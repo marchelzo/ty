@@ -49,7 +49,8 @@ find_package(OpenSSL REQUIRED)
 # ---
 
 set(CMAKE_C_STANDARD 23)
-set(CMAKE_C_STANDARD_REQUIRED TRUE)
+set(CMAKE_C_STANDARD_REQUIRED ON)
+set(CMAKE_C_EXTENSIONS OFF)
 
 # ---
 #  generate ioctl_constants
@@ -162,19 +163,37 @@ target_compile_options(${_tgt_ty_interface}
       -Wno-trigraphs
     >
     $<$<C_COMPILER_ID:AppleClang>:
-      -Weverything
+      -Wall
+      -Wno-class-varargs
+      -Wno-switch
       -Wno-string-plus-int
       -Wno-multichar
       -Wno-trigraphs
+      -Wno-sign-compare
+      -Wno-sign-conversion
+      -Wno-padded
+      -Wno-shadow
+      -Wno-shorten-64-to-32
+      -Wno-cast-qual
+      -Wno-declaration-after-statement
       -mcpu=native
       -flto
       -ferror-limit=3
     >
     $<$<C_COMPILER_ID:Clang>:
-      -Weverything
+      -Wall
+      -Wno-class-varargs
+      -Wno-switch
       -Wno-string-plus-int
       -Wno-multichar
       -Wno-trigraphs
+      -Wno-sign-compare
+      -Wno-sign-conversion
+      -Wno-padded
+      -Wno-shadow
+      -Wno-shorten-64-to-32
+      -Wno-cast-qual
+      -Wno-declaration-after-statement
       -mcpu=native
       -flto
     >

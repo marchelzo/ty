@@ -75,6 +75,7 @@ typedef vec(u32)            U32Vector;
 typedef vec(Value)          ValueVector;
 typedef ValueVector         ValueStack;
 typedef vec(char)           byte_vector;
+typedef vec(bool)           BoolVector;
 typedef vec(int)            int_vector;
 typedef vec(Symbol *)       symbol_vector;
 typedef vec(TySavePoint *)  TySavePointVector;
@@ -925,6 +926,7 @@ enum {
 #define v0(v)     ((v).count = 0)
 #define v00(v)    (((v).count = 0), ((v).items = NULL), ((v).capacity = 0))
 #define v_(v, i)  (&(v).items[(i)])
+#define v_0(v)    ((v).items[0])
 #define v_L(v)    ((v).items[(v).count - 1])
 #define v__(v, i) ((v).items[(i)])
 #define vv(v)     ((v).items)

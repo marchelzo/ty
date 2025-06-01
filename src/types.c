@@ -28,11 +28,9 @@ u32 TYPES_OFF = 0;
 #define ENFORCE (!AllowErrors && TYPES_OFF == 0 && !DEBUGGING)
 #define ENABLED (CheckConstraints)
 
-#define xDDD() if (!ENABLED) { return NULL; }
-#define xDDDD() if (!ENABLED) { return true; }
-#define xDDDDD() if (!ENABLED) { return; }
-
-enum { PROP_DEFAULT, PROP_FIX, PROP_UNFIX };
+#define   xDDD() if (!ENABLED) { return NULL; }
+#define  xDDDD() if (!ENABLED) { return true; }
+#define xDDDDD() if (!ENABLED) { return;      }
 
 #define ANY     TYPE_ANY
 #define BOTTOM  BOTTOM_TYPE
@@ -53,8 +51,6 @@ enum { PROP_DEFAULT, PROP_FIX, PROP_UNFIX };
 #define NewRecord(...) ((NewRecord)(ty, __VA_ARGS__ __VA_OPT__(,) NULL))
 #define NewTuple(...) ((NewTuple)(ty, __VA_ARGS__ __VA_OPT__(,) NULL))
 #define NewList(...) ((NewList)(ty, __VA_ARGS__ __VA_OPT__(,) NULL))
-#define New2OpL(op, a, b) ((New2OpL)(ty, (op), (a), (b)))
-#define New2OpR(a, op, b) ((New2OpR)(ty, (op), (a), (b)))
 #define NewIntersect(...) ((NewIntersect)(ty, __VA_ARGS__ __VA_OPT__(,) NULL))
 #define NewUnion(...) ((NewUnion)(ty, __VA_ARGS__ __VA_OPT__(,) NULL))
 #define NewFunction(...) ((NewFunction)(ty, __VA_ARGS__ __VA_OPT__(,) NULL))
@@ -62,14 +58,42 @@ enum { PROP_DEFAULT, PROP_FIX, PROP_UNFIX };
 #define NewDict(k, v) NewObject(CLASS_DICT, (k), (v))
 #define NewArray(t) NewObject(CLASS_ARRAY, (t))
 
+inline static void
+TupleAddField(Ty *ty, Type *t0, Type *u0, char const *name, bool required)
+{
+        avP(t0->types, u0);
+        avP(t0->names, name);
+        avP(t0->required, required);
+}
+
+#define AddEntry_2(t, u)       TupleAddField(ty, (t), (u), NULL, true)
+#define AddEntry_3(t, u, n)    TupleAddField(ty, (t), (u), (n),  true)
+#define AddEntry_4(t, u, n, r) TupleAddField(ty, (t), (u), (n),  (r))
+#define AddEntry(...) VA_SELECT(AddEntry, __VA_ARGS__)
+
+inline static bool
+IsRequired(Type const *t0, i32 i)
+{
+        switch (TypeType(t0)) {
+        case TYPE_TUPLE:
+                return v__(t0->required, i);
+
+        case TYPE_FUNCTION:
+                return v_(t0->params, i)->required;
+
+        default:
+                UNREACHABLE();
+        }
+}
+
 #if TYPES_LOG
 #define XXTLOG(fmt, ...) (EnableLogging > 0 && printf("[%2d] " fmt "\n", CurrentLevel __VA_OPT__(,) __VA_ARGS__))
 #define XXXTLOG(fmt, ...) (printf("[%2d] " fmt "\n", CurrentLevel __VA_OPT__(,) __VA_ARGS__))
 #define DPRINT(cond, fmt, ...) ((cond) && EnableLogging > 0 && printf("%*s" fmt "\n", 4*ud, "" __VA_OPT__(,) __VA_ARGS__))
 #define XDPRINT(cond, fmt, ...) ((cond) && printf("%*s" fmt "\n", 4*ud, "" __VA_OPT__(,) __VA_ARGS__))
 #else
-#define XXTLOG(fmt, ...) 0
-#define XXXTLOG(fmt, ...) 0
+#define XXTLOG(...) 0
+#define XXXTLOG(...) 0
 #define DPRINT(cond, fmt, ...) 0
 #define XDPRINT(cond, fmt, ...) 0
 #endif
@@ -97,9 +121,6 @@ IsSolved(Type const *t0);
 
 static Type *
 TypeOf2Op(Ty *ty, int op, Type *t0, Type *t1);
-
-static void
-BindChecked(Ty *ty, Type *t0, Type *t1);
 
 static bool
 BindConstraint(Ty *ty, Constraint const *c, bool check);
@@ -168,9 +189,6 @@ type_check2(Ty *ty, Type *t0, Type *t1, bool need);
 Value *
 vm_local(Ty *ty, int i);
 
-static void
-unify_(Ty *ty, Type **t0, Type *t1, bool fixed);
-
 static bool
 unify2_(Ty *ty, Type **t0, Type *t1, bool check);
 
@@ -234,6 +252,7 @@ Type *TYPE_FLOAT;
 Type *TYPE_BOOL;
 Type *TYPE_STRING;
 Type *TYPE_REGEX;
+Type *TYPE_REGEXV;
 Type *TYPE_BLOB;
 Type *TYPE_ARRAY;
 Type *TYPE_DICT;
@@ -785,8 +804,7 @@ static Type *
 
         while ((name = va_arg(ap, char const *)) != NULL) {
                 t1 = va_arg(ap, Type *);
-                avP(t0->names, name);
-                avP(t0->types, t1);
+                AddEntry(t0, t1, name);
         }
 
         va_end(ap);
@@ -805,8 +823,7 @@ static Type *
         va_start(ap, ty);
 
         while ((t1 = va_arg(ap, Type *)) != NULL) {
-                avP(t0->names, NULL);
-                avP(t0->types, t1);
+                AddEntry(t0, t1);
         }
 
         va_end(ap);
@@ -849,26 +866,6 @@ static Type *
 
         va_end(ap);
 
-        return t0;
-}
-
-static Type *
-(New2OpL)(Ty *ty, int op, Type *a0, Type *b0)
-{
-        Type *t0 = NewType(ty, TYPE_2OP_L);
-        t0->op = op;
-        t0->a = a0;
-        t0->b = b0;
-        return t0;
-}
-
-static Type *
-(New2OpR)(Ty *ty, int op, Type *a0, Type *b0)
-{
-        Type *t0 = NewType(ty, TYPE_2OP_R);
-        t0->op = op;
-        t0->a = a0;
-        t0->b = b0;
         return t0;
 }
 
@@ -1107,7 +1104,12 @@ SliceType(Ty *ty, Type const *t0, int i, int j, int k)
 }
 
 static bool
-FlattenTypeSequence(Ty *ty, TypeVector *types, ConstStringVector *names)
+FlattenTypeSequence(
+        Ty *ty,
+        TypeVector *types,
+        ConstStringVector *names,
+        BoolVector *required
+)
 {
         bool already_flat = true;
 
@@ -1125,6 +1127,7 @@ FlattenTypeSequence(Ty *ty, TypeVector *types, ConstStringVector *names)
 
         TypeVector flat = {0};
         ConstStringVector flat_names = {0};
+        BoolVector flat_required = {0};
 
         for (int i = 0; i < vN(*types); ++i) {
                 Type *t0 = ResolveVar(v__(*types, i));
@@ -1135,15 +1138,28 @@ FlattenTypeSequence(Ty *ty, TypeVector *types, ConstStringVector *names)
                                         avP(flat_names, NULL);
                                 }
                         }
+                        if (required != NULL) {
+                                while (vN(flat_required) < vN(flat)) {
+                                        avP(flat_required, NULL);
+                                }
+                        }
                 } else {
                         avP(flat, v__(*types, i));
                         if (names != NULL) {
                                 avP(flat_names, v__(*names, i));
                         }
+                        if (required != NULL) {
+                                avP(flat_required, v__(*required, i));
+                        }
                 }
         }
 
-        FlattenTypeSequence(ty, &flat, (names != NULL) ? &flat_names : NULL);
+        FlattenTypeSequence(
+                ty,
+                &flat,
+                (names != NULL) ? &flat_names : NULL,
+                (required != NULL) ? &flat_required : NULL
+        );
 
         Type before = { .type = TYPE_SEQUENCE, .types = *types };
         Type after = { .type = TYPE_SEQUENCE, .types = flat };
@@ -1165,13 +1181,13 @@ Flatten(Ty *ty, Type *t0)
 {
         switch (TypeType(t0)) {
         case TYPE_TUPLE:
-                return FlattenTypeSequence(ty, &t0->types, &t0->names);
+                return FlattenTypeSequence(ty, &t0->types, &t0->names, &t0->required);
         case TYPE_SEQUENCE:
         case TYPE_LIST:
-                return FlattenTypeSequence(ty, &t0->types, NULL);
+                return FlattenTypeSequence(ty, &t0->types, NULL, NULL);
         case TYPE_ALIAS:
         case TYPE_OBJECT:
-                return FlattenTypeSequence(ty, &t0->args, NULL);
+                return FlattenTypeSequence(ty, &t0->args, NULL, NULL);
         default:
                 return false;
         }
@@ -1526,25 +1542,6 @@ NthType(Type const *t0, int i)
         return BOTTOM;
 }
 
-inline static bool
-IsOperand(Type const *t0)
-{
-        return TypeType(t0) == TYPE_2OP_L
-            || TypeType(t0) == TYPE_2OP_R;
-}
-
-inline static bool
-IsOpL(Type const *t0)
-{
-        return TypeType(t0) == TYPE_2OP_L;
-}
-
-inline static bool
-IsOpR(Type const *t0)
-{
-        return TypeType(t0) == TYPE_2OP_R;
-}
-
 static bool
 IsTupleLike(Type const *t0)
 {
@@ -1656,9 +1653,9 @@ Resolve(Ty *ty, Type const *t0)
                 }
         }
 
-        TLOG("Resolve(%d):", TypeType(t));
-        TLOG("    %s", ShowType(t));
-        TLOG("    %s\n", ShowType(t0));
+        XXTLOG("Resolve(%d):", TypeType(t));
+        XXTLOG("    %s", ShowType(t));
+        XXTLOG("    %s\n", ShowType(t0));
 
         return (Type *)t0;
 }
@@ -1728,6 +1725,9 @@ AlmostSameType(Type const *t0, Type const *t1)
 
         case PAIR_OF(TYPE_TUPLE):
                 if (vN(t0->types) != vN(t1->types)) {
+                        return false;
+                }
+                if (!AlmostSameType(t0->repeat, t1->repeat)) {
                         return false;
                 }
                 for (int i = 0; i < vN(t0->types); ++i) {
@@ -1885,6 +1885,9 @@ SameType(Type const *t0, Type const *t1)
                 if (vN(t0->types) != vN(t1->types)) {
                         return false;
                 }
+                if (!SameType(t0->repeat, t1->repeat)) {
+                        return false;
+                }
                 for (int i = 0; i < vN(t0->types); ++i) {
                         char const *n0 = v__(t0->names, i);
                         char const *n1 = v__(t1->names, i);
@@ -1895,6 +1898,9 @@ SameType(Type const *t0, Type const *t1)
                                 if (strcmp(n0, n1) != 0) {
                                         return false;
                                 }
+                        }
+                        if (IsRequired(t0, i) != IsRequired(t1, i)) {
+                                return false;
                         }
                         if (!SameType(v__(t0->types, i), v__(t1->types, i))) {
                                 return false;
@@ -2294,9 +2300,10 @@ CountRefs(Type *t0, u32 id)
                 n = CountRefs(t0->val, id);
                 break;
 
+        case TYPE_TUPLE:
+                n += CountRefs(t0->repeat, id);
         case TYPE_UNION:
         case TYPE_INTERSECT:
-        case TYPE_TUPLE:
         case TYPE_SEQUENCE:
         case TYPE_LIST:
                 for (int i = 0; i < vN(t0->types); ++i) {
@@ -2383,15 +2390,42 @@ Uniq(Ty *ty, Type *t0)
                                 if (cloned) {
                                         vPx(t1->types, t00);
                                 }
-                        } else if (!cloned) {
-                                t1 = CloneType(ty, t1);
-                                CloneVec(t1->types);
-                                cloned = true;
+                        } else {
+                                XXTLOG("Uniq(): %s", ShowType(t1));
+                                XXTLOG("  drop: %s", ShowType(t00));
+                                if (!cloned) {
+                                        t1 = CloneType(ty, t1);
+                                        CloneVec(t1->types);
+                                        cloned = true;
+                                }
                         }
                         vPx(t0->types, t00);
                 }
                 if (vN(t0->types) == 1) {
                         t1 = v__(t0->types, 0);
+                }
+                break;
+
+        case TYPE_TUPLE:
+                if (
+                        (t0->repeat != NULL)
+                     && (vN(t0->types) > 0)
+                     && (v_L(t0->names) == NULL)
+                     && type_check(ty, t0->repeat, v_L(t0->types))
+                ) {
+                        t0 = CloneType(ty, t0);
+                        CloneVec(t0->types);
+                        CloneVec(t0->names);
+                        CloneVec(t0->required);
+                        do {
+                                vvX(t0->types);
+                                vvX(t0->names);
+                                vvX(t0->required);
+                        } while (
+                                (vN(t0->types) > 0)
+                             && (v_L(t0->names) == NULL)
+                             && type_check(ty, t0->repeat, v_L(t0->types))
+                        );
                 }
                 break;
 
@@ -2476,46 +2510,44 @@ CollapseInts(Ty *ty, Type **t0)
 Type *
 type_object(Ty *ty, Class *class)
 {
-        if (class->i == CLASS_TUPLE) {
-                return NewTuple(
-                        UNKNOWN,
-                        UNKNOWN, 
-                        UNKNOWN,
-                        UNKNOWN,
-                        UNKNOWN,
-                        UNKNOWN,
-                        UNKNOWN,
-                        UNKNOWN, 
-                        UNKNOWN, 
-                        UNKNOWN, 
-                        UNKNOWN, 
-                        UNKNOWN, 
-                        UNKNOWN,
-                        UNKNOWN,
-                        UNKNOWN,
-                        UNKNOWN, 
-                        UNKNOWN, 
-                        UNKNOWN
-                );
+        ClassDefinition const *def = (class->def != NULL)
+                                   ? &class->def->class
+                                   : NULL;
+
+        Type *t0 = NewType(ty, TYPE_OBJECT);
+        t0->concrete = true;
+
+        if (class->i == CLASS_TUPLE && def != NULL) {
+                t0->type = TYPE_TUPLE;
+
+                for (int i = 0; i < vN(def->type_params); ++i) {
+                        Expr const *param = v__(def->type_params, 0);
+                        if (
+                                (param->symbol != NULL)
+                             && SymbolIsTypeVar(param->symbol)
+                        ) {
+                                AddEntry(t0, param->symbol->type);
+                        }
+                }
+
+                return t0;
         }
 
-        Type *t = NewType(ty, TYPE_OBJECT);
-        t->class = class;
-        t->concrete = true;
+        t0->class = class;
 
         if (class->def != NULL) {
-                for (int i = 0; i < vN(class->def->class.type_params); ++i) {
-                        Type *t0 = type_resolve(
+                for (int i = 0; i < vN(def->type_params); ++i) {
+                        Type *u0 = type_resolve(
                                 ty,
-                                v__(class->def->class.type_params, i)
+                                v__(def->type_params, i)
                         );
-                        avP(t->args, t0);
+                        avP(t0->args, u0);
                 }
         }
 
-        TLOG("type_object(%s) = %s (narg=%d)", class->name, ShowType(t), (int)vN(t->args));
+        TLOG("type_object(%s) = %s (narg=%d)", class->name, ShowType(t0), (int)vN(t0->args));
 
-        return t;
+        return t0;
 }
 
 Type *
@@ -2808,20 +2840,15 @@ GatherFree(Ty *ty, Type *t0, U32Vector *freev, U32Vector *boundv)
                 GatherFree(ty, t0->val, freev, boundv);
                 break;
 
+        case TYPE_TUPLE:
+                GatherFree(ty, t0->repeat, freev, boundv);
         case TYPE_UNION:
         case TYPE_INTERSECT:
-        case TYPE_TUPLE:
         case TYPE_LIST:
         case TYPE_SEQUENCE:
                 for (int i = 0; i < vN(t0->types); ++i) {
                         GatherFree(ty, v__(t0->types, i), freev, boundv);
                 }
-                break;
-
-        case TYPE_2OP_L:
-        case TYPE_2OP_R:
-                GatherFree(ty, t0->a, freev, boundv);
-                GatherFree(ty, t0->b, freev, boundv);
                 break;
 
         case TYPE_ALIAS:
@@ -2858,20 +2885,11 @@ GatherFree(Ty *ty, Type *t0, U32Vector *freev, U32Vector *boundv)
 }
 
 static Type *
-PropagateX(Ty *ty, Type *t0, bool drill, int mode)
+Propagate(Ty *ty, Type *t0)
 {
         static int d = 0;
 
         Type *t = t0;
-
-        if (drill) {
-                t0 = Resolve(ty, t0);
-        }
-
-        switch (mode) {
-        case PROP_FIX:   t0 = type_fixed(ty, t0);   break;
-        case PROP_UNFIX: t0 = type_unfixed(ty, t0); break;
-        }
 
         if (t0 == NULL) {
                 return NULL;
@@ -2894,7 +2912,7 @@ PropagateX(Ty *ty, Type *t0, bool drill, int mode)
         switch (t0->type) {
         case TYPE_VARIABLE:
                 if (IsBoundVar(t0)) {
-                        t1 = PropagateX(ty, t0->val, drill, mode);
+                        t1 = Propagate(ty, t0->val);
                         if (t1 != t0->val) {
                                 t0 = CloneType(ty, t0);
                                 t0->concrete &= IsConcrete(t1);
@@ -2908,7 +2926,7 @@ PropagateX(Ty *ty, Type *t0, bool drill, int mode)
 
         case TYPE_SUBSCRIPT:
         case TYPE_SLICE:
-                t1 = PropagateX(ty, t0->val, drill, mode);
+                t1 = Propagate(ty, t0->val);
                 if (t1 != t0->val) {
                         t0 = CloneType(ty, t0);
                         t0->concrete &= IsConcrete(t1);
@@ -2916,26 +2934,22 @@ PropagateX(Ty *ty, Type *t0, bool drill, int mode)
                 t0->val = t1;
                 break;
 
-        case TYPE_2OP_L:
-        case TYPE_2OP_R:
-                t1 = PropagateX(ty, t0->a, drill, mode);
-                t2 = PropagateX(ty, t0->b, drill, mode);
-                if (t1 != t0->a || t2 != t0->b) {
+        case TYPE_TUPLE:
+                t1 = Propagate(ty, t0->repeat);
+                if (t1 != t0->repeat) {
                         t0 = CloneType(ty, t0);
-                        t0->concrete &= IsConcrete(t1) && IsConcrete(t2);
+                        CloneVec(t0->types);
+                        cloned = true;
                 }
-                t0->a = t1;
-                t0->b = t2;
-                break;
-
+                t0->repeat = t1;
+                t0->concrete &= IsConcrete(t1);
         case TYPE_LIST:
         case TYPE_UNION:
         case TYPE_INTERSECT:
-        case TYPE_TUPLE:
         case TYPE_SEQUENCE:
                 for (int i = 0; i < vN(t0->types); ++i) {
                         t1 = v__(t0->types, i);
-                        t2 = PropagateX(ty, t1, drill, mode);
+                        t2 = Propagate(ty, t1);
                         if (t2 != t1 && !cloned) {
                                 t0 = CloneType(ty, t0);
                                 CloneVec(t0->types);
@@ -2950,7 +2964,7 @@ PropagateX(Ty *ty, Type *t0, bool drill, int mode)
         case TYPE_OBJECT:
                 for (int i = 0; i < vN(t0->args); ++i) {
                         t1 = v__(t0->args, i);
-                        t2 = PropagateX(ty, t1, drill, mode);
+                        t2 = Propagate(ty, t1);
                         if (t2 != t1 && !cloned) {
                                 t0 = CloneType(ty, t0);
                                 CloneVec(t0->args);
@@ -2964,7 +2978,7 @@ PropagateX(Ty *ty, Type *t0, bool drill, int mode)
         case TYPE_COMPUTED:
                 for (int i = 0; i < vN(t0->args); ++i) {
                         t1 = v__(t0->args, i);
-                        t2 = PropagateX(ty, t1, drill, mode);
+                        t2 = Propagate(ty, t1);
                         if (t2 != t1 && !cloned) {
                                 t0 = CloneType(ty, t0);
                                 t0->inst = true;
@@ -2983,7 +2997,7 @@ PropagateX(Ty *ty, Type *t0, bool drill, int mode)
         case TYPE_ALIAS:
                 for (int i = 0; i < vN(t0->args); ++i) {
                         t1 = v__(t0->args, i);
-                        t2 = PropagateX(ty, t1, drill, mode);
+                        t2 = Propagate(ty, t1);
                         if (t2 != t1 && !cloned) {
                                 t0 = CloneType(ty, t0);
                                 CloneVec(t0->args);
@@ -3003,7 +3017,7 @@ PropagateX(Ty *ty, Type *t0, bool drill, int mode)
         case TYPE_FUNCTION:
                 for (int i = 0; i < vN(t0->params); ++i) {
                         Param const *p = v_(t0->params, i);
-                        t1 = PropagateX(ty, p->type, drill, mode);
+                        t1 = Propagate(ty, p->type);
                         if (t1 != p->type && !cloned) {
                                 t0 = CloneType(ty, t0);
                                 CloneVec(t0->params);
@@ -3015,9 +3029,9 @@ PropagateX(Ty *ty, Type *t0, bool drill, int mode)
                 }
                 for (int i = 0; i < vN(t0->constraints); ++i) {
                         Constraint const *c0 = v_(t0->constraints, i);
-                        t1 = PropagateX(ty, c0->t0, drill, mode);
-                        t2 = PropagateX(ty, c0->t1, drill, mode);
-                        t3 = PropagateX(ty, c0->t2, drill, mode);
+                        t1 = Propagate(ty, c0->t0);
+                        t2 = Propagate(ty, c0->t1);
+                        t3 = Propagate(ty, c0->t2);
                         if ((t1 != c0->t0 || t2 != c0->t1 || t3 != c0->t2) && !cloned) {
                                 t0 = CloneType(ty, t0);
                                 CloneVec(t0->constraints);
@@ -3027,7 +3041,7 @@ PropagateX(Ty *ty, Type *t0, bool drill, int mode)
                         v_(t0->constraints, i)->t1 = t2;
                         v_(t0->constraints, i)->t2 = t3;
                 }
-                t1 = PropagateX(ty, t0->rt, drill, mode);
+                t1 = Propagate(ty, t0->rt);
                 if (t1 != t0->rt && !cloned) {
                         t0 = CloneType(ty, t0);
                 }
@@ -3044,13 +3058,6 @@ PropagateX(Ty *ty, Type *t0, bool drill, int mode)
         TLOG("%*s    %s", 4*d, "", ShowType(t0));
 
         return t0;
-}
-
-static Type *
-Propagate(Ty *ty, Type *t0)
-{
-        Type *t1 = PropagateX(ty, t0, false, PROP_DEFAULT);
-        return t1;
 }
 
 static bool
@@ -3104,9 +3111,13 @@ Occurs(Ty *ty, Type *t0, u32 id, int level)
                 ret = Occurs(ty, t0->val, id, level);
                 break;
 
+        case TYPE_TUPLE:
+                if (Occurs(ty, t0->repeat, id, level)) {
+                        ret = true;
+                        break;
+                }
         case TYPE_UNION:
         case TYPE_INTERSECT:
-        case TYPE_TUPLE:
         case TYPE_SEQUENCE:
         case TYPE_LIST:
                 for (int i = 0; i < vN(t0->types); ++i) {
@@ -3264,6 +3275,7 @@ NewInst0(Ty *ty, Type *t0, TypeEnv *env)
                 break;
 
         case TYPE_TUPLE:
+                t0->repeat = NewInst0(ty, t0->repeat, env);
         case TYPE_SEQUENCE:
         case TYPE_LIST:
                 CloneVec(t0->types);
@@ -3505,6 +3517,7 @@ static bool
 GetField(Ty *ty, Type *t0, int i, Type **u0, char const **name)
 {
         Expr const *field;
+        ClassDefinition const *def;
 
         switch (TypeType(t0)) {
         case TYPE_OBJECT:
@@ -3513,16 +3526,24 @@ GetField(Ty *ty, Type *t0, int i, Type **u0, char const **name)
                         *name = "";
                         return true;
                 }
-                if (i < vN(t0->class->def->class.fields)) {
-                        field = v__(t0->class->def->class.fields, i);
+                def = &t0->class->def->class;
+                if (i < vN(def->fields)) {
+                        field = v__(def->fields, i);
                         *u0 = SolveMemberAccess(ty, t0, field->_type);
                         *name = FieldIdentifier(field)->identifier;
                         return true;
                 }
-                i -= vN(t0->class->def->class.fields);
-                if (i < vN(t0->class->def->class.methods)) {
-                        field = v__(t0->class->def->class.methods, i);
+                i -= vN(def->fields);
+                if (i < vN(def->methods)) {
+                        field = v__(def->methods, i);
                         *u0 = SolveMemberAccess(ty, t0, field->_type);
+                        *name = field->name;
+                        return true;
+                }
+                i -= vN(def->methods);
+                if (i < vN(def->getters)) {
+                        field = v__(def->getters, i);
+                        *u0 = SolveMemberAccess(ty, t0, field->_type->rt);
                         *name = field->name;
                         return true;
                 }
@@ -3627,14 +3648,14 @@ TryUnifyObjects(Ty *ty, Type *t0, Type *t1, bool super)
         if (StrictClassOf(t0) == CLASS_ITERABLE && IsTuple(t1)) {
                 t1 = NewObject(
                         CLASS_ITERABLE,
-                        vN(t1->types) == 0 ? UNKNOWN : v__(t1->types, 0)
+                        (t1->repeat == NULL) ? UNKNOWN : t1->repeat
                 );
         }
 
         if (StrictClassOf(t1) == CLASS_ITERABLE && IsTuple(t0)) {
                 t0 = NewObject(
                         CLASS_ITERABLE,
-                        vN(t0->types) == 0 ? UNKNOWN : v__(t0->types, 0)
+                        (t0->repeat == NULL) ? UNKNOWN : t0->repeat
                 );
         }
 
@@ -3698,10 +3719,20 @@ TryUnifyObjects(Ty *ty, Type *t0, Type *t1, bool super)
 
                 if (super) {
                         for (int i = 0; i < vN(t0->types); ++i) {
-                                if (CanBindVariadic(v__(t0->types, i))) {
-                                        BindVar(v__(t0->types, i), TailTypes(ty, &t1->types, i));
-                                        Flatten(ty, t0);
-                                        break;
+                                Type *t00 = v__(t0->types, i);
+                                if (CanBindVariadic(t00)) {
+                                        if (i < vN(t1->types)) {
+                                                Type *tail = TailTypes(ty, &t1->types, i);
+                                                if (t1->repeat != NULL) {
+                                                        avP(tail->types, t1->repeat);
+                                                }
+                                                BindVar(t00, tail);
+                                                Flatten(ty, t0);
+                                                break;
+                                        } else if (t1->repeat != NULL) {
+                                                BindVar(t00, t1->repeat);
+                                                break;
+                                        }
                                 }
                                 char const *name = v__(t0->names, i);
                                 t2 = FindRecordEntry(t1, i, name);
@@ -3721,11 +3752,12 @@ TryUnifyObjects(Ty *ty, Type *t0, Type *t1, bool super)
                                                 ) {
                                                         return false;
                                                 }
-                                        } else if (t1->fixed) {
-                                                return false;
+                                        } else if (!IsRequired(t0, i)) {
+                                                continue;
+                                        } else if (!t1->fixed) {
+                                                AddEntry(t1, v__(t0->types, i), name);
                                         } else {
-                                                avP(t1->names, name);
-                                                avP(t1->types, v__(t0->types, i));
+                                                return false;
                                         }
                                 } else if (!UnifyX(ty, v__(t0->types, i), *t2, super, false)) {
                                         if (!t0->fixed) {
@@ -3739,10 +3771,20 @@ TryUnifyObjects(Ty *ty, Type *t0, Type *t1, bool super)
                         }
                 } else {
                         for (int i = 0; i < vN(t1->types); ++i) {
-                                if (CanBindVariadic(v__(t1->types, i))) {
-                                        BindVar(v__(t1->types, i), TailTypes(ty, &t0->types, i));
-                                        Flatten(ty, t1);
-                                        break;
+                                Type *t11 = v__(t1->types, i);
+                                if (CanBindVariadic(t11)) {
+                                        if (i < vN(t0->types)) {
+                                                Type *tail = TailTypes(ty, &t0->types, i);
+                                                if (t0->repeat != NULL) {
+                                                        avP(tail->types, t0->repeat);
+                                                }
+                                                BindVar(t11, tail);
+                                                Flatten(ty, t1);
+                                                break;
+                                        } else if (t0->repeat != NULL) {
+                                                BindVar(t11, t0->repeat);
+                                                break;
+                                        }
                                 }
                                 char const *name = v__(t1->names, i);
                                 t2 = FindRecordEntry(t0, i, name);
@@ -3762,11 +3804,12 @@ TryUnifyObjects(Ty *ty, Type *t0, Type *t1, bool super)
                                                 ) {
                                                         return false;
                                                 }
-                                        } else if (t0->fixed) {
-                                                return false;
+                                        } else if (!IsRequired(t1, i)) {
+                                                continue;
+                                        } else if (!t0->fixed) {
+                                                AddEntry(t0, v__(t1->types, i), name);
                                         } else {
-                                                avP(t0->names, name);
-                                                avP(t0->types, v__(t1->types, i));
+                                                return false;
                                         }
                                 } else if (!UnifyX(ty, *t2, v__(t1->types, i), super, false)) {
                                         if (!t1->fixed) {
@@ -3999,7 +4042,7 @@ UnifyXD(Ty *ty, Type *t0, Type *t1, bool super, bool check, bool soft)
         }
 
         if (SameType(t0, t1)) {
-                XDPRINT(true, "SAME TYPE");
+                DPRINT(true, "SAME TYPE");
                 return true;
         }
 
@@ -4460,10 +4503,6 @@ UnifyX(Ty *ty, Type *t0, Type *t1, bool super, bool check)
         TLOG("UnifyX():");
         TLOG("    %s", ShowType(t0));
         TLOG("    %s\n", ShowType(t1));
-
-        if (check && !ENFORCE) {
-                return true;
-        }
 
 #ifdef TY_PROFILE_TYPES
         Type *q0 = (ud > 0) ? NULL : NewInst(ty, t0);
@@ -5223,14 +5262,12 @@ InferCall0(
                 if (vN(*args) > 1) {
                         t2 = NewType(ty, TYPE_TUPLE);
                         for (int i = 0; i < vN(*args); ++i) {
-                                avP(t2->types, v__(*args, i)->_type);
-                                avP(t2->names, NULL);
+                                AddEntry(t2, v__(*args, i)->_type);
                         }
                 } else if (vN(*kws) > 0) {
                         t2 = NewType(ty, TYPE_TUPLE);
                         for (int i = 0; i < vN(*kws); ++i) {
-                                avP(t2->types, v__(*kwargs, i)->_type);
-                                avP(t2->names, v__(*kws, i));
+                                AddEntry(t2, v__(*kwargs, i)->_type, v__(*kws, i));
                         }
                 } else {
                         t2 = (vN(*args) == 0) ? BOTTOM : v__(*args, 0)->_type;
@@ -5246,6 +5283,9 @@ InferCall0(
                 XXTLOG("  Args:");
                 for (int i = 0; i < vN(*args); ++i) {
                         XXTLOG("   (%d) %s", i, ShowType(v__(*args, i)->_type));
+                }
+                for (int i = 0; i < vN(*kws); ++i) {
+                        XXTLOG("   (%s%s%s) %s", TERM(93), v__(*kws, i), TERM(0), ShowType(v__(*kwargs, i)->_type));
                 }
 
                 XXTLOG("Overloads:");
@@ -5295,6 +5335,16 @@ InferCall0(
                         dump(&msg, FMT_MORE "Arguments:");
                         for (int i = 0; i < vN(*args); ++i) {
                                 dump(&msg, FMT_MORE "  arg[%d]: %s", i, ShowType(Relax(v__(*args, i)->_type)));
+                        }
+                        for (int i = 0; i < vN(*kws); ++i) {
+                                dump(
+                                        &msg,
+                                        FMT_MORE "  kwarg[%s%s%s]: %s",
+                                        TERM(92),
+                                        v__(*kws, i),
+                                        TERM(0),
+                                        ShowType(Relax(v__(*kwargs, i)->_type))
+                                );
                         }
                         dump(&msg, FMT_MORE "Prototypes");
                         for (int i = 0; i < vN(t0->types); ++i) {
@@ -5447,10 +5497,6 @@ type_call(Ty *ty, Expr const *e)
 Type *
 type_match(Ty *ty, Expr const *e)
 {
-        if (!ENFORCE) {
-                return UNKNOWN;
-        }
-
         Type *t0 = NULL;
         Type *s0 = NULL;
 
@@ -5492,10 +5538,6 @@ type_match(Ty *ty, Expr const *e)
 Type *
 type_match_stmt(Ty *ty, Stmt const *stmt)
 {
-        if (!ENFORCE) {
-                return UNKNOWN;
-        }
-
         Type *t0 = NULL;
         Type *s0 = NULL;
 
@@ -5708,7 +5750,7 @@ SolveMemberAccess(Ty *ty, Type const *t0, Type const *t1)
         return t;
 }
 
-Type *
+static Type *
 type_member_access_t_(Ty *ty, Type const *t0, char const *name, bool strict)
 {
         t0 = Resolve(ty, t0);
@@ -5855,6 +5897,12 @@ type_member_access_t_(Ty *ty, Type const *t0, char const *name, bool strict)
                         }
                         break;
                 }
+                if (
+                        (t1 == NULL)
+                     && ((f = FindMethod(t0->class, "__missing__")) != NULL)
+                ) {
+                        t1 = f->_type->rt;
+                }
                 if (ENFORCE && strict && t1 == NULL) {
                         goto NotFound;
                 }
@@ -5906,8 +5954,7 @@ type_member_access(Ty *ty, Expr const *e)
                 } else if (!IsFixed(e->object->_type)) {
                         t0 = NewVar(ty);
                         t1 = NewType(ty, TYPE_TUPLE);
-                        avP(t1->names, e->member_name);
-                        avP(t1->types, t0);
+                        AddEntry(t1, t0, e->member_name);
                         type_intersect(ty, &e->object->_type, t1);
                 } else {
                         type_member_access_t(ty, e->object->_type, e->member_name, true);
@@ -5943,6 +5990,8 @@ type_method_call_t(Ty *ty, Expr const *e, Type *t0, char const *name)
         case TYPE_TAG:
         case TYPE_VARIABLE:
         case TYPE_TUPLE:
+        case TYPE_FUNCTION:
+        case TYPE_INTEGER:
                 t1 = SolveMemberAccess(ty, t0, type_member_access_t(ty, t0, name, false));
                 t1 = Inst(ty, t1, &t0->bound, NULL);
                 t1 = SolveMemberAccess(ty, t0, type_call_t(ty, e, t1));
@@ -5983,7 +6032,7 @@ type_method_call(Ty *ty, Expr const *e)
 {
         xDDD();
 
-        Type *t0 = type_method_call_t(ty, e, e->object->_type, e->method_name);
+        Type *t0 = type_method_call_t(ty, e, Relax(e->object->_type), e->method_name);
         return t0;
 }
 
@@ -6110,7 +6159,7 @@ type_slice(Ty *ty, Expr const *e)
 }
 
 static bool
-check_entry(Ty *ty, Type *t0, int i, Type *t1, bool need)
+check_entry(Ty *ty, Type *t0, int i, Type *t1, bool required, bool need)
 {
         if (IsBottom(t0)) {
                 return false;
@@ -6119,7 +6168,7 @@ check_entry(Ty *ty, Type *t0, int i, Type *t1, bool need)
         switch (t0->type) {
         case TYPE_UNION:
                 for (int ii = 0; ii < vN(t0->types); ++ii) {
-                        if (!check_entry(ty, v__(t0->types, ii), i, t1, need)) {
+                        if (!check_entry(ty, v__(t0->types, ii), i, t1, required, need)) {
                                 return false;
                         }
                 }
@@ -6127,22 +6176,30 @@ check_entry(Ty *ty, Type *t0, int i, Type *t1, bool need)
 
         case TYPE_INTERSECT:
                 for (int ii = 0; ii < vN(t0->types); ++ii) {
-                        if (check_entry(ty, v__(t0->types, ii), i, t1, false)) {
+                        if (check_entry(ty, v__(t0->types, ii), i, t1, required, false)) {
                                 return true;
                         }
                 }
                 return false;
 
         case TYPE_TUPLE:
-                return vN(t0->types) > i
-                    && type_check_x(ty, v__(t0->types, i), t1, need);
+                return (vN(t0->types) > i)  ? type_check_x(ty, v__(t0->types, i), t1, need)
+                     : (t0->repeat != NULL) ? type_check_x(ty, t0->repeat, t1, need)
+                     : !required;
         }
 
         return false;
 }
 
 static bool
-check_field(Ty *ty, Type *t0, char const *name, Type *t1, bool need)
+check_field(
+        Ty *ty,
+        Type *t0,
+        char const *name,
+        Type *t1,
+        bool required,
+        bool need
+)
 {
         t0 = ResolveVar(t0);
 
@@ -6155,7 +6212,7 @@ check_field(Ty *ty, Type *t0, char const *name, Type *t1, bool need)
         switch (t0->type) {
         case TYPE_UNION:
                 for (int i = 0; i < vN(t0->types); ++i) {
-                        if (!check_field(ty, v__(t0->types, i), name, t1, need)) {
+                        if (!check_field(ty, v__(t0->types, i), name, t1, required, need)) {
                                 return false;
                         }
                 }
@@ -6163,7 +6220,7 @@ check_field(Ty *ty, Type *t0, char const *name, Type *t1, bool need)
 
         case TYPE_INTERSECT:
                 for (int i = 0; i < vN(t0->types); ++i) {
-                        if (check_field(ty, v__(t1->types, i), name, t1, false)) {
+                        if (check_field(ty, v__(t1->types, i), name, t1, required, false)) {
                                 return true;
                         }
                 }
@@ -6183,13 +6240,14 @@ check_field(Ty *ty, Type *t0, char const *name, Type *t1, bool need)
                                 return type_check_x(ty, v__(t0->types, i), t1, need);
                         }
                 }
-                return false;
+                return !required;
 
         case TYPE_OBJECT:
                 t2 = type_member_access_t_(ty, t0, name, false);
                 if (t2 != NULL) {
                         return type_check_x(ty, t2, t1, need);
                 }
+                return !required;
         }
 
         return false;
@@ -6271,7 +6329,7 @@ type_check_shallow(Ty *ty, Type *t0, Type *t1)
         return false;
 }
 
-bool
+static bool
 type_check_x_(Ty *ty, Type *t0, Type *t1, bool need)
 {
         if (
@@ -6520,10 +6578,10 @@ type_check_x_(Ty *ty, Type *t0, Type *t1, bool need)
                         Type *t2 = (name != NULL)
                                  ? RecordField(ty, t1, name)
                                  : RecordElem(t1, i);
-                        if (t2 == NULL) {
-                                t2 = NIL_TYPE;
+                        if (t2 == NULL && !IsRequired(t0, i)) {
+                                continue;
                         }
-                        if (!type_check_x(ty, v__(t0->types, i), t2, need)) {
+                        if (t2 == NULL || !type_check_x(ty, v__(t0->types, i), t2, need)) {
                                 DPRINT(name && need, "Field(%s) %s != %s", name, ShowType(v__(t0->types, i)), ShowType(t2));
                                 DPRINT(!name && need, "Field(%d) %s != %s", i, ShowType(v__(t0->types, i)), ShowType(t2));
                                 return false;
@@ -6542,9 +6600,9 @@ type_check_x_(Ty *ty, Type *t0, Type *t1, bool need)
                 for (int i = 0; i < vN(t1->types); ++i) {
                         char const *name = v__(t1->names, i);
                         if (
-                                name == NULL
-                              ? !check_entry(ty, t0, i, v__(t1->types, i), need)
-                              : !check_field(ty, t0, name, v__(t1->types, i), need)
+                                (name == NULL)
+                              ? !check_entry(ty, t0, i, v__(t1->types, i), IsRequired(t1, i), need)
+                              : !check_field(ty, t0, name, v__(t1->types, i), IsRequired(t1, i), need)
                         ) {
                                 DPRINT(name && need, "Field(%s) %s.%s != %s", name, ShowType(t0), name, ShowType(v__(t1->types, i)));
                                 DPRINT(!name && need, "Field(%d) %s.%d != %s", i, ShowType(t0), i, ShowType(v__(t1->types, i)));
@@ -6609,9 +6667,17 @@ type_check_x_(Ty *ty, Type *t0, Type *t1, bool need)
                 XXTLOG("Check functions:");
                 XXTLOG("  %s", ShowType(t0));
                 XXTLOG("  %s", ShowType(t1));
+                bool t0_allows_extra = false;
+                bool t1_allows_extra = false;
+                bool t0_allows_extra_kw = false;
+                bool t1_allows_extra_kw = false;
                 for (int i = 0; i < vN(t0->params) && i < vN(t1->params); ++i) {
                         Param const *pp0 = v_(t0->params, i);
                         Param const *pp1 = v_(t1->params, i);
+                        t0_allows_extra    |= pp0->rest;
+                        t0_allows_extra_kw |= pp0->kws;
+                        t1_allows_extra    |= pp1->rest;
+                        t1_allows_extra_kw |= pp1->kws;
                         if (
                                 (pp0->rest ^ pp1->rest)
                              || (pp0->kws ^ pp1->kws)
@@ -6626,7 +6692,25 @@ type_check_x_(Ty *ty, Type *t0, Type *t1, bool need)
                 }
                 for (int i = vN(t1->params); i < vN(t0->params); ++i) {
                         Param const *p = v_(t0->params, i);
-                        if (p->required && !p->kws && !p->rest) {
+                        if (p->required) {
+                                return false;
+                        }
+                        if (
+                                (p->rest && !t0_allows_extra)
+                             || (p->kws  && !t0_allows_extra_kw)
+                        ) {
+                                return false;
+                        }
+                }
+                for (int i = vN(t0->params); i < vN(t1->params); ++i) {
+                        Param const *p = v_(t1->params, i);
+                        if (p->required) {
+                                return false;
+                        }
+                        if (
+                                (p->rest && !t1_allows_extra)
+                             || (p->kws  && !t1_allows_extra_kw)
+                        ) {
                                 return false;
                         }
                 }
@@ -6736,8 +6820,7 @@ type_tuple(Ty *ty, Expr const *e)
 
         for (int i = 0; i < vN(e->es); ++i) {
                 Type *u0 = NewVar(ty);
-                avP(t0->types, u0);
-                avP(t0->names, v__(e->names, i));
+                AddEntry(t0, u0, v__(e->names, i), false);
                 BindVar(u0, (v__(e->es, i)->_type));
         }
 
@@ -6943,6 +7026,13 @@ type_assign(Ty *ty, Expr *e, Type *t0, int flags)
                                 ShowType(e->symbol->type),
                                 ShowType(t0)
                         );
+                        if (
+                                (e->symbol->type == NULL || CanBind(e->symbol->type))
+                             && (flags & T_FLAG_AVOID_NIL)
+                             && IsNil(t0)
+                        ) {
+                                t0 = type_either(ty, NewVar(ty), type_unfixed(ty, t0));
+                        }
                         if (flags & T_FLAG_UPDATE) {
                                 Refinement *ref = ScopeRefineVar(
                                         ty,
@@ -7016,13 +7106,10 @@ type_assign(Ty *ty, Expr *e, Type *t0, int flags)
                         }
                         if (IsFixed(v__(e->es, i)->_type)) {
                                 t2 = v__(e->es, i)->_type;
-                        } else if (v__(e->required, i)) {
-                                t2 = NewVar(ty);
                         } else {
-                                t2 = NewForgivingVar(ty);
+                                t2 = NewVar(ty);
                         }
-                        avP(t1->names, name);
-                        avP(t1->types, t2);
+                        AddEntry(t1, t2, name, v__(e->required, i));
                         type_assign(ty, v__(e->es, i), t2, flags);
                 }
                 UnifyX(ty, t1, t0, true, strict);
@@ -7092,12 +7179,6 @@ Type *
 type_inst0(Ty *ty, Type const *t0, U32Vector const *params, TypeVector const *args)
 {
         return Inst0(ty, (Type *)t0, params, args, false, false);
-}
-
-Type *
-type_drill(Ty *ty, Type const *t0)
-{
-        return PropagateX(ty, (Type *)t0, true, PROP_DEFAULT);
 }
 
 Type *
@@ -7248,8 +7329,16 @@ type_resolve(Ty *ty, Expr const *e)
                 t0->concrete = true;
                 t0->fixed = true;
                 for (int i = 0; i < vN(e->es); ++i) {
-                        avP(t0->names, v__(e->names, i));
-                        avP(t0->types, type_resolve(ty, v__(e->es, i)));
+                        if (v__(e->es, i)->type == EXPRESSION_SPREAD) {
+                                t0->repeat = type_resolve(ty, v__(e->es, i)->value);
+                        } else {
+                                AddEntry(
+                                        t0,
+                                        type_resolve(ty, v__(e->es, i)),
+                                        v__(e->names, i),
+                                        v__(e->required, i)
+                                );
+                        }
                 }
                 return t0;
 
@@ -7274,15 +7363,16 @@ type_resolve(Ty *ty, Expr const *e)
         case EXPRESSION_BIT_AND:
                 t0 = type_unfixed(ty, type_resolve(ty, e->left));
                 t1 = type_unfixed(ty, type_resolve(ty, e->right));
-                if (type_check(ty, t0, t1)) {
-                        return t1;
-                }
-                if (type_check(ty, t1, t0)) {
-                        return t0;
-                }
-                t2 = NewType(ty, TYPE_INTERSECT);
-                avP(t2->types, t0);
-                avP(t2->types, t1);
+                t2 = type_both(ty, t0, t1);
+                //if (type_check(ty, t0, t1)) {
+                //        return t1;
+                //}
+                //if (type_check(ty, t1, t0)) {
+                //        return t0;
+                //}
+                //t2 = NewType(ty, TYPE_INTERSECT);
+                //avP(t2->types, t0);
+                //avP(t2->types, t1);
                 return t2;
 
         case EXPRESSION_PREFIX_QUESTION:
@@ -7329,7 +7419,7 @@ type_resolve(Ty *ty, Expr const *e)
                                                         ty,
                                                         v__(e->left->es, i)
                                                 ),
-                                                true
+                                                v__(e->required, i)
                                         )
                                 );
                         }
@@ -7711,22 +7801,30 @@ type_show(Ty *ty, Type const *t0)
                 break;
         case TYPE_SEQUENCE:
         case TYPE_LIST:
-                //dump(&buf, t0->type == TYPE_LIST ? "list" : "seq");
+#ifdef TY_DEBUG_TYPES
+                dump(&buf, t0->type == TYPE_LIST ? "list" : "seq");
+#endif
         case TYPE_TUPLE:
                 if (is_record(t0)) {
-                        dump(&buf, "%s{%s", TERM(38;2;240;158;58), TERM(0));
+                        dump(&buf, "%s{%s", TERM(38:2:240:158:58), TERM(0));
                         for (int i = 0; i < vN(t0->types); ++i) {
+                                if (i > 0) {
+                                        dump(&buf, ", ");
+                                }
+                                if (!IsRequired(t0, i)) {
+                                        dump(&buf, "%s?%s", TERM(1;34), TERM(0));
+                                }
                                 if (v__(t0->names, i) == NULL) {
                                         dump(
                                                 &buf,
-                                                (i == 0) ? "%d: %s" : ", %d: %s",
+                                                "%d: %s",
                                                 i,
                                                 ShowType(v__(t0->types, i))
                                         );
                                 } else {
                                         dump(
                                                 &buf,
-                                                (i == 0) ? "%s%s:%s %s" : ", %s%s%s: %s",
+                                                "%s%s:%s %s",
                                                 TERM(38;2;240;158;58),
                                                 v__(t0->names, i),
                                                 TERM(0),
@@ -7734,9 +7832,15 @@ type_show(Ty *ty, Type const *t0)
                                         );
                                 }
                         }
-                        dump(&buf, "%s}%s", TERM(38;2;240;158;58), TERM(0));
+                        if (t0->repeat != NULL) {
+                                if (vN(t0->types) > 0) {
+                                        dump(&buf, ", ");
+                                }
+                                dump(&buf, "%s...%s%s", TERM(93), ShowType(t0->repeat), TERM(0));
+                        }
+                        dump(&buf, "%s}%s", TERM(38:2:240:158:58), TERM(0));
                 } else {
-                        dump(&buf, "(");
+                        dump(&buf, "%s(%s", TERM(38:2:240:158:58), TERM(0));
                         for (int i = 0; i < vN(t0->types); ++i) {
                                 dump(
                                         &buf,
@@ -7744,7 +7848,13 @@ type_show(Ty *ty, Type const *t0)
                                         ShowType(v__(t0->types, i))
                                 );
                         }
-                        dump(&buf, ")");
+                        if (t0->repeat != NULL) {
+                                if (vN(t0->types) > 0) {
+                                        dump(&buf, ", ");
+                                }
+                                dump(&buf, "%s...%s%s", TERM(93), ShowType(t0->repeat), TERM(0));
+                        }
+                        dump(&buf, "%s)%s", TERM(38:2:240:158:58), TERM(0));
                 }
                 break;
 
@@ -8004,13 +8114,6 @@ MakeConcrete_(Ty *ty, Type *t0, TypeVector *refs, bool variance)
                    : true ? t0 : (variance ? TYPE_ANY : UNKNOWN);
                 break;
 
-        case TYPE_2OP_L:
-        case TYPE_2OP_R:
-                t0->a = MakeConcrete_(ty, t0->a, refs, variance);
-                t0->b = MakeConcrete_(ty, t0->b, refs, variance);
-                t0->concrete &= IsConcrete(t0->a) && IsConcrete(t0->b);
-                break;
-
         case TYPE_UNION:
                 CloneVec(t0->types);
                 for (int i = 0; i < vN(t0->types); ++i) {
@@ -8037,6 +8140,10 @@ MakeConcrete_(Ty *ty, Type *t0, TypeVector *refs, bool variance)
                 break;
 
         case TYPE_TUPLE:
+                if (t0->repeat != NULL) {
+                        t0->repeat = MakeConcrete_(ty, t0->repeat, refs, variance);
+                        t0->concrete &= t0->repeat->concrete;
+                }
         case TYPE_SEQUENCE:
         case TYPE_LIST:
                 CloneVec(t0->types);
@@ -8115,7 +8222,7 @@ type_find_member(Ty *ty, Type *t0, char const *name)
                         m = FieldIdentifier(FindField(t0->class, name));
                 }
                 if (m == NULL) {
-                        m = FindField(t0->class, name);
+                        m = FindGetter(t0->class, name);
                 }
                 break;
 
@@ -8322,10 +8429,6 @@ Type *
 type_binary_op(Ty *ty, Expr const *e)
 {
         int op = -1;
-
-        if (!ENFORCE) {
-                return UNKNOWN;
-        }
 
         switch (e->type) {
         case EXPRESSION_PLUS:    op = OP_ADD;    break;
@@ -8764,6 +8867,10 @@ TupleSubscriptType(Ty *ty, Type const *t0)
                 avP(t2->types, v__(t0->types, i));
         }
 
+        if (t0->repeat != NULL) {
+                avP(t2->types, t0->repeat);
+        }
+
         avP(
                 t1->types,
                 NewFunction(
@@ -8783,7 +8890,9 @@ FindRecordEntry(Type const *t0, int i, char const *name)
         }
 
         if (name == NULL) {
-                return (i < vN(t0->types)) ? v_(t0->types, i) : NULL;
+                return (i < vN(t0->types))
+                     ? v_(t0->types, i)
+                     : (Type **)&t0->repeat;
         }
 
         for (int i = 0; i < vN(t0->types); ++i) {
@@ -8848,14 +8957,14 @@ type_intersect(Ty *ty, Type **t0, Type *t1)
                 *t0 = CloneType(ty, *t0);
                 CloneVec((*t0)->types);
                 CloneVec((*t0)->names);
+                CloneVec((*t0)->required);
 
                 for (int i = 0; i < vN(t1->types); ++i) {
                         char const *name = v__(t1->names, i);
                         Type *e1 = v__(t1->types, i);
                         Type **e2 = FindRecordEntry(*t0, i, name);
                         if (e2 == NULL) {
-                                avP((*t0)->types, e1);
-                                avP((*t0)->names, name);
+                                AddEntry(*t0, e1, name, false);
                         } else {
                                 type_intersect(ty, e2, e1);
                         }
@@ -9105,6 +9214,7 @@ type_completions(Ty *ty, Type const *t0, char const *pre, ValueVector *out)
                         Expr const *e = v__(exprs, i);
                         switch (e->type) {
                         case EXPRESSION_FUNCTION:
+                        case EXPRESSION_MULTI_FUNCTION:
                                 xvP(
                                         *out,
                                         vTn(
@@ -9312,6 +9422,9 @@ type_from_ty(Ty *ty, Value const *v)
         case TyRegexT:
                 return TYPE_REGEX;
 
+        case TyRegexVT:
+                return TYPE_REGEXV;
+
         case TyFloatT:
                 return TYPE_FLOAT;
 
@@ -9409,11 +9522,11 @@ type_from_ty(Ty *ty, Value const *v)
 RecordType:
                 t0 = NewType(ty, TYPE_TUPLE);
                 for (int i = 0; i < inner.count; ++i) {
-                        avP(t0->types, type_from_ty(ty, &inner.items[i]));
+                        Type *u0 = type_from_ty(ty, &inner.items[i]);
                         if (inner.ids[i] == -1) {
-                                avP(t0->names, NULL);
+                                AddEntry(t0, u0);
                         } else {
-                                avP(t0->names, M_NAME(inner.ids[i]));
+                                AddEntry(t0, u0, M_NAME(inner.ids[i]));
                         }
                 }
                 break;

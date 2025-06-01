@@ -35,6 +35,7 @@ enum {
         CLASS_BOOL,
         CLASS_PTR,
         CLASS_REGEX,
+        CLASS_REGEXV,
         CLASS_GENERATOR,
         CLASS_TAG,
         CLASS_TUPLE,
@@ -207,6 +208,7 @@ enum {
         X(Dict)        \
         X(Ptr)         \
         X(Regex)       \
+        X(RegexV)      \
         X(Iter)
 
 
@@ -1025,7 +1027,6 @@ ClassOf(Value const *v)
         case VALUE_DICT:              return CLASS_DICT;
         case VALUE_TUPLE:             return CLASS_TUPLE;
         case VALUE_GENERATOR:         return CLASS_GENERATOR;
-        case VALUE_REGEX:             return CLASS_REGEX;
         case VALUE_CLASS:             return CLASS_CLASS;
         case VALUE_FUNCTION:          return CLASS_FUNCTION;
         case VALUE_METHOD:            return CLASS_FUNCTION;
@@ -1033,6 +1034,10 @@ ClassOf(Value const *v)
         case VALUE_BUILTIN_METHOD:    return CLASS_FUNCTION;
         case VALUE_OPERATOR:          return CLASS_FUNCTION;
         case VALUE_NIL:               return CLASS_NIL;
+
+        case VALUE_REGEX:
+                return v->regex->detailed ? CLASS_REGEXV
+                                          : CLASS_REGEX;
         }
 
         return CLASS_TOP;

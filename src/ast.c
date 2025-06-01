@@ -386,6 +386,7 @@ visit_expression(Ty *ty, Expr *e, Scope *scope, VisitorSet const *hooks)
         case EXPRESSION_PREFIX_DEC:
         case EXPRESSION_POSTFIX_INC:
         case EXPRESSION_POSTFIX_DEC:
+        case EXPRESSION_TYPE_OF:
                 V(e->operand);
                 break;
         case EXPRESSION_CONDITIONAL:
@@ -564,6 +565,9 @@ visit_type(Ty *ty, Expr *e, Scope *scope, VisitorSet const *hooks)
         case EXPRESSION_FUNCTION_TYPE:
                 VT(e->left);
                 VT(e->right);
+                break;
+        case EXPRESSION_TYPE_OF:
+                V(e->operand);
                 break;
         case EXPRESSION_MATCH:
                 VT(e->subject);
