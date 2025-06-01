@@ -708,7 +708,7 @@ do_tool_opts(char *arg)
         QueryLine = atoi(arg) - 1;
         QueryCol  = atoi(colon + 1) - 1;
         CompileOnly = true;
-        AllowErrors = true;
+        AllowErrors = (query & TOOL_COMPLETE);
 
         return query;
 }

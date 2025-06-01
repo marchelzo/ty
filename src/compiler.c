@@ -189,6 +189,7 @@ static vec(Module *) modules;
 static vec(ProgramAnnotation) annotations;
 static vec(location_vector) location_lists;
 static vec(void *) source_map;
+static Module *MainModule;
 static Module *GlobalModule;
 static Scope *GlobalScope;
 static Symbol *AnyTypeSymbol;
@@ -865,9 +866,12 @@ static void
 ProposeMemberDefinition(Ty *ty, Location start, Location end, Expr const *o, char const *m)
 {
         if (
-                start.line == QueryLine
-             && start.col  <= QueryCol
-             && end.col     > QueryCol
+                (start.line == QueryLine)
+             && (start.col  <= QueryCol)
+             && (
+                     (end.col  >= QueryCol)
+                  || (end.line >  QueryLine)
+                )
              && strcmp(CurrentModulePath(ty), QueryFile) == 0
         ) {
                 static Symbol sym;
@@ -877,9 +881,16 @@ ProposeMemberDefinition(Ty *ty, Location start, Location end, Expr const *o, cha
                 Type *t0;
                 if (member != NULL) {
                         t0 = type_member_access_t(ty, o->_type, m, false);
-                        if (member->type == EXPRESSION_FUNCTION) {
+                        if (
+                                (member->type == EXPRESSION_FUNCTION)
+                             || (member->type == EXPRESSION_MULTI_FUNCTION)
+                        ) {
                                 name = member->name;
-                                doc = member->doc;
+                                if (member->fn_symbol != NULL) {
+                                        doc = member->doc;
+                                } else {
+                                        doc = member->symbol->doc;
+                                }
                         } else if (member->symbol != NULL) {
                                 name = member->symbol->identifier;
                                 doc = member->symbol->doc;
@@ -2196,7 +2207,7 @@ aggregate_overloads(
 
                 int m = 0;
                 do {
-                        ms->items[i + m]->fn_symbol = NULL;
+                        ms->items[i + m]->fn_symbol = multi->fn_symbol;
                         ms->items[i + m]->overload = multi;
                         snprintf(buffer, sizeof buffer, "%s#%d", ms->items[i + m]->name, m + 1);
                         ms->items[i + m]->name = sclonea(ty, buffer);
@@ -2476,11 +2487,6 @@ symbolize_var_decl(Ty *ty, Scope *scope, Expr *target, bool pub)
                 UNREACHABLE();
         }
 
-        if (target->symbol != NULL) {
-                //target->symbol->flags &= ~SYM_TRANSIENT;
-                return;
-        }
-
         bool is_thread_local = false;
 
         if (target->type == EXPRESSION_SPREAD) {
@@ -2556,7 +2562,6 @@ symbolize_decl(Ty *ty, Scope *scope, Expr *target, bool pub)
         case EXPRESSION_MATCH_REST:
         case EXPRESSION_TAG_PATTERN:
         case EXPRESSION_MATCH_ANY:
-        case EXPRESSION_REF_PATTERN:
         case EXPRESSION_VIEW_PATTERN:
         case EXPRESSION_NOT_NIL_VIEW_PATTERN:
                 symbolize_var_decl(ty, scope, target, pub);
@@ -3629,6 +3634,7 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
         case EXPRESSION_SHR_EQ:
                 symbolize_expression(ty, scope, e->value);
                 symbolize_lvalue(ty, scope, e->target, false, false);
+                e->_type = e->target->_type;
                 break;
         case EXPRESSION_MAYBE_EQ:
         case EXPRESSION_EQ:
@@ -3640,6 +3646,7 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                         e->value->_type,
                         T_FLAG_STRICT | T_FLAG_UPDATE
                 );
+                e->_type = e->value->_type;
                 break;
         case EXPRESSION_FUNCTION_TYPE:
                 if (e->left->type == EXPRESSION_TUPLE) {
@@ -3928,7 +3935,7 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                 e->_type = TYPE_STRING;
                 break;
         case EXPRESSION_REGEX:
-                e->_type = TYPE_REGEX;
+                e->_type = e->regex->detailed ? TYPE_REGEXV : TYPE_REGEX;
                 break;
         case EXPRESSION_NIL:
                 e->_type = NIL_TYPE;
@@ -4571,9 +4578,18 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
                         }
                 }
                 symbolize_lvalue(ty, scope, s->target, true, s->pub);
-                type_assign(ty, s->target, s->value->_type, T_FLAG_STRICT);
+                type_assign(
+                        ty,
+                        s->target,
+                        s->value->_type,
+                        T_FLAG_STRICT | T_FLAG_AVOID_NIL
+                );
                 if (s->target->type == EXPRESSION_IDENTIFIER) {
-                       dont_printf("%s ::= %s\n", s->target->identifier, type_show(ty, s->target->symbol->type));
+                       dont_printf(
+                                "%s ::= %s\n",
+                                s->target->identifier,
+                                type_show(ty, s->target->symbol->type)
+                        );
                 }
                 break;
         case STATEMENT_OPERATOR_DEFINITION:
@@ -8699,15 +8715,14 @@ lowkey(Expr *e, Scope *scope, void *ctx)
                 return e;
         }
 
-        if (e->end.line > QueryLine) {
-                return e;
-        }
-
         if (
-                e->start.line == QueryLine
-             && e->start.col <= QueryCol
-             && e->end.col >= QueryCol
-             && QueryResult == NULL
+                (e->start.line == QueryLine)
+             && (e->start.col <= QueryCol)
+             && (
+                        (e->end.col >= QueryCol)
+                     || (e->end.line > QueryLine)
+                )
+             && (QueryResult == NULL)
         ) {
 
                 switch (e->type) {
@@ -8735,7 +8750,10 @@ lowkey(Expr *e, Scope *scope, void *ctx)
                 }
         }
 
-        if (e->end.line == QueryLine && e->end.col > QueryCol) {
+        if (
+                (e->end.line > QueryLine)
+             || (e->end.line == QueryLine && e->end.col > QueryCol)
+        ) {
                 return e;
         }
 
@@ -9222,6 +9240,7 @@ compiler_init(Ty *ty)
         TYPE_INT    = class_get(ty, CLASS_INT   )->object_type;
         TYPE_STRING = class_get(ty, CLASS_STRING)->object_type;
         TYPE_REGEX  = class_get(ty, CLASS_REGEX )->object_type;
+        TYPE_REGEXV = class_get(ty, CLASS_REGEXV)->object_type;
         TYPE_FLOAT  = class_get(ty, CLASS_FLOAT )->object_type;
         TYPE_BOOL   = class_get(ty, CLASS_BOOL  )->object_type;
         TYPE_BLOB   = class_get(ty, CLASS_BLOB  )->object_type;
@@ -9421,6 +9440,10 @@ compiler_compile_source(Ty *ty, char const *source, char const *file)
                 source,
                 STATE.global
         );
+
+        if (MainModule == NULL) {
+                MainModule = module;
+        }
 
         int symbol_count = scope_get_symbol(ty);
 
@@ -12776,6 +12799,9 @@ IntroduceDefinitions(Ty *ty, Stmt *stmt)
 
         switch (stmt->type) {
         case STATEMENT_FUNCTION_DEFINITION:
+                if (!HasBody(stmt->value)) {
+                        goto Eager;
+                }
                 if (
                         (last == NULL)
                      || (last->ns != stmt->ns)
@@ -12788,6 +12814,7 @@ IntroduceDefinitions(Ty *ty, Stmt *stmt)
                 break;
 
         default:
+        Eager:
                 avP(STATE.pending, stmt);
                 DefinePending(ty);
         }

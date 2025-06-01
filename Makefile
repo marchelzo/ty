@@ -1,4 +1,4 @@
-CFLAGS += -std=c23
+CFLAGS += -std=c2x
 CFLAGS += -Wall
 CFLAGS += -Iinclude
 CFLAGS += -Ilibco

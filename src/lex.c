@@ -462,9 +462,13 @@ lexname(Ty *ty)
         vec(u8) name = {0};
         avP(name, nextchar(ty));
 
+        if (v_L(name) == '`') {
+                vvX(name);
+        }
+
         bool special_ok = true;
 
-        for (u8 c; !contains(STOP, (c = C(0))); nextchar(ty)) {
+        for (u8 c; strchr(STOP, (c = C(0))) == NULL; nextchar(ty)) {
                 if (c == ':') {
                         if (C(1) == ':') {
                                 avP(name, c);
@@ -485,7 +489,7 @@ lexname(Ty *ty)
                      && (v_L(name) == '-')
                 ) {
                         v_L(name) = c + ('A' - 'a');
-                } else {
+                } else if (c != '`') {
                         avP(name, c);
                 }
         }

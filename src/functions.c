@@ -5454,7 +5454,7 @@ BUILTIN_FUNCTION(stdio_fgets)
         int c;
 
         lGv(true);
-        while ((c = fgetc_unlocked(fp)) != EOF && c != '\n') {
+        while ((c = fgetc(fp)) != EOF && c != '\n') {
                 vvP(B, c);
         }
         lTk();
@@ -5551,7 +5551,7 @@ BUILTIN_FUNCTION(stdio_write_signed)
         }
 
         lGv(true);
-        size_t n = fwrite_unlocked(b, size, 1, fp);
+        size_t n = fwrite(b, size, 1, fp);
         lTk();
 
         return BOOLEAN(n == 1);
@@ -5579,7 +5579,7 @@ BUILTIN_FUNCTION(stdio_read_unsigned)
 
         uintmax_t k = 0;
 
-        if (fread_unlocked(&k, min(size, sizeof k), 1, fp) != 1) {
+        if (fread(&k, min(size, sizeof k), 1, fp) != 1) {
                 return NIL;
         } else {
                 return INTEGER(k);
@@ -5625,7 +5625,7 @@ BUILTIN_FUNCTION(stdio_write_unsigned)
         }
 
         lGv(true);
-        size_t n = fwrite_unlocked(b, size, 1, fp);
+        size_t n = fwrite(b, size, 1, fp);
         lTk();
 
         return BOOLEAN(n == 1);
@@ -5644,7 +5644,7 @@ BUILTIN_FUNCTION(stdio_read_double)
 
         lGv(true);
 
-        if (fread_unlocked(&x, sizeof x, 1, fp) == 1) {
+        if (fread(&x, sizeof x, 1, fp) == 1) {
                 lTk();
                 return REAL(x);
         } else {
@@ -5666,7 +5666,7 @@ BUILTIN_FUNCTION(stdio_read_float)
 
         lGv(true);
 
-        if (fread_unlocked(&x, sizeof x, 1, fp) == 1) {
+        if (fread(&x, sizeof x, 1, fp) == 1) {
                 lTk();
                 return REAL(x);
         } else {
@@ -5692,7 +5692,7 @@ BUILTIN_FUNCTION(stdio_write_float)
 
         lGv(true);
 
-        size_t n = fwrite_unlocked(&fx, sizeof fx, 1, fp);
+        size_t n = fwrite(&fx, sizeof fx, 1, fp);
 
         lTk();
 
@@ -5716,7 +5716,7 @@ BUILTIN_FUNCTION(stdio_write_double)
 
         lGv(true);
 
-        size_t n = fwrite_unlocked(&fx, sizeof fx, 1, fp);
+        size_t n = fwrite(&fx, sizeof fx, 1, fp);
 
         lTk();
 
@@ -5750,7 +5750,7 @@ BUILTIN_FUNCTION(stdio_fread)
         int c;
 
         lGv(true);
-        while (bytes < n.integer && (c = fgetc_unlocked(fp)) != EOF) {
+        while (bytes < n.integer && (c = fgetc(fp)) != EOF) {
                 vvP(*b, c);
                 bytes += 1;
         }
@@ -5782,7 +5782,7 @@ BUILTIN_FUNCTION(stdio_slurp)
         B.count = 0;
 
         lGv(true);
-        while ((c = fgetc_unlocked(fp)) != EOF) {
+        while ((c = fgetc(fp)) != EOF) {
                 vvP(B, c);
         }
         lTk();
@@ -5804,7 +5804,7 @@ BUILTIN_FUNCTION(stdio_fgetc)
                 zP("the argument to stdio.fgetc() must be a pointer");
 
         lGv(true);
-        int c = fgetc_unlocked(f.ptr);
+        int c = fgetc(f.ptr);
         lTk();
 
         if (c == EOF)
@@ -5826,7 +5826,7 @@ BUILTIN_FUNCTION(stdio_fputc)
         }
 
         lGv(true);
-        int c = fputc_unlocked((int)ARG(1).integer, f.ptr);
+        int c = fputc((int)ARG(1).integer, f.ptr);
         lTk();
 
         if (c == EOF)
@@ -5847,11 +5847,11 @@ BUILTIN_FUNCTION(stdio_fwrite)
 
         switch (s.type) {
         case VALUE_STRING:
-                return INTEGER(fwrite_unlocked(s.str, 1, s.bytes, f.ptr));
+                return INTEGER(fwrite(s.str, 1, s.bytes, f.ptr));
         case VALUE_BLOB:
-                return INTEGER(fwrite_unlocked(s.blob->items, 1, s.blob->count, f.ptr));
+                return INTEGER(fwrite(s.blob->items, 1, s.blob->count, f.ptr));
         case VALUE_INTEGER:
-                return INTEGER(fputc_unlocked((unsigned char)s.integer, f.ptr));
+                return INTEGER(fputc((unsigned char)s.integer, f.ptr));
         default:
                 zP("invalid type for second argument passed to stdio.fwrite()");
         }
@@ -5872,12 +5872,12 @@ BUILTIN_FUNCTION(stdio_puts)
 
         switch (s.type) {
         case VALUE_STRING:
-                r = fwrite_unlocked(s.str, 1, s.bytes, f.ptr);
+                r = fwrite(s.str, 1, s.bytes, f.ptr);
                 if (r < s.bytes && errno != 0)
                         return NIL;
                 break;
         case VALUE_BLOB:
-                r = fwrite_unlocked(s.blob->items, 1, s.blob->count, f.ptr);
+                r = fwrite(s.blob->items, 1, s.blob->count, f.ptr);
                 if (r < s.blob->count && errno != 0)
                         return NIL;
                 break;
@@ -5885,7 +5885,7 @@ BUILTIN_FUNCTION(stdio_puts)
                 zP("the second argument to stdio.puts() must be a string or a blob");
         }
 
-        if (fputc_unlocked('\n', f.ptr) == EOF)
+        if (fputc('\n', f.ptr) == EOF)
                 return NIL;
 
         return INTEGER(r + 1);
@@ -5894,87 +5894,43 @@ BUILTIN_FUNCTION(stdio_puts)
 BUILTIN_FUNCTION(stdio_fflush)
 {
         ASSERT_ARGC("stdio.fflush()", 1);
-
-        Value f = ARG(0);
-        if (f.type != VALUE_PTR)
-                zP("the argument to stdio.fflush() must be a pointer");
-
-        if (fflush(f.ptr) == EOF)
-                return NIL;
-
-        return INTEGER(0);
+        return (fflush(PTR_ARG(0)) == EOF) ? NIL : INTEGER(0);
 }
 
 BUILTIN_FUNCTION(stdio_fclose)
 {
         ASSERT_ARGC("stdio.fclose()", 1);
-
-        Value f = ARG(0);
-        if (f.type != VALUE_PTR)
-                zP("the argument to stdio.fclose() must be a pointer");
-
-        if (fclose(f.ptr) == EOF)
-                return NIL;
-
-        return INTEGER(0);
+        return (fclose(PTR_ARG(0)) == EOF) ? NIL : INTEGER(0);
 }
 
 BUILTIN_FUNCTION(stdio_clearerr)
 {
         ASSERT_ARGC("stdio.clearerr()", 1);
-
-        Value f = ARG(0);
-        if (f.type != VALUE_PTR)
-                zP("the argument to stdio.clearerr() must be a pointer");
-
-        clearerr(f.ptr);
-
+        clearerr(PTR_ARG(0));
         return NIL;
 }
 
 BUILTIN_FUNCTION(stdio_setvbuf)
 {
         ASSERT_ARGC("stdio.setvbuf()", 2);
-
-        Value f = ARG(0);
-        if (f.type != VALUE_PTR)
-                zP("the first argument to stdio.setvbuf() must be a pointer");
-
-        Value mode = ARG(1);
-        if (mode.type != VALUE_INTEGER)
-                zP("the second argument to stdio.setvbuf() must be an integer");
-
-        return INTEGER(setvbuf(f.ptr, NULL, mode.integer, 0));
+        return INTEGER(setvbuf(PTR_ARG(0), NULL, INT_ARG(1), 0));
 }
 
 BUILTIN_FUNCTION(stdio_ftell)
 {
         ASSERT_ARGC("stdio.ftell()", 1);
-
-        Value f = ARG(0);
-        if (f.type != VALUE_PTR)
-                zP("the first argument to stdio.ftell() must be a pointer");
-
-        return INTEGER(ftell(f.ptr));
+        return INTEGER(ftell(PTR_ARG(0)));
 }
 
 BUILTIN_FUNCTION(stdio_fseek)
 {
         ASSERT_ARGC("stdio.fseek()", 3);
 
-        Value f = ARG(0);
-        if (f.type != VALUE_PTR)
-                zP("the first argument to stdio.fseek() must be a pointer");
+        FILE *fp     = PTR_ARG(0);
+        i64   off    = INT_ARG(1);
+        i32   whence = INT_ARG(2);
 
-        Value off = ARG(1);
-        if (off.type != VALUE_INTEGER)
-                zP("the second argument to stdio.fseek() must be an integer");
-
-        Value whence = ARG(2);
-        if (whence.type != VALUE_INTEGER)
-                zP("the third argument to stdio.fseek() must be an integer");
-
-        return INTEGER(fseek(f.ptr, off.integer, whence.integer));
+        return INTEGER(fseek(fp, off, whence));
 }
 
 BUILTIN_FUNCTION(object)

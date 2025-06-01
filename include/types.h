@@ -21,6 +21,13 @@ typedef struct param_bounds ParamBounds;
                 --_ctx_cond, --TYPES_OFF           \
         )
 
+#define WITH_TYPES_OFF_2                               \
+        for (                                          \
+                u32 _ctx_cond = ((TYPES_OFF += 3), 1); \
+                _ctx_cond;                             \
+                --_ctx_cond, (TYPES_OFF -= 3)          \
+        )
+
 extern u32 TYPES_OFF;
 
 struct constraint {
@@ -30,10 +37,10 @@ struct constraint {
         } type;
         union {
                 struct {
-                        int op;
                         Type *t0;
                         Type *t1;
                         Type *t2;
+                        i32 op;
                         Expr const *src;
                         u64 time;
                 };
@@ -49,8 +56,6 @@ struct type {
         enum {
                 TYPE_FUNCTION,
                 TYPE_TUPLE,
-                TYPE_2OP_L,
-                TYPE_2OP_R,
                 TYPE_LIST,
                 TYPE_SEQUENCE,
                 TYPE_TAG,
@@ -104,14 +109,14 @@ struct type {
                                 struct {
                                         union {
                                                 struct {
-                                                        int id;
-                                                        int level;
+                                                        u32 id;
+                                                        i32 level;
                                                         bool bounded;
                                                 };
                                                 struct {
-                                                        int i;
-                                                        int j;
-                                                        int k;
+                                                        i32 i;
+                                                        i32 j;
+                                                        i32 k;
                                                 };
                                                 struct {
                                                         Value func;
@@ -127,8 +132,10 @@ struct type {
                 struct {
                         TypeVector types;
                         ConstStringVector names;
+                        BoolVector required;
+                        Type *repeat;
                 };
-                intmax_t z;
+                imax z;
         };
         Expr const *src;
 };
@@ -151,6 +158,7 @@ extern Type *TYPE_FLOAT;
 extern Type *TYPE_BOOL;
 extern Type *TYPE_STRING;
 extern Type *TYPE_REGEX;
+extern Type *TYPE_REGEXV;
 extern Type *TYPE_BLOB;
 extern Type *TYPE_ARRAY;
 extern Type *TYPE_DICT;
@@ -162,9 +170,10 @@ extern Type *TYPE_ANY;
 extern Type *TYPE_CLASS_;
 
 
-#define TY_T_FLAGS   \
-        X(UPDATE, 0) \
-        X(STRICT, 1) \
+#define TY_T_FLAGS      \
+        X(UPDATE,    0) \
+        X(STRICT,    1) \
+        X(AVOID_NIL, 2)
 
 #define X(f, i) T_FLAG_ ## f = 1 << i,
 enum { TY_T_FLAGS };
@@ -281,9 +290,6 @@ type_inst(Ty *ty, Type const *t0);
 Type *
 type_inst0(Ty *ty, Type const *t0, U32Vector const *params, TypeVector const *args);
 
-Type *
-type_drill(Ty *ty, Type const *t0);
-
 void
 type_assign(Ty *ty, Expr *e, Type *t0, int flags);
 
@@ -393,6 +399,9 @@ type_assign_iterable(Ty *ty, Expr *e, Type *t0, int flags)
 {
         type_assign(ty, e, iterable_type_for(ty, e, t0), flags);
 }
+
+void
+DumpTypeTimingInfo(Ty *ty);
 
 #endif
 

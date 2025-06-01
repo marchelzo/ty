@@ -73,7 +73,7 @@
                 consume(TOKEN_ ## token);                                  \
                 e->type = EXPRESSION_PREFIX_ ## token;                     \
                 e->operand = assignment_lvalue(ty, parse_expr(ty, prec));  \
-                e->end= TEnd;                                              \
+                e->end = TEnd;                                              \
                 return e;                                                  \
         }                                                                  \
 
@@ -904,7 +904,7 @@ inline static void
         struct token t = {
                 .type = type,
                 .start= TEnd,
-                .end= TEnd,
+                .end = TEnd,
                 .ctx = LEX_FAKE
         };
 
@@ -1461,14 +1461,17 @@ parse_type_params(Ty *ty, expression_vector *params)
         SAVE_NE(true);
         consume('[');
         while (T0 != ']') {
-                switch (T0) {
-                case TOKEN_STAR:
-                case TOKEN_IDENTIFIER:
-                        avP(*params, parse_expr(ty, 99));
-                        break;
-                default:
-                        expect(TOKEN_IDENTIFIER);
+                bool variadic = try_consume('*')
+                             || try_consume(TOKEN_DOT_DOT_DOT);
+
+                Expr *param = prefix_identifier(ty);
+
+                if (variadic) {
+                        param->type = EXPRESSION_MATCH_REST;
                 }
+
+                avP(*params, param);
+
                 if (T0 != ']') {
                         consume(',');
                 }
@@ -1707,7 +1710,7 @@ ss_inner(Ty *ty, bool top)
                 avP(e->strings, ss_next_str(ty, top));
         }
 
-        e->end= TEnd;
+        e->end = TEnd;
 
         return e;
 }
@@ -1731,7 +1734,7 @@ prefix_ss(Ty *ty)
         consume('"');
 
         e->start = start;
-        e->end= TEnd;
+        e->end = TEnd;
 
         return extend_string(ty, e);
 }
@@ -1745,7 +1748,7 @@ prefix_hash(Ty *ty)
 
         e->type = EXPRESSION_PREFIX_HASH;
         e->operand = parse_expr(ty, 10);
-        e->end= TEnd;
+        e->end = TEnd;
 
         return e;
 }
@@ -1766,7 +1769,7 @@ prefix_slash(Ty *ty)
         avP(f->args, body);
         avP(f->fconds, NULL);
 
-        nil->end = f->end= TEnd;
+        nil->end = f->end = TEnd;
 
         return mkpartial(ty, f);
 }
@@ -1794,7 +1797,7 @@ prefix_dollar(Ty *ty)
 
         consume(TOKEN_IDENTIFIER);
 
-        e->end= TEnd;
+        e->end = TEnd;
 
         return e;
 }
@@ -1834,14 +1837,14 @@ prefix_identifier(Ty *ty)
 
         if (TypeContext && strcmp(e->identifier, "_") == 0) {
                 e->type = EXPRESSION_MATCH_ANY;
-                e->end= TEnd;
+                e->end = TEnd;
                 return e;
         }
 
         if (!TypeContext && e->module == NULL && is_operator(e->identifier)) {
                 e->type = EXPRESSION_OPERATOR;
                 e->op.id = e->identifier;
-                e->end= TEnd;
+                e->end = TEnd;
                 return e;
         }
 
@@ -1853,7 +1856,7 @@ prefix_identifier(Ty *ty)
                 e->constraint = NULL;
         }
 
-        e->end= TEnd;
+        e->end = TEnd;
 
         return e;
 }
@@ -1866,7 +1869,7 @@ prefix_eval(Ty *ty)
         consume('(');
         e->operand = parse_expr(ty, 0);
         consume(')');
-        e->end= TEnd;
+        e->end = TEnd;
         return e;
 }
 
@@ -1891,7 +1894,7 @@ prefix_defined(Ty *ty)
         consume(')');
 
         e->start = start;
-        e->end= TEnd;
+        e->end = TEnd;
 
         return e;
 }
@@ -1985,7 +1988,7 @@ prefix_function(Ty *ty)
                 if (T0 == ':') {
                         next();
                         avP(e->constraints, parse_type(ty, 0));
-                        (*vvL(e->constraints))->end= TEnd;
+                        (*vvL(e->constraints))->end = TEnd;
                 } else {
                         avP(e->constraints, NULL);
                 }
@@ -1993,7 +1996,7 @@ prefix_function(Ty *ty)
                 if (!special && T0 == TOKEN_EQ) {
                         next();
                         avP(e->dflts, parse_expr(ty, 0));
-                        (*vvL(e->dflts))->end= TEnd;
+                        (*vvL(e->dflts))->end = TEnd;
                 } else {
                         avP(e->dflts, NULL);
                 }
@@ -2010,7 +2013,7 @@ prefix_function(Ty *ty)
         vvX(SavePoints);
 
 EndOfParams:
-        e->end= TEnd;
+        e->end = TEnd;
 
         if (T0 == TOKEN_ARROW) {
                 next();
@@ -2202,7 +2205,7 @@ prefix_star(Ty *ty)
                 }
         }
 
-        e->end= TEnd;
+        e->end = TEnd;
 
         return e;
 }
@@ -2252,7 +2255,7 @@ prefix_record(Ty *ty)
                         } else {
                                 item->type = EXPRESSION_SPREAD;
                                 item->value = parse_expr(ty, 0);
-                                item->end= TEnd;
+                                item->end = TEnd;
                         }
                         avP(e->names, "*");
                         avP(e->es, item);
@@ -2301,7 +2304,7 @@ Next:
 
         consume('}');
 
-        e->end= TEnd;
+        e->end = TEnd;
 
         return e;
 }
@@ -2316,12 +2319,12 @@ next_pattern(Ty *ty)
         SAVE_NC(false);
 
         Expr *p = parse_expr(ty, 0);
-        p->end= TEnd;
+        p->end = TEnd;
 
         if (false && p->type == EXPRESSION_IDENTIFIER && T0 == ':') {
                 next();
                 p->constraint = parse_expr(ty, 0);
-                p->constraint->end= TEnd;
+                p->constraint->end = TEnd;
         }
 
         LOAD_NC();
@@ -2443,7 +2446,7 @@ prefix_with(Ty *ty)
 
         make_with(ty, with, defs, parse_statement(ty, 0));
 
-        with->end= TEnd;
+        with->end = TEnd;
 
         return with;
 }
@@ -2460,7 +2463,7 @@ prefix_throw(Ty *ty)
         if (T0 == ';')
                 next();
 
-        e->end= TEnd;
+        e->end = TEnd;
 
         return e;
 }
@@ -2476,7 +2479,7 @@ prefix_typeof(Ty *ty)
         e->operand = parse_expr(ty, 0);
         LOAD_TC();
 
-        e->end= TEnd;
+        e->end = TEnd;
 
         return e;
 }
@@ -2495,7 +2498,7 @@ prefix_yield(Ty *ty)
                 avP(e->es, parse_expr(ty, 1));
         }
 
-        e->end= TEnd;
+        e->end = TEnd;
 
         return e;
 }
@@ -2518,7 +2521,7 @@ prefix_match(Ty *ty)
         consume_keyword(KEYWORD_MATCH);
 
         e->subject = parse_expr(ty, -1);
-        e->end = e->subject->end= TEnd;
+        e->end = e->subject->end = TEnd;
 
         SAVE_NA(false);
 
@@ -2627,7 +2630,7 @@ gencompr(Ty *ty, Expr *e)
         g->body->each.body->expression->type = EXPRESSION_YIELD;
         avP(g->body->each.body->expression->es, e);
 
-        g->end= TEnd;
+        g->end = TEnd;
 
         return g;
 }
@@ -2694,7 +2697,7 @@ next_arg(
                         arg->value->type = EXPRESSION_IDENTIFIER;
                         arg->value->module = NULL;
                         arg->value->identifier = &"**"[arg->type == EXPRESSION_SPREAD];
-                        arg->end= TEnd;
+                        arg->end = TEnd;
                         arg->value->start = arg->start;
                         arg->value->end = arg->end;
                 } else {
@@ -2786,7 +2789,7 @@ Close:
         vvX(SavePoints);
 
 End:
-        e->end= TEnd;
+        e->end = TEnd;
 }
 
 static Expr *
@@ -2795,12 +2798,12 @@ parse_method_call(Ty *ty, Expr *e)
         switch (T0) {
         case '(':
                 parse_method_args(ty, e);
-                e->end= TEnd;
+                e->end = TEnd;
                 return e;
         case TOKEN_AT:
                 next();
                 parse_method_args(ty, e);
-                e->end= TEnd;
+                e->end = TEnd;
                 return mkpartial(ty, e);
         case '\\':
                 next();
@@ -2822,7 +2825,7 @@ parse_method_call(Ty *ty, Expr *e)
         avP(e->method_args, mkpartial(ty, f));
         avP(e->mconds, NULL);
 
-        e->end= TEnd;
+        e->end = TEnd;
 
         return e;
 }
@@ -2857,14 +2860,9 @@ prefix_parenthesis(Ty *ty)
          */
         if (T0 == ')') {
                 next();
-                e = mkexpr(ty);
+                e = mkxpr(TUPLE);
                 e->start = start;
-                e->type = EXPRESSION_TUPLE;
                 e->only_identifiers = true;
-                vec_init(e->es);
-                vec_init(e->names);
-                vec_init(e->required);
-                vec_init(e->tconds);
                 return e;
         }
 
@@ -2909,7 +2907,7 @@ prefix_parenthesis(Ty *ty)
                         next();
                         e->type = EXPRESSION_SPREAD;
                         e->value = parse_expr(ty, 0);
-                        e->end= TEnd;
+                        e->end = TEnd;
                 } else {
                         e = parse_expr(ty, 0);
                 }
@@ -2931,24 +2929,18 @@ prefix_parenthesis(Ty *ty)
              || (T0 == ':')
              || (K0 == KEYWORD_IF)
         ) {
-                Expr *list = mkexpr(ty);
+                Expr *list = mkxpr(TUPLE);
                 list->start = start;
                 list->only_identifiers = true;
 
                 if (
-                        e->type != EXPRESSION_IDENTIFIER
-                     && e->type != EXPRESSION_MATCH_REST
+                        (e->type != EXPRESSION_IDENTIFIER)
+                     && (e->type != EXPRESSION_MATCH_REST)
                 ) {
                         list->only_identifiers = false;
                 }
 
-                list->type = EXPRESSION_TUPLE;
-                vec_init(list->names);
-                vec_init(list->es);
-                vec_init(list->required);
-                vec_init(list->tconds);
-
-                e->end= TEnd;
+                e->end = TEnd;
                 avP(list->es, e);
                 avP(list->names, NULL);
                 avP(list->required, true);
@@ -3007,7 +2999,7 @@ prefix_parenthesis(Ty *ty)
 
                 consume(')');
 
-                list->end= TEnd;
+                list->end = TEnd;
 
                 if (T0 == TOKEN_ARROW) {
                         list->type = EXPRESSION_LIST;
@@ -3020,21 +3012,16 @@ prefix_parenthesis(Ty *ty)
                 consume(')');
 
                 e->start = start;
-                e->end= TEnd;
+                e->end = TEnd;
 
                 return e;
         } else {
                 consume(')');
 
                 if (e->type == EXPRESSION_TUPLE && !has_names(e)) {
-                        Expr *list = mkexpr(ty);
+                        Expr *list = mkxpr(TUPLE);
                         list->start = start;
                         list->only_identifiers = false;
-                        list->type = EXPRESSION_TUPLE;
-                        vec_init(list->names);
-                        vec_init(list->es);
-                        vec_init(list->tconds);
-                        vec_init(list->required);
                         avP(list->names, NULL);
                         avP(list->required, true);
                         avP(list->es, e);
@@ -3042,7 +3029,7 @@ prefix_parenthesis(Ty *ty)
                         return list;
                 } else {
                         e->start = start;
-                        e->end= TEnd;
+                        e->end = TEnd;
                         return e;
                 }
         }
@@ -3229,7 +3216,7 @@ prefix_array(Ty *ty)
                 f->body->expression->left->module = NULL;
                 f->body->expression->right = e;
                 f->start = start;
-                f->end= TEnd;
+                f->end = TEnd;
                 return f;
         case KEYWORD_NOT:
                 next();
@@ -3260,12 +3247,12 @@ prefix_array(Ty *ty)
                                 item->value->module = NULL;
                                 item->value->identifier = "*";
                                 item->value->start = item->start;
-                                item->value->end = item->end= TEnd;
+                                item->value->end = item->end = TEnd;
                         } else {
                                 item->value = parse_expr(ty, 0);
                         }
 
-                        item->end= TEnd;
+                        item->end = TEnd;
 
                         avP(e->elements, item);
                         avP(e->optional, false);
@@ -3346,7 +3333,7 @@ prefix_array(Ty *ty)
         vvX(SavePoints);
 
 End:
-        e->end= TEnd;
+        e->end = TEnd;
         return e;
 }
 
@@ -3457,7 +3444,7 @@ prefix_range(Ty *ty)
 
         e->left = zero;
         e->right = no_rhs(ty, 0) ? NULL : parse_expr(ty, 7);
-        e->end= TEnd;
+        e->end = TEnd;
 
         return e;
 }
@@ -3547,7 +3534,7 @@ prefix_implicit_method(Ty *ty)
         Expr *f = mkfunc(ty);
         f->body = mkret(ty, e);
         f->start = start;
-        f->end= TEnd;
+        f->end = TEnd;
 
         avP(f->params, o->identifier);
         avP(f->dflts, NULL);
@@ -3606,7 +3593,7 @@ prefix_bit_or(Ty *ty)
 
         consume('|');
 
-        e->end= TEnd;
+        e->end = TEnd;
 
         return e;
 }
@@ -3622,7 +3609,7 @@ prefix_arrow(Ty *ty)
         Expr *f = parse_expr(ty, 0);
         f->type = EXPRESSION_IMPLICIT_FUNCTION;
         f->start = start;
-        f->end= TEnd;
+        f->end = TEnd;
 
         return f;
 }
@@ -3655,7 +3642,7 @@ prefix_percent(Ty *ty)
                 Expr *call = parse_expr(ty, 10);
                 call->type = EXPRESSION_TAG_PATTERN_CALL;
                 call->start = e->start;
-                call->end= TEnd;
+                call->end = TEnd;
                 return call;
         }
 
@@ -3677,7 +3664,7 @@ prefix_percent(Ty *ty)
                         unconsume(TOKEN_ARROW);
                         e->dflt = parse_expr(ty, 0);
                         e->dflt->start = start;
-                        e->dflt->end= TEnd;
+                        e->dflt->end = TEnd;
                 } else if (T0 == TOKEN_STAR) {
                         Expr *item = mkexpr(ty);
                         next();
@@ -3699,10 +3686,10 @@ prefix_percent(Ty *ty)
                                 item->value->module = NULL;
                                 item->value->identifier = "**" + (item->type == EXPRESSION_SPREAD);
                                 item->value->start = item->start;
-                                item->value->end = item->end= TEnd;
+                                item->value->end = item->end = TEnd;
                         } else {
                                 item->value = parse_expr(ty, 0);
-                                item->end= TEnd;
+                                item->end = TEnd;
                         }
 
                         avP(e->keys, item);
@@ -3744,7 +3731,7 @@ prefix_percent(Ty *ty)
 
         next();
 
-        e->end= TEnd;
+        e->end = TEnd;
 
         return e;
 }
@@ -3806,7 +3793,7 @@ infix_function_call(Ty *ty, Expr *left)
 
         if (T0 == ')') {
                 next();
-                e->end= TEnd;
+                e->end = TEnd;
                 return e;
         }
 
@@ -3851,7 +3838,7 @@ infix_function_call(Ty *ty, Expr *left)
         vvX(SavePoints);
 
 End:
-        e->end= TEnd;
+        e->end = TEnd;
         return e;
 }
 
@@ -3870,7 +3857,7 @@ infix_eq(Ty *ty, Expr *left)
                 e->type = (e->type == EXPRESSION_EQ)
                         ? EXPRESSION_REF_PATTERN
                         : EXPRESSION_REF_MAYBE_PATTERN;
-                e->end= TEnd;
+                e->end = TEnd;
                 return e;
         }
 
@@ -3898,7 +3885,7 @@ prefix_complement(Ty *ty)
         next();
 
         e->operand = parse_expr(ty, 8);
-        e->end= TEnd;
+        e->end = TEnd;
 
         return e;
 }
@@ -3912,7 +3899,7 @@ prefix_user_op(Ty *ty)
         next();
 
         e->operand = parse_expr(ty, 9);
-        e->end= TEnd;
+        e->end = TEnd;
 
         return e;
 }
@@ -3930,7 +3917,7 @@ infix_complement(Ty *ty, Expr *left)
         next();
 
         e->right = parse_expr(ty, 7);
-        e->end= TEnd;
+        e->end = TEnd;
 
         return e;
 }
@@ -3961,7 +3948,7 @@ infix_user_op(Ty *ty, Expr *left)
         }
 
         e->right = parse_expr(ty, prec);
-        e->end= TEnd;
+        e->end = TEnd;
 
         return e;
 }
@@ -3979,7 +3966,7 @@ infix_type_union(Ty *ty, Expr *left)
                 avP(e->es, parse_type(ty, 5));
         }
 
-        e->end= TEnd;
+        e->end = TEnd;
 
         return e;
 }
@@ -4002,7 +3989,7 @@ infix_list(Ty *ty, Expr *left)
 
         LOAD_NE();
 
-        e->end= TEnd;
+        e->end = TEnd;
 
         return e;
 }
@@ -4016,7 +4003,7 @@ infix_count_from(Ty *ty, Expr *left)
         e->start = left->start;
         e->left = left;
         e->right = NULL;
-        e->end= TEnd;
+        e->end = TEnd;
 
         return e;
 }
@@ -4039,7 +4026,7 @@ infix_subscript(Ty *ty, Expr *left)
                 e->container = mkid(xs);
                 e->subscript = mkid(i);
                 e->subscript->start = e->start;
-                e->end= TEnd;
+                e->end = TEnd;
 
                 Expr *f = mkfunc(ty);
                 avP(f->params, i);
@@ -4047,7 +4034,7 @@ infix_subscript(Ty *ty, Expr *left)
                 avP(f->constraints, NULL);
                 f->body = mkret(ty, e);
                 f->start = left->start;
-                f->end= TEnd;
+                f->end = TEnd;
 
                 Stmt *def = mkstmt(ty);
                 def->type = STATEMENT_DEFINITION;
@@ -4102,7 +4089,7 @@ infix_subscript(Ty *ty, Expr *left)
 End:
         consume(']');
 
-        e->end= TEnd;
+        e->end = TEnd;
 
         return e;
 }
@@ -4156,7 +4143,7 @@ infix_member_access(Ty *ty, Expr *left)
                 e->subscript->integer = tok()->integer;
                 next();
                 e->start = left->start;
-                e->end= TEnd;
+                e->end = TEnd;
                 return e;
         }
 
@@ -4187,7 +4174,7 @@ infix_member_access(Ty *ty, Expr *left)
                         macro->identifier = id;
                         macro->module = tok()->module;
                         next();
-                        macro->end= TEnd;
+                        macro->end = TEnd;
                         return typarse(ty, macro, left, &macro->start, &token(-1)->end);
                 }
 
@@ -4202,7 +4189,7 @@ infix_member_access(Ty *ty, Expr *left)
              && !have_without_nl(ty, '$')
              && !have_without_nl(ty, TOKEN_AT)
         ) {
-                e->end= TEnd;
+                e->end = TEnd;
                 return e;
         } else {
                 e->method_name = e->member_name;
@@ -4225,7 +4212,7 @@ infix_squiggly_not_nil_arrow(Ty *ty, Expr *left)
         e->left = left;
         e->right = parse_expr(ty, 0);
         e->start = left->start;
-        e->end= TEnd;
+        e->end = TEnd;
 
         return e;
 }
@@ -4240,7 +4227,7 @@ infix_squiggly_arrow(Ty *ty, Expr *left)
         e->left = left;
         e->right = parse_expr(ty, 0);
         e->start = left->start;
-        e->end= TEnd;
+        e->end = TEnd;
 
         return e;
 }
@@ -4257,7 +4244,7 @@ infix_arrow_function(Ty *ty, Expr *left)
                 e->left = left;
                 e->right = parse_expr(ty, 0);
                 e->start = left->start;
-                e->end= TEnd;
+                e->end = TEnd;
                 return e;
         }
 
@@ -4317,7 +4304,7 @@ infix_arrow_function(Ty *ty, Expr *left)
                 e->body = body;
         }
 
-        e->end= TEnd;
+        e->end = TEnd;
 
         return e;
 }
@@ -4361,7 +4348,7 @@ infix_kw_or(Ty *ty, Expr *left)
         } while (have_keyword(KEYWORD_OR));
 
         e->start = left->start;
-        e->end= TEnd;
+        e->end = TEnd;
 
         return e;
 }
@@ -4379,7 +4366,7 @@ infix_kw_and(Ty *ty, Expr *left)
 
         e->p_cond = parse_condparts(ty, false);
 
-        e->end= TEnd;
+        e->end = TEnd;
 
         return e;
 }
@@ -4470,7 +4457,7 @@ postfix_inc(Ty *ty, Expr *left)
 
         e->type = EXPRESSION_POSTFIX_INC;
         e->operand = assignment_lvalue(ty, left);
-        e->end= TEnd;
+        e->end = TEnd;
 
         return e;
 }
@@ -4485,7 +4472,7 @@ postfix_dec(Ty *ty, Expr *left)
 
         e->type = EXPRESSION_POSTFIX_DEC;
         e->operand = assignment_lvalue(ty, left);
-        e->end= TEnd;
+        e->end = TEnd;
 
         return e;
 }
@@ -5076,7 +5063,7 @@ parse_definition_lvalue(Ty *ty, int context, Expr *e)
                 break;
         }
 
-        e->end= TEnd;
+        e->end = TEnd;
         return e;
 
 Error:
@@ -5208,7 +5195,7 @@ parse_for_loop(Ty *ty)
 
                 s->each.body = parse_statement(ty, -1);
 
-                s->end= TEnd;
+                s->end = TEnd;
 
                 return s;
         }
@@ -5239,7 +5226,7 @@ parse_for_loop(Ty *ty)
                 s->for_loop.next = parse_expr(ty, 0);
         }
 
-        s->end= TEnd;
+        s->end = TEnd;
 
         expect('{');
 
@@ -5358,7 +5345,7 @@ parse_while(Ty *ty)
 
         s->While.block = parse_block(ty);
 
-        s->end= TEnd;
+        s->end = TEnd;
 
         return s;
 }
@@ -5383,7 +5370,7 @@ parse_if(Ty *ty)
                 s->iff.otherwise = NULL;
         }
 
-        s->end= TEnd;
+        s->end = TEnd;
 
         return s;
 }
@@ -5600,7 +5587,7 @@ parse_let_definition(Ty *ty)
         s->value = parse_expr(ty, -1);
         LOAD_NA();
 
-        s->end= TEnd;
+        s->end = TEnd;
 
         if (T0 == ';')
                 next();
@@ -5833,7 +5820,7 @@ parse_block(Ty *ty)
 
         while (T0 != '}') {
                 Stmt *s = parse_statement(ty, -1);
-                s->end= TEnd;
+                s->end = TEnd;
                 avP(block->statements, s);
         }
 
@@ -5844,7 +5831,7 @@ End:
 
         consume('}');
 
-        block->end= TEnd;
+        block->end = TEnd;
 
         return block;
 }
@@ -5919,7 +5906,7 @@ parse_class_definition(Ty *ty)
                 next();
                 s->type = STATEMENT_TYPE_DEFINITION;
                 s->class.type = parse_expr(ty, 0);
-                s->end= TEnd;
+                s->end = TEnd;
                 return s;
         } else {
                 s->type = tag ? STATEMENT_TAG_DEFINITION
@@ -6171,7 +6158,7 @@ parse_class_definition(Ty *ty)
                 }
         }
 
-        s->end= TEnd;
+        s->end = TEnd;
 
         return s;
 }
@@ -6217,7 +6204,7 @@ parse_use(Ty *ty)
                 }
                 consume('=');
                 stmt->class.type = parse_type(ty, -1);
-                stmt->end= TEnd;
+                stmt->end = TEnd;
                 return stmt;
         }
 
@@ -6233,7 +6220,7 @@ parse_use(Ty *ty)
                 consume(')');
         }
 
-        stmt->end= TEnd;
+        stmt->end = TEnd;
 
         return stmt;
 }
@@ -6357,7 +6344,7 @@ parse_try(Ty *ty)
                 s->try.finally = NULL;
         }
 
-        s->end= TEnd;
+        s->end = TEnd;
 
         return s;
 }
@@ -6443,7 +6430,7 @@ parse_import(Ty *ty)
                 consume(')');
         }
 
-        s->end= TEnd;
+        s->end = TEnd;
 
         consume(TOKEN_NEWLINE);
 
@@ -6835,7 +6822,7 @@ parse_ex(
                         s = s->expression->statement;
                 }
 
-                s->end= TEnd;
+                s->end = TEnd;
 
                 if (s->type != STATEMENT_MACRO_DEFINITION) {
                         avP(program, s);
