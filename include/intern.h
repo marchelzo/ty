@@ -5,23 +5,8 @@
 #include <string.h>
 #include <inttypes.h>
 
+#include "ty.h"
 #include "vec.h"
-
-enum { INTERN_TABLE_SIZE = 128 };
-
-typedef struct {
-        int64_t id;
-        char const *name;
-        unsigned long hash;
-        void *data;
-} InternEntry;
-
-typedef vec(InternEntry) InternBucket;
-
-typedef struct {
-        InternBucket set[INTERN_TABLE_SIZE];
-        vec(uint32_t) index;
-} InternSet;
 
 inline static void
 intern_init(InternSet *set)
@@ -43,9 +28,9 @@ intern(InternSet *set, char const *s)
 }
 
 inline static InternEntry *
-intern_entry(InternSet *set, int64_t id)
+intern_entry(InternSet *set, i64 id)
 {
-        uint32_t key = set->index.items[id];
+        u32 key = set->index.items[id];
         InternBucket *b = &set->set[key & 0xFF];
         return &b->items[key >> 8u];
 }

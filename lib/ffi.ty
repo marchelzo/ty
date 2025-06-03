@@ -331,7 +331,7 @@ fn fun() {
             *(ty.Arg(arg: p) for (p: AST) in ps)
         ]
         ty.Let(
-            ty.Id(name: name),
+            ty.Id(name: name, constraint: ty.Any),
             ty.Call(
                 func: ty.Value(set-doc),
                 args: [
@@ -491,14 +491,14 @@ fn strct() {
             next!('}')
             next!(';')
 
-            let type-alternatives = ty.Array(
-                decls.map(match {
-                    Struct(inner) => do {
-                        let ts = inner.map(decl -> ty.Arg(arg: decl.t))
+            let type-alternatives: _ = ty.Array(
+                decls.map(fn (x: _) -> _ match x {
+                    Struct((inner: _)) => do {
+                        let ts = inner.map(fn (decl: _) ty.Arg(arg: decl.t))
                         ty.Call(func: ty.Value(c.struct), args: ts)
                     },
 
-                    decl => decl.t
+                    decl: _ => decl.t
                 }).map(t -> ty.ArrayItem(item: t))
             )
             
@@ -715,9 +715,12 @@ fn strct() {
     ty.Multi([
         ty.Let(
             ctype,
-            ty.Call(
-                func: ty.Value(c.struct),
-                args: structArgs
+            ty.Cast(
+                ty.Call(
+                    func: ty.Value(c.struct),
+                    args: structArgs
+                ),
+                $$[ c::CType[$$(ty.Id({name: structName}))] $$]
             )
         ),
         ty.Class(

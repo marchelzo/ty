@@ -8,11 +8,11 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include <pcre2.h>
-
-#include "intern.h"
 #include "libco.h"
+
 #include "panic.h"
 #include "polyfill_stdatomic.h"
 #include "tthread.h"
@@ -80,6 +80,21 @@ typedef vec(int)            int_vector;
 typedef vec(Symbol *)       symbol_vector;
 typedef vec(TySavePoint *)  TySavePointVector;
 
+enum { INTERN_TABLE_SIZE = 128 };
+
+typedef struct {
+        i64 id;
+        char const *name;
+        unsigned long hash;
+        void *data;
+} InternEntry;
+
+typedef vec(InternEntry) InternBucket;
+
+typedef struct {
+        InternBucket set[INTERN_TABLE_SIZE];
+        vec(u32) index;
+} InternSet;
 
 struct alloc {
         union {
@@ -1261,16 +1276,7 @@ TyNewCString(Ty *ty, Value val, bool nul_before)
                 UNREACHABLE();
         }
 
-        char *c_str = alloc0(n + 1 + nul_before) + nul_before;
-
-        memcpy(c_str, str, n);
-        c_str[n] = '\0';
-
-        if (nul_before) {
-                c_str[-1] = '\0';
-        }
-
-        return c_str;
+        return memcpy(alloc0(n + 1 + nul_before) + nul_before, str, n);
 }
 
 #define TY_BUF_i(i, n) (                                                          \

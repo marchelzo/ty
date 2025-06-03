@@ -3,11 +3,14 @@
 
 #include "ty.h"
 
-struct value
-json_parse(Ty *ty, char const *s, int n);
+Value
+json_parse(Ty *ty, char const *s, usize n);
 
-struct value
-json_encode(Ty *ty, struct value const *v);
+Value
+json_parse_xD(Ty *ty, char const *s, usize n);
+
+Value
+json_encode(Ty *ty, Value const *v);
 
 bool
 json_dump(Ty *ty, Value const  *v, byte_vector *out);

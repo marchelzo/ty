@@ -54,22 +54,23 @@ initsym(Symbol *s)
 }
 
 inline static Symbol *
-local_xlookup(Scope const *s, char const *id, u32 flags)
+local_xlookup(Scope const *scope, char const *id, u32 flags)
 {
         u64 h = strhash(id);
-        u32 i = h % SYMBOL_TABLE_SIZE;
+        u32 i = h & scope->mask;
 
         bool    member_ok = !(flags & SCOPE_EXPLICIT);
         bool transient_ok =  (flags & SCOPE_PERMISSIVE);
 
-        for (Symbol *sym = s->table[i]; sym != NULL; sym = sym->next) {
+        for (Symbol *sym = scope->table[i]; sym != NULL; sym = sym->next) {
                 if (
                         (sym->hash == h)
-                     && (strcmp(sym->identifier, id) == 0)
                      && (member_ok    || !SymbolIsMember(sym))
                      && (transient_ok || !SymbolIsTransient(sym))
+                     && (strcmp(sym->identifier, id) == 0)
+                     && !SymbolIsRecycled(sym)
                 ) {
-                        return sym;
+                                return sym;
                 }
         }
 
@@ -77,65 +78,80 @@ local_xlookup(Scope const *s, char const *id, u32 flags)
 }
 
 inline static Symbol *
-local_lookup(Scope const *s, char const *id)
+local_lookup(Scope const *scope, char const *id)
 {
-        return local_xlookup(s, id, 0);
+        return local_xlookup(scope, id, SCOPE_LOCAL);
 }
 
 Symbol *
-scope_find_symbol(Scope const *s, Symbol const *needle)
+scope_find_symbol(Scope const *scope, Symbol const *needle)
 {
-        if (s == NULL) {
+        if (scope == NULL) {
                 return NULL;
         }
 
-        for (int i = 0; i < SYMBOL_TABLE_SIZE; ++i) {
-                for (Symbol *sym = s->table[i]; sym != NULL; sym = sym->next) {
+        for (int i = 0; i < scope->size; ++i) {
+                for (Symbol *sym = scope->table[i]; sym != NULL; sym = sym->next) {
                         if (sym->symbol == needle->symbol) {
                                 return sym;
                         }
                 }
         }
 
-        return scope_find_symbol(s->parent, needle);
+        return scope_find_symbol(scope->parent, needle);
 }
 
 Symbol *
 scope_new_namespace(Ty *ty, char const *name, Scope *parent)
 {
-        Scope *s = amA0(sizeof *s);
-
-        s->parent = parent;
-        s->function = parent->function;
-        s->namespace = true;
-
+        Scope *ns = NewSubscope(
+                ty,
 #if !defined(TY_RELEASE) || defined(TY_DEBUG_NAMES)
-        s->name = name;
+                name,
 #endif
+                0,
+                parent,
+                false
+        );
 
-        return scope_add_namespace(ty, parent, name, s);
+        ns->namespace = true;
+
+        return scope_add_namespace(ty, parent, name, ns);
 }
 
 Scope *
-_scope_new(Ty *ty,
+NewSubscope(
+        Ty *ty,
 #if !defined(TY_RELEASE) || defined(TY_DEBUG_NAMES)
         char const *name,
 #endif
+        u32 size,
         Scope *parent,
         bool is_function
 )
 {
-        Scope *s = amA0(sizeof *s);
+        if (size == 0) {
+                size = (parent != NULL)
+                     ? zmaxu(8, parent->size >> 2)
+                     : 256;
+        }
 
-        s->parent = parent;
-        s->is_function = is_function;
-        s->function = (is_function || parent == NULL) ? s : parent->function;
+        Scope *scope = amA0(sizeof (Scope) + (size * sizeof (Symbol *)));
+
+        scope->parent = parent;
+        scope->is_function = is_function;
+        scope->function = (is_function || parent == NULL)
+                        ? scope
+                        : parent->function;
+
+        scope->size = size;
+        scope->mask = (size - 1);
 
 #if !defined(TY_RELEASE) || defined(TY_DEBUG_NAMES)
-        s->name = name;
+        scope->name = name;
 #endif
 
-        return s;
+        return scope;
 }
 
 inline static bool
@@ -175,8 +191,8 @@ scope_capture(Ty *ty, Scope *s, Symbol *sym, int parent_index)
                 return vN(s->captured) - 1;
 }
 
-Symbol *
-scope_xlookup(
+inline static Symbol *
+lookup(
         Ty *ty,
         Scope const *s,
         char const *id,
@@ -196,7 +212,7 @@ scope_xlookup(
                 return sym;
         }
 
-        sym = scope_xlookup(ty, s->parent, id, flags);
+        sym = lookup(ty, s->parent, id, flags & ~SCOPE_LOCAL);
 
         if (sym == NULL) {
                 return NULL;
@@ -249,6 +265,17 @@ scope_xlookup(
 }
 
 Symbol *
+scope_xlookup(
+        Ty *ty,
+        Scope const *scope,
+        char const *id,
+        u32 flags
+)
+{
+        return lookup(ty, scope, id, flags | SCOPE_LOCAL);
+}
+
+Symbol *
 scope_lookup(Ty *ty, Scope const *s, char const *id)
 {
         return scope_xlookup(ty, s, id, 0);
@@ -280,7 +307,7 @@ scope_local_lookup(Ty *ty, Scope const *s, char const *id)
 static Symbol *
 xnew(Ty *ty, char const *id)
 {
-        uint64_t h = strhash(id);
+        u64 h = strhash(id);
         Symbol *sym = amA(sizeof *sym);
 
         initsym(sym);
@@ -292,14 +319,49 @@ xnew(Ty *ty, char const *id)
         return sym;
 }
 
-static Symbol *
-xadd(Ty *ty, Scope *s, char const *id)
+Symbol *
+ScopeFindRecycled(Scope const *scope, char const *id)
 {
-        Symbol *sym = xnew(ty, id);
-        int i = sym->hash % SYMBOL_TABLE_SIZE;
+        u64 h = strhash(id);
+        u32 i = h & scope->mask;
 
-        sym->next = s->table[i];
-        s->table[i] = sym;
+        Symbol *old = NULL;
+
+        for (Symbol *sym = scope->table[i]; sym != NULL; sym = sym->next) {
+                if (
+                        SymbolIsRecycled(sym)
+                     && (sym->hash == h)
+                     && (strcmp(sym->identifier, id) == 0)
+                ) {
+                        old = sym;
+                }
+        }
+
+        return old;
+}
+
+static Symbol *
+xadd(Ty *ty, Scope *scope, char const *id)
+{
+        if (scope->reloading) {
+                Symbol *old = ScopeFindRecycled(scope, id);
+                if (old != NULL) {
+                        old->flags = SYM_GLOBAL;
+                        old->type  = NULL;
+                        old->expr  = NULL;
+                        old->class = -1;
+                        old->tag   = -1;
+                        return old;
+                }
+        }
+
+        Symbol *sym = xnew(ty, id);
+        u32 i = sym->hash & scope->mask;
+
+        sym->scope = scope;
+
+        sym->next = scope->table[i];
+        scope->table[i] = sym;
 
         return sym;
 }
@@ -367,31 +429,18 @@ scope_add_type_var(Ty *ty, Scope *s, char const *id)
 }
 
 Symbol *
-scope_add_i(Ty *ty, Scope *s, char const *id, int idx)
+scope_add_i(Ty *ty, Scope *scope, char const *id, int idx)
 {
-        uint64_t h = strhash(id);
-        int i = h % SYMBOL_TABLE_SIZE;
-
-        Symbol *sym = amA(sizeof *sym);
-
-        initsym(sym);
-        sym->identifier = id;
-        sym->symbol = SYMBOL++;
-        sym->scope = s;
+        Symbol *sym = xadd(ty, scope, id);
 
         if (
-                (s->function->parent == NULL)
-            || (s->function->parent->parent == NULL && s->function != s)
+                (scope->function->parent == NULL)
+            || (scope->function->parent->parent == NULL && scope->function != scope)
         ) {
                 sym->flags |= SYM_GLOBAL;
         }
 
-        sym->hash = h;
-        sym->next = s->table[i];
-
-        sym->mod = CompilerCurrentModule(ty);
-
-        Scope *owner = s;
+        Scope *owner = scope;
         while (owner->function != owner && owner->parent != NULL) {
                 owner = owner->parent;
         }
@@ -399,8 +448,6 @@ scope_add_i(Ty *ty, Scope *s, char const *id, int idx)
         while (vN(owner->owned) <= idx) {
                 avP(owner->owned, NULL);
         }
-
-        LOG("Symbol %d (%s) is getting i = %d in scope %p", sym->symbol, id, sym->i, s);
 
         while (idx < vN(owner->owned) && v__(owner->owned, idx) != NULL) {
                 idx += 1;
@@ -413,7 +460,6 @@ scope_add_i(Ty *ty, Scope *s, char const *id, int idx)
         }
 
         sym->i = idx;
-        s->table[i] = sym;
 
         return sym;
 }
@@ -425,37 +471,37 @@ scope_add(Ty *ty, Scope *s, char const *id)
 }
 
 Symbol *
-scope_insert_as(Ty *ty, Scope *s, Symbol *sym, char const *id)
+scope_insert_as(Ty *ty, Scope *scope, Symbol *sym, char const *id)
 {
         Symbol *new = amA(sizeof *new);
 
         *new = *sym;
         new->identifier = id;
         new->hash = strhash(id);
-        new->scope = s;
+        new->scope = scope;
         new->flags &= ~SYM_PUBLIC;
 
-        int i = new->hash % SYMBOL_TABLE_SIZE;
-        new->next = s->table[i];
-        s->table[i] = new;
+        u32 i = new->hash & scope->mask;
+        new->next = scope->table[i];
+        scope->table[i] = new;
 
         return new;
 }
 
 Symbol *
-scope_insert(Ty *ty, Scope *s, Symbol *sym)
+scope_insert(Ty *ty, Scope *scope, Symbol *sym)
 {
         Symbol *new = amA(sizeof *new);
         *new = *sym;
 
         if (!SymbolIsNamespace(sym)) {
-                new->scope = s;
+                new->scope = scope;
                 new->flags &= ~SYM_PUBLIC;
         }
 
-        int i = sym->hash % SYMBOL_TABLE_SIZE;
-        new->next = s->table[i];
-        s->table[i] = new;
+        u32 i = sym->hash & scope->mask;
+        new->next = scope->table[i];
+        scope->table[i] = new;
 
         return new;
 }
@@ -463,7 +509,7 @@ scope_insert(Ty *ty, Scope *s, Symbol *sym)
 char const *
 scope_copy(Ty *ty, Scope *dst, Scope const *src)
 {
-        for (int i = 0; i < SYMBOL_TABLE_SIZE; ++i) {
+        for (int i = 0; i < src->size; ++i) {
                 for (Symbol *s = src->table[i]; s != NULL; s = s->next) {
                         Symbol *conflict = scope_lookup(ty, dst, s->identifier);
                         if (
@@ -476,7 +522,7 @@ scope_copy(Ty *ty, Scope *dst, Scope const *src)
                 }
         }
 
-        for (int i = 0; i < SYMBOL_TABLE_SIZE; ++i) {
+        for (int i = 0; i < src->size; ++i) {
                 for (Symbol *s = src->table[i]; s != NULL; s = s->next) {
                         scope_insert(ty, dst, s);
                 }
@@ -500,7 +546,7 @@ should_skip(char const *id, char const **skip, int n)
 char const *
 scope_copy_public_except(Ty *ty, Scope *dst, Scope const *src, char const **skip, int n, bool reexport)
 {
-        for (int i = 0; i < SYMBOL_TABLE_SIZE; ++i) {
+        for (int i = 0; i < src->size; ++i) {
                 for (Symbol *s = src->table[i]; s != NULL; s = s->next) {
                         if (should_skip(s->identifier, skip, n)) {
                                 continue;
@@ -516,7 +562,7 @@ scope_copy_public_except(Ty *ty, Scope *dst, Scope const *src, char const **skip
                 }
         }
 
-        for (int i = 0; i < SYMBOL_TABLE_SIZE; ++i) {
+        for (int i = 0; i < src->size; ++i) {
                 for (Symbol *s = src->table[i]; s != NULL; s = s->next) {
                         if (should_skip(s->identifier, skip, n)) {
                                 continue;
@@ -533,7 +579,7 @@ scope_copy_public_except(Ty *ty, Scope *dst, Scope const *src, char const **skip
 char const *
 scope_copy_public(Ty *ty, Scope *dst, Scope const *src, bool reexport)
 {
-        for (int i = 0; i < SYMBOL_TABLE_SIZE; ++i) {
+        for (int i = 0; i < src->size; ++i) {
                 for (Symbol *s = src->table[i]; s != NULL; s = s->next) {
                         Symbol *conflict = scope_lookup(ty, dst, s->identifier);
                         if (
@@ -546,7 +592,7 @@ scope_copy_public(Ty *ty, Scope *dst, Scope const *src, bool reexport)
                 }
         }
 
-        for (int i = 0; i < SYMBOL_TABLE_SIZE; ++i) {
+        for (int i = 0; i < src->size; ++i) {
                 for (Symbol *s = src->table[i]; s != NULL; s = s->next) {
                         if (SymbolIsPublic(s)) {
                                 scope_insert(ty, dst, s)->flags |= SYM_PUBLIC * reexport;
@@ -561,8 +607,9 @@ bool
 scope_is_subscope(Scope const *sub, Scope const *scope)
 {
         while (sub != NULL) {
-                if (sub->parent == scope)
+                if (sub->parent == scope) {
                         return true;
+                }
                 sub = sub->parent;
         }
 
@@ -576,7 +623,7 @@ scope_capture_all(Ty *ty, Scope *scope, Scope const *stop)
                 return;
 
         for (Scope *s = scope; s->function != stop->function; s = s->parent) {
-                for (int i = 0; i < SYMBOL_TABLE_SIZE; ++i) {
+                for (int i = 0; i < s->size; ++i) {
                         for (Symbol *sym = s->table[i]; sym != NULL; sym = sym->next) {
                                 sym->flags |= SYM_IMMORTAL;
                                 LOG(
@@ -638,7 +685,7 @@ scope_get_completions(
 
         if (scope == NULL || max == 0) return 0;
 
-        for (int i = 0; i < SYMBOL_TABLE_SIZE; ++i) {
+        for (int i = 0; i < scope->size; ++i) {
                 for (Symbol *sym = scope->table[i]; sym != NULL; sym = sym->next) {
                         if (
                                 n < max
@@ -661,3 +708,28 @@ scope_get_completions(
 
         return n;
 }
+
+void
+ScopeReset(Scope *scope)
+{
+        scope->active = false;
+        v0(scope->refinements);
+
+        for (i32 i = 0; i < scope->size; ++i) {
+                Symbol *last = NULL;
+                for (Symbol *sym = scope->table[i]; sym != NULL; sym = sym->next) {
+                        if (sym->mod->scope != scope) {
+                                if (last == NULL) {
+                                        scope->table[i] = sym->next;
+                                } else {
+                                        last->next = sym->next;
+                                }
+                        } else {
+                                sym->flags |= SYM_RECYCLED;
+                                last = sym;
+                        }
+                }
+        }
+}
+
+/* vim: set sw=8 sts=8 expandtab: */

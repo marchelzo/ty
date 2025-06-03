@@ -13,8 +13,8 @@ const INFO     = 3
 const DEBUG    = 4
 
 use LoggingConfig = {
-    level: ?Int,
-    path:  ?String
+    ?level: ?Int,
+    ?path:  ?String
 }
 
 let levels = %{

@@ -13,6 +13,7 @@
 
 #include "ty.h"
 #include "alloc.h"
+#include "intern.h"
 #include "polyfill_unistd.h"
 
 #ifdef max

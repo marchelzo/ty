@@ -127,6 +127,9 @@ GetInstructionName(uint8_t i);
 void
 DebugAddBreak(Ty *ty, Value const *f);
 
+bool
+TyReloadModule(Ty *ty, char const *module);
+
 #endif
 
 /* vim: set sts=8 sw=8 expandtab: */

@@ -110,7 +110,6 @@ target_compile_definitions(libco PRIVATE LIBCO_MP)
 # ---
 
 set(_src_files
-  ty.c
   src/alloc.c
   src/array.c
   src/ast.c
@@ -253,11 +252,19 @@ target_compile_definitions(${_tgt_ty_interface}
 
 set(_tgt_ty ${PROJECT_NAME})
 add_executable(${_tgt_ty})
+target_sources(${_tgt_ty} PRIVATE ty.c)
 target_link_libraries(${_tgt_ty} PRIVATE ${_tgt_ty_interface})
+
+set(_tgt_ty_ls "${PROJECT_NAME}ls")
+add_executable(${_tgt_ty_ls})
+target_sources(${_tgt_ty_ls} PRIVATE tyls.c)
+target_compile_definitions(${_tgt_ty_ls} PRIVATE TY_LS)
+target_link_libraries(${_tgt_ty_ls} PRIVATE ${_tgt_ty_interface})
 
 if(BUILD_PROFILER)
   set(_tgt_ty_profiler "${PROJECT_NAME}prof")
   add_executable(${_tgt_ty_profiler})
+  target_sources(${_tgt_ty_profiler} PRIVATE ty.c)
   target_compile_definitions(${_tgt_ty_profiler} PRIVATE TY_ENABLE_PROFILING)
   target_link_libraries(${_tgt_ty_profiler} PRIVATE ${_tgt_ty_interface})
 endif()
@@ -267,7 +274,7 @@ endif()
 # ---
 
 include(GNUInstallDirs)
-install(TARGETS ${_tgt_ty} ${_tgt_ty_profiler}
+install(TARGETS ${_tgt_ty} ${_tgt_ty_profiler} ${_tgt_ty_ls}
   COMPONENT InstallComponentTy
   DESTINATION ${CMAKE_INSTALL_BINDIR}
 )

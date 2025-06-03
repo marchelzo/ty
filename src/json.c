@@ -19,7 +19,8 @@
 
 static _Thread_local jmp_buf jb;
 static _Thread_local char const *json;
-static _Thread_local int len;
+static _Thread_local usize len;
+static _Thread_local bool xd;
 
 typedef byte_vector str;
 
@@ -52,7 +53,7 @@ space(void)
         while (isspace(peek())) next();
 }
 
-static struct value
+static Value
 number(void)
 {
         char numbuf[512];
@@ -92,7 +93,7 @@ number(void)
         memcpy(numbuf, num, n);
         numbuf[n] = '\0';
 
-        struct value result;
+        Value result;
 
         errno = 0;
         if (integral)
@@ -106,7 +107,7 @@ number(void)
         return result;
 }
 
-static struct value
+static Value
 null(void)
 {
         if (strncmp(json, "null", 4) != 0)
@@ -121,7 +122,7 @@ null(void)
         return NIL;
 }
 
-static struct value
+static Value
 jtrue(void)
 {
         if (strncmp(json, "true", 4) != 0)
@@ -136,7 +137,7 @@ jtrue(void)
         return BOOLEAN(true);
 }
 
-static struct value
+static Value
 jfalse(void)
 {
         if (strncmp(json, "false", 5) != 0)
@@ -151,7 +152,7 @@ jfalse(void)
         return BOOLEAN(false);
 }
 
-static struct value
+static Value
 string(Ty *ty)
 {
         if (next() != '"')
@@ -231,7 +232,7 @@ string(Ty *ty)
         return STRING(s, n);
 }
 
-static struct value
+static Value
 array(Ty *ty)
 {
         if (next() != '[')
@@ -252,8 +253,8 @@ array(Ty *ty)
         return ARRAY(a);
 }
 
-static struct value
-object(Ty *ty)
+inline static Value
+object_lol(Ty *ty)
 {
         if (next() != '{')
                 FAIL;
@@ -279,7 +280,63 @@ object(Ty *ty)
         return DICT(obj);
 }
 
-static struct value
+inline static Value
+object_xD(Ty *ty)
+{
+        if (next() != '{')
+                FAIL;
+
+        SCRATCH_SAVE();
+
+        ValueVector keys   = {0};
+        ValueVector values = {0};
+
+        while (peek() != '\0' && peek() != '}') {
+                space();
+
+                Value key = string(ty);
+
+                space();
+                if (next() != ':') {
+                        SCRATCH_RESTORE();
+                        FAIL;
+                }
+
+                Value val = value(ty);
+
+                space();
+                if (peek() != '}' && next() != ',') {
+                        SCRATCH_RESTORE();
+                        FAIL;
+                }
+
+                svP(keys, key);
+                svP(values, val);
+        }
+
+        if (next() != '}')
+                FAIL;
+
+        Value object = value_record(ty, vN(keys));
+
+        for (u32 i = 0; i < vN(keys); ++i) {
+                char const *key = TY_TMP_C_STR(v__(keys, i));
+                object.ids[i]   = M_ID(key);
+                object.items[i] = v__(values, i);
+        }
+
+        SCRATCH_RESTORE();
+
+        return object;
+}
+
+static Value 
+object(Ty *ty)
+{
+        return xd ? object_xD(ty) : object_lol(ty);
+}
+
+static Value
 value(Ty *ty)
 {
         space();
@@ -528,11 +585,13 @@ encode(Ty *ty, Value const *v, str *out)
         return true;
 }
 
-struct value
-json_parse(Ty *ty, char const *s, int n)
+Value
+json_parse(Ty *ty, char const *s, usize n)
 {
         json = s;
         len = n;
+
+        xd = false;
 
         GC_STOP();
 
@@ -541,7 +600,7 @@ json_parse(Ty *ty, char const *s, int n)
                 return NIL;
         }
 
-        struct value v = value(ty);
+        Value v = value(ty);
         space();
 
         if (peek() != '\0')
@@ -552,13 +611,39 @@ json_parse(Ty *ty, char const *s, int n)
         return v;
 }
 
-struct value
-json_encode(Ty *ty, struct value const *v)
+Value
+json_parse_xD(Ty *ty, char const *s, usize n)
+{
+        json = s;
+        len = n;
+
+        xd = true;
+
+        GC_STOP();
+
+        if (setjmp(jb) != 0) {
+                GC_RESUME();
+                return NIL;
+        }
+
+        Value v = value(ty);
+        space();
+
+        if (peek() != '\0')
+                v = NIL;
+
+        GC_RESUME();
+
+        return v;
+}
+
+Value
+json_encode(Ty *ty, Value const *v)
 {
         str s;
         vec_init(s);
 
-        struct value r = NIL;
+        Value r = NIL;
 
         Visiting.count = 0;
 

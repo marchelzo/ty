@@ -110,6 +110,10 @@ ty: ty.c $(OBJECTS)
 	@echo cc $^
 	$(CC) $(CFLAGS) -o $@ $< obj/* $(LDFLAGS)
 
+tyls: tyls.c $(OBJECTS)
+	@echo cc $^
+	$(CC) $(CFLAGS) -o $@ $< obj/* $(LDFLAGS)
+
 asm: $(ASSEMBLY)
 
 %.s: src/%.c

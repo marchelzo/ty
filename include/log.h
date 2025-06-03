@@ -24,24 +24,17 @@ extern int EnableLogging;
 
 #define XLOGX(...) if (EnableLogging > 0) do {               \
                         GC_STOP();                           \
-                        flockfile(stderr),                   \
-                        fprintf(stderr, "(%d) ", getpid()),  \
-                        fprintf(stderr, "(%4lld) ", TID),    \
-                        fprintf(stderr, __VA_ARGS__),        \
+                        flockfile(stderr);                   \
+                        fprintf(stderr, "(%d) ", getpid());  \
+                        fprintf(stderr, "(%4lld) ", TID);    \
+                        fprintf(stderr, __VA_ARGS__);        \
                         funlockfile(stderr);                 \
                         GC_RESUME();                         \
                 } while (0)
 
-#define XXLOG(...) if (EnableLogging > 0) do {               \
-                        Ty *ty = ty;                         \
-                        GC_STOP();                           \
-                        flockfile(stderr),                   \
-                        fprintf(stderr, "(%d) ", getpid()),  \
-                        fprintf(stderr, "(%4lld) ", TID),    \
-                        fprintf(stderr, __VA_ARGS__),        \
-                        fprintf(stderr, "\n"),               \
-                        funlockfile(stderr);                 \
-                        GC_RESUME();                         \
+#define XXLOG(...) if (EnableLogging >= 0) do {               \
+                        fprintf(stdout, __VA_ARGS__);        \
+                        fprintf(stdout, "\n");               \
                 } while (0)
 
 #if !defined(TY_NO_LOG)
