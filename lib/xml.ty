@@ -1893,7 +1893,7 @@ class XMLAttrSet {
         __node = node
     }
 
-    __subscript__(key: String) -> String | nil {
+    [](key: String) -> String | nil {
         if let $ptr = xmlGetProp(__node, key.cstr()) {
             defer c::free(ptr)
             c.str(ptr)
@@ -1907,7 +1907,7 @@ class XMLAttrSet {
         }
     }
 
-    __subscript__=(key: String, val: String) -> String {
+    []=(key: String, val: String) -> String {
         xmlSetProp(__node, key.cstr(), val.cstr())
         val
     }
@@ -2062,11 +2062,11 @@ class XMLSelection : Iterable[XMLNode] {
         for __nodes { it.unlink() }
     }
 
-    __subscript__(expr: String) -> XMLSelection {
+    [](expr: String) -> XMLSelection {
         return XMLSelection(__doc, [*__doc[expr]].filter(\_ in __nodes))
     }
 
-    __subscript__(p: XMLNode -> Any) -> XMLSelection {
+    [](p: XMLNode -> Any) -> XMLSelection {
         return XMLSelection(__doc, __nodes.filter(p))
     }
 
@@ -2138,7 +2138,7 @@ class Document {
         XMLNode(__doc.children)
     }
 
-    __subscript__(expr: String) -> Generator[XMLNode] {
+    [](expr: String) -> Generator[XMLNode] {
         let expr = expr.cstr()
         let xpath = CXMLXPathObject(xmlXPathEvalExpression(expr.cstr(), __xpath_ctx))
         return iter-node-set(xpath.nodesetval)

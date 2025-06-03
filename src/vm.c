@@ -60,30 +60,31 @@
 #include <pthread.h>
 #endif
 
-#include "value.h"
-#include "cffi.h"
-#include "vm.h"
-#include "util.h"
-#include "gc.h"
-#include "dict.h"
 #include "alloc.h"
-#include "compiler.h"
-#include "test.h"
-#include "log.h"
-#include "operators.h"
 #include "array.h"
-#include "str.h"
 #include "blob.h"
-#include "tags.h"
-#include "object.h"
-#include "istat.h"
+#include "cffi.h"
 #include "class.h"
+#include "compiler.h"
+#include "curl.h"
+#include "dict.h"
+#include "functions.h"
+#include "gc.h"
+#include "html.h"
+#include "intern.h"
+#include "istat.h"
+#include "log.h"
+#include "object.h"
+#include "operators.h"
+#include "sqlite.h"
+#include "str.h"
+#include "tags.h"
+#include "test.h"
 #include "types.h"
 #include "utf8.h"
-#include "functions.h"
-#include "html.h"
-#include "curl.h"
-#include "sqlite.h"
+#include "util.h"
+#include "value.h"
+#include "vm.h"
 
 #define TY_LOG_VERBOSE 1
 
@@ -6628,7 +6629,7 @@ vm_load_program(Ty *_ty, char const *source, char const *file)
         v0(TARGETS);
         SCRATCH_RESET();
 
-        char * volatile code = NULL;
+        Module * volatile mod = NULL;
 
         if (TY_CATCH_ERROR()) {
                 filename = NULL;
@@ -6636,8 +6637,8 @@ vm_load_program(Ty *_ty, char const *source, char const *file)
                 return false;
         }
 
-        code = compiler_compile_source(ty, source, filename);
-        if (code == NULL) {
+        mod = compiler_compile_source(ty, source, filename);
+        if (mod == NULL) {
                 filename = NULL;
                 TY_CATCH_END();
                 GC_RESUME();
@@ -6654,7 +6655,7 @@ vm_load_program(Ty *_ty, char const *source, char const *file)
         TY_CATCH_END();
         GC_RESUME();
 
-        ty->code = code;
+        ty->code = mod->code;
 
         return true;
 }
@@ -8023,6 +8024,83 @@ vm_local(Ty *ty, int i)
 {
         xprint_stack(ty, 10);
         return local(ty, i);
+}
+
+bool
+TyReloadModule(Ty *ty, char const *module)
+{
+        lGv(true);
+        TyMutexLock(&MyGroup->GCLock);
+        lTk();
+
+        TyMutexLock(&MyGroup->Lock);
+
+        MyGroup->WantGC = true;
+
+        static int *blockedThreads;
+        static int *runningThreads;
+        static size_t capacity;
+
+        if (MyGroup->ThreadList.count > capacity) {
+                blockedThreads = realloc(blockedThreads, MyGroup->ThreadList.count * sizeof *blockedThreads);
+                runningThreads = realloc(runningThreads, MyGroup->ThreadList.count * sizeof *runningThreads);
+                if (blockedThreads == NULL || runningThreads == NULL)
+                        panic("Out of memory!");
+                capacity = MyGroup->ThreadList.count;
+        }
+
+        int nBlocked = 0;
+        int nRunning = 0;
+
+        for (int i = 0; i < MyGroup->ThreadList.count; ++i) {
+                if (MyLock == MyGroup->ThreadLocks.items[i]) {
+                        continue;
+                }
+                TyMutexLock(MyGroup->ThreadLocks.items[i]);
+                if (TryFlipTo(MyGroup->ThreadStates.items[i], true)) {
+                        runningThreads[nRunning++] = i;
+                } else {
+                        blockedThreads[nBlocked++] = i;
+                }
+        }
+
+        bool ready = ty->ty->ready;
+
+        TyBarrierInit(&MyGroup->GCBarrierStart, nRunning + 1);
+        TyBarrierInit(&MyGroup->GCBarrierMark, nRunning + 1);
+        TyBarrierInit(&MyGroup->GCBarrierSweep, nRunning + 1);
+        TyBarrierInit(&MyGroup->GCBarrierDone, nRunning + 1);
+        // ======================================================================================
+        GC_STOP();
+        ty->ty->ready = false;
+
+        bool ok = false;
+
+        if (TY_CATCH_ERROR()) {
+                goto End;
+        }
+        // ======================================================================================
+        Module *mod = CompilerGetModule(ty, module);
+        if (mod != NULL && CompilerReloadModule(ty, mod, NULL)) {
+                vm_exec(ty, mod->code);
+                ok = true;
+        }
+        // ======================================================================================
+End:
+        ty->ty->ready = ready;
+        GC_RESUME();
+        // ======================================================================================
+        TyBarrierWait(&MyGroup->GCBarrierStart);
+        TyBarrierWait(&MyGroup->GCBarrierMark);
+        MyGroup->WantGC = false;
+        UnlockThreads(ty, runningThreads, nRunning);
+        TyBarrierWait(&MyGroup->GCBarrierSweep);
+        UnlockThreads(ty, blockedThreads, nBlocked);
+        TyMutexUnlock(&MyGroup->Lock);
+        TyMutexUnlock(&MyGroup->GCLock);
+        TyBarrierWait(&MyGroup->GCBarrierDone);
+
+        return ok;
 }
 
 /* vim: set sts=8 sw=8 expandtab: */

@@ -9,14 +9,11 @@
 #include "gc.h"
 #include "ty.h"
 
-enum {
-        SYMBOL_TABLE_SIZE = 16
-};
-
 #define TY_SCOPE_FLAGS                 \
         X(LOCAL_ONLY,  LocalOnly,  0)  \
         X(EXPLICIT,    Explicit,   1)  \
-        X(PERMISSIVE,  Permissive, 2)
+        X(PERMISSIVE,  Permissive, 2)  \
+        X(LOCAL,       Local,      3)
 
 
 #define X(f, _, i) SCOPE_##f = 1 << i,
@@ -31,15 +28,17 @@ enum { TY_SCOPE_FLAGS };
         X(FUN_MACRO,    FunMacro,     3)  \
         X(PROPERTY,     Property,     4)  \
         X(CONST,        Const,        5)  \
-        X(TYPE_VAR,     TypeVar,      6)  \
-        X(VARIADIC,     Variadic,     7)  \
-        X(IMMORTAL,     Immortal,     8)  \
-        X(TRANSIENT,    Transient,    9)  \
-        X(CLASS_MEMBER, Member,      10)  \
-        X(GLOBAL,       Global,      11)  \
-        X(CAPTURED,     Captured,    13)  \
-        X(FIXED,        FixedType,   14)  \
-        X(NAMESPACE,    Namespace,   15)
+        X(BUILTIN,      Builtin,      6)  \
+        X(TYPE_VAR,     TypeVar,      7)  \
+        X(VARIADIC,     Variadic,     8)  \
+        X(IMMORTAL,     Immortal,     9)  \
+        X(TRANSIENT,    Transient,   10)  \
+        X(RECYCLED,     Recycled,    11)  \
+        X(CLASS_MEMBER, Member,      12)  \
+        X(GLOBAL,       Global,      13)  \
+        X(CAPTURED,     Captured,    14)  \
+        X(FIXED,        FixedType,   15)  \
+        X(NAMESPACE,    Namespace,   16)
 
 
 #define X(f, _, i) SYM_##f = 1 << i,
@@ -75,43 +74,47 @@ typedef struct symbol {
 } Symbol;
 
 typedef struct scope {
+#if !defined(TY_RELEASE) || defined(TY_DEBUG_NAMES)
+        char const *name;
+#endif
+        symbol_vector owned;
+        symbol_vector captured;
+        int_vector cap_indices;
+
+        RefinementVector refinements;
+
         bool external;
         bool namespace;
         bool shared;
         bool active;
         bool is_function;
+        bool reloading;
 
-        Symbol *table[SYMBOL_TABLE_SIZE];
-
-        symbol_vector owned;
-        symbol_vector captured;
-        int_vector cap_indices;
-
-        Scope *parent;
         Scope *function;
 
-        RefinementVector refinements;
+        u32 size;
+        u32 mask;
 
-#if !defined(TY_RELEASE) || defined(TY_DEBUG_NAMES)
-        char const *name;
-#endif
+        Scope *parent;
+
+        Symbol *table[];
 } Scope;
 
-typedef void *SymbolTransform(Ty *ty, Symbol *);
-
-struct scope *
-_scope_new(Ty *ty,
+Scope *
+NewSubscope(
+        Ty *ty,
 #if !defined(TY_RELEASE) || defined(TY_DEBUG_NAMES)
         char const *name,
 #endif
+        u32 size,
         Scope *parent,
         bool function
 );
 
 #if !defined(TY_RELEASE) || defined(TY_DEBUG_NAMES)
-  #define scope_new(ty, n, p, f) _scope_new(ty, n, p, f)
+  #define scope_new(ty, n, p, f) NewSubscope(ty, n, 0, p, f)
 #else
-  #define scope_new(ty, n, p, f) _scope_new(ty, p, f)
+  #define scope_new(ty, n, p, f) NewSubscope(ty, 0, p, f)
 #endif
 
 Symbol *
@@ -184,16 +187,6 @@ scope_copy_public_except(Ty *ty, Scope *dst, Scope const *src, char const **skip
 
 char const *
 scope_copy(Ty *ty, Scope *dst, Scope const *src);
-
-inline static void
-scope_apply(Ty *ty, Scope *scope, SymbolTransform *f)
-{
-        for (int i = 0; i < SYMBOL_TABLE_SIZE; ++i) {
-                for (Symbol *s = scope->table[i]; s != NULL; s = s->next) {
-                        f(ty, s);
-                }
-        }
-}
 
 i64
 scope_get_symbol(Ty *ty);
@@ -305,6 +298,12 @@ scope_get_completions(
         int max,
         bool recursive
 );
+
+void
+ScopeReset(Scope *scope);
+
+Symbol *
+ScopeFindRecycled(Scope const *scope, char const *id);
 
 #if !defined(TY_RELEASE) || defined(TY_DEBUG_NAMES)
 char const *

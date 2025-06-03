@@ -400,6 +400,7 @@ static struct {
   { .module = "ptr",        .name = "untyped",                  .value = BUILTIN(builtin_ptr_untyped)            },
 
   { .module = "json",       .name = "parse",                    .value = BUILTIN(builtin_json_parse)             },
+  { .module = "json",       .name = "parse!",                   .value = BUILTIN(builtin_json_parse_xD)          },
   { .module = "json",       .name = "encode",                   .value = BUILTIN(builtin_json_encode)            },
 
   { .module = "gumbo",      .name = "parse",                    .value = BUILTIN(html_parse)                     },

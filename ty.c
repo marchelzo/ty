@@ -161,6 +161,12 @@ execln(Ty *ty, char *line)
                 } else {
                         goto Bad;
                 }
+        } else if (strncmp(line, ":r ", 3) == 0) {
+                if (TyReloadModule(ty, line + 3)) {
+                        goto End;
+                } else {
+                        goto Bad;
+                }
         } else if (strncmp(line, "help ", 5) == 0) {
                 dump(&buffer, "help(%s);", line + 5);
                 if (repl_exec(ty, v_(buffer, 1)))
@@ -872,7 +878,13 @@ main(int argc, char **argv)
                         }
                         break;
                 case EXPRESSION_METHOD_CALL:
-                        type_find_method(ty, QueryExpr->object->_type, QueryExpr->method_name, &t0, &fun);
+                        type_find_method(
+                                ty,
+                                QueryExpr->object->_type,
+                                QueryExpr->method->identifier,
+                                &t0,
+                                &fun
+                        );
                         break;
                 }
 

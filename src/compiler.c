@@ -32,6 +32,22 @@
 #include "types.h"
 #include "json.h"
 
+#define DT(e, ...) do {                     \
+        fprintf(                            \
+                stderr,                     \
+                "%s:%d: [type(%s) = %s]: ", \
+                __func__,                   \
+                __LINE__,                   \
+                #e,                         \
+                type_show(ty, (e))          \
+        );                                  \
+        fprintf(stderr, "" __VA_ARGS__);    \
+        fprintf(stderr, "\n");              \
+} while (0)
+
+#undef DT
+#define DT(...)
+
 #define emit_instr(i) ((emit_instr)(ty, INSTR_ ## i))
 
 #define PLACEHOLDER_JUMP(t, name) JumpPlaceholder name = (PLACEHOLDER_JUMP)(ty, (INSTR_ ## t))
@@ -566,7 +582,7 @@ QualifiedName_(Expr const *e, byte_vector *b)
                 xvPn(*b, e->identifier, strlen(e->identifier));
                 break;
         case EXPRESSION_MEMBER_ACCESS:
-                xvPn(*b, e->member_name, strlen(e->member_name));
+                xvPn(*b, e->member->identifier, strlen(e->member->identifier));
                 break;
         case EXPRESSION_MODULE:
         case EXPRESSION_NAMESPACE:
@@ -1426,6 +1442,18 @@ addsymbolx(Ty *ty, Scope *scope, char const *name, bool check_ns_shadow)
 inline static Symbol *
 addsymbol(Ty *ty, Scope *scope, char const *name)
 {
+        if (scope->reloading) {
+                Symbol *sym = ScopeFindRecycled(scope, name);
+                if (sym != NULL) {
+                        sym->flags = SYM_GLOBAL;
+                        sym->class = -1;
+                        sym->tag   = -1;
+                        sym->type  = NULL;
+                        sym->expr  = NULL;
+                        return sym;
+                }
+        }
+
         return addsymbolx(ty, scope, name, false);
 }
 
@@ -1501,7 +1529,11 @@ getsymbol(Ty *ty, Scope const *scope, char const *name, u32 flags)
                 fail("namespace used in illegal context");
         }
 
-        if (s->scope->external && !SymbolIsPublic(s)) {
+        if (
+                s->scope->external
+            && !SymbolIsPublic(s)
+            && !ModuleIsReloading(STATE.module)
+        ) {
                 fail("reference to non-public external variable '%s'", name);
         }
 
@@ -1550,6 +1582,10 @@ freshstate(Ty *ty, Module *mod)
 
         st.class = NULL;
         st.start = st.end = st.mstart = st.mend = Nowhere;
+
+        // == Typechecking ==========
+        types_init(ty);
+        // ==========================
 
         avP(st.imports, ((struct import) {
                 .mod  = GlobalModule,
@@ -1859,8 +1895,8 @@ resolve_access(Ty *ty, Scope const *scope, char **parts, int n, Expr *e, bool st
 #endif
 
         if (
-                left->type == EXPRESSION_IDENTIFIER
-             || left->type == EXPRESSION_MEMBER_ACCESS
+                (left->type == EXPRESSION_IDENTIFIER)
+             || (left->type == EXPRESSION_MEMBER_ACCESS)
         ) {
                 return e;
         }
@@ -1870,7 +1906,7 @@ resolve_access(Ty *ty, Scope const *scope, char **parts, int n, Expr *e, bool st
                 if (!strict) return NULL;
                 STATE.end = e->end;
                 fail(
-                        "reference to gay undefined variable: %s%s%s%s",
+                        "reference to undefined variable: %s%s%s%s",
                         TERM(1),
                         TERM(93),
                         id,
@@ -1949,7 +1985,6 @@ fixup_access(Ty *ty, Scope const *scope, Expr *e, bool strict)
         StringVector parts = {0};
 
         char const *name;
-        Location start = e->start;
         Location end = e->end;
 
         if (scope == NULL) {
@@ -1957,12 +1992,10 @@ fixup_access(Ty *ty, Scope const *scope, Expr *e, bool strict)
         }
 
         if (e->type == EXPRESSION_MEMBER_ACCESS) {
-                name = e->member_name;
-                start = e->start;
+                name = e->member->identifier;
                 end = e->end;
         } else if (e->type == EXPRESSION_METHOD_CALL) {
-                name = e->method_name;
-                start = e->object->start;
+                name = e->method->identifier;
                 end = e->object->end;
                 while (*end.s != '\0' && *end.s != '(') {
                         end.s += 1;
@@ -2007,7 +2040,7 @@ fixup_access(Ty *ty, Scope const *scope, Expr *e, bool strict)
 
         for (;;) {
                 if (o->type == EXPRESSION_MEMBER_ACCESS) {
-                        avI(parts, o->member_name, 0);
+                        avI(parts, o->member->identifier, 0);
                         o = o->object;
                 } else if (
                         (o->type == EXPRESSION_NAMESPACE)
@@ -2652,28 +2685,6 @@ symbolize_lvalue_(Ty *ty, Scope *scope, Expr *target, bool decl, bool pub)
                                 }
                         }
                 } else {
-                        if (0 && CurrentClassID != -1 && target->module == NULL) {
-                                Symbol *sym = scope_lookup(ty, scope, target->identifier);
-                                if (sym == NULL || sym->scope == STATE.global || sym->scope == GlobalScope) {
-                                        dont_printf(
-                                                "%s.%s: checking %s for self. conversion\n",
-                                                class_name(ty, CurrentClassID),
-                                                STATE.func->name,
-                                                e->identifier
-                                        );
-                                        if (try_make_implicit_self(ty, target, CurrentClassID)) {
-                                                dont_printf(
-                                                        "%16s: convert %14s to self.%-14s %7d\n",
-                                                        class_name(ty, CurrentClassID),
-                                                        e->member_name,
-                                                        e->member_name,
-                                                        e->start.line + 1
-                                                );
-                                                symbolize_lvalue_(ty, scope, target->object, false, false);
-                                                break;
-                                        }
-                                }
-                        }
                         if (target->constraint != NULL) {
                                 fail(
                                         "illegal constraint on %s%s%s%s%s in assignment statement",
@@ -3153,29 +3164,6 @@ GetNamespace(Ty *ty, Namespace *ns)
         return sym->scope;
 }
 
-static bool
-try_make_implicit_self(Ty *ty, Expr *e, int class)
-{
-        Class const *c = class_get(ty, class);
-        char const *id = e->identifier;
-
-        if (
-                (ClassFindMemberImmediate(c, id) != NULL)
-             || (FindField(c, id) != NULL)
-        ) {
-                e->type = EXPRESSION_SELF_ACCESS;
-                e->member_name = (char *)id;
-                e->maybe = false;
-                e->object = NewExpr(ty, EXPRESSION_IDENTIFIER);
-                e->object->identifier = "self";
-                e->object->start = e->start;
-                e->object->end = e->start;
-                return true;
-        }
-
-        return false;
-}
-
 static void
 symbolize_expression(Ty *ty, Scope *scope, Expr *e)
 {
@@ -3259,33 +3247,6 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                         break;
                 }
 
-#if 1
-                // This turned out to be cringe
-                //
-                // UPDATE: Wait maybe it's based
-                if (0 && CurrentClassID != -1 && e->module == NULL) {
-                        Symbol *sym = scope_lookup(ty, scope, e->identifier);
-                        if (sym == NULL || sym->scope == STATE.global || sym->scope == GlobalScope) {
-                                dont_printf(
-                                        "%s.%s: checking %s for self. conversion\n",
-                                        class_name(ty, CurrentClassID),
-                                        STATE.func->name,
-                                        e->identifier
-                                );
-                                if (try_make_implicit_self(ty, e, CurrentClassID)) {
-                                        dont_printf(
-                                                "%16s: convert %14s to self.%-14s %7d\n",
-                                                class_name(ty, CurrentClassID),
-                                                e->member_name,
-                                                e->member_name,
-                                                e->start.line + 1
-                                        );
-                                        symbolize_expression(ty, scope, e);
-                                        break;
-                                }
-                        }
-                }
-#endif
                 e->symbol = ResolveIdentifier(ty, e);
 
                 LOG("var %s local", e->local ? "is" : "is NOT");
@@ -3548,7 +3509,7 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                         Expr call = *e;
                         call.type = EXPRESSION_METHOD_CALL;
                         call.object = e->function->object;
-                        call.method_name = e->function->member_name;
+                        call.method = e->function->member;
                         call.method_args = e->args;
                         call.method_kws = e->kws;
                         call.method_kwargs = e->kwargs;
@@ -3600,7 +3561,7 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                 SET_TYPE_SRC(e);
                 //===================={ <LSP> }=========================================
                 if (FindDefinition && 0 && e->type == EXPRESSION_METHOD_CALL) {
-                        ProposeMemberDefinition(ty, e->start, e->end, e->object, e->member_name);
+                        ProposeMemberDefinition(ty, e->start, e->end, e->object, e->member->identifier);
                 }
                 //===================={ </LSP> }========================================
                 break;
@@ -3618,7 +3579,7 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                 SET_TYPE_SRC(e);
                 //===================={ <LSP> }=========================================
                 if (FindDefinition && 0 && e->type == EXPRESSION_METHOD_CALL) {
-                        ProposeMemberDefinition(ty, e->start, e->end, e->object, e->method_name);
+                        ProposeMemberDefinition(ty, e->method->start, e->method->end, e->object, e->method->identifier);
                 }
                 //===================={ </LSP> }========================================
                 break;
@@ -3682,7 +3643,9 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                         SET_TYPE_SRC(e);
                 }
 
-                type_scope_push(ty, e);
+                if (1 || e->name != NULL) {
+                        type_scope_push(ty, e);
+                }
 
                 if (e->fn_symbol != NULL) {
                         e->fn_symbol->type = e->_type;
@@ -3748,9 +3711,9 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                 }
 
                 if (CurrentClassID == -1) {
-                        dont_printf("=== %s() === %s\n", e->name, type_show(ty, e->_type));
+                        LOG("=== %s() === %s\n", e->name, type_show(ty, e->_type));
                 } else {
-                        dont_printf("=== %s.%s() === %s\n", class_name(ty, CurrentClassID), e->name, type_show(ty, e->_type));
+                        LOG("=== %s.%s() === %s\n", class_name(ty, CurrentClassID), e->name, type_show(ty, e->_type));
                 }
 
                 type_scope_pop(ty);
@@ -3814,7 +3777,7 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
         case EXPRESSION_WITH:
                 subscope = scope_new(ty, "(with)", scope, false);
                 symbolize_statement(ty, subscope, e->with.block);
-                for (int i = 0; i < SYMBOL_TABLE_SIZE; ++i) {
+                for (int i = 0; i < subscope->size; ++i) {
                         for (Symbol *sym = subscope->table[i]; sym != NULL; sym = sym->next) {
                                 // Make sure it's not a tmpsymbol() symbol
                                 if (!isdigit(sym->identifier[0])) {
@@ -4609,7 +4572,7 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
                         ty,
                         scope,
                         s->target,
-                        HasBody(s->value) && s->target->module == NULL,
+                        HasBody(s->value) && (s->target->module == NULL),
                         s->pub
                 );
                 symbolize_expression(ty, scope, s->value);
@@ -4617,7 +4580,7 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
                 if (s->value->overload == NULL) {
                         Symbol *var = s->target->symbol;
                         if (HasBody(s->value)) {
-                                var->type = s->value->_type;
+                                var->type = s->value->fn_symbol->type;
                         }
                         s->target->_type = s->value->_type;
                         dont_printf("%s(1) :: %s\n", s->target->identifier, type_show(ty, s->target->symbol->type));
@@ -6719,7 +6682,7 @@ emit_target(Ty *ty, Expr *target, bool def)
         case EXPRESSION_SELF_ACCESS:
                 emit_expression(ty, target->object);
                 emit_instr(TARGET_MEMBER);
-                emit_member(ty, target->member_name);
+                emit_member(ty, target->member->identifier);
                 break;
         case EXPRESSION_SUBSCRIPT:
                 emit_expression(ty, target->container);
@@ -7474,7 +7437,7 @@ emit_expr(Ty *ty, Expr const *e, bool need_loc)
                         emit_instr(TRY_MEMBER_ACCESS);
                 else
                         emit_instr(MEMBER_ACCESS);
-                emit_member(ty, e->member_name);
+                emit_member(ty, e->member->identifier);
                 break;
         case EXPRESSION_SUBSCRIPT:
                 if (e->subscript->type == EXPRESSION_LIST) {
@@ -7595,7 +7558,7 @@ emit_expr(Ty *ty, Expr const *e, bool need_loc)
                 if (e->type == EXPRESSION_DYN_METHOD_CALL) {
                         emit_int(ty, -1);
                 } else {
-                        emit_member(ty, e->method_name);
+                        emit_member(ty, e->method->identifier);
                 }
 
                 emit_int(ty, vN(e->method_kwargs));
@@ -8427,9 +8390,9 @@ RedpillFun(Ty *ty, Scope *scope, Expr *f, Type *self0)
         }
 
         if (f->class < 0) {
-                dont_printf("REDPILL: === %s() === %s\n", f->name, type_show(ty, f->_type));
+                LOG("REDPILL: === %s() === %s\n", f->name, type_show(ty, f->_type));
         } else {
-                dont_printf("REDPILL: === %s.%s() === %s\n", class_name(ty, f->class), f->name, type_show(ty, f->_type));
+                LOG("REDPILL: === %s.%s() === %s\n", class_name(ty, f->class), f->name, type_show(ty, f->_type));
         }
 
         RestoreContext(ty, ctx);
@@ -8566,14 +8529,29 @@ InjectRedpill(Ty *ty, Stmt *s)
                 if (s->target->symbol == NULL) {
                         DeclareSymbols(ty, s);
                 }
+                DT(s->value->_type, "name=%s\n", s->target->identifier);
                 if (s->value->_type == NULL) {
                         RedpillFun(ty, scope, s->value, NULL);
                 }
                 if (s->value->type != EXPRESSION_MULTI_FUNCTION) {
+                        DT(
+                                s->target->symbol->type,
+                                "PRE  %s::%s  (%p)\n",
+                                s->target->symbol->mod->name,
+                                s->target->identifier,
+                                (void *)s->target->symbol
+                        );
                         s->target->symbol->type = type_both(
                                 ty,
                                 HasBody(s->value) ? NULL : s->target->symbol->type,
                                 s->value->_type
+                        );
+                        DT(
+                                s->target->symbol->type,
+                                "POST %s::%s  (%p)\n",
+                                s->target->symbol->mod->name,
+                                s->target->identifier,
+                                (void *)s->target->symbol
                         );
                 } else {
                         for (int i = 0; i < vN(s->value->functions); ++i) {
@@ -8583,6 +8561,7 @@ InjectRedpill(Ty *ty, Stmt *s)
                                         s->target->symbol->type,
                                         sub->value->_type
                                 );
+                                DT(s->target->symbol->type, "sub=%s\n", type_show(ty, sub->value->_type));
                         }
                 }
                 break;
@@ -8733,12 +8712,24 @@ lowkey(Expr *e, Scope *scope, void *ctx)
                         break;
 
                 case EXPRESSION_METHOD_CALL:
-                        ProposeMemberDefinition(ty, e->start, e->end, e->object, e->method_name);
+                        ProposeMemberDefinition(
+                                ty,
+                                e->method->start,
+                                e->method->end,
+                                e->object,
+                                e->method->identifier
+                        );
                         break;
 
                 case EXPRESSION_MEMBER_ACCESS:
                 case EXPRESSION_SELF_ACCESS:
-                        ProposeMemberDefinition(ty, e->start, e->end, e->object, e->member_name);
+                        ProposeMemberDefinition(
+                                ty,
+                                e->member->start,
+                                e->member->end,
+                                e->object,
+                                e->member->identifier
+                        );
                         break;
 
                 case EXPRESSION_FUNCTION:
@@ -8908,10 +8899,7 @@ compile(Ty *ty, char const *source)
                 WITH_SCOPE_LIMIT(p[i]->when) {
                         symbolize_statement(ty, STATE.global, p[i]);
                 }
-                void *ctx = PushContext(ty, p[i]);
                 type_iter(ty);
-                type_reset(ty);
-                RestoreContext(ty, ctx);
         }
 
         for (int i = 0; i < vN(STATE.class_ops); ++i) {
@@ -8920,7 +8908,6 @@ compile(Ty *ty, char const *source)
                         symbolize_statement(ty, STATE.global, def);
                 }
                 type_iter(ty);
-                type_reset(ty);
         }
 
         if (SuggestCompletions || FindDefinition) {
@@ -9007,6 +8994,8 @@ compile(Ty *ty, char const *source)
 
         PopScope();
 
+        DisableRefinements(ty, STATE.active);
+
         return p;
 }
 
@@ -9059,6 +9048,7 @@ NewModule(
 
         if (mod == NULL) {
                 mod = amA0(sizeof *mod);
+                avP(modules, mod);
         }
 
         if (scope == NULL) {
@@ -9066,11 +9056,9 @@ NewModule(
         }
 
         mod->source = source;
-        mod->name = name;
-        mod->path = path;
-        mod->scope = scope;
-
-        avP(modules, mod);
+        mod->name   = name;
+        mod->path   = path;
+        mod->scope  = scope;
 
         return mod;
 }
@@ -9097,7 +9085,7 @@ load_module(Ty *ty, char const *name, Scope *scope)
         Stmt **prog = compile(ty, source);
 
         if (scope != NULL) {
-                scope_copy_public(ty, scope, STATE.global, true);
+                //scope_copy_public(ty, scope, STATE.global, true);
         } else {
                 STATE.global->external = true;
         }
@@ -9168,7 +9156,7 @@ import_module(Ty *ty, Stmt const *s)
         char const **aliases = (char const **)vv(s->import.aliases);
         int n = vN(s->import.identifiers);
 
-        bool everything = n == 1 && strcmp(identifiers[0], "..") == 0;
+        bool everything = (n == 1) && strcmp(identifiers[0], "..") == 0;
 
         if (everything) {
                 char const *id = scope_copy_public(ty, STATE.global, module_scope, pub);
@@ -9222,6 +9210,7 @@ compiler_init(Ty *ty)
                 Class *c = class_new_empty(ty);
                 Symbol *sym = addsymbol(ty, GlobalScope, c->name);
                 sym->class = c->i;
+                sym->flags |= (SYM_PUBLIC | SYM_CONST | SYM_BUILTIN);
         }
 
         class_set_super(ty, CLASS_ITER, CLASS_ITERABLE);
@@ -9250,7 +9239,6 @@ compiler_init(Ty *ty)
         TYPE_ANY    = &ANY_TYPE;
 
         if (CheckConstraints) {
-                types_init(ty);
                 scope_add_type(ty, GlobalScope, "Any")->type = TYPE_ANY;
         } else {
                 AnyTypeSymbol = scope_add_type_var(ty, GlobalScope, "Any");
@@ -9349,22 +9337,22 @@ compiler_lookup(Ty *ty, char const *module, char const *name)
 Symbol *
 compiler_introduce_symbol(Ty *ty, char const *module, char const *name)
 {
-        Scope *s;
+        Module *mod;
 
         if (module == NULL) {
-                s = GlobalScope;
+                mod = GlobalModule;
         } else {
-                s = get_module_scope(module);
-                if (s == NULL) {
+                mod = GetModule(ty, module);
+                if (mod == NULL) {
                         builtin_modules += 1;
-                        s = NewModule(ty, module, "(built-in)", NULL, NULL)->scope;
+                        mod = NewModule(ty, module, "(built-in)", NULL, NULL);
                 }
         }
 
-        Symbol *sym = addsymbol(ty, s, name);
-        sym->flags |= SYM_PUBLIC;
-        sym->type = BOTTOM_TYPE;
-        LOG("%s got index %d", name, sym->i);
+        Symbol *sym = addsymbol(ty, mod->scope, name);
+        sym->flags |= (SYM_PUBLIC | SYM_BUILTIN);
+        sym->type   = BOTTOM_TYPE;
+        sym->mod    = mod;
 
         BuiltinCount += 1;
 
@@ -9387,8 +9375,7 @@ compiler_introduce_tag(Ty *ty, char const *module, char const *name, int super)
         }
 
         Symbol *sym = addsymbol(ty, s, name);
-        sym->flags |= SYM_PUBLIC;
-        sym->flags |= SYM_CONST;
+        sym->flags |= (SYM_CONST | SYM_PUBLIC | SYM_BUILTIN);
         sym->tag = tags_new(ty, name);
 
         Class *class;
@@ -9408,8 +9395,12 @@ compiler_introduce_tag(Ty *ty, char const *module, char const *name, int super)
         return sym->tag;
 }
 
-char *
-compiler_compile_source(Ty *ty, char const *source, char const *file)
+Module *
+compiler_compile_source(
+        Ty *ty,
+        char const *source,
+        char const *file
+)
 {
         v00(STATE.code);
         v00(STATE.expression_locations);
@@ -9455,14 +9446,13 @@ compiler_compile_source(Ty *ty, char const *source, char const *file)
         }
 
         Stmt **prog = compile(ty, source);
-
         PatchModule(ty, module, prog);
 
         TY_CATCH_END();
 
         v00(STATE.code);
 
-        return module->code;
+        return module;
 }
 
 #if 0
@@ -10314,7 +10304,7 @@ tyexpr(Ty *ty, Expr const *e)
         case EXPRESSION_DYN_METHOD_CALL:
                 v = vTn(
                         "object", tyexpr(ty, e->function),
-                        "method", (e->type == EXPRESSION_METHOD_CALL) ? vSsz(e->method_name)
+                        "method", (e->type == EXPRESSION_METHOD_CALL) ? vSsz(e->method->identifier)
                                                                       : tyexpr(ty, e->method),
                         "args", ARRAY(vA())
                 );
@@ -10372,7 +10362,7 @@ tyexpr(Ty *ty, Expr const *e)
         case EXPRESSION_SELF_ACCESS:
                 v = vT(2);
                 v__(v, 0) = tyexpr(ty, e->object);
-                v__(v, 1) = vSsz(e->member_name);
+                v__(v, 1) = vSsz(e->member->identifier);
                 v.type |= VALUE_TAGGED;
                 v.tags = tags_push(ty, 0, e->maybe ? TyTryMemberAccess : TyMemberAccess);
                 break;
@@ -11611,7 +11601,8 @@ cexpr(Ty *ty, Value *v)
                         e->maybe = true;
                 case TyMethodCall:
                         e->type = EXPRESSION_METHOD_CALL;
-                        e->method_name = mkcstr(ty, method);
+                        e->method = NewExpr(ty, EXPRESSION_IDENTIFIER);
+                        e->method->identifier = mkcstr(ty, method);
                         break;
 
                 case TyTryDynMethodCall:
@@ -11767,13 +11758,14 @@ cexpr(Ty *ty, Value *v)
         case TyMemberAccess:
                 e->type = EXPRESSION_MEMBER_ACCESS;
                 e->object = cexpr(ty, &v->items[0]);
-                e->member_name = mkcstr(ty, &v->items[1]);
+                e->member = NewExpr(ty, EXPRESSION_IDENTIFIER);
+                e->member->identifier = mkcstr(ty, &v->items[1]);
                 break;
         case TyTryMemberAccess:
                 e->type = EXPRESSION_MEMBER_ACCESS;
                 e->maybe = true;
-                e->object = cexpr(ty, &v->items[0]);
-                e->member_name = mkcstr(ty, &v->items[1]);
+                e->member = NewExpr(ty, EXPRESSION_IDENTIFIER);
+                e->member->identifier = mkcstr(ty, &v->items[1]);
                 break;
         case TyDynMemberAccess:
                 e->type = EXPRESSION_DYN_MEMBER_ACCESS;
@@ -12506,7 +12498,7 @@ define_type(Ty *ty, Stmt *s, Scope *scope)
 
         if (sym == NULL) {
                 sym = scope_add_type_var(ty, scope, s->class.name);
-        } else {
+        } else if (!ModuleIsReloading(STATE.module)) {
                 fail(
                         "redeclaration of %s%s%s%s",
                         TERM(1),
@@ -12726,7 +12718,7 @@ DeclareSymbols(Ty *ty, Stmt *stmt)
                         ty,
                         GetNamespace(ty, stmt->ns),
                         stmt->target,
-                        HasBody(stmt->value),
+                        HasBody(stmt->value) && (stmt->target->module == NULL),
                         stmt->pub
                 );
                 stmt->target->symbol->flags &= ~SYM_TRANSIENT;
@@ -12800,7 +12792,10 @@ IntroduceDefinitions(Ty *ty, Stmt *stmt)
         switch (stmt->type) {
         case STATEMENT_FUNCTION_DEFINITION:
                 if (!HasBody(stmt->value)) {
-                        goto Eager;
+                        avP(STATE.pending, stmt);
+                        DefinePending(ty);
+                        DT(stmt->value->_type, "FUNC == %s::%s", stmt->target->module, stmt->target->identifier);
+                        DT(stmt->target->symbol->type);
                 }
                 if (
                         (last == NULL)
@@ -13459,7 +13454,7 @@ DumpProgram(
                 TERM(0)
         );
         //dump(out, "%s%s:%s\n", TERM(34), name, TERM(0));
-        printf("        %s%s:%s\n", TERM(34), name, TERM(0));
+        dont_printf("        %s%s:%s\n", TERM(34), name, TERM(0));
 
         char const *caption;
 
@@ -13483,7 +13478,7 @@ DumpProgram(
                         caption[0] == ':'
                 ) {
                         dump(out, "            %s%s:%s\n", TERM(95), caption + 1, TERM(0));
-                        printf("            %s%s:%s\n", TERM(95), caption + 1, TERM(0));
+                        dont_printf("            %s%s:%s\n", TERM(95), caption + 1, TERM(0));
                 }
 
 #ifdef TY_ENABLE_PROFILING
@@ -13551,7 +13546,7 @@ DumpProgram(
                 }
 #endif
 
-                printf(
+                dont_printf(
                         "%s%7td%s            %s%s%s      %ju\n",
                         TERM(94), pc, TERM(0),
                         TERM(93), GetInstructionName(*c), TERM(0),
@@ -13822,14 +13817,14 @@ DumpProgram(
                         if (!DebugScan) {
                                 dump(out, " %s", VSC((Value *)s));
                         }
-                        printf(" %s", VSC((Value *)s));
+                        dont_printf(" %s", VSC((Value *)s));
                         break;
                 CASE(TYPE)
                         READVALUE_(s);
                         if (!DebugScan) {
                                 dump(out, " %s", type_show(ty, (Type *)s));
                         }
-                        printf(" %s", type_show(ty, (Type *)s));
+                        dont_printf(" %s", type_show(ty, (Type *)s));
                         break;
                 CASE(EVAL)
                 CASE(EXPRESSION)
@@ -14084,7 +14079,6 @@ DumpProgram(
                 CASE(CALL)
                         READVALUE(n);
                         READVALUE(nkw);
-                        printf("nkw=%d\n", nkw);
                         for (int i = 0; i < nkw; ++i) {
                                 SKIPSTR();
                         }
@@ -14256,6 +14250,128 @@ Module *
 CompilerCurrentModule(Ty *ty)
 {
         return STATE.module;
+}
+
+Module *
+CompilerGetModule(Ty *ty, char const *name)
+{
+        return GetModule(ty, name);
+}
+
+bool
+CompilerReloadModule(
+        Ty *ty,
+        Module *mod,
+        char const *source
+)
+{
+        Module saved = *mod;
+        i64 symbol  = scope_get_symbol(ty);
+
+        ScopeReset(mod->scope);
+        v00(mod->imports);
+        v00(mod->tokens);
+        mod->prog = NULL;
+        mod->source = NULL;
+        mod->flags |= MOD_RELOADING;
+        mod->scope->reloading = true;
+
+        if (TY_CATCH_ERROR()) {
+                mod->flags &= ~MOD_RELOADING;
+                mod->scope->reloading = false;
+                scope_set_symbol(ty, symbol);
+                *mod = saved;
+                return false;
+        }
+
+        STATE = freshstate(ty, mod);
+
+        if (source == NULL) {
+                source = slurp_module(ty, mod->name, NULL);
+        }
+
+        Stmt **prog = compile(ty, source);
+
+        TY_CATCH_END();
+
+        PatchModule(ty, mod, prog);
+        v00(STATE.code);
+
+        mod->scope->reloading = false;
+        mod->flags &= ~MOD_RELOADING;
+
+        return true;
+}
+
+Symbol *
+CompilerFindDefinition(Ty *ty, Module *mod, i32 line, i32 col)
+{
+        Module *save = STATE.module;
+        STATE.module = mod;
+
+        QueryResult = NULL;
+        QueryExpr = NULL;
+        QueryLine = line;
+        QueryCol = col;
+        QueryFile = mod->path;
+
+        Stmt **prog = mod->prog;
+        for (int i = 0; prog[i] != NULL && QueryResult == NULL; ++i) {
+                on_god(ty, prog[i]);
+        }
+
+        STATE.module = save;
+
+        return QueryResult;
+}
+
+void
+CompilerResetState(Ty *ty)
+{
+        v0(STATE.imports);
+}
+
+bool
+CompilerSuggestCompletions(
+        Ty *ty,
+        Module *mod,
+        i32 line,
+        i32 col,
+        ValueVector *completions
+)
+{
+        Module *save = STATE.module;
+        STATE.module = mod;
+
+        QueryResult = NULL;
+        QueryExpr = NULL;
+        QueryLine = line;
+        QueryCol = col;
+        QueryFile = mod->path;
+
+        Stmt **prog = mod->prog;
+        for (int i = 0; prog != NULL && prog[i] != NULL; ++i) {
+                on_god(ty, prog[i]);
+        }
+
+        STATE.module = save;
+
+        if (QueryExpr == NULL) {
+                return false;
+        }
+
+        switch (QueryExpr->type) {
+        case EXPRESSION_MEMBER_ACCESS:
+                type_completions(
+                        ty,
+                        QueryExpr->object->_type,
+                        QueryExpr->member->identifier,
+                        completions
+                );
+                break;
+        }
+
+        return true;
 }
 
 /* vim: set sw=8 sts=8 expandtab: */

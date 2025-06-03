@@ -294,6 +294,11 @@ static ParserState state;
 struct table uops;
 struct table uopcs;
 
+static Expr BlankID = {
+        .type = EXPRESSION_IDENTIFIER,
+        .identifier = ""
+};
+
 static Expr WildCard = {
         .type = EXPRESSION_IDENTIFIER,
         .identifier = "_"
@@ -1396,14 +1401,17 @@ parse_decorators(Ty *ty)
                 for (int i = 0 ; T0 != ']'; ++i) {
                         Expr *f = parse_expr(ty, 0);
 
-                        if (f->type != EXPRESSION_FUNCTION_CALL && f->type != EXPRESSION_METHOD_CALL) {
+                        if (
+                                (f->type != EXPRESSION_FUNCTION_CALL)
+                             && (f->type != EXPRESSION_METHOD_CALL)
+                        ) {
                                 Expr *call = mkexpr(ty);
                                 call->start = f->start;
                                 call->end = f->end;
                                 if (f->type == EXPRESSION_MEMBER_ACCESS) {
                                         call->type = EXPRESSION_METHOD_CALL;
                                         call->object = f->object;
-                                        call->method_name = f->method_name;
+                                        call->method = f->member;
                                 } else {
                                         call->type = EXPRESSION_FUNCTION_CALL;
                                         call->function = f;
@@ -3500,34 +3508,15 @@ prefix_implicit_method(Ty *ty)
                 return implicit_subscript(ty, o);
         }
 
-        bool maybe = false;
-        if (T0 == TOKEN_QUESTION) {
-                next();
-                maybe = true;
-        }
-
         Expr *e = mkexpr(ty);
-        e->maybe = false;
+        e->maybe = try_consume('?');
         e->start = start;
+        e->type = try_consume('.') ? EXPRESSION_MEMBER_ACCESS
+                                   : EXPRESSION_METHOD_CALL;
+        e->member = prefix_identifier(ty);
+        e->object = o;
 
-        if (T0 == '.') {
-                next();
-                expect(TOKEN_IDENTIFIER);
-
-                e->type = EXPRESSION_MEMBER_ACCESS;
-                e->member_name = tok()->identifier;
-                e->object = o;
-
-                next();
-        } else {
-                expect(TOKEN_IDENTIFIER);
-
-                e->type = EXPRESSION_METHOD_CALL;
-                e->maybe = maybe;
-                e->object = o;
-                e->method_name = tok()->identifier;
-                next();
-
+        if (e->type == EXPRESSION_METHOD_CALL) {
                 e = parse_method_call(ty, e);
         }
 
@@ -4155,32 +4144,26 @@ infix_member_access(Ty *ty, Expr *left)
                 consume('}');
                 e->type = EXPRESSION_DYN_MEMBER_ACCESS;
         } else if (AllowErrors && T0 != TOKEN_IDENTIFIER) {
-                e->member_name = "";
+                e->member = &BlankID;
         } else {
-                expect(TOKEN_IDENTIFIER);
+                e->member = prefix_identifier(ty);
 
-                char *id = tok()->identifier;
-
-                if (is_fun_macro(ty, tok()->module, id)) {
-                        Expr *macro = prefix_identifier(ty);
-                        Expr *call = infix_function_call(ty, macro);
+                if (is_fun_macro(ty, NULL, e->member->identifier)) {
+                        Expr *call = infix_function_call(ty, e->member);
                         avI(call->args, left, 0);
                         avI(call->fconds, NULL, 0);
                         return call;
                 }
 
-                if (is_macro(ty, tok()->module, id)) {
-                        Expr *macro = mkxpr(IDENTIFIER);
-                        macro->identifier = id;
-                        macro->module = tok()->module;
-                        next();
-                        macro->end = TEnd;
-                        return typarse(ty, macro, left, &macro->start, &token(-1)->end);
+                if (is_macro(ty, NULL, e->member->identifier)) {
+                        return typarse(
+                                ty,
+                                e->member,
+                                left,
+                                &e->member->start,
+                                &e->member->end
+                        );
                 }
-
-                e->member_name = id;
-
-                consume(TOKEN_IDENTIFIER);
         }
 
 
@@ -4192,12 +4175,9 @@ infix_member_access(Ty *ty, Expr *left)
                 e->end = TEnd;
                 return e;
         } else {
-                e->method_name = e->member_name;
-
                 e->type = (e->type == EXPRESSION_MEMBER_ACCESS)
                         ? EXPRESSION_METHOD_CALL
                         : EXPRESSION_DYN_METHOD_CALL;
-
                 return parse_method_call(ty, e);
         }
 }
@@ -6144,11 +6124,13 @@ parse_class_definition(Ty *ty)
                         avI(init->constraints, param->constraint, i);
                         avI(init->dflts,       param->dflt,       i);
 
+                        Expr *member = mkid(param->name);
+
                         Expr *assignment = mkxpr(EQ);
                         assignment->target = mkxpr(MEMBER_ACCESS);
                         assignment->target->object = mkid("self");
-                        assignment->target->member_name = param->name;
-                        assignment->value = mkid(param->name);
+                        assignment->target->member = member;
+                        assignment->value = member;
 
                         Stmt *stmt = mkstmt(ty);
                         stmt->type = STATEMENT_EXPRESSION;

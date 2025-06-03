@@ -1,6 +1,7 @@
 #ifndef COMPILE_H_INCLUDED
 #define COMPILE_H_INCLUDED
 
+#include "ty.h"
 #include "value.h"
 
 extern bool CheckConstraints;
@@ -22,6 +23,10 @@ enum {
         TY_NAME_VARIABLE,
         TY_NAME_NAMESPACE,
         TY_NAME_MODULE
+};
+
+enum {
+        MOD_RELOADING = 1
 };
 
 typedef struct eloc {
@@ -62,6 +67,7 @@ typedef struct module {
         char const *source;
         Stmt **prog;
         TokenVector tokens;
+        u64 flags;
 } Module;
 
 typedef vec(struct eloc) location_vector;
@@ -125,7 +131,6 @@ typedef struct compiler_state {
 
         int function_resources;
         int resources;
-
         int label;
 
         int ctx;
@@ -135,11 +140,11 @@ typedef struct compiler_state {
         Scope *macro_scope;
 
         Expr *implicit_func;
-
         Expr *origin;
 
         statement_vector class_ops;
         statement_vector pending;
+
         bool based;
 
         Expr *func;
@@ -206,8 +211,12 @@ CompilerDoUse(Ty *ty, Stmt *s, Scope *scope);
 void
 compiler_clear_location(Ty *ty);
 
-char *
-compiler_compile_source(Ty *ty, char const *source, char const *filename);
+Module *
+compiler_compile_source(
+        Ty *ty,
+        char const *source,
+        char const *filename
+);
 
 int
 compiler_symbol_count(Ty *ty);
@@ -394,7 +403,28 @@ char const *
 CompilerGetModuleSource(Ty *ty, char const *mod);
 
 Module *
+CompilerGetModule(Ty *ty, char const *name);
+
+Module *
 CompilerCurrentModule(Ty *ty);
+
+bool
+CompilerReloadModule(Ty *ty, Module *mod, char const *source);
+
+Symbol *
+CompilerFindDefinition(Ty *ty, Module *mod, i32 line, i32 col);
+
+bool
+CompilerSuggestCompletions(
+        Ty *ty,
+        Module *mod,
+        i32 line,
+        i32 col,
+        ValueVector *completions
+);
+
+void
+CompilerResetState(Ty *ty);
 
 int
 Expr2Op(Expr const *e);
@@ -409,4 +439,12 @@ DumpProgram(
         bool incl_sub_fns
 );
 
+inline static bool
+ModuleIsReloading(Module const *mod)
+{
+        return (mod->flags & MOD_RELOADING);
+}
+
 #endif
+
+/* vim: set sw=8 sts=8 expandtab: */

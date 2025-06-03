@@ -1807,6 +1807,13 @@ BUILTIN_FUNCTION(json_parse)
         return json_parse(ty, (char const *)json.str, json.bytes);
 }
 
+BUILTIN_FUNCTION(json_parse_xD)
+{
+        ASSERT_ARGC("json.parse!()", 1);
+        Value json = ARGx(0, VALUE_STRING);
+        return json_parse_xD(ty, (char const *)json.str, json.bytes);
+}
+
 BUILTIN_FUNCTION(json_encode)
 {
         ASSERT_ARGC("json.parse()", 1);

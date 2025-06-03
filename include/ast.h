@@ -460,12 +460,8 @@ struct expression {
                         Expr *object;
                         union {
                                 Expr *member;
-                                char *member_name;
                                 struct {
-                                        union {
-                                                char const *method_name;
-                                                Expr *method;
-                                        };
+                                        Expr *method;
                                         expression_vector method_args;
                                         expression_vector mconds;
                                         expression_vector method_kwargs;

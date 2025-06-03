@@ -6,7 +6,7 @@
 #include "intern.h"
 #include "ty.h"
 
-typedef struct value Value;
+typedef Value Value;
 
 struct itable {
         int_vector ids;
@@ -17,10 +17,10 @@ struct itable {
 void
 itable_init(Ty *ty, struct itable *t);
 
-struct value *
+Value *
 itable_add(Ty *ty, struct itable *t, int64_t id, Value v);
 
-inline static struct value *
+inline static Value *
 itable_put(Ty *ty, struct itable *t, char const *name, Value v)
 {
         InternEntry *e = intern(&xD.members, name);
@@ -40,16 +40,16 @@ itable_copy(Ty *ty, struct itable *dst, struct itable const *src);
 void
 itable_copy_weak(Ty *ty, struct itable *dst, struct itable const *src);
 
-struct value *
+Value *
 itable_lookup(Ty *ty, struct itable const *t, int64_t id);
 
-struct value *
+Value *
 itable_get(Ty *ty, struct itable *t, int64_t id);
 
 void
 itable_dump(Ty *ty, struct itable *t);
 
-inline static struct value *
+inline static Value *
 itable_look(Ty *ty, struct itable const *t, char const *name)
 {
         InternEntry *e = intern(&xD.members, name);

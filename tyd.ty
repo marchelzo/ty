@@ -9,7 +9,7 @@ import log (..)
 
 logging({
     path: './tyd.log',
-    level: CRITICAL
+    level: INFO
 })
 
 let i = 0
@@ -31,7 +31,7 @@ let init = {
             openClose: true,
             save: true,
             change: 1
-        }
+       }
     },
 
     serverInfo: {
@@ -43,6 +43,18 @@ let init = {
 info!(pretty(init, width=72))
 
 let store: Dict[String, String] = %{}
+
+fn relpath(path: String) {
+    let cwd = getcwd().split(/\\|\//)
+    let path = path.split(/\\|\//)
+
+    while cwd && path && cwd[0] == path[0] {
+        path.pop(0)
+        cwd.pop(0)
+    }
+
+    path.join('/')
+}
 
 fn send(msg) {
     info!("SEND {pretty(msg, width=72)}")
@@ -104,7 +116,9 @@ fn check-file(path: String) {
 }
 
 fn go() {
-    let $line = stdin.nextLine()
+    if not let $line = stdin.nextLine() {
+        exit(0)
+    }
 
     info!("line = {line}")
     info!("line.words()[-1] = {line.words()[-1]}")
@@ -220,7 +234,7 @@ fn go() {
                         value: "
                       \>{info['name']} : {info['type']}
                       \>
-                      \>Defined at {info['file']}:{info['line']}.
+                      \>Defined at {relpath(info['file'])}:{info['line']}.
                       \>
                       \>{nice(info['doc'])}
                       \>"

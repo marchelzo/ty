@@ -486,6 +486,7 @@ lexname(Ty *ty)
 
                 if (
                         (c >= 'a' && c <= 'z')
+                     && (vN(name) > 0)
                      && (v_L(name) == '-')
                 ) {
                         v_L(name) = c + ('A' - 'a');

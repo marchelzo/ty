@@ -74,6 +74,7 @@ fn *(a: Int, b: Float) -> Float;
 fn /(a: Int, b: Float) -> Float;
 fn %(a: Int, b: Float) -> Float;
 
+
 fn +(a: String, b: String) -> String;
 
 fn slurp(file: ?String | Int) -> String;
@@ -90,7 +91,8 @@ fn fmt(str: String, *args: _);
 fn cast[a](x: _) -> a { x }
 fn time::utime() -> Int;
 fn time::now() -> Float;
-fn tuple(*xs: _, %kws: _) -> (_,);
+fn tuple[T](*xs: T, %kws: _) -> (*T);
+fn tuple(*xs: _, %kws: _) -> (*_);
 fn abs(k: Int) -> Int;
 fn abs(x: Float) -> Float;
 fn floor(x: Int | Float) -> Int;
@@ -99,6 +101,8 @@ fn round(x: Int | Float) -> Float;
 fn iround(x: Int | Float) -> Int;
 fn ord(character: String) -> Int;
 fn chr(codepoint: Int) -> String;
+fn getenv(var: String) -> String | nil;
+fn setenv(var: String, val: String) -> String | nil;
 
 fn math::sqrt(x: Int | Float) -> Float;
 fn math::cos(x: Int | Float) -> Float;
@@ -109,10 +113,15 @@ fn math::atan2(x: Int | Float, y: Int | Float) -> Float;
 fn math::asin(x: Int | Float) -> Float;
 fn math::acos(x: Int | Float) -> Float;
 fn math::cbrt(x: Int | Float) -> Float;
+fn math::pow(x: Int | Float, y: Int | Float) -> Float;
 fn math::exp(x: Int | Float) -> Float;
 fn math::log(x: Int | Float) -> Float;
 fn math::log2(x: Int | Float) -> Float;
 fn math::log10(x: Int | Float) -> Float;
+
+fn os::listdir(path: String) -> [String];
+
+__set_type__ ty::executable String
 
 class Object {
     init(%props) {
@@ -731,10 +740,18 @@ class String : Iterable[String], IntoPtr[Int] {
 
     int { ::int(self) }
 
-    matches(pattern: Regex) -> [String | RegexMatch];
-    scan(pattern: Regex) -> [String | RegexMatch];
-    match!(pattern: Regex) -> String | [String] | RegexMatch;
+    matches(pattern: RegexV) -> [RegexMatch];
+    matches(pattern: Regex) -> [String];
+
+    scan(pattern: RegexV) -> [RegexMatch];
+    scan(pattern: Regex) -> [String];
+
+    match!(pattern: RegexV) -> RegexMatch;
+    match!(pattern: Regex) -> String | [String];
+
     match?(pattern: Regex) -> Bool;
+
+    count(pattern: String | Regex) -> Int;
 
     repeat(n: Int) -> String;
 
@@ -1226,6 +1243,9 @@ class Regex < Function {
     }
 }
 
+class RegexV < Regex {
+}
+
 trait IntoPtr[T] {
     __ptr__() -> Ptr[T];
 }
@@ -1277,7 +1297,7 @@ class Tag {
     cope() { dbg(self, super, self[Int]) }
 }
 
-class Tuple {
+class Tuple[...Types] {
     init(*args, %kwargs) {
         tuple(*args, **kwargs)
     }
@@ -1286,7 +1306,7 @@ class Tuple {
         str(self)
     }
 
-    static named?(x) {
+    static named?(x: _) -> Bool {
         members(x).keys().any?(\_ !:: Int)
     }
 
@@ -2185,7 +2205,7 @@ trait Iter[T] < Iterable[T] {
         return true
     }
 
-    static tee(it: Iterable[T], n: Int = 2) -> _ {
+    static tee(it: Iterable[T], n: Int = 2) -> (*Iterable[T]) {
         let queues: [_] = [Queue() for _ in ..n]
         let it = it.__iter__()
 
@@ -2212,7 +2232,7 @@ trait Iter[T] < Iterable[T] {
 
         let generators = queues.map(go3)
 
-        return cast(tuple(*generators))
+        return tuple(*generators)
     }
 
     dict() {
@@ -3496,7 +3516,7 @@ macro __desugar_partial__(call: _) {
     let (args: _, mkcall: _) = match call {
         %t({args, ?func, *call}) => do {
             if func == ty.Nil {
-                func = ty.Value(x -> x)
+                func = $$[ (x -> x) $$]
             }
             (args, args -> t({*call, func, args}))
         }
