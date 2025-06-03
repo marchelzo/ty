@@ -23,10 +23,10 @@ let init = {
         completionProvider: {
             triggerCharacters: ['.']
         },
-        signatureHelpProvider: {
-            triggerCharacters: ['(', ','],
-            retriggerCharacters: [')']
-        },
+        //signatureHelpProvider: {
+        //    triggerCharacters: ['(', ','],
+        //    retriggerCharacters: [')']
+        //},
         textDocumentSync: {
             openClose: true,
             save: true,
@@ -39,6 +39,58 @@ let init = {
         version: '0.0.1'
     }
 }
+
+let err-fd = open('tyls.err', O_WRONLY | O_TRUNC | O_CREAT, 0644)
+dup2(err-fd, 2)
+
+let tyls = os.spawn(['/Users/brad/ty/tyls'], shareStderr=true)
+critical!(tyls)
+
+//let responses = io.open(tyls.stdout, 'r', buffering=io.NBF)
+//critical!(responses)
+
+onExit(fn () {
+    kill(tyls.pid, SIGTERM)
+})
+
+fn get() {
+    if not let $line = read(tyls.stdout, 8192) ?> &str! {
+        critical!("DEAD: {waitpid(tyls.pid)}")
+        return nil
+    } else {
+        warn!("TYLS OUTPUT: {line}")
+        return line
+    }
+}
+
+use Request = {
+    file: String,
+    what: Int,
+    ?line: Int,
+    ?col: Int
+}
+
+fn do-req(msg: Request) {
+    error!("REQUEST TO TYLS: {msg}")
+    let n = write(tyls.stdin, "{json.encode(msg)}\n")
+    error!("WROTE {n} BYTES TO TYLS")
+    get()
+}
+
+fn run(request: Request) {
+    do-req({
+        what: 0,
+        file: request.file,
+        source: store[request.file]
+    })
+
+    if not let $line = do-req(request) {
+        throw "NO RESPONSE"
+    }
+
+    return json.parse(line)
+}
+
 
 info!(pretty(init, width=72))
 
@@ -63,30 +115,23 @@ fn send(msg) {
     io.stdout.flush()
 }
 
-fn run(cmd, path: String) {
-    info!("RUN: {TY_CMD} {cmd} {path}")
-
-    if not let $out, $info = sh(
-        "{TY_CMD} {cmd} -:{path}",
-        combineOutput=true,
-        input=store[path],
-        timeoutMs=5000
-    ) {
-        return '', { status: -1 }
-    }
-
-    info!("CMD OUT: {out}")
-
-    return out, info
-}
-
 fn check-file(path: String) {
+    return
     info!("path = {path}")
     let out, info = run("-c", path)
     let { status, * } = info
     info!("out = {out}")
     info!("status = {status}")
     let file = path
+
+    let msg = json.encode({
+        what: 0,
+        file: path,
+        source: store[path]
+    })
+
+    write(tyls.stdin, "{msg}\n")
+
 
     try {
         let diagnostics = (status == 0) ? [] : match json.parse(out) {
@@ -115,27 +160,26 @@ fn check-file(path: String) {
     }
 }
 
+let skip = [
+    /^[^A-z_]+$/,
+    /^__.*(?<!__)$/
+]
+
 fn go() {
     if not let $line = stdin.nextLine() {
         exit(0)
     }
 
-    info!("line = {line}")
-    info!("line.words()[-1] = {line.words()[-1]}")
-
     let &words $~> &[-1] ~> int ~> $n = line
-    info!("n = {n}")
 
     // Skip empty line
     stdin.nextLine()
 
     let req = stdin.next(n).str()
-    info!(req)
-
     let msg: _ = json.parse(req)
     let id = msg['id']
 
-    info!(pretty(msg, width=72))
+    info!(pretty(msg, oneline=true))
 
     match msg['method'] {
         'initialize' => {
@@ -178,14 +222,8 @@ fn go() {
                 }
             } = msg['params']
 
-            info!("path = {path}")
-            let out, { status, * } = run("-t d{line + 1}:{col + 1}", path)
-
-            info!("out = {out}")
-            info!("status = {status}")
-
-            let result = match (status, out) {
-                (0, json.parse ~> %{file, line, col}) => {
+            let result = match run({file: path, what: 1, line, col}) {
+                %{file, line, col} => {
                     uri: file.match?(/^\/dev\//) ? "file://{path}" : "file://{realpath(file)}",
                     range: {
                         start: { line: line - 1, character: col - 1 },
@@ -197,9 +235,7 @@ fn go() {
             }
 
             let response = {id, result}
-
             info!(response)
-
             send(response)
         },
 
@@ -214,12 +250,6 @@ fn go() {
                 }
             } = msg['params']
 
-            info!("path = {path}")
-            let out, { status, * } = run("-t d{line + 1}:{col + 1}", path)
-
-            info!("out = {out}")
-            info!("status = {status}")
-
             fn nice(doc) {
                 if doc == nil { return '' }
                 let lines: _ = doc.comb(/^\n+|\n+$/).lines()
@@ -227,8 +257,8 @@ fn go() {
                 lines.map(&[pre;]).unlines().strip()
             }
 
-            let result = match (status, out) {
-                (0, json.parse ~> info) => {
+            let result = match run({file: path, what: 1, line, col}) {
+                $info => {
                     contents: {
                         kind: 'plaintext',
                         value: "
@@ -238,7 +268,7 @@ fn go() {
                       \>
                       \>{nice(info['doc'])}
                       \>"
-                    },
+                    }
                     //range: {
                     //    start: { line: line - 6, character: col - 1 },
                     //    end:   { line: line - 3, character: col + 24 }
@@ -252,6 +282,8 @@ fn go() {
         },
 
         'textDocument/signatureHelp' as method => {
+            return
+
             if not let %{
                 'textDocument': %{
                     'uri': &[7;] ~> path: String,
@@ -310,27 +342,23 @@ fn go() {
                 return
             }
 
-            let out, {status, *} = run("-t c{line + 1}:{col}", path)
-
-            info!("out = {out}")
-            info!("status = {status}")
-
-            let result = match (status, out) {
-                (0, json.parse ~> %{source, type, completions}) => {
+            let result = match run({file: path, what: 2, line, col}) {
+                %{source, type, completions} => {
                     isIncomplete: true,
                     items: [
                         {
-                            label: c['name'],
-                            detail: c['type'],
-                            doc: c['doc'],
-                            kind: c['kind'],
-                            sortText: "{c['depth']:03} {c['name']}"
+                            label:    c['name'],
+                            detail:   c['type'],
+                            doc:      c['doc'],
+                            kind:     c['kind'],
+                            //sortText: "{10 - c['depth']:04} {c['name']}"
+                            sortText: "{rand(120):05}"
                         }
-                        for c in completions if c['name'].match?(/[A-z]/)
+                        for c in completions if !skip.any?(\c['name'] :: _)
                     ]
                 },
 
-                _ => ()
+                _ => nil
             }
 
             send({id, result})
