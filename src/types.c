@@ -47,16 +47,16 @@ u32 TYPES_OFF = 0;
 #define TypeError(...) do { CompileError(ty, __VA_ARGS__); } while (0)
 #define ShowType(t) type_show(ty, (t))
 
-#define NewObject(c, ...) ((NewObject)(ty, c, __VA_ARGS__ __VA_OPT__(,) NULL))
-#define NewRecord(...) ((NewRecord)(ty, __VA_ARGS__ __VA_OPT__(,) NULL))
-#define NewTuple(...) ((NewTuple)(ty, __VA_ARGS__ __VA_OPT__(,) NULL))
-#define NewList(...) ((NewList)(ty, __VA_ARGS__ __VA_OPT__(,) NULL))
-#define NewIntersect(...) ((NewIntersect)(ty, __VA_ARGS__ __VA_OPT__(,) NULL))
-#define NewUnion(...) ((NewUnion)(ty, __VA_ARGS__ __VA_OPT__(,) NULL))
-#define NewFunction(...) ((NewFunction)(ty, __VA_ARGS__ __VA_OPT__(,) NULL))
+#define NewObject(c, ...) ((NewObject)(ty,    c,  __VA_ARGS__ __VA_OPT__(,) NULL))
+#define NewRecord(...)    ((NewRecord)(ty,        __VA_ARGS__ __VA_OPT__(,) NULL))
+#define NewTuple(...)     ((NewTuple)(ty,         __VA_ARGS__ __VA_OPT__(,) NULL))
+#define NewList(...)      ((NewList)(ty,          __VA_ARGS__ __VA_OPT__(,) NULL))
+#define NewIntersect(...) ((NewIntersect)(ty,     __VA_ARGS__ __VA_OPT__(,) NULL))
+#define NewUnion(...)     ((NewUnion)(ty,         __VA_ARGS__ __VA_OPT__(,) NULL))
+#define NewFunction(...)  ((NewFunction)(ty,      __VA_ARGS__ __VA_OPT__(,) NULL))
 
-#define NewDict(k, v) NewObject(CLASS_DICT, (k), (v))
-#define NewArray(t) NewObject(CLASS_ARRAY, (t))
+#define NewDict(k, v) NewObject(CLASS_DICT,  (k), (v))
+#define NewArray(t)   NewObject(CLASS_ARRAY, (t))
 
 inline static void
 TupleAddField(Ty *ty, Type *t0, Type *u0, char const *name, bool required)
@@ -8851,19 +8851,11 @@ type_function_fixup(Ty *ty, Expr const *e)
                 return;
         }
 
-        for (int i = 0; i < vN(t0->params); ++i) {
-                Expr *dflt = v__(e->dflts, i);
-                if (dflt != NULL && dflt->_type != NULL) {
-                        //type_check(ty, psym->type, dflt->_type);
-                        //unify2(ty, &psym->type, dflt->_type);
-                }
-        }
-
         if (e->class > -1) {
                 XXTLOG("fixup(%s.%s)[%d]:", class_name(ty, e->class), e->name, CurrentLevel);
                 XXTLOG("    %s", ShowType(t0));
         } else {
-                XXTLOG("fixup()[%d]:", CurrentLevel);
+                XXTLOG("fixup(%s)[%d]:", e->name ? e->name : "", CurrentLevel);
                 XXTLOG("    %s", ShowType(t0));
         }
 
