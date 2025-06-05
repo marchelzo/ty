@@ -3643,9 +3643,7 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                         SET_TYPE_SRC(e);
                 }
 
-                if (1 || e->name != NULL) {
-                        type_scope_push(ty, e);
-                }
+                type_scope_push(ty, e);
 
                 if (e->fn_symbol != NULL) {
                         e->fn_symbol->type = e->_type;
