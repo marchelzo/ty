@@ -91,7 +91,13 @@ main(int argc, char *argv[])
 
                 switch (what) {
                 case 0:
-                        source = TY_0_C_STR(*tget_nn(&req, "source"));
+                        v = tget_or(&req, "source", NIL);
+
+                        if (v.type == VALUE_NIL) {
+                                goto NextRequest;
+                        }
+
+                        source = TY_0_C_STR(v);
 
                         if (mod == NULL) {
                                 mod = compiler_compile_source(ty, source, file);

@@ -795,26 +795,29 @@ CompileError(Ty *ty, char const *fmt, ...)
 
         va_end(ap);
 
-        if (!CompileOnly || isatty(2) || EVAL_DEPTH > 0) {
-                if (CompilationDepth(ty) > 0) {
-                        dump(&ErrorBuffer, "\n");
-                        CompilationTrace(ty, &ErrorBuffer);
-                }
-        } else {
-                Value msg = vSsz(vv(ErrorBuffer));
-                Value trace = (CompilationDepth(ty) > 0) ? CompilationTraceArray(ty) : ARRAY(vA());
-                Value record = vTn("message", msg, "trace", trace);
-                v0(ErrorBuffer);
-                json_dump(ty, &record, &ErrorBuffer);
-                xvP(ErrorBuffer, '\0');
+
+#if defined(TY_LS)
+        Value msg = vSsz(vv(ErrorBuffer));
+        Value trace = (CompilationDepth(ty) > 0) ? CompilationTraceArray(ty) : ARRAY(vA());
+        Value record = vTn("message", msg, "trace", trace);
+        v0(ErrorBuffer);
+        json_dump(ty, &record, &ErrorBuffer);
+        xvP(ErrorBuffer, '\0');
+#else
+        if (CompilationDepth(ty) > 0) {
+                dump(&ErrorBuffer, "\n");
+                CompilationTrace(ty, &ErrorBuffer);
         }
+#endif
 
         ContextList = NULL;
 
-        //if (vN(ty->jbs) < 3) {
-        //        fputs(TyError(ty), stdout);
-        //        *(char *)0 = 0;
-        //}
+#if 0
+        if (vN(ty->jbs) < 3) {
+                fputs(TyError(ty), stdout);
+                *(char *)0 = 0;
+        }
+#endif
 
         TY_THROW_ERROR();
 }
@@ -9033,6 +9036,20 @@ PatchModule(Ty *ty, Module *mod, Stmt **prog)
         return mod;
 }
 
+inline static void
+AbandonModule(Ty *ty, Module *mod)
+{
+        u32 n = 0;
+
+        for (u32 i = 0; i < vN(modules); ++i) {
+                if (v__(modules, i) != mod) {
+                        *v_(modules, n++) = v__(modules, i);
+                }
+        }
+
+        vN(modules) = n;
+}
+
 static Module *
 NewModule(
         Ty *ty,
@@ -9434,12 +9451,16 @@ compiler_compile_source(
                 MainModule = module;
         }
 
-        int symbol_count = scope_get_symbol(ty);
+        i64 symbol = scope_get_symbol(ty);
+        u32 n_imports = vN(STATE.imports);
+        
 
         if (TY_CATCH_ERROR()) {
-                scope_set_symbol(ty, symbol_count);
+                scope_set_symbol(ty, symbol);
+                vN(STATE.imports) = n_imports;
                 v0(STATE.code);
                 v0(STATE.pending);
+                AbandonModule(ty, module);
                 return NULL;
         }
 
