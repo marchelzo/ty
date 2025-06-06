@@ -6630,6 +6630,8 @@ BUILTIN_FUNCTION(ty_disassemble)
         char const *end;
         char const *name;
 
+        Module *mod;
+
         char *tmp = TY_TMP();
 
         switch (what.type) {
@@ -6639,15 +6641,17 @@ BUILTIN_FUNCTION(ty_disassemble)
                 uvP(B, '\0');
 
                 name = "(eval)";
-                code = compiler_compile_source(ty, B.items + 1, name);
+                mod = compiler_compile_source(ty, B.items + 1, name);
                 end = NULL;
 
-                if (code == NULL) {
+                if (mod == NULL || mod->code == NULL) {
                         snprintf(tmp, TY_TMP_N, "%s", TyError(ty));
                         bP("%s", tmp);
                 }
 
+                code = mod->code;
                 break;
+
         case VALUE_GENERATOR:
                 what = what.gen->f;
         case VALUE_FUNCTION:
@@ -6673,8 +6677,8 @@ BUILTIN_FUNCTION(ty_disassemble)
                 name = tmp;
                 code = code_of(&what);
                 end = code + code_size_of(&what);
-
                 break;
+
         default:
                 bP("I don't know how to disassemble that yet :( %s", VSC(&what));
         }

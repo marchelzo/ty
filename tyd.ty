@@ -1,4 +1,4 @@
-#!/usr/local/bin/ty -q
+#!/usr/bin/env -S ty -q
 
 import io (stdin)
 import json
@@ -43,7 +43,9 @@ let init = {
 let err-fd = open('tyls.err', O_WRONLY | O_TRUNC | O_CREAT, 0644)
 dup2(err-fd, 2)
 
-let tyls = os.spawn(['/Users/brad/ty/tyls'], shareStderr=true)
+let TY_LS_CMD = getenv('TY_LS_CMD').words() ?? ['tyls']
+
+let tyls = os.spawn(TY_LS_CMD, shareStderr=true)
 critical!(tyls)
 
 //let responses = io.open(tyls.stdout, 'r', buffering=io.NBF)
@@ -77,18 +79,54 @@ fn do-req(msg: Request) {
     get()
 }
 
+fn check[T](msg: T) -> T {
+    let file = msg.?file
+
+    match msg {
+        %{
+            'error': json.parse $~> %{
+                message,
+                'trace': &0 ~> %{ start, end, 'file': >file }
+            }
+        } => do {
+            let diagnostics = [{
+                range: {
+                    start: { line: start['line'] - 1, character: start['col'] - 1 },
+                    end: { line: end['line'] - 1, character: end['col'] - 1 }
+                },
+                message,
+                severity: 1
+            }]
+
+            send({
+                method: 'textDocument/publishDiagnostics',
+                params: {
+                    uri: "file://{file}",
+                    diagnostics
+                }
+            })
+
+            throw 'COMPILER ERROR'
+        },
+
+        _ => msg
+    }
+}
+
 fn run(request: Request) {
-    do-req({
+    let file = request.file
+
+    check(do-req({
         what: 0,
-        file: request.file,
-        source: store[request.file]
-    })
+        file: file,
+        source: store[file]
+    }))
 
     if not let $line = do-req(request) {
-        throw "NO RESPONSE"
+        throw 'NO RESPONSE'
     }
 
-    return json.parse(line)
+    return check(json.parse(line))
 }
 
 
@@ -116,48 +154,7 @@ fn send(msg) {
 }
 
 fn check-file(path: String) {
-    return
-    info!("path = {path}")
-    let out, info = run("-c", path)
-    let { status, * } = info
-    info!("out = {out}")
-    info!("status = {status}")
-    let file = path
-
-    let msg = json.encode({
-        what: 0,
-        file: path,
-        source: store[path]
-    })
-
-    write(tyls.stdin, "{msg}\n")
-
-
-    try {
-        let diagnostics = (status == 0) ? [] : match json.parse(out) {
-            %{
-                message,
-                'trace': &0 ~> %{ start, end, 'file': >file }
-            } => [{
-                range: {
-                    start: { line: start['line'] - 1, character: start['col'] - 1 },
-                    end: { line: end['line'] - 1, character: end['col'] - 1 }
-                },
-                message,
-                severity: 1
-            }]
-        }
-
-        send({
-            method: 'textDocument/publishDiagnostics',
-            params: {
-                uri: "file://{file}",
-                diagnostics
-            }
-        })
-    } catch _ {
-        info!("Failed to parse diagnostics: {out}")
-    }
+    run({what: 0, check: true, file: path, source: store[path]})
 }
 
 let skip = [
@@ -351,8 +348,7 @@ fn go() {
                             detail:   c['type'],
                             doc:      c['doc'],
                             kind:     c['kind'],
-                            //sortText: "{10 - c['depth']:04} {c['name']}"
-                            sortText: "{rand(120):05}"
+                            sortText: "{10 - c['depth']:04} {c['name']}"
                         }
                         for c in completions if !skip.any?(\c['name'] :: _)
                     ]
