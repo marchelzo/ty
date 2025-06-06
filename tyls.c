@@ -78,7 +78,7 @@ main(int argc, char *argv[])
                 if (TY_CATCH_ERROR()) {
                         fputs(TyError(ty), stderr);
                         result = vTn(
-                                "errror", xSz(TyError(ty))
+                                "error", xSz(TyError(ty))
                         );
                         goto NextRequest;
                 }
@@ -100,14 +100,14 @@ main(int argc, char *argv[])
                                 } else {
                                         fputs(TyError(ty), stderr);
                                         result = vTn(
-                                                "errror", xSz(TyError(ty))
+                                                "error", xSz(TyError(ty))
                                         );
                                 }
                         } else {
                                 if (!CompilerReloadModule(ty, mod, source)) {
                                         fputs(TyError(ty), stderr);
                                         result = vTn(
-                                                "errror", xSz(TyError(ty))
+                                                "error", xSz(TyError(ty))
                                         );
                                         goto NextRequest;
                                 }
