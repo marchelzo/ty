@@ -3684,8 +3684,10 @@ prefix_percent(Ty *ty)
                         avP(e->keys, item);
                         avP(e->values, NULL);
                 } else {
+                        SAVE_NC(true);
                         Expr *key = parse_expr(ty, 0);
                         avP(e->keys, key);
+                        LOAD_NC();
                         if (key->type == EXPRESSION_IDENTIFIER) {
                                 avP(e->values, key->constraint);
                                 key->constraint = NULL;

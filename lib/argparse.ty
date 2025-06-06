@@ -43,14 +43,15 @@ function add(opt, result, value) {
     }
 }
 
-pub function make(*opts, version, help) {
-    return function (argv) {
+pub fn make(*opts, version, help) {
+    return fn (argv) {
         let result = %{}
         let i = 1
 
         for opt in opts {
             if opt.type == 'o' && opt.default != nil {
-                add(opt, result, opt.default.val)
+                result[opt.short ?? opt.long]  = opt.default.val
+                result[opt.long  ?? opt.short] = opt.default.val
             }
         }
 
@@ -90,7 +91,7 @@ pub function make(*opts, version, help) {
                 },
 
                 '-h', '--help' => {
-                    let [flags, opts] = opts.partition(o -> o.type == 'f')
+                    let (flags, opts) = opts.partition(o -> o.type == 'f')
 
                     if version {
                         print("{argv[0]} version {version}\n")
@@ -122,9 +123,9 @@ pub function make(*opts, version, help) {
 
                         for (opt, s) in opts.zip(optStrings) {
                             if opt.default != nil {
-                                print("  {s.padRight(maxWidth)}    {opt.help} (default: {opt.default.show})")
+                                print("  {s.rpad(maxWidth)}    {opt.help} (default: {opt.default.show})")
                             } else {
-                                print("  {s.padRight(maxWidth)}    {opt.help}")
+                                print("  {s.rpad(maxWidth)}    {opt.help}")
                             }
                         }
 
@@ -143,7 +144,7 @@ pub function make(*opts, version, help) {
                         let maxWidth = flagStrings.map(&len).max()
 
                         for (flag, s) in flags.zip(flagStrings) {
-                            print("  {s.padRight(maxWidth)}    {flag.help}")
+                            print("  {s.rpad(maxWidth)}    {flag.help}")
                         }
 
                         print()

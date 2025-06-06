@@ -248,16 +248,6 @@ class_add_setter_i(Ty *ty, int class, int id, Value f)
         itable_add(ty, &C(class)->setters, id, f);
 }
 
-void
-class_copy_methods(Ty *ty, int dst, int src)
-{
-        //itable_copy(ty, &C(dst)->methods, &C(src)->methods);
-        itable_copy(ty, &C(dst)->getters, &C(src)->getters);
-        itable_copy(ty, &C(dst)->setters, &C(src)->setters);
-        itable_copy(ty, &C(dst)->fields, &C(src)->fields);
-        C(dst)->finalizer = C(src)->finalizer;
-}
-
 Value *
 class_lookup_field_i(Ty *ty, int class, int id)
 {

@@ -116,9 +116,6 @@ class_add_setter_i(Ty *ty, int class, int id, Value f);
 void
 class_add_setter(Ty *ty, int class, char const *name, Value f);
 
-void
-class_copy_methods(Ty *ty, int dst, int src);
-
 Value *
 class_lookup_method(Ty *ty, int class, char const *name, unsigned long h);
 

@@ -3842,12 +3842,14 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                 symbolize_expression(ty, scope, e->dcompr.iter);
                 subscope = scope_new(ty, "(dict compr)", scope, false);
                 symbolize_lvalue(ty, subscope, e->dcompr.pattern, true, false);
+                type_assign_iterable(ty, e->dcompr.pattern, e->dcompr.iter->_type, 0);
                 symbolize_statement(ty, subscope, e->dcompr.where);
                 symbolize_expression(ty, subscope, e->dcompr.cond);
                 for (size_t i = 0; i < vN(e->keys); ++i) {
                         symbolize_expression(ty, subscope, v__(e->keys, i));
                         symbolize_expression(ty, subscope, v__(e->values, i));
                 }
+                e->_type = type_dict(ty, e);
                 break;
         case EXPRESSION_TYPE_UNION:
                 for (int i = 0; i < vN(e->es); ++i) {
@@ -4329,6 +4331,9 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
                 break;
         case STATEMENT_TAG_DEFINITION:
                 cd = &s->tag;
+                if (cd->scope == NULL) {
+                        define_tag(ty, s);
+                }
                 symbolize_methods(ty, cd->scope, CLASS_TAG, &s->tag.methods, MT_INSTANCE);
                 symbolize_methods(ty, cd->scope, CLASS_TAG, &s->tag.statics, MT_STATIC);
                 break;
@@ -4449,7 +4454,7 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
                                                 ty,
                                                 p->e,
                                                 subscope,
-                                                (s->iff.otherwise != NULL) ? subscope2 : NULL
+                                                subscope2
                                         );
                                 }
                         }
@@ -9466,6 +9471,8 @@ compiler_compile_source(
 
         Stmt **prog = compile(ty, source);
         PatchModule(ty, module, prog);
+
+        class_finalize_all(ty);
 
         TY_CATCH_END();
 
