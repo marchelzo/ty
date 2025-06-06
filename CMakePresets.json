@@ -64,6 +64,17 @@
             }
         },
         {
+            "name": "gcc-ninja",
+            "inherits": "base-linux",
+            "displayName": "GCC - amd64 - Release",
+            "description": "Using GCC with Ninja",
+            "generator": "Ninja",
+            "cacheVariables": {
+                "CMAKE_C_COMPILER": "cc",
+                "CMAKE_CXX_COMPILER": "c++"
+            }
+        },
+        {
             "name": "clang-osx",
             "inherits": "base-osx",
             "displayName": "Clang - amd64 - Release",
@@ -155,6 +166,13 @@
             "inherits": "base-build",
             "displayName": "GCC - amd64 - Release",
             "configurePreset": "gcc",
+            "configuration": "Release"
+        },
+        {
+            "name": "gcc-ninja",
+            "inherits": "base-build",
+            "displayName": "GCC - amd64 - Release",
+            "configurePreset": "gcc-ninja",
             "configuration": "Release"
         },
         {
@@ -272,6 +290,19 @@
                 {
                     "type": "build",
                     "name": "gcc"
+                }
+            ]
+        },
+        {
+            "name": "gcc-ninja",
+            "steps": [
+                {
+                    "type": "configure",
+                    "name": "gcc-ninja"
+                },
+                {
+                    "type": "build",
+                    "name": "gcc-ninja"
                 }
             ]
         },

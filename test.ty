@@ -19,7 +19,7 @@ let b = chalk['bold blue']
 
 let TY_PATH = getenv('TY_PATH') ?? ty.executable
 
-function getTyCommand(test) {
+fn getTyCommand(test) {
 #|if __windows__
         "{TY_PATH} tests\\{test}"
 #|else
@@ -27,9 +27,9 @@ function getTyCommand(test) {
 #|]
 }
 
-C! function strsignal(c.int) -> c.ptr;
+C! fn strsignal(c.int) -> c.ptr;
 
-function doTest(name: String) {
+fn doTest(name: String) {
     let testStart = time.now()
 
     let _, result = sh(getTyCommand(name), timeoutMs=2000)

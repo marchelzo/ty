@@ -92,6 +92,7 @@ main(int argc, char *argv[])
                 switch (what) {
                 case 0:
                         v = tget_or(&req, "source", NIL);
+                        AllowErrors = tget_or(&req, "check", NIL).type == VALUE_NIL;
 
                         if (v.type == VALUE_NIL) {
                                 goto NextRequest;
