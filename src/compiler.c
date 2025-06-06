@@ -6313,7 +6313,7 @@ emit_match_statement(Ty *ty, Stmt const *s, bool want_result)
         }
 
         /*
-         * Nothing matched. This is a runtime errror.
+         * Nothing matched. This is a runtime error.
          */
         emit_instr(BAD_MATCH);
 
@@ -6646,7 +6646,7 @@ emit_match_expression(Ty *ty, Expr const *e)
         }
 
         /*
-         * Nothing matched. This is a runtime errror.
+         * Nothing matched. This is a runtime error.
          */
         emit_instr(BAD_MATCH);
 
