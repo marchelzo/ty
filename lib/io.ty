@@ -163,7 +163,7 @@ pub function open(
     buffering: ?BufferingMode = nil,
     dup: Bool = false
 ) {
-    if let path: Int = path {
+    if path :: Int {
         return Stream(path, mode, buffering, dup);
     }
 
@@ -175,12 +175,8 @@ pub function open(
         'r+' => os.O_RDWR,
         'w+' => os.O_RDWR | os.O_CREAT | os.O_TRUNC,
         'a+' => os.O_RDWR | os.O_CREAT | os.O_APPEND,
-        _    => nil
+        _    => throw Err(errno.EINVAL)
     };
-
-    if flags == nil {
-        throw Err(errno.EINVAL)
-    }
 
     let fd = if flags & os.O_CREAT {
         os.open(path, flags, 0666)

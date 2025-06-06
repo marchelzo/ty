@@ -1916,7 +1916,7 @@ class XMLAttrSet {
         self[name]
     }
 
-    dict {
+    dict -> Dict[String, String] {
         if let $props = __node.properties {
             let propMap = %{}
 
@@ -1946,9 +1946,12 @@ class XMLNode : Iterable[XMLNode] {
         self.ptr == other.ptr
     }
 
-    children -> ?XMLNode {
-        if let $p = __node.children {
-            XMLNode(p)
+    children -> Generator[XMLNode] generator {
+        if let XMLNode $~> node = __node.children {
+            while node != nil {
+                yield node
+                node = node.next
+            }
         }
     }
 

@@ -101,7 +101,7 @@ ifdef WITHOUT_OS
 endif
 
 SOURCES := $(wildcard src/*.c)
-OBJECTS := $(patsubst src/%.c,obj/%.o,$(SOURCES))
+OBJECTS := $(patsubst src/%.c,obj/%.o,$(SOURCES)) libco/libco.o
 ASSEMBLY := $(patsubst %.c,%.s,$(SOURCES))
 
 all: $(PROG)
@@ -119,6 +119,9 @@ asm: $(ASSEMBLY)
 %.s: src/%.c
 	@echo cc $<
 	$(CC) $(CFLAGS) -S -o asm/$@ -DFILENAME=$(patsubst %.c,%,$<) $<
+
+libco/libco.o: libco/libco.c
+	$(CC) $(CFLAGS) -c -o $@ -DLIBCO_MP $<
 
 obj/%.o: src/%.c
 	@echo cc $<

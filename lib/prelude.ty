@@ -77,6 +77,9 @@ fn %(a: Int, b: Float) -> Float;
 
 fn +(a: String, b: String) -> String;
 
+fn +[K, U, V](a: Dict[K, U], b: Dict[K, V]) -> Dict[K, U | V];
+fn -[K, V](a: Dict[K, V], b: Dict[K, Any]) -> Dict[K, V];
+
 fn slurp(file: ?String | Int) -> String;
 fn rand[a](items: Array[a]) -> a;
 fn rand() -> Float;
@@ -122,6 +125,8 @@ fn math::log10(x: Int | Float) -> Float;
 fn os::listdir(path: String) -> [String];
 
 __set_type__ ty::executable String
+
+const `,` = tuple
 
 class Object {
     init(%props) {
@@ -715,6 +720,8 @@ class Dict[K, V] : Iterable[K, V] {
     [](key: K) -> V {
         self[key]
     }
+
+    keys() -> Array[K];
 }
 
 class String : Iterable[String], IntoPtr[Int] {

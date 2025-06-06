@@ -5653,24 +5653,35 @@ Inst1(Ty *ty, Type *t0)
 {
         Type *t1 = t0;
 
-        if (TypeType(t0) == TYPE_FUNCTION) {
+        switch (TypeType(t0)) {
+        case TYPE_FUNCTION:
                 t1 = Inst0(ty, t0, &t0->bound, NULL, t0->variadic, false);
                 if (t1 == t0 && vN(t1->bound) > 0) {
                         t1 = CloneType(ty, t1);
                 }
                 v00(t1->bound);
-        } else if (TypeType(t0) == TYPE_OBJECT && !IsAny(t0)) {
+                break;
+
+        case TYPE_OBJECT:
+                if (IsAny(t0)) {
+                        break;
+                }
                 t1 = Inst0(ty, t0, &t0->class->type->bound, NULL, t0->variadic, false);
                 if (t1 == t0) {
                         t1 = CloneType(ty, t1);
                 }
                 v00(t1->bound);
-        } else if (TypeType(t0) == TYPE_INTERSECT) {
+                break;
+
+
+        case TYPE_INTERSECT:
+        case TYPE_UNION:
                 t1 = CloneType(ty, t0);
                 CloneVec(t1->types);
                 for (int i = 0; i < vN(t1->types); ++i) {
                         *v_(t1->types, i) = Inst1(ty, v__(t1->types, i));
                 }
+                break;
         }
 
         XXTLOG("Inst1():");

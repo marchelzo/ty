@@ -31,36 +31,36 @@ class Args {
             lines.map(&[leading;]).join('\n')
         }
 
-        for opt in opts {
-            if opt.constraint == Bool {
+        for o in opts {
+            if o.constraint == Bool {
                 args.push(
                     flag(
-                        short: opt.short,
-                        long: opt.long,
-                        help: opt.help
+                        short: o.short,
+                        long:  o.long,
+                        help:  o.help
                     )
                 )
-            } else if let [constraint] = opt.constraint {
+            } else if let [constraint] = o.constraint {
                 args.push(
                     opt(
-                        short: opt.short,
-                        long: opt.long,
-                        help: opt.help,
-                        convert: opt.?conv,
-                        post: constraint,
-                        multi: true,
-                        default: opt.default
+                        short:   o.short,
+                        long:    o.long,
+                        help:    o.help,
+                        convert: o.?conv[0],
+                        post:    constraint,
+                        multi:   true,
+                        default: o.default ?? {val: [], show: '[]'}
                     )
                 )
             } else {
                 args.push(
                     opt(
-                        short: opt.short,
-                        long: opt.long,
-                        help: opt.help,
-                        convert: opt.?conv,
-                        post: opt.constraint,
-                        default: opt.default
+                        short:   o.short,
+                        long:    o.long,
+                        help:    o.help,
+                        convert: o.?conv,
+                        post:    o.constraint,
+                        default: o.default
                    )
                 )
             }
@@ -91,12 +91,12 @@ class Args {
         }
 
         (
-            tuple(**%{
-                o.name:
-                    (o.constraint == Bool) ? ((o.short in result) || (o.long in result))
-                                           : (result[o.short] ?? result[o.long])
+            tuple(**(%{
+                o.name: (o.constraint == Bool)
+                      ? ((o.short in result) || (o.long in result))
+                      : result[o.short]
                 for o in opts
-            } + %{ 'help': 'help' in result }),
+            } + %{ 'help': 'help' in result })),
             argv
         )
     }
@@ -206,10 +206,10 @@ pub macro clap! {
     }
 
     let getCmds = ty.Func(name: 'cmds', params: [], body: ty.Return(ty.Value(cmds)))
-    let info = ty.Func(name: 'info', params: [], body: ty.Return(ty.Value(args)))
+    let info    = ty.Func(name: 'info', params: [], body: ty.Return(ty.Value(args)))
     let version = ty.Func(name: 'version', params: [], body: ty.Return(ty.Value(version)))
 
     next()
 
-   ty.Class(name: name, methods: [info, getCmds, version], `super`: ty.Id(name: 'Args', module: 'clap'))
+    ty.Class(name: name, statics: [info, getCmds, version], `super`: ty.Id(name: 'Args', module: 'clap'))
 }

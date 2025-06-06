@@ -11,8 +11,8 @@
 static Value
 blob_clear(Ty *ty, Value *blob, int argc, Value *kwargs)
 {
-        int start;
-        int n;
+        isize start;
+        isize n;
 
         if (argc > 0 && ARG(0).type != VALUE_INTEGER)
                 zP("the first argument to blob.clear() must be an integer");
