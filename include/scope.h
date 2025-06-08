@@ -9,6 +9,12 @@
 #include "gc.h"
 #include "ty.h"
 
+#if defined(TY_DEBUG_NAMES) || !defined(TY_RELEASE) || defined(TY_LS)
+ #define TY_NAMED_SCOPES 1
+#else
+ #define TY_NAMED_SCOPES 0
+#endif
+
 #define TY_SCOPE_FLAGS                 \
         X(LOCAL_ONLY,  LocalOnly,  0)  \
         X(EXPLICIT,    Explicit,   1)  \
@@ -74,7 +80,7 @@ typedef struct symbol {
 } Symbol;
 
 typedef struct scope {
-#if !defined(TY_RELEASE) || defined(TY_DEBUG_NAMES)
+#if TY_NAMED_SCOPES
         char const *name;
 #endif
         symbol_vector owned;
@@ -103,7 +109,7 @@ typedef struct scope {
 Scope *
 NewSubscope(
         Ty *ty,
-#if !defined(TY_RELEASE) || defined(TY_DEBUG_NAMES)
+#if TY_NAMED_SCOPES
         char const *name,
 #endif
         u32 size,
@@ -111,7 +117,7 @@ NewSubscope(
         bool function
 );
 
-#if !defined(TY_RELEASE) || defined(TY_DEBUG_NAMES)
+#if TY_NAMED_SCOPES
   #define scope_new(ty, n, p, f) NewSubscope(ty, n, 0, p, f)
 #else
   #define scope_new(ty, n, p, f) NewSubscope(ty, 0, p, f)
@@ -299,15 +305,28 @@ scope_get_completions(
         bool recursive
 );
 
+i32
+ScopeCompletions(
+        Ty *ty,
+        Scope *scope,
+        char const *prefix,
+        symbol_vector *out,
+        i32Vector *depths,
+        i32 max,
+        bool recursive
+);
+
 void
 ScopeReset(Scope *scope);
 
 Symbol *
 ScopeFindRecycled(Scope const *scope, char const *id);
 
-#if !defined(TY_RELEASE) || defined(TY_DEBUG_NAMES)
+#if TY_NAMED_SCOPES
 char const *
 scope_name(Ty *ty, Scope const *s);
+#else
+#define scope_name(...) "<>"
 #endif
 
 #endif

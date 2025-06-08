@@ -9,8 +9,8 @@ class A {
 }
 
 class B < A {
-    foo(x: Int) {
-        str(x)
+    foo(msg: String) {
+        super(msg.count('.'))
     }
 
     bar(x: Int) {
@@ -22,14 +22,4 @@ if B().bar(4) != 20 {
     print('FAIL')
 }
 
-try {
-    print(__eval__($$[
-        B().foo(12)
-    $$]))
-} catch Err(msg) {
-    if 'return value' in msg {
-        print('PASS')
-    } else {
-        print(msg)
-    }
-}
+print(['FAIL', 'FAIL', 'PASS'][B().foo('o.o')])

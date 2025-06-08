@@ -28,8 +28,6 @@
 #define TERM1(n) (ColorStdout  ? ("\x1b[" #n "m") : "")
 #define TERM(n)  (ColorStderr  ? ("\x1b[" #n "m") : "")
 
-#define ERR_SIZE 4096
-
 #define SWAP(t, a, b) do { t _swap_tmp_ = a; a = b; b = _swap_tmp_; } while (0)
 
 #define SAVE_(t, x) t x##_; memcpy(&(x##_), &(x), sizeof (x))
@@ -39,6 +37,8 @@
 
 #define afmt(...) ((afmt)(ty, __VA_ARGS__))
 #define adump(...) ((adump)(ty, __VA_ARGS__))
+
+#define sxdf(...) ((sxdf)(ty, __VA_ARGS__))
 
 inline static size_t
 P_ALIGN(void const *p)
@@ -114,8 +114,20 @@ sclone(Ty *ty, char const *s);
 char *
 sclonea(Ty *ty, char const *s);
 
-char *
-sclone_malloc(char const *s);
+static inline char *
+S2(char const *s)
+{
+        size_t n = strlen(s);
+        char *new = malloc(n + 1);
+
+        if (new == NULL) {
+                panic("out of memory");
+        }
+
+        memcpy(new, s, n + 1);
+
+        return new;
+}
 
 bool
 contains(char const *s, char c);
@@ -138,10 +150,10 @@ strstrn(char const *haystack, int hn, char const *needle, int nn)
         return NULL;
 }
 
-inline static unsigned long
+inline static u64
 strhash(char const *s)
 {
-        unsigned long hash = 2166136261UL;
+        u64 hash = 2166136261UL;
 
         while (*s != '\0')
                 hash = (hash ^ *s++) * 16777619UL;
@@ -161,19 +173,19 @@ gcd(int a, int b)
         return a;
 }
 
-inline static uint64_t
-splitmix64(uint64_t *state)
+inline static u64
+splitmix64(u64 *state)
 {
-        uint64_t z = (*state += 0x9e3779b97f4a7c15);
+        u64 z = (*state += 0x9e3779b97f4a7c15);
         z = (z ^ (z >> 30)) * 0xbf58476d1ce4e5b9;
         z = (z ^ (z >> 27)) * 0x94d049bb133111eb;
         return z ^ (z >> 31);
 }
 
-inline static unsigned long
+inline static u64
 StrHash(char const *s)
 {
-        unsigned long hash = 2166136261UL;
+        u64 hash = 2166136261UL;
 
         while (*s != '\0')
                 hash = (hash ^ *s++) * 16777619UL;
@@ -306,6 +318,19 @@ scvdump(Ty *ty, byte_vector *str, char const *fmt, va_list ap)
         }
 }
 
+static int
+(sxdf)(Ty *ty, byte_vector *str, char const *fmt, ...)
+{
+        int bytes;
+        va_list ap;
+
+        va_start(ap, fmt);
+        bytes = scvdump(ty, str, fmt, ap);
+        va_end(ap);
+
+        return bytes;
+}
+
 static const char *
 ifmt(char const *fmt, ...)
 {
@@ -333,7 +358,7 @@ static char *
         SCRATCH_SAVE();
         va_start(ap, fmt);
         scvdump(ty, &buf, fmt, ap);
-        str = sclone_malloc(vv(buf));
+        str = S2(vv(buf));
         va_end(ap);
         SCRATCH_RESTORE();
 

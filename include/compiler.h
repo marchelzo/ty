@@ -87,11 +87,29 @@ typedef struct {
 typedef struct loop_state {
         offset_vector continues;
         offset_vector breaks;
-        int resources;
-        int t;
+        i32 resources;
+        i32 t;
+        i32 n;
         bool wr;
-        bool each;
 } LoopState;
+
+typedef struct {
+        bool inclusive;
+        bool reverse;
+
+        Expr *start;
+        Expr *stop;
+
+        Expr *_if;
+        Expr *_while;
+
+        JumpLabel begin;
+        JumpLabel next;
+
+        JumpPlaceholder skip;
+        JumpPlaceholder exit;
+        JumpPlaceholder end;
+} RangeLoop;
 
 typedef struct try_state {
         int t;

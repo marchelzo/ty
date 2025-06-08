@@ -175,7 +175,7 @@ static SigfnStack sigfns;
 #define peektarget()     ((peektarget)(ty))
 #define pushtarget(t, g) ((pushtarget)(ty, (t), (g)))
 
-#ifdef TY_ENABLE_PROFILING
+#ifdef TY_PROFILER
 bool UseWallTime = false;
 FILE *ProfileOut = NULL;
 
@@ -479,14 +479,14 @@ WaitGC(Ty *ty)
 
         lGv(false);
 
-#ifdef TY_ENABLE_PROFILING
+#ifdef TY_PROFILER
         uint64_t start = TyThreadTime();
 #endif
 
         while (!*MyState) {
                 if (!MyGroup->WantGC && TryFlipTo(MyState, true)) {
                         lTk();
-#ifdef TY_ENABLE_PROFILING
+#ifdef TY_PROFILER
                         LastThreadGCTime = TyThreadTime() - start;
 #endif
                         return;
@@ -510,7 +510,7 @@ WaitGC(Ty *ty)
         TyBarrierWait(&MyGroup->GCBarrierDone);
         GCLOG("Continuing execution: %llu", TID);
 
-#ifdef TY_ENABLE_PROFILING
+#ifdef TY_PROFILER
         LastThreadGCTime = TyThreadTime() - start;
 #endif
 
@@ -528,7 +528,7 @@ DoGC(Ty *ty)
                 return;
         }
 
-#ifdef TY_ENABLE_PROFILING
+#ifdef TY_PROFILER
         uint64_t start = TyThreadTime();
 #endif
 
@@ -649,7 +649,7 @@ DoGC(Ty *ty)
 
         GCInProgress = false;
 
-#ifdef TY_ENABLE_PROFILING
+#ifdef TY_PROFILER
         LastThreadGCTime = TyThreadTime() - start;
 #endif
 
@@ -1120,24 +1120,21 @@ __attribute__((optnone, noinline))
 static void
 call(Ty *ty, Value const *f, Value const *pSelf, int n, int nkw, bool exec)
 {
-        int bound = f->info[FUN_INFO_BOUND];
-        int np = f->info[FUN_INFO_PARAM_COUNT];
-        int irest = *(i16 const *)info_of(f, FUN_REST_IDX);
-        int ikwargs = *(i16 const *)info_of(f, FUN_KWARGS_IDX);
-        int class = class_of(f);
-        char *code = code_of(f);
-        int argc = n;
+        int   argc    = n;
+        int   np      = f->info[FUN_INFO_PARAM_COUNT];
+        int   bound   = f->info[FUN_INFO_BOUND];
 
-        Value self = (pSelf == NULL) ? NONE : *pSelf;
+        int   irest   = *(i16 const *)info_of(f, FUN_REST_IDX);
+        int   ikwargs = *(i16 const *)info_of(f, FUN_KWARGS_IDX);
+        Value kwargs  = (nkw > 0) ? pop() : NIL;
 
-        Value kwargs = (nkw > 0) ? pop() : NIL;
+        int   class   = class_of(f);
+        Value self    = (pSelf == NULL) ? NONE : *pSelf;
+
+        char  *code   = code_of(f);
+        int   fp      = STACK.count - n;
 
         gP(&kwargs);
-
-        /*
-         * This is the index of the beginning of the stack frame for this call to f.
-         */
-        int fp = STACK.count - n;
 
         /*
          * Default missing arguments to NIL and make space for all of this function's local variables.
@@ -1213,14 +1210,17 @@ call(Ty *ty, Value const *f, Value const *pSelf, int n, int nkw, bool exec)
         gX();
 
         if (exec) {
+#ifndef TY_RELEASE
                 Generator *gen = GetCurrentGenerator(ty);
-
                 xvP(CALLS, &halt);
                 vm_exec(ty, code);
-
                 if (UNLIKELY(GetCurrentGenerator(ty) != gen)) {
                         zP("sus use of coroutine yield");
                 }
+#else
+                xvP(CALLS, &halt);
+                vm_exec(ty, code);
+#endif
         } else {
                 xvP(CALLS, IP);
                 IP = code;
@@ -2133,6 +2133,8 @@ GetMember(Ty *ty, Value v, int member, bool b)
         case VALUE_METHOD:
                 if (member == NAMES._name_) {
                         return xSz(name_of(&v));
+                } else if (member == NAMES._def_) {
+                        return FunDef(ty, &v);
                 }
         case VALUE_BUILTIN_FUNCTION:
         case VALUE_BUILTIN_METHOD:
@@ -2835,13 +2837,13 @@ DoQuestion(Ty *ty, bool exec)
         if (top()->type == VALUE_NIL) {
                 *top() = BOOLEAN(false);
         } else {
-                CallMethod(ty, NAMES.question, 0, 0, false);
+                CallMethod(ty, OP_QUESTION, 0, 0, false);
                 if (exec) vm_exec(ty, IP);
         }
 }
 
 TY_INSTR_INLINE static void
-DoNeg(Ty *ty)
+DoNeg(Ty *ty, bool exec)
 {
         Value v = pop();
 
@@ -2850,7 +2852,8 @@ DoNeg(Ty *ty)
         } else if (v.type == VALUE_REAL) {
                 push(REAL(-v.real));
         } else {
-                zP("unary - applied to non-numeric operand: %s", VSC(&v));
+                CallMethod(ty, OP_NEG, 0, 0, false);
+                if (exec) vm_exec(ty, IP);
         }
 }
 
@@ -2892,7 +2895,7 @@ DoUnaryOp(Ty *ty, int op, bool exec)
 
         switch (op) {
         case OP_COUNT:    DoCount(ty, exec);    return;
-        case OP_NEG:      DoNeg(ty);            return;
+        case OP_NEG:      DoNeg(ty, exec);      return;
         case OP_NOT:      DoNot(ty);            return;
         case OP_QUESTION: DoQuestion(ty, exec); return;
         }
@@ -3712,6 +3715,60 @@ DoAssignSubscript(Ty *ty)
 }
 
 static void
+IncValue(Ty *ty, Value *v)
+{
+        Value *vp;
+
+        switch (EXPECT(v->type, VALUE_INTEGER)) {
+        case VALUE_INTEGER: ++v->integer; break;
+        case VALUE_REAL:    ++v->real;    break;
+        case VALUE_PTR:
+                v->ptr = ((char *)v->ptr)
+                       + ((ffi_type *)(
+                               (v->extra == NULL)
+                              ? &ffi_type_uint8
+                              : v->extra
+                         ))->size;
+                break;
+        case VALUE_OBJECT:
+                vp = class_method(ty, v->class, "++");
+                if (vp != NULL) {
+                        call(ty, vp, v, 0, 0, true);
+                        break;
+                }
+        default:
+                zP("pre-increment applied to invalid type: %s", VSC(v));
+        }
+}
+
+static void
+DecValue(Ty *ty, Value *v)
+{
+        Value *vp;
+
+        switch (EXPECT(v->type, VALUE_INTEGER)) {
+        case VALUE_INTEGER: --v->integer; break;
+        case VALUE_REAL:    --v->real;    break;
+        case VALUE_PTR:
+                v->ptr = ((char *)v->ptr)
+                       - ((ffi_type *)(
+                               (v->extra == NULL)
+                              ? &ffi_type_uint8
+                              : v->extra
+                         ))->size;
+                break;
+        case VALUE_OBJECT:
+                vp = class_method(ty, v->class, "--");
+                if (vp != NULL) {
+                        call(ty, vp, v, 0, 0, true);
+                        break;
+                }
+        default:
+                zP("pre-decrement applied to invalid type: %s", VSC(v));
+        }
+}
+
+static void
 IterGetNext(Ty *ty)
 {
         Value v;
@@ -3887,7 +3944,7 @@ vm_exec(Ty *ty, char *code)
 
         PopulateGlobals(ty);
 
-#ifdef TY_ENABLE_PROFILING
+#ifdef TY_PROFILER
         char *StartIPLocal = LastIP;
 #endif
 
@@ -3933,7 +3990,7 @@ vm_exec(Ty *ty, char *code)
 
         for (int N = 0; N < 32; ++N) {
         NextInstruction:
-#ifdef TY_ENABLE_PROFILING
+#ifdef TY_PROFILER
                 if (Samples != NULL) {
                         uint64_t now = TyThreadTime();
 
@@ -4066,6 +4123,10 @@ vm_exec(Ty *ty, char *code)
                 CASE(DUP)
                         push(peek());
                         break;
+                CASE(DUP2)
+                        push(top()[-1]);
+                        push(top()[-1]);
+                        break;
                 CASE(JUMP)
                         READVALUE(n);
                         IP += n;
@@ -4144,6 +4205,32 @@ vm_exec(Ty *ty, char *code)
                         DoNeq(ty);
                         if (pop().boolean) {
                                 IP += n;
+                        }
+                        break;
+                CASE(JII)
+                        READJUMP(jump);
+                        READVALUE(z);
+                        if (z < 0) {
+                                v = pop();
+                                z = -z;
+                        } else {
+                                v = peek();
+                        }
+                        if (class_is_subclass(ty, ClassOf(&v), z)) {
+                                DOJUMP(jump);
+                        }
+                        break;
+                CASE(JNI)
+                        READJUMP(jump);
+                        READVALUE(z);
+                        if (z < 0) {
+                                v = pop();
+                                z = -z;
+                        } else {
+                                v = peek();
+                        }
+                        if (!class_is_subclass(ty, ClassOf(&v), z)) {
+                                DOJUMP(jump);
                         }
                         break;
                 CASE(JUMP_AND)
@@ -4284,6 +4371,12 @@ AssignGlobal:
                         break;
                 CASE(TARGET_SUBSCRIPT)
                         DoTargetSubscript(ty);
+                        break;
+                CASE(INC)
+                        IncValue(ty, top());
+                        break;
+                CASE(DEC)
+                        DecValue(ty, top());
                         break;
                 CASE(ASSIGN)
                         DoAssign(ty);
@@ -4720,6 +4813,11 @@ AssignGlobal:
                 CASE(UNPOP)
                         STACK.count += 1;
                         break;
+                CASE(DROP2)
+                        v = v_L(STACK);
+                        STACK.count -= 2;
+                        v_L(STACK) = v;
+                        break;
                 CASE(INTEGER)
                         READVALUE(k);
                         push(INTEGER(k));
@@ -4749,6 +4847,9 @@ AssignGlobal:
                         READVALUE(s);
                         v = REGEX((struct regex const *) s);
                         push(v);
+                        break;
+                CASE(ARRAY0)
+                        push(ARRAY(vA()));
                         break;
                 CASE(ARRAY)
                         n = STACK.count - *vvX(SP_STACK);
@@ -5446,7 +5547,7 @@ BadTupleMember:
                         DoQuestion(ty, false);
                         break;
                 CASE(NEG)
-                        DoNeg(ty);
+                        DoNeg(ty, false);
                         break;
                 CASE(COUNT)
                         DoCount(ty, false);
@@ -5596,27 +5697,6 @@ BadTupleMember:
                         if (UNLIKELY(SpecialTarget(ty))) {
                                 zP("pre-increment applied to invalid target");
                         }
-                        switch (EXPECT(peektarget()->type, VALUE_INTEGER)) {
-                        case VALUE_INTEGER: ++peektarget()->integer; break;
-                        case VALUE_REAL:    ++peektarget()->real;    break;
-                        case VALUE_PTR:
-                                vp = peektarget();
-                                vp->ptr = ((char *)vp->ptr)
-                                        + ((ffi_type *)(
-                                                (vp->extra == NULL)
-                                               ? &ffi_type_uint8
-                                               : vp->extra
-                                          ))->size;
-                                break;
-                        case VALUE_OBJECT:
-                                vp = class_method(ty, peektarget()->class, "++");
-                                if (vp != NULL) {
-                                        call(ty, vp, peektarget(), 0, 0, true);
-                                        break;
-                                }
-                        default:
-                                zP("pre-increment applied to invalid type: %s", VSC(peektarget()));
-                        }
                         push(*poptarget());
                         break;
                 CASE(POST_INC)
@@ -5638,27 +5718,6 @@ BadTupleMember:
                 CASE(PRE_DEC)
                         if (UNLIKELY(SpecialTarget(ty))) {
                                 zP("pre-decrement applied to invalid target");
-                        }
-                        switch (EXPECT(peektarget()->type, VALUE_INTEGER)) {
-                        case VALUE_INTEGER: --peektarget()->integer; break;
-                        case VALUE_REAL:    --peektarget()->real;    break;
-                        case VALUE_PTR:
-                                vp = peektarget();
-                                vp->ptr = ((char *)vp->ptr)
-                                        - ((ffi_type *)(
-                                                (vp->extra == NULL)
-                                               ? &ffi_type_uint8
-                                               : vp->extra
-                                          ))->size;
-                                break;
-                        case VALUE_OBJECT:
-                                vp = class_method(ty, peektarget()->class, "--");
-                                if (vp != NULL) {
-                                        call(ty, vp, peektarget(), 0, 0, true);
-                                        break;
-                                }
-                        default:
-                                zP("pre-decrement applied to invalid type: %s", VSC(peektarget()));
                         }
                         push(*poptarget());
                         break;
@@ -5999,19 +6058,27 @@ RunExitHooks(void)
         Ty *ty = MyTy;
         int id = NAMES.exit_hooks;
 
-        if (id == -1 || Globals.items[id].type != VALUE_ARRAY)
+#if defined(TY_PROFILER)
+        ProfileReport(ty);
+#endif
+
+        if (
+                (id == -1)
+             || (Globals.items[id].type != VALUE_ARRAY)
+        ) {
                 return;
+        }
 
         Array *hooks = Globals.items[id].array;
 
         vec(char *) msgs = {0};
-        char *first = (Error == NULL) ? NULL : sclone_malloc(Error);
+        char *first = !TyHasError(ty) ? NULL : S2(TyError(ty));
 
         bool bReprintFirst = false;
 
         for (size_t i = 0; i < hooks->count; ++i) {
                 if (TY_CATCH_ERROR()) {
-                        vvP(msgs, sclone_malloc(Error));
+                        vvP(msgs, S2(TyError(ty)));
                 } else {
                         Value v = vmC(&hooks->items[i], 0);
                         bReprintFirst = bReprintFirst || value_truthy(ty, &v);
@@ -6049,6 +6116,7 @@ vm_init(Ty *ty, int ac, char **av)
         NAMES.call             = M_ID("__call__");
         NAMES.contains         = M_ID("contains?");
         NAMES.count            = M_ID("__count__");
+        NAMES._def_            = M_ID("__def__");
         NAMES._drop_           = M_ID("__drop__");
         NAMES.fmt              = M_ID("__fmt__");
         NAMES._free_           = M_ID("__free__");
@@ -6061,10 +6129,8 @@ vm_init(Ty *ty, int ac, char **av)
         NAMES.missing          = M_ID("__missing__");
         NAMES.method_missing   = M_ID("__method_missing__");
         NAMES._name_           = M_ID("__name__");
-        NAMES._argc_           = M_ID("__argc__");
         NAMES._next_           = M_ID("__next__");
         NAMES.ptr              = M_ID("__ptr__");
-        NAMES.question         = M_ID("?");
         NAMES.slice            = M_ID("[;;]");
         NAMES.str              = M_ID("__str__");
         NAMES.subscript        = M_ID("[]");
@@ -6104,7 +6170,7 @@ vm_init(Ty *ty, int ac, char **av)
         GC_RESUME();
         TY_CATCH_END();
 
-#ifdef TY_ENABLE_PROFILING
+#ifdef TY_PROFILER
         Samples = dict_new(ty);
         NOGC(Samples);
         FuncSamples = dict_new(ty);
@@ -6276,7 +6342,7 @@ vm_execute_file(Ty *ty, char const *path)
         return success;
 }
 
-#if defined(TY_ENABLE_PROFILING)
+#if defined(TY_PROFILER)
 inline static int
 ilerp(int lo, int hi, float a, float x, float b)
 {
@@ -6629,6 +6695,8 @@ vm_load_program(Ty *_ty, char const *source, char const *file)
         v0(TARGETS);
         SCRATCH_RESET();
 
+        TyClearError(ty);
+
         Module * volatile mod = NULL;
 
         if (TY_CATCH_ERROR()) {
@@ -6679,7 +6747,7 @@ vm_execute(Ty *ty, char const *source, char const *file)
                 return false;
         }
 
-#ifdef TY_ENABLE_PROFILING
+#ifdef TY_PROFILER
         void (*handler)(int) = signal(SIGINT, ProfilerSIGINT);
 #endif
 
@@ -6695,7 +6763,7 @@ vm_execute(Ty *ty, char const *source, char const *file)
         TY_IS_READY = true;
         vm_exec(ty, ty->code);
 
-#ifdef TY_ENABLE_PROFILING
+#ifdef TY_PROFILER
         ProfileReport(ty);
 #endif
 
@@ -7195,6 +7263,7 @@ StepInstruction(char const *ip)
                 SKIPVALUE(s);
                 break;
         CASE(DUP)
+        CASE(DUP2)
                 break;
         CASE(JUMP)
                 SKIPVALUE(n);
@@ -7212,6 +7281,8 @@ StepInstruction(char const *ip)
                 SKIPVALUE(n);
                 break;
         CASE(JUMP_IF_TYPE)
+        CASE(JII)
+        CASE(JNI)
                 SKIPVALUE(n);
                 SKIPVALUE(i);
                 break;
@@ -7392,6 +7463,7 @@ StepInstruction(char const *ip)
                 SKIPVALUE(s);
                 break;
         CASE(ARRAY)
+        CASE(ARRAY0)
                 break;
         CASE(TUPLE)
                 SKIPVALUE(n);
@@ -7539,6 +7611,8 @@ StepInstruction(char const *ip)
         CASE(CMP)
         CASE(GET_TAG)
         CASE(LEN)
+        CASE(INC)
+        CASE(DEC)
         CASE(PRE_INC)
         CASE(POST_INC)
         CASE(PRE_DEC)
@@ -7839,6 +7913,8 @@ tdb_step_over_x(Ty *ty, char *ip, i32 i)
         CASE(JLE)
         CASE(JLT)
         CASE(JNE)
+        CASE(JNI)
+        CASE(JII)
         CASE(JUMP)
         CASE(JUMP_AND)
         CASE(JUMP_IF)

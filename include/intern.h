@@ -1,12 +1,10 @@
 #ifndef INTERN_H_INCLUDED
 #define INTERN_H_INCLUDED
 
-#include <stdio.h>
 #include <string.h>
 #include <inttypes.h>
 
 #include "ty.h"
-#include "vec.h"
 
 inline static void
 intern_init(InternSet *set)

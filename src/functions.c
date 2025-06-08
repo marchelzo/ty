@@ -215,7 +215,7 @@ doprint(Ty *ty, int argc, Value *kwargs, FILE *f)
                                 }
                                 written += sep->bytes;
                         } else {
-                                if (fputs(", ", stdout) == EOF) {
+                                if (fputs(", ", f) == EOF) {
                                         lTk();
                                         return -1;
                                 }
@@ -649,8 +649,9 @@ BUILTIN_FUNCTION(chr)
 
         i32 rune = INT_ARG(0);
 
-        if (!utf8proc_codepoint_valid(rune))
+        if (!utf8proc_codepoint_valid(rune)) {
                 return NIL;
+        }
 
         u8 b[4];
         int n = utf8proc_encode_char(rune, b);
@@ -667,13 +668,14 @@ BUILTIN_FUNCTION(ord)
         if (c.type != VALUE_STRING)
                 zP("the argument to ord() must be a string");
 
-        int codepoint;
-        int n = utf8proc_iterate(c.str, c.bytes, &codepoint);
+        i32 rune;
+        i32 n = utf8proc_iterate(c.str, c.bytes, &rune);
 
-        if (codepoint == -1 || n < c.bytes)
+        if (n <= 0) {
                 return NIL;
+        }
 
-        return INTEGER(codepoint);
+        return INTEGER(rune);
 }
 
 BUILTIN_FUNCTION(hash)

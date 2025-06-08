@@ -7,17 +7,14 @@
 #include <stdnoreturn.h>
 #include <assert.h>
 #include <errno.h>
-#include <math.h>
 
 #include <pcre2.h>
 #include <utf8proc.h>
 
 #include "vec.h"
 #include "token.h"
-#include "test.h"
 #include "util.h"
 #include "lex.h"
-#include "log.h"
 
 static Token
 dotoken(Ty *ty, int ctx);
@@ -40,9 +37,7 @@ static LexState state;
 inline static unsigned char
 C(int n)
 {
-        if (SRC + n < END)
-                return SRC[n];
-        return '\0';
+        return (SRC + n < END) ? SRC[n] : '\0';
 }
 
 noreturn static void
@@ -1049,21 +1044,25 @@ lexcomment(Ty *ty)
 
         int level = 1;
 
-        vec(char) comment;
-        vec_init(comment);
+        vec(char) comment = {0};
 
         while (C(0) != '\0' && level != 0) {
-                if (C(0) == '/' && C(1) == '*')
+                if (C(0) == '/' && C(1) == '*') {
                         ++level;
-                else if (C(0) == '*' && C(1) == '/')
+                } else if (C(0) == '*' && C(1) == '/') {
                         --level;
+                }
+
                 char c = nextchar(ty);
-                if (level != 0)
+
+                if (level != 0) {
                         avP(comment, c);
+                }
         }
 
-        if (level != 0)
+        if (level != 0) {
                 error(ty, "unterminated comment");
+        }
 
         avP(comment, '\0');
 
@@ -1086,6 +1085,7 @@ saferegex(Ty *ty)
 
         Token t;
         if (setjmp(jb) != 0) {
+                TyClearError(ty);
                 state = save;
                 t = mktoken(ty, nextchar(ty));
         } else {

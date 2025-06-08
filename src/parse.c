@@ -1,11 +1,8 @@
-#include <setjmp.h>
 #include <stdarg.h>
 #include <string.h>
 #include <ctype.h>
 #include <stdbool.h>
 #include <assert.h>
-#include <errno.h>
-#include <math.h>
 #include <stdnoreturn.h>
 
 #include "alloc.h"
@@ -17,7 +14,6 @@
 #include "parse.h"
 #include "scope.h"
 #include "table.h"
-#include "test.h"
 #include "token.h"
 #include "ty.h"
 #include "util.h"
@@ -2082,9 +2078,7 @@ Body:
         }
 
         if (sugared_generator) {
-                char name[256];
-                snprintf(name, sizeof name, "<%s:generator>", e->name);
-                e->body->expression->name = sclonea(ty, name);
+                e->body->expression->name = afmt("<%s:generator>", e->name);
         }
 
         return e;
@@ -6069,12 +6063,17 @@ parse_class_definition(Ty *ty)
                                 avP(s->tag.fields, field);
                                 try_consume(';');
                         } else {
-                                bool getter = (T0 == TOKEN_ARROW || T0 == '{');
                                 bool setter = try_consume('=');
+                                bool star   = try_consume('*');
+                                bool getter = (T0 == TOKEN_ARROW) || (T0 == '{');
 
                                 if (getter) {
                                         unconsume(')');
                                         unconsume('(');
+                                }
+
+                                if (star) {
+                                        unconsume('*');
                                 }
 
                                 meth = parse_method(

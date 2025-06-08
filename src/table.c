@@ -97,7 +97,7 @@ table_get_completions(Ty *ty, struct table const *t, char const *prefix, char **
         for (int i = 0; i < TABLE_SIZE; ++i) {
                 for (int j = 0; j < t->buckets[i].names.count; ++j) {
                         if (n < max && strncmp(t->buckets[i].names.items[j], prefix, prefix_len) == 0) {
-                                out[n++] = sclone_malloc(t->buckets[i].names.items[j]);
+                                out[n++] = S2(t->buckets[i].names.items[j]);
                         }
                 }
         }

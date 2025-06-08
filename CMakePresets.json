@@ -68,7 +68,7 @@
             "inherits": "base-linux",
             "displayName": "GCC - amd64 - Release",
             "description": "Using GCC with Ninja",
-            "generator": "Ninja",
+            "generator": "Unix Makefiles",
             "cacheVariables": {
                 "CMAKE_C_COMPILER": "cc",
                 "CMAKE_CXX_COMPILER": "c++"

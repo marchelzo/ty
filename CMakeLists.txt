@@ -265,7 +265,7 @@ if(BUILD_PROFILER)
   set(_tgt_ty_profiler "${PROJECT_NAME}prof")
   add_executable(${_tgt_ty_profiler})
   target_sources(${_tgt_ty_profiler} PRIVATE ty.c)
-  target_compile_definitions(${_tgt_ty_profiler} PRIVATE TY_ENABLE_PROFILING)
+  target_compile_definitions(${_tgt_ty_profiler} PRIVATE TY_PROFILER)
   target_link_libraries(${_tgt_ty_profiler} PRIVATE ${_tgt_ty_interface})
 endif()
 

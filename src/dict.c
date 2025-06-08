@@ -21,12 +21,12 @@ dict_new(Ty *ty)
         Dict *d = mAo(sizeof *d, GC_DICT);
         NOGC(d);
 
-        d->size = INITIAL_SIZE;
-        d->hashes = mA(sizeof (unsigned long [INITIAL_SIZE]));
-        d->keys = mA0(sizeof (Value [INITIAL_SIZE]));
+        d->size   = INITIAL_SIZE;
+        d->hashes = mA(sizeof (u64 [INITIAL_SIZE]));
+        d->keys   = mA0(sizeof (Value [INITIAL_SIZE]));
         d->values = mA(sizeof (Value [INITIAL_SIZE]));
-        d->count = 0;
-        d->dflt = NONE;
+        d->count  = 0;
+        d->dflt   = NONE;
 
         OKGC(d);
 
@@ -37,9 +37,9 @@ inline static usize
 find_spot(
         Ty *ty,
         usize size,
-        unsigned long const *hs,
+        u64 const *hs,
         Value const *vs,
-        unsigned long h,
+        u64 h,
         Value const *v
 ) {
         usize mask = size - 1;
@@ -62,7 +62,7 @@ inline static usize
 delete(Dict *d, usize i)
 {
         usize mask = d->size - 1;
-        unsigned long h = d->hashes[i] & mask;
+        u64 h = d->hashes[i] & mask;
 
         usize j = i;
         usize k = (i + 1) & mask;
@@ -93,7 +93,7 @@ grow(Ty *ty, Dict *d)
 {
         usize new_size = d->size << 1;
 
-        unsigned long *hashes = mA(new_size * sizeof (unsigned long));
+        u64 *hashes = mA(new_size * sizeof (u64));
         Value *keys = mA(new_size * sizeof (Value));
         Value *values = mA(new_size * sizeof (Value));
 
@@ -121,7 +121,7 @@ grow(Ty *ty, Dict *d)
 }
 
 inline static Value *
-put(Ty *ty, Dict *d, usize i, unsigned long h, Value k, Value v)
+put(Ty *ty, Dict *d, usize i, u64 h, Value k, Value v)
 {
         if (9*d->count >= 4*d->size) {
                 grow(ty, d);
@@ -139,7 +139,7 @@ put(Ty *ty, Dict *d, usize i, unsigned long h, Value k, Value v)
 Value *
 dict_get_value(Ty *ty, Dict *d, Value *key)
 {
-        unsigned long h = value_hash(ty, key);
+        u64 h = value_hash(ty, key);
         usize i = find_spot(ty, d->size, d->hashes, d->keys, h, key);
 
         if (d->keys[i].type != 0)
@@ -159,7 +159,7 @@ dict_get_value(Ty *ty, Dict *d, Value *key)
 bool
 dict_has_value(Ty *ty, Dict *d, Value *key)
 {
-        unsigned long h = value_hash(ty, key);
+        u64 h = value_hash(ty, key);
         usize i = find_spot(ty, d->size, d->hashes, d->keys, h, key);
 
         if (d->keys[i].type != 0)
@@ -171,7 +171,7 @@ dict_has_value(Ty *ty, Dict *d, Value *key)
 void
 dict_put_value(Ty *ty, Dict *d, Value key, Value value)
 {
-        unsigned long h = value_hash(ty, &key);
+        u64 h = value_hash(ty, &key);
         usize i = find_spot(ty, d->size, d->hashes, d->keys, h, &key);
 
         if (d->keys[i].type != 0)
@@ -183,7 +183,7 @@ dict_put_value(Ty *ty, Dict *d, Value key, Value value)
 Value *
 dict_put_value_with(Ty *ty, Dict *d, Value key, Value v, Value const *f)
 {
-        unsigned long h = value_hash(ty, &key);
+        u64 h = value_hash(ty, &key);
         usize i = find_spot(ty, d->size, d->hashes, d->keys, h, &key);
 
         if (d->keys[i].type != 0) {
@@ -196,7 +196,7 @@ dict_put_value_with(Ty *ty, Dict *d, Value key, Value v, Value const *f)
 Value *
 dict_put_key_if_not_exists(Ty *ty, Dict *d, Value key)
 {
-        unsigned long h = value_hash(ty, &key);
+        u64 h = value_hash(ty, &key);
         usize i = find_spot(ty, d->size, d->hashes, d->keys, h, &key);
 
         if (d->keys[i].type != 0) {
@@ -283,7 +283,7 @@ dict_contains(Ty *ty, Value *d, int argc, Value *kwargs)
                 zP("dict.contains() expects 1 argument but got %d", argc);
 
         Value *key = &ARG(0);
-        unsigned long h = value_hash(ty, key);
+        u64 h = value_hash(ty, key);
         usize i = find_spot(ty, d->dict->size, d->dict->hashes, d->dict->keys, h, key);
 
         return BOOLEAN(d->dict->keys[i].type != 0);
@@ -644,7 +644,7 @@ dict_remove(Ty *ty, Value *d, int argc, Value *kwargs)
                 zP("dict.remove() expects 1 argument but got %d", argc);
 
         Value k = ARG(0);
-        unsigned long h = value_hash(ty, &k);
+        u64 h = value_hash(ty, &k);
 
         usize i = find_spot(
                 ty,

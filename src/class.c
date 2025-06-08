@@ -409,18 +409,18 @@ bool
 class_is_subclass(Ty *ty, int sub, int super)
 {
         if (
-                sub == super
-             || super == CLASS_TOP
-             || sub == CLASS_BOTTOM
+                (sub   == super)
+             || (super == CLASS_TOP)
+             || (sub   == CLASS_BOTTOM)
         ) {
                 return true;
         }
 
         if (
-                sub == CLASS_TOP
-             || sub == CLASS_NIL
-             || super == CLASS_BOTTOM
-             || super == CLASS_NIL
+                (sub   == CLASS_TOP)
+             || (sub   == CLASS_NIL)
+             || (super == CLASS_BOTTOM)
+             || (super == CLASS_NIL)
         ) {
                 return false;
         }

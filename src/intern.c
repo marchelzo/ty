@@ -53,7 +53,7 @@ intern_put(InternEntry *e, void *data)
 
         e->data = data;
         e->id = set->index.count;
-        e->name = sclone_malloc(e->name);
+        e->name = S2(e->name);
 
         xvP(set->index, (b->count << 8u) | (b - set->set));
 
