@@ -527,7 +527,13 @@ struct statement {
                 } for_loop;
                 struct {
                         Expr *target;
-                        Expr *array;
+                        union {
+                                Expr *array;
+                                struct {
+                                        Expr *a;
+                                        Expr *b;
+                                };
+                        };
                         Stmt *body;
                         Expr *cond;
                         Expr *stop;

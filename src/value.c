@@ -1,12 +1,11 @@
+#include <ctype.h>
 #include <string.h>
 #include <stdlib.h>
 #include <assert.h>
 #include <stdbool.h>
 #include <inttypes.h>
-#include <math.h>
 
 #include "value.h"
-#include "test.h"
 #include "util.h"
 #include "dict.h"
 #include "object.h"
@@ -15,9 +14,7 @@
 #include "log.h"
 #include "gc.h"
 #include "vm.h"
-#include "token.h"
 #include "ast.h"
-#include "intern.h"
 #include "compiler.h"
 #include "types.h"
 
@@ -210,13 +207,15 @@ value_hash(Ty *ty, Value const *val)
 char *
 show_dict(Ty *ty, Value const *d, bool color)
 {
-        static _Thread_local vec(struct dict *) show_dicts;
+        static _Thread_local vec(Dict *) show_dicts;
 
-        for (int i = 0; i < show_dicts.count; ++i)
-                if (show_dicts.items[i] == d->dict)
+        for (int i = 0; i < vN(show_dicts); ++i) {
+                if (v__(show_dicts, i) == d->dict) {
                         return sclone(ty, "{...}");
+                }
+        }
 
-        vvP(show_dicts, d->dict);
+        xvP(show_dicts, d->dict);
 
         size_t capacity = 1;
         size_t len = 1;
@@ -251,7 +250,7 @@ show_dict(Ty *ty, Value const *d, bool color)
         add("}");
 #undef add
 
-        --show_dicts.count;
+        vvX(show_dicts);
 
         return s;
 }
@@ -261,11 +260,13 @@ show_array(Ty *ty, Value const *a, bool color)
 {
         static _Thread_local vec(Array *) show_arrays;
 
-        for (int i = 0; i < show_arrays.count; ++i)
-                if (show_arrays.items[i] == a->array)
+        for (int i = 0; i < vN(show_arrays); ++i) {
+                if (v__(show_arrays, i) == a->array) {
                         return sclone(ty, "[...]");
+                }
+        }
 
-        vvP(show_arrays, a->array);
+        xvP(show_arrays, a->array);
 
         size_t capacity = 1;
         size_t len = 1;
@@ -292,7 +293,7 @@ show_array(Ty *ty, Value const *a, bool color)
         add("]");
 #undef add
 
-        --show_arrays.count;
+        vvX(show_arrays);
 
         return s;
 }
@@ -302,11 +303,13 @@ show_tuple(Ty *ty, Value const *v, bool color)
 {
         static _Thread_local vec(Value *) show_tuples;
 
-        for (int i = 0; i < show_tuples.count; ++i)
-                if (show_tuples.items[i] == v->items)
+        for (int i = 0; i < vN(show_tuples); ++i) {
+                if (v__(show_tuples, i) == v->items) {
                         return sclone(ty, "(...)");
+                }
+        }
 
-        vvP(show_tuples, v->items);
+        xvP(show_tuples, v->items);
 
         bool tagged = v->type & VALUE_TAGGED;
         size_t capacity = 1;
@@ -350,62 +353,75 @@ show_tuple(Ty *ty, Value const *v, bool color)
         }
 #undef add
 
-        --show_tuples.count;
+        vvX(show_tuples);
 
         return s;
 }
 
 static char *
-show_string(Ty *ty, char const *s, size_t n, bool color)
+show_string(Ty *ty, u8 const *s, size_t n, bool use_color)
 {
         vec(char) v = {0};
+        i32 color = 0;
 
-#define COLOR(i) if (color) vvPn(v, TERM(i), strlen(TERM(i)))
+#define COLOR(i) do {                               \
+        if (use_color && color != i) {              \
+                vvPn(v, TERM(i), strlen(TERM(i)));  \
+                color = i;                          \
+        }                                           \
+} while (0)
 
         COLOR(92);
 
         vvP(v, '\'');
 
-        if (s != NULL) for (char const *c = s; c < s + n; ++c) switch (*c) {
+        if (s != NULL) for (u8 const *c = s; c < s + n; ++c) switch (*c) {
         case '\t':
                 COLOR(95);
                 vvP(v, '\\');
                 vvP(v, 't');
                 COLOR(92);
                 break;
+
         case '\r':
                 COLOR(95);
                 vvP(v, '\\');
                 vvP(v, 'r');
                 COLOR(92);
                 break;
+
         case '\n':
                 COLOR(95);
                 vvP(v, '\\');
                 vvP(v, 'n');
                 COLOR(92);
                 break;
+
         case '\\':
                 COLOR(95);
                 vvP(v, '\\');
                 vvP(v, '\\');
                 COLOR(92);
                 break;
+
         case '\'':
                 COLOR(95);
                 vvP(v, '\\');
                 vvP(v, '\'');
                 COLOR(92);
                 break;
+
         case '\0':
                 COLOR(91);
                 vvP(v, '\\');
                 vvP(v, '0');
                 COLOR(92);
                 break;
+
         default:
                 vvP(v, *c);
         }
+        
 
         vvP(v, '\'');
 
@@ -415,7 +431,7 @@ show_string(Ty *ty, char const *s, size_t n, bool color)
 
         vvP(v, '\0');
 
-        return v.items;
+        return vv(v);
 }
 
 static noreturn void
@@ -834,8 +850,9 @@ value_show_colorx(Ty *ty, Value const *v)
                 if (fp != NULL && fp != class_method(ty, CLASS_OBJECT, "__str__")) {
                         Value str = vm_eval_function(ty, fp, v, NULL);
                         gP(&str);
-                        if (str.type != VALUE_STRING)
+                        if (str.type != VALUE_STRING) {
                                 zP("%s.__str__() returned non-string", class_name(ty, v->class));
+                        }
                         s = mA(str.bytes + 1);
                         gX();
                         memcpy(s, str.str, str.bytes);
@@ -1465,7 +1482,7 @@ tuple_get_completions(Ty *ty, Value const *v, char const *prefix, char **out, in
                 if (v->ids[i] == -1) continue;
                 char const *name = M_NAME(v->ids[i]);
                 if (strncmp(name, prefix, prefix_len) == 0) {
-                        out[n++] = sclone_malloc(name);
+                        out[n++] = S2(name);
                 }
         }
 

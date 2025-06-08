@@ -1,4 +1,4 @@
-struct value;
+typedef struct value Value;
 
 #ifndef VALUE_H_INCLUDED
 #define VALUE_H_INCLUDED
@@ -14,7 +14,6 @@ struct value;
 #include "gc.h"
 #include "tags.h"
 #include "tthread.h"
-#include "token.h"
 #include "scope.h"
 #include "util.h"
 
@@ -275,7 +274,7 @@ ValueTypeName(Ty *ty, Value const *v)
 }
 
 char *
-value_show_color(Ty *ty, struct value const *v);
+value_show_color(Ty *ty, Value const *v);
 
 #define DEFINE_METHOD_TABLE(...)                                     \
         static struct {                                              \
@@ -341,7 +340,7 @@ value_show_color(Ty *ty, struct value const *v);
                                 (n < max)                                       \
                              && strncmp(funcs[i].name, prefix, len) == 0        \
                         ) {                                                     \
-                                out[n++] = sclone_malloc(funcs[i].name);        \
+                                out[n++] = S2(funcs[i].name);                   \
                         }                                                       \
                 }                                                               \
                                                                                 \
@@ -511,26 +510,26 @@ checked_arg_4(Ty *ty, char const *fun, int i, Value arg, int t0, int t1, int t2,
   #define value_mark _value_mark
 #endif
 
-unsigned long
-value_hash(Ty *ty, struct value const *val);
+u64
+value_hash(Ty *ty, Value const *val);
 
 bool
-value_test_equality(Ty *ty, struct value const *v1, struct value const *v2);
+value_test_equality(Ty *ty, Value const *v1, Value const *v2);
 
 int
 value_compare(Ty *ty, Value const *v1, Value const *v2);
 
 bool
-value_truthy(Ty *ty, struct value const *v);
+value_truthy(Ty *ty, Value const *v);
 
 bool
-value_apply_predicate(Ty *ty, struct value *p, struct value *v);
+value_apply_predicate(Ty *ty, Value *p, Value *v);
 
-struct value
-value_apply_callable(Ty *ty, struct value *f, struct value *v);
+Value
+value_apply_callable(Ty *ty, Value *f, Value *v);
 
 char *
-value_show(Ty *ty, struct value const *v);
+value_show(Ty *ty, Value const *v);
 
 inline static void *
 value_string_alloc(Ty *ty, u32 n)
@@ -574,13 +573,13 @@ value_array_extend(Ty *ty, struct array *, struct array const *);
 struct blob *
 value_blob_new(Ty *ty);
 
-struct value
+Value
 value_tuple(Ty *ty, int n);
 
 Value
 value_record(Ty *ty, int n);
 
-struct value
+Value
 value_named_tuple(Ty *ty, char const *first, ...);
 
 Value *
@@ -1128,5 +1127,15 @@ TagAndReturn:
         return v;
 }
 
+inline static Value
+FunDef(Ty *ty, Value const *f)
+{
+        extern Value CToTyExpr(Ty *, Expr *);
+
+        Value def = CToTyExpr(ty, expr_of(f));
+        return unwrap(ty, &def);
+}
 
 #endif
+
+/* vim: set sts=8 sw=8 expandtab: */

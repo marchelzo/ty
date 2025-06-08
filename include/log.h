@@ -32,10 +32,13 @@ extern int EnableLogging;
                         GC_RESUME();                         \
                 } while (0)
 
-#define XXLOG(...) if (EnableLogging >= 0) do {               \
-                        fprintf(stdout, __VA_ARGS__);        \
-                        fprintf(stdout, "\n");               \
-                } while (0)
+#define XXLOG(...)                              \
+        if (EnableLogging >= 0) do {            \
+                fprintf(stdout, __VA_ARGS__);   \
+                fprintf(stdout, "\n");          \
+        } while (0)
+
+#define XXX(fmt, ...) fprintf(stderr, fmt "\n" __VA_OPT__(,) __VA_ARGS__)
 
 #if !defined(TY_NO_LOG)
 #define LOG(...) if (EnableLogging > 0) do {                 \

@@ -77,6 +77,7 @@ typedef ValueVector         ValueStack;
 typedef vec(char)           byte_vector;
 typedef vec(bool)           BoolVector;
 typedef vec(int)            int_vector;
+typedef vec(i32)            i32Vector;
 typedef vec(Symbol *)       symbol_vector;
 typedef vec(TySavePoint *)  TySavePointVector;
 
@@ -537,6 +538,7 @@ typedef struct {
         int call;
         int contains;
         int count;
+        int _def_;
         int _drop_;
         int fmt;
         int _free_;
@@ -549,7 +551,7 @@ typedef struct {
         int missing;
         int method_missing;
         int _name_;
-        int _argc_;
+        int negate;
         int _next_;
         int ptr;
         int question;
@@ -650,6 +652,8 @@ extern u64 TypeCheckTime;
         X(TARGET_THREAD_LOCAL),   \
         X(TARGET_MEMBER),         \
         X(TARGET_SUBSCRIPT),      \
+        X(INC),                   \
+        X(DEC),                   \
         X(ASSIGN),                \
         X(MAYBE_ASSIGN),          \
         X(ASSIGN_LOCAL),          \
@@ -664,6 +668,7 @@ extern u64 TypeCheckTime;
         X(STRING),                \
         X(REGEX),                 \
         X(ARRAY),                 \
+        X(ARRAY0),                \
         X(DICT),                  \
         X(TUPLE),                 \
         X(GATHER_TUPLE),          \
@@ -695,7 +700,9 @@ extern u64 TypeCheckTime;
         X(LOOP_CHECK),            \
         X(POP),                   \
         X(UNPOP),                 \
+        X(DROP2),                 \
         X(DUP),                   \
+        X(DUP2),                  \
         X(LEN),                   \
         X(ARRAY_COMPR),           \
         X(DICT_COMPR),            \
@@ -717,6 +724,8 @@ extern u64 TypeCheckTime;
         X(JGT),                   \
         X(JEQ),                   \
         X(JNE),                   \
+        X(JNI),                   \
+        X(JII),                   \
         X(JUMP_AND),              \
         X(JUMP_OR),               \
         X(JUMP_WTF),              \
@@ -1005,12 +1014,12 @@ enum {
 
 #define TY_UNARY_OPERATORS   \
         X(COMPL,      "~"),  \
-        X(NEG,        "-"),  \
-        X(NOT,        "!"),  \
         X(COUNT,      "#"),  \
-        X(QUESTION,   "?"),  \
         X(DEC,       "--"),  \
         X(INC,       "++"),  \
+        X(NEG,        "-"),  \
+        X(NOT,        "!"),  \
+        X(QUESTION,   "?"),  \
         X(UOP_MAX,    "z")
 
 #define TY_BINARY_OPERATORS  \
@@ -1411,6 +1420,18 @@ tdb_locals(Ty *ty);
 
 void
 tdb_backtrace(Ty *ty);
+
+inline static bool
+TyHasError(Ty *ty)
+{
+        return vN(ty->err) > 0;
+}
+
+inline static void
+TyClearError(Ty *ty)
+{
+        v0(ty->err);
+}
 
 inline static char const *
 TyError(Ty *ty)

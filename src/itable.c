@@ -284,7 +284,7 @@ itable_get_completions(Ty *ty, struct itable const *t, char const *prefix, char 
         for (int i = 0; n < max && i < vN(t->ids); ++i) {
                 char const *name = M_NAME(v__(t->ids, i));
                 if (strncmp(name, prefix, prefix_len) == 0) {
-                        out[n++] = sclone_malloc(name);
+                        out[n++] = S2(name);
                 }
         }
 

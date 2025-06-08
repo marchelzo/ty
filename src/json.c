@@ -29,10 +29,13 @@ static _Thread_local vec(void const *) Visiting;
 inline static char
 peek(void)
 {
-        if (len <= 0)
-                return '\0';
+        return (len == 0) ? '\0' : json[0];
+}
 
-        return *json;
+inline static char
+peek1(void)
+{
+        return (len <= 1) ? '\0' : json[1];
 }
 
 inline static char
@@ -152,6 +155,42 @@ jfalse(void)
         return BOOLEAN(false);
 }
 
+static u8 const xtable[256] = {
+        ['0'] = 0, ['1'] = 1, ['2'] = 2, ['3'] = 3, ['4'] = 4,
+        ['5'] = 5, ['6'] = 6, ['7'] = 7, ['8'] = 8, ['9'] = 9,
+
+        ['A'] = 10, ['a'] = 10,
+        ['B'] = 11, ['b'] = 11,
+        ['C'] = 12, ['c'] = 12,
+        ['D'] = 13, ['d'] = 13,
+        ['E'] = 14, ['e'] = 14,
+        ['F'] = 15, ['f'] = 15
+};
+
+inline static u16
+next16x(Ty *ty)
+{
+        u8 b0 = xtable[(u8)next()];
+        u8 b1 = xtable[(u8)next()];
+        u8 b2 = xtable[(u8)next()];
+        u8 b3 = xtable[(u8)next()];
+
+        return (b3 << 0)
+             | (b2 << 4)
+             | (b1 << 8)
+             | (b0 << 12);
+}
+
+inline static u8
+next8x(Ty *ty)
+{
+        u8 b0 = xtable[(u8)next()];
+        u8 b1 = xtable[(u8)next()];
+
+        return (b1 << 0)
+             | (b0 << 4);
+}
+
 static Value
 string(Ty *ty)
 {
@@ -162,10 +201,12 @@ string(Ty *ty)
 
         char b[8] = {0};
         i32 cp;
+        u16 lo;
+        u16 hi;
         utf8proc_ssize_t n;
 
         while (peek() != '\0' && peek() != '"') {
-                if (peek() == '\\') switch (next(), next()) {
+                switch ((peek() == '\\') ? (next(), next()) : -1) {
                 case 't':  xvP(str, '\t'); break;
                 case 'f':  xvP(str, '\f'); break;
                 case 'n':  xvP(str, '\n'); break;
@@ -174,46 +215,30 @@ string(Ty *ty)
                 case '"':  xvP(str, '"');  break;
                 case '/':  xvP(str, '/');  break;
                 case '\\': xvP(str, '\\'); break;
+
                 case 'x':
-                        b[0] = next();
-                        b[1] = next();
-                        b[2] = '\0';
-                        if (sscanf(b, "%X", &cp) != 1) {
-                                FAIL;
-                        }
-                        xvP(str, (char)cp);
+                        xvP(str, next8x(ty));
                         break;
+
                 case 'u':
-                        b[0] = isxdigit(peek()) ? next() : '\0';
-                        b[1] = isxdigit(peek()) ? next() : '\0';
-                        b[2] = isxdigit(peek()) ? next() : '\0';
-                        b[3] = isxdigit(peek()) ? next() : '\0';
-                        b[4] = '\0';
-                        if (sscanf(b, "%x", &cp) != 1) {
-                                FAIL;
-                        }
-                        if ((cp & 0xD800) == 0xD800) {
-                                uint16_t hi  = cp;
-                                uint16_t lo;
-
-                                if (next() != '\\') { FAIL; }
-                                if (next() != 'u')  { FAIL; }
-
-                                b[0] = isxdigit(peek()) ? next() : '\0';
-                                b[1] = isxdigit(peek()) ? next() : '\0';
-                                b[2] = isxdigit(peek()) ? next() : '\0';
-                                b[3] = isxdigit(peek()) ? next() : '\0';
-                                b[4] = '\0';
-                                if (sscanf(b, "%hx", &lo) != 1) {
+                        cp = next16x(ty);
+                        if ((cp & 0xF800) == 0xD800) {
+                                if (next() != '\\' || next() != 'u') {
                                         FAIL;
                                 }
-                                
+
+                                hi = cp;
+                                lo = next16x(ty);
+
                                 cp = 0x10000 + ((hi - 0xD800) << 10) + (lo - 0xDC00);
                         }
-                        n = utf8proc_encode_char(cp, (uint8_t *)b);
+                        n = utf8proc_encode_char(cp, (u8 *)b);
                         xvPn(str, b, n);
                         break;
-                } else xvP(str, next());
+
+                default:
+                        xvP(str, next());
+                }
         }
 
         if (next() != '"')
@@ -435,8 +460,8 @@ encode(Ty *ty, Value const *v, str *out)
                                                         dump(out, "\\u%04x", cp);
                                                 } else {
                                                         cp -= 0x10000;
-                                                        uint16_t hi = 0xD800 + (cp >> 10);
-                                                        uint16_t lo = 0xDC00 + (cp & 0x3FF);
+                                                        u16 hi = 0xD800 + (cp >> 10);
+                                                        u16 lo = 0xDC00 + (cp & 0x3FF);
                                                         dump(out, "\\u%04x\\u%04x", hi, lo);
                                                 }
                                         }

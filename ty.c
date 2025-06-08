@@ -68,7 +68,7 @@ bool AllowErrors = false;
 extern bool ProduceAnnotation;
 extern FILE *DisassemblyOut;
 
-#ifdef TY_ENABLE_PROFILING
+#ifdef TY_PROFILER
 extern FILE *ProfileOut;
 bool ColorProfile;
 #endif
@@ -97,7 +97,7 @@ usage(void)
                 "                    (- is interpreted as stdout, and @ is interpreted as stderr)         \0"
                 "    -t LINE:COL   Find the definition of the symbol which occurs at LINE:COL             \0"
                 "                  in the specified source file                                           \0"
-#ifdef TY_ENABLE_PROFILING
+#ifdef TY_PROFILER
                 "    -o FILE       Write profile data to FILE instead of stdout                           \0"
                 "                    (- is interpreted as stdout, and @ is interpreted as stderr)         \0"
                 "    --wall        Profile based on wall time instead of CPU time                         \0"
@@ -330,7 +330,7 @@ repl(Ty *ty)
 char *
 completion_generator(char const *text, int state)
 {
-        return completions[state] ? sclone_malloc(completions[state]) : NULL;
+        return completions[state] ? S2(completions[state]) : NULL;
 }
 
 static int
@@ -531,7 +531,7 @@ ProcessArgs(char *argv[], bool first)
                         goto NextOption;
                 }
 
-#ifdef TY_ENABLE_PROFILING
+#ifdef TY_PROFILER
                 extern bool UseWallTime;
                 if (strcmp(argv[argi], "--wall") == 0) {
                         UseWallTime = true;
@@ -617,7 +617,7 @@ ProcessArgs(char *argv[], bool first)
 
                                         goto NextOption;
                                 }
-#ifdef TY_ENABLE_PROFILING
+#ifdef TY_PROFILER
                                 case 'o':
                                         if (opt[1] == '\0') {
                                                 if (argv[argi + 1] == NULL) {
@@ -755,7 +755,7 @@ main(int argc, char **argv)
                 query = 0;
         }
 
-#ifdef TY_ENABLE_PROFILING
+#ifdef TY_PROFILER
         if (ProfileOut == NULL) {
                 ProfileOut = stdout;
         }

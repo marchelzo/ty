@@ -11,7 +11,7 @@
 
 static i64 SYMBOL;
 
-#if !defined(TY_RELEASE) || defined(TY_DEBUG_NAMES)
+#if TY_NAMED_SCOPES
 char const *
 scope_name(Ty *ty, Scope const *s)
 {
@@ -106,7 +106,7 @@ scope_new_namespace(Ty *ty, char const *name, Scope *parent)
 {
         Scope *ns = NewSubscope(
                 ty,
-#if !defined(TY_RELEASE) || defined(TY_DEBUG_NAMES)
+#if TY_NAMED_SCOPES
                 name,
 #endif
                 0,
@@ -122,7 +122,7 @@ scope_new_namespace(Ty *ty, char const *name, Scope *parent)
 Scope *
 NewSubscope(
         Ty *ty,
-#if !defined(TY_RELEASE) || defined(TY_DEBUG_NAMES)
+#if TY_NAMED_SCOPES
         char const *name,
 #endif
         u32 size,
@@ -147,7 +147,7 @@ NewSubscope(
         scope->size = size;
         scope->mask = (size - 1);
 
-#if !defined(TY_RELEASE) || defined(TY_DEBUG_NAMES)
+#if TY_NAMED_SCOPES
         scope->name = name;
 #endif
 
@@ -692,7 +692,7 @@ scope_get_completions(
                              && SymbolIsPublic(sym)
                              && strncmp(sym->identifier, prefix, prefix_len) == 0
                         ) {
-                                out[n++] = sclone_malloc(sym->identifier);
+                                out[n++] = S2(sym->identifier);
                         }
                 }
         }
@@ -707,6 +707,64 @@ scope_get_completions(
         );
 
         return n;
+}
+
+i32
+ScopeCompletionsGo(
+        Ty *ty,
+        Scope *scope,
+        char const *prefix,
+        symbol_vector *out,
+        i32Vector *depths,
+        i32 max,
+        bool recursive,
+        i32 depth
+)
+{
+        i32 n = 0;
+        u32 prefix_len = strlen(prefix);
+
+        if (scope == NULL || max == 0) return 0;
+
+        for (int i = 0; i < scope->size; ++i) {
+                for (Symbol *sym = scope->table[i]; sym != NULL && n < (u32)max; sym = sym->next) {
+                        if (
+                                SymbolIsPublic(sym)
+                             && strncmp(sym->identifier, prefix, prefix_len) == 0
+                        ) {
+                                xvP(*out, sym);
+                                xvP(*depths, depth);
+                                n += 1;
+                        }
+                }
+        }
+
+        if (recursive) n += ScopeCompletionsGo(
+                ty,
+                scope->parent,
+                prefix,
+                out,
+                depths,
+                (max == -1) ? -1 : (max - n),
+                true,
+                depth + 1
+        );
+
+        return n;
+}
+
+i32
+ScopeCompletions(
+        Ty *ty,
+        Scope *scope,
+        char const *prefix,
+        symbol_vector *out,
+        i32Vector *depths,
+        i32 max,
+        bool recursive
+)
+{
+        return ScopeCompletionsGo(ty, scope, prefix, out, depths, max, recursive, 0);
 }
 
 void

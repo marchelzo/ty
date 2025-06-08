@@ -79,7 +79,7 @@ else
 endif
 
 ifdef TY_PROFILER
-        CFLAGS += -DTY_ENABLE_PROFILING
+        CFLAGS += -DTY_PROFILER
 endif
 
 ifdef GENPROF

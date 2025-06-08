@@ -7646,19 +7646,19 @@ type_show(Ty *ty, Type const *t0)
         t0 = ResolveVar(t0);
 
         if (t0 == NULL) {
-                return sclone_malloc("⭕️");
+                return S2("⭕️");
         }
 
         if (IsUnknown(t0)) {
-                return sclone_malloc("🟢");
+                return S2("🟢");
         }
 
         if (IsBottom(t0)) {
-                return sclone_malloc("🔴");
+                return S2("🔴");
         }
 
         if (already_visiting(&visiting, t0) || vN(visiting) > 24) {
-                return sclone_malloc("...");
+                return S2("...");
         } else {
                 xvP(visiting, (Type *)t0);
         }
@@ -8004,7 +8004,7 @@ type_show(Ty *ty, Type const *t0)
 
         vvX(visiting);
 
-        return vN(buf) == 0 ? sclone_malloc("<?>") : buf.items;
+        return vN(buf) == 0 ? S2("<?>") : buf.items;
 }
 
 Type *
