@@ -7704,10 +7704,24 @@ type_show(Ty *ty, Type const *t0)
                 }
                 break;
         case TYPE_CLASS:
-                dump(&buf, "Class[%s]", t0->class->name != NULL ? t0->class->name : "?");
+                dump(
+                        &buf,
+                        "%sClass[%s%s%s]%s",
+                        TERM(33;1),
+                        TERM(95),
+                        t0->class->name != NULL ? t0->class->name : "?",
+                        TERM(33;1),
+                        TERM(0)
+                );
                 break;
         case TYPE_TAG:
-                dump(&buf, "Tag[%s]", t0->class->name);
+                dump(
+                        &buf,
+                        "%s%s%s",
+                        TERM(34;1),
+                        t0->class->name,
+                        TERM(0)
+                );
                 break;
         case TYPE_TYPE:
                 dump(&buf, "Type[%s]", ShowType(t0->_type));

@@ -9186,7 +9186,7 @@ lowkey(Expr *e, Scope *scope, void *ctx)
 
         if (
                 e->end.line == QueryExpr->end.line
-             && e->end.col < QueryExpr->end.col
+             && e->end.col <= QueryExpr->end.col
         ) {
                 return e;
         }
