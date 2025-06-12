@@ -1,5 +1,3 @@
-#include <string.h>
-
 #include <libco.h>
 
 #include "gc.h"
@@ -7,7 +5,6 @@
 #include "object.h"
 #include "vm.h"
 #include "log.h"
-#include "token.h"
 #include "class.h"
 #include "tthread.h"
 #include "compiler.h"
@@ -117,7 +114,7 @@ collect(Ty *ty, struct alloc *a)
 }
 
 void
-GCForget(Ty *ty, AllocList *allocs, usize *used)
+GCForget(Ty *ty, AllocList *allocs, isize *used)
 {
         usize n = 0;
 
@@ -134,24 +131,47 @@ GCForget(Ty *ty, AllocList *allocs, usize *used)
 }
 
 void
-GCSweep(Ty *ty, AllocList *allocs, usize *used)
+GCSweepOwn(Ty *ty)
 {
         GC_STOP();
 
         usize n = 0;
 
-        for (int i = 0; i < allocs->count; ++i) {
-                if (!A_LOAD(&allocs->items[i]->mark) && A_LOAD(&allocs->items[i]->hard) == 0) {
-                        *used -= min(allocs->items[i]->size, *used);
-                        collect(ty, allocs->items[i]);
-                        free(allocs->items[i]);
+        for (int i = 0; i < vN(ty->allocs); ++i) {
+                if (!A_LOAD(&v__(ty->allocs, i)->mark) && A_LOAD(&v__(ty->allocs, i)->hard) == 0) {
+                        ty->memory_used -= min(v__(ty->allocs, i)->size, ty->memory_used);
+                        collect(ty, v__(ty->allocs, i));
+                        free(v__(ty->allocs, i));
                 } else {
-                        A_STORE(&allocs->items[i]->mark, false);
-                        allocs->items[n++] = allocs->items[i];
+                        A_STORE(&v__(ty->allocs, i)->mark, false);
+                        *v_(ty->allocs, n++) = v__(ty->allocs, i);
                 }
         }
 
-        allocs->count = n;
+        vN(ty->allocs) = n;
+
+        GC_RESUME();
+}
+
+void
+GCSweep(Ty *ty, AllocList *allocs, isize *used)
+{
+        GC_STOP();
+
+        usize n = 0;
+
+        for (int i = 0; i < vN(*allocs); ++i) {
+                if (!A_LOAD(&v__(*allocs, i)->mark) && A_LOAD(&v__(*allocs, i)->hard) == 0) {
+                        *used -= min(v__(*allocs, i)->size, *used);
+                        collect(ty, v__(*allocs, i));
+                        free(v__(*allocs, i));
+                } else {
+                        A_STORE(&v__(*allocs, i)->mark, false);
+                        *v_(*allocs, n++) = v__(*allocs, i);
+                }
+        }
+
+        vN(*allocs) = n;
 
         GC_RESUME();
 }
@@ -160,7 +180,7 @@ void
 GCTakeOwnership(Ty *ty, AllocList *new)
 {
         for (usize i = 0; i < new->count; ++i) {
-                vec_nogc_push(ty->allocs, new->items[i]);
+                xvP(ty->allocs, new->items[i]);
                 MemoryUsed += new->items[i]->size;
         }
 }
@@ -174,24 +194,13 @@ gc(Ty *ty)
 void
 gc_register(Ty *ty, void *p)
 {
-        vec_nogc_push(ty->allocs, ALLOC_OF(p));
-}
-
-void
-_gc_push(Ty *ty, Value const *v)
-{
+        xvP(ty->allocs, ALLOC_OF(p));
 }
 
 void
 gc_immortalize(Ty *ty, Value const *v)
 {
-        vec_nogc_push(ImmortalSet, *v);
-}
-
-void
-_gc_pop(Ty *ty)
-{
-        --RootSet.count;
+        xvP(ImmortalSet, *v);
 }
 
 void

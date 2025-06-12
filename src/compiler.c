@@ -71,7 +71,7 @@
 
 #define PATCH_OFFSET(i)                                           \
         do {                                                      \
-                int dist = vN(STATE.code) - i - sizeof dist;    \
+                int dist = vN(STATE.code) - i - sizeof dist;      \
                 memcpy(STATE.code.items + i, &dist, sizeof dist); \
         } while (0)
 
@@ -85,14 +85,14 @@
         do {                                                               \
                 annotate("%sL%d%s", TERM(95), (loc).label + 1, TERM(0));   \
                 INSN(JUMP);                                                \
-                Ei32((loc).off - vN(STATE.code) - sizeof (int));   \
+                Ei32((loc).off - vN(STATE.code) - sizeof (int));           \
         } while (0)
 
 #define JUMP_IF_NOT(loc)                                                   \
         do {                                                               \
                 annotate("%sL%d%s", TERM(95), (loc).label + 1, TERM(0));   \
                 INSN(JUMP_IF_NOT);                                         \
-                Ei32((loc).off - vN(STATE.code) - sizeof (int));   \
+                Ei32((loc).off - vN(STATE.code) - sizeof (int));           \
         } while (0)
 
 #define EMIT_GROUP_LABEL(g, s)  \
@@ -108,7 +108,7 @@
                 EMIT_GROUP_LABEL(STATE.match_fails, "Fail"); \
                 INSN(instr);                                 \
                 avP(STATE.match_fails, vN(STATE.code));      \
-                Ei32(0);                             \
+                Ei32(0);                                     \
         } while (0)
 
 #define CHECK_INIT() if (CheckConstraints) { INSN(CHECK_INIT); }
@@ -148,7 +148,7 @@
 #define ScopeLookupLocalEx(scope, name, flags)                       \
         ScopeLookupEx((scope), (name), ((flags) | SCOPE_LOCAL_ONLY))
 
-#define ScopeLookupLocal(scope, name) \
+#define ScopeLookupLocal(scope, name)          \
         ScopeLookupLocalEx((scope), (name), 0)
 
 #define ScopeLookup(scope, name) ScopeLookupEx((scope), (name), 0)
@@ -4807,9 +4807,16 @@ emit_load(Ty *ty, Symbol const *s, Scope const *scope)
         if (SymbolIsTypeVar(s)) {
                 INSN(BOOLEAN);
                 Eu1(true);
-        } else if (0 && class_op_self_access) {
+        } else if (class_op_self_access) {
                 emit_load(ty, v__(STATE.func->param_symbols, 0), scope);
                 INSN(MEMBER_ACCESS);
+                Ei32(s->member);
+        } else if (
+                SymbolIsMember(s)
+             && (STATE.class != NULL)
+             && (STATE.self->scope->function == scope->function)
+        ) {
+                INSN(SELF_MEMBER_ACCESS);
                 Ei32(s->member);
         } else if (SymbolIsMember(s)) {
                 emit_load(ty, STATE.self, scope);
@@ -4851,6 +4858,13 @@ emit_tgt(Ty *ty, Symbol *s, Scope const *scope, bool def)
         } else if (0 && class_op_self_access) {
                 emit_load(ty, v__(STATE.func->param_symbols, 0), scope);
                 INSN(TARGET_MEMBER);
+                Ei32(s->member);
+        } else if (
+                SymbolIsMember(s)
+             && (STATE.class != NULL)
+             && (STATE.self->scope->function == scope->function)
+        ) {
+                INSN(TARGET_SELF_MEMBER);
                 Ei32(s->member);
         } else if (SymbolIsMember(s)) {
                 emit_load(ty, STATE.self, scope);
@@ -6307,7 +6321,7 @@ emit_case(Ty *ty, Expr const *pattern, Expr const *cond, Stmt const *s, bool wan
         InitJumpGroup(&STATE.match_fails);
 
         expression_vector assignments = STATE.match_assignments;
-        vec_init(STATE.match_assignments);
+        v00(STATE.match_assignments);
 
         if (pattern->has_resources) {
                 INSN(PUSH_DROP_GROUP);
@@ -6316,13 +6330,10 @@ emit_case(Ty *ty, Expr const *pattern, Expr const *cond, Stmt const *s, bool wan
 
         INSN(SAVE_STACK_POS);
         emit_try_match(ty, pattern);
-
         if (cond != NULL) {
                 fail_match_if_not(ty, cond);
         }
-
-        INSN(POP_STACK_POS);
-        INSN(CLEAR_EXTRA);
+        INSN(POP_STACK_POS_POP);
 
         bool returns = false;
 
@@ -6390,8 +6401,7 @@ emit_expression_case(Ty *ty, Expr const *pattern, Expr const *e)
          * Go back to where the subject of the match is on top of the stack,
          * then pop it and execute the code to produce the result of this branch.
          */
-        INSN(POP_STACK_POS);
-        INSN(CLEAR_EXTRA);
+        INSN(POP_STACK_POS_POP);
 
         for (int i = 0; i < vN(STATE.match_assignments); ++i) {
                 Expr *e = *v_(STATE.match_assignments, i);
@@ -6432,28 +6442,36 @@ emit_match_statement(Ty *ty, Stmt const *s, bool want_result)
         offset_vector successes_save = STATE.match_successes;
         vec_init(STATE.match_successes);
 
-        /* FIXME: Why do we need a sentinel here? */
-        INSN(SENTINEL);
-        INSN(CLEAR_RC);
         EE(s->match.e);
 
         bool returns = true;
+        bool irrefutable = false;
 
         for (int i = 0; i < vN(s->match.patterns); ++i) {
-                LOG("emitting case %d", i + 1);
-                returns &= emit_case(
-                        ty,
-                        v__(s->match.patterns, i),
-                        NULL,
-                        v__(s->match.statements, i),
-                        want_result
-                );
+                Expr *pattern = v__(s->match.patterns, i);
+                Stmt *then = v__(s->match.statements, i);
+                if (
+                        (pattern->type == EXPRESSION_IDENTIFIER)
+                     && (pattern->constraint == NULL)
+                ) {
+                        if (i + 1 != vN(s->match.patterns)) {
+                                fail("unreachable cases in match statement");
+                        }
+
+                        irrefutable = true;
+
+                        emit_assignment2(ty, pattern, false, true);
+                        INSN(POP);
+
+                        returns &= ES(then, want_result);
+                } else {
+                        returns &= emit_case(ty, pattern, NULL, then, want_result);
+                }
         }
 
-        /*
-         * Nothing matched. This is a runtime error.
-         */
-        INSN(BAD_MATCH);
+        if (!irrefutable) {
+                INSN(BAD_MATCH);
+        }
 
         patch_jumps_to(&STATE.match_successes, vN(STATE.code));
         STATE.match_successes = successes_save;
@@ -6764,35 +6782,36 @@ emit_match_expression(Ty *ty, Expr const *e)
         offset_vector successes_save = STATE.match_successes;
         vec_init(STATE.match_successes);
 
-        /*
-         * FIXME:
-         *
-         * We used to use emit_list here, but matching on multiple return values
-         * was never used and could cause some problems for the GC.
-         *
-         * However, I don't know if/why SENTINEL is really needed here still.
-         *
-         * This applies to emit_match_statement() as well.
-         */
-        INSN(SENTINEL);
-        INSN(CLEAR_RC);
         EE(e->subject);
 
+        bool irrefutable = false;
+
         for (int i = 0; i < vN(e->patterns); ++i) {
-                LOG("emitting case %d", i + 1);
-                emit_expression_case(ty, v__(e->patterns, i), v__(e->thens, i));
+                Expr *pattern = v__(e->patterns, i);
+                Expr *then = v__(e->thens, i);
+                if (
+                        (pattern->type == EXPRESSION_IDENTIFIER)
+                     && (pattern->constraint == NULL)
+                ) {
+                        if (i + 1 != vN(e->patterns)) {
+                                fail("unreachable cases in match expression");
+                        }
+
+                        irrefutable = true;
+
+                        emit_assignment2(ty, pattern, false, true);
+                        INSN(POP);
+
+                        EE(then);
+                } else {
+                        emit_expression_case(ty, v__(e->patterns, i), v__(e->thens, i));
+                }
         }
 
-        /*
-         * Nothing matched. This is a runtime error.
-         */
-        INSN(BAD_MATCH);
+        if (!irrefutable) {
+                INSN(BAD_MATCH);
+        }
 
-        /*
-         * If a branch matched successfully, it will jump to this point
-         * after it is evaluated so as not to fallthrough to the other
-         * branches.
-         */
         patch_jumps_to(&STATE.match_successes, vN(STATE.code));
 
         STATE.match_successes = successes_save;
@@ -6977,8 +6996,7 @@ emit_array_compr(Ty *ty, Expr const *e)
         for (int i = 0; i < vN(e->compr.pattern->es); ++i) {
                 INSN(SAVE_STACK_POS);
                 emit_try_match(ty, v__(e->compr.pattern->es, i));
-                INSN(POP_STACK_POS);
-                INSN(POP);
+                INSN(POP_STACK_POS_POP);
         }
 
         emit_statement(ty, e->compr.where, false);
@@ -11922,10 +11940,17 @@ cexpr(Ty *ty, Value *v)
         {
                 e->type = EXPRESSION_ARRAY;
 
-                for (int i = 0; i < v->array->count; ++i) {
-                        Value *entry = &v->array->items[i];
+                for (int i = 0; i < vN(*v->array); ++i) {
+                        Value *entry    = v_(*v->array, i);
+
+                        Value *item     = tuple_get(entry, "item");
                         Value *optional = tuple_get(entry, "optional");
-                        Value *cond = tuple_get(entry, "cond");
+                        Value *cond     = tuple_get(entry, "cond");
+
+                        if (item == NULL) {
+                                goto Bad;
+                        }
+
                         avP(e->elements, cexpr(ty, tuple_get(entry, "item")));
                         avP(e->optional, optional != NULL ? optional->boolean : false);
                         avP(e->aconds, (cond != NULL && cond->type != VALUE_NIL) ? cexpr(ty, cond) : NULL);
@@ -11948,16 +11973,28 @@ cexpr(Ty *ty, Value *v)
         {
                 e->type = EXPRESSION_TUPLE;
 
-                for (int i = 0; i < v->array->count; ++i) {
-                        Value *entry = &v->array->items[i];
-                        Value *item = tuple_get(entry, "item");
-                        Value *name = tuple_get(entry, "name");
-                        Value *optional = tuple_get(entry, "optional");
-                        Value *cond = tuple_get(entry, "cond");
+                Value elems = unwrap(ty, v);
+
+                if (elems.type != VALUE_ARRAY) {
+                        goto Bad;
+                }
+
+                for (int i = 0; i < vN(*elems.array); ++i) {
+                        Value *entry = v_(*elems.array, i);
+
+                        Value *item     = tuple_get(entry, "item");
+                        Value *name     = tget_t(entry, "name", VALUE_STRING);
+                        Value *optional = tget_t(entry, "optional", VALUE_BOOLEAN);
+                        Value *cond     = tget_nn(entry, "cond");
+
+                        if (item == NULL) {
+                                goto Bad;
+                        }
+
                         avP(e->es, cexpr(ty, item));
-                        avP(e->names, name != NULL && name->type != VALUE_NIL ? mkcstr(ty, name) : NULL);
+                        avP(e->names, (name != NULL) ? mkcstr(ty, name) : NULL);
                         avP(e->required, optional != NULL ? !optional->boolean : true);
-                        avP(e->tconds, cond != NULL && cond->type != VALUE_NIL ? cexpr(ty, cond) : NULL);
+                        avP(e->tconds, cexpr(ty, cond));
                 }
 
                 break;
@@ -14063,6 +14100,7 @@ DumpProgram(
 #endif
                         break;
                 CASE(TARGET_MEMBER)
+                CASE(TARGET_SELF_MEMBER)
                         READMEMBER(n);
                         break;
                 CASE(TARGET_SUBSCRIPT)
@@ -14351,6 +14389,9 @@ DumpProgram(
                 CASE(MEMBER_ACCESS)
                         READMEMBER(n);
                         break;
+                CASE(SELF_MEMBER_ACCESS)
+                        READMEMBER(n);
+                        break;
                 CASE(TRY_GET_MEMBER)
                 CASE(GET_MEMBER)
                         break;
@@ -14532,6 +14573,7 @@ DumpProgram(
                 CASE(SAVE_STACK_POS)
                         break;
                 CASE(POP_STACK_POS)
+                CASE(POP_STACK_POS_POP)
                         break;
                 CASE(MULTI_RETURN)
                         READVALUE(n);

@@ -522,19 +522,25 @@ fn strct() {
         decl              => decl.name
     }).flat()
 
+    let init-params = [
+        ty.Param({name: name, default: ty.Nil, constraint: ty.Any})
+        for name in member-names
+    ]
+
     let init = ty.Func(
         name: 'init',
-        params: [ty.Param(name: '<p>', default: ty.Nil, constraint: ty.Any), ty.Kwargs('kws')],
-        body: ty.Multi([
-            $$[self.`<p>` = cast(`<p>`) ?? c.new($$ctype) $$],
-            *[
-                $$[
-                    if $${name} in kws {
-                        $$(ty.MemberAccess($$[ self $$], name)) = kws[$${name}]
-                    }
-                $$] for name in member-names
-            ]
-        ])
+        params: [ty.Param(name: '<p>', default: ty.Nil, constraint: ty.Any), *init-params],
+        body: ty.If(
+            [$$[`<p>` != nil$$]],
+            $$[ self.`<p>` = `<p>` $$],
+            ty.Multi([
+                $$[ self.`<p>` = c.new($$ctype) $$],
+                *[
+                    $$[ $$(ty.MemberAccess($$[ self $$], name)) = $$(ty.Id({name})) $$]
+                    for name in member-names
+                ]
+            ])
+        )
     )
 
     let get = ty.Func(

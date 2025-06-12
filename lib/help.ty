@@ -480,7 +480,8 @@ fn term-cols() {
 }
 
 pub fn pretty(x, %kwargs) {
-    kwargs['width'] ?= max(min(term-cols(), 108), 36)
+    //kwargs['width'] ?= max(min(term-cols(), 108), 36)
+    kwargs['width'] ?= 32
     if let $home = getenv('HOME') and let $s = slurp("{home}/.ty/colors.json") {
         Printer(colors=tuple(**json.parse(s))).print(x)
     } else {

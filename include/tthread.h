@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <time.h>
+#include <stdio.h>
 
 typedef uint64_t u64;
 
@@ -241,6 +242,7 @@ typedef pthread_t            TyThread;
 typedef pthread_mutex_t      TyMutex;
 typedef pthread_cond_t       TyCondVar;
 typedef pthread_rwlock_t     TyRwLock;
+typedef pthread_spinlock_t   TySpinLock;
 typedef pthread_barrier_t    TyBarrier;
 typedef void                *TyThreadFunc(void *);
 typedef void                *TyThreadReturnValue;
@@ -309,20 +311,31 @@ TyThreadEqual(TyThread t1, TyThread t2)
         return pthread_equal(t1, t2);
 }
 
-inline static void
-TyMutexInit(TyMutex *m)
+inline static bool
+TySpinLockInit(TySpinLock *spin)
 {
-        pthread_mutex_init(m, NULL);
+        return pthread_spin_init(spin, PTHREAD_PROCESS_PRIVATE) == 0;
 }
 
-inline static void
+inline static bool
+TyMutexInit(TyMutex *m)
+{
+        return pthread_mutex_init(m, NULL) == 0;
+}
+
+inline static bool
 TyMutexInitRecursive(TyMutex *m)
 {
         pthread_mutexattr_t attr;
+        int err;
+
         pthread_mutexattr_init(&attr);
         pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE);
-        pthread_mutex_init(m, &attr);
+
+        err = pthread_mutex_init(m, &attr);
         pthread_mutexattr_destroy(&attr);
+
+        return (err == 0);
 }
 
 inline static bool
@@ -347,6 +360,30 @@ inline static bool
 TyMutexUnlock(TyMutex *m)
 {
         return pthread_mutex_unlock(m) == 0;
+}
+
+inline static bool
+TySpinLockTryLock(TySpinLock *spin)
+{
+        return pthread_spin_trylock(spin) == 0;
+}
+
+inline static bool
+TySpinLockLock(TySpinLock *spin)
+{
+        return pthread_spin_lock(spin) == 0;
+}
+
+inline static bool
+TySpinLockUnlock(TySpinLock *spin)
+{
+        return pthread_spin_unlock(spin) == 0;
+}
+
+inline static bool
+TySpinLockDestroy(TySpinLock *spin)
+{
+        return pthread_spin_destroy(spin) == 0;
 }
 
 inline static void

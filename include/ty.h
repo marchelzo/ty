@@ -61,6 +61,7 @@ typedef vec(char const *)   ConstStringVector;
 typedef vec(Constraint)     ConstraintVector;
 typedef vec(Frame)          FrameStack;
 typedef vec(Value)          GCRootSet;
+typedef vec(Value *)        GCWorkStack;
 typedef vec(jmp_buf *)      JmpBufVector;
 typedef vec(Refinement)     RefinementVector;
 typedef vec(Scope *)        ScopeVector;
@@ -86,7 +87,7 @@ enum { INTERN_TABLE_SIZE = 128 };
 typedef struct {
         i64 id;
         char const *name;
-        unsigned long hash;
+        u64 hash;
         void *data;
 } InternEntry;
 
@@ -345,7 +346,7 @@ struct thread {
 
 struct chanval {
         vec(void *) as;
-        struct value v;
+        Value v;
 };
 
 struct channel {
@@ -356,12 +357,12 @@ struct channel {
 };
 
 struct dict {
-        unsigned long *hashes;
-        struct value *keys;
-        struct value *values;
-        size_t size;
-        size_t count;
-        struct value dflt;
+        u64   *hashes;
+        Value *keys;
+        Value *values;
+        usize size;
+        usize count;
+        Value dflt;
 };
 
 typedef struct target {
@@ -491,10 +492,11 @@ typedef struct ty {
         int GC_OFF_COUNT;
         int rc;
 
-        GCRootSet gc_roots;
+        GCRootSet   gc_roots;
+        GCWorkStack marking;
 
-        usize memory_used;
-        usize memory_limit;
+        isize memory_used;
+        isize memory_limit;
 
         AllocList allocs;
         ThreadGroup *my_group;
@@ -588,6 +590,10 @@ extern u64 TypeCheckCounter;
 extern u64 TypeAllocCounter;
 extern u64 TypeCheckTime;
 
+#if defined(TY_GC_STATS)
+extern usize TotalBytesAllocated;
+#endif
+
 #define dont_printf(...) 0
 
 #if 0
@@ -651,6 +657,7 @@ extern u64 TypeCheckTime;
         X(TARGET_GLOBAL),         \
         X(TARGET_THREAD_LOCAL),   \
         X(TARGET_MEMBER),         \
+        X(TARGET_SELF_MEMBER),    \
         X(TARGET_SUBSCRIPT),      \
         X(INC),                   \
         X(DEC),                   \
@@ -685,6 +692,7 @@ extern u64 TypeCheckTime;
         X(INCRANGE),              \
         X(MEMBER_ACCESS),         \
         X(TRY_MEMBER_ACCESS),     \
+        X(SELF_MEMBER_ACCESS),    \
         X(GET_MEMBER),            \
         X(TRY_GET_MEMBER),        \
         X(SUBSCRIPT),             \
@@ -760,6 +768,7 @@ extern u64 TypeCheckTime;
         X(SAVE_STACK_POS),        \
         X(RESTORE_STACK_POS),     \
         X(POP_STACK_POS),         \
+        X(POP_STACK_POS_POP),     \
         X(DROP_STACK_POS),        \
         X(NEXT),                  \
         X(YIELD),                 \
@@ -1220,6 +1229,17 @@ ResetScratch(Ty *ty)
 #define SCRATCH_SAVE()    ScratchSave _scratch_save = SaveScratch(ty);
 #define SCRATCH_RESTORE() RestoreScratch(ty, _scratch_save);
 #define SCRATCH_RESET()   ResetScratch(ty);
+#define WITH_SCRATCH for (                              \
+        struct {                                        \
+                ScratchSave save;                       \
+                bool cond;                              \
+        } _ss_ctx = { SaveScratch(ty), 1 };             \
+        (                                               \
+                _ss_ctx.cond                            \
+             || (RestoreScratch(ty, _ss_ctx.save), 0)   \
+        );                                              \
+        _ss_ctx.cond = 0                                \
+)
 
 inline static void *
 TyEnsureTmpBuffer(Ty *ty, u32 i, usize n)

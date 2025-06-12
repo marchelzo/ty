@@ -5463,20 +5463,16 @@ type_call_t(Ty *ty, Expr const *e, Type *t0)
                 if (IsBoundVar(t0)) {
                         return type_call_t(ty, e, t0->val);
                 } else {
-                        return NewVar(ty);
                         t1 = NewType(ty, TYPE_FUNCTION);
                         t1->rt = NewVar(ty);
-                        //t1->rt->level = t0->level;
                         for (int i = 0; i < vN(*args); ++i) {
                                 Type *p0 = NewVar(ty);
-                                //p0->level = t0->level;
                                 avP(t1->params, PARAM(NULL, p0, true));
                         }
                         for (int i = 0; i < vN(*args); ++i) {
                                 Unify(ty, v_(t1->params, i)->type, v__(*args, i)->_type, true);
                         }
                         Unify(ty, t1, t0, false);
-                        //return Generalize(ty, t1->rt);
                         return t1->rt;
                 }
         }
@@ -6007,7 +6003,7 @@ type_method_call_t(Ty *ty, Expr const *e, Type *t0, char const *name)
         case TYPE_FUNCTION:
         case TYPE_INTEGER:
                 t1 = SolveMemberAccess(ty, t0, type_member_access_t(ty, t0, name, false));
-                t1 = e->member->_type = Inst(ty, t1, &t0->bound, NULL);
+                t1 = Inst(ty, t1, &t0->bound, NULL);
                 t1 = SolveMemberAccess(ty, t0, type_call_t(ty, e, t1));
                 return t1;
 

@@ -117,7 +117,8 @@ let styles: Dict[String, TermStyle] = %{
     'bg-bright':    {bg-bright: true}
 }
 
-pub fn record-of(attrs: String, start: _ = {}) -> _ {
+@[memoized]
+fn record-of(attrs: String, start: _ = {}) -> _ {
     let props = start
 
     let name = match {
@@ -189,7 +190,8 @@ pub fn record-of(attrs: String, start: _ = {}) -> _ {
     props
 }
 
-pub fn detrans(a: TermStyle, b: TermStyle) -> String {
+@[memoized]
+fn detrans(a: TermStyle, b: TermStyle) -> String {
     let on = []
     let off = []
 
@@ -312,7 +314,8 @@ pub fn rand-hsl(
     (sample(h), sample(s), sample(l))
 }
 
-pub fn parse-style(style: String, chalk: Chalk) -> ?TermStyle {
+@[memoized]
+fn parse-style(style: String, chalk: Chalk) -> ?TermStyle {
     match style {
         /.*\?$/ => do {
             let (h, s, l) = rand-hsl()
@@ -389,7 +392,8 @@ fn bright-unfix(style) {
     }
 }
 
-pub fn trans(a: TermStyle, b: TermStyle) -> String {
+@[memoized]
+fn trans(a: TermStyle, b: TermStyle) -> String {
     let a: _ = %{**a}
     let b: _ = %{**b}
 

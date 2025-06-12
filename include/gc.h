@@ -21,7 +21,16 @@ DoGC(Ty *ty);
 uint64_t
 MyThreadId(Ty *ty);
 
+
 #define GC_INITIAL_LIMIT (1ULL << 22)
+
+
+#if defined(TY_GC_STATS)
+#define AddToTotalBytes(n) TotalBytesAllocated += (n)
+#else
+#define AddToTotalBytes(n) 0
+#endif
+
 
 #define resize(ptr, n) ((ptr) = gc_resize(ty, (ptr), (n)))
 #define resize_unchecked(ptr, n) ((ptr) = gc_resize_unchecked(ty, (ptr), (n)))
@@ -65,6 +74,7 @@ gc_resize_unchecked(Ty *ty, void *p, usize n) {
         }
 
         MemoryUsed += n;
+        AddToTotalBytes(n);
 
         a = realloc(a, sizeof *a + n);
         if (UNLIKELY(a == NULL)) {
@@ -81,7 +91,7 @@ CheckUsed(Ty *ty)
 {
         if (UNLIKELY(
                 (ty->GC_OFF_COUNT == 0)
-             && (MemoryUsed > MemoryLimit)
+             && (MemoryUsed >= MemoryLimit)
         )) {
                 GCLOG("Running GC. Used = %zu MB, Limit = %zu MB", MemoryUsed / 1000000, MemoryLimit / 1000000);
                 DoGC(ty);
@@ -97,6 +107,7 @@ inline static void *
 gc_alloc(Ty *ty, usize n)
 {
         MemoryUsed += n;
+        AddToTotalBytes(n);
         CheckUsed(ty);
 
         struct alloc *a = malloc(sizeof *a + n);
@@ -116,6 +127,7 @@ inline static void *
 gc_alloc0(Ty *ty, usize n)
 {
         MemoryUsed += n;
+        AddToTotalBytes(n);
         CheckUsed(ty);
 
         struct alloc *a = calloc(1, sizeof *a + n);
@@ -137,6 +149,7 @@ gc_alloc_object(Ty *ty, usize n, char type)
         }
 
         MemoryUsed += n;
+        AddToTotalBytes(n);
         CheckUsed(ty);
 
         struct alloc *a = malloc(sizeof *a + n);
@@ -162,6 +175,7 @@ gc_alloc_object0(Ty *ty, usize n, char type)
         }
 
         MemoryUsed += n;
+        AddToTotalBytes(n);
         CheckUsed(ty);
 
         struct alloc *a = calloc(1, sizeof *a + n);
@@ -181,21 +195,7 @@ void
 gc_register(Ty *ty, void *p);
 
 void
-_gc_push(Ty *ty, Value const *v);
-
-void
-_gc_pop(Ty *ty);
-
-void
 gc_immortalize(Ty *ty, Value const *v);
-
-#if 0
-#define gc_push(ty, v) do { GCLOG("gc_push(): " __FILE__ ":%d: %p", __LINE__, (v)); _gc_push(ty, v); } while (0)
-#define gc_pop(ty) do { GCLOG("gc_pop(): " __FILE__ ":%d: %p", __LINE__, *vvL(*GCRoots(ty))); _gc_pop(ty); } while (0)
-#else
-#define gc_push _gc_push
-#define gc_pop _gc_pop
-#endif
 
 void
 gc_clear_root_set(Ty *ty);
@@ -239,6 +239,7 @@ gc_resize(Ty *ty, void *p, usize n) {
         }
 
         MemoryUsed += n;
+        AddToTotalBytes(n);
 
         CheckUsed(ty);
 
@@ -264,10 +265,13 @@ void
 GCMark(Ty *ty);
 
 void
-GCSweep(Ty *ty, AllocList *allocs, usize *used);
+GCSweepOwn(Ty *ty);
 
 void
-GCForget(Ty *ty, AllocList *allocs, usize *used);
+GCSweep(Ty *ty, AllocList *allocs, isize *used);
+
+void
+GCForget(Ty *ty, AllocList *allocs, isize *used);
 
 void
 GCTakeOwnership(Ty *ty, AllocList *new);

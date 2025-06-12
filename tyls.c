@@ -22,6 +22,8 @@ u64 TypeCheckCounter = 0;
 u64 TypeAllocCounter = 0;
 u64 TypeCheckTime = 0;
 
+usize TotalBytesAllocated = 0;
+
 bool ColorStdout;
 bool ColorStderr;
 

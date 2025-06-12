@@ -5,13 +5,14 @@
 #include <stdbool.h>
 #include <inttypes.h>
 
+#include "ty.h"
+#include "dtoa.h"
 #include "value.h"
 #include "util.h"
 #include "dict.h"
 #include "object.h"
 #include "tags.h"
 #include "class.h"
-#include "log.h"
 #include "gc.h"
 #include "vm.h"
 #include "ast.h"
@@ -20,6 +21,12 @@
 
 static char *value_showx(Ty *ty, Value const *v);
 static char *value_show_colorx(Ty *ty, Value const *v);
+
+inline static void
+MarkNext(Ty *ty, Value *v)
+{
+        xvP(ty->marking, v);
+}
 
 static bool
 arrays_equal(Ty *ty, Value const *v1, Value const *v2)
@@ -75,10 +82,10 @@ tuples_equal(Ty *ty, Value const *v1, Value const *v2)
         return true;
 }
 
-inline static unsigned long
+inline static u64
 str_hash(char const *str, int n)
 {
-        unsigned long hash = 2166136261UL;
+        u64 hash = 2166136261UL;
 
         for (int i = 0; i < n; ++i)
                 hash = (hash ^ str[i]) * 16777619UL;
@@ -86,10 +93,10 @@ str_hash(char const *str, int n)
         return hash;
 }
 
-inline static unsigned long
+inline static u64
 int_hash(Ty *ty, intmax_t k)
 {
-        unsigned long hash = 2166136261UL;
+        u64 hash = 2166136261UL;
         char const *bytes = (char const *) &k;
         unsigned char c;
 
@@ -101,10 +108,10 @@ int_hash(Ty *ty, intmax_t k)
         return hash;
 }
 
-inline static unsigned long
+inline static u64
 ptr_hash(Ty *ty, void const *p)
 {
-        unsigned long hash = 2166136261UL;
+        u64 hash = 2166136261UL;
         char const *bytes = (char const *) &p;
         unsigned char c;
 
@@ -116,10 +123,10 @@ ptr_hash(Ty *ty, void const *p)
         return hash;
 }
 
-inline static unsigned long
+inline static u64
 flt_hash(Ty *ty, float flt)
 {
-        unsigned long hash = 2166136261UL;
+        u64 hash = 2166136261UL;
         char const *bytes = (char const *) &flt;
         unsigned char c;
 
@@ -131,10 +138,10 @@ flt_hash(Ty *ty, float flt)
         return hash;
 }
 
-inline static unsigned long
+inline static u64
 ary_hash(Ty *ty, Value const *a)
 {
-        unsigned long hash = 2166136261UL;
+        u64 hash = 2166136261UL;
 
         for (int i = 0; i < a->array->count; ++i) {
                 unsigned char c = value_hash(ty, &a->array->items[i]);
@@ -144,10 +151,10 @@ ary_hash(Ty *ty, Value const *a)
         return hash;
 }
 
-inline static unsigned long
+inline static u64
 tpl_hash(Ty *ty, Value const *t)
 {
-        unsigned long hash = 2166136261UL;
+        u64 hash = 2166136261UL;
 
         for (int i = 0; i < t->count; ++i) {
                 unsigned char c = value_hash(ty, &t->items[i]);
@@ -157,7 +164,7 @@ tpl_hash(Ty *ty, Value const *t)
         return hash;
 }
 
-inline static unsigned long
+inline static u64
 obj_hash(Ty *ty, Value const *v)
 {
         Value const *f = class_method(ty, v->class, "__hash__");
@@ -167,13 +174,13 @@ obj_hash(Ty *ty, Value const *v)
                 if (h.type != VALUE_INTEGER) {
                         zP("%s.__hash__ return non-integer: %s", class_name(ty, v->class), VSC(v));
                 }
-                return (unsigned long)h.integer;
+                return (u64)h.integer;
         } else {
                 return ptr_hash(ty, v->object);
         }
 }
 
-inline static unsigned long
+inline static u64
 hash(Ty *ty, Value const *val)
 {
         switch (val->type & ~VALUE_TAGGED) {
@@ -192,16 +199,16 @@ hash(Ty *ty, Value const *val)
         case VALUE_BUILTIN_FUNCTION:  return ptr_hash(ty, val->info) ^ ptr_hash(ty, val->env);
         case VALUE_REGEX:             return ptr_hash(ty, val->regex);
         case VALUE_PTR:               return ptr_hash(ty, val->ptr);
-        case VALUE_TAG:               return (((unsigned long)val->tag) * 91238) ^ 0x123AEDDULL;
-        case VALUE_CLASS:             return (((unsigned long)val->class) * 2048) ^ 0xAABB1012ULL;
+        case VALUE_TAG:               return (((u64)val->tag) * 91238) ^ 0x123AEDDULL;
+        case VALUE_CLASS:             return (((u64)val->class) * 2048) ^ 0xAABB1012ULL;
         default:                      zP("attempt to hash invalid value: %s", VSC(val));
         }
 }
 
-unsigned long
+u64
 value_hash(Ty *ty, Value const *val)
 {
-        return (((unsigned long)val->tags) << 14) + hash(ty, val);
+        return (((u64)val->tags) << 14) + hash(ty, val);
 }
 
 char *
@@ -211,48 +218,63 @@ show_dict(Ty *ty, Value const *d, bool color)
 
         for (int i = 0; i < vN(show_dicts); ++i) {
                 if (v__(show_dicts, i) == d->dict) {
-                        return sclone(ty, "{...}");
+                        return "{...}";
                 }
         }
 
         xvP(show_dicts, d->dict);
 
-        size_t capacity = 1;
-        size_t len = 1;
-        size_t n;
-        char *s = mA(2);
-        strcpy(s, "{");
+        byte_vector buf = {0};
 
-#define add(str) \
-                n = strlen(str); \
-                if (len + n >= capacity) {\
-                        capacity = 2 * (len + n) + 1; \
-                        mRE(s, capacity); \
-                } \
-                strcpy(s + len, str); \
-                len += n;
+        if (color) {
+                sxdf(&buf, "%s%%{%s", TERM(94;1), TERM(0));
+        } else {
+                svP(buf, '%');
+                svP(buf, '{');
+        }
 
         for (size_t i = 0, j = 0; i < d->dict->size; ++i) {
-                if (d->dict->keys[i].type == 0) continue;
-                char *key = color ? value_show_colorx(ty, &d->dict->keys[i]) : value_showx(ty, &d->dict->keys[i]);
-                char *val = color ? value_show_colorx(ty, &d->dict->values[i]) : value_showx(ty, &d->dict->values[i]);
-                add(j == 0 ? "" : ", ");
-                add(key);
-                if (d->dict->values[i].type != VALUE_NIL) {
-                        add(": ");
-                        add(val);
+                if (d->dict->keys[i].type == 0) {
+                        continue;
                 }
-                mF(key);
-                mF(val);
+
+                char *key = color
+                          ? value_show_colorx(ty, &d->dict->keys[i])
+                          : value_showx(ty, &d->dict->keys[i]);
+                u32 nkey = strlen(key);
+
+                char *val = color
+                          ? value_show_colorx(ty, &d->dict->values[i])
+                          : value_showx(ty, &d->dict->values[i]);
+                u32 nval = strlen(val);
+
+                if (j > 0) {
+                        svP(buf, ',');
+                        svP(buf, ' ');
+                }
+
+                svPn(buf, key, nkey);
+
+                if (d->dict->values[i].type != VALUE_NIL) {
+                        svP(buf, ':');
+                        svP(buf, ' ');
+                        svPn(buf, val, nval);
+                }
+
                 j += 1;
         }
 
-        add("}");
-#undef add
+        if (color) {
+                sxdf(&buf, "%s}%s", TERM(94;1), TERM(0));
+        } else {
+                svP(buf, '}');
+        }
+
+        svP(buf, '\0');
 
         vvX(show_dicts);
 
-        return s;
+        return vv(buf);
 }
 
 char *
@@ -262,40 +284,34 @@ show_array(Ty *ty, Value const *a, bool color)
 
         for (int i = 0; i < vN(show_arrays); ++i) {
                 if (v__(show_arrays, i) == a->array) {
-                        return sclone(ty, "[...]");
+                        return "[...]";
                 }
         }
 
         xvP(show_arrays, a->array);
 
-        size_t capacity = 1;
-        size_t len = 1;
-        size_t n;
-        char *s = mA(2);
-        strcpy(s, "[");
+        byte_vector buf = {0};
 
-#define add(str) \
-                n = strlen(str); \
-                if (len + n >= capacity) {\
-                        capacity = 2 * (len + n) + 1; \
-                        mRE(s, capacity); \
-                } \
-                strcpy(s + len, str); \
-                len += n;
+        svP(buf, '[');
 
-        for (size_t i = 0; i < a->array->count; ++i) {
-                char *val = color ? value_show_colorx(ty, &a->array->items[i]) : value_showx(ty, &a->array->items[i]);
-                add(i == 0 ? "" : ", ");
-                add(val);
-                mF(val);
+        for (size_t i = 0; i < vN(*a->array); ++i) {
+                char *val = color
+                         ? value_show_colorx(ty, v_(*a->array, i))
+                         : value_showx(ty, v_(*a->array, i));
+                if (i > 0) {
+                        svP(buf, ',');
+                        svP(buf, ' ');
+                }
+                u32 n = strlen(val);
+                svPn(buf, val, n);
         }
 
-        add("]");
-#undef add
+        svP(buf, ']');
+        svP(buf, '\0');
 
         vvX(show_arrays);
 
-        return s;
+        return vv(buf);
 }
 
 char *
@@ -305,131 +321,127 @@ show_tuple(Ty *ty, Value const *v, bool color)
 
         for (int i = 0; i < vN(show_tuples); ++i) {
                 if (v__(show_tuples, i) == v->items) {
-                        return sclone(ty, "(...)");
+                        return "(...)";
                 }
         }
 
         xvP(show_tuples, v->items);
 
-        bool tagged = v->type & VALUE_TAGGED;
-        size_t capacity = 1;
-        size_t len = !tagged;
-        size_t n;
-        char *s = mA(2);
 
-        strcpy(s, !tagged ? "(" : "");
+        byte_vector buf = {0};
+        bool tagged = (v->type & VALUE_TAGGED);
 
-#define add(str) \
-                n = strlen(str); \
-                if (len + n >= capacity) {\
-                        capacity = 2 * (len + n) + 1; \
-                        mRE(s, capacity); \
-                } \
-                strcpy(s + len, str); \
-                len += n;
+        if (!tagged) {
+                svP(buf, '(');
+        }
 
         for (size_t i = 0; i < v->count; ++i) {
-                add(i == 0 ? "" : ", ");
+                if (i > 0) {
+                        svP(buf, ',');
+                        svP(buf, ' ');
+                }
                 if (v->ids != NULL && v->ids[i] != -1) {
                         char const *name = M_NAME(v->ids[i]);
                         if (color) {
-                                add(TERM(34));
-                                add(name);
-                                add(TERM(0));
-                                add(": ");
+                                sxdf(&buf, "%s%s%s: ", TERM(34), name, TERM(0));
                         } else {
-                                add(name);
-                                add(": ");
+                                sxdf(&buf, "%s: ", name);
                         }
                 }
 
-                char *val = color ? value_show_colorx(ty, &v->items[i]) : value_showx(ty, &v->items[i]);
-                add(val);
-                mF(val);
+                char *val = color
+                          ? value_show_colorx(ty, &v->items[i])
+                          : value_showx(ty, &v->items[i]);
+                u32 n = strlen(val);
+
+                svPn(buf, val, n);
         }
 
         if (!tagged) {
-                add(")");
+                svP(buf, ')');
         }
-#undef add
+
+        svP(buf, '\0');
 
         vvX(show_tuples);
 
-        return s;
+        return vv(buf);
 }
 
 static char *
 show_string(Ty *ty, u8 const *s, size_t n, bool use_color)
 {
-        vec(char) v = {0};
+        byte_vector v = {0};
         i32 color = 0;
 
 #define COLOR(i) do {                               \
         if (use_color && color != i) {              \
-                vvPn(v, TERM(i), strlen(TERM(i)));  \
+                svPn(v, TERM(i), strlen(TERM(i)));  \
                 color = i;                          \
         }                                           \
 } while (0)
 
         COLOR(92);
 
-        vvP(v, '\'');
+        svP(v, '\'');
 
         if (s != NULL) for (u8 const *c = s; c < s + n; ++c) switch (*c) {
         case '\t':
                 COLOR(95);
-                vvP(v, '\\');
-                vvP(v, 't');
-                COLOR(92);
+                svP(v, '\\');
+                svP(v, 't');
                 break;
 
         case '\r':
                 COLOR(95);
-                vvP(v, '\\');
-                vvP(v, 'r');
-                COLOR(92);
+                svP(v, '\\');
+                svP(v, 'r');
                 break;
 
         case '\n':
                 COLOR(95);
-                vvP(v, '\\');
-                vvP(v, 'n');
-                COLOR(92);
+                svP(v, '\\');
+                svP(v, 'n');
                 break;
 
         case '\\':
                 COLOR(95);
-                vvP(v, '\\');
-                vvP(v, '\\');
-                COLOR(92);
+                svP(v, '\\');
+                svP(v, '\\');
                 break;
 
         case '\'':
                 COLOR(95);
-                vvP(v, '\\');
-                vvP(v, '\'');
-                COLOR(92);
+                svP(v, '\\');
+                svP(v, '\'');
                 break;
 
         case '\0':
                 COLOR(91);
-                vvP(v, '\\');
-                vvP(v, '0');
-                COLOR(92);
+                svP(v, '\\');
+                svP(v, '0');
                 break;
 
         default:
-                vvP(v, *c);
+                if (iscntrl(*c)) {
+                        COLOR(93);
+                        sxdf(&v, "\\x%02x", (u32)*c);
+
+                } else {
+                        COLOR(92);
+                        svP(v, *c);
+                }
+                break;
         }
         
-
-        vvP(v, '\'');
+        COLOR(92);
+        svP(v, '\'');
 
         COLOR(0);
 
 #undef COLOR
 
-        vvP(v, '\0');
+        svP(v, '\0');
 
         return vv(v);
 }
@@ -470,7 +482,7 @@ value_showx(Ty *ty, Value const *v)
                 snprintf(buffer, 1024, "%"PRIiMAX, v->integer);
                 break;
         case VALUE_REAL:
-                snprintf(buffer, 1024, "%g", v->real);
+                dtoa(v->real, buffer, sizeof buffer);
                 break;
         case VALUE_STRING:
                 s = show_string(ty, v->str, v->bytes, false);
@@ -482,7 +494,7 @@ value_showx(Ty *ty, Value const *v)
                 snprintf(buffer, 1024, "%s", "nil");
                 break;
         case VALUE_TYPE:
-                return sclone(ty, type_show(ty, v->ptr));
+                return type_show(ty, v->ptr);
         case VALUE_NAMESPACE:
                 snprintf(
                         buffer,
@@ -550,12 +562,12 @@ value_showx(Ty *ty, Value const *v)
                 snprintf(buffer, 1024, "<thread %"PRIu64">", v->thread->i);
                 break;
         case VALUE_SENTINEL:
-                return sclone(ty, "<sentinel>");
+                return "<sentinel>";
         case VALUE_REF:
                 snprintf(buffer, 1024, "<reference to %p>", v->ptr);
                 break;
         case VALUE_NONE:
-                return sclone(ty, "<none>");
+                return "<none>";
         case VALUE_INDEX:
                 snprintf(buffer, 1024, "<index: (%d, %d, %d)>", (int)v->i, (int)v->off, (int)v->nt);
                 break;
@@ -591,7 +603,7 @@ BasicObject:
         case VALUE_UNINITIALIZED:
                 uninit(ty, v->sym);
         default:
-                return sclone(ty, "< !!! >");
+                return "<!!!>";
         }
 
         char *result = tags_wrap(
@@ -601,8 +613,6 @@ BasicObject:
                 false
         );
 
-        mF(s);
-
         return result;
 }
 
@@ -611,7 +621,8 @@ value_show_colorx(Ty *ty, Value const *v)
 {
         static _Thread_local vec(void const *) visiting;
 
-        char buffer[4096];
+        char buffer[2048];
+        char small[512];
         char *s = NULL;
 
         Value val = *v;
@@ -621,7 +632,8 @@ value_show_colorx(Ty *ty, Value const *v)
                 snprintf(buffer, sizeof buffer, "%s%"PRIiMAX"%s", TERM(93), v->integer, TERM(0));
                 break;
         case VALUE_REAL:
-                snprintf(buffer, sizeof buffer, "%s%g%s", TERM(93), v->real, TERM(0));
+                dtoa(v->real, small, sizeof small);
+                snprintf(buffer, sizeof buffer, "%s%s%s", TERM(93), small, TERM(0));
                 break;
         case VALUE_STRING:
                 s = show_string(ty, v->str, v->bytes, true);
@@ -823,12 +835,12 @@ value_show_colorx(Ty *ty, Value const *v)
                 snprintf(buffer, sizeof buffer, "%s<thread %"PRIu64">%s", TERM(33), v->thread->i, TERM(0));
                 break;
         case VALUE_SENTINEL:
-                return sclone(ty, "<sentinel>");
+                return "<sentinel>";
         case VALUE_REF:
                 snprintf(buffer, sizeof buffer, "<reference to %p>", v->ptr);
                 break;
         case VALUE_NONE:
-                return sclone(ty, "<none>");
+                return "<none>";
         case VALUE_INDEX:
                 snprintf(buffer, sizeof buffer, "<index: (%d, %d, %d)>", (int)v->i, (int)v->off, (int)v->nt);
                 break;
@@ -849,12 +861,10 @@ value_show_colorx(Ty *ty, Value const *v)
 
                 if (fp != NULL && fp != class_method(ty, CLASS_OBJECT, "__str__")) {
                         Value str = vm_eval_function(ty, fp, v, NULL);
-                        gP(&str);
                         if (str.type != VALUE_STRING) {
                                 zP("%s.__str__() returned non-string", class_name(ty, v->class));
                         }
-                        s = mA(str.bytes + 1);
-                        gX();
+                        s = smA(str.bytes + 1);
                         memcpy(s, str.str, str.bytes);
                         s[str.bytes] = '\0';
                 } else {
@@ -879,6 +889,8 @@ BasicObject:
                 break;
         case VALUE_UNINITIALIZED:
                 uninit(ty, v->sym);
+                UNREACHABLE();
+
         default:
                 return value_showx(ty, v);
         }
@@ -890,22 +902,30 @@ BasicObject:
                 true
         );
 
-        mF(s);
-
         return result;
 }
 
 char *
 value_show_color(Ty *ty, Value const *v)
 {
-        char *str = value_show_colorx(ty, v);
+        char *str;
+
+        WITH_SCRATCH {
+                str = sclone(ty, value_show_colorx(ty, v));
+        }
+
         return str;
 }
 
 char *
 value_show(Ty *ty, Value const *v)
 {
-        char *str = value_showx(ty, v);
+        char *str;
+
+        WITH_SCRATCH {
+                str = sclone(ty, value_showx(ty, v));
+        }
+
         return str;
 }
 
@@ -1220,7 +1240,7 @@ value_array_mark(Ty *ty, struct array *a)
         MARK(a);
 
         for (int i = 0; i < a->count; ++i) {
-                value_mark(ty, &a->items[i]);
+                MarkNext(ty, &a->items[i]);
         }
 }
 
@@ -1232,7 +1252,7 @@ mark_tuple(Ty *ty, Value const *v)
         MARK(v->items);
 
         for (int i = 0; i < v->count; ++i) {
-                value_mark(ty, &v->items[i]);
+                MarkNext(ty, &v->items[i]);
         }
 
         if (v->ids != NULL) {
@@ -1245,7 +1265,7 @@ mark_thread(Ty *ty, Value const *v)
 {
         if (MARKED(v->thread)) return;
         MARK(v->thread);
-        value_mark(ty, &v->thread->v);
+        MarkNext(ty, &v->thread->v);
 }
 
 inline static void
@@ -1255,24 +1275,24 @@ mark_generator(Ty *ty, Value const *v)
 
         MARK(v->gen);
 
-        value_mark(ty, &v->gen->f);
+        MarkNext(ty, &v->gen->f);
 
         for (int i = 0; i < vN(v->gen->frame); ++i) {
-                value_mark(ty, v_(v->gen->frame, i));
+                MarkNext(ty, v_(v->gen->frame, i));
         }
 
         for (int i = 0; i < v->gen->st.targets.count; ++i) {
                 if ((((uintptr_t)v_(v->gen->st.targets, i)->t) & 0x07) == 0) {
-                        value_mark(ty, v_(v->gen->st.targets, i)->t);
+                        MarkNext(ty, v_(v->gen->st.targets, i)->t);
                 }
         }
 
         for (int i = 0; i < vN(v->gen->st.to_drop); ++i) {
-                value_mark(ty, v_(v->gen->st.to_drop, i));
+                MarkNext(ty, v_(v->gen->st.to_drop, i));
         }
 
         for (int i = 0; i < vN(v->gen->gc_roots); ++i) {
-                value_mark(ty, v_(v->gen->gc_roots, i));
+                MarkNext(ty, v_(v->gen->gc_roots, i));
         }
 }
 
@@ -1296,7 +1316,7 @@ mark_function(Ty *ty, Value const *v)
                 if (v->env[i] == NULL)
                         continue;
                 MARK(v->env[i]);
-                value_mark(ty, v->env[i]);
+                MarkNext(ty, v->env[i]);
         }
 }
 
@@ -1307,18 +1327,18 @@ mark_pointer(Ty *ty, Value const *v)
                 MARK(v->gcptr);
                 switch (ALLOC_OF(v->gcptr)->type) {
                 case GC_VALUE:
-                        value_mark(ty, (const Value *)v->gcptr);
+                        MarkNext(ty, (const Value *)v->gcptr);
                         break;
 
                 case GC_FFI_AUTO:
-                        value_mark(ty, ((const Value *)v->gcptr));
+                        MarkNext(ty, ((const Value *)v->gcptr));
                         break;
                 }
         }
 }
 
-void
-_value_mark(Ty *ty, Value const *v)
+static inline void
+_value_mark_xd(Ty *ty, Value const *v)
 {
         void **src = source_lookup(ty, v->src);
         if (src != NULL && *src != NULL) {
@@ -1336,8 +1356,8 @@ _value_mark(Ty *ty, Value const *v)
 #endif
 
         switch (v->type & ~VALUE_TAGGED) {
-        case VALUE_METHOD:          if (!MARKED(v->this)) { MARK(v->this); value_mark(ty, v->this); } break;
-        case VALUE_BUILTIN_METHOD:  if (!MARKED(v->this)) { MARK(v->this); value_mark(ty, v->this); } break;
+        case VALUE_METHOD:          if (!MARKED(v->this)) { MARK(v->this); MarkNext(ty, v->this); }   break;
+        case VALUE_BUILTIN_METHOD:  if (!MARKED(v->this)) { MARK(v->this); MarkNext(ty, v->this); }   break;
         case VALUE_ARRAY:           value_array_mark(ty, v->array);                                   break;
         case VALUE_TUPLE:           mark_tuple(ty, v);                                                break;
         case VALUE_DICT:            dict_mark(ty, v->dict);                                           break;
@@ -1346,7 +1366,7 @@ _value_mark(Ty *ty, Value const *v)
         case VALUE_THREAD:          mark_thread(ty, v);                                               break;
         case VALUE_STRING:          if (v->gcstr != NULL) MARK(v->gcstr);                             break;
         case VALUE_OBJECT:          object_mark(ty, v->object);                                       break;
-        case VALUE_REF:             MARK(v->ptr); value_mark(ty, v->ptr);                             break;
+        case VALUE_REF:             MARK(v->ptr); MarkNext(ty, v->ptr);                               break;
         case VALUE_BLOB:            MARK(v->blob);                                                    break;
         case VALUE_PTR:             mark_pointer(ty, v);                                              break;
         case VALUE_REGEX:           if (v->regex->gc) MARK(v->regex);                                 break;
@@ -1356,6 +1376,17 @@ _value_mark(Ty *ty, Value const *v)
 #ifndef TY_RELEASE
         --d;
 #endif
+}
+
+void
+_value_mark(Ty *ty, Value const *v)
+{
+        _value_mark_xd(ty, v);
+
+        while (vN(ty->marking) > 0) {
+                v = *vvX(ty->marking);
+                _value_mark_xd(ty, v);
+        }
 }
 
 Blob *

@@ -1,6 +1,4 @@
 #include <string.h>
-#include <stdio.h>
-#include <stdlib.h>
 #include <stdbool.h>
 
 #include "ty.h"
@@ -13,24 +11,28 @@
 #include "gc.h"
 #include "vec.h"
 
-#define INITIAL_SIZE 16
+#define INITIAL_SIZE 32
+#define NO_SUCH_SPOT SIZE_MAX
 
-Dict *
-dict_new(Ty *ty)
+#define ENSURE_INIT(d) do {      \
+        if ((d)->size == 0) {    \
+                initxd(ty, (d)); \
+        }                        \
+} while (0)
+
+#define OCCUPIED(d, i) ((i != NO_SUCH_SPOT) && ((d)->keys[i].type != 0))
+
+inline static void
+initxd(Ty *ty, Dict *d)
 {
-        Dict *d = mAo(sizeof *d, GC_DICT);
         NOGC(d);
 
-        d->size   = INITIAL_SIZE;
-        d->hashes = mA(sizeof (u64 [INITIAL_SIZE]));
+        d->hashes = mA( sizeof (u64   [INITIAL_SIZE]));
         d->keys   = mA0(sizeof (Value [INITIAL_SIZE]));
-        d->values = mA(sizeof (Value [INITIAL_SIZE]));
-        d->count  = 0;
-        d->dflt   = NONE;
+        d->values = mA( sizeof (Value [INITIAL_SIZE]));
+        d->size   = INITIAL_SIZE;
 
         OKGC(d);
-
-        return d;
 }
 
 inline static usize
@@ -42,6 +44,10 @@ find_spot(
         u64 h,
         Value const *v
 ) {
+        if (size == 0) {
+                return NO_SUCH_SPOT;
+        }
+
         usize mask = size - 1;
         usize i = h & mask;
 
@@ -77,13 +83,13 @@ delete(Dict *d, usize i)
         j &= mask;
 
         if (i != j) {
-                d->keys[i] = d->keys[j];
+                d->keys[i]   = d->keys[j];
                 d->values[i] = d->values[j];
                 d->hashes[i] = d->hashes[j];
         }
 
         d->hashes[j] = d->keys[j].type = d->values[j].type = 0;
-        d->count -= 1;
+        d->count    -= 1;
 
         return min(i, j);
 }
@@ -91,13 +97,11 @@ delete(Dict *d, usize i)
 inline static void
 grow(Ty *ty, Dict *d)
 {
-        usize new_size = d->size << 1;
+        usize new_size = (d->size << 2);
 
-        u64 *hashes = mA(new_size * sizeof (u64));
-        Value *keys = mA(new_size * sizeof (Value));
-        Value *values = mA(new_size * sizeof (Value));
-
-        memset(keys, 0, new_size * sizeof (Value));
+        u64   *hashes = mA( new_size * sizeof (u64));
+        Value *keys   = mA0(new_size * sizeof (Value));
+        Value *values = mA( new_size * sizeof (Value));
 
         for (usize i = 0; i < d->size; ++i) {
                 if (d->keys[i].type == 0) {
@@ -105,7 +109,7 @@ grow(Ty *ty, Dict *d)
                 }
                 usize j = find_spot(ty, new_size, hashes, keys, d->hashes[i], &d->keys[i]);
                 hashes[j] = d->hashes[i];
-                keys[j] = d->keys[i];
+                keys  [j] = d->keys  [i];
                 values[j] = d->values[i];
         }
 
@@ -114,24 +118,25 @@ grow(Ty *ty, Dict *d)
         mF(d->values);
 
         d->hashes = hashes;
-        d->keys = keys;
+        d->keys   = keys;
         d->values = values;
-
-        d->size = new_size;
+        d->size   = new_size;
 }
 
 inline static Value *
 put(Ty *ty, Dict *d, usize i, u64 h, Value k, Value v)
 {
-        if (9*d->count >= 4*d->size) {
+        ENSURE_INIT(d);
+
+        if (11 * d->count >= 4 * d->size) {
                 grow(ty, d);
                 i = find_spot(ty, d->size, d->hashes, d->keys, h, &k);
         }
 
         d->hashes[i] = h;
-        d->keys[i] = k;
+        d->keys  [i] = k;
         d->values[i] = v;
-        d->count += 1;
+        d->count    += 1;
 
         return &d->values[i];
 }
@@ -142,12 +147,15 @@ dict_get_value(Ty *ty, Dict *d, Value *key)
         u64 h = value_hash(ty, key);
         usize i = find_spot(ty, d->size, d->hashes, d->keys, h, key);
 
-        if (d->keys[i].type != 0)
+        if (OCCUPIED(d, i)) {
                 return &d->values[i];
+        }
 
-        if (d->dflt.type != VALUE_NONE) {
-                Value dflt = value_apply_callable(ty, &d->dflt, key);
+        if (d->dflt.type != VALUE_ZERO) {
                 GC_STOP();
+                ENSURE_INIT(d);
+                Value dflt = value_apply_callable(ty, &d->dflt, key);
+                i = find_spot(ty, d->size, d->hashes, d->keys, h, key);
                 Value *v = put(ty, d, i, h, *key, dflt);
                 GC_RESUME();
                 return v;
@@ -159,6 +167,10 @@ dict_get_value(Ty *ty, Dict *d, Value *key)
 bool
 dict_has_value(Ty *ty, Dict *d, Value *key)
 {
+        if (d->size == 0) {
+                return false;
+        }
+
         u64 h = value_hash(ty, key);
         usize i = find_spot(ty, d->size, d->hashes, d->keys, h, key);
 
@@ -171,18 +183,23 @@ dict_has_value(Ty *ty, Dict *d, Value *key)
 void
 dict_put_value(Ty *ty, Dict *d, Value key, Value value)
 {
+        ENSURE_INIT(d);
+
         u64 h = value_hash(ty, &key);
         usize i = find_spot(ty, d->size, d->hashes, d->keys, h, &key);
 
-        if (d->keys[i].type != 0)
+        if (d->keys[i].type != 0) {
                 d->values[i] = value;
-        else
+        } else {
                 put(ty, d, i, h, key, value);
+        }
 }
 
 Value *
 dict_put_value_with(Ty *ty, Dict *d, Value key, Value v, Value const *f)
 {
+        ENSURE_INIT(d);
+
         u64 h = value_hash(ty, &key);
         usize i = find_spot(ty, d->size, d->hashes, d->keys, h, &key);
 
@@ -196,12 +213,14 @@ dict_put_value_with(Ty *ty, Dict *d, Value key, Value v, Value const *f)
 Value *
 dict_put_key_if_not_exists(Ty *ty, Dict *d, Value key)
 {
+        ENSURE_INIT(d);
+
         u64 h = value_hash(ty, &key);
         usize i = find_spot(ty, d->size, d->hashes, d->keys, h, &key);
 
         if (d->keys[i].type != 0) {
                 return &d->values[i];
-        } else if (d->dflt.type != VALUE_NONE) {
+        } else if (d->dflt.type != VALUE_ZERO) {
                 return put(ty, d, i, h, key, value_apply_callable(ty, &d->dflt, &key));
         } else {
                 return put(ty, d, i, h, key, NIL);
@@ -235,13 +254,14 @@ dict_mark(Ty *ty, Dict *d)
 
         MARK(d);
 
-        if (d->dflt.type != VALUE_NONE)
-                value_mark(ty, &d->dflt);
+        if (d->dflt.type != VALUE_ZERO) {
+                xvP(ty->marking, &d->dflt);
+        }
 
         for (usize i = 0; i < d->size; ++i) {
                 if (d->keys[i].type != 0) {
-                        value_mark(ty, &d->keys[i]);
-                        value_mark(ty, &d->values[i]);
+                        xvP(ty->marking, &d->keys[i]);
+                        xvP(ty->marking, &d->values[i]);
                 }
         }
 }
@@ -258,18 +278,20 @@ static Value
 dict_default(Ty *ty, Value *d, int argc, Value *kwargs)
 {
         if (argc == 0) {
-                if (d->dict->dflt.type == VALUE_NONE) {
+                if (d->dict->dflt.type == VALUE_ZERO) {
                         return NIL;
                 } else {
                         return d->dict->dflt;
                 }
         }
 
-        if (argc != 1)
+        if (argc != 1) {
                 zP("dict.default() expects 1 or 0 arguments but got %d", argc);
+        }
 
-        if (!CALLABLE(ARG(0)))
+        if (!CALLABLE(ARG(0))) {
                 zP("the argument to dict.default() must be callable");
+        }
 
         d->dict->dflt = ARG(0);
 
@@ -279,8 +301,13 @@ dict_default(Ty *ty, Value *d, int argc, Value *kwargs)
 static Value
 dict_contains(Ty *ty, Value *d, int argc, Value *kwargs)
 {
-        if (argc != 1)
+        if (argc != 1) {
                 zP("dict.contains() expects 1 argument but got %d", argc);
+        }
+
+        if (d->dict->size == 0) {
+                return BOOLEAN(false);
+        }
 
         Value *key = &ARG(0);
         u64 h = value_hash(ty, key);
@@ -292,16 +319,19 @@ dict_contains(Ty *ty, Value *d, int argc, Value *kwargs)
 static Value
 dict_keys(Ty *ty, Value *d, int argc, Value *kwargs)
 {
-        if (argc != 0)
+        if (argc != 0) {
                 zP("dict.keys() expects 0 arguments but got %d", argc);
+        }
 
         Value keys = ARRAY(vA());
 
         gP(&keys);
 
-        for (usize i = 0; i < d->dict->size; ++i)
-                if (d->dict->keys[i].type != 0)
+        for (usize i = 0; i < d->dict->size; ++i) {
+                if (d->dict->keys[i].type != 0) {
                         vAp(keys.array, d->dict->keys[i]);
+                }
+        }
 
         gX();
 
@@ -311,16 +341,19 @@ dict_keys(Ty *ty, Value *d, int argc, Value *kwargs)
 static Value
 dict_values(Ty *ty, Value *d, int argc, Value *kwargs)
 {
-        if (argc != 0)
+        if (argc != 0) {
                 zP("dict.values() expects 0 arguments but got %d", argc);
+        }
 
         Value values = ARRAY(vA());
 
         gP(&values);
 
-        for (usize i = 0; i < d->dict->size; ++i)
-                if (d->dict->keys[i].type != 0)
+        for (usize i = 0; i < d->dict->size; ++i) {
+                if (d->dict->keys[i].type != 0) {
                         vAp(values.array, d->dict->values[i]);
+                }
+        }
 
         gX();
 
@@ -349,8 +382,9 @@ DictClone(Ty *ty, Dict const *d)
 static Value
 dict_clone(Ty *ty, Value *d, int argc, Value *kwargs)
 {
-        if (argc != 0)
+        if (argc != 0) {
                 zP("dict.clone() expects 0 arguments but got %d", argc);
+        }
 
         return DICT(DictClone(ty, d->dict));
 }
@@ -358,8 +392,9 @@ dict_clone(Ty *ty, Value *d, int argc, Value *kwargs)
 bool
 dict_same_keys(Ty *ty, Dict const *d, Dict const *u)
 {
-        if (d->count != u->count)
+        if (d->count != u->count) {
                 return false;
+        }
 
         for (usize i = 0; i < d->size;) {
                 if (d->keys[i].type == 0) {
@@ -374,7 +409,7 @@ dict_same_keys(Ty *ty, Dict const *d, Dict const *u)
                         d->hashes[i],
                         &d->keys[i]
                 );
-                if (u->keys[j].type == 0) {
+                if (!OCCUPIED(u, j)) {
                         return false;
                 }
                 i += 1;
@@ -386,6 +421,8 @@ dict_same_keys(Ty *ty, Dict const *d, Dict const *u)
 inline static void
 copy_unique(Ty *ty, Dict *diff, Dict const *d, Dict const *u)
 {
+        ENSURE_INIT(diff);
+
         for (usize i = 0; i < d->size; ++i) {
                 if (d->keys[i].type == 0) {
                         continue;
@@ -400,7 +437,7 @@ copy_unique(Ty *ty, Dict *diff, Dict const *d, Dict const *u)
                         &d->keys[i]
                 );
 
-                if (u->keys[j].type == 0) {
+                if (!OCCUPIED(u, j)) {
                         usize k = find_spot(
                                 ty,
                                 diff->size,
@@ -447,8 +484,9 @@ dict_intersect(Ty *ty, Value *d, int argc, Value *kwargs)
         }
 
         Value u = ARG(0);
-        if (u.type != VALUE_DICT)
+        if (u.type != VALUE_DICT) {
                 zP("the first argument to dict.intersect() must be a dict");
+        }
 
         if (argc == 1) {
                 for (usize i = 0; i < d->dict->size;) {
@@ -464,7 +502,7 @@ dict_intersect(Ty *ty, Value *d, int argc, Value *kwargs)
                                 d->dict->hashes[i],
                                 &d->dict->keys[i]
                         );
-                        if (u.dict->keys[j].type == 0) {
+                        if (!OCCUPIED(u.dict, j)) {
                                 i = delete(d->dict, i);
                         } else {
                                 i += 1;
@@ -488,7 +526,7 @@ dict_intersect(Ty *ty, Value *d, int argc, Value *kwargs)
                                 d->dict->hashes[i],
                                 &d->dict->keys[i]
                         );
-                        if (u.dict->keys[j].type == 0) {
+                        if (!OCCUPIED(u.dict, j)) {
                                 i = delete(d->dict, i);
                         } else {
                                 d->dict->values[i] = vm_eval_function(
@@ -586,7 +624,7 @@ dict_subtract(Ty *ty, Value *d, int argc, Value *kwargs)
                                         u.dict->hashes[i],
                                         &u.dict->keys[i]
                                 );
-                                if (d->dict->keys[j].type != 0) {
+                                if (OCCUPIED(d->dict, j)) {
                                         delete(d->dict, j);
                                 }
                         }
@@ -606,7 +644,7 @@ dict_subtract(Ty *ty, Value *d, int argc, Value *kwargs)
                                         u.dict->hashes[i],
                                         &u.dict->keys[i]
                                 );
-                                if (d->dict->keys[j].type != 0) {
+                                if (OCCUPIED(d->dict, j)) {
                                         vm_eval_function(
                                                 ty,
                                                 &f,
@@ -655,7 +693,7 @@ dict_remove(Ty *ty, Value *d, int argc, Value *kwargs)
                 &k
         );
 
-        if (d->dict->keys[i].type == 0) {
+        if (!OCCUPIED(d->dict, i)) {
                 return NIL;
         } else {
                 Value v = d->dict->values[i];
@@ -667,8 +705,9 @@ dict_remove(Ty *ty, Value *d, int argc, Value *kwargs)
 static Value
 dict_len(Ty *ty, Value *d, int argc, Value *kwargs)
 {
-        if (argc != 0)
+        if (argc != 0) {
                 zP("dict.len() expects 0 arguments but got %d", argc);
+        }
 
         return INTEGER(d->dict->count);
 }
@@ -676,8 +715,9 @@ dict_len(Ty *ty, Value *d, int argc, Value *kwargs)
 static Value
 dict_ptr(Ty *ty, Value *d, int argc, Value *kwargs)
 {
-        if (argc != 0)
+        if (argc != 0) {
                 zP("dict.ptr() expects 0 arguments but got %d", argc);
+        }
 
         return PTR(d->dict);
 }

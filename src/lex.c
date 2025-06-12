@@ -106,11 +106,11 @@ static Token
 mktoken(Ty *ty, int type)
 {
         return (Token) {
-                .type = type,
+                .type  = type,
                 .start = Start,
-                .end = state.loc,
-                .ctx = state.ctx,
-                .nl = (state.need_nl || type == TOKEN_NEWLINE)
+                .end   = state.loc,
+                .ctx   = state.ctx,
+                .nl    = (state.need_nl || type == TOKEN_NEWLINE)
         };
 }
 
@@ -118,14 +118,14 @@ static Token
 mkid(Ty *ty, char *id, char *module, bool raw)
 {
         return (Token) {
-                .type = TOKEN_IDENTIFIER,
+                .type       = TOKEN_IDENTIFIER,
                 .identifier = id,
-                .module = module,
-                .start = Start,
-                .end = state.loc,
-                .nl = state.need_nl,
-                .ctx = state.ctx,
-                .raw = raw
+                .module     = module,
+                .start      = Start,
+                .end        = state.loc,
+                .nl         = state.need_nl,
+                .ctx        = state.ctx,
+                .raw        = raw
         };
 }
 
@@ -133,12 +133,12 @@ static Token
 mkstring(Ty *ty, char *string)
 {
         return (Token) {
-                .type = TOKEN_STRING,
+                .type   = TOKEN_STRING,
                 .string = string,
-                .start = Start,
-                .end = state.loc,
-                .nl = state.need_nl,
-                .ctx = state.ctx
+                .start  = Start,
+                .end    = state.loc,
+                .nl     = state.need_nl,
+                .ctx    = state.ctx
         };
 }
 
@@ -193,24 +193,24 @@ mkregex(Ty *ty, char const *pat, int flags, bool detailed)
         pcre2_pattern_info(re, PCRE2_INFO_CAPTURECOUNT, &r->ncap);
 
         return (Token) {
-                .type = TOKEN_REGEX,
+                .type  = TOKEN_REGEX,
                 .regex = r,
                 .start = Start,
-                .end = state.loc,
-                .ctx = state.ctx
+                .end   = state.loc,
+                .ctx   = state.ctx
         };
 }
 
 static Token
-mkreal(Ty *ty, float real)
+mkreal(Ty *ty, double real)
 {
         return (Token) {
-                .type = TOKEN_REAL,
-                .real = real,
+                .type  = TOKEN_REAL,
+                .real  = real,
                 .start = Start,
-                .end = state.loc,
-                .nl = state.need_nl,
-                .ctx = state.ctx
+                .end   = state.loc,
+                .nl    = state.need_nl,
+                .ctx   = state.ctx
         };
 }
 
@@ -218,12 +218,12 @@ static Token
 mkinteger(Ty *ty, intmax_t k)
 {
         return (Token) {
-                .type = TOKEN_INTEGER,
+                .type    = TOKEN_INTEGER,
                 .integer = k,
-                .start = Start,
-                .end = state.loc,
-                .nl = state.need_nl,
-                .ctx = state.ctx
+                .start   = Start,
+                .end     = state.loc,
+                .nl      = state.need_nl,
+                .ctx     = state.ctx
         };
 }
 

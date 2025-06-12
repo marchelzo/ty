@@ -106,6 +106,12 @@ target_sources(libco PRIVATE libco/libco.c)
 target_compile_definitions(libco PRIVATE LIBCO_MP)
 
 # ---
+#  target: dtoa
+# ---
+add_library(dtoa)
+target_sources(dtoa PRIVATE dtoa/SwiftDtoa.c)
+
+# ---
 #  target: ty
 # ---
 
@@ -221,6 +227,7 @@ target_link_libraries(${_tgt_ty_interface}
     PCRE2::8BIT
     utf8proc
     libco
+    dtoa
     $<$<NOT:$<BOOL:${WIN33}>>:${CMAKE_DL_LIBS}>
     $<$<NOT:$<BOOL:${WIN32}>>:unofficial-readline>
     $<$<NOT:$<BOOL:${WIN32}>>:m>
@@ -233,6 +240,7 @@ target_include_directories(${_tgt_ty_interface}
   INTERFACE
     ${PROJECT_SOURCE_DIR}/include
     ${PROJECT_SOURCE_DIR}/libco
+    ${PROJECT_SOURCE_DIR}/dtoa
 )
 
 target_compile_definitions(${_tgt_ty_interface}
