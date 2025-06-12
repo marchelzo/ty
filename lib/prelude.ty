@@ -1118,7 +1118,7 @@ class Float {
         float(x)
     }
 
-    **(b: Int | Float) {
+    **(b: Int | Float) -> Float {
         return math.pow(self, b)
     }
 
