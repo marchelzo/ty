@@ -110,7 +110,7 @@ GetMember(Ty *ty, Value v, int i, bool b);
 Value
 CompleteCurrentFunction(Ty *ty);
 
-extern _Thread_local TyMutex *MyLock;
+extern _Thread_local TySpinLock *MyLock;
 
 void
 TakeLock(Ty *ty);

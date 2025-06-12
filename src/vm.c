@@ -86,11 +86,16 @@
 #include "value.h"
 #include "vm.h"
 
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+
 #define TY_LOG_VERBOSE 1
 
 #define SKIPSTR()    (IP += strlen(IP) + 1)
 #define READSTR(s)   do { (s) = IP; SKIPSTR(); } while (0)
-#define READVALUE(s) (memcpy(&s, IP, sizeof s), (IP += sizeof s))
+#define READVALUE(s) (__builtin_memcpy(&s, IP, sizeof s), (IP += sizeof s))
 #define READJUMP(c)  (((c) = IP), (IP += sizeof (int)))
 #define DOJUMP(c)    (IP = (c) + load_int((c)) + sizeof (int))
 
@@ -181,14 +186,14 @@ FILE *ProfileOut = NULL;
 
 static char throw = INSTR_THROW;
 
-inline static uint64_t TyThreadWallTime()
+inline static u64 TyThreadWallTime()
 {
 #ifdef _WIN32
         LARGE_INTEGER counter;
         LARGE_INTEGER frequency;
         QueryPerformanceCounter(&counter);
         QueryPerformanceFrequency(&frequency);
-        return (uint64_t)(counter.QuadPart * 1000000000ULL / frequency.QuadPart);
+        return (u64)(counter.QuadPart * 1000000000ULL / frequency.QuadPart);
 #else
         struct timespec t;
         clock_gettime(CLOCK_MONOTONIC, &t);
@@ -196,7 +201,7 @@ inline static uint64_t TyThreadWallTime()
 #endif
 }
 
-inline static uint64_t
+inline static u64
 TyThreadTime(void)
 {
         return UseWallTime ? TyThreadWallTime() : TyThreadCPUTime();
@@ -256,9 +261,9 @@ static void
 ProfileReport(Ty *ty);
 
 static _Thread_local char *LastIP;
-static _Thread_local uint64_t LastThreadTime;
-static _Thread_local uint64_t LastThreadGCTime;
-static TyMutex ProfileMutex;
+static _Thread_local u64 LastThreadTime;
+static _Thread_local u64 LastThreadGCTime;
+static TySpinLock ProfileMutex;
 static Dict *Samples;
 static Dict *FuncSamples;
 istat prof;
@@ -268,20 +273,7 @@ static int64_t LastReportRequest;
 
 #endif
 
-typedef struct {
-        ValueStack *stack;
-        ValueVector *tls;
-        FrameStack *frames;
-        TargetStack *targets;
-        ValueStack *drop_stack;
-        TryStack *try_stack;
-        GCRootSet *roots;
-        AllocList *allocs;
-        size_t *memory_used;
-} ThreadStorage;
-
 static char const *filename;
-static char const *Error;
 
 bool PrintResult = false;
 FILE *DisassemblyOut = NULL;
@@ -293,20 +285,20 @@ typedef atomic_bool TyThreadState;
 #endif
 
 typedef struct thread_group {
-        TyMutex Lock;
-        TyMutex GCLock;
+        TySpinLock Lock;
+        TySpinLock GCLock;
         vec(TyThread) ThreadList;
-        vec(TyMutex *) ThreadLocks;
-        vec(ThreadStorage) ThreadStorages;
+        vec(Ty *) TyList;
+        vec(TySpinLock *) ThreadLocks;
         vec(TyThreadState *) ThreadStates;
         atomic_bool WantGC;
         TyBarrier GCBarrierStart;
         TyBarrier GCBarrierMark;
         TyBarrier GCBarrierSweep;
         TyBarrier GCBarrierDone;
-        TyMutex DLock;
+        TySpinLock DLock;
         AllocList DeadAllocs;
-        size_t DeadUsed;
+        isize DeadUsed;
 } ThreadGroup;
 
 typedef struct {
@@ -327,15 +319,14 @@ static pthread_rwlock_t SigLock = PTHREAD_RWLOCK_INITIALIZER;
 static _Thread_local Ty *co_ty;
 
 static _Thread_local Ty *MyTy;
-_Thread_local TyMutex *MyLock;
+_Thread_local TySpinLock *MyLock;
 static _Thread_local TyThreadState *MyState;
-static _Thread_local ThreadStorage MyStorage;
 static _Thread_local bool GCInProgress;
 static _Thread_local bool HaveLock = true;
-static _Thread_local uint64_t MyId;
+static _Thread_local u64 MyId;
 
 void
-MarkStorage(Ty *ty, ThreadStorage const *storage);
+MarkStorage(Ty *ty);
 
 static TyThreadReturnValue
 vm_run_thread(void *p);
@@ -383,7 +374,7 @@ InitializeTy(Ty *ty)
 
         ty->co_top = co_active();
 
-        uint64_t seed = random();
+        u64 seed = random();
         ty->prng[0] = splitmix64(&seed);
         ty->prng[1] = splitmix64(&seed);
         ty->prng[2] = splitmix64(&seed);
@@ -411,7 +402,7 @@ inline static void
 UnlockThreads(Ty *ty, int *threads, int n)
 {
         for (int i = 0; i < n; ++i) {
-                TyMutexUnlock(MyGroup->ThreadLocks.items[threads[i]]);
+                TySpinLockUnlock(MyGroup->ThreadLocks.items[threads[i]]);
         }
 }
 
@@ -435,38 +426,37 @@ TryFlipTo(TyThreadState *state, bool blocking)
 void
 Forget(Ty *ty, Value *v, AllocList *allocs)
 {
-        size_t n = MyStorage.allocs->count;
+        isize n = vN(ty->allocs);
 
         value_mark(ty, v);
-        GCForget(ty, MyStorage.allocs, MyStorage.memory_used);
+        GCForget(ty, &ty->allocs, &ty->memory_used);
 
-        for (size_t i = MyStorage.allocs->count; i < n; ++i) {
-                vec_push_unchecked(*allocs, MyStorage.allocs->items[i]);
+        for (usize i = vN(ty->allocs); i < n; ++i) {
+                xvP(*allocs, v__(ty->allocs, i));
         }
 }
 
-static void
+static ThreadGroup *
 InitThreadGroup(Ty *ty, ThreadGroup *g)
 {
         v00(g->ThreadList);
+        v00(g->TyList);
         v00(g->ThreadStates);
-        v00(g->ThreadStorages);
         v00(g->ThreadLocks);
         v00(g->DeadAllocs);
-        TyMutexInit(&g->Lock);
-        TyMutexInit(&g->GCLock);
-        TyMutexInit(&g->DLock);
+        TySpinLockInit(&g->Lock);
+        TySpinLockInit(&g->GCLock);
+        TySpinLockInit(&g->DLock);
         g->WantGC = false;
         g->DeadUsed = 0;
 
+        return g;
 }
 
-static ThreadGroup *
+inline static ThreadGroup *
 NewThreadGroup(Ty *ty)
 {
-        ThreadGroup *g = mA(sizeof *g);
-        InitThreadGroup(ty, g);
-        return g;
+        return InitThreadGroup(ty, mA(sizeof (ThreadGroup)));
 }
 
 static void
@@ -480,7 +470,7 @@ WaitGC(Ty *ty)
         lGv(false);
 
 #ifdef TY_PROFILER
-        uint64_t start = TyThreadTime();
+        u64 start = TyThreadTime();
 #endif
 
         while (!*MyState) {
@@ -498,12 +488,12 @@ WaitGC(Ty *ty)
         GCLOG("Waiting to mark: %llu", TID);
         TyBarrierWait(&MyGroup->GCBarrierStart);
         GCLOG("Marking: %llu", TID);
-        MarkStorage(ty, &MyStorage);
+        MarkStorage(ty);
 
         GCLOG("Waiting to sweep: %llu", TID);
         TyBarrierWait(&MyGroup->GCBarrierMark);
         GCLOG("Sweeping: %llu", TID);
-        GCSweep(ty, MyStorage.allocs, MyStorage.memory_used);
+        GCSweepOwn(ty);
 
         GCLOG("Waiting to continue execution: %llu", TID);
         TyBarrierWait(&MyGroup->GCBarrierSweep);
@@ -522,19 +512,19 @@ DoGC(Ty *ty)
 {
         GCLOG("Trying to do GC. Used = %zu, DeadUsed = %zu", MemoryUsed, MyGroup->DeadUsed);
 
-        if (!TyMutexTryLock(&MyGroup->GCLock)) {
+        if (!TySpinLockTryLock(&MyGroup->GCLock)) {
                 GCLOG("Couldn't take GC lock: calling WaitGC() on thread %llu", TID);
                 WaitGC(ty);
                 return;
         }
 
 #ifdef TY_PROFILER
-        uint64_t start = TyThreadTime();
+        u64 start = TyThreadTime();
 #endif
 
         GCInProgress = true;
 
-        TyMutexLock(&MyGroup->Lock);
+        TySpinLockLock(&MyGroup->Lock);
 
         dont_printf(
                 "[%.4f] [%s:%d] DoGC(): TDB_IS_%s\n",
@@ -553,26 +543,24 @@ DoGC(Ty *ty)
 
         static int *blockedThreads;
         static int *runningThreads;
-        static size_t capacity;
+        static usize capacity;
 
         if (MyGroup->ThreadList.count > capacity) {
-                blockedThreads = realloc(blockedThreads, MyGroup->ThreadList.count * sizeof *blockedThreads);
-                runningThreads = realloc(runningThreads, MyGroup->ThreadList.count * sizeof *runningThreads);
-                if (blockedThreads == NULL || runningThreads == NULL)
-                        panic("Out of memory!");
-                capacity = MyGroup->ThreadList.count;
+                blockedThreads = mrealloc(blockedThreads, vN(MyGroup->ThreadList) * sizeof *blockedThreads);
+                runningThreads = mrealloc(runningThreads, vN(MyGroup->ThreadList) * sizeof *runningThreads);
+                capacity = vN(MyGroup->ThreadList);
         }
 
         int nBlocked = 0;
         int nRunning = 0;
 
-        for (int i = 0; i < MyGroup->ThreadList.count; ++i) {
-                if (MyLock == MyGroup->ThreadLocks.items[i]) {
+        for (int i = 0; i < vN(MyGroup->ThreadList); ++i) {
+                if (MyLock == v__(MyGroup->ThreadLocks, i)) {
                         continue;
                 }
                 GCLOG("Trying to take lock for thread %llu: %p", (long long unsigned)MyGroup->ThreadList.items[i], (void *)MyGroup->ThreadLocks.items[i]);
-                TyMutexLock(MyGroup->ThreadLocks.items[i]);
-                if (TryFlipTo(MyGroup->ThreadStates.items[i], true)) {
+                TySpinLockLock(v__(MyGroup->ThreadLocks, i));
+                if (TryFlipTo(v__(MyGroup->ThreadStates, i), true)) {
                         GCLOG("Thread %llu is running", (long long unsigned)MyGroup->ThreadList.items[i]);
                         runningThreads[nRunning++] = i;
                 } else {
@@ -584,9 +572,9 @@ DoGC(Ty *ty)
         GCLOG("nBlocked = %d, nRunning = %d on thread %llu", nBlocked, nRunning, TID);
 
         TyBarrierInit(&MyGroup->GCBarrierStart, nRunning + 1);
-        TyBarrierInit(&MyGroup->GCBarrierMark, nRunning + 1);
+        TyBarrierInit(&MyGroup->GCBarrierMark,  nRunning + 1);
         TyBarrierInit(&MyGroup->GCBarrierSweep, nRunning + 1);
-        TyBarrierInit(&MyGroup->GCBarrierDone, nRunning + 1);
+        TyBarrierInit(&MyGroup->GCBarrierDone,  nRunning + 1);
 
         UnlockThreads(ty, runningThreads, nRunning);
 
@@ -594,11 +582,11 @@ DoGC(Ty *ty)
 
         for (int i = 0; i < nBlocked; ++i) {
                 GCLOG("Marking thread %llu storage from thread %llu", (long long unsigned)MyGroup->ThreadList.items[blockedThreads[i]], TID);
-                MarkStorage(ty, &MyGroup->ThreadStorages.items[blockedThreads[i]]);
+                MarkStorage(v__(MyGroup->TyList, blockedThreads[i]));
         }
 
         GCLOG("Marking own storage on thread %llu", TID);
-        MarkStorage(ty, &MyStorage);
+        MarkStorage(ty);
 
         if (MyGroup == &MainGroup) {
                 for (int i = 0; i < vN(Globals); ++i) {
@@ -619,20 +607,16 @@ DoGC(Ty *ty)
 
         for (int i = 0; i < nBlocked; ++i) {
                 GCLOG("Sweeping thread %llu storage from thread %llu", (long long unsigned)MyGroup->ThreadList.items[blockedThreads[i]], TID);
-                GCSweep(
-                        ty,
-                        MyGroup->ThreadStorages.items[blockedThreads[i]].allocs,
-                        MyGroup->ThreadStorages.items[blockedThreads[i]].memory_used
-                );
+                GCSweepOwn(v__(MyGroup->TyList, blockedThreads[i]));
         }
 
         GCLOG("Sweeping own storage on thread %llu", TID);
-        GCSweep(ty, MyStorage.allocs, MyStorage.memory_used);
+        GCSweepOwn(ty);
 
         GCLOG("Sweeping objects from dead threads on thread %llu", TID);
-        TyMutexLock(&MyGroup->DLock);
+        TySpinLockLock(&MyGroup->DLock);
         GCSweep(ty, &MyGroup->DeadAllocs, &MyGroup->DeadUsed);
-        TyMutexUnlock(&MyGroup->DLock);
+        TySpinLockUnlock(&MyGroup->DLock);
 
         TyBarrierWait(&MyGroup->GCBarrierSweep);
 
@@ -640,8 +624,8 @@ DoGC(Ty *ty)
 
         GCLOG("Unlocking ThreadsLock and GCLock. Used = %zu, DeadUsed = %zu", MemoryUsed, MyGroup->DeadUsed);
 
-        TyMutexUnlock(&MyGroup->Lock);
-        TyMutexUnlock(&MyGroup->GCLock);
+        TySpinLockUnlock(&MyGroup->Lock);
+        TySpinLockUnlock(&MyGroup->GCLock);
 
         GCLOG("Unlocked ThreadsLock and GCLock on thread %llu", TID);
 
@@ -653,7 +637,7 @@ DoGC(Ty *ty)
         LastThreadGCTime = TyThreadTime() - start;
 #endif
 
-        dont_printf("Thread %-3llu: %lluus\n", TID, (TyThreadTime() - start) / 1000);
+        dont_printf("Thread %-3llu: %.6fs\n", TID, (t1 - t0) / 1.0e9);
 }
 
 #define BUILTIN(f)    { .type = VALUE_BUILTIN_FUNCTION, .builtin_function = (f), .tags = 0 }
@@ -1296,7 +1280,7 @@ call_co(Ty *ty, Value *v, int n)
         call_co_ex(ty, v, n, IP);
 }
 
-uint64_t
+u64
 MyThreadId(Ty *ty)
 {
         return MyId;
@@ -1306,7 +1290,7 @@ void
 TakeLock(Ty *ty)
 {
         GCLOG("Taking MyLock%s", "");
-        TyMutexLock(MyLock);
+        TySpinLockLock(MyLock);
         GCLOG("Took MyLock");
         HaveLock = true;
 }
@@ -1322,7 +1306,7 @@ ReleaseLock(Ty *ty, bool blocked)
 {
         SetState(ty, blocked);
         GCLOG("Releasing MyLock: %d", (int)blocked);
-        TyMutexUnlock(MyLock);
+        TySpinLockUnlock(MyLock);
         HaveLock = false;
 }
 
@@ -1362,32 +1346,19 @@ AddThread(Ty *ty, TyThread self)
 {
         GCLOG("AddThread(): %llu: taking lock", TID);
 
-        TyMutexLock(&MyGroup->Lock);
+        TySpinLockLock(&MyGroup->Lock);
 
         GCLOG("AddThread(): %llu: took lock", TID);
 
         GC_STOP();
 
+        vvP(MyGroup->TyList, ty);
         vvP(MyGroup->ThreadList, self);
 
         MyLock = mrealloc(NULL, sizeof *MyLock);
-        TyMutexInit(MyLock);
-        TyMutexLock(MyLock);
+        TySpinLockInit(MyLock);
+        TySpinLockLock(MyLock);
         vvP(MyGroup->ThreadLocks, MyLock);
-
-        MyStorage = (ThreadStorage) {
-                .stack = &STACK,
-                .tls = &THREAD_LOCALS,
-                .frames = &FRAMES,
-                .try_stack = &TRY_STACK,
-                .drop_stack = &DROP_STACK,
-                .targets = &TARGETS,
-                .roots = &RootSet,
-                .allocs = &ty->allocs,
-                .memory_used = &MemoryUsed
-        };
-
-        vvP(MyGroup->ThreadStorages, MyStorage);
 
         MyState = mrealloc(NULL, sizeof *MyState);
         *MyState = false;
@@ -1395,7 +1366,7 @@ AddThread(Ty *ty, TyThread self)
 
         GC_RESUME();
 
-        TyMutexUnlock(&MyGroup->Lock);
+        TySpinLockUnlock(&MyGroup->Lock);
 
         GCLOG("AddThread(): %llu: finished", TID);
 }
@@ -1407,12 +1378,12 @@ CleanupThread(void *ctx)
 
         GCLOG("Cleaning up thread: %zu bytes in use. DeadUsed = %zu", MemoryUsed, MyGroup->DeadUsed);
 
-        TyMutexLock(&MyGroup->DLock);
+        TySpinLockLock(&MyGroup->DLock);
 
         if (MyGroup->DeadUsed + MemoryUsed > MemoryLimit) {
-                TyMutexUnlock(&MyGroup->DLock);
+                TySpinLockUnlock(&MyGroup->DLock);
                 DoGC(ty);
-                TyMutexLock(&MyGroup->DLock);
+                TySpinLockLock(&MyGroup->DLock);
         }
 
         uvPv(MyGroup->DeadAllocs, ty->allocs);
@@ -1420,11 +1391,11 @@ CleanupThread(void *ctx)
 
         ty->allocs.count = 0;
 
-        TyMutexUnlock(&MyGroup->DLock);
+        TySpinLockUnlock(&MyGroup->DLock);
 
         lGv(true);
 
-        TyMutexLock(&MyGroup->Lock);
+        TySpinLockLock(&MyGroup->Lock);
 
         GCLOG("Got threads lock on thread: %llu -- ready to clean up. Group size = %zu", TID, vN(MyGroup->ThreadList));
 
@@ -1432,15 +1403,14 @@ CleanupThread(void *ctx)
                 if (MyLock == MyGroup->ThreadLocks.items[i]) {
                         *v_(MyGroup->ThreadList, i) = *vvX(MyGroup->ThreadList);
                         *v_(MyGroup->ThreadLocks, i) = *vvX(MyGroup->ThreadLocks);
-                        *v_(MyGroup->ThreadStorages, i) = *vvX(MyGroup->ThreadStorages);
                         *v_(MyGroup->ThreadStates, i) = *vvX(MyGroup->ThreadStates);
                         break;
                 }
         }
 
-        size_t group_remaining = MyGroup->ThreadList.count;
+        usize group_remaining = MyGroup->ThreadList.count;
 
-        TyMutexUnlock(&MyGroup->Lock);
+        TySpinLockUnlock(&MyGroup->Lock);
 
         for (int i = 0; i < TRY_STACK.capacity; ++i) {
                 struct try *t = *v_(TRY_STACK, i);
@@ -1448,7 +1418,7 @@ CleanupThread(void *ctx)
                 free(t);
         }
 
-        TyMutexDestroy(MyLock);
+        TySpinLockDestroy(MyLock);
         free(MyLock);
         free((void *)MyState);
         free(STACK.items);
@@ -1468,14 +1438,14 @@ CleanupThread(void *ctx)
 
         if (group_remaining == 0) {
                 GCLOG("Cleaning up group %p", (void*)MyGroup);
-                TyMutexDestroy(&MyGroup->Lock);
-                TyMutexDestroy(&MyGroup->GCLock);
-                TyMutexDestroy(&MyGroup->DLock);
-                mF(MyGroup->ThreadList.items);
-                mF(MyGroup->ThreadLocks.items);
-                mF(MyGroup->ThreadStates.items);
-                mF(MyGroup->ThreadStorages.items);
-                mF(MyGroup->DeadAllocs.items);
+                TySpinLockDestroy(&MyGroup->Lock);
+                TySpinLockDestroy(&MyGroup->GCLock);
+                TySpinLockDestroy(&MyGroup->DLock);
+                vvF(MyGroup->TyList);
+                vvF(MyGroup->ThreadList);
+                vvF(MyGroup->ThreadLocks);
+                vvF(MyGroup->ThreadStates);
+                vvF(MyGroup->DeadAllocs);
                 mF(MyGroup);
         }
 
@@ -1524,7 +1494,7 @@ vm_run_thread(void *p)
 
         if (TY_CATCH_ERROR()) {
                 // TODO: do something useful here
-                fprintf(stderr, "Thread %lld dying with error: %s\n", TID, Error);
+                fprintf(stderr, "Thread %lld dying with error: %s\n", TID, TyError(ty));
                 OKGC(t);
                 t->v = NIL;
         } else {
@@ -1788,6 +1758,33 @@ GetCurrentTry(Ty *ty)
 
         return NULL;
 }
+
+inline static void
+BadFieldAccess(Ty *ty, Value const *val, i32 z)
+{
+        if (val->type == VALUE_TUPLE) {
+                zP(
+                        "attempt to access non-existent field %s'%s'%s of %s%s%s",
+                        TERM(34),
+                        M_NAME(z),
+                        TERM(39),
+                        TERM(97),
+                        VSC(val),
+                        TERM(39)
+                );
+        } else {
+                zP(
+                        "attempt to access non-existent member %s'%s'%s of %s%s%s",
+                        TERM(34),
+                        M_NAME(z),
+                        TERM(39),
+                        TERM(97),
+                        VSC(val),
+                        TERM(39)
+                );
+        }
+}
+
 TY_INSTR_INLINE static bool
 DoThrow(Ty *ty)
 {
@@ -1999,7 +1996,13 @@ Error:
 }
 
 TY_INSTR_INLINE static void
-AddTupleEntry(Ty *ty, int_vector *ids, ValueVector *values, int id, Value const *v)
+AddTupleEntry(
+        Ty *ty,
+        int_vector *ids,
+        ValueVector *values,
+        int id,
+        Value const *v
+)
 {
         for (int i = 0; i < ids->count; ++i) {
                 if (ids->items[i] == id) {
@@ -3539,6 +3542,64 @@ DoAssign(Ty *ty)
 }
 
 static void
+DoTargetMember(Ty *ty, Value v, i32 z)
+{
+        Value *vp;
+        Value *vp2;
+
+        if (v.type == VALUE_OBJECT) {
+                vp = class_lookup_setter_i(ty, v.class, z);
+                if (vp != NULL) {
+                        vp2 = class_lookup_getter_i(ty, v.class, z);
+                        if (UNLIKELY(vp2 == NULL)) {
+                                zP(
+                                        "class %s%s%s needs a getter for %s%s%s!",
+                                        TERM(33),
+                                        class_name(ty, v.class),
+                                        TERM(0),
+                                        TERM(34),
+                                        M_NAME(z),
+                                        TERM(0)
+                                );
+                        }
+                        pushtarget(vp2, NULL);
+                        pushtarget((Value *)(uintptr_t)v.class, v.object);
+                        pushtarget((Value *)(((uintptr_t)vp) | 2), NULL);
+                        return;
+                }
+
+                vp = class_lookup_setter_i(ty, v.class, NAMES.missing);
+                if (vp != NULL) {
+                        vp2 = class_lookup_method_i(ty, v.class, NAMES.missing);
+                        if (UNLIKELY(vp2 == NULL)) {
+                                zP(
+                                        "class %s%s%s needs a getter for %s%s%s!",
+                                        TERM(33),
+                                        class_name(ty, v.class),
+                                        TERM(0),
+                                        TERM(34),
+                                        M_NAME(z),
+                                        TERM(0)
+                                );
+                        }
+                        pushtarget((Value *)(uintptr_t)v.class, v.object);
+                        pushtarget((Value *)(((uintptr_t)z << 3) | 3), NULL);
+                        return;
+                }
+
+                pushtarget(itable_get(ty, v.object, z), v.object);
+        } else if (v.type == VALUE_TUPLE) {
+                vp = tuple_get_i(&v, z);
+                if (vp == NULL) {
+                        BadFieldAccess(ty, &v, z);
+                }
+                pushtarget(vp, v.items);
+        } else {
+                zP("assignment to member of non-object: %s", VSC(&v));
+        }
+}
+
+static void
 DoTargetSubscript(Ty *ty)
 {
         Value v;
@@ -3737,7 +3798,7 @@ IncValue(Ty *ty, Value *v)
                         break;
                 }
         default:
-                zP("pre-increment applied to invalid type: %s", VSC(v));
+                zP("increment applied to invalid type: %s", VSC(v));
         }
 }
 
@@ -3764,7 +3825,7 @@ DecValue(Ty *ty, Value *v)
                         break;
                 }
         default:
-                zP("pre-decrement applied to invalid type: %s", VSC(v));
+                zP("decrement applied to invalid type: %s", VSC(v));
         }
 }
 
@@ -3893,13 +3954,13 @@ vm_try_exec(Ty *_ty, char *code)
 {
         Ty * volatile ty = _ty;
 
-        size_t volatile nframes = FRAMES.count;
+        usize volatile nframes = FRAMES.count;
 
         // FIXME: don't need to allocate a new stack
         TryStack ts = TRY_STACK;
         vec_init(TRY_STACK);
 
-        size_t volatile sp = vN(STACK);
+        usize volatile sp = vN(STACK);
         char * volatile save = IP;
 
         SCRATCH_SAVE();
@@ -3992,27 +4053,27 @@ vm_exec(Ty *ty, char *code)
         NextInstruction:
 #ifdef TY_PROFILER
                 if (Samples != NULL) {
-                        uint64_t now = TyThreadTime();
+                        u64 now = TyThreadTime();
+
+                        if (LastThreadGCTime > 0) {
+                                Value *count = dict_put_key_if_not_exists(ty, FuncSamples, PTR((void *)GC_ENTRY));
+                                if (count->type == VALUE_NIL) {
+                                        *count = INTEGER(LastThreadGCTime);
+                                } else {
+                                        count->integer += LastThreadGCTime;
+                                }
+                                LastThreadGCTime = 0;
+                        }
 
                         if (StartIPLocal != LastIP && LastThreadTime != 0 && *LastIP != INSTR_HALT &&
                             LastIP != next_fix && LastIP != iter_fix && LastIP != next_fix + 1 &&
                             LastIP != iter_fix + 1 && LastIP != &throw) {
 
-                                uint64_t dt = now - LastThreadTime;
+                                u64 dt = now - LastThreadTime;
 
-                                TyMutexLock(&ProfileMutex);
+                                TySpinLockLock(&ProfileMutex);
 
                                 istat_add(&prof, LastIP, dt);
-
-                                if (LastThreadGCTime > 0) {
-                                        Value *count = dict_put_key_if_not_exists(ty, FuncSamples, PTR((void *)GC_ENTRY));
-                                        if (count->type == VALUE_NIL) {
-                                                *count = INTEGER(LastThreadGCTime);
-                                        } else {
-                                                count->integer += LastThreadGCTime;
-                                        }
-                                        LastThreadGCTime = 0;
-                                }
 
                                 Value *count = dict_put_key_if_not_exists(ty, Samples, PTR(LastIP));
                                 if (count->type == VALUE_NIL) {
@@ -4029,13 +4090,13 @@ vm_exec(Ty *ty, char *code)
                                         count->integer += dt;
                                 }
 
-                                TyMutexUnlock(&ProfileMutex);
+                                TySpinLockUnlock(&ProfileMutex);
                         }
 
                         if (WantReport) {
-                                TyMutexLock(&ProfileMutex);
+                                TySpinLockLock(&ProfileMutex);
                                 ProfileReport(ty);
-                                TyMutexUnlock(&ProfileMutex);
+                                TySpinLockUnlock(&ProfileMutex);
                                 WantReport = false;
                         }
 
@@ -4316,58 +4377,17 @@ AssignGlobal:
                         break;
                 CASE(TARGET_MEMBER)
                         READVALUE(z);
-
                         v = pop();
-
-                        if (v.type == VALUE_OBJECT) {
-                                vp = class_lookup_setter_i(ty, v.class, z);
-                                if (vp != NULL) {
-                                        vp2 = class_lookup_getter_i(ty, v.class, z);
-                                        if (UNLIKELY(vp2 == NULL)) {
-                                                zP(
-                                                        "class %s%s%s needs a getter for %s%s%s!",
-                                                        TERM(33),
-                                                        class_name(ty, v.class),
-                                                        TERM(0),
-                                                        TERM(34),
-                                                        M_NAME(z),
-                                                        TERM(0)
-                                                );
-                                        }
-                                        pushtarget(vp2, NULL);
-                                        pushtarget((Value *)(uintptr_t)v.class, v.object);
-                                        pushtarget((Value *)(((uintptr_t)vp) | 2), NULL);
-                                        break;
-                                }
-                                vp = class_lookup_setter_i(ty, v.class, NAMES.missing);
-                                if (vp != NULL) {
-                                        vp2 = class_lookup_method_i(ty, v.class, NAMES.missing);
-                                        if (UNLIKELY(vp2 == NULL)) {
-                                                zP(
-                                                        "class %s%s%s needs a getter for %s%s%s!",
-                                                        TERM(33),
-                                                        class_name(ty, v.class),
-                                                        TERM(0),
-                                                        TERM(34),
-                                                        M_NAME(z),
-                                                        TERM(0)
-                                                );
-                                        }
-                                        pushtarget((Value *)(uintptr_t)v.class, v.object);
-                                        pushtarget((Value *)(((uintptr_t)z << 3) | 3), NULL);
-                                        break;
-                                }
-                                pushtarget(itable_get(ty, v.object, z), v.object);
-                        } else if (v.type == VALUE_TUPLE) {
-                                vp = tuple_get_i(&v, z);
-                                if (vp == NULL) {
-                                        value = v;
-                                        goto BadTupleMember;
-                                }
-                                pushtarget(vp, v.items);
-                        } else {
-                                zP("assignment to member of non-object: %s", VSC(&v));
+                        DoTargetMember(ty, v, z);
+                        break;
+                CASE(TARGET_SELF_MEMBER)
+                        READVALUE(z);
+                        n = vvL(FRAMES)->f.info[FUN_INFO_PARAM_COUNT];
+                        value = v__(STACK, vvL(FRAMES)->fp + n);
+                        if (value.type == VALUE_REF) {
+                                value = *value.ref;
                         }
+                        DoTargetMember(ty, value, z);
                         break;
                 CASE(TARGET_SUBSCRIPT)
                         DoTargetSubscript(ty);
@@ -4595,7 +4615,7 @@ AssignGlobal:
                 CASE(TRY)
                 {
                         struct try *t;
-                        size_t ntry = TRY_STACK.count;
+                        usize ntry = TRY_STACK.count;
 
                         if (UNLIKELY(ntry == TRY_STACK.capacity)) {
                                 do {
@@ -4909,29 +4929,25 @@ AssignGlobal:
                                 }
                         }
 
-                        k = values.count;
+                        k  = vN(values);
                         vp = mAo(k * sizeof (Value), GC_TUPLE);
-
-                        v = TUPLE(vp, NULL, k, false);
+                        v  = TUPLE(vp, NULL, k, false);
 
                         GC_STOP();
 
                         if (k > 0) {
-                                memcpy(vp, values.items, k * sizeof (Value));
+                                __builtin_memcpy(vp, values.items, k * sizeof (Value));
                                 if (have_names) {
                                         v.ids = mAo(k * sizeof (int), GC_TUPLE);
-                                        memcpy(v.ids, ids.items, k * sizeof (int));
+                                        __builtin_memcpy(v.ids, ids.items, k * sizeof (int));
                                 }
                         }
 
                         STACK.count -= n;
-
                         push(v);
 
                         GC_RESUME();
-
                         SCRATCH_RESTORE();
-
                         break;
                 }
                 CASE(GATHER_TUPLE)
@@ -4940,10 +4956,9 @@ AssignGlobal:
                         vp = mAo(n * sizeof (Value), GC_TUPLE);
                         v = TUPLE(vp, NULL, n, false);
 
-                        memcpy(vp, topN(n), n * sizeof (Value));
+                        __builtin_memcpy(vp, topN(n), n * sizeof (Value));
 
                         STACK.count -= n;
-
                         push(v);
 
                         break;
@@ -5172,8 +5187,8 @@ Yield:
                         RC = 0;
                         break;
                 CASE(GET_EXTRA)
-                        LOG("GETTING %d EXTRA", RC);
                         STACK.count += RC;
+                        RC = 0;
                         break;
                 CASE(FIX_EXTRA)
                         for (n = 0; top()[-n].type != VALUE_SENTINEL; ++n)
@@ -5381,6 +5396,15 @@ Yield:
                         }
                         
                         UNREACHABLE();
+                CASE(SELF_MEMBER_ACCESS)
+                        READVALUE(z);
+                        n = vvL(FRAMES)->f.info[FUN_INFO_PARAM_COUNT];
+                        value = v__(STACK, vvL(FRAMES)->fp + n);
+                        if (value.type == VALUE_REF) {
+                                value = *value.ref;
+                        }
+                        push(GetMember(ty, value, z, false));
+                        break;
                 CASE(TRY_MEMBER_ACCESS)
                 CASE(MEMBER_ACCESS)
                         b = IP[-1] == INSTR_TRY_MEMBER_ACCESS;
@@ -5402,30 +5426,9 @@ MemberAccess:
                         }
 
 BadMemberAccess:
-                        if (value.type == VALUE_TUPLE) {
 BadTupleMember:
-                                zP(
-                                        "attempt to access non-existent field %s'%s'%s of %s%s%s",
-                                        TERM(34),
-                                        M_NAME(z),
-                                        TERM(39),
-                                        TERM(97),
-                                        VSC(&value),
-                                        TERM(39)
-                                );
-                        } else {
-                                zP(
-                                        "attempt to access non-existent member %s'%s'%s of %s%s%s",
-                                        TERM(34),
-                                        M_NAME(z),
-                                        TERM(39),
-                                        TERM(97),
-                                        VSC(&value),
-                                        TERM(39)
-                                );
-                        }
-
-                        break;
+                        BadFieldAccess(ty, &value, z);
+                        UNREACHABLE();
                 CASE(SLICE)
                         CallMethod(ty, NAMES.slice, 3, 0, false);
                         break;
@@ -5697,6 +5700,7 @@ BadTupleMember:
                         if (UNLIKELY(SpecialTarget(ty))) {
                                 zP("pre-increment applied to invalid target");
                         }
+                        IncValue(ty, peektarget());
                         push(*poptarget());
                         break;
                 CASE(POST_INC)
@@ -5704,21 +5708,13 @@ BadTupleMember:
                                 zP("pre-increment applied to invalid target");
                         }
                         push(*peektarget());
-                        switch (EXPECT(peektarget()->type, VALUE_INTEGER)) {
-                        case VALUE_INTEGER: ++peektarget()->integer; break;
-                        case VALUE_REAL:    ++peektarget()->real;    break;
-                        case VALUE_PTR:
-                                vp = peektarget();
-                                vp->ptr = ((char *)vp->ptr) + ((ffi_type *)(vp->extra == NULL ? &ffi_type_uint8 : vp->extra))->size;
-                                break;
-                        default:            zP("post-increment applied to invalid type: %s", VSC(peektarget()));
-                        }
-                        poptarget();
+                        IncValue(ty, poptarget());
                         break;
                 CASE(PRE_DEC)
                         if (UNLIKELY(SpecialTarget(ty))) {
                                 zP("pre-decrement applied to invalid target");
                         }
+                        DecValue(ty, peektarget());
                         push(*poptarget());
                         break;
                 CASE(POST_DEC)
@@ -5726,16 +5722,7 @@ BadTupleMember:
                                 zP("post-decrement applied to invalid target");
                         }
                         push(*peektarget());
-                        switch (EXPECT(peektarget()->type, VALUE_INTEGER)) {
-                        case VALUE_INTEGER: --peektarget()->integer; break;
-                        case VALUE_REAL:    --peektarget()->real;    break;
-                        case VALUE_PTR:
-                                vp = peektarget();
-                                vp->ptr = ((char *)vp->ptr) - ((ffi_type *)(vp->extra == NULL ? &ffi_type_uint8 : vp->extra))->size;
-                                break;
-                        default:            zP("post-decrement applied to invalid type: %s", VSC(peektarget()));
-                        }
-                        poptarget();
+                        DecValue(ty, poptarget());
                         break;
                 CASE(MUT_ADD)
                         DoMutAdd(ty);
@@ -6003,6 +5990,9 @@ BadTupleMember:
                 CASE(POP_STACK_POS)
                         STACK.count = *vvX(SP_STACK);
                         break;
+                CASE(POP_STACK_POS_POP)
+                        STACK.count = *vvX(SP_STACK) - 1;
+                        break;
                 CASE(RESTORE_STACK_POS)
                         STACK.count = *vvL(SP_STACK);
                         break;
@@ -6076,7 +6066,7 @@ RunExitHooks(void)
 
         bool bReprintFirst = false;
 
-        for (size_t i = 0; i < hooks->count; ++i) {
+        for (usize i = 0; i < hooks->count; ++i) {
                 if (TY_CATCH_ERROR()) {
                         vvP(msgs, S2(TyError(ty)));
                 } else {
@@ -6090,7 +6080,7 @@ RunExitHooks(void)
                 fprintf(stderr, "%s\n", first);
         }
 
-        for (size_t i = 0; i < msgs.count; ++i) {
+        for (usize i = 0; i < msgs.count; ++i) {
                 fprintf(stderr, "Exit hook failed with error: %s\n", msgs.items[i]);
         }
 }
@@ -6175,12 +6165,53 @@ vm_init(Ty *ty, int ac, char **av)
         NOGC(Samples);
         FuncSamples = dict_new(ty);
         NOGC(FuncSamples);
-        TyMutexInit(&ProfileMutex);
+        TySpinLockInit(&ProfileMutex);
 #endif
 
         TY_IS_READY = true;
 
         return true;
+}
+
+static void
+xDcringe(Ty *ty)
+{
+        dump(&ErrorBuffer, "Stack trace:\n");
+
+        for (int i = 0; IP != NULL; ++i) {
+                if (vN(FRAMES) > 0 && ((char *)vvL(FRAMES)->f.info)[FUN_HIDDEN]) {
+                        goto Next;
+                }
+
+                Expr const *expr = compiler_find_expr(ty, IP - 1);
+
+                WriteExpressionTrace(ty, &ErrorBuffer, expr, 0, i == 0);
+                if (expr != NULL && expr->origin != NULL) {
+                        WriteExpressionOrigin(ty, &ErrorBuffer, expr->origin);
+                }
+
+                while (vN(FRAMES) == 0 && co_abort(ty)) {
+                        ;
+                }
+
+                if (vN(FRAMES) == 0) {
+                        break;
+                }
+
+Next:
+                IP = (char *)vvX(FRAMES)->ip;
+        }
+
+        if (CompilationDepth(ty) > 1) {
+                dump(
+                        &ErrorBuffer,
+                        "\n%s%sCompilation context:%s\n",
+                        TERM(1),
+                        TERM(34),
+                        TERM(0)
+                );
+                CompilationTrace(ty, &ErrorBuffer);
+        }
 }
 
 noreturn void
@@ -6236,9 +6267,7 @@ Next:
                 CompilationTrace(ty, &ErrorBuffer);
         }
 
-        Error = ErrorBuffer.items;
-
-        XLOG("VM Error: %s", Error);
+        XLOG("VM Error: %s", vv(ErrorBuffer));
 
         TY_THROW_ERROR();
 }
@@ -6246,14 +6275,17 @@ Next:
 noreturn void
 vm_error(Ty *ty, char const *fmt, ...)
 {
-        Value msg;
         va_list ap;
 
         va_start(ap, fmt);
-        msg = STRING_VFORMAT(ty, fmt, ap);
+        Value msg = STRING_VFORMAT(ty, fmt, ap);
         va_end(ap);
 
-        vm_throw(ty, &msg);
+        Class *class = class_get(ty, CLASS_ERROR);
+        Value error = OBJECT(object_new(ty, CLASS_ERROR), CLASS_ERROR);
+        *itable_get(ty, error.object, v_0(class->fields.ids)) = msg;
+
+        vm_throw(ty, &error);
 
         UNREACHABLE();
 }
@@ -6271,10 +6303,6 @@ tdb_backtrace(Ty *ty)
 
         for (int i = 0; ip != NULL; ++i) {
                 if (nf > 0 && ((char *)v_(frames, nf - 1)->f.info)[FUN_HIDDEN]) {
-                        /*
-                         * This code is part of a hidden function; we don't want it
-                         * to show up in stack traces.
-                         */
                         goto Next;
                 }
 
@@ -6505,7 +6533,7 @@ ProfileReport(Ty *ty)
                 }
 
                 void const *code = code_of(&f);
-                size_t      size = code_size_of(&f);
+                usize       size = code_size_of(&f);
 
                 DumpProgram(ty, &prog_text, filename, code, code + size, false);
 
@@ -6533,7 +6561,7 @@ ProfileReport(Ty *ty)
         qsort(profile.items, profile.count, sizeof (ProfileEntry), CompareProfileEntriesByWeight);
 
         fprintf(ProfileOut, "\n\n%s===== profile by expression =====%s\n\n", PTERM(95), PTERM(0));
-        uint64_t reported_ticks = 0;
+        u64 reported_ticks = 0;
         for (int i = 0; i < profile.count; ++i) {
                 ProfileEntry *entry = profile.items + i;
                 Expr const *expr = compiler_find_expr(ty, entry->ctx);
@@ -6668,8 +6696,23 @@ cringe(int _)
         print_stack_trace();
 #endif
 
+        for (i32 i = 0; i < vN(MyGroup->TyList); ++i) {
+                Ty *_ty = v__(MyGroup->TyList, i);
+                if (_ty != ty) {
+                        xDcringe(_ty);
+                        fprintf(
+                                stderr,
+                                "============== Thread %d =====================\n"
+                                "%s\n"
+                                "==============================================\n",
+                                i,
+                                TyError(_ty)
+                        );
+                }
+        }
         zP(
-                "xdDDDDDD: TDB state: %s  Am I TDB? %d  Am I on the TDB thread? %d",
+                "xdDDDDDD[%"PRIu64"]: TDB state: %s  Am I TDB? %d  Am I on the TDB thread? %d",
+                MyId,
                 TDB_STATE_NAME,
                 (int)I_AM_TDB,
                 TDB && TyThreadEqual(TyThreadSelf(), TDB->thread.thread->t)
@@ -6771,6 +6814,10 @@ vm_execute(Ty *ty, char const *source, char const *file)
                 printf("%s\n", VSC(top() + 1));
         }
 
+#if defined(TY_GC_STATS)
+        printf("%.2f MB\n", TotalBytesAllocated / 1.0e6);
+#endif
+
         TY_CATCH_END();
 
         filename = NULL;
@@ -6830,7 +6877,7 @@ Value
 vm_call_ex(Ty *ty, Value const *f, int argc, Value *kwargs, bool collect)
 {
         Value r, *init, *vp;
-        size_t n = STACK.count - argc;
+        usize n = STACK.count - argc;
 
         switch (f->type) {
         case VALUE_FUNCTION:
@@ -6929,7 +6976,7 @@ Collect:
 
         Value xs = ARRAY(vA());
         NOGC(xs.array);
-        for (size_t i = n; i < STACK.count; ++i) {
+        for (usize i = n; i < STACK.count; ++i) {
                 vAp(xs.array, STACK.items[i]);
         }
         OKGC(xs.array);
@@ -6944,7 +6991,7 @@ vm_call(Ty *ty, Value const *f, int argc)
 {
         Value a, b, r;
         Value *vp;
-        size_t n = STACK.count - argc;
+        usize n = STACK.count - argc;
 
         switch (f->type) {
         case VALUE_FUNCTION:
@@ -7046,7 +7093,7 @@ vm_eval_function(Ty *ty, Value const *f, ...)
 
         va_end(ap);
 
-        size_t n = STACK.count - argc;
+        usize n = STACK.count - argc;
 
         switch (f->type) {
         case VALUE_FUNCTION:
@@ -7172,47 +7219,47 @@ vm_try_2op(Ty *ty, int op, Value const *a, Value const *b)
 
 
 void
-MarkStorage(Ty *ty, ThreadStorage const *storage)
+MarkStorage(Ty *ty)
 {
-        GCLOG("Marking root set (%zu items)", vN(*storage->roots));
-        for (int i = 0; i < vN(*storage->roots); ++i) {
-                value_mark(ty, v_(*storage->roots, i));
+        GCLOG("Marking root set (%zu items)", vN(RootSet));
+        for (int i = 0; i < vN(RootSet); ++i) {
+                value_mark(ty, v_(RootSet, i));
         }
 
         GCLOG("Marking thread-local storage");
-        for (int i = 0; i < vN(*storage->tls); ++i) {
-                value_mark(ty, v_(*storage->tls, i));
+        for (int i = 0; i < vN(THREAD_LOCALS); ++i) {
+                value_mark(ty, v_(THREAD_LOCALS, i));
         }
 
         GCLOG("Marking stack");
-        for (int i = 0; i < vN(*storage->stack); ++i) {
-                value_mark(ty, v_(*storage->stack, i));
+        for (int i = 0; i < vN(STACK) + RC && i < vC(STACK); ++i) {
+                value_mark(ty, v_(STACK, i));
         }
 
         GCLOG("Marking try stack");
-        for (int i = 0; i < vN(*storage->try_stack); ++i) {
-                struct try *t = *v_(*storage->try_stack, i);
+        for (int i = 0; i < vN(TRY_STACK); ++i) {
+                struct try *t = v__(TRY_STACK, i);
                 for (int i = 0; i < vN(t->defer); ++i) {
                         value_mark(ty, v_(t->defer, i));
                 }
         }
 
         GCLOG("Marking drop stack");
-        for (int i = 0; i < vN(*storage->drop_stack); ++i) {
-                value_mark(ty, v_(*storage->drop_stack, i));
+        for (int i = 0; i < vN(DROP_STACK); ++i) {
+                value_mark(ty, v_(DROP_STACK, i));
         }
 
         GCLOG("Marking targets");
-        for (int i = 0; i < vN(*storage->targets); ++i) {
-                Target *target = v_(*storage->targets, i);
+        for (int i = 0; i < vN(TARGETS); ++i) {
+                Target *target = v_(TARGETS, i);
                 if ((((uintptr_t)target->t) & 0x07) == 0) {
                         value_mark(ty, target->t);
                 }
         }
 
         GCLOG("Marking frame functions");
-        for (int i = 0; i < vN(*storage->frames); ++i) {
-                value_mark(ty, &v_(*storage->frames, i)->f);
+        for (int i = 0; i < vN(FRAMES); ++i) {
+                value_mark(ty, &v_(FRAMES, i)->f);
         }
 }
 
@@ -7725,6 +7772,7 @@ StepInstruction(char const *ip)
         CASE(SAVE_STACK_POS)
                 break;
         CASE(POP_STACK_POS)
+        CASE(POP_STACK_POS_POP)
                 break;
         CASE(MULTI_RETURN)
                 SKIPVALUE(n);
@@ -8106,16 +8154,16 @@ bool
 TyReloadModule(Ty *ty, char const *module)
 {
         lGv(true);
-        TyMutexLock(&MyGroup->GCLock);
+        TySpinLockLock(&MyGroup->GCLock);
         lTk();
 
-        TyMutexLock(&MyGroup->Lock);
+        TySpinLockLock(&MyGroup->Lock);
 
         MyGroup->WantGC = true;
 
         static int *blockedThreads;
         static int *runningThreads;
-        static size_t capacity;
+        static usize capacity;
 
         if (MyGroup->ThreadList.count > capacity) {
                 blockedThreads = realloc(blockedThreads, MyGroup->ThreadList.count * sizeof *blockedThreads);
@@ -8132,7 +8180,7 @@ TyReloadModule(Ty *ty, char const *module)
                 if (MyLock == MyGroup->ThreadLocks.items[i]) {
                         continue;
                 }
-                TyMutexLock(MyGroup->ThreadLocks.items[i]);
+                TySpinLockLock(MyGroup->ThreadLocks.items[i]);
                 if (TryFlipTo(MyGroup->ThreadStates.items[i], true)) {
                         runningThreads[nRunning++] = i;
                 } else {
@@ -8172,8 +8220,8 @@ End:
         UnlockThreads(ty, runningThreads, nRunning);
         TyBarrierWait(&MyGroup->GCBarrierSweep);
         UnlockThreads(ty, blockedThreads, nBlocked);
-        TyMutexUnlock(&MyGroup->Lock);
-        TyMutexUnlock(&MyGroup->GCLock);
+        TySpinLockUnlock(&MyGroup->Lock);
+        TySpinLockUnlock(&MyGroup->GCLock);
         TyBarrierWait(&MyGroup->GCBarrierDone);
 
         return ok;

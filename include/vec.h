@@ -47,7 +47,7 @@ fit2(vec_z cap, vec_z min)
       : ((v).items + --(v).count)       \
 )
 
-#define vec_pop_ith(v, i) memmove(                      \
+#define vec_pop_ith(v, i) __builtin_memmove(            \
         (v).items + (i),                                \
         (v).items + (i) + 1,                            \
         (--(v).count - (i)) * sizeof (*((v).items))     \
@@ -89,14 +89,14 @@ fit2(vec_z cap, vec_z min)
                         )),                                             \
                         ((v).count * (sizeof (*(v).items)))             \
                 ),                                                      \
-                memcpy(                                                 \
+                __builtin_memcpy(                                       \
                         (v).items + (v).count,                          \
                         (elements),                                     \
                         (n) * (sizeof (*(v).items))                     \
                 ),                                                      \
                 ((v).count += (n))                                      \
         ) : (                                                           \
-                memcpy(                                                 \
+                __builtin_memcpy(                                       \
                         (v).items + (v).count,                          \
                         (elements),                                     \
                         (n) * (sizeof (*(v).items))                     \
@@ -107,7 +107,7 @@ fit2(vec_z cap, vec_z min)
 
 #define vec_insert_(v, item, i, rsz) (                          \
         vec_reserve_((v), (v).count + 1, rsz),                  \
-        memmove(                                                \
+        __builtin_memmove(                                      \
                 (v).items + (i) + 1,                            \
                 (v).items + (i),                                \
                 ((v).count - (i)) * (sizeof (*(v).items))       \
@@ -118,12 +118,12 @@ fit2(vec_z cap, vec_z min)
 
 #define vec_insert_n_(v, elems, n, i, rsz) (                    \
         vec_reserve_((v), (v).count + (n), rsz),                \
-        memmove(                                                \
+        __builtin_memmove(                                      \
                 (v).items + (i) + (n),                          \
                 (v).items + (i),                                \
                 ((v).count - (i)) * (sizeof (*(v).items))       \
         ),                                                      \
-        memcpy(                                                 \
+        __builtin_memcpy(                                       \
                 (v).items + (i),                                \
                 (elems),                                        \
                 (n) * (sizeof (*(v).items))                     \

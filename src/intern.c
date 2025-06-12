@@ -8,7 +8,7 @@
 void const *InternSentinel = &InternSentinel;
 
 inline static InternEntry *
-find(InternBucket const *b, char const *name, unsigned long h)
+find(InternBucket const *b, char const *name, u64 h)
 {
         for (int i = 0; i < b->count; ++i) {
                 if (b->items[i].hash != h)
@@ -23,7 +23,7 @@ find(InternBucket const *b, char const *name, unsigned long h)
 InternEntry *
 intern_get(InternSet *set, char const *name)
 {
-        unsigned long h = StrHash(name);
+        u64 h = StrHash(name);
         InternBucket *b = &set->set[h % INTERN_TABLE_SIZE];
 
         InternEntry *e = find(b, name, h);

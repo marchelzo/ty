@@ -2,6 +2,7 @@ CFLAGS += -std=c2x
 CFLAGS += -Wall
 CFLAGS += -Iinclude
 CFLAGS += -Ilibco
+CFLAGS += -Idtoa
 CFLAGS += -isystem/usr/local/include
 CFLAGS += $(shell pkg-config --cflags libffi)
 CFLAGS += $(shell pcre2-config --cflags)
@@ -12,6 +13,11 @@ CFLAGS += -Wno-unused-value
 CFLAGS += -Wno-unused-function
 CFLAGS += -D_GNU_SOURCE
 CFLAGS += -DPCRE2_CODE_UNIT_WIDTH=8
+CFLAGS += -fno-omit-frame-pointer
+CFLAGS += -rdynamic
+CFLAGS += -Og
+CFLAGS += -g2
+CFLAGS += -no-pie
 LDFLAGS += -L/usr/local/lib
 LDFLAGS += -lpthread
 LDFLAGS += -lm
@@ -19,9 +25,9 @@ LDFLAGS += -lreadline
 LDFLAGS += -lutf8proc
 LDFLAGS += -lsqlite3
 LDFLAGS += -ldl
+LDFLAGS += -lunwind
 LDFLAGS += $(shell pkg-config --libs openssl)
 LDFLAGS += -lffi
-LDFLAGS += libco/libco.o
 LDFLAGS += $(shell pcre2-config --libs8)
 LDFLAGS += $(shell pkg-config --libs gumbo)
 LDFLAGS += $(shell pkg-config --libs libcurl)
@@ -64,6 +70,7 @@ ifdef RELEASE
 else ifdef DEBUG
         CFLAGS += -O0
         CFLAGS += -fsanitize=undefined
+        CFLAGS += -fno-sanitize=nonnull-attribute
         CFLAGS += -fsanitize=address
         CFLAGS += -ggdb3
 else ifdef TDEBUG
@@ -71,8 +78,8 @@ else ifdef TDEBUG
         CFLAGS += -fsanitize=thread
         CFLAGS += -ggdb3
 else ifndef LOG
-        CFLAGS += -O1
-        CFLAGS += -ggdb3
+        CFLAGS += -Og
+        CFLAGS += -g3
         CFLAGS += -DTY_RELEASE
 else
         CFLAGS += -O1
@@ -101,18 +108,18 @@ ifdef WITHOUT_OS
 endif
 
 SOURCES := $(wildcard src/*.c)
-OBJECTS := $(patsubst src/%.c,obj/%.o,$(SOURCES)) libco/libco.o
+OBJECTS := $(patsubst src/%.c,obj/%.o,$(SOURCES)) libco/libco.o dtoa/dtoa.o
 ASSEMBLY := $(patsubst %.c,%.s,$(SOURCES))
 
 all: $(PROG)
 
 ty: ty.c $(OBJECTS)
-	@echo cc $^
-	$(CC) $(CFLAGS) -o $@ $< obj/* $(LDFLAGS)
+	@echo cc $<
+	@$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
 tyls: tyls.c $(OBJECTS)
-	@echo cc $^
-	$(CC) $(CFLAGS) -o $@ $< obj/* $(LDFLAGS)
+	@echo cc $<
+	@$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
 asm: $(ASSEMBLY)
 
@@ -123,12 +130,15 @@ asm: $(ASSEMBLY)
 libco/libco.o: libco/libco.c
 	$(CC) $(CFLAGS) -c -o $@ -DLIBCO_MP $<
 
+dtoa/dtoa.o: dtoa/SwiftDtoa.c
+	$(CC) $(CFLAGS) -c -o $@ $<
+
 obj/%.o: src/%.c
 	@echo cc $<
-	$(CC) $(CFLAGS) -c -o $@ -DFILENAME=$(patsubst src/%.c,%,$<) $<
+	@$(CC) $(CFLAGS) -c -o $@ -DFILENAME=$(patsubst src/%.c,%,$<) $<
 
 clean:
-	rm -rf $(PROG) *.gcda $(wildcard obj/*.o) $(wildcard asm/*.s) $(wildcard obj/*.gcda)
+	rm -rf $(PROG) *.gcda $(OBJECTS)
 
 test:
 	./ty test.ty

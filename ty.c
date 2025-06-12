@@ -59,6 +59,10 @@ u64 TypeCheckCounter = 0;
 u64 TypeAllocCounter = 0;
 u64 TypeCheckTime = 0;
 
+#if defined(TY_GC_STATS)
+usize TotalBytesAllocated;
+#endif
+
 bool ColorStdout;
 bool ColorStderr;
 

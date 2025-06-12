@@ -92,8 +92,6 @@ fn min[a](*xs: a) -> a;
 fn max[a](*xs: a) -> a;
 fn fmt(str: String, *args: _);
 fn cast[a](x: _) -> a { x }
-fn time::utime() -> Int;
-fn time::now() -> Float;
 fn tuple[T](*xs: T, %kws: _) -> (*T);
 fn tuple(*xs: _, %kws: _) -> (*_);
 fn abs(k: Int) -> Int;
@@ -121,6 +119,31 @@ fn math::exp(x: Int | Float) -> Float;
 fn math::log(x: Int | Float) -> Float;
 fn math::log2(x: Int | Float) -> Float;
 fn math::log10(x: Int | Float) -> Float;
+
+use time::Tm = {
+    ?sec:    Int,
+    ?min:    Int,
+    ?hour:   Int,
+    ?mday:   Int,
+    ?mon:    Int,
+    ?year:   Int,
+    ?wday:   Int,
+    ?yday:   Int,
+    ?isdst:  Bool,
+    ?gmtoff: Int,
+    ?zone:   ?String
+}
+
+use time::Timespec = {
+    tv_sec:  Int,
+    tv_nsec: Int
+}
+
+fn time::time(tm: ?time::Tm) -> Int;
+fn time::gettime(clock: ?Int) -> time::Timespec;
+fn time::localtime() -> time::Tm;
+fn time::utime(clock: ?Int) -> Int;
+fn time::now() -> Float;
 
 fn os::listdir(path: String) -> [String];
 
@@ -274,7 +297,7 @@ class Array[T] : Iterable[T] {
         xs
     }
 
-    of(*shape, fill=nil) {
+    static of(*shape, fill=nil) {
         match shape {
             [k]      => [fill for _ in ..k],
             [k, *ks] => [Array.of(*ks, fill: fill) for _ in ..k]
@@ -531,19 +554,19 @@ class Array[T] : Iterable[T] {
     }
 }
 
-macro _Param = ty.Param[{name: String, constraint: AST, default: AST}]
+macro _Param = ty.Param[{name: String, ?constraint: AST, ?default: AST}]
              | ty.Gather[String]
              | ty.Kwargs[String]
 
 macro _Func = {
-    name: String | nil,
+    ?name: String | nil,
     params: [_Param],
-    rt: AST,
-    decorators: [AST] | nil,
+    ?rt: AST,
+    ?decorators: [AST] | nil,
     body: AST
 }
 
-macro _ArrayItem = ty.ArrayItem[{item: AST, cond: AST, optional: Bool | nil}]
+macro _ArrayItem = ty.ArrayItem[{item: AST, ?cond: AST, ?optional: Bool | nil}]
 
 macro _DictItem = ty.DictItem[(AST, AST)]
 
@@ -560,8 +583,8 @@ macro __define_ast! {
        | ty.String[String]
        | ty.Float[Float]
        | ty.Bool[Bool]
-       | ty.Id[{name: String, module: String | nil, constraint: AST}]
-       | ty.NotNil[{name: String, module: String | nil, constraint: AST}]
+       | ty.Id[{name: String, ?module: String | nil, ?constraint: AST}]
+       | ty.NotNil[{name: String, ?module: String | nil, ?constraint: AST}]
        | ty.MemberAccess[(AST, String)]
        | ty.Count[AST]
        | ty.Question[AST]
@@ -575,13 +598,13 @@ macro __define_ast! {
        | ty.Slice[(AST, AST, AST, AST)]
        | ty.Array[Array[_ArrayItem]]
        | _ArrayItem
-       | ty.Dict[{items: [_DictItem], default: AST}]
+       | ty.Dict[{items: [_DictItem], ?default: AST}]
        | _DictItem
-       | ty.Call[{func: AST, args: [ty.Arg[{arg: AST, name: String | nil, cond: AST}]]}]
-       | ty.MethodCall[{object: AST, method: String, args: [ty.Arg[{arg: AST, name: String | nil, cond: AST}]]}]
-       | ty.Arg[{arg: AST, name: String | nil, cond: AST}]
-       | ty.Record[Array[ty.RecordEntry[{name: String | nil, item: AST, cond: AST, optional: Bool}]]]
-       | ty.RecordEntry[{name: String | nil, item: AST, cond: AST, optional: Bool}]
+       | ty.Call[{func: AST, args: [ty.Arg[{arg: AST, ?name: String | nil, ?cond: AST}]]}]
+       | ty.MethodCall[{object: AST, method: String, args: [ty.Arg[{arg: AST, ?name: String | nil, ?cond: AST}]]}]
+       | ty.Arg[{arg: AST, ?name: String | nil, ?cond: AST}]
+       | ty.Record[Array[ty.RecordEntry[{?name: String | nil, item: AST, ?cond: AST, ?optional: Bool}]]]
+       | ty.RecordEntry[{?name: String | nil, item: AST, ?cond: AST, ?optional: Bool}]
        | ty.Func[_Func]
        | ty.FuncDef[_Func]
        | ty.ImplicitFunc[_Func]
@@ -597,7 +620,7 @@ macro __define_ast! {
          }]
        | ty.Let[(AST, AST)]
        | ty.Assign[(AST, AST)]
-       | ty.Break[{value: AST, depth: Int}]
+       | ty.Break[{?value: AST, ?depth: Int}]
        | ty.Break
        | ty.Return[Array[AST]]
        | ty.Yield[Array[AST]]
@@ -605,8 +628,8 @@ macro __define_ast! {
        | ty.Union[Array[AST]]
        | ty.Any[AST]
        | ty.Any
-       | ty.ArrayCompr[{items: [_ArrayItem], pattern: AST, iter: AST, cond: AST}]
-       | ty.Each[{iter: AST, pattern: AST, expr: AST, cond: AST, stop: AST}]
+       | ty.ArrayCompr[{items: [_ArrayItem], pattern: AST, iter: AST, ?cond: AST}]
+       | ty.Each[{iter: AST, pattern: AST, expr: AST, ?cond: AST, ?stop: AST}]
        | ty.SpecialString[Array[String | AST | (AST, String | nil, Int | nil, AST)]]
        | ty.Spread[AST]
        | ty.Splat[AST]
@@ -618,7 +641,7 @@ macro __define_ast! {
        | ty.Defer[AST]
        | ty.Eval[AST]
        | ty.Throw[AST]
-       | ty.Try[{body: AST, catches: Array[(AST, AST)], always: AST}]
+       | ty.Try[{body: AST, catches: Array[(AST, AST)], ?always: AST}]
        | ty.For[(AST, AST, AST, AST)]
        | ty.UserOp[(String, AST, AST)]
        | ty.Add[(AST, AST)]
@@ -1259,7 +1282,7 @@ trait IntoPtr[T] {
 
 class Ptr[T] : IntoPtr[T] {
     [](i: Int) -> T;
-    []=(x: T, i: Int) -> T;
+    []=(i: Int, x: T) -> T;
 
     +(off: Int) -> T;
     -(off: Int) -> T;
@@ -2644,6 +2667,12 @@ class Sync[T] {
         }
     }
 
+    []=[I, U](i: I, u: U) -> U where T: Subscript[I, U] {
+        with __mtx.lock() {
+            __x[i] = u
+        }
+    }
+
     ++() {
         with __mtx.lock() {
             ++(__x)
@@ -2683,7 +2712,7 @@ class Sync[T] {
 
     -[A, B](y: A) -> B where (T - A): B {
         with __mtx.lock() {
-            //__x - y
+            __x - y
         }
     }
 
@@ -2701,30 +2730,30 @@ class Sync[T] {
 }
 
 class CondVar {
-    var: _
+    __var: _
 
     init() {
-        @var = thread.cond()
+        __var = thread.cond()
     }
 
     destroy() {
-        thread.destroyCond(@var)
+        thread.destroyCond(__var)
     }
 
     wait(mtx, *timeout) {
-        thread.waitCond(@var, mtx.inner(), *timeout)
+        thread.waitCond(__var, mtx.inner(), *timeout)
     }
 
     signal() {
-        thread.signalCond(@var)
+        thread.signalCond(__var)
     }
 
     broadcast() {
-        thread.broadcastCond(@var)
+        thread.broadcastCond(__var)
     }
 
     __free__() {
-        @destroy()
+        thread.destroyCond(__var)
     }
 }
 
@@ -2867,8 +2896,7 @@ macro time! {
     lex.next()
 
     $$[{
-        let now = $$(ty.Value(time.utime))
-        let (s, x, e) = (now(), $$(e), now())
+        let (s, x, e) = ($${time::now}(), $$(e), $${time::now()})
 
         print(
             __module__,
@@ -2889,7 +2917,7 @@ macro time! {
 macro timed(expr) {
     $$[
         do {
-            let (s: Int, x: _, e: Int) = ($${time.utime}(), $$expr, $${time.utime}())
+            let (s: Int, x: _, e: Int) = ($${time::now}(), $$expr, $${time::now}())
             ((e - s) / 1.0e6, x)
         }
     $$]
@@ -3217,31 +3245,6 @@ class AnyOf {
     __match__(x) { x in @xs }
 }
 
-class MemoizedFunction {
-    __func: _
-    __memo: _
-
-    init(f) {
-        __func = f
-        reset()
-    }
-
-    reset() {
-        __memo = %{*: (__func)(*it.0, **%{k: v for (k, v) in it.1})}
-    }
-
-    __call__(*args, %kwargs) {
-        __memo[(
-            args,
-            kwargs.list().sort!(by: &0)
-        )]
-    }
-
-    cache { __memo }
-}
-
-let memoized = MemoizedFunction
-
 macro __walk! {
     fn copySource(a: _, b: _) -> _ { ty.copySource(a, b) }
     function walk(tree: _, f: _) -> _ {
@@ -3283,7 +3286,7 @@ macro __walk! {
                 item: walk(entry.item, f),
                 name: entry.?name,
                 cond: walk(entry.?cond, f),
-                optional: cast(entry.?optional)
+                optional: entry.?optional
             ),
 
             ty.Add(a, b) => ty.Add(walk(a, f), walk(b, f)),
@@ -3291,19 +3294,20 @@ macro __walk! {
             ty.Div(a, b) => ty.Div(walk(a, f), walk(b, f)),
             ty.Sub(a, b) => ty.Sub(walk(a, f), walk(b, f)),
             ty.Mod(a, b) => ty.Mod(walk(a, f), walk(b, f)),
-            ty.LT(a, b) => ty.LT(walk(a, f), walk(b, f)),
+            ty.LT(a, b)  => ty.LT(walk(a, f), walk(b, f)),
             ty.LEQ(a, b) => ty.LEQ(walk(a, f), walk(b, f)),
-            ty.GT(a, b) => ty.GT(walk(a, f), walk(b, f)),
+            ty.GT(a, b)  => ty.GT(walk(a, f), walk(b, f)),
             ty.GEQ(a, b) => ty.GEQ(walk(a, f), walk(b, f)),
             ty.Cmp(a, b) => ty.Cmp(walk(a, f), walk(b, f)),
-            ty.In(a, b) => ty.In(walk(a, f), walk(b, f)),
+
+            ty.In(   a, b) => ty.In(   walk(a, f), walk(b, f)),
             ty.NotIn(a, b) => ty.NotIn(walk(a, f), walk(b, f)),
 
-            ty.Range(a, b) => ty.Range(walk(a, f), walk(b, f)),
+            ty.Range(   a, b) => ty.Range(   walk(a, f), walk(b, f)),
             ty.IncRange(a, b) => ty.IncRange(walk(a, f), walk(b, f)),
 
-            ty.FuncDef(func),
-            ty.Func(func),
+            ty.FuncDef(     func),
+            ty.Func(        func),
             ty.ImplicitFunc(func) => type(tree)(
                 name: func.name,
                 decorators: [walk(dec, f) for dec in func.decorators],
@@ -3691,4 +3695,53 @@ operator .    2  left
 macro print!(*xs) {
     let xs = ty.Array([ty.ArrayItem(item: x) for x in xs])
     ty.CompileTime($$[ do { print(*$$xs, sep=' '); nil } $$])
+}
+
+fn memoized(fun, sync: Bool = true) {
+    let def = fun.__def__
+
+    let gather = nil
+    let kwargs = nil
+
+    let params: _ = []
+    let p-vars: _ = []
+
+    for match def.params {
+        ty.Gather(>gather) as p,
+        ty.Kwargs(>kwargs) as p => params.push(p),
+
+        ty.Param({name, *}) => do {
+            params.push(ty.Param({name}))
+            p-vars.push(ty.Id({name}))
+        }
+    }
+
+    gather ?: p-vars.push(ty.Spread(gather))
+    kwargs ?: p-vars.push(ty.Splat(kwargs))
+
+    let call = ty.Call({
+        func: ty.Value(fun),
+        args: [ty.Arg({arg: it}) for p-vars]
+    })
+
+    let key = (#p-vars == 1 && gather == nil && kwargs == nil)
+            ? p-vars[0]
+            : ty.Record([ty.RecordEntry({item: it}) for p-vars])
+
+    let cache = sync ? Sync(%{}) : %{}
+
+    __eval__(
+        ty.Func({
+            name: fun.__name__,
+            params: params,
+            body: $$[
+                let __memo_key = $$key
+                if let $cached = $${cache}[__memo_key] {
+                    cached
+                } else {
+                    $${cache}[__memo_key] = $$call
+                }
+            $$]
+        })
+    )
 }

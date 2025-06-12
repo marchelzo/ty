@@ -12,6 +12,10 @@ let passed = Sync(0)
 let failed = Sync(0)
 let timedOut = Sync(0)
 
+fn +[T, U, V](x: Sync[T], y: Sync[U]) -> V where (T + U): V {
+    Sync.read(x) + Sync.read(y)
+}
+
 let g = chalk['bold green']
 let r = chalk['bold red']
 let m = chalk['bold bright magenta']
@@ -95,10 +99,15 @@ if failed > 0 {
 
 if timedOut > 0 {
     print("{m('Timed out')}: {m(timedOut)}")
+    let o = tp
+}
+
+for ..100 {
+    [1, 2, 3].map(\"{_}").sum()
 }
 
 print()
 
-print("{b('Elapsed')}: {b(str(elapsedSec) + 's')}")
+print("{b('Elapsed')}: {b("{elapsedSec:.4}s")}")
 
-exit(Sync.read(failed) + Sync.read(timedOut))
+//exit(failed + timedOut)

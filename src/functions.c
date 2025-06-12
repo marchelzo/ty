@@ -1209,7 +1209,6 @@ MissingArgument:
                         case 'E':
                         case 'a':
                         case 'A':
-                                scratch[si++] = 'l';
                                 scratch[si++] = t;
                                 scratch[si] = '\0';
 
@@ -6186,7 +6185,7 @@ BUILTIN_FUNCTION(members)
 
         Value o = ARG(0);
 
-        struct dict *members = dict_new(ty);
+        Dict *members = dict_new(ty);
         Value vMembers = DICT(members);
 
         gP(&vMembers);

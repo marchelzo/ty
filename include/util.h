@@ -39,6 +39,7 @@
 #define adump(...) ((adump)(ty, __VA_ARGS__))
 
 #define sxdf(...) ((sxdf)(ty, __VA_ARGS__))
+#define sfmt(...) ((sfmt)(ty, __VA_ARGS__))
 
 inline static size_t
 P_ALIGN(void const *p)
@@ -329,6 +330,19 @@ static int
         va_end(ap);
 
         return bytes;
+}
+
+static char *
+(sfmt)(Ty *ty, char const *fmt, ...)
+{
+        byte_vector buf = {0};
+        va_list ap;
+
+        va_start(ap, fmt);
+        scvdump(ty, &buf, fmt, ap);
+        va_end(ap);
+
+        return vv(buf);
 }
 
 static const char *

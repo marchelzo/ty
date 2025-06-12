@@ -4,38 +4,41 @@
 #include "ty.h"
 #include "value.h"
 
-struct dict *
-dict_new(Ty *ty);
+inline static Dict *
+dict_new(Ty *ty)
+{
+        return mAo0(sizeof (Dict), GC_DICT);
+}
 
-struct value *
-dict_get_value(Ty *ty, struct dict *obj, struct value *key);
-
-void
-dict_put_value(Ty *ty, struct dict *obj, struct value key, struct value value);
-
-bool
-dict_has_value(Ty *ty, struct dict *d, struct value *key);
-
-struct value *
-dict_get_member(Ty *ty, struct dict *obj, char const *key);
+Value *
+dict_get_value(Ty *ty, Dict *obj, Value *key);
 
 void
-dict_put_member(Ty *ty, struct dict *obj, char const *key, struct value value);
+dict_put_value(Ty *ty, Dict *obj, Value key, Value value);
 
 bool
-dict_same_keys(Ty *ty, struct dict const *d, struct dict const *u);
+dict_has_value(Ty *ty, Dict *d, Value *key);
 
-struct value *
-dict_put_key_if_not_exists(Ty *ty, struct dict *obj, struct value key);
+Value *
+dict_get_member(Ty *ty, Dict *obj, char const *key);
 
-struct value *
-dict_put_member_if_not_exists(Ty *ty, struct dict *obj, char const *member);
+void
+dict_put_member(Ty *ty, Dict *obj, char const *key, Value value);
 
-struct value
-dict_intersect(Ty *ty, struct value *d, int argc, struct value *kwargs);
+bool
+dict_same_keys(Ty *ty, Dict const *d, Dict const *u);
 
-struct value
-dict_subtract(Ty *ty, struct value *d, int argc, struct value *kwargs);
+Value *
+dict_put_key_if_not_exists(Ty *ty, Dict *obj, Value key);
+
+Value *
+dict_put_member_if_not_exists(Ty *ty, Dict *obj, char const *member);
+
+Value
+dict_intersect(Ty *ty, Value *d, int argc, Value *kwargs);
+
+Value
+dict_subtract(Ty *ty, Value *d, int argc, Value *kwargs);
 
 Dict *
 DictClone(Ty *ty, Dict const *d);
@@ -47,10 +50,10 @@ Dict *
 DictUpdate(Ty *ty, Dict *d, Dict const *u);
 
 void
-dict_mark(Ty *ty, struct dict *obj);
+dict_mark(Ty *ty, Dict *obj);
 
 void
-dict_free(Ty *ty, struct dict *obj);
+dict_free(Ty *ty, Dict *obj);
 
 void
 build_dict_method_table(void);

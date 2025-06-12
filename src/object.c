@@ -31,7 +31,7 @@ object_mark(Ty *ty, struct itable *o)
         MARK(o);
 
         for (int i = 0; i < vN(o->values); ++i) {
-                value_mark(ty, v_(o->values, i));
+                xvP(ty->marking, v_(o->values, i));
         }
 }
 

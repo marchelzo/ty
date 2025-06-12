@@ -6,8 +6,8 @@
 #include "panic.h"
 #include "ty.h"
 
-#define Resize(p, n, m) ((p) = memcpy(amA(n), (p), (m)))
-#define resize_scratch(p, n, m) ((p) = memcpy(smA(n), (p), (m)))
+#define Resize(p, n, m) ((p) = __builtin_memcpy(amA(n), (p), (m)))
+#define resize_scratch(p, n, m) ((p) = __builtin_memcpy(smA(n), (p), (m)))
 
 #if 1
 #define NewArena(n)  NewArena(ty, (n))

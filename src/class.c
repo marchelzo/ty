@@ -40,6 +40,7 @@ static char const *BuiltinClassNames[] = {
         [CLASS_BLOB]         = "Blob",
         [CLASS_CLASS]        = "Class",
         [CLASS_DICT]         = "Dict",
+        [CLASS_ERROR]        = "RuntimeError",
         [CLASS_FLOAT]        = "Float",
         [CLASS_FUNCTION]     = "Function",
         [CLASS_GENERATOR]    = "Generator",
