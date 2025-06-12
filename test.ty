@@ -99,15 +99,10 @@ if failed > 0 {
 
 if timedOut > 0 {
     print("{m('Timed out')}: {m(timedOut)}")
-    let o = tp
-}
-
-for ..100 {
-    [1, 2, 3].map(\"{_}").sum()
 }
 
 print()
 
 print("{b('Elapsed')}: {b("{elapsedSec:.4}s")}")
 
-//exit(failed + timedOut)
+exit(failed + timedOut)

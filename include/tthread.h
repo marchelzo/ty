@@ -242,10 +242,19 @@ typedef pthread_t            TyThread;
 typedef pthread_mutex_t      TyMutex;
 typedef pthread_cond_t       TyCondVar;
 typedef pthread_rwlock_t     TyRwLock;
-typedef pthread_spinlock_t   TySpinLock;
 typedef pthread_barrier_t    TyBarrier;
 typedef void                *TyThreadFunc(void *);
 typedef void                *TyThreadReturnValue;
+
+#if defined(__linux__)
+typedef pthread_spinlock_t   TySpinLock;
+#elif defined(__APPLE__)
+#include <os/lock.h>
+typedef os_unfair_lock TySpinLock;
+#else
+#error "TODO"
+#endif
+
 
 #define TY_THREAD_OK   NULL
 #define TY_RWLOCK_INIT PTHREAD_RWLOCK_INITIALIZER
@@ -312,12 +321,6 @@ TyThreadEqual(TyThread t1, TyThread t2)
 }
 
 inline static bool
-TySpinLockInit(TySpinLock *spin)
-{
-        return pthread_spin_init(spin, PTHREAD_PROCESS_PRIVATE) == 0;
-}
-
-inline static bool
 TyMutexInit(TyMutex *m)
 {
         return pthread_mutex_init(m, NULL) == 0;
@@ -360,30 +363,6 @@ inline static bool
 TyMutexUnlock(TyMutex *m)
 {
         return pthread_mutex_unlock(m) == 0;
-}
-
-inline static bool
-TySpinLockTryLock(TySpinLock *spin)
-{
-        return pthread_spin_trylock(spin) == 0;
-}
-
-inline static bool
-TySpinLockLock(TySpinLock *spin)
-{
-        return pthread_spin_lock(spin) == 0;
-}
-
-inline static bool
-TySpinLockUnlock(TySpinLock *spin)
-{
-        return pthread_spin_unlock(spin) == 0;
-}
-
-inline static bool
-TySpinLockDestroy(TySpinLock *spin)
-{
-        return pthread_spin_destroy(spin) == 0;
 }
 
 inline static void
@@ -491,6 +470,71 @@ TyRwLockWrUnlock(TyRwLock *m)
 }
 
 #endif
+
+#ifdef __APPLE__
+inline static bool
+TySpinLockInit(TySpinLock *spin)
+{
+        *spin = OS_UNFAIR_LOCK_INIT;
+        return true;
+}
+
+inline static bool
+TySpinLockTryLock(TySpinLock *spin)
+{
+        return os_unfair_lock_trylock(spin);
+}
+
+inline static bool
+TySpinLockLock(TySpinLock *spin)
+{
+        os_unfair_lock_lock(spin);
+        return true;
+}
+
+inline static bool
+TySpinLockUnlock(TySpinLock *spin)
+{
+        os_unfair_lock_unlock(spin);
+        return true;
+}
+
+inline static bool
+TySpinLockDestroy(TySpinLock *spin)
+{
+        return true;
+}
+#else // __APPLE__
+inline static bool
+TySpinLockInit(TySpinLock *spin)
+{
+        return pthread_spin_init(spin, PTHREAD_PROCESS_PRIVATE) == 0;
+}
+
+inline static bool
+TySpinLockTryLock(TySpinLock *spin)
+{
+        return pthread_spin_trylock(spin) == 0;
+}
+
+inline static bool
+TySpinLockLock(TySpinLock *spin)
+{
+        return pthread_spin_lock(spin) == 0;
+}
+
+inline static bool
+TySpinLockUnlock(TySpinLock *spin)
+{
+        return pthread_spin_unlock(spin) == 0;
+}
+
+inline static bool
+TySpinLockDestroy(TySpinLock *spin)
+{
+        return pthread_spin_destroy(spin) == 0;
+}
+#endif // __APPLE__
 
 #endif
 

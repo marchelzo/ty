@@ -8,6 +8,7 @@ pub fn read(fd: Int, buf: Blob, n: Int) -> Int;
 pub fn write(fd: Int, data: Any) -> Int;
 pub fn listdir(path: String) -> [Float] | nil;
 pub fn ncpu() -> Int;
+pub fn mktemp(pattern: String = 'tmp.XXXXXX') -> (Int, String);
 
 use ProcessDescriptor = {
     stdin: Int,
