@@ -8,7 +8,6 @@ import ffi as c (C!)
 
 #|if getenv('TY_LOG') != nil
   import log (..)
-  logLevel!(INFO)
 #|else
     macro warn!(msg) = do {}
     macro error!(msg) = do {}

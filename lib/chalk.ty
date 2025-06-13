@@ -566,7 +566,7 @@ class Chalk {
     }
 
     plain(text: Text | String) {
-        render(text :: Text ? text.text : text, plain=true)
+        (self"{text}").plain
     }
 }
 
@@ -587,7 +587,7 @@ pub fn hslToRgb(h: Float, s: Float, l: Float) -> (Int, Int, Int) {
   let (r, g, b) = if s < 0.0001 {
         (l, l, l)
   } else {
-    let q = (l < 0.5) ? l * (1.0 + s) : l + s - l * s
+    let q = (l < 0.5) ? l * (1.0 + s) : (l + s - l * s)
     let p = 2.0 * l - q
     (
         hueToRgb(p, q, h + 1.0/3.0),

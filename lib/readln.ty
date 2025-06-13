@@ -341,7 +341,7 @@ pub fn readln(
                 tio.stop()
 
                 let editor = spawn(
-                    [getenv('EDITOR'), tmp],
+                    [getenv('EDITOR') ?? 'vi', tmp],
                     :shareStdin,
                     :shareStdout,
                     :shareStderr

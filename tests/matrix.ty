@@ -41,7 +41,7 @@ class Vec < Matrix : Iterable[Float] {
     __str__() { "Vec({_v.unwords()})" }
 }
 
-class RowVec(_v) < Vec {
+class RowVec(_v: Array[Float]) < Vec {
     rows {   1 }
     cols { #@_v }
 
@@ -53,7 +53,7 @@ class RowVec(_v) < Vec {
     }
 }
 
-class ColVec(_v) < Vec {
+class ColVec(_v: Array[Float]) < Vec {
     cols { 1   }
     rows { #@_v }
 

@@ -38,6 +38,12 @@ extern int EnableLogging;
                 fprintf(stdout, "\n");          \
         } while (0)
 
+#define XXXLOG(...)                             \
+        do {                                    \
+                fprintf(stdout, __VA_ARGS__);   \
+                fprintf(stdout, "\n");          \
+        } while (0)
+
 #define XXX(fmt, ...) fprintf(stderr, fmt "\n" __VA_OPT__(,) __VA_ARGS__)
 
 #if !defined(TY_NO_LOG)

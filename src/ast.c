@@ -802,3 +802,5 @@ visit_type(Ty *ty, Expr *e, Scope *scope, VisitorSet const *hooks)
 
         return T2(e);
 }
+
+/* vim: set sw=8 sts=8 expandtab: */

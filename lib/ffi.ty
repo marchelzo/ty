@@ -731,6 +731,7 @@ fn strct() {
         ),
         ty.Class(
             name: structName,
+            fields:  [ty.Id({name: '<p>', constraint: ty.Any})],
             methods: [get, __ptr__, init, size, show, *methods],
             getters: getters,
             setters: setters,
