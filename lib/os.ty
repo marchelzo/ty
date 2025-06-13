@@ -59,8 +59,8 @@ pub fn walk*(path: String, skip: _ = nil) -> Generator[(String, [String], [Strin
 #|if !__windows__
 C! function isatty(c.int) -> c.int;
 C! function strsignal(c.int) -> c.ptr;
-let isatty = isatty
-let strsignal = strsignal |> c.str
+pub isatty = isatty
+pub strsignal = strsignal |> c.str
 pub ioctl: ({fd: Int, ioctl: Int, args: *_} -> Int) = c.wrapVar(nil, 'ioctl', 2, c.int, c.int, c.ulong);
 #|]
 
