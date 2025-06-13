@@ -3658,10 +3658,15 @@ function sink(file) match file {
     }
 }
 
-class ScopeGuard(cleanup-func) {
-    cleanup-func: _
+class ScopeGuard {
+    __cleanup: _
+
+    init(cleanup) {
+        __cleanup = cleanup
+    }
+
     __drop__() {
-        (@cleanup-func)()
+        (__cleanup)()
     }
 }
 

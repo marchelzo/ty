@@ -1,4 +1,3 @@
-#include "lex.h"
 #include "scope.h"
 #include "ty.h"
 #include "types.h"
@@ -2561,8 +2560,8 @@ type_variable(Ty *ty, Symbol *var)
         t->concrete = true;
 
         byte_vector name = {0};
-        dump(&name, "%s", var->identifier);
-        //dump(&name, "%s%u", var->identifier, t->id);
+        //dump(&name, "%s", var->identifier);
+        dump(&name, "%s%u", var->identifier, t->id);
         *itable_get(ty, &FixedVarNameTable, t->id) = PTR(name.items);
         *itable_get(ty, &VarNameTable, t->id) = PTR(name.items);
 
@@ -2667,6 +2666,10 @@ type_class(Ty *ty, Class *class)
                         Symbol *var = v__(class->def->class.type_params, i)->symbol;
                         avP(t->bound, var->type->id);
                         t->variadic |= SymbolIsVariadic(var);
+
+                        char *tmp = VarName(ty, var->type->id);
+                        Value *v = itable_get(ty, &VarNameTable, var->type->id);
+                        *v = PTR(afmt("%s::<%s>", tmp, class->name));
                 }
         }
 
@@ -4158,7 +4161,7 @@ UnifyXD(Ty *ty, Type *t0, Type *t1, bool super, bool check, bool soft)
         if (
                 IsUnboundVar(t0)
              && IsUnboundVar(t1)
-             && t0->id == t1->id
+             && (t0->id == t1->id)
         ) {
                 OK("same unbound variable");
                 goto Success;
@@ -4532,6 +4535,7 @@ UnifyX(Ty *ty, Type *t0, Type *t1, bool super, bool check)
         if (!ok && check && ENFORCE) {
                 //EnableLogging += 1;
                 UnifyXD(ty, t0, t1, super, false, false);
+                type_check2(ty, super ? t0 : t1, super ? t1 : t0, true);
                 //EnableLogging -= 1;
                 TypeError(
                         "type mismatch"
@@ -4677,7 +4681,7 @@ TrySolve2Op(Ty *ty, int op, Type *t0, Type *t1, Type *t2)
                                         XXTLOG("%sTrySolve2Op(%s%s%s)%s:", TERM(93), TERM(95), intern_entry(&xD.b_ops, op)->name, TERM(93), TERM(0));
                                         XXTLOG("    %s", ShowType(f0));
                                         XXTLOG("    %s", ShowType(f0_i));
-                                        if ((f0 == NULL) || type_check(ty, f0, f0_i)) { 
+                                        if ((f0 == NULL) || type_check(ty, f0, f0_i)) {
                                         //if (type_check(ty, a0, a0_i) && type_check(ty, b0, b0_i)) {
                                                 XXTLOG("  GOOD");
                                                 a0 = a0_i;
@@ -5252,7 +5256,6 @@ InferCall0(
 
                 XXTLOG("InferCall()");
                 XXTLOG("    %s", ShowType(t0));
-                XXTLOG(" -> %s", ShowType(t0->rt));
 
                 return Reduce(ty, t0->rt);
 
@@ -5489,7 +5492,7 @@ type_call(Ty *ty, Expr const *e)
         dont_printf("type_call()\n");
         dont_printf("    >>> %s\n", show_expr(e));
         dont_printf("    %s\n", ShowType(t0));
-        e->function->_type = Inst1(ty, e->function->_type);
+        //e->function->_type = Inst1(ty, e->function->_type);
         return t0;
 }
 
@@ -5913,7 +5916,12 @@ type_member_access_t_(Ty *ty, Type const *t0, char const *name, bool strict)
                 ) {
                         t1 = f->_type->rt;
                 }
-                if (ENFORCE && strict && t1 == NULL) {
+                if (
+                        ENFORCE
+                     && strict
+                     && (t1 == NULL)
+                     && (vN(t0->class->def->class.fields) > 0) // FIXME: remove crutch eventually
+                ) {
                         goto NotFound;
                 }
                 return SolveMemberAccess(ty, t0, t1);
@@ -6039,7 +6047,7 @@ type_method_call_name(Ty *ty, Type *t0, char const *name)
                 ty,
                 &(Expr){
                         .type = EXPRESSION_METHOD_CALL,
-                        .method = &_method 
+                        .method = &_method
                 },
                 t0,
                 name
@@ -6402,24 +6410,24 @@ type_check_x_(Ty *ty, Type *t0, Type *t1, bool need)
         }
 
         if (
-                t0->type == TYPE_OBJECT
-             && t0->class->i == CLASS_CLASS
-             && t1->type == TYPE_CLASS
+                (t0->type == TYPE_OBJECT)
+             && (t0->class->i == CLASS_CLASS)
+             && (t1->type == TYPE_CLASS)
         ) {
                 return true;
         }
 
         if (
-                t0->type == TYPE_OBJECT
-             && t0->class->i == CLASS_FUNCTION
+                (t0->type == TYPE_OBJECT)
+             && (t0->class->i == CLASS_FUNCTION)
              && IsCallable(t1)
         ) {
                 return true;
         }
 
         if (
-                t1->type == TYPE_OBJECT
-             && t1->class->i == CLASS_FUNCTION
+                (t1->type == TYPE_OBJECT)
+             && (t1->class->i == CLASS_FUNCTION)
              && IsCallable(t0)
         ) {
                 return true;
@@ -6761,9 +6769,9 @@ type_check_x(Ty *ty, Type *t0, Type *t1, bool need)
         bool ok = type_check_x_(ty, t0, t1, need);
         d -= 1;
         if (!ok && need) {
-                XXTLOG("%stype_check_x():%s", ok ? TERM(92) : TERM(91), TERM(0));
-                XXTLOG("    %s", ShowType(t0));
-                XXTLOG("    %s", ShowType(t1));
+                XXXTLOG("%stype_check_x():%s", ok ? TERM(92) : TERM(91), TERM(0));
+                XXXTLOG("    %s", ShowType(t0));
+                XXXTLOG("    %s", ShowType(t1));
         } else {
                 TLOG("%stype_check_x():%s", ok ? TERM(92) : TERM(91), TERM(0));
                 TLOG("    %s", ShowType(t0));
@@ -7324,9 +7332,9 @@ type_resolve(Ty *ty, Expr const *e)
                         }
                         t0->concrete &= (t1 == NULL || t1->concrete) && (TypeType(t0) != TYPE_ALIAS || t0->_type != NULL);
                 }
-                dont_printf("resolve_subscript():\n");
-                dont_printf("%s\n", show_expr(e));
-                dont_printf("  -> %s\n", ShowType(t0));
+                TLOG("resolve_subscript():");
+                TLOG("  %s", show_expr(e));
+                TLOG("  %s", ShowType(t0));
                 return t0;
 
         case EXPRESSION_SLICE:
@@ -8497,19 +8505,21 @@ type_binary_op(Ty *ty, Expr const *e)
         Type *t1 = Reduce(ty, Relax(e->right->_type));
         Type *t2 = NewVar(ty);
 
-        xvP(
-                ToSolve,
-                CONSTRAINT(
-                        .type = TC_2OP,
-                        .op = op,
-                        .t0 = t0,
-                        .t1 = t1,
-                        .t2 = t2,
-                        .src = e
-                )
-        );
+        if (TrySolve2Op(ty, op, t0, t1, t2) == NULL) {
+                xvP(
+                        ToSolve,
+                        CONSTRAINT(
+                                .type = TC_2OP,
+                                .op = op,
+                                .t0 = t0,
+                                .t1 = t1,
+                                .t2 = t2,
+                                .src = e
+                        )
+                );
+        }
 
-        XXTLOG("binary_op(%s): %s", e->op_name, ShowType(t2));
+        XXTLOG("binary_op(%s): %s", intern_entry(&xD.b_ops, op)->name, ShowType(t2));
         XXTLOG("  %s", ShowType(t0));
         XXTLOG("  %s", ShowType(t1));
 
@@ -8678,6 +8688,10 @@ type_iterable_type(Ty *ty, Type *t0, int n)
                         avP(t1->types, UNKNOWN);
                 }
         }
+
+        TLOG("iterable_type(%d):", n);
+        TLOG("  %s", ShowType(t0));
+        TLOG("  %s", ShowType(t1));
 
         return t1;
 }

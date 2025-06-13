@@ -177,16 +177,8 @@
 
 #define WITH_STATE(...) VA_SELECT(WITH_STATE_N, __VA_ARGS__)
 
-#if 0
-#define WITH_SCOPE_LIMIT(t)                               \
-        WITH_STATE(                                       \
-                scope_stop,  max((t), STATE.scope_stop),  \
-                scope_start, scope_get_symbol(ty)         \
-        )
-#else
-#define WITH_SCOPE_LIMIT(t)
+#define WITH_SCOPE_LIMIT(t) // TODO we don't need this
 #define WITH_PERMISSIVE_SCOPE WITH_STATE(based, 1)
-#endif
 
 #define WITH_SELF(x) WITH_STATE(self, ((x) != NULL) ? (x) : STATE.self)
 
@@ -1559,14 +1551,15 @@ getsymbol(Ty *ty, Scope const *scope, char const *name, u32 flags)
         }
 
         Symbol *s = ScopeLookupEx(scope, name, flags);
+
         if (s == NULL) {
-                fail(
+                fail_or(
                         "reference to undefined variable: %s%s%s%s",
                         TERM(1),
                         TERM(93),
                         name,
                         TERM(0)
-                );{
+                ) {
                         s = &UndefinedSymbol;
                         s->scope = GlobalScope;
                 }
@@ -3232,6 +3225,228 @@ GetNamespace(Ty *ty, Namespace *ns)
         }
 
         return sym->scope;
+}
+
+static bool
+TryResolveExpr(Ty *ty, Scope *scope, Expr *e)
+{
+        if (e == NULL) {
+                return true;
+        }
+
+        bool ok = true;
+
+        PushScope(scope);
+
+        switch (e->type) {
+        case EXPRESSION_IDENTIFIER:
+                e->symbol = TryResolveIdentifier(ty, e);
+                ok &= (e->symbol != NULL);
+                break;
+
+        case EXPRESSION_COMPILE_TIME:
+                ok &= TryResolveExpr(ty, scope, e->operand);
+                break;
+
+        case EXPRESSION_SPECIAL_STRING:
+                for (int i = 0; i < e->expressions.count; ++i)
+                        ok &= TryResolveExpr(ty, scope, e->expressions.items[i]);
+                break;
+
+        case EXPRESSION_TAG:
+                break;
+
+        case EXPRESSION_TAG_APPLICATION:
+                ok &= TryResolveExpr(ty, scope, e->tagged);
+                break;
+
+        case EXPRESSION_FUNCTION_TYPE:
+                ok &= TryResolveExpr(ty, scope, e->left);
+                ok &= TryResolveExpr(ty, scope, e->right);
+                break;
+
+        case EXPRESSION_TYPE_OF:
+                ok &= TryResolveExpr(ty, scope, e->operand);
+                break;
+
+        case EXPRESSION_MATCH:
+                ok &= TryResolveExpr(ty, scope, e->subject);
+                break;
+
+        case EXPRESSION_USER_OP:
+                ok &= TryResolveExpr(ty, scope, e->sc);
+        case EXPRESSION_PLUS:
+        case EXPRESSION_MINUS:
+        case EXPRESSION_STAR:
+        case EXPRESSION_DIV:
+        case EXPRESSION_PERCENT:
+        case EXPRESSION_AND:
+        case EXPRESSION_OR:
+        case EXPRESSION_WTF:
+        case EXPRESSION_CHECK_MATCH:
+        case EXPRESSION_LT:
+        case EXPRESSION_LEQ:
+        case EXPRESSION_GT:
+        case EXPRESSION_GEQ:
+        case EXPRESSION_CMP:
+        case EXPRESSION_DBL_EQ:
+        case EXPRESSION_NOT_EQ:
+        case EXPRESSION_DOT_DOT:
+        case EXPRESSION_DOT_DOT_DOT:
+        case EXPRESSION_BIT_OR:
+        case EXPRESSION_BIT_AND:
+        case EXPRESSION_KW_OR:
+        case EXPRESSION_IN:
+        case EXPRESSION_NOT_IN:
+                ok &= TryResolveExpr(ty, scope, e->left);
+                ok &= TryResolveExpr(ty, scope, e->right);
+                break;
+
+        case EXPRESSION_KW_AND:
+                // TODO
+                break;
+
+        case EXPRESSION_EVAL:
+        case EXPRESSION_PREFIX_HASH:
+        case EXPRESSION_PREFIX_BANG:
+        case EXPRESSION_PREFIX_QUESTION:
+        case EXPRESSION_PREFIX_MINUS:
+        case EXPRESSION_PREFIX_AT:
+                ok &= TryResolveExpr(ty, scope, e->operand);
+                break;
+
+        case EXPRESSION_CONDITIONAL:
+                ok &= TryResolveExpr(ty, scope, e->cond);
+                ok &= TryResolveExpr(ty, scope, e->then);
+                ok &= TryResolveExpr(ty, scope, e->otherwise);
+                break;
+
+        case EXPRESSION_STATEMENT:
+                // TODO
+                break;
+
+        case EXPRESSION_TEMPLATE:
+                for (size_t i = 0; i < e->template.exprs.count; ++i) {
+                        ok &= TryResolveExpr(ty, scope, e->template.exprs.items[i]);
+                }
+                break;
+
+        case EXPRESSION_FUNCTION_CALL:
+                ok &= TryResolveExpr(ty, scope, e->function);
+                for (size_t i = 0;  i < e->args.count; ++i)
+
+                        ok &= TryResolveExpr(ty, scope, e->args.items[i]);
+                for (size_t i = 0;  i < e->args.count; ++i)
+                        ok &= TryResolveExpr(ty, scope, e->fconds.items[i]);
+                for (size_t i = 0; i < e->kwargs.count; ++i)
+                        ok &= TryResolveExpr(ty, scope, e->kwargs.items[i]);
+                break;
+
+        case EXPRESSION_SUBSCRIPT:
+                ok &= TryResolveExpr(ty, scope, e->container);
+                ok &= TryResolveExpr(ty, scope, e->subscript);
+                break;
+
+        case EXPRESSION_SLICE:
+                ok &= TryResolveExpr(ty, scope, e->slice.e);
+                ok &= TryResolveExpr(ty, scope, e->slice.i);
+                ok &= TryResolveExpr(ty, scope, e->slice.j);
+                ok &= TryResolveExpr(ty, scope, e->slice.k);
+                break;
+
+        case EXPRESSION_MEMBER_ACCESS:
+                ok &= TryResolveExpr(ty, scope, e->object);
+                break;
+
+        case EXPRESSION_METHOD_CALL:
+                ok &= TryResolveExpr(ty, scope, e->object);
+                for (size_t i = 0;  i < e->method_args.count; ++i)
+                        ok &= TryResolveExpr(ty, scope, e->method_args.items[i]);
+                for (size_t i = 0;  i < e->method_args.count; ++i)
+                        ok &= TryResolveExpr(ty, scope, e->mconds.items[i]);
+                for (size_t i = 0; i < e->method_kwargs.count; ++i)
+                        ok &= TryResolveExpr(ty, scope, e->method_kwargs.items[i]);
+                break;
+
+        case EXPRESSION_EQ:
+        case EXPRESSION_MAYBE_EQ:
+        case EXPRESSION_PLUS_EQ:
+        case EXPRESSION_STAR_EQ:
+        case EXPRESSION_DIV_EQ:
+        case EXPRESSION_MINUS_EQ:
+                ok &= TryResolveExpr(ty, scope, e->value);
+                break;
+
+        case EXPRESSION_IMPLICIT_FUNCTION:
+        case EXPRESSION_GENERATOR:
+        case EXPRESSION_MULTI_FUNCTION:
+        case EXPRESSION_FUNCTION:
+                // TODO
+                break;
+
+        case EXPRESSION_WITH:
+                // TODO
+                break;
+
+        case EXPRESSION_THROW:
+                ok &= TryResolveExpr(ty, scope, e->throw);
+                break;
+
+        case EXPRESSION_YIELD:
+                for (int i = 0; i < e->es.count; ++i) {
+                    ok &= TryResolveExpr(ty, scope, e->es.items[i]);
+                }
+                break;
+
+        case EXPRESSION_ARRAY:
+                for (size_t i = 0; i < e->elements.count; ++i) {
+                        ok &= TryResolveExpr(ty, scope, e->elements.items[i]);
+                        ok &= TryResolveExpr(ty, scope, e->aconds.items[i]);
+                }
+                break;
+
+        case EXPRESSION_ARRAY_COMPR:
+                ok &= TryResolveExpr(ty, scope, e->compr.iter);
+                break;
+
+        case EXPRESSION_DICT:
+                ok &= TryResolveExpr(ty, scope, e->dflt);
+                for (size_t i = 0; i < e->keys.count; ++i) {
+                        ok &= TryResolveExpr(ty, scope, e->keys.items[i]);
+                        ok &= TryResolveExpr(ty, scope, e->values.items[i]);
+                }
+                break;
+
+        case EXPRESSION_DICT_COMPR:
+                ok &= TryResolveExpr(ty, scope, e->dcompr.iter);
+                break;
+
+        case EXPRESSION_LIST:
+                for (int i = 0; i < e->es.count; ++i) {
+                        ok &= TryResolveExpr(ty, scope, e->es.items[i]);
+                }
+                break;
+
+        case EXPRESSION_TUPLE:
+                for (int i = 0; i < e->es.count; ++i) {
+                        ok &= TryResolveExpr(ty, scope, e->es.items[i]);
+                        ok &= TryResolveExpr(ty, scope, e->tconds.items[i]);
+                }
+                break;
+
+        case EXPRESSION_SPREAD:
+        case EXPRESSION_SPLAT:
+                ok &= TryResolveExpr(ty, scope, e->value);
+                break;
+
+        case EXPRESSION_MACRO_INVOCATION:
+                break;
+
+        }
+
+        PopScope();
+
+        return ok;
 }
 
 static void
@@ -8818,9 +9033,9 @@ RedpillFun(Ty *ty, Scope *scope, Expr *f, Type *self0)
         }
 
         if (f->class < 0) {
-                LOG("REDPILL: === %s() === %s\n", f->name, type_show(ty, f->_type));
+                XLOG("REDPILL: === %s() === %s", f->name, type_show(ty, f->_type));
         } else {
-                LOG("REDPILL: === %s.%s() === %s\n", class_name(ty, f->class), f->name, type_show(ty, f->_type));
+                XLOG("REDPILL: === %s.%s() === %s", class_name(ty, f->class), f->name, type_show(ty, f->_type));
         }
 
         RestoreContext(ty, ctx);
@@ -8869,6 +9084,7 @@ InjectRedpill(Ty *ty, Stmt *s)
 
         case STATEMENT_CLASS_DEFINITION:
                 def = &s->class;
+                XLOG("REDPILL CLASS: ============= %s ============", def->name);
                 if (def->redpilled) {
                         break;
                 } else {
@@ -8922,10 +9138,11 @@ InjectRedpill(Ty *ty, Stmt *s)
                 aggregate_overloads(ty, class->i, &def->methods, class_add_method, false);
                 aggregate_overloads(ty, class->i, &def->setters, class_add_setter, true);
                 aggregate_overloads(ty, class->i, &def->statics, class_add_static, false);
-                RedpillMethods(ty, def->scope, class->object_type, &def->methods);
-                RedpillMethods(ty, def->scope, class->object_type, &def->getters);
-                RedpillMethods(ty, def->scope, class->object_type, &def->setters);
-                RedpillMethods(ty, def->scope, class->type, &def->statics);
+                Type *self0 = type_fixed(ty, class->object_type);
+                RedpillMethods(ty, def->scope, self0, &def->methods);
+                RedpillMethods(ty, def->scope, self0, &def->getters);
+                RedpillMethods(ty, def->scope, self0, &def->setters);
+                RedpillMethods(ty, def->scope, type_fixed(ty, class->type), &def->statics);
                 svP(class_defs, s);
                 break;
 
@@ -13043,6 +13260,21 @@ define_class(Ty *ty, Stmt *s)
         cd->var = sym;
 
         sym->type = class_get(ty, sym->class)->type;
+
+        XLOG(
+                "%s================%s DEFINE CLASS: %s :: %s %s==========================%s",
+                TERM(91),
+                TERM(0),
+                cd->name,
+                type_show(ty, class->object_type),
+                TERM(91),
+                TERM(0)
+        );
+
+        for (int i = 0; i < vN(cd->traits); ++i) {
+                Expr *trait0 = v__(cd->traits, i);
+                TryResolveExpr(ty, cd->scope, trait0);
+        }
 
         char scratch[512];
         char const *name;

@@ -1,31 +1,38 @@
 tag CanceledError;
 
-class ThreadPool {
-  init(n, f, setup=nil) {
-    @f = f
-    @setup = setup
-    @queue = []
-    @mtx = Mutex()
-    @cv = CondVar()
-    @stop = false
-    @threads = nil
-    @threads = [Thread(@runThread, @mtx, @cv, f, @setup) for _ in ..n]
+class ThreadPool[*Args, T] {
+  __f:        _
+  __setup:    _
+  queue:    Array[_]
+  mtx:      Mutex
+  cv:       CondVar
+  stop:     Bool
+  threads:  Array[Thread[_]]
+
+  init(n: Int, f: (*Args) -> T, setup: _ = nil) {
+    __f     = f
+    __setup = setup
+    queue   = []
+    mtx     = Mutex()
+    cv      = CondVar()
+    stop    = false
+    threads = [Thread(cast(runThread), mtx, cv, __f, __setup) for _ in ..n]
   }
 
-  submit(*args, %kwargs) {
-    @mtx.lock()
+  submit(*args: *Args, %kwargs: _) -> Future[T] {
+    mtx.lock()
 
     let future = Future()
 
-    @queue.push((args, kwargs, future))
+    queue.push((args, kwargs, future))
 
-    @mtx.unlock()
-    @cv.signal()
+    mtx.unlock()
+    cv.signal()
 
     return future
   }
 
-  runThread(mtx, cv, f, setup=nil) {
+  runThread(mtx: Mutex, cv: CondVar, f: _, setup: _ = nil) {
     let state = if setup != nil {
         (setup)()
     }
@@ -33,99 +40,111 @@ class ThreadPool {
     while true {
       mtx.lock()
 
-      while !@stop && #@queue == 0 {
+      while !stop && #queue == 0 {
         cv.wait(mtx)
       }
 
-      if @stop && #@queue == 0 {
+      if stop && #queue == 0 {
         mtx.unlock()
         break
       }
 
-      let (args, kwargs, future) = @queue.pop(0)
+      let (args, kwargs, future) = queue.pop(0)
 
       mtx.unlock()
 
-      future.mtx.lock()
+      future._mtx.lock()
 
-      if future.canceled {
-        future.mtx.unlock()
+      if future._canceled {
+        future._mtx.unlock()
         continue
       } else {
-        future.running = true
-        future.mtx.unlock()
+        future._running = true
+        future._mtx.unlock()
       }
 
       let x = f(*args, state if state != nil, **kwargs)
 
-      future.mtx.lock()
-      future.box.push(x)
-      future.mtx.unlock()
+      future._mtx.lock()
+      future._box.push(x)
+      future._mtx.unlock()
 
-      future.cv.signal()
+      future._cv.signal()
     }
   }
 
   close() {
-    @mtx.lock()
-    @stop = true
-    @mtx.unlock()
-    @cv.broadcast()
-    @threads.map(&join)
+    mtx.lock()
+    stop = true
+    mtx.unlock()
+    cv.broadcast()
+    threads.map(&join)
   }
 
   __drop__() {
-    self.close()
+    close()
   }
 }
 
-class Future {
+class Future[T] {
+  _cv:       CondVar
+  _mtx:      Mutex
+  _box:      Array[T]
+  _running:  Bool
+  _canceled: Bool
+
   init() {
-    @cv = CondVar()
-    @mtx = Mutex()
-    @box = []
-    @running = false
-    @canceled = false
+    _cv       = CondVar()
+    _mtx      = Mutex()
+    _box      = []
+    _running  = false
+    _canceled = false
   }
 
   wait() {
-    @mtx.lock()
+    _mtx.lock()
 
-    if @canceled {
+    if _canceled {
       throw CanceledError
     }
 
-    while #@box == 0 {
-      @cv.wait(@mtx)
+    while #_box == 0 {
+      _cv.wait(_mtx)
     }
 
-    let [x] = @box
+    let x = _box[0]
 
-    @mtx.unlock()
+    _mtx.unlock()
 
     return x
   }
 
   cancel() {
-    with _ = @mtx.lock() {
-      if @running {
+    with _mtx.lock() {
+      if _running {
         return false
       } else {
-        @canceled = true
+        _canceled = true
         return true
       }
     }
   }
 
-  running?() {
-    with _ = @mtx.lock() {
-      @running
+  running? {
+    with _mtx.lock() {
+      _running
     }
   }
 
-  ready?() {
-    with _ = @mtx.lock() {
-      #@box == 1
+  ready? {
+    with _mtx.lock() {
+      #_box == 1
+    }
+  }
+
+  canceled? {
+    with _mtx.lock() {
+      #_box == 1
     }
   }
 
