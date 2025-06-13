@@ -1401,8 +1401,9 @@ CleanupThread(void *ctx)
 
         for (int i = 0; i < MyGroup->ThreadList.count; ++i) {
                 if (MyLock == MyGroup->ThreadLocks.items[i]) {
-                        *v_(MyGroup->ThreadList, i) = *vvX(MyGroup->ThreadList);
-                        *v_(MyGroup->ThreadLocks, i) = *vvX(MyGroup->ThreadLocks);
+                        *v_(MyGroup->ThreadList,   i) = *vvX(MyGroup->ThreadList);
+                        *v_(MyGroup->TyList,       i) = *vvX(MyGroup->TyList);
+                        *v_(MyGroup->ThreadLocks,  i) = *vvX(MyGroup->ThreadLocks);
                         *v_(MyGroup->ThreadStates, i) = *vvX(MyGroup->ThreadStates);
                         break;
                 }
@@ -1421,16 +1422,16 @@ CleanupThread(void *ctx)
         TySpinLockDestroy(MyLock);
         free(MyLock);
         free((void *)MyState);
-        free(STACK.items);
-        free(THREAD_LOCALS.items);
-        free(RootSet.items);
-        free(CALLS.items);
-        free(FRAMES.items);
-        free(SP_STACK.items);
-        free(TARGETS.items);
-        free(TRY_STACK.items);
-        free(THROW_STACK.items);
-        free(DROP_STACK.items);
+        xvF(STACK);
+        xvF(THREAD_LOCALS);
+        xvF(RootSet);
+        xvF(CALLS);
+        xvF(FRAMES);
+        xvF(SP_STACK);
+        xvF(TARGETS);
+        xvF(TRY_STACK);
+        xvF(THROW_STACK);
+        xvF(DROP_STACK);
         free(ty->allocs.items);
         pcre2_match_data_free(ty->pcre2.match);
         pcre2_match_context_free(ty->pcre2.ctx);
