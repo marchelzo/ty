@@ -783,15 +783,6 @@ IsKwVariadic(Type const *t0)
 }
 
 static Type *
-NewType(Ty *ty, int type)
-{
-        Type *t0 = amA0(sizeof *t0);
-        t0->type = type;
-        TypeAllocCounter += 1;
-        return t0;
-}
-
-static Type *
 (NewRecord)(Ty *ty, ...)
 {
         Type *t0 = NewType(ty, TYPE_TUPLE);
@@ -2343,25 +2334,51 @@ RefersTo(Type *t0, u32 id)
         return CountRefs(t0, id) > 0;
 }
 
+inline static bool
+TypeVecContainsAddr(TypeVector const *types, Type const *t0)
+{
+        for (int i = 0; i < vN(*types); ++i) {
+                if (t0 == v__(*types, i)) {
+                        return true;
+                }
+        }
+
+        return false;
+}
+
+inline static bool
+VecContainsSub(Ty *ty, TypeVector const *types, Type const *t0)
+{
+        for (int i = 0; i < vN(*types); ++i) {
+                if (type_check(ty, (Type *)t0, v__(*types, i))) {
+                        return true;
+                }
+        }
+
+        return false;
+}
+
+inline static bool
+VecContainsSuper(Ty *ty, TypeVector const *types, Type const *t0)
+{
+        for (int i = 0; i < vN(*types); ++i) {
+                if (type_check(ty, v__(*types, i), (Type *)t0)) {
+                        return true;
+                }
+        }
+
+        return false;
+}
+
 static bool
-ContainsType(Type const *t0, Type const *t1)
+ContainsType(Ty *ty, Type const *t0, Type const *t1)
 {
         switch (TypeType(t0)) {
         case TYPE_UNION:
-                for (int i = 0; i < vN(t0->types); ++i) {
-                        if (type_check(ty, v__(t0->types, i), (Type *)t1)) {
-                                return true;
-                        }
-                }
-                break;
+                return VecContainsSuper(ty, &t0->types, t1);
 
         case TYPE_INTERSECT:
-                for (int i = 0; i < vN(t0->types); ++i) {
-                        if (type_check(ty, (Type *)t1, v__(t0->types, i))) {
-                                return true;
-                        }
-                }
-                break;
+                return VecContainsSub(ty, &t0->types, t1);
         }
 
         return false;
@@ -2386,7 +2403,7 @@ Uniq(Ty *ty, Type *t0)
                 v0(t0->types);
                 for (int i = 0; i < n; ++i) {
                         Type *t00 = v__(t0->types, i);
-                        if (!ContainsType(t1, t00)) {
+                        if (!ContainsType(ty, t1, t00)) {
                                 if (cloned) {
                                         vPx(t1->types, t00);
                                 }
@@ -4556,7 +4573,7 @@ Unify(Ty *ty, Type *t0, Type *t1, bool super)
 }
 
 static Type *
-TrySolve2Op(Ty *ty, int op, Type *t0, Type *t1, Type *t2)
+TrySolve2Op(Ty *ty, int op, Type *op0, Type *t0, Type *t1, Type *t2)
 {
         if (!ENABLED) {
                 return UNKNOWN;
@@ -4598,7 +4615,6 @@ TrySolve2Op(Ty *ty, int op, Type *t0, Type *t1, Type *t2)
         }
 
         TypeEnv env = {0};
-        Type *op0 = op_type(op);
 
         if (IsBottom(op0)) {
                 return NULL;
@@ -4626,6 +4642,13 @@ TrySolve2Op(Ty *ty, int op, Type *t0, Type *t1, Type *t2)
         t1 = Inst1(ty, t1);
         t2 = Inst1(ty, t2);
 
+        SCRATCH_SAVE();
+
+        TypeVector keep = {0};
+        bool need_retry = false;
+
+        Type *r0 = NULL;
+
         for (int i = 0; i < UnionCount(t0); ++i) {
                 Type *t00 = UnionElem(t0, i);
                 for (int j = 0; j < UnionCount(t1); ++j) {
@@ -4636,7 +4659,8 @@ TrySolve2Op(Ty *ty, int op, Type *t0, Type *t1, Type *t2)
                         Type *f0 = NULL;
                         for (int i = 0; i < IntersectCount(op0); ++i) {
                                 ClearEnv(&env);
-                                Type *f0_i = CloneType(ty, IntersectElem(op0, i));
+                                Type *_f0_i = IntersectElem(op0, i);
+                                Type *f0_i = CloneType(ty, _f0_i);
                                 TLOG("%sTrySolve2Op(%s%s%s)%s:", TERM(94), TERM(95), intern_entry(&xD.b_ops, op)->name, TERM(94), TERM(0));
                                 TLOG("    %s", ShowType(f0_i));
                                 TLOG("    %s", ShowType(t00));
@@ -4681,7 +4705,13 @@ TrySolve2Op(Ty *ty, int op, Type *t0, Type *t1, Type *t2)
                                         XXTLOG("%sTrySolve2Op(%s%s%s)%s:", TERM(93), TERM(95), intern_entry(&xD.b_ops, op)->name, TERM(93), TERM(0));
                                         XXTLOG("    %s", ShowType(f0));
                                         XXTLOG("    %s", ShowType(f0_i));
-                                        if ((f0 == NULL) || type_check(ty, f0, f0_i)) {
+                                        if (!TypeVecContainsAddr(&keep, _f0_i)) {
+                                                svP(keep, _f0_i);
+                                        }
+                                        if (
+                                                !need_retry
+                                             && ((f0 == NULL) || type_check(ty, f0, f0_i))
+                                        ) {
                                         //if (type_check(ty, a0, a0_i) && type_check(ty, b0, b0_i)) {
                                                 XXTLOG("  GOOD");
                                                 a0 = a0_i;
@@ -4695,7 +4725,7 @@ TrySolve2Op(Ty *ty, int op, Type *t0, Type *t1, Type *t2)
                                                 XXTLOG("    %s", ShowType(t2));
                                                 XXTLOG("    %s", ShowType(op0_i));
                                                 XXTLOG("    %s", ShowType(c0_i));
-                                                return NULL;
+                                                need_retry = true;
                                         } else {
                                                 XXTLOG("  %sTRY NEXT%s", TERM(96), TERM(0));
                                         }
@@ -4709,13 +4739,12 @@ TrySolve2Op(Ty *ty, int op, Type *t0, Type *t1, Type *t2)
                                 XXTLOG("    %s", ShowType(t0));
                                 XXTLOG("    %s", ShowType(t1));
                                 XXTLOG("    %s", ShowType(t2));
-                                return c0;
+                                r0 = t2;
                         } else {
                                 XXTLOG("%sTrySolve2Op(%s%s%s)%s:", TERM(91), TERM(95), intern_entry(&xD.b_ops, op)->name, TERM(91), TERM(0));
                                 XXTLOG("    %s", ShowType(t0));
                                 XXTLOG("    %s", ShowType(t1));
                                 XXTLOG("    %s", ShowType(t2));
-                                return NULL;
                         }
                 }
         }
@@ -4725,7 +4754,16 @@ TrySolve2Op(Ty *ty, int op, Type *t0, Type *t1, Type *t2)
         XXTLOG("    %s", ShowType(t1));
         XXTLOG("    %s", ShowType(t2));
 
-        return t2;
+        if (vN(keep) == 1) {
+                *op0 = *v_0(keep);
+        } else if (vN(keep) > 1) {
+                v0(op0->types);
+                avPv(op0->types, keep);
+        }
+
+        SCRATCH_RESTORE();
+
+        return r0;
 }
 
 static bool
@@ -4750,7 +4788,7 @@ BindConstraint(Ty *ty, Constraint const *_c, bool check)
                 c->t0 = Reduce(ty, c->t0);
                 c->t1 = Reduce(ty, c->t1);
                 c->t1 = Reduce(ty, c->t1);
-                t0 = TrySolve2Op(ty, c->op, c->t0, c->t1, c->t2);
+                t0 = TrySolve2Op(ty, c->op, c->op0, c->t0, c->t1, c->t2);
                 XXTLOG("%sBindConstraint(2op)%s: %s", TERM(92), intern_entry(&xD.b_ops, c->op)->name, TERM(0));
                 XXTLOG("    %s", ShowType(c->t0));
                 XXTLOG("    %s", ShowType(c->t1));
@@ -8505,15 +8543,22 @@ type_binary_op(Ty *ty, Expr const *e)
         Type *t1 = Reduce(ty, Relax(e->right->_type));
         Type *t2 = NewVar(ty);
 
-        if (TrySolve2Op(ty, op, t0, t1, t2) == NULL) {
+        Type *op0 = CloneType(ty, op_type(op));
+
+        if (TypeType(op0) == TYPE_INTERSECT) {
+                CloneVec(op0->types);
+        }
+
+        if (TrySolve2Op(ty, op, op0, t0, t1, t2) == NULL) {
                 xvP(
                         ToSolve,
                         CONSTRAINT(
                                 .type = TC_2OP,
-                                .op = op,
-                                .t0 = t0,
-                                .t1 = t1,
-                                .t2 = t2,
+                                .t0  = t0,
+                                .t1  = t1,
+                                .t2  = t2,
+                                .op0 = op0,
+                                .op  = op,
                                 .src = e
                         )
                 );
