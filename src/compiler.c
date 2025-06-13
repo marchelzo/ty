@@ -215,7 +215,7 @@ static Module *GlobalModule;
 static Scope *GlobalScope;
 static Symbol *AnyTypeSymbol;
 static Scope *ThreadLocals;
-static uint64_t t;
+static u64 t;
 static char const EmptyString[] = "\0";
 static char const UnknownString[] = "\0(unknown location)";
 static Location Nowhere = { 0, 0, 0, EmptyString + 1 };
@@ -2344,7 +2344,7 @@ add_captures(Ty *ty, Expr *pattern, Scope *scope)
         Regex const *re = pattern->regex;
         int n = re->ncap;
 
-        uint32_t n_named;
+        u32 n_named;
         pcre2_pattern_info(re->pcre2, PCRE2_INFO_NAMECOUNT, &n_named);
 
         char const *names;
@@ -10415,7 +10415,7 @@ mkcstr(Ty *ty, Value const *v)
         return s;
 }
 
-uint32_t
+u32
 source_register(Ty *ty, void const *src)
 {
 #if 0
@@ -10425,7 +10425,7 @@ source_register(Ty *ty, void const *src)
         XLOG("Register: %p -> %p: [%.*s] (%d)", src, *(void **)src, (int)strcspn(s, "\n"), s, line + 1);
 #endif
 
-        for (uint32_t i = 0; i < vN(source_map); ++i) {
+        for (u32 i = 0; i < vN(source_map); ++i) {
                 if (v__(source_map, i) == NULL) {
                         v__(source_map, i) = (void *)src;
                         return i + 1;
@@ -10438,7 +10438,7 @@ source_register(Ty *ty, void const *src)
 }
 
 void *
-source_lookup(Ty *ty, uint32_t src)
+source_lookup(Ty *ty, u32 src)
 {
         if (src == 0 || src > vN(source_map)) {
                 return NULL;
@@ -10450,7 +10450,7 @@ source_lookup(Ty *ty, uint32_t src)
 void
 source_forget_arena(void const *arena)
 {
-        for (uint32_t i = 0; i < vN(source_map); ++i) {
+        for (u32 i = 0; i < vN(source_map); ++i) {
                 void **p = v__(source_map, i);
                 if (p != NULL && *p == arena) {
                         v__(source_map, i) = NULL;
@@ -14139,7 +14139,7 @@ DumpProgram(
         int n, nkw = 0, i, j, tag;
 
         bool DebugScan = DEBUGGING;
-        uint32_t limit = UINT32_MAX;
+        u32 limit = UINT32_MAX;
         uintptr_t DebugHistory[8] = {0};
 
         dump(

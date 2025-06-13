@@ -1284,9 +1284,11 @@ class Ptr[T] : IntoPtr[T] {
     [](i: Int) -> T;
     []=(i: Int, x: T) -> T;
 
-    +(off: Int) -> T;
-    -(off: Int) -> T;
+    +(off: Int) -> Ptr[T];
+    -(off: Int) -> Ptr[T];
     -(other: Ptr[T]) -> Int;
+
+    __ptr__() { self }
 }
 
 class RuntimeError {

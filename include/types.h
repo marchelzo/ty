@@ -40,6 +40,7 @@ struct constraint {
                         Type *t0;
                         Type *t1;
                         Type *t2;
+                        Type *op0;
                         i32 op;
                         Expr const *src;
                         u64 time;
@@ -183,6 +184,15 @@ inline static u32
 TypeType(Type const *t0)
 {
         return (t0 == NULL) ? TYPE_BOTTOM : t0->type;
+}
+
+inline static Type *
+NewType(Ty *ty, int type)
+{
+        Type *t0 = amA0(sizeof *t0);
+        t0->type = type;
+        TypeAllocCounter += 1;
+        return t0;
 }
 
 Type *

@@ -30,7 +30,7 @@ typedef struct {
 
 typedef struct {
         u64 key;
-        i32      ref;
+        i32 ref;
 } CacheEntry;
 
 typedef vec(OperatorSpec) DispatchList;
@@ -40,6 +40,7 @@ typedef struct {
         TyRwLock      lock;
         DispatchCache cache;
         DispatchList  defs;
+        Type *op0;
 } DispatchGroup;
 
 
@@ -188,7 +189,8 @@ op_add(i32 op, i32 t1, i32 t2, i32 ref, Expr *expr)
                 })
         );
 
-        group->cache.count = 0;
+        v0(group->cache);
+        group->op0 = NULL;
 
         TyRwLockWrUnlock(&group->lock);
 }
@@ -352,13 +354,20 @@ op_type(i32 op)
         TyRwLockRdUnlock(&_2.lock);
 
         TyRwLockWrLock(&group->lock);
-        for (i32 i = 0; i < vN(group->defs); ++i) {
-                Expr const *fun = v_(group->defs, i)->expr;
-                if (fun->_type != NULL && fun->return_type != NULL) {
-                        t0 = type_both(ty, t0, fun->_type);
+        dont_printf("op_type(%s)  (%u defs):\n", intern_entry(&xD.b_ops, op)->name, vN(group->defs));
+        if (group->op0 == NULL) {
+                for (i32 i = 0; i < vN(group->defs); ++i) {
+                        Expr const *fun = v_(group->defs, i)->expr;
+                        if (fun->_type != NULL && fun->return_type != NULL) {
+                                group->op0 = type_both(ty, group->op0, fun->_type);
+                                dont_printf("  [i=%d]  %s\n", i, type_show(ty, group->op0));
+                        }
                 }
         }
+        t0 = group->op0;
         TyRwLockWrUnlock(&group->lock);
+
+        dont_printf("op_type(%s): %s\n", intern_entry(&xD.b_ops, op)->name, type_show(ty, t0));
 
         return t0;
 }
