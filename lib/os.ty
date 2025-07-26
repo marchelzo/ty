@@ -19,11 +19,11 @@ use ProcessDescriptor = {
 
 pub fn spawn(
     cmd: Array[String],
-    detach: Bool = false,
-    combine-output: Bool = false,
-    share-stdin: Bool = false,
-    share-stdout: Bool = false,
-    share-stderr: Bool = false
+    stdin:  ?Int = nil,
+    stdout: ?Int = nil,
+    stderr: ?Int = nil,
+    chdir:  Int | Blob | String | nil = nil,
+    detach: Bool = false
 ) -> ProcessDescriptor;
 
 #|if __defined__(DT_DIR)

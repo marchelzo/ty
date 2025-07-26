@@ -7,6 +7,7 @@
 
 #include "ty.h"
 #include "dict.h"
+#include "str.h"
 #include "value.h"
 #include "util.h"
 #include "vm.h"
@@ -61,6 +62,8 @@ op_builtin_add(Ty *ty)
                 COMPLETE(v);
         }
 
+        case PACK_TYPES(VALUE_STRING, VALUE_INTEGER):
+                COMPLETE(OffsetString(left, right->integer));
 
         case PACK_TYPES(VALUE_INTEGER, VALUE_PTR):
                 SWAP(Value const *, left, right);
@@ -184,6 +187,7 @@ op_builtin_sub(Ty *ty)
         Value const *left = look(-1);
         Value const *right = look(0);
 
+        Value v;
         ffi_type *t;
 
         switch (PACK_TYPES(left->type, right->type)) {
@@ -198,6 +202,9 @@ op_builtin_sub(Ty *ty)
 
         case PACK_TYPES(VALUE_INTEGER, VALUE_REAL):
                 COMPLETE(REAL(left->integer - right->real));
+
+        case PACK_TYPES(VALUE_STRING, VALUE_INTEGER):
+                COMPLETE(OffsetString(left, -right->integer));
 
         case PACK_TYPES(VALUE_PTR, VALUE_INTEGER):
                 t = (left->extra == NULL) ? &ffi_type_uint8 : left->extra;

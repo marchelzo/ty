@@ -433,7 +433,7 @@ show_string(Ty *ty, u8 const *s, size_t n, bool use_color)
                 }
                 break;
         }
-        
+
         COLOR(92);
         svP(v, '\'');
 
@@ -596,7 +596,7 @@ value_showx(Ty *ty, Value const *v)
 BasicObject:
                         snprintf(buffer, 1024, "<%s object at %p>", class_name(ty, v->class), (void *)v->object);
                 }
-                
+
                 vvX(visiting);
 
                 break;
@@ -1364,7 +1364,7 @@ _value_mark_xd(Ty *ty, Value const *v)
         case VALUE_FUNCTION:        mark_function(ty, v);                                             break;
         case VALUE_GENERATOR:       mark_generator(ty, v);                                            break;
         case VALUE_THREAD:          mark_thread(ty, v);                                               break;
-        case VALUE_STRING:          if (v->gcstr != NULL) MARK(v->gcstr);                             break;
+        case VALUE_STRING:          if (!v->ro) MARK(v->str0);                                        break;
         case VALUE_OBJECT:          object_mark(ty, v->object);                                       break;
         case VALUE_REF:             MARK(v->ptr); MarkNext(ty, v->ptr);                               break;
         case VALUE_BLOB:            MARK(v->blob);                                                    break;

@@ -403,7 +403,7 @@ array_sort(Ty *ty, Value *array, int argc, Value *kwargs)
         Array const *xs = array->array;
 
         CHECK_ARGC(0, 1, 2);
-        
+
         switch (argc) {
         case 0:
                 i = 0;

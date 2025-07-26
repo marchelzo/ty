@@ -198,7 +198,7 @@ Expr const *QueryExpr;
 
 bool CheckConstraints = true;
 bool ProduceAnnotation = true;
-size_t GlobalCount = 0;
+usize GlobalCount = 0;
 
 static int builtin_modules;
 static int BuiltinCount;
@@ -534,6 +534,22 @@ IsClassName(Expr const *expr)
             && (expr->symbol->class != -1);
 }
 
+inline static bool
+IsLocalMemberSymbol(Ty *ty, Symbol const *sym, Scope const *scope)
+{
+        return SymbolIsMember(sym)
+            && (STATE.class != NULL)
+            && (STATE.self->scope->function == scope->function);
+}
+
+inline static bool
+IsLocalMember(Ty *ty, Expr const *expr, Scope const *scope)
+{
+        return (expr != NULL)
+            && (expr->type == EXPRESSION_IDENTIFIER)
+            && (expr->symbol != NULL)
+            && IsLocalMemberSymbol(ty, expr->symbol, scope);
+}
 
 inline static bool
 IsSimpleRange(Expr const *expr)
@@ -721,7 +737,7 @@ colorize_code(
         Location const *start,
         Location const *end,
         char *out,
-        size_t n
+        usize n
 )
 {
         char const *prefix = start->s;
@@ -1237,7 +1253,7 @@ slurp_module(Ty *ty, char const *name, char const **path)
 }
 
 static void
-add_location(Ty *ty, Expr const *e, size_t start_off, size_t end_off)
+add_location(Ty *ty, Expr const *e, usize start_off, usize end_off)
 {
         if (e->start.line == -1 && e->start.col == -1)
                 return;
@@ -1380,11 +1396,10 @@ is_const(Ty *ty, Scope const *scope, char const *name)
 static bool
 any_variadic(Expr * const *args, Expr * const *conds, int n)
 {
-
         for (int i = 0; i < n; ++i) {
                 if (
-                        args[i] != NULL &&
-                        (args[i]->type == EXPRESSION_SPREAD || conds[i] != NULL)
+                        (args[i] != NULL)
+                     && (args[i]->type == EXPRESSION_SPREAD || conds[i] != NULL)
                 ) {
                         return true;
                 }
@@ -1607,7 +1622,7 @@ ResolveIdentifier(Ty *ty, Expr const *expr)
         if (expr->symbol != NULL) {
                 return expr->symbol;
         }
-        
+
         u32    flags = 0;
         Scope *scope = SCOPE;
 
@@ -2011,7 +2026,7 @@ resolve_access(Ty *ty, Scope const *scope, char **parts, int n, Expr *e, bool st
                 fc.fconds = e->mconds;
 
                 vec_init(fc.fkwconds);
-                for (size_t i = 0; i < vN(fc.kws); ++i) {
+                for (usize i = 0; i < vN(fc.kws); ++i) {
                         avP(fc.fkwconds, NULL);
                 }
 
@@ -2177,7 +2192,7 @@ get_import_scope(Ty *ty, char const *name)
                         }
 
                         Module *local_import = GetModuleImport(ty, this_mod, name);
-                        
+
                         if (local_import != NULL) {
                                 return local_import->scope;
                         }
@@ -2666,7 +2681,7 @@ symbolize_decl(Ty *ty, Scope *scope, Expr *target, bool pub)
                 symbolize_decl(ty, scope, target->tagged, pub);
                 break;
         case EXPRESSION_ARRAY:
-                for (size_t i = 0; i < vN(target->elements); ++i) {
+                for (usize i = 0; i < vN(target->elements); ++i) {
                         symbolize_decl(ty, scope, v__(target->elements, i), pub);
                 }
                 break;
@@ -2808,7 +2823,7 @@ symbolize_lvalue_(Ty *ty, Scope *scope, Expr *target, bool decl, bool pub)
                 }
                 break;
         case EXPRESSION_ARRAY:
-                for (size_t i = 0; i < vN(target->elements); ++i) {
+                for (usize i = 0; i < vN(target->elements); ++i) {
                         symbolize_lvalue_(ty, scope, v__(target->elements, i), decl, pub);
                 }
                 target->atmp = tmpsymbol(ty, scope);
@@ -3177,7 +3192,7 @@ invoke_fun_macro(Ty *ty, Scope *scope, Expr *e)
                 QualifiedName(e->function)
         );
 
-        for (size_t i = 0;  i < vN(e->args); ++i) {
+        for (usize i = 0;  i < vN(e->args); ++i) {
                 Value v = tyexpr(ty, v__(e->args, i));
                 vmP(&v);
         }
@@ -3326,19 +3341,19 @@ TryResolveExpr(Ty *ty, Scope *scope, Expr *e)
                 break;
 
         case EXPRESSION_TEMPLATE:
-                for (size_t i = 0; i < e->template.exprs.count; ++i) {
+                for (usize i = 0; i < e->template.exprs.count; ++i) {
                         ok &= TryResolveExpr(ty, scope, e->template.exprs.items[i]);
                 }
                 break;
 
         case EXPRESSION_FUNCTION_CALL:
                 ok &= TryResolveExpr(ty, scope, e->function);
-                for (size_t i = 0;  i < e->args.count; ++i)
+                for (usize i = 0;  i < e->args.count; ++i)
 
                         ok &= TryResolveExpr(ty, scope, e->args.items[i]);
-                for (size_t i = 0;  i < e->args.count; ++i)
+                for (usize i = 0;  i < e->args.count; ++i)
                         ok &= TryResolveExpr(ty, scope, e->fconds.items[i]);
-                for (size_t i = 0; i < e->kwargs.count; ++i)
+                for (usize i = 0; i < e->kwargs.count; ++i)
                         ok &= TryResolveExpr(ty, scope, e->kwargs.items[i]);
                 break;
 
@@ -3360,11 +3375,11 @@ TryResolveExpr(Ty *ty, Scope *scope, Expr *e)
 
         case EXPRESSION_METHOD_CALL:
                 ok &= TryResolveExpr(ty, scope, e->object);
-                for (size_t i = 0;  i < e->method_args.count; ++i)
+                for (usize i = 0;  i < e->method_args.count; ++i)
                         ok &= TryResolveExpr(ty, scope, e->method_args.items[i]);
-                for (size_t i = 0;  i < e->method_args.count; ++i)
+                for (usize i = 0;  i < e->method_args.count; ++i)
                         ok &= TryResolveExpr(ty, scope, e->mconds.items[i]);
-                for (size_t i = 0; i < e->method_kwargs.count; ++i)
+                for (usize i = 0; i < e->method_kwargs.count; ++i)
                         ok &= TryResolveExpr(ty, scope, e->method_kwargs.items[i]);
                 break;
 
@@ -3399,7 +3414,7 @@ TryResolveExpr(Ty *ty, Scope *scope, Expr *e)
                 break;
 
         case EXPRESSION_ARRAY:
-                for (size_t i = 0; i < e->elements.count; ++i) {
+                for (usize i = 0; i < e->elements.count; ++i) {
                         ok &= TryResolveExpr(ty, scope, e->elements.items[i]);
                         ok &= TryResolveExpr(ty, scope, e->aconds.items[i]);
                 }
@@ -3411,7 +3426,7 @@ TryResolveExpr(Ty *ty, Scope *scope, Expr *e)
 
         case EXPRESSION_DICT:
                 ok &= TryResolveExpr(ty, scope, e->dflt);
-                for (size_t i = 0; i < e->keys.count; ++i) {
+                for (usize i = 0; i < e->keys.count; ++i) {
                         ok &= TryResolveExpr(ty, scope, e->keys.items[i]);
                         ok &= TryResolveExpr(ty, scope, e->values.items[i]);
                 }
@@ -3762,10 +3777,10 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                 e->_type = e->statement->_type;
                 break;
         case EXPRESSION_TEMPLATE:
-                for (size_t i = 0; i < vN(e->template.holes); ++i) {
+                for (usize i = 0; i < vN(e->template.holes); ++i) {
                         symbolize_expression(ty, scope, v__(e->template.holes, i));
                 }
-                for (size_t i = 0; i < vN(e->template.exprs); ++i) {
+                for (usize i = 0; i < vN(e->template.exprs); ++i) {
                         symbolize_expression(ty, scope, v__(e->template.exprs, i));
                 }
                 var = scope_lookup(ty, GlobalScope, "AST");
@@ -3805,16 +3820,16 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                         break;
                 }
 
-                for (size_t i = 0;  i < vN(e->args); ++i)
+                for (usize i = 0;  i < vN(e->args); ++i)
                         symbolize_expression(ty, scope, v__(e->args, i));
 
-                for (size_t i = 0;  i < vN(e->args); ++i)
+                for (usize i = 0;  i < vN(e->args); ++i)
                         symbolize_expression(ty, scope, v__(e->fconds, i));
 
-                for (size_t i = 0; i < vN(e->kwargs); ++i)
+                for (usize i = 0; i < vN(e->kwargs); ++i)
                         symbolize_expression(ty, scope, v__(e->kwargs, i));
 
-                for (size_t i = 0; i < vN(e->fkwconds); ++i)
+                for (usize i = 0; i < vN(e->fkwconds); ++i)
                         symbolize_expression(ty, scope, v__(e->fkwconds, i));
 
                 e->_type = type_call(ty, e);
@@ -3854,11 +3869,11 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                 symbolize_expression(ty, scope, e->method);
         case EXPRESSION_METHOD_CALL:
                 symbolize_expression(ty, scope, e->object);
-                for (size_t i = 0;  i < vN(e->method_args); ++i)
+                for (usize i = 0;  i < vN(e->method_args); ++i)
                         symbolize_expression(ty, scope, v__(e->method_args, i));
-                for (size_t i = 0;  i < vN(e->method_args); ++i)
+                for (usize i = 0;  i < vN(e->method_args); ++i)
                         symbolize_expression(ty, scope, v__(e->mconds, i));
-                for (size_t i = 0; i < vN(e->method_kwargs); ++i)
+                for (usize i = 0; i < vN(e->method_kwargs); ++i)
                         symbolize_expression(ty, scope, v__(e->method_kwargs, i));
                 e->_type = type_method_call(ty, e);
                 SET_TYPE_SRC(e);
@@ -4084,7 +4099,7 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                 );
                 break;
         case EXPRESSION_ARRAY:
-                for (size_t i = 0; i < vN(e->elements); ++i) {
+                for (usize i = 0; i < vN(e->elements); ++i) {
                         if (v__(e->aconds, i) != NULL) {
                                 subscope = scope_new(ty, "(array-cond)", scope, false);
                                 symbolize_expression(ty, subscope, v__(e->aconds, i));
@@ -4104,7 +4119,7 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                 type_assign_iterable(ty, e->compr.pattern, e->compr.iter->_type, 0);
                 symbolize_statement(ty, subscope, e->compr.where);
                 symbolize_expression(ty, subscope, e->compr.cond);
-                for (size_t i = 0; i < vN(e->elements); ++i) {
+                for (usize i = 0; i < vN(e->elements); ++i) {
                         symbolize_expression(ty, subscope, v__(e->elements, i));
                         symbolize_expression(ty, subscope, v__(e->aconds, i));
                 }
@@ -4113,7 +4128,7 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                 break;
         case EXPRESSION_DICT:
                 symbolize_expression(ty, scope, e->dflt);
-                for (size_t i = 0; i < vN(e->keys); ++i) {
+                for (usize i = 0; i < vN(e->keys); ++i) {
                         symbolize_expression(ty, scope, v__(e->keys, i));
                         symbolize_expression(ty, scope, v__(e->values, i));
                 }
@@ -4127,7 +4142,7 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                 type_assign_iterable(ty, e->dcompr.pattern, e->dcompr.iter->_type, 0);
                 symbolize_statement(ty, subscope, e->dcompr.where);
                 symbolize_expression(ty, subscope, e->dcompr.cond);
-                for (size_t i = 0; i < vN(e->keys); ++i) {
+                for (usize i = 0; i < vN(e->keys); ++i) {
                         symbolize_expression(ty, subscope, v__(e->keys, i));
                         symbolize_expression(ty, subscope, v__(e->values, i));
                 }
@@ -4206,15 +4221,33 @@ End:
         dont_printf("::) %s\n", type_show(ty, e->_type));
 }
 
+static char *
+StyledNameParts(Ty *ty, StringVector const *names)
+{
+        byte_vector buf = {0};
+
+        for (u32 i = 0; i < vN(*names); ++i) {
+                if (i > 0) {
+                        sxdf(&buf, "%s%s%s", TERM(38:2:156:148:134), ".", TERM(0));
+                }
+                sxdf(&buf, "%s%s%s", TERM(93), v__(*names, i), TERM(0));
+        }
+
+        return vv(buf);
+}
+
 void
 CompilerDoUse(Ty *ty, Stmt *s, Scope *scope)
 {
         void       *use;
+        Scope      *other;
         char const *conflict;
 
         if (scope == NULL) {
                 scope = STATE.pscope;
         }
+
+        void *ctx = PushContext(ty, s);
 
         switch (
                 resolve_name(
@@ -4225,34 +4258,86 @@ CompilerDoUse(Ty *ty, Stmt *s, Scope *scope)
                 )
         ) {
         case TY_NAME_VARIABLE:
-                scope_insert(ty, scope, use);
-                break;
-        case TY_NAME_MODULE:
-        case TY_NAME_NAMESPACE:
-                conflict = scope_copy_public(ty, scope, use, false);
-                if (conflict != NULL) {
+                if (vN(s->use.names) == 0) {
+                        scope_insert(ty, scope, use);
+                } else {
                         fail(
-                                "%suse%s imports conflicting symbol %s%s%s",
-                                TERM(95),
+                                "%suse%s statement includes an import list but "
+                                "%s%s%s resolved to a variable",
+                                TERM(95;1),
                                 TERM(0),
                                 TERM(93),
-                                conflict,
+                                StyledNameParts(ty, &s->use.name),
                                 TERM(0)
                         );
+
                 }
                 break;
+
+        case TY_NAME_MODULE:
+        case TY_NAME_NAMESPACE:
+                other = use;
+                if (vN(s->use.names) == 0) {
+                        conflict = scope_copy_public(ty, scope, other, false);
+                        if (conflict != NULL) {
+                                fail(
+                                        "%suse%s imports conflicting symbol %s%s%s",
+                                        TERM(95;1),
+                                        TERM(0),
+                                        TERM(93),
+                                        conflict,
+                                        TERM(0)
+                                );
+                        }
+                } else {
+                        for (u32 i = 0; i < vN(s->use.names); ++i) {
+                                Symbol *sym = scope_lookup(ty, other, v__(s->use.names, i));
+                                if (sym == NULL) {
+                                        fail(
+                                                "%suse%s subject %s%s%s does not export %s%s%s",
+                                                TERM(95;1),
+                                                TERM(0),
+                                                TERM(93),
+                                                StyledNameParts(ty, &s->use.name),
+                                                TERM(0),
+                                                TERM(93),
+                                                v__(s->use.names, i),
+                                                TERM(0)
+                                        );
+                                } else if (sym->mod != STATE.module && !SymbolIsPublic(sym)) {
+                                        fail(
+                                                "%suse%s statement attempts to import private symbol %s%s%s.%s%s%s",
+                                                TERM(95;1),
+                                                TERM(0),
+                                                TERM(93),
+                                                StyledNameParts(ty, &s->use.name),
+                                                TERM(0),
+                                                TERM(93),
+                                                v__(s->use.names, i),
+                                                TERM(0)
+                                        );
+                                } else {
+                                        scope_insert(ty, scope, sym);
+                                }
+                        }
+                }
+                break;
+
         case TY_NAME_NONE:
                 fail(
-                        "%suse%s references undefined name %s%s%s",
-                        TERM(95),
+                        "%suse%s statement references undefined name %s%s%s",
+                        TERM(95;1),
                         TERM(0),
                         TERM(93),
                         use,
                         TERM(0)
                 );
+
         default:
                 UNREACHABLE("resolve_name(): unrecognized return value");
         }
+
+        RestoreContext(ty, ctx);
 }
 
 static Scope *
@@ -4618,7 +4703,7 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
         case STATEMENT_BLOCK:
                 scope = scope_new(ty, "(block)", scope, false);
         case STATEMENT_MULTI:
-                for (size_t i = 0; i < vN(s->statements); ++i) {
+                for (usize i = 0; i < vN(s->statements); ++i) {
                         for (
                                 int j = i;
 
@@ -4880,7 +4965,7 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
 }
 
 inline static void
-patch_jumps_to(offset_vector const *js, size_t location)
+patch_jumps_to(offset_vector const *js, usize location)
 {
         for (int i = 0; i < js->count; ++i) {
                 int distance = location - js->items[i] - sizeof (int);
@@ -4889,7 +4974,7 @@ patch_jumps_to(offset_vector const *js, size_t location)
 }
 
 inline static void
-patch_loop_jumps(Ty *ty, size_t begin, size_t end)
+patch_loop_jumps(Ty *ty, usize begin, usize end)
 {
         patch_jumps_to(&get_loop(ty, 0)->continues, begin);
         patch_jumps_to(&get_loop(ty, 0)->breaks, end);
@@ -5026,11 +5111,7 @@ emit_load(Ty *ty, Symbol const *s, Scope const *scope)
                 emit_load(ty, v__(STATE.func->param_symbols, 0), scope);
                 INSN(MEMBER_ACCESS);
                 Ei32(s->member);
-        } else if (
-                SymbolIsMember(s)
-             && (STATE.class != NULL)
-             && (STATE.self->scope->function == scope->function)
-        ) {
+        } else if (IsLocalMemberSymbol(ty, s, scope)) {
                 INSN(SELF_MEMBER_ACCESS);
                 Ei32(s->member);
         } else if (SymbolIsMember(s)) {
@@ -5074,11 +5155,7 @@ emit_tgt(Ty *ty, Symbol *s, Scope const *scope, bool def)
                 emit_load(ty, v__(STATE.func->param_symbols, 0), scope);
                 INSN(TARGET_MEMBER);
                 Ei32(s->member);
-        } else if (
-                SymbolIsMember(s)
-             && (STATE.class != NULL)
-             && (STATE.self->scope->function == scope->function)
-        ) {
+        } else if (IsLocalMemberSymbol(ty, s, scope)) {
                 INSN(TARGET_SELF_MEMBER);
                 Ei32(s->member);
         } else if (SymbolIsMember(s)) {
@@ -5493,10 +5570,10 @@ emit_function(Ty *ty, Expr const *e)
 
         int bound = vN(e->scope->owned);
 
-        size_t hs_offset = vN(STATE.code);
+        usize hs_offset = vN(STATE.code);
         Ei32(0);
 
-        size_t size_offset = vN(STATE.code);
+        usize size_offset = vN(STATE.code);
         Ei32(0);
 
         Ei32(ncaps);
@@ -5558,7 +5635,7 @@ emit_function(Ty *ty, Expr const *e)
          * Remember where in the code this function's code begins so that we can compute
          * the relative offset of references to non-local variables.
          */
-        size_t start_offset = vN(STATE.code);
+        usize start_offset = vN(STATE.code);
 
         for (int i = 0; i < vN(e->param_symbols); ++i) {
                 if (
@@ -5591,7 +5668,7 @@ emit_function(Ty *ty, Expr const *e)
                 }
 
                 Symbol const *s = v__(e->param_symbols, i);
-                size_t start = vN(STATE.code);
+                usize start = vN(STATE.code);
 
                 emit_load_instr(ty, s->identifier, INSTR_LOAD_LOCAL, s->i);
 
@@ -5921,7 +5998,7 @@ emit_yield(Ty *ty, Expr const * const *es, int n, bool wrap)
 static void
 emit_return_check(Ty *ty, Expr const *f)
 {
-        size_t start = vN(STATE.code);
+        usize start = vN(STATE.code);
 
         INSN(DUP);
         emit_constraint(ty, f->return_type);
@@ -6046,13 +6123,13 @@ emit_try(Ty *ty, Stmt const *s, bool want_result)
 {
         INSN(TRY);
 
-        size_t catch_offset = vN(STATE.code);
+        usize catch_offset = vN(STATE.code);
         Ei32(0);
 
-        size_t finally_offset = vN(STATE.code);
+        usize finally_offset = vN(STATE.code);
         Ei32(-1);
 
-        size_t end_offset = vN(STATE.code);
+        usize end_offset = vN(STATE.code);
         Ei32(-1);
 
         begin_try(ty);
@@ -6155,7 +6232,7 @@ emit_record_rest(Ty *ty, Expr const *rec, int i, bool is_assignment)
 {
         emit_tgt(ty, v__(rec->es, i)->symbol, STATE.fscope, true);
 
-        size_t bad_assign_jump;
+        usize bad_assign_jump;
 
         if (!is_assignment) {
                 FAIL_MATCH_IF(RECORD_REST);
@@ -6188,7 +6265,7 @@ emit_record_rest(Ty *ty, Expr const *rec, int i, bool is_assignment)
 static void
 emit_try_match_(Ty *ty, Expr const *pattern)
 {
-        size_t    start = vN(STATE.code);
+        usize    start = vN(STATE.code);
         bool   need_loc = false;
         bool        set = true;
         bool      after = false;
@@ -7035,7 +7112,7 @@ emit_match_expression(Ty *ty, Expr const *e)
 static void
 emit_target(Ty *ty, Expr *target, bool def)
 {
-        size_t start = vN(STATE.code);
+        usize start = vN(STATE.code);
 
         switch (target->type) {
         case EXPRESSION_RESOURCE_BINDING:
@@ -7586,7 +7663,7 @@ emit_assignment2(Ty *ty, Expr *target, bool maybe, bool def)
 {
         char instr = maybe ? INSTR_MAYBE_ASSIGN : INSTR_ASSIGN;
 
-        size_t start = vN(STATE.code);
+        usize start = vN(STATE.code);
 
         bool after = false;
 
@@ -7708,7 +7785,7 @@ emit_assignment2(Ty *ty, Expr *target, bool maybe, bool def)
                      && (target->constraint != NULL)
                      && RUNTIME_CONSTRAINTS
                 ) {
-                        size_t start = vN(STATE.code);
+                        usize start = vN(STATE.code);
                         INSN(DUP);
                         EE(target->constraint);
                         INSN(CHECK_MATCH);
@@ -7771,13 +7848,129 @@ emit_non_nil_expr(Ty *ty, Expr const *e, bool none)
         PATCH_JUMP(good);
 }
 
+static void
+EmitMethodCall(
+        Ty *ty,
+        Expr const *object,
+        Expr const *method,
+        bool dyn,
+        expression_vector const *args,
+        expression_vector const *conds,
+        StringVector const *kws,
+        expression_vector const *kwargs,
+        expression_vector const *kwconds,
+        bool strict
+)
+{
+        bool variadic = any_variadic(vv(*args), vv(*conds), vN(*args));
+
+        if (variadic) {
+                INSN(SAVE_STACK_POS);
+        }
+
+        for (usize i = 0; i < vN(*args); ++i) {
+                if (v__(*args, i) == NULL) {
+                        continue;
+                } else if (v__(*conds, i) != NULL) {
+                        PLACEHOLDER_JUMP_IF_NOT(v__(*conds, i), skip);
+                        EE(v__(*args, i));
+                        PATCH_JUMP(skip);
+                } else {
+                        EE(v__(*args, i));
+                }
+        }
+
+        for (usize i = 0; i < vN(*kwargs); ++i) {
+                EE(v__(*kwargs, i));
+        }
+
+        if (object != NULL) {
+                EE(object);
+        }
+
+        if (dyn) {
+                EE(method);
+        }
+
+        if (object == NULL) {
+                INSN(CALL_SELF_METHOD);
+        } else if (!strict) {
+                INSN(TRY_CALL_METHOD);
+        } else {
+                INSN(CALL_METHOD);
+        }
+
+        if (variadic) {
+                Ei32(-1);
+        } else {
+                Ei32(vN(*args));
+        }
+
+        if (dyn) {
+                Ei32(-1);
+        } else {
+                emit_member(ty, method->identifier);
+        }
+
+        Ei32(vN(*kwargs));
+
+        for (usize i = vN(*kwargs); i > 0; --i) {
+                emit_string(ty, v__(*kws, i - 1));
+        }
+}
+
+static void
+EmitFunctionCall(Ty *ty, Expr const *e)
+{
+        if (is_variadic(e)) {
+                INSN(SAVE_STACK_POS);
+        }
+
+        for (usize i = 0; i < vN(e->args); ++i) {
+                if (is_placeholder(v__(e->args, i))) {
+                        continue;
+                } else if (v__(e->fconds, i) != NULL) {
+                        PLACEHOLDER_JUMP_IF_NOT(v__(e->fconds, i), skip);
+                        EE(v__(e->args, i));
+                        PATCH_JUMP(skip);
+                } else {
+                        EE(v__(e->args, i));
+                }
+        }
+
+        for (usize i = 0; i < vN(e->kwargs); ++i) {
+                if (v__(e->fkwconds, i) == NULL) {
+                        EE(v__(e->kwargs, i));
+                } else {
+                        EE(v__(e->fkwconds, i));
+                        PLACEHOLDER_JUMP(NONE_IF_NOT, skip);
+                        EE(v__(e->kwargs, i));
+                        PATCH_JUMP(skip);
+                }
+        }
+
+        EE(e->function);
+        INSN(CALL);
+
+        if (is_variadic(e)) {
+                Ei32(-1);
+        } else {
+                Ei32(vN(e->args));
+        }
+
+        Ei32(vN(e->kwargs));
+        for (usize i = vN(e->kws); i > 0; --i) {
+                emit_string(ty, v__(e->kws, i - 1));
+        }
+}
+
 static bool
 emit_expr(Ty *ty, Expr const *e, bool need_loc)
 {
         STATE.start = e->start;
         STATE.end   = e->end;
 
-        size_t start = vN(STATE.code);
+        usize start = vN(STATE.code);
         void    *ctx = PushContext(ty, e);
 
         bool returns = false;
@@ -8037,99 +8230,52 @@ emit_expr(Ty *ty, Expr const *e, bool need_loc)
                 break;
 
         case EXPRESSION_FUNCTION_CALL:
-                if (is_variadic(e)) {
-                        INSN(SAVE_STACK_POS);
-                }
-
-                for (size_t i = 0; i < vN(e->args); ++i) {
-                        if (is_placeholder(v__(e->args, i))) {
-                                continue;
-                        } else if (v__(e->fconds, i) != NULL) {
-                                PLACEHOLDER_JUMP_IF_NOT(v__(e->fconds, i), skip);
-                                EE(v__(e->args, i));
-                                PATCH_JUMP(skip);
-                        } else {
-                                EE(v__(e->args, i));
-                        }
-                }
-
-                for (size_t i = 0; i < vN(e->kwargs); ++i) {
-                        if (v__(e->fkwconds, i) == NULL) {
-                                EE(v__(e->kwargs, i));
-                        } else {
-                                EE(v__(e->fkwconds, i));
-                                PLACEHOLDER_JUMP(NONE_IF_NOT, skip);
-                                EE(v__(e->kwargs, i));
-                                PATCH_JUMP(skip);
-                        }
-                }
-
-                EE(e->function);
-                INSN(CALL);
-
-                if (is_variadic(e)) {
-                        Ei32(-1);
+                if (IsLocalMember(ty, e->function, STATE.fscope)) {
+                        EmitMethodCall(
+                                ty,
+                                NULL,
+                                e->function,
+                                false,
+                                &e->args,
+                                &e->fconds,
+                                &e->kws,
+                                &e->kwargs,
+                                &e->fkwconds,
+                                true
+                        );
                 } else {
-                        Ei32(vN(e->args));
+                        EmitFunctionCall(ty, e);
                 }
+                break;
 
-                Ei32(vN(e->kwargs));
-                for (size_t i = vN(e->kws); i > 0; --i) {
-                        emit_string(ty, v__(e->kws, i - 1));
-                }
-
+        case EXPRESSION_METHOD_CALL:
+                EmitMethodCall(
+                        ty,
+                        e->object,
+                        e->method,
+                        false,
+                        &e->method_args,
+                        &e->mconds,
+                        &e->method_kws,
+                        &e->method_kwargs,
+                        NULL,
+                        !e->maybe
+                );
                 break;
 
         case EXPRESSION_DYN_METHOD_CALL:
-        case EXPRESSION_METHOD_CALL:
-                if (is_variadic(e)) {
-                        INSN(SAVE_STACK_POS);
-                }
-                for (size_t i = 0; i < vN(e->method_args); ++i) {
-                        if (v__(e->method_args, i) == NULL) {
-                                continue;
-                        } else if (v__(e->mconds, i) != NULL) {
-                                PLACEHOLDER_JUMP_IF_NOT(v__(e->mconds, i), skip);
-                                EE(v__(e->method_args, i));
-                                PATCH_JUMP(skip);
-                        } else {
-                                EE(v__(e->method_args, i));
-                        }
-                }
-                for (size_t i = 0; i < vN(e->method_kwargs); ++i) {
-                        EE(v__(e->method_kwargs, i));
-                }
-
-                EE(e->object);
-
-                if (e->type == EXPRESSION_DYN_METHOD_CALL) {
-                        EE(e->method);
-                }
-
-                if (e->maybe) {
-                        INSN(TRY_CALL_METHOD);
-                } else {
-                        INSN(CALL_METHOD);
-                }
-
-                if (is_variadic(e)) {
-                        Ei32(-1);
-                } else {
-                        Ei32(vN(e->method_args));
-                }
-
-                if (e->type == EXPRESSION_DYN_METHOD_CALL) {
-                        Ei32(-1);
-                } else {
-                        emit_member(ty, e->method->identifier);
-                }
-
-                Ei32(vN(e->method_kwargs));
-
-                for (size_t i = vN(e->method_kws); i > 0; --i) {
-                        emit_string(ty, v__(e->method_kws, i - 1));
-                }
-
+                EmitMethodCall(
+                        ty,
+                        e->object,
+                        e->method,
+                        true,
+                        &e->method_args,
+                        &e->mconds,
+                        &e->method_kws,
+                        &e->method_kwargs,
+                        NULL,
+                        !e->maybe
+                );
                 break;
 
         case EXPRESSION_WITH:
@@ -8534,7 +8680,7 @@ emit_statement(Ty *ty, Stmt const *s, bool want_result)
         bool returns = false;
 
         int resources = STATE.resources;
-        size_t start = vN(STATE.code);
+        usize start = vN(STATE.code);
         LoopState *loop = get_loop(ty, 0);
         void *ctx = PushContext(ty, s);
 
@@ -8815,7 +8961,7 @@ emit_statement(Ty *ty, Stmt const *s, bool want_result)
 static void
 emit_new_globals(Ty *ty)
 {
-        for (size_t i = GlobalCount; i < vN(GlobalScope->owned); ++i) {
+        for (usize i = GlobalCount; i < vN(GlobalScope->owned); ++i) {
                 Symbol *s = v__(GlobalScope->owned, i);
                 if (s->i < BuiltinCount)
                         continue;
@@ -8913,7 +9059,7 @@ RedpillFun(Ty *ty, Scope *scope, Expr *f, Type *self0)
         STATE.func = f;
 
         if (vN(f->type_params) > 0) {
-                for (size_t i = 0; i < vN(f->type_params); ++i) {
+                for (usize i = 0; i < vN(f->type_params); ++i) {
                         Expr *param = v__(f->type_params, i);
                         if (param->symbol == NULL) {
                                 param->symbol = scope_add_type_var(ty, f->scope, param->identifier);
@@ -8946,19 +9092,19 @@ RedpillFun(Ty *ty, Scope *scope, Expr *f, Type *self0)
         }
 
         WITH_SELF(f->self) {
-                for (size_t i = 0; i < vN(f->params); ++i) {
+                for (usize i = 0; i < vN(f->params); ++i) {
                         symbolize_expression(ty, f->scope, v__(f->dflts, i));
                         avP(f->param_symbols, addsymbol(ty, f->scope, v__(f->params, i)));
                 }
                 WITH_CTX(TYPE) {
-                        for (size_t i = 0; i < vN(f->params); ++i) {
+                        for (usize i = 0; i < vN(f->params); ++i) {
                                 Expr *constraint = v__(f->constraints, i);
                                 symbolize_expression(ty, f->scope, constraint);
                         }
                 }
         }
 
-        for (size_t i = 0; i < vN(f->params); ++i) {
+        for (usize i = 0; i < vN(f->params); ++i) {
                 Symbol *sym = v__(f->param_symbols, i);
                 Expr *constraint = v__(f->constraints, i);
                 sym->type = ResolveConstraint(ty, constraint);
@@ -9489,7 +9635,7 @@ compile(Ty *ty, char const *source)
 
         statement_vector expanded = {0};
 
-        for (size_t i = 0; p[i] != NULL; ++i) {
+        for (usize i = 0; p[i] != NULL; ++i) {
                 if (HaveMulti(p, i)) {
                         char buffer[1024];
                         Expr *multi = mkmulti(ty, p[i]->target->identifier, false);
@@ -9536,11 +9682,11 @@ compile(Ty *ty, char const *source)
         avP(expanded, NULL);
         p = vv(expanded);
 
-        for (size_t i = 0; p[i] != NULL; ++i) {
+        for (usize i = 0; p[i] != NULL; ++i) {
                 InjectRedpill(ty, p[i]);
         }
 
-        for (size_t i = 0; p[i] != NULL; ++i) {
+        for (usize i = 0; p[i] != NULL; ++i) {
                 WITH_SCOPE_LIMIT(p[i]->when) {
                         symbolize_statement(ty, STATE.global, p[i]);
                 }
@@ -9556,7 +9702,7 @@ compile(Ty *ty, char const *source)
         }
 
         if (SuggestCompletions || FindDefinition) {
-                for (size_t i = 0; p[i] != NULL; ++i) {
+                for (usize i = 0; p[i] != NULL; ++i) {
                         on_god(ty, p[i]);
                 }
         }
@@ -9848,7 +9994,7 @@ void
 compiler_init(Ty *ty)
 {
         tags_init(ty);
-        
+
         GlobalScope = scope_new(ty, "GLOBAL", NULL, false);
         GlobalModule = NewModule(ty, "prelude", "(built-in)", NULL, GlobalScope);
 
@@ -10099,7 +10245,6 @@ compiler_compile_source(
 
         i64 symbol = scope_get_symbol(ty);
         u32 n_imports = vN(STATE.imports);
-        
 
         if (TY_CATCH_ERROR()) {
                 scope_set_symbol(ty, symbol);
@@ -12957,7 +13102,7 @@ tyeval(Ty *ty, Expr *e)
 
         TY_CATCH_END();
 
-        size_t n_location_lists = vN(location_lists);
+        usize n_location_lists = vN(location_lists);
 
         add_location_info(ty);
 
@@ -13657,14 +13802,14 @@ compiler_render_template(Ty *ty, Expr *e)
 
         Array *a = vA();
 
-        for (size_t i = 0; i < vN(e->template.stmts); ++i) {
+        for (usize i = 0; i < vN(e->template.stmts); ++i) {
                 vAp(a, tystmt(ty, v__(e->template.stmts, i)));
         }
 
         v = tagged(ty, TyMulti, ARRAY(a), NONE);
 
 End:
-        for (size_t i = 0; i < vN(e->template.holes); ++i) {
+        for (usize i = 0; i < vN(e->template.holes); ++i) {
                 vmX();
         }
 
@@ -13868,6 +14013,10 @@ CompilationTrace(Ty *ty, byte_vector *out)
         }
 
         for (ContextEntry *ctx = ContextList; ctx != NULL; ctx = ctx->next) {
+                while (ctx == ctx->next) {
+                        ctx = ctx->next;
+                }
+
                 if (WriteExpressionTrace(ty, out, ctx->e, etw, ctx == ContextList) == 0) {
                         continue;
                 }
@@ -14191,7 +14340,7 @@ DumpProgram(
                 char color_buffer[64] = {0};
                 istat_entry *stat = istat_lookup(&prof, c);
 
-                int64_t max_ticks, total_ticks;
+                i64 max_ticks, total_ticks;
                 istat_count(&prof, &max_ticks, &total_ticks);
 
                 if (*PTERM(0)) {
@@ -14795,6 +14944,7 @@ DumpProgram(
                         break;
                 CASE(TRY_CALL_METHOD)
                 CASE(CALL_METHOD)
+                CASE(CALL_SELF_METHOD)
                         READVALUE(n);
                         READMEMBER(n);
                         READVALUE(nkw);

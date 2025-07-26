@@ -3003,12 +3003,24 @@ BUILTIN_FUNCTION(os_spawn)
 #else
 BUILTIN_FUNCTION(os_spawn)
 {
+/* ========================================================================= */
+        static TyMutex     SpawnLock;
+        static atomic_bool SpawnReady = false;
+
+        bool _false = false;
+        if (atomic_compare_exchange_weak(&SpawnReady, &_false, true)) {
+                TyMutexInit(&SpawnLock);
+                SpawnReady = true;
+        }
+/* ========================================================================= */
+
         ASSERT_ARGC("os.spawn()", 1);
 
         Value cmd = ARGx(0, VALUE_ARRAY);
 
-        if (cmd.array->count == 0)
+        if (cmd.array->count == 0) {
                 bP("empty argv");
+        }
 
         for (int i = 0; i < vN(*cmd.array); ++i) {
                 if (v_(*cmd.array, i)->type != VALUE_STRING) {
@@ -3016,74 +3028,104 @@ BUILTIN_FUNCTION(os_spawn)
                 }
         }
 
-        Value      *combine = NAMED("combineOutput");
-        Value *share_stderr = NAMED("shareStderr");
-        Value *share_stdout = NAMED("shareStdout");
-        Value  *share_stdin = NAMED("shareStdin");
-        Value       *detach = NAMED("detach");
+        Value _detach   = KWARG("detach", BOOLEAN);
+        Value _chdir    = KWARG("chdir",  INTEGER, STRING, BLOB, PTR, _NIL);
+        Value _v_stdin  = KWARG("stdin",  INTEGER);
+        Value _v_stdout = KWARG("stdout", INTEGER);
+        Value _v_stderr = KWARG("stderr", INTEGER);
 
-        if      (combine != NULL && !value_truthy(ty, combine))           combine = NULL;
-        if (share_stderr != NULL && !value_truthy(ty, share_stderr)) share_stderr = NULL;
-        if (share_stdout != NULL && !value_truthy(ty, share_stdout)) share_stdout = NULL;
-        if  (share_stdin != NULL && !value_truthy(ty, share_stdin))   share_stdin = NULL;
-        if       (detach != NULL && !value_truthy(ty, detach))             detach = NULL;
+        char const *chdir = NULL;
+        int        fchdir = -1;
 
-        int in[2], out[2], err[2];
-        int nToClose = 0;
-        int aToClose[6];
+        switch (_chdir.type) {
+        case VALUE_NIL:
+                break;
 
-/* ========================================================================= */
-#define CloseOnError(fd) do { aToClose[nToClose++] = (fd); } while (0)
-#define Cleanup()                                  \
-        do {                                       \
-                TyMutexUnlock(&spawn_lock);        \
-                for (int i = 0; i < nToClose; ++i) \
-                        close(aToClose[i]);        \
-        } while (0)
-/* ========================================================================= */
+        case VALUE_INTEGER:
+                fchdir = _chdir.integer;
+                break;
 
-        static TyMutex spawn_lock;
-        static atomic_bool init = false;
-        bool expected = false;
-
-        if (atomic_compare_exchange_weak(&init, &expected, true)) {
-                TyMutexInit(&spawn_lock);
-                init = true;
+        case VALUE_STRING:
+        case VALUE_BLOB:
+        case VALUE_PTR:
+                chdir = TY_TMP_C_STR(_chdir);
+                break;
         }
 
-        TyMutexLock(&spawn_lock);
+        bool detach = !IsMissing(_detach) && _detach.boolean;
 
-        if (!share_stdin  && pipe(in)  == -1)             { Cleanup(); return NIL; }
-        if (!share_stdout && pipe(out) == -1)             { Cleanup(); return NIL; }
-        if (!share_stderr && !combine && pipe(err) == -1) { Cleanup(); return NIL; }
+        int _stdin  = IsMissing(_v_stdin)  ? TY_SPAWN_INHERIT : _v_stdin.integer;
+        int _stdout = IsMissing(_v_stdout) ? TY_SPAWN_INHERIT : _v_stdout.integer;
+        int _stderr = IsMissing(_v_stderr) ? TY_SPAWN_INHERIT : _v_stderr.integer;
 
-        if (!share_stdin)              {  CloseOnError(in[0]);  CloseOnError(in[1]); }
-        if (!share_stdout)             { CloseOnError(out[0]); CloseOnError(out[1]); }
-        if (!share_stderr && !combine) { CloseOnError(err[0]); CloseOnError(err[1]); }
+        if (_stdin  == TY_SPAWN_INHERIT) { _stdin  = 0; }
+        if (_stdout == TY_SPAWN_INHERIT) { _stdout = 1; }
+        if (_stderr == TY_SPAWN_INHERIT) { _stderr = 2; }
+
+        int _0 = _stdin;
+        int _1 = _stdout;
+        int _2 = _stderr;
+
+        int  in[2];
+        int out[2];
+        int err[2];
+
+        SCRATCH_SAVE();
+
+        vec(int) x0  = {0};
+        vec(int) x1  = {0};
+
+/* ========================================================================= */
+#define X0(x) svP(x0, x)
+#define X1(x) svP(x1, x)
+
+#define P(x, u) do {                                  \
+        if (pipe(x) == 0) { X0(x[u 0]); X1(x[u 1]); } \
+        else              { goto Fail;              } \
+} while (0)
+/* ------------------------------------------------------------------------- */
+        TyMutexLock(&SpawnLock);
+
+        bool const pipe0 = (_stdin  == TY_SPAWN_PIPE);
+        bool const pipe1 = (_stdout == TY_SPAWN_PIPE);
+        bool const pipe2 = (_stderr == TY_SPAWN_PIPE);
+
+        bool const merge = (_stderr == TY_SPAWN_MERGE_ERR);
+
+        bool const same0 = (_stdin  == 0);
+        bool const same1 = (_stdout == 1);
+        bool const same2 = (_stderr == 2);
+
+        if (pipe0) { P(in, !!); _stdin  =  in[0]; _0 =  in[1]; }
+        if (pipe1) { P(out, !); _stdout = out[1]; _1 = out[0]; }
+        if (pipe2) { P(err, !); _stderr = err[1]; _2 = err[0]; }
+
+        if (merge) { _stderr = _stdout; _2 = _1; }
 
         posix_spawn_file_actions_t actions;
         posix_spawn_file_actions_init(&actions);
+/* ------------------------------------------------------------------------- */
+#undef P
+#undef X1
+#undef X0
+/* ========================================================================= */
+#define xD(op, ...) (posix_spawn_file_actions_add##op)(&actions, __VA_ARGS__)
+/* ------------------------------------------------------------------------- */
+        if (!same0) { xD(dup2, _stdin,  0); }
+        if (!same1) { xD(dup2, _stdout, 1); }
+        if (!same2) { xD(dup2, _stderr, 2); }
 
-        if (!share_stdin) {
-                posix_spawn_file_actions_addclose(&actions, in[1]);
-                posix_spawn_file_actions_adddup2(&actions, in[0], STDIN_FILENO);
-                posix_spawn_file_actions_addclose(&actions, in[0]);
-        }
+        vfor(x1, xD(close, *it));
 
-        if (!share_stdout) {
-                posix_spawn_file_actions_addclose(&actions, out[0]);
-                posix_spawn_file_actions_adddup2(&actions, out[1], STDOUT_FILENO);
-                posix_spawn_file_actions_addclose(&actions, out[1]);
-        }
+        if (_0 != _stdin  &&      1) { xD(close, _0); }
+        if (_1 != _stdout &&      1) { xD(close, _1); }
+        if (_2 != _stderr && !merge) { xD(close, _2); }
 
-        if (!share_stderr) {
-                int errfd = combine ? STDOUT_FILENO : err[1];
-                posix_spawn_file_actions_adddup2(&actions, errfd, STDERR_FILENO);
-                if (!combine) {
-                        posix_spawn_file_actions_addclose(&actions, err[0]);
-                        posix_spawn_file_actions_addclose(&actions, err[1]);
-                }
-        }
+        if (fchdir !=   -1) { xD(fchdir_np, fchdir); }
+        if (chdir  != NULL) { xD( chdir_np,  chdir); }
+/* ------------------------------------------------------------------------- */
+#undef xD
+/* ========================================================================= */
 
         posix_spawnattr_t attr;
         posix_spawnattr_init(&attr);
@@ -3093,52 +3135,41 @@ BUILTIN_FUNCTION(os_spawn)
                 posix_spawnattr_setflags(&attr, POSIX_SPAWN_SETPGROUP);
         }
 
-        vec(char *) args = {0};
-
-        for (int i = 0; i < vN(*cmd.array); ++i) {
-                char *arg = TY_C_STR(v__(*cmd.array, i));
-                xvP(args, arg);
-        }
-
-        xvP(args, NULL);
+        vec(char *) argv = {0};
+        vfor(*cmd.array, svP(argv, TY_C_STR(*it)));
+        svP(argv, NULL);
 
         pid_t pid;
-        int status = posix_spawnp(&pid, v__(args, 0), &actions, &attr, vv(args), environ);
+        int error = posix_spawnp(&pid, v_0(argv), &actions, &attr, vv(argv), environ);
 
         posix_spawn_file_actions_destroy(&actions);
         posix_spawnattr_destroy(&attr);
 
-        for (int i = 0; v__(args, i) != NULL; ++i) {
-                free(v__(args, i));
+        vfor(argv, free(*it));
+
+        if (error != 0) {
+                goto Fail;
         }
 
-        xvF(args);
-
-        if (status != 0) {
-                Cleanup();
-                return NIL;
-        }
-
-        TyMutexUnlock(&spawn_lock);
-
-        if              (!share_stdin) close(in[0]);
-        if             (!share_stdout) close(out[1]);
-        if (!share_stderr && !combine) close(err[1]);
-
-        Value  vStdin =  share_stdin ? INTEGER(0) : INTEGER(in[1]);
-        Value vStdout = share_stdout ? INTEGER(1) : INTEGER(out[0]);
-        Value vStderr =      combine ? vStdout
-                                     : share_stderr ? INTEGER(2) : INTEGER(err[0]);
-
-#undef CloseOnError
-#undef Cleanup
+        vfor(x0, close(*it));
+        TyMutexUnlock(&SpawnLock);
+        SCRATCH_RESTORE();
 
         return vTn(
-                "stdin",   vStdin,
-                "stdout",  vStdout,
-                "stderr",  vStderr,
+                "stdin",   INTEGER(_0),
+                "stdout",  INTEGER(_1),
+                "stderr",  INTEGER(_2),
                 "pid",     INTEGER(pid)
         );
+
+/* ------------------------------------------------------------------------- */
+Fail:
+        vfor(x0, close(*it));
+        vfor(x1, close(*it));
+        TyMutexUnlock(&SpawnLock);
+        SCRATCH_RESTORE();
+
+        return NIL;
 }
 #endif
 
@@ -6976,7 +7007,7 @@ BUILTIN_FUNCTION(ty_type_info)
         } else {
                 class = NULL;
         }
-                     
+
         if (class == NULL || class->def == NULL) {
                 return NIL;
         }
@@ -7643,7 +7674,6 @@ BUILTIN_FUNCTION(tdb_insn)
         return vTn(
                 "name", xSz(GetInstructionName(insn))
         );
-        
 }
 
 BUILTIN_FUNCTION(tdb_state)

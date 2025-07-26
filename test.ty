@@ -23,11 +23,13 @@ let b = chalk['bold blue']
 
 let TY_PATH = getenv('TY_PATH') ?? ty.executable
 
+let q = (ty.q ? '-q' : '')
+
 fn getTyCommand(test) {
 #|if __windows__
-        "{TY_PATH} tests\\{test}"
+        "{TY_PATH} {q} tests\\{test}"
 #|else
-        "{TY_PATH} tests/{test}"
+        "{TY_PATH} {q} tests/{test}"
 #|]
 }
 

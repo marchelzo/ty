@@ -77,6 +77,9 @@ fn %(a: Int, b: Float) -> Float;
 
 fn +(a: String, b: String) -> String;
 
+fn +(a: String, b: Int) -> String;
+fn -(a: String, b: Int) -> String;
+
 fn +[K, U, V](a: Dict[K, U], b: Dict[K, V]) -> Dict[K, U | V];
 fn -[K, V](a: Dict[K, V], b: Dict[K, Any]) -> Dict[K, V];
 
