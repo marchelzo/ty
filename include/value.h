@@ -232,6 +232,11 @@ enum {
         TAG_ERR
 };
 
+enum {
+        TY_SPAWN_PIPE       = -13,
+        TY_SPAWN_INHERIT    = -14,
+        TY_SPAWN_MERGE_ERR  = -15
+};
 
 inline static char const *
 TypeName(Ty const *ty, int t0)
@@ -257,8 +262,9 @@ TypeName(Ty const *ty, int t0)
         case VALUE_TUPLE:               return "Tuple";
         case VALUE_TAG:                 return "Tag";
         case VALUE_THREAD:              return "<thread>";
-        case VALUE_PTR:                 return "<ptr>";
-        case VALUE_NIL:                 return "<nil>";
+        case VALUE_PTR:                 return "Ptr";
+        case VALUE_NIL:                 return "nil";
+        case VALUE_NONE:                return "<none>";
 
         default:                        return "<internal>";
         }
@@ -352,13 +358,6 @@ value_show_color(Ty *ty, Value const *v);
 #define NAMED(s) ((kwargs != NULL) ? dict_get_member(ty, kwargs->dict, (s)) : NULL)
 #define ARG_T(i) ((argc > i) ? (vm_get(ty, argc - 1 - (i))->type) : VALUE_NONE)
 
-#define VA_COUNT_INNER( _1, _2, _3, _4, COUNT, ...) COUNT
-#define                               VA_COUNT(...) VA_COUNT_INNER( __VA_ARGS__, 4, 3, 2, 1, 0)
-#define                                   CAT(a, b) a ## b
-#define                       VA_SELECT_INNER(f, i) CAT(f ## _, i)
-#define                           VA_SELECT(f, ...) VA_SELECT_INNER(f, VA_COUNT(__VA_ARGS__))(__VA_ARGS__)
-
-
 #define CHECK_ARGC_1(n0) do {                            \
         if (argc != n0) {                                \
                 zP(                                      \
@@ -414,14 +413,47 @@ value_show_color(Ty *ty, Value const *v);
 
 noreturn void vm_panic(Ty *, char const *, ...);
 
-inline static Value
-checked_arg_1(Ty *ty, char const *fun, int i, Value arg, int t0)
+inline static bool
+IsNone(Value const v)
 {
-        if (arg.type != t0) {
+        return v.type == VALUE_NONE;
+}
+
+inline static bool
+IsNil(Value const v)
+{
+        return v.type == VALUE_NIL;
+}
+
+inline static bool
+IsMissing(Value const v)
+{
+        return IsNone(v) || IsNil(v);
+}
+
+inline static Value
+checked_arg_1(
+        Ty *ty,
+        char const *fun,
+        char const *name,
+        Value const *argp,
+        Value const *named,
+        int t0
+)
+{
+        Value arg = (named != NULL) ? *named
+                  : (argp  != NULL) ? *argp
+                  : NONE;
+        int const _t = arg.type;
+
+        if (
+                (_t != t0)
+             && (t0 != VALUE_ANY || IsNone(arg))
+        ) {
                 zP(
-                        "%s: expected arg%d: %s but got: %s",
+                        "%s: expected `%s` :: %s but got: %s",
                         fun,
-                        i,
+                        name,
                         TypeName(ty, t0),
                         VSC(&arg)
                 );
@@ -431,13 +463,26 @@ checked_arg_1(Ty *ty, char const *fun, int i, Value arg, int t0)
 }
 
 inline static Value
-checked_arg_2(Ty *ty, char const *fun, int i, Value arg, int t0, int t1)
+checked_arg_2(
+        Ty *ty,
+        char const *fun,
+        char const *name,
+        Value const *argp,
+        Value const *named,
+        int t0,
+        int t1
+)
 {
-        if (arg.type != t0 && arg.type != t1) {
+        Value arg = (named != NULL) ? *named
+                  : (argp  != NULL) ? *argp
+                  : NONE;
+        int const _t = arg.type;
+
+        if (_t != t0 && _t != t1) {
                 zP(
-                        "%s: expected arg%d: %s | %s but got: %s",
+                        "%s: expected `%s` :: (%s | %s) but got: %s",
                         fun,
-                        i,
+                        name,
                         TypeName(ty, t0),
                         TypeName(ty, t1),
                         VSC(&arg)
@@ -448,13 +493,27 @@ checked_arg_2(Ty *ty, char const *fun, int i, Value arg, int t0, int t1)
 }
 
 inline static Value
-checked_arg_3(Ty *ty, char const *fun, int i, Value arg, int t0, int t1, int t2)
+checked_arg_3(
+        Ty *ty,
+        char const *fun,
+        char const *name,
+        Value const *argp,
+        Value const *named,
+        int t0,
+        int t1,
+        int t2
+)
 {
-        if (arg.type != t0 && arg.type != t1 && arg.type != t2) {
+        Value arg = (named != NULL) ? *named
+                  : (argp  != NULL) ? *argp
+                  : NONE;
+        int const _t = arg.type;
+
+        if (_t != t0 && _t != t1 && _t != t2) {
                 zP(
-                        "%s: expected arg%d: %s | %s | %s but got: %s",
+                        "%s: expected `%s` :: (%s | %s | %s) but got: %s",
                         fun,
-                        i,
+                        name,
                         TypeName(ty, t0),
                         TypeName(ty, t1),
                         TypeName(ty, t2),
@@ -466,17 +525,109 @@ checked_arg_3(Ty *ty, char const *fun, int i, Value arg, int t0, int t1, int t2)
 }
 
 inline static Value
-checked_arg_4(Ty *ty, char const *fun, int i, Value arg, int t0, int t1, int t2, int t3)
+checked_arg_4(
+        Ty *ty,
+        char const *fun,
+        char const *name,
+        Value const *argp,
+        Value const *named,
+        int t0,
+        int t1,
+        int t2,
+        int t3
+)
 {
-        if (arg.type != t0 && arg.type != t1 && arg.type != t2) {
+        Value arg = (named != NULL) ? *named
+                  : (argp  != NULL) ? *argp
+                  : NONE;
+
+        int const _t = arg.type;
+
+        if (_t != t0 && _t != t1 && _t != t2 && _t != t3) {
                 zP(
-                        "%s: expected arg%d: %s | %s | %s | %s but got: %s",
+                        "%s: expected `%s` :: (%s | %s | %s | %s) but got: %s",
                         fun,
-                        i,
+                        name,
                         TypeName(ty, t0),
                         TypeName(ty, t1),
                         TypeName(ty, t2),
                         TypeName(ty, t3),
+                        VSC(&arg)
+                );
+        }
+
+        return arg;
+}
+
+inline static Value
+checked_arg_5(
+        Ty *ty,
+        char const *fun,
+        char const *name,
+        Value const *argp,
+        Value const *named,
+        int t0,
+        int t1,
+        int t2,
+        int t3,
+        int t4
+)
+{
+        Value arg = (named != NULL) ? *named
+                  : (argp  != NULL) ? *argp
+                  : NONE;
+
+        int const _t = arg.type;
+
+        if (_t != t0 && _t != t1 && _t != t2 && _t != t3 && _t != t4) {
+                zP(
+                        "%s: expected `%s` :: (%s | %s | %s | %s | %s) but got: %s",
+                        fun,
+                        name,
+                        TypeName(ty, t0),
+                        TypeName(ty, t1),
+                        TypeName(ty, t2),
+                        TypeName(ty, t3),
+                        TypeName(ty, t4),
+                        VSC(&arg)
+                );
+        }
+
+        return arg;
+}
+
+inline static Value
+checked_arg_6(
+        Ty *ty,
+        char const *fun,
+        char const *name,
+        Value const *argp,
+        Value const *named,
+        int t0,
+        int t1,
+        int t2,
+        int t3,
+        int t4,
+        int t5
+)
+{
+        Value arg = (named != NULL) ? *named
+                  : (argp  != NULL) ? *argp
+                  : NONE;
+
+        int const _t = arg.type;
+
+        if (_t != t0 && _t != t1 && _t != t2 && _t != t3 && _t != t4 && _t != t5) {
+                zP(
+                        "%s: expected `%s` :: (%s | %s | %s | %s | %s | %s) but got: %s",
+                        fun,
+                        name,
+                        TypeName(ty, t0),
+                        TypeName(ty, t1),
+                        TypeName(ty, t2),
+                        TypeName(ty, t3),
+                        TypeName(ty, t4),
+                        TypeName(ty, t5),
                         VSC(&arg)
                 );
         }
@@ -491,10 +642,41 @@ checked_arg_4(Ty *ty, char const *fun, int i, Value arg, int t0, int t1, int t2,
         )(                             \
                 ty,                    \
                 _name__,               \
-                i,                     \
-                ARG(i),                \
+                "arg[" #i "]",         \
+                &ARG(i),               \
+                NULL,                  \
                 __VA_ARGS__            \
         )
+
+#define ARG__(i, name, ...)                            \
+        VA_SELECT_INNER(                               \
+                checked_arg,                           \
+                VA_COUNT(__VA_ARGS__)                  \
+        )(                                             \
+                ty,                                    \
+                _name__,                               \
+                name,                                  \
+                (i >= 0 && i < argc) ? &ARG(i) : NULL, \
+                NAMED(name),                           \
+                __VA_ARGS__                            \
+        )
+
+#define ARG_xD_3(i, name, t0)                     ARG__((i), (name), VALUE_##t0)
+#define ARG_xD_4(i, name, t0, t1)                 ARG__((i), (name), VALUE_##t0, VALUE_##t1)
+#define ARG_xD_5(i, name, t0, t1, t2)             ARG__((i), (name), VALUE_##t0, VALUE_##t1, VALUE_##t2)
+#define ARG_xD_6(i, name, t0, t1, t2, t3)         ARG__((i), (name), VALUE_##t0, VALUE_##t1, VALUE_##t2, VALUE_##t3)
+#define ARG_xD_7(i, name, t0, t1, t2, t3, t4)     ARG__((i), (name), VALUE_##t0, VALUE_##t1, VALUE_##t2, VALUE_##t3, VALUE_##t4)
+#define ARG_xD_8(i, name, t0, t1, t2, t3, t4, t5) ARG__((i), (name), VALUE_##t0, VALUE_##t1, VALUE_##t2, VALUE_##t3, VALUE_##t4, VALUE_##t5)
+
+#define KWARG_xD_2(name, t0)                     ARG__(-1, (name), VALUE_NONE, VALUE_##t0)
+#define KWARG_xD_3(name, t0, t1)                 ARG__(-1, (name), VALUE_NONE, VALUE_##t0, VALUE_##t1)
+#define KWARG_xD_4(name, t0, t1, t2)             ARG__(-1, (name), VALUE_NONE, VALUE_##t0, VALUE_##t1, VALUE_##t2)
+#define KWARG_xD_5(name, t0, t1, t2, t3)         ARG__(-1, (name), VALUE_NONE, VALUE_##t0, VALUE_##t1, VALUE_##t2, VALUE_##t3)
+#define KWARG_xD_6(name, t0, t1, t2, t3, t4)     ARG__(-1, (name), VALUE_NONE, VALUE_##t0, VALUE_##t1, VALUE_##t2, VALUE_##t3, VALUE_##t4)
+#define KWARG_xD_7(name, t0, t1, t2, t3, t4, t5) ARG__(-1, (name), VALUE_NONE, VALUE_##t0, VALUE_##t1, VALUE_##t2, VALUE_##t3, VALUE_##t4, VALUE_##t5)
+
+#define ARGxD(...) VA_SELECT(ARG_xD,   __VA_ARGS__)
+#define KWARG(...) VA_SELECT(KWARG_xD, __VA_ARGS__)
 
 #define    INT_ARG(i) ARGx(i, VALUE_INTEGER).integer
 #define    PTR_ARG(i) ARGx(i, VALUE_PTR).ptr
@@ -721,7 +903,7 @@ STRING_VFORMAT(Ty *ty, char const *fmt, va_list ap)
                 .tags = 0,
                 .str = str,
                 .bytes = vN(buf),
-                .gcstr = str,
+                .str0 = str,
         };
 }
 
@@ -748,7 +930,7 @@ STRING_CLONE(Ty *ty, void const *s, u32 n)
                 .tags = 0,
                 .str = clone,
                 .bytes = n,
-                .gcstr = clone,
+                .str0 = clone,
         };
 }
 
@@ -767,7 +949,7 @@ STRING_CLONE_C(Ty *ty, void const *s)
                 .tags = 0,
                 .str = clone,
                 .bytes = n,
-                .gcstr = clone,
+                .str0 = clone,
         };
 }
 
@@ -786,7 +968,7 @@ STRING_C_CLONE_C(Ty *ty, void const *s)
                 .tags = 0,
                 .str = clone,
                 .bytes = n,
-                .gcstr = clone,
+                .str0 = clone,
         };
 }
 
@@ -800,7 +982,7 @@ STRING_C_CLONE(Ty *ty, void const *s, u32 n)
                 .tags = 0,
                 .str = clone,
                 .bytes = n,
-                .gcstr = clone,
+                .str0 = clone,
         };
 }
 
@@ -812,7 +994,7 @@ STRING(void *s, u32 n)
                 .tags = 0,
                 .str = s,
                 .bytes = n,
-                .gcstr = s,
+                .str0 = s,
         };
 }
 
@@ -824,7 +1006,8 @@ STRING_VIEW(Value s, isize offset, u32 n)
                 .tags = 0,
                 .str = s.str + offset,
                 .bytes = n,
-                .gcstr = s.gcstr
+                .str0 = s.str0,
+                .ro = s.ro
         };
 }
 
@@ -836,7 +1019,8 @@ STRING_NOGC(void const *s, int n)
                 .tags = 0,
                 .str = s,
                 .bytes = n,
-                .gcstr = NULL
+                .str0 = (u8 *)s,
+                .ro = true
         };
 }
 
@@ -848,11 +1032,53 @@ STRING_NOGC_C(void const *s)
                 .tags = 0,
                 .str = s,
                 .bytes = strlen(s),
-                .gcstr = NULL
+                .str0 = (u8 *)s,
+                .ro = true
         };
 }
 
 #define STRING_EMPTY (STRING_NOGC(NULL, 0))
+
+inline static bool
+DecrementString(Value *v)
+{
+        if (
+                (v->str0 == NULL)
+             || (v->str0 == v->str)
+        ) {
+                return false;
+        }
+
+        while (v->str > v->str0) {
+                v->str -= 1;
+                v->bytes += 1;
+                if ((*v->str & 0x80) != 0x80) {
+                        break;
+                }
+        }
+
+        return true;
+}
+
+inline static Value
+OffsetString(Value const *v, isize n)
+{
+        Value str = *v;
+
+
+        while (n > 0 && str.bytes > 0) {
+                i32 sz = u8_rune_sz(v->str);
+                str.str += sz;
+                str.bytes -= sz;
+                n -= 1;
+        }
+
+        while (n < 0 && DecrementString(&str)) {
+                n += 1;
+        }
+
+        return str;
+}
 
 inline static Value
 PAIR_(Ty *ty, Value a, Value b)

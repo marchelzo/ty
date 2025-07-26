@@ -205,7 +205,7 @@ pub function help(x) {
         }
     }
 
-    let p = os.spawn(['less', '-FRX'], shareStderr: true, shareStdout: true)
+    let p = os.spawn(['less', '-FRX'], stdin=os.SPAWN_PIPE)
     os.write(p.stdin, helpString.str!())
     os.close(p.stdin)
     os.waitpid(p.pid)

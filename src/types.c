@@ -738,7 +738,7 @@ IsUnknown(Type const *t0)
 }
 
 inline static bool
-IsNil(Type const *t0)
+IsNilT(Type const *t0)
 {
         return t0 != NULL
             && t0->type == TYPE_NIL;
@@ -2143,7 +2143,7 @@ StrictClassOf(Type const *t0)
                 return CLASS_TOP;
         }
 
-        if (IsNil(t0)) {
+        if (IsNilT(t0)) {
                 return CLASS_NIL;
         }
 
@@ -4426,8 +4426,8 @@ UnifyXD(Ty *ty, Type *t0, Type *t1, bool super, bool check, bool soft)
                         if (
                                 (p0 != NULL && (p0->kws || p0->rest))
                              || (p1 != NULL && (p1->kws || p1->rest))
-                             || (super && p1 != NULL && !p1->required && IsNil(u0))
-                             || (!super && p0 != NULL && !p0->required && IsNil(u1))
+                             || (super && p1 != NULL && !p1->required && IsNilT(u0))
+                             || (!super && p0 != NULL && !p0->required && IsNilT(u1))
                         ) {
                                 continue;
                         }
@@ -5125,7 +5125,7 @@ CheckArg(Ty *ty, int i, Param const *p, Type *a0, bool strict)
                 if (p->name != NULL) {
                         TypeError(
                                 "missing required argument for parameter %s%s%s of type `%s`",
-                                TERM(93), p->name, TERM(0),
+                                TERM(92;1), p->name, TERM(0),
                                 ShowType(p0)
                         );
                 } else {
@@ -5157,7 +5157,7 @@ CheckArg(Ty *ty, int i, Param const *p, Type *a0, bool strict)
                                 "invalid argument type for parameter %s%s%s:"
                                 FMT_MORE "given:    %s"
                                 FMT_MORE "expected: %s",
-                                TERM(93), p->name, TERM(0),
+                                TERM(92;1), p->name, TERM(0),
                                 ShowType(a0),
                                 ShowType(p0)
                         );
@@ -5238,7 +5238,7 @@ InferCall0(
                                         "argument %s%d%s has no matching parameter"
                                         FMT_MORE "argument type: %s"
                                         FMT_MORE "  callee type: %s",
-                                        TERM(92), i + 1, TERM(0),
+                                        TERM(0), i + 1, TERM(0),
                                         ShowType(a0),
                                         ShowType(t0)
                                 );
@@ -5262,7 +5262,7 @@ InferCall0(
                                         "keyword argument %s%s%s has no matching parameter"
                                         FMT_MORE "argument type: %s"
                                         FMT_MORE "  callee type: %s",
-                                        TERM(92), v__(*kws, i), TERM(0),
+                                        TERM(93;1), v__(*kws, i), TERM(0),
                                         ShowType(a0),
                                         ShowType(t0)
                                 );
@@ -5425,7 +5425,7 @@ type_call_t(Ty *ty, Expr const *e, Type *t0)
                 return t0;
         }
 
-        if (IsNil(t0)) {
+        if (IsNilT(t0)) {
                 return NIL_TYPE;
         }
 
@@ -5807,7 +5807,7 @@ type_member_access_t_(Ty *ty, Type const *t0, char const *name, bool strict)
         t0 = Resolve(ty, t0);
 
         if (
-                IsNil(t0)
+                IsNilT(t0)
              || IsBottom(t0)
              || IsAny(t0)
         ) {
@@ -6025,7 +6025,7 @@ type_method_call_t(Ty *ty, Expr const *e, Type *t0, char const *name)
 {
         t0 = Resolve(ty, t0);
 
-        if (IsNil(t0)) {
+        if (IsNilT(t0)) {
                 return NIL_TYPE;
         }
 
@@ -7100,7 +7100,7 @@ type_assign(Ty *ty, Expr *e, Type *t0, int flags)
                         if (
                                 (e->symbol->type == NULL || CanBind(e->symbol->type))
                              && (flags & T_FLAG_AVOID_NIL)
-                             && IsNil(t0)
+                             && IsNilT(t0)
                         ) {
                                 t0 = type_either(ty, NewVar(ty), type_unfixed(ty, t0));
                         }

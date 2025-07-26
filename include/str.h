@@ -24,4 +24,7 @@ string_match(Ty *ty, Value *string, int argc, Value *kwargs);
 Value
 string_length(Ty *ty, Value *string, int argc, Value *kwargs);
 
+Value
+string_slice(Ty *ty, Value *string, int argc, Value *kwargs);
+
 #endif

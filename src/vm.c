@@ -669,6 +669,8 @@ PopulateGlobals(Ty *ty)
 static void
 add_builtins(Ty *ty, int ac, char **av)
 {
+        GC_STOP();
+
         for (int i = CLASS_OBJECT; i < CLASS_BUILTIN_END; ++i) {
                 xvP(Globals, CLASS(i));
         }
@@ -698,14 +700,33 @@ add_builtins(Ty *ty, int ac, char **av)
         }
 
         Array *args = vA();
-        NOGC(args);
 
         for (int i = 0; i < ac; ++i) {
                 vAp(args, STRING_NOGC(av[i], strlen(av[i])));
         }
 
-        compiler_introduce_symbol(ty, "os", "args");
+        compiler_introduce_symbol(ty, NULL, "argv");
         xvP(Globals, ARRAY(args));
+
+        Dict *env = dict_new(ty);
+
+        extern char **environ;
+        for (char **envp = environ; *envp != NULL; ++envp) {
+                u32 len = strlen(*envp);
+                char const *eq = strchr(*envp, '=');
+                if (eq == NULL) {
+                        Value key = vSs(*envp, len);
+                        Value val = NIL;
+                        dict_put_value(ty, env, key, val);
+                } else {
+                        Value key = vSs(*envp, eq - *envp);
+                        Value val = vSsz(eq + 1);
+                        dict_put_value(ty, env, key, val);
+                }
+        }
+
+        compiler_introduce_symbol(ty, NULL, "__env");
+        xvP(Globals, DICT(env));
 
         compiler_introduce_symbol(ty, NULL, "__EXIT_HOOKS__");
         NAMES.exit_hooks = (int)Globals.count;
@@ -714,6 +735,9 @@ add_builtins(Ty *ty, int ac, char **av)
         compiler_introduce_symbol(ty, "tdb", "hook");
         NAMES.tdb_hook = (int)Globals.count;
         xvP(Globals, NIL);
+
+        compiler_introduce_symbol(ty, "ty", "q");
+        xvP(Globals, BOOLEAN(!CheckConstraints));
 
         compiler_introduce_symbol(ty, "ty", "executable");
         xvP(Globals, this_executable(ty));
@@ -786,6 +810,8 @@ add_builtins(Ty *ty, int ac, char **av)
 
         TY_TYPE_TAGS
 #undef X
+
+        GC_RESUME();
 }
 
 void
@@ -2501,11 +2527,20 @@ NotCallable:
         gX();
 }
 
+inline static Value
+GetSelf(Ty *ty)
+{
+        u32   n = vvL(FRAMES)->f.info[FUN_INFO_PARAM_COUNT];
+        Value v = v__(STACK, vvL(FRAMES)->fp + n);
+
+        return (v.type == VALUE_REF) ? *v.ref : v;
+}
+
 static int
 GetDynamicMemberId(Ty *ty, bool strict)
 {
         Value v = peek();
-        
+
         switch (v.type) {
         case VALUE_STRING:
                 {
@@ -3779,25 +3814,42 @@ DoAssignSubscript(Ty *ty)
 static void
 IncValue(Ty *ty, Value *v)
 {
+        i32 n;
+        i32 rune;
         Value *vp;
+        ffi_type const *type;
 
         switch (EXPECT(v->type, VALUE_INTEGER)) {
-        case VALUE_INTEGER: ++v->integer; break;
-        case VALUE_REAL:    ++v->real;    break;
-        case VALUE_PTR:
-                v->ptr = ((char *)v->ptr)
-                       + ((ffi_type *)(
-                               (v->extra == NULL)
-                              ? &ffi_type_uint8
-                              : v->extra
-                         ))->size;
+        case VALUE_INTEGER:
+                v->integer += 1;
                 break;
+
+        case VALUE_REAL:
+                v->real += 1.0;
+                break;
+
+        case VALUE_PTR:
+                type = (v->extra != NULL) ? v->extra : &ffi_type_uint8;
+                v->ptr = ((char *)v->ptr) + type->size;
+                break;
+
+        case VALUE_STRING:
+                if (v->bytes > 0) {
+                        n = utf8proc_iterate(v->str, v->bytes, &rune);
+                        n = max(1, n);
+                        v->str += n;
+                        v->bytes -= n;
+                }
+                break;
+
         case VALUE_OBJECT:
                 vp = class_method(ty, v->class, "++");
                 if (vp != NULL) {
                         call(ty, vp, v, 0, 0, true);
                         break;
                 }
+                // fall
+
         default:
                 zP("increment applied to invalid type: %s", VSC(v));
         }
@@ -3807,24 +3859,34 @@ static void
 DecValue(Ty *ty, Value *v)
 {
         Value *vp;
+        ffi_type const *type;
 
         switch (EXPECT(v->type, VALUE_INTEGER)) {
-        case VALUE_INTEGER: --v->integer; break;
-        case VALUE_REAL:    --v->real;    break;
-        case VALUE_PTR:
-                v->ptr = ((char *)v->ptr)
-                       - ((ffi_type *)(
-                               (v->extra == NULL)
-                              ? &ffi_type_uint8
-                              : v->extra
-                         ))->size;
+        case VALUE_INTEGER:
+                v->integer -= 1;
                 break;
+
+        case VALUE_REAL:
+                v->real -= 1.0;
+                break;
+
+        case VALUE_PTR:
+                type = (v->extra != NULL) ? v->extra : &ffi_type_uint8;
+                v->ptr = ((char *)v->ptr) - type->size;
+                break;
+
+        case VALUE_STRING:
+                DecrementString(v);
+                break;
+
         case VALUE_OBJECT:
                 vp = class_method(ty, v->class, "--");
                 if (vp != NULL) {
                         call(ty, vp, v, 0, 0, true);
                         break;
                 }
+                // fall
+
         default:
                 zP("decrement applied to invalid type: %s", VSC(v));
         }
@@ -4383,11 +4445,7 @@ AssignGlobal:
                         break;
                 CASE(TARGET_SELF_MEMBER)
                         READVALUE(z);
-                        n = vvL(FRAMES)->f.info[FUN_INFO_PARAM_COUNT];
-                        value = v__(STACK, vvL(FRAMES)->fp + n);
-                        if (value.type == VALUE_REF) {
-                                value = *value.ref;
-                        }
+                        value = GetSelf(ty);
                         DoTargetMember(ty, value, z);
                         break;
                 CASE(TARGET_SUBSCRIPT)
@@ -4953,7 +5011,7 @@ AssignGlobal:
                 }
                 CASE(GATHER_TUPLE)
                         n = vN(STACK) - *vvX(SP_STACK);
-                        
+
                         vp = mAo(n * sizeof (Value), GC_TUPLE);
                         v = TUPLE(vp, NULL, n, false);
 
@@ -5395,15 +5453,11 @@ Yield:
                                 value = pop();
                                 goto BadMemberAccess;
                         }
-                        
+
                         UNREACHABLE();
                 CASE(SELF_MEMBER_ACCESS)
                         READVALUE(z);
-                        n = vvL(FRAMES)->f.info[FUN_INFO_PARAM_COUNT];
-                        value = v__(STACK, vvL(FRAMES)->fp + n);
-                        if (value.type == VALUE_REF) {
-                                value = *value.ref;
-                        }
+                        value = GetSelf(ty);
                         push(GetMember(ty, value, z, false));
                         break;
                 CASE(TRY_MEMBER_ACCESS)
@@ -5965,25 +6019,29 @@ BadTupleMember:
                         break;
                 CASE(CALL)
                         v = pop();
-
                         READVALUE(n);
                         READVALUE(nkw);
-
                         DoCall(ty, &v, n, nkw, false);
-
                         nkw = 0;
-
                         break;
                 CASE(TRY_CALL_METHOD)
-                CASE(CALL_METHOD)
-                        b = IP[-1] == INSTR_TRY_CALL_METHOD;
-
                         READVALUE(n);
                         READVALUE(i);
                         READVALUE(nkw);
-
-                        CallMethod(ty, i, n, nkw, b);
-
+                        CallMethod(ty, i, n, nkw, true);
+                        break;
+                CASE(CALL_METHOD)
+                        READVALUE(n);
+                        READVALUE(i);
+                        READVALUE(nkw);
+                        CallMethod(ty, i, n, nkw, false);
+                        break;
+                CASE(CALL_SELF_METHOD)
+                        READVALUE(n);
+                        READVALUE(i);
+                        READVALUE(nkw);
+                        push(GetSelf(ty));
+                        CallMethod(ty, i, n, nkw, false);
                         break;
                 CASE(SAVE_STACK_POS)
                         xvP(SP_STACK, STACK.count);
@@ -6037,6 +6095,9 @@ BadTupleMember:
                         IP = save;
                         LOG("vm_exec(): <== %d (HALT: IP=%p)", EXEC_DEPTH, (void *)IP);
                         return;
+                default:
+                        UNREACHABLE();
+
                 }
         }
 
@@ -7763,6 +7824,7 @@ StepInstruction(char const *ip)
                 break;
         CASE(TRY_CALL_METHOD)
         CASE(CALL_METHOD)
+        CASE(CALL_SELF_METHOD)
                 SKIPVALUE(n);
                 SKIPVALUE(n);
                 SKIPVALUE(nkw);
@@ -8020,16 +8082,22 @@ tdb_step_into(Ty *ty)
                 v = peek();
                 break;
 
+        CASE(TRY_CALL_METHOD)
+                READVALUE(i);
+                READVALUE(i);
+                v = GetMember(ty, peek(), i, false);
+                break;
+
         CASE(CALL_METHOD)
                 READVALUE(i);
                 READVALUE(i);
                 v = GetMember(ty, peek(), i, true);
                 break;
 
-        CASE(TRY_CALL_METHOD)
+        CASE(CALL_SELF_METHOD)
                 READVALUE(i);
                 READVALUE(i);
-                v = GetMember(ty, peek(), i, false);
+                v = GetMember(ty, GetSelf(ty), i, true);
                 break;
         }
 

@@ -6311,7 +6311,7 @@ parse_try(Ty *ty)
         }
 
         s->try.s = parse_statement(ty, -1);
- 
+
         while (have_keyword(KEYWORD_CATCH)) {
                 next();
                 SAVE_NE(true);

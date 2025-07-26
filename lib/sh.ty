@@ -11,7 +11,7 @@ let KILL_SIG = os.SIGTERM
 #|if __windows__
 let SHELL = ['cmd.exe', '/c']
 #|else
-let SHELL = [os.getenv('SHELL'), '-c']
+let SHELL = ['/bin/sh', '-c']
 #|]
 
 pub use CmdResult = {
@@ -23,18 +23,25 @@ pub use CmdResult = {
 
 pub function sh(
     cmd: String,
-    input=nil,
-    timeoutMs=nil,
-    signal=KILL_SIG,
-    combineOutput=false,
-    shareStderr=false,
-    shell=SHELL
+    input: Blob | String = nil,
+    timeoutMs: Int = nil,
+    signal: Int = KILL_SIG,
+    combineOutput = false,
+    shareStderr = false,
+    chdir: Int | String | Blob | nil = nil,
+    shell: Array[String] = SHELL
 ) -> nil | |String, CmdResult| {
+    let stderr = combineOutput ? os.SPAWN_MERGED_STDERR
+               : shareStderr   ? os.SPAWN_INHERIT
+               :                 os.SPAWN_PIPE
+
     if not let $p = os.spawn(
         [*shell, cmd],
-        detach: timeoutMs != nil,
-        combineOutput: combineOutput,
-        shareStderr: shareStderr
+        stdin=os.SPAWN_PIPE,
+        stdout=os.SPAWN_PIPE,
+        stderr=stderr,
+        chdir=chdir,
+        detach=timeoutMs != nil
     ) {
           return nil
     }
@@ -59,12 +66,11 @@ pub function sh(
         (p.stdout, os::POLLIN, out),
         (p.stderr, os::POLLIN, err) if p.stderr != p.stdout
     ]
-
     let pfds-out = []
 
 #|if __apple__ || __linux__
-    while true {
-        let timeout = deadline && (deadline - now())
+    for (;;) {
+        let timeout = deadline ?: (deadline - now())
 
         if timeout && timeout <= 1.0e-3 {
             os.kill(-p.pid, signal)

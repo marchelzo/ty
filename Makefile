@@ -13,14 +13,16 @@ CFLAGS += -Wno-unused-value
 CFLAGS += -Wno-unused-function
 CFLAGS += -D_GNU_SOURCE
 CFLAGS += -DPCRE2_CODE_UNIT_WIDTH=8
-CFLAGS += -fno-omit-frame-pointer
-CFLAGS += -rdynamic
-CFLAGS += -Og
-CFLAGS += -g2
+CFLAGS += -DCURL_STATICLIB -DPCRE2_CODE_UNIT_WIDTH=8 -DPCRE2_STATIC -DTY_NO_LOG -DTY_RELEASE -DUTF8PROC_STATIC -D_GNU_SOURCE
+
 CFLAGS += -no-pie
+
+LDFLAGS += -lm
+LDFLAGS += -lreadline
+LDFLAGS += -lcurses
 LDFLAGS += -L/usr/local/lib
 LDFLAGS += -lpthread
-LDFLAGS += -lm
+
 LDFLAGS += -lreadline
 LDFLAGS += -lutf8proc
 LDFLAGS += -lsqlite3
@@ -63,10 +65,12 @@ endif
 
 ifdef RELEASE
         CFLAGS += -O3
-        CFLAGS += -pipe
         CFLAGS += -DTY_RELEASE
         CFLAGS += -mcpu=native
         CFLAGS += -mtune=native
+        CFLAGS += -flto
+        CFLAGS += -flto-partition=one
+        CFLAGS += -fomit-frame-pointer
 else ifdef DEBUG
         CFLAGS += -O0
         CFLAGS += -fsanitize=undefined

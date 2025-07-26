@@ -18,7 +18,7 @@
         pcre2_get_error_message(e, msg, 4096);  \
         bP("PCRE2 error: %s", msg);             \
 } while (0)
-        
+
 
 inline static isize
 rune_count(u8 const *s, isize n)
@@ -235,7 +235,7 @@ string_bslice(Ty *ty, Value *string, int argc, Value *kwargs)
         return STRING_VIEW(*string, i, n);
 }
 
-static Value
+Value
 string_slice(Ty *ty, Value *string, int argc, Value *kwargs)
 {
         ASSERT_ARGC("String.slice()", 1, 2);

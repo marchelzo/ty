@@ -355,7 +355,7 @@ object_xD(Ty *ty)
         return object;
 }
 
-static Value 
+static Value
 object(Ty *ty)
 {
         return xd ? object_xD(ty) : object_lol(ty);

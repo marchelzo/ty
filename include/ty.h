@@ -20,6 +20,14 @@
 
 #define TY_TMP_BUF_COUNT 2
 
+#define CAT(a, b) a ## b
+
+#define VA_COUNT_INNER(_1, _2, _3, _4, _5, _6, _7, _8, COUNT, ...) COUNT
+#define VA_COUNT(...) VA_COUNT_INNER(__VA_ARGS__, 8, 7, 6, 5, 4, 3, 2, 1, 0)
+
+#define VA_SELECT_INNER(f, i) CAT(f ## _, i)
+#define VA_SELECT(f, ...) VA_SELECT_INNER(f, VA_COUNT(__VA_ARGS__))(__VA_ARGS__)
+
 typedef struct ty0        TY;
 typedef struct ty         Ty;
 typedef struct ty_save    TySavePoint;
@@ -198,7 +206,14 @@ enum {
         VALUE_THREAD           ,
         VALUE_TUPLE            ,
         VALUE_BREAK            ,
-        VALUE_TAGGED           = 1 << 7
+        VALUE_ANY              ,
+        VALUE_TAGGED           = 1 << 7,
+
+
+        // Aliases for working around macro expansion issues
+        // arising from NONE and NIL being object-like macros
+        VALUE__NONE = VALUE_NONE,
+        VALUE__NIL  = VALUE_NIL,
 };
 
 typedef Value BuiltinFunction(Ty *, int, Value *);
@@ -284,8 +299,9 @@ struct value {
                 };
                 struct {
                         u8 const *str;
-                        uint32_t bytes;
-                        u8 *gcstr;
+                        u32 bytes;
+                        bool ro;
+                        u8 *str0;
                 };
                 struct {
                         intmax_t i;
@@ -701,6 +717,7 @@ extern usize TotalBytesAllocated;
         X(CALL),                  \
         X(CALL_METHOD),           \
         X(TRY_CALL_METHOD),       \
+        X(CALL_SELF_METHOD),      \
         X(GET_NEXT),              \
         X(PUSH_INDEX),            \
         X(READ_INDEX),            \
@@ -968,6 +985,12 @@ enum {
 #define vC(v)     ((v).capacity)
 
 #define vM(v, i, j, n) memmove((v).items + (i), (v).items + (j), (n) sizeof *(v).items)
+
+#define vfor_4(i, x, v, go) for (isize i = 0; i < vN(v); ++i) { typeof (vv(v)) x = v_((v), i); go; }
+#define vfor_3(   x, v, go) vfor_4(_i_##x, x,  (v), (go))
+#define vfor_2(      v, go) vfor_4(_vfi,   it, (v), (go))
+
+#define vfor(...) VA_SELECT(vfor, __VA_ARGS__)
 
 #define avP(a, b)        VPush((a), (b))
 #define avPn(a, b, c)    VPushN(a, b, c)
