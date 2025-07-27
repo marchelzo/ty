@@ -3115,11 +3115,8 @@ BUILTIN_FUNCTION(os_spawn)
         if (!same1) { xD(dup2, _stdout, 1); }
         if (!same2) { xD(dup2, _stderr, 2); }
 
+        vfor(x0, xD(close, *it));
         vfor(x1, xD(close, *it));
-
-        if (_0 != _stdin  &&      1) { xD(close, _0); }
-        if (_1 != _stdout &&      1) { xD(close, _1); }
-        if (_2 != _stderr && !merge) { xD(close, _2); }
 
         if (fchdir !=   -1) { xD(fchdir_np, fchdir); }
         if (chdir  != NULL) { xD( chdir_np,  chdir); }
