@@ -9889,9 +9889,7 @@ load_module(Ty *ty, char const *name, Scope *scope)
 
         Stmt **prog = compile(ty, source);
 
-        if (scope != NULL) {
-                //scope_copy_public(ty, scope, STATE.global, true);
-        } else {
+        if (scope == NULL) {
                 STATE.global->external = true;
         }
 
@@ -10244,14 +10242,12 @@ compiler_compile_source(
         }
 
         i64 symbol = scope_get_symbol(ty);
-        u32 n_imports = vN(STATE.imports);
+        CompileState save = STATE;
 
         if (TY_CATCH_ERROR()) {
                 scope_set_symbol(ty, symbol);
-                vN(STATE.imports) = n_imports;
-                v0(STATE.code);
-                v0(STATE.pending);
                 AbandonModule(ty, module);
+                STATE = save;
                 return NULL;
         }
 

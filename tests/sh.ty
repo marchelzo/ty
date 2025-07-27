@@ -9,11 +9,11 @@ if __windows__ {
         print('FAIL2')
     }
 } else {
-    if not let $out = sh('echo -n based 1>&2', combineOutput: true) or out != 'based' {
+    if not let $out = sh('printf based 1>&2', combineOutput=true) or out != 'based' {
         print('FAIL3')
     }
 
-    if not let $out = sh('echo -n based') or out != 'based' {
+    if not let $out = sh('printf based') or out != 'based' {
             print('FAIL4')
     }
 
