@@ -2,6 +2,7 @@ import os
 import io
 import errno
 import json
+import log (..)
 
 let FCGI_LISTENSOCK_FILENO  = 0;
 
@@ -314,7 +315,7 @@ class FCGIRequest {
         return urlDecode(__params['QUERY_STRING']);
     }
 
-    __subscript__(param: String) -> ?String {
+    [](param: String) -> ?String {
         __params[param]
     }
 
@@ -361,14 +362,14 @@ class FCGIRequest {
 }
 
 pub class FCGIApp {
-    __clients: Dict[Int, FCGIParser]
-    __death: Sync[Array[io.Stream]]
-    __socket: Int
+    __clients: Array[(Int, FCGIParser)]
+    __death:   Sync[Array[io.Stream]]
+    __socket:  Int
 
     init(socket) {
         __socket = socket
         __death = Sync([])
-        __clients = %{}
+        __clients = []
     }
 
     report-dead(stream: io.Stream) {
@@ -381,39 +382,46 @@ pub class FCGIApp {
                 __death.pop().close()
             }
 
-            let pollFds = [{fd: __socket, events: os.POLLIN}]
+            let pollFds = [__socket, *[(c.0, os.POLLIN, c.1) for c in __clients]]
 
-            for client in __clients {
-                pollFds.push({fd: client, events: os.POLLIN})
-            }
+            match os.poll(pollFds, 50) {
+                Ok(fds) => {
+                    warn!(fds)
+                    for match fds {
+                        (_, ev) and (ev & os.POLLIN) => {
+                            error!("Accepting connection!")
+                            let (conn, addr) = os.accept(__socket)
+                            __clients.push((conn, FCGIParser(conn)))
+                        },
 
-            let (t, n) = timed(os.poll(pollFds, 50))
-            if n == 0 {
-                continue
-            }
-
-            if pollFds[0].revents & os.POLLIN {
-                let (conn, addr) = os.accept(__socket)
-                __clients[conn] = FCGIParser(conn)
-            }
-
-            for {fd, events, revents} in pollFds.drop(1) {
-                if revents & os.POLLIN {
-                    if let $data = os.read(fd, 4096) {
-                        if let (body, params, fd) = __clients[fd].push(data) {
-                            yield FCGIRequest(
-                                self,
-                                fd,
-                                io.open(fd, 'w'),
-                                body,
-                                params
-                            )
+                        (conn, ev, _) :: ev & (os.POLLNVAL | os.POLLERR)  => {
+                            __clients.filter!(\_.0 != conn)
                         }
-                    } else {
-                        __clients.remove(fd)
+
+                        (conn, _, parser) => {
+                            if let $data = os.read(conn, 4096) {
+                                if let (body, params, fd) = parser.push(data) {
+                                    yield FCGIRequest(
+                                        self,
+                                        fd,
+                                        io.open(fd, 'w'),
+                                        body,
+                                        params
+                                    )
+                                }
+                            } else {
+                                __clients.filter!(\_.0 != conn)
+                            }
+                        },
+
+                        _ => ()
                     }
-                } else if revents & (os.POLLNVAL | os.POLLERR) {
-                    __clients.remove(fd)
+                },
+
+                Err(0) => (),
+
+                Err(err) => {
+                    error!("poll(): {err}")
                 }
             }
         }
