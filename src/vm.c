@@ -5023,10 +5023,10 @@ AssignGlobal:
                         break;
                 CASE(DICT)
                         v = DICT(dict_new(ty));
-
                         gP(&v);
 
                         n = (STACK.count - *vvX(SP_STACK)) / 2;
+
                         for (i = 0; i < n; ++i) {
                                 value = top()[0];
                                 key = top()[-1];
@@ -5042,7 +5042,6 @@ AssignGlobal:
                         }
 
                         push(v);
-
                         gX();
 
                         break;

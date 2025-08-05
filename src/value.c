@@ -631,19 +631,24 @@ value_show_colorx(Ty *ty, Value const *v)
         case VALUE_INTEGER:
                 snprintf(buffer, sizeof buffer, "%s%"PRIiMAX"%s", TERM(93), v->integer, TERM(0));
                 break;
+
         case VALUE_REAL:
                 dtoa(v->real, small, sizeof small);
                 snprintf(buffer, sizeof buffer, "%s%s%s", TERM(93), small, TERM(0));
                 break;
+
         case VALUE_STRING:
                 s = show_string(ty, v->str, v->bytes, true);
                 break;
+
         case VALUE_BOOLEAN:
                 snprintf(buffer, sizeof buffer, "%s%s%s", TERM(36), v->boolean ? "true" : "false", TERM(0));
                 break;
+
         case VALUE_NIL:
                 snprintf(buffer, sizeof buffer, "%snil%s", TERM(95), TERM(0));
                 break;
+
         case VALUE_NAMESPACE:
                 snprintf(
                         buffer,
@@ -656,18 +661,23 @@ value_show_colorx(Ty *ty, Value const *v)
                         TERM(0)
                 );
                 break;
+
         case VALUE_ARRAY:
                 s = show_array(ty, v, true);
                 break;
+
         case VALUE_TUPLE:
                 s = show_tuple(ty, v, true);
                 break;
+
         case VALUE_REGEX:
                 snprintf(buffer, sizeof buffer, "%s/%s/%s", TERM(96), v->regex->pattern, TERM(0));
                 break;
+
         case VALUE_DICT:
                 s = show_dict(ty, v, true);
                 break;
+
         case VALUE_FUNCTION:
                 if (v->info[6] == -1) {
                         snprintf(
@@ -701,6 +711,7 @@ value_show_colorx(Ty *ty, Value const *v)
                         );
                 }
                 break;
+
         case VALUE_METHOD:
                 if (v->this == NULL) {
                         snprintf(
@@ -734,9 +745,9 @@ value_show_colorx(Ty *ty, Value const *v)
                                 TERM(96),
                                 TERM(0)
                         );
-                        mF(vs);
                 }
                 break;
+
         case VALUE_BUILTIN_METHOD:
                 snprintf(
                         buffer,
@@ -749,8 +760,9 @@ value_show_colorx(Ty *ty, Value const *v)
                         TERM(0)
                 );
                 break;
+
         case VALUE_BUILTIN_FUNCTION:
-                if (v->name == -1)
+                if (v->name == -1) {
                         snprintf(
                                 buffer,
                                 sizeof buffer,
@@ -758,7 +770,7 @@ value_show_colorx(Ty *ty, Value const *v)
                                 TERM(96),
                                 TERM(0)
                         );
-                else if (v->module == NULL)
+                } else if (v->module == NULL) {
                         snprintf(
                                 buffer,
                                 sizeof buffer,
@@ -769,7 +781,7 @@ value_show_colorx(Ty *ty, Value const *v)
                                 TERM(96),
                                 TERM(0)
                         );
-                else
+                } else {
                         snprintf(
                                 buffer,
                                 sizeof buffer,
@@ -781,7 +793,9 @@ value_show_colorx(Ty *ty, Value const *v)
                                 TERM(96),
                                 TERM(0)
                         );
+                }
                 break;
+
         case VALUE_OPERATOR:
                 snprintf(
                         buffer,
@@ -795,6 +809,7 @@ value_show_colorx(Ty *ty, Value const *v)
                         TERM(0)
                 );
                 break;
+
         case VALUE_CLASS:
                 snprintf(
                         buffer,
@@ -808,12 +823,15 @@ value_show_colorx(Ty *ty, Value const *v)
                         TERM(0)
                 );
                 break;
+
         case VALUE_TAG:
                 snprintf(buffer, sizeof buffer, "%s%s%s", TERM(34), tags_name(ty, v->tag), TERM(0));
                 break;
+
         case VALUE_BLOB:
                 snprintf(buffer, sizeof buffer, "<blob at %p (%zu bytes)>", (void *) v->blob, v->blob->count);
                 break;
+
         case VALUE_PTR:
                 snprintf(
                         buffer,
@@ -828,22 +846,29 @@ value_show_colorx(Ty *ty, Value const *v)
                         TERM(0)
                 );
                 break;
+
         case VALUE_GENERATOR:
                 snprintf(buffer, sizeof buffer, "<generator at %p>", v->gen);
                 break;
+
         case VALUE_THREAD:
                 snprintf(buffer, sizeof buffer, "%s<thread %"PRIu64">%s", TERM(33), v->thread->i, TERM(0));
                 break;
+
         case VALUE_SENTINEL:
                 return "<sentinel>";
+
         case VALUE_REF:
                 snprintf(buffer, sizeof buffer, "<reference to %p>", v->ptr);
                 break;
+
         case VALUE_NONE:
                 return "<none>";
+
         case VALUE_INDEX:
                 snprintf(buffer, sizeof buffer, "<index: (%d, %d, %d)>", (int)v->i, (int)v->off, (int)v->nt);
                 break;
+
         case VALUE_OBJECT:;
                 for (int i = 0; i < vN(visiting); ++i) {
                         if (*v_(visiting, i) == v->object) {
@@ -885,8 +910,8 @@ BasicObject:
                 }
 
                 vvX(visiting);
-
                 break;
+
         case VALUE_UNINITIALIZED:
                 uninit(ty, v->sym);
                 UNREACHABLE();
@@ -1364,7 +1389,7 @@ _value_mark_xd(Ty *ty, Value const *v)
         case VALUE_FUNCTION:        mark_function(ty, v);                                             break;
         case VALUE_GENERATOR:       mark_generator(ty, v);                                            break;
         case VALUE_THREAD:          mark_thread(ty, v);                                               break;
-        case VALUE_STRING:          if (!v->ro) MARK(v->str0);                                        break;
+        case VALUE_STRING:          if (!v->ro && v->str0 != NULL) { MARK(v->str0); }                 break;
         case VALUE_OBJECT:          object_mark(ty, v->object);                                       break;
         case VALUE_REF:             MARK(v->ptr); MarkNext(ty, v->ptr);                               break;
         case VALUE_BLOB:            MARK(v->blob);                                                    break;
