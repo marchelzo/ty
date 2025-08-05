@@ -1254,6 +1254,7 @@ ClassOf(Value const *v)
         case VALUE_TUPLE:             return CLASS_TUPLE;
         case VALUE_GENERATOR:         return CLASS_GENERATOR;
         case VALUE_CLASS:             return CLASS_CLASS;
+        case VALUE_TAG:               return CLASS_TAG;
         case VALUE_FUNCTION:          return CLASS_FUNCTION;
         case VALUE_METHOD:            return CLASS_FUNCTION;
         case VALUE_BUILTIN_FUNCTION:  return CLASS_FUNCTION;

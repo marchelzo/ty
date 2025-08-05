@@ -1324,7 +1324,7 @@ class Generator[T] : Iter[T] {
     }
 }
 
-class Tag {
+class Tag < Function {
     [](T) {
          x -> (#x) :: T
     }

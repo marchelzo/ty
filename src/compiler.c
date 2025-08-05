@@ -1077,7 +1077,7 @@ Restart:
                 if (c < 0) {
 Sorry:
                         PushContext(ty, spec);
-                        fail("you\n%s\nreally\nare a psychopathic RAT!\n", getenv("USER"));
+                        fail("not a valid class specifier");
                 }
         }
 
@@ -10017,6 +10017,7 @@ compiler_init(Ty *ty)
         }
 
         class_set_super(ty, CLASS_ITER, CLASS_ITERABLE);
+        class_set_super(ty, CLASS_TAG, CLASS_FUNCTION);
         class_implement_trait(ty, CLASS_ARRAY,     CLASS_ITERABLE);
         class_implement_trait(ty, CLASS_BLOB,      CLASS_ITERABLE);
         class_implement_trait(ty, CLASS_BLOB,      CLASS_INTO_PTR);

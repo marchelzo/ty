@@ -5679,29 +5679,7 @@ BadTupleMember:
                         switch (top()->type) {
                         case VALUE_CLASS:
                                 v = pop();
-                                switch (top()->type) {
-                                case VALUE_OBJECT:
-                                        *top() = BOOLEAN(
-                                                top()->type == VALUE_OBJECT &&
-                                                class_is_subclass(ty, top()->class, v.class)
-                                        );
-                                        break;
-                                case VALUE_INTEGER:   *top() = BOOLEAN(class_is_subclass(ty, CLASS_INT, v.class));       break;
-                                case VALUE_REAL:      *top() = BOOLEAN(class_is_subclass(ty, CLASS_FLOAT, v.class));     break;
-                                case VALUE_BOOLEAN:   *top() = BOOLEAN(class_is_subclass(ty, CLASS_BOOL, v.class));      break;
-                                case VALUE_ARRAY:     *top() = BOOLEAN(class_is_subclass(ty, CLASS_ARRAY, v.class));     break;
-                                case VALUE_STRING:    *top() = BOOLEAN(class_is_subclass(ty, CLASS_STRING, v.class));    break;
-                                case VALUE_BLOB:      *top() = BOOLEAN(class_is_subclass(ty, CLASS_BLOB, v.class));      break;
-                                case VALUE_DICT:      *top() = BOOLEAN(class_is_subclass(ty, CLASS_DICT, v.class));      break;
-                                case VALUE_TUPLE:     *top() = BOOLEAN(class_is_subclass(ty, CLASS_TUPLE, v.class));     break;
-                                case VALUE_METHOD:
-                                case VALUE_BUILTIN_METHOD:
-                                case VALUE_BUILTIN_FUNCTION:
-                                case VALUE_FUNCTION:  *top() = BOOLEAN(class_is_subclass(ty, CLASS_FUNCTION, v.class));  break;
-                                case VALUE_GENERATOR: *top() = BOOLEAN(class_is_subclass(ty, CLASS_GENERATOR, v.class)); break;
-                                case VALUE_REGEX:     *top() = BOOLEAN(class_is_subclass(ty, CLASS_REGEX, v.class));     break;
-                                default:              *top() = BOOLEAN(false);                                           break;
-                                }
+                                *top() = BOOLEAN(class_is_subclass(ty, ClassOf(top()), v.class));
                                 break;
 
                         case VALUE_TAG:
