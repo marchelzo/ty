@@ -2949,7 +2949,7 @@ Propagate(Ty *ty, Type *t0)
                         t0->val = t1;
                 } else {
                         t1 = LookEnv(ty, ty->tenv, t0->id);
-                        t0 = (t1 != NULL) ? Reduce(ty, t1) : t0;
+                        t0 = (t1 != NULL) ? t1 : t0;
                 }
                 break;
 
