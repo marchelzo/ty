@@ -1285,6 +1285,7 @@ CoalescePatterns(Ty *ty, Type const *t0)
                                 keep = false;
                                 break;
                         }
+                        // TODO: anything to do when u1 <: u2?
                 }
                 if (keep) {
                         avP(t1->types, v__(t0->types, i));
@@ -1308,7 +1309,6 @@ UnionCount(Type const *t0)
 
 inline static Type *
 UnionElem(Type const *t0, int i)
-
 {
         if (
                 t0 == NULL
@@ -2403,7 +2403,15 @@ Uniq(Ty *ty, Type *t0)
                 v0(t0->types);
                 for (int i = 0; i < n; ++i) {
                         Type *t00 = v__(t0->types, i);
-                        if (!ContainsType(ty, t1, t00)) {
+                        if (t0->type == TYPE_UNION && type_check(ty, t00, t1)) {
+                                if (!cloned) {
+                                        t1 = CloneType(ty, t1);
+                                        CloneVec(t1->types);
+                                        cloned = true;
+                                }
+                                v0(t1->types);
+                                vPx(t1->types, t00);
+                        } else if (!ContainsType(ty, t1, t00)) {
                                 if (cloned) {
                                         vPx(t1->types, t00);
                                 }
@@ -3693,6 +3701,11 @@ TryUnifyObjects(Ty *ty, Type *t0, Type *t1, bool super)
                                 super ? t0->class->i : t1->class->i
                         )
                 ) {
+                        XXTLOG(
+                                "TryUnifyObjects(): %s !<: %s",
+                                super ? t1->class->name : t0->class->name,
+                                super ? t0->class->name : t1->class->name
+                        );
                         return false;
                 }
 
@@ -4045,7 +4058,7 @@ UnifyXD(Ty *ty, Type *t0, Type *t1, bool super, bool check, bool soft)
 #if 1
 #define OK(fmt, ...) do {               \
         XXTLOG(                         \
-                "%sUnify() OK%s:" fmt,  \
+                "%sUnify() OK%s: " fmt, \
                 TERM(92),               \
                 TERM(0) __VA_OPT__(,)   \
                 __VA_ARGS__             \
@@ -4370,7 +4383,11 @@ UnifyXD(Ty *ty, Type *t0, Type *t1, bool super, bool check, bool soft)
                 }
         }
 
-        if (IsTagged(t0) || IsTagged(t1)) {
+        if (
+                IsTagged(t0)
+             || IsTagged(t1)
+             || (TypeType(t0) == TYPE_UNION)
+        ) {
                 goto Fail;
         }
 
