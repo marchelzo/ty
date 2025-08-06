@@ -3935,10 +3935,10 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                         RedpillFun(ty, scope, e, NULL);
                 }
 
-                if (e->type != EXPRESSION_GENERATOR) {
-                }
-
-                if (e->type != EXPRESSION_MULTI_FUNCTION) {
+                if (
+                        (e->type != EXPRESSION_MULTI_FUNCTION)
+                     && (e->type != EXPRESSION_IMPLICIT_FUNCTION)
+                ) {
                         e->_type = type_function(ty, e, false);
                         SET_TYPE_SRC(e);
                 }
@@ -3970,11 +3970,23 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                 if (e->type == EXPRESSION_IMPLICIT_FUNCTION) {
                         STATE.implicit_fscope = e->scope;
                         STATE.implicit_func = e;
-                        e->type = EXPRESSION_FUNCTION;
-                }
 
-                WITH_SELF(e->self) {
-                        symbolize_statement(ty, e->scope, e->body);
+                        WITH_SELF(e->self) {
+                                symbolize_statement(ty, e->scope, e->body);
+                        }
+
+                        e->type = EXPRESSION_FUNCTION;
+
+                        STATE.implicit_fscope = implicit_fscope;
+                        STATE.implicit_func = implicit_func;
+
+                        e->_type = type_function(ty, e, false);
+                        SET_TYPE_SRC(e);
+
+                } else {
+                        WITH_SELF(e->self) {
+                                symbolize_statement(ty, e->scope, e->body);
+                        }
                 }
 
                 if (
@@ -3993,9 +4005,6 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                 vN(e->bound_symbols) = vN(e->scope->owned);
 
                 STATE.func = func;
-
-                STATE.implicit_fscope = implicit_fscope;
-                STATE.implicit_func = implicit_func;
 
                 if (e->type == EXPRESSION_MULTI_FUNCTION) {
                         e->_type = NULL;
