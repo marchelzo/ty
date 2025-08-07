@@ -122,6 +122,8 @@ slurp(Ty *ty, char const *path)
                         }
                 }
 
+                close(fd);
+
                 vvP(s, '\0');
 
                 return s.items + 1;
