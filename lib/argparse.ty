@@ -43,7 +43,19 @@ function add(opt, result, value) {
     }
 }
 
-pub fn make(*opts, version, help) {
+use OptSpec = {
+    type: String,
+    ?short: ?String,
+    ?long: ?String,
+    ?conv: _,
+    ?help: String,
+    ?pre: _,
+    ?post: _,
+    ?multi: Bool,
+    default: Any
+}
+
+pub fn make(*opts: OptSpec, version, help) {
     return fn (argv) {
         let result = %{}
         let i = 1

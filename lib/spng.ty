@@ -1,5 +1,4 @@
 import ffi as c
-import cutil
 import stdio
 import os
 import errno
@@ -168,7 +167,7 @@ let spng_ihdr = c.struct(
 let $LIB = c.dlopen('libspng.so') ?? c.dlopen('libspng.dylib')
 
 function w(*args) {
-  cutil.wrap(LIB, *args)
+  c.wrap(LIB, *args)
 }
 
 let spng_ctx_new = w('spng_ctx_new', c.ptr, c.int)

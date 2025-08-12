@@ -315,7 +315,7 @@ fn fun() {
 
     let (lib, prefix) = match (peek().type, peek(1)) {
         ('fn', _) => (ty.Nil, ''),
-        ('id', 'fn') => (expr(99), ''),
+        ('id', {type: 'fn', *}) => (expr(99), ''),
         ('id', {str, *}) => (expr(99), next().str),
         _ => (expr(99), '')
     }
@@ -1016,3 +1016,13 @@ pub macro closure! {
         )
     )
 }
+
+pub fn cstr(s: String) -> Ptr[Int] {
+    let p = c.alloc(s.size() + 1)
+
+    memcpy(p, s, s.size())
+    c.store(c.char, p + s.size(), 0)
+
+    return p
+}
+

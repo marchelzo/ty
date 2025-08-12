@@ -307,9 +307,9 @@ pub fn rand-hsl(
     s: FloatRange = (0.4, 1.0),
     l: FloatRange = (0.6, 0.75)
 ) -> (Float, Float, Float) {
-    let sample = match {
-          (lo, hi) => randf(lo, hi),
-          x        => x
+    fn sample(x: FloatRange) match x {
+        (lo, hi) => randf(lo, hi),
+        x        => x
     }
     (sample(h), sample(s), sample(l))
 }

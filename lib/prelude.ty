@@ -83,6 +83,12 @@ fn -(a: String, b: Int) -> String;
 fn +[K, U, V](a: Dict[K, U], b: Dict[K, V]) -> Dict[K, U | V];
 fn -[K, V](a: Dict[K, V], b: Dict[K, Any]) -> Dict[K, V];
 
+fn doc(c:  Class)    -> (String, String, [(String, String, String)]);
+fn doc(f:  Function) -> (String, String, String);
+fn doc(id: Any)   -> (String, String, String)
+                  | (String, String [(String, String, String)])
+                  | nil;
+
 fn slurp(file: ?String | Int) -> String;
 fn rand[a](items: Array[a]) -> a;
 fn rand() -> Float;
@@ -123,7 +129,7 @@ fn math::log(x: Int | Float) -> Float;
 fn math::log2(x: Int | Float) -> Float;
 fn math::log10(x: Int | Float) -> Float;
 
-use time::Tm = {
+pub use time::Tm = {
     ?sec:    Int,
     ?min:    Int,
     ?hour:   Int,
@@ -137,7 +143,7 @@ use time::Tm = {
     ?zone:   ?String
 }
 
-use time::Timespec = {
+pub use time::Timespec = {
     tv_sec:  Int,
     tv_nsec: Int
 }
@@ -520,8 +526,8 @@ class Array[T] : Iterable[T] {
         let slice = []
 
         let wrap = match {
-            $ix :: ix < 0 => ix + #self,
-            ix            => ix
+            ix :: ix < 0 => ix + #self,
+            ix           => ix
         }
 
         if k < 0 {
@@ -759,7 +765,9 @@ class String : Iterable[String], IntoPtr[Int] {
     lower() -> String;
 
     comb(pattern: String | Regex) -> String;
+
     split(offset: Int) -> (String, String);
+    split(pattern: RegexV, n: ?Int) -> [RegexMatch | String];
     split(pattern: String | Regex, n: ?Int) -> [String];
 
     chars() -> [String];
@@ -1440,7 +1448,7 @@ tag Some {
 
     some?() { true }
 
-    static from(x) {
+    static from[T](x: T | nil) {
         match x {
             nil => None,
             _   => Some(x)
@@ -1502,8 +1510,12 @@ class RegexMatch {
         #captures_
     }
 
-    captures {
+    captures -> Array[String | nil] {
         [if i != -1 { @s_.bslice(i, n) } for (i, n) in @captures_]
+    }
+
+    ~() -> Array[String | nil] {
+        [s, *captures]
     }
 
     [](i) -> String {
@@ -1718,7 +1730,7 @@ trait Iterable[T] {
         __iter__().enumerate()
     }
 
-    find(pred) {
+    find(pred: T -> Any) {
         __iter__().find(pred)
     }
 
@@ -1915,7 +1927,7 @@ trait Iter[T] < Iterable[T] {
         }
     }
 
-    find(p) {
+    find[U](p: T -> U) -> T | nil {
         for x in self {
             if p(x) return x
         }
@@ -2825,6 +2837,11 @@ class Thread[T] {
 
 macro static!(e) = $${ty.eval(e)} as (typeof $$e)
 
+macro print!(*xs) {
+    let xs = ty.Array([ty.ArrayItem(item: x) for x in xs])
+    ty.CompileTime($$[ do { print(*$$xs, sep=' '); nil } $$])
+}
+
 macro showCode {
     let e = parse.stmt(0)
     print(e)
@@ -2992,7 +3009,7 @@ macro modify! {
 }
 
 macro enum! {
-    fn next-value(last: _) -> _ {
+    fn next-value(last: AST) -> (AST, AST) | nil {
         while lex.peek().type == 'comment' { lex.next() }
 
         if lex.peek().type != 'id' { return nil }
@@ -3032,8 +3049,7 @@ macro enum! {
         let entries = []
         let i = ty.Int(-1)
 
-        while lex.peek().type != '}' {
-            let (e, val) = next-value(i)
+        while (lex.peek().type != '}') and let (e, val) = next-value(i) {
             entries.push(ty.RecordEntry(item: val, name: e))
             if lex.peek().type == ',' lex.next()
             i = val
@@ -3637,7 +3653,7 @@ fn ?>(x: Any, f: Any) { (x == nil) ? nil : f(x) }
 
 macro =~(a, b) = do let [$0, ?$1, ?$2, ?$3, ?$4, ?$5, ?$6, ?$7, ?$8, ?$9] or ($0: String) = $$a.match!($$b)
 
-fn .(f: Function, g: Function) {
+fn .[a, b, c](f: b -> c, g: a -> b) -> (a -> c) {
     f@(g(*, **))
 }
 
@@ -3701,11 +3717,6 @@ operator :>   5  left
 operator !::  3  left
 operator *>   2  left
 operator .    2  left
-
-macro print!(*xs) {
-    let xs = ty.Array([ty.ArrayItem(item: x) for x in xs])
-    ty.CompileTime($$[ do { print(*$$xs, sep=' '); nil } $$])
-}
 
 fn memoized(fun, sync: Bool = true) {
     let def = fun.__def__

@@ -830,10 +830,11 @@ CloneContext(Ty *ty)
         }
 }
 
-inline static void
+inline static void *
 RestoreContext(Ty *ty, void *ctx)
 {
-        ContextList = ctx;
+        SWAP(void *, ContextList, ctx);
+        return ctx;
 }
 
 static void *
@@ -2520,10 +2521,10 @@ try_symbolize_application(Ty *ty, Scope *scope, Expr *e)
         }
 
         if (
-                tag_pattern ||
-                (
-                        e->type == EXPRESSION_FUNCTION_CALL &&
-                        e->function->type == EXPRESSION_IDENTIFIER
+                tag_pattern
+             || (
+                        (e->type == EXPRESSION_FUNCTION_CALL)
+                     && (e->function->type == EXPRESSION_IDENTIFIER)
                 )
         ) {
                 if (!tag_pattern) {
@@ -2728,8 +2729,6 @@ symbolize_lvalue_(Ty *ty, Scope *scope, Expr *target, bool decl, bool pub)
         }
 
         target->xfunc = STATE.func;
-
-        bool is_thread_local = false;
 
         switch (target->type) {
         case EXPRESSION_RESOURCE_BINDING:
@@ -2977,6 +2976,25 @@ symbolize_pattern_(Ty *ty, Scope *scope, Expr *e, Scope *reuse, bool def)
                 if (c0 != NULL) {
                         unify2(ty, &e->symbol->type, c0);
                         unify2(ty, &e->_type, c0);
+                } else if (e->symbol->type == NULL) {
+                        Type *t0 = type_var(ty);
+
+                        switch  (e->type) {
+                        case EXPRESSION_MATCH_NOT_NIL:
+                                e->_type = t0;
+                                e->symbol->type = type_not_nil(ty, t0);
+                                break;
+
+                        case EXPRESSION_ALIAS_PATTERN:
+                                e->_type = e->aliased->_type;
+                                e->symbol->type = e->aliased->_type;
+                                break;
+
+                        default:
+                                e->_type = t0;
+                                e->symbol->type = t0;
+                                break;
+                        }
                 }
 
                 //===================={ <LSP> }=========================================
@@ -3004,10 +3022,13 @@ symbolize_pattern_(Ty *ty, Scope *scope, Expr *e, Scope *reuse, bool def)
                         symbolize_pattern_(ty, scope, p->target, reuse, p->def);
                         symbolize_expression(ty, scope, p->e);
                 }
+                e->_type = e->left->_type;
                 break;
         case EXPRESSION_ARRAY:
-                for (int i = 0; i < vN(e->elements); ++i)
+                for (int i = 0; i < vN(e->elements); ++i) {
                         symbolize_pattern_(ty, scope, v__(e->elements, i), reuse, def);
+                }
+                e->_type = type_array(ty, e);
                 break;
         case EXPRESSION_DICT:
                 for (int i = 0; i < vN(e->keys); ++i) {
@@ -3040,10 +3061,15 @@ symbolize_pattern_(Ty *ty, Scope *scope, Expr *e, Scope *reuse, bool def)
                 break;
         }
         case EXPRESSION_LIST:
+                for (int i = 0; i < vN(e->es); ++i) {
+                        symbolize_pattern_(ty, scope, v__(e->es, i), reuse, def);
+                }
+                break;
         case EXPRESSION_TUPLE:
                 for (int i = 0; i < vN(e->es); ++i) {
                         symbolize_pattern_(ty, scope, v__(e->es, i), reuse, def);
                 }
+                e->_type = type_tuple(ty, e);
                 break;
         case EXPRESSION_VIEW_PATTERN:
         case EXPRESSION_NOT_NIL_VIEW_PATTERN:
@@ -3065,6 +3091,7 @@ symbolize_pattern_(Ty *ty, Scope *scope, Expr *e, Scope *reuse, bool def)
                 break;
         case EXPRESSION_TAG_APPLICATION:
                 symbolize_pattern_(ty, scope, e->tagged, reuse, def);
+                e->_type = type_call(ty, e);
                 break;
         Tag:
                 symbolize_expression(ty, scope, e);
@@ -3073,6 +3100,7 @@ symbolize_pattern_(Ty *ty, Scope *scope, Expr *e, Scope *reuse, bool def)
         case EXPRESSION_CHECK_MATCH:
                 symbolize_pattern_(ty, scope, e->left, reuse, def);
                 symbolize_expression(ty, scope, e->right);
+                e->_type = e->left->_type;
                 break;
         case EXPRESSION_REGEX:
                 add_captures(ty, e, scope);
@@ -3483,6 +3511,7 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
 
         UpdateRefinemenets(ty, scope);
 
+        Type *t0;
         Symbol *var;
         Scope *subscope;
 
@@ -3617,25 +3646,16 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                 break;
         case EXPRESSION_MATCH:
                 symbolize_expression(ty, scope, e->subject);
+                t0 = type_new_inst(ty, e->subject->_type);
                 for (int i = 0; i < vN(e->patterns); ++i) {
                         Expr *pat = v__(e->patterns, i);
-                        if (0&&(
-                                pat->type == EXPRESSION_LIST
-                             || pat->type == EXPRESSION_CHOICE_PATTERN
-                        )) {
-                                Scope *shared = scope_new(ty, "(match-shared)", scope, false);
-                                for (int j = 0; j < vN(pat->es); ++j) {
-                                        subscope = scope_new(ty, "(match-branch)", scope, false);
-                                        subscope->shared = true;
-                                        symbolize_pattern(ty, subscope, v__(pat->es, j), shared, true);
-                                        scope_copy(ty, shared, subscope);
-                                }
-                                subscope = shared;
-                        } else {
-                                subscope = scope_new(ty, "(match-branch)", scope, false);
-                                symbolize_pattern(ty, subscope, pat, NULL, true);
-                        }
+                        subscope = scope_new(ty, "(match-branch)", scope, false);
+                        symbolize_pattern(ty, subscope, pat, NULL, true);
+                        ctx = PushContext(ty, pat);
+                        unify(ty, &t0, pat->_type);
+                        ctx = RestoreContext(ty, ctx);
                         symbolize_expression(ty, subscope, v__(e->thens, i));
+                        t0 = type_without(ty, t0, pat->_type);
                 }
                 e->_type = type_match(ty, e);
                 SET_TYPE_SRC(e);
@@ -4756,29 +4776,25 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
         case STATEMENT_MATCH:
                 s->will_return = vN(s->match.statements) > 0;
         case STATEMENT_WHILE_MATCH:
+        {
                 symbolize_expression(ty, scope, s->match.e);
+
+                Type *t0 = s->match.e->_type;
+
                 for (int i = 0; i < vN(s->match.patterns); ++i) {
-                        if (0 && v__(s->match.patterns, i)->type == EXPRESSION_LIST) {
-                                Scope *shared = scope_new(ty, "(match-shared)", scope, false);
-                                for (int j = 0; j < vN(v__(s->match.patterns, i)->es); ++j) {
-                                        Expr *pat = v__(v__(s->match.patterns, i)->es, j);
-                                        subscope = scope_new(ty, "(match-branch)", scope, false);
-                                        subscope->shared = true;
-                                        symbolize_pattern(ty, subscope, pat, shared, true);
-                                        scope_copy(ty, shared, subscope);
-                                }
-                                subscope = shared;
-                        } else {
-                                Expr *pat = v__(s->match.patterns, i);
-                                subscope = scope_new(ty, "(match-branch)", scope, false);
-                                symbolize_pattern(ty, subscope, pat, NULL, true);
-                        }
+                        Expr *pat = v__(s->match.patterns, i);
+                        subscope = scope_new(ty, "(match-branch)", scope, false);
+                        symbolize_pattern(ty, subscope, pat, NULL, true);
+                        unify(ty, &t0, pat->_type);
                         symbolize_statement(ty, subscope, v__(s->match.statements, i));
+                        t0 = type_without(ty, t0, pat->_type);
                         s->will_return &= v__(s->match.statements, i)->will_return;
                 }
+
                 s->_type = type_match_stmt(ty, s);
                 SET_TYPE_SRC(s);
                 break;
+        }
         case STATEMENT_WHILE:
                 subscope = scope_new(ty, "(while)", scope, false);
                 for (int i = 0; i < vN(s->While.parts); ++i) {
@@ -4818,7 +4834,7 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
                                 fix_part(ty, p, scope);
                                 symbolize_expression(ty, subscope, p->e);
                                 symbolize_pattern(ty, subscope, p->target, NULL, p->def);
-                                if (p->target != NULL && p->target->_type == NULL) {
+                                if (p->target != NULL) {
                                         type_assign(ty, p->target, p->e->_type, 0);
                                 }
                                 if (p->target == NULL) {

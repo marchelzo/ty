@@ -15,6 +15,8 @@ logging({
 let i = 0
 let TY_CMD = 'ty'
 
+tag CompilationError;
+
 let init = {
     capabilities: {
         definitionProvider: true,
@@ -45,7 +47,7 @@ dup2(err-fd, 2)
 
 let TY_LS_CMD = getenv('TY_LS_CMD').words() ?? ['tyls']
 
-let tyls = os.spawn(TY_LS_CMD, shareStderr=true)
+let tyls = os.spawn(TY_LS_CMD, stdin=SPAWN_PIPE, stdout=SPAWN_PIPE)
 critical!(tyls)
 
 //let responses = io.open(tyls.stdout, 'r', buffering=io.NBF)
@@ -55,13 +57,13 @@ onExit(fn () {
     kill(tyls.pid, SIGTERM)
 })
 
-fn get() {
-    if not let $line = read(tyls.stdout, 8192) ?> &str! {
-        critical!("DEAD: {waitpid(tyls.pid)}")
-        return nil
-    } else {
+fn get() -> String | nil {
+    if let $line = read(tyls.stdout, 8192) ?> &str! {
         warn!("TYLS OUTPUT: {line}")
         return line
+    } else {
+        critical!("DEAD: {waitpid(tyls.pid)}")
+        return nil
     }
 }
 
@@ -79,8 +81,16 @@ fn do-req(msg: Request) {
     get()
 }
 
-fn check[T](msg: T) -> T {
-    let file = msg.?file
+fn check[T](msg: T, file: String) -> T {
+    fn send-dx(diagnostics) {
+        send({
+            method: 'textDocument/publishDiagnostics',
+            params: {
+                uri: "file://{file}",
+                diagnostics
+            }
+        })
+    }
 
     match msg {
         %{
@@ -98,18 +108,15 @@ fn check[T](msg: T) -> T {
                 severity: 1
             }]
 
-            send({
-                method: 'textDocument/publishDiagnostics',
-                params: {
-                    uri: "file://{file}",
-                    diagnostics
-                }
-            })
+            send-dx(diagnostics)
 
-            throw 'COMPILER ERROR'
+            throw CompilationError
         },
 
-        _ => msg
+        _ => do {
+            send-dx([])
+            msg
+        }
     }
 }
 
@@ -120,13 +127,13 @@ fn run(request: Request) {
         what: 0,
         file: file,
         source: store[file]
-    }))
+    }), file)
 
     if not let $line = do-req(request) {
         throw 'NO RESPONSE'
     }
 
-    return check(json.parse(line))
+    return check(json.parse(line), file)
 }
 
 
@@ -223,8 +230,8 @@ fn go() {
                 %{file, line, col} => {
                     uri: file.match?(/^\/dev\//) ? "file://{path}" : "file://{realpath(file)}",
                     range: {
-                        start: { line: line - 1, character: col - 1 },
-                        end:   { line: line - 1, character: col + 1 }
+                        start: { line: line, character: col },
+                        end:   { line: line, character: col + 1 }
                     }
                 },
 
@@ -348,7 +355,7 @@ fn go() {
                             detail:   c['type'],
                             doc:      c['doc'],
                             kind:     c['kind'],
-                            sortText: "{10 - c['depth']:04} {c['name']}"
+                            sortText: "{c['depth']:04} {c['name']}"
                         }
                         for c in completions if !skip.any?(\c['name'] :: _)
                     ]
@@ -365,11 +372,16 @@ fn go() {
 }
 
 for (;;) {
-    try {
-        go()
-    } catch err {
-        error!(err)
+    catch {
+        CompilationError => continue,
+
+        err => do {
+            error!(err)
+            continue
+        }
     }
+
+    go()
 }
 
 /* vim: set sts=4 sw=4 expandtab ft=ty: */

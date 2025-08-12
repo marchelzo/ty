@@ -4225,16 +4225,17 @@ BUILTIN_FUNCTION(os_poll)
         NOGC(fds_out);
         lGv(true);
 #ifdef _WIN32
-        int ret = WSAPoll(pfds, vN(*fds), timeout);
+        int n = WSAPoll(pfds, vN(*fds), timeout);
 #else
         int n = poll(pfds, vN(*fds), timeout);
 #endif
+        int err = errno;
         lTk();
         OKGC(fds_out);
 
         vN(*fds_out) = 0;
 
-        if (n >= 0) {
+        if (n > 0) {
                 GC_STOP();
                 for (int i = 0; i < vN(*fds) && vN(*fds_out) < n; ++i) {
                         if (pfds[i].revents != 0) {
@@ -4253,8 +4254,8 @@ BUILTIN_FUNCTION(os_poll)
         SCRATCH_RESTORE();
 
         return (argc == 3) ? INTEGER(n)
-             : (n    >  0) ? Ok(ty, ARRAY(fds_out))
-             :               Err(ty, INTEGER(n));
+             : (n    >= 0) ? Ok(ty, ARRAY(fds_out))
+             :               Err(ty, INTEGER(err));
 }
 
 #ifdef __linux__

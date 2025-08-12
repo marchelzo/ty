@@ -5,10 +5,27 @@ pub fn open(path: String, flags: Int, mode: ?Int) -> Int;
 pub fn close(fd: Int) -> Int;
 pub fn read(fd: Int, n: Int) -> Blob;
 pub fn read(fd: Int, buf: Blob, n: Int) -> Int;
+pub fn write(fd: Int, data: Any, all: Bool) -> Int;
 pub fn write(fd: Int, data: Any) -> Int;
+
+pub fn mktemp(pattern: String = 'tmp.XXXXXX') -> (Int, String);
+
+pub fn accept(sock: Int) -> (Int, Blob);
+pub fn listen(sock: Int, n: Int) -> Int;
+
+pub fn poll[T](
+    pollfds: [Int | (Int, Int, ?T)],
+    timeout: Float | Int | nil
+) -> Ok[[(Int, Int, ?T)]] | Err[Int];
+
+pub fn poll[T](
+    pollfds-in: [Int | (Int, Int, T)],
+    pollfds-out: [Int | (Int, Int, T)],
+    timeout: Float | Int | nil
+) -> Int;
+
 pub fn listdir(path: String) -> [Float] | nil;
 pub fn ncpu() -> Int;
-pub fn mktemp(pattern: String = 'tmp.XXXXXX') -> (Int, String);
 
 use ProcessDescriptor = {
     stdin: Int,

@@ -1180,8 +1180,9 @@ value_apply_callable(Ty *ty, Value *f, Value *v)
 bool
 value_test_equality(Ty *ty, Value const *v1, Value const *v2)
 {
-        if (v1->tags != v2->tags)
+        if (v1->tags != v2->tags) {
                 return false;
+        }
 
         int t0 = v1->type & ~VALUE_TAGGED;
         int t1 = v2->type & ~VALUE_TAGGED;
@@ -1236,6 +1237,12 @@ value_test_equality(Ty *ty, Value const *v1, Value const *v2)
 
         case PAIR_OF(VALUE_NIL):
                 return true;
+
+        case PAIR_OF(VALUE_OBJECT):
+                if (v1->object == v2->object) {
+                        return true;
+                }
+                break;
         }
 
         if ((t0 | t1) & VALUE_NIL) {

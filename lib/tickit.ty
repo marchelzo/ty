@@ -1,5 +1,4 @@
-import ffi as c
-import cutil (..)
+import ffi as c (C!, wrap, struct!)
 
 if not let $tickit = c.dlopen('libtickit.so') {
 	throw 'failed to load libtickit'

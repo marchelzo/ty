@@ -300,6 +300,9 @@ type_inst(Ty *ty, Type const *t0);
 Type *
 type_inst0(Ty *ty, Type const *t0, U32Vector const *params, TypeVector const *args);
 
+Type *
+type_new_inst(Ty *ty, Type const *t0);
+
 void
 type_assign(Ty *ty, Expr *e, Type *t0, int flags);
 
