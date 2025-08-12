@@ -1,4 +1,4 @@
-function f(x: Int, s: String) -> Float {
+fn f(x: Int, s: String) -> Float {
     return 0.4
 }
 

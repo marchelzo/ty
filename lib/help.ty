@@ -13,7 +13,7 @@ import ioctls (..)
 import os
 #|]
 
-let table = %{}
+let table: Dict[_, (String, String, String)] = %{}
 
 macro doc! {
     let (parse.show ~> name, func) = parse.stmt(0, :raw)
@@ -143,7 +143,7 @@ doc! os::exec
 pub function help(x) {
     let x = docRef(x)
 
-    let doc = function (x) {
+    let doc = function (x: Any) {
         return table[x] ?? doc(x)
     }
 

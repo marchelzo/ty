@@ -151,8 +151,8 @@ pub function uncompress2(s: String | Blob, maxSize) {
   return blob
 }
 
-pub crc32 = function (s: String | Blob) {
-    crc32(0, s, s.size)
+pub crc32 = fn (s: String | Blob) -> Int {
+    crc32(0, s, s.size())
 }
 
 function test() {

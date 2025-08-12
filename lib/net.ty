@@ -13,7 +13,7 @@ pub function dial(network, address) {
 
     if family == AF_UNIX {
         let sock = socket(AF_UNIX, sockType, 0)
-        let addr = (family: AF_UNIX, path: address)
+        let addr = {family: AF_UNIX, path: address}
         return match connect(sock, addr) {
             0 => Ok(sock),
             _ => do { close(sock); Err("connect(): {errno.str()}") }
@@ -51,7 +51,7 @@ pub function listen(network, address, backlog=64) {
 
     if family == AF_UNIX {
         let sock = socket(AF_UNIX, sockType, 0)
-        let addr = (family: AF_UNIX, path: address)
+        let addr = {family: AF_UNIX, path: address}
         if bind(sock, addr) != 0 {
             close(sock)
             return Err("bind(): {errno.str()}")

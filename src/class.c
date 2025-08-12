@@ -86,8 +86,7 @@ MakeTrait(Ty *ty, Class *c)
 inline static bool
 ClassImplementsTrait(Class const *c, int ti)
 {
-        return vN(c->impls) > ti
-            && v__(c->impls, ti);
+        return (vN(c->impls) > ti) && v__(c->impls, ti);
 }
 
 Class *

@@ -1,5 +1,4 @@
 import ffi as c (C!)
-import os (args)
 import ptr
 import help (pretty)
 

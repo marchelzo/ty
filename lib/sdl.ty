@@ -1,5 +1,4 @@
-import ffi as c
-import cutil (wrap)
+import ffi as c (wrap)
 import os (exit)
 
 let SDL2 = c.dlopen('libSDL2-2.0.so.0')

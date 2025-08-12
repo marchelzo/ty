@@ -1,45 +1,42 @@
-class NodeIter {
-    init(nodes) {
-        @nodes = nodes
-    }
+class Node[K, V] {
+    k: K
+    v: V
+    l: Node[K, V]
+    r: Node[K, V]
+    p: Node[K, V]
+    c: Int
+    seen: Bool
 
-    __next__(i) {
-        if i < self.nodes.len() {
-            return Some((self.nodes[i].k, self.nodes[i].v))
-        } else {
-            None
-        }
-    }
-}
-
-class Node {
-    init(k, v) {
+    init(k: K, v: V) {
         @k = k
         @v = v
-        @l = nil
-        @r = nil
-        @p = nil
-        @c = 0
-        @seen = false
+        l = cast(nil)
+        r = cast(nil)
+        p = cast(nil)
+        c = 0
+        seen = false
     }
 }
 
-pub class Tree {
+pub class Tree[K, V] : Iterable[(K, V)] {
+    __null: Node[K, V]
+    __root: Node[K, V]
+
     init() {
-        self.null = Node()
-        self.root = self.null
-        self.root.l = self.root.r = self.root.p = self.null
+        __null = cast(Node())
+        __root = __null
+        __root.l = __root.r = __root.p = __null
     }
 
-    leftRotate(x) {
+    leftRotate(x: Node[K, V]) {
         let y = x.r
         x.r = y.l
-        if y.l != self.null {
+        if y.l != __null {
             y.l.p = x
         }
         y.p = x.p
-        if x.p == self.null {
-            self.root = y
+        if x.p == __null {
+            __root = y
         } else if x == x.p.l {
             x.p.l = y
         } else {
@@ -50,29 +47,29 @@ pub class Tree {
     }
 
     empty?() {
-        return self.root == self.null
+        return __root == __null
     }
 
     size() {
-        return self.treeCount(self.root)
+        return treeCount(__root)
     }
 
-    treeCount(x) {
-        if x == self.null {
+    treeCount(x: Node[K, V]) {
+        if x == __null {
             return 0
         }
-        return 1 + self.treeCount(x.l) + self.treeCount(x.r)
+        return 1 + treeCount(x.l) + treeCount(x.r)
     }
 
-    rightRotate(x) {
+    rightRotate(x: Node[K, V]) {
         let y = x.l
         x.l = y.r
-        if y.r != self.null {
+        if y.r != __null {
             y.r.p = x
         }
         y.p = x.p
-        if x.p == self.null {
-            self.root = y
+        if x.p == __null {
+            __root = y
         } else if x == x.p.r {
             x.p.r = y
         } else {
@@ -82,12 +79,12 @@ pub class Tree {
         x.p = y
     }
 
-    put(k, v) {
-        let y = self.null
-        let x = self.root
+    put(k: K, v: V) {
+        let y = __null
+        let x = __root
         let z = Node(k, v)
-        z.l = z.r = self.null
-        while x != self.null {
+        z.l = z.r = __null
+        while x != __null {
             y = x
             match k <=> x.k {
                 -1 => { x = x.l },
@@ -96,15 +93,15 @@ pub class Tree {
             }
         }
         z.p = y
-        if y == self.null {
-            self.root = z
+        if y == __null {
+            __root = z
         } else if k < y.k {
             y.l = z
         } else {
             y.r = z
         }
         z.c = 1
-        self.ifixup(z)
+        ifixup(z)
         return v
     }
 
@@ -120,11 +117,11 @@ pub class Tree {
                 } else {
                     if z == z.p.r {
                         z = z.p
-                        self.leftRotate(z)
+                        leftRotate(z)
                     }
                     z.p.c = 0
                     z.p.p.c = 1
-                    self.rightRotate(z.p.p)
+                    rightRotate(z.p.p)
                 }
             } else {
                 let y = z.p.p.l
@@ -136,20 +133,20 @@ pub class Tree {
                 } else {
                     if z == z.p.l {
                         z = z.p
-                        self.rightRotate(z)
+                        rightRotate(z)
                     }
                     z.p.c = 0
                     z.p.p.c = 1
-                    self.leftRotate(z.p.p)
+                    leftRotate(z.p.p)
                 }
             }
         }
-        self.root.c = 0
+        __root.c = 0
     }
 
     transplant(u, v) {
-        if u.p == self.null {
-            self.root = v
+        if u.p == __null {
+            __root = v
         } else if u == u.p.l {
             u.p.l = v
         } else {
@@ -159,22 +156,22 @@ pub class Tree {
     }
 
     get(k) {
-        let x = self.findNode(k)
-        if x != self.null {
+        let x = findNode(k)
+        if x != __null {
             return x.v
         }
     }
 
     delete(k) {
-        let x = self.findNode(k)
-        if x != self.null {
-            self.deleteNode(x)
+        let x = findNode(k)
+        if x != __null {
+            deleteNode(x)
         }
     }
 
     findNode(k) {
-        let x = self.root
-        while x != self.null {
+        let x = __root
+        while x != __null {
             match k <=> x.k {
                 -1 => { x = x.l },
                  0 => { break },
@@ -184,45 +181,45 @@ pub class Tree {
         return x
     }
 
-    deleteNode(z) {
+    deleteNode(z: Node[K, V]) {
         let y = z
         let yoc = y.c
-        let x = nil
-        if z.l == self.null {
+        let x = __null
+        if z.l == __null {
             x = z.r
-            self.transplant(z, z.r)
-        } else if z.r == self.null {
+            transplant(z, z.r)
+        } else if z.r == __null {
             x = z.l
-            self.transplant(z, z.l)
+            transplant(z, z.l)
         } else {
-            y = self.treeMin(z.r)
+            y = treeMin(z.r)
             yoc = y.c
             x = y.r
             if y.p == z {
                 x.p = y
             } else {
-                self.transplant(y, y.r)
+                transplant(y, y.r)
                 y.r = z.r
                 y.r.p = y
             }
-            self.transplant(z, y)
+            transplant(z, y)
             y.l = z.l
             y.l.p = y
             y.c = z.c
         }
         if yoc == 0 {
-            self.dfixup(x)
+            dfixup(x)
         }
     }
 
-    dfixup(x) {
-        while x != self.root && x.c == 0 {
+    dfixup(x: Node[K, V]) {
+        while x != __root && x.c == 0 {
             if x == x.p.l {
                 let w = x.p.r
                 if w.c {
                     w.c = 0
                     x.p.c = 1
-                    self.leftRotate(x.p)
+                    leftRotate(x.p)
                     w = x.p.r
                 }
                 if w.l.c == 0 && w.r.c == 0 {
@@ -232,21 +229,21 @@ pub class Tree {
                     if w.r.c == 0 {
                         w.l.c = 0
                         w.c = 1
-                        self.rightRotate(w)
+                        rightRotate(w)
                         w = x.p.r
                     }
                     w.c = x.p.c
                     x.p.c = 0
                     w.r.c = 0
-                    self.leftRotate(x.p)
-                    x = self.root
+                    leftRotate(x.p)
+                    x = __root
                 }
             } else {
                 let w = x.p.l
                 if w.c {
                     w.c = 0
                     x.p.c = 1
-                    self.rightRotate(x.p)
+                    rightRotate(x.p)
                     w = x.p.l
                 }
                 if w.r.c == 0 && w.l.c == 0 {
@@ -256,59 +253,59 @@ pub class Tree {
                     if w.l.c == 0 {
                         w.r.c = 0
                         w.c = 1
-                        self.leftRotate(w)
+                        leftRotate(w)
                         w = x.p.l
                     }
                     w.c = x.p.c
                     x.p.c = 0
                     w.l.c = 0
-                    self.rightRotate(x.p)
-                    x = self.root
+                    rightRotate(x.p)
+                    x = __root
                 }
             }
         }
         x.c = 0
     }
 
-    treeMin(x) {
-        while x.l != self.null {
+    treeMin(x: Node[K, V]) {
+        while x.l != __null {
             x = x.l
         }
         return x
     }
 
-    treeMax(x) {
-        while x.r != self.null {
+    treeMax(x: Node[K, V]) {
+        while x.r != __null {
             x = x.r
         }
         return x
     }
 
     min() {
-        let x = self.treeMin(self.root)
+        let x = treeMin(__root)
         return x.k, x.v
     }
 
     max() {
-        let x = self.treeMax(self.root)
+        let x = treeMax(__root)
         return x.k, x.v
     }
 
     has?(k) {
-        self.findNode(k) != self.null
+        findNode(k) != __null
     }
 
     contains?(k) {
-        self.findNode(k) != self.null
+        findNode(k) != __null
     }
 
-    __iter__() {
-        let s = [self.root]
+    __iter__*() -> Generator[(K, V)] {
+        let s = [__root]
         let nodes = []
 
         while s {
             let x = s.pop()
-            if x == self.null { continue }
+            if x == __null { continue }
             if x.seen {
                 nodes.push(x)
             } else {
@@ -319,14 +316,15 @@ pub class Tree {
             }
         }
 
-        for node in nodes { node.seen = false }
-
-        return NodeIter(nodes)
+        for node in nodes {
+            yield (node.k, node.v)
+            node.seen = false
+        }
     }
 
-    nextNode(x) {
-        if x.r != self.null {
-            return self.treeMin(x.r)
+    nextNode(x: Node[K, V]) {
+        if x.r != __null {
+            return treeMin(x.r)
         }
 
         while x != x.p.l {
@@ -336,9 +334,9 @@ pub class Tree {
         return x.p
     }
 
-    prevNode(x) {
-        if x.l != self.null {
-            return self.treeMax(x.l)
+    prevNode(x: Node[K, V]) {
+        if x.l != __null {
+            return treeMax(x.l)
         }
 
         while x != x.p.r {
@@ -349,36 +347,36 @@ pub class Tree {
     }
 
     prev(k) {
-        let x = self.findNode(k)
+        let x = findNode(k)
 
-        if x == self.null {
+        if x == __null {
             return nil
         }
 
-        let x = self.prevNode(x)
+        let x = prevNode(x)
 
-        if x != self.null {
+        if x != __null {
             return x.k
         }
     }
 
     next(k) {
-        let x = self.findNode(k)
+        let x = findNode(k)
 
-        if x == self.null {
+        if x == __null {
             return nil
         }
 
-        let x = self.nextNode(x)
+        let x = nextNode(x)
 
-        if x != self.null {
+        if x != __null {
             return x.k
         }
     }
 
-    -(a, b) {
+    -(b: Tree) -> Tree {
         let t = Tree()
-        for k, v in a {
+        for (k, v) in self {
             if !b.has?(k) {
                 t.put(k, v)
             }
@@ -386,9 +384,9 @@ pub class Tree {
         return t
     }
 
-    &(a, b) {
+    &(b: Tree[K, V]) -> Tree[K, V] {
         let t = Tree()
-        for k, v in a {
+        for (k, v) in self {
             if b.has?(k) {
                 t.put(k, v)
             }
@@ -396,17 +394,17 @@ pub class Tree {
         return t
     }
 
-    +(a, b) {
+    +(b: Tree[K, V]) -> Tree[K, V] {
         let t = Tree()
-        for k, v in b { t.put(k, v) }
-        for k, v in a { t.put(k, v) }
+        for (k, v) in b { t.put(k, v) }
+        for (k, v) in self { t.put(k, v) }
         return t
     }
 
     union(ts) {
         let t = Tree()
         for t in ts {
-            for k, v in t { t.put(k, v) }
+            for (k, v) in t { t.put(k, v) }
         }
         return t
     }
@@ -414,7 +412,7 @@ pub class Tree {
     intersect(ts) {
         let t = Tree()
         if let [z, *zs] = ts {
-            for k, v in z {
+            for (k, v) in z {
                 if zs.all?(&has?(k)) {
                     t.put(k, v)
                 }

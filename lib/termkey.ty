@@ -1,6 +1,5 @@
 import ty
-import ffi as c (C!)
-import cutil (wrap)
+import ffi as c (C!, wrap)
 
 if not let $lib = c.dlopen('libtermkey.so.1') ?? c.dlopen('libtermkey.dylib') {
 	throw 'Failed to open libtermkey.so'

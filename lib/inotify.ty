@@ -1,5 +1,4 @@
-import ffi as c
-import cutil (wrap, cstr)
+import ffi as c (wrap, cstr)
 import io
 
 /* Supported events suitable for MASK parameter of INOTIFY_ADD_WATCH.  */
@@ -63,11 +62,11 @@ pub function wait(inot) {
     buf.str(0, buf.search(0))
   }
 
-  return (
+  return {
     wd: c.member(inotify_event, b.ptr(), 0),
     mask: c.member(inotify_event, b.ptr(), 1),
     cookie: c.member(inotify_event, b.ptr(), 2),
     name: name,
     size: size
-  )
+  }
 }

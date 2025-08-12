@@ -205,6 +205,32 @@ execln(Ty *ty, char *line)
                 } else {
                         goto Bad;
                 }
+#ifdef TY_RELEASE
+        } else if (strncmp(line, ":u ", 3) == 0) {
+                dump(&buffer, "(__type!((%s)))", line + 3);
+
+                if (!repl_exec(ty, v_(buffer, 1))) {
+                        goto Bad;
+                }
+
+                Expr *pair = TyToCExpr(ty, vm_get(ty, -1));
+
+                Type *t0 = type_resolve(ty, v__(pair->es, 0));
+                Type *t1 = type_resolve(ty, v__(pair->es, 1));
+
+                if (TY_CATCH_ERROR()) {
+                        EnableLogging -= 1;
+                        goto End;
+                }
+
+                EnableLogging += 1;
+                unify(ty, &t0, t1);
+                EnableLogging -= 1;
+
+                TY_CATCH_END();
+
+                goto End;
+#endif
         } else if (strncmp(line, "b ", 2) == 0) {
                 dump(&buffer, "%s", line + 2);
 

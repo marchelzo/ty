@@ -15,6 +15,14 @@ let __tls::history = []
 
 tag CycleCompletions, ListCompletions, ReplaceLine, Insert;
 
+pub use CompletionAction = CycleCompletions[Array[String]]
+                         | ListCompletions[Array[String]]
+                         | Insert[String]
+                         | ReplaceLine[String]
+                         | None
+
+pub use CompletionFunction = {before: String, after: String} -> CompletionAction;
+
 class CompletionCycler {
     init(cs, line, i) {
         @i = i
@@ -62,7 +70,7 @@ fn termDimensions() {
     return (winSize.lines, winSize.cols)
 }
 
-fn completeFile(before, after) {
+fn completeFile(before: String, after: String) -> CompletionAction {
     let parts = (before.match!(/'[^']*$/) ?? before.match!(/\S*$/)).comb(/'/).split('/')
 
     let (dir, prefix) = match parts {
@@ -70,17 +78,22 @@ fn completeFile(before, after) {
         [*parts, prefix] => (parts.join('/'), prefix)
     }
 
-    let names = sh("find -s '{dir}' -maxdepth 1 -name '{prefix}*'").lines().filter(${#it > 0}).map!(&comb(/^\.\//))
+    if not let $output = sh("find -s '{dir}' -maxdepth 1 -name '{prefix}*'") {
+        return None
+    }
+
+    let names = output
+        .lines()
+        .filter(${#it > 0})
+        .map!(&comb(/^\.\//))
 
     let chop = &slice(#"{dir}/{prefix}".comb(/^\.\//))
 
     return match names {
         []       => None,
         [unique] => Insert(chop(unique)),
-        _        => CycleCompletions(names.map(chop)),
-        _        => ListCompletions(names)
+        _        => CycleCompletions(names.map(chop))
     }
-
 }
 
 fn fitItems(items: [String], W: Int) {
@@ -173,7 +186,7 @@ pub fn readln(
                 => do continue
         }
 
-        if let $func = keybinds[key] {
+        if key :: String and let $func = keybinds[key] {
             func(*termDimensions())
         }
 
@@ -320,7 +333,12 @@ pub fn readln(
             },
 
             '<C-r>' => {
-                let fzf = spawn(['fzf', '--tac', '--no-sort', '-q', getText()], shareStdin: false, shareStderr: true)
+                let fzf = spawn(
+                    ['fzf', '--tac', '--no-sort', '-q', getText()],
+                    stdin=SPAWN_PIPE,
+                    stdout=SPAWN_PIPE,
+                    stderr=SPAWN_INHERIT
+                )
 
                 write(fzf.stdin, history.map(&0 |> &str).unlines())
                 close(fzf.stdin)
@@ -340,12 +358,7 @@ pub fn readln(
 
                 tio.stop()
 
-                let editor = spawn(
-                    [getenv('EDITOR') ?? 'vi', tmp],
-                    :shareStdin,
-                    :shareStdout,
-                    :shareStderr
-                )
+                let editor = spawn([getenv('EDITOR') ?? 'vi', tmp])
                 waitpid(editor.pid)
 
                 tio.start()
