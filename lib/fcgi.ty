@@ -398,8 +398,6 @@ pub class FCGIApp {
 
                        (conn, _, parser) => {
                             if let $data = os.read(conn, 4096) {
-                                if let (a, b, c) = parser.push(data) {
-                                }
                                 if let (body, params, fd) = parser.push(data) {
                                     yield FCGIRequest(
                                         self,
