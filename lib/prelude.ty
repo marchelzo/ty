@@ -148,7 +148,7 @@ pub use time::Timespec = {
     tv_nsec: Int
 }
 
-fn time::time(tm: ?time::Tm) -> Int;
+fn time::time(tm: ?time::Tm, utc: Bool = false) -> Int;
 fn time::gettime(clock: ?Int) -> time::Timespec;
 fn time::localtime() -> time::Tm;
 fn time::utime(clock: ?Int) -> Int;
@@ -2918,7 +2918,7 @@ macro time! {
     lex.next()
 
     $$[{
-        let (s, x, e) = ($${time::now}(), $$(e), $${time::now()})
+        let (s, x, e) = ($${time::now}(), $$(e), $${time::now}())
 
         print(
             __module__,
@@ -2927,7 +2927,7 @@ macro time! {
             ': ',
             $$(ty.String(parse.show(e))),
             ': ',
-            (e - s) / 1.0e6,
+            (e - s),
             's',
             sep: ''
         )
@@ -2939,8 +2939,8 @@ macro time! {
 macro timed(expr) {
     $$[
         do {
-            let (s: Int, x: _, e: Int) = ($${time::now}(), $$expr, $${time::now}())
-            ((e - s) / 1.0e6, x)
+            let (s: Float, x: _, e: Float) = ($${time::now}(), $$expr, $${time::now}())
+            ((e - s), x)
         }
     $$]
 }

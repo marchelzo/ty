@@ -1,7 +1,10 @@
 import os (..)
 import errno
 
-pub function dial(network, address) {
+pub fn dial(
+    network: String,
+    address: String
+) -> Ok[Int] | Err[Int | String] {
     let (family, sockType) = match network.lower() {
         'tcp'      => (AF_INET, SOCK_STREAM),
         'udp'      => (AF_INET, SOCK_DGRAM),
@@ -39,7 +42,11 @@ pub function dial(network, address) {
     }
 }
 
-pub function listen(network, address, backlog=64) {
+pub fn listen(
+    network: String,
+    address: String,
+    backlog=64
+) -> Ok[Int] | Err[Int | String] {
     let (family, sockType) = match network.lower() {
         'tcp'      => (AF_INET, SOCK_STREAM),
         'udp'      => (AF_INET, SOCK_DGRAM),
@@ -70,6 +77,7 @@ pub function listen(network, address, backlog=64) {
     match getaddrinfo(host, serv, family, sockType, 0) {
         Ok([addr, *]) => {
             let sock = socket(family, sockType, 0)
+            setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, 1)
             if bind(sock, addr) != 0 {
                 close(sock)
                 return Err("bind(): {errno.str()}")

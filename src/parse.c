@@ -2279,8 +2279,8 @@ prefix_record(Ty *ty)
                                 avP(e->es, name);
                                 break;
                         default:
-                                 expect_one_of(',', '}', KEYWORD_IF);
-                                 UNREACHABLE();
+                                expect_one_of(':', '=');
+                                UNREACHABLE();
                         }
                 } else if (name->type != EXPRESSION_IDENTIFIER) {
                         die_at(name, "unexpected expression used as field name in record literal");

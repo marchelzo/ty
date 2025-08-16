@@ -707,7 +707,7 @@ fn strct() {
     )
 
     let size = ty.Func(
-        name: '__len__',
+        name: '#',
         params: [],
         body: ty.Call(func: ty.Value(c.size), args: [ty.Arg(arg: ctype)])
     )
@@ -969,7 +969,7 @@ pub macro struct! {
     )
 
     let size = ty.Func(
-        name: '__len__',
+        name: '#',
         params: [],
         body: ty.Call(func: ty.Value(c.size), args: [ty.Arg(arg: ty.Id(name: "{structName}_C"))])
     )
