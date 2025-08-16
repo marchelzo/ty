@@ -4010,14 +4010,15 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                 }
 
                 if (
-                        e->body != NULL
+                       (e->_type != NULL)
+                    && (e->body != NULL)
                     && !e->body->will_return
-                    && e->type != EXPRESSION_GENERATOR
+                    && (e->type != EXPRESSION_GENERATOR)
                 ) {
                         unify(
                                 ty,
                                 &e->_type->rt,
-                                e->body->_type == NULL ? NIL_TYPE : e->body->_type
+                                (e->body->_type == NULL) ? NIL_TYPE : e->body->_type
                         );
                 }
 
@@ -4121,11 +4122,13 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                 for (int i = 0; i < vN(e->es); ++i) {
                         symbolize_expression(ty, scope, v__(e->es, i));
                 }
-                unify2(
-                        ty,
-                        &STATE.func->_type->rt,
-                        type_tagged(ty, TAG_SOME, v__(e->es, 0)->_type)
-                );
+                if (STATE.func->_type != NULL) {
+                        unify2(
+                                ty,
+                                &STATE.func->_type->rt,
+                                type_tagged(ty, TAG_SOME, v__(e->es, 0)->_type)
+                        );
+                }
                 break;
         case EXPRESSION_ARRAY:
                 for (usize i = 0; i < vN(e->elements); ++i) {
@@ -11792,6 +11795,7 @@ cstmt(Ty *ty, Value *v)
         } else {
                 s->start = STATE.mstart;
                 s->end = STATE.mend;
+                s->mod = STATE.module;
         }
 
         if (v->type == VALUE_TAG) switch (v->tag) {

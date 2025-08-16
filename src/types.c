@@ -4459,7 +4459,7 @@ UnifyXD(Ty *ty, Type *t0, Type *t1, bool super, bool check, bool soft)
                 t1 = TagFunctionType(ty, t1);
         }
 
-        if (TypeType(t0) == TYPE_FUNCTION && TypeType(t1) == TYPE_FUNCTION) {
+        if (PackTypes(t0, t1) == PAIR_OF(TYPE_FUNCTION)) {
                 for (int i = 0; i < vN(t0->params) || i < vN(t1->params); ++i) {
                         Param const *p0 = (vN(t0->params) > i) ? v_(t0->params, i) : NULL;
                         Param const *p1 = (vN(t1->params) > i) ? v_(t1->params, i) : NULL;
@@ -4488,14 +4488,26 @@ UnifyXD(Ty *ty, Type *t0, Type *t1, bool super, bool check, bool soft)
                         goto Fail;
                 }
 
-                for (int i = 0; i < vN(t0->constraints); ++i) {
-                        if (!BindConstraint(ty, v_(t0->constraints, i), super)) {
-                                goto Fail;
-                        }
-                }
+                for (int n = 0;; ++n) {
+                        bool solved = true;
 
-                for (int i = 0; i < vN(t1->constraints); ++i) {
-                        if (!BindConstraint(ty, v_(t1->constraints, i), super)) {
+                        for (int i = 0; i < vN(t0->constraints); ++i) {
+                                if (!BindConstraint(ty, v_(t0->constraints, i), super)) {
+                                        solved = false;
+                                }
+                        }
+
+                        for (int i = 0; i < vN(t1->constraints); ++i) {
+                                if (!BindConstraint(ty, v_(t1->constraints, i), super)) {
+                                        solved = false;
+                                }
+                        }
+
+                        if (solved) {
+                                break;
+                        }
+
+                        if (n >= 8) {
                                 goto Fail;
                         }
                 }
@@ -4868,7 +4880,7 @@ SolveDeferred(Ty *ty)
         }
 
         usize n = *vvX(WorkIndex);
-        Type *f0 = vN(FunStack) == 0 ? NULL : v_L(FunStack)->_type;
+        Type *f0 = (vN(FunStack) == 0) ? NULL : v_L(FunStack)->_type;
 
         XXTLOG("SolveDeferred(): n=%zu  t0: %s", vN(ToSolve) - n, ShowType(f0));
 
