@@ -5523,7 +5523,7 @@ BUILTIN_FUNCTION(stdio_read_signed)
         int size;
         if (argc == 2) {
                 if (ARG(1).type != VALUE_INTEGER) {
-                        zP("expected intger as second argument to stdio.readSigned() but got: %s", VSC(&ARG(1)));
+                        zP("expected integer as second argument to stdio.readSigned() but got: %s", VSC(&ARG(1)));
                 }
                 size = ARG(1).integer;
         } else {
@@ -5564,7 +5564,7 @@ BUILTIN_FUNCTION(stdio_write_signed)
 
         if (argc == 3) {
                 if (ARG(1).type != VALUE_INTEGER) {
-                        zP("expected intger as second argument to stdio.writeSigned() but got: %s", VSC(&ARG(1)));
+                        zP("expected integer as second argument to stdio.writeSigned() but got: %s", VSC(&ARG(1)));
                 }
                 size = ARG(1).integer;
                 x = ARG(2);
@@ -5607,7 +5607,7 @@ BUILTIN_FUNCTION(stdio_read_unsigned)
         int size;
         if (argc == 2) {
                 if (ARG(1).type != VALUE_INTEGER) {
-                        zP("expected intger as second argument to stdio.readUnsigned() but got: %s", VSC(&ARG(1)));
+                        zP("expected integer as second argument to stdio.readUnsigned() but got: %s", VSC(&ARG(1)));
                 }
                 size = ARG(1).integer;
         } else {
@@ -5638,7 +5638,7 @@ BUILTIN_FUNCTION(stdio_write_unsigned)
 
         if (argc == 3) {
                 if (ARG(1).type != VALUE_INTEGER) {
-                        zP("expected intger as second argument to stdio.writeUnsigned() but got: %s", VSC(&ARG(1)));
+                        zP("expected integer as second argument to stdio.writeUnsigned() but got: %s", VSC(&ARG(1)));
                 }
                 size = ARG(1).integer;
                 x = ARG(2);
