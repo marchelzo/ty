@@ -7,7 +7,7 @@ import errno
 import ffi as c (C!)
 
 #|if getenv('TY_LOG') != nil
-  import log (..)
+    import log (..)
 #|else
     macro warn!(msg) = do {}
     macro error!(msg) = do {}
@@ -551,7 +551,7 @@ class TermIO {
 
     start() {
         write(__notif-w, 1)
-        with __state.lock.lock() {
+        with __state.lock {
             while !__state.on {
                 __state.cond.wait(__state.lock)
             }
@@ -560,7 +560,7 @@ class TermIO {
 
     stop() {
         write(__notif-w, 0)
-        with __state.lock.lock() {
+        with __state.lock {
             while __state.on {
                 __state.cond.wait(__state.lock)
             }
@@ -579,7 +579,7 @@ class TermIO {
         copy.iflag |= IGNBRK
         tcsetattr(__fd, TCSAFLUSH, copy)
         write(__fd, __enter)
-        with __state.lock.lock() {
+        with __state.lock {
             __state.on = true
         }
         __state.cond.broadcast()
@@ -589,7 +589,7 @@ class TermIO {
         warn!("Reader thread stopping!")
         write(__fd, __exit)
         tcsetattr(__fd, TCSAFLUSH, __saved-termios)
-        with __state.lock.lock() {
+        with __state.lock {
             __state.on = false
         }
         __state.cond.broadcast()
@@ -619,28 +619,28 @@ class TermIO {
         }
 
         fn more() -> Bool {
-                let fds = match poll([__notif-r, __fd], -1) {
-                    Ok(fds) => fds,
-                    err     => throw err
-                }
+            let fds = match poll([__notif-r, __fd], -1) {
+                Ok(fds) => fds,
+                err     => throw err
+            }
 
-                for match fds {
-                    (self.__notif-r, ev) => {
-                        if ev & POLLHUP {
-                            throw _TermStop
-                        } else if let $msg = read(__notif-r, 512) and msg[-1] == 0 {
-                            __stop()
-                            wait-for-resume()
-                        }
-                    },
-
-                    (fd, ev) => {
-                        read(fd, buf, 8192)
-                        return true
+            for match fds {
+                (self.__notif-r, ev) => {
+                    if (ev & POLLHUP) {
+                        throw _TermStop
+                    } else if let $msg = read(__notif-r, 512) and msg[-1] == 0 {
+                        __stop()
+                        wait-for-resume()
                     }
-                }
+                },
 
-                return false
+                (fd, ev) => {
+                    read(fd, buf, 8192)
+                    return true
+                }
+            }
+
+            return false
         }
 
         // Initially off
@@ -742,7 +742,7 @@ class TermIO {
     __run-reader() {
         while match (__ev-stream)() {
             Some(event.Cursor(y, x)) => {
-                with __cursor.lock.lock() {
+                with __cursor.lock {
                     __cursor.y = y
                     __cursor.x = x
                     __cursor.t += 1
@@ -763,9 +763,18 @@ class TermIO {
           yield ev
         }
     }
+
+    __enter__() {
+        start()
+        self
+    }
+
+    __drop__() {
+        stop()
+    }
 }
 
-pub function __test() {
+pub fn __test() {
     let tio = TermIO()
 
     tio.start()

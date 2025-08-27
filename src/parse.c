@@ -520,6 +520,20 @@ mkstmt(Ty *ty)
         return s;
 }
 
+#define mkstmtx(t) ((mkstmtx)(ty, STATEMENT_##t))
+inline static Stmt *
+(mkstmtx)(Ty *ty, int type)
+{
+        Stmt *s = amA0(sizeof *s);
+        s->type = type;
+        s->ns = CurrentNamespace;
+        s->arena = GetArenaAlloc(ty);
+        s->mod = CompilerCurrentModule(ty);
+        s->start = tok()->start;
+        s->end = tok()->start;
+        return s;
+}
+
 inline static Stmt *
 mkret(Ty *ty, Expr *value)
 {
@@ -2366,22 +2380,14 @@ void
 make_with(Ty *ty, Expr *e, statement_vector defs, Stmt *body)
 {
         e->type = EXPRESSION_WITH;
-
         e->with.defs = defs;
 
-        Stmt *try = mkstmt(ty);
-        try->type = STATEMENT_TRY;
-        vec_init(try->try.patterns);
-        vec_init(try->try.handlers);
+        Stmt *try = mkstmtx(TRY);
         try->try.s = body;
 
-        try->try.finally = mkstmt(ty);
-        try->try.finally->type = STATEMENT_DROP;
-        vec_init(try->try.finally->drop);
+        try->try.finally = mkstmtx(DROP);
 
-        Stmt *s = mkstmt(ty);
-        s->type = STATEMENT_MULTI;
-        vec_init(s->statements);
+        Stmt *s = mkstmtx(MULTI);
         avPn(s->statements, defs.items, defs.count);
         avP(s->statements, try);
         e->with.block = s;
@@ -2417,33 +2423,36 @@ prefix_with(Ty *ty)
         next();
 
         for (;;) {
-            SAVE_NE(true);
-            Expr *e = parse_expr(ty, 0);
-            LOAD_NE();
+                SAVE_NE(true);
+                Expr *e = parse_expr(ty, 0);
+                LOAD_NE();
 
-            Stmt *def = mkstmt(ty);
-            def->type = STATEMENT_DEFINITION;
-            def->pub = false;
+                Stmt *def = mkstmt(ty);
+                def->type = STATEMENT_DEFINITION;
+                def->pub = false;
+                def->value = mkxpr(METHOD_CALL);
+                def->value->method = mkxpr(IDENTIFIER);
+                def->value->method->identifier = "__enter__";
 
-            if (T0 == TOKEN_EQ) {
-                    next();
-                    def->target = definition_lvalue(ty, e);
-                    def->value = parse_expr(ty, 0);
-            } else {
-                    Expr *t = mkxpr(IDENTIFIER);
-                    t->identifier = gensym();
-                    t->module = NULL;
-                    def->target = t;
-                    def->value = e;
-            }
+                if (T0 == TOKEN_EQ) {
+                        next();
+                        def->target = definition_lvalue(ty, e);
+                        def->value->object = parse_expr(ty, 0);
+                } else {
+                        Expr *t = mkxpr(IDENTIFIER);
+                        t->identifier = gensym();
+                        t->module = NULL;
+                        def->target = t;
+                        def->value->object = e;
+                }
 
-            avP(defs, def);
+                avP(defs, def);
 
-            if (T0 == ',') {
-                    next();
-            } else {
-                break;
-            }
+                if (T0 == ',') {
+                        next();
+                } else {
+                        break;
+                }
         }
 
         make_with(ty, with, defs, parse_statement(ty, 0));
@@ -2462,8 +2471,9 @@ prefix_throw(Ty *ty)
 
         e->throw = parse_expr(ty, 0);
 
-        if (T0 == ';')
+        if (T0 == ';') {
                 next();
+        }
 
         e->end = TEnd;
 

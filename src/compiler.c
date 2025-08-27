@@ -6033,10 +6033,11 @@ emit_return_check(Ty *ty, Expr const *f)
         PLACEHOLDER_JUMP(JUMP_IF, good);
         INSN(BAD_CALL);
 
-        if (f->name != NULL)
+        if (f->name != NULL) {
                 emit_string(ty, f->name);
-        else
+        } else {
                 emit_string(ty, "(anonymous function)");
+        }
 
         emit_string(ty, "return value");
 

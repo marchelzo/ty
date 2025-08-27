@@ -2578,6 +2578,15 @@ class Mutex {
     __free__() {
         thread.destroyMutex(mtx)
     }
+
+    __enter__() {
+        thread.lock(mtx)
+        self
+    }
+
+    __drop__() {
+        thread.unlock(mtx)
+    }
 }
 
 class MutexLock {
@@ -2618,7 +2627,7 @@ class Sync[T] {
     }
 
     static swap(x: Sync[T], y: T) {
-        with x.__mtx.lock() {
+        with x.__mtx {
             let old = x.__x
             x.__x = y
             old
@@ -2626,7 +2635,7 @@ class Sync[T] {
     }
 
     static read(x: Sync[T]) -> T {
-        with x.__mtx.lock() {
+        with x.__mtx {
             x.__x
         }
     }
@@ -2636,7 +2645,7 @@ class Sync[T] {
     }
 
     static set(x, y) {
-        with x.__mtx.lock() {
+        with x.__mtx {
             x.__x = y
         }
     }
@@ -2646,30 +2655,30 @@ class Sync[T] {
     }
 
     __missing__(name) {
-        with __mtx.lock() { __x.{name} }
+        with __mtx { __x.{name} }
 
     }
 
     __method_missing__(name, *args) {
-        with __mtx.lock() {
+        with __mtx {
             __x.{name}(*args)
         }
     }
 
     ==(y) {
-        with __mtx.lock() {
+        with __mtx {
             __x == y
         }
     }
 
     <=>(y) {
-        with __mtx.lock() {
+        with __mtx {
             __x <=> y
         }
     }
 
     #() {
-        with __mtx.lock() {
+        with __mtx {
             #__x
         }
     }
@@ -2679,68 +2688,68 @@ class Sync[T] {
     }
 
     [][I, U](i: I) -> U where T: Subscript[I, U] {
-        with __mtx.lock() {
+        with __mtx {
             __x[i]
         }
     }
 
     []=[I, U](i: I, u: U) -> U where T: Subscript[I, U] {
-        with __mtx.lock() {
+        with __mtx {
             __x[i] = u
         }
     }
 
     ++() {
-        with __mtx.lock() {
+        with __mtx {
             ++(__x)
         }
     }
 
 
     --() {
-        with __mtx.lock() {
+        with __mtx {
             --(__x)
         }
     }
 
     +=(y) {
-        with __mtx.lock() {
+        with __mtx {
             __x += y
         }
     }
 
     +[A, B](y: A) -> B where (T + A): B {
-        with __mtx.lock() {
+        with __mtx {
             __x + y
         }
     }
 
     *[A, B](y: A) -> B where (T * A): B {
-        with __mtx.lock() {
+        with __mtx {
             __x * y
         }
     }
 
     -=(y) {
-        with __mtx.lock() {
+        with __mtx {
             __x -= y
         }
     }
 
     -[A, B](y: A) -> B where (T - A): B {
-        with __mtx.lock() {
+        with __mtx {
             __x - y
         }
     }
 
     /=(y) {
-        with __mtx.lock() {
+        with __mtx {
             __x /= y
         }
     }
 
     `/`[A, B](y: A) -> B where (T / A): B {
-        with __mtx.lock() {
+        with __mtx {
             __x / y
         }
     }
@@ -3170,7 +3179,7 @@ class SharedQueue[T] : Iterable[T] {
     }
 
     #() {
-        with __mutex.lock() {
+        with __mutex {
             if __xs {
                 (__j - __i + #__xs) % #__xs
             } else {
@@ -3194,7 +3203,7 @@ class SharedQueue[T] : Iterable[T] {
     put(x: T) {
         let notify = false
 
-        with __mutex.lock() {
+        with __mutex {
             if __n == 0 {
                 notify = true
             }
