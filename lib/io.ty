@@ -45,6 +45,10 @@ pub class Stream : Iter {
         }
     }
 
+    __enter__() {
+        self
+    }
+
     __drop__() {
         self.close()
     }

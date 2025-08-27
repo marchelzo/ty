@@ -84,7 +84,7 @@ class Logger {
         __path  = config.?path  ?? __path
         __level = config.?level ?? __level
 
-        with global-log-lock.lock() {
+        with global-log-lock {
             __color = isatty(global-log-fds[__path])
         }
     }
@@ -111,7 +111,7 @@ class Logger {
                 "{(__prefix)(level, false)} {name}: {msg}\n"
             }
 
-            with global-log-lock.lock() {
+            with global-log-lock {
                 let fd = global-log-fds[__path]
                 write(fd, "{out}")
             }
