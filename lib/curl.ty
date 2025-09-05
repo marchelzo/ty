@@ -3,13 +3,36 @@ import curl::core (..)
 import curl.slist as slist
 import curl.url
 import ptr (null)
+import ffi as c (C!)
+import json
+
+C! closure __curl_debug(
+    handle: c.ptr,
+    type: c.int,
+    data: c.ptr,
+    size: c.u64,
+    user: c.ptr
+) -> c.int {
+    print({
+        type,
+        size,
+        s: c.as_str(data, size).sub(/[^[:print:]]/, '.')
+    })
+    return 0
+}
 
 pub class CURL {
-    init(url, params = nil) {
-        self.handle = ::init()
+    init(url, params) {
+        self.handle = curl.core.init()
         self.url = curl.url.new()
         self.headers = null
         setopt(self.handle, CURLOPT_FOLLOWLOCATION, true)
+
+#|if 0
+        setopt(self.handle, CURLOPT_VERBOSE, true)
+        dbg(setopt(self.handle, CURLOPT_DEBUGFUNCTION, __curl_debug))
+        dbg(setopt(self.handle, CURLOPT_HTTP_VERSION, CURL_HTTP_VERSION_2))
+#|]
 
         let rc = curl.url.set(@url, curl.url.PART_URL, url, 0)
         if rc != 0 {
@@ -21,9 +44,19 @@ pub class CURL {
         }
     }
 
-    post(data) {
-        let s = data.list().map(pair -> "{pair.0}={pair.1}").join('&')
-        setopt(self.handle, CURLOPT_COPYPOSTFIELDS, s)
+    post(data = %{}, json, content-type) {
+        let body = if json {
+            self.header('Content-Type', 'application/json')
+            json::encode(data)
+        } else if content-type != nil {
+            self.header('Content-Type', content-type)
+            data
+        } else {
+            data.list().map(pair -> "{pair.0}={pair.1}").join('&') ?? ''
+        }
+
+        setopt(self.handle, CURLOPT_COPYPOSTFIELDS, body)
+
         return self
     }
 
@@ -46,9 +79,13 @@ pub class CURL {
         return self
     }
 
+    cookie(c) {
+        setopt(self.handle, CURLOPT_COOKIE, c)
+    }
+
     params(d) {
         for k, v in d {
-            if v :: Iter && v !:: String {
+            if (v :: Iter) && (v !:: String) {
                 for e in v {
                     curl.url.set(@url, curl.url.PART_QUERY, "{k}={e}", curl.url.APPENDQUERY | curl.url.URLENCODE)
                 }
@@ -62,7 +99,7 @@ pub class CURL {
         match curl.url.get(@url, curl.url.PART_URL, 0) {
             Ok(url) => {
                 setopt(self.handle, CURLOPT_URL, url)
-                return ::perform(self.handle)
+                return curl.core.perform(self.handle)
             },
 
             Err(rc) => {
@@ -76,8 +113,26 @@ pub class CURL {
     }
 }
 
-pub function fetch(url, params = %{}, method='GET') {
+pub function fetch(
+    url,
+    params = %{},
+    method ='GET',
+    headers = %{},
+    body,
+    content-type,
+    json
+) {
     let c = CURL(url)
+
     c.params(params)
+
+    for k, v in headers {
+        c.header(k, v)
+    }
+
+    if method != 'GET' && body != nil {
+        c.post(body, json, content-type)
+    }
+
     return c.perform()
 }
