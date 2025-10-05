@@ -59,6 +59,9 @@ main(int argc, char *argv[])
                 req = builtin_json_parse_xD(ty, 1, NULL);
                 vmX();
 
+                fputs(VSC(&req), stderr);
+                fputc('\n', stderr);
+
                 i32 what = tget_nn(&req, "what")->integer;
 
                 i32 line;

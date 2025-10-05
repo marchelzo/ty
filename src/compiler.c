@@ -182,6 +182,8 @@
 
 #define WITH_SELF(x) WITH_STATE(self, ((x) != NULL) ? (x) : STATE.self)
 
+#define WITH_EXPECTED_TYPE(x) WITH_STATE(expected_type, (x))
+
 enum { CTX_EXPR, CTX_TYPE };
 #define WITH_CTX(c) WITH_STATE(ctx, CTX_##c)
 #define WHEN_CTX(c) if (STATE.ctx == (CTX_##c))
@@ -3511,7 +3513,6 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
 
         UpdateRefinemenets(ty, scope);
 
-        Type *t0;
         Symbol *var;
         Scope *subscope;
 
@@ -3528,11 +3529,22 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                 goto End;
         }
 
-        if (EnableLogging > 0 && e->start.s != NULL) {
-                //printf(" %4d | %s\n", e->start.line + 1, show_expr(e));
-        }
-
         e->xfunc = STATE.func;
+
+
+#if 0
+        if (EnableLogging > 0 && e->start.s != NULL) {
+                printf(" %4d | %s\n", e->start.line + 1, show_expr(e));
+        }
+#endif
+
+        Type *t0;
+        if (STATE.expected_type != NULL) {
+                t0 = STATE.expected_type;
+                STATE.expected_type = NULL;
+        } else {
+                t0 = NULL;
+        }
 
         switch (e->type) {
         case EXPRESSION_IDENTIFIER:
@@ -3817,7 +3829,7 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                 symbolize_expression(ty, scope, e->function);
 
                 if (
-                        e->function->type == EXPRESSION_IDENTIFIER
+                        (e->function->type == EXPRESSION_IDENTIFIER)
                      && SymbolIsFunMacro(e->function->symbol)
                 ) {
                         invoke_fun_macro(ty, scope, e);
@@ -3840,17 +3852,35 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                         break;
                 }
 
-                for (usize i = 0;  i < vN(e->args); ++i)
-                        symbolize_expression(ty, scope, v__(e->args, i));
+                t0 = e->function->_type;
 
-                for (usize i = 0;  i < vN(e->args); ++i)
+                for (usize i = 0;  i < vN(e->args); ++i) {
+                        Type *arg0 = NULL;
+                        if (
+                                (TypeType(e->function->_type) == TYPE_FUNCTION)
+                             && (vN(t0->params) > i)
+                        ) {
+                                if (vN(t0->bound) > 0) {
+                                        t0 = type_inst(ty, t0);
+                                }
+                                arg0 = v_(t0->params, i)->type;
+                        }
+                        WITH_EXPECTED_TYPE(arg0) {
+                                symbolize_expression(ty, scope, v__(e->args, i));
+                        }
+                }
+
+                for (usize i = 0;  i < vN(e->args); ++i) {
                         symbolize_expression(ty, scope, v__(e->fconds, i));
+                }
 
-                for (usize i = 0; i < vN(e->kwargs); ++i)
+                for (usize i = 0; i < vN(e->kwargs); ++i) {
                         symbolize_expression(ty, scope, v__(e->kwargs, i));
+                }
 
-                for (usize i = 0; i < vN(e->fkwconds); ++i)
+                for (usize i = 0; i < vN(e->fkwconds); ++i) {
                         symbolize_expression(ty, scope, v__(e->fkwconds, i));
+                }
 
                 e->_type = type_call(ty, e);
                 SET_TYPE_SRC(e);
@@ -3889,12 +3919,35 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                 symbolize_expression(ty, scope, e->method);
         case EXPRESSION_METHOD_CALL:
                 symbolize_expression(ty, scope, e->object);
-                for (usize i = 0;  i < vN(e->method_args); ++i)
+                t0 = type_member_access_t(
+                        ty,
+                        e->object->_type,
+                        e->method->identifier,
+                        false
+                );
+                for (usize i = 0;  i < vN(e->method_args); ++i) {
+                        Type *arg0 = NULL;
+
+                        if ((TypeType(t0) == TYPE_FUNCTION) && (vN(t0->params) > i)) {
+                                if (vN(t0->bound) > 0) {
+                                        t0 = type_inst(ty, t0);
+                                }
+                                arg0 = v_(t0->params, i)->type;
+                        }
+
+                        WITH_EXPECTED_TYPE(arg0) {
+                                symbolize_expression(ty, scope, v__(e->method_args, i));
+                        }
+                }
+                for (usize i = 0;  i < vN(e->method_args); ++i) {
                         symbolize_expression(ty, scope, v__(e->method_args, i));
-                for (usize i = 0;  i < vN(e->method_args); ++i)
+                }
+                for (usize i = 0;  i < vN(e->method_args); ++i) {
                         symbolize_expression(ty, scope, v__(e->mconds, i));
-                for (usize i = 0; i < vN(e->method_kwargs); ++i)
+                }
+                for (usize i = 0; i < vN(e->method_kwargs); ++i) {
                         symbolize_expression(ty, scope, v__(e->method_kwargs, i));
+                }
                 e->_type = type_method_call(ty, e);
                 SET_TYPE_SRC(e);
                 //===================={ <LSP> }=========================================
@@ -3985,6 +4038,16 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                                 e->name,
                                 type_show(ty, e->_type)
                         );
+                }
+
+                if (
+                        (e->type == EXPRESSION_FUNCTION)
+                     && (
+                                (TypeType(t0) == TYPE_FUNCTION)
+                             || (TypeType(t0) == TYPE_ALIAS)
+                        )
+                ) {
+                        unify(ty, &e->_type, t0);
                 }
 
                 if (e->type == EXPRESSION_IMPLICIT_FUNCTION) {

@@ -4049,7 +4049,9 @@ TryBind(Ty *ty, Type *t0, Type *t1, bool super)
                 MaxBindDepth = max(MaxBindDepth, CurrentDepth);
                 if (Occurs(ty, t1, t0->id, t0->level)) {
 #if 1
-                        BindVar(t0, BOTTOM);
+                        if (super || !type_check(ty, t1, t0)) {
+                                BindVar(t0, BOTTOM);
+                        }
 #else
                         TypeError(
                                 "can't unify:\n  %s\n  %s\n",
@@ -4065,7 +4067,9 @@ TryBind(Ty *ty, Type *t0, Type *t1, bool super)
         } else if (CanBind(t1)) {
                 MaxBindDepth = max(MaxBindDepth, CurrentDepth);
                 if (Occurs(ty, t0, t1->id, t1->level)) {
-                        BindVar(t1, BOTTOM);
+                        if (!super || !type_check(ty, t0, t1)) {
+                                BindVar(t1, BOTTOM);
+                        }
                 } else if (super || !IsAny(t0)) {
                         t1->bounded |= super;
                         BindVar(t1, type_unfixed(ty, Relax(Reduce(ty, t0))));
@@ -4152,6 +4156,7 @@ UnifyXD(Ty *ty, Type *t0, Type *t1, bool super, bool check, bool soft)
                 if (type_check(ty, super ? t0 : t1, super ? t1 : t0)) {
                         OK("both concrete and they type-check");
                 } else {
+                        DPRINT(true, "both concrete but they don't type-check");
                         goto Fail;
                 }
         }
@@ -5205,9 +5210,7 @@ CheckArg(Ty *ty, int i, Param const *p, Type *a0, bool strict)
         }
 
         if (strict && ENFORCE) {
-                //EnableLogging += 1;
-                //CheckArg(ty, i, p, a0, false);
-                //EnableLogging -= 1;
+                type_check2(ty, p0, a0, true);
                 if (p->name != NULL) {
                         TypeError(
                                 "invalid argument type for parameter %s%s%s:"
@@ -5823,6 +5826,9 @@ SolveMemberAccess(Ty *ty, Type const *t0, Type const *t1)
                         &c->type->bound,
                         &t0->args
                 );
+                if (tr0 == NULL) {
+                        return NULL;
+                }
                 if (IsObject(tr0)) {
                         t = Inst(
                                 ty,
@@ -5831,7 +5837,7 @@ SolveMemberAccess(Ty *ty, Type const *t0, Type const *t1)
                                 &tr0->args
                         );
                 } else {
-#ifndef TY_RELEASE
+#if 1
                         TypeError(
                                 "class trait resolved to non-object type:  %s  |   %s",
                                 ShowType(tr0),
@@ -6882,10 +6888,14 @@ static u32 checks = 0;
 bool
 type_check_x(Ty *ty, Type *t0, Type *t1, bool need)
 {
+        bool ok;
+
         checks += 1;
+
         d += 1;
-        bool ok = type_check_x_(ty, t0, t1, need);
+        ok = type_check_x_(ty, t0, t1, need);
         d -= 1;
+
         if (!ok && need) {
                 XXXTLOG("%stype_check_x():%s", ok ? TERM(92) : TERM(91), TERM(0));
                 XXXTLOG("    %s", ShowType(t0));
@@ -6895,6 +6905,7 @@ type_check_x(Ty *ty, Type *t0, Type *t1, bool need)
                 TLOG("    %s", ShowType(t0));
                 TLOG("    %s", ShowType(t1));
         }
+
         return ok;
 }
 
