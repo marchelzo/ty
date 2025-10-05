@@ -232,6 +232,7 @@ static struct {
   { .module = "os",         .name = "POLLHUP",                  .value = INT(POLLHUP)                            },
   { .module = "os",         .name = "POLLERR",                  .value = INT(POLLERR)                            },
   { .module = "os",         .name = "POLLNVAL",                 .value = INT(POLLNVAL)                           },
+  { .module = "os",         .name = "O_ACCMODE",                .value = INT(O_ACCMODE)                          },
   { .module = "os",         .name = "O_RDWR",                   .value = INT(O_RDWR)                             },
   { .module = "os",         .name = "O_CREAT",                  .value = INT(O_CREAT)                            },
   { .module = "os",         .name = "O_RDONLY",                 .value = INT(O_RDONLY)                           },

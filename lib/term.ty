@@ -307,8 +307,10 @@ let function-keys = %{
 function title(s) { s[0].upper() + s[1;].lower() }
 
 function nice-key-name(ev) {
+    let mods = ev.mods
+
     let out = match ev {
-        {_key: $k, *} => do { ev.mods &= ~mod.SHIFT; chr(k) },
+        {_key: $k, *} => do { mods &= ~mod.SHIFT; chr(k) },
         {key: k :: String, *} => k.split('_').map(title).str(),
         {key: k :: Int,    *} => chr(k)
     }
@@ -322,10 +324,10 @@ function nice-key-name(ev) {
         _            => out
     }
 
-    if ev.mods & mod.SHIFT { out = "S-{out}"   }
-    if ev.mods & mod.ALT   { out = "M-{out}"   }
-    if ev.mods & mod.CTRL  { out = "C-{out}"   }
-    if ev.mods & mod.SUPER { out = "Cmd-{out}" }
+    if mods & mod.SHIFT { out = "S-{out}"   }
+    if mods & mod.ALT   { out = "M-{out}"   }
+    if mods & mod.CTRL  { out = "C-{out}"   }
+    if mods & mod.SUPER { out = "Cmd-{out}" }
 
     return out
 }
@@ -417,10 +419,10 @@ function yield-basic(ch: String, extra-mods=0) {
     }
 
     if c < 256 {
-        let ev = event.Key({
+        yield event.Key({
             key:  key ?? c,
             _key: c,
-            _base: nil,
+            base: nil,
             mods: (mods ?? 0) | extra-mods,
             event: 1,
             text: [c]
@@ -771,33 +773,5 @@ class TermIO {
 
     __drop__() {
         stop()
-    }
-}
-
-pub fn __test() {
-    let tio = TermIO()
-
-    tio.start()
-    on-exit(tio.stop)
-
-    while let $ev = tio.next-event() {
-        match ev {
-            event.Text(s) => {
-                if s == 'z' { break }
-            },
-
-            event.Key(k) => {
-                if k.key == ord('z') { break }
-                if k.event in [1, 2] {
-                    print(nice-key-name(k))
-                }
-            },
-
-            event.MouseDown(mev) => {
-                pp(mev)
-            }
-            
-            _ => ()
-        }
     }
 }
