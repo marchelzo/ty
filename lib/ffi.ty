@@ -1033,13 +1033,18 @@ pub fn open(
 ) -> Ptr[Any] | nil {
     fn try-open(lib: String) {
         for version in versions ?? [nil] {
+            let name = match version {
 #|if __apple__
-            let name = version ? "lib{lib}.{version}.dylib" : "lib{lib}.dylib"
+                $version => "{lib}.{version}.dylib",
+                _        => "{lib}.dylib"
 #|else if __windows__
-            let name = version ? "{lib}-{version}.dll" : "{lib}.dll"
+                $version => "{lib}-{version}.dll",
+                _        => "{lib}.dll"
 #|else
-            let name = version ? "lib{lib}.so.{version}" : "lib{lib}.so"
+                $version => "{lib}.so.{version}",
+                _        => "{lib}.so"
 #|]
+            }
             if let $handle = c.dlopen(name) {
                 return handle
             }
@@ -1049,6 +1054,11 @@ pub fn open(
     let libs = (lib :: String) ? [lib] : lib
 
     for lib in libs {
+#|if !__windows__
+        if ('/' not in lib) && !lib.starts?('lib') {
+            lib = "lib{lib}"
+        }
+#|]
         if let $handle = try-open(lib) {
             return handle
         }
