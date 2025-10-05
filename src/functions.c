@@ -5047,6 +5047,7 @@ BUILTIN_FUNCTION(os_fcntl)
         }
 
         switch (op) {
+        default:
         case F_DUPFD:
         case F_SETFD:
         case F_SETFL:
