@@ -164,7 +164,7 @@ let spng_ihdr = c.struct(
     c.u8   // interlace method
 )
 
-let $LIB = c.dlopen('libspng.so') ?? c.dlopen('libspng.dylib')
+let $LIB = c.open('spng')
 
 function w(*args) {
   c.wrap(LIB, *args)

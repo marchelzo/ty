@@ -1,6 +1,6 @@
 import ffi as c (C!)
 
-if not let $lib = c.dlopen('libsodium.so') ?? c.dlopen('libsodium.dylib') {
+if not let $lib = c.open('libsodium') {
    throw "failed to load libsodium"
 }
 

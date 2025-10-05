@@ -2,7 +2,7 @@ import ffi as c (C!)
 import ptr
 import help (pretty)
 
-if not let $libxml = c.dlopen('libxml2.so') ?? c.dlopen('libxml2.dylib') ?? c.dlopen('libxml2-2.dll') {
+if not let $libxml = c.open(['xml2', 'xml2-2']) {
     throw "Failed to load libxml2"
 }
 
@@ -1881,6 +1881,8 @@ C! pub libxml fn {
         xmlSchemaValidityWarningFunc warn,
         void *ctx
     );
+
+    xmlChar *xmlEncodeEntitiesReentrant(xmlDoc *doc, const xmlChar *input);
 }
 
 pub xmlFree = c::wrap(libxml, 'xmlFree', c.void, c.ptr, func-ptr?=true)
@@ -2266,7 +2268,6 @@ pub fn xml(parts) {
 
     doc
 }
-
 
 #|if 0
 pub fn test(node: XMLNode) -> Document {

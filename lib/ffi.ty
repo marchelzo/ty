@@ -53,6 +53,7 @@ pub fn getCif(rt, *aTypes, nFixed: ?Int) {
 
 pub fn wrap(lib, name: String, rType: _ = nil, *aTypes: _, func-ptr?: Bool = false) -> _ {
     if not let $fp = c.dlsym(name, lib) {
+
         throw Err("Failed to load symbol '{name}'")
     }
 
@@ -1026,3 +1027,45 @@ pub fn cstr(s: String) -> Ptr[Int] {
     return p
 }
 
+pub fn open(
+    lib: String | [String],
+    versions: ?[String | Int]
+) -> Ptr[Any] | nil {
+    fn try-open(lib: String) {
+        for version in versions ?? [nil] {
+#|if __apple__
+            let name = version ? "lib{lib}.{version}.dylib" : "lib{lib}.dylib"
+#|else if __windows__
+            let name = version ? "{lib}-{version}.dll" : "{lib}.dll"
+#|else
+            let name = version ? "lib{lib}.so.{version}" : "lib{lib}.so"
+#|]
+            if let $handle = c.dlopen(name) {
+                return handle
+            }
+        }
+    }
+
+    let libs = (lib :: String) ? [lib] : lib
+
+    for lib in libs {
+        if let $handle = try-open(lib) {
+            return handle
+        }
+#|if __apple__
+        if !lib.starts?('/') {
+            let dirs = [
+                '/usr/lib',
+                '/usr/local/lib',
+                '/opt/homebrew/lib',
+                '/opt/local/lib'
+            ]
+            for dir in dirs {
+                if let $handle = try-open("{dir}/{lib}") {
+                    return handle
+                }
+            }
+        }
+#|]
+    }
+}
