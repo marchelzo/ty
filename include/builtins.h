@@ -109,6 +109,7 @@ static struct {
   { .module = "os",         .name = "rename",                   .value = BUILTIN(builtin_os_rename)              },
   { .module = "os",         .name = "symlink",                  .value = BUILTIN(builtin_os_symlink)             },
   { .module = "os",         .name = "link",                     .value = BUILTIN(builtin_os_link)                },
+  { .module = "os",         .name = "linkat",                   .value = BUILTIN(builtin_os_linkat)              },
   { .module = "os",         .name = "getcwd",                   .value = BUILTIN(builtin_os_getcwd)              },
   { .module = "os",         .name = "chmod",                    .value = BUILTIN(builtin_os_chmod)               },
   { .module = "os",         .name = "chown",                    .value = BUILTIN(builtin_os_chown)               },
@@ -220,6 +221,7 @@ static struct {
   { .module = "os",         .name = "EPOLLOUT",                 .value = INT(EPOLLOUT)                           },
   { .module = "os",         .name = "EPOLLHUP",                 .value = INT(EPOLLHUP)                           },
 #endif
+
   { .module = "os",         .name = "recvfrom",                 .value = BUILTIN(builtin_os_recvfrom)            },
   { .module = "os",         .name = "sendto",                   .value = BUILTIN(builtin_os_sendto)              },
   { .module = "os",         .name = "connect",                  .value = BUILTIN(builtin_os_connect)             },
@@ -240,6 +242,27 @@ static struct {
   { .module = "os",         .name = "O_ASYNC",                  .value = INT(O_ASYNC)                            },
   { .module = "os",         .name = "O_DIRECTORY",              .value = INT(O_DIRECTORY)                        },
   { .module = "os",         .name = "O_EXCL",                   .value = INT(O_EXCL)                             },
+#ifdef O_TMPFILE
+  { .module = "os",         .name = "O_TMPFILE",                .value = INT(O_TMPFILE)                          },
+#endif
+
+#if defined(__APPLE__) || defined(__linux__)
+  { .module = "os",         .name = "AT_FDCWD",                 .value = INT(AT_FDCWD)                          },
+  { .module = "os",         .name = "AT_EACCESS",               .value = INT(AT_EACCESS)                        },
+  { .module = "os",         .name = "AT_REMOVEDIR",             .value = INT(AT_REMOVEDIR)                      },
+  { .module = "os",         .name = "AT_SYMLINK_FOLLOW",        .value = INT(AT_SYMLINK_FOLLOW)                 },
+  { .module = "os",         .name = "AT_SYMLINK_NOFOLLOW",      .value = INT(AT_SYMLINK_NOFOLLOW)               },
+#endif
+
+#if defined(__linux__)
+  { .module = "os",         .name = "AT_STATX_SYNC_AS_STAT",    .value = INT(AT_STATX_SYNC_AS_STAT)             },
+  { .module = "os",         .name = "AT_STATX_FORCE_SYNC",      .value = INT(AT_STATX_FORCE_SYNC)               },
+  { .module = "os",         .name = "AT_STATX_DONT_SYNC",       .value = INT(AT_STATX_DONT_SYNC)                },
+  { .module = "os",         .name = "AT_RECURSIVE",             .value = INT(AT_RECURSIVE)                      },
+  { .module = "os",         .name = "AT_EMPTY_PATH",            .value = INT(AT_EMPTY_PATH)                     },
+  { .module = "os",         .name = "AT_NO_AUTOMOUNT",          .value = INT(AT_NO_AUTOMOUNT)                   },
+#endif
+
 #ifdef WNOHANG
   { .module = "os",         .name = "WNOHANG",                  .value = INT(WNOHANG)                            },
 #endif

@@ -2071,7 +2071,7 @@ BUILTIN_FUNCTION(os_umask)
 
 BUILTIN_FUNCTION(os_open)
 {
-        ASSERT_ARGC_2("os.open()", 2, 3);
+        ASSERT_ARGC("os.open()", 2, 3);
 
         Value path = ARG(0);
         if (path.type != VALUE_STRING)
@@ -2082,20 +2082,22 @@ BUILTIN_FUNCTION(os_open)
         vvPn(B, path.str, path.bytes);
         vvP(B, '\0');
 
-        Value flags = ARG(1);
-        if (flags.type != VALUE_INTEGER)
-                zP("the second argument to os.open() must be an integer (flags)");
-
+        int flags = INT_ARG(1);
         int fd;
 
-        if (flags.integer & O_CREAT) {
-                if (argc != 3)
-                        zP("os.open() called with O_CREAT but no third argument");
-                if (ARG(2).type != VALUE_INTEGER)
-                        zP("the third argument to os.open() must be an integer");
-                fd = open(B.items, flags.integer, (mode_t) ARG(2).integer);
+#ifdef __linux__
+        bool pass_mode = flags & (O_CREAT | O_TMPFILE);
+#else
+        bool pass_mode = flags & O_CREAT;
+#endif
+
+        if (pass_mode) {
+                if (argc != 3) {
+                        zP("os.open() called with O_CREAT or O_TMPFILE but no mode");
+                }
+                fd = open(vv(B), flags, (mode_t)INT_ARG(2));
         } else {
-                fd = open(B.items, flags.integer);
+                fd = open(vv(B), flags);
         }
 
 
@@ -2449,6 +2451,36 @@ BUILTIN_FUNCTION(os_link)
         return INTEGER(!CreateHardLinkA(c_new, c_new, NULL));
 #else
         return INTEGER(link(c_old, c_new));
+#endif
+}
+
+BUILTIN_FUNCTION(os_linkat)
+{
+#ifdef _WIN32
+        NOT_ON_WINDOWS("os.linkat()");
+#else
+        ASSERT_ARGC("os.linkat()", 4, 5);
+
+        int dirfd0 = INT_ARG(0);
+        Value path0 = ARGx(1, VALUE_STRING);
+
+        int dirfd1 = INT_ARG(2);
+        Value path1 = ARGx(3, VALUE_STRING);
+
+        int flags = 0;
+        if (argc == 5) {
+                flags = INT_ARG(4);
+        }
+
+        return INTEGER(
+                linkat(
+                        dirfd0,
+                        TY_TMP_C_STR_A(path0),
+                        dirfd1,
+                        TY_TMP_C_STR_B(path1),
+                        flags
+                )
+        );
 #endif
 }
 
