@@ -164,6 +164,7 @@ typedef struct compiler_state {
         statement_vector pending;
 
         bool based;
+        Type *expected_type;
 
         Expr *func;
         Expr *meth;
