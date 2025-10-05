@@ -116,8 +116,6 @@
   #define CASE(i) case INSTR_ ## i:
 #endif
 
-#define Inline __attribute__((always_inline)) inline
-
 #define MatchError do {                                          \
         top()->tags = tags_push(ty, top()->tags, TAG_MATCH_ERR); \
         top()->type |= VALUE_TAGGED;                             \
