@@ -6,6 +6,7 @@
 #include "functions.h"
 #include "gc.h"
 #include "mmmm.h"
+#include "ty.h"
 #include "util.h"
 #include "value.h"
 #include "vm.h"

@@ -396,29 +396,45 @@ static char *
         return str;
 }
 
-static int
-term_width(char const *s, int n)
+static isize
+term_width(void const *_s, isize n)
 {
         if (n == -1) {
-                n = strlen(s);
+                n = strlen(_s);
         }
 
-        int width = 0;
-        int ret;
-        int cp;
+        isize width = 0;
+        u8 const *s = _s;
+        bool zwj = false;
 
-        for (int i = 0; i < n;) {
-                if (s[i] == 0x1b) {
+        for (isize i = 0; i < n;) {
+                if (
+                        (i + 1 < n)
+                     && (s[i    ] == 0x1b)
+                     && (s[i + 1] == '[')
+                ) {
                         while (++i < n && s[i] != 'm') {
                                 ;
                         }
+
                         i += 1;
-                } else if ((ret = utf8proc_iterate((uint8_t const *)s + i, n - i, &cp)) > 0) {
-                        width += utf8proc_charwidth(cp);
-                        i += ret;
-                } else {
-                        i += 1;
+                        zwj = false;
+
+                        continue;
                 }
+
+                i32 cp;
+                isize ret = utf8proc_iterate(s + i, n - i, &cp);
+
+                if (ret <= 0) {
+                        i += 1;
+                        continue;
+                }
+
+                width += !zwj * utf8proc_charwidth(cp);
+                i += ret;
+
+                zwj = (cp == 0x200d);
         }
 
         return width;
