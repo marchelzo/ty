@@ -1,6 +1,16 @@
 import ffi as c (wrap, C!)
 
-if not let $curses = c.dlopen('libncursesw.so.5') ?? c.dlopen('libncursesw.so.6') ?? c.dlopen('libncurses.dylib') {
+if not let $curses = c.open(
+    [
+        'ncursesw',
+        'ncurses',
+        'pdcursesw',
+        'pdcurses',
+        'cursesw',
+        'curses'
+    ],
+    [nil, 5, 6]
+) {
 	throw 'Failed to load curses'
 }
 
