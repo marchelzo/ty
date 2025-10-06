@@ -2430,20 +2430,18 @@ prefix_with(Ty *ty)
                 Stmt *def = mkstmt(ty);
                 def->type = STATEMENT_DEFINITION;
                 def->pub = false;
-                def->value = mkxpr(METHOD_CALL);
-                def->value->method = mkxpr(IDENTIFIER);
-                def->value->method->identifier = "__enter__";
+                def->value = mkxpr(ENTER);
 
                 if (T0 == TOKEN_EQ) {
                         next();
                         def->target = definition_lvalue(ty, e);
-                        def->value->object = parse_expr(ty, 0);
+                        def->value->operand = parse_expr(ty, 0);
                 } else {
                         Expr *t = mkxpr(IDENTIFIER);
                         t->identifier = gensym();
                         t->module = NULL;
                         def->target = t;
-                        def->value->object = e;
+                        def->value->operand = e;
                 }
 
                 avP(defs, def);

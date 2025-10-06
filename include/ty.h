@@ -558,6 +558,7 @@ typedef struct {
         int count;
         int _def_;
         int _drop_;
+        int _enter_;
         int fmt;
         int _free_;
         int init;
@@ -869,6 +870,7 @@ extern usize TotalBytesAllocated;
         X(NOT),                   \
         X(QUESTION),              \
         X(COUNT),                 \
+        X(ENTER),                 \
         X(OPERATOR),              \
         X(PATCH_ENV),             \
         X(GET_TAG),               \

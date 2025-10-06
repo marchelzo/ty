@@ -280,6 +280,9 @@ type_wtf(Ty *ty, Expr const *e);
 Type *
 type_unary_hash_t(Ty *ty, Type const *t0);
 
+Type *
+type_enter(Ty *ty, Type const *t0);
+
 void
 unify(Ty *ty, Type **t0, Type *t1);
 

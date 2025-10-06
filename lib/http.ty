@@ -64,7 +64,7 @@ class HttpResponse {
     }
 
     json(x) {
-        body.push(json.encode(x))
+        body.push(json::encode(x))
         self.header('Content-Type', 'application/json')
     }
 
@@ -90,7 +90,7 @@ use HttpRequest = HttpMessage & {
     params: Dict[String, String | [String]]
 }
 
-use RequestHandler = (HttpRequest, HttpResponse) -> Int;
+use RequestHandler = {req: HttpRequest, rsp: HttpResponse, params: *_} -> Int;
 
 class HttpServer {
     __sock:     Int
@@ -194,7 +194,7 @@ class HttpServer {
                                 params.update(decodeQuery(query))
                             }
 
-                            match (req.headers['Content-Type'], req.body.str!()) {
+                            match (req.headers['Content-Type'], req.?body.str!()) {
                                 (/^multipart\/form-data/, $body) => {
                                     let form = %{}
                                     let offset = 0
@@ -233,7 +233,9 @@ class HttpServer {
 
                                 (/^application\/x-www-form-urlencoded/, $body) => {
                                     params.update(decodeQuery(body))
-                                }
+                                },
+
+                                _ => {}
                             }
 
                             if let $m = req.method and let (f, ps) = self.findHandler(m, url) {
