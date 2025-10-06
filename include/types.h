@@ -100,6 +100,7 @@ struct type {
                                 };
                                 struct {
                                         Type *_type;
+                                        Expr const *asrc;
                                         char const *name;
                                 };
                                 struct {
