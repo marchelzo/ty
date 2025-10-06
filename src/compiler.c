@@ -782,6 +782,79 @@ colorize_code(
         );
 }
 
+void
+colorize_code_multiline(
+        char const *expr_color,
+        char const *base_color,
+        Location const *start,
+        Location const *end,
+        byte_vector *buf
+)
+{
+        char const *ls = start->s, *le = end->s + strcspn(end->s, "\n");
+        char const *p, *q;
+        usize min = SIZE_MAX, indent, skip;
+        bool color = *base_color != '\0', hi = false;
+
+        while (ls[-1] != '\0' && ls[-1] != '\n') {
+                --ls;
+        }
+
+        for (p = ls; p <= le;) {
+                if (p > ls && p[-1] == '\n') {
+                        for (indent = 0, q = p; q < le && isspace(*q) && *q != '\n';) {
+                                ++indent, ++q;
+                        }
+                        if (q < le && *q != '\n' && indent < min) {
+                                min = indent;
+                        }
+                }
+                p += *p == '\n' ? 1 : strcspn(p, "\n");
+        }
+
+        for (indent = 0; ls[indent] && isspace(ls[indent]) && ls[indent] != '\n';) {
+                ++indent;
+        }
+        if (indent < min) {
+                min = indent;
+        }
+        if (min == SIZE_MAX) {
+                min = 0;
+        }
+
+        for (p = ls; p <= le;) {
+                if (p == ls || p[-1] == '\n') {
+                        for (skip = 0; skip < min && isspace(p[skip]) && p[skip] != '\n';) {
+                                ++skip;
+                        }
+                        p += skip;
+                }
+
+                if (p == start->s && !hi) {
+                        if (color) {
+                                dump(buf, "%s%s", TERM(1), expr_color);
+                        } else {
+                                dump(buf, "%s", expr_color);
+                        }
+                        hi = true;
+                }
+
+                if (p == end->s && hi) {
+                        if (color) {
+                                dump(buf, "%s%s", TERM(0), base_color);
+                        }
+                        hi = false;
+                }
+
+                xvP(*buf, *p);
+                ++p;
+        }
+
+        if (color && hi) {
+                dump(buf, "%s", TERM(0));
+        }
+}
+
 char *
 ContextString(Ty *ty)
 {
@@ -943,6 +1016,14 @@ show_expr(Expr const *e)
         return S2(buffer);
 }
 
+char *
+show_expr_full(Expr const *e)
+{
+        byte_vector buffer = {0};
+        colorize_code_multiline(TERM(93), TERM(0), &e->start, &e->end, &buffer);
+        return vv(buffer);
+}
+
 static void
 dump_source_of(Expr const *e, byte_vector *out)
 {
@@ -969,12 +1050,21 @@ ProposeMemberDefinition(Ty *ty, Location start, Location end, Expr const *o, cha
              && strcmp(CurrentModulePath(ty), QueryFile) == 0
         ) {
                 static Symbol sym;
+
+                sym = (Symbol) {
+                        .identifier = m,
+                        .loc = Nowhere,
+                        .mod = STATE.module,
+                        .doc = "",
+                        .type = NULL
+                };
+
+                Type *t0 = type_member_access_t(ty, o->_type, m, false);
                 Expr const *member = type_find_member(ty, o->_type, m);
-                char const *name;
-                char const *doc;
-                Type *t0;
+                char const *name = NULL;
+                char const *doc = NULL;
+
                 if (member != NULL) {
-                        t0 = type_member_access_t(ty, o->_type, m, false);
                         if (
                                 (member->type == EXPRESSION_FUNCTION)
                              || (member->type == EXPRESSION_MULTI_FUNCTION)
@@ -985,12 +1075,22 @@ ProposeMemberDefinition(Ty *ty, Location start, Location end, Expr const *o, cha
                                 } else {
                                         doc = member->symbol->doc;
                                 }
-                        } else if (member->symbol != NULL) {
+                        } else if (member->type == EXPRESSION_TUPLE) {
+                                for (int i = 0; i < vN(member->es); ++i) {
+                                        char const *name_i = v__(member->names, i);
+                                        if (name_i != NULL && strcmp(name_i, m) == 0) {
+                                                name = name_i;
+                                                member = v__(member->es, i);
+                                                doc = show_expr_full(member);
+                                                break;
+                                        }
+                                }
+                        } else if (
+                                (member->type == EXPRESSION_IDENTIFIER)
+                             && (member->symbol != NULL)
+                        ) {
                                 name = member->symbol->identifier;
                                 doc = member->symbol->doc;
-                        } else {
-                                name = NULL;
-                                doc = NULL;
                         }
                         sym = (Symbol) {
                                 .identifier = name,
@@ -999,6 +1099,9 @@ ProposeMemberDefinition(Ty *ty, Location start, Location end, Expr const *o, cha
                                 .doc = doc,
                                 .type = t0
                         };
+                        QueryResult = &sym;
+                } else if (t0 != NULL) {
+                        sym.type = t0;
                         QueryResult = &sym;
                 }
         }
@@ -15267,7 +15370,7 @@ CompilerFindDefinition(Ty *ty, Module *mod, i32 line, i32 col)
         QueryFile = mod->path;
 
         Stmt **prog = mod->prog;
-        for (int i = 0; prog[i] != NULL && QueryResult == NULL; ++i) {
+        for (int i = 0; (prog[i] != NULL) && (QueryResult == NULL); ++i) {
                 on_god(ty, prog[i]);
         }
 

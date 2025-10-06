@@ -37,43 +37,47 @@ function makePattern(route) {
 }
 
 class HttpResponse {
+    statusCode: Int
+    body:       Blob
+    headers:    Dict[String, String]
+
     init() {
-        @statusCode = HTTP_STATUS_OK
-        @body = Blob()
-        @headers = %{'Content-Type': 'text/html'}
+        statusCode = HTTP_STATUS_OK
+        body = Blob()
+        headers = %{'Content-Type': 'text/html'}
     }
 
     header(k, v) {
         if v == nil {
-            @headers[k]
+            headers[k]
         } else {
-            @headers[k] = "{v}"
+            headers[k] = "{v}"
         }
     }
 
     status(c) {
-        @statusCode = (c ?? @statusCode)
+        statusCode = (c ?? statusCode)
     }
 
     write(s) {
-        @body.push(s)
+        body.push(s)
     }
 
     json(x) {
-        @body.push(json.encode(x))
+        body.push(json.encode(x))
         self.header('Content-Type', 'application/json')
     }
 
     send(c) {
         let response = Blob([
-            "HTTP/1.1 {@statusCode} {statusName(@statusCode)}",
-            "Content-Length: {#@body}",
-            *["{k}: {v}" for k, v in @headers],
+            "HTTP/1.1 {statusCode} {statusName(statusCode)}",
+            "Content-Length: {#body}",
+            *["{k}: {v}" for k, v in headers],
             '',
             ''
         ].join('\r\n'))
 
-        response.push(@body)
+        response.push(body)
 
         ::write(c, response, all: true)
     }
@@ -138,20 +142,25 @@ class HttpServer {
 
     stop() { __stopping = true }
 
+    __install(method: String, route: String, f: RequestHandler) {
+        let (params, pattern) = makePattern(route)
+        __handlers[method].push((params, pattern, f))
+    }
+
     get(route, f) {
-        __handlers['GET'].push({*makePattern(route), f})
+        __install('GET', route, f)
     }
 
     post(route, f) {
-        __handlers['POST'].push({*makePattern(route), f})
+        __install('POST', route, f)
     }
 
     delete(route, f) {
-        __handlers['DELETE'].push({*makePattern(route), f})
+        __install('DELETE', route, f)
     }
 
     put(route, f) {
-        __handlers['PUT'].push({*makePattern(route), f})
+        __install('PUT', route, f)
     }
 
     run() {

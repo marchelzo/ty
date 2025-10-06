@@ -1400,6 +1400,37 @@ ExprTypeOr(Expr const *e, Type const *t0)
         return e->_type;
 }
 
+static Expr *
+FindTypeMember(Expr const *e, char const *name)
+{
+        Expr *m = NULL;
+
+        switch (e->type) {
+        case EXPRESSION_TUPLE:
+                for (int i = 0; i < vN(e->names); ++i) {
+                        if (
+                                (v__(e->names, i) != NULL)
+                             && (strcmp(v__(e->names, i), name) == 0)
+                        ) {
+                                return (Expr *)e;
+                        }
+                }
+                break;
+
+        case EXPRESSION_BIT_AND:
+                m = FindTypeMember(e->left, name);
+                if (m != NULL) {
+                        return m;
+                }
+                return FindTypeMember(e->right, name);
+
+        case EXPRESSION_IDENTIFIER:
+                return type_find_member(ty, type_resolve(ty, e), name);
+        }
+
+        return NULL;
+}
+
 inline static Type *
 ReturnType(Expr const *f)
 {
@@ -2650,6 +2681,7 @@ type_alias(Ty *ty, Symbol *var, Stmt const *def)
         v0(refs);
 
         var->type->name = def->class.name;
+        var->type->asrc = def->class.type;
         var->type->_type = MakeConcrete(ty, type_resolve(ty, def->class.type), &refs);
 
         for (int i = 0; i < vN(refs); ++i) {
@@ -8417,13 +8449,11 @@ MakeConcrete(Ty *ty, Type *t0, TypeVector *refs)
 Expr *
 type_find_member(Ty *ty, Type *t0, char const *name)
 {
-        if (t0 == NULL) {
-                return NULL;
-        }
-
         Expr *m = NULL;
 
-        switch (t0->type) {
+        t0 = ResolveVar(t0);
+
+        switch (TypeType(t0)) {
         case TYPE_OBJECT:
                 m = FindMethod(t0->class, name);
                 if (m == NULL) {
@@ -8436,6 +8466,10 @@ type_find_member(Ty *ty, Type *t0, char const *name)
 
         case TYPE_CLASS:
                 m = FindStatic(t0->class, name);
+                break;
+
+        case TYPE_ALIAS:
+                m = FindTypeMember(t0->asrc, name);
                 break;
         }
 

@@ -1,14 +1,6 @@
 import ffi as c (wrap)
 import os
 
-#|if __apple__
-let libName = 'libllhttp.dylib'
-#|else
-let libName = 'libllhttp.so'
-#|]
-
-let TY_NO_DBG = true
-
 let HTTP_BOTH      = 0
 let HTTP_REQUEST   = 1
 let HTTP_RESPONSE  = 2
@@ -196,8 +188,8 @@ let HTTP_STATUS_IDENTITY_PROVIDER_AUTHENTICATION_ERROR = 561
 let HTTP_STATUS_NETWORK_READ_TIMEOUT = 598
 let HTTP_STATUS_NETWORK_CONNECT_TIMEOUT = 599
 
-if not let $lib = c.dlopen(libName) {
-    throw "Failed to load {libName}"
+if not let $lib = c.open('llhttp') {
+    throw "failed to load llhttp shared library"
 }
 
 let llhttp_settings_t = c.struct(
@@ -304,17 +296,14 @@ let llhttp_content_length = parser -> do {
 }
 
 let onMessageComplete = (parser) -> do {
-    print("Message complete")
     return 0
 }
 
 let onMessageBegin = (parser) -> do {
-    print("Message begin")
     return 0
 }
 
 let printData = (parser, data, len) -> do {
-    print("Data = '{c.as_str(data, len)}'")
     return 0
 }
 
