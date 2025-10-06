@@ -43,11 +43,10 @@ let init = {
 }
 
 let err-fd = open('tyls.err', O_WRONLY | O_TRUNC | O_CREAT, 0644)
-dup2(err-fd, 2)
 
 let TY_LS_CMD = getenv('TY_LS_CMD').words() ?? ['tyls']
 
-let tyls = os.spawn(TY_LS_CMD, stdin=SPAWN_PIPE, stdout=SPAWN_PIPE)
+let tyls = os.spawn(TY_LS_CMD, stdin=SPAWN_PIPE, stdout=SPAWN_PIPE, stderr=err-fd)
 critical!(tyls)
 
 //let responses = io.open(tyls.stdout, 'r', buffering=io.NBF)
@@ -231,7 +230,7 @@ fn go() {
                     uri: file.match?(/^\/dev\//) ? "file://{path}" : "file://{realpath(file)}",
                     range: {
                         start: { line: line, character: col },
-                        end:   { line: line, character: col + 1 }
+                        end:   { line: line, character: col }
                     }
                 },
 
