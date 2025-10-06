@@ -237,6 +237,7 @@ typedef struct class_definition ClassDefinition;
         X(PREFIX_DEC),                                                                \
         X(POSTFIX_INC),                                                               \
         X(POSTFIX_DEC),                                                               \
+        X(ENTER),                                                                     \
         X(PTR),                                                                       \
         X(EVAL),                                                                      \
         X(IFDEF),                                                                     \

@@ -8792,6 +8792,16 @@ type_unary_op(Ty *ty, Expr const *e)
 }
 
 Type *
+type_enter(Ty *ty, Type const *t0)
+{
+        xDDD();
+
+        Type *t1 = type_method_call_name(ty, (Type *)t0, M_NAME(NAMES._enter_));
+
+        return (t1 == NULL) ? (Type *)t0 : t1;
+}
+
+Type *
 type_wtf(Ty *ty, Expr const *e)
 {
         xDDD();

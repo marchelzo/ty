@@ -4738,6 +4738,14 @@ AssignGlobal:
                                 vmC(&t->defer.items[i], 0);
                         }
                         break;
+                CASE(ENTER)
+                        z = ClassOf(top());
+                        vp = class_lookup_method_i(ty, z, NAMES._enter_);
+                        if (vp != NULL) {
+                                v = pop();
+                                call(ty, vp, &v, 0, 0, false);
+                        }
+                        break;
                 CASE(ENSURE_LEN)
                         READJUMP(jump);
                         READVALUE(i);
@@ -6145,6 +6153,7 @@ vm_init(Ty *ty, int ac, char **av)
         NAMES.count            = M_ID("__count__");
         NAMES._def_            = M_ID("__def__");
         NAMES._drop_           = M_ID("__drop__");
+        NAMES._enter_          = M_ID("__enter__");
         NAMES.fmt              = M_ID("__fmt__");
         NAMES._free_           = M_ID("__free__");
         NAMES.init             = M_ID("init");
@@ -7462,6 +7471,7 @@ StepInstruction(char const *ip)
                 SKIPVALUE(n);
                 break;
         CASE(DROP)
+        CASE(ENTER)
                 break;
         CASE(PUSH_DROP_GROUP)
                 break;

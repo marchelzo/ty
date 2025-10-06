@@ -426,7 +426,7 @@ class HttpParser {
     }
 
     onMessageComplete(parser) {
-        let body = (#__buf == 0) ?: __buf
+        let body = (#__buf > 0) ?: __buf
         if body {
             __buf = Blob()
         }
@@ -455,6 +455,7 @@ class HttpParser {
     }
 
     push(chunk) {
+        dbg(chunk.str())
         __chunk = chunk
         __err = llhttp_execute(__ctx, chunk, chunk.size())
     }

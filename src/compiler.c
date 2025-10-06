@@ -3455,6 +3455,7 @@ TryResolveExpr(Ty *ty, Scope *scope, Expr *e)
                 break;
 
         case EXPRESSION_EVAL:
+        case EXPRESSION_ENTER:
         case EXPRESSION_PREFIX_HASH:
         case EXPRESSION_PREFIX_BANG:
         case EXPRESSION_PREFIX_QUESTION:
@@ -3896,6 +3897,10 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                 break;
         case EXPRESSION_TYPE_OF:
                 symbolize_expression(ty, scope, e->operand);
+                break;
+        case EXPRESSION_ENTER:
+                symbolize_expression(ty, scope, e->operand);
+                e->_type = type_enter(ty, e->operand->_type);
                 break;
         case EXPRESSION_CONDITIONAL:
                 subscope = scope_new(ty, "(?:then)", scope, false);
@@ -8674,6 +8679,11 @@ emit_expr(Ty *ty, Expr const *e, bool need_loc)
         case EXPRESSION_PREFIX_HASH:
                 EE(e->operand);
                 INSN(COUNT);
+                break;
+
+        case EXPRESSION_ENTER:
+                EE(e->operand);
+                INSN(ENTER);
                 break;
 
         case EXPRESSION_PREFIX_QUESTION:
@@ -14739,6 +14749,7 @@ DumpProgram(
                         break;
                 }
                 CASE(DROP)
+                CASE(ENTER)
                         break;
                 CASE(PUSH_DROP_GROUP)
                         break;
