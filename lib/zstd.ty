@@ -1,0 +1,104 @@
+import ffi as c (C!)
+
+if not let $zstd = c.open('zstd') {
+    throw 'failed to open zstd library'
+}
+
+const size_t = c.u64
+
+C! zstd fn {
+    int ZSTD_isError(size_t code);
+    const char* ZSTD_getErrorName(size_t code);
+
+    size_t ZSTD_compress(
+        void* dst,
+        size_t dstCapacity,
+        const void* src,
+        size_t srcSize,
+        int compressionLevel
+    );
+
+    size_t ZSTD_decompress(
+        void* dst,
+        size_t dstCapacity,
+        const void* src,
+        size_t compressedSize
+    );
+
+    size_t ZSTD_compressBound(size_t srcSize);
+
+    unsigned ZSTD_maxCLevel(void);
+
+    size_t ZSTD_versionNumber(void);
+    const char* ZSTD_versionString(void);
+
+    ZSTD_CCtx* ZSTD_createCCtx(void);
+    size_t ZSTD_freeCCtx(ZSTD_CCtx* cctx);
+
+    ZSTD_DCtx* ZSTD_createDCtx(void);
+    size_t ZSTD_freeDCtx(ZSTD_DCtx* dctx);
+
+    size_t ZSTD_compressCCtx(
+        ZSTD_CCtx* cctx,
+        void* dst,
+        size_t dstCapacity,
+        const void* src,
+        size_t srcSize,
+        int compressionLevel
+    );
+
+    size_t ZSTD_decompressDCtx(
+        ZSTD_DCtx* dctx,
+        void* dst,
+        size_t dstCapacity,
+        const void* src,
+        size_t compressedSize
+    );
+}
+
+pub fn compress(data: String | Blob, level: Int = 3) -> Blob {
+    let bound = ZSTD_compressBound(data.size())
+
+    let buf = c.alloc(bound)
+    defer c.free(buf)
+
+    let size = ZSTD_compress(
+        buf,
+        bound,
+        data,
+        data.size(),
+        level
+    )
+
+    if ZSTD_isError(size) != 0 {
+        let msg = ZSTD_getErrorName(size)
+        throw "ZSTD_compress error: {msg}"
+    }
+
+    let out = Blob()
+    out.push(buf, size)
+
+    return out
+}
+
+pub fn decompress(data: String | Blob, originalSize: Int) -> Blob {
+    let buf = c.alloc(originalSize)
+    defer c.free(buf)
+
+    let size = ZSTD_decompress(
+        buf,
+        originalSize,
+        data,
+        data.size()
+    )
+
+    if ZSTD_isError(size) != 0 {
+        let msg = ZSTD_getErrorName(size)
+        throw "ZSTD_decompress error: {msg}"
+    }
+
+    let out = Blob()
+    out.push(buf, size)
+
+    return out
+}
