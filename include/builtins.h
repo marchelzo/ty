@@ -247,6 +247,20 @@ static struct {
   { .module = "os",         .name = "O_ASYNC",                  .value = INT(O_ASYNC)                            },
   { .module = "os",         .name = "O_DIRECTORY",              .value = INT(O_DIRECTORY)                        },
   { .module = "os",         .name = "O_EXCL",                   .value = INT(O_EXCL)                             },
+  { .module = "os",         .name = "O_NOFOLLOW",               .value = INT(O_NOFOLLOW)                         },
+  { .module = "os",         .name = "O_CLOEXEC",                .value = INT(O_CLOEXEC)                          },
+#ifdef O_NOCTTY
+  { .module = "os",         .name = "O_NOCTTY",                 .value = INT(O_NOCTTY)                           },
+#endif
+#ifdef O_DSYNC
+  { .module = "os",         .name = "O_DSYNC",                  .value = INT(O_DSYNC)                            },
+#endif
+#ifdef O_RSYNC
+  { .module = "os",         .name = "O_RSYNC",                  .value = INT(O_RSYNC)                            },
+#endif
+#ifdef O_SYNC
+  { .module = "os",         .name = "O_SYNC",                   .value = INT(O_SYNC)                             },
+#endif
 #ifdef O_TMPFILE
   { .module = "os",         .name = "O_TMPFILE",                .value = INT(O_TMPFILE)                          },
 #endif

@@ -249,7 +249,7 @@ pub fn parse(text: String, start: _ = {}) -> String {
 class Text {
     __text: String
     __chalk: Chalk
-    __fmt: ?String
+    __fmt: String | nil
 
     init(text, chalk, fmt=nil) {
         __text = text
@@ -269,13 +269,17 @@ class Text {
     }
 
     src -> String { __text }
-    
+
     plain -> String {
         __chalk.render(__text, plain=true)
     }
 
     +(other: Text) -> Text {
         cast(__chalk"{self}{other}")
+    }
+
+    spans -> [(TermStyle, String)] {
+        __chalk.spans(__text)
     }
 
     style-span(
@@ -428,15 +432,17 @@ fn trans(a: TermStyle, b: TermStyle) -> String {
 }
 
 class Chalk {
+    __styles: Dict[String, TermStyle]
+
     init() {
-        member(self, 'styles', %{**styles, *: parse-style(it, self)})
+        __styles = %{**styles, *: parse-style(it, self)}
     }
 
     render(text: String, plain: Bool = false) {
         let parts = text.split(/(?<=^|[^\\])\[([\/%])?([^]]*)\]/v)
 
         let stack: _ = [[{}]]
-        let style = {}
+        let style: TermStyle = {}
         let out = Blob()
         let ostack = []
 
@@ -451,7 +457,7 @@ class Chalk {
 #|]
 
         fn get-style(name) {
-            match @styles[name] {
+            match __styles[name] {
                 $style => style,
                 _      => throw ChalkError({
                     msg: 'unknown style',
@@ -476,10 +482,10 @@ class Chalk {
                     => true,
                 'underline' and style.matches?({underline, ?uc})
                     => true,
-                _ => style == @styles[stop]
+                _ => style == __styles[stop]
             }
         }
-    
+
         for match parts {
             m: RegexMatch => {
                 continue if plain
@@ -533,6 +539,82 @@ class Chalk {
         out.str!().sub(/\\./, %{'\\\\': '\\', '\\[': '[', *: it[1]}[])
     }
 
+    spans(text: String) -> [(TermStyle, String)] {
+        let parts = text.split(/(?<=^|[^\\])\[([\/%])?([^]]*)\]/v)
+
+        let spans: [(TermStyle, String)] = []
+
+        let stack: _ = [[{}]]
+        let style: TermStyle = {}
+
+        fn update() {
+            style = stack.flat().fold({}, \{*_, *_})
+        }
+
+        fn get-style(name) {
+            match __styles[name] {
+                $style => style,
+                _      => throw ChalkError({
+                    msg: 'unknown style',
+                    src: text,
+                    style: name
+                })
+            }
+        }
+
+        fn stops(stop, style) {
+            match stop {
+                'fg' and style.matches?({fg, ?bright})
+                    => true,
+                'bg' and style.matches?({bg, ?bg-bright})
+                    => true,
+                'uc' and style.matches?({uc, ?underline})
+                    => true,
+                'underline' and style.matches?({underline, ?uc})
+                    => true,
+                _ => style == __styles[stop]
+            }
+        }
+
+        for match parts {
+            m: RegexMatch => {
+                match m.captures {
+                    [nil, &words $~> styles] => {
+                        stack.push(styles.map(get-style))
+                        update()
+                    },
+
+                    ['%', fmt] => {
+                        throw 'TODO'
+                    },
+
+                    [_, &words $~> []] => {
+                        match stack.pop() {
+                            {fmt} => (),
+                            _     => update()
+                        }
+                    },
+
+                    [_, &words $~> styles] => {
+                        for style in styles {
+                            for entry in stack[;;-1] if entry :: Array {
+                                if let $ii = entry.searchr-by(\style `stops` _) {
+                                    entry.pop(ii)
+                                }
+                            }
+                        }
+                        stack.filter!(\#_ > 0)
+                        update()
+                    }
+                }
+            },
+
+            s => spans.push((style, s))
+        }
+
+        spans
+    }
+
     print(*xs, %kwargs) {
         ::print(
             *xs.map(match { x: Text => self.render(x.text), x => x }),
@@ -541,11 +623,11 @@ class Chalk {
     }
 
     __missing__=(name, style) {
-        @styles[name] = style.words().map(@styles[]).fold(\{*_, *_})
+        __styles[name] = style.words().map(__styles[]).fold(\{*_, *_})
     }
 
     __missing__(name) {
-        @styles[name]
+        __styles[name]
     }
 
     __call__(parts: _) -> Text {
@@ -562,7 +644,7 @@ class Chalk {
     }
 
     [](style: Any) -> (Any -> Text) {
-        return text -> self"[{style}]{text}[/]"
+        x -> self"[{style}]{x}[/]"
     }
 
     plain(text: Text | String) {

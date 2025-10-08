@@ -1,0 +1,578 @@
+import errno
+import io
+import os
+import time
+
+tag PathError;
+
+#|if __windows__
+pub const sep = '\\'
+#|else
+pub const sep = '/'
+#|]
+
+pub class Path {
+    __drv: String
+    __root: String
+    __parts: Array[String]
+
+    init(path: String | Path = '.') {
+        match path {
+            p: Path => {
+                __drv = p.__drv
+                __root = p.__root
+                __parts = p.__parts
+            },
+            s => {
+                let (drv, root, parts) = Path.parse(s)
+                __drv = drv
+                __root = root
+                __parts = parts
+            }
+        }
+    }
+
+    static parse(path: String) -> (String, String, [String]) {
+#|if __windows__
+        let sep = '\\'
+        let altsep = '/'
+        
+        let path = path.sub(/\//, '\\')
+        
+        let (drv, root, rel) = match path {
+            /^([A-Za-z]:)([\\\/]?)(.*)$/ => ($1, $2, $3),
+            /^(\\\\[^\\]+\\[^\\]+)([\\\/]?)(.*)$/ => ($1, $2, $3),
+            /^([\\\/])(.*)$/ => ('', $1, $2),
+            _ => ('', '', path)
+        }
+#|else
+        let sep = '/'
+        let (drv, root, rel) = match path {
+            /^(\/)(.*)$/ => ('', $1, $2),
+            _ => ('', '', path)
+        }
+#|]
+        
+        let parts = rel.split(sep).remove!('').remove!('.')
+        
+        (drv, root, parts)
+    }
+
+    __str__() -> String {
+        if __drv || __root {
+            "{__drv}{__root}{__parts.join(sep)}"
+        } else if __parts {
+            __parts.join(sep)
+        } else {
+            '.'
+        }
+    }
+
+    ==(other: Path | String) -> Bool {
+        match other {
+            p: Path => (__drv == p.__drv)
+                    && (__root == p.__root)
+                    && (__parts == p.__parts),
+
+            s: String => self == Path(s),
+
+            _         => false
+        }
+    }
+
+    __hash__() -> Int {
+        hash((__drv, __root, __parts))
+    }
+
+    /(other: String | Path) -> Path {
+        match other {
+            p: Path => {
+                if p.__drv || p.__root {
+                    return p
+                }
+                
+                let result = Path('')
+                result.__drv = __drv
+                result.__root = __root
+                result.__parts = [*__parts, *p.__parts]
+
+                result
+            },
+            s: String => self / Path(s)
+        }
+    }
+
+    parent -> Path {
+        if !__parts {
+            return self
+        }
+        
+        let result = Path('')
+        result.__drv = __drv
+        result.__root = __root
+        result.__parts = __parts[;-1]
+
+        result
+    }
+
+    name -> String {
+        __parts ? __parts[-1] : ''
+    }
+
+    stem -> String {
+        name.comb(/(?<!^)\.[^.]+$/)
+    }
+
+    suffix -> String {
+        name.match!(/(?<!^)\.[^.]+$/v).?s ?? ''
+    }
+
+    suffixes -> [String] {
+        [".{it}" for name.split('.')[1;]]
+    }
+
+    with-name(name: String) -> Path {
+        if !__parts {
+            throw PathError({msg: 'path has no name', path: str(self)})
+        }
+        
+        if sep in name || name == '.' || !name {
+            throw PathError({msg: 'invalid name', name})
+        }
+        
+        let result = Path('')
+        result.__drv = __drv
+        result.__root = __root
+        result.__parts = [*__parts[;-1], name]
+
+        result
+    }
+
+    with-stem(stem: String) -> Path {
+        let suffix = self.suffix
+        if !suffix {
+            return self.with-name(stem)
+        } else if !stem {
+            throw PathError({msg: 'cannot set empty stem with non-empty suffix'})
+        } else {
+            return self.with-name("{stem}{suffix}")
+        }
+    }
+
+    with-suffix(suffix: String) -> Path {
+        let stem = self.stem
+        if !stem {
+            throw PathError({msg: 'cannot set suffix on path with empty stem'})
+        } else if suffix && !suffix.starts?('.') {
+            throw PathError({msg: 'invalid suffix', suffix})
+        } else {
+            return self.with-name("{stem}{suffix}")
+        }
+    }
+
+    absolute? -> Bool {
+#|if __windows__
+        __drv != '' || __root != ''
+#|else
+        __root != ''
+#|]
+    }
+
+    parts -> [String] {
+        if __drv || __root {
+            ["{__drv}{__root}", *__parts]
+        } else {
+            __parts
+        }
+    }
+
+    anchor -> String {
+        "{__drv}{__root}"
+    }
+
+    exists? -> Bool {
+        os.access("{self}", os.F_OK) == 0
+    }
+
+    file? -> Bool {
+        match os.stat(str(self)) {
+            {st_mode, *} => (st_mode & os.S_IFMT) == os.S_IFREG,
+            _ => false
+        }
+    }
+
+    dir? -> Bool {
+        match os.stat(str(self)) {
+            {st_mode, *} => (st_mode & os.S_IFMT) == os.S_IFDIR,
+            _ => false
+        }
+    }
+
+    symlink? -> Bool {
+        match os.lstat(str(self)) {
+            {st_mode, *} => (st_mode & os.S_IFMT) == os.S_IFLNK,
+            _ => false
+        }
+    }
+
+    absolute -> Path {
+        if self.absolute? {
+            self
+        } else {
+            Path.cwd() / self
+        }
+    }
+
+    resolve -> Path {
+        match os.realpath(str(self)) {
+            $p => Path(p),
+            _ => throw PathError({msg: 'failed to resolve', path: str(self)})
+        }
+    }
+
+    readlink -> Path {
+        match os.readlink(str(self)) {
+            $target => Path(target),
+            _ => throw PathError({msg: 'not a symlink', path: str(self)})
+        }
+    }
+
+    stat -> _ {
+        match os.stat(str(self)) {
+            $s => s,
+            _ => throw PathError({msg: 'stat failed', path: str(self)})
+        }
+    }
+
+    lstat -> _ {
+        match os.lstat(str(self)) {
+            $s => s,
+            _ => throw PathError({msg: 'lstat failed', path: str(self)})
+        }
+    }
+
+    read-text() -> String {
+        ::slurp("{self}")
+    }
+
+    read-bytes() -> Blob {
+        with f = io.open(str(self), 'r') {
+            f.blob()
+        }
+    }
+
+    write-text(text: String) {
+        with f = io.open(str(self), 'w') {
+            f.write(text)
+        }
+    }
+
+    write-bytes(data: Blob) {
+        with f = io.open(str(self), 'w') {
+            f.write(data)
+        }
+    }
+
+    mkdir(mode: Int = 0o777, parents: Bool = false, exist-ok: Bool = false) {
+        if parents {
+            let current = Path('')
+            current.__drv = __drv
+            current.__root = __root
+            current.__parts = []
+            
+            for part in __parts {
+                current.__parts.push(part)
+                let path-str = str(current)
+                
+                if !current.exists? {
+                    if os.mkdir(path-str, mode) == -1 && !exist-ok {
+                        throw PathError({msg: 'mkdir failed', path: path-str})
+                    }
+                }
+            }
+        } else {
+            let path-str = str(self)
+            if os.mkdir(path-str, mode) == -1 {
+                if !exist-ok || errno.get() != errno.EEXIST {
+                    throw PathError({msg: 'mkdir failed', path: path-str})
+                }
+            }
+        }
+    }
+
+    rmdir {
+        if os.rmdir(str(self)) == -1 {
+            throw PathError({msg: 'rmdir failed', path: str(self)})
+        }
+    }
+
+    unlink {
+        if os.unlink(str(self)) == -1 {
+            throw PathError({msg: 'unlink failed', path: str(self)})
+        }
+    }
+
+    rename(target: String | Path) -> Path {
+        let target-path = match target {
+            p: Path => p,
+            s => Path(s)
+        }
+        
+        if os.rename(str(self), str(target-path)) == -1 {
+            throw PathError({msg: 'rename failed', path: str(self)})
+        }
+
+        target-path
+    }
+
+    chmod(mode: Int) {
+        if os.chmod(str(self), mode) == -1 {
+            throw PathError({msg: 'chmod failed', path: str(self)})
+        }
+    }
+
+    touch(mode: Int = 0o666) {
+        let fd = os.open(str(self), os.O_CREAT | os.O_WRONLY, mode)
+        if fd == -1 {
+            throw PathError({
+                msg: 'touch failed',
+                why: errno.str(errno.get()),
+                path: str(self)
+            })
+        }
+        defer os.close(fd)
+        
+        let now = time.now()
+        if os.futimes(fd, now, now) == -1 {
+            throw PathError({msg: 'futimes failed', path: str(self)})
+        }
+    }
+
+    ls -> [Path] {
+        os.listdir(str(self)).map(\self / _)
+    }
+
+    copy(target: String | Path, follow-symlinks: Bool = true) -> Path {
+        let target-path = (target :: String) ? Path(target) : target
+        
+        fn copy-file(src: Path, dst: Path, follow-symlinks: Bool) {
+            let flags = if follow-symlinks { 0 } else { os.O_NOFOLLOW }
+
+            let src-fd = os.open(str(src), os.O_RDONLY | flags)
+            if src-fd == -1 {
+                throw PathError({msg: 'open source failed', path: str(src)})
+            }
+
+            defer os.close(src-fd)
+            
+            let dst-fd = os.open(str(dst), os.O_WRONLY | os.O_CREAT | os.O_TRUNC | flags, 0o666)
+            if dst-fd == -1 {
+                throw PathError({msg: 'open destination failed', path: str(dst)})
+            }
+
+            defer os.close(dst-fd)
+           
+            let buf = Blob()
+            while true {
+                let n = os.read(src-fd, buf, 8192)
+                if n == -1 {
+                    throw PathError({msg: 'read failed', path: str(src)})
+                } else if n == 0 {
+                    break
+                }
+                
+                let written = os.write(dst-fd, buf)
+                if written != n {
+                    throw PathError({msg: 'write failed', path: str(dst)})
+                }
+
+                buf.clear()
+            }
+        }
+
+        if self.dir? {
+            target-path.mkdir(parents=true, exist-ok=true)
+            for entry in self.ls {
+                entry.copy(target-path / entry.name, follow-symlinks)
+            }
+        } else if self.file? || (self.symlink? && follow-symlinks) {
+            copy-file(self, target-path, follow-symlinks)
+        } else if self.symlink? && !follow-symlinks {
+            let link-target = self.readlink()
+            if os.symlink(str(link-target), str(target-path)) == -1 {
+                throw PathError({msg: 'symlink failed', path: str(target-path)})
+            }
+        } else {
+            throw PathError({msg: 'source does not exist', path: str(self)})
+        }
+
+        target-path
+    }
+
+    rmtree(quiet: Bool = false) {
+        if self.dir? {
+            for entry in self.ls {
+                entry.rmtree
+            }
+            rmdir
+        } else if self.file? || self.symlink? {
+            unlink
+        } else if !quiet {
+            throw PathError({msg: 'path does not exist', path: str(self)})
+        }
+    }
+
+    walk* -> Generator[(Path, [String], [String])] {
+        for (dir, dirs, files) in os.walk(str(self)) {
+            yield (Path(dir), dirs, files)
+        }
+    }
+
+    match(pattern: String) -> Bool {
+        let regex = pattern
+            .sub(/\*\*\//, '.*/')
+            .sub(/\*/, '[^/]*')
+            .sub(/\?/, '[^/]')
+            .sub(/\./, '\\.')
+
+        str(self).matches?(/^{regex}$/)
+    }
+
+    glob(pattern: String) -> [Path] {
+        fn match-part(text: String, pattern: String) -> Bool {
+            let pcre = pattern
+                .sub(/\*/, '[^/]*')
+                .sub(/\?/, '[^/]')
+                .sub(/\./, '\\.')
+            text.match?(regex("^{pcre}$"))
+        }
+
+        fn glob-impl(base: Path, parts: [String]) -> [Path] {
+            if !#parts {
+                return [base]
+            }
+
+            let part = parts[0]
+            let rest = parts[1;]
+
+            if part == '**' {
+                let results = []
+                
+                if !#rest {
+                    results.push(base)
+                } else {
+                    results += glob-impl(base, rest)
+                }
+
+                if base.dir? {
+                    for entry in base.ls {
+                        if entry.dir? {
+                            results += glob-impl(entry, parts)
+                        }
+                    }
+                }
+
+                return results
+            }
+
+            let results = []
+
+            if !base.dir? {
+                return results
+            }
+
+            for entry in base.ls {
+                if match-part(entry.name, part) {
+                    if !#rest {
+                        results.push(entry)
+                    } else if entry.dir? {
+                        results += glob-impl(entry, rest)
+                    }
+                }
+            }
+
+            results
+        }
+
+        glob-impl(self, pattern.split(sep).remove!(''))
+    }
+
+    rglob(pattern: String) -> [Path] {
+        self.glob("**/{pattern}")
+    }
+
+    [](pattern: String) -> [Path] {
+        glob(pattern)
+    }
+
+    static cwd() -> Path {
+        Path(os.getcwd())
+    }
+
+    static home() -> Path {
+#|if __windows__
+        Path(getenv('USERPROFILE') ?? getenv('HOMEPATH') ?? '.')
+#|else
+        Path(getenv('HOME') ?? '.')
+#|]
+    }
+
+    mkdtemp(prefix: String = 'tmp') -> Path {
+        let name = "{prefix}-XXXXXX"
+        os.mkdtemp("{self / name}")
+    }
+
+    mktemp(prefix: String = 'tmp', suffix: String = '') -> Path {
+        let name = "{prefix}-XXXXXX{suffix}"
+
+        if not let (fd, path) = os.mktemp("{self / name}") {
+            throw PathError({
+                msg: 'mktemp failed',
+                path: str(self / name)
+            })
+        }
+        
+        os.close(fd)
+        
+        Path(path)
+    }
+
+    tempdir(prefix: String = 'tmp') -> TempDir {
+        TempDir(self, prefix)
+    }
+
+    static tempdir(prefix: String = 'tmp') -> TempDir {
+        Path('/tmp').tempdir(prefix)
+    }
+}
+
+class TempDir {
+    __location: Path
+    __prefix: String
+    __path: Path | nil
+
+    init(location: Path, prefix: String = 'tmp') {
+        __location = location
+        __prefix = prefix
+        __path = nil
+    }
+
+    __str__() -> String {
+        "{__path}"
+    }
+
+    __enter__() -> Path {
+        __path = __location.mkdtemp(__prefix)
+    }
+
+    __drop__() {
+        __path.rmtree(quiet=true)
+    }
+}
+
+pub fn path(p: String | Path = '.') -> Path {
+    Path(p)
+}
+
+pub cwd = Path.cwd
+pub home = Path.home

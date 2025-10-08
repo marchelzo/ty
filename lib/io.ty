@@ -183,7 +183,7 @@ pub function open(
     };
 
     let fd = if flags & os.O_CREAT {
-        os.open(path, flags, 0666)
+        os.open(path, flags, 0o666)
     } else {
         os.open(path, flags)
     }

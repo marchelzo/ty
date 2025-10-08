@@ -197,12 +197,12 @@ doprint(Ty *ty, int argc, Value *kwargs, FILE *f)
         }
 
         Value *flush = NAMED("flush");
-        bool do_flush = flush != NULL && value_truthy(ty, flush);
+        bool do_flush = (flush != NULL) && value_truthy(ty, flush);
 
         lGv(true);
         flockfile(f);
 
-        intmax_t written = 0;
+        imax written = 0;
 
         for (int i = 0; i < argc; ++i) {
                 Value *v = &ARG(i);
@@ -232,14 +232,17 @@ doprint(Ty *ty, int argc, Value *kwargs, FILE *f)
                         s = (char const *)v->str;
                         n = v->bytes;
                         break;
+
                 case VALUE_BLOB:
                         s = (char const *)v->blob->items;
                         n = v->blob->count;
                         break;
+
                 case VALUE_PTR:
                         s = v->ptr;
                         n = strlen(v->ptr);
                         break;
+
                 default:
                         lTk();
                         s = value_show_color(ty, &ARG(i));
@@ -2167,7 +2170,7 @@ BUILTIN_FUNCTION(os_mkdtemp)
         if (argc == 1 && ARG(0).type != VALUE_NIL) {
                 Value s = ARG(0);
                 if (s.type != VALUE_STRING)
-                        zP("the first argument to os.mktemp() must be a string");
+                        zP("the first argument to os.mkdtemp() must be a string");
                 /* -8 to make room for the .XXXXXX suffix and NUL byte */
                 memcpy(template, s.str, min(s.bytes, sizeof template - 8));
         } else {
@@ -2180,7 +2183,7 @@ BUILTIN_FUNCTION(os_mkdtemp)
                 return NIL;
         }
 
-        return vSs(template, strlen(template));
+        return vSsz(template);
 }
 
 static int
@@ -2215,16 +2218,12 @@ make_temp_file(char *template, int flags)
 
 BUILTIN_FUNCTION(os_mktemp)
 {
+        ASSERT_ARGC("os.mktemp()", 0, 1, 2);
+
         char template[PATH_MAX + 1] = {0};
 
-        if (argc > 2) {
-                zP("os.mktemp() expects 0, 1, or 2 arguments but got %d", argc);
-        }
-
         if (argc >= 1 && ARG(0).type != VALUE_NIL) {
-                Value s = ARG(0);
-                if (s.type != VALUE_STRING)
-                        zP("the first argument to os.mktemp() must be a string");
+                Value s = ARGx(0, VALUE_STRING);
                 /* -8 to make room for the .XXXXXX suffix and NUL byte */
                 memcpy(template, s.str, min(s.bytes, sizeof template - 8));
         } else {
@@ -2237,10 +2236,8 @@ BUILTIN_FUNCTION(os_mktemp)
 
         if (argc == 2)
         {
-                Value flags = ARG(1);
-                if (flags.type != VALUE_INTEGER)
-                        zP("the second argument to os.mktemp() must be an integer");
-                fd = make_temp_file(template, flags.integer);
+                int flags = INT_ARG(1);
+                fd = make_temp_file(template, flags);
         }
         else
         {
@@ -2519,7 +2516,7 @@ BUILTIN_FUNCTION(os_symlink)
 
 
         char *c_old = TY_TMP_C_STR_A(old);
-        char *c_new = TY_TMP_C_STR_A(new);
+        char *c_new = TY_TMP_C_STR_B(new);
 
 #ifdef _WIN32
         return INTEGER(!CreateSymbolicLinkA(c_old, c_new, 0));
@@ -4697,6 +4694,12 @@ timespec_tuple(Ty *ty, struct timespec const *ts)
         );
 }
 
+inline static double
+timespec_seconds(struct timespec const *ts)
+{
+        return (double)ts->tv_sec + (double)ts->tv_nsec / 1e9;
+}
+
 static struct timespec
 tuple_timespec(Ty *ty, char const *func, Value const *v)
 {
@@ -5026,6 +5029,28 @@ xstatv(int ret, StatStruct const *st)
         if (ret != 0)
                return NIL;
 
+        Value atime;
+        Value mtime;
+        Value ctime;
+
+        GC_STOP();
+
+#if defined(__APPLE__) || defined(__MACH__)
+        atime = REAL(timespec_seconds(&st->st_atimespec));
+        mtime = REAL(timespec_seconds(&st->st_mtimespec));
+        ctime = REAL(timespec_seconds(&st->st_ctimespec));
+#elif defined(_WIN32)
+        atime = REAL(((double)st->st_atime);
+        mtime = REAL(((double)st->st_mtime);
+        ctime = REAL(((double)st->st_ctime);
+#else
+        atime = REAL(timespec_seconds(&st->st_atim));
+        mtime = REAL(timespec_seconds(&st->st_mtim));
+        ctime = REAL(timespec_seconds(&st->st_ctim));
+#endif
+
+        GC_RESUME();
+
         return value_named_tuple(
                 ty,
                 "st_dev", INTEGER(st->st_dev),
@@ -5040,19 +5065,9 @@ xstatv(int ret, StatStruct const *st)
                 "st_blocks", INTEGER(st->st_blocks),
                 "st_blksize", INTEGER(st->st_blksize),
 #endif
-#ifdef __APPLE__
-                "st_atim", timespec_tuple(ty, &st->st_atimespec),
-                "st_mtim", timespec_tuple(ty, &st->st_mtimespec),
-                "st_ctim", timespec_tuple(ty, &st->st_ctimespec),
-#elif defined(__linux__)
-                "st_atim", timespec_tuple(ty, &st->st_atim),
-                "st_mtim", timespec_tuple(ty, &st->st_mtim),
-                "st_ctim", timespec_tuple(ty, &st->st_ctim),
-#elif defined(_WIN32)
-                "st_atim", INTEGER(st->st_atime),
-                "st_mtim", INTEGER(st->st_mtime),
-                "st_ctim", INTEGER(st->st_ctime),
-#endif
+                "st_atim", atime,
+                "st_mtim", mtime,
+                "st_ctim", ctime,
                 NULL
         );
 }
@@ -5062,7 +5077,11 @@ BUILTIN_FUNCTION(os_fstat)
 {
         ASSERT_ARGC("os.fstat()", 1);
         StatStruct s;
+#ifdef _WIN32
+        return xstatv(_fstat64(INT_ARG(0), &s), &s);
+#else
         return xstatv(fstat(INT_ARG(0), &s), &s);
+#endif
 }
 
 BUILTIN_FUNCTION(os_lstat)
@@ -5082,7 +5101,11 @@ BUILTIN_FUNCTION(os_stat)
         ASSERT_ARGC("os.stat()", 1);
         StatStruct s;
         char const *path = TY_TMP_C_STR(ARGx(0, VALUE_STRING));
+#ifdef _WIN32
+        return xstatv(_stat64(path, &s), &s);
+#else
         return xstatv(stat(path, &s), &s);
+#endif
 }
 
 static int

@@ -13725,12 +13725,14 @@ define_class(Ty *ty, Stmt *s)
         for (int i = 0; i < vN(cd->fields); ++i) {
                 Expr *m = v__(cd->fields, i);
                 Expr *id = FieldIdentifier(m);
+
                 name = GetPrivateName(
                         id->identifier,
                         sym->class,
                         scratch,
                         sizeof scratch
                 );
+
                 class_add_field(
                         ty,
                         sym->class,
@@ -13738,9 +13740,11 @@ define_class(Ty *ty, Stmt *s)
                         m->constraint,
                         (m == id) ? NULL : m->value
                 );
+
                 id->symbol = addsymbol(ty, cd->scope, m->identifier);
                 id->symbol->flags |= SYM_CLASS_MEMBER;
                 id->symbol->member = M_ID(name);
+
                 switch (m->type) {
                 case EXPRESSION_IDENTIFIER:
                 case EXPRESSION_EQ:

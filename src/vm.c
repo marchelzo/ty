@@ -3602,6 +3602,12 @@ DoTargetMember(Ty *ty, Value v, i32 z)
                         return;
                 }
 
+                vp = itable_lookup(ty, v.object, z);
+                if (vp != NULL) {
+                        pushtarget(vp, v.object);
+                        return;
+                }
+
                 vp = class_lookup_setter_i(ty, v.class, NAMES.missing);
                 if (vp != NULL) {
                         vp2 = class_lookup_method_i(ty, v.class, NAMES.missing);
@@ -4053,8 +4059,8 @@ vm_exec(Ty *ty, char *code)
         char *save = IP;
         IP = code;
 
-        uintptr_t s;
-        intmax_t k;
+        uptr s;
+        imax k;
         bool b = false;
         double x;
         int n, nkw = 0, i, j, z, tag;
@@ -7325,8 +7331,8 @@ StepInstruction(char const *ip)
 #define SKIPSTR() (ip += strlen(ip) + 1)
 #define SKIPVALUE(x) (memcpy(&x, ip, sizeof x), (ip += sizeof x))
 
-        uintptr_t s;
-        intmax_t k;
+        uptr s;
+        imax k;
         bool b = false;
         double x;
         int n, nkw = 0, i, j, tag;
