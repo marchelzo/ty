@@ -2638,6 +2638,108 @@ BUILTIN_FUNCTION(os_chmod)
 #endif
 }
 
+BUILTIN_FUNCTION(os_access)
+{
+        ASSERT_ARGC("os.access()", 2);
+
+        Value path = ARGx(0, VALUE_STRING);
+        int mode = INT_ARG(1);
+
+        return INTEGER(access(TY_TMP_C_STR(path), mode));
+}
+
+BUILTIN_FUNCTION(os_readlink)
+{
+        ASSERT_ARGC("os.readlink()", 1);
+
+        Value path = ARGx(0, VALUE_STRING);
+
+        char buf[PATH_MAX + 1];
+        isize n = readlink(TY_TMP_C_STR(path), buf, sizeof buf - 1);
+
+        if (n < 0)
+                return NIL;
+
+        buf[n] = '\0';
+
+        return vSs(buf, n);
+}
+
+BUILTIN_FUNCTION(os_utimes)
+{
+        ASSERT_ARGC("os.utimes()", 1, 3);
+
+        Value file = ARGx(0, VALUE_STRING, VALUE_INTEGER);
+
+        struct timeval times[2];
+        struct timeval *ptimes = NULL;
+
+        if (argc == 3) {
+                double atime = (ARG(1).type == VALUE_INTEGER)
+                             ? ARG(1).integer
+                             : FLOAT_ARG(1);
+
+                double mtime = (ARG(2).type == VALUE_INTEGER)
+                             ? ARG(2).integer
+                             : FLOAT_ARG(2);
+
+                times[0] = (struct timeval) {
+                        .tv_sec = (time_t)atime,
+                        .tv_usec = (suseconds_t)((atime - (time_t)atime) * 1e6)
+                };
+
+                times[1] = (struct timeval) {
+                        .tv_sec = (time_t)mtime,
+                        .tv_usec = (suseconds_t)((mtime - (time_t)mtime) * 1e6)
+                };
+
+                ptimes = times;
+        }
+
+        switch (file.type) {
+        case VALUE_STRING:
+                return INTEGER(utimes(TY_TMP_C_STR(file), ptimes));
+#ifndef _WIN32
+        case VALUE_INTEGER:
+                return INTEGER(futimes(file.integer, ptimes));
+#endif
+        default:
+                UNREACHABLE();
+        }
+}
+
+BUILTIN_FUNCTION(os_futimes)
+{
+        ASSERT_ARGC("os.futimes()", 1, 3);
+
+        int fd = INT_ARG(0);
+
+        if (argc == 1) {
+                return INTEGER(futimes(fd, NULL));
+        }
+
+        double atime = (ARG(1).type == VALUE_INTEGER)
+                     ? ARG(1).integer
+                     : FLOAT_ARG(1);
+
+        double mtime = (ARG(2).type == VALUE_INTEGER)
+                     ? ARG(2).integer
+                     : FLOAT_ARG(2);
+
+        struct timeval times[2] = {
+                {
+                        .tv_sec = (time_t)atime,
+                        .tv_usec = (suseconds_t)((atime - (time_t)atime) * 1e6)
+                },
+                {
+                        .tv_sec = (time_t)mtime,
+                        .tv_usec = (suseconds_t)((mtime - (time_t)mtime) * 1e6)
+                }
+        };
+
+        return INTEGER(futimes(fd, times));
+}
+
 BUILTIN_FUNCTION(os_chdir)
 {
         ASSERT_ARGC("os.chdir()", 1);
@@ -2758,7 +2860,7 @@ BUILTIN_FUNCTION(os_write)
                 ssize_t r = write(fd, ((unsigned char const *)p) + off, n);
                 if (r < 0) {
                         lTk();
-                        return INTEGER(r);
+                        return (off == 0) ? INTEGER(r) : INTEGER(off);
                 }
                 if (r == 0) {
                         break;
@@ -4837,7 +4939,6 @@ resolve_path(char const *in, char *out)
     return realpath(in, out);
 #endif
 }
-
 
 BUILTIN_FUNCTION(os_realpath)
 {

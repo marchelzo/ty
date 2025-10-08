@@ -173,7 +173,7 @@ typedef struct chanval ChanVal;
 typedef struct compiler_state CompileState;
 
 enum { FT_NONE, FT_FUNC, FT_GEN };
-enum { MT_NONE, MT_INSTANCE, MT_GET, MT_SET, MT_STATIC };
+enum { MT_NONE, MT_INSTANCE, MT_GET, MT_SET, MT_STATIC, MT_2OP };
 
 enum {
         VALUE_ZERO             ,

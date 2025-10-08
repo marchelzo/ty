@@ -541,7 +541,8 @@ IsLocalMemberSymbol(Ty *ty, Symbol const *sym, Scope const *scope)
 {
         return SymbolIsMember(sym)
             && (STATE.class != NULL)
-            && (STATE.self->scope->function == scope->function);
+            && (STATE.self->scope->function == scope->function)
+            && (STATE.meth->mtype != MT_2OP);
 }
 
 inline static bool
@@ -5345,15 +5346,8 @@ emit_tgt(Ty *ty, Symbol *s, Scope const *scope, bool def)
 {
         bool local = !SymbolIsGlobal(s) && (s->scope->function == scope->function);
 
-        bool class_op_self_access = SymbolIsMember(s)
-                                 && (STATE.self == NULL);
-
         if (s == &UndefinedSymbol) {
                 INSN(TRAP);
-        } else if (0 && class_op_self_access) {
-                emit_load(ty, v__(STATE.func->param_symbols, 0), scope);
-                INSN(TARGET_MEMBER);
-                Ei32(s->member);
         } else if (IsLocalMemberSymbol(ty, s, scope)) {
                 INSN(TARGET_SELF_MEMBER);
                 Ei32(s->member);
@@ -9952,7 +9946,11 @@ compile(Ty *ty, char const *source)
 
         for (int i = 0; i < vN(STATE.class_ops); ++i) {
                 Stmt *def = v__(STATE.class_ops, i);
-                WITH_SELF(v__(def->value->param_symbols, 0)) {
+                WITH_STATE(
+                        class, class_get(ty, def->value->class),
+                        meth, def->value,
+                        self, v__(def->value->param_symbols, 0)
+                ) {
                         emit_statement(ty, def, false);
                 }
         }
@@ -13642,6 +13640,12 @@ define_class(Ty *ty, Stmt *s)
                         }
 
                         Expr *copy = aclone(m);
+
+                        m->body = NULL;
+
+                        copy->class = sym->class;
+                        copy->mtype = MT_2OP;
+
                         avC(copy->params);
                         avC(copy->param_symbols);
                         avC(copy->constraints);
@@ -13653,12 +13657,11 @@ define_class(Ty *ty, Stmt *s)
                         avI(copy->constraints, this, 0);
                         avPv(copy->type_params, cd->type_params);
 
-                        m->body = NULL;
-
                         Stmt *def = NewStmt(ty, STATEMENT_OPERATOR_DEFINITION);
                         def->target = NewExpr(ty, EXPRESSION_IDENTIFIER);
                         def->target->identifier = copy->name;
                         def->value = copy;
+
                         define_operator(ty, cd->scope, def);
 
                         if (copy->body != NULL) {
@@ -13736,7 +13739,6 @@ define_class(Ty *ty, Stmt *s)
                         (m == id) ? NULL : m->value
                 );
                 id->symbol = addsymbol(ty, cd->scope, m->identifier);
-                id->symbol->flags |= SYM_CLASS_MEMBER;
                 id->symbol->flags |= SYM_CLASS_MEMBER;
                 id->symbol->member = M_ID(name);
                 switch (m->type) {

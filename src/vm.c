@@ -4739,12 +4739,14 @@ AssignGlobal:
                         }
                         break;
                 CASE(ENTER)
-                        z = ClassOf(top());
-                        vp = class_lookup_method_i(ty, z, NAMES._enter_);
-                        if (vp != NULL) {
-                                v = pop();
-                                call(ty, vp, &v, 0, 0, false);
+                        if ((z = ClassOf(top())) < 0) {
+                                break;
                         }
+                        if ((vp = class_lookup_method_i(ty, z, NAMES._enter_)) == NULL) {
+                                break;
+                        }
+                        v = pop();
+                        call(ty, vp, &v, 0, 0, false);
                         break;
                 CASE(ENSURE_LEN)
                         READJUMP(jump);
@@ -7234,7 +7236,6 @@ vm_2op(Ty *ty, int op, Value const *a, Value const *b)
 Value
 vm_try_2op(Ty *ty, int op, Value const *a, Value const *b)
 {
-
         int i = op_dispatch(op, ClassOf(a), ClassOf(b));
 
         if (i == -1) {
