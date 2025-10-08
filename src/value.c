@@ -1245,7 +1245,7 @@ value_test_equality(Ty *ty, Value const *v1, Value const *v2)
                 break;
         }
 
-        if ((t0 | t1) & VALUE_NIL) {
+        if ((t0 == VALUE_NIL) || (t1 == VALUE_NIL)) {
                 return false;
         }
 

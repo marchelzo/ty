@@ -160,7 +160,11 @@ class_set_super(Ty *ty, int class, int super)
         if (c0->is_trait && c1->is_trait) {
                 for (int i = 0; i < vN(classes); ++i) {
                         if (ClassImplementsTrait(v__(classes, i), c0->ti)) {
-                                class_implement_trait(ty, v__(classes, i)->i, c1->i);
+                                class_implement_trait(
+                                        ty,
+                                        v__(classes, i)->i,
+                                        c1->i
+                                );
                         }
                 }
         }

@@ -1,4 +1,4 @@
-import ffi as c (wrap)
+import ffi as c (wrap, C!)
 import os
 
 let HTTP_BOTH      = 0
@@ -188,7 +188,7 @@ let HTTP_STATUS_IDENTITY_PROVIDER_AUTHENTICATION_ERROR = 561
 let HTTP_STATUS_NETWORK_READ_TIMEOUT = 598
 let HTTP_STATUS_NETWORK_CONNECT_TIMEOUT = 599
 
-if not let $lib = c.open('llhttp') {
+if not let $llhttp = c.open('llhttp') {
     throw "failed to load llhttp shared library"
 }
 
@@ -268,16 +268,18 @@ let llhttp_internal = c.struct(
   c.ptr  // void* __settings;
 )
 
-let llhttp_init = wrap(lib, 'llhttp_init', c.void, c.ptr, c.int, c.ptr)
-let llhttp_reset = wrap(lib, 'llhttp_reset', c.void, c.ptr)
-let llhttp_settings_init = wrap(lib, 'llhttp_settings_init', c.void, c.ptr)
-let llhttp_execute = wrap(lib, 'llhttp_execute', c.int, c.ptr, c.ptr, c.u64)
-let llhttp_resume = wrap(lib, 'llhttp_execute', c.void, c.ptr)
-let llhttp_method_name = wrap(lib, 'llhttp_method_name', c.ptr, c.int)
-let llhttp_status_name = wrap(lib, 'llhttp_status_name', c.ptr, c.int)
-let llhttp_errno_name = wrap(lib, 'llhttp_errno_name', c.ptr, c.int)
-let llhttp_get_error_reason = wrap(lib, 'llhttp_get_error_reason', c.ptr, c.ptr)
-let llhttp_get_error_pos = wrap(lib, 'llhttp_get_error_pos', c.ptr, c.ptr)
+C! llhttp fn {
+    void llhttp_init(struct llhttp_internal* parser, int type, struct llhttp_settings_t* settings);
+    void llhttp_reset(struct llhttp_internal* parser);
+    void llhttp_settings_init(struct llhttp_settings_t* settings);
+    int llhttp_execute(struct llhttp_internal* parser, const char* data, c.u64 len);
+    void llhttp_resume(struct llhttp_internal* parser);
+    const char* llhttp_method_name(int method);
+    const char* llhttp_status_name(int status);
+    const char* llhttp_errno_name(int err);
+    const char* llhttp_get_error_reason(struct llhttp_internal* parser);
+    const char* llhttp_get_error_pos(struct llhttp_internal* parser);
+}
 
 let llhttp_get_method = parser -> c.member(llhttp_internal, parser, 10)
 let llhttp_get_status_code = parser -> c.member(llhttp_internal, parser, 18)
@@ -342,7 +344,7 @@ class HttpParser {
 
         __closures = []
 
-        self.reset()
+        __reset()
 
         __settings = c.new(llhttp_settings_t)
         llhttp_settings_init(__settings)
@@ -350,28 +352,28 @@ class HttpParser {
         __ctx = c.new(llhttp_internal)
         llhttp_init(__ctx, type, __settings)
 
-        self.install(1, c.int, c.ptr, c.ptr, c.u64, self.onData)
-        self.install(2, c.int, c.ptr, c.ptr, c.u64, self.onData)
-        self.install(5, c.int, c.ptr, c.ptr, c.u64, self.onData)
-        self.install(6, c.int, c.ptr, c.ptr, c.u64, self.onData)
-        self.install(10, c.int, c.ptr, c.ptr, c.u64, self.onData)
+        __install(1, c.int, c.ptr, c.ptr, c.u64, self.onData)
+        __install(2, c.int, c.ptr, c.ptr, c.u64, self.onData)
+        __install(5, c.int, c.ptr, c.ptr, c.u64, self.onData)
+        __install(6, c.int, c.ptr, c.ptr, c.u64, self.onData)
+        __install(10, c.int, c.ptr, c.ptr, c.u64, self.onData)
 
-        self.install(12, c.int, c.ptr, self.onURLComplete)
-        self.install(13, c.int, c.ptr, self.onStatusComplete)
-        self.install(14, c.int, c.ptr, self.onMethodComplete)
-        self.install(15, c.int, c.ptr, self.onVersionComplete)
-        self.install(16, c.int, c.ptr, self.onHeaderFieldComplete)
-        self.install(17, c.int, c.ptr, self.onHeaderValueComplete)
+        __install(12, c.int, c.ptr, self.onURLComplete)
+        __install(13, c.int, c.ptr, self.onStatusComplete)
+        __install(14, c.int, c.ptr, self.onMethodComplete)
+        __install(15, c.int, c.ptr, self.onVersionComplete)
+        __install(16, c.int, c.ptr, self.onHeaderFieldComplete)
+        __install(17, c.int, c.ptr, self.onHeaderValueComplete)
 
-        self.install(11, c.int, c.ptr, self.onMessageComplete)
+        __install(11, c.int, c.ptr, self.onMessageComplete)
     }
 
-    install(n, *args) {
+    __install(n, *args) {
         __closures.push(c.closure(*args))
         c.member(llhttp_settings_t, __settings, n, __closures[-1])
     }
 
-    reset() {
+    __reset() {
         __headers = %{}
         __url = nil
         __status = nil
@@ -389,9 +391,12 @@ class HttpParser {
 
         if let $field = __header {
             match __headers[field] {
-                nil         => __headers[field] = headerValue,
-                vs :: Array => vs.push(headerValue),
-                v           => __headers[field] = [v, headerValue]
+                nil => __headers[field] = headerValue,
+
+                vs: [String]
+                    => vs.push(headerValue),
+
+                v => __headers[field] = [v, headerValue]
             }
         }
 
@@ -449,15 +454,14 @@ class HttpParser {
             body: body if body != nil
         })
 
-        reset()
+        __reset()
 
         return HPE_OK
     }
 
-    push(chunk) {
-        dbg(chunk.str())
-        __chunk = chunk
-        __err = llhttp_execute(__ctx, chunk, chunk.size())
+    push(chunk: String | Blob) {
+        __chunk = (chunk :: String) ? Blob(chunk) : chunk
+        __err   = llhttp_execute(__ctx, chunk, chunk.size())
     }
 
     takeMessages() -> [HttpMessage] {
@@ -484,7 +488,7 @@ class HttpParser {
 
     errorPos() {
         let pos = llhttp_get_error_pos(__ctx)
-        return pos - __chunk.ptr()
+        (pos - __chunk.ptr())
     }
 
     error() {
@@ -492,6 +496,6 @@ class HttpParser {
     }
 }
 
-pub function statusName(code) {
+pub fn statusName(code: Int) -> String {
     c.as_str(llhttp_status_name(code))
 }

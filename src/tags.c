@@ -130,10 +130,11 @@ tags_wrap(Ty *ty, char const *s, int tags, bool color)
 {
         vec(char) cs = {0};
 
-        if (color)
-                svPn(cs, TERM(94), strlen(TERM(94)));
-
         struct tags *list = lists.items[tags];
+
+        if (color && list->tag != 0) {
+                svPn(cs, TERM(94), strlen(TERM(94)));
+        }
 
         i32 n = 0;
         while (list->tag != 0) {
@@ -144,19 +145,23 @@ tags_wrap(Ty *ty, char const *s, int tags, bool color)
                 n += 1;
         }
 
-        if (color)
+        if (color && n > 0) {
                 svPn(cs, TERM(0), strlen(TERM(0)));
+        }
 
         svPn(cs, s, strlen(s));
 
-        if (color)
+        if (color && n > 0) {
                 svPn(cs, TERM(94), strlen(TERM(94)));
+        }
 
-        while (n --> 0)
+        for (i32 i = 0; i < n; ++i) {
                 svP(cs, ')');
+        }
 
-        if (color)
+        if (color && n > 0) {
                 svPn(cs, TERM(0), strlen(TERM(0)));
+        }
 
         svP(cs, '\0');
 
