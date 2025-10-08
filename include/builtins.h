@@ -139,6 +139,10 @@ static struct {
   { .module = "os",         .name = "fstat",                    .value = BUILTIN(builtin_os_fstat)               },
   { .module = "os",         .name = "truncate",                 .value = BUILTIN(builtin_os_truncate)            },
   { .module = "os",         .name = "ftruncate",                .value = BUILTIN(builtin_os_ftruncate)           },
+  { .module = "os",         .name = "access",                   .value = BUILTIN(builtin_os_access)              },
+  { .module = "os",         .name = "utimes",                   .value = BUILTIN(builtin_os_utimes)              },
+  { .module = "os",         .name = "futimes",                  .value = BUILTIN(builtin_os_futimes)             },
+  { .module = "os",         .name = "readlink",                 .value = BUILTIN(builtin_os_readlink)            },
   { .module = "os",         .name = "realpath",                 .value = BUILTIN(builtin_os_realpath)            },
   { .module = "os",         .name = "fork",                     .value = BUILTIN(builtin_os_fork)                },
   { .module = "os",         .name = "pipe",                     .value = BUILTIN(builtin_os_pipe)                },
@@ -307,6 +311,11 @@ static struct {
      #define   LOCK_NB   4    /* don't block when locking */
      #define   LOCK_UN   8    /* unlock */
 #endif
+
+  { .module = "os",         .name = "R_OK",                     .value = INT(R_OK)                              },
+  { .module = "os",         .name = "W_OK",                     .value = INT(W_OK)                              },
+  { .module = "os",         .name = "X_OK",                     .value = INT(X_OK)                              },
+  { .module = "os",         .name = "F_OK",                     .value = INT(F_OK)                              },
 
   { .module = "os",         .name = "LOCK_SH",                  .value = INT(LOCK_SH)                            },
   { .module = "os",         .name = "LOCK_EX",                  .value = INT(LOCK_EX)                            },
