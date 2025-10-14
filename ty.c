@@ -46,8 +46,9 @@ static bool use_readline;
 static bool basic = false;
 static char buffer[8192];
 static char *completions[MAX_COMPLETIONS + 1];
-static char const *print_function = "print";
 static char ToolQuery[512];
+
+static char const *print_function = "print";
 
 static char const *SourceFile;
 static char const *SourceFileName;
@@ -116,20 +117,6 @@ usage(void)
         do do putchar(*u++); while (u[u[-1] = strspn(u, " ")]); while (putchar('\n'), 1[u += u[-1]] && ++u);
 }
 
-static char *
-readln(void)
-{
-        char prompt[64];
-
-        snprintf(prompt, sizeof prompt, ">> ");
-
-        if (use_readline) {
-                return readline(prompt);
-        } else {
-                return fgets(buffer, sizeof buffer, stdin);
-        }
-}
-
 inline static bool
 repl_exec(Ty *ty, char const *code)
 {
@@ -150,7 +137,7 @@ execln(Ty *ty, char *line)
         /*
          * Very bad.
          */
-        if (use_readline) {
+        if (use_readline && basic) {
                 line = realloc(line, strlen(line) + 2);
                 add_history(line);
         }
@@ -282,24 +269,63 @@ End:
         return good;
 }
 
+static char *
+readln(Ty *ty)
+{
+        Value line;
+        Value *_readln;
+        char prompt[64];
+
+        if (
+                !basic
+             && (_readln = vm_global(ty, NAMES._readln))
+             && CALLABLE(*_readln)
+        ) {
+                if (TY_CATCH_ERROR()) {
+                        fprintf(stderr, "%s\n", TyError(ty));
+                        return NULL;
+                }
+
+                line = vm_call(ty, _readln, 0);
+
+                TY_CATCH_END();
+
+                return (line.type != VALUE_NIL)
+                     ? TyNewCString(ty, line, true)
+                     : NULL;
+        } else if (use_readline) {
+                snprintf(prompt, sizeof prompt, ">> ");
+                return readline(prompt);
+        } else {
+                return fgets(buffer, sizeof buffer, stdin);
+        }
+}
 
 static void
 pollute_with_bloat(void)
 {
         execln(
                 ty,
-                "import help (..)          \n"
-                "import json               \n"
-                "import base64             \n"
-                "import math (..)          \n"
-                "import ty                 \n"
-                "import ty.types as types  \n"
-                "import os (..)            \n"
-                "import time (..)          \n"
-                "import errno              \n"
-                "import locale             \n"
-                "import io                 \n"
-                "import sh (sh)            \n"
+                "import help (..)                               \n"
+                "import json                                    \n"
+                "import base64                                  \n"
+                "import math (..)                               \n"
+                "import ty                                      \n"
+                "import ty.types as types                       \n"
+                "import os (..)                                 \n"
+                "import time (..)                               \n"
+                "import errno                                   \n"
+                "import locale                                  \n"
+                "import io                                      \n"
+                "import path (Path)                             \n"
+                "import readln                                  \n"
+                "import sh (sh)                                 \n"
+                "_readln = readln::InteractiveLineReader(       \n"
+                "  render=pretty-code,                          \n"
+                "  complete=tab-complete,                       \n"
+                "  history-file=Path.home() / '.ty' / '.history'\n"
+                ").readln                                       \n"
+
         );
 
         print_function = "prettyPrint";
@@ -314,7 +340,7 @@ static jmp_buf InterruptJB;
 static void
 sigint(int signal)
 {
-        puts("Interrupted.");
+        fputs("Interrupted.\n", stderr);
         longjmp(InterruptJB, 1);
 }
 
@@ -347,7 +373,7 @@ repl(Ty *ty)
         for (;;) {
                 (void)setjmp(InterruptJB);
                 for (;;) {
-                        char *line = readln();
+                        char *line = readln(ty);
                         if (line == NULL) {
                                 exit(EXIT_SUCCESS);
                         }

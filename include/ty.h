@@ -17,6 +17,7 @@
 #include "polyfill_stdatomic.h"
 #include "tthread.h"
 #include "vec.h"
+#include "log.h"
 
 #define TY_TMP_BUF_COUNT 2
 
@@ -580,6 +581,7 @@ typedef struct {
 
         int exit_hooks;
         int tdb_hook;
+        int _readln;
 } InternedNames;
 
 #define MemoryUsed  (ty->memory_used)
@@ -921,7 +923,7 @@ enum {
 #define BREAK                    ((Value){ .type = VALUE_BREAK,          .i              = 0,    .off   = 0,                     .tags = 0 })
 
 #define CALLABLE(v) ((v).type <= VALUE_REGEX)
-#define ARITY(f)    ((f).type == VALUE_FUNCTION ? (((int16_t *)((f).info + 5))[0] == -1 ? (f).info[4] : 100) : 1)
+#define ARITY(f)    ((f).type == VALUE_FUNCTION ? (((i16 *)((f).info + 5))[0] == -1 ? (f).info[4] : 100) : 1)
 
 #define m0(x) memset(&(x), 0, sizeof (x))
 
@@ -1148,6 +1150,19 @@ alloc0(size_t n)
 }
 
 #define mresize(ptr, n) ((ptr) = mrealloc((ptr), (n)))
+
+static u64
+jb_hash(jmp_buf const *jb)
+{
+        u64 hash = 2166136261UL;
+        u8 const *p = (u8 const *)jb;
+
+        for (usize i = 0; i < sizeof (*jb); ++i) {
+                hash = (hash ^ p[i]) * 16777619UL;
+        }
+
+        return hash;
+}
 
 inline static jmp_buf *
 NewTySavePoint(Ty *ty)

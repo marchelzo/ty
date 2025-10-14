@@ -24,7 +24,7 @@ typedef struct {
 
 u32 TYPES_OFF = 0;
 
-#define ENFORCE (!AllowErrors && TYPES_OFF == 0 && !DEBUGGING)
+#define ENFORCE (!AllowErrors && (TYPES_OFF == 0) && !DEBUGGING)
 #define ENABLED (CheckConstraints)
 
 #define   xDDD() if (!ENABLED) { return NULL; }
@@ -2631,8 +2631,8 @@ type_variable(Ty *ty, Symbol *var)
         t->concrete = true;
 
         byte_vector name = {0};
-        //dump(&name, "%s", var->identifier);
-        dump(&name, "%s%u", var->identifier, t->id);
+        dump(&name, "%s", var->identifier);
+        //dump(&name, "%s%u", var->identifier, t->id);
         *itable_get(ty, &FixedVarNameTable, t->id) = PTR(name.items);
         *itable_get(ty, &VarNameTable, t->id) = PTR(name.items);
 
@@ -8120,7 +8120,7 @@ type_show(Ty *ty, Type const *t0)
                                 TERM(0),
                                 ShowType(t0->val)
                         );
-                } else if (!IsTVar(t0)) {
+                } else if (0 && !IsTVar(t0)) {
                         dump(&buf, "%s{%d}%s", (t0->level >= CurrentLevel) ? TERM(94) : TERM(96), t0->level, TERM(0));
                 }
                 if (vN(t0->args) > 0) {
@@ -9793,7 +9793,10 @@ RecordType:
                 t0 = NewType(ty, TYPE_TUPLE);
                 for (int i = 0; i < inner.count; ++i) {
                         Type *u0 = type_from_ty(ty, &inner.items[i]);
-                        if (inner.ids[i] == -1) {
+                        if (
+                                (inner.ids == NULL)
+                             || (inner.ids[i] == -1)
+                        ) {
                                 AddEntry(t0, u0);
                         } else {
                                 AddEntry(t0, u0, M_NAME(inner.ids[i]));
@@ -9811,11 +9814,11 @@ RecordType:
                         goto Fail;
                 }
                 for (int i = 0; i < vN(*inner.items[0].array); ++i) {
-                        Value const *id = v_(*inner.items[0].array, i);
-                        if (id->type == VALUE_INTEGER) {
-                                avP(t0->bound, id->integer);
-                        } else if (id->type == VALUE_TYPE && IsTVar(id->ptr)) {
-                                avP(t0->bound, ((Type *)id->ptr)->id);
+                        Value const id = unwrap(ty, v_(*inner.items[0].array, i));
+                        if (id.type == VALUE_INTEGER) {
+                                avP(t0->bound, id.integer);
+                        } else if (id.type == VALUE_TYPE && IsTVar(id.ptr)) {
+                                avP(t0->bound, ((Type *)id.ptr)->id);
                         } else {
                                 goto Fail;
                         }
@@ -9835,7 +9838,7 @@ RecordType:
 
         if (t0 == NULL) {
 Fail:
-                CompileError(ty, "invalid type spec: %s", v);
+                CompileError(ty, "invalid type spec: %s", VSC(v));
         }
 
         return t0;
@@ -9850,7 +9853,7 @@ type_to_ty(Ty *ty, Type *t0)
         Array *bound;
         Param const *param;
 
-        t0 = ResolveVar(t0);
+        t0 = Relax(ResolveVar(t0));
 
         if (IsAny(t0)) {
                 return TAG(TyAnyT);
@@ -9881,6 +9884,7 @@ type_to_ty(Ty *ty, Type *t0)
                         }
                         v.items[i] = type_to_ty(ty, v__(t0->types, i));
                 }
+                v = tagged(ty, TyRecordT, v, NONE);
                 break;
 
         case TYPE_OBJECT:
@@ -9889,6 +9893,10 @@ type_to_ty(Ty *ty, Type *t0)
                         vPx(*types, type_to_ty(ty, v__(t0->args, i)));
                 }
                 v = tagged(ty, TyObjectT, CLASS(t0->class->i), ARRAY(types), NONE);
+                break;
+
+        case TYPE_CLASS:
+                v = tagged(ty, TyClassT, CLASS(t0->class->i), NONE);
                 break;
 
         case TYPE_UNION:
@@ -9986,6 +9994,14 @@ type_iter(Ty *ty)
         }
 
         return any;
+}
+
+Type *
+type_inst_for(Ty *ty, Type const *t0, Type const *u0)
+{
+        return (t0 != NULL)
+             ? SolveMemberAccess(ty, (Type *)t0, u0)
+             : (Type *)u0;
 }
 
 /* vim: set sts=8 sw=8 expandtab: */

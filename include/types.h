@@ -417,6 +417,9 @@ type_assign_iterable(Ty *ty, Expr *e, Type *t0, int flags)
         type_assign(ty, e, iterable_type_for(ty, e, t0), flags);
 }
 
+Type *
+type_inst_for(Ty *ty, Type const *t0, Type const *u0);
+
 void
 DumpTypeTimingInfo(Ty *ty);
 

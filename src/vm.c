@@ -380,17 +380,17 @@ InitializeTy(Ty *ty)
 
         ty->pcre2.ctx = pcre2_match_context_create(NULL);
         if (UNLIKELY(ty->pcre2.ctx == NULL)) {
-                panic("1Out of memory!");
+                panic("out of memory!");
         }
 
         ty->pcre2.match = pcre2_match_data_create(128, NULL);
         if (UNLIKELY(ty->pcre2.match == NULL)) {
-                panic("2Out of memory!");
+                panic("out of memory!");
         }
 
         ty->pcre2.stack = pcre2_jit_stack_create(4096, 4096 * 64, NULL);
         if (UNLIKELY(ty->pcre2.stack == NULL)) {
-                panic("3Out of memory!");
+                panic("out of memory!");
         }
 
         pcre2_jit_stack_assign(ty->pcre2.ctx, NULL, ty->pcre2.stack);
@@ -734,6 +734,10 @@ add_builtins(Ty *ty, int ac, char **av)
         NAMES.tdb_hook = (int)Globals.count;
         xvP(Globals, NIL);
 
+        compiler_introduce_symbol(ty, NULL, "_readln");
+        NAMES._readln = (int)Globals.count;
+        xvP(Globals, NIL);
+
         compiler_introduce_symbol(ty, "ty", "q");
         xvP(Globals, BOOLEAN(!CheckConstraints));
 
@@ -994,7 +998,7 @@ do_co(void)
 inline static bool
 GeneratorIsSuspended(Generator *gen)
 {
-        return gen->ip != NULL;
+        return (gen->ip != NULL);
 }
 
 inline static Generator *
@@ -1052,10 +1056,11 @@ GetFreeCoThread(Ty *ty)
 static bool
 co_abort(Ty *ty)
 {
-        if (FRAMES.count == 0 || STACK.count == 0)
+        if (vN(FRAMES) == 0 || vN(STACK) == 0) {
                 return false;
+        }
 
-        int n = FRAMES.items[0].fp;
+        usize n = v_0(FRAMES).fp;
 
         if (n == 0 || v_(STACK, n - 1)->type != VALUE_GENERATOR) {
                 return false;
@@ -1819,7 +1824,10 @@ DoThrow(Ty *ty)
         //xprint_stack(ty, 10);
 
         for (;;) {
-                while (vN(TRY_STACK) > 0 && vvL(TRY_STACK)[0]->state == TRY_FINALLY) {
+                while (
+                        (vN(TRY_STACK) > 0)
+                     && (vvL(TRY_STACK)[0]->state == TRY_FINALLY)
+                ) {
                         vvX(TRY_STACK);
                 }
 
@@ -1851,11 +1859,13 @@ DoThrow(Ty *ty)
                                 t->state = TRY_CATCH;
 
                                 longjmp(t->jb, 1);
+
                         case TRY_CATCH:
                                 t->state = TRY_THROW;
                                 t->end = NULL;
                                 IP = t->finally;
                                 return false;
+
                         case TRY_THROW:
                                 zPx(
                                         "an exception was thrown while handling another exception: %s%s%s",
@@ -1879,7 +1889,7 @@ TY_INSTR_INLINE static bool
 RaiseException(Ty *ty)
 {
         xvP(THROW_STACK, ((ThrowCtx) {
-                .ctxs = FRAMES.count,
+                .ctxs = vN(FRAMES),
                 .ip = IP
         }));
 
@@ -2065,6 +2075,18 @@ DoTag(Ty *ty, int tag, int n, Value *kws)
                 push(v);
                 GC_RESUME();
         }
+}
+
+
+static void
+ExecCurrentCall(Ty *ty)
+{
+        char *ip = v_L(CALLS);
+        v_L(CALLS) = &halt;
+
+        vm_exec(ty, IP);
+
+        IP = ip;
 }
 
 static void
@@ -2264,7 +2286,7 @@ DoCall(Ty *ty, Value const *f, int n, int nkw, bool AutoThis)
         Value container;
         Value subscript;
         Value a, b;
-        intmax_t k;
+        imax k;
 
         if (n == -1) {
                 n = STACK.count - *vvX(SP_STACK) - nkw;
@@ -2353,8 +2375,6 @@ DoCall(Ty *ty, Value const *f, int n, int nkw, bool AutoThis)
 
         switch (v.type) {
         case VALUE_FUNCTION:
-                LOG("CALLING %s with %d arguments", VSC(&v), n);
-                print_stack(ty, n);
                 call(ty, &v, NULL, n, nkw, false);
                 break;
         case VALUE_BUILTIN_FUNCTION:
@@ -2368,11 +2388,11 @@ DoCall(Ty *ty, Value const *f, int n, int nkw, bool AutoThis)
                 if (nkw > 0) {
                         container = pop();
                         gP(&container);
-                        k = STACK.count - n;
+                        k = vN(STACK) - n;
                         v = v.builtin_function(ty, n, &container);
                         gX();
                 } else {
-                        k = STACK.count - n;
+                        k = vN(STACK) - n;
                         v = v.builtin_function(ty, n, NULL);
                 }
 
@@ -2394,11 +2414,13 @@ DoCall(Ty *ty, Value const *f, int n, int nkw, bool AutoThis)
                 case 1:
                         DoUnaryOp(ty, v.uop, false);
                         break;
+
                 case 2:
                         b = pop();
                         a = pop();
                         push(vm_2op(ty, v.bop, &a, &b));
                         break;
+
                 default:
                         push(TAG(gettag(ty, NULL, "DispatchError")));
                         RaiseException(ty);
@@ -2488,7 +2510,6 @@ DoCall(Ty *ty, Value const *f, int n, int nkw, bool AutoThis)
                 } else {
                         v = v.builtin_method(ty, v.this, n, NULL);
                 }
-
                 STACK.count -= n;
                 push(v);
 
@@ -2741,7 +2762,8 @@ ClassLookup:
         }
 
         if (
-                (vp == NULL && value.type == VALUE_OBJECT)
+                (vp == NULL)
+             && (value.type == VALUE_OBJECT)
              && (vp = class_lookup_method_i(ty, value.class, NAMES.method_missing)) != NULL
         ) {
                 method = M_NAME(i);
@@ -2752,7 +2774,8 @@ ClassLookup:
                 push(v);
                 self = &value;
         } else if (
-                (vp == NULL && value.type == VALUE_OBJECT)
+                (vp == NULL)
+             && (value.type == VALUE_OBJECT)
              && (vp = class_lookup_method_i(ty, value.class, NAMES.missing)) != NULL
         ) {
                 // TODO: Shouldn't need to recurse here
@@ -2875,7 +2898,9 @@ DoQuestion(Ty *ty, bool exec)
                 *top() = BOOLEAN(false);
         } else {
                 CallMethod(ty, OP_QUESTION, 0, 0, false);
-                if (exec) vm_exec(ty, IP);
+                if (exec) {
+                        ExecCurrentCall(ty);
+                }
         }
 }
 
@@ -2890,7 +2915,9 @@ DoNeg(Ty *ty, bool exec)
                 push(REAL(-v.real));
         } else {
                 CallMethod(ty, OP_NEG, 0, 0, false);
-                if (exec) vm_exec(ty, IP);
+                if (exec) {
+                        ExecCurrentCall(ty);
+                }
         }
 }
 
@@ -2912,12 +2939,16 @@ DoCount(Ty *ty, bool exec)
         case VALUE_STRING:
                 push(string_length(ty, &v, 0, NULL));
                 break;
+
         case VALUE_OBJECT:
         case VALUE_CLASS:
                 push(v);
                 CallMethod(ty, NAMES._len_, 0, 0, false);
-                if (exec) vm_exec(ty, IP);
+                if (exec) {
+                        ExecCurrentCall(ty);
+                }
                 break;
+
         default:
                 zP("# applied to operand of invalid type: %s", VSC(&v));
         }
@@ -4172,6 +4203,8 @@ vm_exec(Ty *ty, char *code)
 
                 }
 #endif
+                //XXLOG("stack=%zu, instruction = %s", vN(STACK), GetInstructionName(*IP));
+
                 switch ((u8)*IP++) {
                 CASE(NOP)
                         continue;
@@ -5120,8 +5153,8 @@ Yield:
                 CASE(MAKE_GENERATOR)
                         v = GENERATOR(mAo0(sizeof *v.gen, GC_GENERATOR));
 
-                        n = STACK.count - vvL(FRAMES)->fp;
-                        xvPn(v.gen->frame, STACK.items + STACK.count - n, n);
+                        n = vN(STACK) - vvL(FRAMES)->fp;
+                        xvPn(v.gen->frame, vZ(STACK) - n, n);
 
                         v.gen->ip = IP;
                         v.gen->f = vvL(FRAMES)->f;
@@ -6079,7 +6112,6 @@ BadTupleMember:
                         vvX(FRAMES);
                 CASE(RETURN_PRESERVE_CTX)
                         IP = *vvX(CALLS);
-                        LOG("returning: IP = %p", IP);
                         break;
                 CASE(HALT)
                         EXEC_DEPTH -= 1;
@@ -6885,10 +6917,10 @@ vm_push(Ty *ty, Value const *v)
         push(*v);
 }
 
-void
+Value *
 vm_pop(Ty *ty)
 {
-        STACK.count -= 1;
+        return vvX(STACK);
 }
 
 Value *
@@ -7071,10 +7103,12 @@ vm_call(Ty *ty, Value const *f, int argc)
                 case 1:
                         DoUnaryOp(ty, f->uop, true);
                         return pop();
+
                 case 2:
                         b = pop();
                         a = pop();
                         return vm_2op(ty, f->bop, &a, &b);
+
                 default:
                         vm_throw(ty, &TAG(gettag(ty, NULL, "DispatchError")));
                 }
@@ -7147,7 +7181,7 @@ vm_eval_function(Ty *ty, Value const *f, ...)
 
         va_end(ap);
 
-        usize n = STACK.count - argc;
+        usize n = vN(STACK) - argc;
 
         switch (f->type) {
         case VALUE_FUNCTION:
@@ -7183,10 +7217,12 @@ vm_eval_function(Ty *ty, Value const *f, ...)
                 case 1:
                         DoUnaryOp(ty, f->uop, true);
                         return pop();
+
                 case 2:
                         b = pop();
                         a = pop();
                         return vm_2op(ty, f->bop, &a, &b);
+
                 default:
                         vmE(&TAG(gettag(ty, NULL, "DispatchError")));
                 }
@@ -8205,9 +8241,14 @@ CompleteCurrentFunction(Ty *ty)
 }
 
 Value *
+vm_global(Ty *ty, int i)
+{
+        return (vN(Globals) > i) ? v_(Globals, i) : NULL;
+}
+
+Value *
 vm_local(Ty *ty, int i)
 {
-        xprint_stack(ty, 10);
         return local(ty, i);
 }
 

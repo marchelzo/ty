@@ -141,7 +141,7 @@
         (consume)(ty, (t));                              \
 } while (0)
 
-#define consume_keyword(t) (                                \
+#define consume_kw(t) (                                     \
         PLOG(                                               \
                 "%sconsume_kw%s(%s%s%s) :: %s%4d   %s%s%s", \
                 TERM(35;1;4),                               \
@@ -155,7 +155,7 @@
                 __func__,                                   \
                 TERM(0)                                     \
         ),                                                  \
-        ((consume_keyword)(ty, (t))),                       \
+        ((consume_keyword)(ty, (KEYWORD_##t))),             \
         0                                                   \
 )
 
@@ -194,11 +194,11 @@
         0                                                \
 )
 #else
-#define               next()                  ((next)(ty))
-#define           consume(t)          ((consume)(ty, (t)))
-#define   consume_keyword(t)  ((consume_keyword)(ty, (t)))
-#define            expect(t)           ((expect)(ty, (t)))
-#define          setctx(ctx)         ((setctx)(ty, (ctx)))
+#define               next()                           ((next)(ty))
+#define           consume(t)                   ((consume)(ty, (t)))
+#define        consume_kw(t) ((consume_keyword)(ty, (KEYWORD_##t)))
+#define            expect(t)                    ((expect)(ty, (t)))
+#define          setctx(ctx)                  ((setctx)(ty, (ctx)))
 #define PLOGX(...) ((void)0)
 #define  PLOG(...) ((void)0)
 #define PLOGC(...) ((void)0)
@@ -260,6 +260,8 @@ typedef struct ParserState {
         LexState CtxCheckpoint;
         LexContext lctx;
 
+        TokenVector comments;
+
         Namespace *CurrentNamespace;
 
         Expr *CurrentTemplate;
@@ -280,7 +282,6 @@ typedef struct ParserState {
         bool NoAndOr;
         bool NoPipe;
         bool TypeContext;
-        //bool LValueContext;
 } ParserState;
 
 Expr *LastParsedExpr;
@@ -753,6 +754,19 @@ inline static struct token *
         return token(0);
 }
 
+static Token *
+TokenOf(Ty *ty, Expr *e)
+{
+        for (isize i = vN(tokens) - 1; i >= 0; --i) {
+                Token const *t = v_(tokens, i);
+                if (t->start.s == e->start.s) {
+                        return (Token *)t;
+                }
+        }
+
+        return NULL;
+}
+
 void
 parse_sync_lex(Ty *ty)
 {
@@ -1059,6 +1073,7 @@ ParseError(Ty *ty, char const *fmt, ...)
         );
 
         LOG("Parse Error: %s", TyError(ty));
+
 End:
         if (AllowErrors && SetJmpDepth == 0 && vN(SavePoints) > 0) {
                 longjmp(**vvX(SavePoints), 1);
@@ -1841,6 +1856,7 @@ prefix_identifier(Ty *ty)
 {
         expect(TOKEN_IDENTIFIER);
 
+        int i_id = TokenIndex;
         Expr *e = mkexpr(ty);
 
         e->type = EXPRESSION_IDENTIFIER;
@@ -1850,7 +1866,14 @@ prefix_identifier(Ty *ty)
         consume(TOKEN_IDENTIFIER);
 
         if (is_macro(ty, e->module, e->identifier)) {
-                return typarse(ty, e, NULL, &e->start, &token(-1)->end);
+                v_(tokens, i_id)->tag = TT_MACRO;
+
+                Expr *expanded = typarse(ty, e, NULL, &e->start, &token(-1)->end);
+                if (expanded == NULL) {
+                        die_at(e, "macro expansion failed");
+                }
+
+                return expanded;
         }
 
         if (TypeContext && strcmp(e->identifier, "_") == 0) {
@@ -2241,13 +2264,7 @@ prefix_statement(Ty *ty)
 static Expr *
 prefix_record(Ty *ty)
 {
-        Expr *e = mkexpr(ty);
-        e->only_identifiers = false;
-        e->type = EXPRESSION_TUPLE;
-        vec_init(e->es);
-        vec_init(e->names);
-        vec_init(e->required);
-        vec_init(e->tconds);
+        Expr *e = mkxpr(TUPLE);
 
         consume('{');
 
@@ -2280,6 +2297,7 @@ prefix_record(Ty *ty)
 
                 SAVE_NC(true);
                 SAVE_NE(true);
+                int i_name = TokenIndex;
                 Expr *name = parse_expr(ty, 999);
                 LOAD_NE();
                 LOAD_NC();
@@ -2303,6 +2321,7 @@ prefix_record(Ty *ty)
                         next();
                         avP(e->names, name->identifier);
                         avP(e->es, parse_expr(ty, 0));
+                        v_(tokens, i_name)->tag = TT_FIELD;
                 }
 
 Next:
@@ -2465,7 +2484,7 @@ prefix_throw(Ty *ty)
 {
         Expr *e = mkxpr(THROW);
 
-        consume_keyword(KEYWORD_THROW);
+        consume_kw(THROW);
 
         e->throw = parse_expr(ty, 0);
 
@@ -2483,7 +2502,7 @@ prefix_typeof(Ty *ty)
 {
         Expr *e = mkxpr(TYPE_OF);
 
-        consume_keyword(KEYWORD_TYPEOF);
+        consume_kw(TYPEOF);
 
         SAVE_TC(false);
         e->operand = parse_expr(ty, 0);
@@ -2500,7 +2519,7 @@ prefix_yield(Ty *ty)
         Expr *e = mkxpr(YIELD);
         vec_init(e->es);
 
-        consume_keyword(KEYWORD_YIELD);
+        consume_kw(YIELD);
 
         avP(e->es, parse_expr(ty, 1));
         while (T0 == ',') {
@@ -2528,7 +2547,7 @@ prefix_match(Ty *ty)
 
         Expr *e = mkxpr(MATCH);
 
-        consume_keyword(KEYWORD_MATCH);
+        consume_kw(MATCH);
 
         e->subject = parse_expr(ty, -1);
         e->end = e->subject->end = TEnd;
@@ -2608,7 +2627,7 @@ gencompr(Ty *ty, Expr *e)
         if (target->type != EXPRESSION_LIST) {
                 iter_sugar(ty, &target, &iter);
         } else {
-                consume_keyword(KEYWORD_IN);
+                consume_kw(IN);
                 iter = parse_expr(ty, 0);
         }
 
@@ -2887,7 +2906,7 @@ prefix_parenthesis(Ty *ty)
                 avP(e->constraints, NULL);
 
                 Expr *t = mkxpr(IDENTIFIER);
-                t->identifier = e->params.items[0];
+                t->identifier = v_0(e->params);
                 t->module = NULL;
 
                 e->body = mkstmt(ty);
@@ -3051,7 +3070,7 @@ prefix_true(Ty *ty)
         Expr *e = mkxpr(BOOLEAN);
         e->boolean = true;
 
-        consume_keyword(KEYWORD_TRUE);
+        consume_kw(TRUE);
 
         return e;
 }
@@ -3062,7 +3081,7 @@ prefix_false(Ty *ty)
         Expr *e = mkxpr(BOOLEAN);
         e->boolean = false;
 
-        consume_keyword(KEYWORD_FALSE);
+        consume_kw(FALSE);
 
         return e;
 }
@@ -3073,7 +3092,7 @@ prefix_self(Ty *ty)
 
         Expr *e = mkxpr(SELF);
 
-        consume_keyword(KEYWORD_SELF);
+        consume_kw(SELF);
 
         return e;
 }
@@ -3084,7 +3103,7 @@ prefix_nil(Ty *ty)
 
         Expr *e = mkxpr(NIL);
 
-        consume_keyword(KEYWORD_NIL);
+        consume_kw(NIL);
 
         return e;
 }
@@ -3292,7 +3311,7 @@ prefix_array(Ty *ty)
                         if (e->compr.pattern->type != EXPRESSION_LIST) {
                                 iter_sugar(ty, &e->compr.pattern, &e->compr.iter);
                         } else {
-                                consume_keyword(KEYWORD_IN);
+                                consume_kw(IN);
                                 e->compr.iter = parse_expr(ty, 0);
                         }
 
@@ -3369,6 +3388,10 @@ prefix_template(Ty *ty)
 static Expr *
 prefix_template_expr(Ty *ty)
 {
+        if (CurrentTemplate == NULL) {
+                die("stray template expression");
+        }
+
         expression_vector *exprs = &CurrentTemplate->template.exprs;
         expression_vector *holes = &CurrentTemplate->template.holes;
 
@@ -3706,7 +3729,7 @@ prefix_percent(Ty *ty)
                         next();
                         e->type = EXPRESSION_DICT_COMPR;
                         e->dcompr.pattern = parse_target_list(ty);
-                        consume_keyword(KEYWORD_IN);
+                        consume_kw(IN);
                         e->dcompr.iter = parse_expr(ty, 0);
                         e->dcompr.cond = try_consume(KEYWORD_IF)
                                        ? parse_expr(ty, 0)
@@ -3777,6 +3800,13 @@ static Expr *
 infix_function_call(Ty *ty, Expr *left)
 {
         Expr *e = mkcall(ty, left);
+
+        if (
+                (left->type == EXPRESSION_IDENTIFIER)
+             && is_fun_macro(ty, left->module, left->identifier)
+        ) {
+                TokenOf(ty, left)->tag = TT_MACRO;
+        }
 
         consume('(');
 
@@ -4090,7 +4120,7 @@ End:
 static Expr *
 infix_as(Ty *ty, Expr *left)
 {
-        consume_keyword(KEYWORD_AS);
+        consume_kw(AS);
 
         if (NoEquals) {
                 Expr *alias = parse_expr(ty, 99);
@@ -4150,16 +4180,19 @@ infix_member_access(Ty *ty, Expr *left)
         } else if (AllowErrors && T0 != TOKEN_IDENTIFIER) {
                 e->member = &BlankID;
         } else {
+                int i_name = TokenIndex;
                 e->member = prefix_identifier(ty);
 
                 if (is_fun_macro(ty, NULL, e->member->identifier)) {
                         Expr *call = infix_function_call(ty, e->member);
                         avI(call->args, left, 0);
                         avI(call->fconds, NULL, 0);
+                        v_(tokens, i_name)->tag = TT_MACRO;
                         return call;
                 }
 
                 if (is_macro(ty, NULL, e->member->identifier)) {
+                        v_(tokens, i_name)->tag = TT_MACRO;
                         return typarse(
                                 ty,
                                 e->member,
@@ -4168,8 +4201,9 @@ infix_member_access(Ty *ty, Expr *left)
                                 &e->member->end
                         );
                 }
-        }
 
+                v_(tokens, i_name)->tag = TT_MEMBER;
+        }
 
         if (
                 !have_without_nl(ty, '(')
@@ -4346,7 +4380,7 @@ infix_kw_and(Ty *ty, Expr *left)
         e->left = left;
         e->start = left->start;
 
-        consume_keyword(KEYWORD_AND);
+        consume_kw(AND);
 
         e->p_cond = parse_condparts(ty, false);
 
@@ -4369,7 +4403,7 @@ infix_kw_in(Ty *ty, Expr *left)
                 e->type = EXPRESSION_IN;
         }
 
-        consume_keyword(KEYWORD_IN);
+        consume_kw(IN);
 
         e->right = parse_expr(ty, 6);
         e->end = e->right->end;
@@ -5109,7 +5143,7 @@ parse_for_loop(Ty *ty)
         Stmt *s = mkstmt(ty);
         s->type = STATEMENT_FOR_LOOP;
 
-        consume_keyword(KEYWORD_FOR);
+        consume_kw(FOR);
 
         bool match = false;
         bool cloop = false;
@@ -5151,7 +5185,7 @@ parse_for_loop(Ty *ty)
                 if (s->each.target->type != EXPRESSION_LIST) {
                         iter_sugar(ty, &s->each.target, &s->each.array);
                 } else {
-                        consume_keyword(KEYWORD_IN);
+                        consume_kw(IN);
                         s->each.array = parse_expr(ty, 0);
                 }
 
@@ -5312,7 +5346,7 @@ parse_while(Ty *ty)
         Stmt *s = mkstmt(ty);
         s->type = STATEMENT_WHILE;
 
-        consume_keyword(KEYWORD_WHILE);
+        consume_kw(WHILE);
 
         vec_init(s->While.parts);
 
@@ -5341,7 +5375,7 @@ parse_if(Ty *ty)
         Stmt *s = mkstmt(ty);
         s->type = STATEMENT_IF;
 
-        consume_keyword(KEYWORD_IF);
+        consume_kw(IF);
 
         s->iff.neg = try_consume(KEYWORD_NOT);
         s->iff.parts = parse_condparts(ty, s->iff.neg);
@@ -5365,7 +5399,7 @@ parse_match_statement(Ty *ty)
         Stmt *s = mkstmt(ty);
         s->type = STATEMENT_MATCH;
 
-        consume_keyword(KEYWORD_MATCH);
+        consume_kw(MATCH);
 
         s->match.e = parse_expr(ty, -1);
 
@@ -5525,7 +5559,7 @@ parse_return_statement(Ty *ty)
         s->type = STATEMENT_RETURN;
         vec_init(s->returns);
 
-        consume_keyword(KEYWORD_RETURN);
+        consume_kw(RETURN);
 
         if (tok()->start.line != s->start.line || get_prefix_parser(ty) == NULL) {
                 return s;
@@ -5585,7 +5619,7 @@ parse_defer_statement(Ty *ty)
         Stmt *s = mkstmt(ty);
         s->type = STATEMENT_DEFER;
 
-        consume_keyword(KEYWORD_DEFER);
+        consume_kw(DEFER);
 
         s->expression = mkfunc(ty);
         s->expression->body = parse_statement(ty, -1);
@@ -5701,8 +5735,6 @@ should_split(Ty *ty)
 static Expr *
 parse_expr(Ty *ty, int prec)
 {
-        Expr *e;
-
         setctx(LEX_PREFIX);
 
         PLOG("%s", "");
@@ -5720,8 +5752,9 @@ parse_expr(Ty *ty, int prec)
                 TERM(0)
         );
 
-        if (++ParseDepth > 256)
+        if (++ParseDepth > 256) {
                 die("exceeded maximum recursion depth of 256");
+        }
 
         //if (AllowErrors && CatchError()) {
         //        next();
@@ -5739,7 +5772,7 @@ parse_expr(Ty *ty, int prec)
                 );
         }
 
-        e = LastParsedExpr = f(ty);
+        Expr *e = (LastParsedExpr = f(ty));
 
         while (!should_split(ty) && prec < get_infix_prec(ty)) {
                 infix_parse_fn *f = get_infix_parser(ty);
@@ -5756,7 +5789,7 @@ parse_expr(Ty *ty, int prec)
                         // Special case for operator slices. Very based!
                         goto End;
                 }
-                e = LastParsedExpr = f(ty, e);
+                e = (LastParsedExpr = f(ty, e));
         }
 
         if (have_without_nl(ty, '"')) {
@@ -5783,7 +5816,7 @@ End:
 
         --ParseDepth;
 
-        return LastParsedExpr = e;
+        return (LastParsedExpr = e);
 }
 
 static Stmt *
@@ -6030,20 +6063,12 @@ parse_class_definition(Ty *ty)
 
                         // ================/ :) /===
                         setctx(LEX_NAME);
+                        int i_name = TokenIndex;
                         char *name = tok()->identifier;
                         Location start = tok()->start;
                         next();
                         setctx(LEX_PREFIX);
                         // =========================
-
-                        if (name == NULL) {
-                                die(
-                                        "%s\n%s\n%s\n",
-                                        token_show(ty, token(-1)),
-                                        token_show(ty, token(0)),
-                                        token_show(ty, token(1))
-                                );
-                        }
 
                         Expr *meth;
                         if (
@@ -6070,6 +6095,7 @@ parse_class_definition(Ty *ty)
                                 }
                                 avP(s->tag.fields, field);
                                 try_consume(';');
+                                v_(tokens, i_name)->tag = TT_FIELD;
                         } else {
                                 bool setter = try_consume('=');
                                 bool star   = try_consume('*');
@@ -6222,7 +6248,7 @@ parse_set_type(Ty *ty)
         Stmt *s = mkstmt(ty);
         s->type = STATEMENT_SET_TYPE;
 
-        consume_keyword(KEYWORD_SET_TYPE);
+        consume_kw(SET_TYPE);
 
         s->target = prefix_identifier(ty);
         s->value = parse_type(ty, 0);
@@ -6281,7 +6307,7 @@ parse_try(Ty *ty)
         Stmt *s = mkstmt(ty);
         s->type = STATEMENT_TRY;
 
-        consume_keyword(KEYWORD_TRY);
+        consume_kw(TRY);
 
         if (T0 != '{') {
                 s->try.s = mkstmt(ty);
@@ -6344,86 +6370,87 @@ static Stmt *
 parse_import(Ty *ty)
 {
         Stmt *s = mkstmt(ty);
+
         s->type = STATEMENT_IMPORT;
+        s->import.pub = try_consume(KEYWORD_PUB);
 
-        s->import.pub = have_keyword(KEYWORD_PUB) && (next(), true);
-
-        consume_keyword(KEYWORD_IMPORT);
+        consume_kw(IMPORT);
 
         expect(TOKEN_IDENTIFIER);
         char *mod = tok()->module;
         char *id = tok()->identifier;
+        tok()->tag = TT_MODULE;
         next();
 
-        static vec(char) module;
-        module.count = 0;
+        SCRATCH_SAVE();
+
+        byte_vector module = {0};
 
         if (mod != NULL) {
-                avPn(module, mod, strlen(mod));
-                avP(module, '/');
+                sxdf(&module, "%s/", mod);
         }
 
-        avPn(module, id, strlen(id));
+        sxdf(&module, "%s", id);
 
-        while (T0 == '.') {
-                next();
+        while (try_consume('.')) {
                 expect(TOKEN_IDENTIFIER);
-                avP(module, '/');
-                avPn(module, tok()->identifier, strlen(tok()->identifier));
+                sxdf(&module, "/%s", tok()->identifier);
+                tok()->tag = TT_MODULE;
                 next();
         }
 
-        avP(module, '\0');
+        s->import.module = sclonea(ty, vv(module));
 
-        s->import.module = sclonea(ty, module.items);
+        SCRATCH_RESTORE();
 
-        if (have_keyword(KEYWORD_AS)) {
-                next();
+        if (try_consume(KEYWORD_AS)) {
                 expect(TOKEN_IDENTIFIER);
                 s->import.as = tok()->identifier;
+                tok()->tag = TT_MODULE;
                 next();
         } else {
                 s->import.as = s->import.module;
         }
 
-        if (T0 == TOKEN_IDENTIFIER && strcmp(tok()->identifier, "hiding") == 0) {
-                next();
+        if (
+                (T0 == TOKEN_IDENTIFIER)
+             && (strcmp(tok()->identifier, "hiding") == 0)
+        ) {
                 s->import.hiding = true;
+                tok()->tag = TT_KEYWORD;
+                next();
         } else {
                 s->import.hiding = false;
         }
 
-        vec_init(s->import.identifiers);
-        vec_init(s->import.aliases);
+        v00(s->import.identifiers);
+        v00(s->import.aliases);
 
         if (T0 == '(') {
                 next();
-                if (T0 == TOKEN_DOT_DOT) {
-                        next();
+                if (try_consume(TOKEN_DOT_DOT)) {
                         avP(s->import.identifiers, "..");
                         avP(s->import.aliases, "..");
                 } else while (T0 == TOKEN_IDENTIFIER) {
                         avP(s->import.identifiers, tok()->identifier);
                         next();
-                        if (have_keyword(KEYWORD_AS)) {
-                                next();
+                        if (try_consume(KEYWORD_AS)) {
                                 expect(TOKEN_IDENTIFIER);
                                 avP(s->import.aliases, tok()->identifier);
                                 next();
                         } else {
-                                avP(s->import.aliases, *vvL(s->import.identifiers));
+                                avP(s->import.aliases, v_L(s->import.identifiers));
                         }
-                        if (T0 == ',')
-                                next();
-                        else
+                        if (!try_consume(',')) {
                                 expect(')');
+                        }
                 }
                 consume(')');
         }
 
         s->end = TEnd;
 
-        consume(TOKEN_NEWLINE);
+        consume('\n');
 
         return s;
 }
@@ -6643,6 +6670,36 @@ tokenize(Ty *ty, char const *source, TokenVector *tokens_out)
         return true;
 }
 
+
+static void
+MakePublic(Ty *ty, Stmt *s)
+{
+        switch (s->type) {
+        case STATEMENT_DEFINITION:
+        case STATEMENT_FUNCTION_DEFINITION:
+        case STATEMENT_MACRO_DEFINITION:
+        case STATEMENT_FUN_MACRO_DEFINITION:
+        case STATEMENT_OPERATOR_DEFINITION:
+                s->pub = true;
+                break;
+
+        case STATEMENT_TAG_DEFINITION:
+        case STATEMENT_CLASS_DEFINITION:
+        case STATEMENT_TYPE_DEFINITION:
+                s->class.pub = true;
+                break;
+
+        case STATEMENT_MULTI:
+                for (int i = 0; i < vN(s->statements); ++i) {
+                        MakePublic(ty, v__(s->statements, i));
+                }
+                break;
+
+        default:
+                die("`pub` applied to unexpected statement: %s", ExpressionTypeName((Expr *)s));
+        }
+}
+
 static bool
 ImportModule(Ty *ty, Stmt *import)
 {
@@ -6681,6 +6738,8 @@ parse_ex(
         lex_keep_comments(ty, true);
 
         setctx(LEX_PREFIX);
+
+        LastParsedExpr = NULL;
 
         if (setjmp(JB) != 0) {
         Error:
@@ -6819,21 +6878,8 @@ parse_ex(
                         avP(program, s);
                 }
 
-                if (pub) switch (s->type) {
-                case STATEMENT_DEFINITION:
-                case STATEMENT_FUNCTION_DEFINITION:
-                case STATEMENT_MACRO_DEFINITION:
-                case STATEMENT_FUN_MACRO_DEFINITION:
-                case STATEMENT_OPERATOR_DEFINITION:
-                        s->pub = true;
-                        break;
-                case STATEMENT_TAG_DEFINITION:
-                case STATEMENT_CLASS_DEFINITION:
-                case STATEMENT_TYPE_DEFINITION:
-                        s->class.pub = true;
-                        break;
-                default:
-                        die("`pub` applied to unexpected statement: %s", ExpressionTypeName((Expr *)s));
+                if (pub) {
+                        MakePublic(ty, s);
                 }
 
                 SetNamespace(s, CurrentNamespace);
@@ -6859,6 +6905,7 @@ parse_ex(
         *prog_out = vv(program);
 
         if (tok_out != NULL) {
+                avPv(tokens, state.comments);
                 *tok_out = tokens;
         }
 
@@ -7188,6 +7235,25 @@ pp_if(Ty *ty)
         xvF(conds);
         xvF(starts);
         xvF(ends);
+}
+
+void
+parse_push_comment(Ty *ty, Token const *tok)
+{
+        while (
+                (vN(state.comments) > 0)
+             && (vvL(state.comments)->start.s >= tok->start.s)
+        ) {
+                vvX(state.comments);
+        }
+
+        avP(state.comments, *tok);
+}
+
+TokenVector const *
+parse_get_comments(Ty *ty)
+{
+        return &state.comments;
 }
 
 /* vim: set sts=8 sw=8 expandtab: */

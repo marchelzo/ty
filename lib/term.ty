@@ -1,20 +1,23 @@
 import os (..)
 import termios (..)
 import ioctls (TIOCGWINSZ)
-import help (pretty-print as pp, pretty)
 import unibilium as unibi
 import errno
 import ffi as c (C!)
 
 #|if getenv('TY_LOG') != nil
+    import help (pretty-print as pp, pretty)
     import log (..)
+
+    let ppp = pretty@(*, color=false)
 #|else
     macro warn!(msg) = do {}
     macro error!(msg) = do {}
     macro debug!(msg) = do {}
+
+    let ppp = (x -> "{x}")
 #|]
 
-let ppp = pretty@(*, color=false)
 
 tag _TermStop;
 
@@ -764,6 +767,10 @@ class TermIO {
         while let Some(ev) = __ev-queue.try-take(0) {
           yield ev
         }
+    }
+
+    fd -> Int {
+        __fd
     }
 
     __enter__() {

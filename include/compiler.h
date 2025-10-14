@@ -164,6 +164,7 @@ typedef struct compiler_state {
         statement_vector pending;
 
         bool based;
+        bool eval;
         Type *expected_type;
 
         Expr *func;
@@ -463,6 +464,12 @@ ModuleIsReloading(Module const *mod)
 {
         return (mod->flags & MOD_RELOADING);
 }
+
+void *
+GetCompilerContext(Ty *ty);
+
+void
+SetCompilerContext(Ty *ty, void *ctx);
 
 #endif
 

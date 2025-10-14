@@ -513,8 +513,8 @@ scope_copy(Ty *ty, Scope *dst, Scope const *src)
                 for (Symbol *s = src->table[i]; s != NULL; s = s->next) {
                         Symbol *conflict = scope_lookup(ty, dst, s->identifier);
                         if (
-                                conflict != NULL
-                             && conflict->scope != src
+                                (conflict != NULL)
+                             && (conflict->scope != src)
                              && SymbolIsPublic(conflict)
                         ) {
                                 return conflict->identifier;
@@ -544,7 +544,14 @@ should_skip(char const *id, char const **skip, int n)
 }
 
 char const *
-scope_copy_public_except(Ty *ty, Scope *dst, Scope const *src, char const **skip, int n, bool reexport)
+scope_copy_public_except(
+        Ty *ty,
+        Scope *dst,
+        Scope const *src,
+        char const **skip,
+        int n,
+        bool reexport
+)
 {
         for (int i = 0; i < src->size; ++i) {
                 for (Symbol *s = src->table[i]; s != NULL; s = s->next) {

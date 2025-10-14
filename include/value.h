@@ -416,13 +416,13 @@ noreturn void vm_panic(Ty *, char const *, ...);
 inline static bool
 IsNone(Value const v)
 {
-        return v.type == VALUE_NONE;
+        return (v.type == VALUE_NONE);
 }
 
 inline static bool
 IsNil(Value const v)
 {
-        return v.type == VALUE_NIL;
+        return (v.type == VALUE_NIL);
 }
 
 inline static bool
