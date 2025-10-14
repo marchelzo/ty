@@ -1,0 +1,32 @@
+name: Release
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - run: sudo apt-get update && sudo apt-get install -y cmake g++ gcc make pkg-config ninja-build
+      - run: cmake --preset gcc-ninja
+      - run: cmake --build --preset gcc-ninja --config Release --parallel 4
+      - run: tar czf ty-linux-x86_64.tar.gz -C _install/gcc-ninja .
+      - uses: actions/upload-artifact@v3
+        with:
+          name: ty-linux-x86_64
+          path: ty-linux-x86_64.tar.gz
+
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v3
+      - run: cmake --preset msvs2022
+      - run: cmake --build --preset msvc2022 --config Release --parallel 4
+      - run: tar czf ty-win-x86_64.tar.gz -C _install/msvc2022 .
+      - run: Compress-Archive build\Release\ty.exe ty-win-x86_64.zip
+      - uses: actions/upload-artifact@v3
+        with:
+          name: ty-win-x86_64
+          path: ty-win-x86_64.zip
