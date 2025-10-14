@@ -2,32 +2,97 @@ name: Release
 on:
   push:
     tags:
-      - 'v*'
+      - "v*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  VCPKG_DEFAULT_BINARY_CACHE: ${{ runner.temp }}/vcpkg-bincache
 
 jobs:
   build-linux:
+    name: Linux x86_64
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
-      - run: sudo apt-get update && sudo apt-get install -y cmake g++ gcc make pkg-config ninja-build
-      - run: ./scripts/setup-vcpkg.sh
-      - run: cmake --preset gcc-ninja
-      - run: cmake --build --preset gcc-ninja --config Release --parallel 4
-      - run: tar czf ty-linux-x86_64.tar.gz -C _install/gcc-ninja .
-      - uses: actions/upload-artifact@v3
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Restore vcpkg binary cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
+          key: vcpkg-${{ runner.os }}-${{ hashFiles('vcpkg.json') }}
+          restore-keys: |
+            vcpkg-${{ runner.os }}-
+
+      - name: Install toolchain
+        run: sudo apt-get update && sudo apt-get install -y cmake g++ gcc make pkg-config ninja-build
+
+      - name: Setup vcpkg
+        run: ./scripts/setup-vcpkg.sh
+
+      - name: Configure (CMake preset)
+        run: cmake --preset gcc-ninja
+
+      - name: Build + Install
+        run: cmake --build --preset gcc-ninja --config Release --parallel 4 --target install
+
+      - name: Package
+        run: |
+          tar czf ty-linux-x86_64.tar.gz -C _install/gcc-ninja .
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
         with:
           name: ty-linux-x86_64
           path: ty-linux-x86_64.tar.gz
+          if-no-files-found: error
+          retention-days: 14
+          overwrite: true
 
   build-windows:
+    name: Windows x86_64
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v3
-      - run: cmake --preset msvs2022
-      - run: cmake --build --preset msvc2022 --config Release --parallel 4
-      - run: tar czf ty-win-x86_64.tar.gz -C _install/msvc2022 .
-      - run: Compress-Archive build\Release\ty.exe ty-win-x86_64.zip
-      - uses: actions/upload-artifact@v3
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Restore vcpkg binary cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
+          key: vcpkg-${{ runner.os }}-${{ hashFiles('vcpkg.json') }}
+          restore-keys: |
+            vcpkg-${{ runner.os }}-
+
+      - name: Setup vcpkg
+        shell: bash
+        run: ./scripts/setup-vcpkg.sh
+
+      - name: Configure (CMake preset)
+        shell: bash
+        run: cmake --preset msvc2022
+
+      - name: Build + Install
+        shell: bash
+        run: cmake --build --preset msvc2022 --config Release --parallel 4 --target install
+
+      - name: Package
+        shell: pwsh
+        run: |
+          Compress-Archive -Path "_install/msvc2022/*" -DestinationPath "ty-win-x86_64.zip"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
         with:
           name: ty-win-x86_64
           path: ty-win-x86_64.zip
+          if-no-files-found: error
+          retention-days: 14
+          overwrite: true
+
