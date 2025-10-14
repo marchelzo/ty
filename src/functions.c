@@ -7094,40 +7094,6 @@ BUILTIN_FUNCTION(ty_module)
         return ScopeDict(ty, mod->scope, true);
 }
 
-// gcc -g -O0 -funwind-tables -lunwind -o demo demo.c
-#include <libunwind.h>
-#include <stdio.h>
-
-void print_backtrace(void) {
-    unw_context_t uc;
-    unw_cursor_t cur;
-
-    if (unw_getcontext(&uc) < 0) return;
-    if (unw_init_local(&cur, &uc) < 0) return;
-
-    int frame = 0;
-    for (;;) {
-        unw_word_t ip = 0, sp = 0, off = 0;
-        char name[256];
-
-        if (unw_get_reg(&cur, UNW_REG_IP, &ip) < 0) break;
-        if (unw_get_reg(&cur, UNW_REG_SP, &sp) < 0) break;
-
-        name[0] = '\0';
-        if (unw_get_proc_name(&cur, name, sizeof(name), &off) != 0) {
-            name[0] = '?'; name[1] = '\0'; off = 0;
-        }
-
-        fprintf(stderr, "#%d  0x%lx  %s+0x%lx  (sp=0x%lx)\n",
-                frame, (unsigned long)ip, name, (unsigned long)off, (unsigned long)sp);
-
-        int s = unw_step(&cur);
-        if (s <= 0) break;
-        frame++;
-    }
-}
-
-
 BUILTIN_FUNCTION(ty_parse)
 {
         ASSERT_ARGC("ty.parse()", 1);
