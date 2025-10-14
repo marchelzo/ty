@@ -10,6 +10,7 @@ jobs:
     steps:
       - uses: actions/checkout@v3
       - run: sudo apt-get update && sudo apt-get install -y cmake g++ gcc make pkg-config ninja-build
+      - run: ./scripts/setup-vcpkg.sh
       - run: cmake --preset gcc-ninja
       - run: cmake --build --preset gcc-ninja --config Release --parallel 4
       - run: tar czf ty-linux-x86_64.tar.gz -C _install/gcc-ninja .
