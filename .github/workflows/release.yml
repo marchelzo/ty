@@ -11,13 +11,12 @@ concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: true
 
-env:
-  VCPKG_DEFAULT_BINARY_CACHE: ${{ runner.temp }}/vcpkg-bincache
-
 jobs:
   build-linux:
     name: Linux x86_64
     runs-on: ubuntu-latest
+    env:
+      VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/.vcpkg-bincache
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -43,8 +42,7 @@ jobs:
         run: cmake --build --preset gcc-ninja --config Release --parallel 4 --target install
 
       - name: Package
-        run: |
-          tar czf ty-linux-x86_64.tar.gz -C _install/gcc-ninja .
+        run: tar czf ty-linux-x86_64.tar.gz -C _install/gcc-ninja .
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -58,6 +56,8 @@ jobs:
   build-windows:
     name: Windows x86_64
     runs-on: windows-latest
+    env:
+      VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}\.vcpkg-bincache
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -84,8 +84,7 @@ jobs:
 
       - name: Package
         shell: pwsh
-        run: |
-          Compress-Archive -Path "_install/msvc2022/*" -DestinationPath "ty-win-x86_64.zip"
+        run: Compress-Archive -Path "_install/msvc2022/*" -DestinationPath "ty-win-x86_64.zip"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
