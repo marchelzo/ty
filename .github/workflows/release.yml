@@ -14,7 +14,7 @@ concurrency:
 jobs:
   build-linux:
     name: Linux x86_64
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-20.04
     env:
       VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/.vcpkg-bincache
     steps:
@@ -28,18 +28,24 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
-          key: vcpkg-${{ runner.os }}-${{ hashFiles('vcpkg.json') }}
+          key: vcpkg-${{ runner.os }}-20.04-${{ hashFiles('vcpkg.json') }}
           restore-keys: |
-            vcpkg-${{ runner.os }}-
+            vcpkg-${{ runner.os }}-20.04-
 
       - name: Install toolchain
-        run: sudo apt-get update && sudo apt-get install -y cmake g++ gcc make pkg-config ninja-build
+        run: |
+          sudo add-apt-repository ppa:ubuntu-toolchain-r/test
+          sudo apt-get update
+          sudo apt-get install -y gcc-13 g++-13 cmake pkg-config ninja-build
 
       - name: Setup vcpkg
         run: ./scripts/setup-vcpkg.sh
 
       - name: Configure (CMake preset)
-        run: cmake --preset gcc-ninja
+        run: cmake --preset gcc-ninja -DCMAKE_C_COMPILER=gcc-13 -DCMAKE_CXX_COMPILER=g++-13
+        env:
+          CC: gcc-13
+          CXX: g++-13
 
       - name: Build + Install
         run: cmake --build --preset gcc-ninja --config Release --parallel 4 --target install
@@ -102,4 +108,3 @@ jobs:
           if-no-files-found: error
           retention-days: 14
           overwrite: true
-
