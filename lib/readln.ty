@@ -157,8 +157,6 @@ class InteractiveLineReader {
         __complete = complete
         __history_file = (history-file != nil) ?: Path(history-file)
 
-        dbg(history-file, __history_file)
-
         if history-file != nil and let $raw = slurp("{history-file}") {
             __history = [(line, i) for json::parse! ~> {line, i, *} in raw.lines()]
         } else {
