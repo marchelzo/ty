@@ -6083,11 +6083,8 @@ BadTupleMember:
                         vvX(SP_STACK);
                         break;
                 CASE(DEBUG)
-                        READVALUE(i);
-                        READVALUE(j);
-                        fprintf(stderr, "%-12s  (%d/%d)   (sp=%zu)   (nsp=%zu)\n", IP, i + 1, j, STACK.count, vN(SP_STACK));
+                        fprintf(stderr, "%s\n", IP);
                         SKIPSTR();
-                        xprint_stack(ty, 10);
                         break;
                 CASE(RETURN_IF_NOT_NONE)
                         if (top()->type != VALUE_NONE) {

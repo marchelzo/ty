@@ -5654,26 +5654,40 @@ fail_match_if_not(Ty *ty, Expr const *e)
 }
 
 static void
-emit_constraint(Ty *ty, Expr const *c)
+_xemit_constraint(Ty *ty, Expr const *c, JumpSet *jumps)
 {
         if (c->type == EXPRESSION_TYPE_UNION) {
-                vec(JumpPlaceholder) jumps = {0};
-                SCRATCH_SAVE();
                 for (int i = 0; i < vN(c->es); ++i) {
                         if (i + 1 == vN(c->es)) {
-                                emit_constraint(ty, v__(c->es, i));
+                                _xemit_constraint(ty, v__(c->es, i), jumps);
                         } else {
                                 INSN(DUP);
-                                emit_constraint(ty, v__(c->es, i));
-                                svP(jumps, (PLACEHOLDER_JUMP)(ty, INSTR_JUMP_IF));
+                                _xemit_constraint(ty, v__(c->es, i), jumps);
+                                INSN(DUP);
+                                svP(*jumps, (PLACEHOLDER_JUMP)(ty, INSTR_JUMP_IF));
+                                INSN(POP);
                         }
                 }
-
-                SCRATCH_RESTORE();
         } else {
                 EE(c);
                 INSN(CHECK_MATCH);
         }
+}
+
+static void
+emit_constraint(Ty *ty, Expr const *c)
+{
+        JumpSet jumps = {0};
+
+        SCRATCH_SAVE();
+
+        _xemit_constraint(ty, c, &jumps);
+
+        for (int i = 0; i < vN(jumps); ++i) {
+                PATCH_JUMP(v__(jumps, i));
+        }
+
+        SCRATCH_RESTORE();
 }
 
 static void
@@ -5866,10 +5880,10 @@ emit_function(Ty *ty, Expr const *e)
 
         for (int i = 0; i < vN(e->param_symbols); ++i) {
                 if (
-                        v__(e->constraints, i) == NULL
+                        (v__(e->constraints, i) == NULL)
                      || (
                                 !RUNTIME_CONSTRAINTS
-                             && e->overload == NULL
+                             && (e->overload == NULL)
                         )
                 ) {
                         continue;

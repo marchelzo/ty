@@ -16,20 +16,24 @@ pub class Path {
     __root: String
     __parts: Array[String]
 
-    init(path: String | Path = '.') {
-        match path {
-            p: Path => {
-                __drv = p.__drv
-                __root = p.__root
-                __parts = p.__parts
-            },
-            s => {
-                let (drv, root, parts) = Path.parse(s)
-                __drv = drv
-                __root = root
-                __parts = parts
-            }
-        }
+    init(drv: String, root: String, parts: Array[String]) {
+        __drv = drv
+        __root = root
+        __parts = parts
+    }
+
+    init(path: String | Path, o: Any = nil, r: Any = nil) {
+        (__drv, __root, __parts) = (path :: String) ? Path.parse(path) : (
+            path.__drv,
+            path.__root,
+            path.__parts
+        )
+    }
+
+    init() {
+        __drv = ''
+        __root = ''
+        __parts = []
     }
 
     static parse(path: String) -> (String, String, [String]) {
@@ -38,7 +42,7 @@ pub class Path {
         let altsep = '/'
         
         let path = path.sub(/\//, '\\')
-        
+      
         let (drv, root, rel) = match path {
             /^([A-Za-z]:)([\\\/]?)(.*)$/ => ($1, $2, $3),
             /^(\\\\[^\\]+\\[^\\]+)([\\\/]?)(.*)$/ => ($1, $2, $3),
@@ -90,29 +94,14 @@ pub class Path {
                 if p.__drv || p.__root {
                     return p
                 }
-                
-                let result = Path('')
-                result.__drv = __drv
-                result.__root = __root
-                result.__parts = [*__parts, *p.__parts]
-
-                result
+                Path(__drv, __root, [*__parts, *p.__parts])
             },
             s: String => self / Path(s)
         }
     }
 
     parent -> Path {
-        if !__parts {
-            return self
-        }
-        
-        let result = Path('')
-        result.__drv = __drv
-        result.__root = __root
-        result.__parts = __parts[;-1]
-
-        result
+        __parts ? Path(__drv, __root, __parts[;-1]) : self
     }
 
     name -> String {
@@ -140,12 +129,7 @@ pub class Path {
             throw PathError({msg: 'invalid name', name})
         }
         
-        let result = Path('')
-        result.__drv = __drv
-        result.__root = __root
-        result.__parts = [*__parts[;-1], name]
-
-        result
+        Path(__drv, __root, [*__parts[;-1], name])
     }
 
     with-stem(stem: String) -> Path {
@@ -230,6 +214,31 @@ pub class Path {
         }
     }
 
+    relative-to(other: String | Path) -> Path {
+        let other-path = match other {
+            p: Path => p,
+            s => Path(s)
+        }.absolute
+
+        let self-abs = self.absolute
+        if self-abs.__drv != other-path.__drv {
+            throw PathError({msg: 'different drives', path: str(self), other: str(other-path)})
+        }
+
+        let i = 0
+        while (
+            (i < min(#self-abs.__parts, #other-path.__parts))
+         && (self-abs.__parts[i] == other-path.__parts[i])
+        ) {
+            i += 1
+        }
+
+        let ups = ['..' for _ in 0..(#other-path.__parts - i)]
+        let downs = self-abs.__parts[i;]
+        
+        Path('', '', [*ups, *downs])
+    }
+
     readlink -> Path {
         match os.readlink(str(self)) {
             $target => Path(target),
@@ -261,33 +270,32 @@ pub class Path {
         }
     }
 
-    write-text(text: String) {
+    write(text: String | Blob) {
         with f = io.open(str(self), 'w') {
             f.write(text)
         }
     }
 
-    write-bytes(data: Blob) {
-        with f = io.open(str(self), 'w') {
-            f.write(data)
+    append(text: String | Blob) {
+        with f = io.open(str(self), 'a') {
+            f.write(text)
         }
     }
 
-    mkdir(mode: Int = 0o777, parents: Bool = false, exist-ok: Bool = false) {
+    mkdir(mode: Int = 0o755, parents: Bool = false, exist-ok: Bool = false) {
         if parents {
-            let current = Path('')
-            current.__drv = __drv
-            current.__root = __root
-            current.__parts = []
+            let current = Path(__drv, __root, [])
             
             for part in __parts {
                 current.__parts.push(part)
                 let path-str = str(current)
                 
                 if !current.exists? {
-                    if os.mkdir(path-str, mode) == -1 && !exist-ok {
+                    if os.mkdir(path-str, mode) == -1 {
                         throw PathError({msg: 'mkdir failed', path: path-str})
                     }
+                } else if !exist-ok {
+                    throw PathError({msg: 'directory exists', path: path-str})
                 }
             }
         } else {
@@ -300,13 +308,13 @@ pub class Path {
         }
     }
 
-    rmdir {
+    rmdir() {
         if os.rmdir(str(self)) == -1 {
             throw PathError({msg: 'rmdir failed', path: str(self)})
         }
     }
 
-    unlink {
+    unlink() {
         if os.unlink(str(self)) == -1 {
             throw PathError({msg: 'unlink failed', path: str(self)})
         }
@@ -568,10 +576,6 @@ class TempDir {
     __drop__() {
         __path.rmtree(quiet=true)
     }
-}
-
-pub fn path(p: String | Path = '.') -> Path {
-    Path(p)
 }
 
 pub cwd = Path.cwd
