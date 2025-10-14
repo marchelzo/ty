@@ -1078,4 +1078,6 @@ pub fn open(
         }
 #|]
     }
+
+    return nil
 }
