@@ -19,6 +19,9 @@
 static Token
 dotoken(Ty *ty, int ctx);
 
+void
+parse_push_comment(Ty *ty, Token const *tok);
+
 enum {
         MAX_OP_LEN = 8,
 };
@@ -1006,29 +1009,27 @@ lexop(Ty *ty)
 static Token
 lexlinecomment(Ty *ty)
 {
-        // skip the leading slashes
-        nextchar(ty);
-        nextchar(ty);
+        nextchar(ty); // /
+        nextchar(ty); // /
 
         while (isspace(C(0)) && C(0) != '\n') {
                 nextchar(ty);
         }
 
-        vec(char) comment;
-        vec_init(comment);
+        byte_vector comment = {0};
 
         while (C(0) != '\n' && C(0) != '\0') {
                 avP(comment, nextchar(ty));
         }
 
-        while (comment.count > 0 && isspace(*vvL(comment))) {
+        while (vN(comment) > 0 && isspace(*vvL(comment))) {
                 vvX(comment);
         }
 
         avP(comment, '\0');
 
         Token t = mktoken(ty, TOKEN_COMMENT);
-        t.comment = comment.items;
+        t.comment = vv(comment);
 
         Start = state.loc;
 
@@ -1038,13 +1039,11 @@ lexlinecomment(Ty *ty)
 static Token
 lexcomment(Ty *ty)
 {
-        // skip the /*
-        nextchar(ty);
-        nextchar(ty);
+        nextchar(ty); // /
+        nextchar(ty); // *
 
         int level = 1;
-
-        vec(char) comment = {0};
+        byte_vector comment = {0};
 
         while (C(0) != '\0' && level != 0) {
                 if (C(0) == '/' && C(1) == '*') {
@@ -1066,11 +1065,11 @@ lexcomment(Ty *ty)
 
         avP(comment, '\0');
 
-        // skip the final /
+        // /
         nextchar(ty);
 
         Token t = mktoken(ty, TOKEN_COMMENT);
-        t.comment = comment.items;
+        t.comment = vv(comment);
 
         Start = state.loc;
 
@@ -1126,7 +1125,10 @@ dotoken(Ty *ty, int ctx)
                 Token t = lexcomment(ty);
                 if (state.keep_comments) {
                         return t;
-                } else if (skipspace(ty)) {
+                } else {
+                        parse_push_comment(ty, &t);
+                }
+                if (skipspace(ty)) {
                         return mktoken(ty, TOKEN_NEWLINE);
                 } else {
                         return dotoken(ty, ctx);
@@ -1135,7 +1137,10 @@ dotoken(Ty *ty, int ctx)
                 Token t = lexlinecomment(ty);
                 if (state.keep_comments) {
                         return t;
-                } else if (skipspace(ty)) {
+                } else {
+                        parse_push_comment(ty, &t);
+                }
+                if (skipspace(ty)) {
                         return mktoken(ty, TOKEN_NEWLINE);
                 } else {
                         return dotoken(ty, ctx);

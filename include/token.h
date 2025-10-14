@@ -11,88 +11,93 @@
 #include "ast.h"
 #include "ty.h"
 
-typedef struct {
-        StringVector strings;
-        vec(LexState) expressions;
-        vec(bool) e_is_param;
-        vec(struct location) starts;
-        vec(struct location) ends;
-} SpecialString;
+enum {
+        TOKEN_NEWLINE = '\n',
+        TOKEN_AT = '@',
+        TOKEN_BANG = '!',
+        TOKEN_QUESTION = '?',
+        TOKEN_EQ = '=',
+        TOKEN_LT = '<',
+        TOKEN_GT = '>',
+        TOKEN_PLUS = '+',
+        TOKEN_MINUS = '-',
+        TOKEN_STAR = '*',
+        TOKEN_PERCENT = '%',
+        TOKEN_DIV = '/',
+
+        /*
+         * We start the enumeration constants slightly below INT_MAX so that they
+         * don't collide with any codepoints. This way, the type of an open parenthesis
+         * can literally be '(', which is a nice way to avoid verbose names like
+         * TOKEN_OPEN_PAREN.
+         */
+        TOKEN_KEYWORD = INT_MAX - 4096,
+        TOKEN_IDENTIFIER,
+        TOKEN_STRING,
+        TOKEN_SPECIAL_STRING,
+        TOKEN_FUN_SPECIAL_STRING,
+        TOKEN_REGEX,
+        TOKEN_INTEGER,
+        TOKEN_REAL,
+        TOKEN_END,
+        TOKEN_SHL,
+        TOKEN_SHR,
+        TOKEN_NOT_EQ,
+        TOKEN_DBL_EQ,
+        TOKEN_PLUS_EQ,
+        TOKEN_STAR_EQ,
+        TOKEN_DIV_EQ,
+        TOKEN_MINUS_EQ,
+        TOKEN_MOD_EQ,
+        TOKEN_AND_EQ,
+        TOKEN_OR_EQ,
+        TOKEN_XOR_EQ,
+        TOKEN_SHL_EQ,
+        TOKEN_SHR_EQ,
+        TOKEN_ARROW,
+        TOKEN_FAT_ARROW,
+        TOKEN_SQUIGGLY_ARROW,
+        TOKEN_AND,
+        TOKEN_OR,
+        TOKEN_CMP,
+        TOKEN_LEQ,
+        TOKEN_GEQ,
+        TOKEN_INC,
+        TOKEN_DEC,
+        TOKEN_DOT_MAYBE,
+        TOKEN_DOT_DOT,
+        TOKEN_DOT_DOT_DOT,
+        TOKEN_USER_OP,
+        TOKEN_MAYBE_EQ,
+        TOKEN_WTF,
+        TOKEN_ELVIS,
+        TOKEN_CHECK_MATCH,
+        TOKEN_TEMPLATE_BEGIN,
+        TOKEN_TEMPLATE_END,
+        TOKEN_EXPRESSION,
+        TOKEN_COMMENT,
+        TOKEN_DIRECTIVE,
+        TOKEN_ERROR,
+        TOKEN_TYPE_MAX
+};
+
+enum {
+        TT_NONE,
+        TT_FIELD,
+        TT_MEMBER,
+        TT_MACRO,
+        TT_TYPE,
+        TT_MODULE,
+        TT_KEYWORD
+};
 
 typedef struct token {
-        enum {
-                TOKEN_NEWLINE = '\n',
-                TOKEN_AT = '@',
-                TOKEN_BANG = '!',
-                TOKEN_QUESTION = '?',
-                TOKEN_EQ = '=',
-                TOKEN_LT = '<',
-                TOKEN_GT = '>',
-                TOKEN_PLUS = '+',
-                TOKEN_MINUS = '-',
-                TOKEN_STAR = '*',
-                TOKEN_PERCENT = '%',
-                TOKEN_DIV = '/',
 
-                /*
-                 * We start the enumeration constants slightly below INT_MAX so that they
-                 * don't collide with any codepoints. This way, the type of an open parenthesis
-                 * can literally be '(', which is a nice way to avoid verbose names like
-                 * TOKEN_OPEN_PAREN.
-                 */
-                TOKEN_KEYWORD = INT_MAX - 4096,
-                TOKEN_IDENTIFIER,
-                TOKEN_STRING,
-                TOKEN_SPECIAL_STRING,
-                TOKEN_FUN_SPECIAL_STRING,
-                TOKEN_REGEX,
-                TOKEN_INTEGER,
-                TOKEN_REAL,
-                TOKEN_END,
-                TOKEN_SHL,
-                TOKEN_SHR,
-                TOKEN_NOT_EQ,
-                TOKEN_DBL_EQ,
-                TOKEN_PLUS_EQ,
-                TOKEN_STAR_EQ,
-                TOKEN_DIV_EQ,
-                TOKEN_MINUS_EQ,
-                TOKEN_MOD_EQ,
-                TOKEN_AND_EQ,
-                TOKEN_OR_EQ,
-                TOKEN_XOR_EQ,
-                TOKEN_SHL_EQ,
-                TOKEN_SHR_EQ,
-                TOKEN_ARROW,
-                TOKEN_FAT_ARROW,
-                TOKEN_SQUIGGLY_ARROW,
-                TOKEN_AND,
-                TOKEN_OR,
-                TOKEN_CMP,
-                TOKEN_LEQ,
-                TOKEN_GEQ,
-                TOKEN_INC,
-                TOKEN_DEC,
-                TOKEN_DOT_MAYBE,
-                TOKEN_DOT_DOT,
-                TOKEN_DOT_DOT_DOT,
-                TOKEN_USER_OP,
-                TOKEN_MAYBE_EQ,
-                TOKEN_WTF,
-                TOKEN_ELVIS,
-                TOKEN_CHECK_MATCH,
-                TOKEN_TEMPLATE_BEGIN,
-                TOKEN_TEMPLATE_END,
-                TOKEN_EXPRESSION,
-                TOKEN_COMMENT,
-                TOKEN_DIRECTIVE,
-                TOKEN_ERROR,
-                TOKEN_TYPE_MAX
-        } type;
-
-        int8_t pp;
-        int8_t nl;
-        int8_t ctx;
+        i32 type;
+        i8 pp;
+        i8 nl;
+        i8 ctx;
+        i8 tag;
 
         Location start;
         Location end;
@@ -148,7 +153,6 @@ typedef struct token {
                         KEYWORD_NAMESPACE,
                 } keyword;
 
-
                 struct {
                         char *module;
                         union {
@@ -162,7 +166,6 @@ typedef struct token {
 
                 Expr *e;
                 Regex const *regex;
-                SpecialString *special;
                 double real;
                 intmax_t integer;
         };

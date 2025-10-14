@@ -163,7 +163,19 @@ fn record-of(attrs: String, start: _ = {}) -> _ {
             }
         },
 
-        0 => { props = {} },
+        0 => props = {
+            bold: false,
+            italic: false,
+            underline: false,
+            dim: false,
+            reverse: false,
+            fg: false,
+            bg: false,
+            uc: false,
+            fg-bright: nil,
+            bg-bright: nil
+        },
+
         1 => props = {*props, bold: 'b' },
         3 => props = {*props, italic: 'i' },
         4 => props = {*props, underline: 'u' },
@@ -266,6 +278,10 @@ class Text {
     __fmt__(spec: ?String) -> String {
         let spec = spec ?? __fmt
         spec ? "[%{spec}]{__text}[/]" : __text
+    }
+
+    #() -> Int {
+        #plain
     }
 
     src -> String { __text }
@@ -439,7 +455,7 @@ class Chalk {
     }
 
     render(text: String, plain: Bool = false) {
-        let parts = text.split(/(?<=^|[^\\])\[([\/%])?([^]]*)\]/v)
+        let parts = text.split(/(?:\\\\)|(?:\\\[)|\[([\/%]+)?([^]]*)\]/v)
 
         let stack: _ = [[{}]]
         let style: TermStyle = {}
@@ -486,6 +502,8 @@ class Chalk {
             }
         }
 
+        let clean = (\_.sub(/\\./, %{'\\\\': '\\', '\\[': '[', *: it[1]}[]))
+
         for match parts {
             m: RegexMatch => {
                 continue if plain
@@ -501,10 +519,12 @@ class Chalk {
                         stack.push({fmt})
                     },
 
-                    [_, &words $~> []] => {
-                        match stack.pop() {
-                            {fmt} => finish-fmt(fmt),
-                            _     => update()
+                    [&len ~> n, &words $~> []] => {
+                        for ..min(n, #stack) {
+                            match stack.pop() {
+                                {fmt} => finish-fmt(fmt),
+                                _     => update()
+                            }
                         }
                     },
 
@@ -518,11 +538,15 @@ class Chalk {
                         }
                         stack.filter!(\#_ > 0)
                         update()
+                    },
+
+                    [] => {
+                        out.push(m.s[1;])
                     }
                 }
             },
 
-            s => out.push(s)
+            s => out.push(clean(s))
         }
 
         for match stack {
@@ -536,7 +560,7 @@ class Chalk {
             update()
         }
 
-        out.str!().sub(/\\./, %{'\\\\': '\\', '\\[': '[', *: it[1]}[])
+        out.str!()
     }
 
     spans(text: String) -> [(TermStyle, String)] {
@@ -588,10 +612,12 @@ class Chalk {
                         throw 'TODO'
                     },
 
-                    [_, &words $~> []] => {
-                        match stack.pop() {
-                            {fmt} => (),
-                            _     => update()
+                    [&len ~> n, &words $~> []] => {
+                        for ..min(n, #stack) {
+                            match stack.pop() {
+                                {fmt} => {},
+                                _     => update()
+                            }
                         }
                     },
 
@@ -609,7 +635,10 @@ class Chalk {
                 }
             },
 
-            s => spans.push((style, s))
+            s => spans.push((
+                style,
+                s.sub(/\\./, %{'\\\\': '\\', '\\[': '[', *: it[1]}[])
+            ))
         }
 
         spans

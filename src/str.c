@@ -123,6 +123,13 @@ string_length(Ty *ty, Value *string, int argc, Value *kwargs)
 }
 
 static Value
+string_width(Ty *ty, Value *string, int argc, Value *kwargs)
+{
+        ASSERT_ARGC("String.width()", 0);
+        return INTEGER(term_width((u8 const *)string->str, string->bytes));
+}
+
+static Value
 string_grapheme_count(Ty *ty, Value *string, int argc, Value *kwargs)
 {
         u8 const *s = (u8 const *)string->str;
@@ -1274,8 +1281,9 @@ string_pad_right(Ty *ty, Value *string, int argc, Value *kwargs)
 static Value
 string_cstr(Ty *ty, Value *string, int argc, Value *kwargs)
 {
-        if (argc != 0)
+        if (argc != 0) {
                 zP("String.cstr() expects 0 arguments but got %d", argc);
+        }
 
         return vSzs(string->str, string->bytes);
 }
@@ -1283,8 +1291,9 @@ string_cstr(Ty *ty, Value *string, int argc, Value *kwargs)
 static Value
 string_ptr(Ty *ty, Value *string, int argc, Value *kwargs)
 {
-        if (argc != 0)
+        if (argc != 0) {
                 zP("String.ptr() expects 0 arguments but got %d", argc);
+        }
 
         return PTR((void *)string->str);
 }
@@ -1333,6 +1342,7 @@ DEFINE_METHOD_TABLE(
         { .name = "split",     .func = string_split            },
         { .name = "sub",       .func = string_replace          },
         { .name = "upper",     .func = string_upper            },
+        { .name = "width",     .func = string_width            },
         { .name = "words",     .func = string_words            },
 );
 

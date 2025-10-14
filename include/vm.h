@@ -25,21 +25,21 @@ void
 vm_mark(Ty *ty);
 
 void
-Forget(Ty *ty, struct value *v, AllocList *allocs);
+Forget(Ty *ty, Value *v, AllocList *allocs);
 
 void
 DoGC(Ty *ty);
 
 void
-NewThread(Ty *ty, Thread *thread, struct value *ctx, struct value *name, bool sigma);
+NewThread(Ty *ty, Thread *thread, Value *ctx, Value *name, bool sigma);
 
 void
-vm_set_sigfn(Ty *ty, int, struct value const *);
+vm_set_sigfn(Ty *ty, int, Value const *);
 
 void
 vm_del_sigfn(Ty *ty, int);
 
-struct value
+Value
 vm_get_sigfn(Ty *ty, int);
 
 #ifndef _WIN32
@@ -57,19 +57,19 @@ bool
 vm_execute_file(Ty *ty, char const *path);
 
 void
-vm_push(Ty *ty, struct value const *v);
+vm_push(Ty *ty, Value const *v);
 
-void
+Value *
 vm_pop(Ty *ty);
 
-struct value *
+Value *
 vm_get(Ty *ty, int i);
 
 noreturn void
-vm_throw(Ty *ty, struct value const *);
+vm_throw(Ty *ty, Value const *);
 
-struct value
-vm_call(Ty *ty, struct value const *f, int argc);
+Value
+vm_call(Ty *ty, Value const *f, int argc);
 
 Value
 vm_2op(Ty *ty, int op, Value const *a, Value const *b);
@@ -80,14 +80,14 @@ vm_try_2op(Ty *ty, int op, Value const *a, Value const *b);
 Value
 vm_call_ex(Ty *ty, Value const *f, int argc, Value *kwargs, bool collect);
 
-uint64_t
+u64
 MyThreadId(Ty *ty);
 
-struct value
-vm_call_method(Ty *ty, struct value const *self, struct value const *f, int argc);
+Value
+vm_call_method(Ty *ty, Value const *self, Value const *f, int argc);
 
-struct value
-vm_eval_function(Ty *ty, struct value const *f, ...);
+Value
+vm_eval_function(Ty *ty, Value const *f, ...);
 
 void
 vm_load_c_module(Ty *ty, char const *name, void *p);
@@ -103,6 +103,9 @@ vm_get_frames(Ty *ty);
 
 Value *
 vm_local(Ty *ty, int i);
+
+Value *
+vm_global(Ty *ty, int i);
 
 Value
 GetMember(Ty *ty, Value v, int i, bool b);

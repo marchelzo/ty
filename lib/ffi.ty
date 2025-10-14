@@ -795,7 +795,7 @@ fn clos() {
 }
 
 pub macro C! {
-    if 'fn' in [peek(it) for ..8].map(&.type) {
+    if 'fn' in [peek(it).type for ..8] {
         fun()
     } else if peek().?id == 'struct' {
         strct()

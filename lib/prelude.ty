@@ -38,8 +38,18 @@ fn lex::peek(i: Int = 0) -> Token;
 
 fn ty::gensym() -> String;
 
-fn ty::parse(source: String, tokens: Bool) -> Ok[(AST, {tokens: [Token]})] | Err[String];
-fn ty::parse(source: String) -> Ok[AST] | Err[String];
+macro ParseError = {
+    msg: String,
+    location: {
+        line: Int,
+        col: Int,
+        byte: Int
+    },
+    last: AST
+}
+
+fn ty::parse(source: String, tokens: Bool) -> Ok[(AST, {tokens: [Token]})] | Err[ParseError];
+fn ty::parse(source: String) -> Ok[AST] | Err[ParseError];
 
 fn |>[a, b, c](f: a -> b, g: b -> c) -> (a -> c) { g@(f(*, **)) }
 
@@ -776,6 +786,7 @@ class String : Iterable[String], IntoPtr[Int] {
 
     len() -> Int;
     size() -> Int;
+    width() -> Int;
 
     bslice(i: Int, j: ?Int) -> String;
 
@@ -3634,7 +3645,7 @@ macro __desugar_partial__(call: _) {
 
         fn named(name) {
             params.push(name)
-            ty.Id({name, module: ''}) 
+            ty.Id({name, module: ''})
         }
 
         let reducedArgs = args.map(e -> __walk!(e, match {

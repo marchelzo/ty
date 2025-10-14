@@ -35,53 +35,68 @@ xstore(Ty *ty, ffi_type *t, void *p, Value const *v)
         case FFI_TYPE_INT:
                 *(_Atomic int *)p = int_from(v);
                 break;
+
         case FFI_TYPE_UINT8:
                 *(_Atomic uint8_t *)p = int_from(v);
                 break;
+
         case FFI_TYPE_UINT16:
                 *(_Atomic uint16_t *)p = int_from(v);
                 break;
+
         case FFI_TYPE_UINT32:
                 *(_Atomic uint32_t *)p = int_from(v);
                 break;
+
         case FFI_TYPE_UINT64:
                 *(_Atomic uint64_t *)p = int_from(v);
                 break;
+
         case FFI_TYPE_SINT8:
                 *(_Atomic int8_t *)p = int_from(v);
                 break;
+
         case FFI_TYPE_SINT16:
                 *(_Atomic int16_t *)p = int_from(v);
                 break;
+
         case FFI_TYPE_SINT32:
                 *(_Atomic int32_t *)p = int_from(v);
                 break;
+
         case FFI_TYPE_SINT64:
                 *(_Atomic int64_t *)p = int_from(v);
                 break;
+
         case FFI_TYPE_POINTER:
                 switch (v->type) {
                 case VALUE_PTR:
                         *(void * _Atomic *)p = v->ptr;
                         break;
+
                 case VALUE_INTEGER:
                         *(void * _Atomic *)p = (void *)v->integer;
                         break;
+
                 case VALUE_STRING:
                         *(void * _Atomic *)p = (void *)v->str;
                         break;
+
                 case VALUE_NIL:
                         *(void * _Atomic *)p = NULL;
                         break;
+
                 case VALUE_BLOB:
                         *(void * _Atomic *)p = (void *)v->blob->items;
                         break;
+
                 case VALUE_OBJECT:
                         f = class_lookup_method_i(ty, v->class, NAMES.ptr);
-                        if (f != NULL)
+                        if (f != NULL) {
                                 *(void * _Atomic *)p = vm_call_method(ty, v, f, 0).ptr;
-                        else
+                        } else {
                                 *(void * _Atomic *)p = NULL;
+                        }
                         break;
                 }
                 break;
@@ -98,53 +113,69 @@ store(Ty *ty, ffi_type *t, void *p, Value const *v)
         case FFI_TYPE_INT:
                 *(int *)p = int_from(v);
                 break;
+
         case FFI_TYPE_UINT8:
                 *(uint8_t *)p = int_from(v);
                 break;
+
         case FFI_TYPE_UINT16:
                 *(uint16_t *)p = int_from(v);
                 break;
+
         case FFI_TYPE_UINT32:
                 *(uint32_t *)p = int_from(v);
                 break;
+
         case FFI_TYPE_UINT64:
                 *(uint64_t *)p = int_from(v);
                 break;
+
         case FFI_TYPE_SINT8:
                 *(int8_t *)p = int_from(v);
                 break;
+
         case FFI_TYPE_SINT16:
                 *(int16_t *)p = int_from(v);
                 break;
+
         case FFI_TYPE_SINT32:
                 *(int32_t *)p = int_from(v);
                 break;
+
         case FFI_TYPE_SINT64:
                 *(int64_t *)p = int_from(v);
                 break;
+
         case FFI_TYPE_FLOAT:
                 *(float *)p = float_from(v);
                 break;
+
         case FFI_TYPE_DOUBLE:
                 *(double *)p = float_from(v);
                 break;
+
         case FFI_TYPE_POINTER:
                 switch (v->type) {
                 case VALUE_PTR:
                         *(void **)p = v->ptr;
                         break;
+
                 case VALUE_INTEGER:
                         *(void **)p = (void *)v->integer;
                         break;
+
                 case VALUE_STRING:
                         *(void **)p = (void *)v->str;
                         break;
+
                 case VALUE_NIL:
                         *(void **)p = NULL;
                         break;
+
                 case VALUE_BLOB:
                         *(void **)p = (void *)v->blob->items;
                         break;
+
                 case VALUE_OBJECT:
                         f = class_lookup_method_i(ty, v->class, NAMES.ptr);
                         if (f != NULL)
@@ -154,6 +185,7 @@ store(Ty *ty, ffi_type *t, void *p, Value const *v)
                         break;
                 }
                 break;
+
         case FFI_TYPE_STRUCT:
                 switch (v->type) {
                 case VALUE_TUPLE:
@@ -162,7 +194,6 @@ store(Ty *ty, ffi_type *t, void *p, Value const *v)
                         for (int i = 0; i < v->count; ++i) {
                                 store(ty, t->elements[i], (char *)p + offsets[i], &v->items[i]);
                         }
-
                         break;
 
                 case VALUE_PTR:
@@ -493,15 +524,21 @@ cffi_pmember(Ty *ty, int argc, Value *kwargs)
         case VALUE_PTR:
                 p = ARG(1).ptr;
                 break;
+
         case VALUE_BLOB:
                 p = ARG(1).blob->items;
                 break;
+
         default:
                 zP("ffi.pmember(): invalid second argument: %s", VSC(&ARG(1)));
         }
 
         Value i = ARG(2);
-        if (i.type != VALUE_INTEGER || i.integer < 0 || i.integer >= n) {
+        if (
+                (i.type != VALUE_INTEGER)
+             || (i.integer < 0)
+             || (i.integer >= n)
+        ) {
                 zP("invalid third argument to ffi.pmember(): %s", VSC(&i));
         }
 
@@ -509,7 +546,6 @@ cffi_pmember(Ty *ty, int argc, Value *kwargs)
         ffi_get_struct_offsets(FFI_DEFAULT_ABI, type, offsets);
 
         return PTR(p + offsets[i.integer]);
-
 }
 
 Value
@@ -536,15 +572,21 @@ cffi_member(Ty *ty, int argc, Value *kwargs)
         case VALUE_PTR:
                 p = ARG(1).ptr;
                 break;
+
         case VALUE_BLOB:
                 p = ARG(1).blob->items;
                 break;
+
         default:
                 zP("ffi.member(): invalid second argument: %s", VSC(&ARG(1)));
         }
 
         Value i = ARG(2);
-        if (i.type != VALUE_INTEGER || i.integer < 0 || i.integer >= n) {
+        if (
+                (i.type != VALUE_INTEGER)
+             || (i.integer < 0)
+             || (i.integer >= n)
+        ) {
                 zP("invalid third argument to ffi.member(): %s", VSC(&i));
         }
 
@@ -567,7 +609,9 @@ cffi_load(Ty *ty, int argc, Value *kwargs)
         }
 
         if (argc == 1) {
-                ffi_type *t = (ARG(0).extra == NULL) ? &ffi_type_uint8 : ARG(0).extra;
+                ffi_type *t = (ARG(0).extra == NULL)
+                            ? &ffi_type_uint8
+                            : ARG(0).extra;
                 return load(ty, t, ARG(0).ptr);
         }
 
@@ -581,10 +625,14 @@ cffi_load_atomic(Ty *ty, int argc, Value *kwargs)
 
         switch (argc) {
         case 1:
-                t = (ARG(0).extra == NULL) ? &ffi_type_uint8 : ARG(0).extra;
+                t = (ARG(0).extra == NULL)
+                  ? &ffi_type_uint8
+                  : ARG(0).extra;
                 return xload(ty, t, ARG(0).ptr);
+
         case 2:
                 return xload(ty, ARG(0).ptr, ARG(1).ptr);
+
         default:
                 zP("atomic.load(): expected 1 or 2 arguments but got %d", argc);
         }
@@ -623,11 +671,13 @@ cffi_store(Ty *ty, int argc, Value *kwargs)
                 vPtr = ARG(1);
                 vVal = ARG(2);
                 break;
+
         case 2:
                 vType = NONE;
                 vPtr = ARG(0);
                 vVal = ARG(1);
                 break;
+
         default:
                 zP("ffi.store(): expected 2 or 3 arguments but got %d", argc);
         }
@@ -637,7 +687,11 @@ cffi_store(Ty *ty, int argc, Value *kwargs)
         }
 
         if (vType.type == VALUE_NONE) {
-                vType = PTR(vPtr.extra == NULL ? &ffi_type_uint8 : (ffi_type *)vPtr.extra);
+                vType = PTR(
+                        (vPtr.extra == NULL)
+                      ? &ffi_type_uint8
+                      : (ffi_type *)vPtr.extra
+                );
         } else if (vType.type != VALUE_PTR) {
                 zP("ffi.store(): expected pointer but got: %s", VSC(&vType));
         }
@@ -660,11 +714,13 @@ cffi_store_atomic(Ty *ty, int argc, Value *kwargs)
                 vPtr = ARG(1);
                 vVal = ARG(2);
                 break;
+
         case 2:
                 vType = NONE;
                 vPtr = ARG(0);
                 vVal = ARG(1);
                 break;
+
         default:
                 zP("atomic.store(): expected 2 or 3 arguments but got %d", argc);
         }
@@ -674,7 +730,11 @@ cffi_store_atomic(Ty *ty, int argc, Value *kwargs)
         }
 
         if (vType.type == VALUE_NONE) {
-                vType = PTR(vPtr.extra == NULL ? &ffi_type_uint8 : (ffi_type *)vPtr.extra);
+                vType = PTR(
+                        (vPtr.extra == NULL)
+                      ? &ffi_type_uint8
+                      : (ffi_type *)vPtr.extra
+                );
         } else if (vType.type != VALUE_PTR) {
                 zP("atomic.store(): expected pointer but got: %s", VSC(&vType));
         }
@@ -725,9 +785,11 @@ cffi_call(Ty *ty, int argc, Value *kwargs)
         case VALUE_PTR:
                 ret = out->ptr;
                 break;
+
         case VALUE_BLOB:
                 ret = out->blob->items;
                 break;
+
         default:
                 zP("invalid `out` argument to ffi.call(): %s", VSC(out));
         }
@@ -860,7 +922,7 @@ cffi_dlerror(Ty *ty, int argc, Value *kwargs)
         if (error == NULL)
                 return NIL;
 
-        return vSs(error, strlen(error));
+        return vSsz(error);
 #endif
 }
 
@@ -901,8 +963,8 @@ cffi_struct(Ty *ty, int argc, Value *kwargs)
         ffi_type *t = mA(sizeof *t);
 
         t->type = FFI_TYPE_STRUCT;
-        t->alignment = 0;
         t->size = 0;
+        t->alignment = 0;
         t->elements = mA((argc + 1) * sizeof (ffi_type *));
 
         for (int i = 0; i < argc; ++i) {
@@ -937,15 +999,12 @@ cffi_closure(Ty *ty, int argc, Value *kwargs)
         }
 
         Value cif = cffi_cif(ty, argc - 1, NULL);
-
         if (cif.type == VALUE_NIL) {
                 zP("ffi.closure(): failed to construct cif");
         }
 
         void *code;
-
         ffi_closure *closure = ffi_closure_alloc(sizeof *closure, &code);
-
         if (closure == NULL) {
                 zP("ffi.closure(): ffi_closure_alloc() failed");
         }
@@ -980,7 +1039,6 @@ cffi_closure_free(Ty *ty, int argc, Value *kwargs)
         }
 
         Value p = ARG(0);
-
         void **pointers = p.extra;
 
         ffi_closure_free(pointers[0]);

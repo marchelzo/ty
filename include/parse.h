@@ -35,6 +35,12 @@ parse_get_stmt(Ty *ty, int prec, bool want_raw);
 void
 parse_next(Ty *ty);
 
+void
+parse_push_comment(Ty *ty, Token const *tok);
+
+TokenVector const *
+parse_get_comments(Ty *ty);
+
 noreturn void
 ParseError(Ty *ty, char const *fmt, ...);
 

@@ -4,70 +4,72 @@ import ffi as c (C!)
 import os (..)
 import sh (sh)
 import ioctls (..)
+import json
+import time
+import chalk (chalk, Text)
+import path (Path)
 
 let ERASE_LINE = "\x1b[2K"
 
-let __tls::tio: ?TermIO = nil
-let __tls::defaultPrompt: ?String = nil
-let __tls::defaultComplete: _ = nil
-let __tls::termFd: Int = -1
-let __tls::history = []
+let __tls::reader: ?InteractiveLineReader = nil
 
-tag CycleCompletions, ListCompletions, ReplaceLine, Insert;
+pub tag CycleCompletions, ListCompletions, ReplaceLine, Insert;
 
-pub use CompletionAction = CycleCompletions[Array[String]]
-                         | ListCompletions[Array[String]]
+pub use CompletionItem = String | (String | Text, String);
+
+pub use CompletionAction = CycleCompletions[Array[CompletionItem]]
+                         | ListCompletions[Array[CompletionItem]]
                          | Insert[String]
                          | ReplaceLine[String]
                          | None
 
 pub use CompletionFunction = {before: String, after: String} -> CompletionAction;
 
+fn completion-label(item: CompletionItem) -> Text | String {
+    (item :: String) ? item : item.0
+}
+
+fn completion-text(item: CompletionItem) -> String {
+    match item {
+        (_, s) => s,
+        s      => s
+    }
+}
+
 class CompletionCycler {
-    init(cs, line, i) {
-        @i = i
-        @line = line
-        @cs = cs
-        @ci = -1
+    __line:  Array[String]
+    __i:     Int
+    __cs:    Array[CompletionItem]
+    __ci:    Int
+    __first: Bool
+
+    init(cs: [String], line: [String], i: Int) {
+        __i = i
+        __line = line
+        __cs = cs
+        __ci = -1
+        __first = true
+    }
+
+    items -> [CompletionItem] {
+        __cs
     }
 
     cycle() {
-        if #@cs == 0 || @ci + 1 == #@cs {
-            @ci = -1
-            return (@line, @i)
+        if (#__cs == 0) || (__ci + 1 == #__cs) {
+            __ci = -1
+            return (__line, __i)
         }
 
-        @ci = (@ci + 1) % #@cs
+        __ci = (__ci + 1) % #__cs
 
-        let c = @cs[@ci]
+        let c = completion-text(__cs[__ci])
 
-        let line = @line.clone()
-        line.insert(@i, c)
+        let line = __line.clone()
+        line.insert(__i, c)
 
-        return (line, @i + 1)
+        return (line, __i + 1)
     }
-}
-
-C! struct WinSize {
-    c.short lines;
-    c.short cols;
-    c.short xpix;
-    c.short ypix;
-}
-
-let winSize = WinSize()
-
-pub fn init(fd=0, prompt=nil, complete=nil, ctrl_c=false) {
-    termFd = fd
-    defaultPrompt = prompt
-    defaultComplete = complete
-    tio = TermIO(fd, mouse=false)
-    history = []
-}
-
-fn termDimensions() {
-    ioctl(termFd, TIOCGWINSZ, (c.ptr, winSize.get()))
-    return (winSize.lines, winSize.cols)
 }
 
 fn completeFile(before: String, after: String) -> CompletionAction {
@@ -96,300 +98,385 @@ fn completeFile(before: String, after: String) -> CompletionAction {
     }
 }
 
-fn fitItems(items: [String], W: Int) {
+fn fitItems(items: [Text | String], W: Int) {
+    fn width(text: String | Text) {
+        "{text}".width()
+    }
+
     fn widths(cols) {
-        items.map(&len).groupsOf(#items / cols).map(&max)
+        items.map(width).groupsOf(#items / cols).map(&max)
     }
 
     let (cols, ws) = (
         for cols in 1..#items {
             let ws = widths(cols + 1)
-            if ws.sum() + 2 * cols > W {
+            if ws.sum() + 6 * cols > W {
                 break (cols, widths(cols))
             }
         }
     ) ?? (#items, widths(#items))
 
-    let cols: [[String]] = items.groupsOf(#items / cols)
+    let cols: [[String | Text]] = items.groupsOf(#items / cols)
     let rows: Int = cols.map(&len).max()
 
     let result = []
 
     for i in ..rows {
         result.push(
-            cols.map(c -> #c > i ? c[i] : '')
-                .zip(ws, (f, w) -> f.padRight(w))
-                .join('  ')
+            cols.map(c -> (#c > i) ? c[i] : '')
+                .zip(ws, (f, w) -> "{str(f):<{w}}")
+                .join('    ')
         )
     }
 
     result
 }
 
-pub fn readln(
-    prompt: ?String = nil,
-    complete: _ = nil,
-    erase: Bool = false,
-    keybinds: Dict[String, _] = %{}
-) -> String | nil {
-    if tio == nil {
-        init()
-    }
+class InteractiveLineReader {
+    __tio: TermIO
+    __history_file: Path | String | nil
+    __history: Array[(Array[String], Int)]
+    __prompt: String
+    __complete: CompletionFunction | nil
+    __render: (String, [String], Int) -> String
 
-    let prompt = prompt ?? defaultPrompt
-    let line = []
-    let i = 0
-
-    fn getBefore() {
-        line.slice(0, i).str() ?? ''
-    }
-
-    fn getAfter() {
-        line.slice(i).str() ?? ''
-    }
-
-    fn getText() {
-        line.str() ?? ''
-    }
-
-    tio.start()
-    defer tio.stop()
-
-    let hi = 0
-    let hPrefix = nil
-    let hSuffix = nil
-
-    let completionCycler = nil
-
-    fn hMatch?(i) {
-        if #history < i { return false }
-        let text = history[-i].0.str() ?? ''
-        text.starts?(hPrefix) && text.ends?(hSuffix)
-    }
-
-    while true {
-        let before = line.slice(0, i).str() ?? ''
-        let all = line.str() ?? ''
-
-        write(termFd, "{ERASE_LINE}\r{prompt}{all}\r{prompt}{before}")
-
-        if not let $key = tio.next-event() {
-            continue
+    init(
+        term: Int | TermIO = 0,
+        prompt=nil,
+        complete=nil,
+        ctrl_c: ?Bool = false,
+        history-file: Path | String | nil = nil,
+        render: ((String, [String], Int) -> String) | nil = nil
+    ) {
+        __tio = match term {
+            fd: Int => TermIO(fd, mouse=false),
+            tio     => tio
         }
 
-        let key = match key {
-            term.event.Text(_) as t
-                => t,
-            term.event.Key({event: 1 or 2, *})
-                => "<{key.nice-name()}>",
-            _
-                => do continue
+        __prompt = prompt ?? '>> '
+        __complete = complete
+        __history_file = history-file
+
+        if history-file != nil {
+            let entries = slurp("{history-file}").lines().map(json::parse!)
+            __history = [(line, i) for {line, i, *} in entries]
+        } else {
+            __history = []
         }
 
-        if key :: String and let $func = keybinds[key] {
-            func(*termDimensions())
+        __render = render ?? fn (
+            prompt: String,
+            line: [String],
+            i: Int
+        ) -> String {
+            let before = line.slice(0, i).str() ?? ''
+            let all = line.str() ?? ''
+            return "{prompt}{all}\r{prompt}{before}"
+        }
+    }
+
+    __add_history(entry: (Array[String], Int)) {
+        if __history_file != nil {
+            let fd = open("{__history_file}", O_WRONLY | O_CREAT | O_APPEND, 0o644)
+            if fd >= 0 {
+                write(fd, "{json::encode({line: entry.0, i: entry.1, t: time.now()})}\n")
+                close(fd)
+            }
         }
 
-        let hiStart = hi
+        __history.push(entry)
+    }
 
-        if key != '<Tab>' {
-            completionCycler = nil
+    readln(
+        prompt: ?String = nil,
+        complete: _ = nil,
+        erase: Bool = false,
+        keybinds: Dict[String, _] = %{},
+        render: (String, [String], Int) -> String = nil
+    ) -> String | nil {
+        if __tio == nil {
+            init()
         }
 
-        match key {
-            '<Enter>', '\n' => {
-                let text = getText()
+        let prompt = prompt ?? __prompt
+        let render = render ?? __render
+        let line = []
+        let i = 0
 
-                if text != '' && (history == [] || (line, i) != history[-1]) {
-                    history.push((line, i))
-                }
+        fn getBefore() {
+            line.slice(0, i).str() ?? ''
+        }
 
-                if erase {
-                    write(termFd, "{ERASE_LINE}\r")
-                } else {
-                    write(termFd, '\n')
-                }
+        fn getAfter() {
+            line.slice(i).str() ?? ''
+        }
 
-                return text
-            },
+        fn getText() {
+            line.str() ?? ''
+        }
 
-            '<C-d>' => {
-                return nil
-            },
+        fn printItems(cs) {
+            write(__tio.fd, "{ERASE_LINE}\r")
 
-            '<C-a>' => {
-                i = 0
-            },
+            let (h, w) = __tio.size()
 
-            '<C-e>' => {
-                i = #line
-            },
+            for line in fitItems(cs, w) {
+                print(line)
+            }
+        }
 
-            '<C-k>' => {
-                line.take!(i)
-            },
+        __tio.start()
+        defer __tio.stop()
 
-            '<C-l>' => {
-                write(termFd, "\x1b[2J\x1b[H")
-            },
+        let hi = 0
+        let hPrefix = nil
+        let hSuffix = nil
 
-            '<C-w>' => {
-                while i > 0 && line[i - 1].match?(/^\S*$/) {
-                    line.pop(--i)
-                }
-                while i > 0 && line[i - 1].match?(/^\s*$/) {
-                    line.pop(--i)
-                }
-            },
+        let completionCycler = nil
 
-            '<Left>' => {
-                if i > 0 {
-                    i -= 1
-                }
-            },
+        fn hMatch?(i) {
+            if #__history < i { return false }
+            let text = __history[-i].0.str() ?? ''
+            text.starts?(hPrefix) && text.ends?(hSuffix)
+        }
 
-            '<Right>' => {
-                if i < #line {
-                    i += 1
-                }
-            },
+        while true {
+            let before = line.slice(0, i).str() ?? ''
+            let all = line.str() ?? ''
 
-            '<Up>' => {
-                hPrefix ?= getBefore()
-                hSuffix ?= getAfter()
+            write(__tio.fd, "{ERASE_LINE}\r{render(prompt, line, i)}")
 
-                while hi < #history {
-                    hi += 1
-                    if hMatch?(hi) {
-                        break
+            if not let $key = __tio.next-event() {
+                continue
+            }
+
+            let key = match key {
+                term.event.Text(_) as t
+                    => t,
+                term.event.Key({event: 1 or 2, *})
+                    => "<{key.nice-name()}>",
+                _
+                    => do continue
+            }
+
+            if key :: String and let $func = keybinds[key] {
+                func(*__tio.size())
+            }
+
+            let hiStart = hi
+
+            if key != '<Tab>' {
+                completionCycler = nil
+            }
+
+            match key {
+                '<Enter>', '\n' => {
+                    let text = getText()
+
+                    if text != '' && (__history == [] || (line, i) != __history[-1]) {
+                        __add_history((line, i))
                     }
-                }
 
-                if hi < #history && !hMatch?(hi) {
-                    hi = hiStart
-                }
-            },
+                    if erase {
+                        write(__tio.fd, "{ERASE_LINE}\r")
+                    } else {
+                        write(__tio.fd, '\n')
+                    }
 
-            '<Down>' => {
-                hi -= 1
+                    return text
+                },
 
-                while hi > 0 && !hMatch?(hi) {
-                    hi -= 1
-                }
+                '<C-d>' => {
+                    return nil
+                },
 
-                if (hi < 0) || (hi > 0 && !hMatch?(hi)) {
-                    hi = 0
-                }
-            },
+                '<C-a>' => {
+                    i = 0
+                },
 
-            '<DEL>', '<Backspace>' => {
-                if i > 0 {
-                    line.pop(--i)
-                }
-            },
+                '<C-e>' => {
+                    i = #line
+                },
 
-            '<Tab>' => {
-                if completionCycler != nil {
-                    (line, i) = completionCycler.cycle()
-                } else {
-                    let (before, after) = line.split(i)
-                    let result = (
-                           complete
-                        ?? defaultComplete
-                        ?? completeFile
-                    )(
-                        before.str() ?? '',
-                        after.str() ?? ''
-                    )
-                    match result {
-                        Insert(s) => {
-                            line.insert(i++, s)
-                        },
+                '<C-k>' => {
+                    line.take!(i)
+                },
 
-                        None => {
-                        },
+                '<C-l>' => {
+                    write(__tio.fd, "\x1b[2J\x1b[H")
+                },
 
-                        ReplaceLine(s) => {
-                            line = s.chars()
-                            i = #line
-                        },
+                '<C-w>' => {
+                    while i > 0 && line[i - 1].match?(/^\S*$/) {
+                        line.pop(--i)
+                    }
+                    while i > 0 && line[i - 1].match?(/^\s*$/) {
+                        line.pop(--i)
+                    }
+                },
 
-                        CycleCompletions(cs) => {
-                            completionCycler = CompletionCycler(cs, line, i)
-                            (line, i) = completionCycler.cycle()
-                        },
+                '<Left>' => {
+                    if i > 0 {
+                        i -= 1
+                    }
+                },
 
-                        ListCompletions(cs) => {
-                            write(termFd, "{ERASE_LINE}\r")
+                '<Right>' => {
+                    if i < #line {
+                        i += 1
+                    }
+                },
 
-                            let (h, w) = termDimensions()
+                '<Up>' => {
+                    hPrefix ?= getBefore()
+                    hSuffix ?= getAfter()
 
-                            for line in fitItems(cs, w) {
-                                print(line)
-                            }
+                    while hi < #__history {
+                        hi += 1
+                        if hMatch?(hi) {
+                            break
                         }
                     }
+
+                    if hi < #__history && !hMatch?(hi) {
+                        hi = hiStart
+                    }
+                },
+
+                '<Down>' => {
+                    hi -= 1
+
+                    while hi > 0 && !hMatch?(hi) {
+                        hi -= 1
+                    }
+
+                    if (hi < 0) || (hi > 0 && !hMatch?(hi)) {
+                        hi = 0
+                    }
+                },
+
+                '<DEL>',
+                '<Backspace>',
+                '<S-Backspace>',
+                '<C-Backspace>' => {
+                    if i > 0 {
+                        line.pop(--i)
+                    }
+                },
+
+                '<Tab>' => {
+                    if completionCycler != nil {
+                        (line, i) = completionCycler.cycle()
+                    } else {
+                        let (before, after) = line.split(i)
+                        let result = (
+                               complete
+                            ?? __complete
+                            ?? completeFile
+                        )(
+                            before.str() ?? '',
+                            after.str() ?? ''
+                        )
+                        match result {
+                            Insert(s) => {
+                                line.insert(i++, s)
+                            },
+
+                            ReplaceLine(s) => {
+                                line = s.chars()
+                                i = #line
+                            },
+
+                            CycleCompletions(cs) and #cs > 0 => {
+                                completionCycler = CompletionCycler(cs, line, i)
+                                (line, i) = completionCycler.cycle()
+                                printItems(cs.map(completion-label))
+                            },
+
+                            ListCompletions(cs) and #cs > 0 => {
+                                printItems(cs.map(completion-label))
+                            },
+
+                            _ => {}
+                        }
+                    }
+                },
+
+                '<C-r>' => {
+                    __tio.stop()
+
+                    let fzf = spawn(
+                        ['fzf', '--tac', '--no-sort', '-q', getText()],
+                        stdin=SPAWN_PIPE,
+                        stdout=SPAWN_PIPE,
+                        stderr=SPAWN_INHERIT
+                    )
+
+                    write(fzf.stdin, __history.map(\_.0.str()).unlines())
+                    close(fzf.stdin)
+
+                    let out = read(fzf.stdout, 8192).str().strip()
+                    close(fzf.stdout)
+                    waitpid(fzf.pid)
+
+                    __tio.start()
+
+                    if out {
+                        line = out.chars()
+                        i = #line
+                    }
+                },
+
+                '<C-x>' => {
+                    let (fd, tmp) = mktemp()
+                    close(fd)
+
+                    __tio.stop()
+
+                    let editor = spawn([getenv('EDITOR') ?? 'vi', tmp])
+                    waitpid(editor.pid)
+
+                    __tio.start()
+
+                    let out = slurp(tmp).comb(/\r/).sub(/\n+/, ' ').trim()
+                    if #out > 0 {
+                        line = out.chars()
+                        i = #line
+                    }
+                },
+
+                term.event.Text(s) => {
+                    line.insert(i++, s)
+                },
+
+                _ => {}
+            }
+
+            if hi != hiStart {
+                if hi == 0 {
+                    line = []
+                    i = 0
+                    hi = 0
+                } else {
+                    (line, i) = __history[-hi]
+                    line = line.clone()
                 }
-            },
+            } else if key != '<Up>' {
+                hi = 0
+                hPrefix = nil
+                hSuffix = nil
+            }
+        }
+    }
 
-            '<C-r>' => {
-                let fzf = spawn(
-                    ['fzf', '--tac', '--no-sort', '-q', getText()],
-                    stdin=SPAWN_PIPE,
-                    stdout=SPAWN_PIPE,
-                    stderr=SPAWN_INHERIT
-                )
-
-                write(fzf.stdin, history.map(&0 |> &str).unlines())
-                close(fzf.stdin)
-
-                let out = read(fzf.stdout, 8192).str().strip()
-                close(fzf.stdout)
-
-                if #out > 0 {
-                    line = out.chars()
-                    i = #line
-                }
-            },
-
-            '<C-x>' => {
-                let (fd, tmp) = mktemp()
-                close(fd)
-
-                tio.stop()
-
-                let editor = spawn([getenv('EDITOR') ?? 'vi', tmp])
-                waitpid(editor.pid)
-
-                tio.start()
-
-                let out = slurp(tmp).comb(/\r/).sub(/\n+/, ' ').trim()
-                if #out > 0 {
-                    line = out.chars()
-                    i = #line
-                }
-            },
-
-            term.event.Text(s) => {
-                line.insert(i++, s)
-            },
-
-            _ => {}
+    progress(work, prefix, width, effects=id, cleanup=false) {
+        for p in work {
+            let w = width ?? (__tio.size().1 - 8).clamp(0, 70)
+            write(__tio.fd, "\r{prefix ?? ''}{effects(progressString(p, w))} {p * 100:.1f}%%")
         }
 
-        if hi != hiStart {
-            if hi == 0 {
-                line = []
-                i = 0
-                hi = 0
-            } else {
-                (line, i) = history[-hi]
-                line = line.clone()
-            }
-        } else if key != '<Up>' {
-            hi = 0
-            hPrefix = nil
-            hSuffix = nil
+        if cleanup {
+            write(__tio.fd, "{ERASE_LINE}\r")
         }
     }
 }
@@ -409,16 +496,23 @@ fn progressString(progress: Float, width: Int) {
 }
 
 pub fn progress(work, prefix, width, effects=id, cleanup=false) {
-    if tio == nil {
-        init()
-    }
+    reader = reader ?? InteractiveLineReader()
+    reader.progress(work, prefix, width, effects=effects, cleanup=cleanup)
+}
 
-    for p in work {
-        let w = width ?? (termDimensions().1 - 8).clamp(0, 70)
-        write(termFd, "\r{prefix ?? ''}{effects(progressString(p, w))} {p * 100:.1f}%%")
-    }
-
-    if cleanup {
-        write(termFd, "{ERASE_LINE}\r")
-    }
+pub fn readln(
+    prompt: ?String = nil,
+    complete: _ = nil,
+    erase: Bool = false,
+    keybinds: Dict[String, _] = %{},
+    render: (String, [String], Int) -> String = nil
+) -> String | nil {
+    reader = reader ?? InteractiveLineReader()
+    reader.readln(
+        prompt=prompt,
+        complete=complete,
+        erase=erase,
+        keybinds=keybinds,
+        render=render
+    )
 }

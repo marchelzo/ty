@@ -6663,6 +6663,7 @@ Value
 make_token(Ty *ty, Token const *t)
 {
         char const *type = NULL;
+        char const *tag  = NULL;
 
         Value start = make_location(ty, &t->start);
         Value end = make_location(ty, &t->end);
@@ -6670,13 +6671,24 @@ make_token(Ty *ty, Token const *t)
 #define T(name) (STRING_NOGC(#name, strlen(#name)))
         switch (t->type) {
         case TOKEN_IDENTIFIER:
+                switch (t->tag) {
+                case TT_FIELD:   tag = "field";   break;
+                case TT_TYPE:    tag = "type";    break;
+                case TT_MACRO:   tag = "macro";   break;
+                case TT_MEMBER:  tag = "member";  break;
+                case TT_MODULE:  tag = "module";  break;
+                case TT_KEYWORD: tag = "keyword"; break;
+                case TT_NONE:    tag = NULL;      break;
+                }
                 return vTn(
                         "type",   T(id),
+                        "kind",   (tag == NULL ? NIL : vSsz(tag)),
                         "start",  start,
                         "end",    end,
                         "id",     vSsz(t->identifier),
                         "module", t->module == NULL ? NIL : vSsz(t->module)
                 );
+
         case TOKEN_INTEGER:
                 return vTn(
                         "type",   T(int),
@@ -6684,6 +6696,7 @@ make_token(Ty *ty, Token const *t)
                         "end",    end,
                         "int",    INTEGER(t->integer)
                 );
+
         case TOKEN_REAL:
                 return vTn(
                         "type",   T(int),
@@ -6691,6 +6704,7 @@ make_token(Ty *ty, Token const *t)
                         "end",    end,
                         "float",  REAL(t->real)
                 );
+
         case TOKEN_STRING:
                 return vTn(
                         "type",   T(string),
@@ -6698,6 +6712,7 @@ make_token(Ty *ty, Token const *t)
                         "end",    end,
                         "str",    vSsz(t->string)
                 );
+
         case TOKEN_COMMENT:
                 return vTn(
                         "type",    T(comment),
@@ -6705,8 +6720,10 @@ make_token(Ty *ty, Token const *t)
                         "end",     end,
                         "comment", vSsz(t->comment)
                 );
+
         case TOKEN_END:
                 return NIL;
+
         case TOKEN_AND:             type = "&&";   break;
         case TOKEN_AND_EQ:          type = "&=";   break;
         case TOKEN_ARROW:           type = "->";   break;
@@ -6742,6 +6759,18 @@ make_token(Ty *ty, Token const *t)
         case TOKEN_WTF:             type = "??";   break;
         case TOKEN_XOR_EQ:          type = "^=";   break;
 
+        case TOKEN_TEMPLATE_BEGIN:
+                type = "$$[";
+                break;
+
+        case TOKEN_TEMPLATE_END:
+                type = "$$]";
+                break;
+
+        case '$$':
+                type = "$$";
+                break;
+
         case '$~>':
                 type = "$~>";
                 break;
@@ -6749,19 +6778,24 @@ make_token(Ty *ty, Token const *t)
         case TOKEN_KEYWORD:
                 type = keyword_show(t->keyword);
                 break;
+
         case TOKEN_SPECIAL_STRING:
         case TOKEN_FUN_SPECIAL_STRING:
                 type = "f-string";
                 break;
+
         case TOKEN_NEWLINE:
                 type = "\\n";
                 break;
+
         case TOKEN_DIRECTIVE:
                 type = "pp";
                 break;
+
         case TOKEN_REGEX:
                 type = "regex";
                 break;
+
         case TOKEN_USER_OP:
                 type = intern(&xD.b_ops, t->operator)->name;
                 break;
@@ -7012,6 +7046,88 @@ BUILTIN_FUNCTION(ty_scope)
         return (scope == NULL) ? NIL : PTR(scope);
 }
 
+static Value
+ScopeDict(Ty *ty, Scope *scope, bool public_only)
+{
+        Dict *vars = dict_new(ty);
+
+        GC_STOP();
+
+        for (int i = 0; i < scope->size; ++i) {
+                for (Symbol *sym = scope->table[i]; sym != NULL; sym = sym->next) {
+                        if (!public_only || SymbolIsPublic(sym)) {
+                                Value name = vSsz(sym->identifier);
+                                Value entry;
+                                if (SymbolIsNamespace(sym)) {
+                                        entry = ScopeDict(ty, sym->scope, public_only);
+                                } else {
+                                        entry = vTn(
+                                                "name", name,
+                                                "type", type_to_ty(ty, sym->type),
+                                                "value", *vm_global(ty, sym->i)
+                                        );
+                                }
+                                dict_put_value(ty, vars, name, entry);
+                        }
+                }
+        }
+
+        GC_RESUME();
+
+        return DICT(vars);
+}
+
+BUILTIN_FUNCTION(ty_module)
+{
+        ASSERT_ARGC("ty.module()", 0, 1);
+
+        bool this = (argc == 0);
+        Value name = !this ? ARGx(0, VALUE_STRING) : NIL;
+        Module *mod = !this
+                    ? CompilerGetModule(ty, TY_TMP_C_STR(name))
+                    : CompilerCurrentModule(ty);
+
+        if (mod == NULL) {
+                return NIL;
+        }
+
+        return ScopeDict(ty, mod->scope, true);
+}
+
+// gcc -g -O0 -funwind-tables -lunwind -o demo demo.c
+#include <libunwind.h>
+#include <stdio.h>
+
+void print_backtrace(void) {
+    unw_context_t uc;
+    unw_cursor_t cur;
+
+    if (unw_getcontext(&uc) < 0) return;
+    if (unw_init_local(&cur, &uc) < 0) return;
+
+    int frame = 0;
+    for (;;) {
+        unw_word_t ip = 0, sp = 0, off = 0;
+        char name[256];
+
+        if (unw_get_reg(&cur, UNW_REG_IP, &ip) < 0) break;
+        if (unw_get_reg(&cur, UNW_REG_SP, &sp) < 0) break;
+
+        name[0] = '\0';
+        if (unw_get_proc_name(&cur, name, sizeof(name), &off) != 0) {
+            name[0] = '?'; name[1] = '\0'; off = 0;
+        }
+
+        fprintf(stderr, "#%d  0x%lx  %s+0x%lx  (sp=0x%lx)\n",
+                frame, (unsigned long)ip, name, (unsigned long)off, (unsigned long)sp);
+
+        int s = unw_step(&cur);
+        if (s <= 0) break;
+        frame++;
+    }
+}
+
+
 BUILTIN_FUNCTION(ty_parse)
 {
         ASSERT_ARGC("ty.parse()", 1);
@@ -7020,7 +7136,7 @@ BUILTIN_FUNCTION(ty_parse)
                 zP("ty.parse(): expected string but got: %s", VSC(&ARG(0)));
         }
 
-        B.count = 0;
+        v0(B);
         uvP(B, '\0');
         uvPn(B, ARG(0).str, ARG(0).bytes);
         uvP(B, '\0');
@@ -7038,43 +7154,53 @@ BUILTIN_FUNCTION(ty_parse)
                                ? "tokens"
                                : NULL;
         Value vTokens = NIL;
-
         Value result;
 
 /* = */ GC_STOP(); /* ====================================================== */
+        TYPES_OFF += 1;
 
         CompileState compiler_state = PushCompilerState(ty, "(eval)");
+        void *compiler_ctx = GetCompilerContext(ty);
+        co_state st = ty->st;
+        char *ip = ty->ip;
+
+        m0(ty->st);
 
         if (TY_CATCH_ERROR()) {
                 char const *msg = TyError(ty);
 
                 result = Err(
                         ty,
-                        vTn(
-                                "msg", vSs(msg, strlen(msg))
-                        )
+                        vTn("msg", vSsz(msg))
                 );
 
-                goto Return;
+                goto ReturnError;
         }
 
         if (!parse_ex(ty, B.items + 1, "(eval)", &prog, &stop, &tokens)) {
+                Value last;
                 char const *msg = TyError(ty);
 
                 if (tokens_key) {
                         vTokens = make_tokens(ty, &tokens);
                 }
 
+                if (LastParsedExpr != NULL) {
+                        last = CToTyExpr(ty, LastParsedExpr);
+                        last = !IsNone(last) ? last : NIL;
+                } else {
+                        last = NIL;
+                }
+
                 extra = vTn(
-                        "where",    make_location(ty, &stop),
-                        "msg",      vSs(msg, strlen(msg)),
+                        "location", make_location(ty, &stop),
+                        "msg",      vSsz(msg),
+                        "last",     last,
                         tokens_key, vTokens
                 );
         } else if (tokens_key) {
                 vTokens = make_tokens(ty, &tokens);
-                extra = vTn(
-                        tokens_key, vTokens
-                );
+                extra = vTn(tokens_key, vTokens);
         }
 
         if (prog == NULL || prog[0] == NULL) {
@@ -7082,7 +7208,10 @@ BUILTIN_FUNCTION(ty_parse)
                 goto Return;
         }
 
-        if (prog[1] == NULL && prog[0]->type == STATEMENT_EXPRESSION) {
+        if (
+                (prog[1] == NULL)
+             && (prog[0]->type == STATEMENT_EXPRESSION)
+        ) {
                 Value v = CToTyExpr(ty, prog[0]->expression);
                 if (v.type == VALUE_NONE) {
                         result = Err(ty, extra);
@@ -7118,10 +7247,15 @@ BUILTIN_FUNCTION(ty_parse)
         }
 
 Return:
-        ReleaseArena(old);
         TY_CATCH_END();
+ReturnError:
+        ReleaseArena(old);
+        TYPES_OFF -= 1;
 /* = */ GC_RESUME(); /* ==================================================== */
 
+        ty->st = st;
+        ty->ip = ip;
+        SetCompilerContext(ty, compiler_ctx);
         PopCompilerState(ty, compiler_state);
 
         return result;
@@ -7134,42 +7268,41 @@ BUILTIN_FUNCTION(ty_id)
 }
 
 static Value
-MethodSummary(Ty *ty, Expr const *fun)
+MethodSummary(Ty *ty, Type *t0, Expr const *fun)
 {
+        Type *u0 = fun->_type;
+
+        if (t0 != NULL) {
+                u0 = type_inst_for(ty, t0, u0);
+        }
+
         return vTn(
                 "name", vSsz(fun->name),
-                "type", type_to_ty(ty, fun->_type)
+                "type", type_to_ty(ty, u0)
         );
 }
 
 BUILTIN_FUNCTION(ty_type_info)
 {
-        char const *_name__ = "ty.types.info()";
+        ASSERT_ARGC("ty.types.info()", 1);
 
-        CHECK_ARGC(1);
+        Value arg0 = ARG(0);
+        Type *t0 = type_from_ty(ty, &arg0);
 
-        Value type = ARGx(0, VALUE_CLASS, VALUE_TYPE);
-
-        Class *class;
-
-        if (type.type == VALUE_CLASS) {
-                class = class_get(ty, type.class);
-        } else if (
-                ((Type *)type.ptr)->type == TYPE_CLASS
-             || ((Type *)type.ptr)->type == TYPE_OBJECT
+        if (
+                (TypeType(t0) != TYPE_CLASS)
+             && (TypeType(t0) != TYPE_OBJECT)
         ) {
-                class = ((Type *)type.ptr)->class;
-        } else {
-                class = NULL;
-        }
-
-        if (class == NULL || class->def == NULL) {
                 return NIL;
         }
 
-        GC_STOP();
+        if (t0->class->def == NULL) {
+                return NIL;
+        }
 
-        ClassDefinition *def = &class->def->class;
+        ClassDefinition *def = &t0->class->def->class;
+
+        GC_STOP();
 
         Array *methods = vA();
         Array *statics = vA();
@@ -7180,19 +7313,19 @@ BUILTIN_FUNCTION(ty_type_info)
         Array *params = vA();
 
         for (int i = 0; i < vN(def->methods); ++i) {
-                vAp(methods, MethodSummary(ty, v__(def->methods, i)));
+                vAp(methods, MethodSummary(ty, t0, v__(def->methods, i)));
         }
 
         for (int i = 0; i < vN(def->statics); ++i) {
-                vAp(statics, MethodSummary(ty, v__(def->statics, i)));
+                vAp(statics, MethodSummary(ty, t0, v__(def->statics, i)));
         }
 
         for (int i = 0; i < vN(def->getters); ++i) {
-                vAp(getters, MethodSummary(ty, v__(def->getters, i)));
+                vAp(getters, MethodSummary(ty, t0, v__(def->getters, i)));
         }
 
         for (int i = 0; i < vN(def->setters); ++i) {
-                vAp(setters, MethodSummary(ty, v__(def->setters, i)));
+                vAp(setters, MethodSummary(ty, t0, v__(def->setters, i)));
         }
 
         for (int i = 0; i < vN(def->fields); ++i) {
@@ -7200,20 +7333,38 @@ BUILTIN_FUNCTION(ty_type_info)
                 char const *name = (field->type == EXPRESSION_IDENTIFIER)
                                  ? field->identifier
                                  : field->target->identifier;
-                vAp(fields, vTn("name", vSsz(name), "type", type_to_ty(ty, field->_type)));
+                Type *u0 = type_inst_for(ty, t0, field->_type);
+                vAp(
+                        fields,
+                        vTn(
+                                "name", vSsz(name),
+                                "type", type_to_ty(ty, u0)
+                        )
+                );
         }
 
         for (int i = 0; i < vN(def->traits); ++i) {
-                vAp(traits, type_to_ty(ty, type_resolve(ty, v__(def->traits, i))));
+                Type *tr0 = type_resolve(ty, v__(def->traits, i));
+                vAp(traits, type_to_ty(ty, type_inst_for(ty, t0, tr0)));
         }
 
         for (int i = 0; i < vN(def->type_params); ++i) {
                 vAp(params, type_to_ty(ty, v__(def->type_params, i)->symbol->type));
         }
 
-        Value super = (def->super != NULL)
-                    ? type_to_ty(ty, type_resolve(ty, def->super))
-                    : NIL;
+        Value super;
+        if (def->super != NULL) {
+                super = type_to_ty(
+                        ty,
+                        type_inst_for(
+                                ty,
+                                t0,
+                                type_resolve(ty, def->super)
+                        )
+                );
+        } else {
+                super = NIL;
+        }
 
         Value info = vTn(
                 "methods", ARRAY(methods),
@@ -7301,9 +7452,7 @@ BUILTIN_FUNCTION(ty_type_inst)
 
 BUILTIN_FUNCTION(ty_type_infer)
 {
-        char const *_name__ = "ty.types.infer()";
-
-        CHECK_ARGC(1);
+        ASSERT_ARGC("ty.types.infer()", 1);
 
         Value ast = ARG(0);
         Expr *expr = TyToCExpr(ty, &ast);
@@ -7331,6 +7480,16 @@ BUILTIN_FUNCTION(ty_type_check)
                         type_from_ty(ty, &t1)
                 )
         );
+}
+
+BUILTIN_FUNCTION(ty_type_show)
+{
+        ASSERT_ARGC("ty.types.show()", 1);
+
+        Value t = ARG(0);
+        Type *type = type_from_ty(ty, &t);
+
+        return vSsz(type_show(ty, type));
 }
 
 BUILTIN_FUNCTION(ty_definition)

@@ -875,8 +875,9 @@ ContextString(Ty *ty)
 static void *
 PushContext(Ty *ty, void const *ctx)
 {
-        if (ContextList != NULL && ContextList->e == ctx)
+        if (ContextList != NULL && ContextList->e == ctx) {
                 return ContextList;
+        }
 
         ContextEntry *new = amA(sizeof *new);
         new->next = ContextList;
@@ -911,6 +912,18 @@ RestoreContext(Ty *ty, void *ctx)
 {
         SWAP(void *, ContextList, ctx);
         return ctx;
+}
+
+void *
+GetCompilerContext(Ty *ty)
+{
+        return ContextList;
+}
+
+void
+SetCompilerContext(Ty *ty, void *ctx)
+{
+        ContextList = ctx;
 }
 
 static void *
@@ -3357,8 +3370,9 @@ invoke_fun_macro(Ty *ty, Scope *scope, Expr *e)
 Scope *
 GetNamespace(Ty *ty, Namespace *ns)
 {
-        if (ns == NULL)
+        if (ns == NULL) {
                 return STATE.global;
+        }
 
         Scope *scope = GetNamespace(ty, ns->next);
         Symbol *sym = scope_lookup(ty, scope, ns->id);
@@ -4771,8 +4785,9 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
         s->xfunc    = STATE.func;
         s->mod      = STATE.module;
 
-        if (scope == STATE.global && s->ns != NULL)
+        if (scope == STATE.global && s->ns != NULL) {
                 scope = GetNamespace(ty, s->ns);
+        }
 
         UpdateRefinemenets(ty, scope);
 
@@ -10147,9 +10162,15 @@ import_module(Ty *ty, Stmt const *s)
          */
         for (int i = 0; i < vN(STATE.imports); ++i) {
                 if (strcmp(as, v__(STATE.imports, i).name) == 0) {
+                        if (STATE.eval) {
+                                return;
+                        }
                         fail("there is already a module imported under the name '%s'", as);
                 }
                 if (v__(STATE.imports, i).mod->scope == module_scope) {
+                        if (STATE.eval) {
+                                return;
+                        }
                         fail("the module '%s' has already been imported", name);
                 }
         }
@@ -13397,7 +13418,7 @@ typarse(
         STATE.mstart = *start;
         STATE.mend = *end;
 
-        Value vSelf = self == NULL ? NIL : tyexpr(ty, self);
+        Value vSelf = (self == NULL) ? NIL : tyexpr(ty, self);
         Value expr;
 
         vmP(&vSelf);
@@ -13579,8 +13600,8 @@ define_class(Ty *ty, Stmt *s)
                            ? trait_new(ty, s)
                            : class_new(ty, s);
         } else if (
-                sym->class < CLASS_BUILTIN_END
-             && sym->class != -1
+                (sym->class < CLASS_BUILTIN_END)
+             && (sym->class != -1)
         ) {
                 class_builtin(ty, sym->class, s);
         } else {
@@ -13605,7 +13626,7 @@ define_class(Ty *ty, Stmt *s)
         cd->symbol = sym->class;
         cd->var = sym;
 
-        sym->type = class_get(ty, sym->class)->type;
+        sym->type = class->type;
 
         XLOG(
                 "%s================%s DEFINE CLASS: %s :: %s %s==========================%s",
@@ -13766,6 +13787,8 @@ DeclareSymbols(Ty *ty, Stmt *stmt)
         Scope *scope = GetNamespace(ty, stmt->ns);
         Expr *expr;
 
+        PushScope(scope);
+
         switch (stmt->type) {
         case STATEMENT_OPERATOR_DEFINITION:
         case STATEMENT_FUNCTION_DEFINITION:
@@ -13823,6 +13846,8 @@ DeclareSymbols(Ty *ty, Stmt *stmt)
                 }
                 break;
         }
+
+        PopScope();
 }
 
 static void
@@ -13935,7 +13960,7 @@ is_fun_macro(Ty *ty, char const *module, char const *id)
                 }
         }
 
-        return s != NULL && SymbolIsFunMacro(s);
+        return (s != NULL) && SymbolIsFunMacro(s);
 }
 
 bool
@@ -13952,7 +13977,7 @@ is_macro(Ty *ty, char const *module, char const *id)
                 }
         }
 
-        return s != NULL && SymbolIsMacro(s);
+        return (s != NULL) && SymbolIsMacro(s);
 }
 
 bool
@@ -15212,8 +15237,8 @@ IsTopLevel(Symbol const *sym)
         while (s->namespace)
                 s = s->parent;
 
-        return GlobalScope == s
-            || GlobalScope == s->parent;
+        return (GlobalScope == s)
+            || (GlobalScope == s->parent);
 }
 
 CompileState
@@ -15224,8 +15249,22 @@ PushCompilerState(Ty *ty, char const *file)
         Module *tmp_mod = amA0(sizeof (Module));
         tmp_mod->name = file;
         tmp_mod->path = file;
+        tmp_mod->source = NULL;
+        tmp_mod->scope = scope_new(ty, file, GlobalScope, true);
 
         STATE = freshstate(ty, tmp_mod);
+        STATE.eval = true;
+
+        for (isize i = 0; i < vN(modules); ++i){
+                avP(
+                        STATE.imports,
+                        ((struct import) {
+                                .mod = v__(modules, i),
+                                .name = v__(modules, i)->name,
+                                .pub = true
+                        })
+                );
+        }
 
         return old;
 }
