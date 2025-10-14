@@ -21,6 +21,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Ensure vcpkg cache dir exists
+        run: mkdir -p "${VCPKG_DEFAULT_BINARY_CACHE}"
+
       - name: Restore vcpkg binary cache
         uses: actions/cache@v4
         with:
@@ -61,6 +64,11 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Ensure vcpkg cache dir exists
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path "$env:VCPKG_DEFAULT_BINARY_CACHE" -Force | Out-Null
 
       - name: Restore vcpkg binary cache
         uses: actions/cache@v4
