@@ -73,16 +73,16 @@ typedef struct module {
 typedef vec(struct eloc) location_vector;
 
 typedef struct {
-        intrusive_vec(size_t);
+        intrusive_vec(usize);
         int label;
-} JumpGroup;
-
-typedef JumpGroup offset_vector;
+} JumpGroup, offset_vector;
 
 typedef struct {
-        size_t off;
+        usize off;
         int label;
 } JumpPlaceholder, JumpLabel;
+
+typedef vec(JumpPlaceholder) JumpSet;
 
 typedef struct loop_state {
         offset_vector continues;

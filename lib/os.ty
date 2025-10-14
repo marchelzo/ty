@@ -1,6 +1,8 @@
 import ffi as c (C!)
 import errno (ENOTDIR)
 
+__set_type__ argv Array[String];
+
 pub fn open(path: String, flags: Int, mode: ?Int) -> Int;
 pub fn close(fd: Int) -> Int;
 pub fn read(fd: Int, n: Int) -> Blob;

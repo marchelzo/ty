@@ -1,0 +1,430 @@
+import path
+import os
+import ty.parse as parse
+
+macro assert(cond) {
+    $$[
+        if !$$cond {
+            throw "assertion failed[{__line__}]: {$${parse.show(cond)}}"
+        }
+    $$]
+}
+
+fn assert-eq(a, b, msg: String = 'values not equal') {
+    if a != b {
+        throw "{msg}: {a} != {b}"
+    }
+}
+
+fn test-basic-construction() {
+    let p = path.Path('foo/bar')
+    assert-eq(str(p), 'foo/bar')
+    
+    let p2 = path.Path(p)
+    assert-eq(str(p2), 'foo/bar')
+    assert(p == p2)
+    
+    let empty = path.Path()
+    assert-eq(str(empty), '.')
+}
+
+fn test-join() {
+    let p = path.Path('foo')
+    let p2 = p / 'bar'
+    assert-eq(str(p2), 'foo/bar')
+    
+    let p3 = p2 / 'baz'
+    assert-eq(str(p3), 'foo/bar/baz')
+    
+    // Absolute path should replace
+#|if !__windows__
+    let p4 = p / '/absolute'
+    assert-eq(str(p4), '/absolute')
+#|]
+}
+
+fn test-parent() {
+    let p = path.Path('foo/bar/baz')
+    assert-eq(str(p.parent), 'foo/bar')
+    assert-eq(str(p.parent.parent), 'foo')
+    assert-eq(str(p.parent.parent.parent), '.')
+    assert-eq(str(p.parent.parent.parent.parent), '.')
+    
+#|if !__windows__
+    let abs = path.Path('/foo/bar')
+    assert-eq(str(abs.parent), '/foo')
+    assert-eq(str(abs.parent.parent), '/')
+    assert-eq(str(abs.parent.parent.parent), '/')
+#|]
+}
+
+fn test-name-stem-suffix() {
+    let p = path.Path('foo/bar.txt')
+    assert-eq(p.name, 'bar.txt')
+    assert-eq(p.stem, 'bar')
+    assert-eq(p.suffix, '.txt')
+    
+    let p2 = path.Path('foo/archive.tar.gz')
+    assert-eq(p2.name, 'archive.tar.gz')
+    assert-eq(p2.stem, 'archive.tar')
+    assert-eq(p2.suffix, '.gz')
+    assert-eq(p2.suffixes, ['.tar', '.gz'])
+    
+    let no-ext = path.Path('foo/bar')
+    assert-eq(no-ext.stem, 'bar')
+    assert-eq(no-ext.suffix, '')
+    assert-eq(#no-ext.suffixes, 0)
+    
+    let hidden = path.Path('.bashrc')
+    assert-eq(hidden.name, '.bashrc')
+    assert-eq(hidden.stem, '.bashrc')
+    assert-eq(hidden.suffix, '')
+}
+
+fn test-with-name() {
+    let p = path.Path('foo/bar.txt')
+    let p2 = p.with-name('baz.py')
+    assert-eq(str(p2), 'foo/baz.py')
+    
+    let p3 = p.with-stem('qux')
+    assert-eq(str(p3), 'foo/qux.txt')
+    
+    let p4 = p.with-suffix('.md')
+    assert-eq(str(p4), 'foo/bar.md')
+    
+    let p5 = p.with-suffix('')
+    assert-eq(str(p5), 'foo/bar')
+}
+
+fn test-parts() {
+    let p = path.Path('foo/bar/baz')
+    assert-eq(p.parts, ['foo', 'bar', 'baz'])
+    
+#|if !__windows__
+    let abs = path.Path('/foo/bar')
+    assert-eq(abs.parts, ['/', 'foo', 'bar'])
+    
+    let root = path.Path('/')
+    assert-eq(root.parts, ['/'])
+#|else
+    let abs = path.Path('C:\\foo\\bar')
+    assert-eq(abs.parts, ['C:\\', 'foo', 'bar'])
+#|]
+}
+
+fn test-absolute() {
+    let rel = path.Path('foo/bar')
+    assert(!rel.absolute?)
+    
+#|if !__windows__
+    let abs = path.Path('/foo/bar')
+    assert(abs.absolute?)
+    
+    let root = path.Path('/')
+    assert(root.absolute?)
+#|else
+    let abs = path.Path('C:\\foo\\bar')
+    assert(abs.absolute?)
+    
+    let unc = path.Path('\\\\server\\share\\file')
+    assert(unc.absolute?)
+#|]
+}
+
+fn test-anchor() {
+    let rel = path.Path('foo/bar')
+    assert-eq(rel.anchor, '')
+    
+#|if !__windows__
+    let abs = path.Path('/foo/bar')
+    assert-eq(abs.anchor, '/')
+#|else
+    let abs = path.Path('C:\\foo\\bar')
+    assert-eq(abs.anchor, 'C:\\')
+#|]
+}
+
+fn test-normalize-dots() {
+    let p = path.Path('foo/./bar')
+    assert-eq(str(p), 'foo/bar')
+    
+    let p2 = path.Path('foo/bar/.')
+    assert-eq(str(p2), 'foo/bar')
+    
+    let p3 = path.Path('./foo')
+    assert-eq(str(p3), 'foo')
+}
+
+fn test-equality() {
+    let p1 = path.Path('foo/bar')
+    let p2 = path.Path('foo/bar')
+    let p3 = path.Path('foo/baz')
+    
+    assert(p1 == p2)
+    assert(p1 != p3)
+    
+    assert(p1 == 'foo/bar')
+}
+
+fn test-hash() {
+    let p1 = path.Path('foo/bar')
+    let p2 = path.Path('foo/bar')
+    let p3 = path.Path('foo/baz')
+    
+    assert-eq(hash(p1), hash(p2))
+    assert(hash(p1) != hash(p3))
+    
+    // Can use in dict
+    let d = %{p1: 'value1', p3: 'value2'}
+    assert-eq(d[p2], 'value1')
+}
+
+fn test-file-operations() {
+    let tmp = path.Path("/tmp/ty-path-test-{rand()}")
+    
+    // Create directory
+    tmp.mkdir(parents=true, exist-ok=true)
+    assert(tmp.exists?)
+    assert(tmp.dir?)
+    
+    // Create file
+    let file = tmp / 'test.txt'
+    file.write('hello world')
+    assert(file.exists?)
+    assert(file.file?)
+    
+    // Read file
+    let content = file.read-text()
+    assert-eq(content, 'hello world')
+    
+    // Write bytes
+    let bin-file = tmp / 'test.bin'
+    bin-file.write(Blob(1, 2, 3, 4))
+    let data = bin-file.read-bytes()
+    assert-eq(#data, 4)
+    
+    // Rename
+    let renamed = tmp / 'renamed.txt'
+    file.rename(renamed)
+    assert(!file.exists?)
+    assert(renamed.exists?)
+    
+    // Touch
+    let touched = tmp / 'touched.txt'
+    touched.touch()
+    assert(touched.exists?)
+    
+    // Cleanup
+    for entry in tmp.ls {
+        entry.unlink()
+    }
+    tmp.rmdir()
+    assert(!tmp.exists?)
+}
+
+fn test-ls() {
+    let tmp = path.Path("/tmp/ty-path-ls-{rand()}")
+    tmp.mkdir()
+    
+    (tmp / 'file1.txt').touch()
+    (tmp / 'file2.txt').touch()
+    (tmp / 'subdir').mkdir()
+    
+    let entries = tmp.ls
+    assert-eq(#entries, 3)
+    
+    let names = entries.map(\_.name).sort()
+    assert-eq(names, ['file1.txt', 'file2.txt', 'subdir'])
+    
+    // Cleanup
+    for entry in tmp.ls {
+        if entry.dir? {
+            entry.rmdir()
+        } else {
+            entry.unlink()
+        }
+    }
+    tmp.rmdir()
+}
+
+fn test-glob() {
+    let tmp = path.Path("/tmp/ty-path-glob-{rand()}")
+    tmp.mkdir()
+    
+    (tmp / 'file1.txt').touch()
+    (tmp / 'file2.txt').touch()
+    (tmp / 'file3.py').touch()
+    (tmp / 'subdir').mkdir()
+    (tmp / 'subdir' / 'nested.txt').touch()
+    
+    // Simple glob
+    let txt-files = tmp.glob('*.txt').map(\_.name).sort()
+    assert-eq(txt-files, ['file1.txt', 'file2.txt'])
+    
+    // Question mark wildcard
+    let file1 = tmp.glob('file?.txt').map(\_.name).sort()
+    assert-eq(#file1, 2)
+    
+    // Recursive glob
+    let all-txt = tmp.rglob('*.txt').map(\_.name).sort()
+    assert-eq(all-txt, ['file1.txt', 'file2.txt', 'nested.txt'])
+    
+    // Cleanup
+    (tmp / 'subdir' / 'nested.txt').unlink()
+    (tmp / 'subdir').rmdir()
+    for entry in tmp.ls {
+        entry.unlink()
+    }
+    tmp.rmdir()
+}
+
+fn test-walk() {
+    let tmp = path.Path("/tmp/ty-path-walk-{rand()}")
+    tmp.mkdir()
+    
+    (tmp / 'file1.txt').touch()
+    (tmp / 'dir1').mkdir()
+    (tmp / 'dir1' / 'file2.txt').touch()
+    (tmp / 'dir1' / 'dir2').mkdir()
+    (tmp / 'dir1' / 'dir2' / 'file3.txt').touch()
+    
+    let all-paths = []
+    for (dir, dirs, files) in tmp.walk {
+        all-paths.push(str(dir))
+    }
+    
+    assert(#all-paths >= 3)  // tmp, tmp/dir1, tmp/dir1/dir2
+    
+    // Cleanup
+    (tmp / 'dir1' / 'dir2' / 'file3.txt').unlink()
+    (tmp / 'dir1' / 'dir2').rmdir()
+    (tmp / 'dir1' / 'file2.txt').unlink()
+    (tmp / 'dir1').rmdir()
+    (tmp / 'file1.txt').unlink()
+    tmp.rmdir()
+}
+
+fn test-cwd-home() {
+    let cwd = path.cwd()
+    assert(cwd.absolute?)
+    assert(cwd.exists?)
+    
+    let home = path.home()
+    assert(home.absolute?)
+    assert(home.exists?)
+}
+
+fn test-chmod() {
+    let tmp = path.Path("/tmp/ty-path-chmod-{rand()}")
+    tmp.mkdir()
+
+    tmp / 'test.txt' >> \_.touch()
+    
+    let file = tmp / 'test.txt'
+    file.chmod(0o644)
+    
+    let st = file.stat
+    assert((st.st_mode & 0o777) & 0o644 == 0o644)
+    
+    file.unlink()
+    tmp.rmdir()
+}
+
+fn test-symlink() {
+    let tmp = path.Path("/tmp/ty-path-symlink-{rand()}")
+    tmp.mkdir()
+    
+    let target = tmp / 'target.txt'
+    target.write('target content')
+    
+    let link = tmp / 'link.txt';
+    os.symlink(str(target), str(link))
+    
+    assert(link.exists?)
+    assert(link.symlink?)
+    assert(!target.symlink?)
+    
+    let resolved = link.readlink
+    assert-eq(resolved.name, 'target.txt')
+    
+    link.unlink()
+    target.unlink()
+    tmp.rmdir()
+}
+
+fn test-stat() {
+    let tmp = path.Path("/tmp/ty-path-stat-{rand()}")
+    tmp.mkdir()
+
+    let file = tmp / 'test.txt'
+
+    file.write('content')
+    
+    let st = file.stat
+    
+    assert(st.st_size :: Int)
+    assert(st.st_mode :: Int)
+    assert((st.st_mtim :: Int) || (st.st_mtim :: Float))
+    
+    file.unlink()
+}
+
+fn test-edge-cases() {
+    // Empty path
+    let empty = path.Path('')
+    assert-eq(str(empty), '.')
+    
+    // Trailing slash
+    let trailing = path.Path('foo/bar/')
+    assert-eq(str(trailing), 'foo/bar')
+    
+    // Multiple slashes
+    let multi = path.Path('foo//bar///baz')
+    assert-eq(str(multi), 'foo/bar/baz')
+    
+    // Root only
+#|if !__windows__
+    let root = path.Path('/')
+    assert-eq(str(root), '/')
+    assert-eq(root.name, '')
+#|]
+}
+
+// Run all tests
+fn main() {
+    let tests = [
+        test-basic-construction,
+        test-join,
+        test-parent,
+        test-name-stem-suffix,
+        test-with-name,
+        test-parts,
+        test-absolute,
+        test-anchor,
+        test-normalize-dots,
+        test-equality,
+        test-hash,
+        test-file-operations,
+        test-ls,
+        test-glob,
+        test-walk,
+        test-cwd-home,
+        test-chmod,
+#|if !__windows__
+        test-symlink,
+#|]
+        test-stat,
+        test-edge-cases
+    ]
+    
+    let passed = 0
+    let failed = 0
+    
+    for test in tests {
+        test()
+    }
+    
+    print('PASS')
+}
+
+main()

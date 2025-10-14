@@ -134,7 +134,7 @@ fn fitItems(items: [Text | String], W: Int) {
 
 class InteractiveLineReader {
     __tio: TermIO
-    __history_file: Path | String | nil
+    __history_file: Path | nil
     __history: Array[(Array[String], Int)]
     __prompt: String
     __complete: CompletionFunction | nil
@@ -155,11 +155,12 @@ class InteractiveLineReader {
 
         __prompt = prompt ?? '>> '
         __complete = complete
-        __history_file = history-file
+        __history_file = (history-file != nil) ?: Path(history-file)
 
-        if history-file != nil {
-            let entries = slurp("{history-file}").lines().map(json::parse!)
-            __history = [(line, i) for {line, i, *} in entries]
+        dbg(history-file, __history_file)
+
+        if history-file != nil and let $raw = slurp("{history-file}") {
+            __history = [(line, i) for json::parse! ~> {line, i, *} in raw.lines()]
         } else {
             __history = []
         }
@@ -177,11 +178,9 @@ class InteractiveLineReader {
 
     __add_history(entry: (Array[String], Int)) {
         if __history_file != nil {
-            let fd = open("{__history_file}", O_WRONLY | O_CREAT | O_APPEND, 0o644)
-            if fd >= 0 {
-                write(fd, "{json::encode({line: entry.0, i: entry.1, t: time.now()})}\n")
-                close(fd)
-            }
+            let record = {line: entry.0, i: entry.1, t: time.now()}
+            __history_file.parent.mkdir(parents=true, exist-ok=true)
+            __history_file.append("{json::encode(record)}\n")
         }
 
         __history.push(entry)
