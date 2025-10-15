@@ -4687,7 +4687,7 @@ AssignGlobal:
                 CASE(FINALLY)
                 {
                         struct try *t = GetCurrentTry(ty);
-                        //printf("Finally: ntry=%zu  ndefer=%zu\n", vN(TRY_STACK), vN(t->defer));
+                        dont_printf("Finally: ntry=%zu  ndefer=%zu\n", vN(TRY_STACK), vN(t->defer));
                         t->state = TRY_FINALLY;
                         t->end = IP;
                         IP = t->finally;
