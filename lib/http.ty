@@ -92,10 +92,20 @@ use HttpRequest = HttpMessage & {
 
 use RequestHandler = {req: HttpRequest, rsp: HttpResponse, params: *_} -> Int;
 
+use RouteMap = Dict[
+    String,
+    Array[{
+        route: String,
+        params: Array[String],
+        pattern: Regex,
+        fun: RequestHandler
+    }]
+];
+
 class HttpServer {
     __sock:     Int
     __conns:    Array[{fd: Int, p: HttpParser}]
-    __handlers: Dict[String, Array[(Array[String], Regex, RequestHandler)]]
+    __handlers: RouteMap
     __stopping: Bool
 
     init(*args, backlog=64) {
@@ -133,9 +143,9 @@ class HttpServer {
             return nil
         }
 
-        for (ps, pattern, f) in hs {
+        for {params: ps, pattern, fun, *} in hs {
             if let $m = url.match!(pattern) {
-                return (f, %{ps[i]: m[i+1] for i in ..#ps})
+                return (fun, %{ps[i]: m[i+1] for i in ..#ps})
             }
         }
     }
@@ -144,7 +154,15 @@ class HttpServer {
 
     __install(method: String, route: String, f: RequestHandler) {
         let (params, pattern) = makePattern(route)
-        __handlers[method].push((params, pattern, f))
+
+        __handlers[method].push({
+            route,
+            params,
+            pattern,
+            fun: f
+        })
+
+        __handlers[method].sort!(by=\-(_.route.search('<') ?? 99999))
     }
 
     get(route, f) {
