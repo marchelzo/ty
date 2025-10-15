@@ -6286,7 +6286,7 @@ emit_return(Ty *ty, Stmt const *s)
                 INSN(NIL);
         }
 
-        if (vN(STATE.tries) > 0) {
+        for (int i = 0; get_try(ty, i) != NULL; ++i) {
                 INSN(FINALLY);
         }
 

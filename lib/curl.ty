@@ -116,7 +116,7 @@ pub class CURL {
 pub function fetch(
     url,
     params = %{},
-    method ='GET',
+    method = 'GET',
     headers = %{},
     body,
     content-type,
