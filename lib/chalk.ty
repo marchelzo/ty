@@ -4,7 +4,7 @@ import ty.token
 
 tag ChalkError;
 
-use TermStyle = () | {
+pub use TermStyle = () | {
     bold:      ?Bool,
     italic:    ?Bool,
     underline: ?[Int],
