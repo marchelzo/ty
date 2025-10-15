@@ -125,7 +125,7 @@ pub class SQLite {
 
     fetchOne[a](*args, assoc=true) -> a {
         with q = query(*args) {
-            if let $row = q.nextRow(assoc: assoc) {
+            if let $row = q.nextRow(assoc=assoc) {
                 row
             }
         }
@@ -133,11 +133,13 @@ pub class SQLite {
 
     fetchAll[a](*args, assoc=true) -> [a] {
         let xs = []
+
         with q = query(*args) {
-            while let $row = q.nextRow(assoc: assoc) {
+            while let $row = q.nextRow(assoc=assoc) {
                 xs.push(row)
             }
         }
+
         xs
     }
 
@@ -148,7 +150,7 @@ pub class SQLite {
 
         for p, i in ps {
             match ::bind(s, i + 1, p) {
-                ::SQLITE_OK => { },
+                ::SQLITE_OK => {},
                   e         => throw SQLiteError(e)
             }
         }
