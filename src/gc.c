@@ -91,7 +91,7 @@ collect(Ty *ty, struct alloc *a)
                 break;
 
         case GC_ARENA:
-                source_forget_arena(p);
+                ForgetSourceNodesFrom(p);
                 break;
 
         case GC_FUN_INFO:
@@ -119,10 +119,10 @@ GCForget(Ty *ty, AllocList *allocs, isize *used)
         usize n = 0;
 
         for (usize i = 0; i < allocs->count;) {
-                if (allocs->items[i] == NULL) {
-                        abort();
-                }
-                if (!A_LOAD(&allocs->items[i]->mark) && A_LOAD(&allocs->items[i]->hard) == 0) {
+                if (
+                        !A_LOAD(&allocs->items[i]->mark)
+                     && (A_LOAD(&allocs->items[i]->hard) == 0)
+                ) {
                         allocs->items[n++] = allocs->items[i++];
                 } else {
                         *used -= min(allocs->items[i]->size, *used);
@@ -138,7 +138,10 @@ GCSweepOwn(Ty *ty)
         usize n = 0;
 
         for (int i = 0; i < vN(ty->allocs); ++i) {
-                if (!A_LOAD(&v__(ty->allocs, i)->mark) && A_LOAD(&v__(ty->allocs, i)->hard) == 0) {
+                if (
+                        !A_LOAD(&v__(ty->allocs, i)->mark)
+                     && (A_LOAD(&v__(ty->allocs, i)->hard) == 0)
+                ) {
                         ty->memory_used -= min(v__(ty->allocs, i)->size, ty->memory_used);
                         collect(ty, v__(ty->allocs, i));
                         free(v__(ty->allocs, i));
@@ -161,7 +164,10 @@ GCSweep(Ty *ty, AllocList *allocs, isize *used)
         usize n = 0;
 
         for (int i = 0; i < vN(*allocs); ++i) {
-                if (!A_LOAD(&v__(*allocs, i)->mark) && A_LOAD(&v__(*allocs, i)->hard) == 0) {
+                if (
+                        !A_LOAD(&v__(*allocs, i)->mark)
+                     && (A_LOAD(&v__(*allocs, i)->hard) == 0)
+                ) {
                         *used -= min(v__(*allocs, i)->size, *used);
                         collect(ty, v__(*allocs, i));
                         free(v__(*allocs, i));

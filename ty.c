@@ -306,7 +306,7 @@ pollute_with_bloat(void)
 {
         execln(
                 ty,
-                "import help (..)                               \n"
+                "import pretty (..)                             \n"
                 "import json                                    \n"
                 "import base64                                  \n"
                 "import math (..)                               \n"
@@ -320,6 +320,7 @@ pollute_with_bloat(void)
                 "import path (Path)                             \n"
                 "import readln                                  \n"
                 "import sh (sh)                                 \n"
+                "import help (..)                               \n"
                 "_readln = readln::InteractiveLineReader(       \n"
                 "  render=pretty-code,                          \n"
                 "  complete=tab-complete,                       \n"
@@ -328,7 +329,7 @@ pollute_with_bloat(void)
 
         );
 
-        print_function = "prettyPrint";
+        print_function = "pp";
 }
 
 

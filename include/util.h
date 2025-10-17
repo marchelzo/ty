@@ -439,6 +439,7 @@ term_width(void const *_s, isize n)
 
         return width;
 }
+
 inline static i32
 u8_rune_sz(u8 const *str)
 {

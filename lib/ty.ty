@@ -1,5 +1,6 @@
 import ty
 
-pub function walk(tree, f) {
+pub fn walk(tree, f) {
     __walk!(tree, f)
 }
+

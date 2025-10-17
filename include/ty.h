@@ -110,10 +110,10 @@ typedef struct {
 struct alloc {
         union {
                 struct {
-                        char type;
+                        u8 type;
                         atomic_bool mark;
                         atomic_uint_least16_t hard;
-                        uint32_t size;
+                        u32 size;
                 };
                 void const * restrict padding;
         };
@@ -148,7 +148,7 @@ typedef struct regex {
         char const *pattern;
         bool gc;
         bool detailed;
-        uint32_t ncap;
+        u32 ncap;
 } Regex;
 
 typedef struct {
@@ -237,21 +237,21 @@ enum {
         FUN_BOUND       = FUN_CAPTURES    + sizeof (int),
         FUN_PARAM_COUNT = FUN_BOUND       + sizeof (int),
         FUN_REST_IDX    = FUN_PARAM_COUNT + sizeof (int),
-        FUN_KWARGS_IDX  = FUN_REST_IDX    + sizeof (int16_t),
+        FUN_KWARGS_IDX  = FUN_REST_IDX    + sizeof (i16),
         FUN_CLASS       = FUN_REST_IDX    + sizeof (int),
         FUN_FROM_EVAL   = FUN_CLASS       + sizeof (int),
         FUN_HIDDEN      = FUN_FROM_EVAL   + 1,
         FUN_PROTO       = FUN_HIDDEN      + 1,
-        FUN_DOC         = FUN_PROTO       + sizeof (uintptr_t),
-        FUN_NAME        = FUN_DOC         + sizeof (uintptr_t),
-        FUN_EXPR        = FUN_NAME        + sizeof (uintptr_t),
-        FUN_PARAM_NAMES = FUN_EXPR        + sizeof (uintptr_t)
+        FUN_DOC         = FUN_PROTO       + sizeof (uptr),
+        FUN_NAME        = FUN_DOC         + sizeof (uptr),
+        FUN_EXPR        = FUN_NAME        + sizeof (uptr),
+        FUN_PARAM_NAMES = FUN_EXPR        + sizeof (uptr)
 };
 
 struct value {
-        uint8_t type;
-        uint16_t tags;
-        uint32_t src;
+        u8 type;
+        u16 tags;
+        u32 src;
         union {
                 short tag;
                 double real;
@@ -412,7 +412,7 @@ struct try {
         ScratchSave ss;
 
         bool executing;
-        uint8_t state;
+        u8 state;
         char *catch;
         char *finally;
         char *end;
@@ -1117,13 +1117,13 @@ enum {
 
 #define VSC(v) value_show_color(ty, v)
 
-#define pT(p) ((uintptr_t)p &  7)
-#define pP(p) ((uintptr_t)p & ~7)
+#define pT(p) ((uptr)p &  7)
+#define pP(p) ((uptr)p & ~7)
 
 #define M_ID(m)   intern(&xD.members, (m))->id
 #define M_NAME(i) intern_entry(&xD.members, (i))->name
 
-#define PMASK3 ((uintptr_t)7)
+#define PMASK3 ((uptr)7)
 
 inline static void *
 mrealloc(void *p, size_t n)
@@ -1214,7 +1214,7 @@ AllocateScratch(Ty *ty, size_t n)
 {
         for (;;) {
                 ptrdiff_t avail = SSS->end - SSS->beg;
-                ptrdiff_t padding = -(intptr_t)SSS->beg & ((alignof (void *)) - 1);
+                ptrdiff_t padding = -(iptr)SSS->beg & ((alignof (void *)) - 1);
 
                 if (n > avail - padding) {
                         ExpandScratch(ty);

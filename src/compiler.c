@@ -142,7 +142,7 @@
                 (name),                                     \
                 (                                           \
                         (flags)                             \
-                      | (SCOPE_PERMISSIVE * !!STATE.based)  \
+                      | (SCOPE_PERMISSIVE * !!STATE._based) \
                 )                                           \
         )
 #define ScopeLookupLocalEx(scope, name, flags)                       \
@@ -178,7 +178,7 @@
 #define WITH_STATE(...) VA_SELECT(WITH_STATE_N, __VA_ARGS__)
 
 #define WITH_SCOPE_LIMIT(t) // TODO we don't need this
-#define WITH_PERMISSIVE_SCOPE WITH_STATE(based, 1)
+#define WITH_PERMISSIVE_SCOPE WITH_STATE(_based, 1)
 
 #define WITH_SELF(x) WITH_STATE(self, ((x) != NULL) ? (x) : STATE.self)
 
@@ -211,7 +211,7 @@ static CompileState STATE;
 static vec(Module *) modules;
 static vec(ProgramAnnotation) annotations;
 static vec(location_vector) location_lists;
-static vec(void *) source_map;
+static vec(Expr const *) source_map;
 static Module *MainModule;
 static Module *GlobalModule;
 static Scope *GlobalScope;
@@ -410,11 +410,11 @@ dumpstr(byte_vector *out, char const *s)
         if (ProduceAnnotation) do {                                          \
                 xvP(                                                         \
                         STATE.annotation.map,                                \
-                        (void const *)(uintptr_t)vN(STATE.code)              \
+                        (void const *)(uptr)vN(STATE.code)                   \
                 );                                                           \
                 xvP(                                                         \
                         STATE.annotation.captions,                           \
-                        (void const *)(uintptr_t)vN(STATE.annotation.text)   \
+                        (void const *)(uptr)vN(STATE.annotation.text)        \
                 );                                                           \
                 dump(&STATE.annotation.text, __VA_ARGS__);                   \
                 xvP(STATE.annotation.text, '\0');                            \
@@ -425,20 +425,20 @@ PatchAnnotation(ProgramAnnotation *annotation, void const *base)
 {
         for (int i = 0; i < vN(annotation->map); ++i) {
                 v__(annotation->map, i) = (void const *)(
-                                (uintptr_t)v__(annotation->map, i)
-                              + (uintptr_t)base
+                                (uptr)v__(annotation->map, i)
+                              + (uptr)base
                 );
         }
 
         for (int i = 0; i < vN(annotation->captions); ++i) {
                 v__(annotation->captions, i) = (void const *)(
-                                (uintptr_t)v__(annotation->captions, i)
-                              + (uintptr_t)vv(annotation->text)
+                                (uptr)v__(annotation->captions, i)
+                              + (uptr)vv(annotation->text)
                 );
         }
 
-        annotation->start += (uintptr_t)base;
-        annotation->end += (uintptr_t)base;
+        annotation->start += (uptr)base;
+        annotation->end += (uptr)base;
 
         annotation->patched = true;
 }
@@ -1231,11 +1231,11 @@ inline static void
 
         // XXX please do better
         if (
-                last0 == INSTR_SAVE_STACK_POS
-             && last1 == INSTR_TARGET_LOCAL
-             && last2 == INSTR_ASSIGN
-             && last3 == INSTR_POP_STACK_POS
-             &&     c == INSTR_POP
+                (last0 == INSTR_SAVE_STACK_POS)
+             && (last1 == INSTR_TARGET_LOCAL)
+             && (last2 == INSTR_ASSIGN)
+             && (last3 == INSTR_POP_STACK_POS)
+             &&     (c == INSTR_POP)
         ) {
                 int i;
 
@@ -1399,8 +1399,8 @@ add_location_info(Ty *ty)
 
         struct eloc *locs = vv(STATE.expression_locations);
         for (int i = 0; i < vN(STATE.expression_locations); ++i) {
-                locs[i].p_start = (uintptr_t)(v_(STATE.code, locs[i].start_off));
-                locs[i].p_end = (uintptr_t)(v_(STATE.code, locs[i].end_off));
+                locs[i].p_start = (uptr)(v_(STATE.code, locs[i].start_off));
+                locs[i].p_end = (uptr)(v_(STATE.code, locs[i].end_off));
         }
 
         qsort(
@@ -5238,13 +5238,13 @@ emit_ulong(Ty *ty, unsigned long k)
         }
 }
 
-#define emit_symbol(s) ((emit_symbol)(ty, (uintptr_t)(s)))
+#define emit_symbol(s) ((emit_symbol)(ty, (uptr)(s)))
 inline static void
-(emit_symbol)(Ty *ty, uintptr_t sym)
+(emit_symbol)(Ty *ty, uptr sym)
 {
         LOG("emitting symbol: %"PRIuPTR, sym);
         char const *s = (char *) &sym;
-        for (int i = 0; i < sizeof (uintptr_t); ++i) {
+        for (int i = 0; i < sizeof (uptr); ++i) {
                 avP(STATE.code, s[i]);
         }
 }
@@ -5691,7 +5691,7 @@ emit_constraint(Ty *ty, Expr const *c)
 }
 
 static void
-add_annotation(Ty *ty, char const *name, uintptr_t start, uintptr_t end)
+add_annotation(Ty *ty, char const *name, uptr start, uptr end)
 {
         ProgramAnnotation annotation = STATE.annotation;
 
@@ -6660,7 +6660,7 @@ emit_try_match_(Ty *ty, Expr const *pattern)
                 break;
         case EXPRESSION_REGEX:
                 FAIL_MATCH_IF(TRY_REGEX);
-                emit_symbol((uintptr_t) pattern->regex);
+                emit_symbol((uptr) pattern->regex);
                 emit_tgt(ty, (Symbol *)pattern->match_symbol, STATE.fscope, true);
                 INSN(ASSIGN_REGEX_MATCHES);
                 Ei32(pattern->regex->ncap);
@@ -8221,12 +8221,12 @@ emit_expr(Ty *ty, Expr const *e, bool need_loc)
 
         case EXPRESSION_TYPE_OF:
                 INSN(TYPE);
-                emit_symbol((uintptr_t)e->operand->_type);
+                emit_symbol((uptr)e->operand->_type);
                 break;
 
         case EXPRESSION_TYPE:
                 INSN(TYPE);
-                emit_symbol((uintptr_t)e->_type);
+                emit_symbol((uptr)e->_type);
                 break;
 
         case EXPRESSION_NONE:
@@ -8236,7 +8236,7 @@ emit_expr(Ty *ty, Expr const *e, bool need_loc)
 
         case EXPRESSION_VALUE:
                 INSN(VALUE);
-                emit_symbol((uintptr_t)e->v);
+                emit_symbol((uptr)e->v);
                 break;
 
         case EXPRESSION_SUPER:
@@ -8311,7 +8311,7 @@ emit_expr(Ty *ty, Expr const *e, bool need_loc)
         case EXPRESSION_EVAL:
                 EE(e->operand);
                 INSN(EVAL);
-                emit_symbol((uintptr_t)e->escope);
+                emit_symbol((uptr)e->escope);
                 break;
 
         case EXPRESSION_TAG:
@@ -8321,7 +8321,7 @@ emit_expr(Ty *ty, Expr const *e, bool need_loc)
 
         case EXPRESSION_REGEX:
                 INSN(REGEX);
-                emit_symbol((uintptr_t)e->regex);
+                emit_symbol((uptr)e->regex);
                 break;
 
         case EXPRESSION_ARRAY:
@@ -8846,7 +8846,7 @@ emit_expr(Ty *ty, Expr const *e, bool need_loc)
                         EE(v__(e->template.holes, i));
                 }
                 INSN(RENDER_TEMPLATE);
-                emit_symbol((uintptr_t)e);
+                emit_symbol((uptr)e);
                 break;
 
         case EXPRESSION_NAMESPACE:
@@ -9170,9 +9170,9 @@ emit_statement(Ty *ty, Stmt const *s, bool want_result)
 
 #if 0 && defined(TY_PROFILER)
         if (
-                s->type != STATEMENT_BLOCK &&
-                s->type != STATEMENT_MULTI &&
-                (s->type != STATEMENT_EXPRESSION || !want_result)
+                (s->type != STATEMENT_BLOCK)
+             && (s->type != STATEMENT_MULTI)
+             && (s->type != STATEMENT_EXPRESSION || !want_result)
         ) {
                 Expr *e = NewExpr(ty, EXPRESSION_STATEMENT);
                 e->start = s->start;
@@ -9190,23 +9190,24 @@ static void
 emit_new_globals(Ty *ty)
 {
         for (usize i = GlobalCount; i < vN(GlobalScope->owned); ++i) {
-                Symbol *s = v__(GlobalScope->owned, i);
-                if (s->i < BuiltinCount)
+                Symbol *sym = v__(GlobalScope->owned, i);
+                if (sym->i < BuiltinCount) {
                         continue;
-                if (s->tag != -1) {
+                }
+                if (sym->tag != -1) {
                         INSN(TAG);
-                        Ei32(s->tag);
-                        annotate("%s", s->identifier);
+                        Ei32(sym->tag);
+                        annotate("%s", sym->identifier);
                         INSN(TARGET_GLOBAL);
-                        Ei32(s->i);
+                        Ei32(sym->i);
                         INSN(ASSIGN);
                         INSN(POP);
-                } else if (s->class >= 0) {
+                } else if (sym->class >= 0) {
                         INSN(CLASS);
-                        Ei32(s->class);
-                        annotate("%s", s->identifier);
+                        Ei32(sym->class);
+                        annotate("%s", sym->identifier);
                         INSN(TARGET_GLOBAL);
-                        Ei32(s->i);
+                        Ei32(sym->i);
                         INSN(ASSIGN);
                         INSN(POP);
                 }
@@ -9303,7 +9304,7 @@ RedpillFun(Ty *ty, Scope *scope, Expr *f, Type *self0)
         if (self0 != NULL) {
                 if (
                         !contains(OperatorCharset, *f->name)
-                     || vN(f->params) == 0
+                     || (vN(f->params) == 0)
                 ) {
                         f->self = scope_add_i(ty, f->scope, "self", vN(f->params));
                         f->self->mod = STATE.module;
@@ -9433,8 +9434,8 @@ InjectRedpill(Ty *ty, Stmt *s)
         ClassDefinition *def;
         Scope *scope = GetNamespace(ty, s->ns);
 
-        SCRATCH_SAVE();
         void *ctx = PushContext(ty, s);
+        SCRATCH_SAVE();
 
         vec(Stmt *) class_defs = {0};
 
@@ -9602,15 +9603,15 @@ InjectRedpill(Ty *ty, Stmt *s)
 
         }
 
-        RestoreContext(ty, ctx);
         SCRATCH_RESTORE();
+        RestoreContext(ty, ctx);
 }
 
 inline static bool
 is_proc_def(Stmt const *s)
 {
-        return s->type == STATEMENT_FUNCTION_DEFINITION ||
-               s->type == STATEMENT_OPERATOR_DEFINITION;
+        return (s->type == STATEMENT_FUNCTION_DEFINITION)
+            || (s->type == STATEMENT_OPERATOR_DEFINITION);
 }
 
 static bool
@@ -9636,8 +9637,8 @@ static Expr *
 zfold(Expr *e, Scope *scope, void *ctx)
 {
         if (
-                e->type == EXPRESSION_PREFIX_MINUS
-             && e->operand->type == EXPRESSION_INTEGER
+                (e->type == EXPRESSION_PREFIX_MINUS)
+             && (e->operand->type == EXPRESSION_INTEGER)
         ) {
                 e->type = EXPRESSION_INTEGER;
                 e->integer = -e->operand->integer;
@@ -9645,9 +9646,9 @@ zfold(Expr *e, Scope *scope, void *ctx)
         }
 
         if (
-                e->type == EXPRESSION_UNARY_OP
-             && M_ID(e->uop) == OP_COMPL
-             && e->operand->type == EXPRESSION_INTEGER
+                (e->type == EXPRESSION_UNARY_OP)
+             && (M_ID(e->uop) == OP_COMPL)
+             && (e->operand->type == EXPRESSION_INTEGER)
         ) {
                 e->type = EXPRESSION_INTEGER;
                 e->integer = ~e->operand->integer;
@@ -9659,8 +9660,8 @@ zfold(Expr *e, Scope *scope, void *ctx)
         }
 
         if (
-                e->left->type != EXPRESSION_INTEGER
-             || e->right->type != EXPRESSION_INTEGER
+                (e->left->type != EXPRESSION_INTEGER)
+             || (e->right->type != EXPRESSION_INTEGER)
         ) {
                 return e;
         }
@@ -9776,8 +9777,8 @@ lowkey(Expr *e, Scope *scope, void *ctx)
         }
 
         if (
-                e->end.line == QueryExpr->end.line
-             && e->end.col <= QueryExpr->end.col
+                (e->end.line == QueryExpr->end.line)
+             && (e->end.col <= QueryExpr->end.col)
         ) {
                 return e;
         }
@@ -9817,10 +9818,10 @@ HaveMulti(Stmt **stmts, int i)
 {
         for (; stmts[i] != NULL; ++i) {
                 if (
-                        stmts[i + 1] != NULL &&
-                        stmts[i    ]->type == STATEMENT_FUNCTION_DEFINITION &&
-                        stmts[i + 1]->type == STATEMENT_FUNCTION_DEFINITION &&
-                        strcmp(
+                        (stmts[i + 1] != NULL)
+                     && (stmts[i    ]->type == STATEMENT_FUNCTION_DEFINITION)
+                     && (stmts[i + 1]->type == STATEMENT_FUNCTION_DEFINITION)
+                     && strcmp(
                                 stmts[i]->target->identifier,
                                 stmts[i + 1]->target->identifier
                         ) == 0
@@ -9895,9 +9896,9 @@ compile(Ty *ty, char const *source)
                                 DeclareSymbols(ty, p[i + m]);
                                 m += 1;
                         } while (
-                                p[i + m] != NULL
-                            &&  p[i + m]->type == STATEMENT_FUNCTION_DEFINITION
-                            &&  strcmp(multi->name, p[i + m]->target->identifier) == 0
+                                (p[i + m] != NULL)
+                            &&  (p[i + m]->type == STATEMENT_FUNCTION_DEFINITION)
+                            &&  (strcmp(multi->name, p[i + m]->target->identifier) == 0)
                         );
 
                         avP(expanded, def);
@@ -9961,7 +9962,7 @@ compile(Ty *ty, char const *source)
                         while (
                                 (j --> 0)
                              && !is_proc_def(p[j])
-                             && p[j]->type != STATEMENT_IMPORT
+                             && (p[j]->type != STATEMENT_IMPORT)
                         ) {
                                 SWAP(Stmt *, p[j], p[j + 1]);
                                 end_of_defs = j + 1;
@@ -10176,13 +10177,13 @@ import_module(Ty *ty, Stmt const *s)
          */
         for (int i = 0; i < vN(STATE.imports); ++i) {
                 if (strcmp(as, v__(STATE.imports, i).name) == 0) {
-                        if (STATE.eval) {
+                        if (STATE._eval) {
                                 return;
                         }
                         fail("there is already a module imported under the name '%s'", as);
                 }
                 if (v__(STATE.imports, i).mod->scope == module_scope) {
-                        if (STATE.eval) {
+                        if (STATE._eval) {
                                 return;
                         }
                         fail("the module '%s' has already been imported", name);
@@ -10299,9 +10300,10 @@ compiler_load_builtin_modules(Ty *ty)
                 exit(1);
         }
 
-        load_module(ty, "ffi", get_module_scope("ffi"));
-        load_module(ty, "os", get_module_scope("os"));
-        load_module(ty, "ty", get_module_scope("ty"));
+        load_module(ty, "ffi",    get_module_scope("ffi"));
+        load_module(ty, "os",     get_module_scope("os"));
+        load_module(ty, "ty",     get_module_scope("ty"));
+        load_module(ty, "pretty", NULL);
 
         TY_CATCH_END();
 }
@@ -10575,7 +10577,7 @@ compiler_find_expr_x(Ty *ty, char const *code, bool func)
 {
         location_vector *locs = NULL;
 
-        uintptr_t c = (uintptr_t) code;
+        uptr c = (uptr) code;
         //printf("Looking for %lu\n", c);
 
         /*
@@ -10589,7 +10591,7 @@ compiler_find_expr_x(Ty *ty, char const *code, bool func)
                 if (c < v__(v__(location_lists, i), 0).p_start)
                         continue;
 
-                uintptr_t end = 0;
+                uptr end = 0;
                 for (int j = 0; j < v__(location_lists, i).count; ++j)
                         if (v__(v__(location_lists, i), j).p_end > end)
                                 end = v__(v__(location_lists, i), j).p_end;
@@ -10639,8 +10641,8 @@ compiler_find_expr_x(Ty *ty, char const *code, bool func)
         }
 
         //printf("Found: (%luu, %lu)\n",
-        //       (uintptr_t)(locs->items[match_index].p_start),
-        //       (uintptr_t)(locs->items[match_index].p_end));
+        //       (uptr)(locs->items[match_index].p_start),
+        //       (uptr)(locs->items[match_index].p_end));
 
         return &locs->items[match_index];
 
@@ -10772,14 +10774,14 @@ compiler_has_module(Ty *ty, char const *name)
         return false;
 }
 
-int
+usize
 compiler_global_count(Ty *ty)
 {
-        return (int)vN(GlobalScope->owned);
+        return vN(GlobalScope->owned);
 }
 
 Symbol *
-compiler_global_sym(Ty *ty, int i)
+compiler_global_sym(Ty *ty, usize i)
 {
         return v__(GlobalScope->owned, i);
 }
@@ -10807,12 +10809,12 @@ source_register(Ty *ty, void const *src)
 
         for (u32 i = 0; i < vN(source_map); ++i) {
                 if (v__(source_map, i) == NULL) {
-                        v__(source_map, i) = (void *)src;
+                        v__(source_map, i) = (Expr const *)src;
                         return i + 1;
                 }
         }
 
-        xvP(source_map, (void *)src);
+        xvP(source_map, (Expr const *)src);
 
         return vN(source_map);
 }
@@ -10823,26 +10825,26 @@ source_lookup(Ty *ty, u32 src)
         if (src == 0 || src > vN(source_map)) {
                 return NULL;
         } else {
-                return v__(source_map, src - 1);
+                return (void *)v__(source_map, src - 1);
         }
 }
 
 void
-source_forget_arena(void const *arena)
+ForgetSourceNodesFrom(void const *base)
 {
         for (u32 i = 0; i < vN(source_map); ++i) {
-                void **p = v__(source_map, i);
-                if (p != NULL && *p == arena) {
+                Expr const *e = v__(source_map, i);
+                if (e != NULL && e->arena == base) {
                         v__(source_map, i) = NULL;
-                } else if (p != NULL) {
+                } else if (e != NULL) {
                         // TODO
                 }
         }
 }
 
-#define t_(t, i) ((t_)(ty, (t), (uintptr_t)(i)))
+#define t_(t, i) ((t_)(ty, (t), (uptr)(i)))
 inline static Value *
-(t_)(Ty *ty, Value const *t, uintptr_t i)
+(t_)(Ty *ty, Value const *t, uptr i)
 {
         if ((t->type & ~VALUE_TAGGED) != VALUE_TUPLE) {
                 if (i == 0) return (Value *)t;
@@ -11105,7 +11107,7 @@ tyexpr(Ty *ty, Expr const *e)
                 }
 
                 if (e->identifier != EmptyString) {
-                        Expr *id = amA0(sizeof *id);
+                        Expr *id = amA(sizeof *id);
                         *id = *e;
                         id->type = EXPRESSION_IDENTIFIER;
                         v__(v, 0) = tyexpr(ty, id);
@@ -14488,7 +14490,7 @@ DumpProgram(
             double:      dump(out, " %s%f%s", TERM(32), (x), TERM(0)),                     \
             float:       dump(out, " %s%f%s", TERM(32), (x), TERM(0)),                     \
             bool:        dump(out, " %s%s%s", TERM(32), (x) ? "true" : "false", TERM(0)),  \
-            uintptr_t:   dump(out, " %"PRIuPTR, (x))                                       \
+            uptr:        dump(out, " %"PRIuPTR, (x))                                       \
         )
 
         byte_vector after = {0};
@@ -14500,7 +14502,7 @@ DumpProgram(
 #define READVALUE_(x) (memcpy(&x, c, sizeof x), (c += sizeof x))
 #define READMEMBER(n) (READVALUE_((n)), DUMPSTR(n == -1 ? "<$>" : M_NAME((n))))
 
-        uintptr_t pc = (uintptr_t)code;
+        uptr pc = (uptr)code;
         ProgramAnnotation *annotation = NULL;
 
         for (int i = 0; i < vN(annotations); ++i) {
@@ -14529,7 +14531,7 @@ DumpProgram(
                 return end;
         }
 
-        uintptr_t s;
+        uptr s;
         intmax_t k;
         bool b = false;
         double x;
@@ -14537,7 +14539,7 @@ DumpProgram(
 
         bool DebugScan = DEBUGGING;
         u32 limit = UINT32_MAX;
-        uintptr_t DebugHistory[8] = {0};
+        uptr DebugHistory[8] = {0};
 
         dump(
                 out,
@@ -14556,7 +14558,7 @@ DumpProgram(
         char const *caption = NULL;
 
         for (char const *c = code; end == NULL || c < end; DebugScan || xvP(*out, '\n')) {
-                uintptr_t pc = (uintptr_t)c;
+                uptr pc = (uptr)c;
 
                 if (DEBUGGING) {
                         if (--limit == 0) break;
@@ -14647,7 +14649,7 @@ DumpProgram(
                         "%s%7td%s            %s%s%s      %ju\n",
                         TERM(94), pc, TERM(0),
                         TERM(93), GetInstructionName(*c), TERM(0),
-                        (uintptr_t)ty->ip
+                        (uptr)ty->ip
                 );
 
                 switch ((unsigned char)*c++) {
@@ -15256,7 +15258,7 @@ IsTopLevel(Symbol const *sym)
 }
 
 CompileState
-PushCompilerState(Ty *ty, char const *file)
+PushCompilerState(Ty *ty, char const *file, u32 flags)
 {
         CompileState old = STATE;
 
@@ -15267,7 +15269,8 @@ PushCompilerState(Ty *ty, char const *file)
         tmp_mod->scope = scope_new(ty, file, GlobalScope, true);
 
         STATE = freshstate(ty, tmp_mod);
-        STATE.eval = true;
+        STATE._parse = (flags & TYC_PARSE);
+        STATE._eval  = (flags & TYC_EVAL);
 
         for (isize i = 0; i < vN(modules); ++i){
                 avP(
@@ -15541,7 +15544,7 @@ CompilerSuggestCompletions(
 
         switch (QueryExpr->type) {
         case EXPRESSION_IDENTIFIER:
-                XXX(
+                XXLOG(
                         "OBJECT IS AN IDENTIFIER: %s::%s (namespace=%s)",
                         QueryExpr->module ? QueryExpr->module : "<>",
                         QueryExpr->identifier,
@@ -15553,7 +15556,7 @@ CompilerSuggestCompletions(
                       : (QueryExpr->xscope    != NULL) ? QueryExpr->xscope
                       : STATE.global;
 
-                XXX("QueryExpr=IDENTIFIER: scope=%s", scope ? scope_name(ty, scope) : "<null>");
+                XXLOG("QueryExpr=IDENTIFIER: scope=%s", scope ? scope_name(ty, scope) : "<null>");
                 if (scope != NULL) {
                         AddScopeCompletions(
                                 ty,
@@ -15567,7 +15570,7 @@ CompilerSuggestCompletions(
 
         case EXPRESSION_MEMBER_ACCESS:
                 if (QueryExpr->object->type == EXPRESSION_MODULE) {
-                        XXX("OBJECT IS A MODULE: %s", QueryExpr->object->name);
+                        XXLOG("OBJECT IS A MODULE: %s", QueryExpr->object->name);
                         AddScopeCompletions(
                                 ty,
                                 QueryExpr->object->scope,
@@ -15576,7 +15579,7 @@ CompilerSuggestCompletions(
                                 16
                         );
                 } else {
-                        XXX("OBJECT IS NOT A MODULE: %s", QueryExpr->object->name);
+                        XXLOG("OBJECT IS NOT A MODULE: %s", QueryExpr->object->name);
                         type_completions(
                                 ty,
                                 QueryExpr->object->_type,

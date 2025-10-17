@@ -12,36 +12,39 @@ pub SEEK_SET = stdio.SEEK_SET
 pub SEEK_CUR = stdio.SEEK_CUR
 
 pub class Stream : Iter {
-    f: _
-    fd: Int
+    __f: _
+    __fd: Int
 
     init(fd, mode: ?String = 'a+', buffering: ?BufferingMode = nil, dup: Bool = false) {
         if fd :: Int {
-            @fd = match dup { true => os.dup(fd), _ => fd }
+            __fd = match dup { true => os.dup(fd), _ => fd }
 
-            if let $f = stdio.fdopen(@fd, mode) {
-                @f = f
+            if let $f = stdio.fdopen(__fd, mode) {
+                __f = f
             } else {
-                if dup { os.close(@fd) }
+                if dup { os.close(__fd) }
                 throw Err(errno.get())
             }
 
             if buffering != nil {
-                stdio.setvbuf(self.f, buffering);
+                stdio.setvbuf(__f, buffering);
             }
         } else {
             // fd is actually a file pointer
-            @f = fd
+            __f = fd
         }
     }
 
+    fd -> Int { __fd }
+
     close() {
-        if self.f != nil {
-            let r = stdio.fclose(self.f)
-            self.f = nil
-            return r
-        } else {
-            throw Err(errno.EBADF)
+        match __f ?: stdio.fclose(__f) {
+            0 => {
+                __f  = nil
+                __fd = -1
+            },
+
+            _ => throw __f ? Err(errno.get()) : Err(errno.EBADF)
         }
     }
 
@@ -50,98 +53,98 @@ pub class Stream : Iter {
     }
 
     __drop__() {
-        self.close()
+        close()
     }
 
     tell() -> Int {
-        stdio.ftell(@f)
+        stdio.ftell(__f)
     }
 
     seek(*args) {
-        stdio.fseek(@f, *args)
+        stdio.fseek(__f, *args)
     }
 
     nextLine() -> String | nil {
-        if let $line = stdio.fgets(self.f) {
+        if let $line = stdio.fgets(__f) {
             line
-        } else if stdio.fseek(self.f, 0, stdio.SEEK_SET) == -1 {
-            stdio.clearerr(self.f)
+        } else if stdio.fseek(__f, 0, stdio.SEEK_SET) == -1 {
+            stdio.clearerr(__f)
         }
     }
 
     rewind() {
-        if stdio.fseek(self.f, 0, stdio.SEEK_SET) == -1 {
+        if stdio.fseek(__f, 0, stdio.SEEK_SET) == -1 {
             throw Err(errno.get())
         }
     }
 
     next(n: Int, buf: ?Blob) -> Blob {
-        stdio.fread(self.f, n, buf)
+        stdio.fread(__f, n, buf)
     }
 
     next() -> Int {
-        stdio.fgetc(self.f)
+        stdio.fgetc(__f)
     }
 
     write(s) {
         match s {
-            _ :: Blob | String => stdio.fwrite(self.f, s),
-            _                  => stdio.fwrite(self.f, str(s))
+            _ :: Blob | String => stdio.fwrite(__f, s),
+            _                  => stdio.fwrite(__f, str(s))
         }
     }
 
     writeSigned(*args) {
-        stdio.writeSigned(@f, *args)
+        stdio.writeSigned(__f, *args)
     }
 
     writeUnsigned(*args) {
-        stdio.writeUnsigned(@f, *args)
+        stdio.writeUnsigned(__f, *args)
     }
 
     writeFloat(*args) {
-        stdio.writeFloat(@f, *args)
+        stdio.writeFloat(__f, *args)
     }
 
     writeDouble(*args) {
-        stdio.writeDouble(@f, *args)
+        stdio.writeDouble(__f, *args)
     }
 
     putc(c: Int) {
-        stdio.fputc(@f, c)
+        stdio.fputc(__f, c)
     }
 
     nextFloat() -> Float {
-        stdio.readFloat(@f)
+        stdio.readFloat(__f)
     }
 
     nextDouble() -> Float {
-        stdio.readDouble(@f)
+        stdio.readDouble(__f)
     }
 
     nextUnsigned(*args) -> Int {
-        stdio.readUnsigned(@f, *args)
+        stdio.readUnsigned(__f, *args)
     }
 
     nextSigned(*args) -> Int {
-        stdio.readUnsigned(@f, *args)
+        stdio.readUnsigned(__f, *args)
     }
 
     print(s = '') {
         match s {
-            _ :: Blob   => stdio.puts(self.f, s),
-            _ :: String => stdio.puts(self.f, s),
-            _           => stdio.puts(self.f, str(s))
+            _ :: Blob   => stdio.puts(__f, s),
+            _ :: String => stdio.puts(__f, s),
+            _           => stdio.puts(__f, str(s))
         }
     }
 
     slurp() -> String {
-        stdio.slurp(self.f)
+        stdio.slurp(__f)
     }
 
     blob(bs=1024) -> Blob {
         let b = ::blob()
 
-        while stdio.fread(@f, bs, b) > 0 {
+        while stdio.fread(__f, bs, b) > 0 {
             ;
         }
 
@@ -149,11 +152,11 @@ pub class Stream : Iter {
     }
 
     flush() {
-        stdio.fflush(self.f)
+        stdio.fflush(__f)
     }
 
     __next__() {
-        Some.from(self.nextLine())
+        Some.from(nextLine())
     }
 }
 

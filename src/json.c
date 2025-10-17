@@ -8,6 +8,7 @@
 #include "value.h"
 #include "dict.h"
 #include "util.h"
+#include "dtoa.h"
 #include "itable.h"
 #include "class.h"
 #include "vec.h"
@@ -488,7 +489,7 @@ encode(Ty *ty, Value const *v, str *out)
                 break;
         case VALUE_REAL:
                 xvR(*out, out->count + 64);
-                out->count += snprintf(out->items + out->count, 64, "%g", v->real);
+                out->count += dtoa(v->real, out->items + out->count, 64);
                 break;
         case VALUE_ARRAY:
                 xvP(*out, '[');

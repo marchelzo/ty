@@ -29,15 +29,20 @@ enum {
         MOD_RELOADING = 1
 };
 
+enum {
+        TYC_EVAL  = (1 << 0),
+        TYC_PARSE = (1 << 1)
+};
+
 typedef struct eloc {
         union {
-                uintptr_t p_start;
-                size_t start_off;
+                uptr p_start;
+                usize start_off;
         };
 
         union {
-                uintptr_t p_end;
-                size_t end_off;
+                uptr p_end;
+                usize end_off;
         };
 
         Expr const *e;
@@ -125,8 +130,8 @@ typedef struct {
         byte_vector text;
         vec(char const *) captions;
         vec(char const *) map;
-        uintptr_t start;
-        uintptr_t end;
+        uptr start;
+        uptr end;
         char const *name;
         char const *module;
 } ProgramAnnotation;
@@ -163,8 +168,10 @@ typedef struct compiler_state {
         statement_vector class_ops;
         statement_vector pending;
 
-        bool based;
-        bool eval;
+        bool _based;
+        bool _eval;
+        bool _parse;
+
         Type *expected_type;
 
         Expr *func;
@@ -268,11 +275,11 @@ compiler_find_next_line(Ty *ty, char const *ip);
 bool
 compiler_has_module(Ty *ty, char const *path);
 
-int
+usize
 compiler_global_count(Ty *ty);
 
 Symbol *
-compiler_global_sym(Ty *ty, int i);
+compiler_global_sym(Ty *ty, usize i);
 
 Value
 compiler_render_template(Ty *ty, Expr *);
@@ -347,7 +354,7 @@ colorize_code(
         Location const *start,
         Location const *end,
         char *out,
-        size_t n
+        usize n
 );
 
 char const *
@@ -356,14 +363,14 @@ show_expr_type(Ty *ty, Expr const *e);
 char *
 show_expr(Expr const *e);
 
-uint32_t
+u32
 source_register(Ty *ty, void const *src);
 
 void *
-source_lookup(Ty *ty, uint32_t src);
+source_lookup(Ty *ty, u32 src);
 
 void
-source_forget_arena(void const *arena);
+ForgetSourceNodesFrom(void const *base);
 
 void
 try_symbolize_application(Ty *ty, Scope *scope, Expr *e);
@@ -384,7 +391,7 @@ void
 CompilationTrace(Ty *ty, byte_vector *out);
 
 CompileState
-PushCompilerState(Ty *ty, char const *filename);
+PushCompilerState(Ty *ty, char const *name, u32 flags);
 
 void
 PopCompilerState(Ty *ty, CompileState state);
