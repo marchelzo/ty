@@ -251,8 +251,8 @@ class Printer {
     }
 }
 
-fn term-cols() {
-    terminal-size().cols ?? 80
+fn term-cols() -> Int {
+    terminal-size().?cols ?? 80
 }
 
 pretty = fn pretty(x, %kwargs) {
