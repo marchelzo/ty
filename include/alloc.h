@@ -18,10 +18,10 @@
 #endif
 
 Arena
-NewArenaNoGC(Ty *ty, size_t cap);
+NewArenaNoGC(Ty *ty, usize cap);
 
 Arena
-NewArenaGC(Ty *ty, size_t cap);
+NewArenaGC(Ty *ty, usize cap);
 
 inline static Arena *
 NextArena(Arena const *a)
@@ -65,30 +65,29 @@ inline static void
 }
 
 inline static Arena
-(NewArena)(Ty *ty, size_t cap)
+(NewArena)(Ty *ty, usize cap)
 {
+#if 1
         return NewArenaGC(ty, cap);
-        return TY_IS_READY
-             ? NewArenaGC(ty, cap)
-             : NewArenaNoGC(ty, cap);
+#else
+        return TY_IS_READY ? NewArenaGC(ty, cap)
+                           : NewArenaNoGC(ty, cap);
+#endif
 }
 
 void *
 GetArenaAlloc(Ty *ty);
 
-void
-(ReleaseArena)(Ty *ty, Arena old);
-
 void *
-Allocate(Ty *ty, size_t n);
+Allocate(Ty *ty, usize n);
 
 inline static void *
-Allocate0(Ty *ty, size_t n)
+Allocate0(Ty *ty, usize n)
 {
         return memset(Allocate(ty, n), 0, n);
 }
 
 void *
-AllocateScratch(Ty *ty, size_t n);
+AllocateScratch(Ty *ty, usize n);
 
 #endif

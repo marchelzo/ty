@@ -50,21 +50,22 @@ typedef unsigned short mode_t;
 #define fread_unlocked _fread_nolock
 #else
 typedef struct stat StatStruct;
-#include <termios.h>
-#include <sys/mman.h>
 #include <dirent.h>
-#include <sys/socket.h>
-#include <sys/un.h>
 #include <netdb.h>
-#include <sys/wait.h>
 #include <netdb.h>
 #include <netinet/ip.h>
-#include <sys/time.h>
-#include <sys/file.h>
 #include <poll.h>
-#include <sys/mman.h>
 #include <pthread.h>
 #include <spawn.h>
+#include <sys/file.h>
+#include <sys/ioctl.h>
+#include <sys/mman.h>
+#include <sys/mman.h>
+#include <sys/socket.h>
+#include <sys/time.h>
+#include <sys/un.h>
+#include <sys/wait.h>
+#include <termios.h>
 extern char **environ;
 #endif
 
@@ -5219,6 +5220,59 @@ BUILTIN_FUNCTION(os_isatty)
         return INTEGER(isatty(INT_ARG(0)));
 }
 
+BUILTIN_FUNCTION(os_terminal_size)
+{
+        ASSERT_ARGC("os.terminal-size()", 0, 1);
+
+#ifdef _WIN32
+        HANDLE hConsole = GetStdHandle(STD_OUTPUT_HANDLE);
+        if (hConsole == INVALID_HANDLE_VALUE) {
+            return NIL;
+        }
+        CONSOLE_SCREEN_BUFFER_INFO csbi;
+        if (!GetConsoleScreenBufferInfo(hConsole, &csbi)) {
+                return NIL;
+        }
+
+        int columns = csbi.srWindow.Right - csbi.srWindow.Left + 1;
+        int rows = csbi.srWindow.Bottom - csbi.srWindow.Top + 1;
+
+        return vTn(
+                "rows", INTEGER(rows),
+                "cols", INTEGER(columns)
+        );
+#else
+        struct winsize w;
+        int fd;
+
+        if (argc == 0) {
+                fd = open("/dev/tty", O_RDONLY);
+                if (fd == -1) {
+                        return NIL;
+                }
+        } else {
+                fd = INT_ARG(0);
+        }
+
+        if (ioctl(fd, TIOCGWINSZ, &w) == -1) {
+                if (argc == 0) {
+                        close(fd);
+                }
+                return NIL;
+        }
+
+        if (argc == 0) {
+                close(fd);
+        }
+
+        return vTn(
+                "rows", INTEGER(w.ws_row),
+                "cols", INTEGER(w.ws_col)
+        );
+#endif
+}
+
+
 BUILTIN_FUNCTION(termios_tcgetattr)
 {
         ASSERT_ARGC("termios.tcgetattr()", 1);
@@ -5356,6 +5410,19 @@ BUILTIN_FUNCTION(time_now)
         clock_gettime(CLOCK_MONOTONIC, &t);
 #endif
         i64 nsec = TY_1e9*t.tv_sec + (i64)t.tv_nsec;
+        return REAL(nsec / 1.0e9);
+}
+
+BUILTIN_FUNCTION(time_utc)
+{
+        ASSERT_ARGC("time.utc()", 0);
+
+        struct timespec t;
+        i64 nsec;
+
+        GetCurrentTimespec(&t);
+        nsec = TY_1e9*t.tv_sec + (i64)t.tv_nsec;
+
         return REAL(nsec / 1.0e9);
 }
 
@@ -7125,7 +7192,7 @@ BUILTIN_FUNCTION(ty_parse)
 /* = */ GC_STOP(); /* ====================================================== */
         TYPES_OFF += 1;
 
-        CompileState compiler_state = PushCompilerState(ty, "(eval)");
+        CompileState compiler_state = PushCompilerState(ty, "(eval)", TYC_PARSE);
         void *compiler_ctx = GetCompilerContext(ty);
         co_state st = ty->st;
         char *ip = ty->ip;

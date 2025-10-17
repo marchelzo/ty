@@ -3793,3 +3793,6 @@ fn memoized(fun, sync: Bool = true) {
         })
     )
 }
+
+let pretty: _ = cast(nil)
+let pp: _ = cast(nil)

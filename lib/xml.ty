@@ -1,6 +1,5 @@
 import ffi as c (C!)
 import ptr
-import help (pretty)
 
 if not let $libxml = c.open(['xml2', 'xml2-2']) {
     throw "Failed to load libxml2"

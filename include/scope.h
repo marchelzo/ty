@@ -22,7 +22,7 @@
         X(LOCAL,       Local,      3)
 
 
-#define X(f, _, i) SCOPE_##f = 1 << i,
+#define X(f, _, i) SCOPE_##f = (1 << i),
 enum { TY_SCOPE_FLAGS };
 #undef X
 
@@ -47,7 +47,7 @@ enum { TY_SCOPE_FLAGS };
         X(NAMESPACE,    Namespace,   16)
 
 
-#define X(f, _, i) SYM_##f = 1 << i,
+#define X(f, _, i) SYM_##f = (1 << i),
 enum { TY_SYM_FLAGS };
 #undef X
 
@@ -186,10 +186,22 @@ bool
 scope_is_subscope(Scope const *sub, Scope const *scope);
 
 char const *
-scope_copy_public(Ty *ty, Scope *dst, Scope const *src, bool reexport);
+scope_copy_public(
+        Ty *ty,
+        Scope *dst,
+        Scope const *src,
+        bool reexport
+);
 
 char const *
-scope_copy_public_except(Ty *ty, Scope *dst, Scope const *src, char const **skip, int n, bool reexport);
+scope_copy_public_except(
+        Ty *ty,
+        Scope *dst,
+        Scope const *src,
+        char const **skip,
+        int n,
+        bool reexport
+);
 
 char const *
 scope_copy(Ty *ty, Scope *dst, Scope const *src);

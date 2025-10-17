@@ -4,7 +4,6 @@ import io (stdin)
 import json
 import sh (sh)
 import os (..)
-import help (pretty)
 import log (..)
 
 logging({

@@ -6,10 +6,11 @@ import errno
 import ffi as c (C!)
 
 #|if getenv('TY_LOG') != nil
-    import help (pretty-print as pp, pretty)
     import log (..)
 
     let ppp = pretty@(*, color=false)
+
+    logging({level: DEBUG})
 #|else
     macro warn!(msg) = do {}
     macro error!(msg) = do {}
@@ -18,14 +19,13 @@ import ffi as c (C!)
     let ppp = (x -> "{x}")
 #|]
 
-
 tag _TermStop;
 
 pub ns mod {
-    pub SHIFT = 1 << 0
-    pub ALT   = 1 << 1
-    pub CTRL  = 1 << 2
-    pub SUPER = 1 << 3
+    pub SHIFT = (1 << 0)
+    pub ALT   = (1 << 1)
+    pub CTRL  = (1 << 2)
+    pub SUPER = (1 << 3)
 }
 
 pub use CursorAddress = (Int, Int)
@@ -401,30 +401,29 @@ namespace ctlseq {
     }
 }
 
-function yield-basic(ch: String, extra-mods=0) {
+fn unctrl(c: Int) -> Int {
+    ord(chr(c + 64).lower())
+}
+
+fn yield-basic(ch: String, extra-mods=0) {
     let c = ord(ch)
 
-    let (key, mods) = match c {
-        1        => ('a',  mod.CTRL),
-        2        => ('b',  mod.CTRL),
-        3        => ('c',  mod.CTRL),
-        4        => ('d',  mod.CTRL),
-        9        => ('Tab',       0),
-        10 or 13 => ('Enter',     0),
-        27       => ('Escape',    0),
-        32       => ('Space',     0),
-        127      => ('Backspace', 0),
-        _        => (nil,       nil)
+    let (key, _key, mods, text?) = match c {
+        10 or 13      => (keys.ENTER,     c,   0,        false),
+        27            => (keys.ESCAPE,    c,   0,        false),
+        127           => (keys.BACKSPACE, c,   0,        false),
+
+        _ => (c < 32) ? (unctrl(c),       nil, mod.CTRL, false)
+                      : (c,               nil, 0,        true)
     }
 
-    if key == nil {
+    if text? {
         yield event.Text(ch)
     }
 
     if c < 256 {
         yield event.Key({
-            key:  key ?? c,
-            _key: c,
+            key, _key,
             base: nil,
             mods: (mods ?? 0) | extra-mods,
             event: 1,

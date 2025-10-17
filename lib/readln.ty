@@ -176,7 +176,7 @@ class InteractiveLineReader {
 
     __add_history(entry: (Array[String], Int)) {
         if __history_file != nil {
-            let record = {line: entry.0, i: entry.1, t: time.now()}
+            let record = {line: entry.0, i: entry.1, t: time.utc()}
             __history_file.parent.mkdir(parents=true, exist-ok=true)
             __history_file.append("{json::encode(record)}\n")
         }

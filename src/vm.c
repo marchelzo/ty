@@ -653,10 +653,10 @@ DoGC(Ty *ty)
 inline static void
 PopulateGlobals(Ty *ty)
 {
-        int n = compiler_global_count(ty);
+        usize n = compiler_global_count(ty);
 
-        while (Globals.count < n) {
-                Symbol *sym = compiler_global_sym(ty, Globals.count);
+        while (vN(Globals) < n) {
+                Symbol *sym = compiler_global_sym(ty, vN(Globals));
                 xvP(
                         Globals,
                         IsTopLevel(sym) ? UNINITIALIZED(sym) : NIL
@@ -824,13 +824,9 @@ vm_load_c_module(Ty *ty, char const *name, void *p)
                 Value value;
         } *mod = p;
 
-        int n = 0;
-        while (mod[n].name != NULL)
-                n += 1;
-
-        for (int i = 0; i < n; ++i) {
+        for (isize i = 0; mod[i].name != NULL; ++i) {
                 compiler_introduce_symbol(ty, name, mod[i].name);
-                vvP(Globals, mod[i].value);
+                xvP(Globals, mod[i].value);
         }
 }
 

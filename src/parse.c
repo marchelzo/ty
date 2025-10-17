@@ -1989,7 +1989,16 @@ prefix_function(Ty *ty)
 
         if (e->name != NULL && tok()->start.s[-1] == ' ') {
                 Expr *f = parse_expr(ty, 0);
+
+                if (
+                        (f->type != EXPRESSION_FUNCTION)
+                     && (f->type != EXPRESSION_IMPLICIT_FUNCTION)
+                ) {
+                        die_at(f, "expected function expression");
+                }
+
                 f->name = e->name;
+
                 return f;
         }
 
@@ -6564,6 +6573,10 @@ SetNamespace(Stmt *s, Namespace *ns)
 static void
 define_top(Ty *ty, Stmt *s, char const *doc)
 {
+        if (TyCompilerState(ty)->_parse) {
+                return;
+        }
+
         switch (s->type) {
         case STATEMENT_FUN_MACRO_DEFINITION:
         case STATEMENT_MACRO_DEFINITION:

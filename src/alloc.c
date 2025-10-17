@@ -15,21 +15,21 @@ ExpandArena(Ty *ty)
         if (A.base == NULL) {
                 NewArenaGC(ty, 1 << 20);
         } else {
-                size_t size = 2 * (A.end - (A.base + RESERVED));
+                usize size = 2 * (A.end - (A.base + RESERVED));
                 Arena old = A.gc ? NewArenaGC(ty, size) : NewArenaNoGC(ty, size);
                 *NextArena(&A) = old;
         }
 }
 
 Arena
-NewArenaGC(Ty *ty, size_t cap)
+NewArenaGC(Ty *ty, usize cap)
 {
         Arena old = A;
 
         A.base = mAo(cap + RESERVED, GC_ARENA);
-        A.gc = true;
         A.beg = A.base + RESERVED;
         A.end = A.base + RESERVED + cap;
+        A.gc = true;
 
         memset(A.base, 0, RESERVED);
 
@@ -39,7 +39,7 @@ NewArenaGC(Ty *ty, size_t cap)
 }
 
 Arena
-NewArenaNoGC(Ty *ty, size_t cap)
+NewArenaNoGC(Ty *ty, usize cap)
 {
         Arena old = A;
 
@@ -59,11 +59,11 @@ NewArenaNoGC(Ty *ty, size_t cap)
 }
 
 void *
-Allocate(Ty *ty, size_t n)
+Allocate(Ty *ty, usize n)
 {
         for (;;) {
                 ptrdiff_t avail = A.end - A.beg;
-                ptrdiff_t padding = -(uintptr_t)A.beg & (align - 1);
+                ptrdiff_t padding = -(uptr)A.beg & (align - 1);
 
                 if (UNLIKELY(n > avail - padding)) {
                         ExpandArena(ty);

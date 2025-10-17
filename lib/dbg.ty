@@ -1,6 +1,5 @@
 import os
 import chalk (chalk)
-import help (pretty-print, pretty)
 import readln (readln)
 import tdb
 import term
@@ -183,7 +182,7 @@ tdb.hook = fn hook() {
     while match readln("(tdb)[{depth}] ") {
         /^p (.*)$/ => match tdb.eval($1) {
             Err(msg) => print(msg),
-            Ok(val)  => pretty-print(val)
+            Ok(val)  => pp(val)
         },
 
         /^b (.*)$/ => match tdb.eval($1) {
@@ -231,12 +230,12 @@ tdb.hook = fn hook() {
         },
 
         'st' => {
-            pretty-print(state)
+            pp(state)
         },
 
         'lo' => {
             if let $locals = tdb.locals() {
-                pretty-print(tuple(**tdb.locals()))
+                pp(tuple(**tdb.locals()))
             } else {
                 print(chalk"[bright red]No locals![/]")
             }
