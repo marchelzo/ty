@@ -212,7 +212,6 @@ target_compile_options(${_tgt_ty_interface}
       -Wno-unused-function
       -Wno-multichar
       -Wno-trigraphs
-      -flto
       -pipe
     >
     $<$<C_COMPILER_ID:AppleClang>:

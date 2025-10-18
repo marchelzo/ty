@@ -10,6 +10,78 @@ pub fn read(fd: Int, buf: Blob, n: Int) -> Int;
 pub fn write(fd: Int, data: Any, all: Bool) -> Int;
 pub fn write(fd: Int, data: Any) -> Int;
 
+pub fn socket(domain: Int, type: Int, protocol: Int) -> Int;
+pub fn bind(sock: Int, addr: Blob) -> Int;
+pub fn connect(sock: Int, addr: Blob) -> Int;
+pub fn getsockname(sock: Int) -> Blob;
+pub fn getpeername(sock: Int) -> Blob;
+pub fn setsockopt(sock: Int, level: Int, opt: Int, val: Any) -> Int;
+pub fn getsockopt(sock: Int, level: Int, opt: Int) -> _;
+pub fn shutdown(sock: Int, how: Int) -> Int;
+pub fn getaddrinfo(
+    node: String | nil,
+    service: String | Int | nil,
+    domain: Int | nil,
+    type: Int | nil,
+    protocol: Int | nil,
+    flags: ?Int = 0,
+) -> Ok[Array[Blob]] | Err[Int];
+pub fn gai_strerror(errcode: Int) -> String;
+pub fn sendfile(
+    outfd: Int,
+    infd: Int,
+    offset: ?Int = nil,
+    count: ?Int = nil,
+    headers: ?Blob = nil,
+    trailers: ?Blob = nil,
+    flags: Int = 0
+) -> Int;
+pub fn fcntl(fd: Int, cmd: Int, arg: ?Int = nil) -> Int;
+pub fn dup(fd: Int) -> Int;
+pub fn dup2(fd: Int, fd2: Int) -> Int;
+pub fn pipe() -> (Int, Int);
+pub fn splice(
+    fd_in: Int,
+    off_in: ?Int = nil,
+    fd_out: Int,
+    off_out: ?Int = nil,
+    len: Int,
+    flags: Int = 0
+) -> Int;
+
+pub fn umask(mask: Int) -> Int;
+pub fn chmod(path: String, mode: Int) -> Int;
+pub fn chown(path: String, owner: Int, group: Int) -> Int;
+pub fn ftruncate(path: String, size: Int) -> Int;
+pub fn truncate(path: String, size: Int) -> Int;
+
+pub use Stat = {
+    st_dev:     Int,
+    st_ino:     Int,
+    st_mode:    Int,
+    st_nlink:   Int,
+    st_uid:     Int,
+    st_gid:     Int,
+    st_rdev:    Int,
+    st_size:    Int,
+    st_atime:   Float,
+    st_mtime:   Float,
+    st_ctime:   Float,
+    st_blksize: Int,
+    st_blocks:  Int
+}
+
+pub fn stat(path: String) -> Stat | nil;
+pub fn fstat(fd: Int) -> Stat | nil;
+pub fn lstat(path: String) -> Stat | nil;
+
+pub fn opendir(path: String) -> Int | nil;
+pub fn readdir(dirp: Int) -> {d_ino: Int, d_off: Int, d_reclen: Int, d_type: Int, d_name: String} | nil;
+pub fn closedir(dirp: Int) -> Int;
+pub fn telldir(dirp: Int) -> Int;
+pub fn seekdir(dirp: Int, loc: Int);
+
+
 pub fn mktemp(pattern: String = 'tmp.XXXXXX') -> (Int, String);
 
 pub fn accept(sock: Int) -> (Int, Blob);
@@ -28,6 +100,7 @@ pub fn poll[T](
 
 pub fn listdir(path: String) -> [Float] | nil;
 pub fn ncpu() -> Int;
+pub fn terminal-size(fd: ?Int) -> {rows: Int, cols: Int} | nil;
 
 use ProcessDescriptor = {
     stdin: Int,
@@ -45,9 +118,32 @@ pub fn spawn(
     detach: Bool = false
 ) -> ProcessDescriptor;
 
+class OSError < RuntimeError {
+    __code: Int
+    __ctx:  String | nil
+
+    init(what: ?String = nil, code: ?Int = nil) {
+        __code = code ?? errno.get()
+        __ctx = what
+    }
+
+    what -> String {
+        match __ctx {
+            $ctx => "{ctx}: {errno.str(__code)}",
+            _    => errno.str(__code)
+        }
+    }
+
+    code -> Int {
+        __code
+    }
+}
+
 #|if __defined__(DT_DIR)
 pub fn walk*(path: String, skip: _ = nil) -> Generator[(String, [String], [String])] {
-    let d = opendir(path)
+    if not let $d = opendir(path) {
+        throw OSError('opendir()')
+    }
 
     let fs: [String] = []
     let ds: [String] = []

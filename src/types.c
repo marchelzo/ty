@@ -3797,8 +3797,8 @@ TryUnifyObjects(Ty *ty, Type *t0, Type *t1, bool super)
         }
 
         if (
-                TypeType(t0) == TYPE_TUPLE
-             && TypeType(t1) == TYPE_TUPLE
+                (TypeType(t0) == TYPE_TUPLE)
+             && (TypeType(t1) == TYPE_TUPLE)
         ) {
                 Type **t2;
 
@@ -3875,8 +3875,8 @@ TryUnifyObjects(Ty *ty, Type *t0, Type *t1, bool super)
                                 t2 = FindRecordEntry(t0, i, name);
                                 if (t2 == NULL) {
                                         if (
-                                                name != NULL
-                                             && strcmp(name, "[]") == 0
+                                                (name != NULL)
+                                             && (strcmp(name, "[]") == 0)
                                         ) {
                                                 if (
                                                         !UnifyX(

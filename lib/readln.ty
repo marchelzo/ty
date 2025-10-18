@@ -102,7 +102,7 @@ fn completeFile(before: String, after: String) -> CompletionAction {
     }
 }
 
-fn fitItems(items: Array[CompletionLabel], W: Int) {
+fn fitItems*(items: Array[CompletionLabel], W: Int) -> Generator[String] {
     fn plain(item: CompletionLabel) -> String {
         let item = match item {
             parts: Array[Text | nil] => parts
@@ -119,12 +119,20 @@ fn fitItems(items: Array[CompletionLabel], W: Int) {
 
     fn width(text: Text | nil) -> Int {
         (text == nil) ? 0 : "{text}".width()
-   }
+    }
 
-    fn widths(ncols: Int) -> Array[Array[Int]] {
-        let cols = items.groupsOf(#items / ncols)
-        
+    fn group-cols(n: Int) -> Array[Array[CompletionLabel]] {
+        items.groups-of((#items + n - 1) / n)
+    }
+
+    fn widths(ncol: Int) -> Array[Array[Int]] {
+        let cols = group-cols(ncol)
+
         fn col-widths(i: Int) -> Array[Int] {
+            if i >= #cols {
+                return []
+            }
+
             let nparts = cols[i]
                 .map(label -> (label :: Array) ? #label : 1)
                 .max()
@@ -135,61 +143,71 @@ fn fitItems(items: Array[CompletionLabel], W: Int) {
                 W - (parts.sum() ?? 0)
             }
 
+            let max-singleton = 0
+
             for j in ..nparts {
-                let w = cols[i]
-                    .map(match {
-                        (label :: Array) and (#label > j)
-                            => min(limit(), width(cast(label)[j])),
+                let w = cols[i].map(match {
+                    (label: Array[Text | nil]) and (#label > j)
+                        => min(limit(), width(label[j])),
 
-                        label and (j == 0)
-                            => min(limit(), width(label)),
+                    label and (j == 0) => do {
+                        max-singleton = max(
+                            max-singleton,
+                            min(limit(), width(label))
+                        )
 
-                        _ => 0
-                    })
-                    .max()
-                parts.push(w ?? 0)
+                        0
+                    },
+
+                    _ => 0
+                }).max()
+                parts.push(w || max-singleton)
             }
 
             parts
         }
 
-        [col-widths(it) for ..ncols]
+        [col-widths(it) for ..ncol]
     }
 
-    let (cols, ws) = (
-        for cols in 1..#items {
-            let ws = widths(cols + 1)
-            if ws.flat().sum() + 6 * cols > W {
-                break (cols, widths(cols))
+    let (ncol, ws) = (
+        for ncol in 1..#items {
+            let ws = widths(ncol + 1)
+            if ws.flat().sum() + 6 * ncol > W {
+                break (ncol, widths(ncol))
             }
         }
     ) ?? (#items, widths(#items))
 
-    let cols: [[CompletionLabel]] = items.groupsOf(#items / cols)
-    let rows: Int = cols.map(&len).max()
+    let cols: [[CompletionLabel]] = group-cols(ncol)
+    let nrow: Int = cols.map(&len).max()
 
-    let result = []
+    fn s(x: Text | nil) -> String {
+        match x {
+            x: String => x,
+            nil       => '',
+            _         => "{x}"
+        }
+    }
 
     fn format(label: CompletionLabel, widths: Array[Int]) -> String {
         match label {
             parts: Array[Text | nil] => [
-                "{str(parts[i]):<{widths[i]}}"
+                "{s(parts[i]):<{widths[i]}}"
                 for i in ..#parts
             ].str(),
 
-            part => "{str(part):<{widths.sum()}}"
+            part => "{s(part):<{widths.sum()}}"
         }
     }
 
-    for i in ..rows {
-        result.push(
+    for i in ..nrow {
+        yield (
             cols.map(c -> (#c > i) ? c[i] : '')
                 .zip(ws, format)
                 .join('    ')
         )
     }
-
-    result
 }
 
 class InteractiveLineReader {

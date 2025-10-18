@@ -26,8 +26,8 @@ pub function sh(
     input: Blob | String = nil,
     timeoutMs: Int = nil,
     signal: Int = KILL_SIG,
-    combineOutput = false,
-    shareStderr = false,
+    combineOutput: Bool = false,
+    shareStderr: Bool = false,
     chdir: Int | String | Blob | nil = nil,
     shell: Array[String] = SHELL
 ) -> nil | |String, CmdResult| {
