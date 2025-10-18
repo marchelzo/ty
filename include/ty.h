@@ -726,6 +726,7 @@ extern usize TotalBytesAllocated;
         X(READ_INDEX),            \
         X(LOOP_ITER),             \
         X(LOOP_CHECK),            \
+        X(SPREAD_CHECK),          \
         X(POP),                   \
         X(UNPOP),                 \
         X(DROP2),                 \

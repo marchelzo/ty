@@ -239,6 +239,28 @@ pub class Path {
         Path('', '', [*ups, *downs])
     }
 
+    is-relative-to?(other: String | Path) -> Bool {
+        let other-path = match other {
+            p: Path => p,
+            s => Path(s)
+        }.absolute
+
+        let self-abs = self.absolute
+        if self-abs.__drv != other-path.__drv {
+            return false
+        }
+
+        let i = 0
+        while (
+            (i < min(#self-abs.__parts, #other-path.__parts))
+         && (self-abs.__parts[i] == other-path.__parts[i])
+        ) {
+            i += 1
+        }
+
+        i == #other-path.__parts
+    }
+
     readlink -> Path {
         match os.readlink(str(self)) {
             $target => Path(target),
@@ -417,10 +439,16 @@ pub class Path {
         target-path
     }
 
+    copy-into(target-dir: String | Path, follow-symlinks: Bool = true) -> Path {
+        let target-path = (target-dir :: String) ? Path(target-dir) : target-dir
+        let dest = target-path / name
+        copy(dest, follow-symlinks)
+    }
+
     rmtree(quiet: Bool = false) {
         if self.dir? {
             for entry in self.ls {
-                entry.rmtree
+                entry.rmtree()
             }
             rmdir
         } else if self.file? || self.symlink? {
@@ -507,6 +535,14 @@ pub class Path {
 
     rglob(pattern: String) -> [Path] {
         glob("**/{pattern}")
+    }
+
+    static glob(pattern: String) -> [Path] {
+        Path.cwd().glob(pattern)
+    }
+
+    static rglob(pattern: String) -> [Path] {
+        Path.cwd().rglob(pattern)
     }
 
     [](pattern: String) -> [Path] {

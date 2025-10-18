@@ -250,6 +250,8 @@ class Object {
 }
 
 class Class {
+    __name__: String;
+
     |(other) {
         c -> (c :: self) || (c :: other)
     }
@@ -261,9 +263,15 @@ class Class {
     __match__(other) {
         type(other) != Class && other.is?(self)
     }
+
+    static name(c) {
+        c.__name__
+    }
 }
 
 class Function : Iter {
+    __name__: String;
+
     init() {
         id
     }
@@ -308,7 +316,7 @@ class Function : Iter {
     }
 
     static name(f) {
-        doc(f).0
+        f.__name__
     }
 
     static disassemble(f) {
@@ -1327,8 +1335,8 @@ class RuntimeError {
 
     what { __what }
 
-    __str__() {
-        "RuntimeError: {__what}"
+    __str__() -> String {
+        "{Class.name(type(self))}: {what}"
     }
 }
 
@@ -1646,7 +1654,7 @@ trait Iterable[T] {
         __iter__().intersperse(x)
     }
 
-    groupsOf(n, keepShort: Bool = true) {
+    groupsOf(n: Int, keepShort: Bool = true) -> Generator[Array[T]] {
         __iter__().groupsOf(n, keepShort=keepShort)
     }
 
@@ -1718,8 +1726,12 @@ trait Iterable[T] {
         __iter__().fold(x, f)
     }
 
-    group(f) {
+    group[U](f: T -> U) -> Generator[Array[T]] {
         __iter__().group(f)
+    }
+
+    group() -> Generator[Array[T]] {
+        __iter__().group()
     }
 
     chain(A, B) {
@@ -1949,23 +1961,27 @@ trait Iter[T] < Iterable[T] {
         }
     }
 
-    group*(f = id) {
-        if not let Some(x) = self.__next__() {
+    group*[U](f: T -> U = id) -> Generator[Array[T]] {
+        if not let Some(x) = __next__() {
             return None
         }
 
         let group = [x]
+        let key = f(x)
 
         for (;;) {
-            if not let Some(x) = self.__next__() {
+            if not let Some(x) = __next__() {
                 break
             }
 
-            if f(x) == f(group[-1]) {
+            let this-key = f(x)
+
+            if this-key == key {
                 group.push(x)
             } else {
                 yield group
                 group = [x]
+                key = this-key
             }
         }
 
@@ -1982,15 +1998,15 @@ trait Iter[T] < Iterable[T] {
         return d
     }
 
-    groupsOf*(n: Int & n >= 0, keepShort: Bool = true) {
-        while let xs = @take(n).list() and #xs > 0 {
-            if #xs == n || keepShort {
+    groupsOf*(n: Int, keepShort: Bool = true) -> Generator[Array[T]] {
+        while let xs = take(n).list() and (#xs > 0) {
+            if (#xs == n) || keepShort {
                 yield xs
             }
         }
     }
 
-    join(sep: String) ->  String {
+    join(sep: String) -> String {
         if not let Some(::str ~> $s) = @__next__() {
             return ''
         }

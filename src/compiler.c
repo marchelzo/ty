@@ -580,12 +580,12 @@ inline static bool
 IsPrivateMember(char const *name)
 {
         usize n = strlen(name);
-        return n > 2
-            && name[0] == '_'
-            && name[1] == '_'
+        return (n > 2)
+            && (name[0] == '_')
+            && (name[1] == '_')
             && (
-                        name[n - 1] != '_'
-                     || name[n - 2] != '_'
+                        (name[n - 1] != '_')
+                     || (name[n - 2] != '_')
                )
             ;
 }
@@ -7573,40 +7573,16 @@ emit_spread(Ty *ty, Expr const *e, bool nils)
         }
 
         LABEL(start);
-        INSN(SENTINEL);
-        INSN(CLEAR_RC);
-        INSN(GET_NEXT);
-        INSN(READ_INDEX);
+        INSN(LOOP_ITER);
 
-        PLACEHOLDER_JUMP(JUMP_IF_NONE, done);
-
-        INSN(FIX_TO);
-        Ei32(1);
-
-        INSN(SWAP);
-        INSN(POP);
-
-        INSN(REVERSE);
-        Ei32(3);
-
-        if (nils) {
-                INSN(NIL);
-                INSN(REVERSE);
-                Ei32(3);
-        } else {
-                INSN(SWAP);
-        }
+        PLACEHOLDER_JUMP(SPREAD_CHECK, done);
+        Eu8(nils);
 
         JUMP(start);
 
         PATCH_JUMP(done);
 
-        INSN(FIX_TO);
-        Ei32(1);
-
-        INSN(POP);
-        INSN(POP);
-        INSN(POP);
+        INSN(POP_STACK_POS_POP);
         INSN(POP);
 }
 
@@ -14953,6 +14929,10 @@ DumpProgram(
                 CASE(LOOP_CHECK);
                         READVALUE(n);
                         READVALUE(n);
+                        break;
+                CASE(SPREAD_CHECK);
+                        READVALUE(n);
+                        READVALUE(b);
                         break;
                 CASE(ARRAY_COMPR)
                         break;

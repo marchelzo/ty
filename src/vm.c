@@ -4020,6 +4020,62 @@ NoIter:
         }
 }
 
+static bool
+LoopCheck(Ty *ty, i32 z, char *jump)
+{
+        imax k = top()[-3].integer - 1;
+
+        STACK.count += RC;
+
+        push(INTEGER(k));
+
+        bool done = (top()[-1].type == VALUE_NONE);
+        if (done) {
+                DOJUMP(jump);
+        }
+
+        i32 i;
+        i32 j;
+
+        for (i = 0; top()[-i].type != VALUE_SENTINEL; ++i) {
+                ;
+        }
+
+        while (i > z) {
+                --i, pop();
+        }
+
+        while (i < z) {
+                ++i, push(NIL);
+        }
+
+        Value v;
+
+        for (i = 0, j = z - 1; i < j; ++i, --j) {
+                v = top()[-i];
+                top()[-i] = top()[-j];
+                top()[-j] = v;
+        }
+
+        return done;
+}
+
+inline static void
+SpreadShuffle(Ty *ty, bool inject_nil)
+{
+        Value x = pop();
+        (void)pop();
+        Value xs = pop();
+        Value idx = pop();
+
+        push(x);
+        if (inject_nil) {
+                push(NIL);
+        }
+        push(idx);
+        push(xs);
+}
+
 static void
 splat(Ty *ty, Dict *d, Value *v)
 {
@@ -5235,27 +5291,15 @@ Yield:
                 CASE(LOOP_CHECK)
                         READJUMP(jump);
                         READVALUE(z);
-
-                        k = top()[-3].integer - 1;
-                        STACK.count += RC;
-                        push(INTEGER(k));
-
-                        if (top()[-1].type == VALUE_NONE) {
-                                DOJUMP(jump);
+                        LoopCheck(ty, z, jump);
+                        break;
+                CASE(SPREAD_CHECK)
+                        READJUMP(jump);
+                        READVALUE(b);
+                        if (!LoopCheck(ty, 1, jump)) {
+                                vvX(SP_STACK);
                         }
-
-                        for (i = 0; top()[-i].type != VALUE_SENTINEL; ++i)
-                                ;
-                        while (i > z)
-                                --i, pop();
-                        while (i < z)
-                                ++i, push(NIL);
-                        for (i = 0, j = z - 1; i < j; ++i, --j) {
-                                v = top()[-i];
-                                top()[-i] = top()[-j];
-                                top()[-j] = v;
-                        }
-
+                        SpreadShuffle(ty, b);
                         break;
                 CASE(PUSH_INDEX)
                         READVALUE(n);
@@ -5380,7 +5424,7 @@ Yield:
                         if (n >= top()->array->count) {
                                 if (b) {
                                         MatchError;
-                                        zP("elment index out of range in destructuring assignment");
+                                        zP("element index out of range in destructuring assignment");
                                 } else {
                                         push(NIL);
                                 }
@@ -7649,6 +7693,10 @@ StepInstruction(char const *ip)
         CASE(LOOP_CHECK)
                 SKIPVALUE(n);
                 SKIPVALUE(n);
+                break;
+        CASE(SPREAD_CHECK)
+                SKIPVALUE(n);
+                SKIPVALUE(b);
                 break;
         CASE(ARRAY_COMPR)
                 break;
