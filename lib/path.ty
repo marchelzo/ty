@@ -506,7 +506,7 @@ pub class Path {
     }
 
     rglob(pattern: String) -> [Path] {
-        self.glob("**/{pattern}")
+        glob("**/{pattern}")
     }
 
     [](pattern: String) -> [Path] {

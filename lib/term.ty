@@ -572,7 +572,7 @@ class TermIO {
     }
 
     __start() {
-        warn!("Reader thread starting!")
+        warn!("Reader: start")
         if (__saved-termios = tcgetattr(__fd)) == nil {
             error!("Error: {errno.str()}")
         }
@@ -590,7 +590,7 @@ class TermIO {
     }
 
     __stop() {
-        warn!("Reader thread stopping!")
+        warn!("Reader: stop")
         write(__fd, __exit)
         tcsetattr(__fd, TCSAFLUSH, __saved-termios)
         with __state.lock {
@@ -725,7 +725,7 @@ class TermIO {
 
     next-event() -> ?event.Event {
         let ev = __ev-queue.take()
-        debug!("event: {ppp(ev)}")
+        debug!("Event: {ppp(ev)}")
         return ev
     }
 

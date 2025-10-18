@@ -6,7 +6,7 @@ import sh (sh)
 import ioctls (..)
 import json
 import time
-import chalk (chalk, Text)
+import chalk (chalk)
 import path (Path)
 
 let ERASE_LINE = "\x1b[2K"
@@ -15,7 +15,11 @@ let __tls::reader: ?InteractiveLineReader = nil
 
 pub tag CycleCompletions, ListCompletions, ReplaceLine, Insert;
 
-pub use CompletionItem = String | (String | Text, String);
+use Text = String | chalk::Text
+
+pub use CompletionLabel = Text | Array[Text | nil]
+
+pub use CompletionItem = String | (CompletionLabel, String);
 
 pub use CompletionAction = CycleCompletions[Array[CompletionItem]]
                          | ListCompletions[Array[CompletionItem]]
@@ -25,7 +29,7 @@ pub use CompletionAction = CycleCompletions[Array[CompletionItem]]
 
 pub use CompletionFunction = {before: String, after: String} -> CompletionAction;
 
-fn completion-label(item: CompletionItem) -> Text | String {
+fn completion-label(item: CompletionItem) -> CompletionLabel {
     (item :: String) ? item : item.0
 }
 
@@ -98,33 +102,89 @@ fn completeFile(before: String, after: String) -> CompletionAction {
     }
 }
 
-fn fitItems(items: [Text | String], W: Int) {
-    fn width(text: String | Text) {
-        "{text}".width()
+fn fitItems(items: Array[CompletionLabel], W: Int) {
+    fn plain(item: CompletionLabel) -> String {
+        let item = match item {
+            parts: Array[Text | nil] => parts
+                .map(part -> part ?? '')
+                .str(),
+
+            part => str(part)
+        }
+
+        (chalk"{item}").plain
     }
 
-    fn widths(cols) {
-        items.map(width).groupsOf(#items / cols).map(&max)
+    let items = items.sort(by=plain)
+
+    fn width(text: Text | nil) -> Int {
+        (text == nil) ? 0 : "{text}".width()
+   }
+
+    fn widths(ncols: Int) -> Array[Array[Int]] {
+        let cols = items.groupsOf(#items / ncols)
+        
+        fn col-widths(i: Int) -> Array[Int] {
+            let nparts = cols[i]
+                .map(label -> (label :: Array) ? #label : 1)
+                .max()
+
+            let parts: Array[Int] = []
+
+            fn limit() -> Int {
+                W - (parts.sum() ?? 0)
+            }
+
+            for j in ..nparts {
+                let w = cols[i]
+                    .map(match {
+                        (label :: Array) and (#label > j)
+                            => min(limit(), width(cast(label)[j])),
+
+                        label and (j == 0)
+                            => min(limit(), width(label)),
+
+                        _ => 0
+                    })
+                    .max()
+                parts.push(w ?? 0)
+            }
+
+            parts
+        }
+
+        [col-widths(it) for ..ncols]
     }
 
     let (cols, ws) = (
         for cols in 1..#items {
             let ws = widths(cols + 1)
-            if ws.sum() + 6 * cols > W {
+            if ws.flat().sum() + 6 * cols > W {
                 break (cols, widths(cols))
             }
         }
     ) ?? (#items, widths(#items))
 
-    let cols: [[String | Text]] = items.groupsOf(#items / cols)
+    let cols: [[CompletionLabel]] = items.groupsOf(#items / cols)
     let rows: Int = cols.map(&len).max()
 
     let result = []
 
+    fn format(label: CompletionLabel, widths: Array[Int]) -> String {
+        match label {
+            parts: Array[Text | nil] => [
+                "{str(parts[i]):<{widths[i]}}"
+                for i in ..#parts
+            ].str(),
+
+            part => "{str(part):<{widths.sum()}}"
+        }
+    }
+
     for i in ..rows {
         result.push(
             cols.map(c -> (#c > i) ? c[i] : '')
-                .zip(ws, (f, w) -> "{str(f):<{w}}")
+                .zip(ws, format)
                 .join('    ')
         )
     }
@@ -213,7 +273,7 @@ class InteractiveLineReader {
         }
 
         fn printItems(cs) {
-            write(__tio.fd, "{ERASE_LINE}\r")
+            write(__tio.fd, "{ERASE_LINE}\rAvailable completions:\n")
 
             let (h, w) = __tio.size()
 

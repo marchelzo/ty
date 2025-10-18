@@ -318,9 +318,9 @@ pub fn pretty-code(prompt: String, line: [String], i: Int) -> String {
     "{prompt}{all}\r{prompt}{before}"
 }
 
-fn type-completions(type: _, prefix: String) -> [String] {
+fn type-completions(type: _, prefix: String) -> Array[_] {
     fn label(method) {
-        chalk"[bright blue]{method.name:<10}[/][grey]:[/] {types::show(method.type)}"
+        [chalk"[bright blue]{method.name}[/][grey]:[/] ", types::show(method.type)]
     }
 
     match type {
@@ -366,8 +366,8 @@ fn mod-completions(mod: Dict[String, _], prefix: String) -> [(Text, String)] {
 
     for name, item in mod if name.starts?(prefix) {
         let label = match item {
-            _ns: Dict => chalk"[bright blue]{name}[/][grey]:[/] [b yellow]namespace[/]",
-            {type, *} => chalk"[bright blue]{name}[/][grey]:[/] {types::show(type)}",
+            _ns: Dict => [chalk"[bright blue]{name}[/][grey]:[/] ", chalk"[b yellow]namespace[/]"],
+            {type, *} => [chalk"[bright blue]{name}[/][grey]:[/] ", types::show(type)],
             _         => nil
         }
 

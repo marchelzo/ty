@@ -962,7 +962,7 @@ ParseError(Ty *ty, char const *fmt, ...)
 
         if (tokenx(0)->type == TOKEN_ERROR) {
                 /*
-                 * The lexer already wrote us a nice error message :)
+                 * The lexer already wrote us a nice error message ^_^
                  */
                 goto End;
         }
@@ -5767,7 +5767,7 @@ parse_expr(Ty *ty, int prec)
 
         //if (AllowErrors && CatchError()) {
         //        next();
-        //        -ParseDepth;
+        //        --ParseDepth;
         //        return &NullExpr;
         //}
 
@@ -6750,15 +6750,13 @@ parse_ex(
         lex_init(ty, file, source);
         lex_keep_comments(ty, true);
 
-        setctx(LEX_PREFIX);
-
         LastParsedExpr = NULL;
 
         if (setjmp(JB) != 0) {
         Error:
                 avP(program, NULL);
 
-                *err_loc = tok()->start;
+                *err_loc = tokenx(0)->start;
                 *prog_out = program.items;
 
                 if (tok_out != NULL) {
@@ -6770,6 +6768,8 @@ parse_ex(
                 return false;
         }
 
+        setctx(LEX_PREFIX);
+
         while (T0 == TOKEN_NEWLINE) {
                 next();
         }
@@ -6777,7 +6777,7 @@ parse_ex(
         while (
                 have_keywords(KEYWORD_PUB, KEYWORD_IMPORT)
              || have_keyword(KEYWORD_IMPORT)
-             || T0 == TOKEN_COMMENT
+             || (T0 == TOKEN_COMMENT)
         ) {
                 if (T0 == TOKEN_COMMENT) {
                         next();
@@ -7164,7 +7164,7 @@ pp_if(Ty *ty)
                         continue;
                 }
 
-                if (conds.count > 0) {
+                if (vN(conds) > 0) {
                         xvP(ends, TokenIndex);
                 }
 

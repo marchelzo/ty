@@ -1,5 +1,6 @@
 import base64
 import bit
+import errno
 import json
 import math
 import os
@@ -163,6 +164,10 @@ fn time::gettime(clock: ?Int) -> time::Timespec;
 fn time::localtime() -> time::Tm;
 fn time::utime(clock: ?Int) -> Int;
 fn time::now() -> Float;
+
+fn errno::get() -> Int;
+fn errno::str(err: Int) -> String;
+fn errno::str() -> String;
 
 fn os::listdir(path: String) -> [String];
 
