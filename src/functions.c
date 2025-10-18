@@ -61,6 +61,7 @@ typedef struct stat StatStruct;
 #include <sys/ioctl.h>
 #include <sys/mman.h>
 #include <sys/mman.h>
+#include <sys/sendfile.h>
 #include <sys/socket.h>
 #include <sys/time.h>
 #include <sys/un.h>
@@ -2877,6 +2878,161 @@ BUILTIN_FUNCTION(os_write)
         return INTEGER(off);
 }
 
+BUILTIN_FUNCTION(os_lseek)
+{
+        ASSERT_ARGC("os.lseek()", 3);
+
+        int fd = INT_ARG(0);
+        isize offset = INT_ARG(1);
+        int whence = INT_ARG(2);
+
+        return INTEGER(lseek(fd, (off_t)offset, whence));
+}
+
+BUILTIN_FUNCTION(os_ftruncate)
+{
+        ASSERT_ARGC("os.ftruncate()", 2);
+
+        int fd = INT_ARG(0);
+        isize length = INT_ARG(1);
+
+#ifdef __linux__
+        return INTEGER(ftruncate64(fd, (off64_t)length));
+#else
+        return INTEGER(ftruncate(fd, (off_t)length));
+#endif
+}
+
+BUILTIN_FUNCTION(os_sendfile)
+{
+        ASSERT_ARGC("os.sendfile()", 3, 4);
+
+        int out_fd = INT_ARG(0);
+        int in_fd = INT_ARG(1);
+        isize offset = INT_ARG(2);
+        isize count = -1;
+
+        if (argc == 4) {
+                count = INT_ARG(3);
+        }
+
+#ifdef _WIN32
+        NOT_ON_WINDOWS("os.sendfile()");
+#endif
+
+#ifdef __linux__
+        return INTEGER(
+                sendfile64(
+                        out_fd,
+                        in_fd,
+                        (off64_t *)&offset,
+                        (size_t)count
+                )
+        );
+#else
+        ssize_t total_sent = 0;
+
+        while (count != 0) {
+                ssize_t to_send = (count < 0 || count > SSIZE_MAX) ? SSIZE_MAX : count;
+                ssize_t n_sent = sendfile(out_fd, in_fd, (off_t *)&offset, (size_t)to_send);
+                if (n_sent <= 0) {
+                        if (total_sent == 0) {
+                                return INTEGER(n_sent);
+                        }
+                        break;
+                }
+                total_sent += n_sent;
+                if (count > 0) {
+                        count -= n_sent;
+                }
+        }
+
+        return INTEGER(total_sent);
+#endif
+}
+
+BUILTIN_FUNCTION(os_splice)
+{
+        ASSERT_ARGC("os.splice()", 5, 6);
+
+        int fd_in = INT_ARG(0);
+        isize *off_in = NULL;
+        isize offset_in = 0;
+        if (ARG(1).type != VALUE_NIL) {
+                offset_in = INT_ARG(1);
+                off_in = &offset_in;
+        }
+
+        int fd_out = INT_ARG(2);
+        isize *off_out = NULL;
+        isize offset_out = 0;
+        if (ARG(3).type != VALUE_NIL) {
+                offset_out = INT_ARG(3);
+                off_out = &offset_out;
+        }
+
+        imax len = INT_ARG(4);
+
+        uint flags = 0;
+        if (argc == 6) {
+                flags = INT_ARG(5);
+        }
+
+        return INTEGER(
+                splice(
+                        fd_in,
+                        (off_in != NULL) ? (loff_t *)off_in : NULL,
+                        fd_out,
+                        (off_out != NULL) ? (loff_t *)off_out : NULL,
+                        (usize)len,
+                        flags
+                )
+        );
+}
+
+BUILTIN_FUNCTION(os_copy_file_range)
+{
+        ASSERT_ARGC("os.copy_file_range()", 5, 6);
+
+#ifdef __linux__
+        int fd_in = INT_ARG(0);
+        isize *off_in = NULL;
+        isize offset_in = 0;
+        if (ARG(1).type != VALUE_NIL) {
+                offset_in = INT_ARG(1);
+                off_in = &offset_in;
+        }
+
+        int fd_out = INT_ARG(2);
+        isize *off_out = NULL;
+        isize offset_out = 0;
+        if (ARG(3).type != VALUE_NIL) {
+                offset_out = INT_ARG(3);
+                off_out = &offset_out;
+        }
+
+        imax len = INT_ARG(4);
+
+        uint flags = 0;
+        if (argc == 6) {
+                flags = INT_ARG(5);
+        }
+
+        return INTEGER(
+                copy_file_range(
+                        fd_in,
+                        (off_in != NULL) ? (loff_t *)off_in : NULL,
+                        fd_out,
+                        (off_out != NULL) ? (loff_t *)off_out : NULL,
+                        (usize)len,
+                        flags
+                )
+        );
+#else
+        bP("unsupported platform");
+#endif
+}
+
 BUILTIN_FUNCTION(os_fsync)
 {
         ASSERT_ARGC("os.fsync()", 1);
@@ -4963,16 +5119,6 @@ BUILTIN_FUNCTION(os_realpath)
         char *resolved = resolve_path(in, out);
 
         return (resolved != NULL) ? vSsz(out) : NIL;
-}
-
-BUILTIN_FUNCTION(os_ftruncate)
-{
-        ASSERT_ARGC("os.ftruncate()", 2);
-
-        int fd = INT_ARG(0);
-        i64 size = INT_ARG(1);
-
-        return INTEGER(ftruncate(fd, size));
 }
 
 static int

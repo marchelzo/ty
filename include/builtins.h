@@ -124,6 +124,9 @@ static struct {
   { .module = "os",         .name = "rewinddir",                .value = BUILTIN(builtin_os_rewinddir)           },
   { .module = "os",         .name = "read",                     .value = BUILTIN(builtin_os_read)                },
   { .module = "os",         .name = "write",                    .value = BUILTIN(builtin_os_write)               },
+  { .module = "os",         .name = "sendfile",                 .value = BUILTIN(builtin_os_sendfile)            },
+  { .module = "os",         .name = "splice",                   .value = BUILTIN(builtin_os_splice)              },
+  { .module = "os",         .name = "copy_file_range",          .value = BUILTIN(builtin_os_copy_file_range)     },
   { .module = "os",         .name = "sync",                     .value = BUILTIN(builtin_os_sync)                },
   { .module = "os",         .name = "fsync",                    .value = BUILTIN(builtin_os_fsync)               },
   { .module = "os",         .name = "umask",                    .value = BUILTIN(builtin_os_umask)               },
@@ -337,6 +340,12 @@ static struct {
   { .module = "os",         .name = "LOCK_NB",                  .value = INT(LOCK_NB)                            },
   { .module = "os",         .name = "LOCK_UN",                  .value = INT(LOCK_UN)                            },
 
+  { .module = "os",         .name = "SEEK_SET",                 .value = INT(SEEK_SET)                           },
+  { .module = "os",         .name = "SEEK_CUR",                 .value = INT(SEEK_CUR)                           },
+  { .module = "os",         .name = "SEEK_END",                 .value = INT(SEEK_END)                           },
+  { .module = "os",         .name = "SEEK_DATA",                .value = INT(SEEK_DATA)                          },
+  { .module = "os",         .name = "SEEK_HOLE",                .value = INT(SEEK_HOLE)                          },
+
   { .module = "thread",     .name = "create",                   .value = BUILTIN(builtin_thread_create)          },
   { .module = "thread",     .name = "join",                     .value = BUILTIN(builtin_thread_join)            },
   { .module = "thread",     .name = "detach",                   .value = BUILTIN(builtin_thread_detach)          },
@@ -392,35 +401,6 @@ static struct {
   { .module = "stdio",      .name = "SEEK_END",                 .value = INT(SEEK_END)                           },
   { .module = "errno",      .name = "get",                      .value = BUILTIN(builtin_errno_get)              },
   { .module = "errno",      .name = "str",                      .value = BUILTIN(builtin_errno_str)              },
-  { .module = "errno",      .name = "EACCES",                   .value = INT(EACCES)                             },
-  { .module = "errno",      .name = "EAGAIN",                   .value = INT(EAGAIN)                             },
-  { .module = "errno",      .name = "EBADF",                    .value = INT(EBADF)                              },
-  { .module = "errno",      .name = "ENOTSOCK",                 .value = INT(ENOTSOCK)                           },
-  { .module = "errno",      .name = "ETIMEDOUT",                .value = INT(ETIMEDOUT)                          },
-  { .module = "errno",      .name = "ECHILD",                   .value = INT(ECHILD)                             },
-#ifndef _WIN32
-  { .module = "errno",      .name = "EDQUOT",                   .value = INT(EDQUOT)                             },
-#endif
-  { .module = "errno",      .name = "EEXIST",                   .value = INT(EEXIST)                             },
-  { .module = "errno",      .name = "EFAULT",                   .value = INT(EFAULT)                             },
-  { .module = "errno",      .name = "EFBIG",                    .value = INT(EFBIG)                              },
-  { .module = "errno",      .name = "EINTR",                    .value = INT(EINTR)                              },
-  { .module = "errno",      .name = "EINVAL",                   .value = INT(EINVAL)                             },
-  { .module = "errno",      .name = "EISDIR",                   .value = INT(EISDIR)                             },
-  { .module = "errno",      .name = "ELOOP",                    .value = INT(ELOOP)                              },
-  { .module = "errno",      .name = "EMFILE",                   .value = INT(EMFILE)                             },
-  { .module = "errno",      .name = "ENAMETOOLONG",             .value = INT(ENAMETOOLONG)                       },
-  { .module = "errno",      .name = "ENFILE",                   .value = INT(ENFILE)                             },
-  { .module = "errno",      .name = "ENODEV",                   .value = INT(ENODEV)                             },
-  { .module = "errno",      .name = "ENOENT",                   .value = INT(ENOENT)                             },
-  { .module = "errno",      .name = "ENOLCK",                   .value = INT(ENOLCK)                             },
-  { .module = "errno",      .name = "ENOMEM",                   .value = INT(ENOMEM)                             },
-  { .module = "errno",      .name = "ENOSPC",                   .value = INT(ENOSPC)                             },
-  { .module = "errno",      .name = "ENOTDIR",                  .value = INT(ENOTDIR)                            },
-  { .module = "errno",      .name = "ENXIO",                    .value = INT(ENXIO)                              },
-  { .module = "errno",      .name = "EROFS",                    .value = INT(EROFS)                              },
-  { .module = "errno",      .name = "ETXTBSY",                  .value = INT(ETXTBSY)                            },
-  { .module = "errno",      .name = "EWOULDBLOCK",              .value = INT(EWOULDBLOCK)                        },
   { .module = "time",       .name = "time",                     .value = BUILTIN(builtin_time_time)              },
   { .module = "time",       .name = "utime",                    .value = BUILTIN(builtin_time_utime)             },
   { .module = "time",       .name = "now",                      .value = BUILTIN(builtin_time_now)               },
@@ -809,7 +789,9 @@ static struct {
   { .module = "tdb",        .name = "backtrace",                .value = BUILTIN(builtin_tdb_backtrace)          },
 
 #ifndef _WIN32
-#  include "ioctl_constants.h"
+  #include "ioctl_constants.h"
 #endif
+
+#include "errno_constants.h"
 
 };

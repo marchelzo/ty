@@ -53,7 +53,7 @@ set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS OFF)
 
 # ---
-#  generate ioctl_constants
+#  generate ioctl constants
 # ---
 
 set(_autogen_dir ${PROJECT_BINARY_DIR}/GeneratedFiles)
@@ -96,6 +96,52 @@ else()
     VERBATIM
   )
   add_dependencies(${_tgt_ioctlconstants_h} ${_tgt_gen_ioctl_h})
+endif()
+
+# ---
+#  generate errno constants
+# ---
+
+set(_autogen_dir ${PROJECT_BINARY_DIR}/GeneratedFiles)
+file(MAKE_DIRECTORY ${_autogen_dir})
+file(MAKE_DIRECTORY ${_autogen_dir}/include)
+
+set(_file_errno_constants_h ${_autogen_dir}/include/errno_constants.h)
+set(_gen_errno_script       ${PROJECT_SOURCE_DIR}/scripts/geterrnos.sh)
+
+set(_tgt_errnoconstants_h "ErrnoConstantsH")
+add_library(${_tgt_errnoconstants_h} INTERFACE)
+target_include_directories(${_tgt_errnoconstants_h}
+  INTERFACE
+    ${_autogen_dir}/include
+)
+
+if (WIN32)
+  if (NOT EXISTS ${_file_errno_constants_h})
+    file(TOUCH ${_file_errno_constants_h})
+  endif()
+else()
+  set(_tgt_gen_errno_h GenerateErrnoConstantsH)
+  add_custom_target(${_tgt_gen_errno_h}
+    BYPRODUCTS
+      ${_file_errno_constants_h}
+    COMMAND # generate tmp file
+      sh "${_gen_errno_script}" > "${_file_errno_constants_h}.tmp"
+    COMMAND # replace existing (if different)
+      ${CMAKE_COMMAND} -E copy_if_different
+        "${_file_errno_constants_h}.tmp"
+        "${_file_errno_constants_h}"
+    COMMAND # remove tmp file
+      ${CMAKE_COMMAND} -E rm "${_file_errno_constants_h}.tmp"
+    WORKING_DIRECTORY
+      "${PROJECT_SOURCE_DIR}"
+    COMMENT
+      "Generating errno_constants.h file using geterrnos.sh"
+    DEPENDS
+      ${_gen_errno_script}
+    VERBATIM
+  )
+  add_dependencies(${_tgt_errnoconstants_h} ${_tgt_gen_errno_h})
 endif()
 
 # ---
