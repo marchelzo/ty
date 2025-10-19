@@ -226,7 +226,7 @@ let groups = %{
     'fg0': 'id',
     'fg1': '[ ] { } ( ) . .? , ]',
     'orange': '
-        =   ==  ++  --  +   -  *   /   %   ^    |    &
+        =   ==  ++  --  +   -  *   /   %   ^    |    &    <=   >=
         +=  -=  *=  /=  %=  @  #   &&  ||  <=>  !    ~
         ~>  =>  $~> >   <  !=  ??  >>  <<  <<=  >>=  |>
         *** &&& <$> <%> ?> <? <*>  *>  <*  ..%. .%.. .%
@@ -251,12 +251,9 @@ let groups = %{
 
 let colors = [ %{ t: c for t in g.words() } for c, g in groups ].sum()
 
-fn color-and-break(source: String) -> [(Int, String)] {
-    let tokens = match ty.parse(source, tokens=true) {
-        Err({tokens, last: $last, *}) as e
-            => tokens,
-
-        Ok((_, {tokens, *})) or Err({tokens, *})
+fn color-and-break(source: String) -> Array[(Int, String)] {
+    let tokens: Array[_] = match ty.parse(source, tokens=true) {
+        (Ok((_, {tokens, *})) or Err({tokens, *}))
             => tokens,
 
         err => do { print(err); return [(0, chalk::escape(source))] }
@@ -270,28 +267,40 @@ fn color-and-break(source: String) -> [(Int, String)] {
 
     let parts = [(it, '') for source]
 
-    fn idx-of(off: Int) -> Int {
-        let n = 0
+    fn idx-of(off: Int, start: (Int, Int) = (0, 0)) -> (Int, Int) {
+        let (n0, i0) = start
+        let n = n0
 
-        for ..#parts {
+        for i0..#parts {
+            if n == off {
+                return (n, it)
+            }
+
             n += parts[it][0].size()
-            if (n > off) {
-                return it
+
+            if (n > off) && (n0 == 0) {
+                return (n, it)
             }
         }
 
-        #parts
+        (n0 == 0) ? (n, #parts) : idx-of(off)
     }
 
+    let st = (0, 0)
     for {start, end, type, ?kind, *} in tokens {
-        let i = idx-of(start.byte)
-        let j = idx-of(end.byte)
-
         continue if not let $color = colors[[type, ?kind].join('_')]
+
+        let st0 = idx-of(start.byte, st)
+        let st1 = idx-of(end.byte, st0)
+
+        let (_, i) = st0
+        let (_, j) = st1
 
         for i..j {
             parts[it] = (parts[it][0], color)
         }
+
+        st = st1
     }
 
     parts.group-by!(&1).map!(group -> (group.map(&0).str(), group[0][1]))

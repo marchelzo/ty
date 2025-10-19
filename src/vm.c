@@ -7904,6 +7904,10 @@ StepInstruction(char const *ip)
                 while (  s --> 0) { SKIPVALUE(i); }
                 break;
         }
+        CASE(INIT_STATIC_FIELD)
+                SKIPVALUE(i);
+                SKIPVALUE(i);
+                break;
         CASE(FUNCTION)
         {
                 Value v;

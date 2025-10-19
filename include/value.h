@@ -397,7 +397,7 @@ value_show_color(Ty *ty, Value const *v);
         if (argc != n0 && argc != n1 && argc != n2 && argc != n3) {  \
                 zP(                                                  \
                         "%s: expected "                              \
-                        #n0 ", " #n1 ", " #n2 ", or " #n2 " "        \
+                        #n0 ", " #n1 ", " #n2 ", or " #n3 " "        \
                         "arguments but got %d",                      \
                         _name__,                                     \
                         argc                                         \
@@ -405,11 +405,34 @@ value_show_color(Ty *ty, Value const *v);
         }                                                            \
 } while (0)
 
+#define CHECK_ARGC_5(n0, n1, n2, n3, n4) do {                                      \
+        if (argc != n0 && argc != n1 && argc != n2 && argc != n3 && argc != n4) {  \
+                zP(                                                                \
+                        "%s: expected "                                            \
+                        #n0 ", " #n1 ", " #n2 ", " #n3 ", or " #n4 " "             \
+                        "arguments but got %d",                                    \
+                        _name__,                                                   \
+                        argc                                                       \
+                );                                                                 \
+        }                                                                          \
+} while (0)
+
 #define CHECK_ARGC(...) VA_SELECT(CHECK_ARGC, __VA_ARGS__)
 
 #define ASSERT_ARGC(func, ...)      \
         char const *_name__ = func; \
         CHECK_ARGC(__VA_ARGS__)
+
+#define ASSERT_ARGC_RANGE(func, n0, n1)                                 \
+        char const *_name__ = func;                                     \
+        if (argc < n0 || argc > n1) {                                   \
+                zP(                                                     \
+                        "%s: expected between " #n0 " and " #n1 " "     \
+                        "arguments but got %d",                         \
+                        _name__,                                        \
+                        argc                                            \
+                );                                                      \
+        }
 
 noreturn void vm_panic(Ty *, char const *, ...);
 

@@ -811,7 +811,6 @@ inline static void
 {
         if (
                    (LCTX == ctx)
-                || ((LCTX = ctx) && 0)
                 || (tok()->ctx == LEX_FAKE)
                 || tok()->pp
         ) {
@@ -6669,7 +6668,7 @@ tokenize(Ty *ty, char const *source, TokenVector *tokens_out)
         lex_init(ty, "(tokenize)", source);
         lex_keep_comments(ty, true);
 
-        vec_init(tokens);
+        v00(tokens);
 
         while (T0 != TOKEN_END && T0 != TOKEN_ERROR) {
                 while (get_prefix_parser(ty) != NULL) {
@@ -6889,8 +6888,8 @@ parse_ex(
 
                 // TODO: figure out if this is necessary
                 while (
-                        s->type == STATEMENT_EXPRESSION
-                     && s->expression->type == EXPRESSION_STATEMENT
+                        (s->type == STATEMENT_EXPRESSION)
+                     && (s->expression->type == EXPRESSION_STATEMENT)
                 ) {
                         s = s->expression->statement;
                 }

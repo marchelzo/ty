@@ -10176,17 +10176,22 @@ import_module(Ty *ty, Stmt const *s)
          *
          * are both errors.
          */
-        for (int i = 0; i < vN(STATE.imports); ++i) {
-                if (strcmp(as, v__(STATE.imports, i).name) == 0) {
-                        if (STATE._eval) {
-                                return;
-                        }
+        bool forgive = (STATE._eval || STATE._parse);
+
+        for (int i = 0; i < vN(STATE.imports) && !forgive; ++i) {
+                bool collision = (strcmp(as, v__(STATE.imports, i).name) == 0);
+                bool duplicate = (v__(STATE.imports, i).mod->scope == module_scope);
+
+                if (forgive && (collision || duplicate)) {
+                        vvXi(STATE.imports, i);
+                        break;
+                }
+
+                if (collision) {
                         fail("there is already a module imported under the name '%s'", as);
                 }
-                if (v__(STATE.imports, i).mod->scope == module_scope) {
-                        if (STATE._eval) {
-                                return;
-                        }
+
+                if (duplicate) {
                         fail("the module '%s' has already been imported", name);
                 }
         }
@@ -10199,20 +10204,25 @@ import_module(Ty *ty, Stmt const *s)
         char const **aliases = (char const **)vv(s->import.aliases);
         int n = vN(s->import.identifiers);
 
-        bool everything = (n == 1) && strcmp(identifiers[0], "..") == 0;
+        bool everything = (n == 1)
+                       && (strcmp(identifiers[0], "..") == 0);
 
         if (everything) {
                 char const *id = scope_copy_public(ty, STATE.global, module_scope, pub);
-                if (id != NULL) {
+                if (id != NULL && !forgive) {
                         fail("module '%s' exports conflcting name '%s'", name, id);
                 }
         } else if (s->import.hiding) {
                 char const *id = scope_copy_public_except(ty, STATE.global, module_scope, identifiers, n, pub);
-                if (id != NULL)
+                if (id != NULL && !forgive) {
                         fail("module '%s' exports conflcting name '%s'", name, id);
+                }
         } else for (int i = 0; i < n; ++i) {
                 Symbol *s = scope_lookup(ty, module_scope, identifiers[i]);
                 if (s == NULL || !SymbolIsPublic(s)) {
+                        if (forgive) {
+                                continue;
+                        }
                         fail("module '%s' does not export '%s'", name, identifiers[i]);
                 }
                 scope_insert_as(ty, STATE.global, s, aliases[i])->flags |= SYM_PUBLIC * pub;
@@ -10544,17 +10554,17 @@ compiler_find_definition(Ty *ty, char const *file, int line, int col)
 
                         if (
                                 (
-                                        e->type == EXPRESSION_IDENTIFIER
-                                     || e->type == EXPRESSION_FUNCTION
-                                     || e->type == STATEMENT_FUNCTION_DEFINITION
+                                        (e->type == EXPRESSION_IDENTIFIER)
+                                     || (e->type == EXPRESSION_FUNCTION)
+                                     || (e->type == STATEMENT_FUNCTION_DEFINITION)
                                 )
-                             && e->start.line == line
+                             && (e->start.line == line)
                              && (
                                         col >= e->start.col
                                      && col <= e->end.col
                                 )
                              && (e->mod->path != NULL)
-                             && strcmp(e->mod->path, file) == 0
+                             && (strcmp(e->mod->path, file) == 0)
                         ) {
                                 Symbol *sym = (e->type == EXPRESSION_IDENTIFIER)         ? e->symbol
                                             : (e->type == STATEMENT_FUNCTION_DEFINITION) ? ((Stmt *)e)->target->symbol
@@ -14571,6 +14581,7 @@ DumpProgram(
 #define READVALUE(x)  (memcpy(&x, c, sizeof x), (c += sizeof x), (!DebugScan && ((PRINTVALUE(x)), 0)))
 #define READVALUE_(x) (memcpy(&x, c, sizeof x), (c += sizeof x))
 #define READMEMBER(n) (READVALUE_((n)), DUMPSTR(n == -1 ? "<$>" : M_NAME((n))))
+#define READCLASS(n) (READVALUE_((n)), DUMPSTR(n == -1 ? "<$>" : class_name(ty, (n))))
 
         uptr pc = (uptr)code;
         ProgramAnnotation *annotation = NULL;
@@ -15183,6 +15194,10 @@ DumpProgram(
                         while (  s --> 0) { READMEMBER(i); }
                         break;
                 }
+                CASE(INIT_STATIC_FIELD)
+                        READCLASS(i);
+                        READMEMBER(i);
+                        break;
                 CASE(FUNCTION)
                 {
                         Value v = {0};
