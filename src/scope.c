@@ -220,7 +220,7 @@ lookup(
 
         u32 const dont_capture = SYM_GLOBAL
                                | SYM_NAMESPACE
-                               | SYM_CLASS_MEMBER
+                               | SYM_MEMBER
                                | SYM_TYPE_VAR
                                | SYM_THREAD_LOCAL;
 

@@ -813,6 +813,7 @@ extern usize TotalBytesAllocated;
         X(TAG_PUSH),              \
         X(DEFINE_TAG),            \
         X(DEFINE_CLASS),          \
+        X(INIT_STATIC_FIELD),     \
         X(TRY_INDEX),             \
         X(TRY_INDEX_TUPLE),       \
         X(TRY_TUPLE_MEMBER),      \

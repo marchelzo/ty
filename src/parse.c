@@ -3690,9 +3690,10 @@ prefix_percent(Ty *ty)
                         e->dflt->end = TEnd;
                 } else if (T0 == TOKEN_STAR) {
                         Expr *item = mkexpr(ty);
+
                         next();
-                        if (T0 == TOKEN_STAR) {
-                                next();
+
+                        if (try_consume(TOKEN_STAR)) {
                                 item->type = EXPRESSION_SPLAT;
                         } else {
                                 item->type = EXPRESSION_SPREAD;
@@ -3707,7 +3708,7 @@ prefix_percent(Ty *ty)
                                 item->value = mkexpr(ty);
                                 item->value->type = EXPRESSION_IDENTIFIER;
                                 item->value->module = NULL;
-                                item->value->identifier = "**" + (item->type == EXPRESSION_SPREAD);
+                                item->value->identifier = &"**"[item->type == EXPRESSION_SPREAD];
                                 item->value->start = item->start;
                                 item->value->end = item->end = TEnd;
                         } else {
@@ -5910,8 +5911,8 @@ parse_class_definition(Ty *ty)
 {
         Location start = tok()->start;
 
-        bool tag = K0 == KEYWORD_TAG;
-        bool trait = K0 == KEYWORD_TRAIT;
+        bool tag = (K0 == KEYWORD_TAG);
+        bool trait = (K0 == KEYWORD_TRAIT);
         next();
 
         expect(TOKEN_IDENTIFIER);
@@ -6102,8 +6103,12 @@ parse_class_definition(Ty *ty)
                                         EEnd = field->end;
                                         die("expected a field declarator");
                                 }
-                                avP(s->tag.fields, field);
+
+                                if (_static) { avP(s->tag.s_fields, field); }
+                                else         { avP(s->tag.fields,   field); }
+
                                 try_consume(';');
+
                                 v_(tokens, i_name)->tag = TT_FIELD;
                         } else {
                                 bool setter = try_consume('=');
@@ -6129,10 +6134,15 @@ parse_class_definition(Ty *ty)
 
                                 meth->name = name;
 
-                                if      (_static) { avP(s->tag.statics, meth); }
-                                else if (getter)  { avP(s->tag.getters, meth); }
-                                else if (setter)  { avP(s->tag.setters, meth); }
-                                else              { avP(s->tag.methods, meth); }
+                                if (_static) {
+                                        if      (getter)  { avP(s->tag.s_getters, meth); }
+                                        else if (setter)  { avP(s->tag.s_setters, meth); }
+                                        else              { avP(s->tag.s_methods, meth); }
+                                } else {
+                                        if      (getter)  { avP(s->tag.getters, meth); }
+                                        else if (setter)  { avP(s->tag.setters, meth); }
+                                        else              { avP(s->tag.methods, meth); }
+                                }
 
                                 if (
                                         !(getter | setter | _static)

@@ -926,7 +926,7 @@ inline static Value
 inline static void
 (push)(Ty *ty, Value v)
 {
-        LOG("PUSH: %s", VSC(&v));
+        //LOG("PUSH: %s", VSC(&v));
         xvP(STACK, v);
         print_stack(ty, 10);
 }
@@ -1785,7 +1785,7 @@ GetCurrentTry(Ty *ty)
         return NULL;
 }
 
-inline static void
+inline static noreturn void
 BadFieldAccess(Ty *ty, Value const *val, i32 z)
 {
         if (val->type == VALUE_TUPLE) {
@@ -2089,11 +2089,11 @@ static void
 CallMethod(Ty *ty, int i, int n, int nkw, bool b);
 
 Value
-GetMember(Ty *ty, Value v, int member, bool b)
+GetMember(Ty *ty, Value v, int member, bool try_missing, bool exec)
 {
-
         int n;
-        Value *vp = NULL, *this;
+        Value *this;
+        Value *vp = NULL;
         BuiltinMethod *func;
 
         if (v.type & VALUE_TAGGED) for (int tags = v.tags; tags != 0; tags = tags_pop(ty, tags)) {
@@ -2193,23 +2193,33 @@ GetMember(Ty *ty, Value v, int member, bool b)
                                 return PTR((void *)func);
                         }
                         break;
+
                 case CLASS_STRING:
                         if ((func = get_string_method_i(member)) != NULL) {
                                 return PTR((void *)func);
                         }
                         break;
+
                 case CLASS_DICT:
                         if ((func = get_dict_method_i(member)) != NULL) {
                                 return PTR((void *)func);
                         }
                         break;
+
                 case CLASS_BLOB:
                         if ((func = get_blob_method_i(member)) != NULL) {
                                 return PTR((void *)func);
                         }
                         break;
                 }
-                if ((vp = class_lookup_static_i(ty, v.class, member)) != NULL) {
+                if ((vp = class_lookup_s_getter_i(ty, v.class, member)) != NULL) {
+                        return !exec ? (call(ty, vp, &v, 0, 0, false), BREAK)
+                                     : (call(ty, vp, &v, 0, 0, true), pop());
+                }
+                if ((vp = class_lookup_field(ty, v.class, member)) != NULL) {
+                        return *vp;
+                }
+                if ((vp = class_lookup_s_method_i(ty, v.class, member)) != NULL) {
                         return *vp;
                 }
                 if ((vp = class_lookup_method_i(ty, v.class, member)) != NULL) {
@@ -2232,8 +2242,8 @@ ClassLookup:
                 vp = class_lookup_getter_i(ty, n, member);
 
                 if (vp != NULL) {
-                        return b ? (pop(), call(ty, vp, &v, 0, 0, false), BREAK)
-                                 : vmC(&METHOD(member, vp, &v), 0);
+                        return !exec ? (call(ty, vp, &v, 0, 0, false), BREAK)
+                                     : (call(ty, vp, &v, 0, 0, true), pop());
                 }
 
                 vp = class_lookup_method_i(ty, n, member);
@@ -2244,14 +2254,19 @@ ClassLookup:
                         return METHOD(member, vp, this);
                 }
 
-                if (b && (vp = class_lookup_method_i(ty, n, NAMES.missing)) != NULL) {
-                        pop();
-                        push(xSz(M_NAME(member)));
-                        call(ty, vp, &v, 1, 0, false);
-                        return BREAK;
+                if (try_missing && (vp = class_lookup_method_i(ty, n, NAMES.missing)) != NULL) {
+                        return !exec ? (
+                                pop(),
+                                push(xSz(M_NAME(member))),
+                                call(ty, vp, &v, 1, 0, false),
+                                BREAK
+                        ) : (
+                                push(xSz(M_NAME(member))),
+                                vmC(&METHOD(NAMES.missing, vp, &v), 1)
+                        );
                 }
 
-                if (b && (vp = class_lookup_method_i(ty, n, NAMES.method_missing)) != NULL) {
+                if (try_missing && (vp = class_lookup_method_i(ty, n, NAMES.method_missing)) != NULL) {
                         char const *name = M_NAME(member);
                         this = mAo(sizeof (Value [3]), GC_VALUE);
                         this[0] = v;
@@ -2721,7 +2736,7 @@ CallMethod(Ty *ty, int i, int n, int nkw, bool b)
         case VALUE_CLASS: /* lol */
                 vp = class_lookup_method_immediate_i(ty, CLASS_CLASS, i);
                 if (vp == NULL) {
-                        vp = class_lookup_static_i(ty, value.class, i);
+                        vp = class_lookup_s_method_i(ty, value.class, i);
                 }
                 //if (vp == NULL) {
                 //        vp = class_lookup_method_i(ty, value.class, i);
@@ -2736,7 +2751,7 @@ ClassLookup:
                 vp = class_lookup_method_i(ty, class, i);
 
                 if (vp == NULL) {
-                        attr = GetMember(ty, value, i, false);
+                        attr = GetMember(ty, value, i, false, true);
                         vp = (attr.type == VALUE_NONE) ? NULL : &attr;
                         self = NULL;
                 }
@@ -3590,7 +3605,7 @@ DoAssign(Ty *ty)
                 call(ty, v, &OBJECT(o, c), 1, 0, false);
                 break;
         case 3:
-                m = p >> 3;
+                m = (p >> 3);
                 c = (uintptr_t)poptarget();
                 o = vZ(TARGETS)[0].gc;
                 push(xSz(M_NAME(m)));
@@ -3608,7 +3623,8 @@ DoTargetMember(Ty *ty, Value v, i32 z)
         Value *vp;
         Value *vp2;
 
-        if (v.type == VALUE_OBJECT) {
+        switch (v.type) {
+        case VALUE_OBJECT:
                 vp = class_lookup_setter_i(ty, v.class, z);
                 if (vp != NULL) {
                         vp2 = class_lookup_getter_i(ty, v.class, z);
@@ -3655,13 +3671,31 @@ DoTargetMember(Ty *ty, Value v, i32 z)
                 }
 
                 pushtarget(itable_get(ty, v.object, z), v.object);
-        } else if (v.type == VALUE_TUPLE) {
+                break;
+
+        case VALUE_CLASS:
+                vp = class_lookup_setter_i(ty, v.class, z);
+                if (vp != NULL) {
+                        pushtarget(vp, NULL);
+                        pushtarget((Value *)(uintptr_t)v.class, NULL);
+                        return;
+                }
+                vp = class_lookup_field(ty, v.class, z);
+                if (vp != NULL) {
+                        pushtarget(vp, NULL);
+                        return;
+                }
+                BadFieldAccess(ty, &v, z);
+
+        case VALUE_TUPLE:
                 vp = tuple_get_i(&v, z);
                 if (vp == NULL) {
                         BadFieldAccess(ty, &v, z);
                 }
                 pushtarget(vp, v.items);
-        } else {
+                break;
+
+        default:
                 zP("assignment to member of non-object: %s", VSC(&v));
         }
 }
@@ -4074,6 +4108,24 @@ SpreadShuffle(Ty *ty, bool inject_nil)
         }
         push(idx);
         push(xs);
+}
+
+static void
+InstallMethods(Ty *ty, struct itable *table, i32 n)
+{
+        i32 i;
+        Value v;
+        Value *vp;
+
+        while (n --> 0) {
+                v = pop();
+                READVALUE(i);
+                vp = itable_get(ty, table, i);
+                if (vp->type == VALUE_REF) {
+                        *vp->ref = v;
+                }
+                *vp = v;
+        }
 }
 
 static void
@@ -5543,26 +5595,41 @@ Yield:
                         UNREACHABLE();
                 CASE(SELF_MEMBER_ACCESS)
                         READVALUE(z);
-                        value = GetSelf(ty);
-                        push(GetMember(ty, value, z, false));
-                        break;
-                CASE(TRY_MEMBER_ACCESS)
-                CASE(MEMBER_ACCESS)
-                        b = IP[-1] == INSTR_TRY_MEMBER_ACCESS;
 
-                        READVALUE(z);
-MemberAccess:
-                        value = peek();
-                        v = GetMember(ty, value, z, true);
+                        value = GetSelf(ty);
+                        v = GetMember(ty, value, z, false, false);
 
                         switch (v.type) {
                         case VALUE_BREAK:
                                 continue;
-                        case VALUE_NONE:
-                                if (!b) { break; }
-                                v = NIL;
+
                         default:
-                                *top() = v;
+                                push(v);
+                                continue;
+                        }
+                        break;
+                CASE(TRY_MEMBER_ACCESS)
+                CASE(MEMBER_ACCESS)
+                        b = (IP[-1] == INSTR_TRY_MEMBER_ACCESS);
+
+                        READVALUE(z);
+MemberAccess:
+                        value = pop();
+                        v = GetMember(ty, value, z, true, false);
+
+                        switch (v.type) {
+                        case VALUE_BREAK:
+                                continue;
+
+                        case VALUE_NONE:
+                                if (b) {
+                                        push(NIL);
+                                        continue;
+                                }
+                                break;
+
+                        default:
+                                push(v);
                                 continue;
                         }
 
@@ -5907,49 +5974,45 @@ BadTupleMember:
                 CASE(DEFINE_CLASS)
                 {
                         Class *class;
-                        int class_id, c, n, g, s;
+                        i32 class_id;
+
+                        i32   m,   g,   s;
+                        i32 s_m, s_g, s_s;
+
                         READVALUE(class_id);
-                        READVALUE(c);
-                        READVALUE(n);
+                        READVALUE(s_m);
+                        READVALUE(s_g);
+                        READVALUE(m);
                         READVALUE(g);
                         READVALUE(s);
+
                         class = class_get(ty, class_id);
-                        while (c --> 0) {
-                                v = pop();
-                                READVALUE(i);
-                                vp = itable_get(ty, &class->statics, i);
-                                if (vp->type == VALUE_REF) {
-                                        *vp->ref = v;
-                                }
-                                *vp = v;
+
+                        InstallMethods(ty, &class->s_getters, s_g);
+                        InstallMethods(ty, &class->s_methods, s_m);
+                        InstallMethods(ty, &class->methods, m);
+                        InstallMethods(ty, &class->getters, g);
+                        InstallMethods(ty, &class->setters, s);
+                        break;
+                }
+                CASE(INIT_STATIC_FIELD)
+                {
+                        Class *class;
+                        i32 class_id;
+                        i32 member_id;
+
+                        READVALUE(class_id);
+                        READVALUE(member_id);
+
+                        class = class_get(ty, class_id);
+
+                        v = pop();
+
+                        vp = itable_get(ty, &class->s_fields, member_id);
+                        if (vp->type == VALUE_REF) {
+                                *vp->ref = v;
                         }
-                        while (n --> 0) {
-                                v = pop();
-                                READVALUE(i);
-                                vp = itable_get(ty, &class->methods, i);
-                                if (vp->type == VALUE_REF) {
-                                        *vp->ref = v;
-                                }
-                                *vp = v;
-                        }
-                        while (g --> 0) {
-                                v = pop();
-                                READVALUE(i);
-                                vp = itable_get(ty, &class->getters, i);
-                                if (vp->type == VALUE_REF) {
-                                        *vp->ref = v;
-                                }
-                                *vp = v;
-                        }
-                        while (s --> 0) {
-                                v = pop();
-                                READVALUE(i);
-                                vp = itable_get(ty, &class->setters, i);
-                                if (vp->type == VALUE_REF) {
-                                        *vp->ref = v;
-                                }
-                                *vp = v;
-                        }
+                        *vp = v;
                         break;
                 }
                 CASE(FUNCTION)
@@ -6053,7 +6116,7 @@ BadTupleMember:
                 CASE(BIND_STATIC)
                         READVALUE(n);
                         READVALUE(z);
-                        vp = class_lookup_static_i(ty, n, z);
+                        vp = class_lookup_s_method_i(ty, n, z);
                         push(*vp);
                         break;
                 CASE(OPERATOR)
@@ -7822,24 +7885,23 @@ StepInstruction(char const *ip)
         }
         CASE(DEFINE_CLASS)
         {
-                int class, t, n, g, s;
-                SKIPVALUE(class);
-                SKIPVALUE(t);
-                SKIPVALUE(n);
-                SKIPVALUE(g);
-                SKIPVALUE(s);
-                while (t --> 0) {
-                        SKIPVALUE(i);
-                }
-                while (n --> 0) {
-                        SKIPVALUE(i);
-                }
-                while (g --> 0) {
-                        SKIPVALUE(i);
-                }
-                while (s --> 0) {
-                        SKIPVALUE(i);
-                }
+                i32 class;
+                i32   m,   g,   s;
+                i32 s_m, s_g, s_s;
+
+                READVALUE(class);
+
+                READVALUE(s_m);
+                READVALUE(s_g);
+                READVALUE(m);
+                READVALUE(g);
+                READVALUE(s);
+
+                while (s_m --> 0) { SKIPVALUE(i); }
+                while (s_g --> 0) { SKIPVALUE(i); }
+                while (  m --> 0) { SKIPVALUE(i); }
+                while (  g --> 0) { SKIPVALUE(i); }
+                while (  s --> 0) { SKIPVALUE(i); }
                 break;
         }
         CASE(FUNCTION)
@@ -8154,19 +8216,19 @@ tdb_step_into(Ty *ty)
         CASE(TRY_CALL_METHOD)
                 READVALUE(i);
                 READVALUE(i);
-                v = GetMember(ty, peek(), i, false);
+                v = GetMember(ty, peek(), i, false, true);
                 break;
 
         CASE(CALL_METHOD)
                 READVALUE(i);
                 READVALUE(i);
-                v = GetMember(ty, peek(), i, true);
+                v = GetMember(ty, peek(), i, true, true);
                 break;
 
         CASE(CALL_SELF_METHOD)
                 READVALUE(i);
                 READVALUE(i);
-                v = GetMember(ty, GetSelf(ty), i, true);
+                v = GetMember(ty, GetSelf(ty), i, false, true);
                 break;
         }
 
@@ -8189,6 +8251,9 @@ tdb_step_into(Ty *ty)
 
         case VALUE_GENERATOR:
                 ip = v.gen->ip;
+                break;
+
+        case VALUE_NONE:
                 break;
         }
 

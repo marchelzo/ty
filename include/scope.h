@@ -40,11 +40,12 @@ enum { TY_SCOPE_FLAGS };
         X(IMMORTAL,     Immortal,     9)  \
         X(TRANSIENT,    Transient,   10)  \
         X(RECYCLED,     Recycled,    11)  \
-        X(CLASS_MEMBER, Member,      12)  \
-        X(GLOBAL,       Global,      13)  \
-        X(CAPTURED,     Captured,    14)  \
-        X(FIXED,        FixedType,   15)  \
-        X(NAMESPACE,    Namespace,   16)
+        X(MEMBER,       Member,      12)  \
+        X(STATIC,       Static,      13)  \
+        X(GLOBAL,       Global,      14)  \
+        X(CAPTURED,     Captured,    15)  \
+        X(FIXED,        FixedType,   16)  \
+        X(NAMESPACE,    Namespace,   17)
 
 
 #define X(f, _, i) SYM_##f = (1 << i),
