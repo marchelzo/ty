@@ -14,22 +14,35 @@ typedef vec(Class *) ClassVector;
 
 struct class {
         int i;
+
         int ti;
         bool is_trait;
+
         bool final;
         bool really_final;
+
         Class *super;
+
         struct itable methods;
-        struct itable setters;
         struct itable getters;
-        struct itable statics;
+        struct itable setters;
         struct itable fields;
+
+        struct itable s_methods;
+        struct itable s_getters;
+        struct itable s_setters;
+        struct itable s_fields;
+
         vec(bool) impls;
         vec(Class *) traits;
+
         Value finalizer;
+
         char const *name;
         char const *doc;
+
         Stmt *def;
+
         Type *type;
         Type *object_type;
 };
@@ -64,12 +77,15 @@ class_lookup_##what##_immediate_i(Ty *ty, int class, int id)  \
         return v;                                             \
 }
 LOOKUP_IMPL_FOR(method);
-LOOKUP_IMPL_FOR(static);
 LOOKUP_IMPL_FOR(getter);
 LOOKUP_IMPL_FOR(setter);
+LOOKUP_IMPL_FOR(s_method);
+LOOKUP_IMPL_FOR(s_getter);
+LOOKUP_IMPL_FOR(s_setter);
 #undef LOOKUP_IMPL_FOR
 
 typedef void (add_to_class_fn)(Ty *, int, char const *, Value);
+typedef void (add_field_to_class_fn)(Ty *, Class *, i32 id, Expr *t0, Expr *dflt);
 
 void
 class_init(Ty *ty);
@@ -86,6 +102,9 @@ class_builtin(Ty *ty, int class, Stmt *def);
 int
 trait_new(Ty *ty, Stmt *s);
 
+void
+class_mark(Ty *ty, int c);
+
 char const *
 class_name(Ty *ty, int class);
 
@@ -100,6 +119,9 @@ class_add_static(Ty *ty, int class, char const *name, Value f);
 
 void
 class_add_static_i(Ty *ty, int class, int id, Value f);
+
+void
+class_add_s_getter(Ty *ty, int class, char const *, Value f);
 
 void
 class_add_getter(Ty *ty, int class, char const *name, Value f);
@@ -120,7 +142,7 @@ Value *
 class_lookup_method(Ty *ty, int class, char const *name, unsigned long h);
 
 Value *
-class_lookup_field_i(Ty *ty, int class, int id);
+class_lookup_field(Ty *ty, int class, int id);
 
 Value *
 class_lookup_getter(Ty *ty, int class, char const *name, unsigned long h);
@@ -142,8 +164,6 @@ class_method(Ty *ty, int class, char const *name)
 {
         return class_lookup_method_i(ty, class, M_ID(name));
 }
-void
-class_add_field(Ty *ty, int class, char const *name, Expr *t, Expr *dflt);
 
 void
 class_init_object(Ty *ty, int class, struct itable *o);
@@ -168,6 +188,24 @@ class_is_trait(Ty *ty, int class);
 
 void
 class_implement_trait(Ty *ty, int class, int trait);
+
+void
+class_add_field(
+        Ty *ty,
+        Class *c,
+        i32 id,
+        Expr *type,
+        Expr *dflt
+);
+
+void
+class_add_s_field(
+        Ty *ty,
+        Class *c,
+        i32 id,
+        Expr *type,
+        Expr *dflt
+);
 
 int
 class_get_completions(Ty *ty, int class, char const *prefix, char **out, int max);
@@ -210,6 +248,12 @@ FindMethod(Class const *c, char const *name);
 
 Expr *
 FindStatic(Class const *c, char const *name);
+
+Expr *
+FindStaticGetter(Class const *c, char const *name);
+
+Expr *
+FindStaticField(Class const *c, char const *name);
 
 Expr *
 FindMethodImmediate(expression_vector const *ms, char const *name);
@@ -293,7 +337,7 @@ ClassFindMemberImmediate(Class const *c, char const *name)
                 return NULL;
         }
 
-        return FindMethodImmediate(&c->def->class.statics, name);
+        return FindMethodImmediate(&c->def->class.s_methods, name);
 }
 
 #endif

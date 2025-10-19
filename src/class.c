@@ -171,14 +171,17 @@ class_set_super(Ty *ty, int class, int super)
 }
 
 void
-class_add_field(Ty *ty, int class, char const *name, Expr *t, Expr *dflt)
+class_add_field(Ty *ty, Class *c, i32 id, Expr *type, Expr *dflt)
 {
-        itable_put(
-                ty,
-                &C(class)->fields,
-                name,
-                TPTR(t, dflt)
-        );
+        itable_add(ty, &c->fields, id, TPTR(type, dflt));
+}
+
+void
+class_add_s_field(Ty *ty, Class *c, i32 id, Expr *type, Expr *dflt)
+{
+        (void)type;
+        (void)dflt;
+        itable_add(ty, &c->s_fields, id, REF(NewZero()));
 }
 
 void
@@ -187,7 +190,7 @@ class_init_object(Ty *ty, int class, struct itable *o)
         Class *c = C(class);
         o->class = class;
 
-        uvPn(o->ids, c->fields.ids.items, vN(c->fields.ids));
+        uvPv(o->ids, c->fields.ids);
         uvR(o->values, vN(o->values) + vN(c->fields.values));
         for (int i = 0; i < vN(c->fields.values); ++i) {
                 vPx(o->values, NIL);
@@ -195,6 +198,17 @@ class_init_object(Ty *ty, int class, struct itable *o)
 
         if (!c->final) {
                 finalize(ty, c);
+        }
+}
+
+void
+class_mark(Ty *ty, int c)
+{
+        Class *class = C(c);
+
+        for (usize i = 0; i < vN(class->s_fields.values); ++i) {
+                Value *v = v_(class->s_fields.values, i);
+                value_mark(ty, v);
         }
 }
 
@@ -207,13 +221,19 @@ class_name(Ty *ty, int class)
 void
 class_add_static(Ty *ty, int class, char const *name, Value f)
 {
-        itable_put(ty, &C(class)->statics, name, f);
+        itable_put(ty, &C(class)->s_methods, name, f);
+}
+
+void
+class_add_s_getter(Ty *ty, int class, char const *name, Value f)
+{
+        itable_put(ty, &C(class)->s_getters, name, f);
 }
 
 void
 class_add_static_i(Ty *ty, int class, int id, Value f)
 {
-        itable_add(ty, &C(class)->statics, id, f);
+        itable_add(ty, &C(class)->s_methods, id, f);
 }
 
 void
@@ -253,19 +273,20 @@ class_add_setter_i(Ty *ty, int class, int id, Value f)
 }
 
 Value *
-class_lookup_field_i(Ty *ty, int class, int id)
+class_lookup_field(Ty *ty, int class, int id)
 {
         Class *c = C(class);
-        Value *v;
+        Value *v = itable_lookup(ty, &c->s_fields, id);
 
-        do {
-                if ((v = itable_lookup(ty, &c->fields, id)) != NULL) {
-                        return v;
-                }
-                c = c->super;
-        } while (c != NULL);
+        if (v == NULL) {
+                return NULL;
+        }
 
-        return NULL;
+        if  (v->type != VALUE_REF) {
+                return v;
+        }
+
+        return (v->ref->type != VALUE_ZERO) ? v->ref : NULL;
 }
 
 Value *
@@ -323,8 +344,8 @@ qget(Ty *ty, ClassVector *cq, u32 *i, u32 j)
 static void
 class_resolve_all(Ty *ty, int class)
 {
-        Class *c0 = C(class);
         Class *c  = C(class);
+        Class *c0 = c;
 
         SCRATCH_SAVE();
 
@@ -344,7 +365,9 @@ class_resolve_all(Ty *ty, int class)
                         itable_copy_weak(ty, &c0->methods, &c->methods);
                         itable_copy_weak(ty, &c0->getters, &c->getters);
                         itable_copy_weak(ty, &c0->setters, &c->setters);
-                        itable_copy_weak(ty, &c0->statics, &c->statics);
+                        itable_copy_weak(ty, &c0->s_methods, &c->s_methods);
+                        itable_copy_weak(ty, &c0->s_getters, &c->s_getters);
+                        itable_copy_weak(ty, &c0->s_fields, &c->s_fields);
                 }
         } while ((c = qget(ty, &sq, &i, j)) != NULL);
 
@@ -362,7 +385,7 @@ Value *
 class_lookup_static(Ty *ty, int class, char const *name, unsigned long h)
 {
         InternEntry *e = intern(&xD.members, name);
-        return class_lookup_static_i(ty, class, e->id);
+        return class_lookup_s_method_i(ty, class, e->id);
 }
 
 Value *
@@ -469,7 +492,7 @@ class_get_completions(Ty *ty, int class, char const *prefix, char **out, int max
         out += n;
         N += n;
 
-        n = itable_get_completions(ty, &C(class)->statics, prefix, out, max);
+        n = itable_get_completions(ty, &C(class)->s_methods, prefix, out, max);
         max -= n;
         out += n;
         N += n;
@@ -560,7 +583,7 @@ class_methods(Ty *ty, int class)
 struct itable *
 class_static_methods(Ty *ty, int class)
 {
-        return &C(class)->statics;
+        return &C(class)->s_methods;
 }
 
 struct itable *
@@ -607,8 +630,8 @@ FieldIdentifier(Expr const *field)
         }
 
         if (
-                field->type == EXPRESSION_EQ
-             && field->target->type == EXPRESSION_IDENTIFIER
+                (field->type == EXPRESSION_EQ)
+             && (field->target->type == EXPRESSION_IDENTIFIER)
         ) {
                 return field->target;
         }
@@ -692,12 +715,32 @@ Expr *
 FindStatic(Class const *c, char const *name)
 {
         while (c != NULL && c->def != NULL) {
-                Expr *m = FindMethodImmediate(&c->def->class.statics, name);
+                Expr *m = FindMethodImmediate(&c->def->class.s_methods, name);
                 if (m != NULL) {
                         return m;
                 }
                 for (int i = 0; i < vN(c->traits); ++i) {
                         m = FindStatic(v__(c->traits, i), name);
+                        if (m != NULL) {
+                                return m;
+                        }
+                }
+                c = c->super;
+        }
+
+        return NULL;
+}
+
+Expr *
+FindStaticGetter(Class const *c, char const *name)
+{
+        while (c != NULL && c->def != NULL) {
+                Expr *m = FindMethodImmediate(&c->def->class.s_getters, name);
+                if (m != NULL) {
+                        return m;
+                }
+                for (int i = 0; i < vN(c->traits); ++i) {
+                        m = FindStaticGetter(v__(c->traits, i), name);
                         if (m != NULL) {
                                 return m;
                         }
@@ -741,6 +784,26 @@ FindField(Class const *c, char const *name)
         return NULL;
 }
 
+Expr *
+FindStaticField(Class const *c, char const *name)
+{
+        while (c != NULL && c->def != NULL) {
+                Expr *m = FindFieldImmediate(&c->def->class.s_fields, name);
+                if (m != NULL) {
+                        return m;
+                }
+                for (int i = 0; i < vN(c->traits); ++i) {
+                        m = FindStaticField(v__(c->traits, i), name);
+                        if (m != NULL) {
+                                return m;
+                        }
+                }
+                c = c->super;
+        }
+
+        return NULL;
+}
+
 inline static void
 eliminate_refs(struct itable *t)
 {
@@ -755,7 +818,9 @@ eliminate_refs(struct itable *t)
 static void
 really_finalize(Ty *ty, Class *c)
 {
-        eliminate_refs(&c->statics);
+        eliminate_refs(&c->s_fields);
+        eliminate_refs(&c->s_methods);
+        eliminate_refs(&c->s_getters);
         eliminate_refs(&c->methods);
         eliminate_refs(&c->getters);
         eliminate_refs(&c->setters);

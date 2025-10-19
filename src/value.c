@@ -1405,6 +1405,7 @@ _value_mark_xd(Ty *ty, Value const *v)
         case VALUE_THREAD:          mark_thread(ty, v);                                               break;
         case VALUE_STRING:          if (!v->ro && v->str0 != NULL) { MARK(v->str0); }                 break;
         case VALUE_OBJECT:          object_mark(ty, v->object);                                       break;
+        case VALUE_CLASS:           class_mark(ty, v->class);                                         break;
         case VALUE_REF:             MARK(v->ptr); MarkNext(ty, v->ptr);                               break;
         case VALUE_BLOB:            MARK(v->blob);                                                    break;
         case VALUE_PTR:             mark_pointer(ty, v);                                              break;

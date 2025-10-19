@@ -57,7 +57,7 @@
 #define INSN(i)       ((emit_instr)(ty, INSTR_##i))
 
 #define EE(x)    emit_expression(ty, (x))
-#define EE(x)    emit_expression(ty, (x))
+#define EM(x)    emit_member(ty, (x))
 #define Ei32(x)  emit_int(ty, (x))
 #define Eu8(x)   avP(STATE.code, (x))
 #define Eu1(x)   avP(STATE.code, !!(x))
@@ -325,6 +325,9 @@ DefinePending(Ty *ty);
 static void
 AddClassTraits(Ty *ty, ClassDefinition const *def);
 
+static void
+ResolveFieldTypes(Ty *ty, Scope *scope, expression_vector const *fields);
+
 static bool
 expedite_fun(Ty *ty, Expr *e, void *ctx);
 
@@ -477,12 +480,6 @@ NewStmt(Ty *ty, int t)
         s->mod = STATE.module;
         s->type = t;
         return s;
-}
-
-inline static Value *
-NewZero(void)
-{
-        return alloc0(sizeof *NewZero());
 }
 
 inline static int
@@ -1213,6 +1210,7 @@ ResolveConstraint(Ty *ty, Expr *constraint)
 
         Type *t0 = type_fixed(ty, type_resolve(ty, constraint));
 
+        // XXX
         if (0 && t0 != NULL) {
                 constraint->type = EXPRESSION_TYPE;
                 constraint->_type = t0;
@@ -1375,10 +1373,20 @@ slurp_module(Ty *ty, char const *name, char const **path)
 static void
 add_location(Ty *ty, Expr const *e, usize start_off, usize end_off)
 {
-        if (e->start.line == -1 && e->start.col == -1)
+        if (
+                (e->start.line == -1)
+             && (e->start.col  == -1)
+        ) {
                 return;
+        }
 
-        //printf("Location: (%zu, %zu) (%d) '%.*s'\n", start_off, end_off, e->type, (int)(e->end.s - e->start.s), e->start.s);
+        dont_printf(
+                "Location: (%zu, %zu) (%d) '%.*s'\n",
+                start_off,
+                end_off,
+                e->type,
+                (int)(e->end.s - e->start.s), e->start.s
+        );
 
         avP(
                 STATE.expression_locations,
@@ -1444,12 +1452,10 @@ get_try(Ty *ty, int i)
 inline static void
 begin_try(Ty *ty)
 {
-        TryState try = {
+        avP(STATE.tries, ((TryState) {
                 .t = ++t,
                 .finally = false
-        };
-
-        avP(STATE.tries, try);
+        }));
 }
 
 inline static void
@@ -1471,14 +1477,12 @@ get_loop(Ty *ty, int i)
 inline static void
 begin_loop(Ty *ty, bool wr, u32 n)
 {
-        LoopState loop = {
+        avP(STATE.loops, ((LoopState) {
                 .t = ++t,
                 .resources = STATE.resources,
                 .wr = wr,
                 .n = n
-        };
-
-        avP(STATE.loops, loop);
+        }));
 }
 
 inline static void
@@ -1502,8 +1506,8 @@ RequiredParameterCount(Expr const *e)
 inline static bool
 is_call(Expr const *e)
 {
-        return e->type == EXPRESSION_METHOD_CALL
-            || e->type == EXPRESSION_FUNCTION_CALL;
+        return (e->type == EXPRESSION_METHOD_CALL)
+            || (e->type == EXPRESSION_FUNCTION_CALL);
 }
 
 inline static bool
@@ -1700,24 +1704,20 @@ getsymbol(Ty *ty, Scope const *scope, char const *name, u32 flags)
                 }
         }
 
-        //===================={ <LSP> }=========================================
-        if (
-                FindDefinition && 0
-             && STATE.start.line == QueryLine
-             && STATE.start.col  <= QueryCol
-             && STATE.end.col    >= QueryCol
-             && strcmp(CurrentModulePath(ty), QueryFile) == 0
-        ) {
-                QueryResult = s;
-        }
-        //===================={ </LSP> }========================================
-
         if (
                 SymbolIsMember(s)
              && (scope->function != STATE.self->scope)
         ) {
                 // Force a capture of `self`
                 (void)ScopeLookup(scope->function, "self");
+        }
+
+        if (
+                SymbolIsMember(s)
+             && (STATE.meth->mtype == MT_STATIC)
+             && !SymbolIsStatic(s)
+        ) {
+                fail("instance member '%s' referenced from static context", name);
         }
 
         if (SymbolIsNamespace(s)) {
@@ -2365,14 +2365,45 @@ static void
 symbolize_methods(Ty *ty, Scope *scope, int class, expression_vector *ms, int mtype)
 {
         for (int i = 0; i < vN(*ms); ++i) {
-                Expr *meth = STATE.meth = v__(*ms, i);
-                meth->mtype = mtype;
-                dont_printf("======== meth=%s.%s ========\n", class_name(ty, class), meth->name);
-                symbolize_expression(ty, scope, meth);
-                dont_printf("======== type=%s ========\n", type_show(ty, meth->_type));
+                Expr *meth = v__(*ms, i);
+                WITH_STATE(meth, meth) {
+                        meth->mtype = mtype;
+                        symbolize_expression(ty, scope, meth);
+                }
         }
+}
 
-        STATE.meth = NULL;
+static void
+symbolize_fields(Ty *ty, Scope *subscope, expression_vector const *fields)
+{
+        for (int i = 0; i < vN(*fields); ++i) {
+                Expr *field = v__(*fields, i);
+                switch (field->type) {
+                case EXPRESSION_IDENTIFIER:
+                        if (field->constraint != NULL) {
+                                symbolize_expression(ty, subscope, field->constraint);
+                                field->_type = type_fixed(ty, type_resolve(ty, field->constraint));
+                                SET_TYPE_SRC(field);
+                        }
+                        break;
+                case EXPRESSION_EQ:
+                        if (field->target->type != EXPRESSION_IDENTIFIER) {
+                                field = field->target;
+                                goto BadField;
+                        }
+                        symbolize_expression(ty, subscope, field->value);
+                        if (field->target->constraint != NULL) {
+                                symbolize_expression(ty, subscope, field->target->constraint);
+                                field->_type = type_fixed(ty, type_resolve(ty, field->target->constraint));
+                                SET_TYPE_SRC(field);
+                        }
+                        type_assign(ty, field->target, field->value->_type, T_FLAG_STRICT);
+                        break;
+                default:
+                BadField:
+                        fail("illegal expression in field definition: %s", ExpressionTypeName(field));
+                }
+        }
 }
 
 static Expr *
@@ -2579,8 +2610,8 @@ fix_part(Ty *ty, struct condpart *p, Scope *scope)
                 p->e = p->e->value;
                 p->def = false;
         } else if (
-                p->e->type == EXPRESSION_STATEMENT
-             && p->e->statement->type == STATEMENT_DEFINITION
+                (p->e->type == EXPRESSION_STATEMENT)
+             && (p->e->statement->type == STATEMENT_DEFINITION)
         ) {
                 p->target = p->e->statement->target;
                 p->e = p->e->statement->value;
@@ -4848,7 +4879,9 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
                 apply_decorator_macros(ty, subscope, vv(cd->methods), vN(cd->methods));
                 apply_decorator_macros(ty, subscope, vv(cd->getters), vN(cd->getters));
                 apply_decorator_macros(ty, subscope, vv(cd->setters), vN(cd->setters));
-                apply_decorator_macros(ty, subscope, vv(cd->statics), vN(cd->statics));
+                apply_decorator_macros(ty, subscope, vv(cd->s_methods), vN(cd->s_methods));
+                apply_decorator_macros(ty, subscope, vv(cd->s_getters), vN(cd->s_getters));
+                apply_decorator_macros(ty, subscope, vv(cd->s_setters), vN(cd->s_setters));
 
                 /*
                  * We have to move all of the operator methods out of the class and just
@@ -4880,35 +4913,12 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
                         symbolize_methods(ty, subscope, c, &cd->methods, MT_INSTANCE);
                         symbolize_methods(ty, subscope, c, &cd->getters, MT_GET);
                         symbolize_methods(ty, subscope, c, &cd->setters, MT_SET);
-                        symbolize_methods(ty, subscope, c, &cd->statics, MT_STATIC);
+                        symbolize_methods(ty, subscope, c, &cd->s_methods, MT_STATIC);
+                        symbolize_methods(ty, subscope, c, &cd->s_getters, MT_STATIC);
+                        symbolize_methods(ty, subscope, c, &cd->s_setters, MT_STATIC);
 
-                        for (int i = 0; i < vN(cd->fields); ++i) {
-                                Expr *field = v__(cd->fields, i);
-                                switch (field->type) {
-                                case EXPRESSION_IDENTIFIER:
-                                        if (field->constraint != NULL) {
-                                                symbolize_expression(ty, subscope, field->constraint);
-                                                field->_type = type_fixed(ty, type_resolve(ty, field->constraint));
-                                                SET_TYPE_SRC(field);
-                                        }
-                                        break;
-                                case EXPRESSION_EQ:
-                                        if (field->target->type != EXPRESSION_IDENTIFIER) {
-                                                field = field->target;
-                                                goto BadField;
-                                        }
-                                        symbolize_expression(ty, subscope, field->value);
-                                        if (field->target->constraint != NULL) {
-                                                symbolize_expression(ty, subscope, field->target->constraint);
-                                                field->_type = type_fixed(ty, type_resolve(ty, field->target->constraint));
-                                                SET_TYPE_SRC(field);
-                                        }
-                                        break;
-                                default:
-                                BadField:
-                                        fail("illegal expression in field definition: %s", ExpressionTypeName(field));
-                                }
-                        }
+                        symbolize_fields(ty, subscope, &cd->fields);
+                        symbolize_fields(ty, subscope, &cd->s_fields);
                 }
 
                 STATE.class = NULL;
@@ -4917,7 +4927,7 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
         case STATEMENT_TAG_DEFINITION:
                 cd = &s->tag;
                 symbolize_methods(ty, cd->scope, CLASS_TAG, &s->tag.methods, MT_INSTANCE);
-                symbolize_methods(ty, cd->scope, CLASS_TAG, &s->tag.statics, MT_STATIC);
+                symbolize_methods(ty, cd->scope, CLASS_TAG, &s->tag.s_methods, MT_STATIC);
                 break;
         case STATEMENT_BLOCK:
                 scope = scope_new(ty, "(block)", scope, false);
@@ -8962,8 +8972,8 @@ emit_statement(Ty *ty, Stmt const *s, bool want_result)
                 break;
 
         case STATEMENT_TAG_DEFINITION:
-                for (int i = 0; i < vN(s->tag.statics); ++i) {
-                        EE(v__(s->tag.statics, i));
+                for (int i = 0; i < vN(s->tag.s_methods); ++i) {
+                        EE(v__(s->tag.s_methods, i));
                 }
 
                 for (int i = 0; i < vN(s->tag.methods); ++i) {
@@ -8974,14 +8984,14 @@ emit_statement(Ty *ty, Stmt const *s, bool want_result)
                 Ei32(s->tag.symbol);
                 Ei32(-1);
                 Ei32(vN(s->tag.methods));
-                Ei32(vN(s->tag.statics));
+                Ei32(vN(s->tag.s_methods));
 
                 for (int i = vN(s->tag.methods); i > 0; --i) {
                         emit_string(ty, v__(s->tag.methods, i - 1)->name);
                 }
 
-                for (int i = vN(s->tag.statics); i > 0; --i) {
-                        emit_string(ty, v__(s->tag.statics, i - 1)->name);
+                for (int i = vN(s->tag.s_methods); i > 0; --i) {
+                        emit_string(ty, v__(s->tag.s_methods, i - 1)->name);
                 }
                 break;
 
@@ -9000,31 +9010,49 @@ emit_statement(Ty *ty, Stmt const *s, bool want_result)
                         STATE.meth = v__(s->class.methods, i);
                         EE(v__(s->class.methods, i));
                 }
-                for (int i = 0; i < vN(s->class.statics); ++i) {
-                        STATE.meth = v__(s->class.statics, i);
-                        EE(v__(s->class.statics, i));
+                for (int i = 0; i < vN(s->class.s_getters); ++i) {
+                        STATE.meth = v__(s->class.s_getters, i);
+                        EE(v__(s->class.s_getters, i));
+                }
+                for (int i = 0; i < vN(s->class.s_methods); ++i) {
+                        STATE.meth = v__(s->class.s_methods, i);
+                        EE(v__(s->class.s_methods, i));
                 }
 
                 STATE.meth = NULL;
 
                 INSN(DEFINE_CLASS);
                 Ei32(s->class.symbol);
-                Ei32(vN(s->class.statics));
+                Ei32(vN(s->class.s_methods));
+                Ei32(vN(s->class.s_getters));
                 Ei32(vN(s->class.methods));
                 Ei32(vN(s->class.getters));
                 Ei32(vN(s->class.setters));
 
-                for (int i = vN(s->class.statics); i > 0; --i)
-                        emit_member(ty, v__(s->class.statics, i - 1)->name);
+                for (int i = vN(s->class.s_methods); i > 0; --i)
+                        EM(v__(s->class.s_methods, i - 1)->name);
+
+                for (int i = vN(s->class.s_getters); i > 0; --i)
+                        EM(v__(s->class.s_getters, i - 1)->name);
 
                 for (int i = vN(s->class.methods); i > 0; --i)
-                        emit_member(ty, v__(s->class.methods, i - 1)->name);
+                        EM(v__(s->class.methods, i - 1)->name);
 
                 for (int i = vN(s->class.getters); i > 0; --i)
-                        emit_member(ty, v__(s->class.getters, i - 1)->name);
+                        EM(v__(s->class.getters, i - 1)->name);
 
                 for (int i = vN(s->class.setters); i > 0; --i)
-                        emit_member(ty, v__(s->class.setters, i - 1)->name);
+                        EM(v__(s->class.setters, i - 1)->name);
+
+                for (int i = 0; i < vN(s->class.s_fields); ++i) {
+                        Expr *f = v__(s->class.s_fields, i);
+                        if (f->type == EXPRESSION_EQ) {
+                                EE(f->value);
+                                INSN(INIT_STATIC_FIELD);
+                                Ei32(s->class.symbol);
+                                Ei32(f->target->symbol->member);
+                        }
+                }
 
                 STATE.class = NULL;
                 break;
@@ -9475,25 +9503,19 @@ InjectRedpill(Ty *ty, Stmt *s)
                         }
                 }
                 AddClassTraits(ty, def);
-                for (int i = 0; i < vN(def->fields); ++i) {
-                        Expr *f = FieldIdentifier(v__(def->fields, i));
-                        if (f->constraint != NULL) {
-                                WITH_CTX(TYPE) {
-                                        symbolize_expression(ty, def->scope, f->constraint);
-                                        f->_type = type_fixed(ty, type_resolve(ty, f->constraint));
-                                        f->symbol->type = f->_type;
-                                        SET_TYPE_SRC(f);
-                                }
-                        }
-                }
+                ResolveFieldTypes(ty, def->scope, &def->fields);
+                ResolveFieldTypes(ty, def->scope, &def->s_fields);
                 aggregate_overloads(ty, class->i, &def->methods, class_add_method, false);
                 aggregate_overloads(ty, class->i, &def->setters, class_add_setter, true);
-                aggregate_overloads(ty, class->i, &def->statics, class_add_static, false);
+                aggregate_overloads(ty, class->i, &def->s_methods, class_add_static, false);
                 Type *self0 = type_fixed(ty, class->object_type);
                 RedpillMethods(ty, def->scope, self0, &def->methods);
                 RedpillMethods(ty, def->scope, self0, &def->getters);
                 RedpillMethods(ty, def->scope, self0, &def->setters);
-                RedpillMethods(ty, def->scope, type_fixed(ty, class->type), &def->statics);
+                Type *s_self0 = type_fixed(ty, class->type);
+                RedpillMethods(ty, def->scope, s_self0, &def->s_methods);
+                RedpillMethods(ty, def->scope, s_self0, &def->s_getters);
+                RedpillMethods(ty, def->scope, s_self0, &def->s_setters);
                 svP(class_defs, s);
                 break;
 
@@ -9900,7 +9922,10 @@ compile(Ty *ty, char const *source)
 
         for (int i = 0; i < vN(STATE.class_ops); ++i) {
                 Stmt *def = v__(STATE.class_ops, i);
-                WITH_SELF(v__(def->value->param_symbols, 0)) {
+                WITH_STATE(
+                        self, v__(def->value->param_symbols, 0),
+                        meth, def->value
+                ){
                         symbolize_statement(ty, STATE.global, def);
                 }
                 type_iter(ty);
@@ -11745,8 +11770,11 @@ tystmt(Ty *ty, Stmt *s)
                         "methods", ARRAY(vA()),
                         "getters", ARRAY(vA()),
                         "setters", ARRAY(vA()),
-                        "statics", ARRAY(vA()),
-                        "fields",  ARRAY(vA())
+                        "fields",  ARRAY(vA()),
+                        "staticMethods", ARRAY(vA()),
+                        "staticGetters", ARRAY(vA()),
+                        "staticSetters", ARRAY(vA()),
+                        "staticFields",  ARRAY(vA())
                 );
                 for (int i = 0; i < vN(s->class.methods); ++i) {
                         vAp(v__(v, 2).array, tyexpr(ty, v__(s->class.methods, i)));
@@ -11757,11 +11785,20 @@ tystmt(Ty *ty, Stmt *s)
                 for (int i = 0; i < vN(s->class.setters); ++i) {
                         vAp(v__(v, 4).array, tyexpr(ty, v__(s->class.setters, i)));
                 }
-                for (int i = 0; i < vN(s->class.statics); ++i) {
-                        vAp(v__(v, 5).array, tyexpr(ty, v__(s->class.statics, i)));
-                }
                 for (int i = 0; i < vN(s->class.fields); ++i) {
-                        vAp(v__(v, 6).array, tyexpr(ty, v__(s->class.fields, i)));
+                        vAp(v__(v, 5).array, tyexpr(ty, v__(s->class.fields, i)));
+                }
+                for (int i = 0; i < vN(s->class.s_methods); ++i) {
+                        vAp(v__(v, 6).array, tyexpr(ty, v__(s->class.s_methods, i)));
+                }
+                for (int i = 0; i < vN(s->class.s_getters); ++i) {
+                        vAp(v__(v, 7).array, tyexpr(ty, v__(s->class.s_getters, i)));
+                }
+                for (int i = 0; i < vN(s->class.s_setters); ++i) {
+                        vAp(v__(v, 8).array, tyexpr(ty, v__(s->class.s_setters, i)));
+                }
+                for (int i = 0; i < vN(s->class.s_fields); ++i) {
+                        vAp(v__(v, 9).array, tyexpr(ty, v__(s->class.s_fields, i)));
                 }
                 v.type |= VALUE_TAGGED;
                 v.tags = tags_push(ty, 0, TyClass);
@@ -12030,8 +12067,10 @@ cstmt(Ty *ty, Value *v)
                 Value *methods = tuple_get(v, "methods");
                 Value *getters = tuple_get(v, "getters");
                 Value *setters = tuple_get(v, "setters");
-                Value *statics = tuple_get(v, "statics");
                 Value *fields = tuple_get(v, "fields");
+                Value *s_methods = tuple_get(v, "staticMethods");
+                Value *s_getters = tuple_get(v, "staticGetters");
+                Value *s_fields = tuple_get(v, "staticFields");
                 if (methods != NULL) for (int i = 0; i < methods->array->count; ++i) {
                         if (tuple_get(v_(*methods->array, i), "name") == NULL) {
                                 fail("class %s has an unnamed method", s->class.name);
@@ -12047,17 +12086,24 @@ cstmt(Ty *ty, Value *v)
                         }
                         avP(s->class.setters, cexpr(ty, &setters->array->items[i]));
                 }
-                if (statics != NULL) for (int i = 0; i < statics->array->count; ++i) {
-                        avP(s->class.statics, cexpr(ty, &statics->array->items[i]));
-                }
                 if (fields != NULL) for (int i = 0; i < fields->array->count; ++i) {
                         avP(s->class.fields, cexpr(ty, &fields->array->items[i]));
+                }
+                if (s_methods != NULL) for (int i = 0; i < s_methods->array->count; ++i) {
+                        avP(s->class.s_methods, cexpr(ty, &s_methods->array->items[i]));
+                }
+                if (s_getters != NULL) for (int i = 0; i < s_getters->array->count; ++i) {
+                        avP(s->class.s_getters, cexpr(ty, &s_getters->array->items[i]));
+                }
+                if (s_fields != NULL) for (int i = 0; i < s_fields->array->count; ++i) {
+                        avP(s->class.s_fields, cexpr(ty, &s_fields->array->items[i]));
                 }
                 break;
         }
         case TyIfNot:
                 s->iff.neg =  true;
-        if (0) { case TyIf:
+        if (0) {
+        case TyIf:
                 s->iff.neg = false;
         }
                 s->type = STATEMENT_IF;
@@ -13434,11 +13480,74 @@ typarse(
 }
 
 static void
+AddClassFields(
+        Ty *ty,
+        Class *c,
+        Scope *scope,
+        expression_vector const *fields,
+        add_field_to_class_fn *add,
+        u32 extra_flags
+)
+{
+        SCRATCH_SAVE();
+
+        char *scratch = smA(512);
+
+        for (int i = 0; i < vN(*fields); ++i) {
+                Expr *field = v__(*fields, i);
+
+                switch (field->type) {
+                case EXPRESSION_IDENTIFIER:
+                case EXPRESSION_EQ:
+                        break;
+
+                default:
+                        fail(
+                                "unexpected expression used as field declaration: %s",
+                                ExpressionTypeName(field)
+                        );
+                }
+
+                Expr *ident = FieldIdentifier(field);
+                char const *name = ident->identifier;
+                char const *private_name = GetPrivateName(name, c->i, scratch, 512);
+
+                i32 id = M_ID(private_name);
+
+                (*add)(ty, c, id, field->constraint, (field == ident) ? NULL : field->value);
+
+                ident->symbol = addsymbol(ty, scope, name);
+                ident->symbol->flags |= SYM_MEMBER;
+                ident->symbol->flags |= extra_flags;
+                ident->symbol->member = id;
+        }
+
+        SCRATCH_RESTORE();
+}
+
+static void
 AddClassTraits(Ty *ty, ClassDefinition const *def)
 {
         for (int i = 0; i < vN(def->traits); ++i) {
                 int t = ResolveClassSpec(ty, v__(def->traits, i));
                 class_implement_trait(ty, def->symbol, t);
+        }
+}
+
+static void
+ResolveFieldTypes(Ty *ty, Scope *scope, expression_vector const *fields)
+{
+        for (int i = 0; i < vN(*fields); ++i) {
+                Expr *f = FieldIdentifier(v__(*fields, i));
+                if (f->constraint != NULL) {
+                        WITH_CTX(TYPE) {
+                                symbolize_expression(ty, scope, f->constraint);
+                                f->_type = type_fixed(ty, type_resolve(ty, f->constraint));
+                                f->symbol->type = f->_type;
+                                f->symbol->flags |= SYM_FIXED;
+                                SET_TYPE_SRC(f);
+                        }
+                }
         }
 }
 
@@ -13510,9 +13619,9 @@ define_tag(Ty *ty, Stmt *s)
                 v__(s->tag.methods, i)->class = -3;
         }
 
-        for (int i = 0; i < vN(s->tag.statics); ++i) {
+        for (int i = 0; i < vN(s->tag.s_methods); ++i) {
                 // :^)
-                v__(s->tag.statics, i)->class = -3;
+                v__(s->tag.s_methods, i)->class = -3;
         }
 }
 
@@ -13675,7 +13784,9 @@ define_class(Ty *ty, Stmt *s)
                         def->target->identifier = copy->name;
                         def->value = copy;
 
-                        define_operator(ty, cd->scope, def);
+                        WITH_STATE(meth, copy) {
+                                define_operator(ty, cd->scope, def);
+                        }
 
                         if (copy->body != NULL) {
                                 avP(STATE.class_ops, def);
@@ -13688,7 +13799,7 @@ define_class(Ty *ty, Stmt *s)
                         class_add_method(ty, sym->class, name, REF(NewZero()));
 
                         m->fn_symbol = addsymbol(ty, cd->scope, m->name);
-                        m->fn_symbol->flags |= SYM_CLASS_MEMBER;
+                        m->fn_symbol->flags |= SYM_MEMBER;
                         m->fn_symbol->member = M_ID(name);
 
                         *v_(cd->methods, keep++) = m;
@@ -13698,15 +13809,29 @@ define_class(Ty *ty, Stmt *s)
         // Drop binary ops
         vN(cd->methods) = keep;
 
-        for (int i = 0; i < vN(cd->statics); ++i) {
-                Expr *m = v__(cd->statics, i);
+        for (int i = 0; i < vN(cd->s_methods); ++i) {
+                Expr *m = v__(cd->s_methods, i);
                 m->_type = UNKNOWN_TYPE;
                 m->class = sym->class;
                 name = GetPrivateName(m->name, sym->class, scratch, sizeof scratch);
                 class_add_static(ty, sym->class, name, REF(NewZero()));
 
                 m->fn_symbol = addsymbol(ty, cd->scope, m->name);
-                m->fn_symbol->flags |= SYM_CLASS_MEMBER;
+                m->fn_symbol->flags |= SYM_MEMBER;
+                m->fn_symbol->flags |= SYM_STATIC;
+                m->fn_symbol->member = M_ID(name);
+        }
+
+        for (int i = 0; i < vN(cd->s_getters); ++i) {
+                Expr *m = v__(cd->s_getters, i);
+                m->_type = UNKNOWN_TYPE;
+                m->class = sym->class;
+                name = GetPrivateName(m->name, sym->class, scratch, sizeof scratch);
+                class_add_s_getter(ty, sym->class, name, REF(NewZero()));
+
+                m->fn_symbol = addsymbol(ty, cd->scope, m->name);
+                m->fn_symbol->flags |= SYM_MEMBER;
+                m->fn_symbol->flags |= SYM_STATIC;
                 m->fn_symbol->member = M_ID(name);
         }
 
@@ -13718,7 +13843,7 @@ define_class(Ty *ty, Stmt *s)
                 class_add_getter(ty, sym->class, name, REF(NewZero()));
 
                 m->fn_symbol = addsymbol(ty, cd->scope, m->name);
-                m->fn_symbol->flags |= SYM_CLASS_MEMBER;
+                m->fn_symbol->flags |= SYM_MEMBER;
                 m->fn_symbol->flags |= SYM_PROPERTY;
                 m->fn_symbol->member = M_ID(name);
         }
@@ -13731,44 +13856,12 @@ define_class(Ty *ty, Stmt *s)
                 class_add_setter(ty, sym->class, name, REF(NewZero()));
 
                 m->fn_symbol = addsymbol(ty, cd->scope, m->name);
-                m->fn_symbol->flags |= SYM_CLASS_MEMBER;
+                m->fn_symbol->flags |= SYM_MEMBER;
                 m->fn_symbol->member = M_ID(name);
         }
 
-        for (int i = 0; i < vN(cd->fields); ++i) {
-                Expr *m = v__(cd->fields, i);
-                Expr *id = FieldIdentifier(m);
-
-                name = GetPrivateName(
-                        id->identifier,
-                        sym->class,
-                        scratch,
-                        sizeof scratch
-                );
-
-                class_add_field(
-                        ty,
-                        sym->class,
-                        name,
-                        m->constraint,
-                        (m == id) ? NULL : m->value
-                );
-
-                id->symbol = addsymbol(ty, cd->scope, m->identifier);
-                id->symbol->flags |= SYM_CLASS_MEMBER;
-                id->symbol->member = M_ID(name);
-
-                switch (m->type) {
-                case EXPRESSION_IDENTIFIER:
-                case EXPRESSION_EQ:
-                        break;
-                default:
-                        fail(
-                                "unexpected expression used as field declaration: %s",
-                                ExpressionTypeName(m)
-                        );
-                }
-        }
+        AddClassFields(ty, class, cd->scope, &cd->fields,   class_add_field,   0);
+        AddClassFields(ty, class, cd->scope, &cd->s_fields, class_add_s_field, SYM_STATIC);
 
         RestoreContext(ty, ctx);
 }
@@ -13899,6 +13992,7 @@ define_operator(Ty *ty, Scope *scope, Stmt *s)
         }
 
         RedpillFun(ty, scope, s->value, NULL);
+
         symbolize_op_def(ty, scope, s);
 }
 
@@ -15070,24 +15164,23 @@ DumpProgram(
                 }
                 CASE(DEFINE_CLASS)
                 {
-                        int class, t, n, g, s;
+                        i32 class;
+                        i32   m,   g,   s;
+                        i32 s_m, s_g, s_s;
+
                         READVALUE(class);
-                        READVALUE(t);
-                        READVALUE(n);
+
+                        READVALUE(s_m);
+                        READVALUE(s_g);
+                        READVALUE(m);
                         READVALUE(g);
                         READVALUE(s);
-                        while (t --> 0) {
-                                READMEMBER(i);
-                        }
-                        while (n --> 0) {
-                                READMEMBER(i);
-                        }
-                        while (g --> 0) {
-                                READMEMBER(i);
-                        }
-                        while (s --> 0) {
-                                READMEMBER(i);
-                        }
+
+                        while (s_m --> 0) { READMEMBER(i); }
+                        while (s_g --> 0) { READMEMBER(i); }
+                        while (  m --> 0) { READMEMBER(i); }
+                        while (  g --> 0) { READMEMBER(i); }
+                        while (  s --> 0) { READMEMBER(i); }
                         break;
                 }
                 CASE(FUNCTION)

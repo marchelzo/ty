@@ -648,7 +648,9 @@ macro __define_ast! {
              methods: [AST],
              getters: [AST],
              setters: [AST],
-             statics: [AST]
+             static-methods: [AST],
+             static-getters: [AST],
+             static-fields: [AST]
          }]
        | ty.Let[(AST, AST)]
        | ty.Assign[(AST, AST)]
@@ -2295,7 +2297,7 @@ trait Iter[T] < Iterable[T] {
         let queues: [_] = [Queue() for _ in ..n]
         let it = it.__iter__()
 
-        function get() {
+        fn get() {
             if let Some(x) = it.__next__() {
                 for queue in queues {
                     queue.put(x)
@@ -2514,28 +2516,28 @@ use JSON = String
 fn json::parse(json: String) -> JSON;
 fn json::encode(value: Any) -> String;
 
-function id[T](x: T) -> T { x }
+fn id[T](x: T) -> T { x }
 
-function len(xs) {
+fn len(xs) {
     #xs
 }
 
-function zip(*xs) {
+fn zip(*xs) {
     match xs {
         [x, *xs] => x.zip(*xs),
         []       => []
     }
 }
 
-function onExit(f) {
+fn onExit(f) {
     __EXIT_HOOKS__.push(f)
 }
 
-function printf(*args, %kwargs) {
+fn printf(*args, %kwargs) {
     print(fmt(*args), **kwargs)
 }
 
-function uuid4() {
+fn uuid4() {
     let b = Blob(*[rand(256) for _ in ..16])
 
     b.set(6, 0x40 | (b[6] & 0x0F))
@@ -2552,7 +2554,7 @@ function uuid4() {
     ].join('-')
 }
 
-function uuid7(pseudo = true) {
+fn uuid7(pseudo = true) {
     let b = if pseudo {
         Blob(*[rand(256) for _ in ..16])
     } else {
@@ -2828,7 +2830,7 @@ class Thread[T] {
     /*
      * Thread(func, *args, isolated=false, name=nil)
      *
-     * Call the specified function with any provided arguments in a
+     * Call the specified fn with any provided arguments in a
      * new thread.
      *
      * isolated: If isolated is true, the new thread will be in its own thread
@@ -2994,7 +2996,7 @@ macro timed(expr) {
 }
 
 macro modify! {
-    function path() {
+    fn path() {
         let p = [lex.next().id]
 
         while lex.peek().type == '.' {
@@ -3005,7 +3007,7 @@ macro modify! {
         p
     }
 
-    function convert(map: _) {
+    fn convert(map: _) {
         let entries = []
 
         for k, v in map {
@@ -3316,7 +3318,7 @@ class AnyOf {
 
 macro __walk! {
     fn copySource(a: _, b: _) -> _ { ty.copySource(a, b) }
-    function walk(tree: _, f: _) -> _ {
+    fn walk(tree: _, f: _) -> _ {
         if tree == nil {
             return nil
         }
@@ -3397,7 +3399,10 @@ macro __walk! {
                 methods: [walk(m, f) for m in c.methods],
                 getters: [walk(g, f) for g in c.getters],
                 setters: [walk(s, f) for s in c.setters],
-                statics: [walk(s, f) for s in c.statics]
+                fields: [walk(s, f) for s in c.fields],
+                static-methods: [walk(s, f) for s in c.static-methods],
+                static-getters: [walk(s, f) for s in c.static-getters],
+                static-fields: [walk(s, f) for s in c.static-fields]
             ),
 
             ty.Cond(cond, a, b) => ty.Cond(
@@ -3705,7 +3710,7 @@ fn .[a, b, c](f: b -> c, g: a -> b) -> (a -> c) {
     f@(g(*, **))
 }
 
-function sink(file) match file {
+fn sink(file) match file {
     nil => print@(*, **, :flush)
 
     fd: Int => {

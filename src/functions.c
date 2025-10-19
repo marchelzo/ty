@@ -6631,7 +6631,7 @@ BUILTIN_FUNCTION(member)
         int id = M_ID(TY_TMP_C_STR(name));
 
         if (argc == 2) {
-                Value v = GetMember(ty, o, id, false);
+                Value v = GetMember(ty, o, id, false, true);
                 return (v.type == VALUE_NONE) ? NIL : v;
         } else if (o.type == VALUE_OBJECT) {
                 itable_add(
@@ -7495,8 +7495,8 @@ BUILTIN_FUNCTION(ty_type_info)
                 vAp(methods, MethodSummary(ty, t0, v__(def->methods, i)));
         }
 
-        for (int i = 0; i < vN(def->statics); ++i) {
-                vAp(statics, MethodSummary(ty, t0, v__(def->statics, i)));
+        for (int i = 0; i < vN(def->s_methods); ++i) {
+                vAp(statics, MethodSummary(ty, t0, v__(def->s_methods, i)));
         }
 
         for (int i = 0; i < vN(def->getters); ++i) {

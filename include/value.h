@@ -1364,6 +1364,12 @@ FunDef(Ty *ty, Value const *f)
         return unwrap(ty, &def);
 }
 
+inline static Value *
+NewZero(void)
+{
+        return alloc0(sizeof *NewZero());
+}
+
 #endif
 
 /* vim: set sts=8 sw=8 expandtab: */

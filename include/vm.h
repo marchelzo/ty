@@ -108,7 +108,7 @@ Value *
 vm_global(Ty *ty, int i);
 
 Value
-GetMember(Ty *ty, Value v, int i, bool b);
+GetMember(Ty *ty, Value v, int i, bool try_missing, bool exec);
 
 Value
 CompleteCurrentFunction(Ty *ty);

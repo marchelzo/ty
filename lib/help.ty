@@ -236,7 +236,7 @@ let groups = %{
     'red': '
         for       while    if     let       and    fn     const
         do        try      catch  operator  or     in     yield
-        match     else     with   break     pub    as
+        match     else     with   break     pub    as     static
         continue  return   macro  where     not    throw  id_keyword
     ',
     'yellow': 'class tag trait use id_member id_module',

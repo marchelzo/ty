@@ -61,8 +61,12 @@ struct class_definition {
                         expression_vector methods;
                         expression_vector getters;
                         expression_vector setters;
-                        expression_vector statics;
                         expression_vector fields;
+
+                        expression_vector s_methods;
+                        expression_vector s_getters;
+                        expression_vector s_setters;
+                        expression_vector s_fields;
                 };
                 Expr *type;
         };

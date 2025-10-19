@@ -185,8 +185,8 @@ visit_statement(Ty *ty, Stmt *s, Scope *scope, VisitorSet const *hooks)
                 for (int i = 0; i < vN(s->class.setters); ++i) {
                         V(v__(s->class.setters, i));
                 }
-                for (int i = 0; i < vN(s->class.statics); ++i) {
-                        V(v__(s->class.statics, i));
+                for (int i = 0; i < vN(s->class.s_methods); ++i) {
+                        V(v__(s->class.s_methods, i));
                 }
                 break;
         }

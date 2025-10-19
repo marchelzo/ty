@@ -22,7 +22,7 @@ pub class Path {
         __parts = parts
     }
 
-    init(path: String | Path, o: Any = nil, r: Any = nil) {
+    init(path: String | Path) {
         (__drv, __root, __parts) = (path :: String) ? Path.parse(path) : (
             path.__drv,
             path.__root,

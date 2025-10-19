@@ -736,7 +736,7 @@ fn strct() {
             methods: [get, __ptr__, init, size, show, *methods],
             getters: getters,
             setters: setters,
-            statics: [ctypeFunction, size]
+            static-methods: [ctypeFunction, size]
         )
     ])
 }

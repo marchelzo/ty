@@ -1464,6 +1464,22 @@ IsObject(Type const *t0)
 }
 
 inline static bool
+IsRecord(Type const *t0)
+{
+        if (TypeType(t0) != TYPE_TUPLE) {
+                return false;
+        }
+
+        for (int i = 0; i < vN(t0->types); ++i) {
+                if (v__(t0->names, i) == NULL) {
+                        return false;
+                }
+        }
+
+        return true;
+}
+
+inline static bool
 IsTuple(Type const *t0)
 {
         if (TypeType(t0) != TYPE_TUPLE) {
@@ -1534,11 +1550,11 @@ TypeArg(Type const *t0, int i)
         }
 
         if (
-                t0 == NULL
+                (t0 == NULL)
              || (
-                        t0->type != TYPE_OBJECT
-                     && t0->type != TYPE_CLASS
-                     && t0->type != TYPE_FUNCTION
+                        (t0->type != TYPE_OBJECT)
+                     && (t0->type != TYPE_CLASS)
+                     && (t0->type != TYPE_FUNCTION)
                 )
              || (int)vN(t0->args) <= i
              || (
@@ -3629,8 +3645,8 @@ GetField(Ty *ty, Type *t0, int i, Type **u0, char const **name)
                 if (t0->class->def == NULL) {
                         return NULL;
                 }
-                if (i < vN(t0->class->def->class.statics)) {
-                        field = v__(t0->class->def->class.statics, i);
+                if (i < vN(t0->class->def->class.s_methods)) {
+                        field = v__(t0->class->def->class.s_methods, i);
                         *u0 = SolveMemberAccess(ty, t0, field->_type);
                         *name = field->name;
                         return true;
@@ -3725,18 +3741,34 @@ TryUnifyObjects(Ty *ty, Type *t0, Type *t1, bool super)
         t0 = ToRecordLikeType(ty, t0);
         t1 = ToRecordLikeType(ty, t1);
 
-        if (StrictClassOf(t0) == CLASS_ITERABLE && IsTuple(t1)) {
-                t1 = NewObject(
-                        CLASS_ITERABLE,
-                        (t1->repeat == NULL) ? UNKNOWN : t1->repeat
-                );
+        if (StrictClassOf(t0) == CLASS_ITERABLE) {
+                if (ArgCount(t0) == 1 && IsTuple(t1)) {
+                        t1 = NewObject(
+                                CLASS_ITERABLE,
+                                (t1->repeat == NULL) ? UNKNOWN : t1->repeat
+                        );
+                } else if (ArgCount(t0) == 2 && IsRecord(t1)) {
+                        t1 = NewObject(
+                                CLASS_ITERABLE,
+                                TYPE_STRING,
+                                UnionOf(ty, t1)
+                        );
+                }
         }
 
-        if (StrictClassOf(t1) == CLASS_ITERABLE && IsTuple(t0)) {
-                t0 = NewObject(
-                        CLASS_ITERABLE,
-                        (t0->repeat == NULL) ? UNKNOWN : t0->repeat
-                );
+        if (StrictClassOf(t1) == CLASS_ITERABLE) {
+                if (ArgCount(t1) == 1 && IsTuple(t0)) {
+                        t0 = NewObject(
+                                CLASS_ITERABLE,
+                                (t0->repeat == NULL) ? UNKNOWN : t0->repeat
+                        );
+                } else if (ArgCount(t1) == 2 && IsRecord(t0)) {
+                        t0 = NewObject(
+                                CLASS_ITERABLE,
+                                TYPE_STRING,
+                                UnionOf(ty, t0)
+                        );
+                }
         }
 
         if (IsObject(t0) && IsObject(t1)) {
@@ -5987,6 +6019,20 @@ type_member_access_t_(Ty *ty, Type const *t0, char const *name, bool strict)
 
                 }
                 if (t1 == NULL) {
+                        f = FindStaticGetter(c, name);
+                        if (f != NULL) {
+                                if (TypeType(f->_type) == TYPE_FUNCTION) {
+                                        t1 = f->_type->rt;
+                                }
+                        }
+                }
+                if (t1 == NULL) {
+                        f = FieldIdentifier(FindStaticField(c, name));
+                        if (f != NULL) {
+                                t1 = f->_type;
+                        }
+                }
+                if (t1 == NULL) {
                         f = FindMethod(c, name);
                         if (f != NULL) {
                                 t1 = f->_type;
@@ -7067,22 +7113,31 @@ type_dict(Ty *ty, Expr const *e)
 
         Type *t0 = NewVar(ty);
         Type *t1 = NewVar(ty);
+        Type *t2;
+
 
         for (int i = 0; i < vN(e->keys); ++i) {
-                unify2(ty, &t0, v__(e->keys, i)->_type);
-                unify2(
-                        ty,
-                        &t1,
-                        (v__(e->values, i) == NULL) ? NIL_TYPE : v__(e->values, i)->_type
-                );
+                Expr *key = v__(e->keys, i);
+                Expr *value = v__(e->values, i);
+
+                switch (key->type) {
+                case EXPRESSION_SPREAD:
+                        break;
+
+                case EXPRESSION_SPLAT:
+                        t2 = type_iterable_type(ty, key->_type, 2);
+                        unify2(ty, &t0, NthType(t2, 0));
+                        unify2(ty, &t1, NthType(t2, 1));
+                        break;
+
+                default:
+                        unify2(ty, &t0, key->_type);
+                        unify2(ty, &t1, (value == NULL) ? NIL_TYPE : value->_type);
+                        break;
+                }
         }
 
-        Type *t = NewType(ty,  TYPE_OBJECT);
-        t->class = class_get(ty, CLASS_DICT);
-        avP(t->args, Relax(t0));
-        avP(t->args, Relax(t1));
-
-        return t;
+        return NewDict(Relax(t0), Relax(t1));;
 }
 
 Type *
@@ -7198,7 +7253,7 @@ type_assign(Ty *ty, Expr *e, Type *t0, int flags)
         Type *t3;
         Type *t4;
 
-        bool strict = flags & T_FLAG_STRICT;
+        bool strict = (flags & T_FLAG_STRICT);
 
         if (t0 == NULL) {
                 t0 = NewVar(ty);
@@ -7206,8 +7261,8 @@ type_assign(Ty *ty, Expr *e, Type *t0, int flags)
         }
 
         if (
-                e->type != EXPRESSION_LIST
-             && e->type != EXPRESSION_CHOICE_PATTERN
+                (e->type != EXPRESSION_LIST)
+             && (e->type != EXPRESSION_CHOICE_PATTERN)
         ) {
                 t0 = Unlist(ty, t0);
         }
@@ -8466,6 +8521,12 @@ type_find_member(Ty *ty, Type *t0, char const *name)
 
         case TYPE_CLASS:
                 m = FindStatic(t0->class, name);
+                if (m == NULL) {
+                        m = FieldIdentifier(FindStaticField(t0->class, name));
+                }
+                if (m == NULL) {
+                        m = FindStaticGetter(t0->class, name);
+                }
                 break;
 
         case TYPE_ALIAS:
@@ -9375,10 +9436,7 @@ TypeCheck(Ty *ty, Type *t0, Value const *v)
                                         return false;
                                 }
                                 int id = M_ID(name);
-                                Value item = GetMember(ty, *v, id, false);
-                                if (item.type == VALUE_BREAK) {
-                                        item = CompleteCurrentFunction(ty);
-                                }
+                                Value item = GetMember(ty, *v, id, false, true);
                                 if (
                                         item.type == VALUE_NONE
                                      || !TypeCheck(ty, v__(t0->types, i), &item)
@@ -9897,6 +9955,10 @@ type_to_ty(Ty *ty, Type *t0)
 
         case TYPE_CLASS:
                 v = tagged(ty, TyClassT, CLASS(t0->class->i), NONE);
+                break;
+
+        case TYPE_TAG:
+                v = tagged(ty, TyTagT, TAG(TagOf(t0)), NONE);
                 break;
 
         case TYPE_UNION:
