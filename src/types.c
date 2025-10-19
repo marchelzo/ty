@@ -2273,11 +2273,11 @@ IsCallable(Type *t0)
                 return false;
         }
 
-        return t0->type == TYPE_FUNCTION
-            || t0->type == TYPE_TAG
-            || t0->type == TYPE_CLASS
+        return (t0->type == TYPE_FUNCTION)
+            || (t0->type == TYPE_TAG)
+            || (t0->type == TYPE_CLASS)
             || (
-                        t0->type == TYPE_OBJECT
+                        (t0->type == TYPE_OBJECT)
                      && type_find_member(ty, t0, "__call__") != NULL
                )
             ;
@@ -9706,9 +9706,9 @@ TyTypeClass(Ty *ty, Value const *v)
         if (v->type == VALUE_CLASS) {
                 return class_get(ty, v->class);
         } else if (
-                v->type == VALUE_TYPE
-             && v->ptr != NULL
-             && ((Type *)v->ptr)->type == TYPE_CLASS
+                (v->type == VALUE_TYPE)
+             && (v->ptr != NULL)
+             && (((Type *)v->ptr)->type == TYPE_CLASS)
         ) {
                 return ((Type *)v->ptr)->class;
         } else {
@@ -9821,6 +9821,12 @@ type_from_ty(Ty *ty, Value const *v)
         case TyClassT:
                 t0 = NewType(ty, TYPE_CLASS);
                 t0->class = TyTypeClass(ty, &inner);
+                break;
+
+        case TyTagT:
+                t0 = NewType(ty, TYPE_TAG);
+                t0->tag = inner.tag;
+                t0->class = tags_get_class(ty, t0->tag);
                 break;
 
         case TyListT:
