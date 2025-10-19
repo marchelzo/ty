@@ -174,19 +174,19 @@ fn nexttype(array-to-ptr? = true, has-name?: ?Bool = nil) {
         signed     auto    noreturn  _Noreturn
     ".words()
 
-    let allow-name? = has-name? != false
-    let need-name? = has-name? == true
+    let allow-name? = (has-name? != false)
+    let need-name?  = (has-name? == true)
 
     while match (peek().type, peek(1).type) {
         (')', _),
         (_, '('),
         (';', _) => { break },
 
-        (_, '.')       => {
+        (_, '.') => {
             let e = expr(1)
 
             // Allow stuff like f(c.int error_code) by just ignoring the identifier
-            return e, if allow-name? && peek().type == 'id' { next().id }
+            return e, (allow-name? && peek().type == 'id') ?: next().id
         },
 
         ('const', _)   => { next()                  },
@@ -196,7 +196,7 @@ fn nexttype(array-to-ptr? = true, has-name?: ?Bool = nil) {
         ('**', _)      => { next(); parts.push('*') }
     }
 
-    let have-int? = 'int' in parts
+    let have-int? = ('int' in parts)
 
     parts.filter!(\_ not in ignore)
 
@@ -252,7 +252,7 @@ fn nexttype(array-to-ptr? = true, has-name?: ?Bool = nil) {
         _             => ty.Value(t)
     }
 
-    if peek().type == '*' || peek().type == '**' {
+    if peek().type in '**' {
         // Just kidding it's actually a pointer
         t = ty.Value(c.ptr)
         next()

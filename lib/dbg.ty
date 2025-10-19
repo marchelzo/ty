@@ -31,6 +31,7 @@ chalk.aqua   = '#89b482'
 chalk.orange = '#e78a4e'
 chalk.yellow = '#d8a657'
 chalk.green  = '#a9b665'
+chalk.green2 = '#9dbd60'
 chalk.blue   = '#7daea3'
 chalk.blue2  = '#3193ce'
 chalk.purple = '#d3869b'
@@ -40,53 +41,81 @@ chalk.pink   = '#d677be'
 
 let groups = %{
     'fg0': 'id',
-    'fg1': '[ ] { } ( ) . , ] ;',
+    'fg1': '[ ] { } ( ) . .? , ]',
     'orange': '
-        =   ==  ++  --  +   -  *   /   %   ^    |    &
-        +=  -=  *=  /=  %=  @  #   &&  ||  <=>  !    ~  
-        ->  ~>  =>  $~> >   <  !=  ??  >>  <<   <<=  >>=  |>
+        =   ==  ++  --  +   -  *   /   %   ^    |    &    <=   >=
+        +=  -=  *=  /=  %=  @  #   &&  ||  <=>  !    ~
+        ~>  =>  $~> >   <  !=  ??  >>  <<  <<=  >>=  |>
         *** &&& <$> <%> ?> <? <*>  *>  <*  ..%. .%.. .%
-        ::  ?=  |=  &=  ^=
+        ::  ?=  |=  &=  ^=  ?  :   $   ..  ...  ?:
     ',
-    'purple': 'true false nil int float',
+    'purple': 'true false nil int float import',
     'red': '
-        for       while    if     let       and    fn
-        do        try      catch  operator  or     in
-        match     else     with   import    break  pub
-        continue  return   macro  where     not    throw
+        for       while    if     let       and    fn     const
+        do        try      catch  operator  or     in     yield
+        match     else     with   break     pub    as     static
+        continue  return   macro  where     not    throw  id_keyword
     ',
-    'yellow': 'as class tag trait use',
-    'green': 'fun string " f-string',
+    'yellow': 'class tag trait use id_member id_module',
+    'green': 'string " f-string',
+    'b u green2': 'fun fun_member',
     'blue': 'type',
     'blue2': 'typeof',
-    'aqua': 'regex',
-    'grey': 'comment',
-    'pink': 'pp'
+    'aqua': 'regex id_field',
+    'grey': 'comment ;',
+    'pink': 'pp id_macro fun_macro $$[ $$] $$'
 }
 
 let colors = [ %{ t: c for t in g.words() } for c, g in groups ].sum()
 
 @[memoized]
-function color-and-break(module: String) -> [(Int, String)] {
+fn color-and-break(module: String) -> Array[(Int, String)] {
     if not let ($source, $tokens) = (ty.text(module), ty.tokens(module)) {
         throw TDBError("failed to fetch source information for {module}")
     }
 
     let tokens = tokens.remove!(nil).map!(t -> match t {
-        {id, end, *} and source[end.byte] == '(' => do { let x: _ = t; ({*x, type: 'fun'}) },
         {id: /^[A-Z]\w*[a-z]\w*$/, *}            => do { let x: _ = t; ({*x, type: 'type'}) },
+        {id, end, *} and source[end.byte] == '(' => do { let x: _ = t; ({*x, type: 'fun'}) },
         _ => t
     })
 
     let parts = [(it, '') for source]
 
-    for {start, end, type, *} in tokens {
-        let i = start.byte
-        let j = end.byte
+    fn idx-of(off: Int, start: (Int, Int) = (0, 0)) -> (Int, Int) {
+        let (n0, i0) = start
+        let n = n0
 
-        continue if not let $color = colors[type]
+        for i0..#parts {
+            if n == off {
+                return (n, it)
+            }
 
-        for i..j { parts[it] = (parts[it][0], color) }
+            n += parts[it][0].size()
+
+            if (n > off) && (n0 == 0) {
+                return (n, it)
+            }
+        }
+
+        (n0 == 0) ? (n, #parts) : idx-of(off)
+    }
+
+    let st = (0, 0)
+    for {start, end, type, ?kind, *} in tokens {
+        continue if not let $color = colors[[type, ?kind].join('_')]
+
+        let st0 = idx-of(start.byte, st)
+        let st1 = idx-of(end.byte, st0)
+
+        let (_, i) = st0
+        let (_, j) = st1
+
+        for i..j {
+            parts[it] = (parts[it][0], color)
+        }
+
+        st = st1
     }
 
     parts.group-by!(&1).map!(group -> (group.map(&0).str(), group[0][1]))
