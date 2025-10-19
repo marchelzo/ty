@@ -326,7 +326,7 @@ pub use HttpMessage = {
 }
 
 class HttpParser {
-    __ctx:      _
+    __ctx:      IntoPtr[_] | nil;
     __mq:       Array[HttpMessage]
     __buf:      Blob
     __chunk:    Blob
@@ -479,11 +479,11 @@ class HttpParser {
     destroy() {
         if __ctx != nil {
             c.free(__ctx)
-            __ctx = nil
             while __closures {
                 c.freeClosure(__closures.pop())
             }
         }
+        __ctx = nil
     }
 
     errorPos() {

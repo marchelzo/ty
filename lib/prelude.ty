@@ -2885,6 +2885,9 @@ class Thread[T] {
     }
 }
 
+class ValueError < RuntimeError {
+}
+
 macro static!(e) = $${ty.eval(e)} as (typeof $$e)
 
 macro print!(*xs) {

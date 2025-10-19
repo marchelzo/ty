@@ -4,6 +4,7 @@ import llhttp (..)
 import os (..)
 import json
 import errno
+import net
 
 function urlDecode(s: String) -> String {
     s.sub('+', ' ')
@@ -15,7 +16,7 @@ function urlDecode(s: String) -> String {
 function decodeQuery(query: String) {
     let params = %{}
 
-    for [k, ?v] in query.split('&').map(&split('=') |> &map(urlDecode)) {
+    for [k, ?v] in query.split('&').map(&split('=', 1) |> &map(urlDecode)) {
         if let $p = params[k] {
             if p :: Array {
                 p.push(v)
@@ -83,8 +84,6 @@ class HttpResponse {
     }
 }
 
-tag SocketError;
-
 use HttpRequest = HttpMessage & {
     addr: ?Blob,
     params: Dict[String, String | [String]]
@@ -108,30 +107,16 @@ class HttpServer {
     __handlers: RouteMap
     __stopping: Bool
 
-    init(*args, backlog=64) {
+    init(*args, backlog: Int = 64) {
         __handlers = %{*:[]}
         __conns = []
         __stopping = false
         match args {
-            [addr, port] => {
-                __sock = socket(AF_INET, SOCK_STREAM, 0)
-
-                setsockopt(__sock, SOL_SOCKET, SO_REUSEADDR, 1)
-
-                let Ok([addr]) = getaddrinfo(addr, port, AF_INET, SOCK_STREAM, 0)
-
-                let err = bind(__sock, addr)
-                if err != 0 {
-                    throw SocketError("bind(): {errno.str(err)}")
-                }
-
-                let err = listen(__sock, backlog)
-                if err != 0 {
-                    throw SocketError("listen(): {errno.str(err)}")
-                }
+            [addr: String, port: Int] => {
+                __sock = net::listen('tcp', "{addr}:{port}", backlog)
             },
 
-            [sock] => {
+            [sock: Int] => {
                 __sock = sock
                 listen(__sock, backlog)
             }

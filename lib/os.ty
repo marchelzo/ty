@@ -10,9 +10,10 @@ pub fn read(fd: Int, buf: Blob, n: Int) -> Int;
 pub fn write(fd: Int, data: Any, all: Bool) -> Int;
 pub fn write(fd: Int, data: Any) -> Int;
 
+
 pub fn socket(domain: Int, type: Int, protocol: Int) -> Int;
-pub fn bind(sock: Int, addr: Blob) -> Int;
-pub fn connect(sock: Int, addr: Blob) -> Int;
+pub fn bind(sock: Int, addr: _) -> Int;
+pub fn connect(sock: Int, addr: _) -> Int;
 pub fn getsockname(sock: Int) -> Blob;
 pub fn getpeername(sock: Int) -> Blob;
 pub fn setsockopt(sock: Int, level: Int, opt: Int, val: Any) -> Int;
