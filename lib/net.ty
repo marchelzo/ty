@@ -1,44 +1,48 @@
 import os (..)
 import errno
 
+class GAIError < RuntimeError {
+    init(code: Int) {
+        super("getaddrinfo() failed: {gai_strerror(code)}")
+    }
+}
+
 pub fn dial(
     network: String,
     address: String
-) -> Ok[Int] | Err[Int | String] {
+) -> Int {
     let (family, sockType) = match network.lower() {
         'tcp'      => (AF_INET, SOCK_STREAM),
         'udp'      => (AF_INET, SOCK_DGRAM),
         'ip'       => (AF_INET, SOCK_RAW),
         'unix'     => (AF_UNIX, SOCK_STREAM),
         'unixgram' => (AF_UNIX, SOCK_DGRAM),
-        other      => throw Err("dial(): invalid network '{other}'")
+        other      => throw ValueError("invalid network: '{other}'")
     }
 
     if family == AF_UNIX {
         let sock = socket(AF_UNIX, sockType, 0)
         let addr = {family: AF_UNIX, path: address}
-        return match connect(sock, addr) {
-            0 => Ok(sock),
-            _ => do { close(sock); Err("connect(): {errno.str()}") }
+        match connect(sock, addr) {
+            0 => { return sock },
+            _ => throw OSError('connect()')
         }
     }
 
     if not let [host, serv] = address.split(':') {
-        throw Err("dial(): invalid address '{address}'")
+        throw ValueError("invalid address: '{address}'")
     }
 
     match getaddrinfo(host, serv, family, sockType, 0) {
         Ok([addr, *]) => {
             let sock = socket(family, sockType, 0)
-            return match connect(sock, addr) {
-                0 => Ok(sock),
-                _ => do { close(sock); Err("connect(): {errno.str()}") }
+            match connect(sock, addr) {
+                0 => { return sock },
+                _ => { close(sock); throw OSError('connect()') }
             }
         },
 
-        err => {
-            return err
-        }
+        Err(ec) => throw GAIError(ec)
     }
 }
 
@@ -46,51 +50,61 @@ pub fn listen(
     network: String,
     address: String,
     backlog=64
-) -> Ok[Int] | Err[Int | String] {
+) -> Int {
     let (family, sockType) = match network.lower() {
         'tcp'      => (AF_INET, SOCK_STREAM),
         'udp'      => (AF_INET, SOCK_DGRAM),
         'ip'       => (AF_INET, SOCK_RAW),
         'unix'     => (AF_UNIX, SOCK_STREAM),
         'unixgram' => (AF_UNIX, SOCK_DGRAM),
-        other      => throw Err("listen(): invalid network '{other}'")
+        other      => throw ValueError("invalid network: '{other}'")
     }
 
     if family == AF_UNIX {
         let sock = socket(AF_UNIX, sockType, 0)
         let addr = {family: AF_UNIX, path: address}
+
         if bind(sock, addr) != 0 {
             close(sock)
-            return Err("bind(): {errno.str()}")
+            throw OSError('bind()')
         }
+
         if os.listen(sock, backlog) != 0 {
             close(sock)
-            return Err("listen(): {errno.str()}")
+            throw OSError('listen()')
         }
-        return Ok(sock)
+
+        return sock
     }
 
     if not let [host, serv] = address.split(':') {
-        throw Err("listen(): invalid address '{address}'")
+        throw ValueError("invalid address: '{address}'")
     }
 
     match getaddrinfo(host, serv, family, sockType, 0) {
         Ok([addr, *]) => {
             let sock = socket(family, sockType, 0)
-            setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, 1)
+
+            if setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, 1) != 0 {
+                close(sock)
+                throw OSError('setsockopt()')
+            }
+
             if bind(sock, addr) != 0 {
                 close(sock)
-                return Err("bind(): {errno.str()}")
+                throw OSError('bind()')
             }
+
             if os.listen(sock, backlog) != 0 {
                 close(sock)
-                return Err("listen(): {errno.str()}")
+                throw OSError('listen()')
             }
-            return Ok(sock)
+
+            return sock
         },
 
-        err => {
-            return err
+        Err(ec) => {
+            throw GAIError(ec)
         }
     }
 }
