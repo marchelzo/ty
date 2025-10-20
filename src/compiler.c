@@ -2204,7 +2204,7 @@ fixup_access(Ty *ty, Scope const *scope, Expr *e, bool strict)
 
         Expr const *o = e->object;
 
-        for (;;) {
+        while (o != NULL) {
                 if (o->type == EXPRESSION_MEMBER_ACCESS) {
                         o = o->object;
                 } else if (
@@ -2215,6 +2215,10 @@ fixup_access(Ty *ty, Scope const *scope, Expr *e, bool strict)
                 } else {
                         break;
                 }
+        }
+
+        if (o == NULL) {
+                return;
         }
 
         if (
@@ -12856,15 +12860,18 @@ cexpr(Ty *ty, Value *v)
 
                 break;
         }
-        case TyMemberAccess:
-                e->type = EXPRESSION_MEMBER_ACCESS;
-                e->object = cexpr(ty, &v->items[0]);
-                e->member = NewExpr(ty, EXPRESSION_IDENTIFIER);
-                e->member->identifier = mkcstr(ty, &v->items[1]);
-                break;
         case TyTryMemberAccess:
-                e->type = EXPRESSION_MEMBER_ACCESS;
                 e->maybe = true;
+        case TyMemberAccess:
+                if (v->items[0].type == VALUE_NIL) {
+                        e->type = EXPRESSION_SELF_ACCESS;
+                } else {
+                        e->type = EXPRESSION_MEMBER_ACCESS;
+                        e->object = cexpr(ty, &v->items[0]);
+                        if (e->object == NULL) {
+                                goto Bad;
+                        }
+                }
                 e->member = NewExpr(ty, EXPRESSION_IDENTIFIER);
                 e->member->identifier = mkcstr(ty, &v->items[1]);
                 break;

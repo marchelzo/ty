@@ -618,6 +618,7 @@ macro __define_ast! {
        | ty.Id[{name: String, ?module: String | nil, ?constraint: AST}]
        | ty.NotNil[{name: String, ?module: String | nil, ?constraint: AST}]
        | ty.MemberAccess[(AST, String)]
+       | ty.TryMemberAccess[(AST, String)]
        | ty.Count[AST]
        | ty.Question[AST]
        | ty.Not[AST]
@@ -3443,6 +3444,11 @@ macro __walk! {
             ),
 
             ty.MemberAccess(object, member) => ty.MemberAccess(
+                walk(object, f),
+                member
+            ),
+
+            ty.TryMemberAccess(object, member) => ty.TryMemberAccess(
                 walk(object, f),
                 member
             ),
