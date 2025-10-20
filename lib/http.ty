@@ -11,7 +11,7 @@ log::logging({level: log::DEBUG})
 
 function urlDecode(s: String) -> String {
     s.sub('+', ' ')
-     .sub(/%../, s -> chr(int(s.slice(1), 16)))
+     .sub(/%[[:xdigit:]]{2}/, \chr(int(_[1;], 16)))
      .sub("\r\n", "\n")
      .sub("\r", "\n")
 }
