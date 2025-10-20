@@ -144,7 +144,7 @@ class Future[T] {
 
   canceled? {
     with _mtx.lock() {
-      #_box == 1
+      _canceled
     }
   }
 
