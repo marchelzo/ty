@@ -41,28 +41,31 @@ chalk.pink   = '#d677be'
 
 let groups = %{
     'fg0': 'id',
-    'fg1': '[ ] { } ( ) . .? , ]',
+    'fg1': '[ ] { } ( ) . .? , ] ->',
     'orange': '
-        =   ==  ++  --  +   -  *   /   %   ^    |    &    <=   >=
-        +=  -=  *=  /=  %=  @  #   &&  ||  <=>  !    ~
-        ~>  =>  $~> >   <  !=  ??  >>  <<  <<=  >>=  |>
-        *** &&& <$> <%> ?> <? <*>  *>  <*  ..%. .%.. .%
-        ::  ?=  |=  &=  ^=  ?  :   $   ..  ...  ?:
+        =   ==  ++  --  +   -  *    /   %   ^    |    &    <=   >=
+        +=  -=  *=  /=  %=  @  #    &&  ||  <=>  !    ~
+        ~>  =>  $~> >   <  !=  ??   >>  <<  <<=  >>=  |>
+        *** &&& <$> <%> ?> <?  <*>  *>  <*  ..%. .%.. .%
+        ::  ?=  |=  &=  ^=  ?  $    ..  ... ?:
     ',
-    'purple': 'true false nil int float import',
+    'purple': 'true false nil int float use import',
     'red': '
-        for       while    if     let       and    fn     const
-        do        try      catch  operator  or     in     yield
-        match     else     with   break     pub    as     static
-        continue  return   macro  where     not    throw  id_keyword
+        for        while    if     let       and    fn     const
+        do         try      catch  operator  or     in     yield
+        match      else     with   break     pub    as     static
+        continue   return   macro  where     not    throw  defer
+
+        id_keyword
     ',
-    'yellow': 'class tag trait use id_member id_module',
+    'b yellow': 'type type_member',
+    'yellow': 'class tag trait id_module',
     'green': 'string " f-string',
-    'b u green2': 'fun fun_member',
-    'blue': 'type',
+    ' green2': 'fun fun_member',
+    'blue': 'id_member id_field',
     'blue2': 'typeof',
-    'aqua': 'regex id_field',
-    'grey': 'comment ;',
+    'aqua': 'regex',
+    'grey': 'comment ; :',
     'pink': 'pp id_macro fun_macro $$[ $$] $$'
 }
 

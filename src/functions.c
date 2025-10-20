@@ -7088,7 +7088,7 @@ make_token(Ty *ty, Token const *t)
 
         int tlen;
         if (type == NULL) {
-                char const *charset = "[](){}<>;.,?`~=!@#$%^&*/()-_~+|\"\\\n";
+                char const *charset = "[](){}<>;:.,?`~=!@#$%^&*/()-_~+|\"\\\n";
 
                 if ((type = strchr(charset, t->type)) == NULL) {
                         tlen = 0;

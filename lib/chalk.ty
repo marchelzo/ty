@@ -564,7 +564,7 @@ class Chalk {
     }
 
     spans(text: String) -> [(TermStyle, String)] {
-        let parts = text.split(/(?<=^|[^\\])\[([\/%])?([^]]*)\]/v)
+        let parts = text.split(/(?:\\\\)|(?:\\\[)|\[([\/%]+)?([^]]*)\]/v)
 
         let spans: [(TermStyle, String)] = []
 
@@ -601,8 +601,8 @@ class Chalk {
         }
 
         for match parts {
-            m: RegexMatch => {
-                match m.captures {
+            _match: RegexMatch => {
+                match _match.captures {
                     [nil, &words $~> styles] => {
                         stack.push(styles.map(get-style))
                         update()
@@ -631,14 +631,13 @@ class Chalk {
                         }
                         stack.filter!(\#_ > 0)
                         update()
-                    }
+                    },
+
+                    _ => spans.push((style, _match.s[1;]))
                 }
             },
 
-            s => spans.push((
-                style,
-                s.sub(/\\./, %{'\\\\': '\\', '\\[': '[', *: it[1]}[])
-            ))
+            text => spans.push((style, text.sub(/\\./, &[1;])))
         }
 
         spans
