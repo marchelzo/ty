@@ -5,6 +5,9 @@ import os (..)
 import json
 import errno
 import net
+import log
+
+log::logging({level: log::DEBUG})
 
 function urlDecode(s: String) -> String {
     s.sub('+', ' ')
@@ -80,7 +83,7 @@ class HttpResponse {
 
         response.push(body)
 
-        ::write(c, response, all: true)
+        ::write(c, response, all=true)
     }
 }
 
@@ -121,6 +124,13 @@ class HttpServer {
                 listen(__sock, backlog)
             }
         }
+    }
+
+    address -> (String, String) {
+        getnameinfo(
+            getsockname(__sock),
+            NI_NUMERICHOST | NI_NUMERICSERV
+        )
     }
 
     findHandler(method: String, url: String) -> (RequestHandler, Dict[String, String]) | nil {
@@ -170,6 +180,8 @@ class HttpServer {
         let b = Blob()
 
         while !__stopping {
+            log::debug!("poll()")
+
             if not let Ok(pollFds) = poll([__sock, *__conns.map(\_.fd)], -1) {
                 continue
             }
@@ -179,10 +191,13 @@ class HttpServer {
                     if ev & POLLIN {
                         let (conn, addr) = accept(fd)
                         __conns.push({fd: conn, addr, p: HttpParser(HTTP_REQUEST)})
+                        log::debug!("new connection: fd={conn} addr={getnameinfo(addr, NI_NUMERICHOST | NI_NUMERICSERV)}")
                     }
                 } else {
                     let $c = __conns.find(${it.fd == fd})
                     if (ev & POLLIN) && read(fd, b, 4096) > 0 {
+                        log::debug!("read {#b} bytes from fd={fd}")
+
                         c.p.push(b)
                         b.clear()
 
@@ -192,6 +207,8 @@ class HttpServer {
                             let u = req.url
                             let [url, ?query] = req.url.split('?', 1)
                             let params = %{}
+
+                            log::debug!("{getnameinfo(c.addr, NI_NUMERICHOST | NI_NUMERICSERV)}: {req.method} {u}")
 
                             if query != nil {
                                 params.update(decodeQuery(query))
