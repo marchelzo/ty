@@ -72,6 +72,11 @@ class HttpResponse {
         self.header('Content-Type', 'application/json')
     }
 
+    plain(x) {
+        body.push("{x}")
+        self.header('Content-Type', 'text/plain')
+    }
+
     send(c) {
         let response = Blob([
             "HTTP/1.1 {statusCode} {statusName(statusCode)}",
@@ -272,9 +277,9 @@ class HttpServer {
 
                             rsp.send(fd)
                         }
-                    } else if ev & POLLHUP {
+                    } else {
                         close(fd)
-                        __conns.filter!(${it.fd != fd})
+                        __conns.filter!(\_.fd != fd)
                     }
                 }
             }

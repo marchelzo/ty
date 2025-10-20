@@ -685,18 +685,22 @@ lex_ss_string(Ty *ty)
                         switch (C(0)) {
                         case '\0':
                                 goto Unterminated;
+
                         case 'n':
                                 nextchar(ty);
                                 avP(str, '\n');
                                 continue;
+
                         case 'r':
                                 nextchar(ty);
                                 avP(str, '\r');
                                 continue;
+
                         case 't':
                                 nextchar(ty);
                                 avP(str, '\t');
                                 continue;
+
                         case 'x':
                                 {
                                         unsigned long long b;
@@ -711,6 +715,7 @@ lex_ss_string(Ty *ty)
 
                                         continue;
                                 }
+
                         case 'u':
                         case 'U':
                                 {
@@ -734,6 +739,7 @@ lex_ss_string(Ty *ty)
 
                                         continue;
                                 }
+
                         case '>':
                                 nextchar(ty);
 
@@ -743,6 +749,7 @@ lex_ss_string(Ty *ty)
                                 }
 
                                 continue;
+
                         case '<':
                                 nextchar(ty);
                                 nextchar(ty);
