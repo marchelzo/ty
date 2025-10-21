@@ -1460,6 +1460,7 @@ class Tuple[...Types] {
 tag MatchError;
 tag IndexError;
 tag DispatchError;
+tag ZeroDivisionError;
 
 tag None {
     static map(f)     { None }

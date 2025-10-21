@@ -940,7 +940,7 @@ inline static void
 inline static Value *
 local(Ty *ty, int i)
 {
-        return &STACK.items[vvL(FRAMES)->fp + i];
+        return v_(STACK, vvL(FRAMES)->fp + i);
 }
 
 inline static Value *
@@ -1000,7 +1000,11 @@ GeneratorIsSuspended(Generator *gen)
 inline static Generator *
 GetCurrentGenerator(Ty *ty)
 {
-        int n = FRAMES.items[0].fp;
+        if (vN(FRAMES) == 0 || vN(STACK) == 0) {
+                return NULL;
+        }
+
+        usize n = FRAMES.items[0].fp;
 
         if (n == 0 || STACK.items[n - 1].type != VALUE_GENERATOR) {
                 return NULL;
@@ -1012,12 +1016,12 @@ GetCurrentGenerator(Ty *ty)
 inline static Generator *
 GetNextGenerator(Generator *gen)
 {
-        int n = v_(gen->st.frames, 0)->fp;
+        usize n = v_(gen->st.frames, 0)->fp;
 
         if (
-                n == 0
-             || v_(STACK, n - 1)->type != VALUE_GENERATOR
-             || v_(STACK, n - 1)->gen == gen
+                (n == 0)
+             || (v_(STACK, n - 1)->type != VALUE_GENERATOR)
+             || (v_(STACK, n - 1)->gen == gen)
         ) {
                 return NULL;
         }
@@ -1049,6 +1053,26 @@ GetFreeCoThread(Ty *ty)
         }
 }
 
+static char const *
+co_up(Ty *ty, co_state *st)
+{
+        if (vN(st->frames) == 0 || vN(STACK) == 0) {
+                return NULL;
+        }
+
+        usize n = vv(st->frames)->fp;
+
+        if (n == 0 || v_(STACK, n - 1)->type != VALUE_GENERATOR) {
+                return NULL;
+        }
+
+        Generator *gen = v_(STACK, n - 1)->gen;
+
+        *st = gen->st;
+
+        return gen->ip;
+}
+
 static bool
 co_abort(Ty *ty)
 {
@@ -1070,7 +1094,6 @@ co_abort(Ty *ty)
 
         vvX(FRAMES);
         IP = *vvX(CALLS);
-
         return true;
 }
 
@@ -1303,6 +1326,54 @@ static void
 call_co(Ty *ty, Value *v, int n)
 {
         call_co_ex(ty, v, n, IP);
+}
+
+static ThrowCtx *
+PushThrowCtx(Ty *ty)
+{
+        ThrowCtx *ctx;
+        usize n = vN(THROW_STACK);
+
+        if (UNLIKELY(n == vC(THROW_STACK))) {
+                do {
+                        ctx = alloc0(sizeof *ctx);
+                        xvP(THROW_STACK, ctx);
+                } while (vN(THROW_STACK) != vC(THROW_STACK));
+                vN(THROW_STACK) = n;
+        }
+
+        ctx = *vZ(THROW_STACK);
+        vN(THROW_STACK) += 1;
+
+        //== (in case it's recycled) ==============
+        vN(*ctx) = 0;
+
+        for (int i = 0; i < vN(ctx->locals); ++i) {
+                vN(v__(ctx->locals, i)) = 0;
+        }
+
+        vN(ctx->locals) = 0;
+        //=========================================
+
+        if (DetailedExceptions) {
+                CaptureContextEx(ty, ctx);
+        } else {
+                CaptureContext(ty, ctx);
+        }
+
+        return ctx;
+}
+
+inline static ThrowCtx *
+CurrentThrowCtx(Ty *ty)
+{
+        return *vvL(THROW_STACK);
+}
+
+static ThrowCtx *
+PopThrowCtx(Ty *ty)
+{
+        return *vvX(THROW_STACK);
 }
 
 u64
@@ -1811,12 +1882,12 @@ BadFieldAccess(Ty *ty, Value const *val, i32 z)
         }
 }
 
-TY_INSTR_INLINE static bool
+TY_INSTR_INLINE static void
 DoThrow(Ty *ty)
 {
         Value ex = peek();
 
-        //printf("Throw: %s\n", VSC(&ex));
+        //XXX("Throw: %s", VSC(&ex));
         //xprint_stack(ty, 10);
 
         for (;;) {
@@ -1834,20 +1905,20 @@ DoThrow(Ty *ty)
                         case TRY_TRY:
                                 t->state = TRY_THROW;
 
-                                while (DROP_STACK.count > t->ds) {
+                                while (vN(DROP_STACK) > t->ds) {
                                         DoDrop(ty);
                                 }
 
-                                STACK.count = t->sp;
-                                SP_STACK.count = t->nsp;
-                                FRAMES.count = t->ctxs;
-                                TARGETS.count = t->ts;
-                                CALLS.count = t->cs;
-                                IP = t->catch;
-                                EXEC_DEPTH = t->ed;
-                                RestoreScratch(ty, t->ss);
+                                EXEC_DEPTH   = t->ed;
+                                vN(STACK)    = t->sp;
+                                vN(SP_STACK) = t->nsp;
+                                vN(FRAMES)   = t->ctxs;
+                                vN(TARGETS)  = t->ts;
+                                vN(CALLS)    = t->cs;
+                                vN(RootSet)  = min(vN(RootSet), t->gc);
+                                IP           = t->catch;
 
-                                RootSet.count = min(vN(RootSet), t->gc);
+                                RestoreScratch(ty, t->ss);
 
                                 push(SENTINEL);
                                 push(ex);
@@ -1855,12 +1926,13 @@ DoThrow(Ty *ty)
                                 t->state = TRY_CATCH;
 
                                 longjmp(t->jb, 1);
+                                ////////////////////////////////////////////////
 
                         case TRY_CATCH:
                                 t->state = TRY_THROW;
                                 t->end = NULL;
                                 IP = t->finally;
-                                return false;
+                                return;
 
                         case TRY_THROW:
                                 zPx(
@@ -1871,25 +1943,17 @@ DoThrow(Ty *ty)
                 }
 
                 if (!co_abort(ty)) {
-                        ThrowCtx c = *vvX(THROW_STACK);
-
-                        FRAMES.count = c.ctxs;
-                        IP = (char *)c.ip;
-
-                        zPx("uncaught exception: %s%s%s", TERM(31), VSC(&ex), TERM(39));
+                        ThrowCtx *ctx = PopThrowCtx(ty);
+                        zPxx(ctx, "uncaught exception: %s%s%s", TERM(31), VSC(&ex), TERM(39));
                 }
         }
 }
 
-TY_INSTR_INLINE static bool
+TY_INSTR_INLINE static void
 RaiseException(Ty *ty)
 {
-        xvP(THROW_STACK, ((ThrowCtx) {
-                .ctxs = vN(FRAMES),
-                .ip = IP
-        }));
-
-        return DoThrow(ty);
+        PushThrowCtx(ty);
+        DoThrow(ty);
 }
 
 static void
@@ -2433,7 +2497,7 @@ DoCall(Ty *ty, Value const *f, int n, int nkw, bool AutoThis)
                         break;
 
                 default:
-                        push(TAG(gettag(ty, NULL, "DispatchError")));
+                        push(TAG(TAG_DISPATCH_ERR));
                         RaiseException(ty);
                         break;
                 }
@@ -3742,10 +3806,14 @@ DoTargetSubscript(Ty *ty)
                 }
                 if (subscript.integer < 0 || subscript.integer >= container.blob->count) {
                         // TODO: Not sure which is the best behavior here
-                        push(TAG(gettag(ty, NULL, "IndexError")));
+                        push(tagged(
+                                ty,
+                                TAG_INDEX_ERR,
+                                container,
+                                subscript,
+                                NONE
+                        ));
                         RaiseException(ty);
-                        return;
-                        zP("blob index out of range in subscript expression");
                 }
                 pushtarget((Value *)((((uintptr_t)(subscript.integer)) << 3) | 1) , container.blob);
                 break;
@@ -3827,10 +3895,14 @@ DoAssignSubscript(Ty *ty)
                 }
                 if (subscript.integer < 0 || subscript.integer >= container.blob->count) {
                         // TODO: Not sure which is the best behavior here
-                        push(TAG(gettag(ty, NULL, "IndexError")));
+                        push(tagged(
+                                ty,
+                                TAG_INDEX_ERR,
+                                container,
+                                subscript,
+                                NONE
+                        ));
                         RaiseException(ty);
-                        return;
-                        zP("blob index out of range in subscript expression");
                 }
                 if (UNLIKELY(value.type != VALUE_INTEGER)) {
                         zP("attempt to assign Blob element to non-integer value: %s", VSC(&value));
@@ -4149,6 +4221,51 @@ splat(Ty *ty, Dict *d, Value *v)
         }
 
         // FIXME: What else should be allowed here?
+}
+
+static Value
+ResolveTrace(Ty *ty, ThrowCtx const *ctx)
+{
+        Array *trace = vA();
+
+        GC_STOP();
+
+        for (int i = 0; i < vN(*ctx); ++i) {
+                char const *ip = v__(*ctx, i);
+
+                Expr const *expr = compiler_find_expr(ty, ip - 1);
+                Expr const *func = compiler_find_func(ty, ip - 1);
+
+                if (expr == NULL) {
+                        continue;
+                }
+
+                Value entry = TyTraceEntryFor(ty, expr);
+
+                if (func == NULL || vN(ctx->locals) <= i) {
+                        vAp(trace, PAIR(entry, NIL));
+                        continue;
+                }
+
+                ValueVector localv = v__(ctx->locals, i);
+                Scope *scope = func->scope;
+                Dict *locals = dict_new(ty);
+
+                for (int i = 0; i < vN(scope->owned); ++i) {
+                        dict_put_member(
+                                ty,
+                                locals,
+                                v__(scope->owned, i)->identifier,
+                                v__(localv, i)
+                        );
+                }
+
+                vAp(trace, PAIR(entry, DICT(locals)));
+        }
+
+        GC_RESUME();
+
+        return ARRAY(trace);
 }
 
 Value
@@ -4723,7 +4840,7 @@ AssignGlobal:
                 CASE(BAD_MATCH)
                         MatchError;
                 CASE(BAD_DISPATCH);
-                        push(TAG(gettag(ty, NULL, "DispatchError")));
+                        push(TAG(TAG_DISPATCH_ERR));
                         vvX(FRAMES);
                         IP = *vvX(CALLS);
                         RaiseException(ty);
@@ -4810,22 +4927,24 @@ AssignGlobal:
                         break;
                 }
                 CASE(CATCH)
+                        PopThrowCtx(ty);
                         vvL(TRY_STACK)[0]->state = TRY_FINALLY;
                         break;
                 CASE(TRY)
                 {
                         struct try *t;
-                        usize ntry = TRY_STACK.count;
+                        usize ntry = vN(TRY_STACK);
 
-                        if (UNLIKELY(ntry == TRY_STACK.capacity)) {
+                        if (UNLIKELY(ntry == vC(TRY_STACK))) {
                                 do {
                                         t = alloc0(sizeof *t);
                                         xvP(TRY_STACK, t);
-                                } while (TRY_STACK.count != TRY_STACK.capacity);
-                                TRY_STACK.count = ntry;
+                                } while (vN(TRY_STACK) != vC(TRY_STACK));
+                                vN(TRY_STACK) = ntry;
                         }
 
-                        t = TRY_STACK.items[TRY_STACK.count++];
+                        t = *vZ(TRY_STACK);
+                        vN(TRY_STACK) += 1;
 
                         if (setjmp(t->jb) != 0) {
                                 break;
@@ -4840,13 +4959,13 @@ AssignGlobal:
                         READVALUE(n);
                         t->end = (n == -1) ? NULL : IP + n;
 
-                        t->sp = STACK.count;
+                        t->sp = vN(STACK);
                         t->gc = vN(RootSet);
-                        t->cs = CALLS.count;
-                        t->ts = TARGETS.count;
-                        t->ds = DROP_STACK.count;
-                        t->ctxs = FRAMES.count;
-                        t->nsp = SP_STACK.count;
+                        t->cs = vN(CALLS);
+                        t->ts = vN(TARGETS);
+                        t->ds = vN(DROP_STACK);
+                        t->ctxs = vN(FRAMES);
+                        t->nsp = vN(SP_STACK);
                         t->executing = false;
                         t->state = TRY_TRY;
                         t->ed = EXEC_DEPTH;
@@ -4855,6 +4974,9 @@ AssignGlobal:
 
                         break;
                 }
+                CASE(TRACE)
+                        push(ResolveTrace(ty, CurrentThrowCtx(ty)));
+                        break;
                 CASE(DROP)
                         DoDrop(ty);
                         break;
@@ -6359,6 +6481,29 @@ vm_init(Ty *ty, int ac, char **av)
         return true;
 }
 
+char *
+FormatTrace(Ty *ty, ThrowCtx const *ctx, byte_vector *out)
+{
+        byte_vector message = {0};
+
+        if (out == NULL) {
+                out = &message;
+        }
+
+        for (int i = 0; i < vN(*ctx); ++i) {
+                char *ip = (char *)v__(*ctx, i);
+                Expr const *expr = compiler_find_expr(ty, ip - 1);
+
+                WriteExpressionTrace(ty, out, expr, 0, i == 0);
+
+                if (expr != NULL && expr->origin != NULL) {
+                        WriteExpressionOrigin(ty, out, expr->origin);
+                }
+        }
+
+        return vv(*out);
+}
+
 static void
 xDcringe(Ty *ty)
 {
@@ -6400,47 +6545,115 @@ Next:
         }
 }
 
-noreturn void
-vm_panic(Ty *ty, char const *fmt, ...)
+void
+CaptureContextEx(Ty *ty, ThrowCtx *ctx)
+{
+        co_state st = ty->st;
+        char const *ip = IP;
+        char const *up;
+
+        for (;;) {
+                if (
+                        (vN(st.frames) > 0)
+                     && is_hidden_fun(&vvL(st.frames)->f)
+                ) {
+                        goto Next;
+                }
+
+                i32 fp;
+                i32 nvar;
+                if (vN(st.frames) > 0) {
+                        Frame *frame = vvL(st.frames);
+                        fp = frame->fp;
+                        nvar = frame->f.info[FUN_INFO_BOUND];
+                } else {
+                        fp = 0;
+                        nvar = 0;
+                }
+
+                ValueVector locals = {0};
+                xvPn(locals, vv(STACK) + fp, nvar);
+
+                xvP(*ctx, (void *)ip);
+                xvP(ctx->locals, locals);
+
+                if (
+                        (vN(st.frames) == 1)
+                     && ((up = co_up(ty, &st)) != NULL)
+                ) {
+                        ip = up;
+                        continue;
+                }
+
+                if (vN(st.frames) == 0) {
+                        break;
+                }
+Next:
+                ip = vvX(st.frames)->ip;
+        }
+}
+
+void
+CaptureContext(Ty *ty, ThrowCtx *ctx)
+{
+        co_state st = ty->st;
+        char const *ip = IP;
+        char const *up;
+
+        for (;;) {
+                if (
+                        (vN(st.frames) > 0)
+                     && is_hidden_fun(&vvL(st.frames)->f)
+                ) {
+                        goto Next;
+                }
+
+                xvP(*ctx, (void *)ip);
+
+                if (
+                        (vN(st.frames) == 1)
+                     && ((up = co_up(ty, &st)) != NULL)
+                ) {
+                        ip = up;
+                        continue;
+                }
+
+                if (vN(st.frames) == 0) {
+                        break;
+                }
+Next:
+                ip = vvX(st.frames)->ip;
+        }
+
+        xvP(*ctx, NULL);
+}
+
+inline static void
+FormatPanicEntryFor(Ty *ty, byte_vector *buf, char const *ip)
+{
+        Expr const *expr = compiler_find_expr(ty, ip - 1);
+
+        WriteExpressionTrace(ty, buf, expr, 0, false);
+        if (expr != NULL && expr->origin != NULL) {
+                WriteExpressionOrigin(ty, buf, expr->origin);
+        }
+}
+
+static noreturn void
+vm_vpanic_ex(Ty *ty, ThrowCtx const *ctx, char const *fmt, va_list _ap)
 {
         va_list ap;
-        va_start(ap, fmt);
 
         ErrorBuffer.count = 0;
 
+        va_copy(ap, _ap);
         dump(&ErrorBuffer, "%s%sRuntimeError%s%s: ", TERM(1), TERM(31), TERM(22), TERM(39));
         vdump(&ErrorBuffer, fmt, ap);
         va_end(ap);
 
         dump(&ErrorBuffer, "%c", '\n');
 
-        for (int i = 0; IP != NULL; ++i) {
-                if (vN(FRAMES) > 0 && ((char *)vvL(FRAMES)->f.info)[FUN_HIDDEN]) {
-                        /*
-                         * This code is part of a hidden function -- we don't want it
-                         * to show up in stack traces.
-                         */
-                        goto Next;
-                }
-
-                Expr const *expr = compiler_find_expr(ty, IP - 1);
-
-                WriteExpressionTrace(ty, &ErrorBuffer, expr, 0, i == 0);
-                if (expr != NULL && expr->origin != NULL) {
-                        WriteExpressionOrigin(ty, &ErrorBuffer, expr->origin);
-                }
-
-                while (vN(FRAMES) == 0 && co_abort(ty)) {
-                        ;
-                }
-
-                if (vN(FRAMES) == 0) {
-                        break;
-                }
-
-Next:
-                IP = (char *)vvX(FRAMES)->ip;
-        }
+        FormatTrace(ty, ctx, &ErrorBuffer);
 
         if (CompilationDepth(ty) > 1) {
                 dump(
@@ -6456,6 +6669,32 @@ Next:
         XLOG("VM Error: %s", vv(ErrorBuffer));
 
         TY_THROW_ERROR();
+}
+
+noreturn void
+vm_panic_ex(Ty *ty, ThrowCtx const *ctx, char const *fmt, ...)
+{
+        va_list ap;
+
+        va_start(ap, fmt);
+        vm_vpanic_ex(ty, ctx, fmt, ap);
+        va_end(ap);
+
+        UNREACHABLE();
+}
+
+noreturn void
+vm_panic(Ty *ty, char const *fmt, ...)
+{
+        va_list ap;
+
+        ThrowCtx *ctx = PushThrowCtx(ty);
+
+        va_start(ap, fmt);
+        vm_panic_ex(ty, ctx, fmt, ap);
+        va_end(ap);
+
+        UNREACHABLE();
 }
 
 noreturn void
@@ -7034,16 +7273,11 @@ vm_throw(Ty *ty, Value const *v)
 {
         push(*v);
 
-        xvP(THROW_STACK, ((ThrowCtx) {
-                .ctxs = FRAMES.count,
-                .ip = IP
-        }));
+        PushThrowCtx(ty);
+        DoThrow(ty);
+        vm_exec(ty, IP);
 
-        if (!DoThrow(ty)) {
-                vm_exec(ty, IP);
-        }
-
-        abort();
+        UNREACHABLE();
 }
 
 FrameStack *
@@ -7210,7 +7444,7 @@ vm_call(Ty *ty, Value const *f, int argc)
                         return vm_2op(ty, f->bop, &a, &b);
 
                 default:
-                        vm_throw(ty, &TAG(gettag(ty, NULL, "DispatchError")));
+                        vm_throw(ty, &TAG(TAG_DISPATCH_ERR));
                 }
 
         case VALUE_TAG:
@@ -7324,7 +7558,7 @@ vm_eval_function(Ty *ty, Value const *f, ...)
                         return vm_2op(ty, f->bop, &a, &b);
 
                 default:
-                        vmE(&TAG(gettag(ty, NULL, "DispatchError")));
+                        vmE(&TAG(TAG_DISPATCH_ERR));
                 }
 
         case VALUE_TAG:
@@ -7430,6 +7664,17 @@ MarkStorage(Ty *ty)
                 struct try *t = v__(TRY_STACK, i);
                 for (int i = 0; i < vN(t->defer); ++i) {
                         value_mark(ty, v_(t->defer, i));
+                }
+        }
+
+        GCLOG("Marking throw stack");
+        for (int i = 0; i < vN(THROW_STACK); ++i) {
+                ThrowCtx *ctx = v__(THROW_STACK, i);
+                for (int i = 0; i < vN(ctx->locals); ++i) {
+                        ValueVector const *locals = v_(ctx->locals, i);
+                        for (int i = 0; i < vN(*locals); ++i) {
+                                value_mark(ty, v_(*locals, i));
+                        }
                 }
         }
 
@@ -8029,11 +8274,9 @@ tdb_eval_hook(Ty *ty)
 {
 }
 
-Value
-tdb_locals(Ty *ty)
+static Value
+LocalsDict(Ty *ty)
 {
-        ty = TDB->host;
-
         if (vN(FRAMES) == 0) {
                 return NIL;
         }
@@ -8057,6 +8300,12 @@ tdb_locals(Ty *ty)
         }
 
         return DICT(locals);
+}
+
+Value
+tdb_locals(Ty *ty)
+{
+        return LocalsDict(TDB->host);
 }
 
 void
@@ -8437,6 +8686,12 @@ End:
         TyBarrierWait(&MyGroup->GCBarrierDone);
 
         return ok;
+}
+
+noreturn void
+ZeroDividePanic(Ty *ty)
+{
+        vmE(&TAG(TAG_ZERO_DIV_ERR));
 }
 
 /* vim: set sts=8 sw=8 expandtab: */

@@ -27,6 +27,8 @@ usize TotalBytesAllocated = 0;
 bool ColorStdout;
 bool ColorStderr;
 
+bool CheckConstraints = true;
+bool DetailedExceptions = false;
 bool CompileOnly = true;
 bool AllowErrors = false;
 

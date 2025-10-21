@@ -166,15 +166,27 @@ op_builtin_div(Ty *ty)
 
         switch (PACK_TYPES(left->type, right->type)) {
         case PAIR_OF(VALUE_INTEGER):
+                if (right->integer == 0) {
+                        ZeroDividePanic(ty);
+                }
                 COMPLETE(INTEGER(left->integer / right->integer));
 
         case PAIR_OF(VALUE_REAL):
+                if (right->real == 0.0) {
+                        ZeroDividePanic(ty);
+                }
                 COMPLETE(REAL(left->real / right->real));
 
         case PACK_TYPES(VALUE_REAL, VALUE_INTEGER):
+                if (right->integer == 0) {
+                        ZeroDividePanic(ty);
+                }
                 COMPLETE(REAL(left->real / right->integer));
 
         case PACK_TYPES(VALUE_INTEGER, VALUE_REAL):
+                if (right->real == 0.0) {
+                        ZeroDividePanic(ty);
+                }
                 COMPLETE(REAL(left->integer / right->real));
         }
 
@@ -243,12 +255,24 @@ op_builtin_mod(Ty *ty)
 
         switch (PACK_TYPES(left->type, right->type)) {
         case PACK_TYPES(VALUE_INTEGER, VALUE_INTEGER):
+                if (right->integer == 0) {
+                        ZeroDividePanic(ty);
+                }
                 COMPLETE(INTEGER(left->integer % right->integer));
         case PACK_TYPES(VALUE_REAL, VALUE_INTEGER):
+                if (right->integer == 0) {
+                        ZeroDividePanic(ty);
+                }
                 COMPLETE(REAL(fmod(left->real, right->integer)));
         case PACK_TYPES(VALUE_INTEGER, VALUE_REAL):
+                if (right->real == 0.0) {
+                        ZeroDividePanic(ty);
+                }
                 COMPLETE(REAL(fmod(left->integer, right->real)));
         case PACK_TYPES(VALUE_REAL, VALUE_REAL):
+                if (right->real == 0.0) {
+                        ZeroDividePanic(ty);
+                }
                 COMPLETE(REAL(fmod(left->real, right->real)));
         }
 
