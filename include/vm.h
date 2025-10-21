@@ -19,6 +19,9 @@ bool
 vm_init(Ty *ty, int ac, char **av);
 
 noreturn void
+vm_panic_ex(Ty *ty, ThrowCtx const *ctx, char const *fmt, ...);
+
+noreturn void
 vm_panic(Ty *ty, char const *fmt, ...);
 
 void
@@ -132,6 +135,18 @@ DebugAddBreak(Ty *ty, Value const *f);
 
 bool
 TyReloadModule(Ty *ty, char const *module);
+
+char *
+FormatTrace(Ty *ty, ThrowCtx const *ctx, byte_vector *out);
+
+void
+CaptureContext(Ty *ty, ThrowCtx *ctx);
+
+void
+CaptureContextEx(Ty *ty, ThrowCtx *ctx);
+
+noreturn void
+ZeroDividePanic(Ty *ty);
 
 #endif
 

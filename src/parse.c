@@ -3165,7 +3165,7 @@ prefix_array(Ty *ty)
         consume('[');
 
         /*
-         * function sum [match] {
+         * fn sum [match] {
          *      [x, *xs] => x + sum(*xs),
          *      []       => 0,
          * }

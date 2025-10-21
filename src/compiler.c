@@ -198,7 +198,6 @@ char const *QueryFile;
 Symbol const *QueryResult;
 Expr const *QueryExpr;
 
-bool CheckConstraints = true;
 bool ProduceAnnotation = true;
 usize GlobalCount = 0;
 
@@ -1380,6 +1379,14 @@ add_location(Ty *ty, Expr const *e, usize start_off, usize end_off)
                 return;
         }
 
+        switch (e->type) {
+        case EXPRESSION_STATEMENT:
+        case STATEMENT_EXPRESSION:
+        case STATEMENT_MULTI:
+        case STATEMENT_BLOCK:
+                return;
+        }
+
         dont_printf(
                 "Location: (%zu, %zu) (%d) '%.*s'\n",
                 start_off,
@@ -1421,24 +1428,6 @@ add_location_info(Ty *ty)
         xvP(location_lists, STATE.expression_locations);
 }
 
-inline static void
-begin_finally(Ty *ty)
-{
-        vvL(STATE.tries)->finally = true;
-}
-
-inline static void
-end_finally(Ty *ty)
-{
-        vvL(STATE.tries)->finally = false;
-}
-
-inline static bool
-inside_finally(Ty *ty)
-{
-        return vN(STATE.tries) != 0 && vvL(STATE.tries)->finally;
-}
-
 inline static TryState *
 get_try(Ty *ty, int i)
 {
@@ -1449,19 +1438,26 @@ get_try(Ty *ty, int i)
         }
 }
 
-inline static void
+inline static int
+get_try_ctx(Ty *ty)
+{
+        TryState *try = get_try(ty, 0);
+        return (try != NULL) ? try->ctx : TRY_NONE;
+}
+
+inline static TryState *
 begin_try(Ty *ty)
 {
-        avP(STATE.tries, ((TryState) {
+        return avP(STATE.tries, ((TryState) {
                 .t = ++t,
-                .finally = false
+                .ctx = TRY_TRY
         }));
 }
 
-inline static void
+inline static TryState *
 end_try(Ty *ty)
 {
-        vvX(STATE.tries);
+        return vvX(STATE.tries);
 }
 
 inline static LoopState *
@@ -2145,7 +2141,7 @@ resolve_access(Ty *ty, Scope const *scope, char **parts, int n, Expr *e, bool st
                 fc.kws = e->method_kws;
                 fc.fconds = e->mconds;
 
-                vec_init(fc.fkwconds);
+                v00(fc.fkwconds);
                 for (usize i = 0; i < vN(fc.kws); ++i) {
                         avP(fc.fkwconds, NULL);
                 }
@@ -2568,8 +2564,8 @@ try_fun_macro_op(Ty *ty, Scope *scope, Expr *e)
         e->type = EXPRESSION_FUNCTION_CALL;
         e->function = fun;
 
-        vec_init(e->args);
-        vec_init(e->fconds);
+        v00(e->args);
+        v00(e->fconds);
 
         avP(e->args, left);
         avP(e->fconds, NULL);
@@ -3342,7 +3338,7 @@ invoke_fun_macro(Ty *ty, Scope *scope, Expr *e)
         v00(STATE.expression_locations);
 
         byte_vector code_save = STATE.code;
-        vec_init(STATE.code);
+        v00(STATE.code);
 
         ProgramAnnotation annotation = STATE.annotation;
         STATE.annotation = (ProgramAnnotation) {0};
@@ -3739,6 +3735,22 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                 if (e->module == NULL && strcmp(e->identifier, "__line__") == 0) {
                         e->type = EXPRESSION_INTEGER;
                         e->integer = STATE.start.line + 1;
+                        break;
+                }
+
+                if (e->module == NULL && strcmp(e->identifier, "__trace__") == 0) {
+                        if (get_try_ctx(ty) != TRY_CATCH) {
+                                fail(
+                                        "%s%s%s%s%s can only be used inside a catch block",
+                                        TERM(1),
+                                        TERM(33),
+                                        e->identifier,
+                                        TERM(39),
+                                        TERM(22)
+                                );
+                        } else {
+                                e->type = EXPRESSION_TRACE;
+                        }
                         break;
                 }
 
@@ -4152,6 +4164,10 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
         case EXPRESSION_GENERATOR:
         case EXPRESSION_MULTI_FUNCTION:
         case EXPRESSION_FUNCTION:
+        {
+                TryStates tries = STATE.tries;
+                v00(STATE.tries);
+
                 STATE.func = e;
 
                 // TODO
@@ -4247,6 +4263,7 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                 vN(e->bound_symbols) = vN(e->scope->owned);
 
                 STATE.func = func;
+                STATE.tries = tries;
 
                 if (e->type == EXPRESSION_MULTI_FUNCTION) {
                         e->_type = NULL;
@@ -4323,6 +4340,7 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
 #endif
 
                 break;
+        }
         case EXPRESSION_WITH:
                 subscope = scope_new(ty, "(with)", scope, false);
                 symbolize_statement(ty, subscope, e->with.block);
@@ -4964,18 +4982,22 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
                 break;
         case STATEMENT_TRY:
         {
+                begin_try(ty);
+
                 symbolize_statement(ty, scope, s->try.s);
 
+                get_try(ty, 0)->ctx = TRY_CATCH;
                 for (int i = 0; i < vN(s->try.patterns); ++i) {
                         Scope *catch = scope_new(ty, "(catch)", scope, false);
                         symbolize_pattern(ty, catch, v__(s->try.patterns, i), NULL, true);
                         symbolize_statement(ty, catch, v__(s->try.handlers, i));
                 }
 
+                get_try(ty, 0)->ctx = TRY_CATCH;
                 symbolize_statement(ty, scope, s->try.finally);
 
+                s->try.need_trace = end_try(ty)->need_trace;
                 break;
-
         }
         case STATEMENT_MATCH:
                 s->will_return = vN(s->match.statements) > 0;
@@ -5212,7 +5234,7 @@ patch_loop_jumps(Ty *ty, usize begin, usize end)
 inline static void
 InitJumpGroup(JumpGroup *jg)
 {
-        vec_init(*jg);
+        v00(*jg);
         jg->label = STATE.label++;
 }
 
@@ -5748,10 +5770,10 @@ emit_function(Ty *ty, Expr const *e)
         vN(STATE.bound_symbols) = vN(e->bound_symbols);
 
         LoopStates loops = STATE.loops;
-        vec_init(STATE.loops);
+        v00(STATE.loops);
 
         TryStates tries = STATE.tries;
-        vec_init(STATE.tries);
+        v00(STATE.tries);
 
         int t_save = t;
         t = 0;
@@ -6257,7 +6279,7 @@ emit_return_check(Ty *ty, Expr const *f)
 static bool
 emit_return(Ty *ty, Stmt const *s)
 {
-        if (inside_finally(ty)) {
+        if (get_try_ctx(ty) == TRY_FINALLY) {
                 fail("invalid return statement (occurs in a finally block)");
         }
 
@@ -6380,12 +6402,20 @@ emit_try(Ty *ty, Stmt const *s, bool want_result)
         PLACEHOLDER_JUMP(JUMP, finally);
 
         offset_vector successes_save = STATE.match_successes;
-        vec_init(STATE.match_successes);
+        v00(STATE.match_successes);
 
         PATCH_OFFSET(catch_offset);
 
+        get_try(ty, 0)->ctx = TRY_CATCH;
+
         for (int i = 0; i < vN(s->try.patterns); ++i) {
-                returns &= emit_catch(ty, v__(s->try.patterns, i), NULL, v__(s->try.handlers, i), want_result);
+                returns &= emit_catch(
+                        ty,
+                        v__(s->try.patterns, i),
+                        NULL,
+                        v__(s->try.handlers, i),
+                        want_result
+                );
         }
 
         INSN(RETHROW);
@@ -6399,9 +6429,8 @@ emit_try(Ty *ty, Stmt const *s, bool want_result)
         PATCH_OFFSET(finally_offset);
 
         if (s->try.finally != NULL) {
-                begin_finally(ty);
+                get_try(ty, 0)->ctx = TRY_FINALLY;
                 returns &= emit_statement(ty, s->try.finally, false);
-                end_finally(ty);
         }
 
         INSN(END_TRY);
@@ -6418,8 +6447,9 @@ emit_for_loop(Ty *ty, Stmt const *s, bool want_result)
 {
         begin_loop(ty, want_result, 0);
 
-        if (s->for_loop.init != NULL)
+        if (s->for_loop.init != NULL) {
                 emit_statement(ty, s->for_loop.init, false);
+        }
 
         PLACEHOLDER_JUMP(JUMP, skip_next);
 
@@ -6441,11 +6471,13 @@ emit_for_loop(Ty *ty, Stmt const *s, bool want_result)
 
         JUMP(begin);
 
-        if (s->for_loop.cond != NULL)
+        if (s->for_loop.cond != NULL) {
                 PATCH_JUMP(end_jump);
+        }
 
-        if (want_result)
+        if (want_result) {
                 INSN(NIL);
+        }
 
         patch_loop_jumps(ty, begin.off, vN(STATE.code));
 
@@ -6786,8 +6818,9 @@ emit_try_match_(Ty *ty, Expr const *pattern)
                 need_loc = true;
         }
 
-        if (KEEP_LOCATION(pattern) || need_loc)
+        if (KEEP_LOCATION(pattern) || need_loc) {
                 add_location(ty, pattern, start, vN(STATE.code));
+        }
 }
 
 static void
@@ -6800,7 +6833,6 @@ static bool
 emit_catch(Ty *ty, Expr const *pattern, Expr const *cond, Stmt const *s, bool want_result)
 {
         JumpGroup fails_save = STATE.match_fails;
-
         InitJumpGroup(&STATE.match_fails);
 
         INSN(SAVE_STACK_POS);
@@ -6916,7 +6948,7 @@ emit_expression_case(Ty *ty, Expr const *pattern, Expr const *e)
         InitJumpGroup(&STATE.match_fails);
 
         expression_vector assignments = STATE.match_assignments;
-        vec_init(STATE.match_assignments);
+        v00(STATE.match_assignments);
 
         if (pattern->has_resources) {
                 INSN(PUSH_DROP_GROUP);
@@ -6969,7 +7001,7 @@ static bool
 emit_match_statement(Ty *ty, Stmt const *s, bool want_result)
 {
         offset_vector successes_save = STATE.match_successes;
-        vec_init(STATE.match_successes);
+        v00(STATE.match_successes);
 
         EE(s->match.e);
 
@@ -7014,7 +7046,7 @@ emit_while_match(Ty *ty, Stmt const *s, bool want_result)
         begin_loop(ty, want_result, 0);
 
         offset_vector successes_save = STATE.match_successes;
-        vec_init(STATE.match_successes);
+        v00(STATE.match_successes);
 
         LABEL(begin);
 
@@ -7062,7 +7094,7 @@ emit_while(Ty *ty, Stmt const *s, bool want_result)
         begin_loop(ty, want_result, 0);
 
         offset_vector successes_save = STATE.match_successes;
-        vec_init(STATE.match_successes);
+        v00(STATE.match_successes);
 
         JumpGroup fails_save = STATE.match_fails;
         InitJumpGroup(&STATE.match_fails);
@@ -7126,13 +7158,13 @@ static bool
 emit_if_not(Ty *ty, Stmt const *s, bool want_result)
 {
         offset_vector successes_save = STATE.match_successes;
-        vec_init(STATE.match_successes);
+        v00(STATE.match_successes);
 
         JumpGroup fails_save = STATE.match_fails;
         InitJumpGroup(&STATE.match_fails);
 
         expression_vector assignments = STATE.match_assignments;
-        vec_init(STATE.match_assignments);
+        v00(STATE.match_assignments);
 
         bool has_resources = false;
 
@@ -7209,7 +7241,7 @@ static bool
 emit_if(Ty *ty, Stmt const *s, bool want_result)
 {
         offset_vector successes_save = STATE.match_successes;
-        vec_init(STATE.match_successes);
+        v00(STATE.match_successes);
 
         /* Special case for 'if not' */
         if (s->iff.neg) {
@@ -7232,7 +7264,7 @@ emit_if(Ty *ty, Stmt const *s, bool want_result)
         InitJumpGroup(&STATE.match_fails);
 
         expression_vector assignments = STATE.match_assignments;
-        vec_init(STATE.match_assignments);
+        v00(STATE.match_assignments);
 
         bool has_resources = false;
 
@@ -7309,7 +7341,7 @@ static void
 emit_match_expression(Ty *ty, Expr const *e)
 {
         offset_vector successes_save = STATE.match_successes;
-        vec_init(STATE.match_successes);
+        v00(STATE.match_successes);
 
         EE(e->subject);
 
@@ -7391,7 +7423,7 @@ emit_dict_compr(Ty *ty, Expr const *e)
 
         offset_vector successes_save = STATE.match_successes;
         JumpGroup fails_save = STATE.match_fails;
-        vec_init(STATE.match_successes);
+        v00(STATE.match_successes);
         InitJumpGroup(&STATE.match_fails);
 
         INSN(SAVE_STACK_POS);
@@ -7501,7 +7533,7 @@ emit_array_compr(Ty *ty, Expr const *e)
 
         offset_vector successes_save = STATE.match_successes;
         JumpGroup fails_save = STATE.match_fails;
-        vec_init(STATE.match_successes);
+        v00(STATE.match_successes);
         InitJumpGroup(&STATE.match_fails);
 
         INSN(ARRAY0);
@@ -7766,7 +7798,7 @@ emit_for_each(Ty *ty, Stmt const *s, bool want_result)
         offset_vector successes_save = STATE.match_successes;
         JumpGroup         fails_save = STATE.match_fails;
 
-        vec_init(STATE.match_successes);
+        v00(STATE.match_successes);
         InitJumpGroup(&STATE.match_fails);
 
         INSN(PUSH_INDEX);
@@ -7862,7 +7894,7 @@ check_multi(Expr *target, Expr const *e, int *n)
         for (*n = 0; *n < vN(e->es); ++*n) {
                 if (
                         is_call(v__(e->es, *n))
-                     || v__(e->es, *n)->type == EXPRESSION_SPREAD
+                     || (v__(e->es, *n)->type == EXPRESSION_SPREAD)
                 ) {
                         return true;
                 }
@@ -8302,6 +8334,10 @@ emit_expr(Ty *ty, Expr const *e, bool need_loc)
                 EE(e->operand);
                 INSN(EVAL);
                 emit_symbol((uptr)e->escope);
+                break;
+
+        case EXPRESSION_TRACE:
+                INSN(TRACE);
                 break;
 
         case EXPRESSION_TAG:
@@ -10634,7 +10670,7 @@ compiler_find_expr_x(Ty *ty, char const *code, bool func)
                 }
 
                 if (
-                        func && !(
+                        func != (
                                 (locs->items[i].e->type == EXPRESSION_FUNCTION)
                              || (locs->items[i].e->type == EXPRESSION_MULTI_FUNCTION)
                              || (locs->items[i].e->type == EXPRESSION_GENERATOR)
@@ -10643,7 +10679,7 @@ compiler_find_expr_x(Ty *ty, char const *code, bool func)
                         continue;
                 }
 
-                ptrdiff_t width = locs->items[i].p_end - locs->items[i].p_start;
+                ptrdiff_t width = (locs->items[i].p_end - locs->items[i].p_start);
 
                 if (width < match_width) {
                         match_index = i;
@@ -12133,8 +12169,8 @@ cstmt(Ty *ty, Value *v)
         {
                 s->type = STATEMENT_TRY;
 
-                vec_init(s->try.handlers);
-                vec_init(s->try.patterns);
+                v00(s->try.handlers);
+                v00(s->try.patterns);
 
                 Value *vBody = tuple_get(v, "body");
                 Value *vCatches = tuple_get(v, "catches");
@@ -12172,9 +12208,9 @@ cstmt(Ty *ty, Value *v)
         {
                 s->type = STATEMENT_MATCH;
                 s->match.e = cexpr(ty, &v->items[0]);
-                vec_init(s->match.patterns);
-                vec_init(s->match.statements);
-                vec_init(s->match.conds);
+                v00(s->match.patterns);
+                v00(s->match.statements);
+                v00(s->match.conds);
                 Value *cases = &v->items[1];
                 for (int i = 0; i < cases->array->count; ++i) {
                         Value *_case = &cases->array->items[i];
@@ -12192,9 +12228,9 @@ cstmt(Ty *ty, Value *v)
         {
                 s->type = STATEMENT_WHILE_MATCH;
                 s->match.e = cexpr(ty, &v->items[0]);
-                vec_init(s->match.patterns);
-                vec_init(s->match.statements);
-                vec_init(s->match.conds);
+                v00(s->match.patterns);
+                v00(s->match.statements);
+                v00(s->match.conds);
                 Value *cases = &v->items[1];
                 for (int i = 0; i < cases->array->count; ++i) {
                         Value *_case = &cases->array->items[i];
@@ -12241,7 +12277,7 @@ cstmt(Ty *ty, Value *v)
         case TyReturn:
         {
                 s->type = STATEMENT_RETURN;
-                vec_init(s->returns);
+                v00(s->returns);
                 if (wrapped_type(ty, v) == VALUE_TUPLE) {
                         for (int i = 0; i < v->count; ++i) {
                                 avP(s->returns, cexpr(ty, &v->items[i]));
@@ -12288,7 +12324,7 @@ cstmt(Ty *ty, Value *v)
         }
         case TyBlock:
                 s->type = STATEMENT_BLOCK;
-                vec_init(s->statements);
+                v00(s->statements);
                 for (int i = 0; i < v->array->count; ++i) {
                         if (v->array->items[i].type == VALUE_NIL) {
                                 fail("nil in block: %s", value_show_color(ty, v));
@@ -12298,7 +12334,7 @@ cstmt(Ty *ty, Value *v)
                 break;
         case TyMulti:
                 s->type = STATEMENT_MULTI;
-                vec_init(s->statements);
+                v00(s->statements);
                 for (int i = 0; i < v->array->count; ++i) {
                         avP(s->statements, cstmt(ty, &v->array->items[i]));
                 }
@@ -12908,7 +12944,7 @@ cexpr(Ty *ty, Value *v)
         }
         case TyYield:
                 e->type = EXPRESSION_YIELD;
-                vec_init(e->es);
+                v00(e->es);
                 if ((v->type & ~VALUE_TAGGED) == VALUE_ARRAY) {
                         for (int i = 0; i < v->array->count; ++i) {
                                 avP(e->es, cexpr(ty, &v->array->items[i]));
@@ -13369,10 +13405,10 @@ tyeval(Ty *ty, Expr *e)
         }
 
         byte_vector code_save = STATE.code;
-        vec_init(STATE.code);
+        v00(STATE.code);
 
         location_vector locs_save = STATE.expression_locations;
-        vec_init(STATE.expression_locations);
+        v00(STATE.expression_locations);
 
         EE(e);
         INSN(HALT);
@@ -13404,10 +13440,10 @@ compiler_eval(
         symbolize_expression(ty, STATE.global, e);
 
         byte_vector code_save = STATE.code;
-        vec_init(STATE.code);
+        v00(STATE.code);
 
         add_location_info(ty);
-        vec_init(STATE.expression_locations);
+        v00(STATE.expression_locations);
 
         ProgramAnnotation annotation = STATE.annotation;
         STATE.annotation = (ProgramAnnotation) {0};
@@ -13415,13 +13451,13 @@ compiler_eval(
         EE(e);
         INSN(HALT);
 
-        vec_init(STATE.expression_locations);
+        v00(STATE.expression_locations);
 
         vm_exec(ty, vv(STATE.code));
 
         STATE.code = code_save;
         STATE.annotation = annotation;
-        vec_init(STATE.expression_locations);
+        v00(STATE.expression_locations);
 
         Value v = *vm_get(ty, 0);
         vmX();
@@ -14025,10 +14061,10 @@ define_macro(Ty *ty, Stmt *s, bool fun)
         s->type = STATEMENT_FUNCTION_DEFINITION;
 
         add_location_info(ty);
-        vec_init(STATE.expression_locations);
+        v00(STATE.expression_locations);
 
         byte_vector code_save = STATE.code;
-        vec_init(STATE.code);
+        v00(STATE.code);
 
         ProgramAnnotation an = STATE.annotation;
         STATE.annotation = (ProgramAnnotation){0};
@@ -14040,7 +14076,7 @@ define_macro(Ty *ty, Stmt *s, bool fun)
         STATE.annotation = an;
 
         add_location_info(ty);
-        vec_init(STATE.expression_locations);
+        v00(STATE.expression_locations);
 
         void *ctx = PushContext(ty, s);
         vm_exec(ty, vv(STATE.code));
@@ -14171,9 +14207,9 @@ inline static int
 ExpressionTypeWidth(Expr const *e)
 {
         if (
-                e == NULL ||
-                e->type == EXPRESSION_STATEMENT ||
-                e->type == STATEMENT_EXPRESSION
+                (e == NULL)
+             && (e->type == EXPRESSION_STATEMENT)
+             && (e->type == STATEMENT_EXPRESSION)
         ) {
                 return 0;
         }
@@ -14187,9 +14223,9 @@ WriteExpressionOrigin(Ty *ty, byte_vector *out, Expr const *e)
         char buffer[512];
 
         if (
-                e == NULL ||
-                e->type == EXPRESSION_STATEMENT ||
-                e->type == STATEMENT_EXPRESSION
+                (e == NULL)
+             || (e->type == EXPRESSION_STATEMENT)
+             || (e->type == STATEMENT_EXPRESSION)
         ) {
                 return 0;
         }
@@ -14304,10 +14340,23 @@ WriteExpressionOrigin(Ty *ty, byte_vector *out, Expr const *e)
         return n;
 }
 
-inline static Value
-TraceEntryFor(Ty *ty, Expr const *e)
+Value
+TyTraceEntryFor(Ty *ty, Expr const *e)
 {
-        return vTn(
+        Value trace;
+        Value func = NIL;
+        Value class = NIL;
+
+        GC_STOP();
+        if (e->xfunc != NULL) {
+                if (e->xfunc->name != NULL) {
+                        func = vSsz(e->xfunc->name);
+                }
+                if (e->xfunc->class != -1) {
+                        class = vSsz(class_name(ty, e->xfunc->class));
+                }
+        }
+        trace = vTn(
                 "file", (e->mod == NULL || e->mod->path == NULL) ? NIL : xSz(e->mod->path),
                 "module", vSsz(GetExpressionModule(e)),
                 "start", vTn(
@@ -14318,8 +14367,12 @@ TraceEntryFor(Ty *ty, Expr const *e)
                         "line", INTEGER(e->end.line + 1),
                         "col", INTEGER(e->end.col + 1)
                 ),
-                "type", xSz(ExpressionTypeName(e))
+                "fn", func,
+                "class", class
         );
+        GC_RESUME();
+
+        return trace;
 }
 
 Value
@@ -14327,16 +14380,20 @@ CompilationTraceArray(Ty *ty)
 {
         Array *trace = vA();
 
+        GC_STOP();
+
         for (ContextEntry *ctx = ContextList; ctx != NULL; ctx = ctx->next) {
                 if (
-                        ctx->e == NULL
-                     || ctx->e->type == EXPRESSION_STATEMENT
-                     || ctx->e->type == STATEMENT_EXPRESSION
+                        (ctx->e == NULL)
+                     || (ctx->e->type == EXPRESSION_STATEMENT)
+                     || (ctx->e->type == STATEMENT_EXPRESSION)
                 ) {
                         continue;
                 }
-                vAp(trace, TraceEntryFor(ty, ctx->e));
+                vAp(trace, TyTraceEntryFor(ty, ctx->e));
         }
+
+        GC_RESUME();
 
         return ARRAY(trace);
 }
@@ -14345,9 +14402,9 @@ void
 CompilationTrace(Ty *ty, byte_vector *out)
 {
         int etw = 0;
-        for (ContextEntry *ctx = ContextList; ctx != NULL; ctx = ctx->next) {
-                etw = max(etw, ExpressionTypeWidth(ctx->e));
-        }
+        //for (ContextEntry *ctx = ContextList; ctx != NULL; ctx = ctx->next) {
+        //        etw = max(etw, ExpressionTypeWidth(ctx->e));
+        //}
 
         for (ContextEntry *ctx = ContextList; ctx != NULL; ctx = ctx->next) {
                 while (ctx == ctx->next) {
@@ -14881,6 +14938,7 @@ DumpProgram(
                         READVALUE(n);
                         READVALUE(n);
                         READVALUE(n);
+                        READVALUE(b);
                         break;
                 }
                 CASE(DROP)

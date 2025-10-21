@@ -65,6 +65,7 @@ typedef intptr_t iptr;
 
 typedef vec(struct alloc *) AllocList;
 typedef vec(char *)         CallStack;
+typedef vec(void *)         ContextVector;
 typedef vec(cothread_t)     CoThreadVector;
 typedef vec(char const *)   ConstStringVector;
 typedef vec(Constraint)     ConstraintVector;
@@ -394,7 +395,7 @@ typedef struct {
         void *beg;
 } ScratchSave;
 
-enum { TRY_TRY, TRY_THROW, TRY_CATCH, TRY_FINALLY };
+enum { TRY_NONE, TRY_TRY, TRY_THROW, TRY_CATCH, TRY_FINALLY };
 enum { TY_SAVE_INTERNAL, TY_SAVE_USER };
 
 struct try {
@@ -412,6 +413,7 @@ struct try {
         ScratchSave ss;
 
         bool executing;
+        bool need_trace;
         u8 state;
         char *catch;
         char *finally;
@@ -424,9 +426,9 @@ struct ty_save {
         byte_vector msg;
 };
 
-typedef struct ThrowCtx {
-        int ctxs;
-        char const *ip;
+typedef struct {
+        intrusive_vec(void *);
+        vec(ValueVector) locals;
 } ThrowCtx;
 
 typedef struct ty0 {
@@ -520,7 +522,7 @@ typedef struct ty {
 
         CoThreadVector cothreads;
 
-        vec(ThrowCtx) throw_stack;
+        vec(void *) throw_stack;
 
         int eval_depth;
 
@@ -602,6 +604,8 @@ extern bool ColorStdout;
 extern bool ColorStderr;
 extern bool ColorProfile;
 
+extern bool CheckConstraints;
+extern bool DetailedExceptions;
 extern bool CompileOnly;
 extern bool AllowErrors;
 
@@ -874,6 +878,7 @@ extern usize TotalBytesAllocated;
         X(NOT),                   \
         X(QUESTION),              \
         X(COUNT),                 \
+        X(TRACE),                 \
         X(ENTER),                 \
         X(OPERATOR),              \
         X(PATCH_ENV),             \
@@ -931,6 +936,7 @@ enum {
 
 #define zP(...)    vm_error(ty, __VA_ARGS__)
 #define zPx(...)   vm_panic(ty, __VA_ARGS__)
+#define zPxx(...)   vm_panic_ex(ty, __VA_ARGS__)
 
 #define mRE(...)   resize(__VA_ARGS__)
 #define mREu(...)  resize_unchecked(__VA_ARGS__)

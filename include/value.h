@@ -226,6 +226,7 @@ enum {
         TAG_MATCH_ERR,
         TAG_INDEX_ERR,
         TAG_DISPATCH_ERR,
+        TAG_ZERO_DIV_ERR,
         TAG_NONE,
         TAG_SOME,
         TAG_OK,
@@ -1194,6 +1195,12 @@ expr_of(Value const *f)
         uintptr_t p;
         memcpy(&p, (char *)f->info + FUN_EXPR, sizeof p);
         return (Expr *)p;
+}
+
+inline static bool
+is_hidden_fun(Value const *f)
+{
+        return ((char *)f->info)[FUN_HIDDEN];
 }
 
 inline static Type *

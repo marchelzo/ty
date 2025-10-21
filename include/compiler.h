@@ -4,8 +4,6 @@
 #include "ty.h"
 #include "value.h"
 
-extern bool CheckConstraints;
-
 extern bool SuggestCompletions;
 extern bool FindDefinition;
 extern int QueryLine;
@@ -117,8 +115,9 @@ typedef struct {
 } RangeLoop;
 
 typedef struct try_state {
-        int t;
-        bool finally;
+        u32 t;
+        u8 ctx;
+        bool need_trace;
 } TryState;
 
 typedef vec(LoopState) LoopStates;
@@ -477,6 +476,9 @@ GetCompilerContext(Ty *ty);
 
 void
 SetCompilerContext(Ty *ty, void *ctx);
+
+Value
+TyTraceEntryFor(Ty *ty, Expr const *e);
 
 #endif
 

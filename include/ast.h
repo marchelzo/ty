@@ -244,6 +244,7 @@ typedef struct class_definition ClassDefinition;
         X(ENTER),                                                                     \
         X(PTR),                                                                       \
         X(EVAL),                                                                      \
+        X(TRACE),                                                                     \
         X(IFDEF),                                                                     \
         X(NONE),                                                                      \
         X(MULTI_FUNCTION),                                                            \
@@ -395,7 +396,7 @@ struct expression {
                 struct {
                         Expr *subject;
                         expression_vector patterns;
-                        vec(Expr *) thens;
+                        expression_vector thens;
                 };
                 struct {
                         char *name;
@@ -417,8 +418,8 @@ struct expression {
                                 };
                                 Expr *parent;
                         };
-                        vec(Symbol *) param_symbols;
-                        vec(Symbol *) bound_symbols;
+                        symbol_vector param_symbols;
+                        symbol_vector bound_symbols;
                         TypeBoundVector type_bounds;
                         Stmt *body;
                         Expr *overload;
@@ -504,15 +505,15 @@ struct statement {
                         Expr *expression;
                         int depth;
                 };
-                vec(Stmt *) statements;
+                statement_vector statements;
                 expression_vector returns;
                 vec(char *) exports;
                 vec(Symbol *) drop;
                 struct {
                         char *module;
                         char *as;
-                        vec(char *) identifiers;
-                        vec(char *) aliases;
+                        StringVector identifiers;
+                        StringVector aliases;
                         bool pub;
                         bool hiding;
                 } import;
@@ -546,14 +547,15 @@ struct statement {
                 struct {
                         Stmt *s;
                         expression_vector patterns;
-                        vec(Stmt *) handlers;
+                        statement_vector handlers;
                         Stmt *finally;
+                        bool need_trace;
                 } try;
                 struct {
                         Expr *e;
                         expression_vector patterns;
                         expression_vector conds;
-                        vec(Stmt *) statements;
+                        statement_vector statements;
                 } match;
                 struct {
                         condpart_vector parts;

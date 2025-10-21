@@ -69,6 +69,8 @@ bool ColorStderr;
 
 bool CompileOnly = false;
 bool AllowErrors = false;
+bool CheckConstraints = true;
+bool DetailedExceptions = false;
 
 extern bool ProduceAnnotation;
 extern FILE *DisassemblyOut;
@@ -604,22 +606,28 @@ ProcessArgs(char *argv[], bool first)
                                 case 'q':
                                         CheckConstraints = false;
                                         break;
+
                                 case 'b':
                                         basic = true;
                                         break;
+
                                 case 'c':
                                         CompileOnly = true;
                                         break;
+
                                 case 'd':
                                         if (!first) tdb_start(ty);
                                         break;
+
                                 case 'L':
                                         EnableLogging |= KindOfEnableLogging;
                                         KindOfEnableLogging = true;
                                         break;
+
                                 case 'p':
                                         PrintResult |= !first;
                                         break;
+
                                 case 't':
                                         ColorStdout = false;
                                         ColorStderr = false;
@@ -634,6 +642,11 @@ ProcessArgs(char *argv[], bool first)
                                                 while (opt[1] != '\0') ++opt;
                                         }
                                         break;
+
+                                case 'x':
+                                        DetailedExceptions = true;
+                                        break;
+
                                 case 'e':
                                         if (!first && !basic) pollute_with_bloat();
                                         if (opt[1] == '\0') {
@@ -647,6 +660,7 @@ ProcessArgs(char *argv[], bool first)
                                                 while (opt[1] != '\0') ++opt;
                                         }
                                         break;
+
                                 case 'f':
                                 case 'm':
                                 case 'M':
@@ -688,6 +702,7 @@ ProcessArgs(char *argv[], bool first)
                                         }
                                         break;
 #endif
+
                                 case 'S':
                                         if (opt[1] == '\0') {
                                                 if (argv[argi + 1] == NULL) {
@@ -700,6 +715,7 @@ ProcessArgs(char *argv[], bool first)
                                                 while (opt[1] != '\0') ++opt;
                                         }
                                         break;
+
                                 default:
                                         fprintf(stderr, "ty: unrecognized option `-%c`\n", *opt);
                                         exit(1);
