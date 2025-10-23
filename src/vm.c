@@ -6526,6 +6526,7 @@ FormatTrace(Ty *ty, ThrowCtx const *ctx, byte_vector *out)
                         if (
                                 DetailedExceptions
                              && ((func = compiler_find_func(ty, ip - 1)) != NULL)
+                             && (func->scope != NULL)
                              && (vN(func->scope->owned) > 0)
                         ) {
                                 ValueVector localv = v__(ctx->locals, i);
