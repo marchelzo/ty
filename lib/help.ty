@@ -373,7 +373,7 @@ fn type-completions(type: _, prefix: String) -> Array[_] {
     }
 }
 
-fn mod-completions(mod: Dict[String, _], prefix: String) -> [(Text, String)] {
+fn mod-completions(mod: Dict[String, _], prefix: String) -> [([Text | String], String)] {
     let completions = []
 
     for name, item in mod if name.starts?(prefix) {

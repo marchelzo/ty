@@ -47,7 +47,7 @@ class CompletionCycler {
     __ci:    Int
     __first: Bool
 
-    init(cs: [String], line: [String], i: Int) {
+    init(cs: Array[CompletionItem], line: Array[String], i: Int) {
         __i = i
         __line = line
         __cs = cs
@@ -55,7 +55,7 @@ class CompletionCycler {
         __first = true
     }
 
-    items -> [CompletionItem] {
+    items -> Array[CompletionItem] {
         __cs
     }
 
@@ -72,7 +72,7 @@ class CompletionCycler {
         let line = __line.clone()
         line.insert(__i, c)
 
-        return (line, __i + 1)
+        (line, __i + 1)
     }
 }
 
