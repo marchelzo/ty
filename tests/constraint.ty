@@ -1,3 +1,5 @@
+import ty
+
 fn f(x: Int, s: String) -> Float {
     return 0.4
 }
@@ -6,7 +8,7 @@ f(10, 'foo')
 
 try {
     __eval__('f(10, 20)')
-    print('FAIL')
+    print(ty.q ? 'PASS' : 'FAIL')
 } catch Err(msg) :: 'invalid argument type' in msg {
     print('PASS')
 }

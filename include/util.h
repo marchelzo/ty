@@ -451,6 +451,9 @@ u8_rune_sz(u8 const *str)
 bool
 get_directory_where_chad_looks_for_runtime_dependencies(char *buffer);
 
+bool
+get_terminal_size(int fd, int *rows, int *cols);
+
 #endif
 
 /* vim: set sts=8 sw=8 expandtab: */

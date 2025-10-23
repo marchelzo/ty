@@ -2,12 +2,6 @@ import os
 import time (now)
 import errno (ETIMEDOUT, EINTR)
 
-#|if __defined__(os::SIGKILL)
-let KILL_SIG = os.SIGKILL
-#|else
-let KILL_SIG = os.SIGTERM
-#|]
-
 #|if __windows__
 let SHELL = ['cmd.exe', '/c']
 #|else
@@ -23,9 +17,9 @@ pub use CmdResult = {
 
 pub function sh(
     cmd: String,
-    input: Blob | String = nil,
-    timeoutMs: Int = nil,
-    signal: Int = KILL_SIG,
+    input: Blob | String | nil = nil,
+    timeoutMs: Int | nil = nil,
+    signal: Int = os.SIGTERM,
     combineOutput: Bool = false,
     shareStderr: Bool = false,
     chdir: Int | String | Blob | nil = nil,

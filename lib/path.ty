@@ -262,24 +262,18 @@ pub class Path {
     }
 
     readlink -> Path {
-        match os.readlink(str(self)) {
+        match os.readlink("{self}") {
             $target => Path(target),
-            _ => throw PathError({msg: 'not a symlink', path: str(self)})
+            _       => throw os.OSError('readlink()')
         }
     }
 
     stat -> _ {
-        match os.stat(str(self)) {
-            $s => s,
-            _ => throw PathError({msg: 'stat failed', path: str(self)})
-        }
+        os.stat("{self}") ?? throw os.OSError('stat()')
     }
 
     lstat -> _ {
-        match os.lstat(str(self)) {
-            $s => s,
-            _ => throw PathError({msg: 'lstat failed', path: str(self)})
-        }
+        os.lstat("{self}") ?? throw os.OSError('stat()')
     }
 
     read-text() -> String {

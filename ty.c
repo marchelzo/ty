@@ -67,10 +67,12 @@ usize TotalBytesAllocated;
 bool ColorStdout;
 bool ColorStderr;
 
-bool CompileOnly = false;
-bool AllowErrors = false;
-bool CheckConstraints = true;
-bool DetailedExceptions = false;
+bool CompileOnly        = false;
+bool AllowErrors        = false;
+bool CheckTypes         = true;
+bool CheckConstraints   = true;
+bool DetailedExceptions = true;
+bool InteractiveSession = false;
 
 extern bool ProduceAnnotation;
 extern FILE *DisassemblyOut;
@@ -364,6 +366,8 @@ xxx(void)
 noreturn static void
 repl(Ty *ty)
 {
+        InteractiveSession = true;
+
         rl_attempted_completion_function = complete;
         rl_basic_word_break_characters = ".\t\n\r ";
 
@@ -604,7 +608,9 @@ ProcessArgs(char *argv[], bool first)
                         for (char const *opt = argv[argi] + 1; *opt != '\0'; ++opt) {
                                 switch (*opt) {
                                 case 'q':
+                                        CheckTypes = false;
                                         CheckConstraints = false;
+                                        DetailedExceptions = false;
                                         break;
 
                                 case 'b':

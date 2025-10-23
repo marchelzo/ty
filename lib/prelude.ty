@@ -264,6 +264,10 @@ class Class {
         type(other) != Class && other.is?(self)
     }
 
+    [](x) {
+        true
+    }
+
     static name(c) {
         c.__name__
     }
@@ -586,18 +590,6 @@ class Array[T] : Iterable[T] {
     }
 }
 
-macro _Param = ty.Param[{name: String, ?constraint: AST, ?default: AST}]
-             | ty.Gather[String]
-             | ty.Kwargs[String]
-
-macro _Func = {
-    ?name: String | nil,
-    params: [_Param],
-    ?rt: AST,
-    ?decorators: [AST] | nil,
-    body: AST
-}
-
 macro _ArrayItem = ty.ArrayItem[{item: AST, ?cond: AST, ?optional: Bool | nil}]
 
 macro _DictItem = ty.DictItem[(AST, AST)]
@@ -606,6 +598,19 @@ macro __type! {
     let t0: _ = parse::type(0)
     ty.Value(t0)
 }
+
+macro _Param = ty.Param[{name: String, ?constraint: AST, ?default: AST}]
+             | ty.Gather[String]
+             | ty.Kwargs[String]
+
+macro _Func = {
+    ?name: String | nil,
+    params: Array[_Param],
+    ?rt: AST,
+    ?decorators: [AST] | nil,
+    body: AST
+}
+
 
 macro __define_ast! {
     let f = parse.expr(999)
@@ -616,6 +621,7 @@ macro __define_ast! {
        | ty.Float[Float]
        | ty.Bool[Bool]
        | ty.Id[{name: String, ?module: String | nil, ?constraint: AST}]
+       | ty.Resource[{name: String, ?module: String | nil, ?constraint: AST}]
        | ty.NotNil[{name: String, ?module: String | nil, ?constraint: AST}]
        | ty.MemberAccess[(AST, String)]
        | ty.TryMemberAccess[(AST, String)]
@@ -775,11 +781,15 @@ class Dict[K, V] : Iterable[K, V] {
         return self.keys().zip(self.values()).__iter__()
     }
 
+    keys() -> Array[K];
+
     [](key: K) -> V {
         self[key]
     }
 
-    keys() -> Array[K];
+    static [](K, V) {
+        x -> (x :: Dict) && x.keys().all?(p -> (p.0 :: K) && (p.1 :: V))
+    }
 }
 
 class String : Iterable[String], IntoPtr[Int] {
@@ -1327,6 +1337,10 @@ class Ptr[T] : IntoPtr[T] {
     -(other: Ptr[T]) -> Int;
 
     __ptr__() { self }
+
+    static [](x) {
+        (\type(_) == ptr.null)
+    }
 }
 
 class RuntimeError {
@@ -1361,10 +1375,22 @@ class Generator[T] : Iter[T] {
 
 class Tag < Function {
     [](T) {
-         x -> (#x) :: T
+         x -> do {
+            match x {
+                %_(x) => x :: T,
+                _     => false
+            }
+        }
     }
 
-    cope() { dbg(self, super, self[Int]) }
+    static [](T) {
+        x -> do {
+            match x {
+                %_(x) => x :: T,
+                _     => false
+            }
+        }
+    }
 }
 
 class Tuple[...Types] {
@@ -2476,6 +2502,39 @@ class InclusiveRange < Range {
     init(a, b) {
         self.a = min(a, b)
         self.b = max(a, b) + 1
+    }
+}
+
+class TupleSpec {
+    __types: Array[_]
+
+    init(types: Array[_]) {
+        dbg(types)
+        __types = types
+    }
+
+    __match__(t) {
+        if t !:: Tuple {
+            return false
+        }
+
+        for (name, pred, req?), i in __types {
+            if name == nil {
+                if (#t <= i) || (t[i] !:: pred) {
+                    return false
+                }
+                continue
+            }
+            if let $val = t.?{name} {
+                if val !:: pred {
+                    return false
+                }
+            } else if req? {
+                return false
+            }
+        }
+
+        true
     }
 }
 
@@ -3695,7 +3754,7 @@ macro __desugar_partial__(call: _) {
             e => e
         }))
 
-        let params: [_Param] = params.map!(id -> ty.Param({name: id}))
+        let params: Array[_Param] = params.map!(id -> ty.Param({name: id}))
 
         if _argv   != nil { params.push(ty.Gather(_argv)) }
         if _kwargs != nil { params.push(ty.Kwargs(_kwargs)) }
@@ -3829,6 +3888,3 @@ fn memoized(fun, sync: Bool = true) {
         })
     )
 }
-
-let pretty: _ = cast(nil)
-let pp: _ = cast(nil)

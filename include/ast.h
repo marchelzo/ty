@@ -157,6 +157,7 @@ typedef struct class_definition ClassDefinition;
         X(REF_MAYBE_PATTERN),                                                         \
         X(KEEP_LOC), /* Below here we store Location in instruction pointer index */  \
         X(TUPLE),                                                                     \
+        X(TUPLE_SPEC),                                                                \
         X(IDENTIFIER),                                                                \
         X(RESOURCE_BINDING),                                                          \
         X(DEFINED),                                                                   \

@@ -437,6 +437,7 @@ typedef struct ty0 {
         InternSet u_ops;
         InternSet b_ops;
         InternSet members;
+        bool initialized;
         bool ready;
 } TY;
 
@@ -581,9 +582,14 @@ typedef struct {
         int str;
         int subscript;
 
-        int exit_hooks;
-        int tdb_hook;
         int _readln;
+        int env;
+        int exe;
+        int exit_hooks;
+        int pp;
+        int pretty;
+        int q;
+        int tdb_hook;
 } InternedNames;
 
 #define MemoryUsed  (ty->memory_used)
@@ -591,7 +597,8 @@ typedef struct {
 
 #define MyGroup (ty->my_group)
 
-#define TY_IS_READY (ty->ty->ready)
+#define TY_IS_READY       (ty->ty->ready)
+#define TY_IS_INITIALIZED (ty->ty->initialized)
 
 #define EVAL_DEPTH (ty->eval_depth)
 
@@ -604,10 +611,12 @@ extern bool ColorStdout;
 extern bool ColorStderr;
 extern bool ColorProfile;
 
+extern bool CheckTypes;
 extern bool CheckConstraints;
 extern bool DetailedExceptions;
 extern bool CompileOnly;
 extern bool AllowErrors;
+extern bool InteractiveSession;
 
 extern u64 TypeCheckCounter;
 extern u64 TypeAllocCounter;
@@ -762,6 +771,8 @@ extern usize TotalBytesAllocated;
         X(JUMP_AND),              \
         X(JUMP_OR),               \
         X(JUMP_WTF),              \
+        X(SKIP_CHECK),            \
+        X(5NOP),                  \
         X(RETURN),                \
         X(RETURN_PRESERVE_CTX),   \
         X(EXEC_CODE),             \
@@ -1036,6 +1047,7 @@ enum {
 #define xvF(v)           free((v).items)
 
 #define svPn(a, b, c)    vec_push_n_scratch((a), (b), (c))
+#define svPv(a, b)       vec_push_n_scratch((a), ((b).items), ((b).count))
 #define svP(a, b)        vec_push_scratch((a), (b))
 #define svI(a, b, c)     vec_insert_scratch((a), (b), (c))
 #define svIn(a, b, c, d) vec_insert_n_scratch(a, (b), (c), (d))

@@ -49,6 +49,7 @@ enum {
         CLASS_SHARED_QUEUE,
         CLASS_RANGE,
         CLASS_INC_RANGE,
+        CLASS_TUPLE_SPEC,
         CLASS_BUILTIN_END,
         CLASS_BOTTOM = INT_MAX
 };
@@ -1291,6 +1292,8 @@ ClassOf(Value const *v)
         case VALUE_BUILTIN_METHOD:    return CLASS_FUNCTION;
         case VALUE_OPERATOR:          return CLASS_FUNCTION;
         case VALUE_NIL:               return CLASS_NIL;
+        case VALUE_PTR:               return CLASS_PTR;
+
 
         case VALUE_REGEX:
                 return v->regex->detailed ? CLASS_REGEXV

@@ -5,16 +5,16 @@ import ty.token
 tag ChalkError;
 
 pub use TermStyle = () | {
-    bold:      ?Bool,
-    italic:    ?Bool,
-    underline: ?[Int],
-    dim:       ?Bool,
-    reverse:   ?Bool,
-    fg:        ?[Int],
-    bg:        ?[Int],
-    uc:        ?[Int],
-    fg-bright: ?Bool,
-    bg-bright: ?Bool
+    ?bold:      ?Bool,
+    ?italic:    ?Bool,
+    ?underline: ?Array[Int],
+    ?dim:       ?Bool,
+    ?reverse:   ?Bool,
+    ?fg:        ?Array[Int],
+    ?bg:        ?Array[Int],
+    ?uc:        ?Array[Int],
+    ?fg-bright: ?Bool,
+    ?bg-bright: ?Bool
 }
 
 // Some nice colors :)
