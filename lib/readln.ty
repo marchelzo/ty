@@ -267,7 +267,7 @@ class InteractiveLineReader {
         complete: _ = nil,
         erase: Bool = false,
         keybinds: Dict[String, _] = %{},
-        render: (String, [String], Int) -> String = nil
+        render: ((String, [String], Int) -> String) | nil = nil
     ) -> String | nil {
         if __tio == nil {
             init()
@@ -580,7 +580,7 @@ pub fn readln(
     complete: _ = nil,
     erase: Bool = false,
     keybinds: Dict[String, _] = %{},
-    render: (String, [String], Int) -> String = nil
+    render: ((String, [String], Int) -> String) | nil = nil
 ) -> String | nil {
     reader = reader ?? InteractiveLineReader()
     reader.readln(

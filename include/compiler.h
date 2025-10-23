@@ -380,6 +380,12 @@ WriteExpressionTrace(Ty *ty, byte_vector *out, Expr const *e, int etw, bool firs
 int
 WriteExpressionOrigin(Ty *ty, byte_vector *out, Expr const *e);
 
+void
+WriteExpressionSourceHeading(Ty *ty, byte_vector *out, int cols, Expr const *e);
+
+void
+WriteExpressionSourceContext(Ty *ty, byte_vector *out, Expr const *e);
+
 int
 CompilationDepth(Ty *ty);
 

@@ -62,6 +62,8 @@
 #define Eu8(x)   avP(STATE.code, (x))
 #define Eu1(x)   avP(STATE.code, !!(x))
 #define ES(x, b) emit_statement(ty, (x), (b))
+#define EC(x)    emit_constraint(ty, (x))
+#define EA(x)    emit_assertion(ty, (x))
 
 #define PLACEHOLDER_JUMP(t, name) JumpPlaceholder name = (PLACEHOLDER_JUMP)(ty, (INSTR_##t))
 #define LABEL(name) JumpLabel name = (LABEL)(ty)
@@ -111,15 +113,15 @@
                 Ei32(0);                                     \
         } while (0)
 
-#define CHECK_INIT() if (CheckConstraints) { INSN(CHECK_INIT); }
+#define CHECK_INIT() if (CheckTypes) { INSN(CHECK_INIT); }
 
 #define SET_TYPE_SRC(e) ((e) != NULL && (e)->_type != NULL && ((e)->_type->src = (Expr *)(e)))
 
-#define NO_TYPES (!CheckConstraints || TY_IS_READY)
+#define NO_TYPES (!CheckTypes || TY_IS_READY)
 
-#define RUNTIME_CONSTRAINTS 0
+#define RUNTIME_CONSTRAINTS CheckConstraints
 
-#if 1 || defined(TY_PROFILER)
+#if defined(TY_PROFILER) || 1
 #define KEEP_LOCATION(e) true
 #else
 #define KEEP_LOCATION(e) ((e)->type > EXPRESSION_KEEP_LOC)
@@ -186,8 +188,7 @@
 
 enum { CTX_EXPR, CTX_TYPE };
 #define WITH_CTX(c) WITH_STATE(ctx, CTX_##c)
-#define WHEN_CTX(c) if (STATE.ctx == (CTX_##c))
-#define WHEN_NOT_CTX(c) if (STATE.ctx != (CTX_##c))
+#define IS_CTX(c) (STATE.ctx == (CTX_##c))
 
 
 bool SuggestCompletions = false;
@@ -211,6 +212,7 @@ static vec(Module *) modules;
 static vec(ProgramAnnotation) annotations;
 static vec(location_vector) location_lists;
 static vec(Expr const *) source_map;
+static JumpGroup PreludeAssertionOffsets;
 static Module *MainModule;
 static Module *GlobalModule;
 static Scope *GlobalScope;
@@ -370,30 +372,35 @@ dumpstr(byte_vector *out, char const *s)
                 xvP(*out, 't');
                 COLOR(92);
                 break;
+
         case '\r':
                 COLOR(95);
                 xvP(*out, '\\');
                 xvP(*out, 'r');
                 COLOR(92);
                 break;
+
         case '\n':
                 COLOR(95);
                 xvP(*out, '\\');
                 xvP(*out, 'n');
                 COLOR(92);
                 break;
+
         case '\\':
                 COLOR(95);
                 xvP(*out, '\\');
                 xvP(*out, '\\');
                 COLOR(92);
                 break;
+
         case '\'':
                 COLOR(95);
                 xvP(*out, '\\');
                 xvP(*out, '\'');
                 COLOR(92);
                 break;
+
         default:
                 xvP(*out, *c);
         }
@@ -499,6 +506,18 @@ wrapped_type(Ty *ty, Value const *v)
         } else {
                 return v->type;
         }
+}
+
+inline static bool
+has_any_names(Expr const *e)
+{
+        for (int i = 0; i < vN(e->names); ++i) {
+                if (v__(e->names, i) != NULL) {
+                        return true;
+                }
+        }
+
+        return false;
 }
 
 inline static bool
@@ -1203,14 +1222,14 @@ Sorry:
 static Type *
 ResolveConstraint(Ty *ty, Expr *constraint)
 {
-        if (constraint == NULL || !CheckConstraints) {
+        if (constraint == NULL || !CheckTypes) {
                 return NULL;
         }
 
         Type *t0 = type_fixed(ty, type_resolve(ty, constraint));
 
         // XXX
-        if (0 && t0 != NULL) {
+        if (1 && (t0 != NULL)) {
                 constraint->type = EXPRESSION_TYPE;
                 constraint->_type = t0;
         }
@@ -4059,7 +4078,7 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
         case EXPRESSION_SUBSCRIPT:
                 symbolize_expression(ty, scope, e->container);
                 symbolize_expression(ty, scope, e->subscript);
-                WHEN_CTX(EXPR) {
+                if (IS_CTX(EXPR)) {
                         e->_type = type_subscript(ty, e);
                         SET_TYPE_SRC(e);
                 }
@@ -4370,6 +4389,16 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                 }
                 break;
         case EXPRESSION_ARRAY:
+                if (IS_CTX(TYPE) && vN(e->elements) == 1) {
+                        Expr *elem0 = v__(e->elements, 0);
+                        e->type = EXPRESSION_SUBSCRIPT;
+                        e->container = NewExpr(ty, EXPRESSION_IDENTIFIER);
+                        e->container->identifier = "Array";
+                        e->container->symbol = class_get(ty, CLASS_ARRAY)->def->class.var;
+                        e->subscript = elem0;
+                        symbolize_expression(ty, scope, e);
+                        break;
+                }
                 for (usize i = 0; i < vN(e->elements); ++i) {
                         if (v__(e->aconds, i) != NULL) {
                                 subscope = scope_new(ty, "(array-cond)", scope, false);
@@ -4439,6 +4468,9 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                 }
                 e->_type = type_tuple(ty, e);
                 SET_TYPE_SRC(e);
+                if (IS_CTX(TYPE) && has_any_names(e)) {
+                        e->type = EXPRESSION_TUPLE_SPEC;
+                }
                 break;
         case EXPRESSION_SPREAD:
                 symbolize_expression(ty, scope, e->value);
@@ -5131,7 +5163,7 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
 
                 if (STATE.func->type == EXPRESSION_GENERATOR) {
                         s->type = STATEMENT_GENERATOR_RETURN;
-                } else if (CheckConstraints && STATE.func->_type != NULL) {
+                } else if (CheckTypes && STATE.func->_type != NULL) {
                         Type *t0 = (vN(s->returns) == 0) ? NIL_TYPE
                                  : (vN(s->returns) == 1) ? (*vvL(s->returns))->_type
                                  : type_list_from(ty, &s->returns);
@@ -5445,13 +5477,13 @@ emit_list(Ty *ty, Expr const *e)
 }
 
 inline static JumpPlaceholder
-(PLACEHOLDER_JUMP)(Ty *ty, int t)
+(PLACEHOLDER_JUMP)(Ty *ty, int insn)
 {
         int label = STATE.label++;
 
         annotate("%sL%d%s", TERM(95), label + 1, TERM(0));
 
-        (emit_instr)(ty, t);
+        (emit_instr)(ty, insn);
 
         JumpPlaceholder jmp = {
                 .off = vN(STATE.code),
@@ -5727,6 +5759,21 @@ emit_constraint(Ty *ty, Expr const *c)
 }
 
 static void
+emit_assertion(Ty *ty, Expr const *e)
+{
+        if (STATE.module == GlobalModule) {
+                xvP(PreludeAssertionOffsets, vN(STATE.code));
+                PLACEHOLDER_JUMP(SKIP_CHECK, skip);
+                EE(e);
+                INSN(CHECK_MATCH);
+                PATCH_JUMP(skip);
+        } else {
+                EE(e);
+                INSN(CHECK_MATCH);
+        }
+}
+
+static void
 add_annotation(Ty *ty, char const *name, uptr start, uptr end)
 {
         ProgramAnnotation annotation = STATE.annotation;
@@ -5859,7 +5906,7 @@ emit_function(Ty *ty, Expr const *e)
 
         if (e->name != NULL) {
                 fun_name = e->name;
-        } else if (!CheckConstraints) {
+        } else if (!CheckTypes) {
                 fun_name = "(anonymous function)";
         } else {
                 char buffer[512];
@@ -5930,24 +5977,24 @@ emit_function(Ty *ty, Expr const *e)
 
                 emit_load_instr(ty, s->identifier, INSTR_LOAD_LOCAL, s->i);
 
-                emit_constraint(ty, v__(e->constraints, i));
-                PLACEHOLDER_JUMP(JUMP_IF, good);
-
                 if (e->overload != NULL) {
+                        EC(v__(e->constraints, i));
+                        PLACEHOLDER_JUMP(JUMP_IF, good);
                         INSN(POP);
                         INSN(NONE);
                         INSN(RETURN);
+                        PATCH_JUMP(good);
                 } else {
+                        EA(v__(e->constraints, i));
+                        PLACEHOLDER_JUMP(JUMP_IF, good);
                         emit_load_instr(ty, s->identifier, INSTR_LOAD_LOCAL, s->i);
                         INSN(BAD_CALL);
                         emit_string(ty, fun_name);
                         emit_string(ty, v__(e->param_symbols, i)->identifier);
                         add_location(ty, v__(e->constraints, i), start, vN(STATE.code));
+                        INSN(POP);
+                        PATCH_JUMP(good);
                 }
-
-                INSN(POP);
-
-                PATCH_JUMP(good);
         }
 
         int   function_resources = STATE.function_resources;
@@ -6259,7 +6306,7 @@ emit_return_check(Ty *ty, Expr const *f)
         usize start = vN(STATE.code);
 
         INSN(DUP);
-        emit_constraint(ty, f->return_type);
+        EA(f->return_type);
         PLACEHOLDER_JUMP(JUMP_IF, good);
         INSN(BAD_CALL);
 
@@ -6484,18 +6531,6 @@ emit_for_loop(Ty *ty, Stmt const *s, bool want_result)
         end_loop(ty);
 }
 
-inline static bool
-has_any_names(Expr const *e)
-{
-        for (int i = 0; i < vN(e->names); ++i) {
-                if (v__(e->names, i) != NULL) {
-                        return true;
-                }
-        }
-
-        return false;
-}
-
 static void
 emit_record_rest(Ty *ty, Expr const *rec, int i, bool is_assignment)
 {
@@ -6559,7 +6594,7 @@ emit_try_match_(Ty *ty, Expr const *pattern)
                                 Ei32(pattern->constraint->symbol->class);
                         } else {
                                 INSN(DUP);
-                                emit_constraint(ty, pattern->constraint);
+                                EC(pattern->constraint);
                                 FAIL_MATCH_IF(JUMP_IF_NOT);
                         }
                 }
@@ -6579,7 +6614,7 @@ emit_try_match_(Ty *ty, Expr const *pattern)
                         Ei32(pattern->right->symbol->class);
                 } else {
                         INSN(DUP);
-                        emit_constraint(ty, pattern->right);
+                        EC(pattern->right);
                         FAIL_MATCH_IF(JUMP_IF_NOT);
                 }
                 break;
@@ -8032,8 +8067,7 @@ emit_assignment2(Ty *ty, Expr *target, bool maybe, bool def)
                 ) {
                         usize start = vN(STATE.code);
                         INSN(DUP);
-                        EE(target->constraint);
-                        INSN(CHECK_MATCH);
+                        EA(target->constraint);
                         PLACEHOLDER_JUMP(JUMP_IF, good);
                         INSN(BAD_ASSIGN);
                         emit_string(ty, target->identifier);
@@ -8867,6 +8901,34 @@ emit_expr(Ty *ty, Expr const *e, bool need_loc)
                 }
                 break;
 
+        case EXPRESSION_TUPLE_SPEC:
+                INSN(SAVE_STACK_POS);
+                for (int i = 0; i < vN(e->es); ++i) {
+                        if (v__(e->names, i) == NULL) {
+                                INSN(NIL);
+                        } else {
+                                INSN(STRING);
+                                emit_string(ty, v__(e->names, i));
+                        }
+                        EE(v__(e->es, i));
+                        INSN(BOOLEAN);
+                        Eu8(v__(e->required, i));
+                        INSN(TUPLE);
+                        Ei32(3);
+                        Ei32(-1);
+                        Ei32(-1);
+                        Ei32(-1);
+                }
+                INSN(ARRAY);
+                INSN(CLASS);
+                Ei32(CLASS_TUPLE_SPEC);
+                INSN(CALL);
+                Ei32(1);
+                Ei32(0);
+                break;
+
+
+
         case EXPRESSION_TEMPLATE:
                 for (int i = vN(e->template.holes) - 1; i >= 0; --i) {
                         EE(v__(e->template.holes, i));
@@ -8893,6 +8955,13 @@ emit_expr(Ty *ty, Expr const *e, bool need_loc)
                 INSN(BOOLEAN);
                 Eu1(true);
                 break;
+
+        case EXPRESSION_LIST:
+                if (vN(e->es) > 0) {
+                        EE(v__(e->es, 0));
+                        break;
+                }
+                // v v v v v v v v v v v v v v
 
         default:
                 fail("expression unexpected in this context: %s", ExpressionTypeName(e));
@@ -10332,7 +10401,7 @@ compiler_init(Ty *ty)
         TYPE_CLASS_ = class_get(ty, CLASS_CLASS )->object_type;
         TYPE_ANY    = &ANY_TYPE;
 
-        if (CheckConstraints) {
+        if (CheckTypes) {
                 scope_add_type(ty, GlobalScope, "Any")->type = TYPE_ANY;
         } else {
                 AnyTypeSymbol = scope_add_type_var(ty, GlobalScope, "Any");
@@ -10381,7 +10450,6 @@ compiler_load_prelude(Ty *ty)
 
         PatchModule(ty, STATE.module, prog);
 
-        STATE.module = GlobalModule;
         STATE.global = scope_new(ty, "(prelude)", STATE.global, false);
         STATE.pscope = scope_new(ty, "(parse)", STATE.global, false);
 
@@ -13805,7 +13873,7 @@ define_class(Ty *ty, Stmt *s)
                 Expr *m = v__(cd->methods, i);
                 if (contains(OperatorCharset, *m->name) && vN(m->params) > 0) {
                         Expr *this;
-                        if (CheckConstraints) {
+                        if (CheckTypes) {
                                 this = NewExpr(ty, EXPRESSION_TYPE);
                                 this->_type = class->object_type;
                         } else {
@@ -14593,6 +14661,108 @@ WriteExpressionTrace(Ty *ty, byte_vector *out, Expr const *e, int etw, bool firs
         );
 
         return n;
+}
+
+void
+WriteExpressionSourceHeading(Ty *ty, byte_vector *out, int cols, Expr const *e)
+{
+        int path_len = term_width(e->mod->path, -1);
+        int pad = max(0, (cols - path_len - 4));
+        int pad_l = (pad / 4);
+        int pad_r = pad - pad_l;
+
+        dump(out, "%s", TERM(38:2:96:96:96));
+
+        for (int i = 0; i < pad_l; ++i) {
+                dump(out, "━");
+        }
+
+        dump(out, "┫ %s%s%s ┣", TERM(93;1), e->mod->path, TERM(38:2:96:96:96));
+
+        for (int i = 0; i < pad_r; ++i) {
+                dump(out, "━");
+        }
+
+        dump(out, "%s\n", TERM(0));
+}
+
+void
+WriteExpressionSourceContext(Ty *ty, byte_vector *out, Expr const *e)
+{
+        char const *start = e->start.s;
+        char const *end   = e->end.s;
+
+        int line0 = e->start.line;
+        int line1 = e->end.line;
+
+        // Seek back a few lines for context
+        for (int i = 0; i < 6; ++i) {
+                if (start[-1] == '\n') {
+                        --start;
+                        --line0;
+                }
+                while (start[-1] != '\0' && start[-1] != '\n') {
+                        --start;
+                }
+        }
+
+        // And ahead a few lines
+        for (int i = 0; i < 4; ++i) {
+                while (end[0] != '\0' && end[0] != '\n') {
+                        ++end;
+                }
+                if (end[0] == '\n') {
+                        ++end;
+                        ++line1;
+                }
+        }
+
+        for (int line = line0; start < end; ++line) {
+                char const *line_start = start;
+                char const *line_end = strchr(line_start, '\n');
+                if (line_end == NULL || line_end > end) {
+                        line_end = end;
+                }
+
+                if (line == e->start.line && line == e->end.line) {
+                        int before = e->start.s - line_start;
+                        int length = e->end.s - e->start.s;
+                        int after = line_end - e->end.s;
+                        dump(
+                                out,
+                                "%s%4d%s | %.*s%s%.*s%s%.*s%s\n",
+                                TERM(91),
+                                line + 1,
+                                TERM(0),
+                                before,
+                                line_start,
+                                TERM(1;91;4:3),
+                                length,
+                                e->start.s,
+                                TERM(0),
+                                after,
+                                e->end.s,
+                                TERM(0)
+                        );
+                } else {
+                        dump(
+                                out,
+                                "%s%4d%s | %s%.*s%s\n",
+                                (line >= e->start.line && line <= e->end.line) ? TERM(91) : "",
+                                line + 1,
+                                TERM(0),
+                                (line >= e->start.line && line <= e->end.line) ? TERM(91) : "",
+                                (int)(line_end - line_start),
+                                line_start,
+                                TERM(0)
+                        );
+                }
+
+                start = line_end;
+                if (start[0] == '\n') {
+                        ++start;
+                }
+        }
 }
 
 char const *

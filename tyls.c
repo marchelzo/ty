@@ -27,10 +27,12 @@ usize TotalBytesAllocated = 0;
 bool ColorStdout;
 bool ColorStderr;
 
+bool CheckTypes = true;
 bool CheckConstraints = true;
-bool DetailedExceptions = false;
+bool DetailedExceptions = true;
 bool CompileOnly = true;
 bool AllowErrors = false;
+bool InteractiveSession = false;
 
 int
 main(int argc, char *argv[])

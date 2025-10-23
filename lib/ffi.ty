@@ -324,7 +324,7 @@ fn fun() {
     // function
     next!('fn')
 
-    function mkfdef(name, rt: AST, ps: [AST], proto-string: ?String, doc-string: ?String) {
+    function mkfdef(name, rt: AST, ps: Array[AST], proto-string: ?String, doc-string: ?String) {
         let args = [
             ty.Arg(arg: lib),
             ty.Arg(arg: ty.String(prefix + name)),
@@ -999,7 +999,7 @@ pub macro closure! {
         fail('need return type')
     }
 
-    let args: [AST] = [rt]
+    let args: Array[AST] = [rt]
 
     for ty.Param(p), i in f.params {
         args.push(p.constraint)
@@ -1029,7 +1029,7 @@ pub fn cstr(s: String) -> Ptr[Int] {
 
 pub fn open(
     lib: String | [String],
-    versions: ?[String | Int]
+    versions: Array[String | Int | nil] | nil = nil
 ) -> Ptr[Any] | nil {
     fn try-open(lib: String) {
         for version in versions ?? [nil] {

@@ -17,8 +17,9 @@
 #include <windows.h>
 #include <shlwapi.h>
 #else
-#include <sys/mman.h>
 #include <libgen.h>
+#include <sys/mman.h>
+#include <sys/ioctl.h>
 #endif
 
 #if !defined(S_ISREG) && defined(S_IFMT) && defined(S_IFREG)
@@ -192,3 +193,52 @@ this_executable(Ty *ty)
         return NIL;
 #endif
 }
+
+bool
+get_terminal_size(int fd, int *rows, int *cols)
+{
+#ifdef _WIN32
+        HANDLE hConsole = GetStdHandle(STD_OUTPUT_HANDLE);
+        if (hConsole == INVALID_HANDLE_VALUE) {
+                return false;
+        }
+        CONSOLE_SCREEN_BUFFER_INFO csbi;
+        if (!GetConsoleScreenBufferInfo(hConsole, &csbi)) {
+                return false;
+        }
+
+        *rows = csbi.srWindow.Bottom - csbi.srWindow.Top + 1;
+        *cols = csbi.srWindow.Right - csbi.srWindow.Left + 1;
+
+        return true;
+#else
+        bool open_dev_tty = (fd == -1);
+
+        if (open_dev_tty) {
+                fd = open("/dev/tty", O_RDONLY);
+                if (fd == -1) {
+                        return false;
+                }
+        }
+
+        struct winsize ws;
+
+        if (ioctl(fd, TIOCGWINSZ, &ws) == -1) {
+                if (open_dev_tty) {
+                        close(fd);
+                }
+                return false;
+        }
+
+        if (open_dev_tty) {
+                close(fd);
+        }
+
+        *rows = ws.ws_row;
+        *cols = ws.ws_col;
+
+        return true;
+#endif
+}
+
+/* vim: set sw=8 sts=8 expandtab: */

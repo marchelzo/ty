@@ -723,26 +723,23 @@ add_builtins(Ty *ty, int ac, char **av)
                 }
         }
 
-        compiler_introduce_symbol(ty, NULL, "__env");
-        xvP(Globals, DICT(env));
-
-        compiler_introduce_symbol(ty, NULL, "__EXIT_HOOKS__");
-        NAMES.exit_hooks = (int)Globals.count;
-        xvP(Globals, ARRAY(vA()));
-
-        compiler_introduce_symbol(ty, "tdb", "hook");
-        NAMES.tdb_hook = (int)Globals.count;
-        xvP(Globals, NIL);
-
-        compiler_introduce_symbol(ty, NULL, "_readln");
-        NAMES._readln = (int)Globals.count;
-        xvP(Globals, NIL);
-
-        compiler_introduce_symbol(ty, "ty", "q");
-        xvP(Globals, BOOLEAN(!CheckConstraints));
-
-        compiler_introduce_symbol(ty, "ty", "executable");
-        xvP(Globals, this_executable(ty));
+//===========================================================================
+#define BUILTIN_VAR(m, t, c)                 \
+        compiler_introduce_symbol(ty, m, t); \
+        NAMES.c = vN(Globals);               \
+        *xvP(Globals, NIL)
+//---------------------------------------------------------------------------
+        BUILTIN_VAR(NULL,  "__env",          env       ) = DICT(env);
+        BUILTIN_VAR(NULL,  "__EXIT_HOOKS__", exit_hooks) = ARRAY(vA());
+        BUILTIN_VAR("tdb", "hook",           tdb_hook  ) = NIL;
+        BUILTIN_VAR(NULL,  "_readln",        _readln   ) = NIL;
+        BUILTIN_VAR(NULL,  "pretty",         pretty    ) = NIL;
+        BUILTIN_VAR(NULL,  "pp",             pp        ) = NIL;
+        BUILTIN_VAR("ty",  "q",              q         ) = BOOLEAN(!CheckTypes);
+        BUILTIN_VAR("ty",  "executable",     exe       ) = this_executable(ty);
+//---------------------------------------------------------------------------
+#undef BUILTIN_VAR
+//===========================================================================
 
 #ifdef _WIN32
         // TODO
@@ -757,61 +754,58 @@ add_builtins(Ty *ty, int ac, char **av)
         vvP(Globals, INTEGER(SIGRTMIN));
 #endif
 
-        /* Add FFI types here because they aren't constant expressions on Windows. */
-        compiler_introduce_symbol(ty, "ffi", "char");
-        xvP(Globals, PTR(&ffi_type_schar));
-        compiler_introduce_symbol(ty, "ffi", "short");
-        xvP(Globals, PTR(&ffi_type_sshort));
-        compiler_introduce_symbol(ty, "ffi", "int");
-        xvP(Globals, PTR(&ffi_type_sint));
-        compiler_introduce_symbol(ty, "ffi", "long");
-        xvP(Globals, PTR(&ffi_type_slong));
-        compiler_introduce_symbol(ty, "ffi", "uchar");
-        xvP(Globals, PTR(&ffi_type_uchar));
-        compiler_introduce_symbol(ty, "ffi", "ushort");
-        xvP(Globals, PTR(&ffi_type_ushort));
-        compiler_introduce_symbol(ty, "ffi", "uint");
-        xvP(Globals, PTR(&ffi_type_uint));
-        compiler_introduce_symbol(ty, "ffi", "ulong");
-        xvP(Globals, PTR(&ffi_type_ulong));
-        compiler_introduce_symbol(ty, "ffi", "u8");
-        xvP(Globals, PTR(&ffi_type_uint8));
-        compiler_introduce_symbol(ty, "ffi", "u16");
-        xvP(Globals, PTR(&ffi_type_uint16));
-        compiler_introduce_symbol(ty, "ffi", "u32");
-        xvP(Globals, PTR(&ffi_type_uint32));
-        compiler_introduce_symbol(ty, "ffi", "u64");
-        xvP(Globals, PTR(&ffi_type_uint64));
-        compiler_introduce_symbol(ty, "ffi", "i8");
-        xvP(Globals, PTR(&ffi_type_sint8));
-        compiler_introduce_symbol(ty, "ffi", "i16");
-        xvP(Globals, PTR(&ffi_type_sint16));
-        compiler_introduce_symbol(ty, "ffi", "i32");
-        xvP(Globals, PTR(&ffi_type_sint32));
-        compiler_introduce_symbol(ty, "ffi", "i64");
-        xvP(Globals, PTR(&ffi_type_sint64));
-        compiler_introduce_symbol(ty, "ffi", "float");
-        xvP(Globals, PTR(&ffi_type_float));
-        compiler_introduce_symbol(ty, "ffi", "double");
-        xvP(Globals, PTR(&ffi_type_double));
-        compiler_introduce_symbol(ty, "ffi", "ptr");
-        xvP(Globals, PTR(&ffi_type_pointer));
-        compiler_introduce_symbol(ty, "ffi", "void");
-        xvP(Globals, PTR(&ffi_type_void));
 
+//===========================================================================
+/* Add FFI types here because they aren't constant expressions on Windows. */
+//---------------------------------------------------------------------------
+#define BUILTIN_FFI_TYPE(name, ffi_type_ptr)        \
+        compiler_introduce_symbol(ty, "ffi", name); \
+        xvP(Globals, PTR(ffi_type_ptr))
+//---------------------------------------------------------------------------
+        BUILTIN_FFI_TYPE("char",    &ffi_type_schar   );
+        BUILTIN_FFI_TYPE("short",   &ffi_type_sshort  );
+        BUILTIN_FFI_TYPE("int",     &ffi_type_sint    );
+        BUILTIN_FFI_TYPE("long",    &ffi_type_slong   );
+        BUILTIN_FFI_TYPE("uchar",   &ffi_type_uchar   );
+        BUILTIN_FFI_TYPE("ushort",  &ffi_type_ushort  );
+        BUILTIN_FFI_TYPE("uint",    &ffi_type_uint    );
+        BUILTIN_FFI_TYPE("ulong",   &ffi_type_ulong   );
+        BUILTIN_FFI_TYPE("u8",      &ffi_type_uint8   );
+        BUILTIN_FFI_TYPE("u16",     &ffi_type_uint16  );
+        BUILTIN_FFI_TYPE("u32",     &ffi_type_uint32  );
+        BUILTIN_FFI_TYPE("u64",     &ffi_type_uint64  );
+        BUILTIN_FFI_TYPE("i8",      &ffi_type_sint8   );
+        BUILTIN_FFI_TYPE("i16",     &ffi_type_sint16  );
+        BUILTIN_FFI_TYPE("i32",     &ffi_type_sint32  );
+        BUILTIN_FFI_TYPE("i64",     &ffi_type_sint64  );
+        BUILTIN_FFI_TYPE("float",   &ffi_type_float   );
+        BUILTIN_FFI_TYPE("double",  &ffi_type_double  );
+        BUILTIN_FFI_TYPE("ptr",     &ffi_type_pointer );
+        BUILTIN_FFI_TYPE("void",    &ffi_type_void    );
+//---------------------------------------------------------------------------
+#undef BUILTIN_FFI_TYPE
+//===========================================================================
+
+
+//====/ AST Enum /===========================================================
 #define X(name)                                       \
         compiler_introduce_tag(ty, "ty", #name, -1);  \
         xvP(Globals, TAG(Ty ## name));                \
 
         TY_AST_NODES
 #undef X
+//===========================================================================
 
+
+//====/ Types Enum /=========================================================
 #define X(name)                                             \
         compiler_introduce_tag(ty, "ty/types", #name, -1);  \
         xvP(Globals, TAG(Ty ## name ## T));                 \
 
         TY_TYPE_TAGS
 #undef X
+//===========================================================================
+
 
         GC_RESUME();
 }
@@ -2797,14 +2791,11 @@ CallMethod(Ty *ty, int i, int n, int nkw, bool b)
                         self = NULL;
                 }
                 break;
-        case VALUE_CLASS: /* lol */
-                vp = class_lookup_method_immediate_i(ty, CLASS_CLASS, i);
+        case VALUE_CLASS:
+                vp = class_lookup_s_method_i(ty, value.class, i);
                 if (vp == NULL) {
-                        vp = class_lookup_s_method_i(ty, value.class, i);
+                        vp = class_lookup_method_immediate_i(ty, CLASS_CLASS, i);
                 }
-                //if (vp == NULL) {
-                //        vp = class_lookup_method_i(ty, value.class, i);
-                //}
                 if (vp == NULL) {
                         vp = class_lookup_method_immediate_i(ty, CLASS_OBJECT, i);
                 }
@@ -4639,6 +4630,16 @@ vm_exec(Ty *ty, char *code)
                                 IP += n;
                         }
                         break;
+                CASE(SKIP_CHECK)
+                        if (!TY_IS_INITIALIZED) {
+                                READVALUE(n);
+                                IP += n;
+                                *top() = BOOLEAN(true);
+                                break;
+                        }
+                CASE(5NOP)
+                        IP += 4;
+                        break;
                 CASE(TARGET_GLOBAL)
 TargetGlobal:
                         READVALUE(n);
@@ -5699,22 +5700,22 @@ Yield:
                         OKGC(v.object);
                         break;
                 CASE(TRY_GET_MEMBER)
-                CASE(GET_MEMBER)
-                        z = GetDynamicMemberId(ty, IP[-1] != INSTR_TRY_GET_MEMBER);
-
+                        z = GetDynamicMemberId(ty, false);
                         if (z >= 0) {
                                 goto MemberAccess;
-                        } else if (z == -1) {
-                                pop();
-                                push(NIL);
-                                break;
+                        } else {
+                                *top() = NIL;
+                                continue;
+                        }
+                CASE(GET_MEMBER)
+                        z = GetDynamicMemberId(ty, true);
+                        if (z >= 0) {
+                                goto MemberAccess;
                         } else {
                                 z = -(z + 1);
                                 value = pop();
                                 goto BadMemberAccess;
                         }
-
-                        UNREACHABLE();
                 CASE(SELF_MEMBER_ACCESS)
                         READVALUE(z);
 
@@ -5960,7 +5961,10 @@ BadTupleMember:
 
                         case VALUE_TAG:
                                 v = pop();
-                                *top() = BOOLEAN(tags_first(ty, top()->tags) == v.tag);
+                                *top() = BOOLEAN(
+                                        (top()->type == VALUE_TAG && top()->tag == v.tag)
+                                     || (tags_first(ty, top()->tags) == v.tag)
+                                );
                                 break;
 
                         case VALUE_BOOLEAN:
@@ -5972,6 +5976,11 @@ BadTupleMember:
                                 v = pop();
                                 value = pop();
                                 push(BOOLEAN(TypeCheck(ty, v.ptr, &value)));
+                                break;
+
+                        case VALUE_NIL:
+                                v = pop();
+                                *top() = BOOLEAN(top()->type == VALUE_NIL);
                                 break;
 
                         default:
@@ -6476,6 +6485,7 @@ vm_init(Ty *ty, int ac, char **av)
         TySpinLockInit(&ProfileMutex);
 #endif
 
+        TY_IS_INITIALIZED = true;
         TY_IS_READY = true;
 
         return true;
@@ -6490,14 +6500,70 @@ FormatTrace(Ty *ty, ThrowCtx const *ctx, byte_vector *out)
                 out = &message;
         }
 
+        int _rows;
+        int cols;
+
+        if (!get_terminal_size(-1, &_rows, &cols)) {
+                cols = 80;
+        }
+
         for (int i = 0; i < vN(*ctx); ++i) {
                 char *ip = (char *)v__(*ctx, i);
                 Expr const *expr = compiler_find_expr(ty, ip - 1);
 
-                WriteExpressionTrace(ty, out, expr, 0, i == 0);
+                if (expr == NULL) {
+                        continue;
+                }
 
-                if (expr != NULL && expr->origin != NULL) {
-                        WriteExpressionOrigin(ty, out, expr->origin);
+                if (!InteractiveSession) {
+                        WriteExpressionSourceHeading(ty, out, cols, expr);
+
+                        if (expr->origin != NULL) {
+                                WriteExpressionOrigin(ty, out, expr->origin);
+                        }
+
+                        Expr const *func;
+                        if (
+                                DetailedExceptions
+                             && ((func = compiler_find_func(ty, ip - 1)) != NULL)
+                             && (vN(func->scope->owned) > 0)
+                        ) {
+                                ValueVector localv = v__(ctx->locals, i);
+                                Scope *scope = func->scope;
+
+                                int max_width = 0;
+                                for (int i = 0; i < vN(scope->owned); ++i) {
+                                        int width = term_width(v__(scope->owned, i)->identifier, -1);
+                                        if (width > max_width) {
+                                                max_width = width;
+                                        }
+                                }
+
+                                for (int i = 0; i < vN(scope->owned); ++i) {
+                                        dump(
+                                                out,
+                                                "    %s%*s%s = %s\n",
+                                                TERM(1;93),
+                                                max_width + 2,
+                                                v__(scope->owned, i)->identifier,
+                                                TERM(22;39),
+                                                VSC(v_(localv, i))
+                                        );
+                                }
+
+                                dump(out, "%s", TERM(38:2:74:74:74));
+                                for (int i = 0; i < cols; ++i) {
+                                        dump(out, "─");
+                                }
+                                dump(out, "%s\n", TERM(0));
+                        }
+
+                        WriteExpressionSourceContext(ty, out, expr);
+                } else {
+                        WriteExpressionTrace(ty, out, expr, -1, i == 0);
+                        if (expr->origin != NULL) {
+                                WriteExpressionOrigin(ty, out, expr->origin);
+                        }
                 }
         }
 
@@ -6747,16 +6813,14 @@ tdb_backtrace(Ty *ty)
                                 break;
                         }
                 } else {
-                        gen = (nf == 0)                     ? NULL
+                        gen = (nf == 0) ? NULL
                             : (v_(frames, nf - 1)->fp == 0) ? NULL
                             : (v_(STACK, v_(frames, nf - 1)->fp - 1)->type != VALUE_GENERATOR) ? NULL
                             :  v_(STACK, v_(frames, nf - 1)->fp - 1)->gen;
                 }
 
 Next:
-                ip = (nf == 0)
-                   ? NULL
-                   : v_(frames, --nf)->ip;
+                ip = (nf == 0) ? NULL : v_(frames, --nf)->ip;
         }
 
         xvP(buf, '\n');
@@ -7776,6 +7840,7 @@ StepInstruction(char const *ip)
         CASE(JUMP_AND)
         CASE(JUMP_OR)
         CASE(JUMP_WTF)
+        CASE(SKIP_CHECK)
                 SKIPVALUE(n);
                 break;
         CASE(TARGET_GLOBAL)
@@ -8420,6 +8485,7 @@ tdb_step_over_x(Ty *ty, char *ip, i32 i)
         CASE(JUMP_IF_TYPE)
         CASE(JUMP_OR)
         CASE(JUMP_WTF)
+        CASE(SKIP_CHECK)
         CASE(LOOP_CHECK)
         CASE(NONE_IF_NOT)
         CASE(RECORD_REST)

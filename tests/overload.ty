@@ -27,12 +27,12 @@ fn bar(a: Int, b: Int) {
 fn o() {}
 
 (fn () {
-    if [A.foo(4.0), A.foo([1, 2]), A.foo([1, 2.0]), A.foo(['a'])] != [1, 2, 3, 4] {
-        print('FAIL')
+    if let x = [A.foo(4.0), A.foo([1, 2]), A.foo([1, 2.0]), A.foo(['a'])] and x != [1, 2, 3, 4] {
+        throw "FAIL: {x}"
     }
 
     if (bar('x'), bar(4, 5)) != (1, 2) {
-        print('FAIL')
+        throw 'FAIL'
     }
 
     print('PASS')

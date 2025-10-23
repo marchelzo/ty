@@ -3773,18 +3773,10 @@ PREFIX_LVALUE_OPERATOR(dec,   DEC,   9)
 Expr *
 mkcall(Ty *ty, Expr *func)
 {
-        Expr *e = mkexpr(ty);
-
-        e->type = EXPRESSION_FUNCTION_CALL;
-        e->function = func;
-        e->start = func->start;
-        vec_init(e->args);
-        vec_init(e->kws);
-        vec_init(e->kwargs);
-        vec_init(e->fconds);
-        vec_init(e->fkwconds);
-
-        return e;
+        Expr *call = mkxpr(FUNCTION_CALL);
+        call->function = func;
+        call->start = func->start;
+        return call;
 }
 
 static Expr *

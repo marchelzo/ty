@@ -60,7 +60,8 @@ static char const *BuiltinClassNames[] = {
         [CLASS_SHARED_QUEUE] = "SharedQueue",
         [CLASS_STRING]       = "String",
         [CLASS_TAG]          = "Tag",
-        [CLASS_TUPLE]        = "Tuple"
+        [CLASS_TUPLE]        = "Tuple",
+        [CLASS_TUPLE_SPEC]   = "TupleSpec"
 };
 
 static void
@@ -86,7 +87,19 @@ MakeTrait(Ty *ty, Class *c)
 inline static bool
 ClassImplementsTrait(Class const *c, int ti)
 {
-        return (vN(c->impls) > ti) && v__(c->impls, ti);
+        do {
+                if (
+                        (vN(c->impls) > ti)
+                     && v__(c->impls, ti)
+                ) {
+                        return true;
+                }
+                c = c->super;
+        } while (
+                (c != NULL)
+        );
+
+        return false;
 }
 
 Class *

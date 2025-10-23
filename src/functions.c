@@ -5440,52 +5440,20 @@ BUILTIN_FUNCTION(os_terminal_size)
 {
         ASSERT_ARGC("os.terminal-size()", 0, 1);
 
-#ifdef _WIN32
-        HANDLE hConsole = GetStdHandle(STD_OUTPUT_HANDLE);
-        if (hConsole == INVALID_HANDLE_VALUE) {
-            return NIL;
-        }
-        CONSOLE_SCREEN_BUFFER_INFO csbi;
-        if (!GetConsoleScreenBufferInfo(hConsole, &csbi)) {
-                return NIL;
-        }
-
-        int columns = csbi.srWindow.Right - csbi.srWindow.Left + 1;
-        int rows = csbi.srWindow.Bottom - csbi.srWindow.Top + 1;
-
-        return vTn(
-                "rows", INTEGER(rows),
-                "cols", INTEGER(columns)
-        );
-#else
-        struct winsize w;
-        int fd;
+        int rows;
+        int cols;
+        bool ok;
 
         if (argc == 0) {
-                fd = open("/dev/tty", O_RDONLY);
-                if (fd == -1) {
-                        return NIL;
-                }
+                ok = get_terminal_size(-1, &rows, &cols);
         } else {
-                fd = INT_ARG(0);
+                ok = get_terminal_size(INT_ARG(0), &rows, &cols);
         }
 
-        if (ioctl(fd, TIOCGWINSZ, &w) == -1) {
-                if (argc == 0) {
-                        close(fd);
-                }
-                return NIL;
-        }
-
-        if (argc == 0) {
-                close(fd);
-        }
-
-        return vTn(
-                "rows", INTEGER(w.ws_row),
-                "cols", INTEGER(w.ws_col)
+        return !ok ? NIL : vTn(
+                "rows", INTEGER(rows),
+                "cols", INTEGER(cols)
         );
-#endif
 }
 
 

@@ -25,7 +25,7 @@ typedef struct {
 u32 TYPES_OFF = 0;
 
 #define ENFORCE (!AllowErrors && (TYPES_OFF == 0) && !DEBUGGING)
-#define ENABLED (CheckConstraints)
+#define ENABLED (CheckTypes)
 
 #define   xDDD() if (!ENABLED) { return NULL; }
 #define  xDDDD() if (!ENABLED) { return true; }
@@ -5299,6 +5299,99 @@ CheckArg(Ty *ty, int i, Param const *p, Type *a0, bool strict)
         return false;
 }
 
+typedef struct {
+        expression_vector args;
+        expression_vector kwargs;
+        StringVector const *kws;
+} CallSignature;
+
+typedef vec(CallSignature) CallSignatures;
+
+static CallSignatures
+ExpandCallSignatures(
+        Ty *ty,
+        expression_vector const *args,
+        expression_vector const *kwargs,
+        StringVector const *kws
+) {
+        // Expand all union types in args and kwargs into multiple call signatures
+
+        CallSignatures result = {0};
+        CallSignatures work = {0};
+
+        expression_vector empty = {0};
+
+        svP(work, ((CallSignature) {
+                .args = empty,
+                .kwargs = empty,
+                .kws = kws
+        }));
+
+        while (vN(work) > 0) {
+                CallSignature call = *vvX(work);
+
+                int argi = vN(call.args);
+                int kwi = vN(call.kwargs);
+
+                if (argi == vN(*args) && kwi == vN(*kwargs)) {
+                        svP(result, call);
+                        continue;
+                }
+
+                if (argi < vN(*args)) {
+                        Expr const *arg = v__(*args, argi);
+                        Type *t0 = Relax(arg->_type);
+
+                        for (int i = 0; i < UnionCount(t0); ++i) {
+                                Type *t1 = UnionElem(t0, i);
+
+                                Expr *_arg = smA(sizeof *_arg);
+                                *_arg = *arg;
+                                _arg->_type = t1;
+
+                                expression_vector _args = {0};
+                                svPv(_args, call.args);
+                                svP(_args, _arg);
+
+                                svP(work, ((CallSignature) {
+                                        .args = _args,
+                                        .kwargs = call.kwargs,
+                                        .kws = call.kws
+                                }));
+                        }
+
+                        continue;
+                }
+
+                if (kwi < vN(*kwargs)) {
+                        Expr const *kwarg = v__(*kwargs, kwi);
+                        Type *t0 = Relax(kwarg->_type);
+
+                        for (int i = 0; i < UnionCount(t0); ++i) {
+                                Type *t1 = UnionElem(t0, i);
+
+                                Expr *_kwarg = smA(sizeof *_kwarg);
+                                *_kwarg = *kwarg;
+                                _kwarg->_type = t1;
+
+                                expression_vector _kwargs = {0};
+                                svPv(_kwargs, call.kwargs);
+                                svP(_kwargs, _kwarg);
+
+                                svP(work, ((CallSignature) {
+                                        .args = call.args,
+                                        .kwargs = _kwargs,
+                                        .kws = call.kws
+                                }));
+                        }
+
+                        continue;
+                }
+        }
+
+        return result;
+}
+
 static Type *
 InferCall0(
         Ty *ty,
@@ -5310,11 +5403,15 @@ InferCall0(
 ) {
         Type *t1;
         Type *t2;
+        Type *t3;
+        Type *t4;
         bool gather = false;
 
         vec(Expr) _argv = {0};
         expression_vector _args = {0};
         expression_vector _kwargs = {0};
+
+        CallSignatures expanded;
 
         XXTLOG("InferCall(%s)", ShowType(t0));
         for (int i = 0; i < vN(*args); ++i) {
@@ -5458,65 +5555,98 @@ InferCall0(
                         XXTLOG("  (%d) %s", i + 1, ShowType(v__(t0->types, i)));
                 }
 
-                for (int i = 0; i < vN(t0->types); ++i) {
-                        t1 = v__(t0->types, i);
+                SCRATCH_SAVE();
 
-                        v0(_argv);
-                        v0(_args);
-                        v0(_kwargs);
-                        Expr tmp = { .type = EXPRESSION_NIL };
+                expanded = ExpandCallSignatures(ty, args, kwargs, kws);
+                t4 = NULL;
 
-                        TypeEnv *env = NewEnv(ty, NULL);
+                for (int i = 0; i < vN(expanded); ++i) {
+                        CallSignature *call = v_(expanded, i);
+                        expression_vector *args = &call->args;
+                        expression_vector *kwargs = &call->kwargs;
 
+                        t3 = NULL;
+
+                        XXTLOG("  ResolveCall(%d):", i);
+                        XXTLOG("    Args:");
                         for (int i = 0; i < vN(*args); ++i) {
-                                tmp._type = NewInst0(ty, Relax(v__(*args, i)->_type), env);
-                                avP(_argv, tmp);
-                        }
-
-                        for (int i = 0; i < vN(*kwargs); ++i) {
-                                tmp._type = NewInst0(ty, Relax(v__(*kwargs, i)->_type), env);
-                                avP(_argv, tmp);
-                        }
-
-                        for (int i = 0; i < vN(*args); ++i) {
-                                avP(_args, v_(_argv, i));
-                        }
-
-                        for (int i = 0; i < vN(*kwargs); ++i) {
-                                avP(_kwargs, v_(_argv, i + vN(*args)));
-                        }
-
-                        t2 = NewInst(ty, t1);
-
-                        Type *t3 = InferCall0(ty, &_args, &_kwargs, kws, t2, false);
-                        if (t3 != NULL) {
-                                XXTLOG(" OK:  %s", ShowType(t2));
-                                XXTLOG("   -> %s", ShowType(t3));
-                                return InferCall0(ty, args, kwargs, kws, t1, strict);
-                        }
-                }
-                if (ENFORCE && strict) {
-                        byte_vector msg = {0};
-                        dump(&msg, FMT_MORE "Arguments:");
-                        for (int i = 0; i < vN(*args); ++i) {
-                                dump(&msg, FMT_MORE "  arg[%d]: %s", i, ShowType(Relax(v__(*args, i)->_type)));
+                                XXTLOG("     (%d) %s", i, ShowType(v__(*args, i)->_type));
                         }
                         for (int i = 0; i < vN(*kws); ++i) {
-                                dump(
-                                        &msg,
-                                        FMT_MORE "  kwarg[%s%s%s]: %s",
-                                        TERM(92),
-                                        v__(*kws, i),
-                                        TERM(0),
-                                        ShowType(Relax(v__(*kwargs, i)->_type))
-                                );
+                                XXTLOG("     (%s%s%s) %s", TERM(93), v__(*kws, i), TERM(0), ShowType(v__(*kwargs, i)->_type));
                         }
-                        dump(&msg, FMT_MORE "Prototypes");
+
+                        XXTLOG("  Overloads:");
                         for (int i = 0; i < vN(t0->types); ++i) {
-                                dump(&msg, FMT_MORE "  (%d) %s", i + 1, ShowType(v__(t0->types, i)));
+                                XXTLOG("  (%d) %s", i + 1, ShowType(v__(t0->types, i)));
                         }
-                        TypeError("no matching prototype for given arguments%s", msg.items);
+
+                        for (int i = 0; i < vN(t0->types); ++i) {
+                                t1 = v__(t0->types, i);
+
+                                v0(_argv);
+                                v0(_args);
+                                v0(_kwargs);
+                                Expr tmp = { .type = EXPRESSION_NIL };
+
+                                TypeEnv *env = NewEnv(ty, NULL);
+
+                                for (int i = 0; i < vN(*args); ++i) {
+                                        tmp._type = NewInst0(ty, Relax(v__(*args, i)->_type), env);
+                                        avP(_argv, tmp);
+                                }
+
+                                for (int i = 0; i < vN(*kwargs); ++i) {
+                                        tmp._type = NewInst0(ty, Relax(v__(*kwargs, i)->_type), env);
+                                        avP(_argv, tmp);
+                                }
+
+                                for (int i = 0; i < vN(*args); ++i) {
+                                        avP(_args, v_(_argv, i));
+                                }
+
+                                for (int i = 0; i < vN(*kwargs); ++i) {
+                                        avP(_kwargs, v_(_argv, i + vN(*args)));
+                                }
+
+                                t2 = NewInst(ty, t1);
+                                t3 = InferCall0(ty, &_args, &_kwargs, kws, t2, false);
+                                if (t3 != NULL) {
+                                        XXTLOG(" OK:  %s", ShowType(t2));
+                                        XXTLOG("   -> %s", ShowType(t3));
+                                        unify2(ty, &t4, InferCall0(ty, args, kwargs, kws, t1, strict));
+                                        break;
+                                }
+                        }
+
+                        if (t3 == NULL && ENFORCE && strict) {
+                                byte_vector msg = {0};
+                                dump(&msg, FMT_MORE "Arguments:");
+                                for (int i = 0; i < vN(*args); ++i) {
+                                        dump(&msg, FMT_MORE "  arg[%d]: %s", i, ShowType(Relax(v__(*args, i)->_type)));
+                                }
+                                for (int i = 0; i < vN(*kws); ++i) {
+                                        dump(
+                                                &msg,
+                                                FMT_MORE "  kwarg[%s%s%s]: %s",
+                                                TERM(92),
+                                                v__(*kws, i),
+                                                TERM(0),
+                                                ShowType(Relax(v__(*kwargs, i)->_type))
+                                        );
+                                }
+                                dump(&msg, FMT_MORE "Prototypes");
+                                for (int i = 0; i < vN(t0->types); ++i) {
+                                        dump(&msg, FMT_MORE "  (%d) %s", i + 1, ShowType(v__(t0->types, i)));
+                                }
+                                SCRATCH_RESTORE();
+                                TypeError("no matching prototype for given arguments%s", msg.items);
+                        }
                 }
+
+                SCRATCH_RESTORE();
+
+                return t4;
         }
 
         return NULL;
@@ -7597,6 +7727,7 @@ type_resolve(Ty *ty, Expr const *e)
                 return t0;
 
         case EXPRESSION_TUPLE:
+        case EXPRESSION_TUPLE_SPEC:
                 t0 = NewType(ty, TYPE_TUPLE);
                 t0->concrete = true;
                 t0->fixed = true;
@@ -7678,7 +7809,10 @@ type_resolve(Ty *ty, Expr const *e)
                                         )
                                 );
                         }
-                } else if (e->left->type == EXPRESSION_TUPLE) {
+                } else if (
+                        (e->left->type == EXPRESSION_TUPLE)
+                     || (e->left->type == EXPRESSION_TUPLE_SPEC)
+                ) {
                         for (int i = 0; i < vN(e->left->es); ++i) {
                                 char const *name = (vN(e->left->names) > i)
                                                  ? v__(e->left->names, i)
