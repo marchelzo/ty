@@ -14400,7 +14400,7 @@ WriteExpressionOrigin(Ty *ty, byte_vector *out, Expr const *e)
 
         n += dump(
                 out,
-                "%s%s",
+                "%s%s\n",
                 TERM(39),
                 TERM(22)
         );
