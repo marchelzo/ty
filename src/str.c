@@ -17,7 +17,7 @@
 #define ty_re_panic(e) do {                     \
         void *msg = smA(4096);                  \
         pcre2_get_error_message(e, msg, 4096);  \
-        bP("PCRE2 error: %s", msg);             \
+        bP("PCRE2: %s", msg);                   \
 } while (0)
 
 
@@ -117,8 +117,7 @@ mkmatch(Ty *ty, Value *s, usize *ovec, isize n, bool detailed)
 Value
 string_length(Ty *ty, Value *string, int argc, Value *kwargs)
 {
-        char *_name__ = "String.len()";
-        CHECK_ARGC(0);
+        ASSERT_ARGC("String.len()", 0);
         return INTEGER(rune_count((u8 const *)string->str, string->bytes));
 }
 
@@ -765,14 +764,16 @@ string_comb(Ty *ty, Value *string, int argc, Value *kwargs)
                 isize len = string->bytes;
                 isize plen = pattern.bytes;
                 u8 const *match;
+                bool any = false;
 
                 while ((match = mmmm(str, len, p, plen)) != NULL) {
                         svPn(scratch, str, match - str);
                         len -= (match - str + plen);
                         str = match + plen;
+                        any = true;
                 }
 
-                if (vN(scratch) > 0) {
+                if (any) {
                         svPn(scratch, str, len);
                 }
 
@@ -783,20 +784,22 @@ string_comb(Ty *ty, Value *string, int argc, Value *kwargs)
                 pcre2_code *re = pattern.regex->pcre2;
                 isize len = string->bytes;
                 isize start = 0;
+                bool any = false;
                 usize *ovec = ty_re_ovec();
                 i32 rc;
 
                 while ((rc = ty_re_match(re, str, len, start, 0)) > 0) {
                         svPn(scratch, str + start, ovec[0] - start);
                         start = ovec[1];
+                        any = true;
                 }
 
                 if (rc != PCRE2_ERROR_NOMATCH) {
                         SCRATCH_RESTORE();
-                        zP("");
+                        ty_re_panic(rc);
                 }
 
-                if (vN(scratch) > 0) {
+                if (any) {
                         svPn(scratch, str + start, len - start);
                 }
 
@@ -994,8 +997,9 @@ string_is_match(Ty *ty, Value *string, int argc, Value *kwargs)
                 ty->pcre2.ctx
         );
 
-        if (rc < -2)
-                zP("error while executing regular expression: %d", rc);
+        if (rc < -2) {
+                ty_re_panic(rc);
+        }
 
         return BOOLEAN(rc > -1);
 }
@@ -1018,11 +1022,13 @@ string_match(Ty *ty, Value *string, int argc, Value *kwargs)
                 ty->pcre2.ctx
         );
 
-        if (rc < -2)
-                zP("error while executing regular expression: %d", rc);
+        if (rc < -2) {
+                ty_re_panic(rc);
+        }
 
-        if (rc < 0)
+        if (rc < 0) {
                 return NIL;
+        }
 
         return mkmatch(ty, string, ovec, rc, pattern.regex->detailed);
 }
@@ -1076,21 +1082,19 @@ string_matches(Ty *ty, Value *string, int argc, Value *kwargs)
 static Value
 string_byte(Ty *ty, Value *string, int argc, Value *kwargs)
 {
-        if (argc != 1)
-                zP("str.byte() expects 1 argument but got %d", argc);
+        ASSERT_ARGC("String.byte()", 1);
 
-        Value i = ARG(0);
+        imax i = INT_ARG(0);
 
-        if (i.type != VALUE_INTEGER)
-                zP("non-integer passed to str.byte()");
+        if (i < 0) {
+                i += string->bytes;
+        }
 
-        if (i.integer < 0)
-                i.integer += string->bytes;
-
-        if (i.integer < 0 || i.integer >= string->bytes)
+        if (i < 0 || i >= string->bytes) {
                 return NIL; /* TODO: maybe panic */
+        }
 
-        return INTEGER((unsigned char)string->str[i.integer]);
+        return INTEGER((unsigned char)string->str[i]);
 }
 
 Value
@@ -1098,7 +1102,7 @@ string_char(Ty *ty, Value *string, int argc, Value *kwargs)
 {
         ASSERT_ARGC("String.char()", 1);
 
-        int64_t i = INT_ARG(0);
+        imax i = INT_ARG(0);
 
         if (i < 0) {
                 i += string_length(ty, string, 0, NULL).integer;

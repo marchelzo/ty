@@ -151,6 +151,23 @@ static struct {
   { .module = "os",         .name = "pipe",                     .value = BUILTIN(builtin_os_pipe)                },
   { .module = "os",         .name = "dup",                      .value = BUILTIN(builtin_os_dup)                 },
   { .module = "os",         .name = "dup2",                     .value = BUILTIN(builtin_os_dup2)                },
+
+  { .module = "os",         .name = "mmap",                     .value = BUILTIN(builtin_os_mmap)                },
+  { .module = "os",         .name = "munmap",                   .value = BUILTIN(builtin_os_munmap)              },
+  { .module = "os",         .name = "PROT_READ",                .value = INT(PROT_READ)                          },
+  { .module = "os",         .name = "PROT_WRITE",               .value = INT(PROT_WRITE)                         },
+  { .module = "os",         .name = "PROT_EXEC",                .value = INT(PROT_EXEC)                          },
+  { .module = "os",         .name = "PROT_NONE",                .value = INT(PROT_NONE)                          },
+#if defined(MAP_ANON)
+  { .module = "os",         .name = "MAP_ANON",                 .value = INT(MAP_ANON)                           },
+#elif defined(MAP_ANONYMOUS)
+  { .module = "os",         .name = "MAP_ANON",                 .value = INT(MAP_ANONYMOUS)                      },
+#endif
+  { .module = "os",         .name = "MAP_SHARED",               .value = INT(MAP_SHARED)                         },
+  { .module = "os",         .name = "MAP_PRIVATE",              .value = INT(MAP_PRIVATE)                        },
+  { .module = "os",         .name = "MAP_FIXED",                .value = INT(MAP_FIXED)                          },
+  { .module = "os",         .name = "MAP_FAILED",               .value = POINTER(MAP_FAILED)                     },
+
   { .module = "os",         .name = "poll",                     .value = BUILTIN(builtin_os_poll)                },
   { .module = "os",         .name = "bind",                     .value = BUILTIN(builtin_os_bind)                },
   { .module = "os",         .name = "socket",                   .value = BUILTIN(builtin_os_socket)              },
@@ -430,6 +447,7 @@ static struct {
   { .module = "ptr",        .name = "null",                     .value = POINTER(NULL)                           },
   { .module = "ptr",        .name = "typed",                    .value = BUILTIN(builtin_ptr_typed)              },
   { .module = "ptr",        .name = "untyped",                  .value = BUILTIN(builtin_ptr_untyped)            },
+  { .module = "ptr",        .name = "fromInt",                  .value = BUILTIN(builtin_ptr_from_int)           },
 
   { .module = "json",       .name = "parse",                    .value = BUILTIN(builtin_json_parse)             },
   { .module = "json",       .name = "parse!",                   .value = BUILTIN(builtin_json_parse_xD)          },

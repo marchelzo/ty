@@ -26,11 +26,41 @@ int_from(Value const *v)
              : v->real;
 }
 
-static void
-xstore(Ty *ty, ffi_type *t, void *p, Value const *v)
+inline static void *
+ptr_from(Ty *ty, Value const *v)
 {
         Value *f;
 
+        switch (v->type) {
+        case VALUE_PTR:
+                return v->ptr;
+
+        case VALUE_INTEGER:
+                return (void *)v->integer;
+
+        case VALUE_STRING:
+                return (void *)v->str;
+
+        case VALUE_NIL:
+                return NULL;
+
+        case VALUE_BLOB:
+                return (void *)v->blob->items;
+
+        case VALUE_OBJECT:
+                f = class_lookup_method_i(ty, v->class, NAMES.ptr);
+                if (f != NULL) {
+                        return vm_call_method(ty, v, f, 0).ptr;
+                }
+                // fallthrough
+        }
+
+        zP("attempt to use non-addressable value as pointer: %s", VSC(v));
+}
+
+static void
+xstore(Ty *ty, ffi_type *t, void *p, Value const *v)
+{
         switch (t->type) {
         case FFI_TYPE_INT:
                 *(_Atomic int *)p = int_from(v);
@@ -69,37 +99,11 @@ xstore(Ty *ty, ffi_type *t, void *p, Value const *v)
                 break;
 
         case FFI_TYPE_POINTER:
-                switch (v->type) {
-                case VALUE_PTR:
-                        *(void * _Atomic *)p = v->ptr;
-                        break;
-
-                case VALUE_INTEGER:
-                        *(void * _Atomic *)p = (void *)v->integer;
-                        break;
-
-                case VALUE_STRING:
-                        *(void * _Atomic *)p = (void *)v->str;
-                        break;
-
-                case VALUE_NIL:
-                        *(void * _Atomic *)p = NULL;
-                        break;
-
-                case VALUE_BLOB:
-                        *(void * _Atomic *)p = (void *)v->blob->items;
-                        break;
-
-                case VALUE_OBJECT:
-                        f = class_lookup_method_i(ty, v->class, NAMES.ptr);
-                        if (f != NULL) {
-                                *(void * _Atomic *)p = vm_call_method(ty, v, f, 0).ptr;
-                        } else {
-                                *(void * _Atomic *)p = NULL;
-                        }
-                        break;
-                }
+                *(void * _Atomic *)p = ptr_from(ty, v);
                 break;
+
+        default:
+                zP("attempt to store unsupported atomic type: %d", t->type);
         }
 }
 
@@ -155,42 +159,13 @@ store(Ty *ty, ffi_type *t, void *p, Value const *v)
                 break;
 
         case FFI_TYPE_POINTER:
-                switch (v->type) {
-                case VALUE_PTR:
-                        *(void **)p = v->ptr;
-                        break;
-
-                case VALUE_INTEGER:
-                        *(void **)p = (void *)v->integer;
-                        break;
-
-                case VALUE_STRING:
-                        *(void **)p = (void *)v->str;
-                        break;
-
-                case VALUE_NIL:
-                        *(void **)p = NULL;
-                        break;
-
-                case VALUE_BLOB:
-                        *(void **)p = (void *)v->blob->items;
-                        break;
-
-                case VALUE_OBJECT:
-                        f = class_lookup_method_i(ty, v->class, NAMES.ptr);
-                        if (f != NULL)
-                                *(void **)p = vm_call_method(ty, v, f, 0).ptr;
-                        else
-                                *(void **)p = NULL;
-                        break;
-                }
+                *(void **)p = ptr_from(ty, v);
                 break;
 
         case FFI_TYPE_STRUCT:
                 switch (v->type) {
                 case VALUE_TUPLE:
                         ffi_get_struct_offsets(FFI_DEFAULT_ABI, t, offsets);
-
                         for (int i = 0; i < v->count; ++i) {
                                 store(ty, t->elements[i], (char *)p + offsets[i], &v->items[i]);
                         }
@@ -604,18 +579,24 @@ cffi_member(Ty *ty, int argc, Value *kwargs)
 Value
 cffi_load(Ty *ty, int argc, Value *kwargs)
 {
+        ASSERT_ARGC("ffi.load()", 1, 2, 3);
+
         if (argc == 3) {
                 return cffi_load_n(ty, argc, kwargs);
         }
 
+        Value arg0 = ARGx(0, VALUE_PTR);
+
         if (argc == 1) {
-                ffi_type *t = (ARG(0).extra == NULL)
+                ffi_type *t = (arg0.extra == NULL)
                             ? &ffi_type_uint8
-                            : ARG(0).extra;
-                return load(ty, t, ARG(0).ptr);
+                            : arg0.extra;
+                return load(ty, t, arg0.ptr);
         }
 
-        return load(ty, ARG(0).ptr, ARG(1).ptr);
+        Value addr = ARG(1);
+
+        return load(ty, arg0.ptr, ptr_from(ty, &addr));
 }
 
 Value
@@ -855,7 +836,7 @@ cffi_clone(Ty *ty, int argc, Value *kwargs)
 Value
 cffi_c_str(Ty *ty, int argc, Value *kwargs)
 {
-        ASSERT_ARGC("ffi.cstr()", 1);
+        ASSERT_ARGC("ffi.c_str()", 1);
         Value str = ARGx(0, VALUE_STRING, VALUE_BLOB);
         return PTR(TY_C_STR(str));
 }
