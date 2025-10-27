@@ -259,7 +259,9 @@ fn color-and-break(source: String) -> Array[(Int, String)] {
         (Ok((_, {tokens, *})) or Err({tokens, *}))
             => tokens,
 
-        err => do { print(err); return [(0, chalk::escape(source))] }
+        err => do {
+            return [(0, chalk::escape(source))]
+        }
     }
 
     let tokens = tokens.remove!(nil).map!(t -> match t {

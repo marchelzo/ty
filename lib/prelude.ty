@@ -1342,20 +1342,6 @@ class Ptr[T] : IntoPtr[T] {
     }
 }
 
-class RuntimeError {
-    __what: String
-
-    init(what: String) {
-        __what = what
-    }
-
-    what { __what }
-
-    __str__() -> String {
-        "{Class.name(type(self))}: {what}"
-    }
-}
-
 class Generator[T] : Iter[T] {
     init*(f) {
         while let Some(x) = f() {
@@ -1480,6 +1466,20 @@ class Tuple[...Types] {
     }
 
     __iter__() -> Iter[_];
+}
+
+class RuntimeError {
+    __what: String
+
+    init(what: String) {
+        __what = what
+    }
+
+    what { __what }
+
+    __str__() -> String {
+        "{Class.name(type(self))}: {what}"
+    }
 }
 
 tag MatchError;
