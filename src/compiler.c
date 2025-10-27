@@ -1611,10 +1611,10 @@ addsymbolx(Ty *ty, Scope *scope, char const *name, bool check_ns_shadow)
         Symbol *s = scope_local_lookup(ty, scope, name);
 
         if (
-                s != NULL
+                (s != NULL)
              && SymbolIsConst(s)
              && (scope == STATE.global || scope == GlobalScope)
-             && strcmp(name, "_") != 0
+             && (strcmp(name, "_") != 0)
         ) {
                 fail_or(
                         "redeclaration of variable %s%s%s%s%s",
@@ -1630,7 +1630,7 @@ addsymbolx(Ty *ty, Scope *scope, char const *name, bool check_ns_shadow)
 
         if (
                 check_ns_shadow
-             && (s = scope_lookup(ty, scope, name)) != NULL
+             && ((s = scope_lookup(ty, scope, name)) != NULL)
              && SymbolIsNamespace(s)
         ) {
                 fail_or(
@@ -12182,6 +12182,8 @@ cstmt(Ty *ty, Value *v)
                 s->class.doc = NULL;
                 Value *super = tuple_get(v, "super");
                 s->class.super = (super != NULL && super->type != VALUE_NIL) ? cexpr(ty, super) : NULL;
+                Value *pub = tuple_get(v, "public");
+                s->class.pub = (pub != NULL) && value_truthy(ty, pub);
                 Value *methods = tuple_get(v, "methods");
                 Value *getters = tuple_get(v, "getters");
                 Value *setters = tuple_get(v, "setters");
@@ -13840,15 +13842,19 @@ define_class(Ty *ty, Stmt *s)
         Class *class = class_get(ty, sym->class);
         ClassDefinition *cd = &s->class;
 
-        sym->flags |= SYM_CONST;
         sym->doc = cd->doc;
         sym->loc = cd->loc;
         sym->mod = s->mod;
+        sym->type = class->type;
+
         sym->flags |= SYM_CONST;
+        if (cd->pub) {
+                sym->flags |= SYM_PUBLIC;
+        }
+
         cd->symbol = sym->class;
         cd->var = sym;
 
-        sym->type = class->type;
 
         XLOG(
                 "%s================%s DEFINE CLASS: %s :: %s %s==========================%s",

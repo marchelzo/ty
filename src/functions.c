@@ -3126,6 +3126,46 @@ BUILTIN_FUNCTION(os_sync)
         return NIL;
 }
 
+BUILTIN_FUNCTION(os_mmap)
+{
+        ASSERT_ARGC("os.mmap()", 5, 6);
+
+        Value _hint = ARGx(0, VALUE_PTR, VALUE_INTEGER, VALUE_NIL);
+        isize length = INT_ARG(1);
+        int prot = INT_ARG(2);
+        int flags = INT_ARG(3);
+        int fd = INT_ARG(4);
+        isize offset;
+
+        if (argc == 6) {
+                offset = INT_ARG(5);
+        } else {
+                offset = 0;
+        }
+
+        void *hint;
+
+        switch (_hint.type) {
+        case VALUE_PTR:     hint = _hint.ptr;             break;
+        case VALUE_INTEGER: hint = (void *)_hint.integer; break;
+        case VALUE_NIL:     hint = NULL;                  break;
+        }
+
+        void *addr = mmap(hint, length, prot, flags, fd, offset);
+
+        return (addr != MAP_FAILED) ? PTR(addr) : NIL;
+}
+
+BUILTIN_FUNCTION(os_munmap)
+{
+        ASSERT_ARGC("os.munmap()", 2);
+
+        void *addr = PTR_ARG(0);
+        isize length = INT_ARG(1);
+
+        return INTEGER(munmap(addr, length));
+}
+
 #ifdef _WIN32
 // Paraphrased from https://github.com/python/cpython/blob/main/Lib/subprocess.py (list2cmdline)
 char *
@@ -8000,6 +8040,12 @@ BUILTIN_FUNCTION(ptr_untyped)
         }
 
         return GCPTR(p.ptr, p.gcptr);
+}
+
+BUILTIN_FUNCTION(ptr_from_int)
+{
+        ASSERT_ARGC("ptr.fromInt()", 1);
+        return PTR((void *)(uintptr_t)INT_ARG(0));
 }
 
 BUILTIN_FUNCTION(tdb_eval)

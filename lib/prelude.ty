@@ -728,7 +728,6 @@ macro __define_ast! {
        | nil
 
     return __eval__(f)(union)
-
 }
 
 use AST = __define_ast!(fn (t0) { t0 })

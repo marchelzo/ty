@@ -44,20 +44,21 @@
 #define CLOCK_REALTIME 0
 #define CLOCK_MONOTONIC 0
 #else
-#include <sys/types.h>
-#include <sys/ioctl.h>
-#include <sys/socket.h>
-#include <sys/un.h>
-#include <netdb.h>
-#include <sys/stat.h>
-#include <sys/wait.h>
-#include <netdb.h>
-#include <netinet/ip.h>
-#include <net/if.h>
-#include <poll.h>
-#include <termios.h>
 #include <dirent.h>
+#include <netdb.h>
+#include <netdb.h>
+#include <net/if.h>
+#include <netinet/ip.h>
+#include <poll.h>
 #include <pthread.h>
+#include <sys/ioctl.h>
+#include <sys/mman.h>
+#include <sys/socket.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <sys/un.h>
+#include <sys/wait.h>
+#include <termios.h>
 #endif
 
 #include "alloc.h"
