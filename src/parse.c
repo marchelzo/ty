@@ -6510,7 +6510,7 @@ Keyword:
 
         case KEYWORD_USE:
                 s = parse_use(ty);
-                if (s->type == STATEMENT_USE) {
+                if ((s->type == STATEMENT_USE) && !TyCompilerState(ty)->_parse) {
                         CompilerDoUse(ty, s, NULL);
                 }
                 return s;
@@ -6574,10 +6574,6 @@ SetNamespace(Stmt *s, Namespace *ns)
 static void
 define_top(Ty *ty, Stmt *s, char const *doc)
 {
-        if (TyCompilerState(ty)->_parse) {
-                return;
-        }
-
         switch (s->type) {
         case STATEMENT_FUN_MACRO_DEFINITION:
         case STATEMENT_MACRO_DEFINITION:
@@ -6898,7 +6894,9 @@ parse_ex(
 
                 SetNamespace(s, CurrentNamespace);
 
-                define_top(ty, s, doc);
+                if (!TyCompilerState(ty)->_parse) {
+                        define_top(ty, s, doc);
+                }
 
 #ifdef TY_DEBUG_NAMES
                 pns(s->ns, true);
