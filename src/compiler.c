@@ -4375,6 +4375,7 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                 break;
         case EXPRESSION_THROW:
                 symbolize_expression(ty, scope, e->throw);
+                e->_type = BOTTOM_TYPE;
                 break;
         case EXPRESSION_YIELD:
                 for (int i = 0; i < vN(e->es); ++i) {

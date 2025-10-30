@@ -701,6 +701,8 @@ macro __define_ast! {
        | ty.BitAnd[(AST, AST)]
        | ty.BitOr[(AST, AST)]
        | ty.Xor[(AST, AST)]
+       | ty.Shl[(AST, AST)]
+       | ty.Shr[(AST, AST)]
        | ty.Wtf[(AST, AST)]
        | ty.Cmp[(AST, AST)]
        | ty.LT[(AST, AST)]
@@ -3433,6 +3435,12 @@ macro __walk! {
             ty.GT(a, b)  => ty.GT(walk(a, f), walk(b, f)),
             ty.GEQ(a, b) => ty.GEQ(walk(a, f), walk(b, f)),
             ty.Cmp(a, b) => ty.Cmp(walk(a, f), walk(b, f)),
+
+            ty.Xor(a, b) => ty.Xor(walk(a, f), walk(b, f)),
+            ty.BitAnd(a, b) => ty.BitAnd(walk(a, f), walk(b, f)),
+            ty.BitOr(a, b)  => ty.BitOr(walk(a, f), walk(b, f)),
+            ty.Shl(a, b)    => ty.Shl(walk(a, f), walk(b, f)),
+            ty.Shr(a, b)    => ty.Shr(walk(a, f), walk(b, f)),
 
             ty.In(   a, b) => ty.In(   walk(a, f), walk(b, f)),
             ty.NotIn(a, b) => ty.NotIn(walk(a, f), walk(b, f)),
