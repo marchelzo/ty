@@ -1,0 +1,27 @@
+import ffi as c (C!)
+
+C! struct Foo {
+    int a;
+    union {
+        int b;
+        float c;
+    };
+    int y;
+    int z;
+};
+
+if #Foo != 16 {
+    print("FAIL: sizeof (Foo) = {#Foo} != 16")
+}
+
+let foo = Foo(a=2, c=4.5, z=11)
+if foo.c != 4.5 {
+    print("FAIL: foo.c = {foo.c} != 4.5")
+}
+
+foo.b = 7
+if foo.b != 7 {
+    print("FAIL: foo.b = {foo.b} != 7")
+}
+
+print('PASS')
