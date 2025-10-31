@@ -19,10 +19,6 @@
 #include "compiler.h"
 #include "types.h"
 
-
-static _Thread_local vec(void const *) visiting;
-
-
 static char *value_showx(Ty *ty, Value const *v);
 static char *value_show_colorx(Ty *ty, Value const *v);
 
@@ -574,22 +570,23 @@ value_showx(Ty *ty, Value const *v)
                 snprintf(buffer, 1024, "<index: (%d, %d, %d)>", (int)v->i, (int)v->off, (int)v->nt);
                 break;
         case VALUE_OBJECT:;
-                for (int i = 0; i < vN(visiting); ++i) {
-                        if (*v_(visiting, i) == v->object) {
+                for (int i = 0; i < vN(ty->visiting); ++i) {
+                        if (*v_(ty->visiting, i) == v->object) {
                                 goto BasicObject;
                         }
                 }
 
-                xvP(visiting, v->object);
 #ifdef TY_NO_LOG
                 Value *fp = class_method(ty, v->class, "__str__");
 #else
                 Value *fp = NULL;
 #endif
                 if (fp != NULL && fp != class_method(ty, CLASS_OBJECT, "__str__")) {
+                        xvP(ty->visiting, v->object);
                         Value str = vm_eval_function(ty, fp, v, NULL);
+                        vvX(ty->visiting);
                         if (str.type != VALUE_STRING) {
-                                zP("%s.__str__() returned non-string", class_name(ty, v->class));
+                                goto BasicObject;
                         }
                         s = gc_resize_unchecked(ty, NULL, str.bytes + 1);
                         memcpy(s, str.str, str.bytes);
@@ -598,8 +595,6 @@ value_showx(Ty *ty, Value const *v)
 BasicObject:
                         snprintf(buffer, 1024, "<%s object at %p>", class_name(ty, v->class), (void *)v->object);
                 }
-
-                vvX(visiting);
 
                 break;
         case VALUE_UNINITIALIZED:
@@ -870,13 +865,11 @@ value_show_colorx(Ty *ty, Value const *v)
                 break;
 
         case VALUE_OBJECT:;
-                for (int i = 0; i < vN(visiting); ++i) {
-                        if (*v_(visiting, i) == v->object) {
+                for (int i = 0; i < vN(ty->visiting); ++i) {
+                        if (*v_(ty->visiting, i) == v->object) {
                                 goto BasicObject;
                         }
                 }
-
-                xvP(visiting, v->object);
 
 #ifdef TY_NO_LOG
                 Value *fp = class_method(ty, v->class, "__str__");
@@ -888,10 +881,13 @@ value_show_colorx(Ty *ty, Value const *v)
                         if (!VM_TRY()) {
                                 vm_catch(ty);
                                 vm_finally(ty);
+                                vvX(ty->visiting);
                                 goto BasicObject;
                         }
 
+                        xvP(ty->visiting, v->object);
                         Value str = vm_eval_function(ty, fp, v, NULL);
+                        vvX(ty->visiting);
 
                         vm_finally(ty);
 
@@ -918,8 +914,6 @@ BasicObject:
                                 TERM(0)
                         );
                 }
-
-                vvX(visiting);
                 break;
 
         case VALUE_UNINITIALIZED:
@@ -946,7 +940,6 @@ value_show_color(Ty *ty, Value const *v)
         char *str;
 
         WITH_SCRATCH {
-                v0(visiting);
                 str = sclone(ty, value_show_colorx(ty, v));
         }
 
@@ -959,7 +952,6 @@ value_show(Ty *ty, Value const *v)
         char *str;
 
         WITH_SCRATCH {
-                v0(visiting);
                 str = sclone(ty, value_showx(ty, v));
         }
 

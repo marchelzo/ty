@@ -484,7 +484,7 @@ class Array[T] : Iterable[T] {
     mean(f: T -> Int | Float = id) -> ?Float {
         match self {
             [] => nil,
-            _  => @map(f |> float).sum() / @len()
+            _  => map(f |> float).sum() / len()
         }
     }
 
@@ -829,7 +829,7 @@ class String : Iterable[String], IntoPtr[Int] {
     match!(pattern: Regex) -> String | [String];
 
     match?(pattern: Regex) -> Bool;
-
+    search(pattern: String | Regex, off: ?Int) -> Int;
     count(pattern: String | Regex) -> Int;
 
     repeat(n: Int) -> String;
@@ -878,16 +878,16 @@ class String : Iterable[String], IntoPtr[Int] {
     }
 
     lower?() {
-        return self == @lower()
+        return self == lower()
     }
 
     upper?() {
-        return self == @upper()
+        return self == upper()
     }
 
-    searchr(pattern) {
-        for let off = @len() - 1; off >= 0; --off {
-            if let $i = @search(pattern, off) {
+    searchr(pattern: String | Regex) -> Int | nil {
+        for let off = len() - 1; off >= 0; --off {
+            if let $i = search(pattern, off) {
                 return i
             }
         }
@@ -1536,29 +1536,28 @@ class RegexMatch {
     start_: Int
     captures_: Array[(Int, Int)]
 
-    init(s, groups) {
-        let [(start, size), *captures] = groups
-        @start_ = start
-        @size = size
-        @s_ = s
-        @s = s.bslice(start, size)
-        @captures_ = captures
+    init(full, groups) {
+        let [(start, >size), *captures] = groups
+        start_ = start
+        s_ = full
+        s = full.bslice(start, size)
+        captures_ = captures
     }
 
     start {
-        #@pre
+        #pre
     }
 
     end {
-        @start + #@s
+        start + #s
     }
 
     pre {
-        @s_.bslice(0, @start_)
+        s_.bslice(0, start_)
     }
 
     post {
-        @s_.bslice(@start_ + @size)
+        s_.bslice(start_ + size)
     }
 
     count {
@@ -1566,7 +1565,7 @@ class RegexMatch {
     }
 
     captures -> Array[String | nil] {
-        [if i != -1 { @s_.bslice(i, n) } for (i, n) in @captures_]
+        [if i != -1 { s_.bslice(i, n) } for (i, n) in captures_]
     }
 
     ~() -> Array[String | nil] {
@@ -1575,16 +1574,16 @@ class RegexMatch {
 
     [](i) -> String {
         if i == 0 {
-            @s
-        } else if let (i, n) = @captures_[i - 1] and i != -1 {
-            @s_.bslice(i, n)
+            s
+        } else if let (i, n) = captures_[i - 1] and i != -1 {
+            s_.bslice(i, n)
         } else {
             throw IndexError(self, i)
         }
     }
 
     #() {
-        #@s
+        #s
     }
 }
 
@@ -1965,7 +1964,7 @@ trait Iter[T] < Iterable[T] {
     }
 
     zip(*its, longest=false) {
-        @zipWith(tuple, *its, longest: longest)
+        zipWith(tuple, *its, longest=longest)
     }
 
     pad*(n, x) {
@@ -2038,14 +2037,14 @@ trait Iter[T] < Iterable[T] {
     }
 
     join(sep: String) -> String {
-        if not let Some(::str ~> $s) = @__next__() {
+        if not let Some(::str ~> $s) = __next__() {
             return ''
         }
 
         let b = blob()
         b.push(s)
 
-        while let Some(s) = @__next__() {
+        while let Some(s) = __next__() {
             b.push(sep)
             b.push(::str(s))
         }
@@ -2123,7 +2122,7 @@ trait Iter[T] < Iterable[T] {
     }
 
     takeWhile*(pred) {
-        while let Some(x) = @__next__() {
+        while let Some(x) = __next__() {
             if pred(x) {
                 yield x
             } else {
@@ -2133,18 +2132,18 @@ trait Iter[T] < Iterable[T] {
     }
 
     drop(n: Int) {
-        for _ in ..n { @__next__() }
+        for _ in ..n { __next__() }
         return self
     }
 
     dropWhile*(pred) {
-        while let Some(x) = @__next__() {
+        while let Some(x) = __next__() {
             if !pred(x) {
                 yield x
                 break
             }
         }
-        while let Some(x) = @__next__() {
+        while let Some(x) = __next__() {
             yield x
         }
     }
@@ -2181,14 +2180,14 @@ trait Iter[T] < Iterable[T] {
     }
 
     max(k = id) {
-        if not let Some(x) = @__next__() {
+        if not let Some(x) = __next__() {
             return nil
         }
 
         let m = x
         let mKey = k(m)
 
-        while let Some(x) = @__next__() {
+        while let Some(x) = __next__() {
             let key = k(x)
             if key > mKey {
                 m, mKey = x, key
@@ -2199,14 +2198,14 @@ trait Iter[T] < Iterable[T] {
     }
 
     min(k = id) {
-        if not let Some(x) = @__next__() {
+        if not let Some(x) = __next__() {
             return nil
         }
 
         let m = x
         let mKey = k(m)
 
-        while let Some(x) = @__next__() {
+        while let Some(x) = __next__() {
             let key = k(x)
             if key < mKey {
                 m, mKey = x, key
@@ -2217,7 +2216,7 @@ trait Iter[T] < Iterable[T] {
     }
 
     minmax(k = id) {
-        if not let Some(x) = @__next__() {
+        if not let Some(x) = __next__() {
             return nil
         }
 
@@ -2227,7 +2226,7 @@ trait Iter[T] < Iterable[T] {
         let min = max
         let minKey = maxKey
 
-        while let Some(x) = @__next__() {
+        while let Some(x) = __next__() {
             let key = k(x)
             if key < minKey {
                 min, minKey = x, key
@@ -2270,7 +2269,7 @@ trait Iter[T] < Iterable[T] {
     }
 
     cycle() {
-        return @list().cycle()
+        return list().cycle()
     }
 
     repeat*(n) {
@@ -2311,7 +2310,7 @@ trait Iter[T] < Iterable[T] {
     }
 
     median() {
-        return @list().median()
+        return list().median()
     }
 
     all?(pred: T -> _ = id) {
@@ -2708,15 +2707,15 @@ class Channel {
     chan: _
 
     init() {
-        @chan = thread.channel()
+        chan = thread.channel()
     }
 
     send(x) {
-        thread.send(@chan, x)
+        thread.send(chan, x)
     }
 
     recv(timeoutMs: ?Int) {
-        thread.recv(@chan, timeoutMs if timeoutMs != nil)
+        thread.recv(chan, timeoutMs if timeoutMs != nil)
     }
 }
 
@@ -2907,7 +2906,7 @@ class Thread[T] {
      *                and use Channel to transfer objects between thread groups.
      */
     init(func: (*args: _) -> T, *args,  %kwargs) {
-        @handle = thread.create(func, *args, **kwargs)
+        handle = thread.create(func, *args, **kwargs)
     }
 
     static getName(t=nil) {
@@ -2915,7 +2914,7 @@ class Thread[T] {
     }
 
     getName() {
-        thread.getName(@handle)
+        thread.getName(handle)
     }
 
     setName(s) {
@@ -2927,15 +2926,15 @@ class Thread[T] {
     }
 
     join() -> T | nil {
-        thread.join(@handle)
+        thread.join(handle)
     }
 
     kill(sig) {
-        thread.kill(@handle, sig)
+        thread.kill(handle, sig)
     }
 
     detach() {
-        thread.detach(@handle)
+        thread.detach(handle)
     }
 
     static id() {
@@ -2943,7 +2942,7 @@ class Thread[T] {
     }
 
     id() {
-        thread.id(@handle)
+        thread.id(handle)
     }
 }
 
@@ -3370,15 +3369,15 @@ class SharedQueue[T] : Iterable[T] {
 }
 
 class EqualTo[T] {
-    x: T
-    init(x: T)   { @x = x     }
-    __match__(x) { self == @x }
+    __x: T
+    init(x: T)   { __x = x     }
+    __match__(x) { self == __x }
 }
 
 class AnyOf {
-    xs: Array[_]
-    init(*xs)    { @xs = xs }
-    __match__(x) { x in @xs }
+    __xs: Array[_]
+    init(*xs)    { __xs = xs }
+    __match__(x) { x in __xs }
 }
 
 macro __walk! {

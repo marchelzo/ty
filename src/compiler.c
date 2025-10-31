@@ -8173,7 +8173,11 @@ EmitMethodCall(
         }
 
         if (object == NULL) {
-                INSN(CALL_SELF_METHOD);
+                if (SymbolIsStatic(method->symbol) && STATE.meth->mtype != MT_STATIC) {
+                        INSN(CALL_SELF_STATIC);
+                } else {
+                        INSN(CALL_SELF_METHOD);
+                }
         } else if (!strict) {
                 INSN(TRY_CALL_METHOD);
         } else {
@@ -9573,7 +9577,6 @@ InjectRedpill(Ty *ty, Stmt *s)
 
         case STATEMENT_CLASS_DEFINITION:
                 def = &s->class;
-                XLOG("REDPILL CLASS: ============= %s ============", def->name);
                 if (def->redpilled) {
                         break;
                 } else {
@@ -9614,7 +9617,7 @@ InjectRedpill(Ty *ty, Stmt *s)
                 }
                 AddClassTraits(ty, def);
                 ResolveFieldTypes(ty, def->scope, &def->fields);
-                ResolveFieldTypes(ty, def->scope, &def->s_fields);
+                ResolveFieldTypes(ty, def->s_scope, &def->s_fields);
                 aggregate_overloads(ty, class->i, &def->methods, class_add_method, false);
                 aggregate_overloads(ty, class->i, &def->setters, class_add_setter, true);
                 aggregate_overloads(ty, class->i, &def->s_methods, class_add_static, false);
@@ -9623,9 +9626,9 @@ InjectRedpill(Ty *ty, Stmt *s)
                 RedpillMethods(ty, def->scope, self0, &def->getters);
                 RedpillMethods(ty, def->scope, self0, &def->setters);
                 Type *s_self0 = type_fixed(ty, class->type);
-                RedpillMethods(ty, def->scope, s_self0, &def->s_methods);
-                RedpillMethods(ty, def->scope, s_self0, &def->s_getters);
-                RedpillMethods(ty, def->scope, s_self0, &def->s_setters);
+                RedpillMethods(ty, def->s_scope, s_self0, &def->s_methods);
+                RedpillMethods(ty, def->s_scope, s_self0, &def->s_getters);
+                RedpillMethods(ty, def->s_scope, s_self0, &def->s_setters);
                 svP(class_defs, s);
                 break;
 
@@ -13809,12 +13812,13 @@ define_class(Ty *ty, Stmt *s)
 
         Scope *scope = GetNamespace(ty, s->ns);
 
-        s->class.scope = scope_new(ty, s->class.name, scope, false);
+        s->class.s_scope = scope_new(ty, s->class.name, scope, false);
+        s->class.scope = scope_new(ty, "(instance)", s->class.s_scope, false);
 
         for (int i = 0; i < vN(s->class.type_params); ++i) {
                 Expr *t0 = v__(s->class.type_params, i);
-                t0->symbol = scope_add_type_var(ty, s->class.scope, t0->identifier);
-                symbolize_expression(ty, s->class.scope, t0->constraint);
+                t0->symbol = scope_add_type_var(ty, s->class.s_scope, t0->identifier);
+                symbolize_expression(ty, s->class.s_scope, t0->constraint);
         }
 
         Symbol *sym = scope_local_lookup(ty, scope, s->class.name);
@@ -13869,7 +13873,7 @@ define_class(Ty *ty, Stmt *s)
 
         for (int i = 0; i < vN(cd->traits); ++i) {
                 Expr *trait0 = v__(cd->traits, i);
-                TryResolveExpr(ty, cd->scope, trait0);
+                TryResolveExpr(ty, cd->s_scope, trait0);
         }
 
         char scratch[512];
@@ -13944,7 +13948,7 @@ define_class(Ty *ty, Stmt *s)
                 name = GetPrivateName(m->name, sym->class, scratch, sizeof scratch);
                 class_add_static(ty, sym->class, name, REF(NewZero()));
 
-                m->fn_symbol = addsymbol(ty, cd->scope, m->name);
+                m->fn_symbol = addsymbol(ty, cd->s_scope, m->name);
                 m->fn_symbol->flags |= SYM_MEMBER;
                 m->fn_symbol->flags |= SYM_STATIC;
                 m->fn_symbol->member = M_ID(name);
@@ -13957,7 +13961,7 @@ define_class(Ty *ty, Stmt *s)
                 name = GetPrivateName(m->name, sym->class, scratch, sizeof scratch);
                 class_add_s_getter(ty, sym->class, name, REF(NewZero()));
 
-                m->fn_symbol = addsymbol(ty, cd->scope, m->name);
+                m->fn_symbol = addsymbol(ty, cd->s_scope, m->name);
                 m->fn_symbol->flags |= SYM_MEMBER;
                 m->fn_symbol->flags |= SYM_STATIC;
                 m->fn_symbol->member = M_ID(name);
@@ -13989,7 +13993,7 @@ define_class(Ty *ty, Stmt *s)
         }
 
         AddClassFields(ty, class, cd->scope, &cd->fields,   class_add_field,   0);
-        AddClassFields(ty, class, cd->scope, &cd->s_fields, class_add_s_field, SYM_STATIC);
+        AddClassFields(ty, class, cd->s_scope, &cd->s_fields, class_add_s_field, SYM_STATIC);
 
         RestoreContext(ty, ctx);
 }
@@ -15526,6 +15530,7 @@ DumpProgram(
                 CASE(TRY_CALL_METHOD)
                 CASE(CALL_METHOD)
                 CASE(CALL_SELF_METHOD)
+                CASE(CALL_SELF_STATIC)
                         READVALUE(n);
                         READMEMBER(n);
                         READVALUE(nkw);

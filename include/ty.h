@@ -539,11 +539,12 @@ typedef struct ty {
 
         struct { void *p; usize n; } tmp[TY_TMP_BUF_COUNT];
 
-
         struct {
                 int i;
                 vec(Arena) arenas;
         } scratch;
+
+        vec(void *) visiting;
 
         byte_vector err;
         JmpBufVector jbs;
@@ -734,6 +735,7 @@ extern usize TotalBytesAllocated;
         X(CALL_METHOD),           \
         X(TRY_CALL_METHOD),       \
         X(CALL_SELF_METHOD),      \
+        X(CALL_SELF_STATIC),      \
         X(GET_NEXT),              \
         X(PUSH_INDEX),            \
         X(READ_INDEX),            \

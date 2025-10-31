@@ -2,7 +2,7 @@ import ffi as c (C!)
 
 let $unibi = c.open('unibilium')
 
-pub namespace boolean {
+pub ns boolean {
     enum! {
         _begin,
         auto_left_margin,
@@ -53,7 +53,7 @@ pub namespace boolean {
     }
 }
 
-pub namespace numeric {
+pub ns numeric {
     enum! {
         _begin = boolean._end,
         columns,
@@ -529,7 +529,7 @@ C! struct UnibiVar {
 
 let var_t = UnibiVar_C
 
-C! pub unibi 'unibi_' function {
+C! pub unibi 'unibi_' fn {
     void destroy(term *);
 
     size_t dump(const term *, char *, size_t);
@@ -620,50 +620,40 @@ pub from_mem = mem -> from_mem(mem, mem.size())
 
 tag InitError;
 
-pub fn ev(s) {
-    __eval__(s)
-}
-
 class Term {
+    __term: _
+
     init(term, name, fd, path, mem) {
-        @term = term
+        __term = term
              ?? (fd   ?> from_fd)
              ?? (path ?> from_file)
              ?? (mem  ?> from_mem)
              ?? (name ?> from_term)
              ?? from_env()
 
-        if @term == nil {
+        if __term == nil {
             throw InitError()
         }
     }
 
     [](cap: Int) -> Bool | String | Int | nil {
         if cap :: bools {
-            return get_bool(@term, cap) != 0
+            return get_bool(__term, cap) != 0
         }
 
         if cap :: nums {
-            return get_num(@term, cap)
+            return get_num(__term, cap)
         }
 
         if cap :: strs {
-            return get_str(@term, cap) ?> c.str
+            return get_str(__term, cap) ?> c::str
         }
-    }
-
-    __missing__(name) {
-        self[ev("string.{name}")]
-    }
-
-    __method_missing__(name) {
-        print(self[ev("string.{name}")])
     }
 }
 
-pub function name(cap) {
+pub fn name(cap) {
     return ((cap :: bools) ? name_bool(cap)
           : (cap :: nums)  ? name_num(cap)
           : (cap :: strs)  ? name_str(cap)
-          : nil) ?> c.str
+          : nil) ?> c::str
 }

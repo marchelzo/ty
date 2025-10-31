@@ -71,7 +71,7 @@ let groups = %{
 
 let colors = [ %{ t: c for t in g.words() } for c, g in groups ].sum()
 
-@[memoized]
+@memoized
 fn color-and-break(module: String) -> Array[(Int, String)] {
     if not let ($source, $tokens) = (ty.text(module), ty.tokens(module)) {
         throw TDBError("failed to fetch source information for {module}")
