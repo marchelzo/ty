@@ -117,7 +117,7 @@ let styles: Dict[String, TermStyle] = %{
     'bg-bright':    {bg-bright: true}
 }
 
-@memoized()
+@memoized
 fn record-of(attrs: String, start: _ = {}) -> _ {
     let props = start
 
@@ -202,7 +202,7 @@ fn record-of(attrs: String, start: _ = {}) -> _ {
     props
 }
 
-@memoized()
+@memoized
 fn detrans(a: TermStyle, b: TermStyle) -> String {
     let on = []
     let off = []
@@ -424,7 +424,7 @@ fn trans(a: TermStyle, b: TermStyle) -> String {
 
     for key, val in b if a[key] != val {
         match key {
-            'fg' or 'bg' or 'uc'       => attrs.push(val.join(':')),
+            'fg' or 'bg' or 'uc'       => attrs.push(val.join(';')),
             'underline' :: val != nil  => attrs.push(val.join(':')),
             'bold'      :: val != nil  => attrs.push(1),
             'italic'    :: val != nil  => attrs.push(3),
@@ -444,7 +444,7 @@ fn trans(a: TermStyle, b: TermStyle) -> String {
         _           => None
     })
 
-    attrs ? "\x1b[{attrs.join(';')}m" : ''
+    attrs ? ["\x1b[{it}m" for attrs].str() : ''
 }
 
 class Chalk {
