@@ -324,7 +324,7 @@ fn fun() {
     // function
     next!('fn')
 
-    function mkfdef(name, rt: AST, ps: Array[AST], proto-string: ?String, doc-string: ?String) {
+    fn mkfdef(name, rt: AST, ps: Array[AST], proto-string: ?String, doc-string: ?String) {
         let args = [
             ty.Arg(arg: lib),
             ty.Arg(arg: ty.String(prefix + name)),
@@ -404,14 +404,14 @@ fn strct() {
     let peek_ = peek
     let next_ = next
 
-    let next = function () {
+    let next = fn () {
         while peek_().type == 'comment' {
             next_()
         }
         next_()
     }
 
-    let peek = function (i=0) {
+    let peek = fn (i=0) {
         let j = 0
 
         for (;;) {
@@ -580,7 +580,7 @@ fn strct() {
     let getters: Array[ty.Func[_Func]] = []
     let setters: Array[ty.Func[_Func]] = []
 
-    function add-member(i: ?Int, name, t, count, off: Int | AST = 0) {
+    fn add-member(i: ?Int, name, t, count, off: Int | AST = 0) {
         if i == nil {
             i = #structArgs
 
@@ -624,7 +624,7 @@ fn strct() {
             let mem = (off == 0) ? $$[
                 $${c.member}($$ctype, self.`<p>`, $${i})
             $$] : $$[
-                $${c.load}($$t, $${ptr::typed}($${c.pmember}($$ctype, self.`<p>`, $${i}), $${c.u8}) + $$off)
+                $${c.load}($$t, $${ptr::untyped}($${c.pmember}($$ctype, self.`<p>`, $${i})) + $$off)
             $$]
 
             let store = (off == 0) ? $$[
@@ -667,17 +667,17 @@ fn strct() {
         match member {
             Union(ut, decls) => do {
                 structArgs.push(ty.Arg(arg: ut))
+                let off = $$[ 0 $$]
                 for match decls {
                     Struct(inner) => do {
-                        let off = $$[ 0 $$]
                         for {name, t, count} in inner {
-                            add-member(i, name, t, count, off = off)
+                            add-member(i, name, t, count, off=off)
                             off = ty.Add(off, $$[ $${c.size}($$t) $$])
                         }
                     },
 
                     {name, t, count} => {
-                        add-member(i, name, t, count)
+                        add-member(i, name, t, count, off=off)
                     }
                 }
             },
