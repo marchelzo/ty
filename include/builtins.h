@@ -168,6 +168,12 @@ static struct {
   { .module = "os",         .name = "MAP_FIXED",                .value = INT(MAP_FIXED)                          },
   { .module = "os",         .name = "MAP_FAILED",               .value = POINTER(MAP_FAILED)                     },
 
+#if defined(__linux__)
+  { .module = "os",         .name = "AT_FDCWD",                 .value = INT(AT_FDCWD)                           },
+  { .module = "os",         .name = "AT_SYMLINK_NOFOLLOW",      .value = INT(AT_SYMLINK_NOFOLLOW)                },
+  { .module = "os",         .name = "AT_EMPTY_PATH",            .value = INT(AT_EMPTY_PATH)                      },
+#endif
+
   { .module = "os",         .name = "poll",                     .value = BUILTIN(builtin_os_poll)                },
   { .module = "os",         .name = "bind",                     .value = BUILTIN(builtin_os_bind)                },
   { .module = "os",         .name = "socket",                   .value = BUILTIN(builtin_os_socket)              },

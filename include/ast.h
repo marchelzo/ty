@@ -72,6 +72,7 @@ struct class_definition {
         };
         expression_vector type_params;
         Scope *scope;
+        Scope *s_scope;
         Symbol *var;
 };
 

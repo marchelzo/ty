@@ -1399,8 +1399,8 @@ parse_decorator_macro(Ty *ty)
 
         if (
                 (
-                        m->type != EXPRESSION_FUNCTION_CALL ||
-                        m->function->type != EXPRESSION_IDENTIFIER
+                        (m->type != EXPRESSION_FUNCTION_CALL)
+                     || (m->function->type != EXPRESSION_IDENTIFIER)
                 )
                 // TODO: allow . for module access here
         ) {
@@ -1418,58 +1418,49 @@ parse_decorators(Ty *ty)
 {
         expression_vector decorators = {0};
 
-        do {
-                consume('@');
-                consume('[');
+        while (try_consume('@')) {
+                Expr *f = parse_expr(ty, 0);
 
-                for (int i = 0 ; T0 != ']'; ++i) {
-                        Expr *f = parse_expr(ty, 0);
-
-                        if (
-                                (f->type != EXPRESSION_FUNCTION_CALL)
-                             && (f->type != EXPRESSION_METHOD_CALL)
-                        ) {
-                                Expr *call = mkexpr(ty);
-                                call->start = f->start;
-                                call->end = f->end;
-                                if (f->type == EXPRESSION_MEMBER_ACCESS) {
-                                        call->type = EXPRESSION_METHOD_CALL;
-                                        call->object = f->object;
-                                        call->method = f->member;
-                                } else {
-                                        call->type = EXPRESSION_FUNCTION_CALL;
-                                        call->function = f;
-                                }
-                                f = call;
+                if (
+                        (f->type != EXPRESSION_FUNCTION_CALL)
+                     && (f->type != EXPRESSION_METHOD_CALL)
+                ) {
+                        Expr *call = mkexpr(ty);
+                        call->start = f->start;
+                        call->end = f->end;
+                        if (f->type == EXPRESSION_MEMBER_ACCESS) {
+                                call->type = EXPRESSION_METHOD_CALL;
+                                call->object = f->object;
+                                call->method = f->member;
+                        } else {
+                                call->type = EXPRESSION_FUNCTION_CALL;
+                                call->function = f;
                         }
-
-                        Expr *hole = mkxpr(PLACEHOLDER);
-
-                        switch (f->type) {
-                        case EXPRESSION_FUNCTION_CALL:
-                                avI(f->args, hole, 0);
-                                avI(f->fconds, NULL, 0);
-                                break;
-
-                        case EXPRESSION_METHOD_CALL:
-                                avI(f->method_args, hole, 0);
-                                avI(f->mconds, NULL, 0);
-                                break;
-
-                        default:
-                                UNREACHABLE();
-                        }
-
-                        vvI(decorators, f, i);
-
-                        if (T0 == ',') {
-                                next();
-                        }
+                        f = call;
                 }
 
-                consume(']');
+                Expr *hole = mkxpr(PLACEHOLDER);
 
-        } while (T0 == '@' && T1 == '[');
+                switch (f->type) {
+                case EXPRESSION_FUNCTION_CALL:
+                        avI(f->args, hole, 0);
+                        avI(f->fconds, NULL, 0);
+                        break;
+
+                case EXPRESSION_METHOD_CALL:
+                        avI(f->method_args, hole, 0);
+                        avI(f->mconds, NULL, 0);
+                        break;
+
+                default:
+                        UNREACHABLE();
+                }
+
+                avP(decorators, f);
+
+                try_consume(',');
+                try_consume(';');
+        }
 
         return decorators;
 }
@@ -1824,8 +1815,9 @@ prefix_dollar(Ty *ty)
         e->identifier = tok()->identifier;
         e->module = tok()->module;
 
-        if (e->module != NULL)
-                die("unpexpected module in lvalue");
+        if (e->module != NULL) {
+                die_at(e, "not-nil ($<id>) pattern contains unexpected module qualifier");
+        }
 
         consume(TOKEN_IDENTIFIER);
 
@@ -2183,15 +2175,9 @@ opfunc(Ty *ty)
 static Expr *
 prefix_at(Ty *ty)
 {
-        if (T1 == '[')
-                return prefix_function(ty);
-
-        Location start = tok()->start;
-        Location end = tok()->end;
-
-        next();
-
-        if (T0 == '{') {
+        switch (T1) {
+        case '{':
+                next();
                 next();
 
                 Expr *m = parse_decorator_macro(ty);
@@ -2205,18 +2191,9 @@ prefix_at(Ty *ty)
                 avI(m->fconds, NULL, 0);
 
                 return m;
-        } else {
-                unconsume('.');
-                tok()->start = start;
-                tok()->end = end;
 
-                unconsume(TOKEN_IDENTIFIER);
-                tok()->identifier = "self";
-                tok()->module = NULL;
-                tok()->start = start;
-                tok()->end = end;
-
-                return prefix_identifier(ty);
+        default:
+                return prefix_function(ty);
         }
 }
 
@@ -6474,10 +6451,10 @@ _parse_statement(Ty *ty, int prec)
 
         switch (T0) {
         case TOKEN_AT:
-                if (T1 == '[')
-                        return parse_function_definition(ty);
-                else
+                if (T1 == '{') {
                         goto Expression;
+                }
+                return parse_function_definition(ty);
 
         case '{':            return parse_block(ty);
         case ';':            return parse_null_statement(ty);

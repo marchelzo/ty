@@ -6309,6 +6309,14 @@ BadTupleMember:
                         push(GetSelf(ty));
                         CallMethod(ty, i, n, nkw, false);
                         break;
+                CASE(CALL_SELF_STATIC)
+                        READVALUE(n);
+                        READVALUE(i);
+                        READVALUE(nkw);
+                        v = GetSelf(ty);
+                        push(CLASS(ClassOf(&v)));
+                        CallMethod(ty, i, n, nkw, false);
+                        break;
                 CASE(SAVE_STACK_POS)
                         xvP(SP_STACK, STACK.count);
                         break;
@@ -6517,8 +6525,11 @@ FormatTrace(Ty *ty, ThrowCtx const *ctx, byte_vector *out)
 
         for (int i = 0; i < vN(*ctx); ++i) {
                 char *ip = (char *)v__(*ctx, i);
-                Expr const *expr = compiler_find_expr(ty, ip - 1);
+                if (ip == NULL) {
+                        break;
+                }
 
+                Expr const *expr = compiler_find_expr(ty, ip - 1);
                 if (expr == NULL) {
                         continue;
                 }
@@ -8279,6 +8290,7 @@ StepInstruction(char const *ip)
         CASE(TRY_CALL_METHOD)
         CASE(CALL_METHOD)
         CASE(CALL_SELF_METHOD)
+        CASE(CALL_SELF_STATIC)
                 SKIPVALUE(n);
                 SKIPVALUE(n);
                 SKIPVALUE(nkw);
@@ -8557,6 +8569,14 @@ tdb_step_into(Ty *ty)
                 READVALUE(i);
                 READVALUE(i);
                 v = GetMember(ty, GetSelf(ty), i, false, true);
+                break;
+
+        CASE(CALL_SELF_STATIC)
+                READVALUE(i);
+                READVALUE(i);
+                v = GetSelf(ty);
+                v = CLASS(ClassOf(&v));
+                v = GetMember(ty, v, i, false, true);
                 break;
         }
 

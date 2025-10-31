@@ -1,8 +1,8 @@
 import io
-import os (args)
+import os (argv)
 import sh (sh)
 
-if not let [_, header, *prefixes] = args {
+if not let [_, header, *prefixes] = argv {
     os.exit(1)
 }
 

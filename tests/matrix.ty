@@ -1,24 +1,26 @@
-pub class Matrix : Iterable {
-    init(m) { self.m = m }
+pub class Matrix[T] : Iterable {
+    __m: _
+
+    init(m) { __m = m }
 
     cols {
-        #@m[0]
+        #__m[0]
     }
 
     rows {
-        #@m
+        #__m
     }
 
     col(i) {
-        ColVec([row[i] for row in @m])
+        ColVec([row[i] for row in __m])
     }
 
     row(i) {
-        RowVec(@m[i])
+        RowVec(__m[i])
     }
 
     __call__(i, j) {
-        @m[i][j]
+        __m[i][j]
     }
 
     __fmt__() { self.__str__() }
@@ -42,26 +44,30 @@ class Vec < Matrix : Iterable[Float] {
 }
 
 class RowVec(_v: Array[Float]) < Vec {
+    _v: Array[Float]
+
     rows {   1 }
-    cols { #@_v }
+    cols { #_v }
 
     row(i: i == 0) { self }
-    col(i)         { ColVec([@_v[i]]) }
+    col(i)         { ColVec([_v[i]]) }
 
     __call__(i, j) {
-        @_v[j]
+        _v[j]
     }
 }
 
 class ColVec(_v: Array[Float]) < Vec {
+    _v: Array[Float]
+
     cols { 1   }
-    rows { #@_v }
+    rows { #_v }
 
     col(i: i == 0) { self }
-    row(i)         { RowVec([@_v[i]]) }
+    row(i)         { RowVec([_v[i]]) }
 
     __call__(i, j) {
-        @_v[i]
+        _v[i]
     }
 }
 

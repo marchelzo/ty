@@ -2,11 +2,11 @@ let dropped = []
 
 class A {
     init(k) {
-        @k = k
+        self.k = k
     }
 
     __drop__() {
-        dropped.push(@k)
+        dropped.push(self.k)
     }
 }
 
