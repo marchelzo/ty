@@ -148,6 +148,17 @@ CaptureContextEx(Ty *ty, ThrowCtx *ctx);
 noreturn void
 ZeroDividePanic(Ty *ty);
 
+struct try *
+vm_push_try(Ty *ty);
+
+void
+vm_catch(Ty *ty);
+
+void
+vm_finally(Ty *ty);
+
+#define VM_TRY() (setjmp(vm_push_try(ty)->jb) == 0)
+
 #endif
 
 /* vim: set sts=8 sw=8 expandtab: */

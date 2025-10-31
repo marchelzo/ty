@@ -19,6 +19,10 @@
 #include "compiler.h"
 #include "types.h"
 
+
+static _Thread_local vec(void const *) visiting;
+
+
 static char *value_showx(Ty *ty, Value const *v);
 static char *value_show_colorx(Ty *ty, Value const *v);
 
@@ -470,8 +474,6 @@ uninit(Ty *ty, Symbol const *s)
 static char *
 value_showx(Ty *ty, Value const *v)
 {
-        static _Thread_local vec(void const *) visiting;
-
         char buffer[1024];
         char *s = NULL;
 
@@ -619,8 +621,6 @@ BasicObject:
 static char *
 value_show_colorx(Ty *ty, Value const *v)
 {
-        static _Thread_local vec(void const *) visiting;
-
         char buffer[2048];
         char small[512];
         char *s = NULL;
@@ -885,10 +885,20 @@ value_show_colorx(Ty *ty, Value const *v)
 #endif
 
                 if (fp != NULL && fp != class_method(ty, CLASS_OBJECT, "__str__")) {
-                        Value str = vm_eval_function(ty, fp, v, NULL);
-                        if (str.type != VALUE_STRING) {
-                                zP("%s.__str__() returned non-string", class_name(ty, v->class));
+                        if (!VM_TRY()) {
+                                vm_catch(ty);
+                                vm_finally(ty);
+                                goto BasicObject;
                         }
+
+                        Value str = vm_eval_function(ty, fp, v, NULL);
+
+                        vm_finally(ty);
+
+                        if (str.type != VALUE_STRING) {
+                                goto BasicObject;
+                        }
+
                         s = smA(str.bytes + 1);
                         memcpy(s, str.str, str.bytes);
                         s[str.bytes] = '\0';
@@ -936,6 +946,7 @@ value_show_color(Ty *ty, Value const *v)
         char *str;
 
         WITH_SCRATCH {
+                v0(visiting);
                 str = sclone(ty, value_show_colorx(ty, v));
         }
 
@@ -948,6 +959,7 @@ value_show(Ty *ty, Value const *v)
         char *str;
 
         WITH_SCRATCH {
+                v0(visiting);
                 str = sclone(ty, value_showx(ty, v));
         }
 

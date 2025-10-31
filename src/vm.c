@@ -1877,6 +1877,39 @@ BadFieldAccess(Ty *ty, Value const *val, i32 z)
         }
 }
 
+static struct try *
+PushTry(Ty *ty)
+{
+        struct try *t;
+        usize ntry = vN(TRY_STACK);
+
+        if (UNLIKELY(ntry == vC(TRY_STACK))) {
+                do {
+                        t = alloc0(sizeof *t);
+                        xvP(TRY_STACK, t);
+                } while (vN(TRY_STACK) != vC(TRY_STACK));
+                vN(TRY_STACK) = ntry;
+        }
+
+        t = *vZ(TRY_STACK);
+        vN(TRY_STACK) += 1;
+
+        t->sp = vN(STACK);
+        t->gc = vN(RootSet);
+        t->cs = vN(CALLS);
+        t->ts = vN(TARGETS);
+        t->ds = vN(DROP_STACK);
+        t->ctxs = vN(FRAMES);
+        t->nsp = vN(SP_STACK);
+        t->executing = false;
+        t->state = TRY_TRY;
+        t->ed = EXEC_DEPTH;
+        t->ss = SaveScratch(ty);
+        v0(t->defer);
+
+        return t;
+}
+
 TY_INSTR_INLINE static void
 DoThrow(Ty *ty)
 {
@@ -4934,19 +4967,7 @@ AssignGlobal:
                         break;
                 CASE(TRY)
                 {
-                        struct try *t;
-                        usize ntry = vN(TRY_STACK);
-
-                        if (UNLIKELY(ntry == vC(TRY_STACK))) {
-                                do {
-                                        t = alloc0(sizeof *t);
-                                        xvP(TRY_STACK, t);
-                                } while (vN(TRY_STACK) != vC(TRY_STACK));
-                                vN(TRY_STACK) = ntry;
-                        }
-
-                        t = *vZ(TRY_STACK);
-                        vN(TRY_STACK) += 1;
+                        struct try *t = PushTry(ty);
 
                         if (setjmp(t->jb) != 0) {
                                 break;
@@ -4960,20 +4981,6 @@ AssignGlobal:
 
                         READVALUE(n);
                         t->end = (n == -1) ? NULL : IP + n;
-
-                        t->sp = vN(STACK);
-                        t->gc = vN(RootSet);
-                        t->cs = vN(CALLS);
-                        t->ts = vN(TARGETS);
-                        t->ds = vN(DROP_STACK);
-                        t->ctxs = vN(FRAMES);
-                        t->nsp = vN(SP_STACK);
-                        t->executing = false;
-                        t->state = TRY_TRY;
-                        t->ed = EXEC_DEPTH;
-                        t->ss = SaveScratch(ty);
-                        v0(t->defer);
-
                         break;
                 }
                 CASE(TRACE)
@@ -8760,6 +8767,27 @@ noreturn void
 ZeroDividePanic(Ty *ty)
 {
         vmE(&TAG(TAG_ZERO_DIV_ERR));
+}
+
+struct try *
+vm_push_try(Ty *ty)
+{
+       struct try *t = PushTry(ty);
+       t->catch = IP;
+       t->end   = IP;
+       return t;
+}
+
+void
+vm_catch(Ty *ty)
+{
+        PopThrowCtx(ty);
+}
+
+void
+vm_finally(Ty *ty)
+{
+        vvX(TRY_STACK);
 }
 
 /* vim: set sts=8 sw=8 expandtab: */
