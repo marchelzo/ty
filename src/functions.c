@@ -5188,6 +5188,58 @@ BUILTIN_FUNCTION(os_sigwaitinfo)
 #endif
 }
 
+BUILTIN_FUNCTION(os_sigwait)
+{
+        ASSERT_ARGC("os.sigwait()", 1);
+#ifdef _WIN32
+        NOT_ON_WINDOWS("os.sigwait()");
+#else
+        Value set = ARGx(0, VALUE_ARRAY, VALUE_DICT);
+
+        sigset_t sigset;
+        sigemptyset(&sigset);
+
+        switch (set.type) {
+        case VALUE_ARRAY:
+                for (int i = 0; i < vN(*set.array); ++i) {
+                        Value v = v__(*set.array, i);
+                        if (v.type != VALUE_INTEGER) {
+                                bP("bad signal set: %s", VSC(&set));
+                        }
+                        sigaddset(&sigset, v.integer);
+                }
+                break;
+
+        case VALUE_DICT:
+                for (int i = 0; i < set.dict->count; ++i) {
+                        Value key = set.dict->keys[i];
+                        Value val = set.dict->values[i];
+
+                        if (key.type == VALUE_ZERO) {
+                                continue;
+                        }
+
+                        if (key.type != VALUE_INTEGER) {
+                                bP("bad signal set: %s", VSC(&set));
+                        }
+
+                        if (value_truthy(ty, &val)) {
+                                sigaddset(&sigset, key.integer);
+                        }
+                }
+                break;
+        }
+
+        int signo;
+        int ret = sigwait(&sigset, &signo);
+        if (ret != 0) {
+                bP("%s", strerror(ret));
+        }
+
+        return INTEGER(signo);
+#endif
+}
+
 BUILTIN_FUNCTION(os_kill)
 {
         ASSERT_ARGC("os.kill()", 2);

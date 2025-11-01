@@ -218,6 +218,7 @@ static struct {
   { .module = "os",         .name = "sigpending",               .value = BUILTIN(builtin_os_sigpending)          },
   { .module = "os",         .name = "sigsuspend",               .value = BUILTIN(builtin_os_sigsuspend)          },
   { .module = "os",         .name = "sigwaitinfo",              .value = BUILTIN(builtin_os_sigwaitinfo)         },
+  { .module = "os",         .name = "sigwait",                  .value = BUILTIN(builtin_os_sigwait)             },
   { .module = "os",         .name = "SIG_BLOCK",                .value = INT(SIG_BLOCK)                          },
   { .module = "os",         .name = "SIG_UNBLOCK",              .value = INT(SIG_UNBLOCK)                        },
   { .module = "os",         .name = "SIG_SETMASK",              .value = INT(SIG_SETMASK)                        },
