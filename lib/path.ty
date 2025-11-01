@@ -180,22 +180,22 @@ pub class Path {
 
     file? -> Bool {
         match os.stat(str(self)) {
-            {st_mode, *} => (st_mode & os.S_IFMT) == os.S_IFREG,
-            _ => false
+            {mode, *} => (mode & os.S_IFMT) == os.S_IFREG,
+            _         => false
         }
     }
 
     dir? -> Bool {
         match os.stat(str(self)) {
-            {st_mode, *} => (st_mode & os.S_IFMT) == os.S_IFDIR,
-            _ => false
+            {mode, *} => (mode & os.S_IFMT) == os.S_IFDIR,
+            _         => false
         }
     }
 
     symlink? -> Bool {
         match os.lstat(str(self)) {
-            {st_mode, *} => (st_mode & os.S_IFMT) == os.S_IFLNK,
-            _ => false
+            {mode, *} => (mode & os.S_IFMT) == os.S_IFLNK,
+            _         => false
         }
     }
 

@@ -42,9 +42,9 @@ pub fn dup(fd: Int) -> Int;
 pub fn dup2(fd: Int, fd2: Int) -> Int;
 pub fn pipe() -> (Int, Int);
 pub fn splice(
-    fd_in: Int,
+    fin: Int,
     off_in: ?Int = nil,
-    fd_out: Int,
+    fout: Int,
     off_out: ?Int = nil,
     len: Int,
     flags: Int = 0
@@ -57,19 +57,19 @@ pub fn ftruncate(path: String, size: Int) -> Int;
 pub fn truncate(path: String, size: Int) -> Int;
 
 pub use Stat = {
-    st_dev:     Int,
-    st_ino:     Int,
-    st_mode:    Int,
-    st_nlink:   Int,
-    st_uid:     Int,
-    st_gid:     Int,
-    st_rdev:    Int,
-    st_size:    Int,
-    st_atime:   Float,
-    st_mtime:   Float,
-    st_ctime:   Float,
-    st_blksize: Int,
-    st_blocks:  Int
+    dev:     Int,
+    ino:     Int,
+    mode:    Int,
+    nlink:   Int,
+    uid:     Int,
+    gid:     Int,
+    rdev:    Int,
+    size:    Int,
+    atime:   Float,
+    mtime:   Float,
+    ctime:   Float,
+    blksize: Int,
+    blocks:  Int
 }
 
 pub fn stat(path: String) -> Stat | nil;
@@ -77,7 +77,7 @@ pub fn fstat(fd: Int) -> Stat | nil;
 pub fn lstat(path: String) -> Stat | nil;
 
 pub fn opendir(path: String) -> Int | nil;
-pub fn readdir(dirp: Int) -> {d_ino: Int, d_off: Int, d_reclen: Int, d_type: Int, d_name: String} | nil;
+pub fn readdir(dirp: Int) -> {ino: Int, off: Int, reclen: Int, type: Int, name: String} | nil;
 pub fn closedir(dirp: Int) -> Int;
 pub fn telldir(dirp: Int) -> Int;
 pub fn seekdir(dirp: Int, loc: Int);
@@ -150,10 +150,10 @@ pub fn walk*(path: String, skip: _ = nil) -> Generator[(String, [String], [Strin
     let ds: [String] = []
 
     while let $entry = readdir(d) {
-        match (entry.d_type, entry.d_name) {
+        match (entry.type, entry.name) {
             (_, '.'), (_, '..') => { },
-            (::DT_DIR, name)    => ds.push(entry.d_name),
-            (_,        name)    => fs.push(entry.d_name)
+            (::DT_DIR, name)    => ds.push(entry.name),
+            (_,        name)    => fs.push(entry.name)
         }
     }
 
@@ -199,8 +199,8 @@ pub fn rm(path, quiet=false) {
 
     try {
         while let $entry = readdir(d) {
-            match (entry.d_type, entry.d_name) {
-                (_, '.'), (_, '..') => { },
+            match (entry.type, entry.name) {
+                (_, '.'), (_, '..') => {},
                 (_, name)           => rm("{path}/{name}")
             }
         }
