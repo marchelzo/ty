@@ -155,8 +155,8 @@ pub use time::Tm = {
 }
 
 pub use time::Timespec = {
-    tv_sec:  Int,
-    tv_nsec: Int
+    sec:  Int,
+    nsec: Int
 }
 
 fn time::time(tm: ?time::Tm, utc: Bool = false) -> Int;

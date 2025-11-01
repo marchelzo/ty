@@ -5634,9 +5634,9 @@ xstatv(int ret, StatStruct const *st)
                 "blocks", INTEGER(st->st_blocks),
                 "blksize", INTEGER(st->st_blksize),
 #endif
-                "atim", atime,
-                "mtim", mtime,
-                "ctim", ctime,
+                "atime", atime,
+                "mtime", mtime,
+                "ctime", ctime,
                 NULL
         );
 }

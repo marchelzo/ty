@@ -324,7 +324,7 @@ fn test-chmod() {
     file.chmod(0o644)
     
     let st = file.stat
-    assert((st.st_mode & 0o777) & 0o644 == 0o644)
+    assert((st.mode & 0o777) & 0o644 == 0o644)
     
     file.unlink()
     tmp.rmdir()
@@ -362,9 +362,9 @@ fn test-stat() {
     
     let st = file.stat
     
-    assert(st.st_size :: Int)
-    assert(st.st_mode :: Int)
-    assert((st.st_mtim :: Int) || (st.st_mtim :: Float))
+    assert(st.size :: Int)
+    assert(st.mode :: Int)
+    assert((st.mtime :: Int) || (st.mtime :: Float))
     
     file.unlink()
 }
