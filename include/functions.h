@@ -211,6 +211,7 @@ BUILTIN_FUNCTION(os_sigprocmask);
 BUILTIN_FUNCTION(os_sigpending);
 BUILTIN_FUNCTION(os_sigsuspend);
 BUILTIN_FUNCTION(os_sigwaitinfo);
+BUILTIN_FUNCTION(os_sigwait);
 BUILTIN_FUNCTION(os_exit);
 BUILTIN_FUNCTION(os_exec);
 BUILTIN_FUNCTION(errno_get);

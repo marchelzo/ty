@@ -23,16 +23,15 @@ fn test_sigprocmask_blocks_signals() {
     signal(SIGUSR1, nil)
 }
 
-fn test_sigwaitinfo_retrieves_blocked_signal() {
+fn test_sigwait_retrieves_blocked_signal() {
     let blocked = [SIGUSR1]
     let old = sigprocmask(SIG_BLOCK, blocked)
     
     let pid = getpid()
     raise(SIGUSR1)
     
-    let info = sigwaitinfo(blocked)
-    assert(info.signo == SIGUSR1, "sigwaitinfo should return SIGUSR1")
-    assert(info.pid == pid, "signal source should be self")
+    let signo = sigwait(blocked)
+    assert(signo == SIGUSR1, "sigwait should return SIGUSR1")
     
     sigprocmask(SIG_SETMASK, old)
 }
@@ -128,9 +127,7 @@ fn test_sigpending_reflects_blocked_signals() {
 
 fn run_all_tests() {
     test_sigprocmask_blocks_signals()
-#|if __linux__
-    test_sigwaitinfo_retrieves_blocked_signal()
-#|]
+    test_sigwait_retrieves_blocked_signal()
     test_signal_handler_fires()
     test_sigsuspend_waits_for_unblocked_signal()
     test_sigprocmask_restore_old_mask()
