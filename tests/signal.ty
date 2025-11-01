@@ -128,7 +128,9 @@ fn test_sigpending_reflects_blocked_signals() {
 
 fn run_all_tests() {
     test_sigprocmask_blocks_signals()
+#|if __linux__
     test_sigwaitinfo_retrieves_blocked_signal()
+#|]
     test_signal_handler_fires()
     test_sigsuspend_waits_for_unblocked_signal()
     test_sigprocmask_restore_old_mask()

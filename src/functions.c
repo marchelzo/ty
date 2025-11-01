@@ -5082,8 +5082,8 @@ BUILTIN_FUNCTION(os_sigsuspend)
 BUILTIN_FUNCTION(os_sigwaitinfo)
 {
         ASSERT_ARGC("os.sigwaitinfo()", 1, 2);
-#ifdef _WIN32
-        NOT_ON_WINDOWS("os.sigwaitinfo()");
+#if !defined(__linux__)
+        bP("os.sigwaitinfo() is not supported on this platform");
 #else
         Value set = ARGx(0, VALUE_ARRAY, VALUE_DICT);
         Value timeout;
@@ -5174,12 +5174,14 @@ BUILTIN_FUNCTION(os_sigwaitinfo)
                 "pid",     INTEGER(info.si_pid),
                 "uid",     INTEGER(info.si_uid),
                 "status",  INTEGER(info.si_status),
+#if defined(__linux__)
                 "utime",   INTEGER(info.si_utime),
                 "stime",   INTEGER(info.si_stime),
+                "fd",      INTEGER(info.si_fd),
+#endif
                 "value",   INTEGER(info.si_value.sival_int),
                 "addr",    INTEGER((imax)(uintptr_t)info.si_addr),
-                "band",    INTEGER(info.si_band),
-                "fd",      INTEGER(info.si_fd)
+                "band",    INTEGER(info.si_band)
         );
 
         return result;
