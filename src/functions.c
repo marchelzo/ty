@@ -5014,7 +5014,7 @@ BUILTIN_FUNCTION(os_signal)
                 vm_del_sigfn(ty, sig);
                 act.sa_handler = SIG_DFL;
                 break;
-        
+
         default:
                 if (!CALLABLE(f)) {
                         zP("the second argument to os.signal() must be callable");
@@ -5180,7 +5180,7 @@ BUILTIN_FUNCTION(os_sigwait)
         NOT_ON_WINDOWS("os.sigwait()");
 #else
         sigset_t set;
-        
+
         IntoSigSet(ty, "os.sigwait()", &ARG(0), &set);
 
         int sig;

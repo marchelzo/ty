@@ -9,26 +9,26 @@ fn assert(condition: bool, message: String) {
 fn test_signals_blocks_and_queries() {
     let blocked = Signals(SIGUSR1, SIGUSR2)
     let old = blocked.block()
-    
+
     raise(SIGUSR1)
-    
+
     assert(SIGUSR1 in Signals.pending, "SIGUSR1 should be pending after block")
 
     Signals.flush()
-    
+
     old.set()
 }
 
 fn test_signals_wait_retrieves_blocked() {
     let blocked = Signals(SIGUSR1)
     let old = blocked.block()
-    
+
     let pid = os.getpid()
     kill(pid, SIGUSR1)
-    
+
     let sig = blocked.wait()
     assert(sig == SIGUSR1, "wait should return SIGUSR1")
-    
+
     old.set()
 }
 
@@ -37,17 +37,17 @@ fn test_signal_handler_fires() {
     signal(SIGUSR1, fn () {
         fired = true
     })
-    
+
     let pid = os.getpid()
     kill(pid, SIGUSR1)
-    
+
     sleep(0.01)
     assert(fired, "signal handler should have executed")
 }
 
 fn test_signals_suspend_waits_unblocked() {
     Signals.block(SIGUSR2)
-    
+
     match fork() {
         0 => {
             let received = false
@@ -72,7 +72,7 @@ fn test_signals_restore_mask() {
     let original = Signals.mask
     Signals.block(SIGUSR1)
     original.set()
-    
+
     let current = Signals.mask
     assert(!current.contains?(SIGUSR1), "mask should restore to original state")
 }
@@ -98,16 +98,16 @@ fn test_kill_delivers_to_target() {
 
 fn test_signals_pending_reflects_blocked() {
     let old = Signals(SIGUSR1, SIGUSR2).block()
-    
+
     Thread.kill(SIGUSR1)
     Thread.kill(SIGUSR2)
-    
+
     let pending = Signals.pending
     assert(pending.contains?(SIGUSR1), "SIGUSR1 should be pending")
     assert(pending.contains?(SIGUSR2), "SIGUSR2 should be pending")
 
     pending.flush()
-    
+
     old.set()
 }
 
@@ -116,7 +116,7 @@ fn test_signals_add_remove() {
     set.add(SIGUSR2)
     assert(set.contains?(SIGUSR1), "SIGUSR1 should be in set")
     assert(set.contains?(SIGUSR2), "SIGUSR2 should be in set")
-    
+
     set.del(SIGUSR1)
     assert(!set.contains?(SIGUSR1), "SIGUSR1 should be removed")
     assert(set.contains?(SIGUSR2), "SIGUSR2 should remain")
@@ -125,10 +125,10 @@ fn test_signals_add_remove() {
 fn test_signals_clear_fill() {
     let set = Signals.full
     assert(set.contains?(SIGUSR1), "full set should contain SIGUSR1")
-    
+
     set.clear()
     assert(!set.contains?(SIGUSR1), "cleared set should not contain SIGUSR1")
-    
+
     set.fill()
     assert(set.contains?(SIGUSR1), "filled set should contain SIGUSR1")
 }
@@ -136,10 +136,10 @@ fn test_signals_clear_fill() {
 fn test_signals_unblock() {
     let old = Signals.block(SIGUSR1)
     assert(Signals.mask.contains?(SIGUSR1), "SIGUSR1 should be blocked")
-    
+
     Signals(SIGUSR1).unblock()
     assert(!Signals.mask.contains?(SIGUSR1), "SIGUSR1 should be unblocked")
-    
+
     old.set()
 }
 
