@@ -211,7 +211,17 @@ static struct {
   { .module = "os",         .name = "SHUT_WR",                  .value = INT(SHUT_WR)                            },
   { .module = "os",         .name = "SHUT_RDWR",                .value = INT(SHUT_RDWR)                          },
   { .module = "os",         .name = "kill",                     .value = BUILTIN(builtin_os_kill)                },
+  { .module = "os",         .name = "raise",                    .value = BUILTIN(builtin_os_raise)               },
   { .module = "os",         .name = "signal",                   .value = BUILTIN(builtin_os_signal)              },
+
+  { .module = "os",         .name = "sigprocmask",              .value = BUILTIN(builtin_os_sigprocmask)         },
+  { .module = "os",         .name = "sigpending",               .value = BUILTIN(builtin_os_sigpending)          },
+  { .module = "os",         .name = "sigsuspend",               .value = BUILTIN(builtin_os_sigsuspend)          },
+  { .module = "os",         .name = "sigwaitinfo",              .value = BUILTIN(builtin_os_sigwaitinfo)         },
+  { .module = "os",         .name = "SIG_BLOCK",                .value = INT(SIG_BLOCK)                          },
+  { .module = "os",         .name = "SIG_UNBLOCK",              .value = INT(SIG_UNBLOCK)                        },
+  { .module = "os",         .name = "SIG_SETMASK",              .value = INT(SIG_SETMASK)                        },
+
   { .module = "os",         .name = "exit",                     .value = BUILTIN(builtin_os_exit)                },
   { .module = "os",         .name = "isatty",                   .value = BUILTIN(builtin_os_isatty)              },
   { .module = "os",         .name = "terminalSize",             .value = BUILTIN(builtin_os_terminal_size)       },

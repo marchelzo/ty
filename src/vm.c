@@ -597,6 +597,10 @@ DoGC(Ty *ty)
                 for (int i = 0; i < vN(*immortal); ++i) {
                         value_mark(ty, v_(*immortal, i));
                 }
+
+                for (int i = 0; i < vN(sigfns); ++i) {
+                        value_mark(ty, &v_(sigfns, i)->f);
+                }
         }
 
         TyBarrierWait(&MyGroup->GCBarrierMark);
@@ -1721,8 +1725,8 @@ vm_del_sigfn(Ty *ty, int sig)
 #ifndef _WIN32
         pthread_rwlock_wrlock(&SigLock);
 
-        for (int i = 0; i < sigfns.count; ++i) {
-                if (sigfns.items[i].sig == sig) {
+        for (int i = 0; i < vN(sigfns); ++i) {
+                if (v_(sigfns, i)->sig == sig) {
                         struct sigfn t = *vvL(sigfns);
                         *vvL(sigfns) = sigfns.items[i];
                         sigfns.items[i] = t;
@@ -1741,9 +1745,9 @@ vm_set_sigfn(Ty *ty, int sig, Value const *f)
 #ifndef _WIN32
         pthread_rwlock_wrlock(&SigLock);
 
-        for (int i = 0; i < sigfns.count; ++i) {
-                if (sigfns.items[i].sig == sig) {
-                        sigfns.items[i].f = *f;
+        for (int i = 0; i < vN(sigfns); ++i) {
+                if (v_(sigfns, i)->sig == sig) {
+                        v_(sigfns, i)->f = *f;
                         goto End;
                 }
         }
@@ -1762,9 +1766,9 @@ vm_get_sigfn(Ty *ty, int sig)
 #ifndef _WIN32
         pthread_rwlock_rdlock(&SigLock);
 
-        for (int i = 0; i < sigfns.count; ++i) {
-                if (sigfns.items[i].sig == sig) {
-                        f = sigfns.items[i].f;
+        for (int i = 0; i < vN(sigfns); ++i) {
+                if (v_(sigfns, i)->sig == sig) {
+                        f = v_(sigfns, i)->f;
                         break;
                 }
         }
@@ -1783,9 +1787,9 @@ vm_do_signal(int sig, siginfo_t *info, void *ctx)
 
         pthread_rwlock_rdlock(&SigLock);
 
-        for (int i = 0; i < sigfns.count; ++i) {
-                if (sigfns.items[i].sig == sig) {
-                        f = sigfns.items[i].f;
+        for (int i = 0; i < vN(sigfns); ++i) {
+                if (v_(sigfns, i)->sig == sig) {
+                        f = v_(sigfns, i)->f;
                         break;
                 }
         }
@@ -1803,10 +1807,11 @@ vm_do_signal(int sig, siginfo_t *info, void *ctx)
                 push(INTEGER(info->si_value.sival_int));
 #else
                 push(INTEGER(info->si_fd));
-#endif
-#endif
+#endif // __APPLE__
+#endif // SIGIO
                 vm_call(ty, &f, 1);
                 break;
+
         default:
                 vm_call(ty, &f, 0);
         }
