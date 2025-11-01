@@ -729,35 +729,35 @@ add_builtins(Ty *ty, int ac, char **av)
         }
 
 //===========================================================================
-#define BUILTIN_VAR(m, t, c)                 \
+#define BUILTIN_VAR(m, t)                    \
+        compiler_introduce_symbol(ty, m, t); \
+        *xvP(Globals, NIL)
+
+#define BUILTIN_NAMED_VAR(m, t, c)           \
         compiler_introduce_symbol(ty, m, t); \
         NAMES.c = vN(Globals);               \
         *xvP(Globals, NIL)
 //---------------------------------------------------------------------------
-        BUILTIN_VAR(NULL,  "__env",          env       ) = DICT(env);
-        BUILTIN_VAR(NULL,  "__EXIT_HOOKS__", exit_hooks) = ARRAY(vA());
-        BUILTIN_VAR("tdb", "hook",           tdb_hook  ) = NIL;
-        BUILTIN_VAR(NULL,  "_readln",        _readln   ) = NIL;
-        BUILTIN_VAR(NULL,  "pretty",         pretty    ) = NIL;
-        BUILTIN_VAR(NULL,  "pp",             pp        ) = NIL;
-        BUILTIN_VAR("ty",  "q",              q         ) = BOOLEAN(!CheckTypes);
-        BUILTIN_VAR("ty",  "executable",     exe       ) = this_executable(ty);
+        BUILTIN_NAMED_VAR(NULL,  "__env",          env       ) = DICT(env);
+        BUILTIN_NAMED_VAR(NULL,  "__EXIT_HOOKS__", exit_hooks) = ARRAY(vA());
+        BUILTIN_NAMED_VAR("tdb", "hook",           tdb_hook  ) = NIL;
+        BUILTIN_NAMED_VAR(NULL,  "_readln",        _readln   ) = NIL;
+        BUILTIN_NAMED_VAR(NULL,  "pretty",         pretty    ) = NIL;
+        BUILTIN_NAMED_VAR(NULL,  "pp",             pp        ) = NIL;
+        BUILTIN_NAMED_VAR("ty",  "q",              q         ) = BOOLEAN(!CheckTypes);
+
+        BUILTIN_VAR("ty",  "executable") = this_executable(ty);
+#if defined(_WIN32)
+        BUILTIN_VAR("os",  "PAGE_SIZE" ) = INTEGER(4096);
+#else
+        BUILTIN_VAR("os",  "SIGRTMIN"  ) = INTEGER(SIGRTMIN);
+        BUILTIN_VAR("os",  "SIGRTMAX"  ) = INTEGER(SIGRTMAX);
+        BUILTIN_VAR("os",  "PAGE_SIZE" ) = INTEGER(sysconf(_SC_PAGESIZE));
+#endif
 //---------------------------------------------------------------------------
 #undef BUILTIN_VAR
 //===========================================================================
 
-#ifdef _WIN32
-        // TODO
-#else
-        compiler_introduce_symbol(ty, "os", "PAGE_SIZE");
-        xvP(Globals, INTEGER(sysconf(_SC_PAGESIZE)));
-#endif
-
-#ifdef SIGRTMIN
-        /* Add this here because SIGRTMIN doesn't expand to a constant */
-        compiler_introduce_symbol(ty, "os", "SIGRTMIN");
-        vvP(Globals, INTEGER(SIGRTMIN));
-#endif
 
 
 //===========================================================================

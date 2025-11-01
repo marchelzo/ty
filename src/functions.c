@@ -5294,7 +5294,11 @@ BUILTIN_FUNCTION(os_signame)
                 return NIL;
         }
 
+#if defined(__APPLE__)
         return xSz(sys_signame[sig]);
+#else
+        return xSz(sigabbrev_np(sig));
+#endif
 #endif
 }
 
