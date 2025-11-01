@@ -2313,10 +2313,10 @@ BUILTIN_FUNCTION(os_readdir)
         NOGC(name.str);
 
         Value result = vTn(
-                "d_ino", INTEGER(entry->d_ino),
-                "d_reclen", INTEGER(entry->d_reclen),
-                "d_type", INTEGER(entry->d_type),
-                "d_name", name
+                "ino", INTEGER(entry->d_ino),
+                "reclen", INTEGER(entry->d_reclen),
+                "type", INTEGER(entry->d_type),
+                "name", name
         );
 
         OKGC(name.str);
@@ -4893,15 +4893,12 @@ BUILTIN_FUNCTION(os_exec)
 
 BUILTIN_FUNCTION(os_signal)
 {
-        ASSERT_ARGC_2("os.signal()", 1, 2);
+        ASSERT_ARGC("os.signal()", 1, 2);
 #ifdef _WIN32
         NOT_ON_WINDOWS("os.signal()");
 #else
 
-        Value num = ARG(0);
-
-        if (num.type != VALUE_INTEGER)
-                zP("the first argument to os.signal() must be an integer");
+        imax sig = INT_ARG(0);
 
         if (argc == 2) {
                 Value f = ARG(1);
@@ -4909,24 +4906,283 @@ BUILTIN_FUNCTION(os_signal)
                 struct sigaction act = {0};
 
                 if (f.type == VALUE_NIL) {
-                        vm_del_sigfn(ty, num.integer);
+                        vm_del_sigfn(ty, sig);
                         act.sa_handler = SIG_DFL;
-                } else if (CALLABLE(f)) {
+                } else {
+                        if (!CALLABLE(f)) {
+                                zP("the second argument to os.signal() must be callable");
+                        }
                         act.sa_flags = SA_SIGINFO;
                         act.sa_sigaction = vm_do_signal;
-                } else {
-                        zP("the second argument to os.signal() must be callable");
                 }
 
-                int r = sigaction(num.integer, &act, NULL);
-                if (r == 0)
-                        vm_set_sigfn(ty, num.integer, &f);
+                int r = sigaction(sig, &act, NULL);
+                if (r == 0) {
+                        vm_set_sigfn(ty, sig, &f);
+                }
 
                 return INTEGER(r);
         } else {
-                return vm_get_sigfn(ty, num.integer);
+                return vm_get_sigfn(ty, sig);
         }
 
+#endif
+}
+
+BUILTIN_FUNCTION(os_sigprocmask)
+{
+        ASSERT_ARGC("os.sigprocmask()", 2);
+#ifdef _WIN32
+        NOT_ON_WINDOWS("os.sigprocmask()");
+#else
+        imax how = INT_ARG(0);
+        Value set = ARGx(1, VALUE_ARRAY, VALUE_DICT, VALUE_NIL);
+
+        sigset_t new;
+        sigset_t old;
+
+        sigemptyset(&new);
+
+        switch (set.type) {
+        case VALUE_ARRAY:
+                for (int i = 0; i < vN(*set.array); ++i) {
+                        Value v = v__(*set.array, i);
+                        if (v.type != VALUE_INTEGER) {
+                                bP("bad signal set: %s", VSC(&set));
+                        }
+                        sigaddset(&new, v.integer);
+                }
+                break;
+
+        case VALUE_DICT:
+                for (int i = 0; i < set.dict->count; ++i) {
+                        Value key = set.dict->keys[i];
+                        Value val = set.dict->values[i];
+
+                        if (key.type == VALUE_ZERO) {
+                                continue;
+                        }
+
+                        if (key.type != VALUE_INTEGER) {
+                                bP("bad signal set: %s", VSC(&set));
+                        }
+
+                        if (value_truthy(ty, &val)) {
+                                sigaddset(&new, key.integer);
+                        }
+                }
+                break;
+
+        case VALUE_NIL:
+                break;
+        }
+
+        int ret = sigprocmask(how, &new, &old);
+        if (ret != 0) {
+                bP("%s", strerror(errno));
+        }
+
+        Array *out = vA();
+
+        GC_STOP();
+        for (int sig = 1; sig < NSIG; ++sig) {
+                if (sigismember(&old, sig)) {
+                        vAp(out, INTEGER(sig));
+                }
+        }
+        GC_RESUME();
+
+        return ARRAY(out);
+#endif
+}
+
+BUILTIN_FUNCTION(os_sigpending)
+{
+        ASSERT_ARGC("os.sigpending()", 0);
+#ifdef _WIN32
+        NOT_ON_WINDOWS("os.sigpending()");
+#else
+        sigset_t pending;
+        sigemptyset(&pending);
+
+        int r = sigpending(&pending);
+        if (r != 0) {
+                bP("%s", strerror(errno));
+        }
+
+        Array *out = vA();
+
+        GC_STOP();
+        for (int sig = 1; sig < NSIG; ++sig) {
+                if (sigismember(&pending, sig)) {
+                        vAp(out, INTEGER(sig));
+                }
+        }
+        GC_RESUME();
+
+        return ARRAY(out);
+#endif
+}
+
+BUILTIN_FUNCTION(os_sigsuspend)
+{
+        ASSERT_ARGC("os.sigsuspend()", 1);
+#ifdef _WIN32
+        NOT_ON_WINDOWS("os.sigsuspend()");
+#else
+        Value set = ARGx(0, VALUE_ARRAY, VALUE_DICT, VALUE_NIL);
+
+        sigset_t new;
+        sigemptyset(&new);
+
+        switch (set.type) {
+        case VALUE_ARRAY:
+                for (int i = 0; i < vN(*set.array); ++i) {
+                        Value v = v__(*set.array, i);
+                        if (v.type != VALUE_INTEGER) {
+                                bP("bad signal set: %s", VSC(&set));
+                        }
+                        sigaddset(&new, v.integer);
+                }
+                break;
+
+        case VALUE_DICT:
+                for (int i = 0; i < set.dict->count; ++i) {
+                        Value key = set.dict->keys[i];
+                        Value val = set.dict->values[i];
+
+                        if (key.type == VALUE_ZERO) {
+                                continue;
+                        }
+
+                        if (key.type != VALUE_INTEGER) {
+                                bP("bad signal set: %s", VSC(&set));
+                        }
+
+                        if (value_truthy(ty, &val)) {
+                                sigaddset(&new, key.integer);
+                        }
+                }
+                break;
+
+        case VALUE_NIL:
+                break;
+        }
+
+
+        int ret = sigsuspend(&new);
+        if (ret != 0 && errno != EINTR) {
+                bP("%s", strerror(errno));
+        }
+
+        return NIL;
+#endif
+}
+
+BUILTIN_FUNCTION(os_sigwaitinfo)
+{
+        ASSERT_ARGC("os.sigwaitinfo()", 1, 2);
+#ifdef _WIN32
+        NOT_ON_WINDOWS("os.sigwaitinfo()");
+#else
+        Value set = ARGx(0, VALUE_ARRAY, VALUE_DICT);
+        Value timeout;
+
+        if (argc == 1) {
+                timeout = NIL;
+        } else {
+                timeout = ARGx(1, VALUE_TUPLE, VALUE_INTEGER, VALUE_REAL, VALUE_NIL);
+        }
+
+        sigset_t sigset;
+        sigemptyset(&sigset);
+
+        switch (set.type) {
+        case VALUE_ARRAY:
+                for (int i = 0; i < vN(*set.array); ++i) {
+                        Value v = v__(*set.array, i);
+                        if (v.type != VALUE_INTEGER) {
+                                bP("bad signal set: %s", VSC(&set));
+                        }
+                        sigaddset(&sigset, v.integer);
+                }
+                break;
+
+        case VALUE_DICT:
+                for (int i = 0; i < set.dict->count; ++i) {
+                        Value key = set.dict->keys[i];
+                        Value val = set.dict->values[i];
+
+                        if (key.type == VALUE_ZERO) {
+                                continue;
+                        }
+
+                        if (key.type != VALUE_INTEGER) {
+                                bP("bad signal set: %s", VSC(&set));
+                        }
+
+                        if (value_truthy(ty, &val)) {
+                                sigaddset(&sigset, key.integer);
+                        }
+                }
+                break;
+        }
+
+        struct timespec ts;
+        i64 nsec;
+
+        switch (timeout.type) {
+        case VALUE_TUPLE:
+                ts = tuple_timespec(ty, "os.sigtimedwait()", &timeout);
+                break;
+
+        case VALUE_INTEGER:
+        case VALUE_REAL:
+                nsec = NSEC_ARG(1);
+                ts.tv_sec = nsec / TY_1e9;
+                ts.tv_nsec = nsec % TY_1e9;
+                break;
+
+        case VALUE_NIL:
+                ts.tv_sec = 0;
+                ts.tv_nsec = 0;
+                break;
+        }
+
+        siginfo_t info;
+        int ret;
+
+        errno = 0;
+        if (argc == 1) {
+                ret = sigwaitinfo(&sigset, &info);
+        } else {
+                ret = sigtimedwait(&sigset, &info, &ts);
+        }
+
+        if (ret == -1) {
+                if (errno == EAGAIN) {
+                        return NIL;
+                } else {
+                        bP("%s", strerror(errno));
+                }
+        }
+
+        Value result = vTn(
+                "signo",   INTEGER(info.si_signo),
+                "code",    INTEGER(info.si_code),
+                "errno",   INTEGER(info.si_errno),
+                "pid",     INTEGER(info.si_pid),
+                "uid",     INTEGER(info.si_uid),
+                "status",  INTEGER(info.si_status),
+                "utime",   INTEGER(info.si_utime),
+                "stime",   INTEGER(info.si_stime),
+                "value",   INTEGER(info.si_value.sival_int),
+                "addr",    INTEGER((imax)(uintptr_t)info.si_addr),
+                "band",    INTEGER(info.si_band),
+                "fd",      INTEGER(info.si_fd)
+        );
+
+        return result;
 #endif
 }
 
@@ -4934,30 +5190,32 @@ BUILTIN_FUNCTION(os_kill)
 {
         ASSERT_ARGC("os.kill()", 2);
 
-        Value pid = ARG(0);
-        Value sig = ARG(1);
-
-        if (pid.type != VALUE_INTEGER || sig.type != VALUE_INTEGER)
-                zP("both arguments to os.kill() must be integers");
-
+        imax pid = INT_ARG(0);
+        imax sig = INT_ARG(1);
 
 #ifdef _WIN32
-        HANDLE hProc = OpenProcess(PROCESS_ALL_ACCESS, FALSE, pid.integer);
+        HANDLE hProc = OpenProcess(PROCESS_ALL_ACCESS, FALSE, pid);
         bool bSuccess = TerminateProcess(hProc, 0);
         int error = GetLastError();
         CloseHandle(hProc);
         return INTEGER(bSuccess ? 0 : error);
 #else
-        return INTEGER(kill(pid.integer, sig.integer));
+        return INTEGER(kill(pid, sig));
 #endif
+}
+
+BUILTIN_FUNCTION(os_raise)
+{
+        ASSERT_ARGC("os.raise()", 1);
+        return INTEGER(raise(INT_ARG(0)));
 }
 
 static Value
 timespec_tuple(Ty *ty, struct timespec const *ts)
 {
         return vTn(
-                "tv_sec",  INTEGER(ts->tv_sec),
-                "tv_nsec", INTEGER(ts->tv_nsec)
+                "sec",  INTEGER(ts->tv_sec),
+                "nsec", INTEGER(ts->tv_nsec)
         );
 }
 
@@ -4970,7 +5228,7 @@ timespec_seconds(struct timespec const *ts)
 static struct timespec
 tuple_timespec(Ty *ty, char const *func, Value const *v)
 {
-        Value *sec = tuple_get(v, "tv_sec");
+        Value *sec = tuple_get(v, "sec");
 
         if (sec == NULL || sec->type != VALUE_INTEGER) {
                 zP(
@@ -4980,12 +5238,12 @@ tuple_timespec(Ty *ty, char const *func, Value const *v)
                         VSC(v),
                         TERM(0),
                         TERM(92),
-                        "tv_sec",
+                        "sec",
                         TERM(0)
                 );
         }
 
-        Value *nsec = tuple_get(v, "tv_nsec");
+        Value *nsec = tuple_get(v, "nsec");
 
         if (nsec == NULL || nsec->type != VALUE_INTEGER) {
                 zP(
@@ -4995,7 +5253,7 @@ tuple_timespec(Ty *ty, char const *func, Value const *v)
                         VSC(v),
                         TERM(0),
                         TERM(92),
-                        "tv_nsec",
+                        "nsec",
                         TERM(0)
                 );
         }
@@ -5310,21 +5568,21 @@ xstatv(int ret, StatStruct const *st)
 
         return value_named_tuple(
                 ty,
-                "st_dev", INTEGER(st->st_dev),
-                "st_ino", INTEGER(st->st_ino),
-                "st_mode", INTEGER(st->st_mode),
-                "st_nlink", INTEGER(st->st_nlink),
-                "st_uid", INTEGER(st->st_uid),
-                "st_gid", INTEGER(st->st_gid),
-                "st_rdev", INTEGER(st->st_rdev),
-                "st_size", INTEGER(st->st_size),
+                "dev", INTEGER(st->st_dev),
+                "ino", INTEGER(st->st_ino),
+                "mode", INTEGER(st->st_mode),
+                "nlink", INTEGER(st->st_nlink),
+                "uid", INTEGER(st->st_uid),
+                "gid", INTEGER(st->st_gid),
+                "rdev", INTEGER(st->st_rdev),
+                "size", INTEGER(st->st_size),
 #ifndef _WIN32
-                "st_blocks", INTEGER(st->st_blocks),
-                "st_blksize", INTEGER(st->st_blksize),
+                "blocks", INTEGER(st->st_blocks),
+                "blksize", INTEGER(st->st_blksize),
 #endif
-                "st_atim", atime,
-                "st_mtim", mtime,
-                "st_ctim", ctime,
+                "atim", atime,
+                "mtim", mtime,
+                "ctim", ctime,
                 NULL
         );
 }

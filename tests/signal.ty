@@ -1,0 +1,141 @@
+import os (..)
+
+fn assert(condition: bool, message: String) {
+    if !condition {
+        eprint("Assertion failed: {message}")
+        exit(1)
+    }
+}
+
+fn test_sigprocmask_blocks_signals() {
+    let blocked = [SIGUSR1, SIGUSR2]
+    let old = sigprocmask(SIG_BLOCK, blocked)
+    
+    raise(SIGUSR1)
+    
+    let pending = sigpending()
+    assert(SIGUSR1 in pending, "SIGUSR1 should be pending after block")
+
+    signal(SIGUSR1, fn () {})
+    
+    sigprocmask(SIG_SETMASK, old)
+
+    signal(SIGUSR1, nil)
+}
+
+fn test_sigwaitinfo_retrieves_blocked_signal() {
+    let blocked = [SIGUSR1]
+    let old = sigprocmask(SIG_BLOCK, blocked)
+    
+    let pid = getpid()
+    raise(SIGUSR1)
+    
+    let info = sigwaitinfo(blocked)
+    assert(info.signo == SIGUSR1, "sigwaitinfo should return SIGUSR1")
+    assert(info.pid == pid, "signal source should be self")
+    
+    sigprocmask(SIG_SETMASK, old)
+}
+
+fn test_signal_handler_fires() {
+    let fired = false
+
+    signal(SIGUSR1, fn () {
+        fired = true
+    })
+    
+    raise(SIGUSR1)
+    
+    // Handler runs asynchronously; brief yield
+    sleep(0.01)
+
+    assert(fired, "signal handler should have executed")
+}
+
+fn test_sigsuspend_waits_for_unblocked_signal() {
+    let old = sigprocmask(SIG_BLOCK, [SIGUSR2])
+    
+    match fork() {
+        0 => {
+            let received = false
+            signal(SIGUSR2, fn () {
+                received = true
+            })
+            sigsuspend([])
+            assert(received, "sigsuspend should wake on SIGUSR2")
+            exit(0)
+        },
+
+        pid => {
+            sleep(0.05)
+            kill(pid, SIGUSR2)
+            let (_, status) = waitpid(pid)
+            assert(status == 0, "child should exit cleanly")
+            sigprocmask(SIG_SETMASK, old)
+        }
+    }
+}
+
+fn test_sigprocmask_restore_old_mask() {
+    let original = sigprocmask(SIG_BLOCK, [])
+    sigprocmask(SIG_BLOCK, [SIGUSR1])
+    sigprocmask(SIG_SETMASK, original)
+    
+    let current = sigprocmask(SIG_BLOCK, [])
+    assert(current == original, "mask should restore to original state")
+}
+
+fn test_kill_delivers_to_target_process() {
+    match fork() {
+        0 => {
+            let caught = false
+            signal(SIGUSR1, fn () {
+                caught = true
+            })
+            sigsuspend([])
+            assert(caught, "child should receive SIGUSR1 from parent")
+            exit(0)
+        },
+
+        pid => {
+            sleep(0.02)
+            kill(pid, SIGUSR1)
+            waitpid(pid)
+        }
+    }
+}
+
+fn test_sigpending_reflects_blocked_signals() {
+    let old = sigprocmask(SIG_BLOCK, [SIGUSR1, SIGUSR2])
+    
+    let pid = os.getpid()
+    kill(pid, SIGUSR1)
+    kill(pid, SIGUSR2)
+
+    let pending = sigpending()
+
+    assert(SIGUSR1 in pending, "SIGUSR1 should be pending")
+    assert(SIGUSR2 in pending, "SIGUSR2 should be pending")
+
+    signal(SIGUSR1, fn () {})
+    signal(SIGUSR2, fn () {})
+    
+    sigprocmask(SIG_SETMASK, old)
+
+    signal(SIGUSR1, nil)
+    signal(SIGUSR2, nil)
+}
+
+fn run_all_tests() {
+    test_sigprocmask_blocks_signals()
+    test_sigwaitinfo_retrieves_blocked_signal()
+    test_signal_handler_fires()
+    test_sigsuspend_waits_for_unblocked_signal()
+    test_sigprocmask_restore_old_mask()
+    test_kill_delivers_to_target_process()
+    test_sigpending_reflects_blocked_signals()
+}
+
+run_all_tests()
+
+print('PASS')
