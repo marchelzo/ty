@@ -648,7 +648,7 @@ static struct {
   { .module = "os",         .name = "SIGUSR2",                  .value = INT(SIGUSR2)                            },
 #endif
 
-  { .module = "os",         .name = "NSIG",                      .value = INT(NSIG)                              },
+  { .module = "os",         .name = "NSIG",                      .value = INT(32)                                },
 
   { .module = "os",         .name = "S_IFREG",                  .value = INT(S_IFREG)                            },
   { .module = "os",         .name = "S_IFDIR",                  .value = INT(S_IFDIR)                            },

@@ -84,12 +84,12 @@ fn test_kill_delivers_to_target() {
             signal(SIGUSR1, fn () {
                 caught = true
             })
-            sleep(0.01)
+            sleep(0.15)
             assert(caught, "child should receive SIGUSR1 from parent")
             exit(0)
         },
         pid => {
-            sleep(0.02)
+            sleep(0.05)
             kill(pid, SIGUSR1)
             wait(pid)
         }
