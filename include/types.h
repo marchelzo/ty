@@ -175,7 +175,8 @@ extern Type *TYPE_CLASS_;
 #define TY_T_FLAGS      \
         X(UPDATE,    0) \
         X(STRICT,    1) \
-        X(AVOID_NIL, 2)
+        X(AVOID_NIL, 2) \
+        X(BANG,      3)
 
 #define X(f, i) T_FLAG_ ## f = 1 << i,
 enum { TY_T_FLAGS };

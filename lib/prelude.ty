@@ -2886,7 +2886,7 @@ class CondVar {
 }
 
 class Thread[T] {
-    handle: _
+    __handle: _
 
     /*
      * Thread(func, *args, isolated=false, name=nil)
@@ -2906,15 +2906,19 @@ class Thread[T] {
      *                and use Channel to transfer objects between thread groups.
      */
     init(func: (*args: _) -> T, *args,  %kwargs) {
-        handle = thread.create(func, *args, **kwargs)
+        __handle = thread.create(func, *args, **kwargs)
     }
 
     static getName(t=nil) {
         thread.getName(t)
     }
 
+    static kill(sig) {
+        thread.kill(sig)
+    }
+
     getName() {
-        thread.getName(handle)
+        thread.getName(__handle)
     }
 
     setName(s) {
@@ -2922,19 +2926,19 @@ class Thread[T] {
     }
 
     join(timeoutMs: Int) -> Some[T] | None {
-        thread.join(handle, timeoutMs)
+        thread.join(__handle, timeoutMs)
     }
 
     join() -> T | nil {
-        thread.join(handle)
+        thread.join(__handle)
     }
 
     kill(sig) {
-        thread.kill(handle, sig)
+        thread.kill(__handle, sig)
     }
 
     detach() {
-        thread.detach(handle)
+        thread.detach(__handle)
     }
 
     static id() {
@@ -2942,7 +2946,7 @@ class Thread[T] {
     }
 
     id() {
-        thread.id(handle)
+        thread.id(__handle)
     }
 }
 

@@ -5583,10 +5583,13 @@ parse_let_definition(Ty *ty)
         s->value = parse_expr(ty, -1);
         LOAD_NA();
 
+        s->bang = try_consume('!');
+
         s->end = TEnd;
 
-        if (T0 == ';')
+        if (T0 == ';') {
                 next();
+        }
 
         return s;
 }

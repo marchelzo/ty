@@ -5744,6 +5744,21 @@ Yield:
                                 continue;
                         }
                         break;
+                CASE(SELF_STATIC_ACCESS)
+                        READVALUE(z);
+
+                        value = GetSelf(ty);
+                        v = GetMember(ty, CLASS(ClassOf(&value)), z, false, false);
+
+                        switch (v.type) {
+                        case VALUE_BREAK:
+                                continue;
+
+                        default:
+                                push(v);
+                                continue;
+                        }
+                        break;
                 CASE(TRY_MEMBER_ACCESS)
                 CASE(MEMBER_ACCESS)
                         b = (IP[-1] == INSTR_TRY_MEMBER_ACCESS);
@@ -6132,8 +6147,8 @@ BadTupleMember:
 
                         class = class_get(ty, class_id);
 
-                        InstallMethods(ty, &class->s_getters, s_g);
                         InstallMethods(ty, &class->s_methods, s_m);
+                        InstallMethods(ty, &class->s_getters, s_g);
                         InstallMethods(ty, &class->methods, m);
                         InstallMethods(ty, &class->getters, g);
                         InstallMethods(ty, &class->setters, s);
@@ -8161,6 +8176,8 @@ StepInstruction(char const *ip)
                 break;
         CASE(TRY_MEMBER_ACCESS)
         CASE(MEMBER_ACCESS)
+        CASE(SELF_MEMBER_ACCESS)
+        CASE(SELF_STATIC_ACCESS)
                 SKIPVALUE(n);
                 break;
         CASE(TRY_GET_MEMBER)

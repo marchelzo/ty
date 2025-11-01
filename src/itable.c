@@ -319,7 +319,7 @@ itable_dump(Ty *ty, struct itable *t)
         for (int i = 0; i < vN(t->ids); ++i) {
                 char const *name = M_NAME(v__(t->ids, i));
                 Value const *val = v_(t->values, i);
-                printf("%-*s : %s\n", w, name, VSC(val));
+                fprintf(stderr, "[%3d] %-*s (%4d) : %s\n", i, w, name, v__(t->ids, i), VSC(val));
         }
 }
 

@@ -131,6 +131,71 @@ u64 NextThreadId() { return ++tid; }
 static struct timespec
 tuple_timespec(Ty *ty, char const *func, Value const *v);
 
+inline static void
+IntoSigSet(Ty *ty, char const *ctx, Value const *v, sigset_t *set)
+{
+        sigemptyset(set);
+
+        switch (v->type) {
+        case VALUE_ARRAY:
+                for (int i = 0; i < vN(*v->array); ++i) {
+                        Value sig = v__(*v->array, i);
+                        if (sig.type != VALUE_INTEGER) {
+                                zP("%s: bad signal set: %s", ctx, VSC(v));
+                        }
+                        sigaddset(set, sig.integer);
+                }
+                break;
+
+        case VALUE_DICT:
+                for (int i = 0; i < v->dict->count; ++i) {
+                        Value key = v->dict->keys[i];
+                        Value val = v->dict->values[i];
+                        if (key.type == VALUE_ZERO) {
+                                continue;
+                        }
+                        if (key.type != VALUE_INTEGER) {
+                                zP("%s: bad signal set: %s", ctx, VSC(v));
+                        }
+                        if (value_truthy(ty, &val)) {
+                                sigaddset(set, key.integer);
+                        }
+                }
+                break;
+
+        case VALUE_PTR:
+                *set = *(sigset_t *)v->ptr;
+                break;
+
+        case VALUE_NIL:
+                break;
+
+        case VALUE_OBJECT:
+        {
+                Value *f = class_lookup_method_i(ty, v->class, NAMES.ptr);
+                if (f != NULL) {
+                        Value addr = vm_call_method(ty, v, f, 0);
+                        if (addr.type == VALUE_PTR) {
+                                *set = *(sigset_t *)addr.ptr;
+                                break;
+                        }
+                }
+                // fallthrough
+        }
+
+        default:
+                zP("%s: bad signal set: %s", ctx, VSC(v));
+        }
+}
+
+inline static Value
+NewSigSetFrom(Ty *ty, sigset_t const *set)
+{
+        sigset_t *new = mAo(sizeof *new, GC_ANY);
+        *new = *set;
+        return GCPTR(new, new);
+}
+
 inline static i64
 TryIntoTime(Ty *ty, char const *ctx, Value const *t, i64 factor)
 {
@@ -3764,11 +3829,7 @@ BUILTIN_FUNCTION(thread_send)
 {
         ASSERT_ARGC("thread.send()", 2);
 
-        if (ARG(0).type != VALUE_PTR) {
-                zP("thread.send(): expected pointer to channel but got: %s", VSC(&ARG(0)));
-        }
-
-        Channel *chan = ARG(0).ptr;
+        Channel *chan = PTR_ARG(0);
         ChanVal cv = { .v = ARG(1) };
 
         Forget(ty, &cv.v, (AllocList *)&cv.as);
@@ -3787,13 +3848,9 @@ BUILTIN_FUNCTION(thread_send)
 
 BUILTIN_FUNCTION(thread_recv)
 {
-        ASSERT_ARGC_2("thread.recv()", 1, 2);
+        ASSERT_ARGC("thread.recv()", 1, 2);
 
-        if (ARG(0).type != VALUE_PTR) {
-                zP("thread.recv(): expected pointer to channel but got: %s", VSC(&ARG(0)));
-        }
-
-        Channel *chan = ARG(0).ptr;
+        Channel *chan = PTR_ARG(0);
 
         lGv(true);
         TyMutexLock(&chan->m);
@@ -3836,11 +3893,7 @@ BUILTIN_FUNCTION(thread_close)
 {
         ASSERT_ARGC("thread.close()", 1);
 
-        if (ARG(0).type != VALUE_PTR) {
-                zP("thread.close(): expected pointer to channel but got: %s", VSC(&ARG(0)));
-        }
-
-        Channel *chan = ARG(0).ptr;
+        Channel *chan = PTR_ARG(0);
 
         lGv(true);
         TyMutexLock(&chan->m);
@@ -3853,21 +3906,14 @@ BUILTIN_FUNCTION(thread_close)
 
 BUILTIN_FUNCTION(thread_kill)
 {
-        ASSERT_ARGC("thread.kill()", 2);
+        ASSERT_ARGC("thread.kill()", 1, 2);
 
-        Value t = ARG(0);
-
-        if (t.type != VALUE_THREAD) {
-                zP("thread.kill() expects a thread as the first argument but got: %s", VSC(&t));
+        if (argc == 1) {
+                return BOOLEAN(TyThreadKill(TyThreadSelf(), INT_ARG(0)));
+        } else {
+                Value t = ARGx(0, VALUE_THREAD);
+                return BOOLEAN(TyThreadKill(t.thread->t, INT_ARG(1)));
         }
-
-        Value sig = ARG(1);
-
-        if (sig.type != VALUE_INTEGER) {
-                zP("thread.kill(): expected integer as second argument but got: %s", VSC(&sig));
-        }
-
-        return BOOLEAN(TyThreadKill(t.thread->t, sig.integer));
 }
 
 BUILTIN_FUNCTION(thread_setname)
@@ -3962,6 +4008,33 @@ BUILTIN_FUNCTION(thread_self)
 {
         ASSERT_ARGC("thread.self()", 0);
         return PTR((void *)TyThreadSelf());
+}
+
+BUILTIN_FUNCTION(thread_sigmask)
+{
+        ASSERT_ARGC("thread.sigmask()", 0, 2);
+
+        imax how;
+        sigset_t set;
+        sigset_t *pset;
+
+        if (argc == 0) {
+                how = SIG_SETMASK;
+                pset = NULL;
+        } else {
+                how = INT_ARG(0);
+                pset = &set;
+                IntoSigSet(ty, "thread.sigmask()", &ARG(1), &set);
+        }
+
+        sigset_t old;
+
+        int ret = pthread_sigmask(how, pset, &old);
+        if (ret != 0) {
+                bP("pthread_sigmask(): %s", strerror(ret));
+        }
+
+        return NewSigSetFrom(ty, &old);
 }
 
 BUILTIN_FUNCTION(os_fork)
@@ -4736,35 +4809,47 @@ BUILTIN_FUNCTION(os_epoll_wait)
 }
 #endif
 
-BUILTIN_FUNCTION(os_waitpid)
+BUILTIN_FUNCTION(os_wait)
 {
-        ASSERT_ARGC_2("os.waitpid()", 1, 2);
+        ASSERT_ARGC("os.wait()", 0, 1, 2);
 #ifdef _WIN32
-        NOT_ON_WINDOWS("os.waitpid()");
+        NOT_ON_WINDOWS("os.wait()");
 #else
+        imax pid;
+        imax flags;
 
-        Value pid = ARG(0);
+        switch (argc) {
+        case 0:
+                pid = -1;
+                flags = 0;
+                break;
 
-        int flags = 0;
-        if (argc == 2) {
-                Value f = ARG(1);
-                if (f.type != VALUE_INTEGER) goto Bad;
-                flags = f.integer;
-        } else {
-        }
+        case 1:
+                pid = INT_ARG(0);
+                flags = 0;
+                break;
 
-        if (pid.type != VALUE_INTEGER) {
-Bad:
-                zP("both arguments to os.waitpid() must be integers");
+        case 2:
+                pid = INT_ARG(0);
+                flags = INT_ARG(1);
+                break;
         }
 
         int status;
-        int ret = waitpid(pid.integer, &status, flags);
+        int ret;
 
-        if (ret <= 0)
-                return INTEGER(ret);
+        for (;;) {
+                ret = waitpid(pid, &status, flags);
+                if (ret == -1 && errno == EINTR) {
+                        continue;
+                }
+                break;
+        }
+        if (ret < 0 && errno != ECHILD) {
+                bP("%s", strerror(errno));
+        }
 
-        return PAIR(INTEGER(ret), INTEGER(status));
+        return (ret > 0) ? PAIR(INTEGER(ret), INTEGER(status)) : NIL;
 #endif
 }
 
@@ -4897,102 +4982,80 @@ BUILTIN_FUNCTION(os_signal)
 #ifdef _WIN32
         NOT_ON_WINDOWS("os.signal()");
 #else
-
         imax sig = INT_ARG(0);
 
-        if (argc == 2) {
-                Value f = ARG(1);
-
-                struct sigaction act = {0};
-
-                if (f.type == VALUE_NIL) {
-                        vm_del_sigfn(ty, sig);
-                        act.sa_handler = SIG_DFL;
-                } else {
-                        if (!CALLABLE(f)) {
-                                zP("the second argument to os.signal() must be callable");
-                        }
-                        act.sa_flags = SA_SIGINFO;
-                        act.sa_sigaction = vm_do_signal;
-                }
-
-                int r = sigaction(sig, &act, NULL);
-                if (r == 0) {
-                        vm_set_sigfn(ty, sig, &f);
-                }
-
-                return INTEGER(r);
-        } else {
+        if (argc == 1) {
                 return vm_get_sigfn(ty, sig);
         }
 
+        Value f = ARG(1);
+
+        struct sigaction act = {0};
+
+        switch (f.type) {
+        case VALUE_INTEGER:
+                switch (f.integer) {
+                case 0:
+                        vm_del_sigfn(ty, sig);
+                        act.sa_handler = SIG_DFL;
+                        break;
+
+                case 1:
+                        vm_del_sigfn(ty, sig);
+                        act.sa_handler = SIG_IGN;
+                        break;
+
+                default:
+                        bP("bad signal handler: %s", VSC(&f));
+                }
+                break;
+
+        case VALUE_NIL:
+                vm_del_sigfn(ty, sig);
+                act.sa_handler = SIG_DFL;
+                break;
+        
+        default:
+                if (!CALLABLE(f)) {
+                        zP("the second argument to os.signal() must be callable");
+                }
+                act.sa_flags = SA_SIGINFO;
+                act.sa_sigaction = vm_do_signal;
+        }
+
+        int ret = sigaction(sig, &act, NULL);
+        if (ret == 0) {
+                vm_set_sigfn(ty, sig, &f);
+        }
+
+        return INTEGER(ret);
 #endif
 }
 
 BUILTIN_FUNCTION(os_sigprocmask)
 {
-        ASSERT_ARGC("os.sigprocmask()", 2);
+        ASSERT_ARGC("os.sigprocmask()", 0, 2);
 #ifdef _WIN32
         NOT_ON_WINDOWS("os.sigprocmask()");
 #else
-        imax how = INT_ARG(0);
-        Value set = ARGx(1, VALUE_ARRAY, VALUE_DICT, VALUE_NIL);
-
-        sigset_t new;
+        imax how;
+        sigset_t set;
         sigset_t old;
 
-        sigemptyset(&new);
-
-        switch (set.type) {
-        case VALUE_ARRAY:
-                for (int i = 0; i < vN(*set.array); ++i) {
-                        Value v = v__(*set.array, i);
-                        if (v.type != VALUE_INTEGER) {
-                                bP("bad signal set: %s", VSC(&set));
-                        }
-                        sigaddset(&new, v.integer);
-                }
-                break;
-
-        case VALUE_DICT:
-                for (int i = 0; i < set.dict->count; ++i) {
-                        Value key = set.dict->keys[i];
-                        Value val = set.dict->values[i];
-
-                        if (key.type == VALUE_ZERO) {
-                                continue;
-                        }
-
-                        if (key.type != VALUE_INTEGER) {
-                                bP("bad signal set: %s", VSC(&set));
-                        }
-
-                        if (value_truthy(ty, &val)) {
-                                sigaddset(&new, key.integer);
-                        }
-                }
-                break;
-
-        case VALUE_NIL:
-                break;
+        if (argc == 0) {
+                how = SIG_SETMASK;
+                sigemptyset(&set);
+        } else {
+                how = INT_ARG(0);
+                IntoSigSet(ty, "os.sigprocmask()", &ARG(1), &set);
         }
 
-        int ret = sigprocmask(how, &new, &old);
+        int ret = sigprocmask(how, &set, &old);
         if (ret != 0) {
                 bP("%s", strerror(errno));
         }
 
-        Array *out = vA();
-
-        GC_STOP();
-        for (int sig = 1; sig < NSIG; ++sig) {
-                if (sigismember(&old, sig)) {
-                        vAp(out, INTEGER(sig));
-                }
-        }
-        GC_RESUME();
-
-        return ARRAY(out);
+        return NewSigSetFrom(ty, &old);
 #endif
 }
 
@@ -5005,22 +5068,12 @@ BUILTIN_FUNCTION(os_sigpending)
         sigset_t pending;
         sigemptyset(&pending);
 
-        int r = sigpending(&pending);
-        if (r != 0) {
+        int ret = sigpending(&pending);
+        if (ret != 0) {
                 bP("%s", strerror(errno));
         }
 
-        Array *out = vA();
-
-        GC_STOP();
-        for (int sig = 1; sig < NSIG; ++sig) {
-                if (sigismember(&pending, sig)) {
-                        vAp(out, INTEGER(sig));
-                }
-        }
-        GC_RESUME();
-
-        return ARRAY(out);
+        return NewSigSetFrom(ty, &pending);
 #endif
 }
 
@@ -5030,47 +5083,11 @@ BUILTIN_FUNCTION(os_sigsuspend)
 #ifdef _WIN32
         NOT_ON_WINDOWS("os.sigsuspend()");
 #else
-        Value set = ARGx(0, VALUE_ARRAY, VALUE_DICT, VALUE_NIL);
+        sigset_t set;
 
-        sigset_t new;
-        sigemptyset(&new);
+        IntoSigSet(ty, "os.sigsuspend()", &ARG(0), &set);
 
-        switch (set.type) {
-        case VALUE_ARRAY:
-                for (int i = 0; i < vN(*set.array); ++i) {
-                        Value v = v__(*set.array, i);
-                        if (v.type != VALUE_INTEGER) {
-                                bP("bad signal set: %s", VSC(&set));
-                        }
-                        sigaddset(&new, v.integer);
-                }
-                break;
-
-        case VALUE_DICT:
-                for (int i = 0; i < set.dict->count; ++i) {
-                        Value key = set.dict->keys[i];
-                        Value val = set.dict->values[i];
-
-                        if (key.type == VALUE_ZERO) {
-                                continue;
-                        }
-
-                        if (key.type != VALUE_INTEGER) {
-                                bP("bad signal set: %s", VSC(&set));
-                        }
-
-                        if (value_truthy(ty, &val)) {
-                                sigaddset(&new, key.integer);
-                        }
-                }
-                break;
-
-        case VALUE_NIL:
-                break;
-        }
-
-
-        int ret = sigsuspend(&new);
+        int ret = sigsuspend(&set);
         if (ret != 0 && errno != EINTR) {
                 bP("%s", strerror(errno));
         }
@@ -5085,7 +5102,6 @@ BUILTIN_FUNCTION(os_sigwaitinfo)
 #if !defined(__linux__)
         bP("os.sigwaitinfo() is not supported on this platform");
 #else
-        Value set = ARGx(0, VALUE_ARRAY, VALUE_DICT);
         Value timeout;
 
         if (argc == 1) {
@@ -5094,39 +5110,8 @@ BUILTIN_FUNCTION(os_sigwaitinfo)
                 timeout = ARGx(1, VALUE_TUPLE, VALUE_INTEGER, VALUE_REAL, VALUE_NIL);
         }
 
-        sigset_t sigset;
-        sigemptyset(&sigset);
-
-        switch (set.type) {
-        case VALUE_ARRAY:
-                for (int i = 0; i < vN(*set.array); ++i) {
-                        Value v = v__(*set.array, i);
-                        if (v.type != VALUE_INTEGER) {
-                                bP("bad signal set: %s", VSC(&set));
-                        }
-                        sigaddset(&sigset, v.integer);
-                }
-                break;
-
-        case VALUE_DICT:
-                for (int i = 0; i < set.dict->count; ++i) {
-                        Value key = set.dict->keys[i];
-                        Value val = set.dict->values[i];
-
-                        if (key.type == VALUE_ZERO) {
-                                continue;
-                        }
-
-                        if (key.type != VALUE_INTEGER) {
-                                bP("bad signal set: %s", VSC(&set));
-                        }
-
-                        if (value_truthy(ty, &val)) {
-                                sigaddset(&sigset, key.integer);
-                        }
-                }
-                break;
-        }
+        sigset_t set;
+        IntoSigSet(ty, "os.sigwaitinfo()", &ARG(0), &set);
 
         struct timespec ts;
         i64 nsec;
@@ -5154,9 +5139,9 @@ BUILTIN_FUNCTION(os_sigwaitinfo)
 
         errno = 0;
         if (argc == 1) {
-                ret = sigwaitinfo(&sigset, &info);
+                ret = sigwaitinfo(&set, &info);
         } else {
-                ret = sigtimedwait(&sigset, &info, &ts);
+                ret = sigtimedwait(&set, &info, &ts);
         }
 
         if (ret == -1) {
@@ -5194,49 +5179,134 @@ BUILTIN_FUNCTION(os_sigwait)
 #ifdef _WIN32
         NOT_ON_WINDOWS("os.sigwait()");
 #else
-        Value set = ARGx(0, VALUE_ARRAY, VALUE_DICT);
+        sigset_t set;
+        
+        IntoSigSet(ty, "os.sigwait()", &ARG(0), &set);
 
-        sigset_t sigset;
-        sigemptyset(&sigset);
-
-        switch (set.type) {
-        case VALUE_ARRAY:
-                for (int i = 0; i < vN(*set.array); ++i) {
-                        Value v = v__(*set.array, i);
-                        if (v.type != VALUE_INTEGER) {
-                                bP("bad signal set: %s", VSC(&set));
-                        }
-                        sigaddset(&sigset, v.integer);
-                }
-                break;
-
-        case VALUE_DICT:
-                for (int i = 0; i < set.dict->count; ++i) {
-                        Value key = set.dict->keys[i];
-                        Value val = set.dict->values[i];
-
-                        if (key.type == VALUE_ZERO) {
-                                continue;
-                        }
-
-                        if (key.type != VALUE_INTEGER) {
-                                bP("bad signal set: %s", VSC(&set));
-                        }
-
-                        if (value_truthy(ty, &val)) {
-                                sigaddset(&sigset, key.integer);
-                        }
-                }
-                break;
-        }
-
-        int signo;
-        int ret = sigwait(&sigset, &signo);
+        int sig;
+        int ret = sigwait(&set, &sig);
         if (ret != 0) {
                 bP("%s", strerror(ret));
         }
 
-        return INTEGER(signo);
+        return INTEGER(sig);
+#endif
+}
+
+BUILTIN_FUNCTION(os_sigset)
+{
+        ASSERT_ARGC("os.sigset()", 0, 1);
+#ifdef _WIN32
+        NOT_ON_WINDOWS("os.sigset()");
+#else
+        sigset_t set;
+
+        if (argc == 1) {
+                IntoSigSet(ty, "os.sigset()", &ARG(0), &set);
+        } else {
+                sigemptyset(&set);
+        }
+
+        return NewSigSetFrom(ty, &set);
+#endif
+}
+
+BUILTIN_FUNCTION(os_sigemptyset)
+{
+        ASSERT_ARGC("os.sigemptyset()", 1);
+#ifdef _WIN32
+        NOT_ON_WINDOWS("os.sigemptyset()");
+#else
+        sigemptyset((sigset_t *)PTR_ARG(0));
+        return ARG(0);
+#endif
+}
+
+BUILTIN_FUNCTION(os_sigfillset)
+{
+        ASSERT_ARGC("os.sigfillset()", 1);
+#ifdef _WIN32
+        NOT_ON_WINDOWS("os.sigfillset()");
+#else
+        sigfillset((sigset_t *)PTR_ARG(0));
+        return ARG(0);
+#endif
+}
+
+BUILTIN_FUNCTION(os_sigaddset)
+{
+        ASSERT_ARGC("os.sigaddset()", 2);
+#ifdef _WIN32
+        NOT_ON_WINDOWS("os.sigaddset()");
+#else
+        sigset_t *set = PTR_ARG(0);
+        imax sig = INT_ARG(1);
+
+        int ret = sigaddset(set, sig);
+        if (ret != 0) {
+                bP("%s", strerror(ret));
+        }
+
+        return ARG(0);
+#endif
+}
+
+BUILTIN_FUNCTION(os_sigdelset)
+{
+        ASSERT_ARGC("os.sigdelset()", 2);
+#ifdef _WIN32
+        NOT_ON_WINDOWS("os.sigdelset()");
+#else
+        sigset_t *set = PTR_ARG(0);
+        imax sig = INT_ARG(1);
+
+        int ret = sigdelset(set, sig);
+        if (ret != 0) {
+                bP("%s", strerror(ret));
+        }
+
+        return ARG(0);
+#endif
+}
+
+BUILTIN_FUNCTION(os_sigismember)
+{
+        ASSERT_ARGC("os.sigismember()", 2);
+#ifdef _WIN32
+        NOT_ON_WINDOWS("os.sigismember()");
+#else
+        sigset_t *set = PTR_ARG(0);
+        imax sig = INT_ARG(1);
+
+        return BOOLEAN(sigismember(set, sig));
+#endif
+}
+
+BUILTIN_FUNCTION(os_signame)
+{
+        ASSERT_ARGC("os.signame()", 1);
+#ifdef _WIN32
+        NOT_ON_WINDOWS("os.strsignal()");
+#else
+        imax sig = INT_ARG(0);
+
+        if (sig < 0 || sig >= NSIG) {
+                return NIL;
+        }
+
+        return xSz(sys_signame[sig]);
+#endif
+}
+
+BUILTIN_FUNCTION(os_strsignal)
+{
+        ASSERT_ARGC("os.strsignal()", 1);
+#ifdef _WIN32
+        NOT_ON_WINDOWS("os.strsignal()");
+#else
+        imax sig = INT_ARG(0);
+        char *name = strsignal(sig);
+        return (name != NULL) ? xSz(name) : NIL;
 #endif
 }
 
