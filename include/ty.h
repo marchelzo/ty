@@ -726,6 +726,7 @@ extern usize TotalBytesAllocated;
         X(MEMBER_ACCESS),         \
         X(TRY_MEMBER_ACCESS),     \
         X(SELF_MEMBER_ACCESS),    \
+        X(SELF_STATIC_ACCESS),    \
         X(GET_MEMBER),            \
         X(TRY_GET_MEMBER),        \
         X(SUBSCRIPT),             \

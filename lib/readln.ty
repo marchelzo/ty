@@ -492,7 +492,7 @@ class InteractiveLineReader {
 
                     let out = read(fzf.stdout, 8192).str().strip()
                     close(fzf.stdout)
-                    waitpid(fzf.pid)
+                    wait(fzf.pid)
 
                     __tio.start()
 
@@ -509,7 +509,7 @@ class InteractiveLineReader {
                     __tio.stop()
 
                     let editor = spawn([getenv('EDITOR') ?? 'vi', tmp])
-                    waitpid(editor.pid)
+                    wait(editor.pid)
 
                     __tio.start()
 

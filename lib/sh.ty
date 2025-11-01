@@ -93,15 +93,15 @@ pub function sh(
     os.close(p.stdout)
     if p.stderr != nil { os.close(p.stderr) }
 
-    let (_, s) = os.waitpid(p.pid)
+    let (_, status) = os.wait(p.pid) !
 
     let out = out.str!()
 
     if !timedOut {
         return out, {
-            signal: os.WIFSIGNALED(s) ? os.WTERMSIG(s) : nil,
+            signal: os.WIFSIGNALED(status) ? os.WTERMSIG(status) : nil,
             stdout: out,
-            status: os.WEXITSTATUS(s),
+            status: os.WEXITSTATUS(status),
             stderr: err.str!()
         }
     }

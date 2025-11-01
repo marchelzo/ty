@@ -214,6 +214,12 @@ static struct {
   { .module = "os",         .name = "raise",                    .value = BUILTIN(builtin_os_raise)               },
   { .module = "os",         .name = "signal",                   .value = BUILTIN(builtin_os_signal)              },
 
+  { .module = "os",         .name = "SIG_DFL",                  .value = INT(0)                                  },
+  { .module = "os",         .name = "SIG_IGN",                  .value = INT(1)                                  },
+
+  { .module = "os",         .name = "signame",                  .value = BUILTIN(builtin_os_signame)             },
+  { .module = "os",         .name = "strsignal",                .value = BUILTIN(builtin_os_strsignal)           },
+
   { .module = "os",         .name = "sigprocmask",              .value = BUILTIN(builtin_os_sigprocmask)         },
   { .module = "os",         .name = "sigpending",               .value = BUILTIN(builtin_os_sigpending)          },
   { .module = "os",         .name = "sigsuspend",               .value = BUILTIN(builtin_os_sigsuspend)          },
@@ -222,6 +228,13 @@ static struct {
   { .module = "os",         .name = "SIG_BLOCK",                .value = INT(SIG_BLOCK)                          },
   { .module = "os",         .name = "SIG_UNBLOCK",              .value = INT(SIG_UNBLOCK)                        },
   { .module = "os",         .name = "SIG_SETMASK",              .value = INT(SIG_SETMASK)                        },
+
+  { .module = "os",         .name = "sigset",                   .value = BUILTIN(builtin_os_sigset)              },
+  { .module = "os",         .name = "sigemptyset",              .value = BUILTIN(builtin_os_sigemptyset)         },
+  { .module = "os",         .name = "sigfillset",               .value = BUILTIN(builtin_os_sigfillset)          },
+  { .module = "os",         .name = "sigaddset",                .value = BUILTIN(builtin_os_sigaddset)           },
+  { .module = "os",         .name = "sigdelset",                .value = BUILTIN(builtin_os_sigdelset)           },
+  { .module = "os",         .name = "sigismember",              .value = BUILTIN(builtin_os_sigismember)         },
 
   { .module = "os",         .name = "exit",                     .value = BUILTIN(builtin_os_exit)                },
   { .module = "os",         .name = "isatty",                   .value = BUILTIN(builtin_os_isatty)              },
@@ -238,7 +251,7 @@ static struct {
   { .module = "os",         .name = "seteuid",                  .value = BUILTIN(builtin_os_seteuid)             },
   { .module = "os",         .name = "setgid",                   .value = BUILTIN(builtin_os_setgid)              },
   { .module = "os",         .name = "setegid",                  .value = BUILTIN(builtin_os_setegid)             },
-  { .module = "os",         .name = "waitpid",                  .value = BUILTIN(builtin_os_waitpid)             },
+  { .module = "os",         .name = "wait",                     .value = BUILTIN(builtin_os_wait)                },
   { .module = "os",         .name = "WIFSTOPPED",               .value = BUILTIN(builtin_os_WIFSTOPPED)          },
   { .module = "os",         .name = "WIFEXITED",                .value = BUILTIN(builtin_os_WIFEXITED)           },
   { .module = "os",         .name = "WEXITSTATUS",              .value = BUILTIN(builtin_os_WEXITSTATUS)         },
@@ -402,6 +415,7 @@ static struct {
   { .module = "thread",     .name = "close",                    .value = BUILTIN(builtin_thread_close)           },
   { .module = "thread",     .name = "send",                     .value = BUILTIN(builtin_thread_send)            },
   { .module = "thread",     .name = "recv",                     .value = BUILTIN(builtin_thread_recv)            },
+  { .module = "thread",     .name = "sigmask",                  .value = BUILTIN(builtin_thread_sigmask)         },
 
   { .module = "stdio",      .name = "fdopen",                   .value = BUILTIN(builtin_stdio_fdopen)           },
   { .module = "stdio",      .name = "fileno",                   .value = BUILTIN(builtin_stdio_fileno)           },
@@ -633,6 +647,8 @@ static struct {
 #ifdef SIGUSR2
   { .module = "os",         .name = "SIGUSR2",                  .value = INT(SIGUSR2)                            },
 #endif
+
+  { .module = "os",         .name = "NSIG",                      .value = INT(NSIG)                              },
 
   { .module = "os",         .name = "S_IFREG",                  .value = INT(S_IFREG)                            },
   { .module = "os",         .name = "S_IFDIR",                  .value = INT(S_IFDIR)                            },

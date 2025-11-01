@@ -597,8 +597,14 @@ BasicObject:
                 }
 
                 break;
+
+        case VALUE_ZERO:
+                snprintf(buffer, 1024, "<:ZERO:>");
+                break;
+
         case VALUE_UNINITIALIZED:
                 uninit(ty, v->sym);
+
         default:
                 return "<!!!>";
         }

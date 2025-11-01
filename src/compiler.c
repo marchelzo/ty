@@ -5198,7 +5198,7 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
                         ty,
                         s->target,
                         s->value->_type,
-                        T_FLAG_STRICT | T_FLAG_AVOID_NIL
+                        T_FLAG_STRICT | T_FLAG_AVOID_NIL | (s->bang * T_FLAG_BANG)
                 );
                 if (s->target->type == EXPRESSION_IDENTIFIER) {
                        dont_printf(
@@ -5396,7 +5396,11 @@ emit_load(Ty *ty, Symbol const *s, Scope const *scope)
                 INSN(MEMBER_ACCESS);
                 Ei32(s->member);
         } else if (IsLocalMemberSymbol(ty, s, scope)) {
-                INSN(SELF_MEMBER_ACCESS);
+                if (SymbolIsStatic(s) && STATE.meth->mtype != MT_STATIC) {
+                        INSN(SELF_STATIC_ACCESS);
+                } else {
+                        INSN(SELF_MEMBER_ACCESS);
+                }
                 Ei32(s->member);
         } else if (SymbolIsMember(s)) {
                 emit_load(ty, STATE.self, scope);
@@ -15353,6 +15357,7 @@ DumpProgram(
                         READMEMBER(n);
                         break;
                 CASE(SELF_MEMBER_ACCESS)
+                CASE(SELF_STATIC_ACCESS)
                         READMEMBER(n);
                         break;
                 CASE(TRY_GET_MEMBER)

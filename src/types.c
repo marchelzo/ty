@@ -7384,6 +7384,9 @@ type_assign(Ty *ty, Expr *e, Type *t0, int flags)
         Type *t4;
 
         bool strict = (flags & T_FLAG_STRICT);
+        bool bang   = (flags & T_FLAG_BANG);
+
+        bool check = strict && !bang;
 
         if (t0 == NULL) {
                 t0 = NewVar(ty);
@@ -7428,9 +7431,9 @@ type_assign(Ty *ty, Expr *e, Type *t0, int flags)
                                 );
                                 ref->mut = true;
                         } else {
-                                unify2_(ty, &e->symbol->type, t0, strict);
+                                unify2_(ty, &e->symbol->type, t0, check);
                         }
-                        unify2_(ty, &e->_type, t0, strict);
+                        unify2_(ty, &e->_type, t0, check);
                         XXTLOG(
                                 "type_assign(): %s |= %s    --->    %s",
                                 e->symbol->identifier,
@@ -7453,7 +7456,7 @@ type_assign(Ty *ty, Expr *e, Type *t0, int flags)
         case EXPRESSION_TAG_APPLICATION:
                 t1 = NewVar(ty);
                 type_assign(ty, e->tagged, t1, flags);
-                UnifyX(ty, t0, type_tagged(ty, e->symbol->tag, t1), false, strict);
+                UnifyX(ty, t0, type_tagged(ty, e->symbol->tag, t1), false, check);
                 break;
         case EXPRESSION_ARRAY:
                 if (vN(e->elements) == 0) {
@@ -7462,11 +7465,11 @@ type_assign(Ty *ty, Expr *e, Type *t0, int flags)
                         t1 = NewVar(ty);
                         if (v__(e->elements, 0)->type == EXPRESSION_MATCH_REST) {
                                 type_assign(ty, v__(e->elements, 0), t1, flags);
-                                UnifyX(ty, t1, t0, true, strict);
+                                UnifyX(ty, t1, t0, true, check);
 
                         } else {
                                 type_assign(ty, v__(e->elements, 0), t1, flags);
-                                UnifyX(ty, NewArray(t1), t0, true, strict);
+                                UnifyX(ty, NewArray(t1), t0, true, check);
                         }
                 } else {
                         t1 = NewType(ty, TYPE_UNION);
@@ -7480,7 +7483,7 @@ type_assign(Ty *ty, Expr *e, Type *t0, int flags)
                                 avP(t1->types, t2);
                         }
                         t1 = CoalescePatterns(ty, t1);
-                        UnifyX(ty, NewArray(t1), t0, true, strict);
+                        UnifyX(ty, NewArray(t1), t0, true, check);
                 }
                 break;
         case EXPRESSION_TUPLE:
@@ -7498,7 +7501,7 @@ type_assign(Ty *ty, Expr *e, Type *t0, int flags)
                         AddEntry(t1, t2, name, v__(e->required, i));
                         type_assign(ty, v__(e->es, i), t2, flags);
                 }
-                UnifyX(ty, t1, t0, true, strict);
+                UnifyX(ty, t1, t0, true, check);
                 break;
         case EXPRESSION_DICT:
                 t1 = NewVar(ty);
@@ -7512,7 +7515,7 @@ type_assign(Ty *ty, Expr *e, Type *t0, int flags)
                         unify2(ty, &t1, key->_type);
                         unify2(ty, &t2, t4);
                 }
-                UnifyX(ty, t0, t3, true, strict);
+                UnifyX(ty, t0, t3, true, check);
                 break;
 
         case EXPRESSION_CHOICE_PATTERN:
@@ -7522,7 +7525,7 @@ type_assign(Ty *ty, Expr *e, Type *t0, int flags)
                         type_assign(ty, v__(e->es, i), var, flags);
                         t1 = (t1 == NULL) ? var : Either(ty, t1, var);
                 }
-                UnifyX(ty, t0, t1, true, strict);
+                UnifyX(ty, t0, t1, true, check);
                 break;
         case EXPRESSION_LIST:
                 t0 = Resolve(ty, t0);
@@ -7543,7 +7546,7 @@ type_assign(Ty *ty, Expr *e, Type *t0, int flags)
                 t3 = NewFunction(t1, t2);
                 type_assign(ty, e->right, t2, flags);
                 UnifyX(ty, t3, Inst1(ty, e->left->_type), true, true);
-                UnifyX(ty, t1, t0, true, strict);
+                UnifyX(ty, t1, t0, true, check);
                 break;
 
         case EXPRESSION_MEMBER_ACCESS:
