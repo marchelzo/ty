@@ -78,6 +78,9 @@ inline static Arena
 void *
 GetArenaAlloc(Ty *ty);
 
+void
+TyImmortalizeArena(Ty *ty);
+
 void *
 Allocate(Ty *ty, usize n);
 

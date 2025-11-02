@@ -114,6 +114,22 @@ collect(Ty *ty, struct alloc *a)
 }
 
 void
+GCForgetObject(Ty *ty, void const *o)
+{
+        usize n = 0;
+
+        for (usize i = 0; i < vN(ty->allocs); ++i) {
+                if (v__(ty->allocs, i)->data != o) {
+                        *v_(ty->allocs, n++) = v__(ty->allocs, i);
+                } else {
+                        MemoryUsed -= v__(ty->allocs, i)->size;
+                }
+        }
+
+        vN(ty->allocs) = n;
+}
+
+void
 GCForget(Ty *ty, AllocList *allocs, isize *used)
 {
         usize n = 0;

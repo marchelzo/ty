@@ -274,6 +274,9 @@ void
 GCForget(Ty *ty, AllocList *allocs, isize *used);
 
 void
+GCForgetObject(Ty *ty, void const *o);
+
+void
 GCTakeOwnership(Ty *ty, AllocList *new);
 
 GCRootSet *

@@ -7442,7 +7442,7 @@ type_assign(Ty *ty, Expr *e, Type *t0, int flags)
                         );
                 } else if (
                         !UnifyX(ty, t0, e->symbol->type, false, false)
-                     && strict
+                     && check
                      && ENFORCE
                 ) {
                         TypeError(
@@ -9865,6 +9865,10 @@ type_from_ty(Ty *ty, Value const *v)
                 return NIL_TYPE;
         }
 
+        if (v->type == VALUE_TYPE) {
+                return v->ptr;
+        }
+
         if (v->type == VALUE_TAG) switch (v->tag) {
         case TyNilT:
                 return NIL_TYPE;
@@ -10207,6 +10211,12 @@ type_inst_for(Ty *ty, Type const *t0, Type const *u0)
         return (t0 != NULL)
              ? SolveMemberAccess(ty, (Type *)t0, u0)
              : (Type *)u0;
+}
+
+Type *
+type_array_of(Ty *ty, Type *t0)
+{
+        return NewArray(t0);
 }
 
 /* vim: set sts=8 sw=8 expandtab: */

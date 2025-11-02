@@ -533,6 +533,7 @@ class Chalk {
                             for entry in stack[;;-1] if entry :: Array {
                                 if let $ii = entry.searchr-by(\style `stops` _) {
                                     entry.pop(ii)
+                                    break
                                 }
                             }
                         }

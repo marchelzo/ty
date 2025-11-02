@@ -4473,6 +4473,17 @@ postfix_dec(Ty *ty, Expr *left)
         return e;
 }
 
+static Expr *
+postfix_bang(Ty *ty, Expr *left)
+{
+        next();
+
+        left->bang = true;
+        left->end = TEnd;
+
+        return left;
+}
+
 BINARY_OPERATOR(star,     STAR,        9, false)
 BINARY_OPERATOR(div,      DIV,         9, false)
 BINARY_OPERATOR(percent,  PERCENT,     9, false)
@@ -4618,6 +4629,7 @@ get_infix_parser(Ty *ty)
         case ',':                  return infix_list;
         case TOKEN_INC:            return postfix_inc;
         case TOKEN_DEC:            return postfix_dec;
+        case '!':                  return postfix_bang;
         case TOKEN_ARROW:          return infix_arrow_function;
         case TOKEN_SQUIGGLY_ARROW: return infix_squiggly_arrow;
         case '$~>':                return infix_squiggly_not_nil_arrow;
@@ -4762,6 +4774,7 @@ get_infix_prec(Ty *ty)
         case TOKEN_QUESTION:       return 3;
         case TOKEN_ELVIS:          return 3;
 
+        case '!':                  return 3;
 
         case TOKEN_MAYBE_EQ:
         case TOKEN_EQ:             return NoEquals ? -3 : 2;
@@ -5582,8 +5595,6 @@ parse_let_definition(Ty *ty)
         SAVE_NA(true);
         s->value = parse_expr(ty, -1);
         LOAD_NA();
-
-        s->bang = try_consume('!');
 
         s->end = TEnd;
 

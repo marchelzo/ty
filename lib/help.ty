@@ -7,6 +7,7 @@ import os
 import chalk (chalk, Text)
 import json
 import readln (readln, ListCompletions, CycleCompletions)
+import path (Path)
 import ffi as c (C!)
 
 let table: Dict[_, (String, String, String)] = %{}
@@ -319,17 +320,19 @@ fn color-and-break(source: String) -> Array[(Int, String)] {
     out.str!().lines().enumerate!()
 }
 
-pub fn pretty-code(prompt: String, line: [String], i: Int) -> String {
-    let before = line[;i].str() ?? ''
-    let all = line.str() ?? ''
+pub fn pretty-code(
+    prompt: String,
+    lines: Array[Array[String]],
+    line: Int,
+    col: Int
+) -> (Array[String], Int, Int) {
+    let code = (lines.map(\_.str() ?? '').unlines() ?? '') + '\n'
 
-    if let [(_, _before), *] = color-and-break(before) and
-       let [(_, _all), *] = color-and-break(all) {
-        before = Text(_before, chalk)
-        all = Text(_all, chalk)
+    if let [*lines] = color-and-break(code) {
+        code = (lines.map(\Text(_.1, chalk)).unlines() ?? '') + '\n'
     }
 
-    "{prompt}{all}\r{prompt}{before}"
+    ("{code}".lines()[;#lines], line, col)
 }
 
 fn type-completions(type: _, prefix: String) -> Array[_] {
@@ -338,7 +341,7 @@ fn type-completions(type: _, prefix: String) -> Array[_] {
     }
 
     match type {
-        types::Object(_) => do {
+        types::Object(_) or types::Class(_) => do {
             let info = types.info(type)
 
             let members = (
@@ -348,10 +351,17 @@ fn type-completions(type: _, prefix: String) -> Array[_] {
               + info.setters
             )
 
+            fn fix-name(name: _) -> String {
+                let name = name.match?(/\p{L}/) ? name : "`{name}`"
+                let name = name[#prefix;]
+                name.comb(/#\d+$/)
+            }
+
             let completions = members
-                .filter(\_.name.starts?(prefix))
+                .filter(\_.name.starts?(prefix.comb('`')))
                 .filter(\_.type !:: types::Intersect)
-                .map(${(label(it), it.name[#prefix;])})
+                .sort(by=\_.name)
+                .map(${(label(it), fix-name(it.name))})
                 .sort(by=\"{_.0}")
 
             for info.traits {
@@ -390,10 +400,24 @@ fn mod-completions(mod: Dict[String, _], prefix: String) -> [([Text | String], S
         }
     }
 
-    completions
+    completions.sort!(by=\_.1)
 }
 
 pub fn tab-complete(before: String, after: String) -> readln::CompletionAction {
+    if let [_, space, prefix] = before.match!(/^\s*import\b(\s*)((?:\w|\.)*)$/) {
+        let modules-dir = Path.home() / '.ty'
+        if modules-dir.dir? {
+            let modules = modules-dir.glob('*.ty').map!(\_.stem)
+            return CycleCompletions([
+                (chalk"[bright yellow]{mod}[/]", (space ? '' : ' ') + mod[#prefix;])
+                for mod in modules if mod.starts?(prefix)
+            ])
+        } else {
+            return ListCompletions([])
+        }
+
+    }
+
     let expr = match ty.parse("{before} .? \{") {
         Err({last: $expr, *}) => expr,
 

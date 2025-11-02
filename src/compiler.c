@@ -4167,7 +4167,7 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                         ty,
                         e->target,
                         e->value->_type,
-                        T_FLAG_STRICT | T_FLAG_UPDATE
+                        T_FLAG_STRICT | T_FLAG_UPDATE | (e->value->bang * T_FLAG_BANG)
                 );
                 e->_type = e->value->_type;
                 break;
@@ -5198,7 +5198,7 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
                         ty,
                         s->target,
                         s->value->_type,
-                        T_FLAG_STRICT | T_FLAG_AVOID_NIL | (s->bang * T_FLAG_BANG)
+                        T_FLAG_STRICT | T_FLAG_AVOID_NIL | (s->value->bang * T_FLAG_BANG)
                 );
                 if (s->target->type == EXPRESSION_IDENTIFIER) {
                        dont_printf(
@@ -5898,11 +5898,9 @@ emit_function(Ty *ty, Expr const *e)
 
         Ei32(e->class);
 
-        // Need to GC code?
-        avP(STATE.code, GetArenaAlloc(ty) != NULL);
-
-        // Is this function hidden (i.e. omitted from stack trace messages)?
-        avP(STATE.code, e->type == EXPRESSION_MULTI_FUNCTION);
+        Eu1(GetArenaAlloc(ty) != NULL);            // Need to GC code?
+        Eu1(e->type == EXPRESSION_MULTI_FUNCTION); // Is this function hidden (i.e. omitted from stack trace messages)?
+        Eu1(e->overload != NULL);                  // Is this an overload?
 
         emit_symbol(e->proto);
         emit_symbol(e->doc);
@@ -5967,8 +5965,10 @@ emit_function(Ty *ty, Expr const *e)
         }
 
         for (int i = 0; i < vN(e->param_symbols); ++i) {
+                Expr const *constraint = v__(e->constraints, i);
+
                 if (
-                        (v__(e->constraints, i) == NULL)
+                        (constraint == NULL)
                      || (
                                 !RUNTIME_CONSTRAINTS
                              && (e->overload == NULL)
@@ -5982,15 +5982,26 @@ emit_function(Ty *ty, Expr const *e)
 
                 emit_load_instr(ty, s->identifier, INSTR_LOAD_LOCAL, s->i);
 
+                if (i == e->rest) {
+                        Expr *array_of = NewExpr(ty, EXPRESSION_SUBSCRIPT);
+                        array_of->start = constraint->start;
+                        array_of->end   = constraint->end;
+                        array_of->container = NewExpr(ty, EXPRESSION_IDENTIFIER);
+                        array_of->container->symbol = class_get(ty, CLASS_ARRAY)->def->class.var;
+                        array_of->container->identifier = array_of->container->symbol->identifier;
+                        array_of->subscript = constraint;
+                        constraint = array_of;
+                }
+
                 if (e->overload != NULL) {
-                        EC(v__(e->constraints, i));
+                        EC(constraint);
                         PLACEHOLDER_JUMP(JUMP_IF, good);
                         INSN(POP);
                         INSN(NONE);
                         INSN(RETURN);
                         PATCH_JUMP(good);
                 } else {
-                        EA(v__(e->constraints, i));
+                        EA(constraint);
                         PLACEHOLDER_JUMP(JUMP_IF, good);
                         emit_load_instr(ty, s->identifier, INSTR_LOAD_LOCAL, s->i);
                         INSN(BAD_CALL);
@@ -10205,6 +10216,7 @@ NewModule(
         if (mod == NULL) {
                 mod = amA0(sizeof *mod);
                 avP(modules, mod);
+                TyImmortalizeArena(ty);
         }
 
         if (scope == NULL) {

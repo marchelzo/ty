@@ -10,6 +10,7 @@ import chalk (chalk)
 import path (Path)
 
 let ERASE_LINE = "\x1b[2K"
+let ERASE_REST = "\x1b[0J"
 
 let __tls::reader: ?InteractiveLineReader = nil
 
@@ -29,8 +30,36 @@ pub use CompletionAction = CycleCompletions[Array[CompletionItem]]
 
 pub use CompletionFunction = {before: String, after: String} -> CompletionAction;
 
+pub use RenderFunction = {
+    prompt: String,
+    lines: Array[Array[String]],
+    line: Int,
+    col: Int
+} -> (Array[String], Int, Int);
+
+use HistoryEntry = {
+    lines: Array[Array[String]],
+    i: Int,
+    j: Int,
+    t: Float
+};
+
 fn completion-label(item: CompletionItem) -> CompletionLabel {
     (item :: String) ? item : item.0
+}
+
+fn completion-label-plain(item: CompletionItem) -> String {
+    let label = completion-label(item)
+
+    let label = match label {
+        parts: Array[Text | nil] => parts
+            .map(part -> part ?? '')
+            .str(),
+
+        part => str(part)
+    }
+
+    (chalk"{label}").plain
 }
 
 fn completion-text(item: CompletionItem) -> String {
@@ -41,18 +70,54 @@ fn completion-text(item: CompletionItem) -> String {
 }
 
 class CompletionCycler {
-    __line:  Array[String]
-    __i:     Int
-    __cs:    Array[CompletionItem]
-    __ci:    Int
-    __first: Bool
+    __line:   Array[String]
+    __i:      Int
+    __cs:     Array[CompletionItem]
+    __ci:     Int
+    __first:  Bool
+    __pages:  Array[Array[Array[String]]]
+    __limits: {rows: Int, cols: Int}
 
     init(cs: Array[CompletionItem], line: Array[String], i: Int) {
         __i = i
         __line = line
         __cs = cs
-        __ci = -1
+        __ci = 0
         __first = true
+        __pages = []
+        __limits = terminal-size()!
+
+        let rows = fit-items(__cs.map(completion-label), __limits.cols)
+        let max-height = (__limits.rows - 8).clamp(1, 32)
+
+        while rows {
+            let page = []
+            let height = 0
+
+            while rows and (height < max-height) {
+                let row = rows.pop(0)
+                let width = __join(row).width()
+                height += 1 + (width / (__limits.cols + 1))
+                page.push(row)
+            }
+
+            __pages.push(page)
+        }
+    }
+
+    static __join(row: Array[String]) -> String {
+        row.join("\x1b[0m    ")
+    }
+
+    __seek(ci: Int) -> (Int, Int) {
+        let n = 0
+        for page, i in __pages {
+            let count = page.map(`#`).sum()
+            if ci < n + count {
+                return (i, n)
+            }
+            n += count
+        }
     }
 
     items -> Array[CompletionItem] {
@@ -60,19 +125,61 @@ class CompletionCycler {
     }
 
     cycle() {
-        if (#__cs == 0) || (__ci + 1 == #__cs) {
-            __ci = -1
+        if __ci == #__cs {
+            __ci = 0
             return (__line, __i)
         }
 
-        __ci = (__ci + 1) % #__cs
-
-        let c = completion-text(__cs[__ci])
-
+        let text = completion-text(__cs[__ci])
         let line = __line.clone()
-        line.insert(__i, c)
+        line.insert(__i, text)
+
+        __ci += 1
 
         (line, __i + 1)
+    }
+
+    render() {
+        let out = Blob()
+
+        out.push("{ERASE_REST}\n")
+
+        let ci = (__ci % #__cs)
+
+        let (pg-num, pg-start) = __seek(ci)
+
+        let page = __pages[pg-num]
+
+        let i = (ci - pg-start) % #page
+        let j = (ci - pg-start) / #page
+
+        let off = 0
+
+        for row, row-i in page {
+            if (i == row-i) && (__ci < #__cs) {
+                row = [*row]
+                row[j] = chalk"[reverse]{row[j]}[/]"
+            }
+
+            let line = row.join("\x1b[0m    ")
+
+            off += line.width() / (__limits.cols + 1)
+
+            out.push("{line}\n")
+        }
+
+        if #__pages > 1 {
+            out.push("\nPage {pg-num + 1} of {#__pages}\n")
+            off += 2
+        }
+
+        out.push("\r\x1b[{#page + off + 1}A")
+
+        out.str!()
+    }
+
+    cursor -> Int {
+        (__ci + 1) % #__cs
     }
 }
 
@@ -102,21 +209,7 @@ fn completeFile(before: String, after: String) -> CompletionAction {
     }
 }
 
-fn fitItems*(items: Array[CompletionLabel], W: Int) -> Generator[String] {
-    fn plain(item: CompletionLabel) -> String {
-        let item = match item {
-            parts: Array[Text | nil] => parts
-                .map(part -> part ?? '')
-                .str(),
-
-            part => str(part)
-        }
-
-        (chalk"{item}").plain
-    }
-
-    let items = items.sort(by=plain)
-
+fn fitItems(items: Array[CompletionLabel], W: Int) -> Array[Array[String]] {
     fn width(text: Text | nil) -> Int {
         (text == nil) ? 0 : "{text}".width()
     }
@@ -201,22 +294,19 @@ fn fitItems*(items: Array[CompletionLabel], W: Int) -> Generator[String] {
         }
     }
 
-    for i in ..nrow {
-        yield (
-            cols.map(c -> (#c > i) ? c[i] : '')
-                .zip(ws, format)
-                .join('    ')
-        )
-    }
+    return [
+        cols.map(c -> (#c > i) ? c[i] : '').zip(ws, format)
+        for i in ..nrow
+    ]
 }
 
 class InteractiveLineReader {
     __tio: TermIO
-    __history_file: Path | nil
-    __history: Array[(Array[String], Int)]
+    __history-file: Path | nil
+    __history: Array[HistoryEntry]
     __prompt: String
     __complete: CompletionFunction | nil
-    __render: (String, [String], Int) -> String
+    __render: RenderFunction
 
     init(
         term: Int | TermIO = 0,
@@ -224,7 +314,7 @@ class InteractiveLineReader {
         complete=nil,
         ctrl_c: ?Bool = false,
         history-file: Path | String | nil = nil,
-        render: ((String, [String], Int) -> String) | nil = nil
+        render: RenderFunction | nil = nil
     ) {
         __tio = match term {
             fd: Int => TermIO(fd, mouse=false),
@@ -233,30 +323,30 @@ class InteractiveLineReader {
 
         __prompt = prompt ?? '>> '
         __complete = complete
-        __history_file = (history-file != nil) ?: Path(history-file)
+        __history-file = (history-file != nil) ?: Path(history-file)
 
         if history-file != nil and let $raw = slurp("{history-file}") {
-            __history = [(line, i) for json::parse! ~> {line, i, *} in raw.lines()]
+            __history = raw.lines().map(json::parse!)
         } else {
             __history = []
         }
 
         __render = render ?? fn (
             prompt: String,
-            line: [String],
-            i: Int
-        ) -> String {
-            let before = line.slice(0, i).str() ?? ''
-            let all = line.str() ?? ''
-            return "{prompt}{all}\r{prompt}{before}"
+            lines: Array[Array[String]],
+            line: Int,
+            col: Int
+        ) -> (Array[String], Int, Int) {
+            (lines.map(\_.str() ?? ''), line, col)
         }
     }
 
-    __add_history(entry: (Array[String], Int)) {
-        if __history_file != nil {
-            let record = {line: entry.0, i: entry.1, t: time.utc()}
-            __history_file.parent.mkdir(parents=true, exist-ok=true)
-            __history_file.append("{json::encode(record)}\n")
+    __add-history(lines: Array[Array[String]], i: Int, j: Int) {
+        let entry = {lines, i, j, t: time.utc()}
+
+        if __history-file != nil {
+            __history-file.parent.mkdir(parents=true, exist-ok=true)
+            __history-file.append("{json::encode(entry)}\n")
         }
 
         __history.push(entry)
@@ -267,7 +357,7 @@ class InteractiveLineReader {
         complete: _ = nil,
         erase: Bool = false,
         keybinds: Dict[String, _] = %{},
-        render: ((String, [String], Int) -> String) | nil = nil
+        render: RenderFunction | nil = nil
     ) -> String | nil {
         if __tio == nil {
             init()
@@ -275,6 +365,10 @@ class InteractiveLineReader {
 
         let prompt = prompt ?? __prompt
         let render = render ?? __render
+
+        let lines = [[]]
+        let nr = 0
+
         let line = []
         let i = 0
 
@@ -287,17 +381,60 @@ class InteractiveLineReader {
         }
 
         fn getText() {
-            line.str() ?? ''
+            lines.map(\_.str() ?? '').unlines()
         }
 
-        fn printItems(cs) {
+        fn printItems(cs, select=nil) {
             write(__tio.fd, "{ERASE_LINE}\rAvailable completions:\n")
 
             let (h, w) = __tio.size()
 
-            for line in fitItems(cs, w) {
-                print(line)
+            let n = 0
+            for row in fitItems(cs, w) {
+                if select in n.range(0, #row - 1) {
+                    row[select - n] = chalk"[reverse]{row[select - n]}[/]"
+                }
+                print(row.join('    '))
+                n += #row
             }
+        }
+
+        fn draw(start: Int, count: Int) {
+            let i = line[;i].map(`#`).sum() ?? 0
+            let lines = [(it.str() ?? '').chars() for lines]
+
+            let (lines, line, col) = render(prompt, lines, nr, i)
+
+            let out = Blob()
+            let pad = prompt.comb(/\s+$/).sub(/./, '.').pad(prompt.width())
+
+            if start > 0 {
+                out.push("\r\x1b[{start}A")
+            }
+
+            if count > #lines {
+                for ..count {
+                    out.push("\r{ERASE_LINE}\n")
+                }
+                out.push("\x1b[{count}A")
+            }
+
+            for text, i in lines {
+                if i > 0 {
+                    out.push('\n')
+                }
+                out.push("\r{ERASE_LINE}")
+                out.push("{(i == 0) ? prompt : pad}{text}")
+            }
+
+            let up = (#lines - line - 1)
+            if up > 0 {
+                out.push("\x1b[{up}A")
+            }
+
+            out.push("\x1b[{1 + col + prompt.width()}G")
+
+            write(__tio.fd, out.str!())
         }
 
         __tio.start()
@@ -315,11 +452,14 @@ class InteractiveLineReader {
             text.starts?(hPrefix) && text.ends?(hSuffix)
         }
 
+        draw(0, 0)
+
         while true {
+            let nr0 = nr
+            let count0 = #lines
+
             let before = line.slice(0, i).str() ?? ''
             let all = line.str() ?? ''
-
-            write(__tio.fd, "{ERASE_LINE}\r{render(prompt, line, i)}")
 
             if not let $key = __tio.next-event() {
                 continue
@@ -340,7 +480,8 @@ class InteractiveLineReader {
 
             let hiStart = hi
 
-            if key != '<Tab>' {
+            if (key != '<Tab>') && (completionCycler != nil) {
+                write(__tio.fd, ERASE_REST)
                 completionCycler = nil
             }
 
@@ -349,7 +490,7 @@ class InteractiveLineReader {
                     let text = getText()
 
                     if text != '' && (__history == [] || (line, i) != __history[-1]) {
-                        __add_history((line, i))
+                        __add-history(lines, nr, i)
                     }
 
                     if erase {
@@ -359,6 +500,15 @@ class InteractiveLineReader {
                     }
 
                     return text
+                },
+
+                '<C-Enter>',
+                '<S-Enter>' => {
+                    let (before, after) = line.split(i)
+                    lines[nr] = before
+                    lines.insert(++nr, after)
+                    line = lines[nr]
+                    i = 0
                 },
 
                 '<C-d>' => {
@@ -379,6 +529,18 @@ class InteractiveLineReader {
 
                 '<C-l>' => {
                     write(__tio.fd, "\x1b[2J\x1b[H")
+                },
+
+                '<C-p>' => {
+                    nr = max(nr - 1, 0)
+                    line = lines[nr]
+                    i = min(i, #line)
+                },
+
+                '<C-n>' => {
+                    nr = min(nr + 1, #lines - 1)
+                    line = lines[nr]
+                    i = min(i, #line)
                 },
 
                 '<C-w>' => {
@@ -436,11 +598,24 @@ class InteractiveLineReader {
                 '<C-Backspace>' => {
                     if i > 0 {
                         line.pop(--i)
+                    } else if nr > 0 {
+                        i = #lines[nr - 1]
+                        lines[nr - 1] += line
+                        lines.pop(nr--)
+                        line = lines[nr]
                     }
+                },
+
+                '<C-c>' => {
+                    line = []
+                    i = 0
+                    lines = [line]
+                    nr = 0
                 },
 
                 '<Tab>' => {
                     if completionCycler != nil {
+                        write(__tio.fd, completionCycler.render())
                         (line, i) = completionCycler.cycle()
                     } else {
                         let (before, after) = line.split(i)
@@ -464,8 +639,8 @@ class InteractiveLineReader {
 
                             CycleCompletions(cs) and #cs > 0 => {
                                 completionCycler = CompletionCycler(cs, line, i)
+                                write(__tio.fd, completionCycler.render())
                                 (line, i) = completionCycler.cycle()
-                                printItems(cs.map(completion-label))
                             },
 
                             ListCompletions(cs) and #cs > 0 => {
@@ -530,17 +705,24 @@ class InteractiveLineReader {
             if hi != hiStart {
                 if hi == 0 {
                     line = []
-                    i = 0
-                    hi = 0
+                    i    = 0
+                    hi   = 0
                 } else {
-                    (line, i) = __history[-hi]
-                    line = line.clone()
+                    let entry = __history[-hi]
+                    lines = entry.lines.map(\_.clone())
+                    nr    = entry.i
+                    i     = entry.j
+                    line  = lines[nr]
                 }
             } else if key != '<Up>' {
                 hi = 0
                 hPrefix = nil
                 hSuffix = nil
             }
+
+            lines[nr] = line
+
+            draw(nr0, count0)
         }
     }
 
@@ -580,7 +762,7 @@ pub fn readln(
     complete: _ = nil,
     erase: Bool = false,
     keybinds: Dict[String, _] = %{},
-    render: ((String, [String], Int) -> String) | nil = nil
+    render: RenderFunction | nil = nil
 ) -> String | nil {
     reader = reader ?? InteractiveLineReader()
     reader.readln(
