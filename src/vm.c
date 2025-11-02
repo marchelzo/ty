@@ -134,6 +134,7 @@ static char const *InstructionNames[] = {
 static char halt = INSTR_HALT;
 static char next_fix[] = { INSTR_NONE_IF_NIL, INSTR_RETURN_PRESERVE_CTX };
 static char iter_fix[] = { INSTR_SENTINEL, INSTR_GET_NEXT, INSTR_RETURN_PRESERVE_CTX };
+static char hook_fix[] = { INSTR_POP, INSTR_RETURN_PRESERVE_CTX };
 
 InternedNames NAMES;
 
@@ -1161,7 +1162,7 @@ call(Ty *ty, Value const *f, Value const *pSelf, int n, int nkw, bool exec)
         int   ikwargs = *(i16 const *)info_of(f, FUN_KWARGS_IDX);
         Value kwargs  = (nkw > 0) ? pop() : NIL;
 
-        int   class   = class_of(f);
+        int   class   = f->info[FUN_INFO_CLASS];
         Value self    = (pSelf == NULL) ? NONE : *pSelf;
 
         char  *code   = code_of(f);
@@ -2282,10 +2283,14 @@ GetMember(Ty *ty, Value v, int member, bool try_missing, bool exec)
                 goto ClassLookup;
         case VALUE_FUNCTION:
         case VALUE_METHOD:
-                if (member == NAMES._name_) {
+                if (member == NAMES._class_) {
+                        return (class_of(&v) != -1) ? CLASS(class_of(&v)) : NIL;
+                } else if (member == NAMES._name_) {
                         return xSz(name_of(&v));
                 } else if (member == NAMES._def_) {
                         return FunDef(ty, &v);
+                } else if (*has_meta(&v)) {
+                        return GetMember(ty, *meta_of(ty, &v), member, false, exec);
                 }
         case VALUE_BUILTIN_FUNCTION:
         case VALUE_BUILTIN_METHOD:
@@ -2332,6 +2337,27 @@ GetMember(Ty *ty, Value v, int member, bool try_missing, bool exec)
                 }
                 if (member == NAMES._name_) {
                         return xSz(class_name(ty, v.class));
+                }
+                if (member == NAMES._fields_) {
+                        return itable_dict(ty, &class_get(ty, v.class)->fields);
+                }
+                if (member == NAMES._methods_) {
+                        return itable_dict(ty, &class_get(ty, v.class)->methods);
+                }
+                if (member == NAMES._getters_) {
+                        return itable_dict(ty, &class_get(ty, v.class)->getters);
+                }
+                if (member == NAMES._setters_) {
+                        return itable_dict(ty, &class_get(ty, v.class)->setters);
+                }
+                if (member == NAMES._static_fields_) {
+                        return itable_dict(ty, &class_get(ty, v.class)->s_fields);
+                }
+                if (member == NAMES._static_methods_) {
+                        return itable_dict(ty, &class_get(ty, v.class)->s_methods);
+                }
+                if (member == NAMES._static_getters_) {
+                        return itable_dict(ty, &class_get(ty, v.class)->s_getters);
                 }
                 n = CLASS_CLASS;
                 goto ClassLookup;
@@ -3797,6 +3823,10 @@ DoTargetMember(Ty *ty, Value v, i32 z)
                 pushtarget(vp, v.items);
                 break;
 
+        case VALUE_FUNCTION:
+                DoTargetMember(ty, *meta_of(ty, &v), z);
+                break;
+
         default:
                 zP("assignment to member of non-object: %s", VSC(&v));
         }
@@ -4752,6 +4782,17 @@ AssignGlobal:
                 CASE(TARGET_SELF_MEMBER)
                         READVALUE(z);
                         value = GetSelf(ty);
+                        DoTargetMember(ty, value, z);
+                        break;
+                CASE(TARGET_SELF_STATIC)
+                        READVALUE(z);
+                        value = GetSelf(ty);
+                        DoTargetMember(ty, CLASS(ClassOf(&value)), z);
+                        break;
+                CASE(TARGET_STATIC_MEMBER)
+                        READVALUE(i);
+                        READVALUE(z);
+                        value = CLASS(i);
                         DoTargetMember(ty, value, z);
                         break;
                 CASE(TARGET_SUBSCRIPT)
@@ -5755,8 +5796,23 @@ Yield:
                 CASE(SELF_STATIC_ACCESS)
                         READVALUE(z);
 
-                        value = GetSelf(ty);
-                        v = GetMember(ty, CLASS(ClassOf(&value)), z, false, false);
+                        v = GetSelf(ty);
+                        v = GetMember(ty, CLASS(ClassOf(&v)), z, false, false);
+
+                        switch (v.type) {
+                        case VALUE_BREAK:
+                                continue;
+
+                        default:
+                                push(v);
+                                continue;
+                        }
+                        break;
+                CASE(STATIC_MEMBER_ACCESS)
+                        READVALUE(i);
+                        READVALUE(z);
+
+                        v = GetMember(ty, CLASS(i), z, false, false);
 
                         switch (v.type) {
                         case VALUE_BREAK:
@@ -6160,6 +6216,19 @@ BadTupleMember:
                         InstallMethods(ty, &class->methods, m);
                         InstallMethods(ty, &class->getters, g);
                         InstallMethods(ty, &class->setters, s);
+
+                        if (class->super != NULL) {
+                                Value *hook = class_lookup_s_method_i(
+                                        ty,
+                                        class->super->i,
+                                        NAMES._init_subclass_
+                                );
+                                if (hook != NULL) {
+                                        push(CLASS(class->i));
+                                        call(ty, hook, NULL, 1, 0, true);
+                                        pop();
+                                }
+                        }
                         break;
                 }
                 CASE(INIT_STATIC_FIELD)
@@ -6326,24 +6395,32 @@ BadTupleMember:
                         break;
                 CASE(CALL_METHOD)
                         READVALUE(n);
-                        READVALUE(i);
+                        READVALUE(z);
                         READVALUE(nkw);
-                        CallMethod(ty, i, n, nkw, false);
+                        CallMethod(ty, z, n, nkw, false);
                         break;
                 CASE(CALL_SELF_METHOD)
                         READVALUE(n);
-                        READVALUE(i);
+                        READVALUE(z);
                         READVALUE(nkw);
                         push(GetSelf(ty));
-                        CallMethod(ty, i, n, nkw, false);
+                        CallMethod(ty, z, n, nkw, false);
                         break;
                 CASE(CALL_SELF_STATIC)
                         READVALUE(n);
-                        READVALUE(i);
+                        READVALUE(z);
                         READVALUE(nkw);
                         v = GetSelf(ty);
                         push(CLASS(ClassOf(&v)));
-                        CallMethod(ty, i, n, nkw, false);
+                        CallMethod(ty, z, n, nkw, false);
+                        break;
+                CASE(CALL_STATIC_METHOD)
+                        READVALUE(i);
+                        READVALUE(n);
+                        READVALUE(z);
+                        READVALUE(nkw);
+                        push(CLASS(i));
+                        CallMethod(ty, z, n, nkw, false);
                         break;
                 CASE(SAVE_STACK_POS)
                         xvP(SP_STACK, STACK.count);
@@ -6464,6 +6541,7 @@ vm_init(Ty *ty, int ac, char **av)
         build_blob_method_table();
 
         NAMES.call             = M_ID("__call__");
+        NAMES._class_          = M_ID("__class__");
         NAMES.contains         = M_ID("contains?");
         NAMES.count            = M_ID("__count__");
         NAMES._def_            = M_ID("__def__");
@@ -6472,11 +6550,13 @@ vm_init(Ty *ty, int ac, char **av)
         NAMES.fmt              = M_ID("__fmt__");
         NAMES._free_           = M_ID("__free__");
         NAMES.init             = M_ID("init");
+        NAMES._init_subclass_  = M_ID("__init_subclass__");
         NAMES._iter_           = M_ID("__iter__");
         NAMES.json             = M_ID("__json__");
         NAMES._len_            = M_ID("#");
         NAMES.len              = M_ID("len");
         NAMES.match            = M_ID("__match__");
+        NAMES._meta_           = M_ID("__meta__");
         NAMES.missing          = M_ID("__missing__");
         NAMES.method_missing   = M_ID("__method_missing__");
         NAMES._name_           = M_ID("__name__");
@@ -6485,6 +6565,14 @@ vm_init(Ty *ty, int ac, char **av)
         NAMES.slice            = M_ID("[;;]");
         NAMES.str              = M_ID("__str__");
         NAMES.subscript        = M_ID("[]");
+
+        NAMES._fields_         = M_ID("__fields__");
+        NAMES._methods_        = M_ID("__methods__");
+        NAMES._getters_        = M_ID("__getters__");
+        NAMES._setters_        = M_ID("__setters__");
+        NAMES._static_fields_  = M_ID("__static_fields__");
+        NAMES._static_methods_ = M_ID("__static_methods__");
+        NAMES._static_getters_ = M_ID("__static_getters__");
 
         GC_STOP();
 
@@ -6587,7 +6675,7 @@ FormatTrace(Ty *ty, ThrowCtx const *ctx, byte_vector *out)
                                         }
                                 }
 
-                                for (int i = 0; i < vN(scope->owned); ++i) {
+                                for (int i = 0; i < vN(scope->owned) && i < vN(localv); ++i) {
                                         dump(
                                                 out,
                                                 "    %s%*s%s = %s\n",
@@ -7810,8 +7898,12 @@ MarkStorage(Ty *ty)
 }
 
 char const *
-GetInstructionName(uint8_t i)
+GetInstructionName(u8 i)
 {
+        if (i >= countof(InstructionNames)) {
+                XXX("Invalid instruction: %u", i);
+        }
+
         return (i < countof(InstructionNames))
              ? InstructionNames[i]
              : "INVALID_INSTRUCTION";
@@ -7909,7 +8001,11 @@ StepInstruction(char const *ip)
                 SKIPSTR();
 #endif
                 break;
+        CASE(TARGET_STATIC_MEMBER)
+                SKIPVALUE(n);
         CASE(TARGET_MEMBER)
+        CASE(TARGET_SELF_MEMBER)
+        CASE(TARGET_SELF_STATIC)
                 SKIPVALUE(n);
                 break;
         CASE(TARGET_SUBSCRIPT)
@@ -8317,6 +8413,8 @@ StepInstruction(char const *ip)
                         SKIPSTR();
                 }
                 break;
+        CASE(CALL_STATIC_METHOD)
+                SKIPVALUE(n);
         CASE(TRY_CALL_METHOD)
         CASE(CALL_METHOD)
         CASE(CALL_SELF_METHOD)
@@ -8575,6 +8673,7 @@ tdb_step_into(Ty *ty)
         Value v = NONE;
         char *ip = IP;
         int i;
+        int c;
 
         ty = TDB->host;
 
@@ -8606,6 +8705,14 @@ tdb_step_into(Ty *ty)
                 READVALUE(i);
                 v = GetSelf(ty);
                 v = CLASS(ClassOf(&v));
+                v = GetMember(ty, v, i, false, true);
+                break;
+
+        CASE(CALL_STATIC_METHOD)
+                READVALUE(c);
+                READVALUE(i);
+                READVALUE(i);
+                v = CLASS(c);
                 v = GetMember(ty, v, i, false, true);
                 break;
         }

@@ -2,6 +2,7 @@
 #include "itable.h"
 #include "vec.h"
 #include "util.h"
+#include "dict.h"
 
 inline static void
 xsort7(struct itable *t)
@@ -48,7 +49,7 @@ xsort7(struct itable *t)
 }
 
 inline static Value *
-xfind(struct itable const *t, int64_t id)
+xfind(struct itable const *t, i64 id)
 {
         for (int i = 0; i < vN(t->ids); ++i) {
                 if (v__(t->ids, i) == id) {
@@ -60,7 +61,7 @@ xfind(struct itable const *t, int64_t id)
 }
 
 static bool
-bfind(struct itable const *t, int64_t id, int * restrict i)
+bfind(struct itable const *t, i64 id, int * restrict i)
 {
         int const * restrict ids = vv(t->ids);
         int n = vN(t->ids);
@@ -92,7 +93,7 @@ itable_init(Ty *ty, struct itable *t)
 }
 
 Value *
-itable_get(Ty *ty, struct itable *t, int64_t id)
+itable_get(Ty *ty, struct itable *t, i64 id)
 {
         Value *m;
         int i;
@@ -123,7 +124,7 @@ Big:
 }
 
 Value *
-itable_add(Ty *ty, struct itable *t, int64_t id, Value v)
+itable_add(Ty *ty, struct itable *t, i64 id, Value v)
 {
         Value *m;
         int i;
@@ -158,7 +159,7 @@ Big:
 }
 
 inline static void
-bubble(struct itable *t, int64_t i, int64_t j)
+bubble(struct itable *t, i64 i, i64 j)
 {
         for (; j > i && v__(t->ids, j) < v__(t->ids, j - 1); --j) {
                 SWAP(int, *v_(t->ids, j), *v_(t->ids, j - 1));
@@ -167,9 +168,9 @@ bubble(struct itable *t, int64_t i, int64_t j)
 }
 
 inline static void
-xsort(struct itable *t, int64_t i, int64_t n)
+xsort(struct itable *t, i64 i, i64 n)
 {
-        for (int64_t j = i + n - 1; j > i; --j) {
+        for (i64 j = i + n - 1; j > i; --j) {
                 bubble(t, i, j);
         }
 }
@@ -254,7 +255,7 @@ itable_copy(Ty *ty, struct itable * restrict dst, struct itable const * restrict
 }
 
 Value *
-itable_lookup(Ty *ty, struct itable const *t, int64_t id)
+itable_lookup(Ty *ty, struct itable const *t, i64 id)
 {
         if (false && vN(t->ids) < 8) {
                 return xfind(t, id);
@@ -273,6 +274,27 @@ itable_release(Ty *ty, struct itable *t)
 {
         vvF(t->ids);
         vvF(t->values);
+}
+
+Value
+itable_dict(Ty *ty, struct itable const *t)
+{
+        Dict *dict = dict_new(ty);
+
+        GC_STOP();
+
+        for (int i = 0; i < vN(t->ids); ++i) {
+                char const *key = M_NAME(v__(t->ids, i));
+                Value val = v__(t->values, i);
+                if (val.type == VALUE_REF) {
+                        val = *val.ref;
+                }
+                dict_put_member(ty, dict, key, val);
+        }
+
+        GC_RESUME();
+
+        return DICT(dict);
 }
 
 int

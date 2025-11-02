@@ -18,7 +18,7 @@ void
 itable_init(Ty *ty, struct itable *t);
 
 Value *
-itable_add(Ty *ty, struct itable *t, int64_t id, Value v);
+itable_add(Ty *ty, struct itable *t, i64 id, Value v);
 
 inline static Value *
 itable_put(Ty *ty, struct itable *t, char const *name, Value v)
@@ -41,10 +41,13 @@ void
 itable_copy_weak(Ty *ty, struct itable *dst, struct itable const *src);
 
 Value *
-itable_lookup(Ty *ty, struct itable const *t, int64_t id);
+itable_lookup(Ty *ty, struct itable const *t, i64 id);
 
 Value *
-itable_get(Ty *ty, struct itable *t, int64_t id);
+itable_get(Ty *ty, struct itable *t, i64 id);
+
+Value
+itable_dict(Ty *ty, struct itable const *t);
 
 void
 itable_dump(Ty *ty, struct itable *t);

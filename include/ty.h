@@ -157,6 +157,7 @@ typedef struct {
         char *name;
         char *proto;
         char *doc;
+        i32 class;
 } FunUserInfo;
 
 struct refinement {
@@ -209,6 +210,7 @@ enum {
         VALUE_THREAD           ,
         VALUE_TUPLE            ,
         VALUE_BREAK            ,
+        VALUE_FUN_META         ,
         VALUE_ANY              ,
         VALUE_TAGGED           = 1 << 7,
 
@@ -244,9 +246,11 @@ enum {
         FUN_FROM_EVAL   = FUN_CLASS       + sizeof (int),
         FUN_HIDDEN      = FUN_FROM_EVAL   + 1,
         FUN_OVERLOAD    = FUN_HIDDEN      + 1,
-        FUN_PROTO       = FUN_OVERLOAD    + 1,
+        FUN_HAS_META    = FUN_OVERLOAD    + 1,
+        FUN_PROTO       = FUN_HAS_META    + 1,
         FUN_DOC         = FUN_PROTO       + sizeof (uptr),
-        FUN_NAME        = FUN_DOC         + sizeof (uptr),
+        FUN_META        = FUN_DOC         + sizeof (uptr),
+        FUN_NAME        = FUN_META        + sizeof (uptr),
         FUN_EXPR        = FUN_NAME        + sizeof (uptr),
         FUN_PARAM_NAMES = FUN_EXPR        + sizeof (uptr)
 };
@@ -277,7 +281,7 @@ struct value {
                         char const *constant;
                 };
                 struct {
-                        int class;
+                        i32 class;
                         struct itable *object;
                         Type **t0;
                 };
@@ -561,6 +565,7 @@ typedef struct ty {
 
 typedef struct {
         int call;
+        int _class_;
         int contains;
         int count;
         int _def_;
@@ -569,11 +574,13 @@ typedef struct {
         int fmt;
         int _free_;
         int init;
+        int _init_subclass_;
         int _iter_;
         int json;
         int len;
         int _len_;
         int match;
+        int _meta_;
         int missing;
         int method_missing;
         int _name_;
@@ -584,6 +591,14 @@ typedef struct {
         int slice;
         int str;
         int subscript;
+
+        int _fields_;
+        int _methods_;
+        int _getters_;
+        int _setters_;
+        int _static_fields_;
+        int _static_methods_;
+        int _static_getters_;
 
         int _readln;
         int env;
@@ -693,6 +708,8 @@ extern usize TotalBytesAllocated;
         X(TARGET_THREAD_LOCAL),   \
         X(TARGET_MEMBER),         \
         X(TARGET_SELF_MEMBER),    \
+        X(TARGET_SELF_STATIC),    \
+        X(TARGET_STATIC_MEMBER),  \
         X(TARGET_SUBSCRIPT),      \
         X(INC),                   \
         X(DEC),                   \
@@ -729,6 +746,7 @@ extern usize TotalBytesAllocated;
         X(TRY_MEMBER_ACCESS),     \
         X(SELF_MEMBER_ACCESS),    \
         X(SELF_STATIC_ACCESS),    \
+        X(STATIC_MEMBER_ACCESS),  \
         X(GET_MEMBER),            \
         X(TRY_GET_MEMBER),        \
         X(SUBSCRIPT),             \
@@ -738,6 +756,7 @@ extern usize TotalBytesAllocated;
         X(CALL_METHOD),           \
         X(TRY_CALL_METHOD),       \
         X(CALL_SELF_METHOD),      \
+        X(CALL_STATIC_METHOD),    \
         X(CALL_SELF_STATIC),      \
         X(GET_NEXT),              \
         X(PUSH_INDEX),            \

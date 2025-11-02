@@ -544,20 +544,37 @@ HasBody(Expr const *fun)
 }
 
 inline static bool
+InsideInstanceMethod(Ty *ty)
+{
+        return (STATE.class != NULL)
+            && (STATE.meth != NULL)
+            && (STATE.meth->mtype != MT_STATIC)
+            && (STATE.meth->mtype != MT_2OP);
+}
+
+inline static bool
 IsClassName(Expr const *expr)
 {
         return (expr->type == EXPRESSION_IDENTIFIER)
             && (expr->symbol != NULL)
-            && (expr->symbol->class != -1);
+            && (expr->symbol->class != -1)
+            && !SymbolIsMember(expr->symbol);
 }
 
 inline static bool
 IsLocalMemberSymbol(Ty *ty, Symbol const *sym, Scope const *scope)
 {
         return SymbolIsMember(sym)
-            && (STATE.class != NULL)
-            && (STATE.self->scope->function == scope->function)
-            && (STATE.meth->mtype != MT_2OP);
+            && (STATE.self != NULL)
+            && (STATE.self->scope->function == scope->function);
+}
+
+inline static bool
+IsMember(Ty *ty, Expr const *expr)
+{
+        return (expr != NULL)
+            && (expr->type == EXPRESSION_IDENTIFIER)
+            && SymbolIsMember(expr->symbol);
 }
 
 inline static bool
@@ -565,8 +582,34 @@ IsLocalMember(Ty *ty, Expr const *expr, Scope const *scope)
 {
         return (expr != NULL)
             && (expr->type == EXPRESSION_IDENTIFIER)
-            && (expr->symbol != NULL)
             && IsLocalMemberSymbol(ty, expr->symbol, scope);
+}
+
+enum {
+        SELF_FROM_SELF,
+        SELF_FROM_SYMBOL,
+        SELF_FROM_STATE_CLASS,
+        SELF_FROM_SELF_CLASS
+};
+
+inline static int
+MemberAccessType(Ty *ty, Symbol const *sym, Scope const *scope)
+{
+        if ((STATE.meth == NULL) || (STATE.func == NULL)) {
+                return SELF_FROM_STATE_CLASS;
+        } else if (
+                !IsLocalMemberSymbol(ty, sym, scope)
+             || (STATE.meth->mtype == MT_2OP)
+        ) {
+                return SELF_FROM_SYMBOL;
+        } else if (
+                !SymbolIsStatic(sym)
+             || (STATE.meth->mtype == MT_STATIC)
+        ) {
+                return SELF_FROM_SELF;
+        } else {
+                return SELF_FROM_SELF_CLASS;
+        }
 }
 
 inline static bool
@@ -589,20 +632,6 @@ IsRangeLoop(Stmt const *loop)
         return (loop->type == STATEMENT_EACH_LOOP)
             && IsSimpleRange(loop->each.array);
 
-}
-
-inline static bool
-IsPrivateMember(char const *name)
-{
-        usize n = strlen(name);
-        return (n > 2)
-            && (name[0] == '_')
-            && (name[1] == '_')
-            && (
-                        (name[n - 1] != '_')
-                     || (name[n - 2] != '_')
-               )
-            ;
 }
 
 inline static char *
@@ -1270,9 +1299,9 @@ inline static void
                 last2 = -1;
                 last3 = INSTR_ASSIGN_LOCAL;
         } else if (
-                last2 == INSTR_TARGET_LOCAL
-             && last3 == INSTR_ASSIGN
-             &&     c == INSTR_POP
+                (last2 == INSTR_TARGET_LOCAL)
+             && (last3 == INSTR_ASSIGN)
+             &&     (c == INSTR_POP)
         ) {
                 int i;
 
@@ -1289,8 +1318,8 @@ inline static void
                 last2 = -1;
                 last3 = INSTR_ASSIGN_LOCAL;
         } else if (
-                last3 == INSTR_TARGET_SUBSCRIPT
-             &&     c == INSTR_ASSIGN
+                (last3 == INSTR_TARGET_SUBSCRIPT)
+             &&     (c == INSTR_ASSIGN)
         ) {
                 *vvL(STATE.code) = INSTR_ASSIGN_SUBSCRIPT;
                 last0 = -1;
@@ -1721,18 +1750,11 @@ getsymbol(Ty *ty, Scope const *scope, char const *name, u32 flags)
 
         if (
                 SymbolIsMember(s)
+             && !SymbolIsStatic(s)
              && (scope->function != STATE.self->scope)
         ) {
                 // Force a capture of `self`
                 (void)ScopeLookup(scope->function, "self");
-        }
-
-        if (
-                SymbolIsMember(s)
-             && (STATE.meth->mtype == MT_STATIC)
-             && !SymbolIsStatic(s)
-        ) {
-                fail("instance member '%s' referenced from static context", name);
         }
 
         if (SymbolIsNamespace(s)) {
@@ -4184,6 +4206,11 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
         case EXPRESSION_MULTI_FUNCTION:
         case EXPRESSION_FUNCTION:
         {
+                for (int i = 0; i < vN(e->decorators); ++i) {
+                        Expr *dec = v__(e->decorators, i);
+                        symbolize_expression(ty, scope, dec);
+                }
+
                 TryStates tries = STATE.tries;
                 v00(STATE.tries);
 
@@ -4314,7 +4341,6 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
 
                 for (int i = 0; i < vN(e->decorators); ++i) {
                         Expr *dec = v__(e->decorators, i);
-                        symbolize_expression(ty, scope, dec);
                         switch (dec->type) {
                         case EXPRESSION_FUNCTION_CALL:
                                 v__(dec->args, 0)->_type = e->_type;
@@ -5382,29 +5408,32 @@ emit_load(Ty *ty, Symbol const *s, Scope const *scope)
                   && !SymbolIsTypeVar(s)
                   && (s->scope->function == scope->function);
 
-        // Resolved to a class field but then got pulled out
-        // of the class to become a global binary operator
-        // overload -- gotta use arg0 instead of STATE.self
-        bool class_op_self_access = SymbolIsMember(s)
-                                 && (STATE.self == NULL);
-
         if (SymbolIsTypeVar(s)) {
                 INSN(BOOLEAN);
                 Eu1(true);
-        } else if (class_op_self_access) {
-                emit_load(ty, v__(STATE.func->param_symbols, 0), scope);
-                INSN(MEMBER_ACCESS);
-                Ei32(s->member);
-        } else if (IsLocalMemberSymbol(ty, s, scope)) {
-                if (SymbolIsStatic(s) && STATE.meth->mtype != MT_STATIC) {
-                        INSN(SELF_STATIC_ACCESS);
-                } else {
-                        INSN(SELF_MEMBER_ACCESS);
-                }
-                Ei32(s->member);
         } else if (SymbolIsMember(s)) {
-                emit_load(ty, STATE.self, scope);
-                INSN(MEMBER_ACCESS);
+                switch (MemberAccessType(ty, s, scope)) {
+                case SELF_FROM_SELF:
+                        INSN(SELF_MEMBER_ACCESS);
+                        break;
+
+                case SELF_FROM_STATE_CLASS:
+                        INSN(STATIC_MEMBER_ACCESS);
+                        Ei32(STATE.class->i);
+                        break;
+
+                case SELF_FROM_SELF_CLASS:
+                        INSN(SELF_STATIC_ACCESS);
+                        break;
+
+                case SELF_FROM_SYMBOL:
+                        emit_load(ty, STATE.self, scope);
+                        INSN(MEMBER_ACCESS);
+                        break;
+
+                default:
+                        UNREACHABLE();
+                }
                 Ei32(s->member);
         } else if (s->class != -1) {
                 INSN(CLASS);
@@ -5436,12 +5465,26 @@ emit_tgt(Ty *ty, Symbol *s, Scope const *scope, bool def)
 
         if (s == &UndefinedSymbol) {
                 INSN(TRAP);
-        } else if (IsLocalMemberSymbol(ty, s, scope)) {
-                INSN(TARGET_SELF_MEMBER);
-                Ei32(s->member);
         } else if (SymbolIsMember(s)) {
-                emit_load(ty, STATE.self, scope);
-                INSN(TARGET_MEMBER);
+                switch (MemberAccessType(ty, s, scope)) {
+                case SELF_FROM_SELF:
+                        INSN(TARGET_SELF_MEMBER);
+                        break;
+
+                case SELF_FROM_STATE_CLASS:
+                        INSN(TARGET_STATIC_MEMBER);
+                        Ei32(STATE.class->i);
+                        break;
+
+                case SELF_FROM_SELF_CLASS:
+                        INSN(TARGET_SELF_STATIC);
+                        break;
+
+                case SELF_FROM_SYMBOL:
+                        emit_load(ty, STATE.self, scope);
+                        INSN(TARGET_MEMBER);
+                        break;
+                }
                 Ei32(s->member);
         } else if (SymbolIsThreadLocal(s)) {
                 INSN(TARGET_THREAD_LOCAL);
@@ -5892,7 +5935,7 @@ emit_function(Ty *ty, Expr const *e)
         emit_int16(ty, e->rest);
         emit_int16(ty, e->ikwargs);
 
-        for (int i = 0; i < sizeof (int) - 2 * sizeof (int16_t); ++i) {
+        for (int i = 0; i < sizeof (int) - 2 * sizeof (i16); ++i) {
                 avP(STATE.code, 0);
         }
 
@@ -5901,9 +5944,11 @@ emit_function(Ty *ty, Expr const *e)
         Eu1(GetArenaAlloc(ty) != NULL);            // Need to GC code?
         Eu1(e->type == EXPRESSION_MULTI_FUNCTION); // Is this function hidden (i.e. omitted from stack trace messages)?
         Eu1(e->overload != NULL);                  // Is this an overload?
+        Eu1(false);                                // Does this function have attached metadata?
 
         emit_symbol(e->proto);
         emit_symbol(e->doc);
+        emit_symbol(NULL);
 
         char const *fun_name;
 
@@ -6144,6 +6189,7 @@ emit_function(Ty *ty, Expr const *e)
                 info->name  = (char *)fun_name;
                 info->proto = (char *)e->proto;
                 info->doc   = (char *)e->doc;
+                info->class = e->class;
                 NOGC(info);
 
                 for (int i = 0; i < vN(e->decorators); ++i) {
@@ -8164,7 +8210,7 @@ EmitMethodCall(
         }
 
         for (usize i = 0; i < vN(*args); ++i) {
-                if (v__(*args, i) == NULL) {
+                if (is_placeholder(v__(*args, i))) {
                         continue;
                 } else if (v__(*conds, i) != NULL) {
                         PLACEHOLDER_JUMP_IF_NOT(v__(*conds, i), skip);
@@ -8188,10 +8234,24 @@ EmitMethodCall(
         }
 
         if (object == NULL) {
-                if (SymbolIsStatic(method->symbol) && STATE.meth->mtype != MT_STATIC) {
-                        INSN(CALL_SELF_STATIC);
-                } else {
+                switch (MemberAccessType(ty, method->symbol, STATE.fscope)) {
+                case SELF_FROM_SELF:
                         INSN(CALL_SELF_METHOD);
+                        break;
+
+                case SELF_FROM_STATE_CLASS:
+                        INSN(CALL_STATIC_METHOD);
+                        Ei32(STATE.class->i);
+                        break;
+
+                case SELF_FROM_SELF_CLASS:
+                        INSN(CALL_SELF_STATIC);
+                        break;
+
+                case SELF_FROM_SYMBOL:
+                        emit_load(ty, STATE.self, STATE.fscope);
+                        INSN(CALL_METHOD);
+                        break;
                 }
         } else if (!strict) {
                 INSN(TRY_CALL_METHOD);
@@ -8533,7 +8593,7 @@ emit_expr(Ty *ty, Expr const *e, bool need_loc)
                 break;
 
         case EXPRESSION_FUNCTION_CALL:
-                if (IsLocalMember(ty, e->function, STATE.fscope)) {
+                if (IsMember(ty, e->function)) {
                         EmitMethodCall(
                                 ty,
                                 NULL,
@@ -9609,9 +9669,9 @@ InjectRedpill(Ty *ty, Stmt *s)
                                 symbolize_expression(ty, def->scope, def->super);
                         }
 
-                        int super = ResolveClassSpec(ty, def->super);
+                        Class *super = class_get(ty, ResolveClassSpec(ty, def->super));
 
-                        class_set_super(ty, def->symbol, super);
+                        class_set_super(ty, def->symbol, super->i);
 
                         for (int i = 0; i < vN(def->methods); ++i) {
                                 Expr *m = v__(def->methods, i);
@@ -9622,13 +9682,16 @@ InjectRedpill(Ty *ty, Stmt *s)
                                                 dont_printf(
                                                         "%s: inherited return type: %s.%s() -> %s\n",
                                                         class->name,
-                                                        class_name(ty, super),
+                                                        super->name,
                                                         m->name,
                                                         type_show(ty, type_resolve(ty, m->return_type))
                                                 );
                                         }
                                 }
                         }
+
+                        scope_copy_weak(ty, def->s_scope, super->def->class.s_scope);
+                        scope_copy_weak(ty, def->scope, super->def->class.scope);
                 }
                 AddClassTraits(ty, def);
                 ResolveFieldTypes(ty, def->scope, &def->fields);
@@ -10333,8 +10396,7 @@ import_module(Ty *ty, Stmt const *s)
         char const **aliases = (char const **)vv(s->import.aliases);
         int n = vN(s->import.identifiers);
 
-        bool everything = (n == 1)
-                       && (strcmp(identifiers[0], "..") == 0);
+        bool everything = (n == 1) && (strcmp(identifiers[0], "..") == 0);
 
         if (everything) {
                 char const *id = scope_copy_public(ty, STATE.global, module_scope, pub);
@@ -13663,6 +13725,7 @@ AddClassFields(
                 ident->symbol->flags |= SYM_MEMBER;
                 ident->symbol->flags |= extra_flags;
                 ident->symbol->member = id;
+                ident->symbol->class = c->i;
         }
 
         SCRATCH_RESTORE();
@@ -13949,6 +14012,7 @@ define_class(Ty *ty, Stmt *s)
                         m->fn_symbol = addsymbol(ty, cd->scope, m->name);
                         m->fn_symbol->flags |= SYM_MEMBER;
                         m->fn_symbol->member = M_ID(name);
+                        m->fn_symbol->class = sym->class;
 
                         *v_(cd->methods, keep++) = m;
                 }
@@ -13968,6 +14032,7 @@ define_class(Ty *ty, Stmt *s)
                 m->fn_symbol->flags |= SYM_MEMBER;
                 m->fn_symbol->flags |= SYM_STATIC;
                 m->fn_symbol->member = M_ID(name);
+                m->fn_symbol->class = sym->class;
         }
 
         for (int i = 0; i < vN(cd->s_getters); ++i) {
@@ -13981,6 +14046,7 @@ define_class(Ty *ty, Stmt *s)
                 m->fn_symbol->flags |= SYM_MEMBER;
                 m->fn_symbol->flags |= SYM_STATIC;
                 m->fn_symbol->member = M_ID(name);
+                m->fn_symbol->class = sym->class;
         }
 
         for (int i = 0; i < vN(cd->getters); ++i) {
@@ -13994,6 +14060,7 @@ define_class(Ty *ty, Stmt *s)
                 m->fn_symbol->flags |= SYM_MEMBER;
                 m->fn_symbol->flags |= SYM_PROPERTY;
                 m->fn_symbol->member = M_ID(name);
+                m->fn_symbol->class = sym->class;
         }
 
         for (int i = 0; i < vN(cd->setters); ++i) {
@@ -14006,6 +14073,7 @@ define_class(Ty *ty, Stmt *s)
                 m->fn_symbol = addsymbol(ty, cd->scope, m->name);
                 m->fn_symbol->flags |= SYM_MEMBER;
                 m->fn_symbol->member = M_ID(name);
+                m->fn_symbol->class = sym->class;
         }
 
         AddClassFields(ty, class, cd->scope, &cd->fields,   class_add_field,   0);
@@ -14849,8 +14917,8 @@ DumpProgram(
 
         for (int i = 0; i < vN(annotations); ++i) {
                 if (
-                        pc >= v__(annotations, i).start
-                     && pc <  v__(annotations, i).end
+                        (pc >= v__(annotations, i).start)
+                     && (pc <  v__(annotations, i).end)
                 ) {
                         annotation = &v__(annotations, i);
                         annotation->i = 0;
@@ -14987,7 +15055,7 @@ DumpProgram(
                 }
 #endif
 
-                dont_printf(
+                printf(
                         "%s%7td%s            %s%s%s      %ju\n",
                         TERM(94), pc, TERM(0),
                         TERM(93), GetInstructionName(*c), TERM(0),
@@ -15052,6 +15120,7 @@ DumpProgram(
                 CASE(JUMP_OR)
                 CASE(JUMP_AND)
                 CASE(JUMP_WTF)
+                CASE(SKIP_CHECK)
                         READVALUE(n);
                         break;
                 CASE(TARGET_GLOBAL)
@@ -15060,6 +15129,7 @@ DumpProgram(
                         break;
                 CASE(TARGET_LOCAL)
                 CASE(ASSIGN_LOCAL)
+                CASE(TARGET_THREAD_LOCAL)
                         READVALUE(n);
                         break;
                 CASE(TARGET_REF)
@@ -15072,13 +15142,17 @@ DumpProgram(
                         SKIPSTR();
 #endif
                         break;
+                CASE(TARGET_STATIC_MEMBER)
+                        READCLASS(n);
                 CASE(TARGET_MEMBER)
                 CASE(TARGET_SELF_MEMBER)
+                CASE(TARGET_SELF_STATIC)
                         READMEMBER(n);
                         break;
                 CASE(TARGET_SUBSCRIPT)
                         break;
                 CASE(ASSIGN)
+                CASE(ASSIGN_SUBSCRIPT)
                         break;
                 CASE(MAYBE_ASSIGN)
                         break;
@@ -15368,6 +15442,8 @@ DumpProgram(
                 CASE(MEMBER_ACCESS)
                         READMEMBER(n);
                         break;
+                CASE(STATIC_MEMBER_ACCESS)
+                        READCLASS(i);
                 CASE(SELF_MEMBER_ACCESS)
                 CASE(SELF_STATIC_ACCESS)
                         READMEMBER(n);
@@ -15412,6 +15488,10 @@ DumpProgram(
                 CASE(MUT_XOR)
                 CASE(MUT_SHL)
                 CASE(MUT_SHR)
+                CASE(BIT_OR)
+                CASE(BIT_AND)
+                CASE(SHL)
+                CASE(SHR)
                         break;
                 CASE(BINARY_OP)
                         READVALUE_(n);
@@ -15472,10 +15552,10 @@ DumpProgram(
 
                         v.info = (int *) c;
 
-                        int hs = v.info[0];
-                        int size  = v.info[1];
-                        int nEnv = v.info[2];
-                        int bound = v.info[3];
+                        int hs    = v.info[FUN_INFO_HEADER_SIZE];
+                        int size  = v.info[FUN_INFO_CODE_SIZE];
+                        int nEnv  = v.info[FUN_INFO_CAPTURES];
+                        int bound = v.info[FUN_INFO_BOUND];
 
                         int ncaps = (n > 0) ? nEnv - n : nEnv;
 
@@ -15488,7 +15568,7 @@ DumpProgram(
                                 !incl_sub_fns
                              || (DEBUGGING && (ty->ip > c + hs + size))
                         ) {
-                                c += hs + size;
+                                c += (hs + size);
                         } else {
                                 char signature[256];
 
@@ -15544,6 +15624,8 @@ DumpProgram(
                                 SKIPSTR();
                         }
                         break;
+                CASE(CALL_STATIC_METHOD)
+                        READCLASS(i);
                 CASE(TRY_CALL_METHOD)
                 CASE(CALL_METHOD)
                 CASE(CALL_SELF_METHOD)
@@ -15556,9 +15638,10 @@ DumpProgram(
                         }
                         break;
                 CASE(SAVE_STACK_POS)
-                        break;
+                CASE(RESTORE_STACK_POS)
                 CASE(POP_STACK_POS)
                 CASE(POP_STACK_POS_POP)
+                CASE(DROP_STACK_POS)
                         break;
                 CASE(MULTI_RETURN)
                         READVALUE(n);
@@ -15567,8 +15650,17 @@ DumpProgram(
                 CASE(RETURN)
                 CASE(RETURN_PRESERVE_CTX)
                         break;
+
+                CASE(TRACE)
+                        break;
+
                 CASE(HALT)
                         if (end == NULL) goto End;
+                        break;
+
+                default:
+                        fail("not implemented: %s", GetInstructionName((unsigned char)*(c - 1)));
+                        break;
                 }
 
                 if (!DebugScan && caption != NULL) {

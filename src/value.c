@@ -517,7 +517,7 @@ value_showx(Ty *ty, Value const *v)
                 if (class_of(v) == -1) {
                         snprintf(buffer, 1024, "<function '%s' at %p>", name_of(v), (void *)((char *)v->info + v->info[0]));
                 } else {
-                        char const *class = class_name(ty, v->info[6]);
+                        char const *class = class_name(ty, class_of(v));
                         snprintf(buffer, 1024, "<function '%s.%s' at %p>", class, name_of(v), (void *)((char *)v->info + v->info[0]));
                 }
                 break;
@@ -680,7 +680,7 @@ value_show_colorx(Ty *ty, Value const *v)
                 break;
 
         case VALUE_FUNCTION:
-                if (v->info[6] == -1) {
+                if (class_of(v) == -1) {
                         snprintf(
                                 buffer,
                                 sizeof buffer,
@@ -695,7 +695,7 @@ value_show_colorx(Ty *ty, Value const *v)
                                 TERM(0)
                         );
                 } else {
-                        char const *class = class_name(ty, v->info[6]);
+                        char const *class = class_name(ty, class_of(v));
                         snprintf(
                                 buffer,
                                 sizeof buffer,
@@ -1350,22 +1350,37 @@ mark_function(Ty *ty, Value const *v)
 {
         int n = v->info[FUN_INFO_CAPTURES];
 
-        if (*from_eval(v))
+        if (*from_eval(v)) {
                 MARK(v->info);
+        }
 
-        if (v->xinfo != NULL)
+        if (*has_meta(v)) {
+                Value *meta = meta_of(ty, v);
+                if (!MARKED(meta)) {
+                        MARK(meta);
+                        MarkNext(ty, meta);
+                }
+        }
+
+        if (v->xinfo != NULL) {
                 MARK(v->xinfo);
+        }
 
-        if (n == 0 || MARKED(v->env))
+        if (n == 0 || MARKED(v->env)) {
                 return;
+        }
 
         MARK(v->env);
 
-        for (size_t i = 0; i < n; ++i) {
+        int meta = 0;
+        for (int i = 0; i < n + meta; ++i) {
                 if (v->env[i] == NULL)
                         continue;
                 MARK(v->env[i]);
                 MarkNext(ty, v->env[i]);
+                if (v->env[i]->type == VALUE_FUN_META) {
+                        meta += 1;
+                }
         }
 }
 

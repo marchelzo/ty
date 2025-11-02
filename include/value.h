@@ -9,8 +9,9 @@ typedef struct value Value;
 #include <string.h>
 
 #include "ty.h"
-#include "vec.h"
 #include "ast.h"
+#include "vec.h"
+#include "object.h"
 #include "gc.h"
 #include "tags.h"
 #include "tthread.h"
@@ -1187,7 +1188,9 @@ code_of(Value const *v)
 inline static int
 class_of(Value const *v)
 {
-        return v->info[FUN_INFO_CLASS];
+        return (v->xinfo != NULL && v->xinfo->class > 0)
+             ? v->xinfo->class
+             : v->info[FUN_INFO_CLASS];
 }
 
 inline static Expr *
@@ -1259,6 +1262,34 @@ inline static void
 set_name_of(Value const *f, uintptr_t p)
 {
         memcpy((char *)f->info + FUN_NAME, &p, sizeof p);
+}
+
+inline static char *
+has_meta(Value const *f)
+{
+        return (char *)f->info + FUN_HAS_META;
+}
+
+inline static Value *
+meta_of(Ty *ty, Value *f)
+{
+        uptr p;
+        Value *meta;
+
+        char *addr = (char *)f->info + FUN_META;
+
+        memcpy(&p, addr, sizeof p);
+        if (p == 0) {
+                meta = mAo(sizeof (Value), GC_VALUE);
+                *meta = OBJECT(object_new(ty, CLASS_OBJECT), CLASS_OBJECT);
+                p = (uptr)meta;
+                memcpy(addr, &p, sizeof p);
+                *has_meta(f) = true;
+        } else {
+                meta = (Value *)p;
+        }
+
+        return meta;
 }
 
 inline static char *
