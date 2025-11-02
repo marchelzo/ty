@@ -54,7 +54,7 @@ struct class_definition {
         char *name;
         char const *doc;
         Location loc;
-        struct expression *super;
+        Expr *super;
         expression_vector traits;
         union {
                 struct {
@@ -292,6 +292,7 @@ struct expression {
         Type *_type;
 
         bool has_resources;
+        bool bang;
 
         union {
                 intmax_t integer;
@@ -575,7 +576,6 @@ struct statement {
                         char const *doc;
                         bool pub;
                         bool cnst;
-                        bool bang;
                 };
         };
 };

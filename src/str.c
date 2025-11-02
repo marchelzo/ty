@@ -766,6 +766,10 @@ string_comb(Ty *ty, Value *string, int argc, Value *kwargs)
                 u8 const *match;
                 bool any = false;
 
+                if (plen == 0) {
+                        break;
+                }
+
                 while ((match = mmmm(str, len, p, plen)) != NULL) {
                         svPn(scratch, str, match - str);
                         len -= (match - str + plen);
@@ -779,6 +783,7 @@ string_comb(Ty *ty, Value *string, int argc, Value *kwargs)
 
                 break;
         }
+
         case VALUE_REGEX:
         {
                 pcre2_code *re = pattern.regex->pcre2;
@@ -790,7 +795,16 @@ string_comb(Ty *ty, Value *string, int argc, Value *kwargs)
 
                 while ((rc = ty_re_match(re, str, len, start, 0)) > 0) {
                         svPn(scratch, str + start, ovec[0] - start);
-                        start = ovec[1];
+                        if (ovec[0] == ovec[1]) {
+                                if (start == len) {
+                                        rc = PCRE2_ERROR_NOMATCH;
+                                        break;
+                                } else {
+                                        start += u8_rune_sz(str + start);
+                                }
+                        } else {
+                                start = ovec[1];
+                        }
                         any = true;
                 }
 
@@ -805,6 +819,7 @@ string_comb(Ty *ty, Value *string, int argc, Value *kwargs)
 
                 break;
         }
+
         default:
                 ARGx(0, VALUE_STRING, VALUE_REGEX);
         }

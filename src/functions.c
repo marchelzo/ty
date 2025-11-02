@@ -7768,7 +7768,7 @@ BUILTIN_FUNCTION(ty_module)
                 return NIL;
         }
 
-        return ScopeDict(ty, mod->scope, true);
+        return ScopeDict(ty, mod->scope, !this);
 }
 
 BUILTIN_FUNCTION(ty_parse)

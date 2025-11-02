@@ -35,6 +35,10 @@ NewArenaGC(Ty *ty, usize cap)
 
         NOGC(A.base);
 
+        if (A.immortal) {
+                GCForgetObject(ty, A.base);
+        }
+
         return old;
 }
 
@@ -45,6 +49,7 @@ NewArenaNoGC(Ty *ty, usize cap)
 
         A.base = malloc(cap + RESERVED);
         A.gc = false;
+        A.immortal = false;
 
         if (UNLIKELY(A.base == NULL)) {
                 panic("out of memory: couldn't allocate new %zu-byte arena", cap);
@@ -81,6 +86,27 @@ void *
 GetArenaAlloc(Ty *ty)
 {
         return A.gc ? A.base : NULL;
+}
+
+static void
+ImmortalizeArena(Ty *ty, Arena *a)
+{
+        if (a == NULL) {
+                return;
+        }
+
+        ImmortalizeArena(ty, NextArena(a));
+        GCForgetObject(ty, a->base);
+
+        a->immortal = true;
+}
+
+void
+TyImmortalizeArena(Ty *ty)
+{
+        if (A.gc) {
+                ImmortalizeArena(ty, &A);
+        }
 }
 
 /* vim: set sts=8 sw=8 expandtab: */

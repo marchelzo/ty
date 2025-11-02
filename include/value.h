@@ -1204,6 +1204,12 @@ is_hidden_fun(Value const *f)
         return ((char *)f->info)[FUN_HIDDEN];
 }
 
+inline static bool
+is_overload(Value const *f)
+{
+        return ((char *)f->info)[FUN_OVERLOAD];
+}
+
 inline static Type *
 type_of(Value const *f)
 {

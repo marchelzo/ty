@@ -129,6 +129,7 @@ struct arena {
         char *end;
         Arena *next;
         bool gc;
+        bool immortal;
 };
 
 
@@ -242,7 +243,8 @@ enum {
         FUN_CLASS       = FUN_REST_IDX    + sizeof (int),
         FUN_FROM_EVAL   = FUN_CLASS       + sizeof (int),
         FUN_HIDDEN      = FUN_FROM_EVAL   + 1,
-        FUN_PROTO       = FUN_HIDDEN      + 1,
+        FUN_OVERLOAD    = FUN_HIDDEN      + 1,
+        FUN_PROTO       = FUN_OVERLOAD    + 1,
         FUN_DOC         = FUN_PROTO       + sizeof (uptr),
         FUN_NAME        = FUN_DOC         + sizeof (uptr),
         FUN_EXPR        = FUN_NAME        + sizeof (uptr),

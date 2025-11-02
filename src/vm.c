@@ -750,9 +750,11 @@ add_builtins(Ty *ty, int ac, char **av)
 #if defined(_WIN32)
         BUILTIN_VAR("os",  "PAGE_SIZE" ) = INTEGER(4096);
 #else
+        BUILTIN_VAR("os",  "PAGE_SIZE" ) = INTEGER(sysconf(_SC_PAGESIZE));
+#endif
+#if defined(__linux__)
         BUILTIN_VAR("os",  "SIGRTMIN"  ) = INTEGER(SIGRTMIN);
         BUILTIN_VAR("os",  "SIGRTMAX"  ) = INTEGER(SIGRTMAX);
-        BUILTIN_VAR("os",  "PAGE_SIZE" ) = INTEGER(sysconf(_SC_PAGESIZE));
 #endif
 //---------------------------------------------------------------------------
 #undef BUILTIN_VAR
@@ -1164,6 +1166,12 @@ call(Ty *ty, Value const *f, Value const *pSelf, int n, int nkw, bool exec)
 
         char  *code   = code_of(f);
         int   fp      = STACK.count - n;
+
+        if (is_overload(f) && (irest == -1) && (n > np)) {
+                STACK.count -= n;
+                push(NONE);
+                return;
+        }
 
         gP(&kwargs);
 
