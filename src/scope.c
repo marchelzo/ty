@@ -531,6 +531,21 @@ scope_copy(Ty *ty, Scope *dst, Scope const *src)
         return NULL;
 }
 
+void
+scope_copy_weak(Ty *ty, Scope *dst, Scope const *src)
+{
+        for (int i = 0; i < src->size; ++i) {
+                for (Symbol *sym = src->table[i]; sym != NULL; sym = sym->next) {
+                        if (
+                                !IsPrivateMember(sym->identifier)
+                             && !scope_locally_defined(ty, dst, sym->identifier)
+                        ) {
+                                scope_insert(ty, dst, sym);
+                        }
+                }
+        }
+}
+
 inline static bool
 should_skip(char const *id, char const **skip, int n)
 {

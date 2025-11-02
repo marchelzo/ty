@@ -207,6 +207,9 @@ scope_copy_public_except(
 char const *
 scope_copy(Ty *ty, Scope *dst, Scope const *src);
 
+void
+scope_copy_weak(Ty *ty, Scope *dst, Scope const *src);
+
 i64
 scope_get_symbol(Ty *ty);
 
@@ -306,6 +309,20 @@ inline static bool
 ScopeIsContainedBy(Scope const *sub, Scope const *scope)
 {
         return (sub == scope) || scope_is_subscope(sub, scope);
+}
+
+inline static bool
+IsPrivateMember(char const *name)
+{
+        usize n = strlen(name);
+        return (n > 2)
+            && (name[0] == '_')
+            && (name[1] == '_')
+            && (
+                        (name[n - 1] != '_')
+                     || (name[n - 2] != '_')
+               )
+            ;
 }
 
 int
