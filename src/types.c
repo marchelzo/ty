@@ -1556,10 +1556,10 @@ TypeArg(Type const *t0, int i)
                      && (t0->type != TYPE_CLASS)
                      && (t0->type != TYPE_FUNCTION)
                 )
-             || (int)vN(t0->args) <= i
+             || ((int)vN(t0->args) <= i)
              || (
-                        i < 0
-                     && (int)vN(t0->args) <= (i += vN(t0->args))
+                        (i < 0)
+                     && ((int)vN(t0->args) <= (i += vN(t0->args)))
                 )
         ) {
                 return ANY;
@@ -2747,17 +2747,13 @@ type_class(Ty *ty, Class *class)
 
         if (ENABLED && class->def != NULL) {
                 for (int i = 0; i < vN(class->def->class.type_params); ++i) {
-                        //Type *t0 = type_resolve(
-                        //        ty,
-                        //        v__(class->def->class.type_params, i)
-                        //);
                         Symbol *var = v__(class->def->class.type_params, i)->symbol;
                         avP(t->bound, var->type->id);
                         t->variadic |= SymbolIsVariadic(var);
 
                         char *tmp = VarName(ty, var->type->id);
                         Value *v = itable_get(ty, &VarNameTable, var->type->id);
-                        *v = PTR(afmt("%s::<%s>", tmp, class->name));
+                        *v = PTR(afmt("%s.%s", class->name, tmp));
                 }
         }
 
@@ -3583,10 +3579,7 @@ GetTrait(Ty *ty, Type *t0, int i)
 static Type *
 GetSuper(Ty *ty, Type *t0)
 {
-        if (
-                TypeType(t0) != TYPE_OBJECT
-             || IsTagged(t0)
-        ) {
+        if ((TypeType(t0) != TYPE_OBJECT) || IsTagged(t0)) {
                 return NULL;
         }
 
@@ -3951,6 +3944,24 @@ TryUnifyObjects(Ty *ty, Type *t0, Type *t1, bool super)
         ) {
                 XXTLOG("TryUnifyObjects(): tuple <> non-tuple");
                 return false;
+        }
+
+        if (
+                super
+             && IsObject(t0)
+             && (t0->class->i == CLASS_CLASS)
+             && (TypeType(t1) == TYPE_CLASS)
+        ) {
+                return UnifyX(ty, TypeArg(t0, 0), t1->class->object_type, super, false);
+        }
+
+        if (
+                !super
+             && IsObject(t1)
+             && (t1->class->i == CLASS_CLASS)
+             && (TypeType(t0) == TYPE_CLASS)
+        ) {
+                return UnifyX(ty, t0->class->object_type, TypeArg(t1, 0), super, false);
         }
 
         if (super) {
@@ -5164,7 +5175,6 @@ ClassFunctionType(Ty *ty, Type *t0)
         }
 
         return Inst1(ty, t2);
-        //return Generalize(ty, t2);
 }
 
 Type *
@@ -6658,24 +6668,25 @@ type_check_shallow(Ty *ty, Type *t0, Type *t1)
         }
 
         if (
-                t0->type == TYPE_OBJECT
-             && t0->class->i == CLASS_CLASS
-             && t1->type == TYPE_CLASS
+                (t0->type == TYPE_OBJECT)
+             && (t0->class->i == CLASS_CLASS)
+             && (ArgCount(t0) == 0)
+             && (t1->type == TYPE_CLASS)
         ) {
                 return true;
         }
 
         if (
-                t0->type == TYPE_OBJECT
-             && t0->class->i == CLASS_FUNCTION
+                (t0->type == TYPE_OBJECT)
+             && (t0->class->i == CLASS_FUNCTION)
              && IsCallable(t1)
         ) {
                 return true;
         }
 
         if (
-                t1->type == TYPE_OBJECT
-             && t1->class->i == CLASS_FUNCTION
+                (t1->type == TYPE_OBJECT)
+             && (t1->class->i == CLASS_FUNCTION)
              && IsCallable(t0)
         ) {
                 return true;
@@ -6740,7 +6751,12 @@ type_check_x_(Ty *ty, Type *t0, Type *t1, bool need)
              && (t0->class->i == CLASS_CLASS)
              && (t1->type == TYPE_CLASS)
         ) {
-                return true;
+                return type_check_x(
+                        ty,
+                        TypeArg(t0, 0),
+                        t1->class->object_type,
+                        need
+                );
         }
 
         if (

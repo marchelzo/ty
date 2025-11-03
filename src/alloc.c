@@ -63,6 +63,34 @@ NewArenaNoGC(Ty *ty, usize cap)
         return old;
 }
 
+void
+MarkArena(Arena *a)
+{
+        if (a == NULL || !a->gc) {
+                return;
+        }
+
+        MarkArena(NextArena(a));
+
+        MARK(a->base);
+}
+
+void
+FreeArena(Arena *a)
+{
+        if (a == NULL) {
+                return;
+        }
+
+        FreeArena(NextArena(a));
+
+        if (a->gc) {
+                OKGC(a->base);
+        } else {
+                free(a->base);
+        }
+}
+
 void *
 Allocate(Ty *ty, usize n)
 {
@@ -85,7 +113,7 @@ Allocate(Ty *ty, usize n)
 void *
 GetArenaAlloc(Ty *ty)
 {
-        return A.gc ? A.base : NULL;
+        return (A.gc ? A.base : NULL);
 }
 
 static void

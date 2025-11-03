@@ -130,6 +130,9 @@ MaybeTakeLock(Ty *ty);
 char const *
 GetInstructionName(uint8_t i);
 
+char *
+StepInstruction(char const *ip);
+
 void
 DebugAddBreak(Ty *ty, Value const *f);
 

@@ -975,6 +975,32 @@ SpecialTarget(Ty *ty)
 }
 
 inline static Value
+GetSelf(Ty *ty)
+{
+        Value const *fun = &vvL(FRAMES)->f;
+        u32  np = param_count_of(fun);
+        Value v = v__(STACK, vvL(FRAMES)->fp + np);
+
+        return (v.type == VALUE_REF) ? *v.ref : v;
+}
+
+inline static Value
+TryGetSelf(Ty *ty)
+{
+        if (vN(FRAMES) == 0) {
+                return NIL;
+        }
+
+        Value const *fun = &vvL(FRAMES)->f;
+
+        if (fun->info[FUN_INFO_CLASS] == -1) {
+                return NIL;
+        }
+
+        return GetSelf(ty);
+}
+
+inline static Value
 BindMethod(Value *f, Value *v, int id)
 {
         Value *this = mAo(sizeof *this, GC_VALUE);
@@ -1152,29 +1178,42 @@ TY_INSTR_INLINE
 __attribute__((optnone, noinline))
 #endif
 static void
-call(Ty *ty, Value const *f, Value const *pSelf, int n, int nkw, bool exec)
+call(Ty *ty, Value const *f, Value const *pSelf, int argc, int nkw, bool exec)
 {
-        int   argc    = n;
         int   np      = f->info[FUN_INFO_PARAM_COUNT];
         int   bound   = f->info[FUN_INFO_BOUND];
 
-        int   irest   = *(i16 const *)info_of(f, FUN_REST_IDX);
-        int   ikwargs = *(i16 const *)info_of(f, FUN_KWARGS_IDX);
+        int   irest   = rest_idx_of(f);
+        int   ikwargs = kwargs_idx_of(f);
         Value kwargs  = (nkw > 0) ? pop() : NIL;
 
         int   class   = f->info[FUN_INFO_CLASS];
-        Value self    = (pSelf == NULL) ? NONE : *pSelf;
 
         char  *code   = code_of(f);
-        int   fp      = STACK.count - n;
+        int   fp      = vN(STACK) - argc;
 
-        if (is_overload(f) && (irest == -1) && (n > np)) {
-                STACK.count -= n;
+        Value self;
+        if (class != -1) {
+                self = (pSelf != NULL) ? *pSelf
+                     : is_decorated(f) ? GetSelf(ty)
+                     : NIL;
+        } else {
+                self = NONE;
+        }
+
+        LOG(
+                "Calling %s with %d args, bound = %d, self = %s, env size = %d",
+                VSC(f), argc, bound, VSC(&self), f->info[2]
+        );
+
+
+        if (is_overload(f) && (irest == -1) && (argc > np)) {
+                STACK.count -= argc;
                 push(NONE);
                 return;
         }
 
-        gP(&kwargs);
+        int n = argc;
 
         /*
          * Default missing arguments to NIL and make space for all of this function's local variables.
@@ -1183,6 +1222,8 @@ call(Ty *ty, Value const *f, Value const *pSelf, int n, int nkw, bool exec)
                 push(NIL);
                 n += 1;
         }
+
+        gP(&kwargs);
 
         /*
          * If the function was declared with the form f(..., *extra) then we
@@ -1218,11 +1259,7 @@ call(Ty *ty, Value const *f, Value const *pSelf, int n, int nkw, bool exec)
                 STACK.count -= (n - bound);
         }
 
-        /*
-         * Fill in 'self' as an implicit additional parameter.
-         */
-        if (self.type != VALUE_NONE && class != -1) {
-                LOG("setting self = %s", VSC(&self));
+        if (class != -1) {
                 STACK.items[fp + np] = self;
         }
 
@@ -1244,7 +1281,6 @@ call(Ty *ty, Value const *f, Value const *pSelf, int n, int nkw, bool exec)
                 }
         }
 
-        LOG("Calling %s with %d args, bound = %d, self = %s, env size = %d", VSC(f), argc, bound, VSC(&self), f->info[2]);
         print_stack(ty, max(bound + 2, 5));
 
         gX();
@@ -2289,7 +2325,7 @@ GetMember(Ty *ty, Value v, int member, bool try_missing, bool exec)
                         return xSz(name_of(&v));
                 } else if (member == NAMES._def_) {
                         return FunDef(ty, &v);
-                } else if (*has_meta(&v)) {
+                } else if (has_meta(&v)) {
                         return GetMember(ty, *meta_of(ty, &v), member, false, exec);
                 }
         case VALUE_BUILTIN_FUNCTION:
@@ -2330,7 +2366,7 @@ GetMember(Ty *ty, Value v, int member, bool try_missing, bool exec)
                         return *vp;
                 }
                 if ((vp = class_lookup_s_method_i(ty, v.class, member)) != NULL) {
-                        return *vp;
+                        goto BoundMethod;
                 }
                 if ((vp = class_lookup_method_i(ty, v.class, member)) != NULL) {
                         return *vp;
@@ -2380,6 +2416,7 @@ ClassLookup:
                 vp = class_lookup_method_i(ty, n, member);
 
                 if (vp != NULL) {
+BoundMethod:
                         this = mAo(sizeof *this, GC_VALUE);
                         *this = v;
                         return METHOD(member, vp, this);
@@ -2589,10 +2626,11 @@ DoCall(Ty *ty, Value const *f, int n, int nkw, bool AutoThis)
 
                 break;
         case VALUE_CLASS:
-                if (v.class < CLASS_PRIMITIVE && v.class != CLASS_OBJECT) {
+                if (v.class <= CLASS_PRIMITIVE && v.class != CLASS_OBJECT) {
                         vp = class_lookup_method_i(ty, v.class, NAMES.init);
                         if (LIKELY(vp != NULL)) {
-                                call(ty, vp, NULL, n, nkw, true);
+                                value = NONE;
+                                call(ty, vp, &value, n, nkw, true);
                         } else {
                                 zP("built-in class has no init method. Was prelude loaded?");
                         }
@@ -2688,15 +2726,6 @@ NotCallable:
         gX();
 }
 
-inline static Value
-GetSelf(Ty *ty)
-{
-        u32   n = vvL(FRAMES)->f.info[FUN_INFO_PARAM_COUNT];
-        Value v = v__(STACK, vvL(FRAMES)->fp + n);
-
-        return (v.type == VALUE_REF) ? *v.ref : v;
-}
-
 static int
 GetDynamicMemberId(Ty *ty, bool strict)
 {
@@ -2768,7 +2797,7 @@ CallMethod(Ty *ty, int i, int n, int nkw, bool b)
         }
 
         if (n == -1) {
-                n = STACK.count - *vvX(SP_STACK) - nkw - 1;
+                n = vN(STACK) - *vvX(SP_STACK) - nkw - 1;
         }
 
         value = peek();
@@ -2788,12 +2817,13 @@ CallMethod(Ty *ty, int i, int n, int nkw, bool b)
                 }
         }
 
-        /*
-         * If we get here and self is a null pointer, none of the value's tags (if it even had any)
-         * supported the  method call, so we must now see if the inner value itself can handle the method
-         * call.
-         */
-        if (self == NULL && (self = &value)) switch (value.type & ~VALUE_TAGGED) {
+        if (self != NULL) {
+                goto DoCall;
+        } else {
+                self = &value;
+        }
+
+        switch (value.type & ~VALUE_TAGGED) {
         case VALUE_TAG:
                 vp = class_lookup_method_immediate_i(ty, CLASS_TAG, i);
                 if (vp == NULL) {
@@ -2806,6 +2836,7 @@ CallMethod(Ty *ty, int i, int n, int nkw, bool b)
                         vp = class_lookup_method_immediate_i(ty, CLASS_OBJECT, i);
                 }
                 break;
+
         case VALUE_STRING:
                 func = get_string_method_i(i);
                 if (func == NULL) {
@@ -2813,6 +2844,7 @@ CallMethod(Ty *ty, int i, int n, int nkw, bool b)
                         goto ClassLookup;
                 }
                 break;
+
         case VALUE_DICT:
                 func = get_dict_method_i(i);
                 if (func == NULL) {
@@ -2820,6 +2852,7 @@ CallMethod(Ty *ty, int i, int n, int nkw, bool b)
                         goto ClassLookup;
                 }
                 break;
+
         case VALUE_ARRAY:
                 func = get_array_method_i(i);
                 if (func == NULL) {
@@ -2827,6 +2860,7 @@ CallMethod(Ty *ty, int i, int n, int nkw, bool b)
                         goto ClassLookup;
                 }
                 break;
+
         case VALUE_BLOB:
                 func = get_blob_method_i(i);
                 if (func == NULL) {
@@ -2834,27 +2868,34 @@ CallMethod(Ty *ty, int i, int n, int nkw, bool b)
                         goto ClassLookup;
                 }
                 break;
+
         case VALUE_INTEGER:
                 class = CLASS_INT;
                 goto ClassLookup;
+
         case VALUE_REAL:
                 class = CLASS_FLOAT;
                 goto ClassLookup;
+
         case VALUE_BOOLEAN:
                 class = CLASS_BOOL;
                 goto ClassLookup;
+
         case VALUE_REGEX:
                 class = CLASS_REGEX;
                 goto ClassLookup;
+
         case VALUE_FUNCTION:
         case VALUE_BUILTIN_FUNCTION:
         case VALUE_METHOD:
         case VALUE_BUILTIN_METHOD:
                 class = CLASS_FUNCTION;
                 goto ClassLookup;
+
         case VALUE_GENERATOR:
                 class = CLASS_GENERATOR;
                 goto ClassLookup;
+
         case VALUE_TUPLE:
                 vp = tuple_get(&value, intern_entry(&xD.members, i)->name);
                 if (vp == NULL) {
@@ -2864,6 +2905,7 @@ CallMethod(Ty *ty, int i, int n, int nkw, bool b)
                         self = NULL;
                 }
                 break;
+
         case VALUE_CLASS:
                 vp = class_lookup_s_method_i(ty, value.class, i);
                 if (vp == NULL) {
@@ -2873,22 +2915,27 @@ CallMethod(Ty *ty, int i, int n, int nkw, bool b)
                         vp = class_lookup_method_immediate_i(ty, CLASS_OBJECT, i);
                 }
                 break;
+
         case VALUE_OBJECT:
                 class = value.class;
 ClassLookup:
                 vp = class_lookup_method_i(ty, class, i);
-
                 if (vp == NULL) {
                         attr = GetMember(ty, value, i, false, true);
                         vp = (attr.type == VALUE_NONE) ? NULL : &attr;
                         self = NULL;
                 }
-
                 break;
+
         case VALUE_NIL:
                 STACK.count -= (n + 1 + nkw);
                 push(NIL);
                 return;
+
+        default:
+                class = CLASS_OBJECT;
+                goto ClassLookup;
+
         }
 
         if (func != NULL) {
@@ -2926,6 +2973,7 @@ ClassLookup:
                 return;
         }
 
+DoCall:
         if (vp != NULL) {
                 pop();
 
@@ -4258,14 +4306,72 @@ InstallMethods(Ty *ty, struct itable *table, i32 n)
         Value *vp;
 
         while (n --> 0) {
-                v = pop();
                 READVALUE(i);
+
+                v = pop();
+
+                if ((v.env != NULL) || has_meta(&v)) {
+                        gc_immortalize(ty, &v);
+                }
+
                 vp = itable_get(ty, table, i);
                 if (vp->type == VALUE_REF) {
                         *vp->ref = v;
                 }
                 *vp = v;
         }
+}
+
+static Value
+IntoMethod(Ty *ty, Value const *fun, i32 c)
+{
+        Value method = *fun;
+
+        i32 c0 = method.info[FUN_INFO_CLASS];
+        if (c0 == c) {
+                return method;
+        }
+
+        u32 size = header_size_of(fun)
+                 + code_size_of(fun);
+
+        method.info = memcpy(mrealloc(NULL, size), fun->info, size);
+        method.info[FUN_INFO_CLASS] = c;
+
+        if (c0 != -1) {
+                return method;
+        }
+
+        i32 np = fun->info[FUN_INFO_PARAM_COUNT];
+
+        char *ip  = code_of(&method);
+        char *end = ip + code_size_of(&method);
+
+        int ref;
+        while (ip < end) {
+                switch (*ip) {
+                case INSTR_LOAD_LOCAL:
+                case INSTR_LOAD_REF:
+                case INSTR_ASSIGN_LOCAL:
+                case INSTR_TARGET_LOCAL:
+                case INSTR_TARGET_REF:
+                case INSTR_CAPTURE:
+                        ref = load_int(ip + 1);
+                        if (ref >= np) {
+                                ref += 1;
+                                memcpy(ip + 1, &ref, sizeof ref);
+                        }
+                        break;
+
+                default:
+                        break;
+                }
+                ip = StepInstruction(ip);
+        }
+
+        method.info[FUN_INFO_BOUND] += 1;
+
+        return method;
 }
 
 static void
@@ -4565,6 +4671,13 @@ vm_exec(Ty *ty, char *code)
                         if (top()->type == VALUE_FUNCTION) {
                                 top()->xinfo = (FunUserInfo *)s;
                         }
+                        break;
+                CASE(INTO_METHOD)
+                        READVALUE(i);
+                        if (top()->type != VALUE_FUNCTION) {
+                                zP("method decorator returned non-function: %s", VSC(top()));
+                        }
+                        *top() = IntoMethod(ty, top(), i);
                         break;
                 CASE(EXEC_CODE)
                         READVALUE(s);
@@ -6224,8 +6337,8 @@ BadTupleMember:
                                         NAMES._init_subclass_
                                 );
                                 if (hook != NULL) {
-                                        push(CLASS(class->i));
-                                        call(ty, hook, NULL, 1, 0, true);
+                                        Value self = CLASS(class->i);
+                                        call(ty, hook, &self, 0, 0, true);
                                         pop();
                                 }
                         }
@@ -6256,16 +6369,16 @@ BadTupleMember:
                         v = NONE;
                         v.type = VALUE_FUNCTION;
 
-                        IP = ALIGNED_FOR(int, IP);
-
                         // n: bound_caps
                         READVALUE(n);
 
-                        v.info = (int *) IP;
+                        IP = ALIGNED_FOR(i64, IP);
 
-                        int hs = v.info[0];
-                        int size  = v.info[1];
-                        int nEnv = v.info[2];
+                        v.info = (i32 *)IP;
+
+                        int hs   = v.info[FUN_INFO_HEADER_SIZE];
+                        int size = v.info[FUN_INFO_CODE_SIZE];
+                        int nEnv = v.info[FUN_INFO_CAPTURES];
 
                         int ncaps = (n > 0) ? nEnv - n : nEnv;
 
@@ -6275,7 +6388,7 @@ BadTupleMember:
                         LOG("ncaps: %d", ncaps);
                         LOG("Name: %s", VSC(&v));
 
-                        if (*from_eval(&v)) {
+                        if (from_eval(&v)) {
                                 v.info = mAo(hs + size, GC_ANY);
                                 memcpy(v.info, IP, hs + size);
                                 NOGC(v.info);
@@ -6317,7 +6430,7 @@ BadTupleMember:
 
                         GC_RESUME();
 
-                        if (*from_eval(&v)) {
+                        if (from_eval(&v)) {
                                 OKGC(v.info);
                         }
 
@@ -6549,6 +6662,7 @@ vm_init(Ty *ty, int ac, char **av)
         NAMES._enter_          = M_ID("__enter__");
         NAMES.fmt              = M_ID("__fmt__");
         NAMES._free_           = M_ID("__free__");
+        NAMES._hash_           = M_ID("__hash__");
         NAMES.init             = M_ID("init");
         NAMES._init_subclass_  = M_ID("__init_subclass__");
         NAMES._iter_           = M_ID("__iter__");
@@ -6712,7 +6826,7 @@ xDcringe(Ty *ty)
         dump(&ErrorBuffer, "Stack trace:\n");
 
         for (int i = 0; IP != NULL; ++i) {
-                if (vN(FRAMES) > 0 && ((char *)vvL(FRAMES)->f.info)[FUN_HIDDEN]) {
+                if (vN(FRAMES) > 0 && is_hidden_fun(&vvL(FRAMES)->f)) {
                         goto Next;
                 }
 
@@ -6929,7 +7043,7 @@ tdb_backtrace(Ty *ty)
         int nf = vN(frames);
 
         for (int i = 0; ip != NULL; ++i) {
-                if (nf > 0 && ((char *)v_(frames, nf - 1)->f.info)[FUN_HIDDEN]) {
+                if (nf > 0 && is_hidden_fun(&v_(frames, nf - 1)->f)) {
                         goto Next;
                 }
 
@@ -7496,7 +7610,7 @@ vm_call_method(Ty *ty, Value const *self, Value const *f, int argc)
 Value
 vm_call_ex(Ty *ty, Value const *f, int argc, Value *kwargs, bool collect)
 {
-        Value r, *init, *vp;
+        Value v, *init, *vp;
         usize n = STACK.count - argc;
 
         switch (f->type) {
@@ -7519,14 +7633,14 @@ vm_call_ex(Ty *ty, Value const *f, int argc, Value *kwargs, bool collect)
                 goto Collect;
 
         case VALUE_BUILTIN_FUNCTION:
-                r = f->builtin_function(ty, argc, kwargs);
+                v = f->builtin_function(ty, argc, kwargs);
                 STACK.count = n;
-                return r;
+                return v;
 
         case VALUE_BUILTIN_METHOD:
-                r = f->builtin_method(ty, f->this, argc, NULL);
+                v = f->builtin_method(ty, f->this, argc, NULL);
                 STACK.count = n;
-                return r;
+                return v;
 
         case VALUE_TAG:
                 DoTag(ty, f->tag, argc, (Value *)kwargs);
@@ -7542,14 +7656,14 @@ vm_call_ex(Ty *ty, Value const *f, int argc, Value *kwargs, bool collect)
                                 zP("Couldn't find init method for built-in class. Was prelude loaded?");
                         }
                 } else {
-                        r = OBJECT(object_new(ty, f->class), f->class);
+                        v = OBJECT(object_new(ty, f->class), f->class);
                         if (init != NULL) {
-                                call(ty, init, &r, argc, 0, true);
+                                call(ty, init, &v, argc, 0, true);
                                 pop();
                         } else {
                                 STACK.count -= argc;
                         }
-                        return r;
+                        return v;
                 }
                 UNREACHABLE();
 
@@ -7559,9 +7673,9 @@ vm_call_ex(Ty *ty, Value const *f, int argc, Value *kwargs, bool collect)
                 return (vp == NULL) ? None : Some(*vp);
 
         case VALUE_ARRAY:
-                r = (argc >= 1) ? ArraySubscript(ty, *f, top()[-(argc - 1)], false) : None;
+                v = (argc >= 1) ? ArraySubscript(ty, *f, top()[-(argc - 1)], false) : None;
                 STACK.count -= argc;
-                return r;
+                return v;
 
         case VALUE_OBJECT:
                 vp = class_lookup_method_i(ty, f->class, NAMES.call);
@@ -7609,7 +7723,7 @@ Collect:
 Value
 vm_call(Ty *ty, Value const *f, int argc)
 {
-        Value a, b, r;
+        Value a, b, v;
         Value *vp;
         usize n = STACK.count - argc;
 
@@ -7623,14 +7737,14 @@ vm_call(Ty *ty, Value const *f, int argc)
                 return pop();
 
         case VALUE_BUILTIN_FUNCTION:
-                r = f->builtin_function(ty, argc, NULL);
+                v = f->builtin_function(ty, argc, NULL);
                 STACK.count = n;
-                return r;
+                return v;
 
         case VALUE_BUILTIN_METHOD:
-                r = f->builtin_method(ty, f->this, argc, NULL);
+                v = f->builtin_method(ty, f->this, argc, NULL);
                 STACK.count = n;
-                return r;
+                return v;
 
         case VALUE_OPERATOR:
                 switch (argc) {
@@ -7661,14 +7775,14 @@ vm_call(Ty *ty, Value const *f, int argc)
                                 zP("Couldn't find init method for built-in class. Was prelude loaded?");
                         }
                 } else {
-                        r = OBJECT(object_new(ty, f->class), f->class);
+                        v = OBJECT(object_new(ty, f->class), f->class);
                         if (vp != NULL) {
-                                call(ty, vp, &r, argc, 0, true);
+                                call(ty, vp, &v, argc, 0, true);
                                 pop();
                         } else {
                                 STACK.count -= argc;
                         }
-                        return r;
+                        return v;
                 }
                 UNREACHABLE();
 
@@ -7678,9 +7792,9 @@ vm_call(Ty *ty, Value const *f, int argc)
                 return (vp == NULL) ? None : Some(*vp);
 
         case VALUE_ARRAY:
-                r = (argc >= 1) ? ArraySubscript(ty, *f, top()[-(argc - 1)], false) : None;
+                v = (argc >= 1) ? ArraySubscript(ty, *f, top()[-(argc - 1)], false) : None;
                 STACK.count -= argc;
-                return r;
+                return v;
 
         case VALUE_OBJECT:
                 vp = class_lookup_method_i(ty, f->class, NAMES.call);
@@ -7900,10 +8014,6 @@ MarkStorage(Ty *ty)
 char const *
 GetInstructionName(u8 i)
 {
-        if (i >= countof(InstructionNames)) {
-                XXX("Invalid instruction: %u", i);
-        }
-
         return (i < countof(InstructionNames))
              ? InstructionNames[i]
              : "INVALID_INSTRUCTION";
@@ -8368,10 +8478,9 @@ StepInstruction(char const *ip)
         {
                 Value v;
 
-                ip = ALIGNED_FOR(int, ip);
-
-                // n: bound_caps
                 SKIPVALUE(n);
+
+                ip = ALIGNED_FOR(i64, ip);
 
                 v.info = (int *) ip;
 

@@ -167,14 +167,18 @@ tpl_hash(Ty *ty, Value const *t)
 inline static u64
 obj_hash(Ty *ty, Value const *v)
 {
-        Value const *f = class_method(ty, v->class, "__hash__");
+        Value const *f = class_lookup_method_i(ty, v->class, NAMES._hash_);
 
         if (f != NULL) {
-                Value h = vm_eval_function(ty, f, v, NULL);
-                if (h.type != VALUE_INTEGER) {
-                        zP("%s.__hash__ return non-integer: %s", class_name(ty, v->class), VSC(v));
+                Value hash = vm_call_method(ty, v, f, 0);
+                if (hash.type != VALUE_INTEGER) {
+                        zP(
+                                "%s.__hash__() returned non-integer: %s",
+                                class_name(ty, v->class),
+                                VSC(v)
+                        );
                 }
-                return (u64)h.integer;
+                return (u64)hash.integer;
         } else {
                 return ptr_hash(ty, v->object);
         }
@@ -577,13 +581,13 @@ value_showx(Ty *ty, Value const *v)
                 }
 
 #ifdef TY_NO_LOG
-                Value *fp = class_method(ty, v->class, "__str__");
+                Value *fp = class_lookup_method_i(ty, v->class, NAMES.str);
 #else
                 Value *fp = NULL;
 #endif
-                if (fp != NULL && fp != class_method(ty, CLASS_OBJECT, "__str__")) {
+                if (fp != NULL && class_of(fp) != CLASS_OBJECT) {
                         xvP(ty->visiting, v->object);
-                        Value str = vm_eval_function(ty, fp, v, NULL);
+                        Value str = vm_call_method(ty, v, fp, 0);
                         vvX(ty->visiting);
                         if (str.type != VALUE_STRING) {
                                 goto BasicObject;
@@ -878,12 +882,12 @@ value_show_colorx(Ty *ty, Value const *v)
                 }
 
 #ifdef TY_NO_LOG
-                Value *fp = class_method(ty, v->class, "__str__");
+                Value *fp = class_lookup_method_i(ty, v->class, NAMES.str);
 #else
                 Value *fp = NULL;
 #endif
 
-                if (fp != NULL && fp != class_method(ty, CLASS_OBJECT, "__str__")) {
+                if (fp != NULL && class_of(fp) != CLASS_OBJECT) {
                         if (!VM_TRY()) {
                                 vm_catch(ty);
                                 vm_finally(ty);
@@ -892,7 +896,7 @@ value_show_colorx(Ty *ty, Value const *v)
                         }
 
                         xvP(ty->visiting, v->object);
-                        Value str = vm_eval_function(ty, fp, v, NULL);
+                        Value str = vm_call_method(ty, v, fp, 0);
                         vvX(ty->visiting);
 
                         vm_finally(ty);
@@ -1350,11 +1354,11 @@ mark_function(Ty *ty, Value const *v)
 {
         int n = v->info[FUN_INFO_CAPTURES];
 
-        if (*from_eval(v)) {
+        if (from_eval(v)) {
                 MARK(v->info);
         }
 
-        if (*has_meta(v)) {
+        if (has_meta(v)) {
                 Value *meta = meta_of(ty, v);
                 if (!MARKED(meta)) {
                         MARK(meta);
@@ -1391,11 +1395,11 @@ mark_pointer(Ty *ty, Value const *v)
                 MARK(v->gcptr);
                 switch (ALLOC_OF(v->gcptr)->type) {
                 case GC_VALUE:
-                        MarkNext(ty, (const Value *)v->gcptr);
+                        MarkNext(ty, (Value *)v->gcptr);
                         break;
 
                 case GC_FFI_AUTO:
-                        MarkNext(ty, ((const Value *)v->gcptr));
+                        MarkNext(ty, ((Value *)v->gcptr));
                         break;
                 }
         }

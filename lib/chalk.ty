@@ -402,11 +402,11 @@ fn bright-fix(style) {
 fn bright-unfix(style) {
     style.remove('bright')
     style.remove('bg-bright')
-    if let [int ~> fg] = style['fg'] and fg :: 90...99 {
+    if let [int ~> fg] = style['fg'] and fg in 90...99 {
         style['fg'] = [fg - 60]
         style['bright'] = true
     }
-    if let [int ~> bg] = style['bg'] and bg :: 100...109 {
+    if let [int ~> bg] = style['bg'] and bg in 100...109 {
         style['bg'] = [bg - 60]
         style['bg-bright'] = true
     }

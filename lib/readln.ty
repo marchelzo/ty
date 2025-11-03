@@ -295,7 +295,7 @@ fn fitItems(items: Array[CompletionLabel], W: Int) -> Array[Array[String]] {
     }
 
     return [
-        cols.map(c -> (#c > i) ? c[i] : '').zip(ws, format)
+        cols.map(c -> (#c > i) ? c[i] : '').zip(ws, f=format)
         for i in ..nrow
     ]
 }

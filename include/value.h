@@ -39,8 +39,8 @@ enum {
         CLASS_GENERATOR,
         CLASS_TAG,
         CLASS_TUPLE,
-        CLASS_PRIMITIVE,
-        CLASS_ERROR = CLASS_PRIMITIVE,
+        CLASS_PRIMITIVE = CLASS_TUPLE,
+        CLASS_ERROR,
         CLASS_RE_MATCH,
         CLASS_INTO_PTR,
         CLASS_ITERABLE,
@@ -268,6 +268,7 @@ TypeName(Ty const *ty, int t0)
         case VALUE_PTR:                 return "Ptr";
         case VALUE_NIL:                 return "nil";
         case VALUE_NONE:                return "<none>";
+        case VALUE_ANY:                 return "Any";
 
         default:                        return "<internal>";
         }
@@ -360,6 +361,7 @@ value_show_color(Ty *ty, Value const *v);
 #define ARG(i) (*vm_get(ty, argc - 1 - (i)))
 #define NAMED(s) ((kwargs != NULL) ? dict_get_member(ty, kwargs->dict, (s)) : NULL)
 #define ARG_T(i) ((argc > i) ? (vm_get(ty, argc - 1 - (i))->type) : VALUE_NONE)
+#define HAVE_FLAG(s) (value_truthy_checked(ty, NAMED(s)))
 
 #define CHECK_ARGC_1(n0) do {                            \
         if (argc != n0) {                                \
@@ -504,7 +506,11 @@ checked_arg_2(
                   : NONE;
         int const _t = arg.type;
 
-        if (_t != t0 && _t != t1) {
+        if (
+                (_t != t0)
+             && (_t != t1)
+             && (t1 != VALUE_ANY)
+        ) {
                 zP(
                         "%s: expected `%s` :: (%s | %s) but got: %s",
                         fun,
@@ -731,6 +737,12 @@ value_compare(Ty *ty, Value const *v1, Value const *v2);
 bool
 value_truthy(Ty *ty, Value const *v);
 
+inline static bool
+value_truthy_checked(Ty *ty, Value const *v)
+{
+        return (v != NULL) && value_truthy(ty, v);
+}
+
 bool
 value_apply_predicate(Ty *ty, Value *p, Value *v);
 
@@ -798,7 +810,7 @@ Value *
 tuple_get_i(Value const *tuple, int id);
 
 inline static Value *
-tget_or_null(Value const *tuple, uintptr_t k)
+tget_or_null(Value const *tuple, uptr k)
 {
         if ((tuple->type & ~VALUE_TAGGED) != VALUE_TUPLE) {
                 return NULL;
@@ -821,35 +833,35 @@ tget_or_null(Value const *tuple, uintptr_t k)
 }
 
 inline static Value
-tget_or(Value const *tuple, uintptr_t k, Value _)
+tget_or(Value const *tuple, uptr k, Value _)
 {
         Value *v = tget_or_null(tuple, k);
         return (v != NULL) ? *v : _;
 }
 
 inline static Value *
-tget_t(Value const *tuple, uintptr_t k, uint32_t t)
+tget_t(Value const *tuple, uptr k, u32 t)
 {
         Value *v = tget_or_null(tuple, k);
         return (v == NULL || v->type != t) ? NULL : v;
 }
 
 inline static Value *
-tget_nn(Value const *tuple, uintptr_t k)
+tget_nn(Value const *tuple, uptr k)
 {
         Value *v = tget_or_null(tuple, k);
         return (v == NULL || v->type == VALUE_NIL) ? NULL : v;
 }
 
 inline static Value
-tget_tagged(Value const *tuple, uintptr_t k)
+tget_tagged(Value const *tuple, uptr k)
 {
         return NONE;
 }
 
-#define tget_or(t, i, v)  ((tget_or)((t), (uintptr_t)(i),  (v)))
-#define tget_nn(t, i   )  ((tget_nn)((t), (uintptr_t)(i)      ))
-#define  tget_t(t, i, t0) ((tget_t) ((t), (uintptr_t)(i), (t0)))
+#define tget_or(t, i, v)  ((tget_or)((t), (uptr)(i),  (v)))
+#define tget_nn(t, i   )  ((tget_nn)((t), (uptr)(i)      ))
+#define  tget_t(t, i, t0) ((tget_t) ((t), (uptr)(i), (t0)))
 
 int
 tuple_get_completions(Ty *ty, Value const *v, char const *prefix, char **out, int max);
@@ -1167,16 +1179,46 @@ Some(Ty *ty, Value v)
 
 #define Some(x) (Some)(ty, x)
 
-inline static ptrdiff_t
-code_size_of(Value const *v)
+inline static u32
+header_size_of(Value const *f)
 {
-        return v->info[FUN_INFO_CODE_SIZE];
+        return f->info[FUN_INFO_HEADER_SIZE];
 }
 
-inline static void const *
+inline static u32
+code_size_of(Value const *f)
+{
+        return f->info[FUN_INFO_CODE_SIZE];
+}
+
+inline static i32
+param_count_of(Value const *f)
+{
+        return f->info[FUN_INFO_PARAM_COUNT];
+}
+
+inline static void *
 info_of(Value const *f, int i)
 {
         return ((char *)f->info) + i;
+}
+
+inline static i32 *
+flags_of(Value const *f)
+{
+        return info_of(f, FUN_FLAGS);
+}
+
+inline static int
+rest_idx_of(Value const *v)
+{
+        return *((i16 *)info_of(v, FUN_REST_IDX));
+}
+
+inline static int
+kwargs_idx_of(Value const *v)
+{
+        return *((i16 *)info_of(v, FUN_KWARGS_IDX));
 }
 
 inline static char *
@@ -1196,21 +1238,25 @@ class_of(Value const *v)
 inline static Expr *
 expr_of(Value const *f)
 {
-        uintptr_t p;
-        memcpy(&p, (char *)f->info + FUN_EXPR, sizeof p);
-        return (Expr *)p;
+        return (Expr *)*(uptr *)info_of(f, FUN_EXPR);
 }
 
 inline static bool
 is_hidden_fun(Value const *f)
 {
-        return ((char *)f->info)[FUN_HIDDEN];
+        return (*flags_of(f) & FF_HIDDEN);
 }
 
 inline static bool
 is_overload(Value const *f)
 {
-        return ((char *)f->info)[FUN_OVERLOAD];
+        return (*flags_of(f) & FF_OVERLOAD);
+}
+
+inline static bool
+is_decorated(Value const *f)
+{
+        return (*flags_of(f) & FF_DECORATED);
 }
 
 inline static Type *
@@ -1222,56 +1268,47 @@ type_of(Value const *f)
 inline static char const *
 proto_of(Value const *f)
 {
-        uintptr_t p;
-
         if (f->xinfo != NULL && f->xinfo->proto != NULL) {
                 return f->xinfo->proto;
+        } else {
+                return (char const *)*(uptr *)info_of(f, FUN_PROTO);
         }
-
-        memcpy(&p, (char *)f->info + FUN_PROTO, sizeof p);
-        return (p == 0) ?  "()" : (char const *)p;
 }
 
 inline static char const *
 doc_of(Value const *f)
 {
-        uintptr_t p;
-
         if (f->xinfo != NULL && f->xinfo->doc != NULL) {
                 return f->xinfo->doc;
+        } else {
+                return (char const *)*(uptr *)info_of(f, FUN_DOC);
         }
-
-        memcpy(&p, (char *)f->info + FUN_DOC, sizeof p);
-        return (char const *)p;
 }
 
 inline static char const *
 name_of(Value const *f)
 {
-        uintptr_t p;
-
         if (f->xinfo != NULL && f->xinfo->name != NULL) {
                 return f->xinfo->name;
+        } else {
+                return (char const *)*(uptr *)info_of(f, FUN_NAME);
         }
-
-        memcpy(&p, (char *)f->info + FUN_NAME, sizeof p);
-        return (char const *)p;
 }
 
 inline static void
-set_name_of(Value const *f, uintptr_t p)
+set_name_of(Value const *f, uptr name)
 {
-        memcpy((char *)f->info + FUN_NAME, &p, sizeof p);
+        *(uptr *)info_of(f, FUN_NAME) = name;
 }
 
-inline static char *
+inline static bool
 has_meta(Value const *f)
 {
-        return (char *)f->info + FUN_HAS_META;
+        return (*flags_of(f) & FF_HAS_META);
 }
 
 inline static Value *
-meta_of(Ty *ty, Value *f)
+meta_of(Ty *ty, Value const *f)
 {
         uptr p;
         Value *meta;
@@ -1284,7 +1321,7 @@ meta_of(Ty *ty, Value *f)
                 *meta = OBJECT(object_new(ty, CLASS_OBJECT), CLASS_OBJECT);
                 p = (uptr)meta;
                 memcpy(addr, &p, sizeof p);
-                *has_meta(f) = true;
+                *flags_of(f) |= FF_HAS_META;
         } else {
                 meta = (Value *)p;
         }
@@ -1292,10 +1329,10 @@ meta_of(Ty *ty, Value *f)
         return meta;
 }
 
-inline static char *
+inline static bool
 from_eval(Value const *f)
 {
-        return (char *)f->info + FUN_FROM_EVAL;
+        return (*flags_of(f) & FF_FROM_EVAL);
 }
 
 inline static Type *
@@ -1343,13 +1380,13 @@ ClassOf(Value const *v)
 inline static bool
 ArrayIsSmall(Array const *a)
 {
-        return ((uintptr_t)a & 7);
+        return ((uptr)a & 7);
 }
 
 inline static Value *
 ArrayItems(Array *a)
 {
-        uintptr_t p = (uintptr_t)a;
+        uptr p = (uptr)a;
         return (p & 7)
              ? (Value *)(p & ~7)
              : a->items;
@@ -1358,7 +1395,7 @@ ArrayItems(Array *a)
 inline static size_t
 ArrayCount(Array *a)
 {
-        uintptr_t p = (uintptr_t)a & ~7;
+        uptr p = (uptr)a & ~7;
         return (p > 0) ? (p - 1) : a->count;
 }
 

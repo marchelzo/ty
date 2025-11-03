@@ -29,33 +29,11 @@ NextArena(Arena const *a)
         return ((Arena *)a->base);
 }
 
-static void
-MarkArena(Arena *a)
-{
-        if (a == NULL || !a->gc) {
-                return;
-        }
+void
+MarkArena(Arena *a);
 
-        MarkArena(NextArena(a));
-
-        MARK(a->base);
-}
-
-static void
-FreeArena(Arena *a)
-{
-        if (a == NULL) {
-                return;
-        }
-
-        FreeArena(NextArena(a));
-
-        if (a->gc) {
-                OKGC(a->base);
-        } else {
-                free(a->base);
-        }
-}
+void
+FreeArena(Arena *a);
 
 inline static void
 (ReleaseArena)(Ty *ty, Arena old)
