@@ -142,8 +142,8 @@ scope_add_namespace(Ty *ty, Scope *s, char const *id, Scope *ns);
 Symbol *
 scope_new_namespace(Ty *ty, char const *name, Scope *parent);
 
-int
-scope_capture(Ty *ty, Scope *s, Symbol *sym, int parent_index);
+void
+scope_capture(Ty *ty, Scope *scope, Symbol *sym);
 
 bool
 scope_locally_defined(Ty *ty, Scope const *s, char const *id);

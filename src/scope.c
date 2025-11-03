@@ -166,8 +166,8 @@ ScopeCapturesVar(Scope const *scope, Symbol const *var)
         return false;
 }
 
-int
-scope_capture(Ty *ty, Scope *s, Symbol *sym, int parent_index)
+static int
+capture(Ty *ty, Scope *s, Symbol *sym, int parent_index)
 {
                 for (int i = 0; i < vN(s->captured); ++i) {
                         if (v__(s->captured, i) == sym) {
@@ -181,7 +181,7 @@ scope_capture(Ty *ty, Scope *s, Symbol *sym, int parent_index)
                 avP(s->cap_indices, parent_index);
 
                 LOG(
-                        "scope_capture(ty, sym=%s, scope=%s (%p), cap_index=%d)",
+                        "capture(sym=%s, scope=%s (%p), cap_index=%d)",
                         sym->identifier,
                         scope_name(ty, s),
                         s,
@@ -228,37 +228,7 @@ lookup(
                 (sym->scope->function != s->function)
              && !(sym->flags & dont_capture)
         ) {
-                if (
-                        (EVAL_DEPTH > 0)
-                     && !ScopeCapturesVar(s->function, sym)
-                     && !SymbolIsImmortal(sym)
-                ) {
-                        CompileError(
-                                ty,
-                                "attempted runtime access of non-captured variable `%s%s%s`",
-                                TERM(93;1),
-                                sym->identifier,
-                                TERM(0)
-                        );
-                }
-
-                SCRATCH_SAVE();
-
-                Scope *scope = s->function;
-                vec(Scope *) scopes = {0};
-
-                while (scope->parent->function != sym->scope->function) {
-                        svP(scopes, scope);
-                        scope = scope->parent->function;
-                }
-
-                int parent_index = scope_capture(ty, scope, sym, -1);
-
-                for (int i = vN(scopes) - 1; i >= 0; --i) {
-                        parent_index = scope_capture(ty, v__(scopes, i), sym, parent_index);
-                }
-
-                SCRATCH_RESTORE();
+                scope_capture(ty, s, sym);
         }
 
         return sym;
@@ -639,6 +609,42 @@ scope_is_subscope(Scope const *sub, Scope const *scope)
 }
 
 void
+scope_capture(Ty *ty, Scope *s, Symbol *sym)
+{
+        if (
+                (EVAL_DEPTH > 0)
+             && !ScopeCapturesVar(s->function, sym)
+             && !SymbolIsImmortal(sym)
+        ) {
+                CompileError(
+                        ty,
+                        "attempted runtime access of non-captured variable `%s%s%s`",
+                        TERM(93;1),
+                        sym->identifier,
+                        TERM(0)
+                );
+        }
+
+        SCRATCH_SAVE();
+
+        Scope *scope = s->function;
+        vec(Scope *) scopes = {0};
+
+        while (scope->parent->function != sym->scope->function) {
+                svP(scopes, scope);
+                scope = scope->parent->function;
+        }
+
+        int parent_index = capture(ty, scope, sym, -1);
+
+        for (int i = vN(scopes) - 1; i >= 0; --i) {
+                parent_index = capture(ty, v__(scopes, i), sym, parent_index);
+        }
+
+        SCRATCH_RESTORE();
+}
+
+void
 scope_capture_all(Ty *ty, Scope *scope, Scope const *stop)
 {
         if (scope->function->parent == NULL)
@@ -649,7 +655,7 @@ scope_capture_all(Ty *ty, Scope *scope, Scope const *stop)
                         for (Symbol *sym = s->table[i]; sym != NULL; sym = sym->next) {
                                 sym->flags |= SYM_IMMORTAL;
                                 LOG(
-                                        "scope_capture_all(ty, scope=%s (%p)): capturing %s",
+                                        "scope_capture_all(scope=%s (%p)): capturing %s",
                                         scope_name(ty, scope),
                                         scope,
                                         sym->identifier
@@ -668,13 +674,13 @@ scope_capture_all(Ty *ty, Scope *scope, Scope const *stop)
                                         fscope = fscope->parent->function;
                                 }
 
-                                int parent_index = scope_capture(ty, fscope, sym, -1);
+                                int parent_index = capture(ty, fscope, sym, -1);
 
                                 for (int i = vN(scopes) - 1; i >= 0; --i) {
-                                        parent_index = scope_capture(ty, v__(scopes, i), sym, parent_index);
+                                        parent_index = capture(ty, v__(scopes, i), sym, parent_index);
                                 }
 
-                                LOG("scope_capture_all: done capturing %s", sym->identifier);
+                                LOG("scope_capture_all(): done capturing %s", sym->identifier);
                         }
                 }
         }

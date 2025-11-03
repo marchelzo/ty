@@ -93,7 +93,7 @@ extern char **environ;
 #endif
 
 static _Thread_local vec(char) B;
-static _Atomic(uint64_t) tid = 0;
+static _Atomic(u64) tid = 0;
 
 u64 NextThreadId() { return ++tid; }
 
@@ -203,7 +203,7 @@ TryIntoTime(Ty *ty, char const *ctx, Value const *t, i64 factor)
 
         switch (t->type) {
         case VALUE_REAL:
-                return factor * t->real;
+                return (factor * t->real);
 
         case VALUE_INTEGER:
                 return t->integer;
@@ -230,7 +230,7 @@ GetCurrentTimespec(struct timespec* ts)
 #ifdef _WIN32
         FILETIME ft;
         GetSystemTimeAsFileTime(&ft);
-        uint64_t totalUs = (((uint64_t)ft.dwHighDateTime << 32) + ft.dwLowDateTime - 0x19DB1DED53E8000ULL) / 10ULL;
+        u64 totalUs = (((u64)ft.dwHighDateTime << 32) + ft.dwLowDateTime - 0x19DB1DED53E8000ULL) / 10ULL;
         ts->tv_sec = totalUs / 1000000ULL;
         ts->tv_nsec = (totalUs % 1000000ULL) * 1000ULL;
 #else
@@ -534,17 +534,17 @@ BUILTIN_FUNCTION(read)
         return vSs(B.items, B.count);
 }
 
-inline static uint64_t
-rotl(uint64_t x, int k)
+inline static u64
+rotl(u64 x, int k)
 {
         return (x << k) | (x >> (64 - k));
 }
 
-inline static uint64_t
+inline static u64
 xoshiro256ss(Ty *ty)
 {
-        uint64_t const result = rotl(ty->prng[1] * 5, 7) * 9;
-        uint64_t const t = ty->prng[1] << 17;
+        u64 const result = rotl(ty->prng[1] * 5, 7) * 9;
+        u64 const t = ty->prng[1] << 17;
 
         ty->prng[2] ^= ty->prng[0];
         ty->prng[3] ^= ty->prng[1];
@@ -559,12 +559,12 @@ xoshiro256ss(Ty *ty)
 
 BUILTIN_FUNCTION(rand)
 {
-        int64_t low;
-        int64_t high;
+        i64 low;
+        i64 high;
 
         ASSERT_ARGC_3("rand()", 0, 1, 2);
 
-        uint64_t z = xoshiro256ss(ty);
+        u64 z = xoshiro256ss(ty);
 
         if (argc == 0) {
                 return REAL(z / (double)UINT64_MAX);
@@ -902,12 +902,14 @@ BUILTIN_FUNCTION(show)
 
 BUILTIN_FUNCTION(str)
 {
-        ASSERT_ARGC_2("str()", 0, 1);
+        ASSERT_ARGC("str()", 0, 1);
 
-        if (argc == 0)
-                return STRING_NOGC(NULL, 0);
+        if (argc == 0) {
+                return STRING_EMPTY;
+        }
 
         Value arg = ARG(0);
+
         if (arg.type == VALUE_STRING) {
                 return arg;
         } else {
@@ -921,12 +923,12 @@ BUILTIN_FUNCTION(str)
 inline static bool
 isflag(int c)
 {
-        return c == '0' ||
-               c == '-' ||
-               c == '+' ||
-               c == ' ' ||
-               c == '#' ||
-               c == '\'';
+        return (c == '0')
+            || (c == '-')
+            || (c == '+')
+            || (c == ' ')
+            || (c == '#')
+            || (c == '\'');
 }
 
 struct fspec {
@@ -935,9 +937,9 @@ struct fspec {
         bool sep;
         bool sign;
         bool zero;
-        int8_t justify;
+        i8 justify;
         char xsep;
-        int32_t fill;
+        i32 fill;
         char prec[64];
         char width[64];
 };
@@ -956,7 +958,7 @@ getfmt(char const **s, char const *end, struct fspec *out)
         out->fill    = 0;
         out->xsep    = '\0';
 
-        int32_t rune;
+        i32 rune;
         int bytes;
 
         for (;;) {
@@ -1390,7 +1392,7 @@ MissingArgument:
                                 int sz = utf8proc_encode_char(spec.fill, fill);
 
                                 if (sz <= 0) {
-                                        fill[0] = (uint8_t)spec.fill;
+                                        fill[0] = (u8)spec.fill;
                                         sz = 1;
                                 }
 
@@ -1505,7 +1507,7 @@ BUILTIN_FUNCTION(regex)
                 return pattern;
         }
 
-        uint32_t options = 0;
+        u32 options = 0;
         bool detailed = false;
 
         if (argc == 2) {
@@ -3648,7 +3650,7 @@ BUILTIN_FUNCTION(thread_join)
                 lTk();
                 return t->v;
         } else {
-                i64 timeoutMs = max(0, INT_ARG(1));
+                i64 timeoutMs = max(0, MSEC_ARG(1));
 
                 lGv(true);
                 TyMutexLock(&t->mutex);
@@ -3692,19 +3694,24 @@ BUILTIN_FUNCTION(thread_cond_wait)
 {
         ASSERT_ARGC("thread.waitCond()", 2, 3);
 
-        TyCondVar *cond = ARGx(0, VALUE_PTR).ptr;
-        TyMutex *mtx = ARGx(1, VALUE_PTR).ptr;
-        i64 usec = -1;
+        TyCondVar *cond = PTR_ARG(0);
+        TyMutex    *mtx = PTR_ARG(1);
+
+        i64 usec;
+        bool forever;
 
         if (argc == 3) {
-                usec = INT_ARG(2);
+                usec = USEC_ARG(2);
+                forever = (usec == -1)
+                       && (ARG_T(2) == VALUE_INTEGER);
+        } else {
+                forever = true;
         }
 
         lGv(true);
-
-        bool ok = (usec < 0) ? TyCondVarWait(cond, mtx)
-                             : TyCondVarTimedWaitRelative(cond, mtx, usec / 1000);
-
+        bool ok = forever
+                ? TyCondVarWait(cond, mtx)
+                : TyCondVarTimedWaitRelative(cond, mtx, usec / 1000);
         lTk();
 
         return BOOLEAN(ok);
@@ -3713,45 +3720,25 @@ BUILTIN_FUNCTION(thread_cond_wait)
 BUILTIN_FUNCTION(thread_cond_signal)
 {
         ASSERT_ARGC("thread.signalCond()", 1);
-
-        if (ARG(0).type != VALUE_PTR) {
-                zP("thread.signalCond() expects a pointer but got: %s", VSC(&ARG(0)));
-        }
-
-        return BOOLEAN(TyCondVarSignal(ARG(0).ptr));
+        return BOOLEAN(TyCondVarSignal(PTR_ARG(0)));
 }
 
 BUILTIN_FUNCTION(thread_cond_broadcast)
 {
         ASSERT_ARGC("thread.broadcastCond()", 1);
-
-        if (ARG(0).type != VALUE_PTR) {
-                zP("thread.broadcastCond() expects a pointer but got: %s", VSC(&ARG(0)));
-        }
-
-        return BOOLEAN(TyCondVarBroadcast(ARG(0).ptr));
+        return BOOLEAN(TyCondVarBroadcast(PTR_ARG(0)));
 }
 
 BUILTIN_FUNCTION(thread_cond_destroy)
 {
         ASSERT_ARGC("thread.destroyCond()", 1);
-
-        if (ARG(0).type != VALUE_PTR) {
-                zP("thread.destroyCond() expects a pointer but got: %s", VSC(&ARG(0)));
-        }
-
-        return BOOLEAN(TyCondVarDestroy(ARG(0).ptr));
+        return BOOLEAN(TyCondVarDestroy(PTR_ARG(0)));
 }
 
 BUILTIN_FUNCTION(thread_mutex_destroy)
 {
         ASSERT_ARGC("thread.destroyMutex()", 1);
-
-        if (ARG(0).type != VALUE_PTR) {
-                zP("thread.destroyMutex() expects a pointer but got: %s", VSC(&ARG(0)));
-        }
-
-        return BOOLEAN(TyMutexDestroy(ARG(0).ptr));
+        return BOOLEAN(TyMutexDestroy(PTR_ARG(0)));
 }
 
 BUILTIN_FUNCTION(thread_lock)
@@ -3759,10 +3746,10 @@ BUILTIN_FUNCTION(thread_lock)
         ASSERT_ARGC("thread.lock()", 1);
 
         bool ok;
-        Value mtx = ARGx(0, VALUE_PTR);
+        TyMutex *mtx = PTR_ARG(0);
 
         lGv(true);
-        ok = TyMutexLock(mtx.ptr);
+        ok = TyMutexLock(mtx);
         lTk();
 
         return BOOLEAN(ok);
@@ -3771,24 +3758,18 @@ BUILTIN_FUNCTION(thread_lock)
 BUILTIN_FUNCTION(thread_trylock)
 {
         ASSERT_ARGC("thread.tryLock()", 1);
-        return BOOLEAN(TyMutexTryLock(ARGx(0, VALUE_PTR).ptr));
+        return BOOLEAN(TyMutexTryLock(PTR_ARG(0)));
 }
 
 BUILTIN_FUNCTION(thread_unlock)
 {
         ASSERT_ARGC("thread.unlock()", 1);
-        return BOOLEAN(TyMutexUnlock(ARGx(0, VALUE_PTR).ptr));
+        return BOOLEAN(TyMutexUnlock(PTR_ARG(0)));
 }
 
 BUILTIN_FUNCTION(thread_create)
 {
-        if (argc == 0) {
-                zP("thread.create() expects at least one argument");
-        }
-
-        if (!CALLABLE(ARG(0))) {
-                zP("non-callable value passed to thread.create(): %s", VSC(&ARG(0)));
-        }
+        ASSERT_ARGC_RANGE("thread.create()", 1, INT_MAX);
 
         Value *ctx = mA((argc + 1) * sizeof (Value));
         Thread *t = mAo(sizeof *t, GC_THREAD);
@@ -3803,9 +3784,7 @@ BUILTIN_FUNCTION(thread_create)
 
         ctx[argc] = NONE;
 
-        Value *isolated = NAMED("isolated");
-
-        NewThread(ty, t, ctx, NAMED("name"), isolated != NULL && value_truthy(ty, isolated));
+        NewThread(ty, t, ctx, NAMED("name"), HAVE_FLAG("isolated"));
 
         return THREAD(t);
 }
@@ -3815,14 +3794,14 @@ BUILTIN_FUNCTION(thread_channel)
 {
         ASSERT_ARGC("thread.channel()", 0);
 
-        Channel *c = mAo(sizeof *c, GC_ANY);
+        Channel *chan = mAo(sizeof *chan, GC_ANY);
 
-        c->open = true;
-        vec_init(c->q);
-        TyCondVarInit(&c->c);
-        TyMutexInit(&c->m);
+        chan->open = true;
+        v00(chan->q);
+        TyCondVarInit(&chan->c);
+        TyMutexInit(&chan->m);
 
-        return GCPTR(c, c);
+        return GCPTR(chan, chan);
 }
 
 BUILTIN_FUNCTION(thread_send)
@@ -5476,7 +5455,7 @@ BUILTIN_FUNCTION(os_sleep)
 #endif
 
 static int
-microsleep(int64_t usec)
+microsleep(i64 usec)
 {
 #ifdef _WIN32
         HANDLE timer;
@@ -6057,7 +6036,7 @@ BUILTIN_FUNCTION(time_utime)
 
         clock_gettime(clk, &t);
 #endif
-        return INTEGER((uint64_t)t.tv_sec * 1000 * 1000 + (uint64_t)t.tv_nsec / 1000);
+        return INTEGER((u64)t.tv_sec * 1000 * 1000 + (u64)t.tv_nsec / 1000);
 }
 
 BUILTIN_FUNCTION(time_localtime)
@@ -6807,11 +6786,7 @@ BUILTIN_FUNCTION(stdio_fseek)
 BUILTIN_FUNCTION(object)
 {
         ASSERT_ARGC("object()", 1);
-
-        Value class = ARG(0);
-        if (class.type != VALUE_CLASS)
-                zP("the argument to object() must be a class");
-
+        Value class = ARGx(0, VALUE_CLASS);
         return OBJECT(object_new(ty, class.class), class.class);
 }
 
@@ -6893,13 +6868,16 @@ BUILTIN_FUNCTION(apply)
                 bP("called with no arguments");
         }
 
-        Value g = ARG(0);
+        Value fun0  = ARG(0);
         Value *self = NAMED("self");
+        Value *kws  = NAMED("kwargs");
 
-        Value *collect = NAMED("collect");
-        Value *kws = NAMED("kwargs");
-
-        Value f = (self == NULL || g.type != VALUE_METHOD) ? g : METHOD(g.name, &g, self);
+        Value fun;
+        if (self != NULL && fun0.type == VALUE_METHOD) {
+                fun = METHOD(fun0.name, &fun0, self);
+        } else {
+                fun = fun0;
+        }
 
         for (int i = 1; i < argc; ++i) {
                 vmP(&ARG(1));
@@ -6907,10 +6885,10 @@ BUILTIN_FUNCTION(apply)
 
         return vm_call_ex(
                 ty,
-                &f,
+                &fun,
                 argc - 1,
                 kws,
-                collect != NULL && value_truthy(ty, collect)
+                HAVE_FLAG("collect")
         );
 }
 
@@ -7277,7 +7255,7 @@ BUILTIN_FUNCTION(ty_bt)
 
                 Value *f = &frames->items[i].f;
 
-                if (((char *)f->info)[FUN_HIDDEN]) {
+                if (is_hidden_fun(f)) {
                         continue;
                 }
 
@@ -8317,7 +8295,12 @@ BUILTIN_FUNCTION(parse_expr)
         Value *resolve = NAMED("resolve");
         Value *raw = NAMED("raw");
 
-        return parse_get_expr(ty, prec, resolve != NULL && value_truthy(ty, resolve), raw != NULL && value_truthy(ty, raw));
+        return parse_get_expr(
+                ty,
+                prec,
+                (resolve != NULL) && value_truthy(ty, resolve),
+                (raw != NULL) && value_truthy(ty, raw)
+        );
 }
 
 BUILTIN_FUNCTION(parse_type)

@@ -557,7 +557,7 @@ pub class Path {
 
     mkdtemp(prefix: String = 'tmp') -> Path {
         let name = "{prefix}-XXXXXX"
-        os.mkdtemp("{self / name}")
+        Path(os.mkdtemp("{self / name}"))
     }
 
     mktemp(prefix: String = 'tmp', suffix: String = '') -> Path {

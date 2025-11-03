@@ -360,6 +360,28 @@ dict_values(Ty *ty, Value *d, int argc, Value *kwargs)
         return values;
 }
 
+static Value
+dict_items(Ty *ty, Value *d, int argc, Value *kwargs)
+{
+        ASSERT_ARGC("dict.items()", 0);
+
+        Value items = ARRAY(vA());
+
+        gP(&items);
+
+        for (usize i = 0; i < d->dict->size; ++i) {
+                if (d->dict->keys[i].type != 0) {
+                        Value key = d->dict->keys[i];
+                        Value value = d->dict->values[i];
+                        vAp(items.array, PAIR(key, value));
+                }
+        }
+
+        gX();
+
+        return items;
+}
+
 Dict *
 DictClone(Ty *ty, Dict const *d)
 {
@@ -733,6 +755,7 @@ DEFINE_METHOD_TABLE(
         { .name = "diff",         .func = dict_diff           },
         { .name = "has?",         .func = dict_contains       },
         { .name = "intersect",    .func = dict_intersect      },
+        { .name = "items",        .func = dict_items          },
         { .name = "keys",         .func = dict_keys           },
         { .name = "len",          .func = dict_len            },
         { .name = "ptr",          .func = dict_ptr            },

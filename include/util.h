@@ -41,10 +41,10 @@
 #define sxdf(...) ((sxdf)(ty, __VA_ARGS__))
 #define sfmt(...) ((sfmt)(ty, __VA_ARGS__))
 
-inline static size_t
+inline static usize
 P_ALIGN(void const *p)
 {
-        return ((uintptr_t)p & 7)[(size_t []) {
+        return ((uptr)p & 7)[(usize []) {
                 [0] = 8,
                 [1] = 1,
                 [2] = 2,
@@ -57,15 +57,15 @@ P_ALIGN(void const *p)
 }
 
 inline static void *
-ALIGNED_TO(void const *p, size_t align)
+ALIGNED_TO(void const *p, usize align)
 {
-        return (void *)(((uintptr_t)p + (align - 1)) & ~(align - 1));
+        return (void *)(((uptr)p + (align - 1)) & ~(align - 1));
 }
 
 inline static bool
-IS_ALIGNED_TO(void const *p, size_t align)
+IS_ALIGNED_TO(void const *p, usize align)
 {
-        return ((uintptr_t)p & (align - 1)) == 0;
+        return ((uptr)p & (align - 1)) == 0;
 }
 
 #define ALIGNED_FOR(T, p) (ALIGNED_TO((p), _Alignof (T)))
@@ -118,7 +118,7 @@ sclonea(Ty *ty, char const *s);
 static inline char *
 S2(char const *s)
 {
-        size_t n = strlen(s);
+        usize n = strlen(s);
         char *new = malloc(n + 1);
 
         if (new == NULL) {
@@ -197,7 +197,7 @@ StrHash(char const *s)
 inline static bool
 search_str(StringVector const *ss, char const *s)
 {
-        for (size_t i = 0; i < ss->count; ++i) {
+        for (usize i = 0; i < ss->count; ++i) {
                 if (strcmp(ss->items[i], s) == 0) {
                         return true;
                 }

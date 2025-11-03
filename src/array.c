@@ -100,51 +100,56 @@ compare_by2(void const *v1, void const *v2, void *ctx_)
 }
 
 inline static void
-shrink(Ty *ty, Value *array)
+shrink(Ty *ty, Value *v)
 {
-        if (array->array->capacity > 8 * array->array->count || (array->array->capacity - array->array->count) > 1000) {
-                array->array->capacity = array->array->count;
-                if (array->array->count == 0)
-                        mF(array->array->items), array->array->items = NULL;
-                else
-                        mREu(array->array->items, array->array->count * sizeof (Value));
+        Array *a = v->array;
+
+        if (
+                (vC(*a) > 8 * vN(*a))
+             || (vC(*a) - vN(*a) > 1000)
+        ) {
+                vC(*a) = vN(*a);
+                if (vN(*a) == 0) {
+                        mF(vv(*a));
+                        vv(*a) = NULL;
+                } else {
+                        mREu(vv(*a), vN(*a) * sizeof (Value));
+                }
         }
 }
 
 static Value
 array_push(Ty *ty, Value *array, int argc, Value *kwargs)
 {
-        if (argc != 1)
-                zP("the push method on arrays expects 1 argument but got %d", argc);
-
+        ASSERT_ARGC("Array.push()", 1);
         vAp(array->array, ARG(0));
-
         return NIL;
 }
 
 static Value
 array_insert(Ty *ty, Value *array, int argc, Value *kwargs)
 {
-        if (argc != 2)
-                zP("the insert method on arrays expects 2 arguments but got %d", argc);
+        ASSERT_ARGC("Array.insert()", 2);
 
-        Value i = ARG(0);
+        imax i = INT_ARG(0);
         Value v = ARG(1);
 
-        if (i.type != VALUE_INTEGER)
-                zP("non-integer passed as the index to the insert method on array");
-
-        int index = i.integer;
-
-        if (index < 0)
-                index += array->array->count + 1;
-        if (index < 0 || index > array->array->count)
-                zP("array index passed to insert is out of range: %d", index);
+        if (i < 0) {
+                i += vN(*array->array) + 1;
+        }
+        if (i < 0 || i > vN(*array->array)) {
+                bP("index out of range: %"PRIiMAX, i);
+        }
 
         vAp(array->array, NIL);
 
-        memmove(array->array->items + index + 1, array->array->items + index, (array->array->count - index - 1) * sizeof (Value));
-        array->array->items[index] = v;
+        memmove(
+                vv(*array->array) + i + 1,
+                vv(*array->array) + i,
+                (vN(*array->array) - i - 1) * sizeof (Value)
+        );
+
+        *v_(*array->array, i) = v;
 
         return *array;
 }
@@ -152,57 +157,57 @@ array_insert(Ty *ty, Value *array, int argc, Value *kwargs)
 static Value
 array_pop(Ty *ty, Value *array, int argc, Value *kwargs)
 {
-        Value result;
+        ASSERT_ARGC("Array.pop()", 0, 1);
+
+        Value v;
 
         if (argc == 0) {
-                if (array->array->count == 0)
-                        zP("attempt to pop from an empty array");
-                result = array->array->items[--array->array->count];
-        } else if (argc == 1) {
-                Value arg = ARG(0);
-                if (arg.type != VALUE_INTEGER)
-                        zP("the argument to pop must be an integer");
-                if (arg.integer < 0)
-                        arg.integer += array->array->count;
-                if (arg.integer < 0 || arg.integer >= array->array->count)
-                        zP("array index passed to pop is out of range");
-                result = array->array->items[arg.integer];
-                vvXi(*array->array, arg.integer);
+                if (vN(*array->array) == 0) {
+                        bP("empty array");
+                }
+                v = array->array->items[--array->array->count];
         } else {
-                zP("the pop method on arrays expects 0 or 1 argument(s) but got %d", argc);
+                imax i = INT_ARG(0);
+                if (i < 0) {
+                        i += vN(*array->array);
+                }
+                if (i < 0 || i >= vN(*array->array)) {
+                        bP("out of range: %"PRIiMAX, i);
+                }
+                v = v__(*array->array, i);
+                vvXi(*array->array, i);
         }
 
         shrink(ty, array);
 
-        return result;
+        return v;
 }
 
 static Value
 array_swap(Ty *ty, Value *array, int argc, Value *kwargs)
 {
-        if (argc != 2)
-                zP("array.swap() expects 2 arguments but got %d", argc);
+        ASSERT_ARGC("Array.swap()", 2);
 
-        Value i = ARG(0);
-        Value j = ARG(1);
+        imax i = INT_ARG(0);
+        imax j = INT_ARG(1);
 
-        if (i.type != VALUE_INTEGER || j.type != VALUE_INTEGER)
-                zP("the arguments to array.swap() must be integers");
+        if (i < 0) {
+                i += vN(*array->array);
+        }
+        if (j < 0) {
+                j += vN(*array->array);
+        }
 
-        if (i.integer < 0)
-                i.integer += array->array->count;
+        if (
+                (i < 0) || (i >= vN(*array->array))
+             || (j < 0) || (j >= vN(*array->array))
+        ) {
+                bP("out of range: (%"PRIiMAX"), %"PRIiMAX")", i, j);
+        }
 
-        if (j.integer < 0)
-                j.integer += array->array->count;
-
-        if (i.integer < 0 || i.integer >= array->array->count
-         || j.integer < 0 || j.integer >= array->array->count) {
-                zP("invalid indices passed to array.swap(): (%d, %d)", (int) i.integer, (int) j.integer);
-           }
-
-        Value tmp = array->array->items[i.integer];
-        array->array->items[i.integer] = array->array->items[j.integer];
-        array->array->items[j.integer] = tmp;
+        Value tmp = v__(*array->array, i);
+        *v_(*array->array, i) = v__(*array->array, j);
+        *v_(*array->array, j) = tmp;
 
         return *array;
 }
@@ -210,47 +215,46 @@ array_swap(Ty *ty, Value *array, int argc, Value *kwargs)
 static Value
 array_slice_mut(Ty *ty, Value *array, int argc, Value *kwargs)
 {
-        if (argc != 1 && argc != 2)
-                zP("array.slice!() expects 1 or 2 arguments but got %d", argc);
+        ASSERT_ARGC("Array.slice!()", 1, 2);
 
-        Value start = ARG(0);
-
-        if (start.type != VALUE_INTEGER)
-                zP("non-integer passed as first argument to array.slice!()");
-
-        int s = start.integer;
-        int n;
+        imax i = INT_ARG(0);
+        imax n;
 
         if (argc == 2) {
-                Value count = ARG(1);
-                if (count.type != VALUE_INTEGER)
-                        zP("non-integer passed as second argument to array.slice!()");
-                n = count.integer;
+                n = INT_ARG(1);
         } else {
-                n = array->array->count;
+                n = vN(*array->array);
         }
 
 
-        if (s < 0)
-                s += array->array->count;
-        if (s < 0)
-                zP("start index passed to array.slice!() is out of range");
+        if (i < 0) {
+                i += vN(*array->array);
+        }
+        if (i < 0) {
+                bP("out of range: %"PRIiMAX, i);
+        }
 
-        if (n < 0)
-                n += array->array->count;
-        if (n < 0)
-                zP("negative count passed to array.slice!()");
+        if (n < 0) {
+                n += vN(*array->array);
+        }
+        if (n < 0) {
+                bP("bad count: %"PRIiMAX, n);
+        }
 
-        s = min(s, array->array->count);
-        n = min(n, array->array->count - s);
+        i = min(i, vN(*array->array));
+        n = min(n, vN(*array->array) - i);
 
-        struct array *slice = vA();
+        Array *slice = vA();
         NOGC(slice);
 
-        vvPn(*slice, array->array->items + s, n);
-        memmove(array->array->items + s, array->array->items + s + n, (array->array->count - (s + n)) * sizeof (Value));
+        vvPn(*slice, vv(*array->array) + i, n);
+        memmove(
+                vv(*array->array) + i,
+                vv(*array->array) + (i + n),
+                (vN(*array->array) - (i + n)) * sizeof (Value)
+        );
+        vN(*array->array) -= n;
 
-        array->array->count -= n;
         shrink(ty, array);
 
         OKGC(slice);
@@ -258,47 +262,59 @@ array_slice_mut(Ty *ty, Value *array, int argc, Value *kwargs)
         return ARRAY(slice);
 }
 
+inline static Value
+index_safe(Array const *array, isize i)
+{
+        if (i < 0 || i >= vN(*array)) {
+                return NIL;
+        } else {
+                return v__(*array, i);
+        }
+}
+
 static Value
 array_zip(Ty *ty, Value *array, int argc, Value *kwargs)
 {
-        if (argc == 0 || (argc == 1 && ARG(0).type != VALUE_ARRAY)) {
-                zP("array.zip() expects at least one array argument");
-        }
+        ASSERT_ARGC_RANGE("Array.zip()", 1, INT_MAX);
 
-        int ac = argc;
+        usize n = vN(*array->array);
+        Value f = KWARG("f", _ANY);
+        bool longest = HAVE_FLAG("longest");
 
-        Value f = NIL;
-        if (ARG(ac - 1).type != VALUE_ARRAY && CALLABLE(ARG(ac - 1))) {
-                f = ARG(ac - 1);
-                ac -= 1;
-        }
-
-        int n = array->array->count;
-        for (int i = 0; i < ac; ++i) {
-                if (ARG(i).type != VALUE_ARRAY) {
-                        zP("non-array passed to array.zip()");
+        for (int i = 0; i < argc; ++i) {
+                if (ARG_T(i) != VALUE_ARRAY) {
+                        bP("arg%d is non-Array: %s", i, VSC(&ARG(i)));
                 }
-                n = min(n, ARG(i).array->count);
+                n = longest
+                  ? max(n, vN(*ARG(i).array))
+                  : min(n, vN(*ARG(i).array));
         }
 
-        for (int i = 0; i < n; ++i) {
-                if (f.type == VALUE_NIL) {
-                        Value t = vT(ac + 1);
-                        t.items[0] = array->array->items[i];
-                        for (int j = 0; j < ac; ++j) {
-                                t.items[j + 1] = ARG(j).array->items[i];
+        while (vN(*array->array) < n) {
+                vAp(array->array, NIL);
+        }
+
+        for (usize i = 0; i < n; ++i) {
+                if (IsMissing(f)) {
+                        Value tuple = vT(argc + 1);
+                        tuple.items[0] = index_safe(array->array, i);
+                        for (int j = 0; j < argc; ++j) {
+                                tuple.items[j + 1] = index_safe(ARG(j).array, i);
                         }
-                        array->array->items[i] = t;
+                        *v_(*array->array, i) = tuple;
                 } else {
-                        vmP(&array->array->items[i]);
-                        for (int j = 0; j < ac; ++j) {
-                                vmP(&ARG(-1).array->items[i]);
+                        Value v = index_safe(array->array, i);
+                        vmP(&v);
+                        for (int j = 0; j < argc; ++j) {
+                                v = index_safe(ARG(-1).array, i);
+                                vmP(&v);
+
                         }
-                        array->array->items[i] = vmC(&f, argc);
+                        *v_(*array->array, i) = vmC(&f, argc + 1);
                 }
         }
 
-        array->array->count = n;
+        vN(*array->array) = n;
         shrink(ty, array);
 
         return *array;
@@ -307,41 +323,35 @@ array_zip(Ty *ty, Value *array, int argc, Value *kwargs)
 static Value
 array_window(Ty *ty, Value *array, int argc, Value *kwargs)
 {
-        if (argc != 1 && argc != 2)
-                zP("array.window() expects 1 or 2 arguments but got %d", argc);
+        ASSERT_ARGC("Array.window()", 1, 2);
 
-        Value k = ARG(0);
-        if (k.type != VALUE_INTEGER)
-                zP("the first argument to array.window() must be an integer");
+        imax k = INT_ARG(0);
+        if (k <= 0) {
+                bP("bad window size: %"PRIiMAX, k);
+        }
 
-        if (k.integer <= 0)
-                zP("the first argument to array.window() must be positive");
-
-        int n = max((intmax_t)array->array->count - k.integer + 1, 0);
+        int n = max((imax)vN(*array->array) - k + 1, 0);
 
         if (argc == 2) {
                 Value f = ARG(1);
-                if (!CALLABLE(f))
-                        zP("the second argument to array.window() must be callable");
-
                 for (int i = 0; i < n; ++i) {
-                        for (int j = i; j < i + k.integer; ++j)
-                                vmP(&array->array->items[j]);
-                        array->array->items[i] = vmC(&f, k.integer);
+                        for (int j = i; j < i + k; ++j) {
+                                vmP(v_(*array->array, j));
+                        }
+                        *v_(*array->array, i) = vmC(&f, k);
                 }
 
         } else {
                 for (int i = 0; i < n; ++i) {
-                        struct array *w = vA();
-                        NOGC(w);
-                        for (int j = i; j < i + k.integer; ++j)
-                                vAp(w, array->array->items[j]);
-                        OKGC(w);
-                        array->array->items[i] = ARRAY(w);
+                        Array *win = vAn(k);
+                        for (int j = i; j < i + k; ++j) {
+                                vPx(*win, v__(*array->array, j));
+                        }
+                        *v_(*array->array, i) =  ARRAY(win);
                 }
         }
 
-        array->array->count = n;
+        vN(*array->array) = n;
         shrink(ty, array);
 
         return *array;
@@ -350,46 +360,43 @@ array_window(Ty *ty, Value *array, int argc, Value *kwargs)
 static Value
 array_slice(Ty *ty, Value *array, int argc, Value *kwargs)
 {
-        if (argc != 1 && argc != 2)
-                zP("array.slice() expects 1 or 2 arguments but got %d", argc);
+        ASSERT_ARGC("Array.slice()", 1, 2);
 
-        Value start = ARG(0);
-        if (start.type != VALUE_INTEGER)
-                zP("non-integer passed as first argument to array.slice()");
-
-        int s = start.integer;
-        int n;
+        imax i = INT_ARG(0);
+        imax n;
 
         if (argc == 2) {
-                Value count = ARG(1);
-                if (count.type != VALUE_INTEGER)
-                        zP("non-integer passed as second argument to array.slice()");
-                n = count.integer;
+                n = INT_ARG(1);
         } else {
-                n = array->array->count;
+                n = vN(*array->array);
         }
 
-        if (s < 0)
-                s += array->array->count;
-        if (s < 0)
-                zP("start index passed to array.slice() is out of range");
+        if (i < 0) {
+                i += vN(*array->array);
+        }
+        if (i < 0) {
+                bP("out of range: %"PRIiMAX, i);
+        }
 
-        if (n < 0)
-                n += array->array->count;
-        if (n < 0)
-                zP("negative count passed to array.slice()");
+        if (n < 0) {
+                n += vN(*array->array);
+        }
+        if (n < 0) {
+                bP("bad count: %"PRIiMAX, n);
+        }
 
-        s = min(s, array->array->count);
-        n = min(n, array->array->count - s);
+        i = min(i, vN(*array->array));
+        n = min(n, vN(*array->array) - i);
 
-        Value result = ARRAY(vA());
-        NOGC(result.array);
-        value_array_reserve(ty, result.array, n);
-        OKGC(result.array);
-        memmove(result.array->items, array->array->items + s, n * sizeof (Value));
-        result.array->count = n;
+        Array *slice = vAn(n);
+        memmove(
+                vv(*slice),
+                vv(*array->array) + i,
+                n * sizeof (Value)
+        );
+        vN(*slice) = n;
 
-        return result;
+        return ARRAY(slice);
 }
 
 static Value

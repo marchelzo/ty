@@ -104,6 +104,7 @@ fn slurp(file: ?String | Int) -> String;
 fn rand[a](items: Array[a]) -> a;
 fn rand() -> Float;
 fn rand(n: Int, m: ?Int) -> Int;
+fn object[T](cls: Class[T]) -> T;
 fn print(*args: Any, sep: String = ', ', end: String = '\n', file: _, flush: Bool = false) -> Int;
 fn str(x: Any) -> String;
 fn int[a](x: a, base: ?Int) -> Int;
@@ -249,7 +250,7 @@ class Object {
     }
 }
 
-class Class {
+class Class[T] {
     __name__: String;
 
     |(other) {
@@ -262,10 +263,6 @@ class Class {
 
     __match__(other) {
         type(other) != Class && other.is?(self)
-    }
-
-    [](x) {
-        true
     }
 
     static name(c) {
@@ -297,6 +294,7 @@ class Function : Iter {
     }
 
     __match__(x) {
+        //print("self = {self}, x = {x}\n", flush=true)
         self(x)
     }
 
@@ -379,6 +377,32 @@ class Array[T] : Iterable[T] {
     tally[U](key: T -> U) -> Dict[U, Int];
     uniq!() -> Array[T];
     uniq() -> Array[T];
+
+    zip[U1, U2, U3, R](
+        ys1: Array[U1],
+        ys2: Array[U2],
+        ys3: Array[U3],
+        f: (T, U1, U2, U3) -> R
+    ) -> Array[R];
+    zip[U1, U2, R](
+        ys1: Array[U1],
+        ys2: Array[U2],
+        f: (T, U1, U2) -> R
+    ) -> Array[R];
+    zip[U1, R](
+        ys1: Array[U1],
+        f: (T, U1) -> R
+    ) -> Array[R];
+    zip[U1, U2, U3](
+        ys1: Array[U1],
+        ys2: Array[U2],
+        ys3: Array[U3]
+    ) -> Array[(T, U1, U2, U3)];
+    zip[U1, U2](
+        ys1: Array[U1],
+        ys2: Array[U2]
+    ) -> Array[(T, U1, U2)];
+    zip[U1](ys1: Array[U1]) -> Array[(T, U1)];
 
     +[U](ys: Array[U]) -> Array[T | U] { self + ys }
 
@@ -538,7 +562,9 @@ class Array[T] : Iterable[T] {
     }
 
     static [](T) {
-        return xs -> (xs :: Array) && xs.all?(x -> x :: T)
+        xs -> do {
+            (xs :: Array) && xs.all?(x -> x :: T)
+        }
     }
 
     [](i: Int) -> T {
@@ -779,10 +805,11 @@ class Dict[K, V] : Iterable[K, V] {
     }
 
     __iter__() -> Iter[K, V] {
-        return self.keys().zip(self.values()).__iter__()
+        return cast(self.keys().zip(self.values()).__iter__())
     }
 
     keys() -> Array[K];
+    values() -> Array[V];
 
     [](key: K) -> V {
         self[key]
@@ -3338,14 +3365,15 @@ class SharedQueue[T] : Iterable[T] {
 
     tryTake(timeoutMs: Int = 0) -> Some[T] | None {
         let force = (timeoutMs == -1)
-        let stop = time.utime() + timeoutMs * 1000
+        let stop = time.now() + (timeoutMs / 1000.0)
 
         __mutex.lock()
 
         while __n == 0 {
-            let now = time.utime()
-            let wait = (stop - now) / 1000
-            if !__cond.wait(__mutex, wait if !force) {
+            if !__cond.wait(
+                __mutex,
+                (stop - time.now()) if !force
+            ) {
                 __mutex.unlock()
                 return None
             }
@@ -3869,8 +3897,8 @@ fn memoized(fun, sync: Bool = true) {
         }
     }
 
-    gather ?: p-vars.push(ty.Spread(gather))
-    kwargs ?: p-vars.push(ty.Splat(kwargs))
+    if gather { p-vars.push(ty.Spread(ty.Id({name: gather})))      }
+    if kwargs { p-vars.push($$[$$kwargs.items().sort!(by=\_.0)$$]) }
 
     let call = ty.Call({
         func: ty.Value(fun),

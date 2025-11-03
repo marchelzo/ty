@@ -110,15 +110,25 @@ use RouteMap = Dict[
 ];
 
 class HttpServer {
+    static __routes: RouteMap
+
     __sock:     Int
     __conns:    Array[{fd: Int, p: HttpParser}]
-    __handlers: RouteMap
     __stopping: Bool
+    __handlers: RouteMap
 
     init(*args, backlog: Int = 64) {
-        __handlers = %{*:[]}
-        __conns = []
+        __conns    = []
         __stopping = false
+        __handlers = %{*: []}
+
+        for method, handlers in __routes {
+            __handlers[method] = handlers.map(handler -> {
+                *handler,
+                fun: handler.fun.bind(self)
+            })
+        }
+
         match args {
             [addr: String, port: Int] => {
                 __sock = net::listen('tcp', "{addr}:{port}", backlog)
@@ -131,6 +141,26 @@ class HttpServer {
         }
     }
 
+    static __init_subclass__() {
+        __routes = %{*: []}
+
+        for _, method in self.__methods__ {
+            if method.__class__ != self {
+                continue
+            }
+
+            if not let $route = method.?__route {
+                continue
+            }
+
+            __install(
+                route.method,
+                route.route,
+                method
+            )
+        }
+    }
+
     address -> (String, String) {
         getnameinfo(
             getsockname(__sock),
@@ -138,47 +168,53 @@ class HttpServer {
         )
     }
 
-    findHandler(method: String, url: String) -> (RequestHandler, Dict[String, String]) | nil {
-        if not let $hs = __handlers[method] {
+    __resolve(
+        method: String,
+        url: String
+    ) -> (RequestHandler, Dict[String, String]) | nil {
+        if not let $handlers = __handlers[method] {
             return nil
         }
 
-        for {params: ps, pattern, fun, *} in hs {
+        for {params, pattern, fun, *} in handlers {
             if let $m = url.match!(pattern) {
-                return (fun, %{ps[i]: m[i+1] for i in ..#ps})
+                return (fun, %{params[i]: m[i + 1] for i in ..#params})
             }
         }
     }
 
     stop() { __stopping = true }
 
-    __install(method: String, route: String, f: RequestHandler) {
+    static __install(method: String, route: String, f: RequestHandler) {
         let (params, pattern) = makePattern(route)
-
-        __handlers[method].push({
+        let handlers = __routes[method]
+        handlers.push({
             route,
             params,
             pattern,
             fun: f
         })
-
-        __handlers[method].sort!(by=\-(_.route.search('<') ?? 99999))
+        handlers.sort!(by=\-(_.route.search('<') ?? 99999))
     }
 
-    get(route, f) {
-        __install('GET', route, f)
+    static get(f, route) {
+        f.__route = {method: 'GET', route}
+        f
     }
 
-    post(route, f) {
-        __install('POST', route, f)
+    static post(f, route) {
+        f.__route = {method: 'POST', route}
+        f
     }
 
-    delete(route, f) {
-        __install('DELETE', route, f)
+    static delete(f, route) {
+        f.__route = {method: 'DELETE', route}
+        f
     }
 
-    put(route, f) {
-        __install('PUT', route, f)
+    static put(f, route) {
+        f.__route = {method: 'PUT', route}
+        f
     }
 
     run() {
@@ -199,7 +235,7 @@ class HttpServer {
                         log::debug!("new connection: fd={conn} addr={getnameinfo(addr, NI_NUMERICHOST | NI_NUMERICSERV)}")
                     }
                 } else {
-                    let $c = __conns.find(${it.fd == fd})
+                    let c = __conns.find(${it.fd == fd})
                     if (ev & POLLIN) && read(fd, b, 4096) > 0 {
                         log::debug!("read {#b} bytes from fd={fd}")
 
@@ -263,7 +299,7 @@ class HttpServer {
                                 _ => {}
                             }
 
-                            if let $m = req.method and let (f, ps) = self.findHandler(m, url) {
+                            if let $m = req.method and let (f, ps) = __resolve(m, url) {
                                 try {
                                     rsp.status(f({*req, url, params, addr: c.addr}, rsp, **ps) ?? 200)
                                 } catch e {

@@ -53,7 +53,6 @@ pub fn getCif(rt, *aTypes, nFixed: ?Int) {
 
 pub fn wrap(lib, name: String, rType: _ = nil, *aTypes: _, func-ptr?: Bool = false) -> _ {
     if not let $fp = c.dlsym(name, lib) {
-
         throw Err("Failed to load symbol '{name}'")
     }
 

@@ -3848,7 +3848,10 @@ infix_eq(Ty *ty, Expr *left)
 {
         Expr *e = mkexpr(ty);
 
-        e->type = T0 == TOKEN_EQ ? EXPRESSION_EQ : EXPRESSION_MAYBE_EQ;
+        e->type = (T0 == TOKEN_EQ)
+                ? EXPRESSION_EQ
+                : EXPRESSION_MAYBE_EQ;
+
         next();
 
         e->start = left->start;
@@ -5979,6 +5982,7 @@ parse_class_definition(Ty *ty)
 
                 if (param.dflt != NULL) {
                         Expr *eql = mkxpr(EQ);
+                        eql->start = start;
                         eql->target = field;
                         eql->value = param.dflt;
                         field = eql;
@@ -6068,6 +6072,7 @@ parse_class_definition(Ty *ty)
                              || (T0 == '=' && tok()->start.s[-1] == ' ')
                         ) {
                                 Expr *field = mkid(name);
+                                field->start = start;
                                 if (T0 == ':') {
                                         next();
                                         SAVE_NE(true);

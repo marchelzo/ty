@@ -75,7 +75,7 @@ typedef vec(Value *)        GCWorkStack;
 typedef vec(jmp_buf *)      JmpBufVector;
 typedef vec(Refinement)     RefinementVector;
 typedef vec(Scope *)        ScopeVector;
-typedef vec(size_t)         SPStack;
+typedef vec(usize)          SPStack;
 typedef vec(struct sigfn)   SigfnStack;
 typedef vec(char *)         StringVector;
 typedef vec(Target)         TargetStack;
@@ -135,14 +135,14 @@ struct arena {
 
 typedef struct array {
         Value *items;
-        size_t count;
-        size_t capacity;
+        usize count;
+        usize capacity;
 } Array;
 
 typedef struct blob {
         unsigned char *items;
-        size_t count;
-        size_t capacity;
+        usize count;
+        usize capacity;
 } Blob;
 
 typedef struct regex {
@@ -212,13 +212,14 @@ enum {
         VALUE_BREAK            ,
         VALUE_FUN_META         ,
         VALUE_ANY              ,
-        VALUE_TAGGED           = 1 << 7,
+        VALUE_TAGGED           = (1 << 7),
 
 
         // Aliases for working around macro expansion issues
-        // arising from NONE and NIL being object-like macros
-        VALUE__NONE = VALUE_NONE,
-        VALUE__NIL  = VALUE_NIL,
+        // arising from NONE et al. being object-like macros
+        VALUE__NONE   = VALUE_NONE,
+        VALUE__NIL    = VALUE_NIL,
+        VALUE__ANY    = VALUE_ANY
 };
 
 typedef Value BuiltinFunction(Ty *, int, Value *);
@@ -230,24 +231,30 @@ enum {
         FUN_INFO_CAPTURES,
         FUN_INFO_BOUND,
         FUN_INFO_PARAM_COUNT,
-        FUN_INFO__PAD1,
-        FUN_INFO_CLASS
+        FUN_INFO_GATHER_IDXS,
+        FUN_INFO_CLASS,
+        FUN_INFO_FLAGS
+};
+
+enum {
+        FF_HIDDEN    = (1 << 0),
+        FF_FROM_EVAL = (1 << 1),
+        FF_DECORATED = (1 << 2),
+        FF_HAS_META  = (1 << 3),
+        FF_OVERLOAD  = (1 << 4)
 };
 
 enum {
         FUN_HEADER_SIZE = 0,
-        FUN_CODE_SIZE   = FUN_HEADER_SIZE + sizeof (int),
-        FUN_CAPTURES    = FUN_CODE_SIZE   + sizeof (int),
-        FUN_BOUND       = FUN_CAPTURES    + sizeof (int),
-        FUN_PARAM_COUNT = FUN_BOUND       + sizeof (int),
-        FUN_REST_IDX    = FUN_PARAM_COUNT + sizeof (int),
+        FUN_CODE_SIZE   = FUN_HEADER_SIZE + sizeof (i32),
+        FUN_CAPTURES    = FUN_CODE_SIZE   + sizeof (i32),
+        FUN_BOUND       = FUN_CAPTURES    + sizeof (i32),
+        FUN_PARAM_COUNT = FUN_BOUND       + sizeof (i32),
+        FUN_REST_IDX    = FUN_PARAM_COUNT + sizeof (i32),
         FUN_KWARGS_IDX  = FUN_REST_IDX    + sizeof (i16),
-        FUN_CLASS       = FUN_REST_IDX    + sizeof (int),
-        FUN_FROM_EVAL   = FUN_CLASS       + sizeof (int),
-        FUN_HIDDEN      = FUN_FROM_EVAL   + 1,
-        FUN_OVERLOAD    = FUN_HIDDEN      + 1,
-        FUN_HAS_META    = FUN_OVERLOAD    + 1,
-        FUN_PROTO       = FUN_HAS_META    + 1,
+        FUN_CLASS       = FUN_KWARGS_IDX  + sizeof (i16),
+        FUN_FLAGS       = FUN_CLASS       + sizeof (i32),
+        FUN_PROTO       = FUN_FLAGS       + sizeof (i32),
         FUN_DOC         = FUN_PROTO       + sizeof (uptr),
         FUN_META        = FUN_DOC         + sizeof (uptr),
         FUN_NAME        = FUN_META        + sizeof (uptr),
@@ -277,7 +284,7 @@ struct value {
                         void *extra;
                 };
                 struct {
-                        intmax_t integer;
+                        imax integer;
                         char const *constant;
                 };
                 struct {
@@ -286,8 +293,8 @@ struct value {
                         Type **t0;
                 };
                 struct {
-                        int uop;
-                        int bop;
+                        i32 uop;
+                        i32 bop;
                 };
                 struct {
                         union {
@@ -303,7 +310,7 @@ struct value {
                                         char const *module;
                                 };
                         };
-                        int name;
+                        i32 name;
                 };
                 struct {
                         u8 const *str;
@@ -312,18 +319,18 @@ struct value {
                         u8 *str0;
                 };
                 struct {
-                        intmax_t i;
+                        imax i;
                         int off;
                         int nt;
                 };
                 struct {
-                        int count;
+                        i32 count;
                         Value *items;
-                        int *ids;
+                        i32 *ids;
                 };
                 Regex const *regex;
                 struct {
-                        int *info;
+                        i32 *info;
                         Value **env;
                         FunUserInfo *xinfo;
                 };
@@ -333,7 +340,7 @@ struct value {
 };
 
 struct frame {
-        size_t fp;
+        usize fp;
         Value f;
         char const *ip;
 };
@@ -573,6 +580,7 @@ typedef struct {
         int _enter_;
         int fmt;
         int _free_;
+        int _hash_;
         int init;
         int _init_subclass_;
         int _iter_;
@@ -701,6 +709,7 @@ extern usize TotalBytesAllocated;
         X(CHECK_INIT),            \
         X(CAPTURE),               \
         X(DECORATE),              \
+        X(INTO_METHOD),           \
         X(TARGET_LOCAL),          \
         X(TARGET_REF),            \
         X(TARGET_CAPTURED),       \
@@ -1092,6 +1101,9 @@ enum {
 #define TRIPLE(a, b, c)       TRIPLE_(ty, (a), (b), (c))
 #define QUADRUPLE(a, b, c, d) QUADRUPLE_(ty, (a), (b), (c), (d))
 
+#define TAGGED(t, ...) tagged(ty, (t), __VA_ARGS__, NONE)
+#define TAGGED_RECORD(t, ...) tagged(ty, (t), vTn(__VA_ARGS__), NONE)
+
 #define TY_UNARY_OPERATORS   \
         X(COMPL,      "~"),  \
         X(COUNT,      "#"),  \
@@ -1170,7 +1182,7 @@ enum {
 #define PMASK3 ((uptr)7)
 
 inline static void *
-mrealloc(void *p, size_t n)
+mrealloc(void *p, usize n)
 {
         p = realloc(p, n);
 
@@ -1182,7 +1194,7 @@ mrealloc(void *p, size_t n)
 }
 
 inline static void *
-alloc0(size_t n)
+alloc0(usize n)
 {
         void *p = calloc(1, n);
 
@@ -1254,7 +1266,7 @@ ExpandScratch(Ty *ty)
 }
 
 inline static void *
-AllocateScratch(Ty *ty, size_t n)
+AllocateScratch(Ty *ty, usize n)
 {
         for (;;) {
                 ptrdiff_t avail = SSS->end - SSS->beg;
@@ -1271,7 +1283,7 @@ AllocateScratch(Ty *ty, size_t n)
 }
 
 inline static void *
-AllocateScratch0(Ty *ty, size_t n)
+AllocateScratch0(Ty *ty, usize n)
 {
         return memset(AllocateScratch(ty, n), 0, n);
 }
