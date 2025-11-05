@@ -137,10 +137,10 @@ doc! os::exec
     }
 '''
 
-pub fn help(x) {
+pub fn help(x: Any) {
     let x = docRef(x)
 
-    let doc = fn (x: Any) {
+    let doc = fn (x) {
         return table[x] ?? doc(x)
     }
 
@@ -187,7 +187,7 @@ pub fn help(x) {
         },
 
         (name, proto, doc) => {
-            if doc != nil {
+            if doc :: String {
                 p("{name}{proto}:")
                 p()
                 pdoc(doc, 4)
