@@ -345,6 +345,8 @@ InitializeTY(Ty *ty)
         TY_UNARY_OPERATORS;
 #undef X
 
+        intern(&xD.strings, "");
+
         srandom(TyThreadCPUTime() & 0xFFFFFFFF);
 
         xD.ty = ty;
@@ -979,9 +981,14 @@ GetSelf(Ty *ty)
 {
         Value const *fun = &vvL(FRAMES)->f;
         u32  np = param_count_of(fun);
+
         Value v = v__(STACK, vvL(FRAMES)->fp + np);
 
-        return (v.type == VALUE_REF) ? *v.ref : v;
+        while (v.type == VALUE_REF) {
+                v = *v.ref;
+        }
+
+        return v;
 }
 
 inline static Value
@@ -3212,14 +3219,18 @@ DoMutDiv(Ty *ty)
 
         switch (p & PMASK3) {
         case 0:
-                if (vp->type == VALUE_OBJECT && (vp2 = class_method(ty, vp->class, "/=")) != NULL) {
+                if (
+                        (vp->type == VALUE_OBJECT)
+                     && ((vp2 = class_method(ty, vp->class, "/=")) != NULL)
+                ) {
                         gP(vp);
                         call(ty, vp2, vp, 1, 0, true);
                         gX();
                         pop();
                 } else {
                         x = pop();
-                        if ((val = vm_try_2op(ty, OP_MUT_DIV, vp, &x)).type != VALUE_NONE) {
+                        val = vm_try_2op(ty, OP_MUT_DIV, vp, &x);
+                        if (val.type != VALUE_NONE) {
                                 vp = &val;
                         } else {
                                 *vp = vm_2op(ty, OP_DIV, vp, &x);
@@ -4064,6 +4075,73 @@ DoAssignSubscript(Ty *ty)
         pop();
 }
 
+inline static void
+splat(Ty *ty, Dict *d, Value *v)
+{
+        if (v->type == VALUE_DICT) {
+                DictUpdate(ty, d, v->dict);
+                return;
+        }
+
+        if (v->type == VALUE_TUPLE) {
+                for (int i = 0; i < v->count; ++i) {
+                        if (v->ids == NULL || v->ids[i] == -1) {
+                                dict_put_value(ty, d, INTEGER(i), v->items[i]);
+                        } else {
+                                char const *name = M_NAME(v->ids[i]);
+                                dict_put_member(ty, d, name, v->items[i]);
+                        }
+                }
+                return;
+        }
+        // FIXME: What else should be allowed here?
+}
+
+static void
+DoStringLiteral(Ty *ty, i32 i)
+{
+        InternEntry const *interned = intern_entry(&xD.strings, i);
+        push(
+                STRING_NOGC(
+                        interned->name,
+                        (uptr)interned->data
+                )
+        );
+}
+
+static void
+DoDictLiteral(Ty *ty, Value const *dflt)
+{
+        Dict *dict = dict_new(ty);
+        Value val  = DICT(dict);
+
+        usize n = (vN(STACK) - *vvX(SP_STACK));
+
+        gP(&val);
+
+        if (dflt != NULL) {
+                dict->dflt = *dflt;
+        }
+
+        for (usize i = vN(STACK) - n; i < vN(STACK); i += 2) {
+                Value *key   = v_(STACK, i);
+                Value *value = v_(STACK, i + 1);
+
+                if (IsNone(*value)) {
+                        splat(ty, dict, key);
+                } else {
+                        dict_put_value(ty, dict, *key, *value);
+                }
+        }
+
+        gX();
+
+        STACK.count -= n;
+
+        push(val);
+}
+
+
 static void
 IncValue(Ty *ty, Value *v)
 {
@@ -4374,29 +4452,6 @@ IntoMethod(Ty *ty, Value const *fun, i32 c)
         return method;
 }
 
-static void
-splat(Ty *ty, Dict *d, Value *v)
-{
-        if (v->type == VALUE_DICT) {
-                DictUpdate(ty, d, v->dict);
-                return;
-        }
-
-        if (v->type == VALUE_TUPLE) {
-                for (int i = 0; i < v->count; ++i) {
-                        if (v->ids == NULL || v->ids[i] == -1) {
-                                dict_put_value(ty, d, INTEGER(i), v->items[i]);
-                        } else {
-                                char const *name = M_NAME(v->ids[i]);
-                                dict_put_member(ty, d, name, v->items[i]);
-                        }
-                }
-                return;
-        }
-
-        // FIXME: What else should be allowed here?
-}
-
 static Value
 ResolveTrace(Ty *ty, ThrowCtx const *ctx)
 {
@@ -4617,12 +4672,11 @@ vm_exec(Ty *ty, char *code)
                         LOG("Loading ref: %s (%d)", IP, n);
                         SKIPSTR();
 #endif
-                        vp = local(ty, n);
-                        if (vp->type == VALUE_REF) {
-                                push(*(Value *)vp->ptr);
-                        } else {
-                                push(*vp);
+                        v = *local(ty, n);
+                        while (v.type == VALUE_REF) {
+                                v = *v.ref;
                         }
+                        push(v);
                         break;
                 CASE(LOAD_CAPTURED)
                         READVALUE(n);
@@ -5354,14 +5408,15 @@ AssignGlobal:
                         READVALUE(x);
                         push(REAL(x));
                         break;
-                CASE(BOOLEAN)
-                        READVALUE(b);
-                        push(BOOLEAN(b));
+                CASE(TRUE)
+                        push(BOOLEAN(true));
+                        break;
+                CASE(FALSE)
+                        push(BOOLEAN(false));
                         break;
                 CASE(STRING)
-                        n = strlen(IP);
-                        push(STRING_NOGC(IP, n));
-                        IP += n + 1;
+                        READVALUE(n);
+                        DoStringLiteral(ty, n);
                         break;
                 CASE(CLASS)
                         READVALUE(tag);
@@ -5471,32 +5526,11 @@ AssignGlobal:
 
                         break;
                 CASE(DICT)
-                        v = DICT(dict_new(ty));
-                        gP(&v);
-
-                        n = (STACK.count - *vvX(SP_STACK)) / 2;
-
-                        for (i = 0; i < n; ++i) {
-                                value = top()[0];
-                                key = top()[-1];
-                                if (value.type == VALUE_NONE) {
-                                        pop();
-                                        splat(ty, v.dict, &key);
-                                        pop();
-                                } else {
-                                        dict_put_value(ty, v.dict, key, value);
-                                        pop();
-                                        pop();
-                                }
-                        }
-
-                        push(v);
-                        gX();
-
+                        DoDictLiteral(ty, NULL);
                         break;
-                CASE(DICT_DEFAULT)
-                        v = pop();
-                        top()->dict->dflt = v;
+                CASE(DEFAULT_DICT)
+                        value = pop();
+                        DoDictLiteral(ty, &value);
                         break;
                 CASE(SELF)
                         if (FRAMES.count == 0) {
@@ -6890,6 +6924,13 @@ CaptureContextEx(Ty *ty, ThrowCtx *ctx)
                 ValueVector locals = {0};
                 xvPn(locals, vv(STACK) + fp, nvar);
 
+                for (int i = 0; i < vN(locals); ++i) {
+                        Value *v = v_(locals, i);
+                        while (v->type == VALUE_REF) {
+                                *v = *v->ref;
+                        }
+                }
+
                 xvP(*ctx, (void *)ip);
                 xvP(ctx->locals, locals);
 
@@ -8248,11 +8289,11 @@ StepInstruction(char const *ip)
         CASE(REAL)
                 SKIPVALUE(x);
                 break;
-        CASE(BOOLEAN)
-                SKIPVALUE(b);
+        CASE(TRUE)
+        CASE(FALSE)
                 break;
         CASE(STRING)
-                SKIPSTR();
+                SKIPVALUE(n);
                 break;
         CASE(CLASS)
                 SKIPVALUE(tag);
@@ -8275,8 +8316,7 @@ StepInstruction(char const *ip)
         CASE(GATHER_TUPLE)
                 break;
         CASE(DICT)
-                break;
-        CASE(DICT_DEFAULT)
+        CASE(DEFAULT_DICT)
                 break;
         CASE(SELF)
                 break;

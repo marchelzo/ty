@@ -950,7 +950,7 @@ value_show_color(Ty *ty, Value const *v)
         char *str;
 
         WITH_SCRATCH {
-                str = sclone(ty, value_show_colorx(ty, v));
+                str = S2(value_show_colorx(ty, v));
         }
 
         return str;
@@ -962,7 +962,31 @@ value_show(Ty *ty, Value const *v)
         char *str;
 
         WITH_SCRATCH {
-                str = sclone(ty, value_showx(ty, v));
+                str = S2(value_showx(ty, v));
+        }
+
+        return str;
+}
+
+Value
+value_vshow_color(Ty *ty, Value const *v)
+{
+        Value str;
+
+        WITH_SCRATCH {
+                str = vSsz(value_show_colorx(ty, v));
+        }
+
+        return str;
+}
+
+Value
+value_vshow(Ty *ty, Value const *v)
+{
+        Value str;
+
+        WITH_SCRATCH {
+                str = vSsz(value_showx(ty, v));
         }
 
         return str;

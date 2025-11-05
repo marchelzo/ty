@@ -450,6 +450,7 @@ typedef struct ty0 {
         InternSet u_ops;
         InternSet b_ops;
         InternSet members;
+        InternSet strings;
         bool initialized;
         bool ready;
 } TY;
@@ -471,6 +472,7 @@ struct param {
         bool required;
         bool rest;
         bool kws;
+        bool pack;
 };
 
 typedef vec(Param) ParamVector;
@@ -732,15 +734,16 @@ extern usize TotalBytesAllocated;
         X(RECORD_REST),           \
         X(INTEGER),               \
         X(REAL),                  \
-        X(BOOLEAN),               \
+        X(TRUE),                  \
+        X(FALSE),                 \
         X(STRING),                \
         X(REGEX),                 \
         X(ARRAY),                 \
         X(ARRAY0),                \
         X(DICT),                  \
+        X(DEFAULT_DICT),          \
         X(TUPLE),                 \
         X(GATHER_TUPLE),          \
-        X(DICT_DEFAULT),          \
         X(NIL),                   \
         X(SELF),                  \
         X(TAG),                   \
@@ -1000,6 +1003,8 @@ enum {
 #define smA(n) AllocateScratch(ty, (n))
 #define smA0(n) AllocateScratch0(ty, (n))
 
+#define xmA(n) mrealloc(NULL, (n))
+
 #define vSs(s, n)  STRING_CLONE(ty, (s), (n))
 #define vSzs(s, n) STRING_C_CLONE(ty, (s), (n))
 #define vSsz(s)    STRING_CLONE_C(ty, (s))
@@ -1178,6 +1183,9 @@ enum {
 
 #define M_ID(m)   intern(&xD.members, (m))->id
 #define M_NAME(i) intern_entry(&xD.members, (i))->name
+
+#define S_ID(s)     intern(&xD.strings, (s))->id
+#define S_STRING(i) intern_entry(&xD.strings, (i))->name
 
 #define PMASK3 ((uptr)7)
 

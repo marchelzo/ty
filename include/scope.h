@@ -45,7 +45,8 @@ enum { TY_SCOPE_FLAGS };
         X(GLOBAL,       Global,      14)  \
         X(CAPTURED,     Captured,    15)  \
         X(FIXED,        FixedType,   16)  \
-        X(NAMESPACE,    Namespace,   17)
+        X(NAMESPACE,    Namespace,   17)  \
+        X(PARAM_PACK,   ParamPack,   18)  \
 
 
 #define X(f, _, i) SYM_##f = (1 << i),

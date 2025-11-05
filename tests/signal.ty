@@ -144,16 +144,24 @@ fn test_signals_unblock() {
 }
 
 fn run_all_tests() {
-    test_signals_blocks_and_queries()
-    test_signals_wait_retrieves_blocked()
-    test_signal_handler_fires()
-    test_signals_suspend_waits_unblocked()
-    test_signals_restore_mask()
-    test_kill_delivers_to_target()
-    test_signals_pending_reflects_blocked()
-    test_signals_add_remove()
-    test_signals_clear_fill()
-    test_signals_unblock()
+    let tests = [
+        test_signals_blocks_and_queries,
+        test_signals_wait_retrieves_blocked,
+        test_signal_handler_fires,
+        test_signals_suspend_waits_unblocked,
+        test_signals_restore_mask,
+        test_kill_delivers_to_target,
+        test_signals_pending_reflects_blocked,
+        test_signals_add_remove,
+        test_signals_clear_fill,
+        test_signals_unblock
+    ]
+
+    for test in tests {
+        test()
+        sleep(0.001)
+    }
+
     print('PASS')
 }
 

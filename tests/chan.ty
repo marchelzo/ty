@@ -2,8 +2,8 @@ import os (..)
 
 let chan = Channel()
 
-Thread(isolated: true, function () {
-    sleep(0.1)
+Thread(isolated=true, fn () {
+    sleep(0.05)
     chan.send('PASS')
 })
 

@@ -1484,13 +1484,15 @@ parse_type_params(Ty *ty, expression_vector *params)
         SAVE_NE(true);
         consume('[');
         while (T0 != ']') {
-                bool variadic = try_consume('*')
-                             || try_consume(TOKEN_DOT_DOT_DOT);
+                bool variadic = try_consume('*');
+                bool pack     = try_consume(TOKEN_DOT_DOT_DOT);
 
                 Expr *param = prefix_identifier(ty);
 
                 if (variadic) {
                         param->type = EXPRESSION_MATCH_REST;
+                } else if (pack) {
+                        param->type = EXPRESSION_PACK;
                 }
 
                 avP(*params, param);
@@ -3434,7 +3436,7 @@ prefix_carat(Ty *ty)
 }
 
 static Expr *
-prefix_incrange(Ty *ty)
+prefix_dot_dot_dot(Ty *ty)
 {
         Expr *e = mkxpr(DOT_DOT_DOT);
 
@@ -3451,7 +3453,7 @@ prefix_incrange(Ty *ty)
 }
 
 static Expr *
-prefix_range(Ty *ty)
+prefix_dot_dot(Ty *ty)
 {
         Expr *e = mkxpr(DOT_DOT);
 
@@ -4487,35 +4489,28 @@ postfix_bang(Ty *ty, Expr *left)
         return left;
 }
 
-BINARY_OPERATOR(star,     STAR,        9, false)
-BINARY_OPERATOR(div,      DIV,         9, false)
-BINARY_OPERATOR(percent,  PERCENT,     9, false)
-
-BINARY_OPERATOR(plus,     PLUS,        8, false)
-BINARY_OPERATOR(minus,    MINUS,       8, false)
-
-BINARY_OPERATOR(range,    DOT_DOT,     7, false)
-BINARY_OPERATOR(incrange, DOT_DOT_DOT, 7, false)
-
-BINARY_OPERATOR(lt,       LT,          7, false)
-BINARY_OPERATOR(gt,       GT,          7, false)
-BINARY_OPERATOR(geq,      GEQ,         7, false)
-BINARY_OPERATOR(leq,      LEQ,         7, false)
-BINARY_OPERATOR(cmp,      CMP,         7, false)
-
-BINARY_OPERATOR(not_eq,   NOT_EQ,    6, false)
-BINARY_OPERATOR(dbl_eq,   DBL_EQ,    6, false)
-
-BINARY_OPERATOR(and,      AND,         5, false)
-BINARY_OPERATOR(xor,      XOR,         5, false)
-BINARY_OPERATOR(shl,      SHL,         7, false)
-BINARY_OPERATOR(shr,      SHR,         7, false)
-BINARY_OPERATOR(bit_and,  BIT_AND,     5, false)
-BINARY_OPERATOR(bit_or,   BIT_OR,      5, false)
-
-BINARY_OPERATOR(or,       OR,          4, false)
-BINARY_OPERATOR(wtf,      WTF,         4, false)
-
+BINARY_OPERATOR(star,         STAR,        9, false)
+BINARY_OPERATOR(div,          DIV,         9, false)
+BINARY_OPERATOR(percent,      PERCENT,     9, false)
+BINARY_OPERATOR(plus,         PLUS,        8, false)
+BINARY_OPERATOR(minus,        MINUS,       8, false)
+BINARY_OPERATOR(dot_dot,      DOT_DOT,     7, false)
+BINARY_OPERATOR(dot_dot_dot,  DOT_DOT_DOT, 7, false)
+BINARY_OPERATOR(lt,           LT,          7, false)
+BINARY_OPERATOR(gt,           GT,          7, false)
+BINARY_OPERATOR(geq,          GEQ,         7, false)
+BINARY_OPERATOR(leq,          LEQ,         7, false)
+BINARY_OPERATOR(cmp,          CMP,         7, false)
+BINARY_OPERATOR(not_eq,       NOT_EQ,      6, false)
+BINARY_OPERATOR(dbl_eq,       DBL_EQ,      6, false)
+BINARY_OPERATOR(and,          AND,         5, false)
+BINARY_OPERATOR(xor,          XOR,         5, false)
+BINARY_OPERATOR(shl,          SHL,         7, false)
+BINARY_OPERATOR(shr,          SHR,         7, false)
+BINARY_OPERATOR(bit_and,      BIT_AND,     5, false)
+BINARY_OPERATOR(bit_or,       BIT_OR,      5, false)
+BINARY_OPERATOR(or,           OR,          4, false)
+BINARY_OPERATOR(wtf,          WTF,         4, false)
 BINARY_OPERATOR(check_match, CHECK_MATCH,  3, false)
 
 BINARY_LVALUE_OPERATOR(plus_eq,  PLUS_EQ,  2, true)
@@ -4563,8 +4558,8 @@ get_prefix_parser(Ty *ty)
         case TOKEN_TEMPLATE_BEGIN:     return prefix_template;
         case '$$':                     return prefix_template_expr;
 
-        case TOKEN_DOT_DOT:            return prefix_range;
-        case TOKEN_DOT_DOT_DOT:        return prefix_incrange;
+        case TOKEN_DOT_DOT:            return prefix_dot_dot;
+        case TOKEN_DOT_DOT_DOT:        return prefix_dot_dot_dot;
 
         case TOKEN_QUESTION:           return prefix_is_nil;
         case TOKEN_BANG:               return prefix_bang;
@@ -4637,8 +4632,8 @@ get_infix_parser(Ty *ty)
         case TOKEN_SQUIGGLY_ARROW: return infix_squiggly_arrow;
         case '$~>':                return infix_squiggly_not_nil_arrow;
 
-        case TOKEN_DOT_DOT:        return no_rhs(ty, 1) ? infix_count_from : infix_range;
-        case TOKEN_DOT_DOT_DOT:    return no_rhs(ty, 1) ? infix_count_from : infix_incrange;
+        case TOKEN_DOT_DOT:        return no_rhs(ty, 1) ? infix_count_from : infix_dot_dot;
+        case TOKEN_DOT_DOT_DOT:    return no_rhs(ty, 1) ? infix_count_from : infix_dot_dot_dot;
 
         case TOKEN_IDENTIFIER:     return infix_identifier;
 

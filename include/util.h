@@ -41,6 +41,8 @@
 #define sxdf(...) ((sxdf)(ty, __VA_ARGS__))
 #define sfmt(...) ((sfmt)(ty, __VA_ARGS__))
 
+#define xfmt(...) ((xfmt)(ty, __VA_ARGS__))
+
 inline static usize
 P_ALIGN(void const *p)
 {
