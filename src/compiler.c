@@ -2849,6 +2849,7 @@ symbolize_var_decl(Ty *ty, Scope *scope, Expr *target, bool pub)
         case EXPRESSION_TAG_PATTERN:
         case EXPRESSION_MATCH_ANY:
                 break;
+
         default:
                 UNREACHABLE();
         }
@@ -2928,23 +2929,30 @@ symbolize_decl(Ty *ty, Scope *scope, Expr *target, bool pub)
         case EXPRESSION_MATCH_REST:
         case EXPRESSION_TAG_PATTERN:
         case EXPRESSION_MATCH_ANY:
-        case EXPRESSION_VIEW_PATTERN:
-        case EXPRESSION_NOT_NIL_VIEW_PATTERN:
                 symbolize_var_decl(ty, scope, target, pub);
                 break;
+
+        case EXPRESSION_VIEW_PATTERN:
+        case EXPRESSION_NOT_NIL_VIEW_PATTERN:
+                symbolize_decl(ty, scope, target->right, pub);
+                break;
+
         case EXPRESSION_TAG_APPLICATION:
                 symbolize_decl(ty, scope, target->tagged, pub);
                 break;
+
         case EXPRESSION_ARRAY:
                 for (usize i = 0; i < vN(target->elements); ++i) {
                         symbolize_decl(ty, scope, v__(target->elements, i), pub);
                 }
                 break;
+
         case EXPRESSION_DICT:
                 for (int i = 0; i < vN(target->keys); ++i) {
                         symbolize_decl(ty, scope, v__(target->values, i), pub);
                 }
                 break;
+
         case EXPRESSION_TUPLE:
         case EXPRESSION_LIST:
                 for (int i = 0; i < vN(target->es); ++i) {
