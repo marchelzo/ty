@@ -113,7 +113,7 @@ fn min[a](*xs: a) -> a;
 fn max[a](*xs: a) -> a;
 fn fmt(str: String, *args: _);
 fn cast[a](x: _) -> a { x }
-fn tuple[T](*xs: T, %kws: _) -> (*T);
+fn tuple[...Ts](xs: ...Ts) -> (Ts,);
 fn tuple(*xs: _, %kws: _) -> (*_);
 fn abs(k: Int) -> Int;
 fn abs(x: Float) -> Float;
@@ -174,7 +174,7 @@ fn os::listdir(path: String) -> [String];
 
 __set_type__ ty::executable String
 
-const `,` = tuple
+const `,`: _ = tuple
 
 class Object {
     init(%props) {
@@ -378,31 +378,11 @@ class Array[T] : Iterable[T] {
     uniq!() -> Array[T];
     uniq() -> Array[T];
 
-    zip[U1, U2, U3, R](
-        ys1: Array[U1],
-        ys2: Array[U2],
-        ys3: Array[U3],
-        f: (T, U1, U2, U3) -> R
+    zip[...U, R](
+        ys: ...Array[U],
+        f: (T, U) -> R
     ) -> Array[R];
-    zip[U1, U2, R](
-        ys1: Array[U1],
-        ys2: Array[U2],
-        f: (T, U1, U2) -> R
-    ) -> Array[R];
-    zip[U1, R](
-        ys1: Array[U1],
-        f: (T, U1) -> R
-    ) -> Array[R];
-    zip[U1, U2, U3](
-        ys1: Array[U1],
-        ys2: Array[U2],
-        ys3: Array[U3]
-    ) -> Array[(T, U1, U2, U3)];
-    zip[U1, U2](
-        ys1: Array[U1],
-        ys2: Array[U2]
-    ) -> Array[(T, U1, U2)];
-    zip[U1](ys1: Array[U1]) -> Array[(T, U1)];
+    zip[...U](ys: ...Array[U]) -> Array[(T, U)];
 
     +[U](ys: Array[U]) -> Array[T | U] { self + ys }
 
@@ -443,7 +423,8 @@ class Array[T] : Iterable[T] {
         for x, i in self {
             if x :: Array {
                 for idx in x.indices() {
-                    yield tuple(*((idx :: Array) ? ([i] + idx) : [i, idx]))
+                    let tpl: _ = tuple
+                    yield tpl(*((idx :: Array) ? ([i] + idx) : [i, idx]))
                 }
             } else {
                 yield i
@@ -739,8 +720,8 @@ macro __define_ast! {
        | ty.NotIn[(AST, AST)]
        | ty.Matches[(AST, AST)]
        | ty.KwAnd[(AST, AST)]
-       | ty.Range[(AST, AST)]
-       | ty.IncRange[(AST, AST)]
+       | ty.DotDot[(AST, AST)]
+       | ty.DotDotDot[(AST, AST)]
        | ty.Cond[(AST, AST, AST)]
        | ty.If[(AST, AST, AST)]
        | ty.IfNot[(AST, AST, AST)]
@@ -1407,7 +1388,7 @@ class Tag < Function {
     }
 }
 
-class Tuple[...Types] {
+class Tuple[...T] {
     init(*args, %kwargs) {
         tuple(*args, **kwargs)
     }
@@ -3476,8 +3457,8 @@ macro __walk! {
             ty.In(   a, b) => ty.In(   walk(a, f), walk(b, f)),
             ty.NotIn(a, b) => ty.NotIn(walk(a, f), walk(b, f)),
 
-            ty.Range(   a, b) => ty.Range(   walk(a, f), walk(b, f)),
-            ty.IncRange(a, b) => ty.IncRange(walk(a, f), walk(b, f)),
+            ty.DotDot(   a, b) => ty.DotDot(   walk(a, f), walk(b, f)),
+            ty.DotDotDot(a, b) => ty.DotDotDot(walk(a, f), walk(b, f)),
 
             ty.FuncDef(     func),
             ty.Func(        func),
@@ -3878,7 +3859,7 @@ operator !::  3  left
 operator *>   2  left
 operator .    2  left
 
-fn memoized(fun, sync: Bool = true) {
+fn memoized[F](fun: F, sync: Bool = true) -> F {
     let def = fun.__def__
 
     let gather = nil
