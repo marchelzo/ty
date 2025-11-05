@@ -141,6 +141,26 @@ Inst0(
 );
 
 static Type *
+Inst01(
+        Ty *ty,
+        Type *t0,
+        u32 param,
+        Type *arg0
+);
+
+static Type *
+InstXD(
+        Ty *ty,
+        Type *t0,
+        U32Vector const *params,
+        TypeVector const *args,
+        u32 param,
+        Type *arg0,
+        bool variadic,
+        bool strict
+);
+
+static Type *
 Inst(Ty *ty, Type *t0, U32Vector const *params, TypeVector const *args);
 
 static Type *
@@ -525,33 +545,31 @@ PackTypes(Type const *t0, Type const *t1)
 inline static bool
 IsError(Type const *t0)
 {
-        return TypeType(t0) == TYPE_ERROR;
+        return (TypeType(t0) == TYPE_ERROR);
 }
 
 inline static bool
 IsComputed(Type const *t0)
 {
-        return TypeType(t0) == TYPE_COMPUTED;
+        return (TypeType(t0) == TYPE_COMPUTED);
 }
 
 inline static bool
 IsBottom(Type const *t0)
 {
-        return t0 == NULL || t0->type == TYPE_BOTTOM;
+        return (t0 == NULL) || (t0->type == TYPE_BOTTOM);
 }
 
 inline static bool
 IsUnboundVar(Type const *t0)
 {
-        return TypeType(t0) == TYPE_VARIABLE
-            && t0->level != -1;
+        return (TypeType(t0) == TYPE_VARIABLE) && (t0->level != -1);
 }
 
 inline static bool
 IsTVar(Type const *t0)
 {
-        return TypeType(t0) == TYPE_VARIABLE
-            && t0->val == TVAR;
+        return (TypeType(t0) == TYPE_VARIABLE) && (t0->val == TVAR);
 }
 
 inline static Type *
@@ -586,15 +604,15 @@ CanBindVariadic(Type const *t0)
 inline static bool
 IsHole(Type const *t0)
 {
-        return TypeType(t0) == TYPE_VARIABLE
-            && t0->val == HOLE;
+        return (TypeType(t0) == TYPE_VARIABLE)
+            && (t0->val == HOLE);
 }
 
 inline static bool
 IsBoundVar(Type const *t0)
 {
-        return TypeType(t0) == TYPE_VARIABLE
-            && t0->level == -1;
+        return (TypeType(t0) == TYPE_VARIABLE)
+            && (t0->level == -1);
 }
 
 inline static bool
@@ -1098,6 +1116,53 @@ SliceType(Ty *ty, Type const *t0, int i, int j, int k)
 }
 
 static bool
+FlattenParameterList(Ty *ty, ParamVector *params)
+{
+        bool already_flat = true;
+
+        for (int i = 0; i < vN(*params); ++i) {
+                Param const *p = v_(*params, i);
+                if (TypeType(ResolveVar(p->type)) == TYPE_SEQUENCE) {
+                        already_flat = false;
+                        break;
+                }
+        }
+
+        if (already_flat) {
+                return false;
+        }
+
+        ParamVector flat = {0};
+
+        for (int i = 0; i < vN(*params); ++i) {
+                Param const *param = v_(*params, i);
+                Type *p0 = ResolveVar(param->type);
+                if (TypeType(p0) == TYPE_SEQUENCE) {
+                        for (int j = 0; j < vN(p0->types); ++j) {
+                                avP(
+                                        flat,
+                                        PARAMx(
+                                                .name     = param->name,
+                                                .rest     = false,
+                                                .kws      = false,
+                                                .required = true,
+                                                .type     = v__(p0->types, j)
+                                        )
+                                );
+                        }
+                } else {
+                        avP(flat, *param);
+                }
+        }
+
+        FlattenParameterList(ty, &flat);
+
+        *params = flat;
+
+        return true;
+}
+
+static bool
 FlattenTypeSequence(
         Ty *ty,
         TypeVector *types,
@@ -1182,6 +1247,8 @@ Flatten(Ty *ty, Type *t0)
         case TYPE_ALIAS:
         case TYPE_OBJECT:
                 return FlattenTypeSequence(ty, &t0->args, NULL, NULL);
+        case TYPE_FUNCTION:
+                return FlattenParameterList(ty, &t0->params);
         default:
                 return false;
         }
@@ -1302,6 +1369,115 @@ CoalescePatterns(Ty *ty, Type const *t0)
         XXTLOG("    %s", ShowType(t1));
 
         return (vN(t1->types) == 1) ? v__(t1->types, 0) : t1;
+}
+
+static bool
+IsPacked(Type *t0)
+{
+        if (t0 == NULL) {
+                return false;
+        }
+
+        if (t0->packed) {
+                return true;
+        }
+
+        switch (t0->type) {
+        case TYPE_VARIABLE:
+                if (IsBoundVar(t0)) {
+                        return IsPacked(t0->val);
+                }
+                break;
+
+        case TYPE_SUBSCRIPT:
+        case TYPE_SLICE:
+                return IsPacked(t0->val);
+
+        case TYPE_TUPLE:
+        case TYPE_UNION:
+        case TYPE_INTERSECT:
+        case TYPE_SEQUENCE:
+        case TYPE_LIST:
+                for (int i = 0; i < vN(t0->types); ++i) {
+                        if (IsPacked(v__(t0->types, i))) {
+                                return true;
+                        }
+                }
+                break;
+
+        case TYPE_FUNCTION:
+                if (IsPacked(t0->rt)) {
+                        return true;
+                }
+                for (int i = 0; i < vN(t0->params); ++i) {
+                        if (IsPacked(v_(t0->params, i)->type)) {
+                                return true;
+                        }
+                }
+                break;
+
+        case TYPE_OBJECT:
+        case TYPE_COMPUTED:
+        case TYPE_CLASS:
+        case TYPE_ALIAS:
+                for (int i = 0; i < vN(t0->args); ++i) {
+                        if (IsPacked(v__(t0->args, i))) {
+                                return true;
+                        }
+                }
+                break;
+        }
+
+        return false;
+}
+
+static Type *
+ExpandPacks(Ty *ty, Type *t0)
+{
+        if (t0 == NULL) {
+                return NULL;
+        }
+
+        switch (t0->type) {
+        case TYPE_VARIABLE:
+                if (IsBoundVar(t0)) {
+                        t0->val = ExpandPacks(ty, t0->val);
+                }
+                break;
+
+        case TYPE_SUBSCRIPT:
+        case TYPE_SLICE:
+                t0->val = ExpandPacks(ty, t0->val);
+                break;
+
+        case TYPE_TUPLE:
+        case TYPE_UNION:
+        case TYPE_INTERSECT:
+        case TYPE_SEQUENCE:
+        case TYPE_LIST:
+                for (int i = 0; i < vN(t0->types); ++i) {
+                        *v_(t0->types, i) = ExpandPacks(ty, v__(t0->types, i));
+                }
+                break;
+
+        case TYPE_FUNCTION:
+                t0->rt = ExpandPacks(ty, t0->rt);
+                for (int i = 0; i < vN(t0->params); ++i) {
+                        v_(t0->params, i)->type = ExpandPacks(ty, v_(t0->params, i)->type);
+                }
+                break;
+
+        case TYPE_OBJECT:
+        case TYPE_COMPUTED:
+        case TYPE_CLASS:
+        case TYPE_ALIAS:
+                for (int i = 0; i < vN(t0->args); ++i) {
+                        *v_(t0->args, i) = ExpandPacks(ty, v__(t0->args, i));
+                }
+                break;
+        }
+
+        return t0;
 }
 
 inline static int
@@ -2143,7 +2319,11 @@ IsFullyBound(Type *t0)
         switch (t0->type) {
         case TYPE_VARIABLE:
                 return IsTVar(t0)
-                    || (IsBoundVar(t0) && IsFixed(t0) && IsFullyBound(t0->val));
+                    || (
+                                IsBoundVar(t0)
+                             && IsFixed(t0)
+                             && IsFullyBound(t0->val)
+                       );
 
         case TYPE_UNION:
         case TYPE_INTERSECT:
@@ -2375,6 +2555,7 @@ CountRefs(Type *t0, u32 id)
                         n += CountRefs(c->t1, id);
                         n += CountRefs(c->t2, id);
                 }
+                n += (t0->pack == id);
                 break;
 
         case TYPE_OBJECT:
@@ -2783,14 +2964,30 @@ type_function(Ty *ty, Expr const *e, bool tmp)
                         if (var->type == EXPRESSION_IDENTIFIER) {
                                 a0 = type_resolve(ty, var);
                                 b0 = type_fixed(ty, type_resolve(ty, bound->bound));
-                                avP(t->constraints, CONSTRAINT(.type = TC_SUB, .t0 = a0, .t1 = b0));
+                                avP(
+                                        t->constraints,
+                                        CONSTRAINT(
+                                                .type = TC_SUB,
+                                                .t0 = a0,
+                                                .t1 = b0
+                                        )
+                                );
                                 PutEnv(ty, ty->tenv, a0->id, b0);
                         } else {
                                 int op = Expr2Op(var);
                                 a0 = type_resolve(ty, var->left);
                                 b0 = type_resolve(ty, var->right);
                                 c0 = type_resolve(ty, bound->bound);
-                                avP(t->constraints, CONSTRAINT(.type = TC_2OP, .t0 = a0, .t1 = b0, .t2 = c0, .op = op));
+                                avP(
+                                        t->constraints,
+                                        CONSTRAINT(
+                                                .type = TC_2OP,
+                                                .t0 = a0,
+                                                .t1 = b0,
+                                                .t2 = c0,
+                                                .op = op
+                                        )
+                                );
                                 break;
                         }
                 }
@@ -2832,8 +3029,11 @@ type_function(Ty *ty, Expr const *e, bool tmp)
 
         for (int i = 0; i < vN(e->type_params); ++i) {
                 Symbol *var = v__(e->type_params, i)->symbol;
-                avP(t->bound, var->type->id);
-                t->variadic |= SymbolIsVariadic(var);
+                if (SymbolIsParamPack(var)) {
+                        t->pack = var->type->id;
+                } else {
+                        avP(t->bound, var->type->id);
+                }
         }
 
         for (int i = 0; i < vN(e->param_symbols); ++i) {
@@ -2866,6 +3066,7 @@ type_function(Ty *ty, Expr const *e, bool tmp)
                                 .type = p0,
                                 .rest = (i == e->rest),
                                 .kws  = (i == e->ikwargs),
+                                .pack = p0->packed,
                                 .required = (
                                         v__(e->dflts, i) == NULL
                                      && (i != e->rest)
@@ -3135,6 +3336,7 @@ Propagate(Ty *ty, Type *t0)
                 }
                 t0->concrete &= IsConcrete(t1);
                 t0->rt = t1;
+                Flatten(ty, t0);
                 break;
         }
 
@@ -3322,7 +3524,7 @@ NewInst0(Ty *ty, Type *t0, TypeEnv *env)
                 return t1;
         }
 
-        __attribute__((unused)) Type *t00 = t0;
+        Type *t00 = t0;
 
         t0 = CloneType(ty, t0);
 
@@ -3415,10 +3617,11 @@ NewInst0(Ty *ty, Type *t0, TypeEnv *env)
         return t0;
 }
 
-static Type *
+inline static Type *
 NewInst(Ty *ty, Type *t0)
 {
-        return NewInst0(ty, t0, NewEnv(ty, NULL));
+        TypeEnv env = {0};
+        return NewInst0(ty, t0, &env);
 }
 
 inline static void
@@ -4360,12 +4563,12 @@ UnifyXD(Ty *ty, Type *t0, Type *t1, bool super, bool check, bool soft)
         if (TypeType(t1) == TYPE_INTERSECT) {
                 if (super) {
                         for (int i = 0; i < vN(t1->types); ++i) {
-                                TypeEnv *env = NewEnv(ty, NULL);
+                                TypeEnv env = {0};
                                 if (
                                         UnifyXD(
                                                 ty,
-                                                NewInst0(ty, t0, env),
-                                                NewInst0(ty, v__(t1->types, i),  env),
+                                                NewInst0(ty, t0, &env),
+                                                NewInst0(ty, v__(t1->types, i),  &env),
                                                 super,
                                                 false,
                                                 soft
@@ -4463,12 +4666,12 @@ UnifyXD(Ty *ty, Type *t0, Type *t1, bool super, bool check, bool soft)
                         goto Success;
                 } else {
                         for (int i = 0; i < vN(t0->types); ++i) {
-                                TypeEnv *env = NewEnv(ty, NULL);
+                                TypeEnv env = {0};
                                 if (
                                         UnifyXD(
                                                 ty,
-                                                NewInst0(ty, v__(t0->types, i), env),
-                                                NewInst0(ty, t1,  env),
+                                                NewInst0(ty, v__(t0->types, i), &env),
+                                                NewInst0(ty, t1,  &env),
                                                 super,
                                                 false,
                                                 soft
@@ -5236,7 +5439,7 @@ FindParam(
                         if (p->kws && name != NULL) {
                                 return p;
                         }
-                } else if (p->rest || i == argi) {
+                } else if (p->rest || p->pack || i == argi) {
                         return p;
                 }
         }
@@ -5244,7 +5447,7 @@ FindParam(
         return NULL;
 }
 
-inline static bool
+static bool
 CheckArg(Ty *ty, int i, Param const *p, Type *a0, bool strict)
 {
         Type *p0 = p->type;
@@ -5434,14 +5637,66 @@ InferCall0(
 
         switch (t0->type) {
         case TYPE_FUNCTION:
+                if (t0->pack != 0) {
+                        TypeVector pack = {0};
+
+                        for (int i = 0; i < vN(t0->params); ++i) {
+                                Param const *p = v_(t0->params, i);
+
+                                if (!p->pack) {
+                                        continue;
+                                }
+
+                                for (int ai = i; ai < vN(*args); ++ai) {
+                                        Type *arg0   = PossibleArgTypes(ty, args, ai);
+                                        Type *pack00 = NewVar(ty);
+
+                                        //XXX("Substitute %s:=%s in %s", VarName(ty, t0->pack), ShowType(pack00), ShowType(p->type));
+
+                                        Type *p0 = Inst01(
+                                                ty,
+                                                NewInst(ty, p->type),
+                                                t0->pack,
+                                                pack00
+                                        );
+
+                                        //XXX("After substitution: %s", ShowType(p0));
+
+                                        if (!UnifyX(ty, p0, arg0, true, strict)) {
+                                                return NULL;
+                                        }
+
+                                        //XXX("Adding to pack:");
+                                        //XXX("    arg: %s", ShowType(arg0));
+                                        //XXX("    p0:  %s", ShowType(p0));
+                                        //XXX(" pack0:  %s", ShowType(pack00));
+
+                                        avP(pack, ResolveVar(pack00));
+                                }
+
+                                break;
+                        }
+
+                        Type *pack0 = NewType(ty, TYPE_SEQUENCE);
+                        pack0->types = pack;
+
+                        for (int i = 0; i < vN(t0->params); ++i) {
+                                Param *p = v_(t0->params, i);
+                                if (!p->pack) {
+                                        p->type = Inst01(ty, p->type, t0->pack, pack0);
+                                        Flatten(ty, p->type);
+                                }
+                        }
+
+                        t0->rt = Inst01(ty, t0->rt, t0->pack, pack0);
+                }
                 for (int i = 0; i < vN(t0->params); ++i) {
                         Param const *p = v_(t0->params, i);
                         gather |= p->rest;
-                        if (p->rest || p->kws) {
+                        if (p->rest || p->kws || p->pack) {
                                 continue;
                         }
-                        char const *name = p->name;
-                        Type *a0 = FindArg(gather ? -1 : i, name, args, kwargs, kws);
+                        Type *a0 = FindArg(gather ? -1 : i, p->name, args, kwargs, kws);
                         if (a0 == NONE_TYPE) {
                                 if (
                                         !p->required
@@ -5460,7 +5715,7 @@ InferCall0(
                         Param const *p = FindParam(i, NULL, &t0->params);
                         Type *a0 = Relax(v__(*args, i)->_type);
                         if (p != NULL && p->type != NULL) {
-                                if (!CheckArg(ty, p - v_(t0->params, 0), p, a0, strict)) {
+                                if (!p->pack && !CheckArg(ty, p - v_(t0->params, 0), p, a0, strict)) {
                                         return NULL;
                                 }
                         } else if (ENFORCE && strict) {
@@ -5599,15 +5854,15 @@ InferCall0(
                                 v0(_kwargs);
                                 Expr tmp = { .type = EXPRESSION_NIL };
 
-                                TypeEnv *env = NewEnv(ty, NULL);
+                                TypeEnv env = {0};
 
                                 for (int i = 0; i < vN(*args); ++i) {
-                                        tmp._type = NewInst0(ty, Relax(v__(*args, i)->_type), env);
+                                        tmp._type = NewInst0(ty, Relax(v__(*args, i)->_type), &env);
                                         avP(_argv, tmp);
                                 }
 
                                 for (int i = 0; i < vN(*kwargs); ++i) {
-                                        tmp._type = NewInst0(ty, Relax(v__(*kwargs, i)->_type), env);
+                                        tmp._type = NewInst0(ty, Relax(v__(*kwargs, i)->_type), &env);
                                         avP(_argv, tmp);
                                 }
 
@@ -5896,10 +6151,10 @@ Inst0(
         TLOG("Inst(): %s", ShowType(t0));
 
         bool skip = true;
-        for (int i = 0; i < vN(*params); ++i) {
+
+        for (int i = 0; skip && i < vN(*params); ++i) {
                 if (RefersTo(t0, v__(*params, i))) {
                         skip = false;
-                        break;
                 }
         }
 
@@ -5924,8 +6179,10 @@ Inst0(
                 args = &vars;
         }
 
+        TypeEnv env = {0};
+
         TypeEnv *save = ty->tenv;
-        ty->tenv = NewEnv(ty, NULL);
+        ty->tenv = &env;
 
         for (int i = 0; i < vN(*params) - variadic && i < vN(*args); ++i) {
                 TLOG("  %s := %s", VarName(ty, v__(*params, i)), ShowType(v__(*args, i)));
@@ -5933,13 +6190,37 @@ Inst0(
         }
 
         if (variadic) {
-                Type *rest0 = NewType(ty, TYPE_SEQUENCE);
+                Type *rest0 = NewType(ty, TYPE_LIST);
                 for (int i = vN(*params) - variadic; i < vN(*args); ++i) {
                         avP(rest0->types, v__(*args, i));
                 }
                 PutEnv(ty, ty->tenv, *vvL(*params), rest0);
         }
 
+        t0 = Propagate(ty, t0);
+
+        ty->tenv = save;
+
+        return t0;
+}
+
+static Type *
+Inst01(
+        Ty *ty,
+        Type *t0,
+        u32 param,
+        Type *arg0
+) {
+        if (!RefersTo(t0, param)) {
+                return t0;
+        }
+
+        TypeEnv env = {0};
+
+        TypeEnv *save = ty->tenv;
+        ty->tenv = &env;
+
+        PutEnv(ty, ty->tenv, param, arg0);
         t0 = Propagate(ty, t0);
 
         ty->tenv = save;
@@ -7688,6 +7969,11 @@ type_resolve(Ty *ty, Expr const *e)
                 }
                 return t0;
 
+        case EXPRESSION_DOT_DOT_DOT:
+                t0 = CloneType(ty, type_resolve(ty, e->right));
+                t0->packed = true;
+                return t0;
+
         case EXPRESSION_SUBSCRIPT:
                 t0 = CloneType(ty, type_resolve(ty, e->container));
                 if (IsTVar(t0) && e->subscript->type == EXPRESSION_INTEGER) {
@@ -7695,20 +7981,11 @@ type_resolve(Ty *ty, Expr const *e)
                         t1->i = e->subscript->integer;
                         t1->val = t0;
                         t0 = t1;
-                } else if (IsTVar(t0) && e->subscript->type == EXPRESSION_DOT_DOT) {
-                        Type *i0 = type_resolve(ty, e->subscript->left);
-                        Type *j0 = type_resolve(ty, e->subscript->right);
-                        t1 = NewType(ty, TYPE_SLICE);
-                        t1->i = (TypeType(i0) == TYPE_INTEGER) ? i0->z : 0;
-                        t1->j = (TypeType(j0) == TYPE_INTEGER) ? j0->z : INT_MAX;
-                        t1->k = 1;
-                        t1->val = t0;
-                        t0 = t1;
                 } else if (t0 != NULL) {
                         t1 = type_resolve(ty, e->subscript);
                         if (
-                                TypeType(t1) == TYPE_SEQUENCE
-                             || TypeType(t1) == TYPE_LIST
+                                (TypeType(t1) == TYPE_SEQUENCE)
+                             || (TypeType(t1) == TYPE_LIST)
                         ) {
                                 t0->args = t1->types;
                         } else {
@@ -8053,8 +8330,8 @@ type_show(Ty *ty, Type const *t0)
                 return S2("🔴");
         }
 
-        if (already_visiting(&visiting, t0) || vN(visiting) > 24) {
-                return S2("...");
+        if (already_visiting(&visiting, t0) || vN(visiting) > 16) {
+                return xfmt("%s[...]%s", TERM(93;1), TERM(0));
         } else {
                 xvP(visiting, (Type *)t0);
         }
@@ -8139,6 +8416,9 @@ type_show(Ty *ty, Type const *t0)
                         }
                         dump(&buf, "%s", ShowType(v__(t0->types, i)));
                 }
+                if (vN(t0->types) == 0) {
+                        dump(&buf, "%snever%s", TERM(91;1), TERM(0));
+                }
                 //dump(&buf, "%s]%s", TERM(96), TERM(0));
                 break;
         case TYPE_INTERSECT:
@@ -8160,13 +8440,19 @@ type_show(Ty *ty, Type const *t0)
                 }
                 break;
         case TYPE_FUNCTION:
-                if (vN(t0->bound) > 0) {
+                if (vN(t0->bound) > 0 || t0->pack != 0) {
                         dump(&buf, "%s[", TERM(38;2;255;153;187));
                         for (int i = 0; i < vN(t0->bound); ++i) {
                                 if (i > 0) {
                                         dump(&buf, ", ");
                                 }
-                                dump(&buf, "%s", VarName(ty, v__(t0->bound, i)), TERM(0));
+                                dump(&buf, "%s", VarName(ty, v__(t0->bound, i)));
+                        }
+                        if (t0->pack != 0) {
+                                if (vN(t0->bound) > 0) {
+                                        dump(&buf, ", ");
+                                }
+                                dump(&buf, "...%s", VarName(ty, t0->pack));
                         }
                         dump(&buf, "]%s", TERM(0));
                 }
@@ -8199,8 +8485,9 @@ type_show(Ty *ty, Type const *t0)
                 dump(&buf, "%s(%s", TERM(1;38;2;178;153;191), TERM(0));
                 for (int i = 0; i < vN(t0->params); ++i) {
                         Param const *p = v_(t0->params, i);
-                        char const *pre = p->rest ? "..."
+                        char const *pre = p->rest ? "*"
                                         : p->kws ? "%"
+                                        : p->pack ? "..."
                                         : !p->required ? "?"
                                         : "";
                         if (p->name == NULL) {
@@ -8249,7 +8536,7 @@ type_show(Ty *ty, Type const *t0)
                 break;
         case TYPE_SEQUENCE:
         case TYPE_LIST:
-#ifdef TY_DEBUG_TYPES
+#if defined(TY_DEBUG_TYPES) || 1
                 dump(&buf, t0->type == TYPE_LIST ? "list" : "seq");
 #endif
         case TYPE_TUPLE:
@@ -8413,6 +8700,11 @@ type_show(Ty *ty, Type const *t0)
         }
 
         vvX(visiting);
+
+        if (vN(buf) == 0) {
+                XXX("type=%d", t0->type);
+                *(volatile char *)0 = 0;
+        }
 
         return vN(buf) == 0 ? S2("<?>") : buf.items;
 }
@@ -9268,8 +9560,10 @@ fixup(Ty *ty, Type *t0)
         Type *g0 = Generalize(ty, t0);
         XXTLOG("  g0:  %s", ShowType(g0));
 
-        TypeEnv *env = ty->tenv;
-        ty->tenv = NewEnv(ty, NULL);
+        TypeEnv env = {0};
+
+        TypeEnv *save = ty->tenv;
+        ty->tenv = &env;
 
         U32Vector bound = g0->bound;
         v00(g0->bound);
@@ -9294,7 +9588,7 @@ fixup(Ty *ty, Type *t0)
         *t0 = *Reduce(ty, Generalize(ty, g0));
         XXTLOG("  t0:  %s", ShowType(t0));
 
-        ty->tenv = env;
+        ty->tenv = save;
 
         if (FUEL > 0) {
                 FUEL = MAX_FUEL;
@@ -9464,9 +9758,9 @@ type_intersect(Ty *ty, Type **t0, Type *t1)
 void
 type_subtract(Ty *ty, Type **t0, Type *t1)
 {
-        dont_printf("subtract()\n");
-        dont_printf("    %s\n", ShowType(*t0));
-        dont_printf("    %s\n", ShowType(t1));
+        XXTLOG("subtract()");
+        XXTLOG("    %s", ShowType(*t0));
+        XXTLOG("    %s", ShowType(t1));
 
         if (IsBottom(*t0) || IsAny(*t0) || IsBottom(t1) || IsAny(t1)) {
                 return;
@@ -9500,8 +9794,9 @@ type_subtract(Ty *ty, Type **t0, Type *t1)
                 break;
 
         case TYPE_VARIABLE:
-                t = *t0;
-                type_subtract(ty, &(*t0)->val, t1);
+                if (IsBoundVar(t)) {
+                        type_subtract(ty, &t->val, t1);
+                }
                 break;
         }
 

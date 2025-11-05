@@ -53,33 +53,36 @@ struct param_bounds {
         TypeVector bounds;
 };
 
+enum {
+        TYPE_FUNCTION,
+        TYPE_TUPLE,
+        TYPE_LIST,
+        TYPE_SEQUENCE,
+        TYPE_TAG,
+        TYPE_CLASS,
+        TYPE_OBJECT,
+        TYPE_UNION,
+        TYPE_VARIABLE,
+        TYPE_SUBSCRIPT,
+        TYPE_SLICE,
+        TYPE_INTEGER,
+        TYPE_INTERSECT,
+        TYPE_NIL,
+        TYPE_NONE,
+        TYPE_BOTTOM,
+        TYPE_COMPUTED,
+        TYPE_TYPE,
+        TYPE_ERROR,
+        TYPE_ALIAS
+};
+
 struct type {
-        enum {
-                TYPE_FUNCTION,
-                TYPE_TUPLE,
-                TYPE_LIST,
-                TYPE_SEQUENCE,
-                TYPE_TAG,
-                TYPE_CLASS,
-                TYPE_OBJECT,
-                TYPE_UNION,
-                TYPE_VARIABLE,
-                TYPE_SUBSCRIPT,
-                TYPE_SLICE,
-                TYPE_INTEGER,
-                TYPE_INTERSECT,
-                TYPE_NIL,
-                TYPE_NONE,
-                TYPE_BOTTOM,
-                TYPE_COMPUTED,
-                TYPE_TYPE,
-                TYPE_ERROR,
-                TYPE_ALIAS
-        } type;
+        u8 type;
         bool fixed;
         bool concrete;
         bool variadic;
         bool forgive;
+        bool packed;
         union {
                 struct {
                         union {
@@ -93,10 +96,10 @@ struct type {
                                 struct {
                                         Type *rt;
                                         Type *yields;
-                                        Type *consumes;
                                         ParamVector params;
                                         ConstraintVector constraints;
                                         ParamBounds bounds;
+                                        u32 pack;
                                 };
                                 struct {
                                         Type *_type;

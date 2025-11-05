@@ -8,13 +8,16 @@
 void const *InternSentinel = &InternSentinel;
 
 inline static InternEntry *
-find(InternBucket const *b, char const *name, u64 h)
+find(InternBucket const *bucket, char const *name, u64 hash)
 {
-        for (int i = 0; i < b->count; ++i) {
-                if (b->items[i].hash != h)
+        for (usize i = 0; i < vN(*bucket); ++i) {
+                InternEntry *entry = v_(*bucket, i);
+                if (entry->hash != hash) {
                         continue;
-                if (strcmp(b->items[i].name, name) == 0)
-                        return &b->items[i];
+                }
+                if (strcmp(entry->name, name) == 0) {
+                        return entry;
+                }
         }
 
         return NULL;
@@ -23,26 +26,26 @@ find(InternBucket const *b, char const *name, u64 h)
 InternEntry *
 intern_get(InternSet *set, char const *name)
 {
-        u64 h = StrHash(name);
-        InternBucket *b = &set->set[h % INTERN_TABLE_SIZE];
+        u64 hash = StrHash(name);
+        InternBucket *bucket = &set->set[hash & (INTERN_TABLE_SIZE - 1)];
 
-        InternEntry *e = find(b, name, h);
+        InternEntry *entry = find(bucket, name, hash);
 
-        if (e != NULL) {
-                return e;
+        if (entry != NULL) {
+                return entry;
         }
 
         xvP(
-                *b,
-                ((InternEntry){
+                *bucket,
+                ((InternEntry) {
                         .name = name,
-                        .hash = h,
-                        .id = -(b + 1 - set->set),
+                        .hash = hash,
+                        .id   = -(bucket + 1 - set->set),
                         .data = set
                 })
         );
 
-        return vvX(*b);
+        return vvX(*bucket);
 }
 
 InternEntry *
@@ -52,7 +55,7 @@ intern_put(InternEntry *e, void *data)
         InternBucket *b = &set->set[-e->id - 1];
 
         e->data = data;
-        e->id = set->index.count;
+        e->id   = vN(set->index);
         e->name = S2(e->name);
 
         xvP(set->index, (b->count << 8u) | (b - set->set));

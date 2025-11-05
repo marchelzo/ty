@@ -58,6 +58,8 @@
 
 #define EE(x)    emit_expression(ty, (x))
 #define EM(x)    emit_member(ty, (x))
+#define ESL(s)   emit_string_literal(ty, (s))
+#define EiMAX(x) emit_integer(ty, (x))
 #define Ei32(x)  emit_i32(ty, (x))
 #define Ei16(x)  emit_i16(ty, (x))
 #define Eu8(x)   avP(STATE.code, (x))
@@ -5345,67 +5347,53 @@ last_instr(void)
 }
 
 inline static void
-emit_i32(Ty *ty, int k)
+emit_i32(Ty *ty, i32 k)
 {
-        LOG("emitting int: %d", k);
-        char const *s = (char *) &k;
-        for (int i = 0; i < sizeof (int); ++i) {
-                avP(STATE.code, s[i]);
-        }
+        avPn(STATE.code, (char const *)&k, sizeof k);
 }
 
 inline static void
 emit_i16(Ty *ty, i16 k)
 {
-        LOG("emitting i16: %d", (int)k);
-        char const *s = (char *) &k;
-        for (int i = 0; i < sizeof (i16); ++i){
-                avP(STATE.code, s[i]);
-        }
-}
-
-inline static void
-emit_ulong(Ty *ty, unsigned long k)
-{
-        LOG("emitting ulong: %lu", k);
-        char const *s = (char *) &k;
-        for (int i = 0; i < sizeof (unsigned long); ++i) {
-                avP(STATE.code, s[i]);
-        }
+        avPn(STATE.code, (char const *)&k, sizeof k);
 }
 
 #define emit_symbol(s) ((emit_symbol)(ty, (uptr)(s)))
 inline static void
 (emit_symbol)(Ty *ty, uptr sym)
 {
-        LOG("emitting symbol: %"PRIuPTR, sym);
-        char const *s = (char *) &sym;
-        for (int i = 0; i < sizeof (uptr); ++i) {
-                avP(STATE.code, s[i]);
-        }
+        avPn(STATE.code, (char const *)&sym, sizeof sym);
 }
 
 inline static void
 emit_integer(Ty *ty, imax k)
 {
-
-        LOG("emitting integer: %"PRIiMAX, k);
         avPn(STATE.code, (char const *)&k, sizeof k);
 }
 
 inline static void
 emit_float(Ty *ty, double x)
 {
-        LOG("emitting float: %f", x);
         avPn(STATE.code, (char const *)&x, sizeof x);
 }
 
 inline static void
 emit_string(Ty *ty, char const *s)
 {
-        LOG("emitting string: %s", s);
         usize size = strlen(s) + 1;
         avPn(STATE.code, s, size);
+}
+
+inline static void
+emit_string_literal(Ty *ty, char const *s)
+{
+        InternEntry *interned = intern_get(&xD.strings, s);
+
+        if (interned->id < 0) {
+                interned = intern_put(interned, (void *)(uptr)strlen(s));
+        }
+
+        Ei32(interned->id);
 }
 
 #ifndef TY_NO_LOG
@@ -5450,8 +5438,7 @@ emit_load(Ty *ty, Symbol const *s, Scope const *scope)
                   && (s->scope->function == scope->function);
 
         if (SymbolIsTypeVar(s)) {
-                INSN(BOOLEAN);
-                Eu1(true);
+                INSN(TRUE);
         } else if (SymbolIsMember(s)) {
                 switch (MemberAccessType(ty, s, scope)) {
                 case SELF_FROM_SELF:
@@ -6313,7 +6300,7 @@ emit_lang_string(Ty *ty, Expr const *e)
 
         if (v__(e->strings, 0)[0] != '\0') {
                 INSN(STRING);
-                emit_string(ty, v__(e->strings, 0));
+                ESL(v__(e->strings, 0));
         }
 
         for (int i = 0; i < vN(e->expressions); ++i) {
@@ -6328,7 +6315,7 @@ emit_lang_string(Ty *ty, Expr const *e)
                         EE(fmt);
                 }
                 INSN(INTEGER);
-                emit_integer(ty, width);
+                EiMAX(width);
                 INSN(TUPLE);
                 Ei32(3);
                 Ei32(-1);
@@ -6337,7 +6324,7 @@ emit_lang_string(Ty *ty, Expr const *e)
 
                 if (v__(e->strings, i + 1)[0] != '\0') {
                         INSN(STRING);
-                        emit_string(ty, v__(e->strings, i + 1));
+                        ESL(v__(e->strings, i + 1));
                 }
         }
 
@@ -6356,7 +6343,7 @@ emit_special_string(Ty *ty, Expr const *e)
 
         if (v__(e->strings, 0)[0] != '\0') {
                 INSN(STRING);
-                emit_string(ty, v__(e->strings, 0));
+                ESL(v__(e->strings, 0));
                 n += 1;
         }
 
@@ -6379,7 +6366,7 @@ emit_special_string(Ty *ty, Expr const *e)
                         EE(fmt);
 
                         INSN(INTEGER);
-                        emit_integer(ty, width);
+                        EiMAX(width);
 
                         EE(ex);
 
@@ -6398,7 +6385,7 @@ emit_special_string(Ty *ty, Expr const *e)
 
                 if (v__(e->strings, i + 1)[0] != '\0') {
                         INSN(STRING);
-                        emit_string(ty, v__(e->strings, i + 1));
+                        ESL(v__(e->strings, i + 1));
                 }
         }
 
@@ -6407,7 +6394,7 @@ emit_special_string(Ty *ty, Expr const *e)
                 Ei32(n);
         } else if (n == 0) {
                 INSN(STRING);
-                avP(STATE.code, '\0');
+                Ei32(0);
         }
 }
 
@@ -8470,7 +8457,7 @@ emit_expr(Ty *ty, Expr const *e, bool need_loc)
                 } else {
                         INSN(CALL_METHOD);
                         Ei32(0);
-                        Ei32(vN(NAMES));
+                        Ei32(NAMES.count);
                         Ei32(0);
                 }
                 break;
@@ -8491,12 +8478,15 @@ emit_expr(Ty *ty, Expr const *e, bool need_loc)
 
         case EXPRESSION_INTEGER:
                 INSN(INTEGER);
-                emit_integer(ty, e->integer);
+                EiMAX(e->integer);
                 break;
 
         case EXPRESSION_BOOLEAN:
-                INSN(BOOLEAN);
-                Eu1(e->boolean);
+                if (e->boolean) {
+                        INSN(TRUE);
+                } else {
+                        INSN(FALSE);
+                }
                 break;
 
         case EXPRESSION_REAL:
@@ -8506,7 +8496,7 @@ emit_expr(Ty *ty, Expr const *e, bool need_loc)
 
         case EXPRESSION_STRING:
                 INSN(STRING);
-                emit_string(ty, e->string);
+                ESL(e->string);
                 break;
 
         case EXPRESSION_SPECIAL_STRING:
@@ -8585,10 +8575,11 @@ emit_expr(Ty *ty, Expr const *e, bool need_loc)
                                 }
                         }
                 }
-                INSN(DICT);
                 if (e->dflt != NULL) {
                         EE(e->dflt);
-                        INSN(DICT_DEFAULT);
+                        INSN(DEFAULT_DICT);
+                } else {
+                        INSN(DICT);
                 }
                 break;
 
@@ -9061,11 +9052,14 @@ emit_expr(Ty *ty, Expr const *e, bool need_loc)
                                 INSN(NIL);
                         } else {
                                 INSN(STRING);
-                                emit_string(ty, v__(e->names, i));
+                                ESL(v__(e->names, i));
                         }
                         EE(v__(e->es, i));
-                        INSN(BOOLEAN);
-                        Eu8(v__(e->required, i));
+                        if (v__(e->required, i)) {
+                                INSN(TRUE);
+                        } else {
+                                INSN(FALSE);
+                        }
                         INSN(TUPLE);
                         Ei32(3);
                         Ei32(-1);
@@ -9096,8 +9090,7 @@ emit_expr(Ty *ty, Expr const *e, bool need_loc)
                 break;
 
         case EXPRESSION_FUNCTION_TYPE:
-                INSN(BOOLEAN);
-                Eu1(true);
+                INSN(TRUE);
                 break;
 
         case EXPRESSION_CAST:
@@ -9105,8 +9098,7 @@ emit_expr(Ty *ty, Expr const *e, bool need_loc)
                 break;
 
         case EXPRESSION_MATCH_ANY:
-                INSN(BOOLEAN);
-                Eu1(true);
+                INSN(TRUE);
                 break;
 
         case EXPRESSION_LIST:
@@ -9225,7 +9217,7 @@ emit_statement(Ty *ty, Stmt const *s, bool want_result)
         case STATEMENT_FUN_MACRO_DEFINITION:
                 if (
                         HasBody(s->value)
-                     || s->value->type == EXPRESSION_MULTI_FUNCTION
+                     || (s->value->type == EXPRESSION_MULTI_FUNCTION)
                 ) {
         case STATEMENT_DEFINITION:
                         emit_assignment(ty, s->target, s->value, false, true);
@@ -9561,6 +9553,8 @@ RedpillFun(Ty *ty, Scope *scope, Expr *f, Type *self0)
                                 if (param->type == EXPRESSION_MATCH_REST) {
                                         param->symbol->flags |= SYM_VARIADIC;
                                         param->symbol->type->variadic = true;
+                                } else if (param->type == EXPRESSION_PACK) {
+                                        param->symbol->flags |= SYM_PARAM_PACK;
                                 }
                         }
                         symbolize_expression(ty, f->scope, param->constraint);
@@ -10851,7 +10845,7 @@ compiler_find_expr_x(Ty *ty, char const *code, bool func)
 {
         location_vector *locs = NULL;
 
-        uptr c = (uptr) code;
+        uptr c = (uptr)code;
         //printf("Looking for %lu\n", c);
 
         /*
@@ -11280,6 +11274,14 @@ tyexpr(Ty *ty, Expr const *e)
                 );
                 break;
 
+        case EXPRESSION_PACK:
+                v = TAGGED_RECORD(
+                        TyPack,
+                        "name", vSsz(e->identifier),
+                        "module", (e->module == NULL) ? NIL : vSsz(e->module)
+                );
+                break;
+
         case EXPRESSION_RESOURCE_BINDING:
                 v = TAGGED_RECORD(
                         TyResource,
@@ -11438,20 +11440,21 @@ tyexpr(Ty *ty, Expr const *e)
                         if (i == e->rest) {
                                 vAp(
                                         params,
-                                        tagged(ty, TyGather, name, NONE)
+                                        TAGGED(TyGather, name)
                                 );
                         } else if (i == e->ikwargs) {
                                 vAp(
                                         params,
-                                        tagged(ty, TyKwargs, name, NONE)
+                                        TAGGED(TyKwargs, name)
                                 );
                         } else {
-                                Value param = vTn(
+                                Value param = TAGGED_RECORD(
+                                        TyParam,
                                         "name",       name,
                                         "constraint", tyexpr(ty, v__(e->constraints, i)),
                                         "default",    tyexpr(ty, v__(e->dflts, i))
                                 );
-                                vAp(params, TAGGED(TyParam, param));
+                                vAp(params, param);
                         }
                 }
 
@@ -11675,7 +11678,7 @@ tyexpr(Ty *ty, Expr const *e)
                         vAp(v.array, tystmt(ty, v__(e->with.defs, i)));
                 }
                 v = TAGGED(
-                        TyWith, 
+                        TyWith,
                         v,
                         tystmt(ty, v__(e->with.block->statements, 1)->try.s)
                 );
@@ -11759,11 +11762,11 @@ tyexpr(Ty *ty, Expr const *e)
                 break;
 
         case EXPRESSION_DOT_DOT:
-                v = TAGGED(TyRange, tyexpr(ty, e->left), tyexpr(ty, e->right));
+                v = TAGGED(TyDotDot, tyexpr(ty, e->left), tyexpr(ty, e->right));
                 break;
 
         case EXPRESSION_DOT_DOT_DOT:
-                v = TAGGED(TyIncRange, tyexpr(ty, e->left), tyexpr(ty, e->right));
+                v = TAGGED(TyDotDotDot, tyexpr(ty, e->left), tyexpr(ty, e->right));
                 break;
 
         case EXPRESSION_EQ:
@@ -12654,8 +12657,10 @@ cexpr(Ty *ty, Value *v)
                         goto Bad;
                 }
                 break;
+
         case TyExpr:
                 return v->ptr;
+
         case TyType:
         {
                 Value v_ = unwrap(ty, v);
@@ -12663,9 +12668,10 @@ cexpr(Ty *ty, Value *v)
                 e->_type = type_from_ty(ty, &v_);
                 break;
         }
+
         case TyValue:
         {
-                Value *value = mrealloc(NULL, sizeof *value);
+                Value *value = xmA(sizeof *value);
 
                 *value = *v;
 
@@ -12681,22 +12687,27 @@ cexpr(Ty *ty, Value *v)
 
                 break;
         }
+
         case TyInt:
                 e->type = EXPRESSION_INTEGER;
                 e->integer = v->integer;
                 break;
+
         case TyFloat:
                 e->type = EXPRESSION_REAL;
                 e->real = v->real;
                 break;
+
         case TyRegex:
                 e->type = EXPRESSION_REGEX;
                 e->regex = v->regex;
                 break;
+
         case TyOperator:
                 e->type = EXPRESSION_OPERATOR;
                 e->op.id = mkcstr(ty, t_(v, 0));
                 break;
+
         case TyId:
         {
                 e->type = EXPRESSION_IDENTIFIER;
@@ -12713,6 +12724,7 @@ cexpr(Ty *ty, Value *v)
 
                 break;
         }
+
         case TyPatternAlias:
         {
                 e->type = EXPRESSION_ALIAS_PATTERN;
@@ -12724,14 +12736,19 @@ cexpr(Ty *ty, Value *v)
                 e->aliased = cexpr(ty, tuple_get(v, "pattern"));
                 break;
         }
+
         case TyNotNil:
-        {
                 e->type = EXPRESSION_MATCH_NOT_NIL;
-                e->identifier = mkcstr(ty, tuple_get(v, "name"));
-                Value *mod = tuple_get(v, "module");
-                e->module = (mod != NULL && mod->type != VALUE_NIL) ? mkcstr(ty, mod) : NULL;
+                e->identifier = mkcstr(ty, t_(v, "name"));
+                e->module = mkcstr(ty, tuple_get(v, "module"));
                 break;
-        }
+
+        case TyPack:
+                e->type = EXPRESSION_PACK;
+                e->identifier = mkcstr(ty, t_(v, "name"));
+                e->module = mkcstr(ty, tuple_get(v, "module"));
+                break;
+
         case TyAny:
         {
                 if (v->count > 0) {
@@ -12745,6 +12762,7 @@ cexpr(Ty *ty, Value *v)
                 e->module = NULL;
                 break;
         }
+
         case TyResource:
         {
                 e->type = EXPRESSION_RESOURCE_BINDING;
@@ -12753,6 +12771,7 @@ cexpr(Ty *ty, Value *v)
                 e->module = (mod != NULL && mod->type != VALUE_NIL) ? mkcstr(ty, mod) : NULL;
                 break;
         }
+
         case TySpread:
         {
                 Value v_ = *v;
@@ -12761,6 +12780,7 @@ cexpr(Ty *ty, Value *v)
                 e->value = cexpr(ty, &v_);
                 break;
         }
+
         case TySplat:
         {
                 Value v_ = *v;
@@ -12769,6 +12789,7 @@ cexpr(Ty *ty, Value *v)
                 e->value = cexpr(ty, &v_);
                 break;
         }
+
         case TyTagged:
         {
                 e->type = EXPRESSION_TAG_APPLICATION;
@@ -12801,10 +12822,12 @@ cexpr(Ty *ty, Value *v)
 
                 break;
         }
+
         case TyString:
                 e->type = EXPRESSION_STRING;
                 e->string = mkcstr(ty, v);
                 break;
+
         case TyLangString:
                 e->lang = cexpr(ty, tget_nn(v, 0));
                 v = tget_nn(v, 1);
@@ -12829,12 +12852,13 @@ cexpr(Ty *ty, Value *v)
                         }
                 }
 
-                if (v->array->count == 0 || vvL(*v->array)->type != VALUE_STRING) {
+                if (vN(*v->array) == 0 || vvL(*v->array)->type != VALUE_STRING) {
                         avP(e->strings, "");
                 }
 
                 break;
         }
+
         case TyArray:
         {
                 e->type = EXPRESSION_ARRAY;
@@ -12857,6 +12881,7 @@ cexpr(Ty *ty, Value *v)
 
                 break;
         }
+
         case TyUnion:
         {
                 e->type = EXPRESSION_TYPE_UNION;
@@ -12868,6 +12893,7 @@ cexpr(Ty *ty, Value *v)
 
                 break;
         }
+
         case TyRecord:
         {
                 e->type = EXPRESSION_TUPLE;
@@ -12898,6 +12924,7 @@ cexpr(Ty *ty, Value *v)
 
                 break;
         }
+
         case TyChoicePattern:
         {
                 e->type = EXPRESSION_CHOICE_PATTERN;
@@ -12912,6 +12939,7 @@ cexpr(Ty *ty, Value *v)
 
                 break;
         }
+
         case TyDict:
         {
                 e->type = EXPRESSION_DICT;
@@ -12929,6 +12957,7 @@ cexpr(Ty *ty, Value *v)
 
                 break;
         }
+
         case TyCall:
         {
                 e->type = EXPRESSION_FUNCTION_CALL;
@@ -12936,27 +12965,28 @@ cexpr(Ty *ty, Value *v)
                 Value *func = tuple_get(v, "func");
                 e->function = cexpr(ty, func);
 
-                Value *args = tuple_get(v, "args");
+                Value *args = t_(v, "args");
 
-                for (int i = 0; i < args->array->count; ++i) {
-                        Value *arg = &args->array->items[i];
+                for (int i = 0; i < vN(*args->array); ++i) {
+                        Value *arg = v_(*args->array, i);
                         Value *name = tuple_get(arg, "name");
                         Value *cond = tuple_get(arg, "cond");
                         if (cond != NULL && cond->type == VALUE_NIL) {
                                 cond = NULL;
                         }
                         if (name == NULL || name->type == VALUE_NIL) {
-                                avP(e->args, cexpr(ty, tuple_get(arg, "arg")));
-                                avP(e->fconds, cond != NULL ? cexpr(ty, cond) : NULL);
+                                avP(e->args, cexpr(ty, t_(arg, "arg")));
+                                avP(e->fconds, cexpr(ty, cond));
                         } else {
-                                avP(e->kwargs, cexpr(ty, tuple_get(arg, "arg")));
+                                avP(e->kwargs, cexpr(ty, t_(arg, "arg")));
                                 avP(e->kws, mkcstr(ty, name));
-                                avP(e->fkwconds, cond != NULL ? cexpr(ty, cond) : NULL);
+                                avP(e->fkwconds, cexpr(ty, cond));
                         }
                 }
 
                 break;
         }
+
         case TyMethodCall:
         case TyTryMethodCall:
         case TyDynMethodCall:
@@ -13002,6 +13032,7 @@ cexpr(Ty *ty, Value *v)
                 }
                 break;
         }
+
         case TyGenerator:
         {
                 Value v_ = *v;
@@ -13014,6 +13045,7 @@ cexpr(Ty *ty, Value *v)
                 e->body = cstmt(ty, &v_);
                 break;
         }
+
         case TyFunc:
         case TyImplicitFunc:
         {
@@ -13066,12 +13098,14 @@ cexpr(Ty *ty, Value *v)
                                 avP(e->dflts, cexpr(ty, d));
                                 break;
                         }
+
                         case TyGather:
                                 avP(e->params, mkcstr(ty, p));
                                 avP(e->constraints, NewExpr(ty, EXPRESSION_MATCH_ANY));
                                 avP(e->dflts, NULL);
                                 e->rest = i;
                                 break;
+
                         case TyKwargs:
                                 avP(e->params, mkcstr(ty, p));
                                 avP(e->constraints, NewExpr(ty, EXPRESSION_MATCH_ANY));
@@ -13289,12 +13323,12 @@ cexpr(Ty *ty, Value *v)
                 e->target = cexpr(ty, &v->items[0]);
                 e->value = cexpr(ty, &v->items[1]);
                 break;
-        case TyRange:
+        case TyDotDot:
                 e->type = EXPRESSION_DOT_DOT;
                 e->left = cexpr(ty, &v->items[0]);
                 e->right = cexpr(ty, &v->items[1]);
                 break;
-        case TyIncRange:
+        case TyDotDotDot:
                 e->type = EXPRESSION_DOT_DOT_DOT;
                 e->left = cexpr(ty, &v->items[0]);
                 e->right = cexpr(ty, &v->items[1]);
@@ -14999,13 +15033,14 @@ DumpProgram(
 
         byte_vector after = {0};
 
-#define DUMPSTR(s)    (!DebugScan && (xvP(*out, ' '), dumpstr(out, (s)), 0))
-#define SKIPSTR()     (DUMPSTR(c), (c += strlen(c) + 1))
-#define READSTR(s)    (((s) = c), SKIPSTR())
-#define READVALUE(x)  (memcpy(&x, c, sizeof x), (c += sizeof x), (!DebugScan && ((PRINTVALUE(x)), 0)))
-#define READVALUE_(x) (memcpy(&x, c, sizeof x), (c += sizeof x))
-#define READMEMBER(n) (READVALUE_((n)), DUMPSTR(n == -1 ? "<$>" : M_NAME((n))))
-#define READCLASS(n) (READVALUE_((n)), DUMPSTR(n == -1 ? "<$>" : class_name(ty, (n))))
+#define DUMPSTR(s)     (!DebugScan && (xvP(*out, ' '), dumpstr(out, (s)), 0))
+#define SKIPSTR()      (DUMPSTR(c), (c += strlen(c) + 1))
+#define READSTR(s)     (((s) = c), SKIPSTR())
+#define READVALUE(x)   (memcpy(&x, c, sizeof x), (c += sizeof x), (!DebugScan && ((PRINTVALUE(x)), 0)))
+#define READVALUE_(x)  (memcpy(&x, c, sizeof x), (c += sizeof x))
+#define READMEMBER(n)  (READVALUE_((n)), DUMPSTR(n == -1 ? "<$>" : M_NAME((n))))
+#define READCLASS(n)   (READVALUE_((n)), DUMPSTR(n == -1 ? "<$>" : class_name(ty, (n))))
+#define READLITERAL(n) (READVALUE_((n)), DUMPSTR(S_STRING((n))))
 
         uptr pc = (uptr)code;
         ProgramAnnotation *annotation = NULL;
@@ -15150,7 +15185,7 @@ DumpProgram(
                 }
 #endif
 
-                printf(
+                dont_printf(
                         "%s%7td%s            %s%s%s      %ju\n",
                         TERM(94), pc, TERM(0),
                         TERM(93), GetInstructionName(*c), TERM(0),
@@ -15186,18 +15221,11 @@ DumpProgram(
                 CASE(DUP2)
                         break;
                 CASE(JUMP)
-                        READVALUE(n);
-                        break;
                 CASE(JUMP_IF)
-                        READVALUE(n);
-                        break;
                 CASE(JUMP_IF_NOT)
-                        READVALUE(n);
-                        break;
                 CASE(JUMP_IF_NONE)
-                        READVALUE(n);
-                        break;
                 CASE(JUMP_IF_NIL)
+                CASE(NONE_IF_NOT)
                         READVALUE(n);
                         break;
                 CASE(JUMP_IF_TYPE)
@@ -15379,11 +15407,11 @@ DumpProgram(
                 CASE(REAL)
                         READVALUE(x);
                         break;
-                CASE(BOOLEAN)
-                        READVALUE(b);
-                        break;
                 CASE(STRING)
-                        SKIPSTR();
+                        READLITERAL(n);
+                        break;
+                CASE(TRUE)
+                CASE(FALSE)
                         break;
                 CASE(CLASS)
                         READVALUE(tag);
@@ -15411,8 +15439,7 @@ DumpProgram(
                 CASE(GATHER_TUPLE)
                         break;
                 CASE(DICT)
-                        break;
-                CASE(DICT_DEFAULT)
+                CASE(DEFAULT_DICT)
                         break;
                 CASE(SELF)
                         break;

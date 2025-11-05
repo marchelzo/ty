@@ -321,7 +321,7 @@ doprint(Ty *ty, int argc, Value *kwargs, FILE *f)
 
                 if (fwrite(s, 1, n, f) < n) {
                         if (need_free) {
-                                mF((char *)s);
+                                free((char *)s);
                         }
 
                         lTk();
@@ -330,7 +330,7 @@ doprint(Ty *ty, int argc, Value *kwargs, FILE *f)
                 }
 
                 if (need_free) {
-                        mF((char *)s);
+                        free((char *)s);
                 }
 
                 written += n;
@@ -893,11 +893,8 @@ BUILTIN_FUNCTION(show)
 
         bool use_color = (color == NULL) ? isatty(1) : value_truthy(ty, color);
 
-        char *str = use_color ? value_show_color(ty, &arg) : value_show(ty, &arg);
-        Value result = vSs(str, strlen(str));
-        mF(str);
-
-        return result;
+        return use_color ? value_vshow_color(ty, &arg)
+                         : value_vshow(ty, &arg);
 }
 
 BUILTIN_FUNCTION(str)
@@ -910,14 +907,7 @@ BUILTIN_FUNCTION(str)
 
         Value arg = ARG(0);
 
-        if (arg.type == VALUE_STRING) {
-                return arg;
-        } else {
-                char *str = value_show(ty, &arg);
-                Value result = vSs(str, strlen(str));
-                mF(str);
-                return result;
-        }
+        return (arg.type == VALUE_STRING) ? arg : value_vshow(ty, &arg);
 }
 
 inline static bool

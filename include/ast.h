@@ -203,6 +203,7 @@ typedef struct class_definition ClassDefinition;
         X(MATCH_ANY),                                                                 \
         X(MATCH_NOT_NIL),                                                             \
         X(MATCH_REST),                                                                \
+        X(PACK),                                                                      \
         X(DOT_DOT),                                                                   \
         X(DOT_DOT_DOT),                                                               \
         X(MATCH),                                                                     \

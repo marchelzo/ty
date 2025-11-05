@@ -1,6 +1,6 @@
 import os (sleep)
 
-let N = 1250
+let N = 1000
 
 let queue = SharedQueue()
 let threads = []
@@ -13,7 +13,7 @@ if let Some(_) = queue.tryTake() {
 
 for _ in ..6 {
     thread(fn () {
-        sleep(0.2)
+        sleep(0.01)
         for i in ..N {
             queue.put(i)
         }

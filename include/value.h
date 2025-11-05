@@ -93,6 +93,7 @@ enum {
         X(Splat)                \
         X(Gather)               \
         X(Kwargs)               \
+        X(Pack)                 \
         X(Any)                  \
         X(Add)                  \
         X(Mul)                  \
@@ -178,8 +179,8 @@ enum {
         X(CompileTime)          \
         X(Defined)              \
         X(Throw)                \
-        X(Range)                \
-        X(IncRange)             \
+        X(DotDot)               \
+        X(DotDotDot)            \
         X(Super)                \
         X(TypeOf)               \
         X(Cast)                 \
@@ -286,6 +287,9 @@ ValueTypeName(Ty *ty, Value const *v)
 
 char *
 value_show_color(Ty *ty, Value const *v);
+
+Value
+value_vshow_color(Ty *ty, Value const *v);
 
 #define DEFINE_METHOD_TABLE(...)                                     \
         static struct {                                              \
@@ -752,6 +756,9 @@ value_apply_callable(Ty *ty, Value *f, Value *v);
 char *
 value_show(Ty *ty, Value const *v);
 
+Value
+value_vshow(Ty *ty, Value const *v);
+
 inline static void *
 value_string_alloc(Ty *ty, u32 n)
 {
@@ -1050,7 +1057,7 @@ STRING_VIEW(Value s, isize offset, u32 n)
 }
 
 inline static Value
-STRING_NOGC(void const *s, int n)
+STRING_NOGC(void const *s, u32 n)
 {
         return (Value) {
                 .type = VALUE_STRING,
@@ -1099,10 +1106,9 @@ DecrementString(Value *v)
 }
 
 inline static Value
-OffsetString(Value const *v, isize n)
+OffsetString(Value const *v, i32 n)
 {
         Value str = *v;
-
 
         while (n > 0 && str.bytes > 0) {
                 i32 sz = u8_rune_sz(v->str);
@@ -1148,7 +1154,7 @@ QUADRUPLE_(Ty *ty, Value a, Value b, Value c, Value d)
         return v;
 }
 
-#define None                     TAG(TAG_NONE)
+#define None TAG(TAG_NONE)
 
 int
 tags_push(Ty *ty, int, int);
