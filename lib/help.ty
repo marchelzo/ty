@@ -227,30 +227,31 @@ let groups = %{
     'fg0': 'id',
     'fg1': '[ ] { } ( ) . .? , ] ->',
     'orange': '
-        =   ==  ++  --  +   -  *    /   %   ^    |    &    <=   >=
-        +=  -=  *=  /=  %=  @  #    &&  ||  <=>  !    ~
-        ~>  =>  $~> >   <  !=  ??   >>  <<  <<=  >>=  |>
-        *** &&& <$> <%> ?> <?  <*>  *>  <*  ..%. .%.. .%
-        ::  ?=  |=  &=  ^=  ?  $    ..  ... ?:
+        =   ==  ++  --  +   -  *    /   %   ^    |     &    <=   >=
+        +=  -=  *=  /=  %=  @  #    &&  ||  <=>  !     ~
+        ~>  =>  $~> >   <  !=  ??   >>  <<  <<=  >>=   |>
+        *** &&& <$> <%> ?> <?  <*>  *>  <*  ..%. .%..  .%
+        ::  ?=  |=  &=  ^=  ?  :    ?:  ..  ...  $
     ',
     'purple': 'true false nil int float use import',
     'red': '
-        for        while    if     let       and    fn     const
-        do         try      catch  operator  or     in     yield
-        match      else     with   break     pub    as     static
-        continue   return   macro  where     not    throw  defer
+        for        while     if       let       and    fn     const
+        do         try       catch    operator  or     in     yield
+        match      else      with     break     pub    as     static
+        continue   return    macro    where     not    throw  defer
+        finally
 
         id_keyword
     ',
-    'b yellow': 'type type_member',
-    'yellow': 'class tag trait id_module',
+    'b yellow': 'type type_member type_func id_type type_type',
+    'yellow': 'class tag trait id_module, id_param id_module',
     'green': 'string " f-string',
-    ' green2': 'fun fun_member',
+    'green2': 'fun_member fun fun_func id_func (_call )_call',
     'blue': 'id_member id_field',
-    'blue2': 'typeof',
+    'blue2': 'typeof __set_type__',
     'aqua': 'regex',
-    'grey': 'comment ; :',
-    'pink': 'pp id_macro fun_macro $$[ $$] $$'
+    'grey': 'comment ; :_punct',
+    'pink': 'pp id_macro fun_macro $$[ $$] $$ __defined__'
 }
 
 let colors = [ %{ t: c for t in g.words() } for c, g in groups ].sum()
@@ -266,8 +267,10 @@ fn color-and-break(source: String) -> Array[(Int, String)] {
     }
 
     let tokens = tokens.remove!(nil).map!(t -> match t {
-        {id: /^[A-Z]\w*[a-z]\w*$/, *}            => do { let x: _ = t; ({*x, type: 'type'}) },
-        {id, end, *} and source[end.byte] == '(' => do { let x: _ = t; ({*x, type: 'fun'}) },
+        {id: /^[A-Z]\w*[a-z]\w*$/, *} => do {
+            let x: _ = t;
+            ({*x, type: 'type'})
+        },
         _ => t
     })
 
@@ -293,8 +296,8 @@ fn color-and-break(source: String) -> Array[(Int, String)] {
     }
 
     let st = (0, 0)
-    for {start, end, type, ?kind, *} in tokens {
-        continue if not let $color = colors[[type, ?kind].join('_')]
+    for {start, end, type, ?meta, *} in tokens {
+        continue if not let $color = colors[[type, ?meta].join('_')]
 
         let st0 = idx-of(start.byte, st)
         let st1 = idx-of(end.byte, st0)

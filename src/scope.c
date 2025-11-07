@@ -56,8 +56,12 @@ initsym(Symbol *s)
 inline static Symbol *
 local_xlookup(Scope const *scope, char const *id, u32 flags)
 {
-        u64 h = strhash(id);
-        u32 i = h & scope->mask;
+        if (scope->count == 0) {
+                return NULL;
+        }
+
+        u64 h = hash64z(id);
+        u32 i = h & (scope->size - 1);
 
         bool    member_ok = !(flags & SCOPE_EXPLICIT);
         bool transient_ok =  (flags & SCOPE_PERMISSIVE);
@@ -109,7 +113,6 @@ scope_new_namespace(Ty *ty, char const *name, Scope *parent)
 #if TY_NAMED_SCOPES
                 name,
 #endif
-                0,
                 parent,
                 false
         );
@@ -125,27 +128,17 @@ NewSubscope(
 #if TY_NAMED_SCOPES
         char const *name,
 #endif
-        u32 size,
         Scope *parent,
         bool is_function
 )
 {
-        if (size == 0) {
-                size = (parent != NULL)
-                     ? zmaxu(8, parent->size >> 2)
-                     : 256;
-        }
-
-        Scope *scope = amA0(sizeof (Scope) + (size * sizeof (Symbol *)));
+        Scope *scope = amA0(sizeof *scope);
 
         scope->parent = parent;
         scope->is_function = is_function;
         scope->function = (is_function || parent == NULL)
                         ? scope
                         : parent->function;
-
-        scope->size = size;
-        scope->mask = (size - 1);
 
 #if TY_NAMED_SCOPES
         scope->name = name;
@@ -169,26 +162,26 @@ ScopeCapturesVar(Scope const *scope, Symbol const *var)
 static int
 capture(Ty *ty, Scope *s, Symbol *sym, int parent_index)
 {
-                for (int i = 0; i < vN(s->captured); ++i) {
-                        if (v__(s->captured, i) == sym) {
-                                return i;
-                        }
+        for (int i = 0; i < vN(s->captured); ++i) {
+                if (v__(s->captured, i) == sym) {
+                        return i;
                 }
+        }
 
-                sym->flags |= SYM_CAPTURED;
+        sym->flags |= SYM_CAPTURED;
 
-                avP(s->captured, sym);
-                avP(s->cap_indices, parent_index);
+        avP(s->captured, sym);
+        avP(s->cap_indices, parent_index);
 
-                LOG(
-                        "capture(sym=%s, scope=%s (%p), cap_index=%d)",
-                        sym->identifier,
-                        scope_name(ty, s),
-                        s,
-                        parent_index
-                );
+        LOG(
+                "capture(sym=%s, scope=%s (%p), cap_index=%d)",
+                sym->identifier,
+                scope_name(ty, s),
+                s,
+                parent_index
+        );
 
-                return vN(s->captured) - 1;
+        return vN(s->captured) - 1;
 }
 
 inline static Symbol *
@@ -218,17 +211,22 @@ lookup(
                 return NULL;
         }
 
-        u32 const dont_capture = SYM_GLOBAL
-                               | SYM_NAMESPACE
-                               | SYM_MEMBER
-                               | SYM_TYPE_VAR
-                               | SYM_THREAD_LOCAL;
+        bool already_outlives_us = sym->flags & (
+                SYM_GLOBAL
+              | SYM_NAMESPACE
+              | SYM_MEMBER
+              | SYM_TYPE_VAR
+              | SYM_THREAD_LOCAL
+        );
 
-        if (
-                (sym->scope->function != s->function)
-             && !(sym->flags & dont_capture)
-        ) {
-                scope_capture(ty, s, sym);
+        bool same_function = (sym->scope->function == s->function);
+
+        bool do_capture = !already_outlives_us
+                       && !same_function
+                       && HAVE_COMPILER_FLAG(EMIT);
+
+        if (do_capture) {
+                scope_capture(ty, (Scope *)s, sym);
         }
 
         return sym;
@@ -277,7 +275,7 @@ scope_local_lookup(Ty *ty, Scope const *s, char const *id)
 static Symbol *
 xnew(Ty *ty, char const *id)
 {
-        u64 h = strhash(id);
+        u64 h = hash64z(id);
         Symbol *sym = amA(sizeof *sym);
 
         initsym(sym);
@@ -292,8 +290,8 @@ xnew(Ty *ty, char const *id)
 Symbol *
 ScopeFindRecycled(Scope const *scope, char const *id)
 {
-        u64 h = strhash(id);
-        u32 i = h & scope->mask;
+        u64 h = hash64z(id);
+        u32 i = h & (scope->size - 1);
 
         Symbol *old = NULL;
 
@@ -308,6 +306,50 @@ ScopeFindRecycled(Scope const *scope, char const *id)
         }
 
         return old;
+}
+
+static void
+grow(Ty *ty, Scope *scope)
+{
+        u32 new_size = (scope->size > 0) ? (scope->size * 8) : 8;
+        u32 new_mask = (new_size - 1);
+
+        Symbol **new_table = amA0(sizeof (Symbol *) * new_size);
+
+        SCRATCH_SAVE();
+
+        symbol_vector stack = {0};
+
+        for (u32 i = 0; i < scope->size; ++i) {
+                for (Symbol *sym = scope->table[i]; sym != NULL; sym = sym->next) {
+                        svP(stack, sym);
+                }
+                while (vN(stack) != 0) {
+                        Symbol *sym = *vvX(stack);
+                        u32 j = sym->hash & new_mask;
+                        sym->next = new_table[j];
+                        new_table[j] = sym;
+                }
+        }
+
+        SCRATCH_RESTORE();
+
+        scope->table = new_table;
+        scope->size  = new_size;
+}
+
+inline static void
+put(Ty *ty, Scope *scope, Symbol *sym)
+{
+        if (scope->count * 9 >= scope->size * 4) {
+                grow(ty, scope);
+        }
+
+        u32 i = sym->hash & (scope->size - 1);
+        sym->next = scope->table[i];
+        scope->table[i] = sym;
+
+        scope->count += 1;
 }
 
 static Symbol *
@@ -326,12 +368,9 @@ xadd(Ty *ty, Scope *scope, char const *id)
         }
 
         Symbol *sym = xnew(ty, id);
-        u32 i = sym->hash & scope->mask;
 
+        put(ty, scope, sym);
         sym->scope = scope;
-
-        sym->next = scope->table[i];
-        scope->table[i] = sym;
 
         return sym;
 }
@@ -387,12 +426,13 @@ scope_add_type(Ty *ty, Scope *s, char const *id)
 }
 
 Symbol *
-scope_add_type_var(Ty *ty, Scope *s, char const *id)
+scope_add_type_var(Ty *ty, Scope *s, char const *id, u32 flags)
 {
         Symbol *sym = xadd(ty, s, id);
 
         sym->scope = s;
         sym->flags |= SYM_TYPE_VAR;
+        sym->flags |= flags;
         sym->type = type_variable(ty, sym);
 
         return sym;
@@ -405,13 +445,23 @@ scope_add_i(Ty *ty, Scope *scope, char const *id, int idx)
 
         if (
                 (scope->function->parent == NULL)
-            || (scope->function->parent->parent == NULL && scope->function != scope)
+             || (
+                        (scope->function->parent->parent == NULL)
+                     && (scope->function != scope)
+                )
         ) {
                 sym->flags |= SYM_GLOBAL;
         }
 
+        if (!HAVE_COMPILER_FLAG(EMIT) && !SymbolIsGlobal(sym)) {
+                return sym;
+        }
+
         Scope *owner = scope;
-        while (owner->function != owner && owner->parent != NULL) {
+        while (
+                (owner->function != owner)
+             && (owner->parent != NULL)
+        ) {
                 owner = owner->parent;
         }
 
@@ -419,7 +469,10 @@ scope_add_i(Ty *ty, Scope *scope, char const *id, int idx)
                 avP(owner->owned, NULL);
         }
 
-        while (idx < vN(owner->owned) && v__(owner->owned, idx) != NULL) {
+        while (
+                (idx < vN(owner->owned))
+             && (v__(owner->owned, idx) != NULL)
+        ) {
                 idx += 1;
         }
 
@@ -447,13 +500,11 @@ scope_insert_as(Ty *ty, Scope *scope, Symbol *sym, char const *id)
 
         *new = *sym;
         new->identifier = id;
-        new->hash = strhash(id);
+        new->hash = hash64z(id);
         new->scope = scope;
         new->flags &= ~SYM_PUBLIC;
 
-        u32 i = new->hash & scope->mask;
-        new->next = scope->table[i];
-        scope->table[i] = new;
+        put(ty, scope, new);
 
         return new;
 }
@@ -469,9 +520,7 @@ scope_insert(Ty *ty, Scope *scope, Symbol *sym)
                 new->flags &= ~SYM_PUBLIC;
         }
 
-        u32 i = sym->hash & scope->mask;
-        new->next = scope->table[i];
-        scope->table[i] = new;
+        put(ty, scope, new);
 
         return new;
 }
@@ -545,8 +594,8 @@ scope_copy_public_except(
                         }
                         Symbol *conflict = scope_lookup(ty, dst, s->identifier);
                         if (
-                                conflict != NULL
-                             && conflict->scope != src
+                                (conflict != NULL)
+                             && (conflict->scope != src)
                              && SymbolIsPublic(conflict)
                         ) {
                                 return conflict->identifier;
@@ -560,7 +609,7 @@ scope_copy_public_except(
                                 continue;
                         }
                         if (SymbolIsPublic(s)) {
-                                scope_insert(ty, dst, s)->flags |= SYM_PUBLIC * reexport;
+                                scope_insert(ty, dst, s)->flags |= (SYM_PUBLIC * reexport);
                         }
                 }
         }
@@ -575,8 +624,8 @@ scope_copy_public(Ty *ty, Scope *dst, Scope const *src, bool reexport)
                 for (Symbol *s = src->table[i]; s != NULL; s = s->next) {
                         Symbol *conflict = scope_lookup(ty, dst, s->identifier);
                         if (
-                                conflict != NULL
-                             && conflict->scope != src
+                                (conflict != NULL)
+                             && (conflict->scope != src)
                              && SymbolIsPublic(conflict)
                         ) {
                                 return conflict->identifier;
@@ -587,7 +636,7 @@ scope_copy_public(Ty *ty, Scope *dst, Scope const *src, bool reexport)
         for (int i = 0; i < src->size; ++i) {
                 for (Symbol *s = src->table[i]; s != NULL; s = s->next) {
                         if (SymbolIsPublic(s)) {
-                                scope_insert(ty, dst, s)->flags |= SYM_PUBLIC * reexport;
+                                scope_insert(ty, dst, s)->flags |= (SYM_PUBLIC * reexport);
                         }
                 }
         }
@@ -618,6 +667,7 @@ scope_capture(Ty *ty, Scope *s, Symbol *sym)
         ) {
                 CompileError(
                         ty,
+                        MOD_COMPILE_ERR,
                         "attempted runtime access of non-captured variable `%s%s%s`",
                         TERM(93;1),
                         sym->identifier,
@@ -647,8 +697,11 @@ scope_capture(Ty *ty, Scope *s, Symbol *sym)
 void
 scope_capture_all(Ty *ty, Scope *scope, Scope const *stop)
 {
-        if (scope->function->parent == NULL)
+        if (scope->function->parent == NULL) {
                 return;
+        }
+
+        SCRATCH_SAVE();
 
         for (Scope *s = scope; s->function != stop->function; s = s->parent) {
                 for (int i = 0; i < s->size; ++i) {
@@ -670,7 +723,7 @@ scope_capture_all(Ty *ty, Scope *scope, Scope const *stop)
                                      &&         fscope->function != sym->scope->function
                                      && fscope->parent->function != sym->scope->function
                                 ) {
-                                        avP(scopes, fscope);
+                                        svP(scopes, fscope);
                                         fscope = fscope->parent->function;
                                 }
 
@@ -684,6 +737,8 @@ scope_capture_all(Ty *ty, Scope *scope, Scope const *stop)
                         }
                 }
         }
+
+        SCRATCH_RESTORE();
 }
 
 i64

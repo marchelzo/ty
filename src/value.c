@@ -5,6 +5,8 @@
 #include <stdbool.h>
 #include <inttypes.h>
 
+#include <xxhash.h>
+
 #include "ty.h"
 #include "dtoa.h"
 #include "value.h"
@@ -83,69 +85,44 @@ tuples_equal(Ty *ty, Value const *v1, Value const *v2)
 }
 
 inline static u64
-str_hash(char const *str, int n)
+str_hash(char const *str, u32 len)
 {
-        u64 hash = 2166136261UL;
-
-        for (int i = 0; i < n; ++i)
-                hash = (hash ^ str[i]) * 16777619UL;
-
-        return hash;
+        return XXH3_64bits(str, len);
 }
 
 inline static u64
-int_hash(Ty *ty, intmax_t k)
+hash64(u64 x)
 {
-        u64 hash = 2166136261UL;
-        char const *bytes = (char const *) &k;
-        unsigned char c;
-
-        for (int i = 0; i < sizeof k; ++i) {
-                c = bytes[i];
-                hash = (hash ^ c) * 16777619UL;
-        }
-
-        return hash;
+        x ^= x >> 30;
+        x *= 0xBF58476D1CE4E5B9ULL;
+        x ^= x >> 27;
+        x *= 0x94D049BB133111EBULL;
+        x ^= x >> 31;
+        return x;
 }
 
 inline static u64
-ptr_hash(Ty *ty, void const *p)
+ptr_hash(void const *p)
 {
-        u64 hash = 2166136261UL;
-        char const *bytes = (char const *) &p;
-        unsigned char c;
-
-        for (int i = 0; i < sizeof p; ++i) {
-                c = bytes[i];
-                hash = (hash ^ c) * 16777619UL;
-        }
-
-        return hash;
+        return hash64((u64)(uintptr_t)p);
 }
 
 inline static u64
-flt_hash(Ty *ty, float flt)
+flt_hash(double _x)
 {
-        u64 hash = 2166136261UL;
-        char const *bytes = (char const *) &flt;
-        unsigned char c;
-
-        for (int i = 0; i < sizeof flt; ++i) {
-                c = bytes[i];
-                hash = (hash ^ c) * 16777619UL;
-        }
-
-        return hash;
+        u64 x;
+        memcpy(&x, &_x, sizeof x);
+        return hash64(x);
 }
 
 inline static u64
 ary_hash(Ty *ty, Value const *a)
 {
-        u64 hash = 2166136261UL;
+        u64 hash = 7234782527432842341ULL;
 
-        for (int i = 0; i < a->array->count; ++i) {
-                unsigned char c = value_hash(ty, &a->array->items[i]);
-                hash = (hash ^ c) * 16777619UL;
+        for (usize i = 0; i < vN(*a->array); ++i) {
+                u64 x = value_hash(ty, &a->array->items[i]);
+                hash = HashCombine(hash, x);
         }
 
         return hash;
@@ -154,11 +131,11 @@ ary_hash(Ty *ty, Value const *a)
 inline static u64
 tpl_hash(Ty *ty, Value const *t)
 {
-        u64 hash = 2166136261UL;
+        u64 hash = 1127573292757587281ULL;
 
         for (int i = 0; i < t->count; ++i) {
-                unsigned char c = value_hash(ty, &t->items[i]);
-                hash = (hash ^ c) * 16777619UL;
+                u64 x = value_hash(ty, &t->items[i]);
+                hash = HashCombine(hash, x);
         }
 
         return hash;
@@ -180,31 +157,31 @@ obj_hash(Ty *ty, Value const *v)
                 }
                 return (u64)hash.integer;
         } else {
-                return ptr_hash(ty, v->object);
+                return ptr_hash(v->object);
         }
 }
 
-inline static u64
+static u64
 hash(Ty *ty, Value const *val)
 {
         switch (val->type & ~VALUE_TAGGED) {
-        case VALUE_NIL:               return 0xDEADBEEFULL;
+        case VALUE_NIL:               return 0xDEADDEADDEADULL;
         case VALUE_BOOLEAN:           return val->boolean ? 0xABCULL : 0xDEFULL;
-        case VALUE_STRING:            return str_hash(val->str, val->bytes);
-        case VALUE_INTEGER:           return int_hash(ty, val->integer);
-        case VALUE_REAL:              return flt_hash(ty, val->real);
+        case VALUE_STRING:            return XXH3_64bits(val->str, val->bytes);
+        case VALUE_INTEGER:           return hash64(val->integer);
+        case VALUE_REAL:              return flt_hash(val->real);
         case VALUE_ARRAY:             return ary_hash(ty, val);
         case VALUE_TUPLE:             return tpl_hash(ty, val);
-        case VALUE_DICT:              return ptr_hash(ty, val->dict);
+        case VALUE_DICT:              return ptr_hash(val->dict);
         case VALUE_OBJECT:            return obj_hash(ty, val);
-        case VALUE_METHOD:            return ptr_hash(ty, val->method) ^ str_hash((void *)val->this, sizeof (Value));
-        case VALUE_BUILTIN_METHOD:    return ptr_hash(ty, val->builtin_method) ^ ptr_hash(ty, val->this);
-        case VALUE_FUNCTION:          return ptr_hash(ty, val->builtin_function);
-        case VALUE_BUILTIN_FUNCTION:  return ptr_hash(ty, val->info) ^ ptr_hash(ty, val->env);
-        case VALUE_REGEX:             return ptr_hash(ty, val->regex);
-        case VALUE_PTR:               return ptr_hash(ty, val->ptr);
-        case VALUE_TAG:               return (((u64)val->tag) * 91238) ^ 0x123AEDDULL;
-        case VALUE_CLASS:             return (((u64)val->class) * 2048) ^ 0xAABB1012ULL;
+        case VALUE_METHOD:            return HashCombine(ptr_hash(val->method), ptr_hash(val->this));
+        case VALUE_BUILTIN_METHOD:    return HashCombine(ptr_hash(val->builtin_method), ptr_hash(val->this));
+        case VALUE_FUNCTION:          return ptr_hash(val->builtin_function);
+        case VALUE_BUILTIN_FUNCTION:  return HashCombine(ptr_hash(val->info), ptr_hash(val->env));
+        case VALUE_REGEX:             return ptr_hash(val->regex);
+        case VALUE_PTR:               return ptr_hash(val->ptr);
+        case VALUE_TAG:               return (((u64)val->tag) * 517929173925273293ULL);
+        case VALUE_CLASS:             return (((u64)val->class) * 817364735284283413ULL);
         default:                      zP("attempt to hash invalid value: %s", VSC(val));
         }
 }
@@ -212,7 +189,7 @@ hash(Ty *ty, Value const *val)
 u64
 value_hash(Ty *ty, Value const *val)
 {
-        return (((u64)val->tags) << 14) + hash(ty, val);
+        return ((u64)val->tags) ^ hash(ty, val);
 }
 
 char *
@@ -573,7 +550,12 @@ value_showx(Ty *ty, Value const *v)
         case VALUE_INDEX:
                 snprintf(buffer, 1024, "<index: (%d, %d, %d)>", (int)v->i, (int)v->off, (int)v->nt);
                 break;
-        case VALUE_OBJECT:;
+        case VALUE_OBJECT:
+        {
+                if (TY_IS(DYING)) {
+                        goto BasicObject;
+                }
+
                 for (int i = 0; i < vN(ty->visiting); ++i) {
                         if (*v_(ty->visiting, i) == v->object) {
                                 goto BasicObject;
@@ -587,12 +569,13 @@ value_showx(Ty *ty, Value const *v)
 #endif
                 if (fp != NULL && class_of(fp) != CLASS_OBJECT) {
                         xvP(ty->visiting, v->object);
-                        Value str = vm_call_method(ty, v, fp, 0);
+                        Value self = stripped(v);
+                        Value str  = vm_call_method(ty, &self, fp, 0);
                         vvX(ty->visiting);
                         if (str.type != VALUE_STRING) {
                                 goto BasicObject;
                         }
-                        s = gc_resize_unchecked(ty, NULL, str.bytes + 1);
+                        s = smA(str.bytes + 1);
                         memcpy(s, str.str, str.bytes);
                         s[str.bytes] = '\0';
                 } else {
@@ -601,9 +584,10 @@ BasicObject:
                 }
 
                 break;
+        }
 
         case VALUE_ZERO:
-                snprintf(buffer, 1024, "<:ZERO:>");
+                snprintf(buffer, 1024, "<zero>");
                 break;
 
         case VALUE_UNINITIALIZED:
@@ -875,6 +859,10 @@ value_show_colorx(Ty *ty, Value const *v)
                 break;
 
         case VALUE_OBJECT:;
+                if (TY_IS(DYING)) {
+                        goto BasicObject;
+                }
+
                 for (int i = 0; i < vN(ty->visiting); ++i) {
                         if (*v_(ty->visiting, i) == v->object) {
                                 goto BasicObject;
@@ -888,23 +876,13 @@ value_show_colorx(Ty *ty, Value const *v)
 #endif
 
                 if (fp != NULL && class_of(fp) != CLASS_OBJECT) {
-                        if (!VM_TRY()) {
-                                vm_catch(ty);
-                                vm_finally(ty);
-                                vvX(ty->visiting);
-                                goto BasicObject;
-                        }
-
                         xvP(ty->visiting, v->object);
-                        Value str = vm_call_method(ty, v, fp, 0);
+                        Value self = stripped(v);
+                        Value str  = vm_call_method(ty, &self, fp, 0);
                         vvX(ty->visiting);
-
-                        vm_finally(ty);
-
                         if (str.type != VALUE_STRING) {
                                 goto BasicObject;
                         }
-
                         s = smA(str.bytes + 1);
                         memcpy(s, str.str, str.bytes);
                         s[str.bytes] = '\0';

@@ -81,8 +81,12 @@ update_cache(DispatchCache *c, u64 key, i32 ref)
 {
         xvP(*c, ((CacheEntry) { .key = key, .ref = ref }));
 
-        for (i32 i = c->count - 1; i > 0 && c->items[i - 1].key > key; --i) {
-                SWAP(CacheEntry, c->items[i], c->items[i - 1]);
+        for (i32 i = vN(*c) - 1; i > 0 && v_(*c, i - 1)->key > key; --i) {
+                SWAP(
+                        CacheEntry,
+                        v__(*c, i),
+                        v__(*c, i - 1)
+                );
         }
 }
 
@@ -90,11 +94,11 @@ inline static bool
 are_ordered(OperatorSpec const *a, OperatorSpec const *b)
 {
         return (
-                class_is_subclass(ty, a->t1, b->t1) &&
-                class_is_subclass(ty, a->t2, b->t2) &&
-                (
-                        a->t1 != b->t1 ||
-                        a->t2 != b->t2
+                class_is_subclass(ty, a->t1, b->t1)
+             && class_is_subclass(ty, a->t2, b->t2)
+             && (
+                        (a->t1 != b->t1)
+                     || (a->t2 != b->t2)
                 )
         );
 }

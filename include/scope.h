@@ -5,7 +5,6 @@
 #include <stdbool.h>
 
 #include "vec.h"
-#include "location.h"
 #include "gc.h"
 #include "ty.h"
 
@@ -30,23 +29,26 @@ enum { TY_SCOPE_FLAGS };
 #define TY_SYM_FLAGS                      \
         X(PUBLIC,       Public,       0)  \
         X(THREAD_LOCAL, ThreadLocal,  1)  \
-        X(MACRO,        Macro,        2)  \
-        X(FUN_MACRO,    FunMacro,     3)  \
-        X(PROPERTY,     Property,     4)  \
-        X(CONST,        Const,        5)  \
-        X(BUILTIN,      Builtin,      6)  \
-        X(TYPE_VAR,     TypeVar,      7)  \
-        X(VARIADIC,     Variadic,     8)  \
-        X(IMMORTAL,     Immortal,     9)  \
-        X(TRANSIENT,    Transient,   10)  \
-        X(RECYCLED,     Recycled,    11)  \
-        X(MEMBER,       Member,      12)  \
-        X(STATIC,       Static,      13)  \
-        X(GLOBAL,       Global,      14)  \
-        X(CAPTURED,     Captured,    15)  \
-        X(FIXED,        FixedType,   16)  \
-        X(NAMESPACE,    Namespace,   17)  \
-        X(PARAM_PACK,   ParamPack,   18)  \
+        X(CLASS,        Class,        2)  \
+        X(TAG,          Tag,          3)  \
+        X(FUNCTION,     Function,     4)  \
+        X(MACRO,        Macro,        5)  \
+        X(FUN_MACRO,    FunMacro,     6)  \
+        X(PROPERTY,     Property,     7)  \
+        X(CONST,        Const,        8)  \
+        X(BUILTIN,      Builtin,      9)  \
+        X(TYPE_VAR,     TypeVar,     10)  \
+        X(VARIADIC,     Variadic,    11)  \
+        X(IMMORTAL,     Immortal,    12)  \
+        X(TRANSIENT,    Transient,   13)  \
+        X(RECYCLED,     Recycled,    14)  \
+        X(MEMBER,       Member,      15)  \
+        X(STATIC,       Static,      16)  \
+        X(GLOBAL,       Global,      17)  \
+        X(CAPTURED,     Captured,    18)  \
+        X(FIXED,        FixedType,   19)  \
+        X(NAMESPACE,    Namespace,   20)  \
+        X(PARAM_PACK,   ParamPack,   21)  \
 
 
 #define X(f, _, i) SYM_##f = (1 << i),
@@ -101,11 +103,11 @@ typedef struct scope {
         Scope *function;
 
         u32 size;
-        u32 mask;
+        u32 count;
 
         Scope *parent;
 
-        Symbol *table[];
+        Symbol **table;
 } Scope;
 
 Scope *
@@ -114,22 +116,21 @@ NewSubscope(
 #if TY_NAMED_SCOPES
         char const *name,
 #endif
-        u32 size,
         Scope *parent,
         bool function
 );
 
 #if TY_NAMED_SCOPES
-  #define scope_new(ty, n, p, f) NewSubscope(ty, n, 0, p, f)
+  #define scope_new(ty, n, p, f) NewSubscope(ty, n, p, f)
 #else
-  #define scope_new(ty, n, p, f) NewSubscope(ty, 0, p, f)
+  #define scope_new(ty, n, p, f) NewSubscope(ty, p, f)
 #endif
 
 Symbol *
 scope_add(Ty *ty, Scope *s, char const *id);
 
 Symbol *
-scope_add_type_var(Ty *ty, Scope *s, char const *id);
+scope_add_type_var(Ty *ty, Scope *s, char const *id, u32 flags);
 
 Symbol *
 scope_add_type(Ty *ty, Scope *s, char const *id);

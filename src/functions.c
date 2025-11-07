@@ -1808,32 +1808,16 @@ BUILTIN_FUNCTION(bit_complement)
 
 BUILTIN_FUNCTION(setenv)
 {
-        static _Thread_local vec(char) varbuf;
-        static _Thread_local vec(char) valbuf;
-
         ASSERT_ARGC("setenv()", 2);
 
-        Value var = ARG(0);
-        Value val = ARG(1);
-
-        if (var.type != VALUE_STRING || val.type != VALUE_STRING)
-                zP("both arguments to setenv() must be strings");
-
-        vvPn(varbuf, var.str, var.bytes);
-        vvP(varbuf, '\0');
-
-        vvPn(valbuf, val.str, val.bytes);
-        vvP(valbuf, '\0');
+        char *key = TY_TMP_C_STR_A(ARGx(0, VALUE_STRING, VALUE_BLOB));
+        char *val = TY_TMP_C_STR_B(ARGx(1, VALUE_STRING, VALUE_BLOB));
 
 #ifdef _WIN32
-        SetEnvironmentVariableA(varbuf.items, valbuf.items);
+        SetEnvironmentVariableA(key, val);
 #else
-        setenv(varbuf.items, valbuf.items, 1);
+        setenv(key, val, 1);
 #endif
-
-        varbuf.count = 0;
-        valbuf.count = 0;
-
         return NIL;
 }
 
@@ -1842,13 +1826,9 @@ BUILTIN_FUNCTION(getenv)
         ASSERT_ARGC("getenv()", 1);
 
         Value var = ARGx(0, VALUE_STRING);
-
         char const *val = getenv(TY_TMP_C_STR(var));
 
-        if (val == NULL)
-                return NIL;
-        else
-                return STRING_NOGC(val, strlen(val));
+        return (val != NULL) ? vSsz(val) : NIL;
 }
 
 BUILTIN_FUNCTION(locale_setlocale)
@@ -7313,30 +7293,39 @@ make_token(Ty *ty, Token const *t)
         Value start = make_location(ty, &t->start);
         Value end = make_location(ty, &t->end);
 
+        switch (t->tag) {
+        case TT_FIELD:     tag = "field";     break;
+        case TT_TYPE:      tag = "type";      break;
+        case TT_MACRO:     tag = "macro";     break;
+        case TT_MEMBER:    tag = "member";    break;
+        case TT_FUNC:      tag = "func";      break;
+        case TT_MODULE:    tag = "module";    break;
+        case TT_KEYWORD:   tag = "keyword";   break;
+        case TT_PARAM:     tag = "param";     break;
+        case TT_PUNCT:     tag = "punct";     break;
+        case TT_CALL:      tag = "call";      break;
+        case TT_OPERATOR:  tag = "operator";  break;
+        default:                              break;
+        }
+
+        Value meta = (tag == NULL) ? NIL : xSz(tag);
+
 #define T(name) (STRING_NOGC(#name, strlen(#name)))
         switch (t->type) {
         case TOKEN_IDENTIFIER:
-                switch (t->tag) {
-                case TT_FIELD:   tag = "field";   break;
-                case TT_TYPE:    tag = "type";    break;
-                case TT_MACRO:   tag = "macro";   break;
-                case TT_MEMBER:  tag = "member";  break;
-                case TT_MODULE:  tag = "module";  break;
-                case TT_KEYWORD: tag = "keyword"; break;
-                case TT_NONE:    tag = NULL;      break;
-                }
                 return vTn(
                         "type",   T(id),
-                        "kind",   (tag == NULL ? NIL : vSsz(tag)),
+                        "meta",   meta,
                         "start",  start,
                         "end",    end,
                         "id",     vSsz(t->identifier),
-                        "module", t->module == NULL ? NIL : vSsz(t->module)
+                        "module", (t->module == NULL) ? NIL : vSsz(t->module)
                 );
 
         case TOKEN_INTEGER:
                 return vTn(
                         "type",   T(int),
+                        "meta",   meta,
                         "start",  start,
                         "end",    end,
                         "int",    INTEGER(t->integer)
@@ -7345,6 +7334,7 @@ make_token(Ty *ty, Token const *t)
         case TOKEN_REAL:
                 return vTn(
                         "type",   T(int),
+                        "meta",   meta,
                         "start",  start,
                         "end",    end,
                         "float",  REAL(t->real)
@@ -7463,6 +7453,7 @@ make_token(Ty *ty, Token const *t)
 
         return vTn(
                 "type",   xSs(type, tlen),
+                "meta",   meta,
                 "start",  start,
                 "end",    end
         );
@@ -7561,13 +7552,9 @@ BUILTIN_FUNCTION(ty_disassemble)
 
 BUILTIN_FUNCTION(eval)
 {
-        ASSERT_ARGC_2("ty.eval()", 1, 2);
+        ASSERT_ARGC("ty.eval()", 1, 2);
 
-        struct scope *scope = NULL;
-
-        if (argc == 2) {
-                scope = ARG(1).ptr;
-        }
+        Scope *scope = (argc == 2) ? PTR_ARG(1) : NULL;
 
         if (ARG(0).type == VALUE_STRING) {
                 B.count = 0;
@@ -7587,19 +7574,18 @@ BUILTIN_FUNCTION(eval)
 
                 Expr *e = (Expr *)prog[0];
 
-                if (!compiler_symbolize_expression(ty, e, scope))
-E1:
-                {
+                if (!compiler_symbolize_expression(ty, e, scope)) {
                         char const *msg = TyError(ty);
                         Value e = Err(ty, vSsz(msg));
                         ReleaseArena(old);
                         vmE(&e);
                 }
 
-                Value v = tyeval(ty, e);
+                Value v;
 
-                if (v.type == VALUE_NONE) {
-                        goto E1;
+                if (!tyeval(ty, e, &v)) {
+                        ReleaseArena(old);
+                        vmE(&v);
                 }
 
                 ReleaseArena(old);
@@ -7607,19 +7593,20 @@ E1:
                 return v;
         } else {
                 compiler_clear_location(ty);
-                Expr *e = TyToCExpr(ty, &ARG(0));
-                if (e == NULL || !compiler_symbolize_expression(ty, e, scope))
-E2:
-                {
-                        char const *msg = TyError(ty);
-                        Value e = Err(ty, vSsz(msg));
-                        vmE(&e);
+
+                Value prog = ARG(0);
+                Expr *expr = TyToCExpr(ty, &prog);
+                if (
+                        (expr == NULL)
+                     || !compiler_symbolize_expression(ty, expr, scope)
+                ) {
+                        bP("%s", sfmt("%s", TyError(ty)));
                 }
 
-                Value v = tyeval(ty, e);
+                Value v;
 
-                if (v.type == VALUE_NONE) {
-                        goto E2;
+                if (!tyeval(ty, expr, &v)) {
+                        vmE(&v);
                 }
 
                 return v;
@@ -7743,52 +7730,47 @@ BUILTIN_FUNCTION(ty_parse)
 {
         ASSERT_ARGC("ty.parse()", 1);
 
-        if (ARG(0).type != VALUE_STRING) {
-                zP("ty.parse(): expected string but got: %s", VSC(&ARG(0)));
-        }
-
-        v0(B);
-        uvP(B, '\0');
-        uvPn(B, ARG(0).str, ARG(0).bytes);
-        uvP(B, '\0');
-
-        Arena old = NewArena(1 << 22);
-
-        Stmt **prog;
         Location stop;
         Value extra = NIL;
-        TokenVector tokens = {0};
 
-        Value *want_tokens = NAMED("tokens");
+        bool resolve = HAVE_FLAG("resolve");
 
-        char const *tokens_key = (want_tokens && value_truthy(ty, want_tokens))
+        char const *tokens_key = HAVE_FLAG("tokens")
                                ? "tokens"
                                : NULL;
+        u32 flags = (
+                TYC_PARSE
+              | TYC_IMPORT_ALL
+              | TYC_FORGIVING
+              | TYC_NO_TYPES
+              | (TYC_SHALLOW * !HAVE_FLAG("deep"))
+              | (TYC_RESOLVE * HAVE_FLAG("resolve"))
+              | (TYC_TOKENS  * (tokens_key != NULL))
+        );
+
         Value vTokens = NIL;
         Value result;
 
 /* = */ GC_STOP(); /* ====================================================== */
         TYPES_OFF += 1;
 
-        CompileState compiler_state = PushCompilerState(ty, "(eval)", TYC_PARSE);
-        void *compiler_ctx = GetCompilerContext(ty);
-        co_state st = ty->st;
-        char *ip = ty->ip;
-
-        m0(ty->st);
+        Arena volatile old = NewArena(1 << 22);
+        char *source = TY_0_C_STR(ARGx(0, VALUE_STRING, VALUE_BLOB));
 
         if (TY_CATCH_ERROR()) {
-                char const *msg = TyError(ty);
-
-                result = Err(
-                        ty,
-                        vTn("msg", vSsz(msg))
-                );
-
-                goto ReturnError;
+                Value exc = TY_CATCH();
+                ReleaseArena(old);
+                TYPES_OFF -= 1;
+                free(source - 1);
+                return Err(ty, exc);
         }
 
-        if (!parse_ex(ty, B.items + 1, "(eval)", &prog, &stop, &tokens)) {
+        Module *mod = TyCompileSource(ty, source, flags);
+
+        Stmt **prog = mod->prog;
+        TokenVector tokens = mod->tokens;
+
+        if (prog == NULL) {
                 Value last;
                 char const *msg = TyError(ty);
 
@@ -7816,7 +7798,7 @@ BUILTIN_FUNCTION(ty_parse)
 
         if (prog == NULL || prog[0] == NULL) {
                 result = Err(ty, extra);
-                goto Return;
+                goto End;
         }
 
         if (
@@ -7829,7 +7811,7 @@ BUILTIN_FUNCTION(ty_parse)
                 } else {
                         result = Ok(ty, PAIR(v, extra));
                 }
-                goto Return;
+                goto End;
         }
 
         if (prog[1] == NULL) {
@@ -7839,7 +7821,7 @@ BUILTIN_FUNCTION(ty_parse)
                 } else {
                         result = Ok(ty, PAIR(v, extra));
                 }
-                goto Return;
+                goto End;
         }
 
         Stmt *multi = amA0(sizeof *multi);
@@ -7857,17 +7839,12 @@ BUILTIN_FUNCTION(ty_parse)
                 result = Ok(ty, PAIR(v, extra));
         }
 
-Return:
-        TY_CATCH_END();
-ReturnError:
+End:
+        free(source - 1);
         ReleaseArena(old);
+        TY_CATCH_END();
         TYPES_OFF -= 1;
 /* = */ GC_RESUME(); /* ==================================================== */
-
-        ty->st = st;
-        ty->ip = ip;
-        SetCompilerContext(ty, compiler_ctx);
-        PopCompilerState(ty, compiler_state);
 
         return result;
 }
@@ -8441,7 +8418,7 @@ BUILTIN_FUNCTION(tdb_eval)
         Value v;
         if (
                 compiler_symbolize_expression(ty, e, scope)
-             && (v = tyeval(TDB->host, e)).type != VALUE_NONE
+             && tyeval(TDB->host, e, &v)
         ) {
                 ReleaseArena(old);
                 return Ok(ty, v);

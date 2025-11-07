@@ -4,6 +4,8 @@
 #include "ty.h"
 #include "value.h"
 
+#define HAVE_COMPILER_FLAG(flag) (TyCompilerState(ty)->flags & TYC_##flag)
+
 extern bool SuggestCompletions;
 extern bool FindDefinition;
 extern int QueryLine;
@@ -24,12 +26,30 @@ enum {
 };
 
 enum {
-        MOD_RELOADING = 1
+        MOD_RELOADING   = (1 << 0),
+        MOD_PARSE_ERR   = (1 << 1),
+        MOD_TYPE_ERR    = (1 << 2),
+        MOD_COMPILE_ERR = (1 << 3)
 };
 
 enum {
-        TYC_EVAL  = (1 << 0),
-        TYC_PARSE = (1 << 1)
+        TYC_EVAL                = (1 << 0),
+        TYC_PARSE               = (1 << 1),
+        TYC_SHALLOW             = (1 << 2),
+        TYC_ZFOLD               = (1 << 3),
+        TYC_TOKENS              = (1 << 4),
+        TYC_RESOLVE             = (1 << 5),
+        TYC_EMIT                = (1 << 6),
+        TYC_INHERIT_GLOBAL      = (1 << 7),
+        TYC_IMPORT_ALL          = (1 << 8),
+        TYC_FORGIVING           = (1 << 9),
+        TYC_NO_TYPES            = (1 << 10),
+
+        TYC_DEFAULT_FLAGS = (
+                TYC_RESOLVE
+              | TYC_EMIT
+              | TYC_TOKENS
+        )
 };
 
 typedef struct eloc {
@@ -168,8 +188,8 @@ typedef struct compiler_state {
         statement_vector pending;
 
         bool _based;
-        bool _eval;
-        bool _parse;
+
+        u32 flags;
 
         Type *expected_type;
 
@@ -244,6 +264,9 @@ compiler_compile_source(
         char const *filename
 );
 
+Module *
+TyCompileSource(Ty *ty, char const *source, u32 flags);
+
 int
 compiler_symbol_count(Ty *ty);
 
@@ -316,8 +339,8 @@ is_fun_macro(Ty *ty, char const *module, char const *id);
 Value
 tyexpr(Ty *ty, Expr const *);
 
-Value
-tyeval(Ty *ty, Expr *e);
+bool
+tyeval(Ty *ty, Expr *e, Value *ret);
 
 Value
 tystmt(Ty *ty, Stmt *s);
@@ -369,7 +392,7 @@ void *
 source_lookup(Ty *ty, u32 src);
 
 void
-ForgetSourceNodesFrom(void const *base);
+ForgetSourceNodesFrom(void const *base, usize len);
 
 void
 try_symbolize_application(Ty *ty, Scope *scope, Expr *e);
@@ -396,13 +419,16 @@ void
 CompilationTrace(Ty *ty, byte_vector *out);
 
 CompileState
-PushCompilerState(Ty *ty, char const *name, u32 flags);
+TempCompilerState(Ty *ty, char const *name, char const *source, u32 flags);
 
 void
-PopCompilerState(Ty *ty, CompileState state);
+RestoreCompilerState(Ty *ty, CompileState state);
 
 CompileState *
 TyCompilerState(Ty *ty);
+
+bool
+CompilerAnalyzeProgram(Ty *ty, Stmt **prog);
 
 void
 CompilerScopePush(Ty *ty);
@@ -485,6 +511,9 @@ SetCompilerContext(Ty *ty, void *ctx);
 
 Value
 TyTraceEntryFor(Ty *ty, Expr const *e);
+
+char const *
+QualifiedName(Expr const *e);
 
 #endif
 

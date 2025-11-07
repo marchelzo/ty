@@ -10,6 +10,7 @@
 #include <stdbool.h>
 
 #include <utf8proc.h>
+#include <xxhash.h>
 
 #include "ty.h"
 #include "alloc.h"
@@ -111,6 +112,12 @@ min(imax a, imax b)
         return (a < b) ? a : b;
 }
 
+inline static int
+s_eq(char const *a, char const *b)
+{
+        return strcmp(a, b) == 0;
+}
+
 char *
 sclone(Ty *ty, char const *s);
 
@@ -154,14 +161,15 @@ strstrn(char const *haystack, int hn, char const *needle, int nn)
 }
 
 inline static u64
-strhash(char const *s)
+HashCombine(u64 seed, u64 hash)
 {
-        u64 hash = 2166136261UL;
+        return seed ^ (hash + 0x9E3779B97F4A7C15ULL + (seed << 6) + (seed >> 2));
+}
 
-        while (*s != '\0')
-                hash = (hash ^ *s++) * 16777619UL;
-
-        return hash;
+inline static u64
+hash64z(char const *s)
+{
+        return XXH3_64bits(s, strlen(s));
 }
 
 inline static int
@@ -185,22 +193,11 @@ splitmix64(u64 *state)
         return z ^ (z >> 31);
 }
 
-inline static u64
-StrHash(char const *s)
-{
-        u64 hash = 2166136261UL;
-
-        while (*s != '\0')
-                hash = (hash ^ *s++) * 16777619UL;
-
-        return hash;
-}
-
 inline static bool
 search_str(StringVector const *ss, char const *s)
 {
-        for (usize i = 0; i < ss->count; ++i) {
-                if (strcmp(ss->items[i], s) == 0) {
+        for (usize i = 0; i < vN(*ss); ++i) {
+                if (s_eq(v__(*ss, i), s)) {
                         return true;
                 }
         }
@@ -396,6 +393,54 @@ static char *
         SCRATCH_RESTORE();
 
         return str;
+}
+
+static isize
+term_fit_cols(void const *_s, isize n, int cols)
+{
+        isize width = 0;
+        u8 const *s = _s;
+        bool zwj = false;
+
+        if (n == -1) {
+                n = strlen(_s);
+        }
+
+        for (isize i = 0; i < n;) {
+                if (
+                        (i + 1 < n)
+                     && (s[i    ] == 0x1b)
+                     && (s[i + 1] == '[')
+                ) {
+                        while (++i < n && s[i] != 'm') {
+                                ;
+                        }
+
+                        i += 1;
+                        zwj = false;
+
+                        continue;
+                }
+
+                i32 cp;
+                isize ret = utf8proc_iterate(s + i, n - i, &cp);
+
+                if (ret <= 0) {
+                        i += 1;
+                        continue;
+                }
+
+                width += !zwj * utf8proc_charwidth(cp);
+                i += ret;
+
+                if (width >= cols) {
+                        return i;
+                }
+
+                zwj = (cp == 0x200d);
+        }
+
+        return n;
 }
 
 static isize

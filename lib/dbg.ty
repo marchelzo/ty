@@ -39,34 +39,36 @@ chalk.aqua   = '#89b482'
 chalk.grey   = '#847a6d'
 chalk.pink   = '#d677be'
 
+
 let groups = %{
     'fg0': 'id',
     'fg1': '[ ] { } ( ) . .? , ] ->',
     'orange': '
-        =   ==  ++  --  +   -  *    /   %   ^    |    &    <=   >=
-        +=  -=  *=  /=  %=  @  #    &&  ||  <=>  !    ~
-        ~>  =>  $~> >   <  !=  ??   >>  <<  <<=  >>=  |>
-        *** &&& <$> <%> ?> <?  <*>  *>  <*  ..%. .%.. .%
-        ::  ?=  |=  &=  ^=  ?  $    ..  ... ?:
+        =   ==  ++  --  +   -  *    /   %   ^    |     &    <=   >=
+        +=  -=  *=  /=  %=  @  #    &&  ||  <=>  !     ~    **
+        ~>  =>  $~> >   <  !=  ??   >>  <<  <<=  >>=   |>   !::
+        *** &&& <$> <%> ?> <?  <*>  *>  <*  ..%. .%..  .%
+        ::  ?=  |=  &=  ^=  ?  :    ?:  ..  ...  $     :>
     ',
     'purple': 'true false nil int float use import',
     'red': '
-        for        while    if     let       and    fn     const
-        do         try      catch  operator  or     in     yield
-        match      else     with   break     pub    as     static
-        continue   return   macro  where     not    throw  defer
+        for        while     if       let       and    fn     const
+        do         try       catch    operator  or     in     yield
+        match      else      with     break     pub    as     static
+        continue   return    macro    where     not    throw  defer
+        finally    __eval__
 
         id_keyword
     ',
-    'b yellow': 'type type_member',
-    'yellow': 'class tag trait id_module',
+    'b yellow': 'type type_member type_func id_type type_type',
+    'yellow': 'class tag trait id_module, id_param id_module',
     'green': 'string " f-string',
-    ' green2': 'fun fun_member',
+    'green2': 'fun_member fun fun_func id_func (_call )_call',
     'blue': 'id_member id_field',
-    'blue2': 'typeof',
+    'blue2': 'typeof __set_type__',
     'aqua': 'regex',
-    'grey': 'comment ; :',
-    'pink': 'pp id_macro fun_macro $$[ $$] $$'
+    'grey': 'comment ; :_punct',
+    'pink': 'pp id_macro fun_macro type_macro $$[ $$] $$ __defined__'
 }
 
 let colors = [ %{ t: c for t in g.words() } for c, g in groups ].sum()
@@ -105,8 +107,8 @@ fn color-and-break(module: String) -> Array[(Int, String)] {
     }
 
     let st = (0, 0)
-    for {start, end, type, ?kind, *} in tokens {
-        continue if not let $color = colors[[type, ?kind].join('_')]
+    for {start, end, type, ?meta, *} in tokens {
+        continue if not let $color = colors[[type, ?meta].join('_')]
 
         let st0 = idx-of(start.byte, st)
         let st1 = idx-of(end.byte, st0)
@@ -343,24 +345,20 @@ fn print-source(module: String, range: Range, state: _) {
 
     let ndigit = int(log10(range.high())) + 1
 
-    try {
-        for (i, chalk::Text@(_, chalk) ~> source-line) in lines[range] {
-            let highlight = text -> chalk"[bright yellow bold]{text}[/]"
-            let margin = (i == current-line)
-                       ? "     --> {i + 1:{ndigit}} |" >> highlight
-                       : "         {i + 1:{ndigit}} |"
-            if i == current-line {
-                if expr-span != nil {
-                    source-line = source-line.style-span(expr-span, 'b u.-#7ead85')
-                }
-                source-line = chalk"[bg-#3c3836]{source-line:-100}[/]"
+    for (i, chalk::Text@(_, chalk) ~> source-line) in lines[range] {
+        let highlight = text -> chalk"[bright yellow bold]{text}[/]"
+        let margin = (i == current-line)
+                   ? "     --> {i + 1:{ndigit}} |" >> highlight
+                   : "         {i + 1:{ndigit}} |"
+        if i == current-line {
+            if expr-span != nil {
+                source-line = source-line.style-span(expr-span, 'b u.-#7ead85')
             }
-            put(chalk"{margin} {source-line}")
+            source-line = chalk"[bg-#3c3836]{source-line:-100}[/]"
         }
-        put(chalk"[yellow]Current instruction:[/] [blue]{state.insn}[/]")
-        print(buf.str!(), end='')
-    } catch chalk::ChalkError(e) {
-        print(chalk"[bright red b]chalk error[/]: {pretty(e)}")
+        put(chalk"{margin} {source-line}")
     }
+    put(chalk"[yellow]Current instruction:[/] [blue]{state.insn}[/]")
+    print(buf.str!(), end='')
 }
 

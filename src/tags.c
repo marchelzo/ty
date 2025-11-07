@@ -24,7 +24,8 @@ struct tags {
         vec(struct link) links;
 };
 
-static int tagcount = 0;
+static u32 next_id = 0;
+
 static vec(struct tags *) lists;
 static vec(char const *) names;
 static vec(struct itable) tables;
@@ -50,7 +51,7 @@ mklist(int tag, struct tags *next)
 void
 tags_init(Ty *ty)
 {
-        mklist(tagcount++, NULL);
+        mklist(next_id++, NULL);
 }
 
 void
@@ -68,9 +69,9 @@ tags_get_class(Ty *ty, int tag)
 int
 tags_new(Ty *ty, char const *tag)
 {
-        LOG("making new tag: %s -> %d", tag, tagcount);
+        LOG("making new tag: %s -> %d", tag, next_id);
 
-        vec_nogc_push(names, tag);
+        xvP(names, tag);
 
         struct itable table;
 
@@ -82,8 +83,9 @@ tags_new(Ty *ty, char const *tag)
 
         xvP(classes, NULL);
 
-        mklist(tagcount, lists.items[0]);
-        return tagcount++;
+        mklist(next_id, v_0(lists));
+
+        return next_id++;
 }
 
 bool
@@ -93,33 +95,42 @@ tags_same(Ty *ty, int t1, int t2)
 }
 
 int
-tags_push(Ty *ty, int n, int tag)
+tags_push(Ty *ty, int tags, int tag)
 {
+        struct tags *list = v__(lists, tags);
 
-        LOG("tags_push: n = %d, tag = %d", n, tag);
+        for (int i = 0; i < vN(list->links); ++i) {
+                struct link *link = v_(list->links, i);
+                if (link->tag == tag) {
+                        return link->t->n;
+                }
+        }
 
-        struct tags *t = lists.items[n];
+        struct tags *new = mklist(tag, list);
 
-        for (int i = 0; i < t->links.count; ++i)
-                if (t->links.items[i].tag == tag)
-                        return t->links.items[i].t->n;
-
-        struct tags *new = mklist(tag, t);
-        vec_nogc_push(t->links, ((struct link){ .t = new, .tag = tag }));
+        //XLOG("push: tags=%d tag=%d new=%d", tags, tag, new->n);
+        xvP(
+                list->links,
+                ((struct link) {
+                        .t = new,
+                        .tag = tag
+                })
+        );
 
         return new->n;
 }
 
 int
-tags_pop(Ty *ty, int n)
+tags_pop(Ty *ty, int tags)
 {
-        return lists.items[n]->next->n;
+        return v__(lists, tags)->next->n;
 }
 
 int
 tags_first(Ty *ty, int tags)
 {
-        return lists.items[tags]->tag;
+        //XLOG("tags=%d", tags);
+        return v__(lists, tags)->tag;
 }
 
 /*

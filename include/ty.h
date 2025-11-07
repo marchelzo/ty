@@ -92,7 +92,7 @@ typedef vec(i32)            i32Vector;
 typedef vec(Symbol *)       symbol_vector;
 typedef vec(TySavePoint *)  TySavePointVector;
 
-enum { INTERN_TABLE_SIZE = 128 };
+enum { INTERN_TABLE_SIZE = 256 };
 
 typedef struct {
         i64 id;
@@ -107,6 +107,15 @@ typedef struct {
         InternBucket set[INTERN_TABLE_SIZE];
         vec(u32) index;
 } InternSet;
+
+typedef struct location {
+        u32 line;
+        u32 col;
+        u32 byte;
+        u32 tok;
+        char const *s;
+} Location;
+
 
 struct alloc {
         union {
@@ -262,6 +271,36 @@ enum {
         FUN_PARAM_NAMES = FUN_EXPR        + sizeof (uptr)
 };
 
+#define TY_ERROR_TYPES           \
+        X(NONE,     NotAn,    0) \
+        X(PARSE,    Parse,    1) \
+        X(COMPILE,  Compile,  2) \
+        X(TYPE,     Type,     3) \
+        X(RUNTIME,  Runtime,  4)
+
+
+#define X(f, n, i) TY_ERROR_##f = ((1 << i) >> 1),
+enum { TY_ERROR_TYPES };
+#undef X
+
+#define X(f, n, i) #n "Error" ,
+static char const *TY_ERROR_NAMES[] = {
+        TY_ERROR_TYPES
+};
+#undef X
+
+enum {
+        TY_F_DYING          = (1 << 0),
+        TY_F_IN_GC          = (1 << 1),
+        TY_F_TDB            = (1 << 2),
+        TY_F_IN_EVAL        = (1 << 3),
+        TY_F_IGNORING_TYPES = (1 << 4),
+};
+
+#define TY_IS(x)    (ty->flags & TY_F_ ## x)
+#define TY_START(x) (ty->flags |= TY_F_ ## x)
+#define TY_STOP(x)  (ty->flags &= ~TY_F_ ## x)
+
 struct value {
         u8 type;
         u16 tags;
@@ -414,23 +453,29 @@ enum { TY_SAVE_INTERNAL, TY_SAVE_USER };
 struct try {
         jmp_buf jb;
 
-        int sp;
-        int gc;
-        int cs;
-        int ts;
-        int ds;
-        int ctxs;
-        int nsp;
-        int ed;
-
-        ScratchSave ss;
+        u32 sp;
+        u32 gc;
+        u32 cs;
+        u32 ts;
+        u32 ds;
+        u32 ctxs;
+        u32 nsp;
+        u16 vs;
+        u16 ed;
 
         bool executing;
         bool need_trace;
+
         u8 state;
+
+        u32 flags;
+
+        ScratchSave ss;
+
         char *catch;
         char *finally;
         char *end;
+
         ValueVector defer;
 };
 
@@ -540,7 +585,8 @@ typedef struct ty {
 
         vec(void *) throw_stack;
 
-        int eval_depth;
+        i32 eval_depth;
+        u32 flags;
 
         u64 prng[4];
 
@@ -601,6 +647,7 @@ typedef struct {
         int slice;
         int str;
         int subscript;
+        int _what;
 
         int _fields_;
         int _methods_;
@@ -609,6 +656,7 @@ typedef struct {
         int _static_fields_;
         int _static_methods_;
         int _static_getters_;
+        int _static_setters_;
 
         int _readln;
         int env;
@@ -677,9 +725,15 @@ extern usize TotalBytesAllocated;
 
 #define ErrorBuffer (ty->err)
 
-#define TY_CATCH_ERROR()  (setjmp(*NewTySavePoint(ty)) != 0)
-#define TY_THROW_ERROR()  (longjmp(**vvX(ty->jbs), 1))
-#define TY_CATCH_END()    (vvX(ty->jbs))
+//#define TY_CATCH_ERROR()  (TyClearError(ty), (setjmp(*NewTySavePoint(ty)) != 0))
+//#define TY_THROW_ERROR()  (longjmp(**vvX(ty->jbs), 1))
+//#define TY_CATCH_END()    (vvX(ty->jbs))
+
+#define TY_CATCH_ERROR() (TyClearError(ty), !VM_TRY())
+#define TY_THROW_ERROR() (vm_throw_ty(ty))
+#define TY_CATCH_END()   (vm_finally(ty))
+#define TY_CATCH()       (vm_catch(ty))
+#define TY_RETHROW()     (vm_rethrow(ty))
 
 #ifdef _WIN32
 #  define UNLIKELY(x)  (x)
@@ -699,6 +753,27 @@ extern usize TotalBytesAllocated;
 #  else
 #    define UNREACHABLE(msg) __builtin_unreachable()
 #  endif
+#endif
+
+#ifndef TY_RELEASE
+#define ASSERT(expr, ...) do {                              \
+        if (!(expr)) {                                      \
+                fprintf(                                    \
+                        stderr,                             \
+                        "%s:%d: %s: assertion '%s' failed"  \
+                        __VA_OPT__(": ")                    \
+                        __VA_ARGS__                         \
+                        "\n"                                \
+                        __FILE__,                           \
+                        __LINE__,                           \
+                        __func__,                           \
+                        #expr                               \
+                );                                          \
+                abort();                                    \
+        }                                                   \
+} while (0)
+#else
+#define ASSERT(...) ;
 #endif
 
 #define TY_INSTRUCTIONS           \
@@ -749,8 +824,6 @@ extern usize TotalBytesAllocated;
         X(TAG),                   \
         X(CLASS),                 \
         X(TO_STRING),             \
-        X(FMT1),                  \
-        X(FMT2),                  \
         X(CONCAT_STRINGS),        \
         X(RANGE),                 \
         X(INCRANGE),              \
@@ -808,7 +881,6 @@ extern usize TotalBytesAllocated;
         X(JUMP_OR),               \
         X(JUMP_WTF),              \
         X(SKIP_CHECK),            \
-        X(5NOP),                  \
         X(RETURN),                \
         X(RETURN_PRESERVE_CTX),   \
         X(EXEC_CODE),             \
@@ -833,8 +905,6 @@ extern usize TotalBytesAllocated;
         X(JUMP_IF_SENTINEL),      \
         X(CLEAR_EXTRA),           \
         X(FIX_EXTRA),             \
-        X(PUSH_ALL),              \
-        X(EXPRESSION),            \
         X(VALUE),                 \
         X(EVAL),                  \
         X(SAVE_STACK_POS),        \
@@ -992,6 +1062,8 @@ enum {
 #define mAo(...)   gc_alloc_object(ty, __VA_ARGS__)
 #define mAo0(...)  gc_alloc_object0(ty, __VA_ARGS__)
 #define mF(p)      gc_free(ty, p)
+
+#define uAo(...)   gc_alloc_object_unchecked(ty, __VA_ARGS__)
 
 #define amA(n)  Allocate(ty, (n))
 #define amA0(n) Allocate0(ty, (n))
@@ -1178,9 +1250,6 @@ enum {
 
 #define VSC(v) value_show_color(ty, v)
 
-#define pT(p) ((uptr)p &  7)
-#define pP(p) ((uptr)p & ~7)
-
 #define M_ID(m)   intern(&xD.members, (m))->id
 #define M_NAME(i) intern_entry(&xD.members, (i))->name
 
@@ -1188,6 +1257,9 @@ enum {
 #define S_STRING(i) intern_entry(&xD.strings, (i))->name
 
 #define PMASK3 ((uptr)7)
+#define pT(p) (((uptr)(p)) &  PMASK3)
+#define pP(p) (((uptr)(p)) & ~PMASK3)
+
 
 inline static void *
 mrealloc(void *p, usize n)
@@ -1459,7 +1531,7 @@ TyNewCString(Ty *ty, Value val, bool nul_before)
 #define TY_0_C_STR(s) TyNewCString(ty, (s), true)
 
 noreturn void
-CompileError(Ty *ty, char const *fmt, ...);
+CompileError(Ty *ty, u32 type, char const *fmt, ...);
 
 noreturn void
 vm_panic(Ty *ty, char const *fmt, ...);
@@ -1477,31 +1549,31 @@ vm_error(Ty *ty, char const *fmt, ...);
 #define DEBUGGING      (!TDB_IS(OFF))
 
 #if 0
-#define TDB_IS(x)     (                                   \
-        fprintf(                                          \
-                stderr,                                   \
-                "[%s] %16s:%-6d TDB_IS(%s) --> %d (state: %s)\n",   \
-                I_AM_TDB ? "TDB" : "Ty",                  \
-                __FILE__, \
-                __LINE__, \
-                #x,                                       \
-                TDB_STATE == (TDB_STATE_ ## x),           \
-                TDB_STATE_NAME                            \
-        ),                                                \
-        (TDB_STATE == (TDB_STATE_ ## x))                  \
+#define TDB_IS(x) (                                                  \
+        fprintf(                                                     \
+                stderr,                                              \
+                "[%s] %16s:%-6d TDB_IS(%s) --> %d (state: %s)\n",    \
+                I_AM_TDB ? "TDB" : "Ty",                             \
+                __FILE__,                                            \
+                __LINE__,                                            \
+                #x,                                                  \
+                TDB_STATE == (TDB_STATE_ ## x),                      \
+                TDB_STATE_NAME                                       \
+        ),                                                           \
+        (TDB_STATE == (TDB_STATE_ ## x))                             \
 )
 
-#define TDB_IS_NOW(x) (                                   \
-        fprintf(                                          \
-                stderr,                                   \
-                "[%s] %16s:%-6d TDB_WAS(%s) --> TDB_IS_NOW(%s)\n",  \
-                I_AM_TDB ? "TDB" : "Ty",                  \
-                __FILE__, \
-                __LINE__, \
-                TDB_STATE_NAME,                           \
-                #x                                        \
-        ),                                                \
-        (TDB->state = TDB_STATE_ ## x)                    \
+#define TDB_IS_NOW(x) (                                              \
+        fprintf(                                                     \
+                stderr,                                              \
+                "[%s] %16s:%-6d TDB_WAS(%s) --> TDB_IS_NOW(%s)\n",   \
+                I_AM_TDB ? "TDB" : "Ty",                             \
+                __FILE__,                                            \
+                __LINE__,                                            \
+                TDB_STATE_NAME,                                      \
+                #x                                                   \
+        ),                                                           \
+        (TDB->state = TDB_STATE_ ## x)                               \
 )
 #else
 #define TDB_IS(x)     (TDB_STATE == (TDB_STATE_ ## x))

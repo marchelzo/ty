@@ -12,7 +12,6 @@
 #include "scope.h"
 #include "ty.h"
 #include "alloc.h"
-#include "location.h"
 #include "operators.h"
 #include "log.h"
 #include "util.h"
@@ -224,9 +223,9 @@ static Scope *ThreadLocals;
 static u64 t;
 static char const EmptyString[] = "\0";
 static char const UnknownString[] = "\0(unknown location)";
-static Location Nowhere = { 0, 0, 0, EmptyString + 1 };
-static Location UnknownStart = { 0, 0, 0, UnknownString + 1 };
-static Location UnknownEnd = { 0, 0, 0, UnknownString + sizeof UnknownString - 1 };
+static Location Nowhere = { 0, 0, 0, 0, EmptyString + 1 };
+static Location UnknownStart = { 0, 0, 0, 0, UnknownString + 1 };
+static Location UnknownEnd = { 0, 0, 0, 0, UnknownString + sizeof UnknownString - 1 };
 static Symbol UndefinedSymbol = { .flags = SYM_PUBLIC | SYM_GLOBAL, .i = -1 };
 
 typedef struct context_entry ContextEntry;
@@ -334,6 +333,9 @@ ResolveFieldTypes(Ty *ty, Scope *scope, expression_vector const *fields);
 
 static bool
 expedite_fun(Ty *ty, Expr *e, void *ctx);
+
+static Stmt *
+annotate_tokens(Ty *ty, Stmt *stmt);
 
 static RangeLoop
 BeginRangeLoop(
@@ -564,7 +566,7 @@ HasConstructor(ClassDefinition const *def)
 {
         for (int i = 0; i < vN(def->methods); ++i) {
                 Expr const *method = v__(def->methods, i);
-                if (strcmp(method->name, "init") == 0) {
+                if (s_eq(method->name, "init")) {
                         return true;
                 }
 
@@ -657,7 +659,7 @@ IsSimpleRange(Expr const *expr)
 {
         if (
                 (expr->type == EXPRESSION_MEMBER_ACCESS)
-             && (strcmp(expr->member->identifier, "rev") == 0)
+             && s_eq(expr->member->identifier, "rev")
         ) {
                 expr = expr->object;
         }
@@ -713,18 +715,21 @@ QualifiedName_(Expr const *e, byte_vector *b)
         case EXPRESSION_IDENTIFIER:
                 good &= QualifiedName_(e->namespace, b);
                 break;
+
         case EXPRESSION_MEMBER_ACCESS:
                 good &= QualifiedName_(e->object, b);
                 break;
+
         case EXPRESSION_MODULE:
         case EXPRESSION_NAMESPACE:
                 good &= QualifiedName_(e->parent, b);
                 break;
+
         default:
                 return false;
         }
 
-        if (b->count > 0) {
+        if (vN(*b) > 0) {
                 xvP(*b, '.');
         }
 
@@ -735,9 +740,11 @@ QualifiedName_(Expr const *e, byte_vector *b)
                 }
                 xvPn(*b, e->identifier, strlen(e->identifier));
                 break;
+
         case EXPRESSION_MEMBER_ACCESS:
                 xvPn(*b, e->member->identifier, strlen(e->member->identifier));
                 break;
+
         case EXPRESSION_MODULE:
         case EXPRESSION_NAMESPACE:
                 xvPn(*b, e->name, strlen(e->name));
@@ -747,7 +754,7 @@ QualifiedName_(Expr const *e, byte_vector *b)
         return true;
 }
 
-static char const *
+char const *
 QualifiedName(Expr const *e)
 {
         _Thread_local static byte_vector name = {0};
@@ -1026,10 +1033,15 @@ PushInfo(Ty *ty, void const *ctx, char const *fmt, ...)
         return save;
 }
 
-#define fail(...) CompileError(ty, __VA_ARGS__)
-#define fail_or(...) if (!AllowErrors || EVAL_DEPTH > 0) { CompileError(ty, __VA_ARGS__); } else
+#define fail_or(...)                                            \
+        if (!HAVE_COMPILER_FLAG(FORGIVING) || EVAL_DEPTH > 0) { \
+                CompileError(ty, MOD_COMPILE_ERR, __VA_ARGS__); \
+        } else
+
+#define fail(...) CompileError(ty, MOD_COMPILE_ERR, __VA_ARGS__)
+
 noreturn void
-CompileError(Ty *ty, char const *fmt, ...)
+CompileError(Ty *ty, u32 type, char const *fmt, ...)
 {
         va_list ap;
         va_start(ap, fmt);
@@ -1040,7 +1052,6 @@ CompileError(Ty *ty, char const *fmt, ...)
         vdump(&ErrorBuffer, fmt, ap);
 
         va_end(ap);
-
 
 #if defined(TY_LS)
         Value msg = vSsz(vv(ErrorBuffer));
@@ -1064,6 +1075,8 @@ CompileError(Ty *ty, char const *fmt, ...)
                 *(char *)0 = 0;
         }
 #endif
+
+        STATE.module->flags |= type;
 
         TY_THROW_ERROR();
 }
@@ -1151,9 +1164,9 @@ ProposeMemberDefinition(Ty *ty, Location start, Location end, Expr const *o, cha
 
                 sym = (Symbol) {
                         .identifier = m,
-                        .loc = Nowhere,
-                        .mod = STATE.module,
-                        .doc = "",
+                        .loc  = Nowhere,
+                        .mod  = STATE.module,
+                        .doc  = "",
                         .type = NULL
                 };
 
@@ -1299,6 +1312,9 @@ ResolveConstraint(Ty *ty, Expr *constraint)
 
         // XXX
         if (1 && (t0 != NULL)) {
+                if (HAVE_COMPILER_FLAG(TOKENS)) {
+                       annotate_tokens(ty, (Stmt *)constraint);
+                }
                 constraint->type = EXPRESSION_TYPE;
                 constraint->_type = t0;
         }
@@ -1846,14 +1862,17 @@ tmpsymbol(Ty *ty, Scope *scope)
 static CompileState
 freshstate(Ty *ty, Module *mod)
 {
-        CompileState st = {0};
-
-        st.module = mod;
-        st.global = mod->scope;
-        st.pscope = scope_new(ty, "(parse)", st.global, false);
-
-        st.class = NULL;
-        st.start = st.end = st.mstart = st.mend = Nowhere;
+        CompileState st = {
+                .flags = TYC_DEFAULT_FLAGS,
+                .module = mod,
+                .global = mod->scope,
+                .pscope = scope_new(ty, "(parse)", st.global, false),
+                .class  = NULL,
+                .start  = Nowhere,
+                .end    = Nowhere,
+                .mstart = Nowhere,
+                .mend   = Nowhere
+        };
 
         // == Typechecking ==========
         types_init(ty);
@@ -2027,6 +2046,7 @@ symbolize_op_def(Ty *ty, Scope *scope, Stmt *def)
         target->symbol = scope_add(ty, GlobalScope, target->identifier);
         target->symbol->mod = STATE.module;
         target->symbol->loc = target->start;
+        target->symbol->flags |= SYM_FUNCTION;
 
         for (int i = 0; i < t1.count; ++i) {
                 for (int j = 0; j < t2.count; ++j) {
@@ -3395,7 +3415,10 @@ comptime(Ty *ty, Scope *scope, Expr *e)
 {
         symbolize_expression(ty, scope, e->operand);
 
-        Value v = tyeval(ty, e->operand);
+        Value v;
+        if (!tyeval(ty, e->operand, &v)) {
+                fail("error evaluating compile-time expression: %s", VSC(&v));
+        }
 
         Location mstart = STATE.mstart;
         Location mend = STATE.mend;
@@ -3429,7 +3452,9 @@ invoke_fun_macro(Ty *ty, Scope *scope, Expr *e)
 
         e->type = EXPRESSION_FUN_MACRO_INVOCATION;
 
+        EnableLogging += 1;
         EE(e->function);
+        EnableLogging -= 1;
         INSN(HALT);
 
         v0(STATE.expression_locations);
@@ -3454,6 +3479,20 @@ invoke_fun_macro(Ty *ty, Scope *scope, Expr *e)
                 QualifiedName(e->function)
         );
 
+        if (TY_CATCH_ERROR()) {
+                Value exc = TY_CATCH();
+                GC_RESUME();
+                RestoreContext(ty, ctx);
+                STATE.macro_scope = mscope;
+                e->type = EXPRESSION_ERROR;
+                e->string = afmt(
+                        "error invoking function-like macro %s: %s",
+                        QualifiedName(e->function),
+                        VSC(&exc)
+                );
+                return;
+        }
+
         for (usize i = 0;  i < vN(e->args); ++i) {
                 Value v = tyexpr(ty, v__(e->args, i));
                 vmP(&v);
@@ -3476,6 +3515,8 @@ invoke_fun_macro(Ty *ty, Scope *scope, Expr *e)
         STATE.mstart = mstart;
         STATE.mend = mend;
         STATE.macro_scope = mscope;
+
+        TY_CATCH_END();
 
         RestoreContext(ty, ctx);
 
@@ -3765,7 +3806,6 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
 
         e->xfunc = STATE.func;
 
-
 #if 0
         if (EnableLogging > 0 && e->start.s != NULL) {
                 printf(" %4d | %s\n", e->start.line + 1, show_expr(e));
@@ -3782,7 +3822,12 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
 
         switch (e->type) {
         case EXPRESSION_IDENTIFIER:
-                LOG("symbolizing var: %s%s%s", (e->module == NULL ? "" : e->module), (e->module == NULL ? "" : "::"), e->identifier);
+                LOG(
+                        "symbolizing var: %s%s%s",
+                        (e->module == NULL ? "" : e->module),
+                        (e->module == NULL ? "" : "::"),
+                        e->identifier
+                );
 
                 if (e->module == NULL && strcmp(e->identifier, "__module__") == 0) {
                         e->type = EXPRESSION_STRING;
@@ -4573,11 +4618,16 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
         case EXPRESSION_REGEX:
                 e->_type = e->regex->detailed ? TYPE_REGEXV : TYPE_REGEX;
                 break;
+
         case EXPRESSION_NIL:
                 e->_type = NIL_TYPE;
                 break;
+
         case EXPRESSION_MATCH_REST:
                 fail("*<identifier> 'match-rest' pattern used outside of pattern context");
+
+        case EXPRESSION_ERROR:
+                fail("%s", e->string);
         }
 
         if (e->_type == NULL) {
@@ -4921,6 +4971,37 @@ UpdateRefinemenets(Ty *ty, Scope *scope)
 }
 
 static void
+symbolize_fun_def(Ty *ty, Scope *scope, Stmt *s, u32 flag)
+{
+        symbolize_lvalue(
+                ty,
+                scope,
+                s->target,
+                HasBody(s->value) && (s->target->module == NULL),
+                s->pub
+        );
+
+        symbolize_expression(ty, scope, s->value);
+
+        Symbol *var = s->target->symbol;
+
+        dont_printf("%s(0) :: %s\n", s->target->identifier, type_show(ty, var->type));
+
+        if (s->value->overload == NULL) {
+                if (HasBody(s->value)) {
+                        var->type = s->value->fn_symbol->type;
+                }
+
+                dont_printf("%s(1) :: %s\n", s->target->identifier, type_show(ty, var->type));
+
+                s->target->_type = s->value->_type;
+
+                var->expr = s->value;
+                var->flags |= flag;
+        }
+}
+
+static void
 symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
 {
         Scope           *subscope;
@@ -4954,9 +5035,11 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
         case STATEMENT_IMPORT:
                 import_module(ty, s);
                 break;
+
         case STATEMENT_USE:
                 CompilerDoUse(ty, s, scope);
                 break;
+
         case STATEMENT_DEFER:
                 if (STATE.func == NULL) {
                         fail("invalid defer statement (not inside of a function)");
@@ -4967,13 +5050,16 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
                 s->_type = s->expression->_type;
                 s->will_return = WillReturn(s->expression);
                 break;
+
         case STATEMENT_BREAK:
         case STATEMENT_NEXT:
                 symbolize_expression(ty, scope, s->expression);
                 break;
+
         case STATEMENT_TYPE_DEFINITION:
                 define_type(ty, s, scope);
                 break;
+
         case STATEMENT_CLASS_DEFINITION:
                 cd = &s->class;
 
@@ -5046,13 +5132,14 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
                 }
 
                 STATE.class = NULL;
-
                 break;
+
         case STATEMENT_TAG_DEFINITION:
                 cd = &s->tag;
                 symbolize_methods(ty, cd->scope, CLASS_TAG, &s->tag.methods, MT_INSTANCE);
                 symbolize_methods(ty, cd->scope, CLASS_TAG, &s->tag.s_methods, MT_STATIC);
                 break;
+
         case STATEMENT_BLOCK:
                 scope = scope_new(ty, "(block)", scope, false);
         case STATEMENT_MULTI:
@@ -5082,6 +5169,7 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
                         v0(scope->refinements);
                 }
                 break;
+
         case STATEMENT_TRY:
         {
                 begin_try(ty);
@@ -5101,6 +5189,7 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
                 s->try.need_trace = end_try(ty)->need_trace;
                 break;
         }
+
         case STATEMENT_MATCH:
                 s->will_return = vN(s->match.statements) > 0;
         case STATEMENT_WHILE_MATCH:
@@ -5123,6 +5212,7 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
                 SET_TYPE_SRC(s);
                 break;
         }
+
         case STATEMENT_WHILE:
                 subscope = scope_new(ty, "(while)", scope, false);
                 for (int i = 0; i < vN(s->While.parts); ++i) {
@@ -5138,6 +5228,7 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
                 }
                 symbolize_statement(ty, subscope, s->While.block);
                 break;
+
         case STATEMENT_IF:
                 // if not let Ok(x) = f() or not [y] = bar() { ... }
                 subscope = scope_new(ty, "(if)", scope, false);
@@ -5199,6 +5290,7 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
                 s->will_return = (s->iff.then != NULL && s->iff.then->will_return)
                               && (s->iff.otherwise != NULL && s->iff.otherwise->will_return);
                 break;
+
         case STATEMENT_FOR_LOOP:
                 scope = scope_new(ty, "(for)", scope, false);
                 subscope = scope_new(ty, "(for-body)", scope, false);
@@ -5210,6 +5302,7 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
                 s->_type = s->for_loop.body->_type;
                 s->will_return = WillReturn(s->for_loop.body);
                 break;
+
         case STATEMENT_EACH_LOOP:
                 symbolize_expression(ty, scope, s->each.array);
                 subscope = scope_new(ty, "(for-each)", scope, false);
@@ -5221,6 +5314,7 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
                 s->_type = s->each.body->_type;
                 s->will_return = WillReturn(s->each.body);
                 break;
+
         case STATEMENT_RETURN:
                 if (STATE.func == NULL) {
                         fail("invalid return statement (not inside of a function)");
@@ -5250,8 +5344,8 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
                 }
 
                 s->will_return = true;
-
                 break;
+
         case STATEMENT_DEFINITION:
                 WITH_SCOPE_LIMIT(s->when) {
                         if (s->value->type == EXPRESSION_LIST) {
@@ -5277,6 +5371,7 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
                         );
                 }
                 break;
+
         case STATEMENT_OPERATOR_DEFINITION:
                 symbolize_expression(ty, scope, s->value);
                 /*
@@ -5287,27 +5382,17 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
                         *v_(s->value->constraints, i) = NULL;
                 }
                 break;
+
         case STATEMENT_FUNCTION_DEFINITION:
+                symbolize_fun_def(ty, scope, s, SYM_FUNCTION);
+                break;
+
         case STATEMENT_MACRO_DEFINITION:
+                symbolize_fun_def(ty, scope, s, SYM_MACRO);
+                break;
+
         case STATEMENT_FUN_MACRO_DEFINITION:
-                symbolize_lvalue(
-                        ty,
-                        scope,
-                        s->target,
-                        HasBody(s->value) && (s->target->module == NULL),
-                        s->pub
-                );
-                symbolize_expression(ty, scope, s->value);
-                dont_printf("%s(0) :: %s\n", s->target->identifier, type_show(ty, s->target->symbol->type));
-                if (s->value->overload == NULL) {
-                        Symbol *var = s->target->symbol;
-                        if (HasBody(s->value)) {
-                                var->type = s->value->fn_symbol->type;
-                        }
-                        s->target->_type = s->value->_type;
-                        dont_printf("%s(1) :: %s\n", s->target->identifier, type_show(ty, s->target->symbol->type));
-                        s->target->symbol->expr = s->value;
-                }
+                symbolize_fun_def(ty, scope, s, SYM_FUN_MACRO);
                 break;
         }
 
@@ -5477,8 +5562,14 @@ emit_load(Ty *ty, Symbol const *s, Scope const *scope)
                 emit_load_instr(ty, s->identifier, INSTR_LOAD_LOCAL, s->i);
         } else if (!local && SymbolIsCaptured(s)) {
                 int i = 0;
-                while (v__(scope->function->captured, i) != s) {
+                while (
+                        (i < vN(scope->function->captured))
+                     && (v__(scope->function->captured, i) != s)
+                ) {
                         i += 1;
+                }
+                if (i == vN(scope->function->captured)) {
+                        fail("Captured symbol %s not found in function %s", s->identifier, STATE.func->name);
                 }
                 emit_load_instr(ty, s->identifier, INSTR_LOAD_CAPTURED, i);
         } else {
@@ -6699,6 +6790,7 @@ emit_try_match_(Ty *ty, Expr const *pattern)
         switch (pattern->type) {
         case EXPRESSION_MATCH_ANY:
                 break;
+
         case EXPRESSION_RESOURCE_BINDING:
                 INSN(PUSH_DROP);
                 /* fallthrough */
@@ -6724,11 +6816,13 @@ emit_try_match_(Ty *ty, Expr const *pattern)
                         emit_try_match_(ty, pattern->aliased);
                 }
                 break;
+
         case EXPRESSION_TAG_PATTERN:
                 emit_tgt(ty, pattern->symbol, STATE.fscope, true);
                 FAIL_MATCH_IF(TRY_STEAL_TAG);
                 emit_try_match_(ty, pattern->tagged);
                 break;
+
         case EXPRESSION_CHECK_MATCH:
                 emit_try_match_(ty, pattern->left);
                 if (IsClassName(pattern->right)) {
@@ -6740,15 +6834,18 @@ emit_try_match_(Ty *ty, Expr const *pattern)
                         FAIL_MATCH_IF(JUMP_IF_NOT);
                 }
                 break;
+
         case EXPRESSION_MATCH_NOT_NIL:
                 emit_tgt(ty, pattern->symbol, STATE.fscope, true);
                 FAIL_MATCH_IF(TRY_ASSIGN_NON_NIL);
                 break;
+
         case EXPRESSION_MUST_EQUAL:
                 emit_load(ty, pattern->symbol, STATE.fscope);
                 FAIL_MATCH_IF(ENSURE_EQUALS_VAR);
                 need_loc = true;
                 break;
+
         case EXPRESSION_KW_AND:
                 emit_try_match_(ty, pattern->left);
                 for (int i = 0; i < vN(pattern->p_cond); ++i) {
@@ -6762,6 +6859,7 @@ emit_try_match_(Ty *ty, Expr const *pattern)
                         }
                 }
                 break;
+
         case EXPRESSION_NOT_NIL_VIEW_PATTERN:
                 INSN(DUP);
                 FAIL_MATCH_IF(JUMP_IF_NIL);
@@ -6776,6 +6874,7 @@ emit_try_match_(Ty *ty, Expr const *pattern)
                 emit_try_match_(ty, pattern->right);
                 INSN(POP);
                 break;
+
         case EXPRESSION_ARRAY:
                 for (int i = 0; i < vN(pattern->elements); ++i) {
                         if (v__(pattern->elements, i)->type == EXPRESSION_MATCH_REST) {
@@ -6807,13 +6906,12 @@ emit_try_match_(Ty *ty, Expr const *pattern)
                                 INSN(POP);
                         }
                 }
-
                 if (!after) {
                         FAIL_MATCH_IF(ENSURE_LEN);
                         Ei32(vN(pattern->elements));
                 }
-
                 break;
+
         case EXPRESSION_DICT:
                 /*
                  * If there are only keys and no values, we interpret this as a Set
@@ -6852,15 +6950,15 @@ emit_try_match_(Ty *ty, Expr const *pattern)
                         }
                 }
                 break;
+
         case EXPRESSION_TAG_APPLICATION:
                 INSN(DUP);
                 FAIL_MATCH_IF(TRY_TAG_POP);
                 Ei32(tag_app_tag(pattern));
-
                 emit_try_match_(ty, pattern->tagged);
-
                 INSN(POP);
                 break;
+
         case EXPRESSION_REGEX:
                 FAIL_MATCH_IF(TRY_REGEX);
                 emit_symbol((uptr) pattern->regex);
@@ -6869,6 +6967,7 @@ emit_try_match_(Ty *ty, Expr const *pattern)
                 Ei32(pattern->regex->ncap);
                 need_loc = true;
                 break;
+
         case EXPRESSION_TUPLE:
                 for (int i = 0; i < vN(pattern->es); ++i) {
                         if (v__(pattern->es, i)->type == EXPRESSION_MATCH_REST) {
@@ -6898,7 +6997,6 @@ emit_try_match_(Ty *ty, Expr const *pattern)
                                 INSN(POP);
                         }
                 }
-
                 if (
                         vN(pattern->es) == 0
                      || vvL(pattern->es)[0]->type != EXPRESSION_MATCH_REST
@@ -6906,8 +7004,8 @@ emit_try_match_(Ty *ty, Expr const *pattern)
                         FAIL_MATCH_IF(ENSURE_LEN_TUPLE);
                         Ei32(vN(pattern->es));
                 }
-
                 break;
+
         case EXPRESSION_LIST:
         {
                 int n = vN(pattern->es);
@@ -6922,6 +7020,7 @@ emit_try_match_(Ty *ty, Expr const *pattern)
 
                 break;
         }
+
         case EXPRESSION_REF_PATTERN:
         {
                 emit_tgt(ty, pattern->tmp, STATE.fscope, true);
@@ -6929,6 +7028,7 @@ emit_try_match_(Ty *ty, Expr const *pattern)
                 avP(STATE.match_assignments, pattern);
                 break;
         }
+
         case EXPRESSION_CHOICE_PATTERN:
         {
                 vec(JumpPlaceholder) matched = {0};
@@ -6964,6 +7064,7 @@ emit_try_match_(Ty *ty, Expr const *pattern)
 
                 break;
         }
+
         default:
                 /*
                  * Need to think about how this should work...
@@ -9104,16 +9205,21 @@ emit_expr(Ty *ty, Expr const *e, bool need_loc)
         case EXPRESSION_LIST:
                 if (vN(e->es) > 0) {
                         EE(v__(e->es, 0));
-                        break;
+                } else {
+                        UNREACHABLE("empty list expression");
                 }
-                // v v v v v v v v v v v v v v
+                break;
+
+        case EXPRESSION_ERROR:
+                fail("%s", e->string);
 
         default:
                 fail("expression unexpected in this context: %s", ExpressionTypeName(e));
         }
 
-        if (KEEP_LOCATION(e) || need_loc)
+        if (KEEP_LOCATION(e) || need_loc) {
                 add_location(ty, e, start, vN(STATE.code));
+        }
 
         RestoreContext(ty, ctx);
 
@@ -9264,6 +9370,10 @@ emit_statement(Ty *ty, Stmt const *s, bool want_result)
                         STATE.meth = v__(s->class.methods, i);
                         EE(v__(s->class.methods, i));
                 }
+                for (int i = 0; i < vN(s->class.s_setters); ++i) {
+                        STATE.meth = v__(s->class.s_setters, i);
+                        EE(v__(s->class.s_setters, i));
+                }
                 for (int i = 0; i < vN(s->class.s_getters); ++i) {
                         STATE.meth = v__(s->class.s_getters, i);
                         EE(v__(s->class.s_getters, i));
@@ -9279,6 +9389,7 @@ emit_statement(Ty *ty, Stmt const *s, bool want_result)
                 Ei32(s->class.symbol);
                 Ei32(vN(s->class.s_methods));
                 Ei32(vN(s->class.s_getters));
+                Ei32(vN(s->class.s_setters));
                 Ei32(vN(s->class.methods));
                 Ei32(vN(s->class.getters));
                 Ei32(vN(s->class.setters));
@@ -9288,6 +9399,9 @@ emit_statement(Ty *ty, Stmt const *s, bool want_result)
 
                 for (int i = vN(s->class.s_getters); i > 0; --i)
                         EM(v__(s->class.s_getters, i - 1)->name);
+
+                for (int i = vN(s->class.s_setters); i > 0; --i)
+                        EM(v__(s->class.s_setters, i - 1)->name);
 
                 for (int i = vN(s->class.methods); i > 0; --i)
                         EM(v__(s->class.methods, i - 1)->name);
@@ -9539,6 +9653,7 @@ RedpillFun(Ty *ty, Scope *scope, Expr *f, Type *self0)
         if (f->name != NULL && !is_method(f)) {
                 scope = scope_new(ty, "(function name)", scope, false);
                 f->fn_symbol = addsymbol(ty, scope, f->name);
+                f->fn_symbol->flags |= SYM_FUNCTION;
         }
 
         f->scope = scope_new(ty, f->name == NULL ? "(anon)" : f->name, scope, true);
@@ -9549,13 +9664,13 @@ RedpillFun(Ty *ty, Scope *scope, Expr *f, Type *self0)
                 for (usize i = 0; i < vN(f->type_params); ++i) {
                         Expr *param = v__(f->type_params, i);
                         if (param->symbol == NULL) {
-                                param->symbol = scope_add_type_var(ty, f->scope, param->identifier);
+                                u32 flags = 0;
                                 if (param->type == EXPRESSION_MATCH_REST) {
-                                        param->symbol->flags |= SYM_VARIADIC;
-                                        param->symbol->type->variadic = true;
+                                        flags |= SYM_VARIADIC;
                                 } else if (param->type == EXPRESSION_PACK) {
-                                        param->symbol->flags |= SYM_PARAM_PACK;
+                                        flags |= SYM_PARAM_PACK;
                                 }
+                                param->symbol = scope_add_type_var(ty, f->scope, param->identifier, flags);
                         }
                         symbolize_expression(ty, f->scope, param->constraint);
                 }
@@ -9668,9 +9783,9 @@ RedpillFun(Ty *ty, Scope *scope, Expr *f, Type *self0)
         }
 
         if (f->class < 0) {
-                XLOG("REDPILL: === %s() === %s", f->name, type_show(ty, f->_type));
+                LOG("REDPILL: === %s() === %s", f->name, type_show(ty, f->_type));
         } else {
-                XLOG("REDPILL: === %s.%s() === %s", class_name(ty, f->class), f->name, type_show(ty, f->_type));
+                LOG("REDPILL: === %s.%s() === %s", class_name(ty, f->class), f->name, type_show(ty, f->_type));
         }
 
         RestoreContext(ty, ctx);
@@ -9708,6 +9823,14 @@ InjectRedpill(Ty *ty, Stmt *s)
 
         case STATEMENT_TAG_DEFINITION:
                 def = &s->class;
+                if (def->scope == NULL) {
+                        define_tag(ty, s);
+                }
+                if (def->redpilled) {
+                        break;
+                } else {
+                        def->redpilled = true;
+                }
                 class = def->var->type->class;
                 RedpillMethods(
                         ty,
@@ -9717,8 +9840,15 @@ InjectRedpill(Ty *ty, Stmt *s)
                 );
                 break;
 
+        case STATEMENT_TYPE_DEFINITION:
+                define_type(ty, s, scope);
+                break;
+
         case STATEMENT_CLASS_DEFINITION:
                 def = &s->class;
+                if (def->scope == NULL) {
+                        define_class(ty, s);
+                }
                 if (def->redpilled) {
                         break;
                 } else {
@@ -9954,9 +10084,80 @@ opt(Ty *ty, Stmt *stmt)
         return visit_statement(
                 ty,
                 stmt,
-                scope_new(ty, "(opt)", NULL, false),
+                NULL,
                 &visitor
         );
+}
+
+static void
+tag_start_token(Expr const *e, i32 tag)
+{
+        Module *mod = e->mod;
+
+        if (mod == NULL) {
+                return;
+        }
+
+        TokenVector *tokens = &mod->tokens;
+        u32 i = e->start.tok;
+
+        if (i < vN(*tokens)) {
+                v_(*tokens, i)->tag = tag;
+        }
+}
+
+static Expr *
+annotate_expr_tokens(Expr *e, Scope *scope, void *ctx)
+{
+        Symbol *sym;
+
+        switch (e->type) {
+        case EXPRESSION_IDENTIFIER:
+                sym = e->symbol;
+                if (SymbolIsFunction(sym)) {
+                        tag_start_token(e, TT_FUNC);
+                } else if (SymbolIsTypeVar(sym)) {
+                        tag_start_token(e, TT_TYPE);
+                } else if (SymbolIsClass(sym)) {
+                        tag_start_token(e, TT_TYPE);
+                } else if (SymbolIsTag(sym)) {
+                        tag_start_token(e, TT_TYPE);
+                } else if (SymbolIsMember(sym)) {
+                        tag_start_token(e, TT_MEMBER);
+                } else if (SymbolIsNamespace(sym)) {
+                        tag_start_token(e, TT_MODULE);
+                }
+                break;
+
+        case EXPRESSION_METHOD_CALL:
+                break;
+
+        case EXPRESSION_FUNCTION_CALL:
+                break;
+        }
+
+        return e;
+}
+
+static Expr *
+annotate_lvalue_tokens(Expr *e, bool _, Scope *scope, void *ctx)
+{
+        return annotate_expr_tokens(e, scope, ctx);
+}
+
+static Stmt *
+annotate_tokens(Ty *ty, Stmt *stmt)
+{
+        VisitorSet visitor = visit_identitiy(ty);
+
+        visitor.e_post = annotate_expr_tokens;
+        visitor.p_post = annotate_expr_tokens;
+        visitor.t_post = annotate_expr_tokens;
+        visitor.l_post = annotate_lvalue_tokens;
+
+        return (stmt->type < EXPRESSION_MAX_TYPE)
+             ? visit_expression(ty, (Expr *)stmt, NULL, &visitor)
+             : visit_statement(ty, stmt, NULL, &visitor);
 }
 
 static Expr *
@@ -10063,11 +10264,10 @@ on_god(Ty *ty, Stmt *stmt)
         return visit_statement(
                 ty,
                 stmt,
-                scope_new(ty, "(lsp)", NULL, false),
+                NULL,
                 &visitor
         );
 }
-
 
 inline static bool
 HaveMulti(Stmt **stmts, int i)
@@ -10077,10 +10277,10 @@ HaveMulti(Stmt **stmts, int i)
                         (stmts[i + 1] != NULL)
                      && (stmts[i    ]->type == STATEMENT_FUNCTION_DEFINITION)
                      && (stmts[i + 1]->type == STATEMENT_FUNCTION_DEFINITION)
-                     && strcmp(
+                     && s_eq(
                                 stmts[i]->target->identifier,
                                 stmts[i + 1]->target->identifier
-                        ) == 0
+                        )
                 ) {
                         if (HasBody(stmts[i]->value) || HasBody(stmts[i + 1]->value)) {
                                 return true;
@@ -10094,30 +10294,8 @@ HaveMulti(Stmt **stmts, int i)
 }
 
 static Stmt **
-compile(Ty *ty, char const *source)
+expand_prog(Ty *ty, Stmt **p)
 {
-        Stmt **p;
-        Location parse_error_location;
-
-        PushScope(STATE.global);
-
-        if (!parse_ex(
-                ty,
-                source,
-                CurrentModulePath(ty),
-                &p,
-                &parse_error_location,
-                &STATE.source_tokens
-        )) {
-                TY_THROW_ERROR();
-        }
-
-        DefinePending(ty);
-
-        for (int i = 0; p[i] != NULL; ++i) {
-                p[i] = opt(ty, p[i]);
-        }
-
         statement_vector expanded = {0};
 
         for (usize i = 0; p[i] != NULL; ++i) {
@@ -10154,7 +10332,7 @@ compile(Ty *ty, char const *source)
                         } while (
                                 (p[i + m] != NULL)
                             &&  (p[i + m]->type == STATEMENT_FUNCTION_DEFINITION)
-                            &&  (strcmp(multi->name, p[i + m]->target->identifier) == 0)
+                            &&  s_eq(multi->name, p[i + m]->target->identifier)
                         );
 
                         avP(expanded, def);
@@ -10165,8 +10343,13 @@ compile(Ty *ty, char const *source)
         }
 
         avP(expanded, NULL);
-        p = vv(expanded);
 
+        return vv(expanded);
+}
+
+static Stmt **
+resolve_prog(Ty *ty, Stmt **p)
+{
         for (usize i = 0; p[i] != NULL; ++i) {
                 InjectRedpill(ty, p[i]);
         }
@@ -10189,10 +10372,67 @@ compile(Ty *ty, char const *source)
                 type_iter(ty);
         }
 
+        return p;
+}
+
+static Stmt **
+compile(Ty *ty, char const *source)
+{
+        Stmt **p;
+        Location parse_error_location;
+
+        PushScope(STATE.global);
+
+        if (!parse_ex(
+                ty,
+                source,
+                CurrentModulePath(ty),
+                &p,
+                &parse_error_location,
+                &STATE.module->tokens
+        )) {
+                STATE.module->flags |= MOD_PARSE_ERR;
+                TY_THROW_ERROR();
+        }
+
+        if (HAVE_COMPILER_FLAG(ZFOLD)) {
+                for (int i = 0; p[i] != NULL; ++i) {
+                        p[i] = opt(ty, p[i]);
+                }
+        }
+
+        if (!HAVE_COMPILER_FLAG(RESOLVE)) {
+                goto NoResolve;
+        }
+
+        DefinePending(ty);
+
+        if (HAVE_COMPILER_FLAG(NO_TYPES)) {
+                WITH_TYPES_OFF {
+                        p = expand_prog(ty, p);
+                        p = resolve_prog(ty, p);
+                }
+        } else {
+                p = expand_prog(ty, p);
+                p = resolve_prog(ty, p);
+        }
+
+#if 0
         if (SuggestCompletions || FindDefinition) {
                 for (usize i = 0; p[i] != NULL; ++i) {
                         on_god(ty, p[i]);
                 }
+        }
+#endif
+
+        if (HAVE_COMPILER_FLAG(TOKENS)) {
+                for (usize i = 0; p[i] != NULL; ++i) {
+                        annotate_tokens(ty, p[i]);
+                }
+        }
+
+        if (!HAVE_COMPILER_FLAG(EMIT)) {
+                goto NoEmit;
         }
 
         emit_new_globals(ty);
@@ -10255,29 +10495,21 @@ compile(Ty *ty, char const *source)
 
         INSN(HALT);
 
-        /*
-         * We can re-use this vec(Stmt *) for further compilation but it's important
-         * that we empty it here. Because we stripped the constraints out of the
-         * functions, passing them to symbolize_op_def() again will provide new
-         * implementations of the operators that match /any/ operands.
-         */
-        vN(STATE.class_ops) = 0;
+        add_annotation(ty, "(top)", 0, vN(STATE.code));
+        PatchAnnotations(ty);
 
-        /*
-         * Add all of the location information from this compliation unit to the GlobalScope list.
-         */
+NoEmit:
         add_location_info(ty);
 
+        vN(STATE.class_ops) = 0;
         vN(STATE.generator_returns) = 0;
         vN(STATE.tries) = 0;
         vN(STATE.loops) = 0;
 
-        add_annotation(ty, "(top)", 0, vN(STATE.code));
-        PatchAnnotations(ty);
-
-        PopScope();
-
         DisableRefinements(ty, STATE.active);
+
+NoResolve:
+        PopScope();
 
         return p;
 }
@@ -10287,7 +10519,7 @@ GetModule(Ty *ty, char const *name)
 {
         for (int i = 0; i < vN(modules); ++i) {
                 Module const *mod = v__(modules, i);
-                if (strcmp(mod->name, name) == 0) {
+                if (s_eq(mod->name, name)) {
                         return (Module *)mod;
                 }
         }
@@ -10300,7 +10532,7 @@ GetModuleImport(Ty *ty, Module const *mod, char const *name)
 {
         for (int i = 0; i < vN(mod->imports); ++i) {
                 struct import const *import = v_(mod->imports, i);
-                if (strcmp(import->name, name) == 0) {
+                if (s_eq(import->name, name)) {
                         return import->mod;
                 }
         }
@@ -10311,10 +10543,9 @@ GetModuleImport(Ty *ty, Module const *mod, char const *name)
 inline static Module *
 PatchModule(Ty *ty, Module *mod, Stmt **prog)
 {
-        mod->prog = prog;
-        mod->code = vv(STATE.code);
+        mod->prog    = prog;
+        mod->code    = vv(STATE.code);
         mod->imports = STATE.imports;
-        mod->tokens = STATE.source_tokens;
         return mod;
 }
 
@@ -10400,6 +10631,7 @@ bool
 compiler_import_module(Ty *ty, Stmt const *s)
 {
         if (TY_CATCH_ERROR()) {
+                TY_CATCH();
                 return false;
         }
 
@@ -10435,10 +10667,10 @@ import_module(Ty *ty, Stmt const *s)
          *
          * are both errors.
          */
-        bool forgive = (STATE._eval || STATE._parse);
+        bool forgive = HAVE_COMPILER_FLAG(FORGIVING);
 
         for (int i = 0; i < vN(STATE.imports) && !forgive; ++i) {
-                bool collision = (strcmp(as, v__(STATE.imports, i).name) == 0);
+                bool collision = s_eq(as, v__(STATE.imports, i).name);
                 bool duplicate = (v__(STATE.imports, i).mod->scope == module_scope);
 
                 if (forgive && (collision || duplicate)) {
@@ -10463,7 +10695,7 @@ import_module(Ty *ty, Stmt const *s)
         char const **aliases = (char const **)vv(s->import.aliases);
         int n = vN(s->import.identifiers);
 
-        bool everything = (n == 1) && (strcmp(identifiers[0], "..") == 0);
+        bool everything = (n == 1) && s_eq(identifiers[0], "..");
 
         if (everything) {
                 char const *id = scope_copy_public(ty, STATE.global, module_scope, pub);
@@ -10553,7 +10785,7 @@ compiler_init(Ty *ty)
         if (CheckTypes) {
                 scope_add_type(ty, GlobalScope, "Any")->type = TYPE_ANY;
         } else {
-                AnyTypeSymbol = scope_add_type_var(ty, GlobalScope, "Any");
+                AnyTypeSymbol = scope_add_type_var(ty, GlobalScope, "Any", 0);
         }
 }
 
@@ -10561,10 +10793,11 @@ void
 compiler_load_builtin_modules(Ty *ty)
 {
         if (TY_CATCH_ERROR()) {
+                Value ex = TY_CATCH();
                 fprintf(
                         stderr,
                         "Aborting, failed to load builtin modules: %s\n",
-                        TyError(ty)
+                        VSC(&ex)
                 );
                 exit(1);
         }
@@ -10754,6 +10987,7 @@ compiler_compile_source(
         CompileState save = STATE;
 
         if (TY_CATCH_ERROR()) {
+                TY_CATCH();
                 scope_set_symbol(ty, symbol);
                 AbandonModule(ty, module);
                 STATE = save;
@@ -10821,7 +11055,7 @@ compiler_find_definition(Ty *ty, char const *file, int line, int col)
                                      && col <= e->end.col
                                 )
                              && (e->mod->path != NULL)
-                             && (strcmp(e->mod->path, file) == 0)
+                             && s_eq(e->mod->path, file)
                         ) {
                                 Symbol *sym = (e->type == EXPRESSION_IDENTIFIER)         ? e->symbol
                                             : (e->type == STATEMENT_FUNCTION_DEFINITION) ? ((Stmt *)e)->target->symbol
@@ -11074,13 +11308,6 @@ mkcstr(Ty *ty, Value const *v)
 u32
 source_register(Ty *ty, void const *src)
 {
-#if 0
-        char const *s = ((Expr *)src)->start.s;
-        if (s == NULL) s = "XXXXX";
-        int line = ((Expr *)src)->start.line;
-        XLOG("Register: %p -> %p: [%.*s] (%d)", src, *(void **)src, (int)strcspn(s, "\n"), s, line + 1);
-#endif
-
         for (u32 i = 0; i < vN(source_map); ++i) {
                 if (v__(source_map, i) == NULL) {
                         v__(source_map, i) = (Expr const *)src;
@@ -11104,14 +11331,14 @@ source_lookup(Ty *ty, u32 src)
 }
 
 void
-ForgetSourceNodesFrom(void const *base)
+ForgetSourceNodesFrom(void const *_base, usize len)
 {
+        uptr base = (uptr)_base;
+
         for (u32 i = 0; i < vN(source_map); ++i) {
-                Expr const *e = v__(source_map, i);
-                if (e != NULL && e->arena == base) {
+                uptr expr = (uptr)v__(source_map, i);
+                if (expr >= base && expr < base + len) {
                         v__(source_map, i) = NULL;
-                } else if (e != NULL) {
-                        // TODO
                 }
         }
 }
@@ -12717,7 +12944,7 @@ cexpr(Ty *ty, Value *v)
                 e->module = (mod != NULL && mod->type != VALUE_NIL) ? mkcstr(ty, mod) : NULL;
                 e->constraint = (constraint != NULL && constraint->type != VALUE_NIL) ? cexpr(ty, constraint) : NULL;
 
-                if (e->module == NULL && strcmp(e->identifier, "__line__") == 0) {
+                if (e->module == NULL && s_eq(e->identifier, "__line__")) {
                         e->start = STATE.mstart;
                         e->end = STATE.mend;
                 }
@@ -13615,6 +13842,7 @@ CToTyExpr(Ty *ty, Expr *e)
         GC_STOP();
 
         if (TY_CATCH_ERROR()) {
+                TY_CATCH();
                 GC_RESUME();
                 return NONE;
         }
@@ -13633,6 +13861,7 @@ CToTyStmt(Ty *ty, Stmt *s)
         GC_STOP();
 
         if (TY_CATCH_ERROR()) {
+                TY_CATCH();
                 GC_RESUME();
                 return NONE;
         }
@@ -13651,6 +13880,7 @@ TyToCExpr(Ty *ty, Value *v)
         GC_STOP();
 
         if (TY_CATCH_ERROR()) {
+                TY_CATCH();
                 GC_RESUME();
                 return NULL;
         }
@@ -13663,23 +13893,20 @@ TyToCExpr(Ty *ty, Value *v)
         return e;
 }
 
-Value
-tyeval(Ty *ty, Expr *e)
+bool
+tyeval(Ty *ty, Expr *e, Value *ret)
 {
         if (TY_CATCH_ERROR()) {
-                return NONE;
+                TY_CATCH();
+                *ret = NONE;
+                return false;
         }
 
         if (e->xscope == NULL) {
-                symbolize_expression(
-                        ty,
-                        (
-                                STATE.macro_scope != NULL
-                              ? STATE.macro_scope
-                              : STATE.global
-                        ),
-                        e
-                );
+                Scope *scope = (STATE.macro_scope != NULL)
+                             ? STATE.macro_scope
+                             : STATE.global;
+                symbolize_expression(ty, scope, e);
         }
 
         byte_vector code_save = STATE.code;
@@ -13698,7 +13925,7 @@ tyeval(Ty *ty, Expr *e)
         add_location_info(ty);
 
         EVAL_DEPTH += 1;
-        Value v = vm_try_exec(ty, vv(STATE.code));
+        bool ok = vm_try_exec(ty, vv(STATE.code), ret);
         EVAL_DEPTH -= 1;
 
         STATE.code = code_save;
@@ -13706,7 +13933,7 @@ tyeval(Ty *ty, Expr *e)
 
         vN(location_lists) = n_location_lists;
 
-        return v;
+        return ok;
 }
 
 Value
@@ -13896,12 +14123,13 @@ define_tag(Ty *ty, Stmt *s)
 
         for (int i = 0; i < vN(s->tag.type_params); ++i) {
                 Expr *t0 = v__(s->tag.type_params, i);
-                t0->symbol = scope_add_type_var(ty, s->tag.scope, t0->identifier);
+                t0->symbol = scope_add_type_var(ty, s->tag.scope, t0->identifier, 0);
                 symbolize_expression(ty, s->tag.scope, t0->constraint);
         }
 
         Symbol *sym = addsymbol(ty, scope, s->tag.name);
         sym->flags |= SYM_CONST;
+        sym->flags |= SYM_TAG;
         sym->tag = tags_new(ty, s->tag.name);
         sym->doc = s->tag.doc;
         s->tag.symbol = sym->tag;
@@ -13976,14 +14204,18 @@ define_type(Ty *ty, Stmt *s, Scope *scope)
 
         for (int i = 0; i < vN(s->class.type_params); ++i) {
                 Expr *t0 = v__(s->class.type_params, i);
-                t0->symbol = scope_add_type_var(ty, s->class.scope, t0->identifier);
+                u32 flags = 0;
+                if (t0->type == EXPRESSION_MATCH_REST) {
+                        flags |= SYM_VARIADIC;
+                }
+                t0->symbol = scope_add_type_var(ty, s->class.scope, t0->identifier, flags);
                 symbolize_expression(ty, s->class.scope, t0->constraint);
         }
 
         Symbol *sym = scope_local_lookup(ty, scope, s->class.name);
 
         if (sym == NULL) {
-                sym = scope_add_type_var(ty, scope, s->class.name);
+                sym = scope_add_type_var(ty, scope, s->class.name, 0);
         } else if (!ModuleIsReloading(STATE.module)) {
                 fail(
                         "redeclaration of %s%s%s%s",
@@ -14022,7 +14254,11 @@ define_class(Ty *ty, Stmt *s)
 
         for (int i = 0; i < vN(s->class.type_params); ++i) {
                 Expr *t0 = v__(s->class.type_params, i);
-                t0->symbol = scope_add_type_var(ty, s->class.s_scope, t0->identifier);
+                u32 flags = 0;
+                if (t0->type == EXPRESSION_MATCH_REST) {
+                        flags |= SYM_VARIADIC;
+                }
+                t0->symbol = scope_add_type_var(ty, s->class.s_scope, t0->identifier, flags);
                 symbolize_expression(ty, s->class.s_scope, t0->constraint);
         }
 
@@ -14056,7 +14292,7 @@ define_class(Ty *ty, Stmt *s)
         sym->loc = cd->loc;
         sym->mod = s->mod;
         sym->type = class->type;
-
+        sym->flags |= SYM_CLASS;
         sym->flags |= SYM_CONST;
         if (cd->pub) {
                 sym->flags |= SYM_PUBLIC;
@@ -14065,7 +14301,7 @@ define_class(Ty *ty, Stmt *s)
         cd->symbol = sym->class;
         cd->var = sym;
 
-        XLOG(
+        LOG(
                 "%s================%s DEFINE CLASS: %s :: %s %s==========================%s",
                 TERM(91),
                 TERM(0),
@@ -14140,6 +14376,7 @@ define_class(Ty *ty, Stmt *s)
 
                         m->fn_symbol = addsymbol(ty, cd->scope, m->name);
                         m->fn_symbol->flags |= SYM_MEMBER;
+                        m->fn_symbol->flags |= SYM_FUNCTION;
                         m->fn_symbol->member = M_ID(name);
                         m->fn_symbol->class = sym->class;
 
@@ -14160,12 +14397,28 @@ define_class(Ty *ty, Stmt *s)
                 m->fn_symbol = addsymbol(ty, cd->s_scope, m->name);
                 m->fn_symbol->flags |= SYM_MEMBER;
                 m->fn_symbol->flags |= SYM_STATIC;
+                m->fn_symbol->flags |= SYM_FUNCTION;
                 m->fn_symbol->member = M_ID(name);
                 m->fn_symbol->class = sym->class;
         }
 
         for (int i = 0; i < vN(cd->s_getters); ++i) {
                 Expr *m = v__(cd->s_getters, i);
+                m->_type = UNKNOWN_TYPE;
+                m->class = sym->class;
+                name = GetPrivateName(m->name, sym->class, scratch, sizeof scratch);
+                class_add_s_getter(ty, sym->class, name, REF(NewZero()));
+
+                m->fn_symbol = addsymbol(ty, cd->s_scope, m->name);
+                m->fn_symbol->flags |= SYM_MEMBER;
+                m->fn_symbol->flags |= SYM_STATIC;
+                m->fn_symbol->flags |= SYM_PROPERTY;
+                m->fn_symbol->member = M_ID(name);
+                m->fn_symbol->class = sym->class;
+        }
+
+        for (int i = 0; i < vN(cd->s_setters); ++i) {
+                Expr *m = v__(cd->s_setters, i);
                 m->_type = UNKNOWN_TYPE;
                 m->class = sym->class;
                 name = GetPrivateName(m->name, sym->class, scratch, sizeof scratch);
@@ -14311,7 +14564,7 @@ IntroduceDefinitions(Ty *ty, Stmt *stmt)
                         (last == NULL)
                      || (last->ns != stmt->ns)
                      || (last->type != STATEMENT_FUNCTION_DEFINITION)
-                     || (strcmp(last->value->name, stmt->value->name) != 0)
+                     || !s_eq(last->value->name, stmt->value->name)
                 ) {
                         DefinePending(ty);
                         avP(STATE.pending, stmt);
@@ -14347,7 +14600,6 @@ define_macro(Ty *ty, Stmt *s, bool fun)
         DefinePending(ty);
 
         symbolize_statement(ty, STATE.global, s);
-        s->target->symbol->flags |= fun ? SYM_FUN_MACRO : SYM_MACRO;
         s->target->symbol->flags &= ~SYM_TRANSIENT;
         s->target->symbol->doc = s->doc;
         s->type = STATEMENT_FUNCTION_DEFINITION;
@@ -14417,6 +14669,7 @@ compiler_symbolize_expression(Ty *ty, Expr *e, Scope *scope)
         EVAL_DEPTH += 1;
 
         if (TY_CATCH_ERROR()) {
+                TY_CATCH();
                 EVAL_DEPTH -= 1;
                 return false;
         }
@@ -14456,6 +14709,7 @@ compiler_render_template(Ty *ty, Expr *e)
         Value v;
 
         if (TY_CATCH_ERROR()) {
+                TY_CATCH();
                 v = Err(ty, vSsz(TyError(ty)));
                 vmE(&v);
         }
@@ -15445,9 +15699,6 @@ DumpProgram(
                         break;
                 CASE(NIL)
                         break;
-                CASE(FMT1)
-                CASE(FMT2)
-                        break;
                 CASE(TO_STRING)
                         break;
                 CASE(YIELD)
@@ -15471,7 +15722,6 @@ DumpProgram(
                         dont_printf(" %s", type_show(ty, (Type *)s));
                         break;
                 CASE(EVAL)
-                CASE(EXPRESSION)
                         READVALUE(s);
                         break;
                 CASE(RENDER_TEMPLATE)
@@ -15551,8 +15801,6 @@ DumpProgram(
                 CASE(PUSH_TUPLE_MEMBER)
                         READVALUE(b);
                         READMEMBER(n);
-                        break;
-                CASE(PUSH_ALL)
                         break;
                 CASE(CONCAT_STRINGS)
                         READVALUE(n);
@@ -15648,12 +15896,14 @@ DumpProgram(
 
                         READVALUE(s_m);
                         READVALUE(s_g);
+                        READVALUE(s_s);
                         READVALUE(m);
                         READVALUE(g);
                         READVALUE(s);
 
                         while (s_m --> 0) { READMEMBER(i); }
                         while (s_g --> 0) { READMEMBER(i); }
+                        while (s_s --> 0) { READMEMBER(i); }
                         while (  m --> 0) { READMEMBER(i); }
                         while (  g --> 0) { READMEMBER(i); }
                         while (  s --> 0) { READMEMBER(i); }
@@ -15822,37 +16072,68 @@ IsTopLevel(Symbol const *sym)
             || (GlobalScope == s->parent);
 }
 
-CompileState
-PushCompilerState(Ty *ty, char const *file, u32 flags)
+Module *
+TyCompileSource(Ty *ty, char const *source, u32 flags)
 {
-        CompileState old = STATE;
+        CompileState state = STATE;
 
-        Module *tmp_mod = amA0(sizeof (Module));
-        tmp_mod->name = file;
-        tmp_mod->path = file;
-        tmp_mod->source = NULL;
-        tmp_mod->scope = scope_new(ty, file, GlobalScope, true);
+        Scope *global = (flags & TYC_INHERIT_GLOBAL)
+                      ? STATE.global
+                      : GlobalScope;
 
-        STATE = freshstate(ty, tmp_mod);
-        STATE._parse = (flags & TYC_PARSE);
-        STATE._eval  = (flags & TYC_EVAL);
+        Module *mod = amA0(sizeof (Module));
+        mod->name = "(tmp)";
+        mod->path = "(tmp)";
+        mod->source = source;
+        mod->scope = scope_new(ty, mod->name, global, false);
 
-        for (isize i = 0; i < vN(modules); ++i){
-                avP(
-                        STATE.imports,
-                        ((struct import) {
-                                .mod = v__(modules, i),
-                                .name = v__(modules, i)->name,
-                                .pub = true
-                        })
-                );
+        STATE = freshstate(ty, mod);
+        STATE.flags = flags;
+
+        if (HAVE_COMPILER_FLAG(IMPORT_ALL)) {
+                for (isize i = 0; i < vN(modules); ++i){
+                        avP(
+                                STATE.imports,
+                                ((struct import) {
+                                        .mod = v__(modules, i),
+                                        .name = v__(modules, i)->name,
+                                        .pub = true
+                                })
+                        );
+                }
         }
 
-        return old;
+        void *ctx = ContextList;
+        u32 types = TYPES_OFF;
+
+        i64 symbol = scope_get_symbol(ty);
+
+        if (TY_CATCH_ERROR()) {
+                Value exc = TY_CATCH();
+                scope_set_symbol(ty, symbol);
+                TYPES_OFF = types;
+                ContextList = ctx;
+                STATE = state;
+                return mod;
+        }
+
+        Stmt **prog = compile(ty, source);
+        PatchModule(ty, mod, prog);
+
+        class_finalize_all(ty);
+
+        TYPES_OFF = types;
+        ContextList = ctx;
+
+        STATE = state;
+
+        TY_CATCH_END();
+
+        return mod;
 }
 
 void
-PopCompilerState(Ty *ty, CompileState saved)
+RestoreCompilerState(Ty *ty, CompileState saved)
 {
         STATE = saved;
 }
@@ -15904,6 +16185,7 @@ CompilerResolveExpr(Ty *ty, Expr *e)
         }
 
         if (TY_CATCH_ERROR()) {
+                TY_CATCH();
                 return false;
         }
 
@@ -15969,6 +16251,7 @@ CompilerReloadModule(
         mod->scope->reloading = true;
 
         if (TY_CATCH_ERROR()) {
+                TY_CATCH();
                 mod->flags &= ~MOD_RELOADING;
                 mod->scope->reloading = false;
                 scope_set_symbol(ty, symbol);
@@ -16109,7 +16392,7 @@ CompilerSuggestCompletions(
 
         switch (QueryExpr->type) {
         case EXPRESSION_IDENTIFIER:
-                XXLOG(
+                LOG(
                         "OBJECT IS AN IDENTIFIER: %s::%s (namespace=%s)",
                         QueryExpr->module ? QueryExpr->module : "<>",
                         QueryExpr->identifier,
@@ -16121,7 +16404,7 @@ CompilerSuggestCompletions(
                       : (QueryExpr->xscope    != NULL) ? QueryExpr->xscope
                       : STATE.global;
 
-                XXLOG("QueryExpr=IDENTIFIER: scope=%s", scope ? scope_name(ty, scope) : "<null>");
+                LOG("QueryExpr=IDENTIFIER: scope=%s", scope ? scope_name(ty, scope) : "<null>");
                 if (scope != NULL) {
                         AddScopeCompletions(
                                 ty,
@@ -16135,7 +16418,7 @@ CompilerSuggestCompletions(
 
         case EXPRESSION_MEMBER_ACCESS:
                 if (QueryExpr->object->type == EXPRESSION_MODULE) {
-                        XXLOG("OBJECT IS A MODULE: %s", QueryExpr->object->name);
+                        LOG("OBJECT IS A MODULE: %s", QueryExpr->object->name);
                         AddScopeCompletions(
                                 ty,
                                 QueryExpr->object->scope,
@@ -16144,7 +16427,7 @@ CompilerSuggestCompletions(
                                 16
                         );
                 } else {
-                        XXLOG("OBJECT IS NOT A MODULE: %s", QueryExpr->object->name);
+                        LOG("OBJECT IS NOT A MODULE: %s", QueryExpr->object->name);
                         type_completions(
                                 ty,
                                 QueryExpr->object->_type,

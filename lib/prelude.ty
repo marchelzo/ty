@@ -20,11 +20,16 @@ use TokenData = { id: String, module: String }
 
 use TokenLocation = {
     line: Int,
-    col: Int,
+    col:  Int,
     byte: Int
 }
 
-use Token = { type: String, start: TokenLocation, end: TokenLocation } & TokenData
+use Token = TokenData & {
+    type:  String,
+    start: TokenLocation,
+    end:   TokenLocation,
+    ?meta: String | nil
+}
 
 use Subscript[T, U] = { `[]`: T -> U };
 
@@ -49,8 +54,17 @@ macro ParseError = {
     last: AST
 }
 
-fn ty::parse(source: String, tokens: Bool) -> Ok[(AST, {tokens: [Token]})] | Err[ParseError];
-fn ty::parse(source: String) -> Ok[AST] | Err[ParseError];
+fn ty::parse(
+    source: String,
+    tokens: Bool,
+    deep: Bool = false,
+    resolve: Bool = false
+) -> Ok[(AST, {tokens: [Token]})] | Err[ParseError];
+fn ty::parse(
+    source: String,
+    deep: Bool = false,
+    resolve: Bool = false
+) -> Ok[AST] | Err[ParseError];
 
 fn |>[a, b, c](f: a -> b, g: b -> c) -> (a -> c) { g@(f(*, **)) }
 
@@ -94,6 +108,8 @@ fn -(a: String, b: Int) -> String;
 fn +[K, U, V](a: Dict[K, U], b: Dict[K, V]) -> Dict[K, U | V];
 fn -[K, V](a: Dict[K, V], b: Dict[K, Any]) -> Dict[K, V];
 
+fn %.*[T, U, *Ts](tpl: (T, Ts), f: T -> U) -> (U, Ts);
+
 fn doc(c:  Class)    -> (String, String, [(String, String, String)]);
 fn doc(f:  Function) -> (String, String, String);
 fn doc(id: Any)   -> (String, String, String)
@@ -124,7 +140,7 @@ fn iround(x: Int | Float) -> Int;
 fn ord(character: String) -> Int;
 fn chr(codepoint: Int) -> String;
 fn getenv(var: String) -> String | nil;
-fn setenv(var: String, val: String) -> String | nil;
+fn setenv(var: String, val: String) -> nil;
 
 fn math::sqrt(x: Int | Float) -> Float;
 fn math::cos(x: Int | Float) -> Float;
@@ -294,7 +310,6 @@ class Function : Iter {
     }
 
     __match__(x) {
-        //print("self = {self}, x = {x}\n", flush=true)
         self(x)
     }
 
@@ -697,6 +712,10 @@ macro __define_ast! {
        | ty.Mul[(AST, AST)]
        | ty.Div[(AST, AST)]
        | ty.Mod[(AST, AST)]
+       | ty.MutAdd[(AST, AST)]
+       | ty.MutSub[(AST, AST)]
+       | ty.MutDiv[(AST, AST)]
+       | ty.MutMod[(AST, AST)]
        | ty.GT[(AST, AST)]
        | ty.LT[(AST, AST)]
        | ty.GEQ[(AST, AST)]
@@ -710,6 +729,8 @@ macro __define_ast! {
        | ty.Xor[(AST, AST)]
        | ty.Shl[(AST, AST)]
        | ty.Shr[(AST, AST)]
+       | ty.MutShl[(AST, AST)]
+       | ty.MutShr[(AST, AST)]
        | ty.Wtf[(AST, AST)]
        | ty.Cmp[(AST, AST)]
        | ty.LT[(AST, AST)]
@@ -776,7 +797,7 @@ class Dict[K, V] : Iterable[K, V] {
     }
 
     <=(o) {
-        ![*self].any?((not in o))
+        ![*self].any?(\_ not in o)
     }
 
     iterValues*() {
@@ -963,8 +984,11 @@ class String : Iterable[String], IntoPtr[Int] {
                     D[i][j] + cost
                 )
 
-                if i > 0 && j > 0 && a[i] == b[j - 1] && b[j] == a[i - 1] {
-                    D[i + 1][j + 1] = min(D[i + 1][j + 1], D[i - 1][j - 1] + 1)
+                if (i > 0 && j > 0 && a[i] == b[j - 1] && b[j] == a[i - 1]) {
+                    D[i + 1][j + 1] = min(
+                        D[i + 1][j + 1],
+                        D[i - 1][j - 1] + 1
+                    )
                 }
             }
         }
@@ -1153,21 +1177,6 @@ class Int : IntoPtr[_] {
             fmt("%{spec}d", (n ?? w) if '*' in spec, self)
         }
     }
-
-//    +(k: Int) -> Int { self + k }
-//    +(x: Float) -> Float { self + x }
-//
-//    -(k: Int) -> Int { self - k }
-//    -(x: Float) -> Float { self - x }
-//
-//    *(k: Int) -> Int { self * k }
-//    *(x: Float) -> Float { self * x }
-//
-//    `/`(k: Int) -> Int { self / k }
-//    `/`(x: Float) -> Float { self / x }
-//
-//    %(k: Int) -> Int { self % k }
-//    %(x: Float) -> Float { self % x }
 }
 
 class Float {
@@ -1195,7 +1204,7 @@ class Float {
         self * n
     }
 
-    nan?() {
+    nan? {
         math.nan?(self)
     }
 
@@ -1370,7 +1379,7 @@ class Generator[T] : Iter[T] {
 
 class Tag < Function {
     [](T) {
-         x -> do {
+        x -> do {
             match x {
                 %_(x) => x :: T,
                 _     => false
@@ -1530,6 +1539,7 @@ tag Ok {
 }
 
 tag Err {
+     __str__() { str(self) }
      map()     { self }
      flatMap() { self }
 }
@@ -2517,7 +2527,6 @@ class TupleSpec {
     __types: Array[_]
 
     init(types: Array[_]) {
-        dbg(types)
         __types = types
     }
 

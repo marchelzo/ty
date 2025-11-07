@@ -4,7 +4,6 @@
 #include <stdbool.h>
 
 #include "ty.h"
-#include "location.h"
 
 typedef struct token Token;
 

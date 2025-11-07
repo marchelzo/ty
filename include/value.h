@@ -446,6 +446,12 @@ value_vshow_color(Ty *ty, Value const *v);
 noreturn void vm_panic(Ty *, char const *, ...);
 
 inline static bool
+IsZero(Value const v)
+{
+        return (v.type == VALUE_ZERO);
+}
+
+inline static bool
 IsNone(Value const v)
 {
         return (v.type == VALUE_NONE);
@@ -1417,6 +1423,15 @@ ArrayClone(Ty *ty, Array const *a)
         new->count = a->count;
 
         return new;
+}
+
+inline static Value
+stripped(Value const *wrapped)
+{
+        Value inner = *wrapped;
+        inner.type &= ~VALUE_TAGGED;
+        inner.tags = 0;
+        return inner;
 }
 
 inline static Value

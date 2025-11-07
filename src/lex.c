@@ -48,8 +48,6 @@ error(Ty *ty, char const *fmt, ...)
 {
         va_list ap;
 
-        ErrorBuffer.count = 0;
-
         dump(
                 &ErrorBuffer,
                 "%s%sSyntaxError%s%s %s%s%s:%s%d%s:%s%d%s: ",
@@ -1255,6 +1253,8 @@ dotoken(Ty *ty, int ctx)
 Token
 lex_token(Ty *ty, LexContext ctx)
 {
+        TyClearError(ty);
+
         if (setjmp(jb) != 0) {
                 return (Token) {
                         .type = TOKEN_ERROR,

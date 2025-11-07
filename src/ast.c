@@ -9,7 +9,14 @@
 #define VL_(t) ((t) = visit_lvalue(ty, t, scope, hooks, decl))
 #define VLT(t) ((t) = visit_lvalue(ty, t, scope, hooks, true))
 
-#define SUB(f, name, ...) do { Scope *tmp_scope = scope; scope = scope_new(ty, name, scope, f); __VA_ARGS__; scope = tmp_scope; } while (0)
+#define SUB(f, name, ...) do {                           \
+        Scope *tmp_scope = scope;                        \
+        if (scope != NULL) {                             \
+                scope = scope_new(ty, name, scope, f);   \
+        }                                                \
+        __VA_ARGS__;                                     \
+        scope = tmp_scope;                               \
+} while (0)
 
 #define E1(e) ((e) = (hooks->e_pre)(e, scope, hooks->user))
 #define E2(e) ((e) = (hooks->e_post)(e, scope, hooks->user))
@@ -154,18 +161,34 @@ visit_statement(Ty *ty, Stmt *s, Scope *scope, VisitorSet const *hooks)
                 VL(true, s->target);
                 break;
         case STATEMENT_FUNCTION_DEFINITION:
+        case STATEMENT_OPERATOR_DEFINITION:
         case STATEMENT_MACRO_DEFINITION:
         case STATEMENT_FUN_MACRO_DEFINITION:
                 VL(true, s->target);
                 V(s->value);
                 break;
         case STATEMENT_CLASS_DEFINITION:
+                for (int i = 0; i < vN(s->class.type_params); ++i) {
+                        VT(v__(s->class.type_params, i));
+                }
                 VT(s->class.super);
                 for (int i = 0; i < vN(s->class.traits); ++i) {
                         VT(v__(s->class.traits, i));
                 }
                 for (int i = 0; i < vN(s->class.fields); ++i) {
                         Expr *field = v__(s->class.fields, i);
+                        switch (field->type) {
+                        case EXPRESSION_IDENTIFIER:
+                                VT(field->constraint);
+                                break;
+                        case EXPRESSION_EQ:
+                                VT(field->target->constraint);
+                                V(field->value);
+                                break;
+                        }
+                }
+                for (int i = 0; i < vN(s->class.s_fields); ++i) {
+                        Expr *field = v__(s->class.s_fields, i);
                         switch (field->type) {
                         case EXPRESSION_IDENTIFIER:
                                 VT(field->constraint);
@@ -187,6 +210,9 @@ visit_statement(Ty *ty, Stmt *s, Scope *scope, VisitorSet const *hooks)
                 }
                 for (int i = 0; i < vN(s->class.s_methods); ++i) {
                         V(v__(s->class.s_methods, i));
+                }
+                for (int i = 0; i < vN(s->class.s_getters); ++i) {
+                        V(v__(s->class.s_getters, i));
                 }
                 break;
         }
@@ -458,20 +484,19 @@ visit_expression(Ty *ty, Expr *e, Scope *scope, VisitorSet const *hooks)
                 for (int i = 0; i < vN(e->decorators); ++i) {
                         V(v__(e->decorators, i));
                 }
-
-                for (size_t i = 0; i < e->params.count; ++i) {
-                        V(e->dflts.items[i]);
+                for (size_t i = 0; i < vN(e->type_params); ++i) {
+                        VT(v__(e->type_params, i));
                 }
-
-                for (size_t i = 0; i < e->params.count; ++i) {
-                        VT(e->constraints.items[i]);
+                for (size_t i = 0; i < vN(e->params); ++i) {
+                        V(v__(e->dflts, i));
                 }
-
+                for (size_t i = 0; i < vN(e->params); ++i) {
+                        VT(v__(e->constraints, i));
+                }
                 VT(e->return_type);
-
                 VS(e->body);
-
                 break;
+
         case EXPRESSION_WITH:
                 VS(e->with.block);
                 // FIXME: do anything with e->with.defs?
