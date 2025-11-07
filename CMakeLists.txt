@@ -43,6 +43,8 @@ find_package(pcre2 CONFIG REQUIRED)
 find_package(CURL CONFIG REQUIRED)
 # defines target(s): OpenSSL::SSL, OpenSSL::Crypto, OpenSSL::applink
 find_package(OpenSSL REQUIRED)
+# defines target(s): xxHash::xxhash
+find_package(xxHash CONFIG REQUIRED)
 
 # ---
 #   global compiler variables
@@ -272,6 +274,7 @@ target_link_libraries(${_tgt_ty_interface}
     unofficial::sqlite3::sqlite3
     unofficial::gumbo::gumbo
     PCRE2::8BIT
+    xxHash::xxhash
     utf8proc
     libco
     dtoa
@@ -299,6 +302,8 @@ target_compile_definitions(${_tgt_ty_interface}
     TY_NO_LOG
     TY_HAVE_VERSION_INFO
     PCRE2_CODE_UNIT_WIDTH=8
+    XXH_INLINE_ALL
+    XXH_STATIC_LINKING_ONLY
 )
 
 # ---

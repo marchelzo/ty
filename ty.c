@@ -121,7 +121,7 @@ usage(void)
         do do putchar(*u++); while (u[u[-1] = strspn(u, " ")]); while (putchar('\n'), 1[u += u[-1]] && ++u);
 }
 
-inline static bool
+static bool
 repl_exec(Ty *ty, char const *code)
 {
         return vm_execute(ty, code, "(repl)");
@@ -179,6 +179,7 @@ execln(Ty *ty, char *line)
                 tdb_set_break(ty, ty->code);
 
                 if (!vm_execute(ty, NULL, NULL)) {
+                        TY_CATCH();
                         goto Bad;
                 }
 
@@ -247,21 +248,24 @@ execln(Ty *ty, char *line)
                 goto End;
         } else if (strncmp(line, "dis ", 4) == 0) {
                 dump(&buffer, "print(ty.disassemble(%s));", line + 4);
-                if (repl_exec(ty, v_(buffer, 1)))
+                if (repl_exec(ty, v_(buffer, 1))) {
                         goto End;
-                else
+                } else {
                         goto Bad;
+                }
         }
 
         dump(&buffer, "%s(do (%s));", print_function, line);
-        if (repl_exec(ty, v_(buffer, 1)))
+        if (repl_exec(ty, v_(buffer, 1))) {
                 goto End;
+        }
 
         buffer.count = 1;
 
         dump(&buffer, "%s\n", line);
-        if (strstr(TyError(ty), "ParseError") != NULL && repl_exec(ty, v_(buffer, 1)))
+        if (strstr(TyError(ty), "ParseError") != NULL && repl_exec(ty, v_(buffer, 1))) {
                 goto End;
+        }
 
 Bad:
         good = false;
@@ -286,7 +290,7 @@ readln(Ty *ty)
              && CALLABLE(*_readln)
         ) {
                 if (TY_CATCH_ERROR()) {
-                        fprintf(stderr, "%s\n", TyError(ty));
+                        (void)TY_CATCH();
                         return NULL;
                 }
 
@@ -489,8 +493,7 @@ complete(char const *s, int start, int end)
                 strcat(before + 1, " [");
                 repl_exec(ty, before + 1);
                 expr = LastParsedExpr;
-                v = tyeval(ty, expr);
-                if (v.type == VALUE_NONE) {
+                if (!tyeval(ty, expr, &v)) {
                         compiler_symbolize_expression(ty, expr, NULL);
                         t0 = expr->_type;
                         switch (t0 == NULL ? -1 : t0->type) {
@@ -803,7 +806,7 @@ main(int argc, char **argv)
 {
         ty = &vvv;
 
-#if defined(TY_PROFILE_TYPES) && 0
+#if defined(TY_PROFILE_TYPES) && 1
         atexit(xxx);
 #endif
 
@@ -1017,14 +1020,14 @@ main(int argc, char **argv)
                 xvP(out, '\n');
                 xvP(out, '\0');
 
-                fputs(out.items, stdout);
+                fputs(vv(out), stdout);
 
                 return 0;
         }
 
         if (!vm_execute(ty, source, SourceFileName)) {
                 fprintf(stderr, "%s\n", TyError(ty));
-                return -1;
+                exit(67);
         }
 
         return 0;

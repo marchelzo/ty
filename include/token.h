@@ -6,7 +6,6 @@
 #include <stdbool.h>
 
 #include "vec.h"
-#include "location.h"
 #include "lex.h"
 #include "ast.h"
 #include "ty.h"
@@ -85,10 +84,15 @@ enum {
         TT_NONE,
         TT_FIELD,
         TT_MEMBER,
+        TT_FUNC,
         TT_MACRO,
         TT_TYPE,
         TT_MODULE,
-        TT_KEYWORD
+        TT_KEYWORD,
+        TT_PARAM,
+        TT_PUNCT,
+        TT_OPERATOR,
+        TT_CALL
 };
 
 typedef struct token {

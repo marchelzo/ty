@@ -91,7 +91,7 @@ collect(Ty *ty, struct alloc *a)
                 break;
 
         case GC_ARENA:
-                ForgetSourceNodesFrom(p);
+                ForgetSourceNodesFrom(p, a->size);
                 break;
 
         case GC_FUN_INFO:

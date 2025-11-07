@@ -13,7 +13,14 @@ CFLAGS += -Wno-unused-value
 CFLAGS += -Wno-unused-function
 CFLAGS += -D_GNU_SOURCE
 CFLAGS += -DPCRE2_CODE_UNIT_WIDTH=8
+CFLAGS += -DXXH_INLINE_ALL
 CFLAGS += -DCURL_STATICLIB -DPCRE2_CODE_UNIT_WIDTH=8 -DPCRE2_STATIC -DTY_RELEASE -DUTF8PROC_STATIC -D_GNU_SOURCE
+
+ifeq ($(shell uname -m),arm64)
+        CFLAGS += -isystem/opt/homebrew/include
+        LDFLAGS += -L/opt/homebrew/lib
+        LDFLAGS += -Wl,-rpath,/opt/homebrew/lib
+endif
 
 CFLAGS += -no-pie
 

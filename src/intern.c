@@ -26,7 +26,7 @@ find(InternBucket const *bucket, char const *name, u64 hash)
 InternEntry *
 intern_get(InternSet *set, char const *name)
 {
-        u64 hash = StrHash(name);
+        u64 hash = hash64z(name);
         InternBucket *bucket = &set->set[hash & (INTERN_TABLE_SIZE - 1)];
 
         InternEntry *entry = find(bucket, name, hash);

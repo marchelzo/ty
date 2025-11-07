@@ -69,7 +69,7 @@
                 consume(TOKEN_ ## token);                                  \
                 e->type = EXPRESSION_PREFIX_ ## token;                     \
                 e->operand = assignment_lvalue(ty, parse_expr(ty, prec));  \
-                e->end = TEnd;                                              \
+                e->end = TEnd;                                             \
                 return e;                                                  \
         }                                                                  \
 
@@ -83,15 +83,6 @@
 #define K2 ((T2 == TOKEN_KEYWORD) ? token(2)->keyword : -1)
 #define K3 ((T3 == TOKEN_KEYWORD) ? token(3)->keyword : -1)
 #define KW(i) ((token(i)->type == TOKEN_KEYWORD) ? token(i)->keyword : -1)
-
-
-#define SAVE_JB                        \
-        jmp_buf jb_;                   \
-        memcpy(&jb_, &JB, sizeof JB);  \
-        SetJmpDepth += 1
-
-#define RESTORE_JB do { memcpy(&JB, &jb_, sizeof JB); SetJmpDepth -= 1; } while (0)
-
 
 #if 0
 #define PLOGX(fmt, ...) (                       \
@@ -124,7 +115,7 @@
         ((next)(ty))                                     \
 )
 
-#define consume(t) do {                                  \
+#define consume_n_1(t) do {                              \
         PLOG(                                            \
                 "%sconsume%s(%s%s%s) :: %s%4d   %s%s%s", \
                 TERM(33;1;4),                            \
@@ -138,7 +129,24 @@
                 __func__,                                \
                 TERM(0)                                  \
         );                                               \
-        (consume)(ty, (t));                              \
+        (consume)(ty, t);                                \
+} while (0)
+
+#define consume_n_2(t, tt) do {                          \
+        PLOG(                                            \
+                "%sconsume%s(%s%s%s) :: %s%4d   %s%s%s", \
+                TERM(33;1;4),                            \
+                TERM(0),                                 \
+                TERM(34;3),                              \
+                #t,                                      \
+                TERM(0),                                 \
+                TERM(92),                                \
+                __LINE__,                                \
+                TERM(96;1),                              \
+                __func__,                                \
+                TERM(0)                                  \
+        );                                               \
+        (consume_tagged)(ty, t, tt);                     \
 } while (0)
 
 #define consume_kw(t) (                                     \
@@ -194,8 +202,10 @@
         0                                                \
 )
 #else
+#define consume_n_1(t)     ((consume)(ty, (t)))
+#define consume_n_2(t, tt) ((consume_tagged)(ty, (t), (tt)))
+
 #define               next()                           ((next)(ty))
-#define           consume(t)                   ((consume)(ty, (t)))
 #define        consume_kw(t) ((consume_keyword)(ty, (KEYWORD_##t)))
 #define            expect(t)                    ((expect)(ty, (t)))
 #define          setctx(ctx)                  ((setctx)(ty, (ctx)))
@@ -204,14 +214,18 @@
 #define PLOGC(...) ((void)0)
 #endif
 
+#define try_consume_n_1(t)     ((try_consume)(ty, (t)))
+#define try_consume_n_2(t, tt) ((try_consume_tagged)(ty, (t), (tt)))
+#define try_consume(...)       VA_SELECT(try_consume_n, __VA_ARGS__)
+
 #define                 tok()                            ((tok)(ty))
 #define              token(i)                     ((token)(ty, (i)))
 #define               skip(n)                      ((skip)(ty, (n)))
-#define        try_consume(t)               ((try_consume)(ty, (t)))
 #define       have_keyword(k)              ((have_keyword)(ty, (k)))
 #define have_keywords(k0, k1)      ((have_keywords)(ty, (k0), (k1)))
 #define          unconsume(t)                 ((unconsume)(ty, (t)))
 #define    expect_one_of(...) ((expect_one_of)(ty, __VA_ARGS__, -1))
+#define          consume(...)      VA_SELECT(consume_n, __VA_ARGS__)
 
 #define with_fun_subscope(...)                                          \
         if (1) {                                                        \
@@ -266,7 +280,6 @@ typedef struct ParserState {
 
         Expr *CurrentTemplate;
 
-        jmp_buf jb;
         JmpBufVector SavePoints;
         int SetJmpDepth;
 
@@ -317,7 +330,6 @@ static Expr NullExpr = {
 #define EEnd              (state.EEnd)
 #define EStart            (state.EStart)
 #define FileName          (state.filename)
-#define JB                (state.jb)
 #define LCTX              (state.lctx)
 #define NoAndOr           (state.NoAndOr)
 #define NoConstraint      (state.NoConstraint)
@@ -485,11 +497,11 @@ inline static Expr *
 
 #define mkid(id) ((mkid)(ty, (id)))
 inline static Expr *
-(mkid)(Ty *ty, char *id)
+(mkid)(Ty *ty, char *name)
 {
-        Expr *e = mkxpr(IDENTIFIER);
-        e->identifier = id;
-        return e;
+        Expr *ident = mkxpr(IDENTIFIER);
+        ident->identifier = name;
+        return ident;
 }
 
 inline static Expr *
@@ -585,6 +597,13 @@ inline static Stmt *
 }
 
 inline static Token *
+fixup(Ty *ty, Token *tok)
+{
+        tok->start.tok = tok - vv(tokens);
+        return tok;
+}
+
+inline static Token *
 (tokenxx)(Ty *ty, int i)
 {
         Token t;
@@ -632,7 +651,7 @@ inline static Token *
         }
 #endif
 
-        return v_(tokens, TokenIndex + i);
+        return fixup(ty, v_(tokens, TokenIndex + i));
 }
 
 #define tokenx(i) ((tokenx)(ty, (i)))
@@ -717,7 +736,7 @@ inline static Token *
 
                 if (
                         LIKELY(t->type != TOKEN_DIRECTIVE)
-                     || tokenx(i + 1)->type != TOKEN_KEYWORD
+                     || (tokenx(i + 1)->type != TOKEN_KEYWORD)
                      || t->pp
                 ) {
                         goto End;
@@ -754,17 +773,12 @@ inline static struct token *
         return token(0);
 }
 
-static Token *
-TokenOf(Ty *ty, Expr *e)
+inline static void
+TagTokenOf(Ty *ty, Expr *e, int tag)
 {
-        for (isize i = vN(tokens) - 1; i >= 0; --i) {
-                Token const *t = v_(tokens, i);
-                if (t->start.s == e->start.s) {
-                        return (Token *)t;
-                }
+        if (vN(tokens) > e->start.tok) {
+                v_(tokens, e->start.tok)->tag = tag;
         }
-
-        return NULL;
 }
 
 void
@@ -959,14 +973,9 @@ ParseError(Ty *ty, char const *fmt, ...)
                 goto End;
         }
 
-        if (tokenx(0)->type == TOKEN_ERROR) {
-                /*
-                 * The lexer already wrote us a nice error message ^_^
-                 */
+        if (TyHasError(ty)) {
                 goto End;
         }
-
-        ErrorBuffer.count = 0;
 
         va_list ap;
         va_start(ap, fmt);
@@ -1077,7 +1086,7 @@ End:
         if (AllowErrors && SetJmpDepth == 0 && vN(SavePoints) > 0) {
                 longjmp(**vvX(SavePoints), 1);
         } else {
-                longjmp(JB, 1);
+                TY_THROW_ERROR();
         }
 }
 
@@ -1112,41 +1121,32 @@ PopNS(Ty *ty)
 inline static bool
 (have_keyword)(Ty *ty, int kw)
 {
-        return T0 == TOKEN_KEYWORD && K0 == kw;
+        return (K0 == kw);
 }
 
 inline static bool
 (have_keywords)(Ty *ty, int kw1, int kw2)
 {
-        return T0 == TOKEN_KEYWORD && K0 == kw1 &&
-               T1 == TOKEN_KEYWORD && K1 == kw2;
+        return (T0 == TOKEN_KEYWORD) && (K0 == kw1)
+            && (T1 == TOKEN_KEYWORD) && (K1 == kw2);
 }
 
 inline static bool
 have_without_nl(Ty *ty, int t)
 {
-        return T0 == t && tok()->start.line == TEnd.line;
+        return (T0 == t) && (tok()->start.line == TEnd.line);
 }
 
 inline static bool
 next_without_nl(Ty *ty, int t)
 {
-        return T1 == t && token(1)->start.line == tok()->end.line;
-}
-
-inline static bool
-kw_without_nl(Ty *ty, int t)
-{
-        return have_without_nl(ty, TOKEN_KEYWORD) && K0 == t;
+        return (T1 == t) && (token(1)->start.line == tok()->end.line);
 }
 
 static bool
 have_not_in(Ty *ty)
 {
-        return T0 == TOKEN_KEYWORD &&
-               K0 == KEYWORD_NOT &&
-               T1 == TOKEN_KEYWORD &&
-               K1 == KEYWORD_IN;
+        return (K0 == KEYWORD_NOT) && (K1 == KEYWORD_IN);
 }
 
 inline static bool
@@ -1250,10 +1250,28 @@ inline static bool
              ;
 }
 
+inline static bool
+(try_consume_tagged)(Ty *ty, int t, int tt)
+{
+        return (T0 == t || K0 == t)
+             ? ((tok()->tag = tt), next(), true)
+             : false
+             ;
+}
+
 inline static void
 (consume)(Ty *ty, int type)
 {
         if (expect(type)) {
+                next();
+        }
+}
+
+inline static void
+(consume_tagged)(Ty *ty, int type, int tt)
+{
+        if (expect(type)) {
+                tok()->tag = tt;
                 next();
         }
 }
@@ -1861,9 +1879,24 @@ prefix_identifier(Ty *ty)
         if (is_macro(ty, e->module, e->identifier)) {
                 v_(tokens, i_id)->tag = TT_MACRO;
 
-                Expr *expanded = typarse(ty, e, NULL, &e->start, &token(-1)->end);
-                if (expanded == NULL) {
-                        die_at(e, "macro expansion failed");
+                Expr *expanded;
+
+                if (TY_CATCH_ERROR()) {
+                        char *trace = FormatTrace(ty, NULL, NULL);
+                        Value exc = TY_CATCH();
+                        expanded = mkxpr(ERROR);
+                        expanded->start = e->start;
+                        expanded->end = TEnd;
+                        expanded->string = afmt(
+                                "error during expansion of %s%s%s: %s\n%s\n",
+                                TERM(95;1), QualifiedName(e), TERM(0),
+                                VSC(&exc),
+                                trace
+                        );
+                        TyClearError(ty);
+                } else {
+                        expanded = typarse(ty, e, NULL, &e->start, &token(-1)->end);
+                        TY_CATCH_END();
                 }
 
                 return expanded;
@@ -1883,8 +1916,7 @@ prefix_identifier(Ty *ty)
         }
 
         // TODO: maybe get rid of this
-        if (!NoConstraint && T0 == ':') {
-                next();
+        if (!NoConstraint && try_consume(':', TT_PUNCT)) {
                 e->constraint = parse_type(ty, 0);
         } else {
                 e->constraint = NULL;
@@ -1911,7 +1943,7 @@ static Expr *
 prefix_defined(Ty *ty)
 {
         Expr *e;
-        struct location start = tok()->start;
+        Location start = tok()->start;
 
         next();
         consume('(');
@@ -1972,6 +2004,7 @@ prefix_function(Ty *ty)
 
         if (T0 == TOKEN_IDENTIFIER) {
                 e->name = tok()->identifier;
+                tok()->tag = TT_FUNC;
                 next();
         }
 
@@ -2026,10 +2059,10 @@ prefix_function(Ty *ty)
 
                 expect(TOKEN_IDENTIFIER);
                 avP(e->params, tok()->identifier);
+                tok()->tag = TT_PARAM;
                 next();
 
-                if (T0 == ':') {
-                        next();
+                if (try_consume(':', TT_PUNCT)) {
                         avP(e->constraints, parse_type(ty, 0));
                         (*vvL(e->constraints))->end = TEnd;
                 } else {
@@ -2258,12 +2291,8 @@ prefix_record(Ty *ty)
         while (T0 != '}') {
                 setctx(LEX_PREFIX);
 
-                if (T0 == TOKEN_QUESTION) {
-                        next();
-                        avP(e->required, false);
-                } else {
-                        avP(e->required, true);
-                }
+                bool optional = try_consume('?');
+                avP(e->required, !optional);
 
                 if (T0 == TOKEN_STAR) {
                         Expr *item = mkexpr(ty);
@@ -2284,7 +2313,6 @@ prefix_record(Ty *ty)
 
                 SAVE_NC(true);
                 SAVE_NE(true);
-                int i_name = TokenIndex;
                 Expr *name = parse_expr(ty, 999);
                 LOAD_NE();
                 LOAD_NC();
@@ -2297,31 +2325,34 @@ prefix_record(Ty *ty)
                                 avP(e->names, name->identifier);
                                 avP(e->es, name);
                                 break;
+
                         default:
                                 expect_one_of(':', '=');
                                 UNREACHABLE();
                         }
                 } else if (name->type != EXPRESSION_IDENTIFIER) {
-                        die_at(name, "unexpected expression used as field name in record literal");
+                        die_at(
+                                name,
+                                "unexpected expression used as "
+                                "field name in record literal"
+                        );
                 } else {
                         expect_one_of(':', '=');
+                        tok()->tag = TT_PUNCT;
                         next();
                         avP(e->names, name->identifier);
                         avP(e->es, parse_expr(ty, 0));
-                        v_(tokens, i_name)->tag = TT_FIELD;
+                        TagTokenOf(ty, name, TT_FIELD);
                 }
 
 Next:
-                if (have_keyword(KEYWORD_IF)) {
-                        next();
+                if (try_consume(KEYWORD_IF)) {
                         avP(e->tconds, parse_expr(ty, 0));
                 } else {
                         avP(e->tconds, NULL);
                 }
 
-                if (T0 == ',') {
-                        next();
-                }
+                try_consume(',');
         }
 
         consume('}');
@@ -2705,9 +2736,9 @@ next_arg(
                 }
 
                 if (
-                        T0 == ',' ||
-                        T0 == ')' ||
-                        have_keyword(KEYWORD_IF)
+                        (T0 == ',')
+                     || (T0 == ')')
+                     || (K0 == KEYWORD_IF)
                 ) {
                         arg->value = mkexpr(ty);
                         arg->value->type = EXPRESSION_IDENTIFIER;
@@ -2732,12 +2763,13 @@ next_arg(
                         avP(*conds, try_cond(ty));
                 }
         } else if (
-                 T0 == TOKEN_IDENTIFIER &&
-                 (
-                         T1 == ':' ||
-                         T1 == TOKEN_EQ
+                 (T0 == TOKEN_IDENTIFIER)
+              && (
+                         (T1 == ':')
+                      || (T1 == TOKEN_EQ)
                  )
         ) {
+                tok()->tag = TT_PARAM;
                 avP(*kws, tok()->identifier);
                 next();
                 next();
@@ -3496,7 +3528,7 @@ prefix_implicit_method(Ty *ty)
                 return prefix_implicit_lambda(ty);
         }
 
-        if (T0 == TOKEN_KEYWORD && K0 == KEYWORD_NOT) {
+        if (K0 == KEYWORD_NOT) {
                 next();
                 unconsume(TOKEN_IDENTIFIER);
                 tok()->identifier = "__not__";
@@ -3508,7 +3540,7 @@ prefix_implicit_method(Ty *ty)
         o->module = NULL;
 
         if (T0 == TOKEN_INTEGER) {
-                intmax_t k = tok()->integer;
+                imax k = tok()->integer;
                 next();
                 unconsume(']');
                 unconsume(TOKEN_INTEGER);
@@ -3528,6 +3560,8 @@ prefix_implicit_method(Ty *ty)
         e->member = prefix_identifier(ty);
         e->object = o;
 
+        TagTokenOf(ty, e->member, TT_FUNC);
+
         if (e->type == EXPRESSION_METHOD_CALL) {
                 e = parse_method_call(ty, e);
         }
@@ -3542,13 +3576,6 @@ prefix_implicit_method(Ty *ty)
         avP(f->constraints, NULL);
 
         return f;
-}
-
-static Expr *
-prefix_colon(Ty *ty)
-{
-        T0 = '&';
-        return prefix_implicit_method(ty);
 }
 
 static Expr *
@@ -3763,7 +3790,7 @@ mkpartial(Ty *ty, Expr *sugared)
 {
         Expr *fun = mkxpr(IDENTIFIER);
         fun->identifier = "__desugar_partial__";
-        fun->module = NULL;
+        fun->module = "prelude";
 
         Expr *call = mkcall(ty, fun);
         avP(call->args, sugared);
@@ -3781,21 +3808,13 @@ infix_function_call(Ty *ty, Expr *left)
 {
         Expr *e = mkcall(ty, left);
 
-        if (
-                (left->type == EXPRESSION_IDENTIFIER)
-             && is_fun_macro(ty, left->module, left->identifier)
-        ) {
-                TokenOf(ty, left)->tag = TT_MACRO;
-        }
-
         consume('(');
 
         setctx(LEX_PREFIX);
 
         Location start = tok()->start;
 
-        if (T0 == ')') {
-                next();
+        if (try_consume(')')) {
                 e->end = TEnd;
                 return e;
         }
@@ -4163,19 +4182,17 @@ infix_member_access(Ty *ty, Expr *left)
         } else if (AllowErrors && T0 != TOKEN_IDENTIFIER) {
                 e->member = &BlankID;
         } else {
-                int i_name = TokenIndex;
                 e->member = prefix_identifier(ty);
 
                 if (is_fun_macro(ty, NULL, e->member->identifier)) {
                         Expr *call = infix_function_call(ty, e->member);
                         avI(call->args, left, 0);
                         avI(call->fconds, NULL, 0);
-                        v_(tokens, i_name)->tag = TT_MACRO;
                         return call;
                 }
 
                 if (is_macro(ty, NULL, e->member->identifier)) {
-                        v_(tokens, i_name)->tag = TT_MACRO;
+                        TagTokenOf(ty, e->member, TT_MACRO);
                         return typarse(
                                 ty,
                                 e->member,
@@ -4185,7 +4202,7 @@ infix_member_access(Ty *ty, Expr *left)
                         );
                 }
 
-                v_(tokens, i_name)->tag = TT_MEMBER;
+                TagTokenOf(ty, e->member, TT_MEMBER);
         }
 
         if (
@@ -4199,6 +4216,7 @@ infix_member_access(Ty *ty, Expr *left)
                 e->type = (e->type == EXPRESSION_MEMBER_ACCESS)
                         ? EXPRESSION_METHOD_CALL
                         : EXPRESSION_DYN_METHOD_CALL;
+                TagTokenOf(ty, e->member, TT_FUNC);
                 return parse_method_call(ty, e);
         }
 }
@@ -5142,18 +5160,20 @@ parse_for_loop(Ty *ty)
                 next();
         } else {
                 int save = TokenIndex;
-                SAVE_JB;
                 SAVE_NI(true);
                 SAVE_NE(NoEquals);
-                if (setjmp(JB) != 0) {
+
+                if (TY_CATCH_ERROR()) {
+                        TY_CATCH();
                         LOAD_NE();
                         cloop = true;
                 } else {
                         parse_expr(ty, 0);
-                        cloop = T0 == ';';
+                        cloop = (T0 == ';');
+                        TY_CATCH_END();
                 }
+
                 LOAD_NI();
-                RESTORE_JB;
                 seek(ty, save);
         }
 
@@ -5432,7 +5452,7 @@ parse_function_definition(Ty *ty)
                 op_fixup(ty, 0);
 
                 Token name = *token(0);
-                consume(TOKEN_IDENTIFIER);
+                consume(TOKEN_IDENTIFIER, TT_MACRO);
 
                 if (T0 == '(') {
                         s->type = STATEMENT_FUN_MACRO_DEFINITION;
@@ -5958,7 +5978,7 @@ parse_class_definition(Ty *ty)
                 end = tok()->end;
                 next();
 
-                param.constraint = try_consume(':')
+                param.constraint = try_consume(':', TT_PUNCT)
                                  ? parse_expr(ty, 0)
                                  : NULL;
 
@@ -6054,7 +6074,6 @@ parse_class_definition(Ty *ty)
 
                         // ================/ :) /===
                         setctx(LEX_NAME);
-                        int i_name = TokenIndex;
                         char *name = tok()->identifier;
                         Location start = tok()->start;
                         next();
@@ -6068,8 +6087,7 @@ parse_class_definition(Ty *ty)
                         ) {
                                 Expr *field = mkid(name);
                                 field->start = start;
-                                if (T0 == ':') {
-                                        next();
+                                if (try_consume(':', TT_PUNCT)) {
                                         SAVE_NE(true);
                                         field->constraint = parse_type(ty, 1);
                                         LOAD_NE();
@@ -6091,7 +6109,7 @@ parse_class_definition(Ty *ty)
 
                                 try_consume(';');
 
-                                v_(tokens, i_name)->tag = TT_FIELD;
+                                TagTokenOf(ty, field, TT_FIELD);
                         } else {
                                 bool setter = try_consume('=');
                                 bool star   = try_consume('*');
@@ -6132,6 +6150,8 @@ parse_class_definition(Ty *ty)
                                 ) {
                                         init = *vvL(s->tag.methods);
                                 }
+
+                                TagTokenOf(ty, meth, TT_FUNC);
                         }
                 }
                 setctx(LEX_PREFIX);
@@ -6198,11 +6218,8 @@ next_name(Ty *ty, StringVector *names)
 inline static bool
 have_typedef(Ty *ty)
 {
-        return T0 == TOKEN_IDENTIFIER
-            && (
-                        T1 == '='
-                     || T1 == '['
-               );
+        return (T0 == TOKEN_IDENTIFIER)
+            && (T1 == '=' || T1 == '[');
 }
 
 static Stmt *
@@ -6501,7 +6518,7 @@ Keyword:
 
         case KEYWORD_USE:
                 s = parse_use(ty);
-                if ((s->type == STATEMENT_USE) && !TyCompilerState(ty)->_parse) {
+                if ((s->type == STATEMENT_USE) && !HAVE_COMPILER_FLAG(PARSE)) {
                         CompilerDoUse(ty, s, NULL);
                 }
                 return s;
@@ -6521,9 +6538,7 @@ Expression:
                 s = s->expression->statement;
         }
 
-        if (T0 == ';') {
-                consume(';');
-        }
+        try_consume(';');
 
         return s;
 }
@@ -6551,8 +6566,8 @@ SetNamespace(Stmt *s, Namespace *ns)
         s->ns = ns;
 
         if (
-                s->type == STATEMENT_EXPRESSION
-             && s->expression->type == EXPRESSION_STATEMENT
+                (s->type == STATEMENT_EXPRESSION)
+             && (s->expression->type == EXPRESSION_STATEMENT)
         ) {
                 SetNamespace(s->expression->statement, ns);
         } else if (s->type == STATEMENT_MULTI) {
@@ -6604,8 +6619,8 @@ define_top(Ty *ty, Stmt *s, char const *doc)
                 break;
 
         case STATEMENT_MULTI:
-                for (int i = 0; i < s->statements.count; ++i) {
-                        define_top(ty, s->statements.items[i], doc);
+                for (int i = 0; i < vN(s->statements); ++i) {
+                        define_top(ty, v__(s->statements, i), doc);
                 }
                 break;
 
@@ -6725,7 +6740,7 @@ parse_ex(
         char const *file,
         Stmt ***prog_out,
         Location *err_loc,
-        TokenVector *tok_out
+        TokenVector *tokens_out
 )
 {
         lex_save(ty, &CtxCheckpoint);
@@ -6740,15 +6755,16 @@ parse_ex(
 
         LastParsedExpr = NULL;
 
-        if (setjmp(JB) != 0) {
+        if (TY_CATCH_ERROR()) {
+                TY_CATCH();
         Error:
                 avP(program, NULL);
 
                 *err_loc = tokenx(0)->start;
                 *prog_out = program.items;
 
-                if (tok_out != NULL) {
-                        *tok_out = tokens;
+                if (tokens_out != NULL) {
+                        *tokens_out = tokens;
                 }
 
                 state = save;
@@ -6763,15 +6779,18 @@ parse_ex(
         }
 
         while (
-                have_keywords(KEYWORD_PUB, KEYWORD_IMPORT)
-             || have_keyword(KEYWORD_IMPORT)
+                (K0 == KEYWORD_IMPORT)
+             || (K0 == KEYWORD_PUB && K1 == KEYWORD_IMPORT)
              || (T0 == TOKEN_COMMENT)
         ) {
                 if (T0 == TOKEN_COMMENT) {
                         next();
                 } else {
                         Stmt *import = parse_import(ty);
-                        if (!ImportModule(ty, import)) {
+                        if (
+                                !HAVE_COMPILER_FLAG(SHALLOW)
+                             && !ImportModule(ty, import)
+                        ) {
                                 goto Error;
                         }
                 }
@@ -6875,19 +6894,20 @@ parse_ex(
 
                 s->end = TEnd;
 
-                if (s->type != STATEMENT_MACRO_DEFINITION) {
-                        avP(program, s);
-                }
-
                 if (pub) {
                         MakePublic(ty, s);
                 }
 
                 SetNamespace(s, CurrentNamespace);
 
-                if (!TyCompilerState(ty)->_parse) {
+                if (TY_CATCH_ERROR()) {
+                        TY_CATCH();
+                } else {
                         define_top(ty, s, doc);
+                        TY_CATCH_END();
                 }
+
+                avP(program, s);
 
 #ifdef TY_DEBUG_NAMES
                 pns(s->ns, true);
@@ -6904,12 +6924,14 @@ parse_ex(
                 }
         }
 
+        TY_CATCH_END();
+
         avP(program, NULL);
         *prog_out = vv(program);
 
-        if (tok_out != NULL) {
+        if (tokens_out != NULL) {
                 avPv(tokens, state.comments);
-                *tok_out = tokens;
+                *tokens_out = tokens;
         }
 
         state = save;
@@ -6970,8 +6992,6 @@ parse_get_type(Ty *ty, int prec, bool resolve, bool want_raw)
 {
         int save = TokenIndex;
 
-        SAVE_JB;
-
         SAVE_NI(false);
         SAVE_NE(false);
 
@@ -6980,7 +7000,8 @@ parse_get_type(Ty *ty, int prec, bool resolve, bool want_raw)
         Value v;
         Expr *e;
 
-        if (setjmp(JB) != 0) {
+        if (TY_CATCH_ERROR()) {
+                TY_CATCH();
                 v = NIL;
                 seek(ty, save);
         } else {
@@ -6993,12 +7014,11 @@ parse_get_type(Ty *ty, int prec, bool resolve, bool want_raw)
                         v.type |= VALUE_TAGGED;
                         v.tags = tags_push(ty, 0, TyExpr);
                 }
+                TY_CATCH_END();
         }
 
         LOAD_NE();
         LOAD_NI();
-
-        RESTORE_JB;
 
         lex_keep_comments(ty, keep_comments);
 
@@ -7017,8 +7037,6 @@ parse_get_expr(Ty *ty, int prec, bool resolve, bool want_raw)
 {
         int save = TokenIndex;
 
-        SAVE_JB;
-
         SAVE_NI(false);
         SAVE_NE(false);
 
@@ -7027,7 +7045,8 @@ parse_get_expr(Ty *ty, int prec, bool resolve, bool want_raw)
         Value v;
         Expr *e;
 
-        if (setjmp(JB) != 0) {
+        if (TY_CATCH_ERROR()) {
+                TY_CATCH();
                 v = NIL;
                 seek(ty, save);
         } else {
@@ -7040,12 +7059,11 @@ parse_get_expr(Ty *ty, int prec, bool resolve, bool want_raw)
                         v.type |= VALUE_TAGGED;
                         v.tags = tags_push(ty, 0, TyExpr);
                 }
+                TY_CATCH_END();
         }
 
         LOAD_NE();
         LOAD_NI();
-
-        RESTORE_JB;
 
         lex_keep_comments(ty, keep_comments);
 
@@ -7064,8 +7082,6 @@ parse_get_stmt(Ty *ty, int prec, bool want_raw)
 {
         int save = TokenIndex;
 
-        SAVE_JB;
-
         SAVE_NI(false);
         SAVE_NE(false);
 
@@ -7073,7 +7089,8 @@ parse_get_stmt(Ty *ty, int prec, bool want_raw)
 
         struct value v;
 
-        if (setjmp(JB) != 0) {
+        if (TY_CATCH_ERROR()) {
+                TY_CATCH();
                 v = NIL;
                 seek(ty, save);
         } else {
@@ -7085,12 +7102,11 @@ parse_get_stmt(Ty *ty, int prec, bool want_raw)
                 } else {
                         v = tystmt(ty, s);
                 }
+                TY_CATCH_END();
         }
 
         LOAD_NE();
         LOAD_NI();
-
-        RESTORE_JB;
 
         lex_keep_comments(ty, keep_comments);
 
@@ -7119,8 +7135,8 @@ pp_while(Ty *ty)
 static void
 pp_if(Ty *ty)
 {
-        vec(int) starts   = {0};
-        vec(int) ends     = {0};
+        vec(u32) starts   = {0};
+        vec(u32) ends     = {0};
         vec(Expr *) conds = {0};
 
         int very_start = TokenIndex;
@@ -7202,18 +7218,16 @@ pp_if(Ty *ty)
 
         int very_end = TokenIndex;
 
-        int start = -1;
-        int end = -1;
+        i32 start = -1;
+        i32 end = -1;
 
-        Value val;
-        for (int i = 0; i < conds.count; ++i) {
-                if (
-                        (*v_(conds, i) == NULL)
-                     || ((val = pp_eval(ty, *v_(conds, i))), 0)
-                     || value_truthy(ty, &val)
-                ) {
-                        start = *v_(starts, i);
-                        end = *v_(ends, i);
+        for (int i = 0; i < vN(conds); ++i) {
+                Value take = (v__(conds, i) != NULL)
+                           ? pp_eval(ty, v__(conds, i))
+                           : BOOLEAN(true);
+                if (value_truthy(ty, &take)) {
+                        start = v__(starts, i);
+                        end = v__(ends, i);
                         break;
                 }
         }

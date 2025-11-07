@@ -33,10 +33,10 @@ extern int EnableLogging;
                 } while (0)
 
 #define XXLOG(...)                              \
-        if (EnableLogging >= 0) do {            \
+        if (EnableLogging > 0) {                \
                 fprintf(stdout, __VA_ARGS__);   \
                 fprintf(stdout, "\n");          \
-        } while (0)
+        } else if (0)
 
 #define XXXLOG(...)                             \
         do {                                    \

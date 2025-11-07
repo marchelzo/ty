@@ -253,6 +253,9 @@ Expr *
 FindStaticGetter(Class const *c, char const *name);
 
 Expr *
+FindStaticSetter(Class const *c, char const *name);
+
+Expr *
 FindStaticField(Class const *c, char const *name);
 
 Expr *

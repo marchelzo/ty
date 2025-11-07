@@ -29,7 +29,7 @@ table_add(Ty *ty, struct table *t, char const *name, unsigned long h, struct val
 inline static struct value *
 table_put(Ty *ty, struct table *t, char const *name, struct value f)
 {
-        return table_add(ty, t, name, strhash(name), f);
+        return table_add(ty, t, name, hash64z(name), f);
 }
 
 void
@@ -41,7 +41,7 @@ table_lookup(Ty *ty, struct table const *t, char const *name, unsigned long h);
 inline static struct value *
 table_look(Ty *ty, struct table const *t, char const *name)
 {
-        return table_lookup(ty, t, name, strhash(name));
+        return table_lookup(ty, t, name, hash64z(name));
 }
 
 int

@@ -4,7 +4,6 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#include "location.h"
 #include "tags.h"
 #include "vec.h"
 #include "scope.h"
@@ -256,6 +255,7 @@ typedef struct class_definition ClassDefinition;
         X(CTX_INFO),                                                                  \
         X(PLACEHOLDER),                                                               \
         X(VALUE),                                                                     \
+        X(ERROR),                                                                     \
         X(MAX_TYPE)
 
 #define ZERO_EXPR(e) memset(                               \

@@ -380,6 +380,7 @@ class_resolve_all(Ty *ty, int class)
                         itable_copy_weak(ty, &c0->setters, &c->setters);
                         itable_copy_weak(ty, &c0->s_methods, &c->s_methods);
                         itable_copy_weak(ty, &c0->s_getters, &c->s_getters);
+                        itable_copy_weak(ty, &c0->s_setters, &c->s_setters);
                         itable_copy_weak(ty, &c0->s_fields, &c->s_fields);
                 }
         } while ((c = qget(ty, &sq, &i, j)) != NULL);
@@ -754,6 +755,26 @@ FindStaticGetter(Class const *c, char const *name)
                 }
                 for (int i = 0; i < vN(c->traits); ++i) {
                         m = FindStaticGetter(v__(c->traits, i), name);
+                        if (m != NULL) {
+                                return m;
+                        }
+                }
+                c = c->super;
+        }
+
+        return NULL;
+}
+
+Expr *
+FindStaticSetter(Class const *c, char const *name)
+{
+        while (c != NULL && c->def != NULL) {
+                Expr *m = FindMethodImmediate(&c->def->class.s_setters, name);
+                if (m != NULL) {
+                        return m;
+                }
+                for (int i = 0; i < vN(c->traits); ++i) {
+                        m = FindStaticSetter(v__(c->traits, i), name);
                         if (m != NULL) {
                                 return m;
                         }

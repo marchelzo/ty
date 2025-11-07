@@ -31,8 +31,8 @@ fn o() {}
         throw "FAIL: {x}"
     }
 
-    if (bar('x'), bar(4, 5)) != (1, 2) {
-        throw 'FAIL'
+    if let x = (bar('x'), bar(4, 5)) and x != (1, 2) {
+        throw "FAIL: {x}"
     }
 
     print('PASS')

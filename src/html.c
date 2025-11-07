@@ -9,16 +9,16 @@
 #include "util.h"
 #include "gc.h"
 
-static struct value
+static Value
 convert_node(Ty *ty, GumboNode const *n, struct itable *p);
 
-inline static struct value
+inline static Value
 convert_text(Ty *ty, GumboText const *t)
 {
         return vSsz(t->text);
 }
 
-inline static struct value
+inline static Value
 convert_attr(Ty *ty, GumboAttribute const *a)
 {
         struct itable *t = object_new(ty, 0);
@@ -32,7 +32,7 @@ convert_attr(Ty *ty, GumboAttribute const *a)
         return OBJECT(t, 0);
 }
 
-static struct value
+static Value
 convert_elem(Ty *ty, GumboElement const *e, struct itable *n)
 {
         struct itable *t = object_new(ty, 0);
@@ -65,7 +65,7 @@ convert_elem(Ty *ty, GumboElement const *e, struct itable *n)
         return OBJECT(t, 0);
 }
 
-static struct value
+static Value
 convert_doc(Ty *ty, GumboDocument const *d)
 {
         struct itable *t = object_new(ty, 0);
@@ -80,7 +80,7 @@ convert_doc(Ty *ty, GumboDocument const *d)
         return OBJECT(t, 0);
 }
 
-static struct value
+static Value
 convert_node(Ty *ty, GumboNode const *n, struct itable *p)
 {
         struct itable *t = object_new(ty, 0);
@@ -104,7 +104,7 @@ convert_node(Ty *ty, GumboNode const *n, struct itable *p)
         return OBJECT(t, 0);
 }
 
-static struct value
+static Value
 convert(Ty *ty, GumboOutput const *out)
 {
         struct itable *t = object_new(ty, 0);
@@ -118,36 +118,25 @@ convert(Ty *ty, GumboOutput const *out)
         return OBJECT(t, 0);
 }
 
-struct value
-html_parse(Ty *ty, int argc, struct value *kwargs)
+Value
+html_parse(Ty *ty, int argc, Value *kwargs)
 {
-        if (argc != 1) {
-                zP("gumbo::parse(ty) expects 1 argument but got %d", argc);
-        }
+        ASSERT_ARGC("gumbo.parse()", 1);
 
-        struct value s = ARG(0);
-        vec(char) b = {0};
+        char *html = TY_TMP_C_STR(ARG(0));
+        GumboOutput *doc = gumbo_parse(html);
 
-        if (s.type == VALUE_STRING) {
-                vvPn(b, s.str, s.bytes);
-        } else if (s.type == VALUE_BLOB) {
-                vvPn(b, s.blob->items, s.blob->count);
-        } else {
-                zP("the argument to gumbo::parse(ty) must be a string or a blob");
-        }
-
-        vvP(b, '\0');
-        GumboOutput *out = gumbo_parse(b.items);
-
-        if (out == NULL) {
-                vec_empty(b);
+        if (doc == NULL) {
                 return NIL;
-        } else {
-                GC_STOP();
-                struct value v = convert(ty, out);
-                GC_RESUME();
-                vec_empty(b);
-                gumbo_destroy_output(&kGumboDefaultOptions, out);
-                return v;
         }
+
+        GC_STOP();
+
+        Value result = convert(ty, doc);
+
+        GC_RESUME();
+
+        gumbo_destroy_output(&kGumboDefaultOptions, doc);
+
+        return result;
 }

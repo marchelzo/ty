@@ -168,6 +168,31 @@ gc_alloc_object(Ty *ty, usize n, char type)
 }
 
 inline static void *
+gc_alloc_object_unchecked(Ty *ty, usize n, char type)
+{
+        if (n == 0) {
+                return NULL;
+        }
+
+        MemoryUsed += n;
+        AddToTotalBytes(n);
+
+        struct alloc *a = malloc(sizeof *a + n);
+        if (UNLIKELY(a == NULL)) {
+                panic("Out of memory!");
+        }
+
+        atomic_init(&a->mark, false);
+        atomic_init(&a->hard, 0);
+        a->type = type;
+        a->size = n;
+
+        xvP(ty->allocs, a);
+
+        return a->data;
+}
+
+inline static void *
 gc_alloc_object0(Ty *ty, usize n, char type)
 {
         if (n == 0) {

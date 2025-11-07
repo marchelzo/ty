@@ -1,7 +1,7 @@
 import ffi as c
 import ty
 import ty.token (next, peek)
-import ty.parse (expr, stmt, fail)
+import ty.parse (expr, stmt)
 import ty.lex as lex
 import ptr (typed)
 
@@ -33,6 +33,10 @@ pub __tls::_cif_cache: _ = nil
 
 tag Union;
 tag Struct;
+
+fn fail(msg: String) {
+    throw RuntimeError("C! macro error: {msg}")
+}
 
 fn next!(t) {
     while peek().type == 'comment' { next() }
@@ -802,7 +806,7 @@ fn clos() {
 }
 
 pub macro C! {
-    if 'fn' in [peek(it).type for ..8] {
+    if 'fn' in [peek(it).?type for ..8] {
         fun()
     } else if peek().?id == 'struct' || peek(1).?id == 'struct' {
         strct()

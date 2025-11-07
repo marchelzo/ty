@@ -19,7 +19,7 @@ bool
 vm_init(Ty *ty, int ac, char **av);
 
 noreturn void
-vm_panic_ex(Ty *ty, ThrowCtx const *ctx, char const *fmt, ...);
+vm_panic_ex(Ty *ty, char const *fmt, ...);
 
 noreturn void
 vm_panic(Ty *ty, char const *fmt, ...);
@@ -37,13 +37,16 @@ void
 NewThread(Ty *ty, Thread *thread, Value *ctx, Value *name, bool sigma);
 
 void
-vm_set_sigfn(Ty *ty, int, Value const *);
+vm_set_sigfn(Ty *ty, int sig, Value const *f);
 
 void
-vm_del_sigfn(Ty *ty, int);
+vm_del_sigfn(Ty *ty, int sig);
 
 Value
-vm_get_sigfn(Ty *ty, int);
+vm_get_sigfn(Ty *ty, int sig);
+
+void
+vm_invoke_sigfn(Ty *ty, int sig);
 
 #ifndef _WIN32
 void
@@ -70,6 +73,9 @@ vm_get(Ty *ty, int i);
 
 noreturn void
 vm_throw(Ty *ty, Value const *);
+
+noreturn void
+vm_throw_ty(Ty *ty);
 
 Value
 vm_call(Ty *ty, Value const *f, int argc);
@@ -98,8 +104,8 @@ vm_load_c_module(Ty *ty, char const *name, void *p);
 void
 vm_exec(Ty *ty, char *ip);
 
-Value
-vm_try_exec(Ty *ty, char *ip);
+bool
+vm_try_exec(Ty *ty, char *ip, Value *ret);
 
 FrameStack *
 vm_get_frames(Ty *ty);
@@ -154,11 +160,14 @@ ZeroDividePanic(Ty *ty);
 struct try *
 vm_push_try(Ty *ty);
 
-void
+Value
 vm_catch(Ty *ty);
 
 void
 vm_finally(Ty *ty);
+
+noreturn void
+vm_rethrow(Ty *ty);
 
 #define VM_TRY() (setjmp(vm_push_try(ty)->jb) == 0)
 

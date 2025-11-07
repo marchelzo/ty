@@ -2,7 +2,22 @@ import ty
 import ty.parse
 import ty.token
 
-tag ChalkError;
+class UnknownStyleError < RuntimeError {
+    __chalk: Chalk
+    __src:   String
+    __style: String
+
+
+    init(style: String, src: String, chalk: Chalk) {
+        __chalk = chalk
+        __src   = src
+        __style = style
+    }
+
+    what -> String {
+        "Unknown style '{__style}' in chalk text: '{__src}'"
+    }
+}
 
 pub use TermStyle = () | {
     ?bold:      ?Bool,
@@ -475,11 +490,7 @@ class Chalk {
         fn get-style(name) {
             match __styles[name] {
                 $style => style,
-                _      => throw ChalkError({
-                    msg: 'unknown style',
-                    src: text,
-                    style: name
-                })
+                _      => throw UnknownStyleError(name, text, self)
             }
         }
 
@@ -579,11 +590,7 @@ class Chalk {
         fn get-style(name) {
             match __styles[name] {
                 $style => style,
-                _      => throw ChalkError({
-                    msg: 'unknown style',
-                    src: text,
-                    style: name
-                })
+                _      => throw UnknownStyleError(name, text, self)
             }
         }
 
