@@ -4912,7 +4912,6 @@ UnifyX(Ty *ty, Type *t0, Type *t1, bool super, bool check)
                 UnifyXD(ty, t0, t1, super, false, false);
                 type_check2(ty, super ? t0 : t1, super ? t1 : t0, true);
                 //EnableLogging -= 1;
-                *(volatile char *)0 = 0;
                 TypeError(
                         "type mismatch"
                         FMT_MORE "found:     %s"
@@ -9867,8 +9866,8 @@ TypeCheck(Ty *ty, Type *t0, Value const *v)
 
         switch (t0->type) {
         case TYPE_INTEGER:
-                return v->type == VALUE_INTEGER
-                    && v->integer == t0->z;
+                return (v->type == VALUE_INTEGER)
+                    && (v->integer == t0->z);
 
         case TYPE_VARIABLE:
         case TYPE_SUBSCRIPT:
@@ -9925,7 +9924,7 @@ TypeCheck(Ty *ty, Type *t0, Value const *v)
                                 int id = M_ID(name);
                                 Value item = GetMember(ty, *v, id, false, true);
                                 if (
-                                        item.type == VALUE_NONE
+                                        (item.type == VALUE_NONE)
                                      || !TypeCheck(ty, v__(t0->types, i), &item)
                                 ) {
                                         return false;
@@ -9935,11 +9934,11 @@ TypeCheck(Ty *ty, Type *t0, Value const *v)
                 return true;
 
         case TYPE_TAG:
-                return v->type == VALUE_TAG
-                    && v->tag == TagOf(t0);
+                return (v->type == VALUE_TAG)
+                    && (v->tag == TagOf(t0));
 
         case TYPE_CLASS:
-                return v->type == VALUE_CLASS
+                return (v->type == VALUE_CLASS)
                     && class_is_subclass(ty, v->class, t0->class->i);
 
         default:

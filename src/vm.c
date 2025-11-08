@@ -1632,9 +1632,8 @@ vm_run_thread(void *p)
 
         if (TY_CATCH_ERROR()) {
                 // TODO: do something useful here
+                t->v = TY_CATCH();
                 fprintf(stderr, "Thread %lld dying with error: %s\n", TID, TyError(ty));
-                OKGC(t);
-                t->v = NIL;
         } else {
                 t->v = vmC(call, argc);
                 TY_CATCH_END();
@@ -1684,6 +1683,7 @@ vm_run_tdb(void *ctx)
         AddThread(ty, t->t);
 
         if (TY_CATCH_ERROR()) {
+                TY_CATCH();
                 fprintf(stderr, "TDB thread unrecoverable error: %s\n", TyError(ty));
                 goto TDB_HAS_BEEN_STOPPED;
         }
@@ -1698,6 +1698,7 @@ vm_run_tdb(void *ctx)
                 u8 next = TDB_STATE_STOPPED;
 
                 if (TY_CATCH_ERROR()) {
+                        TY_CATCH();
                         fprintf(stderr, "TDB thread error: %s\n", TyError(ty));
                         goto KeepRunning;
                 }
@@ -1935,7 +1936,13 @@ DoThrow(Ty *ty)
 {
         Value ex = peek();
 
-        //XXX("Throw: %s", ValueTypeName(ty, &ex));
+        //if (ex.type == VALUE_OBJECT && ex.class == CLASS_ERROR) {
+        //        XXX("Throw: RuntimeError: %s", TY_TMP_C_STR(*itable_get(ty, ex.object, NAMES._what)));
+        //} else {
+        //        TY_START(DYING);
+        //        XXX("Throw: %s", VSC(&ex));
+        //        TY_STOP(DYING);
+        //}
         //xprint_stack(ty, 10);
 
         for (;;) {
@@ -2350,6 +2357,10 @@ GetMember(Ty *ty, Value v, int member, bool try_missing, bool exec)
                 if (member == NAMES._name_) {
                         return xSz(class_name(ty, v.class));
                 }
+                if (member == NAMES._super_) {
+                        Class *super = class_get(ty, v.class)->super;
+                        return (super != NULL) ? CLASS(super->i) : NIL;
+                }
                 if (member == NAMES._fields_) {
                         return itable_dict(ty, &class_get(ty, v.class)->fields);
                 }
@@ -2725,37 +2736,36 @@ GetDynamicMemberId(Ty *ty, bool strict)
 
         switch (v.type) {
         case VALUE_STRING:
-                {
-                        byte_vector name = {0};
-                        InternEntry *member;
+        {
+                byte_vector name = {0};
+                InternEntry *member;
 
-                        SCRATCH_SAVE();
+                SCRATCH_SAVE();
 
-                        svPn(name, v.str, v.bytes);
-                        svP(name, '\0');
+                svPn(name, v.str, v.bytes);
+                svP(name, '\0');
 
-                        member = intern_get(&xD.members, v_(name, 0));
-                        if (member->id < 0) {
-                                if (!strict) {
-                                        pop();
-                                        return -1;
-                                } else {
-                                        int z = intern_put(member, NULL)->id;
-                                        SCRATCH_RESTORE();
-
-                                        pop();
-
-                                        return -(z + 1);
-                                }
-                        } else {
+                member = intern_get(&xD.members, v_(name, 0));
+                if (member->id < 0) {
+                        if (!strict) {
                                 SCRATCH_RESTORE();
                                 pop();
-                                return member->id;
-
+                                return -1;
+                        } else {
+                                int z = intern_put(member, NULL)->id;
+                                SCRATCH_RESTORE();
+                                pop();
+                                return -(z + 1);
                         }
+                } else {
+                        SCRATCH_RESTORE();
+                        pop();
+                        return member->id;
 
                 }
+
                 break;
+        }
 
         default:
                 zP(
@@ -2947,7 +2957,7 @@ ClassLookup:
         } else if (
                 (vp == NULL)
              && (value.type == VALUE_OBJECT)
-             && (vp = class_lookup_method_i(ty, value.class, NAMES.missing)) != NULL
+             && ((vp = class_lookup_method_i(ty, value.class, NAMES.missing)) != NULL)
         ) {
                 // TODO: Shouldn't need to recurse here
                 push(xSz(M_NAME(i)));
@@ -3228,7 +3238,7 @@ DoMutDiv(Ty *ty)
                 if (UNLIKELY(top()->type != VALUE_INTEGER)) {
                         zP("attempt to divide byte by non-integer: %s", VSC(top()));
                 }
-                b = ((struct blob *)TARGETS.items[TARGETS.count].gc)->items[((uptr)vp) >> 3] /= pop().integer;
+                b = ((Blob *)vZ(TARGETS)->gc)->items[((uptr)vp) >> 3] /= pop().integer;
                 push(INTEGER(b));
                 break;
 
@@ -3858,15 +3868,15 @@ DoTargetMember(Ty *ty, Value v, i32 z)
                 break;
 
         case VALUE_CLASS:
+                vp = class_lookup_field(ty, v.class, z);
+                if (vp != NULL) {
+                        pushtarget(vp, NULL);
+                        return;
+                }
                 vp = class_lookup_s_setter_i(ty, v.class, z);
                 if (vp != NULL) {
                         pushtarget(vp, NULL);
                         pushtarget((Value *)(uptr)v.class, NULL);
-                        return;
-                }
-                vp = class_lookup_field(ty, v.class, z);
-                if (vp != NULL) {
-                        pushtarget(vp, NULL);
                         return;
                 }
                 vp = class_lookup_s_setter_i(ty, v.class, NAMES.missing);
@@ -5366,6 +5376,9 @@ AssignGlobal:
                         STACK.count -= 2;
                         v_L(STACK) = v;
                         break;
+                CASE(INT8)
+                        push(INTEGER((i8)*IP++));
+                        break;
                 CASE(INTEGER)
                         READVALUE(k);
                         push(INTEGER(k));
@@ -5815,19 +5828,20 @@ Yield:
                 CASE(CONCAT_STRINGS)
                         READVALUE(n);
                         k = 0;
-                        for (i = STACK.count - n; i < STACK.count; ++i)
-                                k += STACK.items[i].bytes;
+                        for (i = vN(STACK) - n; i < vN(STACK); ++i) {
+                                k += v_(STACK, i)->bytes;
+                        }
                         str = value_string_alloc(ty, k);
                         v = STRING(str, k);
                         k = 0;
-                        for (i = STACK.count - n; i < STACK.count; ++i) {
-                                if (STACK.items[i].bytes > 0) {
-                                        memcpy(str + k, STACK.items[i].str, STACK.items[i].bytes);
+                        for (i = vN(STACK) - n; i < vN(STACK); ++i) {
+                                if (v_(STACK, i)->bytes > 0) {
+                                        memcpy(str + k, v_(STACK, i)->str, v_(STACK, i)->bytes);
                                         k += STACK.items[i].bytes;
                                 }
                         }
-                        STACK.count -= n - 1;
-                        STACK.items[STACK.count - 1] = v;
+                        STACK.count -= n;
+                        vPx(STACK, v);
                         break;
                 CASE(RANGE)
                         vp = class_lookup_method_i(ty, CLASS_RANGE, NAMES.init);
@@ -6595,6 +6609,7 @@ RunExitHooks(void)
 
         for (usize i = 0; i < vN(*hooks); ++i) {
                 if (TY_CATCH_ERROR()) {
+                        TY_CATCH();
                         xvP(msgs, S2(TyError(ty)));
                 } else {
                         Value v = vmC(v_(*hooks, i), 0);
@@ -6656,7 +6671,7 @@ vm_init(Ty *ty, int ac, char **av)
         NAMES.slice            = M_ID("[;;]");
         NAMES.str              = M_ID("__str__");
         NAMES.subscript        = M_ID("[]");
-        NAMES._what            = M_ID(sfmt("what$%d", CLASS_ERROR));
+        NAMES._what            = M_ID(sfmt("what$%d", CLASS_RUNTIME_ERROR));
 
         NAMES._fields_         = M_ID("__fields__");
         NAMES._methods_        = M_ID("__methods__");
@@ -6665,6 +6680,7 @@ vm_init(Ty *ty, int ac, char **av)
         NAMES._static_fields_  = M_ID("__static_fields__");
         NAMES._static_methods_ = M_ID("__static_methods__");
         NAMES._static_getters_ = M_ID("__static_getters__");
+        NAMES._super_          = M_ID("__super__");
 
         GC_STOP();
 
@@ -6679,6 +6695,7 @@ vm_init(Ty *ty, int ac, char **av)
         AddThread(ty, TyThreadSelf());
 
         if (TY_CATCH_ERROR()) {
+                TY_CATCH();
                 GC_RESUME();
                 return false;
         }
@@ -7048,7 +7065,7 @@ vm_panic(Ty *ty, char const *fmt, ...)
 {
         va_list ap;
 
-        ThrowCtx *ctx = PushThrowCtx(ty);
+        (void)PushThrowCtx(ty);
 
         va_start(ap, fmt);
         vm_vpanic_ex(ty, fmt, ap);
@@ -7068,12 +7085,10 @@ vm_error(Ty *ty, char const *fmt, ...)
 
         //XXX("VM Error: %.*s", (int)msg.bytes, msg.str);
 
-        Value error = OBJECT(object_new(ty, CLASS_ERROR), CLASS_ERROR);
-        *itable_get(ty, error.object, NAMES._what) = msg;
+        Value error = RawObject(CLASS_RUNTIME_ERROR);
+        PutMember(error, NAMES._what, msg);
 
         vm_throw(ty, &error);
-
-        UNREACHABLE();
 }
 
 void
@@ -7516,22 +7531,14 @@ vm_load_program(Ty *ty, char const *source, char const *file)
 {
         TY_IS_READY = false;
 
-        GC_STOP();
-
-        v0(RootSet);
-        v0(STACK);
-        v0(SP_STACK);
-        v0(TRY_STACK);
-        v0(TARGETS);
-        SCRATCH_RESET();
-
         Module * volatile mod = NULL;
 
         if (TY_CATCH_ERROR()) {
                 TY_CATCH();
-                GC_RESUME();
                 return false;
         }
+
+        GC_STOP();
 
         mod = compiler_compile_source(ty, source, file);
         if (mod == NULL) {
@@ -7571,7 +7578,6 @@ vm_execute(Ty *ty, char const *source, char const *file)
         if (TY_CATCH_ERROR()) {
                 char *trace = FormatTrace(ty, NULL, NULL);
                 Value   exc = TY_CATCH();
-                TY_START(DYING);
                 dump(
                         &ErrorBuffer,
                         "%sRuntimeError%s: uncaught exception: %s\n\n%s",
@@ -7581,7 +7587,6 @@ vm_execute(Ty *ty, char const *source, char const *file)
                         trace
                 );
                 free(trace);
-                TY_STOP(DYING);
                 return false;
         }
 
@@ -8311,6 +8316,9 @@ StepInstruction(char const *ip)
         CASE(POP)
                 break;
         CASE(UNPOP)
+                break;
+        CASE(INT8)
+                IP += 1;
                 break;
         CASE(INTEGER)
                 SKIPVALUE(k);
@@ -9064,16 +9072,16 @@ TyReloadModule(Ty *ty, char const *module)
         bool ok = false;
 
         if (TY_CATCH_ERROR()) {
-                goto End;
+                TY_CATCH();
+        } else {
+                Module *mod = CompilerGetModule(ty, module);
+                if (mod != NULL && CompilerReloadModule(ty, mod, NULL)) {
+                        vm_exec(ty, mod->code);
+                        ok = true;
+                }
+                TY_CATCH_END();
         }
-        // ======================================================================================
-        Module *mod = CompilerGetModule(ty, module);
-        if (mod != NULL && CompilerReloadModule(ty, mod, NULL)) {
-                vm_exec(ty, mod->code);
-                ok = true;
-        }
-        // ======================================================================================
-End:
+
         ty->ty->ready = ready;
         GC_RESUME();
         // ======================================================================================

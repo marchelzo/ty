@@ -35,33 +35,37 @@ static void
 really_finalize(Ty *ty, Class *c);
 
 static char const *BuiltinClassNames[] = {
-        [CLASS_ARRAY]        = "Array",
-        [CLASS_BOOL]         = "Bool",
-        [CLASS_BLOB]         = "Blob",
-        [CLASS_CLASS]        = "Class",
-        [CLASS_DICT]         = "Dict",
-        [CLASS_ERROR]        = "RuntimeError",
-        [CLASS_FLOAT]        = "Float",
-        [CLASS_FUNCTION]     = "Function",
-        [CLASS_GENERATOR]    = "Generator",
-        [CLASS_INT]          = "Int",
-        [CLASS_INC_RANGE]    = "InclusiveRange",
-        [CLASS_ITER]         = "Iter",
-        [CLASS_ITERABLE]     = "Iterable",
-        [CLASS_OBJECT]       = "Object",
-        [CLASS_PTR]          = "Ptr",
-        [CLASS_INTO_PTR]     = "IntoPtr",
-        [CLASS_QUEUE]        = "Queue",
-        [CLASS_RANGE]        = "Range",
-        [CLASS_REGEX]        = "Regex",
-        [CLASS_REGEXV]       = "RegexV",
-        [CLASS_RE_MATCH]     = "RegexMatch",
-        [CLASS_REV_ITER]     = "ReverseIter",
-        [CLASS_SHARED_QUEUE] = "SharedQueue",
-        [CLASS_STRING]       = "String",
-        [CLASS_TAG]          = "Tag",
-        [CLASS_TUPLE]        = "Tuple",
-        [CLASS_TUPLE_SPEC]   = "TupleSpec"
+        [CLASS_ARRAY]           = "Array",
+        [CLASS_BOOL]            = "Bool",
+        [CLASS_BLOB]            = "Blob",
+        [CLASS_CLASS]           = "Class",
+        [CLASS_DICT]            = "Dict",
+        [CLASS_ERROR]           = "BaseException",
+        [CLASS_RUNTIME_ERROR]   = "RuntimeError",
+        [CLASS_COMPILE_ERROR]   = "CompileError",
+        [CLASS_VALUE_ERROR]     = "ValueError",
+        [CLASS_ASSERT_ERROR]    = "AssertError",
+        [CLASS_FLOAT]           = "Float",
+        [CLASS_FUNCTION]        = "Function",
+        [CLASS_GENERATOR]       = "Generator",
+        [CLASS_INT]             = "Int",
+        [CLASS_INC_RANGE]       = "InclusiveRange",
+        [CLASS_ITER]            = "Iter",
+        [CLASS_ITERABLE]        = "Iterable",
+        [CLASS_OBJECT]          = "Object",
+        [CLASS_PTR]             = "Ptr",
+        [CLASS_INTO_PTR]        = "IntoPtr",
+        [CLASS_QUEUE]           = "Queue",
+        [CLASS_RANGE]           = "Range",
+        [CLASS_REGEX]           = "Regex",
+        [CLASS_REGEXV]          = "RegexV",
+        [CLASS_RE_MATCH]        = "RegexMatch",
+        [CLASS_REV_ITER]        = "ReverseIter",
+        [CLASS_SHARED_QUEUE]    = "SharedQueue",
+        [CLASS_STRING]          = "String",
+        [CLASS_TAG]             = "Tag",
+        [CLASS_TUPLE]           = "Tuple",
+        [CLASS_TUPLE_SPEC]      = "TupleSpec"
 };
 
 static void
@@ -870,6 +874,9 @@ finalize(Ty *ty, Class *c)
 
         Value *f = itable_lookup(ty, &c->methods, NAMES._free_);
         if (f != NULL) {
+                while (f->type == VALUE_REF) {
+                        f = f->ref;
+                }
                 c->finalizer = *f;
         }
 

@@ -41,6 +41,10 @@ enum {
         CLASS_TUPLE,
         CLASS_PRIMITIVE = CLASS_TUPLE,
         CLASS_ERROR,
+        CLASS_COMPILE_ERROR,
+        CLASS_RUNTIME_ERROR,
+        CLASS_VALUE_ERROR,
+        CLASS_ASSERT_ERROR,
         CLASS_RE_MATCH,
         CLASS_INTO_PTR,
         CLASS_ITERABLE,
@@ -1496,6 +1500,22 @@ inline static Value *
 NewZero(void)
 {
         return alloc0(sizeof *NewZero());
+}
+
+#define RawObject(c) ((RawObject)(ty, (c)))
+inline static Value
+(RawObject)(Ty *ty, int class)
+{
+        struct itable *o = mAo0(sizeof *o, GC_OBJECT);
+        o->class = class;
+        return OBJECT(o, class);
+}
+
+#define PutMember(o, m, x) ((PutMember)(ty, (o), (m), (x)))
+inline static void
+(PutMember)(Ty *ty, Value v, i32 m, Value x)
+{
+        *itable_get(ty, v.object, m) = x;
 }
 
 #endif

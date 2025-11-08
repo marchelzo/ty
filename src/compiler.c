@@ -9,22 +9,22 @@
 #include <stdnoreturn.h>
 #include <unistd.h>
 
-#include "scope.h"
-#include "ty.h"
 #include "alloc.h"
-#include "operators.h"
-#include "log.h"
-#include "util.h"
-#include "value.h"
 #include "ast.h"
+#include "class.h"
+#include "compiler.h"
 #include "dict.h"
 #include "functions.h"
 #include "lex.h"
+#include "log.h"
+#include "operators.h"
 #include "parse.h"
+#include "scope.h"
 #include "tags.h"
-#include "class.h"
+#include "ty.h"
+#include "util.h"
+#include "value.h"
 #include "vm.h"
-#include "compiler.h"
 #include "types.h"
 
 #if defined(TY_LS)
@@ -334,8 +334,8 @@ ResolveFieldTypes(Ty *ty, Scope *scope, expression_vector const *fields);
 static bool
 expedite_fun(Ty *ty, Expr *e, void *ctx);
 
-static Stmt *
-annotate_tokens(Ty *ty, Stmt *stmt);
+static void *
+annotate_tokens(Ty *ty, void const *stmt);
 
 static RangeLoop
 BeginRangeLoop(
@@ -834,6 +834,12 @@ colorize_code(
         usize n
 )
 {
+        out[0] = '\0';
+
+        if (start->s == NULL || end->s == NULL) {
+                return;
+        }
+
         char const *prefix = start->s;
         char const    *eol = start->s + strcspn(start->s, "\n");
         char const *suffix = (eol > end->s) ? end->s : eol;
@@ -883,6 +889,13 @@ colorize_code_multiline(
         byte_vector *buf
 )
 {
+        xvP(*buf, '\0');
+        vvX(*buf);
+
+        if (start->s == NULL || end->s == NULL) {
+                return;
+        }
+
         char const *ls = start->s, *le = end->s + strcspn(end->s, "\n");
         char const *p, *q;
         usize min = SIZE_MAX, indent, skip;
@@ -1260,6 +1273,8 @@ ResolveClassSpec(Ty *ty, Expr const *spec)
 {
         i32 c;
 
+        symbolize_expression(ty, STATE.active, (Expr *)spec);
+
 Restart:
         switch (spec->type) {
         case EXPRESSION_MATCH_ANY:
@@ -1308,15 +1323,19 @@ ResolveConstraint(Ty *ty, Expr *constraint)
                 return NULL;
         }
 
+        if (constraint->type == EXPRESSION_TYPE) {
+                return constraint->_type;
+        }
+
         Type *t0 = type_fixed(ty, type_resolve(ty, constraint));
 
         // XXX
         if (1 && (t0 != NULL)) {
-                if (HAVE_COMPILER_FLAG(TOKENS)) {
-                       annotate_tokens(ty, (Stmt *)constraint);
-                }
+                Expr *tmp = aclone(constraint);
+                tmp->arena = GetArenaAlloc(ty);
                 constraint->type = EXPRESSION_TYPE;
                 constraint->_type = t0;
+                constraint->constraint = tmp;
         }
 
         return t0;
@@ -1792,6 +1811,7 @@ getsymbol(Ty *ty, Scope const *scope, char const *name, u32 flags)
         Symbol *s = ScopeLookupEx(scope, name, flags);
 
         if (s == NULL) {
+                *(volatile int *)0 = 0;
                 fail_or(
                         "reference to undefined variable: %s%s%s%s",
                         TERM(1),
@@ -5387,7 +5407,14 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
                  * reached when the operands are already known to satisfy them.
                  */
                 for (int i = 0; i < vN(s->value->constraints); ++i) {
-                        *v_(s->value->constraints, i) = NULL;
+                        Expr **constraint = v_(s->value->constraints, i);
+                        if (*constraint == NULL) {
+                                continue;
+                        }
+                        if (HAVE_COMPILER_FLAG(TOKENS)) {
+                                annotate_tokens(ty, *constraint);
+                        }
+                        *constraint = NULL;
                 }
                 break;
 
@@ -8586,8 +8613,13 @@ emit_expr(Ty *ty, Expr const *e, bool need_loc)
                 break;
 
         case EXPRESSION_INTEGER:
-                INSN(INTEGER);
-                EiMAX(e->integer);
+                if (e->integer >= INT8_MIN && e->integer <= INT8_MAX) {
+                        INSN(INT8);
+                        Eu8((u8)e->integer);
+                } else {
+                        INSN(INTEGER);
+                        EiMAX(e->integer);
+                }
                 break;
 
         case EXPRESSION_BOOLEAN:
@@ -9678,7 +9710,12 @@ RedpillFun(Ty *ty, Scope *scope, Expr *f, Type *self0)
                                 } else if (param->type == EXPRESSION_PACK) {
                                         flags |= SYM_PARAM_PACK;
                                 }
-                                param->symbol = scope_add_type_var(ty, f->scope, param->identifier, flags);
+                                param->symbol = scope_add_type_var(
+                                        ty,
+                                        f->scope,
+                                        param->identifier,
+                                        flags
+                                );
                         }
                         symbolize_expression(ty, f->scope, param->constraint);
                 }
@@ -9720,7 +9757,10 @@ RedpillFun(Ty *ty, Scope *scope, Expr *f, Type *self0)
                 Symbol *sym = v__(f->param_symbols, i);
                 Expr *constraint = v__(f->constraints, i);
                 sym->type = ResolveConstraint(ty, constraint);
-                if (constraint != NULL && constraint->type == EXPRESSION_TYPE) {
+                if (
+                        (constraint != NULL)
+                     && (constraint->type == EXPRESSION_TYPE)
+                ) {
                         sym->flags |= SYM_FIXED;
                 }
         }
@@ -9768,11 +9808,11 @@ RedpillFun(Ty *ty, Scope *scope, Expr *f, Type *self0)
                                 case EXPRESSION_USER_OP:
                                         if (
                                                 (
-                                                        var->left->type != EXPRESSION_IDENTIFIER
+                                                        (var->left->type != EXPRESSION_IDENTIFIER)
                                                      || !SymbolIsTypeVar(var->left->symbol)
                                                 )
                                              && (
-                                                        var->right->type != EXPRESSION_IDENTIFIER
+                                                        (var->right->type != EXPRESSION_IDENTIFIER)
                                                      || !SymbolIsTypeVar(var->right->symbol)
                                                 )
                                         ) {
@@ -10109,8 +10149,8 @@ tag_start_token(Expr const *e, i32 tag)
         TokenVector *tokens = &mod->tokens;
         u32 i = e->start.tok;
 
-        if (i < vN(*tokens)) {
-                v_(*tokens, i)->tag = tag;
+        if (i > 0 && i <= vN(*tokens)) {
+                v_(*tokens, i - 1)->tag = tag;
         }
 }
 
@@ -10119,8 +10159,14 @@ annotate_expr_tokens(Expr *e, Scope *scope, void *ctx)
 {
         Symbol *sym;
 
+        if (e == NULL) {
+                return NULL;
+        }
+
         switch (e->type) {
+        case EXPRESSION_MATCH_REST:
         case EXPRESSION_IDENTIFIER:
+        case EXPRESSION_PACK:
                 sym = e->symbol;
                 if (SymbolIsFunction(sym)) {
                         tag_start_token(e, TT_FUNC);
@@ -10153,26 +10199,31 @@ annotate_lvalue_tokens(Expr *e, bool _, Scope *scope, void *ctx)
         return annotate_expr_tokens(e, scope, ctx);
 }
 
-static Stmt *
-annotate_tokens(Ty *ty, Stmt *stmt)
+static void *
+annotate_tokens(Ty *ty, void const *ast)
 {
+        if (ast == NULL) {
+                return NULL;
+        }
+
         VisitorSet visitor = visit_identitiy(ty);
 
-        visitor.e_post = annotate_expr_tokens;
-        visitor.p_post = annotate_expr_tokens;
-        visitor.t_post = annotate_expr_tokens;
-        visitor.l_post = annotate_lvalue_tokens;
+        visitor.e_pre = annotate_expr_tokens;
+        visitor.p_pre = annotate_expr_tokens;
+        visitor.t_pre = annotate_expr_tokens;
+        visitor.l_pre = annotate_lvalue_tokens;
 
-        return (stmt->type < EXPRESSION_MAX_TYPE)
-             ? visit_expression(ty, (Expr *)stmt, NULL, &visitor)
-             : visit_statement(ty, stmt, NULL, &visitor);
+        return (((Expr *)ast)->type < EXPRESSION_MAX_TYPE)
+             ? (void *)visit_expression(ty, (Expr *)ast, NULL, &visitor)
+             : (void *)visit_statement(ty, ast, NULL, &visitor);
 }
 
 static Expr *
 lowkey(Expr *e, Scope *scope, void *ctx)
 {
         if (
-                (e->mod == NULL)
+                (e == NULL)
+             || (e->mod == NULL)
              || (e->mod->path == NULL)
              || (strcmp(e->mod->path, QueryFile) != 0)
         ) {
@@ -10657,8 +10708,7 @@ import_module(Ty *ty, Stmt const *s)
         char const *as = s->import.as;
         bool pub = s->import.pub;
 
-        STATE.start = s->start;
-        STATE.end = s->end;
+        void *ctx = PushContext(ty, s);
 
         Scope *module_scope = get_module_scope(name);
 
@@ -10728,12 +10778,14 @@ import_module(Ty *ty, Stmt const *s)
 
         avP(
                 STATE.imports,
-                ((struct import){
+                ((struct import) {
                         .name = as,
                         .mod  = GetScopeModule(ty, module_scope),
                         .pub  = pub
                 })
         );
+
+        RestoreContext(ty, ctx);
 }
 
 void
@@ -10763,6 +10815,11 @@ compiler_init(Ty *ty)
                 sym->class = c->i;
                 sym->flags |= (SYM_PUBLIC | SYM_CONST | SYM_BUILTIN);
         }
+
+        class_set_super(ty, CLASS_COMPILE_ERROR, CLASS_ERROR);
+        class_set_super(ty, CLASS_RUNTIME_ERROR, CLASS_ERROR);
+        class_set_super(ty, CLASS_ASSERT_ERROR, CLASS_RUNTIME_ERROR);
+        class_set_super(ty, CLASS_VALUE_ERROR, CLASS_RUNTIME_ERROR);
 
         class_set_super(ty, CLASS_ITER, CLASS_ITERABLE);
         class_set_super(ty, CLASS_TAG, CLASS_FUNCTION);
@@ -12449,6 +12506,8 @@ tystmt(Ty *ty, Stmt *s)
         }
 
         case STATEMENT_FUNCTION_DEFINITION:
+        case STATEMENT_FUN_MACRO_DEFINITION:
+        case STATEMENT_OPERATOR_DEFINITION:
                 v = tyexpr(ty, s->value);
                 v = TAGGED(TyFuncDef, unwrap(ty, &v));
                 break;
@@ -13834,7 +13893,7 @@ cexpr(Ty *ty, Value *v)
                 fail("invalid value passed to cexpr(): %s", VSC(v));
         }
 
-        Scope *scope = STATE.macro_scope == NULL
+        Scope *scope = (STATE.macro_scope == NULL)
                      ? STATE.global
                      : STATE.macro_scope;
 
@@ -15285,8 +15344,9 @@ DumpProgram(
 #define PRINTVALUE(x)                                                                      \
         _Generic(                                                                          \
             (x),                                                                           \
+            i8:          dump(out, " %s%d%s", TERM(32), (x), TERM(0)),                     \
             int:         dump(out, " %s%d%s", TERM(32), (x), TERM(0)),                     \
-            imax:    dump(out, " %s%"PRIiMAX"%s", TERM(32), (x), TERM(0)),             \
+            imax:        dump(out, " %s%"PRIiMAX"%s", TERM(32), (x), TERM(0)),             \
             double:      dump(out, " %s%f%s", TERM(32), (x), TERM(0)),                     \
             float:       dump(out, " %s%f%s", TERM(32), (x), TERM(0)),                     \
             bool:        dump(out, " %s%s%s", TERM(32), (x) ? "true" : "false", TERM(0)),  \
@@ -15335,6 +15395,7 @@ DumpProgram(
 
         uptr s;
         imax k;
+        i8 n8;
         bool b = false;
         double x;
         int n, nkw = 0, i, j, tag;
@@ -15662,6 +15723,9 @@ DumpProgram(
                 CASE(POP)
                         break;
                 CASE(UNPOP)
+                        break;
+                CASE(INT8)
+                        READVALUE(n8);
                         break;
                 CASE(INTEGER)
                         READVALUE(k);

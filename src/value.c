@@ -562,11 +562,8 @@ value_showx(Ty *ty, Value const *v)
                         }
                 }
 
-#ifdef TY_NO_LOG
                 Value *fp = class_lookup_method_i(ty, v->class, NAMES.str);
-#else
-                Value *fp = NULL;
-#endif
+
                 if (fp != NULL && class_of(fp) != CLASS_OBJECT) {
                         xvP(ty->visiting, v->object);
                         Value self = stripped(v);
@@ -1141,9 +1138,11 @@ value_apply_callable(Ty *ty, Value *f, Value *v)
         case VALUE_ARRAY:
                 vmP(v);
                 return vmC(f, 1);
+
         case VALUE_REGEX:
-                if (v->type != VALUE_STRING)
+                if (v->type != VALUE_STRING) {
                         zP("regex applied as predicate to non-string");
+                }
 
                 size_t *ovec = pcre2_get_ovector_pointer(ty->pcre2.match);
 
@@ -1157,11 +1156,13 @@ value_apply_callable(Ty *ty, Value *f, Value *v)
                         ty->pcre2.ctx
                 );
 
-                if (rc < -2)
+                if (rc < -2) {
                         zP("error while executing regular expression: %d", rc);
+                }
 
-                if (rc <= 0)
+                if (rc <= 0) {
                         return NIL;
+                }
 
                 Value match;
 
@@ -1380,14 +1381,22 @@ mark_function(Ty *ty, Value const *v)
 
         int meta = 0;
         for (int i = 0; i < n + meta; ++i) {
-                if (v->env[i] == NULL)
+                if (v->env[i] == NULL) {
                         continue;
+                }
                 MARK(v->env[i]);
                 MarkNext(ty, v->env[i]);
                 if (v->env[i]->type == VALUE_FUN_META) {
                         meta += 1;
                 }
         }
+}
+
+inline static void
+mark_method(Ty *ty, Value const *v)
+{
+        MARK(v->this);
+        MarkNext(ty, v->this);
 }
 
 inline static void
@@ -1426,7 +1435,7 @@ _value_mark_xd(Ty *ty, Value const *v)
 #endif
 
         switch (v->type & ~VALUE_TAGGED) {
-        case VALUE_METHOD:          if (!MARKED(v->this)) { MARK(v->this); MarkNext(ty, v->this); }   break;
+        case VALUE_METHOD:          if (!MARKED(v->this)) { mark_method(ty, v); }                     break;
         case VALUE_BUILTIN_METHOD:  if (!MARKED(v->this)) { MARK(v->this); MarkNext(ty, v->this); }   break;
         case VALUE_ARRAY:           value_array_mark(ty, v->array);                                   break;
         case VALUE_TUPLE:           mark_tuple(ty, v);                                                break;

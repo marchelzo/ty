@@ -513,10 +513,11 @@ array_take_while_mut(Ty *ty, Value *array, int argc, Value *kwargs)
 
         int keep = 0;
         for (int i = 0; i < array->array->count; ++i) {
-                if (value_apply_predicate(ty, &f, &array->array->items[i]))
+                if (value_apply_predicate(ty, &f, &array->array->items[i])) {
                         ++keep;
-                else
+                } else {
                         break;
+                }
         }
 
         array->array->count = keep;
@@ -528,20 +529,22 @@ array_take_while_mut(Ty *ty, Value *array, int argc, Value *kwargs)
 static Value
 array_take_while(Ty *ty, Value *array, int argc, Value *kwargs)
 {
-        if (argc != 1)
-                zP("array.takeWhile!() expects 1 argument but got %d", argc);
+        ASSERT_ARGC("Array.takeWhile!()", 1);
 
         Value f = ARG(0);
 
-        if (!CALLABLE(f))
+        if (!CALLABLE(f)) {
                 zP("non-callable predicate passed to array.takeWhile!()");
+        }
 
         int keep = 0;
-        for (int i = 0; i < array->array->count; ++i)
-                if (value_apply_predicate(ty, &f, &array->array->items[i]))
-                        ++keep;
-                else
+        for (int i = 0; i < vN(*array->array); ++i) {
+                if (value_apply_predicate(ty, &f, v_(*array->array, i))) {
+                        keep += 1;
+                } else {
                         break;
+                }
+        }
 
         Value result = ARRAY(vA());
         NOGC(result.array);

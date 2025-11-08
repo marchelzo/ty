@@ -1375,6 +1375,10 @@ class Generator[T] : Iter[T] {
     __call__(*args: Any) -> Some[T] | None {
         self()
     }
+
+    static [](T) {
+        x -> (x :: Generator)
+    }
 }
 
 class Tag < Function {
@@ -1487,7 +1491,17 @@ class Tuple[...T] {
     __iter__() -> Iter[_];
 }
 
-class RuntimeError {
+class BaseException {
+    what -> String;
+
+    __str__() -> String {
+        "{Class.name(type(self))}: {what}"
+    }
+}
+
+class CompileError < BaseException {}
+
+class RuntimeError < BaseException {
     __what: String
 
     init(what: String) {
@@ -1495,11 +1509,10 @@ class RuntimeError {
     }
 
     what { __what }
-
-    __str__() -> String {
-        "{Class.name(type(self))}: {what}"
-    }
 }
+
+class ValueError < RuntimeError {}
+class AssertError < RuntimeError {}
 
 tag MatchError;
 tag IndexError;
@@ -2965,9 +2978,6 @@ class Thread[T] {
     id() {
         thread.id(__handle)
     }
-}
-
-class ValueError < RuntimeError {
 }
 
 macro static!(e) = $${ty.eval(e)} as (typeof $$e)
