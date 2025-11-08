@@ -228,18 +228,18 @@ let groups = %{
     'fg1': '[ ] { } ( ) . .? , ] ->',
     'orange': '
         =   ==  ++  --  +   -  *    /   %   ^    |     &    <=   >=
-        +=  -=  *=  /=  %=  @  #    &&  ||  <=>  !     ~
-        ~>  =>  $~> >   <  !=  ??   >>  <<  <<=  >>=   |>
+        +=  -=  *=  /=  %=  @  #    &&  ||  <=>  !     ~    **
+        ~>  =>  $~> >   <  !=  ??   >>  <<  <<=  >>=   |>   !::
         *** &&& <$> <%> ?> <?  <*>  *>  <*  ..%. .%..  .%
-        ::  ?=  |=  &=  ^=  ?  :    ?:  ..  ...  $
+        ::  ?=  |=  &=  ^=  ?  :    ?:  ..  ...  $     :>
     ',
     'purple': 'true false nil int float use import',
     'red': '
-        for        while     if       let       and    fn     const
-        do         try       catch    operator  or     in     yield
-        match      else      with     break     pub    as     static
-        continue   return    macro    where     not    throw  defer
-        finally
+        for        while     if         let       and    fn     const
+        do         try       catch      operator  or     in     yield
+        match      else      with       break     pub    as     static
+        continue   return    macro      where     not    throw  defer
+        finally    __eval__  generator  ns
 
         id_keyword
     ',
@@ -251,13 +251,13 @@ let groups = %{
     'blue2': 'typeof __set_type__',
     'aqua': 'regex',
     'grey': 'comment ; :_punct',
-    'pink': 'pp id_macro fun_macro $$[ $$] $$ __defined__'
+    'pink': 'pp id_macro fun_macro type_macro $$[ $$] $$ __defined__'
 }
 
 let colors = [ %{ t: c for t in g.words() } for c, g in groups ].sum()
 
 fn color-and-break(source: String) -> Array[(Int, String)] {
-    let tokens: Array[_] = match ty.parse(source, tokens=true) {
+    let tokens: Array[_] = match ty.parse(source, tokens=true, deep=false, resolve=true) {
         (Ok((_, {tokens, *})) or Err({tokens, *}))
             => tokens,
 

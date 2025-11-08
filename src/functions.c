@@ -6768,7 +6768,6 @@ BUILTIN_FUNCTION(bind)
         Value x = ARG(1);
 
         Value *this;
-        Value *fp;
 
         if (f.type == VALUE_METHOD) {
                 this = mAo(sizeof x, GC_VALUE);
@@ -6776,14 +6775,14 @@ BUILTIN_FUNCTION(bind)
                 return METHOD(f.name, f.method, this);
         }
 
-        if (f.type == VALUE_FUNCTION) {
-                this = mAo(sizeof x, GC_VALUE);
-                NOGC(this);
-                *this = x;
-                fp = mAo(sizeof x, GC_VALUE);
-                *fp = f;
-                OKGC(this);
-                return METHOD(f.name, fp, this);
+        if (
+                (f.type == VALUE_FUNCTION)
+             && (class_of(&f) != -1)
+        ){
+                this = mAo(2 * sizeof (Value), GC_VALUE);
+                this[0] = x;
+                this[1] = f;
+                return METHOD(M_ID(name_of(&f)), &this[1], &this[0]);
         }
 
         return f;

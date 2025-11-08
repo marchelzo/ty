@@ -600,7 +600,7 @@ Expr *
 visit_expression(Ty *ty, Expr *e, Scope *, VisitorSet const *);
 
 Expr *
-visit_type(Ty *ty, Expr *e, Scope *scope, VisitorSet const *hooks);
+visit_type(Ty *ty, Expr *e, Scope *scope, VisitorSet const *);
 
 VisitorSet
 visit_identitiy(Ty *ty);

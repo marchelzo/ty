@@ -657,6 +657,7 @@ typedef struct {
         int _static_methods_;
         int _static_getters_;
         int _static_setters_;
+        int _super_;
 
         int _readln;
         int env;
@@ -807,6 +808,7 @@ extern usize TotalBytesAllocated;
         X(ARRAY_REST),            \
         X(TUPLE_REST),            \
         X(RECORD_REST),           \
+        X(INT8),                  \
         X(INTEGER),               \
         X(REAL),                  \
         X(TRUE),                  \

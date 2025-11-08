@@ -78,7 +78,6 @@ collect(Ty *ty, struct alloc *a)
                 o = OBJECT((struct itable *)p, ((struct itable *)p)->class);
                 finalizer = class_get_finalizer(ty, o.class);
                 if (finalizer.type != VALUE_NONE) {
-                        GCLOG("Calling finalizer for: %s", value_show(ty, &o));
                         vm_call_method(ty, &o, &finalizer, 0);
                 }
                 itable_release(ty, p);

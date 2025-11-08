@@ -171,7 +171,7 @@ typedef struct token {
                 Expr *e;
                 Regex const *regex;
                 double real;
-                intmax_t integer;
+                imax integer;
         };
 } Token;
 

@@ -147,7 +147,7 @@ static Token
 mkregex(Ty *ty, char const *pat, int flags, bool detailed)
 {
         int err;
-        size_t offset;
+        usize offset;
         char err_buf[256];
 
         pcre2_code *re = pcre2_compile(
@@ -160,7 +160,7 @@ mkregex(Ty *ty, char const *pat, int flags, bool detailed)
         );
 
         if (re == NULL) {
-                pcre2_get_error_message(err, (uint8_t *)err_buf, sizeof err_buf);
+                pcre2_get_error_message(err, (u8 *)err_buf, sizeof err_buf);
                 error(
                         ty,
                         "error compiling regular expression: %s/%s/%s at position %zu: %s",
@@ -174,7 +174,7 @@ mkregex(Ty *ty, char const *pat, int flags, bool detailed)
 
         err = pcre2_jit_compile(re, PCRE2_JIT_COMPLETE);
         if (err < 0) {
-                pcre2_get_error_message(err, (uint8_t *)err_buf, sizeof err_buf);
+                pcre2_get_error_message(err, (u8 *)err_buf, sizeof err_buf);
                 error(
                         ty,
                         "error JIT-compiling regular expression: %s/%s/%s: %s",
@@ -348,11 +348,8 @@ idchar(int c)
 static Token
 lexword(Ty *ty)
 {
-        vec(char) module;
-        vec(char) word;
-
-        vec_init(module);
-        vec_init(word);
+        byte_vector module = {0};
+        byte_vector word   = {0};
 
         bool raw = false;
         bool has_module = false;
@@ -403,12 +400,15 @@ lexword(Ty *ty)
                         nextchar(ty);
                         nextchar(ty);
 
-                        if (module.count != 0)
+                        if (module.count != 0) {
                                 avP(module, '/');
+                        }
 
-                        if (word.count != 0)
+                        if (vN(word) > 0) {
                                 avPn(module, word.items, word.count);
-                        word.count = 0;
+                        }
+
+                        v0(word);
 
                         if (!haveid(ty)) {
                                 error(
@@ -426,23 +426,25 @@ lexword(Ty *ty)
         /*
          * Identifiers are allowed to end in '?' or '!'. e.g., [1, 2, 3].map!(a -> a + 1)
          */
-        if (C(0) == '!' || C(0) == '?')
+        if (C(0) == '!' || C(0) == '?') {
                 avP(word, nextchar(ty));
+        }
 
-        if (has_module)
+        if (has_module) {
                 avP(module, '\0');
+        }
 
         avP(word, '\0');
 
-        char *w = word.items;
-        char *m = module.items;
+        char *w = vv(word);
+        char *m = vv(module);
 
         int keyword;
         if (!raw && (keyword = keyword_get_number(w)) != -1) {
                 state.need_nl |= (
-                        keyword == KEYWORD_IMPORT
-                     || keyword == KEYWORD_OPERATOR
-                     || keyword == KEYWORD_NAMESPACE
+                        (keyword == KEYWORD_IMPORT)
+                     || (keyword == KEYWORD_OPERATOR)
+                     || (keyword == KEYWORD_NAMESPACE)
                 );
                 return mkkw(ty, keyword);
         }
@@ -455,7 +457,7 @@ lexname(Ty *ty)
 {
         static char const *STOP = " \t\r\n({[";
 
-        vec(u8) name = {0};
+        byte_vector name = {0};
         avP(name, nextchar(ty));
 
         if (v_L(name) == '`') {
@@ -769,9 +771,9 @@ Unterminated:
 static Token
 lexregex(Ty *ty)
 {
-        vec(char) pat;
-        vec_init(pat);
+        byte_vector pat = {0};
 
+        // Initial slash
         nextchar(ty);
 
         while (C(0) != '/') {
@@ -792,7 +794,8 @@ lexregex(Ty *ty)
                 }
         }
 
-        nextchar(ty) == '/';
+        // Closing slash
+        nextchar(ty);
 
         int flags = 0;
         bool detailed = false;
@@ -1253,15 +1256,13 @@ dotoken(Ty *ty, int ctx)
 Token
 lex_token(Ty *ty, LexContext ctx)
 {
-        TyClearError(ty);
-
         if (setjmp(jb) != 0) {
                 return (Token) {
-                        .type = TOKEN_ERROR,
+                        .type  = TOKEN_ERROR,
                         .start = Start,
-                        .end = state.loc,
-                        .nl = state.need_nl,
-                        .ctx = state.ctx
+                        .end   = state.loc,
+                        .nl    = state.need_nl,
+                        .ctx   = state.ctx
                 };
         }
 
@@ -1367,7 +1368,7 @@ lex_peek_char(Ty *ty, char *out)
 
         char const *s = SRC;
 
-        int n = utf8proc_iterate((uint8_t *)s, END - s, &cp1);
+        int n = utf8proc_iterate((u8 *)s, END - s, &cp1);
 
         if (n == -1) {
                 return 0;
@@ -1378,7 +1379,7 @@ lex_peek_char(Ty *ty, char *out)
                         *out++ = *s++;
                 }
 
-                n = utf8proc_iterate((uint8_t *)s, END - s, &cp2);
+                n = utf8proc_iterate((u8 *)s, END - s, &cp2);
                 if (n == -1) {
                         break;
                 }

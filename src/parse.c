@@ -281,7 +281,6 @@ typedef struct ParserState {
         Expr *CurrentTemplate;
 
         JmpBufVector SavePoints;
-        int SetJmpDepth;
 
         Location EEnd;
         Location EStart;
@@ -338,7 +337,6 @@ static Expr NullExpr = {
 #define NoPipe            (state.NoPipe)
 #define ParseDepth        (state.depth)
 #define SavePoints        (state.SavePoints)
-#define SetJmpDepth       (state.SetJmpDepth)
 #define TokenIndex        (state.TokenIndex)
 #define TypeContext       (state.TypeContext)
 #define LValueContext     (state.LValueContext)
@@ -599,7 +597,7 @@ inline static Stmt *
 inline static Token *
 fixup(Ty *ty, Token *tok)
 {
-        tok->start.tok = tok - vv(tokens);
+        tok->start.tok = (tok - vv(tokens)) + 1;
         return tok;
 }
 
@@ -776,8 +774,8 @@ inline static struct token *
 inline static void
 TagTokenOf(Ty *ty, Expr *e, int tag)
 {
-        if (vN(tokens) > e->start.tok) {
-                v_(tokens, e->start.tok)->tag = tag;
+        if (e->start.tok > 0 && e->start.tok <= vN(tokens)) {
+                v_(tokens, e->start.tok - 1)->tag = tag;
         }
 }
 
@@ -934,7 +932,11 @@ NewSavePoint(void)
         return *vvL(SavePoints);
 }
 
-#define CatchError() (AllowErrors && setjmp(*NewSavePoint()) != 0)
+#define ReallyCatchError() (setjmp(*NewSavePoint()) != 0)
+#define ReallyEndCatch()   (vvX(SavePoints))
+
+#define CatchError()       (AllowErrors && ReallyCatchError())
+#define EndCatch()         (AllowErrors ? ReallyEndCatch() : NULL)
 
 /*
  * Push a token into the token stream, so that it will be returned by the next call
@@ -943,11 +945,11 @@ NewSavePoint(void)
 inline static void
 (unconsume)(Ty *ty, int type)
 {
-        struct token t = {
-                .type = type,
-                .start= TEnd,
-                .end = TEnd,
-                .ctx = LEX_FAKE
+        Token t = {
+                .type  = type,
+                .start = TEnd,
+                .end   = TEnd,
+                .ctx   = LEX_FAKE
         };
 
         PLOG("Inserting tokens[%d] = %s", TokenIndex, token_show(ty, &t));
@@ -979,6 +981,8 @@ ParseError(Ty *ty, char const *fmt, ...)
 
         va_list ap;
         va_start(ap, fmt);
+
+        v0(ErrorBuffer);
 
         dump(&ErrorBuffer, "%s%sParseError%s%s: ", TERM(1), TERM(31), TERM(22), TERM(39));
         vdump(&ErrorBuffer, fmt, ap);
@@ -1080,11 +1084,9 @@ ParseError(Ty *ty, char const *fmt, ...)
                 TERM(22)
         );
 
-        LOG("Parse Error: %s", TyError(ty));
-
 End:
-        if (AllowErrors && SetJmpDepth == 0 && vN(SavePoints) > 0) {
-                longjmp(**vvX(SavePoints), 1);
+        if (vN(SavePoints) > 0) {
+                longjmp(**ReallyEndCatch(), 1);
         } else {
                 TY_THROW_ERROR();
         }
@@ -2086,7 +2088,7 @@ prefix_function(Ty *ty)
 
         consume(')');
 
-        vvX(SavePoints);
+        EndCatch();
 
 EndOfParams:
         e->end = TEnd;
@@ -2145,7 +2147,7 @@ Body:
                         e->body = NULL;
                 } else {
                         e->body = parse_statement(ty, -1);
-                        vvX(SavePoints);
+                        EndCatch();
                 }
         }
 
@@ -2834,7 +2836,7 @@ parse_method_args(Ty *ty, Expr *e)
 
 Close:
         consume(')');
-        vvX(SavePoints);
+        EndCatch();
 
 End:
         e->end = TEnd;
@@ -2959,7 +2961,7 @@ prefix_parenthesis(Ty *ty)
                 } else {
                         e = parse_expr(ty, 0);
                 }
-                vvX(SavePoints);
+                EndCatch();
         }
         LOAD_NC();
         LOAD_NA();
@@ -3378,7 +3380,7 @@ prefix_array(Ty *ty)
         }
 
         next();
-        vvX(SavePoints);
+        EndCatch();
 
 End:
         e->end = TEnd;
@@ -3857,7 +3859,7 @@ infix_function_call(Ty *ty, Expr *left)
 
         consume(')');
 
-        vvX(SavePoints);
+        EndCatch();
 
 End:
         e->end = TEnd;
@@ -4273,9 +4275,9 @@ infix_arrow_function(Ty *ty, Expr *left)
         e->proto = clone_slice_a(ty, left->start.s, left->end.s);
 
         if (
-                left->type != EXPRESSION_LIST
+                (left->type != EXPRESSION_LIST)
              && (
-                        left->type != EXPRESSION_TUPLE
+                        (left->type != EXPRESSION_TUPLE)
                      || !left->only_identifiers
                 )
             ) {
@@ -5163,14 +5165,13 @@ parse_for_loop(Ty *ty)
                 SAVE_NI(true);
                 SAVE_NE(NoEquals);
 
-                if (TY_CATCH_ERROR()) {
-                        TY_CATCH();
+                if (ReallyCatchError()) {
                         LOAD_NE();
                         cloop = true;
                 } else {
                         parse_expr(ty, 0);
                         cloop = (T0 == ';');
-                        TY_CATCH_END();
+                        ReallyEndCatch();
                 }
 
                 LOAD_NI();
@@ -5434,7 +5435,7 @@ parse_match_statement(Ty *ty)
 
         consume('}');
 
-        vvX(SavePoints);
+        EndCatch();
 
 End:
         return s;
@@ -5821,7 +5822,7 @@ End:
         );
 
         //if (AllowErrors) {
-        //        vvX(SavePoints);
+        //        EndCatch();
         //}
 
         --ParseDepth;
@@ -5851,7 +5852,7 @@ parse_block(Ty *ty)
                 avP(block->statements, s);
         }
 
-        vvX(SavePoints);
+        EndCatch();
 
 End:
         CompilerScopePop(ty);
@@ -6554,7 +6555,7 @@ parse_statement(Ty *ty, int prec)
         Stmt *stmt = _parse_statement(ty, prec);
 
         //if (AllowErrors) {
-        //        vvX(SavePoints);
+        //        EndCatch();
         //}
 
         return stmt;
@@ -6582,9 +6583,13 @@ define_top(Ty *ty, Stmt *s, char const *doc)
 {
         switch (s->type) {
         case STATEMENT_FUN_MACRO_DEFINITION:
+                s->doc = doc;
+                define_macro(ty, s, true);
+                break;
+
         case STATEMENT_MACRO_DEFINITION:
                 s->doc = doc;
-                define_macro(ty, s, s->type == STATEMENT_FUN_MACRO_DEFINITION);
+                define_macro(ty, s, false);
                 break;
 
         case STATEMENT_FUNCTION_DEFINITION:
@@ -6749,6 +6754,7 @@ parse_ex(
         m0(state);
 
         volatile statement_vector program = {0};
+        volatile bool ok = true;
 
         lex_init(ty, file, source);
         lex_keep_comments(ty, true);
@@ -6756,20 +6762,10 @@ parse_ex(
         LastParsedExpr = NULL;
 
         if (TY_CATCH_ERROR()) {
-                TY_CATCH();
-        Error:
-                avP(program, NULL);
-
+                (void)TY_CATCH();
                 *err_loc = tokenx(0)->start;
-                *prog_out = program.items;
-
-                if (tokens_out != NULL) {
-                        *tokens_out = tokens;
-                }
-
-                state = save;
-
-                return false;
+                ok = false;
+                goto Finally;
         }
 
         setctx(LEX_PREFIX);
@@ -6779,20 +6775,23 @@ parse_ex(
         }
 
         while (
-                (K0 == KEYWORD_IMPORT)
+                (T0 == TOKEN_COMMENT)
+             || (K0 == KEYWORD_IMPORT)
              || (K0 == KEYWORD_PUB && K1 == KEYWORD_IMPORT)
-             || (T0 == TOKEN_COMMENT)
         ) {
-                if (T0 == TOKEN_COMMENT) {
-                        next();
-                } else {
-                        Stmt *import = parse_import(ty);
-                        if (
-                                !HAVE_COMPILER_FLAG(SHALLOW)
-                             && !ImportModule(ty, import)
-                        ) {
-                                goto Error;
-                        }
+                if (try_consume(TOKEN_COMMENT)) {
+                        continue;
+                }
+
+                Stmt *import = parse_import(ty);
+
+                if (
+                        !HAVE_COMPILER_FLAG(SHALLOW)
+                     && !ImportModule(ty, import)
+                ) {
+                        *err_loc = import->end;
+                        ok = false;
+                        goto End;
                 }
         }
 
@@ -6861,19 +6860,22 @@ parse_ex(
                         break;
                 }
 
-                bool pub = have_keyword(KEYWORD_PUB);
-
+                bool pub = try_consume(KEYWORD_PUB);
                 if (pub) {
-                        next();
-                        if (!have_keyword(KEYWORD_FUNCTION) &&
-                            !have_keyword(KEYWORD_MACRO) &&
-                            !have_keyword(KEYWORD_CLASS) &&
-                            !have_keyword(KEYWORD_USE) &&
-                            !have_keyword(KEYWORD_CONST) &&
-                            !have_keyword(KEYWORD_TAG)) {
+                        switch (K0) {
+                        case KEYWORD_CLASS:
+                        case KEYWORD_CONST:
+                        case KEYWORD_FUNCTION:
+                        case KEYWORD_MACRO:
+                        case KEYWORD_TAG:
+                        case KEYWORD_TRAIT:
+                        case KEYWORD_USE:
+                                break;
 
+                        default:
                                 unconsume(TOKEN_KEYWORD);
                                 tok()->keyword = KEYWORD_LET;
+                                break;
                         }
                 }
 
@@ -6882,7 +6884,6 @@ parse_ex(
                 if (s == NULL) {
                         break;
                 }
-
 
                 // TODO: figure out if this is necessary
                 while (
@@ -6901,7 +6902,15 @@ parse_ex(
                 SetNamespace(s, CurrentNamespace);
 
                 if (TY_CATCH_ERROR()) {
-                        TY_CATCH();
+                        (void)TY_CATCH();
+#if 0
+                        Stmt *err = mkstmtx(EXPRESSION);
+                        err->expression = mkxpr(ERROR);
+                        err->expression->start = s->start;
+                        err->expression->end = TEnd;
+                        err->expression->string = sclonea(ty, TyError(ty));
+#endif
+                        TyClearError(ty);
                 } else {
                         define_top(ty, s, doc);
                         TY_CATCH_END();
@@ -6924,8 +6933,9 @@ parse_ex(
                 }
         }
 
+End:
         TY_CATCH_END();
-
+Finally:
         avP(program, NULL);
         *prog_out = vv(program);
 
@@ -6936,7 +6946,7 @@ parse_ex(
 
         state = save;
 
-        return true;
+        return ok;
 }
 
 Stmt **

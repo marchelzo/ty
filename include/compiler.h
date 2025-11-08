@@ -33,22 +33,23 @@ enum {
 };
 
 enum {
-        TYC_EVAL                = (1 << 0),
-        TYC_PARSE               = (1 << 1),
-        TYC_SHALLOW             = (1 << 2),
-        TYC_ZFOLD               = (1 << 3),
-        TYC_TOKENS              = (1 << 4),
-        TYC_RESOLVE             = (1 << 5),
-        TYC_EMIT                = (1 << 6),
-        TYC_INHERIT_GLOBAL      = (1 << 7),
-        TYC_IMPORT_ALL          = (1 << 8),
-        TYC_FORGIVING           = (1 << 9),
-        TYC_NO_TYPES            = (1 << 10),
+        TYC_EVAL            = (1 << 0),
+        TYC_PARSE           = (1 << 1),
+        TYC_SHALLOW         = (1 << 2),
+        TYC_ZFOLD           = (1 << 3),
+        TYC_TOKENS          = (1 << 4),
+        TYC_RESOLVE         = (1 << 5),
+        TYC_EMIT            = (1 << 6),
+        TYC_INHERIT_GLOBAL  = (1 << 7),
+        TYC_IMPORT_ALL      = (1 << 8),
+        TYC_FORGIVING       = (1 << 9),
+        TYC_NO_TYPES        = (1 << 10),
 
         TYC_DEFAULT_FLAGS = (
                 TYC_RESOLVE
               | TYC_EMIT
               | TYC_TOKENS
+              | TYC_ZFOLD
         )
 };
 

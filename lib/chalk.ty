@@ -287,7 +287,7 @@ class Text {
     chalk { __chalk }
 
     __str__() -> String {
-        __chalk.render(__text)
+        "{__chalk.render(__text)}\x1b[0m"
     }
 
     __fmt__(spec: ?String) -> String {
