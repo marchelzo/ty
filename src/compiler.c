@@ -1811,7 +1811,6 @@ getsymbol(Ty *ty, Scope const *scope, char const *name, u32 flags)
         Symbol *s = ScopeLookupEx(scope, name, flags);
 
         if (s == NULL) {
-                *(volatile int *)0 = 0;
                 fail_or(
                         "reference to undefined variable: %s%s%s%s",
                         TERM(1),
