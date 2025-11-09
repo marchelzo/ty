@@ -171,7 +171,7 @@ string_chars(Ty *ty, Value *string, int argc, Value *kwargs)
         isize offset = 0;
         i32 state = 0;
 
-        struct array *r = vA();
+        Array *r = vA();
         NOGC(r);
 
         while (size > 0) {
@@ -250,24 +250,21 @@ string_slice(Ty *ty, Value *string, int argc, Value *kwargs)
         u8 const *str = (u8 const *)string->str;
         isize sz = string->bytes;
 
-        isize ncp = rune_count(str, sz);
-
         isize i = INT_ARG(0);
-        if (i < 0) {
-                i += ncp;
-        }
-        i = min(max(0, i), ncp);
+        isize n = (argc == 2) ? INT_ARG(1) : sz;
 
-        isize n;
-        if (argc == 2) {
-                n = INT_ARG(1);
-        } else {
-                n = string->bytes;
+        if ((i < 0) | (n < 0)) {
+                isize ncp = rune_count(str, sz);
+                if (i < 0) {
+                        i += ncp;
+                }
+                if (n < 0) {
+                        n += ncp;
+                }
         }
-        if (n < 0) {
-                n += ncp;
-        }
-        n = min(max(0, n), ncp - i);
+
+        i = min(max(0, i), sz);
+        n = min(max(0, n), sz);
 
         isize drop = x_x_x(str, sz, i);
         isize take = x_x_x(str + drop, sz - drop, n);
@@ -373,7 +370,7 @@ string_bsearch(Ty *ty, Value *string, int argc, Value *kwargs)
         ASSERT_ARGC("String.bsearch()", 1, 2);
 
         Value pattern = ARGx(0, VALUE_STRING, VALUE_REGEX);
-        int64_t offset = (argc == 1) ? 0 : INT_ARG(1);
+        isize offset = (argc == 1) ? 0 : INT_ARG(1);
 
         if (offset < 0) {
                 offset += string->bytes;
@@ -388,9 +385,9 @@ string_bsearch(Ty *ty, Value *string, int argc, Value *kwargs)
         }
 
         u8 const *s = string->str + offset;
-        int64_t bytes = (int64_t)string->bytes - offset;
+        isize bytes = (int64_t)string->bytes - offset;
 
-        int64_t n;
+        isize n;
 
         if (pattern.type == VALUE_STRING) {
                 u8 const *match = mmmm(s, bytes, pattern.str, pattern.bytes);
@@ -1124,8 +1121,8 @@ string_char(Ty *ty, Value *string, int argc, Value *kwargs)
         }
 
         i32 cp;
-        int64_t j = i;
-        int64_t offset = 0;
+        isize j = i;
+        isize offset = 0;
         isize n = utf8proc_iterate((u8 const *)string->str, string->bytes, &cp);
 
         while (offset < string->bytes && n > 0 && j --> 0) {
@@ -1207,7 +1204,7 @@ string_pad_left(Ty *ty, Value *string, int argc, Value *kwargs)
 {
         ASSERT_ARGC("String.lpad()", 1, 2);
 
-        int64_t width = INT_ARG(0);
+        isize width = INT_ARG(0);
 
         isize string_len = TyStrLen(string);
         if (string_len >= width) {
