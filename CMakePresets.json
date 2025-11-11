@@ -145,8 +145,7 @@
         {
             "name": "base-build",
             "hidden": true,
-            "targets": "install",
-            "jobs": 4
+            "targets": "install"
         },
         {
             "name": "msvc2022",
