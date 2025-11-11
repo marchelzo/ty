@@ -30,6 +30,11 @@
             "inherits": "base",
             "cacheVariables": {
                 "VCPKG_TARGET_TRIPLET": "x64-windows-static"
+            },
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Windows"
             }
         },
         {
@@ -38,6 +43,11 @@
             "inherits": "base",
             "cacheVariables": {
                 "VCPKG_TARGET_TRIPLET": "x64-linux"
+            },
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Linux"
             }
         },
         {
@@ -50,6 +60,11 @@
                 "VCPKG_TARGET_ARCHITECTURE": "arm64",
                 "VCPKG_OSX_ARCHITECTURES": "arm64",
                 "VCPKG_CRT_LINKAGE": "dynamic"
+            },
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Darwin"
             }
         },
         {
@@ -201,7 +216,9 @@
             "name": "msvc2022-debug",
             "inherits": "base-package",
             "configurePreset": "msvc2022-debug",
-            "configurations": [ "Debug" ]
+            "configurations": [
+                "Debug"
+            ]
         },
         {
             "name": "msvc2022-shared",
@@ -212,19 +229,25 @@
             "name": "msvc2022-shared-debug",
             "inherits": "base-package",
             "configurePreset": "msvc2022-shared-debug",
-            "configurations": [ "Debug" ]
+            "configurations": [
+                "Debug"
+            ]
         },
         {
             "name": "gcc",
             "inherits": "base-package",
             "configurePreset": "gcc",
-            "configurations": [ "Debug" ]
+            "configurations": [
+                "Debug"
+            ]
         },
         {
             "name": "clang-osx",
             "inherits": "base-package",
             "configurePreset": "clang-osx",
-            "configurations": [ "Debug" ]
+            "configurations": [
+                "Debug"
+            ]
         }
     ],
     "workflowPresets": [
