@@ -24,7 +24,7 @@ SOFTWARE.
 #
 # source: <https://github.com/skaravos/CMakeVersionInfoTarget>
 #
-cmake_minimum_required(VERSION 3.10)
+cmake_minimum_required(VERSION 3.10...4.0)
 
 #[=============================================================================[
   adds two cmake targets:
