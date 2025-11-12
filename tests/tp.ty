@@ -1,12 +1,11 @@
 import os
 import tp (..)
 
-let pool = ThreadPool(os.ncpu(), function (s) {
-  for i in ..500 {
-    s.chars().shuffle().sum()
-  }
-
-  return s
+let pool = ThreadPool(os.ncpu(), fn (s) {
+    for ..300 {
+        s.chars().shuffle().sum()
+    }
+    s
 })
 
 let futures = []

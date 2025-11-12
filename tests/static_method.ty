@@ -1,5 +1,5 @@
 class A {
-    static f(x) {
+    static f(x) -> Int {
         x * 2
     }
 }

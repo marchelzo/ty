@@ -89,17 +89,15 @@ struct type {
                                 struct {
                                         Class *class;
                                         Type *ft;
-                                        int tag;
+                                        i32 tag;
                                         U32Vector _bound;
                                         TypeVector _args;
                                 };
                                 struct {
                                         Type *rt;
-                                        Type *yields;
                                         ParamVector params;
                                         ConstraintVector constraints;
-                                        ParamBounds bounds;
-                                        u32 pack;
+                                        Type *pack;
                                 };
                                 struct {
                                         Type *_type;

@@ -661,7 +661,7 @@ Expr *
 FindMethodImmediate(expression_vector const *ms, char const *name)
 {
         for (int i = 0; i < vN(*ms); ++i) {
-                if (strcmp(name, v__(*ms, i)->name) == 0) {
+                if (s_eq(name, v__(*ms, i)->name)) {
                         return v__(*ms, i);
                 }
         }
@@ -794,7 +794,7 @@ FindFieldImmediate(expression_vector const *fs, char const *name)
 {
         for (int i = 0; i < vN(*fs); ++i) {
                 Expr *field = v__(*fs, i);
-                if (strcmp(FieldIdentifier(field)->identifier, name) == 0) {
+                if (s_eq(FieldIdentifier(field)->identifier, name)) {
                         return field;
                 }
         }

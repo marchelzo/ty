@@ -192,6 +192,12 @@ enum { CTX_EXPR, CTX_TYPE };
 #define WITH_CTX(c) WITH_STATE(ctx, CTX_##c)
 #define IS_CTX(c) (STATE.ctx == (CTX_##c))
 
+enum {
+        LV_NONE,
+        LV_CONST = (1 << 0),
+        LV_DECL  = (1 << 1),
+        LV_PUB   = (1 << 2),
+};
 
 bool SuggestCompletions = false;
 bool FindDefinition = false;
@@ -680,7 +686,7 @@ inline static char *
 GetPrivateName(char const *name, int class, char *scratch, usize n)
 {
         if (IsPrivateMember(name) && class >= 0) {
-                snprintf(scratch, n, "%s$%d", &name[2], class);
+                snprintf(scratch, n, "%s$%d", &name[1], class);
                 return scratch;
         } else {
                 return (char *)name;
@@ -2462,8 +2468,8 @@ apply_decorator_macros(Ty *ty, Scope *scope, Expr **ms, int n)
 {
         for (int i = 0; i < n; ++i) {
                 if (
-                        ms[i]->type == EXPRESSION_FUNCTION_CALL &&
-                        ms[i]->function->type == EXPRESSION_IDENTIFIER
+                        (ms[i]->type == EXPRESSION_FUNCTION_CALL)
+                     && (ms[i]->function->type == EXPRESSION_IDENTIFIER)
                 ) {
                         symbolize_expression(ty, scope, ms[i]->function);
 
@@ -2477,6 +2483,29 @@ apply_decorator_macros(Ty *ty, Scope *scope, Expr **ms, int n)
                                 fail("method decorator macro returned %s", ExpressionTypeName(ms[i]));
                         }
                 }
+        }
+}
+
+static void
+SymbolizeTypeParams(Ty *ty, Scope *scope, expression_vector const *params)
+{
+        for (usize i = 0; i < vN(*params); ++i) {
+                Expr *param = v__(*params, i);
+                if (param->symbol == NULL) {
+                        u32 flags = 0;
+                        if (param->type == EXPRESSION_MATCH_REST) {
+                                flags |= SYM_VARIADIC;
+                        } else if (param->type == EXPRESSION_PACK) {
+                                flags |= SYM_PARAM_PACK;
+                        }
+                        param->symbol = scope_add_type_var(
+                                ty,
+                                scope,
+                                param->identifier,
+                                flags
+                        );
+                }
+                symbolize_expression(ty, scope, param->constraint);
         }
 }
 
@@ -2985,7 +3014,7 @@ End:
 }
 
 static void
-symbolize_lvalue_(Ty *ty, Scope *scope, Expr *target, bool decl, bool pub)
+symbolize_lvalue_(Ty *ty, Scope *scope, Expr *target, u32 flags)
 {
         if (target->mod == NULL) {
                 target->mod = STATE.module;
@@ -3011,6 +3040,10 @@ symbolize_lvalue_(Ty *ty, Scope *scope, Expr *target, bool decl, bool pub)
 
         target->xfunc = STATE.func;
 
+        bool decl = (flags & LV_DECL);
+        bool pub  = (flags & LV_PUB);
+        bool cnst = (flags & LV_CONST);
+
         switch (target->type) {
         case EXPRESSION_RESOURCE_BINDING:
                 if (
@@ -3030,6 +3063,7 @@ symbolize_lvalue_(Ty *ty, Scope *scope, Expr *target, bool decl, bool pub)
                                 symbolize_var_decl(ty, scope, target, pub);
                         }
                         target->symbol->flags &= ~SYM_TRANSIENT;
+                        target->symbol->flags |= SYM_CONST * cnst;
                         if (target->constraint != NULL) {
                                 WITH_CTX(TYPE) {
                                         symbolize_expression(ty, scope, target->constraint);
@@ -3088,26 +3122,31 @@ symbolize_lvalue_(Ty *ty, Scope *scope, Expr *target, bool decl, bool pub)
                 }
                 //===================={ </LSP> }========================================
                 break;
+
         case EXPRESSION_REF_PATTERN:
-                symbolize_lvalue_(ty, scope, target->target, false, pub);
+                symbolize_lvalue_(ty, scope, target->target, flags & ~LV_DECL);
                 break;
+
         case EXPRESSION_VIEW_PATTERN:
         case EXPRESSION_NOT_NIL_VIEW_PATTERN:
                 symbolize_expression(ty, scope, target->left);
-                symbolize_lvalue_(ty, scope, target->right, decl, pub);
+                symbolize_lvalue_(ty, scope, target->right, flags);
                 break;
+
         case EXPRESSION_TAG_APPLICATION:
-                symbolize_lvalue_(ty, scope, target->tagged, decl, pub);
+                symbolize_lvalue_(ty, scope, target->tagged, flags);
                 if (target->identifier != EmptyString) {
                         target->symbol = ResolveIdentifier(ty, target);
                 }
                 break;
+
         case EXPRESSION_ARRAY:
                 for (usize i = 0; i < vN(target->elements); ++i) {
-                        symbolize_lvalue_(ty, scope, v__(target->elements, i), decl, pub);
+                        symbolize_lvalue_(ty, scope, v__(target->elements, i), flags);
                 }
                 target->atmp = tmpsymbol(ty, scope);
                 break;
+
         case EXPRESSION_DICT:
                 if (target->dflt != NULL) {
                         PushContext(ty, target->dflt);
@@ -3115,31 +3154,36 @@ symbolize_lvalue_(Ty *ty, Scope *scope, Expr *target, bool decl, bool pub)
                 }
                 for (int i = 0; i < vN(target->keys); ++i) {
                         symbolize_expression(ty, scope, v__(target->keys, i));
-                        symbolize_lvalue_(ty, scope, v__(target->values, i), decl, pub);
+                        symbolize_lvalue_(ty, scope, v__(target->values, i), flags);
                 }
                 target->dtmp = tmpsymbol(ty, scope);
                 break;
+
         case EXPRESSION_SUBSCRIPT:
                 symbolize_expression(ty, scope, target->container);
                 symbolize_expression(ty, scope, target->subscript);
                 break;
+
         case EXPRESSION_DYN_MEMBER_ACCESS:
                 symbolize_expression(ty, scope, target->member);
         case EXPRESSION_MEMBER_ACCESS:
                 symbolize_expression(ty, scope, target->object);
                 break;
+
         case EXPRESSION_TUPLE:
                 target->ltmp = tmpsymbol(ty, scope);
         case EXPRESSION_LIST:
                 for (int i = 0; i < vN(target->es); ++i) {
-                        symbolize_lvalue_(ty, scope, v__(target->es, i), decl, pub);
+                        symbolize_lvalue_(ty, scope, v__(target->es, i), flags);
                 }
                 break;
+
         case EXPRESSION_TEMPLATE_XHOLE:
                 WITH_PERMISSIVE_SCOPE {
-                        symbolize_lvalue_(ty, scope, target->hole.expr, false, false);
+                        symbolize_lvalue_(ty, scope, target->hole.expr, 0);
                 }
                 break;
+
         default:
                 fail("unexpected %s in lvalue context", ExpressionTypeName(target));
         }
@@ -3152,9 +3196,9 @@ End:
 }
 
 static void
-symbolize_lvalue(Ty *ty, Scope *scope, Expr *target, bool decl, bool pub)
+symbolize_lvalue(Ty *ty, Scope *scope, Expr *target, u32 flags)
 {
-        symbolize_lvalue_(ty, scope, target, decl, pub);
+        symbolize_lvalue_(ty, scope, target, flags);
 
         if (STATE.resources > 0) {
                 target->has_resources = true;
@@ -3197,9 +3241,9 @@ symbolize_pattern_(Ty *ty, Scope *scope, Expr *e, Scope *reuse, bool def)
         case EXPRESSION_IDENTIFIER:
                 existing = TryResolveIdentifier(ty, e);
                 if (
-                        strcmp(e->identifier, "_") != 0
+                        !s_eq(e->identifier, "_")
                      && (
-                                (existing != NULL && SymbolIsConst(existing))
+                                (existing != NULL && SymbolIsConst(existing) && isupper(e->identifier[0]))
                              || (existing != NULL && existing->scope == scope && !ScopeIsTop(scope))
                              || (e->module != NULL)
                         )
@@ -3292,7 +3336,7 @@ symbolize_pattern_(Ty *ty, Scope *scope, Expr *e, Scope *reuse, bool def)
 
                 break;
         case EXPRESSION_REF_PATTERN:
-                symbolize_lvalue(ty, scope, e->target, false, false);
+                symbolize_lvalue(ty, scope, e->target, 0);
                 e->tmp = tmpsymbol(ty, scope);
                 break;
         case EXPRESSION_KW_AND:
@@ -3479,9 +3523,7 @@ invoke_fun_macro(Ty *ty, Scope *scope, Expr *e)
 
         e->type = EXPRESSION_FUN_MACRO_INVOCATION;
 
-        EnableLogging += 1;
         EE(e->function);
-        EnableLogging -= 1;
         INSN(HALT);
 
         v0(STATE.expression_locations);
@@ -3986,7 +4028,7 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                         subscope = scope_new(ty, "(match-branch)", scope, false);
                         symbolize_pattern(ty, subscope, pat, NULL, true);
                         ctx = PushContext(ty, pat);
-                        unify(ty, &t0, pat->_type);
+                        unify2(ty, &t0, pat->_type);
                         ctx = RestoreContext(ty, ctx);
                         symbolize_expression(ty, subscope, v__(e->thens, i));
                         t0 = type_without(ty, t0, pat->_type);
@@ -4293,13 +4335,13 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
         case EXPRESSION_SHL_EQ:
         case EXPRESSION_SHR_EQ:
                 symbolize_expression(ty, scope, e->value);
-                symbolize_lvalue(ty, scope, e->target, false, false);
+                symbolize_lvalue(ty, scope, e->target, 0);
                 e->_type = e->target->_type;
                 break;
         case EXPRESSION_MAYBE_EQ:
         case EXPRESSION_EQ:
                 symbolize_expression(ty, scope, e->value);
-                symbolize_lvalue(ty, scope, e->target, false, false);
+                symbolize_lvalue(ty, scope, e->target, 0);
                 type_assign(
                         ty,
                         e->target,
@@ -4413,7 +4455,7 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                     && !e->body->will_return
                     && (e->type != EXPRESSION_GENERATOR)
                 ) {
-                        unify(
+                        unify2(
                                 ty,
                                 &e->_type->rt,
                                 (e->body->_type == NULL) ? NIL_TYPE : e->body->_type
@@ -4557,7 +4599,7 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
         case EXPRESSION_ARRAY_COMPR:
                 symbolize_expression(ty, scope, e->compr.iter);
                 subscope = scope_new(ty, "(array compr)", scope, false);
-                symbolize_lvalue(ty, subscope, e->compr.pattern, true, false);
+                symbolize_lvalue(ty, subscope, e->compr.pattern, LV_DECL);
                 type_assign_iterable(ty, e->compr.pattern, e->compr.iter->_type, 0);
                 symbolize_statement(ty, subscope, e->compr.where);
                 symbolize_expression(ty, subscope, e->compr.cond);
@@ -4580,7 +4622,7 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
         case EXPRESSION_DICT_COMPR:
                 symbolize_expression(ty, scope, e->dcompr.iter);
                 subscope = scope_new(ty, "(dict compr)", scope, false);
-                symbolize_lvalue(ty, subscope, e->dcompr.pattern, true, false);
+                symbolize_lvalue(ty, subscope, e->dcompr.pattern, LV_DECL);
                 type_assign_iterable(ty, e->dcompr.pattern, e->dcompr.iter->_type, 0);
                 symbolize_statement(ty, subscope, e->dcompr.where);
                 symbolize_expression(ty, subscope, e->dcompr.cond);
@@ -5000,12 +5042,13 @@ UpdateRefinemenets(Ty *ty, Scope *scope)
 static void
 symbolize_fun_def(Ty *ty, Scope *scope, Stmt *s, u32 flag)
 {
+        bool decl = HasBody(s->value) && (s->target->module == NULL);
+
         symbolize_lvalue(
                 ty,
                 scope,
                 s->target,
-                HasBody(s->value) && (s->target->module == NULL),
-                s->pub
+                (s->pub * LV_PUB) | (decl * LV_DECL)
         );
 
         symbolize_expression(ty, scope, s->value);
@@ -5174,14 +5217,14 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
                         for (
                                 int j = i;
 
-                                j < vN(s->statements)
-                             && v__(s->statements, j)->type == STATEMENT_FUNCTION_DEFINITION
-                             && v__(s->statements, j)->xscope == NULL;
+                                (j < vN(s->statements))
+                             && (v__(s->statements, j)->type == STATEMENT_FUNCTION_DEFINITION)
+                             && (v__(s->statements, j)->xscope == NULL);
 
                                 j += 1
                         ) {
                                 Stmt *s0 = v__(s->statements, j);
-                                symbolize_lvalue(ty, scope, s0->target, true, s0->pub);
+                                symbolize_lvalue(ty, scope, s0->target, LV_DECL | (s0->pub * LV_PUB));
                                 s0->target->symbol->doc = s0->doc;
                         }
 
@@ -5229,7 +5272,7 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
                         Expr *pat = v__(s->match.patterns, i);
                         subscope = scope_new(ty, "(match-branch)", scope, false);
                         symbolize_pattern(ty, subscope, pat, NULL, true);
-                        unify(ty, &t0, pat->_type);
+                        unify2(ty, &t0, pat->_type);
                         symbolize_statement(ty, subscope, v__(s->match.statements, i));
                         t0 = type_without(ty, t0, pat->_type);
                         s->will_return &= v__(s->match.statements, i)->will_return;
@@ -5304,15 +5347,15 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
                         }
                 }
                 if (s->iff.then != NULL) {
-                        unify(ty, &s->_type, s->iff.then->_type);
+                        unify2(ty, &s->_type, s->iff.then->_type);
                         s->will_return = s->iff.then->will_return;
                 } else {
-                        unify(ty, &s->_type, NIL_TYPE);
+                        unify2(ty, &s->_type, NIL_TYPE);
                 }
                 if (s->iff.otherwise != NULL) {
-                        unify(ty, &s->_type, s->iff.otherwise->_type);
+                        unify2(ty, &s->_type, s->iff.otherwise->_type);
                 } else {
-                        unify(ty, &s->_type, NIL_TYPE);
+                        unify2(ty, &s->_type, NIL_TYPE);
                 }
                 s->will_return = (s->iff.then != NULL && s->iff.then->will_return)
                               && (s->iff.otherwise != NULL && s->iff.otherwise->will_return);
@@ -5333,7 +5376,7 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
         case STATEMENT_EACH_LOOP:
                 symbolize_expression(ty, scope, s->each.array);
                 subscope = scope_new(ty, "(for-each)", scope, false);
-                symbolize_lvalue(ty, subscope, s->each.target, true, false);
+                symbolize_lvalue(ty, subscope, s->each.target, LV_DECL);
                 type_assign_iterable(ty, s->each.target, s->each.array->_type, 0);
                 symbolize_statement(ty, subscope, s->each.body);
                 symbolize_expression(ty, subscope, s->each.cond);
@@ -5383,7 +5426,12 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
                                 symbolize_expression(ty, scope, s->value);
                         }
                 }
-                symbolize_lvalue(ty, scope, s->target, true, s->pub);
+                symbolize_lvalue(
+                        ty,
+                        scope,
+                        s->target,
+                        LV_DECL | (LV_CONST * s->cnst) | (s->pub * LV_PUB)
+                );
                 type_assign(
                         ty,
                         s->target,
@@ -9699,26 +9747,7 @@ RedpillFun(Ty *ty, Scope *scope, Expr *f, Type *self0)
 
         STATE.func = f;
 
-        if (vN(f->type_params) > 0) {
-                for (usize i = 0; i < vN(f->type_params); ++i) {
-                        Expr *param = v__(f->type_params, i);
-                        if (param->symbol == NULL) {
-                                u32 flags = 0;
-                                if (param->type == EXPRESSION_MATCH_REST) {
-                                        flags |= SYM_VARIADIC;
-                                } else if (param->type == EXPRESSION_PACK) {
-                                        flags |= SYM_PARAM_PACK;
-                                }
-                                param->symbol = scope_add_type_var(
-                                        ty,
-                                        f->scope,
-                                        param->identifier,
-                                        flags
-                                );
-                        }
-                        symbolize_expression(ty, f->scope, param->constraint);
-                }
-        }
+        SymbolizeTypeParams(ty, f->scope, &f->type_params);
 
         if (self0 != NULL) {
                 if (
@@ -9793,6 +9822,9 @@ RedpillFun(Ty *ty, Scope *scope, Expr *f, Type *self0)
                                                         TERM(0)
                                                 );
                                         }
+                                        break;
+
+                                case EXPRESSION_FUNCTION_TYPE:
                                         break;
 
                                 case EXPRESSION_PLUS:
@@ -10861,7 +10893,7 @@ compiler_load_builtin_modules(Ty *ty)
                 fprintf(
                         stderr,
                         "Aborting, failed to load builtin modules: %s\n",
-                        VSC(&ex)
+                        TyError(ty)
                 );
                 exit(1);
         }
@@ -14187,11 +14219,7 @@ define_tag(Ty *ty, Stmt *s)
 
         s->tag.scope = scope_new(ty, s->tag.name, scope, false);
 
-        for (int i = 0; i < vN(s->tag.type_params); ++i) {
-                Expr *t0 = v__(s->tag.type_params, i);
-                t0->symbol = scope_add_type_var(ty, s->tag.scope, t0->identifier, 0);
-                symbolize_expression(ty, s->tag.scope, t0->constraint);
-        }
+        SymbolizeTypeParams(ty, s->tag.scope, &s->tag.type_params);
 
         Symbol *sym = addsymbol(ty, scope, s->tag.name);
         sym->flags |= SYM_CONST;
@@ -14268,15 +14296,7 @@ define_type(Ty *ty, Stmt *s, Scope *scope)
 
         void *ctx = PushContext(ty, s);
 
-        for (int i = 0; i < vN(s->class.type_params); ++i) {
-                Expr *t0 = v__(s->class.type_params, i);
-                u32 flags = 0;
-                if (t0->type == EXPRESSION_MATCH_REST) {
-                        flags |= SYM_VARIADIC;
-                }
-                t0->symbol = scope_add_type_var(ty, s->class.scope, t0->identifier, flags);
-                symbolize_expression(ty, s->class.scope, t0->constraint);
-        }
+        SymbolizeTypeParams(ty, s->class.scope, &s->class.type_params);
 
         Symbol *sym = scope_local_lookup(ty, scope, s->class.name);
 
@@ -14318,15 +14338,7 @@ define_class(Ty *ty, Stmt *s)
         s->class.s_scope = scope_new(ty, s->class.name, scope, false);
         s->class.scope = scope_new(ty, "(instance)", s->class.s_scope, false);
 
-        for (int i = 0; i < vN(s->class.type_params); ++i) {
-                Expr *t0 = v__(s->class.type_params, i);
-                u32 flags = 0;
-                if (t0->type == EXPRESSION_MATCH_REST) {
-                        flags |= SYM_VARIADIC;
-                }
-                t0->symbol = scope_add_type_var(ty, s->class.s_scope, t0->identifier, flags);
-                symbolize_expression(ty, s->class.s_scope, t0->constraint);
-        }
+        SymbolizeTypeParams(ty, s->class.s_scope, &s->class.type_params);
 
         Symbol *sym = scope_local_lookup(ty, scope, s->class.name);
 
@@ -14545,8 +14557,10 @@ DeclareSymbols(Ty *ty, Stmt *stmt)
                         ty,
                         GetNamespace(ty, stmt->ns),
                         stmt->target,
-                        HasBody(stmt->value) && (stmt->target->module == NULL),
-                        stmt->pub
+                        (
+                                (LV_DECL  * (HasBody(stmt->value) && (stmt->target->module == NULL)))
+                              | (LV_PUB   * stmt->pub)
+                        )
                 );
                 stmt->target->symbol->flags &= ~SYM_TRANSIENT;
                 stmt->target->symbol->doc = stmt->doc;
@@ -14758,7 +14772,7 @@ compiler_symbolize_expression(Ty *ty, Expr *e, Scope *scope)
 void
 compiler_set_type_of(Ty *ty, Stmt *stmt)
 {
-        symbolize_lvalue(ty, GetNamespace(ty, stmt->ns), stmt->target, false, false);
+        symbolize_lvalue(ty, GetNamespace(ty, stmt->ns), stmt->target, 0);
         symbolize_expression(ty, GetNamespace(ty, stmt->ns), stmt->value);
         stmt->target->symbol->type = type_fixed(ty, type_resolve(ty, stmt->value));
 }

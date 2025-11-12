@@ -4,8 +4,14 @@ let rng = generator {
     }
 }
 
-let (r1, r2, r3) = Iter.tee(rng.take(50), n: 3)
+let (r1, r2, r3) = Iter.tee(rng.take(50), n=3)
 
-if [r1.list(), r2.list(), r3.list()].uniq!().len() == 1 {
-    print('PASS')
+if [*r1].len() != 50 {
+    print('FAIL')
 }
+
+if [*r2] != [*r3] {
+    print('FAIL')
+}
+
+print('PASS')

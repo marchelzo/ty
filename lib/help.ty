@@ -150,7 +150,7 @@ pub fn help(x: Any) {
         helpString.push(end);
     }
 
-    fn pdoc(s, indent) {
+    fn pdoc(s: String, indent: Int) {
         let lines = s.lines().dropWhile!(/^\s*$/)
 
         // Remove trailing empty lines at the end.
@@ -162,7 +162,7 @@ pub fn help(x: Any) {
         let leading = lines.map(&match!(/^\s*/) |> &len).min()
 
         for line in lines.map!(&slice(leading)) {
-            p(''.lpad(indent), line, sep: '')
+            p(''.lpad(indent), line, sep='')
         }
     }
 
@@ -254,10 +254,10 @@ let groups = %{
     'pink': 'pp id_macro fun_macro type_macro $$[ $$] $$ __defined__'
 }
 
-let colors = [ %{ t: c for t in g.words() } for c, g in groups ].sum()
+let colors = [ %{ t: c for t in g.words() } for c, g in groups ].sum() ?? %{}
 
 fn color-and-break(source: String) -> Array[(Int, String)] {
-    let tokens: Array[_] = match ty.parse(source, tokens=true, deep=false, resolve=true) {
+    let tokens: Array[_] = match ty.parse(source, tokens=true, deep=false, resolve=false) {
         (Ok((_, {tokens, *})) or Err({tokens, *}))
             => tokens,
 
@@ -347,7 +347,7 @@ fn type-completions(type: _, prefix: String) -> Array[_] {
         types::Object(_) or types::Class(_) => do {
             let info = types.info(type)
 
-            let members = (
+            let members: _ = (
                 info.methods
               + info.fields
               + info.getters

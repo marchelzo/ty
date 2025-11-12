@@ -337,7 +337,7 @@ fn fun() {
         ty.Let(
             ty.Id(name: name, constraint: ty.Any),
             ty.Call(
-                func: ty.Value(set-doc),
+                func: $$[ prelude::set-doc $$],
                 args: [
                     ty.Arg(arg: ty.Call(func: ty.Value(wrap), args: args)),
                     ty.Arg(name: 'name', arg: ty.String(name)),
@@ -439,7 +439,13 @@ fn strct() {
 
     next!('{')
 
-    let members: [_] = []
+    use SimpleFieldDecl = {t: AST, name: String, count: AST}
+
+    use FieldDecl = SimpleFieldDecl
+                  | Struct[Array[FieldDecl]]
+                  | Union[(AST, Array[FieldDecl])]
+
+    let members: Array[FieldDecl] = []
 
     while peek().type != '}' {
         let get-count = fn () -> AST {
@@ -451,7 +457,7 @@ fn strct() {
             }
         }
 
-        fn get-decl() {
+        fn get-decl() -> Array[FieldDecl] {
             let t, name = nexttype(array-to-ptr?=false, has-name?=true)
             let names = [(name, get-count())]
 
@@ -467,7 +473,7 @@ fn strct() {
 
         if peek().?id == 'union' {
             let types = []
-            let decls: [_] = []
+            let decls: Array[FieldDecl] = []
 
             next() // union
             next!('{')

@@ -1,15 +1,15 @@
 tag CanceledError;
 
-class ThreadPool[*Args, T] {
-  __f:        _
-  __setup:    _
+class ThreadPool[F: Function] {
+  __f:      F
+  __setup:  _
   queue:    Array[_]
   mtx:      Mutex
   cv:       CondVar
   stop:     Bool
   threads:  Array[Thread[_]]
 
-  init(n: Int, f: (*Args) -> T, setup: _ = nil) {
+  init(n: Int, f: F, setup: _ = nil) {
     __f     = f
     __setup = setup
     queue   = []
@@ -19,7 +19,7 @@ class ThreadPool[*Args, T] {
     threads = [Thread(cast(runThread), mtx, cv, __f, __setup) for _ in ..n]
   }
 
-  submit(*args: *Args, %kwargs: _) -> Future[T] {
+  submit[...Args, T](*args: ...Args, %kwargs: _) -> Future[T] where (Args -> T): F {
     mtx.lock()
 
     let future = Future()
@@ -53,23 +53,17 @@ class ThreadPool[*Args, T] {
 
       mtx.unlock()
 
-      future._mtx.lock()
-
-      if future._canceled {
-        future._mtx.unlock()
+      if !future.start() {
         continue
-      } else {
-        future._running = true
-        future._mtx.unlock()
       }
 
-      let x = f(*args, state if state != nil, **kwargs)
+      let x = try {
+        f(*args, state if state != nil, **kwargs)
+      } catch err {
+        future.abort(err)
+      }
 
-      future._mtx.lock()
-      future._box.push(x)
-      future._mtx.unlock()
-
-      future._cv.signal()
+      future.complete(x)
     }
   }
 
@@ -86,65 +80,103 @@ class ThreadPool[*Args, T] {
   }
 }
 
+ns state {
+  const CREATED   = (1 << 0)
+  const RUNNING   = (1 << 1)
+  const CANCELED  = (1 << 2)
+  const ABORTED   = (1 << 3)
+  const COMPLETED = (1 << 4)
+}
+
 class Future[T] {
-  _cv:       CondVar
-  _mtx:      Mutex
-  _box:      Array[T]
-  _running:  Bool
-  _canceled: Bool
+  _state: Int
+  _mtx:   Mutex
+  _cv:    CondVar
+  _val:   T
+  _err:   Any
 
   init() {
-    _cv       = CondVar()
-    _mtx      = Mutex()
-    _box      = []
-    _running  = false
-    _canceled = false
+    _state = state.CREATED
+    _cv    = CondVar()
+    _mtx   = Mutex()
   }
 
   wait() {
-    _mtx.lock()
+    let ^_ = _mtx.lock()
 
-    if _canceled {
-      throw CanceledError
-    }
-
-    while #_box == 0 {
+    while _state & (state.CREATED | state.RUNNING) {
       _cv.wait(_mtx)
     }
 
-    let x = _box[0]
-
-    _mtx.unlock()
-
-    return x
+    match _state {
+        state.CANCELED  => throw CanceledError,
+        state.ABORTED   => throw _err,
+        state.COMPLETED => return _val
+    }
   }
 
-  cancel() {
-    with _mtx.lock() {
-      if _running {
-        return false
+  start() -> Bool {
+    with _mtx {
+      if _state == state.CREATED {
+        _state = state.RUNNING
+        true
       } else {
-        _canceled = true
-        return true
+        false
       }
     }
   }
 
+  cancel() -> Bool {
+    with _mtx {
+      if _state == state.CREATED {
+        _state = state.CANCELED
+        _cv.signal()
+        true
+      } else {
+        false
+      }
+    }
+  }
+
+  abort(err: Any) {
+    with _mtx {
+      _state = state.ABORTED
+      _err   = err
+      _cv.signal()
+    }
+  }
+
   running? {
-    with _mtx.lock() {
-      _running
+    with _mtx {
+      _state == state.RUNNING
     }
   }
 
   ready? {
-    with _mtx.lock() {
-      #_box == 1
+    with _mtx {
+      _state == state.COMPLETED
     }
   }
 
   canceled? {
-    with _mtx.lock() {
-      _canceled
+    with _mtx {
+      _state == state.CANCELED
+    }
+  }
+
+  complete(x: T) {
+    with _mtx {
+      _state = state.COMPLETED
+      _val   = x
+      _cv.signal()
+    }
+  }
+
+  abort(err: Any) {
+    with _mtx {
+      _state = state.ABORTED
+      _err   = err
+      _cv.signal()
     }
   }
 

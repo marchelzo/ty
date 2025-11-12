@@ -1,4 +1,4 @@
-pub class Matrix[T] : Iterable {
+pub class Matrix[T] : Iterable[RowVec] {
     __m: _
 
     init(m) { __m = m }
@@ -37,46 +37,42 @@ pub class Matrix[T] : Iterable {
 }
 
 class Vec < Matrix : Iterable[Float] {
-    _v: Array[Float]
-    __subscript__(i: Int) { _v[i] }
-    __iter__() { _v.__iter__() }
-    __str__() { "Vec({_v.unwords()})" }
+    v: Array[Float]
+    __subscript__(i: Int) { v[i] }
+    __iter__() { v.__iter__() }
+    __str__() { "Vec({v.unwords()})" }
 }
 
-class RowVec(_v: Array[Float]) < Vec {
-    _v: Array[Float]
+class RowVec(v: Array[Float]) < Vec {
+    v: Array[Float]
 
     rows {   1 }
-    cols { #_v }
+    cols { #v }
 
     row(i: i == 0) { self }
-    col(i)         { ColVec([_v[i]]) }
+    col(i)         { ColVec([v[i]]) }
 
     __call__(i, j) {
-        _v[j]
+        v[j]
     }
 }
 
-class ColVec(_v: Array[Float]) < Vec {
-    _v: Array[Float]
+class ColVec(v: Array[Float]) < Vec {
+    v: Array[Float]
 
     cols { 1   }
-    rows { #_v }
+    rows { #v }
 
     col(i: i == 0) { self }
-    row(i)         { RowVec([_v[i]]) }
+    row(i)         { RowVec([v[i]]) }
 
     __call__(i, j) {
-        _v[i]
+        v[i]
     }
 }
 
-
-let dots = 0
-
 fn .(u: Vec, v: Vec) -> Float {
-    dots += 1
-    [x * y for (x, y) in u.zip(v)].sum()
+    [x * y for (x, y) in u.zip(v)].sum(0.0)
 }
 
 fn m(s) {
