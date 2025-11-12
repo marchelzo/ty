@@ -1515,7 +1515,7 @@ inline static Value
 inline static void
 (PutMember)(Ty *ty, Value v, i32 m, Value x)
 {
-        *itable_get(ty, v.object, m) = x;
+        itable_add(ty, v.object, m, x);
 }
 
 #endif

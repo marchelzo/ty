@@ -734,20 +734,31 @@ array_drop(Ty *ty, Value *array, int argc, Value *kwargs)
 static Value
 array_sum(Ty *ty, Value *array, int argc, Value *kwargs)
 {
-        if (argc != 0)
-                zP("the sum method on arrays expects no arguments but got %d", argc);
+        ASSERT_ARGC("Array.sum()", 0, 1);
 
-        if (array->array->count == 0)
-                return NIL;
+        Value zero = (argc == 1) ? ARG(0) : NIL;
 
-        Value sum, v;
-        sum = array->array->items[0];
+        if (vN(*array->array) == 0) {
+                return zero;
+        }
 
+        isize i0;
+        Value sum;
 
-        for (int i = 1; i < array->array->count; ++i) {
+        if (argc == 1) {
+                sum = zero;
+                i0 = 0;
+        } else {
+                sum = v__(*array->array, 0);
+                i0 = 1;
+        }
+
+        Value val;
+
+        for (isize i = i0; i < vN(*array->array); ++i) {
                 gP(&sum);
-                v = array->array->items[i];
-                sum = vm_2op(ty, OP_ADD, &sum, &v);
+                val = v__(*array->array, i);
+                sum = vm_2op(ty, OP_ADD, &sum, &val);
                 gX();
         }
 

@@ -52,11 +52,10 @@ fn completion-label-plain(item: CompletionItem) -> String {
     let label = completion-label(item)
 
     let label = match label {
-        parts: Array[Text | nil] => parts
-            .map(part -> part ?? '')
-            .str(),
-
-        part => str(part)
+        parts: Array[Text | nil]
+            => parts.remove(nil).join(),
+        part
+            => str(part)
     }
 
     (chalk"{label}").plain
@@ -184,7 +183,7 @@ class CompletionCycler {
 }
 
 fn completeFile(before: String, after: String) -> CompletionAction {
-    let parts = (before.match!(/'[^']*$/) ?? before.match!(/\S*$/)).comb(/'/).split('/')
+    let parts = (before.match!(/'[^']*$/v) ?? before.match!(/\S*$/v)).s.comb(/'/).split('/')
 
     let (dir, prefix) = match parts {
         [prefix] => ('.', prefix),
@@ -195,14 +194,14 @@ fn completeFile(before: String, after: String) -> CompletionAction {
         return None
     }
 
-    let names = output
+    let names: Array[String] = output
         .lines()
         .filter(${#it > 0})
         .map!(&comb(/^\.\//))
 
     let chop = &slice(#"{dir}/{prefix}".comb(/^\.\//))
 
-    return match names {
+    match names {
         []       => None,
         [unique] => Insert(chop(unique)),
         _        => CycleCompletions(names.map(chop))
@@ -266,7 +265,7 @@ fn fitItems(items: Array[CompletionLabel], W: Int) -> Array[Array[String]] {
     let (ncol, ws) = (
         for ncol in 1..#items {
             let ws = widths(ncol + 1)
-            if ws.flat().sum() + 6 * ncol > W {
+            if ws.flat().sum(0) + 6 * ncol > W {
                 break (ncol, widths(ncol))
             }
         }
@@ -288,7 +287,7 @@ fn fitItems(items: Array[CompletionLabel], W: Int) -> Array[Array[String]] {
             parts: Array[Text | nil] => [
                 "{s(parts[i]):<{widths[i]}}"
                 for i in ..#parts
-            ].str(),
+            ].str() ?? '',
 
             part => "{s(part):<{widths.sum()}}"
         }
@@ -463,14 +462,14 @@ class InteractiveLineReader {
             let before = line.slice(0, i).str() ?? ''
             let all = line.str() ?? ''
 
-            if not let $key = __tio.next-event() {
+            if not let $ev = __tio.next-event() {
                 continue
             }
 
-            let key = match key {
+            let key = match ev {
                 term.event.Text(_) as t
                     => t,
-                term.event.Key({event: 1 or 2, *})
+                term.event.Key({event: 1 or 2, *}) as key
                     => "<{key.nice-name()}>",
                 _
                     => do continue

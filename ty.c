@@ -179,7 +179,6 @@ execln(Ty *ty, char *line)
                 tdb_set_break(ty, ty->code);
 
                 if (!vm_execute(ty, NULL, NULL)) {
-                        TY_CATCH();
                         goto Bad;
                 }
 
@@ -210,16 +209,15 @@ execln(Ty *ty, char *line)
                 Type *t0 = type_resolve(ty, v__(pair->es, 0));
                 Type *t1 = type_resolve(ty, v__(pair->es, 1));
 
-                if (TY_CATCH_ERROR()) {
-                        EnableLogging -= 1;
-                        goto End;
-                }
-
                 EnableLogging += 1;
-                unify(ty, &t0, t1);
+                if (TY_CATCH_ERROR()) {
+                        (void)TY_CATCH();
+                        fprintf(stderr, "%s\n", TyError(ty));
+                } else {
+                        unify(ty, &t0, t1);
+                        TY_CATCH_END();
+                }
                 EnableLogging -= 1;
-
-                TY_CATCH_END();
 
                 goto End;
 #endif
@@ -290,6 +288,7 @@ readln(Ty *ty)
              && CALLABLE(*_readln)
         ) {
                 if (TY_CATCH_ERROR()) {
+                        fprintf(stderr, "\n%s\n", TyError(ty));
                         (void)TY_CATCH();
                         return NULL;
                 }

@@ -6671,7 +6671,7 @@ vm_init(Ty *ty, int ac, char **av)
         NAMES.slice            = M_ID("[;;]");
         NAMES.str              = M_ID("__str__");
         NAMES.subscript        = M_ID("[]");
-        NAMES._what            = M_ID(sfmt("what$%d", CLASS_RUNTIME_ERROR));
+        NAMES._what            = M_ID(sfmt("_what$%d", CLASS_RUNTIME_ERROR));
 
         NAMES._fields_         = M_ID("__fields__");
         NAMES._methods_        = M_ID("__methods__");

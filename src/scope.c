@@ -465,6 +465,10 @@ scope_add_i(Ty *ty, Scope *scope, char const *id, int idx)
                 owner = owner->parent;
         }
 
+        if (SymbolIsGlobal(sym) && GetArenaAlloc(ty) != NULL) {
+                TyImmortalizeArena(ty);
+        }
+
         while (vN(owner->owned) <= idx) {
                 avP(owner->owned, NULL);
         }

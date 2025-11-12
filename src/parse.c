@@ -450,10 +450,10 @@ prefix_implicit_lambda(Ty *ty);
 static Expr *
 prefix_identifier(Ty *ty);
 
-inline static struct token *
+inline static Token *
 (tok)(Ty *ty);
 
-inline static struct token *
+inline static Token *
 (token)(Ty *ty, int i);
 
 Expr *
@@ -765,7 +765,7 @@ End:
         return t;
 }
 
-inline static struct token *
+inline static Token *
 (tok)(Ty *ty)
 {
         return token(0);
@@ -1235,7 +1235,7 @@ expect_keyword(Ty *ty, int type)
         if (K0 != type) {
                 die(
                         "expected %s but found %s%s%s",
-                        token_show(ty, &(struct token){ .type = TOKEN_KEYWORD, .keyword = type }),
+                        token_show(ty, &(Token){ .type = TOKEN_KEYWORD, .keyword = type }),
                         TERM(34),
                         token_show(ty, tok()),
                         TERM(0)
@@ -2100,11 +2100,6 @@ EndOfParams:
 
         e->proto = clone_slice_a(ty, proto_start, TEnd.s);
 
-        if (sugared_generator) {
-                unconsume(TOKEN_KEYWORD);
-                tok()->keyword = KEYWORD_GENERATOR;
-        }
-
         if (try_consume(KEYWORD_WHERE)) {
                 for (;;) {
                         Expr *sub;
@@ -2135,6 +2130,11 @@ EndOfParams:
                 }
         }
 
+        if (sugared_generator) {
+                unconsume(TOKEN_KEYWORD);
+                tok()->keyword = KEYWORD_GENERATOR;
+        }
+
 Body:
         if (T0 == ';') {
                 next();
@@ -2151,8 +2151,8 @@ Body:
                 }
         }
 
-        if (sugared_generator) {
-                e->body->expression->name = afmt("<%s:generator>", e->name);
+        if (sugared_generator && e->name != NULL) {
+                e->body->expression->name = afmt("<%s:gen>", e->name);
         }
 
         return e;
@@ -2162,11 +2162,11 @@ Body:
 static Expr *
 opfunc(Ty *ty)
 {
-        struct location start = tok()->start;
+        Location start = tok()->start;
 
         consume('[');
 
-        struct token t = *tok();
+        Token t = *tok();
         next();
 
         consume(']');
@@ -2900,7 +2900,7 @@ prefix_parenthesis(Ty *ty)
          * or it can be an identifier list for an arrow function, e.g., (a, b, c).
          */
 
-        struct location start = tok()->start;
+        Location start = tok()->start;
         Expr *e;
 
         consume('(');
@@ -6134,6 +6134,13 @@ parse_class_definition(Ty *ty)
                                 );
 
                                 meth->name = name;
+                                if (
+                                        (meth->body != NULL)
+                                     && (meth->body->type == STATEMENT_EXPRESSION)
+                                     && (meth->body->expression->type == EXPRESSION_GENERATOR)
+                                ) {
+                                        meth->body->expression->name = afmt("<%s:gen>", name);
+                                }
 
                                 if (_static) {
                                         if      (getter)  { avP(s->tag.s_getters, meth); }
@@ -6581,6 +6588,10 @@ SetNamespace(Stmt *s, Namespace *ns)
 static void
 define_top(Ty *ty, Stmt *s, char const *doc)
 {
+        if (!HAVE_COMPILER_FLAG(RESOLVE)) {
+                return;
+        }
+
         switch (s->type) {
         case STATEMENT_FUN_MACRO_DEFINITION:
                 s->doc = doc;
@@ -6903,13 +6914,6 @@ parse_ex(
 
                 if (TY_CATCH_ERROR()) {
                         (void)TY_CATCH();
-#if 0
-                        Stmt *err = mkstmtx(EXPRESSION);
-                        err->expression = mkxpr(ERROR);
-                        err->expression->start = s->start;
-                        err->expression->end = TEnd;
-                        err->expression->string = sclonea(ty, TyError(ty));
-#endif
                         TyClearError(ty);
                 } else {
                         define_top(ty, s, doc);
@@ -6969,7 +6973,7 @@ parse_get_token(Ty *ty, int i)
 
         if (lex_pos(ty).s > vvL(tokens)->end.s) {
                 vN(tokens) = TokenIndex;
-                avP(tokens, ((struct token) {
+                avP(tokens, ((Token) {
                         .ctx = LCTX,
                         .type = TOKEN_EXPRESSION,
                         .start = lex_pos(ty),
@@ -7042,7 +7046,7 @@ parse_get_type(Ty *ty, int prec, bool resolve, bool want_raw)
         }
 }
 
-struct value
+Value
 parse_get_expr(Ty *ty, int prec, bool resolve, bool want_raw)
 {
         int save = TokenIndex;
@@ -7087,7 +7091,7 @@ parse_get_expr(Ty *ty, int prec, bool resolve, bool want_raw)
         }
 }
 
-struct value
+Value
 parse_get_stmt(Ty *ty, int prec, bool want_raw)
 {
         int save = TokenIndex;
@@ -7097,7 +7101,7 @@ parse_get_stmt(Ty *ty, int prec, bool want_raw)
 
         bool keep_comments = lex_keep_comments(ty, false);
 
-        struct value v;
+        Value v;
 
         if (TY_CATCH_ERROR()) {
                 TY_CATCH();

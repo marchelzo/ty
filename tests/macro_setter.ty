@@ -2,7 +2,8 @@ import ty
 
 macro based {
     ty.Class(
-        name: 'King',
+        name: 'Widget',
+        fields: [$$[ _x: String $$]],
         setters: [
             ty.Func(
                 name: 'x',
@@ -29,7 +30,7 @@ macro based {
 
 based
 
-let o = King()
+let o = Widget()
 
 o.x = 'pass'
 

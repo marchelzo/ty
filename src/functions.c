@@ -3226,6 +3226,7 @@ make_cmdline(Array *args)
                 case '\\':
                         n_bs += 1;
                         break;
+
                 case '"':
                         n_bs *= 2;
                         while (n_bs --> 0)
@@ -3234,6 +3235,7 @@ make_cmdline(Array *args)
                         vec_nogc_push(result, '\\');
                         vec_nogc_push(result, '"');
                         break;
+
                 default:
                         while (n_bs --> 0)
                                 vec_nogc_push(result, '\\');
@@ -3896,9 +3898,11 @@ BUILTIN_FUNCTION(thread_setname)
         case VALUE_BLOB:
                 pname = TY_TMP_C_STR(name);
                 break;
+
         case VALUE_PTR:
                 pname = name.ptr;
                 break;
+
         default:
                 zP("thread.setName(): expected string but got: %s", VSC(&name));
         }
@@ -3926,11 +3930,12 @@ BUILTIN_FUNCTION(thread_getname)
                 thread = TyThreadSelf();
         }
 
-        int errc;
-        char name[256];
+        int err;
+        char *name = TY_TMP();
 
-        errc = pthread_getname_np(thread, name, sizeof name);
-        if (errc != 0) {
+        err = pthread_getname_np(thread, name, TY_TMP_N);
+        if (err != 0) {
+                errno = err;
                 return NIL;
         }
 
@@ -6688,7 +6693,7 @@ BUILTIN_FUNCTION(stdio_puts)
         Value s = ARG(1);
 
         errno = 0;
-        size_t r;
+        usize r;
 
         switch (s.type) {
         case VALUE_STRING:

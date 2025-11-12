@@ -317,9 +317,8 @@ inline static bool
 IsPrivateMember(char const *name)
 {
         usize n = strlen(name);
-        return (n > 2)
+        return (n >= 2)
             && (name[0] == '_')
-            && (name[1] == '_')
             && (
                         (name[n - 1] != '_')
                      || (name[n - 2] != '_')

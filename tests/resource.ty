@@ -1,12 +1,14 @@
 let dropped = []
 
 class A {
+    _k: Int
+
     init(k) {
-        self.k = k
+        _k = k
     }
 
     __drop__() {
-        dropped.push(self.k)
+        dropped.push(_k)
     }
 }
 

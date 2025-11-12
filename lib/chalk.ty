@@ -459,7 +459,7 @@ fn trans(a: TermStyle, b: TermStyle) -> String {
         _           => None
     })
 
-    attrs ? ["\x1b[{it}m" for attrs].str() : ''
+    ["\x1b[{it}m" for attrs].str() ?? ''
 }
 
 class Chalk {
@@ -653,7 +653,7 @@ class Chalk {
 
     print(*xs, %kwargs) {
         ::print(
-            *xs.map(match { x: Text => self.render(x.text), x => x }),
+            *xs.map(match { x: Text => self.render(x.src), x => x }),
             **kwargs
         )
     }

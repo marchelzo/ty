@@ -52,7 +52,7 @@ static struct {
 };
 
 inline static u64
-forge_key(i32 t1, i32 t2)
+key_for(i32 t1, i32 t2)
 {
         return (((u64)t1) << 32) | ((u32)t2);
 }
@@ -69,7 +69,7 @@ check_cache(DispatchCache const *c, u64 key)
                 i32 m = (lo + hi) / 2;
                 if      (key < c->items[m].key) hi = m - 1;
                 else if (key > c->items[m].key) lo = m + 1;
-                else                            return c->items[m].ref;
+                else    return c->items[m].ref;
         }
 
         return OP_CACHE_MISS;
@@ -202,7 +202,7 @@ op_add(i32 op, i32 t1, i32 t2, i32 ref, Expr *expr)
 i32
 op_dispatch(i32 op, i32 t1, i32 t2)
 {
-        u64 key = forge_key(t1, t2);
+        u64 key = key_for(t1, t2);
 
         TyRwLockRdLock(&_2.lock);
 
@@ -319,8 +319,8 @@ op_member_type(i32 op, i32 c, bool left)
                 i32 t1 = v_(group->defs, i)->t1;
                 i32 t2 = v_(group->defs, i)->t2;
                 if (
-                        fun->_type != NULL
-                     && (left ? t1 : t2) == c
+                        (fun->_type != NULL)
+                     && ((left ? t1 : t2) == c)
                 ) {
                         t0 = type_both(ty, t0, fun->_type);
                 }
@@ -345,16 +345,15 @@ op_member_type_r(i32 op, i32 c)
 Type *
 op_type(i32 op)
 {
-        TyRwLockRdLock(&_2.lock);
+        Type *t0 = NULL;
+        DispatchGroup *group;
 
+        TyRwLockRdLock(&_2.lock);
         if (_2.ops.count <= op) {
                 TyRwLockRdUnlock(&_2.lock);
                 return NULL;
         }
-
-        Type *t0 = NULL;
-
-        DispatchGroup *group = _2.ops.items[op];
+        group = _2.ops.items[op];
         TyRwLockRdUnlock(&_2.lock);
 
         TyRwLockWrLock(&group->lock);
