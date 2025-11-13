@@ -1,4 +1,4 @@
-#!/usr/bin/env -S ty -q
+#!/Users/brad/ty/ty -q
 
 import io (stdin)
 import json
@@ -10,9 +10,6 @@ logging({
     path: './tyd.log',
     level: INFO
 })
-
-let i = 0
-let TY_CMD = 'ty'
 
 tag CompilationError;
 
@@ -60,7 +57,7 @@ fn get() -> String | nil {
         warn!("TYLS OUTPUT: {line}")
         return line
     } else {
-        critical!("DEAD: {waitpid(tyls.pid)}")
+        critical!("DEAD: {wait(tyls.pid)}")
         return nil
     }
 }
