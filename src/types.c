@@ -5904,12 +5904,8 @@ InferCall0(
                                 return NULL;
                         }
 
-                        for (int i = 0; i < vN(t0->params); ++i) {
-                                Param *p = v_(t0->params, i);
-                                Flatten(ty, p->type);
-                        }
-
                         FlattenParameterList(ty, &t0->params);
+                        Flatten(ty, t0->rt);
                 }
                 for (int i = 0; i < vN(t0->params); ++i) {
                         Param const *p = v_(t0->params, i);

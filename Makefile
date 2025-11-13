@@ -13,7 +13,6 @@ CFLAGS += -Wno-unused-value
 CFLAGS += -Wno-unused-function
 CFLAGS += -D_GNU_SOURCE
 CFLAGS += -DPCRE2_CODE_UNIT_WIDTH=8
-CFLAGS += -DXXH_INLINE_ALL
 CFLAGS += -DCURL_STATICLIB -DPCRE2_CODE_UNIT_WIDTH=8 -DPCRE2_STATIC -DTY_RELEASE -DUTF8PROC_STATIC -D_GNU_SOURCE
 
 ifeq ($(shell uname -m),arm64)
@@ -33,6 +32,7 @@ LDFLAGS += -lpthread
 LDFLAGS += -lreadline
 LDFLAGS += -lutf8proc
 LDFLAGS += -lsqlite3
+LDFLAGS += -lxxhash
 LDFLAGS += -ldl
 LDFLAGS += $(shell pkg-config --libs openssl)
 LDFLAGS += -lffi
