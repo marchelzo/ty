@@ -328,12 +328,7 @@ pollute_with_bloat(void)
                 "import readln                                  \n"
                 "import sh (sh)                                 \n"
                 "import help (..)                               \n"
-                "_readln = readln::InteractiveLineReader(       \n"
-                "  render=pretty-code,                          \n"
-                "  complete=tab-complete,                       \n"
-                "  history-file=Path.home() / '.ty' / '.history'\n"
-                ").readln                                       \n"
-
+                "import ty.repl (..)                            \n"
         );
 
         print_function = "pp";

@@ -1,0 +1,269 @@
+import ty
+import ty.lex as lex
+import ty.parse as parse
+import ty.token as tok
+import ty.types as types
+import os
+import chalk (chalk, Text)
+import json
+import readln (readln, InteractiveLineReader, ListCompletions, CycleCompletions)
+import path (Path)
+import time
+import ffi as c (C!)
+
+chalk.fg0    = '#e1c78f'
+chalk.fg1    = '#ddc7a1'
+chalk.red    = '#ea6962'
+chalk.aqua   = '#89b482'
+chalk.orange = '#e78a4e'
+chalk.yellow = '#d8a657'
+chalk.green  = '#a9b665'
+chalk.green2 = '#9dbd60'
+chalk.blue   = '#7daea3'
+chalk.blue2  = '#3193ce'
+chalk.purple = '#d3869b'
+chalk.aqua   = '#89b482'
+chalk.grey   = '#847a6d'
+chalk.pink   = '#d677be'
+
+let groups = %{
+    'fg0': 'id',
+    'fg1': '[ ] { } ( ) . .? , ] ->',
+    'orange': '
+        =   ==  ++  --  +   -  *    /   %   ^    |     &    <=   >=
+        +=  -=  *=  /=  %=  @  #    &&  ||  <=>  !     ~    **
+        ~>  =>  $~> >   <  !=  ??   >>  <<  <<=  >>=   |>   !::
+        *** &&& <$> <%> ?> <?  <*>  *>  <*  ..%. .%..  .%
+        ::  ?=  |=  &=  ^=  ?  :    ?:  ..  ...  $     :>
+    ',
+    'purple': 'true false nil int float use import',
+    'red': '
+        for        while     if         let       and    fn     const
+        do         try       catch      operator  or     in     yield
+        match      else      with       break     pub    as     static
+        continue   return    macro      where     not    throw  defer
+        finally    __eval__  generator  ns
+
+        id_keyword
+    ',
+    'b yellow': 'type type_member type_func id_type type_type',
+    'yellow': 'class tag trait id_module, id_param id_module',
+    'green': 'string " f-string',
+    'green2': 'fun_member fun fun_func id_func (_call )_call',
+    'blue': 'id_member id_field',
+    'blue2': 'typeof __set_type__',
+    'aqua': 'regex',
+    'grey': 'comment ; :_punct',
+    'pink': 'pp id_macro fun_macro type_macro $$[ $$] $$ __defined__'
+}
+
+let colors = [ %{ t: c for t in g.words() } for c, g in groups ].sum() ?? %{}
+
+fn color-and-break(source: String) -> Array[(Int, String)] {
+    let tokens: Array[_] = match ty.parse(source, tokens=true, deep=false, resolve=false) {
+        (Ok((_, {tokens, *})) or Err({tokens, *}))
+            => tokens,
+
+        err => do {
+            return [(0, chalk::escape(source))]
+        }
+    }
+
+    let tokens = tokens.remove!(nil).map!(t -> match t {
+        {id: /^[A-Z]\w*[a-z]\w*$/, *} => do {
+            let x: _ = t;
+            ({*x, type: 'type'})
+        },
+        _ => t
+    })
+
+    let parts = [(it, '') for source]
+
+    fn idx-of(off: Int, start: (Int, Int) = (0, 0)) -> (Int, Int) {
+        let (n0, i0) = start
+        let n = n0
+
+        for i0..#parts {
+            if n == off {
+                return (n, it)
+            }
+
+            n += parts[it][0].size()
+
+            if (n > off) && (n0 == 0) {
+                return (n, it)
+            }
+        }
+
+        (n0 == 0) ? (n, #parts) : idx-of(off)
+    }
+
+    let st = (0, 0)
+    for {start, end, type, ?meta, *} in tokens {
+        continue if not let $color = colors[[type, ?meta].join('_')]
+
+        let st0 = idx-of(start.byte, st)
+        let st1 = idx-of(end.byte, st0)
+
+        let (_, i) = st0
+        let (_, j) = st1
+
+        for i..j {
+            parts[it] = (parts[it][0], color)
+        }
+
+        st = st1
+    }
+
+    parts.group-by!(&1).map!(group -> (group.map(&0).str(), group[0][1]))
+
+    let out = Blob()
+
+    for (text, fg) in parts {
+        out.push(fg ? "[{fg}]{chalk::escape(text)}[/]" : chalk::escape(text))
+    }
+
+    out.str!().lines().enumerate!()
+}
+
+pub fn pretty-code(
+    prompt: String,
+    lines: Array[Array[String]],
+    line: Int,
+    col: Int
+) -> (Array[String], Int, Int) {
+    let code = (lines.map(\_.str() ?? '').unlines() ?? '') + '\n'
+
+    if let [*lines] = color-and-break(code) {
+        code = (lines.map(\Text(_.1, chalk)).unlines() ?? '') + '\n'
+    }
+
+    ("{code}".lines()[;#lines], line, col)
+}
+
+fn type-completions(type: _, prefix: String) -> Array[_] {
+    fn label(method) {
+        [chalk"[bright blue]{method.name}[/][grey]:[/] ", types::show(method.type)]
+    }
+
+    match type {
+        types::Object(_) or types::Class(_) => do {
+            let info = types.info(type)
+
+            let members: _ = (
+                info.methods
+              + info.fields
+              + info.getters
+              + info.setters
+            )
+
+            fn fix-name(name: _) -> String {
+                let name = name.match?(/\p{L}/) ? name : "`{name}`"
+                let name = name[#prefix;]
+                name.comb(/#\d+$/)
+            }
+
+            let completions = members
+                .filter(\_.name.starts?(prefix.comb('`')))
+                .filter(\_.type !:: types::Intersect)
+                .sort(by=\_.name)
+                .map(${(label(it), fix-name(it.name))})
+                .sort(by=\"{_.0}")
+
+            for info.traits {
+                completions += type-completions(it, prefix)
+            }
+
+            if info.`super` != nil {
+                completions += type-completions(info.`super`, prefix)
+            }
+
+            completions.uniq()
+        }
+
+        types::Record(members ~> $fields)
+            => fields.keys()
+                .filter(\_.starts?(prefix))
+                .map(\_[#prefix;])
+                .sort(),
+
+        _ => []
+    }
+}
+
+fn mod-completions(mod: Dict[String, _], prefix: String) -> [([Text | String], String)] {
+    let completions = []
+
+    for name, item in mod if name.starts?(prefix) {
+        let label = match item {
+            _ns: Dict => [chalk"[bright blue]{name}[/][grey]:[/] ", chalk"[b yellow]namespace[/]"],
+            {type, *} => [chalk"[bright blue]{name}[/][grey]:[/] ", types::show(type)],
+            _         => nil
+        }
+
+        if label {
+            completions.push((label, name[#prefix;]))
+        }
+    }
+
+    completions.sort!(by=\_.1)
+}
+
+pub fn tab-complete(before: String, after: String) -> readln::CompletionAction {
+    if let [_, space, prefix] = before.match!(/^\s*import\b(\s*)((?:\w|\.)*)$/) {
+        let modules-dir = Path.home() / '.ty'
+        if modules-dir.dir? {
+            let modules = modules-dir.glob('*.ty').map!(\_.stem)
+            return CycleCompletions([
+                (chalk"[bright yellow]{mod}[/]", (space ? '' : ' ') + mod[#prefix;])
+                for mod in modules if mod.starts?(prefix)
+            ])
+        } else {
+            return ListCompletions([])
+        }
+
+    }
+
+    let expr = match ty.parse("{before} .? \{") {
+        Err({last: $expr, *}) => expr,
+
+        Ok((expr, _)) => expr,
+
+        _ => do return ListCompletions([])
+    }
+
+    let expr = match expr {
+        ty.Let(_, e) => e,
+        _            => expr
+    }
+
+    if (before[-1] != '.') and let ty.Id({name, *}) = expr {
+        return CycleCompletions(mod-completions(ty.module(), name))
+    }
+
+
+    let (subject, prefix) = match expr {
+        ty.MemberAccess(o, m) and (before[-1] != '.')
+            => (o, m),
+        _
+            => (expr, '')
+    }
+
+    if let ty.Id({name, *}) = subject and let $mod = ty.module(name) {
+        return CycleCompletions(mod-completions(mod, prefix))
+    }
+
+    CycleCompletions(
+        type-completions(
+            types.infer(subject),
+            prefix
+        )
+    )
+}
+
+_readln = InteractiveLineReader(
+    prompt=() -> '>> ',
+    complete=tab-complete,
+    render=pretty-code,
+    history-file=Path.home() / '.ty' / '.history'
+).readln

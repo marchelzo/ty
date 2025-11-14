@@ -875,8 +875,13 @@ class String : Iterable[String], IntoPtr[Int] {
     match!(pattern: Regex) -> String | [String];
 
     match?(pattern: Regex) -> Bool;
-    search(pattern: String | Regex, off: ?Int) -> Int;
     count(pattern: String | Regex) -> Int;
+
+    search(pattern: String | Regex, off: ?Int) -> Int;
+    searchr(pattern: String | Regex, off: ?Int) -> Int;
+
+    bsearch(pattern: String | Regex, off: ?Int) -> Int;
+    bsearchr(pattern: String | Regex, off: ?Int) -> Int;
 
     repeat(n: Int) -> String;
 
@@ -929,14 +934,6 @@ class String : Iterable[String], IntoPtr[Int] {
 
     upper?() {
         return self == upper()
-    }
-
-    searchr(pattern: String | Regex) -> Int | nil {
-        for let off = len() - 1; off >= 0; --off {
-            if let $i = search(pattern, off) {
-                return i
-            }
-        }
     }
 
     trim() {
@@ -1069,16 +1066,20 @@ class Int : IntoPtr[_] {
         }
     }
 
-    even?() {
+    even? {
         self % 2 == 0
     }
 
-    odd?() {
+    odd? {
         self % 2 == 1
     }
 
     sgn {
         self <=> 0
+    }
+
+    float {
+        ::float(self)
     }
 
     str(base: Int = 10) {
@@ -1167,15 +1168,15 @@ class Int : IntoPtr[_] {
         self == 0
     }
 
-    nonZero?() {
+    nonZero? {
         self != 0
     }
 
-    positive?() {
+    positive? {
         self > 0
     }
 
-    negative?() {
+    negative? {
         self < 0
     }
 
@@ -1237,6 +1238,22 @@ class Float {
         math.sqrt(self)
     }
 
+    floor {
+        ::floor(self)
+    }
+
+    ceil {
+        ::ceil(self)
+    }
+
+    round {
+        ::round(self)
+    }
+
+    iround {
+        ::iround(self)
+    }
+
     clamp(low: Float | Int, high: Float | Int) -> Float {
         if self < float(low) {
             float(low)
@@ -1265,6 +1282,10 @@ class Float {
         } else {
             "{self:.{prec}}"
         }
+    }
+
+    int {
+        ::int(self)
     }
 
     +(k: Float) -> Float { self + k }
@@ -2801,7 +2822,7 @@ class Sync[T] {
         x.__x
     }
 
-    static set(x, y) {
+    static set[T](x: Sync[T], y: T) {
         with x.__mtx {
             x.__x = y
         }
@@ -2908,6 +2929,12 @@ class Sync[T] {
     `/`[A, B](y: A) -> B where (T / A): B {
         with __mtx {
             __x / y
+        }
+    }
+
+    __fmt__(*args) {
+        with __mtx {
+            __x.__fmt__(*args)
         }
     }
 }

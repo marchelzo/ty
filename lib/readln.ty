@@ -30,6 +30,8 @@ pub use CompletionAction = CycleCompletions[Array[CompletionItem]]
 
 pub use CompletionFunction = {before: String, after: String} -> CompletionAction;
 
+pub use Prompt = String | (() -> String)
+
 pub use RenderFunction = {
     prompt: String,
     lines: Array[Array[String]],
@@ -305,7 +307,7 @@ class InteractiveLineReader {
     __tio: TermIO
     __history-file: Path | nil
     __history: Array[HistoryEntry]
-    __prompt: String
+    __prompt: Prompt
     __complete: CompletionFunction | nil
     __render: RenderFunction
 
@@ -353,8 +355,15 @@ class InteractiveLineReader {
         __history.push(entry)
     }
 
+    get-prompt() -> String {
+        match __prompt {
+            p: String => p,
+            f         => f()
+        }
+    }
+
     readln(
-        prompt: ?String = nil,
+        prompt: String | nil = nil,
         complete: _ = nil,
         erase: Bool = false,
         keybinds: Dict[String, _] = %{},
@@ -364,7 +373,7 @@ class InteractiveLineReader {
             init()
         }
 
-        let prompt = prompt ?? __prompt
+        let prompt = prompt ?? get-prompt()
         let render = render ?? __render
 
         let lines = [[]]

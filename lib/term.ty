@@ -541,8 +541,8 @@ class TermIO {
             exit.push("\x1b[<1u")
         }
         if __mouse {
-            exit.push("\x1b[?1003l")
             exit.push("\x1b[?1006l")
+            exit.push("\x1b[?1003l")
         }
     
         __enter = enter.str!()
@@ -692,15 +692,13 @@ class TermIO {
                 for key-str, k in __ti-keys {
                     let n = key-str.size()
                     if buf.str!(i, n) == key-str {
-                        i += n
-
                         match k {
                             unibi.string.key_btab   => yield-basic('\t'),
                             unibi.string.key_sleft  => ctlseq.handler.k-ev-based('1', '2:1', '', 'D'),
                             unibi.string.key_sright => ctlseq.handler.k-ev-based('1', '2:1', '', 'C')
-                            _ => {}
+                            _                       => break
                         }
-
+                        i += n
                         continue continue
                     }
                 }
@@ -736,8 +734,8 @@ class TermIO {
         write(__fd, "\x1b[6n")
 
         for (;;) {
-            if let { $x, $y, (t: t != t_0), * } = __cursor {
-                return (x, y)
+            if let { $y, $x, (t: t != t_0), * } = __cursor {
+                return (y, x)
             }
             __cursor.cond.wait(__cursor.lock)
         }
