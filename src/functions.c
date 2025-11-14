@@ -1300,9 +1300,12 @@ MissingArgument:
                                         100.0 * float_from(ty, &arg, start, nspec)
                                 );
 
-                                if (tmp[0] == '0' || tmp[spec.blank] == ' ') {
-                                        xvPn(cs, tmp + 1, len - 1);
-                                        continue;
+                                while (
+                                        (tmp[0] == '0' && isdigit(tmp[1]))
+                                     || (tmp[0] == ' ' && tmp[spec.blank] == ' ')
+                                ) {
+                                        memmove(tmp, tmp + 1, len);
+                                        len -= 1;
                                 }
 
                                 for (int i = len - 1; tmp[i - 1] == ' '; --i) {

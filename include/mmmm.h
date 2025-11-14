@@ -1,48 +1,50 @@
 #include <string.h>
 #include <stdint.h>
 
+#include "ty.h"
+
 /* ====================================================================================
- *  
+ *
  *   memmem() impl. shamelessly stolen from musl
- *  
+ *
  * ==================================================================================== */
-static char *twobyte_memmem(const unsigned char *h, size_t k, const unsigned char *n)
+static u8 *twobyte_memmem(const u8 *h, usize k, const u8 *n)
 {
-	uint16_t nw = n[0]<<8 | n[1], hw = h[0]<<8 | h[1];
+	u16 nw = n[0]<<8 | n[1], hw = h[0]<<8 | h[1];
 	for (h+=2, k-=2; k; k--, hw = hw<<8 | *h++)
-		if (hw == nw) return (char *)h-2;
-	return hw == nw ? (char *)h-2 : 0;
+		if (hw == nw) return (u8 *)h-2;
+	return hw == nw ? (u8 *)h-2 : 0;
 }
 
-static char *threebyte_memmem(const unsigned char *h, size_t k, const unsigned char *n)
+static u8 *threebyte_memmem(const u8 *h, usize k, const u8 *n)
 {
-	uint32_t nw = (uint32_t)n[0]<<24 | n[1]<<16 | n[2]<<8;
-	uint32_t hw = (uint32_t)h[0]<<24 | h[1]<<16 | h[2]<<8;
+	u32 nw = (u32)n[0]<<24 | n[1]<<16 | n[2]<<8;
+	u32 hw = (u32)h[0]<<24 | h[1]<<16 | h[2]<<8;
 	for (h+=3, k-=3; k; k--, hw = (hw|*h++)<<8)
-		if (hw == nw) return (char *)h-3;
-	return hw == nw ? (char *)h-3 : 0;
+		if (hw == nw) return (u8 *)h-3;
+	return hw == nw ? (u8 *)h-3 : 0;
 }
 
-static char *fourbyte_memmem(const unsigned char *h, size_t k, const unsigned char *n)
+static u8 *fourbyte_memmem(const u8 *h, usize k, const u8 *n)
 {
-	uint32_t nw = (uint32_t)n[0]<<24 | n[1]<<16 | n[2]<<8 | n[3];
-	uint32_t hw = (uint32_t)h[0]<<24 | h[1]<<16 | h[2]<<8 | h[3];
+	u32 nw = (u32)n[0]<<24 | n[1]<<16 | n[2]<<8 | n[3];
+	u32 hw = (u32)h[0]<<24 | h[1]<<16 | h[2]<<8 | h[3];
 	for (h+=4, k-=4; k; k--, hw = hw<<8 | *h++)
-		if (hw == nw) return (char *)h-4;
-	return hw == nw ? (char *)h-4 : 0;
+		if (hw == nw) return (u8 *)h-4;
+	return hw == nw ? (u8 *)h-4 : 0;
 }
 
 #define MMMM_MAX(a,b) ((a)>(b)?(a):(b))
 #define MMMM_MIN(a,b) ((a)<(b)?(a):(b))
 
 #define MMMM_BITOP(a,b,op) \
- ((a)[(size_t)(b)/(8*sizeof *(a))] op (size_t)1<<((size_t)(b)%(8*sizeof *(a))))
+ ((a)[(usize)(b)/(8*sizeof *(a))] op (usize)1<<((usize)(b)%(8*sizeof *(a))))
 
-static char *twoway_memmem(const unsigned char *h, const unsigned char *z, const unsigned char *n, size_t l)
+static u8 *twoway_memmem(const u8 *h, const u8 *z, const u8 *n, usize l)
 {
-	size_t i, ip, jp, k, p, ms, p0, mem, mem0;
-	size_t byteset[32 / sizeof(size_t)] = { 0 };
-	size_t shift[256];
+	usize i, ip, jp, k, p, ms, p0, mem, mem0;
+	usize byteset[32 / sizeof(usize)] = { 0 };
+	usize shift[256];
 
 	/* Computing length of needle and fill shift table */
 	for (i=0; i<l; i++)
@@ -124,16 +126,16 @@ static char *twoway_memmem(const unsigned char *h, const unsigned char *z, const
 		}
 		/* Compare left half */
 		for (k=ms+1; k>mem && n[k-1] == h[k-1]; k--);
-		if (k <= mem) return (char *)h;
+		if (k <= mem) return (u8 *)h;
 		h += p;
 		mem = mem0;
 	}
 }
 
 inline static void *
-mmmm(const void *h0, size_t k, const void *n0, size_t l)
+mmmm(const void *h0, usize k, const void *n0, usize l)
 {
-	const unsigned char *h = h0, *n = n0;
+	const u8 *h = h0, *n = n0;
 
 	/* Return immediately on empty needle */
 	if (!l) return (void *)h;
@@ -144,13 +146,35 @@ mmmm(const void *h0, size_t k, const void *n0, size_t l)
 	/* Use faster algorithms for short needles */
 	h = memchr(h0, *n, k);
 	if (!h || l==1) return (void *)h;
-	k -= h - (const unsigned char *)h0;
+	k -= h - (const u8 *)h0;
 	if (k<l) return 0;
 	if (l==2) return twobyte_memmem(h, k, n);
 	if (l==3) return threebyte_memmem(h, k, n);
 	if (l==4) return fourbyte_memmem(h, k, n);
 
 	return twoway_memmem(h, h+k, n, l);
+}
+
+inline static u8 const *
+mmmmr(u8 const *haystack, usize hlen, u8 const *needle, usize nlen)
+{
+        if (nlen == 0)
+                return haystack + hlen;
+
+        if (nlen > hlen)
+                return NULL;
+
+        u8 const *last = NULL;
+
+        for (u8 const *p = haystack; p <= haystack + hlen - nlen;) {
+                u8 const *match = mmmm(p, hlen - (p - haystack), needle, nlen);
+                if (match == NULL)
+                        break;
+                last = match;
+                p = match + 1;
+        }
+
+        return last;
 }
 #undef MMMM_MIN
 #undef MMMM_MAX

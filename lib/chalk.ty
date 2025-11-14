@@ -69,7 +69,7 @@ fn flip(trans: String) -> String {
 fn split(text: String, i: Int, greedy?: Bool = true) -> (String, String) {
     let off = 0
     let width = 0
-    let matches = text.matches(/\x1b\[[^m]*m(*SKIP)(*FAIL)|[^\x1b]+/v)
+    let matches = text.scan(/\x1b\[[^m]*m(*SKIP)(*FAIL)|[^\x1b]+/v)
 
     let stop = greedy? ? (\width > i) : (\width >= i)
 
@@ -311,6 +311,67 @@ class Text {
 
     spans -> [(TermStyle, String)] {
         __chalk.spans(__text)
+    }
+
+    wrap(width: Int) -> Array[Text] {
+        let spans = spans.reverse()
+        let lines = []
+
+        let remain = width
+        let line   = Blob()
+
+        fn next() {
+            lines.push(Text(line.str!(), __chalk))
+            line.clear()
+            remain = width
+        }
+
+        fn add(style, text) {
+            let state = {}
+            for [_, attr] in trans({}, style).scan(/\x1b\[([^m]+)m/) {
+                state = record-of(attr, start=state)
+            }
+
+            line.push(detrans({}, state))
+            line.push(escape(text))
+            line.push('[/]')
+
+            remain -= text.width()
+        }
+
+        while spans {
+            let (style, text) = spans.pop()
+
+            if #line == 0 && text[0] == ' ' {
+                text += 1
+            }
+
+            if let $i = text.search('\n') {
+                let (line, rest) = text.split(i)
+                spans.push((style, rest + 1))
+                spans.push((style, line))
+                remain = min(remain, line.width())
+            } else if text.width() > remain {
+                if remain < width / 3 {
+                    spans.push((style, text))
+                    next()
+                } else {
+                    let i = text.searchr(/\s/, remain) ?? remain
+                    let (keep, push) = text.split(i)
+                    spans.push((style, push))
+                    add(style, keep)
+                    next()
+                }
+            } else {
+                add(style, text)
+            }
+        }
+
+        if #line > 0 {
+            next()
+        }
+
+        lines
     }
 
     style-span(
@@ -683,8 +744,12 @@ class Chalk {
         x -> self"[{style}]{x}[/]"
     }
 
-    plain(text: Text | String) {
+    plain(text: Text | String) -> String {
         (self"{text}").plain
+    }
+
+    text(text: String) -> Text {
+        Text(text, self)
     }
 }
 

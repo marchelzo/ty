@@ -1633,7 +1633,7 @@ vm_run_thread(void *p)
         if (TY_CATCH_ERROR()) {
                 // TODO: do something useful here
                 t->v = TY_CATCH();
-                fprintf(stderr, "Thread %lld dying with error: %s\n", TID, TyError(ty));
+                fprintf(stderr, "Thread %lld dying with error: %s\n", TID, VSC(&t->v));
         } else {
                 t->v = vmC(call, argc);
                 TY_CATCH_END();

@@ -113,43 +113,41 @@ blob_shrink(Ty *ty, Value *blob, int argc, Value *kwargs)
 static Value
 blob_push(Ty *ty, Value *blob, int argc, Value *kwargs)
 {
-        size_t index = blob->blob->count;
+        ASSERT_ARGC("Blob.push()", 1, 2, 3);
+
+        isize index;
         Value arg;
 
-        if (argc >= 2 && ARG(0).type != VALUE_PTR) {
+        if (argc >= 2 && ARG_T(0) != VALUE_PTR) {
+                index = INT_ARG(0);
                 arg = ARG(1);
-                Value idx = ARG(0);
-                if (idx.type != VALUE_INTEGER)
-                        zP("the index passed to blob.push() must be an integer");
-                if (idx.integer < 0)
-                        idx.integer += blob->blob->count;
-                if (idx.integer < 0 || idx.integer > blob->blob->count)
-                        zP("invalid index passed to blob.push()");
-                index = idx.integer;
         } else {
+                index = vN(*blob->blob);
                 arg = ARG(0);
         }
 
         switch (arg.type) {
         case VALUE_INTEGER:
-                if (arg.integer < 0 || arg.integer > UCHAR_MAX)
-                        zP("integer passed to blob.push() out of byte range");
+                if (arg.integer < 0 || arg.integer > UCHAR_MAX) {
+                        bP("not an octet: %s", VSC(&arg));
+                }
                 vvI(*blob->blob, arg.integer, index);
                 break;
+
         case VALUE_BLOB:
                 vvIn(*blob->blob, arg.blob->items, arg.blob->count, index);
                 break;
+
         case VALUE_STRING:
                 vvIn(*blob->blob, arg.str, arg.bytes, index);
                 break;
+
         case VALUE_PTR:
-                if (ARG(argc - 1).type != VALUE_INTEGER) {
-                        zP("blob.push(): expected integer length after pointer argument");
-                }
-                vvIn(*blob->blob, arg.ptr, ARG(argc - 1).integer, index);
+                vvIn(*blob->blob, arg.ptr, INT_ARG(argc - 1), index);
                 break;
+
         default:
-                zP("invalid argument passed to blob.push()");
+                ARGx(!!argc, VALUE_INTEGER, VALUE_STRING, VALUE_BLOB, VALUE_PTR);
         }
 
         return *blob;

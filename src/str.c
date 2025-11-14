@@ -465,6 +465,110 @@ string_search(Ty *ty, Value *string, int argc, Value *kwargs)
 }
 
 static Value
+string_searchr(Ty *ty, Value *string, int argc, Value *kwargs)
+{
+        ASSERT_ARGC("String.searchr()", 1, 2);
+        Value pattern = ARGx(0, VALUE_STRING, VALUE_REGEX);
+        isize offset = (argc == 1) ? TyStrLen(string) - 1 : INT_ARG(1);
+
+        if (offset < 0) {
+                offset += TyStrLen(string);
+        }
+        if (offset < 0) {
+                return NIL;
+        }
+
+        isize off = x_x_x(string->str, string->bytes, offset);
+        if (off > string->bytes) {
+                off = string->bytes;
+        }
+
+        u8 const *s = string->str;
+        isize bytes = off;
+        isize n;
+
+        if (pattern.type == VALUE_STRING) {
+                u8 const *match = mmmmr(s, bytes, pattern.str, pattern.bytes);
+                n = (match != NULL) ? (match - s) : -1;
+        } else {
+                pcre2_code *re = pattern.regex->pcre2;
+                usize *ovec = ty_re_ovec();
+                isize last_match = -1;
+                isize pos = 0;
+
+                while (pos <= bytes) {
+                        isize rc = ty_re_match(re, (PCRE2_SPTR)(s + pos), bytes - pos, 0, 0);
+                        if (rc == PCRE2_ERROR_NOMATCH) {
+                                break;
+                        }
+                        if (rc < 0) {
+                                ty_re_panic(rc);
+                        }
+                        last_match = pos + ovec[0];
+                        pos = last_match + 1;
+                }
+                n = last_match;
+        }
+
+        return (n != -1) ? INTEGER(rune_count(s, n)) : NIL;
+}
+
+static Value
+string_bsearchr(Ty *ty, Value *string, int argc, Value *kwargs)
+{
+        ASSERT_ARGC("String.bsearchr()", 1, 2);
+        Value pattern = ARGx(0, VALUE_STRING, VALUE_REGEX);
+        isize offset = (argc == 1) ? string->bytes - 1 : INT_ARG(1);
+
+        if (offset < 0) {
+                offset += string->bytes;
+        }
+        if (offset < 0) {
+                zP("String.bsearchr(): invalid offset: %"PRIi64, offset);
+        }
+        if (offset >= string->bytes) {
+                offset = string->bytes - 1;
+        }
+
+        u8 const *s = string->str;
+        isize bytes = offset + 1;
+        isize n;
+
+        if (pattern.type == VALUE_STRING) {
+                u8 const *match = mmmmr(s, bytes, pattern.str, pattern.bytes);
+                if (match == NULL) {
+                        return NIL;
+                }
+                n = match - s;
+        } else {
+                pcre2_code *re = pattern.regex->pcre2;
+                usize *ovec = ty_re_ovec();
+                isize last_match = -1;
+                isize pos = 0;
+
+                while (pos <= bytes) {
+                        isize rc = ty_re_match(re, (PCRE2_SPTR)(s + pos), bytes - pos, 0, 0);
+                        if (rc == PCRE2_ERROR_NOMATCH) {
+                                break;
+                        }
+                        if (rc < 0) {
+                                ty_re_panic(rc);
+                        }
+                        last_match = pos + ovec[0];
+                        pos = last_match + 1;
+                }
+
+                if (last_match == -1) {
+                        return NIL;
+                }
+
+                n = last_match;
+        }
+
+        return INTEGER(n);
+}
+
+static Value
 string_contains(Ty *ty, Value *string, int argc, Value *kwargs)
 {
         Value i = string_search(ty, string, argc, kwargs);
@@ -604,7 +708,7 @@ string_split(Ty *ty, Value *string, int argc, Value *kwargs)
                 while (i --> 0) {
                         i32 cp;
                         isize bytes = utf8proc_iterate((u8 const *)(s + off), len - off, &cp);
-                        off += min(bytes, 1);
+                        off += max(bytes, 1);
                 }
                 Value left = STRING_VIEW(*string, 0, off);
                 Value right = STRING_VIEW(*string, off, len - off);
@@ -977,7 +1081,7 @@ string_replace(Ty *ty, Value *string, int argc, Value *kwargs)
                                 OKGC(match.array);
                         }
 
-                        vvPn(chars, substitute.str, substitute.bytes);
+                        uvPn(chars, substitute.str, substitute.bytes);
                 }
 
                 vvPn(chars, s + start, len - start);
@@ -1326,6 +1430,7 @@ string_clone(Ty *ty, Value *string, int argc, Value *kwargs)
 
 DEFINE_METHOD_TABLE(
         { .name = "bsearch",   .func = string_bsearch          },
+        { .name = "bsearchr",  .func = string_bsearchr         },
         { .name = "bslice",    .func = string_bslice           },
         { .name = "byte",      .func = string_byte             },
         { .name = "bytes",     .func = string_bytes            },
@@ -1352,6 +1457,7 @@ DEFINE_METHOD_TABLE(
         { .name = "replace",   .func = string_replace          },
         { .name = "scan",      .func = string_matches          },
         { .name = "search",    .func = string_search           },
+        { .name = "searchr",   .func = string_searchr          },
         { .name = "searchAll", .func = string_search_all       },
         { .name = "size",      .func = string_size             },
         { .name = "slice",     .func = string_slice            },
