@@ -389,8 +389,8 @@ struct value {
 };
 
 struct frame {
-        usize fp;
         Value f;
+        usize fp;
         char const *ip;
 };
 

@@ -154,6 +154,18 @@ CaptureContext(Ty *ty, ThrowCtx *ctx);
 void
 CaptureContextEx(Ty *ty, ThrowCtx *ctx);
 
+inline static Value const *
+FrameFun(Ty *ty, Frame const *frame)
+{
+        return &frame->f;
+}
+
+inline static Value const *
+ActiveFun(Ty *ty)
+{
+        return FrameFun(ty, vvL(ty->st.frames));
+}
+
 noreturn void
 ZeroDividePanic(Ty *ty);
 

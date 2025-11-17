@@ -975,7 +975,7 @@ SpecialTarget(Ty *ty)
 inline static Value
 GetSelf(Ty *ty)
 {
-        Value const *fun = &vvL(FRAMES)->f;
+        Value const *fun = ActiveFun(ty);
         u32  np = param_count_of(fun);
 
         Value v = v__(STACK, vvL(FRAMES)->fp + np);
@@ -4712,7 +4712,7 @@ NextInstruction:
                                         count->integer += dt;
                                 }
 
-                                int *func = (FRAMES.count > 0) ? vvL(FRAMES)->f.info : NULL;
+                                int *func = (FRAMES.count > 0) ? ActiveFun(ty)->info : NULL;
                                 count = dict_put_key_if_not_exists(ty, FuncSamples, PTR(func));
                                 if (count->type == VALUE_NIL) {
                                         *count = INTEGER(dt);
@@ -4763,11 +4763,11 @@ NextInstruction:
                 CASE(LOAD_CAPTURED)
                         READVALUE(n);
 #ifndef TY_NO_LOG
-                        LOG("Loading capture: %s (%d) of %s", IP, n, VSC(&vvL(FRAMES)->f));
+                        LOG("Loading capture: %s (%d) of %s", IP, n, VSC(ActiveFun(ty)));
                         SKIPSTR();
 #endif
 
-                        push(*vvL(FRAMES)->f.env[n]);
+                        push(*ActiveFun(ty)->env[n]);
                         break;
                 CASE(LOAD_GLOBAL)
                         READVALUE(n);
@@ -4800,7 +4800,7 @@ NextInstruction:
                         vp = mAo(sizeof (Value), GC_VALUE);
                         *vp = *local(ty, i);
                         *local(ty, i) = REF(vp);
-                        vvL(FRAMES)->f.env[j] = vp;
+                        ActiveFun(ty)->env[j] = vp;
                         break;
                 CASE(DECORATE)
                         READVALUE(s);
@@ -5011,10 +5011,10 @@ NextInstruction:
                 CASE(TARGET_CAPTURED)
                         READVALUE(n);
 #ifndef TY_NO_LOG
-                        LOG("Loading capture: %s (%d) of %s", IP, n, VSC(&vvL(FRAMES)->f));
+                        LOG("Loading capture: %s (%d) of %s", IP, n, VSC(ActiveFun(ty)));
                         SKIPSTR();
 #endif
-                        pushtarget(vvL(FRAMES)->f.env[n], NULL);
+                        pushtarget(ActiveFun(ty)->env[n], NULL);
                         break;
                 CASE(TARGET_MEMBER)
                         READVALUE(z);
@@ -5614,7 +5614,7 @@ Yield:
                         xvPn(v.gen->frame, vZ(STACK) - n, n);
 
                         v.gen->ip = IP;
-                        v.gen->f = vvL(FRAMES)->f;
+                        v.gen->f = *ActiveFun(ty);
 
                         push(v);
 
@@ -6569,7 +6569,7 @@ BadTupleMember:
                         call6t(ty, &v, NULL, 1, 0, unapply);
                         break;
                 CASE(TAIL_CALL)
-                        n = vvL(FRAMES)->f.info[4];
+                        n = ActiveFun(ty)->info[FUN_INFO_PARAM_COUNT];
 
                         memcpy(
                                 local(ty, 0),
@@ -6578,14 +6578,14 @@ BadTupleMember:
                         );
 
                         i = n;
-                        n = vvL(FRAMES)->f.info[3];
+                        n = ActiveFun(ty)->info[FUN_INFO_BOUND];
 
                         for (; i < n; ++i) {
                                 *local(ty, i) = NIL;
                         }
 
                         STACK.count = vvL(FRAMES)->fp + n;
-                        IP = code_of(&vvL(FRAMES)->f);
+                        IP = code_of(ActiveFun(ty));
 
                         break;
                 CASE(CALL)
@@ -6986,7 +6986,7 @@ xDcringe(Ty *ty)
         dump(&ErrorBuffer, "Stack trace:\n");
 
         for (int i = 0; IP != NULL; ++i) {
-                if (vN(FRAMES) > 0 && is_hidden_fun(&vvL(FRAMES)->f)) {
+                if (vN(FRAMES) > 0 && is_hidden_fun(ActiveFun(ty))) {
                         goto Next;
                 }
 
@@ -7031,7 +7031,7 @@ CaptureContextEx(Ty *ty, ThrowCtx *ctx)
         for (;;) {
                 if (
                         (vN(st.frames) > 0)
-                     && is_hidden_fun(&vvL(st.frames)->f)
+                     && is_hidden_fun(FrameFun(ty, vvL(st.frames)))
                 ) {
                         goto Next;
                 }
@@ -7041,7 +7041,7 @@ CaptureContextEx(Ty *ty, ThrowCtx *ctx)
                 if (vN(st.frames) > 0) {
                         Frame *frame = vvL(st.frames);
                         fp = frame->fp;
-                        nvar = frame->f.info[FUN_INFO_BOUND];
+                        nvar = FrameFun(ty, frame)->info[FUN_INFO_BOUND];
                 } else {
                         fp = 0;
                         nvar = 0;
@@ -7086,7 +7086,7 @@ CaptureContext(Ty *ty, ThrowCtx *ctx)
         for (;;) {
                 if (
                         (vN(st.frames) > 0)
-                     && is_hidden_fun(&vvL(st.frames)->f)
+                     && is_hidden_fun(FrameFun(ty, vvL(st.frames)))
                 ) {
                         goto Next;
                 }
@@ -7212,7 +7212,7 @@ tdb_backtrace(Ty *ty)
         int nf = vN(frames);
 
         for (int i = 0; ip != NULL; ++i) {
-                if (nf > 0 && is_hidden_fun(&v_(frames, nf - 1)->f)) {
+                if (nf > 0 && is_hidden_fun(FrameFun(ty, v_(frames, nf - 1)))) {
                         goto Next;
                 }
 
@@ -8203,7 +8203,7 @@ MarkStorage(Ty *ty)
 
         GCLOG("Marking frame functions");
         for (int i = 0; i < vN(FRAMES); ++i) {
-                value_mark(ty, &v_(FRAMES, i)->f);
+                value_mark(ty, FrameFun(ty, v_(FRAMES, i)));
         }
 }
 
@@ -8832,7 +8832,7 @@ void
 tdb_list(Ty *ty)
 {
         char const *start = (FRAMES.count != 0)
-                          ? code_of(&vvL(FRAMES)->f)
+                          ? code_of(ActiveFun(ty))
                           : ty->code;
 
         byte_vector *context = &TDB->context_buffer;
