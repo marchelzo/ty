@@ -261,7 +261,7 @@ pub fn parse(text: String, start: _ = {}) -> String {
 
     for match text.split(/\x1b\[([^m]*)m/v) {
         escape: RegexMatch => {
-            props = record-of(escape[1], start=props)
+            props = record-of(escape[1]!, start=props)
         },
         text => {
             push(text, props)
@@ -305,11 +305,15 @@ class Text {
         __chalk.render(__text, plain=true)
     }
 
-    +(other: Text) -> Text {
-        cast(__chalk"{self}{other}")
+    width() -> Int {
+        plain.width()
     }
 
-    spans -> [(TermStyle, String)] {
+    +(other: Text) -> Text {
+        (__chalk"{self}{other}")
+    }
+
+    spans -> Array[(TermStyle, String)] {
         __chalk.spans(__text)
     }
 
@@ -342,10 +346,6 @@ class Text {
         while spans {
             let (style, text) = spans.pop()
 
-            if #line == 0 && text[0] == ' ' {
-                text += 1
-            }
-
             if let $i = text.search('\n') {
                 let (line, rest) = text.split(i)
                 spans.push((style, rest + 1))
@@ -358,7 +358,7 @@ class Text {
                 } else {
                     let i = text.searchr(/\s/, remain) ?? remain
                     let (keep, push) = text.split(i)
-                    spans.push((style, push))
+                    spans.push((style, push.comb(/^ /)))
                     add(style, keep)
                     next()
                 }
@@ -421,7 +421,7 @@ fn parse-style(style: String, chalk: Chalk) -> ?TermStyle {
 
         /^#[[:xdigit:]]+$/ => do {
             let group = [/./, /../][#style / 3 - 1]
-            let rgb = style[1;].matches(group).map(int@("{$1}{$1}"[;2], 16))
+            let rgb = style[1;].scan(group).map(int@("{$1}{$1}"[;2], 16))
             ({fg: [38, 2, *rgb]})
         },
 
@@ -505,7 +505,7 @@ fn trans(a: TermStyle, b: TermStyle) -> String {
             'bold'      :: val != nil  => attrs.push(1),
             'italic'    :: val != nil  => attrs.push(3),
             'reverse'   :: val != nil  => attrs.push(7),
-            _                    => ()
+            _                          => ()
         }
     }
 
@@ -579,7 +579,7 @@ class Chalk {
         for match parts {
             m: RegexMatch => {
                 continue if plain
-                match m.captures {
+                match m.groups[1;] {
                     [nil, &words $~> styles] => {
                         stack.push(styles.map(get-style))
                         update()
@@ -614,7 +614,7 @@ class Chalk {
                     },
 
                     [] => {
-                        out.push(m.s[1;])
+                        out.push(m[0][1;])
                     }
                 }
             },
@@ -671,7 +671,7 @@ class Chalk {
 
         for match parts {
             _match: RegexMatch => {
-                match _match.captures {
+                match _match.groups[1;] {
                     [nil, &words $~> styles] => {
                         stack.push(styles.map(get-style))
                         update()
@@ -702,7 +702,7 @@ class Chalk {
                         update()
                     },
 
-                    _ => spans.push((style, _match.s[1;]))
+                    _ => spans.push((style, _match[0][1;]))
                 }
             },
 

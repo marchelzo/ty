@@ -37,10 +37,10 @@ macro __flat-array! $$[
     $${
         fn flat(t0) {
             match t0 {
-                types.Object(::Array, [u0])
+                types::Object(::Array, [u0])
                     => flat(u0),
 
-                types.Union(us)
+                types::Union(us)
                     => types.Union([flat(it) for us]),
                 _
                     => types.Object(Array, [t0])
@@ -1596,61 +1596,31 @@ tag Err {
 use Maybe[T] = Some[T] | None
 
 class RegexMatch {
-    s: String
-    size: Int
-
-    s_: String
-    start_: Int
-    captures_: Array[(Int, Int)]
-
-    init(full, groups) {
-        let [(start, >size), *captures] = groups
-        start_ = start
-        s_ = full
-        s = full.bslice(start, size)
-        captures_ = captures
-    }
+    groups: Array[String | nil]
+    str: String
 
     start {
         #pre
     }
 
     end {
-        start + #s
+        start + #groups[0]
     }
 
     pre {
-        s_.bslice(0, start_)
+        str.bslice(0, groups[0].ptr() - str.ptr())
     }
 
     post {
-        s_.bslice(start_ + size)
+        str.bslice(groups[0].ptr() - str.ptr() + groups[0].size())
     }
 
-    count {
-        #captures_
-    }
-
-    captures -> Array[String | nil] {
-        [if i != -1 { s_.bslice(i, n) } for (i, n) in captures_]
-    }
-
-    ~() -> Array[String | nil] {
-        [s, *captures]
-    }
-
-    [](i: Int) -> String {
-        if i == 0 {
-            s
-        } else if let (i, n) = captures_[i - 1] and i != -1 {
-            s_.bslice(i, n)
-        } else {
-            throw IndexError(self, i)
-        }
+    [](i: Int) -> String | nil {
+        groups[i]
     }
 
     #() {
-        #s
+        #groups[0]
     }
 }
 

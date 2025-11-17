@@ -176,8 +176,9 @@ hash(Ty *ty, Value const *val)
         case VALUE_OBJECT:            return obj_hash(ty, val);
         case VALUE_METHOD:            return HashCombine(ptr_hash(val->method), ptr_hash(val->this));
         case VALUE_BUILTIN_METHOD:    return HashCombine(ptr_hash(val->builtin_method), ptr_hash(val->this));
-        case VALUE_FUNCTION:          return ptr_hash(val->builtin_function);
-        case VALUE_BUILTIN_FUNCTION:  return HashCombine(ptr_hash(val->info), ptr_hash(val->env));
+        case VALUE_BUILTIN_FUNCTION:  return ptr_hash(val->builtin_function);
+        case VALUE_FUNCTION:          return HashCombine(ptr_hash(val->info), ptr_hash(val->env));
+        case VALUE_FOREIGN_FUNCTION:  return HashCombine(ptr_hash((void *)val->ff), ptr_hash(val->ffi));
         case VALUE_REGEX:             return ptr_hash(val->regex);
         case VALUE_PTR:               return ptr_hash(val->ptr);
         case VALUE_TAG:               return (((u64)val->tag) * 517929173925273293ULL);
@@ -519,6 +520,12 @@ value_showx(Ty *ty, Value const *v)
                 else
                         snprintf(buffer, 1024, "<builtin function '%s::%s'>", v->module, M_NAME(v->name));
                 break;
+        case VALUE_FOREIGN_FUNCTION:
+                if (v->xinfo == NULL || v->xinfo->name == NULL)
+                        snprintf(buffer, 1024, "<foreign function>");
+                else
+                        snprintf(buffer, 1024, "<foreign function '%s'>", v->xinfo->name);
+                break;
         case VALUE_OPERATOR:
                 snprintf(buffer, 1024, "<operator %s>", M_NAME(v->uop));
                 break;
@@ -562,7 +569,7 @@ value_showx(Ty *ty, Value const *v)
                         }
                 }
 
-                Value *fp = class_lookup_method_i(ty, v->class, NAMES.str);
+                Value *fp = class_lookup_method_i(ty, v->class, NAMES._str_);
 
                 if (fp != NULL && class_of(fp) != CLASS_OBJECT) {
                         xvP(ty->visiting, v->object);
@@ -782,6 +789,29 @@ value_show_colorx(Ty *ty, Value const *v)
                 }
                 break;
 
+        case VALUE_FOREIGN_FUNCTION:
+                if (v->xinfo == NULL || v->xinfo->name == NULL) {
+                        snprintf(
+                                buffer,
+                                sizeof buffer,
+                                "%s<foreign function>%s",
+                                TERM(96),
+                                TERM(0)
+                        );
+                } else {
+                        snprintf(
+                                buffer,
+                                sizeof buffer,
+                                "%s<foreign function %s'%s'%s>%s",
+                                TERM(96),
+                                TERM(92),
+                                v->xinfo->name,
+                                TERM(96),
+                                TERM(0)
+                        );
+                }
+                break;
+
         case VALUE_OPERATOR:
                 snprintf(
                         buffer,
@@ -867,7 +897,7 @@ value_show_colorx(Ty *ty, Value const *v)
                 }
 
 #ifdef TY_NO_LOG
-                Value *fp = class_lookup_method_i(ty, v->class, NAMES.str);
+                Value *fp = class_lookup_method_i(ty, v->class, NAMES._str_);
 #else
                 Value *fp = NULL;
 #endif
@@ -1435,22 +1465,23 @@ _value_mark_xd(Ty *ty, Value const *v)
 #endif
 
         switch (v->type & ~VALUE_TAGGED) {
-        case VALUE_METHOD:          if (!MARKED(v->this)) { mark_method(ty, v); }                     break;
-        case VALUE_BUILTIN_METHOD:  if (!MARKED(v->this)) { MARK(v->this); MarkNext(ty, v->this); }   break;
-        case VALUE_ARRAY:           value_array_mark(ty, v->array);                                   break;
-        case VALUE_TUPLE:           mark_tuple(ty, v);                                                break;
-        case VALUE_DICT:            dict_mark(ty, v->dict);                                           break;
-        case VALUE_FUNCTION:        mark_function(ty, v);                                             break;
-        case VALUE_GENERATOR:       mark_generator(ty, v);                                            break;
-        case VALUE_THREAD:          mark_thread(ty, v);                                               break;
-        case VALUE_STRING:          if (!v->ro && v->str0 != NULL) { MARK(v->str0); }                 break;
-        case VALUE_OBJECT:          object_mark(ty, v->object);                                       break;
-        case VALUE_CLASS:           class_mark(ty, v->class);                                         break;
-        case VALUE_REF:             MARK(v->ptr); MarkNext(ty, v->ptr);                               break;
-        case VALUE_BLOB:            MARK(v->blob);                                                    break;
-        case VALUE_PTR:             mark_pointer(ty, v);                                              break;
-        case VALUE_REGEX:           if (v->regex->gc) MARK(v->regex);                                 break;
-        default:                                                                                      break;
+        case VALUE_METHOD:           if (!MARKED(v->this)) { mark_method(ty, v); }                     break;
+        case VALUE_BUILTIN_METHOD:   if (!MARKED(v->this)) { MARK(v->this); MarkNext(ty, v->this); }   break;
+        case VALUE_FOREIGN_FUNCTION: if (v->xinfo != NULL) { MARK(v->xinfo); }                         break;
+        case VALUE_ARRAY:            value_array_mark(ty, v->array);                                   break;
+        case VALUE_TUPLE:            mark_tuple(ty, v);                                                break;
+        case VALUE_DICT:             dict_mark(ty, v->dict);                                           break;
+        case VALUE_FUNCTION:         mark_function(ty, v);                                             break;
+        case VALUE_GENERATOR:        mark_generator(ty, v);                                            break;
+        case VALUE_THREAD:           mark_thread(ty, v);                                               break;
+        case VALUE_STRING:           if (!v->ro && v->str0 != NULL) { MARK(v->str0); }                 break;
+        case VALUE_OBJECT:           object_mark(ty, v->object);                                       break;
+        case VALUE_CLASS:            class_mark(ty, v->class);                                         break;
+        case VALUE_REF:              MARK(v->ptr); MarkNext(ty, v->ptr);                               break;
+        case VALUE_BLOB:             MARK(v->blob);                                                    break;
+        case VALUE_PTR:              mark_pointer(ty, v);                                              break;
+        case VALUE_REGEX:            if (v->regex->gc) MARK(v->regex);                                 break;
+        default:                                                                                       break;
         }
 
 #ifndef TY_RELEASE

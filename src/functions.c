@@ -7071,6 +7071,37 @@ BUILTIN_FUNCTION(finalizer)
 }
 
 static Value
+ffdoc(Ty *ty, Value const *ff)
+{
+        char const *_name;
+        char const *_doc;
+        char const *_proto;
+
+        if (ff->xinfo == NULL) {
+                _name  = NULL;
+                _doc   = NULL;
+                _proto = NULL;
+        } else {
+                _name  = ff->xinfo->name;
+                _doc   = ff->xinfo->doc;
+                _proto = ff->xinfo->proto;
+        }
+
+        GC_STOP();
+
+        Value name  = (_name  == NULL) ? NIL : vSsz(_name);
+        Value doc   = (_doc   == NULL) ? NIL : vSsz(_doc);
+        Value proto = (_proto == NULL) ? NIL : vSsz(_proto);
+
+        Value v = TRIPLE(name, proto, doc);
+
+        GC_RESUME();
+
+        return v;
+}
+
+
+static Value
 fdoc(Ty *ty, Value const *f)
 {
         char name_buf[512] = {0};
@@ -7092,10 +7123,8 @@ fdoc(Ty *ty, Value const *f)
         }
         Value p = (proto == NULL) ? NIL : vSsz(proto);
         Value doc = (s == NULL) ? NIL : vSsz(s);
-        Value v = vT(3);
-        v.items[0] = n;
-        v.items[1] = p;
-        v.items[2] = doc;
+
+        Value v = TRIPLE(n, p, doc);
 
         GC_RESUME();
 
@@ -7114,15 +7143,11 @@ BUILTIN_FUNCTION(set_doc)
 {
         ASSERT_ARGC("set-doc()", 1);
 
-        Value f = ARG(0);
+        Value f = ARGx(0, VALUE_FUNCTION, VALUE_FOREIGN_FUNCTION);
 
-        if (f.type != VALUE_FUNCTION) {
-                zP("set-doc(): expected function but got: %s", VSC(&f));
-        }
-
-        Value *name = NAMED("name");
+        Value *name  = NAMED("name");
         Value *proto = NAMED("proto");
-        Value *doc = NAMED("doc");
+        Value *doc   = NAMED("doc");
 
         if (f.xinfo == NULL) {
                 f.xinfo = mAo0(sizeof (FunUserInfo), GC_ANY);
@@ -7154,18 +7179,17 @@ BUILTIN_FUNCTION(set_doc)
 
 BUILTIN_FUNCTION(doc)
 {
-        char mod[256];
-        char id[256];
+        ASSERT_ARGC("doc()", 1, 2);
 
-        if (argc == 0 || argc > 2) {
-                zP("doc(): expected 1 or 2 arguments but got: %d", argc);
-        }
-
-        if (ARG(0).type == VALUE_FUNCTION) {
+        switch (ARG(0).type) {
+        case VALUE_FUNCTION:
                 return fdoc(ty, &ARG(0));
-        }
 
-        if (ARG(0).type == VALUE_CLASS) {
+        case VALUE_FOREIGN_FUNCTION:
+                return ffdoc(ty, &ARG(0));
+
+        case VALUE_CLASS:
+        {
                 GC_STOP();
 
                 char const *s = class_doc(ty, ARG(0).class);
@@ -7184,29 +7208,25 @@ BUILTIN_FUNCTION(doc)
                 return v;
         }
 
-        if (ARG(0).type != VALUE_STRING) {
+        case VALUE_STRING:
+                break;
+
+        default:
                 return NIL;
         }
 
-        snprintf(id, sizeof id, "%.*s", (int)ARG(0).bytes, ARG(0).str);
+        char const *id = TY_TMP_C_STR_A(ARG(0));
+        char const *mod = (argc == 2)
+                        ? TY_TMP_C_STR_B(ARGx(1, VALUE_STRING))
+                        : NULL;
 
-        struct symbol *s;
+        Symbol *sym = compiler_lookup(ty, mod, id);
 
-        if (argc == 2) {
-                if (ARG(1).type != VALUE_STRING) {
-                        zP("doc(): expected function or string but got: %s", VSC(&ARG(1)));
-                }
-                snprintf(mod, sizeof mod, "%.*s", (int)ARG(1).bytes, ARG(1).str);
-                s = compiler_lookup(ty, mod, id);
-        } else {
-                s = compiler_lookup(ty, NULL, id);
-        }
-
-        if (s == NULL || s->doc == NULL) {
+        if (sym == NULL || sym->doc == NULL) {
                 return NIL;
         }
 
-        return vSsz(s->doc);
+        return vSsz(sym->doc);
 }
 
 BUILTIN_FUNCTION(ty_gc)

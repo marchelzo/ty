@@ -137,4 +137,31 @@ TyImmortalizeArena(Ty *ty)
         }
 }
 
+void
+DumpArenaStats(Ty *ty)
+{
+        Arena *a = &A;
+        int level = 0;
+
+        while (a->base != NULL) {
+                usize used = a->beg - (a->base + RESERVED);
+                usize total = a->end - (a->base + RESERVED);
+
+                fprintf(
+                        stderr,
+                        "Arena Level %d: %s, used %.1f / %.1f MB (%.2f%%)\n",
+                        level++,
+                        a->gc ? "GC" : "Non-GC",
+                        used / 1.0e6,
+                        total / 1.0e6,
+                        (total == 0) ? 0.0 : ((double)used * 100.0 / (double)total)
+                );
+
+                a = NextArena(a);
+        }
+
+        fprintf(stderr, "In use by GC: %.1f MB\n", ty->memory_used / 1.0e6);
+        fprintf(stderr, "Current GC threshold: %.1f MB\n", ty->memory_limit / 1.0e6);
+}
+
 /* vim: set sts=8 sw=8 expandtab: */

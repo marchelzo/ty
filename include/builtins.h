@@ -772,6 +772,7 @@ static struct {
   { .module = "ffi",        .name = "store",                    .value = BUILTIN(cffi_store)                     },
   { .module = "ffi",        .name = "call",                     .value = BUILTIN(cffi_call)                      },
   { .module = "ffi",        .name = "cif",                      .value = BUILTIN(cffi_cif)                       },
+  { .module = "ffi",        .name = "fun",                      .value = BUILTIN(cffi_fun)                       },
   { .module = "ffi",        .name = "struct",                   .value = BUILTIN(cffi_struct)                    },
   { .module = "ffi",        .name = "closure",                  .value = BUILTIN(cffi_closure)                   },
   { .module = "ffi",        .name = "freeClosure",              .value = BUILTIN(cffi_closure_free)              },

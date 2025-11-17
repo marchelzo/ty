@@ -6,9 +6,6 @@
 #include "panic.h"
 #include "ty.h"
 
-#define Resize(p, n, m) ((p) = __builtin_memcpy(amA(n), (p), (m)))
-#define resize_scratch(p, n, m) ((p) = __builtin_memcpy(smA(n), (p), (m)))
-
 #if 1
 #define NewArena(n)  NewArena(ty, (n))
 #define ReleaseArena(a) ReleaseArena(ty, (a))
@@ -59,14 +56,8 @@ GetArenaAlloc(Ty *ty);
 void
 TyImmortalizeArena(Ty *ty);
 
-void *
-Allocate(Ty *ty, usize n);
-
-inline static void *
-Allocate0(Ty *ty, usize n)
-{
-        return memset(Allocate(ty, n), 0, n);
-}
+void
+DumpArenaStats(Ty *ty);
 
 void *
 AllocateScratch(Ty *ty, usize n);

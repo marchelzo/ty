@@ -264,6 +264,7 @@ TypeName(Ty const *ty, int t0)
         case VALUE_METHOD:
         case VALUE_BUILTIN_METHOD:
         case VALUE_BUILTIN_FUNCTION:
+        case VALUE_FOREIGN_FUNCTION:
         case VALUE_FUNCTION:
                                         return "Function";
         case VALUE_GENERATOR:           return "Generator";
@@ -1386,6 +1387,7 @@ ClassOf(Value const *v)
         case VALUE_METHOD:            return CLASS_FUNCTION;
         case VALUE_BUILTIN_FUNCTION:  return CLASS_FUNCTION;
         case VALUE_BUILTIN_METHOD:    return CLASS_FUNCTION;
+        case VALUE_FOREIGN_FUNCTION:  return CLASS_FUNCTION;
         case VALUE_OPERATOR:          return CLASS_FUNCTION;
         case VALUE_NIL:               return CLASS_NIL;
         case VALUE_PTR:               return CLASS_PTR;
@@ -1458,6 +1460,21 @@ unwrap(Ty *ty, Value const *wrapped)
         }
 
         return v;
+}
+
+#define TryUnwrap(v, t) ((TryUnwrap)(ty, (v), (t)))
+inline static bool
+(TryUnwrap)(Ty *ty, Value *wrapped, int tag)
+{
+        if (!tags_try_pop(ty, &wrapped->tags, tag)) {
+                return false;
+        }
+
+        if (wrapped->tags == 0) {
+                wrapped->type &= ~VALUE_TAGGED;
+        }
+
+        return true;
 }
 
 inline static Value
