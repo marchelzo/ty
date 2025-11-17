@@ -7250,7 +7250,7 @@ BUILTIN_FUNCTION(ty_bt)
                         continue;
                 }
 
-                Value *f = &frames->items[i].f;
+                Value const *f = FrameFun(ty, v_(*frames, i));
 
                 if (is_hidden_fun(f)) {
                         continue;
@@ -8638,7 +8638,7 @@ BUILTIN_FUNCTION(tdb_state)
         Value mod = (context == NULL) ? NIL : xSz(GetExpressionModule(context));
 
         Value f = (TDB->host->st.frames.count > 0)
-                ? vvL(TDB->host->st.frames)->f
+                ? *FrameFun(TDB->host, vvL(TDB->host->st.frames))
                 : NIL;
 
         Value fp = (TDB->host->st.frames.count > 0)
