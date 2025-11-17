@@ -292,11 +292,14 @@ emit_tgt(Ty *ty, Symbol *s, Scope const *scope, bool def);
 static void
 emit_return_check(Ty *ty, Expr const *f);
 
+static void
+emit_try_match(Ty *ty, Expr const *pattern);
+
 static Scope *
 get_import_scope(Ty *ty, char const *);
 
 static Scope *
-search_import_scope(char const *);
+search_import_scope(Ty *ty, char const *);
 
 static void
 import_module(Ty *ty, Stmt const *s);
@@ -317,7 +320,7 @@ inline static void
 emit_i32(Ty *ty, int k);
 
 static bool
-try_make_implicit_self(Ty *ty, Expr *e, int class);
+TryResolveExpr(Ty *ty, Scope *scope, Expr *e);
 
 static void
 RedpillFun(Ty *ty, Scope *scope, Expr *f, Type *self0);
@@ -529,6 +532,13 @@ has_any_names(Expr const *e)
         }
 
         return false;
+}
+
+inline static bool
+InPatternFunc(Ty *ty)
+{
+        return (STATE.func != NULL)
+            && (STATE.func->ftype == FT_PATTERN);
 }
 
 inline static bool
@@ -773,6 +783,14 @@ QualifiedName(Expr const *e)
         } else {
                 return "(error)";
         }
+}
+
+inline static bool
+is_proc_def(Stmt const *s)
+{
+        return (s->type == STATEMENT_FUNCTION_DEFINITION)
+            || (s->type == STATEMENT_PATTERN_DEFINITION)
+            || (s->type == STATEMENT_OPERATOR_DEFINITION);
 }
 
 inline static bool
@@ -1407,8 +1425,35 @@ inline static void
                 last1 = -1;
                 last2 = -1;
                 last3 = INSTR_ASSIGN_SUBSCRIPT;
+        } else if (
+                (last3 == INSTR_POP)
+             &&     (c == INSTR_POP)
+        ) {
+                *vvL(STATE.code) = INSTR_POP2;
+                last0 = -1;
+                last1 = -1;
+                last2 = -1;
+                last3 = INSTR_POP2;
+        } else if (
+                (last3 == INSTR_POP_STACK_POS_POP)
+             &&     (c == INSTR_POP)
+        ) {
+                *vvL(STATE.code) = (u8)INSTR_POP_STACK_POS_POP2;
+                last0 = -1;
+                last1 = -1;
+                last2 = -1;
+                last3 = INSTR_POP_STACK_POS_POP2;
+        } else if (
+                (last3 == INSTR_POP_STACK_POS)
+             &&     (c == INSTR_POP)
+        ) {
+                *vvL(STATE.code) = (u8)INSTR_POP_STACK_POS_POP;
+                last0 = -1;
+                last1 = -1;
+                last2 = -1;
+                last3 = INSTR_POP_STACK_POS_POP;
         } else {
-                avP(STATE.code, (char)c);
+                avP(STATE.code, (u8)c);
 
                 last0 = last1;
                 last1 = last2;
@@ -1689,15 +1734,19 @@ is_variadic(Expr const *e)
 inline static Scope *
 IdentifierScope(Ty *ty, Expr const *expr)
 {
-        if (
-                (expr == NULL)
-             || (expr->module == NULL)
-             || (*expr->module == '\0')
-        ) {
+        if (expr == NULL) {
                 return SCOPE;
         }
 
-        Scope *scope = search_import_scope(expr->module);
+        if (expr->namespace != NULL) {
+                return expr->namespace->scope;
+        }
+
+        if ((expr->module == NULL) || (*expr->module == '\0')) {
+                return SCOPE;
+        }
+
+        Scope *scope = search_import_scope(ty, expr->module);
 
         return (scope != NULL) ? scope : SCOPE;
 }
@@ -2113,8 +2162,8 @@ resolve_name(Ty *ty, Scope const *scope, StringVector const *parts, void **out)
                 Symbol *sym = scope_lookup(ty, scope, part);
                 if (sym == NULL) {
                         if (
-                                i > 0
-                             || (scope = search_import_scope(part)) == NULL
+                                (i > 0)
+                             || ((scope = search_import_scope(ty, part)) == NULL)
                         ) {
                                 *out = (void *)part;
                                 return TY_NAME_NONE;
@@ -2161,7 +2210,7 @@ resolve_access(Ty *ty, Scope const *scope, char **parts, int n, Expr *e, bool st
                 dump(&mod, &"/%s"[!i], parts[i]);
         }
 
-        Scope *mod_scope = search_import_scope(vv(mod));
+        Scope *mod_scope = search_import_scope(ty, vv(mod));
         if (mod_scope != NULL) {
                 e->type = EXPRESSION_MODULE;
                 e->name = (n == 1) ? parts[0] : sclonea(ty, vv(mod));
@@ -2399,10 +2448,10 @@ fixup_access(Ty *ty, Scope const *scope, Expr *e, bool strict)
 }
 
 static Scope *
-search_import_scope(char const *name)
+search_import_scope(Ty *ty, char const *name)
 {
         for (int i = 0; i < vN(STATE.imports); ++i) {
-                if (strcmp(name, v_(STATE.imports, i)->name) == 0) {
+                if (s_eq(name, v_(STATE.imports, i)->name)) {
                         return v_(STATE.imports, i)->mod->scope;
                 }
         }
@@ -2413,7 +2462,7 @@ search_import_scope(char const *name)
 static Scope *
 get_import_scope(Ty *ty, char const *name)
 {
-        Scope *scope = search_import_scope(name);
+        Scope *scope = search_import_scope(ty, name);
 
         if (scope != NULL) {
                 return scope;
@@ -2809,10 +2858,12 @@ void
 try_symbolize_application(Ty *ty, Scope *scope, Expr *e)
 {
         if (scope == NULL) {
-                scope = STATE.pscope;
+                scope = SCOPE;
         }
 
-        bool tag_pattern = e->type == EXPRESSION_TAG_PATTERN_CALL;
+        PushScope(scope);
+
+        bool tag_pattern = (e->type == EXPRESSION_TAG_PATTERN_CALL);
 
         if (e->type == EXPRESSION_FUNCTION_CALL) {
                 fixup_access(ty, scope, e->function, false);
@@ -2830,16 +2881,24 @@ try_symbolize_application(Ty *ty, Scope *scope, Expr *e)
                 )
         ) {
                 if (!tag_pattern) {
-                        symbolize_expression(ty, scope, e->function);
+                        if (!TryResolveExpr(ty, scope, e->function)) {
+                                goto End;
+                        }
                         if (SymbolIsFunMacro(e->function->symbol)) {
                                 invoke_fun_macro(ty, scope, e);
                                 try_symbolize_application(ty, scope, e);
-                                return;
+                                goto End;
                         }
                 } else {
                         e->type = EXPRESSION_TAG_PATTERN;
                 }
-                if (tag_pattern || e->function->symbol->tag != -1) {
+                if (
+                        tag_pattern
+                     || (e->function->symbol->tag != -1)
+                     || (e->function->symbol->class != -1)
+                     || isupper(e->function->identifier[0])
+                     || SymbolIsPattern(e->function->symbol)
+                ) {
                         Expr             f = *e;
                         char   *identifier = e->function->identifier;
                         char       *module = e->function->module;
@@ -2848,14 +2907,21 @@ try_symbolize_application(Ty *ty, Scope *scope, Expr *e)
                         int           tagc = vN(e->args);
                         Symbol     *symbol = e->function->symbol;
                         if (!tag_pattern) {
-                                e->type = EXPRESSION_TAG_APPLICATION;
+                                e->type = (e->function->symbol->tag == -1)
+                                        ? EXPRESSION_OBJECT_PATTERN
+                                        : EXPRESSION_TAG_APPLICATION;
                         }
                         e->identifier = identifier;
                         e->module = module;
                         e->symbol = symbol;
                         e->namespace = namespace;
                         e->constraint = NULL;
-                        if (tagc == 1 && tagged[0]->type != EXPRESSION_MATCH_REST) {
+                        if (
+                                (tagc == 1)
+                             && (vN(f.kws) == 0)
+                             && (tagged[0]->type != EXPRESSION_MATCH_REST)
+                             && (tagged[0]->type != EXPRESSION_SPREAD)
+                        ) {
                                 e->tagged = tagged[0];
                         } else {
                                 Expr *items = NewExpr(ty, EXPRESSION_TUPLE);
@@ -2865,7 +2931,15 @@ try_symbolize_application(Ty *ty, Scope *scope, Expr *e)
                                         avP(items->es, tagged[i]);
                                         avP(items->tconds, NULL);
                                         avP(items->required, true);
-                                        avP(items->names, NULL);
+                                        if (tagged[i]->type == EXPRESSION_SPREAD) {
+                                                *tagged[i] = *tagged[i]->value;
+                                                avP(items->names, "*");
+                                        } else if (tagged[i]->type == EXPRESSION_MATCH_REST) {
+                                                tagged[i]->type = EXPRESSION_IDENTIFIER;
+                                                avP(items->names, "*");
+                                        } else {
+                                                avP(items->names, NULL);
+                                        }
                                 }
                                 for (int i = 0; i < vN(f.kws); ++i) {
                                         avP(items->es, v__(f.kwargs, i));
@@ -2883,6 +2957,9 @@ try_symbolize_application(Ty *ty, Scope *scope, Expr *e)
         ) {
                 e->symbol = ResolveIdentifier(ty, e);
         }
+
+End:
+        PopScope();
 }
 
 static void
@@ -2985,6 +3062,7 @@ symbolize_decl(Ty *ty, Scope *scope, Expr *target, bool pub)
                 symbolize_decl(ty, scope, target->right, pub);
                 break;
 
+        case EXPRESSION_OBJECT_PATTERN:
         case EXPRESSION_TAG_APPLICATION:
                 symbolize_decl(ty, scope, target->tagged, pub);
                 break;
@@ -3133,6 +3211,7 @@ symbolize_lvalue_(Ty *ty, Scope *scope, Expr *target, u32 flags)
                 symbolize_lvalue_(ty, scope, target->right, flags);
                 break;
 
+        case EXPRESSION_OBJECT_PATTERN:
         case EXPRESSION_TAG_APPLICATION:
                 symbolize_lvalue_(ty, scope, target->tagged, flags);
                 if (target->identifier != EmptyString) {
@@ -3414,6 +3493,7 @@ symbolize_pattern_(Ty *ty, Scope *scope, Expr *e, Scope *reuse, bool def)
         case EXPRESSION_MATCH_REST:
                 e->symbol = addsymbol(ty, scope, e->identifier);
                 break;
+        case EXPRESSION_OBJECT_PATTERN:
         case EXPRESSION_TAG_APPLICATION:
                 symbolize_pattern_(ty, scope, e->tagged, reuse, def);
                 e->_type = type_call(ty, e);
@@ -3921,7 +4001,7 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                 }
 
                 if (e->module == NULL && strcmp(e->identifier, "__func__") == 0) {
-                        if (STATE.func && STATE.func->name != NULL) {
+                        if (STATE.func != NULL && STATE.func->name != NULL) {
                                 e->type = EXPRESSION_STRING;
                                 e->string = STATE.func->name;
                         } else {
@@ -4104,7 +4184,7 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
         case EXPRESSION_DEFINED:
                 e->type = EXPRESSION_BOOLEAN;
                 if (e->module != NULL) {
-                        Scope *mscope = search_import_scope(e->module);
+                        Scope *mscope = search_import_scope(ty, e->module);
                         e->boolean = mscope != NULL && scope_lookup(ty, mscope, e->identifier) != NULL;
                 } else {
                         e->boolean = scope_lookup(ty, scope, e->identifier) != NULL;
@@ -4113,7 +4193,7 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                 break;
         case EXPRESSION_IFDEF:
                 if (e->module != NULL) {
-                        Scope *mscope = search_import_scope(e->module);
+                        Scope *mscope = search_import_scope(ty, e->module);
                         if (mscope != NULL && scope_lookup(ty, mscope, e->identifier) != NULL) {
                                 e->type = EXPRESSION_IDENTIFIER;
                                 symbolize_expression(ty, scope, e);
@@ -4699,6 +4779,10 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                 fail("%s", e->string);
         }
 
+        if (e->bang) {
+                e->_type = UNKNOWN_TYPE;
+        }
+
         if (e->_type == NULL) {
                 e->_type = type_var(ty);
                 SET_TYPE_SRC(e);
@@ -5218,7 +5302,7 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
                                 int j = i;
 
                                 (j < vN(s->statements))
-                             && (v__(s->statements, j)->type == STATEMENT_FUNCTION_DEFINITION)
+                             && is_proc_def(v__(s->statements, j))
                              && (v__(s->statements, j)->xscope == NULL);
 
                                 j += 1
@@ -5467,6 +5551,10 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
 
         case STATEMENT_FUNCTION_DEFINITION:
                 symbolize_fun_def(ty, scope, s, SYM_FUNCTION);
+                break;
+
+        case STATEMENT_PATTERN_DEFINITION:
+                symbolize_fun_def(ty, scope, s, SYM_PATTERN);
                 break;
 
         case STATEMENT_MACRO_DEFINITION:
@@ -6347,7 +6435,12 @@ emit_function(Ty *ty, Expr const *e)
                                 INSN(POP);
                         }
                 }
-                INSN(BAD_DISPATCH);
+                if (e->name != NULL && s_eq(e->name, M_NAME(NAMES.unapply))) {
+                        INSN(NONE);
+                        INSN(RETURN);
+                } else {
+                        INSN(BAD_DISPATCH);
+                }
         } else {
                 for (int i = ncaps - 1; i >= 0; --i) {
                         if (caps[i]->scope->function == e->scope) {
@@ -6633,8 +6726,8 @@ emit_return(Ty *ty, Stmt const *s)
                 }
         }
 
-        Expr **rets = vv(s->returns);
-        int nret = vN(s->returns);
+        Expr **rets = (s != NULL) ? vv(s->returns) : NULL;
+        int    nret = (s != NULL) ? vN(s->returns) : 0;
 
         // Tail call optimization -- currently quite restricted :)
         if (
@@ -6658,10 +6751,14 @@ emit_return(Ty *ty, Stmt const *s)
                 return true;
         }
 
-        if (vN(s->returns) > 0) for (int i = 0; i < vN(s->returns); ++i) {
-                EE(v__(s->returns, i));
-        } else {
+        if (s == NULL) {
+                INSN(NONE);
+        } else if (nret == 0) {
                 INSN(NIL);
+        } else {
+                for (int i = 0; i < nret; ++i) {
+                        EE(rets[i]);
+                }
         }
 
         for (int i = 0; get_try(ty, i) != NULL; ++i) {
@@ -6676,9 +6773,9 @@ emit_return(Ty *ty, Stmt const *s)
                 emit_return_check(ty, STATE.func);
         }
 
-        if (vN(s->returns) > 1) {
+        if (nret > 1) {
                 INSN(MULTI_RETURN);
-                Ei32((int)vN(s->returns) - 1);
+                Ei32((int)nret - 1);
         } else {
                 INSN(RETURN);
         }
@@ -6861,8 +6958,49 @@ emit_record_rest(Ty *ty, Expr const *rec, int i, bool is_assignment)
         }
 }
 
+
 static void
-emit_try_match_(Ty *ty, Expr const *pattern)
+EmitObjectDestructure(Ty *ty, int class_id, Expr const *pattern)
+{
+        ClassDefinition *def = &class_get(ty, class_id)->def->class;
+        expression_vector const *fields = &def->fields;
+
+        if (pattern->type == EXPRESSION_TUPLE) {
+                for (int i = 0; i < vN(pattern->es); ++i) {
+                        char const *name = v__(pattern->names, i);
+                        if (name == NULL) {
+                                if (i < vN(*fields)) {
+                                        name = FieldIdentifier(v__(*fields, i))->identifier;
+                                } else {
+                                        PushContext(ty, v__(pattern->es, i));
+                                        fail(
+                                                "subpattern at index %s%d%s has no "
+                                                "corresponding field in class %s%s%s",
+                                                TERM(94;1), i, TERM(0),
+                                                TERM(93;1), def->name, TERM(0)
+                                        );
+                                }
+                        }
+                        if (!s_eq(name, "*")) {
+                                FAIL_MATCH_IF(TRY_MEMBER);
+                                EM(name);
+                                emit_try_match(ty, v__(pattern->es, i));
+                                INSN(POP);
+                        }
+                }
+        } else if (vN(*fields) != 0) {
+                FAIL_MATCH_IF(TRY_MEMBER);
+                EM(FieldIdentifier(v__(*fields, 0))->identifier);
+                emit_try_match(ty, pattern);
+                INSN(POP);
+        } else {
+                // XXX
+                FAIL_MATCH_IF(JUMP);
+        }
+}
+
+static void
+emit_try_match(Ty *ty, Expr const *pattern)
 {
         usize    start = vN(STATE.code);
         bool   need_loc = false;
@@ -6895,18 +7033,18 @@ emit_try_match_(Ty *ty, Expr const *pattern)
                         }
                 }
                 if (pattern->type == EXPRESSION_ALIAS_PATTERN) {
-                        emit_try_match_(ty, pattern->aliased);
+                        emit_try_match(ty, pattern->aliased);
                 }
                 break;
 
         case EXPRESSION_TAG_PATTERN:
                 emit_tgt(ty, pattern->symbol, STATE.fscope, true);
                 FAIL_MATCH_IF(TRY_STEAL_TAG);
-                emit_try_match_(ty, pattern->tagged);
+                emit_try_match(ty, pattern->tagged);
                 break;
 
         case EXPRESSION_CHECK_MATCH:
-                emit_try_match_(ty, pattern->left);
+                emit_try_match(ty, pattern->left);
                 if (IsClassName(pattern->right)) {
                         FAIL_MATCH_IF(JNI);
                         Ei32(pattern->right->symbol->class);
@@ -6929,16 +7067,35 @@ emit_try_match_(Ty *ty, Expr const *pattern)
                 break;
 
         case EXPRESSION_KW_AND:
-                emit_try_match_(ty, pattern->left);
+                emit_try_match(ty, pattern->left);
                 for (int i = 0; i < vN(pattern->p_cond); ++i) {
                         struct condpart *p = v__(pattern->p_cond, i);
                         if (p->target == NULL) {
                                 fail_match_if_not(ty, p->e);
                         } else {
                                 EE(p->e);
-                                emit_try_match_(ty, p->target);
+                                emit_try_match(ty, p->target);
                                 INSN(POP);
                         }
+                }
+                break;
+
+        case EXPRESSION_OBJECT_PATTERN:
+                emit_load(ty, pattern->symbol, STATE.fscope);
+                if (pattern->symbol->class == -1) {
+                        INSN(UNAPPLY);
+                        FAIL_MATCH_IF(JUMP_IF_NONE);
+                        emit_try_match(ty, pattern->tagged);
+                        INSN(POP);
+                } else {
+                        PLACEHOLDER_JUMP(TRY_UNAPPLY, unapplied);
+                        EmitObjectDestructure(ty, pattern->symbol->class, pattern->tagged);
+                        PLACEHOLDER_JUMP(JUMP, done);
+                        PATCH_JUMP(unapplied);
+                        FAIL_MATCH_IF(JUMP_IF_NONE);
+                        emit_try_match(ty, pattern->tagged);
+                        INSN(POP);
+                        PATCH_JUMP(done);
                 }
                 break;
 
@@ -6953,7 +7110,7 @@ emit_try_match_(Ty *ty, Expr const *pattern)
                 Ei32(1);
                 Ei32(0);
                 add_location(ty, pattern->left, start, vN(STATE.code));
-                emit_try_match_(ty, pattern->right);
+                emit_try_match(ty, pattern->right);
                 INSN(POP);
                 break;
 
@@ -6983,7 +7140,7 @@ emit_try_match_(Ty *ty, Expr const *pattern)
                                 }
                                 Eu1(!v__(pattern->optional, i));
 
-                                emit_try_match_(ty, v__(pattern->elements, i));
+                                emit_try_match(ty, v__(pattern->elements, i));
 
                                 INSN(POP);
                         }
@@ -7023,7 +7180,7 @@ emit_try_match_(Ty *ty, Expr const *pattern)
                                         INSN(DUP);
                                         EE(v__(pattern->keys, i));
                                         INSN(SUBSCRIPT);
-                                        emit_try_match_(ty, v__(pattern->values, i));
+                                        emit_try_match(ty, v__(pattern->values, i));
                                         INSN(POP);
                                 } else {
                                         EE(v__(pattern->keys, i));
@@ -7037,7 +7194,7 @@ emit_try_match_(Ty *ty, Expr const *pattern)
                 INSN(DUP);
                 FAIL_MATCH_IF(TRY_TAG_POP);
                 Ei32(tag_app_tag(pattern));
-                emit_try_match_(ty, pattern->tagged);
+                emit_try_match(ty, pattern->tagged);
                 INSN(POP);
                 break;
 
@@ -7070,12 +7227,12 @@ emit_try_match_(Ty *ty, Expr const *pattern)
                                 FAIL_MATCH_IF(TRY_TUPLE_MEMBER);
                                 Eu1(v__(pattern->required, i));
                                 Ei32(M_ID(v__(pattern->names, i)));
-                                emit_try_match_(ty, v__(pattern->es, i));
+                                emit_try_match(ty, v__(pattern->es, i));
                                 INSN(POP);
                         } else {
                                 FAIL_MATCH_IF(TRY_INDEX_TUPLE);
                                 Ei32(i);
-                                emit_try_match_(ty, v__(pattern->es, i));
+                                emit_try_match(ty, v__(pattern->es, i));
                                 INSN(POP);
                         }
                 }
@@ -7096,7 +7253,7 @@ emit_try_match_(Ty *ty, Expr const *pattern)
                 Ei32(n);
 
                 for (int i = 0; i < n; ++i) {
-                        emit_try_match_(ty, v__(pattern->es, n - 1 - i));
+                        emit_try_match(ty, v__(pattern->es, n - 1 - i));
                         INSN(POP);
                 }
 
@@ -7121,7 +7278,7 @@ emit_try_match_(Ty *ty, Expr const *pattern)
                         JumpGroup fails_save = STATE.match_fails;
                         InitJumpGroup(&STATE.match_fails);
 
-                        emit_try_match_(ty, v__(pattern->es, i));
+                        emit_try_match(ty, v__(pattern->es, i));
                         avP(matched, (PLACEHOLDER_JUMP)(ty, INSTR_JUMP));
 
                         EMIT_GROUP_LABEL(STATE.match_fails, ":Fail");
@@ -7161,12 +7318,6 @@ emit_try_match_(Ty *ty, Expr const *pattern)
         if (KEEP_LOCATION(pattern) || need_loc) {
                 add_location(ty, pattern, start, vN(STATE.code));
         }
-}
-
-static void
-emit_try_match(Ty *ty, Expr const *pattern)
-{
-        emit_try_match_(ty, pattern);
 }
 
 static bool
@@ -7710,7 +7861,12 @@ emit_match_expression(Ty *ty, Expr const *e)
         }
 
         if (!irrefutable) {
-                INSN(BAD_MATCH);
+                if (InPatternFunc(ty)) {
+                        INSN(POP);
+                        emit_return(ty, NULL);
+                } else {
+                        INSN(BAD_MATCH);
+                }
         }
 
         patch_jumps_to(&STATE.match_successes, vN(STATE.code));
@@ -8041,8 +8197,7 @@ BeginRangeLoop(
 
         LABEL(begin);
 
-        INSN(DUP2);
-        INSN(SWAP);
+        INSN(DUP2_SWAP);
 
         JumpPlaceholder end;
 
@@ -9301,6 +9456,7 @@ emit_expr(Ty *ty, Expr const *e, bool need_loc)
                 fail("%s", e->string);
 
         default:
+                *(volatile int *)0 = 0;
                 fail("expression unexpected in this context: %s", ExpressionTypeName(e));
         }
 
@@ -9406,6 +9562,7 @@ emit_statement(Ty *ty, Stmt const *s, bool want_result)
 
         case STATEMENT_OPERATOR_DEFINITION:
         case STATEMENT_FUNCTION_DEFINITION:
+        case STATEMENT_PATTERN_DEFINITION:
         case STATEMENT_MACRO_DEFINITION:
         case STATEMENT_FUN_MACRO_DEFINITION:
                 if (
@@ -10010,6 +10167,7 @@ InjectRedpill(Ty *ty, Stmt *s)
         //        break;
 
         case STATEMENT_FUNCTION_DEFINITION:
+        case STATEMENT_PATTERN_DEFINITION:
         case STATEMENT_OPERATOR_DEFINITION:
                 if (s->target->symbol == NULL) {
                         DeclareSymbols(ty, s);
@@ -10070,13 +10228,6 @@ InjectRedpill(Ty *ty, Stmt *s)
 
         SCRATCH_RESTORE();
         RestoreContext(ty, ctx);
-}
-
-inline static bool
-is_proc_def(Stmt const *s)
-{
-        return (s->type == STATEMENT_FUNCTION_DEFINITION)
-            || (s->type == STATEMENT_OPERATOR_DEFINITION);
 }
 
 static bool
@@ -14551,8 +14702,9 @@ DeclareSymbols(Ty *ty, Stmt *stmt)
         PushScope(scope);
 
         switch (stmt->type) {
-        case STATEMENT_OPERATOR_DEFINITION:
         case STATEMENT_FUNCTION_DEFINITION:
+        case STATEMENT_OPERATOR_DEFINITION:
+        case STATEMENT_PATTERN_DEFINITION:
                 symbolize_lvalue(
                         ty,
                         GetNamespace(ty, stmt->ns),
@@ -14717,7 +14869,7 @@ is_fun_macro(Ty *ty, char const *module, char const *id)
         if (module == NULL) {
                 s = scope_lookup(ty, STATE.global, id);
         } else {
-                Scope *mod = search_import_scope(module);
+                Scope *mod = search_import_scope(ty, module);
                 if (mod != NULL) {
                         s = scope_lookup(ty, mod, id);
                 }
@@ -14734,7 +14886,7 @@ is_macro(Ty *ty, char const *module, char const *id)
         if (module == NULL) {
                 s = scope_lookup(ty, STATE.global, id);
         } else {
-                Scope *mod = search_import_scope(module);
+                Scope *mod = search_import_scope(ty, module);
                 if (mod != NULL) {
                         s = scope_lookup(ty, mod, id);
                 }
@@ -15554,7 +15706,7 @@ DumpProgram(
                         READVALUE(s);
                         break;
                 CASE(DUP)
-                CASE(DUP2)
+                CASE(DUP2_SWAP)
                         break;
                 CASE(JUMP)
                 CASE(JUMP_IF)
@@ -15729,11 +15881,21 @@ DumpProgram(
                         READVALUE(b);
                         READMEMBER(n);
                         break;
+                CASE(TRY_MEMBER)
+                        READVALUE(n);
+                        READMEMBER(n);
+                        break;
                 CASE(TRY_TAG_POP)
                         READVALUE(n);
                         READVALUE(tag);
                         break;
+                CASE(TRY_UNAPPLY)
+                        READVALUE(n);
+                        break;
+                CASE(UNAPPLY)
+                        break;
                 CASE(POP)
+                CASE(POP2)
                         break;
                 CASE(UNPOP)
                         break;
@@ -16097,6 +16259,7 @@ DumpProgram(
                 CASE(RESTORE_STACK_POS)
                 CASE(POP_STACK_POS)
                 CASE(POP_STACK_POS_POP)
+                CASE(POP_STACK_POS_POP2)
                 CASE(DROP_STACK_POS)
                         break;
                 CASE(MULTI_RETURN)
@@ -16484,7 +16647,7 @@ CompilerSuggestCompletions(
                         QueryExpr->namespace ? edbg(QueryExpr->namespace) : "<>"
                 );
                 scope = (QueryExpr->module != NULL) && (*QueryExpr->module != '\0')
-                                                       ? search_import_scope(QueryExpr->module)
+                                                       ? search_import_scope(ty, QueryExpr->module)
                       : (QueryExpr->namespace != NULL) ? QueryExpr->namespace->scope
                       : (QueryExpr->xscope    != NULL) ? QueryExpr->xscope
                       : STATE.global;

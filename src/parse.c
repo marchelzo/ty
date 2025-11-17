@@ -700,12 +700,8 @@ inline static void
 (skip)(Ty *ty, int n)
 {
         Token *t = token(n);
-
-        TokenIndex = t - v_(tokens, 0);
-
+        TokenIndex = t - vv(tokens);
         TEnd = tokenx(-1)->end;
-        EStart = tokenx(0)->start;
-        EEnd = tokenx(0)->end;
 }
 
 inline static void
@@ -761,6 +757,11 @@ End:
                 TERM(0),
                 token_show(ty, t)
         );
+
+        if (i == 0) {
+                EStart = t->start;
+                EEnd = t->end;
+        }
 
         return t;
 }
@@ -3867,6 +3868,13 @@ End:
 }
 
 static Expr *
+infix_brace(Ty *ty, Expr *left)
+{
+        die("TODO");
+        return left;
+}
+
+static Expr *
 infix_eq(Ty *ty, Expr *left)
 {
         Expr *e = mkexpr(ty);
@@ -4644,6 +4652,7 @@ get_infix_parser(Ty *ty)
         case '.':                  return infix_member_access;
         case TOKEN_DOT_MAYBE:      return infix_member_access;
         case '[':                  return infix_subscript;
+        case '{':                  return infix_brace;
         case ',':                  return infix_list;
         case TOKEN_INC:            return postfix_inc;
         case TOKEN_DEC:            return postfix_dec;
@@ -4742,7 +4751,13 @@ get_infix_prec(Ty *ty)
 
         case '[':                  return 11;
         case '(':                  return 11;
-        case '\\': case TOKEN_AT:  return next_without_nl(ty, '(') ? 11 : -3;
+
+        case '{':
+                return (tok()->start.s == token(-1)->end.s) ? 11 : -3;
+
+        case '\\':
+        case TOKEN_AT:
+                return next_without_nl(ty, '(') ? 11 : -3;
 
         case TOKEN_INC:            return 10;
         case TOKEN_DEC:            return 10;
@@ -4926,9 +4941,11 @@ patternize(Ty *ty, Expr *e)
                         e->type = EXPRESSION_MATCH_ANY;
                 }
                 return e;
+
         case EXPRESSION_TAG_APPLICATION:
                 e->tagged = patternize(ty, e->tagged);
                 return e;
+
         case EXPRESSION_LIST:
                 e->type = EXPRESSION_CHOICE_PATTERN;
         case EXPRESSION_TUPLE:
@@ -4937,10 +4954,13 @@ patternize(Ty *ty, Expr *e)
                         e->es.items[i] = patternize(ty, e->es.items[i]);
                 }
                 return e;
+
         case EXPRESSION_ARRAY:
-                for (size_t i = 0; i < e->elements.count; ++i)
+                for (size_t i = 0; i < vN(e->elements); ++i) {
                         e->elements.items[i] = patternize(ty, e->elements.items[i]);
+                }
                 return e;
+
         case EXPRESSION_DICT:
                 for (size_t i = 0; i < e->keys.count; ++i) {
                         if (e->values.items[i] == NULL) {
@@ -4958,13 +4978,16 @@ patternize(Ty *ty, Expr *e)
                         e->values.items[i] = patternize(ty, e->values.items[i]);
                 }
                 return e;
+
         case EXPRESSION_VIEW_PATTERN:
         case EXPRESSION_NOT_NIL_VIEW_PATTERN:
                 e->right = patternize(ty, e->right);
                 return e;
+
         case EXPRESSION_ALIAS_PATTERN:
                 e->aliased = patternize(ty, e->aliased);
                 return e;
+
         default:
                 return e;
         }
@@ -6238,6 +6261,25 @@ parse_use(Ty *ty)
 
         next();
 
+        if (try_consume(KEYWORD_MATCH)) {
+                stmt->type = STATEMENT_PATTERN_DEFINITION;
+
+                expect(TOKEN_IDENTIFIER);
+                stmt->target = mkid(tok()->identifier);
+                next();
+
+                try_consume('=');
+
+                unconsume(TOKEN_KEYWORD);
+                tok()->keyword = KEYWORD_MATCH;
+
+                stmt->value = prefix_match(ty);
+                stmt->value->ftype = FT_PATTERN;;
+                stmt->value->name = stmt->target->identifier;
+
+                return stmt;
+        }
+
         if (have_typedef(ty)) {
                 stmt->type = STATEMENT_TYPE_DEFINITION;
                 stmt->class.name = tok()->identifier;
@@ -6526,7 +6568,10 @@ Keyword:
 
         case KEYWORD_USE:
                 s = parse_use(ty);
-                if ((s->type == STATEMENT_USE) && !HAVE_COMPILER_FLAG(PARSE)) {
+                if (
+                        (s->type == STATEMENT_USE)
+                     && !HAVE_COMPILER_FLAG(PARSE)
+                ) {
                         CompilerDoUse(ty, s, NULL);
                 }
                 return s;
@@ -6603,6 +6648,7 @@ define_top(Ty *ty, Stmt *s, char const *doc)
                 define_macro(ty, s, false);
                 break;
 
+        case STATEMENT_PATTERN_DEFINITION:
         case STATEMENT_FUNCTION_DEFINITION:
                 s->doc = doc;
                 s->value->doc = doc;
@@ -7213,8 +7259,8 @@ pp_if(Ty *ty)
                         consume('\n');
 
                         xvP(starts, TokenIndex);
-
                         break;
+
                 case KEYWORD_IF:
                         next();
 
@@ -7223,8 +7269,8 @@ pp_if(Ty *ty)
                         consume('\n');
 
                         xvP(starts, TokenIndex);
-
                         break;
+
                 default:
                         die("encountered invalid directive while parsing conditional");
                 }

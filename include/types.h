@@ -319,6 +319,9 @@ Type *
 type_unfixed(Ty *ty, Type *t0);
 
 Type *
+type_forgiving(Ty *ty, Type const *t0);
+
+Type *
 type_tagged(Ty *ty, int tag, Type *t0);
 
 Type *

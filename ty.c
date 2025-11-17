@@ -288,8 +288,8 @@ readln(Ty *ty)
              && CALLABLE(*_readln)
         ) {
                 if (TY_CATCH_ERROR()) {
-                        fprintf(stderr, "\n%s\n", TyError(ty));
-                        (void)TY_CATCH();
+                        Value exc = TY_CATCH();
+                        fprintf(stderr, "\n%s\n", VSC(&exc));
                         return NULL;
                 }
 

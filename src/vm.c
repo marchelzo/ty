@@ -132,9 +132,10 @@ static char const *InstructionNames[] = {
 
 /* ======/ RVL Section /============================/ TVSL Types /=========== */
 static char halt = INSTR_HALT;
-static char next_fix[] = { INSTR_NONE_IF_NIL, INSTR_RETURN_PRESERVE_CTX };
-static char iter_fix[] = { INSTR_SENTINEL, INSTR_GET_NEXT, INSTR_RETURN_PRESERVE_CTX };
-static char hook_fix[] = { INSTR_POP, INSTR_RETURN_PRESERVE_CTX };
+static char next_fix[]  = { INSTR_NONE_IF_NIL, INSTR_RETURN_PRESERVE_CTX };
+static char iter_fix[]  = { INSTR_SENTINEL, INSTR_GET_NEXT, INSTR_RETURN_PRESERVE_CTX };
+static char hook_fix[]  = { INSTR_POP, INSTR_RETURN_PRESERVE_CTX };
+static char unapply[]   = { INSTR_RETURN_PRESERVE_CTX };
 
 InternedNames NAMES;
 
@@ -1262,7 +1263,7 @@ xcall(Ty *ty, Value const *f, Value const *pSelf, int argc, int nkw, char *whenc
         xvP(CALLS, whence);
 }
 
-static void
+static bool
 call(Ty *ty, Value const *f, Value const *pSelf, int argc, int nkw)
 {
         if (
@@ -1272,11 +1273,13 @@ call(Ty *ty, Value const *f, Value const *pSelf, int argc, int nkw)
         ) {
                 STACK.count -= argc;
                 push(NONE);
-                return;
+                return false;
         }
 
         xcall(ty, f, pSelf, argc, nkw, IP);
         IP = code_of(f);
+
+        return true;
 }
 
 static void
@@ -1843,32 +1846,25 @@ DoDrop(Ty *ty)
 {
         Value group = *vvL(DROP_STACK);
 
-        for (int i = 0; i < group.array->count; ++i) {
-                Value v = group.array->items[i];
-                if (v.type != VALUE_OBJECT)
+        for (int i = 0; i < vN(*group.array); ++i) {
+                Value v = v__(*group.array, i);
+                if (v.type != VALUE_OBJECT) {
                         continue;
+                }
                 Value *f = class_lookup_method_i(ty, v.class, NAMES._drop_);
-                if (f == NULL)
+                if (f == NULL) {
                         continue;
+                }
                 vm_call_method(ty, &v, f, 0);
         }
 
         vvX(DROP_STACK);
 }
 
-TY_INSTR_INLINE static struct try *
+inline static struct try *
 GetCurrentTry(Ty *ty)
 {
         return *vvL(TRY_STACK);
-
-        for (int i = vN(TRY_STACK) - 1; i >= 0; --i) {
-                struct try *t = *v_(TRY_STACK, i);
-                if (!t->executing) {
-                        return t;
-                }
-        }
-
-        return NULL;
 }
 
 inline static noreturn void
@@ -1936,7 +1932,7 @@ DoThrow(Ty *ty)
 {
         Value ex = peek();
 
-        //if (ex.type == VALUE_OBJECT && ex.class == CLASS_ERROR) {
+        //if (ex.type == VALUE_OBJECT && ex.class == CLASS_RUNTIME_ERROR) {
         //        XXX("Throw: RuntimeError: %s", TY_TMP_C_STR(*itable_get(ty, ex.object, NAMES._what)));
         //} else {
         //        TY_START(DYING);
@@ -2014,21 +2010,19 @@ RaiseException(Ty *ty)
 static void
 YieldFix(Ty *ty)
 {
-        if (top()->type == VALUE_TAG && top()->tag == TAG_NONE) {
-                *top() = NONE;
-        } else if (
-                !LIKELY(
-                        top()->tags != 0 &&
-                        tags_first(ty, top()->tags) == TAG_SOME
-                )
-        ) {
-                zP("iterator returned invalid type. Expected None or Some(...) but got %s", VSC(top()));
-        } else {
-                top()->tags = tags_pop(ty, top()->tags);
-                if (top()->tags == 0) {
-                        top()->type &= ~VALUE_TAGGED;
-                }
+        if (TryUnwrap(top(), TAG_SOME)) {
+                return;
         }
+
+        if (UNLIKELY((top()->type != VALUE_TAG) || (top()->tag != TAG_NONE))) {
+                zP(
+                        "iterator returned invalid type. "
+                        "Expected None or Some(...) but got %s",
+                        VSC(top())
+                );
+        }
+
+        *top() = NONE;
 }
 
 TY_INSTR_INLINE static Value
@@ -2148,7 +2142,7 @@ Error:
 TY_INSTR_INLINE static void
 AddTupleEntry(
         Ty *ty,
-        int_vector *ids,
+        i32Vector *ids,
         ValueVector *values,
         int id,
         Value const *v
@@ -2312,6 +2306,7 @@ GetMember(Ty *ty, Value v, int member, bool try_missing, bool exec)
                 }
         case VALUE_BUILTIN_FUNCTION:
         case VALUE_BUILTIN_METHOD:
+        case VALUE_FOREIGN_FUNCTION:
                 n = CLASS_FUNCTION;
                 goto ClassLookup;
 
@@ -2455,7 +2450,7 @@ BoundMethod:
         return NONE;
 }
 
-static void
+static bool
 DoCall(Ty *ty, Value const *f, int n, int nkw, bool AutoThis)
 {
         Value v = *f;
@@ -2465,6 +2460,8 @@ DoCall(Ty *ty, Value const *f, int n, int nkw, bool AutoThis)
         Value subscript;
         Value a, b;
         imax k;
+
+        bool new_frame = false;
 
         if (n == -1) {
                 n = STACK.count - *vvX(SP_STACK) - nkw;
@@ -2553,8 +2550,10 @@ DoCall(Ty *ty, Value const *f, int n, int nkw, bool AutoThis)
 
         switch (v.type) {
         case VALUE_FUNCTION:
-                call(ty, &v, NULL, n, nkw);
-                break;
+                new_frame = call(ty, &v, NULL, n, nkw);
+                gX();
+                return new_frame;
+
         case VALUE_BUILTIN_FUNCTION:
                 /*
                  * Builtin functions may not preserve the stack size, so instead
@@ -2580,13 +2579,29 @@ DoCall(Ty *ty, Value const *f, int n, int nkw, bool AutoThis)
                 if (UNLIKELY(TAKE_PENDING_SIGNALS())) {
                         HandlePendingSignals(ty);
                 }
+                gX();
+                return false;
 
-                break;
+        case VALUE_FOREIGN_FUNCTION:
+                if (nkw > 0) {
+                        container = pop();
+                        gP(&container);
+                        v = cffi_fast_call(ty, &v, n, &container);
+                        gX();
+                } else {
+                        v = cffi_fast_call(ty, &v, n, NULL);
+                }
+                STACK.count -= n;
+                push(v);
+                gX();
+                return false;
+
         case VALUE_GENERATOR:
                 gX();
                 if (nkw > 0) { pop(); }
                 call_co(ty, &v, n);
-                return;
+                return false;
+
         case VALUE_OPERATOR:
                 gX();
 
@@ -2608,8 +2623,8 @@ DoCall(Ty *ty, Value const *f, int n, int nkw, bool AutoThis)
                         RaiseException(ty);
                         break;
                 }
+                return false;
 
-                return;
         case VALUE_TAG:
                 if (nkw > 0) {
                         container = pop();
@@ -2617,17 +2632,18 @@ DoCall(Ty *ty, Value const *f, int n, int nkw, bool AutoThis)
                 } else {
                         DoTag(ty, v.tag, n, NULL);
                 }
-                break;
+                gX();
+                return false;
+
         case VALUE_OBJECT:
                 vp = class_lookup_method_i(ty, v.class, NAMES.call);
-
                 if (vp == NULL) {
                         goto NotCallable;
                 }
+                new_frame = call(ty, vp, &v, n, nkw);
+                gX();
+                return new_frame;
 
-                call(ty, vp, &v, n, nkw);
-
-                break;
         case VALUE_CLASS:
                 if (v.class <= CLASS_PRIMITIVE && v.class != CLASS_OBJECT) {
                         vp = class_lookup_method_i(ty, v.class, NAMES.init);
@@ -2650,40 +2666,37 @@ DoCall(Ty *ty, Value const *f, int n, int nkw, bool AutoThis)
                         }
                         push(value);
                 }
+                gX();
+                return false;
 
-                break;
         case VALUE_METHOD:
                 if (v.name == NAMES.method_missing) {
                         push(NIL);
                         memmove(top() - (n - 1), top() - n, n * sizeof (Value));
                         top()[-n++] = v.this[1];
                 }
+                new_frame = call(ty, v.method, v.this, n, nkw);
+                gX();
+                return new_frame;
 
-                call(ty, v.method, v.this, n, nkw);
-
-                break;
         case VALUE_REGEX:
                 if (nkw > 0) {
                         pop();
                 }
-
                 if (UNLIKELY(n != 1)) {
-                        zP("attempt to apply a regex to an invalid number of values");
+                        zP("Regex.__call__(): too many arguments (%d given, 1 expected)", n);
                 }
-
-
                 value = peek();
-
                 if (UNLIKELY(value.type != VALUE_STRING)) {
-                        zP("attempt to apply a regex to a non-string: %s", VSC(&value));
+                        zP("Regex.__call__(): expected String but got: %s", VSC(&value));
                 }
-
                 push(v);
                 v = string_match(ty, &value, 1, NULL);
                 pop();
                 *top() = v;
+                gX();
+                return false;
 
-                break;
         case VALUE_BUILTIN_METHOD:
                 if (nkw > 0) {
                         container = pop();
@@ -2695,12 +2708,15 @@ DoCall(Ty *ty, Value const *f, int n, int nkw, bool AutoThis)
                 }
                 STACK.count -= n;
                 push(v);
+                gX();
+                return false;
 
-                break;
         case VALUE_NIL:
                 STACK.count -= n + (nkw > 0);
                 push(NIL);
-                break;
+                gX();
+                return false;
+
         case VALUE_DICT:
                 if (nkw > 0) { pop(); }
                 value = peek();
@@ -2712,7 +2728,9 @@ DoCall(Ty *ty, Value const *f, int n, int nkw, bool AutoThis)
                 } else {
                         push(Some(*vp));
                 }
-                break;
+                gX();
+                return false;
+
         case VALUE_ARRAY:
                 if (nkw > 0) { pop(); }
                 subscript = peek();
@@ -2720,13 +2738,13 @@ DoCall(Ty *ty, Value const *f, int n, int nkw, bool AutoThis)
                 value = ArraySubscript(ty, v, subscript, false);
                 STACK.count -= (n + 1);
                 push(value);
-                break;
+                gX();
+                return false;
+
+        NotCallable:
         default:
-NotCallable:
                 zP("attempt to call non-callable value %s", VSC(&v));
         }
-
-        gX();
 }
 
 static int
@@ -2882,6 +2900,7 @@ CallMethod(Ty *ty, int i, int n, int nkw, bool b)
 
         case VALUE_FUNCTION:
         case VALUE_BUILTIN_FUNCTION:
+        case VALUE_FOREIGN_FUNCTION:
         case VALUE_METHOD:
         case VALUE_BUILTIN_METHOD:
                 class = CLASS_FUNCTION;
@@ -4107,6 +4126,36 @@ splat(Ty *ty, Dict *d, Value *v)
 }
 
 static void
+DoRange(Ty *ty, bool inclusive)
+{
+        Value b = pop();
+        Value a = pop();
+
+        Value v = RawObject(inclusive ? CLASS_INC_RANGE : CLASS_RANGE);
+        push(v);
+
+        if (UNLIKELY(PACK_TYPES(a.type, b.type) != PAIR_OF(VALUE_INTEGER))) {
+                zP(
+                        "Range.init(): bad bounds:, (%s, %s)",
+                        VSC(&a),
+                        VSC(&b)
+                );
+        }
+
+        // XXX
+        if (a.integer > b.integer) {
+                SWAP(imax, a.integer, b.integer);
+        }
+
+        if (inclusive) {
+                b.integer += 1;
+        }
+
+        PutMember(v, NAMES.a, a);
+        PutMember(v, NAMES.b, b);
+}
+
+static void
 DoStringLiteral(Ty *ty, i32 i)
 {
         InternEntry const *interned = intern_entry(&xD.strings, i);
@@ -4150,6 +4199,65 @@ DoDictLiteral(Ty *ty, Value const *dflt)
         push(val);
 }
 
+static void
+DoTupleLiteral(Ty *ty)
+{
+        i32Vector   ids    = {0};
+        ValueVector values = {0};
+
+        bool have_names = false;
+
+        i32 n;
+        i32 z;
+
+        READVALUE(n);
+
+        SCRATCH_SAVE();
+        for (i32 i = 0; i < n; ++i) {
+                Value *v = &vZ(STACK)[i - n];
+                READVALUE(z);
+                if (z == -2) {
+                        if (UNLIKELY(v->type != VALUE_TUPLE)) {
+                                zP(
+                                        "attempt to spread non-tuple in tuple expression: %s",
+                                        VSC(v)
+                                );
+                        }
+                        for (int j = 0; j < v->count; ++j) {
+                                if (v->ids != NULL && v->ids[j] != -1) {
+                                        AddTupleEntry(ty, &ids, &values, v->ids[j], &v->items[j]);
+                                        have_names = true;
+                                } else {
+                                        svP(ids, -1);
+                                        svP(values, v->items[j]);
+                                }
+                        }
+                } else if (v->type != VALUE_NONE) {
+                        if (z == -1) {
+                                svP(ids, -1);
+                                svP(values, *v);
+                        } else {
+                                AddTupleEntry(ty, &ids, &values, z, v);
+                                have_names = true;
+                        }
+                }
+        }
+
+        u32   k = vN(values);
+        Value v = TUPLE(mAo(k * sizeof (Value), GC_TUPLE), NULL, k, false);
+
+        if (k > 0) {
+                __builtin_memcpy(v.items, vv(values), k * sizeof (Value));
+                if (have_names) {
+                        v.ids = uAo(k * sizeof (i32), GC_TUPLE);
+                        __builtin_memcpy(v.ids, vv(ids), k * sizeof (i32));
+                }
+        }
+        SCRATCH_RESTORE();
+
+        STACK.count -= n;
+        push(v);
+}
 
 static void
 IncValue(Ty *ty, Value *v)
@@ -4667,7 +4775,7 @@ NextInstruction:
                         LOG("Loading global: %s (%d)", IP, n);
                         SKIPSTR();
 #endif
-                        push(Globals.items[n]);
+                        push(v__(Globals, n));
                         break;
                 CASE(LOAD_THREAD_LOCAL)
                         READVALUE(n);
@@ -4714,9 +4822,9 @@ NextInstruction:
                 CASE(DUP)
                         push(peek());
                         break;
-                CASE(DUP2)
-                        push(top()[-1]);
-                        push(top()[-1]);
+                CASE(DUP2_SWAP)
+                        push(top()[0]);
+                        push(top()[-2]);
                         break;
                 CASE(JUMP)
                         READVALUE(n);
@@ -4738,7 +4846,7 @@ NextInstruction:
                         break;
                 CASE(JUMP_IF_NONE)
                         READVALUE(n);
-                        if (top()[-1].type == VALUE_NONE) {
+                        if (top()->type == VALUE_NONE) {
                                 IP += n;
                         }
                         break;
@@ -4856,13 +4964,12 @@ NextInstruction:
                                 break;
                         }
                 CASE(TARGET_GLOBAL)
-TargetGlobal:
                         READVALUE(n);
                         LOG("Global: %d", (int)n);
-                        while (Globals.count <= n) {
+                        while (vN(Globals) <= n) {
                                 xvP(Globals, NIL);
                         }
-                        pushtarget(&Globals.items[n], NULL);
+                        pushtarget(v_(Globals, n), NULL);
                         break;
                 CASE(TARGET_THREAD_LOCAL)
                         READVALUE(n);
@@ -4872,23 +4979,19 @@ TargetGlobal:
                         pushtarget(v_(THREAD_LOCALS, n), NULL);
                         break;
                 CASE(TARGET_LOCAL)
-                        if (FRAMES.count == 0)
-                                goto TargetGlobal;
                         READVALUE(n);
                         LOG("Targeting %d", n);
                         pushtarget(local(ty, n), NULL);
                         break;
                 CASE(ASSIGN_GLOBAL)
-AssignGlobal:
                         READVALUE(n);
                         LOG("Global: %d", (int)n);
-                        while (Globals.count <= n)
+                        while (vN(Globals) <= n) {
                                 xvP(Globals, NIL);
-                        Globals.items[n] = pop();
+                        }
+                        *v_(Globals, n) = pop();
                         break;
                 CASE(ASSIGN_LOCAL)
-                        if (FRAMES.count == 0)
-                                goto AssignGlobal;
                         READVALUE(n);
                         LOG("Targeting %d", n);
                         *local(ty, n) = pop();
@@ -4978,7 +5081,7 @@ AssignGlobal:
                         if (top()->type != VALUE_TUPLE) {
                                 DOJUMP(jump);
                         } else {
-                                int count = top()->count - i;
+                                i32 count = top()->count - i;
                                 Value *rest = mAo(count * sizeof (Value), GC_TUPLE);
                                 memcpy(rest, top()->items + i, count * sizeof (Value));
                                 *vp = TUPLE(rest, NULL, count, false);
@@ -5011,10 +5114,10 @@ AssignGlobal:
                                 value = vT(ids.count);
                                 value.ids = uAo(value.count * sizeof (i32), GC_TUPLE);
 
-                                memcpy(value.ids, ids.items, value.count * sizeof (i32));
+                                memcpy(value.ids, vv(ids), value.count * sizeof (i32));
 
                                 for (i32 i = 0; i < value.count; ++i) {
-                                        value.items[i] = v.items[indices.items[i]];
+                                        value.items[i] = v.items[v__(indices, i)];
                                 }
 
                                 SCRATCH_RESTORE();
@@ -5072,15 +5175,25 @@ AssignGlobal:
                 CASE(BAD_MATCH)
                         MatchError;
                 CASE(BAD_DISPATCH);
-                        push(TAG(TAG_DISPATCH_ERR));
-                        vvX(FRAMES);
-                        IP = *vvX(CALLS);
-                        RaiseException(ty);
+                        if (v_L(CALLS) == unapply) {
+                                push(NONE);
+                                goto Return;
+                        } else {
+                                push(TAG(TAG_DISPATCH_ERR));
+                                vvX(FRAMES);
+                                IP = *vvX(CALLS);
+                                RaiseException(ty);
+                        }
                         break;
                 CASE(BAD_CALL)
                         v = peek();
 
                         READSTR(str);
+
+                        if (v_L(CALLS) == unapply) {
+                                *top() = NONE;
+                                goto Return;
+                        }
 
                         zP(
                                 "constraint on %s%s%s%s%s violated in call to %s%s%s%s%s: %s%s%s = %s%s%s",
@@ -5140,7 +5253,6 @@ AssignGlobal:
                 CASE(FINALLY)
                 {
                         struct try *t = GetCurrentTry(ty);
-                        dont_printf("Finally: ntry=%zu  ndefer=%zu\n", vN(TRY_STACK), vN(t->defer));
                         t->state = TRY_FINALLY;
                         t->end = IP;
                         IP = t->finally;
@@ -5252,14 +5364,16 @@ AssignGlobal:
                 CASE(TRY_REGEX)
                         READJUMP(jump);
                         READVALUE(s);
-                        v = REGEX((Regex *) s);
+                        v = peek();
+                        push(REGEX((Regex *)s));
                         if (
-                                top()->type != VALUE_STRING
-                             || (value = value_apply_callable(ty, &v, top())).type == VALUE_NIL
+                                (v.type == VALUE_STRING)
+                             && ((value = string_match(ty, &v, 1, NULL)).type != VALUE_NIL)
                         ) {
-                                DOJUMP(jump);
+                                *top() = value;
                         } else {
-                                push(value);
+                                pop();
+                                DOJUMP(jump);
                         }
                         break;
                 CASE(ASSIGN_REGEX_MATCHES)
@@ -5267,8 +5381,8 @@ AssignGlobal:
                         vp = poptarget();
                         v = pop();
                         if (v.type == VALUE_ARRAY) {
-                                for (i = 0; i < v.array->count; ++i) {
-                                        vp[i] = v.array->items[i];
+                                for (i = 0; i < vN(*v.array); ++i) {
+                                        vp[i] = v__(*v.array, i);
                                 }
                                 while (i < n + 1) {
                                         vp[i++] = NIL;
@@ -5307,16 +5421,16 @@ AssignGlobal:
                                 break;
                         }
                         if (i < 0) {
-                                i += top()->array->count;
+                                i += vN(*top()->array);
                         }
-                        if (top()->array->count <= i) {
+                        if (vN(*top()->array) <= i) {
                                 if (b) {
                                         DOJUMP(jump);
                                 } else {
                                         push(NIL);
                                 }
                         } else {
-                                push(top()->array->items[i]);
+                                push(v__(*top()->array, i));
                         }
                         break;
                 CASE(TRY_INDEX_TUPLE)
@@ -5366,6 +5480,10 @@ AssignGlobal:
                         }
                         break;
                 CASE(POP)
+                        pop();
+                        break;
+                CASE(POP2)
+                        pop();
                         pop();
                         break;
                 CASE(UNPOP)
@@ -5431,67 +5549,8 @@ AssignGlobal:
 
                         break;
                 CASE(TUPLE)
-                {
-                        int_vector ids = {0};
-                        ValueVector values = {0};
-
-                        SCRATCH_SAVE();
-
-                        bool have_names = false;
-
-                        READVALUE(n);
-
-                        for (int i = 0; i < n; ++i) {
-                                Value *v = &STACK.items[STACK.count - n + i];
-                                READVALUE(z);
-                                if (z == -2) {
-                                        if (UNLIKELY(v->type != VALUE_TUPLE)) {
-                                                zP(
-                                                        "attempt to spread non-tuple in tuple expression: %s",
-                                                        VSC(v)
-                                                );
-                                        }
-                                        for (int j = 0; j < v->count; ++j) {
-                                                if (v->ids != NULL && v->ids[j] != -1) {
-                                                        AddTupleEntry(ty, &ids, &values, v->ids[j], &v->items[j]);
-                                                        have_names = true;
-                                                } else {
-                                                        svP(ids, -1);
-                                                        svP(values, v->items[j]);
-                                                }
-                                        }
-                                } else if (v->type != VALUE_NONE) {
-                                        if (z == -1) {
-                                                svP(ids, -1);
-                                                svP(values, *v);
-                                        } else {
-                                                AddTupleEntry(ty, &ids, &values, z, v);
-                                                have_names = true;
-                                        }
-                                }
-                        }
-
-                        k  = vN(values);
-                        vp = mAo(k * sizeof (Value), GC_TUPLE);
-                        v  = TUPLE(vp, NULL, k, false);
-
-                        GC_STOP();
-
-                        if (k > 0) {
-                                __builtin_memcpy(vp, values.items, k * sizeof (Value));
-                                if (have_names) {
-                                        v.ids = mAo(k * sizeof (int), GC_TUPLE);
-                                        __builtin_memcpy(v.ids, ids.items, k * sizeof (int));
-                                }
-                        }
-
-                        STACK.count -= n;
-                        push(v);
-
-                        GC_RESUME();
-                        SCRATCH_RESTORE();
+                        DoTupleLiteral(ty);
                         break;
-                }
                 CASE(GATHER_TUPLE)
                         n = vN(STACK) - *vvX(SP_STACK);
 
@@ -5526,7 +5585,7 @@ AssignGlobal:
                                 pop();
                                 push(STRING_NOGC(s, strlen(s)));
                         } else {
-                                CallMethod(ty, NAMES.str, 0, 0, false);
+                                CallMethod(ty, NAMES._str_, 0, 0, false);
                         }
                         break;
                 CASE(YIELD)
@@ -5844,28 +5903,10 @@ Yield:
                         vPx(STACK, v);
                         break;
                 CASE(RANGE)
-                        vp = class_lookup_method_i(ty, CLASS_RANGE, NAMES.init);
-                        if (UNLIKELY(vp == NULL)) {
-                                zP("failed to load Range class. Was prelude loaded correctly?");
-                        }
-
-                        v = OBJECT(object_new(ty, CLASS_RANGE), CLASS_RANGE);
-                        NOGC(v.object);
-                        exec_fn(ty, vp, &v, 2, 0);
-                        *top() = v;
-                        OKGC(v.object);
+                        DoRange(ty, false);
                         break;
                 CASE(INCRANGE)
-                        vp = class_lookup_method_i(ty, CLASS_INC_RANGE, NAMES.init);
-                        if (UNLIKELY (vp == NULL)) {
-                                zP("failed to load InclusiveRange class. Was prelude loaded correctly?");
-                        }
-
-                        v = OBJECT(object_new(ty, CLASS_INC_RANGE), CLASS_INC_RANGE);
-                        NOGC(v.object);
-                        exec_fn(ty, vp, &v, 2, 0);
-                        *top() = v;
-                        OKGC(v.object);
+                        DoRange(ty, true);
                         break;
                 CASE(TRY_GET_MEMBER)
                         z = GetDynamicMemberId(ty, false);
@@ -5930,9 +5971,25 @@ Yield:
                         }
                         break;
                 CASE(TRY_MEMBER_ACCESS)
-                CASE(MEMBER_ACCESS)
-                        b = (IP[-1] == INSTR_TRY_MEMBER_ACCESS);
+                        READVALUE(z);
 
+                        value = pop();
+                        v = GetMember(ty, value, z, true, false);
+
+                        switch (v.type) {
+                        case VALUE_BREAK:
+                                continue;
+
+                        case VALUE_NONE:
+                                push(NIL);
+                                continue;
+
+                        default:
+                                push(v);
+                                continue;
+                        }
+                        break;
+                CASE(MEMBER_ACCESS)
                         READVALUE(z);
 MemberAccess:
                         value = pop();
@@ -5942,22 +5999,37 @@ MemberAccess:
                         case VALUE_BREAK:
                                 continue;
 
+                        default:
+                                push(v);
+                                continue;
+
                         case VALUE_NONE:
-                                if (b) {
-                                        push(NIL);
-                                        continue;
-                                }
                                 break;
+                        }
+BadMemberAccess:
+BadTupleMember:
+                        BadFieldAccess(ty, &value, z);
+                        UNREACHABLE();
+                CASE(TRY_MEMBER)
+                        READJUMP(jump);
+                        READVALUE(z);
+
+                        value = peek();
+                        v = GetMember(ty, value, z, true, false);
+
+                        switch (v.type) {
+                        case VALUE_BREAK:
+                                continue;
+
+                        case VALUE_NONE:
+                                DOJUMP(jump);
+                                continue;
 
                         default:
                                 push(v);
                                 continue;
                         }
-
-BadMemberAccess:
-BadTupleMember:
-                        BadFieldAccess(ty, &value, z);
-                        UNREACHABLE();
+                        break;
                 CASE(SLICE)
                         CallMethod(ty, NAMES.slice, 3, 0, false);
                         break;
@@ -6467,6 +6539,35 @@ BadTupleMember:
                         READVALUE(j);
                         push(OPERATOR(i, j));
                         break;
+                CASE(TRY_UNAPPLY)
+                        READJUMP(jump);
+                        v = pop();
+                        switch (v.type) {
+                        case VALUE_CLASS:
+                                vp = class_lookup_s_method_i(ty, v.class, NAMES.unapply);
+                                if (vp != NULL) {
+                                        DOJUMP(jump);
+                                        push(peek());
+                                        if (call(ty, vp, &CLASS(n), 1, 0)) {
+                                                xvP(CALLS, unapply);
+                                        }
+                                }
+                                break;
+
+                        default:
+                                DOJUMP(jump);
+                                push(peek());
+                                if (DoCall(ty, &v, 1, 0, false)) {
+                                        xvP(CALLS, unapply);
+                                }
+                                break;
+                        }
+                        break;
+                CASE(UNAPPLY)
+                        v = pop();
+                        push(peek());
+                        call6t(ty, &v, NULL, 1, 0, unapply);
+                        break;
                 CASE(TAIL_CALL)
                         n = vvL(FRAMES)->f.info[4];
 
@@ -6537,6 +6638,9 @@ BadTupleMember:
                         break;
                 CASE(POP_STACK_POS_POP)
                         STACK.count = *vvX(SP_STACK) - 1;
+                        break;
+                CASE(POP_STACK_POS_POP2)
+                        STACK.count = *vvX(SP_STACK) - 2;
                         break;
                 CASE(RESTORE_STACK_POS)
                         STACK.count = *vvL(SP_STACK);
@@ -6645,6 +6749,8 @@ vm_init(Ty *ty, int ac, char **av)
         build_array_method_table();
         build_blob_method_table();
 
+        NAMES.a                = M_ID("a");
+        NAMES.b                = M_ID("b");
         NAMES.call             = M_ID("__call__");
         NAMES._class_          = M_ID("__class__");
         NAMES.contains         = M_ID("contains?");
@@ -6654,6 +6760,7 @@ vm_init(Ty *ty, int ac, char **av)
         NAMES._enter_          = M_ID("__enter__");
         NAMES.fmt              = M_ID("__fmt__");
         NAMES._free_           = M_ID("__free__");
+        NAMES.groups           = M_ID("groups");
         NAMES._hash_           = M_ID("__hash__");
         NAMES.init             = M_ID("init");
         NAMES._init_subclass_  = M_ID("__init_subclass__");
@@ -6669,8 +6776,10 @@ vm_init(Ty *ty, int ac, char **av)
         NAMES._next_           = M_ID("__next__");
         NAMES.ptr              = M_ID("__ptr__");
         NAMES.slice            = M_ID("[;;]");
-        NAMES.str              = M_ID("__str__");
+        NAMES.str              = M_ID("str");
+        NAMES._str_            = M_ID("__str__");
         NAMES.subscript        = M_ID("[]");
+        NAMES.unapply          = M_ID("unapply");
         NAMES._what            = M_ID(sfmt("_what$%d", CLASS_RUNTIME_ERROR));
 
         NAMES._fields_         = M_ID("__fields__");
@@ -6686,7 +6795,7 @@ vm_init(Ty *ty, int ac, char **av)
 
         InitThreadGroup(ty, MyGroup = &MainGroup);
 
-        NewArenaNoGC(ty, 1ULL << 22);
+        NewArenaNoGC(ty, 1ULL << 25);
 
         compiler_init(ty);
 
@@ -7586,6 +7695,7 @@ vm_execute(Ty *ty, char const *source, char const *file)
                         VSC(&exc),
                         trace
                 );
+                XXX("Uncaught exception: %s", TyError(ty));
                 free(trace);
                 return false;
         }
@@ -7708,6 +7818,11 @@ vm_call_ex(Ty *ty, Value const *f, int argc, Value *kwargs, bool collect)
                 STACK.count = n;
                 return v;
 
+        case VALUE_FOREIGN_FUNCTION:
+                v = cffi_fast_call(ty, f, argc, kwargs);
+                STACK.count = n;
+                return v;
+
         case VALUE_BUILTIN_METHOD:
                 v = f->builtin_method(ty, f->this, argc, NULL);
                 STACK.count = n;
@@ -7750,11 +7865,9 @@ vm_call_ex(Ty *ty, Value const *f, int argc, Value *kwargs, bool collect)
 
         case VALUE_OBJECT:
                 vp = class_lookup_method_i(ty, f->class, NAMES.call);
-
                 if (vp == NULL) {
                         goto NotCallable;
                 }
-
                 if (kwargs != NULL) {
                         push(*kwargs);
                         exec_fn(ty, vp, f, argc, 1);
@@ -7811,6 +7924,11 @@ vm_call(Ty *ty, Value const *f, int argc)
 
         case VALUE_BUILTIN_FUNCTION:
                 v = f->builtin_function(ty, argc, NULL);
+                STACK.count = n;
+                return v;
+
+        case VALUE_FOREIGN_FUNCTION:
+                v = cffi_fast_call(ty, f, argc, NULL);
                 STACK.count = n;
                 return v;
 
@@ -7920,6 +8038,11 @@ vm_eval_function(Ty *ty, Value const *f, ...)
                 STACK.count = n;
                 return r;
 
+        case VALUE_FOREIGN_FUNCTION:
+                r = cffi_fast_call(ty, f, argc, NULL);
+                STACK.count = n;
+                return r;
+
         case VALUE_BUILTIN_METHOD:
                 r = f->builtin_method(ty, f->this, argc, NULL);
                 STACK.count = n;
@@ -7927,11 +8050,9 @@ vm_eval_function(Ty *ty, Value const *f, ...)
 
         case VALUE_OBJECT:
                 v = class_lookup_method_i(ty, f->class, NAMES.call);
-
                 if (v == NULL) {
                         goto NotCallable;
                 }
-
                 exec_fn(ty, v, f, argc, 0);
                 break;
 
@@ -8133,7 +8254,7 @@ StepInstruction(char const *ip)
                 SKIPVALUE(s);
                 break;
         CASE(DUP)
-        CASE(DUP2)
+        CASE(DUP2_SWAP)
                 break;
         CASE(JUMP)
                 SKIPVALUE(n);
@@ -8309,11 +8430,16 @@ StepInstruction(char const *ip)
                 SKIPVALUE(b);
                 SKIPVALUE(n);
                 break;
+        CASE(TRY_MEMBER)
+                SKIPVALUE(n);
+                SKIPVALUE(n);
+                break;
         CASE(TRY_TAG_POP)
                 SKIPVALUE(n);
                 SKIPVALUE(tag);
                 break;
         CASE(POP)
+        CASE(POP2)
                 break;
         CASE(UNPOP)
                 break;
@@ -8379,6 +8505,8 @@ StepInstruction(char const *ip)
                 break;
         CASE(RENDER_TEMPLATE)
                 SKIPVALUE(s);
+                break;
+        CASE(UNAPPLY)
                 break;
         CASE(TRAP)
                 break;
@@ -8823,6 +8951,8 @@ tdb_step_over_x(Ty *ty, char *ip, i32 i)
         CASE(TRY_STEAL_TAG)
         CASE(TRY_TAG_POP)
         CASE(TRY_TUPLE_MEMBER)
+        CASE(TRY_MEMBER)
+        CASE(TRY_UNAPPLY)
         CASE(TUPLE_REST)
                 tdb_set_trap(&TDB->alt, ip + 1 + load_int(ip + 1) + sizeof (int));
         }

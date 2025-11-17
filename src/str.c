@@ -83,21 +83,19 @@ mkmatch(Ty *ty, Value *s, usize *ovec, isize n, bool detailed)
         if (detailed) {
                 Value groups = ARRAY(vAn(n));
 
-                gP(&groups);
-
                 for (isize i = 0; i < n; ++i) {
-                        Value group = vT(2);
-                        group.items[0] = INTEGER(ovec[2*i]);
-                        group.items[1] = INTEGER(ovec[2*i + 1] - ovec[2*i]);
-                        vPx(*groups.array, group);
+                        isize off = ovec[2*i];
+                        isize len = ovec[2*i + 1] - ovec[2*i];
+                        vPx(*groups.array, (off == -1) ? NIL : STRING_VIEW(*s, off, len));
                 }
 
-                vmP(s);
-                vmP(&groups);
+                GC_STOP();
+                Value match = RawObject(CLASS_RE_MATCH);
+                PutMember(match, NAMES.str, *s);
+                PutMember(match, NAMES.groups, groups);
+                GC_RESUME();
 
-                gX();
-
-                return vmC(&CLASS(CLASS_RE_MATCH), 2);
+                return match;
         } else if (n == 1) {
                 return STRING_VIEW(*s, ovec[0], ovec[1] - ovec[0]);
         } else {
@@ -854,6 +852,7 @@ string_comb(Ty *ty, Value *string, int argc, Value *kwargs)
         }
 
         vec(u8) scratch = {0};
+        bool any = false;
 
         SCRATCH_SAVE();
 
@@ -865,7 +864,6 @@ string_comb(Ty *ty, Value *string, int argc, Value *kwargs)
                 isize len = string->bytes;
                 isize plen = pattern.bytes;
                 u8 const *match;
-                bool any = false;
 
                 if (plen == 0) {
                         break;
@@ -890,7 +888,6 @@ string_comb(Ty *ty, Value *string, int argc, Value *kwargs)
                 pcre2_code *re = pattern.regex->pcre2;
                 isize len = string->bytes;
                 isize start = 0;
-                bool any = false;
                 usize *ovec = ty_re_ovec();
                 i32 rc;
 
@@ -925,9 +922,10 @@ string_comb(Ty *ty, Value *string, int argc, Value *kwargs)
                 ARGx(0, VALUE_STRING, VALUE_REGEX);
         }
 
-        Value ret = (vN(scratch) > 0)
-                  ? vSs(vv(scratch), vN(scratch))
-                  : *string;
+        Value ret = !any               ? *string
+                  : (vN(scratch) == 0) ? STRING_EMPTY
+                  :                      vSs(vv(scratch), vN(scratch))
+                  ;
 
         SCRATCH_RESTORE();
 

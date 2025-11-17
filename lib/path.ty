@@ -113,7 +113,7 @@ pub class Path {
     }
 
     suffix -> String {
-        name.match!(/(?<!^)\.[^.]+$/v).?s ?? ''
+        (name.match!(/(?<!^)\.[^.]+$/) ?? '')!
     }
 
     suffixes -> [String] {
@@ -355,7 +355,7 @@ pub class Path {
         }
     }
 
-    touch(mode: Int = 0o666) {
+    touch(mode: Int = 0o644) {
         let fd = os.open(str(self), os.O_CREAT | os.O_WRONLY, mode)
         if fd == -1 {
             throw PathError({
@@ -372,7 +372,13 @@ pub class Path {
         }
     }
 
-    ls -> [Path] {
+    chdir() {
+        if os.chdir(str(self)) == -1 {
+            throw PathError({msg: 'chdir failed', path: str(self)})
+        }
+    }
+
+    ls() -> Array[Path] {
         os.listdir(str(self)).map(\self / _)
     }
 
@@ -416,7 +422,7 @@ pub class Path {
 
         if self.dir? {
             target-path.mkdir(parents=true, exist-ok=true)
-            for entry in self.ls {
+            for entry in self.ls() {
                 entry.copy(target-path / entry.name, follow-symlinks)
             }
         } else if self.file? || (self.symlink? && follow-symlinks) {
@@ -441,7 +447,7 @@ pub class Path {
 
     rmtree(quiet: Bool = false) {
         if self.dir? {
-            for entry in self.ls {
+            for entry in self.ls() {
                 entry.rmtree()
             }
             rmdir
@@ -495,7 +501,7 @@ pub class Path {
                 }
 
                 if base.dir? {
-                    for entry in base.ls {
+                    for entry in base.ls() {
                         if entry.dir? {
                             results += glob-impl(entry, parts)
                         }
@@ -511,7 +517,7 @@ pub class Path {
                 return results
             }
 
-            for entry in base.ls {
+            for entry in base.ls() {
                 if match-part(entry.name, part) {
                     if !#rest {
                         results.push(entry)

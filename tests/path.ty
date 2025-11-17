@@ -215,7 +215,7 @@ fn test-file-operations() {
     assert(touched.exists?)
     
     // Cleanup
-    for entry in tmp.ls {
+    for entry in tmp.ls() {
         entry.unlink()
     }
     tmp.rmdir()
@@ -230,14 +230,14 @@ fn test-ls() {
     (tmp / 'file2.txt').touch()
     (tmp / 'subdir').mkdir()
     
-    let entries = tmp.ls
+    let entries = tmp.ls()
     assert-eq(#entries, 3)
     
     let names = entries.map(\_.name).sort()
     assert-eq(names, ['file1.txt', 'file2.txt', 'subdir'])
     
     // Cleanup
-    for entry in tmp.ls {
+    for entry in tmp.ls() {
         if entry.dir? {
             entry.rmdir()
         } else {
@@ -272,7 +272,7 @@ fn test-glob() {
     // Cleanup
     (tmp / 'subdir' / 'nested.txt').unlink()
     (tmp / 'subdir').rmdir()
-    for entry in tmp.ls {
+    for entry in tmp.ls() {
         entry.unlink()
     }
     tmp.rmdir()

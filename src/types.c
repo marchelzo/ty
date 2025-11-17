@@ -1941,8 +1941,15 @@ IsRecordLike(Type const *t0)
 inline static Type *
 ResolveVar(Type const *t0)
 {
+        bool forgiving = false;
+
         while (CanStep(t0)) {
+                forgiving |= IsForgiving(t0);
                 t0 = StepVar(t0);
+        }
+
+        if (forgiving) {
+                t0 = type_forgiving(ty, t0);
         }
 
         return (Type *)t0;
@@ -4966,8 +4973,10 @@ UnifyXD(Ty *ty, Type *t0, Type *t1, bool super, bool check, bool soft)
         if (!type_check(ty, super ? t0 : t1, super ? t1 : t0)) {
                 ConvertUnbound -= check;
 Fail:
+                if (IsForgiving(t0) || IsForgiving(t1)) {
+                        OK("forgiven");
+                }
                 ok = false;
-
         } else {
                 OK("final type check:  (%s) and (%s)", ShowType(t0), ShowType(t1));
                 ConvertUnbound -= check;
@@ -6277,6 +6286,10 @@ type_call(Ty *ty, Expr const *e)
 
         case EXPRESSION_TAG_APPLICATION:
                 t0 = type_call_t(ty, e, e->symbol->type);
+                break;
+
+        default:
+                t0 = NULL;
                 break;
         }
 
@@ -9017,6 +9030,21 @@ type_fixed(Ty *ty, Type *t0)
                 t->fixed = true;
         } else {
                 t = t0;
+        }
+
+        return t;
+}
+
+Type *
+type_forgiving(Ty *ty, Type const *t0)
+{
+        Type *t;
+
+        if (t0 != NULL && !t0->forgive) {
+                t = CloneType(ty, t0);
+                t->forgive = true;
+        } else {
+                t = (Type *)t0;
         }
 
         return t;

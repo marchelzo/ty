@@ -60,37 +60,19 @@ pub fn wrap(lib, name: String, rType: _ = nil, *aTypes: _, func-ptr?: Bool = fal
         throw Err("Failed to load symbol '{name}'")
     }
 
-    if func-ptr? {
-        fp = ptr::typed(fp, c.ptr)
-    }
+    aTypes.remove!(c.void)
+          .map!(t -> (t :: Ptr) ? t : t.ctype())
 
-    aTypes.map!(t -> type(t) == ptr::null ? t : t.ctype())
-
-    if type(rType) != ptr::null {
-        let interface = getCif(rType.ctype(), *aTypes)
-        let argStorage = [c.new(t) for t in aTypes]
-
-        return fn func(*args, out = rType()) {
-            for arg, i in args {
-                c.store(aTypes[i], argStorage[i], arg)
-            }
-
-            let fp = func-ptr? ? c::load(c.ptr, fp) : fp
-
-            c.call(interface, fp, *argStorage, out: out.get())
-
-            return out
-        }
-    } else {
+    if rType :: Ptr {
         let interface = getCif(rType, *aTypes)
-        let argStorage = [c.new(t) for t in aTypes]
-
-        return fn func(*args) {
-            for arg, i in args {
-                c.store(aTypes[i], argStorage[i], arg)
-            }
-
-            c.call(interface, fp, *argStorage)
+        return func-ptr?
+             ? fn func(*args) { c.call(interface, fp[0], *args) }
+             : c.fun(fp, interface, name)
+    } else {
+        let interface = getCif(rType.ctype(), *aTypes)
+        return fn func(*args, out=rType()) {
+            c.call(interface, func-ptr? ? fp[0] : fp, *args, out=out.get())
+            out
         }
     }
 }
@@ -122,30 +104,18 @@ pub fn wrapVar[a](lib, name, nFixed, rType, *aTypes) -> _ {
         throw Err("Failed to load symbol '{name}'")
     }
 
-    let argStorage = [c.new(t) for t in aTypes]
-
     return fn (*args: _) -> _ {
         let aTypes = aTypes.clone()
-        let argStorage = argStorage.clone()
 
         for i in nFixed..#args {
             let (t, x) = args[i]
-            argStorage.push(c.new(t))
             aTypes.push(t)
             args[i] = x
         }
 
-        for arg, i in args {
-            c.store(aTypes[i], argStorage[i], arg)
-        }
+        let interface = getCif(rType, *aTypes, nFixed=nFixed)
 
-        let interface = getCif(rType, *aTypes, nFixed: nFixed)
-
-        let y = c.call(interface, fp, *argStorage)
-
-        for i in nFixed..#args {
-            c.free(argStorage[i])
-        }
+        let y = c.call(interface, fp, *args)
 
         return y
     }
@@ -302,18 +272,7 @@ use LexState = {
     }
 }
 
-fn lspan(s1: LexState, s2: LexState = lex.state()) {
-    let b1 = s1.position.byte
-    let b2 = s2.position.byte
-    s1.source.bsplice(b1, b2)
-}
-
-fn lstep(s1) {
-    let s2 = lex.state()
-    return (s2, lspan(s1, s2))
-}
-
-fn fun() {
+fn cfun() {
     let public = peek().type == 'pub'
     if public { next() }
 
@@ -373,19 +332,23 @@ fn fun() {
                 doc = "{doc ?? ''}{next().comment}"
             }
 
-            let st = lex.state()
+            let source = lex.state().source
+
+            let i = peek().start.byte
             let rt: AST = nexttype(has-name?=false)
-            let rt-string = lspan(st)
+            let j = peek(-1).end.byte
+            let rt-string = source.bsplice(i, j)
 
             let name = next().id
 
-            let st = lex.state()
+            let i = peek().start.byte
             let ps = nextproto()
-            let proto-string = lspan(st)
+            let j = peek(-1).end.byte
+            let proto-string = source.bsplice(i, j).strip().comb(/^\(|\)$/)
+
             if peek().type == ';' { next() }
 
-            let proto-string = "({proto-string.strip().comb(/^\(|\)$/)})"
-            funs.push(mkfdef(name, rt, ps, "{proto-string} -> {rt-string.strip()}", doc))
+            funs.push(mkfdef(name, rt, ps, "({proto-string}) -> {rt-string.strip()}", doc))
         }
 
         // }
@@ -400,7 +363,6 @@ fn fun() {
  *      c.int a;
  *      c.ptr p;
  *      c.u8 data[10];
- *
  * }
  */
 fn strct() {
@@ -813,7 +775,7 @@ fn clos() {
 
 pub macro C! {
     if 'fn' in [peek(it).?type for ..8] {
-        fun()
+        cfun()
     } else if peek().?id == 'struct' || peek(1).?id == 'struct' {
         strct()
     } else if peek().?id == 'closure' {

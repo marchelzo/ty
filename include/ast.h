@@ -92,6 +92,7 @@ typedef struct class_definition ClassDefinition;
         X(DEFINITION),            \
         X(FUNCTION_DEFINITION),   \
         X(OPERATOR_DEFINITION),   \
+        X(PATTERN_DEFINITION),    \
         X(MACRO_DEFINITION),      \
         X(FUN_MACRO_DEFINITION),  \
         X(TAG_DEFINITION),        \
@@ -206,8 +207,10 @@ typedef struct class_definition ClassDefinition;
         X(DOT_DOT),                                                                   \
         X(DOT_DOT_DOT),                                                               \
         X(MATCH),                                                                     \
+        X(PATTERN),                                                                   \
         X(VIEW_PATTERN),                                                              \
         X(NOT_NIL_VIEW_PATTERN),                                                      \
+        X(OBJECT_PATTERN),                                                            \
         X(PLUS),                                                                      \
         X(MINUS),                                                                     \
         X(STAR),                                                                      \

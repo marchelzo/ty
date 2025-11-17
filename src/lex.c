@@ -15,6 +15,7 @@
 #include "token.h"
 #include "util.h"
 #include "lex.h"
+#include "compiler.h"
 
 static Token
 dotoken(Ty *ty, int ctx);
@@ -26,7 +27,6 @@ enum {
         MAX_OP_LEN = 8,
 };
 
-static char const *filename;
 static Location Start;
 
 static jmp_buf jb;
@@ -56,7 +56,7 @@ error(Ty *ty, char const *fmt, ...)
                 TERM(22),
                 TERM(39),
                 TERM(34),
-                filename,
+                TyCompilerState(ty)->module->path,
                 TERM(39),
                 TERM(33),
                 state.loc.line + 1,
@@ -1131,7 +1131,7 @@ dotoken(Ty *ty, int ctx)
 
         if (C(0) == '/' && C(1) == '*') {
                 Token t = lexcomment(ty);
-                if (state.keep_comments) {
+                if (state.keep_comments || state.in_pp) {
                         return t;
                 } else {
                         parse_push_comment(ty, &t);
@@ -1143,7 +1143,7 @@ dotoken(Ty *ty, int ctx)
                 }
         } else if (C(0) == '/' && C(1) == '/') {
                 Token t = lexlinecomment(ty);
-                if (state.keep_comments) {
+                if (state.keep_comments || state.in_pp) {
                         return t;
                 } else {
                         parse_push_comment(ty, &t);
@@ -1273,7 +1273,6 @@ void
 lex_init(Ty *ty, char const *file, char const *src)
 {
         lxst = &state;
-        filename = file;
         state = (LexState) {
                 .loc = (Location) {
                         .s = src,

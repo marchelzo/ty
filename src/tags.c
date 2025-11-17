@@ -126,6 +126,19 @@ tags_pop(Ty *ty, int tags)
         return v__(lists, tags)->next->n;
 }
 
+bool
+tags_try_pop(Ty *ty, u16 *tags, int tag)
+{
+        struct tags *list = v__(lists, *tags);
+
+        if (list->tag == tag) {
+                *tags = list->next->n;
+                return true;
+        } else {
+                return false;
+        }
+}
+
 int
 tags_first(Ty *ty, int tags)
 {

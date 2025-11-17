@@ -18,11 +18,11 @@ float_from(Value const *v)
         return (v->type == VALUE_INTEGER) ? v->integer : v->real;
 }
 
-inline static intmax_t
+inline static imax
 int_from(Value const *v)
 {
         return (v->type == VALUE_INTEGER) ? v->integer
-             : (v->type == VALUE_PTR)     ? (intptr_t)v->ptr
+             : (v->type == VALUE_PTR)     ? (iptr)v->ptr
              : v->real;
 }
 
@@ -55,7 +55,7 @@ ptr_from(Ty *ty, Value const *v)
                 // fallthrough
         }
 
-        zP("attempt to use non-addressable value as pointer: %s", VSC(v));
+        zP("FFI: attempt to use non-addressable value as pointer: %s", VSC(v));
 }
 
 static void
@@ -67,35 +67,35 @@ xstore(Ty *ty, ffi_type *t, void *p, Value const *v)
                 break;
 
         case FFI_TYPE_UINT8:
-                *(_Atomic uint8_t *)p = int_from(v);
+                *(_Atomic u8 *)p = int_from(v);
                 break;
 
         case FFI_TYPE_UINT16:
-                *(_Atomic uint16_t *)p = int_from(v);
+                *(_Atomic u16 *)p = int_from(v);
                 break;
 
         case FFI_TYPE_UINT32:
-                *(_Atomic uint32_t *)p = int_from(v);
+                *(_Atomic u32 *)p = int_from(v);
                 break;
 
         case FFI_TYPE_UINT64:
-                *(_Atomic uint64_t *)p = int_from(v);
+                *(_Atomic u64 *)p = int_from(v);
                 break;
 
         case FFI_TYPE_SINT8:
-                *(_Atomic int8_t *)p = int_from(v);
+                *(_Atomic i8 *)p = int_from(v);
                 break;
 
         case FFI_TYPE_SINT16:
-                *(_Atomic int16_t *)p = int_from(v);
+                *(_Atomic i16 *)p = int_from(v);
                 break;
 
         case FFI_TYPE_SINT32:
-                *(_Atomic int32_t *)p = int_from(v);
+                *(_Atomic i32 *)p = int_from(v);
                 break;
 
         case FFI_TYPE_SINT64:
-                *(_Atomic int64_t *)p = int_from(v);
+                *(_Atomic i64 *)p = int_from(v);
                 break;
 
         case FFI_TYPE_POINTER:
@@ -119,35 +119,35 @@ store(Ty *ty, ffi_type *t, void *p, Value const *v)
                 break;
 
         case FFI_TYPE_UINT8:
-                *(uint8_t *)p = int_from(v);
+                *(u8 *)p = int_from(v);
                 break;
 
         case FFI_TYPE_UINT16:
-                *(uint16_t *)p = int_from(v);
+                *(u16 *)p = int_from(v);
                 break;
 
         case FFI_TYPE_UINT32:
-                *(uint32_t *)p = int_from(v);
+                *(u32 *)p = int_from(v);
                 break;
 
         case FFI_TYPE_UINT64:
-                *(uint64_t *)p = int_from(v);
+                *(u64 *)p = int_from(v);
                 break;
 
         case FFI_TYPE_SINT8:
-                *(int8_t *)p = int_from(v);
+                *(i8 *)p = int_from(v);
                 break;
 
         case FFI_TYPE_SINT16:
-                *(int16_t *)p = int_from(v);
+                *(i16 *)p = int_from(v);
                 break;
 
         case FFI_TYPE_SINT32:
-                *(int32_t *)p = int_from(v);
+                *(i32 *)p = int_from(v);
                 break;
 
         case FFI_TYPE_SINT64:
-                *(int64_t *)p = int_from(v);
+                *(i64 *)p = int_from(v);
                 break;
 
         case FFI_TYPE_FLOAT:
@@ -196,14 +196,14 @@ xload(Ty *ty, ffi_type *t, void const *p)
 
         switch (t->type) {
         case FFI_TYPE_INT:    return INTEGER(*(int _Atomic const *)p);
-        case FFI_TYPE_SINT8:  return INTEGER(*(int8_t _Atomic const *)p);
-        case FFI_TYPE_SINT16: return INTEGER(*(int16_t _Atomic const *)p);
-        case FFI_TYPE_SINT32: return INTEGER(*(int32_t _Atomic const *)p);
-        case FFI_TYPE_SINT64: return INTEGER(*(int64_t _Atomic const *)p);
-        case FFI_TYPE_UINT8:  return INTEGER(*(uint8_t _Atomic const *)p);
-        case FFI_TYPE_UINT16: return INTEGER(*(uint16_t _Atomic const *)p);
-        case FFI_TYPE_UINT32: return INTEGER(*(uint32_t _Atomic const *)p);
-        case FFI_TYPE_UINT64: return INTEGER(*(uint64_t _Atomic const *)p);
+        case FFI_TYPE_SINT8:  return INTEGER(*(i8 _Atomic const *)p);
+        case FFI_TYPE_SINT16: return INTEGER(*(i16 _Atomic const *)p);
+        case FFI_TYPE_SINT32: return INTEGER(*(i32 _Atomic const *)p);
+        case FFI_TYPE_SINT64: return INTEGER(*(i64 _Atomic const *)p);
+        case FFI_TYPE_UINT8:  return INTEGER(*(u8 _Atomic const *)p);
+        case FFI_TYPE_UINT16: return INTEGER(*(u16 _Atomic const *)p);
+        case FFI_TYPE_UINT32: return INTEGER(*(u32 _Atomic const *)p);
+        case FFI_TYPE_UINT64: return INTEGER(*(u64 _Atomic const *)p);
 
         case FFI_TYPE_POINTER:
                 vp = p;
@@ -222,14 +222,14 @@ load(Ty *ty, ffi_type *t, void const *p)
 
         switch (t->type) {
         case FFI_TYPE_INT:    return INTEGER(*(int const *)p);
-        case FFI_TYPE_SINT8:  return INTEGER(*(int8_t const *)p);
-        case FFI_TYPE_SINT16: return INTEGER(*(int16_t const *)p);
-        case FFI_TYPE_SINT32: return INTEGER(*(int32_t const *)p);
-        case FFI_TYPE_SINT64: return INTEGER(*(int64_t const *)p);
-        case FFI_TYPE_UINT8:  return INTEGER(*(uint8_t const *)p);
-        case FFI_TYPE_UINT16: return INTEGER(*(uint16_t const *)p);
-        case FFI_TYPE_UINT32: return INTEGER(*(uint32_t const *)p);
-        case FFI_TYPE_UINT64: return INTEGER(*(uint64_t const *)p);
+        case FFI_TYPE_SINT8:  return INTEGER(*(i8 const *)p);
+        case FFI_TYPE_SINT16: return INTEGER(*(i16 const *)p);
+        case FFI_TYPE_SINT32: return INTEGER(*(i32 const *)p);
+        case FFI_TYPE_SINT64: return INTEGER(*(i64 const *)p);
+        case FFI_TYPE_UINT8:  return INTEGER(*(u8 const *)p);
+        case FFI_TYPE_UINT16: return INTEGER(*(u16 const *)p);
+        case FFI_TYPE_UINT32: return INTEGER(*(u32 const *)p);
+        case FFI_TYPE_UINT64: return INTEGER(*(u64 const *)p);
 
         case FFI_TYPE_POINTER:
                 vp = p;
@@ -246,10 +246,10 @@ load(Ty *ty, ffi_type *t, void const *p)
                 v = vT(n);
                 gP(&v);
 
-                size_t offsets[64];
+                usize offsets[128];
                 ffi_get_struct_offsets(FFI_DEFAULT_ABI, t, offsets);
 
-                for (int i = 0; i < n; ++i) {
+                for (int i = 0; i < (n & 0x7F); ++i) {
                         v.items[i] = load(ty, t->elements[i], (char *)p + offsets[i]);
                 }
 
@@ -728,60 +728,96 @@ cffi_store_atomic(Ty *ty, int argc, Value *kwargs)
 Value
 cffi_call(Ty *ty, int argc, Value *kwargs)
 {
-        if (argc < 2) {
-                zP("ffi.call() expects at least 2 arguments (cif, function) but got %d", argc);
-        }
+        ASSERT_ARGC_RANGE("ffi.call()", 2, INT_MAX);
 
-        ffi_cif *cif;
-        if (ARG(0).type == VALUE_PTR) {
-                cif = ARG(0).ptr;
-        } else {
-                zP("the first argument to ffi.call() must be a pointer");
-        }
+        ffi_cif *cif = PTR_ARG(0);
+        void (*func)(void) = (void (*)(void))PTR_ARG(1);
 
-        void (*func)(void);
-        if (ARG(1).type == VALUE_PTR) {
-                func = (void (*)(void))ARG(1).ptr;
-        } else {
-                zP("the second argument to ffi.call() must be a pointer");
+        if (UNLIKELY(cif->nargs != argc - 2)) {
+                bP("bad FFI call: %u arguments expected but got %d", cif->nargs, argc - 2);
         }
 
         vec(void *) args = {0};
+
+        SCRATCH_SAVE();
+
+        svR(args, cif->nargs);
+
         for (int i = 2; i < argc; ++i) {
-                if (ARG(i).type == VALUE_PTR) {
-                        xvP(args, ARG(i).ptr);
-                } else {
-                        free(args.items);
-                        zP("non-pointer passed as argument %d to ffi.call(): %s", i + 1, VSC(&ARG(i)));
-                }
+                ffi_type *c_type = cif->arg_types[i - 2];
+                void *mem = smA(c_type->size);
+                store(ty, c_type, mem, &ARG(i));
+                vPx(args, mem);
         }
 
-        char  buf[4096] __attribute__((aligned (_Alignof (max_align_t))));
         Value *out = NAMED("out");
-        void  *ret;
-
-        if (out == NULL) {
-                ret = buf;
-        } else switch (out->type) {
-        case VALUE_PTR:
-                ret = out->ptr;
-                break;
-
-        case VALUE_BLOB:
-                ret = out->blob->items;
-                break;
-
-        default:
-                zP("invalid `out` argument to ffi.call(): %s", VSC(out));
-        }
+        void  *buf = (out == NULL) ? smA(cif->rtype->size) : ptr_from(ty, out);
 
         lGv(true);
-        ffi_call(cif, func, ret, args.items);
+        ffi_call(cif, func, buf, vv(args));
         lTk();
 
-        free(args.items);
+        Value ret = (out == NULL) ? load(ty, cif->rtype, buf) : PTR(buf);
 
-        return (out == NULL) ? load(ty, cif->rtype, ret) : PTR(ret);
+        SCRATCH_RESTORE();
+
+        return ret;
+}
+
+Value
+cffi_fun(Ty *ty, int argc, Value *kwargs)
+{
+        ASSERT_ARGC("ffi.fun()", 2, 3);
+
+        void (*ff)(void) = (void (*)(void))PTR_ARG(0);
+        ffi_cif *cif = PTR_ARG(1);
+        FunUserInfo *xinfo = NULL;
+
+        if (ARG_T(2) == VALUE_STRING) {
+                xinfo = mAo0(sizeof (FunUserInfo), GC_ANY);
+                xinfo->name = TY_C_STR(ARG(2));
+        }
+
+        return FOREIGN_FUN(ff, cif, xinfo);
+}
+
+Value
+cffi_fast_call(Ty *ty, Value const *fun, int argc, Value *kwargs)
+{
+        ASSERT_ARGC_RANGE("ffi.call()", 0, INT_MAX);
+
+        ffi_cif *cif = fun->ffi;
+        void (*func)(void) = (void (*)(void))fun->ff;
+
+        if (UNLIKELY(cif->nargs != argc)) {
+                bP("bad FFI call: %u arguments expected but got %d", cif->nargs, argc);
+        }
+
+        vec(void *) args = {0};
+
+        SCRATCH_SAVE();
+
+        svR(args, cif->nargs);
+
+        for (int i = 0; i < argc; ++i) {
+                ffi_type *c_type = cif->arg_types[i];
+                void *mem = smA(c_type->size);
+                store(ty, c_type, mem, &ARG(i));
+                vPx(args, mem);
+        }
+
+        Value *out = NAMED("out");
+        void  *buf = (out == NULL) ? smA(cif->rtype->size) : ptr_from(ty, out);
+
+        lGv(true);
+        ffi_call(cif, func, buf, vv(args));
+        lTk();
+
+        Value ret = (out == NULL) ? load(ty, cif->rtype, buf) : PTR(buf);
+
+        SCRATCH_RESTORE();
+
+        return ret;
 }
 
 Value

@@ -31,6 +31,9 @@ tags_push(Ty *ty, int n, int tag);
 int
 tags_pop(Ty *ty, int n);
 
+bool
+tags_try_pop(Ty *ty, u16 *tags, int tag);
+
 int
 tags_first(Ty *ty, int tags);
 

@@ -554,7 +554,7 @@ C! pub unibi 'unibi_' fn {
     term *from_file(const char *);
     term *from_term(const char *);
     term *from_mem(const char *, size_t);
-    term *from_env(void);
+    term *from_env();
 
     const char *name_bool(enum boolean);
     const char *short_name_bool(enum boolean);

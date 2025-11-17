@@ -2065,6 +2065,10 @@ class XMLSelection : Iterable[XMLNode] {
         for __nodes { it.unlink() }
     }
 
+    [](index: Int) -> XMLNode {
+        __nodes[index]
+    }
+
     [](expr: String) -> XMLSelection {
         return XMLSelection(__doc, [*__doc[expr]].filter(\_ in __nodes))
     }

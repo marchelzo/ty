@@ -8,7 +8,7 @@
 #include "gc.h"
 #include "ty.h"
 
-#if defined(TY_DEBUG_NAMES) || !defined(TY_RELEASE) || defined(TY_LS)
+#if defined(TY_DEBUG_NAMES) || !defined(TY_RELEASE) || defined(TY_LS) || 1
  #define TY_NAMED_SCOPES 1
 #else
  #define TY_NAMED_SCOPES 0
@@ -34,21 +34,22 @@ enum { TY_SCOPE_FLAGS };
         X(FUNCTION,     Function,     4)  \
         X(MACRO,        Macro,        5)  \
         X(FUN_MACRO,    FunMacro,     6)  \
-        X(PROPERTY,     Property,     7)  \
-        X(CONST,        Const,        8)  \
-        X(BUILTIN,      Builtin,      9)  \
-        X(TYPE_VAR,     TypeVar,     10)  \
-        X(VARIADIC,     Variadic,    11)  \
-        X(IMMORTAL,     Immortal,    12)  \
-        X(TRANSIENT,    Transient,   13)  \
-        X(RECYCLED,     Recycled,    14)  \
-        X(MEMBER,       Member,      15)  \
-        X(STATIC,       Static,      16)  \
-        X(GLOBAL,       Global,      17)  \
-        X(CAPTURED,     Captured,    18)  \
-        X(FIXED,        FixedType,   19)  \
-        X(NAMESPACE,    Namespace,   20)  \
-        X(PARAM_PACK,   ParamPack,   21)  \
+        X(PATTERN,      Pattern,      7)  \
+        X(PROPERTY,     Property,     8)  \
+        X(CONST,        Const,        9)  \
+        X(BUILTIN,      Builtin,     10)  \
+        X(TYPE_VAR,     TypeVar,     11)  \
+        X(VARIADIC,     Variadic,    12)  \
+        X(IMMORTAL,     Immortal,    13)  \
+        X(TRANSIENT,    Transient,   14)  \
+        X(RECYCLED,     Recycled,    15)  \
+        X(MEMBER,       Member,      16)  \
+        X(STATIC,       Static,      17)  \
+        X(GLOBAL,       Global,      18)  \
+        X(CAPTURED,     Captured,    19)  \
+        X(FIXED,        FixedType,   20)  \
+        X(NAMESPACE,    Namespace,   21)  \
+        X(PARAM_PACK,   ParamPack,   22)  \
 
 
 #define X(f, _, i) SYM_##f = (1 << i),
