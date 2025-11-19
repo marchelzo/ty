@@ -28,13 +28,7 @@ typedef struct {
         Expr *expr;
 } OperatorSpec;
 
-typedef struct {
-        u64 key;
-        i32 ref;
-} CacheEntry;
-
 typedef vec(OperatorSpec) DispatchList;
-typedef vec(CacheEntry)   DispatchCache;
 
 typedef struct {
         TyRwLock      lock;
@@ -42,7 +36,6 @@ typedef struct {
         DispatchList  defs;
         Type *op0;
 } DispatchGroup;
-
 
 static struct {
         TyRwLock             lock;
@@ -117,11 +110,11 @@ check_slow(DispatchList const *list, i32 t1, i32 t2)
                         return op->ref;
                 }
                 if (
-                        class_is_subclass(ty, t1, op->t1) &&
-                        class_is_subclass(ty, t2, op->t2) &&
-                        (
-                                (match == NULL) ||
-                                are_ordered(op, match)
+                        class_is_subclass(ty, t1, op->t1)
+                     && class_is_subclass(ty, t2, op->t2)
+                     && (
+                                (match == NULL)
+                             || are_ordered(op, match)
                         )
                 ) {
                         match = op;
@@ -199,8 +192,8 @@ op_add(i32 op, i32 t1, i32 t2, i32 ref, Expr *expr)
         TyRwLockWrUnlock(&group->lock);
 }
 
-i32
-op_dispatch(i32 op, i32 t1, i32 t2)
+static i32
+op_xdispatch(i32 op, i32 t1, i32 t2)
 {
         u64 key = key_for(t1, t2);
 
@@ -228,6 +221,34 @@ op_dispatch(i32 op, i32 t1, i32 t2)
 
                 TyRwLockWrUnlock(&group->lock);
         }
+
+        return ref;
+}
+
+i32
+op_dispatch(Ty *ty, i32 op, i32 t1, i32 t2)
+{
+        u64 key = key_for(t1, t2);
+
+        if (op >= vN(ty->_2op_cache)) {
+                goto SlowPath;
+        }
+
+        DispatchCache *cache = v_(ty->_2op_cache, op);
+        i32 ref = check_cache(cache, key);
+
+        if (ref > 0) {
+                return ref;
+        }
+
+SlowPath:
+        ref = op_xdispatch(op, t1, t2);
+
+        while (vN(ty->_2op_cache) <= op) {
+                xvP(ty->_2op_cache, ((DispatchCache) {0}));
+        }
+
+        update_cache(v_(ty->_2op_cache, op), key, ref);
 
         return ref;
 }
