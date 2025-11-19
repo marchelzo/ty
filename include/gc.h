@@ -95,7 +95,7 @@ CheckUsed(Ty *ty)
         )) {
                 GCLOG("Running GC. Used = %zu MB, Limit = %zu MB", MemoryUsed / 1000000, MemoryLimit / 1000000);
                 DoGC(ty);
-                GCLOG("DoGC(ty) returned: %zu MB still in use", MemoryUsed / 1000000);
+                GCLOG("DoGC() returned: %zu MB still in use", MemoryUsed / 1000000);
                 while (MemoryUsed >= MemoryLimit) {
                         MemoryLimit <<= 1;
                 }

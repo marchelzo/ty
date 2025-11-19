@@ -72,7 +72,7 @@ extern int EnableLogging;
                         funlockfile(stderr);                             \
                 } while (0)
 #else
-#define GCLOG LOG
+#define GCLOG(...) LOG(__VA_ARGS__)
 #endif
 
 #endif
