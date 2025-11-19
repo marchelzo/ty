@@ -2,7 +2,7 @@ import ffi as c (C!)
 import ptr
 
 if not let $libxml = c.open(['xml2', 'xml2-2']) {
-    throw "Failed to load libxml2"
+    throw RuntimeError("Failed to load libxml2")
 }
 
 tag XMLError;
@@ -14,7 +14,7 @@ pub ns xpath {
     pub tag NodeSet;
 }
 
-ns defs {
+ ns defs {
     pub const xmlError            = c.int
     pub const xmlParserErrors     = c.int
     pub const xmlParserInputState = c.int
@@ -1386,31 +1386,31 @@ C! struct CXMLAttr {
 
 class XMLAttr < CXMLAttr {
     children() {
-        if let $p = CXMLNode.children.apply(self) {
+        if let $p = super() {
             XMLNode(p)
         }
     }
 
     parent() {
-        if let $p = CXMLNode.parent.apply(self) {
+        if let $p = super() {
             XMLNode(p)
         }
     }
 
     next() {
-        if let $p = CXMLNode.next.apply(self) {
+        if let $p = super() {
             XMLNode(p)
         }
     }
 
     prev() {
-        if let $p = CXMLNode.prev.apply(self) {
+        if let $p = super() {
             XMLNode(p)
         }
     }
 
     last() {
-        if let $p = CXMLNode.last.apply(self) {
+        if let $p = super() {
             XMLNode(p)
         }
     }
@@ -1916,6 +1916,10 @@ class XMLAttrSet {
         self[name]
     }
 
+    __missing__=(name: String, val: String) {
+        self[name] = val
+    }
+
     dict -> Dict[String, String] {
         if let $props = __node.properties {
             let propMap = %{}
@@ -2223,7 +2227,7 @@ pub fn parse(
     Document(xmlReadDoc(doc, url, encoding, options))
 }
 
-pub fn xml(parts) {
+pub fn xml(parts: Array[Any]) -> Document {
     let buf = Blob()
     let holes = []
 
@@ -2271,28 +2275,3 @@ pub fn xml(parts) {
 
     doc
 }
-
-#|if 0
-pub fn test(node: XMLNode) -> Document {
-    cast(xml"<main><test based=\"true\">Fresh strawberries.{node}</test></main>")
-}
-
-pub fn test2() {
-    let doc = parse('''
-        <based>
-            Here is some text.
-            <keyed id="based">Raspberries</keyed>
-            <keyed id="cringe">Mangoes</keyed>
-        </based>
-    ''')
-
-    doc.register-func('lowkey', fn (x) {
-        dbg(x)
-        0
-    })
-
-    for node in doc['//keyed[lowkey(.)]'] {
-        print(node)
-    }
-}
-#|]
