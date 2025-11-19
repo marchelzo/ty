@@ -22,7 +22,7 @@ BufferCString(Value const *v)
 
         switch (v->type) {
         case VALUE_STRING:
-                xvPn(Buffer, v->str, v->bytes);
+                xvPn(Buffer, ss(*v), sN(*v));
                 xvP(Buffer, '\0');
                 break;
         case VALUE_BLOB:
@@ -82,9 +82,9 @@ builtin_curl_trace(Ty *ty, int argc, Value *kwargs)
                 zP("curl.core.trace(): expected String but got: %s", VSC(&cfg));
         }
 
-        int n = min(sizeof buffer - 1, cfg.bytes);
+        int n = min(sizeof buffer - 1, sN(cfg));
 
-        memcpy(buffer, cfg.str, n);
+        memcpy(buffer, ss(cfg), n);
         buffer[n] = '\0';
 
         return INTEGER(curl_global_trace(buffer));
@@ -169,11 +169,13 @@ builtin_curl_mime_data(Ty *ty, int argc, Value *kwargs)
         Value data = ARG(1);
         switch (data.type) {
         case VALUE_STRING:
-                curl_mime_data(part.ptr, data.str, data.bytes);
+                curl_mime_data(part.ptr, (char const *)ss(data), sN(data));
                 break;
+
         case VALUE_BLOB:
-                curl_mime_data(part.ptr, data.blob->items, data.blob->count);
+                curl_mime_data(part.ptr, (char const *)vv(*data.blob), vN(*data.blob));
                 break;
+
         default:
                 zP("invalid data argument passed to curl::mime::data()");
         }
@@ -198,18 +200,20 @@ builtin_curl_mime_name(Ty *ty, int argc, Value *kwargs)
         Value name = ARG(1);
         switch (name.type) {
         case VALUE_STRING:
-                xvPn(Buffer, name.str, name.bytes);
+                xvPn(Buffer, ss(name), sN(name));
                 xvP(Buffer, '\0');
                 break;
+
         case VALUE_BLOB:
                 xvPn(Buffer, name.blob->items, name.blob->count);
                 xvP(Buffer, '\0');
                 break;
+
         default:
                 zP("invalid name argument passed to curl::mime::name()");
         }
 
-        curl_mime_name(part.ptr, name.str);
+        curl_mime_name(part.ptr, (char const *)ss(name));
 
         return NIL;
 }
@@ -278,10 +282,11 @@ builtin_curl_getinfo(Ty *ty, int argc, Value *kwargs)
 
         long rc;
 
-        switch (opt.integer) {
+        switch (opt.z) {
         case CURLINFO_RESPONSE_CODE:
                 curl_easy_getinfo(curl.ptr, CURLINFO_RESPONSE_CODE, &rc);
                 return INTEGER(rc);
+
         default:
                 return NIL;
         }
@@ -306,7 +311,7 @@ builtin_curl_setopt(Ty *ty, int argc, Value *kwargs)
 
         Value s;
 
-        switch (opt.integer) {
+        switch (opt.z) {
         case CURLOPT_URL:
         case CURLOPT_COOKIE:
         case CURLOPT_COOKIEFILE:
@@ -318,38 +323,44 @@ builtin_curl_setopt(Ty *ty, int argc, Value *kwargs)
                         zP("curl.setopt(): expected String, Blob, or pointer but got: %s", VSC(&s));
                 }
 
-                return INTEGER(curl_easy_setopt(curl.ptr, opt.integer, Buffer.items));
+                return INTEGER(curl_easy_setopt(curl.ptr, opt.z, Buffer.items));
+
         case CURLOPT_POST:
                 s = ARG(2);
                 if (s.type != VALUE_INTEGER) {
                         zP("the value of CURLOPT_POST must be an integer");
                 }
-                curl_easy_setopt(curl.ptr, CURLOPT_POST, (long)s.integer);
+                curl_easy_setopt(curl.ptr, CURLOPT_POST, (long)s.z);
                 break;
+
         case CURLOPT_POSTFIELDS:
         case CURLOPT_COPYPOSTFIELDS:
                 s = ARG(2);
                 switch (s.type) {
                 case VALUE_BLOB:
                         curl_easy_setopt(curl.ptr, CURLOPT_POSTFIELDSIZE, (long)s.blob->count);
-                        curl_easy_setopt(curl.ptr, opt.integer, s.blob->items);
+                        curl_easy_setopt(curl.ptr, opt.z, s.blob->items);
                         break;
+
                 case VALUE_STRING:
-                        curl_easy_setopt(curl.ptr, CURLOPT_POSTFIELDSIZE, (long)s.bytes);
-                        curl_easy_setopt(curl.ptr, opt.integer, s.str);
+                        curl_easy_setopt(curl.ptr, CURLOPT_POSTFIELDSIZE, (long)sN(s));
+                        curl_easy_setopt(curl.ptr, opt.z, ss(s));
                         break;
+
                 case VALUE_PTR:
                         if (argc > 3 && ARG(3).type == VALUE_INTEGER) {
-                                curl_easy_setopt(curl.ptr, CURLOPT_POSTFIELDSIZE, (long)ARG(3).integer);
+                                curl_easy_setopt(curl.ptr, CURLOPT_POSTFIELDSIZE, (long)ARG(3).z);
                         } else {
                                 curl_easy_setopt(curl.ptr, CURLOPT_POSTFIELDSIZE, -1L);
                         }
-                        curl_easy_setopt(curl.ptr, opt.integer, s.ptr);
+                        curl_easy_setopt(curl.ptr, opt.z, s.ptr);
                         break;
+
                 default:
                         zP("the value for the CURLOPT_POSTFIELDS option must be a string, a blob, or a pointer");
                 }
                 break;
+
         case CURLOPT_MIMEPOST:
                 s = ARG(2);
                 if (s.type != VALUE_PTR) {
@@ -357,29 +368,35 @@ builtin_curl_setopt(Ty *ty, int argc, Value *kwargs)
                 }
                 curl_easy_setopt(curl.ptr, CURLOPT_MIMEPOST, s.ptr);
                 break;
+
         case CURLOPT_HTTPHEADER:
                 s = ARG(2);
                 if (s.type != VALUE_PTR) {
                         zP("the value of CURLOPT_HTTPHEADER must be an pointer");
                 }
                 return INTEGER(curl_easy_setopt(curl.ptr, CURLOPT_HTTPHEADER, s.ptr));
+
         case CURLOPT_FOLLOWLOCATION:
                 s = ARG(2);
                 if (s.type != VALUE_BOOLEAN) {
                         zP("the value of CURLOPT_FOLLOWLOCATION must be a boolean");
                 }
                 return INTEGER(curl_easy_setopt(curl.ptr, CURLOPT_FOLLOWLOCATION, (long)s.boolean));
+
         case CURLOPT_VERBOSE:
                 s = ARG(2);
                 return INTEGER(curl_easy_setopt(curl.ptr, CURLOPT_VERBOSE, (long)s.boolean));
+
         case CURLOPT_DEBUGFUNCTION:
                 s = ARG(2);
                 return INTEGER(curl_easy_setopt(curl.ptr, CURLOPT_DEBUGFUNCTION, s.ptr));
+
         case CURLOPT_HTTP_VERSION:
                 s = ARG(2);
-                return INTEGER(curl_easy_setopt(curl.ptr, CURLOPT_HTTP_VERSION, (long)s.integer));
+                return INTEGER(curl_easy_setopt(curl.ptr, CURLOPT_HTTP_VERSION, (long)s.z));
+
         default:
-                zP("invalid option passed to curl::setopt(): %d", opt.integer);
+                zP("invalid option passed to curl::setopt(): %d", opt.z);
         }
 
         return NIL;
@@ -427,7 +444,7 @@ builtin_curl_strerror(Ty *ty, int argc, Value *kwargs)
         }
 
 
-        char const *msg = curl_easy_strerror(n.integer);
+        char const *msg = curl_easy_strerror(n.z);
 
         return STRING_NOGC(msg, strlen(msg));
 }
@@ -454,7 +471,7 @@ builtin_curl_url_strerror(Ty *ty, int argc, Value *kwargs)
         }
 
 #if LIBCURL_VERSION_NUM >= 0x075000
-        char const *s = curl_url_strerror(ARG(0).integer);
+        char const *s = curl_url_strerror(ARG(0).z);
 #else
         char const *s = "[curl_url_strerror not implemented]";
 #endif
@@ -499,7 +516,7 @@ builtin_curl_url_get(Ty *ty, int argc, Value *kwargs)
 
         char *content;
 
-        CURLUcode rc = curl_url_get(ARG(0).ptr, ARG(1).integer, &content, ARG(2).integer);
+        CURLUcode rc = curl_url_get(ARG(0).ptr, ARG(1).z, &content, ARG(2).z);
 
         if (rc != CURLUE_OK) {
                 return Err(ty, INTEGER(rc));
@@ -532,7 +549,7 @@ builtin_curl_url_set(Ty *ty, int argc, Value *kwargs)
         switch (ARG(2).type) {
         case VALUE_STRING:
                 Buffer.count = 0;
-                xvPn(Buffer, ARG(2).str, ARG(2).bytes);
+                xvPn(Buffer, ss(ARG(2)), sN(ARG(2)));
                 xvP(Buffer, '\0');
                 content = Buffer.items;
                 break;
@@ -553,7 +570,7 @@ builtin_curl_url_set(Ty *ty, int argc, Value *kwargs)
                 zP("curl.url.set(): expected integer as argument 4 but got: %s", value_show_color(ty, &ARG(3)));
         }
 
-        return INTEGER(curl_url_set(ARG(0).ptr, ARG(1).integer, content, ARG(3).integer));
+        return INTEGER(curl_url_set(ARG(0).ptr, ARG(1).z, content, ARG(3).z));
 }
 
 /* vim: set sts=8 sw=8 expandtab: */

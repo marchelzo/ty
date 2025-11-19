@@ -905,7 +905,16 @@ pub macro struct! {
                 )
             },
             _ => {
-                structArgs.push(ty.Arg(arg: $$[ do { let t = $$item; ($${type}(t) == ptr::null) ? t : t.ctype() } $$]))
+                structArgs.push(
+                    ty.Arg(
+                        arg: $$[
+                            do {
+                                let t = $$item;
+                                ($${type}(t) == $${Ptr}) ? t : t.ctype()
+                            }
+                        $$]
+                    )
+                )
                 methods.push(
                     ty.Func(
                         name: name,

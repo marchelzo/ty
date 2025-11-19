@@ -2,7 +2,14 @@ import ty
 
 tag Code, Text, Expr, Embed, IfDef;
 
-pub function parse(s) {
+use TemplateToken =
+    Code[String]
+  | Text[String]
+  | Expr[String]
+  | Embed[String]
+  | IfDef[String, String]
+
+fn parse(s: String) -> Array[TemplateToken] {
     let ts = []
 
     function go(i, j) {
@@ -31,30 +38,67 @@ pub function parse(s) {
 
     go(0, 0)
 
-    return ts.filter!(${it != Text('')}).map(${
-        match it {
-            Text(s)     => ";_ety_push('{s.sub(/\\/, '\\\\').sub('\n', '\\n').sub('\'', '\\\'')}');",
-            Code(s)     => s,
-            Expr(s)     => ";_ety_push(str({s}));",
-            Embed(s)    => parse(slurp(s.strip())),
-            IfDef(v, s) => "ifdef {v} {s}"
-        }
-    }).str()
+    ts
 }
 
-pub function eval(s, env) {
-    let bindings = []
-
-    for k, v in env {
-        bindings.push("let {k} = env['{k}']")
+fn generate-code(tokens: Array[TemplateToken]) -> String {
+    let chunks = []
+    let string = []
+    
+    fn flush-string() {
+        if #string > 0 {
+            chunks.push("_ety_push(\"{string.str()}\");\n")
+            string = []
+        }
     }
 
-    let preamble = bindings.unlines()
+    for match tokens {
+       Text(s) => do {
+            string.push(
+                s.sub(/\\/, '\\\\')
+                 .sub('\n', '\\n')
+                 .sub('\'', '\\\'')
+            )
+        },
 
-    let b = Blob()
-    let _ety_push = b.push
+        Code(src) => do {
+            flush-string()
+            chunks.push("{src}\n")
+        },
 
-    __eval__("do \{{preamble};{s}\}")
+        Expr(expr) =>
+            string.push("\{{expr}\}"),
 
-    b.str()
+        Embed(path) => do {
+            flush-string()
+            let source = slurp(path.strip())
+            let tokens = parse(source)
+            chunks.push(generate-code(tokens))
+        },
+
+        IfDef(v, s) => do {
+            flush-string()
+            chunks.push("ifdef {v} {s}")
+        }
+    }
+    
+    flush-string()
+    
+    chunks.join()
+}
+
+pub fn compile(source, vars) -> _ {
+    let body = generate-code(parse(source))
+    let params = ["{v}: _" for v in vars].join(', ')
+    let prog = (
+        "(
+       \>  fn ({params}) \{
+       \>    let _ety_blob = ::blob();
+       \>    let _ety_push = _ety_blob.push;
+       \>    {body};
+       \>    _ety_blob.str!()
+       \>  \}
+       \>)"
+    )
+    return __eval__(prog)
 }

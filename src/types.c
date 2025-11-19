@@ -353,10 +353,10 @@ inline static char *
 mkcstr(Ty *ty, Value const *v)
 {
         if (v != NULL && v->type == VALUE_STRING) {
-                char *s = amA(v->bytes + 1);
+                char *s = amA(sN(*v) + 1);
 
-                memcpy(s, v->str, v->bytes);
-                s[v->bytes] = '\0';
+                memcpy(s, ss(*v), sN(*v));
+                s[sN(*v)] = '\0';
 
                 return s;
         } else {
@@ -10132,7 +10132,7 @@ TypeCheck(Ty *ty, Type *t0, Value const *v)
         switch (t0->type) {
         case TYPE_INTEGER:
                 return (v->type == VALUE_INTEGER)
-                    && (v->integer == t0->z);
+                    && (v->z == t0->z);
 
         case TYPE_VARIABLE:
         case TYPE_SUBSCRIPT:
@@ -10602,7 +10602,7 @@ type_from_ty(Ty *ty, Value const *v)
                         CompileError("expected type variable ID but got: %s", VSC(&inner));
                 }
                 t0 = NewType(ty, TYPE_VARIABLE);
-                t0->id = inner.integer;
+                t0->id = inner.z;
                 t0->level = 0;
                 t0->val = TVAR;
                 break;
@@ -10635,7 +10635,7 @@ RecordType:
                 for (int i = 0; i < vN(*inner.items[0].array); ++i) {
                         Value const id = unwrap(ty, v_(*inner.items[0].array, i));
                         if (id.type == VALUE_INTEGER) {
-                                avP(t0->bound, id.integer);
+                                avP(t0->bound, id.z);
                         } else if (id.type == VALUE_TYPE && IsTVar(id.ptr)) {
                                 avP(t0->bound, ((Type *)id.ptr)->id);
                         } else {

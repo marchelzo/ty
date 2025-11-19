@@ -213,8 +213,11 @@ class_init_object(Ty *ty, int class, struct itable *o)
                 vPx(o->values, NIL);
         }
 
-        if (!c->final) {
-                finalize(ty, c);
+        if (!c->really_final) {
+                if (!c->final) {
+                        finalize(ty, c);
+                }
+                really_finalize(ty, c);
         }
 }
 
@@ -379,13 +382,14 @@ class_resolve_all(Ty *ty, int class)
                 }
                 if (c != c0) {
                         finalize(ty, c);
-                        itable_copy_weak(ty, &c0->methods, &c->methods);
-                        itable_copy_weak(ty, &c0->getters, &c->getters);
-                        itable_copy_weak(ty, &c0->setters, &c->setters);
+                        itable_copy_weak(ty, &c0->fields,    &c->fields);
+                        itable_copy_weak(ty, &c0->methods,   &c->methods);
+                        itable_copy_weak(ty, &c0->getters,   &c->getters);
+                        itable_copy_weak(ty, &c0->setters,   &c->setters);
                         itable_copy_weak(ty, &c0->s_methods, &c->s_methods);
                         itable_copy_weak(ty, &c0->s_getters, &c->s_getters);
                         itable_copy_weak(ty, &c0->s_setters, &c->s_setters);
-                        itable_copy_weak(ty, &c0->s_fields, &c->s_fields);
+                        itable_copy_weak(ty, &c0->s_fields,  &c->s_fields);
                 }
         } while ((c = qget(ty, &sq, &i, j)) != NULL);
 
@@ -866,6 +870,18 @@ really_finalize(Ty *ty, Class *c)
 }
 
 static void
+cache_offsets(Ty *ty, Class *c, struct itable const *table, u8 type)
+{
+        for (int i = 0; i < vN(table->ids); ++i) {
+                i32 id = v__(table->ids, i);
+                while (vN(c->offsets) <= id) {
+                        xvP(c->offsets, -1);
+                }
+                *v_(c->offsets, id) = (type << 12) | (i16)i;
+        }
+}
+
+static void
 finalize(Ty *ty, Class *c)
 {
         if (c->final) {
@@ -881,6 +897,10 @@ finalize(Ty *ty, Class *c)
         }
 
         class_resolve_all(ty, c->i);
+
+        cache_offsets(ty, c, &c->fields,  OFF_FIELD);
+        cache_offsets(ty, c, &c->methods, OFF_METHOD);
+        cache_offsets(ty, c, &c->getters, OFF_GETTER);
 
         c->final = true;
 }

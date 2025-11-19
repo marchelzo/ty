@@ -90,6 +90,7 @@ itable_init(Ty *ty, struct itable *t)
         uvR(t->ids, 2);
         uvR(t->values, 2);
         t->class = -1;
+        t->diverged = false;
 }
 
 Value *

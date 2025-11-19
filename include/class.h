@@ -23,6 +23,8 @@ struct class {
 
         Class *super;
 
+        vec(i16) offsets;
+
         struct itable methods;
         struct itable getters;
         struct itable setters;
@@ -45,6 +47,13 @@ struct class {
 
         Type *type;
         Type *object_type;
+};
+
+enum {
+        OFF_FIELD  = 1,
+        OFF_METHOD = 2,
+        OFF_GETTER = 3,
+        OFF_MASK   = 0x0FFF
 };
 
 Class *

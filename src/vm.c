@@ -278,6 +278,9 @@ static int64_t LastReportRequest;
 bool PrintResult = false;
 FILE *DisassemblyOut = NULL;
 
+u64 HITS = 0;
+u64 MISSES = 0;
+
 #ifdef _WIN32
 typedef volatile long TyThreadState;
 #else
@@ -660,7 +663,7 @@ DoGC(Ty *ty)
 //====/ Builtin Values /======================================================================
 #define BUILTIN(f)    { .type = VALUE_BUILTIN_FUNCTION, .builtin_function = (f), .tags = 0 }
 #define FLOAT(x)      { .type = VALUE_REAL,             .real             = (x), .tags = 0 }
-#define INT(k)        { .type = VALUE_INTEGER,          .integer          = (k), .tags = 0 }
+#define INT(k)        { .type = VALUE_INTEGER,          .z                = (k), .tags = 0 }
 #define BOOL_(b)      { .type = VALUE_BOOLEAN,          .boolean          = (b), .tags = 0 }
 #define POINTER(p)    { .type = VALUE_PTR,              .ptr              = (p), .tags = 0 }
 #include "builtins.h"
@@ -708,7 +711,7 @@ add_builtins(Ty *ty, int ac, char **av)
                 xvP(Globals, builtins[i].value);
                 switch (ClassOf(v)) {
                 case CLASS_INT:
-                        sym->type = type_integer(ty, v->integer);
+                        sym->type = type_integer(ty, v->z);
                         break;
                 case CLASS_STRING:
                 case CLASS_BOOL:
@@ -1200,38 +1203,32 @@ xcall(Ty *ty, Value const *f, Value const *pSelf, int argc, int nkw, char *whenc
                 n += 1;
         }
 
-        gP(&kwargs);
-
-        /*
-         * If the function was declared with the form f(..., *extra) then we
-         * create an array and add any extra arguments to it.
-         */
-        if (irest != -1) {
+        if ((irest != -1) | (ikwargs != -1)) {
                 gP(&self);
+                gP(&kwargs);
+                if (irest != -1) {
 
-                int nExtra = max(argc - irest, 0);
-                Array *extra = vAn(nExtra);
+                        int nExtra = max(argc - irest, 0);
+                        Array *extra = vAn(nExtra);
 
-                gX();
+                        memcpy(v_(*extra, 0), v_(STACK, fp + irest), nExtra * sizeof (Value));
+                        extra->count = nExtra;
 
-                memcpy(v_(*extra, 0), v_(STACK, fp + irest), nExtra * sizeof (Value));
-                extra->count = nExtra;
+                        STACK.items[fp + irest] = ARRAY(extra);
 
-                STACK.items[fp + irest] = ARRAY(extra);
-
-                for (int i = irest + 1; i < argc; ++i) {
-                        STACK.items[fp + i] = NIL;
+                        for (int i = irest + 1; i < argc; ++i) {
+                                STACK.items[fp + i] = NIL;
+                        }
                 }
+                if (ikwargs != -1) {
+                        // FIXME: don't allocate a dict when there are no kwargs
+                        STACK.items[fp + ikwargs] = (nkw > 0) ? kwargs : DICT(dict_new(ty));
+                }
+                gX();
+                gX();
         }
 
-        if (ikwargs != -1) {
-                // FIXME: don't allocate a dict when there are no kwargs
-                STACK.items[fp + ikwargs] = (nkw > 0) ? kwargs : DICT(dict_new(ty));
-        }
-
-        /*
-         * Throw away extra arguments.
-         */
+        // Throw away extra args
         if (n > bound) {
                 STACK.count -= (n - bound);
         }
@@ -1241,9 +1238,10 @@ xcall(Ty *ty, Value const *f, Value const *pSelf, int argc, int nkw, char *whenc
         }
 
         xvP(FRAMES, FRAME(fp, *f, IP));
+        xvP(CALLS, whence);
 
-        /* Fill in keyword args (overwriting positional args) */
-        if (kwargs.type != VALUE_NIL) {
+        // Fill in kwargs (overwriting positional args)
+        if (!IsNil(kwargs)) {
                 char const *name = ((char *)f->info) + FUN_PARAM_NAMES;
                 for (int i = 0; i < np; ++i, name += strlen(name) + 1) {
                         if (i == irest || i == ikwargs) {
@@ -1257,10 +1255,6 @@ xcall(Ty *ty, Value const *f, Value const *pSelf, int argc, int nkw, char *whenc
                         }
                 }
         }
-
-        gX();
-
-        xvP(CALLS, whence);
 }
 
 static bool
@@ -1730,10 +1724,10 @@ vm_run_tdb(void *ctx)
                         Value state = vm_call(ty, hook, 0);
                         if (
                                 (state.type == VALUE_INTEGER)
-                             && (state.integer >= 0)
-                             && (state.integer < TDB_MAX_STATE)
+                             && (state.z >= 0)
+                             && (state.z < TDB_MAX_STATE)
                         ) {
-                                next = state.integer;
+                                next = state.z;
                         }
                 }
 
@@ -1939,7 +1933,7 @@ DoThrow(Ty *ty)
         //        XXX("Throw: %s", VSC(&ex));
         //        TY_STOP(DYING);
         //}
-        //xprint_stack(ty, 10);
+        //xprint_stack(ty, 5);
 
         for (;;) {
                 while (
@@ -2048,15 +2042,15 @@ Start:
                                 break;
                         if (UNLIKELY(r.type != VALUE_INTEGER))
                                 zP("iterator yielded non-integer array index in subscript expression: %s", VSC(&r));
-                        if (r.integer < 0)
-                                r.integer += container.array->count;
-                        if (r.integer < 0 || r.integer >= container.array->count) {
+                        if (r.z < 0)
+                                r.z += container.array->count;
+                        if (r.z < 0 || r.z >= container.array->count) {
                                 if (strict) goto Error;
                                 vAp(a, None);
                         } else if (strict) {
-                                vAp(a, container.array->items[r.integer]);
+                                vAp(a, container.array->items[r.z]);
                         } else {
-                                vAp(a, Some(container.array->items[r.integer]));
+                                vAp(a, Some(container.array->items[r.z]));
                         }
                 }
 
@@ -2096,15 +2090,15 @@ Start:
                                 break;
                         if (UNLIKELY(r.type != VALUE_INTEGER))
                                 zP("iterator yielded non-integer array index in subscript expression");
-                        if (r.integer < 0)
-                                r.integer += container.array->count;
-                        if (r.integer < 0 || r.integer >= container.array->count) {
+                        if (r.z < 0)
+                                r.z += container.array->count;
+                        if (r.z < 0 || r.z >= container.array->count) {
                                 if (strict) goto Error;
                                 vAp(a, None);
                         } else if (strict) {
-                                vAp(a, container.array->items[r.integer]);
+                                vAp(a, container.array->items[r.z]);
                         } else {
-                                vAp(a, Some(container.array->items[r.integer]));
+                                vAp(a, Some(container.array->items[r.z]));
                         }
                 }
 
@@ -2114,17 +2108,17 @@ Start:
 
                 return ARRAY(a);
         case VALUE_INTEGER:
-                if (subscript.integer < 0) {
-                        subscript.integer += container.array->count;
+                if (subscript.z < 0) {
+                        subscript.z += container.array->count;
                 }
 
-                if (subscript.integer < 0 || subscript.integer >= container.array->count) {
+                if (subscript.z < 0 || subscript.z >= container.array->count) {
                         if (strict) goto Error;
                         return None;
                 } else if (strict) {
-                        return container.array->items[subscript.integer];
+                        return container.array->items[subscript.z];
                 } else {
-                        return Some(container.array->items[subscript.integer]);
+                        return Some(container.array->items[subscript.z]);
                 }
         default:
                 zP(
@@ -2172,7 +2166,10 @@ search_i32(int const *zs, i32 z)
 TY_INSTR_INLINE static void
 DoTag(Ty *ty, int tag, int n, Value *kws)
 {
-        if (n == 1 && kws == NULL) {
+        if (
+                (n == 1)
+             && ((kws == NULL) || IsNil(*kws))
+        ) {
                 top()->tags = tags_push(ty, top()->tags, tag);
                 top()->type |= VALUE_TAGGED;
         } else {
@@ -2200,6 +2197,396 @@ ExecCurrentCall(Ty *ty)
 
 static void
 CallMethod(Ty *ty, int i, int n, int nkw, bool b);
+
+static Value
+BuildKwargsDict(Ty *ty, int nkw)
+{
+        if (nkw == 0) {
+                return NIL;
+        }
+
+        Dict *kwargs;
+
+        GC_STOP();
+        kwargs = dict_new(ty);
+        for (int i = 0; i < nkw; ++i, SKIPSTR()) {
+                if (top()->type == VALUE_NONE) {
+                        pop();
+                        continue;
+                }
+                if (IP[0] == '*') {
+                        if (top()->type == VALUE_DICT) {
+                                DictUpdate(ty, kwargs, top()->dict);
+                                pop();
+                        } else if (
+                                LIKELY(
+                                        top()->type == VALUE_TUPLE
+                                     && (top()->count == 0 || top()->ids != NULL)
+                                )
+                        ) {
+                                for (int i = 0; i < top()->count; ++i) {
+                                        if (top()->ids[i] != -1) {
+                                                dict_put_member(
+                                                        ty,
+                                                        kwargs,
+                                                        intern_entry(&xD.members, top()->ids[i])->name,
+                                                        top()->items[i]
+                                                );
+                                        }
+                                }
+                                pop();
+                        } else {
+                                zP(
+                                        "attempt to splat invalid value in function call: %s%s%s%s%s",
+                                        TERM(34),
+                                        TERM(1),
+                                        VSC(top()),
+                                        TERM(22),
+                                        TERM(39)
+                                );
+                        }
+                } else {
+                        dict_put_member(ty, kwargs, IP, pop());
+                }
+        }
+        GC_RESUME();
+
+        return DICT(kwargs);
+}
+
+static bool
+DoCall(Ty *ty, Value const *f, int n, int nkw, bool auto_this)
+{
+        Value v = *f;
+        Value *vp;
+        Value value;
+        Value subscript;
+        Value a, b;
+        imax k;
+
+        bool new_frame = false;
+
+        if (n == -1) {
+                n = STACK.count - *vvX(SP_STACK) - nkw;
+        }
+
+        /* TODO: optimize more tail calls */
+#if 0
+        if (tco) {
+                vvX(FRAMES);
+                IP = *vvX(CALLS);
+                tco = false;
+        }
+#endif
+
+        gP(auto_this ? v.this : &v);
+
+        Value kwargs = BuildKwargsDict(ty, nkw);
+
+        switch (v.type) {
+        case VALUE_FUNCTION:
+                if (!IsNil(kwargs)) {
+                        push(kwargs);
+                }
+                new_frame = call(ty, &v, NULL, n, nkw);
+                gX();
+                return new_frame;
+
+        case VALUE_BUILTIN_FUNCTION:
+                /*
+                 * Builtin functions may not preserve the stack size, so instead
+                 * of subtracting `n` after calling the builtin function, we compute
+                 * the desired final stack size in advance.
+                 *
+                 * XXX: ??
+                 */
+                gP(&kwargs);
+                k = vN(STACK) - n;
+                v = (*v.builtin_function)(ty, n, &kwargs);
+                gX();
+                gX();
+                STACK.count = k;
+                push(v);
+                if (UNLIKELY(TAKE_PENDING_SIGNALS())) {
+                        HandlePendingSignals(ty);
+                }
+                return false;
+
+        case VALUE_FOREIGN_FUNCTION:
+                k = vN(STACK) - n;
+                v = cffi_fast_call(ty, &v, n, NULL);
+                STACK.count = k;
+                push(v);
+                gX();
+                if (UNLIKELY(TAKE_PENDING_SIGNALS())) {
+                        HandlePendingSignals(ty);
+                }
+                return false;
+
+        case VALUE_GENERATOR:
+                gX();
+                call_co(ty, &v, n);
+                return false;
+
+        case VALUE_OPERATOR:
+                gX();
+                switch (n) {
+                case 1:
+                        DoUnaryOp(ty, v.uop, false);
+                        break;
+
+                case 2:
+                        b = pop();
+                        a = pop();
+                        push(vm_2op(ty, v.bop, &a, &b));
+                        break;
+
+                default:
+                        push(TAG(TAG_DISPATCH_ERR));
+                        RaiseException(ty);
+                        break;
+                }
+                return false;
+
+        case VALUE_TAG:
+                gP(&kwargs);
+                DoTag(ty, v.tag, n, &kwargs);
+                gX();
+                gX();
+                return false;
+
+        case VALUE_OBJECT:
+                vp = class_lookup_method_i(ty, v.class, NAMES.call);
+                if (vp == NULL) {
+                        goto NotCallable;
+                }
+                if (!IsNil(kwargs)) {
+                        push(kwargs);
+                }
+                new_frame = call(ty, vp, &v, n, nkw);
+                gX();
+                return new_frame;
+
+        case VALUE_CLASS:
+                if (v.class <= CLASS_PRIMITIVE && v.class != CLASS_OBJECT) {
+                        vp = class_lookup_method_i(ty, v.class, NAMES.init);
+                        if (LIKELY(vp != NULL)) {
+                                if (!IsNil(kwargs)) {
+                                        push(kwargs);
+                                }
+                                value = NONE;
+                                exec_fn(ty, vp, &value, n, nkw);
+                        } else {
+                                zP("built-in class has no init method. Was prelude loaded?");
+                        }
+                } else {
+                        value = OBJECT(object_new(ty, v.class), v.class);
+                        vp = class_lookup_method_i(ty, v.class, NAMES.init);
+                        if (vp != NULL) {
+                                if (!IsNil(kwargs)) {
+                                        push(kwargs);
+                                }
+                                gP(&value);
+                                exec_fn(ty, vp, &value, n, nkw);
+                                gX();
+                                pop();
+                        } else {
+                                STACK.count -= n;
+                        }
+                        push(value);
+                }
+                gX();
+                return false;
+
+        case VALUE_METHOD:
+                if (!IsNil(kwargs)) {
+                        push(kwargs);
+                }
+                if (v.name == NAMES.method_missing) {
+                        push(NIL);
+                        memmove(top() - (n - 1), top() - n, n * sizeof (Value));
+                        top()[-n++] = v.this[1];
+                }
+                new_frame = call(ty, v.method, v.this, n, nkw);
+                gX();
+                return new_frame;
+
+        case VALUE_REGEX:
+                if (UNLIKELY(n != 1)) {
+                        zP("Regex.__call__(): too many arguments (%d given, 1 expected)", n);
+                }
+                value = peek();
+                if (UNLIKELY(value.type != VALUE_STRING)) {
+                        zP("Regex.__call__(): expected String but got: %s", VSC(&value));
+                }
+                push(v);
+                v = string_match(ty, &value, 1, NULL);
+                pop();
+                *top() = v;
+                gX();
+                return false;
+
+        case VALUE_BUILTIN_METHOD:
+                gP(&kwargs);
+                v = v.builtin_method(ty, v.this, n, &kwargs);
+                gX();
+                STACK.count -= n;
+                push(v);
+                gX();
+                return false;
+
+        case VALUE_NIL:
+                STACK.count -= n;
+                push(NIL);
+                gX();
+                return false;
+
+        case VALUE_DICT:
+                value = peek();
+                push(v);
+                vp = dict_get_value(ty, v.dict, &value);
+                STACK.count -= (n + 1);
+                if (vp == NULL) {
+                        push(None);
+                } else {
+                        push(Some(*vp));
+                }
+                gX();
+                return false;
+
+        case VALUE_ARRAY:
+                subscript = peek();
+                push(v);
+                value = ArraySubscript(ty, v, subscript, false);
+                STACK.count -= (n + 1);
+                push(value);
+                gX();
+                return false;
+
+        NotCallable:
+        default:
+                zP("attempt to call non-callable value %s", VSC(&v));
+        }
+}
+
+inline static i16
+FastFieldOffset(Ty *ty, Value const *v, i32 id)
+{
+        if (v->type != VALUE_OBJECT || v->object->diverged) {
+                return -1;
+        }
+
+        Class *class = class_get(ty, v->class);
+
+        if (id >= vN(class->offsets)) {
+                return -1;
+        }
+
+        return v__(class->offsets, id);
+}
+
+inline static Value *
+TargetFieldFast(Ty *ty, Value *v, i32 id)
+{
+        i16 off = FastFieldOffset(ty, v, id);
+        if (off < 0) {
+                return NULL;
+        }
+
+        u8 type = (off >> 12);
+        off &= 0x0FFF;
+
+        switch (type) {
+        case OFF_FIELD:
+                return v_(v->object->values, off);
+
+        default:
+                return NULL;
+        }
+}
+
+inline static Value
+LoadFieldFast(Ty *ty, Value *v, i32 id)
+{
+        i16 off = FastFieldOffset(ty, v, id);
+        if (off < 0) {
+                return NONE;
+        }
+
+        u8 type = (off >> 12);
+        off &= 0x0FFF;
+
+        Value *vp;
+        Value *this;
+
+        Class *class = class_get(ty, v->class);
+
+        switch (type) {
+        case OFF_FIELD:
+                return v__(v->object->values, off);
+
+        case OFF_GETTER:
+                vp = v_(class->getters.values, off);
+                call(ty, vp, v, 0, 0);
+                return BREAK;
+
+        case OFF_METHOD:
+                vp = v_(class->methods.values, off);
+                this = mAo(sizeof *this, GC_VALUE);
+                *this = *v;
+                return METHOD(id, vp, this);
+        }
+
+        UNREACHABLE();
+}
+
+inline static bool
+DispatchMethodFast(Ty *ty, Value self, i32 id, int argc, int nkw)
+{
+        Value *v = &self;
+
+        i16 off = FastFieldOffset(ty, v, id);
+        if (off < 0) {
+                return false;
+        }
+
+        u8 type = (off >> 12);
+        off &= 0x0FFF;
+
+        Value *vp;
+        Value fn;
+
+        Class *class = class_get(ty, v->class);
+
+        switch (type) {
+        case OFF_FIELD:
+                pop();
+                DoCall(ty, v_(v->object->values, off), argc, nkw, false);
+                break;
+
+        case OFF_GETTER:
+                vp = v_(class->getters.values, off);
+                exec_fn(ty, vp, v, 0, 0);
+                fn = pop();
+                pop();
+                DoCall(ty, &fn, argc, nkw, false);
+                break;
+
+        case OFF_METHOD:
+                vp = v_(class->methods.values, off);
+                pop();
+                if (nkw > 0) {
+                        push(BuildKwargsDict(ty, nkw));
+                }
+                call(ty, vp, v, argc, nkw);
+                break;
+
+        default:
+                UNREACHABLE();
+        }
+
+        return true;
+}
 
 Value
 GetMember(Ty *ty, Value v, int member, bool try_missing, bool exec)
@@ -2450,303 +2837,6 @@ BoundMethod:
         return NONE;
 }
 
-static bool
-DoCall(Ty *ty, Value const *f, int n, int nkw, bool AutoThis)
-{
-        Value v = *f;
-        Value *vp;
-        Value value;
-        Value container;
-        Value subscript;
-        Value a, b;
-        imax k;
-
-        bool new_frame = false;
-
-        if (n == -1) {
-                n = STACK.count - *vvX(SP_STACK) - nkw;
-        }
-
-        /* TODO: optimize more tail calls */
-#if 0
-        if (tco) {
-                vvX(FRAMES);
-                IP = *vvX(CALLS);
-                tco = false;
-        }
-#endif
-
-        /*
-         * Move all the keyword args into a dict.
-         *
-         *   TODO: find a better way of handling kwargs
-         *
-         *   Right now there's way too much branching on (nkw > 0), and we have
-         *   to worry about popping the kwargs dict from the stack for any cases
-         *   that don't use call()
-         *
-         *   Overall very cringe...
-         */
-        if (nkw > 0) {
-                if (!AutoThis) {
-                        gP(&v);
-                } else {
-                        gP(v.this);
-                        AutoThis = false;
-                }
-                GC_STOP();
-                container = DICT(dict_new(ty));
-                for (int i = 0; i < nkw; ++i, SKIPSTR()) {
-                        if (top()->type == VALUE_NONE) {
-                                pop();
-                                continue;
-                        }
-                        if (IP[0] == '*') {
-                                if (top()->type == VALUE_DICT) {
-                                        DictUpdate(ty, container.dict, top()->dict);
-                                        pop();
-                                } else if (
-                                        LIKELY(
-                                                top()->type == VALUE_TUPLE
-                                             && (top()->count == 0 || top()->ids != NULL)
-                                        )
-                                ) {
-                                        for (int i = 0; i < top()->count; ++i) {
-                                                if (top()->ids[i] != -1) {
-                                                        dict_put_member(
-                                                                ty,
-                                                                container.dict,
-                                                                intern_entry(&xD.members, top()->ids[i])->name,
-                                                                top()->items[i]
-                                                        );
-                                                }
-                                        }
-                                        pop();
-                                } else {
-                                        zP(
-                                                "attempt to splat invalid value in function call: %s%s%s%s%s",
-                                                TERM(34),
-                                                TERM(1),
-                                                VSC(top()),
-                                                TERM(22),
-                                                TERM(39)
-                                        );
-                                }
-                        } else {
-                                dict_put_member(ty, container.dict, IP, pop());
-                        }
-                }
-                push(container);
-                GC_RESUME();
-        } else {
-                container = NIL;
-                if (!AutoThis) {
-                        gP(&v);
-                } else {
-                        gP(v.this);
-                        AutoThis = false;
-                }
-        }
-
-        switch (v.type) {
-        case VALUE_FUNCTION:
-                new_frame = call(ty, &v, NULL, n, nkw);
-                gX();
-                return new_frame;
-
-        case VALUE_BUILTIN_FUNCTION:
-                /*
-                 * Builtin functions may not preserve the stack size, so instead
-                 * of subtracting `n` after calling the builtin function, we compute
-                 * the desired final stack size in advance.
-                 *
-                 * XXX: ??
-                 */
-                if (nkw > 0) {
-                        container = pop();
-                        gP(&container);
-                        k = vN(STACK) - n;
-                        v = (*v.builtin_function)(ty, n, &container);
-                        gX();
-                } else {
-                        k = vN(STACK) - n;
-                        v = (*v.builtin_function)(ty, n, NULL);
-                }
-
-                STACK.count = k;
-                push(v);
-
-                if (UNLIKELY(TAKE_PENDING_SIGNALS())) {
-                        HandlePendingSignals(ty);
-                }
-                gX();
-                return false;
-
-        case VALUE_FOREIGN_FUNCTION:
-                if (nkw > 0) {
-                        container = pop();
-                        gP(&container);
-                        v = cffi_fast_call(ty, &v, n, &container);
-                        gX();
-                } else {
-                        v = cffi_fast_call(ty, &v, n, NULL);
-                }
-                STACK.count -= n;
-                push(v);
-                gX();
-                return false;
-
-        case VALUE_GENERATOR:
-                gX();
-                if (nkw > 0) { pop(); }
-                call_co(ty, &v, n);
-                return false;
-
-        case VALUE_OPERATOR:
-                gX();
-
-                if (nkw > 0) pop();
-
-                switch (n) {
-                case 1:
-                        DoUnaryOp(ty, v.uop, false);
-                        break;
-
-                case 2:
-                        b = pop();
-                        a = pop();
-                        push(vm_2op(ty, v.bop, &a, &b));
-                        break;
-
-                default:
-                        push(TAG(TAG_DISPATCH_ERR));
-                        RaiseException(ty);
-                        break;
-                }
-                return false;
-
-        case VALUE_TAG:
-                if (nkw > 0) {
-                        container = pop();
-                        DoTag(ty, v.tag, n, &container);
-                } else {
-                        DoTag(ty, v.tag, n, NULL);
-                }
-                gX();
-                return false;
-
-        case VALUE_OBJECT:
-                vp = class_lookup_method_i(ty, v.class, NAMES.call);
-                if (vp == NULL) {
-                        goto NotCallable;
-                }
-                new_frame = call(ty, vp, &v, n, nkw);
-                gX();
-                return new_frame;
-
-        case VALUE_CLASS:
-                if (v.class <= CLASS_PRIMITIVE && v.class != CLASS_OBJECT) {
-                        vp = class_lookup_method_i(ty, v.class, NAMES.init);
-                        if (LIKELY(vp != NULL)) {
-                                value = NONE;
-                                exec_fn(ty, vp, &value, n, nkw);
-                        } else {
-                                zP("built-in class has no init method. Was prelude loaded?");
-                        }
-                } else {
-                        value = OBJECT(object_new(ty, v.class), v.class);
-                        vp = class_lookup_method_i(ty, v.class, NAMES.init);
-                        if (vp != NULL) {
-                                gP(&value);
-                                exec_fn(ty, vp, &value, n, nkw);
-                                gX();
-                                pop();
-                        } else {
-                                STACK.count -= n + (nkw > 0);
-                        }
-                        push(value);
-                }
-                gX();
-                return false;
-
-        case VALUE_METHOD:
-                if (v.name == NAMES.method_missing) {
-                        push(NIL);
-                        memmove(top() - (n - 1), top() - n, n * sizeof (Value));
-                        top()[-n++] = v.this[1];
-                }
-                new_frame = call(ty, v.method, v.this, n, nkw);
-                gX();
-                return new_frame;
-
-        case VALUE_REGEX:
-                if (nkw > 0) {
-                        pop();
-                }
-                if (UNLIKELY(n != 1)) {
-                        zP("Regex.__call__(): too many arguments (%d given, 1 expected)", n);
-                }
-                value = peek();
-                if (UNLIKELY(value.type != VALUE_STRING)) {
-                        zP("Regex.__call__(): expected String but got: %s", VSC(&value));
-                }
-                push(v);
-                v = string_match(ty, &value, 1, NULL);
-                pop();
-                *top() = v;
-                gX();
-                return false;
-
-        case VALUE_BUILTIN_METHOD:
-                if (nkw > 0) {
-                        container = pop();
-                        gP(&container);
-                        v = v.builtin_method(ty, v.this, n, &container);
-                        gX();
-                } else {
-                        v = v.builtin_method(ty, v.this, n, NULL);
-                }
-                STACK.count -= n;
-                push(v);
-                gX();
-                return false;
-
-        case VALUE_NIL:
-                STACK.count -= n + (nkw > 0);
-                push(NIL);
-                gX();
-                return false;
-
-        case VALUE_DICT:
-                if (nkw > 0) { pop(); }
-                value = peek();
-                push(v);
-                vp = dict_get_value(ty, v.dict, &value);
-                STACK.count -= (n + 1);
-                if (vp == NULL) {
-                        push(None);
-                } else {
-                        push(Some(*vp));
-                }
-                gX();
-                return false;
-
-        case VALUE_ARRAY:
-                if (nkw > 0) { pop(); }
-                subscript = peek();
-                push(v);
-                value = ArraySubscript(ty, v, subscript, false);
-                STACK.count -= (n + 1);
-                push(value);
-                gX();
-                return false;
-
-        NotCallable:
-        default:
-                zP("attempt to call non-callable value %s", VSC(&v));
-        }
-}
-
 static int
 GetDynamicMemberId(Ty *ty, bool strict)
 {
@@ -2760,7 +2850,7 @@ GetDynamicMemberId(Ty *ty, bool strict)
 
                 SCRATCH_SAVE();
 
-                svPn(name, v.str, v.bytes);
+                svPn(name, ss(v), sN(v));
                 svP(name, '\0');
 
                 member = intern_get(&xD.members, v_(name, 0));
@@ -2931,6 +3021,9 @@ CallMethod(Ty *ty, int i, int n, int nkw, bool b)
                 break;
 
         case VALUE_OBJECT:
+                if (DispatchMethodFast(ty, value, i, n, nkw)) {
+                        return;
+                }
                 class = value.class;
 ClassLookup:
                 vp = class_lookup_method_i(ty, class, i);
@@ -3016,16 +3109,16 @@ name(Ty *ty)                                                                    
                                                                                 \
         switch (PACK_TYPES(top()[-1].type, top()[0].type)) {                    \
         case PAIR_OF(VALUE_INTEGER):                                            \
-                v = BOOLEAN(top()[-1].integer op top()[0].integer);             \
+                v = BOOLEAN(top()[-1].z op top()[0].z);                         \
                 break;                                                          \
         case PAIR_OF(VALUE_REAL):                                               \
                 v = BOOLEAN(top()[-1].real op top()[0].real);                   \
                 break;                                                          \
         case PACK_TYPES(VALUE_INTEGER, VALUE_REAL):                             \
-                v = BOOLEAN(top()[-1].integer op top()[0].real);                \
+                v = BOOLEAN(top()[-1].z op top()[0].real);                      \
                 break;                                                          \
         case PACK_TYPES(VALUE_REAL, VALUE_INTEGER):                             \
-                v = BOOLEAN(top()[-1].real op top()[0].integer);                \
+                v = BOOLEAN(top()[-1].real op top()[0].z);                      \
                 break;                                                          \
         default:                                                                \
                 v = vm_try_2op(ty, eop, top() - 1, top());                      \
@@ -3111,7 +3204,7 @@ DoNeg(Ty *ty, bool exec)
         Value v = pop();
 
         if (v.type == VALUE_INTEGER) {
-                push(INTEGER(-v.integer));
+                push(INTEGER(-v.z));
         } else if (v.type == VALUE_REAL) {
                 push(REAL(-v.real));
         } else {
@@ -3257,7 +3350,7 @@ DoMutDiv(Ty *ty)
                 if (UNLIKELY(top()->type != VALUE_INTEGER)) {
                         zP("attempt to divide byte by non-integer: %s", VSC(top()));
                 }
-                b = ((Blob *)vZ(TARGETS)->gc)->items[((uptr)vp) >> 3] /= pop().integer;
+                b = ((Blob *)vZ(TARGETS)->gc)->items[((uptr)vp) >> 3] /= pop().z;
                 push(INTEGER(b));
                 break;
 
@@ -3307,7 +3400,7 @@ DoMutMod(Ty *ty)
                 if (UNLIKELY(top()->type != VALUE_INTEGER)) {
                         zP("attempt to divide byte by non-integer: %s", VSC(top()));
                 }
-                b = ((struct blob *)TARGETS.items[TARGETS.count].gc)->items[((uptr)vp) >> 3] %= pop().integer;
+                b = ((struct blob *)TARGETS.items[TARGETS.count].gc)->items[((uptr)vp) >> 3] %= pop().z;
                 push(INTEGER(b));
                 break;
         case 2:
@@ -3354,7 +3447,7 @@ DoMutMul(Ty *ty)
                 if (UNLIKELY(top()->type != VALUE_INTEGER)) {
                         zP("attempt to multiply byte by non-integer");
                 }
-                b = ((struct blob *)TARGETS.items[TARGETS.count].gc)->items[((uptr)vp) >> 3] *= pop().integer;
+                b = ((struct blob *)TARGETS.items[TARGETS.count].gc)->items[((uptr)vp) >> 3] *= pop().z;
                 push(INTEGER(b));
                 break;
         case 2:
@@ -3384,7 +3477,7 @@ DoMutSub(Ty *ty)
         case 0:
                 switch (PACK_TYPES(vp->type, top()->type)) {
                 case PAIR_OF(VALUE_INTEGER):
-                        vp->integer -= top()->integer;
+                        vp->z -= top()->z;
                         pop();
                         break;
                 case PAIR_OF(VALUE_REAL):
@@ -3393,12 +3486,12 @@ DoMutSub(Ty *ty)
                         break;
                 case PACK_TYPES(VALUE_INTEGER, VALUE_REAL):
                         vp->type = VALUE_REAL;
-                        vp->real = vp->integer;
+                        vp->real = vp->z;
                         vp->real -= top()->real;
                         pop();
                         break;
                 case PACK_TYPES(VALUE_REAL, VALUE_INTEGER):
-                        vp->real -= top()->integer;
+                        vp->real -= top()->z;
                         pop();
                         break;
                 case PAIR_OF(VALUE_DICT):
@@ -3424,7 +3517,7 @@ DoMutSub(Ty *ty)
                 if (UNLIKELY(top()->type != VALUE_INTEGER)) {
                         zP("attempt to subtract non-integer from byte");
                 }
-                b = ((struct blob *)TARGETS.items[TARGETS.count].gc)->items[((uptr)vp) >> 3] -= pop().integer;
+                b = ((struct blob *)TARGETS.items[TARGETS.count].gc)->items[((uptr)vp) >> 3] -= pop().z;
                 push(INTEGER(b));
                 break;
         case 2:
@@ -3454,7 +3547,7 @@ DoMutAdd(Ty *ty)
         case 0:
                 switch (PACK_TYPES(vp->type, top()->type)) {
                 case PAIR_OF(VALUE_INTEGER):
-                        vp->integer += top()->integer;
+                        vp->z += top()->z;
                         pop();
                         break;
                 case PAIR_OF(VALUE_REAL):
@@ -3463,12 +3556,12 @@ DoMutAdd(Ty *ty)
                         break;
                 case PACK_TYPES(VALUE_INTEGER, VALUE_REAL):
                         vp->type = VALUE_REAL;
-                        vp->real = vp->integer;
+                        vp->real = vp->z;
                         vp->real += top()->real;
                         pop();
                         break;
                 case PACK_TYPES(VALUE_REAL, VALUE_INTEGER):
-                        vp->real += top()->integer;
+                        vp->real += top()->z;
                         pop();
                         break;
                 case PAIR_OF(VALUE_ARRAY):
@@ -3499,7 +3592,7 @@ DoMutAdd(Ty *ty)
                 if (UNLIKELY(top()->type != VALUE_INTEGER)) {
                         zP("attempt to add non-integer to byte");
                 }
-                b = ((struct blob *)TARGETS.items[TARGETS.count].gc)->items[((uptr)vp) >> 3] += pop().integer;
+                b = ((struct blob *)TARGETS.items[TARGETS.count].gc)->items[((uptr)vp) >> 3] += pop().z;
                 push(INTEGER(b));
                 break;
         case 2:
@@ -3529,8 +3622,8 @@ DoMutAnd(Ty *ty)
         case 0:
                 switch (PACK_TYPES(vp->type, top()->type)) {
                 case PAIR_OF(VALUE_INTEGER):
-                        vp->integer &= top()->integer;
-                        top()->integer = vp->integer;
+                        vp->z &= top()->z;
+                        top()->z = vp->z;
                         break;
                 case PAIR_OF(VALUE_BOOLEAN):
                         vp->boolean &= top()->boolean;
@@ -3553,7 +3646,7 @@ DoMutAnd(Ty *ty)
                 if (UNLIKELY(top()->type != VALUE_INTEGER)) {
                         zP("attempt to AND byte with non-integer");
                 }
-                b = ((Blob *)TARGETS.items[TARGETS.count].gc)->items[((uptr)vp) >> 3] &= pop().integer;
+                b = ((Blob *)TARGETS.items[TARGETS.count].gc)->items[((uptr)vp) >> 3] &= pop().z;
                 push(INTEGER(b));
                 break;
         case 2:
@@ -3583,8 +3676,8 @@ DoMutOr(Ty *ty)
         case 0:
                 switch (PACK_TYPES(vp->type, top()->type)) {
                 case PAIR_OF(VALUE_INTEGER):
-                        vp->integer |= top()->integer;
-                        top()->integer = vp->integer;
+                        vp->z |= top()->z;
+                        top()->z = vp->z;
                         break;
                 case PAIR_OF(VALUE_BOOLEAN):
                         vp->boolean |= top()->boolean;
@@ -3607,7 +3700,7 @@ DoMutOr(Ty *ty)
                 if (UNLIKELY(top()->type != VALUE_INTEGER)) {
                         zP("attempt to OR byte with non-integer");
                 }
-                b = ((Blob *)TARGETS.items[TARGETS.count].gc)->items[((uptr)vp) >> 3] |= pop().integer;
+                b = ((Blob *)TARGETS.items[TARGETS.count].gc)->items[((uptr)vp) >> 3] |= pop().z;
                 push(INTEGER(b));
                 break;
 
@@ -3639,8 +3732,8 @@ DoMutXor(Ty *ty)
         case 0:
                 switch (PACK_TYPES(vp->type, top()->type)) {
                 case PAIR_OF(VALUE_INTEGER):
-                        vp->integer ^= top()->integer;
-                        top()->integer = vp->integer;
+                        vp->z ^= top()->z;
+                        top()->z = vp->z;
                         break;
                 case PAIR_OF(VALUE_BOOLEAN):
                         vp->boolean ^= top()->boolean;
@@ -3662,7 +3755,7 @@ DoMutXor(Ty *ty)
                 if (UNLIKELY(top()->type != VALUE_INTEGER)) {
                         zP("attempt to XOR byte with non-integer");
                 }
-                b = ((Blob *)TARGETS.items[TARGETS.count].gc)->items[((uptr)vp) >> 3] ^= pop().integer;
+                b = ((Blob *)TARGETS.items[TARGETS.count].gc)->items[((uptr)vp) >> 3] ^= pop().z;
                 push(INTEGER(b));
                 break;
         case 2:
@@ -3692,8 +3785,8 @@ DoMutShl(Ty *ty)
         case 0:
                 switch (PACK_TYPES(vp->type, top()->type)) {
                 case PAIR_OF(VALUE_INTEGER):
-                        vp->integer <<= top()->integer;
-                        top()->integer = vp->integer;
+                        vp->z <<= top()->z;
+                        top()->z = vp->z;
                         break;
                 default:
                         x = pop();
@@ -3712,7 +3805,7 @@ DoMutShl(Ty *ty)
                 if (UNLIKELY(top()->type != VALUE_INTEGER)) {
                         zP("attempt to left-shift byte by non-integer");
                 }
-                b = ((Blob *)TARGETS.items[TARGETS.count].gc)->items[((uptr)vp) >> 3] <<= pop().integer;
+                b = ((Blob *)TARGETS.items[TARGETS.count].gc)->items[((uptr)vp) >> 3] <<= pop().z;
                 push(INTEGER(b));
                 break;
 
@@ -3744,8 +3837,8 @@ DoMutShr(Ty *ty)
         case 0:
                 switch (PACK_TYPES(vp->type, top()->type)) {
                 case PAIR_OF(VALUE_INTEGER):
-                        vp->integer >>= top()->integer;
-                        top()->integer = vp->integer;
+                        vp->z >>= top()->z;
+                        top()->z = vp->z;
                         break;
                 default:
                         x = pop();
@@ -3764,7 +3857,7 @@ DoMutShr(Ty *ty)
                 if (UNLIKELY(top()->type != VALUE_INTEGER)) {
                         zP("attempt to right-shift byte by non-integer");
                 }
-                b = ((Blob *)TARGETS.items[TARGETS.count].gc)->items[((uptr)vp) >> 3] >>= pop().integer;
+                b = ((Blob *)TARGETS.items[TARGETS.count].gc)->items[((uptr)vp) >> 3] >>= pop().z;
                 push(INTEGER(b));
                 break;
 
@@ -3801,7 +3894,7 @@ DoAssign(Ty *ty)
                 break;
 
         case 1:
-                ((struct blob *)TARGETS.items[TARGETS.count].gc)->items[((uptr)v >> 3)] = peek().integer;
+                ((struct blob *)TARGETS.items[TARGETS.count].gc)->items[((uptr)v >> 3)] = peek().z;
                 break;
 
         case 2:
@@ -3947,15 +4040,15 @@ DoTargetSubscript(Ty *ty)
                 if (UNLIKELY(subscript.type != VALUE_INTEGER)) {
                         zP("non-integer array index used in subscript assignment");
                 }
-                if (subscript.integer < 0) {
-                        subscript.integer += vN(*container.array);
+                if (subscript.z < 0) {
+                        subscript.z += vN(*container.array);
                 }
-                if (UNLIKELY(subscript.integer < 0 || subscript.integer >= vN(*container.array))) {
+                if (UNLIKELY(subscript.z < 0 || subscript.z >= vN(*container.array))) {
                         push(TAGGED(TAG_INDEX_ERR, container, subscript));
                         RaiseException(ty);
                         return;
                 }
-                pushtarget(&container.array->items[subscript.integer], container.array);
+                pushtarget(&container.array->items[subscript.z], container.array);
                 break;
 
         case VALUE_DICT:
@@ -3966,14 +4059,14 @@ DoTargetSubscript(Ty *ty)
                 if (UNLIKELY(subscript.type != VALUE_INTEGER)) {
                         zP("non-integer index in subscript assignment to Blob: %s", VSC(&subscript));
                 }
-                if (subscript.integer < 0) {
-                        subscript.integer += vN(*container.blob);
+                if (subscript.z < 0) {
+                        subscript.z += vN(*container.blob);
                 }
-                if (subscript.integer < 0 || subscript.integer >= vN(*container.blob)) {
+                if (subscript.z < 0 || subscript.z >= vN(*container.blob)) {
                         push(TAGGED(TAG_INDEX_ERR, container, subscript));
                         RaiseException(ty);
                 }
-                pushtarget((Value *)((((uptr)(subscript.integer)) << 3) | 1) , container.blob);
+                pushtarget((Value *)((((uptr)(subscript.z)) << 3) | 1) , container.blob);
                 break;
 
         case VALUE_PTR:
@@ -4024,14 +4117,14 @@ DoAssignSubscript(Ty *ty)
                 if (UNLIKELY(subscript.type != VALUE_INTEGER)) {
                         zP("non-integer index in subscript assignment to Array: %s", VSC(&subscript));
                 }
-                if (subscript.integer < 0) {
-                        subscript.integer += container.array->count;
+                if (subscript.z < 0) {
+                        subscript.z += container.array->count;
                 }
-                if (UNLIKELY(subscript.integer < 0 || subscript.integer >= container.array->count)) {
+                if (UNLIKELY(subscript.z < 0 || subscript.z >= container.array->count)) {
                         push(TAGGED(TAG_INDEX_ERR, container, subscript));
                         RaiseException(ty);
                 }
-                *v_(*container.array, subscript.integer) = value;
+                *v_(*container.array, subscript.z) = value;
                 break;
 
         case VALUE_DICT:
@@ -4042,17 +4135,17 @@ DoAssignSubscript(Ty *ty)
                 if (UNLIKELY(subscript.type != VALUE_INTEGER)) {
                         zP("non-integer index in subscript assignment to Blob: %s", VSC(&subscript));
                 }
-                if (subscript.integer < 0) {
-                        subscript.integer += container.blob->count;
+                if (subscript.z < 0) {
+                        subscript.z += container.blob->count;
                 }
-                if (subscript.integer < 0 || subscript.integer >= vN(*container.blob)) {
+                if (subscript.z < 0 || subscript.z >= vN(*container.blob)) {
                         push(TAGGED(TAG_INDEX_ERR, container, subscript));
                         RaiseException(ty);
                 }
                 if (UNLIKELY(value.type != VALUE_INTEGER)) {
                         zP("attempt to assign Blob element to non-integer value: %s", VSC(&value));
                 }
-                *v_(*container.blob, subscript.integer) = value.integer;
+                *v_(*container.blob, subscript.z) = value.z;
                 break;
 
         case VALUE_PTR:
@@ -4143,12 +4236,12 @@ DoRange(Ty *ty, bool inclusive)
         }
 
         // XXX
-        if (a.integer > b.integer) {
-                SWAP(imax, a.integer, b.integer);
+        if (a.z > b.z) {
+                SWAP(imax, a.z, b.z);
         }
 
         if (inclusive) {
-                b.integer += 1;
+                b.z += 1;
         }
 
         PutMember(v, NAMES.a, a);
@@ -4269,7 +4362,7 @@ IncValue(Ty *ty, Value *v)
 
         switch (EXPECT(v->type, VALUE_INTEGER)) {
         case VALUE_INTEGER:
-                v->integer += 1;
+                v->z += 1;
                 break;
 
         case VALUE_REAL:
@@ -4282,11 +4375,11 @@ IncValue(Ty *ty, Value *v)
                 break;
 
         case VALUE_STRING:
-                if (v->bytes > 0) {
-                        n = utf8proc_iterate(v->str, v->bytes, &rune);
+                if (sN(*v) > 0) {
+                        n = utf8proc_iterate(ss(*v), sN(*v), &rune);
                         n = max(1, n);
-                        v->str += n;
-                        v->bytes -= n;
+                        ss(*v) += n;
+                        sN(*v) -= n;
                 }
                 break;
 
@@ -4311,7 +4404,7 @@ DecValue(Ty *ty, Value *v)
 
         switch (EXPECT(v->type, VALUE_INTEGER)) {
         case VALUE_INTEGER:
-                v->integer -= 1;
+                v->z -= 1;
                 break;
 
         case VALUE_REAL:
@@ -4416,8 +4509,8 @@ IterGetNext(Ty *ty)
                 break;
         case VALUE_STRING:
                 vp = top() - 2;
-                if ((off = vp->off) < v.bytes) {
-                        vp->off += (n = u8_rune_sz(v.str + off));
+                if ((off = vp->off) < sN(v)) {
+                        vp->off += (n = u8_rune_sz(ss(v) + off));
                         push(STRING_VIEW(v, off, n));
                 } else {
                         push(NONE);
@@ -4436,7 +4529,7 @@ NoIter:
 static bool
 LoopCheck(Ty *ty, i32 z, char *jump)
 {
-        imax k = top()[-3].integer - 1;
+        imax k = top()[-3].z - 1;
 
         STACK.count += RC;
 
@@ -4690,7 +4783,7 @@ NextInstruction:
                                 if (count->type == VALUE_NIL) {
                                         *count = INTEGER(LastThreadGCTime);
                                 } else {
-                                        count->integer += LastThreadGCTime;
+                                        count->z += LastThreadGCTime;
                                 }
                                 LastThreadGCTime = 0;
                         }
@@ -4709,7 +4802,7 @@ NextInstruction:
                                 if (count->type == VALUE_NIL) {
                                         *count = INTEGER(dt);
                                 } else {
-                                        count->integer += dt;
+                                        count->z += dt;
                                 }
 
                                 int *func = (FRAMES.count > 0) ? ActiveFun(ty)->info : NULL;
@@ -4717,7 +4810,7 @@ NextInstruction:
                                 if (count->type == VALUE_NIL) {
                                         *count = INTEGER(dt);
                                 } else {
-                                        count->integer += dt;
+                                        count->z += dt;
                                 }
 
                                 TySpinLockUnlock(&ProfileMutex);
@@ -5019,12 +5112,20 @@ NextInstruction:
                 CASE(TARGET_MEMBER)
                         READVALUE(z);
                         v = pop();
-                        DoTargetMember(ty, v, z);
+                        if ((vp = TargetFieldFast(ty, &v, z)) != NULL) {
+                                pushtarget(vp, v.object);
+                        } else {
+                                DoTargetMember(ty, v, z);
+                        }
                         break;
                 CASE(TARGET_SELF_MEMBER)
                         READVALUE(z);
-                        value = GetSelf(ty);
-                        DoTargetMember(ty, value, z);
+                        v = GetSelf(ty);
+                        if ((vp = TargetFieldFast(ty, &v, z)) != NULL) {
+                                pushtarget(vp, v.object);
+                        } else {
+                                DoTargetMember(ty, v, z);
+                        }
                         break;
                 CASE(TARGET_SELF_STATIC)
                         READVALUE(z);
@@ -5580,7 +5681,10 @@ NextInstruction:
                         push(NIL);
                         break;
                 CASE(TO_STRING)
-                        if (top()->type == VALUE_PTR) {
+                        if (top()->type == VALUE_STRING) {
+                                break;
+                        }
+                        if (UNLIKELY(top()->type == VALUE_PTR)) {
                                 char *s = VSC(top());
                                 pop();
                                 push(STRING_NOGC(s, strlen(s)));
@@ -5707,7 +5811,7 @@ Yield:
                         push(INDEX(0, 0, n));
                         break;
                 CASE(READ_INDEX)
-                        k = top()[-3].integer - 1;
+                        k = top()[-3].z - 1;
                         STACK.count += RC;
                         push(INTEGER(k));
                         break;
@@ -5888,15 +5992,15 @@ Yield:
                         READVALUE(n);
                         k = 0;
                         for (i = vN(STACK) - n; i < vN(STACK); ++i) {
-                                k += v_(STACK, i)->bytes;
+                                k += sN(v__(STACK, i));
                         }
                         str = value_string_alloc(ty, k);
                         v = STRING(str, k);
                         k = 0;
                         for (i = vN(STACK) - n; i < vN(STACK); ++i) {
-                                if (v_(STACK, i)->bytes > 0) {
-                                        memcpy(str + k, v_(STACK, i)->str, v_(STACK, i)->bytes);
-                                        k += STACK.items[i].bytes;
+                                if (sN(v__(STACK, i)) > 0) {
+                                        memcpy(str + k, ss(v__(STACK, i)), sN(v__(STACK, i)));
+                                        k += sN(v__(STACK, i));
                                 }
                         }
                         STACK.count -= n;
@@ -5929,7 +6033,10 @@ Yield:
                         READVALUE(z);
 
                         value = GetSelf(ty);
-                        v = GetMember(ty, value, z, false, false);
+
+                        if (UNLIKELY(IsNone((v = LoadFieldFast(ty, &value, z))))) {
+                                v = GetMember(ty, value, z, false, false);
+                        }
 
                         switch (v.type) {
                         case VALUE_BREAK:
@@ -5993,7 +6100,10 @@ Yield:
                         READVALUE(z);
 MemberAccess:
                         value = pop();
-                        v = GetMember(ty, value, z, true, false);
+
+                        if (UNLIKELY(IsNone((v = LoadFieldFast(ty, &value, z))))) {
+                                v = GetMember(ty, value, z, false, false);
+                        }
 
                         switch (v.type) {
                         case VALUE_BREAK:
@@ -6047,11 +6157,11 @@ BadTupleMember:
                                 break;
                         case VALUE_TUPLE:
                                 if (LIKELY(subscript.type == VALUE_INTEGER)) {
-                                        if (subscript.integer < 0) {
-                                                subscript.integer += container.count;
+                                        if (subscript.z < 0) {
+                                                subscript.z += container.count;
                                         }
 
-                                        if (subscript.integer < 0 || subscript.integer >= container.count) {
+                                        if (subscript.z < 0 || subscript.z >= container.count) {
                                                 v = tagged(ty, TAG_INDEX_ERR, container, subscript, NONE);
                                                 pop();
                                                 pop();
@@ -6063,7 +6173,7 @@ BadTupleMember:
                                         pop();
                                         pop();
 
-                                        push(container.items[subscript.integer]);
+                                        push(container.items[subscript.z]);
                                 } else {
                                         zP(
                                                 "non-integer index used in subscript expression: %s",
@@ -6125,7 +6235,7 @@ BadTupleMember:
                                 }
                                 v = GCPTR((container.extra == NULL) ? &ffi_type_uint8 : container.extra, container.gcptr);
                                 push(v);
-                                push(PTR(((char *)container.ptr) + ((ffi_type *)v.ptr)->size * subscript.integer));
+                                push(PTR(((char *)container.ptr) + ((ffi_type *)v.ptr)->size * subscript.z));
                                 v = cffi_load(ty, 2, NULL);
                                 pop();
                                 pop();
@@ -6593,6 +6703,13 @@ BadTupleMember:
                         READVALUE(n);
                         READVALUE(nkw);
                         DoCall(ty, &v, n, nkw, false);
+                        nkw = 0;
+                        break;
+                CASE(CALL_GLOBAL)
+                        READVALUE(i);
+                        READVALUE(n);
+                        READVALUE(nkw);
+                        DoCall(ty, v_(Globals, i), n, nkw, false);
                         nkw = 0;
                         break;
                 CASE(TRY_CALL_METHOD)
@@ -7192,7 +7309,7 @@ vm_error(Ty *ty, char const *fmt, ...)
         Value msg = STRING_VFORMAT(ty, fmt, ap);
         va_end(ap);
 
-        //XXX("VM Error: %.*s", (int)msg.bytes, msg.str);
+        //XXX("VM Error: %.*s", (int)sN(msg), ss(msg));
 
         Value error = RawObject(CLASS_RUNTIME_ERROR);
         PutMember(error, NAMES._what, msg);
@@ -7328,7 +7445,7 @@ ProfileReport(Ty *ty)
                         continue;
                 ProfileEntry entry = {
                         .ctx = Samples->keys[i].ptr,
-                        .count = Samples->values[i].integer
+                        .count = Samples->values[i].z
                 };
                 vec_nogc_push(profile, entry);
                 total_ticks += entry.count;
@@ -7339,7 +7456,7 @@ ProfileReport(Ty *ty)
                         continue;
                 ProfileEntry entry = {
                         .ctx = FuncSamples->keys[i].ptr,
-                        .count = FuncSamples->values[i].integer
+                        .count = FuncSamples->values[i].z
                 };
                 vec_nogc_push(func_profile, entry);
         }
@@ -8712,6 +8829,8 @@ StepInstruction(char const *ip)
                 break;
         CASE(TAIL_CALL)
                 break;
+        CASE(CALL_GLOBAL)
+                SKIPVALUE(n);
         CASE(CALL)
                 SKIPVALUE(n);
                 SKIPVALUE(nkw);
@@ -8986,6 +9105,11 @@ tdb_step_into(Ty *ty)
         ty = TDB->host;
 
         switch ((u8)*IP) {
+        CASE(CALL_GLOBAL)
+                READVALUE(i);
+                v = v__(Globals, i);
+                break;
+
         CASE(CALL)
                 v = peek();
                 break;

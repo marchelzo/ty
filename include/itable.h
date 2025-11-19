@@ -12,6 +12,7 @@ struct itable {
         int_vector ids;
         ValueVector values;
         int class;
+        bool diverged;
 };
 
 void

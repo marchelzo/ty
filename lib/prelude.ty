@@ -285,7 +285,10 @@ class Object {
 }
 
 class Class[T] {
-    __name__: String;
+    __name__: String
+    __methods__: Dict[String, _]
+    __fields__:  Array[_]
+    __static_methods__: Dict[String, _];
 
     |(other) {
         c -> (c :: self) || (c :: other)

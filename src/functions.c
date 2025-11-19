@@ -143,7 +143,7 @@ IntoSigSet(Ty *ty, char const *ctx, Value const *v, sigset_t *set)
                         if (sig.type != VALUE_INTEGER) {
                                 zP("%s: bad signal set: %s", ctx, VSC(v));
                         }
-                        sigaddset(set, sig.integer);
+                        sigaddset(set, sig.z);
                 }
                 break;
 
@@ -158,7 +158,7 @@ IntoSigSet(Ty *ty, char const *ctx, Value const *v, sigset_t *set)
                                 zP("%s: bad signal set: %s", ctx, VSC(v));
                         }
                         if (value_truthy(ty, &val)) {
-                                sigaddset(set, key.integer);
+                                sigaddset(set, key.z);
                         }
                 }
                 break;
@@ -206,7 +206,7 @@ TryIntoTime(Ty *ty, char const *ctx, Value const *t, i64 factor)
                 return (factor * t->real);
 
         case VALUE_INTEGER:
-                return t->integer;
+                return t->z;
 
         case VALUE_TUPLE:
                 spec = tuple_timespec(ty, ctx, t);
@@ -276,11 +276,11 @@ doprint(Ty *ty, int argc, Value *kwargs, FILE *f)
 
                 if (i > 0) {
                         if (sep != NULL) {
-                                if (fwrite(sep->str, 1, sep->bytes, f) < sep->bytes) {
+                                if (fwrite(ss(*sep), 1, sN(*sep), f) < sN(*sep)) {
                                         lTk();
                                         return -1;
                                 }
-                                written += sep->bytes;
+                                written += sN(*sep);
                         } else {
                                 if (fputs(", ", f) == EOF) {
                                         lTk();
@@ -296,8 +296,8 @@ doprint(Ty *ty, int argc, Value *kwargs, FILE *f)
 
                 switch (v->type) {
                 case VALUE_STRING:
-                        s = (char const *)v->str;
-                        n = v->bytes;
+                        s = (char const *)ss(*v);
+                        n = sN(*v);
                         break;
 
                 case VALUE_BLOB:
@@ -338,11 +338,11 @@ doprint(Ty *ty, int argc, Value *kwargs, FILE *f)
 
 
         if (end != NULL) {
-                if (fwrite(end->str, 1, end->bytes, f) < end->bytes) {
+                if (fwrite(ss(*end), 1, sN(*end), f) < sN(*end)) {
                         lTk();
                         return -1;
                 }
-                written += end->bytes;
+                written += sN(*end);
         } else {
                 if (fputc('\n', f) == EOF) {
                         lTk();
@@ -393,11 +393,11 @@ BUILTIN_FUNCTION(slurp)
         } else if (ARG(0).type == VALUE_STRING) {
                 Value v = ARG(0);
 
-                if (v.bytes >= sizeof p)
+                if (sN(v) >= sizeof p)
                         return NIL;
 
-                memcpy(p, v.str, v.bytes);
-                p[v.bytes] = '\0';
+                memcpy(p, ss(v), sN(v));
+                p[sN(v)] = '\0';
 
 #ifdef _WIN32
                 fd = _open(p, _O_RDONLY);
@@ -409,7 +409,7 @@ BUILTIN_FUNCTION(slurp)
 
                 need_close = true;
         } else if (ARG(0).type == VALUE_INTEGER) {
-                fd = ARG(0).integer;
+                fd = ARG(0).z;
         } else {
                 zP("the argument to slurp() must be a path or a file descriptor");
         }
@@ -492,7 +492,7 @@ BUILTIN_FUNCTION(ident)
         case VALUE_OBJECT:  return PTR(v.object);
         case VALUE_BLOB:    return PTR(v.blob);
         case VALUE_TUPLE:   return PTR(v.items);
-        case VALUE_STRING:  return PAIR(PTR((void *)v.str), INTEGER(v.bytes));
+        case VALUE_STRING:  return PAIR(PTR((void *)ss(v)), INTEGER(sN(v)));
         default:            return v;
         }
 }
@@ -504,7 +504,7 @@ BUILTIN_FUNCTION(die)
         CHECK_ARGC(1);
         Value message = ARGx(0, VALUE_STRING);
 
-        zP("%.*s", (int)message.bytes, message.str);
+        zP("%.*s", (int)sN(message), ss(message));
 }
 
 BUILTIN_FUNCTION(__debug)
@@ -583,8 +583,8 @@ BUILTIN_FUNCTION(rand)
                         zP("non-integer passed as argument %d to rand", i + 1);
 
         switch (argc) {
-        case 1:  low = 0;              high = ARG(0).integer; break;
-        case 2:  low = ARG(0).integer; high = ARG(1).integer; break;
+        case 1:  low = 0;              high = ARG(0).z; break;
+        case 2:  low = ARG(0).z; high = ARG(1).z; break;
         }
 
         return INTEGER((z % (high - low)) + low);
@@ -598,7 +598,7 @@ BUILTIN_FUNCTION(abs)
         Value x = ARG(0);
 
         switch (x.type) {
-        case VALUE_INTEGER: return INTEGER(llabs(x.integer));
+        case VALUE_INTEGER: return INTEGER(llabs(x.z));
         case VALUE_REAL:    return REAL(fabs(x.real));
         default:
                 zP("the argument to abs() must be a number");
@@ -619,8 +619,8 @@ BUILTIN_FUNCTION(gcd)
                 zP("both arguments to gcd() must be integers");
         }
 
-        intmax_t a = t.integer;
-        intmax_t b = u.integer;
+        intmax_t a = t.z;
+        intmax_t b = u.z;
 
         while (b != 0) {
                 intmax_t t = b;
@@ -645,8 +645,8 @@ BUILTIN_FUNCTION(lcm)
                 zP("both arguments to lcm() must be integers");
         }
 
-        intmax_t a = t.integer;
-        intmax_t b = u.integer;
+        intmax_t a = t.z;
+        intmax_t b = u.z;
 
         while (b != 0) {
                 intmax_t t = b;
@@ -654,7 +654,7 @@ BUILTIN_FUNCTION(lcm)
                 a = t;
         }
 
-        return INTEGER(llabs(t.integer * u.integer) / a);
+        return INTEGER(llabs(t.z * u.z) / a);
 }
 
 BUILTIN_FUNCTION(round)
@@ -664,7 +664,7 @@ BUILTIN_FUNCTION(round)
         Value x = ARG(0);
 
         switch (x.type) {
-        case VALUE_INTEGER: return REAL(x.integer);
+        case VALUE_INTEGER: return REAL(x.z);
         case VALUE_REAL:    return REAL(round(x.real));
         default:
                 zP("the argument to round() must be a number");
@@ -739,7 +739,7 @@ BUILTIN_FUNCTION(ord)
                 zP("the argument to ord() must be a string");
 
         i32 rune;
-        i32 n = utf8proc_iterate(c.str, c.bytes, &rune);
+        i32 n = utf8proc_iterate(ss(c), sN(c), &rune);
 
         if (n <= 0) {
                 return NIL;
@@ -762,14 +762,14 @@ BUILTIN_FUNCTION(float)
 
         switch (v.type) {
         case VALUE_NIL:     return NIL;
-        case VALUE_INTEGER: return REAL((double)v.integer);
+        case VALUE_INTEGER: return REAL((double)v.z);
         case VALUE_REAL:    return v;
         case VALUE_STRING:;
                 char buf[128];
                 char *end;
-                unsigned n = min(v.bytes, 127);
+                unsigned n = min(sN(v), 127);
 
-                memcpy(buf, v.str, n);
+                memcpy(buf, ss(v), n);
                 buf[n] = '\0';
 
                 errno = 0;
@@ -825,20 +825,20 @@ Coerce:
                 return NIL;
 
         case VALUE_INTEGER:                                               return a;
-        case VALUE_REAL:    v.integer = a.real;                           return v;
-        case VALUE_BOOLEAN: v.integer = a.boolean;                        return v;
-        case VALUE_ARRAY:   v.integer = a.array->count;                   return v;
-        case VALUE_DICT:    v.integer = a.dict->count;                    return v;
-        case VALUE_BLOB:    v.integer = a.blob->count;                    return v;
+        case VALUE_REAL:    v.z = a.real;                           return v;
+        case VALUE_BOOLEAN: v.z = a.boolean;                        return v;
+        case VALUE_ARRAY:   v.z = a.array->count;                   return v;
+        case VALUE_DICT:    v.z = a.dict->count;                    return v;
+        case VALUE_BLOB:    v.z = a.blob->count;                    return v;
         case VALUE_PTR:     return INTEGER((uintptr_t)a.ptr);
 
         case VALUE_STRING:
                 base = 0;
-                if (a.bytes >= TY_TMP_N) {
+                if (sN(a) >= TY_TMP_N) {
                         goto TooBig;
                 }
-                memcpy(tmp, a.str, a.bytes);
-                tmp[a.bytes] = '\0';
+                memcpy(tmp, ss(a), sN(a));
+                tmp[sN(a)] = '\0';
                 goto String;
         }
 
@@ -848,15 +848,15 @@ CustomBase:
         base = INT_ARG(1);
 
         if (base < 0 || base == 1 || base > 36) {
-                bP("invalid base(): expected 0 or 2..36, but got %"PRIiMAX, b.integer);
+                bP("invalid base(): expected 0 or 2..36, but got %"PRIiMAX, b.z);
         }
 
-        if (s.bytes >= TY_TMP_N) {
+        if (sN(s) >= TY_TMP_N) {
                 goto TooBig;
         }
 
-        memcpy(tmp, s.str, s.bytes);
-        tmp[s.bytes] = '\0';
+        memcpy(tmp, ss(s), sN(s));
+        tmp[sN(s)] = '\0';
 
 String:
         /*
@@ -1043,7 +1043,7 @@ inline static intmax_t
 int_from(Ty *ty, Value const *v, char const *spec, int n)
 {
         switch (v->type) {
-        case VALUE_INTEGER: return v->integer;
+        case VALUE_INTEGER: return v->z;
         case VALUE_REAL:    return v->real;
         case VALUE_BOOLEAN: return v->boolean;
         default: BadFmt(ty, spec, n, v);
@@ -1054,7 +1054,7 @@ inline static double
 float_from(Ty *ty, Value const *v, char const *spec, int n)
 {
         switch (v->type) {
-        case VALUE_INTEGER: return v->integer;
+        case VALUE_INTEGER: return v->z;
         case VALUE_REAL:    return v->real;
         default: BadFmt(ty, spec, n, v);
         }
@@ -1114,8 +1114,8 @@ BUILTIN_FUNCTION(fmt)
                 zP("fmt(): expected string but got: %s", VSC(&ARG(0)));
         }
 
-        char const *fmt = (char const *)ARG(0).str;
-        size_t n = ARG(0).bytes;
+        char const *fmt = (char const *)ss(ARG(0));
+        size_t n = sN(ARG(0));
         int ai = 0;
 
         struct fspec spec;
@@ -1165,7 +1165,7 @@ BadFormatSpecifier:
                                         );
                                 }
 
-                                snprintf(spec.width, sizeof spec.width, "%"PRIiMAX, ARG(ai).integer);
+                                snprintf(spec.width, sizeof spec.width, "%"PRIiMAX, ARG(ai).z);
                         }
 
                         if (spec.prec[0] == '*') {
@@ -1182,7 +1182,7 @@ BadFormatSpecifier:
                                         );
                                 }
 
-                                snprintf(spec.prec, sizeof spec.prec, "%"PRIiMAX, ARG(ai).integer);
+                                snprintf(spec.prec, sizeof spec.prec, "%"PRIiMAX, ARG(ai).z);
                         }
 
                         if (++ai >= argc) {
@@ -1325,7 +1325,7 @@ MissingArgument:
 
                                 switch (arg.type) {
                                 case VALUE_STRING:
-                                        xvPn(sb, arg.str, arg.bytes);
+                                        xvPn(sb, ss(arg), sN(arg));
                                         xvP(sb, '\0');
                                         p = sb.items;
                                         break;
@@ -1354,7 +1354,7 @@ MissingArgument:
                                 scratch[si] = '\0';
 
                                 switch (arg.type) {
-                                case VALUE_STRING:   p = arg.str; break;
+                                case VALUE_STRING:   p = ss(arg); break;
                                 case VALUE_BLOB:     p = arg.blob;   break;
                                 case VALUE_OBJECT:   p = arg.object; break;
                                 case VALUE_PTR:      p = arg.ptr;    break;
@@ -1454,7 +1454,7 @@ BUILTIN_FUNCTION(array)
 BUILTIN_FUNCTION(tuple)
 {
         int named = 0;
-        Dict *d = (kwargs != NULL) ? kwargs->dict : NULL;
+        Dict *d = (kwargs != NULL && !IsNil(*kwargs)) ? kwargs->dict : NULL;
 
         if (d != NULL) for (int i = 0; i < d->size; ++i) {
                 if (d->keys[i].type != 0) {
@@ -1505,8 +1505,8 @@ BUILTIN_FUNCTION(regex)
 
         if (argc == 2) {
                 Value flags = ARGx(1, VALUE_STRING);
-                for (int i = 0; i < flags.bytes; ++i) {
-                        switch (flags.str[i]) {
+                for (int i = 0; i < sN(flags); ++i) {
+                        switch (ss(flags)[i]) {
                         case 'i': options |= PCRE2_CASELESS;  break;
                         case 'u': options |= PCRE2_UTF;       break;
                         case 'm': options |= PCRE2_MULTILINE; break;
@@ -1521,8 +1521,8 @@ BUILTIN_FUNCTION(regex)
         size_t off;
 
         pcre2_code *re = pcre2_compile(
-                (PCRE2_SPTR)pattern.str,
-                pattern.bytes,
+                (PCRE2_SPTR)ss(pattern),
+                sN(pattern),
                 options,
                 &err,
                 &off,
@@ -1588,7 +1588,7 @@ BUILTIN_FUNCTION(exp)
 
         Value x = ARG(0);
         if (x.type == VALUE_INTEGER)
-                x = REAL(x.integer);
+                x = REAL(x.z);
         if (x.type != VALUE_REAL)
                 zP("the argument to math.exp() must be a float");
 
@@ -1601,7 +1601,7 @@ BUILTIN_FUNCTION(log)
 
         Value x = ARG(0);
         if (x.type == VALUE_INTEGER)
-                x = REAL(x.integer);
+                x = REAL(x.z);
         if (x.type != VALUE_REAL)
                 zP("the argument to math.log() must be a float");
 
@@ -1614,7 +1614,7 @@ BUILTIN_FUNCTION(log2)
 
         Value x = ARG(0);
         if (x.type == VALUE_INTEGER)
-                x = REAL(x.integer);
+                x = REAL(x.z);
         if (x.type != VALUE_REAL)
                 zP("the argument to math.log2() must be a float");
 
@@ -1627,7 +1627,7 @@ BUILTIN_FUNCTION(log10)
 
         Value x = ARG(0);
         if (x.type == VALUE_INTEGER)
-                x = REAL(x.integer);
+                x = REAL(x.z);
         if (x.type != VALUE_REAL)
                 zP("the argument to math.log10() must be a float");
 
@@ -1640,13 +1640,13 @@ BUILTIN_FUNCTION(pow)
 
         Value x = ARG(0);
         if (x.type == VALUE_INTEGER)
-                x = REAL(x.integer);
+                x = REAL(x.z);
         if (x.type != VALUE_REAL)
                 zP("the first argument to math.pow() must be a float");
 
         Value y = ARG(1);
         if (y.type == VALUE_INTEGER)
-                y = REAL(y.integer);
+                y = REAL(y.z);
         if (y.type != VALUE_REAL)
                 zP("the second argument to math.pow() must be a float");
 
@@ -1659,13 +1659,13 @@ BUILTIN_FUNCTION(atan2)
 
         Value x = ARG(0);
         if (x.type == VALUE_INTEGER)
-                x = REAL(x.integer);
+                x = REAL(x.z);
         if (x.type != VALUE_REAL)
                 zP("the first argument to math.atan2() must be a float");
 
         Value y = ARG(1);
         if (y.type == VALUE_INTEGER)
-                y = REAL(y.integer);
+                y = REAL(y.z);
         if (y.type != VALUE_REAL)
                 zP("the second argument to math.atan2() must be a float");
 
@@ -1680,7 +1680,7 @@ BUILTIN_FUNCTION(atan2)
                                                         \
                 Value x = ARG(0);        \
                 if (x.type == VALUE_INTEGER)            \
-                        x = REAL(x.integer);            \
+                        x = REAL(x.z);            \
                 if (x.type != VALUE_REAL)               \
                         zP("the argument to math." #func "() must be a float"); \
                                                         \
@@ -1703,7 +1703,7 @@ BUILTIN_FUNCTION(sqrt)
 
         Value x = ARG(0);
         if (x.type == VALUE_INTEGER)
-                x = REAL(x.integer);
+                x = REAL(x.z);
         if (x.type != VALUE_REAL)
                 zP("the argument to math.sqrt() must be a float");
 
@@ -1716,7 +1716,7 @@ BUILTIN_FUNCTION(cbrt)
 
         Value x = ARG(0);
         if (x.type == VALUE_INTEGER)
-                x = REAL(x.integer);
+                x = REAL(x.z);
         if (x.type != VALUE_REAL)
                 zP("the argument to math.cbrt() must be a float");
 
@@ -1735,7 +1735,7 @@ BUILTIN_FUNCTION(bit_and)
         if (b.type != VALUE_INTEGER)
                 zP("the second argument to bit.and() must be an integer");
 
-        return INTEGER((uintmax_t)a.integer & (uintmax_t)b.integer);
+        return INTEGER((uintmax_t)a.z & (uintmax_t)b.z);
 }
 
 BUILTIN_FUNCTION(bit_or)
@@ -1750,7 +1750,7 @@ BUILTIN_FUNCTION(bit_or)
         if (b.type != VALUE_INTEGER)
                 zP("the second argument to bit.or() must be an integer");
 
-        return INTEGER((uintmax_t)a.integer | (uintmax_t)b.integer);
+        return INTEGER((uintmax_t)a.z | (uintmax_t)b.z);
 }
 
 BUILTIN_FUNCTION(bit_xor)
@@ -1765,7 +1765,7 @@ BUILTIN_FUNCTION(bit_xor)
         if (b.type != VALUE_INTEGER)
                 zP("the second argument to bit.xor() must be an integer");
 
-        return INTEGER((uintmax_t)a.integer ^ (uintmax_t)b.integer);
+        return INTEGER((uintmax_t)a.z ^ (uintmax_t)b.z);
 }
 
 BUILTIN_FUNCTION(bit_shift_left)
@@ -1780,7 +1780,7 @@ BUILTIN_FUNCTION(bit_shift_left)
         if (b.type != VALUE_INTEGER)
                 zP("the second argument to bit.shiftLeft() must be an integer");
 
-        return INTEGER((uintmax_t)a.integer << (uintmax_t)b.integer);
+        return INTEGER((uintmax_t)a.z << (uintmax_t)b.z);
 }
 
 BUILTIN_FUNCTION(bit_shift_right)
@@ -1795,7 +1795,7 @@ BUILTIN_FUNCTION(bit_shift_right)
         if (b.type != VALUE_INTEGER)
                 zP("the second argument to bit.shiftRight() must be an integer");
 
-        return INTEGER((uintmax_t)a.integer >> (uintmax_t)b.integer);
+        return INTEGER((uintmax_t)a.z >> (uintmax_t)b.z);
 }
 
 BUILTIN_FUNCTION(bit_complement)
@@ -1806,7 +1806,7 @@ BUILTIN_FUNCTION(bit_complement)
         if (a.type != VALUE_INTEGER)
                 zP("the first argument to bit.complement() must be an integer");
 
-        return INTEGER(~(uintmax_t)a.integer);
+        return INTEGER(~(uintmax_t)a.z);
 }
 
 BUILTIN_FUNCTION(setenv)
@@ -1850,14 +1850,14 @@ BUILTIN_FUNCTION(json_parse)
 {
         ASSERT_ARGC("json.parse()", 1);
         Value json = ARGx(0, VALUE_STRING);
-        return json_parse(ty, (char const *)json.str, json.bytes);
+        return json_parse(ty, (char const *)ss(json), sN(json));
 }
 
 BUILTIN_FUNCTION(json_parse_xD)
 {
         ASSERT_ARGC("json.parse!()", 1);
         Value json = ARGx(0, VALUE_STRING);
-        return json_parse_xD(ty, (char const *)json.str, json.bytes);
+        return json_parse_xD(ty, (char const *)ss(json), sN(json));
 }
 
 BUILTIN_FUNCTION(json_encode)
@@ -1874,7 +1874,7 @@ BUILTIN_FUNCTION(sha256)
         unsigned char digest[SHA256_DIGEST_LENGTH];
 
         if (s.type == VALUE_STRING) {
-                SHA256((unsigned char const *)s.str, s.bytes, digest);
+                SHA256((unsigned char const *)ss(s), sN(s), digest);
         } else if (s.type == VALUE_BLOB) {
                 SHA256(s.blob->items, s.blob->count, digest);
         }
@@ -1893,7 +1893,7 @@ BUILTIN_FUNCTION(sha1)
         unsigned char digest[SHA_DIGEST_LENGTH];
 
         if (s.type == VALUE_STRING) {
-                SHA1((unsigned char const *)s.str, s.bytes, digest);
+                SHA1((unsigned char const *)ss(s), sN(s), digest);
         } else if (s.type == VALUE_BLOB) {
                 SHA1(s.blob->items, s.blob->count, digest);
         } else {
@@ -1914,7 +1914,7 @@ BUILTIN_FUNCTION(md5)
         unsigned char digest[MD5_DIGEST_LENGTH];
 
         if (s.type == VALUE_STRING) {
-                MD5((unsigned char const *)s.str, s.bytes, digest);
+                MD5((unsigned char const *)ss(s), sN(s), digest);
         } else if (s.type == VALUE_BLOB) {
                 MD5(s.blob->items, s.blob->count, digest);
         } else {
@@ -2052,7 +2052,7 @@ BUILTIN_FUNCTION(base64_encode)
                         zP("base64.encode(): the second argument must be an integer");
                 }
 
-                size_t n = ARG(1).integer;
+                size_t n = ARG(1).z;
 
                 switch (ARG(0).type) {
                 case VALUE_PTR:
@@ -2064,7 +2064,7 @@ BUILTIN_FUNCTION(base64_encode)
         } else {
                 switch (ARG(0).type) {
                 case VALUE_STRING:
-                        b64enc(ty, ARG(0).str, ARG(0).bytes);
+                        b64enc(ty, ss(ARG(0)), sN(ARG(0)));
                         break;
                 case VALUE_BLOB:
                         b64enc(ty, (char *)ARG(0).blob->items, ARG(0).blob->count);
@@ -2089,7 +2089,7 @@ BUILTIN_FUNCTION(base64_decode)
                 zP("base64.decode(): argument must be a string");
         }
 
-        if (!b64dec(ty, ARG(0).str, ARG(0).bytes)) {
+        if (!b64dec(ty, ss(ARG(0)), sN(ARG(0)))) {
                 return NIL;
         }
 
@@ -2111,7 +2111,7 @@ BUILTIN_FUNCTION(os_umask)
                 zP("the argument to os.umask() must be an integer");
         }
 
-        return INTEGER(umask(mask.integer));
+        return INTEGER(umask(mask.z));
 }
 
 BUILTIN_FUNCTION(os_open)
@@ -2124,7 +2124,7 @@ BUILTIN_FUNCTION(os_open)
 
         B.count = 0;
 
-        vvPn(B, path.str, path.bytes);
+        vvPn(B, ss(path), sN(path));
         vvP(B, '\0');
 
         int flags = INT_ARG(1);
@@ -2158,7 +2158,7 @@ BUILTIN_FUNCTION(os_close)
         if (file.type != VALUE_INTEGER)
                 zP("the argument to os.close() must be an integer");
 
-        return INTEGER(close(file.integer));
+        return INTEGER(close(file.z));
 }
 
 static char *
@@ -2214,7 +2214,7 @@ BUILTIN_FUNCTION(os_mkdtemp)
                 if (s.type != VALUE_STRING)
                         zP("the first argument to os.mkdtemp() must be a string");
                 /* -8 to make room for the .XXXXXX suffix and NUL byte */
-                memcpy(template, s.str, min(s.bytes, sizeof template - 8));
+                memcpy(template, ss(s), min(sN(s), sizeof template - 8));
         } else {
                 strcpy(template, "tmp");
         }
@@ -2267,7 +2267,7 @@ BUILTIN_FUNCTION(os_mktemp)
         if (argc >= 1 && ARG(0).type != VALUE_NIL) {
                 Value s = ARGx(0, VALUE_STRING);
                 /* -8 to make room for the .XXXXXX suffix and NUL byte */
-                memcpy(template, s.str, min(s.bytes, sizeof template - 8));
+                memcpy(template, ss(s), min(sN(s), sizeof template - 8));
         } else {
                 strcpy(template, "tmp");
         }
@@ -2313,13 +2313,13 @@ BUILTIN_FUNCTION(os_opendir)
         DIR *dir;
 
         if (path.type == VALUE_STRING) {
-                if (path.bytes >= TY_TMP_N) {
+                if (sN(path) >= TY_TMP_N) {
                         errno = ENOENT;
                         return NIL;
                 }
                 dir = opendir(TY_TMP_C_STR(path));
         } else if (path.type == VALUE_INTEGER) {
-                dir = fdopendir(path.integer);
+                dir = fdopendir(path.z);
         } else {
                 ARGx(0, VALUE_INTEGER, VALUE_STRING);
                 UNREACHABLE();
@@ -2350,7 +2350,7 @@ BUILTIN_FUNCTION(os_readdir)
 
         Value name = vSs(entry->d_name, strlen(entry->d_name));
 
-        NOGC(name.str);
+        NOGC(ss(name));
 
         Value result = vTn(
                 "ino", INTEGER(entry->d_ino),
@@ -2359,7 +2359,7 @@ BUILTIN_FUNCTION(os_readdir)
                 "name", name
         );
 
-        OKGC(name.str);
+        OKGC(ss(name));
 
         return result;
 #endif
@@ -2399,7 +2399,7 @@ BUILTIN_FUNCTION(os_seekdir)
         if (off.type != VALUE_INTEGER)
                 zP("the second argument to os.seekdir() must be an integer");
 
-        seekdir(d.ptr, off.integer);
+        seekdir(d.ptr, off.z);
 
         return NIL;
 #endif
@@ -2618,8 +2618,8 @@ BUILTIN_FUNCTION(os_chown)
 
         switch (ARG(0).type) {
         case VALUE_STRING:
-                n = ARG(0).bytes;
-                path = (char const *)ARG(0).str;
+                n = sN(ARG(0));
+                path = (char const *)ss(ARG(0));
                 break;
         case VALUE_BLOB:
                 n = ARG(0).blob->count;
@@ -2654,8 +2654,8 @@ BUILTIN_FUNCTION(os_chmod)
 
         switch (ARG(0).type) {
         case VALUE_STRING:
-                n = ARG(0).bytes;
-                path = (char const *)ARG(0).str;
+                n = sN(ARG(0));
+                path = (char const *)ss(ARG(0));
                 break;
         case VALUE_BLOB:
                 n = ARG(0).blob->count;
@@ -2715,11 +2715,11 @@ BUILTIN_FUNCTION(os_utimes)
 
         if (argc == 3) {
                 double atime = (ARG(1).type == VALUE_INTEGER)
-                             ? ARG(1).integer
+                             ? ARG(1).z
                              : FLOAT_ARG(1);
 
                 double mtime = (ARG(2).type == VALUE_INTEGER)
-                             ? ARG(2).integer
+                             ? ARG(2).z
                              : FLOAT_ARG(2);
 
                 times[0] = (struct timeval) {
@@ -2740,7 +2740,7 @@ BUILTIN_FUNCTION(os_utimes)
                 return INTEGER(utimes(TY_TMP_C_STR(file), ptimes));
 #ifndef _WIN32
         case VALUE_INTEGER:
-                return INTEGER(futimes(file.integer, ptimes));
+                return INTEGER(futimes(file.z, ptimes));
 #endif
         default:
                 UNREACHABLE();
@@ -2758,11 +2758,11 @@ BUILTIN_FUNCTION(os_futimes)
         }
 
         double atime = (ARG(1).type == VALUE_INTEGER)
-                     ? ARG(1).integer
+                     ? ARG(1).z
                      : FLOAT_ARG(1);
 
         double mtime = (ARG(2).type == VALUE_INTEGER)
-                     ? ARG(2).integer
+                     ? ARG(2).z
                      : FLOAT_ARG(2);
 
         struct timeval times[2] = {
@@ -2789,7 +2789,7 @@ BUILTIN_FUNCTION(os_chdir)
                 return INTEGER(chdir(TY_TMP_C_STR(dir)));
 #ifndef _WIN32
         } else if (dir.type == VALUE_INTEGER) {
-                return INTEGER(fchdir(dir.integer));
+                return INTEGER(fchdir(dir.z));
 #endif
         } else {
                 ARGx(0, VALUE_STRING);
@@ -2872,11 +2872,11 @@ BUILTIN_FUNCTION(os_write)
                 n = vN(*data.blob);
                 break;
         case VALUE_STRING:
-                p = data.str;
-                n = data.bytes;
+                p = ss(data);
+                n = sN(data);
                 break;
         case VALUE_INTEGER:
-                c = data.integer;
+                c = data.z;
                 p = &c;
                 n = 1;
                 break;
@@ -3006,8 +3006,8 @@ BUILTIN_FUNCTION(os_sendfile)
                         break;
 
                 case VALUE_STRING:
-                        hdr_iov.iov_base = (void *)header.str;
-                        hdr_iov.iov_len = header.bytes;
+                        hdr_iov.iov_base = (void *)ss(header);
+                        hdr_iov.iov_len = sN(header);
                         hdtr.headers = &hdr_iov;
                         hdtr.hdr_cnt = 1;
                         break;
@@ -3027,8 +3027,8 @@ BUILTIN_FUNCTION(os_sendfile)
                         break;
 
                 case VALUE_STRING:
-                        trl_iov.iov_base = (void *)trailer.str;
-                        trl_iov.iov_len = trailer.bytes;
+                        trl_iov.iov_base = (void *)ss(trailer);
+                        trl_iov.iov_len = sN(trailer);
                         hdtr.trailers = &trl_iov;
                         hdtr.trl_cnt = 1;
                         break;
@@ -3187,7 +3187,7 @@ BUILTIN_FUNCTION(os_mmap)
 
         switch (_hint.type) {
         case VALUE_PTR:     hint = _hint.ptr;             break;
-        case VALUE_INTEGER: hint = (void *)_hint.integer; break;
+        case VALUE_INTEGER: hint = (void *)_hint.z; break;
         case VALUE_NIL:     hint = NULL;                  break;
         }
 
@@ -3214,8 +3214,8 @@ make_cmdline(Array *args)
         vec(char) result = {0};
 
         for (int i = 0; i < args->count; ++i) {
-                char const *arg = args->items[i].str;
-                int n = args->items[i].bytes;
+                char const *arg = (char const *)ss(args->items[i]);
+                i32 n = sN(args->items[i]);
                 int n_bs = 0;
                 bool need_quote = memchr(arg, ' ', n) || memchr(arg, '\t', n) || (n == 0);
 
@@ -3433,9 +3433,9 @@ BUILTIN_FUNCTION(os_spawn)
                 "stdin",    vStdin,
                 "stdout",   vStdout,
                 "stderr",   vStderr,
-                "hStdin",   PTR((void *)_get_osfhandle(vStdin.integer)),
-                "hStdout",  PTR((void *)_get_osfhandle(vStdout.integer)),
-                "hStderr",  PTR((void *)_get_osfhandle(vStderr.integer)),
+                "hStdin",   PTR((void *)_get_osfhandle(vStdin.z)),
+                "hStdout",  PTR((void *)_get_osfhandle(vStdout.z)),
+                "hStderr",  PTR((void *)_get_osfhandle(vStderr.z)),
                 "pid",      INTEGER(piProcInfo.dwProcessId),
                 "handle",   PTR((void *)piProcInfo.hProcess)
         );
@@ -3482,7 +3482,7 @@ BUILTIN_FUNCTION(os_spawn)
                 break;
 
         case VALUE_INTEGER:
-                fchdir = _chdir.integer;
+                fchdir = _chdir.z;
                 break;
 
         case VALUE_STRING:
@@ -3494,9 +3494,9 @@ BUILTIN_FUNCTION(os_spawn)
 
         bool detach = !IsMissing(_detach) && _detach.boolean;
 
-        int _stdin  = IsMissing(_v_stdin)  ? TY_SPAWN_INHERIT : _v_stdin.integer;
-        int _stdout = IsMissing(_v_stdout) ? TY_SPAWN_INHERIT : _v_stdout.integer;
-        int _stderr = IsMissing(_v_stderr) ? TY_SPAWN_INHERIT : _v_stderr.integer;
+        int _stdin  = IsMissing(_v_stdin)  ? TY_SPAWN_INHERIT : _v_stdin.z;
+        int _stdout = IsMissing(_v_stdout) ? TY_SPAWN_INHERIT : _v_stdout.z;
+        int _stderr = IsMissing(_v_stderr) ? TY_SPAWN_INHERIT : _v_stderr.z;
 
         if (_stdin  == TY_SPAWN_INHERIT) { _stdin  = 0; }
         if (_stdout == TY_SPAWN_INHERIT) { _stdout = 1; }
@@ -3819,7 +3819,7 @@ BUILTIN_FUNCTION(thread_recv)
                         zP("thread.recv(): expected integer but got: %s", VSC(&t));
                 }
                 while (chan->open && chan->q.count == 0) {
-                        if (!TyCondVarTimedWaitRelative(&chan->c, &chan->m, t.integer)) {
+                        if (!TyCondVarTimedWaitRelative(&chan->c, &chan->m, t.z)) {
                                 break;
                         }
                 }
@@ -4034,7 +4034,7 @@ BUILTIN_FUNCTION(os_dup)
         if (old.type != VALUE_INTEGER)
                 zP("os.dup(): argument must be an integer");
 
-        return INTEGER(dup(old.integer));
+        return INTEGER(dup(old.z));
 }
 
 BUILTIN_FUNCTION(os_dup2)
@@ -4047,7 +4047,7 @@ BUILTIN_FUNCTION(os_dup2)
         if (old.type != VALUE_INTEGER || new.type != VALUE_INTEGER)
                 zP("the arguments to os.dup2() must be integers");
 
-        return INTEGER(dup2(old.integer, new.integer));
+        return INTEGER(dup2(old.z, new.z));
 }
 
 BUILTIN_FUNCTION(os_socket)
@@ -4061,7 +4061,7 @@ BUILTIN_FUNCTION(os_socket)
         if (domain.type != VALUE_INTEGER || type.type != VALUE_INTEGER || protocol.type != VALUE_INTEGER)
                 zP("the arguments to os.socket() must be integers");
 
-        return INTEGER(socket(domain.integer, type.integer, protocol.integer));
+        return INTEGER(socket(domain.z, type.z, protocol.z));
 }
 
 BUILTIN_FUNCTION(os_setsockopt)
@@ -4086,12 +4086,12 @@ BUILTIN_FUNCTION(os_setsockopt)
                 Value v = ARG(3);
                 if (v.type != VALUE_INTEGER)
                         zP("the fourth argument to os.setsockopt() must be an integer (opt value)");
-                o = v.integer;
+                o = v.z;
         } else {
                 o = 1;
         }
 
-        return INTEGER(setsockopt(sock.integer, level.integer, option.integer, &o, sizeof o));
+        return INTEGER(setsockopt(sock.z, level.z, option.z, &o, sizeof o));
 }
 
 BUILTIN_FUNCTION(os_getsockopt)
@@ -4113,7 +4113,7 @@ BUILTIN_FUNCTION(os_getsockopt)
         int o;
         socklen_t n = sizeof o;
 
-        if (getsockopt(sock.integer, level.integer, option.integer, &o, &n) == 0) {
+        if (getsockopt(sock.z, level.z, option.z, &o, &n) == 0) {
                 return INTEGER(o);
         } else {
                 return NIL;
@@ -4147,7 +4147,7 @@ BUILTIN_FUNCTION(os_getnameinfo)
         char host[128];
         char serv[32];
 
-        int r = getnameinfo(addr, alen, host, sizeof host, serv, sizeof serv, ARG(1).integer);
+        int r = getnameinfo(addr, alen, host, sizeof host, serv, sizeof serv, ARG(1).z);
 
         if (r == 0) {
                 Value v = vT(2);
@@ -4171,7 +4171,7 @@ BUILTIN_FUNCTION(os_getpeername)
         socklen_t addr_size = sizeof addr;
 
         lGv(true);
-        int r = getpeername(ARG(0).integer, (void *)&addr, &addr_size);
+        int r = getpeername(ARG(0).z, (void *)&addr, &addr_size);
         lTk();
 
         if (r < 0) {
@@ -4196,7 +4196,7 @@ BUILTIN_FUNCTION(os_getsockname)
         socklen_t addr_size = sizeof addr;
 
         lGv(true);
-        int r = getsockname(ARG(0).integer, (void *)&addr, &addr_size);
+        int r = getsockname(ARG(0).z, (void *)&addr, &addr_size);
         lTk();
 
         if (r < 0) {
@@ -4219,7 +4219,7 @@ BUILTIN_FUNCTION(os_shutdown)
         if (fd.type != VALUE_INTEGER || how.type != VALUE_INTEGER)
                 zP("the arguments to os.shutdown() must be integers");
 
-        return INTEGER(shutdown(fd.integer, how.integer));
+        return INTEGER(shutdown(fd.z, how.z));
 }
 
 BUILTIN_FUNCTION(os_listen)
@@ -4232,7 +4232,7 @@ BUILTIN_FUNCTION(os_listen)
         if (sockfd.type != VALUE_INTEGER || backlog.type != VALUE_INTEGER)
                 zP("the arguments to os.listen() must be integers");
 
-        return INTEGER(listen(sockfd.integer, backlog.integer));
+        return INTEGER(listen(sockfd.z, backlog.z));
 }
 
 BUILTIN_FUNCTION(os_connect)
@@ -4260,8 +4260,8 @@ BUILTIN_FUNCTION(os_connect)
 
         Value *sockaddr = tuple_get(&addr, "address");
         if (sockaddr != NULL && sockaddr->type == VALUE_BLOB) {
-                return INTEGER(connect(sockfd.integer, (struct sockaddr *)sockaddr->blob->items, sockaddr->blob->count));
-        } else switch (v->integer) {
+                return INTEGER(connect(sockfd.z, (struct sockaddr *)sockaddr->blob->items, sockaddr->blob->count));
+        } else switch (v->z) {
 #ifndef _WIN32
                 case AF_UNIX:
                         memset(&un_addr, 0, sizeof un_addr);
@@ -4269,8 +4269,8 @@ BUILTIN_FUNCTION(os_connect)
                         v = tuple_get(&addr, "path");
                         if (v == NULL || v->type != VALUE_STRING)
                                 zP("missing or invalid path in dict passed to os.connect()");
-                        memcpy(un_addr.sun_path, v->str, min(v->bytes, sizeof un_addr.sun_path));
-                        return INTEGER(connect(sockfd.integer, (struct sockaddr *)&un_addr, sizeof un_addr));
+                       memcpy(un_addr.sun_path, ss(*v), min(sN(*v), sizeof un_addr.sun_path));
+                        return INTEGER(connect(sockfd.z, (struct sockaddr *)&un_addr, sizeof un_addr));
 #endif
                 case AF_INET:
                         memset(&in_addr, 0, sizeof in_addr);
@@ -4278,14 +4278,14 @@ BUILTIN_FUNCTION(os_connect)
                         v = tuple_get(&addr, "address");
                         if (v == NULL || v->type != VALUE_INTEGER)
                                 zP("missing or invalid address in dict passed to os.connect()");
-                        ia.s_addr = htonl(v->integer);
+                        ia.s_addr = htonl(v->z);
                         in_addr.sin_addr = ia;
                         v = tuple_get(&addr, "port");
                         if (v == NULL || v->type != VALUE_INTEGER)
                                 zP("missing or invalid port in dict passed to os.connect()");
-                        unsigned short p = htons(v->integer);
+                        unsigned short p = htons(v->z);
                         memcpy(&in_addr.sin_port, &p, sizeof in_addr.sin_port);
-                        return INTEGER(connect(sockfd.integer, (struct sockaddr *)&in_addr, sizeof in_addr));
+                        return INTEGER(connect(sockfd.z, (struct sockaddr *)&in_addr, sizeof in_addr));
                 default:
                         zP("invalid arguments to os.connect()");
         }
@@ -4295,18 +4295,13 @@ BUILTIN_FUNCTION(os_bind)
 {
         ASSERT_ARGC("os.bind()", 2);
 
-        Value sockfd = ARG(0);
-        Value addr = ARG(1);
-
-        if (sockfd.type != VALUE_INTEGER)
-                zP("the first argument to os.bind() must be an integer");
-
-        if (addr.type != VALUE_TUPLE)
-                zP("the second argument to os.bind() must be a named tuple");
+        int fd = INT_ARG(0);
+        Value addr = ARGx(1, VALUE_TUPLE);
 
         Value *v = tuple_get(&addr, "family");
-        if (v == NULL || v->type != VALUE_INTEGER)
-                zP("missing or invalid address family in address passed to os.bind()");
+        if (v == NULL || v->type != VALUE_INTEGER) {
+                bP("expected `family: Int` in address tuple: %s", VSC(&addr));
+        }
 
 #ifndef _WIN32
         struct sockaddr_un un_addr;
@@ -4314,36 +4309,50 @@ BUILTIN_FUNCTION(os_bind)
         struct sockaddr_in in_addr;
         struct in_addr ia;
 
+        unsigned port;
+
         Value *sockaddr = tuple_get(&addr, "address");
+
         if (sockaddr != NULL && sockaddr->type == VALUE_BLOB) {
-                return INTEGER(bind(sockfd.integer, (struct sockaddr *)sockaddr->blob->items, sockaddr->blob->count));
-        } else switch (v->integer) {
+                int err = bind(
+                        fd,
+                        (struct sockaddr *)vv(*sockaddr->blob),
+                        vN(*sockaddr->blob)
+                );
+                return INTEGER(err);
+        }
+
+        switch (v->z) {
 #ifndef _WIN32
-                case AF_UNIX:
-                        memset(&un_addr, 0, sizeof un_addr);
-                        un_addr.sun_family = AF_UNIX;
-                        v = tuple_get(&addr, "path");
-                        if (v == NULL || v->type != VALUE_STRING)
-                                zP("missing or invalid path in tuple passed to os.bind()");
-                        memcpy(un_addr.sun_path, v->str, min(v->bytes, sizeof un_addr.sun_path));
-                        return INTEGER(bind(sockfd.integer, (struct sockaddr *)&un_addr, sizeof un_addr));
+        case AF_UNIX:
+                memset(&un_addr, 0, sizeof un_addr);
+                un_addr.sun_family = AF_UNIX;
+                v = tuple_get(&addr, "path");
+                if (v == NULL || v->type != VALUE_STRING) {
+                        bP("expected `path: String` in address tuple: %s", VSC(&addr));
+                }
+                memcpy(un_addr.sun_path, ss(*v), min(sN(*v), sizeof un_addr.sun_path));
+                return INTEGER(bind(fd, (struct sockaddr *)&un_addr, sizeof un_addr));
 #endif
-                case AF_INET:
-                        memset(&in_addr, 0, sizeof in_addr);
-                        in_addr.sin_family = AF_INET;
-                        v = tuple_get(&addr, "address");
-                        if (v == NULL || v->type != VALUE_INTEGER)
-                                zP("missing or invalid address in tuple passed to os.bind()");
-                        ia.s_addr = htonl(v->integer);
-                        in_addr.sin_addr = ia;
-                        v = tuple_get(&addr, "port");
-                        if (v == NULL || v->type != VALUE_INTEGER)
-                                zP("missing or invalid port in tuple passed to os.bind()");
-                        unsigned short p = htons(v->integer);
-                        memcpy(&in_addr.sin_port, &p, sizeof in_addr.sin_port);
-                        return INTEGER(bind(sockfd.integer, (struct sockaddr *)&in_addr, sizeof in_addr));
-                default:
-                        zP("invalid arguments to os.bind()");
+        case AF_INET:
+                memset(&in_addr, 0, sizeof in_addr);
+                in_addr.sin_family = AF_INET;
+                v = tuple_get(&addr, "address");
+                if (v == NULL || v->type != VALUE_INTEGER) {
+                        bP("expected `address: Int` in address tuple: %s", VSC(&addr));
+                }
+                ia.s_addr = htonl(v->z);
+                in_addr.sin_addr = ia;
+                v = tuple_get(&addr, "port");
+                if (v == NULL || v->type != VALUE_INTEGER) {
+                        bP("expected `port: Int` in address tuple: %s", VSC(&addr));
+                }
+                port = htons(v->z);
+                memcpy(&in_addr.sin_port, &port, sizeof in_addr.sin_port);
+                return INTEGER(bind(fd, (struct sockaddr *)&in_addr, sizeof in_addr));
+
+        default:
+                bP("unknown address family: %d", (int)v->z);
         }
 }
 
@@ -4376,27 +4385,27 @@ BUILTIN_FUNCTION(os_getaddrinfo)
         char *tmp = TY_TMP();
 
         if (port.type == VALUE_INTEGER) {
-                snprintf(tmp, TY_TMP_N, "%hu", (unsigned short)port.integer);
+                snprintf(tmp, TY_TMP_N, "%hu", (unsigned short)port.z);
                 port = xSz(tmp);
         }
 
         if (host.type != VALUE_NIL) {
-                vvPn(B, host.str, host.bytes);
+                vvPn(B, ss(host), sN(host));
                 vvP(B, '\0');
 
-                vvPn(B, port.str, port.bytes);
+                vvPn(B, ss(port), sN(port));
                 vvP(B, '\0');
 
                 node = B.items;
-                service = B.items + host.bytes + 1;
+                service = B.items + sN(host) + 1;
         } else if (port.type == VALUE_NIL) {
-                vvPn(B, host.str, host.bytes);
+                vvPn(B, ss(host), sN(host));
                 vvP(B, '\0');
 
                 node = B.items;
                 service = NULL;
         } else {
-                vvPn(B, port.str, port.bytes);
+                vvPn(B, ss(port), sN(port));
                 vvP(B, '\0');
 
                 node = NULL;
@@ -4571,8 +4580,8 @@ BUILTIN_FUNCTION(os_sendto)
 
         lGv(true);
         ssize_t r = (buffer.type == VALUE_BLOB)
-                  ? sendto(fd.integer, buffer.blob->items, buffer.blob->count, flags.integer, (void *)addr.blob->items, addr.blob->count)
-                  : sendto(fd.integer, buffer.str, buffer.bytes, flags.integer, (void *)addr.blob->items, addr.blob->count);
+                  ? sendto(fd.z, buffer.blob->items, buffer.blob->count, flags.z, (void *)addr.blob->items, addr.blob->count)
+                  : sendto(fd.z, ss(buffer), sN(buffer), flags.z, (void *)addr.blob->items, addr.blob->count);
         lTk();
 
         return INTEGER(r);
@@ -4628,7 +4637,7 @@ BUILTIN_FUNCTION(os_poll)
                 v = v_(*fds, i);
                 switch (v->type) {
                 case VALUE_INTEGER:
-                        pfd.fd = v->integer;
+                        pfd.fd = v->z;
                         pfd.events = POLLIN;
                         break;
 
@@ -4637,8 +4646,8 @@ BUILTIN_FUNCTION(os_poll)
                                 ((fd = tget_t(v, 0, VALUE_INTEGER)) != NULL)
                              && ((ev = tget_t(v, 1, VALUE_INTEGER)) != NULL)
                         ) {
-                                pfd.fd = fd->integer;
-                                pfd.events = ev->integer;
+                                pfd.fd = fd->z;
+                                pfd.events = ev->z;
                                 break;
                         }
                         // fall
@@ -4695,7 +4704,7 @@ BUILTIN_FUNCTION(os_epoll_create)
         if (flags.type != VALUE_INTEGER)
                 zP("the argument to os.epoll_create() must be an integer");
 
-        return INTEGER(epoll_create1(flags.integer));
+        return INTEGER(epoll_create1(flags.z));
 }
 
 BUILTIN_FUNCTION(os_epoll_ctl)
@@ -4719,11 +4728,11 @@ BUILTIN_FUNCTION(os_epoll_ctl)
                 zP("the fourth argument to os.epoll_ctl() must be an integer");
 
         struct epoll_event ev = {
-                .events = events.integer,
-                .data = { .fd = fd.integer }
+                .events = events.z,
+                .data = { .fd = fd.z }
         };
 
-        return INTEGER(epoll_ctl(efd.integer, op.integer, fd.integer, &ev));
+        return INTEGER(epoll_ctl(efd.z, op.z, fd.z, &ev));
 }
 
 BUILTIN_FUNCTION(os_epoll_wait)
@@ -4741,7 +4750,7 @@ BUILTIN_FUNCTION(os_epoll_wait)
         struct epoll_event events[32];
 
         lGv(true);
-        int n = epoll_wait(efd.integer, events, sizeof events / sizeof events[0], timeout.integer);
+        int n = epoll_wait(efd.z, events, sizeof events / sizeof events[0], timeout.z);
         lTk();
 
         if (n == -1)
@@ -4818,19 +4827,19 @@ BUILTIN_FUNCTION(os_wait)
                 NOT_ON_WINDOWS("os." #name); \
         }
 #else
-#define WAITMACRO(name) \
-        Value \
-        builtin_os_ ## name(Ty *ty, int argc, Value *kwargs) \
-        { \
-                ASSERT_ARGC("os." #name, 1); \
-        \
-                Value status = ARG(0); \
-                if (status.type != VALUE_INTEGER) \
-                        zP("the argument to os." #name "() must be an integer"); \
-        \
-                int s = status.integer; \
-        \
-                return INTEGER(name(s)); \
+#define WAITMACRO(name)                                                           \
+        Value                                                                     \
+        builtin_os_ ## name(Ty *ty, int argc, Value *kwargs)                      \
+        {                                                                         \
+                ASSERT_ARGC("os." #name, 1);                                      \
+                                                                                  \
+                Value status = ARG(0);                                            \
+                if (status.type != VALUE_INTEGER)                                 \
+                        zP("the argument to os." #name "() must be an integer");  \
+                                                                                  \
+                int s = status.z;                                                 \
+                                                                                  \
+                return INTEGER(name(s));                                          \
         }
 #endif
 
@@ -4877,7 +4886,7 @@ WAITMACRO(WCOREDUMP)
                 Value id = ARG(0); \
                 if (id.type != VALUE_INTEGER) \
                         zP("the argument to os." #name "() must be an integer"); \
-                return INTEGER(name(id.integer)); \
+                return INTEGER(name(id.z)); \
         }
 #endif
 
@@ -4900,7 +4909,7 @@ noreturn BUILTIN_FUNCTION(os_exit)
         if (status.type != VALUE_INTEGER)
                 zP("the argument to os.exit() must be an integer");
 
-        exit(status.integer);
+        exit(status.z);
 }
 
 BUILTIN_FUNCTION(os_exec)
@@ -4922,9 +4931,7 @@ BUILTIN_FUNCTION(os_exec)
         vec_init(argv);
 
         for (int i = 0; i < cmd.array->count; ++i) {
-                char *arg = mA(cmd.array->items[i].bytes + 1);
-                memcpy(arg, cmd.array->items[i].str, cmd.array->items[i].bytes);
-                arg[cmd.array->items[i].bytes] = '\0';
+                char *arg = TY_C_STR(v__(*cmd.array, i));
                 vvP(argv, arg);
         }
 
@@ -4951,7 +4958,7 @@ BUILTIN_FUNCTION(os_signal)
 
         switch (f.type) {
         case VALUE_INTEGER:
-                switch (f.integer) {
+                switch (f.z) {
                 case 0:
                         vm_del_sigfn(ty, sig);
                         act.sa_handler = SIG_DFL;
@@ -5344,8 +5351,8 @@ tuple_timespec(Ty *ty, char const *func, Value const *v)
         }
 
         return (struct timespec) {
-                .tv_sec = sec->integer,
-                .tv_nsec = nsec->integer
+                .tv_sec = sec->z,
+                .tv_nsec = nsec->z
         };
 }
 
@@ -5375,7 +5382,7 @@ BUILTIN_FUNCTION(os_sleep)
 
         Value *clock = NAMED("clock");
         if (clock != NULL && clock->type == VALUE_INTEGER) {
-                clk = clock->integer;
+                clk = clock->z;
         }
 
         dur.tv_sec = nsec / TY_1e9;
@@ -5468,7 +5475,7 @@ BUILTIN_FUNCTION(os_listdir)
 
         // Prepare the search path
         B.count = 0;
-        vvPn(B, dir.str, dir.bytes);
+        vvPn(B, ss(dir), sN(dir));
         vvPn(B, "\\*", 2); // Add wildcard for all files
         vvP(B, '\0');
 
@@ -5559,15 +5566,15 @@ BUILTIN_FUNCTION(os_realpath)
 
         Value path = ARGx(0, VALUE_STRING);
 
-        if (path.bytes >= PATH_MAX) {
+        if (sN(path) >= PATH_MAX) {
                 return NIL;
         }
 
         char in[PATH_MAX + 1];
         char out[PATH_MAX + 1];
 
-        memcpy(in, path.str, path.bytes);
-        in[path.bytes] = '\0';
+        memcpy(in, ss(path), sN(path));
+        in[sN(path)] = '\0';
 
         char *resolved = resolve_path(in, out);
 
@@ -5904,12 +5911,12 @@ BUILTIN_FUNCTION(termios_tcsetattr)
         Value *ospeed = tuple_get(&attrs, "ospeed");
         Value *cc     = tuple_get(&attrs, "cc");
 
-        if (iflag  != NULL && iflag->type  == VALUE_INTEGER) { t.c_iflag  = iflag->integer; }
-        if (oflag  != NULL && oflag->type  == VALUE_INTEGER) { t.c_oflag  = oflag->integer; }
-        if (cflag  != NULL && cflag->type  == VALUE_INTEGER) { t.c_cflag  = cflag->integer; }
-        if (lflag  != NULL && lflag->type  == VALUE_INTEGER) { t.c_lflag  = lflag->integer; }
-        if (ispeed != NULL && ispeed->type == VALUE_INTEGER) { t.c_ispeed = ispeed->integer; }
-        if (ospeed != NULL && ospeed->type == VALUE_INTEGER) { t.c_ospeed = ospeed->integer; }
+        if (iflag  != NULL && iflag->type  == VALUE_INTEGER) { t.c_iflag  = iflag->z; }
+        if (oflag  != NULL && oflag->type  == VALUE_INTEGER) { t.c_oflag  = oflag->z; }
+        if (cflag  != NULL && cflag->type  == VALUE_INTEGER) { t.c_cflag  = cflag->z; }
+        if (lflag  != NULL && lflag->type  == VALUE_INTEGER) { t.c_lflag  = lflag->z; }
+        if (ispeed != NULL && ispeed->type == VALUE_INTEGER) { t.c_ispeed = ispeed->z; }
+        if (ospeed != NULL && ospeed->type == VALUE_INTEGER) { t.c_ospeed = ospeed->z; }
 
         if (cc != NULL && cc->type == VALUE_BLOB) {
                 for (int i = 0; i < min(vN(*cc->blob), sizeof t.c_cc); ++i) {
@@ -5929,7 +5936,7 @@ BUILTIN_FUNCTION(errno_get)
 
 BUILTIN_FUNCTION(errno_str)
 {
-        ASSERT_ARGC_2("errno.str()", 0, 1);
+        ASSERT_ARGC_2("ss(errno)()", 0, 1);
 
         int e;
 
@@ -5937,8 +5944,8 @@ BUILTIN_FUNCTION(errno_str)
                 e = errno;
         } else {
                 if (ARG(0).type != VALUE_INTEGER)
-                        zP("the argument to errno.str() must be an integer");
-                e = ARG(0).integer;
+                        zP("the argument to ss(errno)() must be an integer");
+                e = ARG(0).z;
         }
 
         char const *s = strerror(e);
@@ -5955,7 +5962,7 @@ BUILTIN_FUNCTION(time_gettime)
                 Value v = ARG(0);
                 if (v.type != VALUE_INTEGER)
                         zP("the argument to time.gettime() must be an integer");
-                clk = v.integer;
+                clk = v.z;
         } else {
                 clk = CLOCK_REALTIME;
         }
@@ -6007,7 +6014,7 @@ BUILTIN_FUNCTION(time_utime)
                 Value v = ARG(0);
                 if (v.type != VALUE_INTEGER)
                         zP("the argument to time.utime() must be an integer");
-                clk = v.integer;
+                clk = v.z;
         } else {
                 clk = CLOCK_REALTIME;
         }
@@ -6028,7 +6035,7 @@ BUILTIN_FUNCTION(time_localtime)
                 if (v.type != VALUE_INTEGER) {
                         zP("the argument to time.localtime() must be an integer");
                 }
-                t = v.integer;
+                t = v.z;
         } else {
                 t = time(NULL);
         }
@@ -6060,7 +6067,7 @@ BUILTIN_FUNCTION(time_gmtime)
                 if (v.type != VALUE_INTEGER) {
                         zP("the argument to time.gmtime() must be an integer");
                 }
-                t = v.integer;
+                t = v.z;
         } else {
                 t = time(NULL);
         }
@@ -6092,26 +6099,26 @@ BUILTIN_FUNCTION(time_strftime)
         if (argc == 2) {
                 Value v = ARG(1);
                 if (v.type == VALUE_INTEGER) {
-                        time_t sec = v.integer;
+                        time_t sec = v.z;
                         localtime_r(&sec, &t);
                 } else if (v.type == VALUE_TUPLE) {
                         Value *vp;
                         if ((vp = tget_t(&v, "sec", VALUE_INTEGER)) != NULL)
-                                t.tm_sec = vp->integer;
+                                t.tm_sec = vp->z;
                         if ((vp = tget_t(&v, "min", VALUE_INTEGER)) != NULL)
-                                t.tm_min = vp->integer;
+                                t.tm_min = vp->z;
                         if ((vp = tget_t(&v, "hour", VALUE_INTEGER)) != NULL)
-                                t.tm_hour = vp->integer;
+                                t.tm_hour = vp->z;
                         if ((vp = tget_t(&v, "mday", VALUE_INTEGER)) != NULL)
-                                t.tm_mday = vp->integer;
+                                t.tm_mday = vp->z;
                         if ((vp = tget_t(&v, "mon", VALUE_INTEGER)) != NULL)
-                                t.tm_mon = vp->integer;
+                                t.tm_mon = vp->z;
                         if ((vp = tget_t(&v, "year", VALUE_INTEGER)) != NULL)
-                                t.tm_year = vp->integer;
+                                t.tm_year = vp->z;
                         if ((vp = tget_t(&v, "wday", VALUE_INTEGER)) != NULL)
-                                t.tm_wday = vp->integer;
+                                t.tm_wday = vp->z;
                         if ((vp = tget_t(&v, "yday", VALUE_INTEGER)) != NULL)
-                                t.tm_yday = vp->integer;
+                                t.tm_yday = vp->z;
                         if ((vp = tget_t(&v, "isdst", VALUE_INTEGER)) != NULL)
                                 t.tm_isdst = vp->boolean;
 
@@ -6150,14 +6157,14 @@ BUILTIN_FUNCTION(time_strptime)
 
         B.count = 0;
 
-        vvPn(B, s.str, s.bytes);
+        vvPn(B, ss(s), sN(s));
         vvP(B, '\0');
 
-        vvPn(B, fmt.str, fmt.bytes);
+        vvPn(B, ss(fmt), sN(fmt));
         vvP(B, '\0');
 
         char const *sp = B.items;
-        char const *fp = B.items + s.bytes + 1;
+        char const *fp = B.items + sN(s) + 1;
 
         struct tm r = {0};
         strptime(sp, fp, &r);
@@ -6194,21 +6201,21 @@ BUILTIN_FUNCTION(time_time)
         Value *vp;
 
         if ((vp = tuple_get(&v, "sec")) != NULL && vp->type == VALUE_INTEGER)
-                t.tm_sec = vp->integer;
+                t.tm_sec = vp->z;
         if ((vp = tuple_get(&v, "min")) != NULL && vp->type == VALUE_INTEGER)
-                t.tm_min = vp->integer;
+                t.tm_min = vp->z;
         if ((vp = tuple_get(&v, "hour")) != NULL && vp->type == VALUE_INTEGER)
-                t.tm_hour = vp->integer;
+                t.tm_hour = vp->z;
         if ((vp = tuple_get(&v, "mday")) != NULL && vp->type == VALUE_INTEGER)
-                t.tm_mday = vp->integer;
+                t.tm_mday = vp->z;
         if ((vp = tuple_get(&v, "mon")) != NULL && vp->type == VALUE_INTEGER)
-                t.tm_mon = vp->integer;
+                t.tm_mon = vp->z;
         if ((vp = tuple_get(&v, "year")) != NULL && vp->type == VALUE_INTEGER)
-                t.tm_year = vp->integer;
+                t.tm_year = vp->z;
         if ((vp = tuple_get(&v, "wday")) != NULL && vp->type == VALUE_INTEGER)
-                t.tm_wday = vp->integer;
+                t.tm_wday = vp->z;
         if ((vp = tuple_get(&v, "yday")) != NULL && vp->type == VALUE_INTEGER)
-                t.tm_yday = vp->integer;
+                t.tm_yday = vp->z;
         if ((vp = tuple_get(&v, "isdst")) != NULL && vp->type == VALUE_BOOLEAN)
                 t.tm_isdst = vp->boolean;
 
@@ -6245,13 +6252,13 @@ BUILTIN_FUNCTION(stdio_fdopen)
                 Value m = ARG(1);
                 if (m.type != VALUE_STRING)
                         zP("the second argument to stdio.fdopen() must be a string");
-                if (m.bytes >= sizeof mode)
+                if (sN(m) >= sizeof mode)
                         zP("invalid mode string %s passed to stdio.fdopen()", VSC(&m));
-                memcpy(mode, m.str, m.bytes);
-                mode[m.bytes] = '\0';
+                memcpy(mode, ss(m), sN(m));
+                mode[sN(m)] = '\0';
         }
 
-        FILE *f = fdopen(fd.integer, mode);
+        FILE *f = fdopen(fd.z, mode);
         if (f == NULL)
                 return NIL;
 
@@ -6316,7 +6323,7 @@ BUILTIN_FUNCTION(stdio_read_signed)
                 if (ARG(1).type != VALUE_INTEGER) {
                         zP("expected integer as second argument to stdio.readSigned() but got: %s", VSC(&ARG(1)));
                 }
-                size = ARG(1).integer;
+                size = ARG(1).z;
         } else {
                 size = sizeof size;
         }
@@ -6357,7 +6364,7 @@ BUILTIN_FUNCTION(stdio_write_signed)
                 if (ARG(1).type != VALUE_INTEGER) {
                         zP("expected integer as second argument to stdio.writeSigned() but got: %s", VSC(&ARG(1)));
                 }
-                size = ARG(1).integer;
+                size = ARG(1).z;
                 x = ARG(2);
         } else {
                 size = sizeof (int);
@@ -6371,10 +6378,10 @@ BUILTIN_FUNCTION(stdio_write_signed)
         char b[sizeof (intmax_t)];
 
         switch (size) {
-        case (sizeof (char)):      memcpy(b, &(char)     {x.integer}, size); break;
-        case (sizeof (short)):     memcpy(b, &(short)    {x.integer}, size); break;
-        case (sizeof (int)):       memcpy(b, &(int)      {x.integer}, size); break;
-        case (sizeof (long long)): memcpy(b, &(long long){x.integer}, size); break;
+        case (sizeof (char)):      memcpy(b, &(char)     {x.z}, size); break;
+        case (sizeof (short)):     memcpy(b, &(short)    {x.z}, size); break;
+        case (sizeof (int)):       memcpy(b, &(int)      {x.z}, size); break;
+        case (sizeof (long long)): memcpy(b, &(long long){x.z}, size); break;
         default: return BOOLEAN(false);
         }
 
@@ -6400,7 +6407,7 @@ BUILTIN_FUNCTION(stdio_read_unsigned)
                 if (ARG(1).type != VALUE_INTEGER) {
                         zP("expected integer as second argument to stdio.readUnsigned() but got: %s", VSC(&ARG(1)));
                 }
-                size = ARG(1).integer;
+                size = ARG(1).z;
         } else {
                 size = sizeof size;
         }
@@ -6431,7 +6438,7 @@ BUILTIN_FUNCTION(stdio_write_unsigned)
                 if (ARG(1).type != VALUE_INTEGER) {
                         zP("expected integer as second argument to stdio.writeUnsigned() but got: %s", VSC(&ARG(1)));
                 }
-                size = ARG(1).integer;
+                size = ARG(1).z;
                 x = ARG(2);
         } else {
                 size = sizeof (int);
@@ -6445,10 +6452,10 @@ BUILTIN_FUNCTION(stdio_write_unsigned)
         char b[sizeof (uintmax_t)];
 
         switch (size) {
-        case (sizeof (unsigned char)):      memcpy(b, &(unsigned char)     {x.integer}, size); break;
-        case (sizeof (unsigned short)):     memcpy(b, &(unsigned short)    {x.integer}, size); break;
-        case (sizeof (unsigned int)):       memcpy(b, &(unsigned int)      {x.integer}, size); break;
-        case (sizeof (unsigned long long)): memcpy(b, &(unsigned long long){x.integer}, size); break;
+        case (sizeof (unsigned char)):      memcpy(b, &(unsigned char)     {x.z}, size); break;
+        case (sizeof (unsigned short)):     memcpy(b, &(unsigned short)    {x.z}, size); break;
+        case (sizeof (unsigned int)):       memcpy(b, &(unsigned int)      {x.z}, size); break;
+        case (sizeof (unsigned long long)): memcpy(b, &(unsigned long long){x.z}, size); break;
         default: return BOOLEAN(false);
         }
 
@@ -6558,8 +6565,8 @@ BUILTIN_FUNCTION(stdio_fread)
         Value f = ARGx(0, VALUE_PTR);
 
         Value n = ARGx(1, VALUE_INTEGER);
-        if (n.integer < 0) {
-                bP("got negative count: %"PRIiMAX, n.integer);
+        if (n.z < 0) {
+                bP("got negative count: %"PRIiMAX, n.z);
         }
 
         Blob *b;
@@ -6578,7 +6585,7 @@ BUILTIN_FUNCTION(stdio_fread)
         int c;
 
         lGv(true);
-        while (bytes < n.integer && (c = fgetc(fp)) != EOF) {
+        while (bytes < n.z && (c = fgetc(fp)) != EOF) {
                 vvP(*b, c);
                 bytes += 1;
         }
@@ -6589,7 +6596,7 @@ BUILTIN_FUNCTION(stdio_fread)
         if (existing_blob) {
                 return INTEGER(bytes);
         } else {
-                if (b->count == 0 && n.integer > 0 && c == EOF)
+                if (b->count == 0 && n.z > 0 && c == EOF)
                         return NIL;
 
                 return BLOB(b);
@@ -6654,7 +6661,7 @@ BUILTIN_FUNCTION(stdio_fputc)
         }
 
         lGv(true);
-        int c = fputc((int)ARG(1).integer, f.ptr);
+        int c = fputc((int)ARG(1).z, f.ptr);
         lTk();
 
         if (c == EOF)
@@ -6675,11 +6682,11 @@ BUILTIN_FUNCTION(stdio_fwrite)
 
         switch (s.type) {
         case VALUE_STRING:
-                return INTEGER(fwrite(s.str, 1, s.bytes, f.ptr));
+                return INTEGER(fwrite(ss(s), 1, sN(s), f.ptr));
         case VALUE_BLOB:
                 return INTEGER(fwrite(s.blob->items, 1, s.blob->count, f.ptr));
         case VALUE_INTEGER:
-                return INTEGER(fputc((unsigned char)s.integer, f.ptr));
+                return INTEGER(fputc((unsigned char)s.z, f.ptr));
         default:
                 zP("invalid type for second argument passed to stdio.fwrite()");
         }
@@ -6700,8 +6707,8 @@ BUILTIN_FUNCTION(stdio_puts)
 
         switch (s.type) {
         case VALUE_STRING:
-                r = fwrite(s.str, 1, s.bytes, f.ptr);
-                if (r < s.bytes && errno != 0)
+                r = fwrite(ss(s), 1, sN(s), f.ptr);
+                if (r < sN(s) && errno != 0)
                         return NIL;
                 break;
         case VALUE_BLOB:
@@ -6915,10 +6922,12 @@ BUILTIN_FUNCTION(type)
         case VALUE_METHOD:
         case VALUE_BUILTIN_METHOD:
         case VALUE_BUILTIN_FUNCTION:
+        case VALUE_FOREIGN_FUNCTION:
+        case VALUE_OPERATOR:
         case VALUE_FUNCTION:  return (Value) { .type = VALUE_CLASS, .class = CLASS_FUNCTION  };
         case VALUE_GENERATOR: return (Value) { .type = VALUE_CLASS, .class = CLASS_GENERATOR };
         case VALUE_TAG:       return (Value) { .type = VALUE_CLASS, .class = CLASS_TAG       };
-        case VALUE_PTR:       return PTR(NULL);
+        case VALUE_PTR:       return (Value) { .type = VALUE_CLASS, .class = CLASS_PTR       };
         default:
         case VALUE_NIL:      return NIL;
         }
@@ -6947,47 +6956,38 @@ BUILTIN_FUNCTION(members_list)
         Array *a = vA();
         Value items = ARRAY(a);
 
-        gP(&items);
+        GC_STOP();
 
         switch (o.type) {
         case VALUE_OBJECT:
                 for (int i = 0; i < vN(o.object->ids); ++i) {
                         char const *key = intern_entry(&xD.members, v__(o.object->ids, i))->name;
-                        Value member = vT(2);
-                        NOGC(member.items);
-                        member.items[0] = vSs(key, strlen(key));
-                        member.items[1] = v__(o.object->values, i);
-                        NOGC(member.items[0].str);
-                        vAp(a, member);
-                        OKGC(member.items[0].str);
-                        OKGC(member.items);
+                        vAp(a, PAIR(vSsz(key), v__(o.object->values, i)));
                 }
-
                 break;
+
         case VALUE_TUPLE:
                 for (int i = 0; i < o.count; ++i) {
                         Value entry = vT(2);
                         Value *pair = entry.items;
-                        NOGC(pair);
                         vAp(a, entry);
                         if (o.ids != NULL && o.ids[i] != -1) {
                                 char const *name = intern_entry(&xD.members, o.ids[i])->name;
-                                pair[0] = vSs(name, strlen(name));
+                                pair[0] = vSsz(name);
                                 pair[1] = o.items[i];
                         } else {
                                 pair[0] = INTEGER(i);
                                 pair[1] = o.items[i];
                         }
-                        OKGC(pair);
                 }
-
                 break;
+
         default:
-                gX();
-                return NIL;
+                items = NIL;
+                break;
         }
 
-        gX();
+        GC_RESUME();
 
         return items;
 }
@@ -7021,9 +7021,9 @@ BUILTIN_FUNCTION(members)
                         if (o.ids != NULL && o.ids[i] != -1) {
                                 char const *name = intern_entry(&xD.members, o.ids[i])->name;
                                 Value key = vSs(name, strlen(name));
-                                NOGC(key.str);
+                                NOGC(ss(key));
                                 dict_put_value(ty, members, key, o.items[i]);
-                                OKGC(key.str);
+                                OKGC(ss(key));
                         } else {
                                 dict_put_value(ty, members, INTEGER(i), o.items[i]);
                         }
@@ -7521,7 +7521,7 @@ BUILTIN_FUNCTION(ty_disassemble)
         switch (what.type) {
         case VALUE_STRING:
                 uvP(B, '\0');
-                uvPn(B, what.str, what.bytes);
+                uvPn(B, ss(what), sN(what));
                 uvP(B, '\0');
 
                 name = "(eval)";
@@ -7587,7 +7587,7 @@ BUILTIN_FUNCTION(eval)
                 B.count = 0;
                 uvP(B, '\0');
                 uvPn(B, EVAL_PROLOGUE, countof(EVAL_PROLOGUE) - 1);
-                uvPn(B, ARG(0).str, ARG(0).bytes);
+                uvPn(B, ss(ARG(0)), sN(ARG(0)));
                 uvPn(B, EVAL_EPILOGUE, countof(EVAL_EPILOGUE));
                 Arena old = NewArena(1 << 26);
                 Stmt **prog = parse(ty, vv(B) + 1, "(eval)");
@@ -7676,7 +7676,7 @@ BUILTIN_FUNCTION(ty_tokenize)
 
         B.count = 0;
         uvP(B, '\0');
-        uvPn(B, ARG(0).str, ARG(0).bytes);
+        uvPn(B, ss(ARG(0)), sN(ARG(0)));
         uvP(B, '\0');
 
         Arena old = NewArena(1 << 18);
@@ -8026,7 +8026,7 @@ BUILTIN_FUNCTION(ty_type_inst)
                 }
                 switch (sub->type) {
                 case VALUE_INTEGER:
-                        xvP(params, sub->integer);
+                        xvP(params, sub->z);
                         break;
                 case VALUE_TYPE:
                         if (!type_is_tvar(as_type(sub))) {
@@ -8044,7 +8044,7 @@ BUILTIN_FUNCTION(ty_type_inst)
                                 (tags_first(ty, sub->tags) == TyVarT)
                              && (unwrap(ty, sub).type == VALUE_INTEGER)
                         ) {
-                                xvP(params, sub->integer);
+                                xvP(params, sub->z);
                         } else {
                                 zP(
                                         "%s: invalid value used as parameter "
@@ -8239,7 +8239,7 @@ BUILTIN_FUNCTION(token_peek)
 
         GC_STOP();
 
-        Token t = parse_get_token(ty, argc == 0 ? 0 : ARG(0).integer);
+        Token t = parse_get_token(ty, argc == 0 ? 0 : ARG(0).z);
         Value v = make_token(ty, &t);
 
         GC_RESUME();
@@ -8281,7 +8281,7 @@ BUILTIN_FUNCTION(parse_expr)
                 if (ARG(0).type != VALUE_INTEGER) {
                         zP("ty.parse.expr(): expected integer but got: %s", VSC(&ARG(0)));
                 }
-                prec = ARG(0).integer;
+                prec = ARG(0).z;
         } else {
                 prec = 0;
         }
@@ -8307,7 +8307,7 @@ BUILTIN_FUNCTION(parse_type)
                 if (ARG(0).type != VALUE_INTEGER) {
                         zP("ty.parse.type(): expected integer but got: %s", VSC(&ARG(0)));
                 }
-                prec = ARG(0).integer;
+                prec = ARG(0).z;
         } else {
                 prec = 0;
         }
@@ -8335,7 +8335,7 @@ BUILTIN_FUNCTION(parse_stmt)
                 if (ARG(0).type != VALUE_INTEGER) {
                         zP("ty.parse.stmt(): expected integer but got: %s", VSC(&ARG(0)));
                 }
-                prec = ARG(0).integer;
+                prec = ARG(0).z;
         } else {
                 prec = -1;
         }
@@ -8421,7 +8421,7 @@ BUILTIN_FUNCTION(tdb_eval)
 
         v0(B);
         uvP(B, '\0');
-        uvPn(B, ARG(0).str, ARG(0).bytes);
+        uvPn(B, ss(ARG(0)), sN(ARG(0)));
         uvP(B, '\0');
 
         Arena old = NewArena(1 << 20);

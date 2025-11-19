@@ -15,13 +15,13 @@
 inline static double
 float_from(Value const *v)
 {
-        return (v->type == VALUE_INTEGER) ? v->integer : v->real;
+        return (v->type == VALUE_INTEGER) ? v->z : v->real;
 }
 
 inline static imax
 int_from(Value const *v)
 {
-        return (v->type == VALUE_INTEGER) ? v->integer
+        return (v->type == VALUE_INTEGER) ? v->z
              : (v->type == VALUE_PTR)     ? (iptr)v->ptr
              : v->real;
 }
@@ -36,10 +36,10 @@ ptr_from(Ty *ty, Value const *v)
                 return v->ptr;
 
         case VALUE_INTEGER:
-                return (void *)v->integer;
+                return (void *)v->z;
 
         case VALUE_STRING:
-                return (void *)v->str;
+                return (void *)ss(*v);
 
         case VALUE_NIL:
                 return NULL;
@@ -332,7 +332,7 @@ Bad:
                 if (nFixed->type != VALUE_INTEGER) {
                         zP("ffi.cif(): expected nFixed to be an integer but got: %s", VSC(nFixed));
                 }
-                if (ffi_prep_cif_var(cif, FFI_DEFAULT_ABI, nFixed->integer, max(0, argc - 1), rt, ats.items) != FFI_OK) {
+                if (ffi_prep_cif_var(cif, FFI_DEFAULT_ABI, nFixed->z, max(0, argc - 1), rt, ats.items) != FFI_OK) {
                         vec_empty(ats);
                         mF(cif);
                         return NIL;
@@ -396,10 +396,10 @@ cffi_realloc(Ty *ty, int argc, Value *kwargs)
                 zP("ffi.realloc(): expected integer as second argument but got: %s", VSC(&ARG(1)));
         }
 
-        if (ARG(1).integer <= 0)
+        if (ARG(1).z <= 0)
                 return NIL;
 
-        void *p = realloc(ARG(0).ptr, ARG(1).integer);
+        void *p = realloc(ARG(0).ptr, ARG(1).z);
 
         return (p == NULL) ? NIL : PTR(p);
 }
@@ -511,8 +511,8 @@ cffi_pmember(Ty *ty, int argc, Value *kwargs)
         Value i = ARG(2);
         if (
                 (i.type != VALUE_INTEGER)
-             || (i.integer < 0)
-             || (i.integer >= n)
+             || (i.z < 0)
+             || (i.z >= n)
         ) {
                 zP("invalid third argument to ffi.pmember(): %s", VSC(&i));
         }
@@ -520,7 +520,7 @@ cffi_pmember(Ty *ty, int argc, Value *kwargs)
         size_t offsets[64];
         ffi_get_struct_offsets(FFI_DEFAULT_ABI, type, offsets);
 
-        return PTR(p + offsets[i.integer]);
+        return PTR(p + offsets[i.z]);
 }
 
 Value
@@ -559,8 +559,8 @@ cffi_member(Ty *ty, int argc, Value *kwargs)
         Value i = ARG(2);
         if (
                 (i.type != VALUE_INTEGER)
-             || (i.integer < 0)
-             || (i.integer >= n)
+             || (i.z < 0)
+             || (i.z >= n)
         ) {
                 zP("invalid third argument to ffi.member(): %s", VSC(&i));
         }
@@ -569,9 +569,9 @@ cffi_member(Ty *ty, int argc, Value *kwargs)
         ffi_get_struct_offsets(FFI_DEFAULT_ABI, type, offsets);
 
         if (argc == 3) {
-                return load(ty, type->elements[i.integer], p + offsets[i.integer]);
+                return load(ty, type->elements[i.z], p + offsets[i.z]);
         } else {
-                store(ty, type->elements[i.integer], p + offsets[i.integer], &ARG(3));
+                store(ty, type->elements[i.z], p + offsets[i.z], &ARG(3));
                 return NIL;
         }
 }
@@ -624,7 +624,7 @@ cffi_load_n(Ty *ty, int argc, Value *kwargs)
 {
         ffi_type *t = ARG(0).ptr;
         char *p = ARG(1).ptr;
-        size_t n = ARG(2).integer;
+        size_t n = ARG(2).z;
 
         struct array *a = vA();
 
@@ -892,7 +892,7 @@ cffi_str(Ty *ty, int argc, Value *kwargs)
                 if (ARG(1).type != VALUE_INTEGER) {
                         zP("the second argument to ffi.str() must be an integer");
                 }
-                n = ARG(1).integer;
+                n = ARG(1).z;
         } else {
                 n = strlen(p);
         }
@@ -916,7 +916,7 @@ cffi_as_str(Ty *ty, int argc, Value *kwargs)
                 if (ARG(1).type != VALUE_INTEGER) {
                         zP("the second argument to ffi.as_str() must be an integer");
                 }
-                n = ARG(1).integer;
+                n = ARG(1).z;
         } else {
                 n = strlen(ARG(0).ptr);
         }

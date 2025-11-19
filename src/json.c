@@ -204,7 +204,7 @@ string(Ty *ty)
         i32 cp;
         u16 lo;
         u16 hi;
-        utf8proc_ssize_t n;
+        utf8proc_size_t n;
 
         while (peek() != '\0' && peek() != '"') {
                 switch ((peek() == '\\') ? (next(), next()) : -1) {
@@ -436,10 +436,10 @@ encode(Ty *ty, Value const *v, str *out)
                 break;
         case VALUE_STRING:
                 xvP(*out, '"');
-                for (int i = 0; i < v->bytes; ++i) {
+                for (int i = 0; i < sN(*v); ++i) {
                         int n;
                         int32_t cp;
-                        switch (v->str[i]) {
+                        switch (ss(*v)[i]) {
                         case '\t':
                                 xvP(*out, '\\');
                                 xvP(*out, 't');
@@ -452,10 +452,10 @@ encode(Ty *ty, Value const *v, str *out)
                         case '"':
                                 xvP(*out, '\\');
                         default:
-                                if (((uint8_t)v->str[i]) > 127) {
-                                        n = utf8proc_iterate((uint8_t *)&v->str[i], v->bytes - i, &cp);
+                                if ((ss(*v)[i]) > 127) {
+                                        n = utf8proc_iterate(&ss(*v)[i], sN(*v) - i, &cp);
                                         if (n <= 0) {
-                                                dump(out, "\\x%02hhx", v->str[i]);
+                                                dump(out, "\\x%02hhx", ss(*v)[i]);
                                         } else {
                                                 if (cp <= 0xFFFF) {
                                                         dump(out, "\\u%04x", cp);
@@ -467,10 +467,10 @@ encode(Ty *ty, Value const *v, str *out)
                                                 }
                                         }
                                         i += n - 1;
-                                } else if (iscntrl(v->str[i])) {
-                                        dump(out, "\\x%02hhx", v->str[i]);
+                                } else if (iscntrl(ss(*v)[i])) {
+                                        dump(out, "\\x%02hhx", ss(*v)[i]);
                                 } else {
-                                        xvP(*out, v->str[i]);
+                                        xvP(*out, ss(*v)[i]);
                                 }
                                 break;
                         }
@@ -485,7 +485,7 @@ encode(Ty *ty, Value const *v, str *out)
                 break;
         case VALUE_INTEGER:
                 xvR(*out, out->count + 64);
-                out->count += snprintf(out->items + out->count, 64, "%"PRIiMAX, v->integer);
+                out->count += snprintf(out->items + out->count, 64, "%"PRIiMAX, v->z);
                 break;
         case VALUE_REAL:
                 xvR(*out, out->count + 64);
@@ -538,7 +538,7 @@ encode(Ty *ty, Value const *v, str *out)
                         Value s = vm_eval_function(ty, NULL, &method, NULL);
                         if (s.type == VALUE_STRING) {
                                 gP(&s);
-                                xvPn(*out, s.str, s.bytes);
+                                xvPn(*out, ss(s), sN(s));
                                 gX();
                         } else {
                                 return encode(ty, &s, out);
@@ -687,7 +687,7 @@ json_dump(Ty *ty, Value const  *v, byte_vector *out)
 {
         Visiting.count = 0;
 
-        size_t start = vN(*out);
+        usize start = vN(*out);
 
         if (!encode(ty, v, out)) {
                 out->count = start;
