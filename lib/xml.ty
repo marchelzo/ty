@@ -14,7 +14,7 @@ pub ns xpath {
     pub tag NodeSet;
 }
 
-pub ns defs {
+ns defs {
     pub const xmlError            = c.int
     pub const xmlParserErrors     = c.int
     pub const xmlParserInputState = c.int

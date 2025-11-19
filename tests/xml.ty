@@ -1,0 +1,26 @@
+import xml (..)
+
+pub fn go() {
+    let doc = parse('''
+        <based>
+            Here is some text.
+            <keyed id="based">Raspberries</keyed>
+            <keyed id="cringe">Mangoes</keyed>
+        </based>
+    ''')
+
+    doc.register-func('lowkey', fn (x) {
+        if x[0].props.id == 'based' {
+            x[0].props.msg = 'PASS'
+        }
+        1
+    })
+
+    for node in doc['//keyed[lowkey(.)]'] {
+        if let $msg = node.props.?msg {
+            print(msg)
+        }
+    }
+}
+
+go()
