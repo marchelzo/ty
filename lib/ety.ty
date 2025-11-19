@@ -7,7 +7,7 @@ use TemplateToken =
   | Text[String]
   | Expr[String]
   | Embed[String]
-  | IfDef[String, String]
+  | IfDef[(String, String)]
 
 fn parse(s: String) -> Array[TemplateToken] {
     let ts = []
@@ -55,7 +55,8 @@ fn generate-code(tokens: Array[TemplateToken]) -> String {
     for match tokens {
        Text(s) => do {
             string.push(
-                s.sub(/\\/, '\\\\')
+                s.comb(/\n[ \t]*\z/)
+                 .sub(/\\/, '\\\\')
                  .sub('\n', '\\n')
                  .sub('\'', '\\\'')
             )
