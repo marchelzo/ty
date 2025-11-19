@@ -353,7 +353,7 @@ void
 op_add(int op, int t1, int t2, int ref, Expr *fun);
 
 int
-op_dispatch(int op, int t1, int t2);
+op_dispatch(Ty *ty, int op, int t1, int t2);
 
 Expr *
 op_fun_info(int op, int t1, int t2);

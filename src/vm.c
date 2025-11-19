@@ -1522,8 +1522,8 @@ CleanupThread(void *ctx)
 
         GCLOG("Got threads lock on thread: %llu -- ready to clean up. Group size = %zu", TID, vN(MyGroup->ThreadList));
 
-        for (int i = 0; i < MyGroup->ThreadList.count; ++i) {
-                if (MyLock == MyGroup->ThreadLocks.items[i]) {
+        for (int i = 0; i < vN(MyGroup->ThreadList); ++i) {
+                if (MyLock == v__(MyGroup->ThreadLocks, i)) {
                         *v_(MyGroup->ThreadList,   i) = *vvX(MyGroup->ThreadList);
                         *v_(MyGroup->TyList,       i) = *vvX(MyGroup->TyList);
                         *v_(MyGroup->ThreadLocks,  i) = *vvX(MyGroup->ThreadLocks);
@@ -1532,14 +1532,18 @@ CleanupThread(void *ctx)
                 }
         }
 
-        usize group_remaining = MyGroup->ThreadList.count;
+        usize group_remaining = vN(MyGroup->ThreadList);
 
         TySpinLockUnlock(&MyGroup->Lock);
 
-        for (int i = 0; i < TRY_STACK.capacity; ++i) {
+        for (int i = 0; i < vC(TRY_STACK); ++i) {
                 struct try *t = *v_(TRY_STACK, i);
                 xvF(t->defer);
                 free(t);
+        }
+
+        for (int i = 0; i < vN(ty->_2op_cache); ++i) {
+                xvF(v__(ty->_2op_cache, i));
         }
 
         TySpinLockDestroy(MyLock);
@@ -1555,7 +1559,8 @@ CleanupThread(void *ctx)
         xvF(TRY_STACK);
         xvF(THROW_STACK);
         xvF(DROP_STACK);
-        free(ty->allocs.items);
+        xvF(ty->allocs);
+        xvF(ty->_2op_cache);
         pcre2_match_data_free(ty->pcre2.match);
         pcre2_match_context_free(ty->pcre2.ctx);
         pcre2_jit_stack_free(ty->pcre2.stack);
@@ -3273,7 +3278,7 @@ DoUnaryOp(Ty *ty, int op, bool exec)
 TY_INSTR_INLINE static void
 DoBinaryOp(Ty *ty, int op, bool exec)
 {
-        int i = op_dispatch(op, ClassOf(top() - 1), ClassOf(top()));
+        int i = op_dispatch(ty, op, ClassOf(top() - 1), ClassOf(top()));
 
         if (i == -1) {
                 op_dump(op);
@@ -8242,7 +8247,7 @@ vm_2op(Ty *ty, int op, Value const *a, Value const *b)
 Value
 vm_try_2op(Ty *ty, int op, Value const *a, Value const *b)
 {
-        int i = op_dispatch(op, ClassOf(a), ClassOf(b));
+        int i = op_dispatch(ty, op, ClassOf(a), ClassOf(b));
 
         if (i == -1) {
                 dont_printf(

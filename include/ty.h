@@ -117,6 +117,12 @@ typedef struct location {
         char const *s;
 } Location;
 
+typedef struct {
+        u64 key;
+        i32 ref;
+} CacheEntry;
+
+typedef vec(CacheEntry) DispatchCache;
 
 struct alloc {
         union {
@@ -141,7 +147,6 @@ struct arena {
         bool gc;
         bool immortal;
 };
-
 
 typedef struct array {
         Value *items;
@@ -578,6 +583,8 @@ typedef struct ty {
         cothread_t co_top;
 
         ValueVector tls;
+
+        vec(DispatchCache) _2op_cache;
 
         int GC_OFF_COUNT;
         int rc;
