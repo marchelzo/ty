@@ -464,7 +464,7 @@ class HttpParser {
         __err   = llhttp_execute(__ctx, chunk, chunk.size())
     }
 
-    takeMessages() -> [HttpMessage] {
+    takeMessages() -> Array[HttpMessage] {
         __mq.slice!(0)
     }
 

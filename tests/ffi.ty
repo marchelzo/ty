@@ -1,16 +1,37 @@
-import ffi as c (wrap)
+import ffi as c (C!)
+import ptr
 import io
 
-let bytes = with f = io.open('/dev/urandom', 'r') { f.next(5000) }
-
-let qsort = wrap(nil, 'qsort', c.void, c.ptr, c.u64, c.u64, c.ptr)
-
-qsort(bytes, #bytes, 1, c.closure(c.int, c.ptr, c.ptr, (pa, pb) -> do {
-	let a = c.load(c.u8, pa)
-	let b = c.load(c.u8, pb)
-	a <=> b
-}))
-
-if bytes.list().sorted?() {
-	print('PASS')
+C! fn {
+    void qsort(void* base, c.u64 nmemb, c.u64 size, void *cmp);
+    long labs(long);
 }
+
+C! closure cmp(pa: c.ptr, pb: c.ptr) -> c.int {
+    let a = c.load(c.i8, pa)
+    let b = c.load(c.i8, pb)
+    labs(a) <=> labs(b)
+}
+
+fn check(n: Int) -> Bool {
+    let bytes = with f = io.open('/dev/urandom', 'r') {
+        f.next(n)
+    }
+    if #bytes != n {
+        return false
+    }
+
+    qsort(bytes, #bytes, 1, cmp)
+
+    let p = ptr.typed(bytes.ptr(), c.i8)
+
+    for i in 1..n {
+        if p[i - 1].abs > p[i].abs {
+            return false
+        }
+    }
+
+    true
+}
+
+print(check(1 << 12) ? 'PASS' : 'FAIL')

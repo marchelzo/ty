@@ -325,7 +325,7 @@ struct value {
                         void *extra;
                 };
                 struct {
-                        imax integer;
+                        imax z;
                         char const *constant;
                 };
                 struct {
@@ -714,6 +714,9 @@ extern u64 TypeCheckCounter;
 extern u64 TypeAllocCounter;
 extern u64 TypeCheckTime;
 
+extern u64 HITS;
+extern u64 MISSES;
+
 #if defined(TY_GC_STATS)
 extern usize TotalBytesAllocated;
 #endif
@@ -858,6 +861,7 @@ extern usize TotalBytesAllocated;
         X(SLICE),                 \
         X(TAIL_CALL),             \
         X(CALL),                  \
+        X(CALL_GLOBAL),           \
         X(CALL_METHOD),           \
         X(TRY_CALL_METHOD),       \
         X(CALL_SELF_METHOD),      \
@@ -1035,7 +1039,7 @@ enum {
 };
 #undef X
 
-#define INTEGER(k)               ((Value){ .type = VALUE_INTEGER,          .integer        = (k),                                  .tags = 0 })
+#define INTEGER(k)               ((Value){ .type = VALUE_INTEGER,          .z              = (k),                                  .tags = 0 })
 #define REAL(f)                  ((Value){ .type = VALUE_REAL,             .real           = (f),                                  .tags = 0 })
 #define BOOLEAN(b)               ((Value){ .type = VALUE_BOOLEAN,          .boolean        = (b),                                  .tags = 0 })
 #define ARRAY(a)                 ((Value){ .type = VALUE_ARRAY,            .array          = (a),                                  .tags = 0 })
@@ -1111,6 +1115,9 @@ enum {
 
 #define xSs(s, n) STRING_NOGC((s), (n))
 #define xSz(s)    STRING_NOGC_C(s)
+
+#define ss(v) ((v).str)
+#define sN(v) ((v).bytes)
 
 #define vA()       value_array_new(ty)
 #define vAn(n)     value_array_new_sized(ty, n)
@@ -1473,8 +1480,8 @@ TyTmpCString(Ty *ty, u32 i, Value val)
 
         switch (val.type) {
         case VALUE_STRING:
-                n = val.bytes;
-                str = val.str;
+                n = sN(val);
+                str = ss(val);
                 break;
 
         case VALUE_BLOB:
@@ -1502,8 +1509,8 @@ TyNewCString(Ty *ty, Value val, bool nul_before)
 
         switch (val.type) {
         case VALUE_STRING:
-                n = val.bytes;
-                str = val.str;
+                n = sN(val);
+                str = ss(val);
                 break;
 
         case VALUE_BLOB:

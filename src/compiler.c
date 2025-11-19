@@ -1381,7 +1381,7 @@ inline static void
              && (last3 == INSTR_POP_STACK_POS)
              &&     (c == INSTR_POP)
         ) {
-                int i;
+                i32 i;
 
                 vvX(STATE.code); // POP_STACK_POS
                 vvX(STATE.code); // ASSIGN
@@ -1402,7 +1402,7 @@ inline static void
              && (last3 == INSTR_ASSIGN)
              &&     (c == INSTR_POP)
         ) {
-                int i;
+                i32 i;
 
                 vvX(STATE.code); // ASSIGN
                 memcpy(&i, vZ(STATE.code) - sizeof i, sizeof i);
@@ -1413,48 +1413,41 @@ inline static void
                 Ei32(i);
 
                 last0 = -1;
-                last1 = -1;
-                last2 = -1;
+                last1 = last0;
+                last2 = last1;
                 last3 = INSTR_ASSIGN_LOCAL;
         } else if (
                 (last3 == INSTR_TARGET_SUBSCRIPT)
              &&     (c == INSTR_ASSIGN)
         ) {
                 *vvL(STATE.code) = INSTR_ASSIGN_SUBSCRIPT;
-                last0 = -1;
-                last1 = -1;
-                last2 = -1;
                 last3 = INSTR_ASSIGN_SUBSCRIPT;
         } else if (
                 (last3 == INSTR_POP)
              &&     (c == INSTR_POP)
         ) {
                 *vvL(STATE.code) = INSTR_POP2;
-                last0 = -1;
-                last1 = -1;
-                last2 = -1;
                 last3 = INSTR_POP2;
         } else if (
                 (last3 == INSTR_POP_STACK_POS_POP)
              &&     (c == INSTR_POP)
         ) {
                 *vvL(STATE.code) = (u8)INSTR_POP_STACK_POS_POP2;
-                last0 = -1;
-                last1 = -1;
-                last2 = -1;
                 last3 = INSTR_POP_STACK_POS_POP2;
         } else if (
                 (last3 == INSTR_POP_STACK_POS)
              &&     (c == INSTR_POP)
         ) {
                 *vvL(STATE.code) = (u8)INSTR_POP_STACK_POS_POP;
-                last0 = -1;
-                last1 = -1;
-                last2 = -1;
                 last3 = INSTR_POP_STACK_POS_POP;
+        } else if (
+                (last3 == INSTR_LOAD_GLOBAL)
+             &&     (c == INSTR_CALL)
+        ) {
+                *(vvL(STATE.code) - sizeof (i32)) = INSTR_CALL_GLOBAL;
+                last3 = INSTR_CALL_GLOBAL;
         } else {
                 avP(STATE.code, (u8)c);
-
                 last0 = last1;
                 last1 = last2;
                 last2 = last3;
@@ -11545,9 +11538,9 @@ mkcstr(Ty *ty, Value const *v)
                 return NULL;
         }
 
-        char *str = amA(v->bytes + 1);
-        memcpy(str, v->str, v->bytes);
-        str[v->bytes] = '\0';
+        char *str = amA(sN(*v) + 1);
+        memcpy(str, ss(*v), sN(*v));
+        str[sN(*v)] = '\0';
 
         return str;
 }
@@ -13004,7 +12997,7 @@ cstmt(Ty *ty, Value *v)
                 } else {
                         Value *expr = tuple_get(v, "value");
                         Value *depth = tuple_get(v, "depth");
-                        s->depth = (depth == NULL || depth->type == VALUE_NIL) ? 1 : max(1, depth->integer);
+                        s->depth = (depth == NULL || depth->type == VALUE_NIL) ? 1 : max(1, depth->z);
                         s->expression = (expr == NULL || expr->type == VALUE_NIL) ? NULL : cexpr(ty, expr);
                 }
                 break;
@@ -13016,10 +13009,10 @@ cstmt(Ty *ty, Value *v)
                 if (v->type == VALUE_TAG) {
                         s->depth = 1;
                 } else if ((v->type & ~VALUE_TAGGED) == VALUE_INTEGER) {
-                        s->depth = max(1, v->integer);
+                        s->depth = max(1, v->z);
                 } else {
                         Value *depth = tuple_get(v, "depth");
-                        s->depth = (depth == NULL || depth->type == VALUE_NIL) ? 1 : max(1, depth->integer);
+                        s->depth = (depth == NULL || depth->type == VALUE_NIL) ? 1 : max(1, depth->z);
                 }
                 break;
         }
@@ -13166,7 +13159,7 @@ cexpr(Ty *ty, Value *v)
 
         case TyInt:
                 e->type = EXPRESSION_INTEGER;
-                e->integer = v->integer;
+                e->integer = v->z;
                 break;
 
         case TyFloat:
@@ -13318,7 +13311,7 @@ cexpr(Ty *ty, Value *v)
                         } else if (x->type == VALUE_TUPLE) {
                                 avP(e->expressions, cexpr(ty, &x->items[0]));
                                 avP(e->fmts, cexpr(ty, &x->items[1]));
-                                avP(e->widths, (x->count > 2) ? x->items[2].integer : 0);
+                                avP(e->widths, (x->count > 2) ? x->items[2].z : 0);
                                 avP(e->fmtfs, cexpr(ty, tget_nn(x, 3)));
                         } else {
                                 avP(e->expressions, cexpr(ty, x));
@@ -16107,6 +16100,7 @@ DumpProgram(
                 CASE(MUT_SHR)
                 CASE(BIT_OR)
                 CASE(BIT_AND)
+                CASE(BIT_XOR)
                 CASE(SHL)
                 CASE(SHR)
                         break;
@@ -16235,6 +16229,8 @@ DumpProgram(
                         break;
                 CASE(TAIL_CALL)
                         break;
+                CASE(CALL_GLOBAL)
+                        READVALUE(n);
                 CASE(CALL)
                         READVALUE(n);
                         READVALUE(nkw);

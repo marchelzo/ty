@@ -104,7 +104,7 @@ hash64(u64 x)
 inline static u64
 ptr_hash(void const *p)
 {
-        return hash64((u64)(uintptr_t)p);
+        return hash64((u64)(uptr)p);
 }
 
 inline static u64
@@ -155,7 +155,7 @@ obj_hash(Ty *ty, Value const *v)
                                 VSC(v)
                         );
                 }
-                return (u64)hash.integer;
+                return (u64)hash.z;
         } else {
                 return ptr_hash(v->object);
         }
@@ -167,8 +167,8 @@ hash(Ty *ty, Value const *val)
         switch (val->type & ~VALUE_TAGGED) {
         case VALUE_NIL:               return 0xDEADDEADDEADULL;
         case VALUE_BOOLEAN:           return val->boolean ? 0xABCULL : 0xDEFULL;
-        case VALUE_STRING:            return XXH3_64bits(val->str, val->bytes);
-        case VALUE_INTEGER:           return hash64(val->integer);
+        case VALUE_STRING:            return XXH3_64bits(ss(*val), sN(*val));
+        case VALUE_INTEGER:           return hash64(val->z);
         case VALUE_REAL:              return flt_hash(val->real);
         case VALUE_ARRAY:             return ary_hash(ty, val);
         case VALUE_TUPLE:             return tpl_hash(ty, val);
@@ -459,13 +459,13 @@ value_showx(Ty *ty, Value const *v)
 
         switch (v->type & ~VALUE_TAGGED) {
         case VALUE_INTEGER:
-                snprintf(buffer, 1024, "%"PRIiMAX, v->integer);
+                snprintf(buffer, 1024, "%"PRIiMAX, v->z);
                 break;
         case VALUE_REAL:
                 dtoa(v->real, buffer, sizeof buffer);
                 break;
         case VALUE_STRING:
-                s = show_string(ty, v->str, v->bytes, false);
+                s = show_string(ty, ss(*v), sN(*v), false);
                 break;
         case VALUE_BOOLEAN:
                 snprintf(buffer, 1024, "%s", v->boolean ? "true" : "false");
@@ -579,9 +579,9 @@ value_showx(Ty *ty, Value const *v)
                         if (str.type != VALUE_STRING) {
                                 goto BasicObject;
                         }
-                        s = smA(str.bytes + 1);
-                        memcpy(s, str.str, str.bytes);
-                        s[str.bytes] = '\0';
+                        s = smA(sN(str) + 1);
+                        memcpy(s, ss(str), sN(str));
+                        s[sN(str)] = '\0';
                 } else {
 BasicObject:
                         snprintf(buffer, 1024, "<%s object at %p>", class_name(ty, v->class), (void *)v->object);
@@ -622,7 +622,7 @@ value_show_colorx(Ty *ty, Value const *v)
 
         switch (v->type & ~VALUE_TAGGED) {
         case VALUE_INTEGER:
-                snprintf(buffer, sizeof buffer, "%s%"PRIiMAX"%s", TERM(93), v->integer, TERM(0));
+                snprintf(buffer, sizeof buffer, "%s%"PRIiMAX"%s", TERM(93), v->z, TERM(0));
                 break;
 
         case VALUE_REAL:
@@ -631,7 +631,7 @@ value_show_colorx(Ty *ty, Value const *v)
                 break;
 
         case VALUE_STRING:
-                s = show_string(ty, v->str, v->bytes, true);
+                s = show_string(ty, ss(*v), sN(*v), true);
                 break;
 
         case VALUE_BOOLEAN:
@@ -910,9 +910,9 @@ value_show_colorx(Ty *ty, Value const *v)
                         if (str.type != VALUE_STRING) {
                                 goto BasicObject;
                         }
-                        s = smA(str.bytes + 1);
-                        memcpy(s, str.str, str.bytes);
-                        s[str.bytes] = '\0';
+                        s = smA(sN(str) + 1);
+                        memcpy(s, ss(str), sN(str));
+                        s[sN(str)] = '\0';
                 } else {
 BasicObject:
                         snprintf(
@@ -1027,7 +1027,7 @@ check_cmp_result(Ty *ty, Value const *v1, Value const *v2, Value v)
                 );
         }
 
-        return v.integer;
+        return v.z;
 }
 
 int
@@ -1037,25 +1037,25 @@ value_compare(Ty *ty, Value const *v1, Value const *v2)
 
         switch (PACK_TYPES(v1->type & ~VALUE_TAGGED, v2->type & ~VALUE_TAGGED)) {
         case PAIR_OF(VALUE_INTEGER):
-                return (v1->integer < v2->integer) ? -1 : (v1->integer != v2->integer);
+                return (v1->z < v2->z) ? -1 : (v1->z != v2->z);
 
         case PAIR_OF(VALUE_REAL):
                 return (v1->real < v2->real) ? -1 : (v1->real != v2->real);
 
         case PACK_TYPES(VALUE_REAL, VALUE_INTEGER):
-                return (v1->real < v2->integer) ? -1 : (v1->real != v2->integer);
+                return (v1->real < v2->z) ? -1 : (v1->real != v2->z);
 
         case PACK_TYPES(VALUE_INTEGER, VALUE_REAL):
-                return (v1->integer < v2->real) ? -1 : (v1->integer != v2->real);
+                return (v1->z < v2->real) ? -1 : (v1->z != v2->real);
 
         case PAIR_OF(VALUE_STRING):
-                c = memcmp(v1->str, v2->str, min(v1->bytes, v2->bytes));
-                return (c != 0) ? c : ((int)v1->bytes - (int)v2->bytes);
+                c = memcmp(ss(*v1), ss(*v2), min(sN(*v1), sN(*v2)));
+                return (c != 0) ? c : (int)((isize)sN(*v1) - (isize)sN(*v2));
 
         case PAIR_OF(VALUE_PTR):
-                return ((uintptr_t)v1->ptr < (uintptr_t)v2->ptr)
+                return ((uptr)v1->ptr < (uptr)v2->ptr)
                      ? -1
-                     :  ((uintptr_t)v1->ptr != (uintptr_t)v2->ptr)
+                     :  ((uptr)v1->ptr != (uptr)v2->ptr)
                      ;
 
         case PAIR_OF(VALUE_ARRAY):
@@ -1084,8 +1084,8 @@ value_truthy(Ty *ty, Value const *v)
         switch (v->type) {
         case VALUE_REAL:             return v->real != 0.0f;
         case VALUE_BOOLEAN:          return v->boolean;
-        case VALUE_INTEGER:          return (v->integer != 0);
-        case VALUE_STRING:           return (v->bytes > 0);
+        case VALUE_INTEGER:          return (v->z != 0);
+        case VALUE_STRING:           return (sN(*v) != 0);
         case VALUE_ARRAY:            return (v->array->count != 0);
         case VALUE_TUPLE:            return (v->count != 0);
         case VALUE_BLOB:             return (v->blob->count != 0);
@@ -1125,8 +1125,8 @@ value_apply_predicate(Ty *ty, Value *p, Value *v)
                 } else {
                         int rc = pcre2_match(
                                 p->regex->pcre2,
-                                (PCRE2_SPTR)v->str,
-                                v->bytes,
+                                (PCRE2_SPTR)ss(*v),
+                                sN(*v),
                                 0,
                                 0,
                                 ty->pcre2.match,
@@ -1178,8 +1178,8 @@ value_apply_callable(Ty *ty, Value *f, Value *v)
 
                 int rc = pcre2_match(
                         f->regex->pcre2,
-                        (PCRE2_SPTR)v->str,
-                        v->bytes,
+                        (PCRE2_SPTR)ss(*v),
+                        sN(*v),
                         0,
                         0,
                         ty->pcre2.match,
@@ -1236,14 +1236,14 @@ value_test_equality(Ty *ty, Value const *v1, Value const *v2)
 
         switch (PACK_TYPES(t0, t1)) {
         case PAIR_OF(VALUE_INTEGER):
-                return v1->integer == v2->integer;
+                return v1->z == v2->z;
 
         case PAIR_OF(VALUE_STRING):
-                return v1->bytes == v2->bytes
-                    && memcmp(v1->str, v2->str, v1->bytes) == 0;
+                return (sN(*v1) == sN(*v2))
+                    && (memcmp(ss(*v1), ss(*v2), sN(*v1)) == 0);
 
         case PAIR_OF(VALUE_BOOLEAN):
-                return v1->boolean == v2->boolean;
+                return (v1->boolean == v2->boolean);
 
         case PAIR_OF(VALUE_ARRAY):
                 return arrays_equal(ty, v1, v2);
@@ -1252,29 +1252,29 @@ value_test_equality(Ty *ty, Value const *v1, Value const *v2)
                 return tuples_equal(ty, v1, v2);
 
         case PAIR_OF(VALUE_DICT):
-                return v1->dict == v2->dict;
+                return (v1->dict == v2->dict);
 
         case PAIR_OF(VALUE_CLASS):
-                return v1->class == v2->class;
+                return (v1->class == v2->class);
 
         case PAIR_OF(VALUE_TAG):
-                return v1->tag == v2->tag;
+                return (v1->tag == v2->tag);
 
         case PAIR_OF(VALUE_PTR):
-                return v1->ptr == v2->ptr;
+                return (v1->ptr == v2->ptr);
 
         case PAIR_OF(VALUE_BLOB):
-                return v1->blob == v2->blob;
+                return (v1->blob == v2->blob);
 
         case PAIR_OF(VALUE_FUNCTION):
-                return v1->info == v2->info;
+                return (v1->info == v2->info);
 
         case PAIR_OF(VALUE_BUILTIN_FUNCTION):
-                return v1->builtin_function == v2->builtin_function;
+                return (v1->builtin_function == v2->builtin_function);
 
         case PAIR_OF(VALUE_BUILTIN_METHOD):
-                return v1->builtin_method == v2->builtin_method
-                    && memcmp(v1->this, v2->this, sizeof (Value)) == 0;
+                return (v1->builtin_method == v2->builtin_method)
+                    && (v1->this == v2->this);
 
         case PAIR_OF(VALUE_REGEX):
                 return v1->regex == v2->regex;
@@ -1361,7 +1361,7 @@ mark_generator(Ty *ty, Value const *v)
         }
 
         for (int i = 0; i < vN(v->gen->st.targets); ++i) {
-                if ((((uintptr_t)v_(v->gen->st.targets, i)->t) & 0x07) == 0) {
+                if ((((uptr)v_(v->gen->st.targets, i)->t) & 0x07) == 0) {
                         MarkNext(ty, v_(v->gen->st.targets, i)->t);
                 }
         }
@@ -1409,16 +1409,12 @@ mark_function(Ty *ty, Value const *v)
 
         MARK(v->env);
 
-        int meta = 0;
-        for (int i = 0; i < n + meta; ++i) {
+        for (int i = 0; i < n; ++i) {
                 if (v->env[i] == NULL) {
                         continue;
                 }
                 MARK(v->env[i]);
                 MarkNext(ty, v->env[i]);
-                if (v->env[i]->type == VALUE_FUN_META) {
-                        meta += 1;
-                }
         }
 }
 

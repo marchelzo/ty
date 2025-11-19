@@ -66,7 +66,7 @@ main(int argc, char *argv[])
                 fputs(VSC(&req), stderr);
                 fputc('\n', stderr);
 
-                i32 what = tget_nn(&req, "what")->integer;
+                i32 what = tget_nn(&req, "what")->z;
 
                 i32 line;
                 i32 col;
@@ -131,8 +131,8 @@ main(int argc, char *argv[])
                         break;
 
                 case 1:
-                        line = tget_nn(&req, "line")->integer;
-                        col  = tget_nn(&req, "col")->integer;
+                        line = tget_nn(&req, "line")->z;
+                        col  = tget_nn(&req, "col")->z;
 
                         if (mod == NULL) {
                                 goto NextRequest;
@@ -154,8 +154,8 @@ main(int argc, char *argv[])
                         break;
 
                 case 2:
-                        line = tget_nn(&req, "line")->integer;
-                        col  = tget_nn(&req, "col")->integer;
+                        line = tget_nn(&req, "line")->z;
+                        col  = tget_nn(&req, "col")->z;
 
                         if (mod == NULL) {
                                 goto NextRequest;

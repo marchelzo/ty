@@ -26,16 +26,16 @@ blob_clear(Ty *ty, Value *blob, int argc, Value *kwargs)
                 n = blob->blob->count;
                 break;
         case 1:
-                start = ARG(0).integer;
+                start = ARG(0).z;
                 if (start < 0)
                         start += blob->blob->count;
                 n = blob->blob->count - start;
                 break;
         case 2:
-                start = ARG(0).integer;
+                start = ARG(0).z;
                 if (start < 0)
                         start += blob->blob->count;
-                n = ARG(1).integer;
+                n = ARG(1).z;
                 break;
         default:
                 zP("blob.clear() expects 0, 1, or 2 arguments but got %d", argc);
@@ -73,33 +73,35 @@ blob_search(Ty *ty, Value *blob, int argc, Value *kwargs)
         if (start.type != VALUE_INTEGER)
                 zP("the offset argument to blob.search() must be an integer");
 
-        if (start.integer < 0 || start.integer > blob->blob->count)
+        if (start.z < 0 || start.z > blob->blob->count)
                 zP("invalid offset passed to blob.search()");
 
         if (blob->blob->count == 0)
                 return NIL;
 
-        char const *haystack = (char const *) blob->blob->items + start.integer;
-        int n = blob->blob->count - start.integer;
+        char const *haystack = (char const *)blob->blob->items + start.z;
+        int n = blob->blob->count - start.z;
         char const *s;
 
         switch (c.type) {
         case VALUE_STRING:
-                s = strstrn(haystack, n, c.str, c.bytes);
+                s = mmmm(haystack, n, ss(c), sN(c));
                 break;
+
         case VALUE_BLOB:
-                s = strstrn(haystack, n, (char *)c.blob->items, c.blob->count);
+                s = mmmm(haystack, n, (char *)c.blob->items, c.blob->count);
                 break;
+
         case VALUE_INTEGER:
-                if (c.integer < 0 || c.integer > UCHAR_MAX)
+                if (c.z < 0 || c.z > UCHAR_MAX)
                         zP("invalid integer passed to blob.search()");
-                s = memchr(haystack, c.integer, n);
+                s = memchr(haystack, c.z, n);
                 break;
         default:
                 zP("invalid argument passed to blob.search()");
         }
 
-        return (s == NULL) ? NIL : INTEGER(s - haystack + start.integer);
+        return (s == NULL) ? NIL : INTEGER(s - haystack + start.z);
 }
 
 static Value
@@ -128,10 +130,10 @@ blob_push(Ty *ty, Value *blob, int argc, Value *kwargs)
 
         switch (arg.type) {
         case VALUE_INTEGER:
-                if (arg.integer < 0 || arg.integer > UCHAR_MAX) {
+                if (arg.z < 0 || arg.z > UCHAR_MAX) {
                         bP("not an octet: %s", VSC(&arg));
                 }
-                vvI(*blob->blob, arg.integer, index);
+                vvI(*blob->blob, arg.z, index);
                 break;
 
         case VALUE_BLOB:
@@ -139,7 +141,7 @@ blob_push(Ty *ty, Value *blob, int argc, Value *kwargs)
                 break;
 
         case VALUE_STRING:
-                vvIn(*blob->blob, arg.str, arg.bytes, index);
+                vvIn(*blob->blob, ss(arg), sN(arg), index);
                 break;
 
         case VALUE_PTR:
@@ -168,12 +170,12 @@ blob_get(Ty *ty, Value *blob, int argc, Value *kwargs)
         Value i = ARG(0);
         if (i.type != VALUE_INTEGER)
                 zP("the argument to blob.get() must be an integer");
-        if (i.integer < 0)
-                i.integer += blob->blob->count;
-        if (i.integer < 0 || i.integer >= blob->blob->count)
-                zP("blob.get(): invalid index: %"PRIiMAX, i.integer);
+        if (i.z < 0)
+                i.z += blob->blob->count;
+        if (i.z < 0 || i.z >= blob->blob->count)
+                zP("blob.get(): invalid index: %"PRIiMAX, i.z);
 
-        return INTEGER(blob->blob->items[i.integer]);
+        return INTEGER(blob->blob->items[i.z]);
 }
 
 static Value
@@ -200,16 +202,16 @@ blob_set(Ty *ty, Value *blob, int argc, Value *kwargs)
         Value i = ARG(0);
         if (i.type != VALUE_INTEGER)
                 zP("the argument to blob.get() must be an integer");
-        if (i.integer < 0)
-                i.integer += blob->blob->count;
-        if (i.integer < 0 || i.integer >= blob->blob->count)
+        if (i.z < 0)
+                i.z += blob->blob->count;
+        if (i.z < 0 || i.z >= blob->blob->count)
                 zP("invalid index passed to blob.get()");
 
         Value arg = ARG(1);
-        if (arg.type != VALUE_INTEGER || arg.integer < 0 || arg.integer > UCHAR_MAX)
+        if (arg.type != VALUE_INTEGER || arg.z < 0 || arg.z > UCHAR_MAX)
                 zP("invalid integer passed to blob.set()");
 
-        blob->blob->items[i.integer] = arg.integer;
+        blob->blob->items[i.z] = arg.z;
 
         return NIL;
 }
@@ -219,7 +221,7 @@ blob_xor(Ty *ty, Value *blob, int argc, Value *kwargs)
 {
         if (argc == 1 && ARG(0).type == VALUE_BLOB) {
                 Blob *b = ARG(0).blob;
-                if (b->count > 0) for (size_t i = 0; i < blob->blob->count; ++i) {
+                if (b->count > 0) for (usize i = 0; i < blob->blob->count; ++i) {
                         blob->blob->items[i] ^= b->items[i % b->count];
                 }
                 return *blob;
@@ -237,56 +239,60 @@ blob_xor(Ty *ty, Value *blob, int argc, Value *kwargs)
                 zP("blob.xor(_, size): expected integer but got: %s", value_show(ty, &ARG(0)));
         }
 
-        uint8_t u8;
-        uint16_t u16, *pu16;
-        uint32_t u32, *pu32;
-        uint64_t u64, *pu64;
+        u8  _u8;
+        u16 _u16, *pu16;
+        u32 _u32, *pu32;
+        u64 _u64, *pu64;
 
-        uint8_t size = ARG(1).integer;
-        uint8_t r;
+        u8 size = ARG(1).z;
+        u8 r;
 
         switch (size) {
         case 1:
-                u8 = ARG(0).integer;
-                for (size_t i = 0; i < blob->blob->count; ++i) {
-                        blob->blob->items[i] ^= u8;
+                _u8 = ARG(0).z;
+                for (usize i = 0; i < blob->blob->count; ++i) {
+                        blob->blob->items[i] ^= _u8;
                 }
                 break;
+
         case 2:
-                u16 = ARG(0).integer;
+                _u16 = ARG(0).z;
                 pu16 = (void *)blob->blob->items;
-                for (size_t i = 0; i < blob->blob->count / 2; ++i) {
-                        pu16[i] ^= u16;
+                for (usize i = 0; i < blob->blob->count / 2; ++i) {
+                        pu16[i] ^= _u16;
                 }
                 r =  blob->blob->count % 2;
                 for (int i = 0; i < r; ++i) {
-                        blob->blob->items[blob->blob->count - r + i] ^= ((u16 >> (8 * i)) & 0xFF);
+                        blob->blob->items[blob->blob->count - r + i] ^= ((_u16 >> (8 * i)) & 0xFF);
                 }
                 break;
+
         case 4:
-                u32 = ARG(0).integer;
+                _u32 = ARG(0).z;
                 pu32 = (void *)blob->blob->items;
-                for (size_t i = 0; i < blob->blob->count / 4; ++i) {
-                        pu32[i] ^= u32;
+                for (usize i = 0; i < blob->blob->count / 4; ++i) {
+                        pu32[i] ^= _u32;
                 }
                 r =  blob->blob->count % 4;
                 for (int i = 0; i < r; ++i) {
-                        blob->blob->items[blob->blob->count - r + i] ^= ((u32 >> (8 * i)) & 0xFF);
+                        blob->blob->items[blob->blob->count - r + i] ^= ((_u32 >> (8 * i)) & 0xFF);
                 }
                 break;
+
         case 8:
-                u64 = ARG(0).integer;
+                _u64 = ARG(0).z;
                 pu64 = (void *)blob->blob->items;
-                for (size_t i = 0; i < blob->blob->count / 8; ++i) {
-                        pu64[i] ^= u64;
+                for (usize i = 0; i < blob->blob->count / 8; ++i) {
+                        pu64[i] ^= _u64;
                 }
                 r =  blob->blob->count % 8;
                 for (int i = 0; i < r; ++i) {
-                        blob->blob->items[blob->blob->count - r + i] ^= ((u64 >> (8 * i)) & 0xFF);
+                        blob->blob->items[blob->blob->count - r + i] ^= ((_u64 >> (8 * i)) & 0xFF);
                 }
                 break;
+
         default:
-                zP("blob.xor(): invalid mask size: %"PRIiMAX, ARG(1).integer);
+                zP("blob.xor(): invalid mask size: %"PRIiMAX, ARG(1).z);
         }
 
         return *blob;
@@ -311,12 +317,12 @@ blob_str(Ty *ty, Value *blob, int argc, Value *kwargs)
                 n = blob->blob->count;
                 break;
         case 1:
-                start = ARG(0).integer;
+                start = ARG(0).z;
                 n = INT_MAX;
                 break;
         case 2:
-                start = ARG(0).integer;
-                n = ARG(1).integer;
+                start = ARG(0).z;
+                n = ARG(1).z;
                 break;
         default:
                 zP("blob.str() expects 0, 1, or 2 arguments but got %d", argc);
@@ -373,12 +379,12 @@ blob_str_unsafe(Ty *ty, Value *blob, int argc, Value *kwargs)
                 n = blob->blob->count;
                 break;
         case 1:
-                start = ARG(0).integer;
+                start = ARG(0).z;
                 n = INT_MAX;
                 break;
         case 2:
-                start = ARG(0).integer;
-                n = ARG(1).integer;
+                start = ARG(0).z;
+                n = ARG(1).z;
                 break;
         default:
                 zP("blob.str!() expects 0, 1, or 2 arguments but got %d", argc);
@@ -405,10 +411,10 @@ blob_reserve(Ty *ty, Value *blob, int argc, Value *kwargs)
         Value n = ARG(0);
         if (n.type != VALUE_INTEGER)
                 zP("the argument to blob.reserve() must be an integer");
-        if (n.integer < 0)
+        if (n.z < 0)
                 zP("the argument to blob.reserve() must be non-negative");
 
-        vvR(*blob->blob, n.integer);
+        vvR(*blob->blob, n.z);
 
         return NIL;
 }
@@ -436,7 +442,7 @@ blob_pad(Ty *ty, Value *blob, int argc, Value *kwargs)
                 zP("Blob.pad(): expected arg0: Int but got: %s", VSC(&n));
         }
 
-        size_t goal = n.integer;
+        usize goal = n.z;
 
         if (vN(*blob->blob) >= goal) {
                 return BOOLEAN(false);
@@ -445,15 +451,17 @@ blob_pad(Ty *ty, Value *blob, int argc, Value *kwargs)
         switch (pad.type) {
         case VALUE_INTEGER:
                 vvR(*blob->blob, goal);
-                memset(vZ(*blob->blob), (uint8_t)pad.integer, goal - vN(*blob->blob));
+                memset(vZ(*blob->blob), (u8)pad.z, goal - vN(*blob->blob));
                 blob->blob->count = blob->blob->capacity;
                 break;
+
         case VALUE_STRING:
-                vvR(*blob->blob, goal + pad.bytes);
+                vvR(*blob->blob, goal + sN(pad));
                 while (vN(*blob->blob) < goal) {
-                        vvPn(*blob->blob, pad.str, pad.bytes);
+                        vvPn(*blob->blob, ss(pad), sN(pad));
                 }
                 break;
+
         default:
                 zP("Blob.pad(): expected arg1: Int | String but got: %s", VSC(&pad));
         }
@@ -473,7 +481,7 @@ blob_ptr(Ty *ty, Value *blob, int argc, Value *kwargs)
                         zP("blob.ptr() expects an integer but got %s", value_show(ty, &ARG(0)));
                 }
 
-                return PTR(blob->blob->items + ARG(0).integer);
+                return PTR(blob->blob->items + ARG(0).z);
         }
 
         zP("blob.ptr() expects 0 or 1 arguments but got %d", argc);
@@ -509,11 +517,11 @@ blob_slice(Ty *ty, Value *blob, int argc, Value *kwargs)
         case 2:
                 if (ARG(1).type != VALUE_INTEGER)
                         zP("the second argument to blob.slice() must be an integer");
-                n = ARG(1).integer;
+                n = ARG(1).z;
         case 1:
                 if (ARG(0).type != VALUE_INTEGER)
                         zP("the first argument to blob.slice() must be an integer");
-                start = ARG(0).integer;
+                start = ARG(0).z;
         case 0:
                 break;
         default:
@@ -549,11 +557,11 @@ blob_splice(Ty *ty, Value *blob, int argc, Value *kwargs)
         case 2:
                 if (ARG(1).type != VALUE_INTEGER)
                         zP("the second argument to blob.splice() must be an integer");
-                n = ARG(1).integer;
+                n = ARG(1).z;
         case 1:
                 if (ARG(0).type != VALUE_INTEGER)
                         zP("the first argument to blob.splice() must be an integer");
-                start = ARG(0).integer;
+                start = ARG(0).z;
         case 0:
                 break;
         default:

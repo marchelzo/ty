@@ -13,6 +13,7 @@
 #include <xxhash.h>
 
 #include "ty.h"
+#include "mmmm.h"
 #include "alloc.h"
 #include "intern.h"
 #include "polyfill_unistd.h"
@@ -147,18 +148,6 @@ slurp(Ty *ty, char const *path);
 
 char *
 fslurp(Ty *ty, FILE *f);
-
-/* memmem. maybe change this to Knuth-Morris-Pratt or Boyer-Moore at some point */
-inline static char const *
-strstrn(char const *haystack, int hn, char const *needle, int nn)
-{
-        for (int i = 0; i <= hn - nn; ++i) {
-                if (memcmp(haystack + i, needle, nn) == 0)
-                        return haystack + i;
-        }
-
-        return NULL;
-}
 
 inline static u64
 HashCombine(u64 seed, u64 hash)

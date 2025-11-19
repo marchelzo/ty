@@ -46,7 +46,7 @@ prepare(Ty *ty, int argc, Value *kwargs)
         Value sql = ARGx(1, VALUE_STRING);
 
         sqlite3_stmt *stmt;
-        int err = sqlite3_prepare_v2(db, (char const *)sql.str, sql.bytes, &stmt, NULL);
+        int err = sqlite3_prepare_v2(db, (char const *)ss(sql), sN(sql), &stmt, NULL);
 
         if (err == SQLITE_OK) {
                 return PTR(stmt);
@@ -238,7 +238,7 @@ mbind(Ty *ty, int argc, Value *kwargs)
         if (index.type == VALUE_STRING) {
                 i = sqlite3_bind_parameter_index(stmt, TY_TMP_C_STR(index));
         } else if (index.type == VALUE_INTEGER) {
-                i = index.integer;
+                i = index.z;
         } else {
                 UNREACHABLE();
         }
@@ -248,7 +248,7 @@ mbind(Ty *ty, int argc, Value *kwargs)
 
         switch (v.type) {
         case VALUE_INTEGER:
-                err = sqlite3_bind_int64(stmt, i, v.integer);
+                err = sqlite3_bind_int64(stmt, i, v.z);
                 break;
         case VALUE_REAL:
                 err = sqlite3_bind_double(stmt, i, v.real);
@@ -257,8 +257,8 @@ mbind(Ty *ty, int argc, Value *kwargs)
                 err = sqlite3_bind_text(
                         stmt,
                         i,
-                        (char const *)v.str,
-                        v.bytes,
+                        (char const *)ss(v),
+                        sN(v),
                         SQLITE_TRANSIENT
                 );
                 break;
@@ -315,7 +315,7 @@ error_msg(Ty *ty, int argc, Value *kwargs)
         if (v.type == VALUE_PTR) {
                 msg = sqlite3_errmsg(v.ptr);
         } else if (v.type == VALUE_INTEGER) {
-                msg = sqlite3_errstr(v.integer);
+                msg = sqlite3_errstr(v.z);
         } else {
                 UNREACHABLE();
         }
@@ -324,7 +324,7 @@ error_msg(Ty *ty, int argc, Value *kwargs)
 }
 
 #define BUILTIN(f)    { .type = VALUE_BUILTIN_FUNCTION, .builtin_function = (f), .tags = 0 }
-#define INT(k)        { .type = VALUE_INTEGER,          .integer          = (k), .tags = 0 }
+#define INT(k)        { .type = VALUE_INTEGER,          .z                = (k), .tags = 0 }
 
 static struct {
         char const *name;

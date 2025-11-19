@@ -1,13 +1,9 @@
-#!/usr/bin/env ty
-
 import llhttp (..)
 import os (..)
 import json
 import errno
 import net
 import log
-
-log::logging({level: log::DEBUG})
 
 function urlDecode(s: String) -> String {
     s.sub('+', ' ')
@@ -69,12 +65,12 @@ class HttpResponse {
 
     json(x) {
         body.push(json::encode(x))
-        self.header('Content-Type', 'application/json')
+        header('Content-Type', 'application/json')
     }
 
     plain(x) {
         body.push("{x}")
-        self.header('Content-Type', 'text/plain')
+        header('Content-Type', 'text/plain')
     }
 
     send(c) {
@@ -109,11 +105,17 @@ use RouteMap = Dict[
     }]
 ];
 
+use ClientConnection = {
+    fd:   Int,
+    addr: Blob,
+    p:    HttpParser
+};
+
 class HttpServer {
     static __routes: RouteMap
 
     __sock:     Int
-    __conns:    Array[{fd: Int, p: HttpParser}]
+    __conns:    Array[ClientConnection]
     __stopping: Bool
     __handlers: RouteMap
 
@@ -235,7 +237,7 @@ class HttpServer {
                         log::debug!("new connection: fd={conn} addr={getnameinfo(addr, NI_NUMERICHOST | NI_NUMERICSERV)}")
                     }
                 } else {
-                    let c = __conns.find(${it.fd == fd})
+                    let c: ClientConnection = __conns.find(${it.fd == fd})!
                     if (ev & POLLIN) && read(fd, b, 4096) > 0 {
                         log::debug!("read {#b} bytes from fd={fd}")
 

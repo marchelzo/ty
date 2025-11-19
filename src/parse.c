@@ -3972,7 +3972,7 @@ infix_user_op(Ty *ty, Expr *left)
 
         struct value *p = table_look(ty, &uops, e->op_name);
         if (p != NULL) {
-                prec = (p->integer > 0) ? p->integer : llabs(p->integer) - 1;
+                prec = (p->z > 0) ? p->z : llabs(p->z) - 1;
         }
 
         struct value *sc = table_look(ty, &uopcs, e->op_name);
@@ -4849,7 +4849,7 @@ Keyword:
 
 UserOp:
         p = table_look(ty, &uops, tok()->identifier);
-        return (p != NULL) ? llabs(p->integer) : 8;
+        return (p != NULL) ? llabs(p->z) : 8;
 }
 
 static Expr *

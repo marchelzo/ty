@@ -28,48 +28,48 @@ op_builtin_add(Ty *ty)
 
         switch (PACK_TYPES(left->type, right->type)) {
         case PAIR_OF(VALUE_INTEGER):
-                COMPLETE(INTEGER(left->integer + right->integer));
+                COMPLETE(INTEGER(left->z + right->z));
 
         case PAIR_OF(VALUE_REAL):
                 COMPLETE(REAL(left->real + right->real));
 
         case PACK_TYPES(VALUE_REAL, VALUE_INTEGER):
-                COMPLETE(REAL(left->real + right->integer));
+                COMPLETE(REAL(left->real + right->z));
 
         case PACK_TYPES(VALUE_INTEGER, VALUE_REAL):
-                COMPLETE(REAL(left->integer + right->real));
+                COMPLETE(REAL(left->z + right->real));
 
         case PAIR_OF(VALUE_STRING):
         {
-                if  (left->bytes == 0) COMPLETE(*right);
-                if (right->bytes == 0) COMPLETE(*left);
+                if  (sN(*left) == 0) COMPLETE(*right);
+                if (sN(*right) == 0) COMPLETE(*left);
 
-                n = left->bytes + right->bytes;
+                n = sN(*left) + sN(*right);
                 v = STRING(value_string_alloc(ty, n), n);
 
                 memcpy(
-                        (void *)v.str,
-                        left->str,
-                        left->bytes
+                        (void *)ss(v),
+                        ss(*left),
+                        sN(*left)
                 );
 
                 memcpy(
-                        (void *)(v.str + left->bytes),
-                        right->str,
-                        right->bytes
+                        (void *)(ss(v) + sN(*left)),
+                        ss(*right),
+                        sN(*right)
                 );
 
                 COMPLETE(v);
         }
 
         case PACK_TYPES(VALUE_STRING, VALUE_INTEGER):
-                COMPLETE(OffsetString(left, right->integer));
+                COMPLETE(OffsetString(left, right->z));
 
         case PACK_TYPES(VALUE_INTEGER, VALUE_PTR):
                 SWAP(Value const *, left, right);
         case PACK_TYPES(VALUE_PTR, VALUE_INTEGER):
                 t = (left->extra == NULL) ? &ffi_type_uint8 : left->extra;
-                COMPLETE(TPTR(left->extra, (char *)left->ptr + right->integer * t->size));
+                COMPLETE(TPTR(left->extra, (char *)left->ptr + right->z * t->size));
 
         case PAIR_OF(VALUE_ARRAY):
         {
@@ -122,16 +122,16 @@ op_builtin_mul(Ty *ty)
 
         switch (PACK_TYPES(left->type, right->type)) {
         case PAIR_OF(VALUE_INTEGER):
-                COMPLETE(INTEGER(left->integer * right->integer));
+                COMPLETE(INTEGER(left->z * right->z));
 
         case PAIR_OF(VALUE_REAL):
                 COMPLETE(REAL(left->real * right->real));
 
         case PACK_TYPES(VALUE_REAL, VALUE_INTEGER):
-                COMPLETE(REAL(left->real * right->integer));
+                COMPLETE(REAL(left->real * right->z));
 
         case PACK_TYPES(VALUE_INTEGER, VALUE_REAL):
-                COMPLETE(REAL(left->integer * right->real));
+                COMPLETE(REAL(left->z * right->real));
 
         case PAIR_OF(VALUE_ARRAY):
                 v = ARRAY(vAn(left->array->count * right->array->count));
@@ -166,10 +166,10 @@ op_builtin_div(Ty *ty)
 
         switch (PACK_TYPES(left->type, right->type)) {
         case PAIR_OF(VALUE_INTEGER):
-                if (right->integer == 0) {
+                if (right->z == 0) {
                         ZeroDividePanic(ty);
                 }
-                COMPLETE(INTEGER(left->integer / right->integer));
+                COMPLETE(INTEGER(left->z / right->z));
 
         case PAIR_OF(VALUE_REAL):
                 if (right->real == 0.0) {
@@ -178,16 +178,16 @@ op_builtin_div(Ty *ty)
                 COMPLETE(REAL(left->real / right->real));
 
         case PACK_TYPES(VALUE_REAL, VALUE_INTEGER):
-                if (right->integer == 0) {
+                if (right->z == 0) {
                         ZeroDividePanic(ty);
                 }
-                COMPLETE(REAL(left->real / right->integer));
+                COMPLETE(REAL(left->real / right->z));
 
         case PACK_TYPES(VALUE_INTEGER, VALUE_REAL):
                 if (right->real == 0.0) {
                         ZeroDividePanic(ty);
                 }
-                COMPLETE(REAL(left->integer / right->real));
+                COMPLETE(REAL(left->z / right->real));
         }
 
         return false;
@@ -204,23 +204,23 @@ op_builtin_sub(Ty *ty)
 
         switch (PACK_TYPES(left->type, right->type)) {
         case PAIR_OF(VALUE_INTEGER):
-                COMPLETE(INTEGER(left->integer - right->integer));
+                COMPLETE(INTEGER(left->z - right->z));
 
         case PAIR_OF(VALUE_REAL):
                 COMPLETE(REAL(left->real - right->real));
 
         case PACK_TYPES(VALUE_REAL, VALUE_INTEGER):
-                COMPLETE(REAL(left->real - right->integer));
+                COMPLETE(REAL(left->real - right->z));
 
         case PACK_TYPES(VALUE_INTEGER, VALUE_REAL):
-                COMPLETE(REAL(left->integer - right->real));
+                COMPLETE(REAL(left->z - right->real));
 
         case PACK_TYPES(VALUE_STRING, VALUE_INTEGER):
-                COMPLETE(OffsetString(left, -right->integer));
+                COMPLETE(OffsetString(left, -right->z));
 
         case PACK_TYPES(VALUE_PTR, VALUE_INTEGER):
                 t = (left->extra == NULL) ? &ffi_type_uint8 : left->extra;
-                COMPLETE(TPTR(left->extra, ((char *)left->ptr) - right->integer * t->size));
+                COMPLETE(TPTR(left->extra, ((char *)left->ptr) - right->z * t->size));
 
         case PACK_TYPES(VALUE_PTR, VALUE_PTR):
                 if (left->extra != right->extra) {
@@ -255,20 +255,20 @@ op_builtin_mod(Ty *ty)
 
         switch (PACK_TYPES(left->type, right->type)) {
         case PACK_TYPES(VALUE_INTEGER, VALUE_INTEGER):
-                if (right->integer == 0) {
+                if (right->z == 0) {
                         ZeroDividePanic(ty);
                 }
-                COMPLETE(INTEGER(left->integer % right->integer));
+                COMPLETE(INTEGER(left->z % right->z));
         case PACK_TYPES(VALUE_REAL, VALUE_INTEGER):
-                if (right->integer == 0) {
+                if (right->z == 0) {
                         ZeroDividePanic(ty);
                 }
-                COMPLETE(REAL(fmod(left->real, right->integer)));
+                COMPLETE(REAL(fmod(left->real, right->z)));
         case PACK_TYPES(VALUE_INTEGER, VALUE_REAL):
                 if (right->real == 0.0) {
                         ZeroDividePanic(ty);
                 }
-                COMPLETE(REAL(fmod(left->integer, right->real)));
+                COMPLETE(REAL(fmod(left->z, right->real)));
         case PACK_TYPES(VALUE_REAL, VALUE_REAL):
                 if (right->real == 0.0) {
                         ZeroDividePanic(ty);
@@ -287,7 +287,7 @@ op_builtin_and(Ty *ty)
 
         switch (PACK_TYPES(left->type, right->type)) {
         case PAIR_OF(VALUE_INTEGER):
-                COMPLETE(INTEGER(left->integer & right->integer));
+                COMPLETE(INTEGER(left->z & right->z));
         }
 
         return false;
@@ -301,7 +301,7 @@ op_builtin_or(Ty *ty)
 
         switch (PACK_TYPES(left->type, right->type)) {
         case PAIR_OF(VALUE_INTEGER):
-                COMPLETE(INTEGER(left->integer | right->integer));
+                COMPLETE(INTEGER(left->z | right->z));
         }
 
         return false;
@@ -315,7 +315,7 @@ op_builtin_xor(Ty *ty)
 
         switch (PACK_TYPES(left->type, right->type)) {
         case PAIR_OF(VALUE_INTEGER):
-                COMPLETE(INTEGER(left->integer ^ right->integer));
+                COMPLETE(INTEGER(left->z ^ right->z));
         }
 
         return false;
@@ -329,7 +329,7 @@ op_builtin_shl(Ty *ty)
 
         switch (PACK_TYPES(left->type, right->type)) {
         case PAIR_OF(VALUE_INTEGER):
-                COMPLETE(INTEGER(left->integer << right->integer));
+                COMPLETE(INTEGER(left->z << right->z));
         }
 
         return false;
@@ -343,7 +343,7 @@ op_builtin_shr(Ty *ty)
 
         switch (PACK_TYPES(left->type, right->type)) {
         case PAIR_OF(VALUE_INTEGER):
-                COMPLETE(INTEGER(left->integer >> right->integer));
+                COMPLETE(INTEGER(left->z >> right->z));
         }
 
         return false;

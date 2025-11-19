@@ -368,7 +368,7 @@ value_vshow_color(Ty *ty, Value const *v);
         }
 
 #define ARG(i) (*vm_get(ty, argc - 1 - (i)))
-#define NAMED(s) ((kwargs != NULL) ? dict_get_member(ty, kwargs->dict, (s)) : NULL)
+#define NAMED(s) ((kwargs != NULL && !IsNil(*kwargs)) ? dict_get_member(ty, kwargs->dict, (s)) : NULL)
 #define ARG_T(i) ((argc > i) ? (vm_get(ty, argc - 1 - (i))->type) : VALUE_NONE)
 #define HAVE_FLAG(s) (value_truthy_checked(ty, NAMED(s)))
 
@@ -725,7 +725,7 @@ checked_arg_6(
 #define ARGxD(...) VA_SELECT(ARG_xD,   __VA_ARGS__)
 #define KWARG(...) VA_SELECT(KWARG_xD, __VA_ARGS__)
 
-#define    INT_ARG(i) ARGx(i, VALUE_INTEGER).integer
+#define    INT_ARG(i) ARGx(i, VALUE_INTEGER).z
 #define    PTR_ARG(i) ARGx(i, VALUE_PTR).ptr
 #define  FLOAT_ARG(i) ARGx(i, VALUE_REAL).real
 #define   BOOL_ARG(i) ARGx(i, VALUE_BOOLEAN).boolean

@@ -90,7 +90,7 @@ compare_by2(void const *v1, void const *v2, void *ctx_)
         int result;
 
         if (v.type == VALUE_INTEGER)
-                result = v.integer;
+                result = v.z;
         else
                 result = value_truthy(ty, &v) ? 1 : -1;
 
@@ -654,7 +654,7 @@ array_take_mut(Ty *ty, Value *array, int argc, Value *kwargs)
         if (n.type != VALUE_INTEGER)
                 zP("non-integer passed to array.take!()");
 
-        array->array->count = min(array->array->count, n.integer);
+        array->array->count = min(array->array->count, n.z);
         shrink(ty, array);
 
         return *array;
@@ -673,7 +673,7 @@ array_take(Ty *ty, Value *array, int argc, Value *kwargs)
 
         Value result = ARRAY(vA());
 
-        int count = min(n.integer, array->array->count);
+        int count = min(n.z, array->array->count);
 
         NOGC(result.array);
         value_array_reserve(ty, result.array, count);
@@ -696,7 +696,7 @@ array_drop_mut(Ty *ty, Value *array, int argc, Value *kwargs)
         if (n.type != VALUE_INTEGER)
                 zP("non-integer passed to array.drop!()");
 
-        int d = min(array->array->count, max(n.integer, 0));
+        int d = min(array->array->count, max(n.z, 0));
 
         memmove(array->array->items, array->array->items + d, (array->array->count - d) * sizeof (Value));
         array->array->count -= d;
@@ -718,7 +718,7 @@ array_drop(Ty *ty, Value *array, int argc, Value *kwargs)
 
         Value result = ARRAY(vA());
 
-        int d = min(max(n.integer, 0), array->array->count);
+        int d = min(max(n.z, 0), array->array->count);
         int count = array->array->count - d;
 
         NOGC(result.array);
@@ -854,7 +854,7 @@ array_groups_of(Ty *ty, Value *array, int argc, Value *kwargs)
         if (size.type != VALUE_INTEGER)
                 zP("the argument to array.groupsOf() must be an integer");
 
-        if (size.integer <= 0)
+        if (size.z <= 0)
                 zP("the argument to array.groupsOf() must be positive");
 
         bool keep_short = true;
@@ -868,13 +868,13 @@ array_groups_of(Ty *ty, Value *array, int argc, Value *kwargs)
 
         int n = 0;
         int i = 0;
-        while (i + size.integer < array->array->count) {
+        while (i + size.z < array->array->count) {
                 struct array *group = vA();
                 NOGC(group);
-                vvPn(*group, array->array->items + i, size.integer);
+                vvPn(*group, array->array->items + i, size.z);
                 OKGC(group);
                 array->array->items[n++] = ARRAY(group);
-                i += size.integer;
+                i += size.z;
         }
 
         if (keep_short && i != array->array->count) {
@@ -1037,7 +1037,7 @@ array_min_by(Ty *ty, Value *array, int argc, Value *kwargs)
                         gP(&r);
                         if (
                                 (r.type != VALUE_INTEGER && !value_truthy(ty, &r))
-                             || (r.integer < 0)
+                             || (r.z < 0)
                         ) {
                                 min = v;
                         }
@@ -1118,7 +1118,7 @@ array_max_by(Ty *ty, Value *array, int argc, Value *kwargs)
                         gP(&r);
                         if (
                                 (r.type != VALUE_INTEGER && value_truthy(ty, &r))
-                             || (r.integer > 0)
+                             || (r.z > 0)
                         ) {
                                 max = v;
                         }
@@ -1444,7 +1444,7 @@ array_split_at(Ty *ty, Value *array, int argc, Value *kargs)
                 );
         }
 
-        int i = ARG(0).integer;
+        int i = ARG(0).z;
 
         if (i < 0)
                 i += array->array->count;
@@ -1555,7 +1555,7 @@ array_tally(Ty *ty, Value *array, int argc, Value *kwargs)
                         if (c == NULL) {
                                 dict_put_value(ty, d.dict, array->array->items[i], INTEGER(1));
                         } else {
-                                c->integer += 1;
+                                c->z += 1;
                         }
                 }
         } else {
@@ -1569,7 +1569,7 @@ array_tally(Ty *ty, Value *array, int argc, Value *kwargs)
                         if (c == NULL) {
                                 dict_put_value(ty, d.dict, v, INTEGER(1));
                         } else {
-                                c->integer += 1;
+                                c->z += 1;
                         }
                 }
         }
@@ -1627,7 +1627,7 @@ array_flat(Ty *ty, Value *array, int argc, Value *kwargs)
                 if (ARG(0).type != VALUE_INTEGER) {
                         zP("Array.flat(): expected Int but got: %s", VSC(&ARG(0)));
                 }
-                maxdepth = ARG(0).integer;
+                maxdepth = ARG(0).z;
         } else {
                 maxdepth = INT_MAX;
         }
@@ -1954,7 +1954,7 @@ array_reverse(Ty *ty, Value *array, int argc, Value *kwargs)
         }
 
         if (argc > 0) {
-                lo = ARG(0).integer;
+                lo = ARG(0).z;
                 if (lo < 0) { lo += array->array->count; }
         } else {
                 lo = 0;
@@ -1965,7 +1965,7 @@ array_reverse(Ty *ty, Value *array, int argc, Value *kwargs)
         }
 
         if (argc > 1) {
-                n = ARG(1).integer;
+                n = ARG(1).z;
         } else {
                 n = array->array->count - lo;
         }
@@ -2007,7 +2007,7 @@ array_rotate(Ty *ty, Value *array, int argc, Value *kwargs)
                 Value amount = ARG(0);
                 if (amount.type != VALUE_INTEGER)
                         zP("the argument to array.rotate() must be an integer");
-                d = amount.integer;
+                d = amount.z;
         } else if (argc != 0) {
                 zP("the rotate method on arrays expects 0 or 1 arguments but got %d", argc);
         }
