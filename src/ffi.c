@@ -280,17 +280,20 @@ closure_func(ffi_cif *cif, void *ret, void **args, void *data)
         switch (cif->rtype->type) {
         case FFI_TYPE_VOID:
                 break;
+
         case FFI_TYPE_INT:
         case FFI_TYPE_SINT8:
         case FFI_TYPE_SINT16:
         case FFI_TYPE_SINT32:
                 store(ty, &ffi_type_sint64, ret, &rv);
                 break;
+
         case FFI_TYPE_UINT8:
         case FFI_TYPE_UINT16:
         case FFI_TYPE_UINT32:
                 store(ty, &ffi_type_uint64, ret, &rv);
                 break;
+
         default:
                 store(ty, cif->rtype, ret, &rv);
         }

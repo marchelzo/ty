@@ -174,7 +174,6 @@ static ValueVector Globals;
 #define peektarget()     ((peektarget)(ty))
 #define pushtarget(t, g) ((pushtarget)(ty, (t), (g)))
 
-
 #define GC_IS_WAITING \
         atomic_load_explicit(&MyGroup->WantGC, memory_order_relaxed)
 
@@ -944,13 +943,7 @@ local(Ty *ty, int i)
 inline static Value *
 (poptarget)(Ty *ty)
 {
-        Target t = *vvX(TARGETS);
-
-        if (t.gc != NULL) {
-                OKGC(t.gc);
-        }
-
-        return t.t;
+        return vvX(TARGETS)->t;
 }
 
 inline static Value *
@@ -962,10 +955,6 @@ inline static Value *
 inline static void
 (pushtarget)(Ty *ty, Value *v, void *gc)
 {
-        if (gc != NULL) {
-                NOGC(gc);
-        }
-
         xvP(TARGETS, ((Target) { .t = v, .gc = gc }));
 }
 
@@ -2380,18 +2369,17 @@ DoCall(Ty *ty, Value const *f, int n, int nkw, bool auto_this)
                                 zP("built-in class has no init method. Was prelude loaded?");
                         }
                 } else {
+                        if (!IsNil(kwargs)) {
+                                push(kwargs);
+                        }
                         value = OBJECT(object_new(ty, v.class), v.class);
                         vp = class_lookup_method_i(ty, v.class, NAMES.init);
-                        if (vp != NULL) {
-                                if (!IsNil(kwargs)) {
-                                        push(kwargs);
-                                }
-                                gP(&value);
+                        if (LIKELY(vp != NULL)) {
                                 exec_fn(ty, vp, &value, n, nkw);
-                                gX();
                                 pop();
                         } else {
-                                STACK.count -= n;
+                                value = OBJECT(object_new(ty, v.class), v.class);
+                                STACK.count -= (n + !IsNil(kwargs));
                         }
                         push(value);
                 }
@@ -3396,6 +3384,7 @@ DoMutMod(Ty *ty)
                 }
                 push(*vp);
                 break;
+
         case 1:
                 if (UNLIKELY(top()->type != VALUE_INTEGER)) {
                         zP("attempt to divide byte by non-integer: %s", VSC(top()));
@@ -3403,6 +3392,7 @@ DoMutMod(Ty *ty)
                 b = ((struct blob *)TARGETS.items[TARGETS.count].gc)->items[((uptr)vp) >> 3] %= pop().z;
                 push(INTEGER(b));
                 break;
+
         case 2:
                 c = (uptr)poptarget();
                 o = TARGETS.items[TARGETS.count].gc;
@@ -3412,6 +3402,7 @@ DoMutMod(Ty *ty)
                 pop();
                 call(ty, v, &OBJECT(o, c), 1, 0);
                 break;
+
         default:
                 zP("bad target pointer :(");
         }
@@ -3443,6 +3434,7 @@ DoMutMul(Ty *ty)
                 }
                 push(*vp);
                 break;
+
         case 1:
                 if (UNLIKELY(top()->type != VALUE_INTEGER)) {
                         zP("attempt to multiply byte by non-integer");
@@ -3450,6 +3442,7 @@ DoMutMul(Ty *ty)
                 b = ((struct blob *)TARGETS.items[TARGETS.count].gc)->items[((uptr)vp) >> 3] *= pop().z;
                 push(INTEGER(b));
                 break;
+
         case 2:
                 c = (uptr)poptarget();
                 o = TARGETS.items[TARGETS.count].gc;
@@ -3459,6 +3452,7 @@ DoMutMul(Ty *ty)
                 pop();
                 call(ty, v, &OBJECT(o, c), 1, 0);
                 break;
+
         default:
                 zP("bad target pointer :(");
         }
@@ -3509,10 +3503,9 @@ DoMutSub(Ty *ty)
 
                         break;
                 }
-
                 push(*vp);
-
                 break;
+
         case 1:
                 if (UNLIKELY(top()->type != VALUE_INTEGER)) {
                         zP("attempt to subtract non-integer from byte");
@@ -3520,6 +3513,7 @@ DoMutSub(Ty *ty)
                 b = ((struct blob *)TARGETS.items[TARGETS.count].gc)->items[((uptr)vp) >> 3] -= pop().z;
                 push(INTEGER(b));
                 break;
+
         case 2:
                 c = (uptr)poptarget();
                 o = TARGETS.items[TARGETS.count].gc;
@@ -3529,6 +3523,7 @@ DoMutSub(Ty *ty)
                 pop();
                 call(ty, v, &OBJECT(o, c), 1, 0);
                 break;
+
         default:
                 zP("bad target pointer :(");
         }
@@ -3588,6 +3583,7 @@ DoMutAdd(Ty *ty)
                 push(*vp);
 
                 break;
+
         case 1:
                 if (UNLIKELY(top()->type != VALUE_INTEGER)) {
                         zP("attempt to add non-integer to byte");
@@ -3595,6 +3591,7 @@ DoMutAdd(Ty *ty)
                 b = ((struct blob *)TARGETS.items[TARGETS.count].gc)->items[((uptr)vp) >> 3] += pop().z;
                 push(INTEGER(b));
                 break;
+
         case 2:
                 c = (uptr)poptarget();
                 o = TARGETS.items[TARGETS.count].gc;
@@ -3604,6 +3601,7 @@ DoMutAdd(Ty *ty)
                 pop();
                 call(ty, v, &OBJECT(o, c), 1, 0);
                 break;
+
         default:
                 zP("bad target pointer :(");
         }
@@ -3649,6 +3647,7 @@ DoMutAnd(Ty *ty)
                 b = ((Blob *)TARGETS.items[TARGETS.count].gc)->items[((uptr)vp) >> 3] &= pop().z;
                 push(INTEGER(b));
                 break;
+
         case 2:
                 c = (uptr)poptarget();
                 o = TARGETS.items[TARGETS.count].gc;
@@ -3658,6 +3657,7 @@ DoMutAnd(Ty *ty)
                 pop();
                 call(ty, v, &OBJECT(o, c), 1, 0);
                 break;
+
         default:
                 zP("bad target pointer :(");
         }
@@ -3751,6 +3751,7 @@ DoMutXor(Ty *ty)
                         break;
                 }
                 break;
+
         case 1:
                 if (UNLIKELY(top()->type != VALUE_INTEGER)) {
                         zP("attempt to XOR byte with non-integer");
@@ -3758,6 +3759,7 @@ DoMutXor(Ty *ty)
                 b = ((Blob *)TARGETS.items[TARGETS.count].gc)->items[((uptr)vp) >> 3] ^= pop().z;
                 push(INTEGER(b));
                 break;
+
         case 2:
                 c = (uptr)poptarget();
                 o = TARGETS.items[TARGETS.count].gc;
@@ -3767,6 +3769,7 @@ DoMutXor(Ty *ty)
                 pop();
                 call(ty, v, &OBJECT(o, c), 1, 0);
                 break;
+
         default:
                 zP("bad target pointer :(");
         }
@@ -3894,7 +3897,7 @@ DoAssign(Ty *ty)
                 break;
 
         case 1:
-                ((struct blob *)TARGETS.items[TARGETS.count].gc)->items[((uptr)v >> 3)] = peek().z;
+                ((Blob *)TARGETS.items[TARGETS.count].gc)->items[((uptr)v >> 3)] = peek().z;
                 break;
 
         case 2:
@@ -3976,6 +3979,7 @@ DoTargetMember(Ty *ty, Value v, i32 z)
                         pushtarget((Value *)(((uptr)z << 3) | 3), NULL);
                         return;
                 }
+                v.object->diverged = true;
                 pushtarget(itable_get(ty, v.object, z), v.object);
                 break;
 
@@ -5050,12 +5054,12 @@ NextInstruction:
                         }
                         break;
                 CASE(SKIP_CHECK)
+                        READVALUE(n);
                         if (!TY_IS_INITIALIZED) {
-                                READVALUE(n);
                                 IP += n;
                                 *top() = BOOLEAN(true);
-                                break;
                         }
+                        break;
                 CASE(TARGET_GLOBAL)
                         READVALUE(n);
                         LOG("Global: %d", (int)n);
@@ -5111,12 +5115,12 @@ NextInstruction:
                         break;
                 CASE(TARGET_MEMBER)
                         READVALUE(z);
-                        v = pop();
-                        if ((vp = TargetFieldFast(ty, &v, z)) != NULL) {
+                        if ((vp = TargetFieldFast(ty, top(), z)) != NULL) {
                                 pushtarget(vp, v.object);
                         } else {
-                                DoTargetMember(ty, v, z);
+                                DoTargetMember(ty, peek(), z);
                         }
+                        pop();
                         break;
                 CASE(TARGET_SELF_MEMBER)
                         READVALUE(z);
@@ -7812,7 +7816,6 @@ vm_execute(Ty *ty, char const *source, char const *file)
                         VSC(&exc),
                         trace
                 );
-                XXX("Uncaught exception: %s", TyError(ty));
                 free(trace);
                 return false;
         }
@@ -8310,11 +8313,15 @@ MarkStorage(Ty *ty)
                 value_mark(ty, v_(DROP_STACK, i));
         }
 
-        GCLOG("Marking targets");
+        GCLOG("Marking %zu targets", vN(TARGETS));
         for (int i = 0; i < vN(TARGETS); ++i) {
                 Target *target = v_(TARGETS, i);
-                if (pT(target->t) == 0) {
-                        value_mark(ty, target->t);
+                uptr t = (uptr)target->t;
+                if (((t & PMASK3) == 0) && (t > 0x0FFF)) {
+                        value_mark(ty, (Value *)t);
+                }
+                if (target->gc != NULL) {
+                        value_mark(ty, target->gc);
                 }
         }
 
