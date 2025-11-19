@@ -1,0 +1,17 @@
+use match Twice {
+    (k: Int) and (k % 2 == 0) => k / 2
+}
+
+fn go() {
+    match 60 {
+        Twice(Twice(15)) => {
+            print('PASS')
+        },
+
+        _ => {
+            print('FAIL')
+        }
+    }
+}
+
+go()

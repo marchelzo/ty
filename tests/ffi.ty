@@ -34,4 +34,4 @@ fn check(n: Int) -> Bool {
     true
 }
 
-print(check(1 << 12) ? 'PASS' : 'FAIL')
+print(check(1 << 18) ? 'PASS' : 'FAIL')

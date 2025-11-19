@@ -6102,7 +6102,7 @@ MemberAccess:
                         value = pop();
 
                         if (UNLIKELY(IsNone((v = LoadFieldFast(ty, &value, z))))) {
-                                v = GetMember(ty, value, z, false, false);
+                                v = GetMember(ty, value, z, true, false);
                         }
 
                         switch (v.type) {
