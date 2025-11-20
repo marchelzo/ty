@@ -26,7 +26,7 @@ if x.sum() != 13 {
 	print('FAIL')
 }
 
-x.slice!(0)
+x.splice(0)
 
 if #x > 0 {
 	print('FAIL')

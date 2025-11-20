@@ -529,6 +529,7 @@ visit_expression(Ty *ty, Expr *e, Scope *scope, VisitorSet const *hooks)
                 V(e->compr.iter);
                 VL(true, e->compr.pattern); /* true, false */
                 VS(e->compr.where);
+                V(e->compr._while);
                 V(e->compr.cond);
                 for (size_t i = 0; i < e->elements.count; ++i) {
                         V(e->elements.items[i]);
@@ -546,6 +547,7 @@ visit_expression(Ty *ty, Expr *e, Scope *scope, VisitorSet const *hooks)
                 V(e->dcompr.iter);
                 VL(true, e->dcompr.pattern); /* true, false */
                 VS(e->compr.where);
+                V(e->dcompr._while);
                 V(e->dcompr.cond);
                 for (size_t i = 0; i < e->keys.count; ++i) {
                         V(e->keys.items[i]);
@@ -799,6 +801,7 @@ visit_type(Ty *ty, Expr *e, Scope *scope, VisitorSet const *hooks)
         case EXPRESSION_ARRAY_COMPR:
                 VT(e->compr.iter);
                 VL(true, e->compr.pattern); /* true, false */
+                VT(e->compr._while);
                 VT(e->compr.cond);
                 for (size_t i = 0; i < e->elements.count; ++i) {
                         VT(e->elements.items[i]);
@@ -815,6 +818,7 @@ visit_type(Ty *ty, Expr *e, Scope *scope, VisitorSet const *hooks)
         case EXPRESSION_DICT_COMPR:
                 VT(e->dcompr.iter);
                 VL(true, e->dcompr.pattern); /* true, false */
+                VT(e->dcompr._while);
                 VT(e->dcompr.cond);
                 for (size_t i = 0; i < e->keys.count; ++i) {
                         VT(e->keys.items[i]);

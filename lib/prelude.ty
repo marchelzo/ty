@@ -439,7 +439,7 @@ class Array[T] : Iterable[T] {
         return shape
     }
 
-    map?(f) {
+    map?[U](f: T -> Some[U] | None) -> Array[U] {
         let ys = []
 
         for x in self {
@@ -449,6 +449,16 @@ class Array[T] : Iterable[T] {
         }
 
         return ys
+    }
+
+    span(p: T -> Any) -> (Array[T], Array[T]) {
+        let good = [x for x in self while p(x)]
+        (good, self[#good;])
+    }
+
+    shift-while(p: T -> Any) -> Array[T] {
+        let i = self.search-by(`!` . p) ?? #self
+        self.splice(0, i)
     }
 
     transpose[U]() -> Array[T] where T: Array[U] {
@@ -592,32 +602,7 @@ class Array[T] : Iterable[T] {
     }
 
     [;;](i: Int = 0, j: Int | nil = nil, k: Int = 1) -> Array[T] {
-        let slice = []
-
-        let wrap = match {
-            ix :: ix < 0 => ix + #self,
-            ix           => ix
-        }
-
-        if k < 0 {
-            let start = min(wrap(i - 1), #self)
-            let stop = max(wrap(j ?? 0), 0)
-            for let ix = start; ix >= stop; ix += k {
-                if let Some(x) = self.get(ix) {
-                    slice.push(x)
-                }
-            }
-        } else {
-            let start = ::max(wrap(i), 0)
-            let stop = min(wrap(j ?? #self), #self)
-            for let ix = start; ix < stop; ix += k {
-                if let Some(x) = self.get(ix) {
-                    slice.push(x)
-                }
-            }
-        }
-
-        return slice
+        self.slice(i, j, k)
     }
 
     #() { len() }
@@ -711,7 +696,23 @@ macro __define_ast! {
        | ty.Union[Array[AST]]
        | ty.Any[AST]
        | ty.Any
-       | ty.ArrayCompr[{items: [_ArrayItem], pattern: AST, iter: AST, ?cond: AST}]
+       | ty.ArrayCompr[{
+            items: [_ArrayItem],
+            pattern: AST,
+            iter: AST,
+            ?`while`: AST,
+            ?cond: AST,
+            ?`where`: AST
+         }]
+       | ty.DictCompr[{
+            items: [_DictItem],
+            pattern: AST,
+            iter: AST,
+            ?default: AST,
+            ?`while`: AST,
+            ?cond: AST,
+            ?`where`: AST
+         }]
        | ty.Each[{iter: AST, pattern: AST, expr: AST, ?cond: AST, ?stop: AST}]
        | ty.SpecialString[Array[String | AST | (AST, String | nil, Int | nil, AST)]]
        | ty.Spread[AST]
@@ -925,7 +926,7 @@ class String : Iterable[String], IntoPtr[Int] {
 
     [;;](i=0, j=#self, k: Int = 1) -> String {
         if k != 1 {
-            throw 'not implemented'
+            throw ValueError('String slicing with step is not supported')
         }
 
         self.slice(i, j)
@@ -3651,11 +3652,23 @@ macro __walk! {
 
             ty.Generator(gen) => ty.Generator(walk(gen, f)),
 
-            ty.ArrayCompr({items, pattern, iter, cond}) => ty.ArrayCompr(
+            ty.ArrayCompr({items, pattern, iter, cond, `while`, `where`}) => ty.ArrayCompr(
                 items: [walk(item, f) for item in items],
-                pattern: walk(pattern, f),
                 iter: walk(iter, f),
-                cond: walk(cond, f)
+                pattern: walk(pattern, f),
+                `while`: walk(`while`, f),
+                cond: walk(cond, f),
+                `where`: walk(`where`, f)
+            ),
+
+            ty.DictCompr({items, pattern, default, iter, cond, `while`, `where`}) => ty.DictCompr(
+                items: [walk(item, f) for item in items],
+                iter: walk(iter, f),
+                default: walk(default, f),
+                pattern: walk(pattern, f),
+                `while`: walk(`while`, f),
+                cond: walk(cond, f),
+                `where`: walk(`where`, f)
             ),
 
             ty.Spread(spread) => ty.Spread(walk(spread, f)),
