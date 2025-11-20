@@ -35,4 +35,3 @@ fn check(n: Int) -> Bool {
 }
 
 print(check(1 << 12) ? 'PASS' : 'FAIL')
-
