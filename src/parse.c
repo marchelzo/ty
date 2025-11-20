@@ -3337,6 +3337,10 @@ prefix_array(Ty *ty)
                                 e->compr.iter = parse_expr(ty, 0);
                         }
 
+                        e->compr._while = try_consume(KEYWORD_WHILE)
+                                        ? parse_expr(ty, 0)
+                                        : NULL;
+
                         e->compr.cond = try_consume(KEYWORD_IF)
                                       ? parse_expr(ty, 0)
                                       : NULL;
@@ -3749,6 +3753,9 @@ prefix_percent(Ty *ty)
                         e->dcompr.pattern = parse_target_list(ty);
                         consume_kw(IN);
                         e->dcompr.iter = parse_expr(ty, 0);
+                        e->dcompr._while = try_consume(KEYWORD_WHILE)
+                                       ? parse_expr(ty, 0)
+                                       : NULL;
                         e->dcompr.cond = try_consume(KEYWORD_IF)
                                        ? parse_expr(ty, 0)
                                        : NULL;

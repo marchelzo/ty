@@ -213,9 +213,9 @@ array_swap(Ty *ty, Value *array, int argc, Value *kwargs)
 }
 
 static Value
-array_slice_mut(Ty *ty, Value *array, int argc, Value *kwargs)
+array_splice(Ty *ty, Value *array, int argc, Value *kwargs)
 {
-        ASSERT_ARGC("Array.slice!()", 1, 2);
+        ASSERT_ARGC("Array.splice()", 1, 2);
 
         imax i = INT_ARG(0);
         imax n;
@@ -357,10 +357,66 @@ array_window(Ty *ty, Value *array, int argc, Value *kwargs)
         return *array;
 }
 
+inline static isize
+iwrap(isize i, isize n)
+{
+        return (i < 0) ? (i + n) : i;
+}
+
+inline static bool
+idx_ok(Array const *array, isize i)
+{
+        return (i >= 0) && (i < (isize)vN(*array));
+}
+
+static Value
+slice3(Array const *xs, Value const *_i, Value const *_j, Value const *_k)
+{
+        Array *slice = vA();
+
+        isize i = _i->z;
+        isize k = (_k->type == VALUE_NIL) ? 1 : (_k->z + !_k->z);
+
+        GC_STOP();
+
+        if (k < 0) {
+                isize j = (_j->type == VALUE_NIL) ? 0 : _j->z;
+                isize start = min(iwrap(i - 1, vN(*xs)), vN(*xs) - 1);
+                isize stop = max(iwrap(j, vN(*xs)), 0);
+                for (isize ix = start; ix >= stop; ix += k) {
+                        if (idx_ok(xs, ix)) {
+                                vAp(slice, v__(*xs, ix));
+                        }
+                }
+        } else {
+                isize j = (_j->type == VALUE_NIL) ? vN(*xs) : _j->z;
+                isize start = max(iwrap(i, vN(*xs)), 0);
+                isize stop = min(iwrap(j, vN(*xs)), vN(*xs));
+                for (isize ix = start; ix < stop; ix += k) {
+                        if (idx_ok(xs, ix)) {
+                                vAp(slice, v__(*xs, ix));
+                        }
+                }
+        }
+
+        GC_RESUME();
+
+        CheckUsed(ty);
+
+        return ARRAY(slice);
+}
+
 static Value
 array_slice(Ty *ty, Value *array, int argc, Value *kwargs)
 {
-        ASSERT_ARGC("Array.slice()", 1, 2);
+        ASSERT_ARGC("Array.slice()", 1, 2, 3);
+
+        if (argc == 3) {
+                Value _i = ARGx(0, VALUE_INTEGER);
+                Value _j = ARGx(1, VALUE_INTEGER, VALUE_NIL);
+                Value _k = ARGx(2, VALUE_INTEGER, VALUE_NIL);
+                return slice3(array->array, &_i, &_j, &_k);
+        }
 
         imax i = INT_ARG(0);
         imax n;
@@ -2201,13 +2257,13 @@ DEFINE_METHOD_TABLE(
         { .name = "shuffle",           .func = array_shuffle_no_mut          },
         { .name = "shuffle!",          .func = array_shuffle                 },
         { .name = "slice",             .func = array_slice                   },
-        { .name = "slice!",            .func = array_slice_mut               },
         { .name = "sort",              .func = array_sort_no_mut             },
         { .name = "sort!",             .func = array_sort                    },
         { .name = "sortBy",            .func = array_sort_by_no_mut          },
         { .name = "sortBy!",           .func = array_sort_by                 },
         { .name = "sortOn",            .func = array_sort_on_no_mut          },
         { .name = "sortOn!",           .func = array_sort_on                 },
+        { .name = "splice",            .func = array_splice                  },
         { .name = "split",             .func = array_split_at                },
         { .name = "sum",               .func = array_sum                     },
         { .name = "swap",              .func = array_swap                    },

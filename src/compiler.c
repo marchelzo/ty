@@ -4675,6 +4675,7 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                 symbolize_lvalue(ty, subscope, e->compr.pattern, LV_DECL);
                 type_assign_iterable(ty, e->compr.pattern, e->compr.iter->_type, 0);
                 symbolize_statement(ty, subscope, e->compr.where);
+                symbolize_expression(ty, subscope, e->compr._while);
                 symbolize_expression(ty, subscope, e->compr.cond);
                 for (usize i = 0; i < vN(e->elements); ++i) {
                         symbolize_expression(ty, subscope, v__(e->elements, i));
@@ -4698,6 +4699,7 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                 symbolize_lvalue(ty, subscope, e->dcompr.pattern, LV_DECL);
                 type_assign_iterable(ty, e->dcompr.pattern, e->dcompr.iter->_type, 0);
                 symbolize_statement(ty, subscope, e->dcompr.where);
+                symbolize_expression(ty, subscope, e->dcompr._while);
                 symbolize_expression(ty, subscope, e->dcompr.cond);
                 for (usize i = 0; i < vN(e->keys); ++i) {
                         symbolize_expression(ty, subscope, v__(e->keys, i));
@@ -7943,6 +7945,11 @@ emit_dict_compr(Ty *ty, Expr const *e)
 
         emit_statement(ty, e->compr.where, false);
 
+        JumpPlaceholder stop;
+        if (e->dcompr._while != NULL) {
+                stop = (PLACEHOLDER_JUMP_IF_NOT)(ty, e->dcompr._while);
+        }
+
         JumpPlaceholder cond_fail;
         if (e->dcompr.cond != NULL) {
                 cond_fail = (PLACEHOLDER_JUMP_IF_NOT)(ty, e->dcompr.cond);
@@ -7953,8 +7960,9 @@ emit_dict_compr(Ty *ty, Expr const *e)
         EMIT_GROUP_LABEL(STATE.match_fails, ":Fail");
         patch_jumps_to(&STATE.match_fails, vN(STATE.code));
         INSN(POP_STACK_POS);
-        if (e->dcompr.cond != NULL)
+        if (e->dcompr.cond != NULL) {
                 PATCH_JUMP(cond_fail);
+        }
         INSN(POP_STACK_POS);
         JUMP(start);
 
@@ -7963,16 +7971,20 @@ emit_dict_compr(Ty *ty, Expr const *e)
 
         for (int i = vN(e->keys) - 1; i >= 0; --i) {
                 EE(v__(e->keys, i));
-                if (v__(e->values, i) != NULL)
+                if (v__(e->values, i) != NULL) {
                         EE(v__(e->values, i));
-                else
+                } else {
                         INSN(NIL);
+                }
         }
 
         INSN(DICT_COMPR);
         Ei32((int)vN(e->keys));
         JUMP(start);
         PATCH_JUMP(done);
+        if (e->dcompr._while != NULL) {
+                PATCH_JUMP(stop);
+        }
         INSN(POP_STACK_POS);
         patch_loop_jumps(ty, start.off, vN(STATE.code));
         INSN(POP);
@@ -7996,7 +8008,7 @@ emit_array_range_compr(Ty *ty, Expr const *e)
 
         ES(e->compr.where, false);
 
-        CheckRangeLoop(ty, &loop, NULL, e->compr.cond);
+        CheckRangeLoop(ty, &loop, e->compr._while, e->compr.cond);
 
         INSN(SAVE_STACK_POS);
 
@@ -8051,6 +8063,11 @@ emit_array_compr(Ty *ty, Expr const *e)
 
         emit_statement(ty, e->compr.where, false);
 
+        JumpPlaceholder stop;
+        if (e->compr._while != NULL) {
+                stop = (PLACEHOLDER_JUMP_IF_NOT)(ty, e->compr._while);
+        }
+
         JumpPlaceholder cond_fail;
         if (e->compr.cond != NULL) {
                 cond_fail = (PLACEHOLDER_JUMP_IF_NOT)(ty, e->compr.cond);
@@ -8061,8 +8078,9 @@ emit_array_compr(Ty *ty, Expr const *e)
         EMIT_GROUP_LABEL(STATE.match_fails, ":Fail");
         patch_jumps_to(&STATE.match_fails, vN(STATE.code));
         INSN(POP_STACK_POS);
-        if (e->compr.cond != NULL)
+        if (e->compr.cond != NULL) {
                 PATCH_JUMP(cond_fail);
+        }
         INSN(POP_STACK_POS);
         JUMP(start);
 
@@ -8084,6 +8102,9 @@ emit_array_compr(Ty *ty, Expr const *e)
         INSN(ARRAY_COMPR);
         JUMP(start);
         PATCH_JUMP(done);
+        if (e->compr._while != NULL) {
+                PATCH_JUMP(stop);
+        }
         INSN(POP_STACK_POS);
         patch_loop_jumps(ty, start.off, vN(STATE.code));
         INSN(POP);
@@ -11802,6 +11823,7 @@ tyexpr(Ty *ty, Expr const *e)
                         "items", ARRAY(avElems),
                         "pattern", tyexpr(ty, e->compr.pattern),
                         "iter", tyexpr(ty, e->compr.iter),
+                        "while", tyexpr(ty, e->compr._while),
                         "cond", tyexpr(ty, e->compr.cond),
                         "where", tystmt(ty, e->compr.where)
                 );
@@ -11829,6 +11851,7 @@ tyexpr(Ty *ty, Expr const *e)
                         "default", tyexpr(ty, e->dflt),
                         "pattern", tyexpr(ty, e->dcompr.pattern),
                         "iter", tyexpr(ty, e->dcompr.iter),
+                        "while", tyexpr(ty, e->dcompr._while),
                         "cond", tyexpr(ty, e->dcompr.cond),
                         "where", tystmt(ty, e->dcompr.where)
                 );
@@ -13590,6 +13613,7 @@ cexpr(Ty *ty, Value *v)
         {
                 Value *pattern = tuple_get(v, "pattern");
                 Value *iter = tuple_get(v, "iter");
+                Value *_while = tuple_get(v, "while");
                 Value *cond = tuple_get(v, "cond");
                 Value *where = tget_nn(v, "where");
                 Value *items = tuple_get(v, "items");
@@ -13600,7 +13624,8 @@ cexpr(Ty *ty, Value *v)
                 e->type = EXPRESSION_ARRAY_COMPR;
                 e->compr.pattern = cexpr(ty, pattern);
                 e->compr.iter = cexpr(ty, iter);
-                e->compr.cond = (cond == NULL || cond->type == VALUE_NIL) ? NULL : cexpr(ty, cond);
+                e->compr._while = cexpr(ty, _while);
+                e->compr.cond = cexpr(ty, cond);
                 e->compr.where = (where == NULL) ? NULL : cstmt(ty, where);
 
                 for (int i = 0; i < items->array->count; ++i) {
@@ -13618,6 +13643,7 @@ cexpr(Ty *ty, Value *v)
         {
                 Value *pattern = tuple_get(v, "pattern");
                 Value *iter = tuple_get(v, "iter");
+                Value *_while = tget_nn(v, "cond");
                 Value *cond = tget_nn(v, "cond");
                 Value *where = tget_nn(v, "where");
                 Value *dflt = tget_nn(v, "default");
@@ -13630,6 +13656,7 @@ cexpr(Ty *ty, Value *v)
                 e->dflt = cexpr(ty, dflt);
                 e->dcompr.pattern = cexpr(ty, pattern);
                 e->dcompr.iter = cexpr(ty, iter);
+                e->dcompr._while = cexpr(ty, _while);
                 e->dcompr.cond = cexpr(ty, cond);
                 e->dcompr.where = cstmt(ty, where);
 

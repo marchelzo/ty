@@ -326,6 +326,7 @@ struct expression {
                                 Expr *pattern;
                                 Expr *iter;
                                 Expr *cond;
+                                Expr *_while;
                                 Stmt *where;
                         } compr;
                 };
@@ -454,6 +455,7 @@ struct expression {
                         struct {
                                 Expr *pattern;
                                 Expr *iter;
+                                Expr *_while;
                                 Expr *cond;
                                 Stmt *where;
                         } dcompr;
