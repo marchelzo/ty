@@ -237,7 +237,7 @@ op_dispatch(Ty *ty, i32 op, i32 t1, i32 t2)
         DispatchCache *cache = v_(ty->_2op_cache, op);
         i32 ref = check_cache(cache, key);
 
-        if (ref > 0) {
+        if (ref != OP_CACHE_MISS) {
                 return ref;
         }
 
