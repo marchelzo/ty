@@ -10,7 +10,7 @@ fn test_signals_blocks_and_queries() {
     let blocked = Signals(SIGUSR1, SIGUSR2)
     let old = blocked.block()
 
-    raise(SIGUSR1)
+    Thread.kill(SIGUSR1)
 
     assert(SIGUSR1 in Signals.pending, "SIGUSR1 should be pending after block")
 
@@ -23,8 +23,7 @@ fn test_signals_wait_retrieves_blocked() {
     let blocked = Signals(SIGUSR1)
     let old = blocked.block()
 
-    let pid = os.getpid()
-    kill(pid, SIGUSR1)
+    Thread.kill(SIGUSR1)
 
     let sig = blocked.wait()
     assert(sig == SIGUSR1, "wait should return SIGUSR1")
@@ -38,11 +37,12 @@ fn test_signal_handler_fires() {
         fired = true
     })
 
-    let pid = os.getpid()
-    kill(pid, SIGUSR1)
+    Thread.kill(SIGUSR1)
 
     sleep(0.01)
     assert(fired, "signal handler should have executed")
+
+    signal(SIGUSR1, SIG_DFL)
 }
 
 fn test_signals_suspend_waits_unblocked() {

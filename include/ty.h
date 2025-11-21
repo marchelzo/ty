@@ -502,6 +502,7 @@ struct ty_save {
 typedef struct {
         intrusive_vec(void *);
         vec(ValueVector) locals;
+        Value exc;
 } ThrowCtx;
 
 typedef struct ty0 {
@@ -600,7 +601,7 @@ typedef struct ty {
 
         CoThreadVector cothreads;
 
-        vec(void *) throw_stack;
+        vec(ThrowCtx *) throw_stack;
 
         i32 eval_depth;
         u32 flags;
@@ -755,10 +756,17 @@ extern usize TotalBytesAllocated;
 //#define TY_THROW_ERROR()  (longjmp(**vvX(ty->jbs), 1))
 //#define TY_CATCH_END()    (vvX(ty->jbs))
 
-#define TY_CATCH_ERROR() (TyClearError(ty), !VM_TRY())
+#if 1
 #define TY_THROW_ERROR() (vm_throw_ty(ty))
-#define TY_CATCH_END()   (vm_finally(ty))
+#define TY_CATCH_ERROR() (TyClearError(ty), !VM_TRY())
 #define TY_CATCH()       (vm_catch(ty))
+#define TY_CATCH_END()   (vm_finally(ty))
+#else
+#define TY_THROW_ERROR() (XXX("%30s:%-7d: THROW",   __FILE__, __LINE__ + 1), vm_throw_ty(ty))
+#define TY_CATCH_ERROR() (XXX("%30s:%-7d: TRY",     __FILE__, __LINE__ + 1), TyClearError(ty), !VM_TRY())
+#define TY_CATCH()       (XXX("%30s:%-7d: CATCH",   __FILE__, __LINE__ + 1), vm_catch(ty))
+#define TY_CATCH_END()   (XXX("%30s:%-7d: END_TRY", __FILE__, __LINE__ + 1), vm_finally(ty))
+#endif
 #define TY_RETHROW()     (vm_rethrow(ty))
 
 #ifdef _WIN32
@@ -1677,11 +1685,8 @@ TyClearError(Ty *ty)
         v0(ty->err);
 }
 
-inline static char const *
-TyError(Ty *ty)
-{
-        return (vN(ty->err) > 0) ? vv(ty->err) : "(no error)";
-}
+char const *
+TyError(Ty *ty);
 
 Ty *
 get_my_ty(void);

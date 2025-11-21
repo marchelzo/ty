@@ -1918,7 +1918,7 @@ PushTry(Ty *ty)
 TY_INSTR_INLINE static void
 DoThrow(Ty *ty)
 {
-        Value ex = peek();
+        Value ex = CurrentThrowCtx(ty)->exc;
 
         //if (ex.type == VALUE_OBJECT && ex.class == CLASS_RUNTIME_ERROR) {
         //        XXX("Throw: RuntimeError: %s", TY_TMP_C_STR(*itable_get(ty, ex.object, NAMES._what)));
@@ -1991,7 +1991,8 @@ DoThrow(Ty *ty)
 TY_INSTR_INLINE static void
 RaiseException(Ty *ty)
 {
-        PushThrowCtx(ty);
+        ThrowCtx *ctx = PushThrowCtx(ty);
+        ctx->exc = pop();
         DoThrow(ty);
 }
 
@@ -6991,7 +6992,7 @@ FormatTrace(Ty *ty, ThrowCtx const *ctx, byte_vector *out)
         if (out == NULL) {
                 out = &message;
         } else {
-                v0(*out);
+               // v0(*out);
         }
 
         int _rows;
@@ -7104,6 +7105,27 @@ FormatTrace(Ty *ty, ThrowCtx const *ctx, byte_vector *out)
         SCRATCH_RESTORE();
 
         return vv(*out);
+}
+
+char const *
+TyError(Ty *ty)
+{
+        if (vN(ty->err) > 0) {
+                return vv(ty->err);
+        }
+
+        if (vC(ty->throw_stack) == 0) {
+                return "(no error)";
+        }
+
+        isize i = (isize)vN(ty->throw_stack) - 1;
+        ThrowCtx *ctx = v__(ty->throw_stack, (i != -1) ? i : 0);
+        Value exc = ctx->exc;
+
+        dump(&ty->err, "%sUncaught exception%s: %s\n", TERM(91;1), TERM(0), VSC(&exc));
+        FormatTrace(ty, ctx, &ty->err);
+
+        return vv(ty->err);
 }
 
 static void
@@ -7880,9 +7902,8 @@ vm_get(Ty *ty, int i)
 noreturn void
 vm_throw(Ty *ty, Value const *v)
 {
-        push(*v);
-
-        PushThrowCtx(ty);
+        ThrowCtx *ctx = PushThrowCtx(ty);
+        ctx->exc = *v;
         DoThrow(ty);
         vm_exec(ty, IP);
 
@@ -8311,6 +8332,7 @@ MarkStorage(Ty *ty)
                                 value_mark(ty, v_(*locals, i));
                         }
                 }
+                value_mark(ty, &ctx->exc);
         }
 
         GCLOG("Marking drop stack");
