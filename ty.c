@@ -17,7 +17,7 @@
 #include "gc.h"
 #include "value.h"
 #include "sqlite.h"
-#include "util.h"
+#include "xd.h"
 #include "itable.h"
 #include "compiler.h"
 #include "class.h"

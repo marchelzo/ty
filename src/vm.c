@@ -2270,7 +2270,7 @@ DoCall(Ty *ty, Value const *f, int n, int nkw, bool auto_this)
         bool new_frame = false;
 
         if (n == -1) {
-                n = STACK.count - *vvX(SP_STACK) - nkw;
+                n = vN(STACK) - *vvX(SP_STACK) - nkw;
         }
 
         /* TODO: optimize more tail calls */
@@ -3069,7 +3069,6 @@ ClassLookup:
 DoCall:
         if (vp != NULL) {
                 pop();
-
                 if (self != NULL) {
                         v = METHOD(i, vp, self);
                         DoCall(ty, &v, n, nkw, true);
