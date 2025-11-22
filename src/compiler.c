@@ -136,7 +136,7 @@
 
 #define CurrentClassID ((STATE.class != NULL) ? (STATE.class->i) : -1)
 #define SCOPE (*vvL(STATE.scopes))
-#define PushScope(scope) xvP(STATE.scopes, (scope))
+#define PushScope(scope) avP(STATE.scopes, (scope))
 #define PopScope()       vvX(STATE.scopes)
 
 #define ScopeLookupEx(scope, name, flags)                   \
@@ -1950,6 +1950,8 @@ freshstate(Ty *ty, Module *mod)
                 .name = "prelude",
                 .pub  = false
         }));
+
+        avP(st.scopes, st.global);
 
         return st;
 }
