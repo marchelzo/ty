@@ -44,13 +44,13 @@ class Logger {
     __color:  Bool
     __path:   String | nil
 
-    init(name: String, path: ?String, chalk: ?chalk.Chalk) {
+    init(name: String, path: ?String, chalk: chalk::Chalk = chalk::Chalk()) {
         __name = name
         __indent = 4
         __level = WARN
         __stack = []
-        __chalk = chalk ?? chalk.Chalk()
-        __prefix = function (level, color) {
+        __chalk = chalk
+        __prefix = fn (level, color) {
             let t = time.utime()
 
             let whole = time.strftime('%Y-%m-%d %H:%M:%S', t / 1000000)

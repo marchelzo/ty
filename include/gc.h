@@ -22,7 +22,11 @@ uint64_t
 MyThreadId(Ty *ty);
 
 
-#define GC_INITIAL_LIMIT (1ULL << 22)
+#if !defined(TY_RELEASE)
+ #define GC_INITIAL_LIMIT (1ULL << 16)
+#else
+ #define GC_INITIAL_LIMIT (1ULL << 20)
+#endif
 
 
 #if defined(TY_GC_STATS)
@@ -202,6 +206,29 @@ gc_alloc_object0(Ty *ty, usize n, char type)
         MemoryUsed += n;
         AddToTotalBytes(n);
         CheckUsed(ty);
+
+        struct alloc *a = calloc(1, sizeof *a + n);
+        if (UNLIKELY(a == NULL)) {
+                panic("Out of memory!");
+        }
+
+        a->type = type;
+        a->size = n;
+
+        xvP(ty->allocs, a);
+
+        return a->data;
+}
+
+inline static void *
+gc_alloc_object0_unchecked(Ty *ty, usize n, char type)
+{
+        if (n == 0) {
+                return NULL;
+        }
+
+        MemoryUsed += n;
+        AddToTotalBytes(n);
 
         struct alloc *a = calloc(1, sizeof *a + n);
         if (UNLIKELY(a == NULL)) {

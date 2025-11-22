@@ -372,12 +372,10 @@ idx_ok(Array const *array, isize i)
 static Value
 slice3(Array const *xs, Value const *_i, Value const *_j, Value const *_k)
 {
-        Array *slice = vA();
+        Array *slice = uAo0(sizeof (Array), GC_ARRAY);
 
         isize i = _i->z;
         isize k = (_k->type == VALUE_NIL) ? 1 : (_k->z + !_k->z);
-
-        GC_STOP();
 
         if (k < 0) {
                 isize j = (_j->type == VALUE_NIL) ? 0 : _j->z;
@@ -385,7 +383,7 @@ slice3(Array const *xs, Value const *_i, Value const *_j, Value const *_k)
                 isize stop = max(iwrap(j, vN(*xs)), 0);
                 for (isize ix = start; ix >= stop; ix += k) {
                         if (idx_ok(xs, ix)) {
-                                vAp(slice, v__(*xs, ix));
+                                uvP(*slice, v__(*xs, ix));
                         }
                 }
         } else {
@@ -394,14 +392,10 @@ slice3(Array const *xs, Value const *_i, Value const *_j, Value const *_k)
                 isize stop = min(iwrap(j, vN(*xs)), vN(*xs));
                 for (isize ix = start; ix < stop; ix += k) {
                         if (idx_ok(xs, ix)) {
-                                vAp(slice, v__(*xs, ix));
+                                uvP(*slice, v__(*xs, ix));
                         }
                 }
         }
-
-        GC_RESUME();
-
-        CheckUsed(ty);
 
         return ARRAY(slice);
 }
@@ -2257,6 +2251,7 @@ DEFINE_METHOD_TABLE(
         { .name = "shuffle",           .func = array_shuffle_no_mut          },
         { .name = "shuffle!",          .func = array_shuffle                 },
         { .name = "slice",             .func = array_slice                   },
+        { .name = "slice!",            .func = array_splice                  },
         { .name = "sort",              .func = array_sort_no_mut             },
         { .name = "sort!",             .func = array_sort                    },
         { .name = "sortBy",            .func = array_sort_by_no_mut          },

@@ -420,8 +420,12 @@ fn parse-style(style: String, chalk: Chalk) -> ?TermStyle {
         },
 
         /^#[[:xdigit:]]+$/ => do {
-            let group = [/./, /../][#style / 3 - 1]
-            let rgb = style[1;].scan(group).map(int@("{$1}{$1}"[;2], 16))
+            let hex = match #style {
+                4 => style[1;].sub(/./, \"{$1}{$1}"),
+                7 => style[1;],
+                _ => return nil
+            }
+            let rgb = [int(it, 16) for hex.scan(/../)]
             ({fg: [38, 2, *rgb]})
         },
 
@@ -732,7 +736,7 @@ class Chalk {
             parts.map(match {
                 s: String   => s,
                 (x, fmt, w) => (
-                      x :: Text ? x.__fmt__(fmt)
+                      (x :: Text) ? x.__fmt__(fmt)
                     : parse(fmt ? x.__fmt__(fmt, w) : x.__str__())
                 )
             }).str(),

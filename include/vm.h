@@ -166,6 +166,9 @@ ActiveFun(Ty *ty)
         return FrameFun(ty, vvL(ty->st.frames));
 }
 
+void
+TyPostFork(Ty *ty);
+
 noreturn void
 ZeroDividePanic(Ty *ty);
 

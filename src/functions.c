@@ -461,20 +461,19 @@ BUILTIN_FUNCTION(slurp)
 
                 void *tmp = TY_TMP();
 
+
+                v0(B);
                 lGv(true);
-
-                B.count = 0;
-
                 while (!feof(f) && (r = fread(tmp, 1, TY_TMP_N, f)) > 0) {
-                        vvPn(B, tmp, r);
+                        uvPn(B, tmp, r);
                 }
-
                 lTk();
 
-                Value str = vSs(B.items, B.count);
+                Value str = vSs(vv(B), vN(B));
 
-                if (need_close)
+                if (need_close) {
                         fclose(f);
+                }
 
                 return str;
         }
@@ -520,20 +519,21 @@ BUILTIN_FUNCTION(read)
 {
         ASSERT_ARGC("readLine()", 0);
 
-        B.count = 0;
-
-        lGv(true);
-
         int c;
-        while (c = getchar(), c != EOF && c != '\n')
-                vvP(B, c);
+
+        v0(B);
+        lGv(true);
+        while (c = getchar(), c != EOF && c != '\n') {
+                uvP(B, c);
+        }
 
         lTk();
 
-        if (B.count == 0 && c != '\n')
+        if (vN(B) == 0 && c != '\n') {
                 return NIL;
+        }
 
-        return vSs(B.items, B.count);
+        return vSs(vv(B), vN(B));
 }
 
 inline static u64
@@ -1851,15 +1851,55 @@ BUILTIN_FUNCTION(locale_setlocale)
 BUILTIN_FUNCTION(json_parse)
 {
         ASSERT_ARGC("json.parse()", 1);
-        Value json = ARGx(0, VALUE_STRING);
-        return json_parse(ty, (char const *)ss(json), sN(json));
+
+        Value json = ARGx(0, VALUE_STRING, VALUE_BLOB);
+
+        u8 const *data;
+        usize len;
+
+        switch (json.type) {
+        case VALUE_STRING:
+                data = ss(json);
+                len  = sN(json);
+                break;
+
+        case VALUE_BLOB:
+                data = vv(*json.blob);
+                len  = vN(*json.blob);
+                break;
+
+        default:
+                UNREACHABLE();
+        }
+
+        return json_parse(ty, (char const *)data, len);
 }
 
 BUILTIN_FUNCTION(json_parse_xD)
 {
         ASSERT_ARGC("json.parse!()", 1);
-        Value json = ARGx(0, VALUE_STRING);
-        return json_parse_xD(ty, (char const *)ss(json), sN(json));
+
+        Value json = ARGx(0, VALUE_STRING, VALUE_BLOB);
+
+        u8 const *data;
+        usize len;
+
+        switch (json.type) {
+        case VALUE_STRING:
+                data = ss(json);
+                len  = sN(json);
+                break;
+
+        case VALUE_BLOB:
+                data = vv(*json.blob);
+                len  = vN(*json.blob);
+                break;
+
+        default:
+                UNREACHABLE();
+        }
+
+        return json_parse_xD(ty, (char const *)data, len);
 }
 
 BUILTIN_FUNCTION(json_encode)
@@ -1974,9 +2014,9 @@ b64dec(Ty *ty, u8 const *s, size_t n)
                 s2 = table[g[1]];
                 s3 = table[g[2]];
                 s4 = table[g[3]];
-                vvP(B, (s1 << 2) | (s2 >> 4));
-                vvP(B, ((s2 & 0x0F) << 4) | (s3 >> 2));
-                vvP(B, ((s3 & 0x03) << 6) | s4);
+                uvP(B, (s1 << 2) | (s2 >> 4));
+                uvP(B, ((s2 & 0x0F) << 4) | (s3 >> 2));
+                uvP(B, ((s3 & 0x03) << 6) | s4);
         }
 
         memset(g, 0, sizeof g);
@@ -1987,17 +2027,17 @@ b64dec(Ty *ty, u8 const *s, size_t n)
                 s1 = table[g[0]];
                 s2 = table[g[1]];
                 s3 = table[g[2]];
-                vvP(B, (s1 << 2) | (s2 >> 4));
-                vvP(B, ((s2 & 0x0F) << 4) | (s3 >> 2));
+                uvP(B, (s1 << 2) | (s2 >> 4));
+                uvP(B, ((s2 & 0x0F) << 4) | (s3 >> 2));
                 break;
         case 2:
                 s1 = table[g[0]];
                 s2 = table[g[1]];
-                vvP(B, (s1 << 2) | (s2 >> 4));
+                uvP(B, (s1 << 2) | (s2 >> 4));
                 break;
         case 1:
                 s1 = table[g[0]];
-                vvP(B, s1 << 2);
+                uvP(B, s1 << 2);
                 break;
         }
 
@@ -2020,10 +2060,10 @@ b64enc(Ty *ty, void const *data, size_t n)
 
         for (size_t i = 0; i < d.quot; ++i) {
                 memcpy(g, s + 3*i, 3);
-                vvP(B, table[g[0] >> 2]);
-                vvP(B, table[((g[0] & 0x03) << 4) | (g[1] >> 4)]);
-                vvP(B, table[((g[1] & 0x0F) << 2) | (g[2] >> 6)]);
-                vvP(B, table[g[2] & 0x3F]);
+                uvP(B, table[g[0] >> 2]);
+                uvP(B, table[((g[0] & 0x03) << 4) | (g[1] >> 4)]);
+                uvP(B, table[((g[1] & 0x0F) << 2) | (g[2] >> 6)]);
+                uvP(B, table[g[2] & 0x3F]);
         }
 
         memset(g, 0, sizeof g);
@@ -2031,16 +2071,16 @@ b64enc(Ty *ty, void const *data, size_t n)
 
         switch (d.rem) {
         case 2:
-                vvP(B, table[g[0] >> 2]);
-                vvP(B, table[((g[0] & 0x03) << 4) | (g[1] >> 4)]);
-                vvP(B, table[((g[1] & 0x0F) << 2) | (g[2] >> 6)]);
-                vvP(B, '=');
+                uvP(B, table[g[0] >> 2]);
+                uvP(B, table[((g[0] & 0x03) << 4) | (g[1] >> 4)]);
+                uvP(B, table[((g[1] & 0x0F) << 2) | (g[2] >> 6)]);
+                uvP(B, '=');
                 break;
         case 1:
-                vvP(B, table[g[0] >> 2]);
-                vvP(B, table[((g[0] & 0x03) << 4) | (g[1] >> 4)]);
-                vvP(B, '=');
-                vvP(B, '=');
+                uvP(B, table[g[0] >> 2]);
+                uvP(B, table[((g[0] & 0x03) << 4) | (g[1] >> 4)]);
+                uvP(B, '=');
+                uvP(B, '=');
                 break;
         }
 }
@@ -2120,14 +2160,7 @@ BUILTIN_FUNCTION(os_open)
 {
         ASSERT_ARGC("os.open()", 2, 3);
 
-        Value path = ARG(0);
-        if (path.type != VALUE_STRING)
-                zP("the path passed to os.open() must be a string");
-
-        B.count = 0;
-
-        vvPn(B, ss(path), sN(path));
-        vvP(B, '\0');
+        char const *path = TY_TMP_C_STR(ARGx(0, VALUE_STRING));
 
         int flags = INT_ARG(1);
         int fd;
@@ -2140,11 +2173,11 @@ BUILTIN_FUNCTION(os_open)
 
         if (pass_mode) {
                 if (argc != 3) {
-                        zP("os.open() called with O_CREAT or O_TMPFILE but no mode");
+                        bP("O_CREAT or O_TMPFILE but no mode");
                 }
-                fd = open(vv(B), flags, (mode_t)INT_ARG(2));
+                fd = open(path, flags, (mode_t)INT_ARG(2));
         } else {
-                fd = open(vv(B), flags);
+                fd = open(path, flags);
         }
 
 
@@ -2154,13 +2187,7 @@ BUILTIN_FUNCTION(os_open)
 BUILTIN_FUNCTION(os_close)
 {
         ASSERT_ARGC("os.close()", 1);
-
-        Value file = ARG(0);
-
-        if (file.type != VALUE_INTEGER)
-                zP("the argument to os.close() must be an integer");
-
-        return INTEGER(close(file.z));
+        return INTEGER(close(INT_ARG(0)));
 }
 
 static char *
@@ -2341,24 +2368,22 @@ BUILTIN_FUNCTION(os_readdir)
 #else
         ASSERT_ARGC("os.readdir()", 1);
 
-        Value d = ARG(0);
+        DIR *dir = PTR_ARG(0);
 
-        if (d.type != VALUE_PTR)
-                zP("the argument to os.readdir() must be a pointer");
-
-        struct dirent *entry = readdir(d.ptr);
-        if (entry == NULL)
+        struct dirent *entry = readdir(dir);
+        if (entry == NULL) {
                 return NIL;
+        }
 
-        Value name = vSs(entry->d_name, strlen(entry->d_name));
+        Value name = vSsz(entry->d_name);
 
         NOGC(ss(name));
 
         Value result = vTn(
-                "ino", INTEGER(entry->d_ino),
+                "ino",    INTEGER(entry->d_ino),
                 "reclen", INTEGER(entry->d_reclen),
-                "type", INTEGER(entry->d_type),
-                "name", name
+                "type",   INTEGER(entry->d_type),
+                "name",   name
         );
 
         OKGC(ss(name));
@@ -2373,14 +2398,7 @@ BUILTIN_FUNCTION(os_rewinddir)
         NOT_ON_WINDOWS("os.rewinddir()");
 #else
         ASSERT_ARGC("os.rewinddir()", 1);
-
-        Value d = ARG(0);
-
-        if (d.type != VALUE_PTR)
-                zP("the argument to os.rewinddir() must be a pointer");
-
-        rewinddir(d.ptr);
-
+        rewinddir(PTR_ARG(0));
         return NIL;
 #endif
 }
@@ -2392,16 +2410,9 @@ BUILTIN_FUNCTION(os_seekdir)
 #else
         ASSERT_ARGC("os.seekdir()", 2);
 
-        Value d = ARG(0);
-
-        if (d.type != VALUE_PTR)
-                zP("the first argument to os.seekdir() must be a pointer");
-
-        Value off = ARG(1);
-        if (off.type != VALUE_INTEGER)
-                zP("the second argument to os.seekdir() must be an integer");
-
-        seekdir(d.ptr, off.z);
+        DIR *dir = PTR_ARG(0);
+        isize off = INT_ARG(1);
+        seekdir(dir, off);
 
         return NIL;
 #endif
@@ -2413,13 +2424,7 @@ BUILTIN_FUNCTION(os_telldir)
         NOT_ON_WINDOWS("os.telldir()");
 #else
         ASSERT_ARGC("os.telldir()", 1);
-
-        Value d = ARG(0);
-
-        if (d.type != VALUE_PTR)
-                zP("the argument to os.telldir() must be a pointer");
-
-        return INTEGER(telldir(d.ptr));
+        return INTEGER(telldir(PTR_ARG(0)));
 #endif
 }
 
@@ -2429,7 +2434,7 @@ BUILTIN_FUNCTION(os_closedir)
         NOT_ON_WINDOWS("os.closedir()");
 #else
         ASSERT_ARGC("os.closedir()", 1);
-        return INTEGER(closedir(ARGx(0, VALUE_PTR).ptr));
+        return INTEGER(closedir(PTR_ARG(0)));
 #endif
 }
 
@@ -2439,8 +2444,9 @@ BUILTIN_FUNCTION(os_getcwd)
 
         char *tmp = TY_TMP();
 
-        if (getcwd(tmp, TY_TMP_N) == NULL)
+        if (getcwd(tmp, TY_TMP_N) == NULL) {
                 return NIL;
+        }
 
         return vSsz(tmp);
 }
@@ -2456,42 +2462,13 @@ BUILTIN_FUNCTION(os_link)
 {
         ASSERT_ARGC("os.symlink()", 2);
 
-        Value old = ARG(0);
-        Value new = ARG(1);
-
-        switch (old.type) {
-        case VALUE_STRING:
-                break;
-        case VALUE_BLOB:
-                old = STRING_NOGC((char *)old.blob->items, old.blob->count);
-                break;
-        case VALUE_PTR:
-                old = STRING_NOGC(old.ptr, strlen(old.ptr));
-                break;
-        default:
-                zP("os.link(): invalid argument: %s", VSC(&old));
-        }
-
-        switch (new.type) {
-        case VALUE_STRING:
-                break;
-        case VALUE_BLOB:
-                new = STRING_NOGC((char *)new.blob->items, new.blob->count);
-                break;
-        case VALUE_PTR:
-                new = STRING_NOGC(new.ptr, strlen(new.ptr));
-                break;
-        default:
-                zP("os.link(): invalid argument: %s", VSC(&new));
-        }
-
-        char *c_old = TY_TMP_C_STR_A(old);
-        char *c_new = TY_TMP_C_STR_B(new);
+        char const *old = TY_TMP_C_STR_A(ARGx(0, VALUE_STRING, VALUE_BLOB, VALUE_PTR));
+        char const *new = TY_TMP_C_STR_B(ARGx(1, VALUE_STRING, VALUE_BLOB, VALUE_PTR));
 
 #ifdef _WIN32
-        return INTEGER(!CreateHardLinkA(c_new, c_new, NULL));
+        return INTEGER(!CreateHardLinkA(new, new, NULL));
 #else
-        return INTEGER(link(c_old, c_new));
+        return INTEGER(link(old, new));
 #endif
 }
 
@@ -2503,10 +2480,10 @@ BUILTIN_FUNCTION(os_linkat)
         ASSERT_ARGC("os.linkat()", 4, 5);
 
         int dirfd0 = INT_ARG(0);
-        Value path0 = ARGx(1, VALUE_STRING);
+        Value path0 = ARGx(1, VALUE_STRING, VALUE_BLOB, VALUE_PTR);
 
         int dirfd1 = INT_ARG(2);
-        Value path1 = ARGx(3, VALUE_STRING);
+        Value path1 = ARGx(3, VALUE_STRING, VALUE_BLOB, VALUE_PTR);
 
         int flags = 0;
         if (argc == 5) {
@@ -2529,35 +2506,8 @@ BUILTIN_FUNCTION(os_symlink)
 {
         ASSERT_ARGC("os.symlink()", 2);
 
-        Value old = ARG(0);
-        Value new = ARG(1);
-
-        switch (old.type) {
-        case VALUE_STRING:
-                break;
-        case VALUE_BLOB:
-                old = STRING_NOGC((char *)old.blob->items, old.blob->count);
-                break;
-        case VALUE_PTR:
-                old = STRING_NOGC(old.ptr, strlen(old.ptr));
-                break;
-        default:
-                zP("os.symlink(): invalid argument: %s", VSC(&old));
-        }
-
-        switch (new.type) {
-        case VALUE_STRING:
-                break;
-        case VALUE_BLOB:
-                new = STRING_NOGC((char *)new.blob->items, new.blob->count);
-                break;
-        case VALUE_PTR:
-                new = STRING_NOGC(new.ptr, strlen(new.ptr));
-                break;
-        default:
-                zP("os.symlink(): invalid argument: %s", VSC(&new));
-        }
-
+        Value old = ARGx(0, VALUE_STRING, VALUE_BLOB, VALUE_PTR);
+        Value new = ARGx(1, VALUE_STRING, VALUE_BLOB, VALUE_PTR);
 
         char *c_old = TY_TMP_C_STR_A(old);
         char *c_new = TY_TMP_C_STR_B(new);
@@ -2573,8 +2523,8 @@ BUILTIN_FUNCTION(os_rename)
 {
         ASSERT_ARGC("os.rename()", 2);
 
-        Value old = ARGx(0, VALUE_STRING);
-        Value new = ARGx(1, VALUE_STRING);
+        Value old = ARGx(0, VALUE_STRING, VALUE_BLOB, VALUE_PTR);
+        Value new = ARGx(1, VALUE_STRING, VALUE_BLOB, VALUE_PTR);
 
         char *c_old = TY_TMP_C_STR_A(old);
         char *c_new = TY_TMP_C_STR_B(new);
@@ -2586,7 +2536,7 @@ BUILTIN_FUNCTION(os_mkdir)
 {
         ASSERT_ARGC("os.mkdir()", 1, 2);
 
-        Value path = ARGx(0, VALUE_STRING);
+        Value path = ARGx(0, VALUE_STRING, VALUE_BLOB, VALUE_PTR);
         mode_t mode = 0777;
 
         if (argc == 2 && ARG(1).type != VALUE_NIL) {
@@ -2603,7 +2553,7 @@ BUILTIN_FUNCTION(os_mkdir)
 BUILTIN_FUNCTION(os_rmdir)
 {
         ASSERT_ARGC("os.rmdir()", 1);
-        Value path = ARGx(0, VALUE_STRING);
+        Value path = ARGx(0, VALUE_STRING, VALUE_BLOB, VALUE_PTR);
         return INTEGER(rmdir(TY_TMP_C_STR(path)));
 }
 
@@ -2615,32 +2565,11 @@ BUILTIN_FUNCTION(os_chown)
         NOT_ON_WINDOWS("os.chown()");
 #else
 
-        size_t n;
-        char const *path;
-
-        switch (ARG(0).type) {
-        case VALUE_STRING:
-                n = sN(ARG(0));
-                path = (char const *)ss(ARG(0));
-                break;
-        case VALUE_BLOB:
-                n = ARG(0).blob->count;
-                path = (char const *)ARG(0).blob->items;
-                break;
-        case VALUE_PTR:
-                n = strlen(ARG(0).ptr);
-                path = ARG(0).ptr;
-                break;
-        default:
-                ARGx(0, VALUE_STRING, VALUE_BLOB, VALUE_PTR);
-                UNREACHABLE();
-        }
-
-        Value vPath = xSs(path, n);
+        Value path = ARGx(0, VALUE_STRING, VALUE_BLOB, VALUE_PTR);
         u64 owner = INT_ARG(1);
         u64 group = INT_ARG(2);
 
-        return INTEGER(chown(TY_TMP_C_STR(vPath), owner, group));
+        return INTEGER(chown(TY_TMP_C_STR(path), owner, group));
 #endif
 }
 
@@ -2651,31 +2580,10 @@ BUILTIN_FUNCTION(os_chmod)
         NOT_ON_WINDOWS("os.chmod()");
 #else
 
-        size_t n;
-        char const *path;
-
-        switch (ARG(0).type) {
-        case VALUE_STRING:
-                n = sN(ARG(0));
-                path = (char const *)ss(ARG(0));
-                break;
-        case VALUE_BLOB:
-                n = ARG(0).blob->count;
-                path = (char const *)ARG(0).blob->items;
-                break;
-        case VALUE_PTR:
-                n = strlen(ARG(0).ptr);
-                path = ARG(0).ptr;
-                break;
-        default:
-                ARGx(0, VALUE_STRING, VALUE_BLOB, VALUE_PTR);
-                UNREACHABLE();
-        }
-
-        Value vPath = xSs(path, n);
+        Value path = ARGx(0, VALUE_STRING, VALUE_BLOB, VALUE_PTR);
         u64 mode = INT_ARG(1);
 
-        return INTEGER(chmod(TY_TMP_C_STR(vPath), mode));
+        return INTEGER(chmod(TY_TMP_C_STR(path), mode));
 #endif
 }
 
@@ -2683,7 +2591,7 @@ BUILTIN_FUNCTION(os_access)
 {
         ASSERT_ARGC("os.access()", 2);
 
-        Value path = ARGx(0, VALUE_STRING);
+        Value path = ARGx(0, VALUE_STRING, VALUE_BLOB, VALUE_PTR);
         int mode = INT_ARG(1);
 
         return INTEGER(access(TY_TMP_C_STR(path), mode));
@@ -2693,7 +2601,7 @@ BUILTIN_FUNCTION(os_readlink)
 {
         ASSERT_ARGC("os.readlink()", 1);
 
-        Value path = ARGx(0, VALUE_STRING);
+        Value path = ARGx(0, VALUE_STRING, VALUE_BLOB, VALUE_PTR);
 
         char buf[PATH_MAX + 1];
         isize n = readlink(TY_TMP_C_STR(path), buf, sizeof buf - 1);
@@ -2710,7 +2618,11 @@ BUILTIN_FUNCTION(os_utimes)
 {
         ASSERT_ARGC("os.utimes()", 1, 3);
 
-        Value file = ARGx(0, VALUE_STRING, VALUE_INTEGER);
+#ifndef _WIN32
+        Value file = ARGx(0, VALUE_STRING, VALUE_BLOB, VALUE_PTR, VALUE_INTEGER);
+#else
+        Value file = ARGx(0, VALUE_STRING, VALUE_BLOB, VALUE_PTR);
+#endif
 
         struct timeval times[2];
         struct timeval *ptimes = NULL;
@@ -2739,11 +2651,15 @@ BUILTIN_FUNCTION(os_utimes)
 
         switch (file.type) {
         case VALUE_STRING:
+        case VALUE_BLOB:
+        case VALUE_PTR:
                 return INTEGER(utimes(TY_TMP_C_STR(file), ptimes));
+
 #ifndef _WIN32
         case VALUE_INTEGER:
                 return INTEGER(futimes(file.z, ptimes));
 #endif
+
         default:
                 UNREACHABLE();
         }
@@ -2785,16 +2701,22 @@ BUILTIN_FUNCTION(os_chdir)
 {
         ASSERT_ARGC("os.chdir()", 1);
 
-        Value dir = ARGx(0, VALUE_STRING, VALUE_INTEGER);
-
-        if (dir.type == VALUE_STRING) {
-                return INTEGER(chdir(TY_TMP_C_STR(dir)));
 #ifndef _WIN32
-        } else if (dir.type == VALUE_INTEGER) {
+        Value dir = ARGx(0, VALUE_STRING, VALUE_INTEGER, VALUE_BLOB, VALUE_PTR);
+#else
+        Value dir = ARGx(0, VALUE_STRING, VALUE_BLOB, VALUE_PTR);
+#endif
+
+        switch (dir.type) {
+        case VALUE_STRING:
+        case VALUE_BLOB:
+        case VALUE_PTR:
+                return INTEGER(chdir(TY_TMP_C_STR(dir)));
+
+#ifndef _WIN32
+        case VALUE_INTEGER:
                 return INTEGER(fchdir(dir.z));
 #endif
-        } else {
-                ARGx(0, VALUE_STRING);
         }
 
         UNREACHABLE();
@@ -2893,10 +2815,9 @@ BUILTIN_FUNCTION(os_write)
         Value *all = NAMED("all");
         bool write_all = all != NULL && value_truthy(ty, all);
 
-        lGv(true);
-
         usize off = 0;
 
+        lGv(true);
         while (n > 0) {
                 ssize_t r = write(fd, ((unsigned char const *)p) + off, n);
                 if (r < 0) {
@@ -2914,7 +2835,6 @@ BUILTIN_FUNCTION(os_write)
                         break;
                 }
         }
-
         lTk();
 
         return INTEGER(off);
@@ -3618,13 +3538,26 @@ BUILTIN_FUNCTION(thread_join)
 
         Thread *t = ARGx(0, VALUE_THREAD).thread;
 
+        //XXX(" [%llu]  JOIN THREAD id=%llu  p=%p", MyThreadId(ty), t->i, t->t);
+
+        if (t->joined) {
+                bP("thread has already been joined");
+        }
+
         if (
                 (argc == 1)
              || (ARG(1).type == VALUE_NIL)
         ) {
                 lGv(true);
+                //TyMutexLock(&t->mutex);
+                //while (t->alive) {
+                //        TyCondVarWait(&t->cond, &t->mutex);
+                //}
+                //TyMutexUnlock(&t->mutex);
                 TyThreadJoin(t->t);
+                t->joined = true;
                 lTk();
+
                 return t->v;
         } else {
                 i64 timeoutMs = max(0, MSEC_ARG(1));
@@ -3641,6 +3574,7 @@ BUILTIN_FUNCTION(thread_join)
 
                 TyMutexUnlock(&t->mutex);
                 TyThreadJoin(t->t);
+                t->joined = true;
                 lTk();
 
                 return Some(t->v);
@@ -3748,12 +3682,14 @@ BUILTIN_FUNCTION(thread_create)
 {
         ASSERT_ARGC_RANGE("thread.create()", 1, INT_MAX);
 
-        Value *ctx = mA((argc + 1) * sizeof (Value));
         Thread *t = mAo(sizeof *t, GC_THREAD);
-
         NOGC(t);
+
         t->i = NextThreadId();
         t->v = NONE;
+        t->joined = false;
+
+        Value *ctx = mA((argc + 1) * sizeof (Value));
 
         for (int i = 0; i < argc; ++i) {
                 ctx[i] = ARG(i);
@@ -3765,7 +3701,6 @@ BUILTIN_FUNCTION(thread_create)
 
         return THREAD(t);
 }
-
 
 BUILTIN_FUNCTION(thread_channel)
 {
@@ -3793,7 +3728,7 @@ BUILTIN_FUNCTION(thread_send)
         lGv(true);
         TyMutexLock(&chan->m);
         lTk();
-        vvP(chan->q, cv);
+        uvP(chan->q, cv);
         TyMutexUnlock(&chan->m);
         TyCondVarSignal(&chan->c);
 
@@ -3810,7 +3745,6 @@ BUILTIN_FUNCTION(thread_recv)
 
         lGv(true);
         TyMutexLock(&chan->m);
-
         if (argc == 1) {
                 while (chan->open && chan->q.count == 0) {
                         TyCondVarWait(&chan->c, &chan->m);
@@ -3818,6 +3752,7 @@ BUILTIN_FUNCTION(thread_recv)
         } else {
                 Value t = ARG(1);
                 if (t.type != VALUE_INTEGER) {
+                        lTk();
                         zP("thread.recv(): expected integer but got: %s", VSC(&t));
                 }
                 while (chan->open && chan->q.count == 0) {
@@ -3826,7 +3761,6 @@ BUILTIN_FUNCTION(thread_recv)
                         }
                 }
         }
-
         lTk();
 
         if (chan->q.count == 0) {
@@ -3864,12 +3798,18 @@ BUILTIN_FUNCTION(thread_kill)
 {
         ASSERT_ARGC("thread.kill()", 1, 2);
 
+        int how;
+        TyThread *thread;
+
         if (argc == 1) {
-                return BOOLEAN(TyThreadKill(TyThreadSelf(), INT_ARG(0)));
+                thread = TyThreadSelf();
+                how = INT_ARG(0);
         } else {
-                Value t = ARGx(0, VALUE_THREAD);
-                return BOOLEAN(TyThreadKill(t.thread->t, INT_ARG(1)));
+                thread = ARGx(0, VALUE_THREAD).thread->t;
+                how = INT_ARG(1);
         }
+
+        return BOOLEAN(TyThreadKill(thread, how));
 }
 
 BUILTIN_FUNCTION(thread_setname)
@@ -3969,6 +3909,25 @@ BUILTIN_FUNCTION(thread_self)
         return PTR((void *)TyThreadSelf());
 }
 
+BUILTIN_FUNCTION(thread_group)
+{
+        ASSERT_ARGC("thread.group()", 0);
+
+        GC_STOP();
+        TySpinLockLock(&MyGroup->Lock);
+
+        Array *threads = vAn(vN(MyGroup->ThreadList));
+        vfor(
+                MyGroup->ThreadList,
+                vPx(*threads, PTR(it))
+        );
+
+        TySpinLockUnlock(&MyGroup->Lock);
+        GC_RESUME();
+
+        return ARRAY(threads);
+}
+
 BUILTIN_FUNCTION(thread_sigmask)
 {
         ASSERT_ARGC("thread.sigmask()", 0, 2);
@@ -4002,7 +3961,17 @@ BUILTIN_FUNCTION(os_fork)
 #ifdef _WIN32
         NOT_ON_WINDOWS("os.fork()");
 #else
-        return INTEGER(fork());
+        int ret = fork();
+
+        switch (ret) {
+        case -1:
+                return NIL;
+
+        case 0:
+                TyPostFork(ty);
+        }
+
+        return INTEGER(ret);
 #endif
 }
 
@@ -4223,7 +4192,7 @@ BUILTIN_FUNCTION(os_getpeername)
                 return NIL;
         }
 
-        struct blob *b = value_blob_new(ty);
+        Blob *b = value_blob_new(ty);
         uvPn(*b, &addr, min(addr_size, sizeof addr));
 
         return BLOB(b);
@@ -4248,7 +4217,7 @@ BUILTIN_FUNCTION(os_getsockname)
                 return NIL;
         }
 
-        struct blob *b = value_blob_new(ty);
+        Blob *b = value_blob_new(ty);
         uvPn(*b, &addr, min(addr_size, sizeof addr));
 
         return BLOB(b);
@@ -4436,22 +4405,22 @@ BUILTIN_FUNCTION(os_getaddrinfo)
 
         if (host.type != VALUE_NIL) {
                 vvPn(B, ss(host), sN(host));
-                vvP(B, '\0');
+                uvP(B, '\0');
 
                 vvPn(B, ss(port), sN(port));
-                vvP(B, '\0');
+                uvP(B, '\0');
 
                 node = B.items;
                 service = B.items + sN(host) + 1;
         } else if (port.type == VALUE_NIL) {
                 vvPn(B, ss(host), sN(host));
-                vvP(B, '\0');
+                uvP(B, '\0');
 
                 node = B.items;
                 service = NULL;
         } else {
                 vvPn(B, ss(port), sN(port));
-                vvP(B, '\0');
+                uvP(B, '\0');
 
                 node = NULL;
                 service = B.items;
@@ -4523,26 +4492,21 @@ BUILTIN_FUNCTION(os_accept)
 
         int sockfd = INT_ARG(0);
 
-        struct sockaddr a;
-        socklen_t n = sizeof a;
+        struct sockaddr _addr;
+        socklen_t n = sizeof _addr;
 
         lGv(true);
-        int r = accept(sockfd, &a, &n);
+        int ret = accept(sockfd, &_addr, &n);
         lTk();
-        if (r == -1)
+
+        if (ret < 0) {
                 return NIL;
+        }
 
-        Blob *b = value_blob_new(ty);
-        NOGC(b);
+        Blob *addr = value_blob_new(ty);
+        Value v = PAIR(INTEGER(ret), BLOB(addr));
 
-        uvPn(*b, (char *)&a, n);
-
-        Value v = vTn(
-                "fd",   INTEGER(r),
-                "addr", BLOB(b)
-        );
-
-        OKGC(b);
+        uvPn(*addr, (u8 *)&_addr, n);
 
         return v;
 }
@@ -4584,7 +4548,7 @@ BUILTIN_FUNCTION(os_recvfrom)
         GC_STOP();
 
         Blob *b = value_blob_new(ty);
-        vvPn(*b, &addr, min(addr_size, sizeof addr));
+        uvPn(*b, &addr, min(addr_size, sizeof addr));
 
         Value result = vT(2);
 
@@ -4598,38 +4562,35 @@ BUILTIN_FUNCTION(os_recvfrom)
 
 BUILTIN_FUNCTION(os_sendto)
 {
-        ASSERT_ARGC_2("os.sendto()", 3, 4);
+        ASSERT_ARGC("os.sendto()", 3, 4);
 
-        Value fd = ARG(0);
-        if (fd.type != VALUE_INTEGER)
-                zP("the first argument to os.sendto() must be an integer (fd)");
+        int fd = INT_ARG(0);
 
-        Value buffer = ARG(1);
-        if (buffer.type != VALUE_BLOB && buffer.type != VALUE_STRING) {
-                zP(
-                        "os.sendto(): expected Blob or String as second argument but got: %s%s%s%s",
-                        TERM(1),
-                        TERM(93),
-                        VSC(&buffer),
-                        TERM(0)
-                );
+        u8 const *data;
+        usize len;
+
+        Value buffer = ARGx(1, VALUE_BLOB, VALUE_STRING);
+
+        switch (buffer.type) {
+        case VALUE_BLOB:
+                data = vv(*buffer.blob);
+                len = vN(*buffer.blob);
+                break;
+
+        case VALUE_STRING:
+                data = ss(buffer);
+                len = sN(buffer);
+                break;
         }
 
-        Value flags = ARG(2);
-        if (flags.type != VALUE_INTEGER)
-                zP("the third argument to os.sendto() must be an integer (flags)");
-
-        Value addr = ARG(3);
-        if (addr.type != VALUE_BLOB)
-                zP("the fourth argument to os.sendto() must be a blob (sockaddr)");
+        int flags = INT_ARG(2);
+        Blob *addr = ARGx(3, VALUE_BLOB).blob;
 
         lGv(true);
-        ssize_t r = (buffer.type == VALUE_BLOB)
-                  ? sendto(fd.z, buffer.blob->items, buffer.blob->count, flags.z, (void *)addr.blob->items, addr.blob->count)
-                  : sendto(fd.z, ss(buffer), sN(buffer), flags.z, (void *)addr.blob->items, addr.blob->count);
+        ssize_t ret = sendto(fd, data, len, flags, (void *)vv(*addr), vN(*addr));
         lTk();
 
-        return INTEGER(r);
+        return INTEGER(ret);
 }
 
 BUILTIN_FUNCTION(os_poll)
@@ -4850,6 +4811,7 @@ BUILTIN_FUNCTION(os_wait)
         int status;
         int ret;
 
+        lGv(true);
         for (;;) {
                 ret = waitpid(pid, &status, flags);
                 if (ret == -1 && errno == EINTR) {
@@ -4857,6 +4819,7 @@ BUILTIN_FUNCTION(os_wait)
                 }
                 break;
         }
+        lTk();
         if (ret < 0 && errno != ECHILD) {
                 bP("%s", strerror(errno));
         }
@@ -5097,7 +5060,9 @@ BUILTIN_FUNCTION(os_sigsuspend)
 
         IntoSigSet(ty, "os.sigsuspend()", &ARG(0), &set);
 
+        lGv(true);
         int ret = sigsuspend(&set);
+        lTk();
         if (ret != 0 && errno != EINTR) {
                 bP("%s", strerror(errno));
         }
@@ -5194,7 +5159,9 @@ BUILTIN_FUNCTION(os_sigwait)
         IntoSigSet(ty, "os.sigwait()", &ARG(0), &set);
 
         int sig;
+        lGv(true);
         int ret = sigwait(&set, &sig);
+        lTk();
         if (ret != 0) {
                 bP("%s", strerror(ret));
         }
@@ -5523,7 +5490,7 @@ BUILTIN_FUNCTION(os_listdir)
         B.count = 0;
         vvPn(B, ss(dir), sN(dir));
         vvPn(B, "\\*", 2); // Add wildcard for all files
-        vvP(B, '\0');
+        uvP(B, '\0');
 
         WIN32_FIND_DATAA findData;
         HANDLE hFind = FindFirstFileA(B.items, &findData);
@@ -6204,10 +6171,10 @@ BUILTIN_FUNCTION(time_strptime)
         B.count = 0;
 
         vvPn(B, ss(s), sN(s));
-        vvP(B, '\0');
+        uvP(B, '\0');
 
         vvPn(B, ss(fmt), sN(fmt));
-        vvP(B, '\0');
+        uvP(B, '\0');
 
         char const *sp = B.items;
         char const *fp = B.items + sN(s) + 1;
@@ -6336,7 +6303,7 @@ BUILTIN_FUNCTION(stdio_fgets)
 
         lGv(true);
         while ((c = fgetc(fp)) != EOF && c != '\n') {
-                vvP(B, c);
+                uvP(B, c);
         }
         lTk();
 
@@ -6572,9 +6539,7 @@ BUILTIN_FUNCTION(stdio_write_float)
         float fx = (float)x.real;
 
         lGv(true);
-
         size_t n = fwrite(&fx, sizeof fx, 1, fp);
-
         lTk();
 
         return BOOLEAN(n > 0);
@@ -6596,9 +6561,7 @@ BUILTIN_FUNCTION(stdio_write_double)
         double fx = x.real;
 
         lGv(true);
-
         size_t n = fwrite(&fx, sizeof fx, 1, fp);
-
         lTk();
 
         return BOOLEAN(n > 0);
@@ -6632,7 +6595,7 @@ BUILTIN_FUNCTION(stdio_fread)
 
         lGv(true);
         while (bytes < n.z && (c = fgetc(fp)) != EOF) {
-                vvP(*b, c);
+                uvP(*b, c);
                 bytes += 1;
         }
         lTk();
@@ -6664,7 +6627,7 @@ BUILTIN_FUNCTION(stdio_slurp)
 
         lGv(true);
         while ((c = fgetc(fp)) != EOF) {
-                vvP(B, c);
+                uvP(B, c);
         }
         lTk();
 
@@ -6688,10 +6651,7 @@ BUILTIN_FUNCTION(stdio_fgetc)
         int c = fgetc(f.ptr);
         lTk();
 
-        if (c == EOF)
-                return NIL;
-        else
-                return INTEGER(c);
+        return (c == EOF) ? NIL : INTEGER(c);
 }
 
 BUILTIN_FUNCTION(stdio_fputc)
@@ -6710,32 +6670,54 @@ BUILTIN_FUNCTION(stdio_fputc)
         int c = fputc((int)ARG(1).z, f.ptr);
         lTk();
 
-        if (c == EOF)
-                return NIL;
-        else
-                return INTEGER(c);
+        return (c == EOF) ? NIL : INTEGER(c);
 }
 
 BUILTIN_FUNCTION(stdio_fwrite)
 {
-        ASSERT_ARGC("stdio.fwrite()", 2);
+        ASSERT_ARGC("stdio.fwrite()", 2, 3);
 
-        Value f = ARG(0);
-        if (f.type != VALUE_PTR)
-                zP("the argument to stdio.fwrite() must be a pointer");
+        FILE *f = PTR_ARG(0);
+        Value data = ARGx(1, VALUE_STRING, VALUE_BLOB, VALUE_PTR, VALUE_INTEGER);
+        usize len;
 
-        Value s = ARG(1);
+        isize ret;
 
-        switch (s.type) {
+        lGv(true);
+        switch (data.type) {
         case VALUE_STRING:
-                return INTEGER(fwrite(ss(s), 1, sN(s), f.ptr));
+                len = (argc == 3) ? INT_ARG(2) : sN(data);
+                ret = fwrite(ss(data), 1, len, f);
+                break;
+
         case VALUE_BLOB:
-                return INTEGER(fwrite(s.blob->items, 1, s.blob->count, f.ptr));
+                len = (argc == 3) ? INT_ARG(2) : vN(*data.blob);
+                ret = fwrite(vv(*data.blob), 1, vN(*data.blob), f);
+                break;
+
+        case VALUE_PTR:
+                len = (argc == 3) ? INT_ARG(2) : strlen(data.ptr);
+                ret = fwrite(data.ptr, 1, 1, f);
+                break;
+
         case VALUE_INTEGER:
-                return INTEGER(fputc((unsigned char)s.z, f.ptr));
+                len = (argc == 3) ? INT_ARG(2) : 1;
+                ret = 0;
+                for (usize i = 0; i < len; ++i) {
+                        if (fputc((unsigned char)data.z, f) == EOF) {
+                                ret = -1;
+                                break;
+                        }
+                        ret += 1;
+                }
+                break;
+
         default:
-                zP("invalid type for second argument passed to stdio.fwrite()");
+                UNREACHABLE();
         }
+        lTk();
+
+        return INTEGER(ret);
 }
 
 BUILTIN_FUNCTION(stdio_puts)

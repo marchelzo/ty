@@ -419,6 +419,29 @@ struct generator {
         Value f;
 };
 
+#ifdef _WIN32
+typedef volatile long TyThreadState;
+#else
+typedef atomic_bool TyThreadState;
+#endif
+
+typedef struct thread_group {
+        TySpinLock Lock;
+        TySpinLock GCLock;
+        vec(TyThread) ThreadList;
+        vec(Ty *) TyList;
+        vec(TySpinLock *) ThreadLocks;
+        vec(TyThreadState *) ThreadStates;
+        atomic_bool WantGC;
+        TyBarrier GCBarrierStart;
+        TyBarrier GCBarrierMark;
+        TyBarrier GCBarrierSweep;
+        TyBarrier GCBarrierDone;
+        TySpinLock DLock;
+        AllocList DeadAllocs;
+        isize DeadUsed;
+} ThreadGroup;
+
 struct thread {
         TyThread t;
         TyMutex mutex;
@@ -427,6 +450,7 @@ struct thread {
         Value v;
         u64 i;
         bool alive;
+        bool joined;
 };
 
 struct chanval {
@@ -605,6 +629,7 @@ typedef struct ty {
 
         i32 eval_depth;
         u32 flags;
+        u64 id;
 
         u64 prng[4];
 
@@ -1106,6 +1131,7 @@ enum {
 #define mF(p)      gc_free(ty, p)
 
 #define uAo(...)   gc_alloc_object_unchecked(ty, __VA_ARGS__)
+#define uAo0(...)  gc_alloc_object0_unchecked(ty, __VA_ARGS__)
 
 #define amA(n)  Allocate(ty, (n))
 #define amA0(n) Allocate0(ty, (n))
@@ -1502,6 +1528,11 @@ TyTmpCString(Ty *ty, u32 i, Value val)
         case VALUE_BLOB:
                 n = vN(*val.blob);
                 str = vv(*val.blob);
+                break;
+
+        case VALUE_PTR:
+                n = strlen((char const *)val.ptr);
+                str = val.ptr;
                 break;
 
         default:

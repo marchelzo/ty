@@ -280,29 +280,6 @@ FILE *DisassemblyOut = NULL;
 u64 HITS = 0;
 u64 MISSES = 0;
 
-#ifdef _WIN32
-typedef volatile long TyThreadState;
-#else
-typedef atomic_bool TyThreadState;
-#endif
-
-typedef struct thread_group {
-        TySpinLock Lock;
-        TySpinLock GCLock;
-        vec(TyThread) ThreadList;
-        vec(Ty *) TyList;
-        vec(TySpinLock *) ThreadLocks;
-        vec(TyThreadState *) ThreadStates;
-        atomic_bool WantGC;
-        TyBarrier GCBarrierStart;
-        TyBarrier GCBarrierMark;
-        TyBarrier GCBarrierSweep;
-        TyBarrier GCBarrierDone;
-        TySpinLock DLock;
-        AllocList DeadAllocs;
-        isize DeadUsed;
-} ThreadGroup;
-
 typedef struct {
         atomic_bool *created;
         Value *ctx;
@@ -503,7 +480,7 @@ WaitGC(Ty *ty)
 
         GCLOG("Waiting to mark: %llu", TID);
         TyBarrierWait(&MyGroup->GCBarrierStart);
-        GCLOG("Marking: %llu", TID);
+        XLOG("Marking: %llu", TID);
         MarkStorage(ty);
 
         GCLOG("Waiting to sweep: %llu", TID);
@@ -514,7 +491,7 @@ WaitGC(Ty *ty)
         GCLOG("Waiting to continue execution: %llu", TID);
         TyBarrierWait(&MyGroup->GCBarrierSweep);
         TyBarrierWait(&MyGroup->GCBarrierDone);
-        GCLOG("Continuing execution: %llu", TID);
+        XLOG("Continuing execution: %llu", TID);
 
 #ifdef TY_PROFILER
         LastThreadGCTime = TyThreadTime() - start;
@@ -540,7 +517,7 @@ DoGC(Ty *ty)
 
         GCInProgress = true;
 
-        GCLOG("Doing GC: MyGroup = %p, (%zu threads)", MyGroup, MyGroup->ThreadList.count);
+        XLOG("Doing GC: MyGroup = %p, (%zu threads)", MyGroup, MyGroup->ThreadList.count);
 
         TySpinLockLock(&MyGroup->Lock);
 
@@ -596,7 +573,7 @@ DoGC(Ty *ty)
         TyBarrierWait(&MyGroup->GCBarrierStart);
 
         for (int i = 0; i < nBlocked; ++i) {
-                GCLOG("Marking thread %llu storage from thread %llu", (long long unsigned)MyGroup->ThreadList.items[blockedThreads[i]], TID);
+                XLOG("Marking thread %d storage from thread %llu", blockedThreads[i], TID);
                 MarkStorage(v__(MyGroup->TyList, blockedThreads[i]));
         }
 
@@ -604,6 +581,7 @@ DoGC(Ty *ty)
         MarkStorage(ty);
 
         if (MyGroup == &MainGroup) {
+                XLOG("Marking %zu global roots on thread %llu", vN(Globals), TID);
                 for (int i = 0; i < vN(Globals); ++i) {
                         value_mark(ty, v_(Globals, i));
                 }
@@ -624,8 +602,9 @@ DoGC(Ty *ty)
         GCLOG("Storing false in WantGC on thread %llu", TID);
         MyGroup->WantGC = false;
 
+        TySpinLockLock(&MyGroup->DLock);
         for (int i = 0; i < nBlocked; ++i) {
-                GCLOG("Sweeping thread %llu storage from thread %llu", (long long unsigned)MyGroup->ThreadList.items[blockedThreads[i]], TID);
+                XLOG("Sweeping thread %d storage from thread %llu", blockedThreads[i], TID);
                 GCSweepOwn(v__(MyGroup->TyList, blockedThreads[i]));
         }
 
@@ -633,7 +612,6 @@ DoGC(Ty *ty)
         GCSweepOwn(ty);
 
         GCLOG("Sweeping objects from dead threads on thread %llu", TID);
-        TySpinLockLock(&MyGroup->DLock);
         GCSweep(ty, &MyGroup->DeadAllocs, &MyGroup->DeadUsed);
         TySpinLockUnlock(&MyGroup->DLock);
 
@@ -1054,7 +1032,7 @@ GetFreeCoThread(Ty *ty)
 #if defined(TY_RELEASE)
         usize const CO_STACK_SIZE = (1UL << 22);
 #else
-        usize const CO_STACK_SIZE = (1UL << 26);
+        usize const CO_STACK_SIZE = (1UL << 24);
 #endif
         if (vN(CO_THREADS) == 0) {
                 GCLOG("GetFreeCoThread(): new");
@@ -1160,13 +1138,14 @@ co_yield_value(Ty *ty)
 __attribute__((optnone, noinline))
 #endif
 inline static void
-xcall(Ty *ty, Value const *f, Value const *pSelf, int argc, Value kwargs, char *whence)
+xcall(Ty *ty, Value const *f, Value const *pSelf, int argc, Value const *pKwargs, char *whence)
 {
         int   np      = f->info[FUN_INFO_PARAM_COUNT];
         int   bound   = f->info[FUN_INFO_BOUND];
 
         int   irest   = rest_idx_of(f);
         int   ikwargs = kwargs_idx_of(f);
+        Value kwargs  = (pKwargs != NULL) ? *pKwargs : NIL;
 
         Value self;
         int   class   = f->info[FUN_INFO_CLASS];
@@ -1251,7 +1230,7 @@ xcall(Ty *ty, Value const *f, Value const *pSelf, int argc, Value kwargs, char *
 }
 
 static bool
-call(Ty *ty, Value const *f, Value const *pSelf, int argc, Value kwargs)
+call(Ty *ty, Value const *f, Value const *pSelf, int argc, Value const *pKwargs)
 {
         if (
                 is_overload(f)
@@ -1263,31 +1242,31 @@ call(Ty *ty, Value const *f, Value const *pSelf, int argc, Value kwargs)
                 return false;
         }
 
-        xcall(ty, f, pSelf, argc, kwargs, IP);
+        xcall(ty, f, pSelf, argc, pKwargs, IP);
         IP = code_of(f);
 
         return true;
 }
 
 static void
-call6(Ty *ty, Value const *f, Value const *pSelf, int argc, Value kwargs, char *whence)
+call6(Ty *ty, Value const *f, Value const *pSelf, int argc, Value const *pKwargs, char *whence)
 {
-        xcall(ty, f, pSelf, argc, kwargs, whence);
+        xcall(ty, f, pSelf, argc, pKwargs, whence);
         IP = code_of(f);
 }
 
 static void
-call6t(Ty *ty, Value const *f, Value const *pSelf, int argc, Value kwargs, char *whence)
+call6t(Ty *ty, Value const *f, Value const *pSelf, int argc, Value const *pKwargs, char *whence)
 {
         xvP(CALLS, IP);
-        xcall(ty, f, pSelf, argc, kwargs, whence);
+        xcall(ty, f, pSelf, argc, pKwargs, whence);
         IP = code_of(f);
 }
 
 static void
-exec_fn(Ty *ty, Value const *f, Value const *pSelf, int argc, Value kwargs)
+exec_fn(Ty *ty, Value const *f, Value const *pSelf, int argc, Value const *pKwargs)
 {
-        xcall(ty, f, pSelf, argc, kwargs, &halt);
+        xcall(ty, f, pSelf, argc, pKwargs, &halt);
         vm_exec(ty, code_of(f));
 }
 
@@ -1310,7 +1289,7 @@ call_co_ex(Ty *ty, Value *v, int n, char *whence)
         }
 
         push(*v);
-        call6(ty, &gen->f, NULL, 0, NIL, whence);
+        call6(ty, &gen->f, NULL, 0, NULL, whence);
         STACK.count = vvL(FRAMES)->fp;
 
         if (vN(gen->st.frames) == 0) {
@@ -1410,7 +1389,7 @@ PopThrowCtx(Ty *ty)
 u64
 MyThreadId(Ty *ty)
 {
-        return MyId;
+        return ty->id;
 }
 
 void
@@ -1459,8 +1438,9 @@ NewThread(Ty *ty, Thread *t, Value *call, Value *name, bool isolated)
         t->alive = true;
 
         int r = TyThreadCreate(&t->t, vm_run_thread, ctx);
-        if (r != 0)
+        if (r != 0) {
                 zP("TyThreadCreate(): %s", strerror(r));
+        }
 
         while (!created)
                 ;
@@ -1471,31 +1451,24 @@ NewThread(Ty *ty, Thread *t, Value *call, Value *name, bool isolated)
 static void
 AddThread(Ty *ty, TyThread self)
 {
-        GCLOG("AddThread(): %llu: taking lock", TID);
-
-        TySpinLockLock(&MyGroup->Lock);
-
-        GCLOG("AddThread(): %llu: took lock", TID);
-
-        GC_STOP();
-
-        vvP(MyGroup->TyList, ty);
-        vvP(MyGroup->ThreadList, self);
-
         MyLock = mrealloc(NULL, sizeof *MyLock);
         TySpinLockInit(MyLock);
         TySpinLockLock(MyLock);
-        vvP(MyGroup->ThreadLocks, MyLock);
 
         MyState = mrealloc(NULL, sizeof *MyState);
         *MyState = false;
+
+        GC_STOP();
+        GCLOG("AddThread(): %llu: taking lock", TID);
+        TySpinLockLock(&MyGroup->Lock);
+        GCLOG("AddThread(): %llu: took lock", TID);
+        vvP(MyGroup->TyList, ty);
+        vvP(MyGroup->ThreadList, self);
+        vvP(MyGroup->ThreadLocks, MyLock);
         vvP(MyGroup->ThreadStates, MyState);
-
-        GC_RESUME();
-
         TySpinLockUnlock(&MyGroup->Lock);
-
         GCLOG("AddThread(): %llu: finished", TID);
+        GC_RESUME();
 }
 
 static void
@@ -1506,18 +1479,14 @@ CleanupThread(void *ctx)
         GCLOG("Cleaning up thread: %zu bytes in use. DeadUsed = %zu", MemoryUsed, MyGroup->DeadUsed);
 
         TySpinLockLock(&MyGroup->DLock);
-
         if (MyGroup->DeadUsed + MemoryUsed > MemoryLimit) {
-                TySpinLockUnlock(&MyGroup->DLock);
-                DoGC(ty);
-                TySpinLockLock(&MyGroup->DLock);
+                //TySpinLockUnlock(&MyGroup->DLock);
+                //DoGC(ty);
+                //TySpinLockLock(&MyGroup->DLock);
         }
-
         uvPv(MyGroup->DeadAllocs, ty->allocs);
         MyGroup->DeadUsed += MemoryUsed;
-
-        ty->allocs.count = 0;
-
+        v0(ty->allocs);
         TySpinLockUnlock(&MyGroup->DLock);
 
         lGv(true);
@@ -1597,7 +1566,7 @@ vm_run_thread(void *p)
         InitializeTy(ty);
 
         MyTy = ty;
-        MyId = t->i;
+        MyId = ty->id = t->i;
 
         int argc = 0;
 
@@ -1626,9 +1595,9 @@ vm_run_thread(void *p)
         *ctx->created = true;
 
         if (TY_CATCH_ERROR()) {
-                // TODO: do something useful here
+                TyClearError(ty);
+                fprintf(stderr, "Thread %lld dying with error: %s\n", TID, TyError(ty));
                 t->v = TY_CATCH();
-                fprintf(stderr, "Thread %lld dying with error: %s\n", TID, VSC(&t->v));
         } else {
                 t->v = vmC(call, argc);
                 TY_CATCH_END();
@@ -2075,7 +2044,7 @@ Start:
                         if (UNLIKELY(vp == NULL)) {
                                 zP("non-iterable object used in subscript expression");
                         }
-                        exec_fn(ty, vp, &subscript, 0, NIL);
+                        exec_fn(ty, vp, &subscript, 0, NULL);
                         subscript = pop();
                         gX();
                         gX();
@@ -2087,7 +2056,7 @@ Start:
 
                 for (int i = 0; ; ++i) {
                         push(INTEGER(i));
-                        exec_fn(ty, vp, &subscript, 1, NIL);
+                        exec_fn(ty, vp, &subscript, 1, NULL);
                         Value r = pop();
                         if (r.type == VALUE_NIL)
                                 break;
@@ -2208,10 +2177,8 @@ BuildKwargsDict(Ty *ty, int nkw)
                 return NIL;
         }
 
-        Dict *kwargs;
-
         GC_STOP();
-        kwargs = dict_new(ty);
+        Dict *kwargs = dict_new(ty);
         for (int i = 0; i < nkw; ++i, SKIPSTR()) {
                 if (top()->type == VALUE_NONE) {
                         pop();
@@ -2288,7 +2255,7 @@ DoCall(Ty *ty, Value const *f, int n, int nkw, bool auto_this)
 
         switch (v.type) {
         case VALUE_FUNCTION:
-                new_frame = call(ty, &v, NULL, n, kwargs);
+                new_frame = call(ty, &v, NULL, n, &kwargs);
                 gX();
                 return new_frame;
 
@@ -2360,7 +2327,7 @@ DoCall(Ty *ty, Value const *f, int n, int nkw, bool auto_this)
                 if (vp == NULL) {
                         goto NotCallable;
                 }
-                new_frame = call(ty, vp, &v, n, kwargs);
+                new_frame = call(ty, vp, &v, n, &kwargs);
                 gX();
                 return new_frame;
 
@@ -2370,7 +2337,7 @@ DoCall(Ty *ty, Value const *f, int n, int nkw, bool auto_this)
                         vp = class_lookup_method_i(ty, v.class, NAMES.init);
                         if (LIKELY(vp != NULL)) {
                                 value = NONE;
-                                exec_fn(ty, vp, &value, n, kwargs);
+                                exec_fn(ty, vp, &value, n, &kwargs);
                         } else {
                                 zP("built-in class has no init method. Was prelude loaded?");
                         }
@@ -2378,10 +2345,11 @@ DoCall(Ty *ty, Value const *f, int n, int nkw, bool auto_this)
                         value = OBJECT(object_new(ty, v.class), v.class);
                         vp = class_lookup_method_i(ty, v.class, NAMES.init);
                         if (LIKELY(vp != NULL)) {
-                                exec_fn(ty, vp, &value, n, kwargs);
+                                gP(&value);
+                                exec_fn(ty, vp, &value, n, &kwargs);
+                                gX();
                                 pop();
                         } else {
-                                value = OBJECT(object_new(ty, v.class), v.class);
                                 STACK.count -= n;
                         }
                         push(value);
@@ -2396,7 +2364,7 @@ DoCall(Ty *ty, Value const *f, int n, int nkw, bool auto_this)
                         memmove(top() - (n - 1), top() - n, n * sizeof (Value));
                         top()[-n++] = v.this[1];
                 }
-                new_frame = call(ty, v.method, v.this, n, kwargs);
+                new_frame = call(ty, v.method, v.this, n, &kwargs);
                 gX();
                 return new_frame;
 
@@ -2419,9 +2387,9 @@ DoCall(Ty *ty, Value const *f, int n, int nkw, bool auto_this)
                 gP(&kwargs);
                 v = v.builtin_method(ty, v.this, n, &kwargs);
                 gX();
+                gX();
                 STACK.count -= n;
                 push(v);
-                gX();
                 return false;
 
         case VALUE_NIL:
@@ -2516,7 +2484,7 @@ LoadFieldFast(Ty *ty, Value *v, i32 id)
 
         case OFF_GETTER:
                 vp = v_(class->getters.values, off);
-                call(ty, vp, v, 0, NIL);
+                call(ty, vp, v, 0, NULL);
                 return BREAK;
 
         case OFF_METHOD:
@@ -2544,6 +2512,7 @@ DispatchMethodFast(Ty *ty, Value self, i32 id, int argc, int nkw)
 
         Value *vp;
         Value fn;
+        Value kwargs;
 
         Class *class = class_get(ty, v->class);
 
@@ -2555,7 +2524,7 @@ DispatchMethodFast(Ty *ty, Value self, i32 id, int argc, int nkw)
 
         case OFF_GETTER:
                 vp = v_(class->getters.values, off);
-                exec_fn(ty, vp, v, 0, NIL);
+                exec_fn(ty, vp, v, 0, NULL);
                 fn = pop();
                 pop();
                 DoCall(ty, &fn, argc, nkw, false);
@@ -2564,7 +2533,8 @@ DispatchMethodFast(Ty *ty, Value self, i32 id, int argc, int nkw)
         case OFF_METHOD:
                 vp = v_(class->methods.values, off);
                 pop();
-                call(ty, vp, v, argc, BuildKwargsDict(ty, nkw));
+                kwargs = BuildKwargsDict(ty, nkw);
+                call(ty, vp, v, argc, &kwargs);
                 break;
 
         default:
@@ -2710,8 +2680,8 @@ GetMember(Ty *ty, Value v, int member, bool try_missing, bool exec)
                         break;
                 }
                 if ((vp = class_lookup_s_getter_i(ty, v.class, member)) != NULL) {
-                        return !exec ? (call(ty, vp, &v, 0, NIL), BREAK)
-                                     : (exec_fn(ty, vp, &v, 0, NIL), pop());
+                        return !exec ? (call(ty, vp, &v, 0, NULL), BREAK)
+                                     : (exec_fn(ty, vp, &v, 0, NULL), pop());
                 }
                 if ((vp = class_lookup_field(ty, v.class, member)) != NULL) {
                         return *vp;
@@ -2762,8 +2732,8 @@ GetMember(Ty *ty, Value v, int member, bool try_missing, bool exec)
 ClassLookup:
                 vp = class_lookup_getter_i(ty, n, member);
                 if (vp != NULL) {
-                        return !exec ? (call(ty, vp, &v, 0, NIL), BREAK)
-                                     : (exec_fn(ty, vp, &v, 0, NIL), pop());
+                        return !exec ? (call(ty, vp, &v, 0, NULL), BREAK)
+                                     : (exec_fn(ty, vp, &v, 0, NULL), pop());
                 }
                 vp = class_lookup_method_i(ty, n, member);
                 if (vp != NULL) {
@@ -2778,7 +2748,7 @@ BoundMethod:
                 if ((vp = class_lookup_method_i(ty, n, NAMES.missing)) != NULL) {
                         return !exec ? (
                                 push(xSz(M_NAME(member))),
-                                call(ty, vp, &v, 1, NIL),
+                                call(ty, vp, &v, 1, NULL),
                                 BREAK
                         ) : (
                                 push(xSz(M_NAME(member))),
@@ -2797,7 +2767,7 @@ BoundMethod:
                 if ((vp = class_lookup_s_method_i(ty, v.class, NAMES.missing)) != NULL) {
                         return !exec ? (
                                 push(xSz(M_NAME(member))),
-                                call(ty, vp, &v, 1, NIL),
+                                call(ty, vp, &v, 1, NULL),
                                 BREAK
                         ) : (
                                 push(xSz(M_NAME(member))),
@@ -3033,10 +3003,14 @@ ClassLookup:
 
         if (func != NULL) {
                 pop();
-                value.type &= ~VALUE_TAGGED;
-                value.tags = 0;
-                v = BUILTIN_METHOD(i, func, &value);
-                DoCall(ty, &v, n, nkw, true);
+                gP(&value);
+                attr = BuildKwargsDict(ty, nkw);
+                gP(&attr);
+                v = (*func)(ty, &value, n, &attr);
+                gX();
+                gX();
+                STACK.count -= n;
+                push(v);
                 return;
         }
 
@@ -3059,7 +3033,7 @@ ClassLookup:
         ) {
                 // TODO: Shouldn't need to recurse here
                 push(xSz(M_NAME(i)));
-                exec_fn(ty, vp, &value, 1, NIL);
+                exec_fn(ty, vp, &value, 1, NULL);
                 v = pop();
                 pop();
                 DoCall(ty, &v, n, nkw, false);
@@ -3261,9 +3235,9 @@ DoUnaryOp(Ty *ty, int op, bool exec)
         v = pop();
 
         if (exec) {
-                exec_fn(ty, vp, &v, 0, NIL);
+                exec_fn(ty, vp, &v, 0, NULL);
         } else {
-                call(ty, vp, &v, 0, NIL);
+                call(ty, vp, &v, 0, NULL);
         }
 }
 
@@ -3294,9 +3268,9 @@ DoBinaryOp(Ty *ty, int op, bool exec)
         );
 
         if (exec) {
-                exec_fn(ty, &Globals.items[i], NULL, 2, NIL);
+                exec_fn(ty, &Globals.items[i], NULL, 2, NULL);
         } else {
-                call(ty, &Globals.items[i], NULL, 2, NIL);
+                call(ty, &Globals.items[i], NULL, 2, NULL);
         }
 }
 
@@ -3316,7 +3290,7 @@ DoMutDiv(Ty *ty)
                      && ((vp2 = class_method(ty, vp->class, "/=")) != NULL)
                 ) {
                         gP(vp);
-                        exec_fn(ty, vp2, vp, 1, NIL);
+                        exec_fn(ty, vp2, vp, 1, NULL);
                         gX();
                         pop();
                 } else {
@@ -3343,10 +3317,10 @@ DoMutDiv(Ty *ty)
                 c = (uptr)poptarget();
                 o = TARGETS.items[TARGETS.count].gc;
                 vp = poptarget();
-                exec_fn(ty, vp, &OBJECT(o, c), 0, NIL);
+                exec_fn(ty, vp, &OBJECT(o, c), 0, NULL);
                 top()[-1] = vm_2op(ty, OP_DIV, top(), top() - 1);
                 pop();
-                call(ty, v, &OBJECT(o, c), 1, NIL);
+                call(ty, v, &OBJECT(o, c), 1, NULL);
                 break;
 
         default:
@@ -3368,7 +3342,7 @@ DoMutMod(Ty *ty)
         case 0:
                 if (vp->type == VALUE_OBJECT && (vp2 = class_method(ty, vp->class, "%=")) != NULL) {
                         gP(vp);
-                        exec_fn(ty, vp2, vp, 1, NIL);
+                        exec_fn(ty, vp2, vp, 1, NULL);
                         gX();
                         pop();
                 } else {
@@ -3394,10 +3368,10 @@ DoMutMod(Ty *ty)
                 c = (uptr)poptarget();
                 o = TARGETS.items[TARGETS.count].gc;
                 vp = poptarget();
-                exec_fn(ty, vp, &OBJECT(o, c), 0, NIL);
+                exec_fn(ty, vp, &OBJECT(o, c), 0, NULL);
                 top()[-1] = vm_2op(ty, OP_MOD, top(), top() - 1);
                 pop();
-                call(ty, v, &OBJECT(o, c), 1, NIL);
+                call(ty, v, &OBJECT(o, c), 1, NULL);
                 break;
 
         default:
@@ -3418,7 +3392,7 @@ DoMutMul(Ty *ty)
         case 0:
                 if (vp->type == VALUE_OBJECT && (vp2 = class_method(ty, vp->class, "*=")) != NULL) {
                         gP(vp);
-                        exec_fn(ty, vp2, vp, 1, NIL);
+                        exec_fn(ty, vp2, vp, 1, NULL);
                         gX();
                         pop();
                 } else {
@@ -3444,10 +3418,10 @@ DoMutMul(Ty *ty)
                 c = (uptr)poptarget();
                 o = TARGETS.items[TARGETS.count].gc;
                 vp = poptarget();
-                exec_fn(ty, vp, &OBJECT(o, c), 0, NIL);
+                exec_fn(ty, vp, &OBJECT(o, c), 0, NULL);
                 top()[-1] = vm_2op(ty, OP_MUL, top(), top() - 1);
                 pop();
-                call(ty, v, &OBJECT(o, c), 1, NIL);
+                call(ty, v, &OBJECT(o, c), 1, NULL);
                 break;
 
         default:
@@ -3515,10 +3489,10 @@ DoMutSub(Ty *ty)
                 c = (uptr)poptarget();
                 o = TARGETS.items[TARGETS.count].gc;
                 vp = poptarget();
-                exec_fn(ty, vp, &OBJECT(o, c), 0, NIL);
+                exec_fn(ty, vp, &OBJECT(o, c), 0, NULL);
                 top()[-1] = vm_2op(ty, OP_SUB, top(), top() - 1);
                 pop();
-                call(ty, v, &OBJECT(o, c), 1, NIL);
+                call(ty, v, &OBJECT(o, c), 1, NULL);
                 break;
 
         default:
@@ -3593,10 +3567,10 @@ DoMutAdd(Ty *ty)
                 c = (uptr)poptarget();
                 o = TARGETS.items[TARGETS.count].gc;
                 vp = poptarget();
-                exec_fn(ty, vp, &OBJECT(o, c), 0, NIL);
+                exec_fn(ty, vp, &OBJECT(o, c), 0, NULL);
                 top()[-1] = vm_2op(ty, OP_ADD, top(), top() - 1);
                 pop();
-                call(ty, v, &OBJECT(o, c), 1, NIL);
+                call(ty, v, &OBJECT(o, c), 1, NULL);
                 break;
 
         default:
@@ -3649,10 +3623,10 @@ DoMutAnd(Ty *ty)
                 c = (uptr)poptarget();
                 o = TARGETS.items[TARGETS.count].gc;
                 vp = poptarget();
-                exec_fn(ty, vp, &OBJECT(o, c), 0, NIL);
+                exec_fn(ty, vp, &OBJECT(o, c), 0, NULL);
                 top()[-1] = vm_2op(ty, OP_BIT_AND, top(), top() - 1);
                 pop();
-                call(ty, v, &OBJECT(o, c), 1, NIL);
+                call(ty, v, &OBJECT(o, c), 1, NULL);
                 break;
 
         default:
@@ -3705,10 +3679,10 @@ DoMutOr(Ty *ty)
                 c = (uptr)poptarget();
                 o = TARGETS.items[TARGETS.count].gc;
                 vp = poptarget();
-                exec_fn(ty, vp, &OBJECT(o, c), 0, NIL);
+                exec_fn(ty, vp, &OBJECT(o, c), 0, NULL);
                 top()[-1] = vm_2op(ty, OP_BIT_OR, top(), top() - 1);
                 pop();
-                call(ty, v, &OBJECT(o, c), 1, NIL);
+                call(ty, v, &OBJECT(o, c), 1, NULL);
                 break;
 
         default:
@@ -3761,10 +3735,10 @@ DoMutXor(Ty *ty)
                 c = (uptr)poptarget();
                 o = TARGETS.items[TARGETS.count].gc;
                 vp = poptarget();
-                exec_fn(ty, vp, &OBJECT(o, c), 0, NIL);
+                exec_fn(ty, vp, &OBJECT(o, c), 0, NULL);
                 top()[-1] = vm_2op(ty, OP_BIT_XOR, top(), top() - 1);
                 pop();
-                call(ty, v, &OBJECT(o, c), 1, NIL);
+                call(ty, v, &OBJECT(o, c), 1, NULL);
                 break;
 
         default:
@@ -3813,10 +3787,10 @@ DoMutShl(Ty *ty)
                 c = (uptr)poptarget();
                 o = TARGETS.items[TARGETS.count].gc;
                 vp = poptarget();
-                exec_fn(ty, vp, &OBJECT(o, c), 0, NIL);
+                exec_fn(ty, vp, &OBJECT(o, c), 0, NULL);
                 top()[-1] = vm_2op(ty, OP_BIT_SHL, top(), top() - 1);
                 pop();
-                call(ty, v, &OBJECT(o, c), 1, NIL);
+                call(ty, v, &OBJECT(o, c), 1, NULL);
                 break;
 
         default:
@@ -3865,10 +3839,10 @@ DoMutShr(Ty *ty)
                 c = (uptr)poptarget();
                 o = TARGETS.items[TARGETS.count].gc;
                 vp = poptarget();
-                exec_fn(ty, vp, &OBJECT(o, c), 0, NIL);
+                exec_fn(ty, vp, &OBJECT(o, c), 0, NULL);
                 top()[-1] = vm_2op(ty, OP_BIT_SHR, top(), top() - 1);
                 pop();
-                call(ty, v, &OBJECT(o, c), 1, NIL);
+                call(ty, v, &OBJECT(o, c), 1, NULL);
                 break;
 
         default:
@@ -3901,7 +3875,7 @@ DoAssign(Ty *ty)
                 c = (uptr)poptarget();
                 o = vZ(TARGETS)[0].gc;
                 poptarget();
-                call(ty, v, &OBJECT(o, c), 1, NIL);
+                call(ty, v, &OBJECT(o, c), 1, NULL);
                 break;
 
         case 3:
@@ -3910,7 +3884,7 @@ DoAssign(Ty *ty)
                 o = vZ(TARGETS)[0].gc;
                 push(xSz(M_NAME(m)));
                 swap();
-                call(ty, class_lookup_setter_i(ty, c, NAMES.missing), &OBJECT(o, c), 2, NIL);
+                call(ty, class_lookup_setter_i(ty, c, NAMES.missing), &OBJECT(o, c), 2, NULL);
                 break;
 
         case 4:
@@ -3918,7 +3892,7 @@ DoAssign(Ty *ty)
                 c = (uptr)poptarget();
                 push(xSz(M_NAME(m)));
                 swap();
-                exec_fn(ty, class_lookup_s_setter_i(ty, c, NAMES.missing), &CLASS(c), 2, NIL);
+                exec_fn(ty, class_lookup_s_setter_i(ty, c, NAMES.missing), &CLASS(c), 2, NULL);
                 break;
 
         default:
@@ -4129,7 +4103,7 @@ DoAssignSubscript(Ty *ty)
                 break;
 
         case VALUE_DICT:
-                *dict_put_key_if_not_exists(ty, container.dict, subscript) = value;
+                dict_put_value(ty, container.dict, subscript, value);
                 break;
 
         case VALUE_BLOB:
@@ -4171,7 +4145,7 @@ DoAssignSubscript(Ty *ty)
                 swap();
                 f = class_lookup_setter_i(ty, container.class, NAMES.subscript);
                 if (f != NULL) {
-                        call(ty, f, &container, 2, NIL);
+                        call(ty, f, &container, 2, NULL);
                 }
                 return;
 
@@ -4181,7 +4155,7 @@ DoAssignSubscript(Ty *ty)
                 swap();
                 f = class_lookup_s_setter_i(ty, container.class, NAMES.subscript);
                 if (f != NULL) {
-                        call(ty, f, &container, 2, NIL);
+                        call(ty, f, &container, 2, NULL);
                 }
                 return;
 
@@ -4387,7 +4361,7 @@ IncValue(Ty *ty, Value *v)
         case VALUE_OBJECT:
                 vp = class_method(ty, v->class, "++");
                 if (vp != NULL) {
-                        exec_fn(ty, vp, v, 0, NIL);
+                        exec_fn(ty, vp, v, 0, NULL);
                         break;
                 }
                 // fall
@@ -4424,7 +4398,7 @@ DecValue(Ty *ty, Value *v)
         case VALUE_OBJECT:
                 vp = class_method(ty, v->class, "--");
                 if (vp != NULL) {
-                        exec_fn(ty, vp, v, 0, NIL);
+                        exec_fn(ty, vp, v, 0, NULL);
                         break;
                 }
                 // fall
@@ -4477,18 +4451,18 @@ IterGetNext(Ty *ty)
                 break;
         case VALUE_FUNCTION:
                 push(INTEGER(i));
-                call(ty, &v, NULL, 1, NIL);
+                call(ty, &v, NULL, 1, NULL);
                 break;
         case VALUE_OBJECT:
                 if ((vp = class_method(ty, v.class, "__next__")) != NULL) {
                         push(INTEGER(i));
-                        call6t(ty, vp, &v, 1, NIL, next_fix);
+                        call6t(ty, vp, &v, 1, NULL, next_fix);
                 } else if ((vp = class_lookup_method_i(ty, v.class, NAMES._iter_)) != NULL) {
                         pop();
                         pop();
                         --top()->i;
                         /* Have to repeat this instruction */
-                        call6t(ty, vp, &v, 0, NIL, iter_fix);
+                        call6t(ty, vp, &v, 0, NULL, iter_fix);
                         return;
                 } else {
                         goto NoIter;
@@ -5170,10 +5144,8 @@ NextInstruction:
                                 DOJUMP(jump);
                         } else {
                                 Array *rest = vA();
-                                NOGC(rest);
-                                vvPn(*rest, top()->array->items + i, top()->array->count - (i + j));
+                                uvPn(*rest, top()->array->items + i, top()->array->count - (i + j));
                                 *poptarget() = ARRAY(rest);
-                                OKGC(rest);
                         }
                         break;
                 CASE(TUPLE_REST)
@@ -5431,7 +5403,7 @@ NextInstruction:
                                 break;
                         }
                         v = pop();
-                        call(ty, vp, &v, 0, NIL);
+                        call(ty, vp, &v, 0, NULL);
                         break;
                 CASE(ENSURE_LEN)
                         READJUMP(jump);
@@ -5747,7 +5719,7 @@ Yield:
                         break;
                 CASE(RENDER_TEMPLATE)
                         READVALUE(s);
-                        push(compiler_render_template(ty, (struct expression *)s));
+                        push(compiler_render_template(ty, (Expr *)s));
                         break;
                 CASE(TRAP)
 #ifdef _WIN32
@@ -6210,7 +6182,7 @@ BadTupleMember:
                                 if (vp != NULL) {
                                         swap();
                                         pop();
-                                        call(ty, vp, &container, 1, NIL);
+                                        call(ty, vp, &container, 1, NULL);
                                 } else {
                                         goto BadContainer;
                                 }
@@ -6220,7 +6192,7 @@ BadTupleMember:
                                 if (vp != NULL) {
                                         swap();
                                         pop();
-                                        call(ty, vp, &container, 1, NIL);
+                                        call(ty, vp, &container, 1, NULL);
                                 } else {
                                         goto BadContainer;
                                 }
@@ -6516,7 +6488,7 @@ BadTupleMember:
                                 );
                                 if (hook != NULL) {
                                         Value self = CLASS(class_id);
-                                        call6t(ty, hook, &self, 0, NIL, hook_fix);
+                                        call6t(ty, hook, &self, 0, NULL, hook_fix);
                                 }
                         }
                         break;
@@ -6659,7 +6631,7 @@ BadTupleMember:
                                 if (vp != NULL) {
                                         DOJUMP(jump);
                                         push(peek());
-                                        if (call(ty, vp, &CLASS(n), 1, NIL)) {
+                                        if (call(ty, vp, &CLASS(n), 1, NULL)) {
                                                 xvP(CALLS, unapply);
                                         }
                                 }
@@ -6677,7 +6649,7 @@ BadTupleMember:
                 CASE(UNAPPLY)
                         v = pop();
                         push(peek());
-                        call6t(ty, &v, NULL, 1, NIL, unapply);
+                        call6t(ty, &v, NULL, 1, NULL, unapply);
                         break;
                 CASE(TAIL_CALL)
                         n = ActiveFun(ty)->info[FUN_INFO_PARAM_COUNT];
@@ -7918,7 +7890,7 @@ vm_call_method(Ty *ty, Value const *self, Value const *f, int argc)
 {
         CheckPendingSignals(ty);
 
-        exec_fn(ty, f, self, argc, NIL);
+        exec_fn(ty, f, self, argc, NULL);
 
         return pop();
 }
@@ -7933,19 +7905,11 @@ vm_call_ex(Ty *ty, Value const *f, int argc, Value *kwargs, bool collect)
 
         switch (f->type) {
         case VALUE_FUNCTION:
-                if (kwargs != NULL) {
-                        exec_fn(ty, f, NULL, argc, *kwargs);
-                } else {
-                        exec_fn(ty, f, NULL, argc, NIL);
-                }
+                exec_fn(ty, f, NULL, argc, kwargs);
                 goto Collect;
 
         case VALUE_METHOD:
-                if (kwargs != NULL) {
-                        exec_fn(ty, f->method, f->this, argc, *kwargs);
-                } else {
-                        exec_fn(ty, f->method, f->this, argc, NIL);
-                }
+                exec_fn(ty, f->method, f->this, argc, kwargs);
                 goto Collect;
 
         case VALUE_BUILTIN_FUNCTION:
@@ -7964,14 +7928,14 @@ vm_call_ex(Ty *ty, Value const *f, int argc, Value *kwargs, bool collect)
                 return v;
 
         case VALUE_TAG:
-                DoTag(ty, f->tag, argc, (Value *)kwargs);
+                DoTag(ty, f->tag, argc, kwargs);
                 return pop();
 
         case VALUE_CLASS:
                 init = class_lookup_method_i(ty, f->class, NAMES.init);
                 if (f->class < CLASS_PRIMITIVE) {
                         if (LIKELY(init != NULL)) {
-                                exec_fn(ty, init, NULL, argc, NIL);
+                                exec_fn(ty, init, NULL, argc, NULL);
                                 return pop();
                         } else {
                                 zP("Couldn't find init method for built-in class. Was prelude loaded?");
@@ -7979,7 +7943,7 @@ vm_call_ex(Ty *ty, Value const *f, int argc, Value *kwargs, bool collect)
                 } else {
                         v = OBJECT(object_new(ty, f->class), f->class);
                         if (init != NULL) {
-                                exec_fn(ty, init, &v, argc, NIL);
+                                exec_fn(ty, init, &v, argc, NULL);
                                 pop();
                         } else {
                                 STACK.count -= argc;
@@ -8003,11 +7967,7 @@ vm_call_ex(Ty *ty, Value const *f, int argc, Value *kwargs, bool collect)
                 if (vp == NULL) {
                         goto NotCallable;
                 }
-                if (kwargs != NULL) {
-                        exec_fn(ty, vp, f, argc, *kwargs);
-                } else {
-                        exec_fn(ty, vp, f, argc, NIL);
-                }
+                exec_fn(ty, vp, f, argc, kwargs);
                 goto Collect;
 
 
@@ -8049,11 +8009,11 @@ vm_call(Ty *ty, Value const *f, int argc)
 
         switch (f->type) {
         case VALUE_FUNCTION:
-                exec_fn(ty, f, NULL, argc, NIL);
+                exec_fn(ty, f, NULL, argc, NULL);
                 return pop();
 
         case VALUE_METHOD:
-                exec_fn(ty, f->method, f->this, argc, NIL);
+                exec_fn(ty, f->method, f->this, argc, NULL);
                 return pop();
 
         case VALUE_BUILTIN_FUNCTION:
@@ -8094,7 +8054,7 @@ vm_call(Ty *ty, Value const *f, int argc)
                 vp = class_lookup_method_i(ty, f->class, NAMES.init);
                 if (f->class < CLASS_PRIMITIVE) {
                         if (LIKELY(vp != NULL)) {
-                                exec_fn(ty, vp, NULL, argc, NIL);
+                                exec_fn(ty, vp, NULL, argc, NULL);
                                 return pop();
                         } else {
                                 zP("Couldn't find init method for built-in class. Was prelude loaded?");
@@ -8102,7 +8062,7 @@ vm_call(Ty *ty, Value const *f, int argc)
                 } else {
                         v = OBJECT(object_new(ty, f->class), f->class);
                         if (vp != NULL) {
-                                exec_fn(ty, vp, &v, argc, NIL);
+                                exec_fn(ty, vp, &v, argc, NULL);
                                 pop();
                         } else {
                                 STACK.count -= argc;
@@ -8126,7 +8086,7 @@ vm_call(Ty *ty, Value const *f, int argc)
                 if (vp == NULL) {
                         goto NotCallable;
                 }
-                exec_fn(ty, vp, f, argc, NIL);
+                exec_fn(ty, vp, f, argc, NULL);
                 return pop();
 
         default:
@@ -8160,11 +8120,11 @@ vm_eval_function(Ty *ty, Value const *f, ...)
 
         switch (f->type) {
         case VALUE_FUNCTION:
-                exec_fn(ty, f, NULL, argc, NIL);
+                exec_fn(ty, f, NULL, argc, NULL);
                 return pop();
 
         case VALUE_METHOD:
-                exec_fn(ty, f->method, f->this, argc, NIL);
+                exec_fn(ty, f->method, f->this, argc, NULL);
                 return pop();
 
         case VALUE_BUILTIN_FUNCTION:
@@ -8187,7 +8147,7 @@ vm_eval_function(Ty *ty, Value const *f, ...)
                 if (v == NULL) {
                         goto NotCallable;
                 }
-                exec_fn(ty, v, f, argc, NIL);
+                exec_fn(ty, v, f, argc, NULL);
                 break;
 
         case VALUE_OPERATOR:
@@ -8279,7 +8239,7 @@ vm_try_2op(Ty *ty, int op, Value const *a, Value const *b)
         push(*a);
         push(*b);
 
-        exec_fn(ty, &Globals.items[i], NULL, 2, NIL);
+        exec_fn(ty, &Globals.items[i], NULL, 2, NULL);
 
         return pop();
 }
@@ -9425,6 +9385,16 @@ void
 vm_finally(Ty *ty)
 {
         vvX(TRY_STACK);
+}
+
+void
+TyPostFork(Ty *ty)
+{
+        TySpinLockInit(&MyGroup->GCLock);
+        TySpinLockInit(&MyGroup->Lock);
+        TySpinLockInit(&MyGroup->DLock);
+        TySpinLockInit(MyLock);
+        TySpinLockLock(MyLock);
 }
 
 /* vim: set sts=8 sw=8 expandtab: */

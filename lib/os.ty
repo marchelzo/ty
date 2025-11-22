@@ -105,7 +105,7 @@ pub fn listdir(path: String) -> [Float] | nil;
 pub fn ncpu() -> Int;
 pub fn terminal-size(fd: ?Int) -> {rows: Int, cols: Int} | nil;
 
-use ProcessDescriptor = {
+pub use ProcessDescriptor = {
     stdin: Int,
     stdout: Int,
     stderr: Int,

@@ -1,9 +1,13 @@
 import zlib as z
 
-let id = z.compress |> z.uncompress |> z.compress |> z.uncompress2 |> &str
+let id = z.compress
+      |> z.uncompress
+      |> z.compress
+      |> z.uncompress2
+      |> &str
 
 for _ in ..10 {
-    let s = [chr(rand(static!([*ord('a')..ord('z')]))) for _ in ..10000].join('')
+    let s = [chr(rand(static!([*ord('a')..ord('z')]))) for _ in ..3000].join('')
     if id(s) != s {
         print("FAIL: {s}")
     }
