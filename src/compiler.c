@@ -2994,7 +2994,7 @@ symbolize_var_decl(Ty *ty, Scope *scope, Expr *target, bool pub)
         if (
                 ScopeIsTop(scope)
              && (target->module != NULL)
-             && (strcmp(target->module, "__tls") == 0)
+             && s_eq(target->module, "__tls")
         ) {
                 is_thread_local = true;
         } else if (target->module != NULL && *target->module != '\0') {
@@ -3183,17 +3183,6 @@ symbolize_lvalue_(Ty *ty, Scope *scope, Expr *target, u32 flags)
                 if (target->type == EXPRESSION_RESOURCE_BINDING) {
                         STATE.resources += 1;
                 }
-                //===================={ <LSP> }=========================================
-                if (
-                        FindDefinition && 0
-                     && target->start.line == QueryLine
-                     && target->start.col  <= QueryCol
-                     && target->end.col    >= QueryCol
-                     && strcmp(CurrentModulePath(ty), QueryFile) == 0
-                ) {
-                        QueryResult = target->symbol;
-                }
-                //===================={ </LSP> }========================================
                 break;
 
         case EXPRESSION_REF_PATTERN:

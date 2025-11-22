@@ -306,6 +306,7 @@ fn fitItems(items: Array[CompletionLabel], W: Int) -> Array[Array[String]] {
 
 class InteractiveLineReader {
     __tio: TermIO
+    __borrowed-tio?: Bool
     __history-file: Path | nil
     __history: Array[HistoryEntry]
     __prompt: Prompt
@@ -320,9 +321,15 @@ class InteractiveLineReader {
         history-file: Path | String | nil = nil,
         render: RenderFunction | nil = nil
     ) {
-        __tio = match term {
-            fd: Int => TermIO(fd, mouse=false),
-            tio     => tio
+        match term {
+            tio: TermIO => {
+                __tio = tio
+                __borrowed-tio? = true
+            },
+            fd => {
+                __tio = TermIO(fd, mouse=false)
+                __borrowed-tio? = false
+            }
         }
 
         __prompt = prompt ?? '>> '
@@ -356,7 +363,7 @@ class InteractiveLineReader {
         __history.push(entry)
     }
 
-    get-prompt() -> String {
+    _get-prompt() -> String {
         match __prompt {
             p: String => p,
             f         => f()
@@ -374,7 +381,7 @@ class InteractiveLineReader {
             init()
         }
 
-        let prompt = prompt ?? get-prompt()
+        let prompt = prompt ?? _get-prompt()
         let render = render ?? __render
 
         let lines = [[]]
@@ -474,6 +481,10 @@ class InteractiveLineReader {
 
             if not let $ev = __tio.next-event() {
                 continue
+            }
+
+            if ev == term.event.EOF {
+                return nil
             }
 
             let key = match ev {
@@ -674,10 +685,10 @@ class InteractiveLineReader {
                     )
 
                     write(fzf.stdin, __history.map(\_.0.str()).unlines())
-                    close(fzf.stdin)
+                    os::close(fzf.stdin)
 
                     let out = read(fzf.stdout, 8192).str().strip()
-                    close(fzf.stdout)
+                    os::close(fzf.stdout)
                     wait(fzf.pid)
 
                     __tio.start()
@@ -690,7 +701,7 @@ class InteractiveLineReader {
 
                 '<C-x>' => {
                     let (fd, tmp) = mktemp()
-                    close(fd)
+                    os::close(fd)
 
                     __tio.stop()
 
@@ -745,6 +756,12 @@ class InteractiveLineReader {
 
         if cleanup {
             write(__tio.fd, "{ERASE_LINE}\r")
+        }
+    }
+
+    close() {
+        if !__borrowed-tio? {
+            __tio.close()
         }
     }
 }

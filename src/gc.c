@@ -28,11 +28,11 @@ collect(Ty *ty, struct alloc *a)
 
         switch (a->type) {
         case GC_ARRAY:
-                mF(((struct array *)p)->items);
+                mF(((Array *)p)->items);
                 break;
 
         case GC_BLOB:
-                mF(((struct blob *)p)->items);
+                mF(((Blob *)p)->items);
                 break;
 
         case GC_DICT:
@@ -65,11 +65,9 @@ collect(Ty *ty, struct alloc *a)
 
         case GC_THREAD:
                 t = p;
-
                 if (t->v.type == VALUE_NONE) {
                         TyThreadDetach(((Thread *)p)->t);
                 }
-
                 TyMutexDestroy(&t->mutex);
                 TyCondVarDestroy(&t->cond);
                 break;
@@ -131,16 +129,15 @@ GCForgetObject(Ty *ty, void const *o)
 void
 GCForget(Ty *ty, AllocList *allocs, isize *used)
 {
-        usize n = 0;
-
-        for (usize i = 0; i < allocs->count;) {
+        for (usize i = 0; i < vN(*allocs); ++i) {
                 if (
-                        !A_LOAD(&allocs->items[i]->mark)
-                     && (A_LOAD(&allocs->items[i]->hard) == 0)
+                        A_LOAD(&v__(*allocs, i)->mark)
+                     || (A_LOAD(&v__(*allocs, i)->hard) != 0)
                 ) {
-                        allocs->items[n++] = allocs->items[i++];
-                } else {
-                        *used -= min(allocs->items[i]->size, *used);
+                        *used -= min(v__(*allocs, i)->size, *used);
+                        A_STORE(&v__(*allocs, i)->mark, false);
+                        SWAP(struct alloc *, v__(*allocs, i), v_L(*allocs));
+                        vvX(*allocs);
                 }
         }
 }
@@ -160,6 +157,7 @@ GCSweepOwn(Ty *ty)
                         ty->memory_used -= min(v__(ty->allocs, i)->size, ty->memory_used);
                         collect(ty, v__(ty->allocs, i));
                         free(v__(ty->allocs, i));
+                        *v_(ty->allocs, i) = NULL;
                 } else {
                         A_STORE(&v__(ty->allocs, i)->mark, false);
                         *v_(ty->allocs, n++) = v__(ty->allocs, i);
@@ -167,6 +165,14 @@ GCSweepOwn(Ty *ty)
         }
 
         vN(ty->allocs) = n;
+
+#if 0
+        for (int i = 0; i < vN(ty->allocs); ++i) {
+                if (v__(ty->allocs, i) == NULL) {
+                        zP("GCSweepOwn(): found NULL allocation!");
+                }
+        }
+#endif
 
         GC_RESUME();
 }
@@ -227,19 +233,19 @@ gc_immortalize(Ty *ty, Value const *v)
 void
 gc_clear_root_set(Ty *ty)
 {
-        RootSet.count = 0;
+        v0(RootSet);
 }
 
 void
 gc_truncate_root_set(Ty *ty, usize n)
 {
-        RootSet.count = n;
+        vN(RootSet) = n;
 }
 
 usize
 gc_root_set_count(Ty *ty)
 {
-        return RootSet.count;
+        return vN(RootSet);
 }
 
 GCRootSet *

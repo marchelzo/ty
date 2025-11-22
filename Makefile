@@ -81,7 +81,6 @@ else ifdef DEBUG
         CFLAGS += -O0
         CFLAGS += -fsanitize=undefined
         CFLAGS += -fno-sanitize=nonnull-attribute
-        CFLAGS += -fno-omit-frame-pointer
         CFLAGS += -fsanitize=address
         CFLAGS += -ggdb3
 else ifdef TDEBUG

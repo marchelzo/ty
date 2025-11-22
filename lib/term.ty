@@ -5,16 +5,17 @@ import unibilium as unibi
 import errno
 import ffi as c (C!)
 
-#|if getenv('TY_LOG') != nil
+#|if 1 || getenv('TY_LOG') != nil
     import log (..)
 
     let ppp = pretty@(*, color=false)
 
-    logging({level: DEBUG})
+    logging({level: DEBUG, path: '/dev/stderr'})
 #|else
     macro warn!(msg) = do {}
     macro error!(msg) = do {}
     macro debug!(msg) = do {}
+    macro critical!(msg) = do {}
 
     let ppp = (x -> "{x}")
 #|]
@@ -31,6 +32,7 @@ pub ns mod {
 pub use CursorAddress = (Int, Int)
 
 pub namespace event {
+    pub tag EOF;
     pub tag Text;
     pub tag MouseDown;
     pub tag MouseUp;
@@ -470,6 +472,7 @@ class TermIO {
         lock: Mutex,
         cond: CondVar,
         on: Bool,
+        open: Bool
     }
 
     __kitty: Bool
@@ -492,7 +495,6 @@ class TermIO {
         kitty: Bool = true
     ) {
         __fd = fd
-        __ev-stream = __read-events()
 
         __ti-keys = %{}
         let $unibi-term = unibi.Term()
@@ -507,6 +509,7 @@ class TermIO {
         __mouse = mouse
         __kitty = kitty
 
+        __ev-stream = __read-events()
         __ev-queue = SharedQueue()
 
         __mouse = mouse
@@ -521,6 +524,7 @@ class TermIO {
         __state = {
             lock: Mutex(),
             cond: CondVar(),
+            open: true,
             on: false
         }
 
@@ -604,61 +608,68 @@ class TermIO {
     }
 
     __read-events*() -> Generator[_] {
+        let closed? = false
         let buf = Blob()
         let i = 0
 
         fn wait-for-resume() {
-            while match poll([__notif-r], -1) {
-                Ok([(fd, ev)]) => {
-                    if (ev & POLLHUP) {
-                        throw _TermStop
-                    } else if let $msg = read(fd, 512) and msg[-1] == 1 {
-                        __start()
+            for (;;) {
+                warn!("Reader: waiting for resume...")
+                match poll([__notif-r], -1) {
+                    Ok([(fd, ev)]) => {
+                        if let $msg = read(fd, 512) and msg[-1] == 1 {
+                            __start()
+                        }
                         return
-                    }
-                },
+                    },
 
-                _ => ()
+                    _ => break
+                }
             }
+            warn!("Reader: resuming.")
         }
 
         fn more() -> Bool {
+            warn!("Reader: polling...")
+
             let fds = match poll([__notif-r, __fd], -1) {
                 Ok(fds) => fds,
                 err     => throw err
             }
 
+            let stop? = false
+
             for match fds {
                 (self.__notif-r, ev) => {
-                    if (ev & POLLHUP) {
-                        throw _TermStop
-                    } else if let $msg = read(__notif-r, 512) and msg[-1] == 0 {
+                    if let $msg = read(__notif-r, 512) and msg[-1] == 0 {
                         __stop()
                         wait-for-resume()
                     }
                 },
 
                 (fd, ev) => {
-                    read(fd, buf, 8192)
-                    return true
+                    let n = read(fd, buf, 8192)
+                    if (n <= 0) || (ev & POLLERR) || (ev & POLLHUP) {
+                        closed? = true
+                    }
+                    stop? = true
                 }
             }
 
-            return false
+            stop?
         }
 
         // Initially off
         wait-for-resume()
 
-        while 1 {
-            let poll-fds = [__notif-r, __fd]
-
+        while !closed? {
             if i == #buf {
                 i = 0
                 buf.clear()
                 while !more() {
                     ;
                 }
+                break if closed?
                 debug!("Read: {ppp(buf.str!())}")
             }
 
@@ -719,12 +730,33 @@ class TermIO {
                 i += 1
             }
         }
+
+        __stop()
+
+        for (;;) {
+            yield event.EOF
+        }
+    }
+
+    open? -> Bool {
+        with __state.lock {
+            __state.open
+        }
     }
 
     next-event() -> ?event.Event {
+        if !open? {
+            return event.EOF
+        }
+
         let ev = __ev-queue.take()
+        if ev == event.EOF {
+            close()
+        }
+
         debug!("Event: {ppp(ev)}")
-        return ev
+
+        ev
     }
 
     cursor() -> CursorAddress {
@@ -754,6 +786,9 @@ class TermIO {
 
             Some(ev) => {
                 __ev-queue.put(ev)
+                if ev == event.EOF {
+                    break
+                }
             },
 
             None => sleep(0.5)
@@ -777,5 +812,18 @@ class TermIO {
 
     __drop__() {
         stop()
+    }
+
+    close() {
+        with __state.lock {
+            if __state.open {
+                critical!("Closing TermIO...")
+                __state.open = false
+                __reader.join()
+                os::close(__notif-r)
+                os::close(__notif-w)
+                critical!("TermIO closed.")
+            }
+        }
     }
 }

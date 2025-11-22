@@ -364,42 +364,42 @@ blob_str(Ty *ty, Value *blob, int argc, Value *kwargs)
 static Value
 blob_str_unsafe(Ty *ty, Value *blob, int argc, Value *kwargs)
 {
+        ASSERT_ARGC("Blob.str!()", 0, 1, 2);
+
         int start;
         int n;
-
-        if (argc > 0 && ARG(0).type != VALUE_INTEGER)
-                zP("Blob.str!(): expected integer but got: %s", VSC(&ARG(0)));
-
-        if (argc > 1 && ARG(1).type != VALUE_INTEGER)
-                zP("Blob.str!(): expected integer but got: %s", VSC(&ARG(1)));
 
         switch (argc) {
         case 0:
                 start = 0;
-                n = blob->blob->count;
+                n = vN(*blob->blob);
                 break;
+
         case 1:
-                start = ARG(0).z;
+                start = INT_ARG(0);
                 n = INT_MAX;
                 break;
+
         case 2:
-                start = ARG(0).z;
-                n = ARG(1).z;
+                start = INT_ARG(0);
+                n = INT_ARG(1);
                 break;
+
         default:
                 zP("blob.str!() expects 0, 1, or 2 arguments but got %d", argc);
         }
 
         if (start < 0) {
-                start += blob->blob->count;
+                start += vN(*blob->blob);
         }
 
-        n = max(0, min(n, blob->blob->count - start));
+        n = max(0, min(n, vN(*blob->blob) - start));
 
-        if (start < 0 || (n + start) > blob->blob->count)
-                zP("Blob.str!(): invalid argument(s): start=%d, n=%d, size=%zu", start, n, blob->blob->count);
+        if (start < 0 || (n + start) > vN(*blob->blob)) {
+                bP("invalid argument(s): start=%d, n=%d, size=%zu", start, n, vN(*blob->blob));
+        }
 
-        return vSs((char const *)blob->blob->items + start, n);
+        return vSs((char const *)vv(*blob->blob) + start, n);
 }
 
 static Value

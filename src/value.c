@@ -1220,7 +1220,7 @@ value_apply_callable(Ty *ty, Value *f, Value *v)
 
                 return match;
         default:
-                zP("invalid type of value used as a callable: %s", value_showx(ty, f));
+                zP("invalid type of value used as a callable: %s", VSC(f));
         }
 }
 

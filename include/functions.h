@@ -155,6 +155,7 @@ BUILTIN_FUNCTION(thread_cond_wait);
 BUILTIN_FUNCTION(thread_getname);
 BUILTIN_FUNCTION(thread_self);
 BUILTIN_FUNCTION(thread_id);
+BUILTIN_FUNCTION(thread_group);
 BUILTIN_FUNCTION(thread_setname);
 BUILTIN_FUNCTION(thread_send);
 BUILTIN_FUNCTION(thread_recv);

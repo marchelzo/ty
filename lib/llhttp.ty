@@ -465,7 +465,7 @@ class HttpParser {
     }
 
     takeMessages() -> Array[HttpMessage] {
-        __mq.slice!(0)
+        __mq.splice(0)
     }
 
     clearMessages() {
