@@ -397,6 +397,10 @@ slice3(Array const *xs, Value const *_i, Value const *_j, Value const *_k)
                 }
         }
 
+        NOGC(slice);
+        CheckUsed(ty);
+        OKGC(slice);
+
         return ARRAY(slice);
 }
 

@@ -145,35 +145,33 @@ GCForget(Ty *ty, AllocList *allocs, isize *used)
 void
 GCSweepOwn(Ty *ty)
 {
-        GC_STOP();
-
         usize n = 0;
 
+        GC_STOP();
+        TySpinLockLock(&ty->alloc_lock);
+
         for (int i = 0; i < vN(ty->allocs); ++i) {
+                struct alloc *a = v__(ty->allocs, i);
+                //if (a == NULL) {
+                //        continue;
+                //}
                 if (
-                        !A_LOAD(&v__(ty->allocs, i)->mark)
-                     && (A_LOAD(&v__(ty->allocs, i)->hard) == 0)
+                        !A_LOAD(&a->mark)
+                     && (A_LOAD(&a->hard) == 0)
                 ) {
-                        ty->memory_used -= min(v__(ty->allocs, i)->size, ty->memory_used);
-                        collect(ty, v__(ty->allocs, i));
-                        free(v__(ty->allocs, i));
+                        ty->memory_used -= min(a->size, ty->memory_used);
+                        collect(ty, a);
+                        free(a);
                         *v_(ty->allocs, i) = NULL;
                 } else {
-                        A_STORE(&v__(ty->allocs, i)->mark, false);
-                        *v_(ty->allocs, n++) = v__(ty->allocs, i);
+                        A_STORE(&a->mark, false);
+                        *v_(ty->allocs, n++) = a;
                 }
         }
 
         vN(ty->allocs) = n;
 
-#if 0
-        for (int i = 0; i < vN(ty->allocs); ++i) {
-                if (v__(ty->allocs, i) == NULL) {
-                        zP("GCSweepOwn(): found NULL allocation!");
-                }
-        }
-#endif
-
+        TySpinLockUnlock(&ty->alloc_lock);
         GC_RESUME();
 }
 
@@ -183,6 +181,8 @@ GCSweep(Ty *ty, AllocList *allocs, isize *used)
         GC_STOP();
 
         usize n = 0;
+
+        //XXX("SWEEP: PRE  nAllocs=%zu", vN(*allocs));
 
         for (int i = 0; i < vN(*allocs); ++i) {
                 if (
@@ -199,6 +199,8 @@ GCSweep(Ty *ty, AllocList *allocs, isize *used)
         }
 
         vN(*allocs) = n;
+
+        //XXX("SWEEP: POST nAllocs=%zu", vN(*allocs));
 
         GC_RESUME();
 }

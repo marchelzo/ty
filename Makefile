@@ -13,7 +13,7 @@ CFLAGS += -Wno-unused-value
 CFLAGS += -Wno-unused-function
 CFLAGS += -D_GNU_SOURCE
 CFLAGS += -DPCRE2_CODE_UNIT_WIDTH=8
-CFLAGS += -DCURL_STATICLIB -DPCRE2_CODE_UNIT_WIDTH=8 -DPCRE2_STATIC -DTY_RELEASE -DUTF8PROC_STATIC -D_GNU_SOURCE
+CFLAGS += -DCURL_STATICLIB -DPCRE2_CODE_UNIT_WIDTH=8 -DPCRE2_STATIC -DUTF8PROC_STATIC -D_GNU_SOURCE
 
 ifeq ($(shell uname -m),arm64)
         CFLAGS += -isystem/opt/homebrew/include
@@ -80,8 +80,10 @@ ifdef RELEASE
 else ifdef DEBUG
         CFLAGS += -O0
         CFLAGS += -fsanitize=undefined
+        CFLAGS += -fno-omit-frame-pointer
         CFLAGS += -fno-sanitize=nonnull-attribute
         CFLAGS += -fsanitize=address
+        CFLAGS += -fno-sanitize-address-use-after-scope
         CFLAGS += -ggdb3
 else ifdef TDEBUG
         CFLAGS += -O0

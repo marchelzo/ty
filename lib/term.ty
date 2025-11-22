@@ -5,7 +5,7 @@ import unibilium as unibi
 import errno
 import ffi as c (C!)
 
-#|if 1 || getenv('TY_LOG') != nil
+#|if getenv('TY_LOG') != nil
     import log (..)
 
     let ppp = pretty@(*, color=false)
@@ -69,6 +69,7 @@ pub use Event = (
   | event.ScrollLeft[CursorAddress]
   | event.ScrollRight[CursorAddress]
   | event.Cursor[CursorAddress]
+  | event.EOF
 )
 
 pub ns error {
@@ -815,15 +816,21 @@ class TermIO {
     }
 
     close() {
+        let do-close? = false
+
         with __state.lock {
             if __state.open {
-                critical!("Closing TermIO...")
+                do-close? = true
                 __state.open = false
-                __reader.join()
-                os::close(__notif-r)
-                os::close(__notif-w)
-                critical!("TermIO closed.")
             }
+        }
+
+        if do-close? {
+            critical!("Closing TermIO...")
+            os::close(__notif-w)
+            __reader.join()
+            os::close(__notif-r)
+            critical!("TermIO closed.")
         }
     }
 }

@@ -21,6 +21,11 @@ DoGC(Ty *ty);
 uint64_t
 MyThreadId(Ty *ty);
 
+#define AddAlloc(ty, a) do { \
+        TySpinLockLock(&ty->alloc_lock); \
+        xvP(ty->allocs, (a)); \
+        TySpinLockUnlock(&ty->alloc_lock); \
+} while (0)
 
 #if !defined(TY_RELEASE)
  #define GC_INITIAL_LIMIT (1ULL << 16)
@@ -166,7 +171,7 @@ gc_alloc_object(Ty *ty, usize n, char type)
         a->type = type;
         a->size = n;
 
-        xvP(ty->allocs, a);
+        AddAlloc(ty, a);
 
         return a->data;
 }
@@ -191,7 +196,7 @@ gc_alloc_object_unchecked(Ty *ty, usize n, char type)
         a->type = type;
         a->size = n;
 
-        xvP(ty->allocs, a);
+        AddAlloc(ty, a);
 
         return a->data;
 }
@@ -215,7 +220,7 @@ gc_alloc_object0(Ty *ty, usize n, char type)
         a->type = type;
         a->size = n;
 
-        xvP(ty->allocs, a);
+        AddAlloc(ty, a);
 
         return a->data;
 }
@@ -238,7 +243,7 @@ gc_alloc_object0_unchecked(Ty *ty, usize n, char type)
         a->type = type;
         a->size = n;
 
-        xvP(ty->allocs, a);
+        AddAlloc(ty, a);
 
         return a->data;
 }

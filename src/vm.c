@@ -5,22 +5,25 @@
 
 #include "ty.h"
 
-#include <time.h>
-#include <string.h>
 #include <ctype.h>
-#include <stdlib.h>
-#include <stdbool.h>
+#include <errno.h>
+#include <locale.h>
 #include <setjmp.h>
 #include <stdarg.h>
-#include <errno.h>
+#include <stdbool.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include <stdnoreturn.h>
-#include <locale.h>
+#include <string.h>
+#include <time.h>
+
 
 #include <curl/curl.h>
 #include <pcre2.h>
 
 #include <fcntl.h>
 #include <signal.h>
+#include <unistd.h>
 
 #include "polyfill_unistd.h"
 #include "polyfill_stdatomic.h"
@@ -45,9 +48,9 @@
 #define CLOCK_MONOTONIC 0
 #else
 #include <dirent.h>
-#include <netdb.h>
-#include <netdb.h>
 #include <net/if.h>
+#include <netdb.h>
+#include <netdb.h>
 #include <netinet/ip.h>
 #include <poll.h>
 #include <pthread.h>
@@ -86,11 +89,6 @@
 #include "xd.h"
 #include "value.h"
 #include "vm.h"
-
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <unistd.h>
 
 #define TY_LOG_VERBOSE 1
 
@@ -364,6 +362,8 @@ InitializeTy(Ty *ty)
         ExpandScratch(ty);
         ty->memory_limit = GC_INITIAL_LIMIT;
 
+        TySpinLockInit(&ty->alloc_lock);
+
         ty->co_top = co_active();
 
         u64 seed = random();
@@ -607,10 +607,8 @@ DoGC(Ty *ty)
                 XLOG("Sweeping thread %d storage from thread %llu", blockedThreads[i], TID);
                 GCSweepOwn(v__(MyGroup->TyList, blockedThreads[i]));
         }
-
         GCLOG("Sweeping own storage on thread %llu", TID);
         GCSweepOwn(ty);
-
         GCLOG("Sweeping objects from dead threads on thread %llu", TID);
         GCSweep(ty, &MyGroup->DeadAllocs, &MyGroup->DeadUsed);
         TySpinLockUnlock(&MyGroup->DLock);
@@ -1179,14 +1177,13 @@ xcall(Ty *ty, Value const *f, Value const *pSelf, int argc, Value const *pKwargs
                 gP(&self);
                 gP(&kwargs);
                 if (irest != -1) {
-
                         int nExtra = max(argc - irest, 0);
                         Array *extra = vAn(nExtra);
 
                         memcpy(v_(*extra, 0), vv(STACK) + fp + irest, nExtra * sizeof (Value));
                         extra->count = nExtra;
 
-                        STACK.items[fp + irest] = ARRAY(extra);
+                        *v_(STACK, fp + irest) = ARRAY(extra);
 
                         for (int i = irest + 1; i < argc; ++i) {
                                 *v_(STACK, fp + i) = NIL;

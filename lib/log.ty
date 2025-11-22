@@ -57,15 +57,15 @@ class Logger {
             let frac  = "{(t % 1000000) / 1000:03}"
             let time-str = "{whole}.{frac}"
 
-            let threadName = (Thread.getName() || 'main') + "({Thread.id()})"
+            let threadName = (Thread.getName() ?? "T{Thread.id()}")
             let levelName = "{"[{levels[level]}]":10}"
 
             if color {
                 __chalk"[time]{time-str}[/] "
                     "[{levels[level]}]{levelName}[/] "
-                    "[thread{Thread.id()}?]\\[{threadName}][/]"
+                    "[thread{Thread.id()}?]{"[{threadName}]":8}[/]"
             } else {
-                "{time-str} {levelName} {"[{threadName}]":-10}"
+                "{time-str} {levelName} {"[{threadName}]":8}"
             }
         }
 
@@ -147,6 +147,19 @@ class Logger {
     }
 }
 
+class LogContextGuard {
+    __logger: Logger
+
+    init(logger: Logger, name: String) {
+        __logger = logger
+        __logger.push(name)
+    }
+
+    __drop__() {
+        __logger.pop()
+    }
+}
+
 let __tls::_loggers = nil
 let __tls::_chalk   = nil
 
@@ -164,43 +177,23 @@ fn _log(level, expr) $$[
     $${_get}(__module__, $$::(DEFAULT_LOG_PATH)).log($${level}, $$expr)
 $$]
 
+fn _ctx(name) $$[
+    let ^_ = $$::(LogContextGuard)(
+        $${_get}(__module__, $$::(DEFAULT_LOG_PATH)),
+        $$name
+    )
+$$]
+
 pub macro    debug!(expr) { _log(DEBUG,    expr) }
 pub macro     info!(expr) { _log(INFO,     expr) }
 pub macro     warn!(expr) { _log(WARN,     expr) }
 pub macro    error!(expr) { _log(ERROR,    expr) }
 pub macro critical!(expr) { _log(CRITICAL, expr) }
 
+pub macro log-ctx(name) { _ctx(name) }
+
 pub macro logging(config) $$[
     let logger = $${_get}(__module__, $$::(DEFAULT_LOG_PATH))
     logger.setup($$config)
 $$]
 
-pub macro logCtx! {
-    let name = parse.expr(50)
-    ty.Multi([
-        ty.Let(
-            ty.Id(name: 'logger'),
-            ty.Call(
-                func: ty.Id(module: 'log', name: 'getLogger'),
-                args: [
-                    ty.Arg(arg: ty.Id(name: '__module__'))
-                ]
-            )
-        ),
-        ty.MethodCall(
-            object: ty.Id(name: 'logger'),
-            method: 'push',
-            args: [ty.Arg(arg: name)]
-        ),
-        ty.Defer(
-            ty.Func(
-                params: [],
-                body: ty.MethodCall(
-                    object: ty.Id(name: 'logger'),
-                    method: 'pop',
-                    args: []
-                )
-            )
-        )
-    ])
-}

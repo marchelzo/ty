@@ -3538,29 +3538,20 @@ BUILTIN_FUNCTION(thread_join)
 
         Thread *t = ARGx(0, VALUE_THREAD).thread;
 
-        //XXX(" [%llu]  JOIN THREAD id=%llu  p=%p", MyThreadId(ty), t->i, t->t);
-
         if (t->joined) {
                 bP("thread has already been joined");
         }
 
-        if (
-                (argc == 1)
-             || (ARG(1).type == VALUE_NIL)
-        ) {
+        if ((argc == 1) || (ARG(1).type == VALUE_NIL)) {
                 lGv(true);
-                //TyMutexLock(&t->mutex);
-                //while (t->alive) {
-                //        TyCondVarWait(&t->cond, &t->mutex);
-                //}
-                //TyMutexUnlock(&t->mutex);
                 TyThreadJoin(t->t);
-                t->joined = true;
                 lTk();
+
+                t->joined = true;
 
                 return t->v;
         } else {
-                i64 timeoutMs = max(0, MSEC_ARG(1));
+                i64 timeoutMs = MSEC_ARG(1);
 
                 lGv(true);
                 TyMutexLock(&t->mutex);
@@ -3571,11 +3562,11 @@ BUILTIN_FUNCTION(thread_join)
                                 return None;
                         }
                 }
-
                 TyMutexUnlock(&t->mutex);
                 TyThreadJoin(t->t);
-                t->joined = true;
                 lTk();
+
+                t->joined = true;
 
                 return Some(t->v);
         }
@@ -3799,7 +3790,7 @@ BUILTIN_FUNCTION(thread_kill)
         ASSERT_ARGC("thread.kill()", 1, 2);
 
         int how;
-        TyThread *thread;
+        TyThread thread;
 
         if (argc == 1) {
                 thread = TyThreadSelf();
@@ -3884,7 +3875,7 @@ BUILTIN_FUNCTION(thread_getname)
                 return NIL;
         }
 
-        return vSsz(name);
+        return (*name == '\0') ? NIL : vSsz(name);
 #endif
 }
 

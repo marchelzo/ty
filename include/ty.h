@@ -621,6 +621,8 @@ typedef struct ty {
         isize memory_limit;
 
         AllocList allocs;
+        AllocList allocs2;
+        TySpinLock alloc_lock;
         ThreadGroup *my_group;
 
         CoThreadVector cothreads;
@@ -651,7 +653,6 @@ typedef struct ty {
         vec(void *) visiting;
 
         byte_vector err;
-        JmpBufVector jbs;
 
         char *code;
 
@@ -776,10 +777,6 @@ extern usize TotalBytesAllocated;
 #define POISONED(v) (atomic_load_explicit(&(ALLOC_OF(v))->hard, memory_order_seq_cst) == 0xDEAD)
 
 #define ErrorBuffer (ty->err)
-
-//#define TY_CATCH_ERROR()  (TyClearError(ty), (setjmp(*NewTySavePoint(ty)) != 0))
-//#define TY_THROW_ERROR()  (longjmp(**vvX(ty->jbs), 1))
-//#define TY_CATCH_END()    (vvX(ty->jbs))
 
 #if 1
 #define TY_THROW_ERROR() (vm_throw_ty(ty))
@@ -1380,21 +1377,6 @@ jb_hash(jmp_buf const *jb)
         }
 
         return hash;
-}
-
-inline static jmp_buf *
-NewTySavePoint(Ty *ty)
-{
-        usize n = vN(ty->jbs);
-
-        if (n == vC(ty->jbs)) {
-                do xvP(ty->jbs, mrealloc(NULL, sizeof (jmp_buf)));
-                while (vN(ty->jbs) < vC(ty->jbs));
-        }
-
-        vN(ty->jbs) = n + 1;
-
-        return *vvL(ty->jbs);
 }
 
 inline static void
