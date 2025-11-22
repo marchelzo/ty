@@ -9,7 +9,7 @@
 #include "dict.h"
 #include "str.h"
 #include "value.h"
-#include "util.h"
+#include "xd.h"
 #include "vm.h"
 
 #define     look(i) (&ty->stack.items[ty->stack.count - 1] + i)

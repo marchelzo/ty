@@ -33,10 +33,12 @@
 #ifdef __linux__
 #include <sys/epoll.h>
 #include <sys/sendfile.h>
+#include <pty.h>
 #endif
 
 #ifdef __APPLE__
 #include <sys/sysctl.h>
+#include <util.h>
 #endif
 
 #ifdef _WIN32
@@ -76,7 +78,7 @@ extern char **environ;
 #include "parse.h"
 #include "vm.h"
 #include "log.h"
-#include "util.h"
+#include "xd.h"
 #include "token.h"
 #include "json.h"
 #include "dict.h"
@@ -4004,6 +4006,49 @@ BUILTIN_FUNCTION(os_fork)
 #endif
 }
 
+BUILTIN_FUNCTION(os_openpty)
+{
+        ASSERT_ARGC("os.openpty()", 0, 1);
+#ifdef _WIN32
+        NOT_ON_WINDOWS("os.openpty()");
+#else
+        struct termios tios;
+        struct winsize winsz;
+        struct winsize *pwinsz;
+
+        if (argc == 1) {
+                Value size = ARGx(0, VALUE_TUPLE);
+                Value *rows = tget_t(&size, 0, VALUE_INTEGER);
+                Value *cols = tget_t(&size, 1, VALUE_INTEGER);
+                if (rows == NULL || cols == NULL) {
+                        bP("bad winsize: %s", VSC(&size));
+                }
+                winsz.ws_row = rows->z;
+                winsz.ws_col = cols->z;
+                winsz.ws_xpixel = 0;
+                winsz.ws_ypixel = 0;
+                pwinsz = &winsz;
+        } else {
+                pwinsz = NULL;
+        }
+
+        int master_fd;
+        int slave_fd;
+
+        char *name = TY_TMP();
+
+        if (openpty(&master_fd, &slave_fd, name, &tios, pwinsz) == -1) {
+                return NIL;
+        }
+
+        return vTn(
+                "master",    INTEGER(master_fd),
+                "slave",     INTEGER(slave_fd),
+                "name",      vSsz(name)
+        );
+#endif
+}
+
 BUILTIN_FUNCTION(os_pipe)
 {
         ASSERT_ARGC("os.pipe()", 0);
@@ -4674,6 +4719,7 @@ BUILTIN_FUNCTION(os_poll)
 
         if (n > 0) {
                 GC_STOP();
+                //XXX("GC_OFF=%d", ty->GC_OFF_COUNT);
                 for (int i = 0; i < vN(*fds) && vN(*fds_out) < n; ++i) {
                         if (pfds[i].revents != 0) {
                                 Value fd = INTEGER(pfds[i].fd);

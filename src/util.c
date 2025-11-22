@@ -29,7 +29,7 @@
 
 #include "panic.h"
 #include "alloc.h"
-#include "util.h"
+#include "xd.h"
 #include "vec.h"
 #include "value.h"
 

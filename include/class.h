@@ -4,7 +4,7 @@
 #include <stdbool.h>
 
 #include "value.h"
-#include "util.h"
+#include "xd.h"
 #include "itable.h"
 
 typedef struct class Class;

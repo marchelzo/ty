@@ -7,7 +7,7 @@
 #include "value.h"
 #include "alloc.h"
 #include "dict.h"
-#include "util.h"
+#include "xd.h"
 #include "vm.h"
 #include "cffi.h"
 #include "class.h"

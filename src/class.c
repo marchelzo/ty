@@ -6,7 +6,7 @@
 #include "value.h"
 #include "alloc.h"
 #include "log.h"
-#include "util.h"
+#include "xd.h"
 #include "vec.h"
 #include "itable.h"
 #include "class.h"

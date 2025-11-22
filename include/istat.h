@@ -6,7 +6,7 @@
 
 #include "vec.h"
 #include "ty.h"
-#include "util.h"
+#include "xd.h"
 
 enum { ISTAT_BINS = 1024 };
 

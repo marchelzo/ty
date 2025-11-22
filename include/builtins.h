@@ -149,6 +149,7 @@ static struct {
   { .module = "os",         .name = "realpath",                 .value = BUILTIN(builtin_os_realpath)            },
   { .module = "os",         .name = "fork",                     .value = BUILTIN(builtin_os_fork)                },
   { .module = "os",         .name = "pipe",                     .value = BUILTIN(builtin_os_pipe)                },
+  { .module = "os",         .name = "openpty",                  .value = BUILTIN(builtin_os_openpty)             },
   { .module = "os",         .name = "dup",                      .value = BUILTIN(builtin_os_dup)                 },
   { .module = "os",         .name = "dup2",                     .value = BUILTIN(builtin_os_dup2)                },
 

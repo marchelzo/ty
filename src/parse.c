@@ -16,7 +16,7 @@
 #include "table.h"
 #include "token.h"
 #include "ty.h"
-#include "util.h"
+#include "xd.h"
 #include "value.h"
 #include "vec.h"
 #include "vm.h"
@@ -5644,6 +5644,11 @@ parse_let_definition(Ty *ty)
         SAVE_NA(true);
         s->value = parse_expr(ty, -1);
         LOAD_NA();
+
+        if (s->value == NULL) {
+                die_at((Expr *)s, "GOAT");
+                *(volatile char *)0 = 0;
+        }
 
         s->end = TEnd;
 

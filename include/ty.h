@@ -732,8 +732,8 @@ extern usize TotalBytesAllocated;
 #define dont_printf(...) 0
 
 #if 0
-#define GC_STOP() do { GCLOG("GC_STOP(): " __FILE__ ":%d: %d", __LINE__, ty->GC_OFF_COUNT + 1); ty->GC_OFF_COUNT += 1; } while (0)
-#define GC_RESUME() do { GCLOG("GC_RESUME(): " __FILE__ ":%d: %d", __LINE__, ty->GC_OFF_COUNT - 1); ty->GC_OFF_COUNT -= 1; } while (0)
+#define GC_STOP() do { XXX("GC_STOP(): " __FILE__ ":%d: %d", __LINE__, ty->GC_OFF_COUNT + 1); ty->GC_OFF_COUNT += 1; } while (0)
+#define GC_RESUME() do { XXX("GC_RESUME(): " __FILE__ ":%d: %d", __LINE__, ty->GC_OFF_COUNT - 1); ty->GC_OFF_COUNT -= 1; } while (0)
 #else
 #define GC_STOP()   (ty->GC_OFF_COUNT += 1)
 #define GC_RESUME() (ty->GC_OFF_COUNT -= 1)
