@@ -536,6 +536,13 @@ TySpinLockDestroy(TySpinLock *spin)
 }
 #endif // __APPLE__
 
+//#define TySpinLockInit TyMutexInit
+//#define TySpinLockDestroy TyMutexDestroy
+//#define TySpinLockLock TyMutexLock
+//#define TySpinLockTryLock TyMutexTryLock
+//#define TySpinLockUnlock TyMutexUnlock
+//#define TySpinLock TyMutex
+
 #endif
 
 /* vim: set sw=8 sts=8 expandtab: */

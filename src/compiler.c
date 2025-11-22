@@ -1106,13 +1106,6 @@ CompileError(Ty *ty, u32 type, char const *fmt, ...)
 
         ContextList = NULL;
 
-#if 0
-        if (vN(ty->jbs) < 3) {
-                fputs(TyError(ty), stdout);
-                *(char *)0 = 0;
-        }
-#endif
-
         STATE.module->flags |= type;
 
         TY_THROW_ERROR();
@@ -3307,7 +3300,7 @@ symbolize_pattern_(Ty *ty, Scope *scope, Expr *e, Scope *reuse, bool def)
                         !s_eq(e->identifier, "_")
                      && (
                                 (existing != NULL && SymbolIsConst(existing) && isupper(e->identifier[0]))
-                             || (existing != NULL && existing->scope == scope && !ScopeIsTop(scope))
+                             || (existing != NULL && (existing->scope == scope) && !ScopeIsTop(scope))
                              || (e->module != NULL)
                         )
                 ) {
@@ -11148,9 +11141,13 @@ compiler_introduce_symbol(Ty *ty, char const *module, char const *name)
         }
 
         Symbol *sym = addsymbol(ty, mod->scope, name);
-        sym->flags |= (SYM_PUBLIC | SYM_BUILTIN);
         sym->type   = BOTTOM_TYPE;
         sym->mod    = mod;
+        sym->flags |= (SYM_PUBLIC | SYM_BUILTIN);
+
+        if (isupper(name[0])) {
+                sym->flags |= SYM_CONST;
+        }
 
         BuiltinCount += 1;
 
