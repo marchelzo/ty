@@ -5,7 +5,7 @@
 
 #include "token.h"
 #include "alloc.h"
-#include "util.h"
+#include "xd.h"
 #include "ty.h"
 
 static char token_show_buffer[512];

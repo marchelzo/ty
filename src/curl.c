@@ -8,7 +8,7 @@
 #include "vm.h"
 #include "table.h"
 #include "object.h"
-#include "util.h"
+#include "xd.h"
 
 static _Thread_local vec(char) Buffer;
 static _Thread_local Blob *ResponseBlob;

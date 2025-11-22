@@ -13,7 +13,7 @@
 
 #include "vec.h"
 #include "token.h"
-#include "util.h"
+#include "xd.h"
 #include "lex.h"
 #include "compiler.h"
 

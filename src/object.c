@@ -4,7 +4,7 @@
 #include <stdbool.h>
 
 #include "alloc.h"
-#include "util.h"
+#include "xd.h"
 #include "value.h"
 #include "object.h"
 #include "itable.h"

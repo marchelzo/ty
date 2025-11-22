@@ -2,7 +2,7 @@
 #define TABLE_H_INCLUDED
 
 #include "vec.h"
-#include "util.h"
+#include "xd.h"
 
 enum { TABLE_SIZE = 16 };
 

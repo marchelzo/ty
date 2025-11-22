@@ -133,6 +133,7 @@ BUILTIN_FUNCTION(os_fork);
 BUILTIN_FUNCTION(os_cpu_count);
 BUILTIN_FUNCTION(os_isatty);
 BUILTIN_FUNCTION(os_terminal_size);
+BUILTIN_FUNCTION(os_openpty);
 BUILTIN_FUNCTION(os_mmap);
 BUILTIN_FUNCTION(os_munmap);
 BUILTIN_FUNCTION(termios_tcgetattr);

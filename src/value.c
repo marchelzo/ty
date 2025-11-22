@@ -10,7 +10,7 @@
 #include "ty.h"
 #include "dtoa.h"
 #include "value.h"
-#include "util.h"
+#include "xd.h"
 #include "dict.h"
 #include "object.h"
 #include "tags.h"

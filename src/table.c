@@ -1,7 +1,7 @@
 #include "value.h"
 #include "table.h"
 #include "vec.h"
-#include "util.h"
+#include "xd.h"
 
 void
 table_init(Ty *ty, struct table *t)

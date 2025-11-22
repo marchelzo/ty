@@ -2,7 +2,7 @@
 #define ITABLE_H_INCLUDED
 
 #include "vec.h"
-#include "util.h"
+#include "xd.h"
 #include "intern.h"
 #include "ty.h"
 

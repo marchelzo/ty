@@ -22,7 +22,7 @@
 #include "scope.h"
 #include "tags.h"
 #include "ty.h"
-#include "util.h"
+#include "xd.h"
 #include "value.h"
 #include "vm.h"
 #include "types.h"

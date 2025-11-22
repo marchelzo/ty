@@ -16,7 +16,7 @@ typedef struct value Value;
 #include "tags.h"
 #include "tthread.h"
 #include "scope.h"
-#include "util.h"
+#include "xd.h"
 
 #define V_ALIGN (_Alignof (Value))
 

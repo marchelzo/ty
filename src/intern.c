@@ -3,7 +3,7 @@
 #include "ty.h"
 #include "intern.h"
 #include "vec.h"
-#include "util.h"
+#include "xd.h"
 
 void const *InternSentinel = &InternSentinel;
 

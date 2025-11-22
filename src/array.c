@@ -8,7 +8,7 @@
 #include "log.h"
 #include "functions.h"
 #include "operators.h"
-#include "util.h"
+#include "xd.h"
 #include "vm.h"
 #include "ty.h"
 

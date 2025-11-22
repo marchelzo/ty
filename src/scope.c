@@ -6,7 +6,7 @@
 #include "alloc.h"
 #include "log.h"
 #include "ty.h"
-#include "util.h"
+#include "xd.h"
 #include "types.h"
 
 static i64 SYMBOL;

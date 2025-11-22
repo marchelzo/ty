@@ -265,7 +265,7 @@ TyThreadCreate(TyThread *t, TyThreadFunc *f, void *arg)
 #if !defined(TY_RELEASE)
         pthread_attr_t attr;
         pthread_attr_init(&attr);
-        int r = pthread_attr_setstacksize(&attr, 1ULL << 26);
+        int r = pthread_attr_setstacksize(&attr, 1ULL << 28);
         if (r != 0)
                 return r;
         return pthread_create(t, &attr, f, arg);

@@ -6,7 +6,7 @@
 #include "vm.h"
 #include "itable.h"
 #include "object.h"
-#include "util.h"
+#include "xd.h"
 #include "gc.h"
 
 static Value

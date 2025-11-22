@@ -5,7 +5,7 @@
 #include "blob.h"
 #include "value.h"
 #include "vm.h"
-#include "util.h"
+#include "xd.h"
 #include "ty.h"
 
 static Value
