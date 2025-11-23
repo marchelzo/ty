@@ -1318,6 +1318,12 @@ value_array_mark(Ty *ty, struct array *a)
 
         MARK(a);
 
+#if defined(TY_TRACE_GC)
+        if (a->items != NULL) {
+                ADD_REACHED(ALLOC_OF(a->items)->size);
+        }
+#endif
+
         for (int i = 0; i < a->count; ++i) {
                 MarkNext(ty, &a->items[i]);
         }
@@ -1345,6 +1351,14 @@ mark_thread(Ty *ty, Value const *v)
         if (MARKED(v->thread)) return;
         MARK(v->thread);
         MarkNext(ty, &v->thread->v);
+}
+
+inline static void
+mark_string(Ty *ty, Value const *v)
+{
+        if (!v->ro && v->str0 != NULL) {
+                MARK(v->str0);
+        }
 }
 
 inline static void
@@ -1470,7 +1484,7 @@ _value_mark_xd(Ty *ty, Value const *v)
         case VALUE_FUNCTION:         mark_function(ty, v);                                             break;
         case VALUE_GENERATOR:        mark_generator(ty, v);                                            break;
         case VALUE_THREAD:           mark_thread(ty, v);                                               break;
-        case VALUE_STRING:           if (!v->ro && v->str0 != NULL) { MARK(v->str0); }                 break;
+        case VALUE_STRING:           mark_string(ty, v);                                               break;
         case VALUE_OBJECT:           object_mark(ty, v->object);                                       break;
         case VALUE_CLASS:            class_mark(ty, v->class);                                         break;
         case VALUE_REF:              MARK(v->ptr); MarkNext(ty, v->ptr);                               break;
@@ -1488,6 +1502,8 @@ _value_mark_xd(Ty *ty, Value const *v)
 void
 _value_mark(Ty *ty, Value const *v)
 {
+        RESET_REACHED();
+
         _value_mark_xd(ty, v);
 
         while (vN(ty->marking) > 0) {

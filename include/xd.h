@@ -43,8 +43,6 @@
 #define sxdf(...) ((sxdf)(ty, __VA_ARGS__))
 #define sfmt(...) ((sfmt)(ty, __VA_ARGS__))
 
-#define xfmt(...) ((xfmt)(ty, __VA_ARGS__))
-
 inline static usize
 P_ALIGN(void const *p)
 {
@@ -340,31 +338,26 @@ ifmt(char const *fmt, ...)
         byte_vector buf = {0};
         va_list ap;
 
-        SCRATCH_SAVE();
         va_start(ap, fmt);
-        scvdump(ty, &buf, fmt, ap);
+        vdump(&buf, fmt, ap);
         va_end(ap);
         str = intern(&xD.members, vv(buf))->name;
-        SCRATCH_RESTORE();
+        xvF(buf);
 
         return str;
 }
 
 static char *
-(xfmt)(Ty *ty, char const *fmt, ...)
+xfmt(char const *fmt, ...)
 {
-        char *str;
         byte_vector buf = {0};
         va_list ap;
 
-        SCRATCH_SAVE();
         va_start(ap, fmt);
-        scvdump(ty, &buf, fmt, ap);
-        str = S2(vv(buf));
+        vdump(&buf, fmt, ap);
         va_end(ap);
-        SCRATCH_RESTORE();
 
-        return str;
+        return vv(buf);
 }
 
 static char *

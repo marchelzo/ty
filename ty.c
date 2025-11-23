@@ -34,10 +34,10 @@
 #include "VersionInfo.h"
 #endif
 
-static Ty vvv;
-
-Ty *ty;
+Ty vvv;
 TY xD;
+
+static Ty *ty;
 
 #define MAX_COMPLETIONS 512
 
@@ -59,6 +59,15 @@ int EnableLogging = 0;
 u64 TypeCheckCounter = 0;
 u64 TypeAllocCounter = 0;
 u64 TypeCheckTime = 0;
+
+#if 0
+_Atomic u64 LogCounter;
+#endif
+
+#if defined(TY_TRACE_GC)
+_Thread_local u64 ThisReached;
+_Thread_local u64 TotalReached;
+#endif
 
 #if defined(TY_GC_STATS)
 usize TotalBytesAllocated;

@@ -16,6 +16,7 @@
 
 TY xD;
 Ty *ty;
+Ty vvv;
 
 int EnableLogging = 0;
 u64 TypeCheckCounter = 0;
@@ -37,7 +38,6 @@ bool InteractiveSession = false;
 int
 main(int argc, char *argv[])
 {
-        Ty vvv;
         ty = &vvv;
 
         if (!vm_init(ty, 0, argv)) {

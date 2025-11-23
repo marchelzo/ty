@@ -1913,7 +1913,7 @@ ResolveIdentifier(Ty *ty, Expr const *expr)
 inline static Symbol *
 tmpsymbol(Ty *ty, Scope *scope)
 {
-        Symbol *sym = scope_add(ty, scope, gensym());
+        Symbol *sym = scope_add(ty, scope, gensym(ty));
         sym->mod = STATE.module;
         sym->loc = STATE.start;
         return sym;
@@ -3116,7 +3116,7 @@ symbolize_lvalue_(Ty *ty, Scope *scope, Expr *target, u32 flags)
                         (target->symbol == NULL)
                      && (strcmp(target->identifier, "_") == 0)
                 ) {
-                        target->identifier = gensym();
+                        target->identifier = gensym(ty);
                 }
         case EXPRESSION_SPREAD:
         case EXPRESSION_IDENTIFIER:
@@ -3292,7 +3292,7 @@ symbolize_pattern_(Ty *ty, Scope *scope, Expr *e, Scope *reuse, bool def)
         switch (e->type) {
         case EXPRESSION_RESOURCE_BINDING:
                 if (e->symbol == NULL && strcmp(e->identifier, "_") == -1) {
-                        e->identifier = gensym();
+                        e->identifier = gensym(ty);
                 }
         case EXPRESSION_IDENTIFIER:
                 existing = TryResolveIdentifier(ty, e);
@@ -10401,6 +10401,8 @@ annotate_tokens(Ty *ty, void const *ast)
 static Expr *
 lowkey(Expr *e, Scope *scope, void *ctx)
 {
+        Ty *ty = GetMyTy();
+
         if (
                 (e == NULL)
              || (e->mod == NULL)

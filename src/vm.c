@@ -238,10 +238,10 @@ CompareProfileEntriesByLocation(void const *a_, void const *b_)
         char const *bIp = b->ctx;
 
         //printf("Instruction(%lu) = %s\n", (uptr)aIp, InstructionNames[(uint8_t)((char *)a->ctx)[0]]);
-        Expr const *aExpr = compiler_find_expr(ty, a->ctx);
+        Expr const *aExpr = compiler_find_expr(&vvv, a->ctx);
 
         //printf("Instruction(%lu) = %s\n", (uptr)bIp, InstructionNames[(uint8_t)((char *)b->ctx)[0]]);
-        Expr const *bExpr = compiler_find_expr(ty, b->ctx);
+        Expr const *bExpr = compiler_find_expr(&vvv, b->ctx);
 
         if (aExpr == bExpr) return 0;
         if (aExpr == NULL) return -1;
@@ -340,12 +340,6 @@ InitializeTY(Ty *ty)
         xD.ty = ty;
 }
 
-int
-AbortVM(void)
-{
-        vm_panic(ty, "oops!");
-}
-
 Ty *
 get_my_ty(void)
 {
@@ -361,8 +355,6 @@ InitializeTy(Ty *ty)
 
         ExpandScratch(ty);
         ty->memory_limit = GC_INITIAL_LIMIT;
-
-        TySpinLockInit(&ty->alloc_lock);
 
         ty->co_top = co_active();
 
@@ -469,6 +461,7 @@ WaitGC(Ty *ty)
         while (!*MyState) {
                 if (!MyGroup->WantGC && TryFlipTo(MyState, true)) {
                         lTk();
+                        GCLOG("Finished waiting: %llu", TID);
 #ifdef TY_PROFILER
                         LastThreadGCTime = TyThreadTime() - start;
 #endif
@@ -480,18 +473,18 @@ WaitGC(Ty *ty)
 
         GCLOG("Waiting to mark: %llu", TID);
         TyBarrierWait(&MyGroup->GCBarrierStart);
-        XLOG("Marking: %llu", TID);
+        GCLOG("Marking: %llu", TID);
         MarkStorage(ty);
 
         GCLOG("Waiting to sweep: %llu", TID);
         TyBarrierWait(&MyGroup->GCBarrierMark);
         GCLOG("Sweeping: %llu", TID);
-        GCSweepOwn(ty);
+        GCSweepTy(ty);
 
         GCLOG("Waiting to continue execution: %llu", TID);
         TyBarrierWait(&MyGroup->GCBarrierSweep);
         TyBarrierWait(&MyGroup->GCBarrierDone);
-        XLOG("Continuing execution: %llu", TID);
+        GCLOG("Continuing execution: %llu", TID);
 
 #ifdef TY_PROFILER
         LastThreadGCTime = TyThreadTime() - start;
@@ -517,7 +510,7 @@ DoGC(Ty *ty)
 
         GCInProgress = true;
 
-        XLOG("Doing GC: MyGroup = %p, (%zu threads)", MyGroup, MyGroup->ThreadList.count);
+        GCLOG("Doing GC: MyGroup = %p, (%zu threads)", MyGroup, MyGroup->ThreadList.count);
 
         TySpinLockLock(&MyGroup->Lock);
 
@@ -553,10 +546,10 @@ DoGC(Ty *ty)
                 GCLOG("Trying to take lock for thread %llu: %p", (long long unsigned)MyGroup->ThreadList.items[i], (void *)MyGroup->ThreadLocks.items[i]);
                 TySpinLockLock(v__(MyGroup->ThreadLocks, i));
                 if (TryFlipTo(v__(MyGroup->ThreadStates, i), true)) {
-                        GCLOG("Thread %llu is running", (long long unsigned)MyGroup->ThreadList.items[i]);
+                        GCLOG("Thread %llu is running", MyGroup->TyList.items[i]->id);
                         runningThreads[nRunning++] = i;
                 } else {
-                        GCLOG("Thread %llu is blocked", (long long unsigned)MyGroup->ThreadList.items[i]);
+                        GCLOG("Thread %llu is blocked", MyGroup->TyList.items[i]->id);
                         blockedThreads[nBlocked++] = i;
                 }
         }
@@ -573,7 +566,7 @@ DoGC(Ty *ty)
         TyBarrierWait(&MyGroup->GCBarrierStart);
 
         for (int i = 0; i < nBlocked; ++i) {
-                XLOG("Marking thread %d storage from thread %llu", blockedThreads[i], TID);
+                GCLOG("Marking thread %d storage from thread %llu", blockedThreads[i], TID);
                 MarkStorage(v__(MyGroup->TyList, blockedThreads[i]));
         }
 
@@ -581,16 +574,19 @@ DoGC(Ty *ty)
         MarkStorage(ty);
 
         if (MyGroup == &MainGroup) {
-                XLOG("Marking %zu global roots on thread %llu", vN(Globals), TID);
+                GCLOG("Marking %zu global roots on thread %llu", vN(Globals), TID);
+                RESET_TOTAL_REACHED();
                 for (int i = 0; i < vN(Globals); ++i) {
                         value_mark(ty, v_(Globals, i));
                 }
+                LOG_REACHED(" => globals reached %llu", TotalReached);
 
+                RESET_TOTAL_REACHED();
                 GCRootSet *immortal = GCImmortalSet(ty);
-
                 for (int i = 0; i < vN(*immortal); ++i) {
                         value_mark(ty, v_(*immortal, i));
                 }
+                LOG_REACHED(" => immortal reached %llu", TotalReached);
 
                 for (int i = 0; i < vN(SignalGCRoots); ++i) {
                         value_mark(ty, v_(SignalGCRoots, i));
@@ -602,14 +598,15 @@ DoGC(Ty *ty)
         GCLOG("Storing false in WantGC on thread %llu", TID);
         MyGroup->WantGC = false;
 
-        TySpinLockLock(&MyGroup->DLock);
         for (int i = 0; i < nBlocked; ++i) {
-                XLOG("Sweeping thread %d storage from thread %llu", blockedThreads[i], TID);
-                GCSweepOwn(v__(MyGroup->TyList, blockedThreads[i]));
+                Ty *other = v__(MyGroup->TyList, blockedThreads[i]);
+                GCLOG("Sweeping thread %llu storage from thread %llu", other->id, TID);
+                GCSweepTy(other);
         }
         GCLOG("Sweeping own storage on thread %llu", TID);
-        GCSweepOwn(ty);
+        GCSweepTy(ty);
         GCLOG("Sweeping objects from dead threads on thread %llu", TID);
+        TySpinLockLock(&MyGroup->DLock);
         GCSweep(ty, &MyGroup->DeadAllocs, &MyGroup->DeadUsed);
         TySpinLockUnlock(&MyGroup->DLock);
 
@@ -617,7 +614,7 @@ DoGC(Ty *ty)
 
         UnlockThreads(ty, blockedThreads, nBlocked);
 
-        GCLOG("Unlocking ThreadsLock and GCLock. Used = %zu, DeadUsed = %zu", MemoryUsed, MyGroup->DeadUsed);
+        GCLOG("Unlocking ThreadsLock and GCLock. Used = %lld, DeadUsed = %lld", MemoryUsed, MyGroup->DeadUsed);
 
         TySpinLockUnlock(&MyGroup->Lock);
         TySpinLockUnlock(&MyGroup->GCLock);
@@ -956,7 +953,7 @@ GetSelf(Ty *ty)
 }
 
 inline static Value
-BindMethod(Value *f, Value *v, int id)
+BindMethod(Ty *ty, Value *f, Value *v, int id)
 {
         Value *this = mAo(sizeof *this, GC_VALUE);
         *this = *v;
@@ -973,6 +970,42 @@ do_co(void)
         vm_exec(ty, IP);
         UNREACHABLE();
 }
+
+#ifdef __has_feature
+#if __has_feature(address_sanitizer)
+#define ASAN_ENABLED
+#endif
+#endif
+
+#ifdef __SANITIZE_ADDRESS__
+#define ASAN_ENABLED
+#endif
+
+#ifdef ASAN_ENABLED
+void __sanitizer_start_switch_fiber(void** fake_stack_save,
+                                     const void* bottom,
+                                     size_t size);
+void __sanitizer_finish_switch_fiber(void* fake_stack_save,
+                                      const void** bottom_old,
+                                      size_t* size_old);
+
+void __asan_unpoison_memory_region(void const *addr, size_t size);
+
+static void
+xco_switch(cothread_t co)
+{
+        co_switch(co);
+}
+#else
+#define __sanitizer_start_switch_fiber(...)
+#define __sanitizer_finish_switch_fiber(...)
+#define __asan_unpoison_memory_region(...)
+static void
+xco_switch(cothread_t co)
+{
+        co_switch(co);
+}
+#endif
 
 inline static bool
 GeneratorIsSuspended(Generator *gen)
@@ -997,22 +1030,6 @@ GetCurrentGenerator(Ty *ty)
 }
 
 inline static Generator *
-GetNextGenerator(Generator *gen)
-{
-        usize n = v_(gen->st.frames, 0)->fp;
-
-        if (
-                (n == 0)
-             || (v_(STACK, n - 1)->type != VALUE_GENERATOR)
-             || (v_(STACK, n - 1)->gen == gen)
-        ) {
-                return NULL;
-        }
-
-        return v_(STACK, n - 1)->gen;
-}
-
-inline static Generator *
 GetGeneratorForFrame(Ty *ty, int i)
 {
         int n = FRAMES.items[i].fp;
@@ -1027,18 +1044,15 @@ GetGeneratorForFrame(Ty *ty, int i)
 inline static cothread_t
 GetFreeCoThread(Ty *ty)
 {
-#if defined(TY_RELEASE)
-        usize const CO_STACK_SIZE = (1UL << 22);
-#else
-        usize const CO_STACK_SIZE = (1UL << 24);
-#endif
+        void *base;
         if (vN(CO_THREADS) == 0) {
                 GCLOG("GetFreeCoThread(): new");
-                return co_create(CO_STACK_SIZE, do_co);
+                base = xmA(CO_STACK_SIZE);
         } else {
                 GCLOG("GetFreeCoThread(): recycled");
-                return co_derive(*vvX(CO_THREADS), CO_STACK_SIZE, do_co);
+                base = *vvX(CO_THREADS);
         }
+        return co_derive(base, CO_STACK_SIZE, do_co);
 }
 
 static char const *
@@ -1316,13 +1330,13 @@ call_co_ex(Ty *ty, Value *v, int n, char *whence)
                 cothread_t co = gen->co;
                 gen->co = co_active();
                 GCLOG("co_call() [%p]: switch to %s on [%p]", co_active(), name_of(&gen->f), (void *)co);
-                co_switch(co);
+                xco_switch(co);
         } else {
                 cothread_t co = GetFreeCoThread(ty);
                 gen->co = co_active();
                 GCLOG("co_call() [%p]: switch to %s on [%p] (NEW)", co_active(), name_of(&gen->f), (void *)co);
                 co_ty = ty;
-                co_switch(co);
+                xco_switch(co);
 
         }
 
@@ -1384,9 +1398,15 @@ PopThrowCtx(Ty *ty)
 }
 
 u64
-MyThreadId(Ty *ty)
+TyThreadId(Ty *ty)
 {
         return ty->id;
+}
+
+u64
+RealThreadId(void)
+{
+        return MyId;
 }
 
 void
@@ -1411,6 +1431,12 @@ ReleaseLock(Ty *ty, bool blocked)
         GCLOG("Releasing MyLock: %d", (int)blocked);
         TySpinLockUnlock(MyLock);
         HaveLock = false;
+}
+
+bool
+HoldingLock(Ty *ty)
+{
+        return HaveLock;
 }
 
 void
@@ -1439,8 +1465,9 @@ NewThread(Ty *ty, Thread *t, Value *call, Value *name, bool isolated)
                 zP("TyThreadCreate(): %s", strerror(r));
         }
 
-        while (!created)
-                ;
+        while (!created) {
+                continue;
+        }
 
         lTk();
 }
@@ -1477,11 +1504,11 @@ CleanupThread(void *ctx)
 
         TySpinLockLock(&MyGroup->DLock);
         if (MyGroup->DeadUsed + MemoryUsed > MemoryLimit) {
-                //TySpinLockUnlock(&MyGroup->DLock);
-                //DoGC(ty);
-                //TySpinLockLock(&MyGroup->DLock);
+                TySpinLockUnlock(&MyGroup->DLock);
+                DoGC(ty);
+                TySpinLockLock(&MyGroup->DLock);
         }
-        uvPv(MyGroup->DeadAllocs, ty->allocs);
+        xvPv(MyGroup->DeadAllocs, ty->allocs);
         MyGroup->DeadUsed += MemoryUsed;
         v0(ty->allocs);
         TySpinLockUnlock(&MyGroup->DLock);
@@ -1512,8 +1539,19 @@ CleanupThread(void *ctx)
                 free(t);
         }
 
+        for (int i = 0; i < vC(THROW_STACK); ++i) {
+                ThrowCtx *ctx = v__(THROW_STACK, i);
+                xvF(*ctx);
+                xvF(ctx->locals);
+                free(ctx);
+        }
+
         for (int i = 0; i < vN(ty->_2op_cache); ++i) {
                 xvF(v__(ty->_2op_cache, i));
+        }
+
+        for (int i = 0; i < vN(CO_THREADS); ++i) {
+                free(v__(CO_THREADS, i));
         }
 
         TySpinLockDestroy(MyLock);
@@ -1529,6 +1567,7 @@ CleanupThread(void *ctx)
         xvF(TRY_STACK);
         xvF(THROW_STACK);
         xvF(DROP_STACK);
+        xvF(CO_THREADS);
         xvF(ty->allocs);
         xvF(ty->_2op_cache);
         pcre2_match_data_free(ty->pcre2.match);
@@ -1544,7 +1583,7 @@ CleanupThread(void *ctx)
                 vvF(MyGroup->ThreadList);
                 vvF(MyGroup->ThreadLocks);
                 vvF(MyGroup->ThreadStates);
-                vvF(MyGroup->DeadAllocs);
+                xvF(MyGroup->DeadAllocs);
                 mF(MyGroup);
         }
 
@@ -6594,19 +6633,19 @@ BadTupleMember:
                         READVALUE(n);
                         READVALUE(z);
                         vp = class_lookup_method_i(ty, n, z);
-                        *top() = BindMethod(vp, top(), z);
+                        *top() = BindMethod(ty, vp, top(), z);
                         break;
                 CASE(BIND_GETTER)
                         READVALUE(n);
                         READVALUE(z);
                         vp = class_lookup_getter_i(ty, n, z);
-                        *top() = BindMethod(vp, top(), z);
+                        *top() = BindMethod(ty, vp, top(), z);
                         break;
                 CASE(BIND_SETTER)
                         READVALUE(n);
                         READVALUE(z);
                         vp = class_lookup_setter_i(ty, n, z);
-                        *top() = BindMethod(vp, top(), z);
+                        *top() = BindMethod(ty, vp, top(), z);
                         break;
                 CASE(BIND_STATIC)
                         READVALUE(n);
@@ -8246,29 +8285,38 @@ void
 MarkStorage(Ty *ty)
 {
         GCLOG("Marking root set (%zu items)", vN(RootSet));
+        RESET_TOTAL_REACHED();
         for (int i = 0; i < vN(RootSet); ++i) {
                 value_mark(ty, v_(RootSet, i));
         }
+        LOG_REACHED(" => root_set reached %llu", TotalReached);
 
         GCLOG("Marking thread-local storage");
+        RESET_TOTAL_REACHED();
         for (int i = 0; i < vN(THREAD_LOCALS); ++i) {
                 value_mark(ty, v_(THREAD_LOCALS, i));
         }
+        LOG_REACHED(" => TLS reached %llu", TotalReached);
 
         GCLOG("Marking stack");
+        RESET_TOTAL_REACHED();
         for (int i = 0; i < vN(STACK) + RC && i < vC(STACK); ++i) {
                 value_mark(ty, v_(STACK, i));
         }
+        LOG_REACHED(" => stack reached %llu", TotalReached);
 
         GCLOG("Marking try stack");
+        RESET_TOTAL_REACHED();
         for (int i = 0; i < vN(TRY_STACK); ++i) {
                 struct try *t = v__(TRY_STACK, i);
                 for (int i = 0; i < vN(t->defer); ++i) {
                         value_mark(ty, v_(t->defer, i));
                 }
         }
+        LOG_REACHED(" => try_stack reached %llu", TotalReached);
 
         GCLOG("Marking throw stack");
+        RESET_TOTAL_REACHED();
         for (int i = 0; i < vN(THROW_STACK); ++i) {
                 ThrowCtx *ctx = v__(THROW_STACK, i);
                 for (int i = 0; i < vN(ctx->locals); ++i) {
@@ -8279,13 +8327,17 @@ MarkStorage(Ty *ty)
                 }
                 value_mark(ty, &ctx->exc);
         }
+        LOG_REACHED(" => throw_stack reached %llu", TotalReached);
 
         GCLOG("Marking drop stack");
+        RESET_TOTAL_REACHED();
         for (int i = 0; i < vN(DROP_STACK); ++i) {
                 value_mark(ty, v_(DROP_STACK, i));
         }
+        LOG_REACHED(" => drop_stack reached %llu", TotalReached);
 
         GCLOG("Marking %zu targets", vN(TARGETS));
+        RESET_TOTAL_REACHED();
         for (int i = 0; i < vN(TARGETS); ++i) {
                 Target *target = v_(TARGETS, i);
                 uptr t = (uptr)target->t;
@@ -8296,11 +8348,14 @@ MarkStorage(Ty *ty)
                         value_mark(ty, target->gc);
                 }
         }
+        LOG_REACHED(" => targets reached %llu", TotalReached);
 
+        RESET_TOTAL_REACHED();
         GCLOG("Marking frame functions");
         for (int i = 0; i < vN(FRAMES); ++i) {
                 value_mark(ty, FrameFun(ty, v_(FRAMES, i)));
         }
+        LOG_REACHED(" => frame fns reached %llu", TotalReached);
 }
 
 char const *
@@ -8540,7 +8595,7 @@ StepInstruction(char const *ip)
         CASE(UNPOP)
                 break;
         CASE(INT8)
-                IP += 1;
+                ip += 1;
                 break;
         CASE(INTEGER)
                 SKIPVALUE(k);
@@ -8746,14 +8801,14 @@ StepInstruction(char const *ip)
                 i32   m,   g,   s;
                 i32 s_m, s_g, s_s;
 
-                READVALUE(class);
+                SKIPVALUE(class);
 
-                READVALUE(s_m);
-                READVALUE(s_g);
-                READVALUE(s_s);
-                READVALUE(m);
-                READVALUE(g);
-                READVALUE(s);
+                SKIPVALUE(s_m);
+                SKIPVALUE(s_g);
+                SKIPVALUE(s_s);
+                SKIPVALUE(m);
+                SKIPVALUE(g);
+                SKIPVALUE(s);
 
                 while (s_m --> 0) { SKIPVALUE(i); }
                 while (s_g --> 0) { SKIPVALUE(i); }
@@ -9392,6 +9447,12 @@ TyPostFork(Ty *ty)
         TySpinLockInit(&MyGroup->DLock);
         TySpinLockInit(MyLock);
         TySpinLockLock(MyLock);
+}
+
+Ty *
+GetMyTy(void)
+{
+        return MyTy;
 }
 
 /* vim: set sts=8 sw=8 expandtab: */

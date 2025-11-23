@@ -322,7 +322,7 @@ static vec(Expr *) FunStack;
 
 
 inline static bool
-FuelCheck(void)
+FuelCheck(Ty *ty)
 {
         if (FUEL <= 0) {
                 EnableLogging = 0;
@@ -679,7 +679,7 @@ StepVar(Type const *t0)
                 return NthType(ResolveVar(t0->val), t0->i);
 
         case TYPE_SLICE:
-                return SliceType(ty, ResolveVar(t0->val), t0->i, t0->j, t0->k);
+                return SliceType(&vvv, ResolveVar(t0->val), t0->i, t0->j, t0->k);
 
         case TYPE_COMPUTED:
         {
@@ -695,7 +695,7 @@ BindVar(Type *var, Type *val)
 {
         XXTLOG("Bind(): %s := %s", ShowType(var), ShowType(val));
         if (var->val != TVAR) {
-                fixup(ty, val);
+                fixup(&vvv, val);
                 var->val = val;
                 var->level = -1;
                 var->bounded = true;
@@ -713,7 +713,7 @@ BindVarSoft(Type *var, Type *val)
         if (var->val != TVAR) {
                 var->val = val;
                 var->level = -1;
-                fixup(ty, val);
+                fixup(&vvv, val);
         }
 }
 
@@ -1709,7 +1709,7 @@ FindTypeMember(Expr const *e, char const *name)
                 return FindTypeMember(e->right, name);
 
         case EXPRESSION_IDENTIFIER:
-                return type_find_member(ty, type_resolve(ty, e), name);
+                return type_find_member(&vvv, type_resolve(&vvv, e), name);
         }
 
         return NULL;
@@ -1949,7 +1949,7 @@ ResolveVar(Type const *t0)
         }
 
         if (forgiving) {
-                t0 = type_forgiving(ty, t0);
+                t0 = type_forgiving(&vvv, t0);
         }
 
         return (Type *)t0;
@@ -2330,7 +2330,7 @@ SameType(Type const *t0, Type const *t1)
 }
 
 static Type *
-Untagged(Type *t0, int tag)
+Untagged(Ty *ty, Type *t0, int tag)
 {
         Type *t1 = NULL;
         Type *t2;
@@ -2340,7 +2340,7 @@ Untagged(Type *t0, int tag)
         switch (TypeType(t0)) {
         case TYPE_UNION:
                 for (int i = 0; i < vN(t0->types); ++i) {
-                        t2 = Untagged(v__(t0->types, i), tag);
+                        t2 = Untagged(ty, v__(t0->types, i), tag);
                         if (!IsBottom(t2)) {
                                 unify2(ty, &t1, t2);
                         }
@@ -2349,7 +2349,7 @@ Untagged(Type *t0, int tag)
 
         case TYPE_INTERSECT:
                 for (int i = 0; i < vN(t0->types); ++i) {
-                        t2 = Untagged(v__(t0->types, i), tag);
+                        t2 = Untagged(ty, v__(t0->types, i), tag);
                         if (!IsBottom(t2)) {
                                 type_intersect(ty, &t1, t2);
                         }
@@ -2585,7 +2585,7 @@ IsCallable(Type *t0)
             || (t0->type == TYPE_CLASS)
             || (
                         (t0->type == TYPE_OBJECT)
-                     && type_find_member(ty, t0, "__call__") != NULL
+                     && type_find_member(&vvv, t0, "__call__") != NULL
                )
             ;
 }
@@ -4536,7 +4536,7 @@ UnifyXD(Ty *ty, Type *t0, Type *t1, bool super, bool check, bool soft)
 
         TypeCheckCounter += 1;
 
-        if (!FuelCheck()) {
+        if (!FuelCheck(ty)) {
                 return false;
         }
 
@@ -5640,6 +5640,7 @@ PossibleArgTypes(Ty *ty, expression_vector const *args, int argi)
 
 static Type *
 FindArg(
+        Ty *ty,
         int i,
         char const *name,
         expression_vector const *args,
@@ -5669,7 +5670,7 @@ FindParam(
         if (name != NULL) {
                 for (int i = 0; i < vN(*ps); ++i) {
                         Param const *p = v_(*ps, i);
-                        if (p->name != NULL && strcmp(p->name, name) == 0) {
+                        if (p->name != NULL && s_eq(p->name, name)) {
                                 return p;
                         }
                 }
@@ -5922,7 +5923,7 @@ InferCall0(
                         if (p->rest || p->kws || p->pack) {
                                 continue;
                         }
-                        Type *a0 = FindArg(gather ? -1 : i, p->name, args, kwargs, kws);
+                        Type *a0 = FindArg(ty, gather ? -1 : i, p->name, args, kwargs, kws);
                         if (a0 == NONE_TYPE) {
                                 if (!p->required || CheckArg(ty, i, p, NIL_TYPE, strict)) {
                                         continue;
@@ -7726,7 +7727,7 @@ type_check(Ty *ty, Type *t0, Type *t1)
 {
         static TypeMemo memo;
 
-        if (!FuelCheck()) {
+        if (!FuelCheck(ty)) {
                 return false;
         }
 

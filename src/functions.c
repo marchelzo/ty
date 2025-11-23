@@ -3884,7 +3884,7 @@ BUILTIN_FUNCTION(thread_id)
         ASSERT_ARGC_2("thread.id()", 0, 1);
 
         if (argc == 0 || ARG(0).type == VALUE_NIL) {
-                return INTEGER(MyThreadId(ty));
+                return INTEGER(TyThreadId(ty));
         } else if (ARG(0).type == VALUE_PTR) {
                 return INTEGER(((Thread *)ARG(0).ptr)->i);
         } else if (ARG(0).type == VALUE_THREAD) {
@@ -4671,7 +4671,6 @@ BUILTIN_FUNCTION(os_poll)
 
         if (n > 0) {
                 GC_STOP();
-                //XXX("GC_OFF=%d", ty->GC_OFF_COUNT);
                 for (int i = 0; i < vN(*fds) && vN(*fds_out) < n; ++i) {
                         if (pfds[i].revents != 0) {
                                 Value fd = INTEGER(pfds[i].fd);
@@ -5635,7 +5634,7 @@ BUILTIN_FUNCTION(os_truncate)
 }
 
 inline static Value
-xstatv(int ret, StatStruct const *st)
+xstatv(Ty *ty, int ret, StatStruct const *st)
 {
         if (ret != 0)
                return NIL;
@@ -5662,8 +5661,7 @@ xstatv(int ret, StatStruct const *st)
 
         GC_RESUME();
 
-        return value_named_tuple(
-                ty,
+        return vTn(
                 "dev", INTEGER(st->st_dev),
                 "ino", INTEGER(st->st_ino),
                 "mode", INTEGER(st->st_mode),
@@ -5678,8 +5676,7 @@ xstatv(int ret, StatStruct const *st)
 #endif
                 "atime", atime,
                 "mtime", mtime,
-                "ctime", ctime,
-                NULL
+                "ctime", ctime
         );
 }
 
@@ -5689,9 +5686,9 @@ BUILTIN_FUNCTION(os_fstat)
         ASSERT_ARGC("os.fstat()", 1);
         StatStruct s;
 #ifdef _WIN32
-        return xstatv(_fstat64(INT_ARG(0), &s), &s);
+        return xstatv(ty, _fstat64(INT_ARG(0), &s), &s);
 #else
-        return xstatv(fstat(INT_ARG(0), &s), &s);
+        return xstatv(ty, fstat(INT_ARG(0), &s), &s);
 #endif
 }
 
@@ -5703,7 +5700,7 @@ BUILTIN_FUNCTION(os_lstat)
         ASSERT_ARGC("os.lstat()", 1);
         StatStruct s;
         char const *path = TY_TMP_C_STR(ARGx(0, VALUE_STRING));
-        return xstatv(lstat(path, &s), &s);
+        return xstatv(ty, lstat(path, &s), &s);
 #endif
 }
 
@@ -5713,9 +5710,9 @@ BUILTIN_FUNCTION(os_stat)
         StatStruct s;
         char const *path = TY_TMP_C_STR(ARGx(0, VALUE_STRING));
 #ifdef _WIN32
-        return xstatv(_stat64(path, &s), &s);
+        return xstatv(ty, _stat64(path, &s), &s);
 #else
-        return xstatv(stat(path, &s), &s);
+        return xstatv(ty, stat(path, &s), &s);
 #endif
 }
 
@@ -7310,7 +7307,7 @@ BUILTIN_FUNCTION(ty_lock)
 BUILTIN_FUNCTION(ty_gensym)
 {
         ASSERT_ARGC("ty.gensym()", 0);
-        return xSz(gensym());
+        return xSz(gensym(ty));
 }
 
 inline static char const *
@@ -7487,7 +7484,6 @@ make_token(Ty *ty, Token const *t)
         int tlen;
         if (type == NULL) {
                 char const *charset = "[](){}<>;:.,?`~=!@#$%^&*/()-_~+|\"\\\n";
-
                 if ((type = strchr(charset, t->type)) == NULL) {
                         tlen = 0;
                 } else {

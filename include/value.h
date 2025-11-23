@@ -280,11 +280,18 @@ TypeName(Ty const *ty, int t0)
         }
 }
 
+char const *
+class_name(Ty *ty, int c);
+
 inline static char const *
 ValueTypeName(Ty *ty, Value const *v)
 {
         if (v->type & VALUE_TAGGED) {
                 return tags_name(ty, tags_first(ty, v->tags));
+        }
+
+        if (v->type == VALUE_OBJECT) {
+                return class_name(ty, v->class);
         }
 
         return TypeName(ty, v->type);

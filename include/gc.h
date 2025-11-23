@@ -19,12 +19,16 @@ void
 DoGC(Ty *ty);
 
 uint64_t
-MyThreadId(Ty *ty);
+TyThreadId(Ty *ty);
 
-#define AddAlloc(ty, a) do { \
-        TySpinLockLock(&ty->alloc_lock); \
+uint64_t
+RealThreadId();
+
+bool
+HoldingLock(Ty *ty);
+
+#define AddAlloc(ty, a) do {  \
         xvP(ty->allocs, (a)); \
-        TySpinLockUnlock(&ty->alloc_lock); \
 } while (0)
 
 #if !defined(TY_RELEASE)
@@ -322,7 +326,7 @@ void
 GCMark(Ty *ty);
 
 void
-GCSweepOwn(Ty *ty);
+GCSweepTy(Ty *ty);
 
 void
 GCSweep(Ty *ty, AllocList *allocs, isize *used);

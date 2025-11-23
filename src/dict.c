@@ -258,6 +258,14 @@ dict_mark(Ty *ty, Dict *d)
                 xvP(ty->marking, &d->dflt);
         }
 
+#if defined(TY_TRACE_GC)
+        if (d->size > 0) {
+                ADD_REACHED(ALLOC_OF(d->hashes)->size);
+                ADD_REACHED(ALLOC_OF(d->keys  )->size);
+                ADD_REACHED(ALLOC_OF(d->values)->size);
+        }
+#endif
+
         for (usize i = 0; i < d->size; ++i) {
                 if (d->keys[i].type != 0) {
                         xvP(ty->marking, &d->keys[i]);
