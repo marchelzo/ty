@@ -1,3 +1,5 @@
+#include <sys/mman.h>
+
 #include <libco.h>
 
 #include "gc.h"
@@ -59,7 +61,7 @@ collect(Ty *ty, struct alloc *a)
                 GCLOG("collect(): free generator   co=%p   ip=%p\n", (void *)gen->co, (void *)gen->ip);
 
                 if (gen->co != ty->co_top) {
-                        co_delete(gen->co);
+                        free(gen->co);
                 }
                 break;
 
@@ -143,18 +145,13 @@ GCForget(Ty *ty, AllocList *allocs, isize *used)
 }
 
 void
-GCSweepOwn(Ty *ty)
+GCSweepTy(Ty *ty)
 {
         usize n = 0;
 
         GC_STOP();
-        TySpinLockLock(&ty->alloc_lock);
-
         for (int i = 0; i < vN(ty->allocs); ++i) {
                 struct alloc *a = v__(ty->allocs, i);
-                //if (a == NULL) {
-                //        continue;
-                //}
                 if (
                         !A_LOAD(&a->mark)
                      && (A_LOAD(&a->hard) == 0)
@@ -162,28 +159,22 @@ GCSweepOwn(Ty *ty)
                         ty->memory_used -= min(a->size, ty->memory_used);
                         collect(ty, a);
                         free(a);
-                        *v_(ty->allocs, i) = NULL;
                 } else {
                         A_STORE(&a->mark, false);
                         *v_(ty->allocs, n++) = a;
                 }
         }
+        GC_RESUME();
 
         vN(ty->allocs) = n;
-
-        TySpinLockUnlock(&ty->alloc_lock);
-        GC_RESUME();
 }
 
 void
 GCSweep(Ty *ty, AllocList *allocs, isize *used)
 {
-        GC_STOP();
-
         usize n = 0;
 
-        //XXX("SWEEP: PRE  nAllocs=%zu", vN(*allocs));
-
+        GC_STOP();
         for (int i = 0; i < vN(*allocs); ++i) {
                 if (
                         !A_LOAD(&v__(*allocs, i)->mark)
@@ -197,12 +188,9 @@ GCSweep(Ty *ty, AllocList *allocs, isize *used)
                         *v_(*allocs, n++) = v__(*allocs, i);
                 }
         }
+        GC_RESUME();
 
         vN(*allocs) = n;
-
-        //XXX("SWEEP: POST nAllocs=%zu", vN(*allocs));
-
-        GC_RESUME();
 }
 
 void

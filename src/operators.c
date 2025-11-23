@@ -87,8 +87,8 @@ inline static bool
 are_ordered(OperatorSpec const *a, OperatorSpec const *b)
 {
         return (
-                class_is_subclass(ty, a->t1, b->t1)
-             && class_is_subclass(ty, a->t2, b->t2)
+                class_is_subclass(&vvv, a->t1, b->t1)
+             && class_is_subclass(&vvv, a->t2, b->t2)
              && (
                         (a->t1 != b->t1)
                      || (a->t2 != b->t2)
@@ -110,8 +110,8 @@ check_slow(DispatchList const *list, i32 t1, i32 t2)
                         return op->ref;
                 }
                 if (
-                        class_is_subclass(ty, t1, op->t1)
-                     && class_is_subclass(ty, t2, op->t2)
+                        class_is_subclass(&vvv, t1, op->t1)
+                     && class_is_subclass(&vvv, t2, op->t2)
                      && (
                                 (match == NULL)
                              || are_ordered(op, match)
@@ -135,8 +135,8 @@ find_op_fun(DispatchList const *list, i32 t1, i32 t2)
                         return op->expr;
                 }
                 if (
-                        class_is_subclass(ty, t1, op->t1)
-                     && class_is_subclass(ty, t2, op->t2)
+                        class_is_subclass(&vvv, t1, op->t1)
+                     && class_is_subclass(&vvv, t2, op->t2)
                      && (
                                 match == NULL
                              || are_ordered(op, match)
@@ -154,9 +154,9 @@ op_add(i32 op, i32 t1, i32 t2, i32 ref, Expr *expr)
 {
         dont_printf(
                 "op_add(): %20s %4s   %-20s\n",
-                class_name(ty, t1),
+                class_name(&vvv, t1),
                 intern_entry(&xD.b_ops, op)->name,
-                class_name(ty, t2)
+                class_name(&vvv, t2)
         );
 
         if (op >= _2.ops.count) {
@@ -276,6 +276,8 @@ op_fun_info(i32 op, i32 t1, i32 t2)
 i32
 op_defs_for(i32 op, i32 c, bool left, expression_vector *defs)
 {
+        Ty *ty = &vvv;
+
         TyRwLockRdLock(&_2.lock);
 
         if (_2.ops.count <= op) {
@@ -296,7 +298,7 @@ op_defs_for(i32 op, i32 c, bool left, expression_vector *defs)
                 i32 t2 = v_(group->defs, i)->t2;
                 if (
                         fun->_type != NULL
-                     && class_is_subclass(ty, c, (left ? t1 : t2))
+                     && class_is_subclass(&vvv, c, (left ? t1 : t2))
                 ) {
                         avP(*defs, fun);
                         n += 1;
@@ -343,7 +345,7 @@ op_member_type(i32 op, i32 c, bool left)
                         (fun->_type != NULL)
                      && ((left ? t1 : t2) == c)
                 ) {
-                        t0 = type_both(ty, t0, fun->_type);
+                        t0 = type_both(&vvv, t0, fun->_type);
                 }
         }
         TyRwLockWrUnlock(&group->lock);
@@ -383,15 +385,15 @@ op_type(i32 op)
                 for (i32 i = 0; i < vN(group->defs); ++i) {
                         Expr const *fun = v_(group->defs, i)->expr;
                         if (fun->_type != NULL && fun->return_type != NULL) {
-                                group->op0 = type_both(ty, group->op0, fun->_type);
-                                dont_printf("  [i=%d]  %s\n", i, type_show(ty, group->op0));
+                                group->op0 = type_both(&vvv, group->op0, fun->_type);
+                                dont_printf("  [i=%d]  %s\n", i, type_show(&vvv, group->op0));
                         }
                 }
         }
         t0 = group->op0;
         TyRwLockWrUnlock(&group->lock);
 
-        dont_printf("op_type(%s): %s\n", intern_entry(&xD.b_ops, op)->name, type_show(ty, t0));
+        dont_printf("op_type(%s): %s\n", intern_entry(&xD.b_ops, op)->name, type_show(&vvv, t0));
 
         return t0;
 }

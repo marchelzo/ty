@@ -90,7 +90,13 @@ Value
 vm_call_ex(Ty *ty, Value const *f, int argc, Value *kwargs, bool collect);
 
 u64
-MyThreadId(Ty *ty);
+TyThreadId(Ty *ty);
+
+u64
+RealThreadId(void);
+
+Ty *
+GetMyTy(void);
 
 Value
 vm_call_method(Ty *ty, Value const *self, Value const *f, int argc);
@@ -129,6 +135,9 @@ TakeLock(Ty *ty);
 
 void
 ReleaseLock(Ty *ty, bool blocked);
+
+bool
+HoldingLock(Ty *ty);
 
 bool
 MaybeTakeLock(Ty *ty);

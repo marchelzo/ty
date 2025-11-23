@@ -370,7 +370,7 @@ idx_ok(Array const *array, isize i)
 }
 
 static Value
-slice3(Array const *xs, Value const *_i, Value const *_j, Value const *_k)
+slice3(Ty *ty, Array const *xs, Value const *_i, Value const *_j, Value const *_k)
 {
         Array *slice = uAo0(sizeof (Array), GC_ARRAY);
 
@@ -413,7 +413,7 @@ array_slice(Ty *ty, Value *array, int argc, Value *kwargs)
                 Value _i = ARGx(0, VALUE_INTEGER);
                 Value _j = ARGx(1, VALUE_INTEGER, VALUE_NIL);
                 Value _k = ARGx(2, VALUE_INTEGER, VALUE_NIL);
-                return slice3(array->array, &_i, &_j, &_k);
+                return slice3(ty, array->array, &_i, &_j, &_k);
         }
 
         imax i = INT_ARG(0);

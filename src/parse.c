@@ -462,8 +462,9 @@ mkcall(Ty *ty, Expr *func);
 static Expr *
 mkpartial(Ty *ty, Expr *sugared);
 
+#define gensym() ((gensym)(ty))
 char *
-gensym(void)
+(gensym)(Ty *ty)
 {
         static u64 sym = 0;
         return (char *)ifmt("#%u", sym++);

@@ -30,6 +30,12 @@
 #define VA_SELECT_INNER(f, i) CAT(f ## _, i)
 #define VA_SELECT(f, ...) VA_SELECT_INNER(f, VA_COUNT(__VA_ARGS__))(__VA_ARGS__)
 
+#if defined(TY_RELEASE)
+ #define CO_STACK_SIZE (1UL << 22)
+#else
+ #define CO_STACK_SIZE (1UL << 24)
+#endif
+
 typedef struct ty0        TY;
 typedef struct ty         Ty;
 typedef struct ty_save    TySavePoint;
@@ -621,8 +627,6 @@ typedef struct ty {
         isize memory_limit;
 
         AllocList allocs;
-        AllocList allocs2;
-        TySpinLock alloc_lock;
         ThreadGroup *my_group;
 
         CoThreadVector cothreads;
@@ -723,12 +727,12 @@ typedef struct {
 
 #define MyGroup (ty->my_group)
 
-#define TY_IS_READY       (ty->ty->ready)
-#define TY_IS_INITIALIZED (ty->ty->initialized)
+#define TY_IS_READY       (xD.ready)
+#define TY_IS_INITIALIZED (xD.initialized)
 
 #define EVAL_DEPTH (ty->eval_depth)
 
-extern Ty *ty;
+extern Ty vvv;
 extern TY xD;
 
 extern InternedNames NAMES;
@@ -751,6 +755,47 @@ extern u64 TypeCheckTime;
 extern u64 HITS;
 extern u64 MISSES;
 
+#if defined(TY_TRACE_GC)
+extern _Thread_local u64 ThisReached;
+extern _Thread_local u64 TotalReached;
+#define MARK(v) do {                        \
+        atomic_store_explicit(              \
+                &(ALLOC_OF(v))->mark,       \
+                true,                       \
+                memory_order_relaxed        \
+        );                                  \
+        ThisReached += ALLOC_OF(v)->size;  \
+        TotalReached += ALLOC_OF(v)->size; \
+} while (0)
+#define ADD_REACHED(n) do {          \
+        ThisReached += (n);          \
+        TotalReached += (n);         \
+} while (0)
+#define RESET_REACHED() do {         \
+        ThisReached = 0;             \
+} while (0)
+#define RESET_TOTAL_REACHED() do {    \
+        TotalReached = 0;             \
+} while (0)
+#define LOG_REACHED(...) XxLOG(__VA_ARGS__)
+#else
+#define MARK(v) do {                     \
+        atomic_store_explicit(           \
+                &(ALLOC_OF(v))->mark,    \
+                true,                    \
+                memory_order_relaxed     \
+        );                               \
+} while (0)
+#define ADD_REACHED(n)
+#define RESET_REACHED()
+#define RESET_TOTAL_REACHED()
+#define LOG_REACHED(...)
+#endif
+#define MARKED(v) atomic_load_explicit(  \
+        &(ALLOC_OF(v))->mark,            \
+        memory_order_relaxed             \
+)
+
 #if defined(TY_GC_STATS)
 extern usize TotalBytesAllocated;
 #endif
@@ -767,8 +812,6 @@ extern usize TotalBytesAllocated;
 
 #define ALLOC_OF(p) ((struct alloc *)(((char *)(p)) - offsetof(struct alloc, data)))
 
-#define MARKED(v) atomic_load_explicit(&(ALLOC_OF(v))->mark, memory_order_relaxed)
-#define MARK(v)   atomic_store_explicit(&(ALLOC_OF(v))->mark, true, memory_order_relaxed)
 
 #define NOGC(v)   atomic_fetch_add_explicit(&(ALLOC_OF(v))->hard, 1, memory_order_relaxed)
 #define OKGC(v)   atomic_fetch_sub_explicit(&(ALLOC_OF(v))->hard, 1, memory_order_relaxed)

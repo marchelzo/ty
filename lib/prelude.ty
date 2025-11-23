@@ -2387,7 +2387,7 @@ trait Iter[T] < Iterable[T] {
             }
         }
 
-        fn go3(queue: _) generator {
+        fn go*(queue: _) {
             while true {
                 if let Some(x) = queue.tryTake() {
                     yield x
@@ -2397,7 +2397,7 @@ trait Iter[T] < Iterable[T] {
             }
         }
 
-        let generators = queues.map(go3)
+        let generators = queues.map(go)
 
         return tuple(*generators)
     }

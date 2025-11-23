@@ -79,12 +79,11 @@ ifdef RELEASE
         CFLAGS += -fomit-frame-pointer
 else ifdef DEBUG
         CFLAGS += -O0
-        CFLAGS += -fsanitize=undefined
         CFLAGS += -fno-omit-frame-pointer
         CFLAGS += -fno-sanitize=nonnull-attribute
         CFLAGS += -fsanitize=address
         CFLAGS += -fno-sanitize-address-use-after-scope
-        CFLAGS += -ggdb3
+        CFLAGS += -g3
 else ifdef TDEBUG
         CFLAGS += -O0
         CFLAGS += -fsanitize=thread
