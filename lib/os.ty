@@ -118,7 +118,8 @@ pub fn spawn(
     stdout: ?Int = nil,
     stderr: ?Int = nil,
     chdir:  Int | Blob | String | nil = nil,
-    detach: Bool = false
+    detach: Bool = false,
+    ctty:   ?String = nil
 ) -> ProcessDescriptor;
 
 class OSError < RuntimeError {

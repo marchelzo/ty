@@ -372,7 +372,9 @@ Value
 cffi_free(Ty *ty, int argc, Value *kwargs)
 {
         ASSERT_ARGC("ffi.free()", 1);
-        free(ARGx(0, VALUE_PTR).ptr);
+        Value object = ARG(0);
+        void *addr = ptr_from(ty, &object);
+        free(addr);
         return NIL;
 }
 
@@ -443,15 +445,44 @@ cffi_auto(Ty *ty, int argc, Value *kwargs)
 Value
 cffi_new(Ty *ty, int argc, Value *kwargs)
 {
-        if (argc != 1 && argc != 2) {
-                zP("ffi.new() expects 1 or 2 arguments but got %d", argc);
+        ASSERT_ARGC("ffi.new()", 1, 2);
+
+        ffi_type *t = PTR_ARG(0);
+        isize count = (argc == 2) ? INT_ARG(1) : 1;
+
+        if (count < 0) {
+                bP("negative count: %zd", count);
         }
 
-        if (ARG(0).type != VALUE_PTR) {
-                zP("the argument to ffi.new() must be a pointer");
+        if (count == 0) {
+                return TPTR(t, NULL);
         }
 
-        ffi_type *t = ARG(0).ptr;
+        unsigned align = max(t->alignment, sizeof (void *));
+        usize total = max(t->size * count, sizeof (void *));
+        total += (total % align);
+
+#ifdef _WIN32
+        Value p = TPTR(t, _aligned_malloc(total, align));
+#else
+        Value p = TPTR(t, aligned_alloc(align, total));
+#endif
+
+        if (p.ptr == NULL) {
+                return NIL;
+        }
+
+        memset(p.ptr, 0, total);
+
+        return p;
+}
+
+Value
+cffi_box(Ty *ty, int argc, Value *kwargs)
+{
+        ASSERT_ARGC("ffi.box()", 1, 2);
+
+        ffi_type *t = PTR_ARG(0);
 
         unsigned align = max(t->alignment, sizeof (void *));
         unsigned size = max(t->size, sizeof (void *));

@@ -241,6 +241,7 @@ enum {
 };
 
 enum {
+        TY_SPAWN_NULL       = -12,
         TY_SPAWN_PIPE       = -13,
         TY_SPAWN_INHERIT    = -14,
         TY_SPAWN_MERGE_ERR  = -15

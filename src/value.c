@@ -21,8 +21,20 @@
 #include "compiler.h"
 #include "types.h"
 
+static _Thread_local vec(Dict *) show_dicts;
+static _Thread_local vec(Value *) show_tuples;
+static _Thread_local vec(Array *) show_arrays;
+
 static char *value_showx(Ty *ty, Value const *v);
 static char *value_show_colorx(Ty *ty, Value const *v);
+
+void
+TyValueCleanup(void)
+{
+        xvF(show_dicts);
+        xvF(show_tuples);
+        xvF(show_arrays);
+}
 
 inline static void
 MarkNext(Ty *ty, Value *v)
@@ -196,8 +208,6 @@ value_hash(Ty *ty, Value const *val)
 char *
 show_dict(Ty *ty, Value const *d, bool color)
 {
-        static _Thread_local vec(Dict *) show_dicts;
-
         for (int i = 0; i < vN(show_dicts); ++i) {
                 if (v__(show_dicts, i) == d->dict) {
                         return "{...}";
@@ -262,8 +272,6 @@ show_dict(Ty *ty, Value const *d, bool color)
 char *
 show_array(Ty *ty, Value const *a, bool color)
 {
-        static _Thread_local vec(Array *) show_arrays;
-
         for (int i = 0; i < vN(show_arrays); ++i) {
                 if (v__(show_arrays, i) == a->array) {
                         return "[...]";
@@ -299,8 +307,6 @@ show_array(Ty *ty, Value const *a, bool color)
 char *
 show_tuple(Ty *ty, Value const *v, bool color)
 {
-        static _Thread_local vec(Value *) show_tuples;
-
         for (int i = 0; i < vN(show_tuples); ++i) {
                 if (v__(show_tuples, i) == v->items) {
                         return "(...)";

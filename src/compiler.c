@@ -188,7 +188,6 @@
 
 #define WITH_EXPECTED_TYPE(x) WITH_STATE(expected_type, (x))
 
-enum { CTX_EXPR, CTX_TYPE };
 #define WITH_CTX(c) WITH_STATE(ctx, CTX_##c)
 #define IS_CTX(c) (STATE.ctx == (CTX_##c))
 
@@ -1818,7 +1817,8 @@ addsymbol(Ty *ty, Scope *scope, char const *name)
 static Symbol *
 getsymbol(Ty *ty, Scope const *scope, char const *name, u32 flags)
 {
-        if (strcmp(name, "_") == 0) {
+        if (s_eq(name, "_")) {
+                *(volatile int *)0 = 0;
                 fail(
                         "the special identifier %s'_'%s can only be used as an lvalue",
                         TERM(38),
@@ -1827,7 +1827,7 @@ getsymbol(Ty *ty, Scope const *scope, char const *name, u32 flags)
         }
 
         // Allow -> it + 1 instead of -> _1 + 1
-        if (strcmp(name, "it") == 0 && STATE.implicit_fscope != NULL) {
+        if (s_eq(name, "it") && STATE.implicit_fscope != NULL) {
                 name = "_1";
         }
 
@@ -3967,6 +3967,11 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                         break;
                 }
 
+                if (IS_CTX(TYPE) && s_eq(e->identifier, "_")) {
+                        e->type = EXPRESSION_MATCH_ANY;
+                        break;
+                }
+
                 if (
                         (e->module == NULL)
                      && (strcmp(e->identifier, "__class__") == 0)
@@ -4235,7 +4240,14 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                 break;
         case EXPRESSION_TEMPLATE:
                 for (usize i = 0; i < vN(e->template.holes); ++i) {
-                        symbolize_expression(ty, scope, v__(e->template.holes, i));
+                        Expr *hole = v__(e->template.holes, i);
+                        int hole_ctx = v__(e->template.ctxs, i);
+                        WITH_STATE(ctx, hole_ctx) {
+                                symbolize_expression(ty, scope, hole);
+                        }
+                        if (hole_ctx == CTX_TYPE) {
+                                ResolveConstraint(ty, hole);
+                        }
                 }
                 for (usize i = 0; i < vN(e->template.exprs); ++i) {
                         symbolize_expression(ty, scope, v__(e->template.exprs, i));
@@ -12523,7 +12535,8 @@ tystmt(Ty *ty, Stmt *s)
         case STATEMENT_CLASS_DEFINITION:
                 v = vTn(
                         "name", vSsz(s->class.name),
-                        "super", s->class.super != NULL ? tyexpr(ty, s->class.super) : NIL,
+                        "super", tyexpr(ty, s->class.super),
+                        "traits", ARRAY(vA()),
                         "methods", ARRAY(vA()),
                         "getters", ARRAY(vA()),
                         "setters", ARRAY(vA()),
@@ -12533,6 +12546,9 @@ tystmt(Ty *ty, Stmt *s)
                         "staticSetters", ARRAY(vA()),
                         "staticFields",  ARRAY(vA())
                 );
+                for (int i = 0; i < vN(s->class.traits); ++i) {
+                        vAp(v__(v, 1).array, tyexpr(ty, v__(s->class.traits, i)));
+                }
                 for (int i = 0; i < vN(s->class.methods); ++i) {
                         vAp(v__(v, 2).array, tyexpr(ty, v__(s->class.methods, i)));
                 }
@@ -12821,13 +12837,18 @@ cstmt(Ty *ty, Value *v)
                 s->class.super = (super != NULL && super->type != VALUE_NIL) ? cexpr(ty, super) : NULL;
                 Value *pub = tuple_get(v, "public");
                 s->class.pub = (pub != NULL) && value_truthy(ty, pub);
+                Value *traits = tuple_get(v, "traits");
                 Value *methods = tuple_get(v, "methods");
                 Value *getters = tuple_get(v, "getters");
                 Value *setters = tuple_get(v, "setters");
                 Value *fields = tuple_get(v, "fields");
                 Value *s_methods = tuple_get(v, "staticMethods");
                 Value *s_getters = tuple_get(v, "staticGetters");
+                Value *s_setters = tuple_get(v, "staticSetters");
                 Value *s_fields = tuple_get(v, "staticFields");
+                if (traits != NULL) for (int i = 0; i < vN(*traits->array); ++i) {
+                        avP(s->class.traits, cexpr(ty, v_(*traits->array, i)));
+                }
                 if (methods != NULL) for (int i = 0; i < methods->array->count; ++i) {
                         if (tuple_get(v_(*methods->array, i), "name") == NULL) {
                                 fail("class %s has an unnamed method", s->class.name);
@@ -12843,17 +12864,20 @@ cstmt(Ty *ty, Value *v)
                         }
                         avP(s->class.setters, cexpr(ty, &setters->array->items[i]));
                 }
-                if (fields != NULL) for (int i = 0; i < fields->array->count; ++i) {
-                        avP(s->class.fields, cexpr(ty, &fields->array->items[i]));
+                if (fields != NULL) for (int i = 0; i < vN(*fields->array); ++i) {
+                        avP(s->class.fields, cexpr(ty, v_(*fields->array, i)));
                 }
-                if (s_methods != NULL) for (int i = 0; i < s_methods->array->count; ++i) {
-                        avP(s->class.s_methods, cexpr(ty, &s_methods->array->items[i]));
+                if (s_methods != NULL) for (int i = 0; i < vN(*s_methods->array); ++i) {
+                        avP(s->class.s_methods, cexpr(ty, v_(*s_methods->array, i)));
                 }
-                if (s_getters != NULL) for (int i = 0; i < s_getters->array->count; ++i) {
-                        avP(s->class.s_getters, cexpr(ty, &s_getters->array->items[i]));
+                if (s_getters != NULL) for (int i = 0; i < vN(*s_getters->array); ++i) {
+                        avP(s->class.s_getters, cexpr(ty, v_(*s_getters->array, i)));
                 }
-                if (s_fields != NULL) for (int i = 0; i < s_fields->array->count; ++i) {
-                        avP(s->class.s_fields, cexpr(ty, &s_fields->array->items[i]));
+                if (s_setters != NULL) for (int i = 0; i < vN(*s_setters->array); ++i) {
+                        avP(s->class.s_setters, cexpr(ty, v_(*s_setters->array, i)));
+                }
+                if (s_fields != NULL) for (int i = 0; i < vN(*s_fields->array); ++i) {
+                        avP(s->class.s_fields, cexpr(ty, v_(*s_fields->array, i)));
                 }
                 break;
         }
