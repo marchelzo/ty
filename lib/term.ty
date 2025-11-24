@@ -579,7 +579,7 @@ class TermIO {
     __start() {
         warn!("Reader: start")
         if (__saved-termios = tcgetattr(__fd)) == nil {
-            error!("Error: {errno.str()}")
+            throw OSError('tcgetattr()')
         }
         let copy = {*__saved-termios}
         copy.lflag &= ~ICANON

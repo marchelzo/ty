@@ -316,6 +316,7 @@ struct expression {
                         statement_vector stmts;
                         expression_vector exprs;
                         expression_vector holes;
+                        i32Vector ctxs;
                 } template;
                 struct {
                         Symbol *atmp;

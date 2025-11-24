@@ -1554,6 +1554,14 @@ CleanupThread(void *ctx)
                 free(v__(CO_THREADS, i));
         }
 
+        for (int i = 0; i < TY_TMP_BUF_COUNT; ++i) {
+                free(ty->tmp[i].p);
+        }
+
+        for (int i = 0; i < vN(ty->scratch.arenas); ++i) {
+                free(v_(ty->scratch.arenas, i)->base);
+        }
+
         TySpinLockDestroy(MyLock);
         free(MyLock);
         free((void *)MyState);
@@ -1570,9 +1578,17 @@ CleanupThread(void *ctx)
         xvF(CO_THREADS);
         xvF(ty->allocs);
         xvF(ty->_2op_cache);
+        xvF(ty->err);
+        xvF(ty->marking);
+        xvF(ty->visiting);
+        xvF(ty->scratch.arenas);
+        FreeArena(&ty->arena);
         pcre2_match_data_free(ty->pcre2.match);
         pcre2_match_context_free(ty->pcre2.ctx);
         pcre2_jit_stack_free(ty->pcre2.stack);
+
+        TyValueCleanup();
+        TyFunctionsCleanup();
 
         if (group_remaining == 0) {
                 GCLOG("Cleaning up group %p", (void*)MyGroup);

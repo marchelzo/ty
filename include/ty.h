@@ -20,7 +20,7 @@
 #include "vec.h"
 #include "log.h"
 
-#define TY_TMP_BUF_COUNT 2
+#define TY_TMP_BUF_COUNT 3
 
 #define CAT(a, b) a ## b
 
@@ -197,6 +197,7 @@ typedef struct chanval ChanVal;
 
 typedef struct compiler_state CompileState;
 
+enum { CTX_EXPR, CTX_TYPE };
 enum { FT_NONE, FT_FUNC, FT_GEN, FT_PATTERN };
 enum { MT_NONE, MT_INSTANCE, MT_GET, MT_SET, MT_STATIC, MT_2OP };
 
@@ -1622,7 +1623,10 @@ TyNewCString(Ty *ty, Value val, bool nul_before)
 #define MB_4 (2 * MB_2)
 
 #define TY_TMP_N MB_2
-#define TY_TMP() TY_BUF(TY_TMP_N)
+#define TY_TMP_A() TY_BUF_A(TY_TMP_N)
+#define TY_TMP_B() TY_BUF_B(TY_TMP_N)
+#define TY_TMP_C() TY_BUF_C(TY_TMP_N)
+#define TY_TMP()   TY_BUF(TY_TMP_N)
 
 #define TY_TMP_C_STR_i(i, n) (                                                    \
         sizeof (                                                                  \
@@ -1637,6 +1641,7 @@ TyNewCString(Ty *ty, Value val, bool nul_before)
 )
 #define TY_TMP_C_STR_A(s) TY_TMP_C_STR_i(0, (s))
 #define TY_TMP_C_STR_B(s) TY_TMP_C_STR_i(1, (s))
+#define TY_TMP_C_STR_C(s) TY_TMP_C_STR_i(2, (s))
 #define TY_TMP_C_STR TY_TMP_C_STR_A
 
 #define TY_C_STR(s) TyNewCString(ty, (s), false)
@@ -1749,6 +1754,12 @@ get_my_ty(void);
 
 Value
 this_executable(Ty *ty);
+
+void
+TyFunctionsCleanup(void);
+
+void
+TyValueCleanup(void);
 
 inline static u64
 TyThreadCPUTime(void)

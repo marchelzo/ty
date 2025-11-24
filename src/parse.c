@@ -3421,6 +3421,7 @@ prefix_template_expr(Ty *ty)
 
         expression_vector *exprs = &CurrentTemplate->template.exprs;
         expression_vector *holes = &CurrentTemplate->template.holes;
+        i32Vector         *ctxs  = &CurrentTemplate->template.ctxs;
 
         Expr *e = mkxpr(TEMPLATE_HOLE);
         e->hole.i = vN(CurrentTemplate->template.holes);
@@ -3430,16 +3431,19 @@ prefix_template_expr(Ty *ty)
         if (T0 == '(') {
                 next();
                 avP(*holes, parse_expr(ty, 0));
+                avP(*ctxs, CTX_EXPR);
                 consume(')');
         } else if (T0 == '{') {
                 e->type = EXPRESSION_TEMPLATE_VHOLE;
                 next();
                 avP(*holes, parse_expr(ty, 0));
+                avP(*ctxs, CTX_EXPR);
                 consume('}');
         } else if (T0 == ':') {
                 e->type = EXPRESSION_TEMPLATE_THOLE;
                 next();
-                avP(*holes, parse_expr(ty, 99));
+                avP(*holes, parse_type(ty, 99));
+                avP(*ctxs, CTX_TYPE);
         } else if (T0 == '\\' || T0 == TOKEN_CHECK_MATCH || T0 == '!') {
                 next();
                 e->type = EXPRESSION_TEMPLATE_XHOLE;
@@ -3447,6 +3451,7 @@ prefix_template_expr(Ty *ty)
                 avP(*exprs, e);
         } else {
                 avP(*holes, parse_expr(ty, 99));
+                avP(*ctxs, CTX_EXPR);
         }
 
         e->end = TEnd;

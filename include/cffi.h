@@ -12,6 +12,9 @@ Value
 cffi_new(Ty *ty, int argc, Value *kwargs);
 
 Value
+cffi_box(Ty *ty, int argc, Value *kwargs);
+
+Value
 cffi_size(Ty *ty, int argc, Value *kwargs);
 
 Value

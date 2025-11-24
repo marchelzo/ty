@@ -99,6 +99,12 @@ static _Atomic(u64) tid = 0;
 
 u64 NextThreadId() { return ++tid; }
 
+void
+TyFunctionsCleanup(void)
+{
+        xvF(B);
+}
+
 #define TDB_MUST_BE(x) if (1) {         \
         if (!TDB_IS(x)) zP(             \
                 "%s(): tdb must be %s", \
@@ -2451,6 +2457,38 @@ BUILTIN_FUNCTION(os_getcwd)
         return vSsz(tmp);
 }
 
+BUILTIN_FUNCTION(os_getsid)
+{
+#ifdef _WIN32
+        NOT_ON_WINDOWS("os.getsid()");
+#else
+        ASSERT_ARGC("os.getsid()", 1);
+        pid_t pid = INT_ARG(0);
+        return INTEGER(getsid(pid));
+#endif
+}
+
+BUILTIN_FUNCTION(os_setsid)
+{
+#ifdef _WIN32
+        NOT_ON_WINDOWS("os.setsid()");
+#else
+        ASSERT_ARGC("os.setsid()", 0);
+        return INTEGER(setsid());
+#endif
+}
+
+BUILTIN_FUNCTION(os_getpgid)
+{
+#ifdef _WIN32
+        NOT_ON_WINDOWS("os.getpgid()");
+#else
+        ASSERT_ARGC("os.getpgid()", 1);
+        pid_t pid = INT_ARG(0);
+        return INTEGER(getpgid(pid));
+#endif
+}
+
 BUILTIN_FUNCTION(os_unlink)
 {
         ASSERT_ARGC("os.unlink()", 1);
@@ -3375,7 +3413,6 @@ BUILTIN_FUNCTION(os_spawn)
                 SpawnReady = true;
         }
 /* ========================================================================= */
-
         ASSERT_ARGC("os.spawn()", 1);
 
         Value cmd = ARGx(0, VALUE_ARRAY);
@@ -3395,6 +3432,9 @@ BUILTIN_FUNCTION(os_spawn)
         Value _v_stdin  = KWARG("stdin",  INTEGER);
         Value _v_stdout = KWARG("stdout", INTEGER);
         Value _v_stderr = KWARG("stderr", INTEGER);
+        Value _ctty     = KWARG("ctty",   TUPLE, _NIL);
+
+        int ret;
 
         char const *chdir = NULL;
         int        fchdir = -1;
@@ -3410,11 +3450,28 @@ BUILTIN_FUNCTION(os_spawn)
         case VALUE_STRING:
         case VALUE_BLOB:
         case VALUE_PTR:
-                chdir = TY_TMP_C_STR(_chdir);
+                chdir = TY_TMP_C_STR_B(_chdir);
                 break;
         }
 
+        char *ctty;
+        int ctty_m;
+        int ctty_s;
+
+        if (!IsMissing(_ctty)) {
+                Value *name   = tget_t(&_ctty, "name",   VALUE_STRING);
+                Value *master = tget_t(&_ctty, "master", VALUE_INTEGER);
+                Value *slave  = tget_t(&_ctty, "slave",  VALUE_INTEGER);
+                if (name == NULL || master == NULL || slave == NULL) {
+                        bP("bad ctty: %s", VSC(&_ctty));
+                }
+                ctty_m = master->z;
+                ctty_s = dup(slave->z);
+                ctty = TY_TMP_C_STR_C(*name);
+        }
+
         bool detach = !IsMissing(_detach) && _detach.boolean;
+        bool setsid = !IsNone(_ctty);
 
         int _stdin  = IsMissing(_v_stdin)  ? TY_SPAWN_INHERIT : _v_stdin.z;
         int _stdout = IsMissing(_v_stdout) ? TY_SPAWN_INHERIT : _v_stdout.z;
@@ -3424,9 +3481,41 @@ BUILTIN_FUNCTION(os_spawn)
         if (_stdout == TY_SPAWN_INHERIT) { _stdout = 1; }
         if (_stderr == TY_SPAWN_INHERIT) { _stderr = 2; }
 
-        int _0 = _stdin;
-        int _1 = _stdout;
-        int _2 = _stderr;
+        int null;
+        if (
+                (_stdin  == TY_SPAWN_NULL)
+              | (_stdout == TY_SPAWN_NULL)
+              | (_stderr == TY_SPAWN_NULL)
+        ) {
+                null = open("/dev/null", O_RDWR);
+                if (null < 0) {
+                        bP("open(\"/dev/null\"): %s", strerror(errno));
+                }
+                if (_stdin  == TY_SPAWN_NULL) { _stdin  = null; }
+                if (_stdout == TY_SPAWN_NULL) { _stdout = null; }
+                if (_stderr == TY_SPAWN_NULL) { _stderr = null; }
+        } else {
+                null = -1;
+        }
+
+        pid_t pgid = getpgrp();
+        bool ctty0 = ctty && isatty(_stdin ) && (tcgetpgrp(_stdin ) == pgid);
+        bool ctty1 = ctty && isatty(_stdout) && (tcgetpgrp(_stdout) == pgid);
+        bool ctty2 = ctty && isatty(_stderr) && (tcgetpgrp(_stderr) == pgid);
+
+        if (ctty0) { _stdin  = ctty_s; }
+        if (ctty1) { _stdout = ctty_s; }
+        if (ctty2) { _stderr = ctty_s; }
+
+        int _0 = (_stdin  != null) ? _stdin  : -1;
+        int _1 = (_stdout != null) ? _stdout : -1;
+        int _2 = (_stderr != null) ? _stderr : -1;
+
+        if (ctty0) { _0 = ctty_m; }
+        if (ctty1) { _1 = ctty_m; }
+        if (ctty2) { _2 = ctty_m; }
+
+        bool octty = (ctty != NULL) && !(ctty0 | ctty1 | ctty2);
 
         int  in[2];
         int out[2];
@@ -3437,6 +3526,7 @@ BUILTIN_FUNCTION(os_spawn)
         vec(int) x0  = {0};
         vec(int) x1  = {0};
 
+        Value proc = NIL;
 /* ========================================================================= */
 #define X0(x) svP(x0, x)
 #define X1(x) svP(x1, x)
@@ -3458,18 +3548,20 @@ BUILTIN_FUNCTION(os_spawn)
         bool const same1 = (_stdout == 1);
         bool const same2 = (_stderr == 2);
 
+        if (null != -1) { X0(null); }
+
         if (pipe0) { P(in, !!); _stdin  =  in[0]; _0 =  in[1]; }
         if (pipe1) { P(out, !); _stdout = out[1]; _1 = out[0]; }
         if (pipe2) { P(err, !); _stderr = err[1]; _2 = err[0]; }
 
         if (merge) { _stderr = _stdout; _2 = _1; }
-
-        posix_spawn_file_actions_t actions;
-        posix_spawn_file_actions_init(&actions);
 /* ------------------------------------------------------------------------- */
 #undef P
 #undef X1
 #undef X0
+/* ------------------------------------------------------------------------- */
+        posix_spawn_file_actions_t actions;
+        posix_spawn_file_actions_init(&actions);
 /* ========================================================================= */
 #define xD(op, ...) (posix_spawn_file_actions_add##op)(&actions, __VA_ARGS__)
 /* ------------------------------------------------------------------------- */
@@ -3482,6 +3574,8 @@ BUILTIN_FUNCTION(os_spawn)
 
         if (fchdir !=   -1) { xD(fchdir_np, fchdir); }
         if (chdir  != NULL) { xD( chdir_np,  chdir); }
+
+        if (octty) { xD(open, 3, ctty, O_RDWR, O_CLOEXEC); }
 /* ------------------------------------------------------------------------- */
 #undef xD
 /* ========================================================================= */
@@ -3489,9 +3583,16 @@ BUILTIN_FUNCTION(os_spawn)
         posix_spawnattr_t attr;
         posix_spawnattr_init(&attr);
 
-        if (detach) {
-                posix_spawnattr_setpgroup(&attr, 0);
-                posix_spawnattr_setflags(&attr, POSIX_SPAWN_SETPGROUP);
+        if (detach | setsid) {
+                i32 flags = 0;
+                if (detach) {
+                        posix_spawnattr_setpgroup(&attr, 0);
+                        flags |= POSIX_SPAWN_SETPGROUP;
+                }
+                if (setsid) {
+                        flags |= POSIX_SPAWN_SETSID;
+                }
+                posix_spawnattr_setflags(&attr, flags);
         }
 
         vec(char *) argv = {0};
@@ -3499,36 +3600,31 @@ BUILTIN_FUNCTION(os_spawn)
         svP(argv, NULL);
 
         pid_t pid;
-        int error = posix_spawnp(&pid, v_0(argv), &actions, &attr, vv(argv), environ);
+        ret = posix_spawnp(&pid, v_0(argv), &actions, &attr, vv(argv), environ);
 
         posix_spawn_file_actions_destroy(&actions);
         posix_spawnattr_destroy(&attr);
-
         vfor(argv, free(*it));
 
-        if (error != 0) {
-                goto Fail;
+        if (ret == 0) {
+                proc = vTn(
+                        "stdin",   INTEGER(_0),
+                        "stdout",  INTEGER(_1),
+                        "stderr",  INTEGER(_2),
+                        "pid",     INTEGER(pid)
+                );
+                goto Cleanup;
         }
-
-        vfor(x0, close(*it));
-        TyMutexUnlock(&SpawnLock);
-        SCRATCH_RESTORE();
-
-        return vTn(
-                "stdin",   INTEGER(_0),
-                "stdout",  INTEGER(_1),
-                "stderr",  INTEGER(_2),
-                "pid",     INTEGER(pid)
-        );
-
 /* ------------------------------------------------------------------------- */
 Fail:
-        vfor(x0, close(*it));
         vfor(x1, close(*it));
+
+Cleanup:
+        vfor(x0, close(*it));
         TyMutexUnlock(&SpawnLock);
         SCRATCH_RESTORE();
 
-        return NIL;
+        return proc;
 }
 #endif
 
@@ -4903,12 +4999,17 @@ SETID(setegid)
 noreturn BUILTIN_FUNCTION(os_exit)
 {
         ASSERT_ARGC("os.exit()", 1);
+        exit(INT_ARG(0));
+}
 
-        Value status = ARG(0);
-        if (status.type != VALUE_INTEGER)
-                zP("the argument to os.exit() must be an integer");
-
-        exit(status.z);
+BUILTIN_FUNCTION(os_pause)
+{
+        ASSERT_ARGC("os.pause()", 0);
+#ifdef _WIN32
+        NOT_ON_WINDOWS("os.pause()");
+#else
+        return INTEGER(pause());
+#endif
 }
 
 BUILTIN_FUNCTION(os_exec)
@@ -5827,6 +5928,19 @@ BUILTIN_FUNCTION(os_isatty)
         return INTEGER(isatty(INT_ARG(0)));
 }
 
+BUILTIN_FUNCTION(os_ttyname)
+{
+        ASSERT_ARGC("os.ttyname()", 1);
+        int fd = INT_ARG(0);
+        char *name = TY_TMP();
+        int ret = ttyname_r(fd, name, TY_TMP_N);
+        if (ret != 0) {
+                errno = ret;
+                return NIL;
+        }
+        return vSsz(name);
+}
+
 BUILTIN_FUNCTION(os_terminal_size)
 {
         ASSERT_ARGC("os.terminal-size()", 0, 1);
@@ -5926,6 +6040,85 @@ BUILTIN_FUNCTION(termios_tcsetattr)
         }
 
         return BOOLEAN(tcsetattr(fd, flags, &t) == 0);
+#endif
+}
+
+BUILTIN_FUNCTION(termios_tcgetsid)
+{
+        ASSERT_ARGC("termios.tcgetsid()", 1);
+#ifdef _WIN32
+        NOT_ON_WINDOWS("termios.getsid()");
+#else
+        return INTEGER(tcgetsid(INT_ARG(0)));
+#endif
+}
+
+BUILTIN_FUNCTION(termios_tcgetpgrp)
+{
+        ASSERT_ARGC("termios.tcgetpgrp()", 1);
+#ifdef _WIN32
+        NOT_ON_WINDOWS("termios.tcgetpgrp()");
+#else
+        return INTEGER(tcgetpgrp(INT_ARG(0)));
+#endif
+}
+
+BUILTIN_FUNCTION(termios_tcsetpgrp)
+{
+        ASSERT_ARGC("termios.tcsetpgrp()", 2);
+#ifdef _WIN32
+        NOT_ON_WINDOWS("termios.tcsetpgrp()");
+#else
+        int fd = INT_ARG(0);
+        pid_t pgrp = INT_ARG(1);
+        return INTEGER(tcsetpgrp(fd, pgrp));
+#endif
+}
+
+BUILTIN_FUNCTION(termios_tcsendbreak)
+{
+        ASSERT_ARGC("termios.tcsendbreak()", 2);
+#ifdef _WIN32
+        NOT_ON_WINDOWS("termios.tcsendbreak()");
+#else
+        int fd = INT_ARG(0);
+        int duration = INT_ARG(1);
+        return INTEGER(tcsendbreak(fd, duration));
+#endif
+}
+
+BUILTIN_FUNCTION(termios_tcdrain)
+{
+        ASSERT_ARGC("termios.tcdrain()", 1);
+#ifdef _WIN32
+        NOT_ON_WINDOWS("termios.tcdrain()");
+#else
+        int fd = INT_ARG(0);
+        return INTEGER(tcdrain(fd));
+#endif
+}
+
+BUILTIN_FUNCTION(termios_tcflush)
+{
+        ASSERT_ARGC("termios.tcflush()", 2);
+#ifdef _WIN32
+        NOT_ON_WINDOWS("termios.tcflush()");
+#else
+        int fd = INT_ARG(0);
+        int action = INT_ARG(1);
+        return INTEGER(tcflush(fd, action));
+#endif
+}
+
+BUILTIN_FUNCTION(termios_tcflow)
+{
+        ASSERT_ARGC("termios.tcflow()", 2);
+#ifdef _WIN32
+        NOT_ON_WINDOWS("termios.tcflow()");
+#else
+        int fd = INT_ARG(0);
+        int action = INT_ARG(1);
+        return INTEGER(tcflow(fd, action));
 #endif
 }
 

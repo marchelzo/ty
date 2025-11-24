@@ -319,7 +319,7 @@ class InteractiveLineReader {
         complete=nil,
         ctrl_c: ?Bool = false,
         history-file: Path | String | nil = nil,
-        render: RenderFunction | nil = nil
+        render: RenderFunction | nil = nil,
     ) {
         match term {
             tio: TermIO => {
@@ -677,11 +677,22 @@ class InteractiveLineReader {
                 '<C-r>' => {
                     __tio.stop()
 
+                    let ctty = do {
+                        let my-tty-fd = open('/dev/tty', O_RDONLY)
+                        let my-tty-name = ttyname(my-tty-fd)
+                        os.close(my-tty-fd)
+                        let tio-tty-name = ttyname(__tio.fd)
+                        if my-tty-name != tio-tty-name {
+                            tio-tty-name
+                        }
+                    }
+
                     let fzf = spawn(
                         ['fzf', '--tac', '--no-sort', '-q', getText()],
                         stdin=SPAWN_PIPE,
                         stdout=SPAWN_PIPE,
-                        stderr=SPAWN_INHERIT
+                        stderr=__tio.fd,
+                        ctty=ctty if ctty != nil
                     )
 
                     write(fzf.stdin, __history.map(\_.0.str()).unlines())
