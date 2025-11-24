@@ -12547,31 +12547,31 @@ tystmt(Ty *ty, Stmt *s)
                         "staticFields",  ARRAY(vA())
                 );
                 for (int i = 0; i < vN(s->class.traits); ++i) {
-                        vAp(v__(v, 1).array, tyexpr(ty, v__(s->class.traits, i)));
+                        vAp(v__(v, 2).array, tyexpr(ty, v__(s->class.traits, i)));
                 }
                 for (int i = 0; i < vN(s->class.methods); ++i) {
-                        vAp(v__(v, 2).array, tyexpr(ty, v__(s->class.methods, i)));
+                        vAp(v__(v, 3).array, tyexpr(ty, v__(s->class.methods, i)));
                 }
                 for (int i = 0; i < vN(s->class.getters); ++i) {
-                        vAp(v__(v, 3).array, tyexpr(ty, v__(s->class.getters, i)));
+                        vAp(v__(v, 4).array, tyexpr(ty, v__(s->class.getters, i)));
                 }
                 for (int i = 0; i < vN(s->class.setters); ++i) {
-                        vAp(v__(v, 4).array, tyexpr(ty, v__(s->class.setters, i)));
+                        vAp(v__(v, 5).array, tyexpr(ty, v__(s->class.setters, i)));
                 }
                 for (int i = 0; i < vN(s->class.fields); ++i) {
-                        vAp(v__(v, 5).array, tyexpr(ty, v__(s->class.fields, i)));
+                        vAp(v__(v, 6).array, tyexpr(ty, v__(s->class.fields, i)));
                 }
                 for (int i = 0; i < vN(s->class.s_methods); ++i) {
-                        vAp(v__(v, 6).array, tyexpr(ty, v__(s->class.s_methods, i)));
+                        vAp(v__(v, 7).array, tyexpr(ty, v__(s->class.s_methods, i)));
                 }
                 for (int i = 0; i < vN(s->class.s_getters); ++i) {
-                        vAp(v__(v, 7).array, tyexpr(ty, v__(s->class.s_getters, i)));
+                        vAp(v__(v, 8).array, tyexpr(ty, v__(s->class.s_getters, i)));
                 }
                 for (int i = 0; i < vN(s->class.s_setters); ++i) {
-                        vAp(v__(v, 8).array, tyexpr(ty, v__(s->class.s_setters, i)));
+                        vAp(v__(v, 9).array, tyexpr(ty, v__(s->class.s_setters, i)));
                 }
                 for (int i = 0; i < vN(s->class.s_fields); ++i) {
-                        vAp(v__(v, 9).array, tyexpr(ty, v__(s->class.s_fields, i)));
+                        vAp(v__(v, 10).array, tyexpr(ty, v__(s->class.s_fields, i)));
                 }
                 v = TAGGED(TyClass, v);
                 break;

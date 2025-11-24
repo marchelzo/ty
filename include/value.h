@@ -21,6 +21,7 @@ typedef struct value Value;
 #define V_ALIGN (_Alignof (Value))
 
 enum {
+        CLASS_BOTTOM = INT_MIN,
         CLASS_NIL = -2,
         CLASS_TOP,
         CLASS_OBJECT,
@@ -55,8 +56,7 @@ enum {
         CLASS_RANGE,
         CLASS_INC_RANGE,
         CLASS_TUPLE_SPEC,
-        CLASS_BUILTIN_END,
-        CLASS_BOTTOM = INT_MAX
+        CLASS_BUILTIN_END
 };
 
 #define TY_AST_NODES            \

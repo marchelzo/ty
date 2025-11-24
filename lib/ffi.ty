@@ -711,7 +711,7 @@ fn strct() {
         ty.Class(
             name: structName,
             public: pub?,
-            traits: [$$[$$:(IntoPtr[_])$$]],
+            traits: [$$[$$::(IntoPtr)[_]$$]],
             fields:  [ty.Id({name: '<p>', constraint: ty.Any})],
             methods: [get, __ptr__, init, size, show, *methods],
             getters: getters,

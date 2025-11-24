@@ -3423,7 +3423,7 @@ BUILTIN_FUNCTION(os_spawn)
 
         for (int i = 0; i < vN(*cmd.array); ++i) {
                 if (v_(*cmd.array, i)->type != VALUE_STRING) {
-                        bP("non-string present in argv: %s", VSC(&cmd));
+                        bP("non-string in argv: %s", VSC(&cmd));
                 }
         }
 
@@ -3466,8 +3466,12 @@ BUILTIN_FUNCTION(os_spawn)
                         bP("bad ctty: %s", VSC(&_ctty));
                 }
                 ctty_m = master->z;
-                ctty_s = dup(slave->z);
+                ctty_s = slave->z;
                 ctty = TY_TMP_C_STR_C(*name);
+        } else {
+                ctty_m = -1;
+                ctty_s = -1;
+                ctty   = NULL;
         }
 
         bool detach = !IsMissing(_detach) && _detach.boolean;
@@ -3614,11 +3618,12 @@ BUILTIN_FUNCTION(os_spawn)
                         "pid",     INTEGER(pid)
                 );
                 goto Cleanup;
+        } else {
+                errno = ret;
         }
 /* ------------------------------------------------------------------------- */
 Fail:
         vfor(x1, close(*it));
-
 Cleanup:
         vfor(x0, close(*it));
         TyMutexUnlock(&SpawnLock);
