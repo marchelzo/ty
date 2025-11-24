@@ -58,7 +58,7 @@ C! lib function crc32(c.u32, c.ptr, c.u64) -> c.u32
 
 pub function compress(s: String | Blob) {
   let bound = cCompressBound(s.size())
-  let $pSize = c.new(c.ulong, bound)
+  let $pSize = c.box(c.ulong, bound)
   let $buffer = c.alloc(bound)
 
   if let err = cCompress(buffer, pSize, s, s.size()) and err != Z_OK {
@@ -75,7 +75,7 @@ pub function compress(s: String | Blob) {
 
 pub function uncompress(s: String | Blob, maxSize = nil) {
   let size = 4096
-  let $pSize = c.new(c.ulong, size)
+  let $pSize = c.box(c.ulong, size)
   let $buffer = c.alloc(size)
 
   defer {

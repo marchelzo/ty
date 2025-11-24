@@ -430,10 +430,14 @@ visit_expression(Ty *ty, Expr *e, Scope *scope, VisitorSet const *hooks)
                 VS(e->statement);
                 break;
         case EXPRESSION_TEMPLATE:
-                for (size_t i = 0; i < e->template.exprs.count; ++i) {
-                        V(e->template.exprs.items[i]);
-                        V(e->template.holes.items[i]);
-                        VS(e->template.stmts.items[i]);
+                for (size_t i = 0; i < vN(e->template.exprs); ++i) {
+                        V(v__(e->template.exprs, i));
+                }
+                for (size_t i = 0; i < vN(e->template.holes); ++i) {
+                        V(v__(e->template.holes, i));
+                }
+                for (size_t i = 0; i < vN(e->template.stmts); ++i) {
+                        VS(v__(e->template.stmts, i));
                 }
                 break;
         case EXPRESSION_FUNCTION_CALL:
