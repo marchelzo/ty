@@ -11,6 +11,7 @@ CFLAGS += $(shell pkg-config --cflags openssl)
 CFLAGS += -Wno-switch
 CFLAGS += -Wno-unused-value
 CFLAGS += -Wno-unused-function
+CFLAGS += -Wno-empty-body
 CFLAGS += -D_GNU_SOURCE
 CFLAGS += -DPCRE2_CODE_UNIT_WIDTH=8
 CFLAGS += -DCURL_STATICLIB -DPCRE2_CODE_UNIT_WIDTH=8 -DPCRE2_STATIC -DUTF8PROC_STATIC -D_GNU_SOURCE
@@ -82,6 +83,7 @@ else ifdef DEBUG
         CFLAGS += -fno-omit-frame-pointer
         CFLAGS += -fno-sanitize=nonnull-attribute
         CFLAGS += -fsanitize=address
+        CFLAGS += -mllvm --asan-stack=0
         CFLAGS += -fno-sanitize-address-use-after-scope
         CFLAGS += -g3
 else ifdef TDEBUG

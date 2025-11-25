@@ -176,6 +176,14 @@ BUILTIN_FUNCTION(thread_recv);
 BUILTIN_FUNCTION(thread_channel);
 BUILTIN_FUNCTION(thread_close);
 BUILTIN_FUNCTION(thread_sigmask);
+BUILTIN_FUNCTION(thread_atomic);
+BUILTIN_FUNCTION(thread_atomic_load);
+BUILTIN_FUNCTION(thread_atomic_store);
+BUILTIN_FUNCTION(thread_atomic_cmpxchg);
+BUILTIN_FUNCTION(thread_atomic_swap);
+BUILTIN_FUNCTION(thread_atomic_fetch_add);
+BUILTIN_FUNCTION(thread_atomic_fetch_sub);
+
 BUILTIN_FUNCTION(os_pipe);
 BUILTIN_FUNCTION(os_dup);
 BUILTIN_FUNCTION(os_dup2);

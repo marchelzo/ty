@@ -11159,10 +11159,6 @@ compiler_introduce_symbol(Ty *ty, char const *module, char const *name)
         sym->mod    = mod;
         sym->flags |= (SYM_PUBLIC | SYM_BUILTIN);
 
-        if (isupper(name[0])) {
-                sym->flags |= SYM_CONST;
-        }
-
         BuiltinCount += 1;
 
         return sym;
