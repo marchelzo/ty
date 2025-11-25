@@ -7881,20 +7881,30 @@ emit_target(Ty *ty, Expr *target, bool def)
                 annotate("%s", target->identifier);
                 emit_tgt(ty, target->symbol, STATE.fscope, def);
                 break;
+
         case EXPRESSION_MEMBER_ACCESS:
         case EXPRESSION_SELF_ACCESS:
                 EE(target->object);
                 INSN(TARGET_MEMBER);
                 emit_member(ty, target->member->identifier);
                 break;
+
+        case EXPRESSION_DYN_MEMBER_ACCESS:
+                EE(target->object);
+                EE(target->member);
+                INSN(TARGET_DYN_MEMBER);
+                break;
+
         case EXPRESSION_SUBSCRIPT:
                 EE(target->container);
                 EE(target->subscript);
                 INSN(TARGET_SUBSCRIPT);
                 break;
+
         case EXPRESSION_REF_PATTERN:
                 emit_target(ty, target->target, false);
                 break;
+
         default:
                 fail("oh no!");
         }

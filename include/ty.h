@@ -895,6 +895,7 @@ extern usize TotalBytesAllocated;
         X(TARGET_GLOBAL),         \
         X(TARGET_THREAD_LOCAL),   \
         X(TARGET_MEMBER),         \
+        X(TARGET_DYN_MEMBER),     \
         X(TARGET_SELF_MEMBER),    \
         X(TARGET_SELF_STATIC),    \
         X(TARGET_STATIC_MEMBER),  \

@@ -5142,6 +5142,7 @@ NextInstruction:
                         break;
                 CASE(TARGET_MEMBER)
                         READVALUE(z);
+TargetMember:
                         if ((vp = TargetFieldFast(ty, top(), z)) != NULL) {
                                 pushtarget(vp, v.object);
                         } else {
@@ -5442,11 +5443,9 @@ NextInstruction:
                 CASE(DEFER)
                         t = GetCurrentTry(ty);
                         xvP(t->defer, pop());
-                        //printf("Push defer: ntry=%zu  ndefer=%zu t=%p\n", vN(TRY_STACK), vN(t->defer), (void *)t);
                         break;
                 CASE(CLEANUP)
                         t = *vvL(TRY_STACK);
-                        //printf("Running %zu cleanup funcs ntry=%zu t=%p\n", vN(t->defer), vN(TRY_STACK), (void *)t);
                         for (int i = 0; i < t->defer.count; ++i) {
                                 vmC(&t->defer.items[i], 0);
                         }
@@ -5545,7 +5544,6 @@ NextInstruction:
                         READJUMP(jump);
                         READVALUE(i);
                         READVALUE(b);
-                        //LOG("trying to index: %s", VSC(top()));
                         if (top()->type != VALUE_ARRAY) {
                                 DOJUMP(jump);
                                 break;
@@ -6058,6 +6056,9 @@ Yield:
                                 value = pop();
                                 goto BadMemberAccess;
                         }
+                CASE(TARGET_DYN_MEMBER)
+                        z = GetDynamicMemberId(ty, true);
+                        goto TargetMember;
                 CASE(SELF_MEMBER_ACCESS)
                         READVALUE(z);
 
@@ -6278,7 +6279,7 @@ BadTupleMember:
                                 push(NIL);
                                 break;
                         default:
-                        BadContainer:
+BadContainer:
                                 zP("invalid container in subscript expression: %s", VSC(&container));
                                 abort();
                         }
@@ -6482,7 +6483,7 @@ BadTupleMember:
                         break;
                 CASE(BINARY_OP)
                         READVALUE(n);
-                BinaryOp:
+BinaryOp:
                         DoBinaryOp(ty, n, false);
                         break;
                 CASE(UNARY_OP)
@@ -6805,7 +6806,7 @@ BadTupleMember:
                         break;
                 CASE(MULTI_RETURN)
                 CASE(RETURN)
-                Return:
+Return:
                         n = vvL(FRAMES)->fp;
                         if (IP[-1] == INSTR_MULTI_RETURN) {
                                 READVALUE(RC);
