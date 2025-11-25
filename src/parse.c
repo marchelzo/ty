@@ -5023,6 +5023,7 @@ assignment_lvalue(Ty *ty, Expr *e)
         case EXPRESSION_SUBSCRIPT:
         case EXPRESSION_TAG_APPLICATION:
         case EXPRESSION_MEMBER_ACCESS:
+        case EXPRESSION_DYN_MEMBER_ACCESS:
         case EXPRESSION_FUNCTION_CALL:
         case EXPRESSION_VIEW_PATTERN:
         case EXPRESSION_NOT_NIL_VIEW_PATTERN:
