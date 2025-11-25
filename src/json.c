@@ -506,23 +506,24 @@ encode(Ty *ty, Value const *v, str *out)
                 break;
         case VALUE_DICT:
                 xvP(*out, '{');
-                int last = -1;
-                for (int i = 0; i < v->dict->size; ++i)
-                        if (v->dict->keys[i].type == VALUE_STRING)
-                                last = i;
-                if (!try_visit(v->dict))
+                if (!try_visit(v->dict)) {
                         return false;
-                for (int i = 0; i < v->dict->size; ++i) {
-                        if (v->dict->keys[i].type != VALUE_STRING)
-                                continue;
-                        if (!encode(ty, &v->dict->keys[i], out))
-                                return false;
-                        xvP(*out, ':');
-                        if (!encode(ty, &v->dict->values[i], out))
-                                return false;
-                        if (i != last)
-                                xvP(*out, ',');
                 }
+                dfor(v->dict, {
+                        if (key->type != VALUE_STRING) {
+                                continue;
+                        }
+                        if (!encode(ty, key, out)) {
+                                return false;
+                        }
+                        xvP(*out, ':');
+                        if (!encode(ty, val, out)) {
+                                return false;
+                        }
+                        if (_d_item->prev != NULL) {
+                                xvP(*out, ',');
+                        }
+                });
                 vvX(Visiting);
                 xvP(*out, '}');
                 break;

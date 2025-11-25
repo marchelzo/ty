@@ -17,10 +17,10 @@ scope_name(Ty *ty, Scope const *s)
 {
         _Thread_local static char b[4096];
 
-        vec(Scope *) stack = {0};
+        vec(Scope const *) stack = {0};
 
         while (s != NULL) {
-                vec_nogc_push(stack, s);
+                xvP(stack, s);
                 s = s->parent;
         }
 
@@ -39,6 +39,8 @@ scope_name(Ty *ty, Scope const *s)
                 strcat(b, "." + (i == 0));
                 remaining -= n;
         }
+
+        xvF(stack);
 
         return sclone(ty, b);
 }
@@ -117,7 +119,7 @@ scope_new_namespace(Ty *ty, char const *name, Scope *parent)
                 false
         );
 
-        ns->namespace = true;
+        ns->flags |= SCOPE_NAMESPACE;
 
         return scope_add_namespace(ty, parent, name, ns);
 }
@@ -135,10 +137,11 @@ NewSubscope(
         Scope *scope = amA0(sizeof *scope);
 
         scope->parent = parent;
-        scope->is_function = is_function;
+        scope->flags |= is_function * SCOPE_FUNCTION;
         scope->function = (is_function || parent == NULL)
                         ? scope
                         : parent->function;
+        scope->eval = EVAL_DEPTH;
 
 #if TY_NAMED_SCOPES
         scope->name = name;
@@ -355,7 +358,7 @@ put(Ty *ty, Scope *scope, Symbol *sym)
 static Symbol *
 xadd(Ty *ty, Scope *scope, char const *id)
 {
-        if (scope->reloading) {
+        if (ScopeIsReloading(scope)) {
                 Symbol *old = ScopeFindRecycled(scope, id);
                 if (old != NULL) {
                         old->flags = SYM_GLOBAL;
@@ -665,7 +668,7 @@ void
 scope_capture(Ty *ty, Scope *s, Symbol *sym)
 {
         if (
-                (EVAL_DEPTH > 0)
+                (EVAL_DEPTH > s->eval)
              && !ScopeCapturesVar(s->function, sym)
              && !SymbolIsImmortal(sym)
         ) {
@@ -857,7 +860,7 @@ ScopeCompletions(
 void
 ScopeReset(Scope *scope)
 {
-        scope->active = false;
+        scope->flags &= ~SCOPE_ACTIVE;
         v0(scope->refinements);
 
         for (i32 i = 0; i < scope->size; ++i) {

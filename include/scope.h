@@ -18,7 +18,12 @@
         X(LOCAL_ONLY,  LocalOnly,  0)  \
         X(EXPLICIT,    Explicit,   1)  \
         X(PERMISSIVE,  Permissive, 2)  \
-        X(LOCAL,       Local,      3)
+        X(LOCAL,       Local,      3)  \
+        X(EXTERNAL,    External,   4)  \
+        X(NAMESPACE,   Namespace,  5)  \
+        X(ACTIVE,      Active,     6)  \
+        X(FUNCTION,    Function,   7)  \
+        X(RELOADING,   Reloading,  8)
 
 
 #define X(f, _, i) SCOPE_##f = (1 << i),
@@ -94,17 +99,12 @@ typedef struct scope {
 
         RefinementVector refinements;
 
-        bool external;
-        bool namespace;
-        bool shared;
-        bool active;
-        bool is_function;
-        bool reloading;
-
         Scope *function;
 
         u32 size;
         u32 count;
+        u32 flags;
+        i32 eval;
 
         Scope *parent;
 
@@ -242,18 +242,15 @@ NewScopedTypeVar(Ty *ty, Scope *s, char const *name);
 TY_SYM_FLAGS
 #undef X
 
-inline static bool
-ScopeIsShared(Scope const *scope)
-{
-        while (scope != NULL) {
-                if (scope->shared) {
-                        return true;
-                }
-                scope = scope->parent;
+#define X(f, n, _)                                 \
+        inline static bool                         \
+        ScopeIs##n(Scope const *scope)             \
+        {                                          \
+                return (scope != NULL)             \
+                    && (scope->flags & SCOPE_##f); \
         }
-
-        return false;
-}
+TY_SCOPE_FLAGS
+#undef X
 
 inline static Refinement *
 ScopeFindRefinement(Scope *scope, Symbol *var)
@@ -298,7 +295,7 @@ inline static bool
 ScopeIsTop(Scope const *scope)
 {
         while (scope != NULL) {
-                if (scope->is_function) {
+                if (ScopeIsFunction(scope)) {
                         return false;
                 }
                 scope = scope->parent;

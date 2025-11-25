@@ -12,7 +12,7 @@
 #include "value.h"
 #include "xd.h"
 #include "dict.h"
-#include "object.h"
+#include "blob.h"
 #include "tags.h"
 #include "class.h"
 #include "gc.h"
@@ -225,36 +225,32 @@ show_dict(Ty *ty, Value const *d, bool color)
                 svP(buf, '{');
         }
 
-        for (size_t i = 0, j = 0; i < d->dict->size; ++i) {
-                if (d->dict->keys[i].type == 0) {
-                        continue;
-                }
+        int i = 0;
 
-                char *key = color
-                          ? value_show_colorx(ty, &d->dict->keys[i])
-                          : value_showx(ty, &d->dict->keys[i]);
-                u32 nkey = strlen(key);
+        dfor(d->dict, {
+                char *k = color
+                          ? value_show_colorx(ty, key)
+                          : value_showx(ty, key);
+                u32 nkey = strlen(k);
 
-                char *val = color
-                          ? value_show_colorx(ty, &d->dict->values[i])
-                          : value_showx(ty, &d->dict->values[i]);
-                u32 nval = strlen(val);
+                char *v = color
+                          ? value_show_colorx(ty, val)
+                          : value_showx(ty, val);
+                u32 nval = strlen(v);
 
-                if (j > 0) {
+                if (i++ > 0) {
                         svP(buf, ',');
                         svP(buf, ' ');
                 }
 
-                svPn(buf, key, nkey);
+                svPn(buf, k, nkey);
 
-                if (d->dict->values[i].type != VALUE_NIL) {
+                if (val->type != VALUE_NIL) {
                         svP(buf, ':');
                         svP(buf, ' ');
-                        svPn(buf, val, nval);
+                        svPn(buf, v, nval);
                 }
-
-                j += 1;
-        }
+        });
 
         if (color) {
                 sxdf(&buf, "%s}%s", TERM(94;1), TERM(0));

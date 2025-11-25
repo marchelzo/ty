@@ -189,6 +189,7 @@ struct refinement {
 };
 
 typedef struct dict Dict;
+typedef struct dict_item DictItem;
 
 typedef struct generator Generator;
 typedef struct thread Thread;
@@ -373,7 +374,7 @@ struct value {
                 };
                 struct {
                         imax i;
-                        int off;
+                        ptrdiff_t off;
                         int nt;
                 };
                 struct {
@@ -474,13 +475,20 @@ struct channel {
 
 typedef atomic_intmax_t TyAtomicInt;
 
+struct dict_item {
+        Value k;
+        Value v;
+        u64   h;
+        DictItem *prev;
+        DictItem *next;
+};
+
 struct dict {
-        u64   *hashes;
-        Value *keys;
-        Value *values;
-        usize size;
-        usize count;
-        Value dflt;
+        DictItem *items;
+        usize     size;
+        usize     count;
+        DictItem *last;
+        Value     dflt;
 };
 
 typedef struct target {
@@ -1239,10 +1247,19 @@ enum {
 #define vM(v, i, j, n) memmove((v).items + (i), (v).items + (j), (n) sizeof *(v).items)
 
 #define vfor_4(i, x, v, go) for (isize i = 0; i < vN(v); ++i) { typeof (vv(v)) x = v_((v), i); go; }
-#define vfor_3(   x, v, go) vfor_4(_i_##x, x,  (v), (go))
-#define vfor_2(      v, go) vfor_4(_vfi,   it, (v), (go))
-
+#define vfor_3(   x, v, go) vfor_4(_i_##x, x,  (v), go)
+#define vfor_2(      v, go) vfor_4(_vfi,   it, (v), go)
 #define vfor(...) VA_SELECT(vfor, __VA_ARGS__)
+
+#define dfor_4(_k, _v, _d, go) \
+        for (DictItem *_d_item = DictFirst((_d)); _d_item != NULL; _d_item = _d_item->next) { \
+                Value *(_k) = &_d_item->k; (void)(_k);\
+                Value *(_v) = &_d_item->v; (void)(_v); \
+                go; \
+        }
+#define dfor_3(v, d, go) dfor_4(key, (v), (d), go)
+#define dfor_2(   d, go) dfor_4(key, val, (d), go)
+#define dfor(...) VA_SELECT(dfor, __VA_ARGS__)
 
 #define avP(a, b)        VPush((a), (b))
 #define avPn(a, b, c)    VPushN(a, b, c)
@@ -1299,6 +1316,8 @@ enum {
 
 #define TAGGED(t, ...) tagged(ty, (t), __VA_ARGS__, NONE)
 #define TAGGED_RECORD(t, ...) tagged(ty, (t), vTn(__VA_ARGS__), NONE)
+
+#define v_eq(a, b) value_test_equality(ty, (a), (b))
 
 #define TY_UNARY_OPERATORS   \
         X(COMPL,      "~"),  \
@@ -1792,6 +1811,35 @@ TyRealTime()
         clock_gettime(CLOCK_REALTIME, &t);
         return 1000000000ULL * t.tv_sec + t.tv_nsec;
 #endif
+}
+
+inline static u64
+xrotl(u64 x, int k)
+{
+        return (x << k) | (x >> (64 - k));
+}
+
+inline static u64
+xoshiro256ss(Ty *ty)
+{
+        u64 const result = xrotl(ty->prng[1] * 5, 7) * 9;
+        u64 const t = ty->prng[1] << 17;
+
+        ty->prng[2] ^= ty->prng[0];
+        ty->prng[3] ^= ty->prng[1];
+        ty->prng[1] ^= ty->prng[2];
+        ty->prng[0] ^= ty->prng[3];
+
+        ty->prng[2] ^= t;
+        ty->prng[3] = xrotl(ty->prng[3], 45);
+
+        return result;
+}
+
+inline static double
+TyRandom(Ty *ty)
+{
+        return xoshiro256ss(ty) / (double)UINT64_MAX;
 }
 
 #endif
