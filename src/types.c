@@ -87,9 +87,8 @@ IsRequired(Type const *t0, i32 i)
         }
 }
 
-Ty *ty = &vvv;
-
 #if TYPES_LOG
+static Ty *ty = &vvv;
 #define XXXTLOG(fmt, ...)                                                                        \
         fprintf(                                                                                 \
                 stderr,                                                                          \
