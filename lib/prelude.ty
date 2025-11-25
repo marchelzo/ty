@@ -834,6 +834,8 @@ class Dict[K, V] : Iterable[K, V] {
     keys() -> Array[K];
     values() -> Array[V];
 
+    pop(i: ?Int) -> (K, V);
+
     [](key: K) -> V {
         self[key]
     }
@@ -2701,59 +2703,72 @@ fn uuid7(pseudo = true) {
     ].join('-')
 }
 
-class Mutex {
-    mtx: _
+class BaseLock {
+    __lock: _
 
-    init() {
-        mtx = thread.mutex()
+    init(lock: _) {
+        __lock = lock
     }
 
-    inner() {
-        mtx
+    inner -> _ {
+        __lock
     }
 
     lock() {
-        thread.lock(mtx)
-        return MutexLock(mtx)
+        thread.lock(__lock)
+        return LockGuard(__lock)
     }
 
     tryLock() {
-        if thread.tryLock(mtx) {
-            return MutexLock(mtx)
+        if thread.tryLock(__lock) {
+            return LockGuard(__lock)
         }
     }
 
     unlock() {
-        thread.unlock(mtx)
+        thread.unlock(__lock)
     }
 
     destroy() {
-        thread.destroyMutex(mtx)
+        thread.destroy(__lock)
+        __lock = nil
     }
 
     __free__() {
-        thread.destroyMutex(mtx)
+        thread.destroy(__lock)
     }
 
     __enter__() {
-        thread.lock(mtx)
+        thread.lock(__lock)
         self
     }
 
     __drop__() {
-        thread.unlock(mtx)
+        thread.unlock(__lock)
     }
 }
 
-class MutexLock {
-    __mtx: _
+class Mutex < BaseLock {
+    init() {
+        super(thread.mutex())
+    }
+}
 
-    init(mtx) {
-        __mtx = mtx
+class SpinLock < BaseLock {
+    init() {
+        super(thread.spinLock())
+    }
+}
+
+class LockGuard {
+    __lock: _
+
+    init(lock) {
+        __lock = lock
     }
 
     __drop__() {
-        thread.unlock(__mtx)
+        thread.unlock(__lock)
     }
 }
 
@@ -2965,11 +2980,12 @@ class CondVar {
     }
 
     destroy() {
-        thread.destroyCond(__var)
+        thread.destroy(__var)
+        __var = nil
     }
 
-    wait(mtx, *timeout) {
-        thread.waitCond(__var, mtx.inner(), *timeout)
+    wait(mtx: Mutex, *timeout) {
+        thread.waitCond(__var, mtx.inner, *timeout)
     }
 
     signal() {
@@ -2981,7 +2997,7 @@ class CondVar {
     }
 
     __free__() {
-        thread.destroyCond(__var)
+        thread.destroy(__var)
     }
 }
 
@@ -3954,13 +3970,9 @@ macro __debug!(n) {
     ty.CompileTime($$[ ty.Value(__debug($$n)) $$])
 }
 
-operator **   10 right
-operator :>   5  left
-operator !::  3  left
-operator *>   2  left
-operator .    2  left
+let __tls::__memos = []
 
-fn memoized[F](fun: F, sync: Bool = true) -> F {
+fn memoized[F](fun: F, max: Int = nil) -> F {
     let def = fun.__def__
 
     let gather = nil
@@ -3971,7 +3983,8 @@ fn memoized[F](fun: F, sync: Bool = true) -> F {
 
     for match def.params {
         ty.Gather(>gather) as p,
-        ty.Kwargs(>kwargs) as p => params.push(p),
+        ty.Kwargs(>kwargs) as p
+            => params.push(p),
 
         ty.Param({name, *}) => do {
             params.push(ty.Param({name}))
@@ -3991,20 +4004,39 @@ fn memoized[F](fun: F, sync: Bool = true) -> F {
             ? p-vars[0]
             : ty.Record([ty.RecordEntry({item: it}) for p-vars])
 
-    let cache = sync ? Sync(%{}) : %{}
+    let i = thread.fetch-add(static!(thread.atomic(0)), 1)
 
-    __eval__(
-        ty.Func({
-            name: fun.__name__,
-            params: params,
-            body: $$[
-                let __memo_key = $$key
-                if let $cached = $${cache}[__memo_key] {
-                    cached
-                } else {
-                    $${cache}[__memo_key] = $$call
+    let cache = fn () {
+        let memos = __memos ?? (__memos = [])
+        while #memos <= i {
+            memos.push(%{})
+        }
+        memos[i]
+    }
+
+    let body = match max {
+        nil => $$[
+            $${cache}().get-or-put-with($$key, () -> $$call)
+        $$],
+
+        $max => do {
+            let _cache = ty.Id({name: ty.gensym()})
+            $$[
+                let $$_cache = $${cache}()
+                let v = $$_cache.get-or-put-with($$key, () -> $$call)
+                if #$$_cache > $${max} {
+                    $$_cache.pop(-1)
                 }
+                v
             $$]
-        })
-    )
+        }
+    }
+
+    __eval__(ty.Func({name: fun.__name__, params, body}))
 }
+
+operator **   10 right
+operator :>   5  left
+operator !::  3  left
+operator *>   2  left
+operator .    2  left

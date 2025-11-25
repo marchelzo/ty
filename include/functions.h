@@ -154,7 +154,8 @@ BUILTIN_FUNCTION(termios_cfsetospeed);
 
 BUILTIN_FUNCTION(thread_create);
 BUILTIN_FUNCTION(thread_mutex);
-BUILTIN_FUNCTION(thread_mutex_destroy);
+BUILTIN_FUNCTION(thread_spinlock);
+BUILTIN_FUNCTION(thread_destroy);
 BUILTIN_FUNCTION(thread_join);
 BUILTIN_FUNCTION(thread_detach);
 BUILTIN_FUNCTION(thread_kill);
@@ -162,7 +163,6 @@ BUILTIN_FUNCTION(thread_lock);
 BUILTIN_FUNCTION(thread_unlock);
 BUILTIN_FUNCTION(thread_trylock);
 BUILTIN_FUNCTION(thread_cond);
-BUILTIN_FUNCTION(thread_cond_destroy);
 BUILTIN_FUNCTION(thread_cond_broadcast);
 BUILTIN_FUNCTION(thread_cond_signal);
 BUILTIN_FUNCTION(thread_cond_wait);

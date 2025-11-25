@@ -156,19 +156,14 @@ IntoSigSet(Ty *ty, char const *ctx, Value const *v, sigset_t *set)
                 break;
 
         case VALUE_DICT:
-                for (int i = 0; i < v->dict->count; ++i) {
-                        Value key = v->dict->keys[i];
-                        Value val = v->dict->values[i];
-                        if (key.type == VALUE_ZERO) {
-                                continue;
-                        }
-                        if (key.type != VALUE_INTEGER) {
+                dfor(v->dict, {
+                        if (key->type != VALUE_INTEGER) {
                                 zP("%s: bad signal set: %s", ctx, VSC(v));
                         }
-                        if (value_truthy(ty, &val)) {
-                                sigaddset(set, key.z);
+                        if (value_truthy(ty, val)) {
+                                sigaddset(set, key->z);
                         }
-                }
+                });
                 break;
 
         case VALUE_PTR:
@@ -542,57 +537,42 @@ BUILTIN_FUNCTION(read)
         return vSs(vv(B), vN(B));
 }
 
-inline static u64
-rotl(u64 x, int k)
+inline static Value
+xpick(Array const *xs, u64 z)
 {
-        return (x << k) | (x >> (64 - k));
-}
-
-inline static u64
-xoshiro256ss(Ty *ty)
-{
-        u64 const result = rotl(ty->prng[1] * 5, 7) * 9;
-        u64 const t = ty->prng[1] << 17;
-
-        ty->prng[2] ^= ty->prng[0];
-        ty->prng[3] ^= ty->prng[1];
-        ty->prng[1] ^= ty->prng[2];
-        ty->prng[0] ^= ty->prng[3];
-
-        ty->prng[2] ^= t;
-        ty->prng[3] = rotl(ty->prng[3], 45);
-
-        return result;
+        usize n = vN(*xs);
+        if (n == 0) {
+                return NIL;
+        } else {
+                return v__(*xs, z % n);
+        }
 }
 
 BUILTIN_FUNCTION(rand)
 {
+        ASSERT_ARGC("rand()", 0, 1, 2);
+
         i64 low;
         i64 high;
 
-        ASSERT_ARGC_3("rand()", 0, 1, 2);
-
         u64 z = xoshiro256ss(ty);
 
-        if (argc == 0) {
-                return REAL(z / (double)UINT64_MAX);
-        }
-
-        if (argc == 1 && ARG(0).type == VALUE_ARRAY) {
-                int n = ARG(0).array->count;
-                if (n == 0)
-                        return NIL;
-                else
-                        return ARG(0).array->items[z % n];
-        }
-
-        for (int i = 0; i < argc; ++i)
-                if (ARG(i).type != VALUE_INTEGER)
-                        zP("non-integer passed as argument %d to rand", i + 1);
-
         switch (argc) {
-        case 1:  low = 0;              high = ARG(0).z; break;
-        case 2:  low = ARG(0).z; high = ARG(1).z; break;
+        case 0:
+                return REAL(TyRandom(ty));
+
+        case 1:
+                if (ARG_T(0) == VALUE_ARRAY) {
+                        return xpick(ARG(0).array, z);
+                }
+                low  = 0;
+                high = INT_ARG(0);
+                break;
+
+        case 2:
+                low  = INT_ARG(0);
+                high = INT_ARG(1);
+                break;
         }
 
         return INTEGER((z % (high - low)) + low);
@@ -1464,10 +1444,8 @@ BUILTIN_FUNCTION(tuple)
         int named = 0;
         Dict *d = (kwargs != NULL && !IsNil(*kwargs)) ? kwargs->dict : NULL;
 
-        if (d != NULL) for (int i = 0; i < d->size; ++i) {
-                if (d->keys[i].type != 0) {
-                        named += 1;
-                }
+        if (d != NULL) {
+                named += d->count;
         }
 
         Value tuple = vT(argc + named);
@@ -1485,13 +1463,13 @@ BUILTIN_FUNCTION(tuple)
                 }
         }
 
-        if (d != NULL) for (int i = 0, n = argc; i < d->size; ++i) {
-                if (d->keys[i].type != 0) {
-                        tuple.items[n] = d->values[i];
-                        tuple.ids[n] = intern(&xD.members, TY_TMP_C_STR(d->keys[i]))->id;
-                        n += 1;
-                }
-        }
+        int n = argc;
+
+        if (d != NULL) dfor(d, {
+                tuple.items[n] = *val;
+                tuple.ids[n] = intern(&xD.members, TY_TMP_C_STR(*key))->id;
+                n += 1;
+        });
 
         return tuple;
 }
@@ -3681,16 +3659,26 @@ BUILTIN_FUNCTION(thread_detach)
 
 BUILTIN_FUNCTION(thread_mutex)
 {
-        TyMutex *p = mAo(sizeof *p, GC_ANY);
-        TyMutexInit(p);
-        return GCPTR(p, p);
+        ASSERT_ARGC("thread.mutex()", 0);
+        TyMutex *mtx = mAo(sizeof *mtx, GC_ANY);
+        TyMutexInit(mtx);
+        return TGCPTR(mtx, (void *)1, mtx);
+}
+
+BUILTIN_FUNCTION(thread_spinlock)
+{
+        ASSERT_ARGC("thread.spinLock()", 0);
+        TySpinLock *spin = mAo(sizeof *spin, GC_ANY);
+        TySpinLockInit(spin);
+        return TGCPTR(spin, (void *)2, spin);
 }
 
 BUILTIN_FUNCTION(thread_cond)
 {
-        TyCondVar *p = mAo(sizeof *p, GC_ANY);
-        TyCondVarInit(p);
-        return GCPTR(p, p);
+        ASSERT_ARGC("thread.cond()", 0);
+        TyCondVar *cond = mAo(sizeof *cond, GC_ANY);
+        TyCondVarInit(cond);
+        return TGCPTR(cond, (void *)3, cond);
 }
 
 BUILTIN_FUNCTION(thread_cond_wait)
@@ -3732,16 +3720,31 @@ BUILTIN_FUNCTION(thread_cond_broadcast)
         return BOOLEAN(TyCondVarBroadcast(PTR_ARG(0)));
 }
 
-BUILTIN_FUNCTION(thread_cond_destroy)
+BUILTIN_FUNCTION(thread_destroy)
 {
-        ASSERT_ARGC("thread.destroyCond()", 1);
-        return BOOLEAN(TyCondVarDestroy(PTR_ARG(0)));
-}
+        ASSERT_ARGC("thread.destroy()", 1);
 
-BUILTIN_FUNCTION(thread_mutex_destroy)
-{
-        ASSERT_ARGC("thread.destroyMutex()", 1);
-        return BOOLEAN(TyMutexDestroy(PTR_ARG(0)));
+        bool ok;
+        Value object = ARGx(0, VALUE_PTR);
+
+        switch ((uptr)object.extra) {
+        case 1:
+                ok = TyMutexDestroy(object.ptr);
+                break;
+
+        case 2:
+                ok = TySpinLockDestroy(object.ptr);
+                break;
+
+        case 3:
+                ok = TyCondVarDestroy(object.ptr);
+                break;
+
+        default:
+                UNREACHABLE("invalid object type");
+        }
+
+        return BOOLEAN(ok);
 }
 
 BUILTIN_FUNCTION(thread_lock)
@@ -3749,11 +3752,22 @@ BUILTIN_FUNCTION(thread_lock)
         ASSERT_ARGC("thread.lock()", 1);
 
         bool ok;
-        TyMutex *mtx = PTR_ARG(0);
+        Value lock = ARGx(0, VALUE_PTR);
 
-        lGv(true);
-        ok = TyMutexLock(mtx);
-        lTk();
+        switch ((uptr)lock.extra) {
+        case 1:
+                lGv(true);
+                ok = TyMutexLock(lock.ptr);
+                lTk();
+                break;
+
+        case 2:
+                ok = TySpinLockLock(lock.ptr);
+                break;
+
+        default:
+                UNREACHABLE("invalid lock type");
+        }
 
         return BOOLEAN(ok);
 }
@@ -3761,13 +3775,49 @@ BUILTIN_FUNCTION(thread_lock)
 BUILTIN_FUNCTION(thread_trylock)
 {
         ASSERT_ARGC("thread.tryLock()", 1);
-        return BOOLEAN(TyMutexTryLock(PTR_ARG(0)));
+
+        bool ok;
+        Value lock = ARGx(0, VALUE_PTR);
+
+        switch ((uptr)lock.extra) {
+        case 1:
+                lGv(true);
+                ok = TyMutexTryLock(lock.ptr);
+                lTk();
+                break;
+
+        case 2:
+                ok = TySpinLockTryLock(lock.ptr);
+                break;
+
+        default:
+                UNREACHABLE("invalid lock type");
+        }
+
+        return BOOLEAN(ok);
 }
 
 BUILTIN_FUNCTION(thread_unlock)
 {
         ASSERT_ARGC("thread.unlock()", 1);
-        return BOOLEAN(TyMutexUnlock(PTR_ARG(0)));
+
+        bool ok;
+        Value lock = ARGx(0, VALUE_PTR);
+
+        switch ((uptr)lock.extra) {
+        case 1:
+                ok = TyMutexUnlock(lock.ptr);
+                break;
+
+        case 2:
+                ok = TySpinLockUnlock(lock.ptr);
+                break;
+
+        default:
+                UNREACHABLE("invalid lock type");
+        }
+
+        return BOOLEAN(ok);
 }
 
 BUILTIN_FUNCTION(thread_create)

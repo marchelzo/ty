@@ -750,8 +750,11 @@ QualifiedName_(Expr const *e, byte_vector *b)
 
         switch (e->type) {
         case EXPRESSION_IDENTIFIER:
-                for (char const *m = e->module; m && *m; ++m) {
-                        xvP(*b, *m == '/' ? '.' : *m);
+                if (e->module != NULL) {
+                        for (char const *m = e->module; *m != '\0'; ++m) {
+                                xvP(*b, (*m == '/') ? '.' : *m);
+                        }
+                        xvP(*b, '.');
                 }
                 xvPn(*b, e->identifier, strlen(e->identifier));
                 break;
@@ -1799,7 +1802,7 @@ addsymbolx(Ty *ty, Scope *scope, char const *name, bool check_ns_shadow)
 inline static Symbol *
 addsymbol(Ty *ty, Scope *scope, char const *name)
 {
-        if (scope->reloading) {
+        if (ScopeIsReloading(scope)) {
                 Symbol *sym = ScopeFindRecycled(scope, name);
                 if (sym != NULL) {
                         sym->flags = SYM_GLOBAL;
@@ -1877,7 +1880,7 @@ getsymbol(Ty *ty, Scope const *scope, char const *name, u32 flags)
         }
 
         if (
-               s->scope->external
+               ScopeIsExternal(s->scope)
             && (s->scope != STATE.module->scope)
             && !SymbolIsPublic(s)
             && !ModuleIsReloading(STATE.module)
@@ -2166,8 +2169,7 @@ resolve_name(Ty *ty, Scope const *scope, StringVector const *parts, void **out)
 
         *out = (void *)scope;
 
-        return scope->namespace ? TY_NAME_NAMESPACE
-                                : TY_NAME_MODULE;
+        return ScopeIsNamespace(scope) ? TY_NAME_NAMESPACE : TY_NAME_MODULE;
 }
 
 inline static Expr *
@@ -2271,7 +2273,7 @@ resolve_access(Ty *ty, Scope const *scope, char **parts, int n, Expr *e, bool st
         } else if (
                 !SymbolIsPublic(sym)
              && (
-                        left->scope->external
+                        ScopeIsExternal(left->scope)
                      || !scope_is_subscope(left->scope, STATE.global)
                 )
         ) {
@@ -4914,7 +4916,7 @@ DisableRefinements(Ty *ty, Scope *scope)
                 return scope;
         }
 
-        while (scope != NULL && !scope->active) {
+        while (scope != NULL && !ScopeIsActive(scope)) {
                 for (int i = 0; i < vN(scope->refinements); ++i) {
                         Refinement *ref = v_(scope->refinements, i);
                         if (ref->active) {
@@ -4968,7 +4970,7 @@ SetActive(Scope *scope)
         }
 
         while (scope != NULL) {
-                scope->active = true;
+                scope->flags |= SCOPE_ACTIVE;
                 scope = scope->parent;
         }
 }
@@ -4981,7 +4983,7 @@ ClearActive(Scope *scope)
         }
 
         while (scope != NULL) {
-                scope->active = false;
+                scope->flags &= ~SCOPE_ACTIVE;
                 scope = scope->parent;
         }
 }
@@ -8691,8 +8693,8 @@ EmitMethodCall(
 
         Ei32(vN(*kwargs));
 
-        for (usize i = vN(*kwargs); i > 0; --i) {
-                emit_string(ty, v__(*kws, i - 1));
+        for (usize i = 0; i < vN(*kwargs); ++i) {
+                emit_string(ty, v__(*kws, i));
         }
 }
 
@@ -8736,8 +8738,8 @@ EmitFunctionCall(Ty *ty, Expr const *e)
         }
 
         Ei32(vN(e->kwargs));
-        for (usize i = vN(e->kws); i > 0; --i) {
-                emit_string(ty, v__(e->kws, i - 1));
+        for (usize i = 0; i < vN(e->kws); ++i) {
+                emit_string(ty, v__(e->kws, i));
         }
 }
 
@@ -10877,7 +10879,7 @@ load_module(Ty *ty, char const *name, Scope *scope)
         Stmt **prog = compile(ty, source);
 
         if (scope == NULL) {
-                STATE.global->external = true;
+                STATE.global->flags |= SCOPE_EXTERNAL;
         }
 
         PatchModule(ty, module, prog);
@@ -11160,7 +11162,7 @@ compiler_introduce_symbol(Ty *ty, char const *module, char const *name)
                 if (mod == NULL) {
                         builtin_modules += 1;
                         mod = NewModule(ty, module, "(built-in)", NULL, NULL);
-                        mod->scope->external = true;
+                        mod->scope->flags |= SCOPE_EXTERNAL;
                 }
         }
 
@@ -11186,7 +11188,7 @@ compiler_introduce_tag(Ty *ty, char const *module, char const *name, int super)
                 if (s == NULL) {
                         builtin_modules += 1;
                         s = NewModule(ty, module, "(built-in)", NULL, NULL)->scope;
-                        s->external = true;
+                        s->flags |= SCOPE_EXTERNAL;
                 }
         }
 
@@ -16356,8 +16358,9 @@ IsTopLevel(Symbol const *sym)
 {
         Scope *s = sym->scope;
 
-        while (s->namespace)
+        while (ScopeIsNamespace(s)) {
                 s = s->parent;
+        }
 
         return (GlobalScope == s)
             || (GlobalScope == s->parent);
@@ -16539,12 +16542,12 @@ CompilerReloadModule(
         mod->prog = NULL;
         mod->source = NULL;
         mod->flags |= MOD_RELOADING;
-        mod->scope->reloading = true;
+        mod->scope->flags |= SCOPE_RELOADING;
 
         if (TY_CATCH_ERROR()) {
                 TY_CATCH();
                 mod->flags &= ~MOD_RELOADING;
-                mod->scope->reloading = false;
+                mod->scope->flags &= ~SCOPE_RELOADING;
                 scope_set_symbol(ty, symbol);
                 *mod = saved;
                 return false;
@@ -16563,7 +16566,7 @@ CompilerReloadModule(
         PatchModule(ty, mod, prog);
         v00(STATE.code);
 
-        mod->scope->reloading = false;
+        mod->scope->flags &= ~SCOPE_RELOADING;
         mod->flags &= ~MOD_RELOADING;
 
         return true;
@@ -16635,7 +16638,7 @@ AddScopeCompletions(
                 &symbols,
                 &depths,
                 max,
-                !scope->external
+                !ScopeIsExternal(scope)
         );
 
         for (u32 i = 0; i < vN(symbols); ++i) {

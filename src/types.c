@@ -10250,15 +10250,12 @@ TypeCheck(Ty *ty, Type *t0, Value const *v)
                                 break;
 
                         case CLASS_DICT:
-                                for (size_t i = 0; i < v->dict->size; ++i) {
-                                        if (v->dict->keys[i].type == 0) {
-                                                continue;
-                                        }
+                                dfor(v->dict, ({
                                         if (
                                                 !TypeCheck(
                                                         ty,
                                                         TypeArg(t0, 0),
-                                                        &v->dict->keys[i]
+                                                        key
                                                 )
                                         ) {
                                                 return false;
@@ -10267,12 +10264,12 @@ TypeCheck(Ty *ty, Type *t0, Value const *v)
                                                 !TypeCheck(
                                                         ty,
                                                         TypeArg(t0, 1),
-                                                        &v->dict->values[i]
+                                                        val
                                                 )
                                         ) {
                                                 return false;
                                         }
-                                }
+                                }));
                                 break;
                         }
                         return true;

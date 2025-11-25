@@ -2236,31 +2236,29 @@ BuildKwargsDict(Ty *ty, int nkw)
         GC_STOP();
         Dict *kwargs = dict_new(ty);
         for (int i = 0; i < nkw; ++i, SKIPSTR()) {
-                if (top()->type == VALUE_NONE) {
-                        pop();
+                Value v = vZ(STACK)[-(nkw - i)];
+                if (IsNone(v)) {
                         continue;
                 }
                 if (IP[0] == '*') {
-                        if (top()->type == VALUE_DICT) {
-                                DictUpdate(ty, kwargs, top()->dict);
-                                pop();
+                        if (v.type == VALUE_DICT) {
+                                DictUpdate(ty, kwargs, v.dict);
                         } else if (
                                 LIKELY(
-                                        top()->type == VALUE_TUPLE
-                                     && (top()->count == 0 || top()->ids != NULL)
+                                        (v.type == VALUE_TUPLE)
+                                     && (v.count == 0 || v.ids != NULL)
                                 )
                         ) {
-                                for (int i = 0; i < top()->count; ++i) {
-                                        if (top()->ids[i] != -1) {
+                                for (int i = 0; i < v.count; ++i) {
+                                        if (v.ids[i] != -1) {
                                                 dict_put_member(
                                                         ty,
                                                         kwargs,
-                                                        intern_entry(&xD.members, top()->ids[i])->name,
-                                                        top()->items[i]
+                                                        intern_entry(&xD.members, v.ids[i])->name,
+                                                        v.items[i]
                                                 );
                                         }
                                 }
-                                pop();
                         } else {
                                 zP(
                                         "attempt to splat invalid value in function call: %s%s%s%s%s",
@@ -2272,9 +2270,10 @@ BuildKwargsDict(Ty *ty, int nkw)
                                 );
                         }
                 } else {
-                        dict_put_member(ty, kwargs, IP, pop());
+                        dict_put_member(ty, kwargs, IP, v);
                 }
         }
+        vN(STACK) -= nkw;
         GC_RESUME();
 
         return DICT(kwargs);
@@ -4470,6 +4469,8 @@ IterGetNext(Ty *ty)
         Value v;
         Value *vp;
 
+        DictItem *item;
+
         ptrdiff_t off;
 
         int i;
@@ -4492,18 +4493,23 @@ IterGetNext(Ty *ty)
                 break;
         case VALUE_DICT:
                 off = top()[-2].off;
-                while (off < v.dict->size && v.dict->keys[off].type == 0) {
-                        off += 1;
+                if (off == 0) {
+                        off = (DictFirst(v.dict) - v.dict->items) + 1;
                 }
-                if (off < v.dict->size) {
-                        top()[-2].off = off + 1;
-                        push(v.dict->keys[off]);
-                        push(v.dict->values[off]);
-                        RC = 1;
-                        pop();
-                } else {
+                if (off > v.dict->size) {
                         push(NONE);
+                        break;
                 }
+                item = &v.dict->items[off - 1];
+                if (item->next != NULL) {
+                        top()[-2].off = (item->next - v.dict->items) + 1;
+                } else {
+                        top()[-2].off = PTRDIFF_MAX;
+                }
+                push(item->k);
+                push(item->v);
+                RC = 1;
+                pop();
                 break;
         case VALUE_FUNCTION:
                 push(INTEGER(i));
@@ -6892,9 +6898,9 @@ vm_init(Ty *ty, int ac, char **av)
         MyId = 0;
 
         build_string_method_table();
-        build_dict_method_table();
         build_array_method_table();
         build_blob_method_table();
+        build_dict_method_table();
 
         NAMES.a                = M_ID("a");
         NAMES.b                = M_ID("b");
@@ -7491,26 +7497,22 @@ ProfileReport(Ty *ty)
         char color_buffer[64] = {0};
         double total_ticks = 0.0;
 
-        for (int i = 0; i < Samples->size; ++i) {
-                if (Samples->keys[i].type == 0)
-                        continue;
-                ProfileEntry entry = {
-                        .ctx = Samples->keys[i].ptr,
-                        .count = Samples->values[i].z
-                };
-                vec_nogc_push(profile, entry);
+        dfor(Samples, {
+                ProfileEntry entry = ((ProfileEntry) {
+                        .ctx = key->ptr,
+                        .count = val->z
+                });
+                xvP(profile, entry);
                 total_ticks += entry.count;
-        }
+        });
 
-        for (int i = 0; i < FuncSamples->size; ++i) {
-                if (FuncSamples->keys[i].type == 0)
-                        continue;
-                ProfileEntry entry = {
-                        .ctx = FuncSamples->keys[i].ptr,
-                        .count = FuncSamples->values[i].z
-                };
-                vec_nogc_push(func_profile, entry);
-        }
+        dfor(FuncSamples, {
+                ProfileEntry entry = ((ProfileEntry) {
+                        .ctx = key->ptr,
+                        .count = val->z
+                });
+                xvP(func_profile, entry);
+        });
 
         qsort(func_profile.items, func_profile.count, sizeof (ProfileEntry), CompareProfileEntriesByWeight);
 

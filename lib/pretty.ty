@@ -186,7 +186,7 @@ class Printer {
             },
 
             d :: Dict => {
-                printMap(d.list(), '%{', '}', ': ')
+                printMap(d.items(), '%{', '}', ': ')
             },
 
             %t(x) => {
