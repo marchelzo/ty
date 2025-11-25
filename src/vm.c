@@ -679,16 +679,20 @@ add_builtins(Ty *ty, int ac, char **av)
                 if (v->type == VALUE_BUILTIN_FUNCTION) {
                         v->name = M_ID(builtins[i].name);
                         v->module = builtins[i].module;
+                        sym->flags |= SYM_FUNCTION;
                 }
                 xvP(Globals, builtins[i].value);
                 switch (ClassOf(v)) {
                 case CLASS_INT:
                         sym->type = type_integer(ty, v->z);
+                        sym->flags |= SYM_CONST;
                         break;
+
                 case CLASS_STRING:
                 case CLASS_BOOL:
                 case CLASS_FLOAT:
                         sym->type = class_get(ty, ClassOf(v))->object_type;
+                        sym->flags |= SYM_CONST;
                         break;
                 }
         }

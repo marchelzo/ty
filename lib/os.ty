@@ -105,6 +105,14 @@ pub fn listdir(path: String) -> [Float] | nil;
 pub fn ncpu() -> Int;
 pub fn terminal-size(fd: ?Int) -> {rows: Int, cols: Int} | nil;
 
+pub use PTY = {
+    master: Int,
+    slave:  Int,
+    name:   String
+}
+
+pub fn openpty(size: ?(Int, Int) = nil) -> PTY | nil;
+
 pub use ProcessDescriptor = {
     stdin: Int,
     stdout: Int,
@@ -119,7 +127,7 @@ pub fn spawn(
     stderr: ?Int = nil,
     chdir:  Int | Blob | String | nil = nil,
     detach: Bool = false,
-    ctty:   ?String = nil
+    ctty:   ?{master: Int, slave: Int} = nil,
 ) -> ProcessDescriptor;
 
 class OSError < RuntimeError {

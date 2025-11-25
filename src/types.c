@@ -87,6 +87,8 @@ IsRequired(Type const *t0, i32 i)
         }
 }
 
+Ty *ty = &vvv;
+
 #if TYPES_LOG
 #define XXXTLOG(fmt, ...)                                                                        \
         fprintf(                                                                                 \
@@ -1304,7 +1306,9 @@ Reduce(Ty *ty, Type const *t0)
         Type *t1 = ResolveVar(t0);
         Type *t2;
         Type *t3;
+
         bool cloned = false;
+        bool fixed  = IsFixed(t1);
 
         switch (TypeType(t1)) {
         case TYPE_UNION:
@@ -1370,6 +1374,10 @@ Reduce(Ty *ty, Type const *t0)
                 }
                 t1->rt = t2;
                 break;
+        }
+
+        if (fixed) {
+                t1->fixed = true;
         }
 
         if (t1 != ResolveVar(t0)) {
@@ -4495,7 +4503,7 @@ TryBind(Ty *ty, Type *t0, Type *t1, bool super)
                 } else if (!super || !IsAny(t1)) {
                         t0->bounded |= !super;
                         BindVar(t0, type_unfixed(ty, Relax(Reduce(ty, t1))));
-               }
+                }
                 return true;
         } else if (CanBind(t1)) {
                 MaxBindDepth = max(MaxBindDepth, CurrentDepth);
@@ -4644,16 +4652,16 @@ UnifyXD(Ty *ty, Type *t0, Type *t1, bool super, bool check, bool soft)
                 AddConstraint(ty, super ? t0 : t1, super ? t0 : t1);
         }
 
-        Type *t0_ = IsConcrete(t0) ? Unlist(ty, t0) : t0;
-        Type *t1_ = IsConcrete(t1) ? Unlist(ty, t1) : t1;
+        //Type *t0_ = IsConcrete(t0) ? Unlist(ty, t0) : t0;
+        //Type *t1_ = IsConcrete(t1) ? Unlist(ty, t1) : t1;
 
-        if (!SameType(t0_, t0) || !SameType(t1_, t1)) {
-                if (UnifyXD(ty, t0_, t1_, super, check, soft)) {
-                        OK("unified post-resolution");
-                } else {
-                        goto Fail;
-                }
-        }
+        //if (!SameType(t0_, t0) || !SameType(t1_, t1)) {
+        //        if (UnifyXD(ty, t0_, t1_, super, check, soft)) {
+        //                OK("unified post-resolution");
+        //        } else {
+        //                goto Fail;
+        //        }
+        //}
 
         if (
                 IsUnboundVar(t0)
@@ -5871,6 +5879,8 @@ InferCall0(
 
         CallSignatures expanded;
 
+        t0 = ResolveVar(t0);
+
         XXTLOG("InferCall(%s)", ShowType(t0));
         for (int i = 0; i < vN(*args); ++i) {
                 Expr *arg = v__(*args, i);
@@ -6182,7 +6192,6 @@ type_call_t(Ty *ty, Expr const *e, Type *t0)
 
         Type *t;
         Type *t1;
-        Type *t2;
         expression_vector const *args = &(expression_vector){0};
         expression_vector const *kwargs = &(expression_vector){0};
         StringVector const *kws = &(StringVector){0};
@@ -6266,7 +6275,7 @@ type_call_t(Ty *ty, Expr const *e, Type *t0)
                         CurrentLevel += 1;
                         TryBind(ty, t0, t1, false);
                         CurrentLevel -= 1;
-                        return t1->rt;
+                        return InferCall(ty, args, kwargs, kws, t0);
                 }
         }
 
@@ -6278,25 +6287,30 @@ type_call(Ty *ty, Expr const *e)
 {
         xDDD();
 
+        Type *f0;
         Type *t0;
 
         switch (e->type) {
         case EXPRESSION_FUNCTION_CALL:
-                t0 = type_call_t(ty, e, e->function->_type);
+                f0 = e->function->_type;
+                t0 = type_call_t(ty, e, f0);
                 break;
 
         case EXPRESSION_TAG_APPLICATION:
-                t0 = type_call_t(ty, e, e->symbol->type);
+                f0 = e->symbol->type;
+                t0 = type_call_t(ty, e, f0);
                 break;
 
         default:
+                f0 = NULL;
                 t0 = NULL;
                 break;
         }
 
-        dont_printf("type_call()\n");
-        dont_printf("    >>> %s\n", show_expr(e));
-        dont_printf("    %s\n", ShowType(t0));
+        XXTLOG("type_call()");
+        XXTLOG("    >>> %s", show_expr(e));
+        XXTLOG("    %s", ShowType(f0));
+        XXTLOG("    %s", ShowType(t0));
 
         return t0;
 }
@@ -9124,7 +9138,7 @@ MakeConcrete_(Ty *ty, Type *t0, TypeVector *refs, bool variance)
                 return UNKNOWN;
         }
 
-        if (t0->concrete) {
+        if (t0->concrete && t0->fixed) {
                 return t0;
         }
 

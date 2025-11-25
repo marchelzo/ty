@@ -15,7 +15,7 @@ pub use CmdResult = {
     stderr: String
 }
 
-pub function sh(
+pub fn sh(
     cmd: String,
     input: Blob | String | nil = nil,
     timeoutMs: Int | nil = nil,
@@ -28,10 +28,11 @@ pub function sh(
     let stderr = combineOutput ? os.SPAWN_MERGED_STDERR
                : shareStderr   ? os.SPAWN_INHERIT
                :                 os.SPAWN_PIPE
+    let stdin = (input != nil) ? os.SPAWN_PIPE : os.SPAWN_NULL
 
     if not let $p = os.spawn(
         [*shell, cmd],
-        stdin=os.SPAWN_PIPE,
+        stdin=stdin,
         stdout=os.SPAWN_PIPE,
         stderr=stderr,
         chdir=chdir,
@@ -40,14 +41,13 @@ pub function sh(
           return nil
     }
 
-    let out = blob()
-    let err = blob()
+    let out = Blob()
+    let err = Blob()
 
     if input != nil {
         os.write(p.stdin, input)
+        os.close(p.stdin)
     }
-
-    os.close(p.stdin)
 
     let deadline = match timeoutMs {
         -1 or nil => nil,
@@ -91,7 +91,9 @@ pub function sh(
     }
 
     os.close(p.stdout)
-    if p.stderr != nil { os.close(p.stderr) }
+    if p.stderr != p.stdout {
+        os.close(p.stderr)
+    }
 
     let (_, status) = os.wait(p.pid) !
 

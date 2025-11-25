@@ -26,6 +26,7 @@ fn c::load[T](type: CType[T], address: IntoPtr[T]) -> T;
 fn c::size[T](type: CType[T]) -> Int;
 fn c::free(ptr: IntoPtr[Any]) -> nil;
 fn c::new[T](type: CType[T], count: ?Int) -> Ptr[T];
+fn c::box[T](type: CType[T], val: ?T) -> Ptr[T];
 fn c::alloc[T](size: Int) -> Ptr[T];
 fn ptr::typed[T](ptr: Ptr[Any], type: CType[T]) -> Ptr[T];
 

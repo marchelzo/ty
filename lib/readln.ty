@@ -306,6 +306,7 @@ fn fitItems(items: Array[CompletionLabel], W: Int) -> Array[Array[String]] {
 
 class InteractiveLineReader {
     __tio: TermIO
+    __pty: os.PTY | nil
     __borrowed-tio?: Bool
     __history-file: Path | nil
     __history: Array[HistoryEntry]
@@ -314,7 +315,7 @@ class InteractiveLineReader {
     __render: RenderFunction
 
     init(
-        term: Int | TermIO = 0,
+        term: Int | TermIO | os.PTY = 0,
         prompt=nil,
         complete=nil,
         ctrl_c: ?Bool = false,
@@ -326,8 +327,13 @@ class InteractiveLineReader {
                 __tio = tio
                 __borrowed-tio? = true
             },
-            fd => {
+            fd: Int => {
                 __tio = TermIO(fd, mouse=false)
+                __borrowed-tio? = false
+            },
+            pty: os.PTY => {
+                __pty = pty
+                __tio = TermIO(pty.slave, mouse=false)
                 __borrowed-tio? = false
             }
         }
@@ -677,22 +683,11 @@ class InteractiveLineReader {
                 '<C-r>' => {
                     __tio.stop()
 
-                    let ctty = do {
-                        let my-tty-fd = open('/dev/tty', O_RDONLY)
-                        let my-tty-name = ttyname(my-tty-fd)
-                        os.close(my-tty-fd)
-                        let tio-tty-name = ttyname(__tio.fd)
-                        if my-tty-name != tio-tty-name {
-                            tio-tty-name
-                        }
-                    }
-
                     let fzf = spawn(
                         ['fzf', '--tac', '--no-sort', '-q', getText()],
                         stdin=SPAWN_PIPE,
                         stdout=SPAWN_PIPE,
-                        stderr=__tio.fd,
-                        ctty=ctty if ctty != nil
+                        ctty=__pty if __pty != nil
                     )
 
                     write(fzf.stdin, __history.map(\_.0.str()).unlines())
@@ -700,6 +695,7 @@ class InteractiveLineReader {
 
                     let out = read(fzf.stdout, 8192).str().strip()
                     os::close(fzf.stdout)
+
                     wait(fzf.pid)
 
                     __tio.start()

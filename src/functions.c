@@ -3827,8 +3827,6 @@ BUILTIN_FUNCTION(thread_send)
         return NIL;
 }
 
-
-
 BUILTIN_FUNCTION(thread_recv)
 {
         ASSERT_ARGC("thread.recv()", 1, 2);
@@ -4045,6 +4043,117 @@ BUILTIN_FUNCTION(thread_sigmask)
         }
 
         return NewSigSetFrom(ty, &old);
+}
+
+BUILTIN_FUNCTION(thread_atomic)
+{
+        ASSERT_ARGC("thread.atomic()", 0, 1);
+
+        TyAtomicInt *atomic = mAo(sizeof *atomic, GC_ANY);
+        *atomic = (argc == 1) ? INT_ARG(0) : 0;
+
+        return GCPTR(atomic, atomic);
+}
+
+BUILTIN_FUNCTION(thread_atomic_load)
+{
+        ASSERT_ARGC("thread.load()", 1);
+
+        TyAtomicInt *atomic = PTR_ARG(0);
+
+        return INTEGER(
+                atomic_load_explicit(
+                        atomic,
+                        memory_order_acquire
+                )
+        );
+}
+
+BUILTIN_FUNCTION(thread_atomic_store)
+{
+        ASSERT_ARGC("thread.store()", 2);
+
+        TyAtomicInt *atomic = PTR_ARG(0);
+        imax            val = INT_ARG(1);
+
+        atomic_store_explicit(
+                atomic,
+                val,
+                memory_order_release
+        );
+
+        return INTEGER(val);
+}
+
+BUILTIN_FUNCTION(thread_atomic_cmpxchg)
+{
+        ASSERT_ARGC("thread.try-swap()", 3);
+
+        TyAtomicInt *atomic = PTR_ARG(0);
+        imax            old = INT_ARG(1);
+        imax            new = INT_ARG(2);
+
+        imax expected = old;
+
+        bool ok = atomic_compare_exchange_strong_explicit(
+                atomic,
+                &expected,
+                new,
+                memory_order_acq_rel,
+                memory_order_acquire
+        );
+
+        return ok
+             ? Ok(ty, INTEGER(new))
+             : Err(ty, INTEGER(expected));
+}
+
+BUILTIN_FUNCTION(thread_atomic_swap)
+{
+        ASSERT_ARGC("thread.swap()", 2);
+
+        TyAtomicInt *atomic = PTR_ARG(0);
+        imax            val = INT_ARG(1);
+
+        return INTEGER(
+                atomic_exchange_explicit(
+                        atomic,
+                        val,
+                        memory_order_acq_rel
+                )
+        );
+}
+
+BUILTIN_FUNCTION(thread_atomic_fetch_add)
+{
+        ASSERT_ARGC("thread.fetchAdd()", 2);
+
+        TyAtomicInt *atomic = PTR_ARG(0);
+        imax            val = INT_ARG(1);
+
+        return INTEGER(
+                atomic_fetch_add_explicit(
+                        atomic,
+                        val,
+                        memory_order_acq_rel
+                )
+        );
+}
+
+BUILTIN_FUNCTION(thread_atomic_fetch_sub)
+{
+        ASSERT_ARGC("thread.fetchSub()", 2);
+
+        TyAtomicInt *atomic = PTR_ARG(0);
+        imax            val = INT_ARG(1);
+
+        return INTEGER(
+                atomic_fetch_sub_explicit(
+                        atomic,
+                        val,
+                        memory_order_acq_rel
+                )
+        );
 }
 
 BUILTIN_FUNCTION(os_fork)

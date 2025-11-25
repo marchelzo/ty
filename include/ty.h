@@ -472,6 +472,8 @@ struct channel {
         vec(ChanVal) q;
 };
 
+typedef atomic_intmax_t TyAtomicInt;
+
 struct dict {
         u64   *hashes;
         Value *keys;

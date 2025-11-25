@@ -2773,6 +2773,46 @@ class Channel {
     }
 }
 
+class Atomic : IntoPtr[Int] {
+    __x: Ptr
+
+    init(x: Int = 0) {
+        __x = thread.atomic(x)
+    }
+
+    get() -> Int {
+        thread.load(__x)
+    }
+
+    set(x: Int) -> Int {
+        thread.store(__x, x)
+    }
+
+    swap(y: Int) -> Int {
+        thread.swap(__x, y)
+    }
+
+    try-swap(old: Int, new: Int) -> Ok[Int] | Err[Int] {
+        thread.try-swap(__x, old, new)
+    }
+
+    fetch-add(y: Int) -> Int {
+        thread.fetch-add(__x, y)
+    }
+
+    fetch-sub(y: Int) -> Int {
+        thread.fetch-sub(__x, y)
+    }
+
+    __str__() {
+        "Atomic({self.get()})"
+    }
+
+    __fmt__(*args: _) {
+        self.get().__fmt__(*args)
+    }
+}
+
 class Sync[T] {
     __x: T
     __mtx: Mutex
