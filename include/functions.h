@@ -97,6 +97,7 @@ BUILTIN_FUNCTION(os_rewinddir);
 BUILTIN_FUNCTION(os_closedir);
 BUILTIN_FUNCTION(os_getcwd);
 BUILTIN_FUNCTION(os_chdir);
+BUILTIN_FUNCTION(os_chroot);
 BUILTIN_FUNCTION(os_mkdir);
 BUILTIN_FUNCTION(os_rmdir);
 BUILTIN_FUNCTION(os_chmod);
