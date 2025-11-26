@@ -2738,6 +2738,13 @@ BUILTIN_FUNCTION(os_chdir)
         UNREACHABLE();
 }
 
+BUILTIN_FUNCTION(os_chroot)
+{
+        ASSERT_ARGC("os.chroot()", 1);
+        Value dir = ARGx(0, VALUE_STRING, VALUE_BLOB, VALUE_PTR);
+        return INTEGER(chroot(TY_TMP_C_STR(dir)));
+}
+
 BUILTIN_FUNCTION(os_read)
 {
         ASSERT_ARGC("os.read()", 2, 3);
@@ -3108,11 +3115,11 @@ BUILTIN_FUNCTION(os_mmap)
 {
         ASSERT_ARGC("os.mmap()", 5, 6);
 
-        Value _hint = ARGx(0, VALUE_PTR, VALUE_INTEGER, VALUE_NIL);
+        Value _hint  = ARGx(0, VALUE_PTR, VALUE_INTEGER, VALUE_NIL);
         isize length = INT_ARG(1);
-        int prot = INT_ARG(2);
-        int flags = INT_ARG(3);
-        int fd = INT_ARG(4);
+        int prot     = INT_ARG(2);
+        int flags    = INT_ARG(3);
+        int fd       = INT_ARG(4);
         isize offset;
 
         if (argc == 6) {
@@ -3124,9 +3131,9 @@ BUILTIN_FUNCTION(os_mmap)
         void *hint;
 
         switch (_hint.type) {
-        case VALUE_PTR:     hint = _hint.ptr;             break;
+        case VALUE_PTR:     hint = _hint.ptr;       break;
         case VALUE_INTEGER: hint = (void *)_hint.z; break;
-        case VALUE_NIL:     hint = NULL;                  break;
+        case VALUE_NIL:     hint = NULL;            break;
         }
 
         void *addr = mmap(hint, length, prot, flags, fd, offset);
@@ -5180,28 +5187,28 @@ BUILTIN_FUNCTION(os_exec)
 {
         ASSERT_ARGC("os.exec()", 1);
 
-        Value cmd = ARG(0);
-        if (cmd.type != VALUE_ARRAY)
-                zP("the argument to os.exec() must be an array");
+        Value cmd = ARGx(0, VALUE_ARRAY);
 
-        if (cmd.array->count == 0)
-                zP("empty array passed to os.exec()");
+        if (vN(*cmd.array) == 0) {
+                bP("empty argv");
+        }
 
-        for (int i = 0; i < cmd.array->count; ++i)
-                if (cmd.array->items[i].type != VALUE_STRING)
-                        zP("non-string in array passed to os.exec()");
+        for (int i = 0; i < vN(*cmd.array); ++i) {
+                if (v_(*cmd.array, i)->type != VALUE_STRING) {
+                        bP("non-string in argv: %s", VSC(&cmd));
+                }
+        }
 
-        vec(char *) argv;
-        vec_init(argv);
+        StringVector argv = {0};
 
-        for (int i = 0; i < cmd.array->count; ++i) {
+        for (int i = 0; i < vN(*cmd.array); ++i) {
                 char *arg = TY_C_STR(v__(*cmd.array, i));
-                vvP(argv, arg);
+                xvP(argv, arg);
         }
 
         vvP(argv, NULL);
 
-        return INTEGER(execvp(argv.items[0], argv.items));
+        return INTEGER(execvp(v_0(argv), vv(argv)));
 }
 
 BUILTIN_FUNCTION(os_signal)

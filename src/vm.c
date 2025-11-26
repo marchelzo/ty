@@ -32,6 +32,9 @@
 
 #ifdef __linux__
 #include <sys/epoll.h>
+#include <sys/mount.h>
+#include <linux/mount.h>
+#include <linux/sched.h>
 #endif
 
 #ifdef _WIN32
