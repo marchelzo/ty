@@ -466,7 +466,7 @@ dict_diff(Ty *ty, Value *d, int argc, Value *kwargs)
 
         Value u = ARG(0);
         if (u.type != VALUE_DICT) {
-                zP("Dict.diff(): expected Dict but got %s", value_show(ty, &u));
+                zP("Dict.diff(): expected Dict but got %s", SHOW(&u));
         }
 
         Dict *diff = dict_new(ty);
@@ -679,6 +679,7 @@ dict_get_or_put_with(Ty *ty, Value *d, int argc, Value *kwargs)
         vmP(&key);
         Value val = vmC(&fun, 1);
 
+        gP(&val);
         if (
                 (dict->size != size)
              || (dict->items != items)
@@ -686,8 +687,10 @@ dict_get_or_put_with(Ty *ty, Value *d, int argc, Value *kwargs)
         ) {
                 i = find_spot(ty, dict->size, dict->items, h, &key);
         }
+        put(ty, dict, i, h, key, val);
+        gX();
 
-        return *put(ty, dict, i, h, key, val);
+        return val;
 }
 
 static Value

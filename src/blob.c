@@ -232,11 +232,11 @@ blob_xor(Ty *ty, Value *blob, int argc, Value *kwargs)
         }
 
         if (ARG(0).type != VALUE_INTEGER) {
-                zP("blob.xor(mask, _): expected integer but got: %s", value_show(ty, &ARG(0)));
+                zP("blob.xor(mask, _): expected integer but got: %s", SHOW(&ARG(0)));
         }
 
         if (ARG(1).type != VALUE_INTEGER) {
-                zP("blob.xor(_, size): expected integer but got: %s", value_show(ty, &ARG(0)));
+                zP("blob.xor(_, size): expected integer but got: %s", SHOW(&ARG(0)));
         }
 
         u8  _u8;
@@ -478,7 +478,7 @@ blob_ptr(Ty *ty, Value *blob, int argc, Value *kwargs)
 
         if (argc == 1) {
                 if (ARG(0).type != VALUE_INTEGER) {
-                        zP("blob.ptr() expects an integer but got %s", value_show(ty, &ARG(0)));
+                        zP("blob.ptr() expects an integer but got %s", SHOW(&ARG(0)));
                 }
 
                 return PTR(blob->blob->items + ARG(0).z);

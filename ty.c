@@ -76,6 +76,7 @@ usize TotalBytesAllocated;
 bool ColorStdout;
 bool ColorStderr;
 
+bool RunningTests       = false;
 bool CompileOnly        = false;
 bool AllowErrors        = false;
 bool CheckTypes         = true;
@@ -100,21 +101,24 @@ usage(void)
         char *u = (char[]) {
                 "usage: ty [options] [script [args]]                                                      \0"
                 "Available options are:                                                                   \0"
-                "    -b            Basic mode: no batteries included. Only has an effect when ty is       \0"
-                "                  running as a REPL or when the program was specified using -e           \0"
-                "    -c            Exit after compilation without executing the program                   \0"
-                "    -d            Run the program under the interactive TDB debugger                     \0"
-                "    -e EXPR       Evaluate and print EXPR                                                \0"
-                "    -f FILE       Interpret FILE before continuing. This differs from -M in that *all*   \0"
-                "                  top-level symbols from FILE will be visible, not just public ones      \0"
-                "    -m MODULE     Import module MODULE before continuing                                 \0"
-                "    -M MODULE     Like -m, but uses an unqualified import: import MODULE (..)            \0"
-                "    -p            Print the value of the last-evaluated expression before exiting        \0"
-                "    -q            Ignore constraints on function parameters and return values            \0"
-                "    -S FILE       Write the program's annotated disassembly to FILE                      \0"
-                "                    (- is interpreted as stdout, and @ is interpreted as stderr)         \0"
-                "    -t LINE:COL   Find the definition of the symbol which occurs at LINE:COL             \0"
-                "                  in the specified source file                                           \0"
+                "    -b           Basic mode: no batteries included. Only has an effect when ty is        \0"
+                "                 running as a REPL or when the program was specified using -e            \0"
+                "    -c           Exit after compilation without executing the program                    \0"
+                "    -d           Run the program under the interactive TDB debugger                      \0"
+                "    -e EXPR      Evaluate and print EXPR                                                 \0"
+                "    -f FILE      Interpret FILE before continuing. This differs from -M in that *all*    \0"
+                "                 top-level symbols from FILE will be visible, not just public ones       \0"
+                "    -m MODULE    Import module MODULE before continuing                                  \0"
+                "    -M MODULE    Like -m, but uses an unqualified import: import MODULE (..)             \0"
+                "    -p           Print the value of the last-evaluated expression before exiting         \0"
+                "    -q           Ignore constraints on function parameters and return values             \0"
+                "    -S FILE      Write the program's annotated disassembly to FILE                       \0"
+                "                   (- is interpreted as stdout, and @ is interpreted as stderr)          \0"
+                "    -t LINE:COL  Find the definition of the symbol which occurs at LINE:COL              \0"
+                "                 in the specified source file                                            \0"
+                "    --test       Any top-level functions decorated with @test will be executed after     \0"
+                "                 initialization. If all tests pass, ty will exit normally; otherwise, it \0"
+                "                 will exit with a non-zero status code                                   \0"
 #ifdef TY_PROFILER
                 "    -o FILE       Write profile data to FILE instead of stdout                           \0"
                 "                    (- is interpreted as stdout, and @ is interpreted as stderr)         \0"
@@ -589,9 +593,14 @@ ProcessArgs(char *argv[], bool first)
                         exit(0);
                 }
 
-                if (strcmp(argv[argi], "--help") == 0) {
+                if (s_eq(argv[argi], "--help")) {
                         usage();
                         exit(0);
+                }
+
+                if (s_eq(argv[argi], "--test")) {
+                        RunningTests = true;
+                        goto NextOption;
                 }
 
                 char const prefix[] = "--color=";

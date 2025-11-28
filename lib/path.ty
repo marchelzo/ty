@@ -465,22 +465,19 @@ pub class Path {
     }
 
     match(pattern: String) -> Bool {
-        let regex = pattern
-            .sub(/\*\*\//, '.*/')
-            .sub(/\*/, '[^/]*')
-            .sub(/\?/, '[^/]')
-            .sub(/\./, '\\.')
-
-        str(self).matches?(/^{regex}$/)
+        let re = pattern.sub(/\*\*\//, '.*/')
+                        .sub(/\*/, '[^/]*')
+                        .sub(/\?/, '[^/]')
+                        .sub(/\./, '\\.')
+        str(self) :: regex("^{re}$")
     }
 
     glob(pattern: String) -> [Path] {
         fn match-part(text: String, pattern: String) -> Bool {
-            let pcre = pattern
-                .sub(/\*/, '[^/]*')
-                .sub(/\?/, '[^/]')
-                .sub(/\./, '\\.')
-            text.match?(regex("^{pcre}$"))
+            let re = pattern.sub(/\*/, '[^/]*')
+                            .sub(/\?/, '[^/]')
+                            .sub(/\./, '\\.')
+            text :: regex("^{re}$")
         }
 
         fn glob-impl(base: Path, parts: [String]) -> [Path] {

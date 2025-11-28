@@ -233,6 +233,7 @@ enum {
         VALUE_REF              ,
         VALUE_THREAD           ,
         VALUE_TUPLE            ,
+        VALUE_TRACE            ,
         VALUE_BREAK            ,
         VALUE_FUN_META         ,
         VALUE_ANY              ,
@@ -681,14 +682,17 @@ typedef struct {
         int a;
         int b;
         int call;
+        int _cause;
         int _class_;
         int contains;
         int count;
+        int _ctx;
         int _def_;
         int _drop_;
         int _enter_;
         int fmt;
         int _free_;
+        int _fqn_;
         int groups;
         int _hash_;
         int init;
@@ -706,6 +710,7 @@ typedef struct {
         int _next_;
         int ptr;
         int question;
+        int _repr_;
         int slice;
         int str;
         int _str_;
@@ -730,6 +735,8 @@ typedef struct {
         int pp;
         int pretty;
         int q;
+        int TEST;
+        int tests;
         int tdb_hook;
 } InternedNames;
 
@@ -752,6 +759,7 @@ extern bool ColorStdout;
 extern bool ColorStderr;
 extern bool ColorProfile;
 
+extern bool RunningTests;
 extern bool CheckTypes;
 extern bool CheckConstraints;
 extern bool DetailedExceptions;
@@ -873,7 +881,7 @@ extern usize TotalBytesAllocated;
                         "%s:%d: %s: assertion '%s' failed"  \
                         __VA_OPT__(": ")                    \
                         __VA_ARGS__                         \
-                        "\n"                                \
+                        "\n",                               \
                         __FILE__,                           \
                         __LINE__,                           \
                         __func__,                           \
@@ -1145,6 +1153,7 @@ enum {
 #define GCPTR(p, gcp)            ((Value){ .type = VALUE_PTR,              .ptr            = (p),  .gcptr = (gcp),                 .tags = 0 })
 #define TGCPTR(p, t, gcp)        ((Value){ .type = VALUE_PTR,              .ptr            = (p),  .gcptr = (gcp), .extra = (t),   .tags = 0 })
 #define EPTR(p, gcp, ep)         ((Value){ .type = VALUE_PTR,              .ptr            = (p),  .gcptr = (gcp), .extra = (ep),  .tags = 0 })
+#define TRACE(t)                 ((Value){ .type = VALUE_TRACE,            .ptr            = (t),                                  .tags = 0 })
 #define BLOB(b)                  ((Value){ .type = VALUE_BLOB,             .blob           = (b),                                  .tags = 0 })
 #define REF(p)                   ((Value){ .type = VALUE_REF,              .ptr            = (p),                                  .tags = 0 })
 #define UNINITIALIZED(p)         ((Value){ .type = VALUE_UNINITIALIZED,    .ptr            = (p),                                  .tags = 0 })
@@ -1386,7 +1395,13 @@ enum {
 
 #define FMT_MAGENTA2(s) TERM(95), (s), TERM(0)
 
-#define VSC(v) value_show_color(ty, v)
+#define VSC(v, ...) value_show_color(ty, (v), __VA_ARGS__ + 0)
+
+#define SHOW_4(v, f1, f2, f3) (value_show_color(ty, (v), TY_SHOW_##f1 | TY_SHOW_##f2 | TY_SHOW_##f3))
+#define SHOW_3(v, f1, f2)     (value_show_color(ty, (v), TY_SHOW_##f1 | TY_SHOW_##f2))
+#define SHOW_2(v, f1)         (value_show_color(ty, (v), TY_SHOW_##f1))
+#define SHOW_1(v)             (value_show_color(ty, (v), 0))
+#define SHOW(...) VA_SELECT(SHOW, __VA_ARGS__)
 
 #define M_ID(m)   intern(&xD.members, (m))->id
 #define M_NAME(i) intern_entry(&xD.members, (i))->name

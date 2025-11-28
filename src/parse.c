@@ -510,12 +510,12 @@ mkfunc(Ty *ty)
 
         static volatile int t = -1;
 
-        f->type = EXPRESSION_FUNCTION;
-        f->rest = -1;
+        f->type    = EXPRESSION_FUNCTION;
+        f->rest    = -1;
         f->ikwargs = -1;
-        f->class = -1;
-        f->ftype = FT_NONE;
-        f->t = ++t;
+        f->class   = NULL;
+        f->ftype   = FT_NONE;
+        f->t       = ++t;
 
         return f;
 }
@@ -1987,9 +1987,21 @@ prefix_function(Ty *ty)
         Expr *e = mkfunc(ty);
 
         bool sugared_generator = false;
+        expression_vector macro_decorators = {0};
+        expression_vector decorators;
+
+        SCRATCH_SAVE();
 
         if (T0 == TOKEN_AT) {
-                e->decorators = parse_decorators(ty);
+                decorators = parse_decorators(ty);
+                for (int i = 0; i < vN(decorators); ++i) {
+                        Expr *dec = v__(decorators, i);
+                        if (IsMacroInvocation(ty, dec)) {
+                                svP(macro_decorators, dec);
+                        } else {
+                                avP(e->decorators, dec);
+                        }
+                }
         }
 
         int type = K0;
@@ -2019,16 +2031,14 @@ prefix_function(Ty *ty)
 
         if (e->name != NULL && tok()->start.s[-1] == ' ') {
                 Expr *f = parse_expr(ty, 0);
-
                 if (
                         (f->type != EXPRESSION_FUNCTION)
                      && (f->type != EXPRESSION_IMPLICIT_FUNCTION)
                 ) {
                         die_at(f, "expected function expression");
                 }
-
                 f->name = e->name;
-
+                SCRATCH_RESTORE();
                 return f;
         }
 
@@ -2156,6 +2166,34 @@ Body:
         if (sugared_generator && e->name != NULL) {
                 e->body->expression->name = afmt("<%s:gen>", e->name);
         }
+
+        Expr *last_decorator = NULL;
+
+        while (vN(macro_decorators) > 0) {
+                Expr *dec = *vvX(macro_decorators);
+                last_decorator = dec->function;
+                v__(dec->args, 0) = e;
+                e = dec;
+                expedite_fun(ty, e, NULL);
+        }
+
+        if (
+                (last_decorator != NULL)
+             && (e->type != EXPRESSION_FUNCTION)
+             && (e->type != EXPRESSION_GENERATOR)
+        ) {
+                die_at(
+                        e,
+                        "function-like decorator macro '%s%s%s' expanded to non-function:\n"
+                        FMT_MORE "%s",
+                        TERM(93;1),
+                        QualifiedName(last_decorator),
+                        TERM(0),
+                        EDBG(e)
+                );
+        }
+
+        SCRATCH_RESTORE();
 
         return e;
 }
@@ -4206,7 +4244,7 @@ infix_member_access(Ty *ty, Expr *left)
                 e->member = &BlankID;
         } else {
                 e->member = prefix_identifier(ty);
-
+#if 0
                 if (is_fun_macro(ty, NULL, e->member->identifier)) {
                         Expr *call = infix_function_call(ty, e->member);
                         avI(call->args, left, 0);
@@ -4224,7 +4262,7 @@ infix_member_access(Ty *ty, Expr *left)
                                 &e->member->end
                         );
                 }
-
+#endif
                 TagTokenOf(ty, e->member, TT_MEMBER);
         }
 
@@ -7177,9 +7215,9 @@ parse_get_stmt(Ty *ty, int prec, bool want_raw)
                 if (want_raw) {
                         v = vT(2);
                         v.items[0] = PTR(s);
-                        v.items[1] = tystmt(ty, s);
+                        v.items[1] = tystmt(ty, s, 0);
                 } else {
-                        v = tystmt(ty, s);
+                        v = tystmt(ty, s, 0);
                 }
                 TY_CATCH_END();
         }

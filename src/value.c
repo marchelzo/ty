@@ -25,8 +25,12 @@ static _Thread_local vec(Dict *) show_dicts;
 static _Thread_local vec(Value *) show_tuples;
 static _Thread_local vec(Array *) show_arrays;
 
-static char *value_showx(Ty *ty, Value const *v);
-static char *value_show_colorx(Ty *ty, Value const *v);
+static char *value_showx(Ty *ty, Value const *v, u32 flags);
+static char *value_show_colorx(Ty *ty, Value const *v, u32 flags);
+
+enum {
+        SHOW_BUF_SZ = 4096
+};
 
 void
 TyValueCleanup(void)
@@ -206,7 +210,7 @@ value_hash(Ty *ty, Value const *val)
 }
 
 char *
-show_dict(Ty *ty, Value const *d, bool color)
+show_dict(Ty *ty, Value const *d, bool color, u32 flags)
 {
         for (int i = 0; i < vN(show_dicts); ++i) {
                 if (v__(show_dicts, i) == d->dict) {
@@ -229,13 +233,13 @@ show_dict(Ty *ty, Value const *d, bool color)
 
         dfor(d->dict, {
                 char *k = color
-                          ? value_show_colorx(ty, key)
-                          : value_showx(ty, key);
+                          ? value_show_colorx(ty, key, flags)
+                          : value_showx(ty, key, flags);
                 u32 nkey = strlen(k);
 
                 char *v = color
-                          ? value_show_colorx(ty, val)
-                          : value_showx(ty, val);
+                          ? value_show_colorx(ty, val, flags)
+                          : value_showx(ty, val, flags);
                 u32 nval = strlen(v);
 
                 if (i++ > 0) {
@@ -266,7 +270,7 @@ show_dict(Ty *ty, Value const *d, bool color)
 }
 
 char *
-show_array(Ty *ty, Value const *a, bool color)
+show_array(Ty *ty, Value const *a, bool color, u32 flags)
 {
         for (int i = 0; i < vN(show_arrays); ++i) {
                 if (v__(show_arrays, i) == a->array) {
@@ -282,8 +286,8 @@ show_array(Ty *ty, Value const *a, bool color)
 
         for (size_t i = 0; i < vN(*a->array); ++i) {
                 char *val = color
-                         ? value_show_colorx(ty, v_(*a->array, i))
-                         : value_showx(ty, v_(*a->array, i));
+                         ? value_show_colorx(ty, v_(*a->array, i), flags)
+                         : value_showx(ty, v_(*a->array, i), flags);
                 if (i > 0) {
                         svP(buf, ',');
                         svP(buf, ' ');
@@ -301,7 +305,7 @@ show_array(Ty *ty, Value const *a, bool color)
 }
 
 char *
-show_tuple(Ty *ty, Value const *v, bool color)
+show_tuple(Ty *ty, Value const *v, bool color, u32 flags)
 {
         for (int i = 0; i < vN(show_tuples); ++i) {
                 if (v__(show_tuples, i) == v->items) {
@@ -334,8 +338,8 @@ show_tuple(Ty *ty, Value const *v, bool color)
                 }
 
                 char *val = color
-                          ? value_show_colorx(ty, &v->items[i])
-                          : value_showx(ty, &v->items[i]);
+                          ? value_show_colorx(ty, &v->items[i], flags)
+                          : value_showx(ty, &v->items[i], flags);
                 u32 n = strlen(val);
 
                 svPn(buf, val, n);
@@ -452,116 +456,163 @@ uninit(Ty *ty, Symbol const *s)
 }
 
 static char *
-value_showx(Ty *ty, Value const *v)
+value_showx(Ty *ty, Value const *v, u32 flags)
 {
-        char buffer[1024];
+        byte_vector buf = {0};
+        char *buffer = smA(SHOW_BUF_SZ);
         char *s = NULL;
 
+        Value *fp;
         Value val = *v;
 
         switch (v->type & ~VALUE_TAGGED) {
         case VALUE_INTEGER:
                 snprintf(buffer, 1024, "%"PRIiMAX, v->z);
                 break;
+
         case VALUE_REAL:
-                dtoa(v->real, buffer, sizeof buffer);
+                dtoa(v->real, buffer, SHOW_BUF_SZ);
                 break;
+
         case VALUE_STRING:
                 s = show_string(ty, ss(*v), sN(*v), false);
                 break;
+
         case VALUE_BOOLEAN:
                 snprintf(buffer, 1024, "%s", v->boolean ? "true" : "false");
                 break;
+
         case VALUE_NIL:
                 snprintf(buffer, 1024, "%s", "nil");
                 break;
+
         case VALUE_TYPE:
                 return type_show(ty, v->ptr);
+
         case VALUE_NAMESPACE:
                 snprintf(
                         buffer,
-                        sizeof buffer,
-                        "<namespace '%s'>",
+                        SHOW_BUF_SZ,
+                        "<ns '%s'>",
                         v->namespace->name
                 );
                 break;
+
         case VALUE_ARRAY:
-                s = show_array(ty, v, false);
+                s = show_array(ty, v, false, flags);
                 break;
+
         case VALUE_TUPLE:
-                s = show_tuple(ty, v, false);
+                s = show_tuple(ty, v, false, flags);
                 break;
+
         case VALUE_REGEX:
                 snprintf(buffer, 1024, "/%s/", v->regex->pattern);
                 break;
+
         case VALUE_DICT:
-                s = show_dict(ty, v, false);
+                s = show_dict(ty, v, false, flags);
                 break;
+
         case VALUE_FUNCTION:
                 if (class_of(v) == -1) {
-                        snprintf(buffer, 1024, "<function '%s' at %p>", name_of(v), (void *)((char *)v->info + v->info[0]));
+                        snprintf(buffer, 1024, "<func %s>", name_of(v));
                 } else {
                         char const *class = class_name(ty, class_of(v));
-                        snprintf(buffer, 1024, "<function '%s.%s' at %p>", class, name_of(v), (void *)((char *)v->info + v->info[0]));
+                        snprintf(buffer, 1024, "<func %s.%s>", class, name_of(v));
                 }
                 break;
+
         case VALUE_METHOD:
-                if (v->this == NULL)
-                        snprintf(buffer, 1024, "<method '%s' at %p>", M_NAME(v->name), (void *)v->method);
-                else
-                        snprintf(buffer, 1024, "<method '%s' at %p bound to %s>", M_NAME(v->name), (void *)v->method, value_showx(ty, v->this));
+                if (v->this == NULL) {
+                        snprintf(
+                                buffer,
+                                1024,
+                                "<method '%s' at %p>",
+                                M_NAME(v->name),
+                                (void *)v->method
+                        );
+                } else {
+                        snprintf(
+                                buffer,
+                                1024,
+                                "<method '%s' bound to %s>",
+                                M_NAME(v->name),
+                                value_showx(ty, v->this, flags)
+                        );
+                }
                 break;
+
         case VALUE_BUILTIN_METHOD:
                 snprintf(buffer, 1024, "<bound builtin method '%s'>", M_NAME(v->name));
                 break;
+
         case VALUE_BUILTIN_FUNCTION:
                 if (v->name == -1)
-                        snprintf(buffer, 1024, "<builtin function>");
+                        snprintf(buffer, 1024, "<builtin>");
                 else if (v->module == NULL)
-                        snprintf(buffer, 1024, "<builtin function '%s'>", M_NAME(v->name));
+                        snprintf(buffer, 1024, "<builtin %s>", M_NAME(v->name));
                 else
-                        snprintf(buffer, 1024, "<builtin function '%s::%s'>", v->module, M_NAME(v->name));
+                        snprintf(buffer, 1024, "<builtin %s.%s>", v->module, M_NAME(v->name));
                 break;
+
         case VALUE_FOREIGN_FUNCTION:
                 if (v->xinfo == NULL || v->xinfo->name == NULL)
-                        snprintf(buffer, 1024, "<foreign function>");
+                        snprintf(buffer, 1024, "<foreign func>");
                 else
-                        snprintf(buffer, 1024, "<foreign function '%s'>", v->xinfo->name);
+                        snprintf(buffer, 1024, "<foreign func %s>", v->xinfo->name);
                 break;
+
         case VALUE_OPERATOR:
                 snprintf(buffer, 1024, "<operator %s>", M_NAME(v->uop));
                 break;
+
         case VALUE_CLASS:
                 snprintf(buffer, 1024, "<class %s>", class_name(ty, v->class));
                 break;
+
         case VALUE_TAG:
                 snprintf(buffer, 1024, "%s", tags_name(ty, v->tag));
                 break;
+
         case VALUE_BLOB:
                 snprintf(buffer, 1024, "<blob at %p (%zu bytes)>", (void *) v->blob, v->blob->count);
                 break;
+
         case VALUE_PTR:
                 snprintf(buffer, 1024, "<pointer at %p>", v->ptr);
                 break;
+
         case VALUE_GENERATOR:
                 snprintf(buffer, 1024, "<generator at %p>", v->gen);
                 break;
+
         case VALUE_THREAD:
                 snprintf(buffer, 1024, "<thread %"PRIu64">", v->thread->i);
                 break;
+
         case VALUE_SENTINEL:
                 return "<sentinel>";
+
         case VALUE_REF:
                 snprintf(buffer, 1024, "<reference to %p>", v->ptr);
                 break;
+
         case VALUE_NONE:
                 return "<none>";
+
+        case VALUE_TRACE:
+                svR(buf, 2048*2048);
+                s = FormatTrace(ty, v->ptr, &buf);
+                break;
+
         case VALUE_INDEX:
                 snprintf(buffer, 1024, "<index: (%d, %d, %d)>", (int)v->i, (int)v->off, (int)v->nt);
                 break;
+
         case VALUE_OBJECT:
         {
-                if (TY_IS(DYING)) {
+                if (flags & TY_SHOW_BASIC) {
                         goto BasicObject;
                 }
 
@@ -571,9 +622,13 @@ value_showx(Ty *ty, Value const *v)
                         }
                 }
 
-                Value *fp = class_lookup_method_i(ty, v->class, NAMES._str_);
+                fp = class_lookup_method_i(
+                        ty,
+                        v->class,
+                        (flags & TY_SHOW_REPR) ? NAMES._repr_ : NAMES._str_
+                );
 
-                if (fp != NULL && class_of(fp) != CLASS_OBJECT) {
+                if (fp != NULL) {
                         xvP(ty->visiting, v->object);
                         Value self = stripped(v);
                         Value str  = vm_call_method(ty, &self, fp, 0);
@@ -614,22 +669,27 @@ BasicObject:
 }
 
 static char *
-value_show_colorx(Ty *ty, Value const *v)
+value_show_colorx(Ty *ty, Value const *v, u32 flags)
 {
-        char buffer[2048];
-        char small[512];
-        char *s = NULL;
+        if (flags & TY_SHOW_NOCOLOR) {
+                return value_showx(ty, v, flags);
+        }
 
+        char *buffer = smA(SHOW_BUF_SZ);
+        char *small  = smA(512);
+        char *s      = NULL;
+
+        Value *fp;
         Value val = *v;
 
         switch (v->type & ~VALUE_TAGGED) {
         case VALUE_INTEGER:
-                snprintf(buffer, sizeof buffer, "%s%"PRIiMAX"%s", TERM(93), v->z, TERM(0));
+                snprintf(buffer, SHOW_BUF_SZ, "%s%"PRIiMAX"%s", TERM(93), v->z, TERM(0));
                 break;
 
         case VALUE_REAL:
                 dtoa(v->real, small, sizeof small);
-                snprintf(buffer, sizeof buffer, "%s%s%s", TERM(93), small, TERM(0));
+                snprintf(buffer, SHOW_BUF_SZ, "%s%s%s", TERM(93), small, TERM(0));
                 break;
 
         case VALUE_STRING:
@@ -637,18 +697,18 @@ value_show_colorx(Ty *ty, Value const *v)
                 break;
 
         case VALUE_BOOLEAN:
-                snprintf(buffer, sizeof buffer, "%s%s%s", TERM(36), v->boolean ? "true" : "false", TERM(0));
+                snprintf(buffer, SHOW_BUF_SZ, "%s%s%s", TERM(36), v->boolean ? "true" : "false", TERM(0));
                 break;
 
         case VALUE_NIL:
-                snprintf(buffer, sizeof buffer, "%snil%s", TERM(95), TERM(0));
+                snprintf(buffer, SHOW_BUF_SZ, "%snil%s", TERM(95), TERM(0));
                 break;
 
         case VALUE_NAMESPACE:
                 snprintf(
                         buffer,
-                        sizeof buffer,
-                        "%s<namespace %s'%s'%s>%s",
+                        SHOW_BUF_SZ,
+                        "%s<ns %s'%s'%s>%s",
                         TERM(93),
                         TERM(95),
                         v->namespace->name,
@@ -658,33 +718,30 @@ value_show_colorx(Ty *ty, Value const *v)
                 break;
 
         case VALUE_ARRAY:
-                s = show_array(ty, v, true);
+                s = show_array(ty, v, true, flags);
                 break;
 
         case VALUE_TUPLE:
-                s = show_tuple(ty, v, true);
+                s = show_tuple(ty, v, true, flags);
                 break;
 
         case VALUE_REGEX:
-                snprintf(buffer, sizeof buffer, "%s/%s/%s", TERM(96), v->regex->pattern, TERM(0));
+                snprintf(buffer, SHOW_BUF_SZ, "%s/%s/%s", TERM(96), v->regex->pattern, TERM(0));
                 break;
 
         case VALUE_DICT:
-                s = show_dict(ty, v, true);
+                s = show_dict(ty, v, true, flags);
                 break;
 
         case VALUE_FUNCTION:
                 if (class_of(v) == -1) {
                         snprintf(
                                 buffer,
-                                sizeof buffer,
-                                "%s<function %s'%s'%s at %s%p%s>%s",
+                                SHOW_BUF_SZ,
+                                "%s<func %s%s%s>%s",
                                 TERM(96),
                                 TERM(92),
                                 name_of(v),
-                                TERM(96),
-                                TERM(94),
-                                (void *)((char *)v->info + v->info[0]),
                                 TERM(96),
                                 TERM(0)
                         );
@@ -692,15 +749,12 @@ value_show_colorx(Ty *ty, Value const *v)
                         char const *class = class_name(ty, class_of(v));
                         snprintf(
                                 buffer,
-                                sizeof buffer,
-                                "%s<function %s'%s.%s'%s at %s%p%s>%s",
+                                SHOW_BUF_SZ,
+                                "%s<func %s%s.%s%s>%s",
                                 TERM(96),
                                 TERM(92),
                                 class,
                                 name_of(v),
-                                TERM(96),
-                                TERM(94),
-                                (void *)((char *)v->info + v->info[0]),
                                 TERM(96),
                                 TERM(0)
                         );
@@ -711,29 +765,23 @@ value_show_colorx(Ty *ty, Value const *v)
                 if (v->this == NULL) {
                         snprintf(
                                 buffer,
-                                sizeof buffer,
-                                "%s<method %s'%s'%s at %s%p%s>%s",
+                                SHOW_BUF_SZ,
+                                "%s<method %s'%s'%s>%s",
                                 TERM(96),
                                 TERM(92),
                                 M_NAME(v->name),
-                                TERM(96),
-                                TERM(94),
-                                (void *)v->method,
                                 TERM(96),
                                 TERM(0)
                         );
                 } else {
-                        char *vs = value_show_colorx(ty, v->this);
+                        char *vs = value_show_colorx(ty, v->this, flags);
                         snprintf(
                                 buffer,
-                                sizeof buffer,
-                                "%s<method %s'%s'%s at %s%p%s bound to %s%s%s>%s",
+                                SHOW_BUF_SZ,
+                                "%s<method %s'%s'%s bound to %s%s%s>%s",
                                 TERM(96),
                                 TERM(92),
                                 M_NAME(v->name),
-                                TERM(96),
-                                TERM(94),
-                                (void *)v->method,
                                 TERM(96),
                                 TERM(0),
                                 vs,
@@ -746,7 +794,7 @@ value_show_colorx(Ty *ty, Value const *v)
         case VALUE_BUILTIN_METHOD:
                 snprintf(
                         buffer,
-                        sizeof buffer,
+                        SHOW_BUF_SZ,
                         "%s<bound builtin method %s'%s'%s>%s",
                         TERM(96),
                         TERM(92),
@@ -760,16 +808,16 @@ value_show_colorx(Ty *ty, Value const *v)
                 if (v->name == -1) {
                         snprintf(
                                 buffer,
-                                sizeof buffer,
-                                "%s<builtin function>%s",
+                                SHOW_BUF_SZ,
+                                "%s<builtin>%s",
                                 TERM(96),
                                 TERM(0)
                         );
                 } else if (v->module == NULL) {
                         snprintf(
                                 buffer,
-                                sizeof buffer,
-                                "%s<builtin function %s'%s'%s>%s",
+                                SHOW_BUF_SZ,
+                                "%s<builtin %s'%s'%s>%s",
                                 TERM(96),
                                 TERM(92),
                                 M_NAME(v->name),
@@ -779,8 +827,8 @@ value_show_colorx(Ty *ty, Value const *v)
                 } else {
                         snprintf(
                                 buffer,
-                                sizeof buffer,
-                                "%s<builtin function %s'%s::%s'%s>%s",
+                                SHOW_BUF_SZ,
+                                "%s<builtin %s'%s::%s'%s>%s",
                                 TERM(96),
                                 TERM(92),
                                 v->module,
@@ -795,7 +843,7 @@ value_show_colorx(Ty *ty, Value const *v)
                 if (v->xinfo == NULL || v->xinfo->name == NULL) {
                         snprintf(
                                 buffer,
-                                sizeof buffer,
+                                SHOW_BUF_SZ,
                                 "%s<foreign function>%s",
                                 TERM(96),
                                 TERM(0)
@@ -803,7 +851,7 @@ value_show_colorx(Ty *ty, Value const *v)
                 } else {
                         snprintf(
                                 buffer,
-                                sizeof buffer,
+                                SHOW_BUF_SZ,
                                 "%s<foreign function %s'%s'%s>%s",
                                 TERM(96),
                                 TERM(92),
@@ -817,7 +865,7 @@ value_show_colorx(Ty *ty, Value const *v)
         case VALUE_OPERATOR:
                 snprintf(
                         buffer,
-                        sizeof buffer,
+                        SHOW_BUF_SZ,
                         "%s<%soperator %s%s%s>%s",
                         TERM(96),
                         TERM(92),
@@ -831,7 +879,7 @@ value_show_colorx(Ty *ty, Value const *v)
         case VALUE_CLASS:
                 snprintf(
                         buffer,
-                        sizeof buffer,
+                        SHOW_BUF_SZ,
                         "%s<%sclass %s%s%s>%s",
                         TERM(96),
                         TERM(92),
@@ -843,17 +891,17 @@ value_show_colorx(Ty *ty, Value const *v)
                 break;
 
         case VALUE_TAG:
-                snprintf(buffer, sizeof buffer, "%s%s%s", TERM(34), tags_name(ty, v->tag), TERM(0));
+                snprintf(buffer, SHOW_BUF_SZ, "%s%s%s", TERM(34), tags_name(ty, v->tag), TERM(0));
                 break;
 
         case VALUE_BLOB:
-                snprintf(buffer, sizeof buffer, "<blob at %p (%zu bytes)>", (void *) v->blob, v->blob->count);
+                snprintf(buffer, SHOW_BUF_SZ, "<blob at %p (%zu bytes)>", (void *) v->blob, v->blob->count);
                 break;
 
         case VALUE_PTR:
                 snprintf(
                         buffer,
-                        sizeof buffer,
+                        SHOW_BUF_SZ,
                         "%s<pointer at %s%s%p%s%s>%s",
                         TERM(32),
                         TERM(1),
@@ -866,29 +914,49 @@ value_show_colorx(Ty *ty, Value const *v)
                 break;
 
         case VALUE_GENERATOR:
-                snprintf(buffer, sizeof buffer, "<generator at %p>", v->gen);
+                snprintf(buffer, SHOW_BUF_SZ, "<generator at %p>", v->gen);
                 break;
 
         case VALUE_THREAD:
-                snprintf(buffer, sizeof buffer, "%s<thread %"PRIu64">%s", TERM(33), v->thread->i, TERM(0));
+                snprintf(buffer, SHOW_BUF_SZ, "%s<thread %"PRIu64">%s", TERM(33), v->thread->i, TERM(0));
                 break;
 
         case VALUE_SENTINEL:
                 return "<sentinel>";
 
         case VALUE_REF:
-                snprintf(buffer, sizeof buffer, "<reference to %p>", v->ptr);
+                snprintf(buffer, SHOW_BUF_SZ, "<reference to %p>", v->ptr);
                 break;
 
         case VALUE_NONE:
                 return "<none>";
 
         case VALUE_INDEX:
-                snprintf(buffer, sizeof buffer, "<index: (%d, %d, %d)>", (int)v->i, (int)v->off, (int)v->nt);
+                snprintf(
+                        buffer,
+                        SHOW_BUF_SZ,
+                        "<index: (%"PRIiMAX", %jd, %d)>",
+                        v->i,
+                        v->off,
+                        v->nt
+                );
                 break;
 
-        case VALUE_OBJECT:;
-                if (TY_IS(DYING)) {
+        case VALUE_TRACE:
+                snprintf(
+                        buffer,
+                        SHOW_BUF_SZ,
+                        "%s<stack trace %s(%zu frames)%s>%s",
+                        TERM(38;2;49;161;173),
+                        TERM(34),
+                        vN(*(ThrowCtx *)v->ptr),
+                        TERM(38;2;49;161;173),
+                        TERM(0)
+                );
+                break;
+
+        case VALUE_OBJECT:
+                if (flags & TY_SHOW_BASIC) {
                         goto BasicObject;
                 }
 
@@ -899,12 +967,16 @@ value_show_colorx(Ty *ty, Value const *v)
                 }
 
 #ifdef TY_NO_LOG
-                Value *fp = class_lookup_method_i(ty, v->class, NAMES._str_);
+                fp = class_lookup_method_i(
+                        ty,
+                        v->class,
+                        (flags & TY_SHOW_REPR) ? NAMES._repr_ : NAMES._str_
+                );
 #else
-                Value *fp = NULL;
+                fp = NULL;
 #endif
 
-                if (fp != NULL && class_of(fp) != CLASS_OBJECT) {
+                if (fp != NULL) {
                         xvP(ty->visiting, v->object);
                         Value self = stripped(v);
                         Value str  = vm_call_method(ty, &self, fp, 0);
@@ -919,7 +991,7 @@ value_show_colorx(Ty *ty, Value const *v)
 BasicObject:
                         snprintf(
                                 buffer,
-                                sizeof buffer,
+                                SHOW_BUF_SZ,
                                 "%s<%s%s%s object at %s%p%s>%s",
                                 TERM(96),
                                 TERM(34),
@@ -938,7 +1010,7 @@ BasicObject:
                 UNREACHABLE();
 
         default:
-                return value_showx(ty, v);
+                return value_showx(ty, v, flags);
         }
 
         char *result = tags_wrap(
@@ -952,48 +1024,48 @@ BasicObject:
 }
 
 char *
-value_show_color(Ty *ty, Value const *v)
+value_show_color(Ty *ty, Value const *v, u32 flags)
 {
         char *str;
 
         WITH_SCRATCH {
-                str = S2(value_show_colorx(ty, v));
+                str = S2(value_show_colorx(ty, v, flags));
         }
 
         return str;
 }
 
 char *
-value_show(Ty *ty, Value const *v)
+value_show(Ty *ty, Value const *v, u32 flags)
 {
         char *str;
 
         WITH_SCRATCH {
-                str = S2(value_showx(ty, v));
+                str = S2(value_showx(ty, v, flags));
         }
 
         return str;
 }
 
 Value
-value_vshow_color(Ty *ty, Value const *v)
+value_vshow_color(Ty *ty, Value const *v, u32 flags)
 {
         Value str;
 
         WITH_SCRATCH {
-                str = vSsz(value_show_colorx(ty, v));
+                str = vSsz(value_show_colorx(ty, v, flags));
         }
 
         return str;
 }
 
 Value
-value_vshow(Ty *ty, Value const *v)
+value_vshow(Ty *ty, Value const *v, u32 flags)
 {
         Value str;
 
         WITH_SCRATCH {
-                str = vSsz(value_showx(ty, v));
+                str = vSsz(value_showx(ty, v, flags));
         }
 
         return str;
@@ -1008,9 +1080,9 @@ check_cmp_result(Ty *ty, Value const *v1, Value const *v2, Value v)
                         FMT_MORE " %sleft%s: %s"
                         FMT_MORE "%sright%s: %s\n",
                         TERM(95), TERM(0),
-                        value_show_color(ty, v1),
+                        SHOW(v1),
                         TERM(95), TERM(0),
-                        value_show_color(ty, v2)
+                        SHOW(v2)
                 );
         }
 
@@ -1021,11 +1093,11 @@ check_cmp_result(Ty *ty, Value const *v1, Value const *v2, Value v)
                         FMT_MORE " %sright%s: %s"
                         FMT_MORE "%sresult%s: %s\n",
                         TERM(95), TERM(0),
-                        value_show_color(ty, v1),
+                        SHOW(v1),
                         TERM(95), TERM(0),
-                        value_show_color(ty, v2),
+                        SHOW(v2),
                         TERM(95), TERM(0),
-                        value_show_color(ty, &v)
+                        SHOW(&v)
                 );
         }
 
@@ -1151,7 +1223,7 @@ value_apply_predicate(Ty *ty, Value *p, Value *v)
         case VALUE_CLASS:
                 return (v->type == VALUE_OBJECT) && (v->class == p->class);
         default:
-                zP("invalid type of value used as a predicate: %s", value_showx(ty, v));
+                zP("invalid type of value used as a predicate: %s", VSC(v));
         }
 }
 
@@ -1458,6 +1530,19 @@ mark_pointer(Ty *ty, Value const *v)
         }
 }
 
+inline static void
+mark_trace(Ty *ty, ThrowCtx *ctx)
+{
+        if (MARKED(ctx)) return;
+
+        MARK(ctx);
+
+        for (int i = 0; i < vN(*ctx); ++i) {
+                ValueVector *locals = v_(ctx->locals, i);
+                vfor(*locals, MarkNext(ty, it));
+        }
+}
+
 static inline void
 _value_mark_xd(Ty *ty, Value const *v)
 {
@@ -1470,7 +1555,7 @@ _value_mark_xd(Ty *ty, Value const *v)
         static _Thread_local int d;
 
         GC_STOP();
-        //GCLOG("Marking: %s", value_show(ty, v));
+        //GCLOG("Marking: %s", SHOW(v, BASIC));
         GC_RESUME();
 
         ++d;
@@ -1492,6 +1577,7 @@ _value_mark_xd(Ty *ty, Value const *v)
         case VALUE_REF:              MARK(v->ptr); MarkNext(ty, v->ptr);                               break;
         case VALUE_BLOB:             MARK(v->blob);                                                    break;
         case VALUE_PTR:              mark_pointer(ty, v);                                              break;
+        case VALUE_TRACE:            mark_trace(ty, v->ptr);                                           break;
         case VALUE_REGEX:            if (v->regex->gc) MARK(v->regex);                                 break;
         default:                                                                                       break;
         }

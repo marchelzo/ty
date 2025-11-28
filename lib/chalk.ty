@@ -564,20 +564,16 @@ class Chalk {
         }
 
         fn stops(stop, style) {
-            match stop {
-                'fg' and style.matches?({fg, ?bright})
-                    => true,
-                'bg' and style.matches?({bg, ?bg-bright})
-                    => true,
-                'uc' and style.matches?({uc, ?underline})
-                    => true,
-                'underline' and style.matches?({underline, ?uc})
-                    => true,
-                _ => style == __styles[stop]
+            match (stop, style) {
+                ('fg', {fg, ?bright})    => true,
+                ('bg', {bg, ?bg-bright}) => true,
+                ('uc', {uc, ?underline}) => true,
+                ('u',  {underline, ?uc}) => true,
+                _  => (style == __styles[stop])
             }
         }
 
-        let clean = (\_.sub(/\\./, %{'\\\\': '\\', '\\[': '[', *: it[1]}[]))
+        let clean = \_.sub(/\\./, &[1])
 
         for match parts {
             m: RegexMatch => {
@@ -659,16 +655,12 @@ class Chalk {
         }
 
         fn stops(stop, style) {
-            match stop {
-                'fg' and style.matches?({fg, ?bright})
-                    => true,
-                'bg' and style.matches?({bg, ?bg-bright})
-                    => true,
-                'uc' and style.matches?({uc, ?underline})
-                    => true,
-                'underline' and style.matches?({underline, ?uc})
-                    => true,
-                _ => style == __styles[stop]
+            match (stop, style) {
+                ('fg', {fg, ?bright})    => true,
+                ('bg', {bg, ?bg-bright}) => true,
+                ('uc', {uc, ?underline}) => true,
+                ('u',  {underline, ?uc}) => true,
+                _  => (style == __styles[stop])
             }
         }
 

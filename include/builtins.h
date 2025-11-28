@@ -881,6 +881,7 @@ static struct {
   { .module = "ty",         .name = "unlock",                   .value = BUILTIN(builtin_ty_unlock)              },
   { .module = "ty",         .name = "gc",                       .value = BUILTIN(builtin_ty_gc)                  },
   { .module = "ty",         .name = "bt",                       .value = BUILTIN(builtin_ty_bt)                  },
+  { .module = "ty",         .name = "trace",                    .value = BUILTIN(builtin_ty_trace)               },
   { .module = "ty",         .name = "valueSize",                .value = INT(sizeof (Value))                     },
   { .module = "ty",         .name = "definition",               .value = BUILTIN(builtin_ty_definition)          },
   { .module = "ty/types",   .name = "info",                     .value = BUILTIN(builtin_ty_type_info)           },

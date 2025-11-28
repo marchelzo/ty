@@ -1,4 +1,4 @@
-import ffi as c (wrap, C!)
+import ffi as c (C!)
 import os
 
 let HTTP_BOTH      = 0

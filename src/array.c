@@ -1493,7 +1493,7 @@ array_split_at(Ty *ty, Value *array, int argc, Value *kargs)
                         "array.split() expected integer but got %s%s%s%s",
                         TERM(96),
                         TERM(1),
-                        value_show(ty, &ARG(0)),
+                        SHOW(&ARG(0)),
                         TERM(0)
                 );
         }
@@ -1996,56 +1996,51 @@ array_scan_right(Ty *ty, Value *array, int argc, Value *kwargs)
 static Value
 array_reverse(Ty *ty, Value *array, int argc, Value *kwargs)
 {
-        int lo;
-        int n;
+        ASSERT_ARGC("Array.reverse()", 0, 1, 2);
 
-        if (argc > 0 && ARG(0).type != VALUE_INTEGER) {
-                zP("array.reverse(): expected integer as first argument but got: %s", value_show(ty, &ARG(0)));
-        }
-
-        if (argc > 1 && ARG(1).type != VALUE_INTEGER) {
-                zP("array.reverse(): expected integer as second argument but got: %s", value_show(ty, &ARG(1)));
-        }
+        isize lo;
+        isize n;
 
         if (argc > 0) {
-                lo = ARG(0).z;
-                if (lo < 0) { lo += array->array->count; }
+                lo = INT_ARG(0);
+                if (lo < 0) {
+                        lo += vN(*array->array);
+                }
         } else {
                 lo = 0;
         }
 
-        if (lo < 0 || lo > array->array->count) {
-                zP("array.reverse(): invalid start index %d for array with size %zu", lo, array->array->count);
+        if (lo < 0 || lo > vN(*array->array)) {
+                bP("invalid start index %zd for array with size %zu", lo, vN(*array->array));
         }
 
         if (argc > 1) {
-                n = ARG(1).z;
+                n = INT_ARG(1);
         } else {
-                n = array->array->count - lo;
+                n = vN(*array->array) - lo;
         }
 
         if (n == 0) {
                 return *array;
         }
 
-        int hi = lo + n - 1;
+        isize hi = lo + n - 1;
 
-        if (hi > array->array->count) {
-                zP(
-                        "array.reverse(): invalid count %d for start index %d and array with size %zu",
-                        n, lo, array->array->count
+        if (hi > vN(*array->array)) {
+                bP(
+                        "invalid count %jd for start index %jd and array of size %zu",
+                        n, lo, vN(*array->array)
                 );
         }
 
-        Value t;
-
         while (lo < hi) {
-                t = array->array->items[lo];
-                array->array->items[lo] = array->array->items[hi];
-                array->array->items[hi] = t;
-
-                ++lo;
-                --hi;
+                SWAP(
+                        Value,
+                        *v_(*array->array, lo),
+                        *v_(*array->array, hi)
+                );
+                lo += 1;
+                hi -= 1;
         }
 
         return *array;

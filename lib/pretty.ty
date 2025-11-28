@@ -139,7 +139,7 @@ class Printer {
         }
 
         fn printMap(
-            m: Array[(_, _)],
+            m: Dict[_, _],
             open: String,
             close: String,
             eq: String,
@@ -153,7 +153,7 @@ class Printer {
 
             try {
                 write(open, delim-style, force!)
-                for match m.intersperse(', ') {
+                for match m.items().intersperse(', ') {
                     (k, v) => {
                         write-key(k, false, force!)
                         write(eq, delim-style, force!)
@@ -169,7 +169,7 @@ class Printer {
                 restore(state)
                 write(open, delim-style, force)
                 nl(1)
-                for (k, v), i in m {
+                for k, v, i in m {
                     if i > 0 { write(',', id, force); nl() }
                     write-key(k, true, force)
                     write(eq, delim-style, force)
@@ -186,7 +186,7 @@ class Printer {
             },
 
             d :: Dict => {
-                printMap(d.items(), '%{', '}', ': ')
+                printMap(d, '%{', '}', ': ')
             },
 
             %t(x) => {
@@ -196,10 +196,9 @@ class Printer {
             },
 
             t :: Tuple => {
-                let items = members(t, list: true)
-
-                if items.map(&0) :: Array[Int] {
-                    printList(items.map(&1), '(', ')', __colors.array)
+                let items = members(t)
+                if items.keys().all?(\_ :: Int) {
+                    printList(items.values(), '(', ')', __colors.array)
                 } else {
                     printMap(items, '{', '}', ': ')
                 }
@@ -228,7 +227,7 @@ class Printer {
                 write("{x}", __colors.float, force)
             },
 
-            members@(_, list=true) ~> $ms => {
+            members ~> $ms => {
                 printMap(ms, "{type(x).__name__}(", ')', '=', delim-style=__colors.c)
             },
 
@@ -260,6 +259,6 @@ pretty = fn pretty(x, %kwargs) {
     Printer(**kwargs).print(x)
 }
 
-pp = fn prettyPrint(x, %kwargs: Any) {
+pp = fn pretty-print(x, %kwargs: Any) {
     print(pretty(x, **kwargs))
 }
