@@ -20,7 +20,6 @@ typedef struct type Type;
 typedef vec(Expr *) expression_vector;
 typedef vec(TypeBound) TypeBoundVector;
 
-
 typedef Expr *ExprTransform(Expr *, Scope *, void *);
 typedef Expr *TypeTransform(Expr *, Scope *, void *);
 typedef Expr *PatternTransform(Expr *, Scope *, void *);
@@ -252,6 +251,7 @@ typedef struct class_definition ClassDefinition;
         X(TRACE),                                                                     \
         X(IFDEF),                                                                     \
         X(NONE),                                                                      \
+        X(UNSAFE),                                                                    \
         X(MULTI_FUNCTION),                                                            \
         X(MACRO_INVOCATION),                                                          \
         X(FUN_MACRO_INVOCATION),                                                      \
@@ -431,9 +431,9 @@ struct expression {
                         symbol_vector bound_symbols;
                         TypeBoundVector type_bounds;
                         Stmt *body;
+                        Class *class;
                         Expr *overload;
                         bool has_defer;
-                        int class;
                         int ikwargs;
                         int rest;
                         int t;
@@ -588,7 +588,7 @@ struct statement {
 };
 
 inline static bool
-is_method(Expr const *e) { return e->class != -1; }
+is_method(Expr const *e) { return e->class != NULL; }
 
 char const *
 ExpressionTypeName(Expr const *e);

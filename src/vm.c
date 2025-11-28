@@ -743,6 +743,8 @@ add_builtins(Ty *ty, int ac, char **av)
         BUILTIN_NAMED_VAR(NULL,  "pretty",         pretty    ) = NIL;
         BUILTIN_NAMED_VAR(NULL,  "pp",             pp        ) = NIL;
         BUILTIN_NAMED_VAR("ty",  "q",              q         ) = BOOLEAN(!CheckTypes);
+        BUILTIN_NAMED_VAR("ty",  "TEST",           TEST      ) = BOOLEAN(RunningTests);
+        BUILTIN_NAMED_VAR("ty",  "tests",          tests     ) = ARRAY(vA());
 
         BUILTIN_VAR("ty",  "executable") = this_executable(ty);
 #if defined(_WIN32)
@@ -2028,7 +2030,16 @@ TY_INSTR_INLINE static void
 RaiseException(Ty *ty)
 {
         ThrowCtx *ctx = PushThrowCtx(ty);
-        ctx->exc = pop();
+        Value exc = pop();
+        if (
+                (vN(THROW_STACK) > 1)
+             && (exc.type == VALUE_OBJECT)
+             && class_is_subclass(ty, exc.class, CLASS_RUNTIME_ERROR)
+        ) {
+                ThrowCtx *prev = vvL(THROW_STACK)[-1];
+                PutMember(exc, NAMES._cause, prev->exc);
+        }
+        ctx->exc = exc;
         DoThrow(ty);
 }
 
@@ -2056,6 +2067,7 @@ ArraySubscript(Ty *ty, Value container, Value subscript, bool strict)
         char *ip;
         Value *vp;
         Array *a;
+        Value err;
 
 Start:
         switch (EXPECT(subscript.type, VALUE_INTEGER)) {
@@ -2069,10 +2081,16 @@ Start:
                         call_co(ty, &subscript, 0);
                         YieldFix(ty);
                         Value r = pop();
-                        if (r.type == VALUE_NONE)
+                        if (r.type == VALUE_NONE) {
                                 break;
-                        if (UNLIKELY(r.type != VALUE_INTEGER))
-                                zP("iterator yielded non-integer array index in subscript expression: %s", VSC(&r));
+                        }
+                        if (UNLIKELY(r.type != VALUE_INTEGER)) {
+                                zP(
+                                        "iterator yielded non-integer array index"
+                                        " in subscript expression: %s",
+                                        VSC(&r)
+                                );
+                        }
                         if (r.z < 0)
                                 r.z += container.array->count;
                         if (r.z < 0 || r.z >= container.array->count) {
@@ -2090,8 +2108,8 @@ Start:
                 gX();
 
                 IP = ip;
-
                 return ARRAY(a);
+
         case VALUE_OBJECT:
                 gP(&subscript);
                 gP(&container);
@@ -2122,34 +2140,33 @@ Start:
                         if (UNLIKELY(r.type != VALUE_INTEGER))
                                 zP("iterator yielded non-integer array index in subscript expression");
                         if (r.z < 0)
-                                r.z += container.array->count;
-                        if (r.z < 0 || r.z >= container.array->count) {
+                                r.z += vN(*container.array);
+                        if (r.z < 0 || r.z >= vN(*container.array)) {
                                 if (strict) goto Error;
                                 vAp(a, None);
                         } else if (strict) {
-                                vAp(a, container.array->items[r.z]);
+                                vAp(a, v__(*container.array, r.z));
                         } else {
-                                vAp(a, Some(container.array->items[r.z]));
+                                vAp(a, Some(v__(*container.array, r.z)));
                         }
                 }
 
                 OKGC(a);
                 gX();
                 gX();
-
                 return ARRAY(a);
+
         case VALUE_INTEGER:
                 if (subscript.z < 0) {
-                        subscript.z += container.array->count;
+                        subscript.z += vN(*container.array);
                 }
-
-                if (subscript.z < 0 || subscript.z >= container.array->count) {
+                if (subscript.z < 0 || subscript.z >= vN(*container.array)) {
                         if (strict) goto Error;
                         return None;
                 } else if (strict) {
-                        return container.array->items[subscript.z];
+                        return v__(*container.array, subscript.z);
                 } else {
-                        return Some(container.array->items[subscript.z]);
+                        return Some(v__(*container.array, subscript.z));
                 }
         default:
                 zP(
@@ -2158,10 +2175,9 @@ Start:
                 );
         }
 
-        Value e;
 Error:
-        e = tagged(ty, TAG_INDEX_ERR, container, subscript, NONE);
-        vm_throw(ty, &e);
+        err = TAGGED(TAG_INDEX_ERR, container, subscript);
+        vm_throw(ty, &err);
 }
 
 TY_INSTR_INLINE static void
@@ -2700,6 +2716,8 @@ GetMember(Ty *ty, Value v, int member, bool try_missing, bool exec)
                         return (class_of(&v) != -1) ? CLASS(class_of(&v)) : NIL;
                 } else if (member == NAMES._name_) {
                         return xSz(name_of(&v));
+                } else if (member == NAMES._fqn_) {
+                        return xSz(fqn_of(&v));
                 } else if (member == NAMES._def_) {
                         return FunDef(ty, &v);
                 } else if (has_meta(&v)) {
@@ -3039,8 +3057,10 @@ CallMethod(Ty *ty, int i, int n, int nkw, bool b)
                         return;
                 }
                 class = value.class;
+                if (0) {
 ClassLookup:
-                vp = class_lookup_method_i(ty, class, i);
+                        vp = class_lookup_method_i(ty, class, i);
+                }
                 if (vp == NULL) {
                         attr = GetMember(ty, value, i, false, true);
                         vp = (attr.type == VALUE_NONE) ? NULL : &attr;
@@ -5455,8 +5475,8 @@ TargetMember:
                         break;
                 CASE(CLEANUP)
                         t = *vvL(TRY_STACK);
-                        for (int i = 0; i < t->defer.count; ++i) {
-                                vmC(&t->defer.items[i], 0);
+                        for (int i = 0; i < vN(t->defer); ++i) {
+                                vmC(v_(t->defer, i), 0);
                         }
                         break;
                 CASE(ENTER)
@@ -6916,6 +6936,7 @@ vm_init(Ty *ty, int ac, char **av)
         NAMES._enter_          = M_ID("__enter__");
         NAMES.fmt              = M_ID("__fmt__");
         NAMES._free_           = M_ID("__free__");
+        NAMES._fqn_            = M_ID("__fqn__");
         NAMES.groups           = M_ID("groups");
         NAMES._hash_           = M_ID("__hash__");
         NAMES.init             = M_ID("init");
@@ -6931,12 +6952,16 @@ vm_init(Ty *ty, int ac, char **av)
         NAMES._name_           = M_ID("__name__");
         NAMES._next_           = M_ID("__next__");
         NAMES.ptr              = M_ID("__ptr__");
+        NAMES._repr_           = M_ID("__repr__");
         NAMES.slice            = M_ID("[;;]");
         NAMES.str              = M_ID("str");
         NAMES._str_            = M_ID("__str__");
         NAMES.subscript        = M_ID("[]");
         NAMES.unapply          = M_ID("unapply");
-        NAMES._what            = M_ID(sfmt("_what$%d", CLASS_RUNTIME_ERROR));
+
+        NAMES._what            = M_ID(sfmt("__what$%d",  CLASS_RUNTIME_ERROR));
+        NAMES._ctx             = M_ID(sfmt("__ctx$%d",   CLASS_RUNTIME_ERROR));
+        NAMES._cause           = M_ID(sfmt("__cause$%d", CLASS_RUNTIME_ERROR));
 
         NAMES._fields_         = M_ID("__fields__");
         NAMES._methods_        = M_ID("__methods__");
@@ -7020,8 +7045,6 @@ FormatTrace(Ty *ty, ThrowCtx const *ctx, byte_vector *out)
 
         if (out == NULL) {
                 out = &message;
-        } else {
-               // v0(*out);
         }
 
         int _rows;
@@ -7035,9 +7058,9 @@ FormatTrace(Ty *ty, ThrowCtx const *ctx, byte_vector *out)
                 ctx = CurrentThrowCtx(ty);
         }
 
-        SCRATCH_SAVE();
+        StringVector locals = {0};
 
-        for (int i = 0; i < vN(*ctx); ++i) {
+        WITH_SCRATCH for (int i = 0; i < vN(*ctx); ++i) {
                 char *ip = (char *)v__(*ctx, i);
                 if (ip == NULL) {
                         break;
@@ -7062,6 +7085,8 @@ FormatTrace(Ty *ty, ThrowCtx const *ctx, byte_vector *out)
                              && (func->scope != NULL)
                              && (vN(func->scope->owned) > 0)
                         ) {
+                                v0(locals);
+
                                 ValueVector localv = v__(ctx->locals, i);
                                 Scope *scope = func->scope;
 
@@ -7077,34 +7102,45 @@ FormatTrace(Ty *ty, ThrowCtx const *ctx, byte_vector *out)
                                         Value  val = v__(localv, i);
                                         char *show = NULL;
                                         bool  good = true;
+                                        byte_vector line = {0};
                                         for (int fuel = 3; (show == NULL) && (fuel > 0); --fuel) {
                                                 if (!VM_TRY()) {
                                                         val = vm_catch(ty);
                                                         good = false;
                                                 } else {
                                                         show = truncate_to_fit(
-                                                                VSC(&val),
-                                                                max(1, cols - max_width - 16)
+                                                                SHOW(&val, REPR),
+                                                                max(1, cols/2 - max_width - 16)
                                                         );
                                                         vm_finally(ty);
                                                 }
                                         }
                                         if (good) {
-                                                dump(
-                                                        out,
-                                                        "    %s%*s%s = %s\n",
+                                                sxdf(
+                                                        &line,
+                                                        "%s%*s%s = ",
                                                         TERM(1;93),
-                                                        max_width + 2,
+                                                        max_width,
                                                         v__(scope->owned, i)->identifier,
-                                                        TERM(22;39),
-                                                        show
+                                                        TERM(22;39)
                                                 );
+                                                for (char const *c = show; *c != '\0'; ++c) {
+                                                        if (*c == '\n') {
+                                                                svP(line, '\0');
+                                                                svP(locals, vv(line));
+                                                                v00(line);
+                                                                sxdf(&line, "%*s", max_width + 3, "");
+                                                        } else {
+                                                                svP(line, *c);
+                                                        }
+                                                }
+                                                svP(line, '\0');
                                         } else {
-                                                dump(
-                                                        out,
-                                                        "    %s%*s%s = [failed to read: %s]\n",
+                                                sxdf(
+                                                        &line,
+                                                        "%s%*s%s = [failed to read: %s]",
                                                         TERM(1;91),
-                                                        max_width + 2,
+                                                        max_width,
                                                         v__(scope->owned, i)->identifier,
                                                         TERM(22;39),
                                                         (show != NULL) ? show : "too many errors"
@@ -7113,16 +7149,15 @@ FormatTrace(Ty *ty, ThrowCtx const *ctx, byte_vector *out)
                                         if (show != NULL) {
                                                 free(show);
                                         }
+                                        svP(locals, vv(line));
                                 }
-
-                                dump(out, "%s", TERM(38:2:74:74:74));
-                                for (int i = 0; i < cols; ++i) {
-                                        dump(out, "─");
-                                }
-                                dump(out, "%s\n", TERM(0));
                         }
 
-                        WriteExpressionSourceContext(ty, out, expr);
+                        if (vN(locals) > 0) {
+                                WriteExpressionSourceContext(ty, out, cols / 2, expr, &locals);
+                        } else {
+                                WriteExpressionSourceContext(ty, out, cols, expr, NULL);
+                        }
                 } else {
                         WriteExpressionTrace(ty, out, expr, -1, i == 0);
                         if (expr->origin != NULL) {
@@ -7130,8 +7165,6 @@ FormatTrace(Ty *ty, ThrowCtx const *ctx, byte_vector *out)
                         }
                 }
         }
-
-        SCRATCH_RESTORE();
 
         return vv(*out);
 }
@@ -7143,12 +7176,11 @@ TyError(Ty *ty)
                 return vv(ty->err);
         }
 
-        if (vC(ty->throw_stack) == 0) {
+        if (vN(ty->throw_stack) == 0) {
                 return "(no error)";
         }
 
-        isize i = (isize)vN(ty->throw_stack) - 1;
-        ThrowCtx *ctx = v__(ty->throw_stack, (i != -1) ? i : 0);
+        ThrowCtx *ctx = v_L(ty->throw_stack);
         Value exc = ctx->exc;
 
         dump(&ty->err, "%sUncaught exception%s: %s\n", TERM(91;1), TERM(0), VSC(&exc));
@@ -7808,6 +7840,21 @@ cringe(int _)
 }
 #endif
 
+static int
+RunTests(Ty *ty)
+{
+        Symbol *_run = compiler_lookup(ty, "ty/test", "run");
+        if (_run == NULL) {
+                zP("internal error: ty was run with --test but ty.test is not loaded");
+        }
+
+        Value run = v__(Globals, _run->i);
+
+        exec_fn(ty, &run, NULL, 0, NULL);
+
+        return (int)pop().z;
+}
+
 bool
 vm_load_program(Ty *ty, char const *source, char const *file)
 {
@@ -7895,6 +7942,10 @@ vm_execute(Ty *ty, char const *source, char const *file)
         if (PrintResult && vC(STACK) > 0) {
                 vN(STACK) += 1;
                 printf("%s\n", VSC(top()));
+        }
+
+        if (RunningTests) {
+                RunTests(ty);
         }
 
 #if defined(TY_GC_STATS)

@@ -58,7 +58,7 @@ builtin_curl_free(Ty *ty, int argc, Value *kwargs)
         }
 
         if (ARG(0).type != VALUE_PTR) {
-                zP("curl.free(): expected pointer but got: %s", value_show_color(ty, &ARG(0)));
+                zP("curl.free(): expected pointer but got: %s", SHOW(&ARG(0)));
         }
 
         curl_free(ARG(0).ptr);
@@ -467,7 +467,7 @@ builtin_curl_url_strerror(Ty *ty, int argc, Value *kwargs)
         }
 
         if (ARG(0).type != VALUE_INTEGER) {
-                zP("curl.url.strerror(): expected integer but got: %s", value_show_color(ty, &ARG(0)));
+                zP("curl.url.strerror(): expected integer but got: %s", SHOW(&ARG(0)));
         }
 
 #if LIBCURL_VERSION_NUM >= 0x075000
@@ -487,7 +487,7 @@ builtin_curl_url_cleanup(Ty *ty, int argc, Value *kwargs)
         }
 
         if (ARG(0).type != VALUE_PTR) {
-                zP("curl.url.cleanup(): expected pointer but got: %s", value_show_color(ty, &ARG(0)));
+                zP("curl.url.cleanup(): expected pointer but got: %s", SHOW(&ARG(0)));
         }
 
         curl_url_cleanup(ARG(0).ptr);
@@ -503,15 +503,15 @@ builtin_curl_url_get(Ty *ty, int argc, Value *kwargs)
         }
 
         if (ARG(0).type != VALUE_PTR) {
-                zP("curl.url.get(): expected pointer as argument 1 but got: %s", value_show_color(ty, &ARG(0)));
+                zP("curl.url.get(): expected pointer as argument 1 but got: %s", SHOW(&ARG(0)));
         }
 
         if (ARG(1).type != VALUE_INTEGER) {
-                zP("curl.url.get(): expected integer as argument 2 but got: %s", value_show_color(ty, &ARG(1)));
+                zP("curl.url.get(): expected integer as argument 2 but got: %s", SHOW(&ARG(1)));
         }
 
         if (ARG(2).type != VALUE_INTEGER) {
-                zP("curl.url.get(): expected integer as argument 3 but got: %s", value_show_color(ty, &ARG(2)));
+                zP("curl.url.get(): expected integer as argument 3 but got: %s", SHOW(&ARG(2)));
         }
 
         char *content;
@@ -537,11 +537,11 @@ builtin_curl_url_set(Ty *ty, int argc, Value *kwargs)
         }
 
         if (ARG(0).type != VALUE_PTR) {
-                zP("curl.url.set(): expected pointer as argument 1 but got: %s", value_show_color(ty, &ARG(0)));
+                zP("curl.url.set(): expected pointer as argument 1 but got: %s", SHOW(&ARG(0)));
         }
 
         if (ARG(1).type != VALUE_INTEGER) {
-                zP("curl.url.set(): expected integer as argument 2 but got: %s", value_show_color(ty, &ARG(1)));
+                zP("curl.url.set(): expected integer as argument 2 but got: %s", SHOW(&ARG(1)));
         }
 
         char const *content;
@@ -563,11 +563,11 @@ builtin_curl_url_set(Ty *ty, int argc, Value *kwargs)
                 content = ARG(2).ptr;
                 break;
         default:
-                zP("curl.url.set(): expected string, blob, or pointer as argument 3 but got: %s", value_show_color(ty, &ARG(2)));
+                zP("curl.url.set(): expected string, blob, or pointer as argument 3 but got: %s", SHOW(&ARG(2)));
         }
 
         if (ARG(3).type != VALUE_INTEGER) {
-                zP("curl.url.set(): expected integer as argument 4 but got: %s", value_show_color(ty, &ARG(3)));
+                zP("curl.url.set(): expected integer as argument 4 but got: %s", SHOW(&ARG(3)));
         }
 
         return INTEGER(curl_url_set(ARG(0).ptr, ARG(1).z, content, ARG(3).z));

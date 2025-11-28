@@ -3154,9 +3154,8 @@ type_function(Ty *ty, Expr const *e, bool tmp)
 
         if (e->return_type != NULL) {
                 Type *rt = SeqToList(type_resolve(ty, e->return_type));
-                if (e->class > -1) {
-                        Class *class = class_get(ty, e->class);
-                        rt = SolveMemberAccess(ty, class->object_type, rt);
+                if (e->class != NULL) {
+                        rt = SolveMemberAccess(ty, e->class->object_type, rt);
                 }
                 rt = Inst(ty, rt, &bounded, &bounds);
                 t->rt = MakeConcrete(ty, rt, NULL);
@@ -8034,6 +8033,7 @@ type_assign(Ty *ty, Expr *e, Type *t0, int flags)
                         !UnifyX(ty, t0, e->symbol->type, false, false)
                      && check
                      && ENFORCE
+                     && !HAVE_COMPILER_FLAG(NO_TYPES)
                 ) {
                         TypeError(
                                 "can't assign `%s` to %s%s%s which has type `%s`",
@@ -9923,7 +9923,7 @@ type_function_fixup(Ty *ty, Expr const *e)
                 return;
         }
 
-        if (e->class > -1) {
+        if (e->class != NULL) {
                 XXTLOG("fixup(%s.%s)[%d]:", class_name(ty, e->class), e->name, CurrentLevel);
                 XXTLOG("    %s", ShowType(t0));
         } else {

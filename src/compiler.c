@@ -51,6 +51,13 @@
 #undef DT
 #define DT(...)
 
+#define texprx(e, ...) (tyexpr(ty, (e), __VA_ARGS__ + 0))
+#define tstmtx(s, ...) (tystmt(ty, (s), __VA_ARGS__ + 0))
+
+enum {
+        TX_NO_RESOLVE = (1 << 0)
+};
+
 #define emit_instr(i) ((emit_instr)(ty, i))
 #define INSNx(i)      ((emit_instr)(ty, i))
 #define INSN(i)       ((emit_instr)(ty, INSTR_##i))
@@ -306,7 +313,7 @@ import_module(Ty *ty, Stmt const *s);
 static Scope *
 get_module_scope(char const *name);
 
-static void
+void
 invoke_fun_macro(Ty *ty, Scope *, Expr *e);
 
 static void
@@ -339,7 +346,7 @@ AddClassTraits(Ty *ty, ClassDefinition const *def);
 static void
 ResolveFieldTypes(Ty *ty, Scope *scope, expression_vector const *fields);
 
-static bool
+bool
 expedite_fun(Ty *ty, Expr *e, void *ctx);
 
 static void *
@@ -591,11 +598,11 @@ HasConstructor(ClassDefinition const *def)
 }
 
 static Expr *
-DefaultConstructor(Ty *ty, ClassDefinition const *def)
+DefaultConstructor(Ty *ty, Class *class)
 {
         Expr *ctor = NewExpr(ty, EXPRESSION_FUNCTION);
         ctor->name = "init";
-        ctor->class = def->symbol;
+        ctor->class = class;
         ctor->body = NULL;
         return ctor;
 }
@@ -740,6 +747,9 @@ QualifiedName_(Expr const *e, byte_vector *b)
                 good &= QualifiedName_(e->parent, b);
                 break;
 
+        case EXPRESSION_FUNCTION:
+                break;
+
         default:
                 return false;
         }
@@ -763,6 +773,18 @@ QualifiedName_(Expr const *e, byte_vector *b)
                 xvPn(*b, e->member->identifier, strlen(e->member->identifier));
                 break;
 
+        case EXPRESSION_FUNCTION:
+                xvPn(*b, e->mod->name, strlen(e->mod->name));
+                xvP(*b, '.');
+                if (e->class != NULL) {
+                        dump(b, "%s.", e->class->name);
+                }
+                xvPn(*b, e->name, strlen(e->name));
+                if (e->mtype == MT_SET) {
+                        xvP(*b, '=');
+                }
+                break;
+
         case EXPRESSION_MODULE:
         case EXPRESSION_NAMESPACE:
                 xvPn(*b, e->name, strlen(e->name));
@@ -775,7 +797,7 @@ QualifiedName_(Expr const *e, byte_vector *b)
 char const *
 QualifiedName(Expr const *e)
 {
-        _Thread_local static byte_vector name = {0};
+        static _Thread_local byte_vector name = {0};
 
         vN(name) = 0;
 
@@ -1131,18 +1153,17 @@ eloc_cmp(void const *a_, void const *b_)
         return 0;
 }
 
-#define edbg(e) ((edbg)(ty, (e)))
-static char *
-(edbg)(Ty *ty, Expr const *e)
+char *
+edbg(Ty *ty, Expr const *e)
 {
-        Value v = tyexpr(ty, e);
+        Value v = texprx(e, TX_NO_RESOLVE);
         return VSC(&v);
 }
 
 char const *
 show_expr_type(Ty *ty, Expr const *e)
 {
-        Value v = tyexpr(ty, e);
+        Value v = texprx(e);
 
         if (v.type == VALUE_TAG) {
                 return tags_name(ty, v.tag);
@@ -1742,6 +1763,10 @@ IdentifierScope(Ty *ty, Expr const *expr)
 inline static Symbol *
 TryResolveIdentifier(Ty *ty, Expr *expr)
 {
+        if (expr->symbol != NULL) {
+                return expr->symbol;
+        }
+
         u32 flags = 0;
         Scope *scope = IdentifierScope(ty, expr);
 
@@ -1855,6 +1880,7 @@ getsymbol(Ty *ty, Scope const *scope, char const *name, u32 flags)
         Symbol *s = ScopeLookupEx(scope, name, flags);
 
         if (s == NULL) {
+                //*(volatile int *)0 = 0;
                 fail_or(
                         "reference to undefined variable: %s%s%s%s",
                         TERM(1),
@@ -2603,7 +2629,7 @@ mkmulti(Ty *ty, char *name, bool setters)
         Expr *multi = NewExpr(ty, EXPRESSION_MULTI_FUNCTION);
 
         multi->name = name;
-        multi->class = -1;
+        multi->class = NULL;
 
         if (setters) {
                 multi->rest = -1;
@@ -2642,11 +2668,8 @@ aggregate_overloads(
 
         for (int i = 0; i + 1 < n; ++i) {
                 if (
-                        (strcmp(ms->items[i]->name, ms->items[i + 1]->name) != 0)
-                     || (
-                                contains(OperatorCharset, ms->items[i]->name[0])
-                        )
-
+                        !s_eq(ms->items[i]->name, ms->items[i + 1]->name)
+                     || contains(OperatorCharset, ms->items[i]->name[0])
                 ) {
                         continue;
                 }
@@ -2668,7 +2691,7 @@ aggregate_overloads(
                         m += 1;
                 } while (i + m < n && strcmp(ms->items[i + m]->name, multi->name) == 0);
 
-                multi->class = class;
+                multi->class = class_get(ty, class);
 
                 //RedpillFun(ty, c->def->class.scope, multi, c->object_type);
 
@@ -2777,7 +2800,7 @@ fix_part(Ty *ty, struct condpart *p, Scope *scope)
         }
 
         if (
-                p->e->type != EXPRESSION_USER_OP
+                (p->e->type != EXPRESSION_USER_OP)
              || !try_fun_macro_op(ty, scope, p->e)
         ) {
                 if (p->e->type != EXPRESSION_FUNCTION_CALL) {
@@ -2787,7 +2810,7 @@ fix_part(Ty *ty, struct condpart *p, Scope *scope)
                 symbolize_expression(ty, scope, p->e->function);
 
                 if (
-                        p->e->function->type != EXPRESSION_IDENTIFIER
+                        (p->e->function->type != EXPRESSION_IDENTIFIER)
                      || !SymbolIsFunMacro(p->e->function->symbol)
                 ) {
                         return;
@@ -3164,7 +3187,7 @@ symbolize_lvalue_(Ty *ty, Scope *scope, Expr *target, u32 flags)
                                 target->symbol->loc = target->start;
                         }
 
-                        if (SymbolIsConst(target->symbol)) {
+                        if (SymbolIsConst(target->symbol) && !HAVE_COMPILER_FLAG(MUT_CONST)) {
                                 fail(
                                         "assignment to const variable %s%s%s%s%s",
                                         TERM(34),
@@ -3513,14 +3536,19 @@ symbolize_pattern(Ty *ty, Scope *scope, Expr *e, Scope *reuse, bool def)
 }
 
 
-static bool
+bool
 expedite_fun(Ty *ty, Expr *e, void *ctx)
 {
-        if (e->type != EXPRESSION_FUNCTION_CALL)
+        if (e->type != EXPRESSION_FUNCTION_CALL) {
                 return false;
+        }
 
         if (e->function->type != EXPRESSION_IDENTIFIER) {
                 return false;
+        }
+
+        if (ctx == NULL) {
+                ctx = SCOPE;
         }
 
         Symbol *sym = scope_lookup(ty, ctx, e->function->identifier);
@@ -3568,9 +3596,13 @@ comptime(Ty *ty, Scope *scope, Expr *e)
         STATE.mend = mend;
 }
 
-static void
+void
 invoke_fun_macro(Ty *ty, Scope *scope, Expr *e)
 {
+        if (scope == NULL) {
+                scope = SCOPE;
+        }
+
         add_location_info(ty);
         v00(STATE.expression_locations);
 
@@ -3622,7 +3654,7 @@ invoke_fun_macro(Ty *ty, Scope *scope, Expr *e)
         }
 
         for (usize i = 0;  i < vN(e->args); ++i) {
-                Value v = tyexpr(ty, v__(e->args, i));
+                Value v = texprx(v__(e->args, i));
                 vmP(&v);
         }
 
@@ -3974,13 +4006,13 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                         break;
                 }
 
-                if (
-                        (e->module == NULL)
-                     && (strcmp(e->identifier, "__class__") == 0)
-                     && (CurrentClassID != -1)
-                ) {
-                        e->type = EXPRESSION_IDENTIFIER;
-                        e->symbol = class_get(ty, CurrentClassID)->def->class.var;
+                if ((e->module == NULL) && s_eq(e->identifier, "__class__")) {
+                        if (CurrentClassID != -1) {
+                                e->type = EXPRESSION_IDENTIFIER;
+                                e->symbol = class_get(ty, CurrentClassID)->def->class.var;
+                        } else {
+                                e->type = EXPRESSION_NIL;
+                        }
                         break;
                 }
 
@@ -4044,16 +4076,18 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                 } else {
                         e->_type = e->symbol->type;
                 }
-
                 break;
+
         case EXPRESSION_OPERATOR:
                 e->op.u = intern(&xD.members, e->op.id)->id;
                 e->op.b = intern(&xD.b_ops, e->op.id)->id;
                 e->_type = type_op(ty, e);
                 break;
+
         case EXPRESSION_COMPILE_TIME:
                 comptime(ty, scope, e);
                 break;
+
         case EXPRESSION_CAST:
                 WITH_CTX(TYPE) {
                         symbolize_expression(ty, scope, e->right);
@@ -4063,6 +4097,7 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                 }
                 e->_type = type_fixed(ty, type_resolve(ty, e->right));
                 break;
+
         case EXPRESSION_SPECIAL_STRING:
                 symbolize_expression(ty, scope, e->lang);
                 for (int i = 0; i < vN(e->expressions); ++i) {
@@ -4072,10 +4107,12 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                 }
                 e->_type = type_special_str(ty, e);
                 break;
+
         case EXPRESSION_TAG:
                 e->symbol = ResolveIdentifier(ty, e);
                 e->_type = e->symbol->type;
                 break;
+
         case EXPRESSION_TAG_APPLICATION:
                 if (e->identifier != EmptyString) {
                         e->symbol = ResolveIdentifier(ty, e);
@@ -4084,6 +4121,7 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                 e->_type = type_call(ty, e);
                 SET_TYPE_SRC(e);
                 break;
+
         case EXPRESSION_MATCH:
                 symbolize_expression(ty, scope, e->subject);
                 t0 = type_new_inst(ty, e->subject->_type);
@@ -4100,6 +4138,7 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                 e->_type = type_match(ty, e);
                 SET_TYPE_SRC(e);
                 break;
+
         case EXPRESSION_UNARY_OP:
                 if (try_fun_macro_op(ty, scope, e)) {
                         symbolize_expression(ty, scope, e);
@@ -4107,6 +4146,7 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                         symbolize_expression(ty, scope, e->operand);
                 }
                 break;
+
         case EXPRESSION_USER_OP:
                 if (try_fun_macro_op(ty, scope, e)) {
                         symbolize_expression(ty, scope, e);
@@ -4130,6 +4170,7 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                 symbolize_expression(ty, scope, e->right);
                 e->_type = type_binary_op(ty, e);
                 break;
+
         case EXPRESSION_IN:
         case EXPRESSION_NOT_IN:
         case EXPRESSION_LT:
@@ -4142,65 +4183,84 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                 symbolize_expression(ty, scope, e->right);
                 e->_type = TYPE_BOOL;
                 break;
+
         case EXPRESSION_AND:
                 subscope = scope_new(ty, "(&&then)", scope, false);
                 symbolize_expression(ty, scope, e->left);
-                AddRefinements(ty, e->left, subscope, scope);
+                AddRefinements(ty, e->left, subscope, NULL);
                 symbolize_expression(ty, subscope, e->right);
                 e->_type = type_either(ty, e->left->_type, e->right->_type);
                 break;
+
         case EXPRESSION_OR:
+                subscope = scope_new(ty, "(||else)", scope, false);
                 symbolize_expression(ty, scope, e->left);
-                symbolize_expression(ty, scope, e->right);
+                AddRefinements(ty, e->left, NULL, subscope);
+                symbolize_expression(ty, subscope, e->right);
                 e->_type = type_either(ty, e->left->_type, e->right->_type);
                 break;
+
         case EXPRESSION_WTF:
                 symbolize_expression(ty, scope, e->left);
                 symbolize_expression(ty, scope, e->right);
                 e->_type = type_wtf(ty, e);
                 break;
+
         case EXPRESSION_DOT_DOT:
         case EXPRESSION_DOT_DOT_DOT:
                 symbolize_expression(ty, scope, e->left);
                 symbolize_expression(ty, scope, e->right);
                 e->_type = class_get(ty, CLASS_RANGE)->object_type;
                 break;
+
+        case EXPRESSION_UNSAFE:
+                WITH_STATE(flags, STATE.flags | TYC_MUT_CONST | TYC_NO_TYPES) {
+                        symbolize_expression(ty, scope, e->operand);
+                }
+                break;
+
         case EXPRESSION_DEFINED:
                 e->type = EXPRESSION_BOOLEAN;
                 if (e->module != NULL) {
-                        Scope *mscope = search_import_scope(ty, e->module);
-                        e->boolean = mscope != NULL && scope_lookup(ty, mscope, e->identifier) != NULL;
+                        Scope *mod_scope = search_import_scope(ty, e->module);
+                        e->boolean = (mod_scope != NULL)
+                                  && (scope_lookup(ty, mod_scope, e->identifier) != NULL);
                 } else {
-                        e->boolean = scope_lookup(ty, scope, e->identifier) != NULL;
+                        e->boolean = (scope_lookup(ty, scope, e->identifier) != NULL);
                 }
                 e->_type = TYPE_BOOL;
                 break;
+
         case EXPRESSION_IFDEF:
                 if (e->module != NULL) {
-                        Scope *mscope = search_import_scope(ty, e->module);
-                        if (mscope != NULL && scope_lookup(ty, mscope, e->identifier) != NULL) {
-                                e->type = EXPRESSION_IDENTIFIER;
-                                symbolize_expression(ty, scope, e);
-                                e->type = EXPRESSION_IFDEF;
+                        Module *mod = GetModule(ty, e->module);
+                        if (
+                                (mod != NULL)
+                             && (mod->scope != NULL)
+                             && ((e->symbol = scope_lookup(ty, mod->scope, e->identifier)) != NULL)
+                        ) {
+                                e->_type = type_tagged(ty, TAG_SOME, e->symbol->type);
                         } else {
                                 e->type = EXPRESSION_NONE;
+                                e->_type = tags_get_class(ty, TAG_NONE)->type;
                         }
                 } else {
-                        if (scope_lookup(ty, scope, e->identifier) != NULL) {
-                                e->type = EXPRESSION_IDENTIFIER;
-                                symbolize_expression(ty, scope, e);
-                                e->type = EXPRESSION_IFDEF;
+                        if ((e->symbol = scope_lookup(ty, scope, e->identifier)) != NULL) {
+                                e->_type = type_tagged(ty, TAG_SOME, e->symbol->type);
                         } else {
                                 e->type = EXPRESSION_NONE;
+                                e->_type = tags_get_class(ty, TAG_NONE)->type;
                         }
                 }
                 break;
+
         case EXPRESSION_EVAL:
                 e->escope = scope;
                 scope_capture_all(ty, scope, GlobalScope);
                 symbolize_expression(ty, scope, e->operand);
                 e->_type = type_var(ty);
                 break;
+
         case EXPRESSION_PREFIX_MINUS:
         case EXPRESSION_PREFIX_QUESTION:
         case EXPRESSION_PREFIX_AT:
@@ -4211,21 +4271,26 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                 symbolize_expression(ty, scope, e->operand);
                 e->_type = e->operand->_type;
                 break;
+
         case EXPRESSION_PREFIX_HASH:
                 symbolize_expression(ty, scope, e->operand);
                 e->_type = type_unary_hash_t(ty, e->operand->_type);
                 break;
+
         case EXPRESSION_PREFIX_BANG:
                 symbolize_expression(ty, scope, e->operand);
                 e->_type = TYPE_BOOL;
                 break;
+
         case EXPRESSION_TYPE_OF:
                 symbolize_expression(ty, scope, e->operand);
                 break;
+
         case EXPRESSION_ENTER:
                 symbolize_expression(ty, scope, e->operand);
                 e->_type = type_enter(ty, e->operand->_type);
                 break;
+
         case EXPRESSION_CONDITIONAL:
                 subscope = scope_new(ty, "(?:then)", scope, false);
                 scope = scope_new(ty, "(?:else)", scope, false);
@@ -4236,10 +4301,12 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                 unify2(ty, &e->_type, e->then->_type);
                 unify2(ty, &e->_type, e->otherwise->_type);
                 break;
+
         case EXPRESSION_STATEMENT:
                 symbolize_statement(ty, scope, e->statement);
                 e->_type = e->statement->_type;
                 break;
+
         case EXPRESSION_TEMPLATE:
                 for (usize i = 0; i < vN(e->template.holes); ++i) {
                         Expr *hole = v__(e->template.holes, i);
@@ -4259,11 +4326,13 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                         e->_type = var->type;
                 }
                 break;
+
         case EXPRESSION_TEMPLATE_XHOLE:
                 WITH_PERMISSIVE_SCOPE {
                         symbolize_expression(ty, scope, e->hole.expr);
                 }
                 break;
+
         case EXPRESSION_FUNCTION_CALL:
                 symbolize_expression(ty, scope, e->function);
 
@@ -4323,8 +4392,8 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
 
                 e->_type = type_call(ty, e);
                 SET_TYPE_SRC(e);
-
                 break;
+
         case EXPRESSION_SUBSCRIPT:
                 symbolize_expression(ty, scope, e->container);
                 symbolize_expression(ty, scope, e->subscript);
@@ -4333,6 +4402,7 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                         SET_TYPE_SRC(e);
                 }
                 break;
+
         case EXPRESSION_SLICE:
                 symbolize_expression(ty, scope, e->slice.e);
                 symbolize_expression(ty, scope, e->slice.i);
@@ -4341,6 +4411,7 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                 e->_type = type_slice(ty, e);
                 SET_TYPE_SRC(e);
                 break;
+
         case EXPRESSION_DYN_MEMBER_ACCESS:
                 symbolize_expression(ty, scope, e->member);
         case EXPRESSION_MEMBER_ACCESS:
@@ -4354,6 +4425,7 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                 }
                 //===================={ </LSP> }========================================
                 break;
+
         case EXPRESSION_DYN_METHOD_CALL:
                 symbolize_expression(ty, scope, e->method);
         case EXPRESSION_METHOD_CALL:
@@ -4395,6 +4467,7 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                 }
                 //===================={ </LSP> }========================================
                 break;
+
         case EXPRESSION_PLUS_EQ:
         case EXPRESSION_STAR_EQ:
         case EXPRESSION_DIV_EQ:
@@ -4409,6 +4482,7 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                 symbolize_lvalue(ty, scope, e->target, 0);
                 e->_type = e->target->_type;
                 break;
+
         case EXPRESSION_MAYBE_EQ:
         case EXPRESSION_EQ:
                 symbolize_expression(ty, scope, e->value);
@@ -4421,6 +4495,7 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                 );
                 e->_type = e->value->_type;
                 break;
+
         case EXPRESSION_FUNCTION_TYPE:
                 if (e->left->type == EXPRESSION_TUPLE) {
                         for (int i = 0; i < vN(e->left->es); ++i) {
@@ -4429,6 +4504,7 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                 symbolize_expression(ty, scope, e->left);
                 symbolize_expression(ty, scope, e->right);
                 break;
+
         case EXPRESSION_IMPLICIT_FUNCTION:
         case EXPRESSION_GENERATOR:
         case EXPRESSION_MULTI_FUNCTION:
@@ -4471,7 +4547,7 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                         e->fn_symbol->expr = e;
                 }
 
-                if (e->class < 0) {
+                if (e->class == NULL) {
                         LOG(
                                 "================================================== %s[%s:%d]() === %s",
                                 (e->name != NULL) ? e->name : "(anon)",
@@ -4591,13 +4667,13 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                         u64 elapsed = time_end - time_start;
                         u64 allocated = allocs_end - allocs_start;
 
-                        if (e->class != -1) {
+                        if (e->class != NULL) {
                                 printf(
                                         "%"PRIu64" %"PRIu64" %s::%s.%s\n",
                                         elapsed,
                                         allocated,
                                         CurrentModuleName(ty),
-                                        class_name(ty, e->class),
+                                        e->class->name,
                                         e->name
                                 );
                         } else {
@@ -4614,6 +4690,7 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
 
                 break;
         }
+
         case EXPRESSION_WITH:
                 subscope = scope_new(ty, "(with)", scope, false);
                 symbolize_statement(ty, subscope, e->with.block);
@@ -4627,10 +4704,12 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                 }
                 e->_type = e->with.block->_type;
                 break;
+
         case EXPRESSION_THROW:
                 symbolize_expression(ty, scope, e->throw);
                 e->_type = BOTTOM_TYPE;
                 break;
+
         case EXPRESSION_YIELD:
                 for (int i = 0; i < vN(e->es); ++i) {
                         symbolize_expression(ty, scope, v__(e->es, i));
@@ -4643,6 +4722,7 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                         );
                 }
                 break;
+
         case EXPRESSION_ARRAY:
                 if (IS_CTX(TYPE) && vN(e->elements) == 1) {
                         Expr *elem0 = v__(e->elements, 0);
@@ -4667,6 +4747,7 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                 e->_type = type_array(ty, e);
                 SET_TYPE_SRC(e);
                 break;
+
         case EXPRESSION_ARRAY_COMPR:
                 symbolize_expression(ty, scope, e->compr.iter);
                 subscope = scope_new(ty, "(array compr)", scope, false);
@@ -4682,6 +4763,7 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                 e->_type = type_array(ty, e);
                 SET_TYPE_SRC(e);
                 break;
+
         case EXPRESSION_DICT:
                 symbolize_expression(ty, scope, e->dflt);
                 for (usize i = 0; i < vN(e->keys); ++i) {
@@ -4691,6 +4773,7 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                 e->_type = type_dict(ty, e);
                 SET_TYPE_SRC(e);
                 break;
+
         case EXPRESSION_DICT_COMPR:
                 symbolize_expression(ty, scope, e->dcompr.iter);
                 subscope = scope_new(ty, "(dict compr)", scope, false);
@@ -4705,12 +4788,14 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                 }
                 e->_type = type_dict(ty, e);
                 break;
+
         case EXPRESSION_TYPE_UNION:
                 for (int i = 0; i < vN(e->es); ++i) {
                         symbolize_expression(ty, scope, v__(e->es, i));
                 }
                 SET_TYPE_SRC(e);
                 break;
+
         case EXPRESSION_LIST:
                 for (int i = 0; i < vN(e->es); ++i) {
                         symbolize_expression(ty, scope, v__(e->es, i));
@@ -4718,6 +4803,7 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                 e->_type = type_list(ty, e);
                 SET_TYPE_SRC(e);
                 break;
+
         case EXPRESSION_TUPLE:
                 for (int i = 0; i < vN(e->es); ++i) {
                         symbolize_expression(ty, scope, v__(e->es, i));
@@ -4729,14 +4815,17 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                         e->type = EXPRESSION_TUPLE_SPEC;
                 }
                 break;
+
         case EXPRESSION_SPREAD:
                 symbolize_expression(ty, scope, e->value);
                 e->_type = e->value->_type;
                 break;
+
         case EXPRESSION_SPLAT:
                 symbolize_expression(ty, scope, e->value);
                 e->_type = e->value->_type;
                 break;
+
         case EXPRESSION_SUPER:
                 if (CurrentClassID == -1) {
                         fail("%ssuper%s referenced outside of class context", TERM(95;1), TERM(0));
@@ -4745,18 +4834,23 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                         e->symbol = STATE.self;
                 }
                 break;
+
         case EXPRESSION_INTEGER:
                 e->_type = type_integer(ty, e->integer);
                 break;
+
         case EXPRESSION_REAL:
                 e->_type = TYPE_FLOAT;
                 break;
+
         case EXPRESSION_BOOLEAN:
                 e->_type = TYPE_BOOL;
                 break;
+
         case EXPRESSION_STRING:
                 e->_type = TYPE_STRING;
                 break;
+
         case EXPRESSION_REGEX:
                 e->_type = e->regex->detailed ? TYPE_REGEXV : TYPE_REGEX;
                 break;
@@ -5007,8 +5101,8 @@ AddRefinements(Ty *ty, Expr const *e, Scope *_then, Scope *_else)
 
         case EXPRESSION_DBL_EQ:
                 if (
-                        e->left->type == EXPRESSION_IDENTIFIER
-                     && e->right->type == EXPRESSION_NIL
+                        (e->left->type == EXPRESSION_IDENTIFIER)
+                     && (e->right->type == EXPRESSION_NIL)
                 ) {
                         if (_then != NULL) {
                                 ScopeRefineVar(
@@ -5031,8 +5125,8 @@ AddRefinements(Ty *ty, Expr const *e, Scope *_then, Scope *_else)
 
         case EXPRESSION_NOT_EQ:
                 if (
-                        e->left->type == EXPRESSION_IDENTIFIER
-                     && e->right->type == EXPRESSION_NIL
+                        (e->left->type == EXPRESSION_IDENTIFIER)
+                     && (e->right->type == EXPRESSION_NIL)
                 ) {
                         e = e->left;
                         if (_else != NULL) {
@@ -6236,10 +6330,10 @@ emit_function(Ty *ty, Expr const *e)
 
         // Binary operator methods get -1 despite being defined on a class
         // because they're pulled out and compiled as standalone top-level functions.
-        if (e->mtype == MT_2OP) {
+        if (e->class == NULL || e->mtype == MT_2OP) {
                 Ei32(-1);
         } else {
-                Ei32(e->class);
+                Ei32(e->class->i);
         }
 
         Ei32(
@@ -6446,7 +6540,7 @@ emit_function(Ty *ty, Expr const *e)
                         (e->mtype == MT_INSTANCE)
                      && (strcmp(e->name, "init") == 0)
                 ) {
-                        Stmt *def = class_get(ty, e->class)->def;
+                        Stmt *def = e->class->def;
                         EmitFieldInitializers(ty, &def->class);
                 }
                 emit_statement(ty, body, true);
@@ -6504,7 +6598,7 @@ emit_function(Ty *ty, Expr const *e)
                 info->name  = (char *)fun_name;
                 info->proto = (char *)e->proto;
                 info->doc   = (char *)e->doc;
-                info->class = e->class;
+                info->class = (e->class != NULL) ? e->class->i : -1;
                 NOGC(info);
 
                 for (int i = 0; i < vN(e->decorators); ++i) {
@@ -6514,12 +6608,12 @@ emit_function(Ty *ty, Expr const *e)
                         emit_symbol(info);
                         if (is_method(e)) {
                                 INSN(INTO_METHOD);
-                                Ei32(e->class);
+                                Ei32(e->class->i);
                         }
                 }
         }
 
-        if (e->fn_symbol != NULL && e->class == -1) {
+        if (e->fn_symbol != NULL && e->class == NULL) {
                 emit_tgt(ty, e->fn_symbol, e->scope->parent, false);
                 INSN(ASSIGN);
         }
@@ -8882,6 +8976,10 @@ emit_expr(Ty *ty, Expr const *e, bool need_loc)
                 INSN(TRACE);
                 break;
 
+        case EXPRESSION_UNSAFE:
+                EE(e->operand);
+                break;
+
         case EXPRESSION_TAG:
                 INSN(TAG);
                 Ei32(e->symbol->tag);
@@ -8967,19 +9065,21 @@ emit_expr(Ty *ty, Expr const *e, bool need_loc)
         case EXPRESSION_DYN_MEMBER_ACCESS:
                 EE(e->object);
                 EE(e->member);
-                if (e->maybe)
+                if (e->maybe) {
                         INSN(TRY_GET_MEMBER);
-                else
+                } else {
                         INSN(GET_MEMBER);
+                }
                 break;
 
         case EXPRESSION_MEMBER_ACCESS:
         case EXPRESSION_SELF_ACCESS:
                 EE(e->object);
-                if (e->maybe)
+                if (e->maybe) {
                         INSN(TRY_MEMBER_ACCESS);
-                else
+                } else {
                         INSN(MEMBER_ACCESS);
+                }
                 emit_member(ty, e->member->identifier);
                 break;
 
@@ -9007,12 +9107,9 @@ emit_expr(Ty *ty, Expr const *e, bool need_loc)
                 break;
 
         case EXPRESSION_SLICE:
-                if (e->slice.i != NULL) EE(e->slice.i);
-                else                    INSN(NIL);
-                if (e->slice.j != NULL) EE(e->slice.j);
-                else                    INSN(NIL);
-                if (e->slice.k != NULL) EE(e->slice.k);
-                else                    INSN(NIL);
+                if (e->slice.i != NULL) { EE(e->slice.i); } else { INSN(NIL); }
+                if (e->slice.j != NULL) { EE(e->slice.j); } else { INSN(NIL); }
+                if (e->slice.k != NULL) { EE(e->slice.k); } else { INSN(NIL); }
                 EE(e->slice.e);
                 INSN(SLICE);
                 break;
@@ -9478,7 +9575,6 @@ emit_expr(Ty *ty, Expr const *e, bool need_loc)
                 fail("%s", e->string);
 
         default:
-                *(volatile int *)0 = 0;
                 fail("expression unexpected in this context: %s", ExpressionTypeName(e));
         }
 
@@ -10040,10 +10136,10 @@ RedpillFun(Ty *ty, Scope *scope, Expr *f, Type *self0)
                 }
         }
 
-        if (f->class < 0) {
+        if (f->class == NULL) {
                 LOG("REDPILL: === %s() === %s", f->name, type_show(ty, f->_type));
         } else {
-                LOG("REDPILL: === %s.%s() === %s", class_name(ty, f->class), f->name, type_show(ty, f->_type));
+                LOG("REDPILL: === %s.%s() === %s", f->class->name, f->name, type_show(ty, f->_type));
         }
 
         RestoreContext(ty, ctx);
@@ -10475,8 +10571,8 @@ lowkey(Expr *e, Scope *scope, void *ctx)
                         break;
 
                 case EXPRESSION_FUNCTION:
-                        if (e->class >= 0) {
-                                Expr o = { ._type = class_get(ty, e->class)->object_type };
+                        if (e->class != NULL) {
+                                Expr o = { ._type = e->class->object_type };
                                 ProposeMemberDefinition(ty, e->start, e->end, &o, e->name);
                         }
                         break;
@@ -10741,7 +10837,7 @@ compile(Ty *ty, char const *source)
         for (int i = 0; i < vN(STATE.class_ops); ++i) {
                 Stmt *def = v__(STATE.class_ops, i);
                 WITH_STATE(
-                        class, class_get(ty, def->value->class),
+                        class, def->value->class,
                         meth, def->value,
                         self, v__(def->value->param_symbols, 0)
                 ) {
@@ -11068,7 +11164,7 @@ compiler_load_builtin_modules(Ty *ty)
                 fprintf(
                         stderr,
                         "Aborting, failed to load builtin modules: %s\n",
-                        TyError(ty)
+                        VSC(&ex)
                 );
                 exit(1);
         }
@@ -11077,6 +11173,9 @@ compiler_load_builtin_modules(Ty *ty)
         load_module(ty, "os",     get_module_scope("os"));
         load_module(ty, "ty",     get_module_scope("ty"));
         load_module(ty, "pretty", NULL);
+        if (RunningTests) {
+                load_module(ty, "ty/test", NULL);
+        }
 
         TY_CATCH_END();
 }
@@ -11228,10 +11327,10 @@ compiler_compile_source(
 
         char const *slash = strrchr(file, '/');
 #ifdef _WIN32
-        slash = (slash == NULL) ? strrchr(file, '\\') : slash;
+        slash = (slash != NULL) ? slash : strrchr(file, '\\');
 #endif
 
-        char const *module_name = (slash == NULL) ? file : slash + 1;
+        char const *module_name = (slash != NULL) ? (slash + 1) : file;
         char const *module_path = realpath(file, NULL);
 
         // (eval) etc.
@@ -11252,6 +11351,7 @@ compiler_compile_source(
 
         if (MainModule == NULL) {
                 MainModule = module;
+                MainModule->name = "main";
         }
 
         i64 symbol = scope_get_symbol(ty);
@@ -11649,7 +11749,7 @@ Missing:
 }
 
 static Value
-typarts(Ty *ty, condpart_vector const *parts)
+typarts(Ty *ty, condpart_vector const *parts, u32 flags)
 {
         Value v = ARRAY(vA());
 
@@ -11661,13 +11761,13 @@ typarts(Ty *ty, condpart_vector const *parts)
                                 tagged(
                                         ty,
                                         part->def ? TyLet : TyAssign,
-                                        tyexpr(ty, part->target),
-                                        tyexpr(ty, part->e),
+                                        texprx(part->target, flags),
+                                        texprx(part->e, flags),
                                         NONE
                                 )
                         );
                 } else {
-                        vAp(v.array, tyexpr(ty, part->e));
+                        vAp(v.array, texprx(part->e, flags));
                 }
         }
 
@@ -11680,24 +11780,25 @@ tyaitem(Ty *ty, Expr const *e, int i)
         return TAGGED(
                 TyArrayItem,
                 vTn(
-                        "item",     tyexpr(ty, v__(e->elements, i)),
-                        "cond",     tyexpr(ty, v__(e->aconds, i)),
+                        "item",     texprx(v__(e->elements, i)),
+                        "cond",     texprx(v__(e->aconds, i)),
                         "optional", BOOLEAN(v__(e->optional, i))
                 )
         );
 }
 
 Value
-tyexpr(Ty *ty, Expr const *e)
+tyexpr(Ty *ty, Expr const *e, u32 flags)
 {
         Value v;
+#define go(e) tyexpr(ty, ((Expr *)(e)), (flags))
 
         if (e == NULL) {
                 return NIL;
         }
 
         if (e->type > EXPRESSION_MAX_TYPE) {
-                return tystmt(ty, (Stmt *)e);
+                return tstmtx((Stmt *)e, flags);
         }
 
         GC_STOP();
@@ -11706,15 +11807,17 @@ tyexpr(Ty *ty, Expr const *e)
                      ? STATE.global
                      : STATE.macro_scope;
 
-        fixup_access(ty, scope, (Expr *)e, false);
-        expedite_fun(ty, (Expr *)e, scope);
+        if (!(flags & TX_NO_RESOLVE)) {
+                fixup_access(ty, scope, (Expr *)e, false);
+                expedite_fun(ty, (Expr *)e, scope);
+        }
 
         switch (e->type) {
         case EXPRESSION_IDENTIFIER:
                 if (e->namespace != NULL) {
                         v = TAGGED(
                                 TyMemberAccess,
-                                tyexpr(ty, e->namespace),
+                                go(e->namespace),
                                 vSsz(e->identifier)
                         );
                 } else {
@@ -11722,7 +11825,7 @@ tyexpr(Ty *ty, Expr const *e)
                                 TyId,
                                 "name",       vSsz(e->identifier),
                                 "module",     (e->module == NULL) ? NIL : vSsz(e->module),
-                                "constraint", tyexpr(ty, e->constraint)
+                                "constraint", go(e->constraint)
                         );
                 }
                 break;
@@ -11732,7 +11835,7 @@ tyexpr(Ty *ty, Expr const *e)
                 if (e->parent != NULL) {
                         v = TAGGED(
                                 TyMemberAccess,
-                                tyexpr(ty, e->parent),
+                                go(e->parent),
                                 vSsz(e->name)
                         );
                         break;
@@ -11748,7 +11851,7 @@ tyexpr(Ty *ty, Expr const *e)
 
         case EXPRESSION_MATCH_ANY:
                 if (e->constraint != NULL) {
-                        v = TAGGED(TyAny, tyexpr(ty, e->constraint));
+                        v = TAGGED(TyAny, go(e->constraint));
                 } else {
                         v = TAG(TyAny);
                 }
@@ -11758,9 +11861,9 @@ tyexpr(Ty *ty, Expr const *e)
                 v = TAGGED_RECORD(
                         TyPatternAlias,
                         "name",       vSsz(e->identifier),
-                        "pattern",    tyexpr(ty, e->aliased),
+                        "pattern",    go(e->aliased),
                         "module",     (e->module == NULL) ? NIL : vSsz(e->module),
-                        "constraint", (e->constraint == NULL) ? NIL : tyexpr(ty, e->constraint)
+                        "constraint", (e->constraint == NULL) ? NIL : go(e->constraint)
                 );
                 break;
 
@@ -11796,7 +11899,7 @@ tyexpr(Ty *ty, Expr const *e)
                 v = ARRAY(vA());
                 NOGC(v.array);
                 for (int i = 0; i < vN(e->es); ++i) {
-                        vAp(v.array, tyexpr(ty, v__(e->es, i)));
+                        vAp(v.array, go(v__(e->es, i)));
                 }
                 OKGC(v.array);
                 v = tagged(ty, TyUnion, v, NONE);
@@ -11813,11 +11916,11 @@ tyexpr(Ty *ty, Expr const *e)
                 break;
 
         case EXPRESSION_SPREAD:
-                v = TAGGED(TySpread, tyexpr(ty, e->value));
+                v = TAGGED(TySpread, go(e->value));
                 break;
 
         case EXPRESSION_SPLAT:
-                v = TAGGED(TySplat, tyexpr(ty, e->value));
+                v = TAGGED(TySplat, go(e->value));
                 break;
 
         case EXPRESSION_ARRAY_COMPR:
@@ -11831,11 +11934,11 @@ tyexpr(Ty *ty, Expr const *e)
                 v = TAGGED_RECORD(
                         TyArrayCompr,
                         "items", ARRAY(avElems),
-                        "pattern", tyexpr(ty, e->compr.pattern),
-                        "iter", tyexpr(ty, e->compr.iter),
-                        "while", tyexpr(ty, e->compr._while),
-                        "cond", tyexpr(ty, e->compr.cond),
-                        "where", tystmt(ty, e->compr.where)
+                        "pattern", go(e->compr.pattern),
+                        "iter", go(e->compr.iter),
+                        "while", go(e->compr._while),
+                        "cond", go(e->compr.cond),
+                        "where", go(e->compr.where)
                 );
                 break;
         }
@@ -11849,8 +11952,8 @@ tyexpr(Ty *ty, Expr const *e)
                                 avElems,
                                 TAGGED(
                                         TyDictItem,
-                                        tyexpr(ty, v__(e->keys, i)),
-                                        tyexpr(ty, v__(e->values, i))
+                                        go(v__(e->keys, i)),
+                                        go(v__(e->values, i))
                                 )
                         );
                 }
@@ -11858,12 +11961,12 @@ tyexpr(Ty *ty, Expr const *e)
                 v = TAGGED_RECORD(
                         TyDictCompr,
                         "items", ARRAY(avElems),
-                        "default", tyexpr(ty, e->dflt),
-                        "pattern", tyexpr(ty, e->dcompr.pattern),
-                        "iter", tyexpr(ty, e->dcompr.iter),
-                        "while", tyexpr(ty, e->dcompr._while),
-                        "cond", tyexpr(ty, e->dcompr.cond),
-                        "where", tystmt(ty, e->dcompr.where)
+                        "default", go(e->dflt),
+                        "pattern", go(e->dcompr.pattern),
+                        "iter", go(e->dcompr.iter),
+                        "while", go(e->dcompr._while),
+                        "cond", go(e->dcompr.cond),
+                        "where", go(e->dcompr.where)
                 );
                 break;
         }
@@ -11873,18 +11976,18 @@ tyexpr(Ty *ty, Expr const *e)
                 if (e->tagged->type == EXPRESSION_TUPLE) {
                         v = vT(vN(e->tagged->es) +  1);
                         for (int i = 0; i < vN(e->tagged->es); ++i) {
-                                v__(v, i + 1) = tyexpr(ty, v__(e->tagged->es, i));
+                                v__(v, i + 1) = go(v__(e->tagged->es, i));
                         }
                 } else {
                         v = vT(2);
-                        v__(v, 1) = tyexpr(ty, e->tagged);
+                        v__(v, 1) = go(e->tagged);
                 }
 
                 if (e->identifier != EmptyString) {
                         Expr *id = amA(sizeof *id);
                         *id = *e;
                         id->type = EXPRESSION_IDENTIFIER;
-                        v__(v, 0) = tyexpr(ty, id);
+                        v__(v, 0) = go(id);
                 } else {
                         v__(v, 0) = tagged(ty, TyValue, *e->constraint->v, NONE);
                 }
@@ -11894,11 +11997,11 @@ tyexpr(Ty *ty, Expr const *e)
         }
 
         case EXPRESSION_EVAL:
-                v = TAGGED(TyEval, tyexpr(ty, e->operand));
+                v = TAGGED(TyEval, go(e->operand));
                 break;
 
         case EXPRESSION_GENERATOR:
-                v = TAGGED(TyGenerator, tystmt(ty, e->body));
+                v = TAGGED(TyGenerator, go(e->body));
                 break;
 
         case EXPRESSION_FUNCTION:
@@ -11917,21 +12020,21 @@ tyexpr(Ty *ty, Expr const *e)
                         vTn(
                                 "name",       (e->name != NULL) ? vSsz(e->name) : NIL,
                                 "params",     ARRAY(params),
-                                "rt",         tyexpr(ty, e->return_type),
-                                "body",       tystmt(ty, e->body),
+                                "rt",         go(e->return_type),
+                                "body",       go(e->body),
                                 "decorators", ARRAY(decorators),
                                 "typeParams", ARRAY(type_params)
                         )
                 );
 
                 for (int i = 0; i < vN(e->decorators); ++i) {
-                        vAp(decorators, tyexpr(ty, v__(e->decorators, i)));
+                        vAp(decorators, go(v__(e->decorators, i)));
                 }
 
                 for (int i = 0; i < vN(e->type_params); ++i) {
                         vAp(
                                 type_params,
-                                tyexpr(ty, v__(e->type_params, i))
+                                go(v__(e->type_params, i))
                         );
                 }
 
@@ -11951,8 +12054,8 @@ tyexpr(Ty *ty, Expr const *e)
                                 Value param = TAGGED_RECORD(
                                         TyParam,
                                         "name",       name,
-                                        "constraint", tyexpr(ty, v__(e->constraints, i)),
-                                        "default",    tyexpr(ty, v__(e->dflts, i))
+                                        "constraint", go(v__(e->constraints, i)),
+                                        "default",    go(v__(e->dflts, i))
                                 );
                                 vAp(params, param);
                         }
@@ -11966,7 +12069,7 @@ tyexpr(Ty *ty, Expr const *e)
         case EXPRESSION_TAG_PATTERN:
                 v = vT(2);
                 v__(v, 0) = vSsz(e->identifier);
-                v__(v, 1) = tyexpr(ty, e->tagged);
+                v__(v, 1) = go(e->tagged);
                 v = TAGGED(TyTagPattern, v);
                 break;
 
@@ -11983,9 +12086,9 @@ tyexpr(Ty *ty, Expr const *e)
                                         ty,
                                         TyRecordEntry,
                                         vTn(
-                                                "item", tyexpr(ty, v__(e->es, i)),
+                                                "item", go(v__(e->es, i)),
                                                 "name", name,
-                                                "cond", (v__(e->tconds, i) == NULL) ? NIL : tyexpr(ty, v__(e->tconds, i)),
+                                                "cond", (v__(e->tconds, i) == NULL) ? NIL : go(v__(e->tconds, i)),
                                                 "optional", BOOLEAN(!v__(e->required, i))
                                         ),
                                         NONE
@@ -12000,7 +12103,7 @@ tyexpr(Ty *ty, Expr const *e)
                 v = ARRAY(vA());
                 NOGC(v.array);
                 for (int i = 0; i < vN(e->es); ++i) {
-                        vAp(v.array, tyexpr(ty, v__(e->es, i)));
+                        vAp(v.array, go(v__(e->es, i)));
                 }
                 OKGC(v.array);
                 break;
@@ -12009,7 +12112,7 @@ tyexpr(Ty *ty, Expr const *e)
                 v = ARRAY(vA());
                 NOGC(v.array);
                 for (int i = 0; i < vN(e->es); ++i) {
-                        vAp(v.array, tyexpr(ty, v__(e->es, i)));
+                        vAp(v.array, go(v__(e->es, i)));
                 }
                 OKGC(v.array);
                 v = TAGGED(TyChoicePattern, v);
@@ -12018,23 +12121,23 @@ tyexpr(Ty *ty, Expr const *e)
         case EXPRESSION_YIELD:
                 v = ARRAY(vA());
                 for (int i = 0; i < vN(e->es); ++i) {
-                        vAp(v.array, tyexpr(ty, v__(e->es, i)));
+                        vAp(v.array, go(v__(e->es, i)));
                 }
                 v = TAGGED(TyYield, v);
                 break;
 
         case EXPRESSION_THROW:
-                v = tagged(ty, TyThrow, tyexpr(ty, e->throw), NONE);
+                v = tagged(ty, TyThrow, go(e->throw), NONE);
                 break;
 
         case EXPRESSION_MATCH:
                 v = vT(2);
-                v__(v, 0) = tyexpr(ty, e->subject);
+                v__(v, 0) = go(e->subject);
                 v__(v, 1) = ARRAY(vA());
                 for (int i = 0; i < vN(e->patterns); ++i) {
                         Value case_ = vT(2);
-                        v__(case_, 0) = tyexpr(ty, v__(e->patterns, i));
-                        v__(case_, 1) = tyexpr(ty, v__(e->thens, i));
+                        v__(case_, 0) = go(v__(e->patterns, i));
+                        v__(case_, 1) = go(v__(e->thens, i));
                         vAp(
                                 v__(v, 1).array,
                                 case_
@@ -12047,7 +12150,7 @@ tyexpr(Ty *ty, Expr const *e)
                 v = TAGGED_RECORD(
                         TyDict,
                         "items",   ARRAY(vA()),
-                        "default", tyexpr(ty, e->dflt)
+                        "default", go(e->dflt)
                 );
                 NOGC(v__(v, 0).array);
                 for (int i = 0; i < vN(e->keys); ++i) {
@@ -12055,8 +12158,8 @@ tyexpr(Ty *ty, Expr const *e)
                                 v__(v, 0).array,
                                 TAGGED(
                                         TyDictItem,
-                                        tyexpr(ty, v__(e->keys, i)),
-                                        tyexpr(ty, v__(e->values, i))
+                                        go(v__(e->keys, i)),
+                                        go(v__(e->values, i))
                                 )
                         );
                 }
@@ -12065,7 +12168,7 @@ tyexpr(Ty *ty, Expr const *e)
 
         case EXPRESSION_FUNCTION_CALL:
                 v = vTn(
-                        "func", tyexpr(ty, e->function),
+                        "func", go(e->function),
                         "args", ARRAY(vA())
                 );
                 for (int i = 0; i < vN(e->args); ++i) {
@@ -12073,8 +12176,8 @@ tyexpr(Ty *ty, Expr const *e)
                                 v__(v, 1).array,
                                 TAGGED_RECORD(
                                         TyArg,
-                                        "arg",  tyexpr(ty, v__(e->args, i)),
-                                        "cond", tyexpr(ty, v__(e->fconds, i)),
+                                        "arg",  go(v__(e->args, i)),
+                                        "cond", go(v__(e->fconds, i)),
                                         "name", NIL
                                 )
                         );
@@ -12084,8 +12187,8 @@ tyexpr(Ty *ty, Expr const *e)
                                 v__(v, 1).array,
                                 TAGGED_RECORD(
                                         TyArg,
-                                        "arg",  tyexpr(ty, v__(e->kwargs, i)),
-                                        "cond", tyexpr(ty, v__(e->fkwconds, i)),
+                                        "arg",  go(v__(e->kwargs, i)),
+                                        "cond", go(v__(e->fkwconds, i)),
                                         "name", vSsz(v__(e->kws, i))
                                 )
                         );
@@ -12096,14 +12199,14 @@ tyexpr(Ty *ty, Expr const *e)
         case EXPRESSION_DYN_METHOD_CALL:
                 if (1) {
                         v = vTn(
-                                "object", tyexpr(ty, e->function),
-                                "method", tyexpr(ty, e->method),
+                                "object", go(e->function),
+                                "method", go(e->method),
                                 "args",   ARRAY(vA())
                         );
                 } else {
         case EXPRESSION_METHOD_CALL:
                         v = vTn(
-                                "object", tyexpr(ty, e->function),
+                                "object", go(e->function),
                                 "method", vSsz(e->method->identifier),
                                 "args",   ARRAY(vA())
                         );
@@ -12113,8 +12216,8 @@ tyexpr(Ty *ty, Expr const *e)
                                 v__(v, 2).array,
                                 TAGGED_RECORD(
                                         TyArg,
-                                        "arg",  tyexpr(ty, v__(e->method_args, i)),
-                                        "cond", tyexpr(ty, v__(e->mconds, i)),
+                                        "arg",  go(v__(e->method_args, i)),
+                                        "cond", go(v__(e->mconds, i)),
                                         "name", NIL
                                 )
                         );
@@ -12124,7 +12227,7 @@ tyexpr(Ty *ty, Expr const *e)
                                 v__(v, 2).array,
                                 TAGGED_RECORD(
                                         TyArg,
-                                        "arg", tyexpr(ty, v__(e->method_kwargs, i)),
+                                        "arg", go(v__(e->method_kwargs, i)),
                                         "cond", NIL, // TODO conditional method kwargs
                                         "name", vSsz(v__(e->method_kws, i))
                                 )
@@ -12140,8 +12243,8 @@ tyexpr(Ty *ty, Expr const *e)
         case EXPRESSION_DYN_MEMBER_ACCESS:
                 v = TAGGED(
                         e->maybe ? TyTryDynMemberAccess : TyDynMemberAccess,
-                        tyexpr(ty, e->object),
-                        tyexpr(ty, e->member)
+                        go(e->object),
+                        go(e->member)
                 );
                 break;
 
@@ -12149,7 +12252,7 @@ tyexpr(Ty *ty, Expr const *e)
         case EXPRESSION_SELF_ACCESS:
                 v = TAGGED(
                         e->maybe ? TyTryMemberAccess : TyMemberAccess,
-                        tyexpr(ty, e->object),
+                        go(e->object),
                         vSsz(e->member->identifier)
                 );
                 break;
@@ -12157,30 +12260,30 @@ tyexpr(Ty *ty, Expr const *e)
         case EXPRESSION_SUBSCRIPT:
                 v = TAGGED(
                         TySubscript,
-                        tyexpr(ty, e->container),
-                        tyexpr(ty, e->subscript)
+                        go(e->container),
+                        go(e->subscript)
                 );
                 break;
 
         case EXPRESSION_SLICE:
                 v = TAGGED(
                         TySlice,
-                        tyexpr(ty, e->slice.e),
-                        tyexpr(ty, e->slice.i),
-                        tyexpr(ty, e->slice.j),
-                        tyexpr(ty, e->slice.k)
+                        go(e->slice.e),
+                        go(e->slice.i),
+                        go(e->slice.j),
+                        go(e->slice.k)
                 );
                 break;
 
         case EXPRESSION_WITH:
                 v = ARRAY(vA());
                 for (int i = 0; i < vN(e->with.defs); ++i) {
-                        vAp(v.array, tystmt(ty, v__(e->with.defs, i)));
+                        vAp(v.array, go(v__(e->with.defs, i)));
                 }
                 v = TAGGED(
                         TyWith,
                         v,
-                        tystmt(ty, v__(e->with.block->statements, 1)->try.s)
+                        go(v__(e->with.block->statements, 1)->try.s)
                 );
                 break;
 
@@ -12191,9 +12294,9 @@ tyexpr(Ty *ty, Expr const *e)
         case EXPRESSION_CONDITIONAL:
                 v = TAGGED(
                         TyCond,
-                        tyexpr(ty, e->cond),
-                        tyexpr(ty, e->then),
-                        tyexpr(ty, e->otherwise)
+                        go(e->cond),
+                        go(e->then),
+                        go(e->otherwise)
                 );
                 break;
 
@@ -12228,15 +12331,15 @@ tyexpr(Ty *ty, Expr const *e)
                 vAp(v.array, vSsz(v__(e->strings, 0)));
 
                 for (int i = 0; i < vN(e->expressions); ++i) {
-                        Value expr = tyexpr(ty, v__(e->expressions, i));
-                        Value arg = tyexpr(ty, *v_(e->fmtfs, i));
+                        Value expr = go(v__(e->expressions, i));
+                        Value arg = go(*v_(e->fmtfs, i));
                         Value fmt;
                         Value width;
                         if (v__(e->fmts, i) == NULL) {
                                 fmt = NIL;
                                 width = NIL;
                         } else {
-                                fmt = tyexpr(ty, v__(e->fmts, i));
+                                fmt = go(v__(e->fmts, i));
                                 width = INTEGER(v__(e->widths, i));
                         }
                         vAp(v.array, QUADRUPLE(expr, fmt, width, arg));
@@ -12248,7 +12351,7 @@ tyexpr(Ty *ty, Expr const *e)
                 if (e->lang == NULL) {
                         v = TAGGED(TySpecialString, v);
                 } else {
-                        v = TAGGED(TyLangString, tyexpr(ty, e->lang), v);
+                        v = TAGGED(TyLangString, go(e->lang), v);
                 }
                 break;
 
@@ -12256,205 +12359,205 @@ tyexpr(Ty *ty, Expr const *e)
                 v = TAGGED(
                         TyUserOp,
                         vSsz(e->op_name),
-                        tyexpr(ty, e->left),
-                        tyexpr(ty, e->right)
+                        go(e->left),
+                        go(e->right)
                 );
                 break;
 
         case EXPRESSION_DOT_DOT:
-                v = TAGGED(TyDotDot, tyexpr(ty, e->left), tyexpr(ty, e->right));
+                v = TAGGED(TyDotDot, go(e->left), go(e->right));
                 break;
 
         case EXPRESSION_DOT_DOT_DOT:
-                v = TAGGED(TyDotDotDot, tyexpr(ty, e->left), tyexpr(ty, e->right));
+                v = TAGGED(TyDotDotDot, go(e->left), go(e->right));
                 break;
 
         case EXPRESSION_EQ:
-                v = TAGGED(TyAssign, tyexpr(ty, e->target), tyexpr(ty, e->value));
+                v = TAGGED(TyAssign, go(e->target), go(e->value));
                 break;
 
         case EXPRESSION_PLUS_EQ:
-                v = TAGGED(TyMutAdd, tyexpr(ty, e->target), tyexpr(ty, e->value));
+                v = TAGGED(TyMutAdd, go(e->target), go(e->value));
                 break;
 
         case EXPRESSION_MINUS_EQ:
-                v = TAGGED(TyMutSub, tyexpr(ty, e->target), tyexpr(ty, e->value));
+                v = TAGGED(TyMutSub, go(e->target), go(e->value));
                 break;
 
         case EXPRESSION_STAR_EQ:
-                v = TAGGED(TyMutMul, tyexpr(ty, e->target), tyexpr(ty, e->value));
+                v = TAGGED(TyMutMul, go(e->target), go(e->value));
                 break;
 
         case EXPRESSION_DIV_EQ:
-                v = TAGGED(TyMutDiv, tyexpr(ty, e->target), tyexpr(ty, e->value));
+                v = TAGGED(TyMutDiv, go(e->target), go(e->value));
                 break;
 
         case EXPRESSION_MOD_EQ:
-                v = TAGGED(TyMutMod, tyexpr(ty, e->target), tyexpr(ty, e->value));
+                v = TAGGED(TyMutMod, go(e->target), go(e->value));
                 break;
 
         case EXPRESSION_AND_EQ:
-                v = TAGGED(TyMutAnd, tyexpr(ty, e->target), tyexpr(ty, e->value));
+                v = TAGGED(TyMutAnd, go(e->target), go(e->value));
                 break;
 
         case EXPRESSION_OR_EQ:
-                v = TAGGED(TyMutOr, tyexpr(ty, e->target), tyexpr(ty, e->value));
+                v = TAGGED(TyMutOr, go(e->target), go(e->value));
                 break;
 
         case EXPRESSION_XOR_EQ:
-                v = TAGGED(TyMutXor, tyexpr(ty, e->target), tyexpr(ty, e->value));
+                v = TAGGED(TyMutXor, go(e->target), go(e->value));
                 break;
 
         case EXPRESSION_SHL_EQ:
-                v = TAGGED(TyMutShl, tyexpr(ty, e->target), tyexpr(ty, e->value));
+                v = TAGGED(TyMutShl, go(e->target), go(e->value));
                 break;
 
         case EXPRESSION_SHR_EQ:
-                v = TAGGED(TyMutShr, tyexpr(ty, e->target), tyexpr(ty, e->value));
+                v = TAGGED(TyMutShr, go(e->target), go(e->value));
                 break;
 
         case EXPRESSION_GT:
-                v = TAGGED(TyGT, tyexpr(ty, e->left), tyexpr(ty, e->right));
+                v = TAGGED(TyGT, go(e->left), go(e->right));
                 break;
 
         case EXPRESSION_GEQ:
-                v = TAGGED(TyGEQ, tyexpr(ty, e->left), tyexpr(ty, e->right));
+                v = TAGGED(TyGEQ, go(e->left), go(e->right));
                 break;
 
         case EXPRESSION_LT:
-                v = TAGGED(TyLT, tyexpr(ty, e->left), tyexpr(ty, e->right));
+                v = TAGGED(TyLT, go(e->left), go(e->right));
                 break;
 
         case EXPRESSION_LEQ:
-                v = TAGGED(TyLEQ, tyexpr(ty, e->left), tyexpr(ty, e->right));
+                v = TAGGED(TyLEQ, go(e->left), go(e->right));
                 break;
 
         case EXPRESSION_CMP:
-                v = TAGGED(TyCmp, tyexpr(ty, e->left), tyexpr(ty, e->right));
+                v = TAGGED(TyCmp, go(e->left), go(e->right));
                 break;
 
         case EXPRESSION_WTF:
-                v = TAGGED(TyWtf, tyexpr(ty, e->left), tyexpr(ty, e->right));
+                v = TAGGED(TyWtf, go(e->left), go(e->right));
                 break;
 
         case EXPRESSION_PLUS:
-                v = TAGGED(TyAdd, tyexpr(ty, e->left), tyexpr(ty, e->right));
+                v = TAGGED(TyAdd, go(e->left), go(e->right));
                 break;
 
         case EXPRESSION_STAR:
-                v = TAGGED(TyMul, tyexpr(ty, e->left), tyexpr(ty, e->right));
+                v = TAGGED(TyMul, go(e->left), go(e->right));
                 break;
 
         case EXPRESSION_MINUS:
-                v = TAGGED(TySub, tyexpr(ty, e->left), tyexpr(ty, e->right));
+                v = TAGGED(TySub, go(e->left), go(e->right));
                 break;
 
         case EXPRESSION_DIV:
-                v = TAGGED(TyDiv, tyexpr(ty, e->left), tyexpr(ty, e->right));
+                v = TAGGED(TyDiv, go(e->left), go(e->right));
                 break;
 
         case EXPRESSION_PERCENT:
-                v = TAGGED(TyMod, tyexpr(ty, e->left), tyexpr(ty, e->right));
+                v = TAGGED(TyMod, go(e->left), go(e->right));
                 break;
 
         case EXPRESSION_XOR:
-                v = TAGGED(TyXor, tyexpr(ty, e->left), tyexpr(ty, e->right));
+                v = TAGGED(TyXor, go(e->left), go(e->right));
                 break;
 
         case EXPRESSION_SHL:
-                v = TAGGED(TyShl, tyexpr(ty, e->left), tyexpr(ty, e->right));
+                v = TAGGED(TyShl, go(e->left), go(e->right));
                 break;
 
         case EXPRESSION_SHR:
-                v = TAGGED(TyShr, tyexpr(ty, e->left), tyexpr(ty, e->right));
+                v = TAGGED(TyShr, go(e->left), go(e->right));
                 break;
 
         case EXPRESSION_DBL_EQ:
-                v = TAGGED(TyEq, tyexpr(ty, e->left), tyexpr(ty, e->right));
+                v = TAGGED(TyEq, go(e->left), go(e->right));
                 break;
 
         case EXPRESSION_NOT_EQ:
-                v = TAGGED(TyNotEq, tyexpr(ty, e->left), tyexpr(ty, e->right));
+                v = TAGGED(TyNotEq, go(e->left), go(e->right));
                 break;
 
         case EXPRESSION_CHECK_MATCH:
-                v = TAGGED(TyMatches, tyexpr(ty, e->left), tyexpr(ty, e->right));
+                v = TAGGED(TyMatches, go(e->left), go(e->right));
                 break;
 
         case EXPRESSION_IN:
-                v = TAGGED(TyIn, tyexpr(ty, e->left), tyexpr(ty, e->right));
+                v = TAGGED(TyIn, go(e->left), go(e->right));
                 break;
 
         case EXPRESSION_NOT_IN:
-                v = TAGGED(TyNotIn, tyexpr(ty, e->left), tyexpr(ty, e->right));
+                v = TAGGED(TyNotIn, go(e->left), go(e->right));
                 break;
 
         case EXPRESSION_OR:
-                v = TAGGED(TyOr, tyexpr(ty, e->left), tyexpr(ty, e->right));
+                v = TAGGED(TyOr, go(e->left), go(e->right));
                 break;
 
         case EXPRESSION_AND:
-                v = TAGGED(TyAnd, tyexpr(ty, e->left), tyexpr(ty, e->right));
+                v = TAGGED(TyAnd, go(e->left), go(e->right));
                 break;
 
         case EXPRESSION_KW_AND:
-                v = TAGGED(TyKwAnd, tyexpr(ty, e->left), typarts(ty, &e->p_cond));
+                v = TAGGED(TyKwAnd, go(e->left), typarts(ty, &e->p_cond, flags));
                 break;
 
         case EXPRESSION_BIT_AND:
-                v = TAGGED(TyBitAnd, tyexpr(ty, e->left), tyexpr(ty, e->right));
+                v = TAGGED(TyBitAnd, go(e->left), go(e->right));
                 break;
 
         case EXPRESSION_BIT_OR:
-                v = TAGGED(TyBitOr, tyexpr(ty, e->left), tyexpr(ty, e->right));
+                v = TAGGED(TyBitOr, go(e->left), go(e->right));
                 break;
 
         case EXPRESSION_VIEW_PATTERN:
-                v = TAGGED(TyView, tyexpr(ty, e->left), tyexpr(ty, e->right));
+                v = TAGGED(TyView, go(e->left), go(e->right));
                 break;
 
         case EXPRESSION_NOT_NIL_VIEW_PATTERN:
-                v = TAGGED(TyNotNilView, tyexpr(ty, e->left), tyexpr(ty, e->right));
+                v = TAGGED(TyNotNilView, go(e->left), go(e->right));
                 break;
 
         case EXPRESSION_CAST:
-                v = TAGGED(TyCast, tyexpr(ty, e->left), tyexpr(ty, e->right));
+                v = TAGGED(TyCast, go(e->left), go(e->right));
                 break;
 
         case EXPRESSION_TYPE_OF:
-                v = TAGGED(TyTypeOf, tyexpr(ty, e->operand));
+                v = TAGGED(TyTypeOf, go(e->operand));
                 break;
 
         case EXPRESSION_PREFIX_HASH:
-                v = TAGGED(TyCount, tyexpr(ty, e->operand));
+                v = TAGGED(TyCount, go(e->operand));
                 break;
 
         case EXPRESSION_PREFIX_BANG:
-                v = TAGGED(TyNot, tyexpr(ty, e->operand));
+                v = TAGGED(TyNot, go(e->operand));
                 break;
 
         case EXPRESSION_PREFIX_MINUS:
-                v = TAGGED(TyNeg, tyexpr(ty, e->operand));
+                v = TAGGED(TyNeg, go(e->operand));
                 break;
 
         case EXPRESSION_PREFIX_QUESTION:
-                v = TAGGED(TyQuestion, tyexpr(ty, e->operand));
+                v = TAGGED(TyQuestion, go(e->operand));
                 break;
 
         case EXPRESSION_PREFIX_INC:
-                v = TAGGED(TyPreInc, tyexpr(ty, e->operand));
+                v = TAGGED(TyPreInc, go(e->operand));
                 break;
 
         case EXPRESSION_POSTFIX_INC:
-                v = TAGGED(TyPostInc, tyexpr(ty, e->operand));
+                v = TAGGED(TyPostInc, go(e->operand));
                 break;
 
         case EXPRESSION_PREFIX_DEC:
-                v = TAGGED(TyPreDec, tyexpr(ty, e->operand));
+                v = TAGGED(TyPreDec, go(e->operand));
                 break;
 
         case EXPRESSION_POSTFIX_DEC:
-                v = TAGGED(TyPostDec, tyexpr(ty, e->operand));
+                v = TAGGED(TyPostDec, go(e->operand));
                 break;
 
         case EXPRESSION_DEFINED:
@@ -12471,6 +12574,10 @@ tyexpr(Ty *ty, Expr const *e)
                         "name",   vSsz(e->identifier),
                         "module", (e->module == NULL) ? NIL : vSsz(e->module)
                 );
+                break;
+
+        case EXPRESSION_UNSAFE:
+                v = TAGGED(TyUnsafe, go(e->operand));
                 break;
 
         case EXPRESSION_TEMPLATE_HOLE:
@@ -12502,7 +12609,7 @@ tyexpr(Ty *ty, Expr const *e)
                 break;
 
         case EXPRESSION_STATEMENT:
-                v = tystmt(ty, e->statement);
+                v = go(e->statement);
                 break;
 
         case EXPRESSION_VALUE:
@@ -12517,13 +12624,15 @@ tyexpr(Ty *ty, Expr const *e)
 
         v.src = source_register(ty, e);
 
+#undef go
         return v;
 }
 
 Value
-tystmt(Ty *ty, Stmt *s)
+tystmt(Ty *ty, Stmt *s, u32 flags)
 {
         Value v;
+#define go(x) tyexpr(ty, ((Expr *)(x)), (flags))
 
         if (s == NULL) {
                 return NIL;
@@ -12535,15 +12644,15 @@ tystmt(Ty *ty, Stmt *s)
         case STATEMENT_DEFINITION:
                 v = TAGGED(
                         TyLet,
-                        tyexpr(ty, s->target),
-                        tyexpr(ty, s->value)
+                        go(s->target),
+                        go(s->value)
                 );
                 break;
 
         case STATEMENT_CLASS_DEFINITION:
                 v = vTn(
                         "name", vSsz(s->class.name),
-                        "super", tyexpr(ty, s->class.super),
+                        "super", go(s->class.super),
                         "traits", ARRAY(vA()),
                         "methods", ARRAY(vA()),
                         "getters", ARRAY(vA()),
@@ -12555,43 +12664,43 @@ tystmt(Ty *ty, Stmt *s)
                         "staticFields",  ARRAY(vA())
                 );
                 for (int i = 0; i < vN(s->class.traits); ++i) {
-                        vAp(v__(v, 2).array, tyexpr(ty, v__(s->class.traits, i)));
+                        vAp(v__(v, 2).array, go(v__(s->class.traits, i)));
                 }
                 for (int i = 0; i < vN(s->class.methods); ++i) {
-                        vAp(v__(v, 3).array, tyexpr(ty, v__(s->class.methods, i)));
+                        vAp(v__(v, 3).array, go(v__(s->class.methods, i)));
                 }
                 for (int i = 0; i < vN(s->class.getters); ++i) {
-                        vAp(v__(v, 4).array, tyexpr(ty, v__(s->class.getters, i)));
+                        vAp(v__(v, 4).array, go(v__(s->class.getters, i)));
                 }
                 for (int i = 0; i < vN(s->class.setters); ++i) {
-                        vAp(v__(v, 5).array, tyexpr(ty, v__(s->class.setters, i)));
+                        vAp(v__(v, 5).array, go(v__(s->class.setters, i)));
                 }
                 for (int i = 0; i < vN(s->class.fields); ++i) {
-                        vAp(v__(v, 6).array, tyexpr(ty, v__(s->class.fields, i)));
+                        vAp(v__(v, 6).array, go(v__(s->class.fields, i)));
                 }
                 for (int i = 0; i < vN(s->class.s_methods); ++i) {
-                        vAp(v__(v, 7).array, tyexpr(ty, v__(s->class.s_methods, i)));
+                        vAp(v__(v, 7).array, go(v__(s->class.s_methods, i)));
                 }
                 for (int i = 0; i < vN(s->class.s_getters); ++i) {
-                        vAp(v__(v, 8).array, tyexpr(ty, v__(s->class.s_getters, i)));
+                        vAp(v__(v, 8).array, go(v__(s->class.s_getters, i)));
                 }
                 for (int i = 0; i < vN(s->class.s_setters); ++i) {
-                        vAp(v__(v, 9).array, tyexpr(ty, v__(s->class.s_setters, i)));
+                        vAp(v__(v, 9).array, go(v__(s->class.s_setters, i)));
                 }
                 for (int i = 0; i < vN(s->class.s_fields); ++i) {
-                        vAp(v__(v, 10).array, tyexpr(ty, v__(s->class.s_fields, i)));
+                        vAp(v__(v, 10).array, go(v__(s->class.s_fields, i)));
                 }
                 v = TAGGED(TyClass, v);
                 break;
 
         case STATEMENT_DEFER:
-                v = TAGGED(TyDefer, tyexpr(ty, s->expression));
+                v = TAGGED(TyDefer, go(s->expression));
                 break;
 
         case STATEMENT_RETURN:
                 v = vT(vN(s->returns));
                 for (int i = 0; i < vN(s->returns); ++i) {
-                        v__(v, i) = tyexpr(ty, v__(s->returns, i));
+                        v__(v, i) = go(v__(s->returns, i));
                 }
                 v = TAGGED(TyReturn, v);
                 break;
@@ -12599,7 +12708,7 @@ tystmt(Ty *ty, Stmt *s)
         case STATEMENT_BREAK:
                 v = TAGGED_RECORD(
                         TyBreak,
-                        "value", (s->expression == NULL) ? NIL : tyexpr(ty, s->expression),
+                        "value", (s->expression == NULL) ? NIL : go(s->expression),
                         "depth", INTEGER(s->depth)
                 );
                 break;
@@ -12610,12 +12719,12 @@ tystmt(Ty *ty, Stmt *s)
 
         case STATEMENT_MATCH:
                 v = vT(2);
-                v__(v, 0) = tyexpr(ty, s->match.e);
+                v__(v, 0) = go(s->match.e);
                 v__(v, 1) = ARRAY(vA());
                 for (int i = 0; i < vN(s->match.patterns); ++i) {
                         Value case_ = vT(2);
-                        v__(case_, 0) = tyexpr(ty, v__(s->match.patterns, i));
-                        v__(case_, 1) = tystmt(ty, v__(s->match.statements, i));
+                        v__(case_, 0) = go(v__(s->match.patterns, i));
+                        v__(case_, 1) = go(v__(s->match.statements, i));
                         vAp(v__(v, 1).array, case_);
                 }
                 v = TAGGED(TyMatch, v);
@@ -12623,12 +12732,12 @@ tystmt(Ty *ty, Stmt *s)
 
         case STATEMENT_WHILE_MATCH:
                 v = vT(2);
-                v__(v, 0) = tyexpr(ty, s->match.e);
+                v__(v, 0) = go(s->match.e);
                 v__(v, 1) = ARRAY(vA());
                 for (int i = 0; i < vN(s->match.patterns); ++i) {
                         Value case_ = vT(2);
-                        v__(case_, 0) = tyexpr(ty, v__(s->match.patterns, i));
-                        v__(case_, 1) = tystmt(ty, v__(s->match.statements, i));
+                        v__(case_, 0) = go(v__(s->match.patterns, i));
+                        v__(case_, 1) = go(v__(s->match.statements, i));
                         vAp(v__(v, 1).array, case_);
                 }
                 v = TAGGED(TyWhileMatch, v);
@@ -12637,19 +12746,16 @@ tystmt(Ty *ty, Stmt *s)
         case STATEMENT_EACH_LOOP:
         {
                 Array *ps = vA();
-
                 v = vTn(
                         "pattern", ARRAY(ps),
-                        "iter", tyexpr(ty, s->each.array),
-                        "expr", tystmt(ty, s->each.body),
-                        "cond", s->each.cond != NULL ? tyexpr(ty, s->each.cond) : NIL,
-                        "stop", s->each.stop != NULL ? tyexpr(ty, s->each.stop) : NIL
+                        "iter", go(s->each.array),
+                        "expr", go(s->each.body),
+                        "cond", s->each.cond != NULL ? go(s->each.cond) : NIL,
+                        "stop", s->each.stop != NULL ? go(s->each.stop) : NIL
                 );
-
                 for (int i = 0; i < vN(s->each.target->es); ++i) {
-                        vAp(ps, tyexpr(ty, v__(s->each.target->es, i)));
+                        vAp(ps, go(v__(s->each.target->es, i)));
                 }
-
                 v = TAGGED(TyEach, v);
                 break;
         }
@@ -12657,17 +12763,17 @@ tystmt(Ty *ty, Stmt *s)
         case STATEMENT_FOR_LOOP:
                 v = TAGGED(
                         TyFor,
-                        tystmt(ty, s->for_loop.init),
-                        tyexpr(ty, s->for_loop.cond),
-                        tyexpr(ty, s->for_loop.next),
-                        tystmt(ty, s->for_loop.body)
+                        go(s->for_loop.init),
+                        go(s->for_loop.cond),
+                        go(s->for_loop.next),
+                        go(s->for_loop.body)
                 );
                 break;
 
         case STATEMENT_BLOCK:
                 v = ARRAY(vA());
                 for (int i = 0; i < vN(s->statements); ++i) {
-                        vAp(v.array, tystmt(ty, v__(s->statements, i)));
+                        vAp(v.array, go(v__(s->statements, i)));
                 }
                 v = TAGGED(TyBlock, v);
                 break;
@@ -12675,7 +12781,7 @@ tystmt(Ty *ty, Stmt *s)
         case STATEMENT_MULTI:
                 v = ARRAY(vA());
                 for (int i = 0; i < vN(s->statements); ++i) {
-                        vAp(v.array, tystmt(ty, v__(s->statements, i)));
+                        vAp(v.array, go(v__(s->statements, i)));
                 }
                 v = TAGGED(TyMulti, v);
                 break;
@@ -12683,36 +12789,34 @@ tystmt(Ty *ty, Stmt *s)
         case STATEMENT_WHILE:
                 v = TAGGED(
                         TyWhile,
-                        typarts(ty, &s->While.parts),
-                        tystmt(ty, s->While.block)
+                        typarts(ty, &s->While.parts, flags),
+                        go(s->While.block)
                 );
                 break;
 
         case STATEMENT_IF:
                 v = TAGGED(
                         TyIf,
-                        typarts(ty, &s->iff.parts),
-                        tystmt(ty, s->iff.then),
-                        tystmt(ty, s->iff.otherwise)
+                        typarts(ty, &s->iff.parts, flags),
+                        go(s->iff.then),
+                        go(s->iff.otherwise)
                 );
                 break;
 
         case STATEMENT_TRY:
         {
                 Array *avCatches = vA();
-
                 for (int i = 0; i < vN(s->try.handlers); ++i) {
                         Value catch = vT(2);
-                        v__(catch, 0) = tyexpr(ty, v__(s->try.patterns, i));
-                        v__(catch, 1) = tystmt(ty, v__(s->try.handlers, i));
+                        v__(catch, 0) = go(v__(s->try.patterns, i));
+                        v__(catch, 1) = go(v__(s->try.handlers, i));
                         vAp(avCatches, catch);
                 }
-
                 v = TAGGED_RECORD(
                         TyTry,
-                        "body",    tystmt(ty, s->try.s),
+                        "body",    go(s->try.s),
                         "catches", ARRAY(avCatches),
-                        "always",  tystmt(ty, s->try.finally)
+                        "always",  go(s->try.finally)
                 );
                 break;
         }
@@ -12720,7 +12824,7 @@ tystmt(Ty *ty, Stmt *s)
         case STATEMENT_FUNCTION_DEFINITION:
         case STATEMENT_FUN_MACRO_DEFINITION:
         case STATEMENT_OPERATOR_DEFINITION:
-                v = tyexpr(ty, s->value);
+                v = go(s->value);
                 v = TAGGED(TyFuncDef, unwrap(ty, &v));
                 break;
 
@@ -12729,7 +12833,7 @@ tystmt(Ty *ty, Stmt *s)
                 break;
 
         case STATEMENT_EXPRESSION:
-                v = tyexpr(ty, s->expression);
+                v = go(s->expression);
                 break;
 
         default:
@@ -12740,6 +12844,7 @@ tystmt(Ty *ty, Stmt *s)
 
         v.src = source_register(ty, s);
 
+#undef go
         return v;
 }
 
@@ -12783,7 +12888,7 @@ cstmt(Ty *ty, Value *v)
 
         s->arena = GetArenaAlloc(ty);
 
-        dont_printf("cstmt(): %s\n", value_show_color(ty, v));
+        dont_printf("cstmt(): %s\n", SHOW(v));
 
         if (src == NULL && wrapped_type(ty, v) == VALUE_TUPLE) {
                 Value *src_val = tuple_get(v, "src");
@@ -12805,8 +12910,10 @@ cstmt(Ty *ty, Value *v)
         if (v->type == VALUE_TAG) switch (v->tag) {
         case TyNull:
                 goto Null;
+
         case TyContinue:
                 goto Continue;
+
         case TyBreak:
                 goto Break;
         }
@@ -12816,6 +12923,7 @@ cstmt(Ty *ty, Value *v)
         switch (tag) {
         case TyStmt:
                 return v->ptr;
+
         case TyLet:
         {
                 Value *pub = tuple_get(v, "public");
@@ -12825,6 +12933,7 @@ cstmt(Ty *ty, Value *v)
                 s->value = cexpr(ty, &v->items[1]);
                 break;
         }
+
         case TyFuncDef:
         {
                 Value f = *v;
@@ -12836,6 +12945,7 @@ cstmt(Ty *ty, Value *v)
                 s->target->identifier = mkcstr(ty, t_(v, "name"));
                 break;
         }
+
         case TyClass:
         {
                 s->type = STATEMENT_CLASS_DEFINITION;
@@ -12889,6 +12999,7 @@ cstmt(Ty *ty, Value *v)
                 }
                 break;
         }
+
         case TyIfNot:
                 s->iff.neg =  true;
         if (0) {
@@ -12904,6 +13015,7 @@ cstmt(Ty *ty, Value *v)
                         s->iff.otherwise = NULL;
                 }
                 break;
+
         case TyTry:
         {
                 s->type = STATEMENT_TRY;
@@ -12916,7 +13028,7 @@ cstmt(Ty *ty, Value *v)
                 Value *vFinally = tuple_get(v, "cleanup");
 
                 if (vCatches->type != VALUE_ARRAY) {
-                        fail("non-array `catches` in ty.Try construction: %s", value_show_color(ty, v));
+                        fail("non-array `catches` in ty.Try construction: %s", SHOW(v));
                 }
 
                 s->try.s = cstmt(ty, vBody);
@@ -12927,7 +13039,7 @@ cstmt(Ty *ty, Value *v)
                         if (catch->type != VALUE_TUPLE || catch->count != 2) {
                                 fail_or(
                                         "invalid `catches` entry in ty.Try construction: %s",
-                                        value_show_color(ty, catch)
+                                        SHOW(v)
                                 ) {
                                         continue;
                                 }
@@ -12938,11 +13050,13 @@ cstmt(Ty *ty, Value *v)
 
                 break;
         }
+
         case TyDefer:
                 v->tags = tags_pop(ty, v->tags);
                 s->type = STATEMENT_DEFER;
                 s->expression = cexpr(ty, v);
                 break;
+
         case TyMatch:
         {
                 s->type = STATEMENT_MATCH;
@@ -12963,6 +13077,7 @@ cstmt(Ty *ty, Value *v)
                 }
                 break;
         }
+
         case TyWhileMatch:
         {
                 s->type = STATEMENT_WHILE_MATCH;
@@ -12979,11 +13094,13 @@ cstmt(Ty *ty, Value *v)
                 }
                 break;
         }
+
         case TyWhile:
                 s->type = STATEMENT_WHILE;
                 s->While.parts = cparts(ty, &v->items[0]);
                 s->While.block = cstmt(ty, &v->items[1]);
                 break;
+
         case TyFor:
                 s->type = STATEMENT_FOR_LOOP;
                 s->for_loop.init = cstmt(ty, &v->items[0]);
@@ -12991,6 +13108,7 @@ cstmt(Ty *ty, Value *v)
                 s->for_loop.next = cexpr(ty, &v->items[2]);
                 s->for_loop.body = cstmt(ty, &v->items[3]);
                 break;
+
         case TyEach:
         {
                 s->type = STATEMENT_EACH_LOOP;
@@ -13013,6 +13131,7 @@ cstmt(Ty *ty, Value *v)
                 s->each.stop = (stop != NULL && stop->type != VALUE_NIL) ? cexpr(ty, stop) : NULL;
                 break;
         }
+
         case TyReturn:
         {
                 s->type = STATEMENT_RETURN;
@@ -13032,6 +13151,7 @@ cstmt(Ty *ty, Value *v)
                 }
                 break;
         }
+
         case TyBreak:
         Break:
         {
@@ -13047,6 +13167,7 @@ cstmt(Ty *ty, Value *v)
                 }
                 break;
         }
+
         case TyContinue:
         Continue:
         {
@@ -13061,16 +13182,18 @@ cstmt(Ty *ty, Value *v)
                 }
                 break;
         }
+
         case TyBlock:
                 s->type = STATEMENT_BLOCK;
                 v00(s->statements);
                 for (int i = 0; i < v->array->count; ++i) {
                         if (v->array->items[i].type == VALUE_NIL) {
-                                fail("nil in block: %s", value_show_color(ty, v));
+                                fail("nil in block: %s", SHOW(v));
                         }
                         avP(s->statements, cstmt(ty, &v->array->items[i]));
                 }
                 break;
+
         case TyMulti:
                 s->type = STATEMENT_MULTI;
                 v00(s->statements);
@@ -13078,15 +13201,17 @@ cstmt(Ty *ty, Value *v)
                         avP(s->statements, cstmt(ty, &v->array->items[i]));
                 }
                 break;
+
         case TyNull:
         Null:
                 s->type = STATEMENT_NULL;
                 break;
+
         default:
                 s->type = STATEMENT_EXPRESSION;
                 s->expression = cexpr(ty, v);
                 if (s->expression == NULL) {
-                        fail("cexpr() returned null pointer: %s", value_show_color(ty, v));
+                        fail("cexpr() returned null pointer: %s", SHOW(v));
                 }
                 if (s->mod == NULL && s->expression->mod != NULL) {
                         s->mod = s->expression->mod;
@@ -13111,7 +13236,7 @@ cexpr(Ty *ty, Value *v)
         Expr *e = amA0(sizeof *e);
         Expr *src = source_lookup(ty, v->src);
 
-        dont_printf("cexpr(): %s\n", value_show_color(ty, v));
+        dont_printf("cexpr(): %s\n", SHOW(v));
 
         e->arena = GetArenaAlloc(ty);
 
@@ -13137,15 +13262,18 @@ cexpr(Ty *ty, Value *v)
         case TyNil:
                 e->type = EXPRESSION_NIL;
                 return e;
+
         case TyNull:
         case TyBreak:
         case TyContinue:
                 goto Statement;
+
         case TyAny:
                 goto Any;
         }
 
         int tag = tags_first(ty, v->tags);
+        Value _v = unwrap(ty, v);
 
         switch (tag) {
         case 0:
@@ -13177,9 +13305,8 @@ cexpr(Ty *ty, Value *v)
 
         case TyType:
         {
-                Value v_ = unwrap(ty, v);
                 e->type = EXPRESSION_TYPE;
-                e->_type = type_from_ty(ty, &v_);
+                e->_type = type_from_ty(ty, &_v);
                 break;
         }
 
@@ -13412,14 +13539,12 @@ cexpr(Ty *ty, Value *v)
         {
                 e->type = EXPRESSION_TUPLE;
 
-                Value elems = unwrap(ty, v);
-
-                if (elems.type != VALUE_ARRAY) {
+                if (_v.type != VALUE_ARRAY) {
                         goto Bad;
                 }
 
-                for (int i = 0; i < vN(*elems.array); ++i) {
-                        Value *entry = v_(*elems.array, i);
+                for (int i = 0; i < vN(*_v.array); ++i) {
+                        Value *entry = v_(*_v.array, i);
 
                         Value *item     = tuple_get(entry, "item");
                         Value *name     = tget_t(entry, "name", VALUE_STRING);
@@ -13548,17 +13673,13 @@ cexpr(Ty *ty, Value *v)
         }
 
         case TyGenerator:
-        {
-                Value v_ = *v;
-                v_.tags = tags_pop(ty, v_.tags);
                 e->type = EXPRESSION_GENERATOR;
                 e->ikwargs = -1;
                 e->rest = -1;
-                e->class = -1;
+                e->class = NULL;
                 e->ftype = FT_GEN;
-                e->body = cstmt(ty, &v_);
+                e->body = cstmt(ty, &_v);
                 break;
-        }
 
         case TyFunc:
         case TyImplicitFunc:
@@ -13568,7 +13689,7 @@ cexpr(Ty *ty, Value *v)
                         : EXPRESSION_IMPLICIT_FUNCTION;
                 e->ikwargs = -1;
                 e->rest    = -1;
-                e->class   = -1;
+                e->class   = NULL;
                 e->ftype   = FT_NONE;
 
                 Value        *name = tget_t(v, "name", VALUE_STRING);
@@ -13631,6 +13752,7 @@ cexpr(Ty *ty, Value *v)
                 e->body = cstmt(ty, t_(v, "body"));
                 break;
         }
+
         case TyArrayCompr:
         {
                 Value *pattern = tuple_get(v, "pattern");
@@ -13661,6 +13783,7 @@ cexpr(Ty *ty, Value *v)
 
                 break;
         }
+
         case TyDictCompr:
         {
                 Value *pattern = tuple_get(v, "pattern");
@@ -13692,6 +13815,7 @@ cexpr(Ty *ty, Value *v)
 
                 break;
         }
+
         case TyTryMemberAccess:
                 e->maybe = true;
         case TyMemberAccess:
@@ -13707,22 +13831,26 @@ cexpr(Ty *ty, Value *v)
                 e->member = NewExpr(ty, EXPRESSION_IDENTIFIER);
                 e->member->identifier = mkcstr(ty, &v->items[1]);
                 break;
+
         case TyDynMemberAccess:
                 e->type = EXPRESSION_DYN_MEMBER_ACCESS;
                 e->object = cexpr(ty, &v->items[0]);
                 e->member = cexpr(ty, &v->items[1]);
                 break;
+
         case TyTryDynMemberAccess:
                 e->type = EXPRESSION_DYN_MEMBER_ACCESS;
                 e->maybe = true;
                 e->object = cexpr(ty, &v->items[0]);
                 e->member = cexpr(ty, &v->items[1]);
                 break;
+
         case TySubscript:
                 e->type = EXPRESSION_SUBSCRIPT;
                 e->container = cexpr(ty, &v->items[0]);
                 e->subscript = cexpr(ty, &v->items[1]);
                 break;
+
         case TySlice:
                 e->type = EXPRESSION_SLICE;
                 e->slice.e = cexpr(ty, &v->items[0]);
@@ -13730,14 +13858,12 @@ cexpr(Ty *ty, Value *v)
                 e->slice.j = cexpr(ty, &v->items[2]);
                 e->slice.k = cexpr(ty, &v->items[3]);
                 break;
+
         case TyEval:
-        {
-                Value v_ = *v;
-                v_.tags = tags_pop(ty, v_.tags);
                 e->type = EXPRESSION_EVAL;
-                e->operand = cexpr(ty, &v_);
+                e->operand = cexpr(ty, &_v);
                 break;
-        }
+
         case TyYield:
                 e->type = EXPRESSION_YIELD;
                 v00(e->es);
@@ -13751,13 +13877,12 @@ cexpr(Ty *ty, Value *v)
                         avP(e->es, cexpr(ty, &v_));
                 }
                 break;
+
         case TyThrow:
-        {
-                Value v_ = unwrap(ty, v);
                 e->type = EXPRESSION_THROW;
-                e->throw = cexpr(ty, &v_);
+                e->throw = cexpr(ty, &_v);
                 break;
-        }
+
         case TyWith:
         {
                 Value *lets = &v->items[0];
@@ -13768,225 +13893,268 @@ cexpr(Ty *ty, Value *v)
                 }
 
                 make_with(ty, e, defs, cstmt(ty, &v->items[1]));
-
                 break;
         }
+
         case TyCast:
                 e->type = EXPRESSION_CAST;
                 e->left = cexpr(ty, &v->items[0]);
                 e->right = cexpr(ty, &v->items[1]);
                 break;
+
         case TyCond:
                 e->type = EXPRESSION_CONDITIONAL;
                 e->cond = cexpr(ty, &v->items[0]);
                 e->then = cexpr(ty, &v->items[1]);
                 e->otherwise = cexpr(ty, &v->items[2]);
                 break;
+
         case TyBool:
                 e->type = EXPRESSION_BOOLEAN;
                 e->boolean = v->boolean;
                 break;
+
         case TyAssign:
                 e->type = EXPRESSION_EQ;
                 e->target = cexpr(ty, &v->items[0]);
                 e->value = cexpr(ty, &v->items[1]);
                 break;
+
         case TyMutAdd:
                 e->type = EXPRESSION_PLUS_EQ;
                 e->target = cexpr(ty, &v->items[0]);
                 e->value = cexpr(ty, &v->items[1]);
                 break;
+
         case TyMutSub:
                 e->type = EXPRESSION_MINUS_EQ;
                 e->target = cexpr(ty, &v->items[0]);
                 e->value = cexpr(ty, &v->items[1]);
                 break;
+
         case TyMutMul:
                 e->type = EXPRESSION_STAR_EQ;
                 e->target = cexpr(ty, &v->items[0]);
                 e->value = cexpr(ty, &v->items[1]);
                 break;
+
         case TyMutDiv:
                 e->type = EXPRESSION_DIV_EQ;
                 e->target = cexpr(ty, &v->items[0]);
                 e->value = cexpr(ty, &v->items[1]);
                 break;
+
         case TyMutMod:
                 e->type = EXPRESSION_MOD_EQ;
                 e->target = cexpr(ty, &v->items[0]);
                 e->value = cexpr(ty, &v->items[1]);
                 break;
+
         case TyMutAnd:
                 e->type = EXPRESSION_AND_EQ;
                 e->target = cexpr(ty, &v->items[0]);
                 e->value = cexpr(ty, &v->items[1]);
                 break;
+
         case TyMutOr:
                 e->type = EXPRESSION_OR_EQ;
                 e->target = cexpr(ty, &v->items[0]);
                 e->value = cexpr(ty, &v->items[1]);
                 break;
+
         case TyMutXor:
                 e->type = EXPRESSION_XOR_EQ;
                 e->target = cexpr(ty, &v->items[0]);
                 e->value = cexpr(ty, &v->items[1]);
                 break;
+
         case TyMutShl:
                 e->type = EXPRESSION_SHL_EQ;
                 e->target = cexpr(ty, &v->items[0]);
                 e->value = cexpr(ty, &v->items[1]);
                 break;
+
         case TyMutShr:
                 e->type = EXPRESSION_SHR_EQ;
                 e->target = cexpr(ty, &v->items[0]);
                 e->value = cexpr(ty, &v->items[1]);
                 break;
+
         case TyDotDot:
                 e->type = EXPRESSION_DOT_DOT;
                 e->left = cexpr(ty, &v->items[0]);
                 e->right = cexpr(ty, &v->items[1]);
                 break;
+
         case TyDotDotDot:
                 e->type = EXPRESSION_DOT_DOT_DOT;
                 e->left = cexpr(ty, &v->items[0]);
                 e->right = cexpr(ty, &v->items[1]);
                 break;
+
         case TyView:
                 e->type = EXPRESSION_VIEW_PATTERN;
                 e->left = cexpr(ty, &v->items[0]);
                 e->right = cexpr(ty, &v->items[1]);
                 break;
+
         case TyNotNilView:
                 e->type = EXPRESSION_NOT_NIL_VIEW_PATTERN;
                 e->left = cexpr(ty, &v->items[0]);
                 e->right = cexpr(ty, &v->items[1]);
                 break;
+
         case TyWtf:
                 e->type = EXPRESSION_WTF;
                 e->left = cexpr(ty, &v->items[0]);
                 e->right = cexpr(ty, &v->items[1]);
                 break;
+
         case TyAdd:
                 e->type = EXPRESSION_PLUS;
                 e->left = cexpr(ty, &v->items[0]);
                 e->right = cexpr(ty, &v->items[1]);
                 break;
+
         case TySub:
                 e->type = EXPRESSION_MINUS;
                 e->left = cexpr(ty, &v->items[0]);
                 e->right = cexpr(ty, &v->items[1]);
                 break;
+
         case TyMod:
                 e->type = EXPRESSION_PERCENT;
                 e->left = cexpr(ty, &v->items[0]);
                 e->right = cexpr(ty, &v->items[1]);
                 break;
+
         case TyDiv:
                 e->type = EXPRESSION_DIV;
                 e->left = cexpr(ty, &v->items[0]);
                 e->right = cexpr(ty, &v->items[1]);
                 break;
+
         case TyMul:
                 e->type = EXPRESSION_STAR;
                 e->left = cexpr(ty, &v->items[0]);
                 e->right = cexpr(ty, &v->items[1]);
                 break;
+
         case TyXor:
                 e->type = EXPRESSION_XOR;
                 e->left = cexpr(ty, &v->items[0]);
                 e->right = cexpr(ty, &v->items[1]);
                 break;
+
         case TyShl:
                 e->type = EXPRESSION_SHL;
                 e->left = cexpr(ty, &v->items[0]);
                 e->right = cexpr(ty, &v->items[1]);
                 break;
+
         case TyShr:
                 e->type = EXPRESSION_SHR;
                 e->left = cexpr(ty, &v->items[0]);
                 e->right = cexpr(ty, &v->items[1]);
                 break;
+
         case TyEq:
                 e->type = EXPRESSION_DBL_EQ;
                 e->left = cexpr(ty, &v->items[0]);
                 e->right = cexpr(ty, &v->items[1]);
                 break;
+
         case TyNotEq:
                 e->type = EXPRESSION_NOT_EQ;
                 e->left = cexpr(ty, &v->items[0]);
                 e->right = cexpr(ty, &v->items[1]);
                 break;
+
         case TyGT:
                 e->type = EXPRESSION_GT;
                 e->left = cexpr(ty, &v->items[0]);
                 e->right = cexpr(ty, &v->items[1]);
                 break;
+
         case TyGEQ:
                 e->type = EXPRESSION_GEQ;
                 e->left = cexpr(ty, &v->items[0]);
                 e->right = cexpr(ty, &v->items[1]);
                 break;
+
         case TyLT:
                 e->type = EXPRESSION_LT;
                 e->left = cexpr(ty, &v->items[0]);
                 e->right = cexpr(ty, &v->items[1]);
                 break;
+
         case TyLEQ:
                 e->type = EXPRESSION_LEQ;
                 e->left = cexpr(ty, &v->items[0]);
                 e->right = cexpr(ty, &v->items[1]);
                 break;
+
         case TyCmp:
                 e->type = EXPRESSION_CMP;
                 e->left = cexpr(ty, &v->items[0]);
                 e->right = cexpr(ty, &v->items[1]);
                 break;
+
         case TyMatches:
                 e->type = EXPRESSION_CHECK_MATCH;
                 e->left = cexpr(ty, &v->items[0]);
                 e->right = cexpr(ty, &v->items[1]);
                 break;
+
         case TyIn:
                 e->type = EXPRESSION_IN;
                 e->left = cexpr(ty, &v->items[0]);
                 e->right = cexpr(ty, &v->items[1]);
                 break;
+
         case TyNotIn:
                 e->type = EXPRESSION_NOT_IN;
                 e->left = cexpr(ty, &v->items[0]);
                 e->right = cexpr(ty, &v->items[1]);
                 break;
+
         case TyOr:
                 e->type = EXPRESSION_OR;
                 e->left = cexpr(ty, &v->items[0]);
                 e->right = cexpr(ty, &v->items[1]);
                 break;
+
         case TyAnd:
                 e->type = EXPRESSION_AND;
                 e->left = cexpr(ty, &v->items[0]);
                 e->right = cexpr(ty, &v->items[1]);
                 break;
+
         case TyKwAnd:
                 e->type = EXPRESSION_KW_AND;
                 e->left = cexpr(ty, &v->items[0]);
                 e->p_cond = cparts(ty, &v->items[1]);
                 break;
+
         case TyBitAnd:
                 e->type = EXPRESSION_BIT_AND;
                 e->left = cexpr(ty, &v->items[0]);
                 e->right = cexpr(ty, &v->items[1]);
                 break;
+
         case TyBitOr:
                 e->type = EXPRESSION_BIT_OR;
                 e->left = cexpr(ty, &v->items[0]);
                 e->right = cexpr(ty, &v->items[1]);
                 break;
+
         case TyUserOp:
                 e->type = EXPRESSION_USER_OP;
                 e->op_name = mkcstr(ty, &v->items[0]);
                 e->left = cexpr(ty, &v->items[1]);
                 e->right = cexpr(ty, &v->items[2]);
                 break;
+
         case TyTypeOf:
         {
                 Value v_ = *v;
@@ -13995,6 +14163,7 @@ cexpr(Ty *ty, Value *v)
                 e->operand = cexpr(ty, &v_);
                 break;
         }
+
         case TyCount:
         {
                 Value v_ = *v;
@@ -14005,51 +14174,44 @@ cexpr(Ty *ty, Value *v)
         }
         case TyNot:
         {
-                Value v_ = unwrap(ty, v);
                 e->type = EXPRESSION_PREFIX_BANG;
-                e->operand = cexpr(ty, &v_);
+                e->operand = cexpr(ty, &_v);
                 break;
         }
         case TyNeg:
         {
-                Value v_ = unwrap(ty, v);
                 e->type = EXPRESSION_PREFIX_MINUS;
-                e->operand = cexpr(ty, &v_);
+                e->operand = cexpr(ty, &_v);
                 break;
         }
         case TyPreInc:
         {
-                Value v_ = unwrap(ty, v);
                 e->type = EXPRESSION_PREFIX_INC;
-                e->operand = cexpr(ty, &v_);
+                e->operand = cexpr(ty, &_v);
                 break;
         }
         case TyPostInc:
         {
-                Value v_ = unwrap(ty, v);
                 e->type = EXPRESSION_POSTFIX_INC;
-                e->operand = cexpr(ty, &v_);
+                e->operand = cexpr(ty, &_v);
                 break;
         }
         case TyPreDec:
         {
-                Value v_ = unwrap(ty, v);
                 e->type = EXPRESSION_PREFIX_DEC;
-                e->operand = cexpr(ty, &v_);
+                e->operand = cexpr(ty, &_v);
                 break;
         }
         case TyPostDec:
         {
-                Value v_ = unwrap(ty, v);
                 e->type = EXPRESSION_POSTFIX_DEC;
-                e->operand = cexpr(ty, &v_);
+                e->operand = cexpr(ty, &_v);
                 break;
         }
         case TyQuestion:
         {
-                Value v_ = unwrap(ty, v);
                 e->type = EXPRESSION_PREFIX_QUESTION;
-                e->operand = cexpr(ty, &v_);
+                e->operand = cexpr(ty, &_v);
                 break;
         }
         case TyTagPattern:
@@ -14085,6 +14247,11 @@ cexpr(Ty *ty, Value *v)
                 e->module = (mod != NULL && mod->type != VALUE_NIL) ? mkcstr(ty, mod) : NULL;
                 break;
         }
+        case TyUnsafe:
+                e->type = EXPRESSION_UNSAFE;
+                e->operand = cexpr(ty, &_v);
+                break;
+
         case TyLet:
         case TyMatch:
         case TyTry:
@@ -14138,7 +14305,7 @@ CToTyExpr(Ty *ty, Expr *e)
                 return NONE;
         }
 
-        Value v = tyexpr(ty, e);
+        Value v = texprx(e);
 
         GC_RESUME();
         TY_CATCH_END();
@@ -14157,7 +14324,7 @@ CToTyStmt(Ty *ty, Stmt *s)
                 return NONE;
         }
 
-        Value v = tystmt(ty, s);
+        Value v = tstmtx(s);
 
         GC_RESUME();
         TY_CATCH_END();
@@ -14305,7 +14472,7 @@ typarse(
         STATE.mstart = *start;
         STATE.mend = *end;
 
-        Value vSelf = (self == NULL) ? NIL : tyexpr(ty, self);
+        Value vSelf = (self == NULL) ? NIL : texprx(self);
         Value expr;
 
         vmP(&vSelf);
@@ -14463,12 +14630,12 @@ define_tag(Ty *ty, Stmt *s)
 
         for (int i = 0; i < vN(s->tag.methods); ++i) {
                 // :^)
-                v__(s->tag.methods, i)->class = -3;
+                v__(s->tag.methods, i)->class = tags_get_class(ty, sym->tag);
         }
 
         for (int i = 0; i < vN(s->tag.s_methods); ++i) {
                 // :^)
-                v__(s->tag.s_methods, i)->class = -3;
+                v__(s->tag.s_methods, i)->class = tags_get_class(ty, sym->tag);
         }
 }
 
@@ -14588,7 +14755,7 @@ define_class(Ty *ty, Stmt *s)
         }
 
         if (HasAnyFieldInitializers(cd) && !HasConstructor(cd)) {
-                avP(cd->methods, DefaultConstructor(ty, cd));
+                avP(cd->methods, DefaultConstructor(ty, class));
         }
 
         char scratch[512];
@@ -14612,7 +14779,7 @@ define_class(Ty *ty, Stmt *s)
 
                         m->body = NULL;
 
-                        copy->class = sym->class;
+                        copy->class = class;
                         copy->mtype = MT_2OP;
 
                         avC(copy->params);
@@ -14639,7 +14806,7 @@ define_class(Ty *ty, Stmt *s)
                                 avP(STATE.class_ops, def);
                         }
                 } else {
-                        m->class = sym->class;
+                        m->class = class;
                         m->_type = UNKNOWN_TYPE;
 
                         name = GetPrivateName(m->name, sym->class, scratch, sizeof scratch);
@@ -14661,7 +14828,7 @@ define_class(Ty *ty, Stmt *s)
         for (int i = 0; i < vN(cd->s_methods); ++i) {
                 Expr *m = v__(cd->s_methods, i);
                 m->_type = UNKNOWN_TYPE;
-                m->class = sym->class;
+                m->class = class;
                 name = GetPrivateName(m->name, sym->class, scratch, sizeof scratch);
                 class_add_static(ty, sym->class, name, REF(NewZero()));
 
@@ -14676,7 +14843,7 @@ define_class(Ty *ty, Stmt *s)
         for (int i = 0; i < vN(cd->s_getters); ++i) {
                 Expr *m = v__(cd->s_getters, i);
                 m->_type = UNKNOWN_TYPE;
-                m->class = sym->class;
+                m->class = class;
                 name = GetPrivateName(m->name, sym->class, scratch, sizeof scratch);
                 class_add_s_getter(ty, sym->class, name, REF(NewZero()));
 
@@ -14691,7 +14858,7 @@ define_class(Ty *ty, Stmt *s)
         for (int i = 0; i < vN(cd->s_setters); ++i) {
                 Expr *m = v__(cd->s_setters, i);
                 m->_type = UNKNOWN_TYPE;
-                m->class = sym->class;
+                m->class = class;
                 name = GetPrivateName(m->name, sym->class, scratch, sizeof scratch);
                 class_add_s_getter(ty, sym->class, name, REF(NewZero()));
 
@@ -14705,7 +14872,7 @@ define_class(Ty *ty, Stmt *s)
         for (int i = 0; i < vN(cd->getters); ++i) {
                 Expr *m = v__(cd->getters, i);
                 m->_type = UNKNOWN_TYPE;
-                m->class = sym->class;
+                m->class = class;
                 name = GetPrivateName(m->name, sym->class, scratch, sizeof scratch);
                 class_add_getter(ty, sym->class, name, REF(NewZero()));
 
@@ -14719,7 +14886,7 @@ define_class(Ty *ty, Stmt *s)
         for (int i = 0; i < vN(cd->setters); ++i) {
                 Expr *m = v__(cd->setters, i);
                 m->_type = UNKNOWN_TYPE;
-                m->class = sym->class;
+                m->class = class;
                 name = GetPrivateName(m->name, sym->class, scratch, sizeof scratch);
                 class_add_setter(ty, sym->class, name, REF(NewZero()));
 
@@ -14904,6 +15071,25 @@ define_macro(Ty *ty, Stmt *s, bool fun)
 }
 
 bool
+IsMacroInvocation(Ty *ty, Expr *e)
+{
+        if (e == NULL) {
+                return false;
+        }
+
+        fixup_access(ty, SCOPE, e, false);
+
+        if (
+                (e->type != EXPRESSION_FUNCTION_CALL)
+             || (e->function->type != EXPRESSION_IDENTIFIER)
+        ) {
+                return false;
+        }
+
+        return SymbolIsFunMacro(TryResolveIdentifier(ty, e->function));
+}
+
+bool
 is_fun_macro(Ty *ty, char const *module, char const *id)
 {
         Symbol *s = NULL;
@@ -14989,14 +15175,14 @@ compiler_render_template(Ty *ty, Expr *e)
         }
 
         if (vN(e->template.stmts) == 1) {
-                v = tystmt(ty, v__(e->template.stmts, 0));
+                v = tstmtx(v__(e->template.stmts, 0));
                 goto End;
         }
 
         Array *a = vA();
 
         for (usize i = 0; i < vN(e->template.stmts); ++i) {
-                vAp(a, tystmt(ty, v__(e->template.stmts, i)));
+                vAp(a, tstmtx(v__(e->template.stmts, i)));
         }
 
         v = tagged(ty, TyMulti, ARRAY(a), NONE);
@@ -15172,8 +15358,8 @@ TyTraceEntryFor(Ty *ty, Expr const *e)
                 if (e->xfunc->name != NULL) {
                         func = vSsz(e->xfunc->name);
                 }
-                if (e->xfunc->class != -1) {
-                        class = vSsz(class_name(ty, e->xfunc->class));
+                if (e->xfunc->class != NULL) {
+                        class = vSsz(e->xfunc->class->name);
                 }
         }
         trace = vTn(
@@ -15235,9 +15421,9 @@ CompilationTrace(Ty *ty, byte_vector *out)
                         continue;
                 }
 
-                if (WriteExpressionOrigin(ty, out, ctx->e->origin) == 0) {
-                        continue;
-                }
+                WriteExpressionOrigin(ty, out, ctx->e->origin);
+
+                break;
         }
 }
 
@@ -15288,7 +15474,7 @@ WriteExpressionTrace(Ty *ty, byte_vector *out, Expr const *e, int etw, bool firs
         if (e->xfunc != NULL && e->xfunc->name != NULL) {
                 vt100bytes += strlen(TERM(36;1));
                 vt100bytes += strlen(TERM(0));
-                if (e->xfunc->class == -1) {
+                if (e->xfunc->class == NULL) {
                         snprintf(
                                 fun_buffer,
                                 sizeof fun_buffer,
@@ -15305,7 +15491,7 @@ WriteExpressionTrace(Ty *ty, byte_vector *out, Expr const *e, int etw, bool firs
                                 sizeof fun_buffer,
                                 "[%s%s%s.%s%s%s]",
                                 TERM(94),
-                                class_name(ty, e->xfunc->class),
+                                e->xfunc->class->name,
                                 TERM(0),
                                 TERM(36;1),
                                 e->xfunc->name,
@@ -15418,8 +15604,17 @@ WriteExpressionTrace(Ty *ty, byte_vector *out, Expr const *e, int etw, bool firs
 void
 WriteExpressionSourceHeading(Ty *ty, byte_vector *out, int cols, Expr const *e)
 {
-        int path_len = term_width(e->mod->path, -1);
-        int pad = max(0, (cols - path_len - 4));
+        int ctx_len = term_width(e->mod->path, -1);
+        if (e->xfunc != NULL) {
+                ctx_len += 6; // "  ——  "
+                if (e->xfunc->class != NULL) {
+                        ctx_len += term_width(e->xfunc->class->name, -1);
+                        ctx_len += 1; // "."
+                }
+                ctx_len += term_width(e->xfunc->name, -1);
+        }
+
+        int pad = max(0, (cols - ctx_len - 4));
         int pad_l = (pad / 4);
         int pad_r = pad - pad_l;
 
@@ -15429,7 +15624,24 @@ WriteExpressionSourceHeading(Ty *ty, byte_vector *out, int cols, Expr const *e)
                 dump(out, "━");
         }
 
-        dump(out, "┫ %s%s%s ┣", TERM(93;1), e->mod->path, TERM(38:2:96:96:96));
+        if (e->xfunc != NULL && e->xfunc->class != NULL) {
+                dump(
+                        out,
+                        "┫ %s%s%s  ——  %s%s%s.%s%s%s ┣",
+                        TERM(93;1), e->mod->path,          TERM(38:2:136:136:136),
+                        TERM(92;1), e->xfunc->class->name, TERM(0),
+                        TERM(34),   e->xfunc->name,        TERM(38:2:96:96:96)
+                );
+        } else if (e->xfunc != NULL) {
+                dump(
+                        out,
+                        "┫ %s%s%s  ——  %s%s%s ┣",
+                        TERM(93;1), e->mod->path,   TERM(38:2:136:136:136),
+                        TERM(0;34), e->xfunc->name, TERM(38:2:96:96:96)
+                );
+        } else {
+                dump(out, "┫ %s%s%s ┣", TERM(93;1), e->mod->path, TERM(38:2:96:96:96));
+        }
 
         for (int i = 0; i < pad_r; ++i) {
                 dump(out, "━");
@@ -15439,15 +15651,19 @@ WriteExpressionSourceHeading(Ty *ty, byte_vector *out, int cols, Expr const *e)
 }
 
 void
-WriteExpressionSourceContext(Ty *ty, byte_vector *out, Expr const *e)
+WriteExpressionSourceContext(
+        Ty *ty,
+        byte_vector *out,
+        int cols,
+        Expr const *e,
+        StringVector const *notes
+)
 {
         char const *start = e->start.s;
         char const *end   = e->end.s;
 
         int line0 = e->start.line;
-        int line1 = e->end.line;
 
-        // Seek back a few lines for context
         for (int i = 0; i < 6; ++i) {
                 if (start[-1] == '\n') {
                         --start;
@@ -15458,16 +15674,19 @@ WriteExpressionSourceContext(Ty *ty, byte_vector *out, Expr const *e)
                 }
         }
 
-        // And ahead a few lines
         for (int i = 0; i < 4; ++i) {
                 while (end[0] != '\0' && end[0] != '\n') {
                         ++end;
                 }
                 if (end[0] == '\n') {
                         ++end;
-                        ++line1;
                 }
         }
+
+        byte_vector tmp = {0};
+        int i_note = 0;
+
+        SCRATCH_SAVE();
 
         for (int line = line0; start < end; ++line) {
                 char const *line_start = start;
@@ -15476,14 +15695,20 @@ WriteExpressionSourceContext(Ty *ty, byte_vector *out, Expr const *e)
                         line_end = end;
                 }
 
+                bool in_range = (line >= e->start.line)
+                             && (line <= e->end.line);
+
+                char const *arrow = in_range ? ">" : " ";
+
                 if (line == e->start.line && line == e->end.line) {
                         int before = e->start.s - line_start;
                         int length = e->end.s - e->start.s;
                         int after = line_end - e->end.s;
-                        dump(
-                                out,
-                                "%s%4d%s | %.*s%s%.*s%s%.*s%s\n",
+                        sxdf(
+                                &tmp,
+                                "%s %s%4d%s | %.*s%s%.*s%s%.*s%s",
                                 TERM(91),
+                                arrow,
                                 line + 1,
                                 TERM(0),
                                 before,
@@ -15497,24 +15722,58 @@ WriteExpressionSourceContext(Ty *ty, byte_vector *out, Expr const *e)
                                 TERM(0)
                         );
                 } else {
-                        dump(
-                                out,
-                                "%s%4d%s | %s%.*s%s\n",
-                                (line >= e->start.line && line <= e->end.line) ? TERM(91) : "",
+                        sxdf(
+                                &tmp,
+                                "%s %s%4d%s | %s%.*s%s",
+                                in_range ? TERM(91) : "",
+                                arrow,
                                 line + 1,
                                 TERM(0),
-                                (line >= e->start.line && line <= e->end.line) ? TERM(91) : "",
+                                in_range ? TERM(91) : "",
                                 (int)(line_end - line_start),
                                 line_start,
                                 TERM(0)
                         );
                 }
 
+                vN(tmp) = term_fit_cols(vv(tmp), vN(tmp), cols);
+
+                if (notes != NULL) {
+                        char const *note = (i_note < vN(*notes))
+                                         ? v__(*notes, i_note++)
+                                         : "";
+                        int pad = cols - term_width(vv(tmp), vN(tmp)) - 1;
+                        while (pad --> 0) {
+                                svP(tmp, ' ');
+                        }
+                        sxdf(&tmp, " %s│%s %s", TERM(38:2:96:96:96), TERM(0), note);
+                }
+
+                dump(out, "%s\n", vv(tmp));
+                v0(tmp);
+
                 start = line_end;
                 if (start[0] == '\n') {
                         ++start;
                 }
         }
+
+        if (notes != NULL) {
+                while (i_note < vN(*notes)) {
+                        char const *note = v__(*notes, i_note++);
+                        dump(
+                                out,
+                                "%*s%s│%s %s\n",
+                                cols,
+                                "",
+                                TERM(38:2:96:96:96),
+                                TERM(0),
+                                note
+                        );
+                }
+        }
+
+        SCRATCH_RESTORE();
 }
 
 char const *
@@ -16690,7 +16949,7 @@ CompilerSuggestCompletions(
                         "OBJECT IS AN IDENTIFIER: %s::%s (namespace=%s)",
                         QueryExpr->module ? QueryExpr->module : "<>",
                         QueryExpr->identifier,
-                        QueryExpr->namespace ? edbg(QueryExpr->namespace) : "<>"
+                        QueryExpr->namespace ? EDBG(QueryExpr->namespace) : "<>"
                 );
                 scope = (QueryExpr->module != NULL) && (*QueryExpr->module != '\0')
                                                        ? search_import_scope(ty, QueryExpr->module)

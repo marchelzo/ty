@@ -274,6 +274,10 @@ doprint(Ty *ty, int argc, Value *kwargs, FILE *f)
 
         imax written = 0;
 
+        u32 show_flags = !isatty(fileno_unlocked(f))
+                       ? TY_SHOW_NOCOLOR
+                       : 0;
+
         for (int i = 0; i < argc; ++i) {
                 Value *v = &ARG(i);
 
@@ -315,7 +319,7 @@ doprint(Ty *ty, int argc, Value *kwargs, FILE *f)
 
                 default:
                         lTk();
-                        s = value_show_color(ty, &ARG(i));
+                        s = VSC(&ARG(i), show_flags);
                         lGv(true);
                         n = strlen(s);
                         need_free = true;
@@ -777,7 +781,7 @@ BUILTIN_FUNCTION(isnan)
         ASSERT_ARGC("nan?()", 1);
 
         if (ARG(0).type != VALUE_REAL) {
-                zP("nan?() expects a float but got: %s", value_show(ty, &ARG(0)));
+                zP("nan?() expects a float but got: %s", SHOW(&ARG(0)));
         }
 
         return BOOLEAN(isnan(ARG(0).real));
@@ -881,8 +885,8 @@ BUILTIN_FUNCTION(show)
 
         bool use_color = (color == NULL) ? isatty(1) : value_truthy(ty, color);
 
-        return use_color ? value_vshow_color(ty, &arg)
-                         : value_vshow(ty, &arg);
+        return use_color ? value_vshow_color(ty, &arg, TY_SHOW_REPR)
+                         : value_vshow(ty, &arg, TY_SHOW_REPR);
 }
 
 BUILTIN_FUNCTION(str)
@@ -895,7 +899,9 @@ BUILTIN_FUNCTION(str)
 
         Value arg = ARG(0);
 
-        return (arg.type == VALUE_STRING) ? arg : value_vshow(ty, &arg);
+        return (arg.type == VALUE_STRING)
+             ? arg
+             : value_vshow(ty, &arg, 0);
 }
 
 inline static bool
@@ -7317,99 +7323,42 @@ BUILTIN_FUNCTION(subclass)
 {
         ASSERT_ARGC("subclass?()", 2);
 
-        Value sub = ARG(0);
-        Value super = ARG(1);
-
-        if (sub.type != VALUE_CLASS || super.type != VALUE_CLASS) {
-                zP("the arguments to subclass?() must be classes");
-        }
+        Value sub   = ARGx(0, VALUE_CLASS);
+        Value super = ARGx(1, VALUE_CLASS);
 
         return BOOLEAN(class_is_subclass(ty, sub.class, super.class));
-}
-
-BUILTIN_FUNCTION(members_list)
-{
-        ASSERT_ARGC("members()", 1);
-
-        Value o = ARG(0);
-
-        Array *a = vA();
-        Value items = ARRAY(a);
-
-        GC_STOP();
-
-        switch (o.type) {
-        case VALUE_OBJECT:
-                for (int i = 0; i < vN(o.object->ids); ++i) {
-                        char const *key = intern_entry(&xD.members, v__(o.object->ids, i))->name;
-                        vAp(a, PAIR(vSsz(key), v__(o.object->values, i)));
-                }
-                break;
-
-        case VALUE_TUPLE:
-                for (int i = 0; i < o.count; ++i) {
-                        Value entry = vT(2);
-                        Value *pair = entry.items;
-                        vAp(a, entry);
-                        if (o.ids != NULL && o.ids[i] != -1) {
-                                char const *name = intern_entry(&xD.members, o.ids[i])->name;
-                                pair[0] = vSsz(name);
-                                pair[1] = o.items[i];
-                        } else {
-                                pair[0] = INTEGER(i);
-                                pair[1] = o.items[i];
-                        }
-                }
-                break;
-
-        default:
-                items = NIL;
-                break;
-        }
-
-        GC_RESUME();
-
-        return items;
 }
 
 BUILTIN_FUNCTION(members)
 {
         ASSERT_ARGC("members()", 1);
 
-        Value *list = NAMED("list");
-        if (list != NULL && value_truthy(ty, list)) {
-                return builtin_members_list(ty, argc, NULL);
-        }
+        Value val = ARG(0);
 
-        Value o = ARG(0);
+        Dict *_members = dict_new(ty);
+        Value members = DICT(_members);
 
-        Dict *members = dict_new(ty);
-        Value vMembers = DICT(members);
+        gP(&members);
 
-        gP(&vMembers);
-
-        switch (o.type) {
+        switch (val.type) {
         case VALUE_OBJECT:
-                for (int i = 0; i < vN(o.object->ids); ++i) {
-                        char const *key = intern_entry(&xD.members, v__(o.object->ids, i))->name;
-                        dict_put_member(ty, members, key, v__(o.object->values, i));
+                for (int i = 0; i < vN(val.object->ids); ++i) {
+                        char const *key = M_NAME(v__(val.object->ids, i));
+                        dict_put_member(ty, _members, key, v__(val.object->values, i));
                 }
-
                 break;
+
         case VALUE_TUPLE:
-                for (int i = 0; i < o.count; ++i) {
-                        if (o.ids != NULL && o.ids[i] != -1) {
-                                char const *name = intern_entry(&xD.members, o.ids[i])->name;
-                                Value key = vSs(name, strlen(name));
-                                NOGC(ss(key));
-                                dict_put_value(ty, members, key, o.items[i]);
-                                OKGC(ss(key));
+                for (int i = 0; i < val.count; ++i) {
+                        if (val.ids != NULL && val.ids[i] != -1) {
+                                char const *key = M_NAME(val.ids[i]);
+                                dict_put_member(ty, _members, key, val.items[i]);
                         } else {
-                                dict_put_value(ty, members, INTEGER(i), o.items[i]);
+                                dict_put_value(ty, _members, INTEGER(i), val.items[i]);
                         }
                 }
-
                 break;
+
         default:
                 gX();
                 return NIL;
@@ -7417,7 +7366,7 @@ BUILTIN_FUNCTION(members)
 
         gX();
 
-        return DICT(members);
+        return members;
 }
 
 BUILTIN_FUNCTION(member)
@@ -7654,6 +7603,28 @@ BUILTIN_FUNCTION(ty_bt)
         GC_RESUME();
 
         return ARRAY(avFrames);
+}
+
+BUILTIN_FUNCTION(ty_trace)
+{
+        ASSERT_ARGC("ty.trace()", 0);
+
+        if (vN(ty->throw_stack) == 0) {
+                return NIL;
+        }
+
+        ThrowCtx *ctx = v_L(ty->throw_stack);
+        ThrowCtx *clone = mAo0(sizeof (ThrowCtx), GC_ANY);
+
+        for (int i = 0; i < vN(*ctx); ++i) {
+                ValueVector locals = {0};
+                ValueVector *_locals = v_(ctx->locals, i);
+                xvPv(locals, *_locals);
+                xvP(clone->locals, locals);
+                xvP(*clone, v__(*ctx, i));
+        }
+
+        return TRACE(clone);
 }
 
 BUILTIN_FUNCTION(ty_unlock)
@@ -8518,7 +8489,7 @@ BUILTIN_FUNCTION(ty_get_source)
         Expr *src = source_lookup(ty, expr.src);
 
         if (src == NULL && expr.type == VALUE_PTR) {
-                src = (Expr const *)expr.ptr;
+                src = (Expr *)expr.ptr;
         }
 
         if (src == NULL || src->start.s == NULL || src->end.s == NULL) {
@@ -8535,6 +8506,7 @@ BUILTIN_FUNCTION(ty_get_source)
                 "start", make_location(ty, &src->start),
                 "end",   make_location(ty, &src->end),
                 "file",  file,
+                "mod",   (src->mod != NULL) ? xSz(src->mod->name) : NIL,
                 "prog",  xSz(src->start.s - src->start.byte),
                 "src",   xSs(src->start.s, src->end.s - src->start.s)
         );
@@ -8640,13 +8612,10 @@ BUILTIN_FUNCTION(token_next)
 BUILTIN_FUNCTION(parse_source)
 {
         ASSERT_ARGC("ty.parse.source()", 0, 1);
-
         Value vSrc = ARGx(0, VALUE_STRING, VALUE_BLOB);
         char *src = TY_0_C_STR(vSrc);
-
         Stmt **p = parse(ty, src, NULL);
-
-        return tyexpr(ty, p[0]->expression);
+        return tyexpr(ty, p[0]->expression, 0);
 }
 
 

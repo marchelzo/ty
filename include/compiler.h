@@ -2,7 +2,7 @@
 #define COMPILE_H_INCLUDED
 
 #include "ty.h"
-#include "value.h"
+#include "ast.h"
 
 #define HAVE_COMPILER_FLAG(flag) (TyCompilerState(ty)->flags & TYC_##flag)
 
@@ -44,6 +44,7 @@ enum {
         TYC_IMPORT_ALL      = (1 << 8),
         TYC_FORGIVING       = (1 << 9),
         TYC_NO_TYPES        = (1 << 10),
+        TYC_MUT_CONST       = (1 << 11),
 
         TYC_DEFAULT_FLAGS = (
                 TYC_RESOLVE
@@ -271,7 +272,7 @@ TyCompileSource(Ty *ty, char const *source, u32 flags);
 int
 compiler_symbol_count(Ty *ty);
 
-struct symbol *
+Symbol *
 compiler_lookup(Ty *ty, char const *module, char const *name);
 
 int
@@ -332,19 +333,22 @@ void
 define_operator(Ty *ty, Scope *scope, Stmt *s);
 
 bool
+IsMacroInvocation(Ty *ty, Expr *e);
+
+bool
 is_macro(Ty *ty, char const *module, char const *id);
 
 bool
 is_fun_macro(Ty *ty, char const *module, char const *id);
 
 Value
-tyexpr(Ty *ty, Expr const *);
+tyexpr(Ty *ty, Expr const *e, u32 flags);
 
 bool
 tyeval(Ty *ty, Expr *e, Value *ret);
 
 Value
-tystmt(Ty *ty, Stmt *s);
+tystmt(Ty *ty, Stmt *s, u32 flags);
 
 Expr *
 cexpr(Ty *ty, Value *);
@@ -408,7 +412,13 @@ void
 WriteExpressionSourceHeading(Ty *ty, byte_vector *out, int cols, Expr const *e);
 
 void
-WriteExpressionSourceContext(Ty *ty, byte_vector *out, Expr const *e);
+WriteExpressionSourceContext(
+        Ty *ty,
+        byte_vector *out,
+        int cols,
+        Expr const *e,
+        StringVector const *notes
+);
 
 int
 CompilationDepth(Ty *ty);
@@ -515,6 +525,17 @@ TyTraceEntryFor(Ty *ty, Expr const *e);
 
 char const *
 QualifiedName(Expr const *e);
+
+char *
+edbg(Ty *ty, Expr const *e);
+
+void
+invoke_fun_macro(Ty *ty, Scope *scope, Expr *e);
+
+bool
+expedite_fun(Ty *ty, Expr *e, void *ctx);
+
+#define EDBG(e) ((edbg)(ty, (e)))
 
 #endif
 

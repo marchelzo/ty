@@ -282,6 +282,14 @@ class Object {
     __fmt__(fmt) {
         str(self)
     }
+
+    __repr__() {
+        if pretty {
+            pretty(self)
+        } else {
+            show(self)
+        }
+    }
 }
 
 class Class[T] {
@@ -831,8 +839,9 @@ class Dict[K, V] : Iterable[K, V] {
         return cast(self.keys().zip(self.values()).__iter__())
     }
 
-    keys() -> Array[K];
+    keys()   -> Array[K];
     values() -> Array[V];
+    items()  -> Array[(K, V)];
 
     pop(i: ?Int) -> (K, V);
 
@@ -867,6 +876,7 @@ class String : Iterable[String], IntoPtr[Int] {
     size() -> Int;
     width() -> Int;
 
+    slice(i: Int, j: ?Int) -> String;
     bslice(i: Int, j: ?Int) -> String;
 
     int { ::int(self) }
@@ -906,40 +916,39 @@ class String : Iterable[String], IntoPtr[Int] {
         return chars().reverse!().sum() ?? ''
     }
 
-    num?() {
+    num? {
         return match?(/^\d+(?:\.\d+)?$/)
     }
 
-    ends?(s) {
-        s == '' || s == self.slice(-#s)
+    ends?(end: String) -> Bool {
+        (end == '') || (bslice(-end.size()) == end)
     }
 
-    starts?(s) {
-        s == self.slice(0, #s)
+    starts?(start: String) -> Bool {
+        (bslice(0, start.size()) == start)
     }
 
     splice(i, j) {
-        self.slice(i, j - i)
+        slice(i, j - i)
     }
 
     bsplice(i: Int, j: Int) -> String {
-        self.bslice(i, j - i)
+        bslice(i, j - i)
     }
 
     [;;](i=0, j=#self, k: Int = 1) -> String {
         if k != 1 {
             throw ValueError('String slicing with step is not supported')
         }
-
-        self.slice(i, j)
+        slice(i, j)
     }
 
     lower?() {
-        return self == lower()
+        self == lower()
     }
 
     upper?() {
-        return self == upper()
+        self == upper()
     }
 
     trim() {
@@ -969,7 +978,7 @@ class String : Iterable[String], IntoPtr[Int] {
     unhex() {
         let b = Blob()
 
-        for octet in self.matches(/../) {
+        for octet in scan(/../) {
             if let $x = ::int(octet, 16) {
                 b.push(x)
             } else {
@@ -998,14 +1007,14 @@ class String : Iterable[String], IntoPtr[Int] {
             for j in ..#b {
                 let cost = (a[i] == b[j]) ? 0 : 1
 
-                D[i + 1][j + 1] = min(
+                D[i + 1][j + 1] = ::min(
                     D[i][j + 1] + 1,
                     D[i + 1][j] + 1,
                     D[i][j] + cost
                 )
 
                 if (i > 0 && j > 0 && a[i] == b[j - 1] && b[j] == a[i - 1]) {
-                    D[i + 1][j + 1] = min(
+                    D[i + 1][j + 1] = ::min(
                         D[i + 1][j + 1],
                         D[i - 1][j - 1] + 1
                     )
@@ -1548,17 +1557,23 @@ class BaseException {
 class CompileError < BaseException {}
 
 class RuntimeError < BaseException {
-    __what: String
+    __what:  String
+    __ctx:   _
+    __cause: _
 
     init(what: String) {
         __what = what
     }
 
-    what { __what }
+    what  { __what  }
+    cause { __cause }
+    bt    { __ctx   }
+
+    trace() { (__ctx = ty.trace()) }
 }
 
 class ValueError < RuntimeError {}
-class AssertError < RuntimeError {}
+class AssertionError < RuntimeError {}
 
 tag MatchError;
 tag IndexError;
@@ -3105,7 +3120,7 @@ macro dbg(*args) {
     let results-id = ty.gensym()
     let results = ty.Id(name: results-id)
 
-    let pp? = ty.IfDef(name: 'Printer', module: 'help')
+    let pp? = ty.IfDef(name: 'Printer', module: 'pretty')
     let pp  = $$[ $$pp?.map(\__().print(_)).or-else($${::show}) $$]
 
     ty.Block([
@@ -4034,6 +4049,194 @@ fn memoized[F](fun: F, max: Int = nil) -> F {
 
     __eval__(ty.Func({name: fun.__name__, params, body}))
 }
+
+macro assert(condition, message) {
+    let condition-str = ty.String(parse.show(condition))
+
+    let (op, lhs, rhs) = match condition {
+        ty.Eq(a, b)      => (ty.Eq,      a, b),
+        ty.NotEq(a, b)   => (ty.NotEq,   a, b),
+        ty.LT(a, b)      => (ty.LT,      a, b),
+        ty.LEQ(a, b)     => (ty.LEQ,     a, b),
+        ty.GT(a, b)      => (ty.GT,      a, b),
+        ty.GEQ(a, b)     => (ty.GEQ,     a, b),
+        ty.In(a, b)      => (ty.In,      a, b),
+        ty.NotIn(a, b)   => (ty.NotIn,   a, b),
+        ty.Matches(a, b) => (ty.Matches, a, b),
+        _                => (nil, nil, nil)
+    }
+
+    let msg = (message != nil) ? $$[" ({$$message})"$$] : ty.String('')
+
+    if op != nil {
+        let lhs-id = ty.gensym()
+        let rhs-id = ty.gensym()
+
+        let lhs-var = ty.Id(name: lhs-id)
+        let rhs-var = ty.Id(name: rhs-id)
+        let cond    = op(lhs-var, rhs-var)
+
+        let pp? = ty.IfDef(name: 'Printer', module: 'pretty')
+        let show = $$[ $$pp?.map(\__().print(_)).or-else($${::show}) $$]
+
+        let chalk? = ty.IfDef(name: 'chalk', module: 'chalk')
+
+        ty.Block([
+            ty.Let(lhs-var, lhs),
+            ty.Let(rhs-var, rhs),
+            $$[ if !$$cond {
+                    let what = match $$chalk? {
+                            Some(chalk) => do {
+                                let __loc = chalk"[bright yellow]{__file__}[/]"
+                                                 "{__class__ ? chalk":[magenta]{__class__.__name__}[/]" : ''}"
+                                                 "[green]{__func__ ? "[{__func__}]" : ''}[/]:"
+                                                 "[bright blue]{__line__}[/]"
+
+                                chalk"[bright red b]Assertion failed[/] at {__loc}: [bright red]{$$msg}[/]\n"
+                                     "  [uc-#f00][u]{$$condition-str}[/][/]\n"
+                                     "    [magenta]lhs[/]: {$$show($$lhs-var)}\n"
+                                     "    [magenta]rhs[/]: {$$show($$rhs-var)}"
+                            },
+                            None => do {
+                                let __loc = "{__file__}:"
+                                            "{__class__ ? "{__class__}." : ''}"
+                                            "{__func__ ?? '(top)'}:"
+                                            "{__line__}";
+                                "Assertion failed at {__loc}:{$$msg}\n"
+                                "  {$$condition-str}\n"
+                                "    lhs: {$$show($$lhs-var)}\n"
+                                "    rhs: {$$show($$rhs-var)}"
+                            }
+                        }
+                    throw AssertionError("{what}")
+                }
+            $$]
+        ])
+    } else {
+        $$[
+            if !$$condition {
+                let __loc = "{__file__}:"
+                          "{__class__ ? "{__class__}." : ''}"
+                          "{__func__ ?? '(top)'}:"
+                          "{__line__}";
+                throw AssertionError(
+                    "Assertion failed at {__loc}: {$$condition-str}{$$msg}"
+                )
+            }
+        $$]
+    }
+}
+
+class PatchGuard {
+    __restore: _
+    __mock:    _
+
+    init(mock, restore) {
+        __mock    = mock
+        __restore = restore
+    }
+
+    __enter__() {
+        __mock
+    }
+
+    __drop__() {
+        (__restore)()
+    }
+}
+
+macro patch(target, val) {
+    let tmp = ty.Id(name: ty.gensym());
+    let obj = ty.Id(name: ty.gensym());
+    let val = (val ?? $$[ Mock() $$])
+
+    let guard = match target {
+        ty.MemberAccess(object, member) => do {
+            let tgt = ty.MemberAccess(obj, member)
+            $$[
+                do {
+                    let $$obj = $$object
+                    let $$tmp = $$tgt
+                    $$tgt = $$val
+                    PatchGuard($$tgt, -> ($$tgt = $$tmp))
+                }
+            $$]
+        },
+
+        ty.Subscript(xs, i) => do {
+            let tgt = ty.Subscript(obj, i)
+            $$[
+                do {
+                    let $$obj = $$xs
+                    let $$tmp = $$tgt
+                    $$tgt = $$val
+                    PatchGuard($$tgt, -> ($$tgt = $$tmp))
+                }
+            $$]
+        },
+
+        ty.Id(_) => ty.Unsafe($$[
+            do {
+                let $$tmp = $$target
+                $$target = $$val
+                PatchGuard($$target, -> ($$target = $$tmp))
+            }
+        $$]),
+
+        _ => throw ValueError("can't patch: {parse.show(target)}")
+    }
+
+    ty.Unsafe(guard)
+}
+
+class Mock {
+    __attrs:   Dict[String, _] = %{*: Mock()}
+    __calls:   Array[_] = []
+
+    return-value: _
+
+    __missing__(name: String) {
+        __attrs[name]
+    }
+
+    __call__(*args: _, %kwargs: _) {
+        __calls.push((args, tuple(**kwargs)))
+        let v = match return-value {
+            (vs: Array) and (#vs > 0)
+                => vs.pop(0),
+            $v  => v,
+            _   => Mock(),
+        }
+        (v :: BaseException) ? (throw v) : v
+    }
+
+    called {
+        #__calls > 0
+    }
+
+    called-once {
+        #__calls == 1
+    }
+
+    called-once-with(*args: _, %kwargs: _) {
+        (#__calls == 1) && (__calls[0] == (args, tuple(**kwargs)))
+    }
+
+    called-with(*args: _, %kwargs: _) {
+        (args, tuple(**kwargs)) in __calls
+    }
+}
+
+#|if ty.TEST
+fn test[F](fun: F) -> F {
+    ty.tests.push(fun)
+    fun
+}
+#|else
+macro test(fun) { ty.Func({name: (#fun).name, params: [], rt: ty.Nil, body: ty.Nil}) }
+#|]
+
+
 
 operator **   10 right
 operator :>   5  left

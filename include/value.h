@@ -16,6 +16,7 @@ typedef struct value Value;
 #include "tags.h"
 #include "tthread.h"
 #include "scope.h"
+#include "compiler.h"
 #include "xd.h"
 
 #define V_ALIGN (_Alignof (Value))
@@ -185,6 +186,7 @@ enum {
         X(Throw)                \
         X(DotDot)               \
         X(DotDotDot)            \
+        X(Unsafe)               \
         X(Super)                \
         X(TypeOf)               \
         X(Cast)                 \
@@ -247,6 +249,14 @@ enum {
         TY_SPAWN_MERGE_ERR  = -15
 };
 
+enum {
+        TY_SHOW_REPR    = (1 << 0),
+        TY_SHOW_BASIC   = (1 << 1),
+        TY_SHOW_ABBREV  = (1 << 2),
+        TY_SHOW_NOCOLOR = (1 << 3)
+
+};
+
 static inline char const *
 TypeName(Ty const *ty, int t0)
 {
@@ -299,10 +309,10 @@ ValueTypeName(Ty *ty, Value const *v)
 }
 
 char *
-value_show_color(Ty *ty, Value const *v);
+value_show_color(Ty *ty, Value const *v, u32 flags);
 
 Value
-value_vshow_color(Ty *ty, Value const *v);
+value_vshow_color(Ty *ty, Value const *v, u32 flags);
 
 #define DEFINE_METHOD_TABLE(...)                                     \
         static struct {                                              \
@@ -773,10 +783,10 @@ Value
 value_apply_callable(Ty *ty, Value *f, Value *v);
 
 char *
-value_show(Ty *ty, Value const *v);
+value_show(Ty *ty, Value const *v, u32 flags);
 
 Value
-value_vshow(Ty *ty, Value const *v);
+value_vshow(Ty *ty, Value const *v, u32 flags);
 
 static inline void *
 value_string_alloc(Ty *ty, u32 n)
@@ -1272,6 +1282,12 @@ expr_of(Value const *f)
         return (Expr *)*(uptr *)info_of(f, FUN_EXPR);
 }
 
+static inline char const *
+fqn_of(Value const *f)
+{
+        return QualifiedName(expr_of(f));
+}
+
 static inline bool
 is_hidden_fun(Value const *f)
 {
@@ -1532,8 +1548,6 @@ TagAndReturn:
 static inline Value
 FunDef(Ty *ty, Value const *f)
 {
-        extern Value CToTyExpr(Ty *, Expr *);
-
         Value def = CToTyExpr(ty, expr_of(f));
         return unwrap(ty, &def);
 }

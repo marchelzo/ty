@@ -1,5 +1,10 @@
 #include "ast.h"
 #include "scope.h"
+#include "compiler.h"
+
+#include "ty.h"
+
+char *value_show_color(Ty *ty, Value const *v);
 
 #define V(e) ((e) = visit_expression(ty, e, scope, hooks))
 #define VS(s) ((s) = visit_statement(ty, s, scope, hooks))
@@ -442,17 +447,17 @@ visit_expression(Ty *ty, Expr *e, Scope *scope, VisitorSet const *hooks)
                 break;
         case EXPRESSION_FUNCTION_CALL:
                 V(e->function);
-                for (size_t i = 0;  i < vN(e->args); ++i) {
+                for (size_t i = 0; i < vN(e->args); ++i) {
                         V(v__(e->args, i));
                 }
-                for (size_t i = 0;  i < e->args.count; ++i) {
-                        V(e->fconds.items[i]);
+                for (size_t i = 0;  i < vN(e->fconds); ++i) {
+                        V(v__(e->fconds, i));
                 }
-                for (size_t i = 0; i < e->kwargs.count; ++i) {
-                        V(e->kwargs.items[i]);
+                for (size_t i = 0; i < vN(e->kwargs); ++i) {
+                        V(v__(e->kwargs, i));
                 }
-                for (size_t i = 0; i < e->fkwconds.count; ++i) {
-                        V(e->fkwconds.items[i]);
+                for (size_t i = 0; i < vN(e->fkwconds); ++i) {
+                        V(v__(e->fkwconds, i));
                 }
                 break;
         case EXPRESSION_SUBSCRIPT:

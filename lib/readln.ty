@@ -473,7 +473,10 @@ class InteractiveLineReader {
         fn hMatch?(i) {
             if #__history < i { return false }
             let text = __history[-i].0.str() ?? ''
-            text.starts?(hPrefix) && text.ends?(hSuffix)
+            return (
+                (hPrefix == nil || text.starts?(hPrefix))
+             && (hSuffix == nil || text.ends?(hSuffix))
+            )
         }
 
         draw(0, 0)
