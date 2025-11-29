@@ -606,7 +606,7 @@ string_words(Ty *ty, Value *string, int argc, Value *kwargs)
                         )
                 ) {
                         i += n;
-                        n = utf8proc_iterate(s + i, len - i, &cp);
+                        n = max(utf8proc_iterate(s + i, len - i, &cp), 1);
                         c = utf8proc_category(cp);
                 }
 
@@ -618,7 +618,7 @@ string_words(Ty *ty, Value *string, int argc, Value *kwargs)
                 do {
                         sN(str) += n;
                         i += n;
-                        n = utf8proc_iterate(s + i, len - i, &cp);
+                        n = max(utf8proc_iterate(s + i, len - i, &cp), 1);
                         c = utf8proc_category(cp);
                 } while (
                         (i < len)
