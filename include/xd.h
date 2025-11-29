@@ -223,8 +223,8 @@ dump(byte_vector *b, char const *fmt, ...)
         va_list ap;
 
         for (;;) {
-                int avail = b->capacity - b->count;
-                int need;
+                isize avail = b->capacity - b->count;
+                isize need;
 
                 va_start(ap, fmt);
                 need = vsnprintf(b->items + b->count, avail, fmt, ap);
@@ -248,8 +248,8 @@ avdump(Ty *ty, byte_vector *str, char const *fmt, va_list ap)
         va_list ap_;
 
         for (;;) {
-                int avail = vC(*str) - vN(*str);
-                int need;
+                isize avail = vC(*str) - vN(*str);
+                isize need;
 
                 va_copy(ap_, ap);
                 need = vsnprintf(vZ(*str), avail, fmt, ap_);
@@ -286,8 +286,8 @@ scvdump(Ty *ty, byte_vector *str, char const *fmt, va_list ap)
         va_list ap_;
 
         for (;;) {
-                int avail = vC(*str) - vN(*str);
-                int need;
+                isize avail = vC(*str) - vN(*str);
+                isize need;
 
                 va_copy(ap_, ap);
                 need = vsnprintf(vZ(*str), avail, fmt, ap_);
@@ -308,7 +308,7 @@ scvdump(Ty *ty, byte_vector *str, char const *fmt, va_list ap)
 static int
 (sxdf)(Ty *ty, byte_vector *str, char const *fmt, ...)
 {
-        int bytes;
+        isize bytes;
         va_list ap;
 
         va_start(ap, fmt);
