@@ -2,8 +2,8 @@ import os (terminal-size)
 import ffi as c (C!)
 import chalk (chalk)
 
-class TooWideError {}
-class TooMuchError {}
+tag TooMuchError;
+tag TooWideError;
 tag Stop;
 
 let defaultColors = {
@@ -37,32 +37,35 @@ pub fn escapeString(s) {
 fn trunc(str, n) { str[;n].comb(/\x1b[[^m]+$/) }
 
 class Printer {
-    __width:    Int
-    __indent:   Int
-    __out:      Blob
-    __col:      Int
-    __depth:    Int
-    __colors:   _
-    __color:    Bool
-    __visiting: Array[Any]
-    __oneline:  Bool
+    __width:     Int
+    __indent:    Int
+    __out:       Blob
+    __col:       Int
+    __depth:     Int
+    __max-depth: Int
+    __colors:    _
+    __color:     Bool
+    __visiting:  Array[Any]
+    __oneline:   Bool
 
     init(
         width:    Int  = 96,
         indent:   Int  = 2,
         colors:   Any  = defaultColors,
         color:    Bool = true,
-        oneline:  Bool = false
+        oneline:  Bool = false,
+        depth:    Int  = Int.MAX
     ) {
-        __width    = width
-        __indent   = indent
-        __out      = Blob()
-        __col      = 0
-        __depth    = 0
-        __colors   = colors
-        __color    = color
-        __visiting = []
-        __oneline  = oneline
+        __width     = width
+        __indent    = indent
+        __out       = Blob()
+        __col       = 0
+        __depth     = 0
+        __max-depth = depth
+        __colors    = colors
+        __color     = color
+        __visiting  = []
+        __oneline   = oneline
     }
 
     save() {
@@ -93,7 +96,7 @@ class Printer {
             _ and force       => put(s),
             n and (n >= want) => put(s),
             n and __oneline   => do { put(trunc(s, n)); __out.push(off) },
-            _                 => throw TooWideError()
+            _                 => throw TooWideError
         }
     }
 
@@ -108,15 +111,15 @@ class Printer {
         let id-of-x = ident(x)
 
         if id-of-x in __visiting {
-            write('...', __colors.more, force)
+            write('…', __colors.more, force)
             return
         }
 
         __visiting.push(id-of-x)
 
-        let state = save()
-
-        let force! = force && !canPush
+        let state     = save()
+        let force!    = force && !canPush
+        let at-limit? = (__depth >= __max-depth)
 
         fn printList(xs, open, close, color) {
             try {
@@ -125,7 +128,12 @@ class Printer {
                     f(x, force=force!)
                 }
                 write(close, color, force!)
-            } catch (e: TooWideError) and canPush {
+            } catch TooWideError and at-limit? {
+                restore(state)
+                write(open, color, force)
+                write('…', __colors.more, force)
+                write(close, color, force)
+            } catch TooWideError and canPush {
                 restore(state)
                 write(open, color, force)
                 nl(1)
@@ -165,7 +173,12 @@ class Printer {
                     }
                 }
                 write(close, delim-style, force!)
-            } catch (e: TooWideError) and canPush {
+            } catch TooWideError and at-limit? {
+                restore(state)
+                write(open, delim-style, force)
+                write('…', __colors.more, force)
+                write(close, delim-style, force)
+            } catch TooWideError and canPush {
                 restore(state)
                 write(open, delim-style, force)
                 nl(1)

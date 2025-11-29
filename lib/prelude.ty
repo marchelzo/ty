@@ -285,7 +285,7 @@ class Object {
 
     __repr__() {
         if pretty {
-            pretty(self)
+            pretty(self, oneline=true)
         } else {
             show(self)
         }
@@ -1057,6 +1057,9 @@ class String : Iterable[String], IntoPtr[Int] {
 }
 
 class Int : IntoPtr[_] {
+    static MAX: Int =  9223372036854775807
+    static MIN: Int = -9223372036854775808
+
     init(x)  {
         int(x ?? 0)
     }
