@@ -9886,15 +9886,11 @@ emit_statement(Ty *ty, Stmt const *s, bool want_result)
                 EE(s->expression);
                 INSN(DEFER);
                 break;
-
-        case STATEMENT_NEXT:
-                EE(s->expression);
-                INSN(NEXT);
-                break;
         }
 
-        if (want_result)
+        if (want_result) {
                 INSN(NIL);
+        }
 
         RestoreContext(ty, ctx);
 
@@ -15972,7 +15968,7 @@ DumpProgram(
                 }
 #endif
 
-                printf(
+                dont_printf(
                         "%s%7td%s            %s%s%s      %ju\n",
                         TERM(94), pc, TERM(0),
                         TERM(93), GetInstructionName(*c), TERM(0),

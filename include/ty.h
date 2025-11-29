@@ -1038,7 +1038,6 @@ extern usize TotalBytesAllocated;
         X(POP_STACK_POS_POP),     \
         X(POP_STACK_POS_POP2),    \
         X(DROP_STACK_POS),        \
-        X(NEXT),                  \
         X(YIELD),                 \
         X(YIELD_NONE),            \
         X(YIELD_SOME),            \
@@ -1048,7 +1047,6 @@ extern usize TotalBytesAllocated;
         X(TRY),                   \
         X(CATCH),                 \
         X(END_TRY),               \
-        X(RESUME_TRY),            \
         X(FINALLY),               \
         X(PUSH_DEFER_GROUP),      \
         X(DEFER),                 \
