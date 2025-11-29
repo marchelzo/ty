@@ -7617,11 +7617,13 @@ BUILTIN_FUNCTION(ty_trace)
         ThrowCtx *clone = mAo0(sizeof (ThrowCtx), GC_ANY);
 
         for (int i = 0; i < vN(*ctx); ++i) {
-                ValueVector locals = {0};
-                ValueVector *_locals = v_(ctx->locals, i);
-                xvPv(locals, *_locals);
-                xvP(clone->locals, locals);
                 xvP(*clone, v__(*ctx, i));
+                if (DetailedExceptions) {
+                        ValueVector locals = {0};
+                        ValueVector *_locals = v_(ctx->locals, i);
+                        xvPv(locals, *_locals);
+                        xvP(clone->locals, locals);
+                }
         }
 
         return TRACE(clone);

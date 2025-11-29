@@ -676,8 +676,9 @@ value_show_colorx(Ty *ty, Value const *v, u32 flags)
         }
 
         char *buffer = smA(SHOW_BUF_SZ);
-        char *small  = smA(512);
         char *s      = NULL;
+
+        char *real;
 
         Value *fp;
         Value val = *v;
@@ -688,8 +689,8 @@ value_show_colorx(Ty *ty, Value const *v, u32 flags)
                 break;
 
         case VALUE_REAL:
-                dtoa(v->real, small, sizeof small);
-                snprintf(buffer, SHOW_BUF_SZ, "%s%s%s", TERM(93), small, TERM(0));
+                dtoa(v->real, (real = smA(512)), 512);
+                snprintf(buffer, SHOW_BUF_SZ, "%s%s%s", TERM(93), real, TERM(0));
                 break;
 
         case VALUE_STRING:

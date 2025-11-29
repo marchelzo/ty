@@ -356,6 +356,7 @@ class HttpParser {
         __install('on_version',      c.int, c.ptr, c.ptr, c.u64, self.onData)
         __install('on_header_field', c.int, c.ptr, c.ptr, c.u64, self.onData)
         __install('on_header_value', c.int, c.ptr, c.ptr, c.u64, self.onData)
+        __install('on_body',         c.int, c.ptr, c.ptr, c.u64, self.onData)
 
         __install('on_url_complete',          c.int, c.ptr, self.onURLComplete)
         __install('on_status_complete',       c.int, c.ptr, self.onStatusComplete)
@@ -391,7 +392,7 @@ class HttpParser {
             match __headers[field] {
                 nil => __headers[field] = headerValue,
 
-                vs: [String]
+                vs: Array[String]
                     => vs.push(headerValue),
 
                 v => __headers[field] = [v, headerValue]
