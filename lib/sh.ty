@@ -31,7 +31,7 @@ pub fn sh(
     let stdin = (input != nil) ? os.SPAWN_PIPE : os.SPAWN_NULL
 
     if not let $p = os.spawn(
-        [*shell, cmd],
+        [*shell, cmd if cmd],
         stdin=stdin,
         stdout=os.SPAWN_PIPE,
         stderr=stderr,
