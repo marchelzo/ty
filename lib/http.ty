@@ -303,10 +303,9 @@ class HttpServer {
 
                             if let $m = req.method and let (f, ps) = __resolve(m, url) {
                                 try {
-                                    rsp.status(f({*req, url, params, addr: c.addr}, rsp, **ps) ?? 200)
+                                    rsp.status(f({*req, url, params, addr=c.addr}, rsp, **ps) ?? 200)
                                 } catch e {
-                                    rsp.header('Content-Type', 'text/plain')
-                                    rsp.write("Exception: {e}")
+                                    rsp.plain("Exception: {e}\n\nBacktrace:\n{str(e.trace())}")
                                     rsp.status(500)
                                 }
                             } else {

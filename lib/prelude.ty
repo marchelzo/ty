@@ -2680,45 +2680,27 @@ fn uuid4() {
 
     let hex = b.hex()
 
-    return [
-        hex.slice(0, 8),
-        hex.slice(8, 4),
-        hex.slice(12, 4),
-        hex.slice(16, 4),
-        hex.slice(20, 12)
-    ].join('-')
+    "{hex[0;8]}-{hex[8;4]}-{hex[12;4]}-{hex[16;4]}-{hex[20;12]}"
 }
 
-fn uuid7(pseudo = true) {
-    let b = if pseudo {
-        Blob(*[rand(256) for _ in ..16])
-    } else {
-        let fd = os.open('/dev/urandom', os.O_RDONLY)
-        defer os.close(fd)
-        os.read(fd, 16)
-    }
+fn uuid7() {
+    let b = Blob(*[rand(256) for _ in ..16])
 
     b.set(6, 0x70 | (b[6] & 0x0F))
     b.set(8, 0x80 | (b[8] & 0x3F))
 
     let t = time.utime() / 1000
 
-    b[0] = t >> 40
-    b[1] = t >> 32
-    b[2] = t >> 24
-    b[3] = t >> 16
-    b[4] = t >>  8
-    b[5] = t >>  0
+    b[0] = (t >> 40)
+    b[1] = (t >> 32)
+    b[2] = (t >> 24)
+    b[3] = (t >> 16)
+    b[4] = (t >>  8)
+    b[5] = (t >>  0)
 
     let hex = b.hex()
 
-    return [
-        hex.slice(0, 8),
-        hex.slice(8, 4),
-        hex.slice(12, 4),
-        hex.slice(16, 4),
-        hex.slice(20, 12)
-    ].join('-')
+    "{hex[0;8]}-{hex[8;4]}-{hex[12;4]}-{hex[16;4]}-{hex[20;12]}"
 }
 
 class BaseLock {
@@ -3166,23 +3148,25 @@ macro time! {
     // )
     lex.next()
 
-    $$[{
-        let (s, x, e) = ($${time::now}(), $$(e), $${time::now}())
+    $$[
+        do {
+            let (s, x, e) = ($${time::now}(), $$(e), $${time::now}())
 
-        print(
-            __module__,
-            ':',
-            __line__,
-            ': ',
-            $$(ty.String(parse.show(e))),
-            ': ',
-            (e - s),
-            's',
-            sep: ''
-        )
+            print(
+                __module__,
+                ':',
+                __line__,
+                ': ',
+                $$(ty.String(parse.show(e))),
+                ': ',
+                (e - s),
+                's',
+                sep: ''
+            )
 
-        x
-    }$$]
+            x
+        }
+    $$]
 }
 
 macro timed(expr) {
