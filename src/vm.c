@@ -7023,19 +7023,18 @@ vm_init(Ty *ty, int ac, char **av)
 }
 
 static char *
-truncate_to_fit(char *wide, int cols)
+xtruncln(Ty *ty, byte_vector *line, int cols)
 {
-        int i = term_fit_cols(wide, -1, cols);
-        char *trunc;
+        isize n = term_fit_cols(vv(*line), vN(*line), cols - 1);
 
-        if (wide[i] == '\0') {
-                trunc = wide;
-        } else {
-                trunc = xfmt("%.*s%s%s%s", i, wide, TERM(1;90), "…", TERM(0));
-                free(wide);
+        if (n < vN(*line)) {
+                vN(*line) = n;
+                sxdf(line, "%s%s%s", TERM(1;90), "…", TERM(0));
         }
 
-        return trunc;
+        svP(*line, '\0');
+
+        return vv(*line);;
 }
 
 char *
@@ -7085,8 +7084,6 @@ FormatTrace(Ty *ty, ThrowCtx const *ctx, byte_vector *out)
                              && (func->scope != NULL)
                              && (vN(func->scope->owned) > 0)
                         ) {
-                                v0(locals);
-
                                 ValueVector localv = v__(ctx->locals, i);
                                 Scope *scope = func->scope;
 
@@ -7098,6 +7095,8 @@ FormatTrace(Ty *ty, ThrowCtx const *ctx, byte_vector *out)
                                         }
                                 }
 
+                                int vcols = cols/2 - (max_width + 5);
+
                                 for (int i = 0; i < vN(scope->owned) && i < vN(localv); ++i) {
                                         Value  val = v__(localv, i);
                                         char *show = NULL;
@@ -7108,10 +7107,7 @@ FormatTrace(Ty *ty, ThrowCtx const *ctx, byte_vector *out)
                                                         val = vm_catch(ty);
                                                         good = false;
                                                 } else {
-                                                        show = truncate_to_fit(
-                                                                SHOW(&val, REPR),
-                                                                max(1, cols/2 - max_width - 16)
-                                                        );
+                                                        show = SHOW(&val, REPR);
                                                         vm_finally(ty);
                                                 }
                                         }
@@ -7126,8 +7122,7 @@ FormatTrace(Ty *ty, ThrowCtx const *ctx, byte_vector *out)
                                                 );
                                                 for (char const *c = show; *c != '\0'; ++c) {
                                                         if (*c == '\n') {
-                                                                svP(line, '\0');
-                                                                svP(locals, vv(line));
+                                                                svP(locals, xtruncln(ty, &line, vcols));
                                                                 v00(line);
                                                                 sxdf(&line, "%*s", max_width + 3, "");
                                                         } else {
@@ -7149,12 +7144,13 @@ FormatTrace(Ty *ty, ThrowCtx const *ctx, byte_vector *out)
                                         if (show != NULL) {
                                                 free(show);
                                         }
-                                        svP(locals, vv(line));
+                                        svP(locals, xtruncln(ty, &line, vcols));
                                 }
                         }
 
                         if (vN(locals) > 0) {
                                 WriteExpressionSourceContext(ty, out, cols / 2, expr, &locals);
+                                v0(locals);
                         } else {
                                 WriteExpressionSourceContext(ty, out, cols, expr, NULL);
                         }
@@ -8819,6 +8815,7 @@ StepInstruction(char const *ip)
                 break;
         CASE(TRY_GET_MEMBER)
         CASE(GET_MEMBER)
+        CASE(TARGET_DYN_MEMBER)
                 break;
         CASE(SLICE)
         CASE(SUBSCRIPT)

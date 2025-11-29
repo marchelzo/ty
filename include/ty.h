@@ -1250,7 +1250,7 @@ enum {
 #define v__(v, i) ((v).items[(i)])
 #define vv(v)     ((v).items)
 #define vZ(v)     ((v).items + (v).count)
-#define vPx(v, x) ((v).items[(v).count++] = (x))
+#define vPx(v, x) (((v).items[(v).count] = (x)), (v).count += 1)
 #define vC(v)     ((v).capacity)
 
 #define vM(v, i, j, n) memmove((v).items + (i), (v).items + (j), (n) sizeof *(v).items)

@@ -1846,7 +1846,6 @@ static Symbol *
 getsymbol(Ty *ty, Scope const *scope, char const *name, u32 flags)
 {
         if (s_eq(name, "_")) {
-                *(volatile int *)0 = 0;
                 fail(
                         "the special identifier %s'_'%s can only be used as an lvalue",
                         TERM(38),
@@ -1880,7 +1879,6 @@ getsymbol(Ty *ty, Scope const *scope, char const *name, u32 flags)
         Symbol *s = ScopeLookupEx(scope, name, flags);
 
         if (s == NULL) {
-                //*(volatile int *)0 = 0;
                 fail_or(
                         "reference to undefined variable: %s%s%s%s",
                         TERM(1),
@@ -15742,7 +15740,7 @@ WriteExpressionSourceContext(
                         char const *note = (i_note < vN(*notes))
                                          ? v__(*notes, i_note++)
                                          : "";
-                        int pad = cols - term_width(vv(tmp), vN(tmp)) - 1;
+                        int pad = cols - term_width(vv(tmp), vN(tmp));
                         while (pad --> 0) {
                                 svP(tmp, ' ');
                         }
@@ -15763,7 +15761,7 @@ WriteExpressionSourceContext(
                         char const *note = v__(*notes, i_note++);
                         dump(
                                 out,
-                                "%*s%s│%s %s\n",
+                                "%*s %s│%s %s\n",
                                 cols,
                                 "",
                                 TERM(38:2:96:96:96),
@@ -15974,7 +15972,7 @@ DumpProgram(
                 }
 #endif
 
-                dont_printf(
+                printf(
                         "%s%7td%s            %s%s%s      %ju\n",
                         TERM(94), pc, TERM(0),
                         TERM(93), GetInstructionName(*c), TERM(0),
@@ -16121,7 +16119,6 @@ DumpProgram(
                         READVALUE(n);
                         READVALUE(n);
                         READVALUE(n);
-                        READVALUE(b);
                         break;
                 }
                 CASE(DROP)
@@ -16368,6 +16365,7 @@ DumpProgram(
                         break;
                 CASE(TRY_GET_MEMBER)
                 CASE(GET_MEMBER)
+                CASE(TARGET_DYN_MEMBER)
                         break;
                 CASE(SLICE)
                 CASE(SUBSCRIPT)
