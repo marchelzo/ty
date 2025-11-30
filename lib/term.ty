@@ -31,7 +31,7 @@ pub ns mod {
 
 pub use CursorAddress = (Int, Int)
 
-pub namespace event {
+pub ns event {
     pub tag EOF;
     pub tag Text;
     pub tag MouseDown;
@@ -76,7 +76,7 @@ pub ns error {
     pub tag EOF;
 }
 
-pub namespace keys {
+pub ns keys {
     pub ESCAPE = 'ESCAPE'
     pub ENTER = 'ENTER'
     pub TAB = 'TAB'
@@ -310,9 +310,9 @@ let function-keys = %{
     "57454u": keys.ISO_LEVEL5_SHIFT
 }
 
-function title(s) { s[0].upper() + s[1;].lower() }
+fn title(s) { s[0].upper() + s[1;].lower() }
 
-function nice-key-name(ev) {
+fn nice-key-name(ev) {
     let mods = ev.mods
 
     let out = match ev {
@@ -338,14 +338,14 @@ function nice-key-name(ev) {
     return out
 }
 
-namespace ctlseq {
-    namespace pattern {
+ns ctlseq {
+    ns pattern {
         pub m-ev-sgr   = /^\x1b\[<(\d+);(\d+);(\d+)([mM])/
         pub k-ev-based = /^\x1b\[([0-9:]*)(?:;([0-9:]*))?(?:;([0-9:]+))?([ABCDEFHPQSu~])/
         pub cpr        = /^\x1b\[(\d+);(\d+)R/
     }
 
-    namespace handler {
+    ns handler {
         pub fn m-ev-sgr($1, $2, $3, $4) {
             let st = int($1)
             let x  = int($2)
@@ -376,8 +376,10 @@ namespace ctlseq {
         pub fn k-ev-based($1: String, $2: String, $3: String, $4: String) {
             let (key, _key, base) = match keys.function-keys("{$1 || 1}{$4}") {
                 Some(sp) => (sp, nil, nil),
-                None     => match $1.split(':').map(int) {
-                    [?key, ?_key, ?base] => (key, _key, base),
+
+                None => do {
+                    let [?key, ?_key, ?base] = $1.split(':').map(int)
+                    (key, _key, base)
                 }
             }
 
@@ -715,19 +717,19 @@ class TermIO {
                     }
                 }
 
-                // No terminfo match, let's hope that means we have a mouse event,
+                // No terminfo match. Hopefully this means we have either a mouse event,
                 // or a keyboard event in the kitty progressive-enhancement format
                 for (pattern, handler: _) in ctlseqs {
-                    if let $captures = buf.str!(i).match!(pattern) {
-                        handler(*captures[1;])
-                        i += #captures[0]
+                    if let [matched, *captures]  = buf.str!(i).match!(pattern) {
+                        handler(*captures)
+                        i += matched.size()
                         continue continue
                     }
                 }
 
                 // If we get here that means we have 0x1b but don't know how
                 // how to parse what follows it. Not sure what to do here
-                // besides skip the ESC and hope for the best :^)
+                // besides skip the ESC byte and hope for the best :)
                 i += 1
             }
         }

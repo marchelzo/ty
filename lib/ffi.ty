@@ -92,9 +92,11 @@ pub fn ffi-type(t0: _) -> _ {
     match t0 {
         c::u8, c::u16, c::u32, c::u64,
         c::i8, c::i16, c::i32, c::i64,
-        c::int, c::uint, c::long, c::ulong => $$[ Int $$],
+        c::int, c::uint, c::long, c::ulong => $$[ $$::(Int) $$],
 
-        c::float, c::double => $$[ Float $$],
+        c::float, c::double => $$[ $$::(Float) $$],
+
+        c::ptr => $$[ $$::(Ptr)[_] $$],
 
         _ => nil
     }
@@ -618,7 +620,8 @@ fn strct() {
                     name: name,
                     params: [],
                     body: getter-body,
-                    rt: try { ffi-type(ty.eval(t, ty.scope())) } catch _ { nil },
+                    rt: try { ffi-type(ty.eval(t, ty.scope())) } catch _ { ty.Any },
+                    //rt: ty.Any,
                     decorators: []
                 )
             )

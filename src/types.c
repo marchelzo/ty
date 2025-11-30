@@ -1946,6 +1946,16 @@ IsRecordLike(Type const *t0)
 }
 
 inline static Type *
+GetTVarBound(Ty *ty, Type const *t0)
+{
+        if (!IsTVar(t0)) {
+                return NULL;
+        }
+
+        return LookEnv(ty, ty->tenv, t0->id);
+}
+
+inline static Type *
 ResolveVar(Type const *t0)
 {
         bool forgiving = false;
@@ -1987,7 +1997,8 @@ ComputeType(Ty *ty, Type const *t0)
 inline static Type *
 Resolve(Ty *ty, Type const *t0)
 {
-        Type const *t = t0;
+        Type const *t00 = t0;
+        Type *bound;
 
         for (;;) {
                 if (CanStep(t0)) {
@@ -1996,13 +2007,15 @@ Resolve(Ty *ty, Type const *t0)
                         t0 = ResolveAlias(ty, t0);
                 } else if (CanCompute(t0)) {
                         t0 = ComputeType(ty, t0);
+                } else if ((bound = GetTVarBound(ty, t0)) != NULL) {
+                        t0 = bound;
                 } else {
                         break;
                 }
         }
 
-        TLOG("Resolve(%d):", TypeType(t));
-        TLOG("    %s", ShowType(t));
+        TLOG("Resolve(%d):", TypeType(t00));
+        TLOG("    %s", ShowType(t00));
         TLOG("    %s\n", ShowType(t0));
 
         return (Type *)t0;
@@ -4670,20 +4683,6 @@ UnifyXD(Ty *ty, Type *t0, Type *t1, bool super, bool check, bool soft)
                 goto Success;
         }
 
-        if (IsTVar(t0)) {
-                Type *bound0 = LookEnv(ty, ty->tenv, t0->id);
-                if (bound0 != NULL) {
-                        t0 = Resolve(ty, bound0);
-                }
-        }
-
-        if (IsTVar(t1)) {
-                Type *bound1 = LookEnv(ty, ty->tenv, t1->id);
-                if (bound1 != NULL) {
-                        t1 = Resolve(ty, bound1);
-                }
-        }
-
         DPRINT(false, "After applying bounds:");
         DPRINT(false, "    %s", ShowType(t0));
         DPRINT(false, "    %s", ShowType(t1));
@@ -6692,7 +6691,7 @@ type_member_access_t_(Ty *ty, Type const *t0, char const *name, bool strict)
                 if (t1 == NULL && s_eq(name, "[]")) {
                         return TupleSubscriptType(ty, t0);
                 }
-                if (ENFORCE && strict && t1 == NULL) {
+                if (!t0->fixed || (ENFORCE && strict && (t1 == NULL))) {
                         goto TryUnify;
                 }
                 return t1;
@@ -6934,7 +6933,7 @@ type_method_call_t(Ty *ty, Expr const *e, Type *t0, char const *name)
 }
 
 Type *
-type_method_call_name(Ty *ty, Type *t0, char const *name)
+type_method_call_name(Ty *ty, Type *t0, char const *name, bool strict)
 {
         xDDD();
 
@@ -6944,7 +6943,8 @@ type_method_call_name(Ty *ty, Type *t0, char const *name)
                 ty,
                 &(Expr){
                         .type = EXPRESSION_METHOD_CALL,
-                        .method = &_method
+                        .method = &_method,
+                        .maybe = !strict
                 },
                 t0,
                 name
@@ -7854,6 +7854,18 @@ type_dict(Ty *ty, Expr const *e)
                         unify2(ty, &t1, (value == NULL) ? NIL_TYPE : value->_type);
                         break;
                 }
+        }
+
+        if (e->dflt != NULL) {
+                t2 = NewVar(ty);
+                UnifyX(
+                        ty,
+                        NewFunction(t0, t2),
+                        Inst1(ty, e->dflt->_type),
+                        false,
+                        false
+                );
+                unify2(ty, &t1, t2);
         }
 
         return NewDict(Relax(t0), Relax(t1));;
@@ -9568,7 +9580,7 @@ type_unary_hash_t(Ty *ty, Type const *t0)
                         break;
                 }
                 if (t1 == NULL) {
-                        type_method_call_name(ty, (Type *)t0, M_NAME(NAMES._len_));
+                        type_method_call_name(ty, (Type *)t0, M_NAME(NAMES._len_), true);
                 }
                 break;
 
@@ -9619,7 +9631,12 @@ type_enter(Ty *ty, Type const *t0)
 {
         xDDD();
 
-        Type *t1 = type_method_call_name(ty, (Type *)t0, M_NAME(NAMES._enter_));
+        Type *t1 = type_method_call_name(
+                ty,
+                (Type *)t0,
+                M_NAME(NAMES._enter_),
+                false
+        );
 
         return (t1 == NULL) ? (Type *)t0 : t1;
 }
@@ -9885,11 +9902,13 @@ fixup(Ty *ty, Type *t0)
         v00(g0->bound);
 
         for (int i = 0; i < vN(bound); ++i) {
-                u32 id = v__(bound, i);
-                int nref = CountRefs(g0, id);
+                u32 id      = v__(bound, i);
+                int refs    = CountRefs(g0, id);
+                int rt_refs = CountRefs(g0->rt, id);
+
                 if (ContainsID(&FixedTypeVars, id)) {
                         avP(g0->bound, id);
-                } else if (nref > 1) {
+                } else if (refs + rt_refs > 1) {
                         Type *var0 = NewTVar(ty);
                         PutEnv(ty, ty->tenv, id, var0);
                         avP(g0->bound, var0->id);
