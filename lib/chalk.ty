@@ -329,7 +329,7 @@ class Text {
             remain = width
         }
 
-        fn add(style, text) {
+        fn add(style: TermStyle, text: String) {
             let state = {}
             for [_, attr] in trans({}, style).scan(/\x1b\[([^m]+)m/) {
                 state = record-of(attr, start=state)
@@ -527,7 +527,7 @@ fn trans(a: TermStyle, b: TermStyle) -> String {
 }
 
 class Chalk {
-    __styles: Dict[String, TermStyle]
+    __styles: Dict[String, TermStyle | nil]
 
     init() {
         __styles = %{**styles, *: parse-style(it, self)}

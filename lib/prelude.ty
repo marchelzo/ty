@@ -399,6 +399,7 @@ class Array[T] : Iterable[T] {
     map![U](fun: T -> U) -> Array[U];
     map[U](fun: T -> U) -> Array[U];
     push(x: T) -> nil;
+    pop(i: ?Int) -> T;
     remove!(x: Any) -> Array[T];
     remove![U](x: nil) -> Array[U] where T: nil | U;
     remove(x: Any) -> Array[T];
@@ -587,12 +588,10 @@ class Array[T] : Iterable[T] {
         (#self > 0) ? Some(self.pop()) : None
     }
 
-    __iter__*() {
-        for x in self { yield x }
-    }
-
-    __it__() {
-        self
+    __iter__*() -> Generator[T] {
+        for x in self {
+            yield x
+        }
     }
 
     static [](T) {
@@ -1351,7 +1350,7 @@ class Blob : Iterable[Int], IntoPtr {
         base64::encode(self)
     }
 
-    __iter__*() {
+    __iter__*() -> Generator[Int] {
         for x in self {
             yield x
         }
@@ -1627,27 +1626,31 @@ class RegexMatch {
     groups: Array[String | nil]
     str: String
 
-    start {
+    start -> Int {
         #pre
     }
 
-    end {
+    end -> Int {
         start + #groups[0]
     }
 
-    pre {
+    pre -> String {
         str.bslice(0, groups[0].ptr() - str.ptr())
     }
 
-    post {
+    post -> String {
         str.bslice(groups[0].ptr() - str.ptr() + groups[0].size())
+    }
+
+    captures -> Array[String | nil] {
+        groups[1;]
     }
 
     [](i: Int) -> String | nil {
         groups[i]
     }
 
-    #() {
+    #() -> Int {
         #groups[0]
     }
 }
@@ -2166,7 +2169,7 @@ trait Iter[T] < Iterable[T] {
         }
     }
 
-    list() {
+    list() -> Array[T] {
         [x for x in self]
     }
 

@@ -3705,6 +3705,7 @@ static Expr *
 prefix_percent(Ty *ty)
 {
         Expr *e = mkexpr(ty);
+
         consume(TOKEN_PERCENT);
 
         if (T0 == TOKEN_IDENTIFIER) {
@@ -3726,21 +3727,19 @@ prefix_percent(Ty *ty)
         }
 
         e->type = EXPRESSION_DICT;
-        e->dflt = NULL;
 
         consume('{');
-
-        vec_init(e->keys);
-        vec_init(e->values);
 
         while (T0 != '}') {
                 setctx(LEX_PREFIX);
 
                 if (T0 == TOKEN_STAR && T1 == ':') {
-                        struct location start = tok()->start;
+                        Location start = tok()->start;
                         next();
                         next();
                         unconsume(TOKEN_ARROW);
+                        unconsume(TOKEN_IDENTIFIER);
+                        tok()->identifier = "it";
                         e->dflt = parse_expr(ty, 0);
                         e->dflt->start = start;
                         e->dflt->end = TEnd;

@@ -253,7 +253,7 @@ Type *
 type_method_call(Ty *ty, Expr const *e);
 
 Type *
-type_method_call_name(Ty *ty, Type *t0, char const *name);
+type_method_call_name(Ty *ty, Type *t0, char const *name, bool strict);
 
 Type *
 type_subscript(Ty *ty, Expr const *e);
