@@ -113,7 +113,7 @@ pub class Path {
     }
 
     suffix -> String {
-        (name.match!(/(?<!^)\.[^.]+$/) ?? '')!
+        (name.match(/(?<!^)\.[^.]+$/) ?? '')!
     }
 
     suffixes -> [String] {

@@ -179,7 +179,7 @@ class HttpServer {
         }
 
         for {params, pattern, fun, *} in handlers {
-            if let $m = url.match!(pattern) {
+            if let $m = url.match(pattern) {
                 return (fun, %{params[i]: m[i + 1] for i in ..#params})
             }
         }
@@ -261,7 +261,7 @@ class HttpServer {
                                 (/^multipart\/form-data/, $body) => {
                                     let form = %{}
                                     let offset = 0
-                                    if not let [_, delim] = body.match!(/^(.*)\r\n/) {
+                                    if not let [_, delim] = body.match(/^(.*)\r\n/) {
                                         RuntimeError("")
                                     }
 

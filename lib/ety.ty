@@ -15,19 +15,19 @@ fn parse(s: String) -> Array[TemplateToken] {
     function go(i, j) {
         if j == #s {
             ts.push(Text(s.splice(i, j)))
-        } else if let [_, code] = s.slice(j).match!(/^<%=((?:(?!%>).)+)%>/) {
+        } else if let [_, code] = s.slice(j).match(/^<%=((?:(?!%>).)+)%>/) {
             ts.push(Text(s.splice(i, j)))
             ts.push(Expr(code))
             go(j + #code + 5, j + #code + 5)
-        } else if let [_, code] = s.slice(j).match!(/^<%@((?:(?!%>).)+)%>/) {
+        } else if let [_, code] = s.slice(j).match(/^<%@((?:(?!%>).)+)%>/) {
             ts.push(Text(s.splice(i, j)))
             ts.push(Embed(code))
             go(j + #code + 5, j + #code + 5)
-        } else if let [_, var, code] = s.slice(j).match!(/^<%\?(\w+)((?:(?!%>).)+)%>/) {
+        } else if let [_, var, code] = s.slice(j).match(/^<%\?(\w+)((?:(?!%>).)+)%>/) {
             ts.push(Text(s.splice(i, j)))
             ts.push(IfDef(var, code))
             go(j + #code + #var + 5, j + #code + #var + 5)
-        } else if let [_, code] = s.slice(j).match!(/^<%((?:(?!%>).)+)%>/) {
+        } else if let [_, code] = s.slice(j).match(/^<%((?:(?!%>).)+)%>/) {
             ts.push(Text(s.splice(i, j)))
             ts.push(Code(code))
             go(j + #code + 4, j + #code + 4)

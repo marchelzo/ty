@@ -886,8 +886,8 @@ class String : Iterable[String], IntoPtr[Int] {
     scan(pattern: RegexV) -> [RegexMatch];
     scan(pattern: Regex) -> [String];
 
-    match!(pattern: RegexV) -> RegexMatch;
-    match!(pattern: Regex) -> String | [String];
+    match(pattern: RegexV) -> RegexMatch;
+    match(pattern: Regex) -> String | [String];
 
     match?(pattern: Regex) -> Bool;
     count(pattern: String | Regex) -> Int;
@@ -1383,11 +1383,11 @@ class Bool {
 class Regex < Function {
     init(x) { regex(x) }
 
-    ~=(s) { s.match!(self) }
+    ~=(s) { s.match(self) }
 
     test(s) { s.match?(self) }
 
-    exec(s) { s.match!(self) }
+    exec(s) { s.match(self) }
 
     __match__(s) {
         (s :: String) && s.match?(self)
@@ -3914,7 +3914,7 @@ fn ?>[a, b](x: nil | a, f: a -> b) -> nil | b;
 
 fn ?>(x: Any, f: Any) { (x == nil) ? nil : f(x) }
 
-macro =~(a, b) = do let [$0, ?$1, ?$2, ?$3, ?$4, ?$5, ?$6, ?$7, ?$8, ?$9] or ($0: String) = $$a.match!($$b)
+macro =~(a, b) = do let [$0, ?$1, ?$2, ?$3, ?$4, ?$5, ?$6, ?$7, ?$8, ?$9] or ($0: String) = $$a.match($$b)
 
 fn .[a, b, c](f: b -> c, g: a -> b) -> (a -> c) {
     f@(g(*, **))

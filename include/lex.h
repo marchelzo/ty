@@ -11,6 +11,7 @@ typedef enum LexContext {
         LEX_PREFIX = 1,
         LEX_INFIX,
         LEX_NAME,
+        LEX_MEMBER,
         LEX_FMT,
         LEX_XFMT,
         LEX_FAKE,
