@@ -210,7 +210,7 @@ fn mod-completions(mod: Dict[String, _], prefix: String) -> [([Text | String], S
 }
 
 pub fn tab-complete(before: String, after: String) -> readln::CompletionAction {
-    if let [_, space, prefix] = before.match!(/^\s*import\b(\s*)((?:\w|\.)*)$/) {
+    if let [_, space, prefix] = before.match(/^\s*import\b(\s*)((?:\w|\.)*)$/) {
         let modules-dir = Path.home() / '.ty'
         if modules-dir.dir? {
             let modules = modules-dir.glob('*.ty').map!(\_.stem)

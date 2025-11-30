@@ -185,7 +185,7 @@ class CompletionCycler {
 }
 
 fn completeFile(before: String, after: String) -> CompletionAction {
-    let path-prefix = (before.match!(/'[^']*$/) ?? before.match!(/\S*$/))!
+    let path-prefix = (before.match(/'[^']*$/) ?? before.match(/\S*$/))!
     let parts = path-prefix.comb(/'/).split('/')
 
     let (dir, prefix) = match parts {

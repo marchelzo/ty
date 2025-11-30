@@ -1499,7 +1499,6 @@ parse_type(Ty *ty, int prec)
         return t;
 }
 
-
 static void
 parse_type_params(Ty *ty, expression_vector *params)
 {
@@ -1525,6 +1524,21 @@ parse_type_params(Ty *ty, expression_vector *params)
         }
         next();
         LOAD_NE();
+}
+
+static Expr *
+parse_member(Ty *ty)
+{
+        int ctx = LCTX;
+        Expr *member;
+
+        setctx(LEX_MEMBER);
+        expect(TOKEN_IDENTIFIER);
+        member = mkid(tok()->identifier);
+        next();
+        setctx(ctx);
+
+        return member;
 }
 
 /* * * * | prefix parsers | * * * */
@@ -1881,10 +1895,8 @@ prefix_identifier(Ty *ty)
         consume(TOKEN_IDENTIFIER);
 
         if (is_macro(ty, e->module, e->identifier)) {
-                v_(tokens, i_id)->tag = TT_MACRO;
-
                 Expr *expanded;
-
+                v_(tokens, i_id)->tag = TT_MACRO;
                 if (TY_CATCH_ERROR()) {
                         char *trace = FormatTrace(ty, NULL, NULL);
                         Value exc = TY_CATCH();
@@ -1902,17 +1914,16 @@ prefix_identifier(Ty *ty)
                         expanded = typarse(ty, e, NULL, &e->start, &token(-1)->end);
                         TY_CATCH_END();
                 }
-
                 return expanded;
         }
 
-        if (TypeContext && strcmp(e->identifier, "_") == 0) {
+        if (TypeContext && s_eq(e->identifier, "_")) {
                 e->type = EXPRESSION_MATCH_ANY;
                 e->end = TEnd;
                 return e;
         }
 
-        if (!TypeContext && e->module == NULL && is_operator(e->identifier)) {
+        if (!TypeContext && (e->module == NULL) && is_operator(e->identifier)) {
                 e->type = EXPRESSION_OPERATOR;
                 e->op.id = e->identifier;
                 e->end = TEnd;
@@ -3608,7 +3619,7 @@ prefix_implicit_method(Ty *ty)
         e->start = start;
         e->type = try_consume('.') ? EXPRESSION_MEMBER_ACCESS
                                    : EXPRESSION_METHOD_CALL;
-        e->member = prefix_identifier(ty);
+        e->member = parse_member(ty);
         e->object = o;
 
         TagTokenOf(ty, e->member, TT_FUNC);
@@ -4242,7 +4253,7 @@ infix_member_access(Ty *ty, Expr *left)
         } else if (AllowErrors && T0 != TOKEN_IDENTIFIER) {
                 e->member = &BlankID;
         } else {
-                e->member = prefix_identifier(ty);
+                e->member = parse_member(ty);
 #if 0
                 if (is_fun_macro(ty, NULL, e->member->identifier)) {
                         Expr *call = infix_function_call(ty, e->member);

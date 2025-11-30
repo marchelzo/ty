@@ -1121,7 +1121,7 @@ string_is_match(Ty *ty, Value *string, int argc, Value *kwargs)
 Value
 string_match(Ty *ty, Value *string, int argc, Value *kwargs)
 {
-        ASSERT_ARGC("String.match!()", 1);
+        ASSERT_ARGC("String.match()", 1);
 
         Value pattern = ARGx(0, VALUE_REGEX);
         usize *ovec = ty_re_ovec();
@@ -1444,7 +1444,7 @@ DEFINE_METHOD_TABLE(
         { .name = "len",       .func = string_length           },
         { .name = "lines",     .func = string_lines            },
         { .name = "lower",     .func = string_lower            },
-        { .name = "match!",    .func = string_match            },
+        { .name = "match",     .func = string_match            },
         { .name = "match?",    .func = string_is_match         },
         { .name = "matches",   .func = string_matches          },
         { .name = "lpad",      .func = string_pad_left         },

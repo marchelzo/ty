@@ -351,7 +351,8 @@ lexword(Ty *ty)
         byte_vector module = {0};
         byte_vector word   = {0};
 
-        bool raw = false;
+        bool kw_ok      = (state.ctx != LEX_MEMBER);
+        bool raw        = false;
         bool has_module = false;
 
         for (;;) {
@@ -440,7 +441,7 @@ lexword(Ty *ty)
         char *m = vv(module);
 
         int keyword;
-        if (!raw && (keyword = keyword_get_number(w)) != -1) {
+        if (!raw && kw_ok && (keyword = keyword_get_number(w)) != -1) {
                 state.need_nl |= (
                         (keyword == KEYWORD_IMPORT)
                      || (keyword == KEYWORD_OPERATOR)
@@ -457,11 +458,13 @@ lexname(Ty *ty)
 {
         static char const *STOP = " \t\r\n({[";
 
+        bool raw = false;
         byte_vector name = {0};
         avP(name, nextchar(ty));
 
         if (v_L(name) == '`') {
                 vvX(name);
+                raw = true;
         }
 
         bool special_ok = true;
@@ -495,7 +498,7 @@ lexname(Ty *ty)
 
         avP(name, '\0');
 
-        return mkid(ty, (char *)vv(name), NULL, false);
+        return mkid(ty, (char *)vv(name), NULL, raw);
 }
 
 static bool

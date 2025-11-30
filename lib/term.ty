@@ -720,7 +720,7 @@ class TermIO {
                 // No terminfo match. Hopefully this means we have either a mouse event,
                 // or a keyboard event in the kitty progressive-enhancement format
                 for (pattern, handler: _) in ctlseqs {
-                    if let [matched, *captures]  = buf.str!(i).match!(pattern) {
+                    if let [matched, *captures]  = buf.str!(i).match(pattern) {
                         handler(*captures)
                         i += matched.size()
                         continue continue
