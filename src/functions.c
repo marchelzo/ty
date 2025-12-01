@@ -328,7 +328,7 @@ doprint(Ty *ty, int argc, Value *kwargs, FILE *f)
 
                 if (fwrite(s, 1, n, f) < n) {
                         if (need_free) {
-                                free((char *)s);
+                                ty_free((char *)s);
                         }
 
                         lTk();
@@ -337,7 +337,7 @@ doprint(Ty *ty, int argc, Value *kwargs, FILE *f)
                 }
 
                 if (need_free) {
-                        free((char *)s);
+                        ty_free((char *)s);
                 }
 
                 written += n;
@@ -1419,10 +1419,10 @@ MissingArgument:
                 }
         }
 
-        Value s = vSs(cs.items, cs.count);
+        Value s = vSs(vv(cs), vN(cs));
 
-        free(cs.items);
-        free(sb.items);
+        xvF(cs);
+        xvF(sb);
 
         return s;
 }
@@ -3289,7 +3289,7 @@ BUILTIN_FUNCTION(os_spawn)
                                 NULL,
                                 NULL)) {
                 // Handle error
-                free(lpAttributeList);
+                ty_free(lpAttributeList);
                 return NIL;
         }
 
@@ -3321,8 +3321,8 @@ BUILTIN_FUNCTION(os_spawn)
         );
 
         DeleteProcThreadAttributeList(lpAttributeList);
-        free(lpAttributeList);
-        free(cmdline);
+        ty_free(lpAttributeList);
+        ty_free(cmdline);
 
         if (!bSuccess) {
                 // Handle error
@@ -3599,7 +3599,7 @@ BUILTIN_FUNCTION(os_spawn)
 
         posix_spawn_file_actions_destroy(&actions);
         posix_spawnattr_destroy(&attr);
-        vfor(argv, free(*it));
+        vfor(argv, ty_free(*it));
 
         if (ret == 0) {
                 proc = vTn(
@@ -8140,7 +8140,7 @@ BUILTIN_FUNCTION(ty_parse)
                 Value exc = TY_CATCH();
                 ReleaseArena(old);
                 TYPES_OFF -= 1;
-                free(source - 1);
+                ty_free(source - 1);
                 return Err(ty, exc);
         }
 
@@ -8219,7 +8219,7 @@ BUILTIN_FUNCTION(ty_parse)
         }
 
 End:
-        free(source - 1);
+        ty_free(source - 1);
         ReleaseArena(old);
         TY_CATCH_END();
         TYPES_OFF -= 1;

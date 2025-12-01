@@ -253,7 +253,7 @@ string(Ty *ty)
         char *s = value_string_alloc(ty, n);
         memcpy(s, str.items, n);
 
-        free(str.items);
+        xvF(str);
 
         return STRING(s, n);
 }
@@ -667,16 +667,14 @@ json_parse_xD(Ty *ty, char const *s, usize n)
 Value
 json_encode(Ty *ty, Value const *v)
 {
-        str s;
-        vec_init(s);
-
+        str buf = {0};
         Value r = NIL;
 
-        Visiting.count = 0;
+        v0(Visiting);
 
-        if (encode(ty, v, &s)) {
-                r = vSs(s.items, s.count);
-                free(s.items);
+        if (encode(ty, v, &buf)) {
+                r = vSs(vv(buf), vN(buf));
+                xvF(buf);
         }
 
         return r;

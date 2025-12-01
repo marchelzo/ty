@@ -44,24 +44,24 @@ collect(Ty *ty, struct alloc *a)
         case GC_GENERATOR:
                 gen = p;
 
-                free(gen->frame.items);
-                free(gen->st.calls.items);
-                free(gen->st.frames.items);
-                free(gen->st.targets.items);
-                free(gen->st.sps.items);
-                free(gen->st.to_drop.items);
-                free(gen->gc_roots.items);
+                ty_free(gen->frame.items);
+                ty_free(gen->st.calls.items);
+                ty_free(gen->st.frames.items);
+                ty_free(gen->st.targets.items);
+                ty_free(gen->st.sps.items);
+                ty_free(gen->st.to_drop.items);
+                ty_free(gen->gc_roots.items);
 
                 for (int i = 0; i < gen->st.try_stack.capacity; ++i) {
-                        free(v__(gen->st.try_stack, i));
+                        ty_free(v__(gen->st.try_stack, i));
                 }
 
-                free(gen->st.try_stack.items);
+                ty_free(gen->st.try_stack.items);
 
                 GCLOG("collect(): free generator   co=%p   ip=%p\n", (void *)gen->co, (void *)gen->ip);
 
                 if (gen->co != ty->co_top) {
-                        free(gen->co);
+                        ty_free(gen->co);
                 }
                 break;
 
@@ -90,7 +90,7 @@ collect(Ty *ty, struct alloc *a)
         case GC_REGEX:
                 re = p;
                 pcre2_code_free(re->pcre2);
-                free((char *)re->pattern);
+                ty_free((char *)re->pattern);
                 break;
 
         case GC_ARENA:
@@ -162,7 +162,7 @@ GCSweepTy(Ty *ty)
                 ) {
                         ty->memory_used -= min(a->size, ty->memory_used);
                         collect(ty, a);
-                        free(a);
+                        ty_free(a);
                 } else {
                         A_STORE(&a->mark, false);
                         *v_(ty->allocs, n++) = a;
@@ -186,7 +186,7 @@ GCSweep(Ty *ty, AllocList *allocs, isize *used)
                 ) {
                         *used -= min(v__(*allocs, i)->size, *used);
                         collect(ty, v__(*allocs, i));
-                        free(v__(*allocs, i));
+                        ty_free(v__(*allocs, i));
                 } else {
                         A_STORE(&v__(*allocs, i)->mark, false);
                         *v_(*allocs, n++) = v__(*allocs, i);

@@ -45,6 +45,11 @@ find_package(CURL CONFIG REQUIRED)
 find_package(OpenSSL REQUIRED)
 # defines target(s): xxHash::xxhash
 find_package(xxHash CONFIG REQUIRED)
+# defines target(s): mimalloc, mimalloc-static
+find_package(mimalloc CONFIG REQUIRED)
+set_target_properties(mimalloc-static PROPERTIES
+  IMPORTED_LINK_INTERFACE_LANGUAGES_RELEASE "C"
+)
 
 # ---
 #   global compiler variables
@@ -275,6 +280,7 @@ target_link_libraries(${_tgt_ty_interface}
     unofficial::gumbo::gumbo
     PCRE2::8BIT
     xxHash::xxhash
+    mimalloc-static
     utf8proc
     libco
     dtoa

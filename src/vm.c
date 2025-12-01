@@ -1554,14 +1554,14 @@ CleanupThread(void *ctx)
         for (int i = 0; i < vC(TRY_STACK); ++i) {
                 struct try *t = *v_(TRY_STACK, i);
                 xvF(t->defer);
-                free(t);
+                xmF(t);
         }
 
         for (int i = 0; i < vC(THROW_STACK); ++i) {
                 ThrowCtx *ctx = v__(THROW_STACK, i);
                 xvF(*ctx);
                 xvF(ctx->locals);
-                free(ctx);
+                xmF(ctx);
         }
 
         for (int i = 0; i < vN(ty->_2op_cache); ++i) {
@@ -1569,20 +1569,20 @@ CleanupThread(void *ctx)
         }
 
         for (int i = 0; i < vN(CO_THREADS); ++i) {
-                free(v__(CO_THREADS, i));
+                xmF(v__(CO_THREADS, i));
         }
 
         for (int i = 0; i < TY_TMP_BUF_COUNT; ++i) {
-                free(ty->tmp[i].p);
+                xmF(ty->tmp[i].p);
         }
 
         for (int i = 0; i < vN(ty->scratch.arenas); ++i) {
-                free(v_(ty->scratch.arenas, i)->base);
+                xmF(v_(ty->scratch.arenas, i)->base);
         }
 
         TySpinLockDestroy(MyLock);
-        free(MyLock);
-        free((void *)MyState);
+        xmF((void *)MyLock);
+        xmF((void *)MyState);
         xvF(STACK);
         xvF(THREAD_LOCALS);
         xvF(RootSet);
@@ -1679,7 +1679,7 @@ vm_run_thread(void *p)
         CleanupThread(ty);
 #endif
 
-        free(ctx);
+        xmF(ctx);
         mF(call);
 
         TyMutexLock(&t->mutex);
@@ -7148,6 +7148,8 @@ RunExitHooks(void)
 bool
 vm_init(Ty *ty, int ac, char **av)
 {
+        mi_version();
+
         curl_global_init(CURL_GLOBAL_ALL);
 
         InitializeTY(ty);
@@ -7380,7 +7382,7 @@ FormatTrace(Ty *ty, ThrowCtx const *ctx, byte_vector *out)
                                                 );
                                         }
                                         if (show != NULL) {
-                                                free(show);
+                                                xmF(show);
                                         }
                                         svP(locals, xtruncln(ty, &line, vcols));
                                 }
@@ -7834,7 +7836,7 @@ ProfileReport(Ty *ty)
                                 (long long)entry->count,
                                 f_string
                         );
-                        free(f_string);
+                        xmF(f_string);
                 }
         }
 
@@ -8151,7 +8153,7 @@ vm_execute(Ty *ty, char const *source, char const *file)
                         VSC(&exc),
                         trace
                 );
-                free(trace);
+                xmF(trace);
                 return false;
         }
 
@@ -9639,10 +9641,8 @@ TyReloadModule(Ty *ty, char const *module)
         static usize capacity;
 
         if (MyGroup->ThreadList.count > capacity) {
-                blockedThreads = realloc(blockedThreads, MyGroup->ThreadList.count * sizeof *blockedThreads);
-                runningThreads = realloc(runningThreads, MyGroup->ThreadList.count * sizeof *runningThreads);
-                if (blockedThreads == NULL || runningThreads == NULL)
-                        panic("Out of memory!");
+                blockedThreads = mrealloc(blockedThreads, MyGroup->ThreadList.count * sizeof *blockedThreads);
+                runningThreads = mrealloc(runningThreads, MyGroup->ThreadList.count * sizeof *runningThreads);
                 capacity = MyGroup->ThreadList.count;
         }
 

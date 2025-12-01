@@ -1038,26 +1038,24 @@ cffi_struct(Ty *ty, int argc, Value *kwargs)
 Value
 cffi_closure(Ty *ty, int argc, Value *kwargs)
 {
-        if (argc == 0) {
-                zP("ffi.closure(): expected at least 1 argument but got %d", argc);
-        }
+        ASSERT_ARGC_RANGE("ffi.closure()", 1, INT_MAX);
 
         Value f = ARG(argc - 1);
         vmX();
 
         if (!CALLABLE(f)) {
-                zP("ffi.closure(): last argument must be callable");
+                bP("argument is not callable: %s", VSC(&f));
         }
 
         Value cif = cffi_cif(ty, argc - 1, NULL);
         if (cif.type == VALUE_NIL) {
-                zP("ffi.closure(): failed to construct cif");
+                bP("failed to construct ffi_cif");
         }
 
         void *code;
         ffi_closure *closure = ffi_closure_alloc(sizeof *closure, &code);
         if (closure == NULL) {
-                zP("ffi.closure(): ffi_closure_alloc() failed");
+                bP("ffi_closure_alloc() failed");
         }
 
         GC_STOP();
