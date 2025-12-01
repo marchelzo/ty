@@ -8,6 +8,7 @@
         "sqlite3",
         "gumbo",
         { "name": "pcre2", "features": ["jit"] },
-        "xxhash"
+        "xxhash",
+        "mimalloc"
     ]
 }

@@ -60,17 +60,15 @@ contains(char const *s, char c)
 char *
 fslurp(Ty *ty, FILE *f)
 {
-        vec(char) s = {0};
+        byte_vector s = {0};
 
         vvP(s, '\0');
-
         for (int c; (c = fgetc(f)) != EOF;) {
                 vvP(s, c);
         }
-
         vvP(s, '\0');
 
-        return s.items + 1;
+        return vv(s) + 1;
 }
 
 char *
@@ -109,25 +107,20 @@ slurp(Ty *ty, char const *path)
 
                 return s + 1;
         } else {
-                vec(char) s;
-                vec_init(s);
-
-                vvP(s, '\0');
+                vec(char) s = {0};
 
                 char b[1UL << 14];
                 int r;
 
+                vvP(s, '\0');
                 while ((r = read(fd, b, sizeof b)) > 0) {
-                        for (int i = 0; i < r; ++i) {
-                                vvP(s, b[i]);
-                        }
+                        vvPn(s, b, r);
                 }
+                vvP(s, '\0');
 
                 close(fd);
 
-                vvP(s, '\0');
-
-                return s.items + 1;
+                return vv(s) + 1;
         }
 }
 

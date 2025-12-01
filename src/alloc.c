@@ -47,7 +47,7 @@ NewArenaNoGC(Ty *ty, usize cap)
 {
         Arena old = A;
 
-        A.base = malloc(cap + RESERVED);
+        A.base = xmA(cap + RESERVED);
         A.gc = false;
         A.immortal = false;
 
@@ -87,7 +87,7 @@ FreeArena(Arena *a)
         if (a->gc) {
                 OKGC(a->base);
         } else {
-                free(a->base);
+                xmF(a->base);
         }
 }
 

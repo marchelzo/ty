@@ -10,6 +10,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <mimalloc.h>
+
 #include <pcre2.h>
 #include <ffi.h>
 #include "libco.h"
@@ -34,6 +36,20 @@
  #define CO_STACK_SIZE (1UL << 22)
 #else
  #define CO_STACK_SIZE (1UL << 24)
+#endif
+
+#if defined(TY_RELEASE)
+ #define ty_malloc        mi_malloc
+ #define ty_calloc        mi_calloc
+ #define ty_realloc       mi_realloc
+ #define ty_free          mi_free
+ #define ty_aligned_alloc mi_aligned_alloc
+#else
+ #define ty_malloc        malloc
+ #define ty_calloc        calloc
+ #define ty_realloc       realloc
+ #define ty_free          free
+ #define ty_aligned_alloc aligned_alloc
 #endif
 
 typedef struct ty0        TY;
@@ -1203,6 +1219,7 @@ enum {
 #define smA0(n) AllocateScratch0(ty, (n))
 
 #define xmA(n) mrealloc(NULL, (n))
+#define xmF(p) ty_free((p))
 
 #define mresize(ptr, n) ((ptr) = mrealloc((ptr), (n)))
 #define Resize(p, n, m) ((p) = __builtin_memcpy(amA(n), (p), (m)))
@@ -1297,7 +1314,7 @@ enum {
 #define xvI(a, b, c)     vec_nogc_insert((a), (b), (c))
 #define xvIn(a, b, c, d) vec_nogc_insert_n(a, (b), (c), (d))
 #define xvR(a, b)        vec_nogc_reserve((a), (b))
-#define xvF(v)           free((v).items)
+#define xvF(v)           ty_free((v).items)
 
 #define svPn(a, b, c)    vec_push_n_scratch((a), (b), (c))
 #define svPv(a, b)       vec_push_n_scratch((a), ((b).items), ((b).count))
@@ -1415,7 +1432,7 @@ enum {
 inline static void *
 mrealloc(void *p, usize n)
 {
-        p = realloc(p, n);
+        p = ty_realloc(p, n);
 
         if (UNLIKELY(p == NULL)) {
                 panic("Out of memory!");
@@ -1427,7 +1444,7 @@ mrealloc(void *p, usize n)
 inline static void *
 alloc0(usize n)
 {
-        void *p = calloc(1, n);
+        void *p = ty_calloc(1, n);
 
         if (UNLIKELY(p == NULL)) {
                 panic("Out of memory!");

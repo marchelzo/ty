@@ -89,7 +89,7 @@ gc_resize_unchecked(Ty *ty, void *p, usize n) {
         MemoryUsed += n;
         AddToTotalBytes(n);
 
-        a = realloc(a, sizeof *a + n);
+        a = ty_realloc(a, sizeof *a + n);
         if (UNLIKELY(a == NULL)) {
                 panic("Out of memory!");
         }
@@ -123,7 +123,7 @@ gc_alloc(Ty *ty, usize n)
         AddToTotalBytes(n);
         CheckUsed(ty);
 
-        struct alloc *a = malloc(sizeof *a + n);
+        struct alloc *a = ty_malloc(sizeof *a + n);
         if (UNLIKELY(a == NULL)) {
                 panic("Out of memory!");
         }
@@ -143,7 +143,7 @@ gc_alloc0(Ty *ty, usize n)
         AddToTotalBytes(n);
         CheckUsed(ty);
 
-        struct alloc *a = calloc(1, sizeof *a + n);
+        struct alloc *a = ty_calloc(1, sizeof *a + n);
         if (UNLIKELY(a == NULL)) {
                 panic("Out of memory!");
         }
@@ -165,7 +165,7 @@ gc_alloc_object(Ty *ty, usize n, char type)
         AddToTotalBytes(n);
         CheckUsed(ty);
 
-        struct alloc *a = malloc(sizeof *a + n);
+        struct alloc *a = ty_malloc(sizeof *a + n);
         if (UNLIKELY(a == NULL)) {
                 panic("Out of memory!");
         }
@@ -190,7 +190,7 @@ gc_alloc_object_unchecked(Ty *ty, usize n, char type)
         MemoryUsed += n;
         AddToTotalBytes(n);
 
-        struct alloc *a = malloc(sizeof *a + n);
+        struct alloc *a = ty_malloc(sizeof *a + n);
         if (UNLIKELY(a == NULL)) {
                 panic("Out of memory!");
         }
@@ -216,7 +216,7 @@ gc_alloc_object0(Ty *ty, usize n, char type)
         AddToTotalBytes(n);
         CheckUsed(ty);
 
-        struct alloc *a = calloc(1, sizeof *a + n);
+        struct alloc *a = ty_calloc(1, sizeof *a + n);
         if (UNLIKELY(a == NULL)) {
                 panic("Out of memory!");
         }
@@ -239,7 +239,7 @@ gc_alloc_object0_unchecked(Ty *ty, usize n, char type)
         MemoryUsed += n;
         AddToTotalBytes(n);
 
-        struct alloc *a = calloc(1, sizeof *a + n);
+        struct alloc *a = ty_calloc(1, sizeof *a + n);
         if (UNLIKELY(a == NULL)) {
                 panic("Out of memory!");
         }
@@ -280,7 +280,7 @@ gc_free(Ty *ty, void *p)
                 } else {
                         MemoryUsed -= a->size;
                 }
-                free(a);
+                ty_free(a);
         }
 }
 
@@ -304,7 +304,7 @@ gc_resize(Ty *ty, void *p, usize n) {
 
         CheckUsed(ty);
 
-        a = realloc(a, sizeof *a + n);
+        a = ty_realloc(a, sizeof *a + n);
         if (UNLIKELY(a == NULL)) {
                 panic("Out of memory!");
         }
