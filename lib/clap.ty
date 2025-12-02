@@ -26,12 +26,16 @@ class Args {
         let version = self.version()
 
         let doc = if let (_, $doc-string, _) = doc(self) {
-            let lines = doc-string.lines().dropWhile!(\!_).popWhile(\!_)
+            let lines = doc-string.lines().drop-while!(`!`).pop-while(`!`)
             let leading = lines.filter(\_).map(`#` . /^\s*/).min() ?? 0
             lines.map(&[leading;]).join('\n')
         }
 
         for o in opts {
+            let default = match o.default {
+                {show, val} => {show: ty.eval(show), val: ty.eval(val)},
+                _           => nil
+            }
             if o.constraint == Bool {
                 args.push(
                     flag(
@@ -49,7 +53,7 @@ class Args {
                         convert: o.?conv[0],
                         post:    constraint,
                         multi:   true,
-                        default: o.default ?? {val: [], show: '[]'}
+                        default: default ?? {val: [], show: '[]'}
                     )
                 )
             } else {
@@ -60,7 +64,7 @@ class Args {
                         help:    o.help,
                         convert: o.?conv,
                         post:    o.constraint,
-                        default: o.default
+                        default: default
                    )
                 )
             }
@@ -94,9 +98,9 @@ class Args {
             tuple(**(%{
                 o.name: (o.constraint == Bool)
                       ? ((o.short in result) || (o.long in result))
-                      : result[o.short]
+                      : (result[o.short] ?? result[o.long])
                 for o in opts
-            } + %{ 'help': 'help' in result })),
+            } + %{'help': 'help' in result})),
             argv
         )
     }
@@ -197,12 +201,12 @@ pub macro clap! {
                     if peek().?id == 'literal' {
                         next()
                         next()
-                        let (p, s) = stmt(0, raw: true)
-                        default = {val: ty.eval(s), show: sourceOf(p)}
+                        let (p, s) = stmt(0, raw=true)
+                        default = {val: s, show: ty.String(sourceOf(p))}
                         next()
                     } else {
-                        let e = ty.eval(expr(1))
-                        default = {val: e, show: "{e}"}
+                        let e = expr(0)
+                        default = {val: e, show: $$["{$$e}"$$]}
                     }
                 },
 
@@ -221,5 +225,5 @@ pub macro clap! {
 
     next()
 
-    ty.Class(name: name, statics: [info, getCmds, version], `super`: ty.Id(name: 'Args', module: 'clap'))
+    ty.Class(name: name, static-methods: [info, getCmds, version], `super`: ty.Id(name: 'Args', module: 'clap'))
 }

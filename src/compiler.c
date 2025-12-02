@@ -15599,7 +15599,7 @@ void
 WriteExpressionSourceHeading(Ty *ty, byte_vector *out, int cols, Expr const *e)
 {
         int ctx_len = term_width(e->mod->path, -1);
-        if (e->xfunc != NULL) {
+        if (e->xfunc != NULL && e->xfunc->name != NULL) {
                 ctx_len += 6; // "  ——  "
                 if (e->xfunc->class != NULL) {
                         ctx_len += term_width(e->xfunc->class->name, -1);
@@ -15626,7 +15626,7 @@ WriteExpressionSourceHeading(Ty *ty, byte_vector *out, int cols, Expr const *e)
                         TERM(92;1), e->xfunc->class->name, TERM(0),
                         TERM(34),   e->xfunc->name,        TERM(38:2:96:96:96)
                 );
-        } else if (e->xfunc != NULL) {
+        } else if (e->xfunc != NULL && e->xfunc->name != NULL) {
                 dump(
                         out,
                         "┫ %s%s%s  ——  %s%s%s ┣",

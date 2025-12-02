@@ -280,6 +280,26 @@ op_builtin_mod(Ty *ty)
 }
 
 inline static bool
+op_builtin_divmod(Ty *ty)
+{
+        Value const *left = look(-1);
+        Value const *right = look(0);
+
+        imaxdiv_t div;
+
+        switch (PACK_TYPES(left->type, right->type)) {
+        case PAIR_OF(VALUE_INTEGER):
+                if (right->z == 0) {
+                        ZeroDividePanic(ty);
+                }
+                div = imaxdiv(left->z, right->z);
+                COMPLETE(PAIR(INTEGER(div.quot), INTEGER(div.rem)));
+        }
+
+        return false;
+}
+
+inline static bool
 op_builtin_and(Ty *ty)
 {
         Value const *left = look(-1);

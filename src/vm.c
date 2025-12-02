@@ -3331,6 +3331,29 @@ DoUnaryOp(Ty *ty, int op, bool exec)
 TY_INSTR_INLINE static void
 DoBinaryOp(Ty *ty, int op, bool exec)
 {
+        switch (op) {
+        case OP_CMP: DoCmp(ty); return;
+        case OP_EQL: DoEq(ty);  return;
+        case OP_NEQ: DoNeq(ty); return;
+        case OP_GEQ: DoGeq(ty); return;
+        case OP_LEQ: DoLeq(ty); return;
+        case OP_GT:  DoGt(ty);  return;
+        case OP_LT:  DoLt(ty);  return;
+
+        case OP_ADD:    if (op_builtin_add(ty))    return; break;
+        case OP_SUB:    if (op_builtin_sub(ty))    return; break;
+        case OP_MUL:    if (op_builtin_mul(ty))    return; break;
+        case OP_DIV:    if (op_builtin_div(ty))    return; break;
+        case OP_MOD:    if (op_builtin_mod(ty))    return; break;
+        case OP_DIVMOD: if (op_builtin_divmod(ty)) return; break;
+
+        case OP_BIT_AND: if (op_builtin_and(ty)) return; break;
+        case OP_BIT_OR:  if (op_builtin_or(ty))  return; break;
+        case OP_BIT_XOR: if (op_builtin_xor(ty)) return; break;
+        case OP_BIT_SHL: if (op_builtin_shl(ty)) return; break;
+        case OP_BIT_SHR: if (op_builtin_shr(ty)) return; break;
+        }
+
         int i = op_dispatch(ty, op, ClassOf(top() - 1), ClassOf(top()));
 
         if (i == -1) {
@@ -7148,8 +7171,6 @@ RunExitHooks(void)
 bool
 vm_init(Ty *ty, int ac, char **av)
 {
-        mi_version();
-
         curl_global_init(CURL_GLOBAL_ALL);
 
         InitializeTY(ty);
@@ -8536,28 +8557,6 @@ vm_2op(Ty *ty, int op, Value const *a, Value const *b)
 {
         push(*a);
         push(*b);
-
-        switch (op) {
-        case OP_CMP: DoCmp(ty); return pop();
-        case OP_EQL: DoEq(ty);  return pop();
-        case OP_NEQ: DoNeq(ty); return pop();
-        case OP_GEQ: DoGeq(ty); return pop();
-        case OP_LEQ: DoLeq(ty); return pop();
-        case OP_GT:  DoGt(ty);  return pop();
-        case OP_LT:  DoLt(ty);  return pop();
-
-        case OP_ADD: if (op_builtin_add(ty)) return pop(); break;
-        case OP_SUB: if (op_builtin_sub(ty)) return pop(); break;
-        case OP_MUL: if (op_builtin_mul(ty)) return pop(); break;
-        case OP_DIV: if (op_builtin_div(ty)) return pop(); break;
-        case OP_MOD: if (op_builtin_mod(ty)) return pop(); break;
-
-        case OP_BIT_AND: if (op_builtin_and(ty)) return pop(); break;
-        case OP_BIT_OR:  if (op_builtin_or(ty))  return pop(); break;
-        case OP_BIT_XOR: if (op_builtin_xor(ty)) return pop(); break;
-        case OP_BIT_SHL: if (op_builtin_shl(ty)) return pop(); break;
-        case OP_BIT_SHR: if (op_builtin_shr(ty)) return pop(); break;
-        }
 
         DoBinaryOp(ty, op, true);
 

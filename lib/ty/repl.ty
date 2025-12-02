@@ -33,7 +33,7 @@ let groups = %{
         =   ==  ++  --  +   -  *    /   %   ^    |     &    <=   >=
         +=  -=  *=  /=  %=  @  #    &&  ||  <=>  !     ~    **
         ~>  =>  $~> >   <  !=  ??   >>  <<  <<=  >>=   |>   !::
-        *** &&& <$> <%> ?> <?  <*>  *>  <*  ..%. .%..  .%
+        *** &&& <$> <%> ?> <?  <*>  *>  <*  ..%. .%..  .%   op
         ::  ?=  |=  &=  ^=  ?  :    ?:  ..  ...  $     :>
     ',
     'purple': 'true false nil int float use import',
@@ -70,11 +70,17 @@ fn color-and-break(source: String) -> Array[(Int, String)] {
     }
 
     let tokens = tokens.remove!(nil).map!(t -> match t {
-        {id: /^[A-Z]\w*[a-z]\w*$/, *} => do {
-            let x: _ = t;
-            ({*x, type: 'type'})
-        },
-        _ => t
+        {id: /^[A-Z]\w*[a-z]\w*$/, *}
+            => ({*t, type: 'type'}),
+
+        {meta: 'operator', *}
+            => ({*t, type: 'op', meta: nil}),
+
+        {id, end, *} and chr(source.byte(end.byte)) == '('
+            => ({*t, type: 'fun'})
+
+        _
+            => t
     })
 
     let parts = [(it, '') for source]
