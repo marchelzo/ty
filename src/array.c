@@ -1921,32 +1921,29 @@ array_fold_right(Ty *ty, Value *array, int argc, Value *kwargs)
 static Value
 array_scan_left(Ty *ty, Value *array, int argc, Value *kwargs)
 {
-        if (argc != 1 && argc != 2) {
-                zP("Array.scanLeft(): expected 1 or 2 arguments but got %d", argc);
+        ASSERT_ARGC("Array.scan()", 1, 2);
+
+        if (vN(*array->array) == 0) {
+                return *array;
         }
 
-        int start;
-        Value f, v;
+        Value f;
 
         if (argc == 1) {
-                start = 1;
                 f = ARG(0);
-                if (array->array->count == 0) {
-                        zP("Array.scanLeft(): empty array and no start value");
-                }
-                v = array->array->items[0];
         } else {
-                start = 0;
+                vvI(*array->array, ARG(0), 0);
                 f = ARG(1);
-                v = ARG(0);
         }
 
         if (!CALLABLE(f)) {
-                zP("Array.scanLeft(): expected callable but got: %s", VSC(&f));
+                zP("Array.scan(): expected callable but got: %s", VSC(&f));
         }
 
-        int n = array->array->count;
-        for (int i = start; i < n; ++i) {
+        usize n = vN(*array->array);
+        Value v = v__(*array->array, 0);
+
+        for (usize i = 1; i < n; ++i) {
                 gP(&v);
                 v = vm_eval_function(ty, &f, &v, v_(*array->array, i), NULL);
                 *v_(*array->array, i) = v;
@@ -1959,31 +1956,28 @@ array_scan_left(Ty *ty, Value *array, int argc, Value *kwargs)
 static Value
 array_scan_right(Ty *ty, Value *array, int argc, Value *kwargs)
 {
-        if (argc != 1 && argc != 2) {
-                zP("Array.scanRight(): expected 1 or 2 arguments but got %d", argc);
+        ASSERT_ARGC("Array.scanr()", 1, 2);
+
+        if (vN(*array->array) == 0) {
+                return *array;
         }
 
-        int start;
-        Value f, v;
+        Value f;
 
         if (argc == 1) {
-                start = array->array->count - 2;
                 f = ARG(0);
-                if (array->array->count == 0) {
-                        zP("Array.scanRight(): empty array and no start value");
-                }
-                v = array->array->items[start + 1];
         } else {
-                start = array->array->count - 1;
+                vvP(*array->array, ARG(0));
                 f = ARG(1);
-                v = ARG(0);
         }
 
         if (!CALLABLE(f)) {
-                zP("Array.scanRight(): expected callable but got: %s", VSC(&f));
+                zP("Array.scanr(): expected callable but got: %s", VSC(&f));
         }
 
-        for (int i = start; i >= 0; --i) {
+        Value v = v_L(*array->array);
+
+        for (isize i = vN(*array->array) - 2; i >= 0; --i) {
                 gP(&v);
                 v = vm_eval_function(ty, &f, v_(*array->array, i), &v, NULL);
                 *v_(*array->array, i) = v;

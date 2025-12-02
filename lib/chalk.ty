@@ -146,9 +146,8 @@ fn record-of(attrs: String, start: _ = {}) -> _ {
         _ => nil
     }
 
-    let try-int = match (int ~> $n) => n else it
-
     let pattern = /([345]8[:;]2(?:[:;]\d{1,3}){3})|(\d+:\d+(?::\d+)*)|;/
+    let try-int = n -> int(n) ?? n
 
     for match attrs.split(pattern).map(try-int) {
         /38.2.(\d+).(\d+).(\d+)/ => {
@@ -218,7 +217,7 @@ fn record-of(attrs: String, start: _ = {}) -> _ {
 
 @memoized
 fn detrans(a: TermStyle, b: TermStyle) -> String {
-    let on = []
+    let on  = []
     let off = []
 
     let a: _ = %{**a}
@@ -478,7 +477,7 @@ fn bright-fix(style) {
     style.remove('bg-bright')
 }
 
-fn bright-unfix(style) {
+pub fn bright-unfix(style) {
     style.remove('bright')
     style.remove('bg-bright')
     if let [int ~> fg] = style['fg'] and fg in 90...99 {

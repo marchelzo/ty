@@ -127,7 +127,7 @@ static inline char *
 S2(char const *s)
 {
         usize n = strlen(s);
-        char *new = mi_malloc(n + 1);
+        char *new = ty_malloc(n + 1);
 
         if (new == NULL) {
                 panic("out of memory");

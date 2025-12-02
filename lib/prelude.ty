@@ -91,6 +91,7 @@ fn +(a: Int, b: Int) -> Int;
 fn *(a: Int, b: Int) -> Int;
 fn /(a: Int, b: Int) -> Int;
 fn %(a: Int, b: Int) -> Int;
+fn %/(a: Int, b: Int) -> (Int, Int);
 fn &(a: Int, b: Int) -> Int;
 fn |(a: Int, b: Int) -> Int;
 fn ^(a: Int, b: Int) -> Int;
@@ -1836,8 +1837,12 @@ trait Iterable[T] {
         __iter__().group()
     }
 
-    chain(A, B) {
+    static chain(A, B) {
         A.__iter__().chain(B)
+    }
+
+    chainAll[U]() -> Generator[U] where T: Iterable[U] {
+        __iter__().chainAll()
     }
 
     cycle() {
@@ -3501,6 +3506,9 @@ class AnyOf {
     __xs: Array[_]
     init(*xs)    { __xs = xs }
     __match__(x) { x in __xs }
+    __str__() {
+        ["{it}" for __xs].join(", ")
+    }
 }
 
 macro __walk! {

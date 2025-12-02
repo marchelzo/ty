@@ -4519,6 +4519,7 @@ infix_conditional(Ty *ty, Expr *left)
         Expr *e = mkxpr(CONDITIONAL);
 
         e->cond = left;
+        e->start = left->start;
 
         consume(TOKEN_QUESTION);
 
@@ -4533,6 +4534,8 @@ infix_conditional(Ty *ty, Expr *left)
                 e->otherwise = mkxpr(NIL);
         }
         LOAD_NC();
+
+        e->end = TEnd;
 
         return e;
 }

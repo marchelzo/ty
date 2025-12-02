@@ -81,7 +81,7 @@ delete(Dict *d, usize i)
         if (d->items[i].next != NULL) {
                 d->items[i].next->prev = d->items[i].prev;
         } else {
-                d->last = d->items[i].next;
+                d->last = d->items[i].prev;
         }
         if (d->items[i].prev != NULL) {
                 d->items[i].prev->next = d->items[i].next;

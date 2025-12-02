@@ -1011,6 +1011,7 @@ lexop(Ty *ty)
         ) {
                 Token t = mktoken(ty, TOKEN_USER_OP);
                 t.identifier = sclonea(ty, op);
+                t.tag = TT_OPERATOR;
                 return t;
         }
 

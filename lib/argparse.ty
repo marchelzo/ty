@@ -1,3 +1,5 @@
+import chalk (chalk)
+
 let bools = %{
     'true': true,
     'false': false,
@@ -33,7 +35,7 @@ pub function flag(short, long, help='') {
 }
 
 function add(opt, result, value) {
-    for o in [opt.short, opt.long].remove!(nil) {
+    for o in [opt.short, opt.long].remove!(nil)[;1] {
         if opt.multi {
             result[o] = result[o] ?? []
             result[o].push(value)
@@ -52,7 +54,7 @@ use OptSpec = {
     ?pre: _,
     ?post: _,
     ?multi: Bool,
-    default: Any
+    default: _
 }
 
 pub fn make(*opts: OptSpec, version, help) {
@@ -106,12 +108,12 @@ pub fn make(*opts: OptSpec, version, help) {
                     let (flags, opts) = opts.partition(o -> o.type == 'f')
 
                     if version {
-                        print("{argv[0]} version {version}\n")
+                        print(chalk"[b yellow]{argv[0]}[/] version {version}\n")
                     } else {
-                        print("{argv[0]}\n")
+                        print(chalk"[b yellow]{argv[0]}[/]\n")
                     }
 
-                    print("USAGE: {argv[0]} [OPTIONS]\n")
+                    print(chalk"[b bright green]USAGE[/]: {argv[0]} \\[OPTIONS\\]\n")
 
                     if help != nil {
                         print(help)
@@ -119,7 +121,7 @@ pub fn make(*opts: OptSpec, version, help) {
                     }
 
                     if #opts > 0 {
-                        print('Options')
+                        print(chalk"[b bright green]Options[/]")
                         print()
 
                         let optStrings = [
@@ -135,9 +137,9 @@ pub fn make(*opts: OptSpec, version, help) {
 
                         for (opt, s) in opts.zip(optStrings) {
                             if opt.default != nil {
-                                print("  {s.rpad(maxWidth)}    {opt.help} (default: {opt.default.show})")
+                                print(chalk"  [b blue]{s.rpad(maxWidth)}[/]    {opt.help} [i](default: {opt.default.show})[/]")
                             } else {
-                                print("  {s.rpad(maxWidth)}    {opt.help}")
+                                print(chalk"  [b blue]{s.rpad(maxWidth)}[/]    {opt.help}")
                             }
                         }
 
@@ -145,7 +147,7 @@ pub fn make(*opts: OptSpec, version, help) {
                     }
 
                     if #flags > 0 {
-                        print('Flags')
+                        print(chalk"[u green]Flags[/]")
                         print()
 
                         let flagStrings = [
@@ -156,7 +158,7 @@ pub fn make(*opts: OptSpec, version, help) {
                         let maxWidth = flagStrings.map(&len).max()
 
                         for (flag, s) in flags.zip(flagStrings) {
-                            print("  {s.rpad(maxWidth)}    {flag.help}")
+                            print(chalk"  [b magenta]{s.rpad(maxWidth)}[/]    {flag.help}")
                         }
 
                         print()

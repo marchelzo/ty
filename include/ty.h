@@ -10,8 +10,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include <mimalloc.h>
-
 #include <pcre2.h>
 #include <ffi.h>
 #include "libco.h"
@@ -39,6 +37,7 @@
 #endif
 
 #if defined(TY_RELEASE)
+ #include <mimalloc.h>
  #define ty_malloc        mi_malloc
  #define ty_calloc        mi_calloc
  #define ty_realloc       mi_realloc
@@ -1359,6 +1358,7 @@ enum {
         X(MUL,       "*"),   \
         X(DIV,       "/"),   \
         X(MOD,       "%"),   \
+        X(DIVMOD,   "/%"),   \
         X(BIT_AND,   "&"),   \
         X(BIT_OR,    "|"),   \
         X(BIT_XOR,   "^"),   \
