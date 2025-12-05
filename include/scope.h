@@ -10,9 +10,13 @@
 
 #if defined(TY_DEBUG_NAMES) || !defined(TY_RELEASE) || defined(TY_LS) || 1
  #define TY_NAMED_SCOPES 1
+ char const *
+ scope_name(Ty *ty, Scope const *s);
 #else
  #define TY_NAMED_SCOPES 0
+ #define scope_name(...) "<>"
 #endif
+
 
 #define TY_SCOPE_FLAGS                 \
         X(LOCAL_ONLY,  LocalOnly,  0)  \
@@ -256,8 +260,9 @@ inline static Refinement *
 ScopeFindRefinement(Scope *scope, Symbol *var)
 {
         for (int i = 0; i < vN(scope->refinements); ++i) {
-                if (v_(scope->refinements, i)->var == var) {
-                        return v_(scope->refinements, i);
+                Refinement *ref = v_(scope->refinements, i);
+                if (ref->var == var) {
+                        return ref;
                 }
         }
 
@@ -269,6 +274,8 @@ ScopeRefineVar(Ty *ty, Scope *scope, Symbol *var, Type *t0)
 {
         Refinement *ref = ScopeFindRefinement(scope, var);
 
+        char *type_show(Ty *ty, Type const *t0);
+
         if (ref != NULL) {
                 Type *type_both(Ty *, Type *, Type *);
                 if (ref->mut) {
@@ -279,7 +286,7 @@ ScopeRefineVar(Ty *ty, Scope *scope, Symbol *var, Type *t0)
         } else {
                 avP(
                         scope->refinements,
-                        ((Refinement){
+                        ((Refinement) {
                                 .var = var,
                                 .t0 = t0,
                                 .active = false
@@ -350,13 +357,6 @@ ScopeReset(Scope *scope);
 
 Symbol *
 ScopeFindRecycled(Scope const *scope, char const *id);
-
-#if TY_NAMED_SCOPES
-char const *
-scope_name(Ty *ty, Scope const *s);
-#else
-#define scope_name(...) "<>"
-#endif
 
 #endif
 

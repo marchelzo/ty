@@ -35,6 +35,7 @@
  #include "istat.h"
 #endif
 
+#if 0
 #define DT(e, ...) do {                     \
         fprintf(                            \
                 stderr,                     \
@@ -48,8 +49,11 @@
         fprintf(stderr, "\n");              \
 } while (0)
 
-#undef DT
+#define LogRefine XXX
+#else
 #define DT(...)
+#define LogRefine(...)
+#endif
 
 #define texprx(e, ...) (tyexpr(ty, (e), __VA_ARGS__ + 0))
 #define tstmtx(s, ...) (tystmt(ty, (s), __VA_ARGS__ + 0))
@@ -5016,11 +5020,9 @@ DisableRefinements(Ty *ty, Scope *scope)
                 for (int i = 0; i < vN(scope->refinements); ++i) {
                         Refinement *ref = v_(scope->refinements, i);
                         if (ref->active) {
-                                if (EnableLogging) {
-                                        dont_printf("Disable(%s):\n", ref->var->identifier);
-                                        dont_printf("    %s\n", type_show(ty, ref->var->type));
-                                        dont_printf("--> %s\n", type_show(ty, ref->t0));
-                                }
+                                LogRefine("Disable(%s):", ref->var->identifier);
+                                LogRefine("    %s", type_show(ty, ref->var->type));
+                                LogRefine("--> %s", type_show(ty, ref->t0));
                                 SWAP(Type *, ref->t0, ref->var->type);
                                 ref->active = false;
                                 if (ref->mut) {
@@ -5041,15 +5043,14 @@ EnableRefinements(Ty *ty, Scope *scope, Scope *stop)
                 return;
         }
 
+        LogRefine("EnableRefinements(): %s", scope_name(ty, scope));
         while (scope != stop) {
                 for (int i = 0; i < vN(scope->refinements); ++i) {
                         Refinement *ref = v_(scope->refinements, i);
                         if (!ref->active) {
-                                if (EnableLogging) {
-                                        dont_printf("Enable(%s):\n", ref->var->identifier);
-                                        dont_printf("    %s\n", type_show(ty, ref->var->type));
-                                        dont_printf("--> %s\n", type_show(ty, ref->t0));
-                                }
+                                LogRefine("  Enable(%s):", ref->var->identifier);
+                                LogRefine("      %s", type_show(ty, ref->var->type));
+                                LogRefine("  --> %s", type_show(ty, ref->t0));
                                 SWAP(Type *, ref->t0, ref->var->type);
                                 ref->active = true;
                         }
@@ -5153,9 +5154,9 @@ AddRefinements(Ty *ty, Expr const *e, Scope *_then, Scope *_else)
                                 type_not_nil(ty, e->symbol->type)
                         );
                         Refinement *ref = vvL(_then->refinements);
-                        dont_printf("AddRefinement(%s):\n", ref->var->identifier);
-                        dont_printf("    %s\n", type_show(ty, ref->var->type));
-                        dont_printf("--> %s\n", type_show(ty, ref->t0));
+                        LogRefine("AddRefinement(%s):", ref->var->identifier);
+                        LogRefine("    %s", type_show(ty, ref->var->type));
+                        LogRefine("--> %s", type_show(ty, ref->t0));
                 }
                 break;
 
@@ -5164,7 +5165,7 @@ AddRefinements(Ty *ty, Expr const *e, Scope *_then, Scope *_else)
                         (e->left->type == EXPRESSION_IDENTIFIER)
                      && IsClassName(e->right)
                 ) {
-                        dont_printf("=== NewRefinement(%s): %s\n", p->e->left->identifier, type_show(ty, p->e->left->symbol->type));
+                        LogRefine("=== NewRefinement(%s): %s", e->left->identifier, type_show(ty, e->left->symbol->type));
                         if (_then != NULL) {
                                 ScopeRefineVar(
                                         ty,
@@ -5190,9 +5191,9 @@ AddRefinements(Ty *ty, Expr const *e, Scope *_then, Scope *_else)
                                 );
                         }
                         Refinement *ref = vvL(_then->refinements);
-                        dont_printf("AddRefinement(%s):\n", ref->var->identifier);
-                        dont_printf("    %s\n", type_show(ty, ref->var->type));
-                        dont_printf("--> %s\n", type_show(ty, ref->t0));
+                        LogRefine("AddRefinement(%s):", ref->var->identifier);
+                        LogRefine("    %s", type_show(ty, ref->var->type));
+                        LogRefine("--> %s", type_show(ty, ref->t0));
                 }
                 break;
         }
@@ -5210,6 +5211,25 @@ UpdateRefinemenets(Ty *ty, Scope *scope)
         } else {
                 EnableRefinements(ty, scope, scope->parent);
         }
+}
+
+Type *
+OriginalType(Ty *ty, Symbol const *var)
+{
+        Type *t0 = NULL;
+        Scope *scope = STATE.active;
+
+        while (scope != NULL) {
+                for (int i = 0; i < vN(scope->refinements); ++i) {
+                        Refinement *ref = v_(scope->refinements, i);
+                        if (ref->active && ref->var == var) {
+                                t0 = ref->t0;
+                        }
+                }
+                scope = scope->parent;
+        }
+
+        return (t0 != NULL) ? t0 : var->type;
 }
 
 static void
@@ -5475,7 +5495,7 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
         case STATEMENT_IF:
                 // if not let Ok(x) = f() or not [y] = bar() { ... }
                 subscope = scope_new(ty, "(if)", scope, false);
-                subscope2 = scope_new(ty, "(if)", scope, false);
+                subscope2 = scope_new(ty, "(else)", scope, false);
                 if (s->iff.neg) {
                         symbolize_statement(ty, scope, s->iff.then);
                         for (int i = 0; i < vN(s->iff.parts); ++i) {
@@ -5513,10 +5533,42 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
                         if (WillReturn(s->iff.then) && !WillReturn(s->iff.otherwise)) {
                                 avPv(scope->refinements, subscope2->refinements);
                                 v0(subscope2->refinements);
-                        }
-                        if (WillReturn(s->iff.otherwise) && !WillReturn(s->iff.then)) {
+                        } else if (WillReturn(s->iff.otherwise) && !WillReturn(s->iff.then)) {
                                 avPv(scope->refinements, subscope->refinements);
                                 v0(subscope->refinements);
+                        } else {
+                                int n = 0;
+                                for (int i = 0; i < vN(subscope->refinements); ++i) {
+                                        Refinement *ref0 = v_(subscope->refinements, i);
+                                        Refinement *ref1 = ScopeFindRefinement(subscope2, ref0->var);
+                                        if (ref1 != NULL) {
+                                                LogRefine("CheckRefinement[%d/%zu](%s): %s", i + 1, vN(subscope->refinements), ref0->var->identifier, type_show(ty, ref0->var->type));
+                                                LogRefine("    %s", type_show(ty, ref0->t0));
+                                                LogRefine("    %s", type_show(ty, ref1->t0));
+                                        }
+                                        if (
+                                                (ref1 != NULL)
+                                             && type_check(ty, ref0->var->type, ref1->t0)
+                                             && type_check(ty, ref1->t0, ref0->var->type)
+                                        ) {
+                                                Type *t0;
+                                                if (ref0->active) {
+                                                        t0 = ref0->t0;
+                                                } else {
+                                                        t0 = ref0->var->type;
+                                                        ref0->var->type = ref0->t0;
+                                                }
+                                                avP(scope->refinements, ((Refinement) {
+                                                        .var    = ref0->var,
+                                                        .t0     = t0,
+                                                        .mut    = ref0->mut,
+                                                        .active = true
+                                                }));
+                                        } else {
+                                                *v_(subscope->refinements, n++) = *ref0;
+                                        }
+                                }
+                                vN(subscope->refinements) = n;
                         }
                 }
                 if (s->iff.then != NULL) {
