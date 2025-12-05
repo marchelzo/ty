@@ -4159,8 +4159,6 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
         case EXPRESSION_XOR:
         case EXPRESSION_SHL:
         case EXPRESSION_SHR:
-        case EXPRESSION_CHECK_MATCH:
-        case EXPRESSION_CMP:
         case EXPRESSION_BIT_OR:
         case EXPRESSION_BIT_AND:
         case EXPRESSION_KW_OR:
@@ -4168,6 +4166,11 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                 symbolize_expression(ty, scope, e->right);
                 e->_type = type_binary_op(ty, e);
                 break;
+
+        case EXPRESSION_CMP:
+                symbolize_expression(ty, scope, e->left);
+                symbolize_expression(ty, scope, e->right);
+                e->_type = TYPE_INT;
 
         case EXPRESSION_IN:
         case EXPRESSION_NOT_IN:
@@ -4177,6 +4180,7 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
         case EXPRESSION_GEQ:
         case EXPRESSION_DBL_EQ:
         case EXPRESSION_NOT_EQ:
+        case EXPRESSION_CHECK_MATCH:
                 symbolize_expression(ty, scope, e->left);
                 symbolize_expression(ty, scope, e->right);
                 e->_type = TYPE_BOOL;

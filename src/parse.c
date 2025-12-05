@@ -3805,8 +3805,12 @@ prefix_percent(Ty *ty)
                         next();
                         e->type = EXPRESSION_DICT_COMPR;
                         e->dcompr.pattern = parse_target_list(ty);
-                        consume_kw(IN);
-                        e->dcompr.iter = parse_expr(ty, 0);
+                        if (e->dcompr.pattern->type != EXPRESSION_LIST) {
+                                iter_sugar(ty, &e->dcompr.pattern, &e->dcompr.iter);
+                        } else {
+                                consume_kw(IN);
+                                e->dcompr.iter = parse_expr(ty, 0);
+                        }
                         e->dcompr._while = try_consume(KEYWORD_WHILE)
                                        ? parse_expr(ty, 0)
                                        : NULL;
