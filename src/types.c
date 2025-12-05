@@ -89,21 +89,21 @@ IsRequired(Type const *t0, i32 i)
 
 #if TYPES_LOG
 static Ty *ty = &vvv;
-#define XXXTLOG(fmt, ...)                                                                        \
-        fprintf(                                                                                 \
-                stderr,                                                                          \
-                "[%2d] (%8.8s %-10.10s)  " fmt "\n",                                                   \
-                CurrentLevel,                                                                    \
-                ((TyCompilerState(ty)->class == NULL) ? "--" : TyCompilerState(ty)->class->name),  \
-                ((TyCompilerState(ty)->func == NULL) ? "--" : TyCompilerState(ty)->func->name)     \
+#define XXXTLOG(fmt, ...)                                                                         \
+        fprintf(                                                                                  \
+                stderr,                                                                           \
+                "[%2d] (%8.8s %-10.10s)  " fmt "\n",                                              \
+                CurrentLevel,                                                                     \
+                ((TyCompilerState(ty)->class == NULL) ? "--" : TyCompilerState(ty)->class->name), \
+                ((TyCompilerState(ty)->func == NULL) ? "--" : TyCompilerState(ty)->func->name)    \
                 __VA_OPT__(,) __VA_ARGS__                                                         \
         )
+
 #define XXTLOG(...) if (EnableLogging > 0) { XXXTLOG(__VA_ARGS__); } else if (0)
 #define DPRINT(cond, fmt, ...) ((cond) && EnableLogging > 0 && XXXTLOG("%*s" fmt, 4*CurrentDepth, "" __VA_OPT__(,) __VA_ARGS__))
 #define XDPRINT(cond, fmt, ...) ((cond) && XXXTLOG("%*s" fmt, 4*CurrentDepth, "" __VA_OPT__(,) __VA_ARGS__))
 #else
 #define XXTLOG(...) 0
-#define XXXTLOG(...) 0
 #define DPRINT(cond, fmt, ...) 0
 #define XDPRINT(cond, fmt, ...) 0
 #endif
@@ -8024,13 +8024,28 @@ type_assign(Ty *ty, Expr *e, Type *t0, int flags)
                                 t0 = type_either(ty, NewVar(ty), type_unfixed(ty, t0));
                         }
                         if (flags & T_FLAG_UPDATE) {
-                                Refinement *ref = ScopeRefineVar(
-                                        ty,
+                                //Refinement *ref = ScopeRefineVar(
+                                //        ty,
+                                //        TyCompilerState(ty)->active,
+                                //        e->symbol,
+                                //        t0
+                                //);
+                                //ref->mut = true;
+                                Refinement *ref = ScopeFindRefinement(
                                         TyCompilerState(ty)->active,
-                                        e->symbol,
-                                        t0
+                                        e->symbol
                                 );
+                                if (ref == NULL) {
+                                        ref = ScopeRefineVar(
+                                                ty,
+                                                TyCompilerState(ty)->active,
+                                                e->symbol,
+                                                e->symbol->type
+                                        );
+                                        ref->active = true;
+                                }
                                 ref->mut = true;
+                                e->symbol->type = t0;
                         } else {
                                 unify2_(ty, &e->symbol->type, t0, check);
                         }
@@ -8041,18 +8056,38 @@ type_assign(Ty *ty, Expr *e, Type *t0, int flags)
                                 ShowType(t0),
                                 ShowType(e->symbol->type)
                         );
-                } else if (
-                        !UnifyX(ty, t0, e->symbol->type, false, false)
-                     && check
-                     && ENFORCE
-                     && !HAVE_COMPILER_FLAG(NO_TYPES)
-                ) {
-                        TypeError(
-                                "can't assign `%s` to %s%s%s which has type `%s`",
-                                ShowType(t0),
-                                TERM(93), e->identifier, TERM(0),
-                                ShowType(e->symbol->type)
-                        );
+                } else {
+                        if (
+                                !UnifyX(ty, t0, OriginalType(ty, e->symbol), false, false)
+                             && check
+                             && ENFORCE
+                             && !HAVE_COMPILER_FLAG(NO_TYPES)
+                        ) {
+                                TypeError(
+                                        "can't assign `%s` to %s%s%s which has type `%s`",
+                                        ShowType(t0),
+                                        TERM(93), e->identifier, TERM(0),
+                                        ShowType(e->symbol->type)
+                                );
+                        }
+                        if (flags & T_FLAG_UPDATE) {
+                                Refinement *ref = ScopeFindRefinement(
+                                        TyCompilerState(ty)->active,
+                                        e->symbol
+                                );
+                                if (ref == NULL) {
+                                        ref = ScopeRefineVar(
+                                                ty,
+                                                TyCompilerState(ty)->active,
+                                                e->symbol,
+                                                e->symbol->type
+                                        );
+                                        ref->active = true;
+                                } else {
+                                }
+                                //ref->mut = true;
+                                e->symbol->type = t0;
+                        }
                 }
                 break;
         case EXPRESSION_TAG_APPLICATION:

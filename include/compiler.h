@@ -459,6 +459,9 @@ CompilerBlackpill(Ty *ty, Stmt *s);
 bool
 CompilerResolveExpr(Ty *ty, Expr *e);
 
+Type *
+OriginalType(Ty *ty, Symbol const *var);
+
 void *
 CompilerPushContext(Ty *ty, void const *ctx);
 

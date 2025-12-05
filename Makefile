@@ -29,6 +29,7 @@ LDFLAGS += -lreadline
 LDFLAGS += -lcurses
 LDFLAGS += -L/usr/local/lib
 LDFLAGS += -lpthread
+LDFLAGS += -lmimalloc
 
 LDFLAGS += -lreadline
 LDFLAGS += -lutf8proc
