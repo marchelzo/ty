@@ -86,6 +86,8 @@ fn |>[a, b, c](f: a -> b, g: b -> c) -> (a -> c) { g@(f(*, **)) }
 
 fn !::(a: Any, b: Any) -> Bool { !(a :: b) }
 
+fn ==(a: Any, b: Any) -> Bool;
+
 fn -(a: Int, b: Int) -> Int;
 fn +(a: Int, b: Int) -> Int;
 fn *(a: Int, b: Int) -> Int;
@@ -116,6 +118,11 @@ fn *(a: Int, b: Float) -> Float;
 fn /(a: Int, b: Float) -> Float;
 fn %(a: Int, b: Float) -> Float;
 
+fn &(a: Class, b: Class) -> (Any -> Bool);
+fn |(a: Class, b: Class) -> (Any -> Bool);
+
+fn &(a: Function, b: Object) -> (Any -> Bool);
+fn |(a: Function, b: Object) -> (Any -> Bool);
 
 fn +(a: String, b: String) -> String;
 
@@ -240,11 +247,11 @@ class Object {
         ::member(self, *args)
     }
 
-    |(other) {
+    |(other: Object) -> (Any -> Bool) {
         c -> (c :: self) || (c :: other)
     }
 
-    &(other) {
+    &(other: Object) -> (Any -> Bool) {
         c -> (c :: self) && (c :: other)
     }
 
@@ -461,6 +468,10 @@ class Array[T] : Iterable[T] {
         return ys
     }
 
+    reject(p: T -> Any) -> Array[T] {
+        filter(\!p(_))
+    }
+
     span(p: T -> Any) -> (Array[T], Array[T]) {
         let good = [x for x in self while p(x)]
         (good, self[#good;])
@@ -476,17 +487,20 @@ class Array[T] : Iterable[T] {
         [[self[j][i] for i in ..#self] for j in ..#self[0]]
     }
 
-    indices*() {
+    indices*() -> Generator[_] {
         for x, i in self {
             if x :: Array {
                 for idx in x.indices() {
-                    let tpl: _ = tuple
-                    yield tpl(*((idx :: Array) ? ([i] + idx) : [i, idx]))
+                    yield tuple(*((idx :: Array) ? ([i] + idx) : [i, idx]))
                 }
             } else {
                 yield i
             }
         }
+    }
+
+    range -> Range {
+        0..#self
     }
 
     permutations*() {
@@ -821,7 +835,7 @@ class Dict[K, V] : Iterable[K, V] {
         self[x] ?= nil
     }
 
-    &(o) {
+    &(o: Dict[K, V]) -> Dict[K, V] {
         %{k: v for k, v in self if k in o}
     }
 
@@ -868,6 +882,7 @@ class String : Iterable[String], IntoPtr[Int] {
     split(pattern: RegexV, n: ?Int) -> [RegexMatch | String];
     split(pattern: String | Regex, n: ?Int) -> [String];
 
+    bytes() -> [Int];
     chars() -> [String];
     words() -> [String];
     lines() -> [String];
@@ -1757,6 +1772,14 @@ trait Iterable[T] {
         __iter__().groupsOf(n, keepShort=keepShort)
     }
 
+    window[U](n: Int, f: (*T) -> U) -> Iterable[U] {
+        __iter__().window(n, f)
+    }
+
+    window(n: Int) -> Iterable[Array[T]] {
+        __iter__().window(n)
+    }
+
     classify(f = id) {
         __iter__().classify(f)
     }
@@ -1897,7 +1920,7 @@ trait Iter[T] < Iterable[T] {
         }
     }
 
-    map?*(f) {
+    map?*[U](f: T -> Some[U] | None) -> Generator[U] {
         for x in self {
             if let Some(y) = f(x) {
                 yield y
@@ -1905,9 +1928,15 @@ trait Iter[T] < Iterable[T] {
         }
     }
 
-    filter*(f) {
+    filter*(f: T -> Any) -> Generator[T] {
         for x in self if f(x) {
             yield x
+        }
+    }
+
+    keep*(p: T -> Any) -> Generator[T] {
+        for self if p(it) {
+            yield it
         }
     }
 
@@ -2063,8 +2092,8 @@ trait Iter[T] < Iterable[T] {
     }
 
     find[U](p: T -> U) -> T | nil {
-        for x in self {
-            if p(x) return x
+        for self if p(it) {
+            return it
         }
     }
 
@@ -2103,6 +2132,28 @@ trait Iter[T] < Iterable[T] {
         }
 
         return d
+    }
+
+    window*(n: Int) -> Generator[Array[T]] {
+        let win = [*take(n)]
+        while #win == n {
+            yield win
+            win.pop(0)
+            if let Some(x) = __next__() {
+                win.push(x)
+            }
+        }
+    }
+
+   window*[U](n: Int, f: (*T) -> U) -> Generator[U] {
+        let win = [*take(n)]
+        while #win == n {
+            yield f(*win)
+            win.pop(0)
+            if let Some(x) = __next__() {
+                win.push(x)
+            }
+        }
     }
 
     groupsOf*(n: Int, keepShort: Bool = true) -> Generator[Array[T]] {
@@ -2367,7 +2418,7 @@ trait Iter[T] < Iterable[T] {
         }
     }
 
-    replicate*(x, n) {
+    static replicate*[T](x: T, n: Int) -> Generator[T] {
         for _ in ..n {
             yield x
         }
@@ -2396,12 +2447,11 @@ trait Iter[T] < Iterable[T] {
         return list().median()
     }
 
-    all?(pred: T -> _ = id) {
+    all?(pred: (T -> Any) = id) {
         for x in self {
             if x !:: pred { return false }
         }
-
-        return true
+        true
     }
 
     static tee[T](it: Iterable[T], n: Int = 2) -> (*Iterable[T]) {
@@ -2527,16 +2577,16 @@ class Range : Iterable[Int] {
         self.b = b
     }
 
-    low() {
+    low -> Int {
         min(a, b)
     }
 
-    high() {
+    high -> Int {
         max(a, b) - 1
     }
 
     #() {
-        high() - low() + 1
+        high - low + 1
     }
 
     __str__() {
@@ -2544,11 +2594,38 @@ class Range : Iterable[Int] {
     }
 
     contains?(r: Range) -> Bool {
-        (r.low() :: self) && (r.high() :: self)
+        (r.low :: self) && (r.high :: self)
     }
 
     contains?(k) -> Bool {
         k :: self
+    }
+
+    &(r: Range) -> Range {
+        if overlap?(r) {
+            Range(
+                max(self.low, r.low),
+                min(self.high, r.high) + 1
+            )
+        } else {
+            Range(0, 0)
+        }
+    }
+
+    |(r: Range) -> Range {
+        if overlap?(r) {
+            Range(
+                min(self.low, r.low),
+                max(self.high, r.high) + 1
+            )
+        } else {
+            throw ValueError('cannot union non-overlapping ranges')
+        }
+    }
+
+    overlap?(r: Range) -> Bool {
+        (high   in r)    || (low   in r)
+     || (r.high in self) || (r.low in self)
     }
 
     clamp(lo, hi) {
@@ -2559,10 +2636,8 @@ class Range : Iterable[Int] {
     }
 
     __match__(x) {
-        (x :: (Int | Float)) && (x >= low() && x <= high())
+        (x :: (Int | Float)) && (x >= low && x <= high)
     }
-
-    slice { [self.low(), #self] }
 
     has?(k) {
         k :: self
@@ -2573,7 +2648,7 @@ class Range : Iterable[Int] {
     }
 
     __iter__() -> Generator[Int] {
-        return if a < b {
+        if a < b {
             a.upto(b - 1)
         } else {
             (a - 1).downto(b)
@@ -3888,7 +3963,9 @@ macro __desugar_partial__(call: _) {
         }
 
         fn named(name) {
-            params.push(name)
+            if name not in params {
+                params.push(name)
+            }
             ty.Id({name, module: ''})
         }
 

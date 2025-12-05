@@ -9508,13 +9508,18 @@ type_binary_op(Ty *ty, Expr const *e)
         int op = -1;
 
         switch (e->type) {
-        case EXPRESSION_PLUS:    op = OP_ADD;    break;
-        case EXPRESSION_MINUS:   op = OP_SUB;    break;
-        case EXPRESSION_DIV:     op = OP_DIV;    break;
-        case EXPRESSION_STAR:    op = OP_MUL;    break;
-        case EXPRESSION_PERCENT: op = OP_MOD;    break;
-        case EXPRESSION_IN:      op = OP_IN;     break;
-        case EXPRESSION_NOT_IN:  op = OP_NOT_IN; break;
+        case EXPRESSION_PLUS:    op = OP_ADD;     break;
+        case EXPRESSION_MINUS:   op = OP_SUB;     break;
+        case EXPRESSION_DIV:     op = OP_DIV;     break;
+        case EXPRESSION_STAR:    op = OP_MUL;     break;
+        case EXPRESSION_PERCENT: op = OP_MOD;     break;
+        case EXPRESSION_IN:      op = OP_IN;      break;
+        case EXPRESSION_NOT_IN:  op = OP_NOT_IN;  break;
+        case EXPRESSION_BIT_OR:  op = OP_BIT_OR;  break;
+        case EXPRESSION_BIT_AND: op = OP_BIT_AND; break;
+        case EXPRESSION_SHL:     op = OP_BIT_SHL; break;
+        case EXPRESSION_SHR:     op = OP_BIT_SHR; break;
+        case EXPRESSION_XOR:     op = OP_BIT_XOR; break;
         case EXPRESSION_USER_OP: op = intern(&xD.b_ops, e->op_name)->id;
         }
 
