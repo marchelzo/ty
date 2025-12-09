@@ -1,81 +1,87 @@
-pub class Heap {
-    init(items=[]) {
-        self.keys = [];
-        self.values = [];
-        self.n = 0;
+pub class Heap[K, T] {
+    __key: Array[K]
+    __xs:  Array[T]
+    __n:   Int
 
-        for (k, v) in items {
-            self.push(k, v)
+    init(items: Iterable[(K, T)] = []) {
+        __key = []
+        __xs  = []
+        __n   = 0
+
+        for (k, x) in items {
+            __key.push(k)
+            __xs.push(x)
+        }
+
+        __heapify()
+    }
+
+    swap(i: Int, j: Int) {
+        __key[i], __key[j] = __key[j], __key[i]
+        __xs[i],  __xs[j]  = __xs[j],  __xs[i]
+    }
+
+    push(key: K, val: T) {
+        __key.push(key)
+        __xs.push(val)
+
+        let i = __xs.len() - 1
+        let p = (i - 1) / 2
+
+        while p >= 0 && __key[i] < __key[p] {
+            __swap(i, p)
+            i = p
+            p = (p - 1) / 2
         }
     }
 
-    swap(i, j) {
-        [self.keys[i], self.keys[j]] = [self.keys[j], self.keys[i]];
-        [self.values[i], self.values[j]] = [self.values[j], self.values[i]];
-    }
-
-    push(key, value) {
-        self.keys.push(key);
-        self.values.push(value);
-
-        let i = self.values.len() - 1;
-        let p = (i - 1) / 2;
-        while p >= 0 && self.keys[i] < self.keys[p] {
-            self.swap(i, p);
-            i = p;
-            p = (p - 1) / 2;
-        }
-    }
-
-    pop() {
-        if self.values.len() == 0 {
-            return nil;
+    pop() -> (K, T) {
+        if __xs.len() == 0 {
+            throw ValueError('pop from empty heap')
         }
 
-        let result = self.values[0];
-        let priority = self.keys[0];
+        let x = __xs[0]
+        let k = __key[0]
 
-        self.keys[0] = self.keys[-1];
-        self.values[0] = self.values[-1];
+        __key[0] = __key[-1]
+        __xs[0]  = __xs[-1]
 
-        self.keys.pop();
-        self.values.pop();
+        __key.pop()
+        __xs.pop()
 
-        let i = 0;
-        let left = 1;
-        let right = 2;
+        let i = 0
+        let l = 1
+        let r = 2
 
-        while left < self.values.len() {
-            let c = i;
-            if self.keys[left] < self.keys[c] {
-                c = left;
+        while l < #__xs {
+            let c = i
+            if __key[l] < __key[c] {
+                c = l
             }
-            if right < self.values.len() && self.keys[right] < self.keys[c] {
-                c = right;
+            if r < #__xs && __key[r] < __key[c] {
+                c = r
             }
             if c == i {
-                break;
+                break
             }
-            self.swap(i, c);
-            i = c;
-            left = 2 * i + 1;
-            right = left + 1;
+            __swap(i, c)
+            i = c
+            l = 2 * i + 1
+            r = l + 1
         }
 
-        return result, priority;
+        return (k, x)
     }
 
-    __len__() {
-        return #self.values
+    #() -> Int {
+        #__xs
     }
 
-    size() {
-        return self.values.len()
-    }
-
-    __iter__() {
-        for k, i in @keys {
-            yield (k, @values[i])
+    __iter__*() {
+        for k, i in __key {
+            yield (k, __xs[i])
         }
     }
+
+
 }

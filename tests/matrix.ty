@@ -106,7 +106,7 @@ let P = m('
 
 let X = P ** 10
 
-if abs(-61.7444 - [X.row(i).sum() for i in ..X.rows].sum()) < 0.001 {
+if abs(-61.7444 - [X.row(i).sum() for i in ..X.rows].sum(0.0)) < 0.001 {
     print('PASS')
 } else {
     print('FAIL')

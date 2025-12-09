@@ -209,6 +209,14 @@ execln(Ty *ty, char *line)
                 } else {
                         goto Bad;
                 }
+        } else if (strcmp(line, ":tt") == 0) {
+                CheckTypes = !CheckTypes;
+                if (CheckTypes) {
+                        puts("Types: \x1b[92;1mON\x1b[0m");
+                } else {
+                        puts("Types: \x1b[91;1mOFF\x1b[0m");
+                }
+                goto End;
 #ifdef TY_RELEASE
         } else if (strncmp(line, ":u ", 3) == 0) {
                 dump(&buffer, "(__type!((%s)))", line + 3);
@@ -400,7 +408,7 @@ repl(Ty *ty)
                                 exit(EXIT_SUCCESS);
                         }
                         execln(ty, line);
-                        type_reset_names(ty);
+                        types_reset_names(ty);
                 }
         }
 }

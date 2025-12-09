@@ -2842,7 +2842,7 @@ BUILTIN_FUNCTION(os_write)
         }
 
         Value *all = NAMED("all");
-        bool write_all = all != NULL && value_truthy(ty, all);
+        bool write_all = (all != NULL) && value_truthy(ty, all);
 
         usize off = 0;
 

@@ -3660,7 +3660,10 @@ invoke_fun_macro(Ty *ty, Scope *scope, Expr *e)
                 vmP(&v);
         }
 
-        Value v = vmC(&m, vN(e->args));
+        Value v;
+        WITH_TYPES_OFF {
+                v = vmC(&m, vN(e->args));
+        }
 
         Location const mstart = STATE.mstart;
         Location const mend = STATE.mend;
@@ -4168,13 +4171,16 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
         case EXPRESSION_KW_OR:
                 symbolize_expression(ty, scope, e->left);
                 symbolize_expression(ty, scope, e->right);
-                e->_type = type_binary_op(ty, e);
+                if (IS_CTX(EXPR)) {
+                        e->_type = type_binary_op(ty, e);
+                }
                 break;
 
         case EXPRESSION_CMP:
                 symbolize_expression(ty, scope, e->left);
                 symbolize_expression(ty, scope, e->right);
                 e->_type = TYPE_INT;
+                break;
 
         case EXPRESSION_IN:
         case EXPRESSION_NOT_IN:
@@ -4213,10 +4219,15 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                 break;
 
         case EXPRESSION_DOT_DOT:
-        case EXPRESSION_DOT_DOT_DOT:
                 symbolize_expression(ty, scope, e->left);
                 symbolize_expression(ty, scope, e->right);
                 e->_type = class_get(ty, CLASS_RANGE)->object_type;
+                break;
+
+        case EXPRESSION_DOT_DOT_DOT:
+                symbolize_expression(ty, scope, e->left);
+                symbolize_expression(ty, scope, e->right);
+                e->_type = class_get(ty, CLASS_INC_RANGE)->object_type;
                 break;
 
         case EXPRESSION_UNSAFE:
@@ -10761,6 +10772,8 @@ expand_prog(Ty *ty, Stmt **p)
 static Stmt **
 resolve_prog(Ty *ty, Stmt **p)
 {
+        types_begin(ty);
+
         for (usize i = 0; p[i] != NULL; ++i) {
                 InjectRedpill(ty, p[i]);
         }
@@ -10769,7 +10782,7 @@ resolve_prog(Ty *ty, Stmt **p)
                 WITH_SCOPE_LIMIT(p[i]->when) {
                         symbolize_statement(ty, STATE.global, p[i]);
                 }
-                type_iter(ty);
+                types_iter(ty);
         }
 
         for (int i = 0; i < vN(STATE.class_ops); ++i) {
@@ -10780,8 +10793,10 @@ resolve_prog(Ty *ty, Stmt **p)
                 ){
                         symbolize_statement(ty, STATE.global, def);
                 }
-                type_iter(ty);
+                types_iter(ty);
         }
+
+        types_finish(ty);
 
         return p;
 }
@@ -12403,6 +12418,14 @@ tyexpr(Ty *ty, Expr const *e, u32 flags)
                 } else {
                         v = TAGGED(TyLangString, go(e->lang), v);
                 }
+                break;
+
+        case EXPRESSION_UNARY_OP:
+                v = TAGGED(
+                        TyUserOp,
+                        vSsz(e->uop),
+                        go(e->operand)
+                );
                 break;
 
         case EXPRESSION_USER_OP:
@@ -14199,10 +14222,23 @@ cexpr(Ty *ty, Value *v)
                 break;
 
         case TyUserOp:
-                e->type = EXPRESSION_USER_OP;
-                e->op_name = mkcstr(ty, &v->items[0]);
-                e->left = cexpr(ty, &v->items[1]);
-                e->right = cexpr(ty, &v->items[2]);
+                switch (v->count) {
+                case 2:
+                        e->type = EXPRESSION_UNARY_OP;
+                        e->uop = mkcstr(ty, &v->items[0]);
+                        e->operand = cexpr(ty, &v->items[1]);
+                        break;
+
+                case 3:
+                        e->type = EXPRESSION_USER_OP;
+                        e->op_name = mkcstr(ty, &v->items[0]);
+                        e->left = cexpr(ty, &v->items[1]);
+                        e->right = cexpr(ty, &v->items[2]);
+                        break;
+
+                default:
+                        goto Bad;
+                }
                 break;
 
         case TyTypeOf:
@@ -14445,10 +14481,7 @@ tyeval(Ty *ty, Expr *e, Value *ret)
 }
 
 Value
-compiler_eval(
-        Ty *ty,
-        Expr *e
-)
+compiler_eval(Ty *ty, Expr *e)
 {
         symbolize_expression(ty, STATE.global, e);
 
@@ -14526,7 +14559,9 @@ typarse(
         Value expr;
 
         vmP(&vSelf);
-        expr = vmC(&m, 1);
+        WITH_TYPES_OFF {
+                expr = vmC(&m, 1);
+        }
         vmP(&expr);
 
         STATE.macro_scope = macro_scope_save;
@@ -15191,7 +15226,7 @@ compiler_symbolize_expression(Ty *ty, Expr *e, Scope *scope)
                 symbolize_expression(ty, scope, e);
         }
 
-        type_iter(ty);
+        types_iter(ty);
 
         EVAL_DEPTH -= 1;
         TY_CATCH_END();
