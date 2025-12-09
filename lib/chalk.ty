@@ -575,9 +575,14 @@ class Chalk {
         let clean = \_.sub(/\\./, &[1])
 
         for match parts {
-            m: RegexMatch => {
-                continue if plain
-                match m.groups[1;] {
+            part: String
+                => out.push(clean(part)),
+
+            RegexMatch({groups: [escaped]})
+                => out.push(escaped[1;]),
+
+            RegexMatch({captures}) => if !plain {
+                match captures {
                     [nil, &words $~> styles] => {
                         stack.push(styles.map(get-style))
                         update()
@@ -609,15 +614,9 @@ class Chalk {
                         }
                         stack.filter!(\#_ > 0)
                         update()
-                    },
-
-                    [] => {
-                        out.push(m[0][1;])
                     }
                 }
-            },
-
-            s => out.push(clean(s))
+            }
         }
 
         for match stack {
@@ -664,8 +663,14 @@ class Chalk {
         }
 
         for match parts {
-            _match: RegexMatch => {
-                match _match.groups[1;] {
+            part: String
+                => spans.push((style, part.sub(/\\./, &[1;]))),
+
+            RegexMatch({groups: [escaped]})
+                => spans.push((style, escaped[1;])),
+
+            RegexMatch({captures}) => {
+                match captures {
                     [nil, &words $~> styles] => {
                         stack.push(styles.map(get-style))
                         update()
@@ -694,13 +699,9 @@ class Chalk {
                         }
                         stack.filter!(\#_ > 0)
                         update()
-                    },
-
-                    _ => spans.push((style, _match[0][1;]))
+                    }
                 }
-            },
-
-            text => spans.push((style, text.sub(/\\./, &[1;])))
+            }
         }
 
         spans

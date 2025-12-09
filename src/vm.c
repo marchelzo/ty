@@ -2735,6 +2735,7 @@ GetMember(Ty *ty, Value v, int member, bool try_missing, bool exec)
         case VALUE_BUILTIN_FUNCTION:
         case VALUE_BUILTIN_METHOD:
         case VALUE_FOREIGN_FUNCTION:
+        case VALUE_OPERATOR:
                 n = CLASS_FUNCTION;
                 goto ClassLookup;
 
@@ -3034,6 +3035,7 @@ CallMethod(Ty *ty, int i, int n, int nkw, bool b)
         case VALUE_FOREIGN_FUNCTION:
         case VALUE_METHOD:
         case VALUE_BUILTIN_METHOD:
+        case VALUE_OPERATOR:
                 class = CLASS_FUNCTION;
                 goto ClassLookup;
 

@@ -334,6 +334,10 @@ class Function : Iter {
         (a, b) -> self(b, a)
     }
 
+    >*() {
+        args -> self(*args)
+    }
+
     bind(x) {
         bindMethod(self, x)
     }
@@ -379,6 +383,8 @@ class Function : Iter {
 }
 
 class Array[T] : Iterable[T] {
+    static NIL: Object = Object()
+
     init(*xs) {
         xs
     }
@@ -401,6 +407,7 @@ class Array[T] : Iterable[T] {
     enumerate() -> Array[(Int, T)];
     filter!(pred: T -> Any) -> Array[T];
     filter(pred: T -> Any) -> Array[T];
+    group() -> Array[Array[T]];
     groups-of(n: Int) -> Array[Array[T]];
     join(sep: String = '') -> String;
     len() -> Int;
@@ -421,6 +428,7 @@ class Array[T] : Iterable[T] {
     sort(cmp: (T, T) -> Any, desc: Bool = false) -> Array[T];
     sort(by: T -> Any, desc: Bool = false) -> Array[T];
     sort(desc: Bool = false) -> Array[T];
+    split(i: Int) -> (Array[T], Array[T]);
     sum(zero: T) -> T;
     sum() -> T | nil;
     take!(n: Int) -> Array[T];
@@ -483,8 +491,7 @@ class Array[T] : Iterable[T] {
     }
 
     transpose[U]() -> Array[T] where T: Array[U] {
-        let xs = [(x, i) for x, i in self[0]]
-        [[self[j][i] for i in ..#self] for j in ..#self[0]]
+        [[self[j][i] for j in ..#self] for i in ..#self[0]]
     }
 
     indices*() -> Generator[_] {
@@ -519,14 +526,44 @@ class Array[T] : Iterable[T] {
         map(f).flat(1)
     }
 
-    sorted?() {
+    sorted? {
         for i in 1..#self {
             if self[i - 1] > self[i] {
                 return false
             }
         }
 
-        return true
+        true
+    }
+
+    split-when(p: T -> Any) -> Array[Array[T]] {
+        let result = []
+        let chunk  = []
+
+        for x in self {
+            if p(x) {
+                if #chunk > 0 {
+                    result.push(chunk)
+                    chunk = []
+                }
+            } else {
+                chunk.push(x)
+            }
+        }
+
+        if #chunk > 0 {
+            result.push(chunk)
+        }
+
+        return result
+    }
+
+    split-on(p: T) -> Array[Array[T]] {
+        split-when(\_ == p)
+    }
+
+    split-any(on: {contains?: T -> Bool}) -> Array[Array[T]] {
+        split-when(\_ in on)
     }
 
     at(i) {
@@ -1097,6 +1134,14 @@ class Int : IntoPtr[_] {
         while self >= b {
             yield self--
         }
+    }
+
+    `..`(b: Int) -> Range {
+        self..b
+    }
+
+    `...`(b: Int) -> InclusiveRange {
+        self...b
     }
 
     even? {
@@ -2647,6 +2692,10 @@ class Range : Iterable[Int] {
         ks.all?(k -> k :: self)
     }
 
+    <=>(r: Range) -> Int {
+        (low, high) <=> (r.low, r.high)
+    }
+
     __iter__() -> Generator[Int] {
         if a < b {
             a.upto(b - 1)
@@ -3991,8 +4040,8 @@ macro __desugar_partial__(call: _) {
     return go(args, mkcall, max(depth, 1))
 }
 
-fn >>(x, f) { f(x) }
-fn <<(f, x) { f(x) }
+fn >>[a, b](x: a, f: a -> b) -> b { f(x) }
+fn <<[a, b](f: a -> b, x: a) -> b { f(x) }
 
 fn ?>[a, b](x: a, f: a -> b) -> b;
 fn ?>[a, b](x: nil | a, f: a -> b) -> nil | b;
@@ -4003,6 +4052,10 @@ macro =~(a, b) = do let [$0, ?$1, ?$2, ?$3, ?$4, ?$5, ?$6, ?$7, ?$8, ?$9] or ($0
 
 fn .[a, b, c](f: b -> c, g: a -> b) -> (a -> c) {
     f@(g(*, **))
+}
+
+fn <*-[T, ...Args](f: (Args -> T), args: Iterable[_]) -> T {
+    f(*args)
 }
 
 fn sink(file) match file {
@@ -4310,8 +4363,6 @@ fn test[F](fun: F) -> F {
 #|else
 macro test(fun) { ty.Func({name: (#fun).name, params: [], rt: ty.Nil, body: ty.Nil}) }
 #|]
-
-
 
 operator **   10 right
 operator :>   5  left

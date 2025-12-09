@@ -60,7 +60,7 @@ ns raw {
 
 let __tls::ctx = nil
 
-pub fn compress(s: String | Blob) {
+pub fn compress(s: String | Blob) -> Blob {
   let bound = raw.compressBound(s.size())
   let $pSize = c.box(c.ulong, bound)
   let $buffer = c.alloc(bound)
@@ -77,7 +77,7 @@ pub fn compress(s: String | Blob) {
   return compressed
 }
 
-pub fn uncompress(s: String | Blob, maxSize = nil) {
+pub fn uncompress(s: String | Blob, maxSize = nil) -> Blob | nil {
   let size = 4096
   let $pSize = c.box(c.ulong, size)
   let $buffer = c.alloc(size)
@@ -110,7 +110,7 @@ pub fn uncompress(s: String | Blob, maxSize = nil) {
   return Blob(c.as_str(buffer, c.load(c.ulong, pSize)))
 }
 
-pub fn uncompress2(s: String | Blob, maxSize) {
+pub fn uncompress2(s: String | Blob, maxSize) -> Blob | nil {
   let CHUNK = 4096
 
   let zs = ctx ?? (ctx = ZStream())

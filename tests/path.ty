@@ -318,7 +318,7 @@ fn test-chmod() {
     let tmp = path.Path("/tmp/ty-path-chmod-{rand()}")
     tmp.mkdir()
 
-    tmp / 'test.txt' >> \_.touch()
+    (tmp / 'test.txt').touch()
     
     let file = tmp / 'test.txt'
     file.chmod(0o644)

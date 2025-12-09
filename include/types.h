@@ -397,13 +397,19 @@ i32
 type_approx_class(Type const *t0);
 
 bool
-type_iter(Ty *ty);
+types_iter(Ty *ty);
 
 void
-type_reset(Ty *ty);
+types_begin(Ty *ty);
 
 void
-type_reset_names(Ty *ty);
+types_finish(Ty *ty);
+
+void
+types_reset(Ty *ty);
+
+void
+types_reset_names(Ty *ty);
 
 inline static Type *
 iterable_type_for(Ty *ty, Expr const *e, Type *t0)

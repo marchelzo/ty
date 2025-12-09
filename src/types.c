@@ -13,7 +13,7 @@
 #include "array.h"
 #include "dict.h"
 
-#define TYPES_LOG 0
+#define TYPES_LOG 1
 
 typedef struct {
         TypeVector id0;
@@ -5480,7 +5480,7 @@ TryProgress(Ty *ty)
                 }
         }
 
-        ToSolve.count = n;
+        vN(ToSolve) = n;
 
         return any;
 }
@@ -9540,6 +9540,8 @@ type_op(Ty *ty, Expr const *e)
 Type *
 type_binary_op(Ty *ty, Expr const *e)
 {
+        xDDD();
+
         int op = -1;
 
         switch (e->type) {
@@ -9954,7 +9956,7 @@ fixup(Ty *ty, Type *t0)
                         avP(g0->bound, var0->id);
                 } else {
                         Occurs(ty, g0, id, CurrentLevel);
-                        XXTLOG("  drop %s, only %d refs in %s", VarName(ty, id), nref, ShowType(g0));
+                        XXTLOG("  drop %s, only %d refs in %s", VarName(ty, id), refs, ShowType(g0));
                 }
         }
 
@@ -9983,7 +9985,7 @@ type_function_fixup(Ty *ty, Expr const *e)
         }
 
         if (e->class != NULL) {
-                XXTLOG("fixup(%s.%s)[%d]:", class_name(ty, e->class), e->name, CurrentLevel);
+                XXTLOG("fixup(%s.%s)[%d]:", e->class->name, e->name, CurrentLevel);
                 XXTLOG("    %s", ShowType(t0));
         } else {
                 XXTLOG("fixup(%s)[%d]:", e->name ? e->name : "", CurrentLevel);
@@ -10855,15 +10857,13 @@ type_approx_class(Type const *t0)
 }
 
 void
-type_reset(Ty *ty)
+types_reset(Ty *ty)
 {
-        ToSolve.count = (vN(WorkIndex) > 0)
-                      ? *vvL(WorkIndex)
-                      : 0;
+        vN(ToSolve) = (vN(WorkIndex) > 0) ? *vvL(WorkIndex) : 0;
 }
 
 void
-type_reset_names(Ty *ty)
+types_reset_names(Ty *ty)
 {
         itable_clear(&VarNameTable);
         itable_copy(ty, &VarNameTable, &FixedVarNameTable);
@@ -10872,21 +10872,41 @@ type_reset_names(Ty *ty)
 }
 
 bool
-type_iter(Ty *ty)
+types_iter(Ty *ty)
 {
+        xDDDD();
+
         bool any = false;
 
-        if (ENABLED) {
-                while (TryProgress(ty)) {
-                        any = true;
-                }
+        while (TryProgress(ty)) {
+                any = true;
         }
 
-        if (!any && vN(ToSolve) > 0) {
-                type_reset(ty);
+        if (any || vN(ToSolve) == 0) {
+                return true;
         }
 
-        return any;
+        if (TY_IS_INITIALIZED) {
+                SolveDeferred(ty);
+        } else {
+                types_reset(ty);
+        }
+
+        return false;
+}
+
+void
+types_begin(Ty *ty)
+{
+        xDDDDD();
+        EnterScope();
+}
+
+void
+types_finish(Ty *ty)
+{
+        xDDDDD();
+        LeaveScope();
 }
 
 Type *
