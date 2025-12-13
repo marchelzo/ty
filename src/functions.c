@@ -7929,6 +7929,11 @@ BUILTIN_FUNCTION(ty_disassemble)
         return result;
 }
 
+BUILTIN_FUNCTION(ty_coro)
+{
+        return TyActiveGenerator(ty);
+}
+
 BUILTIN_FUNCTION(eval)
 {
         ASSERT_ARGC("ty.eval()", 1, 2);
