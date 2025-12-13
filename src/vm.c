@@ -9764,6 +9764,13 @@ TyPostFork(Ty *ty)
         TySpinLockLock(MyLock);
 }
 
+Value
+TyActiveGenerator(Ty *ty)
+{
+        Generator *gen = GetCurrentGenerator(ty);
+        return (gen != NULL) ? GENERATOR(gen) : NIL;
+}
+
 Ty *
 GetMyTy(void)
 {

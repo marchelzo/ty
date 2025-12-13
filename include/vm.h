@@ -175,6 +175,9 @@ ActiveFun(Ty *ty)
         return FrameFun(ty, vvL(ty->st.frames));
 }
 
+Value
+TyActiveGenerator(Ty *ty);
+
 void
 TyPostFork(Ty *ty);
 
