@@ -389,24 +389,15 @@ cffi_alloc(Ty *ty, int argc, Value *kwargs)
 Value
 cffi_realloc(Ty *ty, int argc, Value *kwargs)
 {
-        if (argc != 2) {
-                zP("ffi.realloc() expects 2 arguments but got %d", argc);
-        }
+        ASSERT_ARGC("ffi.realloc()", 2);
 
-        if (ARG(0).type != VALUE_PTR) {
-            zP("ffi.realloc(): expected pointer as first argument but got: %s", VSC(&ARG(0)));
-        }
+        Value _ptr = ARG(0);
+        usize size = INT_ARG(1);
 
-        if (ARG(1).type != VALUE_INTEGER) {
-                zP("ffi.realloc(): expected integer as second argument but got: %s", VSC(&ARG(1)));
-        }
+        void *ptr = ptr_from(ty, &_ptr);
+        void *new = realloc(ptr, size);
 
-        if (ARG(1).z <= 0)
-                return NIL;
-
-        void *p = realloc(ARG(0).ptr, ARG(1).z);
-
-        return (p == NULL) ? NIL : PTR(p);
+        return (new == NULL) ? NIL : PTR(new);
 }
 
 Value
@@ -656,21 +647,22 @@ cffi_load_atomic(Ty *ty, int argc, Value *kwargs)
 Value
 cffi_load_n(Ty *ty, int argc, Value *kwargs)
 {
-        ffi_type *t = ARG(0).ptr;
-        char *p = ARG(1).ptr;
-        size_t n = ARG(2).z;
+        ASSERT_ARGC("ffi.load()", 3);
 
-        struct array *a = vA();
+        ffi_type *t = PTR_ARG(0);
+        char *p = PTR_ARG(1);
+        usize n = INT_ARG(2);
 
-        NOGC(a);
+        Array *a = vA();
+        Value result = ARRAY(a);
 
+        gP(&result);
         for (int i = 0; i < n; ++i) {
-            vAp(a, load(ty, t, p + (i * t->size)));
+            uvP(*a, load(ty, t, p + (i * t->size)));
         }
+        gX();
 
-        OKGC(a);
-
-        return ARRAY(a);
+        return result;
 }
 
 Value
