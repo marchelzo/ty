@@ -44,19 +44,19 @@ collect(Ty *ty, struct alloc *a)
         case GC_GENERATOR:
                 gen = p;
 
-                ty_free(gen->frame.items);
-                ty_free(gen->st.calls.items);
-                ty_free(gen->st.frames.items);
-                ty_free(gen->st.targets.items);
-                ty_free(gen->st.sps.items);
-                ty_free(gen->st.to_drop.items);
-                ty_free(gen->gc_roots.items);
+                xvF(gen->frame);
+                xvF(gen->st.calls);
+                xvF(gen->st.frames);
+                xvF(gen->st.targets);
+                xvF(gen->st.sps);
+                xvF(gen->st.to_drop);
+                xvF(gen->gc_roots);
 
-                for (int i = 0; i < gen->st.try_stack.capacity; ++i) {
+                for (int i = 0; i < vC(gen->st.try_stack); ++i) {
                         ty_free(v__(gen->st.try_stack, i));
                 }
 
-                ty_free(gen->st.try_stack.items);
+                xvF(gen->st.try_stack);
 
                 GCLOG("collect(): free generator   co=%p   ip=%p\n", (void *)gen->co, (void *)gen->ip);
 

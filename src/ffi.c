@@ -912,48 +912,37 @@ cffi_c_str(Ty *ty, int argc, Value *kwargs)
 Value
 cffi_str(Ty *ty, int argc, Value *kwargs)
 {
-        if (argc != 1 && argc != 2) {
-                zP("ffi.str() expects 1 or 2 arguments but got %d", argc);
-        }
+        ASSERT_ARGC("ffi.str()", 1, 2);
 
-        void *p;
-        store(ty, &ffi_type_pointer, &p, &ARG(0));
+        Value arg = ARG(0);
+        void *str = ptr_from(ty, &arg);
 
-        size_t n;
+        usize n;
         if (argc == 2) {
-                if (ARG(1).type != VALUE_INTEGER) {
-                        zP("the second argument to ffi.str() must be an integer");
-                }
-                n = ARG(1).z;
+                n = INT_ARG(1);
         } else {
-                n = strlen(p);
+                n = strlen(str);
         }
 
-        return vSs(p, n);
+        return vSs(str, n);
 }
 
 Value
 cffi_as_str(Ty *ty, int argc, Value *kwargs)
 {
-        if (argc != 1 && argc != 2) {
-                zP("ffi.as_str() expects 1 or 2 arguments but got %d", argc);
-        }
+        ASSERT_ARGC("ffi.as_str()", 1, 2);
 
-        if (ARG(0).type != VALUE_PTR) {
-                zP("the first argument to ffi.as_str() must be a pointer");
-        }
+        Value arg = ARG(0);
+        void *str = ptr_from(ty, &arg);
 
-        size_t n;
+        usize n;
         if (argc == 2) {
-                if (ARG(1).type != VALUE_INTEGER) {
-                        zP("the second argument to ffi.as_str() must be an integer");
-                }
-                n = ARG(1).z;
+                n = INT_ARG(1);
         } else {
-                n = strlen(ARG(0).ptr);
+                n = strlen(str);
         }
 
-        return STRING_NOGC(ARG(0).ptr, n);
+        return xSs(str, n);
 }
 
 Value
@@ -1081,11 +1070,9 @@ cffi_closure(Ty *ty, int argc, Value *kwargs)
 Value
 cffi_closure_free(Ty *ty, int argc, Value *kwargs)
 {
-        if (argc != 1) {
-                zP("ffi.freeClosure(): expected 1 argument but got %d", argc);
-        }
+        ASSERT_ARGC("ffi.freeClosure()", 1);
 
-        Value p = ARG(0);
+        Value p = ARGx(0, VALUE_PTR);
         void **pointers = p.extra;
 
         ffi_closure_free(pointers[0]);
