@@ -7063,7 +7063,7 @@ BinaryOp:
                         break;
 
                 CASE(SAVE_STACK_POS)
-                        xvP(SP_STACK, STACK.count);
+                        xvP(SP_STACK, vN(STACK));
                         break;
 
                 CASE(POP_STACK_POS)
