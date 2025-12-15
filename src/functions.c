@@ -470,7 +470,7 @@ BUILTIN_FUNCTION(slurp)
                 v0(B);
                 lGv(true);
                 while (!feof(f) && (r = fread(tmp, 1, TY_TMP_N, f)) > 0) {
-                        uvPn(B, tmp, r);
+                        xvPn(B, tmp, r);
                 }
                 lTk();
 
@@ -529,7 +529,7 @@ BUILTIN_FUNCTION(read)
         v0(B);
         lGv(true);
         while (c = getchar(), c != EOF && c != '\n') {
-                uvP(B, c);
+                xvP(B, c);
         }
 
         lTk();
@@ -2004,9 +2004,9 @@ b64dec(Ty *ty, u8 const *s, size_t n)
                 s2 = table[g[1]];
                 s3 = table[g[2]];
                 s4 = table[g[3]];
-                uvP(B, (s1 << 2) | (s2 >> 4));
-                uvP(B, ((s2 & 0x0F) << 4) | (s3 >> 2));
-                uvP(B, ((s3 & 0x03) << 6) | s4);
+                xvP(B, (s1 << 2) | (s2 >> 4));
+                xvP(B, ((s2 & 0x0F) << 4) | (s3 >> 2));
+                xvP(B, ((s3 & 0x03) << 6) | s4);
         }
 
         memset(g, 0, sizeof g);
@@ -2017,17 +2017,17 @@ b64dec(Ty *ty, u8 const *s, size_t n)
                 s1 = table[g[0]];
                 s2 = table[g[1]];
                 s3 = table[g[2]];
-                uvP(B, (s1 << 2) | (s2 >> 4));
-                uvP(B, ((s2 & 0x0F) << 4) | (s3 >> 2));
+                xvP(B, (s1 << 2) | (s2 >> 4));
+                xvP(B, ((s2 & 0x0F) << 4) | (s3 >> 2));
                 break;
         case 2:
                 s1 = table[g[0]];
                 s2 = table[g[1]];
-                uvP(B, (s1 << 2) | (s2 >> 4));
+                xvP(B, (s1 << 2) | (s2 >> 4));
                 break;
         case 1:
                 s1 = table[g[0]];
-                uvP(B, s1 << 2);
+                xvP(B, s1 << 2);
                 break;
         }
 
@@ -2050,10 +2050,10 @@ b64enc(Ty *ty, void const *data, size_t n)
 
         for (size_t i = 0; i < d.quot; ++i) {
                 memcpy(g, s + 3*i, 3);
-                uvP(B, table[g[0] >> 2]);
-                uvP(B, table[((g[0] & 0x03) << 4) | (g[1] >> 4)]);
-                uvP(B, table[((g[1] & 0x0F) << 2) | (g[2] >> 6)]);
-                uvP(B, table[g[2] & 0x3F]);
+                xvP(B, table[g[0] >> 2]);
+                xvP(B, table[((g[0] & 0x03) << 4) | (g[1] >> 4)]);
+                xvP(B, table[((g[1] & 0x0F) << 2) | (g[2] >> 6)]);
+                xvP(B, table[g[2] & 0x3F]);
         }
 
         memset(g, 0, sizeof g);
@@ -2061,16 +2061,16 @@ b64enc(Ty *ty, void const *data, size_t n)
 
         switch (d.rem) {
         case 2:
-                uvP(B, table[g[0] >> 2]);
-                uvP(B, table[((g[0] & 0x03) << 4) | (g[1] >> 4)]);
-                uvP(B, table[((g[1] & 0x0F) << 2) | (g[2] >> 6)]);
-                uvP(B, '=');
+                xvP(B, table[g[0] >> 2]);
+                xvP(B, table[((g[0] & 0x03) << 4) | (g[1] >> 4)]);
+                xvP(B, table[((g[1] & 0x0F) << 2) | (g[2] >> 6)]);
+                xvP(B, '=');
                 break;
         case 1:
-                uvP(B, table[g[0] >> 2]);
-                uvP(B, table[((g[0] & 0x03) << 4) | (g[1] >> 4)]);
-                uvP(B, '=');
-                uvP(B, '=');
+                xvP(B, table[g[0] >> 2]);
+                xvP(B, table[((g[0] & 0x03) << 4) | (g[1] >> 4)]);
+                xvP(B, '=');
+                xvP(B, '=');
                 break;
         }
 }
@@ -2125,11 +2125,8 @@ BUILTIN_FUNCTION(base64_decode)
                 return NIL;
         }
 
-        struct blob *b = value_blob_new(ty);
-
-        NOGC(b);
-        vvPn(*b, B.items, B.count);
-        OKGC(b);
+        Blob *b = value_blob_new(ty);
+        uvPv(*b, B);
 
         return BLOB(b);
 }
@@ -4668,23 +4665,23 @@ BUILTIN_FUNCTION(os_getaddrinfo)
         }
 
         if (host.type != VALUE_NIL) {
-                vvPn(B, ss(host), sN(host));
-                uvP(B, '\0');
+                xvPn(B, ss(host), sN(host));
+                xvP(B, '\0');
 
-                vvPn(B, ss(port), sN(port));
-                uvP(B, '\0');
+                xvPn(B, ss(port), sN(port));
+                xvP(B, '\0');
 
                 node = B.items;
                 service = B.items + sN(host) + 1;
         } else if (port.type == VALUE_NIL) {
-                vvPn(B, ss(host), sN(host));
-                uvP(B, '\0');
+                xvPn(B, ss(host), sN(host));
+                xvP(B, '\0');
 
                 node = B.items;
                 service = NULL;
         } else {
-                vvPn(B, ss(port), sN(port));
-                uvP(B, '\0');
+                xvPn(B, ss(port), sN(port));
+                xvP(B, '\0');
 
                 node = NULL;
                 service = B.items;
@@ -5756,9 +5753,9 @@ BUILTIN_FUNCTION(os_listdir)
 
         // Prepare the search path
         B.count = 0;
-        vvPn(B, ss(dir), sN(dir));
-        vvPn(B, "\\*", 2); // Add wildcard for all files
-        uvP(B, '\0');
+        xvPn(B, ss(dir), sN(dir));
+        xvPn(B, "\\*", 2); // Add wildcard for all files
+        xvP(B, '\0');
 
         WIN32_FIND_DATAA findData;
         HANDLE hFind = FindFirstFileA(B.items, &findData);
@@ -6528,11 +6525,11 @@ BUILTIN_FUNCTION(time_strptime)
 
         B.count = 0;
 
-        vvPn(B, ss(s), sN(s));
-        uvP(B, '\0');
+        xvPn(B, ss(s), sN(s));
+        xvP(B, '\0');
 
-        vvPn(B, ss(fmt), sN(fmt));
-        uvP(B, '\0');
+        xvPn(B, ss(fmt), sN(fmt));
+        xvP(B, '\0');
 
         char const *sp = B.items;
         char const *fp = B.items + sN(s) + 1;
@@ -6661,7 +6658,7 @@ BUILTIN_FUNCTION(stdio_fgets)
 
         lGv(true);
         while ((c = fgetc(fp)) != EOF && c != '\n') {
-                uvP(B, c);
+                xvP(B, c);
         }
         lTk();
 
@@ -6985,7 +6982,7 @@ BUILTIN_FUNCTION(stdio_slurp)
 
         lGv(true);
         while ((c = fgetc(fp)) != EOF) {
-                uvP(B, c);
+                xvP(B, c);
         }
         lTk();
 
@@ -7872,9 +7869,9 @@ BUILTIN_FUNCTION(ty_disassemble)
 
         switch (what.type) {
         case VALUE_STRING:
-                uvP(B, '\0');
-                uvPn(B, ss(what), sN(what));
-                uvP(B, '\0');
+                xvP(B, '\0');
+                xvPn(B, ss(what), sN(what));
+                xvP(B, '\0');
 
                 name = "(eval)";
                 mod = compiler_compile_source(ty, B.items + 1, name);
@@ -7942,10 +7939,10 @@ BUILTIN_FUNCTION(eval)
 
         if (ARG(0).type == VALUE_STRING) {
                 B.count = 0;
-                uvP(B, '\0');
-                uvPn(B, EVAL_PROLOGUE, countof(EVAL_PROLOGUE) - 1);
-                uvPn(B, ss(ARG(0)), sN(ARG(0)));
-                uvPn(B, EVAL_EPILOGUE, countof(EVAL_EPILOGUE));
+                xvP(B, '\0');
+                xvPn(B, EVAL_PROLOGUE, countof(EVAL_PROLOGUE) - 1);
+                xvPn(B, ss(ARG(0)), sN(ARG(0)));
+                xvPn(B, EVAL_EPILOGUE, countof(EVAL_EPILOGUE));
                 Arena old = NewArena(1 << 26);
                 Stmt **prog = parse(ty, vv(B) + 1, "(eval)");
 
@@ -8032,9 +8029,9 @@ BUILTIN_FUNCTION(ty_tokenize)
         }
 
         B.count = 0;
-        uvP(B, '\0');
-        uvPn(B, ss(ARG(0)), sN(ARG(0)));
-        uvP(B, '\0');
+        xvP(B, '\0');
+        xvPn(B, ss(ARG(0)), sN(ARG(0)));
+        xvP(B, '\0');
 
         Arena old = NewArena(1 << 18);
 
@@ -8775,9 +8772,9 @@ BUILTIN_FUNCTION(tdb_eval)
         ty = TDB->ty;
 
         v0(B);
-        uvP(B, '\0');
-        uvPn(B, ss(ARG(0)), sN(ARG(0)));
-        uvP(B, '\0');
+        xvP(B, '\0');
+        xvPn(B, ss(ARG(0)), sN(ARG(0)));
+        xvP(B, '\0');
 
         Arena old = NewArena(1 << 20);
 

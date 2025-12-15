@@ -264,9 +264,13 @@ load(Ty *ty, ffi_type *t, void const *p)
 static void
 closure_func(ffi_cif *cif, void *ret, void **args, void *data)
 {
+        static int depth = 0;
+
         Value *ctx = data;
         Value *f = &ctx->items[0];
         Ty *ty = ctx->items[1].ptr;
+
+        depth += 1;
 
         bool need_unlock = MaybeTakeLock(ty);
 
@@ -297,6 +301,8 @@ closure_func(ffi_cif *cif, void *ret, void **args, void *data)
         default:
                 store(ty, cif->rtype, ret, &rv);
         }
+
+        depth -= 1;
 
         if (need_unlock) {
                 ReleaseLock(ty, true);

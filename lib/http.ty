@@ -5,14 +5,14 @@ import errno
 import net
 import log
 
-function urlDecode(s: String) -> String {
+pub fn urlDecode(s: String) -> String {
     s.sub('+', ' ')
      .sub(/%[[:xdigit:]]{2}/, \chr(int(_[1;], 16)))
      .sub("\r\n", "\n")
      .sub("\r", "\n")
 }
 
-function decodeQuery(query: String) {
+pub fn decodeQuery(query: String) {
     let params = %{}
 
     for [k, ?v] in query.split('&').map(&split('=', 1) |> &map(urlDecode)) {
@@ -30,7 +30,7 @@ function decodeQuery(query: String) {
     return params
 }
 
-function makePattern(route) {
+fn makePattern(route) {
     let route = route.sub(/<(\w+)>/, [_, name] -> "<{name}:\\w+>")
     let params = route.matches(/<(\w+):/).map(&1)
     return (params, regex('^' + route.sub(/<\w+:(.*?)>/, [_, pattern] -> "({pattern})") + '/?$'))

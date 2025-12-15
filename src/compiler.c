@@ -7731,6 +7731,21 @@ emit_while_match(Ty *ty, Stmt const *s, bool want_result)
         end_loop(ty);
 }
 
+static void
+emit_part_match(Ty *ty, struct condpart *p)
+{
+        INSN(SAVE_STACK_POS);
+        if (p->e->type == EXPRESSION_LIST) {
+                emit_list(ty, p->e);
+                INSN(FIX_EXTRA);
+                emit_try_match(ty, p->target);
+        } else {
+                EE(p->e);
+                emit_try_match(ty, p->target);
+        }
+        INSN(POP_STACK_POS);
+}
+
 static bool
 emit_while(Ty *ty, Stmt const *s, bool want_result)
 {
@@ -7762,11 +7777,7 @@ emit_while(Ty *ty, Stmt const *s, bool want_result)
                                 STATE.resources += 1;
                                 has_resources = true;
                         }
-                        INSN(SAVE_STACK_POS);
-                        emit_list(ty, p->e);
-                        INSN(FIX_EXTRA);
-                        emit_try_match(ty, p->target);
-                        INSN(POP_STACK_POS);
+                        emit_part_match(ty, p);
                 }
         }
 
@@ -7835,11 +7846,7 @@ emit_if_not(Ty *ty, Stmt const *s, bool want_result)
                         fail_match_if(ty, p->e);
                         INSN(POP_STACK_POS);
                 } else {
-                        INSN(SAVE_STACK_POS);
-                        emit_list(ty, p->e);
-                        INSN(FIX_EXTRA);
-                        emit_try_match(ty, p->target);
-                        INSN(POP_STACK_POS);
+                        emit_part_match(ty, p);
                 }
         }
 
@@ -7935,11 +7942,7 @@ emit_if(Ty *ty, Stmt const *s, bool want_result)
                         fail_match_if_not(ty, p->e);
                         INSN(POP_STACK_POS);
                 } else {
-                        INSN(SAVE_STACK_POS);
-                        emit_list(ty, p->e);
-                        INSN(FIX_EXTRA);
-                        emit_try_match(ty, p->target);
-                        INSN(POP_STACK_POS);
+                        emit_part_match(ty, p);
                 }
         }
 

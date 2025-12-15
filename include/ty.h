@@ -250,6 +250,7 @@ enum {
         VALUE_TUPLE            ,
         VALUE_TRACE            ,
         VALUE_BREAK            ,
+        VALUE_TOMBSTONE        ,
         VALUE_FUN_META         ,
         VALUE_ANY              ,
         VALUE_TAGGED           = (1 << 7),
@@ -425,6 +426,7 @@ struct frame {
 
 typedef struct cothread_state {
         int exec_depth;
+        int rc;
         FrameStack frames;
         CallStack calls;
         SPStack sps;
@@ -503,6 +505,7 @@ struct dict {
         DictItem *items;
         usize     size;
         usize     count;
+        usize     tombs;
         DictItem *last;
         Value     dflt;
 };
@@ -645,7 +648,6 @@ typedef struct ty {
         vec(DispatchCache) _2op_cache;
 
         int GC_OFF_COUNT;
-        int rc;
 
         GCRootSet   gc_roots;
         GCWorkStack marking;
