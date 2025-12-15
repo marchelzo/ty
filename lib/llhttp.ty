@@ -475,9 +475,18 @@ class HttpParser {
         __mq.len()
     }
 
+    reset() {
+        llhttp_reset(__ctx)
+        __reset()
+        __buf.clear()
+        __mq.take!(0)
+        __err = nil
+    }
+
     destroy() {
         if __ctx != nil {
             c.free(__ctx)
+            c.free(__settings)
             while __closures {
                 c.freeClosure(__closures.pop())
             }
