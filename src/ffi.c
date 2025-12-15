@@ -321,7 +321,7 @@ cffi_cif(Ty *ty, int argc, Value *kwargs)
                 rt = ARG(0).ptr;
         } else {
 Bad:
-                vec_empty(ats);
+                xvF(ats);
                 zP("invalid type passed to ffi.cif()");
         }
 
@@ -329,8 +329,7 @@ Bad:
                 if (ARG(i).type != VALUE_PTR) {
                         goto Bad;
                 }
-
-                vvP(ats, ARG(i).ptr);
+                xvP(ats, ARG(i).ptr);
         }
 
         ffi_cif *cif = mA(sizeof *cif);
@@ -339,15 +338,17 @@ Bad:
 
         if (nFixed != NULL && nFixed->type != VALUE_NIL) {
                 if (nFixed->type != VALUE_INTEGER) {
+                        xvF(ats);
+                        mF(cif);
                         zP("ffi.cif(): expected nFixed to be an integer but got: %s", VSC(nFixed));
                 }
                 if (ffi_prep_cif_var(cif, FFI_DEFAULT_ABI, nFixed->z, max(0, argc - 1), rt, ats.items) != FFI_OK) {
-                        vec_empty(ats);
+                        xvF(ats);
                         mF(cif);
                         return NIL;
                 }
-        } else if (ffi_prep_cif(cif, FFI_DEFAULT_ABI, max(0, argc - 1), rt, ats.items) != FFI_OK) {
-                vec_empty(ats);
+        } else if (ffi_prep_cif(cif, FFI_DEFAULT_ABI, max(0, argc - 1), rt, vv(ats)) != FFI_OK) {
+                xvF(ats);
                 mF(cif);
                 return NIL;
         }
@@ -358,19 +359,10 @@ Bad:
 Value
 cffi_addr(Ty *ty, int argc, Value *kwargs)
 {
-        if (argc != 1) {
-                zP("ffi.addr() expects 1 argument but got %d", argc);
-        }
-
-        Value v = ARG(0);
-
-        if (v.type != VALUE_PTR) {
-                zP("ffi.addr() expects a pointer but got: %s", VSC(&v));
-        }
-
+        ASSERT_ARGC("ffi.addr()", 1);
+        void *v = PTR_ARG(0);
         void **p = mA(sizeof *p);
-        *p = v.ptr;
-
+        *p = v;
         return PTR(p);
 }
 
@@ -1076,7 +1068,11 @@ cffi_closure_free(Ty *ty, int argc, Value *kwargs)
         void **pointers = p.extra;
 
         ffi_closure_free(pointers[0]);
-        mF(pointers[1]);
+
+        ffi_cif *cif = pointers[1];
+        ty_free(cif->arg_types);
+        mF(cif);
+
         mF(pointers);
 
         return NIL;
