@@ -20,7 +20,12 @@
         }                        \
 } while (0)
 
-#define OCCUPIED(d, i) ((i != NO_SUCH_SPOT) && ((d)->items[i].k.type != 0))
+#define V_IS_EMPTY(v) ((v)->type == 0)
+#define V_IS_TOMB(v)  ((v)->type == VALUE_TOMBSTONE)
+
+#define IS_EMPTY(d, i) V_IS_EMPTY(&(d)->items[i].k)
+#define IS_TOMB(d, i)  V_IS_TOMB(&(d)->items[i].k)
+#define OCCUPIED(d, i) ((i != NO_SUCH_SPOT) && !IS_EMPTY(d, i) && !IS_TOMB(d, i))
 
 inline static void
 initxd(Ty *ty, Dict *d)
@@ -35,6 +40,12 @@ inline static Value *
 val(Dict *d, usize i)
 {
         return &d->items[i].v;
+}
+
+inline static bool
+should_rehash(Dict *d)
+{
+        return (4 * (d->count + d->tombs) >= 3 * d->size);
 }
 
 inline static usize
@@ -52,70 +63,90 @@ find_spot(
         usize mask = size - 1;
         usize i = h & mask;
 
-        while (
-                (items[i].k.type != 0)
-             && ((items[i].h != h) || !v_eq(&items[i].k, k))
-        ) {
+        usize tomb = NO_SUCH_SPOT;
+
+        while (!V_IS_EMPTY(&items[i].k)) {
+                if (items[i].h == h && v_eq(&items[i].k, k)) {
+                        return i;
+                }
+                if (tomb == -1 && V_IS_TOMB(&items[i].k)) {
+                        tomb = i;
+                }
                 i = (i + 1) & mask;
         }
 
-        return i;
-}
-
-inline static usize
-delete(Dict *d, usize i)
-{
-        usize mask = d->size - 1;
-        u64 h = d->items[i].h & mask;
-
-        usize j = i;
-        usize k = (i + 1) & mask;
-
-        while (d->items[k].k.type != 0) {
-                if ((d->items[k].h & mask) == h) {
-                        j = k;
-                }
-                k = (k + 1) & mask;
-        }
-
-        if (d->items[i].next != NULL) {
-                d->items[i].next->prev = d->items[i].prev;
-        } else {
-                d->last = d->items[i].prev;
-        }
-        if (d->items[i].prev != NULL) {
-                d->items[i].prev->next = d->items[i].next;
-        }
-
-        if (i != j) {
-                d->items[i] = d->items[j];
-                if (d->items[i].next != NULL) {
-                        d->items[i].next->prev = &d->items[i];
-                } else {
-                        d->last = &d->items[i];
-                }
-                if (d->items[i].prev != NULL) {
-                        d->items[i].prev->next = &d->items[i];
-                }
-        }
-
-        m0(d->items[j]);
-        d->count -= 1;
-
-        return min(i, j);
+        return (tomb != NO_SUCH_SPOT) ? tomb : i;
 }
 
 inline static void
-grow(Ty *ty, Dict *d)
+linkxd(Dict *d, usize i)
 {
-        usize size = (d->size * 2);
+        if (d->items[i].next != NULL) {
+                d->items[i].next->prev = &d->items[i];
+        } else {
+                d->last = &d->items[i];
+        }
+        if (d->items[i].prev != NULL) {
+                d->items[i].prev->next = &d->items[i];
+        }
+}
 
+inline static void
+swap(Dict *d, usize i, usize j)
+{
+        SWAP(DictItem, d->items[i], d->items[j]);
+
+        if (d->items[i].next == &d->items[i]) { d->items[i].next = &d->items[j]; }
+        if (d->items[i].prev == &d->items[i]) { d->items[i].prev = &d->items[j]; }
+        if (d->items[j].next == &d->items[j]) { d->items[j].next = &d->items[i]; }
+        if (d->items[j].prev == &d->items[j]) { d->items[j].prev = &d->items[i]; }
+
+        linkxd(d, i);
+        linkxd(d, j);
+}
+
+inline static Value *
+robinhood(Ty *ty, Dict *d, usize i)
+{
+        usize size = d->size;
+        usize mask = size - 1;
+        DictItem *items = d->items;
+
+        usize lo = items[i].h & mask;
+        usize hi = i;
+
+        while (lo != hi) {
+                u64 lo_h = items[lo].h;
+                u64 hi_h = items[hi].h;
+
+                usize lo_ideal = lo_h & mask;
+                usize hi_ideal = hi_h & mask;
+
+                usize lo_dist = (lo + size - lo_ideal) & mask;
+                usize hi_dist = (hi + size - hi_ideal) & mask;
+
+                if (hi_dist > lo_dist) {
+                        swap(d, lo, hi);
+                        if (hi == i) {
+                                i = lo;
+                        }
+                }
+
+                lo = (lo + 1) & mask;
+        }
+
+        return val(d, i);
+}
+
+inline static void
+rehash(Ty *ty, Dict *d, usize size)
+{
         DictItem *items = mA0(size * sizeof (DictItem));
         DictItem *last = NULL;
 
         DictItem *it = d->last;
 
-        while (it->prev != NULL) {
+        while (it != NULL && it->prev != NULL) {
                 it = it->prev;
         }
 
@@ -136,7 +167,29 @@ grow(Ty *ty, Dict *d)
 
         d->items = items;
         d->last  = last;
+        d->tombs = 0;
         d->size  = size;
+}
+
+inline static usize
+delete(Dict *d, usize i)
+{
+        if (d->items[i].next != NULL) {
+                d->items[i].next->prev = d->items[i].prev;
+        } else {
+                d->last = d->items[i].prev;
+        }
+        if (d->items[i].prev != NULL) {
+                d->items[i].prev->next = d->items[i].next;
+        }
+
+        m0(d->items[i]);
+        d->items[i].k.type = VALUE_TOMBSTONE;
+
+        d->count -= 1;
+        d->tombs += 1;
+
+        return i;
 }
 
 inline static Value *
@@ -144,8 +197,8 @@ put(Ty *ty, Dict *d, usize i, u64 h, Value k, Value v)
 {
         ENSURE_INIT(d);
 
-        if (4 * d->count >= 3 * d->size) {
-                grow(ty, d);
+        if (should_rehash(d)) {
+                rehash(ty, d, d->size * 2);
                 i = find_spot(ty, d->size, d->items, h, &k);
         }
 
@@ -163,7 +216,7 @@ put(Ty *ty, Dict *d, usize i, u64 h, Value k, Value v)
 
         d->count += 1;
 
-        return val(d, i);
+        return robinhood(ty, d, i);
 }
 
 Value *
@@ -199,11 +252,7 @@ dict_has_value(Ty *ty, Dict *d, Value *key)
         u64 h = value_hash(ty, key);
         usize i = find_spot(ty, d->size, d->items, h, key);
 
-        if (d->items[i].k.type != 0) {
-                return true;
-        }
-
-        return false;
+        return OCCUPIED(d, i);
 }
 
 void
@@ -214,7 +263,7 @@ dict_put_value(Ty *ty, Dict *d, Value key, Value value)
         u64 h = value_hash(ty, &key);
         usize i = find_spot(ty, d->size, d->items, h, &key);
 
-        if (d->items[i].k.type != 0) {
+        if (OCCUPIED(d, i)) {
                 d->items[i].v = value;
         } else {
                 put(ty, d, i, h, key, value);
@@ -229,7 +278,7 @@ dict_put_value_with(Ty *ty, Dict *d, Value key, Value v, Value const *f)
         u64 h = value_hash(ty, &key);
         usize i = find_spot(ty, d->size, d->items, h, &key);
 
-        if (d->items[i].k.type != 0) {
+        if (OCCUPIED(d, i)) {
                 d->items[i].v = vm_eval_function(ty, f, &d->items[i].v, &v, NULL);
                 return val(d, i);
         } else {
@@ -245,7 +294,7 @@ dict_put_key_if_not_exists(Ty *ty, Dict *d, Value key)
         u64 h = value_hash(ty, &key);
         usize i = find_spot(ty, d->size, d->items, h, &key);
 
-        if (d->items[i].k.type != 0) {
+        if (OCCUPIED(d, i)) {
                 return val(d, i);
         }
 
@@ -340,7 +389,7 @@ dict_contains(Ty *ty, Value *d, int argc, Value *kwargs)
         u64 h = value_hash(ty, key);
         usize i = find_spot(ty, d->dict->size, d->dict->items, h, key);
 
-        return BOOLEAN(d->dict->items[i].k.type != 0);
+        return BOOLEAN(OCCUPIED(d->dict, i));
 }
 
 static Value
@@ -407,7 +456,7 @@ dict_same_keys(Ty *ty, Dict const *d, Dict const *u)
         }
 
         for (usize i = 0; i < d->size;) {
-                if (d->items[i].k.type == 0) {
+                if (!OCCUPIED(d, i)) {
                         i += 1;
                         continue;
                 }
@@ -433,7 +482,7 @@ copy_unique(Ty *ty, Dict *diff, Dict const *d, Dict const *u)
         ENSURE_INIT(diff);
 
         for (usize i = 0; i < d->size; ++i) {
-                if (d->items[i].k.type == 0) {
+                if (!OCCUPIED(d, i)) {
                         continue;
                 }
                 usize j = find_spot(
@@ -451,7 +500,6 @@ copy_unique(Ty *ty, Dict *diff, Dict const *d, Dict const *u)
                                 d->items[i].h,
                                 &d->items[i].k
                         );
-
                         put(ty, diff, k, d->items[i].h, d->items[i].k, d->items[i].v);
                 }
         }
@@ -487,7 +535,7 @@ dict_intersect(Ty *ty, Value *d, int argc, Value *kwargs)
 
         if (argc == 1) {
                 for (usize i = 0; i < d->dict->size;) {
-                        if (d->dict->items[i].k.type == 0) {
+                        if (!OCCUPIED(d->dict, i)) {
                                 i += 1;
                                 continue;
                         }
@@ -510,7 +558,7 @@ dict_intersect(Ty *ty, Value *d, int argc, Value *kwargs)
                         zP("the second argument to dict.intersect() must be callable");
                 }
                 for (usize i = 0; i < d->dict->size;) {
-                        if (d->dict->items[i].k.type == 0) {
+                        if (!OCCUPIED(d->dict, i)) {
                                 i += 1;
                                 continue;
                         }
@@ -551,7 +599,7 @@ Dict *
 DictUpdate(Ty *ty, Dict *d, Dict const *u)
 {
         for (usize i = 0; i < u->size; ++i) {
-                if (u->items[i].k.type != 0) {
+                if (OCCUPIED(u, i)) {
                         dict_put_value(ty, d, u->items[i].k, u->items[i].v);
                 }
         }
@@ -563,7 +611,7 @@ Dict *
 DictUpdateWith(Ty *ty, Dict *d, Dict const *u, Value const *f)
 {
         for (usize i = 0; i < u->size; ++i) {
-                if (u->items[i].k.type != 0) {
+                if (OCCUPIED(u, i)) {
                         dict_put_value_with(
                                 ty,
                                 d,
@@ -600,7 +648,7 @@ dict_subtract(Ty *ty, Value *d, int argc, Value *kwargs)
 
         if (argc == 1) {
                 for (usize i = 0; i < u->size; ++i) {
-                        if (u->items[i].k.type != 0) {
+                        if (OCCUPIED(u, i)) {
                                 usize j = find_spot(
                                         ty,
                                         d->dict->size,
@@ -616,7 +664,7 @@ dict_subtract(Ty *ty, Value *d, int argc, Value *kwargs)
         } else {
                 Value f = ARG(1);
                 for (usize i = 0; i < u->size; ++i) {
-                        if (u->items[i].k.type != 0) {
+                        if (OCCUPIED(u, i)) {
                                 usize j = find_spot(
                                         ty,
                                         d->dict->size,

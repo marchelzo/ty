@@ -60,7 +60,7 @@ u64 TypeCheckCounter = 0;
 u64 TypeAllocCounter = 0;
 u64 TypeCheckTime = 0;
 
-#if 0
+#if 1
 _Atomic u64 LogCounter;
 #endif
 

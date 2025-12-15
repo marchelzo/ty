@@ -285,7 +285,7 @@ class Text {
     chalk { __chalk }
 
     __str__() -> String {
-        "{__chalk.render(__text)}\x1b[0m"
+        "{__chalk.render(__text)}"
     }
 
     __fmt__(spec: ?String) -> String {
@@ -540,14 +540,14 @@ class Chalk {
         let out = Blob()
         let ostack = []
 
-#|if getenv('NO_COLOR') == nil
         fn update() {
             let new-style = stack.flat().fold({}, \{*_, *_})
             out.push(trans(style, new-style))
             style = new-style
         }
-#|else
-        fn update() {}
+
+#|if getenv('NO_COLOR') != nil
+        plain = true
 #|]
 
         fn get-style(name) {
@@ -628,6 +628,7 @@ class Chalk {
 
         if !plain {
             update()
+            out.push("\x1b[0m")
         }
 
         out.str!()

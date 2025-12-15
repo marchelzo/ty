@@ -17,6 +17,8 @@
 #include <string.h>
 #include <time.h>
 
+#define XFP vvL(FRAMES)->fp
+
 
 #include <curl/curl.h>
 #include <pcre2.h>
@@ -159,7 +161,6 @@ static ValueVector Globals;
 #define IP            (ty->ip)
 #define CO_THREADS    (ty->cothreads)
 #define JB            (ty->jb)
-#define RC            (ty->rc)
 #define STACK         (ty->stack)
 #define THREAD_LOCALS (ty->tls)
 #define THROW_STACK   (ty->throw_stack)
@@ -167,6 +168,7 @@ static ValueVector Globals;
 #define CALLS         (ty->st.calls)
 #define DROP_STACK    (ty->st.to_drop)
 #define EXEC_DEPTH    (ty->st.exec_depth)
+#define RC            (ty->st.rc)
 #define FRAMES        (ty->st.frames)
 #define SP_STACK      (ty->st.sps)
 #define TARGETS       (ty->st.targets)
@@ -1064,10 +1066,10 @@ GetFreeCoThread(Ty *ty)
 {
         void *base;
         if (vN(CO_THREADS) == 0) {
-                GCLOG("GetFreeCoThread(): new");
+                CO_LOG("GetFreeCoThread(): new");
                 base = xmA(CO_STACK_SIZE);
         } else {
-                GCLOG("GetFreeCoThread(): recycled");
+                CO_LOG("GetFreeCoThread(): recycled");
                 base = *vvX(CO_THREADS);
         }
         return co_derive(base, CO_STACK_SIZE, do_co);
@@ -1114,14 +1116,16 @@ co_abort(Ty *ty)
 
         vvX(FRAMES);
         IP = *vvX(CALLS);
+
         return true;
 }
 
 static bool
 co_yield_value(Ty *ty)
 {
-        if (FRAMES.count == 0 || STACK.count == 0)
+        if (vN(FRAMES) == 0 || vN(STACK) == 0) {
                 return false;
+        }
 
         int n = FRAMES.items[0].fp;
 
@@ -1131,12 +1135,12 @@ co_yield_value(Ty *ty)
 
         Generator *gen = STACK.items[n - 1].gen;
         gen->ip = IP;
-        gen->frame.count = 0;
+        v0(gen->frame);
 
         SWAP(co_state, gen->st, ty->st);
         SWAP(GCRootSet, gen->gc_roots, RootSet);
 
-        xvPn(gen->frame, STACK.items + n, STACK.count - n - 1);
+        xvPn(gen->frame, vv(STACK) + n, vN(STACK) - n - 1);
 
         STACK.items[n - 1] = peek();
         STACK.count = n;
@@ -1146,12 +1150,12 @@ co_yield_value(Ty *ty)
         IP = *vvX(CALLS);
 
         if (gen->st.exec_depth > 1) {
-                GCLOG("co_yield() [%p]: switch to [%p] with %s (RECURSED)", co_active(), gen->co, VSC(top()));
+                CO_LOG("co_yield() [%p]: switch to [%p] with (%zu:%zu): %s (RECURSED)", co_active(), gen->co, vN(STACK), XFP, VSC(top()));
                 cothread_t co = gen->co;
                 gen->co = co_active();
                 co_switch(co);
         } else {
-                GCLOG("co_yield() [%p]: switch to [%p] with %s", co_active(), gen->co, VSC(top()));
+                CO_LOG("co_yield() [%p]: switch to [%p] with (%zu:%zu): %s", co_active(), gen->co, vN(STACK), XFP, VSC(top()));
                 cothread_t co = gen->co;
                 gen->co = NULL;
                 gen->st.exec_depth = 0;
@@ -1159,7 +1163,7 @@ co_yield_value(Ty *ty)
                 co_switch(co);
         }
 
-        GCLOG("co_yield() [%p]: resume", co_active());
+        CO_LOG("co_yield() [%p]: resume with (%zu): %s", co_active(), vN(STACK), VSC(top()));
 
         return true;
 }
@@ -1302,20 +1306,17 @@ exec_fn(Ty *ty, Value const *f, Value const *pSelf, int argc, Value const *pKwar
 TY_INSTR_INLINE static void
 call_co_ex(Ty *ty, Value *v, int n, char *whence)
 {
-        if (UNLIKELY(!GeneratorIsSuspended(v->gen))) {
+        Generator *gen = v->gen;
+
+        if (UNLIKELY(!GeneratorIsSuspended(gen))) {
                 zP("attempt to invoke an already-active coroutine");
         }
 
-        Generator *gen = v->gen;
-
         if (gen->ip != code_of(&gen->f)) {
-                if (n == 0) {
-                        xvP(gen->frame, NIL);
-                } else {
-                        xvPn(gen->frame, vZ(STACK) - n, n);
-                        STACK.count -= n;
-                }
+                xvP(gen->frame, (n > 0) ? peek() : NIL);
         }
+
+        STACK.count -= n;
 
         push(*v);
         call6(ty, &gen->f, NULL, 0, NULL, whence);
@@ -1324,12 +1325,15 @@ call_co_ex(Ty *ty, Value *v, int n, char *whence)
         if (vN(gen->st.frames) == 0) {
                 xvP(gen->st.frames, *vvL(FRAMES));
         } else {
-                gen->st.frames.items[0] = *vvL(FRAMES);
+                *v_(gen->st.frames, 0) = *vvL(FRAMES);
         }
 
-        int diff = (isize)vN(STACK) - gen->fp;
+        int diff = vN(STACK) - (isize)gen->fp;
         for (int i = 1; i < vN(gen->st.frames); ++i) {
-                gen->st.frames.items[i].fp += diff;
+                v_(gen->st.frames, i)->fp += diff;
+        }
+        for (int i = 0; i < vN(gen->st.sps); ++i) {
+                *v_(gen->st.sps, i) += diff;
         }
 
         gen->fp = vN(STACK);
@@ -1337,9 +1341,10 @@ call_co_ex(Ty *ty, Value *v, int n, char *whence)
         SWAP(co_state, gen->st, ty->st);
         SWAP(GCRootSet, gen->gc_roots, RootSet);
 
-        for (int i = 0; i < gen->frame.count; ++i) {
-                push(gen->frame.items[i]);
+        for (int i = 0; i < vN(gen->frame); ++i) {
+                push(v__(gen->frame, i));
         }
+        v0(gen->frame);
 
         IP = gen->ip;
         gen->ip = NULL;
@@ -1347,18 +1352,18 @@ call_co_ex(Ty *ty, Value *v, int n, char *whence)
         if (gen->co != NULL) {
                 cothread_t co = gen->co;
                 gen->co = co_active();
-                GCLOG("co_call() [%p]: switch to %s on [%p]", co_active(), name_of(&gen->f), (void *)co);
+                CO_LOG("co_call() [%p]: switch to %s on [%p] with (%zu): %s", co_active(), name_of(&gen->f), (void *)co, vN(STACK), VSC(top()));
                 xco_switch(co);
         } else {
                 cothread_t co = GetFreeCoThread(ty);
                 gen->co = co_active();
-                GCLOG("co_call() [%p]: switch to %s on [%p] (NEW)", co_active(), name_of(&gen->f), (void *)co);
+                CO_LOG("co_call() [%p]: switch to %s on [%p] (NEW) with (%zu): %s", co_active(), name_of(&gen->f), (void *)co, vN(STACK), VSC(top()));
                 co_ty = ty;
                 xco_switch(co);
 
         }
 
-        GCLOG("co_call() [%p]: back from %s with %s", co_active(), name_of(&v->gen->f), VSC(top()));
+        CO_LOG("co_call() [%p]: back from %s with (%zu): %s", co_active(), name_of(&v->gen->f), vN(STACK), VSC(top()));
 }
 
 static void
@@ -7542,6 +7547,16 @@ CaptureContextEx(Ty *ty, ThrowCtx *ctx)
 Next:
                 ip = vvX(st.frames)->ip;
         }
+
+        int i = 0;
+        int j = (isize)vN(*ctx) - 1;
+
+        while (i < j) {
+                SWAP(void *, v__(*ctx, i), v__(*ctx, j));
+                SWAP(ValueVector, v__(ctx->locals, i), v__(ctx->locals, j));
+                i += 1;
+                j -= 1;
+        }
 }
 
 void
@@ -7574,6 +7589,15 @@ CaptureContext(Ty *ty, ThrowCtx *ctx)
                 }
 Next:
                 ip = vvX(st.frames)->ip;
+        }
+
+        int i = 0;
+        int j = (isize)vN(*ctx) - 1;
+
+        while (i < j) {
+                SWAP(void *, v__(*ctx, i), v__(*ctx, j));
+                i += 1;
+                j -= 1;
         }
 
         xvP(*ctx, NULL);

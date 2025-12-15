@@ -264,11 +264,11 @@ class Printer {
 }
 
 fn term-cols() -> Int {
-    terminal-size().?cols ?? 80
+    terminal-size().?cols ?? 500
 }
 
 pretty = fn pretty(x, %kwargs) {
-    kwargs['width'] ?= max(min(term-cols(), 108), 36)
+    kwargs['width'] ?= max(min(term-cols(), 500), 36)
     Printer(**kwargs).print(x)
 }
 

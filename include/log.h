@@ -85,6 +85,12 @@ extern _Atomic(uint64_t) LogCounter;
 #define GCLOG(...) LOG(__VA_ARGS__)
 #endif
 
+#if 0
+#define CO_LOG(...) XXX(__VA_ARGS__)
+#else
+#define CO_LOG(...)
+#endif
+
 #endif
 
 /* vim: set sts=8 sw=8 expandtab: */

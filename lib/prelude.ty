@@ -3262,7 +3262,7 @@ macro dbg(*args) {
                     "{__func__ ?? '(top)'                 }:"
                     "{__line__                           }: "
                     "{$${fmt}('%*s', maxw, src)} = {show(r)}",
-                    flush: true
+                    flush=true
                  )
             }
 
