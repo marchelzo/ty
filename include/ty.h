@@ -1078,6 +1078,7 @@ extern usize TotalBytesAllocated;
         X(INIT_STATIC_FIELD),     \
         X(TRY_INDEX),             \
         X(TRY_INDEX_TUPLE),       \
+        X(INDEX_TUPLE),           \
         X(TRY_TUPLE_MEMBER),      \
         X(TRY_TAG_POP),           \
         X(TRY_REGEX),             \

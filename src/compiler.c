@@ -7382,7 +7382,11 @@ emit_try_match(Ty *ty, Expr const *pattern)
                                 emit_try_match(ty, v__(pattern->es, i));
                                 INSN(POP);
                         } else {
-                                FAIL_MATCH_IF(TRY_INDEX_TUPLE);
+                                if (v__(pattern->required, i)) {
+                                        FAIL_MATCH_IF(INDEX_TUPLE);
+                                } else {
+                                        FAIL_MATCH_IF(TRY_INDEX_TUPLE);
+                                }
                                 Ei32(i);
                                 emit_try_match(ty, v__(pattern->es, i));
                                 INSN(POP);
@@ -16260,6 +16264,7 @@ DumpProgram(
                         READVALUE(i);
                         READVALUE(b);
                         break;
+                CASE(INDEX_TUPLE)
                 CASE(TRY_INDEX_TUPLE)
                         READVALUE(n);
                         READVALUE(i);
