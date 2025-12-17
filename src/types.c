@@ -3648,8 +3648,8 @@ Generalize(Ty *ty, Type *t0)
         U32Vector freev = {0};
         U32Vector boundv = {0};
 
-        TLOG("Generalize()");
-        TLOG("t0: %s", ShowType(t0));
+        XXTLOG("Generalize()");
+        XXTLOG("t0: %s", ShowType(t0));
 
         switch (TypeType(t0)) {
         case TYPE_FUNCTION:
@@ -3679,8 +3679,8 @@ Generalize(Ty *ty, Type *t0)
                 break;
         }
 
-        TLOG("Generalize()");
-        TLOG(" => %s", ShowType(t1));
+        XXTLOG("Generalize()");
+        XXTLOG(" => %s", ShowType(t1));
 
         return t1;
 }
@@ -9195,6 +9195,9 @@ MakeConcrete_(Ty *ty, Type *t0, TypeVector *refs, bool variance)
                         Type *t1 = LookEnv(ty, ty->tenv, t0->id);
                         return (t1 != NULL) ? t1 : (variance ? TYPE_ANY : UNKNOWN);
                 }
+        } else if (IsTVar(t0)) {
+                Type *t1 = LookEnv(ty, ty->tenv, t0->id);
+                return (t1 != NULL) ? t1 : t0;
         }
 
         if (already_visiting(&visiting, t0)) {

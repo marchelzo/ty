@@ -5707,13 +5707,25 @@ TargetMember:
                         }
                         break;
 
-                CASE(TRY_INDEX_TUPLE)
+                CASE(INDEX_TUPLE)
                         READJUMP(jump);
                         READVALUE(i);
                         if (top()->type != VALUE_TUPLE || top()->count <= i) {
                                 DOJUMP(jump);
                         } else {
                                 push(top()->items[i]);
+                        }
+                        break;
+
+                CASE(TRY_INDEX_TUPLE)
+                        READJUMP(jump);
+                        READVALUE(i);
+                        if (top()->type != VALUE_TUPLE) {
+                                DOJUMP(jump);
+                        } else if (i < top()->count) {
+                                push(top()->items[i]);
+                        } else {
+                                push(NIL);
                         }
                         break;
 
@@ -8912,6 +8924,7 @@ StepInstruction(char const *ip)
                 SKIPVALUE(i);
                 SKIPVALUE(b);
                 break;
+        CASE(INDEX_TUPLE)
         CASE(TRY_INDEX_TUPLE)
                 SKIPVALUE(n);
                 SKIPVALUE(i);
@@ -9440,6 +9453,7 @@ tdb_step_over_x(Ty *ty, char *ip, i32 i)
         CASE(RECORD_REST)
         CASE(TRY_ASSIGN_NON_NIL)
         CASE(TRY_INDEX)
+        CASE(INDEX_TUPLE)
         CASE(TRY_INDEX_TUPLE)
         CASE(TRY_REGEX)
         CASE(TRY_STEAL_TAG)
