@@ -189,10 +189,6 @@ static ValueVector Globals;
 #define GC_IS_WAITING \
         atomic_load_explicit(&MyGroup->WantGC, memory_order_relaxed)
 
-#define TAKE_PENDING_SIGNALS() \
-        __sync_bool_compare_and_swap(&AnySignalPending, 1, 0)
-
-
 #ifdef TY_PROFILER
 bool UseWallTime = false;
 FILE *ProfileOut = NULL;
@@ -1868,10 +1864,19 @@ HandlePendingSignals(Ty *ty)
         GC_RESUME();
 }
 
+inline static bool
+TakePendingSignals(void)
+{
+        return (
+                UNLIKELY(AnySignalPending)
+            && __sync_bool_compare_and_swap(&AnySignalPending, 1, 0)
+        );
+}
+
 inline static void
 CheckPendingSignals(Ty *ty)
 {
-        if (UNLIKELY(TAKE_PENDING_SIGNALS())) {
+        if (UNLIKELY(TakePendingSignals())) {
                 HandlePendingSignals(ty);
         }
 }
@@ -2362,9 +2367,7 @@ DoCall(Ty *ty, Value const *f, int n, int nkw, bool auto_this)
                 gX();
                 STACK.count = k;
                 push(v);
-                if (UNLIKELY(TAKE_PENDING_SIGNALS())) {
-                        HandlePendingSignals(ty);
-                }
+                CheckPendingSignals(ty);
                 return false;
 
         case VALUE_FOREIGN_FUNCTION:
@@ -2373,9 +2376,7 @@ DoCall(Ty *ty, Value const *f, int n, int nkw, bool auto_this)
                 STACK.count = k;
                 push(v);
                 gX();
-                if (UNLIKELY(TAKE_PENDING_SIGNALS())) {
-                        HandlePendingSignals(ty);
-                }
+                CheckPendingSignals(ty);
                 return false;
 
         case VALUE_GENERATOR:
@@ -4864,12 +4865,14 @@ vm_exec(Ty *ty, char *code)
 
         for (;;) {
 NextInstruction:
-                if (UNLIKELY(GC_IS_WAITING | AnySignalPending)) {
-                        if (UNLIKELY(TAKE_PENDING_SIGNALS())) {
-                                HandlePendingSignals(ty);
-                        }
+                bool signaled = TakePendingSignals();
+
+                if (UNLIKELY(GC_IS_WAITING | signaled)) {
                         if (GC_IS_WAITING) {
                                 WaitGC(ty);
+                        }
+                        if (UNLIKELY(signaled)) {
+                                HandlePendingSignals(ty);
                         }
                 }
 
