@@ -46,12 +46,22 @@ enum {
         TYC_NO_TYPES        = (1 << 10),
         TYC_MUT_CONST       = (1 << 11),
 
+#if defined(TY_LS)
+        TYC_DEFAULT_FLAGS = (
+                TYC_RESOLVE
+              | TYC_EMIT
+              | TYC_TOKENS
+              | TYC_ZFOLD
+              | TYC_FORGIVING
+        )
+#else
         TYC_DEFAULT_FLAGS = (
                 TYC_RESOLVE
               | TYC_EMIT
               | TYC_TOKENS
               | TYC_ZFOLD
         )
+#endif
 };
 
 typedef struct eloc {
@@ -537,6 +547,9 @@ invoke_fun_macro(Ty *ty, Scope *scope, Expr *e);
 
 bool
 expedite_fun(Ty *ty, Expr *e, void *ctx);
+
+bool
+IsUndefinedSymbol(Symbol const *sym);
 
 #define EDBG(e) ((edbg)(ty, (e)))
 

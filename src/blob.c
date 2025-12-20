@@ -11,43 +11,56 @@
 static Value
 blob_clear(Ty *ty, Value *blob, int argc, Value *kwargs)
 {
+        ASSERT_ARGC("Blob.clear()", 0, 1, 2);
+
         isize start;
         isize n;
-
-        if (argc > 0 && ARG(0).type != VALUE_INTEGER)
-                zP("the first argument to blob.clear() must be an integer");
-
-        if (argc > 1 && ARG(1).type != VALUE_INTEGER)
-                zP("the second argument to blob.clear() must be an integer");
 
         switch (argc) {
         case 0:
                 start = 0;
-                n = blob->blob->count;
+                n = vN(*blob->blob);
                 break;
+
         case 1:
-                start = ARG(0).z;
-                if (start < 0)
-                        start += blob->blob->count;
-                n = blob->blob->count - start;
+                start = INT_ARG(0);
+                if (start < 0) {
+                        start += vN(*blob->blob);
+                }
+                n = vN(*blob->blob) - start;
                 break;
+
         case 2:
-                start = ARG(0).z;
-                if (start < 0)
-                        start += blob->blob->count;
-                n = ARG(1).z;
+                start = INT_ARG(0);
+                if (start < 0) {
+                        start += vN(*blob->blob);
+                }
+                n = INT_ARG(1);
                 break;
-        default:
-                zP("blob.clear() expects 0, 1, or 2 arguments but got %d", argc);
         }
 
-        if (start < 0 || n < 0 || (n + start) > blob->blob->count)
-                zP("invalid arguments to blob.clear()");
+        if (
+                (start < 0)
+             || (n < 0)
+             || ((n + start) > vN(*blob->blob))
+        ) {
+                bP(
+                        "invalid argument(s): start=%s, n=%s (size=%zu)",
+                        (argc >= 1) ? SHOW(&ARG(0)) : "nil",
+                        (argc >= 2) ? SHOW(&ARG(1)) : "nil",
+                        vN(*blob->blob)
+                );
+        }
 
-        memmove(blob->blob->items + start, blob->blob->items + start + n, blob->blob->count - start - n);
-        blob->blob->count -= n;
+        memmove(
+                vv(*blob->blob) + start,
+                vv(*blob->blob) + start + n,
+                vN(*blob->blob) - start - n
+        );
 
-        return NIL;
+        vN(*blob->blob) -= n;
+
+        return *blob;
 }
 
 static Value
@@ -73,14 +86,14 @@ blob_search(Ty *ty, Value *blob, int argc, Value *kwargs)
         if (start.type != VALUE_INTEGER)
                 zP("the offset argument to blob.search() must be an integer");
 
-        if (start.z < 0 || start.z > blob->blob->count)
+        if (start.z < 0 || start.z > vN(*blob->blob))
                 zP("invalid offset passed to blob.search()");
 
-        if (blob->blob->count == 0)
+        if (vN(*blob->blob) == 0)
                 return NIL;
 
         char const *haystack = (char const *)blob->blob->items + start.z;
-        int n = blob->blob->count - start.z;
+        int n = vN(*blob->blob) - start.z;
         char const *s;
 
         switch (c.type) {
@@ -107,8 +120,8 @@ blob_search(Ty *ty, Value *blob, int argc, Value *kwargs)
 static Value
 blob_shrink(Ty *ty, Value *blob, int argc, Value *kwargs)
 {
-        mRE(blob->blob->items, blob->blob->count);
-        blob->blob->capacity = blob->blob->count;
+        mRE(blob->blob->items, vN(*blob->blob));
+        blob->blob->capacity = vN(*blob->blob);
         return NIL;
 }
 
@@ -158,39 +171,43 @@ blob_push(Ty *ty, Value *blob, int argc, Value *kwargs)
 static Value
 blob_size(Ty *ty, Value *blob, int argc, Value *kwargs)
 {
-        return INTEGER(blob->blob->count);
+        return INTEGER(vN(*blob->blob));
 }
 
 Value
 blob_get(Ty *ty, Value *blob, int argc, Value *kwargs)
 {
-        if (argc != 1)
-                zP("blob.get() expects 1 argument but got %d", argc);
+        ASSERT_ARGC("Blob.get()", 1);
 
-        Value i = ARG(0);
-        if (i.type != VALUE_INTEGER)
-                zP("the argument to blob.get() must be an integer");
-        if (i.z < 0)
-                i.z += blob->blob->count;
-        if (i.z < 0 || i.z >= blob->blob->count)
-                zP("blob.get(): invalid index: %"PRIiMAX, i.z);
+        isize i = INT_ARG(0);
+        if (i < 0) {
+                i += vN(*blob->blob);
+        }
+        if (i < 0 || i >= vN(*blob->blob)) {
+                bP("out of range: %zd", i);
+        }
 
-        return INTEGER(blob->blob->items[i.z]);
+        return INTEGER(v__(*blob->blob, i));
 }
 
 static Value
 blob_fill(Ty *ty, Value *blob, int argc, Value *kwargs)
 {
-        if (argc != 0)
-                zP("blob.fill() expects no arguments but got %d", argc);
+        ASSERT_ARGC("Blob.fill()", 0);
 
-        if (blob->blob->items == NULL)
+        if (vv(*blob->blob) == NULL) {
                 return NIL;
+        }
 
-        memset(blob->blob->items + blob->blob->count, 0, blob->blob->capacity - blob->blob->count);
-        blob->blob->count = blob->blob->capacity;
+        memset(
+                vv(*blob->blob) + vN(*blob->blob),
+                0,
+                vC(*blob->blob) - vN(*blob->blob)
+        );
 
-        return NIL;
+        vN(*blob->blob) = blob->blob->capacity;
+
+        return *blob;
 }
 
 static Value
@@ -203,8 +220,8 @@ blob_set(Ty *ty, Value *blob, int argc, Value *kwargs)
         if (i.type != VALUE_INTEGER)
                 zP("the argument to blob.get() must be an integer");
         if (i.z < 0)
-                i.z += blob->blob->count;
-        if (i.z < 0 || i.z >= blob->blob->count)
+                i.z += vN(*blob->blob);
+        if (i.z < 0 || i.z >= vN(*blob->blob))
                 zP("invalid index passed to blob.get()");
 
         Value arg = ARG(1);
@@ -213,16 +230,20 @@ blob_set(Ty *ty, Value *blob, int argc, Value *kwargs)
 
         blob->blob->items[i.z] = arg.z;
 
-        return NIL;
+        return arg;
 }
 
 static Value
 blob_xor(Ty *ty, Value *blob, int argc, Value *kwargs)
 {
-        if (argc == 1 && ARG(0).type == VALUE_BLOB) {
+        ASSERT_ARGC("Blob.xor()", 1, 2);
+
+        if (argc == 1 && ARG_T(0) == VALUE_BLOB) {
                 Blob *b = ARG(0).blob;
-                if (b->count > 0) for (usize i = 0; i < blob->blob->count; ++i) {
-                        blob->blob->items[i] ^= b->items[i % b->count];
+                if (vN(*b) > 0) {
+                        for (usize i = 0; i < vN(*blob->blob); ++i) {
+                                *v_(*blob->blob, i) ^= v__(*b, i % vN(*b));
+                        }
                 }
                 return *blob;
         }
@@ -231,68 +252,62 @@ blob_xor(Ty *ty, Value *blob, int argc, Value *kwargs)
                 zP("blob.xor(): expected 2 arguments but got %d", argc);
         }
 
-        if (ARG(0).type != VALUE_INTEGER) {
-                zP("blob.xor(mask, _): expected integer but got: %s", SHOW(&ARG(0)));
-        }
-
-        if (ARG(1).type != VALUE_INTEGER) {
-                zP("blob.xor(_, size): expected integer but got: %s", SHOW(&ARG(0)));
-        }
+        (void)INT_ARG(0);
+        u8 size = INT_ARG(1);
 
         u8  _u8;
         u16 _u16, *pu16;
         u32 _u32, *pu32;
         u64 _u64, *pu64;
 
-        u8 size = ARG(1).z;
         u8 r;
 
         switch (size) {
         case 1:
                 _u8 = ARG(0).z;
-                for (usize i = 0; i < blob->blob->count; ++i) {
-                        blob->blob->items[i] ^= _u8;
+                for (usize i = 0; i < vN(*blob->blob); ++i) {
+                        *v_(*blob->blob, i) ^= _u8;
                 }
                 break;
 
         case 2:
                 _u16 = ARG(0).z;
-                pu16 = (void *)blob->blob->items;
-                for (usize i = 0; i < blob->blob->count / 2; ++i) {
+                pu16 = (void *)vv(*blob->blob);
+                for (usize i = 0; i < vN(*blob->blob) / 2; ++i) {
                         pu16[i] ^= _u16;
                 }
-                r =  blob->blob->count % 2;
-                for (int i = 0; i < r; ++i) {
-                        blob->blob->items[blob->blob->count - r + i] ^= ((_u16 >> (8 * i)) & 0xFF);
+                r =  vN(*blob->blob) % 2;
+                for (u8 i = 0; i < r; ++i) {
+                        *v_(*blob->blob, vN(*blob->blob) - r + i) ^= ((_u16 >> (8 * i)) & 0xFF);
                 }
                 break;
 
         case 4:
                 _u32 = ARG(0).z;
-                pu32 = (void *)blob->blob->items;
-                for (usize i = 0; i < blob->blob->count / 4; ++i) {
+                pu32 = (void *)vv(*blob->blob);
+                for (usize i = 0; i < vN(*blob->blob) / 4; ++i) {
                         pu32[i] ^= _u32;
                 }
-                r =  blob->blob->count % 4;
-                for (int i = 0; i < r; ++i) {
-                        blob->blob->items[blob->blob->count - r + i] ^= ((_u32 >> (8 * i)) & 0xFF);
+                r =  vN(*blob->blob) % 4;
+                for (u8 i = 0; i < r; ++i) {
+                        *v_(*blob->blob, vN(*blob->blob) - r + i) ^= ((_u32 >> (8 * i)) & 0xFF);
                 }
                 break;
 
         case 8:
                 _u64 = ARG(0).z;
-                pu64 = (void *)blob->blob->items;
-                for (usize i = 0; i < blob->blob->count / 8; ++i) {
+                pu64 = (void *)vv(*blob->blob);
+                for (usize i = 0; i < vN(*blob->blob) / 8; ++i) {
                         pu64[i] ^= _u64;
                 }
-                r =  blob->blob->count % 8;
-                for (int i = 0; i < r; ++i) {
-                        blob->blob->items[blob->blob->count - r + i] ^= ((_u64 >> (8 * i)) & 0xFF);
+                r =  vN(*blob->blob) % 8;
+                for (u8 i = 0; i < r; ++i) {
+                        *v_(*blob->blob, vN(*blob->blob) - r + i) ^= ((_u64 >> (8 * i)) & 0xFF);
                 }
                 break;
 
         default:
-                zP("blob.xor(): invalid mask size: %"PRIiMAX, ARG(1).z);
+                bP("invalid mask size: %hhu", size);
         }
 
         return *blob;
@@ -302,72 +317,10 @@ blob_xor(Ty *ty, Value *blob, int argc, Value *kwargs)
 static Value
 blob_str(Ty *ty, Value *blob, int argc, Value *kwargs)
 {
-        int start;
-        int n;
+        ASSERT_ARGC("Blob.str()", 0, 1, 2);
 
-        if (argc > 0 && ARG(0).type != VALUE_INTEGER)
-                zP("Blob.str(): expected integer but got: %s", VSC(&ARG(0)));
-
-        if (argc > 1 && ARG(1).type != VALUE_INTEGER)
-                zP("Blob.str(): expected integer but got: %s", VSC(&ARG(1)));
-
-        switch (argc) {
-        case 0:
-                start = 0;
-                n = blob->blob->count;
-                break;
-        case 1:
-                start = ARG(0).z;
-                n = INT_MAX;
-                break;
-        case 2:
-                start = ARG(0).z;
-                n = ARG(1).z;
-                break;
-        default:
-                zP("blob.str() expects 0, 1, or 2 arguments but got %d", argc);
-        }
-
-        if (start < 0) {
-                start += blob->blob->count;
-        }
-
-        n = max(0, min(n, blob->blob->count - start));
-
-        if (start < 0 || (n + start) > blob->blob->count)
-                zP("Blob.str(): invalid argument(s): start=%d, n=%d, size=%zu", start, n, blob->blob->count);
-
-        char *s = value_string_alloc(ty, 2 * n);
-        int i = 0;
-
-        utf8proc_int32_t cp;
-        while (n > 0) {
-                int r = utf8proc_iterate((unsigned char *)blob->blob->items + start, n, &cp);
-                if (r < 0) {
-                        start += 1;
-                        n -= 1;
-                        if (blob->blob->items[start] < 0xC0) {
-                                s[i++] = 0xC2;
-                                s[i++] = blob->blob->items[start];
-                        }
-                } else {
-                        memcpy(s + i, blob->blob->items + start, r);
-                        i += r;
-                        start += r;
-                        n -= r;
-                }
-        }
-
-        return STRING(s, i);
-}
-
-static Value
-blob_str_unsafe(Ty *ty, Value *blob, int argc, Value *kwargs)
-{
-        ASSERT_ARGC("Blob.str!()", 0, 1, 2);
-
-        int start;
-        int n;
+        isize start;
+        isize n;
 
         switch (argc) {
         case 0:
@@ -384,9 +337,66 @@ blob_str_unsafe(Ty *ty, Value *blob, int argc, Value *kwargs)
                 start = INT_ARG(0);
                 n = INT_ARG(1);
                 break;
+        }
 
-        default:
-                zP("blob.str!() expects 0, 1, or 2 arguments but got %d", argc);
+        if (start < 0) {
+                start += vN(*blob->blob);
+        }
+
+        n = max(0, min(n, vN(*blob->blob) - start));
+
+        if (start < 0 || (n + start) > vN(*blob->blob)) {
+                bP("invalid argument(s): start=%zd, n=%zd, size=%zu", start, n, vN(*blob->blob));
+        }
+
+        u8 *str = value_string_alloc(ty, 2 * n);
+        isize i = 0;
+
+        i32 cp;
+
+        while (n > 0) {
+                i32 sz = utf8proc_iterate(vv(*blob->blob) + start, n, &cp);
+                if (sz < 0) {
+                        start += 1;
+                        n     -= 1;
+                        if (v__(*blob->blob, start) < 0xC0) {
+                                str[i++] = 0xC2;
+                                str[i++] = v__(*blob->blob, start);
+                        }
+                } else {
+                        memcpy(str + i, vv(*blob->blob) + start, sz);
+                        start += sz;
+                        i     += sz;
+                        n     -= sz;
+                }
+        }
+
+        return STRING(str, i);
+}
+
+static Value
+blob_str_unsafe(Ty *ty, Value *blob, int argc, Value *kwargs)
+{
+        ASSERT_ARGC("Blob.str!()", 0, 1, 2);
+
+        isize start;
+        isize n;
+
+        switch (argc) {
+        case 0:
+                start = 0;
+                n = vN(*blob->blob);
+                break;
+
+        case 1:
+                start = INT_ARG(0);
+                n = INT_MAX;
+                break;
+
+        case 2:
+                start = INT_ARG(0);
+                n = INT_ARG(1);
+                break;
         }
 
         if (start < 0) {
@@ -452,7 +462,7 @@ blob_pad(Ty *ty, Value *blob, int argc, Value *kwargs)
         case VALUE_INTEGER:
                 vvR(*blob->blob, goal);
                 memset(vZ(*blob->blob), (u8)pad.z, goal - vN(*blob->blob));
-                blob->blob->count = blob->blob->capacity;
+                vN(*blob->blob) = blob->blob->capacity;
                 break;
 
         case VALUE_STRING:
@@ -472,77 +482,76 @@ blob_pad(Ty *ty, Value *blob, int argc, Value *kwargs)
 static Value
 blob_ptr(Ty *ty, Value *blob, int argc, Value *kwargs)
 {
+        ASSERT_ARGC("Blob.ptr()", 0, 1);
+
         if (argc == 0) {
-                return PTR(blob->blob->items);
+                return PTR(vv(*blob->blob));
+        } else {
+                return PTR(vv(*blob->blob) + INT_ARG(0));
         }
-
-        if (argc == 1) {
-                if (ARG(0).type != VALUE_INTEGER) {
-                        zP("blob.ptr() expects an integer but got %s", SHOW(&ARG(0)));
-                }
-
-                return PTR(blob->blob->items + ARG(0).z);
-        }
-
-        zP("blob.ptr() expects 0 or 1 arguments but got %d", argc);
 }
 
 static Value
 blob_hex(Ty *ty, Value *blob, int argc, Value *kwargs)
 {
-        if (argc != 0)
-                zP("blob.hex() expects no arguments but got %d", argc);
+        ASSERT_ARGC("Blob.hex()", 0);
 
         static char const digits[] = "0123456789abcdef";
 
-        int n = blob->blob->count;
-        char *s = mAo(n*2, GC_STRING);
+        usize n = vN(*blob->blob);
+        u8 *str = mAo(n*2, GC_STRING);
 
         for (int i = 0; i < n; ++i) {
-                unsigned char b = blob->blob->items[i];
-                s[2*i] = digits[b / 0x10];
-                s[2*i+1] = digits[b & 0xF];
+                u8 b = v__(*blob->blob, i);
+                str[2*i  ] = digits[b / 0x10];
+                str[2*i+1] = digits[b & 0xF];
         }
 
-        return STRING(s, n*2);
+        return STRING(str, n*2);
 }
 
 static Value
 blob_slice(Ty *ty, Value *blob, int argc, Value *kwargs)
 {
-        int start = 0;
-        int n = blob->blob->count;
+        ASSERT_ARGC("Blob.slice()", 0, 1, 2);
+
+        isize start;
+        isize n;
 
         switch (argc) {
-        case 2:
-                if (ARG(1).type != VALUE_INTEGER)
-                        zP("the second argument to blob.slice() must be an integer");
-                n = ARG(1).z;
-        case 1:
-                if (ARG(0).type != VALUE_INTEGER)
-                        zP("the first argument to blob.slice() must be an integer");
-                start = ARG(0).z;
         case 0:
+                start = 0;
+                n = vN(*blob->blob);
                 break;
-        default:
-                zP("blob.slice() expects 0, 1, or 2 arguments but got %d", argc);
+
+        case 1:
+                start = INT_ARG(0);
+                n = vN(*blob->blob);
+                break;
+
+        case 2:
+                start = INT_ARG(0);
+                n = INT_ARG(1);
+                break;
         }
 
-        if (start < 0)
-                start += blob->blob->count;
-        if (start < 0 || start > blob->blob->count)
-                zP("start index %d out of range in call to blob.slice()", start);
+        if (start < 0) {
+                start += vN(*blob->blob);
+        }
+        if (start < 0 || start > vN(*blob->blob)) {
+                bP("start index out of range: %zd", start);
+        }
 
-        if (n < 0)
-                n += blob->blob->count;
-        if (n < 0)
-                zP("count %d out of range in call to blob.slice()", n);
-        n = min(n, blob->blob->count - start);
+        if (n < 0) {
+                n += vN(*blob->blob);
+        }
+        if (n < 0) {
+                zP("count d out of range: %zd", n);
+        }
+        n = min(n, vN(*blob->blob) - start);
 
         Blob *b = value_blob_new(ty);
-        NOGC(b);
-        vvPn(*b, blob->blob->items + start, n);
-        OKGC(b);
+        uvPn(*b, blob->blob->items + start, n);
 
         return BLOB(b);
 }
@@ -550,43 +559,54 @@ blob_slice(Ty *ty, Value *blob, int argc, Value *kwargs)
 static Value
 blob_splice(Ty *ty, Value *blob, int argc, Value *kwargs)
 {
-        int start = 0;
-        int n = blob->blob->count;
+        ASSERT_ARGC("Blob.splice()", 0, 1, 2);
+
+        isize start;
+        isize n;
 
         switch (argc) {
-        case 2:
-                if (ARG(1).type != VALUE_INTEGER)
-                        zP("the second argument to blob.splice() must be an integer");
-                n = ARG(1).z;
-        case 1:
-                if (ARG(0).type != VALUE_INTEGER)
-                        zP("the first argument to blob.splice() must be an integer");
-                start = ARG(0).z;
         case 0:
+                start = 0;
+                n = vN(*blob->blob);
                 break;
-        default:
-                zP("blob.splice() expects 0, 1, or 2 arguments but got %d", argc);
+
+        case 1:
+                start = INT_ARG(0);
+                n = vN(*blob->blob);
+                break;
+
+        case 2:
+                start = INT_ARG(0);
+                n = INT_ARG(1);
+                break;
         }
 
-        if (start < 0)
-                start += blob->blob->count;
-        if (start < 0 || start > blob->blob->count)
-                zP("start index %d out of range in call to blob.splice()", start);
+        if (start < 0) {
+                start += vN(*blob->blob);
+        }
+        if (start < 0 || start > vN(*blob->blob)) {
+                bP("start index out of range: %zd", start);
+        }
 
-        if (n < 0)
-                n += blob->blob->count;
-        if (n < 0)
-                zP("count %d out of range in call to blob.splice()", n);
-        n = min(n, blob->blob->count - start);
+        if (n < 0) {
+                n += vN(*blob->blob);
+        }
+        if (n < 0) {
+                bP("count out of range: %zd", n);
+        }
+        n = min(n, vN(*blob->blob) - start);
 
         Blob *b = value_blob_new(ty);
-        NOGC(b);
-        vvPn(*b, blob->blob->items + start, n);
-        OKGC(b);
+        uvPn(*b, vv(*blob->blob) + start, n);
 
 
-        memmove(blob->blob->items + start, blob->blob->items + start + n, blob->blob->count - start - n);
-        blob->blob->count -= n;
+        memmove(
+                vv(*blob->blob) + start,
+                vv(*blob->blob) + start + n,
+                vN(*blob->blob) - start - n
+        );
+
+        vN(*blob->blob) -= n;
 
         return BLOB(b);
 }

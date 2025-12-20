@@ -4397,41 +4397,42 @@ BUILTIN_FUNCTION(os_getsockopt)
 
 BUILTIN_FUNCTION(os_getnameinfo)
 {
-        ASSERT_ARGC("os.getnameinfo()", 2);
+        ASSERT_ARGC("os.getnameinfo()", 1, 2);
+
+        Value _addr = ARGx(0, VALUE_PTR, VALUE_BLOB);
+        int flags   = (argc == 2) ? INT_ARG(1) : 0;
 
         struct sockaddr *addr;
         socklen_t alen;
 
-        switch (ARG(0).type) {
+        switch (_addr.type) {
         case VALUE_PTR:
-                addr = ARG(0).ptr;
+                addr = _addr.ptr;
                 alen = sizeof (struct sockaddr_storage);
                 break;
-        case VALUE_BLOB:
-                addr = (void *)ARG(0).blob->items;
-                alen = ARG(0).blob->count;
-                break;
-        default:
-                zP("os.getnameinfo(): invalid address argument: %s", VSC(&ARG(0)));
-        }
 
-        if (ARG(1).type != VALUE_INTEGER) {
-                zP("os.getnameinfo(): invalid flags argument: %s", VSC(&ARG(1)));
+        case VALUE_BLOB:
+                addr = (void *)vv(*_addr.blob);
+                alen = vN(*_addr.blob);
+                break;
         }
 
         char host[128];
         char serv[32];
 
-        int r = getnameinfo(addr, alen, host, sizeof host, serv, sizeof serv, ARG(1).z);
-
-        if (r == 0) {
-                Value v = vT(2);
-                v.items[0] = vSs(host, strlen(host));
-                v.items[1] = vSs(serv, strlen(serv));
-                return v;
+        int ret = getnameinfo(addr, alen, host, sizeof host, serv, sizeof serv, flags);
+        if (ret != 0) {
+                errno = ret;
+                return NIL;
         }
 
-        return INTEGER(r);
+        Value v = vT(2);
+        gP(&v);
+        v.items[0] = vSsz(host);
+        v.items[1] = vSsz(serv);
+        gX();
+
+        return v;
 }
 
 BUILTIN_FUNCTION(os_getpeername)
@@ -4687,9 +4688,6 @@ BUILTIN_FUNCTION(os_getaddrinfo)
                 service = B.items;
         }
 
-        Value results = ARRAY(vA());
-        gP(&results);
-
         struct addrinfo *res;
         struct addrinfo hints;
 
@@ -4699,46 +4697,39 @@ BUILTIN_FUNCTION(os_getaddrinfo)
         hints.ai_socktype = type;
         hints.ai_protocol = protocol;
 
-        int r = getaddrinfo(node, service, &hints, &res);
-        if (r == 0) {
-                for (struct addrinfo *it = res; it != NULL; it = it->ai_next) {
-                        struct blob *b = value_blob_new(ty);
-
-                        NOGC(b);
-
-                        Value entry = vTn(
-                                "family",    INTEGER(it->ai_family),
-                                "type",      INTEGER(it->ai_socktype),
-                                "protocol",  INTEGER(it->ai_protocol),
-                                "address",   BLOB(b),
-                                "canonname", NIL
-                        );
-
-                        NOGC(entry.items);
-                        NOGC(entry.ids);
-
-                        vAp(results.array, entry);
-
-                        OKGC(entry.items);
-                        OKGC(entry.ids);
-                        OKGC(b);
-
-                        vvPn(*b, (char *)it->ai_addr, it->ai_addrlen);
-
-                        if (it->ai_canonname != NULL) {
-                                entry.items[4] = vSs(it->ai_canonname, strlen(it->ai_canonname));
-                        }
-                }
-
-                gX();
-
-                freeaddrinfo(res);
-
-                return Ok(ty, results);
-
-        } else {
-                return Err(ty, INTEGER(r));
+        lGv(true);
+        int ret = getaddrinfo(node, service, &hints, &res);
+        lTk();
+        if (ret != 0) {
+                return Err(ty, INTEGER(ret));
         }
+
+        Value results = ARRAY(vA());
+
+        GC_STOP();
+        for (struct addrinfo *it = res; it != NULL; it = it->ai_next) {
+                Blob *b = value_blob_new(ty);
+
+                Value entry = vTn(
+                        "family",    INTEGER(it->ai_family),
+                        "type",      INTEGER(it->ai_socktype),
+                        "protocol",  INTEGER(it->ai_protocol),
+                        "address",   BLOB(b),
+                        "canonname", NIL
+                );
+
+                vAp(results.array, entry);
+
+                vvPn(*b, (char *)it->ai_addr, it->ai_addrlen);
+
+                if (it->ai_canonname != NULL) {
+                        entry.items[4] = vSsz(it->ai_canonname);
+                }
+        }
+        freeaddrinfo(res);
+        GC_RESUME();
+
+        return Ok(ty, results);
 }
 
 BUILTIN_FUNCTION(os_gai_strerror)
@@ -7153,9 +7144,20 @@ BUILTIN_FUNCTION(stdio_fseek)
 
 BUILTIN_FUNCTION(object)
 {
-        ASSERT_ARGC("object()", 1);
-        Value class = ARGx(0, VALUE_CLASS);
-        return OBJECT(object_new(ty, class.class), class.class);
+        ASSERT_ARGC("object()", 1, 2);
+
+        Value obj;
+
+        if (argc == 1) {
+                Value class = ARGx(0, VALUE_CLASS);
+                obj = OBJECT(object_new(ty, class.class), class.class);
+        } else {
+                Value class = ARGx(0, VALUE_CLASS);
+                Value old   = ARGx(1, VALUE_OBJECT);
+                obj = OBJECT(old.object, class.class);
+        }
+
+        return obj;
 }
 
 BUILTIN_FUNCTION(bind)

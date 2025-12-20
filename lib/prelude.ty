@@ -572,7 +572,7 @@ class Array[T] : Iterable[T] {
         }
     }
 
-    empty?() {
+    empty? {
         #self == 0
     }
 
@@ -1635,8 +1635,20 @@ class RuntimeError < BaseException {
     trace() { (__ctx = ty.trace()) }
 }
 
-class ValueError < RuntimeError {}
+class ValueError     < RuntimeError {}
 class AssertionError < RuntimeError {}
+
+class TimeoutError < RuntimeError {
+    init() {
+        super('Operation timed out')
+    }
+}
+
+class CanceledError < RuntimeError {
+    init() {
+        super('Operation canceled')
+    }
+}
 
 tag MatchError;
 tag IndexError;
@@ -1644,9 +1656,9 @@ tag DispatchError;
 tag ZeroDivisionError;
 
 tag None {
-    static map(f)     { None }
-    static flat-map() { None }
-    static or-else(x) { x    }
+    static map(f)     { None  }
+    static flat-map() { None  }
+    static or-else(x) { x     }
     static some?()    { false }
 }
 
@@ -2557,7 +2569,7 @@ class Queue[T] : Iterable[T] {
         __j = 0
 
         for x in xs {
-            self.put(x)
+            put(x)
         }
     }
 
@@ -2569,7 +2581,7 @@ class Queue[T] : Iterable[T] {
         }
     }
 
-    empty?() {
+    empty? {
         #self == 0
     }
 
@@ -2590,7 +2602,11 @@ class Queue[T] : Iterable[T] {
         }
     }
 
-    tryTake() -> Some[T] | None {
+    try-peek() -> Some[T] | None {
+        (#self == 0) ? None : Some(__xs[__i])
+    }
+
+    try-take() -> Some[T] | None {
         if #self == 0 {
             return None
         }
@@ -2602,8 +2618,17 @@ class Queue[T] : Iterable[T] {
     }
 
     take() -> T {
-        try let Some(x) = self.tryTake()
-        return x
+        match try-take() {
+            Some(x) => x,
+            None    => throw IndexError(self, 0)
+        }
+    }
+
+    peek() -> T {
+        match try-peek() {
+            Some(x) => x,
+            None    => throw IndexError(self, 0)
+        }
     }
 
     __iter__*() {
@@ -2927,11 +2952,11 @@ class Atomic : IntoPtr[Int] {
         __x = thread.atomic(x)
     }
 
-    get() -> Int {
+    load() -> Int {
         thread.load(__x)
     }
 
-    set(x: Int) -> Int {
+    store(x: Int) -> Int {
         thread.store(__x, x)
     }
 
@@ -2952,11 +2977,11 @@ class Atomic : IntoPtr[Int] {
     }
 
     __str__() {
-        "Atomic({self.get()})"
+        "Atomic({self.load()})"
     }
 
     __fmt__(*args: _) {
-        self.get().__fmt__(*args)
+        self.load().__fmt__(*args)
     }
 }
 
@@ -3284,17 +3309,19 @@ macro time! {
         do {
             let (s, x, e) = ($${time::now}(), $$(e), $${time::now}())
 
-            print(
-                __module__,
-                ':',
-                __line__,
-                ': ',
-                $$(ty.String(parse.show(e))),
-                ': ',
-                (e - s),
-                's',
-                sep: ''
-            )
+            if (e - s) > 0.01 {
+                print(
+                    __module__,
+                    ':',
+                    __line__,
+                    ': ',
+                    $$(ty.String(parse.show(e))),
+                    ': ',
+                    (e - s),
+                    's',
+                    sep: ''
+                )
+            }
 
             x
         }
@@ -3517,17 +3544,19 @@ macro ifdef {
 
 class SharedQueue[T] : Iterable[T] {
     _xs: Array[T]
-    _i: Int
-    _j: Int
+    _i:  Int
+    _j:  Int
     _mutex: Mutex
-    _cond: CondVar
+    _cond:  CondVar
+    _open:  Bool
 
     init(xs: Iterable[T] = []) {
         _xs = []
-        _i = 0
-        _j = 0
+        _i  = 0
+        _j  = 0
         _mutex = Mutex()
-        _cond = CondVar()
+        _cond  = CondVar()
+        _open  = true
 
         for x in xs {
             put(x)
@@ -3552,7 +3581,7 @@ class SharedQueue[T] : Iterable[T] {
         }
     }
 
-    empty?() {
+    empty? {
         #self == 0
     }
 
@@ -3561,9 +3590,9 @@ class SharedQueue[T] : Iterable[T] {
 
         with _mutex {
             if _n == 0 {
+                _open = true
                 notify = true
             }
-
             if !_xs {
                 _xs = [x, x]
                 _j = 1
@@ -3580,20 +3609,18 @@ class SharedQueue[T] : Iterable[T] {
             }
         }
 
-        notify && _cond.broadcast()
+        if notify {
+            _cond.broadcast()
+        }
     }
 
-    tryTake(timeoutMs: Int = 0) -> Some[T] | None {
-        let force = (timeoutMs == -1)
+    try-take(timeoutMs: Int = 0) -> Some[T] | None {
         let stop = time.now() + (timeoutMs / 1000.0)
 
         _mutex.lock()
 
         while _n == 0 {
-            if !_cond.wait(
-                _mutex,
-                (stop - time.now()) if !force
-            ) {
+            if !_cond.wait(_mutex, stop - time.now()) {
                 _mutex.unlock()
                 return None
             }
@@ -3604,13 +3631,33 @@ class SharedQueue[T] : Iterable[T] {
 
         _mutex.unlock()
 
-        return Some(x)
+        Some(x)
     }
 
     take() -> T {
-        if let Some(x) = self.tryTake(-1) {
-            return x
+        _mutex.lock()
+
+        while _n == 0 {
+            if !_open {
+                _mutex.unlock()
+                throw CanceledError()
+            }
+            _cond.wait(_mutex)
         }
+
+        let x = _xs[_i]
+        _i = (_i + 1) % #_xs
+
+        _mutex.unlock()
+
+        x
+    }
+
+    close() {
+        with _mutex {
+            _open = false
+        }
+        _cond.broadcast()
     }
 
     __iter__*() {

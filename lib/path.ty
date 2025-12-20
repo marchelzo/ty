@@ -276,6 +276,10 @@ pub class Path {
         os.lstat("{self}") ?? throw os.OSError('stat()')
     }
 
+    open(how: String = 'r') -> io.Stream {
+        io.open(str(self), how) ?? throw os.OSError('open()')
+    }
+
     read-text() -> String {
         ::slurp("{self}")
     }

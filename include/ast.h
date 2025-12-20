@@ -81,6 +81,16 @@ struct condpart {
         Expr *target;
 };
 
+typedef struct {
+        Expr *pattern;
+        Expr *iter;
+        Expr *_if;
+        Expr *_while;
+        Stmt *where;
+} ComprPart;
+
+typedef vec(ComprPart) Comprehension;
+
 typedef vec(struct condpart *) condpart_vector;
 typedef vec(Stmt *) statement_vector;
 typedef struct class_definition ClassDefinition;
@@ -278,6 +288,7 @@ typedef struct type_bound {
         Expr *bound;
 } TypeBound;
 
+
 struct expression {
         void *arena;
         Expr *origin;
@@ -323,13 +334,7 @@ struct expression {
                         expression_vector elements;
                         expression_vector aconds;
                         vec(bool) optional;
-                        struct {
-                                Expr *pattern;
-                                Expr *iter;
-                                Expr *cond;
-                                Expr *_while;
-                                Stmt *where;
-                        } compr;
+                        Comprehension compr;
                 };
                 struct {
                     Expr *m;
@@ -453,13 +458,7 @@ struct expression {
                         expression_vector keys;
                         expression_vector values;
                         expression_vector dconds;
-                        struct {
-                                Expr *pattern;
-                                Expr *iter;
-                                Expr *_while;
-                                Expr *cond;
-                                Stmt *where;
-                        } dcompr;
+                        Comprehension dcompr;
                         Expr *dflt;
                 };
                 struct {
@@ -551,8 +550,8 @@ struct statement {
                                 };
                         };
                         Stmt *body;
-                        Expr *cond;
-                        Expr *stop;
+                        Expr *_if;
+                        Expr *_while;
                 } each;
                 struct {
                         Stmt *s;

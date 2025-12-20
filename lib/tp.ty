@@ -1,78 +1,47 @@
-tag CanceledError;
-
 class ThreadPool[F: Function] {
-  __f:      F
-  __setup:  _
-  queue:    Array[_]
-  mtx:      Mutex
-  cv:       CondVar
-  stop:     Bool
-  threads:  Array[Thread[_]]
+  __f:       F
+  __setup:   _
+  __queue:   SharedQueue[_]
+  __threads: Array[Thread[_]]
 
   init(n: Int, f: F, setup: _ = nil) {
-    __f     = f
-    __setup = setup
-    queue   = []
-    mtx     = Mutex()
-    cv      = CondVar()
-    stop    = false
-    threads = [Thread(cast(runThread), mtx, cv, __f, __setup) for _ in ..n]
+    __f       = f
+    __setup   = setup
+    __queue   = SharedQueue()
+    __threads = [Thread(cast(runThread), __f, __setup) for _ in ..n]
   }
 
   submit[...Args, T](*args: ...Args, %kwargs: _) -> Future[T] where (Args -> T): F {
-    mtx.lock()
-
     let future = Future()
-
-    queue.push((args, kwargs, future))
-
-    mtx.unlock()
-    cv.signal()
-
-    return future
+    __queue.put((args, kwargs, future))
+    future
   }
 
-  runThread(mtx: Mutex, cv: CondVar, f: _, setup: _ = nil) {
+  runThread(f: _, setup: _ = nil) {
     let state = if setup != nil {
         (setup)()
     }
 
-    while true {
-      mtx.lock()
+    catch _: CanceledError {
+        return
+    }
 
-      while !stop && #queue == 0 {
-        cv.wait(mtx)
+    for (;;) {
+      let (args, kwargs, future) = __queue.take()
+
+      continue if !future.start()
+
+      try {
+        future.complete(f(*args, state if state != nil, **kwargs))
+      } catch ex {
+        future.abort(ex)
       }
-
-      if stop && #queue == 0 {
-        mtx.unlock()
-        break
-      }
-
-      let (args, kwargs, future) = queue.pop(0)
-
-      mtx.unlock()
-
-      if !future.start() {
-        continue
-      }
-
-      let x = try {
-        f(*args, state if state != nil, **kwargs)
-      } catch err {
-        future.abort(err)
-      }
-
-      future.complete(x)
     }
   }
 
   close() {
-    mtx.lock()
-    stop = true
-    mtx.unlock()
-    cv.broadcast()
-    threads.map(&join)
+    __queue.close()
+    __threads.map(&join)
   }
 
   __drop__() {
@@ -101,7 +70,7 @@ class Future[T] {
     _mtx   = Mutex()
   }
 
-  wait() {
+  wait() -> T {
     let ^_ = _mtx.lock()
 
     while _state & (state.CREATED | state.RUNNING) {
@@ -109,7 +78,7 @@ class Future[T] {
     }
 
     match _state {
-        state.CANCELED  => throw CanceledError,
+        state.CANCELED  => throw CanceledError(),
         state.ABORTED   => throw _err,
         state.COMPLETED => return _val
     }
@@ -187,7 +156,7 @@ class Future[T] {
         for f in fs {
             xs.push(f.wait())
         }
-    } catch CanceledError {
+    } catch _: CanceledError {
         return None
     }
 

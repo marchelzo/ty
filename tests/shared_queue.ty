@@ -7,7 +7,7 @@ let threads = []
 
 fn thread(f) { let t = Thread(f); threads.push(t); t }
 
-if let Some(_) = queue.tryTake() {
+if let Some(_) = queue.try-take() {
     print('FAIL')
 }
 
@@ -25,9 +25,7 @@ let out = Sync([])
 for id in ..3 {
     thread(fn () {
         for _ in ..2*N {
-            try let Some(i) = queue.tryTake(-1) or else {
-                throw 'FAIL'
-            }
+            let i = queue.take()
             out.push(i)
         }
     })

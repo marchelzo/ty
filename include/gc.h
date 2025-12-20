@@ -32,7 +32,7 @@ HoldingLock(Ty *ty);
 } while (0)
 
 #if !defined(TY_RELEASE)
- #define GC_INITIAL_LIMIT (1ULL << 16)
+ #define GC_INITIAL_LIMIT (1ULL << 14)
 #else
  #define GC_INITIAL_LIMIT (1ULL << 20)
 #endif
