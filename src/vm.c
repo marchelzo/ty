@@ -4851,6 +4851,7 @@ vm_exec(Ty *ty, char *code)
         char *jump;
 
         bool b = false;
+        bool signaled;
 
         struct try *t;
 
@@ -4865,8 +4866,7 @@ vm_exec(Ty *ty, char *code)
 
         for (;;) {
 NextInstruction:
-                bool signaled = TakePendingSignals();
-
+                signaled = TakePendingSignals();
                 if (UNLIKELY(GC_IS_WAITING | signaled)) {
                         if (GC_IS_WAITING) {
                                 WaitGC(ty);
