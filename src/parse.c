@@ -1541,6 +1541,37 @@ parse_member(Ty *ty)
         return member;
 }
 
+static void
+parse_comprehension(Ty *ty, Comprehension *comp)
+{
+        while (try_consume(KEYWORD_FOR)) {
+                ComprPart part;
+
+                part.pattern = parse_target_list(ty);
+
+                if (part.pattern->type != EXPRESSION_LIST) {
+                        iter_sugar(ty, &part.pattern, &part.iter);
+                } else {
+                        consume_kw(IN);
+                        part.iter = parse_expr(ty, 0);
+                }
+
+                part._while = try_consume(KEYWORD_WHILE)
+                            ? parse_expr(ty, 0)
+                            : NULL;
+
+                part._if = try_consume(KEYWORD_IF)
+                          ? parse_expr(ty, 0)
+                          : NULL;
+
+                part.where = (K0 == KEYWORD_WHERE)
+                           ? parse_let_definition(ty)
+                           : NULL;
+
+                avP(*comp, part);
+        }
+}
+
 /* * * * | prefix parsers | * * * */
 static Expr *
 prefix_integer(Ty *ty)
@@ -2710,16 +2741,16 @@ gencompr(Ty *ty, Expr *e)
 
         if (have_keyword(KEYWORD_IF)) {
                 next();
-                g->body->each.cond = parse_expr(ty, 0);
+                g->body->each._if = parse_expr(ty, 0);
         } else {
-                g->body->each.cond = NULL;
+                g->body->each._if = NULL;
         }
 
         if (have_keyword(KEYWORD_WHILE)) {
                 next();
-                g->body->each.stop = parse_expr(ty, 0);
+                g->body->each._while = parse_expr(ty, 0);
         } else {
-                g->body->each.stop = NULL;
+                g->body->each._while = NULL;
         }
 
         g->body->each.target = target;
@@ -3375,30 +3406,8 @@ prefix_array(Ty *ty)
                 }
 
                 if (have_keyword(KEYWORD_FOR)) {
-                        next();
-
                         e->type = EXPRESSION_ARRAY_COMPR;
-                        e->compr.pattern = parse_target_list(ty);
-
-                        if (e->compr.pattern->type != EXPRESSION_LIST) {
-                                iter_sugar(ty, &e->compr.pattern, &e->compr.iter);
-                        } else {
-                                consume_kw(IN);
-                                e->compr.iter = parse_expr(ty, 0);
-                        }
-
-                        e->compr._while = try_consume(KEYWORD_WHILE)
-                                        ? parse_expr(ty, 0)
-                                        : NULL;
-
-                        e->compr.cond = try_consume(KEYWORD_IF)
-                                      ? parse_expr(ty, 0)
-                                      : NULL;
-
-                        e->compr.where = (K0 == KEYWORD_WHERE)
-                                       ? parse_let_definition(ty)
-                                       : NULL;
-
+                        parse_comprehension(ty, &e->compr);
                         expect(']');
                 } else if (T0 == ',') {
                         next();
@@ -3802,24 +3811,8 @@ prefix_percent(Ty *ty)
                 }
 
                 if (K0 == KEYWORD_FOR) {
-                        next();
                         e->type = EXPRESSION_DICT_COMPR;
-                        e->dcompr.pattern = parse_target_list(ty);
-                        if (e->dcompr.pattern->type != EXPRESSION_LIST) {
-                                iter_sugar(ty, &e->dcompr.pattern, &e->dcompr.iter);
-                        } else {
-                                consume_kw(IN);
-                                e->dcompr.iter = parse_expr(ty, 0);
-                        }
-                        e->dcompr._while = try_consume(KEYWORD_WHILE)
-                                       ? parse_expr(ty, 0)
-                                       : NULL;
-                        e->dcompr.cond = try_consume(KEYWORD_IF)
-                                       ? parse_expr(ty, 0)
-                                       : NULL;
-                        e->dcompr.where = (K0 == KEYWORD_WHERE)
-                                        ? parse_let_definition(ty)
-                                        : NULL;
+                        parse_comprehension(ty, &e->dcompr);
                         expect('}');
                 } else if (T0 == ',') {
                         next();
@@ -5293,16 +5286,16 @@ parse_for_loop(Ty *ty)
 
                 if (T0 == TOKEN_KEYWORD && K0 == KEYWORD_IF) {
                         next();
-                        s->each.cond = parse_expr(ty, 0);
+                        s->each._if = parse_expr(ty, 0);
                 } else {
-                        s->each.cond = NULL;
+                        s->each._if = NULL;
                 }
 
                 if (T0 == TOKEN_KEYWORD && K0 == KEYWORD_WHILE) {
                         next();
-                        s->each.stop = parse_expr(ty, 0);
+                        s->each._while = parse_expr(ty, 0);
                 } else {
-                        s->each.stop = NULL;
+                        s->each._while = NULL;
                 }
 
                 if (match) {
@@ -5930,12 +5923,15 @@ End:
 static Stmt *
 parse_block(Ty *ty)
 {
-        Stmt *block = mkstmt(ty);
+        Stmt *block = mkstmtx(BLOCK);
 
         consume('{');
 
-        block->type = STATEMENT_BLOCK;
-        vec_init(block->statements);
+        if (try_consume('}')) {
+                block->type = STATEMENT_NULL;
+                block->end = TEnd;
+                return block;
+        }
 
         CompilerScopePush(ty);
 

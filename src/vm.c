@@ -5987,22 +5987,25 @@ YIELD:
                         break;
 
                 CASE(ARRAY_COMPR)
-                        n = STACK.count - *vvX(SP_STACK);
-                        v = top()[-(n + 2)];
-                        for (int i = 0; i < n; ++i)
+                        READVALUE(i);
+                        n = vN(STACK) - *vvX(SP_STACK);
+                        v = top()[-(n + i)];
+                        for (isize i = 0; i < n; ++i) {
                                 vAp(v.array, top()[-i]);
+                        }
                         STACK.count -= n;
                         break;
 
                 CASE(DICT_COMPR)
+                        READVALUE(i);
                         READVALUE(n);
-                        v = top()[-(2*n + 2)];
-                        for (i = 0; i < n; ++i) {
+                        v = top()[-(2*n + i)];
+                        for (isize i = 0; i < n; ++i) {
                                 value = top()[-2*i];
                                 key = top()[-(2*i + 1)];
                                 dict_put_value(ty, v.dict, key, value);
                         }
-                        STACK.count -= 2 * n;
+                        STACK.count -= 2*n;
                         break;
 
                 CASE(LOOP_CHECK)

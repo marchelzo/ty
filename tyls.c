@@ -140,7 +140,7 @@ main(int argc, char *argv[])
                         }
 
                         sym = CompilerFindDefinition(ty, mod, line, col);
-                        if (sym == NULL) {
+                        if (sym == NULL || IsUndefinedSymbol(sym)) {
                                 goto NextRequest;
                         }
 

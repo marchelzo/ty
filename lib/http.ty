@@ -4,36 +4,16 @@ import json
 import errno
 import net
 import log
+import tp (ThreadPool)
+import time
 
-pub fn urlDecode(s: String) -> String {
-    s.sub('+', ' ')
-     .sub(/%[[:xdigit:]]{2}/, \chr(int(_[1;], 16)))
-     .sub("\r\n", "\n")
-     .sub("\r", "\n")
-}
+const READ_CHUNK_SIZE = (1 << 14) // 16 KiB
 
-pub fn decodeQuery(query: String) {
-    let params = %{}
-
-    for [k, ?v] in query.split('&').map(&split('=', 1) |> &map(urlDecode)) {
-        if let $p = params[k] {
-            if p :: Array {
-                p.push(v)
-            } else {
-                params[k] = [p, v]
-            }
-        } else {
-            params[k] = v
-        }
-    }
-
-    return params
-}
-
-fn makePattern(route) {
-    let route = route.sub(/<(\w+)>/, [_, name] -> "<{name}:\\w+>")
-    let params = route.matches(/<(\w+):/).map(&1)
-    return (params, regex('^' + route.sub(/<\w+:(.*?)>/, [_, pattern] -> "({pattern})") + '/?$'))
+fn make-pattern(route: String) -> (Array[String], Regex) {
+    let route   = route.sub(/<(\w+)>/, [_, name] -> "<{name}:\\w+>")
+    let params  = route.scan(/<(\w+):/).map(&1)
+    let pattern = route.sub(/<\w+:(.*?)>/, [_, pattern] -> "({pattern})")
+    (params, regex("^{pattern}/?$"))
 }
 
 class HttpResponse {
@@ -88,11 +68,6 @@ class HttpResponse {
     }
 }
 
-use HttpRequest = HttpMessage & {
-    addr: ?Blob,
-    params: Dict[String, String | [String]]
-}
-
 use RequestHandler = {req: HttpRequest, rsp: HttpResponse, params: *_} -> Int;
 
 use RouteMap = Dict[
@@ -105,24 +80,26 @@ use RouteMap = Dict[
     }]
 ];
 
-use ClientConnection = {
-    fd:   Int,
-    addr: Blob,
-    p:    HttpParser
-};
-
 class HttpServer {
     static __routes: RouteMap
 
     __sock:     Int
-    __conns:    Array[ClientConnection]
+    __conns:    Array[HttpConnection]
+    __free:     Array[HttpConnection]
     __stopping: Bool
     __handlers: RouteMap
+    __threads:  Array[Thread[_]]
+    __queue:    SharedQueue[(Int, HttpRequest)]
+    __ev-r:     Int
+    __ev-w:     Int
 
-    init(*args, backlog: Int = 64) {
+    init(*args, backlog: Int = 128) {
         __conns    = []
+        __free     = []
         __stopping = false
         __handlers = %{*: []}
+        __queue    = SharedQueue()
+        (__ev-r, __ev-w) = pipe()
 
         for method, handlers in __routes {
             __handlers[method] = handlers.map(handler -> {
@@ -141,6 +118,8 @@ class HttpServer {
                 listen(__sock, backlog)
             }
         }
+
+        __threads = [Thread(__thread) for ..ncpu()]
     }
 
     static __init_subclass__() {
@@ -188,7 +167,7 @@ class HttpServer {
     stop() { __stopping = true }
 
     static __install(method: String, route: String, f: RequestHandler) {
-        let (params, pattern) = makePattern(route)
+        let (params, pattern) = make-pattern(route)
         let handlers = __routes[method]
         handlers.push({
             route,
@@ -219,107 +198,102 @@ class HttpServer {
         f
     }
 
+    __new-conn(sock: Int, addr: String, port: Int) -> HttpConnection {
+        if let Some(conn) = __free.try-pop() {
+            conn.reset(sock, addr, port)
+        } else {
+            HttpConnection(sock, addr, port)
+        }
+    }
+
+    __go(fd: Int, req: HttpRequest) {
+        let rsp = HttpResponse()
+
+        if let (f, ps) = __resolve(req.method, req.url) {
+            try {
+                rsp.status(f(req, rsp, **ps) ?? 200)
+            } catch e {
+                rsp.plain("Exception: {e}\n\nBacktrace:\n{str(e.trace())}")
+                rsp.status(500)
+            }
+        } else {
+            rsp.status(404)
+        }
+
+        rsp.send(fd)
+        req.end()
+
+        write(__ev-w, 'x')
+    }
+
+    __thread() {
+        catch _: CanceledError {
+            return
+        }
+
+        while let (fd, req) = __queue.take() {
+            __go(fd, req)
+        }
+    }
+
     run() {
-        let b = Blob()
+        let polling = [__sock, __ev-r]
+        let events  = []
+        let buf     = Blob()
 
         while !__stopping {
-            log::debug!("poll()")
+            polling.take!(2)
 
-            if not let Ok(pollFds) = poll([__sock, *__conns.map(\_.fd)], -1) {
+            for __conns if !it.busy? {
+                polling.push((it.fd, POLLIN, it))
+            }
+
+            if poll(polling, events, -1) <= 0 {
+                log::warn!("poll(): {errno.str()}")
                 continue
             }
 
-            for (fd, ev) in pollFds {
-                if fd == __sock {
-                    if ev & POLLIN {
-                        let (conn, addr) = accept(fd)
-                        __conns.push({fd: conn, addr, p: HttpParser(HTTP_REQUEST)})
-                        log::debug!("new connection: fd={conn} addr={getnameinfo(addr, NI_NUMERICHOST | NI_NUMERICSERV)}")
+            for match events {
+                (self.__sock, POLLIN) => {
+                    if let (conn, addr) = accept(__sock) {
+                        let (addr, port) = getnameinfo(addr, NI_NUMERICHOST | NI_NUMERICSERV)
+                        __conns.push(__new-conn(conn, addr, port))
+                        log::debug!("New connection from {addr}:{port} on fd={conn} ({#__conns} active)")
+                    } else {
+                        log::warn!("accept(): {errno.str()}")
                     }
-                } else {
-                    let c: ClientConnection = __conns.find(${it.fd == fd})!
-                    if (ev & POLLIN) && read(fd, b, 4096) > 0 {
-                        log::debug!("read {#b} bytes from fd={fd}")
+                },
 
-                        c.p.push(b)
-                        b.clear()
+                (self.__ev-r, POLLIN) => {
+                    read(__ev-r, buf, READ_CHUNK_SIZE)
+                    buf.clear()
+                },
 
-                        for req in c.p.takeMessages() {
-                            let rsp = HttpResponse()
-
-                            let u = req.url
-                            let [url, ?query] = req.url.split('?', 1)
-                            let params = %{}
-
-                            log::debug!("{getnameinfo(c.addr, NI_NUMERICHOST | NI_NUMERICSERV)}: {req.method} {u}")
-
-                            if query != nil {
-                                params.update(decodeQuery(query))
-                            }
-
-                            match (req.headers['Content-Type'], req.?body.str!()) {
-                                (/^multipart\/form-data/, $body) => {
-                                    let form = %{}
-                                    let offset = 0
-                                    if not let [_, delim] = body.match(/^(.*)\r\n/) {
-                                        RuntimeError("")
-                                    }
-
-                                    while let $i = body.bsearch(delim, offset) {
-                                        if not let $j = body.bsearch('\r\n\r\n', i) {
-                                            break
-                                        }
-                                        let headers = body.bsplice(i + #delim + 2, j).split(/\r\n/)
-                                        offset = body.bsearch(delim, j)
-                                        let content = body.bsplice(j + 4, offset - 2)
-                                        let headers = %{k.lower(): v for [k, v] in headers.map(&split(': ', 1))}
-                                        let disposition = %{k: v for [_, k, v] in headers['content-disposition'].matches(/(\w+)="([^"]+)"/)}
-                                        let name = disposition['name']
-
-                                        if let $filename = disposition['filename'] {
-                                            let f = {
-                                                name: filename,
-                                                type: headers['content-type'],
-                                                content: Blob(content)
-                                            }
-                                            if let $fs = form[name] {
-                                                fs.push(f)
-                                            } else {
-                                                form[name] = [f]
-                                            }
-                                        } else {
-                                            form[disposition['name']] = content
-                                        }
-                                    }
-                                    params.update(form)
-                                },
-
-                                (/^application\/x-www-form-urlencoded/, $body) => {
-                                    params.update(decodeQuery(body))
-                                },
-
-                                _ => {}
-                            }
-
-                            if let $m = req.method and let (f, ps) = __resolve(m, url) {
-                                try {
-                                    rsp.status(f({*req, url, params, addr=c.addr}, rsp, **ps) ?? 200)
-                                } catch e {
-                                    rsp.plain("Exception: {e}\n\nBacktrace:\n{str(e.trace())}")
-                                    rsp.status(500)
-                                }
-                            } else {
-                                rsp.status(404)
-                            }
-
-                            rsp.send(fd)
+                (fd, ev, c) => {
+                    if (ev & POLLIN) && read(fd, buf, READ_CHUNK_SIZE) > 0 {
+                        match c.push(buf) {
+                            Ok($req) => __queue.put((fd, req)),
+                            Err(_)   => shutdown(fd, SHUT_RD),
+                            _        => {}
                         }
+                        buf.clear()
                     } else {
                         close(fd)
-                        __conns.filter!(\_.fd != fd)
+                        __conns.remove!(c)
+                        __free.push(c)
                     }
+                },
+
+                (fd, ev, *) => {
+                    log::warn!("Unexpected poll event {ev} on fd={fd}")
                 }
             }
+        }
+
+        __queue.close()
+        
+        for __threads {
+            it.join()
         }
     }
 }

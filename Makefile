@@ -123,6 +123,7 @@ endif
 
 SOURCES := $(wildcard src/*.c)
 OBJECTS := $(patsubst src/%.c,obj/%.o,$(SOURCES)) libco/libco.o dtoa/dtoa.o
+TYLS_OBJECTS := $(patsubst src/%.c,obj/tyls/%.o,$(SOURCES)) libco/libco.o dtoa/dtoa.o
 ASSEMBLY := $(patsubst %.c,%.s,$(SOURCES))
 
 all: $(PROG)
@@ -131,7 +132,7 @@ ty: ty.c $(OBJECTS)
 	@echo cc $<
 	@$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
-tyls: tyls.c $(OBJECTS)
+tyls: tyls.c $(TYLS_OBJECTS)
 	@echo cc $<
 	@$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
@@ -150,6 +151,10 @@ dtoa/dtoa.o: dtoa/SwiftDtoa.c
 obj/%.o: src/%.c
 	@echo cc $<
 	@$(CC) $(CFLAGS) -c -o $@ -DFILENAME=$(patsubst src/%.c,%,$<) $<
+
+obj/tyls/%.o: src/%.c
+	@echo cc $<
+	@$(CC) $(CFLAGS) -c -o $@ -DTY_LS -DFILENAME=$(patsubst src/%.c,%,$<) $<
 
 clean:
 	rm -rf $(PROG) *.gcda $(OBJECTS)

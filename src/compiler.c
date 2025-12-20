@@ -1119,12 +1119,16 @@ CompileError(Ty *ty, u32 type, char const *fmt, ...)
         va_end(ap);
 
 #if defined(TY_LS)
+        GC_STOP();
+
         Value msg = vSsz(vv(ErrorBuffer));
         Value trace = (CompilationDepth(ty) > 0) ? CompilationTraceArray(ty) : ARRAY(vA());
         Value record = vTn("message", msg, "trace", trace);
         v0(ErrorBuffer);
         json_dump(ty, &record, &ErrorBuffer);
         xvP(ErrorBuffer, '\0');
+
+        GC_RESUME();
 #else
         if (CompilationDepth(ty) > 0) {
                 dump(&ErrorBuffer, "\n");
@@ -1215,7 +1219,7 @@ ProposeMemberDefinition(Ty *ty, Location start, Location end, Expr const *o, cha
                      (end.col  >= QueryCol)
                   || (end.line >  QueryLine)
                 )
-             && strcmp(CurrentModulePath(ty), QueryFile) == 0
+             && s_eq(CurrentModulePath(ty), QueryFile)
         ) {
                 static Symbol sym;
 
@@ -1246,7 +1250,7 @@ ProposeMemberDefinition(Ty *ty, Location start, Location end, Expr const *o, cha
                         } else if (member->type == EXPRESSION_TUPLE) {
                                 for (int i = 0; i < vN(member->es); ++i) {
                                         char const *name_i = v__(member->names, i);
-                                        if (name_i != NULL && strcmp(name_i, m) == 0) {
+                                        if (name_i != NULL && s_eq(name_i, m)) {
                                                 name = name_i;
                                                 member = v__(member->es, i);
                                                 doc = show_expr_full(member);
@@ -3878,20 +3882,22 @@ TryResolveExpr(Ty *ty, Scope *scope, Expr *e)
                 break;
 
         case EXPRESSION_YIELD:
-                for (int i = 0; i < e->es.count; ++i) {
+                for (int i = 0; i < vN(e->es); ++i) {
                     ok &= TryResolveExpr(ty, scope, e->es.items[i]);
                 }
                 break;
 
         case EXPRESSION_ARRAY:
-                for (usize i = 0; i < e->elements.count; ++i) {
+                for (usize i = 0; i < vN(e->elements); ++i) {
                         ok &= TryResolveExpr(ty, scope, e->elements.items[i]);
                         ok &= TryResolveExpr(ty, scope, e->aconds.items[i]);
                 }
                 break;
 
         case EXPRESSION_ARRAY_COMPR:
-                ok &= TryResolveExpr(ty, scope, e->compr.iter);
+                for (usize i = 0; i < vN(e->compr); ++i) {
+                        ok &= TryResolveExpr(ty, scope, v_(e->compr, i)->iter);
+                }
                 break;
 
         case EXPRESSION_DICT:
@@ -3903,17 +3909,19 @@ TryResolveExpr(Ty *ty, Scope *scope, Expr *e)
                 break;
 
         case EXPRESSION_DICT_COMPR:
-                ok &= TryResolveExpr(ty, scope, e->dcompr.iter);
+                for (usize i = 0; i < vN(e->dcompr); ++i) {
+                        ok &= TryResolveExpr(ty, scope, v_(e->dcompr, i)->iter);
+                }
                 break;
 
         case EXPRESSION_LIST:
-                for (int i = 0; i < e->es.count; ++i) {
+                for (int i = 0; i < vN(e->es); ++i) {
                         ok &= TryResolveExpr(ty, scope, e->es.items[i]);
                 }
                 break;
 
         case EXPRESSION_TUPLE:
-                for (int i = 0; i < e->es.count; ++i) {
+                for (int i = 0; i < vN(e->es); ++i) {
                         ok &= TryResolveExpr(ty, scope, e->es.items[i]);
                         ok &= TryResolveExpr(ty, scope, e->tconds.items[i]);
                 }
@@ -4766,20 +4774,30 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                 break;
 
         case EXPRESSION_ARRAY_COMPR:
-                symbolize_expression(ty, scope, e->compr.iter);
-                subscope = scope_new(ty, "(array compr)", scope, false);
-                symbolize_lvalue(ty, subscope, e->compr.pattern, LV_DECL);
-                type_assign_iterable(ty, e->compr.pattern, e->compr.iter->_type, 0);
-                symbolize_statement(ty, subscope, e->compr.where);
-                symbolize_expression(ty, subscope, e->compr._while);
-                symbolize_expression(ty, subscope, e->compr.cond);
+        {
+                subscope = scope;
+
+                for (usize i = 0; i < vN(e->compr); ++i) {
+                        ComprPart const *part = v_(e->compr, i);
+                        symbolize_expression(ty, subscope, part->iter);
+                        subscope = scope_new(ty, "(array compr)", subscope, false);
+                        symbolize_lvalue(ty, subscope, part->pattern, LV_DECL);
+                        type_assign_iterable(ty, part->pattern, part->iter->_type, 0);
+                        symbolize_statement(ty, subscope, part->where);
+                        symbolize_expression(ty, subscope, part->_while);
+                        symbolize_expression(ty, subscope, part->_if);
+                }
+
                 for (usize i = 0; i < vN(e->elements); ++i) {
                         symbolize_expression(ty, subscope, v__(e->elements, i));
                         symbolize_expression(ty, subscope, v__(e->aconds, i));
                 }
+
                 e->_type = type_array(ty, e);
                 SET_TYPE_SRC(e);
+
                 break;
+        }
 
         case EXPRESSION_DICT:
                 symbolize_expression(ty, scope, e->dflt);
@@ -4792,19 +4810,30 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                 break;
 
         case EXPRESSION_DICT_COMPR:
-                symbolize_expression(ty, scope, e->dcompr.iter);
-                subscope = scope_new(ty, "(dict compr)", scope, false);
-                symbolize_lvalue(ty, subscope, e->dcompr.pattern, LV_DECL);
-                type_assign_iterable(ty, e->dcompr.pattern, e->dcompr.iter->_type, 0);
-                symbolize_statement(ty, subscope, e->dcompr.where);
-                symbolize_expression(ty, subscope, e->dcompr._while);
-                symbolize_expression(ty, subscope, e->dcompr.cond);
+        {
+                subscope = scope;
+
+                for (usize i = 0; i < vN(e->dcompr); ++i) {
+                        ComprPart const *part = v_(e->dcompr, i);
+                        symbolize_expression(ty, subscope, part->iter);
+                        subscope = scope_new(ty, "(dict compr)", subscope, false);
+                        symbolize_lvalue(ty, subscope, part->pattern, LV_DECL);
+                        type_assign_iterable(ty, part->pattern, part->iter->_type, 0);
+                        symbolize_statement(ty, subscope, part->where);
+                        symbolize_expression(ty, subscope, part->_while);
+                        symbolize_expression(ty, subscope, part->_if);
+                }
+
                 for (usize i = 0; i < vN(e->keys); ++i) {
                         symbolize_expression(ty, subscope, v__(e->keys, i));
                         symbolize_expression(ty, subscope, v__(e->values, i));
                 }
+
                 e->_type = type_dict(ty, e);
+                SET_TYPE_SRC(e);
+
                 break;
+        }
 
         case EXPRESSION_TYPE_UNION:
                 for (int i = 0; i < vN(e->es); ++i) {
@@ -5615,8 +5644,8 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
                 symbolize_lvalue(ty, subscope, s->each.target, LV_DECL);
                 type_assign_iterable(ty, s->each.target, s->each.array->_type, 0);
                 symbolize_statement(ty, subscope, s->each.body);
-                symbolize_expression(ty, subscope, s->each.cond);
-                symbolize_expression(ty, subscope, s->each.stop);
+                symbolize_expression(ty, subscope, s->each._if);
+                symbolize_expression(ty, subscope, s->each._while);
                 s->_type = s->each.body->_type;
                 s->will_return = WillReturn(s->each.body);
                 break;
@@ -7275,31 +7304,35 @@ emit_try_match(Ty *ty, Expr const *pattern)
                                 } else {
                                         after = true;
                                 }
-                                emit_tgt(ty, v__(pattern->elements, i)->symbol, STATE.fscope, true);
-                                FAIL_MATCH_IF(ARRAY_REST);
-                                Ei32(i);
-                                Ei32(vN(pattern->elements) - i - 1);
-                        } else {
-                                FAIL_MATCH_IF(TRY_INDEX);
-                                if (after) {
-                                        if (v__(pattern->optional, i)) {
-                                                PushContext(ty, v__(pattern->elements, i));
-                                                fail("optional element cannot come after a gather element in array pattern");
-                                        }
-                                        Ei32(i - vN(pattern->elements));
-                                } else {
-                                        Ei32(i);
-                                }
-                                Eu1(!v__(pattern->optional, i));
-
-                                emit_try_match(ty, v__(pattern->elements, i));
-
-                                INSN(POP);
+                        } else if (after && v__(pattern->optional, i)) {
+                                PushContext(ty, v__(pattern->elements, i));
+                                fail("optional element cannot come after a gather element in array pattern");
                         }
                 }
                 if (!after) {
                         FAIL_MATCH_IF(ENSURE_LEN);
                         Ei32(vN(pattern->elements));
+                } else {
+                        after = false;
+                }
+                for (int i = 0; i < vN(pattern->elements); ++i) {
+                        if (v__(pattern->elements, i)->type == EXPRESSION_MATCH_REST) {
+                                emit_tgt(ty, v__(pattern->elements, i)->symbol, STATE.fscope, true);
+                                FAIL_MATCH_IF(ARRAY_REST);
+                                Ei32(i);
+                                Ei32(vN(pattern->elements) - i - 1);
+                                after = true;
+                        } else {
+                                FAIL_MATCH_IF(TRY_INDEX);
+                                if (after) {
+                                        Ei32(i - vN(pattern->elements));
+                                } else {
+                                        Ei32(i);
+                                }
+                                Eu1(!v__(pattern->optional, i));
+                                emit_try_match(ty, v__(pattern->elements, i));
+                                INSN(POP);
+                        }
                 }
                 break;
 
@@ -7360,6 +7393,13 @@ emit_try_match(Ty *ty, Expr const *pattern)
                 break;
 
         case EXPRESSION_TUPLE:
+                if (
+                        (vN(pattern->es) == 0)
+                     || (v_L(pattern->es)->type != EXPRESSION_MATCH_REST)
+                ) {
+                        FAIL_MATCH_IF(ENSURE_LEN_TUPLE);
+                        Ei32(vN(pattern->es));
+                }
                 for (int i = 0; i < vN(pattern->es); ++i) {
                         if (v__(pattern->es, i)->type == EXPRESSION_MATCH_REST) {
                                 if (has_any_names(pattern)) {
@@ -7391,13 +7431,6 @@ emit_try_match(Ty *ty, Expr const *pattern)
                                 emit_try_match(ty, v__(pattern->es, i));
                                 INSN(POP);
                         }
-                }
-                if (
-                        vN(pattern->es) == 0
-                     || vvL(pattern->es)[0]->type != EXPRESSION_MATCH_REST
-                ) {
-                        FAIL_MATCH_IF(ENSURE_LEN_TUPLE);
-                        Ei32(vN(pattern->es));
                 }
                 break;
 
@@ -8081,69 +8114,158 @@ emit_target(Ty *ty, Expr *target, bool def)
                 add_location(ty, target, start, vN(STATE.code));
 }
 
-static void
-emit_dict_compr(Ty *ty, Expr const *e)
+typedef struct {
+        union {
+                RangeLoop loop;
+                struct {
+                        JumpLabel       start;
+                        JumpPlaceholder stop;
+                        JumpPlaceholder done;
+                        offset_vector   success;
+                        JumpGroup       fails;
+                };
+        };
+} ComprState;
+
+typedef vec(ComprState) ComprStateStack;
+
+static ComprState *
+PushComprehensionState(Ty *ty, ComprStateStack *stack)
 {
         begin_loop(ty, false, 2);
 
-        offset_vector successes_save = STATE.match_successes;
-        JumpGroup fails_save = STATE.match_fails;
+        svP(*stack, ((ComprState) {
+                .success = STATE.match_successes,
+                .fails   = STATE.match_fails,
+        }));
+
         v00(STATE.match_successes);
         InitJumpGroup(&STATE.match_fails);
+
+        return vvL(*stack);
+}
+
+static void
+PopComprehensionState(Ty *ty, ComprStateStack *stack)
+{
+        ComprState *state = vvX(*stack);
+
+        patch_jumps_to(&STATE.match_fails, vN(STATE.code));
+
+        STATE.match_successes = state->success;
+        STATE.match_fails     = state->fails;
+
+        end_loop(ty);
+}
+
+static i32
+BeginComprehensionLoop(
+        Ty *ty,
+        ComprStateStack *stack,
+        ComprPart const *part
+)
+{
+        if (IsSimpleRange(part->iter)) {
+                Expr *range = part->iter;
+                Expr *i = v_0(part->pattern->es);
+                RangeLoop loop = BeginRangeLoop(ty, 1, false, range, i);
+                ES(part->where, false);
+                CheckRangeLoop(ty, &loop, part->_while, part->_if);
+                svP(*stack, ((ComprState) {
+                        .loop = loop,
+                }));
+        } else {
+                ComprState *state = PushComprehensionState(ty, stack);
+
+                INSN(PUSH_INDEX);
+                if (part->pattern->type == EXPRESSION_LIST) {
+                        Ei32(vN(part->pattern->es));
+                } else {
+                        Ei32(1);
+                }
+
+                EE(part->iter);
+
+                state->start = (LABEL)(ty);
+                INSN(LOOP_ITER);
+                state->done = (PLACEHOLDER_JUMP)(ty, INSTR_LOOP_CHECK);
+                Ei32((int)vN(part->pattern->es));
+
+                add_location(ty, part->pattern, state->start.off, vN(STATE.code));
+
+                for (int i = 0; i < vN(part->pattern->es); ++i) {
+                        INSN(SAVE_STACK_POS);
+                        emit_try_match(ty, v__(part->pattern->es, i));
+                        INSN(POP_STACK_POS_POP);
+                }
+
+                emit_statement(ty, part->where, false);
+
+                if (part->_while != NULL) {
+                        state->stop = (PLACEHOLDER_JUMP_IF_NOT)(ty, part->_while);
+                }
+
+                JumpPlaceholder cond_fail;
+                if (part->_if != NULL) {
+                        cond_fail = (PLACEHOLDER_JUMP_IF_NOT)(ty, part->_if);
+                }
+
+                PLACEHOLDER_JUMP(JUMP, match);
+
+                EMIT_GROUP_LABEL(STATE.match_fails, ":Fail");
+                patch_jumps_to(&STATE.match_fails, vN(STATE.code));
+                INSN(POP_STACK_POS);
+                if (part->_if != NULL) {
+                        PATCH_JUMP(cond_fail);
+                }
+                INSN(POP_STACK_POS);
+                JUMP(state->start);
+
+                PATCH_JUMP(match);
+                INSN(POP_STACK_POS);
+        }
+}
+
+static void
+EndComprehensionLoop(
+        Ty *ty,
+        ComprStateStack *stack,
+        ComprPart const *part
+)
+{
+        if (IsSimpleRange(part->iter)) {
+                RangeLoop const *loop = &vvX(*stack)->loop;
+                EndRangeLoop(ty, loop);
+        } else {
+                ComprState const *state = vvL(*stack);
+                JUMP(state->start);
+                PATCH_JUMP(state->done);
+                if (part->_while != NULL) {
+                        PATCH_JUMP(state->stop);
+                }
+                INSN(POP_STACK_POS);
+                PopComprehensionState(ty, stack);
+                INSN(POP);
+                INSN(POP);
+        }
+}
+
+static void
+emit_dict_compr(Ty *ty, Expr const *e)
+{
+        ComprStateStack states = {0};
+
+        SCRATCH_SAVE();
 
         INSN(SAVE_STACK_POS);
         INSN(DICT);
 
-        INSN(PUSH_INDEX);
-        if (e->dcompr.pattern->type == EXPRESSION_LIST) {
-                Ei32((int)vN(e->dcompr.pattern->es));
-        } else {
-                Ei32(1);
+        for (usize i = 0; i < vN(e->dcompr); ++i) {
+                ComprPart const *part = v_(e->dcompr, i);
+                BeginComprehensionLoop(ty, &states, part);
         }
 
-        EE(e->dcompr.iter);
-
-        LABEL(start);
-        INSN(LOOP_ITER);
-        PLACEHOLDER_JUMP(LOOP_CHECK, done);
-        Ei32((int)vN(e->dcompr.pattern->es));
-
-        add_location(ty, e, start.off, vN(STATE.code));
-
-        for (int i = 0; i < vN(e->dcompr.pattern->es); ++i) {
-                INSN(SAVE_STACK_POS);
-                emit_try_match(ty, v__(e->dcompr.pattern->es, i));
-                INSN(POP_STACK_POS);
-                INSN(POP);
-        }
-
-        emit_statement(ty, e->compr.where, false);
-
-        JumpPlaceholder stop;
-        if (e->dcompr._while != NULL) {
-                stop = (PLACEHOLDER_JUMP_IF_NOT)(ty, e->dcompr._while);
-        }
-
-        JumpPlaceholder cond_fail;
-        if (e->dcompr.cond != NULL) {
-                cond_fail = (PLACEHOLDER_JUMP_IF_NOT)(ty, e->dcompr.cond);
-        }
-
-        PLACEHOLDER_JUMP(JUMP, match);
-
-        EMIT_GROUP_LABEL(STATE.match_fails, ":Fail");
-        patch_jumps_to(&STATE.match_fails, vN(STATE.code));
-        INSN(POP_STACK_POS);
-        if (e->dcompr.cond != NULL) {
-                PATCH_JUMP(cond_fail);
-        }
-        INSN(POP_STACK_POS);
-        JUMP(start);
-
-        PATCH_JUMP(match);
-        INSN(POP_STACK_POS);
-
-        for (int i = vN(e->keys) - 1; i >= 0; --i) {
+        for (isize i = vN(e->keys) - 1; i >= 0; --i) {
                 EE(v__(e->keys, i));
                 if (v__(e->values, i) != NULL) {
                         EE(v__(e->values, i));
@@ -8153,117 +8275,39 @@ emit_dict_compr(Ty *ty, Expr const *e)
         }
 
         INSN(DICT_COMPR);
-        Ei32((int)vN(e->keys));
-        JUMP(start);
-        PATCH_JUMP(done);
-        if (e->dcompr._while != NULL) {
-                PATCH_JUMP(stop);
-        }
-        INSN(POP_STACK_POS);
-        patch_loop_jumps(ty, start.off, vN(STATE.code));
-        INSN(POP);
-        INSN(POP);
+        Ei32(2*vN(e->dcompr));
+        Ei32(vN(e->keys));
 
-        STATE.match_successes = successes_save;
-        STATE.match_fails = fails_save;
-
-        end_loop(ty);
-}
-
-static void
-emit_array_range_compr(Ty *ty, Expr const *e)
-{
-        Expr *range = e->compr.iter;
-        Expr *i = v_0(e->compr.pattern->es);
-
-        INSN(ARRAY0);
-
-        RangeLoop loop = BeginRangeLoop(ty, 1, false, range, i);
-
-        ES(e->compr.where, false);
-
-        CheckRangeLoop(ty, &loop, e->compr._while, e->compr.cond);
-
-        INSN(SAVE_STACK_POS);
-
-        for (int i = vN(e->elements) - 1; i >= 0; --i) {
-                if (v__(e->aconds, i) != NULL) {
-                        PLACEHOLDER_JUMP_IF_NOT(v__(e->aconds, i), skip);
-                        EE(v__(e->elements, i));
-                        PATCH_JUMP(skip);
-                } else {
-                        EE(v__(e->elements, i));
-                }
+        for (isize i = vN(e->dcompr) - 1; i >= 0; --i) {
+                ComprPart const *part = v_(e->dcompr, i);
+                EndComprehensionLoop(ty, &states, part);
         }
 
-        INSN(ARRAY_COMPR);
+        if (e->dflt != NULL) {
+                EE(e->dflt);
+                INSN(DEFAULT_DICT);
+        }
 
-        EndRangeLoop(ty, &loop);
+        SCRATCH_RESTORE();
 }
 
 static void
 emit_array_compr(Ty *ty, Expr const *e)
 {
-        begin_loop(ty, false, 2);
+        ComprStateStack states = {0};
 
-        offset_vector successes_save = STATE.match_successes;
-        JumpGroup fails_save = STATE.match_fails;
-        v00(STATE.match_successes);
-        InitJumpGroup(&STATE.match_fails);
+        SCRATCH_SAVE();
 
         INSN(ARRAY0);
 
-        INSN(PUSH_INDEX);
-        if (e->compr.pattern->type == EXPRESSION_LIST) {
-                Ei32((int)vN(e->compr.pattern->es));
-        } else {
-                Ei32(1);
+        for (usize i = 0; i < vN(e->compr); ++i) {
+                ComprPart const *part = v_(e->compr, i);
+                BeginComprehensionLoop(ty, &states, part);
         }
-
-        EE(e->compr.iter);
-
-        LABEL(start);
-        INSN(LOOP_ITER);
-        PLACEHOLDER_JUMP(LOOP_CHECK, done);
-        Ei32((int)vN(e->compr.pattern->es));
-
-        add_location(ty, e, start.off, vN(STATE.code));
-
-        for (int i = 0; i < vN(e->compr.pattern->es); ++i) {
-                INSN(SAVE_STACK_POS);
-                emit_try_match(ty, v__(e->compr.pattern->es, i));
-                INSN(POP_STACK_POS_POP);
-        }
-
-        emit_statement(ty, e->compr.where, false);
-
-        JumpPlaceholder stop;
-        if (e->compr._while != NULL) {
-                stop = (PLACEHOLDER_JUMP_IF_NOT)(ty, e->compr._while);
-        }
-
-        JumpPlaceholder cond_fail;
-        if (e->compr.cond != NULL) {
-                cond_fail = (PLACEHOLDER_JUMP_IF_NOT)(ty, e->compr.cond);
-        }
-
-        PLACEHOLDER_JUMP(JUMP, match);
-
-        EMIT_GROUP_LABEL(STATE.match_fails, ":Fail");
-        patch_jumps_to(&STATE.match_fails, vN(STATE.code));
-        INSN(POP_STACK_POS);
-        if (e->compr.cond != NULL) {
-                PATCH_JUMP(cond_fail);
-        }
-        INSN(POP_STACK_POS);
-        JUMP(start);
-
-        PATCH_JUMP(match);
-        INSN(POP_STACK_POS);
 
         INSN(SAVE_STACK_POS);
 
-        for (int i = vN(e->elements) - 1; i >= 0; --i) {
+        for (isize i = vN(e->elements) - 1; i >= 0; --i) {
                 if (v__(e->aconds, i) != NULL) {
                         PLACEHOLDER_JUMP_IF_NOT(v__(e->aconds, i), skip);
                         EE(v__(e->elements, i));
@@ -8274,20 +8318,14 @@ emit_array_compr(Ty *ty, Expr const *e)
         }
 
         INSN(ARRAY_COMPR);
-        JUMP(start);
-        PATCH_JUMP(done);
-        if (e->compr._while != NULL) {
-                PATCH_JUMP(stop);
+        Ei32(2*vN(e->compr));
+
+        for (isize i = vN(e->compr) - 1; i >= 0; --i) {
+                ComprPart const *part = v_(e->compr, i);
+                EndComprehensionLoop(ty, &states, part);
         }
-        INSN(POP_STACK_POS);
-        patch_loop_jumps(ty, start.off, vN(STATE.code));
-        INSN(POP);
-        INSN(POP);
 
-        STATE.match_successes = successes_save;
-        STATE.match_fails     = fails_save;
-
-        end_loop(ty);
+        SCRATCH_RESTORE();
 }
 
 static void
@@ -8468,7 +8506,7 @@ emit_range_loop(Ty *ty, Stmt const *s, bool want_result)
         Expr *i = v_0(s->each.target->es);
 
         RangeLoop loop = BeginRangeLoop(ty, 0, want_result, range, i);
-        CheckRangeLoop(ty, &loop, s->each.stop, s->each.cond);
+        CheckRangeLoop(ty, &loop, s->each._while, s->each._if);
         ES(s->each.body, false);
         EndRangeLoop(ty, &loop);
 }
@@ -8513,8 +8551,8 @@ emit_for_each(Ty *ty, Stmt const *s, bool want_result)
         }
 
         JumpPlaceholder should_stop;
-        if (s->each.stop != NULL) {
-                should_stop = (PLACEHOLDER_JUMP_IF_NOT)(ty, s->each.stop);
+        if (s->each._while != NULL) {
+                should_stop = (PLACEHOLDER_JUMP_IF_NOT)(ty, s->each._while);
         }
 
         PLACEHOLDER_JUMP(JUMP, match);
@@ -8531,8 +8569,8 @@ emit_for_each(Ty *ty, Stmt const *s, bool want_result)
 
         INSN(POP_STACK_POS);
 
-        if (s->each.cond != NULL) {
-                EE(s->each.cond);
+        if (s->each._if != NULL) {
+                EE(s->each._if);
                 JUMP_IF_NOT(start);
         }
 
@@ -8545,8 +8583,9 @@ emit_for_each(Ty *ty, Stmt const *s, bool want_result)
 
         JUMP(start);
 
-        if (s->each.stop != NULL)
+        if (s->each._while != NULL) {
                 PATCH_JUMP(should_stop);
+        }
 
         PATCH_JUMP(done);
 
@@ -8554,8 +8593,9 @@ emit_for_each(Ty *ty, Stmt const *s, bool want_result)
         INSN(POP);
         INSN(POP);
 
-        if (want_result)
+        if (want_result) {
                 INSN(NIL);
+        }
 
         patch_loop_jumps(ty, start.off, vN(STATE.code));
 
@@ -9087,11 +9127,7 @@ emit_expr(Ty *ty, Expr const *e, bool need_loc)
                 break;
 
         case EXPRESSION_ARRAY_COMPR:
-                if (IsSimpleRange(e->compr.iter)) {
-                        emit_array_range_compr(ty, e);
-                } else {
-                        emit_array_compr(ty, e);
-                }
+                emit_array_compr(ty, e);
                 break;
 
         case EXPRESSION_DICT:
@@ -10042,14 +10078,16 @@ declare_classes(Ty *ty, Stmt *s, Scope *scope)
                 }
         } else if (s->type == STATEMENT_CLASS_DEFINITION) {
                 if (scope_locally_defined(ty, ns, s->class.name)) {
-                        fail(
+                        fail_or(
                                 "redeclaration of class %s%s%s%s%s",
                                 TERM(1),
                                 TERM(34),
                                 s->class.name,
                                 TERM(22),
                                 TERM(39)
-                        );
+                        ) {
+                                ;
+                        }
                 }
                 Symbol *sym = addsymbol(ty, ns, s->class.name);
                 sym->class = class_new(ty, s);
@@ -11190,10 +11228,12 @@ compiler_init(Ty *ty)
                 sym->flags |= (SYM_PUBLIC | SYM_CONST | SYM_BUILTIN);
         }
 
-        class_set_super(ty, CLASS_COMPILE_ERROR, CLASS_ERROR);
-        class_set_super(ty, CLASS_RUNTIME_ERROR, CLASS_ERROR);
-        class_set_super(ty, CLASS_ASSERT_ERROR, CLASS_RUNTIME_ERROR);
-        class_set_super(ty, CLASS_VALUE_ERROR, CLASS_RUNTIME_ERROR);
+        class_set_super(ty, CLASS_COMPILE_ERROR,  CLASS_ERROR);
+        class_set_super(ty, CLASS_RUNTIME_ERROR,  CLASS_ERROR);
+        class_set_super(ty, CLASS_ASSERT_ERROR,   CLASS_RUNTIME_ERROR);
+        class_set_super(ty, CLASS_VALUE_ERROR,    CLASS_RUNTIME_ERROR);
+        class_set_super(ty, CLASS_TIMEOUT_ERROR,  CLASS_RUNTIME_ERROR);
+        class_set_super(ty, CLASS_CANCELED_ERROR, CLASS_RUNTIME_ERROR);
 
         class_set_super(ty, CLASS_ITER, CLASS_ITERABLE);
         class_set_super(ty, CLASS_TAG, CLASS_FUNCTION);
@@ -11998,19 +12038,27 @@ tyexpr(Ty *ty, Expr const *e, u32 flags)
         case EXPRESSION_ARRAY_COMPR:
         {
                 Array *avElems = vA();
+                Array *avParts = vA();
 
                 for (int i = 0; i < vN(e->elements); ++i) {
                         vAp(avElems, tyaitem(ty, e, i));
                 }
 
+                for (int i = 0; i < vN(e->compr); ++i) {
+                        Value part = vTn(
+                                "pattern", go(v_(e->compr, i)->pattern),
+                                "iter",    go(v_(e->compr, i)->iter),
+                                "while",   go(v_(e->compr, i)->_while),
+                                "if",      go(v_(e->compr, i)->_if),
+                                "where",   go(v_(e->compr, i)->where)
+                        );
+                        vAp(avParts, part);
+                }
+
                 v = TAGGED_RECORD(
                         TyArrayCompr,
-                        "items", ARRAY(avElems),
-                        "pattern", go(e->compr.pattern),
-                        "iter", go(e->compr.iter),
-                        "while", go(e->compr._while),
-                        "cond", go(e->compr.cond),
-                        "where", go(e->compr.where)
+                        "items",   ARRAY(avElems),
+                        "parts",   ARRAY(avParts)
                 );
                 break;
         }
@@ -12018,6 +12066,7 @@ tyexpr(Ty *ty, Expr const *e, u32 flags)
         case EXPRESSION_DICT_COMPR:
         {
                 Array *avElems = vA();
+                Array *avParts = vA();
 
                 for (int i = 0; i < vN(e->keys); ++i) {
                         vAp(
@@ -12030,15 +12079,22 @@ tyexpr(Ty *ty, Expr const *e, u32 flags)
                         );
                 }
 
+                for (int i = 0; i < vN(e->dcompr); ++i) {
+                        Value part = vTn(
+                                "pattern", go(v_(e->dcompr, i)->pattern),
+                                "iter",    go(v_(e->dcompr, i)->iter),
+                                "while",   go(v_(e->dcompr, i)->_while),
+                                "if",      go(v_(e->dcompr, i)->_if),
+                                "where",   go(v_(e->dcompr, i)->where)
+                        );
+                        vAp(avParts, part);
+                }
+
                 v = TAGGED_RECORD(
                         TyDictCompr,
-                        "items", ARRAY(avElems),
-                        "default", go(e->dflt),
-                        "pattern", go(e->dcompr.pattern),
-                        "iter", go(e->dcompr.iter),
-                        "while", go(e->dcompr._while),
-                        "cond", go(e->dcompr.cond),
-                        "where", go(e->dcompr.where)
+                        "items",   ARRAY(avElems),
+                        "parts",   ARRAY(avParts),
+                        "default", go(e->dflt)
                 );
                 break;
         }
@@ -12828,10 +12884,10 @@ tystmt(Ty *ty, Stmt *s, u32 flags)
                 Array *ps = vA();
                 v = vTn(
                         "pattern", ARRAY(ps),
-                        "iter", go(s->each.array),
-                        "expr", go(s->each.body),
-                        "cond", s->each.cond != NULL ? go(s->each.cond) : NIL,
-                        "stop", s->each.stop != NULL ? go(s->each.stop) : NIL
+                        "iter",  go(s->each.array),
+                        "expr",  go(s->each.body),
+                        "if",    go(s->each._if),
+                        "while", go(s->each._while)
                 );
                 for (int i = 0; i < vN(s->each.target->es); ++i) {
                         vAp(ps, go(v__(s->each.target->es, i)));
@@ -13203,12 +13259,13 @@ cstmt(Ty *ty, Value *v)
                         avP(s->each.target->es, cexpr(ty, ps));
                 }
 
+                Value *cond = tuple_get(v, "if");
+                Value *stop = tuple_get(v, "while");
+
                 s->each.array = cexpr(ty, tuple_get(v, "iter"));
                 s->each.body = cstmt(ty, tuple_get(v, "expr"));
-                Value *cond = tuple_get(v, "cond");
-                s->each.cond = (cond != NULL && cond->type != VALUE_NIL) ? cexpr(ty, cond) : NULL;
-                Value *stop = tuple_get(v, "stop");
-                s->each.stop = (stop != NULL && stop->type != VALUE_NIL) ? cexpr(ty, stop) : NULL;
+                s->each._if = cexpr(ty, cond);
+                s->each._while = cexpr(ty, stop);
                 break;
         }
 
@@ -13835,25 +13892,38 @@ cexpr(Ty *ty, Value *v)
 
         case TyArrayCompr:
         {
-                Value *pattern = tuple_get(v, "pattern");
-                Value *iter = tuple_get(v, "iter");
-                Value *_while = tuple_get(v, "while");
-                Value *cond = tuple_get(v, "cond");
-                Value *where = tget_nn(v, "where");
-                Value *items = tuple_get(v, "items");
-
-                if (pattern == NULL || iter == NULL)
-                        goto Bad;
-
                 e->type = EXPRESSION_ARRAY_COMPR;
-                e->compr.pattern = cexpr(ty, pattern);
-                e->compr.iter = cexpr(ty, iter);
-                e->compr._while = cexpr(ty, _while);
-                e->compr.cond = cexpr(ty, cond);
-                e->compr.where = (where == NULL) ? NULL : cstmt(ty, where);
 
-                for (int i = 0; i < items->array->count; ++i) {
-                        Value *entry = &items->array->items[i];
+                Value *items = tget_t(v, "items", VALUE_ARRAY);
+                Value *parts = tget_t(v, "parts", VALUE_ARRAY);
+
+                if (parts == NULL) {
+                        goto Bad;
+                }
+
+                for (usize i = 0; i < vN(*parts->array); ++i) {
+                        Value *part = v_(*parts->array, i);
+                        Value *pattern = tuple_get(part, "pattern");
+                        Value *iter    = tuple_get(part, "iter");
+                        Value *_while  = tuple_get(part, "while");
+                        Value *cond    = tuple_get(part, "if");
+                        Value *where   = tget_nn(part, "where");
+
+                        if (pattern == NULL || iter == NULL) {
+                                goto Bad;
+                        }
+
+                        avP(e->compr, ((ComprPart) {
+                                .pattern = cexpr(ty, pattern),
+                                .iter    = cexpr(ty, iter),
+                                ._while  = cexpr(ty, _while),
+                                ._if     = cexpr(ty, cond),
+                                .where   = (where == NULL) ? NULL : cstmt(ty, where)
+                        }));
+                }
+
+                for (int i = 0; i < vN(*items->array); ++i) {
+                        Value *entry = v_(*items->array, i);
                         Value *optional = tuple_get(entry, "optional");
                         Value *cond = tuple_get(entry, "cond");
                         avP(e->elements, cexpr(ty, tuple_get(entry, "item")));
@@ -13866,24 +13936,36 @@ cexpr(Ty *ty, Value *v)
 
         case TyDictCompr:
         {
-                Value *pattern = tuple_get(v, "pattern");
-                Value *iter = tuple_get(v, "iter");
-                Value *_while = tget_nn(v, "cond");
-                Value *cond = tget_nn(v, "cond");
-                Value *where = tget_nn(v, "where");
-                Value *dflt = tget_nn(v, "default");
-                Value *items = tuple_get(v, "items");
-
-                if (pattern == NULL || iter == NULL)
-                        goto Bad;
-
                 e->type = EXPRESSION_DICT_COMPR;
-                e->dflt = cexpr(ty, dflt);
-                e->dcompr.pattern = cexpr(ty, pattern);
-                e->dcompr.iter = cexpr(ty, iter);
-                e->dcompr._while = cexpr(ty, _while);
-                e->dcompr.cond = cexpr(ty, cond);
-                e->dcompr.where = cstmt(ty, where);
+
+                Value *items = tget_t(v, "items", VALUE_ARRAY);
+                Value *parts = tget_t(v, "parts", VALUE_ARRAY);
+                Value *dflt  = tuple_get(v, "default");
+
+                if (parts == NULL) {
+                        goto Bad;
+                }
+
+                for (usize i = 0; i < vN(*parts->array); ++i) {
+                        Value *part    = v_(*parts->array, i);
+                        Value *pattern = tuple_get(part, "pattern");
+                        Value *iter    = tuple_get(part, "iter");
+                        Value *_while  = tuple_get(part, "while");
+                        Value *cond    = tuple_get(part, "if");
+                        Value *where   = tget_nn(part, "where");
+
+                        if (pattern == NULL || iter == NULL) {
+                                goto Bad;
+                        }
+
+                        avP(e->dcompr, ((ComprPart) {
+                                .pattern = cexpr(ty, pattern),
+                                .iter    = cexpr(ty, iter),
+                                ._while  = cexpr(ty, _while),
+                                ._if     = cexpr(ty, cond),
+                                .where   = (where == NULL) ? NULL : cstmt(ty, where)
+                        }));
+                }
 
                 for (int i = 0; i < vN(*items->array); ++i) {
                         Value entry = unwrap(ty, v_(*items->array, i));
@@ -13892,6 +13974,8 @@ cexpr(Ty *ty, Value *v)
                         avP(e->keys, cexpr(ty, key));
                         avP(e->values, cexpr(ty, value));
                 }
+
+                e->dflt = cexpr(ty, dflt);
 
                 break;
         }
@@ -14629,6 +14713,7 @@ AddClassFields(
                 ident->symbol->flags |= extra_flags;
                 ident->symbol->member = id;
                 ident->symbol->class = c->i;
+                ident->symbol->loc = ident->start;
         }
 
         SCRATCH_RESTORE();
@@ -14648,7 +14733,7 @@ ResolveFieldTypes(Ty *ty, Scope *scope, expression_vector const *fields)
 {
         for (int i = 0; i < vN(*fields); ++i) {
                 Expr *f = FieldIdentifier(v__(*fields, i));
-                if (f->constraint != NULL) {
+                if (f->constraint != NULL && f->symbol != NULL) {
                         WITH_CTX(TYPE) {
                                 symbolize_expression(ty, scope, f->constraint);
                                 f->_type = type_fixed(ty, type_resolve(ty, f->constraint));
@@ -14755,13 +14840,15 @@ define_type(Ty *ty, Stmt *s, Scope *scope)
         if (sym == NULL) {
                 sym = scope_add_type_var(ty, scope, s->class.name, 0);
         } else if (!ModuleIsReloading(STATE.module)) {
-                fail(
+                fail_or(
                         "redeclaration of %s%s%s%s",
                         TERM(1),
                         TERM(34),
                         s->class.name,
                         TERM(0)
-                );
+                ) {
+                        ;
+                }
         }
 
         sym->doc = s->class.doc;
@@ -14805,14 +14892,16 @@ define_class(Ty *ty, Stmt *s)
         ) {
                 class_builtin(ty, sym->class, s);
         } else {
-                fail(
+                fail_or(
                         "redeclaration of class %s%s%s%s%s",
                         TERM(1),
                         TERM(34),
                         s->class.name,
                         TERM(22),
                         TERM(39)
-                );
+                ) {
+                        ;
+                }
         }
 
         Class *class = class_get(ty, sym->class);
@@ -16388,8 +16477,10 @@ DumpProgram(
                         READVALUE(b);
                         break;
                 CASE(ARRAY_COMPR)
+                        READVALUE(n);
                         break;
                 CASE(DICT_COMPR)
+                        READVALUE(n);
                         READVALUE(n);
                         break;
                 CASE(PUSH_INDEX)
@@ -17085,6 +17176,12 @@ CompilerSuggestCompletions(
         }
 
         return true;
+}
+
+bool
+IsUndefinedSymbol(Symbol const *sym)
+{
+        return (sym == &UndefinedSymbol);
 }
 
 /* vim: set sw=8 sts=8 expandtab: */

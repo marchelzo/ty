@@ -53,7 +53,9 @@ pub class Stream : Iter {
     }
 
     __drop__() {
-        close()
+        if __f != nil {
+            close()
+        }
     }
 
     tell() -> Int {
@@ -186,7 +188,7 @@ pub function open(
     };
 
     let fd = if flags & os.O_CREAT {
-        os.open(path, flags, 0o666)
+        os.open(path, flags, 0o644)
     } else {
         os.open(path, flags)
     }

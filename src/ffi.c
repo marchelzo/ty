@@ -594,8 +594,9 @@ cffi_member(Ty *ty, int argc, Value *kwargs)
         if (argc == 3) {
                 return load(ty, type->elements[i.z], p + offsets[i.z]);
         } else {
-                store(ty, type->elements[i.z], p + offsets[i.z], &ARG(3));
-                return NIL;
+                Value val = ARG(3);
+                store(ty, type->elements[i.z], p + offsets[i.z], &val);
+                return val;
         }
 }
 
