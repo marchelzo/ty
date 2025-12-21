@@ -6637,11 +6637,12 @@ emit_function(Ty *ty, Expr const *e)
                         Stmt *def = e->class->def;
                         EmitFieldInitializers(ty, &def->class);
                 }
-                emit_statement(ty, body, true);
-                if (RUNTIME_CONSTRAINTS && e->return_type != NULL) {
-                        emit_return_check(ty, e);
+                if (!emit_statement(ty, body, true)) {
+                        if (RUNTIME_CONSTRAINTS && e->return_type != NULL) {
+                                emit_return_check(ty, e);
+                        }
+                        INSN(RETURN);
                 }
-                INSN(RETURN);
         }
 
         STATE.function_resources = function_resources;
@@ -9107,7 +9108,7 @@ emit_expr(Ty *ty, Expr const *e, bool need_loc)
                         INSN(ARRAY0);
                 } else {
                         INSN(SAVE_STACK_POS);
-                        for (int i = 0; i < vN(e->elements); ++i) {
+                        for (usize i = 0; i < vN(e->elements); ++i) {
                                 if (v__(e->aconds, i) != NULL) {
                                         PLACEHOLDER_JUMP_IF_NOT(v__(e->aconds, i), skip);
                                         if (v__(e->optional, i)) {
@@ -10004,7 +10005,7 @@ emit_statement(Ty *ty, Stmt const *s, bool want_result)
                 break;
         }
 
-        if (want_result) {
+        if (want_result && !returns) {
                 INSN(NIL);
         }
 
