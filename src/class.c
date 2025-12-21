@@ -62,7 +62,6 @@ static char const *BuiltinClassNames[] = {
         [CLASS_REGEX]           = "Regex",
         [CLASS_REGEXV]          = "RegexV",
         [CLASS_RE_MATCH]        = "RegexMatch",
-        [CLASS_REV_ITER]        = "ReverseIter",
         [CLASS_SHARED_QUEUE]    = "SharedQueue",
         [CLASS_STRING]          = "String",
         [CLASS_TAG]             = "Tag",
@@ -73,12 +72,13 @@ static char const *BuiltinClassNames[] = {
 static void
 init(Ty *ty, Class *c, Stmt *def)
 {
-        c->name = def->class.name;
-        c->doc = def->class.doc;
-        c->def = def;
-        c->finalizer = NONE;
-        c->super = (c->i == CLASS_OBJECT) ? NULL : C(CLASS_OBJECT);
-        c->type = type_class(ty, c);
+        c->name        = def->class.name;
+        c->doc         = def->class.doc;
+        c->def         = def;
+        c->init        = NONE;
+        c->finalizer   = NONE;
+        c->super       = (c->i != CLASS_OBJECT) ? C(CLASS_OBJECT) : NULL;
+        c->type        = type_class(ty, c);
         c->object_type = type_object(ty, c);
 }
 
@@ -132,7 +132,7 @@ class_new_empty(Ty *ty)
                 }
         }
 
-        c->type = type_class(ty, c);
+        c->type        = type_class(ty, c);
         c->object_type = type_object(ty, c);
 
         return c;
@@ -214,13 +214,23 @@ class_init_object(Ty *ty, int class, struct itable *o)
         for (int i = 0; i < vN(c->fields.values); ++i) {
                 vPx(o->values, NIL);
         }
+}
 
-        if (!c->really_final) {
+Value *
+class_ctor(Ty *ty, int class)
+{
+        Class *c = C(class);
+
+        if (UNLIKELY(!c->really_final)) {
                 if (!c->final) {
                         finalize(ty, c);
                 }
                 really_finalize(ty, c);
         }
+
+        ASSERT(c->init.type == VALUE_FUNCTION);
+
+        return &c->init;
 }
 
 void
@@ -868,6 +878,12 @@ really_finalize(Ty *ty, Class *c)
         eliminate_refs(&c->methods);
         eliminate_refs(&c->getters);
         eliminate_refs(&c->setters);
+
+        if (vN(c->offsets) > NAMES.init) {
+                u16 off = v__(c->offsets, NAMES.init) & OFF_MASK;
+                c->init = v__(c->methods.values, off);
+        }
+
         c->really_final = true;
 }
 

@@ -9796,8 +9796,14 @@ emit_statement(Ty *ty, Stmt const *s, bool want_result)
                      || (s->value->type == EXPRESSION_MULTI_FUNCTION)
                 ) {
         case STATEMENT_DEFINITION:
-                        emit_assignment(ty, s->target, s->value, false, true);
-                        INSN(POP);
+                        if (
+                                (s->value->type  != EXPRESSION_NIL)
+                             || (s->target->type != EXPRESSION_IDENTIFIER)
+                             || SymbolIsGlobal(s->target->symbol)
+                        ) {
+                                emit_assignment(ty, s->target, s->value, false, true);
+                                INSN(POP);
+                        }
                 }
                 break;
 

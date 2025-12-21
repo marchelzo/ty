@@ -4803,7 +4803,8 @@ is_postfix(struct token const *t)
 static int
 get_infix_prec(Ty *ty)
 {
-        struct value *p;
+        Value *p;
+
         setctx(LEX_INFIX);
 
         switch (T0) {
@@ -4828,8 +4829,8 @@ get_infix_prec(Ty *ty)
         case TOKEN_PERCENT:        return 9;
 
         case TOKEN_IDENTIFIER:
-                return tok()->raw && tok()->start.line == token(-1)->end.line
-                     ? 9
+                return (tok()->raw && tok()->start.line == token(-1)->end.line)
+                     ?  9
                      : -3;
 
         case TOKEN_MINUS:          return 8;
@@ -4860,7 +4861,6 @@ get_infix_prec(Ty *ty)
         case TOKEN_OR:             return 4;
         case TOKEN_WTF:            return 4;
 
-        /* this may need to have lower precedence. I'm not sure yet. */
         case '$~>':                return 3;
         case TOKEN_SQUIGGLY_ARROW: return 3;
         case TOKEN_CHECK_MATCH:    return 3;
@@ -4896,8 +4896,7 @@ get_infix_prec(Ty *ty)
 
 Keyword:
         switch (K0) {
-        case KEYWORD_OR: return NoAndOr ? -3 : 2;
-
+        case KEYWORD_OR:  return NoAndOr ? -3 : 2;
         case KEYWORD_AND: return NoAndOr ? -3 : 4;
 
         case KEYWORD_NOT:
