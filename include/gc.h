@@ -13,16 +13,14 @@
 #include "log.h"
 #include "alloc.h"
 
-typedef struct value Value;
-
 void
 DoGC(Ty *ty);
 
-uint64_t
+u64
 TyThreadId(Ty *ty);
 
-uint64_t
-RealThreadId();
+u64
+RealThreadId(void);
 
 bool
 HoldingLock(Ty *ty);
@@ -102,10 +100,14 @@ gc_resize_unchecked(Ty *ty, void *p, usize n) {
 inline static void
 CheckUsed(Ty *ty)
 {
-        if (UNLIKELY(
+#if defined(TY_RELEASE)
+        if (UNLIKELY((ty->GC_OFF_COUNT == 0) && (MemoryUsed >= MemoryLimit))) {
+#else
+        if (
                 (ty->GC_OFF_COUNT == 0)
-             && (MemoryUsed >= MemoryLimit)
-        )) {
+             && (MemoryUsed >= MemoryLimit || GC_EVERY_ALLOC)
+        ) {
+#endif
                 GCLOG("Running GC. Used = %zu MB, Limit = %zu MB", MemoryUsed / 1000000, MemoryLimit / 1000000);
                 DoGC(ty);
                 GCLOG("DoGC() returned: %zu MB still in use", MemoryUsed / 1000000);
