@@ -276,14 +276,15 @@ istat prof;
 
 static bool WantReport = false;
 static int64_t LastReportRequest;
-
 #endif
+
+#if !defined(TY_RELEASE)
+volatile bool GC_EVERY_ALLOC = false;
+#endif
+
 
 bool PrintResult = false;
 FILE *DisassemblyOut = NULL;
-
-u64 HITS = 0;
-u64 MISSES = 0;
 
 typedef struct {
         atomic_bool *created;
@@ -7180,121 +7181,6 @@ RunExitHooks(void)
         }
 }
 
-bool
-vm_init(Ty *ty, int ac, char **av)
-{
-        curl_global_init(CURL_GLOBAL_ALL);
-
-        InitializeTY(ty);
-        InitializeTy(ty);
-
-        TY_IS_READY = false;
-
-        MyTy = ty;
-        MyId = 0;
-
-        build_string_method_table();
-        build_array_method_table();
-        build_blob_method_table();
-        build_dict_method_table();
-
-        NAMES.a                = M_ID("a");
-        NAMES.b                = M_ID("b");
-        NAMES.call             = M_ID("__call__");
-        NAMES._class_          = M_ID("__class__");
-        NAMES.contains         = M_ID("contains?");
-        NAMES.count            = M_ID("__count__");
-        NAMES._def_            = M_ID("__def__");
-        NAMES._drop_           = M_ID("__drop__");
-        NAMES._enter_          = M_ID("__enter__");
-        NAMES.fmt              = M_ID("__fmt__");
-        NAMES._free_           = M_ID("__free__");
-        NAMES._fqn_            = M_ID("__fqn__");
-        NAMES.groups           = M_ID("groups");
-        NAMES._hash_           = M_ID("__hash__");
-        NAMES.init             = M_ID("init");
-        NAMES._init_subclass_  = M_ID("__init_subclass__");
-        NAMES._iter_           = M_ID("__iter__");
-        NAMES.json             = M_ID("__json__");
-        NAMES._len_            = M_ID("#");
-        NAMES.len              = M_ID("len");
-        NAMES.match            = M_ID("__match__");
-        NAMES._meta_           = M_ID("__meta__");
-        NAMES.missing          = M_ID("__missing__");
-        NAMES.method_missing   = M_ID("__method_missing__");
-        NAMES._name_           = M_ID("__name__");
-        NAMES._next_           = M_ID("__next__");
-        NAMES.ptr              = M_ID("__ptr__");
-        NAMES._repr_           = M_ID("__repr__");
-        NAMES.slice            = M_ID("[;;]");
-        NAMES.str              = M_ID("str");
-        NAMES._str_            = M_ID("__str__");
-        NAMES.subscript        = M_ID("[]");
-        NAMES.unapply          = M_ID("unapply");
-
-        NAMES._what            = M_ID(sfmt("__what$%d",  CLASS_RUNTIME_ERROR));
-        NAMES._ctx             = M_ID(sfmt("__ctx$%d",   CLASS_RUNTIME_ERROR));
-        NAMES._cause           = M_ID(sfmt("__cause$%d", CLASS_RUNTIME_ERROR));
-
-        NAMES._fields_         = M_ID("__fields__");
-        NAMES._methods_        = M_ID("__methods__");
-        NAMES._getters_        = M_ID("__getters__");
-        NAMES._setters_        = M_ID("__setters__");
-        NAMES._static_fields_  = M_ID("__static_fields__");
-        NAMES._static_methods_ = M_ID("__static_methods__");
-        NAMES._static_getters_ = M_ID("__static_getters__");
-        NAMES._super_          = M_ID("__super__");
-
-        GC_STOP();
-
-        InitThreadGroup(ty, MyGroup = &MainGroup);
-
-        NewArenaNoGC(ty, 1ULL << 25);
-
-        compiler_init(ty);
-
-        add_builtins(ty, ac, av);
-
-        AddThread(ty, TyThreadSelf());
-
-        if (TY_CATCH_ERROR()) {
-                TY_CATCH();
-                GC_RESUME();
-                return false;
-        }
-
-        char *prelude = compiler_load_prelude(ty);
-        if (prelude == NULL) {
-                TY_CATCH_END();
-                GC_RESUME();
-                return false;
-        }
-
-        atexit(RunExitHooks);
-
-        vm_exec(ty, prelude);
-
-        compiler_load_builtin_modules(ty);
-
-        sqlite_load(ty);
-
-        GC_RESUME();
-        TY_CATCH_END();
-
-#ifdef TY_PROFILER
-        Samples = dict_new(ty);
-        NOGC(Samples);
-        FuncSamples = dict_new(ty);
-        NOGC(FuncSamples);
-        TySpinLockInit(&ProfileMutex);
-#endif
-
-        TY_IS_INITIALIZED = true;
-        TY_IS_READY = true;
-
-        return true;
-}
-
 static char *
 xtruncln(Ty *ty, byte_vector *line, int cols)
 {
@@ -8130,6 +8016,14 @@ cringe(int _)
 }
 #endif
 
+#if !defined(TY_RELEASE)
+static void
+FlipGC_EVERY_ALLOC(int _)
+{
+        GC_EVERY_ALLOC = !GC_EVERY_ALLOC;
+}
+#endif
+
 static int
 RunTests(Ty *ty)
 {
@@ -8143,6 +8037,133 @@ RunTests(Ty *ty)
         exec_fn(ty, &run, NULL, 0, NULL);
 
         return (int)pop().z;
+}
+
+bool
+vm_init(Ty *ty, int ac, char **av)
+{
+        curl_global_init(CURL_GLOBAL_ALL);
+
+#if defined(TY_PROFILER)
+        void (*handler)(int) = signal(SIGINT, ProfilerSIGINT);
+#endif
+
+#if defined(TY_CATCH_SIGSEGV)
+        signal(SIGSEGV, cringe);
+#endif
+
+#if !defined(TY_RELEASE)
+        signal(SIGUSR2, FlipGC_EVERY_ALLOC);
+#endif
+
+        InitializeTY(ty);
+        InitializeTy(ty);
+
+        TY_IS_READY = false;
+
+        MyTy = ty;
+        MyId = 0;
+
+        build_string_method_table();
+        build_array_method_table();
+        build_blob_method_table();
+        build_dict_method_table();
+
+        NAMES.a                = M_ID("a");
+        NAMES.b                = M_ID("b");
+        NAMES.call             = M_ID("__call__");
+        NAMES._class_          = M_ID("__class__");
+        NAMES.contains         = M_ID("contains?");
+        NAMES.count            = M_ID("__count__");
+        NAMES._def_            = M_ID("__def__");
+        NAMES._drop_           = M_ID("__drop__");
+        NAMES._enter_          = M_ID("__enter__");
+        NAMES.fmt              = M_ID("__fmt__");
+        NAMES._free_           = M_ID("__free__");
+        NAMES._fqn_            = M_ID("__fqn__");
+        NAMES.groups           = M_ID("groups");
+        NAMES._hash_           = M_ID("__hash__");
+        NAMES.init             = M_ID("init");
+        NAMES._init_subclass_  = M_ID("__init_subclass__");
+        NAMES._iter_           = M_ID("__iter__");
+        NAMES.json             = M_ID("__json__");
+        NAMES._len_            = M_ID("#");
+        NAMES.len              = M_ID("len");
+        NAMES.match            = M_ID("__match__");
+        NAMES._meta_           = M_ID("__meta__");
+        NAMES.missing          = M_ID("__missing__");
+        NAMES.method_missing   = M_ID("__method_missing__");
+        NAMES._name_           = M_ID("__name__");
+        NAMES._next_           = M_ID("__next__");
+        NAMES.ptr              = M_ID("__ptr__");
+        NAMES._repr_           = M_ID("__repr__");
+        NAMES.slice            = M_ID("[;;]");
+        NAMES.str              = M_ID("str");
+        NAMES._str_            = M_ID("__str__");
+        NAMES.subscript        = M_ID("[]");
+        NAMES.unapply          = M_ID("unapply");
+
+        NAMES._what            = M_ID(sfmt("__what$%d",  CLASS_RUNTIME_ERROR));
+        NAMES._ctx             = M_ID(sfmt("__ctx$%d",   CLASS_RUNTIME_ERROR));
+        NAMES._cause           = M_ID(sfmt("__cause$%d", CLASS_RUNTIME_ERROR));
+
+        NAMES._fields_         = M_ID("__fields__");
+        NAMES._methods_        = M_ID("__methods__");
+        NAMES._getters_        = M_ID("__getters__");
+        NAMES._setters_        = M_ID("__setters__");
+        NAMES._static_fields_  = M_ID("__static_fields__");
+        NAMES._static_methods_ = M_ID("__static_methods__");
+        NAMES._static_getters_ = M_ID("__static_getters__");
+        NAMES._super_          = M_ID("__super__");
+
+        GC_STOP();
+
+        InitThreadGroup(ty, MyGroup = &MainGroup);
+
+        NewArenaNoGC(ty, 1ULL << 25);
+
+        compiler_init(ty);
+
+        add_builtins(ty, ac, av);
+
+        AddThread(ty, TyThreadSelf());
+
+        if (TY_CATCH_ERROR()) {
+                TY_CATCH();
+                GC_RESUME();
+                return false;
+        }
+
+        char *prelude = compiler_load_prelude(ty);
+        if (prelude == NULL) {
+                TY_CATCH_END();
+                GC_RESUME();
+                return false;
+        }
+
+        atexit(RunExitHooks);
+
+        vm_exec(ty, prelude);
+
+        compiler_load_builtin_modules(ty);
+
+        sqlite_load(ty);
+
+        GC_RESUME();
+        TY_CATCH_END();
+
+#ifdef TY_PROFILER
+        Samples = dict_new(ty);
+        NOGC(Samples);
+        FuncSamples = dict_new(ty);
+        NOGC(FuncSamples);
+        TySpinLockInit(&ProfileMutex);
+#endif
+
+        TY_IS_INITIALIZED = true;
+        TY_IS_READY = true;
+
+        return true;
 }
 
 bool
@@ -8208,14 +8229,6 @@ vm_execute(Ty *ty, char const *source, char const *file)
                 xmF(trace);
                 return false;
         }
-
-#ifdef TY_PROFILER
-        void (*handler)(int) = signal(SIGINT, ProfilerSIGINT);
-#endif
-
-#ifdef TY_CATCH_SIGSEGV
-        signal(SIGSEGV, cringe);
-#endif
 
         if (DEBUGGING && !I_AM_TDB) {
                 ty->ip = ty->code;

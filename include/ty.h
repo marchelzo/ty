@@ -788,8 +788,9 @@ extern u64 TypeCheckCounter;
 extern u64 TypeAllocCounter;
 extern u64 TypeCheckTime;
 
-extern u64 HITS;
-extern u64 MISSES;
+#if !defined(TY_RELEASE)
+extern volatile bool GC_EVERY_ALLOC;
+#endif
 
 #if defined(TY_TRACE_GC)
 extern _Thread_local u64 ThisReached;

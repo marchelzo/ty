@@ -4756,11 +4756,12 @@ BUILTIN_FUNCTION(os_accept)
         }
 
         Blob *addr = value_blob_new(ty);
-        Value v = PAIR(INTEGER(ret), BLOB(addr));
-
+        GC_STOP();
+        Value conn = PAIR(INTEGER(ret), BLOB(addr));
         uvPn(*addr, (u8 *)&_addr, n);
+        GC_RESUME();
 
-        return v;
+        return conn;
 }
 
 BUILTIN_FUNCTION(os_recvfrom)
