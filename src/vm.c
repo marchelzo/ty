@@ -17,9 +17,6 @@
 #include <string.h>
 #include <time.h>
 
-#define XFP vvL(FRAMES)->fp
-
-
 #include <curl/curl.h>
 #include <pcre2.h>
 
@@ -1146,12 +1143,12 @@ co_yield_value(Ty *ty)
         IP = *vvX(CALLS);
 
         if (gen->st.exec_depth > 1) {
-                CO_LOG("co_yield() [%p]: switch to [%p] with (%zu:%zu): %s (RECURSED)", co_active(), gen->co, vN(STACK), XFP, VSC(top()));
+                CO_LOG("co_yield() [%p]: switch to [%p] with (%zu): %s (RECURSED)", co_active(), gen->co, vN(STACK), VSC(top()));
                 cothread_t co = gen->co;
                 gen->co = co_active();
                 co_switch(co);
         } else {
-                CO_LOG("co_yield() [%p]: switch to [%p] with (%zu:%zu): %s", co_active(), gen->co, vN(STACK), XFP, VSC(top()));
+                CO_LOG("co_yield() [%p]: switch to [%p] with (%zu): %s", co_active(), gen->co, vN(STACK), VSC(top()));
                 cothread_t co = gen->co;
                 gen->co = NULL;
                 gen->st.exec_depth = 0;
@@ -2422,25 +2419,16 @@ DoCall(Ty *ty, Value const *f, int n, int nkw, bool auto_this)
 
         case VALUE_CLASS:
                 gP(&kwargs);
+                vp = class_ctor(ty, v.class);
                 if (v.class <= CLASS_PRIMITIVE && v.class != CLASS_OBJECT) {
-                        vp = class_lookup_method_i(ty, v.class, NAMES.init);
-                        if (LIKELY(vp != NULL)) {
-                                value = NONE;
-                                exec_fn(ty, vp, &value, n, &kwargs);
-                        } else {
-                                zP("built-in class has no init method. Was prelude loaded?");
-                        }
+                        value = NONE;
+                        exec_fn(ty, vp, &value, n, &kwargs);
                 } else {
                         value = OBJECT(object_new(ty, v.class), v.class);
-                        vp = class_lookup_method_i(ty, v.class, NAMES.init);
-                        if (LIKELY(vp != NULL)) {
-                                gP(&value);
-                                exec_fn(ty, vp, &value, n, &kwargs);
-                                gX();
-                                pop();
-                        } else {
-                                STACK.count -= n;
-                        }
+                        gP(&value);
+                        exec_fn(ty, vp, &value, n, &kwargs);
+                        gX();
+                        pop();
                         push(value);
                 }
                 gX();
@@ -2539,8 +2527,8 @@ TargetFieldFast(Ty *ty, Value *v, i32 id)
                 return NULL;
         }
 
-        u8 type = (off >> 12);
-        off &= 0x0FFF;
+        u8 type = (off >> OFF_SHIFT);
+        off &= OFF_MASK;
 
         switch (type) {
         case OFF_FIELD:
@@ -2559,8 +2547,8 @@ LoadFieldFast(Ty *ty, Value *v, i32 id)
                 return NONE;
         }
 
-        u8 type = (off >> 12);
-        off &= 0x0FFF;
+        u8 type = (off >> OFF_SHIFT);
+        off &= OFF_MASK;
 
         Value *vp;
         Value *this;
@@ -2596,8 +2584,8 @@ DispatchMethodFast(Ty *ty, Value self, i32 id, int argc, int nkw)
                 return false;
         }
 
-        u8 type = (off >> 12);
-        off &= 0x0FFF;
+        u8 type = (off >> OFF_SHIFT);
+        off &= OFF_MASK;
 
         Value *vp;
         Value fn;
@@ -4828,32 +4816,32 @@ vm_exec(Ty *ty, char *code)
         IP = code;
 
         uptr s;
-
         double x;
-
         imax k;
 
-        int n;
+        bool b;
+        bool signaled;
+
         int i;
         int j;
+
+        int n;
+        int nkw;
+
         int z;
         int tag;
-        int nkw = 0;
 
+        Value *vp;
         Value v;
-        Value key;
         Value value;
+        Value key;
         Value container;
         Value subscript;
-        Value *vp;
 
         char *str;
         char *jump;
 
-        bool b = false;
-        bool signaled;
-
-        struct try *t;
+        struct try *_try;
 
         PopulateGlobals(ty);
 
@@ -4867,6 +4855,7 @@ vm_exec(Ty *ty, char *code)
         for (;;) {
 NextInstruction:
                 signaled = TakePendingSignals();
+
                 if (UNLIKELY(GC_IS_WAITING | signaled)) {
                         if (GC_IS_WAITING) {
                                 WaitGC(ty);
@@ -5499,29 +5488,29 @@ TargetMember:
 
                 CASE(RETHROW)
                 {
-                        t = GetCurrentTry(ty);
-                        t->state = TRY_THROW;
-                        t->end = NULL;
-                        IP = t->finally;
+                        _try = GetCurrentTry(ty);
+                        _try->state = TRY_THROW;
+                        _try->end = NULL;
+                        IP = _try->finally;
                         break;
                 }
 
                 CASE(FINALLY)
                 {
-                        t = GetCurrentTry(ty);
-                        t->state = TRY_FINALLY;
-                        t->end = IP;
-                        IP = t->finally;
+                        _try = GetCurrentTry(ty);
+                        _try->state = TRY_FINALLY;
+                        _try->end = IP;
+                        IP = _try->finally;
                         break;
                 }
 
                 CASE(END_TRY)
                 {
-                        t = *vvX(TRY_STACK);
-                        if (t->end == NULL) {
+                        _try = *vvX(TRY_STACK);
+                        if (_try->end == NULL) {
                                 DoThrow(ty);
                         } else {
-                                IP = t->end;
+                                IP = _try->end;
                         }
                         break;
                 }
@@ -5533,20 +5522,20 @@ TargetMember:
 
                 CASE(TRY)
                 {
-                        t = PushTry(ty);
+                        _try = PushTry(ty);
 
-                        if (setjmp(t->jb) != 0) {
+                        if (setjmp(_try->jb) != 0) {
                                 break;
                         }
 
                         READVALUE(n);
-                        t->catch = IP + n;
+                        _try->catch = IP + n;
 
                         READVALUE(n);
-                        t->finally = (n == -1) ? NULL : IP + n;
+                        _try->finally = (n == -1) ? NULL : IP + n;
 
                         READVALUE(n);
-                        t->end = (n == -1) ? NULL : IP + n;
+                        _try->end = (n == -1) ? NULL : IP + n;
                         break;
                 }
 
@@ -5574,14 +5563,14 @@ TargetMember:
                         break;
 
                 CASE(DEFER)
-                        t = GetCurrentTry(ty);
-                        xvP(t->defer, pop());
+                        _try = GetCurrentTry(ty);
+                        xvP(_try->defer, pop());
                         break;
 
                 CASE(CLEANUP)
-                        t = *vvL(TRY_STACK);
-                        for (int i = 0; i < vN(t->defer); ++i) {
-                                vmC(v_(t->defer, i), 0);
+                        _try = *vvL(TRY_STACK);
+                        for (int i = 0; i < vN(_try->defer); ++i) {
+                                vmC(v_(_try->defer, i), 0);
                         }
                         break;
 
@@ -7029,7 +7018,6 @@ BinaryOp:
                         READVALUE(n);
                         READVALUE(nkw);
                         DoCall(ty, &v, n, nkw, false);
-                        nkw = 0;
                         break;
 
                 CASE(CALL_GLOBAL)
@@ -7037,7 +7025,6 @@ BinaryOp:
                         READVALUE(n);
                         READVALUE(nkw);
                         DoCall(ty, v_(Globals, i), n, nkw, false);
-                        nkw = 0;
                         break;
 
                 CASE(TRY_CALL_METHOD)
@@ -8348,22 +8335,15 @@ vm_call_ex(Ty *ty, Value const *f, int argc, Value *kwargs, bool collect)
                 return pop();
 
         case VALUE_CLASS:
-                init = class_lookup_method_i(ty, f->class, NAMES.init);
-                if (f->class < CLASS_PRIMITIVE) {
-                        if (LIKELY(init != NULL)) {
-                                exec_fn(ty, init, NULL, argc, NULL);
-                                return pop();
-                        } else {
-                                zP("Couldn't find init method for built-in class. Was prelude loaded?");
-                        }
+                init = class_ctor(ty, f->class);
+                if (f->class <= CLASS_PRIMITIVE && f->class != CLASS_OBJECT) {
+                        v = NONE;
+                        exec_fn(ty, init, &v, argc, NULL);
+                        return pop();
                 } else {
                         v = OBJECT(object_new(ty, f->class), f->class);
-                        if (init != NULL) {
-                                exec_fn(ty, init, &v, argc, NULL);
-                                pop();
-                        } else {
-                                STACK.count -= argc;
-                        }
+                        exec_fn(ty, init, &v, argc, NULL);
+                        pop();
                         return v;
                 }
                 UNREACHABLE();
@@ -8467,22 +8447,15 @@ vm_call(Ty *ty, Value const *f, int argc)
                 return pop();
 
         case VALUE_CLASS:
-                vp = class_lookup_method_i(ty, f->class, NAMES.init);
-                if (f->class < CLASS_PRIMITIVE) {
-                        if (LIKELY(vp != NULL)) {
-                                exec_fn(ty, vp, NULL, argc, NULL);
-                                return pop();
-                        } else {
-                                zP("Couldn't find init method for built-in class. Was prelude loaded?");
-                        }
+                vp = class_ctor(ty, f->class);
+                if (f->class <= CLASS_PRIMITIVE && f->class != CLASS_OBJECT) {
+                        v = NONE;
+                        exec_fn(ty, vp, NULL, argc, NULL);
+                        return pop();
                 } else {
                         v = OBJECT(object_new(ty, f->class), f->class);
-                        if (vp != NULL) {
-                                exec_fn(ty, vp, &v, argc, NULL);
-                                pop();
-                        } else {
-                                STACK.count -= argc;
-                        }
+                        exec_fn(ty, vp, &v, argc, NULL);
+                        pop();
                         return v;
                 }
                 UNREACHABLE();
@@ -8735,7 +8708,7 @@ StepInstruction(char const *ip)
         imax k;
         bool b = false;
         double x;
-        int n, nkw = 0, i, j, tag;
+        int n, nkw, i, j, tag;
 
         switch ((u8)*ip++) {
         CASE(NOP)

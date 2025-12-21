@@ -53,7 +53,6 @@ enum {
         CLASS_INTO_PTR,
         CLASS_ITERABLE,
         CLASS_ITER,
-        CLASS_REV_ITER,
         CLASS_QUEUE,
         CLASS_SHARED_QUEUE,
         CLASS_RANGE,

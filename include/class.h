@@ -39,6 +39,7 @@ struct class {
         vec(Class *) traits;
 
         Value finalizer;
+        Value init;
 
         char const *name;
         char const *doc;
@@ -53,7 +54,9 @@ enum {
         OFF_FIELD  = 1,
         OFF_METHOD = 2,
         OFF_GETTER = 3,
-        OFF_MASK   = 0x0FFF
+
+        OFF_MASK   = 0x0FFF,
+        OFF_SHIFT  = 12
 };
 
 Class *
@@ -173,6 +176,9 @@ class_method(Ty *ty, int class, char const *name)
 {
         return class_lookup_method_i(ty, class, M_ID(name));
 }
+
+Value *
+class_ctor(Ty *ty, int class);
 
 void
 class_init_object(Ty *ty, int class, struct itable *o);
