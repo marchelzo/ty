@@ -3586,13 +3586,8 @@ class SharedQueue[T] : Iterable[T] {
     }
 
     put(x: T) {
-        let notify = false
-
         with _mutex {
-            if _n == 0 {
-                _open = true
-                notify = true
-            }
+            _open = true
             if !_xs {
                 _xs = [x, x]
                 _j = 1
@@ -3608,10 +3603,7 @@ class SharedQueue[T] : Iterable[T] {
                 _j = (_j + 1) % #_xs
             }
         }
-
-        if notify {
-            _cond.broadcast()
-        }
+        _cond.signal()
     }
 
     try-take(timeoutMs: Int = 0) -> Some[T] | None {

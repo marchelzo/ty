@@ -438,7 +438,7 @@ fn multipart*(boundary: String) {
     yield MultipartData(form, files)
 }
 
-pub fn url-decode(s: String) -> String {
+pub fn urldecode(s: String) -> String {
     s.sub('+', ' ')
      .sub(/%[[:xdigit:]]{2}/, \chr(int(_[1;], 16)))
      .sub("\r\n", "\n")
@@ -448,7 +448,7 @@ pub fn url-decode(s: String) -> String {
 pub fn decode-query(query: String) -> Dict[String, String | Array[String]] {
     let params = %{}
 
-    for [k, ?v] in query.split('&').map(p -> p.split('=', 1).map!(url-decode)) {
+    for [k, ?v] in query.split('&').map(p -> p.split('=', 1).map!(urldecode)) {
         if let $p = params[k] {
             if p :: Array {
                 p.push(v)
