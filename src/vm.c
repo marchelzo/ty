@@ -17,7 +17,6 @@
 #include <string.h>
 #include <time.h>
 
-#include <curl/curl.h>
 #include <pcre2.h>
 
 #include <fcntl.h>
@@ -72,11 +71,9 @@
 #include "cffi.h"
 #include "class.h"
 #include "compiler.h"
-#include "curl.h"
 #include "dict.h"
 #include "functions.h"
 #include "gc.h"
-#include "html.h"
 #include "intern.h"
 #include "istat.h"
 #include "log.h"
@@ -8042,8 +8039,6 @@ RunTests(Ty *ty)
 bool
 vm_init(Ty *ty, int ac, char **av)
 {
-        curl_global_init(CURL_GLOBAL_ALL);
-
 #if defined(TY_PROFILER)
         void (*handler)(int) = signal(SIGINT, ProfilerSIGINT);
 #endif

@@ -16,17 +16,21 @@
 #include <ctype.h>
 #include <setjmp.h>
 
-#include "tthread.h"
-#include "polyfill_time.h"
-#include "polyfill_unistd.h"
-#include "polyfill_stdatomic.h"
-#include <openssl/md5.h>
-#include <openssl/sha.h>
-#include <utf8proc.h>
 #include <signal.h>
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+
+#include <utf8proc.h>
+#include <sha1.h>
+#include <sha256.h>
+#include <sha512.h>
+#include <md5.h>
+
+#include "tthread.h"
+#include "polyfill_time.h"
+#include "polyfill_unistd.h"
+#include "polyfill_stdatomic.h"
 
 #define NOT_ON_WINDOWS(name) zP("%s is not implemented in Windows builds of Ty", #name);
 
@@ -1898,65 +1902,68 @@ BUILTIN_FUNCTION(json_encode)
         return json_encode(ty, &ARG(0));
 }
 
+BUILTIN_FUNCTION(sha512)
+{
+        ASSERT_ARGC("sha512", 1);
+
+        Value s = ARGx(0, VALUE_STRING, VALUE_BLOB);
+        char digest[SHA512_DIGEST_STRING_LENGTH];
+
+        if (s.type == VALUE_STRING) {
+                SHA512Data(ss(s), sN(s), digest);
+        } else if (s.type == VALUE_BLOB) {
+                SHA512Data(vv(*s.blob), vN(*s.blob), digest);
+        }
+
+        return vSsz(digest);
+}
+
 BUILTIN_FUNCTION(sha256)
 {
         ASSERT_ARGC("sha256", 1);
 
-        Value s = ARG(0);
-        unsigned char digest[SHA256_DIGEST_LENGTH];
+        Value s = ARGx(0, VALUE_STRING, VALUE_BLOB);
+        char digest[SHA256_DIGEST_STRING_LENGTH];
 
         if (s.type == VALUE_STRING) {
-                SHA256((unsigned char const *)ss(s), sN(s), digest);
+                SHA256Data(ss(s), sN(s), digest);
         } else if (s.type == VALUE_BLOB) {
-                SHA256(s.blob->items, s.blob->count, digest);
+                SHA256Data(vv(*s.blob), vN(*s.blob), digest);
         }
 
-        Blob *b = value_blob_new(ty);
-        uvPn(*b, digest, sizeof digest);
-
-        return BLOB(b);
+        return vSsz(digest);
 }
 
 BUILTIN_FUNCTION(sha1)
 {
         ASSERT_ARGC("sha1", 1);
 
-        Value s = ARG(0);
-        unsigned char digest[SHA_DIGEST_LENGTH];
+        Value s = ARGx(0, VALUE_STRING, VALUE_BLOB);
+        char digest[SHA1_DIGEST_STRING_LENGTH];
 
         if (s.type == VALUE_STRING) {
-                SHA1((unsigned char const *)ss(s), sN(s), digest);
-        } else if (s.type == VALUE_BLOB) {
-                SHA1(s.blob->items, s.blob->count, digest);
+                SHA1Data(ss(s), sN(s), digest);
         } else {
-                zP("md5(): invalid argument: %s", VSC(&s));
+                SHA1Data(vv(*s.blob), vN(*s.blob), digest);
         }
 
-        Blob *b = value_blob_new(ty);
-        uvPn(*b, digest, sizeof digest);
-
-        return BLOB(b);
+        return vSsz(digest);
 }
 
 BUILTIN_FUNCTION(md5)
 {
         ASSERT_ARGC("md5", 1);
 
-        Value s = ARG(0);
-        unsigned char digest[MD5_DIGEST_LENGTH];
+        Value s = ARGx(0, VALUE_STRING, VALUE_BLOB);
+        char digest[MD5_DIGEST_STRING_LENGTH];
 
         if (s.type == VALUE_STRING) {
-                MD5((unsigned char const *)ss(s), sN(s), digest);
-        } else if (s.type == VALUE_BLOB) {
-                MD5(s.blob->items, s.blob->count, digest);
+                MD5Data(ss(s), sN(s), digest);
         } else {
-                zP("md5(): invalid argument: %s", VSC(&s));
+                MD5Data(vv(*s.blob), vN(*s.blob), digest);
         }
 
-        Blob *b = value_blob_new(ty);
-        uvPn(*b, digest, sizeof digest);
-
-        return BLOB(b);
+        return vSsz(digest);
 }
 
 static bool
@@ -2077,51 +2084,62 @@ b64enc(Ty *ty, void const *data, size_t n)
 
 BUILTIN_FUNCTION(base64_encode)
 {
-        ASSERT_ARGC_2("base64.encode()", 1, 2);
+        ASSERT_ARGC("base64.encode()", 1, 2);
 
-        if (argc == 2) {
-                if (ARG(1).type != VALUE_INTEGER) {
-                        zP("base64.encode(): the second argument must be an integer");
-                }
+        void const *data;
+        isize       len;
+        isize       size;
 
-                size_t n = ARG(1).z;
+        Value _data = ARGx(0, VALUE_STRING, VALUE_BLOB, VALUE_PTR);
 
-                switch (ARG(0).type) {
-                case VALUE_PTR:
-                        b64enc(ty, ARG(0).ptr, n);
-                        break;
-                default:
-                        goto Bad;
-                }
-        } else {
-                switch (ARG(0).type) {
-                case VALUE_STRING:
-                        b64enc(ty, ss(ARG(0)), sN(ARG(0)));
-                        break;
-                case VALUE_BLOB:
-                        b64enc(ty, (char *)ARG(0).blob->items, ARG(0).blob->count);
-                        break;
-                default:
-                        goto Bad;
-                }
+        switch (ARG_T(0)) {
+        case VALUE_STRING:
+                data = ss(_data);
+                size = sN(_data);
+                len  = (argc == 2) ? INT_ARG(1) : size;
+                break;
+                break;
+
+        case VALUE_BLOB:
+                data = vv(*_data.blob);
+                size = vN(*_data.blob);
+                len  = (argc == 2) ? INT_ARG(1) : size;
+                break;
+
+        case VALUE_PTR:
+                data = ARG(0).ptr;
+                size = (argc == 2) ? INT_ARG(1) : strlen((char const *)data);
+                len  = size;
+                break;
         }
 
-        return vSs(B.items, B.count);
+        if (len < 0) {
+                len += size;
+        }
 
-Bad:
-        zP("base64.encode(): invalid argument(s)");
+        b64enc(ty, data, max(0, min(len, size)));
 
+        return vSs(vv(B), vN(B));
 }
 
 BUILTIN_FUNCTION(base64_decode)
 {
         ASSERT_ARGC("base64.decode()", 1);
 
-        if (ARG(0).type != VALUE_STRING) {
-                zP("base64.decode(): argument must be a string");
+        Value _data = ARGx(0, VALUE_STRING, VALUE_BLOB);
+        bool ok;
+
+        switch (_data.type) {
+        case VALUE_BLOB:
+                ok = b64dec(ty, vv(*_data.blob), vN(*_data.blob));
+                break;
+
+        case VALUE_STRING:
+                ok = b64dec(ty, ss(_data), sN(_data));
+                break;
         }
 
-        if (!b64dec(ty, ss(ARG(0)), sN(ARG(0)))) {
+        if (!ok) {
                 return NIL;
         }
 

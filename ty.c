@@ -10,9 +10,6 @@
 #include "polyfill_unistd.h"
 #include <fcntl.h>
 
-#include <readline/readline.h>
-#include <readline/history.h>
-
 #include "vm.h"
 #include "gc.h"
 #include "value.h"
@@ -42,7 +39,6 @@ static Ty *ty;
 #define MAX_COMPLETIONS 512
 
 static int color_mode = TY_COLOR_AUTO;
-static bool use_readline;
 static bool basic = false;
 static char buffer[8192];
 static char *completions[MAX_COMPLETIONS + 1];
@@ -150,14 +146,6 @@ execln(Ty *ty, char *line)
                 return true;
 
         xvP(buffer, '\0');
-
-        /*
-         * Very bad.
-         */
-        if (use_readline && basic) {
-                line = realloc(line, strlen(line) + 2);
-                add_history(line);
-        }
 
         if (strncmp(line, ":!", 2) == 0) {
                 (void)system(line + 2);
@@ -299,11 +287,11 @@ End:
 static char *
 readln(Ty *ty)
 {
-        Value line;
         Value *_readln;
-        char prompt[64];
 
-        if (
+        if (!InteractiveSession) {
+                return fgets(buffer, sizeof buffer, stdin);
+        } else if (
                 !basic
              && (_readln = vm_global(ty, NAMES._readln))
              && CALLABLE(*_readln)
@@ -314,17 +302,16 @@ readln(Ty *ty)
                         return NULL;
                 }
 
-                line = vm_call(ty, _readln, 0);
+                Value line = vm_call(ty, _readln, 0);
 
                 TY_CATCH_END();
 
                 return (line.type != VALUE_NIL)
                      ? TyNewCString(ty, line, true)
                      : NULL;
-        } else if (use_readline) {
-                snprintf(prompt, sizeof prompt, ">> ");
-                return readline(prompt);
         } else {
+                fputs(">> ", stdout);
+                fflush(stdout);
                 return fgets(buffer, sizeof buffer, stdin);
         }
 }
@@ -391,14 +378,11 @@ repl(Ty *ty)
 {
         InteractiveSession = true;
 
-        rl_attempted_completion_function = complete;
-        rl_basic_word_break_characters = ".\t\n\r ";
-
         signal(SIGINT, sigint);
 
-        if (!basic) pollute_with_bloat();
-
-        use_readline = true;
+        if (!basic) {
+                pollute_with_bloat();
+        }
 
         for (;;) {
                 (void)setjmp(InterruptJB);
@@ -413,12 +397,7 @@ repl(Ty *ty)
         }
 }
 
-char *
-completion_generator(char const *text, int state)
-{
-        return completions[state] ? S2(completions[state]) : NULL;
-}
-
+#if 0
 static int
 AddCompletions(Ty *ty, Value const *v, char const *s)
 {
@@ -467,73 +446,7 @@ AddCompletions(Ty *ty, Value const *v, char const *s)
 
         return n;
 }
-
-static char **
-complete(char const *s, int start, int end)
-{
-        rl_completion_append_character = '\0';
-
-        if (start == 0 || rl_line_buffer[start - 1] != '.') {
-                int n = compiler_get_completions(ty, NULL, s, completions, 99);
-                if (n == 0) {
-                        return NULL;
-                } else {
-                        completions[n] = NULL;
-                        return rl_completion_matches(s, completion_generator);
-                }
-        }
-
-        int before_len = start - 1;
-        char before[2048] = {0};
-
-        if (before_len + 2 > sizeof before) {
-                return NULL;
-        }
-
-        memcpy(before + 1, rl_line_buffer, before_len);
-        before[1 + before_len] = 0;
-
-        int n = 0;
-
-        Expr *expr;
-        Type *t0;
-        Value v;
-        struct itable o = {0};
-
-        /*
-         * First check if it's a module name, otherwise treat it as an expression that
-         * will evaluate to an object and then complete its members.
-         */
-        if (compiler_has_module(ty, before + 1)) {
-                n = compiler_get_completions(ty, before + 1, s, completions, MAX_COMPLETIONS);
-        } else if (repl_exec(ty, before + 1)) {
-                n = AddCompletions(ty, vm_get(ty, -1), s);
-        } else if (strstr(TyError(ty), "ParseError") != NULL) {
-                strcat(before + 1, " [");
-                repl_exec(ty, before + 1);
-                expr = LastParsedExpr;
-                if (!tyeval(ty, expr, &v)) {
-                        compiler_symbolize_expression(ty, expr, NULL);
-                        t0 = expr->_type;
-                        switch (t0 == NULL ? -1 : t0->type) {
-                        case TYPE_OBJECT:
-                                v = OBJECT(&o, t0->class->i);
-                                break;
-                        case TYPE_INTEGER:
-                                v = INTEGER(t0->z);
-                                break;
-                        }
-                }
-                n = AddCompletions(ty, &v, s);
-        }
-
-        if (n == 0) {
-                return NULL;
-        } else {
-                completions[n] = NULL;
-                return rl_completion_matches(s, completion_generator);
-        }
-}
+#endif
 
 inline static bool
 stdin_is_tty(void)

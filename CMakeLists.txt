@@ -20,29 +20,10 @@ find_package(Threads REQUIRED)
 find_package(unofficial-libffi CONFIG REQUIRED)
 # defines target(s): unofficial::sqlite3::sqlite3
 find_package(unofficial-sqlite3 CONFIG REQUIRED)
-# defines target(s): unofficial::gumbo::gumbo
-find_package(unofficial-gumbo CONFIG REQUIRED)
 # defines target(s): utf8proc
 find_package(unofficial-utf8proc CONFIG REQUIRED)
-if (WIN32)
-  # defines target(s): unofficial::readline-win32::readline
-  find_package(unofficial-readline-win32 CONFIG REQUIRED)
-else()
-  find_package(PkgConfig)
-  pkg_check_modules(READLINE REQUIRED readline)
-  add_library(unofficial-readline STATIC IMPORTED)
-  target_link_libraries(unofficial-readline INTERFACE "${READLINE_STATIC_LIBRARIES}")
-  target_include_directories(unofficial-readline INTERFACE "${READLINE_INCLUDE_DIRS}")
-  target_link_directories(unofficial-readline INTERFACE "${READLINE_LIBRARY_DIRS}")
-  list(GET READLINE_LINK_LIBRARIES 0 _readline_imported_location)
-  set_target_properties(unofficial-readline PROPERTIES IMPORTED_LOCATION ${_readline_imported_location})
-endif()
 # defines target(s): PCRE2::8BIT, PCRE2::16BIT, PCRE2::32BIT, PCRE2::POSIX
 find_package(pcre2 CONFIG REQUIRED)
-# defines target(s): CURL::libcurl
-find_package(CURL CONFIG REQUIRED)
-# defines target(s): OpenSSL::SSL, OpenSSL::Crypto, OpenSSL::applink
-find_package(OpenSSL REQUIRED)
 # defines target(s): xxHash::xxhash
 find_package(xxHash CONFIG REQUIRED)
 # defines target(s): mimalloc, mimalloc-static
@@ -165,6 +146,11 @@ add_library(dtoa)
 target_sources(dtoa PRIVATE dtoa/SwiftDtoa.c)
 
 # ---
+#  target: libmd::md
+# ---
+add_subdirectory(libmd)
+
+# ---
 #  target: ty
 # ---
 
@@ -175,12 +161,10 @@ set(_src_files
   src/blob.c
   src/class.c
   src/compiler.c
-  src/curl.c
   src/dict.c
   src/ffi.c
   src/functions.c
   src/gc.c
-  src/html.c
   src/intern.c
   src/itable.c
   src/json.c
@@ -272,12 +256,9 @@ target_link_libraries(${_tgt_ty_interface}
     ${_tgt_ty_interface_version_info}
     ${_tgt_ioctlconstants_h}
     Threads::Threads # pthreads (or equivalent)
-    CURL::libcurl
-    OpenSSL::SSL
-    OpenSSL::Crypto
+    libmd::md
     unofficial::libffi::libffi
     unofficial::sqlite3::sqlite3
-    unofficial::gumbo::gumbo
     PCRE2::8BIT
     xxHash::xxhash
     mimalloc-static
@@ -285,9 +266,7 @@ target_link_libraries(${_tgt_ty_interface}
     libco
     dtoa
     $<$<NOT:$<BOOL:${WIN33}>>:${CMAKE_DL_LIBS}>
-    $<$<NOT:$<BOOL:${WIN32}>>:unofficial-readline>
     $<$<NOT:$<BOOL:${WIN32}>>:m>
-    $<$<BOOL:${WIN32}>:unofficial::readline-win32::readline>
     $<$<BOOL:${WIN32}>:ws2_32> # winsock2
     $<$<BOOL:${WIN32}>:Shlwapi.lib>
 )
