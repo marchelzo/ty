@@ -1,12 +1,8 @@
 {
     "dependencies": [
         "libffi",
-        { "name": "curl", "features": ["http2"] },
-        "openssl",
-        "readline",
         "utf8proc",
         "sqlite3",
-        "gumbo",
         { "name": "pcre2", "features": ["jit"] },
         "xxhash",
         "mimalloc"

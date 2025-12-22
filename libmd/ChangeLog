@@ -1,0 +1,1056 @@
+commit 16d68ab76eee25bf8ec807aff9a6ea7e0f135019
+Author: Guillem Jover <guillem@hadrons.org>
+Date:   Thu May 25 23:54:13 2023 +0200
+
+    Release libmd 1.1.0
+
+ configure.ac | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+commit 054bca1a2e9810b3017c868e344af8d6c4270767
+Author: Guillem Jover <guillem@hadrons.org>
+Date:   Tue Apr 11 00:19:46 2023 +0200
+
+    build: Terminate lists in variables with «# EOL»
+    
+    This means we can add a trailing «\» to every element, so that they
+    can be removed without requiring modification of other lines, and can
+    be easily sorted.
+    
+    Replace the old usage of $(nil) which could possibly end up with junk
+    added if such variable is ever defined, in the environment.
+
+ Makefile.am         |  9 +++++++--
+ include/Makefile.am |  4 ++--
+ man/Makefile.am     | 20 ++++++++++----------
+ src/Makefile.am     | 30 +++++++++++++++++-------------
+ test/Makefile.am    |  6 +++---
+ 5 files changed, 39 insertions(+), 30 deletions(-)
+
+commit 84d269e813276337a6a074b0ca4d276465b4fc6f
+Author: Guillem Jover <guillem@hadrons.org>
+Date:   Thu Apr 6 20:37:41 2023 +0200
+
+    test: Add cases for SHA224 and SHA512-256
+
+ test/sha2.c | 16 ++++++++++++++++
+ 1 file changed, 16 insertions(+)
+
+commit a677e68673f18bf84b2314b8716e052fb5e471e4
+Author: Guillem Jover <guillem@hadrons.org>
+Date:   Thu Apr 6 20:37:41 2023 +0200
+
+    test: Add a new test_eq() helper function
+
+ test/test.h | 15 +++++++++++++--
+ 1 file changed, 13 insertions(+), 2 deletions(-)
+
+commit 4c5931f53727b1428b47b6a1c0bfdad02c46f1ca
+Author: Guillem Jover <guillem@hadrons.org>
+Date:   Thu Apr 6 20:37:41 2023 +0200
+
+    Sync SHA2 changes from OpenBSD
+    
+    This adds support for SHA224 and SHA512-256.
+
+ include/sha2.h  |  32 +++++++-
+ src/Makefile.am |  12 ++-
+ src/libmd.map   |  23 ++++++
+ src/sha2.c      | 241 ++++++++++++++++++++++++++++++++++++++++++--------------
+ 4 files changed, 247 insertions(+), 61 deletions(-)
+
+commit 9934d941e068001a8116319ee500cbf76b50eb0e
+Author: Guillem Jover <guillem@hadrons.org>
+Date:   Wed Apr 5 23:53:43 2023 +0200
+
+    Sync SHA1 changes from OpenBSD
+    
+    Remove SH specific code, and remove conditional for the digest argument.
+
+ include/sha1.h |  2 +-
+ src/sha1.c     | 72 ++++------------------------------------------------------
+ 2 files changed, 6 insertions(+), 68 deletions(-)
+
+commit 457e30aeec5b0fe979ffb7ffc9e69db52a19fbfc
+Author: Guillem Jover <guillem@hadrons.org>
+Date:   Sun Apr 9 00:14:30 2023 +0200
+
+    Sync RMD160 changes from OpenBSD
+
+ include/rmd160.h |  2 +-
+ src/rmd160.c     | 12 +++++-------
+ 2 files changed, 6 insertions(+), 8 deletions(-)
+
+commit b2e54bcdac68d48f4a5919ece045fe4d0f741f96
+Author: Guillem Jover <guillem@hadrons.org>
+Date:   Sun Apr 9 00:10:07 2023 +0200
+
+    Sync MD5 changes from OpenBSD
+
+ include/md5.h |  2 +-
+ src/md5.c     | 12 +++++-------
+ 2 files changed, 6 insertions(+), 8 deletions(-)
+
+commit ee56a52ac4dc72002eb601ba08196572d6e8a092
+Author: Guillem Jover <guillem@hadrons.org>
+Date:   Sun Apr 9 00:05:02 2023 +0200
+
+    Sync MD4 changes from OpenBSD
+    
+    Get all changes before this MD4 implementation got removed from OpenBSD.
+
+ include/md4.h |  2 +-
+ src/md4.c     | 10 ++++------
+ 2 files changed, 5 insertions(+), 7 deletions(-)
+
+commit b9496acd52b4f4cbde13e80cae4305e9454a469a
+Author: Guillem Jover <guillem@hadrons.org>
+Date:   Wed Apr 5 23:53:24 2023 +0200
+
+    Sync MD2 changes from NetBSD
+
+ include/md2.h | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+commit 09d58246d1aba6ca17ca1e19bb08ef855a9b29fd
+Author: Guillem Jover <guillem@hadrons.org>
+Date:   Sat Apr 8 20:53:37 2023 +0200
+
+    Remove unused <assert.h>
+
+ src/md2.c | 1 -
+ 1 file changed, 1 deletion(-)
+
+commit 08b2c5dd8a51a77b1d9ab436e4e9c261aafa0049
+Author: Guillem Jover <guillem@hadrons.org>
+Date:   Sat Apr 8 23:43:04 2023 +0200
+
+    build: Rename libmd_alias() to libmd_strong_alias()
+
+ src/local-link.h | 6 +++---
+ src/sha2.c       | 8 ++++----
+ 2 files changed, 7 insertions(+), 7 deletions(-)
+
+commit ed695998501bf90158f3899d92fecf28293ea313
+Author: Guillem Jover <guillem@hadrons.org>
+Date:   Fri Mar 31 23:47:38 2023 +0200
+
+    On Darwin use assembler to support symbol aliases
+    
+    The alias attribute is not supported on Darwin, but we can alias using
+    assembler directives instead.
+    
+    At the same time we switch the non-ELF fallback implementation for
+    libmd_symver_default to use libmd_alias.
+
+ src/local-link.h | 14 ++++++++++----
+ 1 file changed, 10 insertions(+), 4 deletions(-)
+
+commit b74b77720494d3103ba0e2e6eb0fd077d33221cf
+Author: Guillem Jover <guillem@hadrons.org>
+Date:   Tue Mar 28 03:25:35 2023 +0200
+
+    build: Do not use strong aliases on macOS
+    
+    These are not supported, and when trying to link the library we
+    get the following error message:
+    
+       error: aliases are not supported on darwin
+
+ src/local-link.h | 6 ++++--
+ 1 file changed, 4 insertions(+), 2 deletions(-)
+
+commit 94838ec6983ab067769901e87f50e9b377252d7e
+Author: Guillem Jover <guillem@hadrons.org>
+Date:   Tue Mar 14 01:49:53 2023 +0100
+
+    build: Require automake 1.11
+    
+    This is a rather old release (from 2009), that provides AM_SILENT_RULES.
+
+ configure.ac | 8 ++------
+ 1 file changed, 2 insertions(+), 6 deletions(-)
+
+commit 39cbc7bb0c8f30c05d0190899aa023e8f04ae317
+Author: Guillem Jover <guillem@hadrons.org>
+Date:   Tue Mar 14 01:48:45 2023 +0100
+
+    build: Fix configure.ac indentation
+    
+    Use the same style as the newly added code, which should make the code
+    more readable.
+
+ configure.ac | 28 ++++++++++++++++++----------
+ 1 file changed, 18 insertions(+), 10 deletions(-)
+
+commit 4620a04ab627ff266ee90853fa2e13326f169552
+Author: Guillem Jover <guillem@hadrons.org>
+Date:   Fri Feb 17 22:29:50 2023 +0100
+
+    build: Switch to debian:latest Docker image
+    
+    This should always point to the latest Debian stable images.
+
+ .gitlab-ci.yml | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+commit e408786075b9540f76783f5c3ce87f6d1ece13cf
+Author: Guillem Jover <guillem@hadrons.org>
+Date:   Sun Feb 12 23:55:09 2023 +0100
+
+    build: Fix version script linker support detection
+    
+    When the linker uses --no-undefined-version either specified by the user
+    or as the default behavior (such as with newer clang >= 16 releases),
+    a missing symbol definition will cause a linker error if that symbol is
+    listed in the version script.
+    
+    Closes: #1
+
+ m4/libmd-linker.m4 | 6 +++++-
+ 1 file changed, 5 insertions(+), 1 deletion(-)
+
+commit 0ef1e4da68332073457e8b3be512b6d902be4685
+Author: Guillem Jover <guillem@hadrons.org>
+Date:   Wed Oct 5 01:38:35 2022 +0200
+
+    doc: Move mailing list reference to the end
+
+ README | 24 ++++++++++++------------
+ 1 file changed, 12 insertions(+), 12 deletions(-)
+
+commit a3f16719026f26d0a7e6ca9aa0f67881505fa017
+Author: Guillem Jover <guillem@hadrons.org>
+Date:   Tue Oct 5 06:03:29 2021 +0200
+
+    man: Add new libmd(7) man page
+
+ man/Makefile.am |   1 +
+ man/libmd.7     | 102 ++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+ 2 files changed, 103 insertions(+)
+
+commit 9d3c9a739f86b65b238163b9f8af3623226a6419
+Author: Guillem Jover <guillem@hadrons.org>
+Date:   Tue Oct 5 04:44:25 2021 +0200
+
+    Release libmd 1.0.4
+
+ configure.ac | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+commit 04781b0a5c767454e569694f5b96c8ae6e9127ea
+Author: David Seifert <soap@gentoo.org>
+Date:   Tue Oct 5 04:34:48 2021 +0200
+
+    build: Avoid non-portable '$<' in non-inference rules
+    
+    OpenBSD's 'pmake' chokes on these.
+    
+    Signed-off-by: Guillem Jover <guillem@hadrons.org>
+
+ man/Makefile.am |  6 +++---
+ src/Makefile.am | 18 +++++++++---------
+ 2 files changed, 12 insertions(+), 12 deletions(-)
+
+commit 8a62de57a12899d300872916d8f08ec04a071eeb
+Author: Guillem Jover <guillem@hadrons.org>
+Date:   Tue Aug 17 02:24:09 2021 +0200
+
+    build: Fix out of tree builds
+    
+    The '$<' variable is not guarantee to work in ordinary make rules by
+    non GNU make implementations. In addition if it is supported it will
+    be replaced by the actual source pathname (in VPATH mode), which is not
+    the relative name we need on installation.
+    
+    Ref: https://www.gnu.org/software/autoconf/manual/autoconf.html#g_t_0024_003c-in-Ordinary-Make-Rules
+    Reported-by: David Seifert <soap@gentoo.org>
+
+ man/Makefile.am | 12 ++++++------
+ 1 file changed, 6 insertions(+), 6 deletions(-)
+
+commit 85f7006c64fcf2f2dd72f7bdca11b88231a8ff0d
+Author: David Seifert <soap@gentoo.org>
+Date:   Tue Oct 5 04:20:30 2021 +0200
+
+    build: Explicitly depend on sed
+    
+    Signed-off-by: Guillem Jover <guillem@hadrons.org>
+
+ configure.ac    |  1 +
+ man/Makefile.am |  6 +++---
+ src/Makefile.am | 20 ++++++++++----------
+ 3 files changed, 14 insertions(+), 13 deletions(-)
+
+commit dc32a5957bee09df3645cddb66c65f7803ea5a20
+Author: Guillem Jover <guillem@hadrons.org>
+Date:   Mon Aug 16 14:43:49 2021 +0200
+
+    build: Switch Docker image to Debian bullseye
+
+ .gitlab-ci.yml | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+commit d9c4c7fe282bbf79fdf3af6aa4b870125e822a50
+Author: Guillem Jover <guillem@hadrons.org>
+Date:   Sat Feb 20 22:19:49 2021 +0100
+
+    build: Add support for sanitizer compiler flags
+
+ .gitlab-ci.yml |  2 +-
+ configure.ac   | 13 +++++++++++++
+ 2 files changed, 14 insertions(+), 1 deletion(-)
+
+commit e35f6b877ab381ffcea9f391944be2097524c20c
+Author: Guillem Jover <guillem@hadrons.org>
+Date:   Fri Feb 19 23:59:47 2021 +0100
+
+    build: Add compiler warnings support
+    
+    Detect as many warnings as possible during configure and enable them
+    if the user did not supply any, so that any such problem can be spotted
+    and fixed.
+
+ configure.ac         | 43 +++++++++++++++++++++++++++++++++++++++++++
+ m4/libmd-compiler.m4 | 24 ++++++++++++++++++++++++
+ 2 files changed, 67 insertions(+)
+
+commit 9cc6db0cf8ad97b33f1499df001f0609a3003a77
+Author: Guillem Jover <guillem@hadrons.org>
+Date:   Sun Feb 28 18:57:00 2021 +0100
+
+    build: Improve coverage report
+    
+    Exclude test suite files from the coverage which incorrectly increase
+    the coverage percent. Build with no-optimizations and debugging symbols.
+
+ .gitlab-ci.yml | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+commit ef667150e80dcb4ca2dd87c30655f23442687969
+Author: Guillem Jover <guillem@hadrons.org>
+Date:   Sun Feb 28 18:56:27 2021 +0100
+
+    build: Indent packages in GitLab CI apt-get invocation
+
+ .gitlab-ci.yml | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+commit 8308181a0018a15944df18303316c30b6d1dbf4a
+Author: Guillem Jover <guillem@hadrons.org>
+Date:   Sat Feb 20 23:41:51 2021 +0100
+
+    build: Add GitLab CI support
+
+ .gitlab-ci.yml | 19 +++++++++++++++++++
+ 1 file changed, 19 insertions(+)
+
+commit ac5cd2d7fce430ab04376cc514da8f88156b9cef
+Author: Guillem Jover <guillem@hadrons.org>
+Date:   Sun Feb 28 01:13:14 2021 +0100
+
+    build: Ignore code coverage files
+
+ .gitignore | 2 ++
+ 1 file changed, 2 insertions(+)
+
+commit 1a8d0b68a1f6a42c57261e76a8fccb9404fc305f
+Author: Guillem Jover <guillem@hadrons.org>
+Date:   Sat Feb 20 23:40:29 2021 +0100
+
+    man: Document RIPEMD160 and SHA-1 security status
+
+ man/rmd160.3 | 7 +++----
+ man/sha1.3   | 6 ++++--
+ 2 files changed, 7 insertions(+), 6 deletions(-)
+
+commit e50a6db8ec1425e8354ece5ce45ac6cb2d2dcb3b
+Author: Guillem Jover <guillem@hadrons.org>
+Date:   Fri Feb 19 23:58:37 2021 +0100
+
+    test: Fix pointer type sign mismatch in DEF_TEST_DIGEST() macro
+    
+    Warned-by: gcc
+
+ test/test.h | 6 +++---
+ 1 file changed, 3 insertions(+), 3 deletions(-)
+
+commit b7d06e0dc98a0b774db6e54272a38ed0583b3d4d
+Author: Guillem Jover <guillem@hadrons.org>
+Date:   Fri Feb 19 23:56:07 2021 +0100
+
+    Fix signedness type mismatch comparisons
+    
+    Change the variable type or use a cast.
+    
+    Warned-by: gcc
+
+ src/helper.c | 2 +-
+ test/test.h  | 2 +-
+ 2 files changed, 2 insertions(+), 2 deletions(-)
+
+commit 6cedc1594f34529a803a25cbcb773cbf5a6fc891
+Author: Guillem Jover <guillem@hadrons.org>
+Date:   Fri Feb 19 07:14:15 2021 +0100
+
+    Fix main() function prototype
+    
+    Warned-by: gcc
+
+ test/md2.c    | 2 +-
+ test/md4.c    | 2 +-
+ test/md5.c    | 2 +-
+ test/rmd160.c | 2 +-
+ test/sha1.c   | 2 +-
+ test/sha2.c   | 2 +-
+ 6 files changed, 6 insertions(+), 6 deletions(-)
+
+commit 52ee547648923398015add10e0e9490ce3226ec7
+Author: Guillem Jover <guillem@hadrons.org>
+Date:   Fri Feb 19 07:13:51 2021 +0100
+
+    Declare local functions as static
+    
+    Warned-by: gcc
+
+ test/md5.c  | 6 +++---
+ test/test.h | 2 +-
+ 2 files changed, 4 insertions(+), 4 deletions(-)
+
+commit 281dab62f25eee47da5eb996db7ef440a22d2295
+Author: Guillem Jover <guillem@hadrons.org>
+Date:   Fri Feb 19 07:13:28 2021 +0100
+
+    Place static keyword before const in function definitions
+    
+    Warned-by: gcc
+
+ src/sha2.c | 10 +++++-----
+ 1 file changed, 5 insertions(+), 5 deletions(-)
+
+commit 981a0a1dc91aae55930451564e506f927010622a
+Author: Guillem Jover <guillem@hadrons.org>
+Date:   Sat Jan 2 16:30:03 2021 +0100
+
+    Release libmd 1.0.3
+
+ configure.ac | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+commit 6b3f9f75d8f79a93792dedb5e3541a228d38fa62
+Author: Guillem Jover <guillem@hadrons.org>
+Date:   Sat Jan 2 16:26:38 2021 +0100
+
+    build: Provide wrapper functions instead of aliases in DLL built with MSVC
+    
+    On Windows we cannot use proper aliases, and using the /EXPORT linker
+    flag is too cumbersome, as it does not work when static linking, and
+    when dynamic linking it does not make the aliases visible within the
+    DLL itself.
+    
+    Just use normal function wrapper in those cases, which are way more
+    maintainable.
+
+ src/local-link.h | 10 ++++++++++
+ src/sha2.c       | 20 ++++++++++++++++++++
+ 2 files changed, 30 insertions(+)
+
+commit 0f57340069a4eabfef3cfec53184837927b70ac9
+Author: Michael Haubenwallner <michael.haubenwallner@ssi-schaefer.com>
+Date:   Tue Dec 22 18:47:47 2020 +0100
+
+    build: Fix out of tree builds
+    
+    Adding local-link.h as private header file requires $(srcdir) on
+    AM_CPPFLAGS to be found by generated sources when builddir != srcdir.
+    
+    Do not use libmd.sym from $(srcdir), as it is a generated file.
+    
+    [guillem@hadrons.org: - Remove unrelated line moves. ]
+    
+    Signed-off-by: Guillem Jover <guillem@hadrons.org>
+
+ src/Makefile.am | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+commit 547953eff097fe3744271b27238d20f99ba43feb
+Author: Guillem Jover <guillem@hadrons.org>
+Date:   Tue Dec 22 18:40:55 2020 +0100
+
+    build: Ignore release tarballs
+
+ .gitignore | 1 +
+ 1 file changed, 1 insertion(+)
+
+commit dd01b873a759a384b914353fe58e346e2c841d8c
+Author: Guillem Jover <guillem@hadrons.org>
+Date:   Tue Dec 22 17:49:23 2020 +0100
+
+    Release libmd 1.0.2
+
+ configure.ac | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+commit eb25da50b3a7540e82c4bf6d92d30b2d4a48d95e
+Author: Guillem Jover <guillem@hadrons.org>
+Date:   Sat Nov 28 20:00:01 2020 +0100
+
+    Remove duplicate Files entries from COPYING
+
+ COPYING | 2 --
+ 1 file changed, 2 deletions(-)
+
+commit 52cb9cbef62cfa625a69f347f60bc7947fc13709
+Author: Guillem Jover <guillem@hadrons.org>
+Date:   Thu Sep 17 03:19:51 2020 +0200
+
+    build: Only depend on libmd.sym when using it
+
+ src/Makefile.am | 9 ++++++---
+ 1 file changed, 6 insertions(+), 3 deletions(-)
+
+commit 42d691a5de1bc16417a908ff9f61bbc07e7d37bc
+Author: Guillem Jover <guillem@hadrons.org>
+Date:   Mon Dec 21 20:19:54 2020 +0100
+
+    build: Move local-link.h from libmd_la_helper_sources to libmd_la_SOURCES
+    
+    This is not a generated file, so it needs to be listed in the library
+    SOURCES variable.
+    
+    Fixes: commit 9cc938450392d64440de5c7db27903dff9922728
+
+ src/Makefile.am | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+commit bd364c6d81dac38ec42f6fe5ae2e5296a56e12de
+Author: Guillem Jover <guillem@hadrons.org>
+Date:   Wed Aug 28 11:30:29 2019 +0200
+
+    Switch SHA2 symbols from weak to strong aliases
+    
+    There is no good reason to have these as weak symbols at all. And it
+    makes building on Windows (Cygwin, MinGW) harder as it does not
+    support weak symbols.
+    
+    Based-on-patch-by: Michael Haubenwallner <michael.haubenwallner@ssi-schaefer.com>
+    Signed-off-by: Guillem Jover <guillem@hadrons.org>
+
+ src/local-link.h |  3 +++
+ src/sha2.c       | 13 ++++---------
+ 2 files changed, 7 insertions(+), 9 deletions(-)
+
+commit 9cc938450392d64440de5c7db27903dff9922728
+Author: Guillem Jover <guillem@hadrons.org>
+Date:   Wed Aug 28 11:19:37 2019 +0200
+
+    Import local-link header from libbsd
+    
+    This provides several macros for versioned symbols and linking magic.
+
+ src/Makefile.am  |  1 +
+ src/local-link.h | 47 +++++++++++++++++++++++++++++++++++++++++++++++
+ 2 files changed, 48 insertions(+)
+
+commit 09b3ad8c9950aadccad1c8a9e2bc27baf93a4513
+Author: Michael Haubenwallner <michael.haubenwallner@ssi-schaefer.com>
+Date:   Wed Aug 28 11:16:54 2019 +0200
+
+    Remove unused weak symbol declarations for MD2 functions
+    
+    These are not currently used, as they are not part of the versioned
+    symbols export map.
+    
+    Signed-off-by: Guillem Jover <guillem@hadrons.org>
+
+ src/md2.c | 7 -------
+ 1 file changed, 7 deletions(-)
+
+commit 9a77023ffe31da98eb1dafbefe005171d1ef7499
+Author: Michael Haubenwallner <michael.haubenwallner@ssi-schaefer.com>
+Date:   Thu Aug 22 16:55:44 2019 +0200
+
+    build: Use <unistd.h> only if available
+    
+    Some target platforms do not have <unistd.h>, notably Windows when
+    using vanilla MSVC toolchain. Note: The AC_CHECK_HEADERS([unistd.h])
+    is redundant with LT_INIT, but there is no guarantee for that.
+    
+    [guillem@hadrons.org:
+     - Use AC_CHECK_HEADERS instead of AC_CHECK_HEADER.
+     - Quote argument to AC_CHECK_HEADERS. ]
+    
+    Signed-off-by: Guillem Jover <guillem@hadrons.org>
+
+ configure.ac | 1 +
+ src/helper.c | 2 ++
+ 2 files changed, 3 insertions(+)
+
+commit 9c330aa8e5085c57249550c0596154ac0e3ab0f4
+Author: Guillem Jover <guillem@hadrons.org>
+Date:   Mon Oct 22 12:43:15 2018 +0200
+
+    Release libmd 1.0.1
+
+ configure.ac | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+commit f23a2145a019776f827c11c03474761ba0b44e48
+Author: Guillem Jover <guillem@hadrons.org>
+Date:   Sat Oct 6 03:46:51 2018 +0200
+
+    Add compatibility with Aladdin Enterprises MD5 implementation
+    
+    This will be guarded by a LIBMD_MD5_ALADDIN macro check, to avoid
+    polluting the namespace by unsuspecting code. The macro can always
+    be defined unconditionally, and the guard could even potentially
+    be removed in the future if required.
+    
+    Prompted-by: Yangfl <mmyangfl@gmail.com>
+    Ref: https://bugs.debian.org/909116
+
+ include/md5.h | 20 ++++++++++++++++++++
+ test/md5.c    | 30 +++++++++++++++++++++++++++---
+ 2 files changed, 47 insertions(+), 3 deletions(-)
+
+commit cf9ac1507f62899d92718fdc216689c2fc98e1fe
+Author: Guillem Jover <guillem@hadrons.org>
+Date:   Sat Oct 6 04:33:02 2018 +0200
+
+    test: Refactor and extend message digest testing
+    
+    Generate the base test function with a maro, because all of them follow
+    the same pattern. And extend it by covering more of the API.
+
+ test/Makefile.am          |  4 ++++
+ test/md2.c                | 16 +++++---------
+ test/md4.c                | 16 +++++---------
+ test/md5.c                | 14 +++++-------
+ test/rmd160.c             | 16 +++++---------
+ test/sha1.c               | 16 +++++---------
+ test/sha2.c               | 46 ++++++++++++----------------------------
+ test/{rmd160.c => test.h} | 54 +++++++++++++++++++++++++++++++++++------------
+ 8 files changed, 83 insertions(+), 99 deletions(-)
+
+commit b6b3402e4a4b53cedff228a75339f08d23e6411d
+Author: Guillem Jover <guillem@hadrons.org>
+Date:   Sat Oct 6 04:30:59 2018 +0200
+
+    Fix compatibility macros for SHA512
+    
+    These have swapped names in their macro values.
+
+ include/sha512.h | 6 +++---
+ 1 file changed, 3 insertions(+), 3 deletions(-)
+
+commit ff52516cedbdd94dcba2ab2c3e5bddbd6a6d65e2
+Author: Guillem Jover <guillem@hadrons.org>
+Date:   Sat Oct 6 04:30:11 2018 +0200
+
+    Add missing compatibility macros for SHA384
+
+ include/sha512.h | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+commit bf04c4110f8028bbb4d6682b5eb93a3dc1a2f895
+Author: Rainer Müller <raimue@codingfarm.de>
+Date:   Fri Sep 29 17:02:33 2017 +0200
+
+    build: Invoke sed with portable regex
+    
+    The previous sed expression only worked with GNU sed, as the '\+'
+    literal is an extension to basic regex. Use portable syntax instead that
+    also works with other implementations of sed(1), for example on macOS.
+    
+    Signed-off-by: Guillem Jover <guillem@hadrons.org>
+
+ src/Makefile.am | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+commit c657abc165177183f453437e578832d146103d61
+Author: Guillem Jover <guillem@hadrons.org>
+Date:   Sat Jan 13 16:29:02 2018 +0100
+
+    Release libmd 1.0.0
+
+ configure.ac | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+commit 397964a117b7e17fc1abf336f2719ba932fb3a67
+Author: Guillem Jover <guillem@hadrons.org>
+Date:   Sat Jan 13 16:32:33 2018 +0100
+
+    Remove unused NEWS file
+
+ NEWS | 3 ---
+ 1 file changed, 3 deletions(-)
+
+commit cc6881c6d7be37279090d5fccb60bcb27bef918e
+Author: Guillem Jover <guillem@hadrons.org>
+Date:   Mon Jun 5 05:10:51 2017 +0200
+
+    Remove unused __RCSID macro usage
+    
+    This is an obsolescent practice, just stop conditionally using this
+    macro.
+
+ src/md2.c | 4 ----
+ 1 file changed, 4 deletions(-)
+
+commit 0def18290376573cf4e8faae071f33e73d163b1a
+Author: Guillem Jover <guillem@hadrons.org>
+Date:   Thu Jun 1 03:00:05 2017 +0200
+
+    Stop using non-portable <sys/param.h>
+    
+    There are platforms without <sys/param.h>, so we better avoid the
+    header altogether, and add the required MIN macro outselves.
+    
+    Based-on-patch-by: Michael Haubenwallner <michael.haubenwallner@ssi-schaefer.com>
+
+ configure.ac | 1 -
+ src/helper.c | 5 ++++-
+ src/sha1.c   | 1 -
+ 3 files changed, 4 insertions(+), 3 deletions(-)
+
+commit 04d92f90e9f522c002907089a4a6a336d86caaff
+Author: Guillem Jover <guillem@hadrons.org>
+Date:   Wed May 31 06:58:23 2017 +0200
+
+    build: Do not override the default DEPENDENCIES for libmd
+    
+    Extend it instead via EXTRA_*_DEPENDENCIES, to make sure that we
+    preserve the builtin library dependencies generated from LIBADD.
+
+ src/Makefile.am | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+commit 4c94d7fd8ccc96036ef847ddac96d24ffee12235
+Author: Guillem Jover <guillem@hadrons.org>
+Date:   Wed May 31 06:55:35 2017 +0200
+
+    build: Use an export symbols file if there is no version script support
+    
+    We generate the symbol list from the version script to avoid repeating
+    ourselves and potentially getting the lists out-of-sync.
+    
+    Proposed-by: Michael Haubenwallner <michael.haubenwallner@ssi-schaefer.com>
+
+ .gitignore      |  1 +
+ src/Makefile.am | 13 +++++++++++++
+ 2 files changed, 14 insertions(+)
+
+commit b6be272ec1baa16adb3502895f361f443054ccd9
+Author: Guillem Jover <guillem@hadrons.org>
+Date:   Wed May 31 06:45:25 2017 +0200
+
+    build: Detect version script linker support at configure time
+    
+    This is not a widely supported feature, so only use if in case the
+    linker does support it.
+    
+    Proposed-by: Michael Haubenwallner <michael.haubenwallner@ssi-schaefer.com>
+
+ .gitignore         |  1 -
+ Makefile.am        |  1 +
+ autogen            |  1 -
+ configure.ac       |  1 +
+ m4/.gitignore      |  2 ++
+ m4/libmd-linker.m4 | 22 ++++++++++++++++++++++
+ src/Makefile.am    |  5 ++++-
+ 7 files changed, 30 insertions(+), 3 deletions(-)
+
+commit 555d5074acfdc938932ac155b71eedcea20b198c
+Author: Michael Haubenwallner <michael.haubenwallner@ssi-schaefer.com>
+Date:   Mon Apr 10 13:10:45 2017 +0200
+
+    build: Switch to AC_C_BIGENDIAN defining WORD_BIGENDIAN
+    
+    We should use the autoconf macro instead of expecting the system to
+    provide the endianness information, which many do not.
+    
+    [guillem@hadrons.org:
+     - Use autoconf macro instead of gnulib one.
+     - Slightly reword commit message. ]
+    
+    Signed-off-by: Guillem Jover <guillem@hadrons.org>
+
+ configure.ac |  3 ++-
+ src/md4.c    |  2 +-
+ src/md5.c    |  2 +-
+ src/rmd160.c |  7 +------
+ src/sha1.c   |  2 +-
+ src/sha2.c   | 39 +++------------------------------------
+ 6 files changed, 9 insertions(+), 46 deletions(-)
+
+commit c3c8d859c309ed245b255d03937ac8e0cb98a425
+Author: Guillem Jover <guillem@hadrons.org>
+Date:   Thu Jun 1 02:43:22 2017 +0200
+
+    build: Drop GCC specific compiler flag -include
+    
+    Instead, explicitly include <config.h> in library and test source files
+    for increased portability.
+    
+    Based-on-patch-by: Michael Haubenwallner <michael.haubenwallner@ssi-schaefer.com>
+
+ src/Makefile.am  | 3 ++-
+ src/helper.c     | 2 ++
+ src/md2.c        | 2 ++
+ src/md4.c        | 2 ++
+ src/md5.c        | 2 ++
+ src/rmd160.c     | 3 +++
+ src/sha1.c       | 2 ++
+ src/sha2.c       | 2 ++
+ test/Makefile.am | 1 -
+ test/md2.c       | 2 ++
+ test/md4.c       | 2 ++
+ test/md5.c       | 2 ++
+ test/rmd160.c    | 2 ++
+ test/sha1.c      | 2 ++
+ test/sha2.c      | 2 ++
+ 15 files changed, 29 insertions(+), 2 deletions(-)
+
+commit 23637d726c7be93630b6e6418695276d13d71fb6
+Author: Michael Haubenwallner <michael.haubenwallner@ssi-schaefer.com>
+Date:   Mon Apr 10 13:10:40 2017 +0200
+
+    build: Stop checking for malloc() and memset()
+    
+    We do not provide alternatives for when memset() is missing, or when
+    malloc() is not GNU-style malloc(), causing redirection to (undefined)
+    rpl_malloc(). We do not rely on GNU-style malloc() at all, so there is
+    no point in checking for it.
+    
+    [guillem@hadrons.org:
+     - Slightly reword commit message. ]
+    
+    Signed-off-by: Guillem Jover <guillem@hadrons.org>
+
+ configure.ac | 2 --
+ 1 file changed, 2 deletions(-)
+
+commit 765a605ec4c5b2d48fba44846cbe8950f428104d
+Author: Michael Haubenwallner <michael.haubenwallner@ssi-schaefer.com>
+Date:   Mon Apr 10 13:10:39 2017 +0200
+
+    build: Add -no-undefined libtool flag
+    
+    We have no need for undefined symbols, so we can let the shared
+    library build even on systems without support for undefined symbols.
+    
+    [guillem@hadrons.org:
+     - Place the option on its own line.
+     - Slightly reword commit message. ]
+    
+    Signed-off-by: Guillem Jover <guillem@hadrons.org>
+
+ src/Makefile.am | 1 +
+ 1 file changed, 1 insertion(+)
+
+commit bb131b2e87b43023655995f5c5d8d4191686f6e3
+Author: Michael Haubenwallner <michael.haubenwallner@ssi-schaefer.com>
+Date:   Mon Apr 10 13:10:38 2017 +0200
+
+    Stop using non-portable <sys/cdefs.h>
+    
+    For portability, we should not rely on the __BEGIN_DECLS, __END_DECLS
+    and __P to be predefined somewhere. For __P, we just remove its usage
+    as we do not support pre-ANSI-C compilers.
+    
+    [guillem@hadrons.org:
+     - Separate extern declarations with newlines.
+     - Slightly reword commit message. ]
+    
+    Signed-off-by: Guillem Jover <guillem@hadrons.org>
+
+ include/md2.h    | 11 ++++++++---
+ include/md4.h    | 11 ++++++++---
+ include/md5.h    | 11 ++++++++---
+ include/rmd160.h | 11 ++++++++---
+ include/sha1.h   | 11 ++++++++---
+ include/sha2.h   | 11 ++++++++---
+ src/md2.c        |  3 +--
+ 7 files changed, 49 insertions(+), 20 deletions(-)
+
+commit ed7d023ee8d20957752e86e60a8d50620cc7cc7e
+Author: Guillem Jover <guillem@hadrons.org>
+Date:   Wed Feb 10 00:16:06 2016 +0100
+
+    Release libmd 0.0.0
+
+ NEWS | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+commit 4eaf4a125cb79116cc2d22fb31b83c2fd8680db5
+Author: Guillem Jover <guillem@hadrons.org>
+Date:   Sun Oct 23 19:20:26 2011 +0200
+
+    Add compatibility with other BSDs
+
+ COPYING             |  2 +-
+ include/Makefile.am |  8 ++++++++
+ include/ripemd.h    | 46 ++++++++++++++++++++++++++++++++++++++++++++++
+ include/sha.h       | 46 ++++++++++++++++++++++++++++++++++++++++++++++
+ include/sha256.h    | 44 ++++++++++++++++++++++++++++++++++++++++++++
+ include/sha512.h    | 49 +++++++++++++++++++++++++++++++++++++++++++++++++
+ 6 files changed, 194 insertions(+), 1 deletion(-)
+
+commit 7a85a55739fb094d865dcd38838a429cffafab8c
+Author: Guillem Jover <guillem@hadrons.org>
+Date:   Tue Feb 9 10:17:55 2016 +0100
+
+    Remove hidden dependencies from public headers
+    
+    Include <sys/types.h> in all public headers as they need them, so that
+    programs do not need to add such header to be able to build.
+
+ include/md4.h    | 5 +++--
+ include/md5.h    | 5 +++--
+ include/rmd160.h | 5 +++--
+ include/sha1.h   | 5 +++--
+ include/sha2.h   | 5 +++--
+ 5 files changed, 15 insertions(+), 10 deletions(-)
+
+commit 18ebbe24a789c26e93e7b81050a48261f73152cc
+Author: Guillem Jover <guillem@hadrons.org>
+Date:   Tue May 29 05:44:54 2012 +0200
+
+    Use stdint types instead of BSD u_int ones
+
+ include/md4.h    | 16 +++++++++-------
+ include/md5.h    | 16 +++++++++-------
+ include/rmd160.h | 16 +++++++++-------
+ include/sha1.h   | 16 +++++++++-------
+ include/sha2.h   | 33 ++++++++++++++++----------------
+ man/mdX.3        |  8 ++++----
+ man/rmd160.3     | 14 +++++++-------
+ man/sha1.3       | 14 +++++++-------
+ man/sha2.3       | 30 ++++++++++++++---------------
+ src/helper.c     |  6 +++---
+ src/md4.c        | 20 +++++++++----------
+ src/md5.c        | 20 +++++++++----------
+ src/rmd160.c     | 22 ++++++++++-----------
+ src/sha1.c       | 46 ++++++++++++++++++++++----------------------
+ src/sha2.c       | 58 ++++++++++++++++++++++++++++----------------------------
+ 15 files changed, 172 insertions(+), 163 deletions(-)
+
+commit 581c239f6eb4810f51c8cca45bd3daffde89ae37
+Author: Guillem Jover <guillem@hadrons.org>
+Date:   Sun May 29 04:46:28 2011 +0200
+
+    Remove __bounded__ GCC attribute
+    
+    This is a BSD specific extension to GCC, and as such not widely
+    available elsewhere.
+
+ include/md4.h    | 23 +++++++----------------
+ include/md5.h    | 23 +++++++----------------
+ include/rmd160.h | 23 +++++++----------------
+ include/sha1.h   | 23 +++++++----------------
+ include/sha2.h   | 57 ++++++++++++++++++--------------------------------------
+ 5 files changed, 46 insertions(+), 103 deletions(-)
+
+commit f1291e88d7a3a9f90e4f54df29620c53e92caded
+Author: Guillem Jover <guillem@hadrons.org>
+Date:   Sun May 29 04:46:46 2011 +0200
+
+    build: Use <endian.h> when <sys/endian.h> is not available
+
+ configure.ac | 2 +-
+ src/rmd160.c | 4 ++++
+ 2 files changed, 5 insertions(+), 1 deletion(-)
+
+commit 79b3a0b7f48918a36f56444d828b11e5f7bbd0cc
+Author: Guillem Jover <guillem@hadrons.org>
+Date:   Sun May 29 04:48:16 2011 +0200
+
+    build: Add build infrastructure
+
+ .gitignore          |  24 +++++++
+ COPYING             | 179 ++++++++++++++++++++++++++++++++++++++++++++++++++++
+ Makefile.am         |  16 +++++
+ NEWS                |   3 +
+ README              |  38 +++++++++++
+ autogen             |   5 ++
+ configure.ac        |  54 ++++++++++++++++
+ get-version         |  50 +++++++++++++++
+ include/Makefile.am |  10 +++
+ man/.gitignore      |   3 +
+ man/Makefile.am     | 148 +++++++++++++++++++++++++++++++++++++++++++
+ src/Makefile.am     |  97 ++++++++++++++++++++++++++++
+ src/libmd.map       |  84 ++++++++++++++++++++++++
+ src/libmd.pc.in     |  11 ++++
+ test/.gitignore     |   6 ++
+ test/Makefile.am    |  20 ++++++
+ test/md2.c          |  47 ++++++++++++++
+ test/md4.c          |  47 ++++++++++++++
+ test/md5.c          |  47 ++++++++++++++
+ test/rmd160.c       |  47 ++++++++++++++
+ test/sha1.c         |  47 ++++++++++++++
+ test/sha2.c         |  80 +++++++++++++++++++++++
+ 22 files changed, 1063 insertions(+)
+
+commit c5179609f32de7999f9da1506346ac4b27a7a385
+Author: Guillem Jover <guillem@hadrons.org>
+Date:   Mon Jun 29 17:32:14 2015 +0200
+
+    build: Define a dummy _DIAGASSERT
+
+ src/md2.c | 2 ++
+ 1 file changed, 2 insertions(+)
+
+commit 7a25747571987687cdd7ab0a7fd5ce91a9cf122e
+Author: Guillem Jover <guillem@hadrons.org>
+Date:   Sat Jul 19 16:49:55 2014 +0200
+
+    build: Add weak_alias definition
+
+ src/sha2.c | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+commit 649209d4707f92c2728f381a25d5b208696a77ed
+Author: Guillem Jover <guillem@hadrons.org>
+Date:   Sat Jul 19 16:11:42 2014 +0200
+
+    build: Use stdint
+
+ include/md2.h | 2 ++
+ 1 file changed, 2 insertions(+)
+
+commit 1878b975d1c797d57c86f76be638447353c5ea4c
+Author: Guillem Jover <guillem@hadrons.org>
+Date:   Sat Jul 19 16:11:25 2014 +0200
+
+    man: Add LIBRARY section
+
+ man/mdX.3    | 2 ++
+ man/rmd160.3 | 2 ++
+ man/sha1.3   | 2 ++
+ man/sha2.3   | 2 ++
+ 4 files changed, 8 insertions(+)
+
+commit ee0b22997a6df7715933fb608a35d67838e0f8e4
+Author: Guillem Jover <guillem@hadrons.org>
+Date:   Sun May 29 03:22:21 2011 +0200
+
+    Initial import from OpenBSD and NetBSD
+
+ include/md2.h    |  29 ++
+ include/md4.h    |  52 ++++
+ include/md5.h    |  51 ++++
+ include/rmd160.h |  62 ++++
+ include/sha1.h   |  59 ++++
+ include/sha2.h   | 118 ++++++++
+ man/mdX.3        | 225 ++++++++++++++
+ man/rmd160.3     | 239 +++++++++++++++
+ man/sha1.3       | 233 +++++++++++++++
+ man/sha2.3       | 281 ++++++++++++++++++
+ src/helper.c     |  96 ++++++
+ src/md2.c        | 178 ++++++++++++
+ src/md4.c        | 231 +++++++++++++++
+ src/md5.c        | 248 ++++++++++++++++
+ src/rmd160.c     | 371 +++++++++++++++++++++++
+ src/sha1.c       | 235 +++++++++++++++
+ src/sha2.c       | 873 +++++++++++++++++++++++++++++++++++++++++++++++++++++++
+ 17 files changed, 3581 insertions(+)

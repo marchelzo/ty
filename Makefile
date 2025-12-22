@@ -3,11 +3,10 @@ CFLAGS += -Wall
 CFLAGS += -Iinclude
 CFLAGS += -Ilibco
 CFLAGS += -Idtoa
+CFLAGS += -Ilibmd/include
 CFLAGS += -isystem/usr/local/include
 CFLAGS += $(shell pkg-config --cflags libffi)
 CFLAGS += $(shell pcre2-config --cflags)
-CFLAGS += $(shell pkg-config --cflags libcurl)
-CFLAGS += $(shell pkg-config --cflags openssl)
 CFLAGS += -Wno-switch
 CFLAGS += -Wno-unused-value
 CFLAGS += -Wno-unused-function
@@ -25,22 +24,17 @@ endif
 CFLAGS += -no-pie
 
 LDFLAGS += -lm
-LDFLAGS += -lreadline
 LDFLAGS += -lcurses
 LDFLAGS += -L/usr/local/lib
 LDFLAGS += -lpthread
-LDFLAGS += -lmimalloc
+#LDFLAGS += -lmimalloc
 
-LDFLAGS += -lreadline
 LDFLAGS += -lutf8proc
 LDFLAGS += -lsqlite3
 LDFLAGS += -lxxhash
 LDFLAGS += -ldl
-LDFLAGS += $(shell pkg-config --libs openssl)
 LDFLAGS += -lffi
 LDFLAGS += $(shell pcre2-config --libs8)
-LDFLAGS += $(shell pkg-config --libs gumbo)
-LDFLAGS += $(shell pkg-config --libs libcurl)
 
 ifdef JEMALLOC
         LDFLAGS += -L$(shell jemalloc-config --libdir)
@@ -84,7 +78,7 @@ else ifdef DEBUG
         CFLAGS += -fno-omit-frame-pointer
         CFLAGS += -fno-sanitize=nonnull-attribute
         CFLAGS += -fsanitize=address
-        CFLAGS += -mllvm --asan-stack=0
+        #CFLAGS += -mllvm --asan-stack=0
         CFLAGS += -fno-sanitize-address-use-after-scope
         CFLAGS += -g3
 else ifdef TDEBUG
@@ -122,17 +116,18 @@ ifdef WITHOUT_OS
 endif
 
 SOURCES := $(wildcard src/*.c)
-OBJECTS := $(patsubst src/%.c,obj/%.o,$(SOURCES)) libco/libco.o dtoa/dtoa.o
-TYLS_OBJECTS := $(patsubst src/%.c,obj/tyls/%.o,$(SOURCES)) libco/libco.o dtoa/dtoa.o
+OBJECTS := $(patsubst src/%.c,obj/%.o,$(SOURCES))
+TYLS_OBJECTS := $(patsubst src/%.c,obj/tyls/%.o,$(SOURCES))
+EXTERNAL := libco/libco.c dtoa/SwiftDtoa.c libmd/src/.libs/libmd.a
 ASSEMBLY := $(patsubst %.c,%.s,$(SOURCES))
 
 all: $(PROG)
 
-ty: ty.c $(OBJECTS)
+ty: ty.c $(OBJECTS) $(EXTERNAL)
 	@echo cc $<
 	@$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
-tyls: tyls.c $(TYLS_OBJECTS)
+tyls: tyls.c $(TYLS_OBJECTS) $(EXTERNAL)
 	@echo cc $<
 	@$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
