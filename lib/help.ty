@@ -160,7 +160,7 @@ pub fn help(x: Any) {
         }
 
         // Find the leading whitespace length common to all lines
-        let leading = lines.map(&match(/^\s*/) |> &len).min()
+        let leading = lines.map(\#_.match(/^\s*/)).min()
 
         for line in lines.map!(&slice(leading)) {
             p(''.lpad(indent), line, sep='')

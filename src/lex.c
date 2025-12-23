@@ -948,7 +948,6 @@ lexop(Ty *ty)
 {
         char op[MAX_OP_LEN + 1] = {0};
         size_t i = 0;
-        int type;
 
         bool touching_id = idchar(C(-1))
                         || C(-1) == '?'
@@ -981,9 +980,9 @@ lexop(Ty *ty)
                  */
                 if (
                         touching_id
-                     && i == 1
-                     && C(-1) == '='
-                     && (C(0) != '=' || contains(OperatorCharset, C(1)))
+                     && (i == 1)
+                     && (C(-1) == '=')
+                     && ((C(0) != '=') || contains(OperatorCharset, C(1)))
                 ) {
                         return mktoken(ty, '=');
                 }
@@ -991,7 +990,7 @@ lexop(Ty *ty)
                 if (i == MAX_OP_LEN) {
                         error(
                                 ty,
-                                "operator contains too many characters: %s'%s...'%s",
+                                "operator exceeds allowed length: %s'%s...'%s",
                                 TERM(36),
                                 op,
                                 TERM(39)
@@ -1001,13 +1000,12 @@ lexop(Ty *ty)
                 }
         }
 
+        int type = operator_get_token_type(op);
+
         if (
-                (type = operator_get_token_type(op)) == -1
-             || (
-                        (strcmp(op, ".") == 0)
-                     && isspace(C(-2))
-                     && isspace(C(0))
-                )
+                (type == -1)
+             || (s_eq(op, ".")  && isspace(C(-2)) && isspace(C(0)))
+             || (s_eq(op, ".?") && isspace(C(-3)) && isspace(C(0)))
         ) {
                 Token t = mktoken(ty, TOKEN_USER_OP);
                 t.identifier = sclonea(ty, op);
@@ -1021,8 +1019,9 @@ lexop(Ty *ty)
 static Token
 lexlinecomment(Ty *ty)
 {
-        nextchar(ty); // /
-        nextchar(ty); // /
+        /* // */
+        nextchar(ty);
+        nextchar(ty);
 
         while (isspace(C(0)) && C(0) != '\n') {
                 nextchar(ty);
@@ -1051,24 +1050,23 @@ lexlinecomment(Ty *ty)
 static Token
 lexcomment(Ty *ty)
 {
-        nextchar(ty); // /
-        nextchar(ty); // *
+        // /*
+        nextchar(ty);
+        nextchar(ty);
 
         int level = 1;
         byte_vector comment = {0};
 
         while (C(0) != '\0' && level != 0) {
                 if (C(0) == '/' && C(1) == '*') {
-                        ++level;
+                        level += 1;
                 } else if (C(0) == '*' && C(1) == '/') {
-                        --level;
+                        level -= 1;
                 }
-
-                char c = nextchar(ty);
-
                 if (level != 0) {
-                        avP(comment, c);
+                        avP(comment, C(0));
                 }
+                nextchar(ty);
         }
 
         if (level != 0) {

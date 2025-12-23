@@ -23,7 +23,7 @@ pub class Stream : Iter {
                 __f = f
             } else {
                 if dup { os.close(__fd) }
-                throw Err(errno.get())
+                throw os.OSError('open()')
             }
 
             if buffering != nil {
@@ -44,7 +44,7 @@ pub class Stream : Iter {
                 __fd = -1
             },
 
-            _ => throw __f ? Err(errno.get()) : Err(errno.EBADF)
+            _ => throw os.OSError('close()', __f ? : errno.EBADF)
         }
     }
 
@@ -76,7 +76,7 @@ pub class Stream : Iter {
 
     rewind() {
         if stdio.fseek(__f, 0, stdio.SEEK_SET) == -1 {
-            throw Err(errno.get())
+            throw os.OSError('rewind()')
         }
     }
 
@@ -184,7 +184,7 @@ pub function open(
         'r+' => os.O_RDWR,
         'w+' => os.O_RDWR | os.O_CREAT | os.O_TRUNC,
         'a+' => os.O_RDWR | os.O_CREAT | os.O_APPEND,
-        _    => throw Err(errno.EINVAL)
+        _    => throw ValueError("invalid mode: {mode}")
     };
 
     let fd = if flags & os.O_CREAT {
@@ -194,14 +194,14 @@ pub function open(
     }
 
     match fd {
-        -1  => throw Err(errno.get()),
+        -1  => throw os.OSError('open()'),
         _   => Stream(fd, mode, buffering)
     }
 }
 
 pub function tmpfile() {
     if not let $f = stdio.tmpfile() {
-        throw Err(errno.get())
+        throw os.OSError('tmpfile()')
     } else {
         Stream(f)
     }

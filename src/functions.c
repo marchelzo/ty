@@ -1514,7 +1514,7 @@ BUILTIN_FUNCTION(regex)
 
 
         int err;
-        size_t off;
+        usize off;
 
         pcre2_code *re = pcre2_compile(
                 (PCRE2_SPTR)ss(pattern),

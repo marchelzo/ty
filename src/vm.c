@@ -836,7 +836,7 @@ vm_load_c_module(Ty *ty, char const *name, void *p)
 inline static Value *
 (topN)(Ty *ty, int n)
 {
-        return &STACK.items[STACK.count - n];
+        return vZ(STACK) - n;
 }
 
 inline static Value *
@@ -1990,7 +1990,7 @@ DoThrow(Ty *ty)
                 }
 
                 if (vN(TRY_STACK) > 0) {
-                        struct try *t = *vvL(TRY_STACK);
+                        struct try *t = v_L(TRY_STACK);
 
                         switch (t->state) {
                         case TRY_TRY:
@@ -5980,9 +5980,7 @@ YIELD:
                         READVALUE(i);
                         n = vN(STACK) - *vvX(SP_STACK);
                         v = top()[-(n + i)];
-                        for (isize i = 0; i < n; ++i) {
-                                vAp(v.array, top()[-i]);
-                        }
+                        vvPn(*v.array, topN(n), n);
                         STACK.count -= n;
                         break;
 
@@ -9767,6 +9765,7 @@ vm_rethrow(Ty *ty)
 
         push(exc);
 
+        vvX(TRY_STACK);
         DoThrow(ty);
         vm_exec(ty, IP);
 

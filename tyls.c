@@ -86,10 +86,13 @@ main(int argc, char *argv[])
                 Value result = NIL;
 
                 if (TY_CATCH_ERROR()) {
-                        fputs(TyError(ty), stderr);
-                        result = vTn(
-                                "error", xSz(TyError(ty))
-                        );
+                        char *trace = FormatTrace(ty, NULL, NULL);
+                        Value   exc = TY_CATCH();
+                        dump(&ErrorBuffer, "%s\n\n%s", VSC(&exc), trace);
+                        fputs(vv(ErrorBuffer), stderr);
+                        GC_STOP();
+                        result = vTn("error", vSsz(vv(ErrorBuffer)));
+                        GC_RESUME();
                         goto NextRequest;
                 }
 
@@ -105,7 +108,7 @@ main(int argc, char *argv[])
                         AllowErrors = tget_or(&req, "check", NIL).type == VALUE_NIL;
 
                         if (v.type == VALUE_NIL) {
-                                goto NextRequest;
+                                goto EndRequest;
                         }
 
                         source = TY_0_C_STR(v);
@@ -126,7 +129,7 @@ main(int argc, char *argv[])
                                         result = vTn(
                                                 "error", xSz(TyError(ty))
                                         );
-                                        goto NextRequest;
+                                        goto EndRequest;
                                 }
                         }
                         break;
@@ -136,12 +139,12 @@ main(int argc, char *argv[])
                         col  = tget_nn(&req, "col")->z;
 
                         if (mod == NULL) {
-                                goto NextRequest;
+                                goto EndRequest;
                         }
 
                         sym = CompilerFindDefinition(ty, mod, line, col);
                         if (sym == NULL || IsUndefinedSymbol(sym)) {
-                                goto NextRequest;
+                                goto EndRequest;
                         }
 
                         result = vTn(
@@ -159,13 +162,13 @@ main(int argc, char *argv[])
                         col  = tget_nn(&req, "col")->z;
 
                         if (mod == NULL) {
-                                goto NextRequest;
+                                goto EndRequest;
                         }
 
                         v0(completions);
 
                         if (!CompilerSuggestCompletions(ty, mod, line, col, &completions)) {
-                                goto NextRequest;
+                                goto EndRequest;
                         }
 
                         result = vTn(
@@ -176,10 +179,12 @@ main(int argc, char *argv[])
                         break;
                 }
 
+EndRequest:
                 TY_CATCH_END();
 
 NextRequest:
                 v0(OutBuffer);
+
                 if (json_dump(ty, &result, &OutBuffer)) {
                         xvP(OutBuffer, '\n');
                         xvP(OutBuffer, '\0');

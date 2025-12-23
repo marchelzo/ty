@@ -281,7 +281,9 @@ pub class Path {
     }
 
     read-text() -> String {
-        ::slurp("{self}")
+        with f = io.open(str(self), 'r') {
+            f.slurp()
+        }
     }
 
     read-bytes() -> Blob {

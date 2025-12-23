@@ -5,20 +5,20 @@ import unibilium as unibi
 import errno
 import ffi as c (C!)
 
-#|if getenv('TY_LOG') != nil
-    import log (..)
-
-    let ppp = pretty@(*, color=false)
-
-    logging({level: DEBUG, path: '/dev/stderr'})
-#|else
+//#|if getenv('TY_LOG') != nil
+//    import log (..)
+//
+//    let ppp = pretty@(*, color=false)
+//
+//    logging({level: DEBUG, path: '/dev/stderr'})
+//#|else
     macro warn!(msg) = do {}
     macro error!(msg) = do {}
     macro debug!(msg) = do {}
     macro critical!(msg) = do {}
 
     let ppp = (x -> "{x}")
-#|]
+//#|]
 
 tag _TermStop;
 
@@ -56,18 +56,25 @@ pub ns event {
         event: Int,
         text: [Int]
     }
+
+    pub use MouseDetails = {
+        x: Int,
+        y: Int,
+        button: Int,
+        mods: Int
+    }
 }
 
 pub use Event = (
     event.Text[String]
   | event.Key[event.KeyDetails]
-  | event.MouseDown[CursorAddress]
-  | event.MouseUp[CursorAddress]
-  | event.MouseMove[CursorAddress]
-  | event.ScrollDown[CursorAddress]
-  | event.ScrollUp[CursorAddress]
-  | event.ScrollLeft[CursorAddress]
-  | event.ScrollRight[CursorAddress]
+  | event.MouseDown[event.MouseDetails]
+  | event.MouseUp[event.MouseDetails]
+  | event.MouseMove[event.MouseDetails]
+  | event.ScrollUp[event.MouseDetails]
+  | event.ScrollDown[event.MouseDetails]
+  | event.ScrollLeft[event.MouseDetails]
+  | event.ScrollRight[event.MouseDetails]
   | event.Cursor[CursorAddress]
   | event.EOF
 )
@@ -709,7 +716,7 @@ class TermIO {
                         match k {
                             unibi.string.key_btab   => yield-basic('\t'),
                             unibi.string.key_sleft  => ctlseq.handler.k-ev-based('1', '2:1', '', 'D'),
-                            unibi.string.key_sright => ctlseq.handler.k-ev-based('1', '2:1', '', 'C')
+                            unibi.string.key_sright => ctlseq.handler.k-ev-based('1', '2:1', '', 'C'),
                             _                       => break
                         }
                         i += n
@@ -720,7 +727,7 @@ class TermIO {
                 // No terminfo match. Hopefully this means we have either a mouse event,
                 // or a keyboard event in the kitty progressive-enhancement format
                 for (pattern, handler: _) in ctlseqs {
-                    if let [matched, *captures]  = buf.str!(i).match(pattern) {
+                    if let [matched, *captures] = buf.str!(i).match(pattern) {
                         handler(*captures)
                         i += matched.size()
                         continue continue

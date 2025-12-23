@@ -137,6 +137,7 @@ struct type {
                         ConstStringVector names;
                         BoolVector required;
                         Type *repeat;
+                        bool frfr;
                 };
                 imax z;
         };

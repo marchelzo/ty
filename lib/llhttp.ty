@@ -445,18 +445,14 @@ pub fn urldecode(s: String) -> String {
      .sub("\r", "\n")
 }
 
-pub fn decode-query(query: String) -> Dict[String, String | Array[String]] {
+pub fn decode-query(query: String) -> Dict[String, String | Array[String] | nil] {
     let params = %{}
 
     for [k, ?v] in query.split('&').map(p -> p.split('=', 1).map!(urldecode)) {
-        if let $p = params[k] {
-            if p :: Array {
-                p.push(v)
-            } else {
-                params[k] = [p, v]
-            }
-        } else {
-            params[k] = v
+        match params[k] {
+            nil         => { params[k] = v        },
+            one: String => { params[k] = [one, v] },
+            many        => { many.push(v)         }
         }
     }
 

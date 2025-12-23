@@ -30,10 +30,10 @@ pub use CompletionAction = CycleCompletions[Array[CompletionItem]]
 
 pub use CompletionFunction = {before: String, after: String} -> CompletionAction;
 
-pub use Prompt = String | (() -> String)
+pub use Prompt = Text | (() -> Text)
 
 pub use RenderFunction = {
-    prompt: String,
+    prompt: Text,
     lines: Array[Array[String]],
     line: Int,
     col: Int
@@ -349,7 +349,7 @@ class InteractiveLineReader {
         }
 
         __render = render ?? fn (
-            prompt: String,
+            prompt: Text,
             lines: Array[Array[String]],
             line: Int,
             col: Int
@@ -369,15 +369,12 @@ class InteractiveLineReader {
         __history.push(entry)
     }
 
-    _get-prompt() -> String {
-        match __prompt {
-            p: String => p,
-            f         => f()
-        }
+    _get-prompt() -> Text {
+        (__prompt :: Function) ? __prompt() : __prompt
     }
 
     readln(
-        prompt: String | nil = nil,
+        prompt: Text | nil = nil,
         complete: _ = nil,
         erase: Bool = false,
         keybinds: Dict[String, _] = %{},
@@ -387,7 +384,7 @@ class InteractiveLineReader {
             init()
         }
 
-        let prompt = prompt ?? _get-prompt()
+        let prompt = str(prompt ?? _get-prompt())
         let render = render ?? __render
 
         let lines = [[]]
@@ -796,7 +793,7 @@ pub fn progress(work, prefix, width, effects=id, cleanup=false) {
 }
 
 pub fn readln(
-    prompt: ?String = nil,
+    prompt: ?Text = nil,
     complete: _ = nil,
     erase: Bool = false,
     keybinds: Dict[String, _] = %{},

@@ -1,5 +1,5 @@
-pub class Matrix[T] : Iterable[RowVec] {
-    __m: _
+pub class Matrix : Iterable[RowVec] {
+    __m: Array[Array[Float]]
 
     init(m) { __m = m }
 
@@ -36,39 +36,35 @@ pub class Matrix[T] : Iterable[RowVec] {
     }
 }
 
-class Vec < Matrix : Iterable[Float] {
+class Vec : Iterable[Float] {
     v: Array[Float]
+
+    init(v: Array[Float]) {
+        self.v = v
+    }
+
     __subscript__(i: Int) { v[i] }
-    __iter__() { v.__iter__() }
+    __call__(i) { v[i] }
+    __iter__() -> Iter[Float] { v.__iter__() }
     __str__() { "Vec({v.unwords()})" }
 }
 
-class RowVec(v: Array[Float]) < Vec {
-    v: Array[Float]
-
-    rows {   1 }
+class RowVec < Vec {
+    rows {  1 }
     cols { #v }
+
+    __iter__() { v.__iter__() }
 
     row(i: i == 0) { self }
     col(i)         { ColVec([v[i]]) }
-
-    __call__(i, j) {
-        v[j]
-    }
 }
 
-class ColVec(v: Array[Float]) < Vec {
-    v: Array[Float]
-
+class ColVec < Vec {
     cols { 1   }
     rows { #v }
 
     col(i: i == 0) { self }
     row(i)         { RowVec([v[i]]) }
-
-    __call__(i, j) {
-        v[i]
-    }
 }
 
 fn .(u: Vec, v: Vec) -> Float {
@@ -95,12 +91,12 @@ fn **(X: Matrix, n: Int) -> Matrix {
 
 let P = m('
      0.75      0.04      0.14      0.07
-                                       
-     0         1.0       2.0       0   
-                                       
+
+     0         1.0       2.0       0
+
      0.18      0         1.0      -0.44
-                                       
-     0         0.14      0         1.0 
+
+     0         0.14      0         1.0
 ')
 
 

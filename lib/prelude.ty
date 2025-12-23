@@ -100,6 +100,10 @@ fn ^(a: Int, b: Int) -> Int;
 fn >>(a: Int, b: Int) -> Int;
 fn <<(a: Int, b: Int) -> Int;
 
+fn -(a: Bool, b: Bool) -> Int;
+fn +(a: Bool, b: Bool) -> Int;
+fn *(a: Bool, b: Bool) -> Int;
+
 fn -(a: Float, b: Float) -> Float;
 fn +(a: Float, b: Float) -> Float;
 fn *(a: Float, b: Float) -> Float;
@@ -118,6 +122,14 @@ fn *(a: Int, b: Float) -> Float;
 fn /(a: Int, b: Float) -> Float;
 fn %(a: Int, b: Float) -> Float;
 
+fn -(a: Bool, b: Int) -> Int;
+fn +(a: Bool, b: Int) -> Int;
+fn *(a: Bool, b: Int) -> Int;
+
+fn -(a: Int, b: Bool) -> Int;
+fn +(a: Int, b: Bool) -> Int;
+fn *(a: Int, b: Bool) -> Int;
+
 fn &(a: Class, b: Class) -> (Any -> Bool);
 fn |(a: Class, b: Class) -> (Any -> Bool);
 
@@ -126,8 +138,9 @@ fn |(a: Function, b: Object) -> (Any -> Bool);
 
 fn +(a: String, b: String) -> String;
 
-fn +(a: String, b: Int) -> String;
-fn -(a: String, b: Int) -> String;
+fn +(a: String, b: Int | Bool) -> String;
+fn *(a: String, b: Int | Bool) -> String;
+fn -(a: String, b: Int | Bool) -> String;
 
 fn +[K, U, V](a: Dict[K, U], b: Dict[K, V]) -> Dict[K, U | V];
 fn -[K, V](a: Dict[K, V], b: Dict[K, Any]) -> Dict[K, V];
@@ -288,7 +301,7 @@ class Object {
     }
 
     __fmt__(fmt) {
-        str(self)
+        "{"{self}":{fmt}}"
     }
 
     __repr__() {
@@ -396,6 +409,7 @@ class Array[T] : Iterable[T] {
         }
     }
 
+    clone() -> Array[T];
     count(x: T) -> Int;
     count-by(predicate: T -> Any) -> Int;
     drop!(n: Int) -> Array[T];
@@ -420,6 +434,8 @@ class Array[T] : Iterable[T] {
     remove(x: Any) -> Array[T];
     reverse!() -> Array[T];
     reverse() -> Array[T];
+    rotate(n: Int = 1) -> Array[T];
+    rotate!(n: Int = 1) -> Array[T];
     shuffle!() -> Array[T];
     shuffle() -> Array[T];
     sort!(by: T -> Any, desc: Bool = false) -> Array[T];
@@ -430,7 +446,7 @@ class Array[T] : Iterable[T] {
     sort(desc: Bool = false) -> Array[T];
     split(i: Int) -> (Array[T], Array[T]);
     sum(zero: T) -> T;
-    sum() -> T | nil;
+    sum() -> T | nil where (T + T): T;
     take!(n: Int) -> Array[T];
     take(n: Int) -> Array[T];
     take-while!(predicate: T -> Any) -> Array[T];
@@ -441,12 +457,10 @@ class Array[T] : Iterable[T] {
     uniq() -> Array[T];
 
     zip[...U, R](
-        ys: ...Array[U],
+        *ys: ...Array[U],
         f: (T, U) -> R
     ) -> Array[R];
-    zip[...U](ys: ...Array[U]) -> Array[(T, U)];
-
-    +[U](ys: Array[U]) -> Array[T | U] { self + ys }
+    zip[...U](*ys: ...Array[U]) -> Array[(T, U)];
 
     shape() {
         use NestedArray[U] = Array[U] | Array[NestedArray[U]]
@@ -666,9 +680,9 @@ class Array[T] : Iterable[T] {
 
     #() { len() }
 
-    *[U](ys: Array[U]) -> Array[(T, U)] {
-        self * ys
-    }
+    +[U](ys: Array[U]) -> Array[T | U]  { self + ys }
+    *[U](ys: Array[U]) -> Array[(T, U)] { self * ys }
+    *(n: Int | Bool)   -> Array[T]      { self * n  }
 
     get(i: Int) -> Some[T] | None {
         let n = #self
@@ -893,6 +907,8 @@ class Dict[K, V] : Iterable[K, V] {
     keys()   -> Array[K];
     values() -> Array[V];
     items()  -> Array[(K, V)];
+
+    update(other: Dict[K, V]) -> Dict[K, V];
 
     pop(i: ?Int) -> (K, V);
 
@@ -1470,8 +1486,9 @@ class Ptr[T] : IntoPtr[T] {
     [](i: Int) -> T;
     []=(i: Int, x: T) -> T;
 
-    +(off: Int) -> Ptr[T];
-    -(off: Int) -> Ptr[T];
+    +(off: Int | Bool) -> Ptr[T];
+    -(off: Int | Bool) -> Ptr[T];
+
     -(other: Ptr[T]) -> Int;
 
     __ptr__() { self }
@@ -2126,8 +2143,8 @@ trait Iter[T] < Iterable[T] {
         }
     }
 
-    zip(*its, longest=false) {
-        zipWith(tuple, *its, longest=longest)
+    zip[...U](*ys: ...Iterable[U], longest: Bool = false) -> Generator[(T, U)] {
+        zip-with(tuple, *ys, longest=longest)
     }
 
     pad*(n, x) {
@@ -2744,7 +2761,7 @@ class TupleSpec {
         __types = types
     }
 
-    __match__(t) {
+    __match__(t: _) {
         if t !:: Tuple {
             return false
         }
@@ -4091,6 +4108,10 @@ macro =~(a, b) = do let [$0, ?$1, ?$2, ?$3, ?$4, ?$5, ?$6, ?$7, ?$8, ?$9] or ($0
 
 fn .[a, b, c](f: b -> c, g: a -> b) -> (a -> c) {
     f@(g(*, **))
+}
+
+fn .?[a, b, c](f: b -> c, g: a -> nil | b) -> (a -> nil | c) {
+    (match $x => f(x) else nil) . g
 }
 
 fn <*-[T, ...Args](f: (Args -> T), args: Iterable[_]) -> T {

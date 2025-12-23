@@ -623,7 +623,13 @@ tag InitError;
 class Term {
     __term: _
 
-    init(term, name, fd, path, mem) {
+    init(
+        term: Ptr[_] | nil        = nil,
+        name: String | nil        = nil,
+        fd:   Int    | nil        = nil,
+        path: String | nil        = nil,
+        mem:  String | Blob | nil = nil
+    ) {
         __term = term
              ?? (fd   ?> from_fd)
              ?? (path ?> from_file)
