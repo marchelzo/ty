@@ -3,9 +3,9 @@ import time (now)
 import errno (ETIMEDOUT, EINTR)
 
 #|if __windows__
-let SHELL = ['cmd.exe', '/c']
+const SHELL = ['cmd.exe', '/c']
 #|else
-let SHELL = ['/bin/sh', '-c']
+const SHELL = ['/bin/sh', '-c']
 #|]
 
 pub use CmdResult = {

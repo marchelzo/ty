@@ -21,7 +21,7 @@ op_builtin_add(Ty *ty)
         Value const *left = look(-1);
         Value const *right = look(0);
 
-        size_t n;
+        usize n;
         ffi_type *t;
 
         Value v;
@@ -33,11 +33,20 @@ op_builtin_add(Ty *ty)
         case PAIR_OF(VALUE_REAL):
                 COMPLETE(REAL(left->real + right->real));
 
+        case PAIR_OF(VALUE_BOOLEAN):
+                COMPLETE(INTEGER(left->boolean + right->boolean));
+
         case PACK_TYPES(VALUE_REAL, VALUE_INTEGER):
                 COMPLETE(REAL(left->real + right->z));
 
         case PACK_TYPES(VALUE_INTEGER, VALUE_REAL):
                 COMPLETE(REAL(left->z + right->real));
+
+        case PACK_TYPES(VALUE_INTEGER, VALUE_BOOLEAN):
+                COMPLETE(INTEGER(left->z + right->boolean));
+
+        case PACK_TYPES(VALUE_BOOLEAN, VALUE_INTEGER):
+                COMPLETE(INTEGER(left->boolean + right->z));
 
         case PAIR_OF(VALUE_STRING):
         {
@@ -65,6 +74,9 @@ op_builtin_add(Ty *ty)
         case PACK_TYPES(VALUE_STRING, VALUE_INTEGER):
                 COMPLETE(OffsetString(left, right->z));
 
+        case PACK_TYPES(VALUE_STRING, VALUE_BOOLEAN):
+                COMPLETE(OffsetString(left, right->boolean));
+
         case PACK_TYPES(VALUE_INTEGER, VALUE_PTR):
                 SWAP(Value const *, left, right);
         case PACK_TYPES(VALUE_PTR, VALUE_INTEGER):
@@ -73,24 +85,24 @@ op_builtin_add(Ty *ty)
 
         case PAIR_OF(VALUE_ARRAY):
         {
-                if  (left->array->count == 0) COMPLETE(ARRAY(ArrayClone(ty, right->array)));
-                if (right->array->count == 0) COMPLETE(ARRAY(ArrayClone(ty, left->array)));
+                if  (vN(*left->array) == 0) COMPLETE(ARRAY(ArrayClone(ty, right->array)));
+                if (vN(*right->array) == 0) COMPLETE(ARRAY(ArrayClone(ty, left->array)));
 
-                n = left->array->count + right->array->count;
+                n = vN(*left->array) + vN(*right->array);
 
                 v = ARRAY(vAn(n));
                 v.array->count = n;
 
                 memcpy(
-                        v.array->items,
-                        left->array->items,
-                        left->array->count * sizeof (Value)
+                        vv(*v.array),
+                        vv(*left->array),
+                        vN(*left->array) * sizeof (Value)
                 );
 
                 memcpy(
-                        v.array->items + left->array->count,
-                        right->array->items,
-                        right->array->count * sizeof (Value)
+                        vv(*v.array) + vN(*left->array),
+                        vv(*right->array),
+                        vN(*right->array) * sizeof (Value)
                 );
 
                 COMPLETE(v);
@@ -127,32 +139,93 @@ op_builtin_mul(Ty *ty)
         case PAIR_OF(VALUE_REAL):
                 COMPLETE(REAL(left->real * right->real));
 
+        case PAIR_OF(VALUE_BOOLEAN):
+                COMPLETE(INTEGER(left->boolean * right->boolean));
+
         case PACK_TYPES(VALUE_REAL, VALUE_INTEGER):
                 COMPLETE(REAL(left->real * right->z));
 
         case PACK_TYPES(VALUE_INTEGER, VALUE_REAL):
                 COMPLETE(REAL(left->z * right->real));
 
+        case PACK_TYPES(VALUE_BOOLEAN, VALUE_INTEGER):
+                COMPLETE(INTEGER(left->boolean * right->z));
+
+        case PACK_TYPES(VALUE_INTEGER, VALUE_BOOLEAN):
+                COMPLETE(INTEGER(left->z * right->boolean));
+
+        case PACK_TYPES(VALUE_BOOLEAN, VALUE_REAL):
+                COMPLETE(REAL(left->boolean * right->real));
+
+        case PACK_TYPES(VALUE_REAL, VALUE_BOOLEAN):
+                COMPLETE(REAL(left->real * right->boolean));
+
+        case PACK_TYPES(VALUE_STRING, VALUE_INTEGER):
+        {
+                if (right->z <= 0) {
+                        COMPLETE(STRING_EMPTY);
+                }
+
+                usize n = sN(*left) * right->z;
+
+                v = STRING(value_string_alloc(ty, n), n);
+
+                for (imax i = 0; i < right->z; ++i) {
+                        memcpy(
+                                (void *)(ss(v) + i * sN(*left)),
+                                ss(*left),
+                                sN(*left)
+                        );
+                }
+
+                COMPLETE(v);
+        }
+
+        case PACK_TYPES(VALUE_STRING, VALUE_BOOLEAN):
+                COMPLETE(right->boolean ? *left : STRING_EMPTY);
+
+
         case PAIR_OF(VALUE_ARRAY):
-                v = ARRAY(vAn(left->array->count * right->array->count));
-
+                v = ARRAY(vAn(vN(*left->array) * vN(*right->array)));
                 gP(&v);
-
-                for (int i = 0; i < left->array->count; ++i) {
-                        for (int j = 0; j < right->array->count; ++j) {
+                for (int i = 0; i < vN(*left->array); ++i) {
+                        for (int j = 0; j < vN(*right->array); ++j) {
                                 vPx(
                                         *v.array,
                                         PAIR(
-                                                left->array->items[i],
-                                                right->array->items[j]
+                                                v__(*left->array, i),
+                                                v__(*right->array, j)
                                         )
                                 );
                         }
                 }
-
                 gX();
+                COMPLETE(v);
+
+        case PACK_TYPES(VALUE_ARRAY, VALUE_INTEGER):
+        {
+                if (right->z <= 0) {
+                        COMPLETE(ARRAY(ArrayClone(ty, NULL)));
+                }
+                v = ARRAY(vAn(vN(*left->array) * right->z));
+                vN(*v.array) = vN(*left->array) * right->z;
+                for (int i = 0; i < right->z; ++i) {
+                        memcpy(
+                                v.array->items + i * left->array->count,
+                                left->array->items,
+                                left->array->count * sizeof (Value)
+                        );
+                }
 
                 COMPLETE(v);
+        }
+
+        case PACK_TYPES(VALUE_ARRAY, VALUE_BOOLEAN):
+                if (right->boolean) {
+                        COMPLETE(ARRAY(ArrayClone(ty, left->array)));
+                } else {
+                        COMPLETE(ARRAY(vAn(0)));
+                }
         }
 
         return false;
@@ -188,6 +261,12 @@ op_builtin_div(Ty *ty)
                         ZeroDividePanic(ty);
                 }
                 COMPLETE(REAL(left->z / right->real));
+
+        case PACK_TYPES(VALUE_BOOLEAN, VALUE_REAL):
+                if (right->real == 0.0) {
+                        ZeroDividePanic(ty);
+                }
+                COMPLETE(REAL(left->boolean / right->real));
         }
 
         return false;
@@ -209,18 +288,34 @@ op_builtin_sub(Ty *ty)
         case PAIR_OF(VALUE_REAL):
                 COMPLETE(REAL(left->real - right->real));
 
+        case PAIR_OF(VALUE_BOOLEAN):
+                COMPLETE(INTEGER(left->boolean - (int)right->boolean));
+
         case PACK_TYPES(VALUE_REAL, VALUE_INTEGER):
                 COMPLETE(REAL(left->real - right->z));
 
         case PACK_TYPES(VALUE_INTEGER, VALUE_REAL):
                 COMPLETE(REAL(left->z - right->real));
 
+        case PACK_TYPES(VALUE_BOOLEAN, VALUE_INTEGER):
+                COMPLETE(INTEGER(left->boolean - right->z));
+
+        case PACK_TYPES(VALUE_INTEGER, VALUE_BOOLEAN):
+                COMPLETE(INTEGER(left->z - right->boolean));
+
         case PACK_TYPES(VALUE_STRING, VALUE_INTEGER):
                 COMPLETE(OffsetString(left, -right->z));
+
+        case PACK_TYPES(VALUE_STRING, VALUE_BOOLEAN):
+                COMPLETE(OffsetString(left, -(int)right->boolean));
 
         case PACK_TYPES(VALUE_PTR, VALUE_INTEGER):
                 t = (left->extra == NULL) ? &ffi_type_uint8 : left->extra;
                 COMPLETE(TPTR(left->extra, ((char *)left->ptr) - right->z * t->size));
+
+        case PACK_TYPES(VALUE_PTR, VALUE_BOOLEAN):
+                t = (left->extra == NULL) ? &ffi_type_uint8 : left->extra;
+                COMPLETE(TPTR(left->extra, ((char *)left->ptr) - right->boolean * t->size));
 
         case PACK_TYPES(VALUE_PTR, VALUE_PTR):
                 if (left->extra != right->extra) {
@@ -259,16 +354,19 @@ op_builtin_mod(Ty *ty)
                         ZeroDividePanic(ty);
                 }
                 COMPLETE(INTEGER(left->z % right->z));
+
         case PACK_TYPES(VALUE_REAL, VALUE_INTEGER):
                 if (right->z == 0) {
                         ZeroDividePanic(ty);
                 }
                 COMPLETE(REAL(fmod(left->real, right->z)));
+
         case PACK_TYPES(VALUE_INTEGER, VALUE_REAL):
                 if (right->real == 0.0) {
                         ZeroDividePanic(ty);
                 }
                 COMPLETE(REAL(fmod(left->z, right->real)));
+
         case PACK_TYPES(VALUE_REAL, VALUE_REAL):
                 if (right->real == 0.0) {
                         ZeroDividePanic(ty);
@@ -308,6 +406,15 @@ op_builtin_and(Ty *ty)
         switch (PACK_TYPES(left->type, right->type)) {
         case PAIR_OF(VALUE_INTEGER):
                 COMPLETE(INTEGER(left->z & right->z));
+
+        case PAIR_OF(VALUE_BOOLEAN):
+                COMPLETE(INTEGER(left->boolean & right->boolean));
+
+        case PACK_TYPES(VALUE_INTEGER, VALUE_BOOLEAN):
+                COMPLETE(INTEGER(left->z & right->boolean));
+
+        case PACK_TYPES(VALUE_BOOLEAN, VALUE_INTEGER):
+                COMPLETE(INTEGER(left->boolean & right->z));
         }
 
         return false;
@@ -322,6 +429,15 @@ op_builtin_or(Ty *ty)
         switch (PACK_TYPES(left->type, right->type)) {
         case PAIR_OF(VALUE_INTEGER):
                 COMPLETE(INTEGER(left->z | right->z));
+
+        case PAIR_OF(VALUE_BOOLEAN):
+                COMPLETE(INTEGER(left->boolean | right->boolean));
+
+        case PACK_TYPES(VALUE_INTEGER, VALUE_BOOLEAN):
+                COMPLETE(INTEGER(left->z | right->boolean));
+
+        case PACK_TYPES(VALUE_BOOLEAN, VALUE_INTEGER):
+                COMPLETE(INTEGER(left->boolean | right->z));
         }
 
         return false;
@@ -336,6 +452,15 @@ op_builtin_xor(Ty *ty)
         switch (PACK_TYPES(left->type, right->type)) {
         case PAIR_OF(VALUE_INTEGER):
                 COMPLETE(INTEGER(left->z ^ right->z));
+
+        case PAIR_OF(VALUE_BOOLEAN):
+                COMPLETE(INTEGER(left->boolean ^ right->boolean));
+
+        case PACK_TYPES(VALUE_INTEGER, VALUE_BOOLEAN):
+                COMPLETE(INTEGER(left->z ^ right->boolean));
+
+        case PACK_TYPES(VALUE_BOOLEAN, VALUE_INTEGER):
+                COMPLETE(INTEGER(left->boolean ^ right->z));
         }
 
         return false;
@@ -350,6 +475,9 @@ op_builtin_shl(Ty *ty)
         switch (PACK_TYPES(left->type, right->type)) {
         case PAIR_OF(VALUE_INTEGER):
                 COMPLETE(INTEGER(left->z << right->z));
+
+        case PACK_TYPES(VALUE_INTEGER, VALUE_BOOLEAN):
+                COMPLETE(INTEGER(left->z << right->boolean));
         }
 
         return false;
@@ -364,6 +492,9 @@ op_builtin_shr(Ty *ty)
         switch (PACK_TYPES(left->type, right->type)) {
         case PAIR_OF(VALUE_INTEGER):
                 COMPLETE(INTEGER(left->z >> right->z));
+
+        case PACK_TYPES(VALUE_INTEGER, VALUE_BOOLEAN):
+                COMPLETE(INTEGER(left->z >> right->boolean));
         }
 
         return false;

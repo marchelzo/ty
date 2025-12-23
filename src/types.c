@@ -13,7 +13,7 @@
 #include "array.h"
 #include "dict.h"
 
-#define TYPES_LOG 1
+#define TYPES_LOG 0
 
 typedef struct {
         TypeVector id0;
@@ -141,7 +141,7 @@ static Type *
 TypeOf2Op(Ty *ty, int op, Type *t0, Type *t1);
 
 static bool
-BindConstraint(Ty *ty, Constraint const *c, bool check);
+BindConstraint(Ty *ty, Constraint const *c);
 
 static bool
 TryBind(Ty *ty, Type *t0, Type *t1, bool super);
@@ -990,7 +990,6 @@ NewStrictVar(Ty *ty)
 {
         Type *t0 = NewVar(ty);
         t0->fixed = true;
-
         return t0;
 }
 
@@ -999,7 +998,6 @@ NewForgivingVar(Ty *ty)
 {
         Type *t0 = NewVar(ty);
         t0->forgive = true;
-
         return t0;
 }
 
@@ -1009,7 +1007,6 @@ NewTVar(Ty *ty)
         Type *t0 = NewVar(ty);
         t0->val = TVAR;
         t0->concrete = true;
-
         return t0;
 }
 
@@ -1019,7 +1016,6 @@ NewVarOf(Ty *ty, u32 id)
         Type *t0 = NewType(ty, TYPE_VARIABLE);
         t0->id = id;
         t0->level = CurrentLevel;
-
         return t0;
 }
 
@@ -4086,6 +4082,38 @@ ResolveSuperInstance(Ty *ty, Type *t0, Class const *class)
 }
 
 static bool
+TryUpgradeTuple(Ty *ty, Type *t0, Type *t1, bool super)
+{
+        if (IsFixed(t0)) {
+                return false;
+        }
+
+        for (int i = 0;; ++i) {
+                Type *u0;
+                char const *name;
+
+                if (!GetField(ty, t0, i, &u0, &name)) {
+                        break;
+                }
+
+                Type *u1 = type_member_access_t(ty, t1, name, false);
+
+                if (IsBottom(u1) && !IsUnknown(u1)) {
+                        return false;
+                }
+
+                if (!UnifyX(ty, u0, Inst1(ty, u1), super, false)) {
+                        return false;
+                }
+        }
+
+        *t0 = *t1;
+
+        return true;
+}
+
+
+static bool
 TryUnifyObjects(Ty *ty, Type *t0, Type *t1, bool super)
 {
         t0 = Relax(t0);
@@ -4331,6 +4359,13 @@ TryUnifyObjects(Ty *ty, Type *t0, Type *t1, bool super)
              && (TypeType(t0) == TYPE_CLASS)
         ) {
                 return UnifyX(ty, t0->class->object_type, TypeArg(t1, 0), super, false);
+        }
+
+        if (
+                ((TypeType(t0) == TYPE_TUPLE) && TryUpgradeTuple(ty, t0, t1, super))
+             || ((TypeType(t1) == TYPE_TUPLE) && TryUpgradeTuple(ty, t1, t0, !super))
+        ) {
+                return true;
         }
 
         if (super) {
@@ -4603,15 +4638,6 @@ UnifyXD(Ty *ty, Type *t0, Type *t1, bool super, bool check, bool soft)
         if (CurrentDepth == 1) {
                 while (TryProgress(ty)) {
                         continue;
-                }
-        }
-
-        if (IsConcrete(t0) && IsConcrete(t1)) {
-                if (type_check(ty, super ? t0 : t1, super ? t1 : t0)) {
-                        OK("both concrete and they type-check");
-                } else {
-                        DPRINT(true, "both concrete but they don't type-check");
-                        goto Fail;
                 }
         }
 
@@ -4907,6 +4933,8 @@ UnifyXD(Ty *ty, Type *t0, Type *t1, bool super, bool check, bool soft)
         if (PackTypes(t0, t1) == PAIR_OF(TYPE_FUNCTION)) {
                 FlattenParameterList(ty, &t0->params);
                 FlattenParameterList(ty, &t1->params);
+                t0 = Inst1(ty, t0);
+                t1 = Inst1(ty, t1);
                 for (int i = 0; i < vN(t0->params) || i < vN(t1->params); ++i) {
                         Param const *p0 = (vN(t0->params) > i) ? v_(t0->params, i) : NULL;
                         Param const *p1 = (vN(t1->params) > i) ? v_(t1->params, i) : NULL;
@@ -4951,13 +4979,13 @@ UnifyXD(Ty *ty, Type *t0, Type *t1, bool super, bool check, bool soft)
                         bool solved = true;
 
                         for (int i = 0; i < vN(t0->constraints); ++i) {
-                                if (!BindConstraint(ty, v_(t0->constraints, i), super)) {
+                                if (!BindConstraint(ty, v_(t0->constraints, i))) {
                                         solved = false;
                                 }
                         }
 
                         for (int i = 0; i < vN(t1->constraints); ++i) {
-                                if (!BindConstraint(ty, v_(t1->constraints, i), super)) {
+                                if (!BindConstraint(ty, v_(t1->constraints, i))) {
                                         solved = false;
                                 }
                         }
@@ -5088,6 +5116,54 @@ Unify(Ty *ty, Type *t0, Type *t1, bool super)
         UnifyX(ty, t0, t1, super, true);
 }
 
+static char *
+ShowConstraint(Ty *ty, Constraint *c)
+{
+        byte_vector buf = {0};
+
+        switch (c->type) {
+        case TC_2OP:
+                dump(
+                        &buf,
+                        "(%s %s%s%s %s) = %s",
+                        ShowType(c->t0),
+                        TERM(1;94),
+                        intern_entry(&xD.b_ops, c->op)->name,
+                        TERM(0),
+                        ShowType(c->t1),
+                        ShowType(c->t2)
+                );
+                break;
+
+        case TC_SUB:
+                dump(
+                        &buf,
+                        "%s %s<:%s %s",
+                        ShowType(c->t0),
+                        TERM(1;94),
+                        TERM(0),
+                        ShowType(c->t1)
+                );
+                break;
+        }
+
+        return vv(buf);
+}
+
+inline static bool
+ShouldDefer2Op(Type *t0, Type *t1, Type *t2)
+{
+        t0 = ResolveVar(t0);
+        t1 = ResolveVar(t1);
+        t2 = ResolveVar(t2);
+
+        int n_unbound = CanBind(t0)
+                      + CanBind(t1)
+                      + CanBind(t2);
+
+        return (n_unbound > 1);
+}
+
 static Type *
 TrySolve2Op(Ty *ty, int op, Type *op0, Type *t0, Type *t1, Type *t2)
 {
@@ -5099,11 +5175,7 @@ TrySolve2Op(Ty *ty, int op, Type *op0, Type *t0, Type *t1, Type *t2)
         t1 = ResolveVar(t1);
         t2 = ResolveVar(t2);
 
-        int n_unbound = CanBind(t0)
-                      + CanBind(t1)
-                      + CanBind(t2);
-
-        if (n_unbound > 1) {
+        if (ShouldDefer2Op(t0, t1, t2)) {
                 return NULL;
         }
 
@@ -5332,7 +5404,7 @@ TrySolve2Op(Ty *ty, int op, Type *op0, Type *t0, Type *t1, Type *t2)
 }
 
 static bool
-BindConstraint(Ty *ty, Constraint const *_c, bool check)
+BindConstraint(Ty *ty, Constraint const *_c)
 {
         Type *t0;
 
@@ -5350,13 +5422,13 @@ BindConstraint(Ty *ty, Constraint const *_c, bool check)
                 XXTLOG("    %s", ShowType(c->t0));
                 XXTLOG("    %s", ShowType(c->t1));
                 XXTLOG("    %s", ShowType(c->t2));
+                if (c->op0 == NULL) {
+                        c->op0 = CloneType(ty, op_type(c->op));
+                }
                 c->t0 = Reduce(ty, c->t0);
                 c->t1 = Reduce(ty, c->t1);
                 c->t1 = Reduce(ty, c->t1);
                 t0 = TrySolve2Op(ty, c->op, c->op0, c->t0, c->t1, c->t2);
-                if ((t0 == NULL) && check) {
-                        t0 = TrySolve2Op(ty, c->op, c->op0, ResolveVar(c->t0), ResolveVar(c->t1), c->t2);
-                }
                 ok = (t0 != NULL);
                 XXTLOG(
                         "%sBindConstraint(2op)%s: %s",
@@ -5401,21 +5473,24 @@ SolveDeferred(Ty *ty)
         }
 
         usize n = *vvX(WorkIndex);
+
         Type *f0 = (vN(FunStack) == 0) ? NULL : v_L(FunStack)->_type;
+        TLOG("SolveDeferred(): n=%zu  t0: %s", vN(ToSolve) - n, ShowType(f0));
 
-        //TLOG("SolveDeferred(): n=%zu  t0: %s", vN(ToSolve) - n, ShowType(f0));
-
-        while (vN(ToSolve) > n) {
-                Constraint c = *vvX(ToSolve);
+        for (usize i = n; i < vN(ToSolve); ++i) {
+                Constraint c = v__(ToSolve, i);
                 switch (c.type) {
                 case TC_2OP:
                         if (
                                 (vN(FunStack) > 0)
-                             && TypeType(v_L(FunStack)->_type) == TYPE_FUNCTION
+                             && (TypeType(v_L(FunStack)->_type) == TYPE_FUNCTION)
                              && (!IsSolved(c.t0) || !IsSolved(c.t1))
+                             && !TY_IS_INITIALIZED
                         ) {
+                                ;
+                        } else if (ShouldDefer2Op(c.t0, c.t1, c.t2)) {
                                 avP(v_L(FunStack)->_type->constraints, c);
-                        } else if (ENFORCE && !IsBottom(c.t0)) {
+                        } else if (ENFORCE) {
                                 CompilerPushContext(ty, c.src);
                                 TypeError(
                                         "no impl. of %s%s%s for:"
@@ -5449,6 +5524,8 @@ SolveDeferred(Ty *ty)
                         break;
                 }
         }
+
+        vN(ToSolve) = n;
 }
 
 static bool
@@ -5459,7 +5536,7 @@ TryProgress(Ty *ty)
 
         for (usize i = n; i < vN(ToSolve); ++i) {
                 Constraint *c = v_(ToSolve, i);
-                if (BindConstraint(ty, c, true)) {
+                if (BindConstraint(ty, c)) {
                         any = true;
 #if defined(TY_PROFILE_TYPES)
                         if (c->type == TC_2OP) {
@@ -5964,7 +6041,7 @@ InferCall0(
                 }
 
                 for (int i = 0; i < vN(*kws); ++i) {
-                        if (strcmp(v__(*kws, i), "*") == 0) {
+                        if (s_eq(v__(*kws, i), "*")) {
                                 continue;
                         }
                         Param const *p = FindParam(i, v__(*kws, i), &t0->params);
@@ -5993,11 +6070,10 @@ InferCall0(
 
                         for (int i = 0; i < vN(t0->constraints); ++i) {
                                 Constraint const *c = v_(t0->constraints, i);
-                                if (BindConstraint(ty, c, true)) {
+                                if (BindConstraint(ty, c)) {
                                         any = true;
                                 } else {
-                                        *v_(t0->constraints, n) = *c;
-                                        n += 1;
+                                        *v_(t0->constraints, n++) = *c;
                                 }
                         }
 
@@ -6010,8 +6086,32 @@ InferCall0(
 
                 for (int i = 0; i < vN(t0->constraints); ++i) {
                         Constraint *c = v_(t0->constraints, i);
-                        if (c->type == TC_SUB) {
-                                Unify(ty, c->t0, c->t1, true);
+                        if (!strict) {
+                                v0(t0->constraints);
+                                XXTLOG(
+                                        "failing InferCall() due to unsatisfied type constraint: %s"
+                                        FMT_MORE
+                                        FMT_MORE "in call to function of type: %s",
+                                        ShowConstraint(ty, c),
+                                        ShowType(t0)
+                                );
+                                return NULL;
+                        }
+                        if (
+                                (vN(FunStack) > 0)
+                             && (c->type == TC_2OP)
+                             && ShouldDefer2Op(c->t0, c->t1, c->t2)
+                        ) {
+                                xvP(ToSolve, *c);
+                        } else {
+                                v0(t0->constraints);
+                                TypeError(
+                                        "unsatisfied type constraint: %s"
+                                        FMT_MORE
+                                        FMT_MORE "in call to function of type: %s",
+                                        ShowConstraint(ty, c),
+                                        ShowType(t0)
+                                );
                         }
                 }
 
@@ -6056,6 +6156,10 @@ InferCall0(
                 XXTLOG("Overloads:");
                 for (int i = 0; i < vN(t0->types); ++i) {
                         XXTLOG("  (%d) %s", i + 1, ShowType(v__(t0->types, i)));
+                }
+
+                while (TryProgress(ty)) {
+                        continue;
                 }
 
                 SCRATCH_SAVE();
@@ -6558,68 +6662,58 @@ SolveMemberAccess(Ty *ty, Type const *t0, Type const *t1)
         }
 
         Type *t = (Type *)t1;
-        Class *c = t0->class;
+        Type const *c0 = t0;
 
-        if (c->def == NULL) {
-                return (Type *)t1;
-        }
+        while (!IsBottom(c0)) {
+                Class *class = c0->class;
 
-        ClassDefinition *def = &c->def->class;
-
-        for (int i = 0; i < vN(def->traits); ++i) {
-                Expr *trait = v__(def->traits, i);
-                if (trait->type == EXPRESSION_SUBSCRIPT) {
-                        TLOG("SolveMemberAccess(): apply trait: %s", trait->container->identifier);
-                } else {
-                        TLOG("SolveMemberAccess(): apply trait: %s", trait->identifier);
-                }
-                Type *tr0 = Inst(
-                        ty,
-                        type_resolve(ty, trait),
-                        &c->type->bound,
-                        &t0->args
-                );
-                if (tr0 == NULL) {
+                if (class == NULL || class->def == NULL) {
                         return NULL;
                 }
-                if (IsObject(tr0)) {
-                        t = Inst(
-                                ty,
-                                t,
-                                &tr0->class->type->bound,
-                                &tr0->args
-                        );
-                } else {
-#if 1
-                        TypeError(
-                                "class trait resolved to non-object type:  %s  |   %s",
-                                ShowType(tr0),
-                                show_expr(trait)
-                        );
-#else
-                        UNREACHABLE("class trait resolved to non-object type");
-#endif
-                }
-        }
 
-        if (def->super != NULL) {
-                Type *super0 = Inst(
+                ClassDefinition *def = &class->def->class;
+
+                for (int i = 0; i < vN(def->traits); ++i) {
+                        Expr *trait = v__(def->traits, i);
+                        if (trait->type == EXPRESSION_SUBSCRIPT) {
+                                TLOG("SolveMemberAccess(): apply trait: %s", trait->container->identifier);
+                        } else {
+                                TLOG("SolveMemberAccess(): apply trait: %s", trait->identifier);
+                        }
+                        Type *tr0 = Inst(
+                                ty,
+                                type_resolve(ty, trait),
+                                &class->type->bound,
+                                &c0->args
+                        );
+                        if (tr0 == NULL) {
+                                return NULL;
+                        }
+                        if (LIKELY(IsObject(tr0))) {
+                                t = Inst(
+                                        ty,
+                                        t,
+                                        &tr0->class->type->bound,
+                                        &tr0->args
+                                );
+                        } else {
+                                TypeError(
+                                        "class trait resolved to non-object type:  %s  |   %s",
+                                        ShowType(tr0),
+                                        show_expr(trait)
+                                );
+                        }
+                }
+
+                t = Inst(ty, t, &class->type->bound, &c0->args);
+
+                c0 = Inst(
                         ty,
                         type_resolve(ty, def->super),
-                        &c->type->bound,
-                        &t0->args
+                        &class->type->bound,
+                        &c0->args
                 );
-                if (super0 != NULL && super0->class != NULL) {
-                        t = Inst(
-                                ty,
-                                t,
-                                &super0->class->type->bound,
-                                &super0->args
-                        );
-                }
         }
-
-        t = Inst(ty, t, &c->type->bound, &t0->args);
 
         XXTLOG("SolveMemberAccess():");
         XXTLOG("    %s", ShowType(t0));
@@ -6640,6 +6734,10 @@ type_member_access_t_(Ty *ty, Type const *t0, char const *name, bool strict)
              || IsAny(t0)
         ) {
                 return (Type *)t0;
+        }
+
+        if (s_eq(name, "!")) {
+                return NewFunction(TYPE_BOOL);
         }
 
         Class *c;
@@ -6688,7 +6786,7 @@ type_member_access_t_(Ty *ty, Type const *t0, char const *name, bool strict)
                                 break;
                         }
                 }
-                if (t1 == NULL && s_eq(name, "[]")) {
+                if (t1 == NULL && t0->frfr && s_eq(name, "[]")) {
                         return TupleSubscriptType(ty, t0);
                 }
                 if (!t0->fixed || (ENFORCE && strict && (t1 == NULL))) {
@@ -7773,6 +7871,7 @@ type_tuple(Ty *ty, Expr const *e)
         xDDD();
 
         Type *t0 = NewType(ty, TYPE_TUPLE);
+        t0->frfr  = true;
         t0->fixed = true;
 
         for (int i = 0; i < vN(e->es); ++i) {
@@ -8366,8 +8465,9 @@ type_resolve(Ty *ty, Expr const *e)
         case EXPRESSION_TUPLE:
         case EXPRESSION_TUPLE_SPEC:
                 t0 = NewType(ty, TYPE_TUPLE);
+                t0->frfr     = true;
                 t0->concrete = true;
-                t0->fixed = true;
+                t0->fixed    = true;
                 for (int i = 0; i < vN(e->es); ++i) {
                         if (v__(e->es, i)->type == EXPRESSION_SPREAD) {
                                 t0->repeat = type_resolve(ty, v__(e->es, i)->value);
@@ -9571,6 +9671,8 @@ type_binary_op(Ty *ty, Expr const *e)
         Type *t1 = Reduce(ty, Relax(e->right->_type));
         Type *t2 = NewVar(ty);
 
+        t2->level += 1;
+
         Type *op0 = CloneType(ty, op_type(op));
 
         if (TypeType(op0) == TYPE_INTERSECT) {
@@ -9582,12 +9684,12 @@ type_binary_op(Ty *ty, Expr const *e)
                         ToSolve,
                         CONSTRAINT(
                                 .type = TC_2OP,
-                                .t0  = t0,
-                                .t1  = t1,
-                                .t2  = t2,
-                                .op0 = op0,
-                                .op  = op,
-                                .src = e
+                                .t0   = t0,
+                                .t1   = t1,
+                                .t2   = t2,
+                                .op0  = op0,
+                                .op   = op,
+                                .src  = e
                         )
                 );
         }
@@ -9595,6 +9697,7 @@ type_binary_op(Ty *ty, Expr const *e)
         XXTLOG("binary_op(%s): %s", intern_entry(&xD.b_ops, op)->name, ShowType(t2));
         XXTLOG("  %s", ShowType(t0));
         XXTLOG("  %s", ShowType(t1));
+        XXTLOG("  src: %s", show_expr_full(e));
 
         return t2;
 }
@@ -10890,6 +10993,7 @@ types_iter(Ty *ty)
         }
 
         if (TY_IS_INITIALIZED) {
+                xvP(WorkIndex, v_L(WorkIndex));
                 SolveDeferred(ty);
         } else {
                 types_reset(ty);

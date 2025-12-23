@@ -400,6 +400,9 @@ show_expr_type(Ty *ty, Expr const *e);
 char *
 show_expr(Expr const *e);
 
+char *
+show_expr_full(Expr const *e);
+
 u32
 source_register(Ty *ty, void const *src);
 

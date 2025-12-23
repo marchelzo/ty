@@ -2,18 +2,8 @@ import path
 import os
 import ty.parse as parse
 
-macro assert(cond) {
-    $$[
-        if !$$cond {
-            throw "assertion failed[{__line__}]: {$${parse.show(cond)}}"
-        }
-    $$]
-}
-
 fn assert-eq(a, b, msg: String = 'values not equal') {
-    if a != b {
-        throw "{msg}: {a} != {b}"
-    }
+    assert(a == b)
 }
 
 fn test-basic-construction() {
@@ -324,7 +314,7 @@ fn test-chmod() {
     file.chmod(0o644)
     
     let st = file.stat
-    assert((st.mode & 0o777) & 0o644 == 0o644)
+    assert((st.mode & 0o777) == 0o644)
     
     file.unlink()
     tmp.rmdir()

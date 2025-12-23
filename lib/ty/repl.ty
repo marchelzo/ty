@@ -133,7 +133,7 @@ fn color-and-break(source: String) -> Array[(Int, String)] {
 }
 
 pub fn pretty-code(
-    prompt: String,
+    prompt: Any,
     lines: Array[Array[String]],
     line: Int,
     col: Int
@@ -268,7 +268,7 @@ pub fn tab-complete(before: String, after: String) -> readln::CompletionAction {
 }
 
 _readln = InteractiveLineReader(
-    prompt=() -> '>> ',
+    prompt=() -> chalk"[#d3a2ff b]>>[/] ",
     complete=tab-complete,
     render=pretty-code,
     history-file=Path.home() / '.ty' / '.history'

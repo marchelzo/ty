@@ -27,7 +27,6 @@ LDFLAGS += -lm
 LDFLAGS += -lcurses
 LDFLAGS += -L/usr/local/lib
 LDFLAGS += -lpthread
-#LDFLAGS += -lmimalloc
 
 LDFLAGS += -lutf8proc
 LDFLAGS += -lsqlite3
@@ -35,6 +34,10 @@ LDFLAGS += -lxxhash
 LDFLAGS += -ldl
 LDFLAGS += -lffi
 LDFLAGS += $(shell pcre2-config --libs8)
+
+ifndef DEBUG
+        LDFLAGS += -lmimalloc
+endif
 
 ifdef JEMALLOC
         LDFLAGS += -L$(shell jemalloc-config --libdir)
@@ -78,7 +81,7 @@ else ifdef DEBUG
         CFLAGS += -fno-omit-frame-pointer
         CFLAGS += -fno-sanitize=nonnull-attribute
         CFLAGS += -fsanitize=address
-        #CFLAGS += -mllvm --asan-stack=0
+        CFLAGS += -mllvm --asan-stack=0
         CFLAGS += -fno-sanitize-address-use-after-scope
         CFLAGS += -g3
 else ifdef TDEBUG
@@ -118,7 +121,7 @@ endif
 SOURCES := $(wildcard src/*.c)
 OBJECTS := $(patsubst src/%.c,obj/%.o,$(SOURCES))
 TYLS_OBJECTS := $(patsubst src/%.c,obj/tyls/%.o,$(SOURCES))
-EXTERNAL := libco/libco.c dtoa/SwiftDtoa.c libmd/src/.libs/libmd.a
+EXTERNAL := libco/libco.o dtoa/dtoa.o libmd/libmd.a
 ASSEMBLY := $(patsubst %.c,%.s,$(SOURCES))
 
 all: $(PROG)
@@ -152,7 +155,7 @@ obj/tyls/%.o: src/%.c
 	@$(CC) $(CFLAGS) -c -o $@ -DTY_LS -DFILENAME=$(patsubst src/%.c,%,$<) $<
 
 clean:
-	rm -rf $(PROG) *.gcda $(OBJECTS)
+	rm -rf $(PROG) *.gcda $(OBJECTS) $(TYLS_OBJECTS) libco/libco.o dtoa/dtoa.o
 
 test:
 	./ty test.ty

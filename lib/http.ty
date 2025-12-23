@@ -9,11 +9,11 @@ import time
 
 const READ_CHUNK_SIZE = (1 << 14) // 16 KiB
 
-fn make-pattern(route: String) -> (Array[String], Regex) {
+fn make-pattern(route: String) -> (Array[String], RegexV) {
     let route   = route.sub(/<(\w+)>/, [_, name] -> "<{name}:\\w+>")
     let params  = route.scan(/<(\w+):/).map(&1)
     let pattern = route.sub(/<\w+:(.*?)>/, [_, pattern] -> "({pattern})")
-    (params, regex("^{pattern}/?$"))
+    (params, regex("^{pattern}/?$", 'v'))
 }
 
 class HttpResponse {
@@ -75,7 +75,7 @@ use RouteMap = Dict[
     Array[{
         route: String,
         params: Array[String],
-        pattern: Regex,
+        pattern: RegexV,
         fun: RequestHandler
     }]
 ];
@@ -159,7 +159,7 @@ class HttpServer {
 
         for {params, pattern, fun, *} in handlers {
             if let $m = url.match(pattern) {
-                return (fun, %{params[i]: m[i + 1] for i in ..#params})
+                return (fun, %{params[i]: m[i + 1]! for i in ..#params})
             }
         }
     }

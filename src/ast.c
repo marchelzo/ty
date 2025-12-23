@@ -72,13 +72,13 @@ visit_statement(Ty *ty, Stmt *s, Scope *scope, VisitorSet const *hooks)
                 }
                 break;
         case STATEMENT_MULTI:
-                for (size_t i = 0; i < s->statements.count; ++i) {
+                for (usize i = 0; i < s->statements.count; ++i) {
                         VS(s->statements.items[i]);
                 }
                 break;
         case STATEMENT_BLOCK:
                 SUB(false, "(block)",
-                        for (size_t i = 0; i < s->statements.count; ++i) {
+                        for (usize i = 0; i < s->statements.count; ++i) {
                                 VS(s->statements.items[i]);
                         }
                 );
@@ -273,7 +273,7 @@ visit_lvalue(Ty *ty, Expr *t, Scope *scope, VisitorSet const *hooks, bool decl)
                 VL_(t->tagged);
                 break;
         case EXPRESSION_ARRAY:
-                for (size_t i = 0; i < t->elements.count; ++i) {
+                for (usize i = 0; i < t->elements.count; ++i) {
                         VL_(v__(t->elements, i));
                 }
                 break;
@@ -363,6 +363,9 @@ visit_expression(Ty *ty, Expr *e, Scope *scope, VisitorSet const *hooks)
         case EXPRESSION_DOT_DOT_DOT:
         case EXPRESSION_BIT_OR:
         case EXPRESSION_BIT_AND:
+        case EXPRESSION_XOR:
+        case EXPRESSION_SHR:
+        case EXPRESSION_SHL:
         case EXPRESSION_KW_OR:
         case EXPRESSION_IN:
         case EXPRESSION_NOT_IN:
@@ -435,28 +438,28 @@ visit_expression(Ty *ty, Expr *e, Scope *scope, VisitorSet const *hooks)
                 VS(e->statement);
                 break;
         case EXPRESSION_TEMPLATE:
-                for (size_t i = 0; i < vN(e->template.exprs); ++i) {
+                for (usize i = 0; i < vN(e->template.exprs); ++i) {
                         V(v__(e->template.exprs, i));
                 }
-                for (size_t i = 0; i < vN(e->template.holes); ++i) {
+                for (usize i = 0; i < vN(e->template.holes); ++i) {
                         V(v__(e->template.holes, i));
                 }
-                for (size_t i = 0; i < vN(e->template.stmts); ++i) {
+                for (usize i = 0; i < vN(e->template.stmts); ++i) {
                         VS(v__(e->template.stmts, i));
                 }
                 break;
         case EXPRESSION_FUNCTION_CALL:
                 V(e->function);
-                for (size_t i = 0; i < vN(e->args); ++i) {
+                for (usize i = 0; i < vN(e->args); ++i) {
                         V(v__(e->args, i));
                 }
-                for (size_t i = 0;  i < vN(e->fconds); ++i) {
+                for (usize i = 0;  i < vN(e->fconds); ++i) {
                         V(v__(e->fconds, i));
                 }
-                for (size_t i = 0; i < vN(e->kwargs); ++i) {
+                for (usize i = 0; i < vN(e->kwargs); ++i) {
                         V(v__(e->kwargs, i));
                 }
-                for (size_t i = 0; i < vN(e->fkwconds); ++i) {
+                for (usize i = 0; i < vN(e->fkwconds); ++i) {
                         V(v__(e->fkwconds, i));
                 }
                 break;
@@ -476,11 +479,11 @@ visit_expression(Ty *ty, Expr *e, Scope *scope, VisitorSet const *hooks)
         case EXPRESSION_METHOD_CALL:
         case EXPRESSION_DYN_METHOD_CALL:
                 V(e->object);
-                for (size_t i = 0;  i < e->method_args.count; ++i)
+                for (usize i = 0;  i < e->method_args.count; ++i)
                         V(e->method_args.items[i]);
-                for (size_t i = 0;  i < e->method_args.count; ++i)
+                for (usize i = 0;  i < e->method_args.count; ++i)
                         V(e->mconds.items[i]);
-                for (size_t i = 0; i < e->method_kwargs.count; ++i)
+                for (usize i = 0; i < e->method_kwargs.count; ++i)
                         V(e->method_kwargs.items[i]);
                 break;
         case EXPRESSION_EQ:
@@ -489,6 +492,12 @@ visit_expression(Ty *ty, Expr *e, Scope *scope, VisitorSet const *hooks)
         case EXPRESSION_STAR_EQ:
         case EXPRESSION_DIV_EQ:
         case EXPRESSION_MINUS_EQ:
+        case EXPRESSION_MOD_EQ:
+        case EXPRESSION_AND_EQ:
+        case EXPRESSION_OR_EQ:
+        case EXPRESSION_XOR_EQ:
+        case EXPRESSION_SHL_EQ:
+        case EXPRESSION_SHR_EQ:
                 V(e->value);
                 VL(false, e->target);
                 break;
@@ -499,17 +508,17 @@ visit_expression(Ty *ty, Expr *e, Scope *scope, VisitorSet const *hooks)
                 for (int i = 0; i < vN(e->decorators); ++i) {
                         V(v__(e->decorators, i));
                 }
-                for (size_t i = 0; i < vN(e->type_params); ++i) {
+                for (usize i = 0; i < vN(e->type_params); ++i) {
                         VT(v__(e->type_params, i));
                 }
-                for (size_t i = 0; i < vN(e->params); ++i) {
+                for (usize i = 0; i < vN(e->params); ++i) {
                         V(v__(e->dflts, i));
                 }
-                for (size_t i = 0; i < vN(e->constraints); ++i) {
+                for (usize i = 0; i < vN(e->constraints); ++i) {
                         VT(v__(e->constraints, i));
                 }
                 VT(e->return_type);
-                for (size_t i = 0; i < vN(e->type_bounds); ++i) {
+                for (usize i = 0; i < vN(e->type_bounds); ++i) {
                         VT(v_(e->type_bounds, i)->var);
                         VT(v_(e->type_bounds, i)->bound);
                 }
@@ -529,7 +538,7 @@ visit_expression(Ty *ty, Expr *e, Scope *scope, VisitorSet const *hooks)
                 }
                 break;
         case EXPRESSION_ARRAY:
-                for (size_t i = 0; i < e->elements.count; ++i) {
+                for (usize i = 0; i < e->elements.count; ++i) {
                         V(e->elements.items[i]);
                         V(e->aconds.items[i]);
                 }
@@ -543,19 +552,20 @@ visit_expression(Ty *ty, Expr *e, Scope *scope, VisitorSet const *hooks)
                         V(part->_while);
                         V(part->_if);
                 }
-                for (size_t i = 0; i < e->elements.count; ++i) {
+                for (usize i = 0; i < e->elements.count; ++i) {
                         V(e->elements.items[i]);
                         V(e->aconds.items[i]);
                 }
                 break;
         case EXPRESSION_DICT:
                 V(e->dflt);
-                for (size_t i = 0; i < e->keys.count; ++i) {
+                for (usize i = 0; i < e->keys.count; ++i) {
                         V(e->keys.items[i]);
                         V(e->values.items[i]);
                 }
                 break;
         case EXPRESSION_DICT_COMPR:
+                V(e->dflt);
                 for (usize i = 0; i < vN(e->dcompr); ++i) {
                         ComprPart *part = v_(e->dcompr, i);
                         V(part->iter);
@@ -564,7 +574,7 @@ visit_expression(Ty *ty, Expr *e, Scope *scope, VisitorSet const *hooks)
                         V(part->_while);
                         V(part->_if);
                 }
-                for (size_t i = 0; i < vN(e->keys); ++i) {
+                for (usize i = 0; i < vN(e->keys); ++i) {
                         V(v__(e->keys, i));
                         V(v__(e->values, i));
                 }
@@ -732,17 +742,17 @@ visit_type(Ty *ty, Expr *e, Scope *scope, VisitorSet const *hooks)
                 VS(e->statement);
                 break;
         case EXPRESSION_TEMPLATE:
-                for (size_t i = 0; i < e->template.exprs.count; ++i) {
+                for (usize i = 0; i < e->template.exprs.count; ++i) {
                         VT(e->template.exprs.items[i]);
                 }
                 break;
         case EXPRESSION_FUNCTION_CALL:
                 VT(e->function);
-                for (size_t i = 0;  i < e->args.count; ++i)
+                for (usize i = 0;  i < e->args.count; ++i)
                         VT(e->args.items[i]);
-                for (size_t i = 0;  i < e->args.count; ++i)
+                for (usize i = 0;  i < e->args.count; ++i)
                         VT(e->fconds.items[i]);
-                for (size_t i = 0; i < e->kwargs.count; ++i)
+                for (usize i = 0; i < e->kwargs.count; ++i)
                         VT(e->kwargs.items[i]);
                 break;
         case EXPRESSION_SUBSCRIPT:
@@ -759,12 +769,13 @@ visit_type(Ty *ty, Expr *e, Scope *scope, VisitorSet const *hooks)
                 VT(e->object);
                 break;
         case EXPRESSION_METHOD_CALL:
+        case EXPRESSION_DYN_METHOD_CALL:
                 VT(e->object);
-                for (size_t i = 0;  i < e->method_args.count; ++i)
+                for (usize i = 0;  i < e->method_args.count; ++i)
                         VT(e->method_args.items[i]);
-                for (size_t i = 0;  i < e->method_args.count; ++i)
+                for (usize i = 0;  i < e->method_args.count; ++i)
                         VT(e->mconds.items[i]);
-                for (size_t i = 0; i < e->method_kwargs.count; ++i)
+                for (usize i = 0; i < e->method_kwargs.count; ++i)
                         VT(e->method_kwargs.items[i]);
                 break;
         case EXPRESSION_EQ:
@@ -808,7 +819,7 @@ visit_type(Ty *ty, Expr *e, Scope *scope, VisitorSet const *hooks)
                 }
                 break;
         case EXPRESSION_ARRAY:
-                for (size_t i = 0; i < e->elements.count; ++i) {
+                for (usize i = 0; i < e->elements.count; ++i) {
                         VT(e->elements.items[i]);
                         VT(e->aconds.items[i]);
                 }
@@ -821,19 +832,20 @@ visit_type(Ty *ty, Expr *e, Scope *scope, VisitorSet const *hooks)
                         VT(part->_while);
                         VT(part->_if);
                 }
-                for (size_t i = 0; i < e->elements.count; ++i) {
+                for (usize i = 0; i < e->elements.count; ++i) {
                         VT(e->elements.items[i]);
                         VT(e->aconds.items[i]);
                 }
                 break;
         case EXPRESSION_DICT:
                 VT(e->dflt);
-                for (size_t i = 0; i < e->keys.count; ++i) {
+                for (usize i = 0; i < e->keys.count; ++i) {
                         VT(e->keys.items[i]);
                         VT(e->values.items[i]);
                 }
                 break;
         case EXPRESSION_DICT_COMPR:
+                VT(e->dflt);
                 for (usize i = 0; i < vN(e->dcompr); ++i) {
                         ComprPart *part = v_(e->dcompr, i);
                         VT(part->iter);
@@ -841,7 +853,7 @@ visit_type(Ty *ty, Expr *e, Scope *scope, VisitorSet const *hooks)
                         VT(part->_while);
                         VT(part->_if);
                 }
-                for (size_t i = 0; i < e->keys.count; ++i) {
+                for (usize i = 0; i < e->keys.count; ++i) {
                         VT(e->keys.items[i]);
                         VT(e->values.items[i]);
                 }
