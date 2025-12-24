@@ -833,7 +833,10 @@ inline static void
 
         LCTX = ctx;
 
-        Location seek = (ctx == LEX_FMT) ? token(-1)->end : tok()->start;
+        Location seek = (ctx == LEX_FMT)
+                      ? token(-1)->end
+                      : tok()->start;
+
         bool nl = tok()->nl;
 
         PLOGC('\n');
@@ -1756,10 +1759,11 @@ ss_inner(Ty *ty, bool top)
 
         avP(e->strings, ss_next_str(ty, top));
 
-        while (setctx(LEX_PREFIX), T0 == '{') {
+        while (setctx(LEX_PREFIX), (T0 == '{')) {
                 Location start = tok()->start;
-
                 next();
+
+                lex_need_nl(ty, false);
 
                 SAVE_NE(false);
                 SAVE_NC(true);
@@ -1767,9 +1771,7 @@ ss_inner(Ty *ty, bool top)
                 LOAD_NC();
                 LOAD_NE();
 
-                if (T0 == ':') {
-                        next();
-
+                if (try_consume(':')) {
                         Expr *fmt = ss_inner(ty, false);
                         char *last = *vvL(fmt->strings);
 
@@ -1783,16 +1785,15 @@ ss_inner(Ty *ty, bool top)
                                 last[i] = '\0';
                         }
 
-                        bool empty = vN(fmt->strings) == 1
-                               && **vvL(fmt->strings) == 0;
+                        bool empty = (vN(fmt->strings) == 1)
+                                  && (*v_L(fmt->strings) == '\0');
 
                         avP(e->fmts, !empty ? fmt : NULL);
                 } else {
                         avP(e->fmts, NULL);
                 }
 
-                if (T0 == '[') {
-                        next();
+                if (try_consume('[')) {
                         SAVE_NE(false);
                         avP(e->fmtfs, parse_expr(ty, 0));
                         LOAD_NE();

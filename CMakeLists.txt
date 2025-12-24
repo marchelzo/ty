@@ -21,7 +21,7 @@ find_package(unofficial-libffi CONFIG REQUIRED)
 # defines target(s): unofficial::sqlite3::sqlite3
 find_package(unofficial-sqlite3 CONFIG REQUIRED)
 # defines target(s): utf8proc
-find_package(unofficial-utf8proc CONFIG REQUIRED)
+find_package(utf8proc CONFIG REQUIRED)
 # defines target(s): PCRE2::8BIT, PCRE2::16BIT, PCRE2::32BIT, PCRE2::POSIX
 find_package(pcre2 CONFIG REQUIRED)
 # defines target(s): xxHash::xxhash
@@ -151,6 +151,11 @@ target_sources(dtoa PRIVATE dtoa/SwiftDtoa.c)
 add_subdirectory(libmd)
 
 # ---
+#  target: unibilium
+# ---
+add_subdirectory(unibilium)
+
+# ---
 #  target: ty
 # ---
 
@@ -222,6 +227,7 @@ target_compile_options(${_tgt_ty_interface}
       -mcpu=native
       -flto
       -ferror-limit=3
+      -rdynamic
     >
     $<$<C_COMPILER_ID:Clang>:
       -Wall
@@ -239,6 +245,7 @@ target_compile_options(${_tgt_ty_interface}
       -Wno-declaration-after-statement
       -mcpu=native
       -flto
+      -rdynamic
     >
     $<$<C_COMPILER_ID:MSVC>:
       /W4
@@ -256,20 +263,32 @@ target_link_libraries(${_tgt_ty_interface}
     ${_tgt_ty_interface_version_info}
     ${_tgt_ioctlconstants_h}
     Threads::Threads # pthreads (or equivalent)
-    libmd::md
-    unofficial::libffi::libffi
-    unofficial::sqlite3::sqlite3
-    PCRE2::8BIT
-    xxHash::xxhash
-    mimalloc-static
-    utf8proc
     libco
+    mimalloc-static
+    xxHash::xxhash
+    utf8proc::utf8proc
+    PCRE2::8BIT
+    unofficial::libffi::libffi
+    libmd::md
     dtoa
+    unofficial::sqlite3::sqlite3
     $<$<NOT:$<BOOL:${WIN33}>>:${CMAKE_DL_LIBS}>
     $<$<NOT:$<BOOL:${WIN32}>>:m>
     $<$<BOOL:${WIN32}>:ws2_32> # winsock2
     $<$<BOOL:${WIN32}>:Shlwapi.lib>
 )
+
+if(APPLE)
+  target_link_libraries(${_tgt_ty_interface} INTERFACE
+    -Wl,-force_load,$<TARGET_FILE:unibilium>
+  )
+  target_link_options(${_tgt_ty_interface} INTERFACE -Wl,-export_dynamic)
+else()
+  target_link_libraries(${_tgt_ty_interface} INTERFACE
+    -Wl,--whole-archive unibilium -Wl,--no-whole-archive
+  )
+  target_link_options(${_tgt_ty_interface} INTERFACE -rdynamic)
+endif()
 
 target_include_directories(${_tgt_ty_interface}
   INTERFACE

@@ -1,6 +1,9 @@
 import ffi as c (C!)
 
-let $unibi = c.open('unibilium')
+let unibi = match c.dlsym('unibi_run') {
+    nil => c.open('unibilium'),
+    _   => nil
+}
 
 pub ns boolean {
     enum! {

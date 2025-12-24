@@ -56,6 +56,9 @@ int
 lex_peek_byte(Ty *ty);
 
 int
+lex_look_byte(Ty *ty, isize i);
+
+int
 lex_peek_char(Ty *ty, char *out);
 
 bool

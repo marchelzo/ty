@@ -105,12 +105,6 @@ if(NOT CMAKE_C_FLAGS)
   endforeach()
 endif()
 
-option(ENABLE_SANITIZE "Enable compiler sanitizer support" OFF)
-if(ENABLE_SANITIZE)
-  target_compile_options(md PRIVATE -fsanitize=address -fsanitize=leak -fsanitize=undefined)
-  target_link_options(md PRIVATE -fsanitize=address -fsanitize=leak -fsanitize=undefined)
-endif()
-
 target_compile_definitions(md PRIVATE
   _GNU_SOURCE
   $<$<PLATFORM_ID:Darwin>:_DARWIN_C_SOURCE>

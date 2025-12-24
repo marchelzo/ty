@@ -669,7 +669,7 @@ readhex(Ty *ty, int ndigits, u64 *k)
 static Token
 lex_ss_string(Ty *ty)
 {
-        vec(char) str = {0};
+        byte_vector str = {0};
 
         for (;;) {
                 switch (C(0)) {
@@ -682,7 +682,7 @@ lex_ss_string(Ty *ty)
                 case '{':
                 case '}':
                         avP(str, '\0');
-                        return mkstring(ty, str.items);
+                        return mkstring(ty, vv(str));
 
                 case '\\':
                         nextchar(ty);
@@ -747,9 +747,11 @@ lex_ss_string(Ty *ty)
                         case '>':
                                 nextchar(ty);
 
-                                while (str.count > 0 && isspace(*vvL(str))) {
-                                        if (*vvL(str) == '\n') break;
-                                        str.count -= 1;
+                                while (
+                                        (vN(str) > 0)
+                                     && ((v_L(str) == ' ') || (v_L(str) == '\t'))
+                                ) {
+                                        vvX(str);
                                 }
 
                                 continue;
@@ -1357,6 +1359,12 @@ int
 lex_peek_byte(Ty *ty)
 {
         return C(0);
+}
+
+int
+lex_look_byte(Ty *ty, isize i)
+{
+        return C(i);
 }
 
 int
