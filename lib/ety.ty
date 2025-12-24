@@ -48,7 +48,7 @@ fn generate-code(tokens: Array[TemplateToken]) -> String {
     
     fn flush-string() {
         if #string > 0 {
-            chunks.push("_ety_push(\"{string.str()}\");\n")
+            chunks.push("_ety_push(\"{string.join()}\");\n")
             string = []
         }
     }
@@ -57,9 +57,11 @@ fn generate-code(tokens: Array[TemplateToken]) -> String {
        Text(s) => do {
             string.push(
                 s.comb(/\n[ \t]*\z/)
-                 .sub(/\\/, '\\\\')
-                 .sub('\n', '\\n')
-                 .sub('\'', '\\\'')
+                 .sub(/[\\"{}\n\t]/, match {
+                    '\n' => '\\n',
+                    '\t' => '\\t',
+                    ch   => "\\{ch}",
+                 })
             )
         },
 

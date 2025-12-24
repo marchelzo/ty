@@ -603,10 +603,10 @@ HasConstructor(ClassDefinition const *def)
 static Expr *
 DefaultConstructor(Ty *ty, Class *class)
 {
-        Expr *ctor = NewExpr(ty, EXPRESSION_FUNCTION);
-        ctor->name = "init";
+        Expr *ctor  = NewExpr(ty, EXPRESSION_FUNCTION);
+        ctor->name  = "init";
         ctor->class = class;
-        ctor->body = NULL;
+        ctor->body  = NULL;
         return ctor;
 }
 
