@@ -1282,7 +1282,7 @@ class Int : IntoPtr[_] {
         clamp(range.low(), range.high())
     }
 
-    range(start, end) {
+    range(start, end) -> Range {
         (self + start)...(self + end)
     }
 

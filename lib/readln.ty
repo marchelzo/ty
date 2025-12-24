@@ -405,7 +405,7 @@ class InteractiveLineReader {
             lines.map(\_.str() ?? '').unlines()
         }
 
-        fn printItems(cs, select=nil) {
+        fn printItems(cs, select: Int = nil) {
             write(__tio.fd, "{ERASE_LINE}\rAvailable completions:\n")
 
             let (h, w) = __tio.size()
