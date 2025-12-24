@@ -1,10 +1,15 @@
 {
-    "dependencies": [
-        "libffi",
-        "utf8proc",
-        "sqlite3",
-        { "name": "pcre2", "features": ["jit"] },
-        "xxhash",
-        "mimalloc"
-    ]
+  "dependencies": [
+    "libffi",
+    "utf8proc",
+    "sqlite3",
+    {
+      "name": "pcre2",
+      "features": [
+        "jit"
+      ]
+    },
+    "xxhash",
+    "mimalloc"
+  ]
 }
