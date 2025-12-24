@@ -20,8 +20,8 @@ find_package(Threads REQUIRED)
 find_package(unofficial-libffi CONFIG REQUIRED)
 # defines target(s): unofficial::sqlite3::sqlite3
 find_package(unofficial-sqlite3 CONFIG REQUIRED)
-# defines target(s): utf8proc
-find_package(unofficial-utf8proc CONFIG REQUIRED)
+# defines target(s): utf8proc::utf8proc
+find_package(utf8proc CONFIG REQUIRED)
 # defines target(s): PCRE2::8BIT, PCRE2::16BIT, PCRE2::32BIT, PCRE2::POSIX
 find_package(pcre2 CONFIG REQUIRED)
 # defines target(s): xxHash::xxhash
@@ -266,7 +266,7 @@ target_link_libraries(${_tgt_ty_interface}
     libco
     mimalloc-static
     xxHash::xxhash
-    utf8proc
+    utf8proc::utf8proc
     PCRE2::8BIT
     unofficial::libffi::libffi
     libmd::md
