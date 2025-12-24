@@ -5289,7 +5289,7 @@ TrySolve2Op(Ty *ty, int op, Type *op0, Type *t0, Type *t1, Type *t2)
                                                 TERM(93),
                                                 TERM(95),
                                                 intern_entry(&xD.b_ops, op)->name,
-                                                TERM(94),
+                                                TERM(93),
                                                 TERM(0)
                                         );
                                         XXTLOG("F   %s", ShowType(op0_i));
@@ -5322,7 +5322,7 @@ TrySolve2Op(Ty *ty, int op, Type *op0, Type *t0, Type *t1, Type *t2)
                                                 !need_retry
                                              && ((f0 == NULL) || type_check(ty, f0, f0_i))
                                         ) {
-                                                XXTLOG("  GOOD");
+                                                XXTLOG("  %sGOOD%s: %s", TERM(92), TERM(0), ShowType(f0_i));
                                                 a0 = a0_i;
                                                 b0 = b0_i;
                                                 c0 = c0_i;
@@ -5347,7 +5347,7 @@ TrySolve2Op(Ty *ty, int op, Type *op0, Type *t0, Type *t1, Type *t2)
                                         }
                                 }
                         }
-                        if (!IsBottom(f0)) {
+                        if (!IsBottom(f0) && !need_retry) {
                                 UnifyX(ty, t0, a0, false, false);
                                 UnifyX(ty, t1, b0, false, false);
                                 UnifyX(ty, t2, c0, true, false);
@@ -5380,18 +5380,21 @@ TrySolve2Op(Ty *ty, int op, Type *op0, Type *t0, Type *t1, Type *t2)
         }
 
         XXTLOG(
-                "%sTrySolve2Op(%s%s%s)%s:",
+                "%sTrySolve2Op(%s%s%s)%s: RETURN %s",
                 TERM(92),
                 TERM(95),
                 intern_entry(&xD.b_ops, op)->name,
                 TERM(92),
-                TERM(0)
+                TERM(0),
+                ShowType(r0)
         );
         XXTLOG("    %s", ShowType(t0));
         XXTLOG("    %s", ShowType(t1));
         XXTLOG("    %s", ShowType(t2));
 
-        if (vN(keep) == 1) {
+        if (vN(keep) == 0) {
+                *op0 = *BOTTOM;
+        } else if (vN(keep) == 1) {
                 *op0 = *v_0(keep);
         } else if (vN(keep) > 1) {
                 v0(op0->types);
@@ -5418,13 +5421,14 @@ BindConstraint(Ty *ty, Constraint const *_c)
 
         switch (c->type) {
         case TC_2OP:
-                XXTLOG("BindConstraint(2op): %s", intern_entry(&xD.b_ops, c->op)->name);
-                XXTLOG("    %s", ShowType(c->t0));
-                XXTLOG("    %s", ShowType(c->t1));
-                XXTLOG("    %s", ShowType(c->t2));
                 if (c->op0 == NULL) {
                         c->op0 = CloneType(ty, op_type(c->op));
                 }
+                XXTLOG("BindConstraint(2op): %s", intern_entry(&xD.b_ops, c->op)->name);
+                XXTLOG("  t0=%s", ShowType(c->t0));
+                XXTLOG("  t1=%s", ShowType(c->t1));
+                XXTLOG("  rt=%s", ShowType(c->t2));
+                XXTLOG("  op=%s", ShowType(c->op0));
                 c->t0 = Reduce(ty, c->t0);
                 c->t1 = Reduce(ty, c->t1);
                 c->t1 = Reduce(ty, c->t1);
@@ -5481,16 +5485,9 @@ SolveDeferred(Ty *ty)
                 Constraint c = v__(ToSolve, i);
                 switch (c.type) {
                 case TC_2OP:
-                        if (
-                                (vN(FunStack) > 0)
-                             && (TypeType(v_L(FunStack)->_type) == TYPE_FUNCTION)
-                             && (!IsSolved(c.t0) || !IsSolved(c.t1))
-                             && !TY_IS_INITIALIZED
-                        ) {
-                                ;
-                        } else if (ShouldDefer2Op(c.t0, c.t1, c.t2)) {
-                                avP(v_L(FunStack)->_type->constraints, c);
-                        } else if (ENFORCE) {
+                        if (!IsBottom(c.op0) && f0 != NULL) {
+                                avP(f0->constraints, c);
+                        } else if (TY_IS_INITIALIZED && ENFORCE) {
                                 CompilerPushContext(ty, c.src);
                                 TypeError(
                                         "no impl. of %s%s%s for:"
@@ -6609,9 +6606,18 @@ Inst1(Ty *ty, Type *t0)
                 }
                 for (int i = 0; i < vN(t1->constraints); ++i) {
                         Constraint *c = v_(t1->constraints, i);
-                        if (c->type == TC_SUB) {
+                        switch (c->type) {
+                        case TC_SUB:
                                 c->t0 = Inst1(ty, c->t0);
                                 c->t1 = Inst1(ty, c->t1);
+                                break;
+
+                        case TC_2OP:
+                                c->op0 = CloneType(ty, c->op0);
+                                if (TypeType(c->op0) == TYPE_INTERSECT) {
+                                        CloneVec(c->op0->types);
+                                }
+                                break;
                         }
                 }
                 t1->rt = Inst1(ty, t1->rt);

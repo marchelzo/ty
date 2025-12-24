@@ -947,7 +947,8 @@ colorize_code_multiline(
                 return;
         }
 
-        char const *ls = start->s, *le = end->s + strcspn(end->s, "\n");
+        char const *ls = start->s;
+        char const *le = end->s + strcspn(end->s, "\n");
         char const *p, *q;
         usize min = SIZE_MAX, indent, skip;
         bool color = *base_color != '\0', hi = false;
@@ -956,7 +957,7 @@ colorize_code_multiline(
                 --ls;
         }
 
-        for (p = ls; p <= le;) {
+        for (p = ls; p < le;) {
                 if (p > ls && p[-1] == '\n') {
                         for (indent = 0, q = p; q < le && isspace(*q) && *q != '\n';) {
                                 ++indent, ++q;
@@ -965,7 +966,7 @@ colorize_code_multiline(
                                 min = indent;
                         }
                 }
-                p += *p == '\n' ? 1 : strcspn(p, "\n");
+                p += (*p == '\n') ? 1 : strcspn(p, "\n");
         }
 
         for (indent = 0; ls[indent] && isspace(ls[indent]) && ls[indent] != '\n';) {
@@ -978,7 +979,7 @@ colorize_code_multiline(
                 min = 0;
         }
 
-        for (p = ls; p <= le;) {
+        for (p = ls; p < le;) {
                 if (p == ls || p[-1] == '\n') {
                         for (skip = 0; skip < min && isspace(p[skip]) && p[skip] != '\n';) {
                                 ++skip;
@@ -1002,12 +1003,13 @@ colorize_code_multiline(
                         hi = false;
                 }
 
-                xvP(*buf, *p);
-                ++p;
+                xvP(*buf, *p++);
         }
 
         if (color && hi) {
                 dump(buf, "%s", TERM(0));
+        } else {
+                xvP(*buf, '\0');
         }
 }
 
