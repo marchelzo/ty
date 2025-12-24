@@ -4979,8 +4979,6 @@ definition_lvalue(Ty *ty, Expr *e)
                 return e;
         }
 
-        *(volatile char *)0 = 0;
-
         die_at(e, "expression is not a valid definition lvalue: %s", ExpressionTypeName(e));
 }
 
@@ -5698,11 +5696,6 @@ parse_let_definition(Ty *ty)
         SAVE_NA(true);
         s->value = parse_expr(ty, -1);
         LOAD_NA();
-
-        if (s->value == NULL) {
-                die_at((Expr *)s, "GOAT");
-                *(volatile char *)0 = 0;
-        }
 
         s->end = TEnd;
 
