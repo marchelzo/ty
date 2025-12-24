@@ -8272,6 +8272,16 @@ MethodSummary(Ty *ty, Type *t0, Expr const *fun)
         );
 }
 
+BUILTIN_FUNCTION(ty_type_type)
+{
+        ASSERT_ARGC("ty.types.info()", 1);
+
+        Value arg0 = ARG(0);
+        Type *t0 = type_from_ty(ty, &arg0);
+
+        return type_to_ty(ty, t0);
+}
+
 BUILTIN_FUNCTION(ty_type_info)
 {
         ASSERT_ARGC("ty.types.info()", 1);

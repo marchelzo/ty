@@ -305,6 +305,7 @@ BUILTIN_FUNCTION(ty_gc);
 BUILTIN_FUNCTION(ty_bt);
 BUILTIN_FUNCTION(ty_trace);
 BUILTIN_FUNCTION(ty_coro);
+BUILTIN_FUNCTION(ty_type_type);
 BUILTIN_FUNCTION(ty_type_info);
 BUILTIN_FUNCTION(ty_type_check);
 BUILTIN_FUNCTION(ty_type_inst);

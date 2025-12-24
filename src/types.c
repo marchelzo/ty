@@ -10658,13 +10658,29 @@ type_from_ty(Ty *ty, Value const *v)
         xDDD();
 
         Type *t0 = NULL;
+        Type *t1;
 
-        if (v->type == VALUE_NIL) {
+        switch (v->type) {
+        case VALUE_NIL:
                 return NIL_TYPE;
-        }
 
-        if (v->type == VALUE_TYPE) {
+        case VALUE_TYPE:
                 return v->ptr;
+
+        case VALUE_OPERATOR:
+                t0 = NewTVar(ty);
+                t1 = NewFunction(
+                        PARAMETER, t0,
+                        NewRecord(M_NAME(v->uop), NewFunction(t0)),
+                        t0
+                );
+                return type_both(ty, op_type(v->bop), t1);
+
+        case VALUE_FUNCTION:
+                return expr_of(v)->_type;
+
+        case VALUE_CLASS:
+                return class_get(ty, v->class)->object_type;
         }
 
         if (v->type == VALUE_TAG) switch (v->tag) {
@@ -10709,10 +10725,6 @@ type_from_ty(Ty *ty, Value const *v)
 
         case TyObjectT:
                 return NewObject(CLASS_OBJECT);
-        }
-
-        if (v->type == VALUE_CLASS) {
-                return class_get(ty, v->class)->object_type;
         }
 
         Value inner = unwrap(ty, v);
