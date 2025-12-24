@@ -598,9 +598,9 @@ lexdocstring(Ty *ty)
 static Token
 lexrawstr(Ty *ty)
 {
-        vec(char) str;
-        vec_init(str);
+        byte_vector str = {0};
 
+        // '
         nextchar(ty);
 
         while (C(0) != '\'') {
@@ -626,21 +626,22 @@ lexrawstr(Ty *ty)
                                 avP(str, '\t');
                                 continue;
                         }
-                        // fallthrough
+                        //------- FALLTHROUGH -------
                 default:
                            avP(str, nextchar(ty));
                 }
         }
 
+        // '
         nextchar(ty);
 
         avP(str, '\0');
 
-        return mkstring(ty, str.items);
+        return mkstring(ty, vv(str));
 }
 
 inline static bool
-readhex(Ty *ty, int ndigits, unsigned long long *k)
+readhex(Ty *ty, int ndigits, u64 *k)
 {
         char b[32];
 
@@ -654,7 +655,7 @@ readhex(Ty *ty, int ndigits, unsigned long long *k)
 
         b[ndigits] = '\0';
 
-        if (sscanf(b, "%llx", k) != 1) {
+        if (sscanf(b, "%"PRIx64, k) != 1) {
                 return false;
         }
 
@@ -705,43 +706,43 @@ lex_ss_string(Ty *ty)
                                 continue;
 
                         case 'x':
-                                {
-                                        unsigned long long b;
+                        {
+                                u64 b;
 
-                                        nextchar(ty);
+                                nextchar(ty);
 
-                                        if (!readhex(ty, 2, &b)) {
-                                                error(ty, "invalid hexadecimal byte value in string: \\x%.2s", SRC);
-                                        }
-
-                                        avP(str, b);
-
-                                        continue;
+                                if (!readhex(ty, 2, &b)) {
+                                        error(ty, "invalid hexadecimal byte value in string: \\x%.2s", SRC);
                                 }
+
+                                avP(str, b);
+
+                                continue;
+                        }
 
                         case 'u':
                         case 'U':
-                                {
-                                        int c = C(0);
-                                        int ndigits = (c == 'u') ? 4 : 8;
-                                        unsigned long long codepoint;
+                        {
+                                int c = C(0);
+                                int ndigits = (c == 'u') ? 4 : 8;
+                                u64 cp;
 
-                                        nextchar(ty);
+                                nextchar(ty);
 
-                                        if (!readhex(ty, ndigits, &codepoint)) {
-                                                error(ty, "expected %d hexadecimal digits after \\%c in string", ndigits, c, SRC);
-                                        }
-
-                                        if (!utf8proc_codepoint_valid(codepoint)) {
-                                                error(ty, "invalid Unicode codepoint in string: %u", codepoint);
-                                        }
-
-                                        unsigned char bytes[4];
-                                        int n = utf8proc_encode_char(codepoint, bytes);
-                                        avPn(str, (char *)bytes, n);
-
-                                        continue;
+                                if (!readhex(ty, ndigits, &cp)) {
+                                        error(ty, "expected %d hexadecimal digits after \\%c in string", ndigits, c, SRC);
                                 }
+
+                                if (!utf8proc_codepoint_valid(cp)) {
+                                        error(ty, "invalid Unicode codepoint in string: %u", cp);
+                                }
+
+                                unsigned char bytes[4];
+                                int n = utf8proc_encode_char(cp, bytes);
+                                avPn(str, (char *)bytes, max(n, 0));
+
+                                continue;
+                        }
 
                         case '>':
                                 nextchar(ty);
