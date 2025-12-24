@@ -4269,7 +4269,7 @@ TryUnifyObjects(Ty *ty, Type *t0, Type *t1, bool super)
                                         if (!IsRequired(t0, i)) {
                                                 continue;
                                         }
-                                        if (t1->fixed) {
+                                        if (t1->closed) {
                                                 return false;
                                         }
                                         AddEntry(t1, t00, name);
@@ -4314,7 +4314,7 @@ TryUnifyObjects(Ty *ty, Type *t0, Type *t1, bool super)
                                         if (!IsRequired(t1, i)) {
                                                 continue;
                                         }
-                                        if (t0->fixed) {
+                                        if (t0->closed) {
                                                 return false;
                                         }
                                         AddEntry(t0, t11, name);
@@ -4548,7 +4548,11 @@ TryBind(Ty *ty, Type *t0, Type *t1, bool super)
 #endif
                 } else if (!super || !IsAny(t1)) {
                         t0->bounded |= !super;
-                        BindVar(t0, type_unfixed(ty, Relax(Reduce(ty, t1))));
+                        t1 = Relax(Reduce(ty, t1));
+                        if (!t0->fixed) {
+                                t1 = type_unfixed(ty, t1);
+                        }
+                        BindVar(t0, t1);
                 }
                 return true;
         } else if (CanBind(t1)) {
@@ -4559,7 +4563,11 @@ TryBind(Ty *ty, Type *t0, Type *t1, bool super)
                         }
                 } else if (super || !IsAny(t0)) {
                         t1->bounded |= super;
-                        BindVar(t1, type_unfixed(ty, Relax(Reduce(ty, t0))));
+                        t0 = Relax(Reduce(ty, t0));
+                        if (!t1->fixed) {
+                                t0 = type_unfixed(ty, t0);
+                        }
+                        BindVar(t1, t0);
                 }
                 return true;
         }
@@ -4731,7 +4739,7 @@ UnifyXD(Ty *ty, Type *t0, Type *t1, bool super, bool check, bool soft)
         if (
                 IsTagged(t0)
              && IsTagged(t1)
-             && TagOf(t0) == TagOf(t1)
+             && (TagOf(t0) == TagOf(t1))
         ) {
                 TLOG("Merge(%s):  %s   <--->   %s", soft ? "soft" : "hard", ShowType(t0), ShowType(t1));
                 if (soft) {
@@ -6792,10 +6800,10 @@ type_member_access_t_(Ty *ty, Type const *t0, char const *name, bool strict)
                                 break;
                         }
                 }
-                if (t1 == NULL && t0->frfr && s_eq(name, "[]")) {
+                if ((t1 == NULL) && t0->frfr && s_eq(name, "[]")) {
                         return TupleSubscriptType(ty, t0);
                 }
-                if (!t0->fixed || (ENFORCE && strict && (t1 == NULL))) {
+                if (ENFORCE && strict && (t1 == NULL)) {
                         goto TryUnify;
                 }
                 return t1;
@@ -7877,13 +7885,14 @@ type_tuple(Ty *ty, Expr const *e)
         xDDD();
 
         Type *t0 = NewType(ty, TYPE_TUPLE);
-        t0->frfr  = true;
-        t0->fixed = true;
+        t0->fixed  = true;
+        t0->closed = true;
+        t0->frfr   = true;
 
         for (int i = 0; i < vN(e->es); ++i) {
                 char const *name = v__(e->names, i);
                 if (name != NULL && s_eq(name, "*")) {
-                        t0->fixed = false;
+                        t0->closed = false;
                 } else {
                         Type *u0 = NewVar(ty);
                         AddEntry(t0, u0, name, false);
@@ -8474,6 +8483,7 @@ type_resolve(Ty *ty, Expr const *e)
                 t0->frfr     = true;
                 t0->concrete = true;
                 t0->fixed    = true;
+                t0->closed   = true;
                 for (int i = 0; i < vN(e->es); ++i) {
                         if (v__(e->es, i)->type == EXPRESSION_SPREAD) {
                                 t0->repeat = type_resolve(ty, v__(e->es, i)->value);
@@ -8650,7 +8660,7 @@ unify2_(Ty *ty, Type **t0, Type *t1, bool check)
                 return true;
         }
 
-        if (*t0 == NULL || IsAny(t1) || *t0 == NONE_TYPE) {
+        if (*t0 == NULL || IsAny(t1) || (*t0 == NONE_TYPE)) {
                 *t0 = type_unfixed(ty, t1);
                 return true;
         }
@@ -8666,18 +8676,11 @@ unify2_(Ty *ty, Type **t0, Type *t1, bool check)
                 return true;
         }
 
-        if (
-                ClassOfType(ty, t1) == CLASS_INT
-             && CollapseInts(ty, t0)
-        ) {
+        if ((ClassOfType(ty, t1) == CLASS_INT) && CollapseInts(ty, t0)) {
                 return true;
         }
 
-        if (
-                IsTagged(*t0)
-             && IsTagged(t1)
-             && (*t0)->class == t1->class
-        ) {
+        if (IsTagged(*t0) && IsTagged(t1) && ((*t0)->class == t1->class)) {
                 unify2_(ty, v_((*t0)->args, 0), v__(t1->args, 0), check);
         } else if (t1->type == TYPE_UNION) {
                 for (int i = 0; i < vN(t1->types); ++i) {
@@ -8986,11 +8989,11 @@ type_show(Ty *ty, Type const *t0)
         case TYPE_TUPLE:
                 if (is_record(t0)) {
                         dump(&buf, "%s{%s", TERM(38:2:240:158:58), TERM(0));
-                        if (!t0->fixed) {
+                        if (!t0->closed) {
                                 dump(&buf, "%s*%s", TERM(1;92), TERM(0));
                         }
                         for (int i = 0; i < vN(t0->types); ++i) {
-                                if (i > 0 || !t0->fixed) {
+                                if (i > 0 || !t0->closed) {
                                         dump(&buf, ", ");
                                 }
                                 if (!IsRequired(t0, i)) {
@@ -9179,7 +9182,6 @@ type_unfixed(Ty *ty, Type *t0)
 
         if (t0->fixed) {
                 t = CloneType(ty, t0);
-                t->fixed = false;
         } else {
                 t = t0;
         }
@@ -10215,8 +10217,8 @@ type_intersect(Ty *ty, Type **t0, Type *t1)
         }
 
         if (
-                TypeType(*t0) == TYPE_TUPLE
-             && TypeType(t1) == TYPE_TUPLE
+                (TypeType(*t0) == TYPE_TUPLE)
+             && (TypeType(t1) == TYPE_TUPLE)
         ) {
                 *t0 = CloneType(ty, *t0);
                 CloneVec((*t0)->types);

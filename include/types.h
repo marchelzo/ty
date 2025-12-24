@@ -138,6 +138,7 @@ struct type {
                         BoolVector required;
                         Type *repeat;
                         bool frfr;
+                        bool closed;
                 };
                 imax z;
         };

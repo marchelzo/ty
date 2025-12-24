@@ -28,4 +28,6 @@ let expected =
     - Widget: Widget C
     '''
 
-print((output == expected) ? 'PASS' : 'FAIL')
+assert(output == expected)
+
+print('PASS')
