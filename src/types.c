@@ -9736,7 +9736,12 @@ type_unary_hash_t(Ty *ty, Type const *t0)
                         break;
                 }
                 if (t1 == NULL) {
-                        type_method_call_name(ty, (Type *)t0, M_NAME(NAMES._len_), true);
+                        t1 = type_method_call_name(
+                                ty,
+                                (Type *)t0,
+                                M_NAME(NAMES._len_),
+                                true
+                        );
                 }
                 break;
 
@@ -9779,7 +9784,14 @@ type_unary_hash_t(Ty *ty, Type const *t0)
 Type *
 type_unary_op(Ty *ty, Expr const *e)
 {
-        return NULL;
+        xDDD();
+
+        return type_method_call_name(
+                ty,
+                e->operand->_type,
+                e->uop,
+                true
+        );
 }
 
 Type *

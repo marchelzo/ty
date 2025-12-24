@@ -1136,7 +1136,7 @@ class Int : IntoPtr[_] {
         type(x)(math.pow(self, x))
     }
 
-    ~() {
+    ~() -> Int {
         bit.complement(self)
     }
 

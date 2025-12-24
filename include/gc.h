@@ -103,10 +103,7 @@ CheckUsed(Ty *ty)
 #if defined(TY_RELEASE)
         if (UNLIKELY((ty->GC_OFF_COUNT == 0) && (MemoryUsed >= MemoryLimit))) {
 #else
-        if (
-                (ty->GC_OFF_COUNT == 0)
-             && (MemoryUsed >= MemoryLimit || GC_EVERY_ALLOC)
-        ) {
+        if ((ty->GC_OFF_COUNT == 0) && (MemoryUsed >= MemoryLimit || GC_EVERY_ALLOC)) {
 #endif
                 GCLOG("Running GC. Used = %zu MB, Limit = %zu MB", MemoryUsed / 1000000, MemoryLimit / 1000000);
                 DoGC(ty);
