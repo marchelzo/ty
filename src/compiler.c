@@ -4163,6 +4163,7 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                 } else {
                         symbolize_expression(ty, scope, e->operand);
                 }
+                e->_type = type_unary_op(ty, e);
                 break;
 
         case EXPRESSION_USER_OP:
