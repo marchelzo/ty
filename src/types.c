@@ -13,7 +13,8 @@
 #include "array.h"
 #include "dict.h"
 
-#define TYPES_LOG 0
+#define TYPES_LOG      0
+#define FUN_TYPES_LOG  0
 
 typedef struct {
         TypeVector id0;
@@ -87,7 +88,7 @@ IsRequired(Type const *t0, i32 i)
         }
 }
 
-#if TYPES_LOG
+#if (TYPES_LOG || FUN_TYPES_LOG)
 static Ty *ty = &vvv;
 #define XXXTLOG(fmt, ...)                                                                         \
         fprintf(                                                                                  \
@@ -98,23 +99,31 @@ static Ty *ty = &vvv;
                 ((TyCompilerState(ty)->func == NULL) ? "--" : TyCompilerState(ty)->func->name)    \
                 __VA_OPT__(,) __VA_ARGS__                                                         \
         )
+#endif
 
-#define XXTLOG(...) if (EnableLogging > 0) { XXXTLOG(__VA_ARGS__); } else if (0)
-#define DPRINT(cond, fmt, ...) ((cond) && EnableLogging > 0 && XXXTLOG("%*s" fmt, 4*CurrentDepth, "" __VA_OPT__(,) __VA_ARGS__))
-#define XDPRINT(cond, fmt, ...) ((cond) && XXXTLOG("%*s" fmt, 4*CurrentDepth, "" __VA_OPT__(,) __VA_ARGS__))
+#if TYPES_LOG
+ #define XXTLOG(...) if (EnableLogging > 0) { XXXTLOG(__VA_ARGS__); } else if (0)
+ #define DPRINT(cond, fmt, ...) ((cond) && EnableLogging > 0 && XXXTLOG("%*s" fmt, 4*CurrentDepth, "" __VA_OPT__(,) __VA_ARGS__))
+ #define XDPRINT(cond, fmt, ...) ((cond) && XXXTLOG("%*s" fmt, 4*CurrentDepth, "" __VA_OPT__(,) __VA_ARGS__))
 #else
-#define XXTLOG(...) 0
-#define DPRINT(cond, fmt, ...) 0
-#define XDPRINT(cond, fmt, ...) 0
+ #define XXTLOG(...) 0
+ #define DPRINT(cond, fmt, ...) 0
+ #define XDPRINT(cond, fmt, ...) 0
+#endif
+
+#if FUN_TYPES_LOG
+ #define FTLOG(...) XXXTLOG(__VA_ARGS__)
+#else
+ #define FTLOG(...)
 #endif
 
 #define TLOG(...)
 
-static void *TVAR = (void *)&TVAR;
-static void *HOLE = (void *)&HOLE;
-static void *REPLACE = (void *)&REPLACE;
-static void *NAMED = (void *)&NAMED;
-static void *OPTIONAL = (void *)&OPTIONAL;
+static void *TVAR      = (void *)&TVAR;
+static void *HOLE      = (void *)&HOLE;
+static void *REPLACE   = (void *)&REPLACE;
+static void *NAMED     = (void *)&NAMED;
+static void *OPTIONAL  = (void *)&OPTIONAL;
 static void *PARAMETER = (void *)&PARAMETER;
 
 static Type ERROR = { .type = TYPE_ERROR, .fixed = true };
@@ -141,7 +150,7 @@ static Type *
 TypeOf2Op(Ty *ty, int op, Type *t0, Type *t1);
 
 static bool
-BindConstraint(Ty *ty, Constraint const *c);
+BindConstraint(Ty *ty, Constraint *c);
 
 static bool
 TryBind(Ty *ty, Type *t0, Type *t1, bool super);
@@ -450,7 +459,7 @@ already_visiting_pair(TypePairVector const *pairs, Type const *t0, Type const *t
 
                 dont_printf("  p0 = %s\n", ShowType(pair->t0));
                 dont_printf("  p1 = %s\n\n\n", ShowType(pair->t1));
-                if (SameType(pair->t0, t0) && SameType(pair->t1, t1)) {
+                if (AlmostSameType(pair->t0, t0) && AlmostSameType(pair->t1, t1)) {
                         return true;
                 }
         }
@@ -2513,7 +2522,7 @@ IsFullyBound(Type *t0)
 static bool
 IsConcrete(Type *t0)
 {
-        return (t0 != NULL) && t0->concrete;
+        return IsBottom(t0) || t0->concrete;
 
 }
 
@@ -3644,8 +3653,8 @@ Generalize(Ty *ty, Type *t0)
         U32Vector freev = {0};
         U32Vector boundv = {0};
 
-        XXTLOG("Generalize()");
-        XXTLOG("t0: %s", ShowType(t0));
+        FTLOG("Generalize()");
+        FTLOG("t0: %s", ShowType(t0));
 
         switch (TypeType(t0)) {
         case TYPE_FUNCTION:
@@ -3653,9 +3662,9 @@ Generalize(Ty *ty, Type *t0)
                 for (int i = 0; i < vN(t0->bound); ++i) {
                         if (RefersTo(t0, v__(t0->bound, i))) {
                                 avP(freev, v__(t0->bound, i));
-                                XXTLOG("  keep %s, it does appear in %s", VarName(ty, v__(t0->bound, i)), ShowType(t0));
+                                FTLOG("  keep %s, it does appear in %s", VarName(ty, v__(t0->bound, i)), ShowType(t0));
                         } else {
-                                XXTLOG("  drop %s, it doesn't appear in %s", VarName(ty, v__(t0->bound, i)), ShowType(t0));
+                                FTLOG("  drop %s, it doesn't appear in %s", VarName(ty, v__(t0->bound, i)), ShowType(t0));
                         }
                 }
                 dont_printf("Free(%s): ", ShowType(t0));
@@ -3675,8 +3684,8 @@ Generalize(Ty *ty, Type *t0)
                 break;
         }
 
-        XXTLOG("Generalize()");
-        XXTLOG(" => %s", ShowType(t1));
+        FTLOG("Generalize()");
+        FTLOG(" => %s", ShowType(t1));
 
         return t1;
 }
@@ -4232,10 +4241,7 @@ TryUnifyObjects(Ty *ty, Type *t0, Type *t1, bool super)
                 return true;
         }
 
-        if (
-                (TypeType(t0) == TYPE_TUPLE)
-             && (TypeType(t1) == TYPE_TUPLE)
-        ) {
+        if ((TypeType(t0) == TYPE_TUPLE) && (TypeType(t1) == TYPE_TUPLE)) {
                 Type **t2;
 
                 if (super) {
@@ -4579,6 +4585,8 @@ TryBind(Ty *ty, Type *t0, Type *t1, bool super)
 static bool
 UnifyXD(Ty *ty, Type *t0, Type *t1, bool super, bool check, bool soft)
 {
+        static TypePairVector stack = {0};
+
 #define UnifyXD(ty, t0, t1, su, ch, so) ((UnifyXD)(ty, t0, t1, su, ch, so) || ((DPRINT(check, "[%d]: %s   !%s   %s", __LINE__, ShowType(t0), (super ? ">" : "<"), ShowType(t1)), false)))
 
 #if 1
@@ -4609,6 +4617,16 @@ UnifyXD(Ty *ty, Type *t0, Type *t1, bool super, bool check, bool soft)
 
         Type *_t0 = t0;
         Type *_t1 = t1;
+
+        bool on_stack = CanResolveAlias(t0) || CanResolveAlias(t1);
+
+        if (on_stack) {
+                if (already_visiting_pair(&stack, t0, t1)) {
+                        return true;
+                } else {
+                        visit_pair(&stack, t0, t1);
+                }
+        }
 
         CurrentDepth += 1;
 
@@ -4708,11 +4726,7 @@ UnifyXD(Ty *ty, Type *t0, Type *t1, bool super, bool check, bool soft)
         //        }
         //}
 
-        if (
-                IsUnboundVar(t0)
-             && IsUnboundVar(t1)
-             && (t0->id == t1->id)
-        ) {
+        if (IsUnboundVar(t0) && IsUnboundVar(t1) && (t0->id == t1->id)) {
                 OK("same unbound variable");
                 goto Success;
         }
@@ -4736,11 +4750,7 @@ UnifyXD(Ty *ty, Type *t0, Type *t1, bool super, bool check, bool soft)
         //        goto Success;
         //}
 
-        if (
-                IsTagged(t0)
-             && IsTagged(t1)
-             && (TagOf(t0) == TagOf(t1))
-        ) {
+        if (IsTagged(t0) && IsTagged(t1) && (TagOf(t0) == TagOf(t1))) {
                 TLOG("Merge(%s):  %s   <--->   %s", soft ? "soft" : "hard", ShowType(t0), ShowType(t1));
                 if (soft) {
                         UnifyXD(ty, v__(t0->args, 0), v__(t1->args, 0), super, check, soft);
@@ -4889,11 +4899,7 @@ UnifyXD(Ty *ty, Type *t0, Type *t1, bool super, bool check, bool soft)
                 }
         }
 
-        if (
-                IsTagged(t0)
-             || IsTagged(t1)
-             || (TypeType(t0) == TYPE_UNION)
-        ) {
+        if (IsTagged(t0) || IsTagged(t1) || (TypeType(t0) == TYPE_UNION)) {
                 goto Fail;
         }
 
@@ -5030,6 +5036,10 @@ Success:
                 }
         }
 
+        if (on_stack) {
+                vvX(stack);
+        }
+
         CurrentDepth -= 1;
 
         XXTLOG("%s%s%s%s%s", color, line, ok ? TERM(92) : TERM(91), ok ? "OK" : "FAILED", TERM(0));
@@ -5063,7 +5073,6 @@ Success:
         }
 
         return ok;
-
 #undef OK
 #undef UnifyXD
 }
@@ -5133,12 +5142,14 @@ ShowConstraint(Ty *ty, Constraint *c)
         case TC_2OP:
                 dump(
                         &buf,
-                        "(%s %s%s%s %s) = %s",
+                        "%s %s%s%s %s %s<:%s %s",
                         ShowType(c->t0),
                         TERM(1;94),
                         intern_entry(&xD.b_ops, c->op)->name,
                         TERM(0),
                         ShowType(c->t1),
+                        TERM(1;94),
+                        TERM(0),
                         ShowType(c->t2)
                 );
                 break;
@@ -5224,7 +5235,7 @@ TrySolve2Op(Ty *ty, int op, Type *op0, Type *t0, Type *t1, Type *t2)
         expression_vector kwargs = {0};
         StringVector      kws    = {0};
 
-        if ( // TODO: Is this actually doing anything?
+        if (
                 IsUnknown(t0)
              || IsUnknown(t1)
              || IsUnknown(t2)
@@ -5415,17 +5426,14 @@ TrySolve2Op(Ty *ty, int op, Type *op0, Type *t0, Type *t1, Type *t2)
 }
 
 static bool
-BindConstraint(Ty *ty, Constraint const *_c)
+BindConstraint(Ty *ty, Constraint *c)
 {
         Type *t0;
+        bool ok;
 
 #if defined(TY_PROFILE_TYPES)
         u64 start = TyThreadCPUTime();
 #endif
-
-        bool ok;
-
-        Constraint *c = (Constraint *)_c;
 
         switch (c->type) {
         case TC_2OP:
@@ -5471,7 +5479,7 @@ BindConstraint(Ty *ty, Constraint const *_c)
 
 #if defined(TY_PROFILE_TYPES)
         u64 end = TyThreadCPUTime();
-        ((Constraint *)c)->time += (end - start);
+        c->time += (end - start);
 #endif
 
         return ok;
@@ -6525,9 +6533,9 @@ Inst0(
         if (args == NULL) {
                 for (int i = 0; i < vN(*params) - variadic; ++i) {
                         Type *u0 = NewVar(ty);
-                        u0->fixed = strict;
+                        u0->fixed    = strict;
                         u0->variadic = (v__(*params, i) & TV_VARIADIC);
-                        u0->packed = (v__(*params, i) & TV_PACK);
+                        u0->packed   = (v__(*params, i) & TV_PACK);
                         avP(vars, u0);
                 }
                 if (variadic) {
@@ -6668,10 +6676,7 @@ SolveMemberAccess(Ty *ty, Type const *t0, Type const *t1)
 {
         t0 = Resolve(ty, t0);
 
-        if (
-                (TypeType(t0) != TYPE_OBJECT)
-             || IsAny(t0)
-        ) {
+        if ((TypeType(t0) != TYPE_OBJECT) || IsAny(t0)) {
                 return (Type *)t1;
         }
 
@@ -8904,31 +8909,14 @@ type_show(Ty *ty, Type const *t0)
                         dump(&buf, "]%s", TERM(0));
                 }
                 if (vN(t0->constraints) > 0) {
+                        dump(&buf, "%s(%s", TERM(38;2;255;153;187), TERM(0));
                         for (int i = 0; i < vN(t0->constraints); ++i) {
-                                Constraint *c = v_(t0->constraints, i);
-                                switch (c->type) {
-                                case TC_2OP:
-                                        dump(
-                                                &buf,
-                                                "(%s %s %s -> %s)",
-                                                ShowType(c->t0),
-                                                intern_entry(&xD.b_ops, c->op)->name,
-                                                ShowType(c->t1),
-                                                ShowType(c->t2)
-                                        );
-                                        break;
-
-                                case TC_SUB:
-                                        dump(
-                                                &buf,
-                                                "(%s : %s)",
-                                                ShowType(c->t0),
-                                                ShowType(c->t1)
-                                        );
-                                        break;
+                                if (i > 0) {
+                                        dump(&buf, ", ");
                                 }
+                                dump(&buf, "%s", ShowConstraint(ty, v_(t0->constraints, i)));
                         }
-                        dump(&buf, " => ");
+                        dump(&buf, "%s) =>%s ", TERM(38;2;255;153;187), TERM(0));
                 }
                 dump(&buf, "%s(%s", TERM(1;38;2;178;153;191), TERM(0));
                 for (int i = 0; i < vN(t0->params); ++i) {
@@ -9068,7 +9056,7 @@ type_show(Ty *ty, Type const *t0)
                                 TERM(0),
                                 ShowType(t0->val)
                         );
-                } else if (0 && !IsTVar(t0)) {
+                } else if (1 && !IsTVar(t0)) {
                         dump(
                                 &buf,
                                 "%s{%d}%s",
@@ -9293,6 +9281,7 @@ MakeConcrete_(Ty *ty, Type *t0, TypeVector *refs, bool variance)
         }
 
         if (t0->concrete && t0->fixed) {
+                FTLOG("MakeConcrete_: already concrete: %s", ShowType(t0));
                 return t0;
         }
 
@@ -9397,6 +9386,11 @@ MakeConcrete_(Ty *ty, Type *t0, TypeVector *refs, bool variance)
                         c->t0 = MakeConcrete_(ty, c->t0, refs, variance);
                         c->t1 = MakeConcrete_(ty, c->t1, refs, variance);
                         c->t2 = MakeConcrete_(ty, c->t2, refs, variance);
+                        t0->concrete &= (
+                                IsConcrete(c->t0)
+                             && IsConcrete(c->t1)
+                             && IsConcrete(c->t2)
+                        );
                 }
                 t0->rt = MakeConcrete_(ty, t0->rt, refs, variance);
                 t0->concrete &= IsConcrete(t0->rt);
@@ -10051,15 +10045,12 @@ fixup(Ty *ty, Type *t0)
 {
         t0 = ResolveVar(t0);
 
-        if (
-                (TypeType(t0) != TYPE_FUNCTION)
-             || IsFullyBound(t0)
-        ) {
+        if ((TypeType(t0) != TYPE_FUNCTION) || IsFullyBound(t0)) {
                 return;
         }
 
         Type *g0 = Generalize(ty, t0);
-        XXTLOG("  g0:  %s", ShowType(g0));
+        FTLOG("  g0:  %s", ShowType(g0));
 
         TypeEnv env = {0};
 
@@ -10082,15 +10073,15 @@ fixup(Ty *ty, Type *t0)
                         avP(g0->bound, var0->id);
                 } else {
                         Occurs(ty, g0, id, CurrentLevel);
-                        XXTLOG("  drop %s, only %d refs in %s", VarName(ty, id), refs, ShowType(g0));
+                        FTLOG("  drop %s, only %d refs in %s", VarName(ty, id), refs, ShowType(g0));
                 }
         }
 
         g0 = MakeConcrete(ty, g0, NULL);
-        XXTLOG("  g0:  %s", ShowType(g0));
+        FTLOG("  g0:  %s", ShowType(g0));
 
         *t0 = *Reduce(ty, Generalize(ty, g0));
-        XXTLOG("  t0:  %s", ShowType(t0));
+        FTLOG("  t0:  %s", ShowType(t0));
 
         ty->tenv = save;
 
@@ -10111,11 +10102,11 @@ type_function_fixup(Ty *ty, Expr const *e)
         }
 
         if (e->class != NULL) {
-                XXTLOG("fixup(%s.%s)[%d]:", e->class->name, e->name, CurrentLevel);
-                XXTLOG("    %s", ShowType(t0));
+                FTLOG("fixup(%s.%s)[%d]:", e->class->name, e->name, CurrentLevel);
+                FTLOG("    %s", ShowType(t0));
         } else {
-                XXTLOG("fixup(%s)[%d]:", e->name ? e->name : "", CurrentLevel);
-                XXTLOG("    %s", ShowType(t0));
+                FTLOG("fixup(%s)[%d]:", e->name ? e->name : "", CurrentLevel);
+                FTLOG("    %s", ShowType(t0));
         }
 
         fixup(ty, t0);
@@ -10312,28 +10303,69 @@ type_subtract(Ty *ty, Type **t0, Type *t1)
         *t0 = t;
 }
 
-bool
-TypeCheck(Ty *ty, Type *t0, Value const *v)
+typedef struct {
+        Type const *t0;
+        Value const *v;
+} TypeCheckPair;
+
+typedef vec(TypeCheckPair) TypeCheckStack;
+
+inline static void
+check_pair(Ty *ty, TypeCheckStack *stack, Type const *t0, Value const *v)
+{
+        svP(*stack, ((TypeCheckPair){ t0, v }));
+}
+
+inline static bool
+already_checking_pair(
+        TypeCheckStack const *stack,
+        Type const *t0,
+        Value const *v
+)
+{
+        for (int i = 0; i < vN(*stack); ++i) {
+                TypeCheckPair const *pair = v_(*stack, i);
+                if ((v == pair->v) && AlmostSameType(pair->t0, t0)) {
+                        return true;
+                }
+        }
+
+        return false;
+}
+
+static bool
+TypeCheckXD(Ty *ty, TypeCheckStack *stack, Type *t0, Value const *v)
 {
         TLOG("TypeCheck():");
         TLOG("    %s", VSC(v));
         TLOG("    %s", ShowType(t0));
 
+        if (already_checking_pair(stack, t0, v)) {
+                return true;
+        } else {
+                check_pair(ty, stack, t0, v);
+        }
+
+        bool ok = false;
+
         t0 = Resolve(ty, t0);
 
         if (IsBottom(t0)) {
-                return true;
+                ok = true;
+                goto End;
         }
 
         if (v->type == VALUE_NIL) {
-                return (TypeType(t0) == TYPE_VARIABLE)
-                    || type_check_x(ty, t0, NIL_TYPE, false);
+                ok = (TypeType(t0) == TYPE_VARIABLE)
+                  || type_check_x(ty, t0, NIL_TYPE, false);
+                goto End;
         }
 
         switch (t0->type) {
         case TYPE_INTEGER:
-                return (v->type == VALUE_INTEGER)
-                    && (v->z == t0->z);
+                ok = (v->type == VALUE_INTEGER)
+                  && (v->z == t0->z);
+                break;
 
         case TYPE_VARIABLE:
         case TYPE_SUBSCRIPT:
@@ -10342,27 +10374,31 @@ TypeCheck(Ty *ty, Type *t0, Value const *v)
         case TYPE_LIST:
         case TYPE_COMPUTED:
         case TYPE_ALIAS:
-                return true;
+                ok = true;
+                break;
 
         case TYPE_UNION:
                 for (int i = 0; i < vN(t0->types); ++i) {
-                        if (TypeCheck(ty, v__(t0->types, i), v)) {
-                                return true;
+                        if (TypeCheckXD(ty, stack, v__(t0->types, i), v)) {
+                                ok = true;
+                                goto End;
                         }
                 }
-                return false;
+                break;
 
         case TYPE_INTERSECT:
                 for (int i = 0; i < vN(t0->types); ++i) {
-                        if (!TypeCheck(ty, v__(t0->types, i), v)) {
-                                return false;
+                        if (!TypeCheckXD(ty, stack, v__(t0->types, i), v)) {
+                                goto End;
                         }
                 }
-                return true;
+                ok = true;
+                break;
 
         case TYPE_FUNCTION:
-                return CALLABLE(*v)
-                    || class_lookup_method_i(ty, ClassOf(v), NAMES.call) != NULL;
+                ok = CALLABLE(*v)
+                  || class_lookup_method_i(ty, ClassOf(v), NAMES.call) != NULL;
+                break;
 
         case TYPE_TUPLE:
                 if (v->type == VALUE_TUPLE) {
@@ -10372,66 +10408,68 @@ TypeCheck(Ty *ty, Type *t0, Value const *v)
                                                   : (v->count > i) ? &v->items[i]
                                                   : /*)  else  (*/   NULL;
                                 if (
-                                        !TypeCheck(
+                                        !TypeCheckXD(
                                                 ty,
+                                                stack,
                                                 v__(t0->types, i),
                                                 (item != NULL) ? item : &STATIC_NIL
                                         )
                                 ) {
-                                        return false;
+                                        goto End;
                                 }
                         }
                 } else {
                         for (int i = 0; i < vN(t0->types); ++i) {
                                 char const *name = v__(t0->names, i);
                                 if (name == NULL) {
-                                        return false;
+                                        goto End;
                                 }
                                 int id = M_ID(name);
                                 Value item = GetMember(ty, *v, id, false, true);
                                 if (
-                                        (item.type == VALUE_NONE)
-                                     || !TypeCheck(ty, v__(t0->types, i), &item)
+                                        IsNone(item)
+                                     || !TypeCheckXD(ty, stack, v__(t0->types, i), &item)
                                 ) {
-                                        return false;
+                                        goto End;
                                 }
                         }
                 }
-                return true;
+                ok = true;
+                break;
 
         case TYPE_TAG:
-                return (v->type == VALUE_TAG)
-                    && (v->tag == TagOf(t0));
+                ok = (v->type == VALUE_TAG)
+                  && (v->tag == TagOf(t0));
+                break;
 
         case TYPE_CLASS:
-                return (v->type == VALUE_CLASS)
-                    && class_is_subclass(ty, v->class, t0->class->i);
+                ok = (v->type == VALUE_CLASS)
+                  && class_is_subclass(ty, v->class, t0->class->i);
+                break;
 
         default:
                 if (v->type & VALUE_TAGGED) {
                         if (TagOf(t0) != tags_first(ty, v->tags)) {
-                                return false;
+                                goto End;
                         }
                         Value inner = unwrap(ty, v);
-                        return TypeCheck(ty, TypeArg(t0, 0), &inner);
-
+                        ok = TypeCheckXD(ty, stack, TypeArg(t0, 0), &inner);
                 } else if (t0->type == TYPE_OBJECT) {
-                        if (
-                                !class_is_subclass(ty, ClassOf(v), t0->class->i)
-                        ) {
-                                return false;
+                        if (!class_is_subclass(ty, ClassOf(v), t0->class->i)) {
+                                goto End;
                         }
                         switch (t0->class->i) {
                         case CLASS_ARRAY:
                                 for (int i = 0; i < vN(*v->array); ++i) {
                                         if (
-                                                !TypeCheck(
+                                                !TypeCheckXD(
                                                         ty,
+                                                        stack,
                                                         TypeArg(t0, 0),
                                                         v_(*v->array, i)
                                                 )
                                         ) {
-                                                return false;
+                                                goto End;
                                         }
                                 }
                                 break;
@@ -10439,31 +10477,48 @@ TypeCheck(Ty *ty, Type *t0, Value const *v)
                         case CLASS_DICT:
                                 dfor(v->dict, ({
                                         if (
-                                                !TypeCheck(
+                                                !TypeCheckXD(
                                                         ty,
+                                                        stack,
                                                         TypeArg(t0, 0),
                                                         key
                                                 )
                                         ) {
-                                                return false;
+                                                goto End;
                                         }
                                         if (
-                                                !TypeCheck(
+                                                !TypeCheckXD(
                                                         ty,
+                                                        stack,
                                                         TypeArg(t0, 1),
                                                         val
                                                 )
                                         ) {
-                                                return false;
+                                                goto End;
                                         }
                                 }));
                                 break;
                         }
-                        return true;
+                        ok = true;
                 }
         }
 
-        return false;
+End:
+        vvX(*stack);
+
+        return ok;
+}
+
+bool
+TypeCheck(Ty *ty, Type *t0, Value const *v)
+{
+        TypeCheckStack stack = {0};
+
+        SCRATCH_SAVE();
+        bool ok = TypeCheckXD(ty, &stack, t0, v);
+        SCRATCH_RESTORE();
+
+        return ok;
 }
 
 void

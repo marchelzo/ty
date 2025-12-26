@@ -684,6 +684,8 @@ class Array[T] : Iterable[T] {
     *[U](ys: Array[U]) -> Array[(T, U)] { self * ys }
     *(n: Int | Bool)   -> Array[T]      { self * n  }
 
+    __call__(i: Int) -> Some[T] | None;
+
     get(i: Int) -> Some[T] | None {
         let n = #self
         (i in -n..n) ? Some(self[i]) : None
@@ -1136,7 +1138,7 @@ class Int : IntoPtr[_] {
         type(x)(math.pow(self, x))
     }
 
-    ~() -> Int {
+    ~() {
         bit.complement(self)
     }
 
@@ -3199,31 +3201,31 @@ class Thread[T] {
         __handle = thread.create(func, *args, **kwargs)
     }
 
-    static getName(t=nil) {
+    static getName(t=nil) -> String | nil {
         thread.getName(t)
     }
 
-    static kill(sig) {
+    static kill(sig: Int) {
         thread.kill(sig)
     }
 
-    getName() {
+    getName() -> String | nil {
         thread.getName(__handle)
     }
 
-    setName(s) {
-        thread.setName(s)
-    }
-
-    join(timeoutMs: Int) -> Some[T] | None {
-        thread.join(__handle, timeoutMs)
+    setName(name: String) {
+        thread.setName(name)
     }
 
     join() -> T {
         thread.join(__handle)
     }
 
-    kill(sig) {
+    join(timeoutMs: Int) -> Some[T] | None {
+        thread.join(__handle, timeoutMs)
+    }
+
+    kill(sig: Int) {
         thread.kill(__handle, sig)
     }
 
@@ -3231,11 +3233,11 @@ class Thread[T] {
         thread.detach(__handle)
     }
 
-    static id() {
+    static id() -> Int {
         thread.id()
     }
 
-    id() {
+    id() -> Int {
         thread.id(__handle)
     }
 }

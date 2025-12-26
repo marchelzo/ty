@@ -9693,7 +9693,10 @@ emit_expr(Ty *ty, Expr const *e, bool need_loc)
                 fail("%s", e->string);
 
         default:
-                fail("expression unexpected in this context: %s", ExpressionTypeName(e));
+                fail(
+                        "expression unexpected in this context: %s",
+                        ExpressionTypeName(e)
+                );
         }
 
         if (KEEP_LOCATION(e) || need_loc) {
@@ -9732,9 +9735,10 @@ emit_statement(Ty *ty, Stmt const *s, bool want_result)
 
         bool returns = false;
 
-        int resources = STATE.resources;
-        usize start = vN(STATE.code);
-        LoopState *loop = get_loop(ty, 0);
+        int        resources = STATE.resources;
+        usize      start     = vN(STATE.code);
+        LoopState *loop      = get_loop(ty, 0);
+
         void *ctx = PushContext(ty, s);
 
         switch (s->type) {
@@ -9783,7 +9787,11 @@ emit_statement(Ty *ty, Stmt const *s, bool want_result)
                 break;
 
         case STATEMENT_IF:
-                returns |= (s->iff.neg ? emit_if_not(ty, s, want_result) : emit_if(ty, s, want_result));
+                returns |= (
+                        s->iff.neg
+                      ? emit_if_not(ty, s, want_result)
+                      : emit_if(ty, s, want_result)
+                );
                 want_result = false;
                 break;
 
@@ -9880,23 +9888,29 @@ emit_statement(Ty *ty, Stmt const *s, bool want_result)
                 Ei32(vN(s->class.getters));
                 Ei32(vN(s->class.setters));
 
-                for (int i = vN(s->class.s_methods); i > 0; --i)
+                for (int i = vN(s->class.s_methods); i > 0; --i) {
                         EM(v__(s->class.s_methods, i - 1)->name);
+                }
 
-                for (int i = vN(s->class.s_getters); i > 0; --i)
+                for (int i = vN(s->class.s_getters); i > 0; --i) {
                         EM(v__(s->class.s_getters, i - 1)->name);
+                }
 
-                for (int i = vN(s->class.s_setters); i > 0; --i)
+                for (int i = vN(s->class.s_setters); i > 0; --i) {
                         EM(v__(s->class.s_setters, i - 1)->name);
+                }
 
-                for (int i = vN(s->class.methods); i > 0; --i)
+                for (int i = vN(s->class.methods); i > 0; --i) {
                         EM(v__(s->class.methods, i - 1)->name);
+                }
 
-                for (int i = vN(s->class.getters); i > 0; --i)
+                for (int i = vN(s->class.getters); i > 0; --i) {
                         EM(v__(s->class.getters, i - 1)->name);
+                }
 
-                for (int i = vN(s->class.setters); i > 0; --i)
+                for (int i = vN(s->class.setters); i > 0; --i) {
                         EM(v__(s->class.setters, i - 1)->name);
+                }
 
                 for (int i = 0; i < vN(s->class.s_fields); ++i) {
                         Expr *f = v__(s->class.s_fields, i);
@@ -9974,8 +9988,9 @@ emit_statement(Ty *ty, Stmt const *s, bool want_result)
         case STATEMENT_CONTINUE:
                 loop = get_loop(ty, s->depth - 1);
 
-                if (loop == NULL)
+                if (loop == NULL) {
                         fail("invalid continue statement (not inside a loop)");
+                }
 
                 for (int i = 0; i < s->depth - 1; ++i) {
                         u32 n = get_loop(ty, i)->n;
