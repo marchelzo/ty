@@ -9056,7 +9056,7 @@ type_show(Ty *ty, Type const *t0)
                                 TERM(0),
                                 ShowType(t0->val)
                         );
-                } else if (1 && !IsTVar(t0)) {
+                } else if (0 && !IsTVar(t0)) {
                         dump(
                                 &buf,
                                 "%s{%d}%s",
