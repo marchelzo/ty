@@ -108,6 +108,11 @@ typedef struct module {
 typedef vec(struct eloc) location_vector;
 
 typedef struct {
+        i32 count;
+        i32 saved;
+} StackState;
+
+typedef struct {
         intrusive_vec(usize);
         int label;
 } JumpGroup, offset_vector;
@@ -122,6 +127,7 @@ typedef vec(JumpPlaceholder) JumpSet;
 typedef struct loop_state {
         offset_vector continues;
         offset_vector breaks;
+        StackState stack;
         i32 resources;
         i32 t;
         i32 n;
@@ -214,6 +220,7 @@ typedef struct compiler_state {
 
         TryStates tries;
         LoopStates loops;
+        StackState stack;
 
         import_vector imports;
 

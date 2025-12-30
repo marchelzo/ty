@@ -1048,15 +1048,15 @@ string_replace(Ty *ty, Value *string, int argc, Value *kwargs)
                 while ((rc = ty_re_match(re, s, len, start, 0)) > 0) {
                         vvPn(chars, s + start, ovec[0] - start);
 
-                        Value match;
+                        Value match = {0};
+
+                        gP(&match);
+
                         if (rc == 1) {
                                 match = STRING_VIEW(*string, ovec[0], ovec[1] - ovec[0]);
                         } else {
                                 match = ARRAY(vA());
-                                NOGC(match.array);
-
-                                isize j = 0;
-                                for (isize i = 0; i < rc; ++i, j += 2) {
+                                for (isize i = 0, j = 0; i < rc; ++i, j += 2) {
                                         vvP(
                                                 *match.array,
                                                 STRING_VIEW(
@@ -1075,9 +1075,7 @@ string_replace(Ty *ty, Value *string, int argc, Value *kwargs)
                         substitute = builtin_str(ty, 1, NULL);
                         vmX();
 
-                        if (match.type == VALUE_ARRAY) {
-                                OKGC(match.array);
-                        }
+                        gX();
 
                         uvPn(chars, ss(substitute), sN(substitute));
                 }

@@ -271,6 +271,20 @@ typedef struct class_definition ClassDefinition;
         X(ERROR),                                                                     \
         X(MAX_TYPE)
 
+#define X(t) EXPRESSION_##t
+enum {
+        TY_EXPRESSION_TYPES
+};
+#undef X
+
+
+#define X(t) STATEMENT_##t
+enum {
+        STATEMENT_TYPE_START = EXPRESSION_MAX_TYPE,
+        TY_STATEMENT_TYPES
+};
+#undef X
+
 #define ZERO_EXPR(e) memset(                               \
         ((char *)(e)) + offsetof(Expr, has_resources) + 1, \
         0,                                                 \
@@ -293,11 +307,7 @@ struct expression {
         void *arena;
         Expr *origin;
 
-#define X(t) EXPRESSION_ ## t
-        enum {
-                TY_EXPRESSION_TYPES
-        } type;
-#undef X
+        u8 type;
 
         Location start;
         Location end;
@@ -492,12 +502,8 @@ struct statement {
         void *arena;
         Expr *origin;
 
-#define X(t) STATEMENT_ ## t
-        enum {
-                STATEMENT_TYPE_START = EXPRESSION_MAX_TYPE,
-                TY_STATEMENT_TYPES
-        } type;
-#undef X
+        u8 type;
+
         Location start;
         Location end;
         Module *mod;

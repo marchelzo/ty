@@ -349,6 +349,7 @@ blob_str(Ty *ty, Value *blob, int argc, Value *kwargs)
                 bP("invalid argument(s): start=%zd, n=%zd, size=%zu", start, n, vN(*blob->blob));
         }
 
+
         u8 *str = value_string_alloc(ty, 2 * n);
         isize i = 0;
 
@@ -357,12 +358,12 @@ blob_str(Ty *ty, Value *blob, int argc, Value *kwargs)
         while (n > 0) {
                 i32 sz = utf8proc_iterate(vv(*blob->blob) + start, n, &cp);
                 if (sz < 0) {
-                        start += 1;
-                        n     -= 1;
                         if (v__(*blob->blob, start) < 0xC0) {
                                 str[i++] = 0xC2;
                                 str[i++] = v__(*blob->blob, start);
                         }
+                        start += 1;
+                        n     -= 1;
                 } else {
                         memcpy(str + i, vv(*blob->blob) + start, sz);
                         start += sz;

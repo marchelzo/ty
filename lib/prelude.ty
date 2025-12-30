@@ -3278,20 +3278,13 @@ macro dbg(*args) {
         return $$[ nil $$]
     }
 
-    let results-id = ty.gensym()
-    let results = ty.Id(name: results-id)
+    let results = ty.gensym()
 
     let pp? = ty.IfDef(name: 'Printer', module: 'pretty')
     let pp  = $$[ $$pp?.map(\__().print(_)).or-else($${::show}) $$]
 
     ty.Block([
-        ty.Let(
-            ty.Id(
-                name: results-id,
-                constraint: ty.Array([ty.ArrayItem(item: ty.Any)])
-            ),
-            ty.Array([])
-        ),
+        $$[ let $$results: Array[_] = [] $$],
         *[
             $$[ $$results.push(($$e, $$(ty.String(parse.show(e))))) $$]
             for e, i in args
@@ -4092,10 +4085,10 @@ macro __desugar_partial__(call: _) {
         if _argv   != nil { params.push(ty.Gather(_argv)) }
         if _kwargs != nil { params.push(ty.Kwargs(_kwargs)) }
 
-        return ty.Func({params, body: go(reducedArgs, mkcall, d - 1)})
+        ty.Func({params, body: go(reducedArgs, mkcall, d - 1)})
     }
 
-    return go(args, mkcall, max(depth, 1))
+    go(args, mkcall, max(depth, 1))
 }
 
 fn >>[a, b](x: a, f: a -> b) -> b { f(x) }

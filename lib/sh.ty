@@ -95,7 +95,7 @@ pub fn sh(
         os.close(p.stderr)
     }
 
-    let (_, status) = os.wait(p.pid) !
+    let (_, status) = os.wait(p.pid)!
 
     let out = out.str!()
 

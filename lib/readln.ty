@@ -427,7 +427,7 @@ class InteractiveLineReader {
             let (lines, line, col) = render(prompt, lines, nr, i)
 
             let out = Blob()
-            let pad = prompt.comb(/\s+$/).sub(/./, '.').pad(prompt.width())
+            let pad = "{'':.<{prompt.width()}}"
 
             if start > 0 {
                 out.push("\r\x1b[{start}A")

@@ -27,6 +27,8 @@
 #include "vm.h"
 #include "types.h"
 
+#define TY_DEBUG_STACK_BOOKKEEPING 0
+
 #if defined(TY_LS)
  #include "json.h"
 #endif
@@ -78,16 +80,29 @@ enum {
 #define EC(x)    emit_constraint(ty, (x))
 #define EA(x)    emit_assertion(ty, (x))
 
+#define ECALL(n, nkw) EmitCallOp(ty, (n), (nkw))
+
+#define EMCALL_5(op, c, m, n, nkw) EmitCallMethodOp(ty, (op), (c), (m), (n), (nkw))
+#define EMCALL_3(m, n, nkw)        EMCALL_5(INSTR_CALL_METHOD, -1, (m), (n), (nkw))
+#define EMCALL_2(m, n)             EMCALL_5(INSTR_CALL_METHOD, -1, (m), (n), 0)
+#define EMCALL(...) VA_SELECT(EMCALL, __VA_ARGS__)
+
+#define ETUPLE(n) EmitTupleOp(ty, (n))
+
+#define STK(n) AdjStack(ty, (n))
+
+#define PRIV_ID(name) GetPrivateId(ty, (name))
+
 #define PLACEHOLDER_JUMP(t, name) JumpPlaceholder name = (PLACEHOLDER_JUMP)(ty, (INSTR_##t))
 #define LABEL(name) JumpLabel name = (LABEL)(ty)
 
 #define PLACEHOLDER_JUMP_IF_NOT(e, name) JumpPlaceholder name = (PLACEHOLDER_JUMP_IF_NOT)(ty, (e))
 #define PLACEHOLDER_JUMP_IF(e, name)     JumpPlaceholder name = (PLACEHOLDER_JUMP_IF)    (ty, (e))
 
-#define PATCH_OFFSET(i)                                           \
-        do {                                                      \
-                int dist = vN(STATE.code) - i - sizeof dist;      \
-                memcpy(STATE.code.items + i, &dist, sizeof dist); \
+#define PATCH_OFFSET(i)                                         \
+        do {                                                    \
+                int dist = vN(STATE.code) - i - sizeof dist;    \
+                memcpy(vv(STATE.code) + i, &dist, sizeof dist); \
         } while (0)
 
 #define PATCH_JUMP(name)                            \
@@ -117,6 +132,10 @@ enum {
               : s "%d",         \
                 (g).label + 1   \
         );
+
+#define PATCH_FAILS             \
+        patch_match_fails(ty);  \
+        WITH_VSTACK
 
 #define FAIL_MATCH_IF(instr)                                 \
         do{                                                  \
@@ -200,6 +219,37 @@ enum {
 
 #define WITH_CTX(c) WITH_STATE(ctx, CTX_##c)
 #define IS_CTX(c) (STATE.ctx == (CTX_##c))
+
+#define WITHxSTACK(stk) for (                                  \
+        struct {                                               \
+                StackState tmp;                                \
+                bool cond;                                     \
+        } _stk_ctx = { (stk), true };                          \
+        (SwapStack(ty, &_stk_ctx.tmp), _stk_ctx.cond);         \
+        _stk_ctx.cond = false, SwapStack(ty, &_stk_ctx.tmp)    \
+)
+
+#define WITH_FORKED_STACK WITHxSTACK(STATE.stack)
+
+#define WITH_STACK_3(stk, n, s) for (                          \
+        struct {                                               \
+                StackState tmp;                                \
+                bool cond;                                     \
+        } _stk_ctx = { (stk), true };                          \
+        _stk_ctx.cond                                          \
+     && (                                                      \
+                _stk_ctx.tmp.count += (n),                     \
+                _stk_ctx.tmp.saved += (s),                     \
+                SwapStack(ty, &_stk_ctx.tmp),                  \
+                true                                           \
+        );                                                     \
+        _stk_ctx.cond = false, SwapStack(ty, &_stk_ctx.tmp)    \
+)
+#define WITH_STACK_2(n, s) WITH_STACK_3(STATE.stack, (n), (s))
+#define WITH_STACK_1(n)    WITH_STACK_3(STATE.stack, (n), 0)
+#define WITH_STACKx(...)   VA_SELECT(WITH_STACK, __VA_ARGS__)
+#define WITH_STACK()       WITH_STACKx(0, 0)
+#define WITH_VSTACK        WITH_STACKx(0, 1)
 
 enum {
         LV_NONE,
@@ -712,8 +762,8 @@ GetPrivateName(char const *name, int class, char *scratch, usize n)
         }
 }
 
-static void
-emit_member(Ty *ty, char const *name)
+inline static i32
+GetPrivateId(Ty *ty, char const *name)
 {
         char scratch[512];
 
@@ -724,7 +774,13 @@ emit_member(Ty *ty, char const *name)
                 sizeof scratch
         );
 
-        Ei32(M_ID(private));
+        return M_ID(private);
+}
+
+static void
+emit_member(Ty *ty, char const *name)
+{
+        Ei32(GetPrivateId(ty, name));
 }
 
 static bool
@@ -1390,6 +1446,255 @@ ResolveConstraint(Ty *ty, Expr *constraint)
         return t0;
 }
 
+static void
+PrintStackState(Ty *ty)
+{
+        if (STATE.stack.saved > 0) {
+                XXXX("%s%2d%s (%d)%s", TERM(31;1), STATE.stack.count, TERM(93), STATE.stack.saved, TERM(0));
+        } else {
+                XXXX("%s%2d%s (%d)%s", TERM(32;1), STATE.stack.count, TERM(93), STATE.stack.saved, TERM(0));
+        }
+}
+
+inline static void
+SaveStack(Ty *ty)
+{
+        STATE.stack.saved += 1;
+}
+
+inline static void
+SwapStack(Ty *ty, StackState *other)
+{
+#if TY_DEBUG_STACK_BOOKKEEPING
+        XXXX("Swapping stack states: ");
+        PrintStackState(ty);
+        XXXX("  <-->  ");
+        SWAP(StackState, STATE.stack, *other);
+        PrintStackState(ty);
+        XXXX("\n");
+#else
+        SWAP(StackState, STATE.stack, *other);
+#endif
+}
+
+inline static void
+EndStack(Ty *ty)
+{
+        ASSERT(STATE.stack.saved > 0);
+        STATE.stack.saved -= 1;
+}
+
+inline static void
+AdjStack(Ty *ty, i32 n)
+{
+        if (STATE.stack.saved == 0) {
+                ASSERT(STATE.stack.count + n >= 0);
+                STATE.stack.count += n;
+        }
+}
+
+inline static void
+IncrStack(Ty *ty)
+{
+        AdjStack(ty, 1);
+}
+
+inline static void
+DecrStack(Ty *ty)
+{
+        AdjStack(ty, -1);
+}
+
+inline static void
+AdjustStack(Ty *ty, int c)
+{
+#if TY_DEBUG_STACK_BOOKKEEPING
+        XXXX("%20s: ", GetInstructionName(c));
+        PrintStackState(ty);
+        XXXX("  -->  ");
+#endif
+
+        switch ((u8)c) {
+        case INSTR_DUP:
+        case INSTR_NIL:
+        case INSTR_FALSE:
+        case INSTR_TRUE:
+        case INSTR_STRING:
+        case INSTR_REGEX:
+        case INSTR_INT8:
+        case INSTR_INTEGER:
+        case INSTR_REAL:
+        case INSTR_CLASS:
+        case INSTR_ARRAY0:
+        case INSTR_TAG:
+        case INSTR_SELF:
+        case INSTR_TYPE:
+        case INSTR_VALUE:
+        case INSTR_OPERATOR:
+        case INSTR_TRACE:
+        case INSTR_LOAD_LOCAL:
+        case INSTR_LOAD_REF:
+        case INSTR_LOAD_CAPTURED:
+        case INSTR_LOAD_GLOBAL:
+        case INSTR_LOAD_THREAD_LOCAL:
+        case INSTR_SELF_MEMBER_ACCESS:
+        case INSTR_SELF_STATIC_ACCESS:
+        case INSTR_STATIC_MEMBER_ACCESS:
+        case INSTR_SENTINEL:
+        case INSTR_PUSH_INDEX:
+        case INSTR_NONE:
+        case INSTR_FUNCTION:
+        case INSTR_PUSH_TUPLE_ELEM:
+        case INSTR_PUSH_TUPLE_MEMBER:
+        case INSTR_TRY_TUPLE_MEMBER:
+        case INSTR_PUSH_ARRAY_ELEM:
+        case INSTR_INDEX_TUPLE:
+        case INSTR_YIELD_NONE:
+        case INSTR_PRE_DEC:
+        case INSTR_PRE_INC:
+        case INSTR_POST_DEC:
+        case INSTR_POST_INC:
+                IncrStack(ty);
+                break;
+
+        case INSTR_DUP2_SWAP:
+                IncrStack(ty);
+                IncrStack(ty);
+                break;
+
+        case INSTR_JUMP_IF:
+        case INSTR_JUMP_IF_NOT:
+        case INSTR_JUMP_IF_NIL:
+        case INSTR_JUMP_AND:
+        case INSTR_JUMP_OR:
+        case INSTR_JUMP_WTF:
+                DecrStack(ty);
+                break;
+
+        case INSTR_JLE:
+        case INSTR_JLT:
+        case INSTR_JGE:
+        case INSTR_JGT:
+        case INSTR_JEQ:
+        case INSTR_JNE:
+                DecrStack(ty);
+                DecrStack(ty);
+                break;
+
+        case INSTR_JUMP_IF_NONE:
+        case INSTR_JUMP_IF_TYPE:
+                break;
+
+        case INSTR_ENSURE_LEN:
+        case INSTR_ENSURE_LEN_TUPLE:
+        case INSTR_ENSURE_EQUALS_VAR:
+        case INSTR_TRY_TAG_POP:
+        case INSTR_TRY_INDEX:
+                break;
+
+        case INSTR_POP2:
+                AdjStack(ty, -2);
+                break;
+
+        case INSTR_SLICE:
+                AdjStack(ty, -3);
+                break;
+
+        case INSTR_POP:
+        case INSTR_LT:
+        case INSTR_LEQ:
+        case INSTR_GT:
+        case INSTR_GEQ:
+        case INSTR_EQ:
+        case INSTR_NEQ:
+        case INSTR_CMP:
+        case INSTR_ADD:
+        case INSTR_SUB:
+        case INSTR_MUL:
+        case INSTR_DIV:
+        case INSTR_MOD:
+        case INSTR_BIT_AND:
+        case INSTR_BIT_OR:
+        case INSTR_BIT_XOR:
+        case INSTR_SHL:
+        case INSTR_SHR:
+        case INSTR_RANGE:
+        case INSTR_INCRANGE:
+        case INSTR_TARGET_MEMBER:
+        case INSTR_TARGET_SUBSCRIPT:
+        case INSTR_SUBSCRIPT:
+        case INSTR_CHECK_MATCH:
+        case INSTR_ASSIGN_LOCAL:
+        case INSTR_ASSIGN_REGEX_MATCHES:
+        case INSTR_DEFER:
+        case INSTR_INIT_STATIC_FIELD:
+                DecrStack(ty);
+                break;
+
+        case INSTR_ARRAY:
+        case INSTR_DICT:
+                EndStack(ty);
+                IncrStack(ty);
+                break;
+
+        case INSTR_POP_STACK_POS:
+        case INSTR_ARRAY_COMPR:
+                EndStack(ty);
+                break;
+
+        case INSTR_GATHER_TUPLE:
+                EndStack(ty);
+                IncrStack(ty);
+                break;
+
+        case INSTR_POP_STACK_POS_POP:
+                EndStack(ty);
+                DecrStack(ty);
+                break;
+
+        case INSTR_POP_STACK_POS_POP2:
+                EndStack(ty);
+                DecrStack(ty);
+                DecrStack(ty);
+                break;
+
+        case INSTR_SAVE_STACK_POS:
+                SaveStack(ty);
+                break;
+
+        case INSTR_LOOP_ITER:
+                //SaveStack(ty);
+                IncrStack(ty);
+                IncrStack(ty);
+                break;
+
+        case INSTR_LOOP_CHECK:
+                //IncrStack(ty);
+                break;
+
+        case INSTR_RESTORE_STACK_POS:
+                break;
+
+        case INSTR_DROP_STACK_POS:
+                EndStack(ty);
+                break;
+
+        case INSTR_RETURN:
+                m0(STATE.stack);
+                IncrStack(ty);
+                break;
+
+        case INSTR_HALT:
+                m0(STATE.stack);
+                break;
+        }
+
+#if TY_DEBUG_STACK_BOOKKEEPING
+        PrintStackState(ty);
+        XXXX("\n");
+#endif
+}
+
 inline static void
 (emit_instr)(Ty *ty, int c)
 {
@@ -1397,6 +1702,8 @@ inline static void
         static int last1 = -1;
         static int last2 = -1;
         static int last3 = -1;
+
+        AdjustStack(ty, c);
 
         // XXX please do better
         if (
@@ -1666,10 +1973,11 @@ inline static void
 begin_loop(Ty *ty, bool wr, u32 n)
 {
         avP(STATE.loops, ((LoopState) {
-                .t = ++t,
+                .t         = ++t,
+                .n         = n,
+                .stack     = STATE.stack,
                 .resources = STATE.resources,
-                .wr = wr,
-                .n = n
+                .wr        = wr,
         }));
 }
 
@@ -2697,7 +3005,10 @@ aggregate_overloads(
                         ms->items[i + m]->name = sclonea(ty, buffer);
                         avP(multi->functions, ms->items[i + m]);
                         m += 1;
-                } while (i + m < n && strcmp(ms->items[i + m]->name, multi->name) == 0);
+                } while (
+                        (i + m < n)
+                     && s_eq(ms->items[i + m]->name, multi->name)
+                );
 
                 multi->class = class_get(ty, class);
 
@@ -3618,6 +3929,12 @@ invoke_fun_macro(Ty *ty, Scope *scope, Expr *e)
         byte_vector code_save = STATE.code;
         v00(STATE.code);
 
+        StackState stack = STATE.stack;
+        m0(STATE.stack);
+
+        LoopStates loops = STATE.loops;
+        v00(STATE.loops);
+
         ProgramAnnotation annotation = STATE.annotation;
         STATE.annotation = (ProgramAnnotation) {0};
 
@@ -3630,6 +3947,8 @@ invoke_fun_macro(Ty *ty, Scope *scope, Expr *e)
 
         vm_exec(ty, vv(STATE.code));
 
+        STATE.loops = loops;
+        STATE.stack = stack;
         STATE.code = code_save;
         STATE.annotation = annotation;
 
@@ -5315,9 +5634,10 @@ symbolize_fun_def(Ty *ty, Scope *scope, Stmt *s, u32 flag)
 static void
 symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
 {
-        Scope           *subscope;
-        Scope           *subscope2;
-        ClassDefinition       *cd;
+        Scope *subscope;
+        Scope *subscope2;
+
+        ClassDefinition *cd;
 
         if (s == NULL || s->xscope != NULL) {
                 return;
@@ -5762,12 +6082,101 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
         RestoreContext(ty, ctx);
 }
 
-inline static void
-patch_jumps_to(offset_vector const *js, usize location)
+inline static i32Vector
+VecCloned(Ty *ty, i32Vector vec)
 {
-        for (int i = 0; i < js->count; ++i) {
-                int distance = location - js->items[i] - sizeof (int);
-                memcpy(v_(STATE.code, js->items[i]), &distance, sizeof distance);
+        avC(vec);
+        return vec;
+}
+
+inline static void
+EmitCallOp(Ty *ty, i32 argc, i32 kwargc)
+{
+        INSN(CALL);
+        Ei32(argc);
+        Ei32(kwargc);
+
+        if (argc == -1) {
+                EndStack(ty);
+                IncrStack(ty);
+        } else {
+                AdjStack(ty, -(argc + kwargc));
+        }
+}
+
+inline static void
+EmitCallMethodOp(
+        Ty *ty,
+        u8 insn,
+        i32 class,
+        i32 method,
+        i32 argc,
+        i32 kwargc
+)
+{
+        (emit_instr)(ty, insn);
+
+        if (insn == INSTR_CALL_STATIC_METHOD) {
+                ASSERT(class != -1);
+                Ei32(class);
+        } else {
+                ASSERT(class == -1);
+        }
+
+        Ei32(argc);
+        Ei32(method);
+        Ei32(kwargc);
+
+        if (argc == -1) {
+                EndStack(ty);
+                IncrStack(ty);
+        } else {
+                i32 off = argc + kwargc + (method == -1);
+                if (
+                        (insn == INSTR_CALL_METHOD)
+                     || (insn == INSTR_TRY_CALL_METHOD)
+                ) {
+                        off += 1;
+                }
+                AdjStack(ty, 1 - off);
+        }
+}
+
+inline static void
+EmitTupleOp(Ty *ty, i32 n)
+{
+        INSN(TUPLE);
+        Ei32(n);
+        AdjStack(ty, 1 - n);
+}
+
+inline static void
+UnwindStack(Ty *ty, StackState to, i32 off)
+{
+        WITH_STACK() {
+                while (STATE.stack.saved > to.saved) {
+                        INSN(POP_STACK_POS);
+                }
+                if (to.saved > 0) {
+                        INSN(RESTORE_STACK_POS);
+                } else {
+                        while (STATE.stack.count + off > to.count) {
+                                INSN(POP);
+                        }
+                }
+        }
+}
+
+inline static void
+patch_jumps_to(offset_vector const *jumps, usize location)
+{
+        for (u32 i = 0; i < vN(*jumps); ++i) {
+                int distance = location - v__(*jumps, i) - sizeof (int);
+                memcpy(
+                        vv(STATE.code) + v__(*jumps, i),
+                        &distance,
+                        sizeof distance
+                );
         }
 }
 
@@ -5776,6 +6185,13 @@ patch_loop_jumps(Ty *ty, usize begin, usize end)
 {
         patch_jumps_to(&get_loop(ty, 0)->continues, begin);
         patch_jumps_to(&get_loop(ty, 0)->breaks, end);
+}
+
+inline static void
+patch_match_fails(Ty *ty)
+{
+        EMIT_GROUP_LABEL(STATE.match_fails, ":Fail");
+        patch_jumps_to(&STATE.match_fails, vN(STATE.code));
 }
 
 inline static void
@@ -6276,7 +6692,9 @@ emit_constraint(Ty *ty, Expr const *c)
 
         SCRATCH_SAVE();
 
-        _xemit_constraint(ty, c, &jumps);
+        WITH_STACK() {
+                _xemit_constraint(ty, c, &jumps);
+        }
 
         for (int i = 0; i < vN(jumps); ++i) {
                 PATCH_JUMP(v__(jumps, i));
@@ -6484,6 +6902,9 @@ emit_function(Ty *ty, Expr const *e)
         int hs = vN(STATE.code) - hs_offset;
         memcpy(v_(STATE.code, hs_offset), &hs, sizeof hs);
 
+        StackState stack = STATE.stack;
+        m0(STATE.stack);
+
         /*
          * Remember where in the code this function's code begins so that we can compute
          * the relative offset of references to non-local variables.
@@ -6541,19 +6962,21 @@ emit_function(Ty *ty, Expr const *e)
                 if (e->overload != NULL) {
                         EC(constraint);
                         PLACEHOLDER_JUMP(JUMP_IF, good);
-                        INSN(POP);
+                        //INSN(POP);
                         INSN(NONE);
                         INSN(RETURN);
                         PATCH_JUMP(good);
                 } else {
                         EA(constraint);
                         PLACEHOLDER_JUMP(JUMP_IF, good);
-                        emit_load_instr(ty, s->identifier, INSTR_LOAD_LOCAL, s->i);
-                        INSN(BAD_CALL);
-                        emit_string(ty, fun_name);
-                        emit_string(ty, v__(e->param_symbols, i)->identifier);
-                        add_location(ty, v__(e->constraints, i), start, vN(STATE.code));
-                        INSN(POP);
+                        WITH_STACK() {
+                                emit_load_instr(ty, s->identifier, INSTR_LOAD_LOCAL, s->i);
+                                INSN(BAD_CALL);
+                                emit_string(ty, fun_name);
+                                emit_string(ty, v__(e->param_symbols, i)->identifier);
+                                add_location(ty, v__(e->constraints, i), start, vN(STATE.code));
+                                INSN(POP);
+                        }
                         PATCH_JUMP(good);
                 }
         }
@@ -6596,9 +7019,7 @@ emit_function(Ty *ty, Expr const *e)
                                 emit_load_instr(ty, "[%]", INSTR_LOAD_LOCAL, 1);
                                 emit_load_instr(ty, "", INSTR_LOAD_GLOBAL, ((Stmt *)f)->target->symbol->i);
                                 CHECK_INIT();
-                                INSN(CALL);
-                                Ei32(-1);
-                                Ei32(1);
+                                ECALL(-1, 1);
                                 emit_string(ty, "*");
                                 INSN(RETURN_IF_NOT_NONE);
                                 INSN(POP);
@@ -6616,10 +7037,7 @@ emit_function(Ty *ty, Expr const *e)
                                 emit_spread(ty, NULL, false);
                                 emit_load_instr(ty, "[%]", INSTR_LOAD_LOCAL, 1);
                                 emit_load_instr(ty, "self", INSTR_LOAD_LOCAL, 2);
-                                INSN(CALL_METHOD);
-                                Ei32(-1);
-                                EM(f->name);
-                                Ei32(1);
+                                EMCALL(PRIV_ID(f->name), -1, 1);
                                 emit_string(ty, "*");
                                 INSN(RETURN_IF_NOT_NONE);
                                 INSN(POP);
@@ -6666,8 +7084,9 @@ emit_function(Ty *ty, Expr const *e)
         int self_cap = -1;
 
         for (int i = 0; i < ncaps; ++i) {
-                if (caps[i]->scope->function == e->scope)
+                if (caps[i]->scope->function == e->scope) {
                         continue;
+                }
                 if (caps[i] == e->fn_symbol) {
                         LOG("Function '%s' self-captures at i=%d", fun_name, i);
                         self_cap = i;
@@ -6685,6 +7104,7 @@ emit_function(Ty *ty, Expr const *e)
         STATE.bound_symbols  = syms_save;
         STATE.loops          = loops;
         STATE.tries          = tries;
+        STATE.stack          = stack;
         t                    = t_save;
 // ===========/ Back to parent function /===========================================
 
@@ -6773,8 +7193,7 @@ emit_lang_string(Ty *ty, Expr const *e)
                 }
                 INSN(INTEGER);
                 EiMAX(width);
-                INSN(TUPLE);
-                Ei32(3);
+                ETUPLE(3);
                 Ei32(-1);
                 Ei32(-1);
                 Ei32(-1);
@@ -6788,9 +7207,7 @@ emit_lang_string(Ty *ty, Expr const *e)
         INSN(ARRAY);
 
         EE(e->lang);
-        INSN(CALL);
-        Ei32(1);
-        Ei32(0);
+        ECALL(1, 0);
 }
 
 static void
@@ -6827,17 +7244,12 @@ emit_special_string(Ty *ty, Expr const *e)
 
                         EE(ex);
 
-                        INSN(CALL_METHOD);
-                        Ei32(2);
-                        Ei32(NAMES.fmt);
-                        Ei32(0);
+                        EMCALL(NAMES.fmt, 2);
                 }
 
                 if (arg != NULL) {
                         EE(arg);
-                        INSN(CALL);
-                        Ei32(1);
-                        Ei32(0);
+                        ECALL(1, 0);
                 }
 
                 if (v__(e->strings, i + 1)[0] != '\0') {
@@ -6849,6 +7261,7 @@ emit_special_string(Ty *ty, Expr const *e)
         if (n > 1) {
                 INSN(CONCAT_STRINGS);
                 Ei32(n);
+                STK(-n + 1);
         } else if (n == 0) {
                 INSN(STRING);
                 Ei32(0);
@@ -6909,13 +7322,17 @@ emit_return(Ty *ty, Stmt const *s)
                 fail("invalid return statement (occurs in a finally block)");
         }
 
-        /* returning from within a for-each loop must be handled specially */
-        for (int i = 0; i < vN(STATE.loops); ++i) {
-                u32 n = get_loop(ty, i)->n;
-                while (n --> 0) {
-                        INSN(POP);
-                }
-        }
+        ///* returning from within a for-each loop must be handled specially */
+        //for (int i = 0; i < vN(STATE.loops); ++i) {
+        //        u32 n = get_loop(ty, i)->n;
+        //        while (n --> 0) {
+        //                INSN(POP);
+        //        }
+        //}
+        //if (vN(STATE.loops) > 0) {
+        //        LoopState *loop = v_(STATE.loops, 0);
+        //        UnwindStack(ty, loop->stack);
+        //}
 
         Expr **rets = (s != NULL) ? vv(s->returns) : NULL;
         int    nret = (s != NULL) ? vN(s->returns) : 0;
@@ -6966,7 +7383,8 @@ emit_return(Ty *ty, Stmt const *s)
 
         if (nret > 1) {
                 INSN(MULTI_RETURN);
-                Ei32((int)nret - 1);
+                Ei32(nret - 1);
+                STK(-nret);
         } else {
                 INSN(RETURN);
         }
@@ -7193,7 +7611,7 @@ EmitObjectDestructure(Ty *ty, int class_id, Expr const *pattern)
 static void
 emit_try_match(Ty *ty, Expr const *pattern)
 {
-        usize    start = vN(STATE.code);
+        usize     start = vN(STATE.code);
         bool   need_loc = false;
         bool        set = true;
         bool      after = false;
@@ -7293,13 +7711,11 @@ emit_try_match(Ty *ty, Expr const *pattern)
         case EXPRESSION_NOT_NIL_VIEW_PATTERN:
                 INSN(DUP);
                 FAIL_MATCH_IF(JUMP_IF_NIL);
-                // Fallthrough
+                /* fallthrough */
         case EXPRESSION_VIEW_PATTERN:
                 INSN(DUP);
                 EE(pattern->left);
-                INSN(CALL);
-                Ei32(1);
-                Ei32(0);
+                ECALL(1, 0);
                 add_location(ty, pattern->left, start, vN(STATE.code));
                 emit_try_match(ty, pattern->right);
                 INSN(POP);
@@ -7450,11 +7866,14 @@ emit_try_match(Ty *ty, Expr const *pattern)
 
                 INSN(FIX_TO);
                 Ei32(n);
+                STK(n - 1);
 
                 for (int i = 0; i < n; ++i) {
                         emit_try_match(ty, v__(pattern->es, n - 1 - i));
                         INSN(POP);
                 }
+
+                INSN(POP);
 
                 break;
         }
@@ -7477,16 +7896,17 @@ emit_try_match(Ty *ty, Expr const *pattern)
                         JumpGroup fails_save = STATE.match_fails;
                         InitJumpGroup(&STATE.match_fails);
 
-                        emit_try_match(ty, v__(pattern->es, i));
+                        WITH_STACK() {
+                                emit_try_match(ty, v__(pattern->es, i));
+                        }
                         avP(matched, (PLACEHOLDER_JUMP)(ty, INSTR_JUMP));
 
-                        EMIT_GROUP_LABEL(STATE.match_fails, ":Fail");
-                        patch_jumps_to(&STATE.match_fails, vN(STATE.code));
-
-                        if (v_(pattern->es, i) == vvL(pattern->es)) {
-                                INSN(POP_STACK_POS);
-                        } else {
-                                INSN(RESTORE_STACK_POS);
+                        PATCH_FAILS {
+                                if (v_(pattern->es, i) == vvL(pattern->es)) {
+                                        INSN(POP_STACK_POS);
+                                } else {
+                                        INSN(RESTORE_STACK_POS);
+                                }
                         }
 
                         STATE.match_fails = fails_save;
@@ -7525,15 +7945,15 @@ emit_catch(Ty *ty, Expr const *pattern, Expr const *cond, Stmt const *s, bool wa
         JumpGroup fails_save = STATE.match_fails;
         InitJumpGroup(&STATE.match_fails);
 
-        INSN(SAVE_STACK_POS);
-        emit_try_match(ty, pattern);
-
-        if (cond != NULL) {
-                fail_match_if_not(ty, cond);
+        WITH_STACK() {
+                INSN(SAVE_STACK_POS);
+                emit_try_match(ty, pattern);
+                if (cond != NULL) {
+                        fail_match_if_not(ty, cond);
+                }
+                INSN(POP_STACK_POS);
+                INSN(CLEAR_EXTRA);
         }
-
-        INSN(POP_STACK_POS);
-        INSN(CLEAR_EXTRA);
 
         bool returns = false;
 
@@ -7547,10 +7967,9 @@ emit_catch(Ty *ty, Expr const *pattern, Expr const *cond, Stmt const *s, bool wa
         avP(STATE.match_successes, vN(STATE.code));
         Ei32(0);
 
-        EMIT_GROUP_LABEL(STATE.match_fails, ":Fail");
-        patch_jumps_to(&STATE.match_fails, vN(STATE.code));
-
-        INSN(POP_STACK_POS);
+        PATCH_FAILS {
+                INSN(POP_STACK_POS);
+        }
 
         STATE.match_fails = fails_save;
 
@@ -7579,39 +7998,45 @@ emit_case(Ty *ty, Expr const *pattern, Expr const *cond, Stmt const *s, bool wan
                 STATE.resources += 1;
         }
 
-        INSN(SAVE_STACK_POS);
-        emit_try_match(ty, pattern);
-        if (cond != NULL) {
-                fail_match_if_not(ty, cond);
-        }
-        INSN(POP_STACK_POS_POP);
-
         bool returns = false;
 
-        for (int i = 0; i < vN(STATE.match_assignments); ++i) {
-                Expr *e = *v_(STATE.match_assignments, i);
-                emit_load(ty, e->tmp, STATE.fscope);
-                emit_assignment2(ty, e->target, false, false);
-                INSN(POP);
+        WITH_STACK() {
+                INSN(SAVE_STACK_POS);
+
+                emit_try_match(ty, pattern);
+
+                if (cond != NULL) {
+                        fail_match_if_not(ty, cond);
+                }
+
+                INSN(POP_STACK_POS_POP);
+
+                for (int i = 0; i < vN(STATE.match_assignments); ++i) {
+                        Expr *e = *v_(STATE.match_assignments, i);
+                        emit_load(ty, e->tmp, STATE.fscope);
+                        emit_assignment2(ty, e->target, false, false);
+                        INSN(POP);
+                }
+
+                if (s != NULL) {
+                        returns = emit_statement(ty, s, want_result);
+                } else if (want_result) {
+                        INSN(NIL);
+                }
+
+                if (pattern->has_resources) {
+                        INSN(DROP);
+                }
+
+                INSN(JUMP);
+                avP(STATE.match_successes, vN(STATE.code));
+                Ei32(0);
         }
 
-        if (s != NULL) {
-                returns = emit_statement(ty, s, want_result);
-        } else if (want_result) {
-                INSN(NIL);
+
+        PATCH_FAILS {
+                INSN(POP_STACK_POS);
         }
-
-        if (pattern->has_resources) {
-                INSN(DROP);
-        }
-
-        INSN(JUMP);
-        avP(STATE.match_successes, vN(STATE.code));
-        Ei32(0);
-
-        EMIT_GROUP_LABEL(STATE.match_fails, ":Fail");
-        patch_jumps_to(&STATE.match_fails, vN(STATE.code));
-        INSN(POP_STACK_POS);
 
         if (pattern->has_resources) {
                 INSN(DISCARD_DROP_GROUP);
@@ -7645,38 +8070,35 @@ emit_expression_case(Ty *ty, Expr const *pattern, Expr const *e)
                 STATE.resources += 1;
         }
 
-        INSN(SAVE_STACK_POS);
-        emit_try_match(ty, pattern);
+        WITH_STACK() {
+                INSN(SAVE_STACK_POS);
+                emit_try_match(ty, pattern);
+                INSN(POP_STACK_POS_POP);
 
-        /*
-         * Go back to where the subject of the match is on top of the stack,
-         * then pop it and execute the code to produce the result of this branch.
-         */
-        INSN(POP_STACK_POS_POP);
+                for (int i = 0; i < vN(STATE.match_assignments); ++i) {
+                        Expr *e = *v_(STATE.match_assignments, i);
+                        emit_load(ty, e->tmp, STATE.fscope);
+                        emit_assignment2(ty, e->target, false, false);
+                }
 
-        for (int i = 0; i < vN(STATE.match_assignments); ++i) {
-                Expr *e = *v_(STATE.match_assignments, i);
-                emit_load(ty, e->tmp, STATE.fscope);
-                emit_assignment2(ty, e->target, false, false);
+                EE(e);
+
+                if (pattern->has_resources) {
+                        INSN(DROP);
+                }
+
+                /*
+                 * We've successfully matched a pattern+condition and produced a result, so we jump
+                 * to the end of the match expression. i.e., there is no fallthrough.
+                 */
+                INSN(JUMP);
+                avP(STATE.match_successes, vN(STATE.code));
+                Ei32(0);
         }
 
-        EE(e);
-
-        if (pattern->has_resources) {
-                INSN(DROP);
+        PATCH_FAILS {
+                INSN(POP_STACK_POS);
         }
-
-        /*
-         * We've successfully matched a pattern+condition and produced a result, so we jump
-         * to the end of the match expression. i.e., there is no fallthrough.
-         */
-        INSN(JUMP);
-        avP(STATE.match_successes, vN(STATE.code));
-        Ei32(0);
-
-        EMIT_GROUP_LABEL(STATE.match_fails, ":Fail");
-        patch_jumps_to(&STATE.match_fails, vN(STATE.code));
-        INSN(POP_STACK_POS);
 
         if (pattern->has_resources) {
                 INSN(DISCARD_DROP_GROUP);
@@ -7740,8 +8162,7 @@ emit_while_match(Ty *ty, Stmt const *s, bool want_result)
 
         LABEL(begin);
 
-        emit_list(ty, s->match.e);
-        INSN(FIX_EXTRA);
+        EE(s->match.e);
 
         for (int i = 0; i < vN(s->match.patterns); ++i) {
                 LOG("emitting case %d", i + 1);
@@ -7754,10 +8175,6 @@ emit_while_match(Ty *ty, Stmt const *s, bool want_result)
                 );
         }
 
-        /*
-         * If nothing matches, we jump out of the loop.
-         */
-        INSN(CLEAR_EXTRA);
         PLACEHOLDER_JUMP(JUMP, finished);
 
         /*
@@ -7768,8 +8185,9 @@ emit_while_match(Ty *ty, Stmt const *s, bool want_result)
 
         PATCH_JUMP(finished);
 
-        if (want_result)
+        if (want_result) {
                 INSN(NIL);
+        }
 
         patch_loop_jumps(ty, begin.off, vN(STATE.code));
 
@@ -7781,16 +8199,13 @@ emit_while_match(Ty *ty, Stmt const *s, bool want_result)
 static void
 emit_part_match(Ty *ty, struct condpart *p)
 {
-        INSN(SAVE_STACK_POS);
         if (p->e->type == EXPRESSION_LIST) {
                 emit_list(ty, p->e);
                 INSN(FIX_EXTRA);
-                emit_try_match(ty, p->target);
         } else {
                 EE(p->e);
-                emit_try_match(ty, p->target);
         }
-        INSN(POP_STACK_POS);
+        emit_try_match(ty, p->target);
 }
 
 static bool
@@ -7806,29 +8221,34 @@ emit_while(Ty *ty, Stmt const *s, bool want_result)
 
         LABEL(start);
 
-        bool has_resources = false;
-
         bool simple = is_simple_condition(&s->iff.parts);
+        bool has_resources = false;
 
         for (int i = 0; i < vN(s->While.parts); ++i) {
                 struct condpart *p = v__(s->While.parts, i);
                 if (simple) {
                         fail_match_if_not(ty, p->e);
-                } else if (p->target == NULL) {
-                        INSN(SAVE_STACK_POS);
-                        fail_match_if_not(ty, p->e);
-                        INSN(POP_STACK_POS);
                 } else {
-                        if (p->target->has_resources && !has_resources) {
-                                INSN(PUSH_DROP_GROUP);
-                                STATE.resources += 1;
-                                has_resources = true;
+                        WITH_STACK() {
+                                INSN(SAVE_STACK_POS);
+                                if (p->target == NULL) {
+                                        fail_match_if_not(ty, p->e);
+                                } else {
+                                        if (p->target->has_resources && !has_resources) {
+                                                INSN(PUSH_DROP_GROUP);
+                                                STATE.resources += 1;
+                                                has_resources = true;
+                                        }
+                                        emit_part_match(ty, p);
+                                }
+                                INSN(POP_STACK_POS);
                         }
-                        emit_part_match(ty, p);
                 }
         }
 
-        emit_statement(ty, s->While.block, false);
+        WITH_STACK() {
+                emit_statement(ty, s->While.block, false);
+        }
 
         if (has_resources) {
                 INSN(DROP);
@@ -7837,9 +8257,11 @@ emit_while(Ty *ty, Stmt const *s, bool want_result)
 
         JUMP(start);
 
-        EMIT_GROUP_LABEL(STATE.match_fails, ":Fail");
-        patch_jumps_to(&STATE.match_fails, vN(STATE.code));
-        if (!simple) INSN(POP_STACK_POS);
+        PATCH_FAILS {
+                if (!simple) {
+                        INSN(POP_STACK_POS);
+                }
+        }
 
         if (want_result) {
                 INSN(NIL);
@@ -7867,6 +8289,8 @@ emit_if_not(Ty *ty, Stmt const *s, bool want_result)
         expression_vector assignments = STATE.match_assignments;
         v00(STATE.match_assignments);
 
+        StackState stack = STATE.stack;
+
         bool has_resources = false;
 
         for (int i = 0; i < vN(s->iff.parts); ++i) {
@@ -7888,35 +8312,47 @@ emit_if_not(Ty *ty, Stmt const *s, bool want_result)
                 struct condpart *p = v__(s->iff.parts, i);
                 if (simple) {
                         fail_match_if(ty, p->e);
-                } else if (p->target == NULL) {
-                        INSN(SAVE_STACK_POS);
-                        fail_match_if(ty, p->e);
-                        INSN(POP_STACK_POS);
                 } else {
-                        emit_part_match(ty, p);
+                        WITH_STACK() {
+                                INSN(SAVE_STACK_POS);
+                                if (p->target == NULL) {
+                                        fail_match_if(ty, p->e);
+                                } else {
+                                        emit_part_match(ty, p);
+                                }
+                                INSN(POP_STACK_POS);
+                        }
                 }
         }
 
         bool returns = false;
 
         for (int i = 0; i < vN(STATE.match_assignments); ++i) {
-                Expr *e = *v_(STATE.match_assignments, i);
+                Expr *e = v__(STATE.match_assignments, i);
                 emit_load(ty, e->tmp, STATE.fscope);
                 emit_assignment2(ty, e->target, false, false);
                 INSN(POP);
         }
 
-        if (s->iff.otherwise != NULL) {
-                returns |= emit_statement(ty, s->iff.otherwise, want_result);
-        } else if (want_result) {
-                INSN(NIL);
+        WITH_STACK() {
+                if (s->iff.otherwise != NULL) {
+                        returns |= emit_statement(
+                                ty,
+                                s->iff.otherwise,
+                                want_result
+                        );
+                } else if (want_result) {
+                        INSN(NIL);
+                }
         }
 
         PLACEHOLDER_JUMP(JUMP, done);
 
-        EMIT_GROUP_LABEL(STATE.match_fails, ":Fail");
-        patch_jumps_to(&STATE.match_fails, vN(STATE.code));
-        if (!simple) INSN(POP_STACK_POS);
+        PATCH_FAILS {
+                if (!simple) {
+                        INSN(POP_STACK_POS);
+                }
+        }
 
         returns &= emit_statement(ty, s->iff.then, want_result);
 
@@ -7927,6 +8363,7 @@ emit_if_not(Ty *ty, Stmt const *s, bool want_result)
                 STATE.resources -= 1;
         }
 
+        STATE.stack             = stack;
         STATE.match_successes   = successes_save;
         STATE.match_fails       = fails_save;
         STATE.match_assignments = assignments;
@@ -7982,30 +8419,40 @@ emit_if(Ty *ty, Stmt const *s, bool want_result)
 
         for (int i = 0; i < vN(s->iff.parts); ++i) {
                 struct condpart *p = v__(s->iff.parts, i);
-                if (simple) {
-                        fail_match_if_not(ty, p->e);
-                } else if (p->target == NULL) {
-                        INSN(SAVE_STACK_POS);
-                        fail_match_if_not(ty, p->e);
-                        INSN(POP_STACK_POS);
-                } else {
-                        emit_part_match(ty, p);
+                WITH_STACK() {
+                        if (simple) {
+                                fail_match_if_not(ty, p->e);
+                        } else {
+                                INSN(SAVE_STACK_POS);
+                                if (p->target == NULL) {
+                                        fail_match_if_not(ty, p->e);
+                                } else {
+                                        emit_part_match(ty, p);
+                                }
+                                INSN(POP_STACK_POS);
+                        }
                 }
         }
 
-        for (int i = 0; i < vN(STATE.match_assignments); ++i) {
-                Expr *e = *v_(STATE.match_assignments, i);
-                emit_load(ty, e->tmp, STATE.fscope);
-                emit_assignment2(ty, e->target, false, false);
-                INSN(POP);
+        bool returns;
+
+        WITH_STACK() {
+                for (int i = 0; i < vN(STATE.match_assignments); ++i) {
+                        Expr *e = *v_(STATE.match_assignments, i);
+                        emit_load(ty, e->tmp, STATE.fscope);
+                        emit_assignment2(ty, e->target, false, false);
+                        INSN(POP);
+                }
+                returns = emit_statement(ty, s->iff.then, want_result);
         }
 
-        bool returns = emit_statement(ty, s->iff.then, want_result);
         PLACEHOLDER_JUMP(JUMP, done);
 
-        EMIT_GROUP_LABEL(STATE.match_fails, ":Fail");
-        patch_jumps_to(&STATE.match_fails, vN(STATE.code));
-        if (!simple) INSN(POP_STACK_POS);
+        PATCH_FAILS {
+                if (!simple) {
+                        INSN(POP_STACK_POS);
+                }
+        }
 
         if (s->iff.otherwise != NULL) {
                 returns &= emit_statement(ty, s->iff.otherwise, want_result);
@@ -8120,8 +8567,9 @@ emit_target(Ty *ty, Expr *target, bool def)
                 fail("oh no!");
         }
 
-        if (KEEP_LOCATION(target))
+        if (KEEP_LOCATION(target)) {
                 add_location(ty, target, start, vN(STATE.code));
+        }
 }
 
 typedef struct {
@@ -8147,6 +8595,7 @@ PushComprehensionState(Ty *ty, ComprStateStack *stack)
         svP(*stack, ((ComprState) {
                 .success = STATE.match_successes,
                 .fails   = STATE.match_fails,
+                .start   = (LABEL)(ty),
         }));
 
         v00(STATE.match_successes);
@@ -8160,7 +8609,7 @@ PopComprehensionState(Ty *ty, ComprStateStack *stack)
 {
         ComprState *state = vvX(*stack);
 
-        patch_jumps_to(&STATE.match_fails, vN(STATE.code));
+        //patch_jumps_to(&STATE.match_fails, vN(STATE.code));
 
         STATE.match_successes = state->success;
         STATE.match_fails     = state->fails;
@@ -8179,35 +8628,44 @@ BeginComprehensionLoop(
                 Expr *range = part->iter;
                 Expr *i = v_0(part->pattern->es);
                 RangeLoop loop = BeginRangeLoop(ty, 1, false, range, i);
+
                 ES(part->where, false);
+
                 CheckRangeLoop(ty, &loop, part->_while, part->_if);
+
                 svP(*stack, ((ComprState) {
                         .loop = loop,
                 }));
+
+                return;
+        }
+
+        INSN(PUSH_INDEX);
+        if (part->pattern->type == EXPRESSION_LIST) {
+                Ei32(vN(part->pattern->es));
         } else {
-                ComprState *state = PushComprehensionState(ty, stack);
+                Ei32(1);
+        }
 
-                INSN(PUSH_INDEX);
-                if (part->pattern->type == EXPRESSION_LIST) {
-                        Ei32(vN(part->pattern->es));
-                } else {
-                        Ei32(1);
-                }
+        EE(part->iter);
 
-                EE(part->iter);
+        ComprState *state = PushComprehensionState(ty, stack);
 
-                state->start = (LABEL)(ty);
+        WITH_STACK() {
                 INSN(LOOP_ITER);
-                state->done = (PLACEHOLDER_JUMP)(ty, INSTR_LOOP_CHECK);
-                Ei32((int)vN(part->pattern->es));
 
-                add_location(ty, part->pattern, state->start.off, vN(STATE.code));
+                state->done = (PLACEHOLDER_JUMP)(ty, INSTR_LOOP_CHECK);
+                Ei32(vN(part->pattern->es));
+                STK(vN(part->pattern->es) - 1);
 
                 for (int i = 0; i < vN(part->pattern->es); ++i) {
-                        INSN(SAVE_STACK_POS);
-                        emit_try_match(ty, v__(part->pattern->es, i));
-                        INSN(POP_STACK_POS_POP);
+                        Expr *target = v__(part->pattern->es, i);
+                        usize start = vN(STATE.code);
+                        emit_try_match(ty, target);
+                        add_location(ty, target, start, vN(STATE.code));
+                        INSN(POP);
                 }
+                INSN(POP);
 
                 emit_statement(ty, part->where, false);
 
@@ -8222,17 +8680,16 @@ BeginComprehensionLoop(
 
                 PLACEHOLDER_JUMP(JUMP, match);
 
-                EMIT_GROUP_LABEL(STATE.match_fails, ":Fail");
-                patch_jumps_to(&STATE.match_fails, vN(STATE.code));
-                INSN(POP_STACK_POS);
+                PATCH_FAILS {
+                        INSN(BAD_MATCH);
+                }
+
                 if (part->_if != NULL) {
                         PATCH_JUMP(cond_fail);
+                        JUMP(state->start);
                 }
-                INSN(POP_STACK_POS);
-                JUMP(state->start);
 
                 PATCH_JUMP(match);
-                INSN(POP_STACK_POS);
         }
 }
 
@@ -8247,16 +8704,15 @@ EndComprehensionLoop(
                 RangeLoop *loop = &vvX(*stack)->loop;
                 EndRangeLoop(ty, loop);
         } else {
-                ComprState const *state = vvL(*stack);
+                ComprState *state = vvL(*stack);
                 JUMP(state->start);
-                PATCH_JUMP(state->done);
                 if (part->_while != NULL) {
                         PATCH_JUMP(state->stop);
                 }
-                INSN(POP_STACK_POS);
+                INSN(POP);
+                INSN(POP);
+                PATCH_JUMP(state->done);
                 PopComprehensionState(ty, stack);
-                INSN(POP);
-                INSN(POP);
         }
 }
 
@@ -8359,9 +8815,9 @@ emit_spread(Ty *ty, Expr const *e, bool nils)
         JUMP(start);
 
         PATCH_JUMP(done);
-
-        INSN(POP_STACK_POS_POP);
-        INSN(POP);
+        //INSN(POP_STACK_POS_POP);
+        //INSN(POP); // xx
+        //INSN(POP);
 }
 
 static void
@@ -8373,12 +8829,17 @@ emit_spread_tuple(Ty *ty, Expr const *e)
 
         PLACEHOLDER_JUMP(JUMP_IF_TYPE, skip);
         Ei32(VALUE_TUPLE);
+
         emit_spread(ty, NULL, false);
+
         INSN(GATHER_TUPLE);
+
         PLACEHOLDER_JUMP(JUMP, end);
 
         PATCH_JUMP(skip);
-        INSN(DROP_STACK_POS);
+        WITH_VSTACK {
+                INSN(DROP_STACK_POS);
+        }
 
         PATCH_JUMP(end);
 }
@@ -8390,7 +8851,9 @@ emit_conditional(Ty *ty, Expr const *e)
         EE(e->then);
         PLACEHOLDER_JUMP(JUMP, end);
         PATCH_JUMP(otherwise);
-        EE(e->otherwise);
+        WITH_STACK() {
+                EE(e->otherwise);
+        }
         PATCH_JUMP(end);
 }
 
@@ -8431,6 +8894,7 @@ BeginRangeLoop(
                 INSN(DEC);
         }
 
+        begin_loop(ty, want_result, 2 + n);
         LABEL(begin);
 
         INSN(DUP2_SWAP);
@@ -8443,8 +8907,6 @@ BeginRangeLoop(
         case 2:
         case 3: end = (PLACEHOLDER_JUMP)(ty, INSTR_JLT); break;
         }
-
-        begin_loop(ty, want_result, 2 + n);
 
         emit_assignment2(ty, target, false, true);
 
@@ -8524,95 +8986,94 @@ emit_range_loop(Ty *ty, Stmt const *s, bool want_result)
 static void
 emit_for_each(Ty *ty, Stmt const *s, bool want_result)
 {
-        begin_loop(ty, want_result, 2);
-
         offset_vector successes_save = STATE.match_successes;
         JumpGroup         fails_save = STATE.match_fails;
 
         v00(STATE.match_successes);
         InitJumpGroup(&STATE.match_fails);
 
-        INSN(PUSH_INDEX);
-        Ei32((int)vN(s->each.target->es));
+        WITH_STACK() {
+                INSN(PUSH_INDEX);
+                Ei32(vN(s->each.target->es));
 
-        EE(s->each.array);
+                EE(s->each.array);
 
-        LABEL(start);
-        INSN(LOOP_ITER);
+                begin_loop(ty, want_result, 2);
+                LABEL(start);
+
+                INSN(LOOP_ITER);
 
 #ifndef TY_PROFILER
-        add_location(ty, s->each.array, start.off, vN(STATE.code));
+                add_location(ty, s->each.array, start.off, vN(STATE.code));
 #endif
 
-        PLACEHOLDER_JUMP(LOOP_CHECK, done);
+                PLACEHOLDER_JUMP(LOOP_CHECK, done);
+                Ei32(vN(s->each.target->es));
+                STK(vN(s->each.target->es) - 1);
 
-        Ei32((int)vN(s->each.target->es));
+                if (s->each.target->has_resources) {
+                        INSN(PUSH_DROP_GROUP);
+                        STATE.resources += 1;
+                }
 
-        if (s->each.target->has_resources) {
-                INSN(PUSH_DROP_GROUP);
-                STATE.resources += 1;
-        }
+                JumpPlaceholder should_stop;
 
-        for (int i = 0; i < vN(s->each.target->es); ++i) {
-                INSN(SAVE_STACK_POS);
-                emit_try_match(ty, v__(s->each.target->es, i));
-                INSN(POP_STACK_POS);
+                for (int i = 0; i < vN(s->each.target->es); ++i) {
+                        Expr *target = v__(s->each.target->es, i);
+                        usize start = vN(STATE.code);
+                        emit_try_match(ty, target);
+                        add_location(ty, target, start, vN(STATE.code));
+                        INSN(POP);
+                }
                 INSN(POP);
+
+                if (s->each._while != NULL) {
+                        should_stop = (PLACEHOLDER_JUMP_IF_NOT)(ty, s->each._while);
+                }
+
+                if (s->each._if != NULL) {
+                        EE(s->each._if);
+                        JUMP_IF_NOT(start);
+                }
+
+                emit_statement(ty, s->each.body, false);
+
+                if (s->each.target->has_resources) {
+                        INSN(DROP);
+                        STATE.resources -= 1;
+                }
+
+                JUMP(start);
+
+                PATCH_FAILS {
+                        add_location(ty, s->each.target, vN(STATE.code), vN(STATE.code) + 2);
+                        INSN(BAD_MATCH);
+                }
+
+
+                if (s->each._while != NULL) {
+                        PATCH_JUMP(should_stop);
+                }
+
+                WITH_VSTACK {
+                        INSN(POP);
+                        INSN(POP);
+                }
+
+                PATCH_JUMP(done);
+
+                if (want_result) {
+                        INSN(NIL);
+                }
+
+                patch_loop_jumps(ty, start.off, vN(STATE.code));
+                end_loop(ty);
         }
 
-        JumpPlaceholder should_stop;
-        if (s->each._while != NULL) {
-                should_stop = (PLACEHOLDER_JUMP_IF_NOT)(ty, s->each._while);
-        }
-
-        PLACEHOLDER_JUMP(JUMP, match);
-
-        EMIT_GROUP_LABEL(STATE.match_fails, ":Fail");
-        patch_jumps_to(&STATE.match_fails, vN(STATE.code));
-
-        // for Some(i) in [None] { ... }
-        add_location(ty, s->each.target, vN(STATE.code), vN(STATE.code) + 2);
-        INSN(POP_STACK_POS);
-        INSN(BAD_MATCH);
-
-        PATCH_JUMP(match);
-
-        INSN(POP_STACK_POS);
-
-        if (s->each._if != NULL) {
-                EE(s->each._if);
-                JUMP_IF_NOT(start);
-        }
-
-        emit_statement(ty, s->each.body, false);
-
-        if (s->each.target->has_resources) {
-                INSN(DROP);
-                STATE.resources -= 1;
-        }
-
-        JUMP(start);
-
-        if (s->each._while != NULL) {
-                PATCH_JUMP(should_stop);
-        }
-
-        PATCH_JUMP(done);
-
-        INSN(POP_STACK_POS);
-        INSN(POP);
-        INSN(POP);
-
-        if (want_result) {
-                INSN(NIL);
-        }
-
-        patch_loop_jumps(ty, start.off, vN(STATE.code));
+        STK(want_result);
 
         STATE.match_successes = successes_save;
         STATE.match_fails     = fails_save;
-
-        end_loop(ty);
 }
 
 static bool
@@ -8702,9 +9163,7 @@ emit_assignment2(Ty *ty, Expr *target, bool maybe, bool def)
         case EXPRESSION_VIEW_PATTERN:
                 INSN(DUP);
                 EE(target->left);
-                INSN(CALL);
-                Ei32(1);
-                Ei32(0);
+                ECALL(1, 0);
                 add_location(ty, target->left, start, vN(STATE.code));
                 emit_assignment2(ty, target->right, maybe, def);
                 INSN(POP);
@@ -8712,9 +9171,7 @@ emit_assignment2(Ty *ty, Expr *target, bool maybe, bool def)
         case EXPRESSION_NOT_NIL_VIEW_PATTERN:
                 INSN(DUP);
                 EE(target->left);
-                INSN(CALL);
-                Ei32(1);
-                Ei32(0);
+                ECALL(1, 0);
                 add_location(ty, target->left, start, vN(STATE.code));
                 INSN(THROW_IF_NIL);
                 add_location(ty, target, vN(STATE.code) - 1, vN(STATE.code));
@@ -8794,6 +9251,7 @@ emit_assignment(Ty *ty, Expr *target, Expr const *e, bool maybe, bool def)
                 emit_list(ty, e);
                 INSN(FIX_TO);
                 Ei32(vN(target->es));
+                STK(vN(target->es) - 1);
                 for (int i = 0; i < vN(target->es); ++i) {
                         emit_assignment2(ty, v__(target->es, i), maybe, def);
                         INSN(POP);
@@ -8811,17 +9269,15 @@ emit_non_nil_expr(Ty *ty, Expr const *e, bool none)
 {
         EE(e);
         INSN(DUP);
-
         PLACEHOLDER_JUMP(JUMP_IF_NIL, skip);
         PLACEHOLDER_JUMP(JUMP, good);
         PATCH_JUMP(skip);
-
-        INSN(POP);
-
-        if (none) {
-                INSN(NONE);
+        WITH_FORKED_STACK {
+                INSN(POP);
+                if (none) {
+                        INSN(NONE);
+                }
         }
-
         PATCH_JUMP(good);
 }
 
@@ -8833,7 +9289,7 @@ EmitMethodCall(
         bool dyn,
         expression_vector const *args,
         expression_vector const *conds,
-        StringVector const *kws,
+        StringVector      const *kws,
         expression_vector const *kwargs,
         expression_vector const *kwconds,
         bool strict
@@ -8869,45 +9325,40 @@ EmitMethodCall(
                 EE(method);
         }
 
+        u8 insn;
+        i32 class = -1;
+
         if (object == NULL) {
                 switch (MemberAccessType(ty, method->symbol, STATE.fscope)) {
                 case SELF_FROM_SELF:
-                        INSN(CALL_SELF_METHOD);
+                        insn = INSTR_CALL_SELF_METHOD;
                         break;
 
                 case SELF_FROM_STATE_CLASS:
-                        INSN(CALL_STATIC_METHOD);
-                        Ei32(STATE.class->i);
+                        insn = INSTR_CALL_STATIC_METHOD;
+                        class = STATE.class->i;
                         break;
 
                 case SELF_FROM_SELF_CLASS:
-                        INSN(CALL_SELF_STATIC);
+                        insn = INSTR_CALL_SELF_STATIC;
                         break;
 
                 case SELF_FROM_SYMBOL:
                         emit_load(ty, STATE.self, STATE.fscope);
-                        INSN(CALL_METHOD);
+                        insn = INSTR_CALL_METHOD;
                         break;
                 }
         } else if (!strict) {
-                INSN(TRY_CALL_METHOD);
+                insn = INSTR_TRY_CALL_METHOD;
         } else {
-                INSN(CALL_METHOD);
+                insn = INSTR_CALL_METHOD;
         }
 
-        if (variadic) {
-                Ei32(-1);
-        } else {
-                Ei32(vN(*args));
-        }
+        i32 argc = variadic ? -1 : vN(*args);
+        i32 meth = dyn      ? -1 : PRIV_ID(method->identifier);
+        i32 kwc  = vN(*kwargs);
 
-        if (dyn) {
-                Ei32(-1);
-        } else {
-                emit_member(ty, method->identifier);
-        }
-
-        Ei32(vN(*kwargs));
+        EMCALL(insn, class, meth, argc, kwc);
 
         for (usize i = 0; i < vN(*kwargs); ++i) {
                 emit_string(ty, v__(*kws, i));
@@ -8945,15 +9396,13 @@ EmitFunctionCall(Ty *ty, Expr const *e)
         }
 
         EE(e->function);
-        INSN(CALL);
 
         if (is_variadic(e)) {
-                Ei32(-1);
+                ECALL(-1, vN(e->kws));
         } else {
-                Ei32(vN(e->args));
+                ECALL(vN(e->args), vN(e->kws));
         }
 
-        Ei32(vN(e->kwargs));
         for (usize i = 0; i < vN(e->kws); ++i) {
                 emit_string(ty, v__(e->kws, i));
         }
@@ -8966,9 +9415,13 @@ emit_expr(Ty *ty, Expr const *e, bool need_loc)
         STATE.end   = e->end;
 
         usize start = vN(STATE.code);
-        void    *ctx = PushContext(ty, e);
+        void   *ctx = PushContext(ty, e);
 
         bool returns = false;
+
+#if TY_DEBUG_STACK_BOOKKEEPING
+        XXX("=========%10s:%04d: %s", STATE.module->name, e->start.line + 1, show_expr((Expr *)e));
+#endif
 
         switch (e->type) {
         case EXPRESSION_IDENTIFIER:
@@ -9031,10 +9484,7 @@ emit_expr(Ty *ty, Expr const *e, bool need_loc)
                         EE(e->right);
                         INSN(RANGE);
                 } else {
-                        INSN(CALL_METHOD);
-                        Ei32(0);
-                        Ei32(NAMES.count);
-                        Ei32(0);
+                        EMCALL(NAMES.count, 0);
                 }
                 break;
 
@@ -9198,7 +9648,7 @@ emit_expr(Ty *ty, Expr const *e, bool need_loc)
                 } else {
                         INSN(MEMBER_ACCESS);
                 }
-                emit_member(ty, e->member->identifier);
+                EM(e->member->identifier);
                 break;
 
         case EXPRESSION_SUBSCRIPT:
@@ -9208,10 +9658,7 @@ emit_expr(Ty *ty, Expr const *e, bool need_loc)
                                         EE(v__(e->subscript->es, i));
                                 }
                                 EE(e->container);
-                                INSN(CALL_METHOD);
-                                Ei32(vN(e->subscript->es));
-                                Ei32(NAMES.subscript);
-                                Ei32(0);
+                                EMCALL(NAMES.subscript, vN(e->subscript->es));
                         } else {
                                 EE(v__(e->container->es, 0));
                                 EE(e->subscript);
@@ -9343,10 +9790,7 @@ emit_expr(Ty *ty, Expr const *e, bool need_loc)
         case EXPRESSION_NOT_IN:
                 EE(e->left);
                 EE(e->right);
-                INSN(CALL_METHOD);
-                Ei32(1);
-                Ei32(NAMES.contains);
-                Ei32(0);
+                EMCALL(NAMES.contains, 1);
                 if (e->type == EXPRESSION_NOT_IN) {
                         INSN(NOT);
                 }
@@ -9354,9 +9798,7 @@ emit_expr(Ty *ty, Expr const *e, bool need_loc)
 
         case EXPRESSION_GENERATOR:
                 emit_function(ty, e);
-                INSN(CALL);
-                Ei32(0);
-                Ei32(0);
+                ECALL(0, 0);
                 break;
 
         case EXPRESSION_FUNCTION:
@@ -9600,7 +10042,9 @@ emit_expr(Ty *ty, Expr const *e, bool need_loc)
                                 }
                                 PLACEHOLDER_JUMP(JUMP, good);
                                 PATCH_JUMP(skip);
-                                INSN(NONE);
+                                WITH_FORKED_STACK {
+                                        INSN(NONE);
+                                }
                                 PATCH_JUMP(good);
                         } else if (!v__(e->required, i)) {
                                 emit_non_nil_expr(ty, v__(e->es, i), true);
@@ -9610,11 +10054,10 @@ emit_expr(Ty *ty, Expr const *e, bool need_loc)
                                 EE(v__(e->es, i));
                         }
                 }
-                INSN(TUPLE);
-                Ei32(vN(e->es));
+                ETUPLE(vN(e->es));
                 for (int i = 0; i < vN(e->names); ++i) {
                         if (v__(e->names, i) != NULL) {
-                                if (strcmp(v__(e->names, i), "*") == 0) {
+                                if (s_eq(v__(e->names, i), "*")) {
                                         Ei32(-2);
                                 } else {
                                         Ei32(M_ID(v__(e->names, i)));
@@ -9640,8 +10083,7 @@ emit_expr(Ty *ty, Expr const *e, bool need_loc)
                         } else {
                                 INSN(FALSE);
                         }
-                        INSN(TUPLE);
-                        Ei32(3);
+                        ETUPLE(3);
                         Ei32(-1);
                         Ei32(-1);
                         Ei32(-1);
@@ -9649,9 +10091,7 @@ emit_expr(Ty *ty, Expr const *e, bool need_loc)
                 INSN(ARRAY);
                 INSN(CLASS);
                 Ei32(CLASS_TUPLE_SPEC);
-                INSN(CALL);
-                Ei32(1);
-                Ei32(0);
+                ECALL(1, 0);
                 break;
 
 
@@ -9662,6 +10102,7 @@ emit_expr(Ty *ty, Expr const *e, bool need_loc)
                 }
                 INSN(RENDER_TEMPLATE);
                 emit_symbol((uptr)e);
+                STK(1 - (i32)vN(e->template.holes));
                 break;
 
         case EXPRESSION_NAMESPACE:
@@ -9740,6 +10181,10 @@ emit_statement(Ty *ty, Stmt const *s, bool want_result)
         LoopState *loop      = get_loop(ty, 0);
 
         void *ctx = PushContext(ty, s);
+
+#if TY_DEBUG_STACK_BOOKKEEPING
+        XXX("%20s:%04d: %s", STATE.module->name, s->start.line + 1, show_expr((Expr *)s));
+#endif
 
         switch (s->type) {
         case STATEMENT_BLOCK:
@@ -9829,21 +10274,17 @@ emit_statement(Ty *ty, Stmt const *s, bool want_result)
                 for (int i = 0; i < vN(s->tag.s_methods); ++i) {
                         EE(v__(s->tag.s_methods, i));
                 }
-
                 for (int i = 0; i < vN(s->tag.methods); ++i) {
                         EE(v__(s->tag.methods, i));
                 }
-
                 INSN(DEFINE_TAG);
                 Ei32(s->tag.symbol);
                 Ei32(-1);
                 Ei32(vN(s->tag.methods));
                 Ei32(vN(s->tag.s_methods));
-
                 for (int i = vN(s->tag.methods); i > 0; --i) {
                         emit_string(ty, v__(s->tag.methods, i - 1)->name);
                 }
-
                 for (int i = vN(s->tag.s_methods); i > 0; --i) {
                         emit_string(ty, v__(s->tag.s_methods, i - 1)->name);
                 }
@@ -9954,12 +10395,7 @@ emit_statement(Ty *ty, Stmt const *s, bool want_result)
                         fail("invalid break statement (not inside a loop)");
                 }
 
-                for (int i = 0; i < s->depth; ++i) {
-                        u32 n = get_loop(ty, i)->n;
-                        while (n --> 0) {
-                                INSN(POP);
-                        }
-                }
+                UnwindStack(ty, loop->stack, loop->n);
 
                 want_result = false;
 
@@ -9972,8 +10408,16 @@ emit_statement(Ty *ty, Stmt const *s, bool want_result)
                         INSN(NIL);
                 }
 
-                for (int i = 0; get_try(ty, i) != NULL && get_try(ty, i)->t > loop->t; ++i) {
-                        INSN(FINALLY);
+                for (int i = 0;; ++i) {
+                        TryState *_try = get_try(ty, i);
+
+                        if (_try == NULL || _try->t <= loop->t) {
+                                break;
+                        }
+
+                        if (_try->ctx != TRY_FINALLY) {
+                                INSN(FINALLY);
+                        }
                 }
 
                 for (int i = loop->resources; i < STATE.resources; ++i) {
@@ -9992,15 +10436,18 @@ emit_statement(Ty *ty, Stmt const *s, bool want_result)
                         fail("invalid continue statement (not inside a loop)");
                 }
 
-                for (int i = 0; i < s->depth - 1; ++i) {
-                        u32 n = get_loop(ty, i)->n;
-                        while (n --> 0) {
-                                INSN(POP);
-                        }
-                }
+                UnwindStack(ty, loop->stack, 0);
 
-                for (int i = 0; get_try(ty, i) != NULL && get_try(ty, i)->t > loop->t; ++i) {
-                        INSN(FINALLY);
+                for (int i = 0;; ++i) {
+                        TryState *_try = get_try(ty, i);
+
+                        if (_try == NULL || _try->t <= loop->t) {
+                                break;
+                        }
+
+                        if (_try->ctx != TRY_FINALLY) {
+                                INSN(FINALLY);
+                        }
                 }
 
                 for (int i = loop->resources; i < STATE.resources; ++i) {
@@ -10982,10 +11429,11 @@ compile(Ty *ty, char const *source)
 NoEmit:
         add_location_info(ty);
 
-        vN(STATE.class_ops) = 0;
-        vN(STATE.generator_returns) = 0;
-        vN(STATE.tries) = 0;
-        vN(STATE.loops) = 0;
+        v0(STATE.class_ops);
+        v0(STATE.generator_returns);
+        v0(STATE.tries);
+        v0(STATE.loops);
+        m0(STATE.stack);
 
         DisableRefinements(ty, STATE.active);
 
@@ -14557,6 +15005,12 @@ tyeval(Ty *ty, Expr *e, Value *ret)
         byte_vector code_save = STATE.code;
         v00(STATE.code);
 
+        StackState stack = STATE.stack;
+        m0(STATE.stack);
+
+        LoopStates loops = STATE.loops;
+        v00(STATE.loops);
+
         location_vector locs_save = STATE.expression_locations;
         v00(STATE.expression_locations);
 
@@ -14573,6 +15027,8 @@ tyeval(Ty *ty, Expr *e, Value *ret)
         bool ok = vm_try_exec(ty, vv(STATE.code), ret);
         EVAL_DEPTH -= 1;
 
+        STATE.loops = loops;
+        STATE.stack = stack;
         STATE.code = code_save;
         STATE.expression_locations = locs_save;
 
@@ -14589,6 +15045,12 @@ compiler_eval(Ty *ty, Expr *e)
         byte_vector code_save = STATE.code;
         v00(STATE.code);
 
+        StackState stack = STATE.stack;
+        m0(STATE.stack);
+
+        LoopStates loops = STATE.loops;
+        v00(STATE.loops);
+
         add_location_info(ty);
         v00(STATE.expression_locations);
 
@@ -14602,6 +15064,7 @@ compiler_eval(Ty *ty, Expr *e)
 
         vm_exec(ty, vv(STATE.code));
 
+        STATE.loops = loops;
         STATE.code = code_save;
         STATE.annotation = annotation;
         v00(STATE.expression_locations);
@@ -14627,6 +15090,12 @@ typarse(
         byte_vector code_save = STATE.code;
         v00(STATE.code);
 
+        StackState stack = STATE.stack;
+        m0(STATE.stack);
+
+        LoopStates loops = STATE.loops;
+        v00(STATE.loops);
+
         add_location_info(ty);
         v00(STATE.expression_locations);
 
@@ -14640,6 +15109,8 @@ typarse(
 
         vm_exec(ty, vv(STATE.code));
 
+        STATE.loops = loops;
+        STATE.stack = stack;
         STATE.code = code_save;
         STATE.annotation = annotation;
         v00(STATE.expression_locations);
@@ -15247,11 +15718,16 @@ define_macro(Ty *ty, Stmt *s, bool fun)
         byte_vector code_save = STATE.code;
         v00(STATE.code);
 
+        StackState stack = STATE.stack;
+        m0(STATE.stack);
+
+        LoopStates loops = STATE.loops;
+        v00(STATE.loops);
+
         ProgramAnnotation an = STATE.annotation;
         STATE.annotation = (ProgramAnnotation){0};
 
         emit_statement(ty, s, false);
-
         INSN(HALT);
 
         STATE.annotation = an;
@@ -15263,6 +15739,8 @@ define_macro(Ty *ty, Stmt *s, bool fun)
         vm_exec(ty, vv(STATE.code));
         RestoreContext(ty, ctx);
 
+        STATE.loops = loops;
+        STATE.stack = stack;
         STATE.code = code_save;
 }
 
