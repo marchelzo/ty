@@ -32,6 +32,19 @@ pub use TermStyle = {
     ?bg-bright: ?Bool
 }
 
+
+pub use ChalkStyle = {
+    ?bold:      ?String,
+    ?italic:    ?String,
+    ?underline: ?String,
+    ?dim:       ?String,
+    ?reverse:   ?String,
+    ?fg:        ?String,
+    ?bg:        ?String,
+    ?uc:        ?String,
+    ?fg-bright: ?String,
+    ?bg-bright: ?String
+}
 // Some nice colors :)
 //
 // blue:   #1d55c6
@@ -175,8 +188,6 @@ fn record-of(attrs: String, start: _ = {}) -> _ {
             }
         },
 
-        attr: String => (),
-
         0 => props = {
             bold: false,
             italic: false,
@@ -217,7 +228,7 @@ fn record-of(attrs: String, start: _ = {}) -> _ {
 }
 
 @memoized
-fn detrans(a: TermStyle, b: TermStyle) -> String {
+fn detrans(a: _, b: _) -> String {
     let on  = []
     let off = []
 

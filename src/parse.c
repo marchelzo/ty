@@ -528,7 +528,7 @@ mkstmt(Ty *ty)
         s->arena = GetArenaAlloc(ty);
         s->mod = CompilerCurrentModule(ty);
         s->start = tok()->start;
-        s->end = tok()->start;
+        s->end = tok()->end;
         return s;
 }
 
@@ -542,7 +542,7 @@ inline static Stmt *
         s->arena = GetArenaAlloc(ty);
         s->mod = CompilerCurrentModule(ty);
         s->start = tok()->start;
-        s->end = tok()->start;
+        s->end = tok()->end;
         return s;
 }
 
@@ -5317,7 +5317,7 @@ parse_for_loop(Ty *ty)
 
                 if (match) {
                         unconsume(TOKEN_EXPRESSION);
-                        tok()->e = s->each.target->es.items[0];
+                        tok()->e = v_0(s->each.target->es);
 
                         unconsume(TOKEN_KEYWORD);
                         tok()->keyword = KEYWORD_MATCH;

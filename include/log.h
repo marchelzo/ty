@@ -54,7 +54,8 @@ extern _Atomic(uint64_t) LogCounter;
                 fprintf(stdout, "\n");          \
         } while (0)
 
-#define XXX(fmt, ...) fprintf(stderr, fmt "\n" __VA_OPT__(,) __VA_ARGS__)
+#define XXX(fmt, ...)  fprintf(stderr, fmt "\n" __VA_OPT__(,) __VA_ARGS__)
+#define XXXX(fmt, ...) fprintf(stderr, fmt __VA_OPT__(,) __VA_ARGS__)
 
 #if !defined(TY_NO_LOG)
 #define LOG(...) if (EnableLogging > 0) do {                 \

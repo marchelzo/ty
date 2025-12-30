@@ -35,6 +35,8 @@ pub __tls::_cif_cache: _ = nil
 tag Union;
 tag Struct;
 
+//fn dbg(*args) { args[-1] }
+
 fn fail(msg: String) {
     throw RuntimeError("C! macro error: {msg}")
 }
@@ -483,7 +485,7 @@ fn strct() {
                     decl: _ => decl.t
                 }).map(t -> ty.ArrayItem(item: t))
             )
-            
+
             let type = $$[ $$type-alternatives.max-by($${c.size}) $$]
 
             members.push(Union(type, decls))
@@ -501,7 +503,7 @@ fn strct() {
             Struct(inner) => inner.map(&.name),
             decl          => decl.name,
         }),
-        decl              => decl.name
+        decl            => decl.name
     }).flat()
 
     let init-params = [
@@ -563,12 +565,9 @@ fn strct() {
             if count != nil {
                 structArgs.push(ty.Arg(arg: $$[ $${mkstruct}($$t, $$count) $$]))
             } else {
-                let t_ = ty.Cond(
-                    $$[ $${type}($$t) == Class $$],
-                    $$[ $$t.ctype() $$],
-                    t
+                structArgs.push(
+                    ty.Arg(arg: $$[ ($$t :: $${Ptr}) ? $$t : $$t.ctype() $$])
                 )
-                structArgs.push(ty.Arg(arg: t_))
             }
         }
 

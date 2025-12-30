@@ -27,7 +27,7 @@
 #define VA_COUNT_INNER(_1, _2, _3, _4, _5, _6, _7, _8, COUNT, ...) COUNT
 #define VA_COUNT(...) VA_COUNT_INNER(__VA_ARGS__, 8, 7, 6, 5, 4, 3, 2, 1, 0)
 
-#define VA_SELECT_INNER(f, i) CAT(f ## _, i)
+#define VA_SELECT_INNER(f, i) CAT(f##_, i)
 #define VA_SELECT(f, ...) VA_SELECT_INNER(f, VA_COUNT(__VA_ARGS__))(__VA_ARGS__)
 
 #if defined(TY_RELEASE)
@@ -905,7 +905,7 @@ extern usize TotalBytesAllocated;
                         __func__,                           \
                         #expr                               \
                 );                                          \
-                abort();                                    \
+                *(volatile char *)0 = 0;                    \
         }                                                   \
 } while (0)
 #else
@@ -1032,6 +1032,7 @@ extern usize TotalBytesAllocated;
         X(RETURN_IF_NOT_NONE),    \
         X(SENTINEL),              \
         X(FIX_TO),                \
+        X(FIXED_TO),              \
         X(REVERSE),               \
         X(SWAP),                  \
         X(NONE),                  \

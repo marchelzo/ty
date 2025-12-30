@@ -99,9 +99,12 @@
 
 #if defined(TY_LOG_VERBOSE) && !defined(TY_NO_LOG)
 static _Thread_local Expr *expr;
+static Ty *ty = &vvv;
 #define CASE(i)                                          \
         case INSTR_##i:                                  \
-        expr = compiler_find_expr(ty, IP - 1);           \
+        if (EnableLogging > 0) {                         \
+                expr = compiler_find_expr(ty, IP - 1);   \
+        }                                                \
         LOG(                                             \
                 "%07ju:%s:%d:%d: " #i,                   \
                 (uptr)(IP - 1) & 0xFFFFFFFF,             \
@@ -903,7 +906,7 @@ inline static Value
 inline static Value
 (peek)(Ty *ty)
 {
-        return *topN(1);
+        return *top();
 }
 
 inline static void
@@ -1972,13 +1975,15 @@ DoThrow(Ty *ty)
 {
         Value ex = CurrentThrowCtx(ty)->exc;
 
-        //if (ex.type == VALUE_OBJECT && ex.class == CLASS_RUNTIME_ERROR) {
-        //        XXX("Throw: RuntimeError: %s", TY_TMP_C_STR(*itable_get(ty, ex.object, NAMES._what)));
-        //} else {
-        //        TY_START(DYING);
-        //        XXX("Throw: %s", VSC(&ex));
-        //        TY_STOP(DYING);
-        //}
+#if 0
+        if (ex.type == VALUE_OBJECT && ex.class == CLASS_RUNTIME_ERROR) {
+                XXX("Throw: RuntimeError: %s", TY_TMP_C_STR(*itable_get(ty, ex.object, NAMES._what)));
+        } else {
+                TY_START(DYING);
+                XXX("Throw: %s", VSC(&ex));
+                TY_STOP(DYING);
+        }
+#endif
         //xprint_stack(ty, 5);
 
         for (;;) {
@@ -4534,12 +4539,13 @@ IterGetNext(Ty *ty)
 
         switch (v.type) {
         case VALUE_ARRAY:
-                if (i < v.array->count) {
-                        push(v.array->items[i]);
+                if (i < vN(*v.array)) {
+                        push(v__(*v.array, i));
                 } else {
                         push(NONE);
                 }
                 break;
+
         case VALUE_DICT:
                 off = top()[-2].off;
                 if (off == 0) {
@@ -4560,10 +4566,12 @@ IterGetNext(Ty *ty)
                 RC = 1;
                 pop();
                 break;
+
         case VALUE_FUNCTION:
                 push(INTEGER(i));
                 call(ty, &v, NULL, 1, NULL);
                 break;
+
         case VALUE_OBJECT:
                 if ((vp = class_method(ty, v.class, "__next__")) != NULL) {
                         push(INTEGER(i));
@@ -4579,13 +4587,15 @@ IterGetNext(Ty *ty)
                         goto NoIter;
                 }
                 break;
+
         case VALUE_BLOB:
-                if (i < v.blob->count) {
+                if (i < vN(*v.blob)) {
                         push(INTEGER(v.blob->items[i]));
                 } else {
                         push(NONE);
                 }
                 break;
+
         case VALUE_TUPLE:
                 if (i < v.count) {
                         push(v.items[i]);
@@ -4593,6 +4603,7 @@ IterGetNext(Ty *ty)
                         push(NONE);
                 }
                 break;
+
         case VALUE_STRING:
                 vp = top() - 2;
                 if ((off = vp->off) < sN(v)) {
@@ -4602,10 +4613,12 @@ IterGetNext(Ty *ty)
                         push(NONE);
                 }
                 break;
+
         case VALUE_GENERATOR:
                 call_co_ex(ty, &v, 0, IP);
                 YieldFix(ty);
                 break;
+
         default:
 NoIter:
                 zP("for-each loop on non-iterable value: %s", VSC(&v));
@@ -4617,14 +4630,19 @@ LoopCheck(Ty *ty, i32 z, char *jump)
 {
         imax k = top()[-3].z - 1;
 
-        STACK.count += RC;
+        if (top()->type == VALUE_NONE) {
+                pop();
+                pop();
+                pop();
+                pop();
 
-        push(INTEGER(k));
-
-        bool done = (top()[-1].type == VALUE_NONE);
-        if (done) {
                 DOJUMP(jump);
+
+                return true;
         }
+
+        STACK.count += RC;
+        push(INTEGER(k));
 
         i32 i;
         i32 j;
@@ -4649,7 +4667,7 @@ LoopCheck(Ty *ty, i32 z, char *jump)
                 top()[-j] = v;
         }
 
-        return done;
+        return false;
 }
 
 inline static void
@@ -5303,11 +5321,11 @@ TargetMember:
                         READJUMP(jump);
                         READVALUE(i);
                         READVALUE(j);
-                        if (top()->type != VALUE_ARRAY || top()->array->count < i + j) {
+                        if (top()->type != VALUE_ARRAY || vN(*top()->array) < i + j) {
                                 DOJUMP(jump);
                         } else {
                                 Array *rest = vA();
-                                uvPn(*rest, top()->array->items + i, top()->array->count - (i + j));
+                                uvPn(*rest, vv(*top()->array) + i, vN(*top()->array) - (i + j));
                                 *poptarget() = ARRAY(rest);
                         }
                         break;
@@ -5418,6 +5436,7 @@ TargetMember:
 
                 CASE(BAD_MATCH)
                         MatchError;
+
                 CASE(BAD_DISPATCH);
                         if (v_L(CALLS) == unapply) {
                                 push(NONE);
@@ -5970,7 +5989,7 @@ YIELD:
                         break;
 
                 CASE(LOOP_ITER)
-                        xvP(SP_STACK, STACK.count);
+                        //xvP(SP_STACK, vN(STACK));
                         push(SENTINEL);
                         RC = 0;
                         IterGetNext(ty);
@@ -6006,9 +6025,8 @@ YIELD:
                         READJUMP(jump);
                         READVALUE(b);
                         if (!LoopCheck(ty, 1, jump)) {
-                                vvX(SP_STACK);
+                                SpreadShuffle(ty, b);
                         }
-                        SpreadShuffle(ty, b);
                         break;
 
                 CASE(PUSH_INDEX)
@@ -7112,10 +7130,9 @@ BinaryOp:
 
 RETURN:
                 CASE(RETURN)
-                        n = vvL(FRAMES)->fp;
+                        n = vvX(FRAMES)->fp;
                         STACK.items[n] = peek();
                         STACK.count = n + 1;
-                        vvX(FRAMES);
                 CASE(RETURN_PRESERVE_CTX)
                         IP = *vvX(CALLS);
                         break;
