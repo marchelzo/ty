@@ -3700,7 +3700,8 @@ symbolize_pattern_(Ty *ty, Scope *scope, Expr *e, Scope *reuse, bool def)
 
                 Type *c0 = ResolveConstraint(ty, e->constraint);
                 if (c0 != NULL) {
-                        unify2(ty, &e->symbol->type, c0);
+                        e->symbol->type = c0;
+                        e->symbol->flags |= SYM_FIXED;
                         unify2(ty, &e->_type, c0);
                 } else if (e->symbol->type == NULL) {
                         Type *t0 = type_var(ty);
@@ -5889,8 +5890,7 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
                                 symbolize_pattern(ty, subscope, p->target, NULL, p->def);
                                 if (p->target != NULL) {
                                         type_assign(ty, p->target, p->e->_type, 0);
-                                }
-                                if (p->target == NULL) {
+                                } else {
                                         AddRefinements(
                                                 ty,
                                                 p->e,
