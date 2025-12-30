@@ -1,0 +1,41 @@
+fn go() {
+    for ..10 {
+        try {
+            for 'abc' {
+                try {
+                    continue continue
+                } catch _ {
+                    print('FAIL')
+                } finally {
+                    print('P', end='')
+                }
+            }
+        } catch _ {
+            print('FAIL')
+        } finally {
+            print('A', end='')
+            break
+        }
+    }
+}
+
+fn go2() {
+    try {
+        while let Some(x) = Some(1) {
+            try {
+                while match x {
+                    1 => { break break   },
+                    _ => { print('FAIL') }
+                }
+            } finally {
+                throw 'SS'
+            }
+            print('FAIL')
+        }
+    } catch e {
+        print(e)
+    }
+}
+
+go()
+go2()
