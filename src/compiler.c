@@ -1633,6 +1633,7 @@ AdjustStack(Ty *ty, int c)
 
         case INSTR_ARRAY:
         case INSTR_DICT:
+        case INSTR_DEFAULT_DICT:
                 EndStack(ty);
                 IncrStack(ty);
                 break;
