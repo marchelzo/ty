@@ -1731,8 +1731,17 @@ vm_run_tdb(void *ctx)
                 u8 next = TDB_STATE_STOPPED;
 
                 if (TY_CATCH_ERROR()) {
-                        TY_CATCH();
-                        fprintf(stderr, "TDB thread error: %s\n", TyError(ty));
+                        char *trace = FormatTrace(ty, NULL, NULL);
+                        Value error = TY_CATCH();
+                        fprintf(
+                                stderr,
+                                "%sRuntimeError%s: uncaught exception: %s\n\n%s",
+                                TERM(91;1),
+                                TERM(0),
+                                VSC(&error),
+                                trace
+                        );
+                        xmF(trace);
                         goto KeepRunning;
                 }
 
@@ -7404,7 +7413,7 @@ CaptureContextEx(Ty *ty, ThrowCtx *ctx)
         char const *ip = IP;
         char const *up;
 
-        for (;;) {
+        while (ip != NULL) {
                 if (
                         (vN(st.frames) > 0)
                      && is_hidden_fun(FrameFun(ty, vvL(st.frames)))
@@ -7443,11 +7452,11 @@ CaptureContextEx(Ty *ty, ThrowCtx *ctx)
                         ip = up;
                         continue;
                 }
-
+Next:
                 if (vN(st.frames) == 0) {
                         break;
                 }
-Next:
+
                 ip = vvX(st.frames)->ip;
         }
 
@@ -7469,7 +7478,7 @@ CaptureContext(Ty *ty, ThrowCtx *ctx)
         char const *ip = IP;
         char const *up;
 
-        for (;;) {
+        while (ip != NULL) {
                 if (
                         (vN(st.frames) > 0)
                      && is_hidden_fun(FrameFun(ty, vvL(st.frames)))
@@ -7502,8 +7511,6 @@ Next:
                 i += 1;
                 j -= 1;
         }
-
-        xvP(*ctx, NULL);
 }
 
 inline static void

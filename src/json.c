@@ -427,13 +427,17 @@ encode(Ty *ty, Value const *v, str *out)
                 return true;
         }
 
+        bool first = true;
+
         switch (v->type & ~VALUE_TAGGED) {
         case VALUE_NIL:
                 xvPn(*out, "null", 4);
                 break;
+
         case VALUE_TAG:
                 dump((void *)out, "\"%s\"", tags_name(ty, v->tag));
                 break;
+
         case VALUE_STRING:
                 xvP(*out, '"');
                 for (int i = 0; i < sN(*v); ++i) {
@@ -477,20 +481,24 @@ encode(Ty *ty, Value const *v, str *out)
                 }
                 xvP(*out, '"');
                 break;
+
         case VALUE_BOOLEAN:
                 if (v->boolean)
                         xvPn(*out, "true", 4);
                 else
                         xvPn(*out, "false", 5);
                 break;
+
         case VALUE_INTEGER:
                 xvR(*out, out->count + 64);
                 out->count += snprintf(out->items + out->count, 64, "%"PRIiMAX, v->z);
                 break;
+
         case VALUE_REAL:
                 xvR(*out, out->count + 64);
                 out->count += dtoa(v->real, out->items + out->count, 64);
                 break;
+
         case VALUE_ARRAY:
                 xvP(*out, '[');
                 if (!try_visit(v->array))
@@ -504,6 +512,7 @@ encode(Ty *ty, Value const *v, str *out)
                 vvX(Visiting);
                 xvP(*out, ']');
                 break;
+
         case VALUE_DICT:
                 xvP(*out, '{');
                 if (!try_visit(v->dict)) {
@@ -513,6 +522,9 @@ encode(Ty *ty, Value const *v, str *out)
                         if (key->type != VALUE_STRING) {
                                 continue;
                         }
+                        if (!first) {
+                                xvP(*out, ',');
+                        }
                         if (!encode(ty, key, out)) {
                                 return false;
                         }
@@ -520,13 +532,12 @@ encode(Ty *ty, Value const *v, str *out)
                         if (!encode(ty, val, out)) {
                                 return false;
                         }
-                        if (_d_item->prev != NULL) {
-                                xvP(*out, ',');
-                        }
+                        first = false;
                 });
                 vvX(Visiting);
                 xvP(*out, '}');
                 break;
+
         case VALUE_OBJECT:
         {
                 if (!try_visit(v->object))
@@ -564,6 +575,7 @@ encode(Ty *ty, Value const *v, str *out)
                 }
                 break;
         }
+
         case VALUE_TUPLE:
                 xvP(*out, '{');
                 if (!try_visit(v->items))
@@ -592,6 +604,7 @@ encode(Ty *ty, Value const *v, str *out)
                         xvP(*out, '}');
                 }
                 break;
+
         case VALUE_BLOB:
                 xvP(*out, '"');
                 for (int i = 0; i < v->blob->count; ++i) {
@@ -604,6 +617,7 @@ encode(Ty *ty, Value const *v, str *out)
                 }
                 xvP(*out, '"');
                 break;
+
         default:
                 return false;
 

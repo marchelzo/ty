@@ -213,6 +213,7 @@ class HttpServer {
             try {
                 rsp.status(f(req, rsp, **ps) ?? 200)
             } catch e {
+                log::error!("Exception while handling {req.method} {req.url}: {e}\n{e.trace()}")
                 rsp.plain("Exception: {e}\n\nBacktrace:\n{str(e.trace())}")
                 rsp.status(500)
             }

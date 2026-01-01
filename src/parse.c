@@ -1439,10 +1439,10 @@ parse_decorator_macro(Ty *ty)
 }
 
 
-static expression_vector
+static ExprVec
 parse_decorators(Ty *ty)
 {
-        expression_vector decorators = {0};
+        ExprVec decorators = {0};
 
         while (try_consume('@')) {
                 Expr *f = parse_expr(ty, 0);
@@ -1504,7 +1504,7 @@ parse_type(Ty *ty, int prec)
 }
 
 static void
-parse_type_params(Ty *ty, expression_vector *params)
+parse_type_params(Ty *ty, ExprVec *params)
 {
         SAVE_NE(true);
         consume('[');
@@ -2032,25 +2032,21 @@ parse_expr_template(Ty *ty)
 }
 
 static Expr *
-prefix_function(Ty *ty)
+parse_function(Ty *ty, ExprVec const *decorators, Expr **name, bool *is_operator)
 {
         Expr *e = mkfunc(ty);
 
+        ExprVec macro_decorators = {0};
         bool sugared_generator = false;
-        expression_vector macro_decorators = {0};
-        expression_vector decorators;
 
         SCRATCH_SAVE();
 
-        if (T0 == TOKEN_AT) {
-                decorators = parse_decorators(ty);
-                for (int i = 0; i < vN(decorators); ++i) {
-                        Expr *dec = v__(decorators, i);
-                        if (IsMacroInvocation(ty, dec)) {
-                                svP(macro_decorators, dec);
-                        } else {
-                                avP(e->decorators, dec);
-                        }
+        for (int i = 0; i < vN(*decorators); ++i) {
+                Expr *dec = v__(*decorators, i);
+                if (IsMacroInvocation(ty, dec)) {
+                        svP(macro_decorators, dec);
+                } else {
+                        avP(e->decorators, dec);
                 }
         }
 
@@ -2068,8 +2064,18 @@ prefix_function(Ty *ty)
                 goto Body;
         }
 
+        if (is_operator != NULL) {
+                *is_operator = op_fixup(ty, 0);
+        } else {
+                (void)op_fixup(ty, 0);
+        }
+
         if (T0 == TOKEN_IDENTIFIER) {
                 e->name = tok()->identifier;
+                if (name != NULL) {
+                        *name = mkid(tok()->identifier);
+                        (*name)->module = tok()->module;
+                }
                 tok()->tag = TT_FUNC;
                 next();
         }
@@ -2246,6 +2252,13 @@ Body:
         SCRATCH_RESTORE();
 
         return e;
+}
+
+static Expr *
+prefix_function(Ty *ty)
+{
+        ExprVec decorators = parse_decorators(ty);
+        return parse_function(ty, &decorators, NULL, NULL);
 }
 
 /* rewrite [ op ] as ((a, b) -> a op b) */
@@ -2506,7 +2519,7 @@ parse_pattern(Ty *ty)
 }
 
 void
-make_with(Ty *ty, Expr *e, statement_vector defs, Stmt *body)
+make_with(Ty *ty, Expr *e, StmtVec defs, Stmt *body)
 {
         e->type = EXPRESSION_WITH;
         e->with.defs = defs;
@@ -2546,7 +2559,7 @@ static Expr *
 prefix_with(Ty *ty)
 {
         Expr *with = mkexpr(ty);
-        statement_vector defs = {0};
+        StmtVec defs = {0};
 
         // with / use
         next();
@@ -2776,7 +2789,7 @@ gencompr(Ty *ty, Expr *e)
 }
 
 static bool
-try_parse_flag(Ty *ty, expression_vector *kwargs, StringVector *kws, expression_vector *kwconds)
+try_parse_flag(Ty *ty, ExprVec *kwargs, StringVector *kws, ExprVec *kwconds)
 {
         if (T0 != ':' && (T0 != TOKEN_BANG || !next_without_nl(ty, ':'))) {
                 return false;
@@ -2805,11 +2818,11 @@ try_parse_flag(Ty *ty, expression_vector *kwargs, StringVector *kws, expression_
 static void
 next_arg(
         Ty *ty,
-        expression_vector *args,
-        expression_vector *conds,
-        expression_vector *kwargs,
+        ExprVec *args,
+        ExprVec *conds,
+        ExprVec *kwargs,
         StringVector *kws,
-        expression_vector *kwconds
+        ExprVec *kwconds
 )
 {
         if (try_parse_flag(ty, kwargs, kws, kwconds)) {
@@ -3486,8 +3499,8 @@ prefix_template_expr(Ty *ty)
                 die("stray template expression");
         }
 
-        expression_vector *exprs = &CurrentTemplate->template.exprs;
-        expression_vector *holes = &CurrentTemplate->template.holes;
+        ExprVec *exprs = &CurrentTemplate->template.exprs;
+        ExprVec *holes = &CurrentTemplate->template.holes;
         i32Vector         *ctxs  = &CurrentTemplate->template.ctxs;
 
         Expr *e = mkxpr(TEMPLATE_HOLE);
@@ -5552,58 +5565,32 @@ parse_function_definition(Ty *ty)
                 s->type = STATEMENT_FUNCTION_DEFINITION;
         }
 
-        Location target_start = tok()->start;
-        Location target_end = tok()->end;
-        char *module = NULL;
+        ExprVec decorators = parse_decorators(ty);
 
-        // FIXME: Hack to skip decorators and find the function name
-        for (int i = 0; i < 128 && s->type == STATEMENT_FUNCTION_DEFINITION; ++i) {
-                if (KW(i) == KEYWORD_FUNCTION) {
-                        if (op_fixup(ty, i + 1)) {
-                                s->type = STATEMENT_OPERATOR_DEFINITION;
-                        }
+        s->pub = try_consume(KEYWORD_PUB);
 
-                        if (token(i + 1)->type == TOKEN_IDENTIFIER) {
-                                target_start = token(i + 1)->start;
-                                target_end = token(i + 1)->end;
-                                module = token(i + 1)->module;
-                        }
+        expect_one_of(KEYWORD_FUNCTION, KEYWORD_MACRO);
 
-                        break;
-                }
+        Expr *target;
+        bool is_operator;
+        Expr *func = parse_function(ty, &decorators, &target, &is_operator);
+
+        if (func->name == NULL) {
+                die("anonymous function definition appears in statement context");
         }
 
-        Expr *f = prefix_function(ty);
-        if (f->name == NULL) {
-                die("anonymous function definition used in statement context");
-        }
-
-        if (s->type == STATEMENT_MACRO_DEFINITION) {
-                avI(f->params, "self", 0);
-                avI(f->constraints, NULL, 0);
-                avI(f->dflts, NULL, 0);
-        }
-
-        if (
-                0 && contains(OperatorCharset, f->name[0]) &&
-                (
-                     f->name[1] == '\0' ||
-                     f->name[0] != '$'  ||
-                     contains(OperatorCharset, f->name[1])
-                )
-        ) {
+        if (is_operator) {
                 s->type = STATEMENT_OPERATOR_DEFINITION;
         }
 
-        Expr *target = mkxpr(IDENTIFIER);
-        target->identifier = f->name;
-        target->module = module;
-        target->start = target_start;
-        target->end = target_end;
+        if (s->type == STATEMENT_MACRO_DEFINITION) {
+                avI(func->params, "self", 0);
+                avI(func->constraints, NULL, 0);
+                avI(func->dflts, NULL, 0);
+        }
 
         s->target = target;
-        s->value = f;
-        s->pub = false;
+        s->value = func;
 
         return s;
 }
@@ -5964,7 +5951,7 @@ parse_method(
         Location start,
         Expr *decorator_macro,
         char const *doc,
-        expression_vector decorators
+        ExprVec decorators
 )
 {
         unconsume(TOKEN_KEYWORD);
@@ -6147,7 +6134,7 @@ parse_class_definition(Ty *ty)
                         consume('}');
                 }
 
-                expression_vector decorators = {0};
+                ExprVec decorators = {0};
                 if (T0 == TOKEN_AT) {
                         decorators = parse_decorators(ty);
                 }
@@ -6206,6 +6193,9 @@ parse_class_definition(Ty *ty)
                                 unconsume('*');
                         }
 
+                        unconsume(TOKEN_IDENTIFIER);
+                        tok()->identifier = name;
+
                         meth = parse_method(
                                 ty,
                                 start,
@@ -6214,7 +6204,6 @@ parse_class_definition(Ty *ty)
                                 decorators
                         );
 
-                        meth->name = name;
                         if (
                                 (meth->body != NULL)
                              && (meth->body->type == STATEMENT_EXPRESSION)
@@ -6865,7 +6854,7 @@ parse_ex(
         ParserState save = state;
         m0(state);
 
-        volatile statement_vector program = {0};
+        volatile StmtVec program = {0};
         volatile bool ok = true;
 
         lex_init(ty, file, source);

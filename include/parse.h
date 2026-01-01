@@ -48,7 +48,7 @@ void
 parse_sync_lex(Ty *ty);
 
 void
-make_with(Ty *ty, struct expression *e, statement_vector defs, struct statement *body);
+make_with(Ty *ty, struct expression *e, StmtVec defs, struct statement *body);
 
 char *
 gensym(Ty *ty);

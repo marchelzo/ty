@@ -183,7 +183,7 @@ typedef struct compiler_state {
 
         JumpGroup match_fails;
         JumpGroup match_successes;
-        expression_vector match_assignments;
+        ExprVec match_assignments;
 
         offset_vector generator_returns;
 
@@ -202,8 +202,8 @@ typedef struct compiler_state {
         Expr *implicit_func;
         Expr *origin;
 
-        statement_vector class_ops;
-        statement_vector pending;
+        StmtVec class_ops;
+        StmtVec pending;
 
         bool _based;
 

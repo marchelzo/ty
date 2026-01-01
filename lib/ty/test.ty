@@ -4,13 +4,15 @@ import chalk (chalk)
 pub fn run() {
     let pass = 0
     let fail = 0
+
     for test in tests {
+        print("{test.__fqn__} ... ", end='')
         try {
             test()
-            print(chalk"{test.__fqn__}: [bright green b]OK[/]")
+            print(chalk"[bright green b]OK[/]")
             pass += 1
         } catch err {
-            print(chalk"{test.__fqn__}: [bright red b]FAIL[/]: {err}")
+            print(chalk"[bright red b]FAIL[/]\n\n{err}\n")
             if err :: RuntimeError {
                 print(str(err.trace()))
             }
@@ -18,7 +20,12 @@ pub fn run() {
         }
     }
 
-    print(chalk"\n{#tests} tests run: [bright green b]{pass} passed[/], [bright red b]{fail} failed[/]")
+    let failed = fail ?: chalk"[bright red b]{fail} failed[/]"
+    let passed = pass ?: chalk"[bright green b]{pass} passed[/]"
+    let result = [?failed, ?passed].join(', ')
+    let _tests = (#tests == 1) ? 'test' : 'tests'
+
+    print(chalk"\nRan [bright yellow b]{#tests}[/] {_tests}: {result}")
 
     (fail == 0) ? 0 : 1
 }

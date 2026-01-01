@@ -284,8 +284,8 @@ Unify(Ty *ty, Type *t0, Type *t1, bool super);
 static Type *
 InferCall0(
         Ty *ty,
-        expression_vector const *args,
-        expression_vector const *kwargs,
+        ExprVec const *args,
+        ExprVec const *kwargs,
         StringVector const *kws,
         Type *t0,
         bool strict
@@ -1657,8 +1657,8 @@ IntersectElem(Type const *t0, int i)
 static void
 ExtractArgs(Ty *ty, Expr const *e, TypeVector *args, TypeVector *kwargs, StringVector *kws)
 {
-        expression_vector const *_args;
-        expression_vector const *_kwargs;
+        ExprVec const *_args;
+        ExprVec const *_kwargs;
 
         switch (e->type) {
         case EXPRESSION_FUNCTION_CALL:
@@ -5231,8 +5231,8 @@ TrySolve2Op(Ty *ty, int op, Type *op0, Type *t0, Type *t1, Type *t2)
         Expr right   = { .type = EXPRESSION_NIL };
         Expr *argv[] = { &left, &right };
 
-        expression_vector args   = { .items = argv, .count = 2 };
-        expression_vector kwargs = {0};
+        ExprVec args   = { .items = argv, .count = 2 };
+        ExprVec kwargs = {0};
         StringVector      kws    = {0};
 
         if (
@@ -5718,7 +5718,7 @@ ClassFunctionType(Ty *ty, Type *t0)
 }
 
 Type *
-PossibleArgTypes(Ty *ty, expression_vector const *args, int argi)
+PossibleArgTypes(Ty *ty, ExprVec const *args, int argi)
 {
         Type *t0 = NULL;
 
@@ -5738,8 +5738,8 @@ FindArg(
         Ty *ty,
         int i,
         char const *name,
-        expression_vector const *args,
-        expression_vector const *kwargs,
+        ExprVec const *args,
+        ExprVec const *kwargs,
         StringVector const *kws
 ) {
         if (name != NULL) {
@@ -5851,8 +5851,8 @@ CheckArg(Ty *ty, int i, Param const *p, Type *a0, bool strict)
 }
 
 typedef struct {
-        expression_vector args;
-        expression_vector kwargs;
+        ExprVec args;
+        ExprVec kwargs;
         StringVector const *kws;
 } CallSignature;
 
@@ -5861,8 +5861,8 @@ typedef vec(CallSignature) CallSignatures;
 static CallSignatures
 ExpandCallSignatures(
         Ty *ty,
-        expression_vector const *args,
-        expression_vector const *kwargs,
+        ExprVec const *args,
+        ExprVec const *kwargs,
         StringVector const *kws
 ) {
         // Expand all union types in args and kwargs into multiple call signatures
@@ -5870,7 +5870,7 @@ ExpandCallSignatures(
         CallSignatures result = {0};
         CallSignatures work = {0};
 
-        expression_vector empty = {0};
+        ExprVec empty = {0};
 
         svP(work, ((CallSignature) {
                 .args = empty,
@@ -5900,7 +5900,7 @@ ExpandCallSignatures(
                                 *_arg = *arg;
                                 _arg->_type = t1;
 
-                                expression_vector _args = {0};
+                                ExprVec _args = {0};
                                 svPv(_args, call.args);
                                 svP(_args, _arg);
 
@@ -5925,7 +5925,7 @@ ExpandCallSignatures(
                                 *_kwarg = *kwarg;
                                 _kwarg->_type = t1;
 
-                                expression_vector _kwargs = {0};
+                                ExprVec _kwargs = {0};
                                 svPv(_kwargs, call.kwargs);
                                 svP(_kwargs, _kwarg);
 
@@ -5946,8 +5946,8 @@ ExpandCallSignatures(
 static Type *
 InferCall0(
         Ty *ty,
-        expression_vector const *args,
-        expression_vector const *kwargs,
+        ExprVec const *args,
+        ExprVec const *kwargs,
         StringVector const *kws,
         Type *t0,
         bool strict
@@ -5959,8 +5959,8 @@ InferCall0(
         bool gather = false;
 
         vec(Expr) _argv = {0};
-        expression_vector _args = {0};
-        expression_vector _kwargs = {0};
+        ExprVec _args = {0};
+        ExprVec _kwargs = {0};
 
         int pack_index = -1;
 
@@ -6182,8 +6182,8 @@ InferCall0(
 
                 for (int i = 0; i < vN(expanded); ++i) {
                         CallSignature *call = v_(expanded, i);
-                        expression_vector *args = &call->args;
-                        expression_vector *kwargs = &call->kwargs;
+                        ExprVec *args = &call->args;
+                        ExprVec *kwargs = &call->kwargs;
 
                         t3 = NULL;
 
@@ -6275,8 +6275,8 @@ InferCall0(
 static Type *
 InferCall(
         Ty *ty,
-        expression_vector const *args,
-        expression_vector const *kwargs,
+        ExprVec const *args,
+        ExprVec const *kwargs,
         StringVector const *kws,
         Type *t0
 )
@@ -6306,8 +6306,8 @@ type_call_t(Ty *ty, Expr const *e, Type *t0)
 
         Type *t;
         Type *t1;
-        expression_vector const *args = &(expression_vector){0};
-        expression_vector const *kwargs = &(expression_vector){0};
+        ExprVec const *args = &(ExprVec){0};
+        ExprVec const *kwargs = &(ExprVec){0};
         StringVector const *kws = &(StringVector){0};
 
 
@@ -7925,7 +7925,7 @@ type_list(Ty *ty, Expr const *e)
 }
 
 Type *
-type_list_from(Ty *ty, expression_vector const *es)
+type_list_from(Ty *ty, ExprVec const *es)
 {
         xDDD();
 
@@ -10534,7 +10534,7 @@ types_init(Ty *ty)
 void
 type_completions(Ty *ty, Type const *t0, char const *pre, ValueVector *out)
 {
-        expression_vector exprs = {0};
+        ExprVec exprs = {0};
         int_vector depths = {0};
 
         int prefix_len = (pre == NULL) ? 0 : strlen(pre);

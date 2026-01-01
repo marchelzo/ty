@@ -274,7 +274,7 @@ op_fun_info(i32 op, i32 t1, i32 t2)
 }
 
 i32
-op_defs_for(i32 op, i32 c, bool left, expression_vector *defs)
+op_defs_for(i32 op, i32 c, bool left, ExprVec *defs)
 {
         Ty *ty = &vvv;
 
@@ -310,13 +310,13 @@ op_defs_for(i32 op, i32 c, bool left, expression_vector *defs)
 }
 
 i32
-op_defs_for_l(i32 op, i32 c, expression_vector *defs)
+op_defs_for_l(i32 op, i32 c, ExprVec *defs)
 {
         return op_defs_for(op, c, true, defs);
 }
 
 i32
-op_defs_for_r(i32 op, i32 c, expression_vector *defs)
+op_defs_for_r(i32 op, i32 c, ExprVec *defs)
 {
         return op_defs_for(op, c, false, defs);
 }
