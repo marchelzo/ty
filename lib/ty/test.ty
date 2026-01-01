@@ -1,0 +1,24 @@
+import ty (tests)
+import chalk (chalk)
+
+pub fn run() {
+    let pass = 0
+    let fail = 0
+    for test in tests {
+        try {
+            test()
+            print(chalk"{test.__fqn__}: [bright green b]OK[/]")
+            pass += 1
+        } catch err {
+            print(chalk"{test.__fqn__}: [bright red b]FAIL[/]: {err}")
+            if err :: RuntimeError {
+                print(str(err.trace()))
+            }
+            fail += 1
+        }
+    }
+
+    print(chalk"\n{#tests} tests run: [bright green b]{pass} passed[/], [bright red b]{fail} failed[/]")
+
+    (fail == 0) ? 0 : 1
+}
