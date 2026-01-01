@@ -17,7 +17,7 @@ typedef struct statement Stmt;
 typedef struct type_bound TypeBound;
 typedef struct type Type;
 
-typedef vec(Expr *) expression_vector;
+typedef vec(Expr *) ExprVec;
 typedef vec(TypeBound) TypeBoundVector;
 
 typedef Expr *ExprTransform(Expr *, Scope *, void *);
@@ -53,22 +53,22 @@ struct class_definition {
         char const *doc;
         Location loc;
         Expr *super;
-        expression_vector traits;
+        ExprVec traits;
         union {
                 struct {
-                        expression_vector methods;
-                        expression_vector getters;
-                        expression_vector setters;
-                        expression_vector fields;
+                        ExprVec methods;
+                        ExprVec getters;
+                        ExprVec setters;
+                        ExprVec fields;
 
-                        expression_vector s_methods;
-                        expression_vector s_getters;
-                        expression_vector s_setters;
-                        expression_vector s_fields;
+                        ExprVec s_methods;
+                        ExprVec s_getters;
+                        ExprVec s_setters;
+                        ExprVec s_fields;
                 };
                 Expr *type;
         };
-        expression_vector type_params;
+        ExprVec type_params;
         Scope *scope;
         Scope *s_scope;
         Symbol *var;
@@ -92,7 +92,7 @@ typedef struct {
 typedef vec(ComprPart) Comprehension;
 
 typedef vec(struct condpart *) condpart_vector;
-typedef vec(Stmt *) statement_vector;
+typedef vec(Stmt *) StmtVec;
 typedef struct class_definition ClassDefinition;
 
 #define TY_STATEMENT_TYPES        \
@@ -334,15 +334,15 @@ struct expression {
                         struct scope *escope;
                 };
                 struct {
-                        statement_vector stmts;
-                        expression_vector exprs;
-                        expression_vector holes;
+                        StmtVec stmts;
+                        ExprVec exprs;
+                        ExprVec holes;
                         i32Vector ctxs;
                 } template;
                 struct {
                         Symbol *atmp;
-                        expression_vector elements;
-                        expression_vector aconds;
+                        ExprVec elements;
+                        ExprVec aconds;
                         vec(bool) optional;
                         Comprehension compr;
                 };
@@ -351,16 +351,16 @@ struct expression {
                     Expr *e;
                 } macro;
                 struct {
-                        statement_vector defs;
+                        StmtVec defs;
                         Stmt *block;
                 } with;
                 struct {
                         Symbol *ltmp;
                         bool only_identifiers;
-                        expression_vector es;
+                        ExprVec es;
                         vec(char const *) names;
                         vec(bool) required;
-                        expression_vector tconds;
+                        ExprVec tconds;
                 };
                 struct {
                         Expr *cond;
@@ -374,10 +374,10 @@ struct expression {
                 struct {
                         Expr *lang;
                         StringVector strings;
-                        expression_vector fmts;
-                        expression_vector fmtfs;
+                        ExprVec fmts;
+                        ExprVec fmtfs;
                         int_vector widths;
-                        expression_vector expressions;
+                        ExprVec expressions;
                 };
                 struct {
                         int u;
@@ -419,8 +419,8 @@ struct expression {
                 } hole;
                 struct {
                         Expr *subject;
-                        expression_vector patterns;
-                        expression_vector thens;
+                        ExprVec patterns;
+                        ExprVec thens;
                 };
                 struct {
                         char *name;
@@ -429,12 +429,12 @@ struct expression {
                         Symbol *fn_symbol;
                         Symbol *self;
                         Scope *scope;
-                        expression_vector type_params;
+                        ExprVec type_params;
                         StringVector params;
-                        expression_vector dflts;
-                        expression_vector constraints;
-                        expression_vector decorators;
-                        expression_vector functions;
+                        ExprVec dflts;
+                        ExprVec constraints;
+                        ExprVec decorators;
+                        ExprVec functions;
                         union {
                                 struct {
                                         Expr *return_type;
@@ -457,17 +457,17 @@ struct expression {
                 };
                 struct {
                         Expr *function;
-                        expression_vector args;
-                        expression_vector fconds;
-                        expression_vector kwargs;
-                        expression_vector fkwconds;
+                        ExprVec args;
+                        ExprVec fconds;
+                        ExprVec kwargs;
+                        ExprVec fkwconds;
                         StringVector kws;
                 };
                 struct {
                         Symbol *dtmp;
-                        expression_vector keys;
-                        expression_vector values;
-                        expression_vector dconds;
+                        ExprVec keys;
+                        ExprVec values;
+                        ExprVec dconds;
                         Comprehension dcompr;
                         Expr *dflt;
                 };
@@ -487,9 +487,9 @@ struct expression {
                                 Expr *member;
                                 struct {
                                         Expr *method;
-                                        expression_vector method_args;
-                                        expression_vector mconds;
-                                        expression_vector method_kwargs;
+                                        ExprVec method_args;
+                                        ExprVec mconds;
+                                        ExprVec method_kwargs;
                                         StringVector method_kws;
                                 };
                         };
@@ -520,8 +520,8 @@ struct statement {
                         Expr *expression;
                         int depth;
                 };
-                statement_vector statements;
-                expression_vector returns;
+                StmtVec statements;
+                ExprVec returns;
                 vec(char *) exports;
                 vec(Symbol *) drop;
                 struct {
@@ -561,16 +561,16 @@ struct statement {
                 } each;
                 struct {
                         Stmt *s;
-                        expression_vector patterns;
-                        statement_vector handlers;
+                        ExprVec patterns;
+                        StmtVec handlers;
                         Stmt *finally;
                         bool need_trace;
                 } try;
                 struct {
                         Expr *e;
-                        expression_vector patterns;
-                        expression_vector conds;
-                        statement_vector statements;
+                        ExprVec patterns;
+                        ExprVec conds;
+                        StmtVec statements;
                 } match;
                 struct {
                         condpart_vector parts;

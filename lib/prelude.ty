@@ -217,7 +217,7 @@ pub use time::Timespec = {
 
 fn time::time(tm: ?time::Tm, utc: Bool = false) -> Int;
 fn time::gettime(clock: ?Int) -> time::Timespec;
-fn time::localtime() -> time::Tm;
+fn time::localtime(time: ?Int) -> time::Tm;
 fn time::utime(clock: ?Int) -> Int;
 fn time::now() -> Float;
 
@@ -1112,7 +1112,7 @@ class String : Iterable[String], IntoPtr[Int] {
     }
 
     __iter__*() -> Generator[String] {
-        for c in self.chars() {
+        for c in chars() {
             yield c
         }
     }
@@ -2214,10 +2214,9 @@ trait Iter[T] < Iterable[T] {
         let win = [*take(n)]
         while #win == n {
             yield win
+            break if not let Some(x) = __next__()
             win.pop(0)
-            if let Some(x) = __next__() {
-                win.push(x)
-            }
+            win.push(x)
         }
     }
 

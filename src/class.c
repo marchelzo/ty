@@ -543,7 +543,7 @@ completions(
         Ty *ty,
         int class,
         char const *prefix,
-        expression_vector *out,
+        ExprVec *out,
         int_vector *depths,
         int depth
 )
@@ -601,7 +601,7 @@ class_completions(
         Ty *ty,
         int class,
         char const *prefix,
-        expression_vector *out,
+        ExprVec *out,
         int_vector *depths
 )
 {
@@ -674,7 +674,7 @@ FieldIdentifier(Expr const *field)
 }
 
 Expr *
-FindMethodImmediate(expression_vector const *ms, char const *name)
+FindMethodImmediate(ExprVec const *ms, char const *name)
 {
         for (int i = 0; i < vN(*ms); ++i) {
                 if (s_eq(name, v__(*ms, i)->name)) {
@@ -806,7 +806,7 @@ FindStaticSetter(Class const *c, char const *name)
 }
 
 Expr *
-FindFieldImmediate(expression_vector const *fs, char const *name)
+FindFieldImmediate(ExprVec const *fs, char const *name)
 {
         for (int i = 0; i < vN(*fs); ++i) {
                 Expr *field = v__(*fs, i);

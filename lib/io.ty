@@ -88,7 +88,7 @@ pub class Stream : Iter {
         stdio.fgetc(__f)
     }
 
-    write(s) {
+    write(s: Any) -> Int {
         match s {
             _ :: Blob | String => stdio.fwrite(__f, s),
             _                  => stdio.fwrite(__f, str(s))

@@ -502,7 +502,7 @@ class InteractiveLineReader {
                     => do continue
             }
 
-            if key :: String and let $func = keybinds[key] {
+            if (key :: String) and let $func = keybinds[key] {
                 func(*__tio.size())
             }
 

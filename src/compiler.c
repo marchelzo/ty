@@ -397,7 +397,7 @@ static void
 AddClassTraits(Ty *ty, ClassDefinition const *def);
 
 static void
-ResolveFieldTypes(Ty *ty, Scope *scope, expression_vector const *fields);
+ResolveFieldTypes(Ty *ty, Scope *scope, ExprVec const *fields);
 
 bool
 expedite_fun(Ty *ty, Expr *e, void *ctx);
@@ -2869,7 +2869,7 @@ apply_decorator_macros(Ty *ty, Scope *scope, Expr **ms, int n)
 }
 
 static void
-SymbolizeTypeParams(Ty *ty, Scope *scope, expression_vector const *params)
+SymbolizeTypeParams(Ty *ty, Scope *scope, ExprVec const *params)
 {
         for (usize i = 0; i < vN(*params); ++i) {
                 Expr *param = v__(*params, i);
@@ -2892,7 +2892,7 @@ SymbolizeTypeParams(Ty *ty, Scope *scope, expression_vector const *params)
 }
 
 static void
-symbolize_methods(Ty *ty, Scope *scope, int class, expression_vector *ms, int mtype)
+symbolize_methods(Ty *ty, Scope *scope, int class, ExprVec *ms, int mtype)
 {
         for (int i = 0; i < vN(*ms); ++i) {
                 Expr *meth = v__(*ms, i);
@@ -2904,7 +2904,7 @@ symbolize_methods(Ty *ty, Scope *scope, int class, expression_vector *ms, int mt
 }
 
 static void
-symbolize_fields(Ty *ty, Scope *subscope, expression_vector const *fields)
+symbolize_fields(Ty *ty, Scope *subscope, ExprVec const *fields)
 {
         for (int i = 0; i < vN(*fields); ++i) {
                 Expr *field = v__(*fields, i);
@@ -2970,7 +2970,7 @@ static void
 aggregate_overloads(
         Ty *ty,
         int class,
-        expression_vector *ms,
+        ExprVec *ms,
         add_to_class_fn *add,
         bool setters
 )
@@ -3160,8 +3160,8 @@ fixup_choice(Ty *ty, Expr *e, Scope *scope)
                 return;
         }
 
-        expression_vector choices = {0};
-        expression_vector to_expand = {0};
+        ExprVec choices = {0};
+        ExprVec to_expand = {0};
 
         avP(to_expand, e);
 
@@ -4862,11 +4862,6 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
         case EXPRESSION_MULTI_FUNCTION:
         case EXPRESSION_FUNCTION:
         {
-                for (int i = 0; i < vN(e->decorators); ++i) {
-                        Expr *dec = v__(e->decorators, i);
-                        symbolize_expression(ty, scope, dec);
-                }
-
                 TryStates tries = STATE.tries;
                 v00(STATE.tries);
 
@@ -4993,10 +4988,6 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                         e->_type = type_generator(ty, e);
                 }
 
-                if (e->fn_symbol != NULL) {
-                        e->fn_symbol->type = e->_type;
-                }
-
                 for (int i = 0; i < vN(e->decorators); ++i) {
                         Expr *dec = v__(e->decorators, i);
                         switch (dec->type) {
@@ -5011,6 +5002,12 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                         default:
                                 UNREACHABLE();
                         }
+                        symbolize_expression(ty, scope, dec);
+                        e->_type = dec->_type;
+                }
+
+                if (e->fn_symbol != NULL) {
+                        e->fn_symbol->type = e->_type;
                 }
 
 #if defined(TY_PROFILE_TYPES)
@@ -6949,6 +6946,14 @@ emit_function(Ty *ty, Expr const *e)
 
                 emit_load_instr(ty, s->identifier, INSTR_LOAD_LOCAL, s->i);
 
+                JumpPlaceholder good;
+                JumpPlaceholder _default;
+
+                if (v__(e->dflts, i) != NULL) {
+                        INSN(DUP);
+                        _default = (PLACEHOLDER_JUMP)(ty, INSTR_JUMP_IF_NIL);
+                }
+
                 if (i == e->rest) {
                         Expr *array_of = NewExpr(ty, EXPRESSION_SUBSCRIPT);
                         array_of->start = constraint->start;
@@ -6962,23 +6967,24 @@ emit_function(Ty *ty, Expr const *e)
 
                 if (e->overload != NULL) {
                         EC(constraint);
-                        PLACEHOLDER_JUMP(JUMP_IF, good);
-                        //INSN(POP);
+                        good = (PLACEHOLDER_JUMP)(ty, INSTR_JUMP_IF);
                         INSN(NONE);
                         INSN(RETURN);
-                        PATCH_JUMP(good);
                 } else {
                         EA(constraint);
-                        PLACEHOLDER_JUMP(JUMP_IF, good);
+                        good = (PLACEHOLDER_JUMP)(ty, INSTR_JUMP_IF);
                         WITH_STACK() {
                                 emit_load_instr(ty, s->identifier, INSTR_LOAD_LOCAL, s->i);
                                 INSN(BAD_CALL);
                                 emit_string(ty, fun_name);
                                 emit_string(ty, v__(e->param_symbols, i)->identifier);
                                 add_location(ty, v__(e->constraints, i), start, vN(STATE.code));
-                                INSN(POP);
                         }
-                        PATCH_JUMP(good);
+                }
+
+                PATCH_JUMP(good);
+                if (v__(e->dflts, i) != NULL) {
+                        PATCH_JUMP(_default);
                 }
         }
 
@@ -7127,8 +7133,7 @@ emit_function(Ty *ty, Expr const *e)
                 NOGC(info);
 
                 for (int i = 0; i < vN(e->decorators); ++i) {
-                        Expr *dec = v__(e->decorators, i);
-                        EE(dec);
+                        EE(v__(e->decorators, i));
                         INSN(DECORATE);
                         emit_symbol(info);
                         if (is_method(e)) {
@@ -7138,7 +7143,7 @@ emit_function(Ty *ty, Expr const *e)
                 }
         }
 
-        if (e->fn_symbol != NULL && e->class == NULL) {
+        if ((e->fn_symbol != NULL) && (e->class == NULL)) {
                 emit_tgt(ty, e->fn_symbol, e->scope->parent, false);
                 INSN(ASSIGN);
         }
@@ -7573,7 +7578,7 @@ static void
 EmitObjectDestructure(Ty *ty, int class_id, Expr const *pattern)
 {
         ClassDefinition *def = &class_get(ty, class_id)->def->class;
-        expression_vector const *fields = &def->fields;
+        ExprVec const *fields = &def->fields;
 
         if (pattern->type == EXPRESSION_TUPLE) {
                 for (int i = 0; i < vN(pattern->es); ++i) {
@@ -7991,7 +7996,7 @@ emit_case(Ty *ty, Expr const *pattern, Expr const *cond, Stmt const *s, bool wan
         JumpGroup fails_save = STATE.match_fails;
         InitJumpGroup(&STATE.match_fails);
 
-        expression_vector assignments = STATE.match_assignments;
+        ExprVec assignments = STATE.match_assignments;
         v00(STATE.match_assignments);
 
         if (pattern->has_resources) {
@@ -8063,7 +8068,7 @@ emit_expression_case(Ty *ty, Expr const *pattern, Expr const *e)
         JumpGroup fails_save = STATE.match_fails;
         InitJumpGroup(&STATE.match_fails);
 
-        expression_vector assignments = STATE.match_assignments;
+        ExprVec assignments = STATE.match_assignments;
         v00(STATE.match_assignments);
 
         if (pattern->has_resources) {
@@ -8287,7 +8292,7 @@ emit_if_not(Ty *ty, Stmt const *s, bool want_result)
         JumpGroup fails_save = STATE.match_fails;
         InitJumpGroup(&STATE.match_fails);
 
-        expression_vector assignments = STATE.match_assignments;
+        ExprVec assignments = STATE.match_assignments;
         v00(STATE.match_assignments);
 
         StackState stack = STATE.stack;
@@ -8398,7 +8403,7 @@ emit_if(Ty *ty, Stmt const *s, bool want_result)
         JumpGroup fails_save = STATE.match_fails;
         InitJumpGroup(&STATE.match_fails);
 
-        expression_vector assignments = STATE.match_assignments;
+        ExprVec assignments = STATE.match_assignments;
         v00(STATE.match_assignments);
 
         bool has_resources = false;
@@ -9288,11 +9293,11 @@ EmitMethodCall(
         Expr const *object,
         Expr const *method,
         bool dyn,
-        expression_vector const *args,
-        expression_vector const *conds,
+        ExprVec const *args,
+        ExprVec const *conds,
         StringVector      const *kws,
-        expression_vector const *kwargs,
-        expression_vector const *kwconds,
+        ExprVec const *kwargs,
+        ExprVec const *kwconds,
         bool strict
 )
 {
@@ -10731,7 +10736,7 @@ RedpillFun(Ty *ty, Scope *scope, Expr *f, Type *self0)
 }
 
 static void
-RedpillMethods(Ty *ty, Scope *scope, Type *t0, expression_vector const *ms)
+RedpillMethods(Ty *ty, Scope *scope, Type *t0, ExprVec const *ms)
 {
         for (int i = 0; i < vN(*ms); ++i) {
                 Expr *meth = v__(*ms, i);
@@ -10749,6 +10754,15 @@ InjectRedpill(Ty *ty, Stmt *s)
         DefinePending(ty);
 
         void *ctx = PushContext(ty, s);
+
+        if (s->mod != NULL && s->start.s != NULL && ScopeIsTop(scope)) {
+                dont_printf(
+                        "[REDPILL] %18s:%4d  |  %s\n",
+                        s->mod->path,
+                        s->start.line + 1,
+                        show_expr((Expr *)s)
+                );
+        }
 
         switch (s->type) {
         case STATEMENT_MULTI:
@@ -11222,7 +11236,7 @@ HaveMulti(Stmt **stmts, int i)
 static Stmt **
 expand_prog(Ty *ty, Stmt **p)
 {
-        statement_vector expanded = {0};
+        StmtVec expanded = {0};
 
         for (usize i = 0; p[i] != NULL; ++i) {
                 if (HaveMulti(p, i)) {
@@ -14509,7 +14523,7 @@ cexpr(Ty *ty, Value *v)
         case TyWith:
         {
                 Value *lets = &v->items[0];
-                statement_vector defs = {0};
+                StmtVec defs = {0};
 
                 for (int i = 0; i < lets->array->count; ++i) {
                         avP(defs, cstmt(ty, &lets->array->items[i]));
@@ -14991,8 +15005,7 @@ bool
 tyeval(Ty *ty, Expr *e, Value *ret)
 {
         if (TY_CATCH_ERROR()) {
-                TY_CATCH();
-                *ret = NONE;
+                *ret = TY_CATCH();
                 return false;
         }
 
@@ -15158,7 +15171,7 @@ AddClassFields(
         Ty *ty,
         Class *c,
         Scope *scope,
-        expression_vector const *fields,
+        ExprVec const *fields,
         add_field_to_class_fn *add,
         u32 extra_flags
 )
@@ -15211,7 +15224,7 @@ AddClassTraits(Ty *ty, ClassDefinition const *def)
 }
 
 static void
-ResolveFieldTypes(Ty *ty, Scope *scope, expression_vector const *fields)
+ResolveFieldTypes(Ty *ty, Scope *scope, ExprVec const *fields)
 {
         for (int i = 0; i < vN(*fields); ++i) {
                 Expr *f = FieldIdentifier(v__(*fields, i));
@@ -15558,7 +15571,7 @@ define_class(Ty *ty, Stmt *s)
                 m->fn_symbol->class = sym->class;
         }
 
-        AddClassFields(ty, class, cd->scope, &cd->fields,   class_add_field,   0);
+        AddClassFields(ty, class, cd->scope,   &cd->fields,   class_add_field,   0);
         AddClassFields(ty, class, cd->s_scope, &cd->s_fields, class_add_s_field, SYM_STATIC);
 
         RestoreContext(ty, ctx);
@@ -15569,6 +15582,7 @@ DeclareSymbols(Ty *ty, Stmt *stmt)
 {
         Scope *scope = GetNamespace(ty, stmt->ns);
         Expr *expr;
+        bool is_def;
 
         if (stmt->mod != NULL && stmt->start.s != NULL) {
                 dont_printf(
@@ -15585,14 +15599,13 @@ DeclareSymbols(Ty *ty, Stmt *stmt)
         case STATEMENT_FUNCTION_DEFINITION:
         case STATEMENT_OPERATOR_DEFINITION:
         case STATEMENT_PATTERN_DEFINITION:
+                is_def = HasBody(stmt->value)
+                      && (stmt->target->module == NULL);
                 symbolize_lvalue(
                         ty,
                         GetNamespace(ty, stmt->ns),
                         stmt->target,
-                        (
-                                (LV_DECL  * (HasBody(stmt->value) && (stmt->target->module == NULL)))
-                              | (LV_PUB   * stmt->pub)
-                        )
+                        (LV_DECL * is_def) | (LV_PUB * stmt->pub)
                 );
                 stmt->target->symbol->flags &= ~SYM_TRANSIENT;
                 stmt->target->symbol->doc = stmt->doc;
@@ -15604,21 +15617,29 @@ DeclareSymbols(Ty *ty, Stmt *stmt)
                 case EXPRESSION_INTEGER:
                 case EXPRESSION_STRING:
                 case EXPRESSION_REAL:
-                FullResolve:
-                        symbolize_statement(ty, scope, stmt);
-                        break;
+                case EXPRESSION_OPERATOR:
+                case EXPRESSION_NIL:
+                        goto TryFullResolve;
 
                 case EXPRESSION_IDENTIFIER:
-                        if ((expr->symbol = TryResolveIdentifier(ty, expr)) != NULL) {
-                                goto FullResolve;
+                        if ((expr->symbol = TryResolveIdentifier(ty, expr)) == NULL) {
+                                goto PartialResolve;
                         }
-                        // vvvvvvv
-
                 default:
-                        if (stmt->cnst) {
-                                goto FullResolve;
+                        if (!stmt->cnst) {
+                                goto PartialResolve;
                         }
-                        symbolize_decl(ty, scope, stmt->target, stmt->pub);
+                TryFullResolve:
+                        if (
+                                (stmt->target->type != EXPRESSION_IDENTIFIER)
+                             || TryResolveExpr(ty, scope, stmt->target->constraint)
+                        ) {
+                                symbolize_statement(ty, scope, stmt);
+                        } else {
+                PartialResolve:
+                                symbolize_decl(ty, scope, stmt->target, stmt->pub);
+                        }
+                        break;
                 }
                 if (stmt->target->type == EXPRESSION_IDENTIFIER) {
                         stmt->target->symbol->doc = stmt->doc;

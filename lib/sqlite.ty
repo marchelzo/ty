@@ -2,9 +2,9 @@ import sqlite3c (..)
 
 fn sqlite3c::open(path: String, flags: ?Int) -> _;
 
-tag SQLiteError {
-    str() -> String {
-        errorMessage(self)
+class SQLiteError < RuntimeError {
+    init(code: Int) {
+        super("{code}")
     }
 }
 

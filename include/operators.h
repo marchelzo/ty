@@ -516,12 +516,12 @@ Type *
 op_type(int op);
 
 int
-op_defs_for(int op, int c, bool left, expression_vector *defs);
+op_defs_for(int op, int c, bool left, ExprVec *defs);
 
 int
-op_defs_for_l(int op, int c, expression_vector *defs);
+op_defs_for_l(int op, int c, ExprVec *defs);
 
 int
-op_defs_for_r(int op, int c, expression_vector *defs);
+op_defs_for_r(int op, int c, ExprVec *defs);
 
 #endif

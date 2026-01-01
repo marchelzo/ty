@@ -1,6 +1,6 @@
 import os
 import chalk (chalk)
-import readln (readln)
+import readln
 import tdb
 import term
 import time (utime)
@@ -71,7 +71,7 @@ let groups = %{
     'pink': 'pp id_macro fun_macro type_macro $$[ $$] $$ __defined__'
 }
 
-let colors = [ %{ t: c for t in g.words() } for c, g in groups ].sum()
+let colors = [%{t: c for t in g.words()} for c, g in groups].sum() ?? %{}
 
 @memoized
 fn color-and-break(module: String) -> Array[(Int, String)] {
@@ -151,7 +151,7 @@ fn end-of-expr() (
 
 let stop-cond = nil
 let step = nil
-let current-line = -1
+let current-line: Int = -1
 let current-mode = Source
 let current-range = 0..1
 let expr-span = nil
@@ -173,7 +173,7 @@ let keybinds = %{
     },
 }
 
-let readln = readln@(_, keybinds=keybinds, erase=false, **)
+let readln = readln::readln@(_, keybinds=keybinds, erase=false, **)
 
 tdb.hook = fn hook() {
     state = tdb.state()
@@ -186,7 +186,7 @@ tdb.hook = fn hook() {
         return
     }
 
-    if stop-cond != nil && !stop-cond({*state, start, end}) {
+   if stop-cond != nil && !stop-cond({*state, start, end}) {
         step()
         return
     }
@@ -327,12 +327,8 @@ tdb.hook = fn hook() {
 }
 
 fn print-source(module: String, range: Range, state: _) {
-    warn!(range)
     let lines = color-and-break(module)
-    error!(range)
-    error!("#lines = {#lines}")
     let range = range.clamp(0, #lines)
-    critical!(range)
 
     let buf = Blob()
     let put = fn (x) {
@@ -343,7 +339,7 @@ fn print-source(module: String, range: Range, state: _) {
     print("\x1b[2J\x1b[H", :flush)
     put(chalk"[yellow]File:[/] [blue]{state.file}[/]")
 
-    let ndigit = int(log10(range.high())) + 1
+    let ndigit = int(log10(range.high)) + 1
 
     for (i, chalk::Text@(_, chalk) ~> source-line) in lines[range] {
         let highlight = text -> chalk"[bright yellow bold]{text}[/]"

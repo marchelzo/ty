@@ -8837,8 +8837,7 @@ BUILTIN_FUNCTION(tdb_eval)
         *TDB->host = save;
 // =====================================================================
 
-        char const *msg = TyError(ty);
-        Value error = Err(ty, vSsz(msg));
+        Value error = Err(ty, v);
 
         ReleaseArena(old);
 

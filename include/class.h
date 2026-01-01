@@ -230,7 +230,7 @@ class_completions(
         Ty *ty,
         int class,
         char const *prefix,
-        expression_vector *out,
+        ExprVec *out,
         int_vector *depths
 );
 
@@ -274,13 +274,13 @@ Expr *
 FindStaticField(Class const *c, char const *name);
 
 Expr *
-FindMethodImmediate(expression_vector const *ms, char const *name);
+FindMethodImmediate(ExprVec const *ms, char const *name);
 
 Expr *
 FindField(Class const *c, char const *name);
 
 Expr *
-FindFieldImmediate(expression_vector const *fs, char const *name);
+FindFieldImmediate(ExprVec const *fs, char const *name);
 
 inline static Expr *
 ClassFindInstMember(Class const *c, char const *name)

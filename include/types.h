@@ -357,7 +357,7 @@ Type *
 type_instance_of(Ty *ty, Type *t0, int class);
 
 Type *
-type_list_from(Ty *ty, expression_vector const *es);
+type_list_from(Ty *ty, ExprVec const *es);
 
 Type *
 type_list_item(Ty *ty, Type const *t0, int i);
