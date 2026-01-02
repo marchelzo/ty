@@ -250,22 +250,35 @@ fn nexttype(array-to-ptr? = true, has-name?: ?Bool = nil) {
     return t, parts(-1).or-else(nil)
 }
 
-fn nextproto() {
-        // (
-        next()
+fn nextproto() -> (Array[AST], Bool) {
+        let params = []
+        let variadic = false
 
-        let ps = []
-        while peek().type != ')' {
-            ps.push(nexttype())
-            while peek().type == ',' || peek().type == 'comment' {
-                break if next().type == ','
+        next!('(')
+
+        while match peek().type {
+            ')' => { break },
+
+            '...' => {
+                variadic = true
+                next()
+                break
+            },
+
+            'comment' => { next() },
+
+            _ => {
+                params.push(nexttype())
+                if peek().type == ',' {
+                    next()
+                }
             }
+
         }
 
-        // )
-        next()
+        next!(')')
 
-        return ps
+        return (params, variadic)
 }
 
 use LexState = {
@@ -282,22 +295,34 @@ fn cfun() {
     if public { next() }
 
     let (lib, prefix) = match (peek().type, peek(1)) {
-        ('fn', _) => (ty.Nil, ''),
+        ('fn', _)               => (ty.Nil, ''),
         ('id', {type: 'fn', *}) => (expr(99), ''),
-        ('id', {str, *}) => (expr(99), next().str),
-        _ => (expr(99), '')
+        ('id', {str, *})        => (expr(99), next().str),
+        _                       => (expr(99), '')
     }
 
-    // function
     next!('fn')
 
-    fn mkfdef(name, rt: AST, ps: Array[AST], proto-string: ?String, doc-string: ?String) {
+    fn mkfdef(
+        name,
+        rt: AST,
+        ps: Array[AST],
+        variadic: Bool = false,
+        proto-string: ?String,
+        doc-string: ?String
+    ) {
         let args = [
             ty.Arg(arg: lib),
             ty.Arg(arg: ty.String(prefix + name)),
             ty.Arg(arg: rt),
             *(ty.Arg(arg: p) for (p: AST) in ps)
         ]
+        let wrap = if variadic {
+            args.insert(2, ty.Arg(arg: ty.Value(#ps)))
+            wrap-var
+        } else {
+            wrap
+        }
         ty.Let(
             ty.Id(name: name, constraint: ty.Any),
             ty.Call(
@@ -316,14 +341,14 @@ fn cfun() {
     if peek().type == 'id' {
         let name = next().id
 
-        let ps = nextproto()
+        let (ps, var?) = nextproto()
 
         // ->
         next!('->')
 
         let rt: AST = expr(0)
 
-        return mkfdef(name, rt, ps)
+        return mkfdef(name, rt, ps, var?)
     } else {
         // {
         next!('{')
@@ -347,13 +372,22 @@ fn cfun() {
             let name = next().id
 
             let i = peek().start.byte
-            let ps = nextproto()
+            let (ps, var?) = nextproto()
             let j = peek(-1).end.byte
             let proto-string = source.bsplice(i, j).strip().comb(/^\(|\)$/)
 
             if peek().type == ';' { next() }
 
-            funs.push(mkfdef(name, rt, ps, "({proto-string}) -> {rt-string.strip()}", doc))
+            funs.push(
+                mkfdef(
+                    name,
+                    rt,
+                    ps,
+                    var?,
+                    "({proto-string}) -> {rt-string.strip()}",
+                    doc
+                )
+            )
         }
 
         // }
