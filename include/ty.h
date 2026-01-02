@@ -327,6 +327,7 @@ enum {
         TY_F_TDB            = (1 << 2),
         TY_F_IN_EVAL        = (1 << 3),
         TY_F_IGNORING_TYPES = (1 << 4),
+        TY_F_FOREIGN        = (1 << 5),
 };
 
 #define TY_IS(x)    (ty->flags & TY_F_ ## x)
@@ -656,7 +657,10 @@ typedef struct ty {
         isize memory_limit;
 
         AllocList allocs;
-        ThreadGroup *my_group;
+        ThreadGroup *group;
+        TyThreadState *state;
+        TySpinLock *lock;
+        bool locked;
 
         CoThreadVector cothreads;
 
@@ -759,8 +763,6 @@ typedef struct {
 
 #define MemoryUsed  (ty->memory_used)
 #define MemoryLimit (ty->memory_limit)
-
-#define MyGroup (ty->my_group)
 
 #define TY_IS_READY       (xD.ready)
 #define TY_IS_INITIALIZED (xD.initialized)

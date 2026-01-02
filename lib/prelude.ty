@@ -3278,12 +3278,14 @@ macro dbg(*args) {
     }
 
     let results = ty.gensym()
+    let decl    = ty.Id(name: results, constraint: $$[ Array[_] $$])
+
 
     let pp? = ty.IfDef(name: 'Printer', module: 'pretty')
     let pp  = $$[ $$pp?.map(\__().print(_)).or-else($${::show}) $$]
 
     ty.Block([
-        $$[ let $$results: Array[_] = [] $$],
+        $$[ let $$decl = [] $$],
         *[
             $$[ $$results.push(($$e, $$(ty.String(parse.show(e))))) $$]
             for e, i in args

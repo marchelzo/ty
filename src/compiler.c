@@ -6015,6 +6015,7 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
                         for (int i = 0; i < vN(s->value->es); ++i) {
                                 symbolize_expression(ty, scope, v__(s->value->es, i));
                         }
+                        s->value->_type = type_list_from(ty, &s->value->es);
                 } else {
                         symbolize_expression(ty, scope, s->value);
                 }
@@ -11016,6 +11017,53 @@ opt(Ty *ty, Stmt *stmt)
         );
 }
 
+static Expr *
+clone_expr(Expr *e, Scope *scope, void *ctx)
+{
+        Ty *ty = (Ty *)ctx;
+        e = aclone(e);
+        e->arena = GetArenaAlloc(ty);
+        return e;
+}
+
+static Expr *
+clone_lvalue(Expr *e, bool _, Scope *scope, void *ctx)
+{
+        Ty *ty = (Ty *)ctx;
+        e = aclone(e);
+        e->arena = GetArenaAlloc(ty);
+        return e;
+}
+
+static Stmt *
+clone_stmt(Stmt *s, Scope *scope, void *ctx)
+{
+        Ty *ty = (Ty *)ctx;
+        s = aclone(s);
+        s->arena = GetArenaAlloc(ty);
+        return s;
+}
+
+static Stmt *
+xclone(Ty *ty, Expr *expr)
+{
+        VisitorSet visitor = visit_identitiy(ty);
+
+        visitor.e_post = clone_expr;
+        visitor.p_post = clone_expr;
+        visitor.t_post = clone_expr;
+        visitor.l_post = clone_lvalue;
+        visitor.s_post = clone_stmt;
+        visitor.user = ty;
+
+        return visit_expression(
+                ty,
+                expr,
+                NULL,
+                &visitor
+        );
+}
+
 static void
 tag_start_token(Expr const *e, i32 tag)
 {
@@ -12392,7 +12440,10 @@ tyexpr(Ty *ty, Expr const *e, u32 flags)
                      ? STATE.global
                      : STATE.macro_scope;
 
-        if (!(flags & TX_NO_RESOLVE)) {
+        if (
+                HAVE_COMPILER_FLAG(RESOLVE)
+             && !(flags & TX_NO_RESOLVE)
+        ) {
                 fixup_access(ty, scope, (Expr *)e, false);
                 expedite_fun(ty, (Expr *)e, scope);
         }
@@ -15863,6 +15914,10 @@ Value
 compiler_render_template(Ty *ty, Expr *e)
 {
         Value v;
+
+        if (ty->arena.gc) {
+                e = xclone(ty, e);
+        }
 
         if (TY_CATCH_ERROR()) {
                 TY_CATCH();

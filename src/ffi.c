@@ -196,11 +196,11 @@ xload(Ty *ty, ffi_type *t, void const *p)
 
         switch (t->type) {
         case FFI_TYPE_INT:    return INTEGER(*(int _Atomic const *)p);
-        case FFI_TYPE_SINT8:  return INTEGER(*(i8 _Atomic const *)p);
+        case FFI_TYPE_SINT8:  return INTEGER(*(i8  _Atomic const *)p);
         case FFI_TYPE_SINT16: return INTEGER(*(i16 _Atomic const *)p);
         case FFI_TYPE_SINT32: return INTEGER(*(i32 _Atomic const *)p);
         case FFI_TYPE_SINT64: return INTEGER(*(i64 _Atomic const *)p);
-        case FFI_TYPE_UINT8:  return INTEGER(*(u8 _Atomic const *)p);
+        case FFI_TYPE_UINT8:  return INTEGER(*(u8  _Atomic const *)p);
         case FFI_TYPE_UINT16: return INTEGER(*(u16 _Atomic const *)p);
         case FFI_TYPE_UINT32: return INTEGER(*(u32 _Atomic const *)p);
         case FFI_TYPE_UINT64: return INTEGER(*(u64 _Atomic const *)p);
@@ -222,11 +222,11 @@ load(Ty *ty, ffi_type *t, void const *p)
 
         switch (t->type) {
         case FFI_TYPE_INT:    return INTEGER(*(int const *)p);
-        case FFI_TYPE_SINT8:  return INTEGER(*(i8 const *)p);
+        case FFI_TYPE_SINT8:  return INTEGER(*(i8  const *)p);
         case FFI_TYPE_SINT16: return INTEGER(*(i16 const *)p);
         case FFI_TYPE_SINT32: return INTEGER(*(i32 const *)p);
         case FFI_TYPE_SINT64: return INTEGER(*(i64 const *)p);
-        case FFI_TYPE_UINT8:  return INTEGER(*(u8 const *)p);
+        case FFI_TYPE_UINT8:  return INTEGER(*(u8  const *)p);
         case FFI_TYPE_UINT16: return INTEGER(*(u16 const *)p);
         case FFI_TYPE_UINT32: return INTEGER(*(u32 const *)p);
         case FFI_TYPE_UINT64: return INTEGER(*(u64 const *)p);
@@ -266,9 +266,10 @@ closure_func(ffi_cif *cif, void *ret, void **args, void *data)
 {
         static int depth = 0;
 
+        Ty *ty = GetMyTy();
+
         Value *ctx = data;
         Value *f = &ctx->items[0];
-        Ty *ty = ctx->items[1].ptr;
 
         depth += 1;
 
@@ -279,7 +280,29 @@ closure_func(ffi_cif *cif, void *ret, void **args, void *data)
                 vmP(&arg);
         }
 
-        Value rv = vmC(f, cif->nargs);
+        Value val;
+
+        if (TY_IS(FOREIGN)) {
+                if (TY_CATCH_ERROR()) {
+                        char *trace = FormatTrace(ty, NULL, NULL);
+                        Value error = TY_CATCH();
+                        fprintf(
+                                stderr,
+                                "%sERROR:%s uncaught exception in FFI callback "
+                                "on foreign thread:\n%s\n%s",
+                                TERM(91;1),
+                                TERM(0),
+                                VSC(&error),
+                                trace
+                        );
+                        val = error;
+                } else {
+                        val = vmC(f, cif->nargs);
+                        TY_CATCH_END();
+                }
+        } else {
+                val = vmC(f, cif->nargs);
+        }
 
         switch (cif->rtype->type) {
         case FFI_TYPE_VOID:
@@ -289,17 +312,17 @@ closure_func(ffi_cif *cif, void *ret, void **args, void *data)
         case FFI_TYPE_SINT8:
         case FFI_TYPE_SINT16:
         case FFI_TYPE_SINT32:
-                store(ty, &ffi_type_sint64, ret, &rv);
+                store(ty, &ffi_type_sint64, ret, &val);
                 break;
 
         case FFI_TYPE_UINT8:
         case FFI_TYPE_UINT16:
         case FFI_TYPE_UINT32:
-                store(ty, &ffi_type_uint64, ret, &rv);
+                store(ty, &ffi_type_uint64, ret, &val);
                 break;
 
         default:
-                store(ty, cif->rtype, ret, &rv);
+                store(ty, cif->rtype, ret, &val);
         }
 
         depth -= 1;

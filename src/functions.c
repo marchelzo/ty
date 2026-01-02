@@ -4082,15 +4082,15 @@ BUILTIN_FUNCTION(thread_group)
         ASSERT_ARGC("thread.group()", 0);
 
         GC_STOP();
-        TySpinLockLock(&MyGroup->Lock);
+        TySpinLockLock(&ty->group->Lock);
 
-        Array *threads = vAn(vN(MyGroup->ThreadList));
+        Array *threads = vAn(vN(ty->group->ThreadList));
         vfor(
-                MyGroup->ThreadList,
+                ty->group->ThreadList,
                 vPx(*threads, PTR(it))
         );
 
-        TySpinLockUnlock(&MyGroup->Lock);
+        TySpinLockUnlock(&ty->group->Lock);
         GC_RESUME();
 
         return ARRAY(threads);
@@ -8146,7 +8146,7 @@ BUILTIN_FUNCTION(ty_parse)
               | TYC_FORGIVING
               | TYC_NO_TYPES
               | (TYC_SHALLOW * !HAVE_FLAG("deep"))
-              | (TYC_RESOLVE * HAVE_FLAG("resolve"))
+              | (TYC_RESOLVE * resolve)
               | (TYC_TOKENS  * (tokens_key != NULL))
         );
 
