@@ -128,8 +128,6 @@ GetMember(Ty *ty, Value v, int i, bool try_missing, bool exec);
 Value
 CompleteCurrentFunction(Ty *ty);
 
-extern _Thread_local TySpinLock *MyLock;
-
 void
 TakeLock(Ty *ty);
 
@@ -180,6 +178,9 @@ TyActiveGenerator(Ty *ty);
 
 void
 TyPostFork(Ty *ty);
+
+void
+TySyncThreadState(Ty *ty);
 
 noreturn void
 ZeroDividePanic(Ty *ty);

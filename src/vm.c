@@ -184,7 +184,7 @@ static ValueVector Globals;
 #define pushtarget(t, g) ((pushtarget)(ty, (t), (g)))
 
 #define GC_IS_WAITING \
-        atomic_load_explicit(&MyGroup->WantGC, memory_order_relaxed)
+        atomic_load_explicit(&ty->group->WantGC, memory_order_relaxed)
 
 #ifdef TY_PROFILER
 bool UseWallTime = false;
@@ -300,11 +300,7 @@ static ThreadGroup MainGroup;
 static _Thread_local Ty *co_ty;
 
 static _Thread_local Ty *MyTy;
-_Thread_local TySpinLock *MyLock;
-static _Thread_local TyThreadState *MyState;
-static _Thread_local bool HaveLock = true;
 static _Thread_local u64 MyId;
-static _Thread_local bool GCInProgress;
 
 // ==========/ Signal Handling /========================================
 ValueVector                  SignalGCRoots;
@@ -355,9 +351,9 @@ get_my_ty(void)
 }
 
 static void
-InitializeTy(Ty *ty)
+InitializeTy(Ty *ty, ThreadGroup *group)
 {
-        memset(ty, 0, sizeof *ty);
+        m0(*ty);
 
         ty->ty = &xD;
 
@@ -388,20 +384,27 @@ InitializeTy(Ty *ty)
         }
 
         pcre2_jit_stack_assign(ty->pcre2.ctx, NULL, ty->pcre2.stack);
+
+        ty->lock = mrealloc(NULL, sizeof *ty->lock);
+        TySpinLockInit(ty->lock);
+        TySpinLockLock(ty->lock);
+        ty->locked = true;
+        ty->state = alloc0(sizeof *ty->state);
+        ty->group = group;
 }
 
 inline static void
 UnlockThreads(Ty *ty, int *threads, int n)
 {
         for (int i = 0; i < n; ++i) {
-                TySpinLockUnlock(MyGroup->ThreadLocks.items[threads[i]]);
+                TySpinLockUnlock(ty->group->ThreadLocks.items[threads[i]]);
         }
 }
 
 inline static void
 SetState(Ty *ty, bool blocking)
 {
-        *MyState = blocking;
+        *ty->state = blocking;
 }
 
 inline static bool
@@ -429,35 +432,24 @@ Forget(Ty *ty, Value *v, AllocList *allocs)
 }
 
 static ThreadGroup *
-InitThreadGroup(Ty *ty, ThreadGroup *g)
+InitThreadGroup(ThreadGroup *group)
 {
-        v00(g->ThreadList);
-        v00(g->TyList);
-        v00(g->ThreadStates);
-        v00(g->ThreadLocks);
-        v00(g->DeadAllocs);
-        TySpinLockInit(&g->Lock);
-        TySpinLockInit(&g->GCLock);
-        TySpinLockInit(&g->DLock);
-        g->WantGC = false;
-        g->DeadUsed = 0;
-
-        return g;
+        m0(*group);
+        TySpinLockInit(&group->Lock);
+        TySpinLockInit(&group->GCLock);
+        TySpinLockInit(&group->DLock);
+        return group;
 }
 
 inline static ThreadGroup *
-NewThreadGroup(Ty *ty)
+NewThreadGroup(void)
 {
-        return InitThreadGroup(ty, mA(sizeof (ThreadGroup)));
+        return InitThreadGroup(mrealloc(NULL, (sizeof (ThreadGroup))));
 }
 
 static void
 WaitGC(Ty *ty)
 {
-        if (GCInProgress) {
-                return;
-        }
-
         GCLOG("Waiting for GC on thread %llu", TID);
 
         lGv(false);
@@ -466,8 +458,8 @@ WaitGC(Ty *ty)
         u64 start = TyThreadTime();
 #endif
 
-        while (!*MyState) {
-                if (!MyGroup->WantGC && TryFlipTo(MyState, true)) {
+        while (!*ty->state) {
+                if (!ty->group->WantGC && TryFlipTo(ty->state, true)) {
                         lTk();
                         GCLOG("Finished waiting: %llu", TID);
 #ifdef TY_PROFILER
@@ -480,18 +472,18 @@ WaitGC(Ty *ty)
         lTk();
 
         GCLOG("Waiting to mark: %llu", TID);
-        TyBarrierWait(&MyGroup->GCBarrierStart);
+        TyBarrierWait(&ty->group->GCBarrierStart);
         GCLOG("Marking: %llu", TID);
         MarkStorage(ty);
 
         GCLOG("Waiting to sweep: %llu", TID);
-        TyBarrierWait(&MyGroup->GCBarrierMark);
+        TyBarrierWait(&ty->group->GCBarrierMark);
         GCLOG("Sweeping: %llu", TID);
         GCSweepTy(ty);
 
         GCLOG("Waiting to continue execution: %llu", TID);
-        TyBarrierWait(&MyGroup->GCBarrierSweep);
-        TyBarrierWait(&MyGroup->GCBarrierDone);
+        TyBarrierWait(&ty->group->GCBarrierSweep);
+        TyBarrierWait(&ty->group->GCBarrierDone);
         GCLOG("Continuing execution: %llu", TID);
 
 #ifdef TY_PROFILER
@@ -504,9 +496,9 @@ WaitGC(Ty *ty)
 void
 DoGC(Ty *ty)
 {
-        GCLOG("Trying to do GC. Used = %zu, DeadUsed = %zu", MemoryUsed, MyGroup->DeadUsed);
+        GCLOG("Trying to do GC. Used = %zu, DeadUsed = %zu", MemoryUsed, ty->group->DeadUsed);
 
-        if (!TySpinLockTryLock(&MyGroup->GCLock)) {
+        if (!TySpinLockTryLock(&ty->group->GCLock)) {
                 GCLOG("Couldn't take GC lock: calling WaitGC() on thread %llu", TID);
                 WaitGC(ty);
                 return;
@@ -516,11 +508,9 @@ DoGC(Ty *ty)
         u64 start = TyThreadTime();
 #endif
 
-        GCInProgress = true;
+        GCLOG("Doing GC: ty->group = %p, (%zu threads)", ty->group, ty->group->ThreadList.count);
 
-        GCLOG("Doing GC: MyGroup = %p, (%zu threads)", MyGroup, MyGroup->ThreadList.count);
-
-        TySpinLockLock(&MyGroup->Lock);
+        TySpinLockLock(&ty->group->Lock);
 
         GCLOG("Took threads lock on thread %llu to do GC", TID);
         GCLOG(
@@ -532,56 +522,56 @@ DoGC(Ty *ty)
         );
         GCLOG("Storing true in WantGC on thread %llu", TID);
 
-        MyGroup->WantGC = true;
+        ty->group->WantGC = true;
 
         static int *blockedThreads;
         static int *runningThreads;
         static usize capacity;
 
-        if (MyGroup->ThreadList.count > capacity) {
-                blockedThreads = mrealloc(blockedThreads, vN(MyGroup->ThreadList) * sizeof *blockedThreads);
-                runningThreads = mrealloc(runningThreads, vN(MyGroup->ThreadList) * sizeof *runningThreads);
-                capacity = vN(MyGroup->ThreadList);
+        if (ty->group->ThreadList.count > capacity) {
+                blockedThreads = mrealloc(blockedThreads, vN(ty->group->ThreadList) * sizeof *blockedThreads);
+                runningThreads = mrealloc(runningThreads, vN(ty->group->ThreadList) * sizeof *runningThreads);
+                capacity = vN(ty->group->ThreadList);
         }
 
         int nBlocked = 0;
         int nRunning = 0;
 
-        for (int i = 0; i < vN(MyGroup->ThreadList); ++i) {
-                if (MyLock == v__(MyGroup->ThreadLocks, i)) {
+        for (int i = 0; i < vN(ty->group->ThreadList); ++i) {
+                if (ty->lock == v__(ty->group->ThreadLocks, i)) {
                         continue;
                 }
-                GCLOG("Trying to take lock for thread %llu: %p", (long long unsigned)MyGroup->ThreadList.items[i], (void *)MyGroup->ThreadLocks.items[i]);
-                TySpinLockLock(v__(MyGroup->ThreadLocks, i));
-                if (TryFlipTo(v__(MyGroup->ThreadStates, i), true)) {
-                        GCLOG("Thread %llu is running", MyGroup->TyList.items[i]->id);
+                GCLOG("Trying to take lock for thread %llu: %p", (long long unsigned)ty->group->ThreadList.items[i], (void *)ty->group->ThreadLocks.items[i]);
+                TySpinLockLock(v__(ty->group->ThreadLocks, i));
+                if (TryFlipTo(v__(ty->group->ThreadStates, i), true)) {
+                        GCLOG("Thread %llu is running", ty->group->TyList.items[i]->id);
                         runningThreads[nRunning++] = i;
                 } else {
-                        GCLOG("Thread %llu is blocked", MyGroup->TyList.items[i]->id);
+                        GCLOG("Thread %llu is blocked", ty->group->TyList.items[i]->id);
                         blockedThreads[nBlocked++] = i;
                 }
         }
 
         GCLOG("nBlocked = %d, nRunning = %d on thread %llu", nBlocked, nRunning, TID);
 
-        TyBarrierInit(&MyGroup->GCBarrierStart, nRunning + 1);
-        TyBarrierInit(&MyGroup->GCBarrierMark,  nRunning + 1);
-        TyBarrierInit(&MyGroup->GCBarrierSweep, nRunning + 1);
-        TyBarrierInit(&MyGroup->GCBarrierDone,  nRunning + 1);
+        TyBarrierInit(&ty->group->GCBarrierStart, nRunning + 1);
+        TyBarrierInit(&ty->group->GCBarrierMark,  nRunning + 1);
+        TyBarrierInit(&ty->group->GCBarrierSweep, nRunning + 1);
+        TyBarrierInit(&ty->group->GCBarrierDone,  nRunning + 1);
 
         UnlockThreads(ty, runningThreads, nRunning);
 
-        TyBarrierWait(&MyGroup->GCBarrierStart);
+        TyBarrierWait(&ty->group->GCBarrierStart);
 
         for (int i = 0; i < nBlocked; ++i) {
                 GCLOG("Marking thread %d storage from thread %llu", blockedThreads[i], TID);
-                MarkStorage(v__(MyGroup->TyList, blockedThreads[i]));
+                MarkStorage(v__(ty->group->TyList, blockedThreads[i]));
         }
 
         GCLOG("Marking own storage on thread %llu", TID);
         MarkStorage(ty);
 
-        if (MyGroup == &MainGroup) {
+        if (ty->group == &MainGroup) {
                 GCLOG("Marking %zu global roots on thread %llu", vN(Globals), TID);
                 RESET_TOTAL_REACHED();
                 for (int i = 0; i < vN(Globals); ++i) {
@@ -601,37 +591,35 @@ DoGC(Ty *ty)
                 }
         }
 
-        TyBarrierWait(&MyGroup->GCBarrierMark);
+        TyBarrierWait(&ty->group->GCBarrierMark);
 
         GCLOG("Storing false in WantGC on thread %llu", TID);
-        MyGroup->WantGC = false;
+        ty->group->WantGC = false;
 
         for (int i = 0; i < nBlocked; ++i) {
-                Ty *other = v__(MyGroup->TyList, blockedThreads[i]);
+                Ty *other = v__(ty->group->TyList, blockedThreads[i]);
                 GCLOG("Sweeping thread %llu storage from thread %llu", other->id, TID);
                 GCSweepTy(other);
         }
         GCLOG("Sweeping own storage on thread %llu", TID);
         GCSweepTy(ty);
         GCLOG("Sweeping objects from dead threads on thread %llu", TID);
-        TySpinLockLock(&MyGroup->DLock);
-        GCSweep(ty, &MyGroup->DeadAllocs, &MyGroup->DeadUsed);
-        TySpinLockUnlock(&MyGroup->DLock);
+        TySpinLockLock(&ty->group->DLock);
+        GCSweep(ty, &ty->group->DeadAllocs, &ty->group->DeadUsed);
+        TySpinLockUnlock(&ty->group->DLock);
 
-        TyBarrierWait(&MyGroup->GCBarrierSweep);
+        TyBarrierWait(&ty->group->GCBarrierSweep);
 
         UnlockThreads(ty, blockedThreads, nBlocked);
 
-        GCLOG("Unlocking ThreadsLock and GCLock. Used = %lld, DeadUsed = %lld", MemoryUsed, MyGroup->DeadUsed);
+        GCLOG("Unlocking ThreadsLock and GCLock. Used = %lld, DeadUsed = %lld", MemoryUsed, ty->group->DeadUsed);
 
-        TySpinLockUnlock(&MyGroup->Lock);
-        TySpinLockUnlock(&MyGroup->GCLock);
+        TySpinLockUnlock(&ty->group->Lock);
+        TySpinLockUnlock(&ty->group->GCLock);
 
         GCLOG("Unlocked ThreadsLock and GCLock on thread %llu", TID);
 
-        TyBarrierWait(&MyGroup->GCBarrierDone);
-
-        GCInProgress = false;
+        TyBarrierWait(&ty->group->GCBarrierDone);
 
 #ifdef TY_PROFILER
         LastThreadGCTime = TyThreadTime() - start;
@@ -1430,15 +1418,15 @@ void
 TakeLock(Ty *ty)
 {
         GCLOG("Taking MyLock%s", "");
-        TySpinLockLock(MyLock);
+        TySpinLockLock(ty->lock);
         GCLOG("Took MyLock");
-        HaveLock = true;
+        ty->locked = true;
 }
 
 bool
 MaybeTakeLock(Ty *ty)
 {
-        return HaveLock ? false : (TakeLock(ty), true);
+        return ty->locked ? false : (TakeLock(ty), true);
 }
 
 void
@@ -1446,14 +1434,14 @@ ReleaseLock(Ty *ty, bool blocked)
 {
         SetState(ty, blocked);
         GCLOG("Releasing MyLock: %d", (int)blocked);
-        TySpinLockUnlock(MyLock);
-        HaveLock = false;
+        TySpinLockUnlock(ty->lock);
+        ty->locked = false;
 }
 
 bool
 HoldingLock(Ty *ty)
 {
-        return HaveLock;
+        return ty->locked;
 }
 
 void
@@ -1470,7 +1458,7 @@ NewThread(Ty *ty, Thread *t, Value *call, Value *name, bool isolated)
                 .name = name,
                 .created = &created,
                 .t = t,
-                .group = isolated ? NewThreadGroup(ty) : MyGroup
+                .group = isolated ? NewThreadGroup() : ty->group
         };
 
         TyMutexInit(&t->mutex);
@@ -1492,22 +1480,15 @@ NewThread(Ty *ty, Thread *t, Value *call, Value *name, bool isolated)
 static void
 AddThread(Ty *ty, TyThread self)
 {
-        MyLock = mrealloc(NULL, sizeof *MyLock);
-        TySpinLockInit(MyLock);
-        TySpinLockLock(MyLock);
-
-        MyState = mrealloc(NULL, sizeof *MyState);
-        *MyState = false;
-
         GC_STOP();
         GCLOG("AddThread(): %llu: taking lock", TID);
-        TySpinLockLock(&MyGroup->Lock);
+        TySpinLockLock(&ty->group->Lock);
         GCLOG("AddThread(): %llu: took lock", TID);
-        vvP(MyGroup->TyList, ty);
-        vvP(MyGroup->ThreadList, self);
-        vvP(MyGroup->ThreadLocks, MyLock);
-        vvP(MyGroup->ThreadStates, MyState);
-        TySpinLockUnlock(&MyGroup->Lock);
+        xvP(ty->group->TyList, ty);
+        xvP(ty->group->ThreadList, self);
+        xvP(ty->group->ThreadLocks, ty->lock);
+        xvP(ty->group->ThreadStates, ty->state);
+        TySpinLockUnlock(&ty->group->Lock);
         GCLOG("AddThread(): %llu: finished", TID);
         GC_RESUME();
 }
@@ -1517,38 +1498,38 @@ CleanupThread(void *ctx)
 {
         Ty *ty = ctx;
 
-        GCLOG("Cleaning up thread: %zu bytes in use. DeadUsed = %zu", MemoryUsed, MyGroup->DeadUsed);
+        GCLOG("Cleaning up thread: %zu bytes in use. DeadUsed = %zu", MemoryUsed, ty->group->DeadUsed);
 
-        TySpinLockLock(&MyGroup->DLock);
-        if (MyGroup->DeadUsed + MemoryUsed > MemoryLimit) {
-                TySpinLockUnlock(&MyGroup->DLock);
+        TySpinLockLock(&ty->group->DLock);
+        if (ty->group->DeadUsed + MemoryUsed > MemoryLimit) {
+                TySpinLockUnlock(&ty->group->DLock);
                 DoGC(ty);
-                TySpinLockLock(&MyGroup->DLock);
+                TySpinLockLock(&ty->group->DLock);
         }
-        xvPv(MyGroup->DeadAllocs, ty->allocs);
-        MyGroup->DeadUsed += MemoryUsed;
+        xvPv(ty->group->DeadAllocs, ty->allocs);
+        ty->group->DeadUsed += MemoryUsed;
         v0(ty->allocs);
-        TySpinLockUnlock(&MyGroup->DLock);
+        TySpinLockUnlock(&ty->group->DLock);
 
         lGv(true);
 
-        TySpinLockLock(&MyGroup->Lock);
+        TySpinLockLock(&ty->group->Lock);
 
-        GCLOG("Got threads lock on thread: %llu -- ready to clean up. Group size = %zu", TID, vN(MyGroup->ThreadList));
+        GCLOG("Got threads lock on thread: %llu -- ready to clean up. Group size = %zu", TID, vN(ty->group->ThreadList));
 
-        for (int i = 0; i < vN(MyGroup->ThreadList); ++i) {
-                if (MyLock == v__(MyGroup->ThreadLocks, i)) {
-                        *v_(MyGroup->ThreadList,   i) = *vvX(MyGroup->ThreadList);
-                        *v_(MyGroup->TyList,       i) = *vvX(MyGroup->TyList);
-                        *v_(MyGroup->ThreadLocks,  i) = *vvX(MyGroup->ThreadLocks);
-                        *v_(MyGroup->ThreadStates, i) = *vvX(MyGroup->ThreadStates);
+        for (int i = 0; i < vN(ty->group->ThreadList); ++i) {
+                if (ty->lock == v__(ty->group->ThreadLocks, i)) {
+                        *v_(ty->group->ThreadList,   i) = *vvX(ty->group->ThreadList);
+                        *v_(ty->group->TyList,       i) = *vvX(ty->group->TyList);
+                        *v_(ty->group->ThreadLocks,  i) = *vvX(ty->group->ThreadLocks);
+                        *v_(ty->group->ThreadStates, i) = *vvX(ty->group->ThreadStates);
                         break;
                 }
         }
 
-        usize group_remaining = vN(MyGroup->ThreadList);
+        usize group_remaining = vN(ty->group->ThreadList);
 
-        TySpinLockUnlock(&MyGroup->Lock);
+        TySpinLockUnlock(&ty->group->Lock);
 
         for (int i = 0; i < vC(TRY_STACK); ++i) {
                 struct try *t = *v_(TRY_STACK, i);
@@ -1579,9 +1560,9 @@ CleanupThread(void *ctx)
                 xmF(v_(ty->scratch.arenas, i)->base);
         }
 
-        TySpinLockDestroy(MyLock);
-        xmF((void *)MyLock);
-        xmF((void *)MyState);
+        TySpinLockDestroy(ty->lock);
+        xmF((void *)ty->lock);
+        xmF((void *)ty->state);
         xvF(STACK);
         xvF(THREAD_LOCALS);
         xvF(RootSet);
@@ -1608,16 +1589,16 @@ CleanupThread(void *ctx)
         TyFunctionsCleanup();
 
         if (group_remaining == 0) {
-                GCLOG("Cleaning up group %p", (void*)MyGroup);
-                TySpinLockDestroy(&MyGroup->Lock);
-                TySpinLockDestroy(&MyGroup->GCLock);
-                TySpinLockDestroy(&MyGroup->DLock);
-                vvF(MyGroup->TyList);
-                vvF(MyGroup->ThreadList);
-                vvF(MyGroup->ThreadLocks);
-                vvF(MyGroup->ThreadStates);
-                xvF(MyGroup->DeadAllocs);
-                mF(MyGroup);
+                GCLOG("Cleaning up group %p", (void*)ty->group);
+                TySpinLockDestroy(&ty->group->Lock);
+                TySpinLockDestroy(&ty->group->GCLock);
+                TySpinLockDestroy(&ty->group->DLock);
+                xvF(ty->group->TyList);
+                xvF(ty->group->ThreadList);
+                xvF(ty->group->ThreadLocks);
+                xvF(ty->group->ThreadStates);
+                xvF(ty->group->DeadAllocs);
+                xmF(ty->group);
         }
 
         GCLOG("Finished cleaning up on thread: %llu -- releasing threads lock", TID);
@@ -1632,7 +1613,7 @@ vm_run_thread(void *p)
         Thread *t = ctx->t;
 
         Ty *ty = mrealloc(NULL, sizeof *ty);
-        InitializeTy(ty);
+        InitializeTy(ty, ctx->group);
 
         MyTy = ty;
         MyId = ty->id = t->i;
@@ -1645,7 +1626,7 @@ vm_run_thread(void *p)
                 push(call[++argc]);
         }
 
-        MyGroup = ctx->group;
+        ty->group = ctx->group;
 
         AddThread(ty, t->t);
 
@@ -1703,15 +1684,13 @@ static TyThreadReturnValue
 vm_run_tdb(void *ctx)
 {
         Ty *ty = mrealloc(NULL, sizeof *ty);
-        InitializeTy(ty);
+        InitializeTy(ty, TDB->host->group);
 
         TDB = ctx;
         Thread *t = TDB->thread.thread;
 
         MyTy = TDB->ty = ty;
         MyId = t->i;
-
-        MyGroup = TDB->host->my_group;
 
         AddThread(ty, t->t);
 
@@ -3451,7 +3430,6 @@ DoMutMod(Ty *ty)
 {
         uptr c, p = (uptr)poptarget();
         struct itable *o;
-        INT32_C(4);
         Value *vp, *vp2, val, x;
         void *v = vp = (void *)(p & ~PMASK3);
         unsigned char b;
@@ -8011,8 +7989,8 @@ cringe(int _)
         print_stack_trace();
 #endif
 
-        for (i32 i = 0; i < vN(MyGroup->TyList); ++i) {
-                Ty *_ty = v__(MyGroup->TyList, i);
+        for (i32 i = 0; i < vN(ty->group->TyList); ++i) {
+                Ty *_ty = v__(ty->group->TyList, i);
                 if (_ty != ty) {
                         xDcringe(_ty);
                         fprintf(
@@ -8073,8 +8051,10 @@ vm_init(Ty *ty, int ac, char **av)
         signal(SIGUSR2, FlipGC_EVERY_ALLOC);
 #endif
 
+        InitThreadGroup(&MainGroup);
+
         InitializeTY(ty);
-        InitializeTy(ty);
+        InitializeTy(ty, &MainGroup);
 
         TY_IS_READY = false;
 
@@ -8135,12 +8115,9 @@ vm_init(Ty *ty, int ac, char **av)
 
         GC_STOP();
 
-        InitThreadGroup(ty, MyGroup = &MainGroup);
-
         NewArenaNoGC(ty, 1ULL << 25);
 
         compiler_init(ty);
-
         add_builtins(ty, ac, av);
 
         AddThread(ty, TyThreadSelf());
@@ -9677,32 +9654,32 @@ bool
 TyReloadModule(Ty *ty, char const *module)
 {
         lGv(true);
-        TySpinLockLock(&MyGroup->GCLock);
+        TySpinLockLock(&ty->group->GCLock);
         lTk();
 
-        TySpinLockLock(&MyGroup->Lock);
+        TySpinLockLock(&ty->group->Lock);
 
-        MyGroup->WantGC = true;
+        ty->group->WantGC = true;
 
         static int *blockedThreads;
         static int *runningThreads;
         static usize capacity;
 
-        if (MyGroup->ThreadList.count > capacity) {
-                blockedThreads = mrealloc(blockedThreads, MyGroup->ThreadList.count * sizeof *blockedThreads);
-                runningThreads = mrealloc(runningThreads, MyGroup->ThreadList.count * sizeof *runningThreads);
-                capacity = MyGroup->ThreadList.count;
+        if (ty->group->ThreadList.count > capacity) {
+                blockedThreads = mrealloc(blockedThreads, ty->group->ThreadList.count * sizeof *blockedThreads);
+                runningThreads = mrealloc(runningThreads, ty->group->ThreadList.count * sizeof *runningThreads);
+                capacity = ty->group->ThreadList.count;
         }
 
         int nBlocked = 0;
         int nRunning = 0;
 
-        for (int i = 0; i < MyGroup->ThreadList.count; ++i) {
-                if (MyLock == MyGroup->ThreadLocks.items[i]) {
+        for (int i = 0; i < ty->group->ThreadList.count; ++i) {
+                if (ty->lock == ty->group->ThreadLocks.items[i]) {
                         continue;
                 }
-                TySpinLockLock(MyGroup->ThreadLocks.items[i]);
-                if (TryFlipTo(MyGroup->ThreadStates.items[i], true)) {
+                TySpinLockLock(ty->group->ThreadLocks.items[i]);
+                if (TryFlipTo(ty->group->ThreadStates.items[i], true)) {
                         runningThreads[nRunning++] = i;
                 } else {
                         blockedThreads[nBlocked++] = i;
@@ -9711,10 +9688,10 @@ TyReloadModule(Ty *ty, char const *module)
 
         bool ready = ty->ty->ready;
 
-        TyBarrierInit(&MyGroup->GCBarrierStart, nRunning + 1);
-        TyBarrierInit(&MyGroup->GCBarrierMark, nRunning + 1);
-        TyBarrierInit(&MyGroup->GCBarrierSweep, nRunning + 1);
-        TyBarrierInit(&MyGroup->GCBarrierDone, nRunning + 1);
+        TyBarrierInit(&ty->group->GCBarrierStart, nRunning + 1);
+        TyBarrierInit(&ty->group->GCBarrierMark, nRunning + 1);
+        TyBarrierInit(&ty->group->GCBarrierSweep, nRunning + 1);
+        TyBarrierInit(&ty->group->GCBarrierDone, nRunning + 1);
         // ======================================================================================
         GC_STOP();
         ty->ty->ready = false;
@@ -9735,15 +9712,15 @@ TyReloadModule(Ty *ty, char const *module)
         ty->ty->ready = ready;
         GC_RESUME();
         // ======================================================================================
-        TyBarrierWait(&MyGroup->GCBarrierStart);
-        TyBarrierWait(&MyGroup->GCBarrierMark);
-        MyGroup->WantGC = false;
+        TyBarrierWait(&ty->group->GCBarrierStart);
+        TyBarrierWait(&ty->group->GCBarrierMark);
+        ty->group->WantGC = false;
         UnlockThreads(ty, runningThreads, nRunning);
-        TyBarrierWait(&MyGroup->GCBarrierSweep);
+        TyBarrierWait(&ty->group->GCBarrierSweep);
         UnlockThreads(ty, blockedThreads, nBlocked);
-        TySpinLockUnlock(&MyGroup->Lock);
-        TySpinLockUnlock(&MyGroup->GCLock);
-        TyBarrierWait(&MyGroup->GCBarrierDone);
+        TySpinLockUnlock(&ty->group->Lock);
+        TySpinLockUnlock(&ty->group->GCLock);
+        TyBarrierWait(&ty->group->GCBarrierDone);
 
         return ok;
 }
@@ -9805,11 +9782,18 @@ vm_finally(Ty *ty)
 void
 TyPostFork(Ty *ty)
 {
-        TySpinLockInit(&MyGroup->GCLock);
-        TySpinLockInit(&MyGroup->Lock);
-        TySpinLockInit(&MyGroup->DLock);
-        TySpinLockInit(MyLock);
-        TySpinLockLock(MyLock);
+        TySpinLockInit(&ty->group->GCLock);
+        TySpinLockInit(&ty->group->Lock);
+        TySpinLockInit(&ty->group->DLock);
+        TySpinLockInit(ty->lock);
+        TySpinLockLock(ty->lock);
+}
+
+void
+TySyncThreadState(Ty *ty)
+{
+        MyTy = ty;
+        MyId = ty->id;
 }
 
 Value
@@ -9822,6 +9806,16 @@ TyActiveGenerator(Ty *ty)
 Ty *
 GetMyTy(void)
 {
+        if (UNLIKELY(MyTy == NULL)) {
+                Ty *ty = mrealloc(NULL, sizeof *ty);
+                InitializeTy(ty, NewThreadGroup());
+                AddThread(ty, TyThreadSelf());
+                ty->flags |= TY_F_FOREIGN;
+                ty->id = NextThreadId();
+                MyTy = ty;
+                MyId = ty->id;
+        }
+
         return MyTy;
 }
 
