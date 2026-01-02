@@ -16314,7 +16314,7 @@ WriteExpressionSourceHeading(Ty *ty, byte_vector *out, int cols, Expr const *e)
         int pad_l = (pad / 4);
         int pad_r = pad - pad_l;
 
-        dump(out, "%s", TERM(38:2:96:96:96));
+        dump(out, "%s", TERM(38;2;96;96;96));
 
         for (int i = 0; i < pad_l; ++i) {
                 dump(out, "━");
@@ -16323,20 +16323,32 @@ WriteExpressionSourceHeading(Ty *ty, byte_vector *out, int cols, Expr const *e)
         if (e->xfunc != NULL && e->xfunc->class != NULL) {
                 dump(
                         out,
-                        "┫ %s%s%s  ——  %s%s%s.%s%s%s ┣",
-                        TERM(93;1), e->mod->path,          TERM(38:2:136:136:136),
+                        "┫%s %s%s%s  %s——%s  %s%s%s.%s%s%s %s┣",
+                        TERM(0),
+                        TERM(93;1), e->mod->path,          TERM(0),
+                        TERM(38;2;136;136;136),            TERM(0),
                         TERM(92;1), e->xfunc->class->name, TERM(0),
-                        TERM(34),   e->xfunc->name,        TERM(38:2:96:96:96)
+                        TERM(34),   e->xfunc->name,        TERM(0),
+                        TERM(38;2;96;96;96)
                 );
         } else if (e->xfunc != NULL && e->xfunc->name != NULL) {
                 dump(
                         out,
-                        "┫ %s%s%s  ——  %s%s%s ┣",
-                        TERM(93;1), e->mod->path,   TERM(38:2:136:136:136),
-                        TERM(0;34), e->xfunc->name, TERM(38:2:96:96:96)
+                        "┫%s %s%s%s  %s——%s  %s%s%s %s┣",
+                        TERM(0),
+                        TERM(93;1), e->mod->path,   TERM(0),
+                        TERM(38;2;136;136;136),     TERM(0),
+                        TERM(34),   e->xfunc->name, TERM(0),
+                        TERM(38;2;96;96;96)
                 );
         } else {
-                dump(out, "┫ %s%s%s ┣", TERM(93;1), e->mod->path, TERM(38:2:96:96:96));
+                dump(
+                        out,
+                        "┫%s %s%s%s %s┣",
+                        TERM(0),
+                        TERM(93;1), e->mod->path, TERM(0),
+                        TERM(38;2;96;96;96)
+                );
         }
 
         for (int i = 0; i < pad_r; ++i) {
@@ -16398,8 +16410,8 @@ WriteExpressionSourceContext(
 
                 if (line == e->start.line && line == e->end.line) {
                         int before = e->start.s - line_start;
-                        int length = e->end.s - e->start.s;
-                        int after = line_end - e->end.s;
+                        int length = e->end.s   - e->start.s;
+                        int after  = line_end   - e->end.s;
                         sxdf(
                                 &tmp,
                                 "%s %s%4d%s | %.*s%s%.*s%s%.*s%s",
@@ -16442,7 +16454,7 @@ WriteExpressionSourceContext(
                         while (pad --> 0) {
                                 svP(tmp, ' ');
                         }
-                        sxdf(&tmp, " %s│%s %s", TERM(38:2:96:96:96), TERM(0), note);
+                        sxdf(&tmp, " %s│%s %s", TERM(38;2;96;96;96), TERM(0), note);
                 }
 
                 dump(out, "%s\n", vv(tmp));
@@ -16462,7 +16474,7 @@ WriteExpressionSourceContext(
                                 "%*s %s│%s %s\n",
                                 cols,
                                 "",
-                                TERM(38:2:96:96:96),
+                                TERM(38;2;96;96;96),
                                 TERM(0),
                                 note
                         );

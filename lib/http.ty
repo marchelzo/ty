@@ -4,7 +4,6 @@ import json
 import errno
 import net
 import log
-import tp (ThreadPool)
 import time
 
 const READ_CHUNK_SIZE = (1 << 14) // 16 KiB

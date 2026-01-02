@@ -535,7 +535,7 @@ pub fn trans(a: TermStyle, b: TermStyle) -> String {
         _           => None
     })
 
-    ["\x1b[{it}m" for attrs].str() ?? ''
+    ["\x1b[{it}m" for attrs].join()
 }
 
 class Chalk {
@@ -577,10 +577,11 @@ class Chalk {
 
         fn stops(stop, style) {
             match (stop, style) {
-                ('fg', {fg, ?bright})    => true,
-                ('bg', {bg, ?bg-bright}) => true,
-                ('uc', {uc, ?underline}) => true,
-                ('u',  {underline, ?uc}) => true,
+                ('fg',        {fg, ?bright})    => true,
+                ('bg',        {bg, ?bg-bright}) => true,
+                ('uc',        {uc, ?underline}) => true,
+                ('underline', {underline, ?uc}) => true,
+
                 _  => (style == __styles[stop])
             }
         }
@@ -744,7 +745,7 @@ class Chalk {
                       (x :: Text) ? x.__fmt__(fmt)
                     : parse(fmt ? x.__fmt__(fmt, w) : x.__str__())
                 )
-            }).str(),
+            }).join(),
             self
         )
     }
