@@ -2500,13 +2500,24 @@ IsFullyBound(Type *t0)
                 return true;
 
         case TYPE_FUNCTION:
-                for (int i = 0; i < vN(t0->args); ++i) {
-                        if (!IsFullyBound(v__(t0->args, i))) {
+                for (int i = 0; i < vN(t0->params); ++i) {
+                        Param const *p = v_(t0->params, i);
+                        if (!IsFullyBound(p->type)) {
                                 return false;
                         }
                 }
                 if (!IsFullyBound(t0->rt)) {
                         return false;
+                }
+                for (int i = 0; i < vN(t0->constraints); ++i) {
+                        Constraint const *c = v_(t0->constraints, i);
+                        if (
+                                !IsFullyBound(c->t0)
+                             || !IsFullyBound(c->t1)
+                             || !IsFullyBound(c->t2)
+                        ) {
+                                return false;
+                        }
                 }
                 return true;
 
@@ -3055,8 +3066,6 @@ type_tag(Ty *ty, Class *class, int tag)
         t->tag = tag;
         t->concrete = true;
 
-        class->type = t;
-
         if (vN(class->type->bound) == 0) {
                 Type *t0 = NewVar(ty);
                 if (ENABLED) {
@@ -3071,6 +3080,8 @@ type_tag(Ty *ty, Class *class, int tag)
         } else {
                 avPv(t->bound, class->type->bound);
         }
+
+        class->type = t;
 
         return t;
 }
@@ -3662,9 +3673,9 @@ Generalize(Ty *ty, Type *t0)
                 for (int i = 0; i < vN(t0->bound); ++i) {
                         if (RefersTo(t0, v__(t0->bound, i))) {
                                 avP(freev, v__(t0->bound, i));
-                                FTLOG("  keep %s, it does appear in %s", VarName(ty, v__(t0->bound, i)), ShowType(t0));
+                                FTLOG("  keep %s; it does appear in %s", VarName(ty, v__(t0->bound, i)), ShowType(t0));
                         } else {
-                                FTLOG("  drop %s, it doesn't appear in %s", VarName(ty, v__(t0->bound, i)), ShowType(t0));
+                                FTLOG("  drop %s; it doesn't appear in %s", VarName(ty, v__(t0->bound, i)), ShowType(t0));
                         }
                 }
                 dont_printf("Free(%s): ", ShowType(t0));
@@ -4989,23 +5000,47 @@ UnifyXD(Ty *ty, Type *t0, Type *t1, bool super, bool check, bool soft)
                         goto Fail;
                 }
 
-                for (int n = 0;; ++n) {
-                        bool solved = true;
+                for (;;) {
+                        bool progress = false;
 
-                        for (int i = 0; i < vN(t0->constraints); ++i) {
-                                if (!BindConstraint(ty, v_(t0->constraints, i))) {
-                                        solved = false;
+                        u32 n0 = 0;
+                        for (u32 i = 0; i < vN(t0->constraints); ++i) {
+                                Constraint *c = v_(t0->constraints, i);
+                                if (BindConstraint(ty, c)) {
+                                        progress = true;
+                                } else {
+                                        *v_(t0->constraints, n0++) = *c;
                                 }
                         }
+                        vN(t0->constraints) = n0;
 
-                        for (int i = 0; i < vN(t1->constraints); ++i) {
-                                if (!BindConstraint(ty, v_(t1->constraints, i))) {
-                                        solved = false;
+                        u32 n1 = 0;
+                        for (u32 i = 0; i < vN(t1->constraints); ++i) {
+                                Constraint *c = v_(t1->constraints, i);
+                                if (BindConstraint(ty, c)) {
+                                        progress = true;
+                                } else {
+                                        *v_(t1->constraints, n1++) = *c;
                                 }
                         }
+                        vN(t1->constraints) = n1;
 
-                        // TODO: when to fail here?
-                        if (solved || n > 0) {
+                        if (n0 + n1 == 0) {
+                                break;
+                        }
+
+                        if (!progress) {
+                                if (super) {
+                                        if (n1 != 0) {
+                                                goto Fail;
+                                        }
+                                        avPv(t1->constraints, t0->constraints);
+                                } else {
+                                        if (n0 != 0) {
+                                                goto Fail;
+                                        }
+                                        avPv(t0->constraints, t1->constraints);
+                                }
                                 break;
                         }
                 }
@@ -10040,6 +10075,39 @@ type_scope_pop(Ty *ty)
         vvX(FunStack);
 }
 
+static bool
+OnlyAppearsInConstraints(Type *t0, u32 id)
+{
+        int nref = CountRefs(t0->rt, id);
+
+        for (int i = 0; i < vN(t0->params); ++i) {
+                Param *p = v_(t0->params, i);
+                nref += CountRefs(p->type, id);
+        }
+
+        return (nref == 0);
+}
+
+static void
+FilterConstraints(Ty *ty, Type *t0)
+{
+        u32 n = 0;
+
+        for (int i = 0; i < vN(t0->constraints); ++i) {
+                Constraint *c = v_(t0->constraints, i);
+                if (
+                        (CanBind(c->t0) && OnlyAppearsInConstraints(t0, c->t0->id))
+                     || (CanBind(c->t1) && OnlyAppearsInConstraints(t0, c->t1->id))
+                ) {
+                        FTLOG("  drop constraint %s", ShowConstraint(ty, c));
+                } else {
+                        *v_(t0->constraints, n++) = *c;
+                }
+        }
+
+        vN(t0->constraints) = n;
+}
+
 static void
 fixup(Ty *ty, Type *t0)
 {
@@ -10051,6 +10119,8 @@ fixup(Ty *ty, Type *t0)
 
         Type *g0 = Generalize(ty, t0);
         FTLOG("  g0:  %s", ShowType(g0));
+
+        FilterConstraints(ty, g0);
 
         TypeEnv env = {0};
 
