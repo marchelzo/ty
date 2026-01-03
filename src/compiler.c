@@ -11044,7 +11044,7 @@ clone_stmt(Stmt *s, Scope *scope, void *ctx)
         return s;
 }
 
-static Stmt *
+static Expr *
 xclone(Ty *ty, Expr *expr)
 {
         VisitorSet visitor = visit_identitiy(ty);
