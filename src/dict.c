@@ -815,6 +815,55 @@ dict_remove(Ty *ty, Value *d, int argc, Value *kwargs)
 }
 
 static Value
+dict_keep_mut(Ty *ty, Value *d, int argc, Value *kwargs)
+{
+        ASSERT_ARGC("Dict.keep!()", 1);
+
+        Value f    = ARG(0);
+        Dict *dict = d->dict;
+
+        for (usize i = 0; i < dict->size; ++i) {
+                if (!OCCUPIED(dict, i)) {
+                        continue;
+                }
+                Value keep = vm_eval_function(
+                        ty,
+                        &f,
+                        &dict->items[i].k,
+                        &dict->items[i].v,
+                        NULL
+                );
+                if (!value_truthy(ty, &keep)) {
+                        delete(dict, i);
+                }
+        }
+
+        return *d;
+}
+
+static Value
+dict_keep(Ty *ty, Value *d, int argc, Value *kwargs)
+{
+        ASSERT_ARGC("Dict.keep()", 1);
+
+        Value f   = ARG(0);
+        Dict *new = dict_new(ty);
+
+        NOGC(new);
+
+        dfor(d->dict, {
+                Value keep = vm_eval_function(ty, &f, key, val, NULL);
+                if (value_truthy(ty, &keep)) {
+                        dict_put_value(ty, new, *key, *val);
+                }
+        });
+
+        OKGC(new);
+
+        return DICT(new);
+}
+
+static Value
 dict_len(Ty *ty, Value *d, int argc, Value *kwargs)
 {
         ASSERT_ARGC("Dict.len()", 0);
@@ -842,6 +891,8 @@ DEFINE_METHOD_TABLE(
         { .name = "has?",         .func = dict_contains        },
         { .name = "intersect",    .func = dict_intersect       },
         { .name = "items",        .func = dict_items           },
+        { .name = "keep",         .func = dict_keep            },
+        { .name = "keep!",        .func = dict_keep_mut        },
         { .name = "keys",         .func = dict_keys            },
         { .name = "len",          .func = dict_len             },
         { .name = "pop",          .func = dict_pop             },

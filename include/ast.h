@@ -358,7 +358,7 @@ struct expression {
                         Symbol *ltmp;
                         bool only_identifiers;
                         ExprVec es;
-                        vec(char const *) names;
+                        ConstStringVector names;
                         vec(bool) required;
                         ExprVec tconds;
                 };
