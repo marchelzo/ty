@@ -7575,9 +7575,12 @@ vm_error(Ty *ty, char const *fmt, ...)
         //XXX("VM Error: %.*s", (int)sN(msg), ss(msg));
 
         Value error = RawObject(CLASS_RUNTIME_ERROR);
+
+        GC_STOP();
         PutMember(error, NAMES._what,  msg);
         PutMember(error, NAMES._ctx,   NIL);
         PutMember(error, NAMES._cause, NIL);
+        GC_RESUME();
 
         vm_throw(ty, &error);
 }
