@@ -7574,44 +7574,63 @@ emit_record_rest(Ty *ty, Expr const *rec, int i, bool is_assignment)
         }
 }
 
+static char const *
+NextPublicField(ExprVec const *fields, usize *i)
+{
+        while (*i< vN(*fields)) {
+                Expr const *ident = FieldIdentifier(v__(*fields, *i));
+                char const *name = ident->identifier;
+                *i += 1;
+                if (!IsPrivateMember(name)) {
+                        return name;
+                }
+        }
+
+        return NULL;
+}
 
 static void
 EmitObjectDestructure(Ty *ty, int class_id, Expr const *pattern)
 {
         ClassDefinition *def = &class_get(ty, class_id)->def->class;
+
         ExprVec const *fields = &def->fields;
+        usize i_field = 0;
+
+        StringVector const *names;
+        Expr const **patterns;
+        usize n_patterns;
 
         if (pattern->type == EXPRESSION_TUPLE) {
-                for (int i = 0; i < vN(pattern->es); ++i) {
-                        char const *name = v__(pattern->names, i);
+                names      = &pattern->names;
+                patterns   = vv(pattern->es);
+                n_patterns = vN(pattern->es);
+        } else {
+                names      = NULL;
+                patterns   = &pattern;
+                n_patterns = 1;
+        }
+
+        for (usize i = 0; i < n_patterns; ++i) {
+                char const *name = (names != NULL) ? v__(*names, i) : NULL;
+                if (name == NULL) {
+                        name = NextPublicField(fields, &i_field);
                         if (name == NULL) {
-                                if (i < vN(*fields)) {
-                                        name = FieldIdentifier(v__(*fields, i))->identifier;
-                                } else {
-                                        PushContext(ty, v__(pattern->es, i));
-                                        fail(
-                                                "subpattern at index %s%d%s has no "
-                                                "corresponding field in class %s%s%s",
-                                                TERM(94;1), i, TERM(0),
-                                                TERM(93;1), def->name, TERM(0)
-                                        );
-                                }
-                        }
-                        if (!s_eq(name, "*")) {
-                                FAIL_MATCH_IF(TRY_MEMBER);
-                                EM(name);
-                                emit_try_match(ty, v__(pattern->es, i));
-                                INSN(POP);
+                                PushContext(ty, patterns[i]);
+                                fail(
+                                        "subpattern at index %s%d%s has no "
+                                        "corresponding field in class %s%s%s",
+                                        TERM(94;1), i, TERM(0),
+                                        TERM(93;1), def->name, TERM(0)
+                                );
                         }
                 }
-        } else if (vN(*fields) != 0) {
-                FAIL_MATCH_IF(TRY_MEMBER);
-                EM(FieldIdentifier(v__(*fields, 0))->identifier);
-                emit_try_match(ty, pattern);
-                INSN(POP);
-        } else {
-                // XXX
-                FAIL_MATCH_IF(JUMP);
+                if (!s_eq(name, "*")) {
+                        FAIL_MATCH_IF(TRY_MEMBER);
+                        EM(name);
+                        emit_try_match(ty, patterns[i]);
+                        INSN(POP);
+                }
         }
 }
 
