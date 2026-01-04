@@ -2653,9 +2653,9 @@ resolve_access(Ty *ty, Scope const *scope, char **parts, int n, Expr *e, bool st
                         avP(fc.fkwconds, NULL);
                 }
 
-                Expr *f = fc.function = NewExpr(ty, EXPRESSION_IDENTIFIER);
+                Expr *f = NewExpr(ty, EXPRESSION_IDENTIFIER);
                 f->start = left->start;
-                f->end = e->end;
+                f->end = left->end;
                 f->identifier = id;
                 f->namespace = left;
                 f->module = NULL;
@@ -2663,6 +2663,7 @@ resolve_access(Ty *ty, Scope const *scope, char **parts, int n, Expr *e, bool st
                 f->xscope = (Scope *)scope;
                 f->xfunc = STATE.func;
                 f->_type = sym->type;
+                fc.function = f;
 
                 *e = fc;
         } else {
