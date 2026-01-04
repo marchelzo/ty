@@ -7597,13 +7597,13 @@ EmitObjectDestructure(Ty *ty, int class_id, Expr const *pattern)
         ExprVec const *fields = &def->fields;
         usize i_field = 0;
 
-        StringVector const *names;
-        Expr const **patterns;
+        ConstStringVector const *names;
+        Expr const *const *patterns;
         usize n_patterns;
 
         if (pattern->type == EXPRESSION_TUPLE) {
                 names      = &pattern->names;
-                patterns   = vv(pattern->es);
+                patterns   = (Expr const *const *)vv(pattern->es);
                 n_patterns = vN(pattern->es);
         } else {
                 names      = NULL;
