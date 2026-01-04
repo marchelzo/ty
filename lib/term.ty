@@ -42,8 +42,9 @@ pub ns event {
     pub tag ScrollLeft;
     pub tag ScrollRight;
     pub tag Cursor;
-    pub tag Key {
-        nice-name() {
+
+    pub tag Key[T] {
+        nice-name() -> String where T: KeyDetails {
             nice-key-name(self)
         }
     }
@@ -317,15 +318,15 @@ let function-keys = %{
     "57454u": keys.ISO_LEVEL5_SHIFT
 }
 
-fn title(s) { s[0].upper() + s[1;].lower() }
+fn title(s: String) { s[0].upper() + s[1;].lower() }
 
-fn nice-key-name(ev) {
+fn nice-key-name(ev: event.KeyDetails) -> String {
     let mods = ev.mods
 
     let out = match ev {
         {_key: $k, *} => do { mods &= ~mod.SHIFT; chr(k) },
-        {key: k :: String, *} => k.split('_').map(title).str(),
-        {key: k :: Int,    *} => chr(k)
+        {key: (k: String), *} => k.split('_').map(title).join(),
+        {key: (k: Int),    *} => chr(k)
     }
 
     let out = match out {
