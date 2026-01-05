@@ -14,6 +14,7 @@ CFLAGS += -Wno-empty-body
 CFLAGS += -D_GNU_SOURCE
 CFLAGS += -DPCRE2_CODE_UNIT_WIDTH=8
 CFLAGS += -DCURL_STATICLIB -DPCRE2_CODE_UNIT_WIDTH=8 -DPCRE2_STATIC -DUTF8PROC_STATIC -D_GNU_SOURCE
+CFLAGS += -fno-omit-frame-pointer
 
 ifeq ($(shell uname -m),arm64)
         CFLAGS += -isystem/opt/homebrew/include
@@ -75,7 +76,6 @@ ifdef RELEASE
         CFLAGS += -mtune=native
         CFLAGS += -flto
         CFLAGS += -flto-partition=one
-        CFLAGS += -fomit-frame-pointer
 else ifdef DEBUG
         CFLAGS += -O0
         CFLAGS += -fno-omit-frame-pointer

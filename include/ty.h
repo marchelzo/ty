@@ -20,6 +20,7 @@
 #include "vec.h"
 #include "log.h"
 
+#define TY_MAX_CALL_DEPTH (1UL << 9)
 #define TY_TMP_BUF_COUNT 3
 
 #define CAT(a, b) a ## b
