@@ -235,7 +235,6 @@ NewTypeVar(Ty *ty, char const *name);
 Symbol *
 NewScopedTypeVar(Ty *ty, Scope *s, char const *name);
 
-
 #define X(f, n, _)                              \
         inline static bool                      \
         SymbolIs##n(Symbol const *var)          \

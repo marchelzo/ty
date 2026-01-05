@@ -1156,6 +1156,10 @@ __attribute__((optnone, noinline))
 inline static void
 xcall(Ty *ty, Value const *f, Value const *pSelf, int argc, Value const *pKwargs, char *whence)
 {
+        if (UNLIKELY(vN(FRAMES) >= TY_MAX_CALL_DEPTH)) {
+                zP("maximum call depth exceeded");
+        }
+
         int   np      = f->info[FUN_INFO_PARAM_COUNT];
         int   bound   = f->info[FUN_INFO_BOUND];
 

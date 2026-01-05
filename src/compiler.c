@@ -5600,17 +5600,26 @@ OriginalType(Ty *ty, Symbol const *var)
 }
 
 static void
-symbolize_fun_def(Ty *ty, Scope *scope, Stmt *s, u32 flag)
+symbolize_fun_decl(Ty *ty, Scope *scope, Stmt *s, u32 flag)
 {
-        bool decl = HasBody(s->value) && (s->target->module == NULL);
+        bool def = HasBody(s->value) && (s->target->module == NULL);
 
         symbolize_lvalue(
                 ty,
                 scope,
                 s->target,
-                (s->pub * LV_PUB) | (decl * LV_DECL)
+                (s->pub * LV_PUB) | (def * LV_DECL)
         );
 
+        s->target->symbol->flags &= ~SYM_TRANSIENT;
+        s->target->symbol->flags |= flag;
+        s->target->symbol->doc = s->doc;
+}
+
+static void
+symbolize_fun_def(Ty *ty, Scope *scope, Stmt *s, u32 flag)
+{
+        symbolize_fun_decl(ty, scope, s, flag);
         symbolize_expression(ty, scope, s->value);
 
         Symbol *var = s->target->symbol;
@@ -5621,13 +5630,9 @@ symbolize_fun_def(Ty *ty, Scope *scope, Stmt *s, u32 flag)
                 if (HasBody(s->value)) {
                         var->type = s->value->fn_symbol->type;
                 }
-
                 dont_printf("%s(1) :: %s\n", s->target->identifier, type_show(ty, var->type));
-
                 s->target->_type = s->value->_type;
-
                 var->expr = s->value;
-                var->flags |= flag;
         }
 }
 
@@ -6064,7 +6069,7 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
                 break;
 
         case STATEMENT_PATTERN_DEFINITION:
-                symbolize_fun_def(ty, scope, s, SYM_PATTERN);
+                symbolize_fun_def(ty, scope, s, SYM_PATTERN | SYM_CONST);
                 break;
 
         case STATEMENT_MACRO_DEFINITION:
@@ -7698,7 +7703,13 @@ emit_try_match(Ty *ty, Expr const *pattern)
 
         case EXPRESSION_MUST_EQUAL:
                 emit_load(ty, pattern->symbol, STATE.fscope);
-                FAIL_MATCH_IF(ENSURE_EQUALS_VAR);
+                if (SymbolIsPattern(pattern->symbol)) {
+                        INSN(UNAPPLY);
+                        FAIL_MATCH_IF(JUMP_IF_NONE);
+                        INSN(POP);
+                } else {
+                        FAIL_MATCH_IF(ENSURE_EQUALS_VAR);
+                }
                 need_loc = true;
                 break;
 
@@ -15563,6 +15574,7 @@ define_class(Ty *ty, Stmt *s)
                         m->fn_symbol->flags |= SYM_FUNCTION;
                         m->fn_symbol->member = M_ID(name);
                         m->fn_symbol->class = sym->class;
+                        m->fn_symbol->loc = m->start;
 
                         *v_(cd->methods, keep++) = m;
                 }
@@ -15584,6 +15596,7 @@ define_class(Ty *ty, Stmt *s)
                 m->fn_symbol->flags |= SYM_FUNCTION;
                 m->fn_symbol->member = M_ID(name);
                 m->fn_symbol->class = sym->class;
+                m->fn_symbol->loc = m->start;
         }
 
         for (int i = 0; i < vN(cd->s_getters); ++i) {
@@ -15599,6 +15612,7 @@ define_class(Ty *ty, Stmt *s)
                 m->fn_symbol->flags |= SYM_PROPERTY;
                 m->fn_symbol->member = M_ID(name);
                 m->fn_symbol->class = sym->class;
+                m->fn_symbol->loc = m->start;
         }
 
         for (int i = 0; i < vN(cd->s_setters); ++i) {
@@ -15613,6 +15627,7 @@ define_class(Ty *ty, Stmt *s)
                 m->fn_symbol->flags |= SYM_STATIC;
                 m->fn_symbol->member = M_ID(name);
                 m->fn_symbol->class = sym->class;
+                m->fn_symbol->loc = m->start;
         }
 
         for (int i = 0; i < vN(cd->getters); ++i) {
@@ -15627,6 +15642,7 @@ define_class(Ty *ty, Stmt *s)
                 m->fn_symbol->flags |= SYM_PROPERTY;
                 m->fn_symbol->member = M_ID(name);
                 m->fn_symbol->class = sym->class;
+                m->fn_symbol->loc = m->start;
         }
 
         for (int i = 0; i < vN(cd->setters); ++i) {
@@ -15640,6 +15656,7 @@ define_class(Ty *ty, Stmt *s)
                 m->fn_symbol->flags |= SYM_MEMBER;
                 m->fn_symbol->member = M_ID(name);
                 m->fn_symbol->class = sym->class;
+                m->fn_symbol->loc = m->start;
         }
 
         AddClassFields(ty, class, cd->scope,   &cd->fields,   class_add_field,   0);
@@ -15653,7 +15670,6 @@ DeclareSymbols(Ty *ty, Stmt *stmt)
 {
         Scope *scope = GetNamespace(ty, stmt->ns);
         Expr *expr;
-        bool is_def;
 
         if (stmt->mod != NULL && stmt->start.s != NULL) {
                 dont_printf(
@@ -15668,18 +15684,15 @@ DeclareSymbols(Ty *ty, Stmt *stmt)
 
         switch (stmt->type) {
         case STATEMENT_FUNCTION_DEFINITION:
+                symbolize_fun_decl(ty, scope, stmt, SYM_FUNCTION);
+                break;
+
         case STATEMENT_OPERATOR_DEFINITION:
+                symbolize_fun_decl(ty, scope, stmt, SYM_FUNCTION);
+                break;
+
         case STATEMENT_PATTERN_DEFINITION:
-                is_def = HasBody(stmt->value)
-                      && (stmt->target->module == NULL);
-                symbolize_lvalue(
-                        ty,
-                        GetNamespace(ty, stmt->ns),
-                        stmt->target,
-                        (LV_DECL * is_def) | (LV_PUB * stmt->pub)
-                );
-                stmt->target->symbol->flags &= ~SYM_TRANSIENT;
-                stmt->target->symbol->doc = stmt->doc;
+                symbolize_fun_decl(ty, scope, stmt, SYM_PATTERN | SYM_CONST);
                 break;
 
         case STATEMENT_DEFINITION:
@@ -15952,11 +15965,12 @@ compiler_render_template(Ty *ty, Expr *e)
 
         Array *a = vA();
 
+        GC_STOP();
         for (usize i = 0; i < vN(e->template.stmts); ++i) {
                 vAp(a, tstmtx(v__(e->template.stmts, i)));
         }
-
         v = tagged(ty, TyMulti, ARRAY(a), NONE);
+        GC_RESUME();
 
 End:
         for (usize i = 0; i < vN(e->template.holes); ++i) {
