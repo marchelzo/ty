@@ -69,6 +69,7 @@ typedef struct refinement Refinement;
 typedef struct type_env   TypeEnv;
 typedef struct frame      Frame;
 typedef struct table      ValueTable;
+typedef struct class      Class;
 
 typedef uint8_t   u8;
 typedef uint16_t  u16;
@@ -108,10 +109,13 @@ typedef vec(Type *)         TypeVector;
 typedef vec(u32)            U32Vector;
 typedef vec(Value)          ValueVector;
 typedef ValueVector         ValueStack;
+typedef vec(Class *)        ClassVector;
 typedef vec(char)           byte_vector;
 typedef vec(bool)           BoolVector;
 typedef vec(int)            int_vector;
 typedef vec(i32)            i32Vector;
+typedef vec(i16)            i16Vector;
+typedef vec(u16)            u16Vector;
 typedef vec(Symbol *)       symbol_vector;
 typedef vec(TySavePoint *)  TySavePointVector;
 
@@ -145,6 +149,11 @@ typedef struct {
 } CacheEntry;
 
 typedef vec(CacheEntry) DispatchCache;
+
+struct itable {
+        i32Vector   ids;
+        ValueVector values;
+};
 
 struct alloc {
         union {
@@ -204,6 +213,8 @@ struct refinement {
         bool mut;
 };
 
+typedef struct object TyObject;
+
 typedef struct dict Dict;
 typedef struct dict_item DictItem;
 
@@ -216,11 +227,20 @@ typedef struct compiler_state CompileState;
 
 enum { CTX_EXPR, CTX_TYPE };
 enum { FT_NONE, FT_FUNC, FT_GEN, FT_PATTERN };
-enum { MT_NONE, MT_INSTANCE, MT_GET, MT_SET, MT_STATIC, MT_2OP };
+
+enum {
+        MT_NONE,
+        MT_DFL    = (1 << 0),
+        MT_GET    = (1 << 1),
+        MT_SET    = (1 << 2),
+        MT_2OP    = (1 << 3),
+        MT_STATIC = (1 << 4)
+};
 
 enum {
         VALUE_ZERO             ,
         VALUE_FUNCTION = 1     ,
+        VALUE_BOUND_FUNCTION   ,
         VALUE_METHOD           ,
         VALUE_BUILTIN_FUNCTION ,
         VALUE_BUILTIN_METHOD   ,
@@ -296,7 +316,8 @@ enum {
         FUN_KWARGS_IDX  = FUN_REST_IDX    + sizeof (i16),
         FUN_CLASS       = FUN_KWARGS_IDX  + sizeof (i16),
         FUN_FLAGS       = FUN_CLASS       + sizeof (i32),
-        FUN_PROTO       = FUN_FLAGS       + sizeof (i32),
+        FUN_METH        = FUN_FLAGS       + sizeof (i16),
+        FUN_PROTO       = FUN_METH        + sizeof (i32),
         FUN_DOC         = FUN_PROTO       + sizeof (uptr),
         FUN_META        = FUN_DOC         + sizeof (uptr),
         FUN_NAME        = FUN_META        + sizeof (uptr),
@@ -362,7 +383,7 @@ struct value {
                 };
                 struct {
                         i32 class;
-                        struct itable *object;
+                        TyObject *object;
                         Type **t0;
                 };
                 struct {
@@ -418,6 +439,53 @@ struct value {
                 Expr *namespace;
                 Generator *gen;
         };
+};
+
+struct object {
+        bool          init;
+        u32           nslot;
+        Class         *class;
+        struct itable *dynamic;
+        Value         slots[];
+};
+
+struct class {
+        int i;
+
+        int ti;
+        bool is_trait;
+
+        bool final;
+        bool really_final;
+
+        Class *super;
+
+        u16Vector offsets_r;
+        u16Vector offsets_w;
+
+        struct itable methods;
+        struct itable getters;
+        struct itable setters;
+        struct itable fields;
+
+        struct itable s_methods;
+        struct itable s_getters;
+        struct itable s_setters;
+        struct itable s_fields;
+
+        vec(bool) impls;
+        ClassVector traits;
+
+        Value finalizer;
+        Value init;
+
+        char const *name;
+        char const *doc;
+
+        Stmt *def;
+
+        Type *type;
+        Type *object_type;
 };
 
 struct frame {
@@ -690,6 +758,7 @@ typedef struct ty {
 
         vec(void *) visiting;
 
+        Value exc;
         byte_vector err;
 
         char *code;
@@ -926,6 +995,7 @@ extern usize TotalBytesAllocated;
         X(CAPTURE),               \
         X(DECORATE),              \
         X(INTO_METHOD),           \
+        X(BIND_CAPTURED),         \
         X(TARGET_LOCAL),          \
         X(TARGET_REF),            \
         X(TARGET_CAPTURED),       \
@@ -968,6 +1038,7 @@ extern usize TotalBytesAllocated;
         X(CONCAT_STRINGS),        \
         X(RANGE),                 \
         X(INCRANGE),              \
+        X(CLASS_OF),              \
         X(MEMBER_ACCESS),         \
         X(TRY_MEMBER_ACCESS),     \
         X(SELF_MEMBER_ACCESS),    \
@@ -988,6 +1059,7 @@ extern usize TotalBytesAllocated;
         X(CALL_SELF_METHOD),      \
         X(CALL_STATIC_METHOD),    \
         X(CALL_SELF_STATIC),      \
+        X(BIND_CLASS),            \
         X(GET_NEXT),              \
         X(PUSH_INDEX),            \
         X(READ_INDEX),            \
@@ -1000,7 +1072,6 @@ extern usize TotalBytesAllocated;
         X(DROP2),                 \
         X(DUP),                   \
         X(DUP2_SWAP),             \
-        X(LEN),                   \
         X(ARRAY_COMPR),           \
         X(DICT_COMPR),            \
         X(THROW_IF_NIL),          \
@@ -1015,6 +1086,7 @@ extern usize TotalBytesAllocated;
         X(JUMP_IF_NOT),           \
         X(JUMP_IF_NONE),          \
         X(JUMP_IF_TYPE),          \
+        X(JUMP_IF_INIT),          \
         X(JLE),                   \
         X(JLT),                   \
         X(JGE),                   \

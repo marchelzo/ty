@@ -1497,7 +1497,9 @@ parse_type(Ty *ty, int prec)
         Expr *t;
 
         SAVE_TC(true);
+        SAVE_NE(true);
         t = parse_expr(ty, prec);
+        LOAD_NE();
         LOAD_TC();
 
         return t;

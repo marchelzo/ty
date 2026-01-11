@@ -3,61 +3,30 @@
 
 #include <stdbool.h>
 
-#include "value.h"
-#include "xd.h"
+#include "ty.h"
 #include "itable.h"
 
-typedef struct class Class;
-typedef struct type Type;
-
-typedef vec(Class *) ClassVector;
-
-struct class {
-        int i;
-
-        int ti;
-        bool is_trait;
-
-        bool final;
-        bool really_final;
-
-        Class *super;
-
-        vec(i16) offsets;
-
-        struct itable methods;
-        struct itable getters;
-        struct itable setters;
-        struct itable fields;
-
-        struct itable s_methods;
-        struct itable s_getters;
-        struct itable s_setters;
-        struct itable s_fields;
-
-        vec(bool) impls;
-        vec(Class *) traits;
-
-        Value finalizer;
-        Value init;
-
-        char const *name;
-        char const *doc;
-
-        Stmt *def;
-
-        Type *type;
-        Type *object_type;
-};
-
 enum {
-        OFF_FIELD  = 1,
-        OFF_METHOD = 2,
-        OFF_GETTER = 3,
+        OFF_FIELD  = 0,
+        OFF_METHOD = 1,
+        OFF_GETTER = 2,
+        OFF_SETTER = 3,
+
+        OFF_DECORATED = 4,
 
         OFF_MASK   = 0x0FFF,
-        OFF_SHIFT  = 12
+        OFF_SHIFT  = 13,
+
+        OFF_NOT_FOUND = 0xFFFF,
+
+        OFF_FIELD_X  = (OFF_FIELD  | OFF_DECORATED),
+        OFF_METHOD_X = (OFF_METHOD | OFF_DECORATED),
+        OFF_GETTER_X = (OFF_GETTER | OFF_DECORATED),
+        OFF_SETTER_X = (OFF_SETTER | OFF_DECORATED),
 };
+
+inline static i32
+class_of(Value const *v);
 
 Class *
 class_get(Ty *ty, int id);
@@ -180,8 +149,8 @@ class_method(Ty *ty, int class, char const *name)
 Value *
 class_ctor(Ty *ty, int class);
 
-void
-class_init_object(Ty *ty, int class, struct itable *o);
+TyObject *
+class_new_instance(Ty *ty, int class);
 
 char const *
 class_method_name(Ty *ty, int class, char const *name);

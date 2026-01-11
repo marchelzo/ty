@@ -786,6 +786,7 @@ static struct {
   { .module = "ffi",        .name = "dlerror",                  .value = BUILTIN(cffi_dlerror)                   },
   { .module = "ffi",        .name = "member",                   .value = BUILTIN(cffi_member)                    },
   { .module = "ffi",        .name = "pmember",                  .value = BUILTIN(cffi_pmember)                   },
+  { .module = "ffi",        .name = "fields",                   .value = BUILTIN(cffi_fields)                    },
   { .module = "ffi",        .name = "str",                      .value = BUILTIN(cffi_str)                       },
   { .module = "ffi",        .name = "blob",                     .value = BUILTIN(cffi_blob)                      },
   { .module = "ffi",        .name = "clone",                    .value = BUILTIN(cffi_clone)                     },

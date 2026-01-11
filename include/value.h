@@ -18,8 +18,12 @@ typedef struct value Value;
 #include "scope.h"
 #include "compiler.h"
 #include "xd.h"
+#include "class.h"
 
 #define V_ALIGN (_Alignof (Value))
+
+#define NewInstance(c) ((NewInstance)(ty, (c)))
+#define RawObject(c) ((RawObject)(ty, (c)))
 
 enum {
         CLASS_BOTTOM = INT_MIN,
@@ -277,6 +281,7 @@ TypeName(Ty const *ty, int t0)
         case VALUE_BUILTIN_METHOD:
         case VALUE_BUILTIN_FUNCTION:
         case VALUE_FOREIGN_FUNCTION:
+        case VALUE_BOUND_FUNCTION:
         case VALUE_FUNCTION:
                                         return "Function";
         case VALUE_GENERATOR:           return "Generator";
@@ -1161,6 +1166,18 @@ OffsetString(Value const *v, i32 n)
 }
 
 static inline Value
+(NewInstance)(Ty *ty, int c)
+{
+        return OBJECT(class_new_instance(ty, c), c);
+}
+
+static inline Value
+(RawObject)(Ty *ty, int class)
+{
+        return NewInstance(class);
+}
+
+static inline Value
 PAIR_(Ty *ty, Value a, Value b)
 {
         Value v = vT(2);
@@ -1245,10 +1262,16 @@ info_of(Value const *f, int i)
         return ((char *)f->info) + i;
 }
 
-static inline i32 *
+static inline i16 *
 flags_of(Value const *f)
 {
-        return info_of(f, FUN_FLAGS);
+        return (i16 *)info_of(f, FUN_FLAGS);
+}
+
+static inline i32
+meth_of(Value const *f)
+{
+        return *((i32 *)info_of(f, FUN_METH));
 }
 
 static inline int
@@ -1269,7 +1292,7 @@ code_of(Value const *v)
         return (char *)v->info + v->info[0];
 }
 
-static inline int
+static inline i32
 class_of(Value const *v)
 {
         return (v->xinfo != NULL && v->xinfo->class > 0)
@@ -1366,7 +1389,7 @@ meta_of(Ty *ty, Value const *f)
         memcpy(&p, addr, sizeof p);
         if (p == 0) {
                 meta = mAo(sizeof (Value), GC_VALUE);
-                *meta = OBJECT(object_new(ty, CLASS_OBJECT), CLASS_OBJECT);
+                *meta = NewInstance(CLASS_OBJECT);
                 p = (uptr)meta;
                 memcpy(addr, &p, sizeof p);
                 *flags_of(f) |= FF_HAS_META;
@@ -1375,6 +1398,16 @@ meta_of(Ty *ty, Value const *f)
         }
 
         return meta;
+}
+
+static inline Value
+self_of(Value const *f)
+{
+        if (f->type == VALUE_BOUND_FUNCTION) {
+                return *f->env[f->info[FUN_INFO_CAPTURES]];
+        } else {
+                return NIL;
+        }
 }
 
 static inline bool
@@ -1409,6 +1442,7 @@ ClassOf(Value const *v)
         case VALUE_CLASS:             return CLASS_CLASS;
         case VALUE_TAG:               return CLASS_TAG;
         case VALUE_FUNCTION:          return CLASS_FUNCTION;
+        case VALUE_BOUND_FUNCTION:    return CLASS_FUNCTION;
         case VALUE_METHOD:            return CLASS_FUNCTION;
         case VALUE_BUILTIN_FUNCTION:  return CLASS_FUNCTION;
         case VALUE_BUILTIN_METHOD:    return CLASS_FUNCTION;
@@ -1556,23 +1590,48 @@ FunDef(Ty *ty, Value const *f)
 static inline Value *
 NewZero(void)
 {
-        return alloc0(sizeof *NewZero());
-}
-
-#define RawObject(c) ((RawObject)(ty, (c)))
-static inline Value
-(RawObject)(Ty *ty, int class)
-{
-        struct itable *o = mAo0(sizeof *o, GC_OBJECT);
-        o->class = class;
-        return OBJECT(o, class);
+        return alloc0(sizeof (struct alloc) + sizeof *NewZero())
+             + sizeof (struct alloc);
 }
 
 #define PutMember(o, m, x) ((PutMember)(ty, (o), (m), (x)))
 static inline void
 (PutMember)(Ty *ty, Value v, i32 m, Value x)
 {
-        itable_add(ty, v.object, m, x);
+        Class *c = v.object->class;
+        u16 off;
+
+        if (
+                (m < vN(c->offsets_r))
+             && ((off = v__(c->offsets_r, m)) != OFF_NOT_FOUND)
+        ) {
+                v.object->slots[off & OFF_MASK] = x;
+        } else {
+                if (v.object->dynamic == NULL) {
+                        v.object->dynamic = mA0(sizeof (struct itable));
+                }
+                itable_add(ty, v.object->dynamic, m, x);
+        }
+}
+
+#define ObjectMember(o, m) ((ObjectMember)(ty, (o), (m)))
+static inline Value *
+(ObjectMember)(Ty *ty, Value v, i32 m)
+{
+        Class *c = v.object->class;
+        u16 off;
+
+        if (
+                (m < vN(c->offsets_r))
+             && ((off = v__(c->offsets_r, m)) != OFF_NOT_FOUND)
+             && ((off >> OFF_SHIFT) == OFF_FIELD)
+        ) {
+                return &v.object->slots[off & OFF_MASK];
+        } else if (v.object->dynamic != NULL) {
+                return itable_lookup(ty, v.object->dynamic, m);
+        } else {
+                return NULL;
+        }
 }
 
 #endif

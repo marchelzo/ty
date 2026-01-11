@@ -45,6 +45,9 @@ Value
 cffi_pmember(Ty *ty, int argc, Value *kwargs);
 
 Value
+cffi_fields(Ty *ty, int argc, Value *kwargs);
+
+Value
 cffi_load(Ty *ty, int argc, Value *kwargs);
 
 Value

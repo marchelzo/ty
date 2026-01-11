@@ -927,8 +927,8 @@ main(int argc, char **argv)
                         );
                 }
 
-                Value doc = (fun != NULL && fun->doc != NULL) ? xSz(fun->doc) : NIL;
-                Value name = (fun != NULL && fun->name != NULL) ? xSz(fun->name) : NIL;
+                Value doc   = (fun != NULL && fun->doc  != NULL) ? xSz(fun->doc)   : NIL;
+                Value name  = (fun != NULL && fun->name != NULL) ? xSz(fun->name)  : NIL;
                 Value proto = (fun != NULL && fun->name != NULL) ? xSz(fun->proto) : NIL;
 
                 ValueVector sigs = {0};

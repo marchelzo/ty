@@ -249,7 +249,9 @@ static intmax_t
 doprint(Ty *ty, int argc, Value *kwargs, FILE *f)
 {
         Value *sep = NAMED("sep");
-
+        if (sep != NULL && sep->type == VALUE_NIL) {
+                sep = NULL;
+        }
         if (sep != NULL && sep->type != VALUE_STRING) {
                 zP(
                         "print(): %s%ssep%s must be a string",
@@ -260,7 +262,9 @@ doprint(Ty *ty, int argc, Value *kwargs, FILE *f)
         }
 
         Value *end = NAMED("end");
-
+        if (end != NULL && end->type == VALUE_NIL) {
+                end = NULL;
+        }
         if (end != NULL && end->type != VALUE_STRING) {
                 zP(
                         "print(): %s%send%s must be a string",
@@ -287,13 +291,15 @@ doprint(Ty *ty, int argc, Value *kwargs, FILE *f)
 
                 if (i > 0) {
                         if (sep != NULL) {
-                                if (fwrite(ss(*sep), 1, sN(*sep), f) < sN(*sep)) {
+                                if (fwrite_unlocked(ss(*sep), 1, sN(*sep), f) < sN(*sep)) {
+                                        funlockfile(f);
                                         lTk();
                                         return -1;
                                 }
                                 written += sN(*sep);
                         } else {
-                                if (fputs(", ", f) == EOF) {
+                                if (fputs_unlocked(", ", f) == EOF) {
+                                        funlockfile(f);
                                         lTk();
                                         return -1;
                                 }
@@ -312,8 +318,8 @@ doprint(Ty *ty, int argc, Value *kwargs, FILE *f)
                         break;
 
                 case VALUE_BLOB:
-                        s = (char const *)v->blob->items;
-                        n = v->blob->count;
+                        s = (char const *)vv(*v->blob);
+                        n = vN(*v->blob);
                         break;
 
                 case VALUE_PTR:
@@ -330,18 +336,17 @@ doprint(Ty *ty, int argc, Value *kwargs, FILE *f)
                         break;
                 }
 
-                if (fwrite(s, 1, n, f) < n) {
+                if (fwrite_unlocked(s, 1, n, f) < n) {
                         if (need_free) {
-                                ty_free((char *)s);
+                                xmF((char *)s);
                         }
-
+                        funlockfile(f);
                         lTk();
-
                         return -1;
                 }
 
                 if (need_free) {
-                        ty_free((char *)s);
+                        xmF((char *)s);
                 }
 
                 written += n;
@@ -349,13 +354,15 @@ doprint(Ty *ty, int argc, Value *kwargs, FILE *f)
 
 
         if (end != NULL) {
-                if (fwrite(ss(*end), 1, sN(*end), f) < sN(*end)) {
+                if (fwrite_unlocked(ss(*end), 1, sN(*end), f) < sN(*end)) {
+                        funlockfile(f);
                         lTk();
                         return -1;
                 }
                 written += sN(*end);
         } else {
-                if (fputc('\n', f) == EOF) {
+                if (fputc_unlocked('\n', f) == EOF) {
+                        funlockfile(f);
                         lTk();
                         return -1;
                 } else {
@@ -364,7 +371,7 @@ doprint(Ty *ty, int argc, Value *kwargs, FILE *f)
         }
 
         if (do_flush) {
-                fflush(f);
+                fflush_unlocked(f);
         }
 
         funlockfile(f);
@@ -7169,7 +7176,7 @@ BUILTIN_FUNCTION(object)
 
         if (argc == 1) {
                 Value class = ARGx(0, VALUE_CLASS);
-                obj = OBJECT(object_new(ty, class.class), class.class);
+                obj = NewInstance(class.class);
         } else {
                 Value class = ARGx(0, VALUE_CLASS);
                 Value old   = ARGx(1, VALUE_OBJECT);
@@ -7360,9 +7367,15 @@ BUILTIN_FUNCTION(members)
 
         switch (val.type) {
         case VALUE_OBJECT:
-                for (int i = 0; i < vN(val.object->ids); ++i) {
-                        char const *key = M_NAME(v__(val.object->ids, i));
-                        dict_put_member(ty, _members, key, v__(val.object->values, i));
+                for (int i = 0; i < val.object->nslot; ++i) {
+                        char const *key = M_NAME(v__(val.object->class->fields.ids, i));
+                        dict_put_member(ty, _members, key, val.object->slots[i]);
+                }
+                if (val.object->dynamic != NULL) {
+                        for (int i = 0; i < vN(val.object->dynamic->ids); ++i) {
+                                char const *key = M_NAME(v__(val.object->dynamic->ids, i));
+                                dict_put_member(ty, _members, key, v__(val.object->dynamic->values, i));
+                        }
                 }
                 break;
 
@@ -7400,12 +7413,7 @@ BUILTIN_FUNCTION(member)
                 Value v = GetMember(ty, o, id, false, true);
                 return (v.type == VALUE_NONE) ? NIL : v;
         } else if (o.type == VALUE_OBJECT) {
-                itable_add(
-                        ty,
-                        o.object,
-                        id,
-                        ARG(2)
-                );
+                PutMember(o, id, ARG(2));
                 return ARG(2);
         } else {
                 bP("attempt to add member to non-object: %s", VSC(&o));
@@ -7906,8 +7914,14 @@ BUILTIN_FUNCTION(ty_disassemble)
                 code = mod->code;
                 break;
 
+        if (0) {
         case VALUE_GENERATOR:
                 what = what.gen->f;
+        }
+        if (0) {
+        case VALUE_METHOD:
+                what = *what.method;
+        }
         case VALUE_FUNCTION:
                 if (class_of(&what) != -1) {
                         snprintf(
