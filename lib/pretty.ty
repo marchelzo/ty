@@ -6,6 +6,12 @@ tag TooMuchError;
 tag TooWideError;
 tag Stop;
 
+pub tag Print;
+pub tag Push;
+pub tag Pop;
+pub tag Newline;
+pub tag Raw;
+
 let defaultColors = {
     dict:  chalk['#e78a4e bold'],
     array: chalk['#e78a4e bold'],
@@ -36,7 +42,7 @@ pub fn escapeString(s) {
 
 fn trunc(str, n) { str[;n].comb(/\x1b[[^m]+$/) }
 
-class Printer {
+pub class Printer {
     __width:     Int
     __indent:    Int
     __out:       Blob
@@ -238,6 +244,26 @@ class Printer {
 
             _ :: Float => {
                 write("{x}", __colors.float, force)
+            },
+
+            Object({__pretty__: $f}) => {
+                for match f() {
+                    Print(x) => {
+                        go(x, canPush, force)
+                    },
+                    Push => {
+                        nl(1)
+                    },
+                    Pop => {
+                        nl(-1)
+                    },
+                    Newline => {
+                        nl()
+                    },
+                    Raw(x) => {
+                        write("{x}", id, force)
+                    }
+                }
             },
 
             members ~> $ms => {
