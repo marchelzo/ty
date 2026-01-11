@@ -1,6 +1,7 @@
 import ty
 import ty.parse
 import ty.token
+import json
 
 class UnknownStyleError < RuntimeError {
     __chalk: Chalk
@@ -289,7 +290,7 @@ class Text {
     __chalk: Chalk
     __fmt: String | nil
 
-    init(text, chalk, fmt=nil) {
+    init(text: String, chalk: Chalk, fmt=nil) {
         __text = text
         __chalk = chalk
         __fmt = fmt

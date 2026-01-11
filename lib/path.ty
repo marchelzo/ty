@@ -178,6 +178,10 @@ pub class Path {
         os.access("{self}", os.F_OK) == 0
     }
 
+    executable? -> Bool {
+        os.access("{self}", os.X_OK) == 0
+    }
+
     file? -> Bool {
         match os.stat(str(self)) {
             {mode, *} => (mode & os.S_IFMT) == os.S_IFREG,
@@ -456,9 +460,9 @@ pub class Path {
             for entry in self.ls() {
                 entry.rmtree()
             }
-            rmdir
+            rmdir()
         } else if self.file? || self.symlink? {
-            unlink
+            unlink()
         } else if !quiet {
             throw PathError({msg: 'path does not exist', path: str(self)})
         }

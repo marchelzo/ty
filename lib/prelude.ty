@@ -867,6 +867,17 @@ class Dict[K, V] : Iterable[K, V] {
         }
     }
 
+    keys()   -> Array[K];
+    values() -> Array[V];
+    items()  -> Array[(K, V)];
+
+    update(other: Dict[K, V]) -> Dict[K, V];
+
+    pop(i: ?Int) -> (K, V);
+
+    keep(f: (K, V) -> Any) -> Dict[K, V];
+    keep!(f: (K, V) -> Any) -> Dict[K, V];
+
     map(f) {
         return %{ k: f(v) for k, v in self }
     }
@@ -906,13 +917,13 @@ class Dict[K, V] : Iterable[K, V] {
         return cast(self.keys().zip(self.values()).__iter__())
     }
 
-    keys()   -> Array[K];
-    values() -> Array[V];
-    items()  -> Array[(K, V)];
+    reject(f: (K, V) -> Any) -> Dict[K, V] {
+        keep((k, v) -> !f(k, v))
+    }
 
-    update(other: Dict[K, V]) -> Dict[K, V];
-
-    pop(i: ?Int) -> (K, V);
+    reject!(f: (K, V) -> Any) -> Dict[K, V] {
+        keep!((k, v) -> !f(k, v))
+    }
 
     [](key: K) -> V {
         self[key]
@@ -977,6 +988,10 @@ class String : Iterable[String], IntoPtr[Int] {
 
     str()  -> String { self }
     str!() -> String { self }
+
+    __ptr__() -> Ptr[Int] {
+        self.ptr()
+    }
 
     center(n: Int, ch: String = ' ') {
         "{self:^{ch}{n}}"
@@ -3320,7 +3335,7 @@ macro time! {
 
     $$[
         do {
-            let (s, x, e) = ($${time::now}(), $$(e), $${time::now}())
+            let (s: _, x, e: _) = ($${time::now}(), $$(e), $${time::now}())
 
             if (e - s) > 0.01 {
                 print(
@@ -4169,8 +4184,6 @@ macro __debug!(n) {
     ty.CompileTime($$[ ty.Value(__debug($$n)) $$])
 }
 
-let __tls::__memos = []
-
 fn memoized[F](fun: F, max: Int = nil) -> F {
     let def = fun.__def__
 
@@ -4203,25 +4216,18 @@ fn memoized[F](fun: F, max: Int = nil) -> F {
             ? p-vars[0]
             : ty.Record([ty.RecordEntry({item: it}) for p-vars])
 
-    let i = thread.fetch-add(static!(thread.atomic(0)), 1)
-
-    let cache = fn () {
-        let memos = __memos ?? (__memos = [])
-        while #memos <= i {
-            memos.push(%{})
-        }
-        memos[i]
-    }
+    let cache = Sync(%{})
 
     let body = match max {
         nil => $$[
-            $${cache}().get-or-put-with($$key, () -> $$call)
+            $${cache}.get-or-put-with($$key, () -> $$call)
         $$],
 
         $max => do {
             let _cache = ty.Id({name: ty.gensym()})
             $$[
-                let $$_cache = $${cache}()
+                let ^_ = $${Sync.lock}($${cache})
+                let $$_cache = $${Sync.get}($${cache})
                 let v = $$_cache.get-or-put-with($$key, () -> $$call)
                 if #$$_cache > $${max} {
                     $$_cache.pop(-1)

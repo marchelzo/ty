@@ -169,9 +169,10 @@ fn nexttype(array-to-ptr? = true, has-name?: ?Bool = nil) {
 
         ('const', _)   => { next()                  },
         ('comment', _) => { next()                  },
-        ('id', _)      => { parts.push(next().id)   },
-        ('*',  _),
-        ('**', _)      => { next(); parts.push('*') }
+        ('id',  _)     => { parts.push(next().id)   },
+        ('*',   _),
+        ('**',  _),
+        ('***', _)     => { next(); parts.push('*') }
     }
 
     let have-int? = ('int' in parts)
@@ -589,6 +590,7 @@ fn strct() {
     let methods: Array[ty.Func[_Func]] = []
     let getters: Array[ty.Func[_Func]] = []
     let setters: Array[ty.Func[_Func]] = []
+    let fields:  Array[_] = []
 
     fn add-member(i: ?Int, name, t, count, off: Int | AST = 0) {
         if i == nil {
@@ -668,6 +670,7 @@ fn strct() {
                     decorators: []
                 )
             )
+            fields.push($$[($${name}, *$${c.fields}($$ctype)[$${i}])$$])
         }
     }
 
@@ -753,7 +756,13 @@ fn strct() {
             methods: [get, __ptr__, init, size, show, *methods],
             getters: getters,
             setters: setters,
-            static-methods: [ctypeFunction, size]
+            static-methods: [ctypeFunction, size],
+            static-fields: [
+                ty.Assign(
+                    'fields',
+                    ty.Array([ty.ArrayItem(item: f) for f in fields])
+                )
+            ]
         )
     ])
 }
