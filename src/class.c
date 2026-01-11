@@ -203,17 +203,23 @@ class_add_s_field(Ty *ty, Class *c, i32 id, Expr *type, Expr *dflt)
         itable_add(ty, &c->s_fields, id, REF(NewZero()));
 }
 
-void
-class_init_object(Ty *ty, int class, struct itable *o)
+TyObject *
+class_new_instance(Ty *ty, int class)
 {
         Class *c = C(class);
-        o->class = class;
 
-        uvPv(o->ids, c->fields.ids);
-        uvR(o->values, vN(o->values) + vN(c->fields.values));
-        for (int i = 0; i < vN(c->fields.values); ++i) {
-                vPx(o->values, NIL);
+        usize const size = sizeof (TyObject)
+                         + vN(c->fields.ids) * sizeof (Value);
+
+        TyObject *obj =  mAo0(size, GC_OBJECT);
+        obj->class = c;
+        obj->nslot = vN(c->fields.ids);
+
+        for (int i = 0; i < obj->nslot; ++i) {
+                obj->slots[i] = NIL;
         }
+
+        return obj;
 }
 
 Value *
@@ -676,8 +682,16 @@ FieldIdentifier(Expr const *field)
 Expr *
 FindMethodImmediate(ExprVec const *ms, char const *name)
 {
+        char const *dollar;
+
         for (int i = 0; i < vN(*ms); ++i) {
                 if (s_eq(name, v__(*ms, i)->name)) {
+                        return v__(*ms, i);
+                } else if (
+                        (v__(*ms, i)->name[0] == '_')
+                     && ((dollar = strchr(name, '$')) != NULL)
+                     && (memcmp(name, v__(*ms, i)->name + 1, dollar - name) == 0)
+                ) {
                         return v__(*ms, i);
                 }
         }
@@ -879,23 +893,51 @@ really_finalize(Ty *ty, Class *c)
         eliminate_refs(&c->getters);
         eliminate_refs(&c->setters);
 
-        if (vN(c->offsets) > NAMES.init) {
-                u16 off = v__(c->offsets, NAMES.init) & OFF_MASK;
+        if (vN(c->offsets_r) > NAMES.init) {
+                u16 off = v__(c->offsets_r, NAMES.init) & OFF_MASK;
                 c->init = v__(c->methods.values, off);
         }
 
         c->really_final = true;
 }
 
+static i16
+decorated_slot(Class *c, Expr const *meth)
+{
+        for (int i = 0; i < vN(c->fields.values); ++i) {
+                Value const *v = v_(c->fields.values, i);
+                if ((v->type == VALUE_PTR) && (v->extra == meth)) {
+                        return i;
+                }
+        }
+
+        UNREACHABLE();
+}
+
 static void
-cache_offsets(Ty *ty, Class *c, struct itable const *table, u8 type)
+cache_offsets(
+        Ty *ty,
+        Class *c,
+        u16Vector *offsets,
+        struct itable const *table,
+        u8 type,
+        Expr *(*find)(Class const *, char const *)
+)
 {
         for (int i = 0; i < vN(table->ids); ++i) {
-                i32 id = v__(table->ids, i);
-                while (vN(c->offsets) <= id) {
-                        xvP(c->offsets, -1);
+                i32 id  = v__(table->ids, i);
+                u16 off = (u16)i;
+                while (vN(*offsets) <= id) {
+                        xvP(*offsets, OFF_NOT_FOUND);
                 }
-                *v_(c->offsets, id) = (type << 12) | (i16)i;
+                if (find != NULL) {
+                        Expr const *meth = (*find)(c, M_NAME(id));
+                        if (vN(meth->decorators) > 0) {
+                                type |= OFF_DECORATED;
+                                off = decorated_slot(c, meth);
+                        }
+                }
+                *v_(*offsets, id) = (type << OFF_SHIFT) | off;
         }
 }
 
@@ -916,9 +958,11 @@ finalize(Ty *ty, Class *c)
 
         class_resolve_all(ty, c->i);
 
-        cache_offsets(ty, c, &c->fields,  OFF_FIELD);
-        cache_offsets(ty, c, &c->methods, OFF_METHOD);
-        cache_offsets(ty, c, &c->getters, OFF_GETTER);
+        cache_offsets(ty, c, &c->offsets_r, &c->fields,  OFF_FIELD,  NULL);
+        cache_offsets(ty, c, &c->offsets_r, &c->methods, OFF_METHOD, FindMethod);
+        cache_offsets(ty, c, &c->offsets_r, &c->getters, OFF_GETTER, FindGetter);
+        cache_offsets(ty, c, &c->offsets_w, &c->fields,  OFF_FIELD,  NULL);
+        cache_offsets(ty, c, &c->offsets_w, &c->setters, OFF_SETTER, FindSetter);
 
         c->final = true;
 }

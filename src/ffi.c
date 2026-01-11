@@ -47,6 +47,9 @@ ptr_from(Ty *ty, Value const *v)
         case VALUE_BLOB:
                 return (void *)v->blob->items;
 
+        case VALUE_FOREIGN_FUNCTION:
+                return (void *)v->ff;
+
         case VALUE_OBJECT:
                 f = class_lookup_method_i(ty, v->class, NAMES.ptr);
                 if (f != NULL) {
@@ -110,7 +113,7 @@ xstore(Ty *ty, ffi_type *t, void *p, Value const *v)
 static void
 store(Ty *ty, ffi_type *t, void *p, Value const *v)
 {
-        size_t offsets[64];
+        usize offsets[64];
         Value *f;
 
         switch (t->type) {
@@ -563,7 +566,7 @@ cffi_pmember(Ty *ty, int argc, Value *kwargs)
                 zP("invalid third argument to ffi.pmember(): %s", VSC(&i));
         }
 
-        size_t offsets[64];
+        usize offsets[64];
         ffi_get_struct_offsets(FFI_DEFAULT_ABI, type, offsets);
 
         return PTR(p + offsets[i.z]);
@@ -611,7 +614,7 @@ cffi_member(Ty *ty, int argc, Value *kwargs)
                 zP("invalid third argument to ffi.member(): %s", VSC(&i));
         }
 
-        size_t offsets[64];
+        usize offsets[64];
         ffi_get_struct_offsets(FFI_DEFAULT_ABI, type, offsets);
 
         if (argc == 3) {
@@ -621,6 +624,42 @@ cffi_member(Ty *ty, int argc, Value *kwargs)
                 store(ty, type->elements[i.z], p + offsets[i.z], &val);
                 return val;
         }
+}
+
+Value
+cffi_fields(Ty *ty, int argc, Value *kwargs)
+{
+        ASSERT_ARGC("ffi.fields()", 1);
+
+        usize *offsets;
+        ffi_type *type = PTR_ARG(0);
+
+        if (type->type != FFI_TYPE_STRUCT) {
+                return NIL;
+        }
+
+        usize count = 0;
+
+        while (type->elements[count] != NULL) {
+                count += 1;
+        }
+
+        Array *fields = vA();
+
+        SCRATCH_SAVE();
+        offsets = smA(count * sizeof (usize));
+        ffi_get_struct_offsets(FFI_DEFAULT_ABI, type, offsets);
+        GC_STOP();
+        for (usize i = 0; i < count; ++i) {
+                uvP(*fields, PAIR(
+                        INTEGER(offsets[i]),
+                        PTR(type->elements[i])
+                ));
+        }
+        GC_RESUME();
+        SCRATCH_RESTORE();
+
+        return ARRAY(fields);
 }
 
 Value

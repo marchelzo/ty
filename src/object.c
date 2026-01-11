@@ -11,27 +11,21 @@
 #include "class.h"
 #include "gc.h"
 
-struct itable *
-object_new(Ty *ty, int class)
-{
-        struct itable *t =  mAo0(sizeof *t, GC_OBJECT);
-
-        NOGC(t);
-        class_init_object(ty, class, t);
-        OKGC(t);
-
-        return t;
-}
-
 void
-object_mark(Ty *ty, struct itable *o)
+object_mark(Ty *ty, TyObject *o)
 {
         if (MARKED(o)) return;
 
         MARK(o);
 
-        for (int i = 0; i < vN(o->values); ++i) {
-                xvP(ty->marking, v_(o->values, i));
+        for (int i = 0; i < o->nslot; ++i) {
+                xvP(ty->marking, &o->slots[i]);
+        }
+
+        if (o->dynamic != NULL) {
+                for (int i = 0; i < vN(o->dynamic->values); ++i) {
+                        xvP(ty->marking, v_(o->dynamic->values, i));
+                }
         }
 }
 

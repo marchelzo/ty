@@ -193,6 +193,7 @@ hash(Ty *ty, Value const *val)
         case VALUE_METHOD:            return HashCombine(ptr_hash(val->method), ptr_hash(val->this));
         case VALUE_BUILTIN_METHOD:    return HashCombine(ptr_hash(val->builtin_method), ptr_hash(val->this));
         case VALUE_BUILTIN_FUNCTION:  return ptr_hash(val->builtin_function);
+        case VALUE_BOUND_FUNCTION:
         case VALUE_FUNCTION:          return HashCombine(ptr_hash(val->info), ptr_hash(val->env));
         case VALUE_FOREIGN_FUNCTION:  return HashCombine(ptr_hash((void *)val->ff), ptr_hash(val->ffi));
         case VALUE_REGEX:             return ptr_hash(val->regex);
@@ -515,6 +516,7 @@ value_showx(Ty *ty, Value const *v, u32 flags)
                 break;
 
         case VALUE_FUNCTION:
+        case VALUE_BOUND_FUNCTION:
                 if (class_of(v) == -1) {
                         snprintf(buffer, 1024, "<func %s>", name_of(v));
                 } else {
@@ -733,6 +735,25 @@ value_show_colorx(Ty *ty, Value const *v, u32 flags)
         case VALUE_DICT:
                 s = show_dict(ty, v, true, flags);
                 break;
+
+        case VALUE_BOUND_FUNCTION:
+        {
+                Value self = self_of(v);
+                snprintf(
+                        buffer,
+                        SHOW_BUF_SZ,
+                        "%s<func %s%s.%s %sbound to %s%s>%s",
+                        TERM(96),
+                        TERM(92),
+                        class_name(ty, class_of(v)),
+                        name_of(v),
+                        TERM(96),
+                        value_show_colorx(ty, &self, flags),
+                        TERM(96),
+                        TERM(0)
+                );
+                break;
+        }
 
         case VALUE_FUNCTION:
                 if (class_of(v) == -1) {
@@ -1166,6 +1187,7 @@ value_truthy(Ty *ty, Value const *v)
         case VALUE_BLOB:             return (vN(*v->blob) != 0);
         case VALUE_REGEX:            return true;
         case VALUE_FUNCTION:         return true;
+        case VALUE_BOUND_FUNCTION:   return true;
         case VALUE_BUILTIN_FUNCTION: return true;
         case VALUE_BUILTIN_METHOD:   return true;
         case VALUE_FOREIGN_FUNCTION: return true;
@@ -1190,6 +1212,7 @@ value_apply_predicate(Ty *ty, Value *p, Value *v)
 
         switch (p->type) {
         case VALUE_FUNCTION:
+        case VALUE_BOUND_FUNCTION:
         case VALUE_BUILTIN_FUNCTION:
         case VALUE_METHOD:
         case VALUE_BUILTIN_METHOD:
@@ -1477,7 +1500,8 @@ mark_generator(Ty *ty, Value const *v)
 inline static void
 mark_function(Ty *ty, Value const *v)
 {
-        int n = v->info[FUN_INFO_CAPTURES];
+        int n = v->info[FUN_INFO_CAPTURES]
+              + (v->type == VALUE_BOUND_FUNCTION);
 
         if (from_eval(v)) {
                 MARK(v->info);
@@ -1502,11 +1526,10 @@ mark_function(Ty *ty, Value const *v)
         MARK(v->env);
 
         for (int i = 0; i < n; ++i) {
-                if (v->env[i] == NULL) {
-                        continue;
+                if (v->env[i] != NULL) {
+                        MARK(v->env[i]);
+                        MarkNext(ty, v->env[i]);
                 }
-                MARK(v->env[i]);
-                MarkNext(ty, v->env[i]);
         }
 }
 
@@ -1537,13 +1560,17 @@ mark_pointer(Ty *ty, Value const *v)
 inline static void
 mark_trace(Ty *ty, ThrowCtx *ctx)
 {
-        if (MARKED(ctx)) return;
+        if (MARKED(ctx)) {
+                return;
+        }
 
         MARK(ctx);
 
-        for (int i = 0; i < vN(*ctx); ++i) {
-                ValueVector *locals = v_(ctx->locals, i);
-                vfor(*locals, MarkNext(ty, it));
+        if (DetailedExceptions) {
+                for (int i = 0; i < vN(*ctx); ++i) {
+                        ValueVector *locals = v_(ctx->locals, i);
+                        vfor(*locals, MarkNext(ty, it));
+                }
         }
 }
 
@@ -1572,13 +1599,14 @@ _value_mark_xd(Ty *ty, Value const *v)
         case VALUE_ARRAY:            value_array_mark(ty, v->array);                                   break;
         case VALUE_TUPLE:            mark_tuple(ty, v);                                                break;
         case VALUE_DICT:             dict_mark(ty, v->dict);                                           break;
+        case VALUE_BOUND_FUNCTION:
         case VALUE_FUNCTION:         mark_function(ty, v);                                             break;
         case VALUE_GENERATOR:        mark_generator(ty, v);                                            break;
         case VALUE_THREAD:           mark_thread(ty, v);                                               break;
         case VALUE_STRING:           mark_string(ty, v);                                               break;
         case VALUE_OBJECT:           object_mark(ty, v->object);                                       break;
         case VALUE_CLASS:            class_mark(ty, v->class);                                         break;
-        case VALUE_REF:              MARK(v->ptr); MarkNext(ty, v->ptr);                               break;
+        case VALUE_REF:              MARK(v->ref); MarkNext(ty, v->ref);                               break;
         case VALUE_BLOB:             MARK(v->blob);                                                    break;
         case VALUE_PTR:              mark_pointer(ty, v);                                              break;
         case VALUE_TRACE:            mark_trace(ty, v->ptr);                                           break;

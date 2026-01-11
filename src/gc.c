@@ -79,12 +79,14 @@ collect(Ty *ty, struct alloc *a)
                 break;
 
         case GC_OBJECT:
-                o = OBJECT((struct itable *)p, ((struct itable *)p)->class);
+                o = OBJECT((TyObject *)p, ((TyObject *)p)->class->i);
                 finalizer = class_get_finalizer(ty, o.class);
                 if (finalizer.type != VALUE_NONE) {
                         vm_call_method(ty, &o, &finalizer, 0);
                 }
-                itable_release(ty, p);
+                if (o.object->dynamic != NULL) {
+                        itable_release(ty, o.object->dynamic);
+                }
                 break;
 
         case GC_REGEX:

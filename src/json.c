@@ -557,21 +557,34 @@ encode(Ty *ty, Value const *v, str *out)
                         }
                 } else {
                         xvP(*out, '{');
-                        for (int i = 0; i < vN(v->object->ids); ++i) {
-                                char const *name = M_NAME(v__(v->object->ids, i));
-                                xvP(*out, '"');
+                        for (int i = 0; i < v->object->nslot; ++i) {
+                                char const *name = M_NAME(v__(v->object->class->fields.ids, i));
                                 xvPn(*out, name, strlen(name));
                                 xvP(*out, '"');
                                 xvP(*out, ':');
-                                if (!encode(ty, v_(v->object->values, i), out))
+                                if (!encode(ty, &v->object->slots[i], out)) {
                                         return false;
+                                }
                                 xvP(*out, ',');
                         }
+                        if (v->object->dynamic != NULL) {
+                                for (int i = 0; i < vN(v->object->dynamic->ids); ++i) {
+                                        char const *name = M_NAME(v__(v->object->dynamic->ids, i));
+                                        xvPn(*out, name, strlen(name));
+                                        xvP(*out, '"');
+                                        xvP(*out, ':');
+                                        if (!encode(ty, &v->object->slots[i], out)) {
+                                                return false;
+                                        }
+                                        xvP(*out, ',');
+                                }
+                        }
                         vvX(Visiting);
-                        if (*vvL(*out) == ',')
+                        if (*vvL(*out) == ',') {
                                 *vvL(*out) = '}';
-                        else
+                        } else {
                                 xvP(*out, '}');
+                        }
                 }
                 break;
         }

@@ -943,9 +943,10 @@ inline static Value
 GetSelf(Ty *ty)
 {
         Value const *fun = ActiveFun(ty);
-        u32  np = param_count_of(fun);
+        u32 np = param_count_of(fun);
 
-        Value v = v__(STACK, vvL(FRAMES)->fp + np);
+        usize i = vvL(FRAMES)->fp + np;
+        Value v = v__(STACK, i);
 
         while (v.type == VALUE_REF) {
                 v = *v.ref;
@@ -955,11 +956,21 @@ GetSelf(Ty *ty)
 }
 
 inline static Value
-BindMethod(Ty *ty, Value *f, Value *v, int id)
+BindMethod(Ty *ty, Value *f, Value *v)
 {
-        Value *this = mAo(sizeof *this, GC_VALUE);
-        *this = *v;
-        return METHOD(id, f, this);
+        Value meth = *f;
+
+        if (class_of(f) != -1) {
+                Value *this = memcpy(mAo(sizeof *this, GC_VALUE), v, sizeof *v);
+                int    nEnv = f->info[FUN_INFO_CAPTURES];
+                Value **env = mAo0((nEnv + 1) * sizeof (Value *), GC_ENV);
+                memcpy(env, f->env, nEnv * sizeof (Value *));
+                env[nEnv] = this;
+                meth.env = env;
+                meth.type = VALUE_BOUND_FUNCTION;
+        }
+
+        return meth;
 }
 
 static bool
@@ -1157,6 +1168,7 @@ inline static void
 xcall(Ty *ty, Value const *f, Value const *pSelf, int argc, Value const *pKwargs, char *whence)
 {
         if (UNLIKELY(vN(FRAMES) >= TY_MAX_CALL_DEPTH)) {
+                *(volatile int *)0 = 0;
                 zP("maximum call depth exceeded");
         }
 
@@ -1173,9 +1185,7 @@ xcall(Ty *ty, Value const *f, Value const *pSelf, int argc, Value const *pKwargs
         int   fp      = vN(STACK) - argc;
 
         if (class != -1) {
-                self = (pSelf != NULL) ? *pSelf
-                     : is_decorated(f) ? GetSelf(ty)
-                     : NIL;
+                self = ((pSelf != NULL) && !IsNone(*pSelf)) ? *pSelf : self_of(f);
         } else {
                 self = NONE;
         }
@@ -1965,18 +1975,27 @@ PushTry(Ty *ty)
 TY_INSTR_INLINE static void
 DoThrow(Ty *ty)
 {
-        Value ex = CurrentThrowCtx(ty)->exc;
+        ty->exc = CurrentThrowCtx(ty)->exc;
 
 #if 0
-        if (ex.type == VALUE_OBJECT && ex.class == CLASS_RUNTIME_ERROR) {
-                XXX("Throw: RuntimeError: %s", TY_TMP_C_STR(*itable_get(ty, ex.object, NAMES._what)));
+        //XXX("%s\n", FormatTrace(ty, NULL, NULL));
+        if (
+                (ty->exc.type == VALUE_OBJECT)
+             && (ty->exc.class == CLASS_RUNTIME_ERROR)
+        ) {
+                Value *what = ObjectMember(ty->exc, NAMES._what);
+                XXX(
+                        "Throw: RuntimeError: %s",
+                        (what != NULL) ? TY_TMP_C_STR(*what) : "<no message>"
+                );
         } else {
                 TY_START(DYING);
-                XXX("Throw: %s", VSC(&ex));
+                XXX("Throw: %s", VSC(&ty->exc));
                 TY_STOP(DYING);
         }
-#endif
+
         //xprint_stack(ty, 5);
+#endif
 
         for (;;) {
                 while (
@@ -2010,7 +2029,7 @@ DoThrow(Ty *ty)
                                 RestoreScratch(ty, t->ss);
 
                                 push(SENTINEL);
-                                push(ex);
+                                push(ty->exc);
 
                                 t->state = TRY_CATCH;
 
@@ -2026,13 +2045,12 @@ DoThrow(Ty *ty)
                         case TRY_THROW:
                                 zPxx(
                                         "an exception was thrown while handling another exception: %s%s%s",
-                                        TERM(31), VSC(&ex), TERM(39)
+                                        TERM(31), VSC(&ty->exc), TERM(39)
                                 );
                         }
                 }
-
-                if (!co_abort(ty)) {
-                        zPxx("uncaught exception: %s%s%s", TERM(31), VSC(&ex), TERM(39));
+                if (UNLIKELY(!co_abort(ty))) {
+                        UNREACHABLE("DoThrow(): no handler at top level");
                 }
         }
 }
@@ -2340,6 +2358,7 @@ DoCall(Ty *ty, Value const *f, int n, int nkw, bool auto_this)
 
         switch (v.type) {
         case VALUE_FUNCTION:
+        case VALUE_BOUND_FUNCTION:
                 new_frame = call(ty, &v, NULL, n, &kwargs);
                 gX();
                 return new_frame;
@@ -2419,7 +2438,7 @@ DoCall(Ty *ty, Value const *f, int n, int nkw, bool auto_this)
                         value = NONE;
                         exec_fn(ty, vp, &value, n, &kwargs);
                 } else {
-                        value = OBJECT(object_new(ty, v.class), v.class);
+                        value = NewInstance(v.class);
                         gP(&value);
                         exec_fn(ty, vp, &value, n, &kwargs);
                         gX();
@@ -2498,47 +2517,90 @@ DoCall(Ty *ty, Value const *f, int n, int nkw, bool auto_this)
         }
 }
 
-inline static i16
-FastFieldOffset(Ty *ty, Value const *v, i32 id)
+inline static u16
+FastReadOffset(Ty *ty, Value const *v, i32 id)
 {
-        if (v->type != VALUE_OBJECT || v->object->diverged) {
-                return -1;
+        if (v->type != VALUE_OBJECT) {
+                return OFF_NOT_FOUND;
         }
 
         Class *class = class_get(ty, v->class);
 
-        if (id >= vN(class->offsets)) {
-                return -1;
+        if (id >= vN(class->offsets_r)) {
+                return OFF_NOT_FOUND;
         }
 
-        return v__(class->offsets, id);
+        return v__(class->offsets_r, id);
 }
 
-inline static Value *
+inline static u16
+FastWriteOffset(Ty *ty, Value const *v, i32 id)
+{
+        if (v->type != VALUE_OBJECT) {
+                return OFF_NOT_FOUND;
+        }
+
+        Class *class = class_get(ty, v->class);
+
+        if (id >= vN(class->offsets_w)) {
+                return OFF_NOT_FOUND;
+        }
+
+        return v__(class->offsets_w, id);
+}
+
+inline static bool
 TargetFieldFast(Ty *ty, Value *v, i32 id)
 {
-        i16 off = FastFieldOffset(ty, v, id);
-        if (off < 0) {
-                return NULL;
+        u16 off = FastWriteOffset(ty, v, id);
+        if (off == OFF_NOT_FOUND) {
+                return false;
         }
 
         u8 type = (off >> OFF_SHIFT);
         off &= OFF_MASK;
 
+        Value *_set = NULL;
+        Value *_get = NULL;
+        Class *class = class_get(ty, v->class);
+
         switch (type) {
         case OFF_FIELD:
-                return v_(v->object->values, off);
+                pushtarget(&v->object->slots[off], v->object);
+                return true;
+
+        case OFF_SETTER:
+                _set = v_(class->setters.values, off);
+                _get = class_lookup_getter_i(ty, v->class, id);
+                if (_get == NULL) {
+                        return false;
+                }
+                pushtarget(_get, NULL);
+                pushtarget((Value *)(uptr)v->class, v->object);
+                pushtarget((Value *)(((uptr)_set) | 2), NULL);
+                return true;
+
+        case OFF_SETTER_X:
+                _set = &v->object->slots[off];
+                _get = class_lookup_getter_i(ty, v->class, id);
+                if (_get == NULL) {
+                        return false;
+                }
+                pushtarget(_get, NULL);
+                pushtarget((Value *)(uptr)v->class, v->object);
+                pushtarget((Value *)(((uptr)_set) | 2), NULL);
+                return true;
 
         default:
-                return NULL;
+                return false;
         }
 }
 
 inline static Value
 LoadFieldFast(Ty *ty, Value *v, i32 id)
 {
-        i16 off = FastFieldOffset(ty, v, id);
-        if (off < 0) {
+        u16 off = FastReadOffset(ty, v, id);
+        if (off == OFF_NOT_FOUND) {
                 return NONE;
         }
 
@@ -2552,10 +2614,15 @@ LoadFieldFast(Ty *ty, Value *v, i32 id)
 
         switch (type) {
         case OFF_FIELD:
-                return v__(v->object->values, off);
+                return v->object->slots[off];
 
         case OFF_GETTER:
                 vp = v_(class->getters.values, off);
+                call(ty, vp, v, 0, NULL);
+                return BREAK;
+
+        case OFF_GETTER_X:
+                vp = &v->object->slots[off];
                 call(ty, vp, v, 0, NULL);
                 return BREAK;
 
@@ -2564,9 +2631,10 @@ LoadFieldFast(Ty *ty, Value *v, i32 id)
                 this = mAo(sizeof *this, GC_VALUE);
                 *this = *v;
                 return METHOD(id, vp, this);
-        }
 
-        UNREACHABLE();
+        default:
+                return NONE;
+        }
 }
 
 inline static bool
@@ -2574,8 +2642,8 @@ DispatchMethodFast(Ty *ty, Value self, i32 id, int argc, int nkw)
 {
         Value *v = &self;
 
-        i16 off = FastFieldOffset(ty, v, id);
-        if (off < 0) {
+        u16 off = FastReadOffset(ty, v, id);
+        if (off == OFF_NOT_FOUND) {
                 return false;
         }
 
@@ -2591,7 +2659,7 @@ DispatchMethodFast(Ty *ty, Value self, i32 id, int argc, int nkw)
         switch (type) {
         case OFF_FIELD:
                 pop();
-                DoCall(ty, v_(v->object->values, off), argc, nkw, false);
+                DoCall(ty, &v->object->slots[off], argc, nkw, false);
                 break;
 
         case OFF_GETTER:
@@ -2602,8 +2670,23 @@ DispatchMethodFast(Ty *ty, Value self, i32 id, int argc, int nkw)
                 DoCall(ty, &fn, argc, nkw, false);
                 break;
 
+        case OFF_GETTER_X:
+                vp = &v->object->slots[off];
+                exec_fn(ty, vp, v, 0, NULL);
+                fn = pop();
+                pop();
+                DoCall(ty, &fn, argc, nkw, false);
+                break;
+
         case OFF_METHOD:
                 vp = v_(class->methods.values, off);
+                pop();
+                kwargs = BuildKwargsDict(ty, nkw);
+                call(ty, vp, v, argc, &kwargs);
+                break;
+
+        case OFF_METHOD_X:
+                vp = &v->object->slots[off];
                 pop();
                 kwargs = BuildKwargsDict(ty, nkw);
                 call(ty, vp, v, argc, &kwargs);
@@ -2708,8 +2791,23 @@ GetMember(Ty *ty, Value v, int member, bool try_missing, bool exec)
                 n = CLASS_BOOL;
                 goto ClassLookup;
 
-        case VALUE_FUNCTION:
         case VALUE_METHOD:
+                if (member == NAMES._class_) {
+                        return (class_of(v.method) != -1) ? CLASS(class_of(v.method)) : NIL;
+                } else if (member == NAMES._name_) {
+                        return xSz(name_of(v.method));
+                } else if (member == NAMES._fqn_) {
+                        return xSz(fqn_of(v.method));
+                } else if (member == NAMES._def_) {
+                        return FunDef(ty, v.method);
+                } else if (has_meta(v.method)) {
+                        return GetMember(ty, *meta_of(ty, v.method), member, false, exec);
+                }
+                n = CLASS_FUNCTION;
+                goto ClassLookup;
+
+        case VALUE_FUNCTION:
+        case VALUE_BOUND_FUNCTION:
                 if (member == NAMES._class_) {
                         return (class_of(&v) != -1) ? CLASS(class_of(&v)) : NIL;
                 } else if (member == NAMES._name_) {
@@ -2799,7 +2897,7 @@ GetMember(Ty *ty, Value v, int member, bool try_missing, bool exec)
                 goto ClassLookup;
 
         case VALUE_OBJECT:
-                vp = itable_lookup(ty, v.object, member);
+                vp = ObjectMember(v, member);
                 if (vp != NULL) {
                         return *vp;
                 }
@@ -3020,6 +3118,7 @@ CallMethod(Ty *ty, int i, int n, int nkw, bool b)
                 goto ClassLookup;
 
         case VALUE_FUNCTION:
+        case VALUE_BOUND_FUNCTION:
         case VALUE_BUILTIN_FUNCTION:
         case VALUE_FOREIGN_FUNCTION:
         case VALUE_METHOD:
@@ -3379,7 +3478,7 @@ TY_INSTR_INLINE static void
 DoMutDiv(Ty *ty)
 {
         uptr c, p = (uptr)poptarget();
-        struct itable *o;
+        TyObject *o;
         Value *vp, *vp2, val, x;
         void *v = vp = (void *)pP(p);
         unsigned char b;
@@ -3433,7 +3532,7 @@ TY_INSTR_INLINE static void
 DoMutMod(Ty *ty)
 {
         uptr c, p = (uptr)poptarget();
-        struct itable *o;
+        TyObject *o;
         Value *vp, *vp2, val, x;
         void *v = vp = (void *)(p & ~PMASK3);
         unsigned char b;
@@ -3483,7 +3582,7 @@ TY_INSTR_INLINE static void
 DoMutMul(Ty *ty)
 {
         uptr c, p = (uptr)poptarget();
-        struct itable *o;
+        TyObject *o;
         Value *vp, *vp2, val, x;
         void *v = vp = (void *)(p & ~PMASK3);
         unsigned char b;
@@ -3533,7 +3632,7 @@ TY_INSTR_INLINE static void
 DoMutSub(Ty *ty)
 {
         uptr c, p = (uptr)poptarget();
-        struct itable *o;
+        TyObject *o;
         Value *vp, x, val;
         void *v = vp = (void *)(p & ~PMASK3);
         unsigned char b;
@@ -3565,13 +3664,11 @@ DoMutSub(Ty *ty)
                         break;
                 default:
                         x = pop();
-
                         if ((val = vm_try_2op(ty, OP_MUT_SUB, vp, &x)).type != VALUE_NONE) {
                                 vp = &val;
                         } else {
                                 *vp = vm_2op(ty, OP_SUB, vp, &x);
                         }
-
                         break;
                 }
                 push(*vp);
@@ -3604,7 +3701,7 @@ TY_INSTR_INLINE static void
 DoMutAdd(Ty *ty)
 {
         uptr c, p = (uptr)poptarget();
-        struct itable *o;
+        TyObject *o;
         Value *vp, val, x;
         void *v = vp = (void *)(p & ~PMASK3);
         unsigned char b;
@@ -3641,13 +3738,11 @@ DoMutAdd(Ty *ty)
                 default:
                         x = pop();
                         val = vm_try_2op(ty, OP_MUT_ADD, vp, &x);
-
                         if (val.type != VALUE_NONE) {
                                 vp = &val;
                         } else {
                                 *vp = vm_2op(ty, OP_ADD, vp, &x);
                         }
-
                         break;
                 }
 
@@ -3665,7 +3760,7 @@ DoMutAdd(Ty *ty)
 
         case 2:
                 c = (uptr)poptarget();
-                o = TARGETS.items[TARGETS.count].gc;
+                o = vZ(TARGETS)->gc;
                 vp = poptarget();
                 exec_fn(ty, vp, &OBJECT(o, c), 0, NULL);
                 top()[-1] = vm_2op(ty, OP_ADD, top(), top() - 1);
@@ -3682,7 +3777,7 @@ TY_INSTR_INLINE static void
 DoMutAnd(Ty *ty)
 {
         uptr c, p = (uptr)poptarget();
-        struct itable *o;
+        TyObject *o;
         Value *vp, val, x;
         void *v = vp = (void *)(p & ~PMASK3);
         unsigned char b;
@@ -3738,7 +3833,7 @@ TY_INSTR_INLINE static void
 DoMutOr(Ty *ty)
 {
         uptr c, p = (uptr)poptarget();
-        struct itable *o;
+        TyObject *o;
         Value *vp, val, x;
         void *v = vp = (void *)(p & ~PMASK3);
         unsigned char b;
@@ -3794,7 +3889,7 @@ TY_INSTR_INLINE static void
 DoMutXor(Ty *ty)
 {
         uptr c, p = (uptr)poptarget();
-        struct itable *o;
+        TyObject *o;
         Value *vp, val, x;
         void *v = vp = (void *)(p & ~PMASK3);
         unsigned char b;
@@ -3850,7 +3945,7 @@ TY_INSTR_INLINE static void
 DoMutShl(Ty *ty)
 {
         uptr c, p = (uptr)poptarget();
-        struct itable *o;
+        TyObject *o;
         Value *vp, val, x;
         void *v = vp = (void *)(p & ~PMASK3);
         unsigned char b;
@@ -3902,7 +3997,7 @@ TY_INSTR_INLINE static void
 DoMutShr(Ty *ty)
 {
         uptr c, p = (uptr)poptarget();
-        struct itable *o;
+        TyObject *o;
         Value *vp, val, x;
         void *v = vp = (void *)(p & ~PMASK3);
         unsigned char b;
@@ -3960,7 +4055,7 @@ DoAssign(Ty *ty)
 {
         uptr m, c, p = (uptr)poptarget();
         void *v = (void *)pP(p);
-        struct itable *o;
+        TyObject *o;
 
         switch (pT(p)) {
         case 0:
@@ -3973,7 +4068,7 @@ DoAssign(Ty *ty)
 
         case 2:
                 c = (uptr)poptarget();
-                o = vZ(TARGETS)[0].gc;
+                o = vZ(TARGETS)->gc;
                 poptarget();
                 call(ty, v, &OBJECT(o, c), 1, NULL);
                 break;
@@ -3981,7 +4076,7 @@ DoAssign(Ty *ty)
         case 3:
                 m = (p >> 3);
                 c = (uptr)poptarget();
-                o = vZ(TARGETS)[0].gc;
+                o = vZ(TARGETS)->gc;
                 push(xSz(M_NAME(m)));
                 swap();
                 call(ty, class_lookup_setter_i(ty, c, NAMES.missing), &OBJECT(o, c), 2, NULL);
@@ -4027,7 +4122,7 @@ DoTargetMember(Ty *ty, Value v, i32 z)
                         pushtarget((Value *)(((uptr)vp) | 2), NULL);
                         return;
                 }
-                vp = itable_lookup(ty, v.object, z);
+                vp = ObjectMember(v, z);
                 if (vp != NULL) {
                         pushtarget(vp, v.object);
                         return;
@@ -4050,8 +4145,10 @@ DoTargetMember(Ty *ty, Value v, i32 z)
                         pushtarget((Value *)(((uptr)z << 3) | 3), NULL);
                         return;
                 }
-                v.object->diverged = true;
-                pushtarget(itable_get(ty, v.object, z), v.object);
+                if (v.object->dynamic == NULL) {
+                        v.object->dynamic = mA0(sizeof (struct itable));
+                }
+                pushtarget(itable_get(ty, v.object->dynamic, z), v.object);
                 break;
 
         case VALUE_CLASS:
@@ -4095,6 +4192,7 @@ DoTargetMember(Ty *ty, Value v, i32 z)
                 break;
 
         case VALUE_FUNCTION:
+        case VALUE_BOUND_FUNCTION:
                 DoTargetMember(ty, *meta_of(ty, &v), z);
                 break;
 
@@ -4304,7 +4402,7 @@ DoRange(Ty *ty, bool inclusive)
 
         if (UNLIKELY(PACK_TYPES(a.type, b.type) != PAIR_OF(VALUE_INTEGER))) {
                 zP(
-                        "Range.init(): bad bounds:, (%s, %s)",
+                        "Range.init(): bad bounds: (%s, %s)",
                         VSC(&a),
                         VSC(&b)
                 );
@@ -4559,6 +4657,7 @@ IterGetNext(Ty *ty)
                 break;
 
         case VALUE_FUNCTION:
+        case VALUE_BOUND_FUNCTION:
                 push(INTEGER(i));
                 call(ty, &v, NULL, 1, NULL);
                 break;
@@ -4678,7 +4777,7 @@ SpreadShuffle(Ty *ty, bool inject_nil)
 }
 
 static void
-InstallMethods(Ty *ty, struct itable *table, i32 n)
+InstallMethods(Ty *ty, i32 c, struct itable *table, i32 n)
 {
         i32 i;
         Value v;
@@ -4959,7 +5058,6 @@ NextInstruction:
                         LOG("Loading capture: %s (%d) of %s", IP, n, VSC(ActiveFun(ty)));
                         SKIPSTR();
 #endif
-
                         push(*ActiveFun(ty)->env[n]);
                         break;
 
@@ -5005,6 +5103,11 @@ NextInstruction:
                         if (top()->type == VALUE_FUNCTION) {
                                 top()->xinfo = (FunUserInfo *)s;
                         }
+                        break;
+
+                CASE(BIND_CLASS)
+                        READVALUE(n);
+                        *top() = BindMethod(ty, top(), &CLASS(n));
                         break;
 
                 CASE(INTO_METHOD)
@@ -5062,6 +5165,15 @@ NextInstruction:
                         v = pop();
                         if (v.type == VALUE_NIL) {
                                 IP += n;
+                        }
+                        break;
+
+                CASE(JUMP_IF_INIT)
+                        READVALUE(n);
+                        if (GetSelf(ty).object->init) {
+                                IP += n;
+                        } else {
+                                GetSelf(ty).object->init = true;
                         }
                         break;
 
@@ -5248,9 +5360,7 @@ NextInstruction:
                 CASE(TARGET_MEMBER)
                         READVALUE(z);
 TargetMember:
-                        if ((vp = TargetFieldFast(ty, top(), z)) != NULL) {
-                                pushtarget(vp, v.object);
-                        } else {
+                        if (!TargetFieldFast(ty, top(), z)) {
                                 DoTargetMember(ty, peek(), z);
                         }
                         pop();
@@ -5259,9 +5369,7 @@ TargetMember:
                 CASE(TARGET_SELF_MEMBER)
                         READVALUE(z);
                         v = GetSelf(ty);
-                        if ((vp = TargetFieldFast(ty, &v, z)) != NULL) {
-                                pushtarget(vp, v.object);
-                        } else {
+                        if (!TargetFieldFast(ty, &v, z)) {
                                 DoTargetMember(ty, v, z);
                         }
                         break;
@@ -6348,7 +6456,7 @@ YIELD:
 MemberAccess:
                         value = pop();
 
-                        if (UNLIKELY(IsNone((v = LoadFieldFast(ty, &value, z))))) {
+                        if (IsNone((v = LoadFieldFast(ty, &value, z)))) {
                                 v = GetMember(ty, value, z, true, false);
                         }
 
@@ -6612,6 +6720,11 @@ BadContainer:
                         DoNeq(ty);
                         break;
 
+                CASE(CLASS_OF)
+                        value = pop();
+                        push(CLASS(ClassOf(&value)));
+                        break;
+
                 CASE(CHECK_MATCH)
                         switch (top()->type) {
                         case VALUE_CLASS:
@@ -6675,11 +6788,6 @@ BadContainer:
                         } else {
                                 push(TAG(tags_first(ty, v.tags)));
                         }
-                        break;
-
-                CASE(LEN)
-                        v = pop();
-                        push(INTEGER(v.array->count)); // TODO
                         break;
 
                 CASE(PRE_INC)
@@ -6806,12 +6914,12 @@ BinaryOp:
 
                         class = class_get(ty, class_id);
 
-                        InstallMethods(ty, &class->s_methods, s_m);
-                        InstallMethods(ty, &class->s_getters, s_g);
-                        InstallMethods(ty, &class->s_setters, s_s);
-                        InstallMethods(ty, &class->methods, m);
-                        InstallMethods(ty, &class->getters, g);
-                        InstallMethods(ty, &class->setters, s);
+                        InstallMethods(ty, class_id, &class->s_methods, s_m);
+                        InstallMethods(ty, class_id, &class->s_getters, s_g);
+                        InstallMethods(ty, class_id, &class->s_setters, s_s);
+                        InstallMethods(ty, class_id, &class->methods, m);
+                        InstallMethods(ty, class_id, &class->getters, g);
+                        InstallMethods(ty, class_id, &class->setters, s);
 
                         if (class->super != NULL) {
                                 Value *hook = class_lookup_s_method_i(
@@ -6850,7 +6958,8 @@ BinaryOp:
 
                 CASE(FUNCTION)
                 {
-                        v = NONE;
+                        m0(v);
+
                         v.type = VALUE_FUNCTION;
 
                         // n: bound_caps
@@ -6882,8 +6991,7 @@ BinaryOp:
 
                         if (nEnv > 0) {
                                 LOG("Allocating ENV for %d caps", nEnv);
-                                v.env = mAo(nEnv * sizeof (Value *), GC_ENV);
-                                memset(v.env, 0, nEnv * sizeof (Value *));
+                                v.env = mAo0(nEnv * sizeof (Value *), GC_ENV);
                         } else {
                                 v.env = NULL;
                         }
@@ -6934,22 +7042,88 @@ BinaryOp:
                 CASE(BIND_INSTANCE)
                         READVALUE(n);
                         READVALUE(z);
-                        vp = class_lookup_method_i(ty, n, z);
-                        *top() = BindMethod(ty, vp, top(), z);
+                        if (n < 0) {
+                                vp = class_lookup_method_i(ty, -n, z);
+                                *top() = BindMethod(ty, vp, top());
+                        } else {
+                                i = FastReadOffset(ty, &OBJECT(top()->object, n), z);
+                                if (i == OFF_NOT_FOUND) {
+                                        vp = class_lookup_method_i(ty, n, z);
+                                        *top() = BindMethod(ty, vp, top());
+                                } else {
+                                        switch (i >> OFF_SHIFT) {
+                                        case OFF_METHOD:
+                                                vp = v_(class_get(ty, n)->methods.values, i & OFF_MASK);
+                                                break;
+
+                                        case OFF_METHOD_X:
+                                                vp = &top()->object->slots[i & OFF_MASK];
+                                                break;
+
+                                        default:
+                                                UNREACHABLE("BIND_INSTANCE: invalid offset type");
+                                        }
+                                        *top() = BindMethod(ty, vp, top());
+                                }
+                        }
                         break;
 
                 CASE(BIND_GETTER)
                         READVALUE(n);
                         READVALUE(z);
-                        vp = class_lookup_getter_i(ty, n, z);
-                        *top() = BindMethod(ty, vp, top(), z);
+                        if (n < 0) {
+                                vp = class_lookup_getter_i(ty, -n, z);
+                                *top() = BindMethod(ty, vp, top());
+                        } else {
+                                i = FastReadOffset(ty, &OBJECT(top()->object, n), z);
+                                if (i == OFF_NOT_FOUND) {
+                                        vp = class_lookup_getter_i(ty, n, z);
+                                        *top() = BindMethod(ty, vp, top());
+                                } else {
+                                        switch (i >> OFF_SHIFT) {
+                                        case OFF_GETTER:
+                                                vp = v_(class_get(ty, n)->getters.values, i & OFF_MASK);
+                                                break;
+
+                                        case OFF_GETTER_X:
+                                                vp = &top()->object->slots[i & OFF_MASK];
+                                                break;
+
+                                        default:
+                                                UNREACHABLE("BIND_GETTER: invalid offset type");
+                                        }
+                                        *top() = BindMethod(ty, vp, top());
+                                }
+                        }
                         break;
 
                 CASE(BIND_SETTER)
                         READVALUE(n);
                         READVALUE(z);
-                        vp = class_lookup_setter_i(ty, n, z);
-                        *top() = BindMethod(ty, vp, top(), z);
+                        if (n < 0) {
+                                vp = class_lookup_setter_i(ty, -n, z);
+                                *top() = BindMethod(ty, vp, top());
+                        } else {
+                                i = FastWriteOffset(ty, &OBJECT(top()->object, n), z);
+                                if (i == OFF_NOT_FOUND) {
+                                        vp = class_lookup_setter_i(ty, n, z);
+                                        *top() = BindMethod(ty, vp, top());
+                                } else {
+                                        switch (i >> OFF_SHIFT) {
+                                        case OFF_SETTER:
+                                                vp = v_(class_get(ty, n)->setters.values, i & OFF_MASK);
+                                                break;
+
+                                        case OFF_SETTER_X:
+                                                vp = &top()->object->slots[i & OFF_MASK];
+                                                break;
+
+                                        default:
+                                                UNREACHABLE("BIND_SETTER: invalid offset type");
+                                        }
+                                        *top() = BindMethod(ty, vp, top());
+                                }
+                        }
                         break;
 
                 CASE(BIND_STATIC)
@@ -7166,8 +7340,19 @@ RunExitHooks(void)
 
         for (usize i = 0; i < vN(*hooks); ++i) {
                 if (TY_CATCH_ERROR()) {
-                        TY_CATCH();
-                        xvP(msgs, S2(TyError(ty)));
+                        char *trace = FormatTrace(ty, NULL, NULL);
+                        Value error = TY_CATCH();
+                        xvP(
+                                msgs,
+                                xfmt(
+                                        "%s\n%sERROR:%s %s",
+                                        trace,
+                                        TERM(91;1),
+                                        TERM(0),
+                                        VSC(&error)
+                                )
+                        );
+                        xmF(trace);
                 } else {
                         Value v = vmC(v_(*hooks, i), 0);
                         bReprintFirst = bReprintFirst || value_truthy(ty, &v);
@@ -7180,7 +7365,7 @@ RunExitHooks(void)
         }
 
         for (usize i = 0; i < vN(msgs); ++i) {
-                fprintf(stderr, "exit hook failed with error: %s\n", v__(msgs, i));
+                fprintf(stderr, "%s\n", v__(msgs, i));
         }
 }
 
@@ -7334,15 +7519,25 @@ TyError(Ty *ty)
                 return vv(ty->err);
         }
 
-        if (vN(ty->throw_stack) == 0) {
-                return "(no error)";
+        Value exc;
+        ThrowCtx const *ctx;
+
+        if (vN(ty->throw_stack) > 0) {
+                ctx = CurrentThrowCtx(ty);
+                exc = ctx->exc;
+        } else if (ty->exc.type != VALUE_ZERO) {
+                ctx = NULL;
+                exc = ty->exc;
+        } else {
+                return "no error";
         }
 
-        ThrowCtx *ctx = v_L(ty->throw_stack);
-        Value exc = ctx->exc;
+        dump(&ty->err, "%sError%s: uncaught exception: %s", TERM(91;1), TERM(0), VSC(&exc));
 
-        dump(&ty->err, "%sUncaught exception%s: %s\n", TERM(91;1), TERM(0), VSC(&exc));
-        FormatTrace(ty, ctx, &ty->err);
+        if (ctx != NULL) {
+                dump(&ty->err, "\n");
+                FormatTrace(ty, ctx, &ty->err);
+        }
 
         return vv(ty->err);
 }
@@ -8107,9 +8302,9 @@ vm_init(Ty *ty, int ac, char **av)
         NAMES.subscript        = M_ID("[]");
         NAMES.unapply          = M_ID("unapply");
 
-        NAMES._what            = M_ID(sfmt("__what$%d",  CLASS_RUNTIME_ERROR));
-        NAMES._ctx             = M_ID(sfmt("__ctx$%d",   CLASS_RUNTIME_ERROR));
-        NAMES._cause           = M_ID(sfmt("__cause$%d", CLASS_RUNTIME_ERROR));
+        NAMES._what            = M_ID(sfmt("_what$%d",  CLASS_RUNTIME_ERROR));
+        NAMES._ctx             = M_ID(sfmt("_ctx$%d",   CLASS_RUNTIME_ERROR));
+        NAMES._cause           = M_ID(sfmt("_cause$%d", CLASS_RUNTIME_ERROR));
 
         NAMES._fields_         = M_ID("__fields__");
         NAMES._methods_        = M_ID("__methods__");
@@ -8221,11 +8416,11 @@ vm_execute(Ty *ty, char const *source, char const *file)
                 Value   exc = TY_CATCH();
                 dump(
                         &ErrorBuffer,
-                        "%sRuntimeError%s: uncaught exception: %s\n\n%s",
+                        "%s\n%sRuntimeError%s: uncaught exception: %s",
+                        trace,
                         TERM(91;1),
                         TERM(0),
-                        VSC(&exc),
-                        trace
+                        VSC(&exc)
                 );
                 xmF(trace);
                 return false;
@@ -8322,6 +8517,7 @@ vm_call_ex(Ty *ty, Value const *f, int argc, Value *kwargs, bool collect)
 
         switch (f->type) {
         case VALUE_FUNCTION:
+        case VALUE_BOUND_FUNCTION:
                 exec_fn(ty, f, NULL, argc, kwargs);
                 goto Collect;
 
@@ -8355,7 +8551,7 @@ vm_call_ex(Ty *ty, Value const *f, int argc, Value *kwargs, bool collect)
                         exec_fn(ty, init, &v, argc, NULL);
                         return pop();
                 } else {
-                        v = OBJECT(object_new(ty, f->class), f->class);
+                        v = NewInstance(f->class);
                         exec_fn(ty, init, &v, argc, NULL);
                         pop();
                         return v;
@@ -8419,6 +8615,7 @@ vm_call(Ty *ty, Value const *f, int argc)
 
         switch (f->type) {
         case VALUE_FUNCTION:
+        case VALUE_BOUND_FUNCTION:
                 exec_fn(ty, f, NULL, argc, NULL);
                 return pop();
 
@@ -8467,7 +8664,7 @@ vm_call(Ty *ty, Value const *f, int argc)
                         exec_fn(ty, vp, NULL, argc, NULL);
                         return pop();
                 } else {
-                        v = OBJECT(object_new(ty, f->class), f->class);
+                        v = NewInstance(f->class);
                         exec_fn(ty, vp, &v, argc, NULL);
                         pop();
                         return v;
@@ -8523,6 +8720,7 @@ vm_eval_function(Ty *ty, Value const *f, ...)
 
         switch (f->type) {
         case VALUE_FUNCTION:
+        case VALUE_BOUND_FUNCTION:
                 exec_fn(ty, f, NULL, argc, NULL);
                 return pop();
 
@@ -8672,6 +8870,7 @@ MarkStorage(Ty *ty)
                 }
                 value_mark(ty, &ctx->exc);
         }
+        value_mark(ty, &ty->exc);
         LOG_REACHED(" => throw_stack reached %llu", TotalReached);
 
         GCLOG("Marking drop stack");
@@ -8730,6 +8929,7 @@ StepInstruction(char const *ip)
         CASE(LOAD_LOCAL)
         CASE(LOAD_REF)
         CASE(LOAD_CAPTURED)
+        CASE(BIND_CAPTURED)
         CASE(LOAD_GLOBAL)
         CASE(LOAD_THREAD_LOCAL)
                 SKIPVALUE(n);
@@ -8756,15 +8956,10 @@ StepInstruction(char const *ip)
                 SKIPVALUE(n);
                 break;
         CASE(JUMP_IF)
-                SKIPVALUE(n);
-                break;
         CASE(JUMP_IF_NOT)
-                SKIPVALUE(n);
-                break;
         CASE(JUMP_IF_NONE)
-                SKIPVALUE(n);
-                break;
         CASE(JUMP_IF_NIL)
+        CASE(JUMP_IF_INIT)
                 SKIPVALUE(n);
                 break;
         CASE(JUMP_IF_TYPE)
@@ -9090,6 +9285,9 @@ StepInstruction(char const *ip)
         CASE(GET_MEMBER)
         CASE(TARGET_DYN_MEMBER)
                 break;
+        CASE(BIND_CLASS)
+                SKIPVALUE(n);
+                break;
         CASE(SLICE)
         CASE(SUBSCRIPT)
         CASE(NOT)
@@ -9104,13 +9302,13 @@ StepInstruction(char const *ip)
         CASE(EQ)
         CASE(NEQ)
         CASE(CHECK_MATCH)
+        CASE(CLASS_OF)
         CASE(LT)
         CASE(GT)
         CASE(LEQ)
         CASE(GEQ)
         CASE(CMP)
         CASE(GET_TAG)
-        CASE(LEN)
         CASE(INC)
         CASE(DEC)
         CASE(PRE_INC)
@@ -9435,6 +9633,7 @@ tdb_step_over_x(Ty *ty, char *ip, i32 i)
         CASE(JUMP_IF)
         CASE(JUMP_IF_NIL)
         CASE(JUMP_IF_NONE)
+        CASE(JUMP_IF_INIT)
         CASE(JUMP_IF_NOT)
         CASE(JUMP_IF_SENTINEL)
         CASE(JUMP_IF_TYPE)
@@ -9536,6 +9735,7 @@ tdb_step_into(Ty *ty)
 
         switch (v.type) {
         case VALUE_FUNCTION:
+        case VALUE_BOUND_FUNCTION:
                 ip = code_of(&v);
                 break;
 

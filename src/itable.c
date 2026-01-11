@@ -89,8 +89,6 @@ itable_init(Ty *ty, struct itable *t)
         v00(t->values);
         uvR(t->ids, 2);
         uvR(t->values, 2);
-        t->class = -1;
-        t->diverged = false;
 }
 
 Value *
@@ -232,7 +230,7 @@ itable_copy(Ty *ty, struct itable * restrict dst, struct itable const * restrict
         uvPv(dst->ids, src->ids);
         uvPv(dst->values, src->values);
 
-        int_vector ids = {0};
+        i32Vector ids = {0};
         ValueVector vals = {0};
 
         uvR(ids, vN(dst->ids));

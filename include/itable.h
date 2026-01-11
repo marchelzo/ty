@@ -6,15 +6,6 @@
 #include "intern.h"
 #include "ty.h"
 
-typedef Value Value;
-
-struct itable {
-        int_vector ids;
-        ValueVector values;
-        int class;
-        bool diverged;
-};
-
 void
 itable_init(Ty *ty, struct itable *t);
 
