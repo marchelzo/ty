@@ -11,14 +11,22 @@ __set_type__ c::i8      CType[Int];
 __set_type__ c::i16     CType[Int];
 __set_type__ c::i32     CType[Int];
 __set_type__ c::i64     CType[Int];
-__set_type__ c::int     CType[Int];
 __set_type__ c::u8      CType[Int];
 __set_type__ c::u16     CType[Int];
 __set_type__ c::u32     CType[Int];
 __set_type__ c::u64     CType[Int];
+__set_type__ c::char    CType[Int];
+__set_type__ c::uchar   CType[Int];
+__set_type__ c::int     CType[Int];
 __set_type__ c::uint    CType[Int];
+__set_type__ c::short   CType[Int];
+__set_type__ c::ushort  CType[Int];
+__set_type__ c::long    CType[Int];
+__set_type__ c::ulong   CType[Int];
 __set_type__ c::float   CType[Float];
 __set_type__ c::double  CType[Float];
+__set_type__ c::ptr     CType[Ptr[Any]];
+__set_type__ c::void    CType[nil];
 
 fn c::str(ptr: IntoPtr[Any], len: ?Int) -> String;
 fn c::as_str(ptr: IntoPtr[Any], len: ?Int) -> String;
@@ -144,16 +152,73 @@ fn _syscall(nr: Int, *args: Any) -> Int { -1 }
 pub syscall: (typeof _syscall) = wrapVar(nil, 'syscall', 1, c.long, c.long)
 
 fn nexttype(array-to-ptr? = true, has-name?: ?Bool = nil) {
-    let parts = []
+    const ignore = /^(?:const|union|struct|restrict|register|auto|volatile|atomic|_Atomic|noreturn|_Noreturn|\*)$/
 
-    let ignore = "
-        int        union   atomic    restrict
-        const      struct  _Atomic   volatile
-        signed     auto    noreturn  _Noreturn
-    ".words()
+    const types = /^(?:
+        char|short|int|long|signed|unsigned
+       |float|double
+       |u8|u16|u32|u64
+       |u?int(?:8|16|32|64)_t
+       |size_t|ssize_t
+       |uintmax_t|intmax_t
+       |uintptr_t|intptr_t|ptrdiff_t
+       |enum
+       |void
+    )$/x
+
+    const map = static!(%{
+        'char':                   c.char,
+        'signed char':            c.char,
+        'unsigned char':          c.uchar,
+        'int':                    c.int,
+        'signed':                 c.int,
+        'unsigned':               c.uint,
+        'signed int':             c.int,
+        'unsigned int':           c.uint,
+        'short':                  c.short,
+        'signed short':           c.short,
+        'unsigned short':         c.ushort,
+        'short int':              c.short,
+        'signed short int':       c.short,
+        'unsigned short int':     c.ushort,
+        'long':                   c.long,
+        'signed long':            c.long,
+        'signed long int':        c.long,
+        'unsigned long':          c.ulong,
+        'unsigned long int':      c.ulong,
+        'long long':              c.i64,
+        'long long int':          c.i64,
+        'unsigned long long':     c.u64,
+        'unsigned long long int': c.u64,
+        'float':                  c.float,
+        'double':                 c.double,
+        'u8':                     c.u8,
+        'u16':                    c.u16,
+        'u32':                    c.u32,
+        'u64':                    c.u64,
+        'int8_t':                 c.i8,
+        'int16_t':                c.i16,
+        'int32_t':                c.i32,
+        'int64_t':                c.i64,
+        'uint8_t':                c.u8,
+        'uint16_t':               c.u16,
+        'uint32_t':               c.u32,
+        'uint64_t':               c.u64,
+        'size_t':                 c.u64,
+        'ssize_t':                c.i64,
+        'uintmax_t':              c.u64,
+        'intmax_t':               c.i64,
+        'uintptr_t':              c.u64,
+        'intptr_t':               c.i64,
+        'ptrdiff_t':              c.i64,
+        'enum':                   c.int,
+        'void':                   c.void
+    })
 
     let allow-name? = (has-name? != false)
     let need-name?  = (has-name? == true)
+
+    let parts = []
 
     while match (peek().type, peek(1).type) {
         (')', _),
@@ -175,80 +240,29 @@ fn nexttype(array-to-ptr? = true, has-name?: ?Bool = nil) {
         ('***', _)     => { next(); parts.push('*') }
     }
 
-    let have-int? = ('int' in parts)
-
-    parts.filter!(\_ not in ignore)
-
-    let type-name = (need-name? ? parts[;-1] : parts).sort(:desc).unwords()
-
-    let t = match type-name {
-        /\benum\b/ => c.int,
-
-        'void' => c.void,
-
-        'char'    => c.char,
-        'short'   => c.short,
-        'int', '' => c.int,
-        'long'    => c.long,
-
-        'unsigned char'  => c.uchar,
-        'unsigned short' => c.ushort,
-        'unsigned'       => c.uint,
-        'unsigned int'   => c.uint,
-        'unsigned long'  => c.ulong,
-
-        'size_t',
-        'uintmax_t',
-        'uintptr_t',
-        'unsigned long long' => c.u64,
-
-        'ssize_t',
-        'intmax_t',
-        'intptr_t',
-        'long long',
-        'ptrdiff_t' => c.i64,
-
-        'int8_t'  => c.i8,
-        'int16_t' => c.i16,
-        'int32_t' => c.i32,
-        'int64_t' => c.i64,
-
-        'uint8_t'  => c.u8,
-        'uint16_t' => c.u16,
-        'uint32_t' => c.u32,
-        'uint64_t' => c.u64,
-
-        'float'  => c.float,
-        'double' => c.double,
-
-        'bool' or '_Bool' => c.u8,
-
-        _ => have-int? ? c.int : ty.Id({name: parts[0]})
-    }
-
-    let t = match t {
-        ty.Id(_) as t => t
-        _             => ty.Value(t)
-    }
-
-    if peek().type in '**' {
-        // Just kidding it's actually a pointer
-        t = ty.Value(c.ptr)
-        next()
-    }
-
     if array-to-ptr? && peek().type == '[' {
-        // Just kidding it's actually a pointer :^)
-        t = ty.Value(c.ptr)
-        next()
-        while next().type != ']' {}
+        while peek().type == '[' {
+            next()
+            if peek().type != ']' {
+                expr(0)
+            }
+            next!(']')
+        }
+        parts.push('*')
     }
 
-    if '*' in parts {
-        t = ty.Value(c.ptr)
+    let ptr? = ('*' in parts)
+    let (base, extra) = parts.reject!(\_ :: ignore).partition(\_ :: types)
+
+    if let $t = (ptr? ? c.ptr : map[base.sort!(desc=true).unwords()]) {
+        return ty.Value(t), extra(-1).or-else(nil)
     }
 
-    return t, parts(-1).or-else(nil)
+    match extra {
+        [t, *, name] => { return ty.Id({name: t}), name }
+        [t]          => { return ty.Id({name: t}), nil  },
+
+    }
 }
 
 fn nextproto() -> (Array[AST], Bool) {

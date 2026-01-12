@@ -198,7 +198,7 @@ string(Ty *ty)
         if (next() != '"')
                 FAIL;
 
-        vec(char) str = {0};
+        byte_vector str = {0};
 
         char b[8] = {0};
         i32 cp;

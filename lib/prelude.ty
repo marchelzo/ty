@@ -455,6 +455,7 @@ class Array[T] : Iterable[T] {
     tally[U](key: T -> U) -> Dict[U, Int];
     uniq!() -> Array[T];
     uniq() -> Array[T];
+    partition(p: T -> Any) -> (Array[T], Array[T]);
 
     zip[...U, R](
         *ys: ...Array[U],
@@ -492,6 +493,10 @@ class Array[T] : Iterable[T] {
 
     reject(p: T -> Any) -> Array[T] {
         filter(\!p(_))
+    }
+
+    reject!(p: T -> Any) -> Array[T] {
+        filter!(\!p(_))
     }
 
     span(p: T -> Any) -> (Array[T], Array[T]) {

@@ -925,19 +925,20 @@ cache_offsets(
 )
 {
         for (int i = 0; i < vN(table->ids); ++i) {
-                i32 id  = v__(table->ids, i);
-                u16 off = (u16)i;
+                i32 id    = v__(table->ids, i);
+                u16 off   = (u16)i;
+                u16 flags = type;
                 while (vN(*offsets) <= id) {
                         xvP(*offsets, OFF_NOT_FOUND);
                 }
                 if (find != NULL) {
                         Expr const *meth = (*find)(c, M_NAME(id));
                         if (vN(meth->decorators) > 0) {
-                                type |= OFF_DECORATED;
+                                flags |= OFF_DECORATED;
                                 off = decorated_slot(c, meth);
                         }
                 }
-                *v_(*offsets, id) = (type << OFF_SHIFT) | off;
+                *v_(*offsets, id) = (flags << OFF_SHIFT) | off;
         }
 }
 
