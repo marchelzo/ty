@@ -92,10 +92,12 @@ extern char **environ;
 #include "types.h"
 
 #ifdef __APPLE__
-#define fputc_unlocked fputc
-#define fgetc_unlocked fgetc
+#define fputc_unlocked putc_unlocked
+#define fgetc_unlocked getc_unlocked
 #define fwrite_unlocked fwrite
 #define fread_unlocked fread
+#define fputs_unlocked fputs
+#define fflush_unlocked fflush
 #endif
 
 static _Thread_local vec(char) B;
