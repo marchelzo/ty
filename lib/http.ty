@@ -80,32 +80,22 @@ use RouteMap = Dict[
 ];
 
 class HttpServer {
-    static __routes: RouteMap
-
     __sock:     Int
     __conns:    Array[HttpConnection]
     __free:     Array[HttpConnection]
     __stopping: Bool
-    __handlers: RouteMap
     __threads:  Array[Thread[_]]
     __queue:    SharedQueue[(Int, HttpRequest)]
     __ev-r:     Int
     __ev-w:     Int
+    __handlers: RouteMap = %{*: []}
 
     init(*args, backlog: Int = 128) {
         __conns    = []
         __free     = []
         __stopping = false
-        __handlers = %{*: []}
         __queue    = SharedQueue()
         (__ev-r, __ev-w) = pipe()
-
-        for method, handlers in __routes {
-            __handlers[method] = handlers.map(handler -> {
-                *handler,
-                fun: handler.fun.bind(self)
-            })
-        }
 
         match args {
             [addr: String, port: Int] => {
@@ -119,26 +109,6 @@ class HttpServer {
         }
 
         __threads = [Thread(__thread) for ..ncpu()]
-    }
-
-    static __init_subclass__() {
-        __routes = %{*: []}
-
-        for _, method in self.__methods__ {
-            if method.__class__ != self {
-                continue
-            }
-
-            if not let $route = method.?__route {
-                continue
-            }
-
-            __install(
-                route.method,
-                route.route,
-                method
-            )
-        }
     }
 
     address -> (String, String) {
@@ -165,9 +135,9 @@ class HttpServer {
 
     stop() { __stopping = true }
 
-    static __install(method: String, route: String, f: RequestHandler) {
+    __install(method: String, route: String, f: RequestHandler) {
         let (params, pattern) = make-pattern(route)
-        let handlers = __routes[method]
+        let handlers = __handlers[method]
         handlers.push({
             route,
             params,
@@ -177,23 +147,23 @@ class HttpServer {
         handlers.sort!(by=\-(_.route.search('<') ?? 99999))
     }
 
-    static get(f, route) {
-        f.__route = {method: 'GET', route}
+    get(f, route) {
+        __install('GET', route, f)
         f
     }
 
-    static post(f, route) {
-        f.__route = {method: 'POST', route}
+    post(f, route) {
+        __install('POST', route, f)
         f
     }
 
-    static delete(f, route) {
-        f.__route = {method: 'DELETE', route}
+    delete(f, route) {
+        __install('DELETE', route, f)
         f
     }
 
-    static put(f, route) {
-        f.__route = {method: 'PUT', route}
+    put(f, route) {
+        __install('PUT', route, f)
         f
     }
 

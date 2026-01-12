@@ -3168,7 +3168,8 @@ ClassLookup:
                 break;
 
         case VALUE_NIL:
-                STACK.count -= (n + 1 + nkw);
+                (void)BuildKwargsDict(ty, nkw);
+                STACK.count -= (n + 1);
                 push(NIL);
                 return;
 
@@ -6622,7 +6623,6 @@ BadTupleMember:
                         default:
 BadContainer:
                                 zP("invalid container in subscript expression: %s", VSC(&container));
-                                abort();
                         }
                         break;
 
