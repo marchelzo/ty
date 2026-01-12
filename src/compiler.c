@@ -1694,13 +1694,11 @@ AdjustStack(Ty *ty, int c)
                 break;
 
         case INSTR_LOOP_ITER:
-                //SaveStack(ty);
                 IncrStack(ty);
                 IncrStack(ty);
                 break;
 
         case INSTR_LOOP_CHECK:
-                //IncrStack(ty);
                 break;
 
         case INSTR_RESTORE_STACK_POS:
@@ -1874,8 +1872,6 @@ try_slurp_module(Ty *ty, char const *name, char const **path_out)
         }
 
 FoundModule:
-
-        // Probably should never fail since we just read from this file
         if (realpath(pathbuf, chadbuf) == NULL) {
                 return NULL;
         }
@@ -2041,7 +2037,7 @@ inline static bool
 is_const(Ty *ty, Scope const *scope, char const *name)
 {
         Symbol const *s = scope_lookup(ty, scope, name);
-        return s != NULL && SymbolIsConst(s);
+        return (s != NULL) && SymbolIsConst(s);
 }
 
 static bool
@@ -2134,7 +2130,7 @@ addsymbolx(Ty *ty, Scope *scope, char const *name, bool check_ns_shadow)
                 (s != NULL)
              && SymbolIsConst(s)
              && (scope == STATE.global || scope == GlobalScope)
-             && (strcmp(name, "_") != 0)
+             && !s_eq(name, "_")
         ) {
                 fail_or(
                         "redeclaration of variable %s%s%s%s%s",
