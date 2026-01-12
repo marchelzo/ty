@@ -21,7 +21,7 @@ const Z_TREES         = 6
 const MAX_WBITS = 15
 
 if not let $zlib = c.open('z', [nil, 1]) {
-  throw "Failed to load zlib"
+  throw RuntimeError('failed to load zlib')
 }
 
 C! struct ZStream {
@@ -30,7 +30,7 @@ C! struct ZStream {
     unsigned long total_in;  /* total number of input bytes read so far */
 
     u8 *next_out; /* next output byte will go here */
-    unsigned int avail_out; /* remaining free space at next_out */
+    unsigned avail_out; /* remaining free space at next_out */
     unsigned long total_out; /* total number of bytes output so far */
 
     char const *msg;  /* last error message, NULL if no error */
@@ -51,10 +51,10 @@ ns raw {
         int inflate(z_stream *strm, int flush);
         int inflateEnd(z_stream *strm);
         int inflateInit2_(z_stream *strm, int windowBits, const char *version, int streamSize);
-        int uncompress(u8 *dest, unsigned long *destLen, const u8 *source, c.ulong sourceLen);
-        int compress(u8 *dest, unsigned long *destLen, const u8 *source, c.ulong sourceLen);
-        c.ulong compressBound(c.ulong sourceLen);
-        c.ulong crc32(c.ulong crc, const u8 *buf, c.uint len);
+        int uncompress(u8 *dest, unsigned long *destLen, const u8 *source, unsigned long sourceLen);
+        int compress(u8 *dest, unsigned long *destLen, const u8 *source, unsigned long sourceLen);
+        unsigned long compressBound(unsigned long sourceLen);
+        unsigned long crc32(unsigned long crc, const u8 *buf, unsigned len);
     }
 }
 
@@ -88,9 +88,9 @@ pub fn uncompress(s: String | Blob, maxSize = nil) -> Blob | nil {
   }
 
   while match raw.uncompress(buffer, pSize, s, s.size()) {
-    ::Z_OK => break,
+    Z_OK => break,
 
-    ::Z_BUF_ERROR => {
+    Z_BUF_ERROR => {
       size *= 2
 
       if maxSize != nil && size > maxSize {
