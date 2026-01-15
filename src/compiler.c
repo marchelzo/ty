@@ -8950,7 +8950,7 @@ emit_array_compr(Ty *ty, Expr const *e)
 
         INSN(SAVE_STACK_POS);
 
-        for (isize i = vN(e->elements) - 1; i >= 0; --i) {
+        for (isize i = 0; i < vN(e->elements); ++i) {
                 if (v__(e->aconds, i) != NULL) {
                         PLACEHOLDER_JUMP_IF_NOT(v__(e->aconds, i), skip);
                         EE(v__(e->elements, i));
