@@ -1,7 +1,0 @@
-while let line = read() {
-     let [_, a, b] = line.match!(/("[^"]+") \? ("[^"]+")/);
-     print(match [a, b].map!(s -> s.lower().chars().filter!(/[[:alpha:]]/).sort!().sum()) {
-          [s, s] => "{a} is an anagram of {b}",
-          _      => "{a} is NOT an anagram of {b}"
-     });
-}

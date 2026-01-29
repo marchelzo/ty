@@ -1,5 +1,0 @@
-let words = 'hello there world'.split(' ');
-
-for w, i in words {
-    print(Ok(w).map(s -> s.len()));
-}

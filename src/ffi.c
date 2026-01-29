@@ -766,7 +766,7 @@ cffi_store(Ty *ty, int argc, Value *kwargs)
 
         store(ty, vType.ptr, vPtr.ptr, &vVal);
 
-        return NIL;
+        return load(ty, vType.ptr, vPtr.ptr);
 }
 
 Value

@@ -4709,7 +4709,9 @@ UnifyXD(Ty *ty, Type *t0, Type *t1, bool super, bool check, bool soft)
                 }
                 if (super) {
                         if (!type_check(ty, t0->val, t1) || IsUnknown(t1)) {
-                                unify2(ty, &t0->val, Relax(t1));
+                                if (!unify2_(ty, &t0->val, Relax(t1), false)) {
+                                        goto Fail;
+                                }
                         }
                 } else {
                         t0->bounded = true;
@@ -8671,10 +8673,9 @@ try_coalesce(Ty *ty, Type **t0, Type *t1)
         if (
                 IsTagged(*t0)
              && IsTagged(t1)
-             && TagOf(*t0) == TagOf(t1)
+             && (TagOf(*t0) == TagOf(t1))
         ) {
-                unify2(ty, t0, t1);
-                return true;
+                return unify2_(ty, t0, t1, false);
         }
 
         if (
@@ -9448,6 +9449,12 @@ static Type *
 MakeConcrete(Ty *ty, Type *t0, TypeVector *refs)
 {
         return MakeConcrete_(ty, t0, refs, false);
+}
+
+Type *
+type_concrete(Ty *ty, Type *t0)
+{
+        return MakeConcrete(ty, t0, NULL);
 }
 
 Expr *

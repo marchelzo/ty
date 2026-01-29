@@ -2705,6 +2705,7 @@ GetMember(Ty *ty, Value v, int member, bool try_missing, bool exec)
         int n;
         Value *this;
         Value *vp = NULL;
+        Value meta;
         BuiltinMethod *func;
 
         if (v.type & VALUE_TAGGED) {
@@ -2791,6 +2792,14 @@ GetMember(Ty *ty, Value v, int member, bool try_missing, bool exec)
                 n = CLASS_BOOL;
                 goto ClassLookup;
 
+        case VALUE_REGEX:
+                n = CLASS_REGEX;
+                goto ClassLookup;
+
+        case VALUE_PTR:
+                n = CLASS_PTR;
+                goto ClassLookup;
+
         case VALUE_METHOD:
                 if (member == NAMES._class_) {
                         return (class_of(v.method) != -1) ? CLASS(class_of(v.method)) : NIL;
@@ -2800,8 +2809,6 @@ GetMember(Ty *ty, Value v, int member, bool try_missing, bool exec)
                         return xSz(fqn_of(v.method));
                 } else if (member == NAMES._def_) {
                         return FunDef(ty, v.method);
-                } else if (has_meta(v.method)) {
-                        return GetMember(ty, *meta_of(ty, v.method), member, false, exec);
                 }
                 n = CLASS_FUNCTION;
                 goto ClassLookup;
@@ -2817,12 +2824,62 @@ GetMember(Ty *ty, Value v, int member, bool try_missing, bool exec)
                 } else if (member == NAMES._def_) {
                         return FunDef(ty, &v);
                 } else if (has_meta(&v)) {
-                        return GetMember(ty, *meta_of(ty, &v), member, false, exec);
+                        meta = GetMember(ty, *meta_of(ty, v.method), member, false, exec);
+                        if (!IsNone(meta)) {
+                                return meta;
+                        }
                 }
-        case VALUE_BUILTIN_FUNCTION:
-        case VALUE_BUILTIN_METHOD:
+                n = CLASS_FUNCTION;
+                goto ClassLookup;
+
         case VALUE_FOREIGN_FUNCTION:
+                if (member == NAMES._class_) {
+                        return NIL;
+                } else if (member == NAMES._name_ || member == NAMES._fqn_) {
+                        return xSz(name_of(&v));
+                } else if (member == NAMES._def_) {
+                        return NIL;
+                }
+                n = CLASS_FUNCTION;;
+                goto ClassLookup;
+
+        case VALUE_BUILTIN_METHOD:
+                if (member == NAMES._class_) {
+                        return CLASS(ClassOf(v.this));
+                } else if (member == NAMES._name_) {
+                        return xSz(M_NAME(v.name));
+                } else if (member == NAMES._fqn_) {
+                        return STRING_FORMAT(
+                                ty,
+                                "%s.%s",
+                                class_name(ty, ClassOf(v.this)),
+                                M_NAME(v.name)
+                        );
+                } else if (member == NAMES._def_) {
+                        return NIL;
+                }
+                n = CLASS_FUNCTION;;
+                goto ClassLookup;
+
+        case VALUE_BUILTIN_FUNCTION:
+                if (member == NAMES._class_) {
+                        return NIL;
+                } else if (member == NAMES._name_ || member == NAMES._fqn_) {
+                        return xSz(M_NAME(v.name));
+                } else if (member == NAMES._def_) {
+                        return NIL;
+                }
+                n = CLASS_FUNCTION;
+                goto ClassLookup;
+
         case VALUE_OPERATOR:
+                if (member == NAMES._class_) {
+                        return NIL;
+                } else if (member == NAMES._name_ || member == NAMES._fqn_) {
+                        return xSz(intern_entry(&xD.b_ops, v.bop)->name);
+                } else if (member == NAMES._def_) {
+                        return NIL;
+                }
                 n = CLASS_FUNCTION;
                 goto ClassLookup;
 
@@ -3117,6 +3174,10 @@ CallMethod(Ty *ty, int i, int n, int nkw, bool b)
                 class = CLASS_REGEX;
                 goto ClassLookup;
 
+        case VALUE_PTR:
+                class = CLASS_PTR;
+                goto ClassLookup;
+
         case VALUE_FUNCTION:
         case VALUE_BOUND_FUNCTION:
         case VALUE_BUILTIN_FUNCTION:
@@ -3363,13 +3424,11 @@ DoCount(Ty *ty, bool exec)
         }
 
         switch (v.type) {
-        case VALUE_BLOB:   push(INTEGER(v.blob->count));  break;
-        case VALUE_ARRAY:  push(INTEGER(v.array->count)); break;
+        case VALUE_BLOB:   push(INTEGER(vN(*v.blob)));    break;
+        case VALUE_ARRAY:  push(INTEGER(vN(*v.array)));   break;
         case VALUE_DICT:   push(INTEGER(v.dict->count));  break;
         case VALUE_TUPLE:  push(INTEGER(v.count));        break;
-        case VALUE_STRING:
-                push(string_length(ty, &v, 0, NULL));
-                break;
+        case VALUE_STRING: push(INTEGER(sN(v)));          break;
 
         case VALUE_OBJECT:
         case VALUE_CLASS:
@@ -3381,7 +3440,7 @@ DoCount(Ty *ty, bool exec)
                 break;
 
         default:
-                zP("# applied to operand of invalid type: %s", VSC(&v));
+                zP("unary # applied to operand of invalid type: %s", VSC(&v));
         }
 }
 
@@ -3475,6 +3534,30 @@ DoBinaryOp(Ty *ty, int op, bool exec)
         }
 }
 
+inline static void
+DoPtrMutOp(Ty *ty, int op)
+{
+        Value val;
+        void *v;
+        ffi_type *c_type;
+
+        v = poptarget();
+        c_type = (ffi_type *)poptarget();
+        push(TPTR(c_type, v));
+        val = cffi_load(ty, 1, NULL);
+        pop();
+        push(val);
+        val = vm_2op(ty, op, top(), top() - 1);
+        pop();
+        pop();
+        push(TPTR(c_type, v));
+        push(val);
+        val = cffi_store(ty, 2, NULL);
+        pop();
+        pop();
+        push(val);
+}
+
 TY_INSTR_INLINE static void
 DoMutDiv(Ty *ty)
 {
@@ -3515,13 +3598,17 @@ DoMutDiv(Ty *ty)
                 break;
 
         case 2:
-                c = (uptr)poptarget();
-                o = TARGETS.items[TARGETS.count].gc;
+                c  = (uptr)poptarget();
+                o  = TARGETS.items[TARGETS.count].gc;
                 vp = poptarget();
                 exec_fn(ty, vp, &OBJECT(o, c), 0, NULL);
                 top()[-1] = vm_2op(ty, OP_DIV, top(), top() - 1);
                 pop();
                 call(ty, v, &OBJECT(o, c), 1, NULL);
+                break;
+
+        case 5:
+                DoPtrMutOp(ty, OP_DIV);
                 break;
 
         default:
@@ -3574,6 +3661,10 @@ DoMutMod(Ty *ty)
                 call(ty, v, &OBJECT(o, c), 1, NULL);
                 break;
 
+        case 5:
+                DoPtrMutOp(ty, OP_MOD);
+                break;
+
         default:
                 zP("bad target pointer :(");
         }
@@ -3586,6 +3677,7 @@ DoMutMul(Ty *ty)
         TyObject *o;
         Value *vp, *vp2, val, x;
         void *v = vp = (void *)(p & ~PMASK3);
+        ffi_type *c_type;
         unsigned char b;
 
         switch (p & PMASK3) {
@@ -3624,6 +3716,10 @@ DoMutMul(Ty *ty)
                 call(ty, v, &OBJECT(o, c), 1, NULL);
                 break;
 
+        case 5:
+                DoPtrMutOp(ty, OP_MUL);
+                break;
+
         default:
                 zP("bad target pointer :(");
         }
@@ -3636,6 +3732,7 @@ DoMutSub(Ty *ty)
         TyObject *o;
         Value *vp, x, val;
         void *v = vp = (void *)(p & ~PMASK3);
+        ffi_type *c_type;
         unsigned char b;
 
         switch (p & PMASK3) {
@@ -3693,6 +3790,10 @@ DoMutSub(Ty *ty)
                 call(ty, v, &OBJECT(o, c), 1, NULL);
                 break;
 
+        case 5:
+                DoPtrMutOp(ty, OP_SUB);
+                break;
+
         default:
                 zP("bad target pointer :(");
         }
@@ -3703,6 +3804,7 @@ DoMutAdd(Ty *ty)
 {
         uptr c, p = (uptr)poptarget();
         TyObject *o;
+        ffi_type *c_type;
         Value *vp, val, x;
         void *v = vp = (void *)(p & ~PMASK3);
         unsigned char b;
@@ -3746,9 +3848,7 @@ DoMutAdd(Ty *ty)
                         }
                         break;
                 }
-
                 push(*vp);
-
                 break;
 
         case 1:
@@ -3767,6 +3867,10 @@ DoMutAdd(Ty *ty)
                 top()[-1] = vm_2op(ty, OP_ADD, top(), top() - 1);
                 pop();
                 call(ty, v, &OBJECT(o, c), 1, NULL);
+                break;
+
+        case 5:
+                DoPtrMutOp(ty, OP_ADD);
                 break;
 
         default:
@@ -3825,6 +3929,10 @@ DoMutAnd(Ty *ty)
                 call(ty, v, &OBJECT(o, c), 1, NULL);
                 break;
 
+        case 5:
+                DoPtrMutOp(ty, OP_BIT_AND);
+                break;
+
         default:
                 zP("bad target pointer :(");
         }
@@ -3837,6 +3945,7 @@ DoMutOr(Ty *ty)
         TyObject *o;
         Value *vp, val, x;
         void *v = vp = (void *)(p & ~PMASK3);
+        ffi_type *c_type;
         unsigned char b;
 
         switch (p & PMASK3) {
@@ -3881,6 +3990,10 @@ DoMutOr(Ty *ty)
                 call(ty, v, &OBJECT(o, c), 1, NULL);
                 break;
 
+        case 5:
+                DoPtrMutOp(ty, OP_BIT_OR);
+                break;
+
         default:
                 zP("bad target pointer :(");
         }
@@ -3893,6 +4006,7 @@ DoMutXor(Ty *ty)
         TyObject *o;
         Value *vp, val, x;
         void *v = vp = (void *)(p & ~PMASK3);
+        ffi_type *c_type;
         unsigned char b;
 
         switch (p & PMASK3) {
@@ -3937,6 +4051,10 @@ DoMutXor(Ty *ty)
                 call(ty, v, &OBJECT(o, c), 1, NULL);
                 break;
 
+        case 5:
+                DoPtrMutOp(ty, OP_BIT_XOR);
+                break;
+
         default:
                 zP("bad target pointer :(");
         }
@@ -3949,6 +4067,7 @@ DoMutShl(Ty *ty)
         TyObject *o;
         Value *vp, val, x;
         void *v = vp = (void *)(p & ~PMASK3);
+        ffi_type *c_type;
         unsigned char b;
 
         switch (p & PMASK3) {
@@ -3989,6 +4108,10 @@ DoMutShl(Ty *ty)
                 call(ty, v, &OBJECT(o, c), 1, NULL);
                 break;
 
+        case 5:
+                DoPtrMutOp(ty, OP_BIT_SHL);
+                break;
+
         default:
                 zP("bad target pointer :(");
         }
@@ -4001,6 +4124,7 @@ DoMutShr(Ty *ty)
         TyObject *o;
         Value *vp, val, x;
         void *v = vp = (void *)(p & ~PMASK3);
+        ffi_type *c_type;
         unsigned char b;
 
         switch (p & PMASK3) {
@@ -4039,6 +4163,10 @@ DoMutShr(Ty *ty)
                 top()[-1] = vm_2op(ty, OP_BIT_SHR, top(), top() - 1);
                 pop();
                 call(ty, v, &OBJECT(o, c), 1, NULL);
+                break;
+
+        case 5:
+                DoPtrMutOp(ty, OP_BIT_SHR);
                 break;
 
         default:
@@ -4206,6 +4334,7 @@ static void
 DoTargetSubscript(Ty *ty)
 {
         Value v;
+        Value p;
         Value subscript = top()[0];
         Value container = top()[-1];
 
@@ -4240,28 +4369,29 @@ DoTargetSubscript(Ty *ty)
                         push(TAGGED(TAG_INDEX_ERR, container, subscript));
                         RaiseException(ty);
                 }
-                pushtarget((Value *)((((uptr)(subscript.z)) << 3) | 1) , container.blob);
+                pushtarget((Value *)((((uptr)(subscript.z)) << 3) | 1), container.blob);
                 break;
 
         case VALUE_PTR:
-                if (IP[0] != INSTR_ASSIGN) {
-                        goto BadContainer;
+                p = vm_2op(ty, OP_ADD, &container, &subscript);
+                if (IP[0] == INSTR_ASSIGN) {
+                        pop();
+                        pop();
+                        v = pop();
+                        push(p);
+                        push(v);
+                        v = cffi_store(ty, 2, NULL);
+                        pop();
+                        pop();
+                        push(v);
+                        IP += 1;
+                        return;
+                } else {
+                        pushtarget(p.extra, NULL);
+                        pushtarget(p.ptr, p.gcptr);
+                        pushtarget((Value *)(uptr)5, NULL);
                 }
-                if (UNLIKELY(subscript.type != VALUE_INTEGER)) {
-                        zP("non-integer pointer offset used in subscript assignment: %s", VSC(&subscript));
-                }
-                Value p = vm_2op(ty, OP_ADD, &container, &subscript);
-                pop();
-                pop();
-                v = pop();
-                push(p);
-                push(v);
-                v = cffi_store(ty, 2, NULL);
-                pop();
-                pop();
-                push(v);
-                IP += 1;
-                return;
+                break;
 
         default:
         BadContainer:

@@ -7741,7 +7741,7 @@ make_token(Ty *ty, Token const *t)
 
         case TOKEN_REAL:
                 return vTn(
-                        "type",   T(int),
+                        "type",   T(float),
                         "meta",   meta,
                         "start",  start,
                         "end",    end,
