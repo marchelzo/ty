@@ -321,6 +321,9 @@ Type *
 type_unfixed(Ty *ty, Type *t0);
 
 Type *
+type_concrete(Ty *ty, Type *t0);
+
+Type *
 type_forgiving(Ty *ty, Type const *t0);
 
 Type *

@@ -1,5 +1,0 @@
-let number = rand(100);
-
-while let int ~> $guess = read() {
-        print(guess);
-}

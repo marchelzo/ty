@@ -1,7 +1,0 @@
-function f() {
-    return 'hello', ' ', 'world', '!';
-}
-
-let a, b, c, d = f();
-
-print(a + b + c + d);

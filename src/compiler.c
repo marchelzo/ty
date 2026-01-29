@@ -1105,7 +1105,13 @@ ContextString(Ty *ty)
         ContextEntry *ctx = ContextList;
 
         while (ctx != NULL) {
-                i += sprintf(buffer + i, "%p[%p]%s", ctx, ctx->e, ctx->next == NULL ? "\n" : " -> ");
+                i += sprintf(
+                        buffer + i,
+                        "%p[%p]%s",
+                        ctx,
+                        ctx->e,
+                        (ctx->next == NULL) ? "\n" : " -> "
+                );
                 ctx = ctx->next;
         }
 
@@ -4677,8 +4683,7 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                 AddRefinements(ty, e->cond, subscope, scope);
                 symbolize_expression(ty, subscope, e->then);
                 symbolize_expression(ty, scope, e->otherwise);
-                unify2(ty, &e->_type, e->then->_type);
-                unify2(ty, &e->_type, e->otherwise->_type);
+                e->_type = type_either(ty, e->then->_type, e->otherwise->_type);
                 break;
 
         case EXPRESSION_STATEMENT:
@@ -16099,7 +16104,8 @@ compiler_set_type_of(Ty *ty, Stmt *stmt)
 {
         symbolize_lvalue(ty, GetNamespace(ty, stmt->ns), stmt->target, 0);
         symbolize_expression(ty, GetNamespace(ty, stmt->ns), stmt->value);
-        stmt->target->symbol->type = type_fixed(ty, type_resolve(ty, stmt->value));
+        stmt->target->symbol->type = type_concrete(ty, type_resolve(ty, stmt->value));
+        stmt->target->symbol->flags |= SYM_FIXED;
 }
 
 void

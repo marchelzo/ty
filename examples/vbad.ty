@@ -1,9 +1,0 @@
-class A {
-    f(self) {
-        print(self);
-        print('Hey!');
-        return;
-    }
-}
-
-A.f();

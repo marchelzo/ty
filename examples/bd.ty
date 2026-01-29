@@ -1,7 +1,0 @@
-let s = slurp('/usr/share/dict/words');
-let words = s.split(/\n/);
-
-let d = {};
-for w in words {
-        d << w;
-}

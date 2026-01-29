@@ -1,8 +1,0 @@
-for k in 1...100 {
-    print(match k % 3, k % 5 {
-        0, 0 => 'FizzBuzz',
-        0, _ => 'Fizz',
-        _, 0 => 'Buzz',
-        _      => k
-    });
-}

@@ -1,6 +1,0 @@
-import os
-
-match 15 {
-        os::SIGTERM => print('Hi!');,
-        _           => { }
-}
