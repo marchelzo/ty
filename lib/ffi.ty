@@ -5,8 +5,6 @@ import ty.parse (expr, stmt)
 import ty.lex as lex
 import ptr (typed)
 
-tag CType;
-
 __set_type__ c::i8      CType[Int];
 __set_type__ c::i16     CType[Int];
 __set_type__ c::i32     CType[Int];
