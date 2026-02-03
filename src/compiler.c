@@ -817,23 +817,28 @@ QualifiedName_(Expr const *e, byte_vector *b)
                 return true;
         }
 
-        bool good = true;
-
         switch (e->type) {
         case EXPRESSION_IDENTIFIER:
-                good &= QualifiedName_(e->namespace, b);
+                if (!QualifiedName_(e->namespace, b)) {
+                        return false;
+                }
                 break;
 
         case EXPRESSION_MEMBER_ACCESS:
-                good &= QualifiedName_(e->object, b);
+                if (!QualifiedName_(e->object, b)) {
+                        return false;
+                }
                 break;
 
         case EXPRESSION_MODULE:
         case EXPRESSION_NAMESPACE:
-                good &= QualifiedName_(e->parent, b);
+                if (!QualifiedName_(e->parent, b)) {
+                        return false;
+                }
                 break;
 
         case EXPRESSION_FUNCTION:
+        case EXPRESSION_MULTI_FUNCTION:
                 break;
 
         default:
@@ -860,6 +865,7 @@ QualifiedName_(Expr const *e, byte_vector *b)
                 break;
 
         case EXPRESSION_FUNCTION:
+        case EXPRESSION_MULTI_FUNCTION:
                 xvPn(*b, e->mod->name, strlen(e->mod->name));
                 xvP(*b, '.');
                 if (e->class != NULL) {
@@ -3024,19 +3030,13 @@ aggregate_overloads(
                         continue;
                 }
 
-                char buffer[1024];
                 Expr *multi = mkmulti(ty, ms->items[i]->name, setters);
-                multi->fn_symbol = ms->items[i]->fn_symbol;
-
-                private = GetPrivateName(multi->name, class, scratch, 4096);
-                (*add)(ty, class, private, REF(NewZero()));
-
                 int m = 0;
+
                 do {
-                        ms->items[i + m]->fn_symbol = multi->fn_symbol;
+                        char const *name = afmt("%s#%d", ms->items[i + m]->name, m + 1);
+                        ms->items[i + m]->name = name;
                         ms->items[i + m]->overload = multi;
-                        snprintf(buffer, sizeof buffer, "%s#%d", ms->items[i + m]->name, m + 1);
-                        ms->items[i + m]->name = sclonea(ty, buffer);
                         avP(multi->functions, ms->items[i + m]);
                         m += 1;
                 } while (
@@ -3045,10 +3045,12 @@ aggregate_overloads(
                 );
 
                 multi->class = class_get(ty, class);
-
-                //RedpillFun(ty, c->def->class.scope, multi, c->object_type);
+                multi->start = ms->items[i]->start;
+                multi->end   = ms->items[i + m - 1]->end;
 
                 avP(*ms, multi);
+
+                i += m - 1;
         }
 
         qsort(ms->items, vN(*ms), sizeof *ms->items, method_cmp);
@@ -5143,7 +5145,9 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                         type_assign_iterable(ty, part->pattern, part->iter->_type, 0);
                         symbolize_statement(ty, subscope, part->where);
                         symbolize_expression(ty, subscope, part->_while);
+                        AddRefinements(ty, part->_while, subscope, NULL);
                         symbolize_expression(ty, subscope, part->_if);
+                        AddRefinements(ty, part->_if, subscope, NULL);
                 }
 
                 for (usize i = 0; i < vN(e->elements); ++i) {
@@ -6987,7 +6991,7 @@ emit_function(Ty *ty, Expr const *e)
         }
 
         bool decorated = (vN(e->decorators) > 0)
-                      && (e->mtype & MT_STATIC);
+                      && ((e->mtype & MT_STATIC) || (e->mtype == MT_NONE));
 
         Ei16(
                 (FF_FROM_EVAL * (GetArenaAlloc(ty) != NULL))
@@ -11021,9 +11025,6 @@ InjectRedpill(Ty *ty, Stmt *s)
                 AddClassTraits(ty, def);
                 ResolveFieldTypes(ty, def->scope, &def->fields);
                 ResolveFieldTypes(ty, def->s_scope, &def->s_fields);
-                aggregate_overloads(ty, class->i, &def->methods, class_add_method, false);
-                aggregate_overloads(ty, class->i, &def->setters, class_add_setter, true);
-                aggregate_overloads(ty, class->i, &def->s_methods, class_add_static, false);
                 Type *self0 = type_fixed(ty, class->object_type);
                 RedpillMethods(ty, def->scope, self0, &def->methods);
                 RedpillMethods(ty, def->scope, self0, &def->getters);
@@ -12135,9 +12136,9 @@ compiler_compile_source(
 {
         v00(STATE.code);
         v00(STATE.expression_locations);
-
+        m0(STATE.annotation);
         ContextList = NULL;
-        STATE.annotation = (ProgramAnnotation) {0};
+        STATE.active = NULL;
 
         char const *slash = strrchr(file, '/');
 #ifdef _WIN32
@@ -15667,6 +15668,10 @@ define_class(Ty *ty, Stmt *s)
 
         char scratch[512];
         char const *name;
+
+        aggregate_overloads(ty, class->i, &cd->methods, class_add_method, false);
+        aggregate_overloads(ty, class->i, &cd->setters, class_add_setter, true);
+        aggregate_overloads(ty, class->i, &cd->s_methods, class_add_static, false);
 
         int keep = 0;
         for (int i = 0; i < vN(cd->methods); ++i) {

@@ -338,6 +338,7 @@ class Class[T] {
 
 class Function : Iter {
     __name__: String;
+    __fqn__:  String;
 
     init() {
         id
@@ -1300,7 +1301,7 @@ class Int : IntoPtr[_] {
         min(max(self, low), high)
     }
 
-    clamp(range: Range) -> Float {
+    clamp(range: Range) -> Int {
         clamp(range.low(), range.high())
     }
 

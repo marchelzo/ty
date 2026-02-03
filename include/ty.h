@@ -547,6 +547,7 @@ struct thread {
         u64 i;
         bool alive;
         bool joined;
+        bool detached;
 };
 
 struct chanval {

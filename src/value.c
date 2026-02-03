@@ -791,7 +791,7 @@ value_show_colorx(Ty *ty, Value const *v, u32 flags)
                                 "%s<method %s'%s'%s>%s",
                                 TERM(96),
                                 TERM(92),
-                                M_NAME(v->name),
+                                name_of(v->method),
                                 TERM(96),
                                 TERM(0)
                         );
@@ -803,7 +803,7 @@ value_show_colorx(Ty *ty, Value const *v, u32 flags)
                                 "%s<method %s'%s'%s bound to %s%s%s>%s",
                                 TERM(96),
                                 TERM(92),
-                                M_NAME(v->name),
+                                name_of(v->method),
                                 TERM(96),
                                 TERM(0),
                                 vs,

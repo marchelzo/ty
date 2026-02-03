@@ -5,8 +5,10 @@ pub fn run() {
     let pass = 0
     let fail = 0
 
+    let width = 1 + tests.map(\#_.__fqn__).max() ?? 0
+
     for test in tests {
-        print("{test.__fqn__} ... ", end='')
+        print("{test.__fqn__:{width}} ... ", end='', flush=true)
         try {
             test()
             print(chalk"[bright green b]OK[/]")
