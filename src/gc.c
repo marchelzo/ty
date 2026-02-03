@@ -67,12 +67,14 @@ collect(Ty *ty, struct alloc *a)
 
         case GC_THREAD:
                 t = p;
-                if (!t->joined) {
+                if (!t->joined && !t->detached) {
+                        TyMutexLock(&t->mutex);
                         if (!t->alive) {
-                                TyThreadJoin(((Thread *)p)->t);
+                                TyThreadJoin(t->t);
                         } else {
-                                TyThreadDetach(((Thread *)p)->t);
+                                TyThreadDetach(t->t);
                         }
+                        TyMutexUnlock(&t->mutex);
                 }
                 TyMutexDestroy(&t->mutex);
                 TyCondVarDestroy(&t->cond);

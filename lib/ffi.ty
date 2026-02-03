@@ -821,7 +821,7 @@ fn clos() {
     )
 
     let call = ty.Call(
-        func: ty.Value(c.closure),
+        func: ty.Cast(ty.Value(c.closure), ty.Any),
         args: [
             *(ty.Arg(arg: t) for t in args),
             ty.Arg(arg: f)

@@ -246,7 +246,7 @@ class_mark(Ty *ty, int c)
 
         for (usize i = 0; i < vN(class->s_fields.values); ++i) {
                 Value *v = v_(class->s_fields.values, i);
-                value_mark(ty, v);
+                xvP(ty->marking, v);
         }
 }
 

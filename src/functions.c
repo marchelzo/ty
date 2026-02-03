@@ -3691,7 +3691,15 @@ BUILTIN_FUNCTION(thread_join)
 BUILTIN_FUNCTION(thread_detach)
 {
         ASSERT_ARGC("thread.detach()", 1);
-        return BOOLEAN(TyThreadDetach(ARGx(0, VALUE_THREAD).thread->t));
+
+        Thread *thread = ARGx(0, VALUE_THREAD).thread;
+
+        if (TyThreadDetach(thread->t)) {
+                thread->detached = true;
+                return BOOLEAN(true);
+        } else {
+                return BOOLEAN(false);
+        }
 }
 
 BUILTIN_FUNCTION(thread_mutex)
@@ -3867,6 +3875,7 @@ BUILTIN_FUNCTION(thread_create)
         t->i = NextThreadId();
         t->v = NONE;
         t->joined = false;
+        t->detached = false;
 
         Value *ctx = mA((argc + 1) * sizeof (Value));
 

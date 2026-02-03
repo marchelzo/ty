@@ -2806,7 +2806,7 @@ GetMember(Ty *ty, Value v, int member, bool try_missing, bool exec)
                 } else if (member == NAMES._name_) {
                         return xSz(name_of(v.method));
                 } else if (member == NAMES._fqn_) {
-                        return xSz(fqn_of(v.method));
+                        return vSsz(fqn_of(v.method));
                 } else if (member == NAMES._def_) {
                         return FunDef(ty, v.method);
                 }
@@ -2820,7 +2820,7 @@ GetMember(Ty *ty, Value v, int member, bool try_missing, bool exec)
                 } else if (member == NAMES._name_) {
                         return xSz(name_of(&v));
                 } else if (member == NAMES._fqn_) {
-                        return xSz(fqn_of(&v));
+                        return vSsz(fqn_of(&v));
                 } else if (member == NAMES._def_) {
                         return FunDef(ty, &v);
                 } else if (has_meta(&v)) {
