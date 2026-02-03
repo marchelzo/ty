@@ -334,6 +334,10 @@ class Class[T] {
     static name(c) {
         c.__name__
     }
+
+    [](_) {
+        self
+    }
 }
 
 class Function : Iter {
@@ -1237,6 +1241,10 @@ class Int : IntoPtr[_] {
         while true { yield self++ }
     }
 
+    __ptr__() -> Ptr[_] {
+        ptr.from-int(self)
+    }
+
     negate() {
         -self
     }
@@ -1421,7 +1429,7 @@ class Float {
     %(x: Float) -> Float { self % x }
 }
 
-class Blob : Iterable[Int], IntoPtr {
+class Blob : Iterable[Int], IntoPtr[Int] {
     init(*args: Any) {
         let b = blob()
 
@@ -1501,11 +1509,15 @@ trait IntoPtr[T] {
     __ptr__() -> Ptr[T];
 
     static [](x) {
-        IntoPtr
+        self
     }
 }
 
 class Ptr[T] : IntoPtr[T] {
+    init(x: IntoPtr[T]) -> Ptr[T] {
+        x.__ptr__()
+    }
+
     [](i: Int) -> T;
     []=(i: Int, x: T) -> T;
 
@@ -1514,10 +1526,16 @@ class Ptr[T] : IntoPtr[T] {
 
     -(other: Ptr[T]) -> Int;
 
-    __ptr__() { self }
+    __ptr__() -> Ptr[T] {
+        self
+    }
 
     static [](x) {
-        (\_ :: Ptr)
+        self
+    }
+
+    as[U](type: CType[U]) -> Ptr[U] {
+        ptr.typed(self, type)
     }
 }
 
@@ -1732,6 +1750,8 @@ tag Err {
      map()     { self }
      flatMap() { self }
 }
+
+tag CType;
 
 use Maybe[T] = Some[T] | None
 
