@@ -14195,7 +14195,12 @@ cexpr(Ty *ty, Value *v)
         case TyId:
         {
                 e->type = EXPRESSION_IDENTIFIER;
-                e->identifier = mkcstr(ty, tuple_get(v, "name"));
+                e->identifier = mkcstr(ty, tget_t(v, "name", VALUE_STRING));
+
+                if (e->identifier == NULL) {
+                        goto Bad;
+                }
+
                 Value *mod = tuple_get(v, "module");
                 Value *constraint = tuple_get(v, "constraint");
                 e->module = (mod != NULL && mod->type != VALUE_NIL) ? mkcstr(ty, mod) : NULL;
