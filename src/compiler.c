@@ -1394,6 +1394,9 @@ WillReturn(void const *_e)
         case EXPRESSION_STATEMENT:
                 return e->statement->will_return;
 
+        case EXPRESSION_THROW:
+                return true;
+
         case EXPRESSION_CONDITIONAL:
                 return WillReturn(e->then)
                     && WillReturn(e->otherwise);
@@ -5487,6 +5490,45 @@ ClearActive(Scope *scope)
         }
 }
 
+inline static void
+EnableRefinement(Refinement *ref)
+{
+        if (ref != NULL && !ref->active) {
+                SWAP(Type *, ref->t0, ref->var->type);
+                ref->active = true;
+        }
+}
+
+inline static void
+DisableRefinement(Refinement *ref)
+{
+        if (ref != NULL && ref->active) {
+                LogRefine("Disable(%s):", ref->var->identifier);
+                SWAP(Type *, ref->t0, ref->var->type);
+                ref->active = false;
+        }
+}
+
+inline static Type *
+RefinedType(Refinement *ref)
+{
+        if (ref->active) {
+                return ref->var->type;
+        } else {
+                return ref->t0;
+        }
+}
+
+inline static Type *
+UnrefinedType(Refinement *ref)
+{
+        if (!ref->active) {
+                return ref->var->type;
+        } else {
+                return ref->t0;
+        }
+}
+
 static void
 AddRefinements(Ty *ty, Expr const *e, Scope *_then, Scope *_else)
 {
@@ -5601,24 +5643,10 @@ AddRefinements(Ty *ty, Expr const *e, Scope *_then, Scope *_else)
         }
 }
 
-static void
-UpdateRefinemenets(Ty *ty, Scope *scope)
-{
-        if (scope != STATE.active) {
-                ClearActive(STATE.active);
-                SetActive(scope);
-                Scope *stop = DisableRefinements(ty, STATE.active);
-                EnableRefinements(ty, scope, stop);
-                STATE.active = scope;
-        } else {
-                EnableRefinements(ty, scope, scope->parent);
-        }
-}
-
 Type *
 OriginalType(Ty *ty, Symbol const *var)
 {
-        Type *t0 = NULL;
+        Type *t0 = var->type;
         Scope *scope = STATE.active;
 
         while (scope != NULL) {
@@ -5631,7 +5659,92 @@ OriginalType(Ty *ty, Symbol const *var)
                 scope = scope->parent;
         }
 
-        return (t0 != NULL) ? t0 : var->type;
+        return t0;
+}
+
+static void
+MergeRefinements(Ty *ty, Scope *scope, Scope *then, Scope *_else)
+{
+        if (NO_TYPES) {
+                return;
+        }
+
+        for (int i = 0; i < vN(then->refinements); ++i) {
+                Refinement *ref0 = v_(then->refinements, i);
+                Refinement *ref1 = ScopeFindRefinement(_else, ref0->var);
+
+                if (ref1 != NULL) {
+                        LogRefine(
+                                "CheckRefinement[%d/%zu](%s): %s",
+                                i + 1,
+                                vN(then->refinements),
+                                ref0->var->identifier,
+                                type_show(ty, ref0->var->type)
+                        );
+                        LogRefine("    %s", type_show(ty, ref0->t0));
+                        LogRefine("    %s", type_show(ty, ref1->t0));
+                } else {
+                        LogRefine(
+                                "CheckRefinement[%d/%zu](%s): %s",
+                                i + 1,
+                                vN(then->refinements),
+                                ref0->var->identifier,
+                                type_show(ty, ref0->var->type)
+                        );
+                        LogRefine("    %s", type_show(ty, ref0->t0));
+                        LogRefine("    <none>");
+                }
+
+                DisableRefinement(ref0);
+                DisableRefinement(ref1);
+
+                Type *t0 = OriginalType(ty, ref0->var);
+                Type *u0 = UnrefinedType(ref0);
+                Type *m0 = type_either(
+                        ty,
+                        RefinedType(ref0),
+                        (ref1 != NULL) ? RefinedType(ref1) : u0
+                );
+
+                if (type_check(ty, m0, t0) && SymbolIsFixedType(ref0->var)) {
+                        m0 = t0;
+                }
+
+                Refinement *existing = ScopeFindRefinement(scope, ref0->var);
+
+                if (existing != NULL) {
+                        existing->t0 = UnrefinedType(existing);
+                        existing->active = true;
+                } else {
+                        avP(scope->refinements, ((Refinement) {
+                                .var    = ref0->var,
+                                .t0     = u0,
+                                .mut    = ref0->mut,
+                                .active = true
+                        }));
+                }
+
+                ref0->var->type = m0;
+        }
+
+        v0(then->refinements);
+        if (_else != NULL) {
+                v0(_else->refinements);
+        }
+}
+
+static void
+UpdateRefinemenets(Ty *ty, Scope *scope)
+{
+        if (scope != STATE.active) {
+                ClearActive(STATE.active);
+                SetActive(scope);
+                Scope *stop = DisableRefinements(ty, STATE.active);
+                EnableRefinements(ty, scope, stop);
+                STATE.active = scope;
+        } else {
+                EnableRefinements(ty, scope, scope->parent);
+        }
 }
 
 static void
@@ -5947,38 +6060,7 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
                                 avPv(scope->refinements, subscope->refinements);
                                 v0(subscope->refinements);
                         } else {
-                                int n = 0;
-                                for (int i = 0; i < vN(subscope->refinements); ++i) {
-                                        Refinement *ref0 = v_(subscope->refinements, i);
-                                        Refinement *ref1 = ScopeFindRefinement(subscope2, ref0->var);
-                                        if (ref1 != NULL) {
-                                                LogRefine("CheckRefinement[%d/%zu](%s): %s", i + 1, vN(subscope->refinements), ref0->var->identifier, type_show(ty, ref0->var->type));
-                                                LogRefine("    %s", type_show(ty, ref0->t0));
-                                                LogRefine("    %s", type_show(ty, ref1->t0));
-                                        }
-                                        if (
-                                                (ref1 != NULL)
-                                             && type_check(ty, ref0->var->type, ref1->t0)
-                                             && type_check(ty, ref1->t0, ref0->var->type)
-                                        ) {
-                                                Type *t0;
-                                                if (ref0->active) {
-                                                        t0 = ref0->t0;
-                                                } else {
-                                                        t0 = ref0->var->type;
-                                                        ref0->var->type = ref0->t0;
-                                                }
-                                                avP(scope->refinements, ((Refinement) {
-                                                        .var    = ref0->var,
-                                                        .t0     = t0,
-                                                        .mut    = ref0->mut,
-                                                        .active = true
-                                                }));
-                                        } else {
-                                                *v_(subscope->refinements, n++) = *ref0;
-                                        }
-                                }
-                                vN(subscope->refinements) = n;
+                                MergeRefinements(ty, scope, subscope, subscope2);
                         }
                 }
                 if (s->iff.then != NULL) {
@@ -6018,6 +6100,9 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
                 symbolize_expression(ty, subscope, s->each._while);
                 s->_type = s->each.body->_type;
                 s->will_return = WillReturn(s->each.body);
+                if (!WillReturn(s)) {
+                        MergeRefinements(ty, scope, subscope, NULL);
+                }
                 break;
 
         case STATEMENT_RETURN:
