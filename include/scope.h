@@ -258,6 +258,10 @@ TY_SCOPE_FLAGS
 inline static Refinement *
 ScopeFindRefinement(Scope *scope, Symbol *var)
 {
+        if (scope == NULL) {
+                return NULL;
+        }
+
         for (int i = 0; i < vN(scope->refinements); ++i) {
                 Refinement *ref = v_(scope->refinements, i);
                 if (ref->var == var) {
