@@ -2986,6 +2986,23 @@ class LockGuard {
     __drop__() {
         thread.unlock(__lock)
     }
+
+    unlocked() {
+        thread.unlock(__lock)
+        UnlockGuard(__lock)
+    }
+}
+
+class UnlockGuard {
+    __lock: _
+
+    init(lock) {
+        __lock = lock
+    }
+
+    __drop__() {
+        thread.lock(__lock)
+    }
 }
 
 class Channel {
@@ -4243,21 +4260,38 @@ fn memoized[F](fun: F, max: Int = nil) -> F {
             ? p-vars[0]
             : ty.Record([ty.RecordEntry({item: it}) for p-vars])
 
-    let cache = Sync(%{})
+    let cache = %{}
+    let lock  = SpinLock()
+
+    let guard-id = ty.gensym()
+    let guard    = ty.Resource({name: guard-id})
+    let _guard   = ty.Id({name: guard-id})
+    let _cache   = ty.Id({name: ty.gensym()})
 
     let body = match max {
         nil => $$[
-            $${cache}.get-or-put-with($$key, () -> $$call)
+            let $$guard = $${lock}.lock()
+            $${cache}.get-or-put-with(
+                $$key,
+                () -> do {
+                    let ^_ = $$_guard.unlocked()
+                    $$call
+                }
+            )
         $$],
 
         $max => do {
-            let _cache = ty.Id({name: ty.gensym()})
             $$[
-                let ^_ = $${Sync.lock}($${cache})
-                let $$_cache = $${Sync.get}($${cache})
-                let v = $$_cache.get-or-put-with($$key, () -> $$call)
-                if #$$_cache > $${max} {
-                    $$_cache.pop(-1)
+                let $$guard = $${lock}.lock()
+                let v = $${cache}.get-or-put-with(
+                    $$key,
+                    () -> do {
+                        let ^_ = $$_guard.unlocked()
+                        $$call
+                    }
+                )
+                if #$${cache} > $${max} {
+                    $${cache}.pop(-1)
                 }
                 v
             $$]
