@@ -590,7 +590,7 @@ syntax_highlight(
         if (source == NULL)
                 return;
 
-        TokenVector const *tokens = &mod->all_tokens;
+        TokenVector const *tokens = &mod->tokens;
         char const **pal = build_palette(find_palette(theme));
 
         char const *attr_on = attr ? attr : "";

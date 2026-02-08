@@ -273,8 +273,7 @@ typedef struct ParserState {
 
         LexState CtxCheckpoint;
         LexContext lctx;
-
-        TokenVector comments;
+        bool comments;
 
         Namespace *CurrentNamespace;
 
@@ -335,6 +334,7 @@ static Expr NullExpr = {
 #define NoEquals          (state.NoEquals)
 #define NoIn              (state.NoIn)
 #define NoPipe            (state.NoPipe)
+#define KeepComments      (state.comments)
 #define ParseDepth        (state.depth)
 #define SavePoints        (state.SavePoints)
 #define TokenIndex        (state.TokenIndex)
@@ -608,16 +608,16 @@ inline static Token *
         Token t;
 
         while (vN(tokens) <= i + TokenIndex) {
+                t = lex_token(ty, LCTX);
+
                 if (vN(tokens) == TokenIndex) {
                         lex_save(ty, &CtxCheckpoint);
                 }
 
-                t = lex_token(ty, LCTX);
-
-                //if (vN(tokens) > 0 && vvL(tokens)->start.s == t.start.s) {
-                //        *vvL(tokens) = t;
-                //        return vvL(tokens);
-                //}
+                if (vN(tokens) > 0 && vvL(tokens)->start.s == t.start.s) {
+                        *vvL(tokens) = t;
+                        return vvL(tokens);
+                }
 
                 PLOG(
                         "%sAdd tokens%s[%d]: %s",
@@ -653,6 +653,13 @@ inline static Token *
         return update(ty, v_(tokens, TokenIndex + i));
 }
 
+inline static bool
+invisible(Ty *ty, Token const *tok)
+{
+        return (tok->ctx  == LEX_HIDDEN)
+            || (tok->type == TOKEN_COMMENT && !KeepComments);
+}
+
 #define tokenx(i) ((tokenx)(ty, (i)))
 inline static Token *
 (tokenx)(Ty *ty, int i)
@@ -660,14 +667,14 @@ inline static Token *
         int n    = abs(i);
         int step = (i >= 0) ? 1 : -1;
 
-        if (i >= 0) while (tokenxx(ty, 0)->ctx == LEX_HIDDEN) {
+        if (i >= 0) while (invisible(ty, tokenxx(ty, 0))) {
                 TokenIndex += 1;
         }
 
         for (;;) {
                 while (
                         (i + TokenIndex >= 0)
-                     && (tokenxx(ty, i)->ctx == LEX_HIDDEN)
+                     && invisible(ty, tokenxx(ty, i))
                 ) {
                         i += step;
                 }
@@ -6116,12 +6123,12 @@ parse_class_definition(Ty *ty)
                 parse_sync_lex(ty);
 
                 char const *doc = NULL;
-                lex_keep_comments(ty, true);
+                KeepComments = true;
                 if (T0 == TOKEN_COMMENT) {
                         doc = tok()->comment;
                         next();
                 }
-                lex_keep_comments(ty, false);
+                KeepComments = false;
 
                 /*
                  * Lol.
@@ -6776,7 +6783,7 @@ tokenize(Ty *ty, char const *source, TokenVector *tokens_out)
         ParserState save = state;
 
         lex_init(ty, "(tokenize)", source);
-        lex_keep_comments(ty, true);
+        KeepComments = true;
 
         v00(tokens);
 
@@ -6871,8 +6878,7 @@ parse_ex(
         char const *file,
         Stmt ***prog_out,
         Location *err_loc,
-        TokenVector *tokens_out,
-        TokenVector *all_tokens_out
+        TokenVector *tokens_out
 )
 {
         lex_save(ty, &CtxCheckpoint);
@@ -6884,7 +6890,7 @@ parse_ex(
         volatile bool ok = true;
 
         lex_init(ty, file, source);
-        lex_keep_comments(ty, true);
+        KeepComments = true;
 
         LastParsedExpr = NULL;
 
@@ -6964,8 +6970,8 @@ parse_ex(
                 }
 
                 parse_sync_lex(ty);
-                lex_keep_comments(ty, true);
                 lex_need_nl(ty, false);
+                KeepComments = true;
 
                 while (T0 == TOKEN_COMMENT) {
                         doc = tok()->comment;
@@ -7008,7 +7014,7 @@ parse_ex(
                         }
                 }
 
-                lex_keep_comments(ty, false);
+                KeepComments = false;
                 Stmt *s = parse_statement(ty, -1);
                 if (s == NULL) {
                         break;
@@ -7068,17 +7074,6 @@ Finally:
                 *tokens_out = tokens;
         }
 
-        if (all_tokens_out != NULL) {
-                avPv(*all_tokens_out, tokens);
-                avPv(*all_tokens_out, state.comments);
-                qsort(
-                        vv(*all_tokens_out),
-                        vN(*all_tokens_out),
-                        sizeof (Token),
-                        tokcmp
-                );
-        }
-
         state = save;
 
         return ok;
@@ -7090,7 +7085,7 @@ parse(Ty *ty, char const *source, char const *file)
         Stmt **prog;
         Location loc;
 
-        if (!parse_ex(ty, source, file, &prog, &loc, NULL, NULL)) {
+        if (!parse_ex(ty, source, file, &prog, &loc, NULL)) {
                 return NULL;
         }
 
@@ -7100,7 +7095,8 @@ parse(Ty *ty, char const *source, char const *file)
 Token
 parse_get_token(Ty *ty, int i)
 {
-        bool keep_comments = lex_keep_comments(ty, true);
+        bool keep_comments = true;
+        SWAP(bool, keep_comments, KeepComments);
 
         if (lex_pos(ty).s > vvL(tokens)->end.s) {
                 vN(tokens) = TokenIndex;
@@ -7121,7 +7117,7 @@ parse_get_token(Ty *ty, int i)
 
         Token *t = token(i);
 
-        lex_keep_comments(ty, keep_comments);
+        KeepComments = keep_comments;
 
         return *t;
 }
@@ -7140,7 +7136,8 @@ parse_get_type(Ty *ty, int prec, bool resolve, bool want_raw)
         SAVE_NI(false);
         SAVE_NE(false);
 
-        bool keep_comments = lex_keep_comments(ty, false);
+        bool keep_comments = false;
+        SWAP(bool, keep_comments, KeepComments);
 
         Value v;
         Expr *e;
@@ -7165,7 +7162,7 @@ parse_get_type(Ty *ty, int prec, bool resolve, bool want_raw)
         LOAD_NE();
         LOAD_NI();
 
-        lex_keep_comments(ty, keep_comments);
+        KeepComments = keep_comments;
 
         if (want_raw) {
                 Value pair = vT(2);
@@ -7185,7 +7182,8 @@ parse_get_expr(Ty *ty, int prec, bool resolve, bool want_raw)
         SAVE_NI(false);
         SAVE_NE(false);
 
-        bool keep_comments = lex_keep_comments(ty, false);
+        bool keep_comments = false;
+        SWAP(bool, keep_comments, KeepComments);
 
         Value v;
         Expr *e;
@@ -7210,7 +7208,7 @@ parse_get_expr(Ty *ty, int prec, bool resolve, bool want_raw)
         LOAD_NE();
         LOAD_NI();
 
-        lex_keep_comments(ty, keep_comments);
+        KeepComments = keep_comments;
 
         if (want_raw) {
                 Value pair = vT(2);
@@ -7230,7 +7228,8 @@ parse_get_stmt(Ty *ty, int prec, bool want_raw)
         SAVE_NI(false);
         SAVE_NE(false);
 
-        bool keep_comments = lex_keep_comments(ty, false);
+        bool keep_comments = false;
+        SWAP(bool, keep_comments, KeepComments);
 
         Value v;
 
@@ -7253,7 +7252,7 @@ parse_get_stmt(Ty *ty, int prec, bool want_raw)
         LOAD_NE();
         LOAD_NI();
 
-        lex_keep_comments(ty, keep_comments);
+        KeepComments = keep_comments;
 
         return v;
 }
@@ -7397,25 +7396,6 @@ pp_if(Ty *ty)
         xvF(conds);
         xvF(starts);
         xvF(ends);
-}
-
-void
-parse_push_comment(Ty *ty, Token const *tok)
-{
-        while (
-                (vN(state.comments) > 0)
-             && (vvL(state.comments)->start.s >= tok->start.s)
-        ) {
-                vvX(state.comments);
-        }
-
-        avP(state.comments, *tok);
-}
-
-TokenVector const *
-parse_get_comments(Ty *ty)
-{
-        return &state.comments;
 }
 
 /* vim: set sts=8 sw=8 expandtab: */

@@ -1135,29 +1135,9 @@ dotoken(Ty *ty, int ctx)
         }
 
         if (C(0) == '/' && C(1) == '*') {
-                Token t = lexcomment(ty);
-                if (state.keep_comments || state.in_pp) {
-                        return t;
-                } else {
-                        parse_push_comment(ty, &t);
-                }
-                if (skipspace(ty)) {
-                        return mktoken(ty, TOKEN_NEWLINE);
-                } else {
-                        return dotoken(ty, ctx);
-                }
+                return lexcomment(ty);
         } else if (C(0) == '/' && C(1) == '/') {
-                Token t = lexlinecomment(ty);
-                if (state.keep_comments || state.in_pp) {
-                        return t;
-                } else {
-                        parse_push_comment(ty, &t);
-                }
-                if (skipspace(ty)) {
-                        return mktoken(ty, TOKEN_NEWLINE);
-                } else {
-                        return dotoken(ty, ctx);
-                }
+                return lexlinecomment(ty);
         } else if (C(0) == '#' && C(1) == '|') {
                 nextchar(ty);
                 nextchar(ty);
@@ -1289,7 +1269,6 @@ lex_init(Ty *ty, char const *file, char const *src)
                 .end = src + strlen(src),
                 .need_nl = false,
                 .in_pp = false,
-                .keep_comments = true,
                 .ctx = LEX_PREFIX
         };
 
@@ -1338,15 +1317,13 @@ lex_in_pp(Ty *ty, bool pp)
 void
 lex_need_nl(Ty *ty, bool need)
 {
-        //PLOG("lex_need_nl(%d): %.*s~", (int)need, (int)strcspn(SRC, "\n"), SRC);
         state.need_nl = need;
 }
 
-bool
-lex_keep_comments(Ty *ty, bool keep)
+LexState *
+lex_state(Ty *ty)
 {
-        SWAP(bool, keep, state.keep_comments);
-        return keep;
+        return &state;
 }
 
 Location
