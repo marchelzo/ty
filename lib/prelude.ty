@@ -786,7 +786,7 @@ macro __define_ast! {
             pattern: AST,
             iter: AST,
             ?`while`: AST,
-            ?cond: AST,
+            ?`if`: AST,
             ?`where`: AST
          }]
        | ty.DictCompr[{
@@ -795,10 +795,10 @@ macro __define_ast! {
             iter: AST,
             ?default: AST,
             ?`while`: AST,
-            ?cond: AST,
+            ?`if`: AST,
             ?`where`: AST
          }]
-       | ty.Each[{iter: AST, pattern: AST, expr: AST, ?cond: AST, ?stop: AST}]
+       | ty.Each[{iter: AST, pattern: AST, expr: AST, ?`if`: AST, ?`while`: AST}]
        | ty.SpecialString[Array[String | AST | (AST, String | nil, Int | nil, AST)]]
        | ty.Spread[AST]
        | ty.Splat[AST]
@@ -3807,8 +3807,8 @@ macro __walk! {
 
             ty.Param(param) => ty.Param(
                 name: param.name,
-                constraint: walk(param.constraint, f),
-                default: walk(param.default, f)
+                constraint: walk(param.?constraint, f),
+                default: walk(param.?default, f)
             ),
 
             ty.Class(c) => ty.Class(
@@ -3884,7 +3884,8 @@ macro __walk! {
                 pattern: [walk(p, f) for p in each.pattern],
                 iter: walk(each.iter, f),
                 expr: walk(each.expr, f),
-                cond: walk(each.cond, f)
+                `if`: walk(each.?`if`, f),
+                `while`: walk(each.?`while`, f)
             ),
 
             ty.For(init, cond, next, body) => ty.For(
@@ -3942,22 +3943,22 @@ macro __walk! {
 
             ty.Generator(gen) => ty.Generator(walk(gen, f)),
 
-            ty.ArrayCompr({items, pattern, iter, cond, `while`, `where`}) => ty.ArrayCompr(
+            ty.ArrayCompr({items, pattern, iter, `if`, `while`, `where`}) => ty.ArrayCompr(
                 items: [walk(item, f) for item in items],
                 iter: walk(iter, f),
                 pattern: walk(pattern, f),
                 `while`: walk(`while`, f),
-                cond: walk(cond, f),
+                `if`: walk(`if`, f),
                 `where`: walk(`where`, f)
             ),
 
-            ty.DictCompr({items, pattern, default, iter, cond, `while`, `where`}) => ty.DictCompr(
+            ty.DictCompr({items, pattern, default, iter, `if`, `while`, `where`}) => ty.DictCompr(
                 items: [walk(item, f) for item in items],
                 iter: walk(iter, f),
                 default: walk(default, f),
                 pattern: walk(pattern, f),
                 `while`: walk(`while`, f),
-                cond: walk(cond, f),
+                `if`: walk(`if`, f),
                 `where`: walk(`where`, f)
             ),
 

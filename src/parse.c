@@ -596,7 +596,7 @@ inline static Stmt *
 }
 
 inline static Token *
-fixup(Ty *ty, Token *tok)
+update(Ty *ty, Token *tok)
 {
         tok->start.tok = (tok - vv(tokens)) + 1;
         return tok;
@@ -650,7 +650,7 @@ inline static Token *
         }
 #endif
 
-        return fixup(ty, v_(tokens, TokenIndex + i));
+        return update(ty, v_(tokens, TokenIndex + i));
 }
 
 #define tokenx(i) ((tokenx)(ty, (i)))
@@ -6528,7 +6528,7 @@ parse_import(Ty *ty)
 
         if (
                 (T0 == TOKEN_IDENTIFIER)
-             && (strcmp(tok()->identifier, "hiding") == 0)
+             && s_eq(tok()->identifier, "hiding")
         ) {
                 s->import.hiding = true;
                 tok()->tag = TT_KEYWORD;
@@ -6540,12 +6540,17 @@ parse_import(Ty *ty)
         v00(s->import.identifiers);
         v00(s->import.aliases);
 
-        if (T0 == '(') {
-                next();
+        if (try_consume('(')) {
                 if (try_consume(TOKEN_DOT_DOT)) {
                         avP(s->import.identifiers, "..");
                         avP(s->import.aliases, "..");
-                } else while (T0 == TOKEN_IDENTIFIER) {
+                } else for (;;) {
+                        while (T0 == '\n') {
+                                next();
+                        }
+                        if (T0 != TOKEN_IDENTIFIER) {
+                                break;
+                        }
                         avP(s->import.identifiers, tok()->identifier);
                         next();
                         if (try_consume(KEYWORD_AS)) {
@@ -6554,6 +6559,9 @@ parse_import(Ty *ty)
                                 next();
                         } else {
                                 avP(s->import.aliases, v_L(s->import.identifiers));
+                        }
+                        while (T0 == '\n') {
+                                next();
                         }
                         if (!try_consume(',')) {
                                 expect(')');
@@ -6841,6 +6849,21 @@ ImportModule(Ty *ty, Stmt *import)
         return ok;
 }
 
+static int
+tokcmp(void const *a, void const *b)
+{
+        Token const *ta = a;
+        Token const *tb = b;
+
+        if (ta->start.byte > tb->start.byte) { return  1; }
+        if (ta->start.byte < tb->start.byte) { return -1; }
+
+        if (ta->end.byte > tb->end.byte) { return  1; }
+        if (ta->end.byte < tb->end.byte) { return -1; }
+
+        return 0;
+}
+
 bool
 parse_ex(
         Ty *ty,
@@ -6848,7 +6871,8 @@ parse_ex(
         char const *file,
         Stmt ***prog_out,
         Location *err_loc,
-        TokenVector *tokens_out
+        TokenVector *tokens_out,
+        TokenVector *all_tokens_out
 )
 {
         lex_save(ty, &CtxCheckpoint);
@@ -7041,8 +7065,18 @@ Finally:
         *prog_out = vv(program);
 
         if (tokens_out != NULL) {
-                avPv(tokens, state.comments);
                 *tokens_out = tokens;
+        }
+
+        if (all_tokens_out != NULL) {
+                avPv(*all_tokens_out, tokens);
+                avPv(*all_tokens_out, state.comments);
+                qsort(
+                        vv(*all_tokens_out),
+                        vN(*all_tokens_out),
+                        sizeof (Token),
+                        tokcmp
+                );
         }
 
         state = save;
@@ -7056,7 +7090,7 @@ parse(Ty *ty, char const *source, char const *file)
         Stmt **prog;
         Location loc;
 
-        if (!parse_ex(ty, source, file, &prog, &loc, NULL)) {
+        if (!parse_ex(ty, source, file, &prog, &loc, NULL, NULL)) {
                 return NULL;
         }
 

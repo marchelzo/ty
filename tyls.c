@@ -1,9 +1,12 @@
+#include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 #include "ty.h"
 #include "compiler.h"
+#include "lex.h"
+#include "token.h"
 #include "value.h"
 #include "functions.h"
 #include "json.h"
@@ -36,6 +39,115 @@ bool CompileOnly = true;
 bool AllowErrors = false;
 bool InteractiveSession = false;
 
+enum {
+        LS_COMPILE,
+        LS_DEFINITION,
+        LS_COMPLETION,
+        LS_SEMANTIC_TOKENS
+};
+
+enum {
+        SEM_KEYWORD,
+        SEM_TYPE,
+        SEM_FUNCTION,
+        SEM_PROPERTY,
+        SEM_VARIABLE,
+        SEM_STRING,
+        SEM_NUMBER,
+        SEM_COMMENT,
+        SEM_OPERATOR,
+        SEM_REGEXP,
+        SEM_NAMESPACE,
+        SEM_MACRO,
+        SEM_PARAMETER
+};
+
+static bool
+is_type_name(char const *id)
+{
+        if (id == NULL || !isupper((unsigned char)id[0]))
+                return false;
+
+        for (char const *p = id + 1; *p != '\0'; ++p)
+                if (*p == '_')
+                        return false;
+
+        return true;
+}
+
+static i32
+classify_identifier(Token const *t, char const *source)
+{
+        switch (t->tag) {
+        case TT_TYPE:     return SEM_TYPE;
+        case TT_FUNC:     return SEM_FUNCTION;
+        case TT_CALL:     return SEM_FUNCTION;
+        case TT_FIELD:    return SEM_PROPERTY;
+        case TT_MEMBER:   return SEM_PROPERTY;
+        case TT_MACRO:    return SEM_MACRO;
+        case TT_MODULE:   return SEM_NAMESPACE;
+        case TT_PARAM:    return SEM_PARAMETER;
+        case TT_KEYWORD:  return SEM_KEYWORD;
+        case TT_OPERATOR: return SEM_OPERATOR;
+        default:          break;
+        }
+
+        if (is_type_name(t->identifier))
+                return SEM_TYPE;
+
+        if (t->end.s != NULL && source != NULL) {
+                char const *p = t->end.s;
+                while (*p == ' ' || *p == '\t') ++p;
+                if (*p == '(')
+                        return SEM_FUNCTION;
+        }
+
+        return -1;
+}
+
+static void
+EncodeTokens(Ty *ty, ValueVector *out, TokenVector const *tokens, char const *source)
+{
+        i32 prev_line = 0;
+        i32 prev_col  = 0;
+
+        for (isize i = 0; i < vN(*tokens); ++i) {
+                Token const *t = v_(*tokens, i);
+
+                if (t->ctx == LEX_FAKE)
+                        continue;
+                if (t->type == TOKEN_END)
+                        break;
+                if (t->type != TOKEN_IDENTIFIER)
+                        continue;
+                if (t->tag == TT_NONE)
+                        continue;
+
+                i32 sem = classify_identifier(t, source);
+                if (sem < 0)
+                        continue;
+
+                i32 tline = (i32)t->start.line;
+                i32 tcol  = (i32)t->start.col;
+                i32 len   = (i32)(t->end.byte - t->start.byte);
+
+                if (len <= 0)
+                        continue;
+
+                i32 delta_line = tline - prev_line;
+                i32 delta_col  = (delta_line == 0) ? (tcol - prev_col) : tcol;
+
+                xvP(*out, INTEGER(delta_line));
+                xvP(*out, INTEGER(delta_col));
+                xvP(*out, INTEGER(len));
+                xvP(*out, INTEGER(sem));
+                xvP(*out, INTEGER(0));
+
+                prev_line = tline;
+                prev_col  = tcol;
+        }
+}
+
 int
 main(int argc, char *argv[])
 {
@@ -45,10 +157,10 @@ main(int argc, char *argv[])
                 exit(1);
         }
 
-        InternSet     names       = {0};
-        struct itable files       = {0};
-        ValueVector   completions = {0};
-        byte_vector   OutBuffer   = {0};
+        InternSet     names     = {0};
+        struct itable files     = {0};
+        ValueVector   items     = {0};
+        byte_vector   OutBuffer = {0};
 
         for (;;) {
                 xD.ready = false;
@@ -103,7 +215,7 @@ main(int argc, char *argv[])
                 mod = (vp->type == VALUE_PTR) ? vp->ptr : NULL;
 
                 switch (what) {
-                case 0:
+                case LS_COMPILE:
                         v = tget_or(&req, "source", NIL);
                         AllowErrors = tget_or(&req, "check", NIL).type == VALUE_NIL;
 
@@ -134,7 +246,7 @@ main(int argc, char *argv[])
                         }
                         break;
 
-                case 1:
+                case LS_DEFINITION:
                         line = tget_nn(&req, "line")->z;
                         col  = tget_nn(&req, "col")->z;
 
@@ -157,7 +269,7 @@ main(int argc, char *argv[])
                         );
                         break;
 
-                case 2:
+                case LS_COMPLETION:
                         line = tget_nn(&req, "line")->z;
                         col  = tget_nn(&req, "col")->z;
 
@@ -165,17 +277,28 @@ main(int argc, char *argv[])
                                 goto EndRequest;
                         }
 
-                        v0(completions);
+                        v0(items);
 
-                        if (!CompilerSuggestCompletions(ty, mod, line, col, &completions)) {
+                        if (!CompilerSuggestCompletions(ty, mod, line, col, &items)) {
                                 goto EndRequest;
                         }
 
                         result = vTn(
                                 "source",      xSs(QueryExpr->start.s, QueryExpr->end.s - QueryExpr->start.s),
                                 "type",        xSz(type_show(ty, QueryExpr->_type)),
-                                "completions", ARRAY((Array *)&completions)
+                                "completions", ARRAY((Array *)&items)
                         );
+                        break;
+
+                case LS_SEMANTIC_TOKENS:
+                        if (mod == NULL) {
+                                goto EndRequest;
+                        }
+
+                        v0(items);
+                        EncodeTokens(ty, &items, &mod->tokens, mod->source);
+
+                        result = ARRAY((Array *)&items);
                         break;
                 }
 

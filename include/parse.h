@@ -17,7 +17,8 @@ parse_ex(
         char const *file,
         struct statement ***prog_out,
         Location *err_loc,
-        TokenVector *tok_out
+        TokenVector *tokens_out,
+        TokenVector *all_tokens_out
 );
 
 Token
