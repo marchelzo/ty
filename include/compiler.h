@@ -102,7 +102,6 @@ typedef struct module {
         char const *source;
         Stmt **prog;
         TokenVector tokens;
-        TokenVector all_tokens;
         u64 flags;
 } Module;
 

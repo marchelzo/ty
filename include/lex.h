@@ -82,6 +82,9 @@ lex_need_nl(Ty *ty, bool);
 bool
 lex_keep_comments(Ty *ty, bool b);
 
+LexState *
+lex_state(Ty *ty);
+
 struct location
 lex_pos(Ty *ty);
 

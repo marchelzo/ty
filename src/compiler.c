@@ -11656,8 +11656,7 @@ compile(Ty *ty, char const *source)
                 CurrentModulePath(ty),
                 &p,
                 &parse_error_location,
-                &STATE.module->tokens,
-                &STATE.module->all_tokens
+                &STATE.module->tokens
         )) {
                 STATE.module->flags |= MOD_PARSE_ERR;
                 TY_THROW_ERROR();
