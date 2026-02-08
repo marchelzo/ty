@@ -3943,7 +3943,7 @@ macro __walk! {
 
             ty.Generator(gen) => ty.Generator(walk(gen, f)),
 
-            ty.ArrayCompr({items, pattern, iter, `if`, `while`, `where`}) => ty.ArrayCompr(
+            ty.ArrayCompr({items, pattern, iter, ?`if`, ?`while`, ?`where`}) => ty.ArrayCompr(
                 items: [walk(item, f) for item in items],
                 iter: walk(iter, f),
                 pattern: walk(pattern, f),
@@ -3952,7 +3952,7 @@ macro __walk! {
                 `where`: walk(`where`, f)
             ),
 
-            ty.DictCompr({items, pattern, default, iter, `if`, `while`, `where`}) => ty.DictCompr(
+            ty.DictCompr({items, pattern, default, iter, ?`if`, ?`while`, ?`where`}) => ty.DictCompr(
                 items: [walk(item, f) for item in items],
                 iter: walk(iter, f),
                 default: walk(default, f),
