@@ -25,6 +25,7 @@
 #include "array.h"
 #include "ty.h"
 #include "types.h"
+#include "highlight.h"
 #include "polyfill_time.h"
 
 #ifdef TY_HAVE_VERSION_INFO
@@ -74,6 +75,8 @@ bool ColorStderr;
 
 bool RunningTests       = false;
 bool CompileOnly        = false;
+bool HighlightOnly      = false;
+static char const *HighlightTheme = NULL;
 bool AllowErrors        = false;
 bool CheckTypes         = true;
 bool CheckConstraints   = true;
@@ -97,24 +100,24 @@ usage(void)
         char *u = (char[]) {
                 "usage: ty [options] [script [args]]                                                      \0"
                 "Available options are:                                                                   \0"
-                "    -b           Basic mode: no batteries included. Only has an effect when ty is        \0"
-                "                 running as a REPL or when the program was specified using -e            \0"
-                "    -c           Exit after compilation without executing the program                    \0"
-                "    -d           Run the program under the interactive TDB debugger                      \0"
-                "    -e EXPR      Evaluate and print EXPR                                                 \0"
-                "    -f FILE      Interpret FILE before continuing. This differs from -M in that *all*    \0"
-                "                 top-level symbols from FILE will be visible, not just public ones       \0"
-                "    -m MODULE    Import module MODULE before continuing                                  \0"
-                "    -M MODULE    Like -m, but uses an unqualified import: import MODULE (..)             \0"
-                "    -p           Print the value of the last-evaluated expression before exiting         \0"
-                "    -q           Ignore constraints on function parameters and return values             \0"
-                "    -S FILE      Write the program's annotated disassembly to FILE                       \0"
-                "                   (- is interpreted as stdout, and @ is interpreted as stderr)          \0"
-                "    -t LINE:COL  Find the definition of the symbol which occurs at LINE:COL              \0"
-                "                 in the specified source file                                            \0"
-                "    --test       Any top-level functions decorated with @test will be executed after     \0"
-                "                 initialization. If all tests pass, ty will exit normally; otherwise, it \0"
-                "                 will exit with a non-zero status code                                   \0"
+                "    -b            Basic mode: no batteries included. Only has an effect when ty is       \0"
+                "                  running as a REPL or when the program was specified using -e           \0"
+                "    -c            Exit after compilation without executing the program                   \0"
+                "    -d            Run the program under the interactive TDB debugger                     \0"
+                "    -e EXPR       Evaluate and print EXPR                                                \0"
+                "    -f FILE       Interpret FILE before continuing. This differs from -M in that *all*   \0"
+                "                  top-level symbols from FILE will be visible, not just public ones      \0"
+                "    -m MODULE     Import module MODULE before continuing                                 \0"
+                "    -M MODULE     Like -m, but uses an unqualified import: import MODULE (..)            \0"
+                "    -p            Print the value of the last-evaluated expression before exiting        \0"
+                "    -q            Ignore constraints on function parameters and return values            \0"
+                "    -S FILE       Write the program's annotated disassembly to FILE                      \0"
+                "                    (- is interpreted as stdout, and @ is interpreted as stderr)         \0"
+                "    -t LINE:COL   Find the definition of the symbol which occurs at LINE:COL             \0"
+                "                  in the specified source file                                           \0"
+                "    --test        Any top-level functions decorated with @test will be executed after    \0"
+                "                  initialization. If all tests pass, ty will exit normally; otherwise, it\0"
+                "                  will exit with a non-zero status code                                  \0"
 #ifdef TY_PROFILER
                 "    -o FILE       Write profile data to FILE instead of stdout                           \0"
                 "                    (- is interpreted as stdout, and @ is interpreted as stderr)         \0"
@@ -122,6 +125,10 @@ usage(void)
 #endif
                 "    --color=WHEN  Explicitly control when to use colored output. WHEN can be set         \0"
                 "                  to 'always', 'never', or 'auto' (default: 'auto')                      \0"
+                "    --highlight[=THEME]                                                                  \0"
+                "                  Print syntax-highlighted source and exit. Available themes:            \0"
+                "                  gruvbox, gruvbox-material, github-light, github-dark, monokai,         \0"
+                "                  one-dark, catppuccin, dracula, nord, solarized, tokyonight, rose-pine  \0"
                 "    --            Stop handling options                                                  \0"
                 "    --version     Print ty version information and exit                                  \0"
                 "    --help        Print this help message and exit                                       \0"
@@ -397,57 +404,6 @@ repl(Ty *ty)
         }
 }
 
-#if 0
-static int
-AddCompletions(Ty *ty, Value const *v, char const *s)
-{
-        int n = 0;
-
-        switch (v->type) {
-        case VALUE_NAMESPACE:
-                n += compiler_get_namespace_completions(ty, v->namespace, s, completions, MAX_COMPLETIONS);
-                break;
-        case VALUE_CLASS:
-                n += class_get_completions(ty, v->class, s, completions, MAX_COMPLETIONS);
-                break;
-        case VALUE_OBJECT:
-                n += class_get_completions(ty, v->class, s, completions, MAX_COMPLETIONS);
-                n += itable_get_completions(ty, v->object, s, completions + n, MAX_COMPLETIONS - n);
-                break;
-        case VALUE_ARRAY:
-                n += array_get_completions(ty, s, completions, MAX_COMPLETIONS);
-                n += class_get_completions(ty, CLASS_ARRAY, s, completions + n, MAX_COMPLETIONS - n);
-                break;
-        case VALUE_DICT:
-                n += dict_get_completions(ty, s, completions, MAX_COMPLETIONS);
-                n += class_get_completions(ty, CLASS_DICT, s, completions + n, MAX_COMPLETIONS - n);
-                break;
-        case VALUE_STRING:
-                n += string_get_completions(ty, s, completions, MAX_COMPLETIONS);
-                n += class_get_completions(ty, CLASS_STRING, s, completions + n, MAX_COMPLETIONS - n);
-                break;
-        case VALUE_BLOB:
-                n += blob_get_completions(ty, s, completions, MAX_COMPLETIONS);
-                n += class_get_completions(ty, CLASS_BLOB, s, completions + n, MAX_COMPLETIONS - n);
-                break;
-        case VALUE_INTEGER:
-                n += class_get_completions(ty, CLASS_INT, s, completions + n, MAX_COMPLETIONS - n);
-                break;
-        case VALUE_REAL:
-                n += class_get_completions(ty, CLASS_FLOAT, s, completions + n, MAX_COMPLETIONS - n);
-                break;
-        case VALUE_GENERATOR:
-                n += class_get_completions(ty, CLASS_ITERABLE, s, completions + n, MAX_COMPLETIONS - n);
-                break;
-        case VALUE_TUPLE:
-                n += tuple_get_completions(ty, v, s, completions, MAX_COMPLETIONS);
-                break;
-        }
-
-        return n;
-}
-#endif
-
 inline static bool
 stdin_is_tty(void)
 {
@@ -521,6 +477,17 @@ ProcessArgs(char *argv[], bool first)
 
                 if (s_eq(argv[argi], "--test")) {
                         RunningTests = true;
+                        goto NextOption;
+                }
+
+                if (s_eq(argv[argi], "--highlight") || strncmp(argv[argi], "--highlight=", 12) == 0) {
+                        HighlightOnly = true;
+                        CheckTypes = false;
+                        CheckConstraints = false;
+                        char const *eq = strchr(argv[argi], '=');
+                        if (eq != NULL && eq[1] != '\0') {
+                                HighlightTheme = eq + 1;
+                        }
                         goto NextOption;
                 }
 
@@ -805,6 +772,21 @@ main(int argc, char **argv)
         }
 
         char *source = fslurp(ty, file);
+
+        if (HighlightOnly) {
+                if (!vm_load_program(ty, source, SourceFileName)) {
+                        fprintf(stderr, "%s\n", TyError(ty));
+                        return 1;
+                }
+
+                Module *mod = CompilerCurrentModule(ty);
+                byte_vector out = {0};
+
+                syntax_highlight(ty, &out, mod, 0, strlen(source), NULL, HighlightTheme);
+                fputs(vv(out), stdout);
+
+                return 0;
+        }
 
         if (query & TOOL_DEFINITION) {
                 bool ok = (QueryResult != NULL) || vm_execute(ty, source, SourceFileName);

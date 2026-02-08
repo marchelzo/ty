@@ -26,6 +26,7 @@
 #include "value.h"
 #include "vm.h"
 #include "types.h"
+#include "highlight.h"
 
 #define TY_DEBUG_STACK_BOOKKEEPING 0
 
@@ -11373,10 +11374,22 @@ annotate_expr_tokens(Expr *e, Scope *scope, void *ctx)
                 }
                 break;
 
+        case EXPRESSION_SELF_ACCESS:
+                tag_start_token(e->member, TT_FIELD);
+                break;
+
+        case EXPRESSION_MEMBER_ACCESS:
+                tag_start_token(e->member, TT_MEMBER);
+                break;
+
         case EXPRESSION_METHOD_CALL:
+                tag_start_token(e->method, TT_CALL);
                 break;
 
         case EXPRESSION_FUNCTION_CALL:
+                if (e->function != NULL && e->function->type == EXPRESSION_IDENTIFIER) {
+                        tag_start_token(e->function, TT_CALL);
+                }
                 break;
         }
 
@@ -11643,7 +11656,8 @@ compile(Ty *ty, char const *source)
                 CurrentModulePath(ty),
                 &p,
                 &parse_error_location,
-                &STATE.module->tokens
+                &STATE.module->tokens,
+                &STATE.module->all_tokens
         )) {
                 STATE.module->flags |= MOD_PARSE_ERR;
                 TY_THROW_ERROR();
@@ -16713,6 +16727,23 @@ WriteExpressionSourceHeading(Ty *ty, byte_vector *out, int cols, Expr const *e)
         dump(out, "%s\n", TERM(0));
 }
 
+static void
+xhighlight(
+        Ty *ty,
+        byte_vector *out,
+        Module *mod,
+        isize start,
+        isize end,
+        char const *attr
+)
+{
+        if (ColorStderr) {
+                syntax_highlight(ty, out, mod, start, end, attr, NULL);
+        } else {
+                sxdf(out, "%.*s", (int)(end - start), mod->source + start);
+        }
+}
+
 void
 WriteExpressionSourceContext(
         Ty *ty,
@@ -16769,33 +16800,52 @@ WriteExpressionSourceContext(
                         int after  = line_end   - e->end.s;
                         sxdf(
                                 &tmp,
-                                "%s %s%4d%s | %.*s%s%.*s%s%.*s%s",
+                                "%s %s%4d%s | ",
                                 TERM(91),
                                 arrow,
                                 line + 1,
-                                TERM(0),
-                                before,
-                                line_start,
-                                TERM(1;91;4:3),
-                                length,
-                                e->start.s,
-                                TERM(0),
-                                after,
-                                e->end.s,
                                 TERM(0)
+                        );
+                        xhighlight(
+                                ty,
+                                &tmp,
+                                e->mod,
+                                line_start - e->mod->source,
+                                line_start - e->mod->source + before,
+                                NULL
+                        );
+                        xhighlight(
+                                ty,
+                                &tmp,
+                                e->mod,
+                                e->start.s - e->mod->source,
+                                e->end.s   - e->mod->source,
+                                TERM(58:2:255:0:0;4:3)
+                        );
+                        xhighlight(
+                                ty,
+                                &tmp,
+                                e->mod,
+                                e->end.s - e->mod->source,
+                                line_end - e->mod->source,
+                                NULL
                         );
                 } else {
                         sxdf(
                                 &tmp,
-                                "%s %s%4d%s | %s%.*s%s",
+                                "%s %s%4d%s | ",
                                 in_range ? TERM(91) : "",
                                 arrow,
                                 line + 1,
-                                TERM(0),
-                                in_range ? TERM(91) : "",
-                                (int)(line_end - line_start),
-                                line_start,
                                 TERM(0)
+                        );
+                        xhighlight(
+                                ty,
+                                &tmp,
+                                e->mod,
+                                line_start - e->mod->source,
+                                line_end   - e->mod->source,
+                                NULL
                         );
                 }
 

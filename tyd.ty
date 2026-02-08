@@ -25,6 +25,17 @@ let init = {
         //    triggerCharacters: ['(', ','],
         //    retriggerCharacters: [')']
         //},
+        semanticTokensProvider: {
+            legend: {
+                tokenTypes: [
+                    'keyword', 'type', 'function', 'property', 'variable',
+                    'string', 'number', 'comment', 'operator', 'regexp',
+                    'namespace', 'macro', 'parameter'
+                ],
+                tokenModifiers: []
+            },
+            full: true
+        },
         textDocumentSync: {
             openClose: true,
             save: true,
@@ -48,12 +59,14 @@ critical!(tyls)
 //let responses = io.open(tyls.stdout, 'r', buffering=io.NBF)
 //critical!(responses)
 
+let tyls-stream = io.open(tyls.stdout, 'r')
+
 onExit(fn () {
     kill(tyls.pid, SIGTERM)
 })
 
 fn get() -> String | nil {
-    if let $line = read(tyls.stdout, 8192) ?> &str! {
+    if let $line = tyls-stream.next-line() {
         warn!("TYLS OUTPUT: {line}")
         return line
     } else {
@@ -183,6 +196,18 @@ fn go() {
     match msg['method'] {
         'initialize' => {
             send({id, result: init})
+        },
+
+        'textDocument/didOpen' => {
+            if let %{
+                'textDocument': %{
+                    'uri': &[7;] ~> $path,
+                    'text': text
+                }
+            } = msg['params'] {
+                store[path] = text
+                check-file(path)
+            }
         },
 
         'textDocument/didChange' => {
@@ -322,6 +347,22 @@ fn go() {
 
                     _ => ()
                 }
+            }
+
+            send({id, result})
+        },
+
+        'textDocument/semanticTokens/full' => {
+            if not let %{
+                'textDocument': %{
+                    'uri': &[7;] ~> $path,
+                }
+            } = msg['params'] {
+                return
+            }
+
+            let result = {
+                data: run({file: path, what: 3}) ?? []
             }
 
             send({id, result})

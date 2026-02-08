@@ -170,6 +170,7 @@ set(_src_files
   src/ffi.c
   src/functions.c
   src/gc.c
+  src/highlight.c
   src/intern.c
   src/itable.c
   src/json.c

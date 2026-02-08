@@ -290,6 +290,7 @@ visit_lvalue(Ty *ty, Expr *t, Scope *scope, VisitorSet const *hooks, bool decl)
                 break;
         case EXPRESSION_MEMBER_ACCESS:
         case EXPRESSION_DYN_MEMBER_ACCESS:
+        case EXPRESSION_SELF_ACCESS:
                 V(t->object);
                 break;
         case EXPRESSION_TUPLE:
@@ -474,6 +475,7 @@ visit_expression(Ty *ty, Expr *e, Scope *scope, VisitorSet const *hooks)
                 V(e->slice.k);
                 break;
         case EXPRESSION_MEMBER_ACCESS:
+        case EXPRESSION_SELF_ACCESS:
                 V(e->object);
                 break;
         case EXPRESSION_METHOD_CALL:
