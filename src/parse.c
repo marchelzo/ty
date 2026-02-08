@@ -243,7 +243,6 @@
                 ty->pscope = _saved__scope;                             \
         } else if (0)                                                   \
 
-
 typedef Expr *
 prefix_parse_fn(Ty *ty);
 
@@ -362,6 +361,7 @@ static enum {
 #define SAVE_NP(b) bool NPSave = NoPipe; NoPipe = (b);
 #define SAVE_NA(b) bool NASave = NoAndOr; NoAndOr = (b);
 #define SAVE_TC(b) bool TCSave = TypeContext; TypeContext = (b);
+#define SAVE_KC(b) bool KCSave = KeepComments; KeepComments = (b);
 #define SAVE_LC(b) 0 // bool LCSave = LValueContext; LValueContext = (b);
 
 #define LOAD_NE() NoEquals = NESave;
@@ -370,6 +370,7 @@ static enum {
 #define LOAD_NP() NoPipe = NPSave;
 #define LOAD_NA() NoAndOr = NASave;
 #define LOAD_TC() TypeContext = TCSave;
+#define LOAD_KC() KeepComments = KCSave;
 #define LOAD_LC() 0 // LValueContext = LCSave;
 
 noreturn void
@@ -654,7 +655,7 @@ inline static Token *
 }
 
 inline static bool
-invisible(Ty *ty, Token const *tok)
+invisible(Ty *ty, Token *tok)
 {
         return (tok->ctx  == LEX_HIDDEN)
             || (tok->type == TOKEN_COMMENT && !KeepComments);
@@ -665,7 +666,7 @@ inline static Token *
 (tokenx)(Ty *ty, int i)
 {
         int n    = abs(i);
-        int step = (i >= 0) ? 1 : -1;
+        int step = i / n;
 
         if (i >= 0) while (invisible(ty, tokenxx(ty, 0))) {
                 TokenIndex += 1;
@@ -6123,12 +6124,12 @@ parse_class_definition(Ty *ty)
                 parse_sync_lex(ty);
 
                 char const *doc = NULL;
-                KeepComments = true;
+                SAVE_KC(true);
                 if (T0 == TOKEN_COMMENT) {
                         doc = tok()->comment;
                         next();
                 }
-                KeepComments = false;
+                LOAD_KC();
 
                 /*
                  * Lol.
@@ -6890,7 +6891,6 @@ parse_ex(
         volatile bool ok = true;
 
         lex_init(ty, file, source);
-        KeepComments = true;
 
         LastParsedExpr = NULL;
 
@@ -6971,7 +6971,8 @@ parse_ex(
 
                 parse_sync_lex(ty);
                 lex_need_nl(ty, false);
-                KeepComments = true;
+
+                SAVE_KC(true);
 
                 while (T0 == TOKEN_COMMENT) {
                         doc = tok()->comment;
@@ -7014,7 +7015,8 @@ parse_ex(
                         }
                 }
 
-                KeepComments = false;
+                LOAD_KC();
+
                 Stmt *s = parse_statement(ty, -1);
                 if (s == NULL) {
                         break;
@@ -7095,29 +7097,17 @@ parse(Ty *ty, char const *source, char const *file)
 Token
 parse_get_token(Ty *ty, int i)
 {
-        bool keep_comments = true;
-        SWAP(bool, keep_comments, KeepComments);
+        SAVE_KC(true);
 
-        if (lex_pos(ty).s > vvL(tokens)->end.s) {
+        Token *prev = token(-1);
+        if (!prev->pp) {
                 vN(tokens) = TokenIndex;
-                avP(tokens, ((Token) {
-                        .ctx = LCTX,
-                        .type = TOKEN_EXPRESSION,
-                        .start = lex_pos(ty),
-                        .end = lex_pos(ty)
-                }));
-                next();
-        } else {
-                Token *prev = token(-1);
-                if (!prev->pp) {
-                        vN(tokens) = TokenIndex;
-                        lex_rewind(ty, &prev->end);
-                }
+                lex_rewind(ty, &prev->end);
         }
 
         Token *t = token(i);
 
-        KeepComments = keep_comments;
+        LOAD_KC();
 
         return *t;
 }
@@ -7125,7 +7115,9 @@ parse_get_token(Ty *ty, int i)
 void
 parse_next(Ty *ty)
 {
+        SAVE_KC(true);
         next();
+        LOAD_KC();
 }
 
 struct value
@@ -7135,9 +7127,7 @@ parse_get_type(Ty *ty, int prec, bool resolve, bool want_raw)
 
         SAVE_NI(false);
         SAVE_NE(false);
-
-        bool keep_comments = false;
-        SWAP(bool, keep_comments, KeepComments);
+        SAVE_KC(false);
 
         Value v;
         Expr *e;
@@ -7159,10 +7149,9 @@ parse_get_type(Ty *ty, int prec, bool resolve, bool want_raw)
                 TY_CATCH_END();
         }
 
+        LOAD_KC();
         LOAD_NE();
         LOAD_NI();
-
-        KeepComments = keep_comments;
 
         if (want_raw) {
                 Value pair = vT(2);
@@ -7181,9 +7170,7 @@ parse_get_expr(Ty *ty, int prec, bool resolve, bool want_raw)
 
         SAVE_NI(false);
         SAVE_NE(false);
-
-        bool keep_comments = false;
-        SWAP(bool, keep_comments, KeepComments);
+        SAVE_KC(false);
 
         Value v;
         Expr *e;
@@ -7205,10 +7192,9 @@ parse_get_expr(Ty *ty, int prec, bool resolve, bool want_raw)
                 TY_CATCH_END();
         }
 
+        LOAD_KC();
         LOAD_NE();
         LOAD_NI();
-
-        KeepComments = keep_comments;
 
         if (want_raw) {
                 Value pair = vT(2);
@@ -7227,9 +7213,7 @@ parse_get_stmt(Ty *ty, int prec, bool want_raw)
 
         SAVE_NI(false);
         SAVE_NE(false);
-
-        bool keep_comments = false;
-        SWAP(bool, keep_comments, KeepComments);
+        SAVE_KC(false);
 
         Value v;
 
@@ -7249,10 +7233,9 @@ parse_get_stmt(Ty *ty, int prec, bool want_raw)
                 TY_CATCH_END();
         }
 
+        LOAD_KC();
         LOAD_NE();
         LOAD_NI();
-
-        KeepComments = keep_comments;
 
         return v;
 }
