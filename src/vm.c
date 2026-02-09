@@ -740,6 +740,7 @@ add_builtins(Ty *ty, int ac, char **av)
         BUILTIN_NAMED_VAR("ty",  "tests",          tests     ) = ARRAY(vA());
 
         BUILTIN_VAR("ty",  "executable") = this_executable(ty);
+        BUILTIN_VAR("ty",  "color")      = xSz(COLOR_MODE_NAMES[ColorMode]);
 #if defined(_WIN32)
         BUILTIN_VAR("os",  "PAGE_SIZE" ) = INTEGER(4096);
 #else
