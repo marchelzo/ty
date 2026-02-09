@@ -2697,7 +2697,7 @@ resolve_access(Ty *ty, Scope const *scope, char **parts, int n, Expr *e, bool st
 
                 Expr *f = NewExpr(ty, EXPRESSION_IDENTIFIER);
                 f->start = left->start;
-                f->end = left->end;
+                f->end = e->method->end;
                 f->identifier = id;
                 f->namespace = left;
                 f->module = NULL;
@@ -10820,33 +10820,6 @@ get_module_scope(char const *name)
 }
 
 static void
-declare_classes(Ty *ty, Stmt *s, Scope *scope)
-{
-        Scope *ns = (scope != NULL) ? scope : GetNamespace(ty, s->ns);
-
-        if (s->type == STATEMENT_MULTI) {
-                for (int i = 0; i < vN(s->statements); ++i) {
-                        declare_classes(ty, v__(s->statements, i), ns);
-                }
-        } else if (s->type == STATEMENT_CLASS_DEFINITION) {
-                if (scope_locally_defined(ty, ns, s->class.name)) {
-                        sometimes_fail(
-                                "redeclaration of class %s%s%s%s%s",
-                                TERM(1),
-                                TERM(34),
-                                s->class.name,
-                                TERM(22),
-                                TERM(39)
-                        );
-                }
-                Symbol *sym = addsymbol(ty, ns, s->class.name);
-                sym->class = class_new(ty, s);
-                sym->flags |= SYM_CONST;
-                s->class.symbol = sym->class;
-        }
-}
-
-static void
 RedpillFun(Ty *ty, Scope *scope, Expr *f, Type *self0)
 {
         if (f->scope != NULL) {
@@ -15759,11 +15732,6 @@ define_class(Ty *ty, Stmt *s)
                 TERM(91),
                 TERM(0)
         );
-
-        for (int i = 0; i < vN(cd->traits); ++i) {
-                Expr *trait0 = v__(cd->traits, i);
-                TryResolveExpr(ty, cd->s_scope, trait0);
-        }
 
         if (HasAnyFieldInitializers(cd) && !HasConstructor(cd)) {
                 avP(cd->methods, DefaultConstructor(ty, class));

@@ -39,7 +39,6 @@ static Ty *ty;
 
 #define MAX_COMPLETIONS 512
 
-static int color_mode = TY_COLOR_AUTO;
 static bool basic = false;
 static char buffer[8192];
 static char *completions[MAX_COMPLETIONS + 1];
@@ -70,18 +69,26 @@ _Thread_local u64 TotalReached;
 usize TotalBytesAllocated;
 #endif
 
+char const *COLOR_MODE_NAMES[] = {
+        [TY_COLOR_AUTO]   = "auto",
+        [TY_COLOR_ALWAYS] = "always",
+        [TY_COLOR_NEVER]  = "never"
+};
+
+int  ColorMode = TY_COLOR_AUTO;
 bool ColorStdout;
 bool ColorStderr;
 
 bool RunningTests       = false;
 bool CompileOnly        = false;
 bool HighlightOnly      = false;
-static char const *HighlightTheme = NULL;
 bool AllowErrors        = false;
 bool CheckTypes         = true;
 bool CheckConstraints   = true;
 bool DetailedExceptions = true;
 bool InteractiveSession = false;
+
+static char const *HighlightTheme = NULL;
 
 extern bool ProduceAnnotation;
 extern FILE *DisassemblyOut;
@@ -494,10 +501,10 @@ ProcessArgs(char *argv[], bool first)
                 char const prefix[] = "--color=";
                 if (strncmp(argv[argi], prefix, countof(prefix) - 1) == 0) {
                         char const *when = strchr(argv[argi], '=') + 1;
-                        if      (strcmp(when, "always") == 0) { color_mode = TY_COLOR_ALWAYS; }
-                        else if (strcmp(when, "never")  == 0) { color_mode = TY_COLOR_NEVER;  }
-                        else if (strcmp(when, "auto")   == 0) { color_mode = TY_COLOR_AUTO;   }
-                        else                                  { goto BadOption;               }
+                        if      (s_eq(when, "always")) { ColorMode = TY_COLOR_ALWAYS; }
+                        else if (s_eq(when, "never"))  { ColorMode = TY_COLOR_NEVER;  }
+                        else if (s_eq(when, "auto"))   { ColorMode = TY_COLOR_AUTO;   }
+                        else                           { goto BadOption;              }
                         goto NextOption;
                 }
 
@@ -716,7 +723,7 @@ main(int argc, char **argv)
 
         int nopt = (argc == 0) ? 0 : ProcessArgs(argv, true);
 
-        switch (color_mode) {
+        switch (ColorMode) {
         case TY_COLOR_AUTO:   ColorStdout = isatty(1); ColorStderr = isatty(2); break;
         case TY_COLOR_ALWAYS: ColorStdout = true;      ColorStderr = true;      break;
         case TY_COLOR_NEVER:  ColorStdout = false;     ColorStderr = false;     break;
@@ -746,13 +753,12 @@ main(int argc, char **argv)
                 ProfileOut = stdout;
         }
 
-        switch (color_mode) {
+        switch (ColorMode) {
         case TY_COLOR_AUTO:   ColorProfile = isatty(fileno(ProfileOut)); break;
         case TY_COLOR_ALWAYS: ColorProfile = true;                       break;
         case TY_COLOR_NEVER:  ColorProfile = false;                      break;
         }
 #endif
-
 
         if (!vm_init(ty, argc - nopt, argv + nopt)) {
                 fprintf(stderr, "%s\n", TyError(ty));

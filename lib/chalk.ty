@@ -560,7 +560,7 @@ class Chalk {
             style = new-style
         }
 
-#|if getenv('NO_COLOR') != nil
+#|if (getenv('NO_COLOR') != nil) || (ty.color == 'never')
         plain = true
 #|]
 

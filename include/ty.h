@@ -832,6 +832,13 @@ typedef struct {
         int tdb_hook;
 } InternedNames;
 
+enum {
+        TY_COLOR_AUTO,
+        TY_COLOR_ALWAYS,
+        TY_COLOR_NEVER,
+        TY_COLOR_MODE_COUNT
+};
+
 #define MemoryUsed  (ty->memory_used)
 #define MemoryLimit (ty->memory_limit)
 
@@ -845,9 +852,11 @@ extern TY xD;
 
 extern InternedNames NAMES;
 
+extern int  ColorMode;
 extern bool ColorStdout;
 extern bool ColorStderr;
 extern bool ColorProfile;
+extern char const *COLOR_MODE_NAMES[TY_COLOR_MODE_COUNT];
 
 extern bool RunningTests;
 extern bool CheckTypes;
@@ -1479,12 +1488,6 @@ enum {
         TY_UNARY_OPERATORS
 };
 #undef X
-
-enum {
-        TY_COLOR_AUTO,
-        TY_COLOR_ALWAYS,
-        TY_COLOR_NEVER
-};
 
 #define FMT_MORE "\n                 "
 #define FMT_CS   "%s%s%s"

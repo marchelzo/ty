@@ -28,8 +28,15 @@ u64 TypeCheckTime = 0;
 
 usize TotalBytesAllocated = 0;
 
+int  ColorMode = TY_COLOR_NEVER;
 bool ColorStdout;
 bool ColorStderr;
+
+char const *COLOR_MODE_NAMES[] = {
+        [TY_COLOR_AUTO]   = "auto",
+        [TY_COLOR_ALWAYS] = "always",
+        [TY_COLOR_NEVER]  = "never"
+};
 
 bool RunningTests = false;
 bool CheckTypes = true;
