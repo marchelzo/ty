@@ -1,0 +1,2788 @@
+/*
+ * temporal.ty — ECMAScript Temporal API for Ty
+ *
+ * Implements the major types from the TC39 Temporal proposal:
+ *   - PlainDate, PlainTime, PlainDateTime, PlainYearMonth, PlainMonthDay
+ *   - Instant, ZonedDateTime
+ *   - Duration
+ *   - Now
+ *
+ * All calendar arithmetic is ISO 8601 (proleptic Gregorian).
+ */
+
+import time
+
+/* ============================================================================
+ * Helpers
+ * ============================================================================ */
+
+fn __is-leap-year(y: Int) -> Bool {
+    y % 4 == 0 && (y % 100 != 0 || y % 400 == 0)
+}
+
+fn __days-in-month(year: Int, month: Int) -> Int {
+    match month {
+        1, 3, 5, 7, 8, 10, 12 => 31,
+        4, 6, 9, 11           => 30,
+        2                     => if __is-leap-year(year) { 29 } else { 28 },
+        _                     => throw ValueError("invalid month: {month}")
+    }
+}
+
+fn __days-in-year(y: Int) -> Int {
+    if __is-leap-year(y) { 366 } else { 365 }
+}
+
+fn __validate-date(year: Int, month: Int, day: Int) {
+    if month < 1 || month > 12 {
+        throw ValueError("month must be 1..12, got {month}")
+    }
+    let max = __days-in-month(year, month)
+    if day < 1 || day > max {
+        throw ValueError("day must be 1..{max} for {year}-{month:02}, got {day}")
+    }
+}
+
+fn __validate-time(hour: Int, minute: Int, second: Int, millisecond: Int, microsecond: Int, nanosecond: Int) {
+    if hour < 0 || hour > 23 { throw ValueError("hour must be 0..23, got {hour}") }
+    if minute < 0 || minute > 59 { throw ValueError("minute must be 0..59, got {minute}") }
+    if second < 0 || second > 59 { throw ValueError("second must be 0..59, got {second}") }
+    if millisecond < 0 || millisecond > 999 { throw ValueError("millisecond must be 0..999, got {millisecond}") }
+    if microsecond < 0 || microsecond > 999 { throw ValueError("microsecond must be 0..999, got {microsecond}") }
+    if nanosecond < 0 || nanosecond > 999 { throw ValueError("nanosecond must be 0..999, got {nanosecond}") }
+}
+
+/* Convert a date to a day number (days since epoch 1970-01-01) using a fast algorithm */
+fn __date-to-epoch-days(year: Int, month: Int, day: Int) -> Int {
+    let y = year
+    let m = month
+    if m <= 2 { y -= 1 }
+    let era = (if y >= 0 { y } else { y - 399 }) / 400
+    let yoe = y - era * 400
+    let doy = (153 * (m + (if m > 2 { -3 } else { 9 })) + 2) / 5 + day - 1
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy
+    era * 146097 + doe - 719468
+}
+
+/* Convert epoch days back to (year, month, day) */
+fn __epoch-days-to-date(z: Int) -> (Int, Int, Int) {
+    let z = z + 719468
+    let era = (if z >= 0 { z } else { z - 146096 }) / 146097
+    let doe = z - era * 146097
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365
+    let y = yoe + era * 400
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100)
+    let mp = (5 * doy + 2) / 153
+    let d = doy - (153 * mp + 2) / 5 + 1
+    let m = mp + (if mp < 10 { 3 } else { -9 })
+    (y + (if m <= 2 { 1 } else { 0 }), m, d)
+}
+
+fn __day-of-week(year: Int, month: Int, day: Int) -> Int {
+    let d = __date-to-epoch-days(year, month, day)
+    let dow = (d % 7 + 7) % 7
+    /* epoch was Thursday (4). We want Monday=1..Sunday=7 (ISO) */
+    let iso = (dow + 3) % 7 + 1
+    iso
+}
+
+fn __day-of-year(year: Int, month: Int, day: Int) -> Int {
+    let days = [0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334]
+    let d = days[month - 1] + day
+    if month > 2 && __is-leap-year(year) { d += 1 }
+    d
+}
+
+fn __week-of-year(year: Int, month: Int, day: Int) -> Int {
+    let dow = __day-of-week(year, 1, 1)
+    let doy = __day-of-year(year, month, day)
+    let week = (doy + dow - 2) / 7 + 1
+    if dow > 4 { week -= 1 }
+    if week == 0 { return __week-of-year(year - 1, 12, 31) }
+    week
+}
+
+fn __pad2(n: Int) -> String { "{n:02}" }
+fn __pad3(n: Int) -> String { "{n:03}" }
+fn __pad4(n: Int) -> String {
+    if n >= 0 && n <= 9999 { "{n:04}" }
+    else if n >= 0 { "+{n:06}" }
+    else { "-{(-n):06}" }
+}
+
+fn __parse-int(s: String) -> Int {
+    Int(s) ?? throw ValueError("expected integer, got '{s}'")
+}
+
+fn __unit-nanos(unit: String) -> Int {
+    match unit {
+        'hour', 'hours'             => 3600000000000,
+        'minute', 'minutes'         => 60000000000,
+        'second', 'seconds'         => 1000000000,
+        'millisecond', 'milliseconds' => 1000000,
+        'microsecond', 'microseconds' => 1000,
+        'nanosecond', 'nanoseconds' => 1,
+        _ => throw ValueError("invalid time unit: '{unit}'")
+    }
+}
+
+fn __round-nanos(nanos: Int, unit-ns: Int, mode: String) -> Int {
+    match mode {
+        'halfExpand' => {
+            let half = unit-ns / 2
+            let rem = nanos % unit-ns
+            if rem < 0 { rem += unit-ns; nanos -= unit-ns }
+            if rem >= half { nanos - rem + unit-ns } else { nanos - rem }
+        },
+        'ceil'  => {
+            let rem = nanos % unit-ns
+            if rem > 0 { nanos - rem + unit-ns }
+            else if rem < 0 { nanos - rem }
+            else { nanos }
+        },
+        'floor' => {
+            let rem = nanos % unit-ns
+            if rem < 0 { nanos - rem - unit-ns } else { nanos - rem }
+        },
+        'trunc' => {
+            nanos - (nanos % unit-ns)
+        },
+        _ => throw ValueError("invalid rounding mode: '{mode}'")
+    }
+}
+
+fn __parse-duration-string(s: String) -> Duration {
+    let str = s
+    let neg = false
+    if str.starts?('-') { neg = true; str = str[1;] }
+    else if str.starts?('+') { str = str[1;] }
+
+    if !str.starts?('P') && !str.starts?('p') {
+        throw ValueError("invalid duration string: '{s}'")
+    }
+    str = str[1;]
+
+    let years = 0
+    let months = 0
+    let weeks = 0
+    let days = 0
+    let hours = 0
+    let minutes = 0
+    let seconds = 0
+    let milliseconds = 0
+    let microseconds = 0
+    let nanoseconds = 0
+
+    let in-time = false
+    let num-str = ''
+
+    for c in str {
+        if c == 'T' || c == 't' {
+            in-time = true
+            continue
+        }
+
+        if (c >= '0' && c <= '9') || c == '.' {
+            num-str += c
+            continue
+        }
+
+        if #num-str == 0 {
+            throw ValueError("invalid duration string: '{s}'")
+        }
+
+        match c {
+            'Y', 'y' => { years = __parse-int(num-str) },
+            'W', 'w' => { weeks = __parse-int(num-str) },
+            'D', 'd' => { days = __parse-int(num-str) },
+            'H', 'h' => { hours = __parse-int(num-str) },
+            'M', 'm' => {
+                if in-time { minutes = __parse-int(num-str) }
+                else { months = __parse-int(num-str) }
+            },
+            'S', 's' => {
+                if let $dot = num-str.search('.') {
+                    seconds = __parse-int(num-str[;dot])
+                    let frac = num-str[dot + 1;]
+                    while #frac < 9 { frac += '0' }
+                    frac = frac[;9]
+                    let frac-ns = __parse-int(frac)
+                    milliseconds = frac-ns / 1000000
+                    microseconds = (frac-ns % 1000000) / 1000
+                    nanoseconds = frac-ns % 1000
+                } else {
+                    seconds = __parse-int(num-str)
+                }
+            },
+            _ => throw ValueError("invalid duration string: '{s}'")
+        }
+        num-str = ''
+    }
+
+    let d = Duration(
+        years=years, months=months, weeks=weeks, days=days,
+        hours=hours, minutes=minutes, seconds=seconds,
+        milliseconds=milliseconds, microseconds=microseconds,
+        nanoseconds=nanoseconds
+    )
+    if neg { d.negated() } else { d }
+}
+
+/* ============================================================================
+ * Smart parser — moment.js-style flexible date/time parsing
+ * ============================================================================ */
+
+let __month-names = %{
+    'jan': 1,  'january': 1,
+    'feb': 2,  'february': 2,
+    'mar': 3,  'march': 3,
+    'apr': 4,  'april': 4,
+    'may': 5,
+    'jun': 6,  'june': 6,
+    'jul': 7,  'july': 7,
+    'aug': 8,  'august': 8,
+    'sep': 9,  'september': 9,
+    'oct': 10, 'october': 10,
+    'nov': 11, 'november': 11,
+    'dec': 12, 'december': 12
+}
+
+let __day-names = [
+    'monday', 'tuesday', 'wednesday', 'thursday',
+    'friday', 'saturday', 'sunday',
+    'mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'
+]
+
+fn __parse-time-part(s: String) -> (Int, Int, Int, Int) {
+    /* Parse time string, returns (hour, minute, second, frac-nanos)
+     * Handles: 14:30, 14:30:45, 14:30:45.123, 2:30pm, 2pm, etc. */
+    let str = s.trim()
+    let hour = 0
+    let minute = 0
+    let second = 0
+    let frac-ns = 0
+
+    /* Check for am/pm suffix */
+    let is-pm = false
+    let is-am = false
+    let lower = str.lower()
+    if lower.ends?('pm') || lower.ends?('p.m.') {
+        is-pm = true
+        str = str.comb(/[paPA]\.*[mM]\.*\s*$/)
+    } else if lower.ends?('am') || lower.ends?('a.m.') {
+        is-am = true
+        str = str.comb(/[aA]\.*[mM]\.*\s*$/)
+    }
+    str = str.trim()
+
+    /* Split fractional seconds */
+    let main = str
+    if let $dot = str.search('.') {
+        main = str[;dot]
+        let frac-str = str[dot + 1;]
+        while #frac-str < 9 { frac-str += '0' }
+        frac-str = frac-str[;9]
+        frac-ns = __parse-int(frac-str)
+    }
+
+    let parts = main.split(':')
+    hour = __parse-int(parts[0].trim())
+    if #parts >= 2 { minute = __parse-int(parts[1].trim()) }
+    if #parts >= 3 { second = __parse-int(parts[2].trim()) }
+
+    /* Apply am/pm */
+    if is-pm && hour < 12 { hour += 12 }
+    if is-am && hour == 12 { hour = 0 }
+
+    (hour, minute, second, frac-ns)
+}
+
+fn __try-parse-month(s: String) -> ?Int {
+    __month-names[s.lower().trim()]
+}
+
+fn __looks-like-year(n: Int) -> Bool {
+    n > 31
+}
+
+pub fn parse(input: String) -> PlainDateTime {
+    let s = input.trim()
+
+    /* ---- Unix timestamp (pure number) ---- */
+    if s.match?(/^-?\d{9,}$/) {
+        let n = __parse-int(s)
+        /* >1e12 → milliseconds, >1e15 → microseconds, >1e18 → nanoseconds */
+        let nanos = if n.abs > 1000000000000000000 { n }
+                    else if n.abs > 1000000000000000 { n * 1000 }
+                    else if n.abs > 1000000000000 { n * 1000000 }
+                    else { n * 1000000000 }
+        return Instant(nanos).to-plain-date-time-utc()
+    }
+
+    /* ---- ISO 8601 / RFC 3339 ---- */
+    /* YYYY-MM-DD, YYYY-MM-DDTHH:MM:SS, with optional Z or offset */
+    if let [_, yr, mo, dy, ?time-str] = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})(?:[T\s](.+))?$/) {
+        let year = __parse-int(yr)
+        let month = __parse-int(mo)
+        let day = __parse-int(dy)
+        if time-str != nil {
+            /* Strip timezone suffix for PlainDateTime */
+            let ts = time-str.comb(/[Zz]$/).comb(/[+-]\d{1,2}:\d{2}$/)
+            let (h, m, sec, frac) = __parse-time-part(ts)
+            let ms = frac / 1000000
+            let us = (frac % 1000000) / 1000
+            let nano = frac % 1000
+            return PlainDateTime(year, month, day, h, m, sec, ms, us, nano)
+        }
+        return PlainDateTime(year, month, day)
+    }
+
+    /* ---- YYYY/MM/DD ---- */
+    if let [_, yr, mo, dy, ?time-str] = s.match(/^(\d{4})\/(\d{1,2})\/(\d{1,2})(?:[\s](.+))?$/) {
+        let year = __parse-int(yr)
+        let month = __parse-int(mo)
+        let day = __parse-int(dy)
+        if time-str != nil {
+            let (h, m, sec, frac) = __parse-time-part(time-str)
+            let ms = frac / 1000000
+            let us = (frac % 1000000) / 1000
+            let nano = frac % 1000
+            return PlainDateTime(year, month, day, h, m, sec, ms, us, nano)
+        }
+        return PlainDateTime(year, month, day)
+    }
+
+    /* ---- M/D/YYYY or MM/DD/YYYY ---- */
+    if let [_, mo, dy, yr, ?time-str] = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})(?:[\s](.+))?$/) {
+        let year = __parse-int(yr)
+        let month = __parse-int(mo)
+        let day = __parse-int(dy)
+        if time-str != nil {
+            let (h, m, sec, frac) = __parse-time-part(time-str)
+            let ms = frac / 1000000
+            let us = (frac % 1000000) / 1000
+            let nano = frac % 1000
+            return PlainDateTime(year, month, day, h, m, sec, ms, us, nano)
+        }
+        return PlainDateTime(year, month, day)
+    }
+
+    /* ---- M-D-YYYY or MM-DD-YYYY (US style with dashes) ---- */
+    if let [_, mo, dy, yr, ?time-str] = s.match(/^(\d{1,2})-(\d{1,2})-(\d{4})(?:[\s](.+))?$/) {
+        let year = __parse-int(yr)
+        let month = __parse-int(mo)
+        let day = __parse-int(dy)
+        if time-str != nil {
+            let (h, m, sec, frac) = __parse-time-part(time-str)
+            let ms = frac / 1000000
+            let us = (frac % 1000000) / 1000
+            let nano = frac % 1000
+            return PlainDateTime(year, month, day, h, m, sec, ms, us, nano)
+        }
+        return PlainDateTime(year, month, day)
+    }
+
+    /* ---- Strip leading day name: "Mon, ", "Monday ", etc. ---- */
+    let stripped = s
+    for name in __day-names {
+        let lower = stripped.lower()
+        if lower.starts?(name) {
+            stripped = stripped[#name;].comb(/^[,\s]+/)
+            break
+        }
+    }
+
+    /* ---- "Month Day, Year" / "Month Day Year" ---- */
+    if let [_, mon-name, dy, yr, ?time-str] = stripped.match(/^([A-Za-z]+)\.?\s+(\d{1,2})(?:st|nd|rd|th)?,?\s+(\d{4})(?:[\s,]+(.+))?$/i) {
+        if let $month = __try-parse-month(mon-name) {
+            let year = __parse-int(yr)
+            let day = __parse-int(dy)
+            if time-str != nil {
+                let ts = time-str.comb(/[Zz]$/).comb(/[+-]\d{1,2}:\d{2}$/).comb(/\s*(GMT|UTC|EST|CST|MST|PST|EDT|CDT|MDT|PDT)\s*$/i)
+                let (h, m, sec, frac) = __parse-time-part(ts)
+                let ms = frac / 1000000
+                let us = (frac % 1000000) / 1000
+                let nano = frac % 1000
+                return PlainDateTime(year, month, day, h, m, sec, ms, us, nano)
+            }
+            return PlainDateTime(year, month, day)
+        }
+    }
+
+    /* ---- "Day Month Year" (European style) ---- */
+    if let [_, dy, mon-name, yr, ?time-str] = stripped.match(/^(\d{1,2})(?:st|nd|rd|th)?\s+([A-Za-z]+)\.?,?\s+(\d{4})(?:[\s,]+(.+))?$/i) {
+        if let $month = __try-parse-month(mon-name) {
+            let year = __parse-int(yr)
+            let day = __parse-int(dy)
+            if time-str != nil {
+                let ts = time-str.comb(/[Zz]$/).comb(/[+-]\d{1,2}:\d{2}$/).comb(/\s*(GMT|UTC|EST|CST|MST|PST|EDT|CDT|MDT|PDT)\s*$/i)
+                let (h, m, sec, frac) = __parse-time-part(ts)
+                let ms = frac / 1000000
+                let us = (frac % 1000000) / 1000
+                let nano = frac % 1000
+                return PlainDateTime(year, month, day, h, m, sec, ms, us, nano)
+            }
+            return PlainDateTime(year, month, day)
+        }
+    }
+
+    /* ---- "Month Year" (no day) ---- */
+    if let [_, mon-name, yr] = stripped.match(/^([A-Za-z]+)\.?\s+(\d{4})$/) {
+        if let $month = __try-parse-month(mon-name) {
+            return PlainDateTime(__parse-int(yr), month, 1)
+        }
+    }
+
+    /* ---- "Month Day" (no year — use current year) ---- */
+    if let [_, mon-name, dy] = stripped.match(/^([A-Za-z]+)\.?\s+(\d{1,2})(?:st|nd|rd|th)?$/) {
+        if let $month = __try-parse-month(mon-name) {
+            let year = Now.plain-date-local().year
+            return PlainDateTime(year, month, __parse-int(dy))
+        }
+    }
+
+    /* ---- "YYYYMMDD" compact ---- */
+    if let [_, yr, mo, dy] = s.match(/^(\d{4})(\d{2})(\d{2})$/) {
+        return PlainDateTime(__parse-int(yr), __parse-int(mo), __parse-int(dy))
+    }
+
+    /* ---- "YYYYMMDDTHHmmss" compact with time ---- */
+    if let [_, yr, mo, dy, hh, mm, ss] = s.match(/^(\d{4})(\d{2})(\d{2})[T\s](\d{2})(\d{2})(\d{2})/) {
+        return PlainDateTime(__parse-int(yr), __parse-int(mo), __parse-int(dy),
+                             __parse-int(hh), __parse-int(mm), __parse-int(ss))
+    }
+
+    throw ValueError("unable to parse date: '{input}'")
+}
+
+/* ============================================================================
+ * Duration
+ * ============================================================================ */
+
+pub class Duration {
+    years:        Int
+    months:       Int
+    weeks:        Int
+    days:         Int
+    hours:        Int
+    minutes:      Int
+    seconds:      Int
+    milliseconds: Int
+    microseconds: Int
+    nanoseconds:  Int
+
+    init(
+        years: Int = 0,
+        months: Int = 0,
+        weeks: Int = 0,
+        days: Int = 0,
+        hours: Int = 0,
+        minutes: Int = 0,
+        seconds: Int = 0,
+        milliseconds: Int = 0,
+        microseconds: Int = 0,
+        nanoseconds: Int = 0
+    ) {
+        self.years = years
+        self.months = months
+        self.weeks = weeks
+        self.days = days
+        self.hours = hours
+        self.minutes = minutes
+        self.seconds = seconds
+        self.milliseconds = milliseconds
+        self.microseconds = microseconds
+        self.nanoseconds = nanoseconds
+    }
+
+    static from(s: String) -> Duration {
+        __parse-duration-string(s)
+    }
+
+    static create(
+        years: ?Int = nil, months: ?Int = nil, weeks: ?Int = nil, days: ?Int = nil,
+        hours: ?Int = nil, minutes: ?Int = nil, seconds: ?Int = nil,
+        milliseconds: ?Int = nil, microseconds: ?Int = nil, nanoseconds: ?Int = nil
+    ) -> Duration {
+        Duration(
+            years=years ?? 0, months=months ?? 0, weeks=weeks ?? 0, days=days ?? 0,
+            hours=hours ?? 0, minutes=minutes ?? 0, seconds=seconds ?? 0,
+            milliseconds=milliseconds ?? 0, microseconds=microseconds ?? 0,
+            nanoseconds=nanoseconds ?? 0
+        )
+    }
+
+    static compare(a: Duration, b: Duration) -> Int {
+        a.total-nanoseconds <=> b.total-nanoseconds
+    }
+
+    sign -> Int {
+        for v in [years, months, weeks, days, hours, minutes, seconds, milliseconds, microseconds, nanoseconds] {
+            if v > 0 { return 1 }
+            if v < 0 { return -1 }
+        }
+        0
+    }
+
+    blank? -> Bool { sign == 0 }
+
+    negated() -> Duration {
+        Duration(
+            years=-years, months=-months, weeks=-weeks, days=-days,
+            hours=-hours, minutes=-minutes, seconds=-seconds,
+            milliseconds=-milliseconds, microseconds=-microseconds,
+            nanoseconds=-nanoseconds
+        )
+    }
+
+    abs() -> Duration {
+        Duration(
+            years=years.abs, months=months.abs, weeks=weeks.abs, days=days.abs,
+            hours=hours.abs, minutes=minutes.abs, seconds=seconds.abs,
+            milliseconds=milliseconds.abs, microseconds=microseconds.abs,
+            nanoseconds=nanoseconds.abs
+        )
+    }
+
+    add(other: Duration) -> Duration {
+        Duration(
+            years=years + other.years,
+            months=months + other.months,
+            weeks=weeks + other.weeks,
+            days=days + other.days,
+            hours=hours + other.hours,
+            minutes=minutes + other.minutes,
+            seconds=seconds + other.seconds,
+            milliseconds=milliseconds + other.milliseconds,
+            microseconds=microseconds + other.microseconds,
+            nanoseconds=nanoseconds + other.nanoseconds
+        )
+    }
+
+    subtract(other: Duration) -> Duration {
+        add(other.negated())
+    }
+
+    total-nanoseconds -> Int {
+        let total = nanoseconds
+        total += microseconds * 1000
+        total += milliseconds * 1000000
+        total += seconds * 1000000000
+        total += minutes * 60000000000
+        total += hours * 3600000000000
+        total += (days + weeks * 7) * 86400000000000
+        total
+    }
+
+    total-seconds -> Float {
+        total-nanoseconds / 1000000000.0
+    }
+
+    total(unit: String) -> Float {
+        match unit {
+            'day', 'days'               => total-nanoseconds / 86400000000000.0,
+            'hour', 'hours'             => total-nanoseconds / 3600000000000.0,
+            'minute', 'minutes'         => total-nanoseconds / 60000000000.0,
+            'second', 'seconds'         => total-nanoseconds / 1000000000.0,
+            'millisecond', 'milliseconds' => total-nanoseconds / 1000000.0,
+            'microsecond', 'microseconds' => total-nanoseconds / 1000.0,
+            'nanosecond', 'nanoseconds' => Float(total-nanoseconds),
+            _ => throw ValueError("invalid unit for total(): '{unit}'")
+        }
+    }
+
+    round(smallest-unit: String, rounding-mode: String = 'halfExpand') -> Duration {
+        let unit-ns = __unit-nanos(smallest-unit)
+        let total = total-nanoseconds
+        let rounded = __round-nanos(total, unit-ns, rounding-mode)
+        /* Decompose back into fields */
+        let neg = rounded < 0
+        let rem = if neg { -rounded } else { rounded }
+        let d = rem / 86400000000000;    rem = rem % 86400000000000
+        let h = rem / 3600000000000;     rem = rem % 3600000000000
+        let m = rem / 60000000000;       rem = rem % 60000000000
+        let s = rem / 1000000000;        rem = rem % 1000000000
+        let ms = rem / 1000000;          rem = rem % 1000000
+        let us = rem / 1000;             rem = rem % 1000
+        let result = Duration(days=d, hours=h, minutes=m, seconds=s,
+                              milliseconds=ms, microseconds=us, nanoseconds=rem)
+        if neg { result.negated() } else { result }
+    }
+
+    with(
+        years: ?Int = nil, months: ?Int = nil, weeks: ?Int = nil, days: ?Int = nil,
+        hours: ?Int = nil, minutes: ?Int = nil, seconds: ?Int = nil,
+        milliseconds: ?Int = nil, microseconds: ?Int = nil, nanoseconds: ?Int = nil
+    ) -> Duration {
+        Duration(
+            years=years ?? self.years, months=months ?? self.months,
+            weeks=weeks ?? self.weeks, days=days ?? self.days,
+            hours=hours ?? self.hours, minutes=minutes ?? self.minutes,
+            seconds=seconds ?? self.seconds,
+            milliseconds=milliseconds ?? self.milliseconds,
+            microseconds=microseconds ?? self.microseconds,
+            nanoseconds=nanoseconds ?? self.nanoseconds
+        )
+    }
+
+    __str__() -> String {
+        if blank? { return 'PT0S' }
+
+        let s = if sign < 0 { '-P' } else { 'P' }
+        let y = years.abs
+        let mo = months.abs
+        let w = weeks.abs
+        let d = days.abs
+        let h = hours.abs
+        let mi = minutes.abs
+        let sec = seconds.abs
+        let ms = milliseconds.abs
+        let us = microseconds.abs
+        let nano = nanoseconds.abs
+
+        if y != 0 { s += "{y}Y" }
+        if mo != 0 { s += "{mo}M" }
+        if w != 0 { s += "{w}W" }
+        if d != 0 { s += "{d}D" }
+
+        if h != 0 || mi != 0 || sec != 0 || ms != 0 || us != 0 || nano != 0 {
+            s += 'T'
+            if h != 0 { s += "{h}H" }
+            if mi != 0 { s += "{mi}M" }
+            if sec != 0 || ms != 0 || us != 0 || nano != 0 {
+                let frac = nano + us * 1000 + ms * 1000000
+                if frac != 0 {
+                    let frac-str = "{frac:09}"
+                    /* trim trailing zeros */
+                    while frac-str.ends?('0') { frac-str = frac-str[;-1] }
+                    s += "{sec}.{frac-str}S"
+                } else {
+                    s += "{sec}S"
+                }
+            }
+        }
+
+        s
+    }
+}
+
+fn +(a: Duration, b: Duration) -> Duration { a.add(b) }
+fn -(a: Duration, b: Duration) -> Duration { a.subtract(b) }
+fn *(n: Int, d: Duration) -> Duration {
+    Duration(
+        years=d.years * n, months=d.months * n, weeks=d.weeks * n, days=d.days * n,
+        hours=d.hours * n, minutes=d.minutes * n, seconds=d.seconds * n,
+        milliseconds=d.milliseconds * n, microseconds=d.microseconds * n,
+        nanoseconds=d.nanoseconds * n
+    )
+}
+fn *(d: Duration, n: Int) -> Duration { n * d }
+fn *(x: Float, d: Duration) -> Duration {
+    if d.years != 0 || d.months != 0 || d.weeks != 0 {
+        throw ValueError("cannot multiply calendar units (years/months/weeks) by Float")
+    }
+    let nanos = Int(x * Float(d.total-nanoseconds))
+    let neg = nanos < 0
+    let rem = if neg { -nanos } else { nanos }
+    let days = rem / 86400000000000;    rem = rem % 86400000000000
+    let h = rem / 3600000000000;        rem = rem % 3600000000000
+    let m = rem / 60000000000;          rem = rem % 60000000000
+    let s = rem / 1000000000;           rem = rem % 1000000000
+    let ms = rem / 1000000;             rem = rem % 1000000
+    let us = rem / 1000;                rem = rem % 1000
+    let result = Duration(days=days, hours=h, minutes=m, seconds=s,
+                          milliseconds=ms, microseconds=us, nanoseconds=rem)
+    neg ? result.negated() : result
+}
+fn *(d: Duration, x: Float) -> Duration { x * d }
+
+fn <=>(a: Duration, b: Duration) -> Int { a.total-nanoseconds <=> b.total-nanoseconds }
+
+/* ============================================================================
+ * PlainDate
+ * ============================================================================ */
+
+pub class PlainDate {
+    year:  Int
+    month: Int
+    day:   Int
+
+    init(year: Int, month: Int, day: Int) {
+        __validate-date(year, month, day)
+        self.year = year
+        self.month = month
+        self.day = day
+    }
+
+    static compare(a: PlainDate, b: PlainDate) -> Int {
+        a <=> b
+    }
+
+    static from(s: String) -> PlainDate {
+        /* Parse ISO 8601: YYYY-MM-DD */
+        let parts = s.split('-')
+        if #parts == 3 {
+            let y = __parse-int(parts[0])
+            let m = __parse-int(parts[1])
+            let d = __parse-int(parts[2])
+            return PlainDate(y, m, d)
+        }
+        /* Handle +YYYYYY-MM-DD or -YYYYYY-MM-DD */
+        if #parts == 4 && parts[0] == '' {
+            let y = -__parse-int(parts[1])
+            let m = __parse-int(parts[2])
+            let d = __parse-int(parts[3])
+            return PlainDate(y, m, d)
+        }
+        throw ValueError("invalid PlainDate string: '{s}'")
+    }
+
+    day-of-week -> Int { __day-of-week(year, month, day) }
+    day-of-year -> Int { __day-of-year(year, month, day) }
+    week-of-year -> Int { __week-of-year(year, month, day) }
+    days-in-month -> Int { __days-in-month(year, month) }
+    days-in-year -> Int { __days-in-year(year) }
+    in-leap-year -> Bool { __is-leap-year(year) }
+
+    with(year: ?Int = nil, month: ?Int = nil, day: ?Int = nil) -> PlainDate {
+        let y = year ?? self.year
+        let m = month ?? self.month
+        let d = day ?? self.day
+        /* Clamp day to valid range */
+        let max = __days-in-month(y, m)
+        if d > max { d = max }
+        PlainDate(y, m, d)
+    }
+
+    add(dur: Duration) -> PlainDate {
+        /* Add years and months first */
+        let y = year + dur.years
+        let m = month + dur.months
+        /* Normalize month */
+        while m > 12 { m -= 12; y += 1 }
+        while m < 1 { m += 12; y -= 1 }
+        /* Clamp day */
+        let max = __days-in-month(y, m)
+        let d = if day > max { max } else { day }
+        /* Add weeks and days */
+        let total-days = dur.days + dur.weeks * 7
+        let epoch = __date-to-epoch-days(y, m, d) + total-days
+        let (ry, rm, rd) = __epoch-days-to-date(epoch)
+        PlainDate(ry, rm, rd)
+    }
+
+    subtract(dur: Duration) -> PlainDate {
+        add(dur.negated())
+    }
+
+    until(other: PlainDate) -> Duration {
+        let days = __date-to-epoch-days(other.year, other.month, other.day) -
+                   __date-to-epoch-days(year, month, day)
+        Duration(days=days)
+    }
+
+    since(other: PlainDate) -> Duration {
+        other.until(self)
+    }
+
+    equals(other: PlainDate) -> Bool {
+        year == other.year && month == other.month && day == other.day
+    }
+
+    to-plain-date-time(time: PlainTime = PlainTime(0, 0, 0)) -> PlainDateTime {
+        PlainDateTime(year, month, day, time.hour, time.minute, time.second,
+                      time.millisecond, time.microsecond, time.nanosecond)
+    }
+
+    to-plain-year-month() -> PlainYearMonth {
+        PlainYearMonth(year, month)
+    }
+
+    to-plain-month-day() -> PlainMonthDay {
+        PlainMonthDay(month, day)
+    }
+
+    /* Fluent navigation */
+    tomorrow -> PlainDate { add(Duration(days=1)) }
+    yesterday -> PlainDate { add(Duration(days=-1)) }
+
+    start-of-month -> PlainDate { PlainDate(year, month, 1) }
+    end-of-month -> PlainDate { PlainDate(year, month, days-in-month) }
+
+    start-of-year -> PlainDate { PlainDate(year, 1, 1) }
+    end-of-year -> PlainDate { PlainDate(year, 12, 31) }
+
+    next-week -> PlainDate { add(Duration(weeks=1)) }
+    last-week -> PlainDate { add(Duration(weeks=-1)) }
+
+    __str__() -> String {
+        "{__pad4(year)}-{__pad2(month)}-{__pad2(day)}"
+    }
+}
+
+fn ==(a: PlainDate, b: PlainDate) -> Bool { a.equals(b) }
+
+fn <=>(a: PlainDate, b: PlainDate) -> Int {
+    if a.year  != b.year  { return a.year  <=> b.year  }
+    if a.month != b.month { return a.month <=> b.month }
+    a.day <=> b.day
+}
+
+fn +(a: PlainDate, b: Duration) -> PlainDate { a.add(b) }
+fn -(a: PlainDate, b: Duration) -> PlainDate { a.subtract(b) }
+fn -(a: PlainDate, b: PlainDate) -> Duration { b.until(a) }
+
+/* ============================================================================
+ * PlainTime
+ * ============================================================================ */
+
+pub class PlainTime {
+    hour:        Int
+    minute:      Int
+    second:      Int
+    millisecond: Int
+    microsecond: Int
+    nanosecond:  Int
+
+    init(
+        hour: Int = 0,
+        minute: Int = 0,
+        second: Int = 0,
+        millisecond: Int = 0,
+        microsecond: Int = 0,
+        nanosecond: Int = 0
+    ) {
+        __validate-time(hour, minute, second, millisecond, microsecond, nanosecond)
+        self.hour = hour
+        self.minute = minute
+        self.second = second
+        self.millisecond = millisecond
+        self.microsecond = microsecond
+        self.nanosecond = nanosecond
+    }
+
+    static compare(a: PlainTime, b: PlainTime) -> Int {
+        let an = a.total-nanos()
+        let bn = b.total-nanos()
+        if an < bn { -1 } else if an > bn { 1 } else { 0 }
+    }
+
+    static from(s: String) -> PlainTime {
+        /* Parse HH:MM:SS or HH:MM:SS.fraction */
+        let main = s
+        let frac-ns = 0
+
+        if let $dot = s.search('.') {
+            main = s[;dot]
+            let frac-str = s[dot + 1;]
+            /* Pad or truncate to 9 digits */
+            while #frac-str < 9 { frac-str += '0' }
+            frac-str = frac-str[;9]
+            frac-ns = __parse-int(frac-str)
+        }
+
+        let parts = main.split(':')
+        if #parts < 2 || #parts > 3 {
+            throw ValueError("invalid PlainTime string: '{s}'")
+        }
+
+        let h = __parse-int(parts[0])
+        let m = __parse-int(parts[1])
+        let sec = if #parts == 3 { __parse-int(parts[2]) } else { 0 }
+
+        let ms = frac-ns / 1000000
+        let us = (frac-ns % 1000000) / 1000
+        let nano = frac-ns % 1000
+
+        PlainTime(h, m, sec, ms, us, nano)
+    }
+
+    total-nanos() -> Int {
+        nanosecond +
+        microsecond * 1000 +
+        millisecond * 1000000 +
+        second * 1000000000 +
+        minute * 60000000000 +
+        hour * 3600000000000
+    }
+
+    with(
+        hour: ?Int = nil, minute: ?Int = nil, second: ?Int = nil,
+        millisecond: ?Int = nil, microsecond: ?Int = nil, nanosecond: ?Int = nil
+    ) -> PlainTime {
+        PlainTime(
+            hour=hour ?? self.hour,
+            minute=minute ?? self.minute,
+            second=second ?? self.second,
+            millisecond=millisecond ?? self.millisecond,
+            microsecond=microsecond ?? self.microsecond,
+            nanosecond=nanosecond ?? self.nanosecond
+        )
+    }
+
+    add(dur: Duration) -> PlainTime {
+        let nanos = total-nanos() + dur.total-nanoseconds
+        let (t, _) = __time-from-nanos(nanos)
+        t
+    }
+
+    subtract(dur: Duration) -> PlainTime {
+        add(dur.negated())
+    }
+
+    until(other: PlainTime) -> Duration {
+        let diff = other.total-nanos() - total-nanos()
+        let h = diff / 3600000000000;          diff = diff % 3600000000000
+        let m = diff / 60000000000;            diff = diff % 60000000000
+        let s = diff / 1000000000;             diff = diff % 1000000000
+        let ms = diff / 1000000;               diff = diff % 1000000
+        let us = diff / 1000;                  diff = diff % 1000
+        Duration(hours=h, minutes=m, seconds=s, milliseconds=ms, microseconds=us, nanoseconds=diff)
+    }
+
+    since(other: PlainTime) -> Duration {
+        other.until(self)
+    }
+
+    equals(other: PlainTime) -> Bool {
+        total-nanos() == other.total-nanos()
+    }
+
+    round(smallest-unit: String, rounding-mode: String = 'halfExpand') -> PlainTime {
+        let unit-ns = __unit-nanos(smallest-unit)
+        let rounded = __round-nanos(total-nanos(), unit-ns, rounding-mode)
+        let (t, _) = __time-from-nanos(rounded)
+        t
+    }
+
+    to-plain-date-time(date: PlainDate) -> PlainDateTime {
+        PlainDateTime(date.year, date.month, date.day,
+                      hour, minute, second, millisecond, microsecond, nanosecond)
+    }
+
+    __str__() -> String {
+        let s = "{__pad2(hour)}:{__pad2(minute)}:{__pad2(second)}"
+        let frac = nanosecond + microsecond * 1000 + millisecond * 1000000
+        if frac != 0 {
+            let fs = "{frac:09}"
+            while fs.ends?('0') { fs = fs[;-1] }
+            s += ".{fs}"
+        }
+        s
+    }
+}
+
+fn __time-from-nanos(nanos: Int) -> (PlainTime, Int) {
+    /* Returns (time, overflow-days) */
+    let day-nanos = 86400000000000
+    let days = nanos / day-nanos
+    nanos = nanos % day-nanos
+    if nanos < 0 { nanos += day-nanos; days -= 1 }
+
+    let h = nanos / 3600000000000;  nanos = nanos % 3600000000000
+    let m = nanos / 60000000000;    nanos = nanos % 60000000000
+    let s = nanos / 1000000000;     nanos = nanos % 1000000000
+    let ms = nanos / 1000000;       nanos = nanos % 1000000
+    let us = nanos / 1000;          nanos = nanos % 1000
+
+    (PlainTime(h, m, s, ms, us, nanos), days)
+}
+
+fn ==(a: PlainTime, b: PlainTime)  -> Bool { a.equals(b) }
+
+fn <=>(a: PlainTime, b: PlainTime) -> Int { a.total-nanos() <=> b.total-nanos() }
+
+fn +(a: PlainTime, b: Duration) -> PlainTime { a.add(b) }
+fn -(a: PlainTime, b: Duration) -> PlainTime { a.subtract(b) }
+
+/* ============================================================================
+ * PlainDateTime
+ * ============================================================================ */
+
+pub class PlainDateTime {
+    year:        Int
+    month:       Int
+    day:         Int
+    hour:        Int
+    minute:      Int
+    second:      Int
+    millisecond: Int
+    microsecond: Int
+    nanosecond:  Int
+
+    init(
+        year: Int,     month: Int,      day: Int,
+        hour: Int = 0, minute: Int = 0, second: Int = 0,
+        millisecond: Int = 0, microsecond: Int = 0, nanosecond: Int = 0
+    ) {
+        __validate-date(year, month, day)
+        __validate-time(hour, minute, second, millisecond, microsecond, nanosecond)
+        self.year = year
+        self.month = month
+        self.day = day
+        self.hour = hour
+        self.minute = minute
+        self.second = second
+        self.millisecond = millisecond
+        self.microsecond = microsecond
+        self.nanosecond = nanosecond
+    }
+
+    static compare(a: PlainDateTime, b: PlainDateTime) -> Int {
+        let da = __date-to-epoch-days(a.year, a.month, a.day)
+        let db = __date-to-epoch-days(b.year, b.month, b.day)
+        if da != db { return if da < db { -1 } else { 1 } }
+        let ta = a.to-plain-time().total-nanos()
+        let tb = b.to-plain-time().total-nanos()
+        if ta < tb { -1 } else if ta > tb { 1 } else { 0 }
+    }
+
+    static from(s: String) -> PlainDateTime {
+        let dt = s.split('T')
+        if #dt != 2 { throw ValueError("invalid PlainDateTime string: '{s}'") }
+        let date = PlainDate.from(dt[0])
+        let time = PlainTime.from(dt[1])
+        PlainDateTime(date.year, date.month, date.day,
+                      time.hour, time.minute, time.second,
+                      time.millisecond, time.microsecond, time.nanosecond)
+    }
+
+    to-plain-date() -> PlainDate { PlainDate(year, month, day) }
+    to-plain-time() -> PlainTime { PlainTime(hour, minute, second, millisecond, microsecond, nanosecond) }
+
+    day-of-week   -> Int  { __day-of-week(year, month, day)  }
+    day-of-year   -> Int  { __day-of-year(year, month, day)  }
+    week-of-year  -> Int  { __week-of-year(year, month, day) }
+    days-in-month -> Int  { __days-in-month(year, month)     }
+    days-in-year  -> Int  { __days-in-year(year)             }
+    in-leap-year  -> Bool { __is-leap-year(year)             }
+
+    with(
+        year: ?Int = nil, month: ?Int = nil, day: ?Int = nil,
+        hour: ?Int = nil, minute: ?Int = nil, second: ?Int = nil,
+        millisecond: ?Int = nil, microsecond: ?Int = nil, nanosecond: ?Int = nil
+    ) -> PlainDateTime {
+        let y = year ?? self.year
+        let m = month ?? self.month
+        let d = day ?? self.day
+        let max = __days-in-month(y, m)
+        if d > max { d = max }
+        PlainDateTime(
+            y, m, d,
+            hour ?? self.hour,
+            minute ?? self.minute,
+            second ?? self.second,
+            millisecond ?? self.millisecond,
+            microsecond ?? self.microsecond,
+            nanosecond ?? self.nanosecond
+        )
+    }
+
+    add(dur: Duration) -> PlainDateTime {
+        /* Add date part */
+        let date = to-plain-date().add(Duration(years=dur.years, months=dur.months, weeks=dur.weeks, days=dur.days))
+        /* Add time part and get day overflow */
+        let time-ns = to-plain-time().total-nanos()
+        let dur-ns = dur.hours        * 3600000000000
+                   + dur.minutes      * 60000000000
+                   + dur.seconds      * 1000000000
+                   + dur.milliseconds * 1000000
+                   + dur.microseconds * 1000
+                   + dur.nanoseconds
+        let total = time-ns + dur-ns
+        let (new-time, overflow-days) = __time-from-nanos(total)
+        /* Apply overflow */
+        let final-date = if overflow-days != 0 {
+            date.add(Duration(days=overflow-days))
+        } else {
+            date
+        }
+        PlainDateTime(final-date.year, final-date.month, final-date.day,
+                      new-time.hour, new-time.minute, new-time.second,
+                      new-time.millisecond, new-time.microsecond, new-time.nanosecond)
+    }
+
+    subtract(dur: Duration) -> PlainDateTime {
+        add(dur.negated())
+    }
+
+    until(other: PlainDateTime) -> Duration {
+        let day-diff = __date-to-epoch-days(other.year, other.month, other.day) -
+                       __date-to-epoch-days(year, month, day)
+        let ns-diff = other.to-plain-time().total-nanos() - to-plain-time().total-nanos()
+        if ns-diff < 0 { day-diff -= 1; ns-diff += 86400000000000 }
+        let h = ns-diff / 3600000000000;       ns-diff = ns-diff % 3600000000000
+        let m = ns-diff / 60000000000;         ns-diff = ns-diff % 60000000000
+        let s = ns-diff / 1000000000;          ns-diff = ns-diff % 1000000000
+        let ms = ns-diff / 1000000;            ns-diff = ns-diff % 1000000
+        let us = ns-diff / 1000;               ns-diff = ns-diff % 1000
+        Duration(days=day-diff, hours=h, minutes=m, seconds=s,
+                 milliseconds=ms, microseconds=us, nanoseconds=ns-diff)
+    }
+
+    since(other: PlainDateTime) -> Duration {
+        other.until(self)
+    }
+
+    equals(other: PlainDateTime) -> Bool {
+        year == other.year && month == other.month && day == other.day &&
+        hour == other.hour && minute == other.minute && second == other.second &&
+        millisecond == other.millisecond && microsecond == other.microsecond &&
+        nanosecond == other.nanosecond
+    }
+
+    round(smallest-unit: String, rounding-mode: String = 'halfExpand') -> PlainDateTime {
+        if smallest-unit == 'day' || smallest-unit == 'days' {
+            let time-ns = to-plain-time().total-nanos()
+            let half-day = 43200000000000
+            let extra = match rounding-mode {
+                'halfExpand' => if time-ns >= half-day { 1 } else { 0 },
+                'ceil'       => if time-ns > 0 { 1 } else { 0 },
+                'floor'      => 0,
+                'trunc'      => 0,
+                _            => throw ValueError("invalid rounding mode: '{rounding-mode}'")
+            }
+            let date = to-plain-date()
+            if extra > 0 { date = date.add(Duration(days=1)) }
+            return PlainDateTime(date.year, date.month, date.day)
+        }
+        let unit-ns = __unit-nanos(smallest-unit)
+        let rounded = __round-nanos(to-plain-time().total-nanos(), unit-ns, rounding-mode)
+        let (t, overflow) = __time-from-nanos(rounded)
+        let date = to-plain-date()
+        if overflow != 0 { date = date.add(Duration(days=overflow)) }
+        PlainDateTime(date.year, date.month, date.day,
+                      t.hour, t.minute, t.second, t.millisecond, t.microsecond, t.nanosecond)
+    }
+
+    to-plain-year-month() -> PlainYearMonth {
+        PlainYearMonth(year, month)
+    }
+
+    to-plain-month-day() -> PlainMonthDay {
+        PlainMonthDay(month, day)
+    }
+
+    /* Fluent navigation */
+    tomorrow -> PlainDateTime { add(Duration(days=1)) }
+    yesterday -> PlainDateTime { add(Duration(days=-1)) }
+
+    start-of-day -> PlainDateTime { PlainDateTime(year, month, day) }
+    end-of-day -> PlainDateTime { PlainDateTime(year, month, day, 23, 59, 59, 999, 999, 999) }
+
+    start-of-month -> PlainDateTime { PlainDateTime(year, month, 1) }
+    end-of-month -> PlainDateTime { PlainDateTime(year, month, days-in-month, 23, 59, 59, 999, 999, 999) }
+
+    start-of-year -> PlainDateTime { PlainDateTime(year, 1, 1) }
+    end-of-year -> PlainDateTime { PlainDateTime(year, 12, 31, 23, 59, 59, 999, 999, 999) }
+
+    next-week -> PlainDateTime { add(Duration(weeks=1)) }
+    last-week -> PlainDateTime { add(Duration(weeks=-1)) }
+
+    __str__() -> String {
+        "{to-plain-date()}T{to-plain-time()}"
+    }
+}
+
+fn ==(a: PlainDateTime, b: PlainDateTime) -> Bool { a.equals(b) }
+
+fn <(a: PlainDateTime, b: PlainDateTime) -> Bool {
+    let da = __date-to-epoch-days(a.year, a.month, a.day)
+    let db = __date-to-epoch-days(b.year, b.month, b.day)
+    if da != db { return da < db }
+    a.to-plain-time().total-nanos() < b.to-plain-time().total-nanos()
+}
+
+fn >(a: PlainDateTime, b: PlainDateTime) -> Bool { b < a }
+fn <=(a: PlainDateTime, b: PlainDateTime) -> Bool { !(b < a) }
+fn >=(a: PlainDateTime, b: PlainDateTime) -> Bool { !(a < b) }
+fn +(a: PlainDateTime, b: Duration) -> PlainDateTime { a.add(b) }
+fn -(a: PlainDateTime, b: Duration) -> PlainDateTime { a.subtract(b) }
+
+/* ============================================================================
+ * Instant
+ * ============================================================================ */
+
+pub class Instant {
+    __epoch-nanos: Int
+
+    init(epoch-nanoseconds: Int) {
+        __epoch-nanos = epoch-nanoseconds
+    }
+
+    static compare(a: Instant, b: Instant) -> Int {
+        if a.__epoch-nanos < b.__epoch-nanos { -1 }
+        else if a.__epoch-nanos > b.__epoch-nanos { 1 }
+        else { 0 }
+    }
+
+    static from(s: String) -> Instant {
+        /* Parse ISO 8601 instant: YYYY-MM-DDTHH:MM:SSZ or YYYY-MM-DDTHH:MM:SS+HH:MM */
+        let str = s
+
+        let offset-ns = 0
+        if str.ends?('Z') || str.ends?('z') {
+            str = str[;-1]
+        } else {
+            /* Look for +HH:MM or -HH:MM at end */
+            let len = #str
+            if len >= 6 {
+                let sign-char = str[len - 6]
+                if sign-char == '+' || sign-char == '-' {
+                    let off-str = str[len - 5;]
+                    let off-parts = off-str.split(':')
+                    if #off-parts == 2 {
+                        let off-h = __parse-int(off-parts[0])
+                        let off-m = __parse-int(off-parts[1])
+                        offset-ns = (off-h * 3600 + off-m * 60) * 1000000000
+                        if sign-char == '-' { offset-ns = -offset-ns }
+                        str = str[;len - 6]
+                    }
+                }
+            }
+        }
+
+        let dt = PlainDateTime.from(str)
+        let epoch-days = __date-to-epoch-days(dt.year, dt.month, dt.day)
+        let day-ns = epoch-days * 86400000000000
+        let time-ns = dt.to-plain-time().total-nanos()
+        Instant(day-ns + time-ns - offset-ns)
+    }
+
+    static from-epoch-seconds(s: Int) -> Instant {
+        Instant(s * 1000000000)
+    }
+
+    static from-epoch-milliseconds(ms: Int) -> Instant {
+        Instant(ms * 1000000)
+    }
+
+    static from-epoch-microseconds(us: Int) -> Instant {
+        Instant(us * 1000)
+    }
+
+    static from-epoch-nanoseconds(nanos: Int) -> Instant {
+        Instant(nanos)
+    }
+
+    epoch-seconds -> Int { __epoch-nanos / 1000000000 }
+    epoch-milliseconds -> Int { __epoch-nanos / 1000000 }
+    epoch-microseconds -> Int { __epoch-nanos / 1000 }
+    epoch-nanoseconds -> Int { __epoch-nanos }
+
+    add(dur: Duration) -> Instant {
+        if dur.years != 0 || dur.months != 0 || dur.weeks != 0 {
+            throw ValueError("cannot add calendar units (years/months/weeks) to Instant")
+        }
+        let delta = dur.days * 86400000000000 + dur.hours * 3600000000000 +
+                    dur.minutes * 60000000000 + dur.seconds * 1000000000 +
+                    dur.milliseconds * 1000000 + dur.microseconds * 1000 +
+                    dur.nanoseconds
+        Instant(__epoch-nanos + delta)
+    }
+
+    subtract(dur: Duration) -> Instant {
+        add(dur.negated())
+    }
+
+    until(other: Instant) -> Duration {
+        let diff = other.__epoch-nanos - __epoch-nanos
+        let neg = diff < 0
+        if neg { diff = -diff }
+
+        let d = diff / 86400000000000;    diff = diff % 86400000000000
+        let h = diff / 3600000000000;     diff = diff % 3600000000000
+        let m = diff / 60000000000;       diff = diff % 60000000000
+        let s = diff / 1000000000;        diff = diff % 1000000000
+        let ms = diff / 1000000;          diff = diff % 1000000
+        let us = diff / 1000;             diff = diff % 1000
+        let nano = diff
+
+        let dur = Duration(days=d, hours=h, minutes=m, seconds=s,
+                           milliseconds=ms, microseconds=us, nanoseconds=nano)
+        if neg { dur.negated() } else { dur }
+    }
+
+    since(other: Instant) -> Duration {
+        other.until(self)
+    }
+
+    equals(other: Instant) -> Bool {
+        __epoch-nanos == other.__epoch-nanos
+    }
+
+    round(smallest-unit: String, rounding-mode: String = 'halfExpand') -> Instant {
+        let unit-ns = __unit-nanos(smallest-unit)
+        Instant(__round-nanos(__epoch-nanos, unit-ns, rounding-mode))
+    }
+
+    to-plain-date-time-utc() -> PlainDateTime {
+        let total = __epoch-nanos
+        let epoch-days = total / 86400000000000
+        let rem = total % 86400000000000
+        if rem < 0 { rem += 86400000000000; epoch-days -= 1 }
+
+        let (y, m, d) = __epoch-days-to-date(epoch-days)
+        let (t, _) = __time-from-nanos(rem)
+        PlainDateTime(y, m, d, t.hour, t.minute, t.second,
+                      t.millisecond, t.microsecond, t.nanosecond)
+    }
+
+    __str__() -> String {
+        let dt = to-plain-date-time-utc()
+        "{dt}Z"
+    }
+}
+
+fn ==(a: Instant, b: Instant) -> Bool { a.equals(b) }
+fn <(a: Instant, b: Instant) -> Bool { a.epoch-nanoseconds < b.epoch-nanoseconds }
+fn >(a: Instant, b: Instant) -> Bool { b < a }
+fn <=(a: Instant, b: Instant) -> Bool { !(b < a) }
+fn >=(a: Instant, b: Instant) -> Bool { !(a < b) }
+fn +(a: Instant, b: Duration) -> Instant { a.add(b) }
+fn -(a: Instant, b: Duration) -> Instant { a.subtract(b) }
+fn -(a: Instant, b: Instant) -> Duration { b.until(a) }
+
+/* ============================================================================
+ * PlainYearMonth
+ * ============================================================================ */
+
+pub class PlainYearMonth {
+    year:  Int
+    month: Int
+
+    init(year: Int, month: Int) {
+        if month < 1 || month > 12 {
+            throw ValueError("month must be 1..12, got {month}")
+        }
+        self.year = year
+        self.month = month
+    }
+
+    static compare(a: PlainYearMonth, b: PlainYearMonth) -> Int {
+        if a.year != b.year { return if a.year < b.year { -1 } else { 1 } }
+        if a.month != b.month { return if a.month < b.month { -1 } else { 1 } }
+        0
+    }
+
+    static from(s: String) -> PlainYearMonth {
+        let parts = s.split('-')
+        if #parts != 2 { throw ValueError("invalid PlainYearMonth string: '{s}'") }
+        PlainYearMonth(__parse-int(parts[0]), __parse-int(parts[1]))
+    }
+
+    days-in-month -> Int { __days-in-month(year, month) }
+    days-in-year -> Int { __days-in-year(year) }
+    in-leap-year -> Bool { __is-leap-year(year) }
+    months-in-year -> Int { 12 }
+
+    with(year: ?Int = nil, month: ?Int = nil) -> PlainYearMonth {
+        PlainYearMonth(year ?? self.year, month ?? self.month)
+    }
+
+    add(dur: Duration) -> PlainYearMonth {
+        let total = (year * 12 + (month - 1)) + dur.months + dur.years * 12
+        let y = if total >= 0 { total / 12 } else { (total - 11) / 12 }
+        let m = total - y * 12 + 1
+        PlainYearMonth(y, m)
+    }
+
+    subtract(dur: Duration) -> PlainYearMonth {
+        add(dur.negated())
+    }
+
+    until(other: PlainYearMonth) -> Duration {
+        let months = (other.year - year) * 12 + (other.month - month)
+        Duration(months=months)
+    }
+
+    since(other: PlainYearMonth) -> Duration {
+        other.until(self)
+    }
+
+    equals(other: PlainYearMonth) -> Bool {
+        year == other.year && month == other.month
+    }
+
+    to-plain-date(day: Int = 1) -> PlainDate {
+        let d = if day > days-in-month { days-in-month } else { day }
+        PlainDate(year, month, d)
+    }
+
+    __str__() -> String {
+        "{__pad4(year)}-{__pad2(month)}"
+    }
+}
+
+fn ==(a: PlainYearMonth, b: PlainYearMonth) -> Bool { a.equals(b) }
+
+fn <(a: PlainYearMonth, b: PlainYearMonth) -> Bool {
+    if a.year != b.year { return a.year < b.year }
+    a.month < b.month
+}
+
+fn >(a: PlainYearMonth, b: PlainYearMonth) -> Bool { b < a }
+fn <=(a: PlainYearMonth, b: PlainYearMonth) -> Bool { !(b < a) }
+fn >=(a: PlainYearMonth, b: PlainYearMonth) -> Bool { !(a < b) }
+
+/* ============================================================================
+ * PlainMonthDay
+ * ============================================================================ */
+
+pub class PlainMonthDay {
+    month: Int
+    day:   Int
+
+    init(month: Int, day: Int) {
+        if month < 1 || month > 12 {
+            throw ValueError("month must be 1..12, got {month}")
+        }
+        /* Validate against max possible (leap year for Feb) */
+        let max = __days-in-month(2000, month)
+        if day < 1 || day > max {
+            throw ValueError("day must be 1..{max} for month {month}, got {day}")
+        }
+        self.month = month
+        self.day = day
+    }
+
+    static from(s: String) -> PlainMonthDay {
+        /* Parse --MM-DD */
+        let str = s
+        if str.starts?('--') { str = str[2;] }
+        let parts = str.split('-')
+        if #parts != 2 { throw ValueError("invalid PlainMonthDay string: '{s}'") }
+        PlainMonthDay(__parse-int(parts[0]), __parse-int(parts[1]))
+    }
+
+    with(month: ?Int = nil, day: ?Int = nil) -> PlainMonthDay {
+        PlainMonthDay(month ?? self.month, day ?? self.day)
+    }
+
+    equals(other: PlainMonthDay) -> Bool {
+        month == other.month && day == other.day
+    }
+
+    to-plain-date(year: Int) -> PlainDate {
+        let d = day
+        let max = __days-in-month(year, month)
+        if d > max { d = max }
+        PlainDate(year, month, d)
+    }
+
+    __str__() -> String {
+        "--{__pad2(month)}-{__pad2(day)}"
+    }
+}
+
+fn ==(a: PlainMonthDay, b: PlainMonthDay) -> Bool { a.equals(b) }
+
+/* ============================================================================
+ * Convenience functions + unit constants
+ * ============================================================================ */
+
+fn __instant-now() -> Instant {
+    let secs = time.utc()
+    let whole = Int(secs)
+    let frac = secs - whole
+    Instant(whole * 1000000000 + Int(frac * 1000000000))
+}
+
+fn __local-dt() -> PlainDateTime {
+    let epoch = Int(time.utc())
+    let tm = time.localtime(epoch)
+    PlainDateTime(tm.year + 1900, tm.mon + 1, tm.mday, tm.hour, tm.min, tm.sec)
+}
+
+/* now() returns the current local date-time */
+pub fn now() -> PlainDateTime { __local-dt() }
+
+/* today() returns the current local date */
+pub fn today() -> PlainDate {
+    let dt = __local-dt()
+    PlainDate(dt.year, dt.month, dt.day)
+}
+
+/* yesterday() / tomorrow() */
+pub fn yesterday() -> PlainDate { today().yesterday }
+pub fn tomorrow() -> PlainDate { today().tomorrow }
+
+/* utc-now() returns the current UTC date-time */
+pub fn utc-now() -> PlainDateTime { __instant-now().to-plain-date-time-utc() }
+
+/* instant-now() returns the current Instant */
+pub fn instant-now() -> Instant { __instant-now() }
+
+/* Unit constants — use with arithmetic: now() + 3*HOUR, today() - 2*WEEK */
+pub NSEC   = Duration(nanoseconds=1)
+pub USEC   = Duration(microseconds=1)
+pub MSEC   = Duration(milliseconds=1)
+pub SEC    = Duration(seconds=1)
+pub MINUTE = Duration(minutes=1)
+pub HOUR   = Duration(hours=1)
+pub DAY    = Duration(days=1)
+pub WEEK   = Duration(weeks=1)
+
+pub class Now {
+    static instant() -> Instant { __instant-now() }
+    static plain-date-time-utc() -> PlainDateTime { __instant-now().to-plain-date-time-utc() }
+    static plain-date-utc() -> PlainDate { let dt = utc-now(); PlainDate(dt.year, dt.month, dt.day) }
+    static plain-time-utc() -> PlainTime { let dt = utc-now(); PlainTime(dt.hour, dt.minute, dt.second, dt.millisecond, dt.microsecond, dt.nanosecond) }
+    static plain-date-time-local() -> PlainDateTime { __local-dt() }
+    static plain-date-local() -> PlainDate { today() }
+    static plain-time-local() -> PlainTime { let dt = __local-dt(); PlainTime(dt.hour, dt.minute, dt.second) }
+}
+
+/* ============================================================================
+ * Tests
+ * ============================================================================ */
+
+@test
+fn test-duration-basic() {
+    let d = Duration(hours=1, minutes=30)
+    assert(d.hours == 1)
+    assert(d.minutes == 30)
+    assert(!d.blank?)
+    assert("{d}" == 'PT1H30M')
+}
+
+@test
+fn test-duration-blank() {
+    let d = Duration()
+    assert(d.blank?)
+    assert(d.sign == 0)
+    assert("{d}" == 'PT0S')
+}
+
+@test
+fn test-duration-negated() {
+    let d = Duration(days=5, hours=3)
+    let n = d.negated()
+    assert(n.days == -5)
+    assert(n.hours == -3)
+    assert("{n}" == '-P5DT3H')
+}
+
+@test
+fn test-duration-abs() {
+    let d = Duration(days=-5, hours=-3)
+    let a = d.abs()
+    assert(a.days == 5 && a.hours == 3)
+}
+
+@test
+fn test-duration-add() {
+    let a = Duration(hours=1, minutes=30)
+    let b = Duration(hours=2, minutes=45)
+    let c = a + b
+    assert(c.hours == 3 && c.minutes == 75)
+}
+
+@test
+fn test-duration-total-seconds() {
+    let d = Duration(hours=1, minutes=30, seconds=15)
+    assert(d.total-seconds == 5415.0)
+}
+
+@test
+fn test-duration-with-fraction() {
+    let d = Duration(seconds=1, milliseconds=500)
+    assert("{d}" == 'PT1.5S')
+}
+
+@test
+fn test-duration-sign() {
+    assert(Duration(days=1).sign == 1)
+    assert(Duration(days=-1).sign == -1)
+    assert(Duration().sign == 0)
+}
+
+/* --- PlainDate tests --- */
+
+@test
+fn test-plain-date-create() {
+    let d = PlainDate(2024, 3, 15)
+    assert(d.year == 2024)
+    assert(d.month == 3)
+    assert(d.day == 15)
+    assert("{d}" == '2024-03-15')
+}
+
+@test
+fn test-plain-date-from-string() {
+    let d = PlainDate.from('2024-03-15')
+    assert(d.year == 2024 && d.month == 3 && d.day == 15)
+}
+
+@test
+fn test-plain-date-leap-year() {
+    assert(PlainDate(2024, 1, 1).in-leap-year)
+    assert(!PlainDate(2023, 1, 1).in-leap-year)
+    assert(PlainDate(2000, 1, 1).in-leap-year)
+    assert(!PlainDate(1900, 1, 1).in-leap-year)
+}
+
+@test
+fn test-plain-date-day-of-week() {
+    /* 2024-01-01 is a Monday */
+    assert(PlainDate(2024, 1, 1).day-of-week == 1)
+    /* 2024-01-07 is a Sunday */
+    assert(PlainDate(2024, 1, 7).day-of-week == 7)
+    /* 2024-03-15 is a Friday */
+    assert(PlainDate(2024, 3, 15).day-of-week == 5)
+}
+
+@test
+fn test-plain-date-day-of-year() {
+    assert(PlainDate(2024, 1, 1).day-of-year == 1)
+    assert(PlainDate(2024, 12, 31).day-of-year == 366)
+    assert(PlainDate(2023, 12, 31).day-of-year == 365)
+}
+
+@test
+fn test-plain-date-days-in-month() {
+    assert(PlainDate(2024, 2, 1).days-in-month == 29)
+    assert(PlainDate(2023, 2, 1).days-in-month == 28)
+    assert(PlainDate(2024, 1, 1).days-in-month == 31)
+    assert(PlainDate(2024, 4, 1).days-in-month == 30)
+}
+
+@test
+fn test-plain-date-add-days() {
+    let d = PlainDate(2024, 1, 30)
+    let r = d.add(Duration(days=5))
+    assert(r == PlainDate(2024, 2, 4))
+}
+
+@test
+fn test-plain-date-add-months() {
+    let d = PlainDate(2024, 1, 31)
+    let r = d.add(Duration(months=1))
+    /* Jan 31 + 1 month = Feb 29 (2024 is leap) */
+    assert(r == PlainDate(2024, 2, 29))
+}
+
+@test
+fn test-plain-date-add-years() {
+    let d = PlainDate(2024, 2, 29)
+    let r = d.add(Duration(years=1))
+    /* Feb 29 + 1 year = Feb 28 (2025 not leap) */
+    assert(r == PlainDate(2025, 2, 28))
+}
+
+@test
+fn test-plain-date-subtract() {
+    let d = PlainDate(2024, 3, 1)
+    let r = d.subtract(Duration(days=1))
+    assert(r == PlainDate(2024, 2, 29))
+}
+
+@test
+fn test-plain-date-until() {
+    let a = PlainDate(2024, 1, 1)
+    let b = PlainDate(2024, 1, 31)
+    let d = a.until(b)
+    assert(d.days == 30)
+}
+
+@test
+fn test-plain-date-since() {
+    let a = PlainDate(2024, 1, 31)
+    let b = PlainDate(2024, 1, 1)
+    let d = a.since(b)
+    assert(d.days == 30)
+}
+
+@test
+fn test-plain-date-comparison() {
+    let a = PlainDate(2024, 1, 1)
+    let b = PlainDate(2024, 6, 15)
+    assert(a < b)
+    assert(b > a)
+    assert(a <= a)
+    assert(a >= a)
+    assert(a == PlainDate(2024, 1, 1))
+}
+
+@test
+fn test-plain-date-with() {
+    let d = PlainDate(2024, 3, 15)
+    let r = d.with(month=1)
+    assert(r == PlainDate(2024, 1, 15))
+}
+
+@test
+fn test-plain-date-operator-plus-minus() {
+    let d = PlainDate(2024, 6, 15)
+    assert(d + Duration(days=1) == PlainDate(2024, 6, 16))
+    assert(d - Duration(days=1) == PlainDate(2024, 6, 14))
+}
+
+@test
+fn test-plain-date-diff-operator() {
+    let a = PlainDate(2024, 1, 1)
+    let b = PlainDate(2024, 1, 11)
+    let d = b - a
+    assert(d.days == 10)
+}
+
+@test
+fn test-plain-date-cross-year() {
+    let d = PlainDate(2023, 12, 31)
+    assert(d.add(Duration(days=1)) == PlainDate(2024, 1, 1))
+}
+
+@test
+fn test-plain-date-to-datetime() {
+    let d = PlainDate(2024, 6, 15)
+    let dt = d.to-plain-date-time()
+    assert(dt.year == 2024 && dt.month == 6 && dt.day == 15)
+    assert(dt.hour == 0 && dt.minute == 0 && dt.second == 0)
+}
+
+/* --- PlainTime tests --- */
+
+@test
+fn test-plain-time-create() {
+    let t = PlainTime(13, 30, 45)
+    assert(t.hour == 13 && t.minute == 30 && t.second == 45)
+    assert("{t}" == '13:30:45')
+}
+
+@test
+fn test-plain-time-from-string() {
+    let t = PlainTime.from('14:30:00')
+    assert(t.hour == 14 && t.minute == 30 && t.second == 0)
+}
+
+@test
+fn test-plain-time-from-string-fractional() {
+    let t = PlainTime.from('10:30:00.500')
+    assert(t.hour == 10 && t.minute == 30 && t.millisecond == 500)
+}
+
+@test
+fn test-plain-time-with-fractions() {
+    let t = PlainTime(10, 30, 0, 123, 456, 789)
+    assert("{t}" == '10:30:00.123456789')
+}
+
+@test
+fn test-plain-time-add() {
+    let t = PlainTime(23, 30, 0)
+    let r = t.add(Duration(hours=2))
+    /* Wraps around midnight */
+    assert(r.hour == 1 && r.minute == 30)
+}
+
+@test
+fn test-plain-time-subtract() {
+    let t = PlainTime(1, 0, 0)
+    let r = t.subtract(Duration(hours=2))
+    assert(r.hour == 23)
+}
+
+@test
+fn test-plain-time-until() {
+    let a = PlainTime(10, 0, 0)
+    let b = PlainTime(12, 30, 0)
+    let d = a.until(b)
+    assert(d.hours == 2 && d.minutes == 30)
+}
+
+@test
+fn test-plain-time-comparison() {
+    let a = PlainTime(10, 0, 0)
+    let b = PlainTime(12, 0, 0)
+    assert(a < b)
+    assert(b > a)
+    assert(a == PlainTime(10, 0, 0))
+}
+
+@test
+fn test-plain-time-midnight() {
+    let t = PlainTime(0, 0, 0)
+    assert("{t}" == '00:00:00')
+}
+
+@test
+fn test-plain-time-with() {
+    let t = PlainTime(10, 30, 45)
+    let r = t.with(hour=8)
+    assert(r.hour == 8 && r.minute == 30 && r.second == 45)
+}
+
+/* --- PlainDateTime tests --- */
+
+@test
+fn test-plain-date-time-create() {
+    let dt = PlainDateTime(2024, 6, 15, 14, 30, 0)
+    assert("{dt}" == '2024-06-15T14:30:00')
+}
+
+@test
+fn test-plain-date-time-from-string() {
+    let dt = PlainDateTime.from('2024-06-15T14:30:00')
+    assert(dt.year == 2024 && dt.month == 6 && dt.day == 15)
+    assert(dt.hour == 14 && dt.minute == 30)
+}
+
+@test
+fn test-plain-date-time-add-across-midnight() {
+    let dt = PlainDateTime(2024, 1, 1, 23, 0, 0)
+    let r = dt.add(Duration(hours=2))
+    assert(r == PlainDateTime(2024, 1, 2, 1, 0, 0))
+}
+
+@test
+fn test-plain-date-time-subtract-across-midnight() {
+    let dt = PlainDateTime(2024, 1, 2, 1, 0, 0)
+    let r = dt.subtract(Duration(hours=2))
+    assert(r == PlainDateTime(2024, 1, 1, 23, 0, 0))
+}
+
+@test
+fn test-plain-date-time-add-months-and-hours() {
+    let dt = PlainDateTime(2024, 1, 31, 12, 0, 0)
+    let r = dt.add(Duration(months=1, hours=6))
+    assert(r == PlainDateTime(2024, 2, 29, 18, 0, 0))
+}
+
+@test
+fn test-plain-date-time-until() {
+    let a = PlainDateTime(2024, 1, 1, 0, 0, 0)
+    let b = PlainDateTime(2024, 1, 2, 12, 30, 0)
+    let d = a.until(b)
+    assert(d.days == 1 && d.hours == 12 && d.minutes == 30)
+}
+
+@test
+fn test-plain-date-time-comparison() {
+    let a = PlainDateTime(2024, 1, 1, 10, 0, 0)
+    let b = PlainDateTime(2024, 1, 1, 12, 0, 0)
+    assert(a < b)
+    assert(b > a)
+}
+
+@test
+fn test-plain-date-time-to-parts() {
+    let dt = PlainDateTime(2024, 6, 15, 14, 30, 45)
+    let d = dt.to-plain-date()
+    let t = dt.to-plain-time()
+    assert(d == PlainDate(2024, 6, 15))
+    assert(t == PlainTime(14, 30, 45))
+}
+
+@test
+fn test-plain-date-time-with() {
+    let dt = PlainDateTime(2024, 6, 15, 14, 30, 0)
+    let r = dt.with(hour=8, minute=0)
+    assert(r == PlainDateTime(2024, 6, 15, 8, 0, 0))
+}
+
+@test
+fn test-plain-date-time-day-of-week() {
+    let dt = PlainDateTime(2024, 1, 1, 12, 0, 0)
+    assert(dt.day-of-week == 1) /* Monday */
+}
+
+/* --- Instant tests --- */
+
+@test
+fn test-instant-from-epoch() {
+    let i = Instant.from-epoch-seconds(0)
+    assert(i.epoch-seconds == 0)
+    assert("{i}" == '1970-01-01T00:00:00Z')
+}
+
+@test
+fn test-instant-from-epoch-ms() {
+    let i = Instant.from-epoch-milliseconds(1000)
+    assert(i.epoch-seconds == 1)
+    assert(i.epoch-milliseconds == 1000)
+}
+
+@test
+fn test-instant-from-string() {
+    let i = Instant.from('2024-01-01T00:00:00Z')
+    let dt = i.to-plain-date-time-utc()
+    assert(dt.year == 2024 && dt.month == 1 && dt.day == 1)
+}
+
+@test
+fn test-instant-from-string-offset() {
+    let i = Instant.from('2024-01-01T05:30:00+05:30')
+    let dt = i.to-plain-date-time-utc()
+    /* 05:30 +05:30 = 00:00 UTC */
+    assert(dt.year == 2024 && dt.month == 1 && dt.day == 1)
+    assert(dt.hour == 0 && dt.minute == 0)
+}
+
+@test
+fn test-instant-add() {
+    let i = Instant.from-epoch-seconds(0)
+    let r = i.add(Duration(hours=24))
+    assert(r.epoch-seconds == 86400)
+}
+
+@test
+fn test-instant-subtract() {
+    let i = Instant.from-epoch-seconds(86400)
+    let r = i.subtract(Duration(hours=24))
+    assert(r.epoch-seconds == 0)
+}
+
+@test
+fn test-instant-until() {
+    let a = Instant.from-epoch-seconds(0)
+    let b = Instant.from-epoch-seconds(3661)
+    let d = a.until(b)
+    assert(d.hours == 1 && d.minutes == 1 && d.seconds == 1)
+}
+
+@test
+fn test-instant-comparison() {
+    let a = Instant.from-epoch-seconds(0)
+    let b = Instant.from-epoch-seconds(1)
+    assert(a < b)
+    assert(b > a)
+    assert(a == Instant.from-epoch-seconds(0))
+}
+
+@test
+fn test-instant-rejects-calendar-units() {
+    try {
+        Instant.from-epoch-seconds(0).add(Duration(months=1))
+        assert(false, 'should have thrown')
+    } catch e: ValueError {
+        assert(true)
+    }
+}
+
+@test
+fn test-instant-diff-operator() {
+    let a = Instant.from-epoch-seconds(0)
+    let b = Instant.from-epoch-seconds(7200)
+    let d = b - a
+    assert(d.hours == 2)
+}
+
+@test
+fn test-instant-roundtrip() {
+    let i = Instant.from('2024-06-15T10:30:00Z')
+    let s = "{i}"
+    let j = Instant.from(s)
+    assert(i == j)
+}
+
+/* --- PlainYearMonth tests --- */
+
+@test
+fn test-plain-year-month-create() {
+    let ym = PlainYearMonth(2024, 3)
+    assert(ym.year == 2024 && ym.month == 3)
+    assert("{ym}" == '2024-03')
+}
+
+@test
+fn test-plain-year-month-from-string() {
+    let ym = PlainYearMonth.from('2024-06')
+    assert(ym.year == 2024 && ym.month == 6)
+}
+
+@test
+fn test-plain-year-month-add() {
+    let ym = PlainYearMonth(2024, 11)
+    let r = ym.add(Duration(months=3))
+    assert(r == PlainYearMonth(2025, 2))
+}
+
+@test
+fn test-plain-year-month-subtract() {
+    let ym = PlainYearMonth(2024, 2)
+    let r = ym.subtract(Duration(months=3))
+    assert(r == PlainYearMonth(2023, 11))
+}
+
+@test
+fn test-plain-year-month-until() {
+    let a = PlainYearMonth(2024, 1)
+    let b = PlainYearMonth(2024, 7)
+    let d = a.until(b)
+    assert(d.months == 6)
+}
+
+@test
+fn test-plain-year-month-days-in-month() {
+    assert(PlainYearMonth(2024, 2).days-in-month == 29)
+    assert(PlainYearMonth(2023, 2).days-in-month == 28)
+}
+
+@test
+fn test-plain-year-month-comparison() {
+    let a = PlainYearMonth(2024, 1)
+    let b = PlainYearMonth(2024, 6)
+    assert(a < b)
+    assert(a == PlainYearMonth(2024, 1))
+}
+
+@test
+fn test-plain-year-month-to-date() {
+    let ym = PlainYearMonth(2024, 2)
+    let d = ym.to-plain-date(29)
+    assert(d == PlainDate(2024, 2, 29))
+}
+
+/* --- PlainMonthDay tests --- */
+
+@test
+fn test-plain-month-day-create() {
+    let md = PlainMonthDay(12, 25)
+    assert(md.month == 12 && md.day == 25)
+    assert("{md}" == '--12-25')
+}
+
+@test
+fn test-plain-month-day-from-string() {
+    let md = PlainMonthDay.from('--02-29')
+    assert(md.month == 2 && md.day == 29)
+}
+
+@test
+fn test-plain-month-day-to-date-leap() {
+    let md = PlainMonthDay(2, 29)
+    /* In a non-leap year, clamp to 28 */
+    let d = md.to-plain-date(2023)
+    assert(d == PlainDate(2023, 2, 28))
+    /* In a leap year, keep 29 */
+    let d2 = md.to-plain-date(2024)
+    assert(d2 == PlainDate(2024, 2, 29))
+}
+
+@test
+fn test-plain-month-day-equals() {
+    assert(PlainMonthDay(3, 14) == PlainMonthDay(3, 14))
+    assert(!(PlainMonthDay(3, 14) == PlainMonthDay(3, 15)))
+}
+
+/* --- Now tests --- */
+
+@test
+fn test-now-instant() {
+    let i = Now.instant()
+    /* Should be after 2024-01-01 */
+    assert(i.epoch-seconds > 1704067200)
+}
+
+@test
+fn test-now-plain-date-utc() {
+    let d = Now.plain-date-utc()
+    assert(d.year >= 2024)
+}
+
+@test
+fn test-now-plain-date-time-utc() {
+    let dt = Now.plain-date-time-utc()
+    assert(dt.year >= 2024)
+    assert(dt.hour >= 0 && dt.hour <= 23)
+}
+
+@test
+fn test-now-plain-date-local() {
+    let d = Now.plain-date-local()
+    assert(d.year >= 2024)
+}
+
+@test
+fn test-now-plain-time-local() {
+    let t = Now.plain-time-local()
+    assert(t.hour >= 0 && t.hour <= 23)
+    assert(t.minute >= 0 && t.minute <= 59)
+}
+
+/* --- Epoch conversion roundtrip tests --- */
+
+@test
+fn test-epoch-roundtrip() {
+    let dates = [
+        (1970, 1, 1),
+        (2000, 2, 29),
+        (2024, 6, 15),
+        (1969, 12, 31),
+        (1, 1, 1),
+        (9999, 12, 31)
+    ]
+    for (y, m, d) in dates {
+        let epoch = __date-to-epoch-days(y, m, d)
+        let (ry, rm, rd) = __epoch-days-to-date(epoch)
+        assert(ry == y && rm == m && rd == d, "roundtrip failed for {y}-{m}-{d}")
+    }
+}
+
+@test
+fn test-epoch-day-known-values() {
+    /* 1970-01-01 is epoch day 0 */
+    assert(__date-to-epoch-days(1970, 1, 1) == 0)
+    /* 1970-01-02 is epoch day 1 */
+    assert(__date-to-epoch-days(1970, 1, 2) == 1)
+    /* 2000-01-01 */
+    assert(__date-to-epoch-days(2000, 1, 1) == 10957)
+}
+
+/* --- Validation tests --- */
+
+@test
+fn test-invalid-date-month() {
+    try {
+        PlainDate(2024, 13, 1)
+        assert(false, 'should have thrown')
+    } catch e: ValueError {
+        assert(true)
+    }
+}
+
+@test
+fn test-invalid-date-day() {
+    try {
+        PlainDate(2024, 2, 30)
+        assert(false, 'should have thrown')
+    } catch e: ValueError {
+        assert(true)
+    }
+}
+
+@test
+fn test-invalid-time-hour() {
+    try {
+        PlainTime(24, 0, 0)
+        assert(false, 'should have thrown')
+    } catch e: ValueError {
+        assert(true)
+    }
+}
+
+@test
+fn test-plain-date-feb29-leap() {
+    /* Should succeed */
+    let d = PlainDate(2024, 2, 29)
+    assert(d.day == 29)
+}
+
+@test
+fn test-plain-date-feb29-nonleap() {
+    try {
+        PlainDate(2023, 2, 29)
+        assert(false, 'should have thrown')
+    } catch e: ValueError {
+        assert(true)
+    }
+}
+
+/* --- Duration.from(String) tests --- */
+
+@test
+fn test-duration-from-string-basic() {
+    let d = Duration.from('P1Y2M3DT4H5M6S')
+    assert(d.years == 1 && d.months == 2 && d.days == 3)
+    assert(d.hours == 4 && d.minutes == 5 && d.seconds == 6)
+}
+
+@test
+fn test-duration-from-string-time-only() {
+    let d = Duration.from('PT1H30M')
+    assert(d.hours == 1 && d.minutes == 30)
+    assert(d.years == 0 && d.days == 0)
+}
+
+@test
+fn test-duration-from-string-negative() {
+    let d = Duration.from('-P5D')
+    assert(d.days == -5)
+    assert(d.sign == -1)
+}
+
+@test
+fn test-duration-from-string-fractional-seconds() {
+    let d = Duration.from('PT1.5S')
+    assert(d.seconds == 1 && d.milliseconds == 500)
+}
+
+@test
+fn test-duration-from-string-weeks() {
+    let d = Duration.from('P2W')
+    assert(d.weeks == 2)
+}
+
+@test
+fn test-duration-from-string-roundtrip() {
+    let d = Duration(years=1, months=2, days=3, hours=4, minutes=5, seconds=6)
+    let s = "{d}"
+    let d2 = Duration.from(s)
+    assert(d2.years == 1 && d2.months == 2 && d2.days == 3)
+    assert(d2.hours == 4 && d2.minutes == 5 && d2.seconds == 6)
+}
+
+/* --- Duration.total() tests --- */
+
+@test
+fn test-duration-total-hours() {
+    let d = Duration(days=1, hours=6)
+    assert(d.total('hours') == 30.0)
+}
+
+@test
+fn test-duration-total-minutes() {
+    let d = Duration(hours=2, minutes=30)
+    assert(d.total('minutes') == 150.0)
+}
+
+@test
+fn test-duration-total-milliseconds() {
+    let d = Duration(seconds=1, milliseconds=500)
+    assert(d.total('milliseconds') == 1500.0)
+}
+
+/* --- Duration.round() tests --- */
+
+@test
+fn test-duration-round-to-hours() {
+    let d = Duration(hours=1, minutes=45)
+    let r = d.round('hour')
+    assert(r.hours == 2 && r.minutes == 0)
+}
+
+@test
+fn test-duration-round-floor() {
+    let d = Duration(hours=1, minutes=59)
+    let r = d.round('hour', 'floor')
+    assert(r.hours == 1 && r.minutes == 0)
+}
+
+@test
+fn test-duration-round-ceil() {
+    let d = Duration(hours=1, minutes=1)
+    let r = d.round('hour', 'ceil')
+    assert(r.hours == 2 && r.minutes == 0)
+}
+
+/* --- Duration.compare() tests --- */
+
+@test
+fn test-duration-compare() {
+    let a = Duration(hours=1)
+    let b = Duration(minutes=90)
+    assert(Duration.compare(a, b) == -1)
+    assert(Duration.compare(b, a) == 1)
+    let c = Duration(minutes=60)
+    assert(Duration.compare(a, c) == 0)
+}
+
+/* --- PlainTime.round() tests --- */
+
+@test
+fn test-plain-time-round-to-hour() {
+    let t = PlainTime(14, 45, 0)
+    let r = t.round('hour')
+    assert(r.hour == 15 && r.minute == 0 && r.second == 0)
+}
+
+@test
+fn test-plain-time-round-floor() {
+    let t = PlainTime(14, 59, 59)
+    let r = t.round('hour', 'floor')
+    assert(r.hour == 14 && r.minute == 0)
+}
+
+@test
+fn test-plain-time-round-to-minute() {
+    let t = PlainTime(10, 30, 45)
+    let r = t.round('minute')
+    assert(r.hour == 10 && r.minute == 31 && r.second == 0)
+}
+
+/* --- PlainDateTime.round() tests --- */
+
+@test
+fn test-plain-date-time-round-to-hour() {
+    let dt = PlainDateTime(2024, 6, 15, 14, 45, 0)
+    let r = dt.round('hour')
+    assert(r == PlainDateTime(2024, 6, 15, 15, 0, 0))
+}
+
+@test
+fn test-plain-date-time-round-to-day() {
+    let dt = PlainDateTime(2024, 6, 15, 18, 0, 0)
+    let r = dt.round('day')
+    assert(r == PlainDateTime(2024, 6, 16, 0, 0, 0))
+}
+
+@test
+fn test-plain-date-time-round-day-floor() {
+    let dt = PlainDateTime(2024, 6, 15, 23, 59, 59)
+    let r = dt.round('day', 'floor')
+    assert(r == PlainDateTime(2024, 6, 15, 0, 0, 0))
+}
+
+/* --- Instant.round() tests --- */
+
+@test
+fn test-instant-round-to-second() {
+    let i = Instant.from-epoch-nanoseconds(1500000000)
+    let r = i.round('second')
+    assert(r.epoch-nanoseconds == 2000000000)
+}
+
+@test
+fn test-instant-round-to-minute() {
+    let i = Instant.from-epoch-seconds(90)
+    let r = i.round('minute')
+    assert(r.epoch-seconds == 120)
+}
+
+/* --- compare() tests --- */
+
+@test
+fn test-plain-date-compare() {
+    let a = PlainDate(2024, 1, 1)
+    let b = PlainDate(2024, 6, 15)
+    assert(PlainDate.compare(a, b) == -1)
+    assert(PlainDate.compare(b, a) == 1)
+    assert(PlainDate.compare(a, a) == 0)
+}
+
+@test
+fn test-plain-time-compare() {
+    let a = PlainTime(10, 0, 0)
+    let b = PlainTime(12, 0, 0)
+    assert(PlainTime.compare(a, b) == -1)
+    assert(PlainTime.compare(b, a) == 1)
+    assert(PlainTime.compare(a, PlainTime(10, 0, 0)) == 0)
+}
+
+@test
+fn test-plain-date-time-compare() {
+    let a = PlainDateTime(2024, 1, 1, 10, 0, 0)
+    let b = PlainDateTime(2024, 1, 1, 12, 0, 0)
+    assert(PlainDateTime.compare(a, b) == -1)
+    assert(PlainDateTime.compare(b, a) == 1)
+}
+
+@test
+fn test-instant-compare() {
+    let a = Instant.from-epoch-seconds(0)
+    let b = Instant.from-epoch-seconds(100)
+    assert(Instant.compare(a, b) == -1)
+    assert(Instant.compare(b, a) == 1)
+    assert(Instant.compare(a, a) == 0)
+}
+
+@test
+fn test-plain-year-month-compare() {
+    let a = PlainYearMonth(2024, 1)
+    let b = PlainYearMonth(2024, 6)
+    assert(PlainYearMonth.compare(a, b) == -1)
+    assert(PlainYearMonth.compare(b, a) == 1)
+    assert(PlainYearMonth.compare(a, a) == 0)
+}
+
+/* --- Conversion method tests --- */
+
+@test
+fn test-plain-time-to-plain-date-time() {
+    let t = PlainTime(14, 30, 0)
+    let d = PlainDate(2024, 6, 15)
+    let dt = t.to-plain-date-time(d)
+    assert(dt == PlainDateTime(2024, 6, 15, 14, 30, 0))
+}
+
+@test
+fn test-plain-date-time-to-year-month() {
+    let dt = PlainDateTime(2024, 6, 15, 14, 30, 0)
+    let ym = dt.to-plain-year-month()
+    assert(ym == PlainYearMonth(2024, 6))
+}
+
+@test
+fn test-plain-date-time-to-month-day() {
+    let dt = PlainDateTime(2024, 6, 15, 14, 30, 0)
+    let md = dt.to-plain-month-day()
+    assert(md == PlainMonthDay(6, 15))
+}
+
+/* --- Duration.create() tests --- */
+
+@test
+fn test-duration-create() {
+    let d = Duration.create(hours=2, minutes=30)
+    assert(d.hours == 2 && d.minutes == 30)
+    assert(d.days == 0 && d.years == 0)
+}
+
+/* --- Smart parser tests --- */
+
+@test
+fn test-parse-iso-date() {
+    let dt = parse('2024-06-15')
+    assert(dt.year == 2024 && dt.month == 6 && dt.day == 15)
+    assert(dt.hour == 0)
+}
+
+@test
+fn test-parse-iso-datetime() {
+    let dt = parse('2024-06-15T14:30:00')
+    assert(dt.year == 2024 && dt.month == 6 && dt.day == 15)
+    assert(dt.hour == 14 && dt.minute == 30)
+}
+
+@test
+fn test-parse-iso-datetime-with-z() {
+    let dt = parse('2024-06-15T14:30:00Z')
+    assert(dt.year == 2024 && dt.hour == 14)
+}
+
+@test
+fn test-parse-iso-space-separator() {
+    let dt = parse('2024-06-15 14:30:00')
+    assert(dt.year == 2024 && dt.hour == 14 && dt.minute == 30)
+}
+
+@test
+fn test-parse-slash-ymd() {
+    let dt = parse('2024/06/15')
+    assert(dt.year == 2024 && dt.month == 6 && dt.day == 15)
+}
+
+@test
+fn test-parse-slash-mdy() {
+    let dt = parse('6/15/2024')
+    assert(dt.year == 2024 && dt.month == 6 && dt.day == 15)
+}
+
+@test
+fn test-parse-slash-mdy-with-time() {
+    let dt = parse('6/15/2024 2:30pm')
+    assert(dt.year == 2024 && dt.month == 6 && dt.day == 15)
+    assert(dt.hour == 14 && dt.minute == 30)
+}
+
+@test
+fn test-parse-month-day-year() {
+    let dt = parse('June 15, 2024')
+    assert(dt.year == 2024 && dt.month == 6 && dt.day == 15)
+}
+
+@test
+fn test-parse-month-abbrev() {
+    let dt = parse('Jun 15, 2024')
+    assert(dt.year == 2024 && dt.month == 6 && dt.day == 15)
+}
+
+@test
+fn test-parse-month-day-year-time() {
+    let dt = parse('Jun 15, 2024 2:30pm')
+    assert(dt.year == 2024 && dt.month == 6 && dt.day == 15)
+    assert(dt.hour == 14 && dt.minute == 30)
+}
+
+@test
+fn test-parse-european-style() {
+    let dt = parse('15 June 2024')
+    assert(dt.year == 2024 && dt.month == 6 && dt.day == 15)
+}
+
+@test
+fn test-parse-european-with-time() {
+    let dt = parse('15 Jun 2024 14:30')
+    assert(dt.year == 2024 && dt.month == 6 && dt.day == 15)
+    assert(dt.hour == 14 && dt.minute == 30)
+}
+
+@test
+fn test-parse-day-name-prefix() {
+    let dt = parse('Sat, Jun 15, 2024')
+    assert(dt.year == 2024 && dt.month == 6 && dt.day == 15)
+}
+
+@test
+fn test-parse-full-day-name() {
+    let dt = parse('Saturday, June 15, 2024')
+    assert(dt.year == 2024 && dt.month == 6 && dt.day == 15)
+}
+
+@test
+fn test-parse-ordinal-day() {
+    let dt = parse('June 1st, 2024')
+    assert(dt.year == 2024 && dt.month == 6 && dt.day == 1)
+}
+
+@test
+fn test-parse-unix-seconds() {
+    let dt = parse('1718451000')
+    assert(dt.year == 2024)
+}
+
+@test
+fn test-parse-unix-millis() {
+    let dt = parse('1718451000000')
+    assert(dt.year == 2024)
+}
+
+@test
+fn test-parse-compact-date() {
+    let dt = parse('20240615')
+    assert(dt.year == 2024 && dt.month == 6 && dt.day == 15)
+}
+
+@test
+fn test-parse-compact-datetime() {
+    let dt = parse('20240615T143000')
+    assert(dt.year == 2024 && dt.month == 6 && dt.day == 15)
+    assert(dt.hour == 14 && dt.minute == 30)
+}
+
+@test
+fn test-parse-am-pm() {
+    let dt = parse('2024-06-15 12:00am')
+    assert(dt.hour == 0, "12am should be midnight")
+    let dt2 = parse('2024-06-15 12:00pm')
+    assert(dt2.hour == 12, "12pm should be noon")
+    let dt3 = parse('2024-06-15 11:59pm')
+    assert(dt3.hour == 23 && dt3.minute == 59)
+}
+
+@test
+fn test-parse-month-year() {
+    let dt = parse('March 2024')
+    assert(dt.year == 2024 && dt.month == 3 && dt.day == 1)
+}
+
+@test
+fn test-parse-fractional-seconds() {
+    let dt = parse('2024-06-15T14:30:00.123456789')
+    assert(dt.millisecond == 123 && dt.microsecond == 456 && dt.nanosecond == 789)
+}
+
+@test
+fn test-parse-rfc2822-ish() {
+    let dt = parse('Mon, 15 Jun 2024 14:30:00 GMT')
+    assert(dt.year == 2024 && dt.month == 6 && dt.day == 15)
+    assert(dt.hour == 14 && dt.minute == 30)
+}
+
+@test
+fn test-parse-us-dash-date() {
+    let dt = parse('06-15-2024')
+    assert(dt.year == 2024 && dt.month == 6 && dt.day == 15)
+}
+
+@test
+fn test-parse-invalid-throws() {
+    try {
+        parse('not a date')
+        assert(false, 'should have thrown')
+    } catch e: ValueError {
+        assert(true)
+    }
+}
+
+/* --- Ergonomic API tests --- */
+
+@test
+fn test-now-returns-datetime() {
+    let n = now()
+    assert(n.year >= 2024)
+    assert(n.hour >= 0 && n.hour <= 23)
+}
+
+@test
+fn test-today-returns-date() {
+    let t = today()
+    assert(t.year >= 2024)
+    assert(t.month >= 1 && t.month <= 12)
+}
+
+@test
+fn test-utc-now-returns-datetime() {
+    let u = utc-now()
+    assert(u.year >= 2024)
+}
+
+@test
+fn test-instant-now-fn() {
+    let i = instant-now()
+    assert(i.epoch-seconds > 1704067200)
+}
+
+@test
+fn test-yesterday-tomorrow-fns() {
+    let y = yesterday()
+    let t = tomorrow()
+    let d = today()
+    assert(y == d.yesterday)
+    assert(t == d.tomorrow)
+    assert((t - y).days == 2)
+}
+
+@test
+fn test-unit-constants() {
+    assert(HOUR.hours == 1)
+    assert(DAY.days == 1)
+    assert(WEEK.weeks == 1)
+    assert(MINUTE.minutes == 1)
+    assert(SEC.seconds == 1)
+}
+
+@test
+fn test-duration-multiply() {
+    let d = 3 * HOUR
+    assert(d.hours == 3)
+    let d2 = MINUTE * 90
+    assert(d2.minutes == 90)
+}
+
+@test
+fn test-duration-multiply-compound() {
+    let d = 2 * Duration(hours=1, minutes=30)
+    assert(d.hours == 2 && d.minutes == 60)
+}
+
+@test
+fn test-now-plus-duration() {
+    let n = now()
+    let later = n + 3 * HOUR
+    assert(later > n)
+}
+
+@test
+fn test-now-minus-week() {
+    let n = now()
+    let week-ago = n - WEEK
+    assert(week-ago < n)
+}
+
+@test
+fn test-date-tomorrow-yesterday() {
+    let d = PlainDate(2024, 6, 15)
+    assert(d.tomorrow == PlainDate(2024, 6, 16))
+    assert(d.yesterday == PlainDate(2024, 6, 14))
+}
+
+@test
+fn test-date-start-end-of-month() {
+    let d = PlainDate(2024, 2, 15)
+    assert(d.start-of-month == PlainDate(2024, 2, 1))
+    assert(d.end-of-month == PlainDate(2024, 2, 29))
+}
+
+@test
+fn test-date-start-end-of-year() {
+    let d = PlainDate(2024, 6, 15)
+    assert(d.start-of-year == PlainDate(2024, 1, 1))
+    assert(d.end-of-year == PlainDate(2024, 12, 31))
+}
+
+@test
+fn test-date-next-last-week() {
+    let d = PlainDate(2024, 6, 15)
+    assert(d.next-week == PlainDate(2024, 6, 22))
+    assert(d.last-week == PlainDate(2024, 6, 8))
+}
+
+@test
+fn test-datetime-start-of-day() {
+    let dt = PlainDateTime(2024, 6, 15, 14, 30, 45)
+    assert(dt.start-of-day == PlainDateTime(2024, 6, 15))
+}
+
+@test
+fn test-datetime-end-of-day() {
+    let dt = PlainDateTime(2024, 6, 15, 14, 30, 45)
+    let eod = dt.end-of-day
+    assert(eod.hour == 23 && eod.minute == 59 && eod.second == 59)
+    assert(eod.day == 15)
+}
+
+@test
+fn test-datetime-tomorrow() {
+    let dt = PlainDateTime(2024, 6, 15, 14, 30, 0)
+    let tom = dt.tomorrow
+    assert(tom.day == 16 && tom.hour == 14 && tom.minute == 30)
+}
+
+@test
+fn test-datetime-start-of-month() {
+    let dt = PlainDateTime(2024, 6, 15, 14, 30, 0)
+    let som = dt.start-of-month
+    assert(som == PlainDateTime(2024, 6, 1))
+}
+
+@test
+fn test-chained-navigation() {
+    /* (now() - WEEK).tomorrow.start-of-day style chaining */
+    let d = PlainDate(2024, 6, 15)
+    let r = (d - WEEK).tomorrow.start-of-month
+    /* 2024-06-15 - 7 days = 2024-06-08, +1 = 2024-06-09, start of month = 2024-06-01 */
+    assert(r == PlainDate(2024, 6, 1))
+}
+
+@test
+fn test-idiomatic-arithmetic() {
+    /* The kind of code you'd actually write */
+    let meeting = PlainDateTime(2024, 6, 15, 14, 0, 0)
+    let reminder = meeting - 30 * MINUTE
+    assert(reminder == PlainDateTime(2024, 6, 15, 13, 30, 0))
+
+    let next-meeting = meeting + 1 * WEEK
+    assert(next-meeting == PlainDateTime(2024, 6, 22, 14, 0, 0))
+}
+
+/* --- Float * Duration tests --- */
+
+@test
+fn test-float-multiply-half-hour() {
+    let d = 0.5 * HOUR
+    assert(d.minutes == 30 && d.hours == 0)
+}
+
+@test
+fn test-float-multiply-1-5-days() {
+    let d = 1.5 * DAY
+    assert(d.days == 1 && d.hours == 12)
+}
+
+@test
+fn test-float-multiply-commutative() {
+    let a = 0.5 * HOUR
+    let b = HOUR * 0.5
+    assert(a.total-nanoseconds == b.total-nanoseconds)
+}
+
+@test
+fn test-float-multiply-fractional-second() {
+    let d = 0.001 * SEC
+    assert(d.milliseconds == 1 && d.seconds == 0)
+}
+
+@test
+fn test-float-multiply-negative() {
+    let d = -0.5 * HOUR
+    assert(d.sign == -1)
+    assert(d.minutes == -30)
+}
+
+@test
+fn test-float-multiply-in-expression() {
+    let meeting = PlainDateTime(2024, 6, 15, 14, 0, 0)
+    let half-hour-later = meeting + 0.5 * HOUR
+    assert(half-hour-later == PlainDateTime(2024, 6, 15, 14, 30, 0))
+}
+
+@test
+fn test-float-multiply-rejects-calendar-units() {
+    try {
+        0.5 * Duration(months=1)
+        assert(false, 'should have thrown')
+    } catch e: ValueError {
+        assert(true)
+    }
+}

@@ -2065,7 +2065,7 @@ class XMLSelection : Iterable[XMLNode] {
        __nodes = nodes ?? []
     }
 
-    __count__() -> Int {
+    #() -> Int {
         #__nodes
     }
 
@@ -2228,7 +2228,14 @@ pub fn parse(
     encoding: ?String = nil,
     options: Int = XML_PARSE_NOBLANKS
 ) -> Document {
-    Document(xmlReadDoc(doc, url, encoding, options))
+    Document(
+        xmlReadDoc(
+            ((doc :: Blob) ? doc.str!() : doc).cstr(),
+            url,
+            encoding,
+            options
+        )
+    )
 }
 
 pub fn xml(parts: Array[Any]) -> Document {
@@ -2255,7 +2262,7 @@ pub fn xml(parts: Array[Any]) -> Document {
 
     buf.push(0)
 
-    if not let $doc = xmlReadDoc(buf) {
+    if not let $doc = xmlReadDoc(buf, nil, nil, XML_PARSE_NOBLANKS) {
         throw XMLError(parts)
     }
 

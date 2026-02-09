@@ -93,6 +93,8 @@ static struct {
   { .module = "math",       .name = "sqrt",                     .value = BUILTIN(builtin_sqrt)                   },
   { .module = "math",       .name = "cbrt",                     .value = BUILTIN(builtin_cbrt)                   },
   { .module = "math",       .name = "pi",                       .value = FLOAT(3.1415926535)                     },
+  { .module = "math",       .name = "nan",                      .value = FLOAT(NAN)                              },
+  { .module = "math",       .name = "inf",                      .value = FLOAT(INFINITY)                         },
   { .module = "bit",        .name = "and",                      .value = BUILTIN(builtin_bit_and)                },
   { .module = "bit",        .name = "or",                       .value = BUILTIN(builtin_bit_or)                 },
   { .module = "bit",        .name = "xor",                      .value = BUILTIN(builtin_bit_xor)                },

@@ -829,7 +829,7 @@ Coerce:
         default:
                 return NIL;
 
-        case VALUE_INTEGER:                                               return a;
+        case VALUE_INTEGER:                                         return a;
         case VALUE_REAL:    v.z = a.real;                           return v;
         case VALUE_BOOLEAN: v.z = a.boolean;                        return v;
         case VALUE_ARRAY:   v.z = a.array->count;                   return v;
@@ -865,11 +865,14 @@ CustomBase:
 
 String:
         /*
-         * The 0b syntax for base-2 integers is not standard C, so the strto* family of
-         * functions doesn't recognize it. Thus, we must handle it specially here.
+         * Handle 0b and 0o manually.
          */
         if (base == 0 && string[0] == '0' && string[1] == 'b') {
                 base = 2;
+                string += 2;
+        }
+        if (base == 0 && string[0] == '0' && string[1] == 'o') {
+                base = 8;
                 string += 2;
         }
 
