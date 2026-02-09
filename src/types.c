@@ -7413,6 +7413,14 @@ type_check_shallow(Ty *ty, Type *t0, Type *t1)
                 return true;
         }
 
+        if (
+                (t0->type == TYPE_OBJECT)
+             && ((t0->class->i == CLASS_INTO_PTR) || (t0->class->i == CLASS_PTR))
+             && (t1->type == TYPE_NIL)
+        ) {
+                return true;
+        }
+
         if (IsUnboundVar(t0) && IsUnboundVar(t1)) {
                 return t0->id == t1->id;
         }
@@ -7464,7 +7472,7 @@ type_check_x_(Ty *ty, Type *t0, Type *t1, bool need)
         }
 
         if (t0->type == TYPE_TAG && t1->type == TYPE_TAG) {
-                return TagOf(t0) == TagOf(t1);
+                return (TagOf(t0) == TagOf(t1));
         }
 
         if (
@@ -7492,6 +7500,14 @@ type_check_x_(Ty *ty, Type *t0, Type *t1, bool need)
                 (t1->type == TYPE_OBJECT)
              && (t1->class->i == CLASS_FUNCTION)
              && IsCallable(t0)
+        ) {
+                return true;
+        }
+
+        if (
+                (t0->type == TYPE_OBJECT)
+             && ((t0->class->i == CLASS_INTO_PTR) || (t0->class->i == CLASS_PTR))
+             && (t1->type == TYPE_NIL)
         ) {
                 return true;
         }

@@ -1,0 +1,695 @@
+import ffi as c (C!)
+import ptr (typed)
+import os
+import math (inf, nan)
+import path (Path)
+
+if not let $libyaml = c.open('yaml') {
+    throw "yaml: failed to load libyaml"
+}
+
+// ── Type aliases ──────────────────────────────────────────────────────
+
+const size_t = c.u64
+
+// ── Event type constants ──────────────────────────────────────────────
+
+enum! {
+    YAML_NO_EVENT = 0,
+    YAML_STREAM_START_EVENT,
+    YAML_STREAM_END_EVENT,
+    YAML_DOCUMENT_START_EVENT,
+    YAML_DOCUMENT_END_EVENT,
+    YAML_ALIAS_EVENT,
+    YAML_SCALAR_EVENT,
+    YAML_SEQUENCE_START_EVENT,
+    YAML_SEQUENCE_END_EVENT,
+    YAML_MAPPING_START_EVENT,
+    YAML_MAPPING_END_EVENT
+};
+
+// ── Node type constants ──────────────────────────────────────────────
+
+enum! {
+    YAML_NO_NODE = 0,
+    YAML_SCALAR_NODE,
+    YAML_SEQUENCE_NODE,
+    YAML_MAPPING_NODE
+};
+
+// ── Scalar style constants ───────────────────────────────────────────
+
+enum! {
+    YAML_ANY_SCALAR_STYLE = 0,
+    YAML_PLAIN_SCALAR_STYLE,
+    YAML_SINGLE_QUOTED_SCALAR_STYLE,
+    YAML_DOUBLE_QUOTED_SCALAR_STYLE,
+    YAML_LITERAL_SCALAR_STYLE,
+    YAML_FOLDED_SCALAR_STYLE
+};
+
+// ── Encoding constants ───────────────────────────────────────────────
+
+const YAML_UTF8_ENCODING = 1
+
+// ── Sequence/mapping style constants ─────────────────────────────────
+
+const YAML_ANY_SEQUENCE_STYLE   = 0
+const YAML_BLOCK_SEQUENCE_STYLE = 1
+const YAML_FLOW_SEQUENCE_STYLE  = 2
+
+const YAML_ANY_MAPPING_STYLE   = 0
+const YAML_BLOCK_MAPPING_STYLE = 1
+const YAML_FLOW_MAPPING_STYLE  = 2
+
+// ── YAML value type (mirrors JSON type from prelude) ─────────────────
+
+use YAML = String
+         | Int
+         | Float
+         | Bool
+         | Array[YAML]
+         | Dict[String, YAML]
+         | nil
+
+// ── C struct definitions ─────────────────────────────────────────────
+C! struct YamlEvent {
+    c.int tp;
+    c.int _pad0;
+    c.ptr anchor;
+    c.ptr tg;
+    c.ptr val;
+    c.u64 len;
+    c.int pi;
+    c.int qi;
+    c.int sty;
+    c.int _pad1;
+    c.u64 sm_idx;
+    c.u64 sm_line;
+    c.u64 sm_col;
+    c.u64 em_idx;
+    c.u64 em_line;
+    c.u64 em_col;
+}
+
+C! struct YamlParser {
+    c.int error;
+    c.int _pad0;
+    c.ptr problem;
+    c.u64 problem_offset;
+    c.int problem_value;
+    c.int _pad1;
+    c.u64 pm_idx;
+    c.u64 pm_line;
+    c.u64 pm_col;
+    c.ptr ctx;
+    c.u64 cm_idx;
+    c.u64 cm_line;
+    c.u64 cm_col;
+    c.u8 _rest[392];
+}
+
+C! struct YamlEmitter {
+    c.int error;
+    c.int _pad0;
+    c.ptr problem;
+    c.u8 _rest[416];
+}
+
+// ── C function bindings ──────────────────────────────────────────────
+
+C! libyaml fn {
+    const char *yaml_get_version_string(void);
+
+    int yaml_parser_initialize(void *parser);
+    void yaml_parser_delete(void *parser);
+    void yaml_parser_set_input_string(void *parser, const char *input, size_t size);
+    void yaml_parser_set_encoding(void *parser, int encoding);
+    int yaml_parser_parse(void *parser, void *event);
+    int yaml_parser_load(void *parser, void *document);
+
+    void yaml_event_delete(void *event);
+
+    void yaml_document_delete(void *document);
+    void *yaml_document_get_node(void *document, int index);
+    void *yaml_document_get_root_node(void *document);
+
+    int yaml_emitter_initialize(void *emitter);
+    void yaml_emitter_delete(void *emitter);
+    void yaml_emitter_set_output(void *emitter, void *handler, void *data);
+    void yaml_emitter_set_encoding(void *emitter, int encoding);
+    void yaml_emitter_set_canonical(void *emitter, int canonical);
+    void yaml_emitter_set_indent(void *emitter, int indent);
+    void yaml_emitter_set_width(void *emitter, int width);
+    void yaml_emitter_set_unicode(void *emitter, int unicode);
+    int yaml_emitter_emit(void *emitter, void *event);
+    int yaml_emitter_flush(void *emitter);
+
+    int yaml_stream_start_event_initialize(void *event, int encoding);
+    int yaml_stream_end_event_initialize(void *event);
+    int yaml_document_start_event_initialize(void *event, void *version, void *tag_start, void *tag_end, int implicit);
+    int yaml_document_end_event_initialize(void *event, int implicit);
+    int yaml_scalar_event_initialize(void *ev, void *anch, void *tg, void *val, int len, int pi, int qi, int sty);
+    int yaml_sequence_start_event_initialize(void *ev, void *anch, void *tg, int imp, int sty);
+    int yaml_sequence_end_event_initialize(void *ev);
+    int yaml_mapping_start_event_initialize(void *ev, void *anch, void *tg, int imp, int sty);
+    int yaml_mapping_end_event_initialize(void *ev);
+    int yaml_alias_event_initialize(void *ev, void *anch);
+}
+
+// ── Error class ──────────────────────────────────────────────────────
+
+pub class YAMLError {
+    message: String
+    line: ?Int
+    column: ?Int
+
+    init(message: String, line: ?Int = nil, column: ?Int = nil) {
+        self.message = message
+        self.line = line
+        self.column = column
+    }
+
+    __str__() -> String {
+        if let $line = self.line {
+            if let $col = self.column {
+                return "YAMLError: {message} (line {line + 1}, column {col + 1})"
+            }
+            return "YAMLError: {message} (line {line + 1})"
+        }
+        "YAMLError: {message}"
+    }
+}
+
+// ── Event field access helpers ───────────────────────────────────────
+
+fn event-scalar-value(ev: YamlEvent) -> String {
+    if ev.val == nil { return '' }
+    c.str(ev.val, ev.len)
+}
+
+fn event-scalar-tag(ev: YamlEvent) -> ?String {
+    if ev.tg == nil { return nil }
+    c.str(ev.tg)
+}
+
+fn event-anchor(ev: YamlEvent) -> ?String {
+    if ev.anchor == nil { return nil }
+    c.str(ev.anchor)
+}
+
+// ── Parser error extraction ──────────────────────────────────────────
+
+fn parser-error(parser: YamlParser) -> YAMLError {
+    let problem = parser.problem
+    let msg = if problem != nil { c.str(problem) } else { 'unknown error' }
+    YAMLError(msg, Int(parser.pm_line), Int(parser.pm_col))
+}
+
+// ── Scalar type resolution ───────────────────────────────────────────
+
+fn resolve-float(value: String) {
+    let lower = value.lower()
+    if lower == '.inf' || lower == '+.inf' { return inf }
+    if lower == '-.inf' { return -inf }
+    if lower == '.nan' { return nan }
+    return Float(value)
+}
+
+fn resolve-scalar(value: String, tg: ?String, style: Int) {
+    // Quoted strings are always strings
+    if style == YAML_SINGLE_QUOTED_SCALAR_STYLE || style == YAML_DOUBLE_QUOTED_SCALAR_STYLE {
+        return value
+    }
+
+    // If there's an explicit tag, use it
+    if let $t = tg {
+        return match t {
+            'tag:yaml.org,2002:null'  => nil,
+            'tag:yaml.org,2002:bool'  => value.lower() in ['true', 'yes', 'on'],
+            'tag:yaml.org,2002:int'   => Int(value),
+            'tag:yaml.org,2002:float' => resolve-float(value),
+            'tag:yaml.org,2002:str' => value,
+            _ => value
+        }
+    }
+
+    // Auto-detect type for plain scalars
+    let lower = value.lower()
+
+    // Null
+    if lower in ['null', '~', ''] {
+        return nil
+    }
+
+    // Boolean (YAML 1.2: only true/false)
+    if lower in ['true'] {
+        return true
+    }
+    if lower in ['false'] {
+        return false
+    }
+
+    // Integer (decimal, hex, octal)
+    if value.match?(/^-?[0-9]+$/) {
+        return Int(value)
+    }
+    if value.match?(/^0x[0-9a-fA-F]+$/) {
+        return Int(value)
+    }
+    if value.match?(/^0o[0-7]+$/) {
+        return Int(value)
+    }
+    // YAML 1.1 octal: 0NNN
+    if value.match?(/^0[0-7]+$/) {
+        return Int("0o{value.slice(1)}")
+    }
+
+    // Float
+    if lower == '.inf' || lower == '+.inf' || lower == 'inf' || lower == '+inf' {
+        return inf
+    }
+    if lower == '-.inf' || lower == '-inf' {
+        return -inf
+    }
+    if lower == '.nan' || lower == 'nan' {
+        return nan
+    }
+    if value.match?(/^-?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$/) {
+        return Float(value)
+    }
+
+    value
+}
+
+// ── Event-based parser ───────────────────────────────────────────────
+
+fn parse-key(parser: YamlParser, ev: YamlEvent, anchors: Dict[String, YAML]) -> String {
+    if ev.tp == YAML_SCALAR_EVENT {
+        return event-scalar-value(ev)
+    }
+    // Non-scalar keys: stringify
+    return "{parse-value(parser, ev, anchors)}"
+}
+
+fn parse-value(parser: YamlParser, ev: YamlEvent, anchors: Dict[String, YAML]) -> YAML {
+    let typ = ev.tp
+    let p = parser.get()
+    let e = ev.get()
+
+    if typ == YAML_SCALAR_EVENT {
+        let value = event-scalar-value(ev)
+        let tg = event-scalar-tag(ev)
+        let style = ev.sty
+        let result = resolve-scalar(value, tg, style)
+        if let $anch = event-anchor(ev) {
+            anchors[anch] = result
+        }
+        return result
+    }
+
+    if typ == YAML_SEQUENCE_START_EVENT {
+        let anch = event-anchor(ev)
+        let items = []
+
+        while true {
+            if yaml_parser_parse(p, e) != 1 {
+                throw parser-error(parser)
+            }
+            if ev.tp == YAML_SEQUENCE_END_EVENT {
+                break
+            }
+            items.push(parse-value(parser, ev, anchors))
+        }
+
+        if let $a = anch {
+            anchors[a] = items
+        }
+        return items
+    }
+
+    if typ == YAML_MAPPING_START_EVENT {
+        let anch = event-anchor(ev)
+        let map = %{}
+
+        while true {
+            if yaml_parser_parse(p, e) != 1 {
+                throw parser-error(parser)
+            }
+            if ev.tp == YAML_MAPPING_END_EVENT {
+                break
+            }
+            let key = parse-key(parser, ev, anchors)
+
+            if yaml_parser_parse(p, e) != 1 {
+                throw parser-error(parser)
+            }
+            let val = parse-value(parser, ev, anchors)
+            map[key] = val
+        }
+
+        if let $a = anch {
+            anchors[a] = map
+        }
+        return map
+    }
+
+    if typ == YAML_ALIAS_EVENT {
+        let anch = event-anchor(ev)
+        if let $a = anch {
+            if let $val = anchors[a] {
+                return val
+            }
+        }
+        throw YAMLError("undefined alias: {anch}")
+    }
+
+    return nil
+}
+
+fn parse-document(parser: YamlParser, ev: YamlEvent) -> Array[YAML] {
+    let anchors: Dict[String, YAML] = %{}
+    let results: Array[YAML] = []
+    let p = parser.get()
+    let e = ev.get()
+
+    while true {
+        if yaml_parser_parse(p, e) != 1 {
+            throw parser-error(parser)
+        }
+
+        if ev.tp == YAML_STREAM_END_EVENT {
+            break
+        }
+
+        if ev.tp == YAML_DOCUMENT_START_EVENT {
+            if yaml_parser_parse(p, e) != 1 {
+                throw parser-error(parser)
+            }
+            if ev.tp == YAML_DOCUMENT_END_EVENT {
+                results.push(nil)
+                continue
+            }
+            results.push(parse-value(parser, ev, anchors))
+            // consume DOCUMENT_END
+            while true {
+                if yaml_parser_parse(p, e) != 1 {
+                    throw parser-error(parser)
+                }
+                if ev.tp == YAML_DOCUMENT_END_EVENT {
+                    break
+                }
+            }
+        }
+    }
+
+    results
+}
+
+fn init-parser(input: String) {
+    let parser = YamlParser()
+    let p = parser.get()
+
+    if yaml_parser_initialize(p) != 1 {
+        throw YAMLError('failed to initialize parser')
+    }
+
+    yaml_parser_set_input_string(p, input.cstr(), input.size())
+    yaml_parser_set_encoding(p, YAML_UTF8_ENCODING)
+
+    parser
+}
+
+fn do-parse(input: String) -> YAML {
+    let parser = init-parser(input)
+    defer yaml_parser_delete(parser.get())
+
+    let ev = YamlEvent()
+    let p = parser.get()
+    let e = ev.get()
+
+    if yaml_parser_parse(p, e) != 1 {
+        throw parser-error(parser)
+    }
+    if ev.tp != YAML_STREAM_START_EVENT {
+        throw YAMLError('expected stream start')
+    }
+
+    let results = parse-document(parser, ev)
+
+    match results {
+        []    => nil,
+        [one] => one,
+        _     => results
+    }
+}
+
+fn do-parse-all(input: String) -> Array[YAML] {
+    let parser = init-parser(input)
+    defer yaml_parser_delete(parser.get())
+
+    let ev = YamlEvent()
+    let p = parser.get()
+    let e = ev.get()
+
+    if yaml_parser_parse(p, e) != 1 {
+        throw parser-error(parser)
+    }
+    if ev.tp != YAML_STREAM_START_EVENT {
+        throw YAMLError('expected stream start')
+    }
+
+    parse-document(parser, ev)
+}
+
+// ── Emitter helpers ──────────────────────────────────────────────────
+
+fn emit-event(emitter, event) {
+    if yaml_emitter_emit(emitter.get(), event.get()) != 1 {
+        let problem = emitter.problem
+        let msg = problem ? c.str(problem) : 'emit error'
+        throw YAMLError(msg)
+    }
+}
+
+fn emit-scalar(emitter, event, s: String, style: Int = YAML_PLAIN_SCALAR_STYLE) {
+    let pi = (style == YAML_PLAIN_SCALAR_STYLE) ? 1 : 0
+    yaml_scalar_event_initialize(event.get(), nil, nil, s.cstr(), s.size(), pi, 1, style)
+    emit-event(emitter, event)
+}
+
+const YAML_LITERALS = [
+    'null', '~', 'true', 'false', 'yes', 'no', 'on', 'off',
+    '.inf', '-.inf', '+.inf', '.nan', 'inf', '-inf', '+inf', 'nan', ''
+]
+
+fn emit-value(emitter, event, value: _, flow: Bool) {
+    if value == nil {
+        emit-scalar(emitter, event, 'null')
+        return
+    }
+    if value == true {
+        emit-scalar(emitter, event, 'true')
+        return
+    }
+    if value == false {
+        emit-scalar(emitter, event, 'false')
+        return
+    }
+    if value :: Int {
+        emit-scalar(emitter, event, "{value}")
+        return
+    }
+    if value :: Float {
+        let s = if value == inf { '.inf' }
+                else if value == -inf { '-.inf' }
+                else if value != value { '.nan' }
+                else { "{value}" }
+        emit-scalar(emitter, event, s)
+        return
+    }
+    if value :: String {
+        let needs-quote = value.contains?('\n')
+                       || value.lower() in YAML_LITERALS
+                       || value.match?(/^-?[0-9]/)
+                       || value.match?(/^[&*!|>{%@`]/)
+                       || value.contains?(': ')
+                       || value.contains?(' #')
+                       || value.match?(/^- /)
+
+        let style = if value.contains?('\n') && value.size() > 40 {
+            YAML_LITERAL_SCALAR_STYLE
+        } else if needs-quote {
+            YAML_DOUBLE_QUOTED_SCALAR_STYLE
+        } else {
+            YAML_PLAIN_SCALAR_STYLE
+        }
+        emit-scalar(emitter, event, value, style: style)
+        return
+    }
+    if value :: Array {
+        let style = if flow { YAML_FLOW_SEQUENCE_STYLE } else { YAML_ANY_SEQUENCE_STYLE }
+        yaml_sequence_start_event_initialize(event.get(), nil, nil, 1, style)
+        emit-event(emitter, event)
+        for item in value {
+            emit-value(emitter, event, item, flow)
+        }
+        yaml_sequence_end_event_initialize(event.get())
+        emit-event(emitter, event)
+        return
+    }
+    if value :: Dict {
+        let style = if flow { YAML_FLOW_MAPPING_STYLE } else { YAML_ANY_MAPPING_STYLE }
+        yaml_mapping_start_event_initialize(event.get(), nil, nil, 1, style)
+        emit-event(emitter, event)
+        for k, v in value {
+            emit-value(emitter, event, "{k}", flow)
+            emit-value(emitter, event, v, flow)
+        }
+        yaml_mapping_end_event_initialize(event.get())
+        emit-event(emitter, event)
+        return
+    }
+    // Fallback: convert to string
+    emit-scalar(emitter, event, "{value}", style: YAML_DOUBLE_QUOTED_SCALAR_STYLE)
+}
+
+fn do-emit(value, indent: Int = 2, width: Int = 80, flow: Bool = false, canonical: Bool = false) -> String {
+    let emitter = YamlEmitter()
+    let em = emitter.get()
+    defer yaml_emitter_delete(em)
+
+    if yaml_emitter_initialize(em) != 1 {
+        throw YAMLError('failed to initialize emitter')
+    }
+
+    // Collect output into a buffer via write handler
+    let chunks = []
+
+    C! closure write_handler(data: c.ptr, buffer: c.ptr, sz: c.u64) -> c.int {
+        chunks.push(c.str(buffer, sz))
+        return 1
+    }
+    defer c.freeClosure(write_handler)
+
+    yaml_emitter_set_output(em, write_handler, nil)
+    yaml_emitter_set_encoding(em, YAML_UTF8_ENCODING)
+    yaml_emitter_set_indent(em, indent)
+    yaml_emitter_set_width(em, width)
+    yaml_emitter_set_unicode(em, 1)
+    if canonical { yaml_emitter_set_canonical(em, 1) }
+
+    let event = YamlEvent()
+    let ev = event.get()
+
+    // STREAM_START
+    yaml_stream_start_event_initialize(ev, YAML_UTF8_ENCODING)
+    emit-event(emitter, event)
+
+    // DOCUMENT_START (implicit)
+    yaml_document_start_event_initialize(ev, nil, nil, nil, 1)
+    emit-event(emitter, event)
+
+    // Value
+    emit-value(emitter, event, value, flow)
+
+    // DOCUMENT_END (implicit)
+    yaml_document_end_event_initialize(ev, 1)
+    emit-event(emitter, event)
+
+    // STREAM_END
+    yaml_stream_end_event_initialize(ev)
+    emit-event(emitter, event)
+
+    chunks.join('')
+}
+
+fn do-emit-all(values: Array, indent: Int = 2, width: Int = 80, flow: Bool = false) -> String {
+    let emitter = YamlEmitter()
+    let em = emitter.get()
+    defer yaml_emitter_delete(em)
+
+    if yaml_emitter_initialize(em) != 1 {
+        throw YAMLError('failed to initialize emitter')
+    }
+
+    let chunks = []
+
+    C! closure write_handler(data: c.ptr, buffer: c.ptr, sz: c.u64) -> c.int {
+        chunks.push(c.str(buffer, sz))
+        return 1
+    }
+    defer c.freeClosure(write_handler)
+
+    yaml_emitter_set_output(em, write_handler, nil)
+    yaml_emitter_set_encoding(em, YAML_UTF8_ENCODING)
+    yaml_emitter_set_indent(em, indent)
+    yaml_emitter_set_width(em, width)
+    yaml_emitter_set_unicode(em, 1)
+
+    let event = YamlEvent()
+    let ev = event.get()
+
+    // STREAM_START
+    yaml_stream_start_event_initialize(ev, YAML_UTF8_ENCODING)
+    emit-event(emitter, event)
+
+    for value in values {
+        // DOCUMENT_START (explicit for multi-doc)
+        yaml_document_start_event_initialize(ev, nil, nil, nil, 0)
+        emit-event(emitter, event)
+
+        emit-value(emitter, event, value, flow)
+
+        // DOCUMENT_END
+        yaml_document_end_event_initialize(ev, 0)
+        emit-event(emitter, event)
+    }
+
+    // STREAM_END
+    yaml_stream_end_event_initialize(ev)
+    emit-event(emitter, event)
+
+    chunks.join('')
+}
+
+// ── Public API ────────────────────────────────────────────────────────
+
+/// Parse a YAML string into a Ty value.
+/// Mappings → Dict, sequences → Array, scalars → String/Int/Float/Bool/nil.
+pub fn parse(input: String) -> YAML {
+    do-parse(input)
+}
+
+/// Parse a YAML string containing multiple documents.
+/// Returns an Array of values, one per document.
+pub fn parse-all(input: String) -> Array[YAML] {
+    do-parse-all(input)
+}
+
+/// Parse a YAML file.
+pub fn parse-file(path: String | Path) -> YAML {
+    let content = Path(path).read-text()
+    do-parse(content)
+}
+
+/// Serialize a Ty value to a YAML string.
+pub fn dump(value, indent: Int = 2, width: Int = 80, flow: Bool = false, canonical: Bool = false) -> String {
+    do-emit(value, indent=indent, width=width, flow=flow, canonical=canonical)
+}
+
+/// Serialize multiple Ty values as a multi-document YAML stream.
+pub fn dump-all(values: Array, indent: Int = 2, width: Int = 80, flow: Bool = false) -> String {
+    do-emit-all(values, indent=indent, width=width, flow=flow)
+}
+
+/// Serialize a Ty value and write it to a file.
+pub fn dump-file(path: String | Path, value, indent: Int = 2, width: Int = 80, flow: Bool = false) {
+    let content = do-emit(value, indent=indent, width=width, flow=flow)
+    Path(path).write(content)
+}
+
+/// Get the libyaml version string.
+pub fn version() -> String {
+    c.str(yaml_get_version_string())
+}
