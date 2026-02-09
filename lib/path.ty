@@ -595,6 +595,14 @@ pub class Path {
     static tempdir(prefix: String = 'tmp') -> TempDir {
         Path('/tmp').tempdir(prefix)
     }
+
+    temp(prefix: String = 'tmp', suffix: String = '') -> TempFile {
+        TempFile(self, prefix, suffix)
+    }
+
+    static temp(prefix: String = 'tmp', suffix: String = '') -> TempFile {
+        Path('/tmp').temp(prefix, suffix)
+    }
 }
 
 class TempDir {
@@ -621,5 +629,34 @@ class TempDir {
     }
 }
 
+class TempFile {
+    __location: Path
+    __prefix: String
+    __suffix: String
+    __path: Path | nil
+
+    init(location: Path, prefix: String = 'tmp', suffix: String = '') {
+        __location = location
+        __prefix = prefix
+        __suffix = suffix
+        __path = nil
+    }
+
+    __str__() -> String {
+        "{__path}"
+    }
+
+    __enter__() -> Path {
+        __path = __location.mktemp(__prefix, __suffix)
+    }
+
+    __drop__() {
+        if __path != nil && __path.exists? {
+            __path.unlink()
+        }
+    }
+}
+
 pub cwd = Path.cwd
 pub home = Path.home
+pub temp = Path.temp

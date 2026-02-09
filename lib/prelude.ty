@@ -1003,6 +1003,9 @@ class String : Iterable[String], IntoPtr[Int] {
         self.ptr()
     }
 
+    // Ensure NUL-termination for C interop
+    cstr() -> String;
+
     center(n: Int, ch: String = ' ') {
         "{self:^{ch}{n}}"
     }
