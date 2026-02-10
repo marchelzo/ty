@@ -10499,7 +10499,10 @@ TypeCheckXD(Ty *ty, TypeCheckStack *stack, Type *t0, Value const *v)
                                 char const *name = v__(t0->names, i);
                                 Value const *item = (name != NULL) ? tuple_get(v, name)
                                                   : (v->count > i) ? &v->items[i]
-                                                  : /*)  else  (*/   NULL;
+                                                  : /*   else   */   NULL;
+                                if (item == NULL && !v__(t0->required, i)) {
+                                        continue;
+                                }
                                 if (
                                         !TypeCheckXD(
                                                 ty,
@@ -10519,10 +10522,14 @@ TypeCheckXD(Ty *ty, TypeCheckStack *stack, Type *t0, Value const *v)
                                 }
                                 int id = M_ID(name);
                                 Value item = GetMember(ty, *v, id, false, true);
-                                if (
-                                        IsNone(item)
-                                     || !TypeCheckXD(ty, stack, v__(t0->types, i), &item)
-                                ) {
+                                if (IsNone(item)) {
+                                        if (!v__(t0->required, i)) {
+                                                continue;
+                                        } else {
+                                                goto End;
+                                        }
+                                }
+                                if (!TypeCheckXD(ty, stack, v__(t0->types, i), &item)) {
                                         goto End;
                                 }
                         }

@@ -684,24 +684,30 @@ class InteractiveLineReader {
                     __tio.stop()
 
                     let fzf = spawn(
-                        ['fzf', '--tac', '--no-sort', '-q', getText()],
+                        ['fzf', '--read0', '--tac', '--no-sort', '-q', getText()],
                         stdin=SPAWN_PIPE,
                         stdout=SPAWN_PIPE,
                         ctty=__pty if __pty != nil
                     )
 
-                    write(fzf.stdin, __history.map(\_.0.str()).unlines())
-                    os::close(fzf.stdin)
+                    for {lines, *} in __history {
+                        let item = Blob(lines.map(&join).unlines())
+                        item.push(0)
+                        write(fzf.stdin, item)
+                    }
+                    os.close(fzf.stdin)
 
                     let out = read(fzf.stdout, 8192).str().strip()
-                    os::close(fzf.stdout)
+                    os.close(fzf.stdout)
 
                     wait(fzf.pid)
 
                     __tio.start()
 
                     if out {
-                        line = out.chars()
+                        lines = out.lines().map(&chars)
+                        nr = #lines - 1
+                        line = lines[nr]
                         i = #line
                     }
                 },

@@ -20,9 +20,6 @@
 static Token
 dotoken(Ty *ty, int ctx);
 
-void
-parse_push_comment(Ty *ty, Token const *tok);
-
 enum {
         MAX_OP_LEN = 8,
 };
@@ -1022,7 +1019,8 @@ lexop(Ty *ty)
 static Token
 lexlinecomment(Ty *ty)
 {
-        /* // */
+        /* /// */
+        nextchar(ty);
         nextchar(ty);
         nextchar(ty);
 
@@ -1036,7 +1034,7 @@ lexlinecomment(Ty *ty)
                 avP(comment, nextchar(ty));
         }
 
-        while (vN(comment) > 0 && isspace(*vvL(comment))) {
+        while (vN(comment) > 0 && v_L(comment) == ' ') {
                 vvX(comment);
         }
 
@@ -1050,10 +1048,19 @@ lexlinecomment(Ty *ty)
         return t;
 }
 
+inline static void
+skiplinecomment(Ty *ty)
+{
+        while (C(0) != '\n' && C(0) != '\0') {
+                nextchar(ty);
+        }
+}
+
 static Token
 lexcomment(Ty *ty)
 {
-        // /*
+        // /**
+        nextchar(ty);
         nextchar(ty);
         nextchar(ty);
 
@@ -1089,6 +1096,32 @@ lexcomment(Ty *ty)
         return t;
 }
 
+static void
+skipcomment(Ty *ty)
+{
+        // /**
+        nextchar(ty);
+        nextchar(ty);
+
+        int level = 1;
+
+        while (C(0) != '\0' && level != 0) {
+                if (C(0) == '/' && C(1) == '*') {
+                        level += 1;
+                } else if (C(0) == '*' && C(1) == '/') {
+                        level -= 1;
+                }
+                nextchar(ty);
+        }
+
+        if (level != 0) {
+                error(ty, "unterminated comment");
+        }
+
+        // /
+        nextchar(ty);
+}
+
 static Token
 saferegex(Ty *ty)
 {
@@ -1112,8 +1145,10 @@ saferegex(Ty *ty)
 static Token
 dotoken(Ty *ty, int ctx)
 {
-        Location start = Start = state.loc;
+        Location start;
 
+Begin:
+        start = Start = state.loc;
         state.ctx = ctx;
 
         if (ctx == LEX_FMT || ctx == LEX_XFMT) {
@@ -1135,9 +1170,19 @@ dotoken(Ty *ty, int ctx)
         }
 
         if (C(0) == '/' && C(1) == '*') {
-                return lexcomment(ty);
+                if (C(2) == '*') {
+                        return lexcomment(ty);
+                } else {
+                        skipcomment(ty);
+                        goto Begin;
+                }
         } else if (C(0) == '/' && C(1) == '/') {
-                return lexlinecomment(ty);
+                if (C(2) == '/') {
+                        return lexlinecomment(ty);
+                } else {
+                        skiplinecomment(ty);
+                        goto Begin;
+                }
         } else if (C(0) == '#' && C(1) == '|') {
                 nextchar(ty);
                 nextchar(ty);
