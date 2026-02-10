@@ -234,6 +234,11 @@ dict_get_value(Ty *ty, Dict *d, Value *key)
                 ENSURE_INIT(d);
                 Value dflt = value_apply_callable(ty, &d->dflt, key);
                 i = find_spot(ty, d->size, d->items, h, key);
+                if (OCCUPIED(d, i)) {
+                        d->items[i].v = dflt;
+                        GC_RESUME();
+                        return val(d, i);
+                }
                 Value *v = put(ty, d, i, h, *key, dflt);
                 GC_RESUME();
                 return v;
@@ -302,6 +307,10 @@ dict_put_key_if_not_exists(Ty *ty, Dict *d, Value key)
 
         if (d->dflt.type != VALUE_ZERO) {
                 v = value_apply_callable(ty, &d->dflt, &key);
+                i = find_spot(ty, d->size, d->items, h, &key);
+                if (OCCUPIED(d, i)) {
+                        return val(d, i);
+                }
         } else {
                 v = NIL;
         }
@@ -731,11 +740,15 @@ dict_get_or_put_with(Ty *ty, Value *d, int argc, Value *kwargs)
         if (
                 (dict->size != size)
              || (dict->items != items)
-             || (OCCUPIED(dict, i) && !v_eq(&dict->items[i].k, &key))
+             || OCCUPIED(dict, i)
         ) {
                 i = find_spot(ty, dict->size, dict->items, h, &key);
         }
-        put(ty, dict, i, h, key, val);
+        if (OCCUPIED(dict, i)) {
+                dict->items[i].v = val;
+        } else {
+                put(ty, dict, i, h, key, val);
+        }
         gX();
 
         return val;
