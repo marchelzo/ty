@@ -84,7 +84,7 @@
 #define K3 ((T3 == TOKEN_KEYWORD) ? token(3)->keyword : -1)
 #define KW(i) ((token(i)->type == TOKEN_KEYWORD) ? token(i)->keyword : -1)
 
-#if 0
+#if 1
 #define PLOGX(fmt, ...) (                       \
         EnableLogging                           \
      && fprintf(                                \
@@ -333,7 +333,6 @@ static Expr NullExpr = {
 #define NoEquals          (state.NoEquals)
 #define NoIn              (state.NoIn)
 #define NoPipe            (state.NoPipe)
-#define KeepComments      (state.comments)
 #define ParseDepth        (state.depth)
 #define SavePoints        (state.SavePoints)
 #define TokenIndex        (state.TokenIndex)
@@ -361,7 +360,6 @@ static enum {
 #define SAVE_NP(b) bool NPSave = NoPipe; NoPipe = (b);
 #define SAVE_NA(b) bool NASave = NoAndOr; NoAndOr = (b);
 #define SAVE_TC(b) bool TCSave = TypeContext; TypeContext = (b);
-#define SAVE_KC(b) bool KCSave = KeepComments; KeepComments = (b);
 #define SAVE_LC(b) 0 // bool LCSave = LValueContext; LValueContext = (b);
 
 #define LOAD_NE() NoEquals = NESave;
@@ -370,7 +368,6 @@ static enum {
 #define LOAD_NP() NoPipe = NPSave;
 #define LOAD_NA() NoAndOr = NASave;
 #define LOAD_TC() TypeContext = TCSave;
-#define LOAD_KC() KeepComments = KCSave;
 #define LOAD_LC() 0 // LValueContext = LCSave;
 
 noreturn void
@@ -657,8 +654,7 @@ inline static Token *
 inline static bool
 invisible(Ty *ty, Token *tok)
 {
-        return (tok->ctx  == LEX_HIDDEN)
-            || (tok->type == TOKEN_COMMENT && !KeepComments);
+        return (tok->ctx == LEX_HIDDEN);
 }
 
 #define tokenx(i) ((tokenx)(ty, (i)))
@@ -3509,9 +3505,9 @@ prefix_template_expr(Ty *ty)
                 die("stray template expression");
         }
 
-        ExprVec *exprs = &CurrentTemplate->template.exprs;
-        ExprVec *holes = &CurrentTemplate->template.holes;
-        i32Vector         *ctxs  = &CurrentTemplate->template.ctxs;
+        ExprVec  *exprs = &CurrentTemplate->template.exprs;
+        ExprVec  *holes = &CurrentTemplate->template.holes;
+        i32Vector *ctxs = &CurrentTemplate->template.ctxs;
 
         Expr *e = mkxpr(TEMPLATE_HOLE);
         e->hole.i = vN(CurrentTemplate->template.holes);
@@ -6124,12 +6120,10 @@ parse_class_definition(Ty *ty)
                 parse_sync_lex(ty);
 
                 char const *doc = NULL;
-                SAVE_KC(true);
                 if (T0 == TOKEN_COMMENT) {
                         doc = tok()->comment;
                         next();
                 }
-                LOAD_KC();
 
                 /*
                  * Lol.
@@ -6784,7 +6778,6 @@ tokenize(Ty *ty, char const *source, TokenVector *tokens_out)
         ParserState save = state;
 
         lex_init(ty, "(tokenize)", source);
-        KeepComments = true;
 
         v00(tokens);
 
@@ -6855,21 +6848,6 @@ ImportModule(Ty *ty, Stmt *import)
         setctx(LEX_PREFIX);
 
         return ok;
-}
-
-static int
-tokcmp(void const *a, void const *b)
-{
-        Token const *ta = a;
-        Token const *tb = b;
-
-        if (ta->start.byte > tb->start.byte) { return  1; }
-        if (ta->start.byte < tb->start.byte) { return -1; }
-
-        if (ta->end.byte > tb->end.byte) { return  1; }
-        if (ta->end.byte < tb->end.byte) { return -1; }
-
-        return 0;
 }
 
 bool
@@ -6972,7 +6950,6 @@ parse_ex(
                 parse_sync_lex(ty);
                 lex_need_nl(ty, false);
 
-                SAVE_KC(true);
 
                 while (T0 == TOKEN_COMMENT) {
                         doc = tok()->comment;
@@ -7015,7 +6992,6 @@ parse_ex(
                         }
                 }
 
-                LOAD_KC();
 
                 Stmt *s = parse_statement(ty, -1);
                 if (s == NULL) {
@@ -7097,27 +7073,13 @@ parse(Ty *ty, char const *source, char const *file)
 Token
 parse_get_token(Ty *ty, int i)
 {
-        SAVE_KC(true);
-
-        Token *prev = token(-1);
-        if (!prev->pp) {
-                vN(tokens) = TokenIndex;
-                lex_rewind(ty, &prev->end);
-        }
-
-        Token *t = token(i);
-
-        LOAD_KC();
-
-        return *t;
+        return *token(i);
 }
 
 void
 parse_next(Ty *ty)
 {
-        SAVE_KC(true);
         next();
-        LOAD_KC();
 }
 
 struct value
@@ -7127,7 +7089,6 @@ parse_get_type(Ty *ty, int prec, bool resolve, bool want_raw)
 
         SAVE_NI(false);
         SAVE_NE(false);
-        SAVE_KC(false);
 
         Value v;
         Expr *e;
@@ -7149,15 +7110,11 @@ parse_get_type(Ty *ty, int prec, bool resolve, bool want_raw)
                 TY_CATCH_END();
         }
 
-        LOAD_KC();
         LOAD_NE();
         LOAD_NI();
 
         if (want_raw) {
-                Value pair = vT(2);
-                pair.items[0] = PTR(e);
-                pair.items[1] = v;
-                return pair;
+                return PAIR(PTR(e), v);
         } else {
                 return v;
         }
@@ -7170,7 +7127,6 @@ parse_get_expr(Ty *ty, int prec, bool resolve, bool want_raw)
 
         SAVE_NI(false);
         SAVE_NE(false);
-        SAVE_KC(false);
 
         Value v;
         Expr *e;
@@ -7192,15 +7148,11 @@ parse_get_expr(Ty *ty, int prec, bool resolve, bool want_raw)
                 TY_CATCH_END();
         }
 
-        LOAD_KC();
         LOAD_NE();
         LOAD_NI();
 
         if (want_raw) {
-                Value pair = vT(2);
-                pair.items[0] = PTR(e);
-                pair.items[1] = v;
-                return pair;
+                return PAIR(PTR(e), v);
         } else {
                 return v;
         }
@@ -7213,7 +7165,6 @@ parse_get_stmt(Ty *ty, int prec, bool want_raw)
 
         SAVE_NI(false);
         SAVE_NE(false);
-        SAVE_KC(false);
 
         Value v;
 
@@ -7233,7 +7184,6 @@ parse_get_stmt(Ty *ty, int prec, bool want_raw)
                 TY_CATCH_END();
         }
 
-        LOAD_KC();
         LOAD_NE();
         LOAD_NI();
 

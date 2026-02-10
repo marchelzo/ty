@@ -2,8 +2,10 @@ import ty
 import ty.token (next, peek)
 import ty.lex (peekc, getc)
 import ty.parse (expr, stmt, show as sourceOf)
-import argparse (opt, flag)
 import os
+import chalk (chalk)
+import path (Path)
+import yaml
 
 fn lisp(s) {
     s.matches(/(?:^[[:lower:]]+)|(?:[[:upper:]][[:lower:]]*)/)
@@ -13,108 +15,963 @@ fn lisp(s) {
 
 fn camel(name: String) -> String {
     let [first, *rest] = name.split('-')
-    rest.map!(s -> s[0].upper() + name.slice(1).lower())
-    [first, *rest].str()
+    rest.map!(s -> s[0].upper() + s.slice(1).lower())
+    [first, *rest].join()
 }
 
-class Args {
-    static parse(argv: [String] = os.argv) {
-        let opts = self.info()
-        let cmds = self.cmds()
-        let args = []
+fn _cleanDoc(ds) {
+    if ds == nil { return nil }
+    let lines = ds.lines().drop-while!(`!`).pop-while(`!`)
+    let leading = lines.filter(\_).map(`#` . /^\s*/).min() ?? 0
+    lines = lines.map(&[leading;])
+    // Strip block-comment "* " prefix
+    if lines.filter(\_).all?(\_.match?(/^\*/)) {
+        lines = lines.map(l -> if l { l.sub(/^\* ?/, '') } else { l })
+    }
+    lines.join('\n')
+}
 
-        let version = self.version()
+let boolish = %{
+    'true': true, 'false': false,
+    'yes': true,  'no': false,
+    'on': true,   'off': false,
+    '1': true,    '0': false
+}
 
-        let doc = if let (_, $doc-string, _) = doc(self) {
-            let lines = doc-string.lines().drop-while!(`!`).pop-while(`!`)
-            let leading = lines.filter(\_).map(`#` . /^\s*/).min() ?? 0
-            lines.map(&[leading;]).join('\n')
-        }
+fn _coerceVal(constraint, val) {
+    if constraint == Bool { return !!val }
+    if constraint == Int {
+        return if val :: Int { val } else { int("{val}") }
+    }
+    if constraint == Float {
+        return if val :: Float { val } else { float("{val}") }
+    }
+    if constraint == String {
+        return if val :: String { val } else { "{val}" }
+    }
+    val
+}
 
-        for o in opts {
-            let default = match o.default {
-                {show, val} => {show: ty.eval(show), val: ty.eval(val)},
-                _           => nil
-            }
-            if o.constraint == Bool {
-                args.push(
-                    flag(
-                        short: o.short,
-                        long:  o.long,
-                        help:  o.help
-                    )
-                )
-            } else if let [constraint] = o.constraint {
-                args.push(
-                    opt(
-                        short:   o.short,
-                        long:    o.long,
-                        help:    o.help,
-                        convert: o.?conv[0],
-                        post:    constraint,
-                        multi:   true,
-                        default: default ?? {val: [], show: '[]'}
-                    )
-                )
-            } else {
-                args.push(
-                    opt(
-                        short:   o.short,
-                        long:    o.long,
-                        help:    o.help,
-                        convert: o.?conv,
-                        post:    o.constraint,
-                        default: default
-                   )
-                )
-            }
-        }
+fn _doParse(cls, argv, config) -> _ {
+    let argv = argv ?? prelude::argv
+    let specs = cls.info()
+    let cmds = cls.cmds()
+    let cmdDescs: _ = cls.cmdHelps()
+    let version = cls.version()
 
-        let result = argparse.make(*args, version: version, help: doc)(argv)
+    let description = if let (_, $ds, _) = doc(cls) { _cleanDoc(ds) }
 
-        if #argv > 0 {
-            let sub = camel(argv[0])
-            if let $cmd = cmds[sub] {
-                result[sub] = ty.eval(cmd).parse(argv)
-                opts.push({
-                    name: sub,
-                    short: nil,
-                    long: sub,
-                    constraint: true
-                })
-                result['cmd'] = sub
-                opts.push({
-                    name: 'cmd',
-                    short: 'cmd',
-                    long: nil,
-                    constraint: true
-                })
-            } else {
-                // Error?
+    // Build lookup tables
+    let byShort = %{}
+    let byLong = %{}
+    let byName = %{}
+    let positionals = []
+
+    for spec in specs {
+        byName[spec.name] = spec
+        if spec.long != nil { byName[spec.long] = spec }
+        if spec.pos {
+            positionals.push(spec)
+        } else {
+            if spec.short != nil { byShort[spec.short] = spec }
+            if spec.long != nil  { byLong[spec.long] = spec }
+            if spec.aliases != nil {
+                for a in spec.aliases { byLong[a] = spec }
             }
         }
-
-        (
-            tuple(**(%{
-                o.name: (o.constraint == Bool)
-                      ? ((o.short in result) || (o.long in result))
-                      : (result[o.short] ?? result[o.long])
-                for o in opts
-            } + %{'help': 'help' in result})),
-            argv
-        )
     }
 
-    static info() -> Array[{
-        name: String,
-        ?short: ?String,
-        ?long: ?String,
-        ?help: ?String,
-        ?conv: _,
-        ?default: Any,
-        ?constraint: _
-    }];
+    // Result storage
+    let result = %{}
+    let explicit = %{}
+    let posArgs = []
+
+    // Initialize defaults
+    for spec in specs {
+        if spec.default != nil {
+            result[spec.name] = ty.eval(spec.default.val)
+        } else if spec.count {
+            result[spec.name] = 0
+        } else if spec.constraint == Bool {
+            result[spec.name] = false
+        } else if spec.repeat {
+            result[spec.name] = []
+        } else if let [_] = spec.constraint {
+            result[spec.name] = []
+        }
+    }
+
+    // Apply YAML config files (overrides defaults, lower precedence than CLI/env)
+    if config != nil {
+        let paths = if config :: Array { config } else { [config] }
+        for p in paths {
+            let fp = Path(p)
+            if fp.exists? {
+                let data: _ = yaml.parse-file(fp)
+                if data :: Dict {
+                    for key, val in data {
+                        if let $spec = byName[key] {
+                            let isArray = spec.repeat
+                            if !isArray { if let [_] = spec.constraint { isArray = true } }
+                            if isArray {
+                                let inner = if let [ic] = spec.constraint { ic } else { spec.constraint }
+                                let arr = if val :: Array { val } else { [val] }
+                                result[spec.name] = arr.map(v -> _coerceVal(inner, v))
+                            } else if spec.count {
+                                result[spec.name] = if val :: Int { val } else { int("{val}") ?? 0 }
+                            } else {
+                                result[spec.name] = _coerceVal(spec.constraint, val)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Helpers
+    fn die(msg) {
+        eprint(chalk"[b red]error[/]: {msg}")
+        eprint("Try '{argv[0]} --help' for more information.")
+        os.exit(1)
+    }
+
+    fn opt(name) {
+        chalk"[b blue]{name}[/]"
+    }
+
+    fn similar(name) {
+        specs.filter(s -> s.long != nil && !s.pos && s.long.editDistance(name) <= 1 + max(1, #s.long / 4))
+             .map(s -> opt("--{s.long}"))
+    }
+
+    fn coerce(constraint, val: String) {
+        match constraint {
+            ::String => val,
+            ::Int    => int(val),
+            ::Float  => float(val),
+            ::Bool   => (val in boolish) ? boolish[val] : (val ? true : false),
+            _        => constraint(val)
+        }
+    }
+
+    fn convert(spec, val: String) {
+        if spec.conv != nil {
+            return (spec.conv)(val)
+        }
+        let c = if let [inner] = spec.constraint { inner } else { spec.constraint }
+        let result = coerce(c, val)
+        let optName = if spec.pos {
+            opt((spec.long ?? lisp(spec.name)).upper())
+        } else {
+            opt(spec.long ? "--{spec.long}" : "-{spec.short}")
+        }
+        if result == nil && c != Bool {
+            let typeName = if let ($n, _, _) = doc(c) { n } else { str(c) }
+            die("Invalid value '{val}' for {optName}: expected {typeName}")
+        }
+        if spec.check != nil {
+            let chk: _ = spec.check.pred
+            let valid = false
+            if chk :: Regex {
+                valid = !!str(result).match?(chk)
+            } else if chk :: Array {
+                valid = chk.any?(c -> c == result)
+            } else if chk :: Range {
+                valid = result in chk
+            } else {
+                valid = !!chk(result)
+            }
+            if !valid {
+                let msg = if chk :: Regex {
+                    "must match {chk}"
+                } else if chk :: Array {
+                    "expected one of: {chk.join(', ')}"
+                } else if chk :: Range {
+                    "must be in range {spec.check.src}"
+                } else {
+                    "failed check: {spec.check.src}"
+                }
+                die("Invalid value '{val}' for {optName}: {msg}")
+            }
+        }
+        return result
+    }
+
+    fn setValue(spec, val) {
+        let vals = if spec.delim != nil { val.split(spec.delim) } else { [val] }
+        if spec.repeat {
+            result[spec.name] = result[spec.name] ?? []
+            for v in vals { result[spec.name].push(convert(spec, v)) }
+        } else if let [_] = spec.constraint {
+            result[spec.name] = result[spec.name] ?? []
+            for v in vals { result[spec.name].push(convert(spec, v)) }
+        } else {
+            result[spec.name] = convert(spec, vals[-1])
+        }
+        explicit[spec.name] = true
+    }
+
+    fn setFlag(spec) {
+        if spec.count {
+            result[spec.name] = (result[spec.name] ?? 0) + 1
+        } else {
+            result[spec.name] = true
+        }
+        explicit[spec.name] = true
+    }
+
+    fn showHelp() {
+        let prog = argv[0]
+
+        if version != nil {
+            print(chalk"[b yellow]{prog}[/] {version}")
+        } else {
+            print(chalk"[b yellow]{prog}[/]")
+        }
+        print()
+
+        if description != nil {
+            print(description)
+            print()
+        }
+
+        // Usage line
+        let usage = prog
+
+        let hasOpts = specs.find(\!_.pos) != nil
+        if hasOpts {
+            usage += ' [OPTIONS]'
+        }
+
+        if #cmds > 0 {
+            usage += ' <COMMAND>'
+        }
+
+        for spec in positionals {
+            let label = (spec.long ?? lisp(spec.name)).upper().sub('-', '_')
+            if spec.repeat {
+                usage += ((spec.required || (spec.?min ?? 0) > 0) ? " <{label}>..." : " [{label}]...")
+            } else {
+                usage += (spec.required ? " <{label}>" : " [{label}]")
+            }
+        }
+
+        print(chalk"[b bright green]Usage:[/] {usage}")
+        print()
+
+        // Options
+        let optSpecs = specs.filter(\!_.pos)
+        let visibleOpts = optSpecs.filter(\!_.hidden)
+
+        if #visibleOpts > 0 || version != nil {
+            // Build left-column strings for all visible options
+            let flagMap = %{}
+            let typeMap = %{}
+            for spec in visibleOpts {
+                flagMap[spec.name] = match (spec.short, spec.long) {
+                    (nil, $l)  => "    --{l}",
+                    ($s, nil)  => "-{s}",
+                    ($s, $l)   => "-{s}, --{l}"
+                }
+
+                if spec.constraint != Bool && !spec.count {
+                    typeMap[spec.name] = if spec.placeholder != nil {
+                        spec.placeholder
+                    } else {
+                        let c = if let [inner] = spec.constraint { inner } else { spec.constraint }
+                        if let ($name, _, _) = doc(c) { name } else { str(c) }
+                    }
+                }
+            }
+
+            // Global column width includes -h/--help and --version
+            let allLefts = ['-h, --help']
+            if version != nil {
+                allLefts.push('    --version')
+            }
+            for spec in visibleOpts {
+                let s = flagMap[spec.name]
+                if typeMap[spec.name] != nil { s += " <{typeMap[spec.name]}>" }
+                allLefts.push(s)
+            }
+            let w = allLefts.map(&len).max() ?? 0
+
+            // Collect group names in definition order
+            let groups = []
+            for spec in visibleOpts {
+                if spec.group != nil && !groups.contains?(spec.group) {
+                    groups.push(spec.group)
+                }
+            }
+
+            // Helper to print a set of option specs
+            fn printOpts(opts) {
+                for spec in opts {
+                    let flag = flagMap[spec.name]
+                    let typ = typeMap[spec.name]
+                    let left = if typ != nil {
+                        chalk"[b blue]{flag}[/] [green]<{typ}>[/]"
+                    } else {
+                        chalk"[b blue]{flag}[/]"
+                    }
+                    let pad = ' '.repeat(w - left.width())
+                    let line = chalk"  {left}{pad}  {spec.help ?? ''}"
+                    if spec.default != nil {
+                        line = line + chalk" [dim](default: [bright green]{ty.eval(spec.default.show)}[/bright green])[/]"
+                    }
+                    if spec.env != nil {
+                        line = line + chalk" [dim](env: [yellow]{spec.env}[/yellow])[/]"
+                    }
+                    if spec.check != nil && spec.check.pred :: Array {
+                        let choices = spec.check.pred.map(c -> chalk"[magenta]{c}[/]").join("{chalk"[dim],[/] "}")
+                        line = line + chalk" [dim](values: [/]{choices}[dim])[/]"
+                    }
+                    if spec.check != nil && spec.check.pred :: Range {
+                        line = line + chalk" [dim](range: [cyan]{spec.check.src}[/cyan])[/]"
+                    }
+                    print(line)
+                }
+            }
+
+            // Print ungrouped options under "Options:"
+            let ungrouped = visibleOpts.filter(\_.group == nil)
+            if #ungrouped > 0 || version != nil {
+                print(chalk"[b bright green]Options:[/]")
+                printOpts(ungrouped)
+                print(chalk"  [b blue]{'-h, --help'.rpad(w)}[/]  Show this help message")
+                if version != nil {
+                    print(chalk"  [b blue]{'    --version'.rpad(w)}[/]  Show version")
+                }
+                print()
+            }
+
+            // Print each group
+            for g in groups {
+                let groupOpts = visibleOpts.filter(\_.group == g)
+                print(chalk"[b bright green]{g}:[/]")
+                printOpts(groupOpts)
+                print()
+            }
+        }
+
+        // Positionals
+        if #positionals > 0 {
+            print(chalk"[b bright green]Arguments:[/]")
+
+            let entries = []
+
+            for spec in positionals {
+                let label = (spec.long ?? lisp(spec.name)).upper().sub('-', '_')
+                entries.push((label, spec.help ?? ''))
+            }
+
+            let w = entries.map(\#_[0]).max() ?? 0
+
+            for (label, help) in entries {
+                print(chalk"  [b cyan]{label.rpad(w)}[/]  {help}")
+            }
+
+            print()
+        }
+
+        // Commands
+        if #cmds > 0 {
+            print(chalk"[b bright green]Commands:[/]")
+
+            let cmdEntries = []
+            for name, _ in cmds {
+                let summary = if cmdDescs[name] != nil {
+                    cmdDescs[name]
+                } else {
+                    let subcls: _ = ty.eval(cmds[name])
+                    if let (_, $ds, _) = doc(subcls) {
+                        let cleaned = _cleanDoc(ds)
+                        if cleaned { cleaned.lines()[0] } else { '' }
+                    } else { '' }
+                }
+                cmdEntries.push((name, summary))
+            }
+
+            let cw = cmdEntries.map(\#_[0]).max() ?? 0
+
+            for (name, summary) in cmdEntries {
+                if summary {
+                    print(chalk"  [b cyan]{name.rpad(cw)}[/]  {summary}")
+                } else {
+                    print(chalk"  [b cyan]{name}[/]")
+                }
+            }
+
+            print()
+        }
+    }
+
+    // Main parse loop
+    let i = 1
+    let subcmdName = nil
+    let subcmdResult = nil
+    let subcmdRest = []
+
+    while i < #argv {
+        let arg = argv[i]
+        i += 1
+
+        match arg {
+            '--' => {
+                while i < #argv {
+                    posArgs.push(argv[i])
+                    i += 1
+                }
+            },
+
+            '-h', '--help' => {
+                showHelp()
+                os.exit(0)
+            },
+
+            '--version' => {
+                if version != nil {
+                    print("{argv[0]} {version}")
+                    os.exit(0)
+                } else {
+                    die("Unknown option: {opt('--version')}")
+                }
+            },
+
+            '--completions' => {
+                if i >= #argv {
+                    die("Missing shell name for {opt('--completions')} (bash, zsh, fish)")
+                }
+                let shell = argv[i]
+                let progName = argv[0].split('/').pop()
+                print(_completions(cls, shell, progName))
+                os.exit(0)
+            },
+
+            /^--no-(.+)/ => {
+                let name = $1
+                if let $spec = byLong[name] {
+                    if spec.constraint == Bool {
+                        result[spec.name] = false
+                        explicit[spec.name] = true
+                    } else {
+                        die("Cannot negate non-boolean option {opt("--{name}")}")
+                    }
+                } else {
+                    let close = similar(name)
+                    if #close > 0 {
+                        die("Unknown option: {opt("--no-{name}")} (did you mean {close.join(', ')}?)")
+                    } else {
+                        die("Unknown option: {opt("--no-{name}")}")
+                    }
+                }
+            },
+
+            /^--([^=]+)=(.*)/ => {
+                let name = $1
+                let val = $2
+                if let $spec = byLong[name] {
+                    if spec.count {
+                        result[spec.name] = int(val) ?? 0
+                        explicit[spec.name] = true
+                    } else if spec.constraint == Bool {
+                        if val in boolish {
+                            result[spec.name] = boolish[val]
+                            explicit[spec.name] = true
+                        } else {
+                            die("Invalid boolean for {opt("--{name}")}: '{val}'")
+                        }
+                    } else if val == '' {
+                        let isArray = spec.repeat
+                        if !isArray { if let [_] = spec.constraint { isArray = true } }
+                        if isArray {
+                            result[spec.name] = []
+                            explicit[spec.name] = true
+                        } else {
+                            setValue(spec, val)
+                        }
+                    } else {
+                        setValue(spec, val)
+                    }
+                } else {
+                    let close = similar(name)
+                    if #close > 0 {
+                        die("Unknown option: {opt("--{name}")} (did you mean {close.join(', ')}?)")
+                    } else {
+                        die("Unknown option: {opt("--{name}")}")
+                    }
+                }
+            },
+
+            /^--(.+)/ => {
+                let name = $1
+                if let $spec = byLong[name] {
+                    if spec.constraint == Bool && !spec.count {
+                        setFlag(spec)
+                    } else if spec.count {
+                        setFlag(spec)
+                    } else {
+                        if i >= #argv {
+                            die("Missing value for {opt("--{name}")}")
+                        }
+                        setValue(spec, argv[i])
+                        i += 1
+                    }
+                } else {
+                    let close = similar(name)
+                    if #close > 0 {
+                        die("Unknown option: {opt("--{name}")} (did you mean {close.join(', ')}?)")
+                    } else {
+                        die("Unknown option: {opt("--{name}")}")
+                    }
+                }
+            },
+
+            /^-(.+)/ => {
+                let chars = $1
+                let j = 0
+                while j < #chars {
+                    let c = chars[j]
+                    if let $spec = byShort[c] {
+                        if spec.constraint == Bool && !spec.count {
+                            setFlag(spec)
+                            j += 1
+                        } else if spec.count {
+                            setFlag(spec)
+                            j += 1
+                        } else {
+                            // Option: rest of chars or next arg is the value
+                            if j + 1 < #chars {
+                                setValue(spec, chars.slice(j + 1))
+                            } else if i < #argv {
+                                setValue(spec, argv[i])
+                                i += 1
+                            } else {
+                                die("Missing value for {opt("-{c}")}")
+                            }
+                            break
+                        }
+                    } else {
+                        die("Unknown option: {opt("-{c}")}")
+                    }
+                }
+            },
+
+            _ => {
+                if arg in cmds {
+                    subcmdName = arg
+                    let subArgv = [arg]
+                    while i < #argv {
+                        subArgv.push(argv[i])
+                        i += 1
+                    }
+                    let sub: _ = ty.eval(cmds[arg]).parse(subArgv)
+                    subcmdResult = sub[0]
+                    subcmdRest = sub[1]
+                } else {
+                    posArgs.push(arg)
+                }
+            }
+        }
+    }
+
+    // Assign positional args
+    let posIdx = 0
+    for spec in positionals {
+        if spec.repeat {
+            result[spec.name] = result[spec.name] ?? []
+            while posIdx < #posArgs {
+                result[spec.name].push(convert(spec, posArgs[posIdx]))
+                posIdx += 1
+            }
+            if posIdx > 0 {
+                explicit[spec.name] = true
+            }
+        } else if posIdx < #posArgs {
+            result[spec.name] = convert(spec, posArgs[posIdx])
+            posIdx += 1
+            explicit[spec.name] = true
+        }
+    }
+
+    // Apply environment variable defaults
+    for spec in specs if spec.env != nil && !(spec.name in explicit) {
+        if let $envVal = getenv(spec.env) {
+            if spec.constraint == Bool {
+                result[spec.name] = (envVal in boolish) ? boolish[envVal] : true
+            } else {
+                result[spec.name] = convert(spec, envVal)
+            }
+        }
+    }
+
+    // Validate required fields
+    for spec in specs if spec.required && result[spec.name] == nil {
+        if spec.pos {
+            die("Missing required argument: {opt((spec.long ?? lisp(spec.name)).upper())}")
+        } else {
+            die("Missing required option: {opt(spec.long ? "--{spec.long}" : "-{spec.short}")}")
+        }
+    }
+
+    // Validate min counts
+    for spec in specs if spec.?min != nil {
+        let arr = result[spec.name] ?? []
+        if #arr < spec.min {
+            die("Expected at least {spec.min} value(s) for {opt(lisp(spec.name))}")
+        }
+    }
+
+    // Validate conflicts
+    for spec in specs if spec.conflicts != nil && spec.name in explicit {
+        let optName = opt(spec.long ? "--{spec.long}" : "-{spec.short}")
+        for other in spec.conflicts {
+            if other in explicit {
+                let otherSpec = specs.find(s -> s.name == other)
+                let otherName = opt(if otherSpec != nil {
+                    otherSpec.long ? "--{otherSpec.long}" : "-{otherSpec.short}"
+                } else {
+                    other
+                })
+                die("{optName} cannot be used with {otherName}")
+            }
+        }
+    }
+
+    // Validate requires
+    for spec in specs if spec.requires != nil && spec.name in explicit {
+        let optName = opt(spec.long ? "--{spec.long}" : "-{spec.short}")
+        for other in spec.requires {
+            if other not in explicit {
+                let otherSpec = specs.find(s -> s.name == other)
+                let otherName = opt(if otherSpec != nil {
+                    otherSpec.long ? "--{otherSpec.long}" : "-{otherSpec.short}"
+                } else {
+                    other
+                })
+                die("{optName} requires {otherName}")
+            }
+        }
+    }
+
+    // Build result instance
+    let fields = %{}
+    for spec in specs {
+        fields[spec.name] = result[spec.name]
+    }
+
+    if subcmdName != nil {
+        fields['cmd'] = subcmdResult
+    }
+
+    let restArgs = if subcmdName != nil {
+        subcmdRest
+    } else {
+        posArgs.slice(posIdx)
+    }
+
+    (cls(**fields), restArgs)
 }
+
+// ── Shell completion generators ──────────────────────────────────────
+
+fn _specOptWords(specs: _, version: _) {
+    let words = []
+    for spec in specs if !spec.pos {
+        if spec.long != nil { words.push('--' + spec.long) }
+    }
+    words.push('--help')
+    if version != nil { words.push('--version') }
+    words
+}
+
+fn _bashValCases(specs: _, ind) {
+    let choiceSpecs = specs.filter(s -> !s.pos && s.check != nil && s.check.pred :: Array)
+    if #choiceSpecs == 0 { return nil }
+
+    let lines = []
+    lines.push(ind + 'case "$prev" in')
+    for spec in choiceSpecs {
+        let flags = []
+        if spec.long != nil { flags.push('--' + spec.long) }
+        if spec.short != nil { flags.push('-' + spec.short) }
+        let vals = spec.check.pred.join(' ')
+        lines.push(ind + '    ' + flags.join('|') + ')')
+        lines.push(ind + '        COMPREPLY=( $(compgen -W "' + vals + '" -- "$cur") )')
+        lines.push(ind + '        return 0')
+        lines.push(ind + '        ;;')
+    }
+    lines.push(ind + 'esac')
+    lines.join('\n')
+}
+
+fn _bashComplete(specs: _, cmds: _, version: _, prog: _) {
+    let funcName = '__' + prog.sub(/[^a-zA-Z0-9]/, '_') + '_completions'
+    let cmdNames = [n for n, _ in cmds]
+    let lines = []
+
+    lines.push(funcName + '() {')
+    lines.push('    local cur prev')
+    lines.push('    COMPREPLY=()')
+    lines.push('    cur="${COMP_WORDS[COMP_CWORD]}"')
+    lines.push('    prev="${COMP_WORDS[COMP_CWORD-1]}"')
+
+    if #cmdNames > 0 {
+        lines.push('')
+        lines.push('    local subcmd=""')
+        lines.push('    local i=1')
+        lines.push('    while [[ $i -lt $COMP_CWORD ]]; do')
+        lines.push('        case "${COMP_WORDS[$i]}" in')
+        lines.push('            ' + cmdNames.join('|') + ')')
+        lines.push('                subcmd="${COMP_WORDS[$i]}"')
+        lines.push('                break')
+        lines.push('                ;;')
+        lines.push('        esac')
+        lines.push('        ((i++))')
+        lines.push('    done')
+        lines.push('')
+        lines.push('    case "$subcmd" in')
+
+        for cn, ce in cmds {
+            let cc: _ = ty.eval(ce)
+            let ss: _ = cc.info()
+            let sv: _ = cc.version()
+            let sw: _ = _specOptWords(ss, sv)
+
+            lines.push('        ' + cn + ')')
+            let sc: _ = _bashValCases(ss, '            ')
+            if sc != nil { lines.push(sc) }
+            lines.push('            if [[ "$cur" == -* ]]; then')
+            lines.push('                COMPREPLY=( $(compgen -W "' + sw.join(' ') + '" -- "$cur") )')
+            lines.push('            fi')
+            lines.push('            return 0')
+            lines.push('            ;;')
+        }
+
+        lines.push('    esac')
+    }
+
+    let tc = _bashValCases(specs, '    ')
+    if tc != nil {
+        lines.push('')
+        lines.push(tc)
+    }
+
+    let ow = _specOptWords(specs, version)
+    lines.push('')
+    lines.push('    if [[ "$cur" == -* ]]; then')
+    lines.push('        COMPREPLY=( $(compgen -W "' + ow.join(' ') + '" -- "$cur") )')
+    lines.push('        return 0')
+    lines.push('    fi')
+
+    if #cmdNames > 0 {
+        lines.push('')
+        lines.push('    COMPREPLY=( $(compgen -W "' + cmdNames.join(' ') + '" -- "$cur") )')
+    }
+
+    lines.push('}')
+    lines.push('complete -F ' + funcName + ' ' + prog)
+
+    lines.join('\n')
+}
+
+fn _zshComplete(specs: _, cmds: _, version: _, prog: _) {
+    let funcName = '_' + prog.sub(/[^a-zA-Z0-9]/, '_')
+    let cmdNames = [n for n, _ in cmds]
+    let opts = specs.filter(\!_.pos)
+    let lines = []
+
+    lines.push('#compdef ' + prog)
+    lines.push('')
+    lines.push(funcName + '() {')
+
+    // Build _arguments specs
+    let argSpecs = []
+    for spec in opts {
+        let desc = (spec.help ?? '').sub("'", "''").sub('[', '\\[').sub(']', '\\]')
+
+        let needsVal = spec.constraint != Bool && !spec.count
+        let valAction = if spec.check != nil && spec.check.pred :: Array {
+            ': :(' + spec.check.pred.join(' ') + ')'
+        } else if needsVal {
+            ': :'
+        } else {
+            ''
+        }
+
+        if spec.short != nil {
+            argSpecs.push("'-" + spec.short + '[' + desc + ']' + valAction + "'")
+        }
+        if spec.long != nil {
+            let eq = if needsVal { '=' } else { '' }
+            argSpecs.push("'--" + spec.long + eq + '[' + desc + ']' + valAction + "'")
+        }
+    }
+
+    argSpecs.push("'--help[Show help]'")
+    if version != nil {
+        argSpecs.push("'--version[Show version]'")
+    }
+
+    if #cmdNames > 0 {
+        argSpecs.push("'1:command:(" + cmdNames.join(' ') + ")'")
+        argSpecs.push("'*::arg:->args'")
+    }
+
+    lines.push('    _arguments \\')
+    for (i, s) in argSpecs.enumerate() {
+        if i < #argSpecs - 1 {
+            lines.push('        ' + s + ' \\')
+        } else {
+            lines.push('        ' + s)
+        }
+    }
+
+    // Subcommand dispatch
+    if #cmdNames > 0 {
+        lines.push('')
+        lines.push('    case "$state" in')
+        lines.push('        args)')
+        lines.push('            case "${words[1]}" in')
+
+        for cn, ce in cmds {
+            let cc: _ = ty.eval(ce)
+            let ss: _ = cc.info()
+            let sv: _ = cc.version()
+            let subOpts: _ = ss.filter(\!_.pos)
+            let subArgSpecs = []
+
+            for spec in subOpts {
+                let desc = (spec.help ?? '').sub("'", "''").sub('[', '\\[').sub(']', '\\]')
+                let needsVal = spec.constraint != Bool && !spec.count
+                let valAction = if spec.check != nil && spec.check.pred :: Array {
+                    ': :(' + spec.check.pred.join(' ') + ')'
+                } else if needsVal {
+                    ': :'
+                } else {
+                    ''
+                }
+                if spec.short != nil {
+                    subArgSpecs.push("'-" + spec.short + '[' + desc + ']' + valAction + "'")
+                }
+                if spec.long != nil {
+                    let eq = if needsVal { '=' } else { '' }
+                    subArgSpecs.push("'--" + spec.long + eq + '[' + desc + ']' + valAction + "'")
+                }
+            }
+            subArgSpecs.push("'--help[Show help]'")
+            if sv != nil { subArgSpecs.push("'--version[Show version]'") }
+
+            lines.push('                ' + cn + ')')
+            lines.push('                    _arguments \\')
+            for (i, s) in subArgSpecs.enumerate() {
+                if i < #subArgSpecs - 1 {
+                    lines.push('                        ' + s + ' \\')
+                } else {
+                    lines.push('                        ' + s)
+                }
+            }
+            lines.push('                    ;;')
+        }
+
+        lines.push('            esac')
+        lines.push('            ;;')
+        lines.push('    esac')
+    }
+
+    lines.push('}')
+    lines.push('')
+    lines.push(funcName + ' "$@"')
+
+    lines.join('\n')
+}
+
+fn _fishComplete(specs: _, cmds: _, version: _, prog: _) {
+    let cmdNames = [n for n, _ in cmds]
+    let opts = specs.filter(\!_.pos)
+    let lines = []
+    let hasCmds = #cmdNames > 0
+    let noCmdCond = if hasCmds { " -n '__fish_use_subcommand'" } else { '' }
+
+    for spec in opts {
+        let desc = (spec.help ?? '').sub("'", "\\'")
+        let parts = ['complete -c ' + prog + noCmdCond]
+
+        if spec.short != nil { parts.push('-s ' + spec.short) }
+        if spec.long != nil { parts.push('-l ' + spec.long) }
+        parts.push("-d '" + desc + "'")
+
+        if spec.constraint != Bool && !spec.count {
+            if spec.check != nil && spec.check.pred :: Array {
+                parts.push('-x -a ' + "'" + spec.check.pred.join(' ') + "'")
+            } else {
+                parts.push('-r')
+            }
+        }
+
+        lines.push(parts.join(' '))
+    }
+
+    lines.push('complete -c ' + prog + noCmdCond + " -l help -d 'Show help'")
+    if version != nil {
+        lines.push('complete -c ' + prog + noCmdCond + " -l version -d 'Show version'")
+    }
+
+    // Subcommands
+    if hasCmds {
+        lines.push('')
+        for cn, ce in cmds {
+            let cc: _ = ty.eval(ce)
+            let ss: _ = cc.info()
+            let sv: _ = cc.version()
+            let subOpts: _ = ss.filter(\!_.pos)
+            let cond = " -n '__fish_seen_subcommand_from " + cn + "'"
+
+            lines.push("complete -c " + prog + " -n '__fish_use_subcommand' -a " + cn + " -d '" + cn + "'")
+
+            for spec in subOpts {
+                let desc = (spec.help ?? '').sub("'", "\\'")
+                let parts = ['complete -c ' + prog + cond]
+                if spec.short != nil { parts.push('-s ' + spec.short) }
+                if spec.long != nil { parts.push('-l ' + spec.long) }
+                parts.push("-d '" + desc + "'")
+
+                if spec.constraint != Bool && !spec.count {
+                    if spec.check != nil && spec.check.pred :: Array {
+                        parts.push('-x -a ' + "'" + spec.check.pred.join(' ') + "'")
+                    } else {
+                        parts.push('-r')
+                    }
+                }
+
+                lines.push(parts.join(' '))
+            }
+
+            lines.push('complete -c ' + prog + cond + " -l help -d 'Show help'")
+            if sv != nil {
+                lines.push('complete -c ' + prog + cond + " -l version -d 'Show version'")
+            }
+        }
+    }
+
+    lines.join('\n')
+}
+
+fn _completions(cls, shell, progName) -> _ {
+    let specs = cls.info()
+    let cmds = cls.cmds()
+    let version = cls.version()
+
+    match shell {
+        'bash' => _bashComplete(specs, cmds, version, progName),
+        'zsh'  => _zshComplete(specs, cmds, version, progName),
+        'fish' => _fishComplete(specs, cmds, version, progName),
+        _      => ''
+    }
+}
+
+const __types = %{}
 
 pub macro clap! {
     let name = peek(0).id
@@ -141,15 +998,52 @@ pub macro clap! {
 
     let args = []
     let cmds = %{}
+    let cmdHelps = %{}
 
-    while peek(0).type != '}' {
-        let help = if peek(0).type == 'comment' {
+    let group = nil
+
+    while peek(0).type != '}' || group != nil {
+        // Close group block
+        if peek(0).type == '}' {
             next()
-            peek(-1).comment
+            group = nil
+            continue
+        }
+
+        let help = nil
+        let conv = nil
+        let short = nil
+        let long = nil
+        let default = nil
+        let required = false
+        let env = nil
+        let pos = false
+        let repeat = false
+        let count = false
+        let min = nil
+        let check = nil
+        let hidden = false
+        let placeholder = nil
+        let conflicts = nil
+        let requires = nil
+        let delim = nil
+        let aliases = nil
+        let sub = nil
+
+        if peek(0).type == 'comment' {
+            next()
+            help = peek(-1).comment
         }
 
         let name = peek(0).id
         next()
+
+        // Handle group blocks: group 'Name' { ... }
+        if name == 'group' {
+            group = ty.eval(expr(1))
+            next()  // consume '{'
+            continue
+        }
 
         if name == 'cmd' {
             let sub = peek(0).id
@@ -161,6 +1055,7 @@ pub macro clap! {
             let parser = expr(999, resolve: true)
 
             cmds[sub] = parser
+            if help != nil { cmdHelps[sub] = help }
 
             continue
         }
@@ -168,11 +1063,10 @@ pub macro clap! {
         // :
         next()
 
-        let constraint = ty.eval(expr(2))
-        let conv = constraint
-        let short = name[0]
-        let long = lisp(name)
-        let default = nil
+        let constraintExpr = expr(2)
+        let constraint = ty.eval(constraintExpr)
+        short = name[0]
+        long = lisp(name)
 
         while peek(0).type == ',' {
             next()
@@ -210,20 +1104,157 @@ pub macro clap! {
                     }
                 },
 
+                'required' => {
+                    next()
+                    required = ty.eval(expr(1))
+                },
+
+                'env' => {
+                    next()
+                    env = ty.eval(expr(1))
+                },
+
+                'pos' => {
+                    next()
+                    pos = ty.eval(expr(1))
+                },
+
+                'repeat' => {
+                    next()
+                    repeat = ty.eval(expr(1))
+                },
+
+                'count' => {
+                    next()
+                    count = ty.eval(expr(1))
+                },
+
+                'min' => {
+                    next()
+                    min = ty.eval(expr(1))
+                },
+
+                'check' => {
+                    next()
+                    let checkExpr = expr(1)
+                    check = {pred: ty.eval(checkExpr), src: sourceOf(checkExpr)}
+                },
+
+                'hidden' => {
+                    next()
+                    hidden = ty.eval(expr(1))
+                },
+
+                'placeholder' => {
+                    next()
+                    placeholder = ty.eval(expr(1))
+                },
+
+                'conflicts' => {
+                    next()
+                    let v = ty.eval(expr(1))
+                    conflicts = if v :: Array { v } else { [v] }
+                },
+
+                'requires' => {
+                    next()
+                    let v = ty.eval(expr(1))
+                    requires = if v :: Array { v } else { [v] }
+                },
+
+                'delim' => {
+                    next()
+                    delim = ty.eval(expr(1))
+                },
+
+                'aliases' => {
+                    next()
+                    let v = ty.eval(expr(1))
+                    aliases = if v :: Array { v } else { [v] }
+                },
+
                 id => {
-                    eprint("Invalid attribute in clap! macro invocation: {id}")
+                    eprint("clap!: Unknown attribute '{id}'")
                 }
             }
         }
 
-        args.push({name, constraint, help, conv, short, long, default})
+        args.push({name, constraint, constraintExpr, help, conv, short, long, default, required, env, pos, repeat, count, min, check, hidden, placeholder, conflicts, requires, group, delim, aliases})
     }
 
-    let getCmds = ty.Func(name: 'cmds', params: [], body: ty.Return(ty.Value(cmds)))
-    let info    = ty.Func(name: 'info', params: [], body: ty.Return(ty.Value(args)))
-    let version = ty.Func(name: 'version', params: [], body: ty.Return(ty.Value(version)))
+    // Build class fields from parsed args
+    let classFields = []
+    for arg in args {
+        let fieldType = nil
+        let ce = arg.constraintExpr
+
+        if arg.count {
+            fieldType = $$[ $$::(Int) $$]
+        } else if arg.constraint == Bool {
+            fieldType = ce
+        } else if arg.repeat {
+            fieldType = if let [_] = arg.constraint { ce } else { $$[ [$$ce] $$] }
+        } else if let [_] = arg.constraint {
+            fieldType = ce
+        } else if arg.required || arg.default != nil {
+            fieldType = ce
+        } else {
+            fieldType = $$[ $$ce | nil $$]
+        }
+
+        classFields.push(ty.Id(name: arg.name, constraint: fieldType))
+    }
+
+    const {mod, *} = ty.ctx()
+
+    if #cmds > 0 {
+        let cmdTypes = [__types["{mod}.{sub}"] ?? $$[_$$] for sub in cmds]
+        cmdTypes.push($$[ nil $$])
+        classFields.push(ty.Id(name: 'cmd', constraint: ty.Union(cmdTypes)))
+    }
+
+    let clsType = ty.Id(name: name)
+    let retType = $$[ ($$clsType, [$$::(String)]) $$]
+
+    let parseFn = ty.Func(
+        name: 'parse',
+        params: [
+            ty.Param(
+                name: 'argv',
+                constraint: $$[ $$::(Array[String]) $$],
+                default: $$[ nil $$]
+            ),
+            ty.Param(
+                name: 'config',
+                constraint: $$[ $$::(String | Path | Array[String | Path]) $$],
+                default: $$[ nil $$]
+            )
+        ],
+        rt: retType,
+        body: $$[ $$::(_doParse)(self, argv, config) $$]
+    )
+
+    let getCmds     = ty.Func(name: 'cmds', params: [], body: ty.Return(ty.Value(cmds)))
+    let getCmdHelps = ty.Func(name: 'cmdHelps', params: [], body: ty.Return(ty.Value(cmdHelps)))
+    let info        = ty.Func(name: 'info', params: [], body: ty.Return(ty.Value(args)))
+    let version     = ty.Func(name: 'version', params: [], body: ty.Return(ty.Value(version)))
+
+    let defaultProgName = lisp(name)
+    let completionsFn = ty.Func(
+        name: 'completions',
+        params: [ty.Param(name: 'shell'), ty.Param(name: 'name', default: ty.String(defaultProgName))],
+        body: ty.Return($$[ $$::(_completions)(self, shell, name) $$])
+    )
 
     next()
 
-    ty.Class(name: name, static-methods: [info, getCmds, version], `super`: ty.Id(name: 'Args', module: 'clap'))
+    let cls = ty.Class(
+        name: name,
+        fields: classFields,
+        static-methods: [info, getCmds, getCmdHelps, version, parseFn, completionsFn]
+    )
+
+    __types["{mod}.{lisp(name)}"] = clsType
+
+    cls
 }

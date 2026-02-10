@@ -11,13 +11,13 @@ let bools = %{
     'no': false
 }
 
-pub function opt(short, long, pre=true, post=true, convert=id, multi=false, default=nil, help='') {
+pub function opt(short, long, pre=true, post=true, conv=id, multi=false, default=nil, help='') {
     return {
         short,
         long,
         pre,
         post,
-        convert,
+        conv,
         multi,
         help,
         default,
@@ -54,7 +54,7 @@ use OptSpec = {
     ?pre: _,
     ?post: _,
     ?multi: Bool,
-    default: _
+    ?default: _
 }
 
 pub fn make(*opts: OptSpec, version, help) {
@@ -63,9 +63,9 @@ pub fn make(*opts: OptSpec, version, help) {
         let i = 1
 
         for opt in opts {
-            if opt.type == 'o' && opt.default != nil {
-                result[opt.short ?? opt.long]  = opt.default.val
-                result[opt.long  ?? opt.short] = opt.default.val
+            if opt.type == 'o' && opt.?default != nil {
+                result[opt.?short ?? opt.long]  = opt.default.val
+                result[opt.?long  ?? opt.short] = opt.default.val
             }
         }
 
@@ -164,14 +164,14 @@ pub fn make(*opts: OptSpec, version, help) {
                         print()
                     }
 
-                    result << 'h'
-                    result << 'help'
+                    result['h']    = true
+                    result['help'] = true
                 },
 
                 /^--([^=]+)$/ => {
                     if let $opt = getflag($1) {
-                        if opt.long  { result << opt.long  }
-                        if opt.short { result << opt.short }
+                        if opt.long  { result[opt.long]  = true }
+                        if opt.short { result[opt.short] = true }
                     } else {
                         unrecognized($1)
                     }
@@ -182,15 +182,15 @@ pub fn make(*opts: OptSpec, version, help) {
                         if !($2 :: opt.pre) {
                             throw "Invalid value for {$1}: {$2}"
                         }
-                        let value = (opt.convert)($2)
+                        let value = (opt.conv)($2)
                         if !(value :: opt.post) {
                             throw "Invalid value for {$1}: {$2}"
                         }
                         add(opt, result, value)
                     } else if let $flag = getflag($1) and $2 in bools {
                         if bools[$2] {
-                            if flag.short { result << flag.short }
-                            if flag.long  { result << flag.long  }
+                            if flag.short { result[flag.short] = true }
+                            if flag.long  { result[flag.long]  = true }
                         } else {
                             result.remove(flag.short)
                             result.remove(flag.long)
@@ -216,7 +216,7 @@ pub fn make(*opts: OptSpec, version, help) {
                             throw "Invalid value for {opt.long ?? $1[0]}: {s}"
                         }
 
-                        let value = (opt.convert)(s)
+                        let value = (opt.conv)(s)
 
                         if !(value :: opt.post) {
                             throw "Invalid value for {opt.long ?? $1[0]}: {s}"
@@ -226,8 +226,8 @@ pub fn make(*opts: OptSpec, version, help) {
                     } else {
                         for c in $1 {
                             if let $opt = getflag(c) {
-                                if opt.short { result << opt.short }
-                                if opt.long  { result << opt.long  }
+                                if opt.short { result[opt.short] = true }
+                                if opt.long  { result[opt.long]  = true }
                             } else {
                                 throw "Unrecognized flag: {c}"
                             }

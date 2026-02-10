@@ -8099,13 +8099,31 @@ BUILTIN_FUNCTION(ty_tokenize)
 
 BUILTIN_FUNCTION(ty_scope)
 {
-        char const *_name__ = "ty.scope()";
-
-        CHECK_ARGC(0);
+        ASSERT_ARGC("ty.scope()", 0);
 
         Scope *scope = TyCompilerState(ty)->macro_scope;
 
         return (scope == NULL) ? NIL : PTR(scope);
+}
+
+BUILTIN_FUNCTION(ty_ctx)
+{
+        ASSERT_ARGC("ty.ctx()", 0);
+
+        CompileState const *state = TyCompilerState(ty);
+
+        Value scope = (state->macro_scope != NULL)
+                    ? PTR(state->macro_scope)
+                    : NIL;
+        Value mod  = vSsz(state->module->name);
+        Value path = vSsz(state->module->path);
+        
+
+        return vTn(
+                "scope", scope,
+                "mod", mod,
+                "path", path
+        );
 }
 
 static Value
@@ -8302,7 +8320,7 @@ MethodSummary(Ty *ty, Type *t0, Expr const *fun)
 
 BUILTIN_FUNCTION(ty_type_type)
 {
-        ASSERT_ARGC("ty.types.info()", 1);
+        ASSERT_ARGC("ty.types.type()", 1);
 
         Value arg0 = ARG(0);
         Type *t0 = type_from_ty(ty, &arg0);

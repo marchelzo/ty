@@ -902,6 +902,7 @@ inline static void
 (push)(Ty *ty, Value v)
 {
         xvP(STACK, v);
+
 }
 
 inline static void
@@ -2291,7 +2292,19 @@ BuildKwargsDict(Ty *ty, int nkw)
                 }
                 if (IP[0] == '*') {
                         if (v.type == VALUE_DICT) {
-                                DictUpdate(ty, kwargs, v.dict);
+                                dfor(v.dict, {
+                                        if (UNLIKELY(key->type != VALUE_STRING)) {
+                                                zP(
+                                                        "splatted Dict argument contains non-string key: %s%s%s%s%s",
+                                                        TERM(34),
+                                                        TERM(1),
+                                                        VSC(&v),
+                                                        TERM(22),
+                                                        TERM(39)
+                                                );
+                                        }
+                                        dict_put_value(ty, kwargs, *key, *val);
+                                });
                         } else if (
                                 LIKELY(
                                         (v.type == VALUE_TUPLE)
@@ -6169,12 +6182,6 @@ YIELD:
                         push(TYPE((Type *)s));
                         break;
 
-                CASE(ASSIGN_TYPE)
-                        READVALUE(s);
-                        if (top()->type == VALUE_OBJECT) {
-                        }
-                        break;
-
                 CASE(VALUE)
                         READVALUE(s);
                         push(*(Value *)s);
@@ -9317,7 +9324,6 @@ StepInstruction(char const *ip)
         CASE(MAKE_GENERATOR)
                 break;
         CASE(TYPE)
-        CASE(ASSIGN_TYPE)
                 SKIPVALUE(s);
                 break;
         CASE(VALUE)

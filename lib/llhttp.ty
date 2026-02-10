@@ -277,7 +277,7 @@ C! struct llhttp_settings {
   llhttp_cb on_reset;
 };
 
-C! llhttp fn {
+C! pub llhttp fn {
     void llhttp_init(llhttp_t *parser, int type, struct llhttp_settings_t *settings);
     void llhttp_reset(llhttp_t *parser);
     void llhttp_settings_init(struct llhttp_settings_t *settings);
@@ -466,7 +466,7 @@ pub class HttpRequest {
     url:       String
     version:   HttpVersion
     headers:   HttpHeaders
-    params:    Dict[String, String | [String]]
+    params:    Dict[String, String | [String] | nil]
     files:     Dict[String, _]
     body:      String | nil
     finished:  Bool

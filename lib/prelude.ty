@@ -1003,7 +1003,6 @@ class String : Iterable[String], IntoPtr[Int] {
         self.ptr()
     }
 
-    // Ensure NUL-termination for C interop
     cstr() -> String;
 
     center(n: Int, ch: String = ' ') {
@@ -3240,11 +3239,10 @@ class CondVar {
 class Thread[T] {
     __handle: _
 
-    /*
+    /**
      * Thread(func, *args, isolated=false, name=nil)
      *
-     * Call the specified fn with any provided arguments in a
-     * new thread.
+     * Call the specified fn with any provided arguments in a new thread.
      *
      * isolated: If isolated is true, the new thread will be in its own thread
      *           group, and will not synchronize its garbage collection with

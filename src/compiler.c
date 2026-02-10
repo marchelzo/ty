@@ -1639,6 +1639,7 @@ AdjustStack(Ty *ty, int c)
                 break;
 
         case INSTR_POP2:
+        case INSTR_TARGET_SUBSCRIPT:
                 AdjStack(ty, -2);
                 break;
 
@@ -1667,7 +1668,6 @@ AdjustStack(Ty *ty, int c)
         case INSTR_RANGE:
         case INSTR_INCRANGE:
         case INSTR_TARGET_MEMBER:
-        case INSTR_TARGET_SUBSCRIPT:
         case INSTR_SUBSCRIPT:
         case INSTR_CHECK_MATCH:
         case INSTR_ASSIGN_LOCAL:
@@ -7663,7 +7663,7 @@ emit_super(Ty *ty, Expr const *e)
         }
 
         Ei32(c);
-        emit_member(ty, func_name);
+        EM(func_name);
 
         return false;
 }
@@ -8812,7 +8812,7 @@ emit_target(Ty *ty, Expr *target, bool def)
         case EXPRESSION_SELF_ACCESS:
                 EE(target->object);
                 INSN(TARGET_MEMBER);
-                emit_member(ty, target->member->identifier);
+                EM(target->member->identifier);
                 break;
 
         case EXPRESSION_DYN_MEMBER_ACCESS:
@@ -9642,7 +9642,9 @@ EmitMethodCall(
 static void
 EmitFunctionCall(Ty *ty, Expr const *e)
 {
-        if (is_variadic(e)) {
+        bool variadic = is_variadic(e);
+
+        if (variadic) {
                 INSN(SAVE_STACK_POS);
         }
 
@@ -9671,7 +9673,7 @@ EmitFunctionCall(Ty *ty, Expr const *e)
 
         EE(e->function);
 
-        if (is_variadic(e)) {
+        if (variadic) {
                 ECALL(-1, vN(e->kws));
         } else {
                 ECALL(vN(e->args), vN(e->kws));
@@ -10537,6 +10539,7 @@ emit_statement(Ty *ty, Stmt const *s, bool want_result)
                                 (s->value->type  != EXPRESSION_NIL)
                              || (s->target->type != EXPRESSION_IDENTIFIER)
                              || SymbolIsGlobal(s->target->symbol)
+                             || (get_loop(ty, 0) != NULL)
                         ) {
                                 emit_assignment(ty, s->target, s->value, false, true);
                                 INSN(POP);
