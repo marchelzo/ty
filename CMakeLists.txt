@@ -40,6 +40,13 @@ set(CMAKE_C_STANDARD 23)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS OFF)
 
+# Enable LTO globally so vendored libs (libco, dtoa, etc.) also participate
+include(CheckIPOSupported)
+check_ipo_supported(RESULT _lto_supported OUTPUT _lto_error)
+if(_lto_supported)
+  set(CMAKE_INTERPROCEDURAL_OPTIMIZATION TRUE)
+endif()
+
 # ---
 #  generate ioctl constants
 # ---
@@ -149,6 +156,8 @@ target_sources(dtoa PRIVATE dtoa/SwiftDtoa.c)
 #  target: libmd::md
 # ---
 add_subdirectory(libmd)
+# libmd uses C_VISIBILITY_PRESET hidden which breaks ThinLTO symbol resolution
+set_target_properties(md PROPERTIES INTERPROCEDURAL_OPTIMIZATION FALSE)
 
 # ---
 #  target: unibilium
@@ -226,9 +235,7 @@ target_compile_options(${_tgt_ty_interface}
       -Wno-cast-qual
       -Wno-declaration-after-statement
       -mcpu=native
-      -flto
       -ferror-limit=3
-      -rdynamic
     >
     $<$<C_COMPILER_ID:Clang>:
       -Wall
@@ -245,8 +252,6 @@ target_compile_options(${_tgt_ty_interface}
       -Wno-cast-qual
       -Wno-declaration-after-statement
       -mcpu=native
-      -flto
-      -rdynamic
     >
     $<$<C_COMPILER_ID:MSVC>:
       /W4
@@ -263,6 +268,7 @@ target_link_libraries(${_tgt_ty_interface}
   INTERFACE
     ${_tgt_ty_interface_version_info}
     ${_tgt_ioctlconstants_h}
+    ${_tgt_errnoconstants_h}
     Threads::Threads # pthreads (or equivalent)
     libco
     mimalloc-static
@@ -273,7 +279,7 @@ target_link_libraries(${_tgt_ty_interface}
     libmd::md
     dtoa
     unofficial::sqlite3::sqlite3
-    $<$<NOT:$<BOOL:${WIN33}>>:${CMAKE_DL_LIBS}>
+    $<$<NOT:$<BOOL:${WIN32}>>:${CMAKE_DL_LIBS}>
     $<$<NOT:$<BOOL:${WIN32}>>:m>
     $<$<BOOL:${WIN32}>:ws2_32> # winsock2
     $<$<BOOL:${WIN32}>:Shlwapi.lib>
@@ -303,8 +309,6 @@ target_compile_definitions(${_tgt_ty_interface}
     $<$<C_COMPILER_ID:GNU>:_GNU_SOURCE>
     $<$<NOT:$<CONFIG:Debug>>:TY_RELEASE>
     $<$<NOT:$<CONFIG:Debug>>:TY_NO_LOG>
-    TY_RELEASE
-    TY_NO_LOG
     TY_HAVE_VERSION_INFO
     PCRE2_CODE_UNIT_WIDTH=8
     XXH_INLINE_ALL
