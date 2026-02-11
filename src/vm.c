@@ -1170,7 +1170,6 @@ inline static void
 xcall(Ty *ty, Value const *f, Value const *pSelf, int argc, Value const *pKwargs, char *whence)
 {
         if (UNLIKELY(vN(FRAMES) >= TY_MAX_CALL_DEPTH)) {
-                *(volatile int *)0 = 0;
                 zP("maximum call depth exceeded");
         }
 
@@ -5062,7 +5061,8 @@ vm_try_exec(Ty *ty, char *code, Value *result)
 void
 vm_exec(Ty *ty, char *code)
 {
-        char *save = IP;
+        Ty   * volatile _ty = ty;
+        char * volatile _ip = IP;
 
         IP = code;
 
@@ -5786,6 +5786,7 @@ TargetMember:
                         _try = PushTry(ty);
 
                         if (setjmp(_try->jb) != 0) {
+                                ty = _ty;
                                 break;
                         }
 
@@ -7442,7 +7443,7 @@ RETURN:
 
                 CASE(HALT)
                         EXEC_DEPTH -= 1;
-                        IP = save;
+                        IP = _ip;
                         LOG("vm_exec(): <== %d (HALT: IP=%p)", EXEC_DEPTH, (void *)IP);
                         return;
 
