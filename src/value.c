@@ -74,6 +74,150 @@ arrays_equal(Ty *ty, Value const *v1, Value const *v2)
         return true;
 }
 
+typedef struct {
+        i32 id;
+        Value val;
+} RecordItem;
+
+typedef vec(RecordItem) RecordItems;
+
+static int
+itemcmp(void *ctx, const void *a, const void *b)
+{
+        Ty *ty = ctx;
+
+        RecordItem const *x = a;
+        RecordItem const *y = b;
+
+        return (x->id < y->id) ? -1
+             : (x->id > y->id) ?  1
+             :                    0
+             ;
+}
+
+static bool
+records_equal(Ty *ty, Value const *v1, Value const *v2)
+{
+        RecordItems xs_named = {0};
+        RecordItems ys_named = {0};
+
+        ValueVector xs_unnamed = {0};
+        ValueVector ys_unnamed = {0};
+
+        SCRATCH_SAVE();
+
+        for (usize i = 0; i < v1->count; ++i) {
+                if (LIKELY(v1->ids[i] != -1)) {
+                        svP(xs_named, ((RecordItem) {
+                                .id  = v1->ids[i],
+                                .val = v1->items[i]
+                        }));
+                } else {
+                        svP(xs_unnamed, v1->items[i]);
+                }
+        }
+
+        for (usize i = 0; i < v2->count; ++i) {
+                if (LIKELY(v2->ids[i] != -1)) {
+                        svP(ys_named, ((RecordItem) {
+                                .id  = v2->ids[i],
+                                .val = v2->items[i]
+                        }));
+                } else {
+                        svP(ys_unnamed, v2->items[i]);
+                }
+        }
+
+        if (
+                (vN(xs_named) != vN(ys_named))
+             || (vN(xs_unnamed) != vN(ys_unnamed))
+        ) {
+                SCRATCH_RESTORE();
+                return false;
+        }
+
+        rqsort(vv(xs_named), vN(xs_named), sizeof (RecordItem), itemcmp, ty);
+        rqsort(vv(ys_named), vN(ys_named), sizeof (RecordItem), itemcmp, ty);
+
+        for (usize i = 0; i < vN(xs_named); ++i) {
+                if (v_(xs_named, i)->id != v_(ys_named, i)->id) {
+                        SCRATCH_RESTORE();
+                        return false;
+                }
+                if (!v_eq(&v_(xs_named, i)->val, &v_(ys_named, i)->val)) {
+                        SCRATCH_RESTORE();
+                        return false;
+                }
+        }
+
+        for (usize i = 0; i < vN(xs_unnamed); ++i) {
+                if (!v_eq(v_(xs_unnamed, i), v_(ys_unnamed, i))) {
+                        SCRATCH_RESTORE();
+                        return false;
+                }
+        }
+
+        SCRATCH_RESTORE();
+
+        return true;
+}
+
+static int
+compare_records(Ty *ty, Value const *v1, Value const *v2)
+{
+        RecordItems xs = {0};
+        RecordItems ys = {0};
+
+        SCRATCH_SAVE();
+
+        for (usize i = 0; i < v1->count; ++i) {
+                if (LIKELY(v1->ids[i] != -1)) {
+                        svP(xs, ((RecordItem) {
+                                .id  = v1->ids[i],
+                                .val = v1->items[i]
+                        }));
+                } else {
+                        svP(xs, ((RecordItem) {
+                                .id  = -1,
+                                .val = v1->items[i]
+                        }));
+                }
+        }
+
+        for (usize i = 0; i < v2->count; ++i) {
+                if (LIKELY(v2->ids[i] != -1)) {
+                        svP(ys, ((RecordItem) {
+                                .id  = v2->ids[i],
+                                .val = v2->items[i]
+                        }));
+                } else {
+                        svP(ys, ((RecordItem) {
+                                .id  = -1,
+                                .val = v2->items[i]
+                        }));
+                }
+        }
+
+        rqsort(vv(xs), vN(xs), sizeof (RecordItem), itemcmp, ty);
+        rqsort(vv(ys), vN(ys), sizeof (RecordItem), itemcmp, ty);
+
+        for (usize i = 0; i < vN(xs); ++i) {
+                if (v_(xs, i)->id != v_(ys, i)->id) {
+                        SCRATCH_RESTORE();
+                        return (v_(xs, i)->id < v_(ys, i)->id) ? -1 : 1;
+                }
+                int cmp = value_compare(ty, &v_(xs, i)->val, &v_(ys, i)->val);
+                if (cmp != 0) {
+                        SCRATCH_RESTORE();
+                        return cmp;
+                }
+        }
+
+        SCRATCH_RESTORE();
+
+        return 0;
+}
+
 static bool
 tuples_equal(Ty *ty, Value const *v1, Value const *v2)
 {
@@ -82,6 +226,10 @@ tuples_equal(Ty *ty, Value const *v1, Value const *v2)
 
         if (v1->count != v2->count)
                 return false;
+
+        if (v1->ids != NULL && v2->ids != NULL) {
+                return records_equal(ty, v1, v2);
+        }
 
         usize n = v1->count;
 
@@ -152,6 +300,9 @@ tpl_hash(Ty *ty, Value const *t)
         for (int i = 0; i < t->count; ++i) {
                 u64 x = value_hash(ty, &t->items[i]);
                 hash = HashCombine(hash, x);
+                if (t->ids != NULL && t->ids[i] != -1) {
+                        hash *= (t->ids[i] + 1);
+                }
         }
 
         return hash;
@@ -1163,10 +1314,17 @@ value_compare(Ty *ty, Value const *v1, Value const *v2)
                 return ((ptrdiff_t)v1->array->count) - ((ptrdiff_t)v2->array->count);
 
         case PAIR_OF(VALUE_TUPLE):
+                if (v1->items == v2->items) {
+                        return 0;
+                }
+                if (v1->ids != NULL && v2->ids != NULL) {
+                        return compare_records(ty, v1, v2);
+                }
                 for (int i = 0; i < v1->count && i < v2->count; ++i) {
                         int o = value_compare(ty, &v1->items[i], &v2->items[i]);
-                        if (o != 0)
+                        if (o != 0) {
                                 return o;
+                        }
                 }
                 return ((int)v1->count) - ((int)v2->count);
         }

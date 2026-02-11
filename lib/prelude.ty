@@ -4292,7 +4292,7 @@ fn memoized[F](fun: F, max: Int = nil) -> F {
                     }
                 )
                 if #$${cache} > $${max} {
-                    $${cache}.pop(-1)
+                    $${cache}.pop(0)
                 }
                 v
             $$]
