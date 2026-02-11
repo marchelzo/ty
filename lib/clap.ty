@@ -232,7 +232,7 @@ fn _doParse(cls, argv, config) -> _ {
         print()
 
         if description != nil {
-            print(description)
+            print(chalk.text(description))
             print()
         }
 
@@ -305,6 +305,9 @@ fn _doParse(cls, argv, config) -> _ {
                 }
             }
 
+            let compactIndent = ' '.repeat(w + 4)
+            let expandedIndent = ' '.repeat(12)
+
             // Helper to print a set of option specs
             fn printOpts(opts) {
                 for spec in opts {
@@ -315,22 +318,48 @@ fn _doParse(cls, argv, config) -> _ {
                     } else {
                         chalk"[b blue]{flag}[/]"
                     }
-                    let pad = ' '.repeat(w - left.width())
-                    let line = chalk"  {left}{pad}  {spec.help ?? ''}"
+
+                    // Build metadata tags
+                    let metaParts = []
                     if spec.default != nil {
-                        line = line + chalk" [dim](default: [bright green]{ty.eval(spec.default.show)}[/bright green])[/]"
+                        metaParts.push(chalk"[dim](default: [bright green]{ty.eval(spec.default.show)}[/bright green])[/]")
                     }
                     if spec.env != nil {
-                        line = line + chalk" [dim](env: [yellow]{spec.env}[/yellow])[/]"
+                        metaParts.push(chalk"[dim](env: [yellow]{spec.env}[/yellow])[/]")
                     }
                     if spec.check != nil && spec.check.pred :: Array {
                         let choices = spec.check.pred.map(c -> chalk"[magenta]{c}[/]").join("{chalk"[dim],[/] "}")
-                        line = line + chalk" [dim](values: [/]{choices}[dim])[/]"
+                        metaParts.push(chalk"[dim](values: [/]{choices}[dim])[/]")
                     }
                     if spec.check != nil && spec.check.pred :: Range {
-                        line = line + chalk" [dim](range: [cyan]{spec.check.src}[/cyan])[/]"
+                        metaParts.push(chalk"[dim](range: [cyan]{spec.check.src}[/cyan])[/]")
                     }
-                    print(line)
+
+                    let metaStr = ''
+                    for mp in metaParts {
+                        metaStr = metaStr ? "{metaStr} {mp}" : "{mp}"
+                    }
+
+                    let helpLines = (spec.help ?? '').lines()
+                    let firstLine = chalk.text(helpLines[0] ?? '')
+
+                    let pad = ' '.repeat(w - left.width())
+                    if #helpLines <= 1 {
+                        // Compact: flag + help + meta on same line
+                        let suffix = metaStr ? " {metaStr}" : ''
+                        print(chalk"  {left}{pad}  {firstLine}{suffix}")
+                    } else {
+                        // Summary on flag line, details indented below
+                        print(chalk"  {left}{pad}  {firstLine}")
+                        print('')
+                        for hl in helpLines.slice(1) {
+                            if hl { print("{expandedIndent}{chalk.text(hl)}") } else { print('') }
+                        }
+                        if metaStr {
+                            print("{expandedIndent}{metaStr}")
+                        }
+                        print('')
+                    }
                 }
             }
 
@@ -369,7 +398,7 @@ fn _doParse(cls, argv, config) -> _ {
             let w = entries.map(\#_[0]).max() ?? 0
 
             for (label, help) in entries {
-                print(chalk"  [b cyan]{label.rpad(w)}[/]  {help}")
+                print(chalk"  [b cyan]{label.rpad(w)}[/]  {chalk.text(help)}")
             }
 
             print()
@@ -397,7 +426,7 @@ fn _doParse(cls, argv, config) -> _ {
 
             for (name, summary) in cmdEntries {
                 if summary {
-                    print(chalk"  [b cyan]{name.rpad(cw)}[/]  {summary}")
+                    print(chalk"  [b cyan]{name.rpad(cw)}[/]  {chalk.text(summary)}")
                 } else {
                     print(chalk"  [b cyan]{name}[/]")
                 }
@@ -1032,7 +1061,7 @@ pub macro clap! {
 
         if peek(0).type == 'comment' {
             next()
-            help = peek(-1).comment
+            help = _cleanDoc(peek(-1).comment)
         }
 
         let name = peek(0).id
