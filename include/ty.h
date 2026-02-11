@@ -1179,6 +1179,7 @@ extern usize TotalBytesAllocated;
         X(TRY_REGEX),             \
         X(ASSIGN_REGEX_MATCHES),  \
         X(TRY_ASSIGN_NON_NIL),    \
+        X(MATCH_TAG),             \
         X(BAD_MATCH),             \
         X(BAD_CALL),              \
         X(BAD_DISPATCH),          \
@@ -1363,6 +1364,7 @@ enum {
 #define vv(v)     ((v).items)
 #define vZ(v)     ((v).items + (v).count)
 #define vPx(v, x) (((v).items[(v).count] = (x)), (v).count += 1)
+#define vXx(v)    ((v).items[--(v).count])
 #define vC(v)     ((v).capacity)
 
 #define vM(v, i, j, n) memmove((v).items + (i), (v).items + (j), (n) sizeof *(v).items)

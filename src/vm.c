@@ -176,8 +176,9 @@ static ValueVector Globals;
 #define topN(i) ((topN)(ty, i))
 #define pop()   ((pop)(ty))
 #define peek()  ((peek)(ty))
-#define push(x) ((push)(ty, (x)))
-#define swap()  ((swap)(ty))
+#define push(x)  ((push)(ty, (x)))
+#define xpush(x) ((xpush)(ty, (x)))
+#define swap()   ((swap)(ty))
 
 #define poptarget()      ((poptarget)(ty))
 #define peektarget()     ((peektarget)(ty))
@@ -889,7 +890,7 @@ xprint_stack(Ty *ty, int n)
 inline static Value
 (pop)(Ty *ty)
 {
-        return *vvX(STACK);
+        return vXx(STACK);
 }
 
 inline static Value
@@ -903,6 +904,12 @@ inline static void
 {
         xvP(STACK, v);
 
+}
+
+inline static void
+(xpush)(Ty *ty, Value v)
+{
+        vPx(STACK, v);
 }
 
 inline static void
@@ -2418,7 +2425,7 @@ DoCall(Ty *ty, Value const *f, int n, int nkw, bool auto_this)
                 case 2:
                         b = pop();
                         a = pop();
-                        push(vm_2op(ty, v.bop, &a, &b));
+                        xpush(vm_2op(ty, v.bop, &a, &b));
                         break;
 
                 default:
@@ -2456,7 +2463,7 @@ DoCall(Ty *ty, Value const *f, int n, int nkw, bool auto_this)
                         exec_fn(ty, vp, &value, n, &kwargs);
                         gX();
                         pop();
-                        push(value);
+                        xpush(value);
                 }
                 gX();
                 gX();
@@ -2508,9 +2515,9 @@ DoCall(Ty *ty, Value const *f, int n, int nkw, bool auto_this)
                 vp = dict_get_value(ty, v.dict, &value);
                 STACK.count -= (n + 1);
                 if (vp == NULL) {
-                        push(None);
+                        xpush(None);
                 } else {
-                        push(Some(*vp));
+                        xpush(Some(*vp));
                 }
                 gX();
                 return false;
@@ -2520,7 +2527,7 @@ DoCall(Ty *ty, Value const *f, int n, int nkw, bool auto_this)
                 push(v);
                 value = ArraySubscript(ty, v, subscript, false);
                 STACK.count -= (n + 1);
-                push(value);
+                xpush(value);
                 gX();
                 return false;
 
@@ -3305,7 +3312,7 @@ DoCall:
         } else if (b) {
 QuietFailure:
                 STACK.count -= (n + 1 + nkw);
-                push(NIL);
+                xpush(NIL);
         } else {
                 zP("call to non-existent method '%s' on %s", M_NAME(i), VSC(&value));
         }
@@ -3343,7 +3350,7 @@ name(Ty *ty)                                                                    
                                                                                 \
         pop();                                                                  \
         pop();                                                                  \
-        push(v);                                                                \
+        xpush(v);                                                               \
 }
 
 inline static void
@@ -3352,7 +3359,7 @@ DoEq(Ty *ty)
         Value b = pop();
         Value a = pop();
 
-        push(BOOLEAN(value_test_equality(ty, &a, &b)));
+        xpush(BOOLEAN(v_eq(&a, &b)));
 }
 
 inline static void
@@ -3361,7 +3368,7 @@ DoNeq(Ty *ty)
         Value b = pop();
         Value a = pop();
 
-        push(BOOLEAN(!value_test_equality(ty, &a, &b)));
+        xpush(BOOLEAN(!v_eq(&a, &b)));
 }
 
 DEFINE_RELATIONAL_OP(DoGeq, >=, OP_GEQ)
@@ -3382,18 +3389,18 @@ DoCmp(Ty *ty)
         pop();
 
         if (i < 0)
-                push(INTEGER(-1));
+                xpush(INTEGER(-1));
         else if (i > 0)
-                push(INTEGER(1));
+                xpush(INTEGER(1));
         else
-                push(INTEGER(0));
+                xpush(INTEGER(0));
 }
 
 inline static void
 DoNot(Ty *ty)
 {
         Value v = pop();
-        push(BOOLEAN(!value_truthy(ty, &v)));
+        xpush(BOOLEAN(!value_truthy(ty, &v)));
 }
 
 TY_INSTR_INLINE static void
@@ -3415,9 +3422,9 @@ DoNeg(Ty *ty, bool exec)
         Value v = pop();
 
         if (v.type == VALUE_INTEGER) {
-                push(INTEGER(-v.z));
+                xpush(INTEGER(-v.z));
         } else if (v.type == VALUE_REAL) {
-                push(REAL(-v.real));
+                xpush(REAL(-v.real));
         } else {
                 CallMethod(ty, OP_NEG, 0, 0, false);
                 if (exec) {
@@ -3432,20 +3439,20 @@ DoCount(Ty *ty, bool exec)
         Value v = pop();
 
         if (v.type & VALUE_TAGGED) {
-                push(unwrap(ty, &v));
+                xpush(unwrap(ty, &v));
                 return;
         }
 
         switch (v.type) {
-        case VALUE_BLOB:   push(INTEGER(vN(*v.blob)));    break;
-        case VALUE_ARRAY:  push(INTEGER(vN(*v.array)));   break;
-        case VALUE_DICT:   push(INTEGER(v.dict->count));  break;
-        case VALUE_TUPLE:  push(INTEGER(v.count));        break;
-        case VALUE_STRING: push(INTEGER(sN(v)));          break;
+        case VALUE_BLOB:   xpush(INTEGER(vN(*v.blob)));    break;
+        case VALUE_ARRAY:  xpush(INTEGER(vN(*v.array)));   break;
+        case VALUE_DICT:   xpush(INTEGER(v.dict->count));  break;
+        case VALUE_TUPLE:  xpush(INTEGER(v.count));        break;
+        case VALUE_STRING: xpush(INTEGER(sN(v)));          break;
 
         case VALUE_OBJECT:
         case VALUE_CLASS:
-                push(v);
+                xpush(v);
                 CallMethod(ty, NAMES._len_, 0, 0, false);
                 if (exec) {
                         ExecCurrentCall(ty);
@@ -3559,16 +3566,16 @@ DoPtrMutOp(Ty *ty, int op)
         push(TPTR(c_type, v));
         val = cffi_load(ty, 1, NULL);
         pop();
-        push(val);
+        xpush(val);
         val = vm_2op(ty, op, top(), top() - 1);
         pop();
         pop();
-        push(TPTR(c_type, v));
-        push(val);
+        xpush(TPTR(c_type, v));
+        xpush(val);
         val = cffi_store(ty, 2, NULL);
         pop();
         pop();
-        push(val);
+        xpush(val);
 }
 
 TY_INSTR_INLINE static void
@@ -3599,7 +3606,7 @@ DoMutDiv(Ty *ty)
                                 *vp = vm_2op(ty, OP_DIV, vp, &x);
                         }
                 }
-                push(*vp);
+                xpush(*vp);
                 break;
 
         case 1:
@@ -3607,7 +3614,7 @@ DoMutDiv(Ty *ty)
                         zP("attempt to divide byte by non-integer: %s", VSC(top()));
                 }
                 b = ((Blob *)vZ(TARGETS)->gc)->items[((uptr)vp) >> 3] /= pop().z;
-                push(INTEGER(b));
+                xpush(INTEGER(b));
                 break;
 
         case 2:
@@ -3653,7 +3660,7 @@ DoMutMod(Ty *ty)
                                 *vp = vm_2op(ty, OP_MOD, vp, &x);
                         }
                 }
-                push(*vp);
+                xpush(*vp);
                 break;
 
         case 1:
@@ -3661,7 +3668,7 @@ DoMutMod(Ty *ty)
                         zP("attempt to divide byte by non-integer: %s", VSC(top()));
                 }
                 b = ((struct blob *)TARGETS.items[TARGETS.count].gc)->items[((uptr)vp) >> 3] %= pop().z;
-                push(INTEGER(b));
+                xpush(INTEGER(b));
                 break;
 
         case 2:
@@ -3708,7 +3715,7 @@ DoMutMul(Ty *ty)
                                 *vp = vm_2op(ty, OP_MUL, vp, &x);
                         }
                 }
-                push(*vp);
+                xpush(*vp);
                 break;
 
         case 1:
@@ -3716,7 +3723,7 @@ DoMutMul(Ty *ty)
                         zP("attempt to multiply byte by non-integer");
                 }
                 b = ((struct blob *)TARGETS.items[TARGETS.count].gc)->items[((uptr)vp) >> 3] *= pop().z;
-                push(INTEGER(b));
+                xpush(INTEGER(b));
                 break;
 
         case 2:
@@ -3782,7 +3789,7 @@ DoMutSub(Ty *ty)
                         }
                         break;
                 }
-                push(*vp);
+                xpush(*vp);
                 break;
 
         case 1:
@@ -3790,7 +3797,7 @@ DoMutSub(Ty *ty)
                         zP("attempt to subtract non-integer from byte");
                 }
                 b = ((struct blob *)TARGETS.items[TARGETS.count].gc)->items[((uptr)vp) >> 3] -= pop().z;
-                push(INTEGER(b));
+                xpush(INTEGER(b));
                 break;
 
         case 2:
@@ -3861,7 +3868,7 @@ DoMutAdd(Ty *ty)
                         }
                         break;
                 }
-                push(*vp);
+                xpush(*vp);
                 break;
 
         case 1:
@@ -3869,7 +3876,7 @@ DoMutAdd(Ty *ty)
                         zP("attempt to add non-integer to byte");
                 }
                 b = ((struct blob *)TARGETS.items[TARGETS.count].gc)->items[((uptr)vp) >> 3] += pop().z;
-                push(INTEGER(b));
+                xpush(INTEGER(b));
                 break;
 
         case 2:
@@ -3919,7 +3926,7 @@ DoMutAnd(Ty *ty)
                         } else {
                                 *vp = vm_2op(ty, OP_BIT_AND, vp, &x);
                         }
-                        push(*vp);
+                        xpush(*vp);
                         break;
                 }
                 break;
@@ -3929,7 +3936,7 @@ DoMutAnd(Ty *ty)
                         zP("attempt to AND byte with non-integer");
                 }
                 b = ((Blob *)TARGETS.items[TARGETS.count].gc)->items[((uptr)vp) >> 3] &= pop().z;
-                push(INTEGER(b));
+                xpush(INTEGER(b));
                 break;
 
         case 2:
@@ -3980,7 +3987,7 @@ DoMutOr(Ty *ty)
                         } else {
                                 *vp = vm_2op(ty, OP_BIT_OR, vp, &x);
                         }
-                        push(*vp);
+                        xpush(*vp);
                         break;
                 }
                 break;
@@ -3990,7 +3997,7 @@ DoMutOr(Ty *ty)
                         zP("attempt to OR byte with non-integer");
                 }
                 b = ((Blob *)TARGETS.items[TARGETS.count].gc)->items[((uptr)vp) >> 3] |= pop().z;
-                push(INTEGER(b));
+                xpush(INTEGER(b));
                 break;
 
         case 2:
@@ -4041,7 +4048,7 @@ DoMutXor(Ty *ty)
                         } else {
                                 *vp = vm_2op(ty, OP_BIT_XOR, vp, &x);
                         }
-                        push(*vp);
+                        xpush(*vp);
                         break;
                 }
                 break;
@@ -4051,7 +4058,7 @@ DoMutXor(Ty *ty)
                         zP("attempt to XOR byte with non-integer");
                 }
                 b = ((Blob *)TARGETS.items[TARGETS.count].gc)->items[((uptr)vp) >> 3] ^= pop().z;
-                push(INTEGER(b));
+                xpush(INTEGER(b));
                 break;
 
         case 2:
@@ -4098,7 +4105,7 @@ DoMutShl(Ty *ty)
                         } else {
                                 *vp = vm_2op(ty, OP_BIT_SHL, vp, &x);
                         }
-                        push(*vp);
+                        xpush(*vp);
                         break;
                 }
                 break;
@@ -4108,7 +4115,7 @@ DoMutShl(Ty *ty)
                         zP("attempt to left-shift byte by non-integer");
                 }
                 b = ((Blob *)TARGETS.items[TARGETS.count].gc)->items[((uptr)vp) >> 3] <<= pop().z;
-                push(INTEGER(b));
+                xpush(INTEGER(b));
                 break;
 
         case 2:
@@ -4155,7 +4162,7 @@ DoMutShr(Ty *ty)
                         } else {
                                 *vp = vm_2op(ty, OP_BIT_SHR, vp, &x);
                         }
-                        push(*vp);
+                        xpush(*vp);
                         break;
                 }
                 break;
@@ -4165,7 +4172,7 @@ DoMutShr(Ty *ty)
                         zP("attempt to right-shift byte by non-integer");
                 }
                 b = ((Blob *)TARGETS.items[TARGETS.count].gc)->items[((uptr)vp) >> 3] >>= pop().z;
-                push(INTEGER(b));
+                xpush(INTEGER(b));
                 break;
 
         case 2:
@@ -4391,12 +4398,12 @@ DoTargetSubscript(Ty *ty)
                         pop();
                         pop();
                         v = pop();
-                        push(p);
-                        push(v);
+                        xpush(p);
+                        xpush(v);
                         v = cffi_store(ty, 2, NULL);
                         pop();
                         pop();
-                        push(v);
+                        xpush(v);
                         IP += 1;
                         return;
                 } else {
@@ -4473,12 +4480,12 @@ DoAssignSubscript(Ty *ty)
                 pop();
                 pop();
                 pop();
-                push(p);
-                push(value);
+                xpush(p);
+                xpush(value);
                 v = cffi_store(ty, 2, NULL);
                 pop();
                 pop();
-                push(v);
+                xpush(v);
                 return;
 
         case VALUE_OBJECT:
@@ -4542,7 +4549,7 @@ DoRange(Ty *ty, bool inclusive)
         Value a = pop();
 
         Value v = RawObject(inclusive ? CLASS_INC_RANGE : CLASS_RANGE);
-        push(v);
+        xpush(v);
 
         if (UNLIKELY(PACK_TYPES(a.type, b.type) != PAIR_OF(VALUE_INTEGER))) {
                 zP(
@@ -5865,10 +5872,42 @@ TargetMember:
                         }
                         break;
 
+                CASE(MATCH_TAG)
+                {
+                        u8 mode = *IP++;
+                        i32 n_entries;
+                        READVALUE(n_entries);
+                        char *default_jp = IP;
+                        IP += sizeof (int);
+
+                        int mtag = -1;
+                        if (mode == 0) {
+                                if (top()->type == VALUE_TAG)
+                                        mtag = top()->tag;
+                        } else {
+                                if (top()->type & VALUE_TAGGED)
+                                        mtag = tags_first(ty, top()->tags);
+                        }
+
+                        for (i32 idx = 0; idx < n_entries; ++idx) {
+                                i32 entry_tag;
+                                READVALUE(entry_tag);
+                                char *jp;
+                                READJUMP(jp);
+                                if (entry_tag == mtag) {
+                                        DOJUMP(jp);
+                                        goto NextInstruction;
+                                }
+                        }
+
+                        DOJUMP(default_jp);
+                        break;
+                }
+
                 CASE(ENSURE_EQUALS_VAR)
                         READVALUE(n);
                         v = pop();
-                        if (!value_test_equality(ty, top(), &v)) {
+                        if (!v_eq(top(), &v)) {
                                 IP += n;
                         }
                         break;
@@ -6138,7 +6177,7 @@ TargetMember:
                         if (UNLIKELY(top()->type == VALUE_PTR)) {
                                 char *s = VSC(top());
                                 pop();
-                                push(STRING_NOGC(s, strlen(s)));
+                                xpush(STRING_NOGC(s, strlen(s)));
                         } else {
                                 CallMethod(ty, NAMES._str_, 0, 0, false);
                         }
@@ -6365,7 +6404,7 @@ YIELD:
                                         *v_(TARGETS, j++)->t = NIL;
                                 }
                         }
-                        push(top()[2]);
+                        xpush(top()[2]);
                         break;
 
                 CASE(MAYBE_MULTI)
@@ -6382,7 +6421,7 @@ YIELD:
                                         *v_(TARGETS, j)->t = NIL;
                                 }
                         }
-                        push(top()[2]);
+                        xpush(top()[2]);
                         break;
 
                 CASE(JUMP_IF_SENTINEL)
@@ -6582,11 +6621,11 @@ YIELD:
                                 continue;
 
                         case VALUE_NONE:
-                                push(NIL);
+                                xpush(NIL);
                                 continue;
 
                         default:
-                                push(v);
+                                xpush(v);
                                 continue;
                         }
                         break;
@@ -6605,7 +6644,7 @@ MemberAccess:
                                 continue;
 
                         default:
-                                push(v);
+                                xpush(v);
                                 continue;
 
                         case VALUE_NONE:
@@ -6652,7 +6691,7 @@ BadTupleMember:
                                 v = ArraySubscript(ty, container, subscript, true);
                                 pop();
                                 pop();
-                                push(v);
+                                xpush(v);
                                 break;
 
                         case VALUE_TUPLE:
@@ -6665,7 +6704,7 @@ BadTupleMember:
                                                 v = tagged(ty, TAG_INDEX_ERR, container, subscript, NONE);
                                                 pop();
                                                 pop();
-                                                push(v);
+                                                xpush(v);
                                                 RaiseException(ty);
                                                 break;
 
@@ -6674,7 +6713,7 @@ BadTupleMember:
                                         pop();
                                         pop();
 
-                                        push(container.items[subscript.z]);
+                                        xpush(container.items[subscript.z]);
                                 } else {
                                         zP(
                                                 "non-integer index used in subscript expression: %s",
@@ -6687,27 +6726,27 @@ BadTupleMember:
                                 v = string_char(ty, &container, 1, NULL);
                                 pop();
                                 pop();
-                                push(v);
+                                xpush(v);
                                 break;
 
                         case VALUE_BLOB:
                                 v = blob_get(ty, &container, 1, NULL);
                                 pop();
                                 pop();
-                                push(v);
+                                xpush(v);
                                 break;
 
                         case VALUE_DICT:
                                 vp = dict_get_value(ty, container.dict, &subscript);
                                 pop();
                                 pop();
-                                push((vp == NULL) ? NIL : *vp);
+                                xpush((vp == NULL) ? NIL : *vp);
                                 break;
 
                         case VALUE_BOOLEAN:
                                 pop();
                                 pop();
-                                push(container);
+                                xpush(container);
                                 break;
 
                         case VALUE_GENERATOR:
@@ -6750,13 +6789,13 @@ BadTupleMember:
                                 pop();
                                 pop();
                                 pop();
-                                push(v);
+                                xpush(v);
                                 break;
 
                         case VALUE_NIL:
                                 pop();
                                 pop();
-                                push(NIL);
+                                xpush(NIL);
                                 break;
 
                         default:
@@ -6861,7 +6900,7 @@ BadContainer:
 
                 CASE(CLASS_OF)
                         value = pop();
-                        push(CLASS(ClassOf(&value)));
+                        xpush(CLASS(ClassOf(&value)));
                         break;
 
                 CASE(CHECK_MATCH)
@@ -6887,7 +6926,7 @@ BadContainer:
                         case VALUE_TYPE:
                                 v = pop();
                                 value = pop();
-                                push(BOOLEAN(TypeCheck(ty, v.ptr, &value)));
+                                xpush(BOOLEAN(TypeCheck(ty, v.ptr, &value)));
                                 break;
 
                         case VALUE_NIL:
@@ -6923,9 +6962,9 @@ BadContainer:
                 CASE(GET_TAG)
                         v = pop();
                         if (v.tags == 0) {
-                                push(NIL);
+                                xpush(NIL);
                         } else {
-                                push(TAG(tags_first(ty, v.tags)));
+                                xpush(TAG(tags_first(ty, v.tags)));
                         }
                         break;
 
@@ -9224,6 +9263,16 @@ StepInstruction(char const *ip)
                 SKIPVALUE(n);
                 SKIPVALUE(n);
                 break;
+        CASE(MATCH_TAG)
+        {
+                ip += 1; /* mode byte */
+                i32 n_entries;
+                memcpy(&n_entries, ip, sizeof n_entries);
+                ip += sizeof (i32);            /* n */
+                ip += sizeof (i32);            /* default_offset */
+                ip += n_entries * 2 * sizeof (i32); /* tag+offset pairs */
+                break;
+        }
         CASE(ENSURE_EQUALS_VAR)
                 SKIPVALUE(n);
                 break;
@@ -9750,6 +9799,14 @@ tdb_step_over_x(Ty *ty, char *ip, i32 i)
         CASE(RETURN)
                 return (i < vN(CALLS))
                     && tdb_step_over_x(ty, vvL(CALLS)[-i], i + 1);
+
+        CASE(MATCH_TAG)
+        {
+                /* default offset is at ip + 1 (mode) + sizeof(i32) (n) */
+                char *def_off = ip + 1 + sizeof (i32);
+                tdb_set_trap(&TDB->alt, def_off + sizeof (int) + load_int(def_off));
+                break;
+        }
 
         CASE(ARRAY_REST)
         CASE(ENSURE_CONTAINS)

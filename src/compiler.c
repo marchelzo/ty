@@ -3419,6 +3419,9 @@ symbolize_decl(Ty *ty, Scope *scope, Expr *target, bool pub)
         }
 
         switch (target->type) {
+        case EXPRESSION_MATCH_ANY:
+                break;
+
         case EXPRESSION_TAG_PATTERN:
                 symbolize_decl(ty, scope, target->tagged, pub);
         case EXPRESSION_RESOURCE_BINDING:
@@ -3426,7 +3429,6 @@ symbolize_decl(Ty *ty, Scope *scope, Expr *target, bool pub)
         case EXPRESSION_IDENTIFIER:
         case EXPRESSION_MATCH_NOT_NIL:
         case EXPRESSION_MATCH_REST:
-        case EXPRESSION_MATCH_ANY:
                 symbolize_var_decl(ty, scope, target, pub);
                 break;
 
@@ -3496,6 +3498,9 @@ symbolize_lvalue_(Ty *ty, Scope *scope, Expr *target, u32 flags)
         bool cnst = (flags & LV_CONST);
 
         switch (target->type) {
+        case EXPRESSION_MATCH_ANY:
+                break;
+
         case EXPRESSION_RESOURCE_BINDING:
                 if (
                         (target->symbol == NULL)
@@ -3508,7 +3513,6 @@ symbolize_lvalue_(Ty *ty, Scope *scope, Expr *target, u32 flags)
         case EXPRESSION_MATCH_NOT_NIL:
         case EXPRESSION_MATCH_REST:
         case EXPRESSION_TAG_PATTERN:
-        case EXPRESSION_MATCH_ANY:
                 if (decl) {
                         if (target->symbol == NULL) {
                                 symbolize_var_decl(ty, scope, target, pub);
@@ -3704,7 +3708,6 @@ symbolize_pattern_(Ty *ty, Scope *scope, Expr *e, Scope *reuse, bool def)
         case EXPRESSION_MATCH_NOT_NIL:
         case EXPRESSION_TAG_PATTERN:
         case EXPRESSION_ALIAS_PATTERN:
-        case EXPRESSION_MATCH_ANY:
                         if (existing != NULL && existing->tag != -1) {
                                 goto Tag;
                         } else if (reuse != NULL && e->module == NULL) {
@@ -7887,7 +7890,7 @@ emit_try_match(Ty *ty, Expr const *pattern)
                 /* fallthrough */
         case EXPRESSION_IDENTIFIER:
         case EXPRESSION_ALIAS_PATTERN:
-                if (strcmp(pattern->identifier, "_") == 0) {
+                if (s_eq(pattern->identifier, "_")) {
                         /* nothing to do */
                 } else {
                         emit_tgt(ty, pattern->symbol, STATE.fscope, true);
@@ -8377,9 +8380,256 @@ emit_expression_case(Ty *ty, Expr const *pattern, Expr const *e)
         STATE.match_assignments = assignments;
 }
 
+enum {
+        TG_MATCH_NONE,
+        TG_MATCH_BARE,
+        TG_MATCH_APP,
+};
+
+inline static int
+classify_tag_pattern(Expr const *p)
+{
+        if (p->type == EXPRESSION_MUST_EQUAL && SymbolIsTag(p->symbol)) {
+                return TG_MATCH_BARE;
+        }
+
+        if (p->type == EXPRESSION_TAG_APPLICATION) {
+                return TG_MATCH_APP;
+        }
+
+        return TG_MATCH_NONE;
+}
+
+static int
+detect_tag_match(ExprVec const *patterns, int n)
+{
+        if (n < 2) return TG_MATCH_NONE;
+
+        int kind = TG_MATCH_NONE;
+
+        for (int i = 0; i < n; ++i) {
+                Expr *p = v__(*patterns, i);
+
+                /* Last arm can be an irrefutable catch-all */
+                if (
+                        (p->type == EXPRESSION_MATCH_ANY)
+                     || (p->type == EXPRESSION_IDENTIFIER && p->constraint == NULL)
+                ) {
+                        return (i + 1 == n && kind != TG_MATCH_NONE) ? kind : TG_MATCH_NONE;
+                }
+
+                if (p->type == EXPRESSION_CHOICE_PATTERN) {
+                        for (int j = 0; j < vN(p->es); ++j) {
+                                int k = classify_tag_pattern(v__(p->es, j));
+                                if (k == TG_MATCH_NONE || (kind != TG_MATCH_NONE && k != kind)) {
+                                        return TG_MATCH_NONE;
+                                }
+                                kind = k;
+                        }
+                } else {
+                        int k = classify_tag_pattern(p);
+                        if (k == TG_MATCH_NONE || (kind != TG_MATCH_NONE && k != kind)) {
+                                return TG_MATCH_NONE;
+                        }
+                        kind = k;
+                }
+        }
+        return kind;
+}
+
+inline static int
+tag_match_entry_count(ExprVec const *patterns, int table_n)
+{
+        int total = 0;
+        for (int i = 0; i < table_n; ++i) {
+                Expr *p = v__(*patterns, i);
+                total += (p->type == EXPRESSION_CHOICE_PATTERN) ? vN(p->es) : 1;
+        }
+        return total;
+}
+
+inline static void
+emit_tag_table_entries(Ty *ty, Expr const *p, int kind, usize *offsets, int *idx)
+{
+        if (p->type == EXPRESSION_CHOICE_PATTERN) {
+                for (int j = 0; j < vN(p->es); ++j) {
+                        Expr *sub = v__(p->es, j);
+                        int tag_id = (kind == TG_MATCH_BARE) ? sub->symbol->tag : tag_app_tag(sub);
+                        Ei32(tag_id);
+                        offsets[(*idx)++] = vN(STATE.code);
+                        Ei32(0);
+                }
+        } else {
+                int tag_id = (kind == TG_MATCH_BARE) ? p->symbol->tag : tag_app_tag(p);
+                Ei32(tag_id);
+                offsets[(*idx)++] = vN(STATE.code);
+                Ei32(0);
+        }
+}
+
+inline static void
+patch_arm_entries(Ty *ty, Expr const *p, usize *offsets, int *idx)
+{
+        int count = (p->type == EXPRESSION_CHOICE_PATTERN) ? vN(p->es) : 1;
+        for (int j = 0; j < count; ++j) {
+                usize off = offsets[(*idx)++];
+                PATCH_OFFSET(off);
+        }
+}
+
+static bool
+emit_tag_match_statement(Ty *ty, Stmt const *s, bool want_result, int kind)
+{
+        int n = vN(s->match.patterns);
+
+        Expr *last_pattern = v_L(s->match.patterns);
+        bool has_else = last_pattern->type  == EXPRESSION_MATCH_ANY
+                     || (last_pattern->type == EXPRESSION_IDENTIFIER && last_pattern->constraint == NULL);
+        int table_n = has_else ? (n - 1) : n;
+        int total = tag_match_entry_count(&s->match.patterns, table_n);
+
+        offset_vector successes_save = STATE.match_successes;
+        v00(STATE.match_successes);
+
+        EE(s->match.e);
+
+        INSN(MATCH_TAG);
+        Eu8(kind == TG_MATCH_BARE ? 0 : 1);
+        Ei32(total);
+
+        usize default_off = vN(STATE.code);
+        Ei32(0);
+
+        SCRATCH_SAVE();
+
+        usize *offsets = smA(total * sizeof (usize));
+        int idx = 0;
+        for (int i = 0; i < table_n; ++i) {
+                emit_tag_table_entries(ty, v__(s->match.patterns, i), kind, offsets, &idx);
+        }
+
+        bool returns = true;
+
+        idx = 0;
+        for (int i = 0; i < table_n; ++i) {
+                Expr *pattern = v__(s->match.patterns, i);
+                Stmt *then = v__(s->match.statements, i);
+
+                patch_arm_entries(ty, pattern, offsets, &idx);
+
+                if (pattern->type != EXPRESSION_CHOICE_PATTERN && kind == TG_MATCH_BARE) {
+                        INSN(POP);
+                        returns &= ES(then, want_result);
+                } else {
+                        returns &= emit_case(ty, pattern, NULL, then, want_result);
+                }
+
+                INSN(JUMP);
+                avP(STATE.match_successes, vN(STATE.code));
+                Ei32(0);
+        }
+
+        PATCH_OFFSET(default_off);
+
+        if (has_else) {
+                if (last_pattern->type != EXPRESSION_MATCH_ANY) {
+                        emit_assignment2(ty, last_pattern, false, true);
+                }
+                INSN(POP);
+                returns &= ES(v__(s->match.statements, n - 1), want_result);
+        } else {
+                INSN(BAD_MATCH);
+        }
+
+        patch_jumps_to(&STATE.match_successes, vN(STATE.code));
+        STATE.match_successes = successes_save;
+
+        SCRATCH_RESTORE();
+
+        return returns;
+}
+
+static void
+emit_tag_match_expression(Ty *ty, Expr const *e, int kind)
+{
+        int n = vN(e->patterns);
+
+        Expr *last_pattern = v_L(e->patterns);
+        bool has_else = last_pattern->type == EXPRESSION_MATCH_ANY
+                     || (last_pattern->type == EXPRESSION_IDENTIFIER && last_pattern->constraint == NULL);
+        int table_n = has_else ? (n - 1) : n;
+        int total = tag_match_entry_count(&e->patterns, table_n);
+
+        offset_vector successes_save = STATE.match_successes;
+        v00(STATE.match_successes);
+
+        EE(e->subject);
+
+        INSN(MATCH_TAG);
+        Eu8(kind == TG_MATCH_BARE ? 0 : 1);
+        Ei32(total);
+
+        usize default_off = vN(STATE.code);
+        Ei32(0);
+
+        SCRATCH_SAVE();
+
+        usize *offsets = smA(total * sizeof (usize));
+        int idx = 0;
+        for (int i = 0; i < table_n; ++i) {
+                emit_tag_table_entries(ty, v__(e->patterns, i), kind, offsets, &idx);
+        }
+
+        idx = 0;
+        for (int i = 0; i < table_n; ++i) {
+                Expr *pattern = v__(e->patterns, i);
+                Expr *then = v__(e->thens, i);
+
+                patch_arm_entries(ty, pattern, offsets, &idx);
+
+                if (pattern->type != EXPRESSION_CHOICE_PATTERN && kind == TG_MATCH_BARE) {
+                        INSN(POP);
+                        EE(then);
+                } else {
+                        emit_expression_case(ty, pattern, then);
+                }
+
+                INSN(JUMP);
+                avP(STATE.match_successes, vN(STATE.code));
+                Ei32(0);
+        }
+
+        PATCH_OFFSET(default_off);
+
+        if (has_else) {
+                if (last_pattern->type != EXPRESSION_MATCH_ANY) {
+                        emit_assignment2(ty, last_pattern, false, true);
+                }
+                INSN(POP);
+                EE(v__(e->thens, n - 1));
+        } else {
+                if (InPatternFunc(ty)) {
+                        INSN(POP);
+                        emit_return(ty, NULL);
+                } else {
+                        INSN(BAD_MATCH);
+                }
+        }
+
+        patch_jumps_to(&STATE.match_successes, vN(STATE.code));
+        STATE.match_successes = successes_save;
+
+        SCRATCH_RESTORE();
+}
+
 static bool
 emit_match_statement(Ty *ty, Stmt const *s, bool want_result)
 {
+        int tag_kind = detect_tag_match(&s->match.patterns, vN(s->match.patterns));
+        if (tag_kind != TG_MATCH_NONE) {
+                return emit_tag_match_statement(ty, s, want_result, tag_kind);
+        }
+
         offset_vector successes_save = STATE.match_successes;
         v00(STATE.match_successes);
 
@@ -8748,6 +8998,12 @@ emit_if(Ty *ty, Stmt const *s, bool want_result)
 static void
 emit_match_expression(Ty *ty, Expr const *e)
 {
+        int tag_kind = detect_tag_match(&e->patterns, vN(e->patterns));
+        if (tag_kind != TG_MATCH_NONE) {
+                emit_tag_match_expression(ty, e, tag_kind);
+                return;
+        }
+
         offset_vector successes_save = STATE.match_successes;
         v00(STATE.match_successes);
 
@@ -8800,7 +9056,6 @@ emit_target(Ty *ty, Expr *target, bool def)
         case EXPRESSION_RESOURCE_BINDING:
                 INSN(PUSH_DROP);
         case EXPRESSION_IDENTIFIER:
-        case EXPRESSION_MATCH_ANY:
         case EXPRESSION_MATCH_REST:
         case EXPRESSION_MATCH_NOT_NIL:
         case EXPRESSION_TAG_PATTERN:
@@ -8829,6 +9084,10 @@ emit_target(Ty *ty, Expr *target, bool def)
 
         case EXPRESSION_REF_PATTERN:
                 emit_target(ty, target->target, false);
+                break;
+
+        case EXPRESSION_MATCH_ANY:
+                *(volatile int *)0 = 0;
                 break;
 
         default:
@@ -9375,6 +9634,9 @@ emit_assignment2(Ty *ty, Expr *target, bool maybe, bool def)
         bool after = false;
 
         switch (target->type) {
+        case EXPRESSION_MATCH_ANY:
+                break;
+
         case EXPRESSION_ARRAY:
                 for (int i = 0; i < vN(target->elements); ++i) {
                         if (v__(target->elements, i)->type == EXPRESSION_MATCH_REST) {
@@ -9409,6 +9671,7 @@ emit_assignment2(Ty *ty, Expr *target, bool maybe, bool def)
                         }
                 }
                 break;
+
         case EXPRESSION_DICT:
                 for (int i = 0; i < vN(target->keys); ++i) {
                         INSN(DUP);
@@ -9418,16 +9681,19 @@ emit_assignment2(Ty *ty, Expr *target, bool maybe, bool def)
                         INSN(POP);
                 }
                 break;
+
         case EXPRESSION_TAG_APPLICATION:
                 INSN(UNTAG_OR_DIE);
                 Ei32(tag_app_tag(target));
                 emit_assignment2(ty, target->tagged, maybe, def);
                 break;
+
         case EXPRESSION_TAG_PATTERN:
                 emit_target(ty, target, def);
                 INSN(STEAL_TAG);
                 emit_assignment2(ty, target->tagged, maybe, def);
                 break;
+
         case EXPRESSION_VIEW_PATTERN:
                 INSN(DUP);
                 EE(target->left);
@@ -9436,6 +9702,7 @@ emit_assignment2(Ty *ty, Expr *target, bool maybe, bool def)
                 emit_assignment2(ty, target->right, maybe, def);
                 INSN(POP);
                 break;
+
         case EXPRESSION_NOT_NIL_VIEW_PATTERN:
                 INSN(DUP);
                 EE(target->left);
@@ -9446,11 +9713,13 @@ emit_assignment2(Ty *ty, Expr *target, bool maybe, bool def)
                 emit_assignment2(ty, target->right, maybe, def);
                 INSN(POP);
                 break;
+
         case EXPRESSION_MATCH_NOT_NIL:
                 INSN(THROW_IF_NIL);
                 emit_target(ty, target, def);
                 (emit_instr)(ty, instr);
                 break;
+
         case EXPRESSION_TUPLE:
                 for (int i = 0; i < vN(target->es); ++i) {
                         if (v__(target->es, i)->type == EXPRESSION_MATCH_REST) {
@@ -9480,6 +9749,7 @@ emit_assignment2(Ty *ty, Expr *target, bool maybe, bool def)
                         }
                 }
                 break;
+
         default:
                 emit_target(ty, target, def);
                 INSNx(instr);
@@ -17180,6 +17450,35 @@ DumpProgram(
                 CASE(TRY_STEAL_TAG)
                         READVALUE(n);
                         break;
+                CASE(MATCH_TAG)
+                {
+                        i8 mode;
+                        READVALUE(mode);
+                        READVALUE(n);
+                        READVALUE(n); /* default offset */
+                        dump(out, " %s{%s", TERM(36), TERM(0));
+                        int saved_n = *(int *)(c - sizeof (int) - sizeof (int));
+                        for (int idx = 0; idx < saved_n; ++idx) {
+                                READVALUE(tag);
+                                READVALUE(n); /* arm offset */
+                                if (!DebugScan) {
+                                        dump(
+                                                out,
+                                                " %s%s%s:%s%d%s",
+                                                TERM(33),
+                                                tags_name(ty, tag),
+                                                TERM(0),
+                                                TERM(32),
+                                                n,
+                                                TERM(0)
+                                        );
+                                }
+                        }
+                        if (!DebugScan) {
+                                dump(out, " %s}%s", TERM(36), TERM(0));
+                        }
+                        break;
+                }
                 CASE(BAD_MATCH)
                         break;
                 CASE(BAD_DISPATCH);
