@@ -82,10 +82,8 @@ typedef struct {
 typedef vec(RecordItem) RecordItems;
 
 static int
-itemcmp(void *ctx, const void *a, const void *b)
+itemcmp(const void *a, const void *b)
 {
-        Ty *ty = ctx;
-
         RecordItem const *x = a;
         RecordItem const *y = b;
 
@@ -136,8 +134,8 @@ records_equal(Ty *ty, Value const *v1, Value const *v2)
                 return false;
         }
 
-        rqsort(vv(xs_named), vN(xs_named), sizeof (RecordItem), itemcmp, ty);
-        rqsort(vv(ys_named), vN(ys_named), sizeof (RecordItem), itemcmp, ty);
+        qsort(vv(xs_named), vN(xs_named), sizeof (RecordItem), itemcmp);
+        qsort(vv(ys_named), vN(ys_named), sizeof (RecordItem), itemcmp);
 
         for (usize i = 0; i < vN(xs_named); ++i) {
                 if (v_(xs_named, i)->id != v_(ys_named, i)->id) {
@@ -198,8 +196,8 @@ compare_records(Ty *ty, Value const *v1, Value const *v2)
                 }
         }
 
-        rqsort(vv(xs), vN(xs), sizeof (RecordItem), itemcmp, ty);
-        rqsort(vv(ys), vN(ys), sizeof (RecordItem), itemcmp, ty);
+        qsort(vv(xs), vN(xs), sizeof (RecordItem), itemcmp);
+        qsort(vv(ys), vN(ys), sizeof (RecordItem), itemcmp);
 
         for (usize i = 0; i < vN(xs); ++i) {
                 if (v_(xs, i)->id != v_(ys, i)->id) {

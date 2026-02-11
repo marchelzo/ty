@@ -219,6 +219,7 @@ target_compile_options(${_tgt_ty_interface}
       -Wno-multichar
       -Wno-trigraphs
       -pipe
+      -flto
     >
     $<$<C_COMPILER_ID:AppleClang>:
       -Wall
