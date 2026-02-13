@@ -8704,7 +8704,7 @@ BUILTIN_FUNCTION(parse_source)
                 vmE(&err);
         }
 
-        return (p[0] == NULL) ? NIL : tyexpr(ty, p[0], 0);
+        return (p[0] == NULL) ? NIL : tystmt(ty, p[0], 0);
 }
 
 
