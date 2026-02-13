@@ -1179,6 +1179,8 @@ extern usize TotalBytesAllocated;
         X(TRY_REGEX),             \
         X(ASSIGN_REGEX_MATCHES),  \
         X(TRY_ASSIGN_NON_NIL),    \
+        X(TRY_RANGE),             \
+        X(TRY_INCRANGE),          \
         X(MATCH_TAG),             \
         X(BAD_MATCH),             \
         X(BAD_CALL),              \

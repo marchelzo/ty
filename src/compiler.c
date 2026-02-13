@@ -68,6 +68,7 @@ enum {
 #define emit_instr(i) ((emit_instr)(ty, i))
 #define INSNx(i)      ((emit_instr)(ty, i))
 #define INSN(i)       ((emit_instr)(ty, INSTR_##i))
+#define PEEPHOLE_BARRIER() ((emit_instr)(ty, -1))
 
 #define EE(x)    emit_expression(ty, (x))
 #define EM(x)    emit_member(ty, (x))
@@ -1640,6 +1641,8 @@ AdjustStack(Ty *ty, int c)
 
         case INSTR_POP2:
         case INSTR_TARGET_SUBSCRIPT:
+        case INSTR_TRY_RANGE:
+        case INSTR_TRY_INCRANGE:
                 AdjStack(ty, -2);
                 break;
 
@@ -1747,6 +1750,11 @@ inline static void
         static int last1 = -1;
         static int last2 = -1;
         static int last3 = -1;
+
+        if (c < 0) {
+                last0 = last1 = last2 = last3 = -1;
+                return;
+        }
 
         AdjustStack(ty, c);
 
@@ -8194,7 +8202,22 @@ emit_try_match(Ty *ty, Expr const *pattern)
                 break;
         }
 
-        default:
+        case EXPRESSION_DOT_DOT:
+                if (pattern->right != NULL) {
+                        EE(pattern->left);
+                        EE(pattern->right);
+                        FAIL_MATCH_IF(TRY_RANGE);
+                        break;
+                }
+                goto default_match;
+
+        case EXPRESSION_DOT_DOT_DOT:
+                EE(pattern->left);
+                EE(pattern->right);
+                FAIL_MATCH_IF(TRY_INCRANGE);
+                break;
+
+        default: default_match:
                 /*
                  * Need to think about how this should work...
                  */
@@ -8533,6 +8556,7 @@ emit_tag_match_statement(Ty *ty, Stmt const *s, bool want_result, int kind)
                 }
         }
 
+        PEEPHOLE_BARRIER();
         PATCH_OFFSET(default_off);
 
         if (has_else) {
@@ -8610,6 +8634,7 @@ emit_tag_match_expression(Ty *ty, Expr const *e, int kind)
                 }
         }
 
+        PEEPHOLE_BARRIER();
         PATCH_OFFSET(default_off);
 
         if (has_else) {
@@ -17550,6 +17575,10 @@ DumpProgram(
                         dump(out, " %s/%s/%s", TERM(92), ((Regex *)s)->pattern, TERM(38));
                         break;
                 CASE(ASSIGN_REGEX_MATCHES)
+                        READVALUE(n);
+                        break;
+                CASE(TRY_RANGE)
+                CASE(TRY_INCRANGE)
                         READVALUE(n);
                         break;
                 CASE(ENSURE_DICT)
