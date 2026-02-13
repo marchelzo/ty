@@ -975,6 +975,10 @@ lexop(Ty *ty)
                 if (i > 0 && C(0) == '@' && idchar(C(1)))
                         break;
 
+                /* Don't consume $$ (template hole marker) as part of an operator */
+                if (C(0) == '$' && C(1) == '$' && i > 0)
+                        break;
+
                 /* Another one :^) We want a=#self to mean a = #self, not a #= self...
                  * This comes up primarily with default function arguments.
                  */

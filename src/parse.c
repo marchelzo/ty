@@ -3561,6 +3561,14 @@ static Expr *
 prefix_carat(Ty *ty)
 {
         consume('^');
+
+        if (T0 == '$$' && CurrentTemplate != NULL) {
+                Expr *e = mkxpr(RESOURCE_BINDING);
+                e->tagged = prefix_template_expr(ty);
+                e->end = TEnd;
+                return e;
+        }
+
         Expr *id = prefix_identifier(ty);
         id->type = EXPRESSION_RESOURCE_BINDING;
         return id;
@@ -5202,8 +5210,6 @@ parse_definition_lvalue(Ty *ty, int context, Expr *e)
                         break;
                 if (T0 != ',')
                         goto Error;
-                if (false && T1 != TOKEN_IDENTIFIER)
-                        goto Error;
                 break;
         default:
                 break;
@@ -5243,15 +5249,7 @@ parse_target_list(Ty *ty)
                 die("expected lvalue in for-each loop");
         }
 
-        while (
-                T0 == ',' && (
-                        T1 == TOKEN_IDENTIFIER ||
-                        T1 == '[' ||
-                        T1 == '{' ||
-                        (T1 == '%' && token(2)->type == '{') ||
-                        true /* FIXME: why were we doing these lookaheads? */
-                )
-        ) {
+        while (T0 == ',') {
                 next();
 
                 target = parse_definition_lvalue(ty, LV_EACH, NULL);

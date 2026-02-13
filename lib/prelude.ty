@@ -4005,7 +4005,7 @@ macro __walk! {
                 walk(x, f)
             ),
 
-            ty.With(bindings, body) -> ty.With(
+            ty.With(bindings, body) => ty.With(
                 [walk(binding, f) for binding in bindings],
                 walk(body, f)
             ),
@@ -4264,18 +4264,15 @@ fn memoized[F](fun: F, max: Int = nil) -> F {
     let cache = %{}
     let lock  = SpinLock()
 
-    let guard-id = ty.gensym()
-    let guard    = ty.Resource({name: guard-id})
-    let _guard   = ty.Id({name: guard-id})
-    let _cache   = ty.Id({name: ty.gensym()})
+    let guard = ty.gensym()
 
     let body = match max {
         nil => $$[
-            let $$guard = $${lock}.lock()
+            let ^$$guard = $${lock}.lock()
             $${cache}.get-or-put-with(
                 $$key,
                 () -> do {
-                    let ^_ = $$_guard.unlocked()
+                    let ^_ = $$guard.unlocked()
                     $$call
                 }
             )
@@ -4283,11 +4280,11 @@ fn memoized[F](fun: F, max: Int = nil) -> F {
 
         $max => do {
             $$[
-                let $$guard = $${lock}.lock()
+                let ^$$guard = $${lock}.lock()
                 let v = $${cache}.get-or-put-with(
                     $$key,
                     () -> do {
-                        let ^_ = $$_guard.unlocked()
+                        let ^_ = $$guard.unlocked()
                         $$call
                     }
                 )
