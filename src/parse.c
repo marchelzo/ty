@@ -7053,6 +7053,7 @@ Finally:
         }
 
         state = save;
+        lex_restore(ty, &CtxCheckpoint);
 
         return ok;
 }
