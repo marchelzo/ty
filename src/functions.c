@@ -8693,10 +8693,18 @@ BUILTIN_FUNCTION(token_next)
 BUILTIN_FUNCTION(parse_source)
 {
         ASSERT_ARGC("ty.parse.source()", 0, 1);
+
         Value vSrc = ARGx(0, VALUE_STRING, VALUE_BLOB);
         char *src = TY_0_C_STR(vSrc);
         Stmt **p = parse(ty, src, NULL);
-        return tyexpr(ty, p[0]->expression, 0);
+
+        if (p == NULL) {
+                char const *msg = TyError(ty);
+                Value err = Err(ty, vSsz(msg));
+                vmE(&err);
+        }
+
+        return (p[0] == NULL) ? NIL : tyexpr(ty, p[0], 0);
 }
 
 
