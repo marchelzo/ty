@@ -885,7 +885,7 @@ xprint_stack(Ty *ty, int n)
         }
 }
 
-#define print_stack(...)
+#define print_stack(ty, n)
 
 inline static Value
 (pop)(Ty *ty)
@@ -5922,6 +5922,28 @@ TargetMember:
                         }
                         break;
 
+                CASE(TRY_RANGE)
+                {
+                        READJUMP(jump);
+                        Value hi = pop();
+                        Value lo = pop();
+                        if (value_compare(ty, top(), &lo) < 0 || value_compare(ty, top(), &hi) >= 0) {
+                                DOJUMP(jump);
+                        }
+                        break;
+                }
+
+                CASE(TRY_INCRANGE)
+                {
+                        READJUMP(jump);
+                        Value hi = pop();
+                        Value lo = pop();
+                        if (value_compare(ty, top(), &lo) < 0 || value_compare(ty, top(), &hi) > 0) {
+                                DOJUMP(jump);
+                        }
+                        break;
+                }
+
                 CASE(TRY_REGEX)
                         READJUMP(jump);
                         READVALUE(s);
@@ -9286,6 +9308,10 @@ StepInstruction(char const *ip)
         CASE(ASSIGN_REGEX_MATCHES)
                 SKIPVALUE(n);
                 break;
+        CASE(TRY_RANGE)
+        CASE(TRY_INCRANGE)
+                SKIPVALUE(n);
+                break;
         CASE(ENSURE_DICT)
                 SKIPVALUE(n);
                 break;
@@ -9843,6 +9869,8 @@ tdb_step_over_x(Ty *ty, char *ip, i32 i)
         CASE(INDEX_TUPLE)
         CASE(TRY_INDEX_TUPLE)
         CASE(TRY_REGEX)
+        CASE(TRY_RANGE)
+        CASE(TRY_INCRANGE)
         CASE(TRY_STEAL_TAG)
         CASE(TRY_TAG_POP)
         CASE(TRY_TUPLE_MEMBER)

@@ -84,7 +84,7 @@
 #define K3 ((T3 == TOKEN_KEYWORD) ? token(3)->keyword : -1)
 #define KW(i) ((token(i)->type == TOKEN_KEYWORD) ? token(i)->keyword : -1)
 
-#if 1
+#if 0
 #define PLOGX(fmt, ...) (                       \
         EnableLogging                           \
      && fprintf(                                \
