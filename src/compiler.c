@@ -65,6 +65,8 @@ enum {
         TX_NO_RESOLVE = (1 << 0)
 };
 
+#define mkcstr(s) (mkcstr(ty, (s)))
+
 #define emit_instr(i) ((emit_instr)(ty, i))
 #define INSNx(i)      ((emit_instr)(ty, i))
 #define INSN(i)       ((emit_instr)(ty, INSTR_##i))
@@ -3510,10 +3512,7 @@ symbolize_lvalue_(Ty *ty, Scope *scope, Expr *target, u32 flags)
                 break;
 
         case EXPRESSION_RESOURCE_BINDING:
-                if (
-                        (target->symbol == NULL)
-                     && (strcmp(target->identifier, "_") == 0)
-                ) {
+                if ((target->symbol == NULL) && s_eq(target->identifier, "_")) {
                         target->identifier = gensym(ty);
                 }
         case EXPRESSION_SPREAD:
@@ -3688,7 +3687,7 @@ symbolize_pattern_(Ty *ty, Scope *scope, Expr *e, Scope *reuse, bool def)
 
         switch (e->type) {
         case EXPRESSION_RESOURCE_BINDING:
-                if (e->symbol == NULL && strcmp(e->identifier, "_") == -1) {
+                if ((e->symbol == NULL) && s_eq(e->identifier, "_")) {
                         e->identifier = gensym(ty);
                 }
         case EXPRESSION_IDENTIFIER:
@@ -12855,7 +12854,7 @@ compiler_global_sym(Ty *ty, usize i)
 }
 
 inline static char *
-mkcstr(Ty *ty, Value const *v)
+(mkcstr)(Ty *ty, Value const *v)
 {
         if (
                 (v == NULL)
@@ -13082,11 +13081,29 @@ tyexpr(Ty *ty, Expr const *e, u32 flags)
                 break;
 
         case EXPRESSION_RESOURCE_BINDING:
-                v = TAGGED_RECORD(
-                        TyResource,
-                        "name", vSsz(e->identifier),
-                        "module", (e->module == NULL) ? NIL : vSsz(e->module)
-                );
+                if (e->identifier != NULL) {
+                        v = TAGGED_RECORD(
+                                TyResource,
+                                "name", vSsz(e->identifier),
+                                "module", (e->module == NULL) ? NIL : vSsz(e->module)
+                        );
+                } else {
+                        Value name = go(e->tagged);
+                        if (TryUnwrap(&name, TyId)) {
+                                name = *t_(&name, "name");
+                        }
+                        if (name.type != VALUE_STRING) {
+                                fail(
+                                        "template hole in resource binding filled with non-string: %s",
+                                        VSC(&name)
+                                );
+                        }
+                        v = TAGGED_RECORD(
+                                TyResource,
+                                "name", name,
+                                "module", NIL
+                        );
+                }
                 break;
 
         case EXPRESSION_TYPE:
@@ -14164,14 +14181,14 @@ cstmt(Ty *ty, Value *v)
                 s->value = cexpr(ty, &f);
                 s->doc = s->value->doc;
                 s->target = NewExpr(ty, EXPRESSION_IDENTIFIER);
-                s->target->identifier = mkcstr(ty, t_(v, "name"));
+                s->target->identifier = mkcstr(t_(v, "name"));
                 break;
         }
 
         case TyClass:
         {
                 s->type = STATEMENT_CLASS_DEFINITION;
-                s->class.name = mkcstr(ty, t_(v, "name"));
+                s->class.name = mkcstr(t_(v, "name"));
                 s->class.doc = NULL;
                 Value *super = tuple_get(v, "super");
                 s->class.super = (super != NULL && super->type != VALUE_NIL) ? cexpr(ty, super) : NULL;
@@ -14515,7 +14532,7 @@ cexpr(Ty *ty, Value *v)
 
                 case VALUE_STRING:
                         e->type = EXPRESSION_IDENTIFIER;
-                        e->identifier = mkcstr(ty, v);
+                        e->identifier = mkcstr(v);
                         break;
 
                 default:
@@ -14569,13 +14586,13 @@ cexpr(Ty *ty, Value *v)
 
         case TyOperator:
                 e->type = EXPRESSION_OPERATOR;
-                e->op.id = mkcstr(ty, t_(v, 0));
+                e->op.id = mkcstr(t_(v, 0));
                 break;
 
         case TyId:
         {
                 e->type = EXPRESSION_IDENTIFIER;
-                e->identifier = mkcstr(ty, tget_t(v, "name", VALUE_STRING));
+                e->identifier = mkcstr(tget_t(v, "name", VALUE_STRING));
 
                 if (e->identifier == NULL) {
                         goto Bad;
@@ -14583,7 +14600,7 @@ cexpr(Ty *ty, Value *v)
 
                 Value *mod = tuple_get(v, "module");
                 Value *constraint = tuple_get(v, "constraint");
-                e->module = (mod != NULL && mod->type != VALUE_NIL) ? mkcstr(ty, mod) : NULL;
+                e->module = (mod != NULL && mod->type != VALUE_NIL) ? mkcstr(mod) : NULL;
                 e->constraint = (constraint != NULL && constraint->type != VALUE_NIL) ? cexpr(ty, constraint) : NULL;
 
                 if (e->module == NULL && s_eq(e->identifier, "__line__")) {
@@ -14597,10 +14614,10 @@ cexpr(Ty *ty, Value *v)
         case TyPatternAlias:
         {
                 e->type = EXPRESSION_ALIAS_PATTERN;
-                e->identifier = mkcstr(ty, tuple_get(v, "name"));
+                e->identifier = mkcstr(tuple_get(v, "name"));
                 Value *mod = tuple_get(v, "module");
                 Value *constraint = tuple_get(v, "constraint");
-                e->module = (mod != NULL && mod->type != VALUE_NIL) ? mkcstr(ty, mod) : NULL;
+                e->module = (mod != NULL && mod->type != VALUE_NIL) ? mkcstr(mod) : NULL;
                 e->constraint = (constraint != NULL && constraint->type != VALUE_NIL) ? cexpr(ty, constraint) : NULL;
                 e->aliased = cexpr(ty, tuple_get(v, "pattern"));
                 break;
@@ -14608,14 +14625,14 @@ cexpr(Ty *ty, Value *v)
 
         case TyNotNil:
                 e->type = EXPRESSION_MATCH_NOT_NIL;
-                e->identifier = mkcstr(ty, t_(v, "name"));
-                e->module = mkcstr(ty, tuple_get(v, "module"));
+                e->identifier = mkcstr(t_(v, "name"));
+                e->module = mkcstr(tuple_get(v, "module"));
                 break;
 
         case TyPack:
                 e->type = EXPRESSION_PACK;
-                e->identifier = mkcstr(ty, t_(v, "name"));
-                e->module = mkcstr(ty, tuple_get(v, "module"));
+                e->identifier = mkcstr(t_(v, "name"));
+                e->module = mkcstr(tuple_get(v, "module"));
                 break;
 
         case TyAny:
@@ -14635,9 +14652,9 @@ cexpr(Ty *ty, Value *v)
         case TyResource:
         {
                 e->type = EXPRESSION_RESOURCE_BINDING;
-                e->identifier = mkcstr(ty, tuple_get(v, "name"));
+                e->identifier = mkcstr(tuple_get(v, "name"));
                 Value *mod = tuple_get(v, "module");
-                e->module = (mod != NULL && mod->type != VALUE_NIL) ? mkcstr(ty, mod) : NULL;
+                e->module = (mod != NULL && mod->type != VALUE_NIL) ? mkcstr(mod) : NULL;
                 break;
         }
 
@@ -14694,7 +14711,7 @@ cexpr(Ty *ty, Value *v)
 
         case TyString:
                 e->type = EXPRESSION_STRING;
-                e->string = mkcstr(ty, v);
+                e->string = mkcstr(v);
                 break;
 
         case TyLangString:
@@ -14707,7 +14724,7 @@ cexpr(Ty *ty, Value *v)
                 for (int i = 0; i < v->array->count; ++i) {
                         Value *x = &v->array->items[i];
                         if (x->type == VALUE_STRING) {
-                                avP(e->strings, mkcstr(ty, x));
+                                avP(e->strings, mkcstr(x));
                         } else if (x->type == VALUE_TUPLE) {
                                 avP(e->expressions, cexpr(ty, &x->items[0]));
                                 avP(e->fmts, cexpr(ty, &x->items[1]));
@@ -14784,7 +14801,7 @@ cexpr(Ty *ty, Value *v)
                         }
 
                         avP(e->es, cexpr(ty, item));
-                        avP(e->names, (name != NULL) ? mkcstr(ty, name) : NULL);
+                        avP(e->names, (name != NULL) ? mkcstr(name) : NULL);
                         avP(e->required, optional != NULL ? !optional->boolean : true);
                         avP(e->tconds, cexpr(ty, cond));
                 }
@@ -14846,7 +14863,7 @@ cexpr(Ty *ty, Value *v)
                                 avP(e->fconds, cexpr(ty, cond));
                         } else {
                                 avP(e->kwargs, cexpr(ty, t_(arg, "arg")));
-                                avP(e->kws, mkcstr(ty, name));
+                                avP(e->kws, mkcstr(name));
                                 avP(e->fkwconds, cexpr(ty, cond));
                         }
                 }
@@ -14867,7 +14884,7 @@ cexpr(Ty *ty, Value *v)
                 case TyMethodCall:
                         e->type = EXPRESSION_METHOD_CALL;
                         e->method = NewExpr(ty, EXPRESSION_IDENTIFIER);
-                        e->method->identifier = mkcstr(ty, method);
+                        e->method->identifier = mkcstr(method);
                         break;
 
                 case TyTryDynMethodCall:
@@ -14894,7 +14911,7 @@ cexpr(Ty *ty, Value *v)
                                 avP(e->mconds, cond != NULL ? cexpr(ty, cond) : NULL);
                         } else {
                                 avP(e->method_kwargs, cexpr(ty, tuple_get(arg, "arg")));
-                                avP(e->method_kws, mkcstr(ty, name));
+                                avP(e->method_kws, mkcstr(name));
                         }
                 }
                 break;
@@ -14928,9 +14945,9 @@ cexpr(Ty *ty, Value *v)
                 Value       *proto = tget_t(v, "proto", VALUE_STRING);
                 Value *type_params = tget_t(v, "typeParams", VALUE_ARRAY);
 
-                e->name          = mkcstr(ty, name);
-                e->doc           = mkcstr(ty, doc);
-                e->proto         = mkcstr(ty, proto);
+                e->name          = mkcstr(name);
+                e->doc           = mkcstr(doc);
+                e->proto         = mkcstr(proto);
                 e->return_type   = (rt != NULL) ? cexpr(ty, rt) : NULL;
 
                 if (decorators != NULL) {
@@ -14954,7 +14971,7 @@ cexpr(Ty *ty, Value *v)
                         switch (tags_first(ty, p->tags)) {
                         case TyParam:
                         {
-                                avP(e->params, mkcstr(ty, t_(p, "name")));
+                                avP(e->params, mkcstr(t_(p, "name")));
                                 Value *c = tget_nn(p, "constraint");
                                 Value *d = tget_nn(p, "default");
                                 avP(e->constraints, cexpr(ty, c));
@@ -14963,14 +14980,14 @@ cexpr(Ty *ty, Value *v)
                         }
 
                         case TyGather:
-                                avP(e->params, mkcstr(ty, p));
+                                avP(e->params, mkcstr(p));
                                 avP(e->constraints, NewExpr(ty, EXPRESSION_MATCH_ANY));
                                 avP(e->dflts, NULL);
                                 e->rest = i;
                                 break;
 
                         case TyKwargs:
-                                avP(e->params, mkcstr(ty, p));
+                                avP(e->params, mkcstr(p));
                                 avP(e->constraints, NewExpr(ty, EXPRESSION_MATCH_ANY));
                                 avP(e->dflts, NULL);
                                 e->ikwargs = i;
@@ -15084,7 +15101,7 @@ cexpr(Ty *ty, Value *v)
                         }
                 }
                 e->member = NewExpr(ty, EXPRESSION_IDENTIFIER);
-                e->member->identifier = mkcstr(ty, &v->items[1]);
+                e->member->identifier = mkcstr(&v->items[1]);
                 break;
 
         case TyDynMemberAccess:
@@ -15407,13 +15424,13 @@ cexpr(Ty *ty, Value *v)
                 switch (v->count) {
                 case 2:
                         e->type = EXPRESSION_UNARY_OP;
-                        e->uop = mkcstr(ty, &v->items[0]);
+                        e->uop = mkcstr(&v->items[0]);
                         e->operand = cexpr(ty, &v->items[1]);
                         break;
 
                 case 3:
                         e->type = EXPRESSION_USER_OP;
-                        e->op_name = mkcstr(ty, &v->items[0]);
+                        e->op_name = mkcstr(&v->items[0]);
                         e->left = cexpr(ty, &v->items[1]);
                         e->right = cexpr(ty, &v->items[2]);
                         break;
@@ -15485,7 +15502,7 @@ cexpr(Ty *ty, Value *v)
         case TyTagPattern:
         {
                 e->type = EXPRESSION_TAG_PATTERN;
-                e->identifier = mkcstr(ty, &v->items[0]);
+                e->identifier = mkcstr(&v->items[0]);
                 e->module = NULL;
                 e->constraint = NULL;
                 e->tagged = cexpr(ty, &v->items[1]);
@@ -15502,17 +15519,17 @@ cexpr(Ty *ty, Value *v)
         case TyIfDef:
         {
                 e->type = EXPRESSION_IFDEF;
-                e->identifier = mkcstr(ty, t_(v, "name"));
+                e->identifier = mkcstr(t_(v, "name"));
                 Value *mod = tuple_get(v, "module");
-                e->module = (mod != NULL && mod->type != VALUE_NIL) ? mkcstr(ty, mod) : NULL;
+                e->module = (mod != NULL && mod->type != VALUE_NIL) ? mkcstr(mod) : NULL;
                 break;
         }
         case TyDefined:
         {
                 e->type = EXPRESSION_DEFINED;
-                e->identifier = mkcstr(ty, t_(v, "name"));
+                e->identifier = mkcstr(t_(v, "name"));
                 Value *mod = tuple_get(v, "module");
-                e->module = (mod != NULL && mod->type != VALUE_NIL) ? mkcstr(ty, mod) : NULL;
+                e->module = (mod != NULL && mod->type != VALUE_NIL) ? mkcstr(mod) : NULL;
                 break;
         }
         case TyUnsafe:
