@@ -8520,13 +8520,17 @@ emit_tag_match_statement(Ty *ty, Stmt const *s, bool want_result, int kind)
                 if (pattern->type != EXPRESSION_CHOICE_PATTERN && kind == TG_MATCH_BARE) {
                         INSN(POP);
                         returns &= ES(then, want_result);
+                        INSN(JUMP);
+                        avP(STATE.match_successes, vN(STATE.code));
+                        Ei32(0);
                 } else {
+                        /*
+                         * emit_case() emits its own JUMP to match_successes on the success
+                         * path. On failure it falls through with the subject still on the
+                         * stack — let it reach the next arm or the default code.
+                         */
                         returns &= emit_case(ty, pattern, NULL, then, want_result);
                 }
-
-                INSN(JUMP);
-                avP(STATE.match_successes, vN(STATE.code));
-                Ei32(0);
         }
 
         PATCH_OFFSET(default_off);
@@ -8590,13 +8594,20 @@ emit_tag_match_expression(Ty *ty, Expr const *e, int kind)
                 if (pattern->type != EXPRESSION_CHOICE_PATTERN && kind == TG_MATCH_BARE) {
                         INSN(POP);
                         EE(then);
+                        INSN(JUMP);
+                        avP(STATE.match_successes, vN(STATE.code));
+                        Ei32(0);
                 } else {
+                        /*
+                         * emit_expression_case() emits its own JUMP to match_successes
+                         * on the success path. On failure it falls through, and the subject
+                         * is still on the stack. We let it fall through to the next arm
+                         * (which may share the same tag) or to the default code. No JUMP
+                         * here — the next arm's emit_try_match will re-check the tag and
+                         * either match the inner pattern or fall through again.
+                         */
                         emit_expression_case(ty, pattern, then);
                 }
-
-                INSN(JUMP);
-                avP(STATE.match_successes, vN(STATE.code));
-                Ei32(0);
         }
 
         PATCH_OFFSET(default_off);
