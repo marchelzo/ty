@@ -30,7 +30,8 @@ pub use TermStyle = {
     ?bg:        ?Array[Int],
     ?uc:        ?Array[Int],
     ?fg-bright: ?Bool,
-    ?bg-bright: ?Bool
+    ?bg-bright: ?Bool,
+    ?link:      ?String
 }
 
 
@@ -44,7 +45,8 @@ pub use ChalkStyle = {
     ?bg:        ?String,
     ?uc:        ?String,
     ?fg-bright: ?String,
-    ?bg-bright: ?String
+    ?bg-bright: ?String,
+    ?link:      ?String
 }
 
 // Some nice colors :)
@@ -244,14 +246,19 @@ fn detrans(a: _, b: _) -> String {
     b = %{key: val for key, val in b if val != nil}
 
     for key, val in b if a[key] != val {
-        match val {
-            false => {
+        match (key, val) {
+            ('link', _) => on.push("link={val}"),
+            (_, false) => {
                 if key in a {
                     off.push(key)
                 }
             },
             _ => on.push(val)
         }
+    }
+
+    if a['link'] and !b['link'] {
+        off.push('link')
     }
 
     let trans = on ? "[{on.unwords()}]" : ''
@@ -271,9 +278,13 @@ pub fn parse(text: String, start: _ = {}) -> String {
         style = st
     }
 
-    for match text.split(/\x1b\[([^m]*)m/v) {
-        escape: RegexMatch => {
-            props = record-of(escape[1]!, start=props)
+    for match text.split(/\x1b\[([^m]*)m|\x1b\]8;;([^\x1b]*)\x1b\\/v) {
+        m: RegexMatch => {
+            match m.groups {
+                [_, $sgr, *]      => props = record-of(sgr, start=props),
+                [_, _, '' or nil] => props = {*props, link: nil},
+                [_, _, url]       => props = {*props, link: url},
+            }
         },
         text => {
             push(text, props)
@@ -476,6 +487,8 @@ fn parse-style(style: String, chalk: Chalk) -> ?TermStyle {
             _                 => nil
         },
 
+        /^link=(.+)$/ => ({link: $1}),
+
         _ => nil
     }
 }
@@ -536,7 +549,14 @@ pub fn trans(a: TermStyle, b: TermStyle) -> String {
         _           => None
     })
 
-    ["\x1b[{it}m" for attrs].join()
+    let combined = ["\x1b[{it}m" for attrs].join()
+
+    let a-link = a['link']
+    let b-link = b['link']
+
+    return (a-link == b-link) ? combined
+         : (b-link == nil)    ? "{combined}\x1b]8;;\x1b\\"
+         :                      "{combined}\x1b]8;;{b-link}\x1b\\"
 }
 
 class Chalk {
@@ -582,6 +602,7 @@ class Chalk {
                 ('bg',        {bg, ?bg-bright}) => true,
                 ('uc',        {uc, ?underline}) => true,
                 ('underline', {underline, ?uc}) => true,
+                ('link',      {link})           => true,
 
                 _  => (style == __styles[stop])
             }
@@ -670,10 +691,11 @@ class Chalk {
 
         fn stops(stop, style) {
             match (stop, style) {
-                ('fg', {fg, ?bright})    => true,
-                ('bg', {bg, ?bg-bright}) => true,
-                ('uc', {uc, ?underline}) => true,
-                ('u',  {underline, ?uc}) => true,
+                ('fg',   {fg, ?bright})    => true,
+                ('bg',   {bg, ?bg-bright}) => true,
+                ('uc',   {uc, ?underline}) => true,
+                ('u',    {underline, ?uc}) => true,
+                ('link', {link})           => true,
                 _  => (style == __styles[stop])
             }
         }
@@ -765,7 +787,7 @@ class Chalk {
 }
 
 pub fn strip(text: String) -> String {
-    text.comb(/\x1b[^m]+m/)
+    text.comb(/\x1b\[[^m]*m|\x1b\]8;[^\x1b]*\x1b\\/)
 }
 
 pub fn hueToRgb(p: Float, q: Float, t: Float) -> Float {
