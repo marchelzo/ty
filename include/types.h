@@ -44,6 +44,7 @@ struct constraint {
                         i32 op;
                         Expr const *src;
                         u64 time;
+                        bool exhaustive;
                 };
         };
 };

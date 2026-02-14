@@ -158,7 +158,6 @@ op_add(i32 op, i32 t1, i32 t2, i32 ref, Expr *expr)
                 intern_entry(&xD.b_ops, op)->name,
                 class_name(&vvv, t2)
         );
-
         if (op >= _2.ops.count) {
                 TyRwLockWrLock(&_2.lock);
 
@@ -391,6 +390,7 @@ op_type(i32 op)
                 }
         }
         t0 = group->op0;
+        group->op0 = NULL;
         TyRwLockWrUnlock(&group->lock);
 
         dont_printf("op_type(%s): %s\n", intern_entry(&xD.b_ops, op)->name, type_show(&vvv, t0));

@@ -1262,14 +1262,15 @@ FlattenTypeSequence(
         Ty *ty,
         TypeVector *types,
         ConstStringVector *names,
-        BoolVector *required
+        BoolVector *required,
+        bool packed_only
 )
 {
         bool already_flat = true;
 
         for (int i = 0; i < vN(*types); ++i) {
                 Type *t0 = ResolveVar(v__(*types, i));
-                if (TypeType(t0) == TYPE_SEQUENCE) {
+                if (TypeType(t0) == TYPE_SEQUENCE && (!packed_only || t0->packed)) {
                         already_flat = false;
                         break;
                 }
@@ -1285,7 +1286,7 @@ FlattenTypeSequence(
 
         for (int i = 0; i < vN(*types); ++i) {
                 Type *t0 = ResolveVar(v__(*types, i));
-                if (TypeType(t0) == TYPE_SEQUENCE) {
+                if (TypeType(t0) == TYPE_SEQUENCE && (!packed_only || t0->packed)) {
                         avPv(flat, t0->types);
                         if (names != NULL) {
                                 while (vN(flat_names) < vN(flat)) {
@@ -1312,7 +1313,8 @@ FlattenTypeSequence(
                 ty,
                 &flat,
                 (names != NULL) ? &flat_names : NULL,
-                (required != NULL) ? &flat_required : NULL
+                (required != NULL) ? &flat_required : NULL,
+                packed_only
         );
 
         Type before = { .type = TYPE_SEQUENCE, .types = *types };
@@ -1335,15 +1337,19 @@ Flatten(Ty *ty, Type *t0)
 {
         switch (TypeType(t0)) {
         case TYPE_TUPLE:
-                return FlattenTypeSequence(ty, &t0->types, &t0->names, &t0->required);
+                return FlattenTypeSequence(ty, &t0->types, &t0->names, &t0->required, false);
 
         case TYPE_SEQUENCE:
         case TYPE_LIST:
-                return FlattenTypeSequence(ty, &t0->types, NULL, NULL);
+                return FlattenTypeSequence(ty, &t0->types, NULL, NULL, false);
+
+        case TYPE_UNION:
+        case TYPE_INTERSECT:
+                return FlattenTypeSequence(ty, &t0->types, NULL, NULL, true);
 
         case TYPE_ALIAS:
         case TYPE_OBJECT:
-                return FlattenTypeSequence(ty, &t0->args, NULL, NULL);
+                return FlattenTypeSequence(ty, &t0->args, NULL, NULL, false);
 
         case TYPE_FUNCTION:
                 return FlattenParameterList(ty, &t0->params);
@@ -1383,6 +1389,7 @@ Reduce(Ty *ty, Type const *t0)
                         }
                         *v_(t1->types, i) = t3;
                 }
+                Flatten(ty, t1);
                 t1 = Uniq(ty, t1);
                 break;
 
@@ -3189,8 +3196,10 @@ type_function(Ty *ty, Expr const *e, bool tmp)
         U32Vector bounded = {0};
         TypeVector bounds = {0};
 
-        if (vN(e->type_bounds) > 0 && !tmp) {
-                ty->tenv = NewEnv(ty, ty->tenv);
+        if (vN(e->type_bounds) > 0) {
+                if (!tmp) {
+                        ty->tenv = NewEnv(ty, ty->tenv);
+                }
                 for (int i = 0; i < vN(e->type_bounds); ++i) {
                         TypeBound const *bound = v_(e->type_bounds, i);
                         Expr const *var = bound->var;
@@ -3200,6 +3209,7 @@ type_function(Ty *ty, Expr const *e, bool tmp)
                         int op;
                         switch (var->type) {
                         case EXPRESSION_IDENTIFIER:
+                                if (tmp) break;
                                 a0 = type_resolve(ty, var);
                                 b0 = type_fixed(ty, type_resolve(ty, bound->bound));
                                 avP(
@@ -3214,6 +3224,7 @@ type_function(Ty *ty, Expr const *e, bool tmp)
                                 break;
 
                         case EXPRESSION_FUNCTION_TYPE:
+                                if (tmp) break;
                                 a0 = type_resolve(ty, var);
                                 b0 = type_fixed(ty, type_resolve(ty, bound->bound));
                                 avP(
@@ -3231,6 +3242,9 @@ type_function(Ty *ty, Expr const *e, bool tmp)
                                 a0 = type_resolve(ty, var->left);
                                 b0 = type_resolve(ty, var->right);
                                 c0 = type_resolve(ty, bound->bound);
+                                bool exhaustive =
+                                        (var->left->type == EXPRESSION_DOT_DOT_DOT && var->left->left->integer != 0)
+                                     || (var->right->type == EXPRESSION_DOT_DOT_DOT && var->right->left->integer != 0);
                                 avP(
                                         t->constraints,
                                         CONSTRAINT(
@@ -3238,7 +3252,8 @@ type_function(Ty *ty, Expr const *e, bool tmp)
                                                 .t0 = a0,
                                                 .t1 = b0,
                                                 .t2 = c0,
-                                                .op = op
+                                                .op = op,
+                                                .exhaustive = exhaustive
                                         )
                                 );
                                 break;
@@ -5293,8 +5308,10 @@ ShouldDefer2Op(Type *t0, Type *t1, Type *t2)
 }
 
 static Type *
-TrySolve2Op(Ty *ty, int op, Type *op0, Type *t0, Type *t1, Type *t2)
+TrySolve2Op(Ty *ty, int op, Type *op0, Type *t0, Type *t1, Type *t2, bool exhaustive)
 {
+        static u32 depth = 0;
+
         if (!ENABLED) {
                 return UNKNOWN;
         }
@@ -5304,6 +5321,10 @@ TrySolve2Op(Ty *ty, int op, Type *op0, Type *t0, Type *t1, Type *t2)
         t2 = ResolveVar(t2);
 
         if (ShouldDefer2Op(t0, t1, t2)) {
+                return NULL;
+        }
+
+        if (depth > 1) {
                 return NULL;
         }
 
@@ -5358,6 +5379,8 @@ TrySolve2Op(Ty *ty, int op, Type *op0, Type *t0, Type *t1, Type *t2)
         t0 = Inst1(ty, t0);
         t1 = Inst1(ty, t1);
         t2 = Inst1(ty, t2);
+
+        depth += 1;
 
         SCRATCH_SAVE();
 
@@ -5476,8 +5499,10 @@ TrySolve2Op(Ty *ty, int op, Type *op0, Type *t0, Type *t1, Type *t2)
                                 }
                         }
                         if (!IsBottom(f0) && !need_retry) {
-                                UnifyX(ty, t0, a0, false, false);
-                                UnifyX(ty, t1, b0, false, false);
+                                if (!exhaustive) {
+                                        UnifyX(ty, t0, a0, false, false);
+                                        UnifyX(ty, t1, b0, false, false);
+                                }
                                 UnifyX(ty, t2, c0, true, false);
                                 XXTLOG(
                                         "%sTrySolve2Op(%s%s%s)%s:",
@@ -5492,6 +5517,11 @@ TrySolve2Op(Ty *ty, int op, Type *op0, Type *t0, Type *t1, Type *t2)
                                 XXTLOG("    %s", ShowType(t2));
                                 r0 = t2;
                         } else {
+                                if (exhaustive) {
+                                        depth -= 1;
+                                        SCRATCH_RESTORE();
+                                        return NULL;
+                                }
                                 XXTLOG(
                                         "%sTrySolve2Op(%s%s%s)%s:",
                                         TERM(91),
@@ -5529,6 +5559,8 @@ TrySolve2Op(Ty *ty, int op, Type *op0, Type *t0, Type *t1, Type *t2)
                 avPv(op0->types, keep);
         }
 
+        depth -= 1;
+
         SCRATCH_RESTORE();
 
         return r0;
@@ -5557,7 +5589,7 @@ BindConstraint(Ty *ty, Constraint *c)
                 c->t0 = Reduce(ty, c->t0);
                 c->t1 = Reduce(ty, c->t1);
                 c->t1 = Reduce(ty, c->t1);
-                t0 = TrySolve2Op(ty, c->op, c->op0, c->t0, c->t1, c->t2);
+                t0 = TrySolve2Op(ty, c->op, c->op0, c->t0, c->t1, c->t2, c->exhaustive);
                 ok = (t0 != NULL);
                 XXTLOG(
                         "%sBindConstraint(2op)%s: %s",
@@ -6098,6 +6130,7 @@ InferCall0(
                 }
                 if (pack_index != -1) {
                         Type *pack0 = NewType(ty, TYPE_SEQUENCE);
+                        pack0->packed = true;
 
                         for (int ai = pack_index; ai < vN(*args); ++ai) {
                                 Type *t00  = NewInst(ty, t0);
@@ -8591,6 +8624,18 @@ type_resolve(Ty *ty, Expr const *e)
                 return t0;
 
         case EXPRESSION_DOT_DOT_DOT:
+                if (e->left->integer == 1) {
+                        t0 = NewType(ty, TYPE_UNION);
+                        t1 = type_resolve(ty, e->right);
+                        avP(t0->types, t1);
+                        return t0;
+                }
+                if (e->left->integer == 2) {
+                        t0 = NewType(ty, TYPE_INTERSECT);
+                        t1 = type_resolve(ty, e->right);
+                        avP(t0->types, t1);
+                        return t0;
+                }
                 t0 = CloneType(ty, type_resolve(ty, e->right));
                 t0->packed = true;
                 return t0;
@@ -9828,6 +9873,11 @@ type_binary_op(Ty *ty, Expr const *e)
         case EXPRESSION_SHL:     op = OP_BIT_SHL; break;
         case EXPRESSION_SHR:     op = OP_BIT_SHR; break;
         case EXPRESSION_XOR:     op = OP_BIT_XOR; break;
+        case EXPRESSION_LT:      op = OP_LT;      break;
+        case EXPRESSION_LEQ:     op = OP_LEQ;     break;
+        case EXPRESSION_GT:      op = OP_GT;      break;
+        case EXPRESSION_GEQ:     op = OP_GEQ;     break;
+        case EXPRESSION_CMP:     op = OP_CMP;     break;
         case EXPRESSION_USER_OP: op = intern(&xD.b_ops, e->op_name)->id;
         }
 
@@ -9843,11 +9893,15 @@ type_binary_op(Ty *ty, Expr const *e)
 
         Type *op0 = CloneType(ty, op_type(op));
 
+        if (op0 == NULL) {
+                return UNKNOWN;
+        }
+
         if (TypeType(op0) == TYPE_INTERSECT) {
                 CloneVec(op0->types);
         }
 
-        if (TrySolve2Op(ty, op, op0, t0, t1, t2) == NULL) {
+        if (TrySolve2Op(ty, op, op0, t0, t1, t2, false) == NULL) {
                 xvP(
                         ToSolve,
                         CONSTRAINT(
