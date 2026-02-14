@@ -13,7 +13,7 @@
 #include "array.h"
 #include "dict.h"
 
-#define TYPES_LOG      0
+#define TYPES_LOG      1
 #define FUN_TYPES_LOG  0
 
 typedef struct {
@@ -223,6 +223,9 @@ Uniq(Ty *ty, Type *t0);
 
 static Type *
 MakeConcrete(Ty *ty, Type *t0, TypeVector *refs);
+
+Type *
+type_resolve(Ty *ty, Expr const *e);
 
 static Type *
 SolveMemberAccess(Ty *ty, Type const *t0, Type const *t1);
@@ -596,6 +599,13 @@ IsTVar(Type const *t0)
         return (TypeType(t0) == TYPE_VARIABLE) && (t0->val == TVAR);
 }
 
+inline static bool
+IsConcrete(Type *t0)
+{
+        return IsBottom(t0) || t0->concrete;
+
+}
+
 inline static Type *
 Relax(Type const *t0)
 {
@@ -645,6 +655,45 @@ CanResolveAlias(Type const *t0)
         return (TypeType(t0) == TYPE_ALIAS)
             && (vN(t0->args) == vN(t0->bound))
             && (t0->_type != NULL);
+}
+
+/*
+ * Attempt lazy resolution of a forward-referenced type alias.
+ * When an alias like `use T = ... | Foo[bar.Baz]` is defined before
+ * bar.Baz exists, the alias is created with _type = NULL. This function
+ * retries resolution when the alias is actually used, by which time
+ * bar.Baz may have been defined.
+ */
+static bool
+TryResolveDeferredAlias(Ty *ty, Type *t0)
+{
+        if (TypeType(t0) != TYPE_ALIAS
+         || t0->_type != NULL
+         || t0->asrc == NULL
+         || vN(t0->args) != vN(t0->bound)) {
+                return false;
+        }
+
+        /* Re-symbolize the source expression now that more types may exist */
+        if (!CompilerResolveExpr(ty, (Expr *)t0->asrc)) {
+                return false;
+        }
+
+        if (TY_CATCH_ERROR()) {
+                TY_CATCH();
+                return false;
+        }
+
+        Type *resolved = type_resolve(ty, t0->asrc);
+
+        TY_CATCH_END();
+
+        if (resolved == NULL) {
+                return false;
+        }
+
+        t0->_type = MakeConcrete(ty, resolved, NULL);
+        return t0->_type != NULL;
 }
 
 static bool
@@ -1311,6 +1360,10 @@ Reduce(Ty *ty, Type const *t0)
         Type *t2;
         Type *t3;
 
+        if (IsConcrete(t1)) {
+                return t1;
+        }
+
         bool cloned = false;
         bool fixed  = IsFixed(t1);
 
@@ -1747,7 +1800,7 @@ IsTagged(Type const *t0)
 inline static int
 TagOf(Type const *t0)
 {
-        return (IsTagged(t0) || t0->type == TYPE_TAG)
+        return (IsTagged(t0) || (TypeType(t0) == TYPE_TAG))
              ? t0->class->type->tag
              : -1;
 }
@@ -2009,6 +2062,8 @@ Resolve(Ty *ty, Type const *t0)
                 if (CanStep(t0)) {
                         t0 = StepVar(t0);
                 } else if (CanResolveAlias(t0)) {
+                        t0 = ResolveAlias(ty, t0);
+                } else if (TryResolveDeferredAlias(ty, (Type *)t0)) {
                         t0 = ResolveAlias(ty, t0);
                 } else if (CanCompute(t0)) {
                         t0 = ComputeType(ty, t0);
@@ -2530,13 +2585,6 @@ IsFullyBound(Type *t0)
         return true;
 }
 
-static bool
-IsConcrete(Type *t0)
-{
-        return IsBottom(t0) || t0->concrete;
-
-}
-
 static int
 StrictClassOf(Type const *t0)
 {
@@ -2759,15 +2807,36 @@ VecContainsSub(Ty *ty, TypeVector const *types, Type const *t0)
 }
 
 inline static bool
-VecContainsSuper(Ty *ty, TypeVector const *types, Type const *t0)
+UnionHasSuper(Ty *ty, TypeVector const *types, Type *t0, bool need)
 {
+        int tag = TagOf(t0);
+        if (tag >= 0) {
+                for (int i = 0; i < vN(*types); ++i) {
+                        Type *ti = v__(*types, i);
+                        int ti_tag = TagOf(ti);
+                        if (ti_tag == tag) {
+                                return type_check_x(ty, ti, t0, need);
+                        }
+                        if (ti_tag < 0 && type_check_x(ty, ti, t0, need)) {
+                                return true;
+                        }
+                }
+                return false;
+        }
+
         for (int i = 0; i < vN(*types); ++i) {
-                if (type_check(ty, v__(*types, i), (Type *)t0)) {
+                if (type_check_x(ty, v__(*types, i), t0, need)) {
                         return true;
                 }
         }
 
         return false;
+}
+
+inline static bool
+VecContainsSuper(Ty *ty, TypeVector const *types, Type const *t0)
+{
+        return UnionHasSuper(ty, types, (Type *)t0, false);
 }
 
 static bool
@@ -3046,7 +3115,8 @@ type_alias(Ty *ty, Symbol *var, Stmt const *def)
 
         var->type->name = def->class.name;
         var->type->asrc = def->class.type;
-        var->type->_type = MakeConcrete(ty, type_resolve(ty, def->class.type), &refs);
+        Type *resolved = type_resolve(ty, def->class.type);
+        var->type->_type = (resolved != NULL) ? MakeConcrete(ty, resolved, &refs) : NULL;
 
         for (int i = 0; i < vN(refs); ++i) {
                 dont_printf("=== Patch #%d (%s) ===\n", i, var->type->name);
@@ -4681,6 +4751,8 @@ UnifyXD(Ty *ty, Type *t0, Type *t1, bool super, bool check, bool soft)
         for (;;) {
                 if (CanResolveAlias(t0)) {
                         t0 = ResolveAlias(ty, t0);
+                } else if (TryResolveDeferredAlias(ty, (Type *)t0)) {
+                        t0 = ResolveAlias(ty, t0);
                 } else if (
                         IsBoundVar(t0)
                      && (IsBoundVar(t0->val) || t0->fixed)
@@ -4920,7 +4992,7 @@ UnifyXD(Ty *ty, Type *t0, Type *t1, bool super, bool check, bool soft)
                 goto Fail;
         }
 
-        if (IsRecordLike(t0) || IsRecordLike(t1)) {
+        if ((IsRecordLike(t0) || IsRecordLike(t1)) && !IsNilT(t0) && !IsNilT(t1)) {
                 if (TryUnifyObjects(ty, t0, t1, super)) {
                         OK("UnifyObjects()");
                         goto Success;
@@ -6780,7 +6852,7 @@ SolveMemberAccess(Ty *ty, Type const *t0, Type const *t1)
 }
 
 static Type *
-type_member_access_t_(Ty *ty, Type const *t0, char const *name, bool strict)
+type_member_access_t_(Ty *ty, Type const *t0, char const *name, bool strict, bool setter)
 {
         t0 = Resolve(ty, t0);
 
@@ -6805,7 +6877,7 @@ type_member_access_t_(Ty *ty, Type const *t0, char const *name, bool strict)
         switch (TypeType(t0)) {
         case TYPE_UNION:
                 for (int i = 0; i < vN(t0->types); ++i) {
-                        t2 = type_member_access_t_(ty, v__(t0->types, i), name, false);
+                        t2 = type_member_access_t_(ty, v__(t0->types, i), name, false, setter);
                         if (!IsBottom(t2)) {
                                 unify2(ty, &t1, t2);
                         }
@@ -6817,7 +6889,7 @@ type_member_access_t_(Ty *ty, Type const *t0, char const *name, bool strict)
 
         case TYPE_INTERSECT:
                 for (int i = 0; i < vN(t0->types); ++i) {
-                        t2 = type_member_access_t_(ty, v__(t0->types, i), name, false);
+                        t2 = type_member_access_t_(ty, v__(t0->types, i), name, false, setter);
                         if (!IsBottom(t2)) {
                                 type_intersect(ty, &t1, t2);
                         }
@@ -6860,12 +6932,20 @@ type_member_access_t_(Ty *ty, Type const *t0, char const *name, bool strict)
                 if (f != NULL) {
                         t1 = f->_type;
                 }
-                if (t1 == NULL) {
+                if (t1 == NULL && !setter) {
                         f = FindStaticGetter(c, name);
-                        if (f != NULL) {
-                                if (TypeType(f->_type) == TYPE_FUNCTION) {
-                                        t1 = f->_type->rt;
-                                }
+                        if (f != NULL && TypeType(f->_type) == TYPE_FUNCTION) {
+                                t1 = f->_type->rt;
+                        }
+                }
+                if (t1 == NULL && setter) {
+                        f = FindStaticSetter(c, name);
+                        if (
+                                (f != NULL)
+                             && (TypeType(f->_type) == TYPE_FUNCTION)
+                             && (vN(f->_type->params) >= 2)
+                        ) {
+                                t1 = v_(f->_type->params, 1)->type;
                         }
                 }
                 if (t1 == NULL) {
@@ -6904,18 +6984,20 @@ type_member_access_t_(Ty *ty, Type const *t0, char const *name, bool strict)
                                 t1 = f->_type;
                         }
                 }
-                if (t1 == NULL) {
+                if (t1 == NULL && !setter) {
                         f = FindGetter(c, name);
-                        if (f != NULL) {
-                                if (TypeType(f->_type) == TYPE_FUNCTION) {
-                                        t1 = f->_type->rt;
-                                }
+                        if (f != NULL && TypeType(f->_type) == TYPE_FUNCTION) {
+                                t1 = f->_type->rt;
                         }
                 }
-                if (t1 == NULL) {
+                if (t1 == NULL && setter) {
                         f = FindSetter(c, name);
-                        if (f != NULL) {
-                                t1 = f->_type;
+                        if (
+                                (f != NULL)
+                             && (TypeType(f->_type) == TYPE_FUNCTION)
+                             && (vN(f->_type->params) >= 2)
+                        ) {
+                                t1 = v_(f->_type->params, 1)->type;
                         }
                 }
                 if (t1 == NULL) switch (c->i) {
@@ -6940,12 +7022,17 @@ type_member_access_t_(Ty *ty, Type const *t0, char const *name, bool strict)
                         }
                         break;
                 }
-                if (
-                        (t1 == NULL)
-                     && (t0->type == TYPE_OBJECT)
-                     && ((f = FindMethod(t0->class, "__missing__")) != NULL)
-                ) {
-                        t1 = f->_type->rt;
+                if ((t1 == NULL) && (t0->type == TYPE_OBJECT)) {
+                        if (
+                                setter
+                             && ((f = FindSetter(t0->class, "__missing__")) != NULL)
+                             && (TypeType(f->_type) == TYPE_FUNCTION)
+                             && (vN(f->_type->params) >= 2)
+                        ) {
+                                t1 = v_(f->_type->params, 1)->type;
+                        } else if ((f = FindMethod(t0->class, "__missing__")) != NULL) {
+                                t1 = f->_type->rt;
+                        }
                 }
                 if (
                         (t1 == NULL)
@@ -6979,7 +7066,7 @@ type_member_access_t_(Ty *ty, Type const *t0, char const *name, bool strict)
 
         case TYPE_VARIABLE:
                 if (IsBoundVar(t0)) {
-                        return type_member_access_t_(ty, t0->val, name, strict);
+                        return type_member_access_t_(ty, t0->val, name, strict, setter);
                 } else if (!IsTVar(t0)) {
                         goto TryUnify;
                 } else {
@@ -7001,7 +7088,7 @@ TryUnify:
 Type *
 type_member_access_t(Ty *ty, Type const *t0, char const *name, bool strict)
 {
-        Type *t1 = type_member_access_t_(ty, Relax(t0), name, strict);
+        Type *t1 = type_member_access_t_(ty, Relax(t0), name, strict, false);
         XXTLOG("MemberAccess(%s, strict=%s):", name, strict ? "true" : "false");
         XXTLOG("  t0:  %s", ShowType(t0));
         XXTLOG("  t1:  %s\n", ShowType(t1));
@@ -7333,7 +7420,7 @@ check_field(
                 return !required;
 
         case TYPE_OBJECT:
-                t2 = type_member_access_t_(ty, t0, name, false);
+                t2 = type_member_access_t_(ty, t0, name, false, false);
                 if (t2 != NULL) {
                         return type_check_x(ty, t2, t1, need);
                 }
@@ -7594,6 +7681,20 @@ type_check_x_(Ty *ty, Type *t0, Type *t1, bool need)
         }
 
         if (t1->type == TYPE_UNION) {
+                int tag = TagOf(t0);
+                if (tag >= 0) {
+                        for (int i = 0; i < vN(t1->types); ++i) {
+                                Type *ti = v__(t1->types, i);
+                                int ti_tag = TagOf(ti);
+                                if (ti_tag >= 0 && ti_tag != tag) {
+                                        return false;
+                                }
+                                if (!type_check_x(ty, t0, ti, need)) {
+                                        return false;
+                                }
+                        }
+                        return true;
+                }
                 for (int i = 0; i < vN(t1->types); ++i) {
                         if (!type_check_x(ty, t0, v__(t1->types, i), need)) {
                                 return false;
@@ -7603,12 +7704,7 @@ type_check_x_(Ty *ty, Type *t0, Type *t1, bool need)
         }
 
         if (t0->type == TYPE_UNION) {
-                for (int i = 0; i < vN(t0->types); ++i) {
-                        if (type_check_x(ty, v__(t0->types, i), t1, need)) {
-                                return true;
-                        }
-                }
-                return false;
+                return UnionHasSuper(ty, &t0->types, t1, need);
         }
 
         if (t0->type == TYPE_INTERSECT) {
@@ -8229,8 +8325,9 @@ type_assign(Ty *ty, Expr *e, Type *t0, int flags)
                                 ShowType(e->symbol->type)
                         );
                 } else {
+                        bool ok = UnifyX(ty, t0, OriginalType(ty, e->symbol), false, false);
                         if (
-                                !UnifyX(ty, t0, OriginalType(ty, e->symbol), false, false)
+                                !ok
                              && check
                              && ENFORCE
                              && !HAVE_COMPILER_FLAG(NO_TYPES)
@@ -8359,10 +8456,21 @@ type_assign(Ty *ty, Expr *e, Type *t0, int flags)
                 break;
 
         case EXPRESSION_MEMBER_ACCESS:
-                t1 = NewForgivingVar(ty);
-                t2 = NewRecord(e->member->identifier, t1);
-                Unify(ty, e->object->_type, t2, false);
-                Unify(ty, t1, t0, true);
+                t1 = type_member_access_t_(
+                        ty,
+                        Resolve(ty, e->object->_type),
+                        e->member->identifier,
+                        false,
+                        true
+                );
+                if (t1 != NULL) {
+                        Unify(ty, t1, t0, true);
+                } else {
+                        t1 = NewForgivingVar(ty);
+                        t2 = NewRecord(e->member->identifier, t1);
+                        Unify(ty, e->object->_type, t2, false);
+                        Unify(ty, t1, t0, true);
+                }
                 break;
         }
 }

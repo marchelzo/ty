@@ -730,7 +730,7 @@ class Chalk {
         )
     }
 
-    __missing__=(name, style) {
+    __missing__=(name, style: String) {
         __styles[name] = style.words().map(__styles[]).fold(\{*_, *_})
     }
 

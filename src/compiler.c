@@ -15989,11 +15989,23 @@ define_type(Ty *ty, Stmt *s, Scope *scope)
         s->class.symbol = sym->class;
         s->class.var = sym;
 
+        bool sym_failed = false;
+
         WITH_CTX(TYPE) WITH_PERMISSIVE_SCOPE {
-                symbolize_expression(ty, s->class.scope, s->class.type);
+                if (TY_CATCH_ERROR()) {
+                        TY_CATCH();
+                        sym_failed = true;
+                } else {
+                        symbolize_expression(ty, s->class.scope, s->class.type);
+                        TY_CATCH_END();
+                }
         }
 
         type_alias(ty, sym, s);
+
+        if (sym_failed) {
+                sym->type->_type = NULL;
+        }
 
         RestoreContext(ty, ctx);
 }
