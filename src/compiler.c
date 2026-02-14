@@ -12717,7 +12717,11 @@ compiler_find_expr_x(Ty *ty, char const *code, bool func)
                 }
         }
 
-        if (c < locs->items[match_index].p_start || c >= locs->items[match_index].p_end) {
+        if (
+                (match_width == PTRDIFF_MAX)
+             || (c < locs->items[match_index].p_start)
+             || (c >= locs->items[match_index].p_end)
+        ) {
                 return NULL;
         }
 
