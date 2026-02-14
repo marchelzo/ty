@@ -3319,7 +3319,7 @@ QuietFailure:
 }
 
 // ===/ < > <= >= == != /=======================================================
-#define DEFINE_RELATIONAL_OP(name, op, eop)                                     \
+#define DEFINE_RELATIONAL_OP(name, op, _op, _op_neg)                            \
 TY_INSTR_INLINE static void                                                     \
 name(Ty *ty)                                                                    \
 {                                                                               \
@@ -3339,11 +3339,20 @@ name(Ty *ty)                                                                    
                 v = BOOLEAN(top()[-1].real op top()[0].z);                      \
                 break;                                                          \
         default:                                                                \
-                v = vm_try_2op(ty, eop, top() - 1, top());                      \
+                v = vm_try_2op(ty, _op, top() - 1, top());                      \
                                                                                 \
-                if (v.type == VALUE_NONE) {                                     \
-                        v = BOOLEAN(value_compare(ty, top() - 1, top()) op 0);  \
+                if (v.type != VALUE_NONE) {                                     \
+                        break;                                                  \
                 }                                                               \
+                                                                                \
+                v = vm_try_2op(ty, _op_neg, top() - 1, top());                  \
+                                                                                \
+                if (v.type != VALUE_NONE) {                                     \
+                        v = BOOLEAN(!v.boolean);                                \
+                        break;                                                  \
+                }                                                               \
+                                                                                \
+                v = BOOLEAN(value_compare(ty, top() - 1, top()) op 0);          \
                                                                                 \
                 break;                                                          \
         }                                                                       \
@@ -3371,10 +3380,10 @@ DoNeq(Ty *ty)
         xpush(BOOLEAN(!v_eq(&a, &b)));
 }
 
-DEFINE_RELATIONAL_OP(DoGeq, >=, OP_GEQ)
-DEFINE_RELATIONAL_OP(DoGt,   >, OP_GT)
-DEFINE_RELATIONAL_OP(DoLeq, <=, OP_LEQ)
-DEFINE_RELATIONAL_OP(DoLt,   <, OP_LT)
+DEFINE_RELATIONAL_OP(DoGeq, >=, OP_GEQ, OP_LT )
+DEFINE_RELATIONAL_OP(DoGt,  >,  OP_GT,  OP_LEQ)
+DEFINE_RELATIONAL_OP(DoLeq, <=, OP_LEQ, OP_GT )
+DEFINE_RELATIONAL_OP(DoLt,  <,  OP_LT,  OP_GEQ)
 
 #undef DEFINE_RELATIONAL_OP
 // =============================================================================

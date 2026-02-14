@@ -9411,12 +9411,12 @@ emit_spread_tuple(Ty *ty, Expr const *e)
 static void
 emit_conditional(Ty *ty, Expr const *e)
 {
-        PLACEHOLDER_JUMP_IF_NOT(e->cond, otherwise);
-        EE(e->then);
+        PLACEHOLDER_JUMP_IF(e->cond, then);
+        EE(e->otherwise);
         PLACEHOLDER_JUMP(JUMP, end);
-        PATCH_JUMP(otherwise);
+        PATCH_JUMP(then);
         WITH_STACK() {
-                EE(e->otherwise);
+                EE(e->then);
         }
         PATCH_JUMP(end);
 }
@@ -11448,6 +11448,7 @@ InjectRedpill(Ty *ty, Stmt *s)
                                 s->target->identifier,
                                 (void *)s->target->symbol
                         );
+                        type_bind(ty, s->target->symbol->type, s->value->_type);
                         s->target->symbol->type = type_both(
                                 ty,
                                 HasBody(s->value) ? NULL : s->target->symbol->type,

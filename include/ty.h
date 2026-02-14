@@ -669,6 +669,7 @@ typedef struct type Type;
 struct param {
         char const *name;
         Type *type;
+        Type *dflt;
         bool required;
         bool rest;
         bool kws;

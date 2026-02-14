@@ -158,6 +158,7 @@ op_add(i32 op, i32 t1, i32 t2, i32 ref, Expr *expr)
                 intern_entry(&xD.b_ops, op)->name,
                 class_name(&vvv, t2)
         );
+
         if (op >= _2.ops.count) {
                 TyRwLockWrLock(&_2.lock);
 

@@ -300,6 +300,9 @@ type_intersect(Ty *ty, Type **t0, Type *t1);
 void
 type_subtract(Ty *ty, Type **t0, Type *t1);
 
+bool
+type_bind(Ty *ty, Type *t0, Type *t1);
+
 Type *
 type_resolve(Ty *ty, Expr const *e);
 

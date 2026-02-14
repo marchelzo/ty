@@ -278,7 +278,7 @@ __set_type__ ty::executable String
 const `,`: _ = tuple
 
 class Object {
-    init(%props) {
+    init[...Ts](%props: ...(Ts |)) {
         for k, v in props {
             member(k, v)
         }
@@ -1991,8 +1991,8 @@ trait Iterable[T] {
         __iter__().unzipWith4(*args, **kwargs)
     }
 
-    mean() {
-        __iter__().mean()
+    mean(f: T -> Int | Float = id) -> ?Float {
+        __iter__().mean(f)
     }
 
     median() -> T | nil where (T <=> T): Int {
@@ -2601,8 +2601,8 @@ trait Iter[T] < Iterable[T] {
         sum() ?? zero
     }
 
-    mean() {
-        return [*self].mean()
+    mean(f: T -> Int | Float = id) -> ?Float {
+        return [*self].mean(f)
     }
 
     median() -> T | nil where (T <=> T): Int {
