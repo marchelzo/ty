@@ -1,0 +1,482 @@
+import yaml (..)
+import math (inf, nan)
+
+@test
+fn test-version() {
+    let v = version()
+    assert(v.match?(/^\d+\.\d+\.\d+$/), "version should be X.Y.Z, got: {v}")
+}
+
+@test
+fn test-parse-scalar-string() {
+    assert(parse('hello') == 'hello')
+    assert(parse('"hello"') == 'hello')
+    assert(parse("'hello'") == 'hello')
+}
+
+@test
+fn test-parse-scalar-int() {
+    assert(parse('42') == 42)
+    assert(parse('-7') == -7)
+    assert(parse('0') == 0)
+}
+
+@test
+fn test-parse-scalar-float() {
+    assert(parse('3.14') == 3.14)
+    assert(parse('-0.5') == -0.5)
+    assert(parse('.inf') == inf)
+    assert(parse('-.inf') == -inf)
+    let nan = parse('.nan')
+    assert(nan != nan)
+}
+
+@test
+fn test-parse-scalar-bool() {
+    assert(parse('true') == true)
+    assert(parse('false') == false)
+    // YAML 1.2: yes/no/on/off are strings, not booleans
+    assert(parse('yes') == 'yes')
+    assert(parse('no') == 'no')
+    assert(parse('on') == 'on')
+    assert(parse('off') == 'off')
+}
+
+@test
+fn test-parse-scalar-null() {
+    assert(parse('null') == nil)
+    assert(parse('~') == nil)
+}
+
+@test
+fn test-parse-quoted-not-converted() {
+    assert(parse('"true"') == 'true')
+    assert(parse('"42"') == '42')
+    assert(parse('"null"') == 'null')
+    assert(parse("'false'") == 'false')
+}
+
+@test
+fn test-parse-simple-mapping() {
+    let result: _ = parse('name: Alice
+age: 30')
+    assert(result['name'] == 'Alice')
+    assert(result['age'] == 30)
+}
+
+@test
+fn test-parse-simple-sequence() {
+    let result = parse('- 1
+- 2
+- 3')
+    assert(result == [1, 2, 3])
+}
+
+@test
+fn test-parse-nested() {
+    let yaml = 'person:
+  name: Bob
+  hobbies:
+    - reading
+    - coding
+  age: 25'
+    let result: _ = parse(yaml)
+    assert(result['person']['name'] == 'Bob')
+    assert(result['person']['hobbies'] == ['reading', 'coding'])
+    assert(result['person']['age'] == 25)
+}
+
+@test
+fn test-parse-flow-sequence() {
+    let result = parse('[1, 2, 3]')
+    assert(result == [1, 2, 3])
+}
+
+@test
+fn test-parse-flow-mapping() {
+    let result: _ = parse('{a: 1, b: 2}')
+    assert(result['a'] == 1)
+    assert(result['b'] == 2)
+}
+
+@test
+fn test-parse-multi-doc() {
+    let yaml = '---
+first
+---
+second
+---
+third'
+    let result: _ = parse-all(yaml)
+    assert(result.len() == 3)
+    assert(result[0] == 'first')
+    assert(result[1] == 'second')
+    assert(result[2] == 'third')
+}
+
+@test
+fn test-parse-anchor-alias() {
+    let yaml = 'defaults: &defaults
+  adapter: postgres
+  host: localhost
+
+development:
+  <<: *defaults
+  database: dev_db'
+    let result: _ = parse(yaml)
+    assert(result['defaults']['adapter'] == 'postgres')
+    assert(result['development']['database'] == 'dev_db')
+}
+
+@test
+fn test-parse-hex-octal() {
+    assert(parse('0xFF') == 255)
+    assert(parse('0o77') == 63)
+}
+
+@test
+fn test-dump-simple-scalars() {
+    assert(dump(42).strip() == '42')
+    assert(dump('hello').strip() == 'hello')
+    assert(dump(true).strip() == 'true')
+    assert(dump(false).strip() == 'false')
+    assert(dump(nil).strip() == 'null')
+    assert(dump(3.14).strip() == '3.14')
+}
+
+@test
+fn test-dump-special-floats() {
+    assert(dump(inf).strip() == '.inf')
+    assert(dump(-inf).strip() == '-.inf')
+    assert(dump(nan).strip() == '.nan')
+}
+
+@test
+fn test-dump-sequence() {
+    let result = dump([1, 2, 3])
+    let parsed = parse(result)
+    assert(parsed == [1, 2, 3])
+}
+
+@test
+fn test-dump-mapping() {
+    let data = %{'name': 'Alice', 'age': 30}
+    let result = dump(data)
+    let parsed: _ = parse(result)
+    assert(parsed['name'] == 'Alice')
+    assert(parsed['age'] == 30)
+}
+
+@test
+fn test-dump-nested() {
+    let data = %{
+        'server': %{
+            'host': 'localhost',
+            'port': 8080,
+            'debug': true
+        },
+        'items': [1, 2, 3]
+    }
+    let result = dump(data)
+    let parsed: _ = parse(result)
+    assert(parsed['server']['host'] == 'localhost')
+    assert(parsed['server']['port'] == 8080)
+    assert(parsed['server']['debug'] == true)
+    assert(parsed['items'] == [1, 2, 3])
+}
+
+@test
+fn test-dump-flow-style() {
+    let data = [1, 2, 3]
+    let result = dump(data, flow: true)
+    assert(result.strip() == '[1, 2, 3]')
+}
+
+@test
+fn test-roundtrip() {
+    let data = %{
+        'database': %{
+            'host': 'localhost',
+            'port': 5432,
+            'name': 'mydb',
+            'ssl': true
+        },
+        'features': ['auth', 'logging', 'metrics'],
+        'version': 2,
+        'debug': false,
+        'timeout': 30.5
+    }
+    let yaml_str = dump(data)
+    let result: _ = parse(yaml_str)
+    assert(result['database']['host'] == 'localhost')
+    assert(result['database']['port'] == 5432)
+    assert(result['database']['ssl'] == true)
+    assert(result['features'] == ['auth', 'logging', 'metrics'])
+    assert(result['version'] == 2)
+    assert(result['debug'] == false)
+    assert(result['timeout'] == 30.5)
+}
+
+@test
+fn test-dump-all() {
+    let docs = [%{'a': 1}, %{'b': 2}]
+    let result = dump-all(docs)
+    let parsed: _ = parse-all(result)
+    assert(parsed.len() == 2)
+    assert(parsed[0]['a'] == 1)
+    assert(parsed[1]['b'] == 2)
+}
+
+@test
+fn test-dump-quoted-strings() {
+    // Strings that look like booleans should be quoted
+    let result = dump('true')
+    let parsed = parse(result)
+    assert(parsed == 'true')
+
+    let result2 = dump('42')
+    let parsed2 = parse(result2)
+    assert(parsed2 == '42')
+
+    let result3 = dump('null')
+    let parsed3 = parse(result3)
+    assert(parsed3 == 'null')
+}
+
+@test
+fn test-parse-empty-doc() {
+    assert(parse('---') == nil)
+    assert(parse('') == nil)
+}
+
+@test
+fn test-parse-mixed-types() {
+    let yaml = '- hello
+- 42
+- true
+- null
+- 3.14'
+    let result: _ = parse(yaml)
+    assert(result[0] == 'hello')
+    assert(result[1] == 42)
+    assert(result[2] == true)
+    assert(result[3] == nil)
+    assert(result[4] == 3.14)
+}
+
+@test
+fn test-dump-file-and-parse-file() {
+    let data = %{'test': [1, 2, 3]}
+    let path = '/tmp/ty-yaml-test.yaml'
+    dump-file(path, data)
+    let result: _ = parse-file(path)
+    assert(result['test'] == [1, 2, 3])
+}
+
+@test
+fn test-parse-error() {
+    let threw = false
+    try {
+        parse('[invalid: yaml: [[[')
+    } catch e {
+        threw = true
+    }
+    assert(threw, 'should have thrown on invalid YAML')
+}
+
+@test
+fn test-parse-multiline-string() {
+    let yaml = 'text: |
+  line one
+  line two
+  line three'
+    let result: _ = parse(yaml)
+    assert(result['text'].contains?('line one'))
+    assert(result['text'].contains?('line two'))
+    assert(result['text'].contains?('line three'))
+}
+
+@test
+fn test-indent-option() {
+    let data = %{'a': %{'b': 1}}
+    let result4 = dump(data, indent: 4)
+    // Just verify it round-trips
+    let parsed: _ = parse(result4)
+    assert(parsed['a']['b'] == 1)
+}
+
+@test
+fn test-parse-complex-docker-compose() {
+    let yaml = '''
+        version: "3.8"
+        services:
+          web:
+            image: nginx:latest
+            ports:
+              - "80:80"
+              - "443:443"
+            volumes:
+              - ./html:/usr/share/nginx/html
+              - nginx-conf:/etc/nginx
+            environment:
+              NGINX_HOST: example.com
+              NGINX_PORT: 80
+            depends_on:
+              - api
+              - redis
+            deploy:
+              replicas: 3
+              resources:
+                limits:
+                  cpus: "0.5"
+                  memory: 256M
+          api:
+            build:
+              context: ./api
+              dockerfile: Dockerfile.prod
+            ports:
+              - "3000:3000"
+            environment:
+              DATABASE_URL: postgres://user:pass@db:5432/app
+              REDIS_URL: redis://redis:6379
+              DEBUG: false
+              MAX_CONNECTIONS: 100
+            depends_on:
+              - db
+              - redis
+          db:
+            image: postgres:15
+            volumes:
+              - pgdata:/var/lib/postgresql/data
+            environment:
+              POSTGRES_USER: user
+              POSTGRES_PASSWORD: pass
+              POSTGRES_DB: app
+          redis:
+            image: redis:7-alpine
+            command: redis-server --maxmemory 128mb
+        volumes:
+          pgdata:
+          nginx-conf:
+    '''
+
+    let result: _ = parse(yaml)
+    assert(result['version'] == '3.8')
+    assert(result['services']['web']['image'] == 'nginx:latest')
+    assert(result['services']['web']['ports'][0] == '80:80')
+    assert(result['services']['web']['ports'][1] == '443:443')
+    assert(result['services']['web']['environment']['NGINX_HOST'] == 'example.com')
+    assert(result['services']['web']['environment']['NGINX_PORT'] == 80)
+    assert(result['services']['web']['depends_on'] == ['api', 'redis'])
+    assert(result['services']['web']['deploy']['replicas'] == 3)
+    assert(result['services']['web']['deploy']['resources']['limits']['cpus'] == '0.5')
+    assert(result['services']['api']['environment']['DEBUG'] == false)
+    assert(result['services']['api']['environment']['MAX_CONNECTIONS'] == 100)
+    assert(result['services']['db']['image'] == 'postgres:15')
+    assert(result['services']['redis']['command'] == 'redis-server --maxmemory 128mb')
+}
+
+@test
+fn test-parse-complex-k8s-deployment() {
+    let yaml = '''
+        apiVersion: apps/v1
+        kind: Deployment
+        metadata:
+          name: web-app
+          namespace: production
+          labels:
+            app: web
+            tier: frontend
+            version: v2.1.0
+          annotations:
+            deployment.kubernetes.io/revision: "5"
+        spec:
+          replicas: 3
+          selector:
+            matchLabels:
+              app: web
+          strategy:
+            type: RollingUpdate
+            rollingUpdate:
+              maxSurge: 1
+              maxUnavailable: 0
+          template:
+            metadata:
+              labels:
+                app: web
+                tier: frontend
+            spec:
+              containers:
+                - name: web
+                  image: myregistry/web:v2.1.0
+                  ports:
+                    - containerPort: 8080
+                      protocol: TCP
+                    - containerPort: 9090
+                      protocol: TCP
+                      name: metrics
+                  env:
+                    - name: DB_HOST
+                      value: postgres.default.svc
+                    - name: LOG_LEVEL
+                      value: info
+                  resources:
+                    requests:
+                      cpu: 250m
+                      memory: 128Mi
+                    limits:
+                      cpu: 500m
+                      memory: 256Mi
+                  livenessProbe:
+                    httpGet:
+                      path: /health
+                      port: 8080
+                    initialDelaySeconds: 30
+                    periodSeconds: 10
+                  readinessProbe:
+                    httpGet:
+                      path: /ready
+                      port: 8080
+                    initialDelaySeconds: 5
+                    periodSeconds: 5
+                - name: sidecar
+                  image: myregistry/log-agent:latest
+                  volumeMounts:
+                    - name: logs
+                      mountPath: /var/log/app
+              volumes:
+                - name: logs
+                  emptyDir: {}
+              nodeSelector:
+                disktype: ssd
+              tolerations:
+                - key: dedicated
+                  operator: Equal
+                  value: web
+                  effect: NoSchedule
+    '''
+
+    let result: _ = parse(yaml)
+    assert(result['apiVersion'] == 'apps/v1')
+    assert(result['kind'] == 'Deployment')
+    assert(result['metadata']['name'] == 'web-app')
+    assert(result['metadata']['namespace'] == 'production')
+    assert(result['metadata']['labels']['version'] == 'v2.1.0')
+    assert(result['spec']['replicas'] == 3)
+    assert(result['spec']['strategy']['rollingUpdate']['maxSurge'] == 1)
+    assert(result['spec']['strategy']['rollingUpdate']['maxUnavailable'] == 0)
+
+    let containers: _ = result['spec']['template']['spec']['containers']
+    assert(containers[0]['name'] == 'web')
+    assert(containers[0]['ports'][0]['containerPort'] == 8080)
+    assert(containers[0]['ports'][1]['name'] == 'metrics')
+    assert(containers[0]['env'][0]['name'] == 'DB_HOST')
+    assert(containers[0]['env'][0]['value'] == 'postgres.default.svc')
+    assert(containers[0]['resources']['limits']['cpu'] == '500m')
+    assert(containers[0]['livenessProbe']['initialDelaySeconds'] == 30)
+    assert(containers[1]['name'] == 'sidecar')
+
+    let tolerations: _ = result['spec']['template']['spec']['tolerations']
+    assert(tolerations[0]['key'] == 'dedicated')
+    assert(tolerations[0]['effect'] == 'NoSchedule')
+}

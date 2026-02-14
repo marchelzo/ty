@@ -1,0 +1,64 @@
+// Explicit init should NOT auto-apply kwargs as members
+class Foo {
+    x: Int = 0
+    init(val: Int) {
+        self.x = val * 2
+    }
+}
+
+if Foo(val=5).x != 10 {
+    print('FAIL')
+}
+
+// Default constructor applies kwargs
+class Config {
+    debug: Bool = false
+    verbose: Bool = false
+}
+
+let c = Config(debug=true)
+if c.debug != true || c.verbose != false {
+    print('FAIL')
+}
+
+// All defaults: no args should work
+if Config().debug != false {
+    print('FAIL')
+}
+
+// Fields without defaults
+class Strict {
+    count: Int
+    name: String
+}
+
+let s = Strict(count=42, name='hello')
+if s.count != 42 || s.name != 'hello' {
+    print('FAIL')
+}
+
+// Private fields excluded from constructor params
+class WithPrivate {
+    _secret: Int = 0
+    name: String = 'default'
+}
+
+if WithPrivate(name='test').name != 'test' {
+    print('FAIL')
+}
+
+// Inheritance: child gets parent field params too
+class Base {
+    x: Int = 0
+}
+
+class Child < Base {
+    y: Int = 0
+}
+
+let ch = Child(x=10, y=20)
+if ch.x != 10 || ch.y != 20 {
+    print('FAIL')
+}
+
+print('PASS')

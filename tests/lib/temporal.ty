@@ -1,0 +1,1251 @@
+import temporal (..)
+
+@test
+fn test-duration-basic() {
+    let d = Duration(hours=1, minutes=30)
+    assert(d.hours == 1)
+    assert(d.minutes == 30)
+    assert(!d.blank?)
+    assert("{d}" == 'PT1H30M')
+}
+
+@test
+fn test-duration-blank() {
+    let d = Duration()
+    assert(d.blank?)
+    assert(d.sign == 0)
+    assert("{d}" == 'PT0S')
+}
+
+@test
+fn test-duration-negated() {
+    let d = Duration(days=5, hours=3)
+    let n = d.negated()
+    assert(n.days == -5)
+    assert(n.hours == -3)
+    assert("{n}" == '-P5DT3H')
+}
+
+@test
+fn test-duration-abs() {
+    let d = Duration(days=-5, hours=-3)
+    let a = d.abs()
+    assert(a.days == 5 && a.hours == 3)
+}
+
+@test
+fn test-duration-add() {
+    let a = Duration(hours=1, minutes=30)
+    let b = Duration(hours=2, minutes=45)
+    let c = a + b
+    assert(c.hours == 3 && c.minutes == 75)
+}
+
+@test
+fn test-duration-total-seconds() {
+    let d = Duration(hours=1, minutes=30, seconds=15)
+    assert(d.total-seconds == 5415.0)
+}
+
+@test
+fn test-duration-with-fraction() {
+    let d = Duration(seconds=1, milliseconds=500)
+    assert("{d}" == 'PT1.5S')
+}
+
+@test
+fn test-duration-sign() {
+    assert(Duration(days=1).sign == 1)
+    assert(Duration(days=-1).sign == -1)
+    assert(Duration().sign == 0)
+}
+
+/* --- PlainDate tests --- */
+
+@test
+fn test-plain-date-create() {
+    let d = PlainDate(2024, 3, 15)
+    assert(d.year == 2024)
+    assert(d.month == 3)
+    assert(d.day == 15)
+    assert("{d}" == '2024-03-15')
+}
+
+@test
+fn test-plain-date-from-string() {
+    let d = PlainDate.from('2024-03-15')
+    assert(d.year == 2024 && d.month == 3 && d.day == 15)
+}
+
+@test
+fn test-plain-date-leap-year() {
+    assert(PlainDate(2024, 1, 1).in-leap-year)
+    assert(!PlainDate(2023, 1, 1).in-leap-year)
+    assert(PlainDate(2000, 1, 1).in-leap-year)
+    assert(!PlainDate(1900, 1, 1).in-leap-year)
+}
+
+@test
+fn test-plain-date-day-of-week() {
+    /* 2024-01-01 is a Monday */
+    assert(PlainDate(2024, 1, 1).day-of-week == 1)
+    /* 2024-01-07 is a Sunday */
+    assert(PlainDate(2024, 1, 7).day-of-week == 7)
+    /* 2024-03-15 is a Friday */
+    assert(PlainDate(2024, 3, 15).day-of-week == 5)
+}
+
+@test
+fn test-plain-date-day-of-year() {
+    assert(PlainDate(2024, 1, 1).day-of-year == 1)
+    assert(PlainDate(2024, 12, 31).day-of-year == 366)
+    assert(PlainDate(2023, 12, 31).day-of-year == 365)
+}
+
+@test
+fn test-plain-date-days-in-month() {
+    assert(PlainDate(2024, 2, 1).days-in-month == 29)
+    assert(PlainDate(2023, 2, 1).days-in-month == 28)
+    assert(PlainDate(2024, 1, 1).days-in-month == 31)
+    assert(PlainDate(2024, 4, 1).days-in-month == 30)
+}
+
+@test
+fn test-plain-date-add-days() {
+    let d = PlainDate(2024, 1, 30)
+    let r = d.add(Duration(days=5))
+    assert(r == PlainDate(2024, 2, 4))
+}
+
+@test
+fn test-plain-date-add-months() {
+    let d = PlainDate(2024, 1, 31)
+    let r = d.add(Duration(months=1))
+    /* Jan 31 + 1 month = Feb 29 (2024 is leap) */
+    assert(r == PlainDate(2024, 2, 29))
+}
+
+@test
+fn test-plain-date-add-years() {
+    let d = PlainDate(2024, 2, 29)
+    let r = d.add(Duration(years=1))
+    /* Feb 29 + 1 year = Feb 28 (2025 not leap) */
+    assert(r == PlainDate(2025, 2, 28))
+}
+
+@test
+fn test-plain-date-subtract() {
+    let d = PlainDate(2024, 3, 1)
+    let r = d.subtract(Duration(days=1))
+    assert(r == PlainDate(2024, 2, 29))
+}
+
+@test
+fn test-plain-date-until() {
+    let a = PlainDate(2024, 1, 1)
+    let b = PlainDate(2024, 1, 31)
+    let d = a.until(b)
+    assert(d.days == 30)
+}
+
+@test
+fn test-plain-date-since() {
+    let a = PlainDate(2024, 1, 31)
+    let b = PlainDate(2024, 1, 1)
+    let d = a.since(b)
+    assert(d.days == 30)
+}
+
+@test
+fn test-plain-date-comparison() {
+    let a = PlainDate(2024, 1, 1)
+    let b = PlainDate(2024, 6, 15)
+    assert(a < b)
+    assert(b > a)
+    assert(a <= a)
+    assert(a >= a)
+    assert(a == PlainDate(2024, 1, 1))
+}
+
+@test
+fn test-plain-date-with() {
+    let d = PlainDate(2024, 3, 15)
+    let r = d.with(month=1)
+    assert(r == PlainDate(2024, 1, 15))
+}
+
+@test
+fn test-plain-date-operator-plus-minus() {
+    let d = PlainDate(2024, 6, 15)
+    assert(d + Duration(days=1) == PlainDate(2024, 6, 16))
+    assert(d - Duration(days=1) == PlainDate(2024, 6, 14))
+}
+
+@test
+fn test-plain-date-diff-operator() {
+    let a = PlainDate(2024, 1, 1)
+    let b = PlainDate(2024, 1, 11)
+    let d = b - a
+    assert(d.days == 10)
+}
+
+@test
+fn test-plain-date-cross-year() {
+    let d = PlainDate(2023, 12, 31)
+    assert(d.add(Duration(days=1)) == PlainDate(2024, 1, 1))
+}
+
+@test
+fn test-plain-date-to-datetime() {
+    let d = PlainDate(2024, 6, 15)
+    let dt = d.to-plain-date-time()
+    assert(dt.year == 2024 && dt.month == 6 && dt.day == 15)
+    assert(dt.hour == 0 && dt.minute == 0 && dt.second == 0)
+}
+
+/* --- PlainTime tests --- */
+
+@test
+fn test-plain-time-create() {
+    let t = PlainTime(13, 30, 45)
+    assert(t.hour == 13 && t.minute == 30 && t.second == 45)
+    assert("{t}" == '13:30:45')
+}
+
+@test
+fn test-plain-time-from-string() {
+    let t = PlainTime.from('14:30:00')
+    assert(t.hour == 14 && t.minute == 30 && t.second == 0)
+}
+
+@test
+fn test-plain-time-from-string-fractional() {
+    let t = PlainTime.from('10:30:00.500')
+    assert(t.hour == 10 && t.minute == 30 && t.millisecond == 500)
+}
+
+@test
+fn test-plain-time-with-fractions() {
+    let t = PlainTime(10, 30, 0, 123, 456, 789)
+    assert("{t}" == '10:30:00.123456789')
+}
+
+@test
+fn test-plain-time-add() {
+    let t = PlainTime(23, 30, 0)
+    let r = t.add(Duration(hours=2))
+    /* Wraps around midnight */
+    assert(r.hour == 1 && r.minute == 30)
+}
+
+@test
+fn test-plain-time-subtract() {
+    let t = PlainTime(1, 0, 0)
+    let r = t.subtract(Duration(hours=2))
+    assert(r.hour == 23)
+}
+
+@test
+fn test-plain-time-until() {
+    let a = PlainTime(10, 0, 0)
+    let b = PlainTime(12, 30, 0)
+    let d = a.until(b)
+    assert(d.hours == 2 && d.minutes == 30)
+}
+
+@test
+fn test-plain-time-comparison() {
+    let a = PlainTime(10, 0, 0)
+    let b = PlainTime(12, 0, 0)
+    assert(a < b)
+    assert(b > a)
+    assert(a == PlainTime(10, 0, 0))
+}
+
+@test
+fn test-plain-time-midnight() {
+    let t = PlainTime(0, 0, 0)
+    assert("{t}" == '00:00:00')
+}
+
+@test
+fn test-plain-time-with() {
+    let t = PlainTime(10, 30, 45)
+    let r = t.with(hour=8)
+    assert(r.hour == 8 && r.minute == 30 && r.second == 45)
+}
+
+/* --- PlainDateTime tests --- */
+
+@test
+fn test-plain-date-time-create() {
+    let dt = PlainDateTime(2024, 6, 15, 14, 30, 0)
+    assert("{dt}" == '2024-06-15T14:30:00')
+}
+
+@test
+fn test-plain-date-time-from-string() {
+    let dt = PlainDateTime.from('2024-06-15T14:30:00')
+    assert(dt.year == 2024 && dt.month == 6 && dt.day == 15)
+    assert(dt.hour == 14 && dt.minute == 30)
+}
+
+@test
+fn test-plain-date-time-add-across-midnight() {
+    let dt = PlainDateTime(2024, 1, 1, 23, 0, 0)
+    let r = dt.add(Duration(hours=2))
+    assert(r == PlainDateTime(2024, 1, 2, 1, 0, 0))
+}
+
+@test
+fn test-plain-date-time-subtract-across-midnight() {
+    let dt = PlainDateTime(2024, 1, 2, 1, 0, 0)
+    let r = dt.subtract(Duration(hours=2))
+    assert(r == PlainDateTime(2024, 1, 1, 23, 0, 0))
+}
+
+@test
+fn test-plain-date-time-add-months-and-hours() {
+    let dt = PlainDateTime(2024, 1, 31, 12, 0, 0)
+    let r = dt.add(Duration(months=1, hours=6))
+    assert(r == PlainDateTime(2024, 2, 29, 18, 0, 0))
+}
+
+@test
+fn test-plain-date-time-until() {
+    let a = PlainDateTime(2024, 1, 1, 0, 0, 0)
+    let b = PlainDateTime(2024, 1, 2, 12, 30, 0)
+    let d = a.until(b)
+    assert(d.days == 1 && d.hours == 12 && d.minutes == 30)
+}
+
+@test
+fn test-plain-date-time-comparison() {
+    let a = PlainDateTime(2024, 1, 1, 10, 0, 0)
+    let b = PlainDateTime(2024, 1, 1, 12, 0, 0)
+    assert(a < b)
+    assert(b > a)
+}
+
+@test
+fn test-plain-date-time-to-parts() {
+    let dt = PlainDateTime(2024, 6, 15, 14, 30, 45)
+    let d = dt.to-plain-date()
+    let t = dt.to-plain-time()
+    assert(d == PlainDate(2024, 6, 15))
+    assert(t == PlainTime(14, 30, 45))
+}
+
+@test
+fn test-plain-date-time-with() {
+    let dt = PlainDateTime(2024, 6, 15, 14, 30, 0)
+    let r = dt.with(hour=8, minute=0)
+    assert(r == PlainDateTime(2024, 6, 15, 8, 0, 0))
+}
+
+@test
+fn test-plain-date-time-day-of-week() {
+    let dt = PlainDateTime(2024, 1, 1, 12, 0, 0)
+    assert(dt.day-of-week == 1) /* Monday */
+}
+
+/* --- Instant tests --- */
+
+@test
+fn test-instant-from-epoch() {
+    let i = Instant.from-epoch-seconds(0)
+    assert(i.epoch-seconds == 0)
+    assert("{i}" == '1970-01-01T00:00:00Z')
+}
+
+@test
+fn test-instant-from-epoch-ms() {
+    let i = Instant.from-epoch-milliseconds(1000)
+    assert(i.epoch-seconds == 1)
+    assert(i.epoch-milliseconds == 1000)
+}
+
+@test
+fn test-instant-from-string() {
+    let i = Instant.from('2024-01-01T00:00:00Z')
+    let dt = i.to-plain-date-time-utc()
+    assert(dt.year == 2024 && dt.month == 1 && dt.day == 1)
+}
+
+@test
+fn test-instant-from-string-offset() {
+    let i = Instant.from('2024-01-01T05:30:00+05:30')
+    let dt = i.to-plain-date-time-utc()
+    /* 05:30 +05:30 = 00:00 UTC */
+    assert(dt.year == 2024 && dt.month == 1 && dt.day == 1)
+    assert(dt.hour == 0 && dt.minute == 0)
+}
+
+@test
+fn test-instant-add() {
+    let i = Instant.from-epoch-seconds(0)
+    let r = i.add(Duration(hours=24))
+    assert(r.epoch-seconds == 86400)
+}
+
+@test
+fn test-instant-subtract() {
+    let i = Instant.from-epoch-seconds(86400)
+    let r = i.subtract(Duration(hours=24))
+    assert(r.epoch-seconds == 0)
+}
+
+@test
+fn test-instant-until() {
+    let a = Instant.from-epoch-seconds(0)
+    let b = Instant.from-epoch-seconds(3661)
+    let d = a.until(b)
+    assert(d.hours == 1 && d.minutes == 1 && d.seconds == 1)
+}
+
+@test
+fn test-instant-comparison() {
+    let a = Instant.from-epoch-seconds(0)
+    let b = Instant.from-epoch-seconds(1)
+    assert(a < b)
+    assert(b > a)
+    assert(a == Instant.from-epoch-seconds(0))
+}
+
+@test
+fn test-instant-rejects-calendar-units() {
+    try {
+        Instant.from-epoch-seconds(0).add(Duration(months=1))
+        assert(false, 'should have thrown')
+    } catch e: ValueError {
+        assert(true)
+    }
+}
+
+@test
+fn test-instant-diff-operator() {
+    let a = Instant.from-epoch-seconds(0)
+    let b = Instant.from-epoch-seconds(7200)
+    let d = b - a
+    assert(d.hours == 2)
+}
+
+@test
+fn test-instant-roundtrip() {
+    let i = Instant.from('2024-06-15T10:30:00Z')
+    let s = "{i}"
+    let j = Instant.from(s)
+    assert(i == j)
+}
+
+/* --- PlainYearMonth tests --- */
+
+@test
+fn test-plain-year-month-create() {
+    let ym = PlainYearMonth(2024, 3)
+    assert(ym.year == 2024 && ym.month == 3)
+    assert("{ym}" == '2024-03')
+}
+
+@test
+fn test-plain-year-month-from-string() {
+    let ym = PlainYearMonth.from('2024-06')
+    assert(ym.year == 2024 && ym.month == 6)
+}
+
+@test
+fn test-plain-year-month-add() {
+    let ym = PlainYearMonth(2024, 11)
+    let r = ym.add(Duration(months=3))
+    assert(r == PlainYearMonth(2025, 2))
+}
+
+@test
+fn test-plain-year-month-subtract() {
+    let ym = PlainYearMonth(2024, 2)
+    let r = ym.subtract(Duration(months=3))
+    assert(r == PlainYearMonth(2023, 11))
+}
+
+@test
+fn test-plain-year-month-until() {
+    let a = PlainYearMonth(2024, 1)
+    let b = PlainYearMonth(2024, 7)
+    let d = a.until(b)
+    assert(d.months == 6)
+}
+
+@test
+fn test-plain-year-month-days-in-month() {
+    assert(PlainYearMonth(2024, 2).days-in-month == 29)
+    assert(PlainYearMonth(2023, 2).days-in-month == 28)
+}
+
+@test
+fn test-plain-year-month-comparison() {
+    let a = PlainYearMonth(2024, 1)
+    let b = PlainYearMonth(2024, 6)
+    assert(a < b)
+    assert(a == PlainYearMonth(2024, 1))
+}
+
+@test
+fn test-plain-year-month-to-date() {
+    let ym = PlainYearMonth(2024, 2)
+    let d = ym.to-plain-date(29)
+    assert(d == PlainDate(2024, 2, 29))
+}
+
+/* --- PlainMonthDay tests --- */
+
+@test
+fn test-plain-month-day-create() {
+    let md = PlainMonthDay(12, 25)
+    assert(md.month == 12 && md.day == 25)
+    assert("{md}" == '--12-25')
+}
+
+@test
+fn test-plain-month-day-from-string() {
+    let md = PlainMonthDay.from('--02-29')
+    assert(md.month == 2 && md.day == 29)
+}
+
+@test
+fn test-plain-month-day-to-date-leap() {
+    let md = PlainMonthDay(2, 29)
+    /* In a non-leap year, clamp to 28 */
+    let d = md.to-plain-date(2023)
+    assert(d == PlainDate(2023, 2, 28))
+    /* In a leap year, keep 29 */
+    let d2 = md.to-plain-date(2024)
+    assert(d2 == PlainDate(2024, 2, 29))
+}
+
+@test
+fn test-plain-month-day-equals() {
+    assert(PlainMonthDay(3, 14) == PlainMonthDay(3, 14))
+    assert(!(PlainMonthDay(3, 14) == PlainMonthDay(3, 15)))
+}
+
+/* --- Now tests --- */
+
+@test
+fn test-now-instant() {
+    let i = Now.instant()
+    /* Should be after 2024-01-01 */
+    assert(i.epoch-seconds > 1704067200)
+}
+
+@test
+fn test-now-plain-date-utc() {
+    let d = Now.plain-date-utc()
+    assert(d.year >= 2024)
+}
+
+@test
+fn test-now-plain-date-time-utc() {
+    let dt = Now.plain-date-time-utc()
+    assert(dt.year >= 2024)
+    assert(dt.hour >= 0 && dt.hour <= 23)
+}
+
+@test
+fn test-now-plain-date-local() {
+    let d = Now.plain-date-local()
+    assert(d.year >= 2024)
+}
+
+@test
+fn test-now-plain-time-local() {
+    let t = Now.plain-time-local()
+    assert(t.hour >= 0 && t.hour <= 23)
+    assert(t.minute >= 0 && t.minute <= 59)
+}
+
+/* --- Epoch conversion roundtrip tests --- */
+
+@test
+fn test-epoch-roundtrip() {
+    let dates = [
+        (1970, 1, 1),
+        (2000, 2, 29),
+        (2024, 6, 15),
+        (1969, 12, 31),
+        (1, 1, 1),
+        (9999, 12, 31)
+    ]
+    for (y, m, d) in dates {
+        let epoch = __date-to-epoch-days(y, m, d)
+        let (ry, rm, rd) = __epoch-days-to-date(epoch)
+        assert(ry == y && rm == m && rd == d, "roundtrip failed for {y}-{m}-{d}")
+    }
+}
+
+@test
+fn test-epoch-day-known-values() {
+    /* 1970-01-01 is epoch day 0 */
+    assert(__date-to-epoch-days(1970, 1, 1) == 0)
+    /* 1970-01-02 is epoch day 1 */
+    assert(__date-to-epoch-days(1970, 1, 2) == 1)
+    /* 2000-01-01 */
+    assert(__date-to-epoch-days(2000, 1, 1) == 10957)
+}
+
+/* --- Validation tests --- */
+
+@test
+fn test-invalid-date-month() {
+    try {
+        PlainDate(2024, 13, 1)
+        assert(false, 'should have thrown')
+    } catch e: ValueError {
+        assert(true)
+    }
+}
+
+@test
+fn test-invalid-date-day() {
+    try {
+        PlainDate(2024, 2, 30)
+        assert(false, 'should have thrown')
+    } catch e: ValueError {
+        assert(true)
+    }
+}
+
+@test
+fn test-invalid-time-hour() {
+    try {
+        PlainTime(24, 0, 0)
+        assert(false, 'should have thrown')
+    } catch e: ValueError {
+        assert(true)
+    }
+}
+
+@test
+fn test-plain-date-feb29-leap() {
+    /* Should succeed */
+    let d = PlainDate(2024, 2, 29)
+    assert(d.day == 29)
+}
+
+@test
+fn test-plain-date-feb29-nonleap() {
+    try {
+        PlainDate(2023, 2, 29)
+        assert(false, 'should have thrown')
+    } catch e: ValueError {
+        assert(true)
+    }
+}
+
+/* --- Duration.from(String) tests --- */
+
+@test
+fn test-duration-from-string-basic() {
+    let d = Duration.from('P1Y2M3DT4H5M6S')
+    assert(d.years == 1 && d.months == 2 && d.days == 3)
+    assert(d.hours == 4 && d.minutes == 5 && d.seconds == 6)
+}
+
+@test
+fn test-duration-from-string-time-only() {
+    let d = Duration.from('PT1H30M')
+    assert(d.hours == 1 && d.minutes == 30)
+    assert(d.years == 0 && d.days == 0)
+}
+
+@test
+fn test-duration-from-string-negative() {
+    let d = Duration.from('-P5D')
+    assert(d.days == -5)
+    assert(d.sign == -1)
+}
+
+@test
+fn test-duration-from-string-fractional-seconds() {
+    let d = Duration.from('PT1.5S')
+    assert(d.seconds == 1 && d.milliseconds == 500)
+}
+
+@test
+fn test-duration-from-string-weeks() {
+    let d = Duration.from('P2W')
+    assert(d.weeks == 2)
+}
+
+@test
+fn test-duration-from-string-roundtrip() {
+    let d = Duration(years=1, months=2, days=3, hours=4, minutes=5, seconds=6)
+    let s = "{d}"
+    let d2 = Duration.from(s)
+    assert(d2.years == 1 && d2.months == 2 && d2.days == 3)
+    assert(d2.hours == 4 && d2.minutes == 5 && d2.seconds == 6)
+}
+
+/* --- Duration.total() tests --- */
+
+@test
+fn test-duration-total-hours() {
+    let d = Duration(days=1, hours=6)
+    assert(d.total('hours') == 30.0)
+}
+
+@test
+fn test-duration-total-minutes() {
+    let d = Duration(hours=2, minutes=30)
+    assert(d.total('minutes') == 150.0)
+}
+
+@test
+fn test-duration-total-milliseconds() {
+    let d = Duration(seconds=1, milliseconds=500)
+    assert(d.total('milliseconds') == 1500.0)
+}
+
+/* --- Duration.round() tests --- */
+
+@test
+fn test-duration-round-to-hours() {
+    let d = Duration(hours=1, minutes=45)
+    let r = d.round('hour')
+    assert(r.hours == 2 && r.minutes == 0)
+}
+
+@test
+fn test-duration-round-floor() {
+    let d = Duration(hours=1, minutes=59)
+    let r = d.round('hour', 'floor')
+    assert(r.hours == 1 && r.minutes == 0)
+}
+
+@test
+fn test-duration-round-ceil() {
+    let d = Duration(hours=1, minutes=1)
+    let r = d.round('hour', 'ceil')
+    assert(r.hours == 2 && r.minutes == 0)
+}
+
+/* --- Duration.compare() tests --- */
+
+@test
+fn test-duration-compare() {
+    let a = Duration(hours=1)
+    let b = Duration(minutes=90)
+    assert(Duration.compare(a, b) == -1)
+    assert(Duration.compare(b, a) == 1)
+    let c = Duration(minutes=60)
+    assert(Duration.compare(a, c) == 0)
+}
+
+/* --- PlainTime.round() tests --- */
+
+@test
+fn test-plain-time-round-to-hour() {
+    let t = PlainTime(14, 45, 0)
+    let r = t.round('hour')
+    assert(r.hour == 15 && r.minute == 0 && r.second == 0)
+}
+
+@test
+fn test-plain-time-round-floor() {
+    let t = PlainTime(14, 59, 59)
+    let r = t.round('hour', 'floor')
+    assert(r.hour == 14 && r.minute == 0)
+}
+
+@test
+fn test-plain-time-round-to-minute() {
+    let t = PlainTime(10, 30, 45)
+    let r = t.round('minute')
+    assert(r.hour == 10 && r.minute == 31 && r.second == 0)
+}
+
+/* --- PlainDateTime.round() tests --- */
+
+@test
+fn test-plain-date-time-round-to-hour() {
+    let dt = PlainDateTime(2024, 6, 15, 14, 45, 0)
+    let r = dt.round('hour')
+    assert(r == PlainDateTime(2024, 6, 15, 15, 0, 0))
+}
+
+@test
+fn test-plain-date-time-round-to-day() {
+    let dt = PlainDateTime(2024, 6, 15, 18, 0, 0)
+    let r = dt.round('day')
+    assert(r == PlainDateTime(2024, 6, 16, 0, 0, 0))
+}
+
+@test
+fn test-plain-date-time-round-day-floor() {
+    let dt = PlainDateTime(2024, 6, 15, 23, 59, 59)
+    let r = dt.round('day', 'floor')
+    assert(r == PlainDateTime(2024, 6, 15, 0, 0, 0))
+}
+
+/* --- Instant.round() tests --- */
+
+@test
+fn test-instant-round-to-second() {
+    let i = Instant.from-epoch-nanoseconds(1500000000)
+    let r = i.round('second')
+    assert(r.epoch-nanoseconds == 2000000000)
+}
+
+@test
+fn test-instant-round-to-minute() {
+    let i = Instant.from-epoch-seconds(90)
+    let r = i.round('minute')
+    assert(r.epoch-seconds == 120)
+}
+
+/* --- compare() tests --- */
+
+@test
+fn test-plain-date-compare() {
+    let a = PlainDate(2024, 1, 1)
+    let b = PlainDate(2024, 6, 15)
+    assert(PlainDate.compare(a, b) == -1)
+    assert(PlainDate.compare(b, a) == 1)
+    assert(PlainDate.compare(a, a) == 0)
+}
+
+@test
+fn test-plain-time-compare() {
+    let a = PlainTime(10, 0, 0)
+    let b = PlainTime(12, 0, 0)
+    assert(PlainTime.compare(a, b) == -1)
+    assert(PlainTime.compare(b, a) == 1)
+    assert(PlainTime.compare(a, PlainTime(10, 0, 0)) == 0)
+}
+
+@test
+fn test-plain-date-time-compare() {
+    let a = PlainDateTime(2024, 1, 1, 10, 0, 0)
+    let b = PlainDateTime(2024, 1, 1, 12, 0, 0)
+    assert(PlainDateTime.compare(a, b) == -1)
+    assert(PlainDateTime.compare(b, a) == 1)
+}
+
+@test
+fn test-instant-compare() {
+    let a = Instant.from-epoch-seconds(0)
+    let b = Instant.from-epoch-seconds(100)
+    assert(Instant.compare(a, b) == -1)
+    assert(Instant.compare(b, a) == 1)
+    assert(Instant.compare(a, a) == 0)
+}
+
+@test
+fn test-plain-year-month-compare() {
+    let a = PlainYearMonth(2024, 1)
+    let b = PlainYearMonth(2024, 6)
+    assert(PlainYearMonth.compare(a, b) == -1)
+    assert(PlainYearMonth.compare(b, a) == 1)
+    assert(PlainYearMonth.compare(a, a) == 0)
+}
+
+/* --- Conversion method tests --- */
+
+@test
+fn test-plain-time-to-plain-date-time() {
+    let t = PlainTime(14, 30, 0)
+    let d = PlainDate(2024, 6, 15)
+    let dt = t.to-plain-date-time(d)
+    assert(dt == PlainDateTime(2024, 6, 15, 14, 30, 0))
+}
+
+@test
+fn test-plain-date-time-to-year-month() {
+    let dt = PlainDateTime(2024, 6, 15, 14, 30, 0)
+    let ym = dt.to-plain-year-month()
+    assert(ym == PlainYearMonth(2024, 6))
+}
+
+@test
+fn test-plain-date-time-to-month-day() {
+    let dt = PlainDateTime(2024, 6, 15, 14, 30, 0)
+    let md = dt.to-plain-month-day()
+    assert(md == PlainMonthDay(6, 15))
+}
+
+/* --- Duration.create() tests --- */
+
+@test
+fn test-duration-create() {
+    let d = Duration.create(hours=2, minutes=30)
+    assert(d.hours == 2 && d.minutes == 30)
+    assert(d.days == 0 && d.years == 0)
+}
+
+/* --- Smart parser tests --- */
+
+@test
+fn test-parse-iso-date() {
+    let dt = parse('2024-06-15')
+    assert(dt.year == 2024 && dt.month == 6 && dt.day == 15)
+    assert(dt.hour == 0)
+}
+
+@test
+fn test-parse-iso-datetime() {
+    let dt = parse('2024-06-15T14:30:00')
+    assert(dt.year == 2024 && dt.month == 6 && dt.day == 15)
+    assert(dt.hour == 14 && dt.minute == 30)
+}
+
+@test
+fn test-parse-iso-datetime-with-z() {
+    let dt = parse('2024-06-15T14:30:00Z')
+    assert(dt.year == 2024 && dt.hour == 14)
+}
+
+@test
+fn test-parse-iso-space-separator() {
+    let dt = parse('2024-06-15 14:30:00')
+    assert(dt.year == 2024 && dt.hour == 14 && dt.minute == 30)
+}
+
+@test
+fn test-parse-slash-ymd() {
+    let dt = parse('2024/06/15')
+    assert(dt.year == 2024 && dt.month == 6 && dt.day == 15)
+}
+
+@test
+fn test-parse-slash-mdy() {
+    let dt = parse('6/15/2024')
+    assert(dt.year == 2024 && dt.month == 6 && dt.day == 15)
+}
+
+@test
+fn test-parse-slash-mdy-with-time() {
+    let dt = parse('6/15/2024 2:30pm')
+    assert(dt.year == 2024 && dt.month == 6 && dt.day == 15)
+    assert(dt.hour == 14 && dt.minute == 30)
+}
+
+@test
+fn test-parse-month-day-year() {
+    let dt = parse('June 15, 2024')
+    assert(dt.year == 2024 && dt.month == 6 && dt.day == 15)
+}
+
+@test
+fn test-parse-month-abbrev() {
+    let dt = parse('Jun 15, 2024')
+    assert(dt.year == 2024 && dt.month == 6 && dt.day == 15)
+}
+
+@test
+fn test-parse-month-day-year-time() {
+    let dt = parse('Jun 15, 2024 2:30pm')
+    assert(dt.year == 2024 && dt.month == 6 && dt.day == 15)
+    assert(dt.hour == 14 && dt.minute == 30)
+}
+
+@test
+fn test-parse-european-style() {
+    let dt = parse('15 June 2024')
+    assert(dt.year == 2024 && dt.month == 6 && dt.day == 15)
+}
+
+@test
+fn test-parse-european-with-time() {
+    let dt = parse('15 Jun 2024 14:30')
+    assert(dt.year == 2024 && dt.month == 6 && dt.day == 15)
+    assert(dt.hour == 14 && dt.minute == 30)
+}
+
+@test
+fn test-parse-day-name-prefix() {
+    let dt = parse('Sat, Jun 15, 2024')
+    assert(dt.year == 2024 && dt.month == 6 && dt.day == 15)
+}
+
+@test
+fn test-parse-full-day-name() {
+    let dt = parse('Saturday, June 15, 2024')
+    assert(dt.year == 2024 && dt.month == 6 && dt.day == 15)
+}
+
+@test
+fn test-parse-ordinal-day() {
+    let dt = parse('June 1st, 2024')
+    assert(dt.year == 2024 && dt.month == 6 && dt.day == 1)
+}
+
+@test
+fn test-parse-unix-seconds() {
+    let dt = parse('1718451000')
+    assert(dt.year == 2024)
+}
+
+@test
+fn test-parse-unix-millis() {
+    let dt = parse('1718451000000')
+    assert(dt.year == 2024)
+}
+
+@test
+fn test-parse-compact-date() {
+    let dt = parse('20240615')
+    assert(dt.year == 2024 && dt.month == 6 && dt.day == 15)
+}
+
+@test
+fn test-parse-compact-datetime() {
+    let dt = parse('20240615T143000')
+    assert(dt.year == 2024 && dt.month == 6 && dt.day == 15)
+    assert(dt.hour == 14 && dt.minute == 30)
+}
+
+@test
+fn test-parse-am-pm() {
+    let dt = parse('2024-06-15 12:00am')
+    assert(dt.hour == 0, "12am should be midnight")
+    let dt2 = parse('2024-06-15 12:00pm')
+    assert(dt2.hour == 12, "12pm should be noon")
+    let dt3 = parse('2024-06-15 11:59pm')
+    assert(dt3.hour == 23 && dt3.minute == 59)
+}
+
+@test
+fn test-parse-month-year() {
+    let dt = parse('March 2024')
+    assert(dt.year == 2024 && dt.month == 3 && dt.day == 1)
+}
+
+@test
+fn test-parse-fractional-seconds() {
+    let dt = parse('2024-06-15T14:30:00.123456789')
+    assert(dt.millisecond == 123 && dt.microsecond == 456 && dt.nanosecond == 789)
+}
+
+@test
+fn test-parse-rfc2822-ish() {
+    let dt = parse('Mon, 15 Jun 2024 14:30:00 GMT')
+    assert(dt.year == 2024 && dt.month == 6 && dt.day == 15)
+    assert(dt.hour == 14 && dt.minute == 30)
+}
+
+@test
+fn test-parse-us-dash-date() {
+    let dt = parse('06-15-2024')
+    assert(dt.year == 2024 && dt.month == 6 && dt.day == 15)
+}
+
+@test
+fn test-parse-invalid-throws() {
+    try {
+        parse('not a date')
+        assert(false, 'should have thrown')
+    } catch e: ValueError {
+        assert(true)
+    }
+}
+
+/* --- Ergonomic API tests --- */
+
+@test
+fn test-now-returns-datetime() {
+    let n = now()
+    assert(n.year >= 2024)
+    assert(n.hour >= 0 && n.hour <= 23)
+}
+
+@test
+fn test-today-returns-date() {
+    let t = today()
+    assert(t.year >= 2024)
+    assert(t.month >= 1 && t.month <= 12)
+}
+
+@test
+fn test-utc-now-returns-datetime() {
+    let u = utc-now()
+    assert(u.year >= 2024)
+}
+
+@test
+fn test-instant-now-fn() {
+    let i = instant-now()
+    assert(i.epoch-seconds > 1704067200)
+}
+
+@test
+fn test-yesterday-tomorrow-fns() {
+    let y = yesterday()
+    let t = tomorrow()
+    let d = today()
+    assert(y == d.yesterday)
+    assert(t == d.tomorrow)
+    assert((t - y).days == 2)
+}
+
+@test
+fn test-unit-constants() {
+    assert(HOUR.hours == 1)
+    assert(DAY.days == 1)
+    assert(WEEK.weeks == 1)
+    assert(MINUTE.minutes == 1)
+    assert(SEC.seconds == 1)
+}
+
+@test
+fn test-duration-multiply() {
+    let d = 3 * HOUR
+    assert(d.hours == 3)
+    let d2 = MINUTE * 90
+    assert(d2.minutes == 90)
+}
+
+@test
+fn test-duration-multiply-compound() {
+    let d = 2 * Duration(hours=1, minutes=30)
+    assert(d.hours == 2 && d.minutes == 60)
+}
+
+@test
+fn test-now-plus-duration() {
+    let n = now()
+    let later = n + 3 * HOUR
+    assert(later > n)
+}
+
+@test
+fn test-now-minus-week() {
+    let n = now()
+    let week-ago = n - WEEK
+    assert(week-ago < n)
+}
+
+@test
+fn test-date-tomorrow-yesterday() {
+    let d = PlainDate(2024, 6, 15)
+    assert(d.tomorrow == PlainDate(2024, 6, 16))
+    assert(d.yesterday == PlainDate(2024, 6, 14))
+}
+
+@test
+fn test-date-start-end-of-month() {
+    let d = PlainDate(2024, 2, 15)
+    assert(d.start-of-month == PlainDate(2024, 2, 1))
+    assert(d.end-of-month == PlainDate(2024, 2, 29))
+}
+
+@test
+fn test-date-start-end-of-year() {
+    let d = PlainDate(2024, 6, 15)
+    assert(d.start-of-year == PlainDate(2024, 1, 1))
+    assert(d.end-of-year == PlainDate(2024, 12, 31))
+}
+
+@test
+fn test-date-next-last-week() {
+    let d = PlainDate(2024, 6, 15)
+    assert(d.next-week == PlainDate(2024, 6, 22))
+    assert(d.last-week == PlainDate(2024, 6, 8))
+}
+
+@test
+fn test-datetime-start-of-day() {
+    let dt = PlainDateTime(2024, 6, 15, 14, 30, 45)
+    assert(dt.start-of-day == PlainDateTime(2024, 6, 15))
+}
+
+@test
+fn test-datetime-end-of-day() {
+    let dt = PlainDateTime(2024, 6, 15, 14, 30, 45)
+    let eod = dt.end-of-day
+    assert(eod.hour == 23 && eod.minute == 59 && eod.second == 59)
+    assert(eod.day == 15)
+}
+
+@test
+fn test-datetime-tomorrow() {
+    let dt = PlainDateTime(2024, 6, 15, 14, 30, 0)
+    let tom = dt.tomorrow
+    assert(tom.day == 16 && tom.hour == 14 && tom.minute == 30)
+}
+
+@test
+fn test-datetime-start-of-month() {
+    let dt = PlainDateTime(2024, 6, 15, 14, 30, 0)
+    let som = dt.start-of-month
+    assert(som == PlainDateTime(2024, 6, 1))
+}
+
+@test
+fn test-chained-navigation() {
+    /* (now() - WEEK).tomorrow.start-of-day style chaining */
+    let d = PlainDate(2024, 6, 15)
+    let r = (d - WEEK).tomorrow.start-of-month
+    /* 2024-06-15 - 7 days = 2024-06-08, +1 = 2024-06-09, start of month = 2024-06-01 */
+    assert(r == PlainDate(2024, 6, 1))
+}
+
+@test
+fn test-idiomatic-arithmetic() {
+    /* The kind of code you'd actually write */
+    let meeting = PlainDateTime(2024, 6, 15, 14, 0, 0)
+    let reminder = meeting - 30 * MINUTE
+    assert(reminder == PlainDateTime(2024, 6, 15, 13, 30, 0))
+
+    let next-meeting = meeting + 1 * WEEK
+    assert(next-meeting == PlainDateTime(2024, 6, 22, 14, 0, 0))
+}
+
+/* --- Float * Duration tests --- */
+
+@test
+fn test-float-multiply-half-hour() {
+    let d = 0.5 * HOUR
+    assert(d.minutes == 30 && d.hours == 0)
+}
+
+@test
+fn test-float-multiply-1-5-days() {
+    let d = 1.5 * DAY
+    assert(d.days == 1 && d.hours == 12)
+}
+
+@test
+fn test-float-multiply-commutative() {
+    let a = 0.5 * HOUR
+    let b = HOUR * 0.5
+    assert(a.total-nanoseconds == b.total-nanoseconds)
+}
+
+@test
+fn test-float-multiply-fractional-second() {
+    let d = 0.001 * SEC
+    assert(d.milliseconds == 1 && d.seconds == 0)
+}
+
+@test
+fn test-float-multiply-negative() {
+    let d = -0.5 * HOUR
+    assert(d.sign == -1)
+    assert(d.minutes == -30)
+}
+
+@test
+fn test-float-multiply-in-expression() {
+    let meeting = PlainDateTime(2024, 6, 15, 14, 0, 0)
+    let half-hour-later = meeting + 0.5 * HOUR
+    assert(half-hour-later == PlainDateTime(2024, 6, 15, 14, 30, 0))
+}
+
+@test
+fn test-float-multiply-rejects-calendar-units() {
+    try {
+        0.5 * Duration(months=1)
+        assert(false, 'should have thrown')
+    } catch e: ValueError {
+        assert(true)
+    }
+}

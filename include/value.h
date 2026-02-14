@@ -1330,6 +1330,7 @@ is_decorated(Value const *f)
         return (*flags_of(f) & FF_DECORATED);
 }
 
+
 static inline Type *
 type_of(Value const *f)
 {

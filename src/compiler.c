@@ -654,6 +654,28 @@ HasConstructor(ClassDefinition const *def)
         return false;
 }
 
+static void
+AddFieldParams(Ty *ty, Expr *ctor, ExprVec const *fields)
+{
+        for (int i = 0; i < vN(*fields); ++i) {
+                Expr *ident = FieldIdentifier(v__(*fields, i));
+                if (ident != NULL && !IsPrivateMember(ident->identifier)) {
+                        avP(ctor->params, ident->identifier);
+                        avP(ctor->dflts, NULL);
+                        avP(ctor->constraints, NULL);
+                }
+        }
+}
+
+static void
+AddInheritedFieldParams(Ty *ty, Expr *ctor, Class *class)
+{
+        if (class != NULL) {
+                AddInheritedFieldParams(ty, ctor, class->super);
+                AddFieldParams(ty, ctor, &class->def->class.fields);
+        }
+}
+
 static Expr *
 DefaultConstructor(Ty *ty, Class *class)
 {
@@ -661,7 +683,27 @@ DefaultConstructor(Ty *ty, Class *class)
         ctor->name  = "init";
         ctor->class = class;
         ctor->body  = NULL;
+        ctor->rest  = -1;
+        ctor->ikwargs = -1;
+
+        AddFieldParams(ty, ctor, &class->def->class.fields);
+
         return ctor;
+}
+
+static Expr *
+FindDefaultConstructor(ClassDefinition const *def)
+{
+        ExprVec const *methods = &def->methods;
+
+        for (int i = 0; i < vN(*methods); ++i) {
+                Expr *method = v__(*methods, i);
+                if (s_eq(method->name, "init") && method->body == NULL) {
+                        return method;
+                }
+        }
+
+        return NULL;
 }
 
 inline static bool
@@ -3837,10 +3879,6 @@ symbolize_pattern_(Ty *ty, Scope *scope, Expr *e, Scope *reuse, bool def)
                 }
 
                 scope_copy(ty, scope, shared);
-
-                //if (reuse != NULL) {
-                //        scope_copy(ty, reuse, shared);
-                //}
 
                 break;
         }
@@ -7257,6 +7295,21 @@ emit_function(Ty *ty, Expr const *e)
         ) {
                 Stmt *def = e->class->def;
                 EmitFieldInitializers(ty, &def->class);
+
+                // Default constructor
+                if (e->body == NULL) {
+                        for (int i = 0; i < vN(e->param_symbols); ++i) {
+                                Symbol *sym = v__(e->param_symbols, i);
+                                emit_load_instr(ty, sym->identifier, INSTR_LOAD_LOCAL, sym->i);
+                                PLACEHOLDER_JUMP(JUMP_IF_NIL, skip);
+                                emit_load_instr(ty, sym->identifier, INSTR_LOAD_LOCAL, sym->i);
+                                INSN(TARGET_SELF_MEMBER);
+                                EM(sym->identifier);
+                                INSN(ASSIGN);
+                                INSN(POP);
+                                PATCH_JUMP(skip);
+                        }
+                }
         }
 
         if (e->type == EXPRESSION_GENERATOR) {
@@ -11402,6 +11455,12 @@ InjectRedpill(Ty *ty, Stmt *s)
 
                         scope_copy_weak(ty, def->s_scope, super->def->class.s_scope);
                         scope_copy_weak(ty, def->scope, super->def->class.scope);
+
+                        // Add inherited field params to default constructor
+                        Expr *init = FindDefaultConstructor(def);
+                        if (init != NULL) {
+                                AddInheritedFieldParams(ty, init, super);
+                        }
                 }
                 AddClassTraits(ty, def);
                 ResolveFieldTypes(ty, def->scope, &def->fields);

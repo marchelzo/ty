@@ -5864,17 +5864,99 @@ TagFunctionType(Ty *ty, Type *t0)
         return f0;
 }
 
+static bool
+HasTypedFields(Class const *c)
+{
+        for (; c != NULL && c->i != CLASS_OBJECT; c = c->super) {
+                if (c->def == NULL) {
+                        continue;
+                }
+                for (int i = 0; i < vN(c->def->class.fields); ++i) {
+                        Expr *ident = FieldIdentifier(v__(c->def->class.fields, i));
+                        if (ident != NULL && ident->constraint != NULL) {
+                                return true;
+                        }
+                }
+        }
+
+        return false;
+}
+
+static bool
+HasUserInit(Class *c)
+{
+        for (; c != NULL && c->i != CLASS_OBJECT; c = c->super) {
+                if (c->def == NULL) {
+                        continue;
+                }
+                for (int i = 0; i < vN(c->def->class.methods); ++i) {
+                        Expr *meth = v__(c->def->class.methods, i);
+                        if (!s_eq(meth->name, "init")) {
+                                continue;
+                        }
+                        if (
+                                (meth->type == EXPRESSION_MULTI_FUNCTION)
+                             || (meth->body != NULL)
+                        ) {
+                                return true;
+                        }
+                }
+        }
+
+        return false;
+}
+
+static Type *
+FieldConstructorType(Ty *ty, Class *c, Type *t1)
+{
+        Type *fun0 = NewType(ty, TYPE_FUNCTION);
+
+        while (c != NULL && c->i != CLASS_OBJECT) {
+                if (c->def == NULL) {
+                        continue;
+                }
+
+                ExprVec *fields = &c->def->class.fields;
+
+                for (int i = 0; i < vN(*fields); ++i) {
+                        Expr *field = v__(*fields, i);
+
+                        Expr *ident = FieldIdentifier(field);
+                        if (ident == NULL || IsPrivateMember(ident->identifier)) {
+                                continue;
+                        }
+
+                        Type *f0 = ident->_type;
+                        if (f0 != NULL) {
+                                f0 = SolveMemberAccess(ty, t1, f0);
+                        }
+
+                        Type *p0 = (f0 != NULL) ? Either(ty, f0, NIL_TYPE) : NULL;
+
+                        avP(fun0->params, PARAMx(
+                                .name = ident->identifier,
+                                .type = p0,
+                                .required = false
+                        ));
+                }
+
+                c = c->super;
+        }
+
+        fun0->rt = t1;
+
+        return Inst1(ty, fun0);
+}
+
 static Type *
 ClassFunctionType(Ty *ty, Type *t0)
 {
-        Type *t1 = Inst(ty, t0->class->object_type, &t0->class->type->bound, NULL);
+        Class *c = t0->class;
+        Type *t1 = Inst(ty, c->object_type, &c->type->bound, NULL);
 
-        //if (vN(t1->args) != vN(t0->class->type->bound)) {
-        //        CloneVec(t1->args);
-        //        while (vN(t1->args) != vN(t0->class->type->bound)) {
-        //                avP(t1->args, NewVarOf(ty, v__(t0->class->type->bound, vN(t1->args))));
-        //        }
-        //}
+        if (!HasUserInit(c) && HasTypedFields(c)) {
+                return FieldConstructorType(ty, c, t1);
+        }
 
         Type *t2 = type_member_access_t(ty, t1, "init", false);
         Type *pack = ParamPackOf(t1);

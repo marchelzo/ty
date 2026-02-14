@@ -1,0 +1,399 @@
+import chalk (chalk, strip, escape, trans, parse, hslToRgb, hsl-hex)
+
+let ESC = "\x1b"
+
+// ── Escape function ──────────────────────────────────────────────
+
+@test
+fn test-escape-brackets() {
+    assert(escape('[hello]') == '\\[hello]')
+}
+
+@test
+fn test-escape-backslash() {
+    assert(escape('a\\b') == 'a\\\\b')
+}
+
+@test
+fn test-escape-no-change() {
+    assert(escape('hello world') == 'hello world')
+}
+
+// ── Strip function ───────────────────────────────────────────────
+
+@test
+fn test-strip-sgr() {
+    let styled = "{ESC}[1mhello{ESC}[0m"
+    assert(strip(styled) == 'hello')
+}
+
+@test
+fn test-strip-multiple-sgr() {
+    let styled = "{ESC}[1m{ESC}[31mhello{ESC}[0m"
+    assert(strip(styled) == 'hello')
+}
+
+@test
+fn test-strip-plain-text() {
+    assert(strip('hello') == 'hello')
+}
+
+@test
+fn test-strip-osc8() {
+    let linked = "{ESC}]8;;https://example.com{ESC}\\hello{ESC}]8;;{ESC}\\"
+    assert(strip(linked) == 'hello')
+}
+
+@test
+fn test-strip-sgr-and-osc8() {
+    let text = "{ESC}[1m{ESC}]8;;https://x.com{ESC}\\hello{ESC}]8;;{ESC}\\{ESC}[0m"
+    assert(strip(text) == 'hello')
+}
+
+// ── Trans function ───────────────────────────────────────────────
+
+@test
+fn test-trans-empty-to-empty() {
+    assert(trans({}, {}) == '')
+}
+
+@test
+fn test-trans-bold-on() {
+    let result = trans({}, {bold: true})
+    assert(result == "{ESC}[1m")
+}
+
+@test
+fn test-trans-bold-off() {
+    let result = trans({bold: true}, {})
+    assert(result == "{ESC}[22m")
+}
+
+@test
+fn test-trans-italic-on() {
+    let result = trans({}, {italic: true})
+    assert(result == "{ESC}[3m")
+}
+
+@test
+fn test-trans-fg-color() {
+    let result = trans({}, {fg: [31]})
+    assert(result == "{ESC}[31m")
+}
+
+@test
+fn test-trans-rgb-fg() {
+    let result = trans({}, {fg: [38, 2, 255, 0, 0]})
+    assert(result == "{ESC}[38;2;255;0;0m")
+}
+
+@test
+fn test-trans-link-open() {
+    let result = trans({}, {link: 'https://example.com'})
+    assert(result == "{ESC}]8;;https://example.com{ESC}\\")
+}
+
+@test
+fn test-trans-link-close() {
+    let result = trans({link: 'https://example.com'}, {})
+    assert(result == "{ESC}]8;;{ESC}\\")
+}
+
+@test
+fn test-trans-link-change() {
+    let result = trans({link: 'https://a.com'}, {link: 'https://b.com'})
+    assert(result == "{ESC}]8;;https://b.com{ESC}\\")
+}
+
+@test
+fn test-trans-link-same() {
+    let result = trans({link: 'https://x.com'}, {link: 'https://x.com'})
+    assert(result == '')
+}
+
+@test
+fn test-trans-bold-and-link() {
+    let result = trans({}, {bold: true, link: 'https://x.com'})
+    assert(result.contains?("{ESC}[1m"))
+    assert(result.contains?("{ESC}]8;;https://x.com{ESC}\\"))
+}
+
+// ── Render: basic styles ─────────────────────────────────────────
+
+@test
+fn test-render-plain-text() {
+    let result = chalk.render('hello')
+    assert(result.contains?('hello'))
+}
+
+@test
+fn test-render-bold() {
+    let result = chalk.render('[bold]hello[/]')
+    assert(result.contains?("{ESC}[1m"))
+    assert(result.contains?('hello'))
+}
+
+@test
+fn test-render-italic() {
+    let result = chalk.render('[italic]hello[/]')
+    assert(result.contains?("{ESC}[3m"))
+}
+
+@test
+fn test-render-named-color() {
+    let result = chalk.render('[red]hello[/]')
+    assert(result.contains?("{ESC}[31m"))
+}
+
+@test
+fn test-render-hex-color() {
+    let result = chalk.render('[#ff0000]hello[/]')
+    assert(result.contains?("{ESC}[38;2;255;0;0m"))
+}
+
+@test
+fn test-render-bg-color() {
+    let result = chalk.render('[bg-red]hello[/]')
+    assert(result.contains?("{ESC}[41m"))
+}
+
+@test
+fn test-render-underline() {
+    let result = chalk.render('[u]hello[/]')
+    assert(result.contains?('hello'))
+}
+
+@test
+fn test-render-combined-styles() {
+    let result = chalk.render('[bold red]hello[/]')
+    let has-style = result.contains?("{ESC}[1m") || result.contains?("{ESC}[31m")
+    assert(has-style)
+    assert(result.contains?('hello'))
+}
+
+// ── Render: nesting and closing ──────────────────────────────────
+
+@test
+fn test-render-nested-styles() {
+    let result = chalk.render('[bold][red]hello[/][/]')
+    assert(result.contains?('hello'))
+}
+
+@test
+fn test-render-close-all() {
+    let result = chalk.render('[bold][red]hello[//]')
+    assert(result.contains?('hello'))
+}
+
+@test
+fn test-render-close-named() {
+    let result = chalk.render('[bold red]hello[/bold]world[/]')
+    assert(result.contains?('hello'))
+    assert(result.contains?('world'))
+}
+
+// ── Render: plain mode ───────────────────────────────────────────
+
+@test
+fn test-render-plain-mode() {
+    let result = chalk.render('[bold red]hello[/]', plain=true)
+    assert(result == 'hello')
+}
+
+@test
+fn test-render-plain-mode-no-escapes() {
+    let result = chalk.render('[bold][link=https://x.com]hello[/][/]', plain=true)
+    assert(!result.contains?(ESC))
+    assert(result == 'hello')
+}
+
+// ── Render: escaped brackets ─────────────────────────────────────
+
+@test
+fn test-render-escaped-bracket() {
+    let result = chalk.render('hello \\[world]')
+    assert(strip(result).contains?('[world]'))
+}
+
+// ── Render: OSC 8 hyperlinks ─────────────────────────────────────
+
+@test
+fn test-render-link-basic() {
+    let result = chalk.render('[link=https://example.com]click here[/link]')
+    assert(result.contains?("{ESC}]8;;https://example.com{ESC}\\"))
+    assert(result.contains?('click here'))
+    assert(result.contains?("{ESC}]8;;{ESC}\\"))
+}
+
+@test
+fn test-render-link-with-styles() {
+    let result = chalk.render('[bold link=https://example.com]click[/]')
+    assert(result.contains?("{ESC}[1m"))
+    assert(result.contains?("{ESC}]8;;https://example.com{ESC}\\"))
+    assert(result.contains?('click'))
+}
+
+@test
+fn test-render-link-close-all() {
+    let result = chalk.render('[link=https://x.com]hello[/]')
+    // After [/], the link should be closed
+    assert(result.contains?("{ESC}]8;;{ESC}\\"))
+}
+
+@test
+fn test-render-link-close-named() {
+    let result = chalk.render('[bold][link=https://x.com]hello[/link] world[/]')
+    let parts = result.split("{ESC}]8;;{ESC}\\")
+    // Link should close after "hello", bold should continue for "world"
+    assert(result.contains?('hello'))
+    assert(result.contains?('world'))
+}
+
+@test
+fn test-render-link-nested-in-style() {
+    let result = chalk.render('[red][link=https://x.com]click[/link] more[/]')
+    assert(result.contains?("{ESC}]8;;https://x.com{ESC}\\"))
+    assert(result.contains?('click'))
+    assert(result.contains?('more'))
+}
+
+@test
+fn test-render-link-plain-mode() {
+    let result = chalk.render('[link=https://example.com]click[/link]', plain=true)
+    assert(result == 'click')
+    assert(!result.contains?(ESC))
+}
+
+@test
+fn test-render-link-stripped() {
+    let result = chalk.render('[link=https://x.com]hello[/link]')
+    assert(strip(result) == 'hello')
+}
+
+@test
+fn test-render-multiple-links() {
+    let result = chalk.render('[link=https://a.com]A[/link] [link=https://b.com]B[/link]')
+    assert(result.contains?("{ESC}]8;;https://a.com{ESC}\\"))
+    assert(result.contains?("{ESC}]8;;https://b.com{ESC}\\"))
+    assert(result.contains?('A'))
+    assert(result.contains?('B'))
+}
+
+@test
+fn test-render-link-with-path() {
+    let url = 'https://example.com/path/to/page?q=1&r=2#section'
+    let result = chalk.render("[link={url}]page[/link]")
+    assert(result.contains?("{ESC}]8;;{url}{ESC}\\"))
+}
+
+// ── Parse (ANSI → chalk) ────────────────────────────────────────
+
+@test
+fn test-parse-bold-ansi() {
+    let ansi = "{ESC}[1mhello{ESC}[0m"
+    let result = parse(ansi)
+    let has-bold = result.contains?('[b]') || result.contains?('[bold]')
+    assert(has-bold)
+    assert(result.contains?('hello'))
+}
+
+@test
+fn test-parse-roundtrip-plain() {
+    let src = '[bold red]hello[/]'
+    let rendered = chalk.render(src)
+    let chalked = parse(rendered)
+    let re-rendered = chalk.render(chalked)
+    // Stripping both should give the same text
+    assert(strip(rendered) == strip(re-rendered))
+}
+
+@test
+fn test-parse-osc8-roundtrip() {
+    let src = '[link=https://example.com]click here[/link]'
+    let rendered = chalk.render(src)
+    let chalked = parse(rendered)
+    let re-rendered = chalk.render(chalked)
+    assert(strip(rendered) == strip(re-rendered))
+    assert(re-rendered.contains?("{ESC}]8;;https://example.com{ESC}\\"))
+    assert(re-rendered.contains?("{ESC}]8;;{ESC}\\"))
+}
+
+@test
+fn test-parse-osc8-with-styles-roundtrip() {
+    let src = '[bold][link=https://x.com]click[/link] plain[/]'
+    let rendered = chalk.render(src)
+    let chalked = parse(rendered)
+    let re-rendered = chalk.render(chalked)
+    assert(strip(rendered) == strip(re-rendered))
+    assert(re-rendered.contains?("{ESC}]8;;https://x.com{ESC}\\"))
+}
+
+// ── HSL / RGB conversion ────────────────────────────────────────
+
+@test
+fn test-hsl-to-rgb-black() {
+    let (r, g, b) = hslToRgb(0.0, 0.0, 0.0)
+    assert(r == 0)
+    assert(g == 0)
+    assert(b == 0)
+}
+
+@test
+fn test-hsl-to-rgb-white() {
+    let (r, g, b) = hslToRgb(0.0, 0.0, 1.0)
+    assert(r == 255)
+    assert(g == 255)
+    assert(b == 255)
+}
+
+@test
+fn test-hsl-to-rgb-red() {
+    let (r, g, b) = hslToRgb(0.0, 1.0, 0.5)
+    assert(r == 255)
+    assert(g == 0)
+    assert(b == 0)
+}
+
+@test
+fn test-hsl-hex-format() {
+    let hex = hsl-hex(0.0, 1.0, 0.5)
+    assert(hex == '#ff0000')
+}
+
+// ── Text class ──────────────────────────────────────────────────
+
+@test
+fn test-text-plain() {
+    let t = chalk"[bold]hello[/]"
+    assert(t.plain == 'hello')
+}
+
+@test
+fn test-text-width() {
+    let t = chalk"[bold red]hello[/]"
+    assert(t.width() == 5)
+}
+
+@test
+fn test-text-concatenation() {
+    let a = chalk"[bold]hello[/]"
+    let b = chalk"[red] world[/]"
+    let c = a + b
+    assert(c.plain == 'hello world')
+}
+
+@test
+fn test-text-str-contains-escapes() {
+    let t = chalk"[bold]hello[/]"
+    let s = "{t}"
+    assert(s.contains?(ESC))
+    assert(strip(s) == 'hello')
+}
+
+@test
+fn test-text-link() {
+    let t = chalk"[link=https://x.com]click[/link]"
+    assert(t.plain == 'click')
+    let s = "{t}"
+    assert(s.contains?("{ESC}]8;;https://x.com{ESC}\\"))
+}
