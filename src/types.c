@@ -5310,8 +5310,6 @@ ShouldDefer2Op(Type *t0, Type *t1, Type *t2)
 static Type *
 TrySolve2Op(Ty *ty, int op, Type *op0, Type *t0, Type *t1, Type *t2, bool exhaustive)
 {
-        static u32 depth = 0;
-
         if (!ENABLED) {
                 return UNKNOWN;
         }
@@ -5321,10 +5319,6 @@ TrySolve2Op(Ty *ty, int op, Type *op0, Type *t0, Type *t1, Type *t2, bool exhaus
         t2 = ResolveVar(t2);
 
         if (ShouldDefer2Op(t0, t1, t2)) {
-                return NULL;
-        }
-
-        if (depth > 1) {
                 return NULL;
         }
 
@@ -5380,8 +5374,6 @@ TrySolve2Op(Ty *ty, int op, Type *op0, Type *t0, Type *t1, Type *t2, bool exhaus
         t1 = Inst1(ty, t1);
         t2 = Inst1(ty, t2);
 
-        depth += 1;
-
         SCRATCH_SAVE();
 
         TypeVector keep = {0};
@@ -5400,6 +5392,13 @@ TrySolve2Op(Ty *ty, int op, Type *op0, Type *t0, Type *t1, Type *t2, bool exhaus
                         for (int i = 0; i < IntersectCount(op0); ++i) {
                                 ClearEnv(&env);
                                 Type *_f0_i = IntersectElem(op0, i);
+                                if (
+                                        TypeType(_f0_i) == TYPE_FUNCTION
+                                     && vN(_f0_i->constraints) > 0
+                                     && (IsUnboundVar(t00) || IsUnboundVar(t11))
+                                ) {
+                                        continue;
+                                }
                                 Type *f0_i = CloneType(ty, _f0_i);
                                 XXTLOG(
                                         "%sTrySolve2Op(%s%s%s)%s:",
@@ -5518,7 +5517,6 @@ TrySolve2Op(Ty *ty, int op, Type *op0, Type *t0, Type *t1, Type *t2, bool exhaus
                                 r0 = t2;
                         } else {
                                 if (exhaustive) {
-                                        depth -= 1;
                                         SCRATCH_RESTORE();
                                         return NULL;
                                 }
@@ -5559,8 +5557,6 @@ TrySolve2Op(Ty *ty, int op, Type *op0, Type *t0, Type *t1, Type *t2, bool exhaus
                 avPv(op0->types, keep);
         }
 
-        depth -= 1;
-
         SCRATCH_RESTORE();
 
         return r0;
@@ -5580,6 +5576,9 @@ BindConstraint(Ty *ty, Constraint *c)
         case TC_2OP:
                 if (c->op0 == NULL) {
                         c->op0 = CloneType(ty, op_type(c->op));
+                        if (TypeType(c->op0) == TYPE_INTERSECT) {
+                                CloneVec(c->op0->types);
+                        }
                 }
                 XXTLOG("BindConstraint(2op): %s", intern_entry(&xD.b_ops, c->op)->name);
                 XXTLOG("  t0=%s", ShowType(c->t0));
