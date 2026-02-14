@@ -1,0 +1,61 @@
+%language=ANSI-C
+%define lookup-function-name keyword_lookup
+%define hash-function-name keyword_hash
+%readonly-tables
+%compare-strncmp
+%struct-type
+%enum
+%includes
+%null-strings
+%global-table
+struct keyword_entry { char const *name; int kw_num; };
+%%
+Next,         KEYWORD_NEXT
+Self,         KEYWORD_SELF
+__defined__,  KEYWORD_DEFINED
+__eval__,     KEYWORD_EVAL
+__set_type__, KEYWORD_SET_TYPE
+typeof,       KEYWORD_TYPEOF
+and,          KEYWORD_AND
+as,           KEYWORD_AS
+break,        KEYWORD_BREAK
+catch,        KEYWORD_CATCH
+class,        KEYWORD_CLASS
+const,        KEYWORD_CONST
+continue,     KEYWORD_CONTINUE
+defer,        KEYWORD_DEFER
+do,           KEYWORD_DO
+else,         KEYWORD_ELSE
+false,        KEYWORD_FALSE
+finally,      KEYWORD_FINALLY
+fn,           KEYWORD_FUNCTION
+for,          KEYWORD_FOR
+function,     KEYWORD_FUNCTION
+generator,    KEYWORD_GENERATOR
+if,           KEYWORD_IF
+import,       KEYWORD_IMPORT
+in,           KEYWORD_IN
+let,          KEYWORD_LET
+macro,        KEYWORD_MACRO
+match,        KEYWORD_MATCH
+namespace,    KEYWORD_NAMESPACE
+nil,          KEYWORD_NIL
+not,          KEYWORD_NOT
+ns,           KEYWORD_NAMESPACE
+operator,     KEYWORD_OPERATOR
+or,           KEYWORD_OR
+pub,          KEYWORD_PUB
+return,       KEYWORD_RETURN
+static,       KEYWORD_STATIC
+super,        KEYWORD_SUPER
+tag,          KEYWORD_TAG
+throw,        KEYWORD_THROW
+trait,        KEYWORD_TRAIT
+true,         KEYWORD_TRUE
+try,          KEYWORD_TRY
+use,          KEYWORD_USE
+where,        KEYWORD_WHERE
+while,        KEYWORD_WHILE
+with,         KEYWORD_WITH
+yield,        KEYWORD_YIELD
+%%

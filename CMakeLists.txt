@@ -140,6 +140,38 @@ else()
 endif()
 
 # ---
+#  generate keyword perfect hash
+# ---
+
+set(_file_keywords_h  ${_autogen_dir}/include/keywords.h)
+set(_gperf_input      ${PROJECT_SOURCE_DIR}/src/keywords.gperf)
+
+find_program(GPERF gperf)
+if(GPERF)
+  add_custom_command(
+    OUTPUT
+      ${_file_keywords_h}
+    COMMAND
+      ${GPERF} "${_gperf_input}" > "${_file_keywords_h}.tmp"
+    COMMAND
+      ${CMAKE_COMMAND} -E copy_if_different
+        "${_file_keywords_h}.tmp"
+        "${_file_keywords_h}"
+    COMMAND
+      ${CMAKE_COMMAND} -E rm "${_file_keywords_h}.tmp"
+    DEPENDS
+      ${_gperf_input}
+    COMMENT
+      "Generating keywords.h from keywords.gperf"
+    VERBATIM
+  )
+  add_custom_target(GenerateKeywordsH DEPENDS ${_file_keywords_h})
+  add_dependencies(${_tgt_ioctlconstants_h} GenerateKeywordsH)
+else()
+  message(WARNING "gperf not found -- keywords.h will not be regenerated")
+endif()
+
+# ---
 #  target: libco
 # ---
 add_library(libco)
