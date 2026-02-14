@@ -2392,6 +2392,13 @@ Expr2Op(Expr const *e)
         case EXPRESSION_XOR:     op = OP_BIT_XOR; break;
         case EXPRESSION_SHL:     op = OP_BIT_SHL; break;
         case EXPRESSION_SHR:     op = OP_BIT_SHR; break;
+        case EXPRESSION_LT:      op = OP_LT;      break;
+        case EXPRESSION_GT:      op = OP_GT;       break;
+        case EXPRESSION_LEQ:     op = OP_LEQ;      break;
+        case EXPRESSION_GEQ:     op = OP_GEQ;      break;
+        case EXPRESSION_DBL_EQ:  op = OP_EQL;      break;
+        case EXPRESSION_NOT_EQ:  op = OP_NEQ;      break;
+        case EXPRESSION_CMP:     op = OP_CMP;      break;
         case EXPRESSION_USER_OP: op = intern(&xD.b_ops, e->op_name)->id;
         }
 
@@ -4553,6 +4560,11 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
         case EXPRESSION_BIT_OR:
         case EXPRESSION_BIT_AND:
         case EXPRESSION_KW_OR:
+        case EXPRESSION_LT:
+        case EXPRESSION_LEQ:
+        case EXPRESSION_GT:
+        case EXPRESSION_GEQ:
+        case EXPRESSION_CMP:
                 symbolize_expression(ty, scope, e->left);
                 symbolize_expression(ty, scope, e->right);
                 if (IS_CTX(EXPR)) {
@@ -4560,18 +4572,8 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                 }
                 break;
 
-        case EXPRESSION_CMP:
-                symbolize_expression(ty, scope, e->left);
-                symbolize_expression(ty, scope, e->right);
-                e->_type = TYPE_INT;
-                break;
-
         case EXPRESSION_IN:
         case EXPRESSION_NOT_IN:
-        case EXPRESSION_LT:
-        case EXPRESSION_LEQ:
-        case EXPRESSION_GT:
-        case EXPRESSION_GEQ:
         case EXPRESSION_DBL_EQ:
         case EXPRESSION_NOT_EQ:
         case EXPRESSION_CHECK_MATCH:
@@ -11248,15 +11250,27 @@ RedpillFun(Ty *ty, Scope *scope, Expr *f, Type *self0)
                                 case EXPRESSION_XOR:
                                 case EXPRESSION_SHL:
                                 case EXPRESSION_SHR:
+                                case EXPRESSION_LT:
+                                case EXPRESSION_GT:
+                                case EXPRESSION_LEQ:
+                                case EXPRESSION_GEQ:
+                                case EXPRESSION_DBL_EQ:
+                                case EXPRESSION_NOT_EQ:
                                 case EXPRESSION_USER_OP:
                                         if (
                                                 (
-                                                        (var->left->type != EXPRESSION_IDENTIFIER)
-                                                     || !SymbolIsTypeVar(var->left->symbol)
+                                                        (var->left->type != EXPRESSION_DOT_DOT_DOT)
+                                                     && (
+                                                                (var->left->type != EXPRESSION_IDENTIFIER)
+                                                             || !SymbolIsTypeVar(var->left->symbol)
+                                                        )
                                                 )
                                              && (
-                                                        (var->right->type != EXPRESSION_IDENTIFIER)
-                                                     || !SymbolIsTypeVar(var->right->symbol)
+                                                        (var->right->type != EXPRESSION_DOT_DOT_DOT)
+                                                     && (
+                                                                (var->right->type != EXPRESSION_IDENTIFIER)
+                                                             || !SymbolIsTypeVar(var->right->symbol)
+                                                        )
                                                 )
                                         ) {
                                 default:

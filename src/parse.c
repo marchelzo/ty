@@ -3584,6 +3584,37 @@ prefix_dot_dot_dot(Ty *ty)
 
         consume(TOKEN_DOT_DOT_DOT);
 
+        if (T0 == '(') {
+                next();
+                Expr *inner = parse_expr(ty, 6);
+
+                if (T0 == '|') {
+                        next();
+                        consume(')');
+                        zero->integer = 1;
+                        e->left = zero;
+                        e->right = inner;
+                        e->end = TEnd;
+                        return e;
+                }
+
+                if (T0 == '&') {
+                        next();
+                        consume(')');
+                        zero->integer = 2;
+                        e->left = zero;
+                        e->right = inner;
+                        e->end = TEnd;
+                        return e;
+                }
+
+                consume(')');
+                e->left = zero;
+                e->right = inner;
+                e->end = TEnd;
+                return e;
+        }
+
         e->left = zero;
         e->right = parse_expr(ty, 7);
         e->end = e->right->end;

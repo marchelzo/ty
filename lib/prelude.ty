@@ -130,6 +130,52 @@ fn -(a: Int, b: Bool) -> Int;
 fn +(a: Int, b: Bool) -> Int;
 fn *(a: Int, b: Bool) -> Int;
 
+fn <(a: Int, b: Int) -> Bool;
+fn <(a: Float, b: Float) -> Bool;
+fn <(a: Int, b: Float) -> Bool;
+fn <(a: Float, b: Int) -> Bool;
+fn <(a: String, b: String) -> Bool;
+fn <(a: Bool, b: Bool) -> Bool;
+fn <(a: Bool, b: Int) -> Bool;
+fn <(a: Int, b: Bool) -> Bool;
+
+fn <=(a: Int, b: Int) -> Bool;
+fn <=(a: Float, b: Float) -> Bool;
+fn <=(a: Int, b: Float) -> Bool;
+fn <=(a: Float, b: Int) -> Bool;
+fn <=(a: String, b: String) -> Bool;
+fn <=(a: Bool, b: Bool) -> Bool;
+fn <=(a: Bool, b: Int) -> Bool;
+fn <=(a: Int, b: Bool) -> Bool;
+
+fn >(a: Int, b: Int) -> Bool;
+fn >(a: Float, b: Float) -> Bool;
+fn >(a: Int, b: Float) -> Bool;
+fn >(a: Float, b: Int) -> Bool;
+fn >(a: String, b: String) -> Bool;
+fn >(a: Bool, b: Bool) -> Bool;
+fn >(a: Bool, b: Int) -> Bool;
+fn >(a: Int, b: Bool) -> Bool;
+
+fn >=(a: Int, b: Int) -> Bool;
+fn >=(a: Float, b: Float) -> Bool;
+fn >=(a: Int, b: Float) -> Bool;
+fn >=(a: Float, b: Int) -> Bool;
+fn >=(a: String, b: String) -> Bool;
+fn >=(a: Bool, b: Bool) -> Bool;
+fn >=(a: Bool, b: Int) -> Bool;
+fn >=(a: Int, b: Bool) -> Bool;
+
+fn <=>(a: Int, b: Int) -> Int;
+fn <=>(a: Float, b: Float) -> Int;
+fn <=>(a: Int, b: Float) -> Int;
+fn <=>(a: Float, b: Int) -> Int;
+fn <=>(a: String, b: String) -> Int;
+fn <=>(a: Bool, b: Bool) -> Int;
+fn <=>(a: Bool, b: Int) -> Int;
+fn <=>(a: Int, b: Bool) -> Int;
+fn <=>[T, U](a: Array[T], b: Array[U]) -> Int where (T <=> U): Int;
+
 fn &(a: Class, b: Class) -> (Any -> Bool);
 fn |(a: Class, b: Class) -> (Any -> Bool);
 
@@ -164,8 +210,8 @@ fn print(*args: Any, sep: String = ', ', end: String = '\n', file: _, flush: Boo
 fn str(x: Any) -> String;
 fn int[a](x: a, base: ?Int) -> Int;
 fn float[a](x: a) -> Float;
-fn min[a](*xs: a) -> a;
-fn max[a](*xs: a) -> a;
+fn min[...Ts](*xs: ...Ts) -> ...(Ts |) where (...(Ts |) <=> ...(Ts |)): Int;
+fn max[...Ts](*xs: ...Ts) -> ...(Ts |) where (...(Ts |) <=> ...(Ts |)): Int;
 fn fmt(str: String, *args: _);
 fn cast[a](x: _) -> a { x }
 fn tuple[...Ts](xs: ...Ts) -> (Ts,);
@@ -3197,6 +3243,30 @@ class Sync[T] {
     `/`[A, B](y: A) -> B where (T / A): B {
         with __mtx {
             __x / y
+        }
+    }
+
+    <[U](y: U) -> Bool where (T < U): Bool {
+        with __mtx {
+            __x < y
+        }
+    }
+
+    >[U](y: U) -> Bool where (T > U): Bool {
+        with __mtx {
+            __x > y
+        }
+    }
+
+    <=[U](y: U) -> Bool where (T <= U): Bool {
+        with __mtx {
+            __x <= y
+        }
+    }
+
+    >=[U](y: U) -> Bool where (T >= U): Bool {
+        with __mtx {
+            __x >= y
         }
     }
 
