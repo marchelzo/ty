@@ -126,6 +126,13 @@ ASSEMBLY := $(patsubst %.c,%.s,$(SOURCES))
 
 all: $(PROG)
 
+include/keywords.h: src/keywords.gperf
+	@echo gperf $<
+	@gperf $< > $@
+
+obj/token.o: include/keywords.h
+obj/tyls/token.o: include/keywords.h
+
 ty: ty.c $(OBJECTS) $(EXTERNAL)
 	@echo cc $<
 	@$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
@@ -155,7 +162,7 @@ obj/tyls/%.o: src/%.c
 	@$(CC) $(CFLAGS) -c -o $@ -DTY_LS -DFILENAME=$(patsubst src/%.c,%,$<) $<
 
 clean:
-	rm -rf $(PROG) *.gcda $(OBJECTS) $(TYLS_OBJECTS) libco/libco.o dtoa/dtoa.o
+	rm -rf $(PROG) *.gcda $(OBJECTS) $(TYLS_OBJECTS) libco/libco.o dtoa/dtoa.o include/keywords.h
 
 test:
 	./ty test.ty
