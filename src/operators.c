@@ -390,7 +390,6 @@ op_type(i32 op)
                 }
         }
         t0 = group->op0;
-        group->op0 = NULL;
         TyRwLockWrUnlock(&group->lock);
 
         dont_printf("op_type(%s): %s\n", intern_entry(&xD.b_ops, op)->name, type_show(&vvv, t0));
