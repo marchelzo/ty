@@ -3301,6 +3301,7 @@ type_function(Ty *ty, Expr const *e, bool tmp)
 
         for (int i = 0; i < vN(e->param_symbols); ++i) {
                 Symbol *psym = v__(e->param_symbols, i);
+                Expr const *d = v__(e->dflts, i);
 
                 Type *p0 = psym->type;
                 if (p0 == NULL) {
@@ -3314,7 +3315,10 @@ type_function(Ty *ty, Expr const *e, bool tmp)
                                 psym->type = type_fixed(ty, NewArray(p0));
                         } else if (i == e->ikwargs) {
                                 psym->type = type_fixed(ty, NewDict(TYPE_STRING, p0));
-                        } else if (psym->type == NULL && v__(e->dflts, i) != NULL) {
+                        } else if (psym->type == NULL && d != NULL) {
+                                if (d->_type != NULL && !IsNilT(d->_type)) {
+                                        UnifyX(ty, p0, d->_type, true, false);
+                                }
                                 psym->type = p0;
                                 p0 = Either(ty, p0, NIL_TYPE);
                         } else {
@@ -3327,11 +3331,12 @@ type_function(Ty *ty, Expr const *e, bool tmp)
                         PARAMx(
                                 .name = psym->identifier,
                                 .type = p0,
+                                .dflt = (!tmp && d != NULL) ? d->_type : NULL,
                                 .rest = (i == e->rest),
                                 .kws  = (i == e->ikwargs),
                                 .pack = p0->packed,
                                 .required = (
-                                        v__(e->dflts, i) == NULL
+                                        d == NULL
                                      && (i != e->rest)
                                      && (i != e->ikwargs)
                                      && (
@@ -3572,13 +3577,15 @@ Propagate(Ty *ty, Type *t0)
                 for (int i = 0; i < vN(t0->params); ++i) {
                         Param const *p = v_(t0->params, i);
                         t1 = Propagate(ty, p->type);
-                        if (t1 != p->type && !cloned) {
+                        t2 = Propagate(ty, p->dflt);
+                        if ((t1 != p->type || t2 != p->dflt) && !cloned) {
                                 t0 = CloneType(ty, t0);
                                 CloneVec(t0->params);
                                 CloneVec(t0->constraints);
                                 cloned = true;
                         }
                         v_(t0->params, i)->type = t1;
+                        v_(t0->params, i)->dflt = t2;
                         t0->concrete &= IsConcrete(t1);
                 }
                 t1 = Propagate(ty, t0->pack);
@@ -5305,6 +5312,26 @@ ShouldDefer2Op(Type *t0, Type *t1, Type *t2)
 }
 
 static Type *
+TrySolve2Op(Ty *ty, int op, Type *op0, Type *t0, Type *t1, Type *t2, bool exhaustive);
+
+/* Derive <, <=, >, >= from <=> */
+static bool
+CmpFallback(Ty *ty, Type *t0, Type *t1, Type *t2)
+{
+        Type *cmp_op0 = CloneType(ty, op_type(OP_CMP));
+        if (cmp_op0 == NULL) return false;
+        if (TypeType(cmp_op0) == TYPE_INTERSECT) {
+                CloneVec(cmp_op0->types);
+        }
+        Type *cmp_t2 = NewVar(ty);
+        if (TrySolve2Op(ty, OP_CMP, cmp_op0, t0, t1, cmp_t2, false) != NULL) {
+                UnifyX(ty, t2, TYPE_BOOL, true, false);
+                return true;
+        }
+        return false;
+}
+
+static Type *
 TrySolve2Op(Ty *ty, int op, Type *op0, Type *t0, Type *t1, Type *t2, bool exhaustive)
 {
         if (!ENABLED) {
@@ -5337,6 +5364,30 @@ TrySolve2Op(Ty *ty, int op, Type *op0, Type *t0, Type *t1, Type *t2, bool exhaus
                                      && type_check(ty, c->t1, t1)
                                 ) {
                                         return c->t2;
+                                }
+                        }
+                }
+
+                /* Derive <, <=, >, >= from <=> constraints */
+                if (op == OP_LT || op == OP_GT || op == OP_LEQ || op == OP_GEQ) {
+                        for (int i = 0; i < vN(FunStack); ++i) {
+                                Expr const *fun = v__(FunStack, i);
+                                Type const *f0 = fun->_type;
+
+                                if (TypeType(f0) != TYPE_FUNCTION) {
+                                        continue;
+                                }
+
+                                for (int i = 0; i < vN(f0->constraints); ++i) {
+                                        Constraint *c = v_(f0->constraints, i);
+                                        if (
+                                                (c->type == TC_2OP)
+                                             && (c->op == OP_CMP)
+                                             && type_check(ty, c->t0, t0)
+                                             && type_check(ty, c->t1, t1)
+                                        ) {
+                                                return TYPE_BOOL;
+                                        }
                                 }
                         }
                 }
@@ -5511,6 +5562,12 @@ TrySolve2Op(Ty *ty, int op, Type *op0, Type *t0, Type *t1, Type *t2, bool exhaus
                                 XXTLOG("    %s", ShowType(t0));
                                 XXTLOG("    %s", ShowType(t1));
                                 XXTLOG("    %s", ShowType(t2));
+                                r0 = t2;
+                        } else if (
+                                f0 == NULL
+                             && (op == OP_LT || op == OP_GT || op == OP_LEQ || op == OP_GEQ)
+                             && CmpFallback(ty, t00, t11, t2)
+                        ) {
                                 r0 = t2;
                         } else {
                                 if (exhaustive) {
@@ -6160,6 +6217,16 @@ InferCall0(
                         }
                         Type *a0 = FindArg(ty, gather ? -1 : i, p->name, args, kwargs, kws);
                         if (a0 == NONE_TYPE) {
+                                if (p->dflt != NULL) {
+                                        Type *d0 = ResolveVar(p->dflt);
+                                        if (d0 != p->dflt) {
+                                                Type *d00 = Inst1(ty, d0);
+                                                if (!CheckArg(ty, i, p, d00, strict)) {
+                                                        return NULL;
+                                                }
+                                        }
+                                        continue;
+                                }
                                 if (!p->required || CheckArg(ty, i, p, NIL_TYPE, strict)) {
                                         continue;
                                 }
@@ -11385,6 +11452,19 @@ Type *
 type_array_of(Ty *ty, Type *t0)
 {
         return NewArray(t0);
+}
+
+bool
+type_bind(Ty *ty, Type *t0, Type *t1)
+{
+        t0 = ResolveVar(t0);
+
+        if (CanBind(t0)) {
+                BindVar(t0, t1);
+                return true;
+        } else {
+                return false;
+        }
 }
 
 /* vim: set sts=8 sw=8 expandtab: */
