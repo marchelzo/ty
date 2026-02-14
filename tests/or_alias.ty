@@ -18,7 +18,7 @@ const xs = [
 fn go(y: WidgetStatus) -> String {
     match y {
         Good((o, Good(Good(z)), o)) => 'A',
-        Good((o, Good(Good(o + 2)), c)) => c,
+        Good((o, Good(Good(o + 2)), c)) => "{c}",
         _ => 'S'
     }
 }

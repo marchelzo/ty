@@ -4381,7 +4381,7 @@ TryUnifyObjects(Ty *ty, Type *t0, Type *t1, bool super)
                                         AddEntry(t1, t00, name);
                                 } else if (!UnifyX(ty, v__(t0->types, i), *t2, super, false)) {
                                         if (!t0->fixed) {
-                                                unify2(ty, v_(t0->types, i), *t2);
+                                                unify2_(ty, v_(t0->types, i), *t2, false);
                                         } else if (!t1->fixed) {
                                                 type_intersect(ty, t2, t00);
                                         } else {
@@ -6751,6 +6751,8 @@ type_match(Ty *ty, Expr const *e)
                 s0 = Reduce(ty, s0);
         }
 
+        unify2_(ty, &e->subject->_type, s0, false);
+
         return t0;
 }
 
@@ -6777,7 +6779,7 @@ type_match_stmt(Ty *ty, Stmt const *stmt)
                 t0 = (t0 == NULL) ? e0 : Either(ty, t0, e0);
         }
 
-        if (false && TypeType(s0) == TYPE_UNION) {
+        if (TypeType(s0) == TYPE_UNION) {
                 Type *s1 = NewVar(ty);
                 for (int i = 0; i < vN(s0->types); ++i) {
                         Type *s00 = v__(s0->types, i);
@@ -6788,6 +6790,8 @@ type_match_stmt(Ty *ty, Stmt const *stmt)
                 }
                 s0 = Reduce(ty, s0);
         }
+
+        unify2_(ty, &stmt->match.e->_type, s0, false);
 
         return t0;
 }

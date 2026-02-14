@@ -4433,12 +4433,12 @@ infix_arrow_function(Ty *ty, Expr *left)
                 avP(e->dflts, dflt);
         }
 
-        Stmt *ret = mkret(ty, parse_expr(ty, 0));
+        Stmt *last = to_stmt(parse_expr(ty, 0));
 
         if (body->statements.count == 0) {
-                e->body = ret;
+                e->body = last;
         } else {
-                avP(body->statements, ret);
+                avP(body->statements, last);
                 e->body = body;
         }
 
