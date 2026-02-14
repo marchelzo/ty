@@ -3242,9 +3242,6 @@ type_function(Ty *ty, Expr const *e, bool tmp)
                                 a0 = type_resolve(ty, var->left);
                                 b0 = type_resolve(ty, var->right);
                                 c0 = type_resolve(ty, bound->bound);
-                                bool exhaustive =
-                                        (var->left->type == EXPRESSION_DOT_DOT_DOT && var->left->left->integer != 0)
-                                     || (var->right->type == EXPRESSION_DOT_DOT_DOT && var->right->left->integer != 0);
                                 avP(
                                         t->constraints,
                                         CONSTRAINT(
@@ -3253,7 +3250,7 @@ type_function(Ty *ty, Expr const *e, bool tmp)
                                                 .t1 = b0,
                                                 .t2 = c0,
                                                 .op = op,
-                                                .exhaustive = exhaustive
+                                                .exhaustive = true
                                         )
                                 );
                                 break;
@@ -5498,7 +5495,7 @@ TrySolve2Op(Ty *ty, int op, Type *op0, Type *t0, Type *t1, Type *t2, bool exhaus
                                 }
                         }
                         if (!IsBottom(f0) && !need_retry) {
-                                if (!exhaustive) {
+                                        if (!exhaustive) {
                                         UnifyX(ty, t0, a0, false, false);
                                         UnifyX(ty, t1, b0, false, false);
                                 }
@@ -10260,16 +10257,28 @@ type_scope_pop(Ty *ty)
 }
 
 static bool
-OnlyAppearsInConstraints(Type *t0, u32 id)
+IsDisconnected(Type *t0, u32 id)
 {
         int nref = CountRefs(t0->rt, id);
 
         for (int i = 0; i < vN(t0->params); ++i) {
-                Param *p = v_(t0->params, i);
-                nref += CountRefs(p->type, id);
+                nref += CountRefs(v_(t0->params, i)->type, id);
         }
 
-        return (nref == 0);
+        if (nref > 0) {
+                return false;
+        }
+
+        int ncon = 0;
+
+        for (int i = 0; i < vN(t0->constraints); ++i) {
+                Constraint const *c = v_(t0->constraints, i);
+                if (CountRefs(c->t0, id) + CountRefs(c->t1, id) + CountRefs(c->t2, id) > 0) {
+                        ncon += 1;
+                }
+        }
+
+        return (ncon <= 1);
 }
 
 static void
@@ -10280,8 +10289,8 @@ FilterConstraints(Ty *ty, Type *t0)
         for (int i = 0; i < vN(t0->constraints); ++i) {
                 Constraint *c = v_(t0->constraints, i);
                 if (
-                        (CanBind(c->t0) && OnlyAppearsInConstraints(t0, c->t0->id))
-                     || (CanBind(c->t1) && OnlyAppearsInConstraints(t0, c->t1->id))
+                        (CanBind(c->t0) && IsDisconnected(t0, c->t0->id))
+                     || (CanBind(c->t1) && IsDisconnected(t0, c->t1->id))
                 ) {
                         FTLOG("  drop constraint %s", ShowConstraint(ty, c));
                 } else {

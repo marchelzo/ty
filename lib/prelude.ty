@@ -493,8 +493,8 @@ class Array[T] : Iterable[T] {
     sort!(desc: Bool = false) -> Array[T];
     sort!(cmp: (T, T) -> Any, desc: Bool = false) -> Array[T];
     sort(cmp: (T, T) -> Any, desc: Bool = false) -> Array[T];
-    sort(by: T -> Any, desc: Bool = false) -> Array[T];
-    sort(desc: Bool = false) -> Array[T];
+    sort[U](by: T -> U, desc: Bool = false) -> Array[T] where (U <=> U): Int;
+    sort(desc: Bool = false) -> Array[T] where (T <=> T): Int;
     split(i: Int) -> (Array[T], Array[T]);
     sum(zero: T) -> T;
     sum() -> T | nil where (T + T): T;
@@ -580,7 +580,7 @@ class Array[T] : Iterable[T] {
         0..#self
     }
 
-    permutations*() {
+    permutations*() -> Generator[Array[T]] where (T <=> T): Int {
         let xs = self.sort()
 
         yield xs
@@ -669,11 +669,9 @@ class Array[T] : Iterable[T] {
         }
     }
 
-    median() {
-        match self {
-            []                 => nil,
-            xs :: xs.sorted?() => xs[#xs / 2],
-            xs                 => self.sort()[#self / 2]
+    median() -> T | nil where (T <=> T): Int {
+        if let Some(m) = sort()(#self / 2) {
+            m
         }
     }
 
@@ -1997,7 +1995,7 @@ trait Iterable[T] {
         __iter__().mean()
     }
 
-    median() {
+    median() -> T | nil where (T <=> T): Int {
         __iter__().median()
     }
 
@@ -2607,7 +2605,7 @@ trait Iter[T] < Iterable[T] {
         return [*self].mean()
     }
 
-    median() {
+    median() -> T | nil where (T <=> T): Int {
         return list().median()
     }
 
