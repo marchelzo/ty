@@ -779,6 +779,13 @@ MemberAccessType(Ty *ty, Symbol const *sym, Scope const *scope)
 }
 
 inline static bool
+IsRangeExpr(Expr const *expr)
+{
+        return (expr->type == EXPRESSION_DOT_DOT)
+            || (expr->type == EXPRESSION_DOT_DOT_DOT);
+}
+
+inline static bool
 IsSimpleRange(Expr const *expr)
 {
         if (
@@ -788,8 +795,7 @@ IsSimpleRange(Expr const *expr)
                 expr = expr->object;
         }
 
-        return (expr->type == EXPRESSION_DOT_DOT)
-            || (expr->type == EXPRESSION_DOT_DOT_DOT);
+        return IsRangeExpr(expr);
 }
 
 inline static bool
@@ -3923,6 +3929,13 @@ symbolize_pattern_(Ty *ty, Scope *scope, Expr *e, Scope *reuse, bool def)
         case EXPRESSION_CHECK_MATCH:
                 symbolize_pattern_(ty, scope, e->left, reuse, def);
                 symbolize_expression(ty, scope, e->right);
+                if (
+                        IsRangeExpr(e->right)
+                     && (e->right->left != NULL)
+                     && (e->right->left->_type != NULL)
+                ) {
+                        unify2(ty, &e->left->_type, e->right->left->_type);
+                }
                 e->_type = e->left->_type;
                 break;
         case EXPRESSION_REGEX:
@@ -6036,7 +6049,7 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
         {
                 symbolize_expression(ty, scope, s->match.e);
 
-                Type *t0 = s->match.e->_type;
+                Type *t0 = type_new_inst(ty, s->match.e->_type);
 
                 for (int i = 0; i < vN(s->match.patterns); ++i) {
                         Expr *pat = v__(s->match.patterns, i);

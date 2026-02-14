@@ -3801,8 +3801,8 @@ class SharedQueue[T] : Iterable[T] {
 
 class EqualTo[T] {
     __x: T
-    init(x: T)   { __x = x     }
-    __match__(x) { self == __x }
+    init(x: T)   { __x = x  }
+    __match__(x) { __x == x }
 }
 
 class AnyOf {
