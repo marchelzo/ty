@@ -366,7 +366,7 @@ op_member_type_r(i32 op, i32 c)
 }
 
 Type *
-op_type(i32 op)
+op_type(Ty *ty, i32 op)
 {
         Type *t0 = NULL;
         DispatchGroup *group;

@@ -513,7 +513,7 @@ void
 op_dump(int op);
 
 Type *
-op_type(int op);
+op_type(Ty *ty, int op);
 
 int
 op_defs_for(int op, int c, bool left, ExprVec *defs);

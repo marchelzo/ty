@@ -5574,7 +5574,7 @@ CullConstraints(Ty *ty, Type *t0)
 static bool
 CmpFallback(Ty *ty, Type *t0, Type *t1, Type *t2)
 {
-        Type *cmp_op0 = CloneType(ty, op_type(OP_CMP));
+        Type *cmp_op0 = CloneType(ty, op_type(ty, OP_CMP));
         if (cmp_op0 == NULL) return false;
         if (TypeType(cmp_op0) == TYPE_INTERSECT) {
                 CloneVec(cmp_op0->types);
@@ -5881,7 +5881,7 @@ BindConstraint(Ty *ty, Constraint *c)
         switch (c->type) {
         case TC_2OP:
                 if (c->op0 == NULL) {
-                        c->op0 = CloneType(ty, op_type(c->op));
+                        c->op0 = CloneType(ty, op_type(ty, c->op));
                         if (TypeType(c->op0) == TYPE_INTERSECT) {
                                 CloneVec(c->op0->types);
                         }
@@ -10231,7 +10231,7 @@ CloneOverload(Ty *ty, Type *t0)
 Type *
 type_op(Ty *ty, Expr const *e)
 {
-        Type *t0 = op_type(e->op.b);
+        Type *t0 = op_type(ty, e->op.b);
         Type *v0 = NewVar(ty);
         Type *u0 = NewRecord(e->op.id, NewFunction(v0));
         return type_both(ty, t0, NewFunction(u0, v0));
@@ -10281,7 +10281,7 @@ type_binary_op(Ty *ty, Expr const *e)
 
         t2->level += 1;
 
-        Type *op0 = CloneType(ty, op_type(op));
+        Type *op0 = CloneType(ty, op_type(ty, op));
 
         if (op0 == NULL) {
                 return UNKNOWN;
@@ -11453,7 +11453,7 @@ type_from_ty(Ty *ty, Value const *v)
                         NewRecord(M_NAME(v->uop), NewFunction(t0)),
                         t0
                 );
-                return type_both(ty, op_type(v->bop), t1);
+                return type_both(ty, op_type(ty, v->bop), t1);
 
         case VALUE_FUNCTION:
                 return expr_of(v)->_type;
