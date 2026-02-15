@@ -66,7 +66,9 @@ enum {
         TYPE_VARIABLE,
         TYPE_SUBSCRIPT,
         TYPE_SLICE,
-        TYPE_INTEGER,
+        TYPE_INT,
+        TYPE_STRING,
+        TYPE_BOOL,
         TYPE_INTERSECT,
         TYPE_NIL,
         TYPE_NONE,
@@ -142,6 +144,7 @@ struct type {
                         bool closed;
                 };
                 imax z;
+                char const *str;
         };
         Expr const *src;
 };
@@ -159,10 +162,10 @@ struct type_env {
 #define CONSTRAINT(...) ((Constraint){ __VA_ARGS__ })
 
 
-extern Type *TYPE_INT;
+extern Type *INT_TYPE;
 extern Type *TYPE_FLOAT;
-extern Type *TYPE_BOOL;
-extern Type *TYPE_STRING;
+extern Type *BOOL_TYPE;
+extern Type *STRING_TYPE;
 extern Type *TYPE_REGEX;
 extern Type *TYPE_REGEXV;
 extern Type *TYPE_BLOB;
@@ -203,6 +206,12 @@ NewType(Ty *ty, int type)
 
 Type *
 type_integer(Ty *ty, intmax_t z);
+
+Type *
+type_string(Ty *ty, char const *s);
+
+Type *
+type_bool(Ty *ty, bool b);
 
 Type *
 type_object(Ty *ty, Class *class);
