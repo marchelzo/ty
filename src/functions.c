@@ -8127,6 +8127,121 @@ BUILTIN_FUNCTION(ty_ctx)
 }
 
 static Value
+MethodSummary(Ty *ty, Type *t0, Expr const *fun)
+{
+        Type *u0 = fun->_type;
+
+        if (t0 != NULL) {
+                u0 = type_inst_for(ty, t0, u0);
+        }
+
+        return vTn(
+                "name", vSsz(fun->name),
+                "type", type_to_ty(ty, u0)
+        );
+}
+
+
+static Value
+ClassSummary(Ty *ty, Type *t0, ClassDefinition *def)
+{
+        if (t0 == NULL) {
+                t0 = class_get(ty, def->symbol)->object_type;
+        }
+
+        GC_STOP();
+
+        Array *params = vA();
+        Array *traits = vA();
+        Array *fields = vA();
+        Array *methods = vA();
+        Array *getters = vA();
+        Array *setters = vA();
+        Array *s_methods = vA();
+        Array *s_getters = vA();
+        Array *s_setters = vA();
+
+        for (int i = 0; i < vN(def->methods); ++i) {
+                vAp(methods, MethodSummary(ty, t0, v__(def->methods, i)));
+        }
+
+        for (int i = 0; i < vN(def->getters); ++i) {
+                vAp(getters, MethodSummary(ty, t0, v__(def->getters, i)));
+        }
+
+        for (int i = 0; i < vN(def->setters); ++i) {
+                vAp(setters, MethodSummary(ty, t0, v__(def->setters, i)));
+        }
+
+        for (int i = 0; i < vN(def->s_methods); ++i) {
+                vAp(s_methods, MethodSummary(ty, t0, v__(def->s_methods, i)));
+        }
+
+        for (int i = 0; i < vN(def->s_getters); ++i) {
+                vAp(s_getters, MethodSummary(ty, t0, v__(def->s_getters, i)));
+        }
+
+        for (int i = 0; i < vN(def->s_setters); ++i) {
+                vAp(s_setters, MethodSummary(ty, t0, v__(def->s_setters, i)));
+        }
+
+        for (int i = 0; i < vN(def->fields); ++i) {
+                Expr const *field = v__(def->fields, i);
+                char const *name = (field->type == EXPRESSION_IDENTIFIER)
+                                 ? field->identifier
+                                 : field->target->identifier;
+                Type *u0 = type_inst_for(ty, t0, field->_type);
+                vAp(
+                        fields,
+                        vTn(
+                                "name", vSsz(name),
+                                "type", type_to_ty(ty, u0)
+                        )
+                );
+        }
+
+        for (int i = 0; i < vN(def->traits); ++i) {
+                Type *tr0 = type_resolve(ty, v__(def->traits, i));
+                vAp(traits, type_to_ty(ty, type_inst_for(ty, t0, tr0)));
+        }
+
+        for (int i = 0; i < vN(def->type_params); ++i) {
+                vAp(params, type_to_ty(ty, v__(def->type_params, i)->symbol->type));
+        }
+
+        Value super;
+        if (def->super != NULL) {
+                super = type_to_ty(
+                        ty,
+                        type_inst_for(
+                                ty,
+                                t0,
+                                type_resolve(ty, def->super)
+                        )
+                );
+        } else {
+                super = NIL;
+        }
+
+        Value info = vTn(
+                "params",  ARRAY(params),
+                "super",   super,
+                "traits",  ARRAY(traits),
+                "fields",  ARRAY(fields),
+                "methods", ARRAY(methods),
+                "getters", ARRAY(getters),
+                "setters", ARRAY(setters),
+                "staticMethods", ARRAY(s_methods),
+                "staticGetters", ARRAY(s_getters),
+                "staticSetters", ARRAY(s_setters)
+        );
+
+        GC_RESUME();
+
+        return info;
+}
+
+static Value
 ScopeDict(Ty *ty, Scope *scope, bool public_only)
 {
         Dict *vars = dict_new(ty);
@@ -8138,7 +8253,10 @@ ScopeDict(Ty *ty, Scope *scope, bool public_only)
                         if (!public_only || SymbolIsPublic(sym)) {
                                 Value name = vSsz(sym->identifier);
                                 Value entry;
-                                if (SymbolIsNamespace(sym)) {
+                                if (SymbolIsClass(sym)) {
+                                        Class *class = class_get(ty, sym->class);
+                                        entry = ClassSummary(ty, NULL, &class->def->class);
+                                } else if (SymbolIsNamespace(sym)) {
                                         entry = ScopeDict(ty, sym->scope, public_only);
                                 } else {
                                         entry = vTn(
@@ -8303,21 +8421,6 @@ BUILTIN_FUNCTION(ty_id)
         return INTEGER(ARG(0).src);
 }
 
-static Value
-MethodSummary(Ty *ty, Type *t0, Expr const *fun)
-{
-        Type *u0 = fun->_type;
-
-        if (t0 != NULL) {
-                u0 = type_inst_for(ty, t0, u0);
-        }
-
-        return vTn(
-                "name", vSsz(fun->name),
-                "type", type_to_ty(ty, u0)
-        );
-}
-
 BUILTIN_FUNCTION(ty_type_type)
 {
         ASSERT_ARGC("ty.types.type()", 1);
@@ -8346,86 +8449,7 @@ BUILTIN_FUNCTION(ty_type_info)
                 return NIL;
         }
 
-        ClassDefinition *def = &t0->class->def->class;
-
-        GC_STOP();
-
-        Array *methods = vA();
-        Array *statics = vA();
-        Array *fields = vA();
-        Array *getters = vA();
-        Array *setters = vA();
-        Array *traits = vA();
-        Array *params = vA();
-
-        for (int i = 0; i < vN(def->methods); ++i) {
-                vAp(methods, MethodSummary(ty, t0, v__(def->methods, i)));
-        }
-
-        for (int i = 0; i < vN(def->s_methods); ++i) {
-                vAp(statics, MethodSummary(ty, t0, v__(def->s_methods, i)));
-        }
-
-        for (int i = 0; i < vN(def->getters); ++i) {
-                vAp(getters, MethodSummary(ty, t0, v__(def->getters, i)));
-        }
-
-        for (int i = 0; i < vN(def->setters); ++i) {
-                vAp(setters, MethodSummary(ty, t0, v__(def->setters, i)));
-        }
-
-        for (int i = 0; i < vN(def->fields); ++i) {
-                Expr const *field = v__(def->fields, i);
-                char const *name = (field->type == EXPRESSION_IDENTIFIER)
-                                 ? field->identifier
-                                 : field->target->identifier;
-                Type *u0 = type_inst_for(ty, t0, field->_type);
-                vAp(
-                        fields,
-                        vTn(
-                                "name", vSsz(name),
-                                "type", type_to_ty(ty, u0)
-                        )
-                );
-        }
-
-        for (int i = 0; i < vN(def->traits); ++i) {
-                Type *tr0 = type_resolve(ty, v__(def->traits, i));
-                vAp(traits, type_to_ty(ty, type_inst_for(ty, t0, tr0)));
-        }
-
-        for (int i = 0; i < vN(def->type_params); ++i) {
-                vAp(params, type_to_ty(ty, v__(def->type_params, i)->symbol->type));
-        }
-
-        Value super;
-        if (def->super != NULL) {
-                super = type_to_ty(
-                        ty,
-                        type_inst_for(
-                                ty,
-                                t0,
-                                type_resolve(ty, def->super)
-                        )
-                );
-        } else {
-                super = NIL;
-        }
-
-        Value info = vTn(
-                "methods", ARRAY(methods),
-                "statics", ARRAY(statics),
-                "getters", ARRAY(getters),
-                "setters", ARRAY(setters),
-                "fields",  ARRAY(fields),
-                "traits",  ARRAY(traits),
-                "params",  ARRAY(params),
-                "super",   super
-        );
-
-        GC_RESUME();
-
-        return info;
+        return ClassSummary(ty, t0, &t0->class->def->class);
 }
 
 BUILTIN_FUNCTION(ty_type_inst)

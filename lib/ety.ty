@@ -9,41 +9,31 @@ use TemplateToken =
   | Embed[String]
   | IfDef[(String, String)]
 
-fn parse(s: String) -> Array[TemplateToken] {
+const TAG = /([\s\S]*?)<%([=@]|\?\w+)?((?:(?!%>).)+)%>/
+
+fn tokenize(s: String) -> Array[TemplateToken] {
     let tokens = []
-    let end = #s
 
-    let i = 0
-    let j = 0
-
-    while j < end {
-        if let [_, code] = s.slice(j).match(/^<%=((?:(?!%>).)+)%>/) {
-            tokens.push(Text(s.splice(i, j)))
-            tokens.push(Expr(code))
-            j += #code + 5
-            i = j
-        } else if let [_, code] = s.slice(j).match(/^<%@((?:(?!%>).)+)%>/) {
-            tokens.push(Text(s.splice(i, j)))
-            tokens.push(Embed(code))
-            j += #code + 5
-            i = j
-        } else if let [_, var, code] = s.slice(j).match(/^<%\?(\w+)((?:(?!%>).)+)%>/) {
-            tokens.push(Text(s.splice(i, j)))
-            tokens.push(IfDef(var, code))
-            j += #code + #var + 5
-            i = j
-        } else if let [_, code] = s.slice(j).match(/^<%((?:(?!%>).)+)%>/) {
-            tokens.push(Text(s.splice(i, j)))
-            tokens.push(Code(code))
-            j += #code + 4
-            i = j
+    while let [`#` ~> n, text, kind, body] = s.match(TAG) {
+        s += n
+        if kind == '=' {
+            tokens.push(Text(text))
+            tokens.push(Expr(body))
         } else {
-            j += 1
+            tokens.push(Text(text.comb(/^[ \t]*\z/)))
+            if kind == '@' {
+                tokens.push(Embed(body))
+            } else if let [_, v] = (kind ?? '').match(/^\?(\w+)/) {
+                tokens.push(IfDef(v, body))
+            } else {
+                tokens.push(Code(body))
+            }
+            s = s.comb(/^[ \t]*\n/)
         }
     }
 
-    if i <= end {
-        tokens.push(Text(s.splice(i, j)))
+    if s {
+        tokens.push(Text(s))
     }
 
     tokens
@@ -52,7 +42,7 @@ fn parse(s: String) -> Array[TemplateToken] {
 fn generate-code(tokens: Array[TemplateToken]) -> String {
     let chunks = []
     let string = []
-    
+
     fn flush-string() {
         if #string > 0 {
             chunks.push("_ety_push(\"{string.join()}\");\n")
@@ -63,8 +53,7 @@ fn generate-code(tokens: Array[TemplateToken]) -> String {
     for match tokens {
        Text(s) => do {
             string.push(
-                s.comb(/\n[ \t]*\z/)
-                 .sub(/[\\"{}\n\t]/, match {
+                s.sub(/[\\"{}\n\t]/, match {
                     '\n' => '\\n',
                     '\t' => '\\t',
                     ch   => "\\{ch}",
@@ -83,7 +72,7 @@ fn generate-code(tokens: Array[TemplateToken]) -> String {
         Embed(path) => do {
             flush-string()
             let source = slurp(path.strip())
-            let tokens = parse(source)
+            let tokens = tokenize(source)
             chunks.push(generate-code(tokens))
         },
 
@@ -92,14 +81,14 @@ fn generate-code(tokens: Array[TemplateToken]) -> String {
             chunks.push("ifdef {v} {s}")
         }
     }
-    
+
     flush-string()
-    
+
     chunks.join()
 }
 
 pub fn compile(source, vars) -> _ {
-    let body = generate-code(parse(source))
+    let body = generate-code(tokenize(source))
     let params = ["{v}: _" for v in vars].join(', ')
     let prog = (
         "(

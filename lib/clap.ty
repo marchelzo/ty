@@ -779,7 +779,7 @@ const BASH_COMPLETION_TEMPLATE = ety.compile(
 
         case "$prev" in
     <% for c in valCases { %>
-    <%= '        ' + c.flags %>)
+            <%= c.flags %>)
                 COMPREPLY=( $(compgen -W "<%= c.vals %>" -- "$cur") )
                 return 0
                 ;;
@@ -792,7 +792,7 @@ const BASH_COMPLETION_TEMPLATE = ety.compile(
         local i=1
         while [[ $i -lt $COMP_CWORD ]]; do
             case "${COMP_WORDS[$i]}" in
-    <%= '            ' + subcmds.map(\_.name).join('|') %>)
+                <%= subcmds.map(\_.name).join('|') %>)
                     subcmd="${COMP_WORDS[$i]}"
                     break
                     ;;
@@ -802,11 +802,11 @@ const BASH_COMPLETION_TEMPLATE = ety.compile(
 
         case "$subcmd" in
     <% for sub in subcmds { %>
-    <%= '        ' + sub.name %>)
+            <%= sub.name %>)
     <% if #sub.valCases > 0 { %>
                 case "$prev" in
     <% for c in sub.valCases { %>
-    <%= '                ' + c.flags %>)
+                    <%= c.flags %>)
                         COMPREPLY=( $(compgen -W "<%= c.vals %>" -- "$cur") )
                         return 0
                         ;;
@@ -843,7 +843,7 @@ const ZSH_COMPLETION_TEMPLATE = ety.compile(
     <%= funcName %>() {
         _arguments \
     <% for (i, a) in argSpecs.enumerate() { %>
-    <%= '        ' + a %><%= i < #argSpecs - 1 ? ' \\' : '' %>
+            <%= a %><%= i < #argSpecs - 1 ? ' \\' : '' %>
     <% } %>
     <% if #subcmds > 0 { %>
 
@@ -851,10 +851,10 @@ const ZSH_COMPLETION_TEMPLATE = ety.compile(
             args)
                 case "${words[1]}" in
     <% for sub in subcmds { %>
-    <%= '                ' + sub.name %>)
+                    <%= sub.name %>)
                         _arguments \
     <% for (i, a) in sub.argSpecs.enumerate() { %>
-    <%= '                        ' + a %><%= i < #sub.argSpecs - 1 ? ' \\' : '' %>
+                            <%= a %><%= i < #sub.argSpecs - 1 ? ' \\' : '' %>
     <% } %>
                         ;;
     <% } %>
@@ -871,23 +871,23 @@ const ZSH_COMPLETION_TEMPLATE = ety.compile(
 
 const FISH_COMPLETION_TEMPLATE = ety.compile(
     '''
-<% for o in opts { %>
-complete -c <%= "{prog}{cond}{o.sf}{o.lf}" %> -d '<%= o.desc %>'<%= o.suffix %>
-<% } %>
-complete -c <%= "{prog}{cond}" %> -l help -d 'Show help'
-<% if version != nil { %>
-complete -c <%= "{prog}{cond}" %> -l version -d 'Show version'
-<% } %>
-<% for sub in subcmds { %>
-complete -c <%= prog %> -n '__fish_use_subcommand' -a <%= sub.name %> -d '<%= sub.name %>'
-<% for o in sub.opts { %>
-complete -c <%= prog %> -n '__fish_seen_subcommand_from <%= sub.name %>'<%= "{o.sf}{o.lf}" %> -d '<%= o.desc %>'<%= o.suffix %>
-<% } %>
-complete -c <%= prog %> -n '__fish_seen_subcommand_from <%= sub.name %>' -l help -d 'Show help'
-<% if sub.version != nil { %>
-complete -c <%= prog %> -n '__fish_seen_subcommand_from <%= sub.name %>' -l version -d 'Show version'
-<% } %>
-<% } %>
+    <% for o in opts { %>
+    complete -c <%= "{prog}{cond}{o.sf}{o.lf}" %> -d '<%= o.desc %>'<%= o.suffix %>
+    <% } %>
+    complete -c <%= "{prog}{cond}" %> -l help -d 'Show help'
+    <% if version != nil { %>
+    complete -c <%= "{prog}{cond}" %> -l version -d 'Show version'
+    <% } %>
+    <% for sub in subcmds { %>
+    complete -c <%= prog %> -n '__fish_use_subcommand' -a <%= sub.name %> -d '<%= sub.name %>'
+    <% for o in sub.opts { %>
+    complete -c <%= prog %> -n '__fish_seen_subcommand_from <%= sub.name %>'<%= "{o.sf}{o.lf}" %> -d '<%= o.desc %>'<%= o.suffix %>
+    <% } %>
+    complete -c <%= prog %> -n '__fish_seen_subcommand_from <%= sub.name %>' -l help -d 'Show help'
+    <% if sub.version != nil { %>
+    complete -c <%= prog %> -n '__fish_seen_subcommand_from <%= sub.name %>' -l version -d 'Show version'
+    <% } %>
+    <% } %>
     ''',
     ['opts', 'cond', 'subcmds', 'version', 'prog']
 )
@@ -903,7 +903,7 @@ fn _bashComplete(specs: _, cmds: _, version: _, prog: _) -> _ {
         let sv: _ = cc.version()
         subcmds.push({name: cn, valCases: _choiceSpecs(ss), optWords: _optWords(ss, sv)})
     }
-    BASH_COMPLETION_TEMPLATE(funcName, valCases, subcmds, optWords, prog)
+    BASH_COMPLETION_TEMPLATE(funcName, valCases, subcmds, optWords, prog).trim()
 }
 
 fn _zshComplete(specs: _, cmds: _, version: _, prog: _) -> _ {
@@ -933,7 +933,7 @@ fn _zshComplete(specs: _, cmds: _, version: _, prog: _) -> _ {
         subcmds.push({name: cn, argSpecs: subArgSpecs})
     }
 
-    ZSH_COMPLETION_TEMPLATE(funcName, argSpecs, subcmds, prog)
+    ZSH_COMPLETION_TEMPLATE(funcName, argSpecs, subcmds, prog).trim()
 }
 
 fn _fishComplete(specs: _, cmds: _, version: _, prog: _) -> _ {
