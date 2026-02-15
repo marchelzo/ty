@@ -4659,6 +4659,13 @@ TryUnifyObjects(Ty *ty, Type *t0, Type *t1, bool super)
                 return true;
         }
 
+        // XXX: Does this make sense?
+        if (IsRecord(t0) && !t0->closed && (!IsRecord(t1) || t1->closed)) {
+                super = true;
+        } else if (IsRecord(t1) && !t1->closed && (!IsRecord(t0) || t0->closed)) {
+                super = false;
+        }
+
         if (super) {
                 for (int i = 0;; ++i) {
                         Type *u0;
@@ -5084,9 +5091,20 @@ UnifyXD(Ty *ty, Type *t0, Type *t1, bool super, bool check, bool soft)
                         goto Fail;
                 } else {
                         for (int i = 0; i < vN(t1->types); ++i) {
-                                if (!UnifyXD(ty, t0, v__(t1->types, i), super, false, soft)) {
+                                TypeEnv env = {0};
+                                if (!UnifyXD(
+                                        ty,
+                                        NewInst0(ty, t0, &env),
+                                        NewInst0(ty, v__(t1->types, i), &env),
+                                        super,
+                                        false,
+                                        soft
+                                )) {
                                         goto Fail;
                                 }
+                        }
+                        for (int i = 0; i < vN(t1->types); ++i) {
+                                UnifyXD(ty, t0, v__(t1->types, i), super, false, soft);
                         }
                         OK("t1 :> t0 is an intersection and t0 is a subtype of every element");
                         goto Success;
@@ -5153,9 +5171,20 @@ UnifyXD(Ty *ty, Type *t0, Type *t1, bool super, bool check, bool soft)
         if (TypeType(t0) == TYPE_INTERSECT) {
                 if (super) {
                         for (int i = 0; i < vN(t0->types); ++i) {
-                                if (!UnifyXD(ty, v__(t0->types, i), t1, super, false, soft)) {
+                                TypeEnv env = {0};
+                                if (!UnifyXD(
+                                        ty,
+                                        NewInst0(ty, v__(t0->types, i), &env),
+                                        NewInst0(ty, t1, &env),
+                                        super,
+                                        false,
+                                        soft
+                                )) {
                                         goto Fail;
                                 }
+                        }
+                        for (int i = 0; i < vN(t0->types); ++i) {
+                                UnifyXD(ty, v__(t0->types, i), t1, super, false, soft);
                         }
                         OK("t0 intersect super");
                         goto Success;
@@ -9421,7 +9450,11 @@ type_show(Ty *ty, Type const *t0)
         static TypeVector visiting;
         byte_vector buf = {0};
 
-        t0 = Reduce(ty, ResolveVar(t0));
+        t0 = ResolveVar(t0);
+
+        if (!EnableLogging) {
+                t0 = Reduce(ty, t0);
+        }
 
         if (t0 == NULL) {
                 return S2("⭕️");
@@ -10417,12 +10450,7 @@ Type *
 type_wtf(Ty *ty, Expr const *e)
 {
         xDDD();
-
-        Type *t0 = NewVar(ty);
-
-        Unify(ty, Either(ty, t0, NIL_TYPE), e->left->_type, true);
-
-        return Either(ty, t0, e->right->_type);
+        return Either( ty, type_not_nil(ty, e->left->_type), e->right->_type);
 }
 
 Type *

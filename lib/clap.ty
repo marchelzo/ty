@@ -88,7 +88,7 @@ fn _doParse(cls, argv, config) -> _ {
     }
 
     // Result storage
-    let result:   _ = %{}
+    let result: _ = %{}
     let explicit: _ = %{}
     let posArgs:  _ = []
 
