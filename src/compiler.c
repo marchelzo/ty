@@ -51,11 +51,17 @@
         fprintf(stderr, "" __VA_ARGS__);    \
         fprintf(stderr, "\n");              \
 } while (0)
-
-#define LogRefine XXX
+#define DBG XXX
 #else
 #define DT(...)
-#define LogRefine(...)
+#define DBG(...)
+#endif
+
+
+#if 0
+ #define LogRefine XXX
+#else
+ #define LogRefine(...)
 #endif
 
 #define texprx(e, ...) (tyexpr(ty, (e), __VA_ARGS__ + 0))
@@ -4752,7 +4758,7 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                 AddRefinements(ty, e->cond, subscope, scope);
                 symbolize_expression(ty, subscope, e->then);
                 symbolize_expression(ty, scope, e->otherwise);
-                e->_type = type_either(ty, e->then->_type, e->otherwise->_type);
+                e->_type = type_conditional(ty, e);
                 break;
 
         case EXPRESSION_STATEMENT:
@@ -5001,7 +5007,7 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                 }
 
                 if (e->class == NULL) {
-                        LOG(
+                        DBG(
                                 "================================================== %s[%s:%d]() === %s",
                                 (e->name != NULL) ? e->name : "(anon)",
                                 CurrentModuleName(ty),
@@ -5009,8 +5015,8 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                                 type_show(ty, e->_type)
                         );
                 } else {
-                        LOG(
-                                "================================================ %s.%s() === %s\n",
+                        DBG(
+                                "================================================ %s.%s() === %s",
                                 e->class->name,
                                 e->name,
                                 type_show(ty, e->_type)
@@ -5092,9 +5098,9 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                 }
 
                 if (CurrentClassID == -1) {
-                        LOG("=== %s() === %s\n", e->name, type_show(ty, e->_type));
+                        DBG("=== %s() === %s", e->name, type_show(ty, e->_type));
                 } else {
-                        LOG("=== %s.%s() === %s\n", STATE.class->name, e->name, type_show(ty, e->_type));
+                        DBG("=== %s.%s() === %s", STATE.class->name, e->name, type_show(ty, e->_type));
                 }
 
                 if (e->type != EXPRESSION_GENERATOR) {
@@ -18517,7 +18523,7 @@ CompilerSuggestCompletions(
                         "OBJECT IS AN IDENTIFIER: %s::%s (namespace=%s)",
                         QueryExpr->module ? QueryExpr->module : "<>",
                         QueryExpr->identifier,
-                        QueryExpr->namespace ? EDBG(QueryExpr->namespace) : "<>"
+                        QueryExpr->namespace ? ELOG(QueryExpr->namespace) : "<>"
                 );
                 scope = (QueryExpr->module != NULL) && (*QueryExpr->module != '\0')
                                                        ? search_import_scope(ty, QueryExpr->module)
