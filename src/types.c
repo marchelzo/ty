@@ -133,12 +133,13 @@ static Value STATIC_NIL = NIL;
 enum { LOW_FUEL = 5, MAX_FUEL = 9999999 };
 static int FUEL = MAX_FUEL;
 
-static int ConvertUnbound = 0;
-
 enum {
         TV_VARIADIC = (1U << 27),
         TV_PACK     = (1U << 28)
 };
+
+inline static Type *
+TypeArg(Type const *t0, int i);
 
 static bool
 IsSolved(Type const *t0);
@@ -876,6 +877,23 @@ IsKwVariadic(Type const *t0)
         return false;
 }
 
+inline static bool
+IsTagged(Type const *t0)
+{
+        return (t0 != NULL)
+            && (t0->type == TYPE_OBJECT)
+            && (t0->class->i != CLASS_TOP)
+            && (t0->class->type->type == TYPE_TAG);
+}
+
+inline static int
+TagOf(Type const *t0)
+{
+        return (IsTagged(t0) || (TypeType(t0) == TYPE_TAG))
+             ? t0->class->type->tag
+             : -1;
+}
+
 static Type *
 (NewRecord)(Ty *ty, ...)
 {
@@ -1359,6 +1377,78 @@ Flatten(Ty *ty, Type *t0)
         }
 }
 
+typedef struct {
+        i32 tag;
+        TypeVector types;
+} TaggedGroup;
+
+static Type *
+CoalesceTagged(Ty *ty, Type *t0)
+{
+        if (TypeType(t0) != TYPE_UNION) {
+                return t0;
+        }
+
+        SCRATCH_SAVE();
+
+        vec(TaggedGroup) tagged = {0};
+        TypeVector     untagged = {0};
+
+        bool skip = true;
+
+        for (int i = 0; i < vN(t0->types); ++i) {
+                Type *t00 = v__(t0->types, i);
+                if (IsTagged(t00)) {
+                        i32 tag = TagOf(t00);
+                        bool found = false;
+                        for (int i = 0; i < vN(tagged); ++i) {
+                                if (v_(tagged, i)->tag == tag) {
+                                        found = true;
+                                        skip = false;
+                                        svP(v_(tagged, i)->types, t00);
+                                        break;
+                                }
+                        }
+                        if (!found) {
+                                svP(tagged, ((TaggedGroup){ .tag = tag }));
+                                svP(vvL(tagged)->types, t00);
+                        }
+                } else {
+                        avP(untagged, t00);
+                }
+        }
+
+        if (skip) {
+                SCRATCH_RESTORE();
+                return t0;
+        }
+
+        Type *new0 = NewType(ty, TYPE_UNION);
+
+        avPv(new0->types, untagged);
+
+        for (int i = 0; i < vN(tagged); ++i) {
+                TaggedGroup const *group = v_(tagged, i);
+                if (vN(group->types) == 1) {
+                        avP(new0->types, v__(group->types, 0));
+                } else {
+                        Type *u1 = NewType(ty, TYPE_UNION);
+                        for (int i = 0; i < vN(group->types); ++i) {
+                                avP(u1->types, TypeArg(v__(group->types, i), 0));
+                        }
+                        avP(new0->types, type_tagged(ty, group->tag, u1));
+                }
+        }
+
+        SCRATCH_RESTORE();
+
+        if (vN(new0->types) == 1) {
+                return v__(new0->types, 0);
+        } else {
+                return new0;
+        }
+}
+
 static Type *
 Reduce(Ty *ty, Type const *t0)
 {
@@ -1391,6 +1481,7 @@ Reduce(Ty *ty, Type const *t0)
                 }
                 Flatten(ty, t1);
                 t1 = Uniq(ty, t1);
+                t1 = CoalesceTagged(ty, t1);
                 break;
 
         case TYPE_SUBSCRIPT:
@@ -1793,23 +1884,6 @@ ReturnType(Expr const *f)
         return (f != NULL && f->_type != NULL)
              ? f->_type->rt
              : NULL;
-}
-
-inline static bool
-IsTagged(Type const *t0)
-{
-        return (t0 != NULL)
-            && (t0->type == TYPE_OBJECT)
-            && (t0->class->i != CLASS_TOP)
-            && (t0->class->type->type == TYPE_TAG);
-}
-
-inline static int
-TagOf(Type const *t0)
-{
-        return (IsTagged(t0) || (TypeType(t0) == TYPE_TAG))
-             ? t0->class->type->tag
-             : -1;
 }
 
 inline static bool
@@ -5143,10 +5217,8 @@ UnifyXD(Ty *ty, Type *t0, Type *t1, bool super, bool check, bool soft)
                 goto Success;
         }
 
-        ConvertUnbound += check;
         bool ok;
         if (!type_check(ty, super ? t0 : t1, super ? t1 : t0)) {
-                ConvertUnbound -= check;
 Fail:
                 if (IsForgiving(t0) || IsForgiving(t1)) {
                         OK("forgiven");
@@ -5154,7 +5226,6 @@ Fail:
                 ok = false;
         } else {
                 OK("final type check:  (%s) and (%s)", ShowType(t0), ShowType(t1));
-                ConvertUnbound -= check;
 Success:
                 ok = true;
 
@@ -5342,6 +5413,13 @@ TrySolve2Op(Ty *ty, int op, Type *op0, Type *t0, Type *t1, Type *t2, bool exhaus
         t1 = ResolveVar(t1);
         t2 = ResolveVar(t2);
 
+        if (IsUnknown(t0) || IsUnknown(t1) || IsUnknown(t2)) {
+                UnifyX(ty, t0, UNKNOWN, true, true);
+                UnifyX(ty, t1, UNKNOWN, true, true);
+                UnifyX(ty, t2, UNKNOWN, true, true);
+                return UNKNOWN;
+        }
+
         if (ShouldDefer2Op(t0, t1, t2)) {
                 return NULL;
         }
@@ -5406,17 +5484,6 @@ TrySolve2Op(Ty *ty, int op, Type *op0, Type *t0, Type *t1, Type *t2, bool exhaus
         ExprVec args   = { .items = argv, .count = 2 };
         ExprVec kwargs = {0};
         StringVector      kws    = {0};
-
-        if (
-                IsUnknown(t0)
-             || IsUnknown(t1)
-             || IsUnknown(t2)
-        ) {
-                UnifyX(ty, t0, UNKNOWN, true, true);
-                UnifyX(ty, t1, UNKNOWN, true, true);
-                UnifyX(ty, t2, UNKNOWN, true, true);
-                return UNKNOWN;
-        }
 
         t0 = Inst1(ty, t0);
         t1 = Inst1(ty, t1);
@@ -6369,7 +6436,7 @@ InferCall0(
                         int n = 0;
 
                         for (int i = 0; i < vN(t0->constraints); ++i) {
-                                Constraint const *c = v_(t0->constraints, i);
+                                Constraint *c = v_(t0->constraints, i);
                                 if (BindConstraint(ty, c)) {
                                         any = true;
                                 } else {
@@ -6377,7 +6444,7 @@ InferCall0(
                                 }
                         }
 
-                        t0->constraints.count = n;
+                        vN(t0->constraints) = n;
 
                         if (!any) {
                                 break;
@@ -10036,6 +10103,11 @@ type_binary_op(Ty *ty, Expr const *e)
 
         Type *t0 = Reduce(ty, Relax(e->left->_type));
         Type *t1 = Reduce(ty, Relax(e->right->_type));
+
+        if (IsUnknown(t0) || IsUnknown(t1)) {
+                return UNKNOWN;
+        }
+
         Type *t2 = NewVar(ty);
 
         t2->level += 1;
@@ -10188,6 +10260,24 @@ Type *
 type_either(Ty *ty, Type *t0, Type *t1)
 {
         return (t0 == NULL) ? t1 : Either(ty, t0, t1);
+}
+
+void
+type_accumulate_return(Ty *ty, Type **rt, Type *t0)
+{
+        Type *resolved = ResolveVar(*rt);
+        if (IsNilT(resolved) && TypeType(*rt) == TYPE_VARIABLE) {
+                /* Previous return was nil. Rebind the variable chain to
+                 * Either(nil, t0) to avoid propagating nil into
+                 * structural type variables via unify2. */
+                Type *last = *rt;
+                while (IsBoundVar(last) && IsBoundVar(last->val)) {
+                        last = last->val;
+                }
+                last->val = type_either(ty, resolved, t0);
+        } else {
+                unify2(ty, rt, t0);
+        }
 }
 
 Type *
@@ -11551,6 +11641,16 @@ type_bind(Ty *ty, Type *t0, Type *t1)
         } else {
                 return false;
         }
+}
+
+Type *
+type_any_of(Ty *ty, TypeVector const *types)
+{
+        Type *t0 = NewType(ty, TYPE_UNION);
+
+        avPv(t0->types, *types);
+
+        return Reduce(ty, t0);
 }
 
 /* vim: set sts=8 sw=8 expandtab: */
