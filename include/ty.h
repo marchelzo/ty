@@ -982,6 +982,8 @@ extern usize TotalBytesAllocated;
 #  endif
 #endif
 
+#define TODO(msg) UNREACHABLE("TODO: " msg)
+
 #ifndef TY_RELEASE
 #define ASSERT(expr, ...) do {                              \
         if (!(expr)) {                                      \

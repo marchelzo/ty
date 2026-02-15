@@ -304,10 +304,10 @@ MakeConcrete(Ty *ty, Type *t0, TypeVector *refs);
 static bool
 TryProgress(Ty *ty);
 
-Type *TYPE_INT;
+Type *INT_TYPE;
 Type *TYPE_FLOAT;
-Type *TYPE_BOOL;
-Type *TYPE_STRING;
+Type *BOOL_TYPE;
+Type *STRING_TYPE;
 Type *TYPE_REGEX;
 Type *TYPE_REGEXV;
 Type *TYPE_BLOB;
@@ -614,11 +614,36 @@ inline static Type *
 Relax(Type const *t0)
 {
         switch (TypeType(t0)) {
-        case TYPE_INTEGER:
-                return TYPE_INT;
+        case TYPE_INT:     return INT_TYPE;
+        case TYPE_STRING:  return STRING_TYPE;
+        case TYPE_BOOL:    return BOOL_TYPE;
         }
 
         return (Type *)t0;
+}
+
+inline static bool
+IsIntLit(Type const *t0)
+{
+        return TypeType(t0) == TYPE_INT;
+}
+
+inline static bool
+IsStrLit(Type const *t0)
+{
+        return TypeType(t0) == TYPE_STRING;
+}
+
+inline static bool
+IsBoolLit(Type const *t0)
+{
+        return TypeType(t0) == TYPE_BOOL;
+}
+
+inline static bool
+IsLiteral(Type const *t0)
+{
+        return IsIntLit(t0) || IsStrLit(t0) || IsBoolLit(t0);
 }
 
 inline static bool
@@ -671,10 +696,12 @@ CanResolveAlias(Type const *t0)
 static bool
 TryResolveDeferredAlias(Ty *ty, Type *t0)
 {
-        if (TypeType(t0) != TYPE_ALIAS
-         || t0->_type != NULL
-         || t0->asrc == NULL
-         || vN(t0->args) != vN(t0->bound)) {
+        if (
+                (TypeType(t0) != TYPE_ALIAS)
+             || (t0->_type != NULL)
+             || (t0->asrc == NULL)
+             || (vN(t0->args) != vN(t0->bound))
+        ) {
                 return false;
         }
 
@@ -697,7 +724,8 @@ TryResolveDeferredAlias(Ty *ty, Type *t0)
         }
 
         t0->_type = MakeConcrete(ty, resolved, NULL);
-        return t0->_type != NULL;
+
+        return (t0->_type != NULL);
 }
 
 static bool
@@ -745,8 +773,7 @@ StepVar(Type const *t0)
                 return SliceType(&vvv, ResolveVar(t0->val), t0->i, t0->j, t0->k);
 
         case TYPE_COMPUTED:
-        {
-        }
+                TODO();
 
         default:
                 return (Type *)t0;
@@ -2229,7 +2256,13 @@ AlmostSameType(Type const *t0, Type const *t1)
                 }
                 return true;
 
-        case PAIR_OF(TYPE_INTEGER):
+        case PAIR_OF(TYPE_INT):
+                return (t0->z == t1->z);
+
+        case PAIR_OF(TYPE_STRING):
+                return s_eq(t0->str, t1->str);
+
+        case PAIR_OF(TYPE_BOOL):
                 return t0->z == t1->z;
 
         case PAIR_OF(TYPE_BOTTOM):
@@ -2393,7 +2426,13 @@ SameType(Type const *t0, Type const *t1)
                 }
                 return true;
 
-        case PAIR_OF(TYPE_INTEGER):
+        case PAIR_OF(TYPE_INT):
+                return t0->z == t1->z;
+
+        case PAIR_OF(TYPE_STRING):
+                return s_eq(t0->str, t1->str);
+
+        case PAIR_OF(TYPE_BOOL):
                 return t0->z == t1->z;
 
         case PAIR_OF(TYPE_BOTTOM):
@@ -2693,7 +2732,7 @@ IsFullyBound(Type *t0)
                 return true;
 
 
-        case TYPE_INTEGER:
+        case TYPE_INT:
         case TYPE_NIL:
                 return true;
         }
@@ -2704,8 +2743,16 @@ IsFullyBound(Type *t0)
 static int
 StrictClassOf(Type const *t0)
 {
-        if (TypeType(t0) == TYPE_INTEGER) {
+        if (TypeType(t0) == TYPE_INT) {
                 return CLASS_INT;
+        }
+
+        if (TypeType(t0) == TYPE_STRING) {
+                return CLASS_STRING;
+        }
+
+        if (TypeType(t0) == TYPE_BOOL) {
+                return CLASS_BOOL;
         }
 
         if (IsAny(t0)) {
@@ -2756,8 +2803,14 @@ ClassOfType(Ty *ty, Type const *t0)
         case TYPE_CLASS:
                 return CLASS_CLASS;
 
-        case TYPE_INTEGER:
+        case TYPE_INT:
                 return CLASS_INT;
+
+        case TYPE_STRING:
+                return CLASS_STRING;
+
+        case TYPE_BOOL:
+                return CLASS_BOOL;
 
         case TYPE_VARIABLE:
                 return IsBoundVar(t0) ? ClassOfType(ty, t0->val) : CLASS_TOP;
@@ -3105,7 +3158,7 @@ CollapseInts(Ty *ty, Type **t0)
         for (int i = 0; i < UnionCount(*t0); ++i) {
                 Type **t2 = UnionElemPtr(t0, i);
                 if (StrictClassOf(*t2) == CLASS_INT) {
-                        *t2 = TYPE_INT;
+                        *t2 = INT_TYPE;
                         collapsed = true;
                 }
         }
@@ -3196,8 +3249,27 @@ type_variable(Ty *ty, Symbol *var)
 Type *
 type_integer(Ty *ty, intmax_t z)
 {
-        Type *t = NewType(ty, TYPE_INTEGER);
+        Type *t = NewType(ty, TYPE_INT);
         t->z = z;
+        t->concrete = true;
+        return t;
+}
+
+Type *
+type_string(Ty *ty, char const *s)
+{
+        Type *t = NewType(ty, TYPE_STRING);
+        t->str = s;
+        t->concrete = true;
+        return t;
+}
+
+Type *
+type_bool(Ty *ty, bool b)
+{
+        Type *t = NewType(ty, TYPE_BOOL);
+        t->z = b;
+        t->concrete = true;
         return t;
 }
 
@@ -3423,7 +3495,7 @@ type_function(Ty *ty, Expr const *e, bool tmp)
                         if (i == e->rest) {
                                 psym->type = type_fixed(ty, NewArray(p0));
                         } else if (i == e->ikwargs) {
-                                psym->type = type_fixed(ty, NewDict(TYPE_STRING, p0));
+                                psym->type = type_fixed(ty, NewDict(STRING_TYPE, p0));
                         } else if (psym->type == NULL && d != NULL) {
                                 if (d->_type != NULL && !IsNilT(d->_type)) {
                                         UnifyX(ty, p0, d->_type, true, false);
@@ -3996,11 +4068,9 @@ NewInst0(Ty *ty, Type *t0, TypeEnv *env)
                 t0->rt = NewInst0(ty, t0->rt, env);
                 break;
 
-        case TYPE_INTEGER:
-                t0->type = TYPE_OBJECT;
-                t0->class = TYPE_INT->class;
-                v00(t0->args);
-                v00(t0->bound);
+        case TYPE_INT:
+        case TYPE_STRING:
+        case TYPE_BOOL:
                 break;
         }
 
@@ -4372,7 +4442,7 @@ TryUnifyObjects(Ty *ty, Type *t0, Type *t1, bool super)
                 } else if (ArgCount(t0) == 2 && IsRecord(t1)) {
                         t1 = NewObject(
                                 CLASS_ITERABLE,
-                                TYPE_STRING,
+                                STRING_TYPE,
                                 UnionOf(ty, t1)
                         );
                 }
@@ -4387,7 +4457,7 @@ TryUnifyObjects(Ty *ty, Type *t0, Type *t1, bool super)
                 } else if (ArgCount(t1) == 2 && IsRecord(t0)) {
                         t0 = NewObject(
                                 CLASS_ITERABLE,
-                                TYPE_STRING,
+                                STRING_TYPE,
                                 UnionOf(ty, t0)
                         );
                 }
@@ -4438,10 +4508,10 @@ TryUnifyObjects(Ty *ty, Type *t0, Type *t1, bool super)
 
                 if (t0->class->i == CLASS_ITERABLE) {
                         if (vN(t0->args) < vN(t1->args)) {
-                                UnifyX(ty, TYPE_INT, v__(t1->args, vN(t0->args)), super, false);
+                                UnifyX(ty, INT_TYPE, v__(t1->args, vN(t0->args)), super, false);
                         }
                         if (vN(t1->args) < vN(t0->args)) {
-                                UnifyX(ty, v__(t0->args, vN(t1->args)), TYPE_INT, super, false);
+                                UnifyX(ty, v__(t0->args, vN(t1->args)), INT_TYPE, super, false);
                         }
                 }
 
@@ -4489,6 +4559,9 @@ TryUnifyObjects(Ty *ty, Type *t0, Type *t1, bool super)
                                         }
                                         AddEntry(t1, t00, name);
                                 } else if (!UnifyX(ty, v__(t0->types, i), *t2, super, false)) {
+                                        if (IsLiteral(v__(t0->types, i)) || IsLiteral(*t2)) {
+                                                return false;
+                                        }
                                         if (!t0->fixed) {
                                                 unify2_(ty, v_(t0->types, i), *t2, false);
                                         } else if (!t1->fixed) {
@@ -4534,6 +4607,9 @@ TryUnifyObjects(Ty *ty, Type *t0, Type *t1, bool super)
                                         }
                                         AddEntry(t0, t11, name);
                                 } else if (!UnifyX(ty, *t2, v__(t1->types, i), super, false)) {
+                                        if (IsLiteral(*t2) || IsLiteral(v__(t1->types, i))) {
+                                                return false;
+                                        }
                                         if (!t1->fixed) {
                                                 unify2(ty, v_(t1->types, i), *t2);
                                         } else if (!t0->fixed) {
@@ -5120,6 +5196,37 @@ UnifyXD(Ty *ty, Type *t0, Type *t1, bool super, bool check, bool soft)
                 goto Fail;
         }
 
+        if (PackTypes(t0, t1) == PAIR_OF(TYPE_INT)) {
+                if (t0->z == t1->z) {
+                        OK("same int literal");
+                        goto Success;
+                }
+                goto Fail;
+        }
+
+        if (PackTypes(t0, t1) == PAIR_OF(TYPE_STRING)) {
+                if (s_eq(t0->str, t1->str)) {
+                        OK("same string literal");
+                        goto Success;
+                }
+                goto Fail;
+        }
+
+        if (PackTypes(t0, t1) == PAIR_OF(TYPE_BOOL)) {
+                if (t0->z == t1->z) {
+                        OK("same bool literal");
+                        goto Success;
+                }
+                goto Fail;
+        }
+
+        if (IsLiteral(t0)) {
+                t0 = Relax(t0);
+        }
+        if (IsLiteral(t1)) {
+                t1 = Relax(t1);
+        }
+
         if ((IsRecordLike(t0) || IsRecordLike(t1)) && !IsNilT(t0) && !IsNilT(t1)) {
                 if (TryUnifyObjects(ty, t0, t1, super)) {
                         OK("UnifyObjects()");
@@ -5474,7 +5581,7 @@ CmpFallback(Ty *ty, Type *t0, Type *t1, Type *t2)
         }
         Type *cmp_t2 = NewVar(ty);
         if (TrySolve2Op(ty, OP_CMP, cmp_op0, t0, t1, cmp_t2, false) != NULL) {
-                UnifyX(ty, t2, TYPE_BOOL, true, false);
+                UnifyX(ty, t2, BOOL_TYPE, true, false);
                 return true;
         }
         return false;
@@ -5542,7 +5649,7 @@ TrySolve2Op(Ty *ty, int op, Type *op0, Type *t0, Type *t1, Type *t2, bool exhaus
                                              && type_check(ty, c->t0, t0)
                                              && type_check(ty, c->t1, t1)
                                         ) {
-                                                return TYPE_BOOL;
+                                                return BOOL_TYPE;
                                         }
                                 }
                         }
@@ -5941,8 +6048,8 @@ ToRecordLikeType(Ty *ty, Type *t0)
                 t1 = class_get(ty, CLASS_TAG)->object_type;
                 break;
 
-        case TYPE_INTEGER:
-                t1 = TYPE_INT;
+        case TYPE_INT:
+                t1 = INT_TYPE;
                 break;
 
         case TYPE_FUNCTION:
@@ -6146,7 +6253,7 @@ PossibleArgTypes(Ty *ty, ExprVec const *args, int argi)
         for (int i = 0; i <= argi && i < vN(*args); ++i) {
                 Expr const *arg = v__(*args, i);
                 if (arg->type == EXPRESSION_SPREAD || i == argi) {
-                        Type *arg0 = (arg->_type == NULL) ? UNKNOWN : Relax(arg->_type);
+                        Type *arg0 = (arg->_type == NULL) ? UNKNOWN : arg->_type;
                         t0 = (t0 == NULL) ? arg0 : Either(ty, t0, arg0);
                 }
         }
@@ -6166,7 +6273,7 @@ FindArg(
         if (name != NULL) {
                 for (int i = 0; i < vN(*kws); ++i) {
                         if (strcmp(v__(*kws, i), name) == 0) {
-                                return Relax(v__(*kwargs, i)->_type);
+                                return v__(*kwargs, i)->_type;
                         }
                 }
         }
@@ -6312,7 +6419,7 @@ ExpandCallSignatures(
 
                 if (argi < vN(*args)) {
                         Expr const *arg = v__(*args, argi);
-                        Type *t0 = Relax(arg->_type);
+                        Type *t0 = arg->_type;
 
                         for (int i = 0; i < UnionCount(t0); ++i) {
                                 Type *t1 = UnionElem(t0, i);
@@ -6337,7 +6444,7 @@ ExpandCallSignatures(
 
                 if (kwi < vN(*kwargs)) {
                         Expr const *kwarg = v__(*kwargs, kwi);
-                        Type *t0 = Relax(kwarg->_type);
+                        Type *t0 = kwarg->_type;
 
                         for (int i = 0; i < UnionCount(t0); ++i) {
                                 Type *t1 = UnionElem(t0, i);
@@ -6466,7 +6573,7 @@ InferCall0(
 
                 for (int i = 0; i < vN(*args); ++i) {
                         Param const *p = FindParam(i, NULL, &t0->params);
-                        Type *a0 = Relax(v__(*args, i)->_type);
+                        Type *a0 = v__(*args, i)->_type;
                         if (p != NULL && p->type != NULL) {
                                 if (!CheckArg(ty, p - v_(t0->params, 0), p, a0, strict)) {
                                         return NULL;
@@ -6644,12 +6751,12 @@ InferCall0(
                                 TypeEnv env = {0};
 
                                 for (int i = 0; i < vN(*args); ++i) {
-                                        tmp._type = NewInst0(ty, Relax(v__(*args, i)->_type), &env);
+                                        tmp._type = NewInst0(ty, v__(*args, i)->_type, &env);
                                         avP(_argv, tmp);
                                 }
 
                                 for (int i = 0; i < vN(*kwargs); ++i) {
-                                        tmp._type = NewInst0(ty, Relax(v__(*kwargs, i)->_type), &env);
+                                        tmp._type = NewInst0(ty, v__(*kwargs, i)->_type, &env);
                                         avP(_argv, tmp);
                                 }
 
@@ -7194,7 +7301,7 @@ type_member_access_t_(Ty *ty, Type const *t0, char const *name, bool strict, boo
         }
 
         if (s_eq(name, "!")) {
-                return NewFunction(TYPE_BOOL);
+                return NewFunction(BOOL_TYPE);
         }
 
         Class *c;
@@ -7473,7 +7580,7 @@ type_method_call_t(Ty *ty, Expr const *e, Type *t0, char const *name)
         case TYPE_TAG:
         case TYPE_TUPLE:
         case TYPE_FUNCTION:
-        case TYPE_INTEGER:
+        case TYPE_INT:
         case TYPE_VARIABLE:
                 t1 = type_member_access_t(ty, t0, name, !e->maybe);
                 if (t1 != NULL) {
@@ -7581,7 +7688,7 @@ type_slice_t(Ty *ty, Type *t0, Type *t1, Type *t2, Type *t3)
 Type *
 type_subscript_t(Ty *ty, Type *t0, Type *t1)
 {
-        if (IsTuple(t0) && TypeType(t1) == TYPE_INTEGER) {
+        if (IsTuple(t0) && TypeType(t1) == TYPE_INT) {
                 return (vN(t0->types) > t1->z)
                      ? v__(t0->types, t1->z)
                      : BOTTOM;
@@ -7614,7 +7721,7 @@ SubscriptType(Ty *ty, Type *t0, Type *t1)
                 switch (t0->class->i) {
                 case CLASS_ARRAY:  t = TypeArg(t0, 0); break;
                 case CLASS_DICT:   t = TypeArg(t0, 1); break;
-                case CLASS_STRING: t = TYPE_STRING;    break;
+                case CLASS_STRING: t = STRING_TYPE;    break;
                 }
                 break;
 
@@ -7627,7 +7734,7 @@ SubscriptType(Ty *ty, Type *t0, Type *t1)
                 break;
 
         case TYPE_TUPLE:
-                t = (t1->type == TYPE_INTEGER)
+                t = (t1->type == TYPE_INT)
                      ? RecordElem(t0, t1->z)
                      : UnionOf(ty, t0);
                 break;
@@ -7837,8 +7944,26 @@ type_check_shallow(Ty *ty, Type *t0, Type *t1)
                 return true;
         }
 
+        if (IsIntLit(t1)) {
+                return IsIntLit(t0)
+                     ? (t0->z == t1->z)
+                     : (StrictClassOf(t0) == CLASS_INT);
+        }
+
+        if (IsStrLit(t1)) {
+                return IsStrLit(t0)
+                     ? s_eq(t0->str, t1->str)
+                     : (StrictClassOf(t0) == CLASS_STRING);
+        }
+
+        if (IsBoolLit(t1)) {
+                return IsBoolLit(t0)
+                     ? (t0->z == t1->z)
+                     : (StrictClassOf(t0) == CLASS_BOOL);
+        }
+
         if (IsUnboundVar(t0) && IsUnboundVar(t1)) {
-                return t0->id == t1->id;
+                return (t0->id == t1->id);
         }
 
         return false;
@@ -7997,8 +8122,23 @@ type_check_x_(Ty *ty, Type *t0, Type *t1, bool need)
                 return true;
         }
 
-        t0 = Relax(t0);
-        t1 = Relax(t1);
+        if (IsIntLit(t1)) {
+                return IsIntLit(t0)
+                     ? (t0->z == t1->z)
+                     : type_check_x(ty, t0, INT_TYPE, need);
+        }
+
+        if (IsStrLit(t1)) {
+                return IsStrLit(t0)
+                     ? s_eq(t0->str, t1->str)
+                     : type_check_x(ty, t0, STRING_TYPE, need);
+        }
+
+        if (IsBoolLit(t1)) {
+                return IsBoolLit(t0)
+                     ? (t0->z == t1->z)
+                     : type_check_x(ty, t0, BOOL_TYPE, need);
+        }
 
         if (t1->type == TYPE_INTERSECT) {
                 for (int i = 0; i < vN(t1->types); ++i) {
@@ -8377,9 +8517,8 @@ type_tuple(Ty *ty, Expr const *e)
                 if (name != NULL && s_eq(name, "*")) {
                         t0->closed = false;
                 } else {
-                        Type *u0 = NewVar(ty);
-                        AddEntry(t0, u0, name, false);
-                        TryBind(ty, u0, v__(e->es, i)->_type, true);
+                        Type *et = v__(e->es, i)->_type;
+                        AddEntry(t0, et, name, false);
                 }
         }
 
@@ -8975,9 +9114,9 @@ type_resolve(Ty *ty, Expr const *e)
                         XXTLOG("slice(): j = %s", ShowType(j0));
                         XXTLOG("slice(): k = %s", ShowType(k0));
                         t1 = NewType(ty, TYPE_SLICE);
-                        t1->k = (TypeType(k0) == TYPE_INTEGER) ? (k0->z + !k0->z) : 1;
-                        t1->i = (TypeType(i0) == TYPE_INTEGER) ? i0->z : 0;
-                        t1->j = (TypeType(j0) == TYPE_INTEGER) ? j0->z : (t1->k < 0) ? 0 : INT_MAX;
+                        t1->k = IsIntLit(k0) ? (k0->z + !k0->z) : 1;
+                        t1->i = IsIntLit(i0) ? i0->z : 0;
+                        t1->j = IsIntLit(j0) ? j0->z : (t1->k < 0) ? 0 : INT_MAX;
                         t1->val = t0;
                         t0 = t1;
                 }
@@ -9121,6 +9260,12 @@ type_resolve(Ty *ty, Expr const *e)
 
         case EXPRESSION_INTEGER:
                 return type_integer(ty, e->integer);
+
+        case EXPRESSION_STRING:
+                return type_string(ty, e->string);
+
+        case EXPRESSION_BOOLEAN:
+                return type_bool(ty, e->boolean);
         }
 
         dont_printf("resolve() failed: %s\n", show_expr(e));
@@ -9143,12 +9288,16 @@ try_coalesce(Ty *ty, Type **t0, Type *t1)
                 return unify2_(ty, t0, t1, false);
         }
 
-        if (
-                ((*t0)->type == TYPE_INTEGER)
-             && (t1->type == TYPE_INTEGER)
-        ) {
-                *t0 = TYPE_INT;
-                return true;
+        if (IsIntLit(*t0) && IsIntLit(t1)) {
+                return (*t0)->z == t1->z;
+        }
+
+        if (IsStrLit(*t0) && IsStrLit(t1)) {
+                return s_eq((*t0)->str, t1->str);
+        }
+
+        if (IsBoolLit(*t0) && IsBoolLit(t1)) {
+                return (*t0)->z == t1->z;
         }
 
         return false;
@@ -9623,8 +9772,16 @@ type_show(Ty *ty, Type const *t0)
                 dump(&buf, "<none>");
                 break;
 
-        case TYPE_INTEGER:
+        case TYPE_INT:
                 dump(&buf, "%s%"PRIiMAX"%s", TERM(94), t0->z, TERM(0));
+                break;
+
+        case TYPE_STRING:
+                dump(&buf, "%s'%s'%s", TERM(38;2;142;192;124), t0->str, TERM(0));
+                break;
+
+        case TYPE_BOOL:
+                dump(&buf, "%s%s%s", TERM(38;2;211;134;155), t0->z ? "true" : "false", TERM(0));
                 break;
 
         case TYPE_ERROR:
@@ -9903,11 +10060,9 @@ MakeConcrete_(Ty *ty, Type *t0, TypeVector *refs, bool variance)
                 t0->concrete &= IsConcrete(t0->rt);
                 break;
 
-        case TYPE_INTEGER:
-                t0->type = TYPE_OBJECT;
-                t0->class = TYPE_INT->class;
-                v00(t0->args);
-                v00(t0->bound);
+        case TYPE_INT:
+        case TYPE_STRING:
+        case TYPE_BOOL:
                 break;
         }
 
@@ -9968,50 +10123,20 @@ static Type *
 TypeOf2Op(Ty *ty, int op, Type *t0, Type *t1)
 {
         if (op == -1) {
-                return NULL;
+                return UNKNOWN;
         }
 
         if (IsBottom(t0) || IsBottom(t1)) {
                 return BOTTOM;
         }
 
-        if (t0->type == TYPE_UNION) {
-                Type *t = NULL;
-                for (int i = 0; i < vN(t0->types); ++i) {
-                        unify2(
-                                ty,
-                                &t,
-                                TypeOf2Op(
-                                        ty,
-                                        op,
-                                        v__(t0->types, i),
-                                        t1
-                                )
-                        );
-                }
-                return t;
-        }
-
-        if (t1->type == TYPE_UNION) {
-                Type *t = NULL;
-                for (int i = 0; i < vN(t1->types); ++i) {
-                        unify2(
-                                ty,
-                                &t,
-                                TypeOf2Op(
-                                        ty,
-                                        op,
-                                        t0,
-                                        v__(t1->types, i)
-                                )
-                        );
-                }
-                return t;
+        if (IsUnknown(t0) || IsUnknown(t1)) {
+                return UNKNOWN;
         }
 
         if (
-                t0->type == TYPE_INTEGER
-             && t1->type == TYPE_INTEGER
+                (t0->type == TYPE_INT)
+             && (t1->type == TYPE_INT)
         ) {
                 switch (op) {
                 case OP_ADD: return type_integer(ty, t0->z + t1->z);
@@ -10029,102 +10154,66 @@ TypeOf2Op(Ty *ty, int op, Type *t0, Type *t1)
                 return NULL;
         }
 
-        Expr *fun = op_fun_info(op, c0, c1);
-
-        if (fun == NULL) {
-                switch (op) {
-                case OP_ADD:
-                        switch (PACK_TYPES(c0, c1)) {
-                        case PAIR_OF(CLASS_INT):                 return TYPE_INT;
-                        case PAIR_OF(CLASS_FLOAT):               return TYPE_FLOAT;
-                        case PACK_TYPES(CLASS_INT, CLASS_FLOAT): return TYPE_FLOAT;
-                        case PACK_TYPES(CLASS_FLOAT, CLASS_INT): return TYPE_FLOAT;
-                        case PAIR_OF(CLASS_ARRAY):               return t0;
-                        case PAIR_OF(CLASS_STRING):              return t0;
-                        case PAIR_OF(CLASS_DICT):                return t0;
-                        default:
-                                return NULL;
-                        }
-
-                case OP_SUB:
-                        switch (PACK_TYPES(c0, c1)) {
-                        case PAIR_OF(CLASS_INT):                 return TYPE_INT;
-                        case PAIR_OF(CLASS_FLOAT):               return TYPE_FLOAT;
-                        case PACK_TYPES(CLASS_INT, CLASS_FLOAT): return TYPE_FLOAT;
-                        case PACK_TYPES(CLASS_FLOAT, CLASS_INT): return TYPE_FLOAT;
-                        case PAIR_OF(CLASS_ARRAY):               return t0;
-                        case PAIR_OF(CLASS_STRING):              return t0;
-                        case PAIR_OF(CLASS_DICT):                return t0;
-                        default:
-                                return NULL;
-                        }
-
-                case OP_MUL:
-                        switch (PACK_TYPES(c0, c1)) {
-                        case PAIR_OF(CLASS_INT):                 return TYPE_INT;
-                        case PAIR_OF(CLASS_FLOAT):               return TYPE_FLOAT;
-                        case PACK_TYPES(CLASS_INT, CLASS_FLOAT): return TYPE_FLOAT;
-                        case PACK_TYPES(CLASS_FLOAT, CLASS_INT): return TYPE_FLOAT;
-                        case PAIR_OF(CLASS_ARRAY):               return t0;
-                        case PAIR_OF(CLASS_STRING):              return t0;
-                        case PAIR_OF(CLASS_DICT):                return t0;
-                        default:
-                                return NULL;
-                        }
-
-                case OP_DIV:
-                        switch (PACK_TYPES(c0, c1)) {
-                        case PAIR_OF(CLASS_INT):                 return TYPE_INT;
-                        case PAIR_OF(CLASS_FLOAT):               return TYPE_FLOAT;
-                        case PACK_TYPES(CLASS_INT, CLASS_FLOAT): return TYPE_FLOAT;
-                        case PACK_TYPES(CLASS_FLOAT, CLASS_INT): return TYPE_FLOAT;
-                        case PAIR_OF(CLASS_ARRAY):               return t0;
-                        case PAIR_OF(CLASS_DICT):                return t0;
-                        default:
-                                return NULL;
-                        }
-
-                case OP_MOD:
-                        switch (PACK_TYPES(c0, c1)) {
-                        case PAIR_OF(CLASS_INT):                 return TYPE_INT;
-                        case PAIR_OF(CLASS_FLOAT):               return TYPE_FLOAT;
-                        case PACK_TYPES(CLASS_INT, CLASS_FLOAT): return TYPE_FLOAT;
-                        case PACK_TYPES(CLASS_FLOAT, CLASS_INT): return TYPE_FLOAT;
-                        case PAIR_OF(CLASS_ARRAY):               return t0;
-                        case PAIR_OF(CLASS_DICT):                return t0;
-                        default:
-                                return NULL;
-                        }
-
-                case OP_IN:
-                case OP_NOT_IN:
-                        return TYPE_BOOL;
+        switch (op) {
+        case OP_ADD:
+                switch (PACK_TYPES(c0, c1)) {
+                case PAIR_OF(CLASS_INT):                 return INT_TYPE;
+                case PAIR_OF(CLASS_FLOAT):               return TYPE_FLOAT;
+                case PACK_TYPES(CLASS_INT, CLASS_FLOAT): return TYPE_FLOAT;
+                case PACK_TYPES(CLASS_FLOAT, CLASS_INT): return TYPE_FLOAT;
+                case PAIR_OF(CLASS_STRING):              return t0;
+                default:
+                        return NULL;
                 }
 
-                return NULL;
+        case OP_SUB:
+                switch (PACK_TYPES(c0, c1)) {
+                case PAIR_OF(CLASS_INT):                 return INT_TYPE;
+                case PAIR_OF(CLASS_FLOAT):               return TYPE_FLOAT;
+                case PACK_TYPES(CLASS_INT, CLASS_FLOAT): return TYPE_FLOAT;
+                case PACK_TYPES(CLASS_FLOAT, CLASS_INT): return TYPE_FLOAT;
+                case PAIR_OF(CLASS_STRING):              return t0;
+                default:
+                        return NULL;
+                }
+
+        case OP_MUL:
+                switch (PACK_TYPES(c0, c1)) {
+                case PAIR_OF(CLASS_INT):                 return INT_TYPE;
+                case PAIR_OF(CLASS_FLOAT):               return TYPE_FLOAT;
+                case PACK_TYPES(CLASS_INT, CLASS_FLOAT): return TYPE_FLOAT;
+                case PACK_TYPES(CLASS_FLOAT, CLASS_INT): return TYPE_FLOAT;
+                case PAIR_OF(CLASS_STRING):              return t0;
+                default:
+                        return NULL;
+                }
+
+        case OP_DIV:
+                switch (PACK_TYPES(c0, c1)) {
+                case PAIR_OF(CLASS_INT):                 return INT_TYPE;
+                case PAIR_OF(CLASS_FLOAT):               return TYPE_FLOAT;
+                case PACK_TYPES(CLASS_INT, CLASS_FLOAT): return TYPE_FLOAT;
+                case PACK_TYPES(CLASS_FLOAT, CLASS_INT): return TYPE_FLOAT;
+                default:
+                        return NULL;
+                }
+
+        case OP_MOD:
+                switch (PACK_TYPES(c0, c1)) {
+                case PAIR_OF(CLASS_INT):                 return INT_TYPE;
+                case PAIR_OF(CLASS_FLOAT):               return TYPE_FLOAT;
+                case PACK_TYPES(CLASS_INT, CLASS_FLOAT): return TYPE_FLOAT;
+                case PACK_TYPES(CLASS_FLOAT, CLASS_INT): return TYPE_FLOAT;
+                default:
+                        return NULL;
+                }
+
+        case OP_IN:
+        case OP_NOT_IN:
+                return BOOL_TYPE;
         }
 
-        Expr arg1 = { ._type = t0 };
-        Expr arg2 = { ._type = t1 };
-        Expr *argv[] = { &arg1, &arg2 };
-
-        Expr call = {
-                .type = EXPRESSION_FUNCTION_CALL,
-                .args = { .items = argv, .count = 2 },
-                .function = fun
-        };
-
-        Type *t = (fun == NULL) ? NULL : type_call_t(ty, &call, fun->_type);
-
-        dont_printf(
-                "TypeOf2Op(%s):\n  %s\n  %s\n => %s\n",
-                intern_entry(&xD.b_ops, op)->name,
-                ShowType(t0),
-                ShowType(t1),
-                ShowType(t)
-        );
-
-        return t;
+        return NULL;
 }
 
 inline static Type *
@@ -10144,15 +10233,8 @@ type_op(Ty *ty, Expr const *e)
 {
         Type *t0 = op_type(e->op.b);
         Type *v0 = NewVar(ty);
-        Type *u0 = NewRecord(
-                e->op.id,
-                NewFunction(v0)
-        );
-        return type_both(
-                ty,
-                t0,
-                NewFunction(u0, v0)
-        );
+        Type *u0 = NewRecord(e->op.id, NewFunction(v0));
+        return type_both(ty, t0, NewFunction(u0, v0));
 }
 
 Type *
@@ -10183,8 +10265,9 @@ type_binary_op(Ty *ty, Expr const *e)
         case EXPRESSION_USER_OP: op = intern(&xD.b_ops, e->op_name)->id;
         }
 
-        if (op == -1) {
-                return UNKNOWN;
+        Type *fast = TypeOf2Op(ty, op, e->left->_type, e->right->_type);
+        if (fast != NULL) {
+                return fast;
         }
 
         Type *t0 = Reduce(ty, Relax(e->left->_type));
@@ -10253,7 +10336,7 @@ type_unary_hash_t(Ty *ty, Type const *t0)
                 case CLASS_DICT:
                 case CLASS_STRING:
                 case CLASS_BLOB:
-                        t1 = TYPE_INT;
+                        t1 = INT_TYPE;
                         break;
                 }
                 if (t1 == NULL) {
@@ -10267,7 +10350,7 @@ type_unary_hash_t(Ty *ty, Type const *t0)
                 break;
 
         case TYPE_TUPLE:
-                t1 = TYPE_INT;
+                t1 = INT_TYPE;
                 break;
 
         case TYPE_UNION:
@@ -10449,7 +10532,7 @@ type_iterable_type(Ty *ty, Type *t0, int n)
         Unify(ty, t2, t0, true);
 
         if (n > 1) {
-                avP(t1->types, TYPE_INT);
+                avP(t1->types, INT_TYPE);
                 while (vN(t1->types) < n) {
                         avP(t1->types, UNKNOWN);
                 }
@@ -10468,21 +10551,21 @@ type_special_str(Ty *ty, Expr const *e)
         xDDD();
 
         if (e->lang == NULL) {
-                return TYPE_STRING;
+                return STRING_TYPE;
         }
 
         Type *a0 = NewVar(ty);
         Type *t0 = NewVar(ty);
         Type *u0 = NewTuple(
                 a0,
-                Either(ty, TYPE_STRING, NIL_TYPE),
-                Either(ty, TYPE_INT, NIL_TYPE)
+                Either(ty, STRING_TYPE, NIL_TYPE),
+                Either(ty, INT_TYPE, NIL_TYPE)
         );
         Type *f0 = NewFunction(
                 NewArray(
                         Either(
                                 ty,
-                                TYPE_STRING,
+                                STRING_TYPE,
                                 u0
                         )
                 ),
@@ -10752,7 +10835,7 @@ TupleSubscriptType(Ty *ty, Type const *t0)
         avP(
                 t1->types,
                 NewFunction(
-                        TYPE_INT,
+                        INT_TYPE,
                         Reduce(ty, t2)
                 )
         );
@@ -10971,9 +11054,20 @@ TypeCheckXD(Ty *ty, TypeCheckStack *stack, Type *t0, Value const *v)
         }
 
         switch (t0->type) {
-        case TYPE_INTEGER:
+        case TYPE_INT:
                 ok = (v->type == VALUE_INTEGER)
                   && (v->z == t0->z);
+                break;
+
+        case TYPE_STRING:
+                ok = (v->type == VALUE_STRING)
+                  && (strlen(t0->str) == sN(*v))
+                  && (memcmp(t0->str, ss(*v), sN(*v)) == 0);
+                break;
+
+        case TYPE_BOOL:
+                ok = (v->type == VALUE_BOOLEAN)
+                  && (v->boolean == (bool)t0->z);
                 break;
 
         case TYPE_VARIABLE:
@@ -11382,10 +11476,10 @@ type_from_ty(Ty *ty, Value const *v)
                 return ANY;
 
         case TyIntT:
-                return TYPE_INT;
+                return INT_TYPE;
 
         case TyStringT:
-                return TYPE_STRING;
+                return STRING_TYPE;
 
         case TyRegexT:
                 return TYPE_REGEX;
@@ -11397,7 +11491,7 @@ type_from_ty(Ty *ty, Value const *v)
                 return TYPE_FLOAT;
 
         case TyBoolT:
-                return TYPE_BOOL;
+                return BOOL_TYPE;
 
         case TyArrayT:
                 return TYPE_ARRAY;

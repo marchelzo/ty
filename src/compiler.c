@@ -3140,7 +3140,7 @@ RegexCapture(Ty *ty, Scope *scope, int i)
         snprintf(id, sizeof id, "$%d", i);
 
         Symbol *var = addsymbol(ty, scope, sclonea(ty, id));
-        var->type = TYPE_STRING;
+        var->type = STRING_TYPE;
 
         return var;
 }
@@ -3172,7 +3172,7 @@ add_captures(Ty *ty, Expr *pattern, Scope *scope)
                                 /*
                                  * Don't think clone is necessary here...
                                  */
-                                addsymbol(ty, scope, nt)->type = TYPE_STRING;
+                                addsymbol(ty, scope, nt)->type = STRING_TYPE;
                                 goto NextCapture;
                         }
                 }
@@ -4636,7 +4636,7 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
         case EXPRESSION_CHECK_MATCH:
                 symbolize_expression(ty, scope, e->left);
                 symbolize_expression(ty, scope, e->right);
-                e->_type = TYPE_BOOL;
+                e->_type = BOOL_TYPE;
                 break;
 
         case EXPRESSION_AND:
@@ -4688,7 +4688,7 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                 } else {
                         e->boolean = (scope_lookup(ty, scope, e->identifier) != NULL);
                 }
-                e->_type = TYPE_BOOL;
+                e->_type = BOOL_TYPE;
                 break;
 
         case EXPRESSION_IFDEF:
@@ -4739,7 +4739,7 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
 
         case EXPRESSION_PREFIX_BANG:
                 symbolize_expression(ty, scope, e->operand);
-                e->_type = TYPE_BOOL;
+                e->_type = BOOL_TYPE;
                 break;
 
         case EXPRESSION_TYPE_OF:
@@ -5339,11 +5339,11 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                 break;
 
         case EXPRESSION_BOOLEAN:
-                e->_type = TYPE_BOOL;
+                e->_type = type_bool(ty, e->boolean);
                 break;
 
         case EXPRESSION_STRING:
-                e->_type = TYPE_STRING;
+                e->_type = type_string(ty, e->string);
                 break;
 
         case EXPRESSION_REGEX:
@@ -12438,12 +12438,12 @@ compiler_init(Ty *ty)
         static Class ANY_CLASS = { .i = CLASS_TOP, .name = "Any" };
         static Type  ANY_TYPE  = { .type = TYPE_OBJECT, .class = &ANY_CLASS, .concrete = true };
 
-        TYPE_INT    = class_get(ty, CLASS_INT   )->object_type;
-        TYPE_STRING = class_get(ty, CLASS_STRING)->object_type;
+        INT_TYPE    = class_get(ty, CLASS_INT   )->object_type;
+        STRING_TYPE = class_get(ty, CLASS_STRING)->object_type;
         TYPE_REGEX  = class_get(ty, CLASS_REGEX )->object_type;
         TYPE_REGEXV = class_get(ty, CLASS_REGEXV)->object_type;
         TYPE_FLOAT  = class_get(ty, CLASS_FLOAT )->object_type;
-        TYPE_BOOL   = class_get(ty, CLASS_BOOL  )->object_type;
+        BOOL_TYPE   = class_get(ty, CLASS_BOOL  )->object_type;
         TYPE_BLOB   = class_get(ty, CLASS_BLOB  )->object_type;
         TYPE_ARRAY  = class_get(ty, CLASS_ARRAY )->object_type;
         TYPE_DICT   = class_get(ty, CLASS_DICT  )->object_type;
