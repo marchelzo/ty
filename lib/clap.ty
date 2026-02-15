@@ -6,6 +6,7 @@ import os
 import chalk (chalk)
 import path (Path)
 import yaml
+import ety
 
 fn lisp(s) {
     s.matches(/(?:^[[:lower:]]+)|(?:[[:upper:]][[:lower:]]*)/)
@@ -19,15 +20,20 @@ fn camel(name: String) -> String {
     [first, *rest].join()
 }
 
-fn _cleanDoc(ds) {
-    if ds == nil { return nil }
-    let lines = ds.lines().drop-while!(`!`).pop-while(`!`)
+fn _cleanDoc(doc: String | nil) {
+    if doc == nil {
+        return nil
+    }
+
+    let lines = doc.lines().drop-while!(`!`).pop-while(`!`)
+
     let leading = lines.filter(\_).map(`#` . /^\s*/).min() ?? 0
     lines = lines.map(&[leading;])
-    // Strip block-comment "* " prefix
+
     if lines.filter(\_).all?(\_.match?(/^\*/)) {
-        lines = lines.map(l -> if l { l.sub(/^\* ?/, '') } else { l })
+        lines = lines.map(l -> l ? l.sub(/^\* ?/, '') : l)
     }
+
     lines.join('\n')
 }
 
@@ -41,13 +47,13 @@ let boolish = %{
 fn _coerceVal(constraint, val) {
     if constraint == Bool { return !!val }
     if constraint == Int {
-        return if val :: Int { val } else { int("{val}") }
+        return val :: Int ? val : int("{val}")
     }
     if constraint == Float {
-        return if val :: Float { val } else { float("{val}") }
+        return val :: Float ? val : float("{val}")
     }
     if constraint == String {
-        return if val :: String { val } else { "{val}" }
+        return val :: String ? val : "{val}"
     }
     val
 }
@@ -103,7 +109,7 @@ fn _doParse(cls, argv, config) -> _ {
 
     // Apply YAML config files (overrides defaults, lower precedence than CLI/env)
     if config != nil {
-        let paths = if config :: Array { config } else { [config] }
+        let paths = config :: Array ? config : [config]
         for p in paths {
             let fp = Path(p)
             if fp.exists? {
@@ -115,10 +121,10 @@ fn _doParse(cls, argv, config) -> _ {
                             if !isArray { if let [_] = spec.constraint { isArray = true } }
                             if isArray {
                                 let inner = if let [ic] = spec.constraint { ic } else { spec.constraint }
-                                let arr = if val :: Array { val } else { [val] }
+                                let arr = val :: Array ? val : [val]
                                 result[spec.name] = arr.map(v -> _coerceVal(inner, v))
                             } else if spec.count {
-                                result[spec.name] = if val :: Int { val } else { int("{val}") ?? 0 }
+                                result[spec.name] = val :: Int ? val : int("{val}") ?? 0
                             } else {
                                 result[spec.name] = _coerceVal(spec.constraint, val)
                             }
@@ -199,7 +205,7 @@ fn _doParse(cls, argv, config) -> _ {
     }
 
     fn setValue(spec, val) {
-        let vals = if spec.delim != nil { val.split(spec.delim) } else { [val] }
+        let vals = spec.delim != nil ? val.split(spec.delim) : [val]
         if spec.repeat {
             result[spec.name] = result[spec.name] ?? []
             for v in vals { result[spec.name].push(convert(spec, v)) }
@@ -353,7 +359,7 @@ fn _doParse(cls, argv, config) -> _ {
                         print(chalk"  {left}{pad}  {firstLine}")
                         print('')
                         for hl in helpLines.slice(1) {
-                            if hl { print("{expandedIndent}{chalk.text(hl)}") } else { print('') }
+                            print(hl ? "{expandedIndent}{chalk.text(hl)}" : '')
                         }
                         if metaStr {
                             print("{expandedIndent}{metaStr}")
@@ -416,7 +422,7 @@ fn _doParse(cls, argv, config) -> _ {
                     let subcls: _ = ty.eval(cmds[name])
                     if let (_, $ds, _) = doc(subcls) {
                         let cleaned = _cleanDoc(ds)
-                        if cleaned { cleaned.lines()[0] } else { '' }
+                        cleaned ? cleaned.lines()[0] : ''
                     } else { '' }
                 }
                 cmdEntries.push((name, summary))
@@ -705,286 +711,253 @@ fn _doParse(cls, argv, config) -> _ {
 
 // ── Shell completion generators ──────────────────────────────────────
 
-fn _specOptWords(specs: _, version: _) {
+fn _optWords(specs: _, version: _) -> _ {
     let words = []
     for spec in specs if !spec.pos {
         if spec.long != nil { words.push('--' + spec.long) }
     }
     words.push('--help')
     if version != nil { words.push('--version') }
-    words
+    words.join(' ')
 }
 
-fn _bashValCases(specs: _, ind) {
-    let choiceSpecs = specs.filter(s -> !s.pos && s.check != nil && s.check.pred :: Array)
-    if #choiceSpecs == 0 { return nil }
-
-    let lines = []
-    lines.push(ind + 'case "$prev" in')
-    for spec in choiceSpecs {
+fn _choiceSpecs(specs: _) -> _ {
+    let result = []
+    for spec in specs if !spec.pos && spec.check != nil && spec.check.pred :: Array {
         let flags = []
         if spec.long != nil { flags.push('--' + spec.long) }
         if spec.short != nil { flags.push('-' + spec.short) }
-        let vals = spec.check.pred.join(' ')
-        lines.push(ind + '    ' + flags.join('|') + ')')
-        lines.push(ind + '        COMPREPLY=( $(compgen -W "' + vals + '" -- "$cur") )')
-        lines.push(ind + '        return 0')
-        lines.push(ind + '        ;;')
+        result.push({flags: flags.join('|'), vals: spec.check.pred.join(' ')})
     }
-    lines.push(ind + 'esac')
-    lines.join('\n')
+    result
 }
 
-fn _bashComplete(specs: _, cmds: _, version: _, prog: _) {
-    let funcName = '__' + prog.sub(/[^a-zA-Z0-9]/, '_') + '_completions'
-    let cmdNames = [n for n, _ in cmds]
-    let lines = []
-
-    lines.push(funcName + '() {')
-    lines.push('    local cur prev')
-    lines.push('    COMPREPLY=()')
-    lines.push('    cur="${COMP_WORDS[COMP_CWORD]}"')
-    lines.push('    prev="${COMP_WORDS[COMP_CWORD-1]}"')
-
-    if #cmdNames > 0 {
-        lines.push('')
-        lines.push('    local subcmd=""')
-        lines.push('    local i=1')
-        lines.push('    while [[ $i -lt $COMP_CWORD ]]; do')
-        lines.push('        case "${COMP_WORDS[$i]}" in')
-        lines.push('            ' + cmdNames.join('|') + ')')
-        lines.push('                subcmd="${COMP_WORDS[$i]}"')
-        lines.push('                break')
-        lines.push('                ;;')
-        lines.push('        esac')
-        lines.push('        ((i++))')
-        lines.push('    done')
-        lines.push('')
-        lines.push('    case "$subcmd" in')
-
-        for cn, ce in cmds {
-            let cc: _ = ty.eval(ce)
-            let ss: _ = cc.info()
-            let sv: _ = cc.version()
-            let sw: _ = _specOptWords(ss, sv)
-
-            lines.push('        ' + cn + ')')
-            let sc: _ = _bashValCases(ss, '            ')
-            if sc != nil { lines.push(sc) }
-            lines.push('            if [[ "$cur" == -* ]]; then')
-            lines.push('                COMPREPLY=( $(compgen -W "' + sw.join(' ') + '" -- "$cur") )')
-            lines.push('            fi')
-            lines.push('            return 0')
-            lines.push('            ;;')
-        }
-
-        lines.push('    esac')
+fn _zshArgSpec(spec: _, version: _, cmdNames: _) -> _ {
+    let result = []
+    let desc = (spec.help ?? '').sub("'", "''").sub('[', '\\[').sub(']', '\\]')
+    let needsVal = spec.constraint != Bool && !spec.count
+    let valAction = if spec.check != nil && spec.check.pred :: Array {
+        ': :(' + spec.check.pred.join(' ') + ')'
+    } else if needsVal {
+        ': :'
+    } else {
+        ''
     }
-
-    let tc = _bashValCases(specs, '    ')
-    if tc != nil {
-        lines.push('')
-        lines.push(tc)
+    if spec.short != nil {
+        result.push("'-" + spec.short + '[' + desc + ']' + valAction + "'")
     }
-
-    let ow = _specOptWords(specs, version)
-    lines.push('')
-    lines.push('    if [[ "$cur" == -* ]]; then')
-    lines.push('        COMPREPLY=( $(compgen -W "' + ow.join(' ') + '" -- "$cur") )')
-    lines.push('        return 0')
-    lines.push('    fi')
-
-    if #cmdNames > 0 {
-        lines.push('')
-        lines.push('    COMPREPLY=( $(compgen -W "' + cmdNames.join(' ') + '" -- "$cur") )')
+    if spec.long != nil {
+        let eq = needsVal ? '=' : ''
+        result.push("'--" + spec.long + eq + '[' + desc + ']' + valAction + "'")
     }
-
-    lines.push('}')
-    lines.push('complete -F ' + funcName + ' ' + prog)
-
-    lines.join('\n')
+    result
 }
 
-fn _zshComplete(specs: _, cmds: _, version: _, prog: _) {
-    let funcName = '_' + prog.sub(/[^a-zA-Z0-9]/, '_')
-    let cmdNames = [n for n, _ in cmds]
-    let opts = specs.filter(\!_.pos)
-    let lines = []
-
-    lines.push('#compdef ' + prog)
-    lines.push('')
-    lines.push(funcName + '() {')
-
-    // Build _arguments specs
-    let argSpecs = []
-    for spec in opts {
-        let desc = (spec.help ?? '').sub("'", "''").sub('[', '\\[').sub(']', '\\]')
-
-        let needsVal = spec.constraint != Bool && !spec.count
-        let valAction = if spec.check != nil && spec.check.pred :: Array {
-            ': :(' + spec.check.pred.join(' ') + ')'
-        } else if needsVal {
-            ': :'
+fn _fishOpt(spec: _) -> _ {
+    let desc = (spec.help ?? '').sub("'", "\\'")
+    let sf = spec.short != nil ? ' -s ' + spec.short : ''
+    let lf = spec.long != nil ? ' -l ' + spec.long : ''
+    let suffix = ''
+    if spec.constraint != Bool && !spec.count {
+        if spec.check != nil && spec.check.pred :: Array {
+            suffix = " -x -a '" + spec.check.pred.join(' ') + "'"
         } else {
-            ''
-        }
-
-        if spec.short != nil {
-            argSpecs.push("'-" + spec.short + '[' + desc + ']' + valAction + "'")
-        }
-        if spec.long != nil {
-            let eq = if needsVal { '=' } else { '' }
-            argSpecs.push("'--" + spec.long + eq + '[' + desc + ']' + valAction + "'")
+            suffix = ' -r'
         }
     }
+    return {sf, lf, desc, suffix}
+}
 
+const BASH_COMPLETION_TEMPLATE = ety.compile(
+    '''
+    <%= funcName %>() {
+        local cur prev
+        COMPREPLY=()
+        cur="${COMP_WORDS[COMP_CWORD]}"
+        prev="${COMP_WORDS[COMP_CWORD-1]}"
+    <% if #valCases > 0 { %>
+
+        case "$prev" in
+    <% for c in valCases { %>
+    <%= '        ' + c.flags %>)
+                COMPREPLY=( $(compgen -W "<%= c.vals %>" -- "$cur") )
+                return 0
+                ;;
+    <% } %>
+        esac
+    <% } %>
+    <% if #subcmds > 0 { %>
+
+        local subcmd=""
+        local i=1
+        while [[ $i -lt $COMP_CWORD ]]; do
+            case "${COMP_WORDS[$i]}" in
+    <%= '            ' + subcmds.map(\_.name).join('|') %>)
+                    subcmd="${COMP_WORDS[$i]}"
+                    break
+                    ;;
+            esac
+            ((i++))
+        done
+
+        case "$subcmd" in
+    <% for sub in subcmds { %>
+    <%= '        ' + sub.name %>)
+    <% if #sub.valCases > 0 { %>
+                case "$prev" in
+    <% for c in sub.valCases { %>
+    <%= '                ' + c.flags %>)
+                        COMPREPLY=( $(compgen -W "<%= c.vals %>" -- "$cur") )
+                        return 0
+                        ;;
+    <% } %>
+                esac
+    <% } %>
+                if [[ "$cur" == -* ]]; then
+                    COMPREPLY=( $(compgen -W "<%= sub.optWords %>" -- "$cur") )
+                fi
+                return 0
+                ;;
+    <% } %>
+        esac
+    <% } %>
+
+        if [[ "$cur" == -* ]]; then
+            COMPREPLY=( $(compgen -W "<%= optWords %>" -- "$cur") )
+            return 0
+        fi
+    <% if #subcmds > 0 { %>
+
+        COMPREPLY=( $(compgen -W "<%= subcmds.map(\_.name).join(' ') %>" -- "$cur") )
+    <% } %>
+    }
+    complete -F <%= funcName %> <%= prog %>
+    ''',
+    ['funcName', 'valCases', 'subcmds', 'optWords', 'prog']
+)
+
+const ZSH_COMPLETION_TEMPLATE = ety.compile(
+    '''
+    #compdef <%= prog %>
+
+    <%= funcName %>() {
+        _arguments \
+    <% for (i, a) in argSpecs.enumerate() { %>
+    <%= '        ' + a %><%= i < #argSpecs - 1 ? ' \\' : '' %>
+    <% } %>
+    <% if #subcmds > 0 { %>
+
+        case "$state" in
+            args)
+                case "${words[1]}" in
+    <% for sub in subcmds { %>
+    <%= '                ' + sub.name %>)
+                        _arguments \
+    <% for (i, a) in sub.argSpecs.enumerate() { %>
+    <%= '                        ' + a %><%= i < #sub.argSpecs - 1 ? ' \\' : '' %>
+    <% } %>
+                        ;;
+    <% } %>
+                esac
+                ;;
+        esac
+    <% } %>
+    }
+
+    <%= funcName %> "$@"
+    ''',
+    ['funcName', 'argSpecs', 'subcmds', 'prog']
+)
+
+const FISH_COMPLETION_TEMPLATE = ety.compile(
+    '''
+    <% for o in opts { %>
+    <%= "complete -c {prog}{cond}{o.sf}{o.lf} -d '{o.desc}'{o.suffix}" %>
+    <% } %>
+    <%= "complete -c {prog}{cond} -l help -d 'Show help'" %>
+    <% if version != nil { %>
+    <%= "complete -c {prog}{cond} -l version -d 'Show version'" %>
+    <% } %>
+    <% for sub in subcmds { %>
+
+    <% let sc = " -n '__fish_use_subcommand'" %>
+    <%= "complete -c {prog}{sc} -a {sub.name} -d '{sub.name}'" %>
+    <% let seen = " -n '__fish_seen_subcommand_from {sub.name}'" %>
+    <% for o in sub.opts { %>
+    <%= "complete -c {prog}{seen}{o.sf}{o.lf} -d '{o.desc}'{o.suffix}" %>
+    <% } %>
+    <%= "complete -c {prog}{seen} -l help -d 'Show help'" %>
+    <% if sub.version != nil { %>
+    <%= "complete -c {prog}{seen} -l version -d 'Show version'" %>
+    <% } %>
+    <% } %>
+    ''',
+    ['opts', 'cond', 'subcmds', 'version', 'prog']
+)
+
+fn _bashComplete(specs: _, cmds: _, version: _, prog: _) -> _ {
+    let funcName = '__' + prog.sub(/[^a-zA-Z0-9]/, '_') + '_completions'
+    let optWords = _optWords(specs, version)
+    let valCases = _choiceSpecs(specs)
+    let subcmds = []
+    for cn, ce in cmds {
+        let cc: _ = ty.eval(ce)
+        let ss: _ = cc.info()
+        let sv: _ = cc.version()
+        subcmds.push({name: cn, valCases: _choiceSpecs(ss), optWords: _optWords(ss, sv)})
+    }
+    BASH_COMPLETION_TEMPLATE(funcName, valCases, subcmds, optWords, prog)
+}
+
+fn _zshComplete(specs: _, cmds: _, version: _, prog: _) -> _ {
+    let funcName = '_' + prog.sub(/[^a-zA-Z0-9]/, '_')
+    let opts = specs.filter(\!_.pos)
+    let cmdNames = [n for n, _ in cmds]
+
+    let argSpecs = []
+    for spec in opts { argSpecs += _zshArgSpec(spec, version, cmdNames) }
     argSpecs.push("'--help[Show help]'")
-    if version != nil {
-        argSpecs.push("'--version[Show version]'")
-    }
-
+    if version != nil { argSpecs.push("'--version[Show version]'") }
     if #cmdNames > 0 {
         argSpecs.push("'1:command:(" + cmdNames.join(' ') + ")'")
         argSpecs.push("'*::arg:->args'")
     }
 
-    lines.push('    _arguments \\')
-    for (i, s) in argSpecs.enumerate() {
-        if i < #argSpecs - 1 {
-            lines.push('        ' + s + ' \\')
-        } else {
-            lines.push('        ' + s)
-        }
+    let subcmds = []
+    for cn, ce in cmds {
+        let cc: _ = ty.eval(ce)
+        let ss: _ = cc.info()
+        let sv: _ = cc.version()
+        let subOpts = ss.filter(\!_.pos)
+        let subArgSpecs = []
+        for spec in subOpts { subArgSpecs += _zshArgSpec(spec, sv, []) }
+        subArgSpecs.push("'--help[Show help]'")
+        if sv != nil { subArgSpecs.push("'--version[Show version]'") }
+        subcmds.push({name: cn, argSpecs: subArgSpecs})
     }
 
-    // Subcommand dispatch
-    if #cmdNames > 0 {
-        lines.push('')
-        lines.push('    case "$state" in')
-        lines.push('        args)')
-        lines.push('            case "${words[1]}" in')
-
-        for cn, ce in cmds {
-            let cc: _ = ty.eval(ce)
-            let ss: _ = cc.info()
-            let sv: _ = cc.version()
-            let subOpts: _ = ss.filter(\!_.pos)
-            let subArgSpecs = []
-
-            for spec in subOpts {
-                let desc = (spec.help ?? '').sub("'", "''").sub('[', '\\[').sub(']', '\\]')
-                let needsVal = spec.constraint != Bool && !spec.count
-                let valAction = if spec.check != nil && spec.check.pred :: Array {
-                    ': :(' + spec.check.pred.join(' ') + ')'
-                } else if needsVal {
-                    ': :'
-                } else {
-                    ''
-                }
-                if spec.short != nil {
-                    subArgSpecs.push("'-" + spec.short + '[' + desc + ']' + valAction + "'")
-                }
-                if spec.long != nil {
-                    let eq = if needsVal { '=' } else { '' }
-                    subArgSpecs.push("'--" + spec.long + eq + '[' + desc + ']' + valAction + "'")
-                }
-            }
-            subArgSpecs.push("'--help[Show help]'")
-            if sv != nil { subArgSpecs.push("'--version[Show version]'") }
-
-            lines.push('                ' + cn + ')')
-            lines.push('                    _arguments \\')
-            for (i, s) in subArgSpecs.enumerate() {
-                if i < #subArgSpecs - 1 {
-                    lines.push('                        ' + s + ' \\')
-                } else {
-                    lines.push('                        ' + s)
-                }
-            }
-            lines.push('                    ;;')
-        }
-
-        lines.push('            esac')
-        lines.push('            ;;')
-        lines.push('    esac')
-    }
-
-    lines.push('}')
-    lines.push('')
-    lines.push(funcName + ' "$@"')
-
-    lines.join('\n')
+    ZSH_COMPLETION_TEMPLATE(funcName, argSpecs, subcmds, prog)
 }
 
-fn _fishComplete(specs: _, cmds: _, version: _, prog: _) {
+fn _fishComplete(specs: _, cmds: _, version: _, prog: _) -> _ {
     let cmdNames = [n for n, _ in cmds]
-    let opts = specs.filter(\!_.pos)
-    let lines = []
     let hasCmds = #cmdNames > 0
-    let noCmdCond = if hasCmds { " -n '__fish_use_subcommand'" } else { '' }
+    let cond = hasCmds ? " -n '__fish_use_subcommand'" : ''
 
-    for spec in opts {
-        let desc = (spec.help ?? '').sub("'", "\\'")
-        let parts = ['complete -c ' + prog + noCmdCond]
+    let opts = []
+    for spec in specs.filter(\!_.pos) { opts.push(_fishOpt(spec)) }
 
-        if spec.short != nil { parts.push('-s ' + spec.short) }
-        if spec.long != nil { parts.push('-l ' + spec.long) }
-        parts.push("-d '" + desc + "'")
-
-        if spec.constraint != Bool && !spec.count {
-            if spec.check != nil && spec.check.pred :: Array {
-                parts.push('-x -a ' + "'" + spec.check.pred.join(' ') + "'")
-            } else {
-                parts.push('-r')
-            }
-        }
-
-        lines.push(parts.join(' '))
+    let subcmds = []
+    for cn, ce in cmds {
+        let cc: _ = ty.eval(ce)
+        let ss: _ = cc.info()
+        let sv: _ = cc.version()
+        let subOpts = []
+        for spec in ss.filter(\!_.pos) { subOpts.push(_fishOpt(spec)) }
+        subcmds.push({name: cn, opts: subOpts, version: sv})
     }
 
-    lines.push('complete -c ' + prog + noCmdCond + " -l help -d 'Show help'")
-    if version != nil {
-        lines.push('complete -c ' + prog + noCmdCond + " -l version -d 'Show version'")
-    }
-
-    // Subcommands
-    if hasCmds {
-        lines.push('')
-        for cn, ce in cmds {
-            let cc: _ = ty.eval(ce)
-            let ss: _ = cc.info()
-            let sv: _ = cc.version()
-            let subOpts: _ = ss.filter(\!_.pos)
-            let cond = " -n '__fish_seen_subcommand_from " + cn + "'"
-
-            lines.push("complete -c " + prog + " -n '__fish_use_subcommand' -a " + cn + " -d '" + cn + "'")
-
-            for spec in subOpts {
-                let desc = (spec.help ?? '').sub("'", "\\'")
-                let parts = ['complete -c ' + prog + cond]
-                if spec.short != nil { parts.push('-s ' + spec.short) }
-                if spec.long != nil { parts.push('-l ' + spec.long) }
-                parts.push("-d '" + desc + "'")
-
-                if spec.constraint != Bool && !spec.count {
-                    if spec.check != nil && spec.check.pred :: Array {
-                        parts.push('-x -a ' + "'" + spec.check.pred.join(' ') + "'")
-                    } else {
-                        parts.push('-r')
-                    }
-                }
-
-                lines.push(parts.join(' '))
-            }
-
-            lines.push('complete -c ' + prog + cond + " -l help -d 'Show help'")
-            if sv != nil {
-                lines.push('complete -c ' + prog + cond + " -l version -d 'Show version'")
-            }
-        }
-    }
-
-    lines.join('\n')
+    FISH_COMPLETION_TEMPLATE(opts, cond, subcmds, version, prog).trim()
 }
 
 fn _completions(cls, shell, progName) -> _ {
@@ -1182,13 +1155,13 @@ pub macro clap! {
                 'conflicts' => {
                     next()
                     let v = ty.eval(expr(1))
-                    conflicts = if v :: Array { v } else { [v] }
+                    conflicts = v :: Array ? v : [v]
                 },
 
                 'requires' => {
                     next()
                     let v = ty.eval(expr(1))
-                    requires = if v :: Array { v } else { [v] }
+                    requires = v :: Array ? v : [v]
                 },
 
                 'delim' => {
@@ -1199,7 +1172,7 @@ pub macro clap! {
                 'aliases' => {
                     next()
                     let v = ty.eval(expr(1))
-                    aliases = if v :: Array { v } else { [v] }
+                    aliases = v :: Array ? v : [v]
                 },
 
                 id => {
