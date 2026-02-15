@@ -153,6 +153,9 @@ TypeOf2Op(Ty *ty, int op, Type *t0, Type *t1);
 static bool
 BindConstraint(Ty *ty, Constraint *c);
 
+static Type *
+CullConstraints(Ty *ty, Type *t0);
+
 static bool
 TryBind(Ty *ty, Type *t0, Type *t1, bool super);
 
@@ -1528,6 +1531,7 @@ Reduce(Ty *ty, Type const *t0)
                         t1 = CloneType(ty, t1);
                 }
                 t1->rt = t2;
+                t1 = CullConstraints(ty, t1);
                 break;
         }
 
@@ -5385,6 +5389,49 @@ ShouldDefer2Op(Type *t0, Type *t1, Type *t2)
 static Type *
 TrySolve2Op(Ty *ty, int op, Type *op0, Type *t0, Type *t1, Type *t2, bool exhaustive);
 
+static Type *
+CullConstraints(Ty *ty, Type *t0)
+{
+        if (TypeType(t0) == TYPE_INTERSECT) {
+                bool cloned = false;
+                for (int i = 0; i < vN(t0->types); ++i) {
+                        Type *elem = v__(t0->types, i);
+                        Type *culled = CullConstraints(ty, elem);
+                        if (culled != elem) {
+                                if (!cloned) {
+                                        t0 = CloneType(ty, t0);
+                                        CloneVec(t0->types);
+                                        cloned = true;
+                                }
+                                *v_(t0->types, i) = culled;
+                        }
+                }
+                return t0;
+        }
+
+        if ((TypeType(t0) != TYPE_FUNCTION) || (vN(t0->constraints) == 0)) {
+                return t0;
+        }
+
+        bool cloned = false;
+
+        for (int i = vN(t0->constraints) - 1; i >= 0; --i) {
+                Constraint c = v__(t0->constraints, i);
+                bool ok = BindConstraint(ty, &c);
+                if (ok) {
+                        if (!cloned) {
+                                t0 = CloneType(ty, t0);
+                                CloneVec(t0->params);
+                                CloneVec(t0->constraints);
+                                cloned = true;
+                        }
+                        vvXi(t0->constraints, i);
+                }
+        }
+
+        return t0;
+}
+
 /* Derive <, <=, >, >= from <=> */
 static bool
 CmpFallback(Ty *ty, Type *t0, Type *t1, Type *t2)
@@ -6926,6 +6973,8 @@ Inst0(
         t0 = Propagate(ty, t0);
 
         ty->tenv = save;
+
+        t0 = CullConstraints(ty, t0);
 
         return t0;
 }
@@ -9192,7 +9241,7 @@ type_show(Ty *ty, Type const *t0)
         static TypeVector visiting;
         byte_vector buf = {0};
 
-        t0 = ResolveVar(t0);
+        t0 = Reduce(ty, ResolveVar(t0));
 
         if (t0 == NULL) {
                 return S2("⭕️");
@@ -9812,6 +9861,12 @@ MakeConcrete_(Ty *ty, Type *t0, TypeVector *refs, bool variance)
                              && IsConcrete(c->t1)
                              && IsConcrete(c->t2)
                         );
+                }
+                for (int i = vN(t0->constraints) - 1; i >= 0; --i) {
+                        Constraint *c = v_(t0->constraints, i);
+                        if (IsUnknown(c->t0) || IsUnknown(c->t1) || IsUnknown(c->t2)) {
+                                vvXi(t0->constraints, i);
+                        }
                 }
                 t0->rt = MakeConcrete_(ty, t0->rt, refs, variance);
                 t0->concrete &= IsConcrete(t0->rt);
