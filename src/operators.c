@@ -369,6 +369,7 @@ Type *
 op_type(Ty *ty, i32 op)
 {
         Type *t0 = NULL;
+        TypeVector types = {0};
         DispatchGroup *group;
 
         TyRwLockRdLock(&_2.lock);
@@ -379,21 +380,42 @@ op_type(Ty *ty, i32 op)
         group = _2.ops.items[op];
         TyRwLockRdUnlock(&_2.lock);
 
+        SCRATCH_SAVE();
+
         TyRwLockWrLock(&group->lock);
         dont_printf("op_type(%s)  (%u defs):\n", intern_entry(&xD.b_ops, op)->name, vN(group->defs));
         if (group->op0 == NULL) {
+                /*
+                 * Snapshot the type pointers while holding the lock.
+                 */
                 for (i32 i = 0; i < vN(group->defs); ++i) {
                         Expr const *fun = v_(group->defs, i)->expr;
                         if (fun->_type != NULL && fun->return_type != NULL) {
-                                group->op0 = type_both(&vvv, group->op0, fun->_type);
-                                dont_printf("  [i=%d]  %s\n", i, type_show(&vvv, group->op0));
+                                svP(types, fun->_type);
                         }
                 }
-        }
-        t0 = group->op0;
-        TyRwLockWrUnlock(&group->lock);
+                TyRwLockWrUnlock(&group->lock);
 
-        dont_printf("op_type(%s): %s\n", intern_entry(&xD.b_ops, op)->name, type_show(&vvv, t0));
+                /*
+                 * Build the intersection incrementally outside the lock.
+                 * Update group->op0 after each step so that recursive
+                 * op_type calls (via type_both -> Reduce -> BindConstraint)
+                 * see the progressively-built result and terminate.
+                 */
+                for (i32 i = 0; i < vN(types); ++i) {
+                        t0 = type_both(ty, t0, v__(types, i));
+                        TyRwLockWrLock(&group->lock);
+                        group->op0 = t0;
+                        TyRwLockWrUnlock(&group->lock);
+                }
+        } else {
+                t0 = group->op0;
+                TyRwLockWrUnlock(&group->lock);
+        }
+
+        SCRATCH_RESTORE();
+
+        dont_printf("op_type(%s): %s\n", intern_entry(&xD.b_ops, op)->name, type_show(ty, t0));
 
         return t0;
 }
