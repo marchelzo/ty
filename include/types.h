@@ -303,6 +303,9 @@ type_subtract(Ty *ty, Type **t0, Type *t1);
 bool
 type_bind(Ty *ty, Type *t0, Type *t1);
 
+void
+type_accumulate_return(Ty *ty, Type **rt, Type *t0);
+
 Type *
 type_resolve(Ty *ty, Expr const *e);
 
@@ -356,6 +359,9 @@ type_without(Ty *ty, Type *t0, Type *t1);
 
 Type *
 type_either(Ty *ty, Type *t0, Type *t1);
+
+Type *
+type_any_of(Ty *ty, TypeVector const *types);
 
 Type *
 type_both(Ty *ty, Type *t0, Type *t1);

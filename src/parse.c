@@ -6242,7 +6242,7 @@ parse_class_definition(Ty *ty)
                              && (meth->body->type == STATEMENT_EXPRESSION)
                              && (meth->body->expression->type == EXPRESSION_GENERATOR)
                         ) {
-                                meth->body->expression->name = afmt("<%def:gen>", name);
+                                meth->body->expression->name = afmt("<%s:gen>", name);
                         }
 
                         if (_static) {

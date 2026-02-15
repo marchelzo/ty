@@ -4966,6 +4966,9 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                 TryStates tries = STATE.tries;
                 v00(STATE.tries);
 
+                TypeVector return_types = STATE.return_types;
+                v00(STATE.return_types);
+
                 STATE.func = e;
 
                 // TODO
@@ -5052,11 +5055,22 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                     && !e->body->will_return
                     && (e->type != EXPRESSION_GENERATOR)
                 ) {
-                        unify2(
-                                ty,
-                                &e->_type->rt,
-                                (e->body->_type == NULL) ? NIL_TYPE : e->body->_type
-                        );
+                        if (e->return_type != NULL) {
+                                unify2(
+                                        ty,
+                                        &e->_type->rt,
+                                        (e->body->_type != NULL) ? e->body->_type : NIL_TYPE
+                                );
+                        } else {
+                                avP(
+                                        STATE.return_types,
+                                        (e->body->_type != NULL) ? e->body->_type : NIL_TYPE
+                                );
+                        }
+                }
+
+                if ((e->return_type == NULL) && (e->body != NULL)) {
+                        unify2(ty, &e->_type->rt, type_any_of(ty, &STATE.return_types));
                 }
 
                 e->bound_symbols.items = e->scope->owned.items;
@@ -5064,6 +5078,7 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
 
                 STATE.func = func;
                 STATE.tries = tries;
+                STATE.return_types = return_types;
 
                 if (e->type == EXPRESSION_MULTI_FUNCTION) {
                         e->_type = NULL;
@@ -5167,9 +5182,8 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                         symbolize_expression(ty, scope, v__(e->es, i));
                 }
                 if (STATE.func->_type != NULL) {
-                        unify2(
-                                ty,
-                                &STATE.func->_type->rt,
+                        avP(
+                                STATE.return_types,
                                 type_tagged(ty, TAG_SOME, v__(e->es, 0)->_type)
                         );
                 }
@@ -6188,10 +6202,10 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
 
                         dont_printf("  before unify: %s\n", type_show(ty, STATE.func->_type->rt));
 
-                        unify2(ty, &STATE.func->_type->rt, t0);
-
-                        if (STATE.func->_type->rt == NULL) {
-                                STATE.func->_type->rt = TYPE_ANY;
+                        if (STATE.func->return_type != NULL) {
+                                unify2(ty, &STATE.func->_type->rt, t0);
+                        } else {
+                                avP(STATE.return_types, t0);
                         }
 
                         dont_printf("  after unify: %s\n", type_show(ty, STATE.func->_type->rt));

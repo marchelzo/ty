@@ -211,6 +211,8 @@ typedef struct compiler_state {
 
         Type *expected_type;
 
+        TypeVector return_types;
+
         Expr *func;
         Expr *meth;
         Class *class;
