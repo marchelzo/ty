@@ -734,7 +734,7 @@ fn _choiceSpecs(specs: _) -> _ {
 
 fn _zshArgSpec(spec: _, version: _, cmdNames: _) -> _ {
     let result = []
-    let desc = (spec.help ?? '').sub("'", "''").sub('[', '\\[').sub(']', '\\]')
+    let desc = chalk.text((spec.help ?? '').lines()[0] ?? '').plain.sub("'", "''").sub('[', '\\[').sub(']', '\\]')
     let needsVal = spec.constraint != Bool && !spec.count
     let valAction = if spec.check != nil && spec.check.pred :: Array {
         ': :(' + spec.check.pred.join(' ') + ')'
@@ -754,7 +754,7 @@ fn _zshArgSpec(spec: _, version: _, cmdNames: _) -> _ {
 }
 
 fn _fishOpt(spec: _) -> _ {
-    let desc = (spec.help ?? '').sub("'", "\\'")
+    let desc = chalk.text((spec.help ?? '').lines()[0] ?? '').plain.sub("'", "\\'")
     let sf = spec.short != nil ? ' -s ' + spec.short : ''
     let lf = spec.long != nil ? ' -l ' + spec.long : ''
     let suffix = ''
@@ -871,26 +871,23 @@ const ZSH_COMPLETION_TEMPLATE = ety.compile(
 
 const FISH_COMPLETION_TEMPLATE = ety.compile(
     '''
-    <% for o in opts { %>
-    <%= "complete -c {prog}{cond}{o.sf}{o.lf} -d '{o.desc}'{o.suffix}" %>
-    <% } %>
-    <%= "complete -c {prog}{cond} -l help -d 'Show help'" %>
-    <% if version != nil { %>
-    <%= "complete -c {prog}{cond} -l version -d 'Show version'" %>
-    <% } %>
-    <% for sub in subcmds { %>
-
-    <% let sc = " -n '__fish_use_subcommand'" %>
-    <%= "complete -c {prog}{sc} -a {sub.name} -d '{sub.name}'" %>
-    <% let seen = " -n '__fish_seen_subcommand_from {sub.name}'" %>
-    <% for o in sub.opts { %>
-    <%= "complete -c {prog}{seen}{o.sf}{o.lf} -d '{o.desc}'{o.suffix}" %>
-    <% } %>
-    <%= "complete -c {prog}{seen} -l help -d 'Show help'" %>
-    <% if sub.version != nil { %>
-    <%= "complete -c {prog}{seen} -l version -d 'Show version'" %>
-    <% } %>
-    <% } %>
+<% for o in opts { %>
+complete -c <%= "{prog}{cond}{o.sf}{o.lf}" %> -d '<%= o.desc %>'<%= o.suffix %>
+<% } %>
+complete -c <%= "{prog}{cond}" %> -l help -d 'Show help'
+<% if version != nil { %>
+complete -c <%= "{prog}{cond}" %> -l version -d 'Show version'
+<% } %>
+<% for sub in subcmds { %>
+complete -c <%= prog %> -n '__fish_use_subcommand' -a <%= sub.name %> -d '<%= sub.name %>'
+<% for o in sub.opts { %>
+complete -c <%= prog %> -n '__fish_seen_subcommand_from <%= sub.name %>'<%= "{o.sf}{o.lf}" %> -d '<%= o.desc %>'<%= o.suffix %>
+<% } %>
+complete -c <%= prog %> -n '__fish_seen_subcommand_from <%= sub.name %>' -l help -d 'Show help'
+<% if sub.version != nil { %>
+complete -c <%= prog %> -n '__fish_seen_subcommand_from <%= sub.name %>' -l version -d 'Show version'
+<% } %>
+<% } %>
     ''',
     ['opts', 'cond', 'subcmds', 'version', 'prog']
 )

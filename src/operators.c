@@ -382,7 +382,7 @@ op_type(Ty *ty, i32 op)
 
         SCRATCH_SAVE();
 
-        TyRwLockWrLock(&group->lock);
+        TyRwLockRdLock(&group->lock);
         dont_printf("op_type(%s)  (%u defs):\n", intern_entry(&xD.b_ops, op)->name, vN(group->defs));
         if (group->op0 == NULL) {
                 /*
@@ -394,7 +394,7 @@ op_type(Ty *ty, i32 op)
                                 svP(types, fun->_type);
                         }
                 }
-                TyRwLockWrUnlock(&group->lock);
+                TyRwLockRdUnlock(&group->lock);
 
                 /*
                  * Build the intersection incrementally outside the lock.
@@ -410,7 +410,7 @@ op_type(Ty *ty, i32 op)
                 }
         } else {
                 t0 = group->op0;
-                TyRwLockWrUnlock(&group->lock);
+                TyRwLockRdUnlock(&group->lock);
         }
 
         SCRATCH_RESTORE();

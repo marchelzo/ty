@@ -125,7 +125,7 @@ class CompletionCycler {
         __cs
     }
 
-    cycle() {
+    cycle() -> (Array[String], Int) {
         if __ci == #__cs {
             __ci = 0
             return (__line, __i)
