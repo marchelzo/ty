@@ -889,17 +889,19 @@ string_comb(Ty *ty, Value *string, int argc, Value *kwargs)
                 isize len = sN(*string);
                 isize start = 0;
                 usize *ovec = ty_re_ovec();
+                i32 sz;
                 i32 rc;
 
                 while ((rc = ty_re_match(re, str, len, start, 0)) > 0) {
                         svPn(scratch, str + start, ovec[0] - start);
                         if (ovec[0] == ovec[1]) {
-                                if (start == len) {
+                                if (ovec[0] >= len) {
                                         rc = PCRE2_ERROR_NOMATCH;
                                         break;
-                                } else {
-                                        start += u8_rune_sz(str + start);
                                 }
+                                sz = u8_rune_sz(str + ovec[0]);
+                                svPn(scratch, str + ovec[0], sz);
+                                start = ovec[0] + sz;
                         } else {
                                 start = ovec[1];
                         }

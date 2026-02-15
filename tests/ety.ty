@@ -26,6 +26,7 @@ let expected =
     - Widget: Widget A
     - Widget: Widget B
     - Widget: Widget C
+
     '''
 
 assert(output == expected)
