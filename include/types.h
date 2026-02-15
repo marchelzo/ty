@@ -361,6 +361,9 @@ Type *
 type_either(Ty *ty, Type *t0, Type *t1);
 
 Type *
+type_conditional(Ty *ty, Expr const *e);
+
+Type *
 type_any_of(Ty *ty, TypeVector const *types);
 
 Type *

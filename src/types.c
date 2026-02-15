@@ -10317,6 +10317,23 @@ type_either(Ty *ty, Type *t0, Type *t1)
         return (t0 == NULL) ? t1 : Either(ty, t0, t1);
 }
 
+Type *
+type_conditional(Ty *ty, Expr const *e)
+{
+        Type *t0 = e->then->_type;
+        Type *t1 = e->otherwise->_type;
+
+        if (UnifyX(ty, t0, t1, true, false)) {
+                return t0;
+        }
+
+        if (UnifyX(ty, t1, t0, true, false)) {
+                return t1;
+        }
+
+        return Either(ty, t0, t1);
+}
+
 void
 type_accumulate_return(Ty *ty, Type **rt, Type *t0)
 {
