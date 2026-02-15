@@ -13,31 +13,38 @@ fn parse(s: String) -> Array[TemplateToken] {
     let tokens = []
     let end = #s
 
-    fn go(i, j) {
-        if j == end {
-            tokens.push(Text(s.splice(i, j)))
-        } else if let [_, code] = s.slice(j).match(/^<%=((?:(?!%>).)+)%>/) {
+    let i = 0
+    let j = 0
+
+    while j < end {
+        if let [_, code] = s.slice(j).match(/^<%=((?:(?!%>).)+)%>/) {
             tokens.push(Text(s.splice(i, j)))
             tokens.push(Expr(code))
-            go(j + #code + 5, j + #code + 5)
+            j += #code + 5
+            i = j
         } else if let [_, code] = s.slice(j).match(/^<%@((?:(?!%>).)+)%>/) {
             tokens.push(Text(s.splice(i, j)))
             tokens.push(Embed(code))
-            go(j + #code + 5, j + #code + 5)
+            j += #code + 5
+            i = j
         } else if let [_, var, code] = s.slice(j).match(/^<%\?(\w+)((?:(?!%>).)+)%>/) {
             tokens.push(Text(s.splice(i, j)))
             tokens.push(IfDef(var, code))
-            go(j + #code + #var + 5, j + #code + #var + 5)
+            j += #code + #var + 5
+            i = j
         } else if let [_, code] = s.slice(j).match(/^<%((?:(?!%>).)+)%>/) {
             tokens.push(Text(s.splice(i, j)))
             tokens.push(Code(code))
-            go(j + #code + 4, j + #code + 4)
+            j += #code + 4
+            i = j
         } else {
-            go(i, j + 1)
+            j += 1
         }
     }
 
-    go(0, 0)
+    if i <= end {
+        tokens.push(Text(s.splice(i, j)))
+    }
 
     tokens
 }
