@@ -88,9 +88,9 @@ fn _doParse(cls, argv, config) -> _ {
     }
 
     // Result storage
-    let result = %{}
-    let explicit = %{}
-    let posArgs = []
+    let result:   _ = %{}
+    let explicit: _ = %{}
+    let posArgs:  _ = []
 
     // Initialize defaults
     for spec in specs {
@@ -162,56 +162,56 @@ fn _doParse(cls, argv, config) -> _ {
     }
 
     fn convert(spec, val: String) {
-        if spec.conv != nil {
-            return (spec.conv)(val)
+        if let $conv = spec.conv {
+            return conv(val)
         }
-        let c = if let [inner] = spec.constraint { inner } else { spec.constraint }
+
+        let c: _ = match spec.constraint {
+            [inner] => inner
+            con     => con
+        }
+
         let result = coerce(c, val)
+
         let optName = if spec.pos {
             opt((spec.long ?? lisp(spec.name)).upper())
         } else {
             opt(spec.long ? "--{spec.long}" : "-{spec.short}")
         }
+
         if result == nil && c != Bool {
             let typeName = if let ($n, _, _) = doc(c) { n } else { str(c) }
             die("Invalid value '{val}' for {optName}: expected {typeName}")
         }
-        if spec.check != nil {
-            let chk: _ = spec.check.pred
-            let valid = false
-            if chk :: Regex {
-                valid = !!str(result).match?(chk)
-            } else if chk :: Array {
-                valid = chk.any?(c -> c == result)
-            } else if chk :: Range {
-                valid = result in chk
-            } else {
-                valid = !!chk(result)
+
+        if let $check = spec.check {
+            let pred: _ = check.pred
+
+            let valid = match pred {
+                allow: Array | Range => result in allow,
+                pattern: Regex       => "{result}".match?(pattern),
+                _                    => !!pred(result)
             }
+
             if !valid {
-                let msg = if chk :: Regex {
-                    "must match {chk}"
-                } else if chk :: Array {
-                    "expected one of: {chk.join(', ')}"
-                } else if chk :: Range {
-                    "must be in range {spec.check.src}"
-                } else {
-                    "failed check: {spec.check.src}"
+                let msg = match pred {
+                    rng: Range => "must be in range {rng}",
+                    pat: Regex => "must match {pat}",
+                    set: Array => "expected one of: {set.join(', ')}",
+                    _          => "failed check: {check.src}"
                 }
                 die("Invalid value '{val}' for {optName}: {msg}")
             }
         }
+
         return result
     }
 
     fn setValue(spec, val) {
         let vals = spec.delim != nil ? val.split(spec.delim) : [val]
-        if spec.repeat {
+        if spec.repeat || (spec.constraint :: Array) {
             result[spec.name] = result[spec.name] ?? []
-            for v in vals { result[spec.name].push(convert(spec, v)) }
-        } else if let [_] = spec.constraint {
-            result[spec.name] = result[spec.name] ?? []
-            for v in vals { result[spec.name].push(convert(spec, v)) }
+            result[spec.name] += [convert(spec, it) for vals]
         } else {
             result[spec.name] = convert(spec, vals[-1])
         }
@@ -1178,7 +1178,12 @@ pub macro clap! {
             }
         }
 
-        args.push({name, constraint, constraintExpr, help, conv, short, long, default, required, env, pos, repeat, count, min, check, hidden, placeholder, conflicts, requires, group, delim, aliases})
+        args.push({
+            name, constraint, constraintExpr, help, conv,
+            short, long, default, required, env, pos, repeat,
+            count, min, check, hidden, placeholder,
+            conflicts, requires, group, delim, aliases
+        })
     }
 
     // Build class fields from parsed args
