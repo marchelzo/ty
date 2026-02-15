@@ -49,8 +49,8 @@ macro __flat-array! $$[
     }
 $$]
 
-fn parse::expr(prec: ?Int, raw: Bool, resolve: ?Bool = false) -> (AST, _);
-fn parse::expr(prec: ?Int, resolve: ?Bool = false) -> AST;
+fn parse::expr(prec: ?Int, raw: true, resolve: ?Bool = false) -> (AST, _);
+fn parse::expr(prec: ?Int, raw: ?Bool, resolve: ?Bool = false) -> AST;
 
 fn parse::stmt(prec: ?Int, raw: Bool) -> (AST, _);
 fn parse::stmt(prec: ?Int) -> AST;
@@ -72,12 +72,13 @@ macro ParseError = {
 
 fn ty::parse(
     source: String,
-    tokens: Bool,
+    tokens: true,
     deep: Bool = false,
     resolve: Bool = false
 ) -> Ok[(AST, {tokens: [Token]})] | Err[ParseError];
 fn ty::parse(
     source: String,
+    tokens: false | nil,
     deep: Bool = false,
     resolve: Bool = false
 ) -> Ok[AST] | Err[ParseError];
@@ -662,7 +663,7 @@ class Array[T] : Iterable[T] {
         self
     }
 
-    mean(f: T -> Int | Float = id) -> ?Float {
+    mean(f: T -> Int | Float = id) -> Float | nil {
         match self {
             [] => nil,
             _  => map(\float(f(_))).sum() / #self
@@ -1014,7 +1015,7 @@ class String : Iterable[String], IntoPtr[Int] {
     slice(i: Int, j: ?Int) -> String;
     bslice(i: Int, j: ?Int) -> String;
 
-    int { ::int(self) }
+    to-i -> Int { ::int(self, 0) }
 
     matches(pattern: RegexV) -> [RegexMatch];
     matches(pattern: Regex) -> [String];
@@ -1037,7 +1038,7 @@ class String : Iterable[String], IntoPtr[Int] {
     repeat(n: Int) -> String;
 
     int(base: Int = 10) {
-        return ::int(self, base)
+        ::int(self, base)
     }
 
     str()  -> String { self }
