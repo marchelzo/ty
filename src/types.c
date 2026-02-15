@@ -1467,9 +1467,16 @@ Reduce(Ty *ty, Type const *t0)
         bool fixed  = IsFixed(t1);
 
         switch (TypeType(t1)) {
+        case TYPE_TUPLE:
+                t2 = Reduce(ty, t1->repeat);
+                if (t2 != t1->repeat) {
+                        t1 = CloneType(ty, t1);
+                        CloneVec(t1->types);
+                        cloned = true;
+                }
+                t1->repeat = t2;
         case TYPE_UNION:
         case TYPE_INTERSECT:
-        case TYPE_TUPLE:
         case TYPE_LIST:
         case TYPE_SEQUENCE:
                 for (int i = 0; i < vN(t1->types); ++i) {
@@ -1521,10 +1528,34 @@ Reduce(Ty *ty, Type const *t0)
                         if (t2 != p->type && !cloned) {
                                 t1 = CloneType(ty, t1);
                                 CloneVec(t1->params);
+                                CloneVec(t1->constraints);
                                 cloned = true;
                         }
                         *v_(t1->params, i) = *p;
                         v_(t1->params, i)->type = t2;
+                }
+                t2 = Reduce(ty, t1->pack);
+                if (t2 != t1->pack && !cloned) {
+                        t1 = CloneType(ty, t1);
+                        CloneVec(t1->params);
+                        CloneVec(t1->constraints);
+                        cloned = true;
+                }
+                t1->pack = t2;
+                for (int i = 0; i < vN(t1->constraints); ++i) {
+                        Constraint const *c = v_(t1->constraints, i);
+                        Type *c0 = Reduce(ty, c->t0);
+                        Type *c1 = Reduce(ty, c->t1);
+                        Type *c2 = Reduce(ty, c->t2);
+                        if ((c0 != c->t0 || c1 != c->t1 || c2 != c->t2) && !cloned) {
+                                t1 = CloneType(ty, t1);
+                                CloneVec(t1->params);
+                                CloneVec(t1->constraints);
+                                cloned = true;
+                        }
+                        v_(t1->constraints, i)->t0 = c0;
+                        v_(t1->constraints, i)->t1 = c1;
+                        v_(t1->constraints, i)->t2 = c2;
                 }
                 t2 = Reduce(ty, t1->rt);
                 if (t2 != t1->rt && !cloned) {
