@@ -640,20 +640,7 @@ HasBody(Expr const *fun)
 }
 
 static bool
-HasAnyFieldInitializers(ClassDefinition const *def)
-{
-        for (int i = 0; i < vN(def->fields); ++i) {
-                Expr const *field = v__(def->fields, i);
-                if (field->type == EXPRESSION_EQ) {
-                        return true;
-                }
-        }
-
-        return false;
-}
-
-static bool
-HasConstructor(Class const *class)
+HasUserConstructor(Class const *class)
 {
         if (class == NULL || class->i == CLASS_OBJECT) {
                 return false;
@@ -664,22 +651,46 @@ HasConstructor(Class const *class)
         for (int i = 0; i < vN(def->methods); ++i) {
                 Expr const *method = v__(def->methods, i);
                 if (s_eq(method->name, "init")) {
+                        return (method->type == EXPRESSION_MULTI_FUNCTION)
+                            || (method->body != NULL);
+                }
+
+        }
+
+        return HasUserConstructor(class->super);
+}
+
+static bool
+HasPublicFields(Class const *class)
+{
+        if (class == NULL || class->i == CLASS_OBJECT) {
+                return false;
+        }
+
+        ClassDefinition const *def = &class->def->class;
+
+        for (int i = 0; i < vN(def->fields); ++i) {
+                Expr const *field = FieldIdentifier(v__(def->fields, i));
+                if (!IsPrivateMember(field->identifier)) {
                         return true;
                 }
 
         }
 
-        return HasConstructor(class->super);
+        return HasPublicFields(class->super);
 }
 
 static void
 AddFieldParams(Ty *ty, Expr *ctor, ExprVec const *fields)
 {
+        static Expr nil = { .type = EXPRESSION_NIL };
+
         for (int i = 0; i < vN(*fields); ++i) {
-                Expr *field = FieldIdentifier(v__(*fields, i));
+                Expr *field   = FieldIdentifier(v__(*fields, i));
+                bool has_init = (v__(*fields, i)->type == EXPRESSION_EQ);
                 if (field != NULL && !IsPrivateMember(field->identifier)) {
                         avP(ctor->params, field->identifier);
-                        avP(ctor->dflts, NULL);
+                        avP(ctor->dflts, has_init ? &nil : NULL);
                         avP(ctor->constraints, field->constraint);
                 }
         }
@@ -707,21 +718,6 @@ DefaultConstructor(Ty *ty, Class *class)
         AddFieldParams(ty, ctor, &class->def->class.fields);
 
         return ctor;
-}
-
-static Expr *
-FindDefaultConstructor(ClassDefinition const *def)
-{
-        ExprVec const *methods = &def->methods;
-
-        for (int i = 0; i < vN(*methods); ++i) {
-                Expr *method = v__(*methods, i);
-                if (s_eq(method->name, "init") && method->body == NULL) {
-                        return method;
-                }
-        }
-
-        return NULL;
 }
 
 inline static bool
@@ -11569,7 +11565,7 @@ InjectRedpill(Ty *ty, Stmt *s)
                 } else {
                         super = NULL;
                 }
-                if (!HasConstructor(class)) {
+                if (!HasUserConstructor(class) && HasPublicFields(class)) {
                         Expr *init = DefaultConstructor(ty, class);
                         if (super != NULL) {
                                 AddInheritedFieldParams(ty, init, super);
