@@ -308,6 +308,7 @@ struct expression {
         Expr *origin;
 
         u8 type;
+        u8 dbg;
 
         Location start;
         Location end;
@@ -503,6 +504,7 @@ struct statement {
         Expr *origin;
 
         u8 type;
+        u8 dbg;
 
         Location start;
         Location end;

@@ -2545,6 +2545,17 @@ make_with(Ty *ty, Expr *e, StmtVec defs, Stmt *body)
 }
 
 static Expr *
+prefix_dbg(Ty *ty)
+{
+        consume_kw(DBG);
+
+        Expr *e = parse_expr(ty, 0);
+        e->dbg = true;
+
+        return e;
+}
+
+static Expr *
 prefix_super(Ty *ty)
 {
         Expr *super = mkxpr(SUPER);
@@ -4739,6 +4750,7 @@ Keyword:
         case KEYWORD_WITH:      return prefix_with;
         case KEYWORD_DO:        return prefix_do;
         case KEYWORD_SUPER:     return prefix_super;
+        case KEYWORD_DBG:       return prefix_dbg;
 
         case KEYWORD_IF:
         case KEYWORD_FOR:
@@ -6172,6 +6184,7 @@ parse_class_definition(Ty *ty)
                         decorators = parse_decorators(ty);
                 }
 
+                bool     dbg = try_consume(KEYWORD_DBG);
                 bool _static = try_consume(KEYWORD_STATIC);
 
                 // ================/ :) /===
@@ -6236,6 +6249,8 @@ parse_class_definition(Ty *ty)
                                 doc,
                                 decorators
                         );
+
+                        meth->dbg |= dbg;
 
                         if (
                                 (meth->body != NULL)
@@ -6651,6 +6666,13 @@ Keyword:
         case KEYWORD_CATCH:    return parse_catch(ty);
         case KEYWORD_SET_TYPE: return parse_set_type(ty);
 
+
+        case KEYWORD_DBG:
+                next();
+                s = parse_statement(ty, prec);
+                s->dbg = true;
+                return s;
+
         case KEYWORD_USE:
                 s = parse_use(ty);
                 if (
@@ -7002,6 +7024,7 @@ parse_ex(
                         break;
                 }
 
+                bool dbg = try_consume(KEYWORD_DBG);
                 bool pub = try_consume(KEYWORD_PUB);
                 if (pub) {
                         switch (K0) {
@@ -7039,6 +7062,10 @@ parse_ex(
 
                 if (pub) {
                         MakePublic(ty, s);
+                }
+
+                if (dbg) {
+                        s->dbg = true;
                 }
 
                 SetNamespace(s, CurrentNamespace);

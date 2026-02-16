@@ -14,10 +14,12 @@ if not let $curses = c.open(
 	throw 'Failed to load curses'
 }
 
-let KEY_DOWN = 258
-let KEY_UP = KEY_DOWN + 1
-let KEY_LEFT = KEY_UP + 1
-let KEY_RIGHT = KEY_LEFT + 1
+enum! {
+    KEY_DOWN = 258,
+    KEY_UP,
+    KEY_LEFT,
+    KEY_RIGHT
+}
 
 let KEY_BACKSPACE = 263
 
@@ -32,6 +34,7 @@ C! pub curses fn {
     WINDOW *newwin(c.int, c.int, c.int, c.int)
     WINDOW *subwin(c.ptr, c.int, c.int, c.int, c.int)
     int delwin(c.ptr)
+    int endwin()
     int mvwin(c.ptr, c.int, c.int)
     void wsyncup(c.ptr)
     void wsyncdown(c.ptr)
@@ -42,43 +45,46 @@ C! pub curses fn {
     void wbkgdset(c.ptr, c.int)
     int wresize(c.ptr, c.int, c.int)
     int box(c.ptr, c.int, c.int)
+    int refresh()
+    int wrefresh(c.ptr)
+    int wclear(c.ptr)
+    int erase()
+    int werase(c.ptr)
+    int getch()
+    int curs_set(c.int)
+    int move(c.int, c.int)
+    int wmove(c.ptr, c.int, c.int)
+    int echo()
+    int noecho()
+    int cbreak()
+    int nocbreak()
+    int raw()
+    int noraw()
+    int keypad(c.ptr, c.u8)
+    int clrtoeol()
+    int wclrtoeol(c.ptr)
+    int clearok(c.ptr, c.u8)
+    int scrollok(c.ptr, c.u8)
+    void immedok(c.ptr, c.u8)
+    int idlok(c.ptr, c.u8)
+    int wsetscrreg(c.ptr, c.int, c.int)
+    SCREEN *newterm(c.ptr, c.ptr, c.ptr)
 }
 
-let initscr = wrap(curses, 'initscr', c.ptr)
-pub endwin = wrap(curses, 'endwin', c.int)
-pub mvaddnstr = wrap(curses, 'mvaddnstr', c.int, c.int, c.int, c.ptr, c.int)
-pub mvwaddnstr = wrap(curses, 'mvwaddnstr', c.int, c.ptr, c.int, c.int, c.ptr, c.int)
-pub waddnstr = wrap(curses, 'waddnstr', c.int, c.ptr, c.ptr, c.int)
-pub refresh = wrap(curses, 'refresh', c.int)
-pub wrefresh = wrap(curses, 'wrefresh', c.int, c.ptr)
-pub wclear = wrap(curses, 'wclear', c.int, c.ptr)
-pub erase = wrap(curses, 'erase', c.int)
-pub werase = wrap(curses, 'werase', c.int, c.ptr)
-pub getch = wrap(curses, 'getch', c.int)
-pub curs_set = wrap(curses, 'curs_set', c.int, c.int)
-pub getmaxx = wrap(curses, 'getmaxx', c.int, c.ptr)
-pub getmaxy = wrap(curses, 'getmaxy', c.int, c.ptr)
-pub getcurx = wrap(curses, 'getcurx', c.int, c.ptr)
-pub getcury = wrap(curses, 'getcury', c.int, c.ptr)
-pub getparx = wrap(curses, 'getparx', c.int, c.ptr)
-pub getpary = wrap(curses, 'getpary', c.int, c.ptr)
-pub move = wrap(curses, 'move', c.int, c.int, c.int)
-pub wmove = wrap(curses, 'wmove', c.int, c.ptr, c.int, c.int)
-pub echo = wrap(curses, 'echo', c.int)
-pub noecho = wrap(curses, 'noecho', c.int)
-pub cbreak = wrap(curses, 'cbreak', c.int)
-pub nocbreak = wrap(curses, 'nocbreak', c.int)
-pub raw = wrap(curses, 'raw', c.int)
-pub noraw = wrap(curses, 'noraw', c.int)
-pub keypad = wrap(curses, 'keypad', c.int, c.ptr, c.u8)
-pub clrtoeol = wrap(curses, 'clrtoeol', c.int)
-pub wclrtoeol = wrap(curses, 'wclrtoeol', c.int, c.ptr)
-pub clearok = wrap(curses, 'clearok', c.int, c.ptr, c.u8)
-pub scrollok = wrap(curses, 'scrollok', c.int, c.ptr, c.u8)
-pub immedok = wrap(curses, 'immedok', c.void, c.ptr, c.u8)
-pub idlok = wrap(curses, 'idlok', c.int, c.ptr, c.u8)
-pub wsetscrreg = wrap(curses, 'idlok', c.int, c.ptr, c.int, c.int)
-pub newterm = wrap(curses, 'newterm', c.ptr, c.ptr, c.ptr, c.ptr)
+ns raw {
+    C! pub curses fn {
+        WINDOW *initscr()
+        int mvaddnstr(c.int, c.int, c.ptr, c.int)
+        int mvwaddnstr(c.ptr, c.int, c.int, c.ptr, c.int)
+        int waddnstr(c.ptr, c.ptr, c.int)
+        int getmaxx(c.ptr)
+        int getmaxy(c.ptr)
+        int getcurx(c.ptr)
+        int getcury(c.ptr)
+        int getparx(c.ptr)
+        int getpary(c.ptr)
+    }
+}
 
 pub stdscr = nil
 
@@ -88,36 +94,36 @@ let n = c.new(c.int)
 let x = c.new(c.int)
 let y = c.new(c.int)
 
-pub initscr = () -> do { stdscr = initscr() }
+pub initscr = () -> (stdscr = raw.initscr())
 
-pub function getmaxyx(win = stdscr) {
-	(getmaxy(win), getmaxx(win))
+pub fn getmaxyx(win = stdscr) {
+	(raw.getmaxy(win), raw.getmaxx(win))
 }
 
-pub function getparyx(win = stdscr) {
-	(getpary(win), getparx(win))
+pub fn getparyx(win = stdscr) {
+	(raw.getpary(win), raw.getparx(win))
 }
 
-pub function getyx(win = stdscr) {
-    (getcury(win), getcurx(win))
+pub fn getyx(win = stdscr) {
+    (raw.getcury(win), raw.getcurx(win))
 }
 
-pub function mvaddstr(i, j, msg) {
-	mvaddnstr(i, j, msg, msg.size())
+pub fn mvaddstr(i, j, msg) {
+	raw.mvaddnstr(i, j, msg, msg.size())
 }
 
-pub function mvwaddstr(w, i, j, msg) {
-	mvwaddnstr(w, i, j, msg, msg.size())
+pub fn mvwaddstr(w, i, j, msg) {
+	raw.mvwaddnstr(w, i, j, msg, msg.size())
 }
 
-pub function waddstr(w, msg) {
-    waddnstr(w, msg, msg.size())
+pub fn waddstr(w, msg) {
+    raw.waddnstr(w, msg, msg.size())
 }
 
-pub function addnstr(msg, n) {
-    waddnstr(stdscr, msg, n)
+pub fn addnstr(msg, n) {
+    raw.waddnstr(stdscr, msg, n)
 }
 
-pub function addstr(msg) {
-    waddnstr(stdscr, msg, msg.size())
+pub fn addstr(msg) {
+    raw.waddnstr(stdscr, msg, msg.size())
 }

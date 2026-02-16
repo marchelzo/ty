@@ -261,6 +261,12 @@ enum {
 #define WITH_STACK()       WITH_STACKx(0, 0)
 #define WITH_VSTACK        WITH_STACKx(0, 1)
 
+#define WITH_LOOP(...) do {       \
+        avP(STATE.loop_stmts, s); \
+        __VA_ARGS__;              \
+        vvX(STATE.loop_stmts);    \
+} while (0);
+
 enum {
         LV_NONE,
         LV_CONST = (1 << 0),
@@ -4432,6 +4438,16 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
         Type *t0 = NULL;
         SWAP(Type *, t0, STATE.expected_type);
 
+        bool debug = e->dbg;
+
+        if (debug) {
+                EnableLogging += 1;
+                if (TY_CATCH_ERROR()) {
+                        EnableLogging -= 1;
+                        TY_RETHROW();
+                }
+        }
+
         switch (e->type) {
         case EXPRESSION_IDENTIFIER:
                 LOG(
@@ -5062,16 +5078,9 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                     && (e->type != EXPRESSION_GENERATOR)
                 ) {
                         if (e->return_type != NULL) {
-                                unify2(
-                                        ty,
-                                        &e->_type->rt,
-                                        (e->body->_type != NULL) ? e->body->_type : NIL_TYPE
-                                );
+                                unify2(ty, &e->_type->rt, e->body->_type);
                         } else {
-                                avP(
-                                        STATE.return_types,
-                                        (e->body->_type != NULL) ? e->body->_type : NIL_TYPE
-                                );
+                                avP(STATE.return_types, e->body->_type);
                         }
                 }
 
@@ -5368,6 +5377,11 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
         if (e->_type == NULL) {
                 e->_type = type_var(ty);
                 SET_TYPE_SRC(e);
+        }
+
+        if (debug) {
+                EnableLogging -= 1;
+                TY_CATCH_END();
         }
 
         e->xscope = scope;
@@ -5869,6 +5883,30 @@ symbolize_fun_def(Ty *ty, Scope *scope, Stmt *s, u32 flag)
 }
 
 static void
+symbolize_match_stmt(Ty *ty, Scope *scope, Stmt *s)
+{
+        symbolize_expression(ty, scope, s->match.e);
+
+        Type *t0 = type_new_inst(ty, s->match.e->_type);
+
+        bool will_return = (vN(s->match.statements) > 0);
+
+        for (int i = 0; i < vN(s->match.patterns); ++i) {
+                Expr *pat = v__(s->match.patterns, i);
+                Scope *subscope = scope_new(ty, "(match-branch)", scope, false);
+                symbolize_pattern(ty, subscope, pat, NULL, true);
+                unify2(ty, &t0, pat->_type);
+                symbolize_statement(ty, subscope, v__(s->match.statements, i));
+                t0 = type_without(ty, t0, pat->_type);
+                will_return &= v__(s->match.statements, i)->will_return;
+        }
+
+        s->will_return = will_return;
+        s->_type = type_match_stmt(ty, s);
+        SET_TYPE_SRC(s);
+}
+
+static void
 symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
 {
         Scope *subscope;
@@ -5904,6 +5942,16 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
 
         PushScope(scope);
 
+        bool debug = s->dbg;
+
+        if (debug) {
+                EnableLogging += 1;
+                if (TY_CATCH_ERROR()) {
+                        EnableLogging -= 1;
+                        TY_RETHROW();
+                }
+        }
+
         switch (s->type) {
         case STATEMENT_IMPORT:
                 import_module(ty, s);
@@ -5925,9 +5973,19 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
                 break;
 
         case STATEMENT_BREAK:
-        case STATEMENT_NEXT:
-                symbolize_expression(ty, scope, s->expression);
+        {
+                if (vN(STATE.loop_stmts) < s->depth) {
+                        fail("break statement has no corresponding loop");
+                }
+                Stmt *loop = vZ(STATE.loop_stmts)[-s->depth];
+                if (s->expression != NULL) {
+                        symbolize_expression(ty, scope, s->expression);
+                        unify2(ty, &loop->_type, s->expression->_type);
+                } else {
+                        unify2(ty, &loop->_type, NIL_TYPE);
+                }
                 break;
+        }
 
         case STATEMENT_TYPE_DEFINITION:
                 define_type(ty, s, scope);
@@ -6034,10 +6092,11 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
                         symbolize_statement(ty, scope, v__(s->statements, i));
                 }
                 if (vN(s->statements) > 0) {
-                        s->will_return = vvL(s->statements)[0]->will_return;
-                        unify(ty, &s->_type, (*vvL(s->statements))->_type);
+                        Stmt const *last = v_L(s->statements);
+                        s->will_return = last->will_return;
+                        s->_type = last->_type;
                 }
-                if (!WillReturn(s) && s->type == STATEMENT_BLOCK) {
+                if (!WillReturn(s) && (s->type == STATEMENT_BLOCK)) {
                         avPv(scope->parent->refinements, scope->refinements);
                         v0(scope->refinements);
                 }
@@ -6063,28 +6122,16 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
                 break;
         }
 
-        case STATEMENT_MATCH:
-                s->will_return = vN(s->match.statements) > 0;
         case STATEMENT_WHILE_MATCH:
-        {
-                symbolize_expression(ty, scope, s->match.e);
-
-                Type *t0 = type_new_inst(ty, s->match.e->_type);
-
-                for (int i = 0; i < vN(s->match.patterns); ++i) {
-                        Expr *pat = v__(s->match.patterns, i);
-                        subscope = scope_new(ty, "(match-branch)", scope, false);
-                        symbolize_pattern(ty, subscope, pat, NULL, true);
-                        unify2(ty, &t0, pat->_type);
-                        symbolize_statement(ty, subscope, v__(s->match.statements, i));
-                        t0 = type_without(ty, t0, pat->_type);
-                        s->will_return &= v__(s->match.statements, i)->will_return;
+                WITH_LOOP(symbolize_match_stmt(ty, scope, s));
+                if (s->_type == NULL) {
+                        s->_type = NIL_TYPE;
                 }
-
-                s->_type = type_match_stmt(ty, s);
-                SET_TYPE_SRC(s);
                 break;
-        }
+
+        case STATEMENT_MATCH:
+                symbolize_match_stmt(ty, scope, s);
+                break;
 
         case STATEMENT_WHILE:
                 subscope = scope_new(ty, "(while)", scope, false);
@@ -6099,7 +6146,10 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
                                 AddRefinements(ty, p->e, subscope, NULL);
                         }
                 }
-                symbolize_statement(ty, subscope, s->While.block);
+                WITH_LOOP(symbolize_statement(ty, subscope, s->While.block));
+                if (s->_type == NULL) {
+                        s->_type = NIL_TYPE;
+                }
                 break;
 
         case STATEMENT_IF:
@@ -6168,10 +6218,12 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
                 symbolize_statement(ty, scope, s->for_loop.init);
                 symbolize_expression(ty, scope, s->for_loop.cond);
                 AddRefinements(ty, s->for_loop.cond, subscope, NULL);
-                symbolize_statement(ty, subscope, s->for_loop.body);
+                WITH_LOOP(symbolize_statement(ty, subscope, s->for_loop.body));
                 symbolize_expression(ty, scope, s->for_loop.next);
-                s->_type = s->for_loop.body->_type;
                 s->will_return = WillReturn(s->for_loop.body);
+                if (s->_type == NULL && s->for_loop.cond != NULL) {
+                        s->_type = NIL_TYPE;
+                }
                 break;
 
         case STATEMENT_EACH_LOOP:
@@ -6179,13 +6231,17 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
                 subscope = scope_new(ty, "(for-each)", scope, false);
                 symbolize_lvalue(ty, subscope, s->each.target, LV_DECL);
                 type_assign_iterable(ty, s->each.target, s->each.array->_type, 0);
-                symbolize_statement(ty, subscope, s->each.body);
                 symbolize_expression(ty, subscope, s->each._if);
                 symbolize_expression(ty, subscope, s->each._while);
-                s->_type = s->each.body->_type;
+                AddRefinements(ty, s->each._if, subscope, NULL);
+                AddRefinements(ty, s->each._while, subscope, NULL);
+                WITH_LOOP(symbolize_statement(ty, subscope, s->each.body));
                 s->will_return = WillReturn(s->each.body);
-                if (!WillReturn(s)) {
+                if (s->will_return) {
                         MergeRefinements(ty, scope, subscope, NULL);
+                }
+                if (s->_type == NULL) {
+                        s->_type = NIL_TYPE;
                 }
                 break;
 
@@ -6283,6 +6339,11 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
         case STATEMENT_FUN_MACRO_DEFINITION:
                 symbolize_fun_def(ty, scope, s, SYM_FUN_MACRO);
                 break;
+        }
+
+        if (debug) {
+                EnableLogging -= 1;
+                TY_CATCH_END();
         }
 
         s->xscope = scope;
@@ -11403,6 +11464,15 @@ InjectRedpill(Ty *ty, Stmt *s)
         DefinePending(ty);
 
         void *ctx = PushContext(ty, s);
+        bool debug = s->dbg;
+
+        if (debug) {
+                EnableLogging += 1;
+                if (TY_CATCH_ERROR()) {
+                        EnableLogging -= 1;
+                        TY_RETHROW();
+                }
+        }
 
         if (s->mod != NULL && s->start.s != NULL && ScopeIsTop(scope)) {
                 dont_printf(
@@ -11574,6 +11644,11 @@ InjectRedpill(Ty *ty, Stmt *s)
                 TryResolveExpr(ty, scope, s->value);
                 symbolize_decl(ty, scope, s->target, s->pub);
                 break;
+        }
+
+        if (debug) {
+                EnableLogging -= 1;
+                TY_CATCH_END();
         }
 
         RestoreContext(ty, ctx);

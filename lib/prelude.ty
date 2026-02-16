@@ -497,8 +497,8 @@ class Array[T] : Iterable[T] {
     sort[U](by: T -> U, desc: Bool = false) -> Array[T] where (U <=> U): Int;
     sort(desc: Bool = false) -> Array[T] where (T <=> T): Int;
     split(i: Int) -> (Array[T], Array[T]);
-    sum(zero: T) -> T;
     sum() -> T | nil where (T + T): T;
+    sum(zero: T) -> T;
     take!(n: Int) -> Array[T];
     take(n: Int) -> Array[T];
     take-while!(predicate: T -> Any) -> Array[T];
@@ -1017,14 +1017,14 @@ class String : Iterable[String], IntoPtr[Int] {
 
     to-i -> Int { ::int(self, 0) }
 
-    matches(pattern: RegexV) -> [RegexMatch];
-    matches(pattern: Regex) -> [String];
+    matches(pattern: RegexV) -> Array[RegexMatch];
+    matches(pattern: Regex) -> Array[String | Array[String]];
 
-    scan(pattern: RegexV) -> [RegexMatch];
-    scan(pattern: Regex) -> [String];
+    scan(pattern: RegexV) -> Array[RegexMatch];
+    scan(pattern: Regex) -> Array[String | Array[String]];
 
     match(pattern: RegexV) -> RegexMatch;
-    match(pattern: Regex) -> String | [String];
+    match(pattern: Regex) -> String | Array[String];
 
     match?(pattern: Regex) -> Bool;
     count(pattern: String | Regex) -> Int;

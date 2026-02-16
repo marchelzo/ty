@@ -14,6 +14,7 @@ Next,         KEYWORD_NEXT
 Self,         KEYWORD_SELF
 __defined__,  KEYWORD_DEFINED
 __eval__,     KEYWORD_EVAL
+__DBG__,      KEYWORD_DBG
 __set_type__, KEYWORD_SET_TYPE
 typeof,       KEYWORD_TYPEOF
 and,          KEYWORD_AND
