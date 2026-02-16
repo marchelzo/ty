@@ -653,8 +653,14 @@ HasAnyFieldInitializers(ClassDefinition const *def)
 }
 
 static bool
-HasConstructor(ClassDefinition const *def)
+HasConstructor(Class const *class)
 {
+        if (class == NULL || class->i == CLASS_OBJECT) {
+                return false;
+        }
+
+        ClassDefinition const *def = &class->def->class;
+
         for (int i = 0; i < vN(def->methods); ++i) {
                 Expr const *method = v__(def->methods, i);
                 if (s_eq(method->name, "init")) {
@@ -663,18 +669,18 @@ HasConstructor(ClassDefinition const *def)
 
         }
 
-        return false;
+        return HasConstructor(class->super);
 }
 
 static void
 AddFieldParams(Ty *ty, Expr *ctor, ExprVec const *fields)
 {
         for (int i = 0; i < vN(*fields); ++i) {
-                Expr *ident = FieldIdentifier(v__(*fields, i));
-                if (ident != NULL && !IsPrivateMember(ident->identifier)) {
-                        avP(ctor->params, ident->identifier);
+                Expr *field = FieldIdentifier(v__(*fields, i));
+                if (field != NULL && !IsPrivateMember(field->identifier)) {
+                        avP(ctor->params, field->identifier);
                         avP(ctor->dflts, NULL);
-                        avP(ctor->constraints, NULL);
+                        avP(ctor->constraints, field->constraint);
                 }
         }
 }
@@ -11459,6 +11465,7 @@ static void
 InjectRedpill(Ty *ty, Stmt *s)
 {
         Class *class;
+        Class *super;
         ClassDefinition *def;
         Scope *scope = GetNamespace(ty, s->ns);
 
@@ -11536,7 +11543,7 @@ InjectRedpill(Ty *ty, Stmt *s)
                                 symbolize_expression(ty, def->scope, def->super);
                         }
 
-                        Class *super = class_get(ty, ResolveClassSpec(ty, def->super));
+                        super = class_get(ty, ResolveClassSpec(ty, def->super));
 
                         class_set_super(ty, def->symbol, super->i);
 
@@ -11559,12 +11566,15 @@ InjectRedpill(Ty *ty, Stmt *s)
 
                         scope_copy_weak(ty, def->s_scope, super->def->class.s_scope);
                         scope_copy_weak(ty, def->scope, super->def->class.scope);
-
-                        // Add inherited field params to default constructor
-                        Expr *init = FindDefaultConstructor(def);
-                        if (init != NULL) {
+                } else {
+                        super = NULL;
+                }
+                if (!HasConstructor(class)) {
+                        Expr *init = DefaultConstructor(ty, class);
+                        if (super != NULL) {
                                 AddInheritedFieldParams(ty, init, super);
                         }
+                        avI(def->methods, init, 0);
                 }
                 AddClassTraits(ty, def);
                 ResolveFieldTypes(ty, def->scope, &def->fields);
@@ -16257,10 +16267,6 @@ define_class(Ty *ty, Stmt *s)
                 TERM(91),
                 TERM(0)
         );
-
-        if (HasAnyFieldInitializers(cd) && !HasConstructor(cd)) {
-                avP(cd->methods, DefaultConstructor(ty, class));
-        }
 
         char scratch[512];
         char const *name;
