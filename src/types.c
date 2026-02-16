@@ -13,7 +13,7 @@
 #include "array.h"
 #include "dict.h"
 
-#define TYPES_LOG      1
+#define TYPES_LOG      0
 #define FUN_TYPES_LOG  0
 
 typedef struct {
@@ -93,10 +93,12 @@ static Ty *ty = &vvv;
 #define XXXTLOG(fmt, ...)                                                                         \
         fprintf(                                                                                  \
                 stderr,                                                                           \
-                "[%2d] (%8.8s %-10.10s)  " fmt "\n",                                              \
+                "%10.10s:%-4d [%2d] (%8.8s %-10.10s)  " fmt "\n",                                 \
+                TyCompilerState(ty)->module->name,                                                \
+                TyCompilerState(ty)->start.line + 1,                                              \
                 CurrentLevel,                                                                     \
                 ((TyCompilerState(ty)->class == NULL) ? "--" : TyCompilerState(ty)->class->name), \
-                ((TyCompilerState(ty)->func == NULL) ? "--" : TyCompilerState(ty)->func->name)    \
+                ((TyCompilerState(ty)->func  == NULL) ? "--" : TyCompilerState(ty)->func->name)   \
                 __VA_OPT__(,) __VA_ARGS__                                                         \
         )
 #endif
@@ -105,6 +107,8 @@ static Ty *ty = &vvv;
  #define XXTLOG(...) if (EnableLogging > 0) { XXXTLOG(__VA_ARGS__); } else if (0)
  #define DPRINT(cond, fmt, ...) ((cond) && EnableLogging > 0 && XXXTLOG("%*s" fmt, 4*CurrentDepth, "" __VA_OPT__(,) __VA_ARGS__))
  #define XDPRINT(cond, fmt, ...) ((cond) && XXXTLOG("%*s" fmt, 4*CurrentDepth, "" __VA_OPT__(,) __VA_ARGS__))
+ #define UnifyX(...) (EnableLogging > 0 ? (XXXTLOG("[%s] UnifyX: %s ~ %s", __func__, ShowType(NULL), ShowType(NULL)), (UnifyX)(__VA_ARGS__)) : (UnifyX)(__VA_ARGS__))
+ #define Unify(...) (EnableLogging > 0 ? (XXXTLOG("[%s] Unify: %s ~ %s", __func__, ShowType(NULL), ShowType(NULL)), (Unify)(__VA_ARGS__)) : (Unify)(__VA_ARGS__))
 #else
  #define XXTLOG(...) 0
  #define DPRINT(cond, fmt, ...) 0
@@ -112,7 +116,7 @@ static Ty *ty = &vvv;
 #endif
 
 #if FUN_TYPES_LOG
- #define FTLOG(...) XXXTLOG(__VA_ARGS__)
+ #define FTLOG(...) XXTLOG(__VA_ARGS__)
 #else
  #define FTLOG(...)
 #endif
@@ -283,10 +287,10 @@ static bool
 SameType(Type const *t0, Type const *t1);
 
 static bool
-UnifyX(Ty *ty, Type *t0, Type *t1, bool super, bool check);
+(UnifyX)(Ty *ty, Type *t0, Type *t1, bool super, bool check);
 
 static void
-Unify(Ty *ty, Type *t0, Type *t1, bool super);
+(Unify)(Ty *ty, Type *t0, Type *t1, bool super);
 
 static Type *
 InferCall0(
@@ -337,6 +341,11 @@ static ConstraintVector ToSolve;
 static vec(Expr *) FunStack;
 // ================================
 
+inline static bool
+IsBottom(Type const *t0)
+{
+        return (t0 == NULL) || (t0->type == TYPE_BOTTOM);
+}
 
 inline static bool
 FuelCheck(Ty *ty)
@@ -583,12 +592,6 @@ inline static bool
 IsComputed(Type const *t0)
 {
         return (TypeType(t0) == TYPE_COMPUTED);
-}
-
-inline static bool
-IsBottom(Type const *t0)
-{
-        return (t0 == NULL) || (t0->type == TYPE_BOTTOM);
 }
 
 inline static bool
@@ -2785,8 +2788,8 @@ ClassOfType(Ty *ty, Type const *t0)
 
         switch (t0->type) {
         case TYPE_UNION:
-                class = ClassOfType(ty, v__(t0->types, 0));
-                for (int i = 1; i < vN(t0->types); ++i) {
+                class = CLASS_TOP;
+                for (int i = 0; i < vN(t0->types); ++i) {
                         int c = ClassOfType(ty, v__(t0->types, i));
                         if (c == class)
                                 continue;
@@ -4797,32 +4800,6 @@ TryUnifyObjects(Ty *ty, Type *t0, Type *t1, bool super)
         }
 }
 
-static int MaxBindDepth = 0;
-
-static int
-FindMaxBindDepth(Ty *ty, Type *t0, Type *t1)
-{
-        TypeEnv env = {0};
-
-        int max_depth = -1;
-
-        for (int i = 0; i < vN(t0->types); ++i) {
-                MaxBindDepth = 0;
-                ClearEnv(&env);
-
-                Type *u0 = NewInst0(ty, v__(t0->types, i), &env);
-                Type *u1 = NewInst0(ty, t1, &env);
-
-                if (!UnifyX(ty, u0, u1, true, false)) {
-                        continue;
-                }
-
-                max_depth = max(max_depth, MaxBindDepth);
-        }
-
-        return max_depth;
-}
-
 static bool
 TryBind(Ty *ty, Type *t0, Type *t1, bool super)
 {
@@ -4831,12 +4808,9 @@ TryBind(Ty *ty, Type *t0, Type *t1, bool super)
         }
 
         if (CanBind(t0)) {
-                MaxBindDepth = max(MaxBindDepth, CurrentDepth);
                 if (Occurs(ty, t1, t0->id, t0->level)) {
 #if 1
-                        if (super || !type_check(ty, t1, t0)) {
-                                BindVar(t0, BOTTOM);
-                        }
+                        BindVar(t0, BOTTOM);
 #else
                         TypeError(
                                 "can't unify:\n  %s\n  %s\n",
@@ -4854,11 +4828,8 @@ TryBind(Ty *ty, Type *t0, Type *t1, bool super)
                 }
                 return true;
         } else if (CanBind(t1)) {
-                MaxBindDepth = max(MaxBindDepth, CurrentDepth);
                 if (Occurs(ty, t0, t1->id, t1->level)) {
-                        if (!super || !type_check(ty, t0, t1)) {
-                                BindVar(t1, BOTTOM);
-                        }
+                        BindVar(t1, BOTTOM);
                 } else if (super || !IsAny(t0)) {
                         t1->bounded |= super;
                         t0 = Relax(Reduce(ty, t0));
@@ -5041,11 +5012,6 @@ UnifyXD(Ty *ty, Type *t0, Type *t1, bool super, bool check, bool soft)
                 goto Success;
         }
 
-        //if (type_check(ty, super ? t0 : t1, super ? t1 : t0)) {
-        //        OK("type_check()");
-        //        goto Success;
-        //}
-
         if (IsTagged(t0) && IsTagged(t1) && (TagOf(t0) == TagOf(t1))) {
                 TLOG("Merge(%s):  %s   <--->   %s", soft ? "soft" : "hard", ShowType(t0), ShowType(t1));
                 if (soft) {
@@ -5113,6 +5079,10 @@ UnifyXD(Ty *ty, Type *t0, Type *t1, bool super, bool check, bool soft)
 
         if (TypeType(t0) == TYPE_UNION) {
                 if (super) {
+                        if (type_check(ty, t0, t1)) {
+                                OK("type_check()");
+                                goto Success;
+                        }
                         for (int i = 0; i < vN(t0->types); ++i) {
                                 Type **t00 = v_(t0->types, i);
                                 if (UnifyXD(ty, *t00, t1, super, false, soft)) {
@@ -5448,7 +5418,7 @@ Success:
 }
 
 static bool
-UnifyX(Ty *ty, Type *t0, Type *t1, bool super, bool check)
+(UnifyX)(Ty *ty, Type *t0, Type *t1, bool super, bool check)
 {
         static u32 id = 0;
 
@@ -5498,9 +5468,9 @@ UnifyX(Ty *ty, Type *t0, Type *t1, bool super, bool check)
 }
 
 static void
-Unify(Ty *ty, Type *t0, Type *t1, bool super)
+(Unify)(Ty *ty, Type *t0, Type *t1, bool super)
 {
-        UnifyX(ty, t0, t1, super, true);
+        (UnifyX)(ty, t0, t1, super, true);
 }
 
 static char *
@@ -11873,9 +11843,22 @@ type_any_of(Ty *ty, TypeVector const *types)
 {
         Type *t0 = NewType(ty, TYPE_UNION);
 
-        avPv(t0->types, *types);
+        for (int i = 0; i < vN(*types); ++i) {
+                Type *t00 = v__(*types, i);
+                if (!IsBottom(t00)) {
+                        avP(t0->types, t00);
+                }
+        }
 
-        return Reduce(ty, t0);
+        Type *t1 = Reduce(ty, t0);
+
+        XXTLOG("type_any_of():");
+        for (int i = 0; i < vN(t0->types); ++i) {
+                XXTLOG("    %s", ShowType(v__(t0->types, i)));
+        }
+        XXTLOG("  = %s", ShowType(t1));
+
+        return t1;
 }
 
 /* vim: set sts=8 sw=8 expandtab: */

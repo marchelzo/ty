@@ -1,68 +1,70 @@
-import ffi as c (wrap)
+import ffi as c (C!)
 import os
 
 /* Error status */
-let CMARK_NODE_NONE = 0
+const CMARK_NODE_NONE = 0
 
 /* Block */
-let CMARK_NODE_DOCUMENT = 1
-let CMARK_NODE_BLOCK_QUOTE = 2
-let CMARK_NODE_LIST = 3
-let CMARK_NODE_ITEM = 4
-let CMARK_NODE_CODE_BLOCK = 5
-let CMARK_NODE_HTML_BLOCK = 6
-let CMARK_NODE_CUSTOM_BLOCK = 7
-let CMARK_NODE_PARAGRAPH = 8
-let CMARK_NODE_HEADING = 9
-let CMARK_NODE_THEMATIC_BREAK = 10
+const CMARK_NODE_DOCUMENT = 1
+const CMARK_NODE_BLOCK_QUOTE = 2
+const CMARK_NODE_LIST = 3
+const CMARK_NODE_ITEM = 4
+const CMARK_NODE_CODE_BLOCK = 5
+const CMARK_NODE_HTML_BLOCK = 6
+const CMARK_NODE_CUSTOM_BLOCK = 7
+const CMARK_NODE_PARAGRAPH = 8
+const CMARK_NODE_HEADING = 9
+const CMARK_NODE_THEMATIC_BREAK = 10
 
-let CMARK_NODE_FIRST_BLOCK = CMARK_NODE_DOCUMENT
-let CMARK_NODE_LAST_BLOCK = CMARK_NODE_THEMATIC_BREAK
+const CMARK_NODE_FIRST_BLOCK = CMARK_NODE_DOCUMENT
+const CMARK_NODE_LAST_BLOCK = CMARK_NODE_THEMATIC_BREAK
 
 /* Inline */
-let CMARK_NODE_TEXT = 11
-let CMARK_NODE_SOFTBREAK = 12
-let CMARK_NODE_LINEBREAK = 13
-let CMARK_NODE_CODE = 14
-let CMARK_NODE_HTML_INLINE = 15
-let CMARK_NODE_CUSTOM_INLINE = 16
-let CMARK_NODE_EMPH = 17
-let CMARK_NODE_STRONG = 18
-let CMARK_NODE_LINK = 19
-let CMARK_NODE_IMAGE = 20
+const CMARK_NODE_TEXT = 11
+const CMARK_NODE_SOFTBREAK = 12
+const CMARK_NODE_LINEBREAK = 13
+const CMARK_NODE_CODE = 14
+const CMARK_NODE_HTML_INLINE = 15
+const CMARK_NODE_CUSTOM_INLINE = 16
+const CMARK_NODE_EMPH = 17
+const CMARK_NODE_STRONG = 18
+const CMARK_NODE_LINK = 19
+const CMARK_NODE_IMAGE = 20
 
-let CMARK_NODE_FIRST_INLINE = CMARK_NODE_TEXT
-let CMARK_NODE_LAST_INLINE = CMARK_NODE_IMAGE
+const CMARK_NODE_FIRST_INLINE = CMARK_NODE_TEXT
+const CMARK_NODE_LAST_INLINE = CMARK_NODE_IMAGE
 
-if not let $cmark = c.dlopen('libcmark.so') ?? c.dlopen('libcmark.dylib') {
-  throw "Couldn't load libcmark.so"
+if not let $cmark = c.open('cmark') {
+  throw RuntimeError('failed to load cmark')
 }
 
-let cmark_parse_document = wrap(cmark, 'cmark_parse_document', c.ptr, c.ptr, c.u64, c.int)
-let cmark_node_get_type = wrap(cmark, 'cmark_node_get_type', c.int, c.ptr)
-let cmark_node_get_type_string = wrap(cmark, 'cmark_node_get_type_string', c.ptr, c.ptr)
-let cmark_node_next = wrap(cmark, 'cmark_node_next', c.ptr, c.ptr)
-let cmark_node_first_child = wrap(cmark, 'cmark_node_first_child', c.ptr, c.ptr)
-let cmark_node_last_child = wrap(cmark, 'cmark_node_last_child', c.ptr, c.ptr)
-let cmark_node_get_literal = wrap(cmark, 'cmark_node_get_literal', c.ptr, c.ptr)
-let cmark_node_get_heading_level = wrap(cmark, 'cmark_node_get_heading_level', c.int, c.ptr)
-let cmark_node_get_list_type = wrap(cmark, 'cmark_node_get_list_type', c.int, c.ptr)
-let cmark_node_get_list_tight = wrap(cmark, 'cmark_node_get_list_tight', c.int, c.ptr)
-let cmark_node_get_fence_info = wrap(cmark, 'cmark_node_get_fence_info', c.ptr, c.ptr)
-let cmark_node_get_url = wrap(cmark, 'cmark_node_get_url', c.ptr, c.ptr)
-let cmark_node_get_title = wrap(cmark, 'cmark_node_get_title', c.ptr, c.ptr)
+C! cmark fn {
+    cmark_node *cmark_parse_document(c.ptr, c.u64, c.int)
+    int cmark_node_get_type(c.ptr)
+    char *cmark_node_get_type_string(c.ptr)
+    cmark_node *cmark_node_next(c.ptr)
+    cmark_node *cmark_node_first_child(c.ptr)
+    cmark_node *cmark_node_last_child(c.ptr)
+    char *cmark_node_get_literal(c.ptr)
+    int cmark_node_get_heading_level(c.ptr)
+    int cmark_node_get_list_type(c.ptr)
+    int cmark_node_get_list_tight(c.ptr)
+    char *cmark_node_get_fence_info(c.ptr)
+    char *cmark_node_get_url(c.ptr)
+    char *cmark_node_get_title(c.ptr)
+}
 
-let CMARK_NO_LIST      = 0
-let CMARK_BULLET_LIST  = 1
-let CMARK_ORDERED_LIST = 2
+const CMARK_NO_LIST      = 0
+const CMARK_BULLET_LIST  = 1
+const CMARK_ORDERED_LIST = 2
 
-let ListType = {
+const ListType = {
     None: CMARK_NO_LIST,
     Bullet: CMARK_BULLET_LIST,
     Ordered: CMARK_ORDERED_LIST
 }
 
-let NodeType = {
+const NodeType = {
   None: CMARK_NODE_NONE,
   Document: CMARK_NODE_DOCUMENT,
   Paragraph: CMARK_NODE_PARAGRAPH,
@@ -78,99 +80,96 @@ let NodeType = {
   Image: CMARK_NODE_IMAGE
 };
 
-let ListType = {
-  Bullet: 1,
-  Ordered: 2
-};
+pub class MarkdownNode {
+  __node: _
 
-class MarkdownNode {
   init(node) {
-    @node = node
+    __node = node
   }
 
-  type() {
-    cmark_node_get_type(@node)
+  type -> Int {
+    cmark_node_get_type(__node)
   }
 
-  text() {
-    if let $p = cmark_node_get_literal(@node) {
-      c.as_str(p)
-    } else if let $c = cmark_node_first_child(@node) and c == cmark_node_last_child(@node) {
+  text -> String | nil {
+    if let $p = cmark_node_get_literal(__node) {
+      c.str(p)
+    } else if let $c = cmark_node_first_child(__node) and c == cmark_node_last_child(__node) {
       MarkdownNode(c).text()
     }
   }
 
-  headingLevel() {
-    if let $n = cmark_node_get_heading_level(@node) and n > 0 {
+  heading-level -> Int | nil {
+    if let $n = cmark_node_get_heading_level(__node) and n > 0 {
       n
     }
   }
 
-  listType() {
-    if let $t = cmark_node_get_list_type(@node) and t > 0 {
+  list-type -> Int | nil {
+    if let $t = cmark_node_get_list_type(__node) and t > 0 {
       t
     }
   }
 
-  infoString() {
-    if let $p = cmark_node_get_fence_info(@node) {
-      c.as_str(p)
+  info-string -> String | nil {
+    if let $p = cmark_node_get_fence_info(__node) {
+      c.str(p)
     }
   }
 
-  tight?() {
-    cmark_node_get_list_tight(@node) == 1
+  tight? -> Bool {
+    cmark_node_get_list_tight(__node) == 1
   }
 
-  url() {
-    if let $p = cmark_node_get_url(@node) {
-      c.as_str(p)
+  url -> String | nil {
+    if let $p = cmark_node_get_url(__node) {
+      c.str(p)
     }
   }
 
-  title() {
-    if let $p = cmark_node_get_title(@node) {
-      c.as_str(p)
+  title -> String | nil {
+    if let $p = cmark_node_get_title(__node) {
+      c.str(p)
     }
   }
 
-  children*() {
-    for let c = cmark_node_first_child(@node); c != nil; c = cmark_node_next(c) {
+  children* -> Generator[MarkdownNode] {
+    for let c = cmark_node_first_child(__node); c != nil; c = cmark_node_next(c) {
       yield MarkdownNode(c)
     }
   }
 
-  childrenHtml() {
-    @children().map(&html).sum() ?? ''
+  children-html -> String {
+    children.map(\_.html).join()
   }
 
-  codeTag() {
-    if let $lang = @infoString() and #lang > 0 {
+  code-tag {
+    if let $lang = info-string and #lang > 0 {
       "<code class=\"language-{lang}\">"
     } else {
       "<code>"
     }
   }
 
-  html() {
-    match @type() {
-      NodeType.Emph      => "<em>{@childrenHtml()}</em>",
-      NodeType.Strong    => "<strong>{@childrenHtml()}</strong>",
-      NodeType.Text      => @text(),
-      NodeType.Heading   => "<h{@headingLevel()}>{@childrenHtml()}</h{@headingLevel()}>",
-      NodeType.Link      => "<a href=\"{@url()}\">{@childrenHtml()}</a>",
-      NodeType.Image     => "<img src=\"{@url()}\">",
-      NodeType.Document  => "<html><body>{@childrenHtml()}</body></html>",
-      NodeType.Code      => "<code>{@text()}</code>",
-      NodeType.CodeBlock => "<pre>{@codeTag()}{@text()}</code></pre>",
-      NodeType.Paragraph => "<p>{@childrenHtml()}</p>",
-      NodeType.List      => @listType() == ListType.Bullet ? "<ul>{@childrenHtml()}</ul>" : "<ol>{@childrenHtml()}</ol>",
-      NodeType.Item      => "<li>{@childrenHtml()}</li>"
+  html -> String {
+    match type {
+      NodeType.Emph      => "<em>{children-html}</em>",
+      NodeType.Strong    => "<strong>{children-html}</strong>",
+      NodeType.Text      => "{text}",
+      NodeType.Heading   => "<h{heading-level}>{children-html}</h{heading-level}>",
+      NodeType.Link      => "<a href=\"{url}\">{children-html}</a>",
+      NodeType.Image     => "<img src=\"{url}\">",
+      NodeType.Document  => "<html><body>{children-html}</body></html>",
+      NodeType.Code      => "<code>{text}</code>",
+      NodeType.CodeBlock => "<pre>{code-tag}{text}</code></pre>",
+      NodeType.Paragraph => "<p>{children-html}</p>",
+      NodeType.List      => (list-type == ListType.Bullet) ? "<ul>{children-html}</ul>" : "<ol>{children-html}</ol>",
+      NodeType.Item      => "<li>{children-html}</li>"
     }
   }
 }
 
-pub function parse(s) -> ?MarkdownNode {
+pub fn parse(s) -> MarkdownNode | nil {
   if let $doc = cmark_parse_document(s, s.size(), 0) {
     MarkdownNode(doc)
   }

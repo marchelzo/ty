@@ -213,6 +213,8 @@ typedef struct compiler_state {
 
         TypeVector return_types;
 
+        ExprVec loop_stmts;
+
         Expr *func;
         Expr *meth;
         Class *class;
