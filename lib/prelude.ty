@@ -1213,7 +1213,7 @@ class Int : IntoPtr[_] {
         type(x)(math.pow(self, x))
     }
 
-    ~() {
+    ~() -> Int {
         bit.complement(self)
     }
 
@@ -1237,23 +1237,23 @@ class Int : IntoPtr[_] {
         self...b
     }
 
-    even? {
-        self % 2 == 0
+    even? -> Bool {
+        (self % 2) == 0
     }
 
-    odd? {
-        self % 2 == 1
+    odd? -> Bool {
+        (self % 2) == 1
     }
 
-    sgn {
+    sgn -> Int {
         self <=> 0
     }
 
-    float {
+    float -> Float {
         ::float(self)
     }
 
-    str(base: Int = 10) {
+    str(base: Int = 10) -> String {
         match base {
             2  => fmt('%b', self),
             8  => fmt('%o', self),
@@ -1276,18 +1276,18 @@ class Int : IntoPtr[_] {
         }
     }
 
-    count*(k: Int = 1) {
+    count*(k: Int = 1) -> Generator[Int] {
         while true {
             yield self
             self += k
         }
     }
 
-    __count__*() {
+    __count__*() -> Generator[Int] {
         while true { yield self++ }
     }
 
-    __iter__*() {
+    __iter__*() -> Generator[Int] {
         while true { yield self++ }
     }
 
@@ -1295,23 +1295,23 @@ class Int : IntoPtr[_] {
         ptr.from-int(self)
     }
 
-    negate() {
+    neg -> Int {
         -self
     }
 
-    sub(n) {
+    sub(n) -> Int {
         self - n
     }
 
-    add(n) {
+    add(n) -> Int {
         self + n
     }
 
-    mul(n) {
+    mul(n) -> Int {
         self * n
     }
 
-    div(n) {
+    div(n) -> Int {
         self / int(n)
     }
 
@@ -1319,7 +1319,7 @@ class Int : IntoPtr[_] {
         self % int(n)
     }
 
-    in?(x) {
+    in?(x) -> Bool {
         self in x
     }
 
@@ -1327,31 +1327,31 @@ class Int : IntoPtr[_] {
         ::abs(self)
     }
 
-    pred {
+    pred -> Int {
         self - 1
     }
 
-    succ {
+    succ -> Int {
         self + 1
     }
 
-    sqrt {
+    sqrt -> Float {
         math.sqrt(self)
     }
 
-    zero? {
+    zero? -> Bool {
         self == 0
     }
 
-    nonZero? {
+    nonZero? -> Bool {
         self != 0
     }
 
-    positive? {
+    positive? -> Bool {
         self > 0
     }
 
-    negative? {
+    negative? -> Bool {
         self < 0
     }
 
@@ -1827,6 +1827,10 @@ class RegexMatch {
 
     captures -> Array[String | nil] {
         groups[1;]
+    }
+
+    [](i: 0) -> String {
+        cast(groups[0])
     }
 
     [](i: Int) -> String | nil {

@@ -1475,11 +1475,12 @@ CoalesceTagged(Ty *ty, Type *t0)
 
         SCRATCH_RESTORE();
 
-        if (vN(new0->types) == 1) {
-                return v__(new0->types, 0);
-        } else {
-                return new0;
+        switch vN(new0->types) {
+        case 0:  return BOTTOM;
+        case 1:  return v_0(new0->types);
         }
+
+        return new0;
 }
 
 static Type *
@@ -5220,10 +5221,19 @@ UnifyXD(Ty *ty, Type *t0, Type *t1, bool super, bool check, bool soft)
         }
 
         if (IsLiteral(t0)) {
-                t0 = Relax(t0);
+                if (super) {
+                        goto Fail;
+                } else {
+                        t0 = Relax(t0);
+                }
         }
+
         if (IsLiteral(t1)) {
-                t1 = Relax(t1);
+                if (!super) {
+                        goto Fail;
+                } else {
+                        t1 = Relax(t1);
+                }
         }
 
         if ((IsRecordLike(t0) || IsRecordLike(t1)) && !IsNilT(t0) && !IsNilT(t1)) {

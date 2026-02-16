@@ -6127,6 +6127,7 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
                 if (s->_type == NULL) {
                         s->_type = NIL_TYPE;
                 }
+                s->will_return = false;
                 break;
 
         case STATEMENT_MATCH:
