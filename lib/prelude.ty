@@ -243,6 +243,9 @@ fn math::log(x: Int | Float) -> Float;
 fn math::log2(x: Int | Float) -> Float;
 fn math::log10(x: Int | Float) -> Float;
 
+fn base64::encode(input: String | Blob) -> String;
+fn base64::decode(input: String | Blob) -> Blob;
+
 pub use time::Tm = {
     ?sec:    Int,
     ?min:    Int,
@@ -2327,7 +2330,7 @@ trait Iter[T] < Iterable[T] {
         }
     }
 
-    join(sep: String) -> String {
+    join(sep: String = '') -> String {
         if not let Some($s) = __next__() {
             return ''
         }
@@ -4444,6 +4447,8 @@ macro assert(condition, message) {
         $$]
     }
 }
+
+macro unreachable! = assert(false, 'unreachable')
 
 class PatchGuard {
     __restore: _
