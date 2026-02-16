@@ -282,7 +282,7 @@ __set_type__ ty::executable String
 const `,`: _ = tuple
 
 class Object {
-    init[...Ts](%props: ...(Ts |)) {
+    init(%props: Any) {
         for k, v in props {
             member(k, v)
         }
@@ -302,11 +302,11 @@ class Object {
         return x
     }
 
-    members() {
+    members() -> Dict[String, Any] {
         ::members(self)
     }
 
-    member(*args) {
+    member(*args: Any) -> Any {
         ::member(self, *args)
     }
 
