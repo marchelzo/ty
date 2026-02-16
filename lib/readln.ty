@@ -112,6 +112,7 @@ class CompletionCycler {
 
     __seek(ci: Int) -> (Int, Int) {
         let n = 0
+
         for page, i in __pages {
             let count = page.map(`#`).sum()
             if ci < n + count {
@@ -119,6 +120,8 @@ class CompletionCycler {
             }
             n += count
         }
+
+        unreachable!
     }
 
     items -> Array[CompletionItem] {
