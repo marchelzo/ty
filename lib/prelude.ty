@@ -478,6 +478,7 @@ class Array[T] : Iterable[T] {
     filter(pred: T -> Any) -> Array[T];
     group() -> Array[Array[T]];
     groups-of(n: Int) -> Array[Array[T]];
+    insert(i: Int, *xs: T) -> nil;
     join(sep: String = '') -> String;
     len() -> Int;
     map![U](fun: T -> U) -> Array[U];
@@ -499,6 +500,7 @@ class Array[T] : Iterable[T] {
     sort(cmp: (T, T) -> Any, desc: Bool = false) -> Array[T];
     sort[U](by: T -> U, desc: Bool = false) -> Array[T] where (U <=> U): Int;
     sort(desc: Bool = false) -> Array[T] where (T <=> T): Int;
+    splice(i: Int = 0, n: Int = #self) -> Array[T];
     split(i: Int) -> (Array[T], Array[T]);
     sum() -> T | nil where (T + T): T;
     sum(zero: T) -> T;
@@ -561,7 +563,7 @@ class Array[T] : Iterable[T] {
 
     shift-while(p: T -> Any) -> Array[T] {
         let i = self.search-by(`!` . p) ?? #self
-        self.splice(0, i)
+        splice(0, i)
     }
 
     transpose[U]() -> Array[T] where T: Array[U] {
@@ -762,10 +764,11 @@ macro __type! {
 macro _Param = ty.Param[{name: String, ?constraint: AST, ?default: AST}]
              | ty.Gather[String]
              | ty.Kwargs[String]
+             | String
 
 macro _Func = {
     ?name: String | nil,
-    params: Array[_Param],
+    ?params: Array[_Param] | nil,
     ?rt: AST,
     ?decorators: [AST] | nil,
     body: AST

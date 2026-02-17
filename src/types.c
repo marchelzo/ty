@@ -1167,6 +1167,60 @@ CloneType(Ty *ty, Type const *t0)
         return t;
 }
 
+inline static int
+UnionCount(Type const *t0)
+{
+        return (t0 == NULL || t0->type != TYPE_UNION) ? 1 : vN(t0->types);
+}
+
+inline static Type *
+UnionElem(Type const *t0, int i)
+{
+        if (
+                (t0 == NULL)
+             || (t0->type != TYPE_UNION)
+             || (vN(t0->types) <= i)
+        ) {
+                return (Type *)t0;
+        } else {
+                return v__(t0->types, i);
+        }
+}
+
+inline static Type **
+UnionElemPtr(Type **t0, int i)
+{
+        if (
+                (*t0 == NULL)
+             || (*t0)->type != TYPE_UNION
+             || (vN((*t0)->types) <= i)
+        ) {
+                return (Type **)t0;
+        } else {
+                return v_((*t0)->types, i);
+        }
+}
+
+inline static int
+IntersectCount(Type const *t0)
+{
+        return (t0 == NULL || t0->type != TYPE_INTERSECT) ? 1 : vN(t0->types);
+}
+
+inline static Type *
+IntersectElem(Type const *t0, int i)
+{
+        if (
+                (t0 == NULL)
+             || (t0->type != TYPE_INTERSECT)
+             || (vN(t0->types) <= i)
+        ) {
+                return (Type *)t0;
+        } else {
+                return v__(t0->types, i);
+        }
+}
+
 inline static imax
 iwrap(imax i, imax n)
 {
@@ -1489,6 +1543,10 @@ Reduce(Ty *ty, Type const *t0)
         Type *t1 = ResolveVar(t0);
         Type *t2;
         Type *t3;
+
+        if ((UnionCount(t1) == 0) || (IntersectCount(t1) == 0)) {
+                return NULL;
+        }
 
         if (IsConcrete(t1)) {
                 return t1;
@@ -1821,60 +1879,6 @@ ExpandPacks(Ty *ty, Type *t0)
         }
 
         return t0;
-}
-
-inline static int
-UnionCount(Type const *t0)
-{
-        return (t0 == NULL || t0->type != TYPE_UNION) ? 1 : vN(t0->types);
-}
-
-inline static Type *
-UnionElem(Type const *t0, int i)
-{
-        if (
-                (t0 == NULL)
-             || (t0->type != TYPE_UNION)
-             || (vN(t0->types) <= i)
-        ) {
-                return (Type *)t0;
-        } else {
-                return v__(t0->types, i);
-        }
-}
-
-inline static Type **
-UnionElemPtr(Type **t0, int i)
-{
-        if (
-                (*t0 == NULL)
-             || (*t0)->type != TYPE_UNION
-             || (vN((*t0)->types) <= i)
-        ) {
-                return (Type **)t0;
-        } else {
-                return v_((*t0)->types, i);
-        }
-}
-
-inline static int
-IntersectCount(Type const *t0)
-{
-        return (t0 == NULL || t0->type != TYPE_INTERSECT) ? 1 : vN(t0->types);
-}
-
-inline static Type *
-IntersectElem(Type const *t0, int i)
-{
-        if (
-                (t0 == NULL)
-             || (t0->type != TYPE_INTERSECT)
-             || (vN(t0->types) <= i)
-        ) {
-                return (Type *)t0;
-        } else {
-                return v__(t0->types, i);
-        }
 }
 
 static void

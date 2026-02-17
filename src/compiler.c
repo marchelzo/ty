@@ -15123,7 +15123,7 @@ cexpr(Ty *ty, Value *v)
                 e->ftype   = FT_NONE;
 
                 Value        *name = tget_t(v, "name", VALUE_STRING);
-                Value      *params = t_(v, "params");
+                Value      *params = tget_t(v, "params", VALUE_ARRAY);
                 Value          *rt = tget_nn(v, "rt");
                 Value  *decorators = tget_t(v, "decorators", VALUE_ARRAY);
                 Value         *doc = tget_t(v, "doc", VALUE_STRING);
@@ -15151,34 +15151,46 @@ cexpr(Ty *ty, Value *v)
                         }
                 }
 
-                for (int i = 0; i < vN(*params->array); ++i) {
-                        Value *p = v_(*params->array, i);
-                        switch (tags_first(ty, p->tags)) {
-                        case TyParam:
-                        {
-                                avP(e->params, mkcstr(t_(p, "name")));
-                                Value *c = tget_nn(p, "constraint");
-                                Value *d = tget_nn(p, "default");
-                                avP(e->constraints, cexpr(ty, c));
-                                avP(e->dflts, cexpr(ty, d));
-                                break;
-                        }
+                if (params != NULL) {
+                        for (int i = 0; i < vN(*params->array); ++i) {
+                                Value *p = v_(*params->array, i);
+                                switch (tags_first(ty, p->tags)) {
+                                case TyParam:
+                                {
+                                        avP(e->params, mkcstr(t_(p, "name")));
+                                        Value *c = tget_nn(p, "constraint");
+                                        Value *d = tget_nn(p, "default");
+                                        avP(e->constraints, cexpr(ty, c));
+                                        avP(e->dflts, cexpr(ty, d));
+                                        break;
+                                }
 
-                        case TyGather:
-                                avP(e->params, mkcstr(p));
-                                avP(e->constraints, NewExpr(ty, EXPRESSION_MATCH_ANY));
-                                avP(e->dflts, NULL);
-                                e->rest = i;
-                                break;
+                                case TyGather:
+                                        avP(e->params, mkcstr(p));
+                                        avP(e->constraints, NewExpr(ty, EXPRESSION_MATCH_ANY));
+                                        avP(e->dflts, NULL);
+                                        e->rest = i;
+                                        break;
 
-                        case TyKwargs:
-                                avP(e->params, mkcstr(p));
-                                avP(e->constraints, NewExpr(ty, EXPRESSION_MATCH_ANY));
-                                avP(e->dflts, NULL);
-                                e->ikwargs = i;
-                                break;
+                                case TyKwargs:
+                                        avP(e->params, mkcstr(p));
+                                        avP(e->constraints, NewExpr(ty, EXPRESSION_MATCH_ANY));
+                                        avP(e->dflts, NULL);
+                                        e->ikwargs = i;
+                                        break;
+
+                                default:
+                                        if (p->type == VALUE_STRING) {
+                                                avP(e->params, mkcstr(p));
+                                                avP(e->constraints, NULL);
+                                                avP(e->dflts, NULL);
+                                        } else {
+                                                goto Bad;
+                                        }
+                                }
                         }
                 }
+
                 e->body = cstmt(ty, t_(v, "body"));
                 break;
         }
