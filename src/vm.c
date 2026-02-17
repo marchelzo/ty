@@ -1667,9 +1667,16 @@ vm_run_thread(void *p)
         *ctx->created = true;
 
         if (TY_CATCH_ERROR()) {
-                TyClearError(ty);
-                fprintf(stderr, "Thread %lld dying with error: %s\n", TID, TyError(ty));
+                char *trace = FormatTrace(ty, NULL, NULL);
                 t->v = TY_CATCH();
+                fprintf(
+                        stderr,
+                        "Thread %lld dying with error: %s\n%s\n",
+                        TID,
+                        trace,
+                        VSC(&t->v)
+                );
+                xmF(trace);
         } else {
                 t->v = vmC(call, argc);
                 TY_CATCH_END();
@@ -2002,7 +2009,7 @@ DoThrow(Ty *ty)
                 TY_STOP(DYING);
         }
 
-        //xprint_stack(ty, 5);
+        //xprint_stack(ty, 8);
 #endif
 
         for (;;) {

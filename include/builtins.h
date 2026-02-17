@@ -816,6 +816,7 @@ static struct {
   { .module = "ty",         .name = "gc",                       .value = BUILTIN(builtin_ty_gc)                  },
   { .module = "ty",         .name = "bt",                       .value = BUILTIN(builtin_ty_bt)                  },
   { .module = "ty",         .name = "trace",                    .value = BUILTIN(builtin_ty_trace)               },
+  { .module = "ty",         .name = "stack-ctx",                .value = BUILTIN(builtin_ty_stack_ctx)           },
   { .module = "ty",         .name = "valueSize",                .value = INT(sizeof (Value))                     },
   { .module = "ty",         .name = "definition",               .value = BUILTIN(builtin_ty_definition)          },
   { .module = "ty",         .name = "coro",                     .value = BUILTIN(builtin_ty_coro)                },

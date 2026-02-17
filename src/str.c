@@ -75,8 +75,6 @@ is_prefix(void const *big, isize blen, void const *little, isize slen)
         return (blen >= slen) && (memcmp(big, little, slen) == 0);
 }
 
-
-
 inline static Value
 mkmatch(Ty *ty, Value *s, usize *ovec, isize n, bool detailed)
 {

@@ -479,6 +479,18 @@ class InteractiveLineReader {
             )
         }
 
+        fn skip-l(pattern: Regex) {
+            while i > 0 && line[i - 1].match?(pattern) {
+                i -= 1
+            }
+        }
+
+        fn skip-r(pattern: Regex) {
+            while i < #line && line[i].match?(pattern) {
+                i += 1
+            }
+        }
+
         draw(0, 0)
 
         while true {
@@ -499,6 +511,7 @@ class InteractiveLineReader {
             let key = match ev {
                 term.event.Text(_) as t
                     => t,
+
                 term.event.Key({event: 1 or 2, *}) as key
                     => "<{key.nice-name()}>",
                 _
@@ -593,6 +606,17 @@ class InteractiveLineReader {
                     if i < #line {
                         i += 1
                     }
+                },
+
+                '<M-Left>' => {
+                    skip-l(/^\s*$/)
+                    skip-l(/^\S*$/)
+                },
+
+                '<M-Right>' => {
+                    skip-r(/^\s*$/)
+                    skip-r(/^\S*$/)
+                    skip-r(/^\s*$/)
                 },
 
                 '<Up>' => {

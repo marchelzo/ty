@@ -4093,16 +4093,6 @@ NewInst(Ty *ty, Type *t0)
 }
 
 inline static void
-combine(Ty *ty, Type **t0, Type *t1, bool super)
-{
-        if (super) {
-                unify2_(ty, t0, t1, false);
-        } else {
-                type_intersect(ty, t0, t1);
-        }
-}
-
-inline static void
 AddMemo(TypeMemo *memo, Type const *t0, Type const *t1, bool b)
 {
         xvP(memo->id0, t0);
@@ -4217,10 +4207,7 @@ trace(Ty *ty, Type const *t0)
 static Type *
 GetTrait(Ty *ty, Type *t0, int i)
 {
-        if (
-                TypeType(t0) != TYPE_OBJECT
-             || IsTagged(t0)
-        ) {
+        if ((TypeType(t0) != TYPE_OBJECT) || IsTagged(t0)) {
                 return NULL;
         }
 
@@ -5015,11 +5002,6 @@ UnifyXD(Ty *ty, Type *t0, Type *t1, bool super, bool check, bool soft)
 
         if (IsTagged(t0) && IsTagged(t1) && (TagOf(t0) == TagOf(t1))) {
                 TLOG("Merge(%s):  %s   <--->   %s", soft ? "soft" : "hard", ShowType(t0), ShowType(t1));
-                if (soft) {
-                        UnifyXD(ty, v__(t0->args, 0), v__(t1->args, 0), super, check, soft);
-                } else {
-                        combine(ty, v_(t0->args, 0), v__(t1->args, 0), super);
-                }
                 if (UnifyX(ty, v__(t0->args, 0), v__(t1->args, 0), super, check)) {
                         OK("both %s; inner types unified", tags_name(ty, TagOf(t0)));
                         goto Success;
@@ -10005,7 +9987,7 @@ MakeConcrete(Ty *ty, Type *t0, TypeVector *refs)
 Type *
 type_concrete(Ty *ty, Type *t0)
 {
-        return MakeConcrete(ty, t0, NULL);
+        return CloneType(ty, MakeConcrete(ty, t0, NULL));
 }
 
 Expr *
