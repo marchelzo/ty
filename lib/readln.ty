@@ -316,6 +316,7 @@ class InteractiveLineReader {
     __prompt: Prompt
     __complete: CompletionFunction | nil
     __render: RenderFunction
+    __kill-ring: Array[Array[String]]
 
     init(
         term: Int | TermIO | os.PTY = 0,
@@ -350,6 +351,8 @@ class InteractiveLineReader {
         } else {
             __history = []
         }
+
+        __kill-ring = []
 
         __render = render ?? fn (
             prompt: Text,
@@ -469,6 +472,11 @@ class InteractiveLineReader {
         let hSuffix = nil
 
         let completionCycler = nil
+        let last-yank-pos = nil
+
+        fn kill(chars: Array[String]) {
+            if chars { __kill-ring.push(chars) }
+        }
 
         fn hMatch?(i) {
             if #__history < i { return false }
@@ -529,6 +537,8 @@ class InteractiveLineReader {
                 completionCycler = nil
             }
 
+            let no-op = false
+
             match key {
                 '<Enter>', '\n' => {
                     let text = getText()
@@ -559,16 +569,18 @@ class InteractiveLineReader {
                     return nil
                 },
 
-                '<C-a>' => {
+                '<C-a>',
+                '<Home>' => {
                     i = 0
                 },
 
-                '<C-e>' => {
+                '<C-e>',
+                '<End>' => {
                     i = #line
                 },
 
                 '<C-k>' => {
-                    line.take!(i)
+                    kill(line.splice(i, #line - i))
                 },
 
                 '<C-l>' => {
@@ -587,33 +599,142 @@ class InteractiveLineReader {
                     i = min(i, #line)
                 },
 
-                '<C-w>' => {
-                    while i > 0 && line[i - 1].match?(/^\S*$/) {
-                        line.pop(--i)
-                    }
-                    while i > 0 && line[i - 1].match?(/^\s*$/) {
+                '<C-w>',
+                '<M-Backspace>' => {
+                    let end = i
+                    skip-l(/^\s$/)
+                    skip-l(/^\S$/)
+                    kill(line.splice(i, end - i))
+                },
+
+                '<C-h>' => {
+                    if i > 0 {
                         line.pop(--i)
                     }
                 },
 
-                '<Left>' => {
+                '<C-t>' => {
+                    if #line >= 2 && i > 0 {
+                        let j = min(i, #line - 1)
+                        let tmp = line[j - 1]
+                        line[j - 1] = line[j]
+                        line[j] = tmp
+                        i = j + 1
+                    }
+                },
+
+                '<C-u>' => {
+                    kill(line.splice(0, i))
+                    i = 0
+                },
+
+                '<C-y>' => if __kill-ring {
+                    let chars = __kill-ring[-1]
+                    line.insert(i, *chars)
+                    last-yank-pos = (i, i + #chars)
+                    i += #chars
+                },
+
+                '<M-y>' => if let (start, end) = last-yank-pos and #__kill-ring > 1 {
+                    line.splice(start, end - start)
+                    __kill-ring.insert(0, __kill-ring.pop())
+                    let chars = __kill-ring[-1]
+                    line.insert(start, *chars)
+                    last-yank-pos = (start, start + #chars)
+                    i = start + #chars
+                },
+
+                '<M-d>' => {
+                    let start = i
+                    skip-r(/^\s$/)
+                    skip-r(/^\S$/)
+                    kill(line.splice(start, i - start))
+                    i = start
+                },
+
+                '<M-u>' => {
+                    skip-r(/^\s$/)
+                    while i < #line && line[i].match?(/^\S$/) {
+                        line[i] = line[i].upper()
+                        i += 1
+                    }
+                },
+
+                '<M-l>' => {
+                    skip-r(/^\s$/)
+                    while i < #line && line[i].match?(/^\S$/) {
+                        line[i] = line[i].lower()
+                        i += 1
+                    }
+                },
+
+                '<M-c>' => {
+                    skip-r(/^\s$/)
+                    if i < #line {
+                        line[i] = line[i].upper()
+                        i += 1
+                    }
+                    while i < #line && line[i].match?(/^\S$/) {
+                        line[i] = line[i].lower()
+                        i += 1
+                    }
+                },
+
+                '<M-t>' => {
+                    let save = i
+
+                    // Find word2 (at/after cursor)
+                    skip-r(/^\s$/)
+                    skip-r(/^\S$/)
+                    let w2e = i
+                    skip-l(/^\S$/)
+                    let w2s = i
+
+                    // Find word1 (before word2)
+                    skip-l(/^\s$/)
+                    let w1e = i
+                    skip-l(/^\S$/)
+                    let w1s = i
+
+                    if w1s < w1e && w2s < w2e && w1e <= w2s {
+                        let word1 = line.slice(w1s, w1e - w1s)
+                        let word2 = line.slice(w2s, w2e - w2s)
+                        let mid = line.slice(w1e, w2s - w1e)
+                        line = [*line.slice(0, w1s), *word2, *mid, *word1, *line.slice(w2e)]
+                        i = w1s + #word2 + #mid + #word1
+                    } else {
+                        i = save
+                    }
+                },
+
+                '<Delete>' => {
+                    if i < #line {
+                        line.pop(i)
+                    }
+                },
+
+                '<Left>',
+                '<C-b>' => {
                     if i > 0 {
                         i -= 1
                     }
                 },
 
-                '<Right>' => {
+                '<Right>',
+                '<C-f>' => {
                     if i < #line {
                         i += 1
                     }
                 },
 
-                '<M-Left>' => {
+                '<M-Left>',
+                '<M-b>' => {
                     skip-l(/^\s*$/)
                     skip-l(/^\S*$/)
                 },
 
-                '<M-Right>' => {
+                '<M-Right>',
+                '<M-f>' => {
                     skip-r(/^\s*$/)
                     skip-r(/^\S*$/)
                     skip-r(/^\s*$/)
@@ -761,7 +882,11 @@ class InteractiveLineReader {
                     line.insert(i++, s)
                 },
 
-                _ => {}
+                _ => { no-op = true }
+            }
+
+            if !no-op && key != '<C-y>' && key != '<M-y>' {
+                last-yank-pos = nil
             }
 
             if hi != hiStart {

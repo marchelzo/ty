@@ -9,14 +9,14 @@ import yaml
 import ety
 
 fn lisp(s) {
-    s.matches(/(?:^[[:lower:]]+)|(?:[[:upper:]][[:lower:]]*)/)
+    s.scan(/(?:^[[:lower:]]+)|(?:[[:upper:]][[:lower:]]*)/)
      .join('-')
      .lower()
 }
 
 fn camel(name: String) -> String {
     let [first, *rest] = name.split('-')
-    rest.map!(s -> s[0].upper() + s.slice(1).lower())
+    rest.map!(s -> s[0].upper() + s[1;].lower())
     [first, *rest].join()
 }
 
@@ -58,7 +58,7 @@ fn _coerceVal(constraint, val) {
     val
 }
 
-fn _doParse(cls, argv, config) -> _ {
+fn _doParse(cls: _, argv, config) -> _ {
     let argv = argv ?? prelude::argv
     let specs = cls.info()
     let cmds = cls.cmds()
@@ -68,10 +68,10 @@ fn _doParse(cls, argv, config) -> _ {
     let description = if let (_, $ds, _) = doc(cls) { _cleanDoc(ds) }
 
     // Build lookup tables
-    let byShort = %{}
-    let byLong = %{}
-    let byName = %{}
-    let positionals = []
+    let byShort:     _ = %{}
+    let byLong:      _ = %{}
+    let byName:      _ = %{}
+    let positionals: _ = []
 
     for spec in specs {
         byName[spec.name] = spec
@@ -81,8 +81,8 @@ fn _doParse(cls, argv, config) -> _ {
         } else {
             if spec.short != nil { byShort[spec.short] = spec }
             if spec.long != nil  { byLong[spec.long] = spec }
-            if spec.aliases != nil {
-                for a in spec.aliases { byLong[a] = spec }
+            if let $aliases = spec.aliases {
+                byLong += %{it: spec for aliases}
             }
         }
     }
@@ -958,8 +958,8 @@ fn _fishComplete(specs: _, cmds: _, version: _, prog: _) -> _ {
 }
 
 fn _completions(cls, shell, progName) -> _ {
-    let specs = cls.info()
-    let cmds = cls.cmds()
+    let specs   = cls.info()
+    let cmds    = cls.cmds()
     let version = cls.version()
 
     match shell {
@@ -1238,16 +1238,16 @@ pub macro clap! {
         body: $$[ $$::(_doParse)(self, argv, config) $$]
     )
 
-    let getCmds     = ty.Func(name: 'cmds', params: [], body: ty.Return(ty.Value(cmds)))
-    let getCmdHelps = ty.Func(name: 'cmdHelps', params: [], body: ty.Return(ty.Value(cmdHelps)))
-    let info        = ty.Func(name: 'info', params: [], body: ty.Return(ty.Value(args)))
-    let version     = ty.Func(name: 'version', params: [], body: ty.Return(ty.Value(version)))
+    let getCmds     = ty.Func(name: 'cmds',     body: ty.Value(cmds))
+    let getCmdHelps = ty.Func(name: 'cmdHelps', body: ty.Value(cmdHelps))
+    let info        = ty.Func(name: 'info',     body: ty.Value(args))
+    let version     = ty.Func(name: 'version',  body: ty.Value(version))
 
     let defaultProgName = lisp(name)
     let completionsFn = ty.Func(
         name: 'completions',
-        params: [ty.Param(name: 'shell'), ty.Param(name: 'name', default: ty.String(defaultProgName))],
-        body: ty.Return($$[ $$::(_completions)(self, shell, name) $$])
+        params: ['shell', ty.Param(name: 'name', default: ty.String(defaultProgName))],
+        body: $$[ $$::(_completions)(self, shell, name) $$]
     )
 
     next()

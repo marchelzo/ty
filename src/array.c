@@ -113,35 +113,27 @@ shrink(Ty *ty, Value *v)
 static Value
 array_push(Ty *ty, Value *array, int argc, Value *kwargs)
 {
-        ASSERT_ARGC("Array.push()", 1);
-        vAp(array->array, ARG(0));
+        ASSERT_ARGC_RANGE("Array.push()", 0, INT_MAX);
+        vvPn(*array->array, &ARG(0), argc);
         return NIL;
 }
 
 static Value
 array_insert(Ty *ty, Value *array, int argc, Value *kwargs)
 {
-        ASSERT_ARGC("Array.insert()", 2);
+        ASSERT_ARGC_RANGE("Array.insert()", 2, INT_MAX);
 
         imax i = INT_ARG(0);
-        Value v = ARG(1);
 
         if (i < 0) {
                 i += vN(*array->array) + 1;
         }
+
         if (i < 0 || i > vN(*array->array)) {
                 bP("index out of range: %"PRIiMAX, i);
         }
 
-        vAp(array->array, NIL);
-
-        memmove(
-                vv(*array->array) + i + 1,
-                vv(*array->array) + i,
-                (vN(*array->array) - i - 1) * sizeof (Value)
-        );
-
-        *v_(*array->array, i) = v;
+        vvIn(*array->array, &ARG(1), argc - 1, i);
 
         return *array;
 }
