@@ -101,6 +101,8 @@ struct type {
                                         ParamVector params;
                                         ConstraintVector constraints;
                                         Type *pack;
+                                        Type *yields;
+                                        Type *sends;
                                 };
                                 struct {
                                         Type *_type;
@@ -193,6 +195,18 @@ inline static u32
 TypeType(Type const *t0)
 {
         return (t0 == NULL) ? TYPE_BOTTOM : t0->type;
+}
+
+inline static bool
+IsFuncT(Type const *t0)
+{
+        return (TypeType(t0) == TYPE_FUNCTION);
+}
+
+inline static bool
+IsAliasT(Type const *t0)
+{
+        return (TypeType(t0) == TYPE_ALIAS);
 }
 
 inline static Type *
@@ -346,7 +360,7 @@ Type *
 type_tagged(Ty *ty, int tag, Type *t0);
 
 Type *
-type_generator(Ty *ty, Expr const *e);
+type_generator(Ty *ty, Expr const *e, Type *yield0, Type *send0);
 
 char *
 type_show(Ty *ty, Type const *t0);
@@ -395,6 +409,12 @@ type_scope_pop(Ty *ty);
 
 void
 type_function_fixup(Ty *ty, Expr const *e);
+
+void
+type_finalize_generator(Ty *ty, Expr *e);
+
+Type *
+type_yield(Ty *ty, Type *f0, Type *y0);
 
 void
 type_completions(Ty *ty, Type const *t0, char const *pre, ValueVector *out);

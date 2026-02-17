@@ -1,15 +1,14 @@
-function f(k) {
+fn f(k) {
     (yield nil) * k
 }
 
-let g = generator {
-    return f(4)
+fn g*() {
+    yield f(4)
 }
 
-g()
+let co = g()
 
-if g(8) == 32 {
-    print('PASS')
-}
+co()
 
-
+assert(co(8) == Some(32))
+print('PASS')

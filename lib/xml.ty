@@ -2163,7 +2163,7 @@ class Document {
         XMLSelection(self, [*self[expr]])
     }
 
-    first(expr: String) -> ?XMLNode {
+    first(expr: String) -> XMLNode | nil {
         self[expr]().or-else(nil)
     }
 
