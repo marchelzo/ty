@@ -114,20 +114,20 @@ Value
 string_length(Ty *ty, Value *string, int argc, Value *kwargs)
 {
         ASSERT_ARGC("String.len()", 0);
-        return INTEGER(rune_count((u8 const *)ss(*string), sN(*string)));
+        return INTEGER(rune_count(ss(*string), sN(*string)));
 }
 
 static Value
 string_width(Ty *ty, Value *string, int argc, Value *kwargs)
 {
         ASSERT_ARGC("String.width()", 0);
-        return INTEGER(term_width((u8 const *)ss(*string), sN(*string)));
+        return INTEGER(term_width(ss(*string), sN(*string)));
 }
 
 static Value
 string_grapheme_count(Ty *ty, Value *string, int argc, Value *kwargs)
 {
-        u8 const *s = (u8 const *)ss(*string);
+        u8 const *s = ss(*string);
         isize size = sN(*string);
         isize offset = 0;
         isize length = 0;
@@ -243,7 +243,7 @@ string_slice(Ty *ty, Value *string, int argc, Value *kwargs)
 {
         ASSERT_ARGC("String.slice()", 1, 2);
 
-        u8 const *str = (u8 const *)ss(*string);
+        u8 const *str = ss(*string);
         isize sz = sN(*string);
 
         isize i = INT_ARG(0);
@@ -336,8 +336,7 @@ string_search_all(Ty *ty, Value *string, int argc, Value *kwargs)
                         vAp(result.array, INTEGER(offset + dist));
 
                         if (n <= 0) {
-                                i32 cp;
-                                n = max(1, utf8proc_iterate(s + ovec[1], bytes - ovec[1], &cp));
+                                n = u8_rune_sz(s + ovec[1]);
                                 plen = 1;
                         }
 
@@ -684,7 +683,7 @@ string_split(Ty *ty, Value *string, int argc, Value *kwargs)
 {
         ASSERT_ARGC("String.split()", 1, 2);
 
-        u8 const *s = (u8 const *)ss(*string);
+        u8 const *s = ss(*string);
         isize len = sN(*string);
 
         Value pattern = ARGx(0, VALUE_INTEGER, VALUE_STRING, VALUE_REGEX);
@@ -703,7 +702,7 @@ string_split(Ty *ty, Value *string, int argc, Value *kwargs)
                 isize off = 0;
                 while (i --> 0) {
                         i32 cp;
-                        isize bytes = utf8proc_iterate((u8 const *)(s + off), len - off, &cp);
+                        isize bytes = utf8proc_iterate((s + off), len - off, &cp);
                         off += max(bytes, 1);
                 }
                 Value left = STRING_VIEW(*string, 0, off);
@@ -825,10 +824,17 @@ string_count(Ty *ty, Value *string, int argc, Value *kwargs)
                                 break;
                         }
 
-                        if (rc <= 0) { break; }
+                        if (off >= len) {
+                                break;
+                        }
+
+                        off = ovec[1];
+                        if (off <= ovec[0]) {
+                                off += u8_rune_sz(s + off);
+                        }
 
                         count += 1;
-                        off = ovec[1];
+
                 }
         } else {
                 ARGx(0, VALUE_STRING, VALUE_REGEX);
@@ -857,7 +863,7 @@ string_comb(Ty *ty, Value *string, int argc, Value *kwargs)
         switch (pattern.type) {
         case VALUE_STRING:
         {
-                u8 const *p = (u8 const *)ss(pattern);
+                u8 const *p = ss(pattern);
 
                 isize len = sN(*string);
                 isize plen = sN(pattern);
@@ -995,6 +1001,10 @@ string_replace(Ty *ty, Value *string, int argc, Value *kwargs)
                 isize plen = sN(pattern);
                 u8 const *m;
 
+                if (plen == 0) {
+                        return *string;
+                }
+
                 while ((m = mmmm(s, len, p, plen)) != NULL) {
                         vvPn(chars, s, m - s);
 
@@ -1010,6 +1020,7 @@ string_replace(Ty *ty, Value *string, int argc, Value *kwargs)
                 isize len = sN(*string);
                 usize *ovec = ty_re_ovec();
                 isize start = 0;
+                isize sz;
 
                 for (;;) {
                         isize n = pcre2_match(
@@ -1024,13 +1035,16 @@ string_replace(Ty *ty, Value *string, int argc, Value *kwargs)
                         if (n <= 0) {
                                 break;
                         }
-                        if (ovec[1] == start) {
-                                vvPn(chars, ss(replacement), sN(replacement));
-                                vvP(chars, s[start]);
-                                start = ovec[1] + 1;
+                        vvPn(chars, s + start, ovec[0] - start);
+                        vvPn(chars, ss(replacement), sN(replacement));
+                        if (ovec[0] >= len) {
+                                start = len;
+                                break;
+                        } else if (ovec[0] == ovec[1]) {
+                                sz = u8_rune_sz(s + ovec[1]);
+                                uvPn(chars, s + ovec[1], sz);
+                                start = ovec[1] + sz;
                         } else {
-                                vvPn(chars, s + start, ovec[0] - start);
-                                vvPn(chars, ss(replacement), sN(replacement));
                                 start = ovec[1];
                         }
                 }
@@ -1043,41 +1057,35 @@ string_replace(Ty *ty, Value *string, int argc, Value *kwargs)
                 isize len = sN(*string);
                 usize *ovec = ty_re_ovec();
                 isize start = 0;
+                isize sz;
                 isize rc;
 
-                while ((rc = ty_re_match(re, s, len, start, 0)) > 0) {
+                Value match;
+                Value subst;
+
+                while (
+                        (start < len)
+                     && (rc = ty_re_match(re, s, len, start, 0)) > 0
+                ) {
                         vvPn(chars, s + start, ovec[0] - start);
 
-                        Value match = {0};
-
+                        match = mkmatch(ty, string, ovec, rc, pattern.regex->detailed);
                         gP(&match);
-
-                        if (rc == 1) {
-                                match = STRING_VIEW(*string, ovec[0], ovec[1] - ovec[0]);
-                        } else {
-                                match = ARRAY(vA());
-                                for (isize i = 0, j = 0; i < rc; ++i, j += 2) {
-                                        vvP(
-                                                *match.array,
-                                                STRING_VIEW(
-                                                        *string,
-                                                        ovec[j],
-                                                        ovec[j + 1] - ovec[j]
-                                                )
-                                        );
-                                }
-                        }
-
-                        start = ovec[1];
-
-                        Value substitute = vm_eval_function(ty, &replacement, &match, NULL);
-                        vmP(&substitute);
-                        substitute = builtin_str(ty, 1, NULL);
+                        subst = vm_eval_function(ty, &replacement, &match, NULL);
+                        vmP(&subst);
+                        subst = builtin_str(ty, 1, NULL);
                         vmX();
-
                         gX();
 
-                        uvPn(chars, ss(substitute), sN(substitute));
+                        uvPn(chars, ss(subst), sN(subst));
+
+                        if (ovec[0] < ovec[1]) {
+                                start = ovec[1];
+                        } else if (ovec[0] < len) {
+                                sz = u8_rune_sz(s + ovec[0]);
+                                uvPn(chars, s + ovec[0], sz);
+                                start = ovec[0] + sz;
+                        }
                 }
 
                 vvPn(chars, s + start, len - start);
@@ -1085,7 +1093,7 @@ string_replace(Ty *ty, Value *string, int argc, Value *kwargs)
                 zP("String.replace(): invalid replacement: %s", VSC(&replacement));
         }
 
-        Value r = vSs(chars.items, chars.count);
+        Value r = vSs(vv(chars), vN(chars));
 
         mF(chars.items);
 
@@ -1173,9 +1181,17 @@ string_matches(Ty *ty, Value *string, int argc, Value *kwargs)
                 if (rc <= 0) { break; }
 
                 vAp(result.array, NIL);
-                *vvL(*result.array) = mkmatch(ty, string, ovec, rc, pattern.regex->detailed);
+                v_L(*result.array) = mkmatch(ty, string, ovec, rc, pattern.regex->detailed);
 
-                offset = ovec[1];
+                if (ovec[0] == ovec[1]) {
+                        if (ovec[0] >= sN(*string)) {
+                                rc = PCRE2_ERROR_NOMATCH;
+                                break;
+                        }
+                        offset = ovec[1] + u8_rune_sz(ss(*string) + ovec[1]);
+                } else {
+                        offset = ovec[1];
+                }
         }
 
         switch (rc) {
@@ -1223,11 +1239,11 @@ string_char(Ty *ty, Value *string, int argc, Value *kwargs)
         i32 cp;
         isize j = i;
         isize offset = 0;
-        isize n = utf8proc_iterate((u8 const *)ss(*string), sN(*string), &cp);
+        isize n = utf8proc_iterate(ss(*string), sN(*string), &cp);
 
         while (offset < sN(*string) && n > 0 && j --> 0) {
                 offset += max(1, n);
-                n = utf8proc_iterate((u8 const *)ss(*string) + offset, sN(*string), &cp);
+                n = utf8proc_iterate(ss(*string) + offset, sN(*string), &cp);
         }
 
         if (offset == sN(*string))

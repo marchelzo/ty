@@ -28,7 +28,7 @@ let defaultColors = {
 }
 
 pub fn escapeString(s) {
-    s.sub(/[\x00-\x1F\x7F-\xFF"\\]/, match {
+    s.sub(/[\x00-\x1F\x7F-\xFF"\\]/u, match {
         '"'  => '\\"',
         '\\' => '\\\\',
         '\b' => '\\b',

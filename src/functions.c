@@ -1515,11 +1515,11 @@ BUILTIN_FUNCTION(regex)
                 Value flags = ARGx(1, VALUE_STRING);
                 for (int i = 0; i < sN(flags); ++i) {
                         switch (ss(flags)[i]) {
-                        case 'i': options |= PCRE2_CASELESS;  break;
-                        case 'u': options |= PCRE2_UTF;       break;
-                        case 'm': options |= PCRE2_MULTILINE; break;
-                        case 'x': options |= PCRE2_EXTENDED;  break;
-                        case 'v': detailed = true;            break;
+                        case 'i': options |= PCRE2_CASELESS;        break;
+                        case 'u': options |= PCRE2_UTF | PCRE2_UCP; break;
+                        case 'm': options |= PCRE2_MULTILINE;       break;
+                        case 'x': options |= PCRE2_EXTENDED;        break;
+                        case 'v': detailed = true;                  break;
                         }
                 }
         }

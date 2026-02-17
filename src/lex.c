@@ -805,11 +805,11 @@ lexregex(Ty *ty)
 
         while (isalpha(C(0))) {
                 switch (C(0)) {
-                case 'i': flags |= PCRE2_CASELESS;  break;
-                case 'u': flags |= PCRE2_UTF;       break;
-                case 'm': flags |= PCRE2_MULTILINE; break;
-                case 'x': flags |= PCRE2_EXTENDED;  break;
-                case 'v': detailed = true;          break;
+                case 'i': flags |= PCRE2_CASELESS;        break;
+                case 'u': flags |= PCRE2_UTF | PCRE2_UCP; break;
+                case 'm': flags |= PCRE2_MULTILINE;       break;
+                case 'x': flags |= PCRE2_EXTENDED;        break;
+                case 'v': detailed = true;                break;
                 default:  error(ty, "invalid regex flag: %s'%c'%s", TERM(36), C(0), TERM(39));
                 }
                 nextchar(ty);
