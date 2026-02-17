@@ -1927,14 +1927,20 @@ try_slurp_module(Ty *ty, char const *name, char const **path_out)
         char chadbuf[PATH_MAX + 1];
         char pathbuf[PATH_MAX + 1];
 
-        char const *home = getenv("HOME");
+        char *source = NULL;
 
+        char const *override = getenv("TY_LIBRARY_PATH");
+        if (override != NULL) {
+                snprintf(pathbuf, sizeof pathbuf, "%s/%s.ty", override, name);
+                if ((source = slurp(ty, pathbuf)) != NULL) {
+                        goto FoundModule;
+                }
+        }
+
+        char const *home = getenv("HOME");
         if (home == NULL) {
                 home = getenv("USERPROFILE");
         }
-
-        char *source = NULL;
-
         if (home != NULL) {
                 snprintf(pathbuf, sizeof pathbuf, "%s/.ty/%s.ty", home, name);
                 if ((source = slurp(ty, pathbuf)) != NULL) {
@@ -1953,7 +1959,8 @@ try_slurp_module(Ty *ty, char const *name, char const **path_out)
                 }
         }
 
-        snprintf(pathbuf, sizeof pathbuf, "%s.ty", name);
+        char *this_dir = directory_of(STATE.module->path, chadbuf);
+        snprintf(pathbuf, sizeof pathbuf, "%s/%s.ty", this_dir, name);
 
         if ((source = slurp(ty, pathbuf)) == NULL) {
                 return NULL;
@@ -8848,6 +8855,7 @@ emit_match_statement(Ty *ty, Stmt const *s, bool want_result)
         }
 
         if (!irrefutable) {
+                STK(-1);
                 INSN(BAD_MATCH);
         }
 
@@ -9225,6 +9233,7 @@ emit_match_expression(Ty *ty, Expr const *e)
                         INSN(POP);
                         emit_return(ty, NULL);
                 } else {
+                        STK(-1);
                         INSN(BAD_MATCH);
                 }
         }
@@ -9730,8 +9739,6 @@ emit_for_each(Ty *ty, Stmt const *s, bool want_result)
                         STATE.resources += 1;
                 }
 
-                JumpPlaceholder should_stop;
-
                 for (int i = 0; i < vN(s->each.target->es); ++i) {
                         Expr *target = v__(s->each.target->es, i);
                         usize start = vN(STATE.code);
@@ -9740,6 +9747,8 @@ emit_for_each(Ty *ty, Stmt const *s, bool want_result)
                         INSN(POP);
                 }
                 INSN(POP);
+
+                JumpPlaceholder should_stop;
 
                 if (s->each._while != NULL) {
                         should_stop = (PLACEHOLDER_JUMP_IF_NOT)(ty, s->each._while);
@@ -9763,7 +9772,6 @@ emit_for_each(Ty *ty, Stmt const *s, bool want_result)
                         add_location(ty, s->each.target, vN(STATE.code), vN(STATE.code) + 2);
                         INSN(BAD_MATCH);
                 }
-
 
                 if (s->each._while != NULL) {
                         PATCH_JUMP(should_stop);
@@ -12543,11 +12551,10 @@ void
 compiler_load_builtin_modules(Ty *ty)
 {
         if (TY_CATCH_ERROR()) {
-                Value ex = TY_CATCH();
                 fprintf(
                         stderr,
                         "Aborting, failed to load builtin modules: %s\n",
-                        VSC(&ex)
+                        TyError(ty)
                 );
                 exit(1);
         }

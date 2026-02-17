@@ -4,21 +4,22 @@ import ioctls (TIOCGWINSZ)
 import unibilium as unibi
 import errno
 import ffi as c (C!)
+import ty
 
-//#|if getenv('TY_LOG') != nil
-//    import log (..)
-//
-//    let ppp = pretty@(*, color=false)
-//
-//    logging({level: DEBUG, path: '/dev/stderr'})
-//#|else
+#|if getenv('TY_LOG') != nil
+    import log (..)
+
+    let ppp = pretty@(*, color=false)
+
+    logging({level: DEBUG, path: './term.log'})
+#|else
     macro warn!(msg) = do {}
     macro error!(msg) = do {}
     macro debug!(msg) = do {}
     macro critical!(msg) = do {}
 
     let ppp = (x -> "{x}")
-//#|]
+#|]
 
 tag _TermStop;
 
@@ -391,18 +392,15 @@ ns ctlseq {
                 }
             }
 
-            let [?mods, ?ev] = ($2 || '1').split(':').map(int)
+            let [?_mods, ?ev] = ($2 || '1').split(':').map(int)
+            let mods = (_mods ?? 1) - 1
+
             let text = $3.split(':').map(int).remove(nil)
 
-            yield event.Key({
-                key, _key, base,
-                mods: (mods ?? 1) - 1,
-                event: ev ?? 1,
-                text
-            })
+            yield event.Key({event: ev ?? 1, key, _key, base, mods, text})
 
-            if #text != 0 {
-                yield event.Text(text.map(chr).str())
+            if text && (mods & ~mod.SHIFT) == 0 {
+                yield event.Text(text.map(chr).join())
             }
         }
 
@@ -421,24 +419,24 @@ fn unctrl(c: Int) -> Int {
 fn yield-basic(ch: String, extra-mods=0) {
     let c = ord(ch)
 
-    let (key, _key, mods, text?) = match c {
+    let (key, _key, _mods, text?) = match c {
         10 or 13      => (keys.ENTER,     c,   0,        false),
         27            => (keys.ESCAPE,    c,   0,        false),
         127           => (keys.BACKSPACE, c,   0,        false),
-
-        _ => (c < 32) ? (unctrl(c),       nil, mod.CTRL, false)
-                      : (c,               nil, 0,        true)
+        0..32         => (unctrl(c),      nil, mod.CTRL, false)
+        _             => (c,              nil, 0,        true)
     }
 
-    if text? {
+    let mods = (_mods | extra-mods)
+
+    if text? && (mods & ~mod.SHIFT) == 0 {
         yield event.Text(ch)
     }
 
     if c < 256 {
         yield event.Key({
-            key, _key,
+            key, _key, mods,
             base: nil,
-            mods: (mods ?? 0) | extra-mods,
             event: 1,
             text: [c]
         })
@@ -469,7 +467,7 @@ pub fn size(fd: Int) -> (Int, Int) {
 class TermIO {
     __fd: Int
 
-    __ti-keys: Dict[String, Int]
+    __ti-keys: Dict[String, Int] = %{}
 
     __saved-termios: _
 
@@ -507,7 +505,6 @@ class TermIO {
     ) {
         __fd = fd
 
-        __ti-keys = %{}
         let $unibi-term = unibi.Term()
         for i in unibi.strs {
             if unibi.name(i).match?(/^key_/)
@@ -727,7 +724,7 @@ class TermIO {
 
                 // No terminfo match. Hopefully this means we have either a mouse event,
                 // or a keyboard event in the kitty progressive-enhancement format
-                for (pattern, handler: _) in ctlseqs {
+                for (pattern, handler) in ctlseqs {
                     if let [matched, *captures] = buf.str!(i).match(pattern) {
                         handler(*captures)
                         i += matched.size()
@@ -843,4 +840,15 @@ class TermIO {
             critical!("TermIO closed.")
         }
     }
+}
+
+if __module__ == 'main' {
+        with term = TermIO() {
+            while let $ev = term.next-event() {
+                pp(ev)
+                if ev == event.Text('q') {
+                    break
+                }
+            }
+        }
 }

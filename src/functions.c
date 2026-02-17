@@ -7669,6 +7669,17 @@ BUILTIN_FUNCTION(ty_trace)
         return TRACE(clone);
 }
 
+BUILTIN_FUNCTION(ty_stack_ctx)
+{
+        ASSERT_ARGC("ty.stack-ctx()", 0);
+
+        return vTn(
+                "stack",  INTEGER(vN(ty->stack)),
+                "fp",     INTEGER(vvL(ty->st.frames)->fp),
+                "frames", INTEGER(vN(ty->st.frames))
+        );
+}
+
 BUILTIN_FUNCTION(ty_unlock)
 {
         lGv(true);

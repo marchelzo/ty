@@ -158,6 +158,22 @@ get_directory_where_chad_looks_for_runtime_dependencies(char *buffer)
 #endif
 }
 
+char *
+directory_of(char const *path, char *buf)
+{
+#if defined(__APPLE__)
+        return dirname_r(path, buf);
+#elif defined(__linux__)
+        strcpy(buf, path);
+        return dirname(buf);
+#elif defined(_WIN32)
+        strcpy(buf, path);
+        PathRemoveFileSpecA(buf);
+        return buf;
+
+#endif
+}
+
 Value
 this_executable(Ty *ty)
 {

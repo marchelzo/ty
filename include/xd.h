@@ -480,6 +480,9 @@ u8_rune_sz(u8 const *str)
 bool
 get_directory_where_chad_looks_for_runtime_dependencies(char *buffer);
 
+char *
+directory_of(char const *path, char *buf);
+
 bool
 get_terminal_size(int fd, int *rows, int *cols);
 
