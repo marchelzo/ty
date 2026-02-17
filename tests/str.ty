@@ -1,21 +1,875 @@
-function eq!(*args) {
+// ─── helpers ───────────────────────────────────────────────────────────────────
+
+fn eq!(*args) {
 	for [a, b] in args.window(2) {
-		if a != b {
-			print('FAIL')
-			return
-		}
+		assert(a == b, "expected {b}, got {a}")
 	}
 }
 
-let s = 'hello world'
+fn ne!(a, b) { assert(a != b, "expected {a} != {b}") }
 
+fn throws!(f) {
+	try { f(); assert(false, 'expected exception') }
+	catch _ { }
+}
+
+// ─── length / size / charCount ─────────────────────────────────────────────────
+
+let s = 'hello world'
 eq!(#s, 11)
+eq!(s.len(), 11)
 eq!(s.size(), 11)
+eq!(''.len(), 0)
+eq!(''.size(), 0)
+eq!(#'', 0)
+
+// Unicode: é is 2 bytes in UTF-8
+eq!('café'.len(), 4)
+eq!('café'.size(), 5)
+eq!('café'.charCount(), 4)
+
+// ASCII
+eq!('abc'.charCount(), 3)
+eq!(''.charCount(), 0)
+
+// ─── indexing (s[i]) ───────────────────────────────────────────────────────────
+
+eq!(s[0], 'h')
 eq!(s[5], ' ')
-eq!(s.words(), s.split(' '), s.split(' ', 1), s.split(/ /), ['hello', 'world'])
+eq!(s[10], 'd')
+eq!(s[-1], 'd')
+eq!(s[-11], 'h')
+
+// Unicode indexing
+eq!('café'[3], 'é')
+eq!('café'[-1], 'é')
+eq!('café'[0], 'c')
+
+// ─── char() method ─────────────────────────────────────────────────────────────
+
+eq!('hello'.char(0), 'h')
+eq!('hello'.char(4), 'o')
+eq!('hello'.char(-1), 'o')
+eq!('hello'.char(-5), 'h')
+eq!('hello'.char(5), nil)
+
+// ─── byte() method ─────────────────────────────────────────────────────────────
+
+eq!('abc'.byte(0), 97)
+eq!('abc'.byte(1), 98)
+eq!('abc'.byte(2), 99)
+eq!('abc'.byte(-1), 99)
+eq!('abc'.byte(-3), 97)
+eq!('abc'.byte(3), nil)
+eq!('abc'.byte(-4), nil)
+
+// ─── chars() ───────────────────────────────────────────────────────────────────
+
 eq!(s.chars(), ['h', 'e', 'l', 'l', 'o', ' ', 'w', 'o', 'r', 'l', 'd'])
-eq!(s, 'hello world')
+eq!(''.chars(), [])
+eq!('a'.chars(), ['a'])
+
+// Unicode chars
+eq!('café'.chars(), ['c', 'a', 'f', 'é'])
+
+// ─── bytes() ───────────────────────────────────────────────────────────────────
+
+eq!('abc'.bytes(), [97, 98, 99])
+eq!(''.bytes(), [])
+
+// ─── upper() / lower() ────────────────────────────────────────────────────────
+
 eq!(s.upper(), 'HELLO WORLD')
 eq!(s.upper().lower(), s.lower(), s)
+eq!('ABC'.lower(), 'abc')
+eq!('abc'.upper(), 'ABC')
+eq!(''.upper(), '')
+eq!(''.lower(), '')
+eq!('123'.upper(), '123')
+eq!('MiXeD'.lower(), 'mixed')
+eq!('MiXeD'.upper(), 'MIXED')
+
+// ─── words() ──────────────────────────────────────────────────────────────────
+
+eq!(s.words(), ['hello', 'world'])
+eq!('  hello  world  '.words(), ['hello', 'world'])
+eq!('hello'.words(), ['hello'])
+eq!(''.words(), [])
+eq!('   '.words(), [])
+
+// Single word with leading/trailing whitespace
+eq!('  hello  '.words(), ['hello'])
+
+// Multiple spaces between words
+eq!('a    b    c'.words(), ['a', 'b', 'c'])
+
+// Newlines are word separators
+eq!("hello\nworld".words(), ['hello', 'world'])
+eq!("hello\r\nworld".words(), ['hello', 'world'])
+
+// ─── lines() ──────────────────────────────────────────────────────────────────
+
+eq!(''.lines(), [''])
+eq!("hello\nworld".lines(), ['hello', 'world'])
+eq!("hello\r\nworld".lines(), ['hello', 'world'])
+eq!("hello\nworld\n".lines(), ['hello', 'world'])
+eq!("hello\r\nworld\r\n".lines(), ['hello', 'world'])
+
+// Empty lines preserved
+eq!("hello\n\nworld".lines(), ['hello', '', 'world'])
+eq!("\n\n".lines(), ['', ''])
+eq!("\n".lines(), [''])
+
+// Single line
+eq!('hello'.lines(), ['hello'])
+
+// ─── split(String) ────────────────────────────────────────────────────────────
+
+eq!(s.split(' '), ['hello', 'world'])
+eq!('a-b-c'.split('-'), ['a', 'b', 'c'])
+eq!('a,,b,,c'.split(','), ['a', '', 'b', '', 'c'])
+
+// Delimiter at edges
+eq!('-a-b-'.split('-'), ['', 'a', 'b', ''])
+eq!('--'.split('-'), ['', '', ''])
+
+// Delimiter not found
+eq!('abc'.split('x'), ['abc'])
+
+// Multi-char delimiter
+eq!('a::b::c'.split('::'), ['a', 'b', 'c'])
+
+// split with limit
+eq!('a,,b,,c'.split(',', 2), ['a', '', 'b,,c'])
+
+// ─── split(Regex) ─────────────────────────────────────────────────────────────
+
+eq!('hello world'.split(/\s+/), ['hello', 'world'])
+eq!('a1b2c'.split(/\d/), ['a', 'b', 'c'])
+
+// Split with capturing group includes captures
+eq!('hello world'.split(/(\s+)/), ['hello', ' ', 'world'])
+eq!('abc'.split(/(\w)(\w)/), ['', 'a', 'b', 'c'])
+
+// Split regex with limit
+eq!('a b c'.split(/\s/, 1), ['a', 'b c'])
+
+// ─── split(Int) ───────────────────────────────────────────────────────────────
+
+// Split at position returns pair
+eq!('hello'.split(0), ('', 'hello'))
+eq!('hello'.split(1), ('h', 'ello'))
+eq!('hello'.split(5), ('hello', ''))
+eq!('hello'.split(-1), ('hell', 'o'))
+eq!(''.split(0), ('', ''))
+
+// ─── search() ─────────────────────────────────────────────────────────────────
+
+eq!('hello world'.search('world'), 6)
+eq!('hello world'.search('hello'), 0)
+eq!('hello world'.search('xyz'), nil)
+eq!('hello'.search('ello'), 1)
+
+// Search with offset
+eq!('abcabc'.search('b', 0), 1)
+eq!('abcabc'.search('b', 2), 4)
+eq!('abc'.search('b', 2), nil)
+
+// Negative offset
+eq!('abc'.search('b', -2), 1)
+
+// Search with regex
+eq!('abc'.search(/a/), 0)
+eq!('abc'.search(/c/), 2)
+eq!('abc'.search(/x/), nil)
+eq!('abc'.search(/b/, 0), 1)
+
+// ─── searchr() ────────────────────────────────────────────────────────────────
+
+eq!('abcabc'.searchr('a'), 3)
+eq!('abc'.searchr('a'), 0)
+eq!('abc'.searchr('x'), nil)
+
+// With regex
+eq!('abcabc'.searchr(/a/), 3)
+
+// ─── searchAll() ──────────────────────────────────────────────────────────────
+
+eq!('abcabc'.searchAll('b'), [1, 4])
+eq!('abc'.searchAll('x'), [])
+eq!('aaa'.searchAll('a'), [0, 1, 2])
+
+// With regex
+eq!('hello world'.searchAll(/\w+/), [0, 6])
+
+// ─── contains?() ──────────────────────────────────────────────────────────────
+
+eq!('hello world'.contains?('hello'), true)
+eq!('hello world'.contains?('xyz'), false)
+eq!('hello world'.contains?(''), true)
+eq!(''.contains?(''), false)  // empty string in empty string: current behavior
+
+// With regex
+eq!('hello'.contains?(/^h/), true)
+eq!('hello'.contains?(/^x/), false)
+
+// ─── count() ──────────────────────────────────────────────────────────────────
+
+eq!('aabaa'.count('a'), 4)
+eq!('aabaa'.count('b'), 1)
+eq!('aabaa'.count('x'), 0)
+eq!('aaaa'.count('aa'), 2)  // non-overlapping
+
+// With regex
+eq!('hello world'.count(/o/), 2)
+eq!('hello world'.count(/\w+/), 2)
+eq!('aaaa'.count(/aa/), 2)
+
+// ─── match() ──────────────────────────────────────────────────────────────────
+
+// No groups: returns matched string
+eq!('abc'.match(/\w+/), 'abc')
+eq!('abc'.match(/^abc$/), 'abc')
+eq!('abc'.match(/xyz/), nil)
+
+// With groups: returns array [whole, group1, group2, ...]
+eq!('abc'.match(/(.)(.)/), ['ab', 'a', 'b'])
+eq!('a(b)c'.match(/\((\w)\)/), ['(b)', 'b'])
+
+// With /v flag: returns RegexMatch object
+let m = 'abc'.match(/(\w)(\w)/v)
+eq!(m.groups, ['ab', 'a', 'b'])
+
+// No match with /v
+eq!('abc'.match(/xyz/v), nil)
+
+// /v no groups
+let m2 = 'abc'.match(/\w+/v)
+eq!(m2.groups, ['abc'])
+
+// ─── match?() ─────────────────────────────────────────────────────────────────
+
+eq!('abc'.match?(/^abc$/), true)
+eq!('abc'.match?(/xyz/), false)
+eq!(''.match?(/^$/), true)
+eq!('hello world'.match?(/\w+/), true)
+
+// ─── scan() / matches() ──────────────────────────────────────────────────────
+
+// No groups: returns array of matched strings
+eq!('foo bar'.scan(/\w+/), ['foo', 'bar'])
+eq!('abc'.scan(/\w/), ['a', 'b', 'c'])
+eq!(''.scan(/\w+/), [])
+eq!('hello world'.scan(/\b\w+\b/), ['hello', 'world'])
+
+// With groups: returns array of arrays
+eq!('foo bar'.scan(/(\w)(\w+)/), [['foo', 'f', 'oo'], ['bar', 'b', 'ar']])
+eq!('abc'.scan(/(\w)/), [['a', 'a'], ['b', 'b'], ['c', 'c']])
+
+// /v flag: returns array of RegexMatch objects
+let ms = 'foo bar'.scan(/(\w)(\w+)/v)
+eq!(#ms, 2)
+eq!(ms[0].groups, ['foo', 'f', 'oo'])
+eq!(ms[1].groups, ['bar', 'b', 'ar'])
+
+// Zero-width matches: scan advances past each position
+eq!('abc'.scan(/(?=\w)/), ['', '', ''])
+eq!('abc'.scan(/(?=.)/), ['', '', ''])
+eq!(''.scan(/(?=.)/), [])
+eq!('abc'.scan(/\b/), ['', ''])  // start-of-word at 0, end-of-word at 3
+
+// ─── sub() / replace() ───────────────────────────────────────────────────────
+
+// String pattern + String replacement (replaces all)
+eq!('hello world'.sub('world', 'earth'), 'hello earth')
+eq!('aaa'.sub('a', 'b'), 'bbb')
+eq!('abcabc'.sub('a', 'A'), 'AbcAbc')
+eq!('abc'.sub('x', 'y'), 'abc')  // no match: unchanged
+
+// Regex pattern + String replacement (replaces all)
+eq!('hello world'.sub(/\w+/, 'X'), 'X X')
+eq!('abc'.sub(/[aeiou]/, '-'), '-bc')
+
+// Regex callback (no groups): callback receives matched string
+eq!('hello world'.sub(/\w+/, \_.upper()), 'HELLO WORLD')
+eq!('abc'.sub(/\w/, \_.upper()), 'ABC')
+
+// Regex callback with groups: callback receives array
+eq!('abc'.sub(/(\w)/, |[_, c]| -> c.upper()), 'ABC')
+
+// Zero-width lookahead in sub: inserts once per match position
+eq!('abc'.sub(/(?=b)/, '-'), 'a-bc')
+
+// Zero-width anchors
+eq!('abc'.sub(/^/, 'X'), 'Xabc')
+eq!('abc'.sub(/$/, 'X'), 'abcX')
+
+// Empty string pattern: returns unchanged
+eq!('abc'.sub('', '-'), 'abc')
+
+// Zero-width sub with callback
+eq!('abc'.sub(/(?=\w)/, |_| -> '-'), '-a-b-c')
+
+// ─── comb() ──────────────────────────────────────────────────────────────────
+
+// With regex
+eq!('abc'.comb(/[aeiou]/), 'bc')
+eq!('hello world'.comb(/\w+/), ' ')
+eq!('abc'.comb(/xyz/), 'abc')
+eq!('aeiou'.comb(/[aeiou]/), '')
+
+// With string
+eq!('abc'.comb('b'), 'ac')
+eq!('abcabc'.comb('a'), 'bcbc')
+eq!('abc'.comb('x'), 'abc')
+eq!('aaa'.comb('a'), '')
+
+// Zero-width regex: no change
+eq!('abc'.comb(/(?=b)/), 'abc')
+
+// ─── comb?() ─────────────────────────────────────────────────────────────────
+
+// Returns nil if no match
+eq!('abc'.comb?('x'), nil)
+eq!('abc'.comb?(/xyz/), nil)
+
+// Returns modified string if match found
+eq!('abc'.comb?('b'), 'ac')
+eq!('hello world'.comb?(/\w+/), ' ')
+
+// ─── slice() ─────────────────────────────────────────────────────────────────
+
+eq!('abc'.slice(0), 'abc')
+eq!('abc'.slice(1), 'bc')
+eq!('abc'.slice(2), 'c')
+eq!('abc'.slice(3), '')
+
+// With count
+eq!('abc'.slice(0, 2), 'ab')
+eq!('abc'.slice(1, 2), 'bc')
+eq!('abc'.slice(1, 1), 'b')
+
+// Negative start
+eq!('abc'.slice(-2), 'bc')
+eq!('abc'.slice(-1), 'c')
+eq!('hello'.slice(-3, 2), 'll')
+
+// Oversized count
+eq!('abc'.slice(0, 100), 'abc')
+
+// Start past end
+eq!('abc'.slice(100), '')
+
+// ─── bslice() ────────────────────────────────────────────────────────────────
+
+eq!('abc'.bslice(0), 'abc')
+eq!('abc'.bslice(1), 'bc')
+eq!('abc'.bslice(1, 2), 'bc')
+eq!('abc'.bslice(0, 0), '')
+eq!('abc'.bslice(-2), 'bc')
+eq!('abc'.bslice(-1), 'c')
+
+// ─── s[i;j] slice syntax ──────────────────────────────────────────────────────
+
+// [i;j] calls slice(i, j) where j = count, not end index
+eq!('abcde'[0;3], 'abc')
+eq!('abcde'[1;3], 'bcd')
+eq!('abcde'[1;], 'bcde')
+eq!('abcde'[;3], 'abc')
+eq!('abcde'[-2;], 'de')
+eq!('abcde'[;-1], 'abcd')
+eq!('abcde'[2;2], 'cd')
+
+// Step != 1 throws
+throws!(\-> 'abcde'[0;5;2])
+
+// ─── String + Int / String - Int (offset) ──────────────────────────────────────
+
+eq!('abc' + 0, 'abc')
+eq!('abc' + 1, 'bc')
+eq!('abc' + 2, 'c')
+eq!('abc' + 3, '')
+
+eq!('abc' + 1 - 1, 'abc')
+eq!('abc' + 2 - 2, 'abc')
+eq!('abc' + 3 - 3, 'abc')
+
+// String + Bool
+eq!('abc' + true, 'bc')
+eq!('abc' + false, 'abc')
+
+// String - Bool
+eq!('abc' - true, 'abc')  // decrement on already-at-start is a no-op
+eq!('bc' - false, 'bc')
+
+// String - Int on original
+eq!('abc' - 1, 'abc')  // can't go before start
+eq!('abc' - 100, 'abc')
+
+// + large offset clips to end
+eq!('abc' + 100, '')
+eq!('' + 1, '')
+
+// ─── String + String (concatenation) ──────────────────────────────────────────
+
+eq!('abc' + 'def', 'abcdef')
+eq!('' + 'abc', 'abc')
+eq!('abc' + '', 'abc')
+eq!('' + '', '')
+
+// ─── String * Int (repeat) ────────────────────────────────────────────────────
+
+eq!('abc' * 3, 'abcabcabc')
+eq!('abc' * 1, 'abc')
+eq!('abc' * 0, '')
+eq!('' * 100, '')
+
+// ─── repeat() method ──────────────────────────────────────────────────────────
+
+eq!('abc'.repeat(3), 'abcabcabc')
+eq!('abc'.repeat(1), 'abc')
+eq!('abc'.repeat(0), '')
+eq!(''.repeat(5), '')
+
+// ─── Comparison operators ─────────────────────────────────────────────────────
+
+assert('abc' == 'abc')
+assert('abc' != 'abd')
+assert('abc' < 'abd')
+assert('abd' > 'abc')
+assert('abc' <= 'abc')
+assert('abc' <= 'abd')
+assert('abc' >= 'abc')
+assert('abd' >= 'abc')
+
+eq!(('abc' <=> 'abc'), 0)
+eq!(('abc' <=> 'abd'), -1)
+eq!(('abd' <=> 'abc'), 1)
+
+// Empty string comparisons
+assert('' < 'a')
+assert('' <= '')
+assert('' == '')
+
+// ─── lpad() / rpad() / pad() ──────────────────────────────────────────────────
+
+eq!('abc'.lpad(10), '       abc')
+eq!('abc'.rpad(10), 'abc       ')
+eq!('abc'.pad(10), 'abc       ')  // pad is alias for rpad
+
+eq!('abc'.lpad(10, '0'), '0000000abc')
+eq!('abc'.rpad(10, '0'), 'abc0000000')
+
+// Already wider than target: unchanged
+eq!('abcdef'.lpad(3), 'abcdef')
+eq!('abcdef'.rpad(3), 'abcdef')
+
+// Multi-char pad string
+eq!('x'.lpad(7, 'ab'), 'abababx')  // 6 pad chars needed, 'ab' * 3 = 'ababab' + 'x'
+
+// ─── clone() ──────────────────────────────────────────────────────────────────
+
+eq!('abc'.clone(), 'abc')
+eq!(''.clone(), '')
+
+// ─── bsearch() / bsearchr() ──────────────────────────────────────────────────
+
+eq!('abc'.bsearch('b'), 1)
+eq!('abc'.bsearch('c'), 2)
+eq!('abc'.bsearch('x'), nil)
+
+// With offset
+eq!('abcabc'.bsearch('b', 2), 4)
+
+// Regex
+eq!('abc'.bsearch(/b/), 1)
+
+// ─── More edge cases ──────────────────────────────────────────────────────────
+
+// sub replaces all occurrences (string pattern)
+eq!('banana'.sub('a', 'o'), 'bonono')
+eq!('hello'.sub('l', 'r'), 'herro')
+
+// sub replaces all occurrences (regex pattern)
+eq!('banana'.sub(/a/, 'o'), 'bonono')
+
+// split with empty result pieces
+eq!(',a,'.split(','), ['', 'a', ''])
+eq!(',,'.split(','), ['', '', ''])
+
+// Empty string operations
+eq!(''.upper(), '')
+eq!(''.lower(), '')
+eq!(''.chars(), [])
+eq!(''.bytes(), [])
+eq!(''.count('a'), 0)
+eq!(''.contains?(''), false)
+eq!(''.search('a'), nil)
+eq!(''.scan(/\w/), [])
+eq!(''.match(/\w/), nil)
+eq!(''.match?(/\w/), false)
+eq!(''.match?(/^$/), true)
+
+// Single character
+eq!('a'.upper(), 'A')
+eq!('A'.lower(), 'a')
+eq!('a'.chars(), ['a'])
+eq!('a'.bytes(), [97])
+eq!('a'.len(), 1)
+eq!('a'.size(), 1)
+eq!('a'[0], 'a')
+eq!('a'[-1], 'a')
+
+// Interpolation doesn't affect test infrastructure
+let x = 42
+eq!("{x}", '42')
+eq!("hello {x} world", 'hello 42 world')
+
+// Unicode operations
+eq!('HELLO'.lower(), 'hello')
+eq!('hello'.upper(), 'HELLO')
+
+// ─── scan/match with word boundaries ──────────────────────────────────────────
+
+eq!('one two three'.scan(/\b\w+\b/), ['one', 'two', 'three'])
+eq!('no-match-here'.scan(/\b\w+\b/), ['no', 'match', 'here'])
+
+// ─── sub with callback (no groups) ───────────────────────────────────────────
+
+eq!('hello world'.sub(/\w+/, |m| -> m.upper()), 'HELLO WORLD')
+
+// sub callback getting string for no-group regex
+fn capitalize(m) { m[0].upper() + m[1;] }
+eq!('hello world'.sub(/\w+/, capitalize), 'Hello World')
+
+// ─── split regex preserves empty ─────────────────────────────────────────────
+
+eq!('a::b'.split('::'), ['a', 'b'])
+eq!('::a::b::'.split('::'), ['', 'a', 'b', ''])
+
+// ─── complex regex operations ────────────────────────────────────────────────
+
+// Nested groups
+eq!('2024-01-15'.match(/(\d{4})-(\d{2})-(\d{2})/), ['2024-01-15', '2024', '01', '15'])
+
+// Alternation
+eq!('cat'.match(/(cat|dog)/), ['cat', 'cat'])
+eq!('dog'.match(/(cat|dog)/), ['dog', 'dog'])
+eq!('bird'.match(/(cat|dog)/), nil)
+
+// Quantifiers
+eq!('aabbb'.match(/(a+)(b+)/), ['aabbb', 'aa', 'bbb'])
+
+// Case-insensitive
+eq!('Hello'.match?(/hello/i), true)
+eq!('Hello'.match(/hello/i), 'Hello')
+
+// ─── RegexMatch object access ────────────────────────────────────────────────
+
+let rm = 'hello world'.match(/(\w+)\s+(\w+)/v)
+eq!(rm.groups[0], 'hello world')
+eq!(rm.groups[1], 'hello')
+eq!(rm.groups[2], 'world')
+
+// ─── sub with all vowels ────────────────────────────────────────────────────
+
+eq!('hello world'.sub(/[aeiou]/, '*'), 'h*ll* w*rld')
+eq!('HELLO'.sub(/[A-Z]/, \_.lower()), 'hello')
+
+// ─── multiline strings ──────────────────────────────────────────────────────
+
+let ml = "hello\nworld"
+eq!(ml.lines(), ['hello', 'world'])
+
+// ─── count edge cases ───────────────────────────────────────────────────────
+
+eq!(''.count('a'), 0)
+eq!('a'.count('a'), 1)
+eq!('aaa'.count('a'), 3)
+eq!('abc'.count('abc'), 1)
+eq!('abcabc'.count('abc'), 2)
+
+// ─── search with regex offset ───────────────────────────────────────────────
+
+eq!('abcabc'.search('a', 1), 3)
+eq!('abcabc'.search(/a/, 1), 3)
+eq!('abcabc'.search('a', -3), 3)
+
+// ─── searchAll more tests ───────────────────────────────────────────────────
+
+eq!('abc'.searchAll('a'), [0])
+eq!(''.searchAll('a'), [])
+eq!('abc'.searchAll('abc'), [0])
+
+// ─── lines edge case: lone \r ────────────────────────────────────────────────
+
+// \r without \n is not treated as line separator in lines()
+// (it only handles \n and \r\n)
+eq!("a\rb".lines(), ["a\rb"])
+
+// ─── sub preserves unmatched portions ───────────────────────────────────────
+
+eq!('--abc--'.sub(/\w+/, 'X'), '--X--')
+eq!('  abc  def  '.sub(/\w+/, 'X'), '  X  X  ')
+
+// ─── lpad/rpad with exact fit ───────────────────────────────────────────────
+
+eq!('abc'.lpad(3), 'abc')
+eq!('abc'.rpad(3), 'abc')
+eq!('abc'.lpad(4), ' abc')
+eq!('abc'.rpad(4), 'abc ')
+
+// ─── scan with no-group regex: returns flat string array ────────────────────
+
+eq!('a1b2c3'.scan(/\d/), ['1', '2', '3'])
+eq!('a1b2c3'.scan(/[a-z]/), ['a', 'b', 'c'])
+eq!('  x  y  '.scan(/\w/), ['x', 'y'])
+
+// ─── match with anchors ────────────────────────────────────────────────────
+
+eq!('abc'.match(/^abc$/), 'abc')
+eq!('abc'.match(/^xyz$/), nil)
+eq!('abc'.match(/^a/), 'a')
+eq!('abc'.match(/c$/), 'c')
+eq!('abc'.match(/^(.)(.)$/), nil)  // 3 chars doesn't match 2-group anchored
+eq!('ab'.match(/^(.)(.)$/), ['ab', 'a', 'b'])
+
+// ─── match? edge cases ─────────────────────────────────────────────────────
+
+eq!('abc'.match?(/^$/), false)
+eq!(''.match?(/^$/), true)
+eq!('abc'.match?(/./), true)
+eq!(''.match?(/./), false)
+
+// Partial match: match? succeeds even without anchoring
+eq!('hello world'.match?(/world/), true)
+eq!('hello world'.match?(/^hello$/), false)  // anchored: no match
+eq!('hello world'.match?(/^hello/), true)
+
+// ─── sub with regex + string: replaces all matches ─────────────────────────
+
+eq!('aaa'.sub(/a/, 'b'), 'bbb')
+eq!('a1b2c3'.sub(/\d/, '#'), 'a#b#c#')
+eq!('abc'.sub(/\w/, ''), '')
+eq!('abc'.sub(/x/, 'y'), 'abc')
+
+// ─── sub string→string edge cases ─────────────────────────────────────────
+
+eq!('aaa'.sub('aa', 'x'), 'xa')     // non-overlapping replacement
+eq!('abc'.sub('abc', ''), '')        // replace entire string
+eq!('abc'.sub('abc', 'xyz'), 'xyz')  // replace entire string with another
+
+// ─── comb removes all matches ──────────────────────────────────────────────
+
+eq!('a1b2c3'.comb(/\d/), 'abc')
+eq!('a1b2c3'.comb(/[a-z]/), '123')
+eq!('  hello  '.comb(/ /), 'hello')
+eq!('hello'.comb('hello'), '')
+
+// ─── split with trailing delimiter ─────────────────────────────────────────
+
+eq!('a,b,c,'.split(','), ['a', 'b', 'c', ''])
+eq!(','.split(','), ['', ''])
+eq!('a'.split(','), ['a'])
+
+// ─── split regex with trailing match ───────────────────────────────────────
+
+eq!('a1b2c3'.split(/\d/), ['a', 'b', 'c', ''])
+eq!('1a2b3c'.split(/\d/), ['', 'a', 'b', 'c'])
+
+// ─── search edge cases ────────────────────────────────────────────────────
+
+eq!('abc'.search('a'), 0)
+eq!('abc'.search('c'), 2)
+eq!('abc'.search('abc'), 0)
+eq!('abc'.search('abcd'), nil)  // pattern longer than string
+
+// search with regex at beginning and end
+eq!('abc'.search(/^/), 0)
+
+// ─── searchAll edge cases ──────────────────────────────────────────────────
+
+eq!('aaa'.searchAll('a'), [0, 1, 2])
+eq!('aaaa'.searchAll('aa'), [0, 2])  // non-overlapping
+
+// ─── slice edge cases ──────────────────────────────────────────────────────
+
+eq!(''.slice(0), '')
+eq!(''.slice(0, 0), '')
+eq!('abc'.slice(-100), 'abc')  // very negative start clamps to 0
+eq!('abc'.slice(0, 0), '')     // zero count
+
+// ─── bslice edge cases ────────────────────────────────────────────────────
+
+eq!(''.bslice(0), '')
+eq!('abc'.bslice(0, 3), 'abc')
+eq!('abc'.bslice(3), '')       // start at end
+
+// ─── String + Int roundtrip with unicode ───────────────────────────────────
+
+let u = 'café'
+eq!(u + 1, 'afé')
+eq!(u + 1 - 1, 'café')
+eq!(u + 4, '')
+eq!(u + 4 - 4, 'café')
+
+// ─── repeat edge cases ────────────────────────────────────────────────────
+
+eq!('a'.repeat(5), 'aaaaa')
+eq!('ab'.repeat(0), '')
+
+// ─── sub with callback: groups vs no groups ────────────────────────────────
+
+// No groups: callback receives string
+eq!('abc'.sub(/\w+/, |m| -> "{#m}"), '3')
+
+// Groups: callback receives array [full, g1, g2, ...]
+eq!('abc'.sub(/(\w+)/, |m| -> "{#m}"), '2')
+
+// Callback returns non-string (gets stringified)
+eq!('abc'.sub(/\w+/, |_| -> 42), '42')
+
+// ─── count edge cases ──────────────────────────────────────────────────────
+
+eq!(''.count(/\w/), 0)
+eq!('abc'.count(/./), 3)
+eq!('abc'.count(''), 0)  // empty pattern: returns 0
+
+// Zero-width regex in count: counts each position
+eq!('abc'.count(/(?=\w)/), 3)
+eq!('abc'.count(/\b/), 2)  // word boundary at start and end
+eq!(''.count(/(?=.)/), 0)
+
+// ─── Unicode search/match ──────────────────────────────────────────────────
+
+eq!('café'.search('é'), 3)
+eq!('café'.contains?('fé'), true)
+eq!('café'.match?(/café/), true)
+eq!('café'.scan(/\w+/), ['caf'])  // \w doesn't match non-ASCII by default
+eq!('café'.scan(/[a-zé]+/), ['café'])
+
+// /u flag enables Unicode Character Properties: \w matches accented chars
+eq!('café'.scan(/\w+/u), ['café'])
+eq!('café résumé'.scan(/\w+/u), ['café', 'résumé'])
+eq!('über'.match?(/^\w+$/u), true)
+eq!('naïve'.match(/\w+/u), 'naïve')
+eq!('naïve'.count(/\w+/u), 1)
+eq!('naïve test'.sub(/\w+/u, \_.upper()), 'NAÏVE TEST')
+
+// ─── regex with special characters ─────────────────────────────────────────
+
+eq!('hello.world'.match(/\./), '.')
+eq!('a+b'.match(/\+/), '+')
+eq!('a*b'.sub(/\*/, 'x'), 'axb')
+eq!('(abc)'.match(/\((\w+)\)/), ['(abc)', 'abc'])
+
+// ─── chained operations ───────────────────────────────────────────────────
+
+eq!('  Hello World  '.words().map(\_.lower()), ['hello', 'world'])
+eq!('a,b,c'.split(',').map(\_.upper()), ['A', 'B', 'C'])
+eq!('abc'.chars().map(\_.upper()), ['A', 'B', 'C'])
+
+// ─── equality with offset strings ─────────────────────────────────────────
+
+let base = 'hello world'
+let tail = base + 6
+eq!(tail, 'world')
+eq!(tail == 'world', true)
+eq!(#tail, 5)
+eq!(tail.upper(), 'WORLD')
+
+// ─── sub with callback and no-match ────────────────────────────────────────
+
+// If no match, callback is never called
+fn never_called(_) { throw 'never'; '' }
+eq!('abc'.sub(/xyz/, never_called), 'abc')
+
+// ─── sub with regex replacing with longer/shorter strings ──────────────────
+
+eq!('abc'.sub(/\w/, 'xx'), 'xxxxxx')  // each char -> 'xx'
+eq!('abc'.sub(/\w+/, ''), '')
+eq!('a b c'.sub(/\s/, ''), 'abc')
+
+// ─── split with limit edge cases ──────────────────────────────────────────
+
+eq!('a-b-c'.split('-', 0), ['a-b-c'])
+eq!('a-b-c'.split('-', 1), ['a', 'b-c'])
+eq!('a-b-c'.split('-', 100), ['a', 'b', 'c'])
+
+// ─── match with optional groups and /v flag ────────────────────────────────
+
+let ov = 'abc'.match(/^(\w)(\w)?(\w)?/v)
+eq!(ov.groups[0], 'abc')
+eq!(ov.groups[1], 'a')
+eq!(ov.groups[2], 'b')
+eq!(ov.groups[3], 'c')
+
+let ov2 = 'a'.match(/^(\w)(\w)?(\w)?/v)
+eq!(ov2.groups[0], 'a')
+eq!(ov2.groups[1], 'a')
+// Groups 2 and 3 are optional and unmatched - may not appear in array
+
+// ─── bsearch more tests ───────────────────────────────────────────────────
+
+eq!('abc'.bsearch('a'), 0)
+eq!('abc'.bsearch('a', 1), nil)
+eq!('abc'.bsearch(/\w/, 1), 1)
+eq!('abc'.bsearch('c', 2), 2)
+
+// ─── width() ──────────────────────────────────────────────────────────────
+
+// ASCII characters have width 1 each
+eq!('abc'.width(), 3)
+eq!(''.width(), 0)
+
+// ─── String comparison with different lengths ─────────────────────────────
+
+assert('ab' < 'abc')
+assert('abc' > 'ab')
+assert('a' < 'b')
+assert('z' > 'a')
+
+// ─── comb? edge cases ─────────────────────────────────────────────────────
+
+eq!('abc'.comb?('a'), 'bc')
+eq!('abc'.comb?(/^a/), 'bc')
+eq!('abc'.comb?('d'), nil)
+eq!(''.comb?('a'), nil)
+
+// ─── scan with /v flag, no groups ──────────────────────────────────────────
+
+let sv = 'abc'.scan(/\w/v)
+eq!(#sv, 3)
+eq!(sv[0].groups, ['a'])
+eq!(sv[1].groups, ['b'])
+eq!(sv[2].groups, ['c'])
+
+// ─── split(Int) edge cases ────────────────────────────────────────────────
+
+eq!('abc'.split(-100), ('', 'abc'))  // very negative clamps to 0
+eq!('abc'.split(100), ('abc', ''))   // past end
+
+// ─── sub replaces all, not just first ──────────────────────────────────────
+
+eq!('axa'.sub('a', 'b'), 'bxb')
+eq!('axa'.sub(/a/, 'b'), 'bxb')
+
+// ─── match group with alternation ──────────────────────────────────────────
+
+let alt = 'abc123'.match(/([a-z]+)(\d+)/)
+eq!(alt, ['abc123', 'abc', '123'])
+
+// ─── Comprehensive comb with regex ─────────────────────────────────────────
+
+eq!('Hello, World!'.comb(/[^a-zA-Z]/), 'HelloWorld')
+eq!('Hello, World!'.comb(/\W/), 'HelloWorld')
+
+// ─── Long string operations ───────────────────────────────────────────────
+
+let long = 'x'.repeat(1000)
+eq!(#long, 1000)
+eq!(long.count('x'), 1000)
+eq!(long.scan(/x/).len(), 1000)
+eq!(long.sub('x', 'y'), 'y'.repeat(1000))
 
 print('PASS')

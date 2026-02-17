@@ -1146,7 +1146,7 @@ OffsetString(Value const *v, i32 n)
         Value str = *v;
 
         while (n > 0 && str.bytes > 0) {
-                i32 sz = u8_rune_sz(v->str);
+                i32 sz = u8_rune_sz(str.str);
                 if (sz <= 0) {
                         sz = 1;
                 }
