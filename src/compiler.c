@@ -4545,10 +4545,7 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                         LOG("ID: %s  ::  %s\n", e->identifier, type_show(ty, e->symbol->type));
                 }
 
-                if (
-                        SymbolIsProperty(e->symbol)
-                     && (TypeType(e->symbol->type) == TYPE_FUNCTION)
-                ) {
+                if (SymbolIsProperty(e->symbol) && IsFuncT(e->symbol->type)) {
                         e->_type = e->symbol->type->rt;
                 } else {
                         e->_type = e->symbol->type;
@@ -4848,10 +4845,7 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
 
                 for (usize i = 0;  i < vN(e->args); ++i) {
                         Type *arg0 = NULL;
-                        if (
-                                (TypeType(e->function->_type) == TYPE_FUNCTION)
-                             && (vN(t0->params) > i)
-                        ) {
+                        if (IsFuncT(e->function->_type) && vN(t0->params) > i) {
                                 if (vN(t0->bound) > 0) {
                                         t0 = type_inst(ty, t0);
                                 }
@@ -4876,6 +4870,7 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
 
                 e->_type = type_call(ty, e);
                 SET_TYPE_SRC(e);
+
                 break;
 
         case EXPRESSION_SUBSCRIPT:
@@ -4923,7 +4918,7 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                 for (usize i = 0;  i < vN(e->method_args); ++i) {
                         Type *arg0 = NULL;
 
-                        if ((TypeType(t0) == TYPE_FUNCTION) && (vN(t0->params) > i)) {
+                        if (IsFuncT(t0) && vN(t0->params) > i) {
                                 if (vN(t0->bound) > 0) {
                                         t0 = type_inst(ty, t0);
                                 }
@@ -5022,9 +5017,7 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                         SET_TYPE_SRC(e);
                 }
 
-                if (e->type != EXPRESSION_GENERATOR) {
-                        type_scope_push(ty, e);
-                }
+                type_scope_push(ty, e);
 
                 if (e->fn_symbol != NULL) {
                         e->fn_symbol->type = e->_type;
@@ -5050,10 +5043,7 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
 
                 if (
                         (e->type == EXPRESSION_FUNCTION)
-                     && (
-                                (TypeType(t0) == TYPE_FUNCTION)
-                             || (TypeType(t0) == TYPE_ALIAS)
-                        )
+                     && (IsFuncT(t0) || TypeType(t0) == TYPE_ALIAS)
                 ) {
                         unify(ty, &e->_type, t0);
                 }
@@ -5089,7 +5079,7 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                         if (e->return_type != NULL) {
                                 unify2(ty, &e->_type->rt, e->body->_type);
                         } else {
-                                avP(STATE.return_types, e->body->_type);
+                                avP(STATE.return_types, type_inst(ty, e->body->_type));
                         }
                 }
 
@@ -5125,7 +5115,7 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                         type_scope_pop(ty);
                         type_function_fixup(ty, e);
                 } else {
-                        e->_type = type_generator(ty, e);
+                        type_finalize_generator(ty, e);
                 }
 
                 for (int i = 0; i < vN(e->decorators); ++i) {
@@ -5205,12 +5195,7 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                 for (int i = 0; i < vN(e->es); ++i) {
                         symbolize_expression(ty, scope, v__(e->es, i));
                 }
-                if (STATE.func->_type != NULL) {
-                        avP(
-                                STATE.return_types,
-                                type_tagged(ty, TAG_SOME, v__(e->es, 0)->_type)
-                        );
-                }
+                e->_type = type_yield(ty, STATE.func->_type, v__(e->es, 0)->_type);
                 break;
 
         case EXPRESSION_ARRAY:
@@ -6277,7 +6262,7 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
                         if (STATE.func->return_type != NULL) {
                                 unify2(ty, &STATE.func->_type->rt, t0);
                         } else {
-                                avP(STATE.return_types, t0);
+                                avP(STATE.return_types, type_inst(ty, t0));
                         }
 
                         dont_printf("  after unify: %s\n", type_show(ty, STATE.func->_type->rt));

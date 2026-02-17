@@ -1514,11 +1514,11 @@ class Blob : Iterable[Int], IntoPtr[Int] {
         }
     }
 
-    [](i: Int) -> Int {
-        self[i]
-    }
+    [](i: Int) -> Int;
+    []=(i: Int, byte: Int) -> Int;
 
     size() -> Int;
+    #() -> Int;
 
     pad(n: Int, c: Int = 0) -> nil;
 
@@ -1527,6 +1527,9 @@ class Blob : Iterable[Int], IntoPtr[Int] {
 
     str(i: ?Int = 0, n: ?Int = #self) -> String;
     str!(i: ?Int = 0, n: ?Int = #self) -> String;
+
+    splice(i: ?Int = 0, n: Int = #self) -> Blob;
+
     set(i: Int, byte: Int) -> nil;
 }
 
@@ -1589,19 +1592,19 @@ class Ptr[T] : IntoPtr[T] {
     }
 }
 
-class Generator[T] : Iter[T] {
+class Generator[T, S] : Iter[T] {
     init*(f) {
         while let Some(x) = f() {
             yield x
         }
     }
 
-    __next__() -> Some[T] | None {
+    __next__() -> Some[T] | None where S: nil {
         self()
     }
 
-    __call__(*args: Any) -> Some[T] | None {
-        self()
+    __call__(arg: S) -> Some[T] | None {
+        self(arg if arg != nil)
     }
 
     static [](T) {

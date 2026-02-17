@@ -61,10 +61,12 @@ class FCGIParser {
     }
 
     next(n: Int) -> Blob  {
-        let more: _ = () -> yield nil
+        let more = () -> (yield nil)
+
         while #__buffer < (n ?? 1) {
             __buffer.push(more())
         }
+
         __buffer.splice(0, n)
     }
 
@@ -85,39 +87,39 @@ class FCGIParser {
                     (b[0] << 8) + b[1]
                 }
 
-                let r = FCGIRecord();
-
-                r.version = next()
-                r.type = next()
-                r.requestID = nextShort()
+                let version   = next()
+                let type      = next()
+                let requestID = nextShort()
 
                 let contentLength = nextShort()
                 let paddingLength = next()
 
                 next()
 
-                r.content = next(contentLength)
+                let content = next(contentLength)
 
                 next(paddingLength)
 
-                match r.type {
+                let rec = FCGIRecord(version, type, requestID, content)
+
+                match type {
                     ::FCGI_BEGIN_REQUEST => {
-                        r.beginRequest()
+                        // TODO
                     },
 
                     ::FCGI_PARAMS => {
-                        params += r.getParams()
+                        params += rec.getParams()
                     },
 
                     ::FCGI_STDIN => {
-                        if #r.content == 0 {
+                        if #rec.content == 0 {
                             break
                         } else {
-                            body.push(r.content)
+                            body.push(rec.content)
                         }
                     },
 
-                    t => { print("Type = {t}") }
+                    _ => {}
                 }
             }
 
@@ -137,9 +139,6 @@ class FCGIRecord {
     type: Int
     requestID: Int
     content: Blob
-
-    beginRequest() {
-    }
 
     getParams() -> Dict[String, String] {
         let b = content
