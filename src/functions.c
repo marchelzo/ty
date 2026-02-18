@@ -8362,7 +8362,7 @@ BUILTIN_FUNCTION(ty_mod_imports)
                         ty,
                         imports,
                         vSsz(v_(mod->imports, i)->name),
-                        MODULE(v_(mod->imports, i))
+                        MODULE(v_(mod->imports, i)->mod)
                 );
         }
         GC_RESUME();
