@@ -5337,7 +5337,7 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                 break;
 
         case EXPRESSION_REGEX:
-                e->_type = e->regex->detailed ? TYPE_REGEXV : TYPE_REGEX;
+                e->_type = type_regex(ty, e->regex);
                 break;
 
         case EXPRESSION_NIL:
@@ -6212,7 +6212,7 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
                 symbolize_expression(ty, scope, s->each.array);
                 subscope = scope_new(ty, "(for-each)", scope, false);
                 symbolize_lvalue(ty, subscope, s->each.target, LV_DECL);
-                type_assign_iterable(ty, s->each.target, s->each.array->_type, 0);
+                type_assign_iterable(ty, s->each.target, s->each.array->_type, T_FLAG_STRICT);
                 symbolize_expression(ty, subscope, s->each._if);
                 symbolize_expression(ty, subscope, s->each._while);
                 AddRefinements(ty, s->each._if, subscope, NULL);

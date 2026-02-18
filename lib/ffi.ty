@@ -456,9 +456,11 @@ fn strct() {
 
     use SimpleFieldDecl = {t: AST, name: String, count: AST}
 
+    use UnionMember = SimpleFieldDecl | Struct[Array[SimpleFieldDecl]]
+
     use FieldDecl = SimpleFieldDecl
                   | Struct[Array[FieldDecl]]
-                  | Union[(AST, Array[FieldDecl])]
+                  | Union[(AST, Array[UnionMember])]
 
     let members: Array[FieldDecl] = []
 

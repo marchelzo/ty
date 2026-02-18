@@ -97,7 +97,7 @@ pub fn poll[T](
 
 pub fn poll[T](
     pollfds-in: [Int | (Int, Int, T)],
-    pollfds-out: [Int | (Int, Int, T)],
+    pollfds-out: [(Int, Int, T)],
     timeout: Float | Int | nil
 ) -> Int;
 

@@ -3292,6 +3292,22 @@ type_bool(Ty *ty, bool b)
 }
 
 Type *
+type_regex(Ty *ty, Regex const *re)
+{
+        Type *t = CloneType(ty, re->detailed ? TYPE_REGEXV : TYPE_REGEX);
+        t->concrete = true;
+
+        u32 ncap;
+        int err = pcre2_pattern_info(re->pcre2, PCRE2_INFO_CAPTURECOUNT, &ncap);
+
+        ASSERT(err == 0);
+
+        avP(t->args, type_integer(ty, ncap));
+
+        return t;
+}
+
+Type *
 type_type(Ty *ty, Type *t0)
 {
         Type *t = NewType(ty, TYPE_TYPE);
