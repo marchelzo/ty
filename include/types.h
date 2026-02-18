@@ -231,6 +231,9 @@ Type *
 type_object(Ty *ty, Class *class);
 
 Type *
+type_regex(Ty *ty, Regex const *re);
+
+Type *
 type_type(Ty *ty, Type *t0);
 
 Type *

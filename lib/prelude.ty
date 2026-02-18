@@ -1028,7 +1028,12 @@ class String : Iterable[String], IntoPtr[Int] {
     matches(pattern: Regex) -> Array[String | Array[String]];
 
     scan(pattern: RegexV) -> Array[RegexMatch];
-    scan(pattern: Regex) -> Array[String | Array[String]];
+    scan(pattern: Regex[0]) -> Array[String];
+    scan(pattern: Regex[1]) -> Array[Array[String]];
+    scan(pattern: Regex[2]) -> Array[Array[String]];
+    scan(pattern: Regex[3]) -> Array[Array[String]];
+    scan(pattern: Regex[4]) -> Array[Array[String]];
+    scan(pattern: Regex[_]) -> Array[Array[String] | String];
 
     match(pattern: RegexV) -> RegexMatch;
     match(pattern: Regex) -> String | Array[String];
