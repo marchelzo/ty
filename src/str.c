@@ -20,34 +20,6 @@
         bP("PCRE2: %s", msg);                   \
 } while (0)
 
-
-inline static isize
-rune_count(u8 const *s, isize n)
-{
-        isize count = 0;
-
-        while (n != 0) {
-                i32 rune;
-                isize bytes = utf8proc_iterate(s, n, &rune);
-                if (bytes <= 0) {
-                        n -= 1;
-                        s += 1;
-                } else {
-                        count += 1;
-                        n -= bytes;
-                        s += bytes;
-                }
-        }
-
-        return count;
-}
-
-inline static isize
-TyStrLen(Value const *str)
-{
-        return rune_count(ss(*str), sN(*str));
-}
-
 inline static isize
 x_x_x(u8 const *s, isize sz, isize ncp)
 {
@@ -1057,7 +1029,6 @@ string_replace(Ty *ty, Value *string, int argc, Value *kwargs)
                 isize len = sN(*string);
                 usize *ovec = ty_re_ovec();
                 isize start = 0;
-                isize sz;
                 isize rc;
 
                 Value match;
@@ -1067,7 +1038,11 @@ string_replace(Ty *ty, Value *string, int argc, Value *kwargs)
                         (start < len)
                      && (rc = ty_re_match(re, s, len, start, 0)) > 0
                 ) {
-                        vvPn(chars, s + start, ovec[0] - start);
+                        // Need to grab these now in case the callback clobbers ovec
+                        isize i = ovec[0];
+                        isize j = ovec[1];
+
+                        vvPn(chars, s + start, i - start);
 
                         match = mkmatch(ty, string, ovec, rc, pattern.regex->detailed);
                         gP(&match);
@@ -1079,13 +1054,12 @@ string_replace(Ty *ty, Value *string, int argc, Value *kwargs)
 
                         uvPn(chars, ss(subst), sN(subst));
 
-                        if (ovec[0] < ovec[1]) {
-                                start = ovec[1];
-                        } else if (ovec[0] < len) {
-                                sz = u8_rune_sz(s + ovec[0]);
-                                uvPn(chars, s + ovec[0], sz);
-                                start = ovec[0] + sz;
+                        if (i == j && i < len) {
+                                j += u8_rune_sz(s + i);
+                                uvPn(chars, s + i, j - i);
                         }
+
+                        start = j;
                 }
 
                 vvPn(chars, s + start, len - start);

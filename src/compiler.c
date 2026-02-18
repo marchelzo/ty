@@ -99,7 +99,26 @@ enum {
 
 #define ETUPLE(n) EmitTupleOp(ty, (n))
 
-#define STK(n) AdjStack(ty, (n))
+#if TY_DEBUG_STACK_BOOKKEEPING
+ #define STK(n) do {                                  \
+         LOGX(                                        \
+                 "[%s:%d] Stack change: %d -> %d\n",  \
+                 __func__,                            \
+                 __LINE__,                            \
+                 STATE.stack.count,                   \
+                 (STATE.stack.count + (n))            \
+         );                                           \
+         AdjStack(ty, (n));                           \
+ } while (0)
+
+ #define AssertEmptyStack() do {         \
+         ASSERT(STATE.stack.count == 0); \
+         ASSERT(STATE.stack.saved == 0); \
+ } while (0)
+#else
+ #define STK(n) AdjStack(ty, (n))
+ #define AssertEmptyStack() ((void)0)
+#endif
 
 #define PRIV_ID(name) GetPrivateId(ty, CurrentClassID, (name))
 
@@ -6668,13 +6687,15 @@ emit_list(Ty *ty, Expr const *e)
         INSN(SENTINEL);
         INSN(CLEAR_RC);
 
-        if (e->type == EXPRESSION_LIST) for (int i = 0; i < vN(e->es); ++i) {
-                if (is_call(v__(e->es, i))) {
-                        INSN(CLEAR_RC);
-                        EE(v__(e->es, i));
-                        INSN(GET_EXTRA);
-                } else {
-                        EE(v__(e->es, i));
+        if (e->type == EXPRESSION_LIST) {
+                for (int i = 0; i < vN(e->es); ++i) {
+                        if (is_call(v__(e->es, i))) {
+                                INSN(CLEAR_RC);
+                                EE(v__(e->es, i));
+                                INSN(GET_EXTRA);
+                        } else {
+                                EE(v__(e->es, i));
+                        }
                 }
         } else {
                 INSN(CLEAR_RC);
@@ -9205,7 +9226,6 @@ emit_match_expression(Ty *ty, Expr const *e)
                         INSN(POP);
                         emit_return(ty, NULL);
                 } else {
-                        STK(-1);
                         INSN(BAD_MATCH);
                 }
         }
@@ -11002,6 +11022,7 @@ emit_statement(Ty *ty, Stmt const *s, bool want_result)
                 for (int i = vN(s->tag.s_methods); i > 0; --i) {
                         emit_string(ty, v__(s->tag.s_methods, i - 1)->name);
                 }
+                STK(-(vN(s->tag.methods) + vN(s->tag.s_methods)));
                 break;
 
         case STATEMENT_CLASS_DEFINITION:
@@ -11076,6 +11097,15 @@ emit_statement(Ty *ty, Stmt const *s, bool want_result)
                                 Ei32(f->target->symbol->member);
                         }
                 }
+
+                STK(-(
+                        vN(s->class.s_methods)
+                      + vN(s->class.s_getters)
+                      + vN(s->class.s_setters)
+                      + vN(s->class.methods)
+                      + vN(s->class.getters)
+                      + vN(s->class.setters)
+                ));
 
                 STATE.class = NULL;
                 break;
@@ -12192,6 +12222,7 @@ compile(Ty *ty, char const *source)
 
         for (int i = 0; i < end_of_defs; ++i) {
                 emit_statement(ty, p[i], false);
+                AssertEmptyStack();
         }
 
         for (int i = 0; i < vN(STATE.class_ops); ++i) {
@@ -12202,11 +12233,13 @@ compile(Ty *ty, char const *source)
                         self, v__(def->value->param_symbols, 0)
                 ) {
                         emit_statement(ty, def, false);
+                        AssertEmptyStack();
                 }
         }
 
         for (int i = end_of_defs; p[i] != NULL; ++i) {
                 emit_statement(ty, p[i], false);
+                AssertEmptyStack();
         }
 
         while (STATE.resources > 0) {
@@ -12215,6 +12248,7 @@ compile(Ty *ty, char const *source)
         }
 
         INSN(HALT);
+        AssertEmptyStack();
 
         add_annotation(ty, "(top)", 0, vN(STATE.code));
         PatchAnnotations(ty);

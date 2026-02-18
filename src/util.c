@@ -250,4 +250,189 @@ get_terminal_size(int fd, int *rows, int *cols)
 #endif
 }
 
+int
+vdump(byte_vector *b, char const *fmt, va_list ap)
+{
+        va_list ap_;
+
+        for (;;) {
+                int avail = b->capacity - b->count;
+                int need;
+
+                va_copy(ap_, ap);
+                need = vsnprintf(b->items + b->count, avail, fmt, ap_);
+                va_end(ap_);
+
+                if (1 + need >= avail) {
+                        xvR(*b, max(b->capacity * 2, 256));
+                        continue;
+                }
+
+                b->count += need;
+                vvL(*b)[1] = '\0';
+
+                return need;
+        }
+}
+
+int
+dump(byte_vector *b, char const *fmt, ...)
+{
+        va_list ap;
+
+        for (;;) {
+                isize avail = b->capacity - b->count;
+                isize need;
+
+                va_start(ap, fmt);
+                need = vsnprintf(b->items + b->count, avail, fmt, ap);
+                va_end(ap);
+
+                if (1 + need >= avail) {
+                        xvR(*b, max(b->capacity * 2, 256));
+                        continue;
+                }
+
+                b->count += need;
+                vvL(*b)[1] = '\0';
+
+                return need;
+        }
+}
+
+int
+avdump(Ty *ty, byte_vector *str, char const *fmt, va_list ap)
+{
+        va_list ap_;
+
+        for (;;) {
+                isize avail = vC(*str) - vN(*str);
+                isize need;
+
+                va_copy(ap_, ap);
+                need = vsnprintf(vZ(*str), avail, fmt, ap_);
+                va_end(ap_);
+
+                if (1 + need >= avail) {
+                        avR(*str, max(vC(*str) * 2, 256));
+                        continue;
+                }
+
+                str->count += need;
+                *vZ(*str) = '\0';
+
+                return need;
+        }
+}
+
+int
+(adump)(Ty *ty, byte_vector *str, char const *fmt, ...)
+{
+        int bytes;
+        va_list ap;
+
+        va_start(ap, fmt);
+        bytes = avdump(ty, str, fmt, ap);
+        va_end(ap);
+
+        return bytes;
+}
+
+int
+scvdump(Ty *ty, byte_vector *str, char const *fmt, va_list ap)
+{
+        va_list ap_;
+
+        for (;;) {
+                isize avail = vC(*str) - vN(*str);
+                isize need;
+
+                va_copy(ap_, ap);
+                need = vsnprintf(vZ(*str), avail, fmt, ap_);
+                va_end(ap_);
+
+                if (1 + need >= avail) {
+                        svR(*str, max(vC(*str) * 2, 256));
+                        continue;
+                }
+
+                str->count += need;
+                *vZ(*str) = '\0';
+
+                return need;
+        }
+}
+
+int
+(sxdf)(Ty *ty, byte_vector *str, char const *fmt, ...)
+{
+        isize bytes;
+        va_list ap;
+
+        va_start(ap, fmt);
+        bytes = scvdump(ty, str, fmt, ap);
+        va_end(ap);
+
+        return bytes;
+}
+
+char *
+(sfmt)(Ty *ty, char const *fmt, ...)
+{
+        byte_vector buf = {0};
+        va_list ap;
+
+        va_start(ap, fmt);
+        scvdump(ty, &buf, fmt, ap);
+        va_end(ap);
+
+        return vv(buf);
+}
+
+const char *
+(ifmt)(char const *fmt, ...)
+{
+        char const *str;
+        byte_vector buf = {0};
+        va_list ap;
+
+        va_start(ap, fmt);
+        vdump(&buf, fmt, ap);
+        va_end(ap);
+        str = intern(&xD.members, vv(buf))->name;
+        xvF(buf);
+
+        return str;
+}
+
+char *
+xfmt(char const *fmt, ...)
+{
+        byte_vector buf = {0};
+        va_list ap;
+
+        va_start(ap, fmt);
+        vdump(&buf, fmt, ap);
+        va_end(ap);
+
+        return vv(buf);
+}
+
+char *
+(afmt)(Ty *ty, char const *fmt, ...)
+{
+        char *str;
+        byte_vector buf = {0};
+        va_list ap;
+
+        SCRATCH_SAVE();
+        va_start(ap, fmt);
+        scvdump(ty, &buf, fmt, ap);
+        str = sclonea(ty, v_(buf, 0));
+        va_end(ap);
+        SCRATCH_RESTORE();
+
+        return str;
+}
+
 /* vim: set sw=8 sts=8 expandtab: */
