@@ -3472,7 +3472,7 @@ DoCount(Ty *ty, bool exec)
         case VALUE_ARRAY:  xpush(INTEGER(vN(*v.array)));   break;
         case VALUE_DICT:   xpush(INTEGER(v.dict->count));  break;
         case VALUE_TUPLE:  xpush(INTEGER(v.count));        break;
-        case VALUE_STRING: xpush(INTEGER(sN(v)));          break;
+        case VALUE_STRING: xpush(INTEGER(TyStrLen(&v)));   break;
 
         case VALUE_OBJECT:
         case VALUE_CLASS:

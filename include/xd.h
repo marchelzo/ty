@@ -12,10 +12,8 @@
 #include <utf8proc.h>
 #include <xxhash.h>
 
-#include "ty.h"
-#include "mmmm.h"
-#include "alloc.h"
-#include "intern.h"
+#include "defs.h"
+#include "panic.h"
 #include "polyfill_unistd.h"
 
 #ifdef max
@@ -36,12 +34,6 @@
 #define RESTORE_(x) memcpy(&(x), &(x##_), sizeof (x))
 
 #define countof(x) (sizeof (x) / sizeof ((x)[0]))
-
-#define afmt(...) ((afmt)(ty, __VA_ARGS__))
-#define adump(...) ((adump)(ty, __VA_ARGS__))
-
-#define sxdf(...) ((sxdf)(ty, __VA_ARGS__))
-#define sfmt(...) ((sfmt)(ty, __VA_ARGS__))
 
 inline static usize
 P_ALIGN(void const *p)
@@ -192,191 +184,6 @@ search_str(StringVector const *ss, char const *s)
         return false;
 }
 
-static int
-vdump(byte_vector *b, char const *fmt, va_list ap)
-{
-        va_list ap_;
-
-        for (;;) {
-                int avail = b->capacity - b->count;
-                int need;
-
-                va_copy(ap_, ap);
-                need = vsnprintf(b->items + b->count, avail, fmt, ap_);
-                va_end(ap_);
-
-                if (1 + need >= avail) {
-                        xvR(*b, max(b->capacity * 2, 256));
-                        continue;
-                }
-
-                b->count += need;
-                vvL(*b)[1] = '\0';
-
-                return need;
-        }
-}
-
-static int
-dump(byte_vector *b, char const *fmt, ...)
-{
-        va_list ap;
-
-        for (;;) {
-                isize avail = b->capacity - b->count;
-                isize need;
-
-                va_start(ap, fmt);
-                need = vsnprintf(b->items + b->count, avail, fmt, ap);
-                va_end(ap);
-
-                if (1 + need >= avail) {
-                        xvR(*b, max(b->capacity * 2, 256));
-                        continue;
-                }
-
-                b->count += need;
-                vvL(*b)[1] = '\0';
-
-                return need;
-        }
-}
-
-static int
-avdump(Ty *ty, byte_vector *str, char const *fmt, va_list ap)
-{
-        va_list ap_;
-
-        for (;;) {
-                isize avail = vC(*str) - vN(*str);
-                isize need;
-
-                va_copy(ap_, ap);
-                need = vsnprintf(vZ(*str), avail, fmt, ap_);
-                va_end(ap_);
-
-                if (1 + need >= avail) {
-                        avR(*str, max(vC(*str) * 2, 256));
-                        continue;
-                }
-
-                str->count += need;
-                *vZ(*str) = '\0';
-
-                return need;
-        }
-}
-
-static int
-(adump)(Ty *ty, byte_vector *str, char const *fmt, ...)
-{
-        int bytes;
-        va_list ap;
-
-        va_start(ap, fmt);
-        bytes = avdump(ty, str, fmt, ap);
-        va_end(ap);
-
-        return bytes;
-}
-
-static int
-scvdump(Ty *ty, byte_vector *str, char const *fmt, va_list ap)
-{
-        va_list ap_;
-
-        for (;;) {
-                isize avail = vC(*str) - vN(*str);
-                isize need;
-
-                va_copy(ap_, ap);
-                need = vsnprintf(vZ(*str), avail, fmt, ap_);
-                va_end(ap_);
-
-                if (1 + need >= avail) {
-                        svR(*str, max(vC(*str) * 2, 256));
-                        continue;
-                }
-
-                str->count += need;
-                *vZ(*str) = '\0';
-
-                return need;
-        }
-}
-
-static int
-(sxdf)(Ty *ty, byte_vector *str, char const *fmt, ...)
-{
-        isize bytes;
-        va_list ap;
-
-        va_start(ap, fmt);
-        bytes = scvdump(ty, str, fmt, ap);
-        va_end(ap);
-
-        return bytes;
-}
-
-static char *
-(sfmt)(Ty *ty, char const *fmt, ...)
-{
-        byte_vector buf = {0};
-        va_list ap;
-
-        va_start(ap, fmt);
-        scvdump(ty, &buf, fmt, ap);
-        va_end(ap);
-
-        return vv(buf);
-}
-
-static const char *
-ifmt(char const *fmt, ...)
-{
-        char const *str;
-        byte_vector buf = {0};
-        va_list ap;
-
-        va_start(ap, fmt);
-        vdump(&buf, fmt, ap);
-        va_end(ap);
-        str = intern(&xD.members, vv(buf))->name;
-        xvF(buf);
-
-        return str;
-}
-
-static char *
-xfmt(char const *fmt, ...)
-{
-        byte_vector buf = {0};
-        va_list ap;
-
-        va_start(ap, fmt);
-        vdump(&buf, fmt, ap);
-        va_end(ap);
-
-        return vv(buf);
-}
-
-static char *
-(afmt)(Ty *ty, char const *fmt, ...)
-{
-        char *str;
-        byte_vector buf = {0};
-        va_list ap;
-
-        SCRATCH_SAVE();
-        va_start(ap, fmt);
-        scvdump(ty, &buf, fmt, ap);
-        str = sclonea(ty, v_(buf, 0));
-        va_end(ap);
-        SCRATCH_RESTORE();
-
-        return str;
-}
-
 static isize
 term_fit_cols(void const *_s, isize n, int cols)
 {
@@ -474,7 +281,28 @@ u8_rune_sz(u8 const *str)
 {
 	i32 cp;
 	i32 n = utf8proc_iterate(str, 8, &cp);
-        return n + !n;
+        return (n > 0) ? n : 1;
+}
+
+inline static isize
+rune_count(u8 const *s, isize n)
+{
+        isize count = 0;
+
+        while (n != 0) {
+                i32 rune;
+                isize bytes = utf8proc_iterate(s, n, &rune);
+                if (bytes <= 0) {
+                        n -= 1;
+                        s += 1;
+                } else {
+                        count += 1;
+                        n -= bytes;
+                        s += bytes;
+                }
+        }
+
+        return count;
 }
 
 bool
@@ -485,6 +313,36 @@ directory_of(char const *path, char *buf);
 
 bool
 get_terminal_size(int fd, int *rows, int *cols);
+
+int
+vdump(byte_vector *b, char const *fmt, va_list ap);
+
+int
+dump(byte_vector *b, char const *fmt, ...);
+
+int
+avdump(Ty *ty, byte_vector *str, char const *fmt, va_list ap);
+
+int
+(adump)(Ty *ty, byte_vector *str, char const *fmt, ...);
+
+int
+scvdump(Ty *ty, byte_vector *str, char const *fmt, va_list ap);
+
+int
+(sxdf)(Ty *ty, byte_vector *str, char const *fmt, ...);
+
+char *
+(sfmt)(Ty *ty, char const *fmt, ...);
+
+const char *
+(ifmt)(char const *fmt, ...);
+
+char *
+xfmt(char const *fmt, ...);
+
+char *
+(afmt)(Ty *ty, char const *fmt, ...);
 
 #endif
 

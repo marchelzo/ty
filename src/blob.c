@@ -7,6 +7,7 @@
 #include "vm.h"
 #include "xd.h"
 #include "ty.h"
+#include "mmmm.h"
 
 static Value
 blob_clear(Ty *ty, Value *blob, int argc, Value *kwargs)
