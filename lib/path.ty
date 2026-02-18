@@ -389,7 +389,7 @@ pub class Path {
     }
 
     ls() -> Array[Path] {
-        os.listdir(str(self)).map(\self / _)
+        os.listdir("{self}").map(\self / _)
     }
 
     copy(target: String | Path, follow-symlinks: Bool = true) -> Path {

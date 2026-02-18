@@ -45,7 +45,8 @@ enum {
         CLASS_GENERATOR,
         CLASS_TAG,
         CLASS_TUPLE,
-        CLASS_PRIMITIVE = CLASS_TUPLE,
+        CLASS_MODULE,
+        CLASS_PRIMITIVE = CLASS_MODULE,
         CLASS_ERROR,
         CLASS_COMPILE_ERROR,
         CLASS_RUNTIME_ERROR,
@@ -1449,6 +1450,7 @@ ClassOf(Value const *v)
         case VALUE_BUILTIN_METHOD:    return CLASS_FUNCTION;
         case VALUE_FOREIGN_FUNCTION:  return CLASS_FUNCTION;
         case VALUE_OPERATOR:          return CLASS_FUNCTION;
+        case VALUE_MODULE:            return CLASS_MODULE;
         case VALUE_NIL:               return CLASS_NIL;
         case VALUE_PTR:               return CLASS_PTR;
 

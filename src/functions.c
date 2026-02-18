@@ -8286,9 +8286,9 @@ ScopeDict(Ty *ty, Scope *scope, bool public_only)
         return DICT(vars);
 }
 
-BUILTIN_FUNCTION(ty_module)
+BUILTIN_FUNCTION(ty_mod_get)
 {
-        ASSERT_ARGC("ty.module()", 0, 1);
+        ASSERT_ARGC("ty.mod.get()", 0, 1);
 
         bool this = (argc == 0);
         Value name = !this ? ARGx(0, VALUE_STRING) : NIL;
@@ -8300,7 +8300,92 @@ BUILTIN_FUNCTION(ty_module)
                 return NIL;
         }
 
-        return ScopeDict(ty, mod->scope, !this);
+        return MODULE(mod);
+}
+
+BUILTIN_FUNCTION(ty_mod_load)
+{
+        ASSERT_ARGC("ty.mod.load()", 1);
+
+        Value name = ARGx(0, VALUE_STRING);
+        Module *mod = TyLoadModule(ty, TY_C_STR(name), 0);
+
+        return MODULE(mod);
+}
+
+BUILTIN_FUNCTION(ty_mod_dict)
+{
+        ASSERT_ARGC("ty.mod.dict()", 0, 1);
+
+        bool this = (argc == 0);
+        Module *mod = this ? CompilerCurrentModule(ty)
+                           : ARGx(0, VALUE_MODULE).mod;
+
+        return ScopeDict(ty, mod->scope, false);
+}
+
+BUILTIN_FUNCTION(ty_mod_name)
+{
+        ASSERT_ARGC("ty.mod.name()", 0, 1);
+
+        bool this = (argc == 0);
+        Module *mod = this ? CompilerCurrentModule(ty)
+                           : ARGx(0, VALUE_MODULE).mod;
+
+        return vSsz(mod->name);
+}
+
+BUILTIN_FUNCTION(ty_mod_path)
+{
+        ASSERT_ARGC("ty.mod.path()", 0, 1);
+
+        bool this = (argc == 0);
+        Module *mod = this ? CompilerCurrentModule(ty)
+                           : ARGx(0, VALUE_MODULE).mod;
+
+        return vSsz(mod->path);
+}
+
+BUILTIN_FUNCTION(ty_mod_imports)
+{
+        ASSERT_ARGC("ty.mod.imports()", 0, 1);
+
+        bool this = (argc == 0);
+        Module *mod = this ? CompilerCurrentModule(ty)
+                           : ARGx(0, VALUE_MODULE).mod;
+
+        Dict *imports = dict_new(ty);
+
+        GC_STOP();
+        for (usize i = 0; i < vN(mod->imports); ++i) {
+                dict_put_value(
+                        ty,
+                        imports,
+                        vSsz(v_(mod->imports, i)->name),
+                        MODULE(v_(mod->imports, i))
+                );
+        }
+        GC_RESUME();
+
+        return DICT(imports);
+}
+
+BUILTIN_FUNCTION(ty_mod_lookup)
+{
+        ASSERT_ARGC("ty.mod.lookup()", 1, 2);
+
+        bool this = (argc == 1);
+        Module *mod = this ? CompilerCurrentModule(ty)
+                           : ARGx(0, VALUE_MODULE).mod;
+        Value name = this ? ARGx(0, VALUE_STRING)
+                          : ARGx(1, VALUE_STRING);
+
+        Symbol *sym = TyLookupSymbol(ty, mod, TY_TMP_C_STR(name));
+        if (sym == NULL) {
+                return NIL;
+        }
+
+        return *vm_global(ty, sym->i);
 }
 
 BUILTIN_FUNCTION(ty_parse)

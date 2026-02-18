@@ -402,10 +402,13 @@ Type *
 type_list_item(Ty *ty, Type const *t0, int i);
 
 void
-type_scope_push(Ty *ty, Expr *fun);
+type_fn_begin(Ty *ty, Expr *e);
 
 void
-type_scope_pop(Ty *ty);
+type_fn_end(Ty *ty, Expr *e);
+
+Type *
+type_fn_tmp(Ty *ty, Expr const *e);
 
 void
 type_function_fixup(Ty *ty, Expr const *e);

@@ -57,6 +57,7 @@ static char const *BuiltinClassNames[] = {
         [CLASS_OBJECT]          = "Object",
         [CLASS_PTR]             = "Ptr",
         [CLASS_INTO_PTR]        = "IntoPtr",
+        [CLASS_MODULE]          = "Module",
         [CLASS_QUEUE]           = "Queue",
         [CLASS_RANGE]           = "Range",
         [CLASS_REGEX]           = "Regex",

@@ -1,4 +1,5 @@
 import ty
+import ty.mod
 import ty.lex as lex
 import ty.parse as parse
 import ty.token as tok
@@ -244,7 +245,7 @@ pub fn tab-complete(before: String, after: String) -> readln::CompletionAction {
     }
 
     if (before[-1] != '.') and let ty.Id({name, *}) = expr {
-        return CycleCompletions(mod-completions(ty.module(), name))
+        return CycleCompletions(mod-completions(ty.mod.dict(), name))
     }
 
 
@@ -255,8 +256,8 @@ pub fn tab-complete(before: String, after: String) -> readln::CompletionAction {
             => (expr, '')
     }
 
-    if let ty.Id({name, *}) = subject and let $mod = ty.module(name) {
-        return CycleCompletions(mod-completions(mod, prefix))
+    if let ty.Id({name, *}) = subject and let $mod = ty.mod.get(name) {
+        return CycleCompletions(mod-completions(ty.mod.dict(mod), prefix))
     }
 
     CycleCompletions(

@@ -648,6 +648,15 @@ value_showx(Ty *ty, Value const *v, u32 flags)
                 );
                 break;
 
+        case VALUE_MODULE:
+                snprintf(
+                        buffer,
+                        SHOW_BUF_SZ,
+                        "<module '%s'>",
+                        v->mod->name
+                );
+                break;
+
         case VALUE_ARRAY:
                 s = show_array(ty, v, false, flags);
                 break;
@@ -864,6 +873,19 @@ value_show_colorx(Ty *ty, Value const *v, u32 flags)
                         TERM(93),
                         TERM(95),
                         v->namespace->name,
+                        TERM(93),
+                        TERM(0)
+                );
+                break;
+
+        case VALUE_MODULE:
+                snprintf(
+                        buffer,
+                        SHOW_BUF_SZ,
+                        "%s<module %s'%s'%s>%s",
+                        TERM(93),
+                        TERM(95),
+                        v->mod->name,
                         TERM(93),
                         TERM(0)
                 );
