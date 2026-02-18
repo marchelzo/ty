@@ -273,6 +273,7 @@ enum {
         VALUE_NONE             ,
         VALUE_UNINITIALIZED    ,
         VALUE_NAMESPACE        ,
+        VALUE_MODULE           ,
         VALUE_PTR              ,
         VALUE_REF              ,
         VALUE_THREAD           ,
@@ -377,6 +378,7 @@ struct value {
                 Blob *blob;
                 Thread *thread;
                 Symbol *sym;
+                Module *mod;
                 struct {
                         union {
                                 Value *ref;
@@ -775,8 +777,6 @@ typedef struct ty {
 
         TyTDB *tdb;
         TY *ty;
-
-        TypeEnv *tenv;
 } Ty;
 
 typedef struct {
@@ -1280,6 +1280,7 @@ enum {
 #define OBJECT(o, c)             ((Value){ .type = VALUE_OBJECT,           .object         = (o),  .class  = (c),                  .tags = 0 })
 #define OPERATOR(u, b)           ((Value){ .type = VALUE_OPERATOR,         .uop            = (u),  .bop    = (b),                  .tags = 0 })
 #define NAMESPACE(ns)            ((Value){ .type = VALUE_NAMESPACE,        .namespace      = (ns),                                 .tags = 0 })
+#define MODULE(m)                ((Value){ .type = VALUE_MODULE,           .mod            = (m),                                  .tags = 0 })
 #define METHOD(n, m, t)          ((Value){ .type = VALUE_METHOD,           .method         = (m),  .this   = (t),  .name = (n),    .tags = 0 })
 #define GENERATOR(g)             ((Value){ .type = VALUE_GENERATOR,        .gen            = (g),                                  .tags = 0 })
 #define THREAD(t)                ((Value){ .type = VALUE_THREAD,           .thread         = (t),                                  .tags = 0 })

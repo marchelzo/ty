@@ -5009,15 +5009,7 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                         RedpillFun(ty, scope, e, NULL);
                 }
 
-                if (
-                        (e->type != EXPRESSION_MULTI_FUNCTION)
-                     && (e->type != EXPRESSION_IMPLICIT_FUNCTION)
-                ) {
-                        e->_type = type_function(ty, e, false);
-                        SET_TYPE_SRC(e);
-                }
-
-                type_scope_push(ty, e);
+                type_fn_begin(ty, e);
 
                 if (e->fn_symbol != NULL) {
                         e->fn_symbol->type = e->_type;
@@ -5061,7 +5053,7 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                         STATE.implicit_fscope = implicit_fscope;
                         STATE.implicit_func = implicit_func;
 
-                        e->_type = type_function(ty, e, false);
+                        e->_type = type_fn_tmp(ty, e);
                         SET_TYPE_SRC(e);
 
                 } else {
@@ -5111,12 +5103,7 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                         DBG("=== %s.%s() === %s", STATE.class->name, e->name, type_show(ty, e->_type));
                 }
 
-                if (e->type != EXPRESSION_GENERATOR) {
-                        type_scope_pop(ty);
-                        type_function_fixup(ty, e);
-                } else {
-                        type_finalize_generator(ty, e);
-                }
+                type_fn_end(ty, e);
 
                 for (int i = 0; i < vN(e->decorators); ++i) {
                         Expr *dec = v__(e->decorators, i);
@@ -11424,7 +11411,7 @@ RedpillFun(Ty *ty, Scope *scope, Expr *f, Type *self0)
                         }
                 }
                 ResolveConstraint(ty, f->return_type);
-                f->_type = type_function(ty, f, true);
+                f->_type = type_fn_tmp(ty, f);
                 if (f->fn_symbol != NULL) {
                         f->fn_symbol->type = f->_type;
                 }
@@ -18337,6 +18324,38 @@ TyCompileSource(Ty *ty, char const *source, u32 flags)
         TY_CATCH_END();
 
         return mod;
+}
+
+Module *
+TyLoadModule(Ty *ty, char const *name, u32 flags)
+{
+        Module *mod = GetModule(ty, name);
+        if (mod != NULL) {
+                return mod;
+        }
+
+        TY_IS_READY = false;
+
+        if (TY_CATCH_ERROR()) {
+                TY_IS_READY = true;
+                TY_RETHROW();
+        }
+
+        mod = load_module(ty, name, NULL);
+        TY_IS_READY = true;
+        TY_CATCH_END();
+
+        return mod;
+}
+
+Symbol *
+TyLookupSymbol(Ty *ty, Module const *mod, char const *name)
+{
+        if (mod == NULL) {
+                mod = STATE.module;
+        }
+
+        return ScopeLookup(mod->scope, name);
 }
 
 void

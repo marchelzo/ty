@@ -290,6 +290,12 @@ compiler_compile_source(
 Module *
 TyCompileSource(Ty *ty, char const *source, u32 flags);
 
+Module *
+TyLoadModule(Ty *ty, char const *name, u32 flags);
+
+Symbol *
+TyLookupSymbol(Ty *ty, Module const *mod, char const *name);
+
 int
 compiler_symbol_count(Ty *ty);
 

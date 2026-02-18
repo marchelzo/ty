@@ -9,6 +9,7 @@ import stdio
 import thread
 import time
 import ty
+import ty.mod
 import ty.parse as parse
 import ty.token as lex
 import ty.types as types
@@ -279,7 +280,7 @@ fn os::listdir(path: String) -> [String];
 
 __set_type__ ty::executable String
 
-const `,`: _ = tuple
+const `,` = tuple
 
 class Object {
     init(%props: Any) {
@@ -1615,6 +1616,27 @@ class Generator[T, S] : Iter[T] {
     }
 }
 
+class Module {
+    name -> String { ty.mod.name(self) }
+    path -> String { ty.mod.path(self) }
+
+    dict -> Dict[String, _] {
+        ty.mod.dict(self)
+    }
+
+    imports -> Dict[String, Module] {
+        ty.mod.imports(self)
+    }
+
+    __missing__(name) {
+        if let $x = ty.mod.lookup(self, name) {
+            x
+        } else {
+            throw RuntimeError("module '{self.name}' has no member '{name}'")
+        }
+    }
+}
+
 class Tag < Function {
     [](T) {
         x -> do {
@@ -2620,7 +2642,7 @@ trait Iter[T] < Iterable[T] {
     }
 
     median() -> T | nil where (T <=> T): Int {
-        return list().median()
+        list().median()
     }
 
     all?(pred: (T -> Any) = id) {
@@ -4232,6 +4254,10 @@ macro __desugar_partial__(call: _) {
     }
 
     go(args, mkcall, max(depth, 1))
+}
+
+fn ??[a, b](x: a | nil, y: b) -> a | b {
+    x ?? y
 }
 
 fn >>[a, b](x: a, f: a -> b) -> b { f(x) }

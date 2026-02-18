@@ -2827,6 +2827,10 @@ GetMember(Ty *ty, Value v, int member, bool try_missing, bool exec)
                 n = CLASS_PTR;
                 goto ClassLookup;
 
+        case VALUE_MODULE:
+                n = CLASS_MODULE;
+                goto ClassLookup;
+
         case VALUE_METHOD:
                 if (member == NAMES._class_) {
                         return (class_of(v.method) != -1) ? CLASS(class_of(v.method)) : NIL;
@@ -3203,6 +3207,10 @@ CallMethod(Ty *ty, int i, int n, int nkw, bool b)
 
         case VALUE_PTR:
                 class = CLASS_PTR;
+                goto ClassLookup;
+
+        case VALUE_MODULE:
+                class = CLASS_MODULE;
                 goto ClassLookup;
 
         case VALUE_FUNCTION:
@@ -6698,7 +6706,7 @@ BadTupleMember:
                         READVALUE(z);
 
                         value = peek();
-                        v = GetMember(ty, value, z, true, false);
+                        v = GetMember(ty, value, z, false, false);
 
                         switch (v.type) {
                         case VALUE_BREAK:

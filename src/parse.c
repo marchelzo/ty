@@ -1360,6 +1360,7 @@ op_fixup(Ty *ty, int i)
         case '#':               token(i)->identifier = "#";    break;
         case '.':               token(i)->identifier = ".";    break;
         case TOKEN_DOT_MAYBE:   token(i)->identifier = ".?";   break;
+        case TOKEN_WTF:         token(i)->identifier = "??";   break;
         case TOKEN_USER_OP:                                    break;
 
         case '[':
@@ -1369,7 +1370,7 @@ op_fixup(Ty *ty, int i)
                 } else if (
                         (token(i + 1)->type == ';')
                      && (token(i + 2)->type == ';')
-                     && (token(i + 3)->type == ';')
+                     && (token(i + 3)->type == ']')
                 ) {
                         token(i)->identifier = "[;;]";
                         token(i + 1)->ctx = LEX_HIDDEN;

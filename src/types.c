@@ -13,8 +13,8 @@
 #include "array.h"
 #include "dict.h"
 
-#define TYPES_LOG      1
-#define FUN_TYPES_LOG  1
+#define TYPES_LOG      0
+#define FUN_TYPES_LOG  0
 
 typedef struct {
         TypeVector id0;
@@ -142,6 +142,9 @@ enum {
         TV_PACK     = (1U << 28)
 };
 
+static void
+SolveDeferred(Ty *ty);
+
 inline static Type *
 TypeArg(Type const *t0, int i);
 
@@ -172,26 +175,6 @@ Inst0(
         Type *t0,
         U32Vector const *params,
         TypeVector const *args,
-        bool variadic,
-        bool strict
-);
-
-static Type *
-Inst01(
-        Ty *ty,
-        Type *t0,
-        u32 param,
-        Type *arg0
-);
-
-static Type *
-InstXD(
-        Ty *ty,
-        Type *t0,
-        U32Vector const *params,
-        TypeVector const *args,
-        u32 param,
-        Type *arg0,
         bool variadic,
         bool strict
 );
@@ -333,12 +316,12 @@ static int VarLetter = 'a';
 static int VarNumber = 0;
 static U32Vector FixedTypeVars;
 
-
 // ================================
 static u32 CurrentLevel = 0;
 static vec(usize) WorkIndex;
 static ConstraintVector ToSolve;
 static vec(Expr *) FunStack;
+static vec(TypeEnv *) EnvStack;
 // ================================
 
 inline static bool
@@ -390,14 +373,41 @@ mkcstr(Ty *ty, Value const *v)
         }
 }
 
-static TypeEnv *
-NewEnv(Ty *ty, TypeEnv *parent)
+inline static TypeEnv *
+(PushEnv)(void)
 {
-        TypeEnv *env = amA(sizeof *env);
-        env->parent = parent;
-        env->level = (parent != NULL) ? (parent->level +  1) : 0;
-        itable_init(ty, &env->vars);
+        TypeEnv *env;
+        usize n = vN(EnvStack);
+
+        TypeEnv *old = (n > 0) ? v_L(EnvStack) : NULL;
+
+        if (UNLIKELY(n == vC(EnvStack))) {
+                do {
+                        env = alloc0(sizeof *env);
+                        xvP(EnvStack, env);
+                } while (vN(EnvStack) != vC(EnvStack));
+                vN(EnvStack) = n;
+        }
+
+        env = *vZ(EnvStack);
+        vN(EnvStack) += 1;
+
+        itable_clear(&env->vars);
+        env->parent = old;
+
         return env;
+}
+
+inline static void
+(PopEnv)(void)
+{
+        vvX(EnvStack);
+}
+
+inline static TypeEnv *
+GetEnv(void)
+{
+        return v_L(EnvStack);
 }
 
 inline static void
@@ -418,12 +428,12 @@ LookEnv(Ty *ty, TypeEnv *env, u32 id)
 {
         if (env == NULL) {
                 return NULL;
-        } else {
-                Value const *v = itable_lookup(ty, &env->vars, id);
-                return (v == NULL) ? LookEnv(ty, env->parent, id)
-                     : (v->type == VALUE_NIL) ? NULL
-                     : v->ptr;
         }
+
+        Value const *v = itable_lookup(ty, &env->vars, id);
+
+        return (v != NULL) ? (IsNil(*v) ? NULL : v->ptr)
+                           : LookEnv(ty, env->parent, id);
 }
 
 inline static bool
@@ -2159,7 +2169,7 @@ GetTVarBound(Ty *ty, Type const *t0)
                 return NULL;
         }
 
-        return LookEnv(ty, ty->tenv, t0->id);
+        return LookEnv(ty, GetEnv(), t0->id);
 }
 
 inline static Type *
@@ -3373,8 +3383,8 @@ type_class(Ty *ty, Class *class)
         return t;
 }
 
-Type *
-type_function(Ty *ty, Expr const *e, bool tmp)
+static Type *
+FnExprType(Ty *ty, Expr const *e, bool tmp)
 {
         xDDD();
 
@@ -3386,9 +3396,6 @@ type_function(Ty *ty, Expr const *e, bool tmp)
         TypeVector bounds = {0};
 
         if (vN(e->type_bounds) > 0) {
-                if (!tmp) {
-                        ty->tenv = NewEnv(ty, ty->tenv);
-                }
                 for (int i = 0; i < vN(e->type_bounds); ++i) {
                         TypeBound const *bound = v_(e->type_bounds, i);
                         Expr const *var = bound->var;
@@ -3409,7 +3416,7 @@ type_function(Ty *ty, Expr const *e, bool tmp)
                                                 .t1 = b0
                                         )
                                 );
-                                PutEnv(ty, ty->tenv, a0->id, b0);
+                                PutEnv(ty, GetEnv(), a0->id, b0);
                                 break;
 
                         case EXPRESSION_FUNCTION_TYPE:
@@ -3463,7 +3470,7 @@ type_function(Ty *ty, Expr const *e, bool tmp)
                 t->rt = tmp ? AddParam(ty, t) : NewHole(ty);
         }
 
-        t->sends = tmp ? UNKNOWN : NewVar(ty);
+        t->sends = tmp ? NULL : NewVar(ty);
 
         // Array[T=Array[Int]]
         //
@@ -3541,16 +3548,69 @@ type_function(Ty *ty, Expr const *e, bool tmp)
                                 )
                         )
                 );
-                //psym->type = type_fixed(ty, psym->type);
         }
 
         t->pack = ParamPackOf(t);
 
-        if (!tmp && e->fn_symbol != NULL) {
-                e->fn_symbol->type = t;
+        return t;
+}
+
+Type *
+type_fn_tmp(Ty *ty, Expr const *e)
+{
+        return FnExprType(ty, e, true);
+}
+
+void
+type_fn_begin(Ty *ty, Expr *fun)
+{
+        xDDDDD();
+
+        PushEnv();
+        fun->_type = FnExprType(ty, fun, false);
+        xvP(FunStack, fun);
+        EnterScope();
+}
+
+void
+type_fn_end(Ty *ty, Expr *e)
+{
+        xDDDDD();
+
+        Type *t0 = e->_type;
+        Type *y0;
+        Type *s0;
+
+        LeaveScope();
+        vvX(FunStack);
+
+        switch (e->type) {
+        case EXPRESSION_GENERATOR:
+                y0 = IsFuncT(e->_type) ? e->_type->yields : NULL;
+                s0 = IsFuncT(e->_type) ? e->_type->sends  : NULL;
+                if (y0 == NULL) {
+                        y0 = type_var(ty);
+                        s0 = type_var(ty);
+                }
+                e->_type = type_generator(ty, e, y0, s0);
+                break;
+
+        case EXPRESSION_FUNCTION:
+                if (t0->yields == NULL) {
+                        t0->sends = NULL;
+                }
+                if (e->class != NULL) {
+                        FTLOG("fixup(%s.%s)[%d]:", e->class->name, e->name, CurrentLevel);
+                        FTLOG("    %s", ShowType(t0));
+                } else {
+                        FTLOG("fixup(%s)[%d]:", e->name ? e->name : "", CurrentLevel);
+                        FTLOG("    %s", ShowType(t0));
+                }
+                fixup(ty, t0);
+                break;
         }
 
-        return t;
+        PopEnv();
 }
 
 static void
@@ -3561,15 +3621,6 @@ GatherFree(Ty *ty, Type *t0, U32Vector *freev, U32Vector *boundv)
         if (t0 == NULL || t0->concrete) {
                 return;
         }
-
-        //static TypeVector visiting;
-        //if (already_visiting(&visiting, t0)) {
-        //        return;
-        //} else {
-        //        xvP(visiting, t0);
-        //}
-
-        Type *t_ = t0;
 
         switch (t0->type) {
         case TYPE_VARIABLE:
@@ -3632,17 +3683,11 @@ GatherFree(Ty *ty, Type *t0, U32Vector *freev, U32Vector *boundv)
                 GatherFree(ty, t0->sends, freev, boundv);
                 break;
         }
-
-        //vvX(visiting);
 }
 
 static Type *
 Propagate(Ty *ty, Type *t0)
 {
-        static int d = 0;
-
-        Type *t = t0;
-
         if (t0 == NULL) {
                 return NULL;
         }
@@ -3653,8 +3698,6 @@ Propagate(Ty *ty, Type *t0)
         } else {
                 xvP(visiting, t0);
         }
-
-        d += 1;
 
         Type *t1;
         Type *t2;
@@ -3671,7 +3714,7 @@ Propagate(Ty *ty, Type *t0)
                         }
                         t0->val = t1;
                 } else {
-                        t1 = LookEnv(ty, ty->tenv, t0->id);
+                        t1 = LookEnv(ty, GetEnv(), t0->id);
                         t0 = (t1 != NULL) ? t1 : t0;
                 }
                 break;
@@ -3828,12 +3871,7 @@ Propagate(Ty *ty, Type *t0)
                 break;
         }
 
-        d -= 1;
         vvX(visiting);
-
-        TLOG("%*sPropagate()", 4*d, "");
-        TLOG("%*s    %s", 4*d, "", ShowType(t));
-        TLOG("%*s    %s", 4*d, "", ShowType(t0));
 
         return t0;
 }
@@ -4113,8 +4151,12 @@ NewInst0(Ty *ty, Type *t0, TypeEnv *env)
 inline static Type *
 NewInst(Ty *ty, Type *t0)
 {
-        TypeEnv env = {0};
-        return NewInst0(ty, t0, &env);
+        TypeEnv *env = PushEnv();
+        Type    *new = NewInst0(ty, t0, env);
+
+        PopEnv();
+
+        return new;
 }
 
 inline static void
@@ -7035,14 +7077,11 @@ Inst0(
                 args = &vars;
         }
 
-        TypeEnv env = {0};
-
-        TypeEnv *save = ty->tenv;
-        ty->tenv = &env;
+        TypeEnv *env = PushEnv();
 
         for (int i = 0; i < vN(*params) - variadic && i < vN(*args); ++i) {
                 TLOG("  %s := %s", VarName(ty, v__(*params, i)), ShowType(v__(*args, i)));
-                PutEnv(ty, ty->tenv, v__(*params, i), v__(*args, i));
+                PutEnv(ty, env, v__(*params, i), v__(*args, i));
         }
 
         if (variadic) {
@@ -7050,40 +7089,14 @@ Inst0(
                 for (int i = vN(*params) - variadic; i < vN(*args); ++i) {
                         avP(rest0->types, v__(*args, i));
                 }
-                PutEnv(ty, ty->tenv, *vvL(*params), rest0);
+                PutEnv(ty, env, *vvL(*params), rest0);
         }
 
         t0 = Propagate(ty, t0);
 
-        ty->tenv = save;
+        PopEnv();
 
-        t0 = CullConstraints(ty, t0);
-
-        return t0;
-}
-
-static Type *
-Inst01(
-        Ty *ty,
-        Type *t0,
-        u32 param,
-        Type *arg0
-) {
-        if (!RefersTo(t0, param)) {
-                return t0;
-        }
-
-        TypeEnv env = {0};
-
-        TypeEnv *save = ty->tenv;
-        ty->tenv = &env;
-
-        PutEnv(ty, ty->tenv, param, arg0);
-        t0 = Propagate(ty, t0);
-
-        ty->tenv = save;
-
-        return t0;
+        return CullConstraints(ty, t0);
 }
 
 static Type *
@@ -9935,11 +9948,11 @@ MakeConcrete_(Ty *ty, Type *t0, TypeVector *refs, bool variance)
                 if (t0->level < CurrentLevel) {
                         return t0;
                 } else {
-                        Type *t1 = LookEnv(ty, ty->tenv, t0->id);
+                        Type *t1 = LookEnv(ty, GetEnv(), t0->id);
                         return (t1 != NULL) ? t1 : (variance ? TYPE_ANY : UNKNOWN);
                 }
         } else if (IsTVar(t0)) {
-                Type *t1 = LookEnv(ty, ty->tenv, t0->id);
+                Type *t1 = LookEnv(ty, GetEnv(), t0->id);
                 return (t1 != NULL) ? t1 : t0;
         }
 
@@ -10656,30 +10669,6 @@ type_instance_of(Ty *ty, Type *t0, int class)
         return t1;
 }
 
-void
-type_scope_push(Ty *ty, Expr *fun)
-{
-        xDDDDD();
-        xvP(FunStack, fun);
-        EnterScope();
-}
-
-void
-type_scope_pop(Ty *ty)
-{
-        xDDDDD();
-        LeaveScope();
-        vvX(FunStack);
-}
-
-static void
-type_scope_pop_generator(Ty *ty)
-{
-        xDDDDD();
-        vvX(FunStack);
-        LeaveScope();
-}
-
 static bool
 IsDisconnected(Type *t0, Type *u0)
 {
@@ -10746,10 +10735,7 @@ fixup(Ty *ty, Type *t0)
 
         FilterConstraints(ty, g0);
 
-        TypeEnv env = {0};
-
-        TypeEnv *save = ty->tenv;
-        ty->tenv = &env;
+        TypeEnv *env = PushEnv();
 
         U32Vector bound = g0->bound;
         v00(g0->bound);
@@ -10763,7 +10749,7 @@ fixup(Ty *ty, Type *t0)
                         avP(g0->bound, id);
                 } else if (refs + rt_refs > 1) {
                         Type *var0 = NewTVar(ty);
-                        PutEnv(ty, ty->tenv, id, var0);
+                        PutEnv(ty, env, id, var0);
                         avP(g0->bound, var0->id);
                 } else {
                         Occurs(ty, g0, id, CurrentLevel);
@@ -10777,59 +10763,11 @@ fixup(Ty *ty, Type *t0)
         *t0 = *Reduce(ty, Generalize(ty, g0));
         FTLOG("  t0:  %s", ShowType(t0));
 
-        ty->tenv = save;
+        PopEnv();
 
         if (FUEL > 0) {
                 FUEL = MAX_FUEL;
         }
-}
-
-void
-type_function_fixup(Ty *ty, Expr const *e)
-{
-        xDDDDD();
-
-        Type *t0 = e->_type;
-
-        if (!IsFuncT(t0)) {
-                return;
-        }
-
-        if (t0->yields == NULL) {
-                t0->sends = NULL;
-        }
-
-        if (e->class != NULL) {
-                FTLOG("fixup(%s.%s)[%d]:", e->class->name, e->name, CurrentLevel);
-                FTLOG("    %s", ShowType(t0));
-        } else {
-                FTLOG("fixup(%s)[%d]:", e->name ? e->name : "", CurrentLevel);
-                FTLOG("    %s", ShowType(t0));
-        }
-
-        fixup(ty, t0);
-
-        if (vN(e->type_bounds) > 0) {
-                ty->tenv = ty->tenv->parent;
-        }
-}
-
-void
-type_finalize_generator(Ty *ty, Expr *e)
-{
-        xDDDDD();
-
-        Type *y0 = IsFuncT(e->_type) ? e->_type->yields : NULL;
-        Type *s0 = IsFuncT(e->_type) ? e->_type->sends  : NULL;
-
-        type_scope_pop_generator(ty);
-
-        if (y0 == NULL) {
-                y0 = type_var(ty);
-                s0 = type_var(ty);
-        }
-
-        e->_type = type_generator(ty, e, y0, s0);
 }
 
 Type *
@@ -11253,7 +11191,6 @@ TypeCheckXD(Ty *ty, TypeCheckStack *stack, Type *t0, Value const *v)
 
 End:
         vvX(*stack);
-
         return ok;
 }
 
@@ -11273,9 +11210,12 @@ void
 types_init(Ty *ty)
 {
         CurrentLevel = 0;
+        CurrentDepth = 0;
         v0(WorkIndex);
         v0(ToSolve);
         v0(FunStack);
+        v0(EnvStack);
+        PushEnv();
         EnterScope();
 }
 
