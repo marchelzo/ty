@@ -219,6 +219,7 @@ lookup(
               | SYM_NAMESPACE
               | SYM_MEMBER
               | SYM_TYPE_VAR
+              | SYM_TYPE_ALIAS
               | SYM_THREAD_LOCAL
         );
 
@@ -437,6 +438,18 @@ scope_add_type_var(Ty *ty, Scope *s, char const *id, u32 flags)
         sym->flags |= SYM_TYPE_VAR;
         sym->flags |= flags;
         sym->type = type_variable(ty, sym);
+
+        return sym;
+}
+
+Symbol *
+scope_add_type_alias(Ty *ty, Scope *s, char const *id, Expr const *src)
+{
+        Symbol *sym = xadd(ty, s, id);
+
+        sym->scope = s;
+        sym->flags |= SYM_TYPE_ALIAS;
+        sym->type = type_alias_tmp(ty, id, src);
 
         return sym;
 }

@@ -212,6 +212,7 @@ fn print(*args: Any, sep: String = ', ', end: String = '\n', file: _, flush: Boo
 fn str(x: Any) -> String;
 fn int[a](x: a, base: ?Int) -> Int;
 fn float[a](x: a) -> Float;
+fn regex(pattern: String, flags: String = '') -> Regex;
 fn min[...Ts](*xs: ...Ts) -> ...(Ts |) where (...(Ts |) <=> ...(Ts |)): Int;
 fn max[...Ts](*xs: ...Ts) -> ...(Ts |) where (...(Ts |) <=> ...(Ts |)): Int;
 fn fmt(str: String, *args: _);
@@ -266,11 +267,17 @@ pub use time::Timespec = {
     nsec: Int
 }
 
+pub use time::ClockID =
+    time::CLOCK_REALTIME
+  | time::CLOCK_MONOTONIC
+  | time::CLOCK_PROCESS_CPUTIME_ID
+  | time::CLOCK_THREAD_CPUTIME_ID
+
 fn time::time(tm: ?time::Tm, utc: Bool = false) -> Int;
-fn time::gettime(clock: ?Int) -> time::Timespec;
+fn time::gettime(clock: ?time::ClockID) -> time::Timespec;
 fn time::localtime(time: ?Int) -> time::Tm;
-fn time::utime(clock: ?Int) -> Int;
-fn time::now() -> Float;
+fn time::utime(clock: ?time::ClockID) -> Int;
+fn time::now(clock: ?time::ClockID) -> Float;
 
 fn errno::get() -> Int;
 fn errno::str(err: Int) -> String;
@@ -1025,27 +1032,28 @@ class String : Iterable[String], IntoPtr[Int] {
     to-i -> Int { ::int(self, 0) }
 
     matches(pattern: RegexV) -> Array[RegexMatch];
+    matches(pattern: Regex[0]) -> Array[String];
+    matches(pattern: Regex[(1..)]) -> Array[Array[String]];
     matches(pattern: Regex) -> Array[String | Array[String]];
 
     scan(pattern: RegexV) -> Array[RegexMatch];
     scan(pattern: Regex[0]) -> Array[String];
-    scan(pattern: Regex[1]) -> Array[Array[String]];
-    scan(pattern: Regex[2]) -> Array[Array[String]];
-    scan(pattern: Regex[3]) -> Array[Array[String]];
-    scan(pattern: Regex[4]) -> Array[Array[String]];
-    scan(pattern: Regex[_]) -> Array[Array[String] | String];
+    scan(pattern: Regex[(1..)]) -> Array[Array[String]];
+    scan(pattern: Regex) -> Array[Array[String] | String];
 
     match(pattern: RegexV) -> RegexMatch;
-    match(pattern: Regex) -> String | Array[String];
+    match(pattern: Regex[0]) -> String | nil;
+    match(pattern: Regex[(1..)]) -> Array[String] | nil;
+    match(pattern: Regex) -> String | Array[String] | nil;
 
     match?(pattern: Regex) -> Bool;
     count(pattern: String | Regex) -> Int;
 
-    search(pattern: String | Regex, off: ?Int) -> Int;
-    searchr(pattern: String | Regex, off: ?Int) -> Int;
+    search(pattern: String | Regex, off: ?Int) -> Int | nil;
+    searchr(pattern: String | Regex, off: ?Int) -> Int | nil;
 
-    bsearch(pattern: String | Regex, off: ?Int) -> Int;
-    bsearchr(pattern: String | Regex, off: ?Int) -> Int;
+    bsearch(pattern: String | Regex, off: ?Int) -> Int | nil;
+    bsearchr(pattern: String | Regex, off: ?Int) -> Int | nil;
 
     repeat(n: Int) -> String;
 
@@ -1788,6 +1796,27 @@ class TimeoutError < RuntimeError {
 class CanceledError < RuntimeError {
     init() {
         super('Operation canceled')
+    }
+}
+
+class OSError < RuntimeError {
+    __code: Int
+    __ctx:  String | nil
+
+    init(what: ?String = nil, code: ?Int = nil) {
+        __code = code ?? errno.get()
+        __ctx = what
+    }
+
+    what -> String {
+        match __ctx {
+            $ctx => "{ctx}: {errno.str(__code)}",
+            _    => errno.str(__code)
+        }
+    }
+
+    code -> Int {
+        __code
     }
 }
 

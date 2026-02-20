@@ -33,7 +33,9 @@ fn getTyCommand(test) {
 #|]
 }
 
-C! fn strsignal(c.int) -> c.ptr;
+C! fn {
+    char const *strsignal(int);
+}
 
 fn doTest(name: String) {
     let testStart = time.now()

@@ -1941,4 +1941,33 @@ tuple_get_completions(Ty *ty, Value const *v, char const *prefix, char **out, in
         return n;
 }
 
+Value
+(NewInstance)(Ty *ty, int c, ...)
+{
+        Class *class = class_get(ty, c);
+        Value object = RawObject(c);
+
+        va_list ap;
+        va_start(ap, c);
+
+        int argc = 0;
+
+        for (;; ++argc) {
+                Value arg = va_arg(ap, Value);
+
+                if (IsNone(arg)) {
+                        break;
+                }
+
+                vmP(&arg);
+        }
+
+        if (!IsMissing(class->init)) {
+                (void)vm_call_method(ty, &object, &class->init, argc);
+        }
+
+        return object;
+}
+
+
 /* vim: set sts=8 sw=8 expandtab: */

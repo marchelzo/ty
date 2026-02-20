@@ -59,6 +59,7 @@ enum { TY_SCOPE_FLAGS };
         X(FIXED,        FixedType,   20)  \
         X(NAMESPACE,    Namespace,   21)  \
         X(PARAM_PACK,   ParamPack,   22)  \
+        X(TYPE_ALIAS,   TypeAlias,   23)  \
 
 
 #define X(f, _, i) SYM_##f = (1 << i),
@@ -136,6 +137,9 @@ scope_add(Ty *ty, Scope *s, char const *id);
 
 Symbol *
 scope_add_type_var(Ty *ty, Scope *s, char const *id, u32 flags);
+
+Symbol *
+scope_add_type_alias(Ty *ty, Scope *s, char const *id, Expr const *src);
 
 Symbol *
 scope_add_type(Ty *ty, Scope *s, char const *id);

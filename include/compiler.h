@@ -26,6 +26,14 @@ enum {
 };
 
 enum {
+        PAT_STRING    = (1 << 0),
+        PAT_TAG       = (1 << 1),
+        PAT_TAGGED    = (1 << 2),
+        PAT_WILDCARD  = (1 << 3),
+        PAT_OTHER     = (1 << 4)
+};
+
+enum {
         MOD_RELOADING   = (1 << 0),
         MOD_PARSE_ERR   = (1 << 1),
         MOD_TYPE_ERR    = (1 << 2),
@@ -488,6 +496,9 @@ CompilerBlackpill(Ty *ty, Stmt *s);
 
 bool
 CompilerResolveExpr(Ty *ty, Expr *e);
+
+void
+UnresolveExpr(Ty *ty, Expr *expr);
 
 Type *
 OriginalType(Ty *ty, Symbol const *var);

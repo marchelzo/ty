@@ -142,6 +142,25 @@ TyFunctionsCleanup(void)
 #define EVAL_PROLOGUE "(fn () {\n"
 #define EVAL_EPILOGUE "\n})()"
 
+#define OSError(e, ...) (OSError)(ty, (e), __VA_ARGS__)
+static noreturn void
+(OSError)(Ty *ty, int err, char const *fmt, ...)
+{
+        va_list ap;
+
+        va_start(ap, fmt);
+        Value ctx = STRING_VFORMAT(ty, fmt, ap);
+        va_end(ap);
+
+        Value exc = NewInstance(
+                CLASS_OS_ERROR,
+                (sN(ctx) > 0) ? ctx : NIL,
+                (err != INT_MAX) ? INTEGER(err) : NIL
+        );
+
+        vmE(&exc);
+}
+
 static struct timespec
 tuple_timespec(Ty *ty, char const *func, Value const *v);
 
@@ -2500,6 +2519,18 @@ BUILTIN_FUNCTION(os_getpgid)
 #endif
 }
 
+BUILTIN_FUNCTION(os_setpgid)
+{
+#ifdef _WIN32
+        NOT_ON_WINDOWS("os.setpgid()");
+#else
+        ASSERT_ARGC("os.setpgid()", 2);
+        pid_t pid = INT_ARG(0);
+        pid_t pgid = INT_ARG(1);
+        return INTEGER(setpgid(pid, pgid));
+#endif
+}
+
 BUILTIN_FUNCTION(os_unlink)
 {
         ASSERT_ARGC("os.unlink()", 1);
@@ -3435,7 +3466,7 @@ BUILTIN_FUNCTION(os_spawn)
 
         Value cmd = ARGx(0, VALUE_ARRAY);
 
-        if (cmd.array->count == 0) {
+        if (vN(*cmd.array) == 0) {
                 bP("empty argv");
         }
 
@@ -3543,6 +3574,7 @@ BUILTIN_FUNCTION(os_spawn)
         int out[2];
         int err[2];
 
+        GC_STOP();
         SCRATCH_SAVE();
 
         vec(int) x0  = {0};
@@ -3645,6 +3677,7 @@ Fail:
 Cleanup:
         vfor(x0, close(*it));
         TyMutexUnlock(&SpawnLock);
+        GC_RESUME();
         SCRATCH_RESTORE();
 
         return proc;
@@ -3802,11 +3835,11 @@ BUILTIN_FUNCTION(thread_lock)
         bool ok;
         Value lock = ARGx(0, VALUE_PTR);
 
+        lGv(true);
+
         switch ((uptr)lock.extra) {
         case 1:
-                lGv(true);
                 ok = TyMutexLock(lock.ptr);
-                lTk();
                 break;
 
         case 2:
@@ -3816,6 +3849,8 @@ BUILTIN_FUNCTION(thread_lock)
         default:
                 UNREACHABLE("invalid lock type");
         }
+
+        lTk();
 
         return BOOLEAN(ok);
 }
@@ -3827,11 +3862,11 @@ BUILTIN_FUNCTION(thread_trylock)
         bool ok;
         Value lock = ARGx(0, VALUE_PTR);
 
+        lGv(true);
+
         switch ((uptr)lock.extra) {
         case 1:
-                lGv(true);
                 ok = TyMutexTryLock(lock.ptr);
-                lTk();
                 break;
 
         case 2:
@@ -3841,6 +3876,8 @@ BUILTIN_FUNCTION(thread_trylock)
         default:
                 UNREACHABLE("invalid lock type");
         }
+
+        lTk();
 
         return BOOLEAN(ok);
 }
@@ -6379,8 +6416,13 @@ BUILTIN_FUNCTION(time_now)
         ASSERT_ARGC("time.now()", 0);
         GetCurrentTimespec(&t);
 #else
-        ASSERT_ARGC("time.now()", 0);
-        clock_gettime(CLOCK_MONOTONIC, &t);
+        ASSERT_ARGC("time.now()", 0, 1);
+
+        clockid_t clk = (argc == 1) ? INT_ARG(0) : CLOCK_MONOTONIC;
+
+        if (clock_gettime(clk, &t) != 0) {
+                OSError(errno, "clock_gettime()");
+        }
 #endif
         i64 nsec = TY_1e9*t.tv_sec + (i64)t.tv_nsec;
         return REAL(nsec / 1.0e9);
@@ -8128,7 +8170,6 @@ BUILTIN_FUNCTION(ty_ctx)
                     : NIL;
         Value mod  = vSsz(state->module->name);
         Value path = vSsz(state->module->path);
-        
 
         return vTn(
                 "scope", scope,

@@ -234,6 +234,7 @@ BUILTIN_FUNCTION(os_setegid);
 BUILTIN_FUNCTION(os_getsid);
 BUILTIN_FUNCTION(os_setsid);
 BUILTIN_FUNCTION(os_getpgid);
+BUILTIN_FUNCTION(os_setpgid);
 BUILTIN_FUNCTION(os_kill);
 BUILTIN_FUNCTION(os_raise);
 BUILTIN_FUNCTION(os_signal);

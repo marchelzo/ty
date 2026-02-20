@@ -2,7 +2,7 @@ import os
 import tp (..)
 
 let pool = ThreadPool(os.ncpu(), fn (s) {
-    for ..300 {
+    for ..3000 {
         s.chars().shuffle().sum()
     }
     s

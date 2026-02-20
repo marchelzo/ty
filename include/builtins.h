@@ -251,6 +251,8 @@ static struct {
   { .module = "os",         .name = "exec",                     .value = BUILTIN(builtin_os_exec)                },
   { .module = "os",         .name = "getpid",                   .value = BUILTIN(builtin_os_getpid)              },
   { .module = "os",         .name = "getppid",                  .value = BUILTIN(builtin_os_getppid)             },
+  { .module = "os",         .name = "getpgid",                  .value = BUILTIN(builtin_os_getpgid)             },
+  { .module = "os",         .name = "setpgid",                  .value = BUILTIN(builtin_os_setpgid)             },
   { .module = "os",         .name = "getuid",                   .value = BUILTIN(builtin_os_getuid)              },
   { .module = "os",         .name = "geteuid",                  .value = BUILTIN(builtin_os_geteuid)             },
   { .module = "os",         .name = "getgid",                   .value = BUILTIN(builtin_os_getgid)              },

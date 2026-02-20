@@ -636,6 +636,12 @@ Relax(Type const *t0)
 }
 
 inline static bool
+IsRange(Type const *t0)
+{
+        return TypeType(t0) == TYPE_RANGE;
+}
+
+inline static bool
 IsIntLit(Type const *t0)
 {
         return TypeType(t0) == TYPE_INT;
@@ -653,10 +659,22 @@ IsBoolLit(Type const *t0)
         return TypeType(t0) == TYPE_BOOL;
 }
 
-inline static bool
+static bool
 IsLiteral(Type const *t0)
 {
-        return IsIntLit(t0) || IsStrLit(t0) || IsBoolLit(t0);
+        switch (TypeType(t0)) {
+        case TYPE_INT:
+        case TYPE_STRING:
+        case TYPE_BOOL:
+                return true;
+
+        case TYPE_RANGE:
+                return (t0->lo == NULL || IsLiteral(t0->lo))
+                    && (t0->hi == NULL || IsLiteral(t0->hi));
+
+        default:
+                return false;
+        }
 }
 
 inline static bool
@@ -2443,13 +2461,15 @@ SameType(Type const *t0, Type const *t1)
                 return true;
 
         case PAIR_OF(TYPE_INT):
+        case PAIR_OF(TYPE_BOOL):
                 return t0->z == t1->z;
 
         case PAIR_OF(TYPE_STRING):
                 return s_eq(t0->str, t1->str);
 
-        case PAIR_OF(TYPE_BOOL):
-                return t0->z == t1->z;
+        case PAIR_OF(TYPE_RANGE):
+                return SameType(t0->lo, t1->lo)
+                    && SameType(t0->hi, t1->hi);
 
         case PAIR_OF(TYPE_BOTTOM):
         case PAIR_OF(TYPE_NIL):
@@ -2756,34 +2776,35 @@ IsFullyBound(Type *t0)
         return true;
 }
 
-static int
+inline static int
 StrictClassOf(Type const *t0)
 {
-        if (TypeType(t0) == TYPE_INT) {
+        switch (TypeType(t0)) {
+        case TYPE_INT:
+        case TYPE_RANGE:
                 return CLASS_INT;
-        }
 
-        if (TypeType(t0) == TYPE_STRING) {
+        case TYPE_STRING:
                 return CLASS_STRING;
-        }
 
-        if (TypeType(t0) == TYPE_BOOL) {
+        case TYPE_BOOL:
                 return CLASS_BOOL;
-        }
 
-        if (IsAny(t0)) {
-                return CLASS_TOP;
-        }
-
-        if (IsNilT(t0)) {
+        case TYPE_NIL:
                 return CLASS_NIL;
-        }
 
-        if (TypeType(t0) != TYPE_OBJECT) {
+        case TYPE_CLASS:
+                return CLASS_CLASS;
+
+        case TYPE_TAG:
+                return CLASS_TAG;
+
+        case TYPE_OBJECT:
+                return t0->class->i;
+
+        default:
                 return CLASS_BOTTOM;
         }
-
-        return t0->class->i;
 }
 
 static int
@@ -2836,6 +2857,50 @@ ClassOfType(Ty *ty, Type const *t0)
         }
 
         return CLASS_TOP;
+}
+
+inline static bool
+IsLitSubtype(Type const *t0, Type const *t1)
+{
+        switch (PackTypes(t0, t1)) {
+        case PAIR_OF(TYPE_INT):
+        case PAIR_OF(TYPE_BOOL):
+                return (t0->z == t1->z);
+
+        case PAIR_OF(TYPE_STRING):
+                return s_eq(t0->str, t1->str);
+
+        case PACK_TYPES(TYPE_RANGE, TYPE_INT):
+        {
+                imax lo = IsIntLit(t0->lo) ? t0->lo->z : 0;
+                imax hi = IsIntLit(t0->hi) ? t0->hi->z : INTMAX_MAX;
+
+                return (lo <= t1->z) && (hi >= t0->z);
+        }
+
+        case PACK_TYPES(TYPE_INT, TYPE_RANGE):
+        {
+                imax lo = IsIntLit(t1->lo) ? t1->lo->z : 0;
+                imax hi = IsIntLit(t1->hi) ? t1->hi->z : INTMAX_MAX;
+
+                return (lo == t0->z) && (hi == t0->z);
+        }
+
+        case PACK_TYPES(TYPE_RANGE, TYPE_RANGE):
+        {
+                imax lo0 = IsIntLit(t0->lo) ? t0->lo->z : 0;
+                imax hi0 = IsIntLit(t0->hi) ? t0->hi->z : INTMAX_MAX;
+
+                imax lo1 = IsIntLit(t1->lo) ? t1->lo->z : 0;
+                imax hi1 = IsIntLit(t1->hi) ? t1->hi->z : INTMAX_MAX;
+
+                return (lo0 <= lo1) && (hi0 >= hi1);
+        }
+
+        default:
+                return IsObject(t0)
+                    && (StrictClassOf(t0) == StrictClassOf(t1));
+        }
 }
 
 static bool
@@ -3316,14 +3381,31 @@ type_type(Ty *ty, Type *t0)
 }
 
 Type *
+type_alias_tmp(Ty *ty, char const *name, Expr const *src)
+{
+        Type *t = NewType(ty, TYPE_ALIAS);
+
+        t->concrete = true;
+        t->name = name;
+        t->asrc = src;
+
+        return t;
+}
+
+Type *
 type_alias(Ty *ty, Symbol *var, Stmt const *def)
 {
         static TypeVector refs;
 
         xDDD();
 
-        var->type = NewType(ty, TYPE_ALIAS);
-        var->type->concrete = true;
+        if (var->type == NULL) {
+                var->type = type_alias_tmp(
+                        ty,
+                        def->class.name,
+                        def->class.type
+                );
+        }
 
         for (int i = 0; i < vN(def->class.type_params); ++i) {
                 Type *t0 = type_resolve(
@@ -5258,28 +5340,13 @@ UnifyXD(Ty *ty, Type *t0, Type *t1, bool super, bool check, bool soft)
                 goto Fail;
         }
 
-        if (PackTypes(t0, t1) == PAIR_OF(TYPE_INT)) {
-                if (t0->z == t1->z) {
-                        OK("same int literal");
+        if (IsLiteral(t0) && IsLiteral(t1)) {
+                if (IsLitSubtype(t0, t1)) {
+                        OK("literal subtype");
                         goto Success;
+                } else {
+                        goto Fail;
                 }
-                goto Fail;
-        }
-
-        if (PackTypes(t0, t1) == PAIR_OF(TYPE_STRING)) {
-                if (s_eq(t0->str, t1->str)) {
-                        OK("same string literal");
-                        goto Success;
-                }
-                goto Fail;
-        }
-
-        if (PackTypes(t0, t1) == PAIR_OF(TYPE_BOOL)) {
-                if (t0->z == t1->z) {
-                        OK("same bool literal");
-                        goto Success;
-                }
-                goto Fail;
         }
 
         if (IsLiteral(t0)) {
@@ -7925,22 +7992,8 @@ type_check_shallow(Ty *ty, Type *t0, Type *t1)
                 return true;
         }
 
-        if (IsIntLit(t1)) {
-                return IsIntLit(t0)
-                     ? (t0->z == t1->z)
-                     : (StrictClassOf(t0) == CLASS_INT);
-        }
-
-        if (IsStrLit(t1)) {
-                return IsStrLit(t0)
-                     ? s_eq(t0->str, t1->str)
-                     : (StrictClassOf(t0) == CLASS_STRING);
-        }
-
-        if (IsBoolLit(t1)) {
-                return IsBoolLit(t0)
-                     ? (t0->z == t1->z)
-                     : (StrictClassOf(t0) == CLASS_BOOL);
+        if (IsLiteral(t0) || IsLiteral(t1)) {
+                return IsLitSubtype(t0, t1);
         }
 
         if (IsUnboundVar(t0) && IsUnboundVar(t1)) {
@@ -8103,22 +8156,8 @@ type_check_x_(Ty *ty, Type *t0, Type *t1, bool need)
                 return true;
         }
 
-        if (IsIntLit(t1)) {
-                return IsIntLit(t0)
-                     ? (t0->z == t1->z)
-                     : type_check_x(ty, t0, INT_TYPE, need);
-        }
-
-        if (IsStrLit(t1)) {
-                return IsStrLit(t0)
-                     ? s_eq(t0->str, t1->str)
-                     : type_check_x(ty, t0, STRING_TYPE, need);
-        }
-
-        if (IsBoolLit(t1)) {
-                return IsBoolLit(t0)
-                     ? (t0->z == t1->z)
-                     : type_check_x(ty, t0, BOOL_TYPE, need);
+        if (IsLiteral(t0) || IsLiteral(t1)) {
+                return IsLitSubtype(t0, t1);
         }
 
         if (t1->type == TYPE_INTERSECT) {
@@ -8503,8 +8542,6 @@ type_tuple(Ty *ty, Expr const *e)
                 }
         }
 
-        XXTLOG("tuple(): %s", ShowType(t0));
-
         return t0;
 }
 
@@ -8782,7 +8819,7 @@ type_assign(Ty *ty, Expr *e, Type *t0, int flags)
                              && !HAVE_COMPILER_FLAG(NO_TYPES)
                         ) {
                                 TypeError(
-                                        "can't assign `%s` to %s%s%s which has type `%s`",
+                                        "can't assign %s to %s%s%s which has type %s",
                                         ShowType(t0),
                                         TERM(93), e->identifier, TERM(0),
                                         ShowType(e->symbol->type)
@@ -8970,7 +9007,6 @@ type_resolve(Ty *ty, Expr const *e)
         Type *t0;
         Type *t1;
         Type *t2;
-        Symbol *var;
 
         if (e == NULL) {
                 return NULL;
@@ -8986,29 +9022,30 @@ type_resolve(Ty *ty, Expr const *e)
         case EXPRESSION_PACK:
         case EXPRESSION_IDENTIFIER:
                 if (
-                        (e->symbol == NULL)
-                     && (e->xscope == NULL)
-                     && !CompilerResolveExpr(ty, (Expr *)e)
+                        (e->symbol == NULL || e->symbol->type == NULL)
+                     && (e->xscope != NULL || !CompilerResolveExpr(ty, (Expr *)e))
                 ) {
-                        return NULL;
-                }
-                if (e->symbol == NULL) {
                         CompilerPushContext(ty, e);
-                        TypeError("cannot resolve type name `%s%s%s`", TERM(93), e->identifier, TERM(0));
+                        TypeError(
+                                "cannot resolve type name `%s%s%s`",
+                                TERM(93),
+                                e->identifier,
+                                TERM(0)
+                        );
                 }
                 if (e->symbol->class != -1) {
                         t0 = NewType(ty, TYPE_OBJECT);
                         t0->class = class_get(ty, e->symbol->class);
-                } else if (e->symbol->tag != -1) {
+                } else if (
+                        SymbolIsTag(e->symbol)
+                     || SymbolIsConst(e->symbol)
+                     || SymbolIsTypeVar(e->symbol)
+                ) {
                         t0 = e->symbol->type;
-                } else if (!IsBottom(e->symbol->type) && !IsHole(e->symbol->type)) {
-                        t0 = e->symbol->type;
-                } else if (SymbolIsTypeVar(e->symbol)) {
-                        return e->symbol->type;
                 } else {
                         t0 = BOTTOM;
                 }
-                if (t0 != NULL && t0->variadic != variadic) {
+                if ((t0 != NULL) && (t0->variadic != variadic)) {
                         t0 = CloneType(ty, t0);
                         t0->variadic = variadic;
                 }
@@ -9039,21 +9076,27 @@ type_resolve(Ty *ty, Expr const *e)
                 }
                 return t0;
 
+        case EXPRESSION_PACK_UNION:
+                t0 = NewType(ty, TYPE_UNION);
+                t1 = type_resolve(ty, e->operand);
+                avP(t0->types, t1);
+                return t0;
+
+        case EXPRESSION_PACK_INTERSECT:
+                t0 = NewType(ty, TYPE_INTERSECT);
+                t1 = type_resolve(ty, e->operand);
+                avP(t0->types, t1);
+                return t0;
+
         case EXPRESSION_DOT_DOT_DOT:
-                if (e->left->integer == 1) {
-                        t0 = NewType(ty, TYPE_UNION);
-                        t1 = type_resolve(ty, e->right);
-                        avP(t0->types, t1);
-                        return t0;
-                }
-                if (e->left->integer == 2) {
-                        t0 = NewType(ty, TYPE_INTERSECT);
-                        t1 = type_resolve(ty, e->right);
-                        avP(t0->types, t1);
-                        return t0;
-                }
                 t0 = CloneType(ty, type_resolve(ty, e->right));
                 t0->packed = true;
+                return t0;
+
+        case EXPRESSION_DOT_DOT:
+                t0 = NewType(ty, TYPE_RANGE);
+                t0->lo = type_resolve(ty, e->left);
+                t0->hi = type_resolve(ty, e->right);
                 return t0;
 
         case EXPRESSION_SUBSCRIPT:
@@ -9430,6 +9473,10 @@ type_show(Ty *ty, Type const *t0)
                 xvP(visiting, (Type *)t0);
         }
 
+        if (vN(visiting) == 1 && IsAliasT(t0)) {
+                t0 = Resolve(ty, t0);
+        }
+
         if (IsFixed(t0)) {
                 //dump(&buf, "!");
         }
@@ -9474,6 +9521,7 @@ type_show(Ty *ty, Type const *t0)
                         dump(&buf, "]");
                 }
                 break;
+
         case TYPE_CLASS:
                 dump(
                         &buf,
@@ -9485,6 +9533,7 @@ type_show(Ty *ty, Type const *t0)
                         TERM(0)
                 );
                 break;
+
         case TYPE_TAG:
                 dump(
                         &buf,
@@ -9494,9 +9543,11 @@ type_show(Ty *ty, Type const *t0)
                         TERM(0)
                 );
                 break;
+
         case TYPE_TYPE:
                 dump(&buf, "Type[%s]", ShowType(t0->_type));
                 break;
+
         case TYPE_UNION:
                 //dump(&buf, "%sunion[%s", TERM(96), TERM(0));
                 for (int i = 0; i < vN(t0->types); ++i) {
@@ -9515,6 +9566,7 @@ type_show(Ty *ty, Type const *t0)
                 }
                 //dump(&buf, "%s]%s", TERM(96), TERM(0));
                 break;
+
         case TYPE_INTERSECT:
                 for (int i = 0; i < vN(t0->types); ++i) {
                         Type *t1 = v__(t0->types, i);
@@ -9536,6 +9588,7 @@ type_show(Ty *ty, Type const *t0)
                         dump(&buf, "%s(&)%s", TERM(91;1), TERM(0));
                 }
                 break;
+
         case TYPE_FUNCTION:
                 if (vN(t0->bound) > 0) {
                         dump(&buf, "%s[", TERM(38;2;255;153;187));
@@ -9636,6 +9689,7 @@ type_show(Ty *ty, Type const *t0)
                         );
                 }
                 break;
+
         case TYPE_SEQUENCE:
         case TYPE_LIST:
 #if defined(TY_DEBUG_TYPES) || 1
@@ -9723,7 +9777,7 @@ type_show(Ty *ty, Type const *t0)
                                 TERM(0),
                                 ShowType(t0->val)
                         );
-                } else if (1 && !IsTVar(t0)) {
+                } else if (0 && !IsTVar(t0)) {
                         dump(
                                 &buf,
                                 "%s{%d}%s",
@@ -9799,6 +9853,17 @@ type_show(Ty *ty, Type const *t0)
 
         case TYPE_BOOL:
                 dump(&buf, "%s%s%s", TERM(38;2;211;134;155), t0->z ? "true" : "false", TERM(0));
+                break;
+
+        case TYPE_RANGE:
+                dump(
+                        &buf,
+                        "%s%s..%s%s",
+                        (t0->lo == NULL) ? "" : ShowType(t0->lo),
+                        TERM(38;2;139;173;101),
+                        TERM(0),
+                        (t0->hi == NULL) ? "" : ShowType(t0->hi)
+                );
                 break;
 
         case TYPE_ERROR:
@@ -11017,6 +11082,26 @@ already_checking_pair(
         return false;
 }
 
+inline static imax
+RangeLow(Type const *t0)
+{
+        if (t0->lo == NULL || !IsIntLit(t0->lo)) {
+                return 0;
+        } else {
+                return t0->lo->z;
+        }
+}
+
+inline static imax
+RangeHigh(Type const *t0)
+{
+        if (t0->hi == NULL || !IsIntLit(t0->hi)) {
+                return INTMAX_MAX;
+        } else {
+                return t0->hi->z;
+        }
+}
+
 static bool
 TypeCheckXD(Ty *ty, TypeCheckStack *stack, Type *t0, Value const *v)
 {
@@ -11049,6 +11134,12 @@ TypeCheckXD(Ty *ty, TypeCheckStack *stack, Type *t0, Value const *v)
         case TYPE_INT:
                 ok = (v->type == VALUE_INTEGER)
                   && (v->z == t0->z);
+                break;
+
+        case TYPE_RANGE:
+                ok = (v->type == VALUE_INTEGER)
+                  && (v->z >= RangeLow(t0))
+                  && (v->z <= RangeHigh(t0));
                 break;
 
         case TYPE_STRING:

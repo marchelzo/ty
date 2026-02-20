@@ -248,21 +248,11 @@ pub class Printer {
 
             Object({__pretty__: $f}) => {
                 for match f() {
-                    Print(x) => {
-                        go(x, canPush, force)
-                    },
-                    Push => {
-                        nl(1)
-                    },
-                    Pop => {
-                        nl(-1)
-                    },
-                    Newline => {
-                        nl()
-                    },
-                    Raw(x) => {
-                        write("{x}", id, force)
-                    }
+                    Print(x) => { go(x, canPush, force)   },
+                    Raw(x)   => { write("{x}", id, force) },
+                    Push     => { nl(1)                   },
+                    Pop      => { nl(-1)                  },
+                    Newline  => { nl()                    }
                 }
             },
 
