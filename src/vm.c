@@ -106,8 +106,22 @@ static Ty *ty = &vvv;
                 expr = compiler_find_expr(ty, IP - 1);   \
         }                                                \
         LOG(                                             \
-                "%07ju:%s:%d:%d: " #i,                   \
-                (uptr)(IP - 1) & 0xFFFFFFFF,             \
+                "[%3zu -> %ld(%zu)] %s:%d:%d: " #i,      \
+                vN(STACK),                               \
+                vN(SP_STACK) ? v_L(SP_STACK) : (long)-1, \
+                vN(SP_STACK),                            \
+                expr ? GetExpressionModule(expr) : "",   \
+                (expr ? expr->start.line : 0) + 1,       \
+                (expr ? expr->start.col : 0) + 1         \
+        );
+#define XCASE(i)                                         \
+        case INSTR_##i:                                  \
+        expr = compiler_find_expr(ty, IP - 1);           \
+        XXX(                                             \
+                "[%3zu -> %ld(%zu)] %s:%d:%d: " #i,      \
+                vN(STACK),                               \
+                vN(SP_STACK) ? v_L(SP_STACK) : (long)-1, \
+                vN(SP_STACK),                            \
                 expr ? GetExpressionModule(expr) : "",   \
                 (expr ? expr->start.line : 0) + 1,       \
                 (expr ? expr->start.col : 0) + 1         \
@@ -172,12 +186,13 @@ static ValueVector Globals;
 #define TRY_STACK     (ty->st.try_stack)
 #define VISITING      (ty->visiting)
 
-#define top()   ((top)(ty))
-#define topN(i) ((topN)(ty, i))
-#define pop()   ((pop)(ty))
-#define peek()  ((peek)(ty))
+#define top()    ((top)(ty))
+#define topN(i)  ((topN)(ty, i))
+#define pop()    ((pop)(ty))
+#define peek()   ((peek)(ty))
 #define push(x)  ((push)(ty, (x)))
 #define xpush(x) ((xpush)(ty, (x)))
+#define put(x)   ((put)(ty, (x)))
 #define swap()   ((swap)(ty))
 
 #define poptarget()      ((poptarget)(ty))
@@ -913,6 +928,12 @@ inline static void
 }
 
 inline static void
+(put)(Ty *ty, Value v)
+{
+        *top() = v;
+}
+
+inline static void
 (swap)(Ty *ty)
 {
         SWAP(Value, top()[-1], top()[0]);
@@ -972,7 +993,7 @@ BindMethod(Ty *ty, Value *f, Value *v)
         if (class_of(f) != -1) {
                 Value *this = memcpy(mAo(sizeof *this, GC_VALUE), v, sizeof *v);
                 int    nEnv = f->info[FUN_INFO_CAPTURES];
-                Value **env = mAo0((nEnv + 1) * sizeof (Value *), GC_ENV);
+                Value **env = uAo0((nEnv + 1) * sizeof (Value *), GC_ENV);
                 memcpy(env, f->env, nEnv * sizeof (Value *));
                 env[nEnv] = this;
                 meth.env = env;
@@ -1043,18 +1064,6 @@ GetCurrentGenerator(Ty *ty)
         }
 
         usize n = FRAMES.items[0].fp;
-
-        if (n == 0 || STACK.items[n - 1].type != VALUE_GENERATOR) {
-                return NULL;
-        }
-
-        return STACK.items[n - 1].gen;
-}
-
-inline static Generator *
-GetGeneratorForFrame(Ty *ty, int i)
-{
-        int n = FRAMES.items[i].fp;
 
         if (n == 0 || STACK.items[n - 1].type != VALUE_GENERATOR) {
                 return NULL;
@@ -2244,8 +2253,8 @@ AddTupleEntry(
         svP(*values, *v);
 }
 
-TY_INSTR_INLINE static bool
-search_i32(int const *zs, i32 z)
+inline static bool
+search_i32(i32 const *zs, i32 z)
 {
         while (*zs != -1) {
                 if (*zs++ == z) return true;
@@ -2465,12 +2474,11 @@ DoCall(Ty *ty, Value const *f, int n, int nkw, bool auto_this)
                         value = NONE;
                         exec_fn(ty, vp, &value, n, &kwargs);
                 } else {
-                        value = NewInstance(v.class);
+                        value = RawObject(v.class);
                         gP(&value);
                         exec_fn(ty, vp, &value, n, &kwargs);
                         gX();
-                        pop();
-                        xpush(value);
+                        put(value);
                 }
                 gX();
                 gX();
@@ -2655,7 +2663,7 @@ LoadFieldFast(Ty *ty, Value *v, i32 id)
 
         case OFF_METHOD:
                 vp = v_(class->methods.values, off);
-                this = mAo(sizeof *this, GC_VALUE);
+                this = uAo(sizeof *this, GC_VALUE);
                 *this = *v;
                 return METHOD(id, vp, this);
 
@@ -3423,8 +3431,7 @@ DoCmp(Ty *ty)
 inline static void
 DoNot(Ty *ty)
 {
-        Value v = pop();
-        xpush(BOOLEAN(!value_truthy(ty, &v)));
+        put(BOOLEAN(!value_truthy(ty, top())));
 }
 
 TY_INSTR_INLINE static void
@@ -3589,17 +3596,14 @@ DoPtrMutOp(Ty *ty, int op)
         c_type = (ffi_type *)poptarget();
         push(TPTR(c_type, v));
         val = cffi_load(ty, 1, NULL);
-        pop();
-        xpush(val);
+        put(val);
         val = vm_2op(ty, op, top(), top() - 1);
         pop();
-        pop();
-        xpush(TPTR(c_type, v));
+        put(TPTR(c_type, v));
         xpush(val);
         val = cffi_store(ty, 2, NULL);
         pop();
-        pop();
-        xpush(val);
+        put(val);
 }
 
 TY_INSTR_INLINE static void
@@ -3721,7 +3725,6 @@ DoMutMul(Ty *ty)
         TyObject *o;
         Value *vp, *vp2, val, x;
         void *v = vp = (void *)(p & ~PMASK3);
-        ffi_type *c_type;
         unsigned char b;
 
         switch (p & PMASK3) {
@@ -3776,7 +3779,6 @@ DoMutSub(Ty *ty)
         TyObject *o;
         Value *vp, x, val;
         void *v = vp = (void *)(p & ~PMASK3);
-        ffi_type *c_type;
         unsigned char b;
 
         switch (p & PMASK3) {
@@ -3848,7 +3850,6 @@ DoMutAdd(Ty *ty)
 {
         uptr c, p = (uptr)poptarget();
         TyObject *o;
-        ffi_type *c_type;
         Value *vp, val, x;
         void *v = vp = (void *)(p & ~PMASK3);
         unsigned char b;
@@ -3989,7 +3990,6 @@ DoMutOr(Ty *ty)
         TyObject *o;
         Value *vp, val, x;
         void *v = vp = (void *)(p & ~PMASK3);
-        ffi_type *c_type;
         unsigned char b;
 
         switch (p & PMASK3) {
@@ -4050,7 +4050,6 @@ DoMutXor(Ty *ty)
         TyObject *o;
         Value *vp, val, x;
         void *v = vp = (void *)(p & ~PMASK3);
-        ffi_type *c_type;
         unsigned char b;
 
         switch (p & PMASK3) {
@@ -4111,7 +4110,6 @@ DoMutShl(Ty *ty)
         TyObject *o;
         Value *vp, val, x;
         void *v = vp = (void *)(p & ~PMASK3);
-        ffi_type *c_type;
         unsigned char b;
 
         switch (p & PMASK3) {
@@ -4168,7 +4166,6 @@ DoMutShr(Ty *ty)
         TyObject *o;
         Value *vp, val, x;
         void *v = vp = (void *)(p & ~PMASK3);
-        ffi_type *c_type;
         unsigned char b;
 
         switch (p & PMASK3) {
@@ -4426,8 +4423,7 @@ DoTargetSubscript(Ty *ty)
                         xpush(v);
                         v = cffi_store(ty, 2, NULL);
                         pop();
-                        pop();
-                        xpush(v);
+                        put(v);
                         IP += 1;
                         return;
                 } else {
@@ -4438,7 +4434,6 @@ DoTargetSubscript(Ty *ty)
                 break;
 
         default:
-        BadContainer:
                 zP(
                         "attempt to perform subscript assignment on "
                         "something other than an object or array: %s",
@@ -4503,13 +4498,11 @@ DoAssignSubscript(Ty *ty)
                 p = vm_2op(ty, OP_ADD, &container, &subscript);
                 pop();
                 pop();
-                pop();
-                xpush(p);
+                put(p);
                 xpush(value);
                 v = cffi_store(ty, 2, NULL);
                 pop();
-                pop();
-                xpush(v);
+                put(v);
                 return;
 
         case VALUE_OBJECT:
@@ -4952,6 +4945,92 @@ SpreadShuffle(Ty *ty, bool inject_nil)
 }
 
 static void
+DoMatchTag(Ty *ty)
+{
+        char *fail;
+        char *jmp;
+        i32 subject_id;
+        i32 entry_id;
+        i32 n;
+
+        u8 wrapped = *IP++;
+        READVALUE(n);
+        READJUMP(fail);
+
+        if (wrapped) {
+                if (top()->type & VALUE_TAGGED) {
+                        subject_id = tags_first(ty, top()->tags);
+                } else {
+                        DOJUMP(fail);
+                        return;
+                }
+        } else {
+                if (top()->type == VALUE_TAG) {
+                        subject_id = top()->tag;
+                } else {
+                        DOJUMP(fail);
+                        return;
+                }
+        }
+
+        for (i32 i = 0; i < n; ++i) {
+                READVALUE(entry_id);
+                READJUMP(jmp);
+                if (entry_id == subject_id) {
+                        DOJUMP(jmp);
+                        return;
+                }
+        }
+
+        DOJUMP(fail);
+}
+
+static void
+DoMatchString(Ty *ty)
+{
+        i32 n;
+        char *fail;
+        char *table;
+
+        READVALUE(n);
+        READJUMP(fail);
+
+        table = IP;
+        IP += n * 2 * sizeof (i32);
+
+        if (top()->type != VALUE_STRING) {
+                DOJUMP(fail);
+                return;
+        }
+
+        u64 h = XXH3_64bits(ss(*top()), sN(*top()));
+        u32 mask = (u32)(n - 1);
+        u32 bucket = (u32)(h & mask);
+
+        for (;;) {
+                char *slot = table + bucket * 2 * sizeof (i32);
+                i32 id = load_i32(slot);
+
+                if (id == -1) {
+                        break;
+                }
+
+                InternEntry const *ie = intern_entry(&xD.strings, id);
+                u32 len = (u32)(uptr)ie->data;
+
+                if (sN(*top()) == len && memcmp(ss(*top()), ie->name, len) == 0) {
+                        char *jmp = slot + sizeof (i32);
+                        DOJUMP(jmp);
+                        return;
+                }
+
+                bucket = (bucket + 1) & mask;
+        }
+
+        DOJUMP(fail);
+}
+
+static void
 InstallMethods(Ty *ty, i32 c, struct itable *table, i32 n)
 {
         i32 i;
@@ -5133,6 +5212,8 @@ vm_exec(Ty *ty, char *code)
 
         EXEC_DEPTH += 1;
         LOG("vm_exec(): ==> %d", EXEC_DEPTH);
+
+        RC = 0;
 
         for (;;) {
 NextInstruction:
@@ -5491,7 +5572,7 @@ NextInstruction:
 
                 CASE(TARGET_LOCAL)
                         READVALUE(n);
-                        LOG("Targeting %d", n);
+                        LOG("Targeting %d (%zu frames)", n, vN(FRAMES));
                         pushtarget(local(ty, n), NULL);
                         break;
 
@@ -5670,14 +5751,17 @@ TargetMember:
                         }
                         break;
 
+                CASE(PUSH_UNTAGGED)
+                        push(peek());
+                        PopTag(top());
+                        break;
+
                 CASE(UNTAG_OR_DIE)
                         READVALUE(tag);
                         if (UNLIKELY(!tags_same(ty, tags_first(ty, top()->tags), tag))) {
                                 MatchError;
                         } else {
-                                if ((top()->tags = tags_pop(ty, top()->tags)) == 0) {
-                                        top()->type &= ~VALUE_TAGGED;
-                                }
+                                PopTag(top());
                         }
                         break;
 
@@ -5685,9 +5769,7 @@ TargetMember:
                         vp = poptarget();
                         if (LIKELY(top()->type & VALUE_TAGGED)) {
                                 *vp = TAG(tags_first(ty, top()->tags));
-                                if ((top()->tags = tags_pop(ty, top()->tags)) == 0) {
-                                        top()->type &= ~VALUE_TAGGED;
-                                }
+                                PopTag(top());
                         } else {
                                 MatchError;
                         }
@@ -5701,9 +5783,7 @@ TargetMember:
                                         zPx("cannot steal tag into self");
                                 }
                                 *vp = TAG(tags_first(ty, top()->tags));
-                                if ((top()->tags = tags_pop(ty, top()->tags)) == 0) {
-                                        top()->type &= ~VALUE_TAGGED;
-                                }
+                                PopTag(top());
                         } else {
                                 IP += n;
                         }
@@ -5897,36 +5977,12 @@ TargetMember:
                         break;
 
                 CASE(MATCH_TAG)
-                {
-                        u8 mode = *IP++;
-                        i32 n_entries;
-                        READVALUE(n_entries);
-                        char *default_jp = IP;
-                        IP += sizeof (int);
-
-                        int mtag = -1;
-                        if (mode == 0) {
-                                if (top()->type == VALUE_TAG)
-                                        mtag = top()->tag;
-                        } else {
-                                if (top()->type & VALUE_TAGGED)
-                                        mtag = tags_first(ty, top()->tags);
-                        }
-
-                        for (i32 idx = 0; idx < n_entries; ++idx) {
-                                i32 entry_tag;
-                                READVALUE(entry_tag);
-                                char *jp;
-                                READJUMP(jp);
-                                if (entry_tag == mtag) {
-                                        DOJUMP(jp);
-                                        goto NextInstruction;
-                                }
-                        }
-
-                        DOJUMP(default_jp);
+                        DoMatchTag(ty);
                         break;
-                }
+
+                CASE(MATCH_STRING)
+                        DoMatchString(ty);
+                        break;
 
                 CASE(ENSURE_EQUALS_VAR)
                         READVALUE(n);
@@ -6096,10 +6152,7 @@ TargetMember:
                         if (!(top()->type & VALUE_TAGGED) || tags_first(ty, top()->tags) != tag) {
                                 DOJUMP(jump);
                         } else {
-                                top()->tags = tags_pop(ty, top()->tags);
-                                if (top()->tags == 0) {
-                                        top()->type &= ~VALUE_TAGGED;
-                                }
+                                PopTag(top());
                         }
                         break;
 
@@ -6222,8 +6275,7 @@ TargetMember:
                         }
                         if (UNLIKELY(top()->type == VALUE_PTR)) {
                                 char *s = VSC(top());
-                                pop();
-                                xpush(STRING_NOGC(s, strlen(s)));
+                                put(STRING_NOGC(s, strlen(s)));
                         } else {
                                 CallMethod(ty, NAMES._str_, 0, 0, false);
                         }
@@ -6278,8 +6330,7 @@ YIELD:
                         push(PTR((void *)s));
                         v = builtin_eval(ty, 2, NULL);
                         pop();
-                        pop();
-                        push(v);
+                        put(v);
                         break;
 
                 CASE(RENDER_TEMPLATE)
@@ -6313,7 +6364,6 @@ YIELD:
                         break;
 
                 CASE(LOOP_ITER)
-                        //xvP(SP_STACK, vN(STACK));
                         push(SENTINEL);
                         RC = 0;
                         IterGetNext(ty);
@@ -6537,7 +6587,7 @@ YIELD:
 
                         if (UNLIKELY(v.type != VALUE_TUPLE || v.ids == NULL)) {
                                 value = v;
-                                goto BadTupleMember;
+                                goto BadField;
                         }
 
                         for (int i = 0; i < v.count; ++i) {
@@ -6553,7 +6603,7 @@ YIELD:
                         }
 
                         value = v;
-                        goto BadTupleMember;
+                        goto BadField;
 
                 CASE(CONCAT_STRINGS)
                         READVALUE(n);
@@ -6588,8 +6638,8 @@ YIELD:
                                 goto MemberAccess;
                         } else {
                                 *top() = NIL;
-                                continue;
                         }
+                        break;
 
                 CASE(GET_MEMBER)
                         z = GetDynamicMemberId(ty, true);
@@ -6598,7 +6648,7 @@ YIELD:
                         } else {
                                 z = -(z + 1);
                                 value = pop();
-                                goto BadMemberAccess;
+                                goto BadField;
                         }
 
                 CASE(TARGET_DYN_MEMBER)
@@ -6660,19 +6710,21 @@ YIELD:
                         READVALUE(z);
 
                         value = pop();
+                        gP(&value);
                         v = GetMember(ty, value, z, true, false);
+                        gX();
 
                         switch (v.type) {
                         case VALUE_BREAK:
-                                continue;
+                                break;
 
                         case VALUE_NONE:
                                 xpush(NIL);
-                                continue;
+                                break;
 
                         default:
                                 xpush(v);
-                                continue;
+                                break;
                         }
                         break;
 
@@ -6687,30 +6739,27 @@ MemberAccess:
 
                         switch (v.type) {
                         case VALUE_BREAK:
-                                continue;
+                                break;
 
                         default:
                                 xpush(v);
-                                continue;
-
-                        case VALUE_NONE:
                                 break;
-
+BadField:
+                        case VALUE_NONE:
+                                BadFieldAccess(ty, &value, z);
+                                UNREACHABLE();
                         }
-BadMemberAccess:
-BadTupleMember:
-                        BadFieldAccess(ty, &value, z);
-                        UNREACHABLE();
+                        break;
+
                 CASE(TRY_MEMBER)
                         READJUMP(jump);
                         READVALUE(z);
 
-                        value = peek();
-                        v = GetMember(ty, value, z, false, false);
+                        v = GetMember(ty, peek(), z, false, false);
 
                         switch (v.type) {
                         case VALUE_BREAK:
-                                continue;
+                                break;
 
                         case VALUE_NONE:
                                 DOJUMP(jump);
@@ -6736,8 +6785,7 @@ BadTupleMember:
                         case VALUE_ARRAY:
                                 v = ArraySubscript(ty, container, subscript, true);
                                 pop();
-                                pop();
-                                xpush(v);
+                                put(v);
                                 break;
 
                         case VALUE_TUPLE:
@@ -6749,8 +6797,7 @@ BadTupleMember:
                                         if (subscript.z < 0 || subscript.z >= container.count) {
                                                 v = tagged(ty, TAG_INDEX_ERR, container, subscript, NONE);
                                                 pop();
-                                                pop();
-                                                xpush(v);
+                                                put(v);
                                                 RaiseException(ty);
                                                 break;
 
@@ -6771,28 +6818,24 @@ BadTupleMember:
                         case VALUE_STRING:
                                 v = string_char(ty, &container, 1, NULL);
                                 pop();
-                                pop();
-                                xpush(v);
+                                put(v);
                                 break;
 
                         case VALUE_BLOB:
                                 v = blob_get(ty, &container, 1, NULL);
                                 pop();
-                                pop();
-                                xpush(v);
+                                put(v);
                                 break;
 
                         case VALUE_DICT:
                                 vp = dict_get_value(ty, container.dict, &subscript);
                                 pop();
-                                pop();
-                                xpush((vp == NULL) ? NIL : *vp);
+                                put((vp == NULL) ? NIL : *vp);
                                 break;
 
                         case VALUE_BOOLEAN:
                                 pop();
-                                pop();
-                                xpush(container);
+                                put(container);
                                 break;
 
                         case VALUE_GENERATOR:
@@ -6834,14 +6877,12 @@ BadTupleMember:
                                 pop();
                                 pop();
                                 pop();
-                                pop();
-                                xpush(v);
+                                put(v);
                                 break;
 
                         case VALUE_NIL:
                                 pop();
-                                pop();
-                                xpush(NIL);
+                                put(NIL);
                                 break;
 
                         default:
@@ -6945,8 +6986,7 @@ BadContainer:
                         break;
 
                 CASE(CLASS_OF)
-                        value = pop();
-                        xpush(CLASS(ClassOf(&value)));
+                        put(CLASS(ClassOf(top())));
                         break;
 
                 CASE(CHECK_MATCH)
@@ -7989,20 +8029,18 @@ vm_panic(Ty *ty, char const *fmt, ...)
 noreturn void
 vm_error(Ty *ty, char const *fmt, ...)
 {
-        va_list ap;
+        GC_STOP();
 
+        va_list ap;
         va_start(ap, fmt);
         Value msg = STRING_VFORMAT(ty, fmt, ap);
         va_end(ap);
 
-        //XXX("VM Error: %.*s", (int)sN(msg), ss(msg));
-
         Value error = RawObject(CLASS_RUNTIME_ERROR);
-
-        GC_STOP();
         PutMember(error, NAMES._what,  msg);
         PutMember(error, NAMES._ctx,   NIL);
         PutMember(error, NAMES._cause, NIL);
+
         GC_RESUME();
 
         vm_throw(ty, &error);
@@ -8775,7 +8813,7 @@ vm_call_ex(Ty *ty, Value const *f, int argc, Value *kwargs, bool collect)
                         exec_fn(ty, init, &v, argc, NULL);
                         return pop();
                 } else {
-                        v = NewInstance(f->class);
+                        v = RawObject(f->class);
                         exec_fn(ty, init, &v, argc, NULL);
                         pop();
                         return v;
@@ -8888,7 +8926,7 @@ vm_call(Ty *ty, Value const *f, int argc)
                         exec_fn(ty, vp, NULL, argc, NULL);
                         return pop();
                 } else {
-                        v = NewInstance(f->class);
+                        v = RawObject(f->class);
                         exec_fn(ty, vp, &v, argc, NULL);
                         pop();
                         return v;
@@ -9138,8 +9176,10 @@ char *
 StepInstruction(char const *ip)
 {
 #undef  SKIPSTR
+#undef  READVALUE
 #define SKIPSTR() (ip += strlen(ip) + 1)
-#define SKIPVALUE(x) (memcpy(&x, ip, sizeof x), (ip += sizeof x))
+#define SKIPVALUE(x) (ip += sizeof x)
+#define READVALUE(x) (__builtin_memcpy(&x, ip, sizeof x), SKIPVALUE(x))
 
         uptr s;
         imax k;
@@ -9258,6 +9298,7 @@ StepInstruction(char const *ip)
         CASE(UNTAG_OR_DIE)
                 SKIPVALUE(tag);
                 break;
+        CASE(PUSH_UNTAGGED)
         CASE(STEAL_TAG)
                 break;
         CASE(TRY_STEAL_TAG)
@@ -9311,12 +9352,21 @@ StepInstruction(char const *ip)
                 break;
         CASE(MATCH_TAG)
         {
-                ip += 1; /* mode byte */
-                i32 n_entries;
-                memcpy(&n_entries, ip, sizeof n_entries);
-                ip += sizeof (i32);            /* n */
-                ip += sizeof (i32);            /* default_offset */
-                ip += n_entries * 2 * sizeof (i32); /* tag+offset pairs */
+                i32 n;
+
+                ip += 1;                    /* mode byte */
+                READVALUE(n);               /* n_entries */
+                ip += sizeof (i32);         /* default_offset */
+                ip += n * 2 * sizeof (i32); /* tag+offset pairs */
+                break;
+        }
+        CASE(MATCH_STRING)
+        {
+                i32 sz;
+
+                READVALUE(sz);               /* table size */
+                ip += sizeof (i32);          /* default_offset */
+                ip += sz * 2 * sizeof (i32); /* hash table slots */
                 break;
         }
         CASE(ENSURE_EQUALS_VAR)
@@ -9401,7 +9451,7 @@ StepInstruction(char const *ip)
         CASE(ARRAY0)
                 break;
         CASE(TUPLE)
-                SKIPVALUE(n);
+                READVALUE(n);
                 while (n --> 0) {
                         SKIPVALUE(i);
                 }
@@ -9565,10 +9615,10 @@ StepInstruction(char const *ip)
         CASE(DEFINE_TAG)
         {
                 int tag, super, t, n;
-                SKIPVALUE(tag);
-                SKIPVALUE(super);
-                SKIPVALUE(n);
-                SKIPVALUE(t);
+                READVALUE(tag);
+                READVALUE(super);
+                READVALUE(n);
+                READVALUE(t);
                 while (n --> 0) {
                         SKIPSTR();
                 }
@@ -9585,12 +9635,12 @@ StepInstruction(char const *ip)
 
                 SKIPVALUE(class);
 
-                SKIPVALUE(s_m);
-                SKIPVALUE(s_g);
-                SKIPVALUE(s_s);
-                SKIPVALUE(m);
-                SKIPVALUE(g);
-                SKIPVALUE(s);
+                READVALUE(s_m);
+                READVALUE(s_g);
+                READVALUE(s_s);
+                READVALUE(m);
+                READVALUE(g);
+                READVALUE(s);
 
                 while (s_m --> 0) { SKIPVALUE(i); }
                 while (s_g --> 0) { SKIPVALUE(i); }
@@ -9608,7 +9658,7 @@ StepInstruction(char const *ip)
         {
                 Value v;
 
-                SKIPVALUE(n);
+                READVALUE(n);
 
                 ip = ALIGNED_FOR(i64, ip);
 
@@ -9649,7 +9699,7 @@ StepInstruction(char const *ip)
                 SKIPVALUE(n);
         CASE(CALL)
                 SKIPVALUE(n);
-                SKIPVALUE(nkw);
+                READVALUE(nkw);
                 for (int i = 0; i < nkw; ++i) {
                         SKIPSTR();
                 }
@@ -9662,7 +9712,7 @@ StepInstruction(char const *ip)
         CASE(CALL_SELF_STATIC)
                 SKIPVALUE(n);
                 SKIPVALUE(n);
-                SKIPVALUE(nkw);
+                READVALUE(nkw);
                 for (int i = 0; i < nkw; ++i) {
                         SKIPSTR();
                 }
@@ -9854,6 +9904,13 @@ tdb_step_over_x(Ty *ty, char *ip, i32 i)
         {
                 /* default offset is at ip + 1 (mode) + sizeof(i32) (n) */
                 char *def_off = ip + 1 + sizeof (i32);
+                tdb_set_trap(&TDB->alt, def_off + sizeof (int) + load_int(def_off));
+                break;
+        }
+
+        CASE(MATCH_STRING)
+        {
+                char *def_off = ip + sizeof (i32);
                 tdb_set_trap(&TDB->alt, def_off + sizeof (int) + load_int(def_off));
                 break;
         }

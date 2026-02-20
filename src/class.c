@@ -47,6 +47,7 @@ static char const *BuiltinClassNames[] = {
         [CLASS_ASSERT_ERROR]    = "AssertionError",
         [CLASS_TIMEOUT_ERROR]   = "TimeoutError",
         [CLASS_CANCELED_ERROR]  = "CanceledError",
+        [CLASS_OS_ERROR]        = "OSError",
         [CLASS_FLOAT]           = "Float",
         [CLASS_FUNCTION]        = "Function",
         [CLASS_GENERATOR]       = "Generator",

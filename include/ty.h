@@ -1110,10 +1110,12 @@ extern usize TotalBytesAllocated;
         X(TRY_RANGE),             \
         X(TRY_INCRANGE),          \
         X(MATCH_TAG),             \
+        X(MATCH_STRING),          \
         X(BAD_MATCH),             \
         X(BAD_CALL),              \
         X(BAD_DISPATCH),          \
         X(BAD_ASSIGN),            \
+        X(PUSH_UNTAGGED),         \
         X(UNTAG_OR_DIE),          \
         X(STEAL_TAG),             \
         X(TRY_STEAL_TAG),         \

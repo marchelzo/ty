@@ -67,6 +67,7 @@ enum {
         TYPE_SUBSCRIPT,
         TYPE_SLICE,
         TYPE_INT,
+        TYPE_RANGE,
         TYPE_STRING,
         TYPE_BOOL,
         TYPE_INTERSECT,
@@ -144,6 +145,10 @@ struct type {
                         Type *repeat;
                         bool frfr;
                         bool closed;
+                };
+                struct {
+                        Type *lo;
+                        Type *hi;
                 };
                 imax z;
                 char const *str;
@@ -250,6 +255,9 @@ type_tag(Ty *ty, Class *class, int tag);
 
 Type *
 type_alias(Ty *ty, Symbol *var, Stmt const *s);
+
+Type *
+type_alias_tmp(Ty *ty, char const *name, Expr const *src);
 
 Type *
 type_function(Ty *ty, Expr const *e, bool tmp);

@@ -215,6 +215,8 @@ typedef struct class_definition ClassDefinition;
         X(PACK),                                                                      \
         X(DOT_DOT),                                                                   \
         X(DOT_DOT_DOT),                                                               \
+        X(PACK_UNION),                                                                \
+        X(PACK_INTERSECT),                                                            \
         X(MATCH),                                                                     \
         X(PATTERN),                                                                   \
         X(VIEW_PATTERN),                                                              \

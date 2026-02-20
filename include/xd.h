@@ -79,6 +79,12 @@ load_int(void const *p)
         return *(int const *)memcpy(&(int){0}, p, sizeof (int));
 }
 
+static inline i32
+load_i32(void const *p)
+{
+        return *(i32 const *)memcpy(&(i32){0}, p, sizeof (i32));
+}
+
 static inline umax
 zmaxu(umax a, umax b)
 {
@@ -303,6 +309,18 @@ rune_count(u8 const *s, isize n)
         }
 
         return count;
+}
+
+inline static isize
+vec_search_i32(i32Vector const *v, i32 x)
+{
+        for (usize i = 0; i < vN(*v); ++i) {
+                if (v__(*v, i) == x) {
+                        return (isize)i;
+                }
+        }
+
+        return -1;
 }
 
 bool

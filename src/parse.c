@@ -218,14 +218,14 @@
 #define try_consume_n_2(t, tt) ((try_consume_tagged)(ty, (t), (tt)))
 #define try_consume(...)       VA_SELECT(try_consume_n, __VA_ARGS__)
 
-#define                 tok()                            ((tok)(ty))
-#define              token(i)                     ((token)(ty, (i)))
-#define               skip(n)                      ((skip)(ty, (n)))
-#define       have_keyword(k)              ((have_keyword)(ty, (k)))
-#define have_keywords(k0, k1)      ((have_keywords)(ty, (k0), (k1)))
-#define          unconsume(t)                 ((unconsume)(ty, (t)))
-#define    expect_one_of(...) ((expect_one_of)(ty, __VA_ARGS__, -1))
-#define          consume(...)      VA_SELECT(consume_n, __VA_ARGS__)
+#define                 tok()                                  ((tok)(ty))
+#define              token(i)                           ((token)(ty, (i)))
+#define               skip(n)                            ((skip)(ty, (n)))
+#define            have_kw(k)                 ((have_kw)(ty, KEYWORD_##k))
+#define      have_kws(k0, k1) ((have_kws)(ty, KEYWORD_##k0, KEYWORD_##k1))
+#define          unconsume(t)                       ((unconsume)(ty, (t)))
+#define    expect_one_of(...)       ((expect_one_of)(ty, __VA_ARGS__, -1))
+#define          consume(...)            VA_SELECT(consume_n, __VA_ARGS__)
 
 #define with_fun_subscope(...)                                          \
         if (1) {                                                        \
@@ -1130,13 +1130,13 @@ PopNS(Ty *ty)
 }
 
 inline static bool
-(have_keyword)(Ty *ty, int kw)
+(have_kw)(Ty *ty, int kw)
 {
         return (K0 == kw);
 }
 
 inline static bool
-(have_keywords)(Ty *ty, int kw1, int kw2)
+(have_kws)(Ty *ty, int kw1, int kw2)
 {
         return (T0 == TOKEN_KEYWORD) && (K0 == kw1)
             && (T1 == TOKEN_KEYWORD) && (K1 == kw2);
@@ -1297,7 +1297,7 @@ inline static void
 inline static Expr *
 try_cond(Ty *ty)
 {
-        if (have_keyword(KEYWORD_IF)) {
+        if (have_kw(IF)) {
                 next();
                 return parse_expr(ty, 0);
         } else {
@@ -2702,7 +2702,7 @@ prefix_match(Ty *ty)
                 e->subject->type = EXPRESSION_IDENTIFIER;
                 e->subject->identifier = id = gensym();
                 avP(e->thens, parse_expr(ty, 0));
-                if (have_keyword(KEYWORD_ELSE)) {
+                if (have_kw(ELSE)) {
                         next();
                         Expr *alt = parse_expr(ty, 0);
                         Expr *any = mkid("it");
@@ -2779,14 +2779,14 @@ gencompr(Ty *ty, Expr *e)
         g->body = mkstmt(ty);
         g->body->type = STATEMENT_EACH_LOOP;
 
-        if (have_keyword(KEYWORD_IF)) {
+        if (have_kw(IF)) {
                 next();
                 g->body->each._if = parse_expr(ty, 0);
         } else {
                 g->body->each._if = NULL;
         }
 
-        if (have_keyword(KEYWORD_WHILE)) {
+        if (have_kw(WHILE)) {
                 next();
                 g->body->each._while = parse_expr(ty, 0);
         } else {
@@ -2933,7 +2933,7 @@ parse_method_args(Ty *ty, Expr *e)
                 );
         }
 
-        if (have_keyword(KEYWORD_FOR)) {
+        if (have_kw(FOR)) {
                 if (e->method_args.count > 0) {
                         *vvL(e->method_args) = gencompr(ty, *vvL(e->method_args));
                 } else {
@@ -3117,7 +3117,7 @@ prefix_parenthesis(Ty *ty)
                 avP(list->names, NULL);
                 avP(list->required, true);
 
-                if (have_keyword(KEYWORD_IF)) {
+                if (have_kw(IF)) {
                         next();
                         avP(list->tconds, parse_expr(ty, 0));
                 } else {
@@ -3157,7 +3157,7 @@ prefix_parenthesis(Ty *ty)
                                 (e->type == EXPRESSION_SPREAD) ? "*" : NULL
                         );
 
-                        if (have_keyword(KEYWORD_IF)) {
+                        if (have_kw(IF)) {
                                 next();
                                 avP(list->tconds, parse_expr(ty, 0));
                         } else {
@@ -3178,7 +3178,7 @@ prefix_parenthesis(Ty *ty)
                 }
 
                 return list;
-        } else if (have_keyword(KEYWORD_FOR)) {
+        } else if (have_kw(FOR)) {
                 e = gencompr(ty, e);
 
                 consume(')');
@@ -3438,14 +3438,14 @@ prefix_array(Ty *ty)
                         avP(e->elements, parse_expr(ty, 0));
                 }
 
-                if (have_keyword(KEYWORD_IF)) {
+                if (have_kw(IF)) {
                         next();
                         avP(e->aconds, parse_expr(ty, 0));
                 } else {
                         avP(e->aconds, NULL);
                 }
 
-                if (have_keyword(KEYWORD_FOR)) {
+                if (have_kw(FOR)) {
                         e->type = EXPRESSION_ARRAY_COMPR;
                         parse_comprehension(ty, &e->compr);
                         expect(']');
@@ -3596,35 +3596,30 @@ prefix_dot_dot_dot(Ty *ty)
 
         consume(TOKEN_DOT_DOT_DOT);
 
-        if (T0 == '(') {
+        if (TypeContext && (T0 == '(')) {
                 next();
                 Expr *inner = parse_expr(ty, 6);
 
-                if (T0 == '|') {
+                switch (T0) {
+                case '|':
                         next();
                         consume(')');
-                        zero->integer = 1;
-                        e->left = zero;
-                        e->right = inner;
+                        e->type = EXPRESSION_PACK_UNION;
+                        e->operand = inner;
                         e->end = TEnd;
                         return e;
-                }
 
-                if (T0 == '&') {
+                case '&':
                         next();
                         consume(')');
-                        zero->integer = 2;
-                        e->left = zero;
-                        e->right = inner;
+                        e->type = EXPRESSION_PACK_INTERSECT;
+                        e->operand = inner;
                         e->end = TEnd;
                         return e;
-                }
 
-                consume(')');
-                e->left = zero;
-                e->right = inner;
-                e->end = TEnd;
-                return e;
+                default:
+                        die_at(inner, "expected '|' or '&' after '...'");
+                }
         }
 
         e->left = zero;
@@ -3972,7 +3967,7 @@ infix_function_call(Ty *ty, Expr *left)
                 &e->fkwconds
         );
 
-        if (have_keyword(KEYWORD_FOR)) {
+        if (have_kw(FOR)) {
                 if (e->args.count > 0) {
                         *vvL(e->args) = gencompr(ty, *vvL(e->args));
                 } else {
@@ -4495,7 +4490,7 @@ infix_kw_or(Ty *ty, Expr *left)
         do {
                 next();
                 avP(e->es, parse_expr(ty, 1));
-        } while (have_keyword(KEYWORD_OR));
+        } while (have_kw(OR));
 
         e->start = left->start;
         e->end = TEnd;
@@ -5280,7 +5275,7 @@ parse_target_list(Ty *ty)
         LOAD_NE();
         LOAD_NI();
 
-        if (T0 != ',' && !have_keyword(KEYWORD_IN)) {
+        if (T0 != ',' && !have_kw(IN)) {
                 return target;
         }
 
@@ -5426,7 +5421,7 @@ parse_condpart(Ty *ty)
         p->target = NULL;
         p->def = false;
 
-        if (have_keyword(KEYWORD_LET)) {
+        if (have_kw(LET)) {
                 next();
                 p->def = true;
                 p->target = parse_definition_lvalue(ty, LV_LET, NULL);
@@ -5462,12 +5457,12 @@ parse_condparts(Ty *ty, bool neg)
 
         avP(parts, parse_condpart(ty));
 
-        while ((!neg && have_keyword(KEYWORD_AND)) ||
-               (neg && have_keyword(KEYWORD_OR))) {
+        while ((!neg && have_kw(AND)) ||
+               (neg && have_kw(OR))) {
 
                 next();
 
-                bool not = have_keyword(KEYWORD_NOT);
+                bool not = have_kw(NOT);
                 if (not) {
                         next();
                 }
@@ -5500,7 +5495,7 @@ parse_while(Ty *ty)
         /*
          * Maybe it's a while-match loop.
          */
-        if (have_keywords(KEYWORD_WHILE, KEYWORD_MATCH)) {
+        if (have_kws(WHILE, MATCH)) {
                 next();
                 Stmt *m = parse_match_statement(ty);
                 m->type = STATEMENT_WHILE_MATCH;
@@ -5519,7 +5514,7 @@ parse_while(Ty *ty)
 
         avP(s->While.parts, parse_condpart(ty));
 
-        while (have_keyword(KEYWORD_AND)) {
+        while (have_kw(AND)) {
                 next();
                 avP(s->While.parts, parse_condpart(ty));
         }
@@ -5546,7 +5541,7 @@ parse_if(Ty *ty)
         s->iff.parts = parse_condparts(ty, s->iff.neg);
         s->iff.then = parse_statement(ty, -1);
 
-        if (have_keyword(KEYWORD_ELSE)) {
+        if (have_kw(ELSE)) {
                 next();
                 s->iff.otherwise = parse_statement(ty, -1);
         } else {
@@ -5763,12 +5758,12 @@ parse_defer_statement(Ty *ty)
 inline static Stmt *
 try_conditional_from(Ty *ty, Stmt *s)
 {
-        if (tok()->start.line == TEnd.line && have_keyword(KEYWORD_IF)) {
+        if (tok()->start.line == TEnd.line && have_kw(IF)) {
                 next();
 
                 Stmt *if_ = mkstmt(ty);
                 if_->type = STATEMENT_IF;
-                if_->iff.neg = have_keyword(KEYWORD_NOT);
+                if_->iff.neg = have_kw(NOT);
 
                 if (if_->iff.neg) {
                         next();
@@ -5792,7 +5787,7 @@ parse_break_statement(Ty *ty)
 
         s->depth = 0;
 
-        while (have_keyword(KEYWORD_BREAK)) {
+        while (have_kw(BREAK)) {
                 next();
                 s->depth += 1;
         }
@@ -5801,7 +5796,7 @@ parse_break_statement(Ty *ty)
                 tok()->start.line == s->start.line
              && get_prefix_parser(ty) != NULL
              && (
-                        !have_keyword(KEYWORD_IF)
+                        !have_kw(IF)
                      || T0 == '('
                 )
         ) {
@@ -5825,7 +5820,7 @@ parse_continue_statement(Ty *ty)
         s->type = STATEMENT_CONTINUE;
         s->depth = 0;
 
-        while (have_keyword(KEYWORD_CONTINUE)) {
+        while (have_kw(CONTINUE)) {
                 next();
                 s->depth += 1;
         }
@@ -6423,7 +6418,7 @@ parse_catch(Ty *ty)
         Stmt *try = mkstmt(ty);
         try->type = STATEMENT_TRY;
 
-        while (have_keyword(KEYWORD_CATCH)) {
+        while (have_kw(CATCH)) {
                 next();
                 if (T0 == '{') {
                         next();
@@ -6476,7 +6471,7 @@ parse_try(Ty *ty)
                 s->try.s->iff.neg = true;
                 s->try.s->iff.parts = parse_condparts(ty, false);
 
-                while (have_keyword(KEYWORD_CATCH)) {
+                while (have_kw(CATCH)) {
                         next();
                         SAVE_NE(true);
                         avP(s->try.patterns, parse_expr(ty, 0));
@@ -6486,7 +6481,7 @@ parse_try(Ty *ty)
 
                 Stmt *otherwise;
 
-                if (have_keywords(KEYWORD_OR, KEYWORD_ELSE)) {
+                if (have_kws(OR, ELSE)) {
                         skip(2);
                         otherwise = parse_statement(ty, -1);
                 } else {
@@ -6507,7 +6502,7 @@ parse_try(Ty *ty)
 
         s->try.s = parse_statement(ty, -1);
 
-        while (have_keyword(KEYWORD_CATCH)) {
+        while (have_kw(CATCH)) {
                 next();
                 SAVE_NE(true);
                 avP(s->try.patterns, parse_expr(ty, 0));
@@ -6515,7 +6510,7 @@ parse_try(Ty *ty)
                 avP(s->try.handlers, parse_statement(ty, -1));
         }
 
-        if (have_keyword(KEYWORD_FINALLY)) {
+        if (have_kw(FINALLY)) {
                 next();
                 s->try.finally = parse_statement(ty, -1);
         } else {
@@ -6967,13 +6962,10 @@ parse_ex(
         while (T0 != TOKEN_END) {
                 char const *doc = NULL;
 
-                while (
-                        have_keyword(KEYWORD_NAMESPACE)
-                     || have_keywords(KEYWORD_PUB, KEYWORD_NAMESPACE)
-                ) {
+                while (have_kw(NAMESPACE) || have_kws(PUB, NAMESPACE)) {
                         lex_need_nl(ty, true);
 
-                        bool pub = have_keyword(KEYWORD_PUB) && (next(), true);
+                        bool pub = have_kw(PUB) && (next(), true);
 
                         next();
 
@@ -7074,6 +7066,7 @@ parse_ex(
                 if (TY_CATCH_ERROR()) {
                         (void)TY_CATCH();
                         TyClearError(ty);
+                        UnresolveExpr(ty, (Expr *)s);
                 } else {
                         define_top(ty, s, doc);
                         TY_CATCH_END();
@@ -7086,7 +7079,10 @@ parse_ex(
 #endif
 
                 while (T0 == '}' && CurrentNamespace != NULL) {
-                        while (CurrentNamespace != NULL && !CurrentNamespace->braced) {
+                        while (
+                                (CurrentNamespace != NULL)
+                             && !CurrentNamespace->braced
+                        ) {
                                 PopNS(ty);
                         }
                         if (CurrentNamespace != NULL) {

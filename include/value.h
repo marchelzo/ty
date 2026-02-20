@@ -22,8 +22,8 @@ typedef struct value Value;
 
 #define V_ALIGN (_Alignof (Value))
 
-#define NewInstance(c) ((NewInstance)(ty, (c)))
 #define RawObject(c) ((RawObject)(ty, (c)))
+#define NewInstance(c, ...) ((NewInstance)(ty, (c), __VA_ARGS__ __VA_OPT__(,) NONE))
 
 enum {
         CLASS_BOTTOM = INT_MIN,
@@ -54,6 +54,7 @@ enum {
         CLASS_ASSERT_ERROR,
         CLASS_TIMEOUT_ERROR,
         CLASS_CANCELED_ERROR,
+        CLASS_OS_ERROR,
         CLASS_RE_MATCH,
         CLASS_INTO_PTR,
         CLASS_ITERABLE,
@@ -1167,16 +1168,13 @@ OffsetString(Value const *v, i32 n)
 }
 
 static inline Value
-(NewInstance)(Ty *ty, int c)
+(RawObject)(Ty *ty, int c)
 {
         return OBJECT(class_new_instance(ty, c), c);
 }
 
-static inline Value
-(RawObject)(Ty *ty, int class)
-{
-        return NewInstance(class);
-}
+Value
+(NewInstance)(Ty *ty, int c, ...);
 
 static inline Value
 PAIR_(Ty *ty, Value a, Value b)
@@ -1548,6 +1546,15 @@ static inline bool
         }
 
         return true;
+}
+
+#define PopTag(v) ((PopTag)(ty, (v)))
+inline static void
+(PopTag)(Ty *ty, Value *val)
+{
+        if ((val->tags = tags_pop(ty, val->tags)) == 0) {
+                val->type &= ~VALUE_TAGGED;
+        }
 }
 
 static inline Value

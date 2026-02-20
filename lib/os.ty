@@ -130,27 +130,6 @@ pub fn spawn(
     ctty:   ?{master: Int, slave: Int} = nil,
 ) -> ProcessDescriptor;
 
-class OSError < RuntimeError {
-    __code: Int
-    __ctx:  String | nil
-
-    init(what: ?String = nil, code: ?Int = nil) {
-        __code = code ?? errno.get()
-        __ctx = what
-    }
-
-    what -> String {
-        match __ctx {
-            $ctx => "{ctx}: {errno.str(__code)}",
-            _    => errno.str(__code)
-        }
-    }
-
-    code -> Int {
-        __code
-    }
-}
-
 class Signals : Iterable[Int] {
     __set: _
 

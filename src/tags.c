@@ -142,7 +142,6 @@ tags_try_pop(Ty *ty, u16 *tags, int tag)
 int
 tags_first(Ty *ty, int tags)
 {
-        //XLOG("tags=%d", tags);
         return v__(lists, tags)->tag;
 }
 
