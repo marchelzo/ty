@@ -10,38 +10,6 @@
 |.section code
 |.globals JIT_GLOB_
 
-// ============================================================================
-// INT MODE: Pure integer functions
-//
-// Calling convention:
-//   intmax_t fn(intmax_t a0, intmax_t a1, intmax_t a2, intmax_t a3)
-//   Arguments: x0-x3, Return: x0, Scratch: x8-x15
-// ============================================================================
-
-|.define ARG0, x0
-|.define ARG1, x1
-|.define ARG2, x2
-|.define ARG3, x3
-|.define RET,  x0
-
-// Scratch registers for intermediate values (int mode)
-|.define TMP0, x8
-|.define TMP1, x9
-|.define TMP2, x10
-|.define TMP3, x11
-|.define TMP4, x12
-|.define TMP5, x13
-|.define TMP6, x14
-|.define TMP7, x15
-
-static void jit_emit_prologue(dasm_State **Dst) {
-        |->entry:
-}
-
-static void jit_emit_epilogue(dasm_State **Dst) {
-        |  ret
-}
-
 // --- Integer arithmetic ---
 
 static void jit_emit_add(dasm_State **Dst, int dst, int left, int right) {
@@ -181,14 +149,14 @@ static void jit_emit_label(dasm_State **Dst, int label) {
 // Callee-saved register assignments:
 //   x19 = Ty *ty
 //   x20 = Value *result
-//   x21 = Value *args
+//   x21 = Value *args (== &stack.items[fp])
 //   x22 = Value *env
-//   x23 = slot base pointer (== sp after slot allocation)
+//   x23 = operand base pointer (== &stack.items[fp + bound])
+//   x24 = fp byte offset into stack (stable across reallocs)
 //
-// Value slots live on the stack at [x23 + i*32].
+// Value slots live in the interpreter's stack at [x23 + i*32].
 // ============================================================================
-
-static void jit_emit_gen_prologue(dasm_State **Dst, int slot_bytes) {
+static void jit_emit_gen_prologue(dasm_State **Dst, int bound) {
         |->entry:
         |  stp x29, x30, [sp, #-16]!
         |  mov x29, sp
@@ -200,22 +168,56 @@ static void jit_emit_gen_prologue(dasm_State **Dst, int slot_bytes) {
         |  mov x20, x1
         |  mov x21, x2
         |  mov x22, x3
-        // Allocate stack space for value slots
-        if (slot_bytes > 0) {
-                |  sub sp, sp, #slot_bytes
+        // x24 = byte offset of fp into stack.items (survives realloc)
+        // x24 = args - stack.items
+        |  ldr x9, [x19, #OFF_TY_STACK + OFF_VEC_DATA]
+        |  sub x24, x21, x9
+        // x23 = args + bound * VALUE_SIZE = &stack.items[fp + bound]
+        int ops_off = bound * VALUE_SIZE;
+        if (ops_off > 0) {
+                |  add x23, x21, #ops_off
+        } else {
+                |  mov x23, x21
         }
-        |  mov x23, sp
 }
 
-static void jit_emit_gen_epilogue(dasm_State **Dst, int slot_bytes) {
-        if (slot_bytes > 0) {
-                |  add sp, sp, #slot_bytes
-        }
+static void jit_emit_gen_epilogue(dasm_State **Dst) {
         |  ldp x23, x24, [sp], #16
         |  ldp x21, x22, [sp], #16
         |  ldp x19, x20, [sp], #16
         |  ldp x29, x30, [sp], #16
         |  ret
+}
+
+// --- Reload x21/x23 after calls that may realloc the stack ---
+// x24 holds the stable fp byte offset; bound is known at compile time.
+static void jit_emit_reload_stack(dasm_State **Dst, int bound) {
+        |  ldr x9, [x19, #OFF_TY_STACK + OFF_VEC_DATA]
+        |  add x21, x9, x24
+        int ops_off = bound * VALUE_SIZE;
+        if (ops_off > 0) {
+                |  add x23, x21, #ops_off
+        } else {
+                |  mov x23, x21
+        }
+}
+
+// Sync interpreter stack count to JIT's current sp.
+// Sets ty->stack.count = (fp + bound + sp)
+// x24 holds fp * VALUE_SIZE, so fp = x24 / VALUE_SIZE
+// But simpler: x23 points to &stack.items[fp + bound],
+// and sp slots past that is where we are.
+static void jit_emit_sync_stack_count(dasm_State **Dst, int bound, int sp) {
+        // stack.count = fp + bound + sp
+        // fp * VALUE_SIZE is in x24
+        // We need the integer index, not byte offset.
+        // fp = x24 / VALUE_SIZE = x24 >> 5  (assuming VALUE_SIZE == 32)
+        |  lsr x16, x24, #5
+        int total = bound + sp;
+        if (total > 0) {
+                |  add x16, x16, #total
+        }
+        |  str x16, [x19, #OFF_TY_STACK + OFF_VEC_LEN]
 }
 
 // --- Memory operations ---
@@ -287,11 +289,8 @@ static void jit_emit_cmp_ri32(dasm_State **Dst, int reg, int imm) {
 }
 
 // --- Conditional branches (use after cmp_ri) ---
-// ARM64 DynASM doesn't support b.cond syntax, so we use cset+cbz/cbnz.
-// Call jit_emit_cmp_ri() first, then these:
 
 static void jit_emit_branch_eq(dasm_State **Dst, int label) {
-        // Branch if the cmp was equal: cset x16 to 1 if eq, then cbnz
         |  cset x16, eq
         |  cbnz x16, =>label
 }

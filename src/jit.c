@@ -25,6 +25,33 @@
 #include "blob.h"
 #include "itable.h"
 
+#define VALUE_SIZE (sizeof (Value))
+
+// ============================================================================
+// Value field offsets (must match struct value layout)
+// ============================================================================
+#define VAL_OFF_TYPE    offsetof(Value, type)    // u8 type
+#define VAL_OFF_TAGS    offsetof(Value, tags)    // u16 tags
+#define VAL_OFF_SRC     offsetof(Value, src)     // u16 src
+#define VAL_OFF_Z       offsetof(Value, z)       // intmax_t z (for VALUE_INTEGER)
+#define VAL_OFF_BOOL    offsetof(Value, boolean) // intmax_t z (for VALUE_INTEGER)
+#define VAL_OFF_CLASS   offsetof(Value, class)   // u16 class (for VALUE_CLASS / VALUE_OBJECT)
+#define VAL_OFF_OBJECT  offsetof(Value, object)  // void *object (for VALUE_OBJECT)
+
+#define OFF_TY_STACK  offsetof(Ty, stack)
+#define OFF_TY_ST     offsetof(Ty, st)
+#define OFF_ST_FRAMES offsetof(co_state, frames)
+#define OFF_FRAME_FP  offsetof(Frame, fp)
+#define OFF_VEC_DATA  offsetof(ValueVector, items)
+#define OFF_VEC_LEN   offsetof(ValueVector, count)
+
+// TyObject layout:
+#define OBJ_OFF_INIT    0    // bool init
+#define OBJ_OFF_NSLOT   4    // u32 nslot
+#define OBJ_OFF_CLASS   8    // Class *class
+#define OBJ_OFF_DYN     16   // struct itable *dynamic
+#define OBJ_OFF_SLOTS   24   // Value slots[] (flexible array)
+
 // ============================================================================
 // DynASM runtime includes
 // ============================================================================
@@ -54,34 +81,6 @@ static int const x64_param_regs[] = { 7, 6, 2, 1 };
 #else
 #  define JIT_ARCH_NONE 1
 #endif
-
-#define VALUE_SIZE (sizeof (Value))
-
-// ============================================================================
-// Value field offsets (must match struct value layout)
-// ============================================================================
-#define VAL_OFF_TYPE    offsetof(Value, type)    // u8 type
-#define VAL_OFF_TAGS    offsetof(Value, tags)    // u16 tags
-#define VAL_OFF_SRC     offsetof(Value, src)     // u16 src
-#define VAL_OFF_Z       offsetof(Value, z)       // intmax_t z (for VALUE_INTEGER)
-#define VAL_OFF_BOOL    offsetof(Value, boolean) // intmax_t z (for VALUE_INTEGER)
-#define VAL_OFF_CLASS   offsetof(Value, class)   // u16 class (for VALUE_CLASS / VALUE_OBJECT)
-#define VAL_OFF_OBJECT  offsetof(Value, object)  // void *object (for VALUE_OBJECT)
-
-#define OFF_TY_STACK  offsetof(Ty, stack)
-#define OFF_TY_ST     offsetof(Ty, st)
-#define OFF_ST_FRAMES offsetof(co_state, frames)
-#define OFF_FRAME_FP  offsetof(Frame, fp)
-#define OFF_VEC_DATA  offsetof(ValueVector, items)
-#define OFF_VEC_LEN   offsetof(ValueVector, count)
-
-// TyObject layout:
-#define OBJ_OFF_INIT    0    // bool init
-#define OBJ_OFF_NSLOT   4    // u32 nslot
-#define OBJ_OFF_CLASS   8    // Class *class
-#define OBJ_OFF_DYN     16   // struct itable *dynamic
-#define OBJ_OFF_SLOTS   24   // Value slots[] (flexible array)
-
 #ifdef JIT_ARCH_NONE
 
 void jit_init(Ty *ty) { (void)ty; }
@@ -91,14 +90,10 @@ JitInfo *jit_compile(Ty *ty, Value const *func) { (void)ty; (void)func; return N
 #else
 
 // ============================================================================
-// Runtime helpers - called from JIT'd generic code
-//
-// All helpers take Ty*, a result Value*, and operand Value* pointers.
-// They perform the operation and write the result.
+// Runtime helpers - called from JIT'd code
 // ============================================================================
 
-
-#if 1
+#if JIT_LOG_VERBOSE
 #define DBG(fmt, ...) do {                                      \
         jit_emit_mov(asm, 0, BC_TY);                            \
         jit_emit_load_imm(asm, 1, ctx->sp);                     \
@@ -322,7 +317,13 @@ jit_rt_member(Ty *ty, Value *result, Value *obj, int member_id)
 static void
 jit_rt_member_set(Ty *ty, Value *obj, int member_id, Value *val)
 {
+        if (val > obj) {
+                vN(ty->stack) = val - vv(ty->stack) + 1;
+        } else {
+                vN(ty->stack) = obj - vv(ty->stack) + 1;
+        }
         DoTargetMember(ty, *obj, member_id);
+        xvP(ty->stack, *val);
         DoAssign(ty);
 }
 
@@ -1137,17 +1138,35 @@ jit_rt_compare(Ty *ty, Value *a, Value *b)
 // Bytecode emission (Pass 2)
 // ============================================================================
 
-// Emit: copy 32-byte Value from src_base[src_off] to dst_base[dst_off]
-// Uses ldp/stp pairs (4 x 64-bit loads + 4 x 64-bit stores)
+// Emit: copy 32-byte Value from src_base+src_off to dst_base+dst_off
+// For small offsets, uses ldp/stp with immediate offsets.
+// For large offsets, computes effective addresses first.
 static void
 bc_copy_value(JitBcCtx *ctx, int dst_reg, int dst_off, int src_reg, int src_off)
 {
         dasm_State **asm = &ctx->asm;
-        // Load 32 bytes (4 x 8) using ldp pairs into scratch regs
-        jit_emit_ldp64(asm, BC_S0, BC_S1, src_reg, src_off);
-        jit_emit_stp64(asm, BC_S0, BC_S1, dst_reg, dst_off);
-        jit_emit_ldp64(asm, BC_S0, BC_S1, src_reg, src_off + 16);
-        jit_emit_stp64(asm, BC_S0, BC_S1, dst_reg, dst_off + 16);
+
+        // ldp x,x,[base,#imm] requires signed 7-bit scaled offset: range [-512, 504]
+        bool src_direct = (src_off >= -512 && src_off + 16 <= 504);
+        bool dst_direct = (dst_off >= -512 && dst_off + 16 <= 504);
+
+        int sa = src_reg, so0 = src_off, so1 = src_off + 16;
+        int da = dst_reg, do0 = dst_off, do1 = dst_off + 16;
+
+        if (!src_direct) {
+                jit_emit_add_imm(asm, BC_S2, src_reg, src_off);
+                sa = BC_S2; so0 = 0; so1 = 16;
+        }
+
+        if (!dst_direct) {
+                jit_emit_add_imm(asm, BC_S3, dst_reg, dst_off);
+                da = BC_S3; do0 = 0; do1 = 16;
+        }
+
+        jit_emit_ldp64(asm, BC_S0, BC_S1, sa, so0);
+        jit_emit_stp64(asm, BC_S0, BC_S1, da, do0);
+        jit_emit_ldp64(asm, BC_S0, BC_S1, sa, so1);
+        jit_emit_stp64(asm, BC_S0, BC_S1, da, do1);
 }
 
 // Emit: push a Value from src_base[src_off] onto the operand stack
@@ -1592,6 +1611,8 @@ bc_emit_self_member_read_fast(JitBcCtx *ctx, int member_id)
 static bool
 bc_emit_self_member_write_fast(JitBcCtx *ctx, int member_id)
 {
+        return false;
+
         if (ctx->self_class == NULL) return false;
 
         Ty *ty = ctx->ty;
@@ -1764,7 +1785,7 @@ bc_resolve_builtin_method(Class *cls, int member_id, int *out_value_type)
         return bm;
 }
 
-#if 1
+#if JIT_LOG_VERBOSE
 #define CASE(name)                \
         case INSTR_##name:        \
                 idbg(ctx, ">> " #name);
@@ -1794,8 +1815,6 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
         ctx->sp     = 0;
         ctx->max_sp = 0;
 
-        jit_emit_add_imm(asm, BC_OPS, BC_LOC, OP_OFF(ctx->func->info[FUN_INFO_BOUND]));
-
         DBG("=========== BEGIN ============");
 
         while (ip < end) {
@@ -1811,6 +1830,9 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                         jit_emit_label(asm, lbl);
                 }
 
+                jit_emit_reload_stack(asm, ctx->bound);
+                jit_emit_sync_stack_count(asm, ctx->bound, ctx->sp);
+
                 u8 op = (u8)*ip++;
 
                 switch (op) {
@@ -1825,28 +1847,9 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                         BC_SKIPSTR();
 #endif
                         // // push(locals[n])
-                        //bc_push_from(ctx, BC_LOC, n * VALUE_SIZE);
+                        bc_push_from(ctx, BC_LOC, n * VALUE_SIZE);
                         // // Track which local this came from (for type-guided fast paths)
-                        // ctx->op_local[ctx->sp - 1] = n;
-
-                        jit_emit_ldr64(
-                                asm,
-                                BC_S0,
-                                BC_TY,
-                                OFF_TY_ST + OFF_ST_FRAMES + OFF_VEC_LEN
-                        );
-                        jit_emit_load_imm(asm, BC_S1, 1);
-                        jit_emit_sub(asm, BC_S0, BC_S0, BC_S1); // S0 = frame count - 1
-                        jit_emit_load_imm(asm, BC_S1, sizeof (Frame));
-                        jit_emit_mul(asm, BC_S0, BC_S0, BC_S1); // S0 = (frame count - 1) * sizeof(Frame)
-                        jit_emit_ldr64(asm, BC_S1, BC_TY, OFF_TY_ST + OFF_ST_FRAMES + OFF_VEC_DATA); // S1 = &frames
-                        jit_emit_add(asm, BC_S0, BC_S0, BC_S1); // S0 = &frames[frame count - 1] = current frame
-                        jit_emit_ldr64(asm, BC_S0, BC_S0, OFF_FRAME_FP); // S0 = current frame pointer
-                        jit_emit_load_imm(asm, BC_S1, sizeof (Value));
-                        jit_emit_mul(asm, BC_S2, BC_S0, BC_S1);
-                        jit_emit_ldr64(asm, BC_S0, BC_TY, OFF_TY_STACK + OFF_VEC_DATA);
-                        jit_emit_add(asm, BC_S2, BC_S2, BC_S0);
-                        bc_push_from(ctx, BC_S2, n * VALUE_SIZE);
+                        ctx->op_local[ctx->sp - 1] = n;
 
                         DBG("LOAD_LOCAL %s%s%s (%d)", TERM(93;1), locals[n]->identifier, TERM(0), n);
                         break;
@@ -2367,7 +2370,7 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                                         : NULL;
 
                                 bool wrote_fast = false;
-                                if (obj_class != NULL) {
+                                if (0 && obj_class != NULL) {
                                         Ty *ty = ctx->ty;
                                         if (z < (int)vN(obj_class->offsets_w)) {
                                                 u16 off = v__(obj_class->offsets_w, z);
@@ -3473,51 +3476,7 @@ jit_compile(Ty *ty, Value const *func)
         dasm_growpc(&asm, MAX_BC_LABELS);
         dasm_setup(&asm, jit_actions);
 
-        // Prologue: save callee-saved regs, set up frame
-        // We use the same prologue structure as generic mode
-        //
-        // ARM64 calling convention for our function:
-        //   Value fn(Ty *ty, Value *locals, Value **env)
-        //   x0 = ty, x1 = locals, x2 = env
-        //   Return: Value in x0,x1,x2,x3 (32 bytes)
-
-        // We need stack space for the shadow operand stack
-        // First pass had max_sp = 0 (haven't done emission yet)
-        // We'll use a generous allocation and can tighten later
-        int ops_slots = MAX_BC_OPS;
-        int ops_bytes = ops_slots * VALUE_SIZE;
-        ops_bytes = (ops_bytes + 15) & ~15; // align to 16
-
-        jit_emit_gen_prologue(&asm, ops_bytes);
-
-        // Map incoming args to our registers
-        // x0=ty → x19, x1=locals → x20, x2=env → x21
-        // The gen_prologue already maps x0→x19, x1→x20, x2→x21, x3→x22
-        // But our convention is different: we want x22 = ops base (sp after alloc)
-        // The gen_prologue saves x0→x19(ty), x1→x20(result), x2→x21(args), x3→x22(env)
-        // We need: x19=ty, x20=locals, x21=env, x22=ops
-
-        // After gen_prologue: x19=x0=ty, x20=x1=locals, x21=x2=env, x22=x3=???
-        // x23 = sp (slot base)
-        // We want BC_OPS (x22) = sp = slot base for operand stack
-        // But gen_prologue puts x3 into x22 and sp into x23.
-        // Let me just use x23 for ops base and keep x22 for env.
-        // Actually the mapping is fine:
-        //   x19 = ty  (from x0)
-        //   x20 = locals (from x1, was "result" in generic mode)
-        //   x21 = env (from x2, was "args" in generic mode)
-        //   x22 = x3 (unused arg, was "env" in generic mode)
-        //   x23 = sp (stack slot base)
-        // So BC_OPS should be x23. Let me fix that.
-
-        // Actually, rethinking: the gen_prologue puts x3→x22. We pass env as x2,
-        // and x3 is garbage. After prologue, x22 has garbage. But we need x22 for
-        // something. Let's use x23 for ops (which is already set to sp by prologue).
-
-        // So I need to redefine:
-        // BC_OPS = 23 (x23, slot base pointer, already set by gen_prologue)
-        // And env is in x21, which is correct since we pass env as x2.
-        // Great, this works!
+        jit_emit_gen_prologue(&asm, bound);
 
         // Emit bytecode
         ctx.asm = asm; // refresh after prologue might have changed it
@@ -3533,7 +3492,7 @@ jit_compile(Ty *ty, Value const *func)
                 jit_emit_label(&asm, lbl_ret);
         }
 
-        jit_emit_gen_epilogue(&asm, ops_bytes);
+        jit_emit_gen_epilogue(&asm);
 
         // Link and encode
         size_t final_size;

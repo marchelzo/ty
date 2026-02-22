@@ -7323,7 +7323,6 @@ emit_function(Ty *ty, Expr const *e)
               | (FF_HIDDEN    * (e->type == EXPRESSION_MULTI_FUNCTION))
               | (FF_OVERLOAD  * (e->overload != NULL))
               | (FF_DECORATED * decorated)
-              | (FF_JIT       * e->must_jit)
         );
 
         if (e->class == NULL) {
@@ -7354,11 +7353,11 @@ emit_function(Ty *ty, Expr const *e)
                 fun_name = sclonea(ty, buffer);
         }
         
-        bool jit = !e->must_jit && (e->type == EXPRESSION_FUNCTION);
+        bool jit = e->must_jit || (e->type == EXPRESSION_FUNCTION);
 
         EP(fun_name);
         EP(e);
-        EP(jit ? (void *)0xFA57 : NULL); // FUN_JIT: sentinel for lazy JIT, or NULL
+        EP(jit ? (void *)0xFA57 : NULL);
 
         LOG("COMPILING FUNCTION: %s", scope_name(ty, e->scope));
 
@@ -11056,9 +11055,6 @@ emit_expr(Ty *ty, Expr const *e, bool need_loc)
                 break;
 
         case EXPRESSION_FUNCTION:
-                // JIT compilation now happens lazily at call time (bytecode-based).
-                // The FF_JIT flag is set in emit_function when e->must_jit is true.
-                /* fallthrough */
         case EXPRESSION_MULTI_FUNCTION:
                 WITH_SELF(e->self) {
                         emit_function(ty, e);
@@ -15728,7 +15724,6 @@ cexpr(Ty *ty, Value *v)
                 e->rest    = -1;
                 e->class   = NULL;
                 e->ftype   = FT_NONE;
-                //e->must_jit = true;
 
                 Value        *name = tget_t(v, "name", VALUE_STRING);
                 Value      *params = tget_t(v, "params", VALUE_ARRAY);
