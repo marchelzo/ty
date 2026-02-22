@@ -40,6 +40,9 @@ void
 DoAssign(Ty *ty);
 
 void
+DoAssignExec(Ty *ty);
+
+void
 DoAssignSubscript(Ty *ty, bool exec);
 
 bool
