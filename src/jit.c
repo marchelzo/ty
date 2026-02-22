@@ -322,9 +322,17 @@ jit_rt_member_set(Ty *ty, Value *obj, int member_id, Value *val)
         } else {
                 vN(ty->stack) = obj - vv(ty->stack) + 1;
         }
+#if JIT_DEBUG_CALLS
+        fprintf(stderr, "JIT member_set: obj type=%d, member=%d, val type=%d",
+                obj->type, member_id, val->type);
+        if (val->type == VALUE_INTEGER) fprintf(stderr, " val=%jd", val->z);
+        else if (val->type == VALUE_REAL) fprintf(stderr, " val=%g", val->real);
+        else if (val->type == VALUE_NIL) fprintf(stderr, " val=nil");
+        fprintf(stderr, "\n");
+#endif
         DoTargetMember(ty, *obj, member_id);
         xvP(ty->stack, *val);
-        DoAssign(ty);
+        DoAssignExec(ty);
 }
 
 // Call a function with one argument
@@ -2614,57 +2622,22 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                                 return false;
                         }
 
-                        // Push n args to VM stack
-                        // bc_emit_push_args(ctx, n);
+                        // For CALL_SELF_METHOD, self is implicit (not on operand stack).
+                        // Operand stack: [...][arg0][arg1]...[argN-1]
+                        // Result replaces args: goes at ops[sp - n]
+                        int result_off = OP_OFF(ctx->sp - n);
 
-                        // Try builtin type fast path first
-                        int self_builtin_vtype = -1;
-                        BuiltinMethod *self_builtin_method = (ctx->self_class != NULL)
-                                ? bc_resolve_builtin_method(ctx->self_class, z, &self_builtin_vtype)
-                                : NULL;
-
-                        // Try to resolve method at compile time (for user-defined classes)
-                        Value *baked_method = (ctx->self_class != NULL && self_builtin_method == NULL)
-                                ? bc_resolve_method(ctx, ctx->self_class, z)
-                                : NULL;
-
-                        if (self_builtin_method != NULL) {
-                                // Direct builtin call with type guard
-                                jit_emit_mov(asm, 0, BC_TY);
-                                jit_emit_add_imm(asm, 1, BC_OPS, OP_OFF(ctx->sp)); // result
-                                //jit_emit_add_imm(asm, 2, BC_LOC, ctx->param_count * VALUE_SIZE); // self
-                                jit_emit_load_imm(asm, 2, 0);
-                                jit_emit_load_imm(asm, 3, (intptr_t)self_builtin_method);
-                                jit_emit_load_imm(asm, 4, self_builtin_vtype);
-                                jit_emit_load_imm(asm, 5, z);
-                                jit_emit_load_imm(asm, 6, n);
-                                jit_emit_load_imm(asm, BC_CALL, (intptr_t)jit_rt_call_builtin_method);
-                                jit_emit_call_reg(asm, BC_CALL);
-                        } else if (baked_method != NULL) {
-                                // Guarded fast path: check self's class at runtime,
-                                // use baked method if match, else fall back to GetMember
-                                jit_emit_mov(asm, 0, BC_TY);
-                                jit_emit_add_imm(asm, 1, BC_OPS, OP_OFF(ctx->sp)); // result
-                                //jit_emit_add_imm(asm, 2, BC_LOC, ctx->param_count * VALUE_SIZE); // self
-                                jit_emit_load_imm(asm, 2, 0);
-                                jit_emit_load_imm(asm, 3, (intptr_t)baked_method);
-                                jit_emit_load_imm(asm, 4, ctx->self_class_id);
-                                jit_emit_load_imm(asm, 5, z);
-                                jit_emit_load_imm(asm, 6, n);
-                                jit_emit_load_imm(asm, BC_CALL, (intptr_t)jit_rt_call_self_method_guarded);
-                                jit_emit_call_reg(asm, BC_CALL);
-                        } else {
-                                // Generic path: runtime method lookup
-                                jit_emit_mov(asm, 0, BC_TY);
-                                jit_emit_add_imm(asm, 1, BC_OPS, OP_OFF(ctx->sp)); // result
-                                //jit_emit_add_imm(asm, 2, BC_LOC, ctx->param_count * VALUE_SIZE); // self
-                                jit_emit_load_imm(asm, 2, 0);
-                                jit_emit_load_imm(asm, 3, z);
-                                jit_emit_load_imm(asm, 4, n);
-                                jit_emit_load_imm(asm, BC_CALL, (intptr_t)jit_rt_call_method);
-                                jit_emit_call_reg(asm, BC_CALL);
-                        }
-                        ctx->sp++;
+                        // Generic path: runtime method lookup
+                        // self=NULL tells jit_rt_call_method to use vm_push_self
+                        jit_emit_mov(asm, 0, BC_TY);
+                        jit_emit_add_imm(asm, 1, BC_OPS, result_off);  // result
+                        jit_emit_load_imm(asm, 2, 0);                  // self = NULL
+                        jit_emit_load_imm(asm, 3, z);                  // member_id
+                        jit_emit_load_imm(asm, 4, n);                  // argc
+                        jit_emit_load_imm(asm, BC_CALL, (intptr_t)jit_rt_call_method);
+                        jit_emit_call_reg(asm, BC_CALL);
+                        // n args consumed, 1 result produced
+                        ctx->sp -= (n - 1);
                         if (ctx->sp > ctx->max_sp) ctx->max_sp = ctx->sp;
                         break;
                 }
@@ -3398,32 +3371,6 @@ jit_compile(Ty *ty, Value const *func)
         LOG("JIT[bc]: compiling %s%s%s (params=%d, bound=%d, code_size=%d, caps=%d)",
             name, clsn[0] ? " of " : "", clsn,
             param_count, bound, code_size, info[FUN_INFO_CAPTURES]);
-
-        // DEBUG: dump bytecode for CXMLNode init and CXMLDoc init
-        if (0 && strcmp(name, "init") == 0 && _e && _e->class) {
-                char const *cn = _e->class->name;
-                if (strcmp(cn, "CXMLNode") == 0 || strcmp(cn, "CXMLDoc") == 0) {
-                        fprintf(stderr, "\n=== Bytecode for %s.init (code_size=%d, params=%d, bound=%d) ===\n",
-                                cn, code_size, param_count, bound);
-                        char const *p = bc;
-                        char const *end = bc + code_size;
-                        while (p < end) {
-                                int off = (int)(p - bc);
-                                int op = *(unsigned char *)p++;
-                                char const *iname = GetInstructionName(op);
-                                fprintf(stderr, "  [%3d] %s", off, iname);
-                                // Print operands based on instruction
-                                int consumed = (int)(StepInstruction((char *)p - 1) - ((char *)p - 1)) - 1;
-                                // Just show raw bytes for operands
-                                for (int i = 0; i < consumed && i < 16; i++) {
-                                        fprintf(stderr, " %02x", (unsigned char)p[i]);
-                                }
-                                fprintf(stderr, "\n");
-                                p += consumed;
-                        }
-                        fprintf(stderr, "=== end ===\n\n");
-                }
-        }
 
         JitBcCtx ctx = {0};
         ctx.ty = ty;

@@ -1222,10 +1222,9 @@ call_jit(Ty *ty, Value const *f)
         usize fp = vvL(FRAMES)->fp;
         Value v;
 
+#if JIT_LOG_VERBOSE
         int np = f->info[FUN_INFO_PARAM_COUNT];
         int bound = f->info[FUN_INFO_BOUND];
-
-#if JIT_LOG_VERBOSE
         LOGX("[jit] call %s: fp=%d   stk=%zu  bound=%d", SHOW(f, BASIC), (int)fp, vN(STACK), bound);
         for (int i = 0; i < np; ++i) {
                 LOGX("    arg%d = %s", i, SHOW(v_(STACK, fp + i), BASIC, ABBREV));
@@ -4349,6 +4348,52 @@ DoAssign(Ty *ty)
                 push(xSz(M_NAME(m)));
                 swap();
                 call(ty, class_lookup_setter_i(ty, c, NAMES.missing), &OBJECT(o, c), 2, NULL);
+                break;
+
+        case 4:
+                m = (p >> 3);
+                c = (uptr)poptarget();
+                push(xSz(M_NAME(m)));
+                swap();
+                exec_fn(ty, class_lookup_s_setter_i(ty, c, NAMES.missing), &CLASS(c), 2, NULL);
+                break;
+
+        default:
+                zP("bad target pointer :(");
+        }
+}
+
+// Like DoAssign but synchronously executes setters (for use from JIT helpers)
+void
+DoAssignExec(Ty *ty)
+{
+        uptr m, c, p = (uptr)poptarget();
+        void *v = (void *)pP(p);
+        TyObject *o;
+
+        switch (pT(p)) {
+        case 0:
+                *(Value *)v = peek();
+                break;
+
+        case 1:
+                ((Blob *)TARGETS.items[TARGETS.count].gc)->items[((uptr)v >> 3)] = peek().z;
+                break;
+
+        case 2:
+                c = (uptr)poptarget();
+                o = vZ(TARGETS)->gc;
+                poptarget();
+                exec_fn(ty, v, &OBJECT(o, c), 1, NULL);
+                break;
+
+        case 3:
+                m = (p >> 3);
+                c = (uptr)poptarget();
+                o = vZ(TARGETS)->gc;
+                push(xSz(M_NAME(m)));
+                swap();
+                exec_fn(ty, class_lookup_setter_i(ty, c, NAMES.missing), &OBJECT(o, c), 2, NULL);
                 break;
 
         case 4:
