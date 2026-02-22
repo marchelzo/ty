@@ -5,7 +5,7 @@
 #include "value.h"
 #include "ast.h"
 
-#define JIT_LOG_VERBOSE 1
+#define JIT_LOG_VERBOSE 0
 
 // JIT compilation modes
 #define JIT_MODE_BYTECODE 2   // Bytecode-to-native compilation

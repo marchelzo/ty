@@ -77,7 +77,6 @@ ifdef RELEASE
 	CFLAGS += -mcpu=native
 	CFLAGS += -mtune=native
 	CFLAGS += -flto
-	CFLAGS += -flto-partition=one
 else ifdef DEBUG
 	CFLAGS += -O0
 	CFLAGS += -fno-omit-frame-pointer

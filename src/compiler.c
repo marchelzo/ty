@@ -7353,11 +7353,13 @@ emit_function(Ty *ty, Expr const *e)
                 fun_name = sclonea(ty, buffer);
         }
         
-        bool jit = e->must_jit || (e->type == EXPRESSION_FUNCTION);
 
         EP(fun_name);
         EP(e);
+#if defined(TY_ENABLE_JIT)
+        bool jit = e->must_jit || (e->type == EXPRESSION_FUNCTION);
         EP(jit ? (void *)0xFA57 : NULL);
+#endif
 
         LOG("COMPILING FUNCTION: %s", scope_name(ty, e->scope));
 
