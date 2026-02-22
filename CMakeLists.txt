@@ -197,6 +197,33 @@ set_target_properties(md PROPERTIES INTERPROCEDURAL_OPTIMIZATION FALSE)
 add_subdirectory(unibilium)
 
 # ---
+#  DynASM JIT code generation
+# ---
+
+find_program(LUAJIT luajit)
+if(LUAJIT)
+  if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64|ARM64")
+    set(_jit_dasc ${PROJECT_SOURCE_DIR}/src/jit_arm64.dasc)
+    set(_jit_hdr  ${PROJECT_SOURCE_DIR}/src/jit_arm64.h)
+  else()
+    set(_jit_dasc ${PROJECT_SOURCE_DIR}/src/jit_x64.dasc)
+    set(_jit_hdr  ${PROJECT_SOURCE_DIR}/src/jit_x64.h)
+  endif()
+
+  add_custom_command(
+    OUTPUT ${_jit_hdr}
+    COMMAND ${LUAJIT} ${PROJECT_SOURCE_DIR}/LuaJIT/dynasm/dynasm.lua
+      -o ${_jit_hdr} ${_jit_dasc}
+    DEPENDS ${_jit_dasc}
+    COMMENT "Generating JIT emission header from ${_jit_dasc}"
+    VERBATIM
+  )
+  add_custom_target(GenerateJitHeader DEPENDS ${_jit_hdr})
+else()
+  message(WARNING "luajit not found -- JIT headers will not be regenerated")
+endif()
+
+# ---
 #  target: ty
 # ---
 
@@ -212,6 +239,7 @@ set(_src_files
   src/functions.c
   src/gc.c
   src/highlight.c
+  src/jit.c
   src/intern.c
   src/itable.c
   src/json.c
@@ -335,7 +363,12 @@ target_include_directories(${_tgt_ty_interface}
     ${PROJECT_SOURCE_DIR}/include
     ${PROJECT_SOURCE_DIR}/libco
     ${PROJECT_SOURCE_DIR}/dtoa
+    ${PROJECT_SOURCE_DIR}/src
 )
+
+if(TARGET GenerateJitHeader)
+  add_dependencies(${_tgt_ty_interface} GenerateJitHeader)
+endif()
 
 target_compile_definitions(${_tgt_ty_interface}
   INTERFACE

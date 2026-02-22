@@ -2,12 +2,7 @@ fn f(g=(x -> x + 1), x=4) {
     g(x)
 }
 
-if f() != 5 {
-    print('FAIL')
-}
-
-if f(&.pred, 8) != 7 {
-    print('FAIL')
-}
+assert(f() == 5)
+assert(f(&.pred, 8) == 7)
 
 print('PASS')

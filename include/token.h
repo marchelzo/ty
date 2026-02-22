@@ -155,7 +155,8 @@ typedef struct token {
                         KEYWORD_SET_TYPE,
                         KEYWORD_DEFINED,
                         KEYWORD_NAMESPACE,
-                        KEYWORD_DBG
+                        KEYWORD_DBG,
+                        KEYWORD_JIT
                 } keyword;
 
                 struct {

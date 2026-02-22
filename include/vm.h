@@ -34,6 +34,30 @@ void
 DoGC(Ty *ty);
 
 void
+DoTargetMember(Ty *ty, Value v, i32 z);
+
+void
+DoAssign(Ty *ty);
+
+void
+DoAssignSubscript(Ty *ty, bool exec);
+
+bool
+DoCall(Ty *ty, Value const *f, int n, int nkw, bool auto_this, bool exec);
+
+bool
+CallMethod(Ty *ty, int m_id, int n, int nkw, bool b, bool exec);
+
+void
+DoTargetSubscript(Ty *ty);
+
+void
+DoCount(Ty *ty, bool exec);
+
+void
+DoCheckMatch(Ty *ty, bool exec);
+
+void
 NewThread(Ty *ty, Thread *thread, Value *ctx, Value *name, bool sigma);
 
 void
@@ -78,6 +102,9 @@ noreturn void
 vm_throw_ty(Ty *ty);
 
 Value
+ArraySubscript(Ty *ty, Value container, Value subscript, bool strict);
+
+Value
 vm_call(Ty *ty, Value const *f, int argc);
 
 Value
@@ -100,6 +127,15 @@ GetMyTy(void);
 
 Value
 vm_call_method(Ty *ty, Value const *self, Value const *f, int argc);
+
+Value
+vm_call_fast(Ty *ty, Value const *f, int argc);
+
+Value
+vm_call_method_fast(Ty *ty, Value const *self, Value const *f, int argc);
+
+void
+vm_push_self(Ty *ty);
 
 Value
 vm_eval_function(Ty *ty, Value const *f, ...);
@@ -196,6 +232,9 @@ vm_finally(Ty *ty);
 
 noreturn void
 vm_rethrow(Ty *ty);
+
+void
+xprint_stack(Ty *ty, int n);
 
 #define VM_TRY() (setjmp(vm_push_try(ty)->jb) == 0)
 

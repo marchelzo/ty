@@ -2268,6 +2268,20 @@ prefix_function(Ty *ty)
         return parse_function(ty, &decorators, NULL, NULL);
 }
 
+static Expr *
+prefix_assert_jit(Ty *ty)
+{
+        next();
+
+        Expr *f = parse_expr(ty, 0);
+
+        if (f->type == EXPRESSION_FUNCTION) {
+                f->must_jit = true;
+        }
+
+        return f;
+}
+
 /* rewrite [ op ] as ((a, b) -> a op b) */
 static Expr *
 opfunc(Ty *ty)
@@ -4734,6 +4748,7 @@ Keyword:
         case KEYWORD_MATCH:     return prefix_match;
         case KEYWORD_FUNCTION:  return prefix_function;
         case KEYWORD_GENERATOR: return prefix_function;
+        case KEYWORD_JIT:       return prefix_assert_jit;
         case KEYWORD_EVAL:      return prefix_eval;
         case KEYWORD_DEFINED:   return prefix_defined;
         case KEYWORD_TRUE:      return prefix_true;
@@ -5585,6 +5600,8 @@ parse_function_definition(Ty *ty)
 {
         Stmt *s = mkstmt(ty);
 
+        bool jit = try_consume(KEYWORD_JIT);
+
         if (K0 == KEYWORD_MACRO) {
                 Token kw = *token(0);
                 consume(TOKEN_KEYWORD);
@@ -5621,6 +5638,8 @@ parse_function_definition(Ty *ty)
         if (func->name == NULL) {
                 die("anonymous function definition appears in statement context");
         }
+
+        func->must_jit = jit;
 
         if (is_operator) {
                 s->type = STATEMENT_OPERATOR_DEFINITION;
@@ -6182,6 +6201,7 @@ parse_class_definition(Ty *ty)
 
                 bool     dbg = try_consume(KEYWORD_DBG);
                 bool _static = try_consume(KEYWORD_STATIC);
+                bool     jit = try_consume(KEYWORD_JIT);
 
                 // ================/ :) /===
                 setctx(LEX_NAME);
@@ -6247,6 +6267,7 @@ parse_class_definition(Ty *ty)
                         );
 
                         meth->dbg |= dbg;
+                        meth->must_jit |= jit;
 
                         if (
                                 (meth->body != NULL)
@@ -6648,6 +6669,7 @@ Keyword:
         case KEYWORD_FOR:      return parse_for_loop(ty);
         case KEYWORD_WHILE:    return parse_while(ty);
         case KEYWORD_IF:       return parse_if(ty);
+        case KEYWORD_JIT:      return parse_function_definition(ty);
         case KEYWORD_FUNCTION: return parse_function_definition(ty);
         case KEYWORD_MACRO:    return parse_function_definition(ty);
         case KEYWORD_OPERATOR: return parse_operator_directive(ty);

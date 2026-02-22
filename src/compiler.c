@@ -27,6 +27,7 @@
 #include "vm.h"
 #include "types.h"
 #include "highlight.h"
+#include "jit.h"
 
 #define TY_DEBUG_STACK_BOOKKEEPING 0
 
@@ -114,13 +115,39 @@ enum {
          AdjStack(ty, (n));                                      \
  } while (0)
 
- #define AssertEmptyStack() do {         \
-         ASSERT(STATE.stack.count == 0); \
-         ASSERT(STATE.stack.saved == 0); \
+ #define STACK_BEGIN() StackState _stack_begin = STATE.stack
+ #define STACK_END(n, x) do {                                            \
+         if (                                                            \
+                (STATE.stack.saved != _stack_begin.saved)                \
+             || (                                                        \
+                     (STATE.stack.saved == 0)                            \
+                  && (STATE.stack.count != _stack_begin.count + (n))     \
+                )                                                        \
+         ) {                                                             \
+                 fail(                                                   \
+                        "Stack imbalance: expected %d but got %d"        \
+                        " (saved: %d, expected saved: %d)"               \
+                        FMT_MORE "%s:%d:%d: %s",                         \
+                        _stack_begin.count + (n),                        \
+                        STATE.stack.count,                               \
+                        STATE.stack.saved,                               \
+                        _stack_begin.saved,                              \
+                        (x)->mod->name,                                  \
+                        (x)->start.line + 1,                             \
+                        (x)->start.col + 1,                              \
+                        ExpressionTypeName((Expr *)(x))                  \
+                 );                                                      \
+         }                                                               \
  } while (0)
 #else
  #define STK(n) AdjStack(ty, (n))
- #define AssertEmptyStack() ((void)0)
+ #define STACK_BEGIN() StackState _stack_begin = STATE.stack
+ #define STACK_END(n, x) do {               \
+         STATE.stack = _stack_begin;        \
+         if (STATE.stack.saved == 0) {      \
+                 STATE.stack.count += (n);  \
+         }                                  \
+ } while (0)
 #endif
 
 #define PRIV_ID(name) GetPrivateId(ty, CurrentClassID, (name))
@@ -1034,19 +1061,20 @@ char const *
 ExpressionTypeName(Expr const *e)
 {
         if (e == NULL) {
-                return "(null)";
+                return "<null>";
         }
 
-        if (e->type == EXPRESSION_STATEMENT) {
-                if (e->statement->type == STATEMENT_EXPRESSION) {
-                        return ExpressionTypeName(e->statement->expression);
-                } else {
-                        return StatementTypeNames[e->statement->type - (STATEMENT_TYPE_START + 1)];
-                }
-        } else if (IsStmt(e)) {
-                return StatementTypeNames[e->type - (STATEMENT_TYPE_START + 1)];
-        } else {
-                return ExpressionTypeNames[e->type];
+        switch (e->type) {
+        case EXPRESSION_STATEMENT:
+                return ExpressionTypeName((Expr *)e->statement);
+
+        case STATEMENT_EXPRESSION:
+                return ExpressionTypeName(((Stmt *)e)->expression);
+
+        default:
+                return IsStmt(e)
+                     ? StatementTypeNames[e->type - (STATEMENT_TYPE_START + 1)]
+                     : ExpressionTypeNames[e->type];
         }
 }
 
@@ -1351,6 +1379,11 @@ CompileError(Ty *ty, u32 type, char const *fmt, ...)
 
         STATE.module->flags |= type;
 
+        if (strstr(vv(ErrorBuffer), "imbalance") != NULL) {
+                XXX("CompileError: %s", vv(ErrorBuffer));
+                *(volatile int *)0 = 0;
+        }
+
         TY_THROW_ERROR();
 }
 
@@ -1640,7 +1673,9 @@ inline static void
 inline static void
 EndStack(Ty *ty)
 {
+#if TY_DEBUG_STACK_BOOKKEEPING
         ASSERT(STATE.stack.saved > 0);
+#endif
         STATE.stack.saved -= 1;
 }
 
@@ -1648,7 +1683,9 @@ inline static void
 AdjStack(Ty *ty, i32 n)
 {
         if (STATE.stack.saved == 0) {
+#if TY_DEBUG_STACK_BOOKKEEPING
                 ASSERT(STATE.stack.count + n >= 0);
+#endif
                 STATE.stack.count += n;
         }
 }
@@ -1782,6 +1819,7 @@ AdjustStack(Ty *ty, int c)
         case INSTR_BIT_XOR:
         case INSTR_SHL:
         case INSTR_SHR:
+        case INSTR_BINARY_OP:
         case INSTR_RANGE:
         case INSTR_INCRANGE:
         case INSTR_TARGET_MEMBER:
@@ -1790,7 +1828,6 @@ AdjustStack(Ty *ty, int c)
         case INSTR_ASSIGN_LOCAL:
         case INSTR_ASSIGN_REGEX_MATCHES:
         case INSTR_DEFER:
-        case INSTR_THROW:
         case INSTR_INIT_STATIC_FIELD:
                 DecrStack(ty);
                 break;
@@ -1843,8 +1880,7 @@ AdjustStack(Ty *ty, int c)
                 break;
 
         case INSTR_RETURN:
-                m0(STATE.stack);
-                IncrStack(ty);
+                DecrStack(ty);
                 break;
 
         case INSTR_HALT:
@@ -6673,9 +6709,6 @@ emit_load(Ty *ty, Symbol const *s, Scope const *scope)
                 ) {
                         i += 1;
                 }
-                if (i == vN(scope->function->captured)) {
-                        fail("Captured symbol %s not found in function %s", s->identifier, STATE.func->name);
-                }
                 emit_load_instr(ty, s->identifier, INSTR_LOAD_CAPTURED, i);
         } else {
                 emit_load_instr(ty, s->identifier, INSTR_LOAD_REF, s->i);
@@ -6824,6 +6857,7 @@ static JumpPlaceholder
                         EE(e->left);
                         jmp = (PLACEHOLDER_JUMP)(ty, INSTR_JII);
                         Ei32(-e->right->symbol->class);
+                        STK(-1);
                         return jmp;
                 } else {
                         goto General;
@@ -6878,6 +6912,7 @@ static JumpPlaceholder
                         EE(e->left);
                         jmp = (PLACEHOLDER_JUMP)(ty, INSTR_JNI);
                         Ei32(-e->right->symbol->class);
+                        STK(-1);
                         return jmp;
                 } else {
                         goto General;
@@ -7036,15 +7071,12 @@ emit_constraint(Ty *ty, Expr const *c)
         JumpSet jumps = {0};
 
         SCRATCH_SAVE();
-
         WITH_STACK() {
                 _xemit_constraint(ty, c, &jumps);
         }
-
         for (int i = 0; i < vN(jumps); ++i) {
                 PATCH_JUMP(v__(jumps, i));
         }
-
         SCRATCH_RESTORE();
 }
 
@@ -7291,6 +7323,7 @@ emit_function(Ty *ty, Expr const *e)
               | (FF_HIDDEN    * (e->type == EXPRESSION_MULTI_FUNCTION))
               | (FF_OVERLOAD  * (e->overload != NULL))
               | (FF_DECORATED * decorated)
+              | (FF_JIT       * e->must_jit)
         );
 
         if (e->class == NULL) {
@@ -7314,15 +7347,18 @@ emit_function(Ty *ty, Expr const *e)
                 snprintf(
                         buffer,
                         sizeof buffer,
-                        "(anonymous function : %s:%d)",
+                        "(anon:%s:%d)",
                         CurrentModuleName(ty),
                         e->start.line + 1
                 );
                 fun_name = sclonea(ty, buffer);
         }
+        
+        bool jit = !e->must_jit && (e->type == EXPRESSION_FUNCTION);
 
         EP(fun_name);
         EP(e);
+        EP(jit ? (void *)0xFA57 : NULL); // FUN_JIT: sentinel for lazy JIT, or NULL
 
         LOG("COMPILING FUNCTION: %s", scope_name(ty, e->scope));
 
@@ -7347,71 +7383,39 @@ emit_function(Ty *ty, Expr const *e)
         usize start_offset = vN(STATE.code);
 
         for (int i = 0; i < vN(e->param_symbols); ++i) {
-                if (
-                        (v__(e->dflts, i) == NULL)
-                     || (v__(e->dflts, i)->type == EXPRESSION_NIL)
-                ) {
-                        continue;
-                }
-                Symbol const *s = v__(e->param_symbols, i);
-                emit_load_instr(ty, s->identifier, INSTR_LOAD_LOCAL, s->i);
-                PLACEHOLDER_JUMP(JUMP_IF_NIL, need_dflt);
-                PLACEHOLDER_JUMP(JUMP, skip_dflt);
-                PATCH_JUMP(need_dflt);
-                annotate("%s", s->identifier);
-                EE(v__(e->dflts, i));
-                INSN(ASSIGN_LOCAL);
-                Ei32(s->i);
-                PATCH_JUMP(skip_dflt);
-        }
-
-        for (int i = 0; i < vN(e->param_symbols); ++i) {
                 Expr const *constraint = v__(e->constraints, i);
-
-                if (
-                        (constraint == NULL)
-                     || (
-                                !RUNTIME_CONSTRAINTS
-                             && (e->overload == NULL)
-                        )
-                ) {
-                        continue;
-                }
-
+                Expr const *dflt       = v__(e->dflts, i);
                 Symbol const *s = v__(e->param_symbols, i);
-                usize start = vN(STATE.code);
-
-                emit_load_instr(ty, s->identifier, INSTR_LOAD_LOCAL, s->i);
-
+                bool check = (constraint != NULL)
+                          && (RUNTIME_CONSTRAINTS || (e->overload != NULL));
+                JumpPlaceholder defaulted;
                 JumpPlaceholder good;
-                JumpPlaceholder _default;
-
-                if (v__(e->dflts, i) != NULL) {
-                        INSN(DUP);
-                        _default = (PLACEHOLDER_JUMP)(ty, INSTR_JUMP_IF_NIL);
+                if (dflt != NULL) {
+                        emit_load_instr(ty, s->identifier, INSTR_LOAD_LOCAL, s->i);
+                        defaulted = (PLACEHOLDER_JUMP)(ty, INSTR_JUMP_IF_NIL);
                 }
-
-                if (i == e->rest) {
-                        Expr *array_of = NewExpr(ty, EXPRESSION_SUBSCRIPT);
-                        array_of->start = constraint->start;
-                        array_of->end   = constraint->end;
-                        array_of->container = NewExpr(ty, EXPRESSION_IDENTIFIER);
-                        array_of->container->symbol = class_get(ty, CLASS_ARRAY)->def->class.var;
-                        array_of->container->identifier = array_of->container->symbol->identifier;
-                        array_of->subscript = constraint;
-                        constraint = array_of;
-                }
-
-                WITH_FORKED_STACK {
-                        if (e->overload != NULL) {
-                                EC(constraint);
-                                good = (PLACEHOLDER_JUMP)(ty, INSTR_JUMP_IF);
-                                INSN(NONE);
-                                INSN(RETURN);
-                        } else {
-                                EA(constraint);
-                                good = (PLACEHOLDER_JUMP)(ty, INSTR_JUMP_IF);
-                                WITH_STACK() {
+                if (check) {
+                        if (i == e->rest) {
+                                Expr *array_of = NewExpr(ty, EXPRESSION_SUBSCRIPT);
+                                array_of->start = constraint->start;
+                                array_of->end   = constraint->end;
+                                array_of->container = NewExpr(ty, EXPRESSION_IDENTIFIER);
+                                array_of->container->symbol = class_get(ty, CLASS_ARRAY)->def->class.var;
+                                array_of->container->identifier = array_of->container->symbol->identifier;
+                                array_of->subscript = constraint;
+                                constraint = array_of;
+                        }
+                        WITH_STACK() {
+                                usize start = vN(STATE.code);
+                                emit_load_instr(ty, s->identifier, INSTR_LOAD_LOCAL, s->i);
+                                if (e->overload != NULL) {
+                                        EC(constraint);
+                                        good = (PLACEHOLDER_JUMP)(ty, INSTR_JUMP_IF);
+                                        INSN(NONE);
+                                        INSN(RETURN);
+                                } else {
+                                        EA(constraint);
+                                        good = (PLACEHOLDER_JUMP)(ty, INSTR_JUMP_IF);
                                         emit_load_instr(ty, s->identifier, INSTR_LOAD_LOCAL, s->i);
                                         INSN(BAD_CALL);
                                         emit_string(ty, fun_name);
@@ -7419,12 +7423,19 @@ emit_function(Ty *ty, Expr const *e)
                                         add_location(ty, v__(e->constraints, i), start, vN(STATE.code));
                                 }
                         }
+                } else {
+                        good = (PLACEHOLDER_JUMP)(ty, INSTR_JUMP);
                 }
-
+                if (dflt != NULL) {
+                        PATCH_JUMP(defaulted);
+                        if (dflt->type != EXPRESSION_NIL) {
+                                EE(dflt);
+                                annotate("%s", s->identifier);
+                                INSN(ASSIGN_LOCAL);
+                                Ei32(s->i);
+                        }
+                }
                 PATCH_JUMP(good);
-                if (v__(e->dflts, i) != NULL) {
-                        PATCH_JUMP(_default);
-                }
         }
 
         int   function_resources = STATE.function_resources;
@@ -7543,6 +7554,9 @@ emit_function(Ty *ty, Expr const *e)
         int bytes = vN(STATE.code) - start_offset;
         memcpy(v_(STATE.code, size_offset), &bytes, sizeof bytes);
         LOG("bytes in func = %d", bytes);
+
+        // JIT compilation is deferred to VM's INSTR_FUNCTION handler
+        // (sentinel 0xFA57 was written to FUN_JIT above)
 
         int self_cap = -1;
 
@@ -7764,22 +7778,23 @@ emit_return_check(Ty *ty, Expr const *f)
 {
         usize start = vN(STATE.code);
 
-        INSN(DUP);
-        EA(f->return_type);
-        PLACEHOLDER_JUMP(JUMP_IF, good);
-        INSN(BAD_CALL);
+        WITH_STACK() {
+                INSN(DUP);
+                EA(f->return_type);
+                PLACEHOLDER_JUMP(JUMP_IF, good);
+                INSN(BAD_CALL);
 
-        if (f->name != NULL) {
-                emit_string(ty, f->name);
-        } else {
-                emit_string(ty, "(anonymous function)");
+                if (f->name != NULL) {
+                        emit_string(ty, f->name);
+                } else {
+                        emit_string(ty, "(anonymous function)");
+                }
+                emit_string(ty, "return value");
+
+                PATCH_JUMP(good);
         }
 
-        emit_string(ty, "return value");
-
         add_location(ty, f->return_type, start, vN(STATE.code));
-
-        PATCH_JUMP(good);
 }
 
 static bool
@@ -7845,9 +7860,7 @@ emit_return(Ty *ty, Stmt const *s)
         }
 
         if (RUNTIME_CONSTRAINTS && STATE.func->return_type != NULL) {
-                WITH_STACK() {
-                        emit_return_check(ty, STATE.func);
-                }
+                emit_return_check(ty, STATE.func);
         }
 
         if (nret > 1) {
@@ -9288,7 +9301,9 @@ emit_match_stmt(Ty *ty, Stmt const *s, bool keep)
                 INSN(BAD_MATCH);
         }
 
-        STK(-1);
+        if (!keep) {
+                STK(-1);
+        }
 
         patch_jumps_to(&STATE.match_successes, vN(STATE.code));
         STATE.match_successes = successes_save;
@@ -9607,14 +9622,12 @@ emit_if(Ty *ty, Stmt const *s, bool want_result)
                 }
         }
 
-        WITH_STACK() {
-                if (s->iff.otherwise != NULL) {
-                        returns &= emit_statement(ty, s->iff.otherwise, want_result);
-                } else {
-                        if (want_result) {
-                                INSN(NIL);
-                        }
-                        returns = false;
+        if (s->iff.otherwise != NULL) {
+                returns &= emit_statement(ty, s->iff.otherwise, want_result);
+        } else {
+                returns = false;
+                if (want_result) {
+                        INSN(NIL);
                 }
         }
 
@@ -9957,6 +9970,7 @@ emit_dict_compr(Ty *ty, Expr const *e)
         INSN(DICT_COMPR);
         Ei32(2*vN(e->dcompr));
         Ei32(vN(e->keys));
+        STK(-2*vN(e->keys));
 
         for (isize i = vN(e->dcompr) - 1; i >= 0; --i) {
                 ComprPart const *part = v_(e->dcompr, i);
@@ -10448,13 +10462,15 @@ emit_assignment2(Ty *ty, Expr *target, bool maybe, bool def)
                      && RUNTIME_CONSTRAINTS
                 ) {
                         usize start = vN(STATE.code);
-                        INSN(DUP);
-                        EA(target->constraint);
-                        PLACEHOLDER_JUMP(JUMP_IF, good);
-                        INSN(BAD_ASSIGN);
-                        emit_string(ty, target->identifier);
-                        PATCH_JUMP(good);
-                        add_location(ty, target->constraint, start, vN(STATE.code));
+                        WITH_STACK() {
+                                INSN(DUP);
+                                EA(target->constraint);
+                                PLACEHOLDER_JUMP(JUMP_IF, good);
+                                INSN(BAD_ASSIGN);
+                                emit_string(ty, target->identifier);
+                                PATCH_JUMP(good);
+                                add_location(ty, target->constraint, start, vN(STATE.code));
+                        }
                 }
 
 #ifndef TY_PROFILER
@@ -10478,13 +10494,14 @@ emit_assignment(Ty *ty, Expr *target, Expr const *e, bool maybe, bool def)
                 emit_list(ty, e);
                 INSN(FIX_TO);
                 Ei32(vN(target->es));
-                STK(vN(target->es) - 1);
+                STK(vN(target->es) - 2);
                 for (int i = 0; i < vN(target->es); ++i) {
                         emit_assignment2(ty, v__(target->es, i), maybe, def);
+                        if (i + 1 == vN(target->es)) {
+                                INSN(SWAP);
+                        }
                         INSN(POP);
                 }
-                INSN(POP);
-                INSN(NIL);
         } else {
                 EE(e);
                 emit_assignment2(ty, target, maybe, def);
@@ -10657,6 +10674,8 @@ emit_expr(Ty *ty, Expr const *e, bool need_loc)
 #if TY_DEBUG_STACK_BOOKKEEPING
         XXX("=========%10s:%04d: %s", STATE.module->name, e->start.line + 1, show_expr((Expr *)e));
 #endif
+
+        STACK_BEGIN();
 
         switch (e->type) {
         case EXPRESSION_IDENTIFIER:
@@ -11037,6 +11056,9 @@ emit_expr(Ty *ty, Expr const *e, bool need_loc)
                 break;
 
         case EXPRESSION_FUNCTION:
+                // JIT compilation now happens lazily at call time (bytecode-based).
+                // The FF_JIT flag is set in emit_function when e->must_jit is true.
+                /* fallthrough */
         case EXPRESSION_MULTI_FUNCTION:
                 WITH_SELF(e->self) {
                         emit_function(ty, e);
@@ -11379,6 +11401,8 @@ emit_expr(Ty *ty, Expr const *e, bool need_loc)
                 add_location(ty, e, start, vN(STATE.code));
         }
 
+        STACK_END(1, e);
+
         RestoreContext(ty, ctx);
 
         return returns;
@@ -11409,6 +11433,7 @@ emit_statement(Ty *ty, Stmt const *s, bool want_result)
         STATE.start = s->start;
         STATE.end = s->end;
 
+        bool wr_save = want_result;
         bool returns = false;
 
         int        resources = STATE.resources;
@@ -11420,6 +11445,8 @@ emit_statement(Ty *ty, Stmt const *s, bool want_result)
 #if TY_DEBUG_STACK_BOOKKEEPING
         XXX("%20s:%04d: %s", STATE.module->name, s->start.line + 1, show_expr((Expr *)s));
 #endif
+
+        STACK_BEGIN();
 
         switch (s->type) {
         case STATEMENT_BLOCK:
@@ -11476,11 +11503,21 @@ emit_statement(Ty *ty, Stmt const *s, bool want_result)
                 break;
 
         case STATEMENT_EXPRESSION:
-                returns |= EE(s->expression);
-                if (!want_result && !returns) {
-                        INSN(POP);
-                } else {
+                if (want_result) {
+                        returns |= EE(s->expression);
                         want_result = false;
+                        break;
+                }
+                switch (s->expression->type) {
+                case EXPRESSION_WITH:
+                        returns |= ES(s->expression->with.block, false);
+                        break;
+
+                default:
+                        returns |= EE(s->expression);
+                        if (!returns) {
+                                INSN(POP);
+                        }
                 }
                 break;
 
@@ -11632,6 +11669,7 @@ emit_statement(Ty *ty, Stmt const *s, bool want_result)
                 INSN(JUMP);
                 avP(STATE.generator_returns, vN(STATE.code));
                 Ei32(0);
+                STK(-1);
                 break;
 
         case STATEMENT_BREAK:
@@ -11724,6 +11762,10 @@ emit_statement(Ty *ty, Stmt const *s, bool want_result)
 
         if (want_result && !returns) {
                 INSN(NIL);
+        }
+
+        if (!returns) {
+                STACK_END(wr_save ? 1 : 0, s);
         }
 
         RestoreContext(ty, ctx);
@@ -12769,7 +12811,6 @@ compile(Ty *ty, char const *source)
 
         for (int i = 0; i < end_of_defs; ++i) {
                 emit_statement(ty, p[i], false);
-                AssertEmptyStack();
         }
 
         for (int i = 0; i < vN(STATE.class_ops); ++i) {
@@ -12780,13 +12821,11 @@ compile(Ty *ty, char const *source)
                         self, v__(def->value->param_symbols, 0)
                 ) {
                         emit_statement(ty, def, false);
-                        AssertEmptyStack();
                 }
         }
 
         for (int i = end_of_defs; p[i] != NULL; ++i) {
                 emit_statement(ty, p[i], false);
-                AssertEmptyStack();
         }
 
         while (STATE.resources > 0) {
@@ -12795,7 +12834,6 @@ compile(Ty *ty, char const *source)
         }
 
         INSN(HALT);
-        AssertEmptyStack();
 
         add_annotation(ty, "(top)", 0, vN(STATE.code));
         PatchAnnotations(ty);
@@ -15690,6 +15728,7 @@ cexpr(Ty *ty, Value *v)
                 e->rest    = -1;
                 e->class   = NULL;
                 e->ftype   = FT_NONE;
+                //e->must_jit = true;
 
                 Value        *name = tget_t(v, "name", VALUE_STRING);
                 Value      *params = tget_t(v, "params", VALUE_ARRAY);

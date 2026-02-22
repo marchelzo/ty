@@ -1,0 +1,327 @@
+// jit_arm64.dasc - DynASM ARM64 code generation templates for ty JIT
+//
+// Processed by: luajit LuaJIT/dynasm/dynasm.lua -o src/jit_arm64.h src/jit_arm64.dasc
+//
+// The generated jit_arm64.h is included by src/jit.c
+//
+
+|.arch arm64
+|.actionlist jit_actions
+|.section code
+|.globals JIT_GLOB_
+
+// ============================================================================
+// INT MODE: Pure integer functions
+//
+// Calling convention:
+//   intmax_t fn(intmax_t a0, intmax_t a1, intmax_t a2, intmax_t a3)
+//   Arguments: x0-x3, Return: x0, Scratch: x8-x15
+// ============================================================================
+
+|.define ARG0, x0
+|.define ARG1, x1
+|.define ARG2, x2
+|.define ARG3, x3
+|.define RET,  x0
+
+// Scratch registers for intermediate values (int mode)
+|.define TMP0, x8
+|.define TMP1, x9
+|.define TMP2, x10
+|.define TMP3, x11
+|.define TMP4, x12
+|.define TMP5, x13
+|.define TMP6, x14
+|.define TMP7, x15
+
+static void jit_emit_prologue(dasm_State **Dst) {
+        |->entry:
+}
+
+static void jit_emit_epilogue(dasm_State **Dst) {
+        |  ret
+}
+
+// --- Integer arithmetic ---
+
+static void jit_emit_add(dasm_State **Dst, int dst, int left, int right) {
+        |  add Rx(dst), Rx(left), Rx(right)
+}
+
+static void jit_emit_sub(dasm_State **Dst, int dst, int left, int right) {
+        |  sub Rx(dst), Rx(left), Rx(right)
+}
+
+static void jit_emit_mul(dasm_State **Dst, int dst, int left, int right) {
+        |  mul Rx(dst), Rx(left), Rx(right)
+}
+
+static void jit_emit_sdiv(dasm_State **Dst, int dst, int left, int right) {
+        |  sdiv Rx(dst), Rx(left), Rx(right)
+}
+
+static void jit_emit_mod(dasm_State **Dst, int dst, int left, int right) {
+        |  sdiv x16, Rx(left), Rx(right)
+        |  msub Rx(dst), x16, Rx(right), Rx(left)
+}
+
+static void jit_emit_neg(dasm_State **Dst, int dst, int src) {
+        |  neg Rx(dst), Rx(src)
+}
+
+// --- Bitwise ops ---
+
+static void jit_emit_and(dasm_State **Dst, int dst, int left, int right) {
+        |  and Rx(dst), Rx(left), Rx(right)
+}
+
+static void jit_emit_or(dasm_State **Dst, int dst, int left, int right) {
+        |  orr Rx(dst), Rx(left), Rx(right)
+}
+
+static void jit_emit_xor(dasm_State **Dst, int dst, int left, int right) {
+        |  eor Rx(dst), Rx(left), Rx(right)
+}
+
+static void jit_emit_shl(dasm_State **Dst, int dst, int left, int right) {
+        |  lsl Rx(dst), Rx(left), Rx(right)
+}
+
+static void jit_emit_shr(dasm_State **Dst, int dst, int left, int right) {
+        |  asr Rx(dst), Rx(left), Rx(right)
+}
+
+// --- Load immediate ---
+
+static void jit_emit_load_imm(dasm_State **Dst, int dst, int64_t imm) {
+        if (imm >= 0 && imm < 65536) {
+                |  movz Rx(dst), #imm
+        } else if (imm >= -65536 && imm < 0) {
+                |  movn Rx(dst), #(~imm)
+        } else {
+                uint64_t u = (uint64_t)imm;
+                |  movz Rx(dst), #(u & 0xFFFF)
+                if ((u >> 16) & 0xFFFF) {
+                        |  movk Rx(dst), #((u >> 16) & 0xFFFF), lsl #16
+                }
+                if ((u >> 32) & 0xFFFF) {
+                        |  movk Rx(dst), #((u >> 32) & 0xFFFF), lsl #32
+                }
+                if ((u >> 48) & 0xFFFF) {
+                        |  movk Rx(dst), #((u >> 48) & 0xFFFF), lsl #48
+                }
+        }
+}
+
+// --- Move between registers ---
+
+static void jit_emit_mov(dasm_State **Dst, int dst, int src) {
+        if (dst != src) {
+                |  mov Rx(dst), Rx(src)
+        }
+}
+
+// --- Comparisons (result is 0 or 1 in dst) ---
+
+static void jit_emit_cmp_eq(dasm_State **Dst, int dst, int left, int right) {
+        |  cmp Rx(left), Rx(right)
+        |  cset Rx(dst), eq
+}
+
+static void jit_emit_cmp_ne(dasm_State **Dst, int dst, int left, int right) {
+        |  cmp Rx(left), Rx(right)
+        |  cset Rx(dst), ne
+}
+
+static void jit_emit_cmp_lt(dasm_State **Dst, int dst, int left, int right) {
+        |  cmp Rx(left), Rx(right)
+        |  cset Rx(dst), lt
+}
+
+static void jit_emit_cmp_le(dasm_State **Dst, int dst, int left, int right) {
+        |  cmp Rx(left), Rx(right)
+        |  cset Rx(dst), le
+}
+
+static void jit_emit_cmp_gt(dasm_State **Dst, int dst, int left, int right) {
+        |  cmp Rx(left), Rx(right)
+        |  cset Rx(dst), gt
+}
+
+static void jit_emit_cmp_ge(dasm_State **Dst, int dst, int left, int right) {
+        |  cmp Rx(left), Rx(right)
+        |  cset Rx(dst), ge
+}
+
+// --- Conditional branches ---
+
+static void jit_emit_cbz(dasm_State **Dst, int reg, int label) {
+        |  cbz Rx(reg), =>label
+}
+
+static void jit_emit_cbnz(dasm_State **Dst, int reg, int label) {
+        |  cbnz Rx(reg), =>label
+}
+
+static void jit_emit_jump(dasm_State **Dst, int label) {
+        |  b =>label
+}
+
+static void jit_emit_label(dasm_State **Dst, int label) {
+        |=>label:
+}
+
+// ============================================================================
+// GENERIC MODE: Value-typed functions with C helper calls
+//
+// Calling convention:
+//   void fn(Ty *ty, Value *result, Value *args, Value *env)
+//   x0=ty, x1=result, x2=args, x3=env
+//
+// Callee-saved register assignments:
+//   x19 = Ty *ty
+//   x20 = Value *result
+//   x21 = Value *args
+//   x22 = Value *env
+//   x23 = slot base pointer (== sp after slot allocation)
+//
+// Value slots live on the stack at [x23 + i*32].
+// ============================================================================
+
+static void jit_emit_gen_prologue(dasm_State **Dst, int slot_bytes) {
+        |->entry:
+        |  stp x29, x30, [sp, #-16]!
+        |  mov x29, sp
+        |  stp x19, x20, [sp, #-16]!
+        |  stp x21, x22, [sp, #-16]!
+        |  stp x23, x24, [sp, #-16]!
+        // Stash incoming args into callee-saved registers
+        |  mov x19, x0
+        |  mov x20, x1
+        |  mov x21, x2
+        |  mov x22, x3
+        // Allocate stack space for value slots
+        if (slot_bytes > 0) {
+                |  sub sp, sp, #slot_bytes
+        }
+        |  mov x23, sp
+}
+
+static void jit_emit_gen_epilogue(dasm_State **Dst, int slot_bytes) {
+        if (slot_bytes > 0) {
+                |  add sp, sp, #slot_bytes
+        }
+        |  ldp x23, x24, [sp], #16
+        |  ldp x21, x22, [sp], #16
+        |  ldp x19, x20, [sp], #16
+        |  ldp x29, x30, [sp], #16
+        |  ret
+}
+
+// --- Memory operations ---
+
+// Load 64-bit from [base + offset]
+static void jit_emit_ldr64(dasm_State **Dst, int dst, int base, int offset) {
+        |  ldr Rx(dst), [Rx(base), #offset]
+}
+
+// Store 64-bit to [base + offset]
+static void jit_emit_str64(dasm_State **Dst, int src, int base, int offset) {
+        |  str Rx(src), [Rx(base), #offset]
+}
+
+// Load byte from [base + offset]
+static void jit_emit_ldrb(dasm_State **Dst, int dst, int base, int offset) {
+        |  ldrb Rw(dst), [Rx(base), #offset]
+}
+
+// Store byte to [base + offset]
+static void jit_emit_strb(dasm_State **Dst, int src, int base, int offset) {
+        |  strb Rw(src), [Rx(base), #offset]
+}
+
+// Store halfword (16-bit) to [base + offset]
+static void jit_emit_strh(dasm_State **Dst, int src, int base, int offset) {
+        |  strh Rw(src), [Rx(base), #offset]
+}
+
+// Store 32-bit word to [base + offset]
+static void jit_emit_str32(dasm_State **Dst, int src, int base, int offset) {
+        |  str Rw(src), [Rx(base), #offset]
+}
+
+// Load pair of 64-bit values from [base + offset]
+static void jit_emit_ldp64(dasm_State **Dst, int r1, int r2, int base, int offset) {
+        |  ldp Rx(r1), Rx(r2), [Rx(base), #offset]
+}
+
+// Store pair of 64-bit values to [base + offset]
+static void jit_emit_stp64(dasm_State **Dst, int r1, int r2, int base, int offset) {
+        |  stp Rx(r1), Rx(r2), [Rx(base), #offset]
+}
+
+// --- Add immediate ---
+static void jit_emit_add_imm(dasm_State **Dst, int dst, int src, int imm) {
+        if (imm == 0) {
+                if (dst != src) {
+                        |  mov Rx(dst), Rx(src)
+                }
+        } else {
+                |  add Rx(dst), Rx(src), #imm
+        }
+}
+
+// --- Indirect call ---
+static void jit_emit_call_reg(dasm_State **Dst, int reg) {
+        |  blr Rx(reg)
+}
+
+// --- Compare register with immediate ---
+static void jit_emit_cmp_ri(dasm_State **Dst, int reg, int imm) {
+        |  cmp Rx(reg), #imm
+}
+
+// Compare 32-bit register with immediate (for int return values)
+static void jit_emit_cmp_ri32(dasm_State **Dst, int reg, int imm) {
+        |  cmp Rw(reg), #imm
+}
+
+// --- Conditional branches (use after cmp_ri) ---
+// ARM64 DynASM doesn't support b.cond syntax, so we use cset+cbz/cbnz.
+// Call jit_emit_cmp_ri() first, then these:
+
+static void jit_emit_branch_eq(dasm_State **Dst, int label) {
+        // Branch if the cmp was equal: cset x16 to 1 if eq, then cbnz
+        |  cset x16, eq
+        |  cbnz x16, =>label
+}
+
+static void jit_emit_branch_ne(dasm_State **Dst, int label) {
+        |  cset x16, ne
+        |  cbnz x16, =>label
+}
+
+static void jit_emit_branch_lt(dasm_State **Dst, int label) {
+        |  cset x16, lt
+        |  cbnz x16, =>label
+}
+
+static void jit_emit_branch_gt(dasm_State **Dst, int label) {
+        |  cset x16, gt
+        |  cbnz x16, =>label
+}
+
+static void jit_emit_branch_le(dasm_State **Dst, int label) {
+        |  cset x16, le
+        |  cbnz x16, =>label
+}
+
+static void jit_emit_branch_ge(dasm_State **Dst, int label) {
+        |  cset x16, ge
+        |  cbnz x16, =>label
+}
+
+// Load 32-bit word from [base + offset]
+static void jit_emit_ldr32(dasm_State **Dst, int dst, int base, int offset) {
+        |  ldr Rw(dst), [Rx(base), #offset]
+}

@@ -452,6 +452,7 @@ struct expression {
                         Class *class;
                         Expr *overload;
                         bool has_defer;
+                        bool must_jit;
                         int ikwargs;
                         int rest;
                         int t;
