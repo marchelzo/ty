@@ -2562,7 +2562,7 @@ bc_resolve_builtin_method(Class *cls, int member_id, int *out_value_type)
         return false; \
 } while (0)
 #else
-#define BAIL(reason) do { \
+#define BAIL(...) do { \
         return false; \
 } while (0)
 #endif
@@ -2677,8 +2677,9 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                                 int off = OP_OFF(ctx->sp - 1);
                                 jit_emit_ldrb(asm, BC_S0, BC_OPS, off + VAL_OFF_TYPE);
                                 jit_emit_cmp_ri(asm, BC_S0, VALUE_NIL);
-                                int lbl_nil = bc_label_for(ctx, target_off + jump);
-                                bc_set_label_sp(ctx, lbl_nil, ctx->sp);
+                                int fail_target = target_off + jump;
+                                int lbl_nil = bc_label_for(ctx, fail_target);
+                                bc_set_label_sp(ctx, fail_target, ctx->sp);
                                 jit_emit_branch_eq(asm, lbl_nil);
                                 // Not nil: assign TOS to locals[n]
                                 bc_copy_value(ctx, BC_LOC, n * VALUE_SIZE, BC_OPS, off);
@@ -2888,6 +2889,7 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                         if (lbl < 0) BAIL("invalid jump target %d", target);
                         bc_set_label_sp(ctx, target, ctx->sp);
                         jit_emit_jump(asm, lbl);
+                        ctx->dead = true;
                         break;
                 }
 
@@ -3549,7 +3551,10 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                         break;
                 CASE(POP_STACK_POS)
                         // Restore compile-time sp
-                        if (ctx->save_sp_top < 0) BAIL("POP_STACK_POS stack underflow");
+                        if (ctx->save_sp_top < 0) {
+                                if (ctx->dead) break;
+                                BAIL("POP_STACK_POS stack underflow");
+                        }
                         ctx->sp = ctx->save_sp_stack[ctx->save_sp_top--];
                         // Also emit runtime call to restore VM stack position
                         jit_emit_mov(asm, 0, BC_TY);
@@ -3558,7 +3563,10 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                         break;
                 CASE(POP_STACK_POS_POP)
                         // Restore compile-time sp - 1
-                        if (ctx->save_sp_top < 0) BAIL("POP_STACK_POS_POP stack underflow");
+                        if (ctx->save_sp_top < 0) {
+                                if (ctx->dead) break;
+                                BAIL("POP_STACK_POS_POP stack underflow");
+                        }
                         ctx->sp = ctx->save_sp_stack[ctx->save_sp_top--] - 1;
                         // Also emit runtime call to restore VM stack position - 1
                         jit_emit_mov(asm, 0, BC_TY);

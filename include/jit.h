@@ -6,8 +6,8 @@
 #include "ast.h"
 
 #define JIT_RT_DEBUG 0
-#define JIT_SCAN_LOG 1
-#define JIT_DUMP_DIS 1
+#define JIT_SCAN_LOG 0
+#define JIT_DUMP_DIS 0
 
 typedef struct jit_info {
         void *code;       // Pointer to JIT'd machine code
