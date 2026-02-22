@@ -5106,6 +5106,56 @@ LoopCheck(Ty *ty, i32 z, char *jump)
         return false;
 }
 
+void
+vm_jit_loop_iter(Ty *ty)
+{
+        push(SENTINEL);
+        RC = 0;
+        IterGetNext(ty);
+}
+
+bool
+vm_jit_loop_check(Ty *ty, int z)
+{
+        imax k = top()[-3].z - 1;
+
+        if (top()->type == VALUE_NONE) {
+                pop();
+                pop();
+                pop();
+                pop();
+                return true;
+        }
+
+        STACK.count += RC;
+        push(INTEGER(k));
+
+        i32 i, j;
+        for (i = 0; top()[-i].type != VALUE_SENTINEL; ++i)
+                ;
+
+        while (i > z)
+                --i, pop();
+
+        while (i < z)
+                ++i, push(NIL);
+
+        Value v;
+        for (i = 0, j = z - 1; i < j; ++i, --j) {
+                v = top()[-i];
+                top()[-i] = top()[-j];
+                top()[-j] = v;
+        }
+
+        return false;
+}
+
+void
+vm_jit_dict_literal(Ty *ty, Value *dflt)
+{
+        DoDictLiteral(ty, dflt);
+}
+
 inline static void
 SpreadShuffle(Ty *ty, bool inject_nil)
 {

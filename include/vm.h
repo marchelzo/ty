@@ -255,6 +255,15 @@ vm_jit_pop_target(Ty *ty);
 Value
 vm_jit_bind_method(Ty *ty, Value *f, Value *v);
 
+void
+vm_jit_loop_iter(Ty *ty);
+
+bool
+vm_jit_loop_check(Ty *ty, int z);
+
+void
+vm_jit_dict_literal(Ty *ty, Value *dflt);
+
 #define VM_TRY() (setjmp(vm_push_try(ty)->jb) == 0)
 
 #endif
