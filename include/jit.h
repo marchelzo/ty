@@ -5,10 +5,9 @@
 #include "value.h"
 #include "ast.h"
 
-#define JIT_LOG_VERBOSE 0
-
-// JIT compilation modes
-#define JIT_MODE_BYTECODE 2   // Bytecode-to-native compilation
+#define JIT_RT_DEBUG 0
+#define JIT_SCAN_LOG 1
+#define JIT_DUMP_DIS 1
 
 typedef struct jit_info {
         void *code;       // Pointer to JIT'd machine code

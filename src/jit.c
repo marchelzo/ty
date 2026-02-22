@@ -95,7 +95,7 @@ JitInfo *jit_compile(Ty *ty, Value const *func) { (void)ty; (void)func; return N
 // Runtime helpers - called from JIT'd code
 // ============================================================================
 
-#if JIT_LOG_VERBOSE
+#if JIT_RT_DEBUG
 #define DBG(fmt, ...) do {                                      \
         jit_emit_mov(asm, 0, BC_TY);                            \
         jit_emit_load_imm(asm, 1, ctx->sp);                     \
@@ -337,92 +337,13 @@ jit_rt_member_set(Ty *ty, Value *obj, int member_id, Value *val)
         DoAssignExec(ty);
 }
 
-// Call a function with one argument
-static void
-jit_rt_call1(Ty *ty, Value *result, Value *fn, Value *arg)
-{
-        vm_push(ty, arg);
-        *result = vm_call(ty, fn, 1);
-}
-
-// Call a method with no extra arguments (just self)
-static void
-jit_rt_method_call0(Ty *ty, Value *result, Value *obj, int member_id)
-{
-        Value method = GetMember(ty, *obj, member_id, true, false);
-        if (method.type == VALUE_METHOD) {
-                *result = vm_call_method(ty, method.this, method.method, 0);
-        } else if (method.type != VALUE_NONE) {
-                *result = vm_call(ty, &method, 0);
-        } else {
-                *result = NIL;
-        }
-}
-
-// Call a method with N arguments on VM stack
-static void
-jit_rt_method_call(Ty *ty, Value *result, Value *obj, int member_id, int argc)
-{
-        Value method = GetMember(ty, *obj, member_id, true, false);
-        if (method.type == VALUE_METHOD) {
-                *result = vm_call_method(ty, method.this, method.method, argc);
-        } else if (method.type != VALUE_NONE) {
-                *result = vm_call(ty, &method, argc);
-        } else {
-                *result = NIL;
-        }
-}
-
 // Subscript access
 static void
 jit_rt_subscript(Ty *ty, Value *result, Value *container, Value *index)
 {
-        switch (container->type) {
-        case VALUE_ARRAY:
-                *result = ArraySubscript(ty, *container, *index, true);
-                break;
-        case VALUE_DICT: {
-                Value *vp = dict_get_value(ty, container->dict, index);
-                *result = (vp == NULL) ? NIL : *vp;
-                break;
-        }
-        case VALUE_STRING:
-                vm_push(ty, index);
-                *result = string_char(ty, container, 1, NULL);
-                vm_pop(ty);
-                break;
-        case VALUE_BLOB:
-                vm_push(ty, index);
-                *result = blob_get(ty, container, 1, NULL);
-                vm_pop(ty);
-                break;
-        case VALUE_OBJECT: {
-                Value *method = class_lookup_method_i(ty, container->class, NAMES.subscript);
-                if (method != NULL) {
-                        vm_push(ty, index);
-                        *result = vm_call_method(ty, container, method, 1);
-                } else {
-                        *result = NIL;
-                }
-                break;
-        }
-        case VALUE_TUPLE:
-                if (index->type == VALUE_INTEGER) {
-                        imax i = index->z;
-                        if (i < 0) i += container->count;
-                        if (i >= 0 && i < container->count)
-                                *result = container->items[i];
-                        else
-                                *result = NIL;
-                } else {
-                        *result = NIL;
-                }
-                break;
-        default:
-                vm_push(ty, index);
-                *result = vm_call(ty, container, 1);
-                break;
-        }
+        vN(ty->stack) = index - vv(ty->stack) + 1;
+        DoSubscript(ty, true);
+        *result = *vm_get(ty, 0);
 }
 
 // Truthiness check (general case)
@@ -1121,15 +1042,13 @@ jit_rt_throw(Ty *ty, Value *exc)
         vm_throw(ty, exc);
 }
 
-// THROW_IF_NIL: if TOS is nil, tag it with MatchError and throw
+// BAD_MATCH: tag TOS with MatchError and throw
 static void
-jit_rt_throw_if_nil(Ty *ty, Value *v)
+jit_rt_bad_match(Ty *ty, Value *v)
 {
-        if (v->type == VALUE_NIL) {
-                v->tags = tags_push(ty, v->tags, TAG_MATCH_ERR);
-                v->type |= VALUE_TAGGED;
-                vm_throw(ty, v);
-        }
+        v->tags = tags_push(ty, v->tags, TAG_MATCH_ERR);
+        v->type |= VALUE_TAGGED;
+        vm_throw(ty, v);
 }
 
 // CONCAT_STRINGS: concatenate n strings from the stack
@@ -1242,13 +1161,20 @@ typedef struct {
 
         int save_sp_stack[16]; // Stack of saved sp values for SAVE_STACK_POS
         int save_sp_top;       // Top of save_sp stack (-1 = empty)
+        char const *last_op;   // DEBUG: last opcode name for bail diagnostics
 
         // Track which local each operand stack slot came from (-1 = unknown)
         // Used to look up types for CALL_METHOD/MEMBER_ACCESS fast paths
         int op_local[MAX_BC_OPS];
 
-        // Label map: bytecode offset → DynASM label + expected sp
-        struct { int offset; int label; int sp; } labels[MAX_BC_LABELS];
+        // Label map: bytecode offset → DynASM label + expected sp + save_sp state
+        struct {
+                int offset;
+                int label;
+                int sp;
+                int save_sp_top;
+                int save_sp_stack[16];
+        } labels[MAX_BC_LABELS];
         int label_count;
 
         // Set after THROW/RETURN — code is unreachable until next label
@@ -1274,6 +1200,7 @@ bc_label_for(JitBcCtx *ctx, int offset)
         ctx->labels[ctx->label_count].offset = offset;
         ctx->labels[ctx->label_count].label = label;
         ctx->labels[ctx->label_count].sp = -1; // unknown until emission
+        ctx->labels[ctx->label_count].save_sp_top = -2; // not set
         ctx->label_count++;
         return label;
 }
@@ -1290,7 +1217,7 @@ bc_find_label(JitBcCtx *ctx, int offset)
         return -1;
 }
 
-// Record the expected sp at a jump target
+// Record the expected sp and save_sp state at a jump target
 static void
 bc_set_label_sp(JitBcCtx *ctx, int offset, int sp)
 {
@@ -1301,6 +1228,11 @@ bc_set_label_sp(JitBcCtx *ctx, int offset, int sp)
                 if (ctx->labels[i].offset == offset) {
                         if (ctx->labels[i].sp == -1) {
                                 ctx->labels[i].sp = sp;
+                        }
+                        if (ctx->labels[i].save_sp_top == -2) {
+                                ctx->labels[i].save_sp_top = ctx->save_sp_top;
+                                memcpy(ctx->labels[i].save_sp_stack, ctx->save_sp_stack,
+                                       (ctx->save_sp_top + 1) * sizeof(int));
                         }
                         return;
                 }
@@ -1361,6 +1293,10 @@ bc_prescan(JitBcCtx *ctx, char const *code, int code_size)
                 int nkw;
                 int i, j, tag;
                 uptr s;
+
+#if JIT_SCAN_LOG
+                LOGX("[jit] prescan[%4jd]: %s", ip - code - 1, GetInstructionName(op));
+#endif
 
                 switch (op) {
                 case INSTR_NOP:
@@ -1691,7 +1627,7 @@ bc_prescan(JitBcCtx *ctx, char const *code, int code_size)
                         BC_READ(jump_off);
                         int target = (int)(ip - code) + jump_off;
                         if (bc_label_for(ctx, target) < 0) return false;
-                        BC_SKIP(i32); // required
+                        BC_SKIP(u8); // required
                         BC_SKIP(i32); // name_id
                         break;
                 }
@@ -1723,7 +1659,7 @@ bc_prescan(JitBcCtx *ctx, char const *code, int code_size)
                         int target = (int)(ip - code) + jump_off;
                         if (bc_label_for(ctx, target) < 0) return false;
                         BC_SKIP(i32); // idx
-                        BC_SKIP(i32); // required
+                        BC_SKIP(u8); // required
                         break;
                 }
 
@@ -1785,8 +1721,8 @@ bc_prescan(JitBcCtx *ctx, char const *code, int code_size)
                         int ncaps = (bound_caps > 0) ? nEnv - bound_caps : nEnv;
                         char const *after = ip + hs + size;
                         for (int q = 0; q < ncaps; ++q) {
-                                after += sizeof(bool);
-                                after += sizeof(int);
+                                after += sizeof (bool);
+                                after += sizeof (int);
                         }
                         if (hs < 0 || size < 0 || nEnv < 0 || ncaps < 0 || after > end) {
                                 return false;
@@ -1797,8 +1733,10 @@ bc_prescan(JitBcCtx *ctx, char const *code, int code_size)
 
                 // Unsupported — bail out
                 default:
-                        LOG("JIT[bc]: prescan bail on %s at offset %d",
+#if JIT_SCAN_LOG
+                        LOGX("JIT[bc]: prescan bail on %s at offset %d",
                             GetInstructionName(op), instr_off);
+#endif
                         return false;
                 }
         }
@@ -2601,13 +2539,27 @@ bc_resolve_builtin_method(Class *cls, int member_id, int *out_value_type)
         return bm;
 }
 
-#if JIT_LOG_VERBOSE
+#if JIT_RT_DEBUG
 #define CASE(name)                \
         case INSTR_##name:        \
+                ctx->last_op = #name; \
                 idbg(ctx, ">> " #name);
 #else
 #define CASE(name)                \
-        case INSTR_##name:
+        case INSTR_##name:        \
+                ctx->last_op = #name;
+#endif
+
+#if JIT_SCAN_LOG
+#define BAIL(fmt, ...) do { \
+        LOGX("JIT[scan]: cannot emit %s at offset %d: " fmt, \
+                ctx->last_op, (int)(ip - code - 1) __VA_OPT__(,) __VA_ARGS__); \
+        return false; \
+} while (0)
+#else
+#define BAIL(reason) do { \
+        return false; \
+} while (0)
 #endif
 
 // Main bytecode emission pass
@@ -2637,12 +2589,21 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
         while (ip < end) {
                 int off = (int)(ip - code);
 
-                // If this offset is a jump target, emit label and sync sp
+                // If this offset is a jump target, emit label and sync sp + save_sp
                 int lbl = bc_find_label(ctx, off);
                 if (lbl >= 0) {
                         int target_sp = bc_get_label_sp(ctx, off);
                         if (target_sp >= 0) {
                                 ctx->sp = target_sp;
+                        }
+                        // Restore save_sp state at this label
+                        for (int li = 0; li < ctx->label_count; ++li) {
+                                if (ctx->labels[li].offset == off && ctx->labels[li].save_sp_top != -2) {
+                                        ctx->save_sp_top = ctx->labels[li].save_sp_top;
+                                        memcpy(ctx->save_sp_stack, ctx->labels[li].save_sp_stack,
+                                               (ctx->save_sp_top + 1) * sizeof(int));
+                                        break;
+                                }
                         }
                         ctx->dead = false;
                         jit_emit_label(asm, lbl);
@@ -2653,8 +2614,17 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
 
                 u8 op = (u8)*ip++;
 
-                switch (op) {
+#if JIT_SCAN_LOG
+                LOGX(
+                        "[jit] emit[%4jd] (sp=%2d, #sp_save=%d): %s",
+                        ip - code - 1,
+                        ctx->sp,
+                        ctx->save_sp_top + 1,
+                        GetInstructionName(op)
+                );
+#endif
 
+                switch (op) {
                 CASE(NOP)
                         break;
 
@@ -2701,12 +2671,13 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                                 jit_emit_ldrb(asm, BC_S0, BC_OPS, off + VAL_OFF_TYPE);
                                 jit_emit_cmp_ri(asm, BC_S0, VALUE_NIL);
                                 int lbl_nil = bc_label_for(ctx, target_off + jump);
+                                bc_set_label_sp(ctx, lbl_nil, ctx->sp);
                                 jit_emit_branch_eq(asm, lbl_nil);
                                 // Not nil: assign TOS to locals[n]
                                 bc_copy_value(ctx, BC_LOC, n * VALUE_SIZE, BC_OPS, off);
                         } else {
                                 // Not fused — bail
-                                LOG("JIT[bc]: TARGET_LOCAL without fusion (next=%d)",
+                                BAIL("TARGET_LOCAL without fusion (next=%d)",
                                         (ip < end) ? (u8)*ip : -1);
                                 return false;
                         }
@@ -2907,7 +2878,7 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                         BC_READ(n);
                         int target = (int)(ip - code) + n;
                         int lbl = bc_find_label(ctx, target);
-                        if (lbl < 0) return false;
+                        if (lbl < 0) BAIL("invalid jump target %d", target);
                         bc_set_label_sp(ctx, target, ctx->sp);
                         jit_emit_jump(asm, lbl);
                         break;
@@ -2918,7 +2889,7 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                         BC_READ(n);
                         int target = (int)(ip - code) + n;
                         int lbl_target = bc_find_label(ctx, target);
-                        if (lbl_target < 0) return false;
+                        if (lbl_target < 0) BAIL("invalid jump target %d", target);
 
                         // Check truthiness of TOS, pop
                         bc_emit_truthy(ctx);
@@ -2935,7 +2906,7 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                         BC_READ(n);
                         int target = (int)(ip - code) + n;
                         int lbl_target = bc_find_label(ctx, target);
-                        if (lbl_target < 0) return false;
+                        if (lbl_target < 0) BAIL("invalid jump target %d", target);
 
                         bc_emit_truthy(ctx);
                         ctx->sp--;
@@ -2951,7 +2922,7 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                         BC_READ(n);
                         int target = (int)(ip - code) + n;
                         int lbl_target = bc_find_label(ctx, target);
-                        if (lbl_target < 0) return false;
+                        if (lbl_target < 0) BAIL("invalid jump target %d", target);
                         jit_emit_ldrb(asm, BC_S0, BC_OPS, OP_OFF(ctx->sp - 1) + VAL_OFF_TYPE);
                         jit_emit_cmp_ri(asm, BC_S0, VALUE_NIL);
                         ctx->sp--;
@@ -2965,7 +2936,7 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                         BC_READ(n);
                         int target = (int)(ip - code) + n;
                         int lbl_target = bc_find_label(ctx, target);
-                        if (lbl_target < 0) return false;
+                        if (lbl_target < 0) BAIL("invalid jump target %d", target);
 
                         int tos_off = OP_OFF(ctx->sp - 1);
                         jit_emit_ldrb(asm, BC_S0, BC_OPS, tos_off + VAL_OFF_TYPE);
@@ -2980,7 +2951,7 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                         BC_READ(n);
                         int target = (int)(ip - code) + n;
                         int lbl_target = bc_find_label(ctx, target);
-                        if (lbl_target < 0) return false;
+                        if (lbl_target < 0) BAIL("invalid jump target %d", target);
 
                         // If TOS is falsy, jump (keep TOS)
                         // If truthy, pop and continue
@@ -2997,7 +2968,7 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                         BC_READ(n);
                         int target = (int)(ip - code) + n;
                         int lbl_target = bc_find_label(ctx, target);
-                        if (lbl_target < 0) return false;
+                        if (lbl_target < 0) BAIL("invalid jump target %d", target);
 
                         // If TOS is truthy, jump (keep TOS)
                         // If falsy, pop and continue
@@ -3017,7 +2988,7 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                         BC_READ(n);
                         int target = (int)(ip - code) + n;
                         int lbl_target = bc_find_label(ctx, target);
-                        if (lbl_target < 0) return false;
+                        if (lbl_target < 0) BAIL("invalid jump target %d", target);
 
                         // Equality test: call jit_rt_eq/ne(ty, &result, &a, &b)
                         // result goes into ops[sp-2], overwriting a
@@ -3049,7 +3020,7 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                         BC_READ(n);
                         int target = (int)(ip - code) + n;
                         int lbl_target = bc_find_label(ctx, target);
-                        if (lbl_target < 0) return false;
+                        if (lbl_target < 0) BAIL("invalid jump target %d", target);
 
                         // Ordering compare: call jit_rt_compare(ty, &a, &b)
                         jit_emit_mov(asm, 0, BC_TY);
@@ -3247,8 +3218,7 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                                 }
                                 ctx->sp -= 1; // only pop obj, val stays
                         } else {
-                                LOG("JIT[bc]: TARGET_MEMBER without ASSIGN fusion");
-                                return false;
+                                BAIL("TARGET_MEMBER without ASSIGN fusion");
                         }
                         break;
                 }
@@ -3274,16 +3244,14 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                                 jit_emit_call_reg(asm, BC_CALL);
                                 // val stays on stack (ASSIGN peeks, doesn't pop)
                         } else {
-                                LOG("JIT[bc]: TARGET_SELF_MEMBER without ASSIGN fusion");
-                                return false;
+                                BAIL("TARGET_SELF_MEMBER without ASSIGN fusion");
                         }
                         break;
                 }
 
                 CASE(ASSIGN)
                         // Standalone ASSIGN (not fused) — bail
-                        LOG("JIT[bc]: standalone ASSIGN not supported");
-                        return false;
+                        BAIL("standalone ASSIGN not supported");
 
                 // --- Function calls ---
                 CASE(CALL) {
@@ -3293,13 +3261,11 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                         for (int q = 0; q < nkw; ++q) BC_SKIPSTR();
 
                         if (nkw > 0) {
-                                LOG("JIT[bc]: CALL with kwargs not supported");
-                                return false;
+                                BAIL("CALL with kwargs not supported");
                         }
 
                         if (n == -1) {
-                                LOG("JIT[bc]: CALL with spread args not supported");
-                                return false;
+                                BAIL("CALL with spread args not supported");
                         }
 
                         // VM stack layout: [... arg0 arg1 ... argN-1 fn]
@@ -3345,8 +3311,7 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                         for (int q = 0; q < nkw; ++q) BC_SKIPSTR();
 
                         if (nkw > 0 || n == -1) {
-                                LOG("JIT[bc]: CALL_METHOD with kwargs/spread not supported");
-                                return false;
+                                BAIL("CALL_METHOD with kwargs/spread not supported");
                         }
 
                         // VM stack layout: [... arg0 arg1 ... argN-1 self]
@@ -3428,8 +3393,7 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                         for (int q = 0; q < nkw; ++q) BC_SKIPSTR();
 
                         if (nkw > 0 || n == -1) {
-                                LOG("JIT[bc]: CALL_SELF_METHOD with kwargs/spread not supported");
-                                return false;
+                                BAIL("CALL_SELF_METHOD with kwargs/spread not supported");
                         }
 
                         // For CALL_SELF_METHOD, self is implicit (not on operand stack).
@@ -3460,8 +3424,7 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                         for (int q = 0; q < nkw; ++q) BC_SKIPSTR();
 
                         if (nkw > 0 || n == -1) {
-                                LOG("JIT[bc]: CALL_GLOBAL with kwargs/spread not supported");
-                                return false;
+                                BAIL("CALL_GLOBAL with kwargs/spread not supported");
                         }
 
                         // Push n args to VM stack
@@ -3570,7 +3533,7 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                 // --- SAVE_STACK_POS / POP_STACK_POS ---
                 CASE(SAVE_STACK_POS)
                         // Push current sp onto compile-time save stack
-                        if (ctx->save_sp_top >= 15) return false;
+                        if (ctx->save_sp_top >= 15) BAIL("SAVE_STACK_POS stack overflow");
                         ctx->save_sp_stack[++ctx->save_sp_top] = ctx->sp;
                         // Also emit runtime call to save VM stack position
                         jit_emit_mov(asm, 0, BC_TY);
@@ -3579,7 +3542,7 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                         break;
                 CASE(POP_STACK_POS)
                         // Restore compile-time sp
-                        if (ctx->save_sp_top < 0) return false;
+                        if (ctx->save_sp_top < 0) BAIL("POP_STACK_POS stack underflow");
                         ctx->sp = ctx->save_sp_stack[ctx->save_sp_top--];
                         // Also emit runtime call to restore VM stack position
                         jit_emit_mov(asm, 0, BC_TY);
@@ -3588,7 +3551,7 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                         break;
                 CASE(POP_STACK_POS_POP)
                         // Restore compile-time sp - 1
-                        if (ctx->save_sp_top < 0) return false;
+                        if (ctx->save_sp_top < 0) BAIL("POP_STACK_POS_POP stack underflow");
                         ctx->sp = ctx->save_sp_stack[ctx->save_sp_top--] - 1;
                         // Also emit runtime call to restore VM stack position - 1
                         jit_emit_mov(asm, 0, BC_TY);
@@ -3601,7 +3564,7 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                 CASE(ARRAY) {
                         // Elements are on ops stack from save_sp to sp
                         // Pop from compile-time save_sp stack
-                        if (ctx->save_sp_top < 0) return false;
+                        if (ctx->save_sp_top < 0) BAIL("ARRAY requires SAVE_STACK_POS");
                         int saved = ctx->save_sp_stack[ctx->save_sp_top--];
                         int n = ctx->sp - saved;
                         // Pop from runtime SP_STACK (mirrors VM's *vvX(SP_STACK))
@@ -3668,7 +3631,7 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                                 // ASSIGN peeks, doesn't pop
                                 bc_copy_value(ctx, BC_LOC, n * VALUE_SIZE, BC_OPS, OP_OFF(ctx->sp - 1));
                         } else {
-                                return false;
+                                BAIL("TARGET_REF without ASSIGN fusion");
                         }
                         break;
                 }
@@ -3676,8 +3639,8 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                 CASE(MAYBE_ASSIGN)
                         // Conditional assign to target: if TOS is not nil/none, assign
                         // For simplicity, bail
-                        LOG("JIT[bc]: MAYBE_ASSIGN not yet supported");
-                        return false;
+                        BAIL("MAYBE_ASSIGN not yet supported");
+                        break;
 
                 // --- Misc ops ---
                 CASE(CHECK_MATCH) {
@@ -3770,10 +3733,7 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                 }
 
                 CASE(QUESTION) {
-                        // Check if TOS is nil → NONE, otherwise keep
-                        // Actually QUESTION is the ? operator: pops, if nil returns NONE, else keeps
-                        // For now bail
-                        LOG("JIT[bc]: QUESTION not yet supported");
+                        BAIL("QUESTION unsupported");
                         return false;
                 }
 
@@ -3876,12 +3836,17 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                         break;
 
                 CASE(THROW_IF_NIL) {
-                        // If TOS is nil, throw MatchError. Does not pop.
-                        int tos_off = OP_OFF(ctx->sp - 1);
+                        // If TOS is nil, tag with MatchError and throw
+                        int off = OP_OFF(ctx->sp - 1);
+                        int lbl_not_nil = ctx->next_label++;
+                        jit_emit_ldrb(asm, BC_S0, BC_OPS, off + VAL_OFF_TYPE);
+                        jit_emit_cmp_ri(asm, BC_S0, VALUE_NIL);
+                        jit_emit_branch_ne(asm, lbl_not_nil);
                         jit_emit_mov(asm, 0, BC_TY);
-                        jit_emit_add_imm(asm, 1, BC_OPS, tos_off);
-                        jit_emit_load_imm(asm, BC_CALL, (intptr_t)jit_rt_throw_if_nil);
+                        jit_emit_add_imm(asm, 1, BC_OPS, off);
+                        jit_emit_load_imm(asm, BC_CALL, (intptr_t)jit_rt_bad_match);
                         jit_emit_call_reg(asm, BC_CALL);
+                        jit_emit_label(asm, lbl_not_nil);
                         break;
                 }
 
@@ -3892,6 +3857,13 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                         break;
 
                 CASE(BAD_MATCH)
+                        int tos_off = OP_OFF(ctx->sp - 1);
+                        jit_emit_mov(asm, 0, BC_TY);
+                        jit_emit_add_imm(asm, 1, BC_OPS, tos_off);
+                        jit_emit_load_imm(asm, BC_CALL, (intptr_t)jit_rt_bad_match);
+                        jit_emit_call_reg(asm, BC_CALL);
+                        break;
+
                 CASE(BAD_DISPATCH)
                         break;
 
@@ -4126,14 +4098,14 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                         BC_READ(n);
                         // Call DoUnaryOp(ty, n, false) — but it operates on VM stack.
                         // For now bail.
-                        LOG("JIT[bc]: UNARY_OP not yet implemented");
+                        BAIL("UNARY_OP unsupported");
                         return false;
                 }
 
                 CASE(BINARY_OP) {
                         int n;
                         BC_READ(n);
-                        LOG("JIT[bc]: BINARY_OP not yet implemented");
+                        BAIL("BINARY_OP unsupported");
                         return false;
                 }
 
@@ -4204,7 +4176,7 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                         BC_READ(n);
                         int target = (int)(ip - code) + n;
                         int lbl_target = bc_find_label(ctx, target);
-                        if (lbl_target < 0) return false;
+                        if (lbl_target < 0) BAIL("invalid JUMP_WTF target");
 
                         int tos_off = OP_OFF(ctx->sp - 1);
                         jit_emit_ldrb(asm, BC_S0, BC_OPS, tos_off + VAL_OFF_TYPE);
@@ -4291,7 +4263,7 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                                 jit_emit_load_imm(asm, BC_CALL, (intptr_t)jit_rt_assign_global);
                                 jit_emit_call_reg(asm, BC_CALL);
                         } else {
-                                LOG("JIT[bc]: TARGET_GLOBAL without ASSIGN fusion");
+                                BAIL("TARGET_GLOBAL without ASSIGN fusion");
                                 return false;
                         }
                         break;
@@ -4339,7 +4311,7 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                         }
 
                         if (!simple) {
-                                LOG("JIT[bc]: TUPLE with named/spread fields not supported");
+                                BAIL("TUPLE with named/spread fields not supported");
                                 return false;
                         }
 
@@ -4361,7 +4333,7 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                         BC_READ(jump_off);
                         int target = (int)(ip - code) + jump_off;
                         int lbl_target = bc_find_label(ctx, target);
-                        if (lbl_target < 0) return false;
+                        if (lbl_target < 0) BAIL("invalid JUMP_IF_TYPE target");
 
                         int type_val;
                         BC_READ(type_val);
@@ -4381,7 +4353,7 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                         BC_READ(jump_off);
                         int target = (int)(ip - code) + jump_off;
                         int fail_lbl = bc_find_label(ctx, target);
-                        if (fail_lbl < 0) return false;
+                        if (fail_lbl < 0) BAIL("invalid ENSURE_LEN_TUPLE target");
 
                         int expected_count;
                         BC_READ(expected_count);
@@ -4404,7 +4376,7 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                         BC_READ(jump_off);
                         int target = (int)(ip - code) + jump_off;
                         int fail_lbl = bc_find_label(ctx, target);
-                        if (fail_lbl < 0) return false;
+                        if (fail_lbl < 0) BAIL("invalid TRY_TAG_POP target");
 
                         int tag;
                         BC_READ(tag);
@@ -4444,7 +4416,7 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                         BC_READ(jump_off);
                         int target = (int)(ip - code) + jump_off;
                         int fail_lbl = bc_find_label(ctx, target);
-                        if (fail_lbl < 0) return false;
+                        if (fail_lbl < 0) BAIL("invalid INDEX_TUPLE target");
 
                         int idx;
                         BC_READ(idx);
@@ -4474,9 +4446,9 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                         BC_READ(jump_off);
                         int target = (int)(ip - code) + jump_off;
                         int fail_lbl = bc_find_label(ctx, target);
-                        if (fail_lbl < 0) return false;
+                        if (fail_lbl < 0) BAIL("invalid TRY_TUPLE_MEMBER target");
 
-                        int required;
+                        u8 required;
                         BC_READ(required);
                         int name_id;
                         BC_READ(name_id);
@@ -4526,7 +4498,7 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                         BC_READ(jump_off);
                         int target = (int)(ip - code) + jump_off;
                         int fail_lbl = bc_find_label(ctx, target);
-                        if (fail_lbl < 0) return false;
+                        if (fail_lbl < 0) BAIL("invalid TRY_STEAL_TAG target");
 
                         int tos_off = OP_OFF(ctx->sp - 1);
 
@@ -4551,7 +4523,7 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                         BC_READ(jump_off);
                         int target = (int)(ip - code) + jump_off;
                         int target_lbl = bc_find_label(ctx, target);
-                        if (target_lbl < 0) return false;
+                        if (target_lbl < 0) BAIL("invalid JII target");
 
                         int class_id;
                         BC_READ(class_id);
@@ -4676,7 +4648,7 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
 
                         int idx;
                         BC_READ(idx);
-                        int required;
+                        u8 required;
                         BC_READ(required);
 
                         int tos_off = OP_OFF(ctx->sp - 1);
@@ -4704,7 +4676,7 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                         BC_READ(jump_off);
                         int target = (int)(ip - code) + jump_off;
                         int target_lbl = bc_find_label(ctx, target);
-                        if (target_lbl < 0) return false;
+                        if (target_lbl < 0) BAIL("invalid JNI target");
 
                         int class_id;
                         BC_READ(class_id);
@@ -4737,7 +4709,7 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                         BC_READ(jump_off);
                         int target = (int)(ip - code) + jump_off;
                         int fail_lbl = bc_find_label(ctx, target);
-                        if (fail_lbl < 0) return false;
+                        if (fail_lbl < 0) BAIL("invalid ENSURE_LEN target");
 
                         int expected_len;
                         BC_READ(expected_len);
@@ -4778,7 +4750,7 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                         BC_READ(jump_off);
                         int target = (int)(ip - code) + jump_off;
                         int exit_lbl = bc_find_label(ctx, target);
-                        if (exit_lbl < 0) return false;
+                        if (exit_lbl < 0) BAIL("invalid LOOP_CHECK target");
 
                         int var_count;
                         BC_READ(var_count);
@@ -4831,8 +4803,7 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                         for (int q = 0; q < nkw; ++q) BC_SKIPSTR();
 
                         if (nkw > 0 || argc == -1) {
-                                LOG("JIT[bc]: CALL_STATIC_METHOD with kwargs/spread not supported");
-                                return false;
+                                BAIL("CALL_STATIC_METHOD with kwargs/spread not supported");
                         }
 
                         // Args are on the operand stack: ops[sp-argc..sp-1]
@@ -4866,11 +4837,9 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                 CASE(MUT_SHL)
                 CASE(MUT_SHR)
                 CASE(TARGET_SUBSCRIPT)
-                        LOG("JIT[bc]: emit bail on %s", GetInstructionName(op));
                         return false;
 
                 default:
-                        LOG("JIT[bc]: unknown emit opcode %d=%s", op, GetInstructionName(op));
                         return false;
                 }
         }
@@ -4900,9 +4869,19 @@ jit_compile(Ty *ty, Value const *func)
         Expr const *_e = expr_of(func);
         char const *clsn = (_e && _e->class) ? _e->class->name : "";
 
-        LOG("JIT[bc]: compiling %s%s%s (params=%d, bound=%d, code_size=%d, caps=%d)",
+#if JIT_SCAN_LOG
+        LOGX("JIT[bc]: compiling %s%s%s (params=%d, bound=%d, code_size=%d, caps=%d)",
             name, clsn[0] ? " of " : "", clsn,
             param_count, bound, code_size, info[FUN_INFO_CAPTURES]);
+#endif
+
+#if JIT_DUMP_DIS
+        static _Thread_local byte_vector dis;
+        DumpProgram(ty, &dis, "<bytecode>", code_of(func), code_of(func) + code_size_of(func), false);
+        xvP(dis, '\0');
+        LOGX("JIT[bc]: bytecode for %s:\n%s", name, vv(dis));
+        v0(dis);
+#endif
 
         JitBcCtx ctx = {0};
         ctx.ty = ty;
@@ -4935,7 +4914,9 @@ jit_compile(Ty *ty, Value const *func)
 
         // Pre-scan: discover jump targets, check support
         if (!bc_prescan(&ctx, bc, code_size)) {
-                LOG("JIT[bc]: bail on %s", name);
+#if JIT_SCAN_LOG
+                LOGX("JIT[bc]: bail on %s", name);
+#endif
 #if JIT_DEBUG_CALLS
                 fprintf(stderr, "JIT BAIL: %s\n", name);
 #endif
@@ -5020,18 +5001,10 @@ jit_compile(Ty *ty, Value const *func)
         ji->env = NULL;
         ji->env_count = info[FUN_INFO_CAPTURES];
 
-        LOG("JIT[bc]: compiled %s (%d params, %d bound, %zu bytes native)",
+#if JIT_LOG_SCAN
+        LOGX("JIT[bc]: compiled %s (%d params, %d bound, %zu bytes native)",
             name, param_count, bound, final_size);
-#if JIT_DEBUG_CALLS
-        fprintf(stderr, "JIT OK:   %s (params=%d bound=%d)\n", name, param_count, bound);
 #endif
-
-        static _Thread_local byte_vector dis;
-
-        //DumpProgram(ty, &dis, "<bytecode>", code_of(func), code_of(func) + code_size_of(func), false);
-        //xvP(dis, '\0');
-        //LOGX("JIT compiled %s:\n%s", VSC(func), vv(dis));
-        //v0(dis);
 
         return ji;
 }
@@ -5044,7 +5017,6 @@ void
 jit_init(Ty *ty)
 {
         (void)ty;
-        LOG("JIT: initialized");
 }
 
 void
