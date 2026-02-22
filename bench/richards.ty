@@ -1,0 +1,403 @@
+// Task IDs
+const I_IDLE = 1;
+const I_WORK = 2;
+const I_HANDLERA = 3;
+const I_HANDLERB = 4;
+const I_DEVA = 5;
+const I_DEVB = 6;
+
+// Packet types
+const K_DEV = 1000;
+const K_WORK = 1001;
+
+const BUFSIZE = 4;
+const TASKTABSIZE = 10;
+
+tag Device, Idle, Handler, Worker;
+
+class Packet {
+    link: Packet | nil
+    ident: Int
+    kind: Int
+    datum: Int
+    data: Array[Int]
+
+    init(l: Packet | nil, i: Int, k: Int) {
+        link = l;
+        ident = i;
+        kind = k;
+        datum = 0;
+        data = [0, 0, 0, 0];
+    }
+}
+
+fn packet_append_to(pkt: Packet, lst: Packet | nil) -> Packet {
+    pkt.link = nil;
+    match lst {
+        $lst => {
+            let p = lst;
+            while let $next = p.link {
+                p = next;
+            }
+            p.link = pkt;
+            lst
+        },
+
+        _ => pkt
+    }
+}
+
+class DeviceTaskRec {
+    pending: Packet | nil
+
+    init() {
+        pending = nil;
+    }
+}
+
+class IdleTaskRec {
+    control: Int
+    count: Int
+
+    init() {
+        control = 1;
+        count = 10000;
+    }
+}
+
+class HandlerTaskRec {
+    work_in: Packet | nil
+    device_in: Packet | nil
+
+    init() {
+        work_in = nil;
+        device_in = nil;
+    }
+
+    work_in_add(p: Packet) -> Packet | nil {
+        work_in = packet_append_to(p, work_in);
+        work_in
+    }
+
+    device_in_add(p: Packet) -> Packet | nil {
+        device_in = packet_append_to(p, device_in);
+        device_in
+    }
+}
+
+class WorkerTaskRec {
+    destination: Int
+    count: Int
+
+    init() {
+        destination = I_HANDLERA;
+        count = 0;
+    }
+}
+
+class TaskState {
+    packet_pending: Bool
+    task_waiting: Bool
+    task_holding: Bool
+
+    init(pp: Bool, tw: Bool, th: Bool) {
+        packet_pending = pp;
+        task_waiting = tw;
+        task_holding = th;
+    }
+
+    mark_pending() {
+        packet_pending = true;
+        task_waiting = false;
+        task_holding = false;
+    }
+
+    set_running() {
+        packet_pending = false;
+        task_waiting = false;
+        task_holding = false;
+    }
+}
+
+fn task_state_running() -> TaskState {
+    TaskState(false, false, false)
+}
+
+fn task_state_waiting() -> TaskState {
+    TaskState(false, true, false)
+}
+
+fn task_state_waiting_with_packet() -> TaskState {
+    TaskState(true, true, false)
+}
+
+class Task {
+    link: Task | nil
+    ident: Int
+    priority: Int
+    input: Packet | nil
+    packet_pending: Bool
+    task_waiting: Bool
+    task_holding: Bool
+    kind: Device | Idle | Handler | Worker
+    rec: _
+
+    init(l: Task | nil, i: Int, p: Int, w: Packet | nil, state: TaskState, k: Device | Idle | Handler | Worker, r: _) {
+        link = l;
+        ident = i;
+        priority = p;
+        input = w;
+        packet_pending = state.packet_pending;
+        task_waiting = state.task_waiting;
+        task_holding = state.task_holding;
+        kind = k;
+        rec = r;
+    }
+
+    is_waiting_with_packet() -> Bool {
+        packet_pending && task_waiting && !task_holding
+    }
+
+    is_holding_or_waiting() -> Bool {
+        task_holding || (!packet_pending && task_waiting)
+    }
+
+    add_packet(p: Packet, old: Task) -> Task {
+        if input == nil {
+            input = p;
+            packet_pending = true;
+            if priority > old.priority {
+                return self;
+            }
+        } else {
+            p = packet_append_to(p, input);
+        }
+        old
+    }
+
+    wait_task() -> Task {
+        task_waiting = true;
+        self
+    }
+
+    set_running() {
+        packet_pending = false;
+        task_waiting = false;
+        task_holding = false;
+    }
+
+    mark_pending() {
+        packet_pending = true;
+        task_waiting = false;
+        task_holding = false;
+    }
+}
+
+class TaskWorkArea {
+    task_list: Task | nil
+    task_tab: Array[Task | nil]
+    hold_count: Int
+    qpkt_count: Int
+
+    init() {
+        task_list = nil;
+        task_tab = [nil, nil, nil, nil, nil, nil, nil, nil, nil, nil];
+        hold_count = 0;
+        qpkt_count = 0;
+    }
+
+    task_new(i: Int, p: Int, w: Packet | nil, state: TaskState, kind: Device | Idle | Handler | Worker, rec: _) -> Task {
+        let t = Task(task_list, i, p, w, state, kind, rec);
+        task_list = t;
+        task_tab[i] = t;
+        t
+    }
+
+    find_tcb(id: Int) -> Task {
+        if not let $t = task_tab[id] {
+            throw RuntimeError("Bad task id");
+        }
+        t
+    }
+}
+
+fn task_qpkt(t: Task, pkt: Packet, work: TaskWorkArea) -> Task {
+    let target = work.find_tcb(pkt.ident);
+    work.qpkt_count = work.qpkt_count + 1;
+    pkt.link = nil;
+    pkt.ident = t.ident;
+    target.add_packet(pkt, t)
+}
+
+fn task_hold(t: Task, work: TaskWorkArea) -> Task | nil {
+    work.hold_count = work.hold_count + 1;
+    t.task_holding = true;
+    t.link
+}
+
+fn task_release(t: Task, i: Int, work: TaskWorkArea) -> Task {
+    let target = work.find_tcb(i);
+    target.task_holding = false;
+    if target.priority > t.priority {
+        target
+    } else {
+        t
+    }
+}
+
+fn task_run_task(t: Task, work: TaskWorkArea) -> Task | nil {
+    let msg: Packet | nil = nil
+    if t.is_waiting_with_packet() {
+        msg = t.input;
+        t.input = msg.link;
+        if t.input == nil {
+            t.set_running();
+        } else {
+            t.mark_pending();
+        }
+    }
+
+    match t.kind {
+        Device  => device_fn(t, msg, work),
+        Idle    => idle_fn(t, msg, work),
+        Handler => handler_fn(t, msg, work),
+        Worker  => worker_fn(t, msg, work)
+    }
+}
+
+fn device_fn(t: Task, pkt: Packet | nil, work: TaskWorkArea) -> Task | nil {
+    let d: DeviceTaskRec = t.rec;
+
+    if let $pkt = pkt {
+        d.pending = pkt;
+        return task_hold(t, work);
+    }
+
+    pkt = d.pending;
+
+    if pkt == nil {
+        return t.wait_task();
+    }
+
+    d.pending = nil;
+
+    return task_qpkt(t, pkt, work);
+}
+
+fn handler_fn(t: Task, pkt: Packet | nil, work: TaskWorkArea) -> Task | nil {
+    let h: HandlerTaskRec = t.rec;
+    if pkt != nil {
+        if pkt.kind == K_WORK {
+            h.work_in_add(pkt);
+        } else {
+            h.device_in_add(pkt);
+        }
+    }
+
+    let work_pkt = h.work_in;
+    if work_pkt == nil {
+        return t.wait_task();
+    }
+
+    let count = work_pkt.datum;
+    if count >= BUFSIZE {
+        h.work_in = work_pkt.link;
+        return task_qpkt(t, work_pkt, work);
+    }
+
+    let dev = h.device_in;
+    if dev == nil {
+        return t.wait_task();
+    }
+
+    h.device_in = dev.link;
+    dev.datum = work_pkt.data[count];
+    work_pkt.datum = count + 1;
+    task_qpkt(t, dev, work)
+}
+
+fn idle_fn(t: Task, pkt: Packet | nil, work: TaskWorkArea) -> Task | nil {
+    let i: IdleTaskRec = t.rec;
+    i.count = i.count - 1;
+    if i.count == 0 {
+        return task_hold(t, work);
+    } else if (i.control & 1) == 0 {
+        i.control = i.control / 2;
+        return task_release(t, I_DEVA, work);
+    } else {
+        i.control = (i.control / 2) ^ 0xd008;
+        return task_release(t, I_DEVB, work);
+    }
+}
+
+fn worker_fn(t: Task, pkt: Packet | nil, work: TaskWorkArea) -> Task | nil {
+    let w: WorkerTaskRec = t.rec;
+    if pkt == nil {
+        return t.wait_task();
+    }
+
+    let dest = if w.destination == I_HANDLERA { I_HANDLERB } else { I_HANDLERA };
+    w.destination = dest;
+    pkt.ident = dest;
+    pkt.datum = 0;
+
+    for i in 0..BUFSIZE {
+        w.count = w.count + 1;
+        if w.count > 26 {
+            w.count = 1;
+        }
+        pkt.data[i] = 65 + w.count - 1;
+    }
+
+    task_qpkt(t, pkt, work)
+}
+
+fn schedule(work: TaskWorkArea) {
+    let t = work.task_list;
+    while t != nil {
+        if t.is_holding_or_waiting() {
+            t = t.link;
+        } else {
+            t = task_run_task(t, work);
+        }
+    }
+}
+
+fn richards_run(iterations: Int) -> Bool {
+    for _ in 0..iterations {
+        let work = TaskWorkArea();
+
+        work.task_new(I_IDLE, 1, nil, task_state_running(), Idle, IdleTaskRec());
+
+        let wkq = Packet(nil, 0, K_WORK);
+        wkq = Packet(wkq, 0, K_WORK);
+        work.task_new(I_WORK, 1000, wkq, task_state_waiting_with_packet(), Worker, WorkerTaskRec());
+
+        wkq = Packet(nil, I_DEVA, K_DEV);
+        wkq = Packet(wkq, I_DEVA, K_DEV);
+        wkq = Packet(wkq, I_DEVA, K_DEV);
+        work.task_new(I_HANDLERA, 2000, wkq, task_state_waiting_with_packet(), Handler, HandlerTaskRec());
+
+        wkq = Packet(nil, I_DEVB, K_DEV);
+        wkq = Packet(wkq, I_DEVB, K_DEV);
+        wkq = Packet(wkq, I_DEVB, K_DEV);
+        work.task_new(I_HANDLERB, 3000, wkq, task_state_waiting_with_packet(), Handler, HandlerTaskRec());
+
+        work.task_new(I_DEVA, 4000, nil, task_state_waiting(), Device, DeviceTaskRec());
+        work.task_new(I_DEVB, 5000, nil, task_state_waiting(), Device, DeviceTaskRec());
+
+        schedule(work);
+
+        if work.hold_count != 9297 || work.qpkt_count != 23246 {
+            return false;
+        }
+    }
+    true
+}
+
+fn main() {
+    let result = richards_run(50);
+    print(if result { "PASS" } else { "FAIL" });
+}
+
+main()

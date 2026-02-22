@@ -376,6 +376,7 @@ target_compile_definitions(${_tgt_ty_interface}
     $<$<NOT:$<CONFIG:Debug>>:TY_RELEASE>
     $<$<NOT:$<CONFIG:Debug>>:TY_NO_LOG>
     TY_HAVE_VERSION_INFO
+    TY_ENABLE_JIT
     PCRE2_CODE_UNIT_WIDTH=8
     XXH_INLINE_ALL
     XXH_STATIC_LINKING_ONLY
