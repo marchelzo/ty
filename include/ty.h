@@ -238,8 +238,7 @@ enum {
         FF_FROM_EVAL = (1 << 1),
         FF_DECORATED = (1 << 2),
         FF_HAS_META  = (1 << 3),
-        FF_OVERLOAD  = (1 << 4),
-        FF_JIT       = (1 << 5)
+        FF_OVERLOAD  = (1 << 4)
 };
 
 enum {
@@ -258,8 +257,12 @@ enum {
         FUN_META        = FUN_DOC         + sizeof (uptr),
         FUN_NAME        = FUN_META        + sizeof (uptr),
         FUN_EXPR        = FUN_NAME        + sizeof (uptr),
+#if defined(TY_ENABLE_JIT)
         FUN_JIT         = FUN_EXPR        + sizeof (uptr),
         FUN_PARAM_NAMES = FUN_JIT         + sizeof (uptr)
+#else
+        FUN_PARAM_NAMES = FUN_EXPR        + sizeof (uptr)
+#endif
 };
 
 #define TY_ERROR_TYPES           \

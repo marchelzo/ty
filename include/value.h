@@ -1413,13 +1413,19 @@ self_of(Value const *f)
 static inline void *
 jit_of(Value const *f)
 {
+#if defined(TY_ENABLE_JIT)
         return (void *)*(uptr *)info_of(f, FUN_JIT);
+#else
+        return NULL;
+#endif
 }
 
 static inline void
 set_jit_of(Value const *f, void *code)
 {
+#if defined(TY_ENABLE_JIT)
         *(uptr *)info_of(f, FUN_JIT) = (uptr)code;
+#endif
 }
 
 static inline bool

@@ -5,9 +5,9 @@
 #include "value.h"
 #include "ast.h"
 
+#define JIT_LOG_VERBOSE 1
+
 // JIT compilation modes
-#define JIT_MODE_INT      0   // Pure integer fast path (intmax_t args/return)
-#define JIT_MODE_GENERIC  1   // Generic Value path with C helper calls
 #define JIT_MODE_BYTECODE 2   // Bytecode-to-native compilation
 
 typedef struct jit_info {
@@ -31,10 +31,6 @@ jit_init(Ty *ty);
 // Returns a JitInfo* on success, or NULL on failure.
 JitInfo *
 jit_compile(Ty *ty, Value const *func);
-
-// Call a JIT'd native function. Arguments are on the VM stack.
-Value
-jit_call(Ty *ty, Value const *f, int argc);
 
 // Free JIT resources
 void

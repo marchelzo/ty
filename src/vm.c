@@ -1225,7 +1225,7 @@ call_jit(Ty *ty, Value const *f)
         int np = f->info[FUN_INFO_PARAM_COUNT];
         int bound = f->info[FUN_INFO_BOUND];
 
-#if 1
+#if JIT_LOG_VERBOSE
         LOGX("[jit] call %s: fp=%d   stk=%zu  bound=%d", SHOW(f, BASIC), (int)fp, vN(STACK), bound);
         for (int i = 0; i < np; ++i) {
                 LOGX("    arg%d = %s", i, SHOW(v_(STACK, fp + i), BASIC, ABBREV));
@@ -1363,12 +1363,13 @@ call(Ty *ty, Value const *f, Value const *pSelf, int argc, Value const *pKwargs)
                 return false;
         }
 
-        //XXXX("[call] ");
         xcall(ty, f, pSelf, argc, pKwargs, IP);
 
+#if defined(TY_ENABLE_JIT)
         if (LIKELY(call_jit(ty, f))) {
                 return false;
         }
+#endif
 
         IP = code_of(f);
 
@@ -1393,12 +1394,13 @@ call6t(Ty *ty, Value const *f, Value const *pSelf, int argc, Value const *pKwarg
 static void
 exec_fn(Ty *ty, Value const *f, Value const *pSelf, int argc, Value const *pKwargs)
 {
-        //XXXX("[exec] ");
         xcall(ty, f, pSelf, argc, pKwargs, &halt);
 
+#if defined(TY_ENABLE_JIT)
         if (LIKELY(call_jit(ty, f))) {
                 return;
         }
+#endif
 
         vm_exec(ty, code_of(f));
 }
@@ -7695,7 +7697,6 @@ RETURN:
                         EXEC_DEPTH -= 1;
                         IP = _ip;
                         LOG("vm_exec(): <== %d (HALT: IP=%p)", EXEC_DEPTH, (void *)IP);
-                        //LOGX("halt (n_sp=%zu)", vN(SP_STACK));
                         return;
 
                 default:
