@@ -216,7 +216,7 @@ enum {
 
 #define NO_TYPES (!CheckTypes || TY_IS_READY)
 
-#define RUNTIME_CONSTRAINTS CheckConstraints
+#define RUNTIME_CONSTRAINTS 0
 
 #if defined(TY_PROFILER) || 1
 #define KEEP_LOCATION(e) true
@@ -7357,8 +7357,7 @@ emit_function(Ty *ty, Expr const *e)
         EP(fun_name);
         EP(e);
 #if defined(TY_ENABLE_JIT)
-        bool jit = e->must_jit || (e->type == EXPRESSION_FUNCTION);
-        EP(jit ? (void *)0xFA57 : NULL);
+        EP((e->type == EXPRESSION_FUNCTION) ? (void *)0xFA57 : NULL);
 #endif
 
         LOG("COMPILING FUNCTION: %s", scope_name(ty, e->scope));

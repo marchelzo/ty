@@ -161,6 +161,12 @@ vm_local(Ty *ty, int i);
 Value *
 vm_global(Ty *ty, int i);
 
+void
+vm_to_string(Ty *ty, Value *v);
+
+Value
+vm_make_range(Ty *ty, Value const *a, Value const *b, bool inclusive);
+
 Value
 GetMember(Ty *ty, Value v, int i, bool try_missing, bool exec);
 
@@ -238,6 +244,16 @@ vm_rethrow(Ty *ty);
 
 void
 xprint_stack(Ty *ty, int n);
+
+// JIT helpers (implemented in vm.c, called from jit.c)
+void
+vm_jit_push_target(Ty *ty, Value *v);
+
+Value *
+vm_jit_pop_target(Ty *ty);
+
+Value
+vm_jit_bind_method(Ty *ty, Value *f, Value *v);
 
 #define VM_TRY() (setjmp(vm_push_try(ty)->jb) == 0)
 
