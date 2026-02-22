@@ -9275,6 +9275,8 @@ emit_match_stmt_group(Ty *ty, Stmt const *stmt, PatternGroup *grp, bool keep, bo
                         break;
                 }
         }
+
+        return returns;
 }
 
 static bool

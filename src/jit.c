@@ -945,6 +945,37 @@ jit_rt_jii(Ty *ty, Value *v, int class_id)
         return class_is_subclass(ty, ClassOf(v), class_id);
 }
 
+// CALL_STATIC_METHOD: push CLASS value as self, then CallMethod
+static void
+jit_rt_call_static_method(Ty *ty, Value *result, int class_id, int argc, int method_id, int nkw)
+{
+        vN(ty->stack) = (result - vv(ty->stack)) + argc;
+        vm_push(ty, &(Value){ .type = VALUE_CLASS, .class = class_id, .object = NULL, .tags = 0 });
+        CallMethod(ty, method_id, argc, nkw, true, true);
+        *result = *vm_pop(ty);
+}
+
+// DEFAULT_DICT: pop default value, create dict with default
+static void
+jit_rt_default_dict(Ty *ty, Value *dflt)
+{
+        vm_jit_dict_literal(ty, dflt);
+}
+
+// LOOP_ITER: push SENTINEL, RC=0, IterGetNext
+static void
+jit_rt_loop_iter(Ty *ty)
+{
+        vm_jit_loop_iter(ty);
+}
+
+// LOOP_CHECK: returns true if loop is done (NONE detected)
+static bool
+jit_rt_loop_check(Ty *ty, int z)
+{
+        return vm_jit_loop_check(ty, z);
+}
+
 // CAPTURE: box a local variable and store in env
 static void
 jit_rt_capture(Ty *ty, Value *local, Value **env, int env_idx)
@@ -1703,6 +1734,45 @@ bc_prescan(JitBcCtx *ctx, char const *code, int code_size)
                         if (bc_label_for(ctx, target) < 0) return false;
                         break;
                 }
+
+                case INSTR_JNI: {
+                        i32 jump_off;
+                        BC_READ(jump_off);
+                        int target = (int)(ip - code) + jump_off;
+                        if (bc_label_for(ctx, target) < 0) return false;
+                        BC_SKIP(i32); // class_id
+                        break;
+                }
+
+                case INSTR_ENSURE_LEN: {
+                        i32 jump_off;
+                        BC_READ(jump_off);
+                        int target = (int)(ip - code) + jump_off;
+                        if (bc_label_for(ctx, target) < 0) return false;
+                        BC_SKIP(i32); // expected_length
+                        break;
+                }
+
+                case INSTR_LOOP_ITER:
+                case INSTR_DEFAULT_DICT:
+                        break;
+
+                case INSTR_LOOP_CHECK: {
+                        i32 jump_off;
+                        BC_READ(jump_off);
+                        int target = (int)(ip - code) + jump_off;
+                        if (bc_label_for(ctx, target) < 0) return false;
+                        BC_SKIP(i32); // var_count
+                        break;
+                }
+
+                case INSTR_CALL_STATIC_METHOD:
+                        BC_SKIP(i32);  // class_id
+                        BC_SKIP(i32);  // argc
+                        BC_SKIP(i32);  // method_id
+                        BC_READ(nkw);
+                        for (int q = 0; q < nkw; ++q) BC_SKIPSTR();
+                        break;
 
                 case INSTR_FUNCTION: {
                         i32 bound_caps;
@@ -4625,6 +4695,161 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                         jit_emit_branch_eq(asm, target_lbl);
 
                         ctx->sp++;
+                        break;
+                }
+
+                // --- JNI (Jump if Not Instance) ---
+                CASE(JNI) {
+                        int jump_off;
+                        BC_READ(jump_off);
+                        int target = (int)(ip - code) + jump_off;
+                        int target_lbl = bc_find_label(ctx, target);
+                        if (target_lbl < 0) return false;
+
+                        int class_id;
+                        BC_READ(class_id);
+
+                        bool pop_val = (class_id < 0);
+                        int actual_class = pop_val ? -class_id : class_id;
+
+                        int val_off = OP_OFF(ctx->sp - 1);
+
+                        jit_emit_mov(asm, 0, BC_TY);
+                        jit_emit_add_imm(asm, 1, BC_OPS, val_off);
+                        jit_emit_load_imm(asm, 2, actual_class);
+                        jit_emit_load_imm(asm, BC_CALL, (intptr_t)jit_rt_jii);
+                        jit_emit_call_reg(asm, BC_CALL);
+
+                        if (pop_val) {
+                                ctx->sp--;
+                        }
+
+                        // JNI: jump if NOT instance (opposite of JII)
+                        jit_emit_cmp_ri(asm, 0, 0);
+                        bc_set_label_sp(ctx, target, ctx->sp);
+                        jit_emit_branch_eq(asm, target_lbl);
+                        break;
+                }
+
+                // --- ENSURE_LEN (array length check) ---
+                CASE(ENSURE_LEN) {
+                        int jump_off;
+                        BC_READ(jump_off);
+                        int target = (int)(ip - code) + jump_off;
+                        int fail_lbl = bc_find_label(ctx, target);
+                        if (fail_lbl < 0) return false;
+
+                        int expected_len;
+                        BC_READ(expected_len);
+
+                        int tos_off = OP_OFF(ctx->sp - 1);
+
+                        // Check type == VALUE_ARRAY
+                        jit_emit_ldrb(asm, BC_S0, BC_OPS, tos_off + VAL_OFF_TYPE);
+                        jit_emit_cmp_ri(asm, BC_S0, VALUE_ARRAY);
+                        bc_set_label_sp(ctx, target, ctx->sp);
+                        jit_emit_branch_ne(asm, fail_lbl);
+
+                        // Load array pointer (at union offset = VAL_OFF_Z)
+                        jit_emit_ldr64(asm, BC_S0, BC_OPS, tos_off + VAL_OFF_Z);
+                        // Load array->count (offsetof(Array, count))
+                        jit_emit_ldr64(asm, BC_S0, BC_S0, (int)offsetof(Array, count));
+                        // If count > expected_len, jump to fail
+                        jit_emit_cmp_ri(asm, BC_S0, expected_len);
+                        jit_emit_branch_gt(asm, fail_lbl);
+                        break;
+                }
+
+                // --- LOOP_ITER ---
+                CASE(LOOP_ITER) {
+                        // Call runtime helper: push SENTINEL, RC=0, IterGetNext
+                        jit_emit_mov(asm, 0, BC_TY);
+                        jit_emit_load_imm(asm, BC_CALL, (intptr_t)jit_rt_loop_iter);
+                        jit_emit_call_reg(asm, BC_CALL);
+                        // Compiler tracks LOOP_ITER as sp += 2 (SENTINEL + one result)
+                        ctx->sp += 2;
+                        if (ctx->sp > ctx->max_sp) ctx->max_sp = ctx->sp;
+                        break;
+                }
+
+                // --- LOOP_CHECK ---
+                CASE(LOOP_CHECK) {
+                        int jump_off;
+                        BC_READ(jump_off);
+                        int target = (int)(ip - code) + jump_off;
+                        int exit_lbl = bc_find_label(ctx, target);
+                        if (exit_lbl < 0) return false;
+
+                        int var_count;
+                        BC_READ(var_count);
+
+                        // Call runtime helper: returns true if loop done (NONE)
+                        jit_emit_mov(asm, 0, BC_TY);
+                        jit_emit_load_imm(asm, 1, var_count);
+                        jit_emit_load_imm(asm, BC_CALL, (intptr_t)jit_rt_loop_check);
+                        jit_emit_call_reg(asm, BC_CALL);
+
+                        // Exit path: helper popped 4 values
+                        bc_set_label_sp(ctx, target, ctx->sp - 4);
+
+                        // Check return value: true = exit loop
+                        jit_emit_cmp_ri32(asm, 0, 0);
+                        jit_emit_branch_ne(asm, exit_lbl);
+
+                        // Continue path: stack adjusted to have var_count values
+                        // Net change from LOOP_CHECK: +(var_count - 1) relative to LOOP_ITER
+                        ctx->sp += (var_count - 1);
+                        if (ctx->sp > ctx->max_sp) ctx->max_sp = ctx->sp;
+                        break;
+                }
+
+                // --- DEFAULT_DICT ---
+                CASE(DEFAULT_DICT) {
+                        // Pop default value (TOS), then create dict from saved stack pos
+                        int dflt_off = OP_OFF(ctx->sp - 1);
+                        ctx->sp--;
+
+                        jit_emit_mov(asm, 0, BC_TY);
+                        jit_emit_add_imm(asm, 1, BC_OPS, dflt_off);
+                        jit_emit_load_imm(asm, BC_CALL, (intptr_t)jit_rt_default_dict);
+                        jit_emit_call_reg(asm, BC_CALL);
+
+                        // DoDictLiteral pops n kv pairs from saved stack pos, pushes dict
+                        // The SAVE_STACK_POS/POP_STACK_POS mechanism handles the sp restore
+                        // After DoDictLiteral, one dict value is on the stack
+                        // But the sp management is handled by the surrounding POP_STACK_POS
+                        break;
+                }
+
+                // --- CALL_STATIC_METHOD ---
+                CASE(CALL_STATIC_METHOD) {
+                        int class_id, argc, method_id, nkw;
+                        BC_READ(class_id);
+                        BC_READ(argc);
+                        BC_READ(method_id);
+                        BC_READ(nkw);
+                        for (int q = 0; q < nkw; ++q) BC_SKIPSTR();
+
+                        if (nkw > 0 || argc == -1) {
+                                LOG("JIT[bc]: CALL_STATIC_METHOD with kwargs/spread not supported");
+                                return false;
+                        }
+
+                        // Args are on the operand stack: ops[sp-argc..sp-1]
+                        // Result replaces the args: goes at ops[sp - argc]
+                        int result_off = OP_OFF(ctx->sp - argc);
+
+                        jit_emit_mov(asm, 0, BC_TY);
+                        jit_emit_add_imm(asm, 1, BC_OPS, result_off);
+                        jit_emit_load_imm(asm, 2, class_id);
+                        jit_emit_load_imm(asm, 3, argc);
+                        jit_emit_load_imm(asm, 4, method_id);
+                        jit_emit_load_imm(asm, 5, nkw);
+                        jit_emit_load_imm(asm, BC_CALL, (intptr_t)jit_rt_call_static_method);
+                        jit_emit_call_reg(asm, BC_CALL);
+
+                        // argc args consumed, 1 result produced
+                        ctx->sp -= (argc - 1);
                         break;
                 }
 
