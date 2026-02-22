@@ -1295,7 +1295,12 @@ bc_prescan(JitBcCtx *ctx, char const *code, int code_size)
                 uptr s;
 
 #if JIT_SCAN_LOG
-                LOGX("[jit] prescan[%4jd]: %s", ip - code - 1, GetInstructionName(op));
+                LOGX(
+                        "[jit] [%12.12s] [%16.16s] scan[%4jd] %s",
+                        expr_of(ctx->func)->mod->name,
+                        name_of(ctx->func),
+                        ip - code - 1, GetInstructionName(op)
+                );
 #endif
 
                 switch (op) {
@@ -2616,7 +2621,9 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
 
 #if JIT_SCAN_LOG
                 LOGX(
-                        "[jit] emit[%4jd] (sp=%2d, #sp_save=%d): %s",
+                        "[jit] [%12.12s] [%16.16s] emit[%4jd] (sp=%2d, #sp_save=%d): %s",
+                        expr_of(ctx->func)->mod->name,
+                        name_of(ctx->func),
                         ip - code - 1,
                         ctx->sp,
                         ctx->save_sp_top + 1,
