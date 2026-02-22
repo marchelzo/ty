@@ -1015,6 +1015,25 @@ BindMethod(Ty *ty, Value *f, Value *v)
         return meth;
 }
 
+// JIT helpers
+void
+vm_jit_push_target(Ty *ty, Value *v)
+{
+        pushtarget(v, NULL);
+}
+
+Value *
+vm_jit_pop_target(Ty *ty)
+{
+        return poptarget();
+}
+
+Value
+vm_jit_bind_method(Ty *ty, Value *f, Value *v)
+{
+        return BindMethod(ty, f, v);
+}
+
 static bool
 co_yield_value(Ty *ty);
 
@@ -1198,7 +1217,14 @@ call_jit(Ty *ty, Value const *f)
 
         if (UNLIKELY(jit == (void *)0xFA57)) {
                 JitInfo *info = jit_compile(ty, f);
-                jit = (info != NULL) ? info->code : NULL;
+                if (info == NULL) {
+                        if (expr_of(f)->must_jit) {
+                                zP("failed to JIT compile function %s", SHOW(f));
+                        }
+                        jit = NULL;
+                } else {
+                        jit = info->code;
+                }
                 set_jit_of(f, jit);
         }
 
@@ -10337,6 +10363,33 @@ Value *
 vm_local(Ty *ty, int i)
 {
         return local(ty, i);
+}
+
+void
+vm_to_string(Ty *ty, Value *v)
+{
+        if (v->type == VALUE_STRING) return;
+        xvP(ty->stack, *v);
+        if (UNLIKELY(v->type == VALUE_PTR)) {
+                char *s = VSC(v);
+                *v = STRING_NOGC(s, strlen(s));
+                vN(ty->stack) -= 1;
+        } else {
+                CallMethod(ty, NAMES._str_, 0, 0, false, false);
+                *v = *vvL(ty->stack);
+                vN(ty->stack) -= 1;
+        }
+}
+
+Value
+vm_make_range(Ty *ty, Value const *a, Value const *b, bool inclusive)
+{
+        xvP(ty->stack, *a);
+        xvP(ty->stack, *b);
+        DoRange(ty, inclusive);
+        Value result = *vvL(ty->stack);
+        vN(ty->stack) -= 1;
+        return result;
 }
 
 bool

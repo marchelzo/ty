@@ -278,6 +278,11 @@ static void jit_emit_call_reg(dasm_State **Dst, int reg) {
         |  blr Rx(reg)
 }
 
+// --- Compare register with register (sets flags for branch_eq/ne/lt/gt/le/ge) ---
+static void jit_emit_cmp_rr(dasm_State **Dst, int left, int right) {
+        |  cmp Rx(left), Rx(right)
+}
+
 // --- Compare register with immediate ---
 static void jit_emit_cmp_ri(dasm_State **Dst, int reg, int imm) {
         |  cmp Rx(reg), #imm
