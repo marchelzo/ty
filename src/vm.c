@@ -1248,7 +1248,7 @@ call_jit(Ty *ty, Value const *f)
         usize fp = vvL(FRAMES)->fp;
         Value v;
 
-#if JIT_LOG_VERBOSE
+#if JIT_RT_DEBUG
         int np = f->info[FUN_INFO_PARAM_COUNT];
         int bound = f->info[FUN_INFO_BOUND];
         LOGX("[jit] call %s: fp=%d   stk=%zu  bound=%d", SHOW(f, BASIC), (int)fp, vN(STACK), bound);
@@ -1264,7 +1264,9 @@ call_jit(Ty *ty, Value const *f)
         ((JitFn)jit)(ty, &v, v_(STACK, fp), f->env);
         EXEC_DEPTH -= 1;
 
-        PRINT_CTX("%sJIT RETURN%s: %s", TERM(95;1), TERM(0), SHOW(&v, BASIC, ABBREV));
+#if JIT_RT_DEBUG
+        XPRINT_CTX("%sJIT RETURN%s: %s", TERM(95;1), TERM(0), SHOW(&v, BASIC, ABBREV));
+#endif
 
         vN(STACK) = fp + 1;
         put(v);
@@ -5299,6 +5301,131 @@ DoCheckMatch(Ty *ty, bool exec)
         }
 }
 
+void
+DoSubscript(Ty *ty, bool exec)
+{
+        Value subscript = top()[0];
+        Value container = top()[-1];
+        Value v;
+        Value *vp;
+
+        switch (container.type) {
+        case VALUE_TYPE:
+                break;
+
+        case VALUE_ARRAY:
+                v = ArraySubscript(ty, container, subscript, true);
+                pop();
+                put(v);
+                break;
+
+        case VALUE_TUPLE:
+                if (LIKELY(subscript.type == VALUE_INTEGER)) {
+                        if (subscript.z < 0) {
+                                subscript.z += container.count;
+                        }
+
+                        if (subscript.z < 0 || subscript.z >= container.count) {
+                                v = tagged(ty, TAG_INDEX_ERR, container, subscript, NONE);
+                                pop();
+                                put(v);
+                                RaiseException(ty);
+                                break;
+
+                        }
+
+                        pop();
+                        pop();
+
+                        xpush(container.items[subscript.z]);
+                } else {
+                        zP(
+                                "non-integer index used in subscript expression: %s",
+                                VSC(&subscript)
+                        );
+                }
+                break;
+
+        case VALUE_STRING:
+                v = string_char(ty, &container, 1, NULL);
+                pop();
+                put(v);
+                break;
+
+        case VALUE_BLOB:
+                v = blob_get(ty, &container, 1, NULL);
+                pop();
+                put(v);
+                break;
+
+        case VALUE_DICT:
+                vp = dict_get_value(ty, container.dict, &subscript);
+                pop();
+                put((vp == NULL) ? NIL : *vp);
+                break;
+
+        case VALUE_BOOLEAN:
+                pop();
+                put(container);
+                break;
+
+        case VALUE_GENERATOR:
+                vp = class_lookup_method_i(ty, CLASS_GENERATOR, NAMES.subscript);
+                if (vp != NULL) {
+                        swap();
+                        pop();
+                        call(ty, vp, &container, 1, NULL);
+                } else {
+                        goto BadContainer;
+                }
+                break;
+
+        case VALUE_OBJECT:
+                vp = class_lookup_method_i(ty, container.class, NAMES.subscript);
+                if (vp != NULL) {
+                        swap();
+                        pop();
+                        if (exec) {
+                                exec_fn(ty, vp, &container, 1, NULL);
+                        } else {
+                                call(ty, vp, &container, 1, NULL);
+                        }
+                } else {
+                        goto BadContainer;
+                }
+                break;
+
+        case VALUE_CLASS:
+        case VALUE_TAG:
+                swap();
+                CallMethod(ty, NAMES.subscript, 1, 0, false, exec);
+                break;
+
+        case VALUE_PTR:
+                if (UNLIKELY(subscript.type != VALUE_INTEGER)) {
+                        zP("non-integer used to subscript pointer: %s", VSC(&subscript));
+                }
+                v = GCPTR((container.extra == NULL) ? &ffi_type_uint8 : container.extra, container.gcptr);
+                push(v);
+                push(PTR(((char *)container.ptr) + ((ffi_type *)v.ptr)->size * subscript.z));
+                v = cffi_load(ty, 2, NULL);
+                pop();
+                pop();
+                pop();
+                put(v);
+                break;
+
+        case VALUE_NIL:
+                pop();
+                put(NIL);
+                break;
+
+        default:
+BadContainer:
+                zP("invalid container in subscript expression: %s", VSC(&container));
+        }
+}
+
 static void
 InstallMethods(Ty *ty, i32 c, struct itable *table, i32 n)
 {
@@ -7055,119 +7182,7 @@ BadField:
                         break;
 
                 CASE(SUBSCRIPT)
-                        subscript = top()[0];
-                        container = top()[-1];
-                        switch (container.type) {
-                        case VALUE_TYPE:
-                                break;
-
-                        case VALUE_ARRAY:
-                                v = ArraySubscript(ty, container, subscript, true);
-                                pop();
-                                put(v);
-                                break;
-
-                        case VALUE_TUPLE:
-                                if (LIKELY(subscript.type == VALUE_INTEGER)) {
-                                        if (subscript.z < 0) {
-                                                subscript.z += container.count;
-                                        }
-
-                                        if (subscript.z < 0 || subscript.z >= container.count) {
-                                                v = tagged(ty, TAG_INDEX_ERR, container, subscript, NONE);
-                                                pop();
-                                                put(v);
-                                                RaiseException(ty);
-                                                break;
-
-                                        }
-
-                                        pop();
-                                        pop();
-
-                                        xpush(container.items[subscript.z]);
-                                } else {
-                                        zP(
-                                                "non-integer index used in subscript expression: %s",
-                                                VSC(&subscript)
-                                        );
-                                }
-                                break;
-
-                        case VALUE_STRING:
-                                v = string_char(ty, &container, 1, NULL);
-                                pop();
-                                put(v);
-                                break;
-
-                        case VALUE_BLOB:
-                                v = blob_get(ty, &container, 1, NULL);
-                                pop();
-                                put(v);
-                                break;
-
-                        case VALUE_DICT:
-                                vp = dict_get_value(ty, container.dict, &subscript);
-                                pop();
-                                put((vp == NULL) ? NIL : *vp);
-                                break;
-
-                        case VALUE_BOOLEAN:
-                                pop();
-                                put(container);
-                                break;
-
-                        case VALUE_GENERATOR:
-                                vp = class_lookup_method_i(ty, CLASS_GENERATOR, NAMES.subscript);
-                                if (vp != NULL) {
-                                        swap();
-                                        pop();
-                                        call(ty, vp, &container, 1, NULL);
-                                } else {
-                                        goto BadContainer;
-                                }
-                                break;
-
-                        case VALUE_OBJECT:
-                                vp = class_lookup_method_i(ty, container.class, NAMES.subscript);
-                                if (vp != NULL) {
-                                        swap();
-                                        pop();
-                                        call(ty, vp, &container, 1, NULL);
-                                } else {
-                                        goto BadContainer;
-                                }
-                                break;
-
-                        case VALUE_CLASS:
-                        case VALUE_TAG:
-                                swap();
-                                CallMethod(ty, NAMES.subscript, 1, 0, false, false);
-                                break;
-
-                        case VALUE_PTR:
-                                if (UNLIKELY(subscript.type != VALUE_INTEGER)) {
-                                        zP("non-integer used to subscript pointer: %s", VSC(&subscript));
-                                }
-                                v = GCPTR((container.extra == NULL) ? &ffi_type_uint8 : container.extra, container.gcptr);
-                                push(v);
-                                push(PTR(((char *)container.ptr) + ((ffi_type *)v.ptr)->size * subscript.z));
-                                v = cffi_load(ty, 2, NULL);
-                                pop();
-                                pop();
-                                pop();
-                                put(v);
-                                break;
-
-                        case VALUE_NIL:
-                                pop();
-                                put(NIL);
-                                break;
-
-                        default:
-BadContainer:
-                                zP("invalid container in subscript expression: %s", VSC(&container));
-                        }
+                        DoSubscript(ty, false);
                         break;
 
                 CASE(NOT)

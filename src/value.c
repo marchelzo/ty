@@ -1214,13 +1214,10 @@ BasicObject:
         );
 
         if (flags & TY_SHOW_ABBREV) {
-                result[min(strcspn(result, "\0"), 80)] = '\0';
-                char *x1b = strrchr(result, '\x1b');
-                if (x1b != NULL) {
-                        char *x0m = strchr(x1b, 'm');
-                        if (x0m == NULL) {
-                                *x1b = '\0';
-                        }
+                int len  = strlen(result);
+                int keep = term_fit_cols(result, len, 80);
+                if (keep < len) {
+                        result = sfmt("%.*s%s...%s", keep, result, TERM(90), TERM(0));
                 }
         }
 

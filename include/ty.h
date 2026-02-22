@@ -1774,8 +1774,7 @@ TyStrLen(Value const *str)
 
 #define XPRINT_CTX(fmt, ...) do { \
         Expr const *expr   = compiler_find_expr(ty, ty->ip - 1);   \
-        Expr const *ret    = vN(ty->st.calls)  ? compiler_find_expr(ty, v_L(ty->st.calls)) : NULL; \
-        Expr const *parent = (vN(ty->st.frames) > 1) ? compiler_find_expr(ty, (vZ(ty->st.frames) - 2)->ip) : NULL; \
+        char const *func   = (vN(ty->st.frames) > 0) ? name_of(&vvL(ty->st.frames)->f) : NULL; \
         LOGX( \
                 "(%d:%s) [sp=%3zu fr=%2zu call=%2zu] %s[%12.12s]%s [%s:%d:%d]: %s: " fmt, \
                 (int)ty->id,                             \
@@ -1783,15 +1782,17 @@ TyStrLen(Value const *str)
                 vN(ty->stack),                               \
                 vN(ty->st.frames),                              \
                 vN(ty->st.calls),                               \
-                TERM(91;1), (vN(ty->st.frames) > 0) ? name_of(&vvL(ty->st.frames)->f) : "   --  ", TERM(0), \
+                TERM(91;1), func ? func : "   --  ", TERM(0), \
                 expr ? GetExpressionModule(expr) : "?",  \
                 (expr ? expr->start.line : 0) + 1,       \
                 (expr ? expr->start.col : 0) + 1,        \
-                GetInstructionName(ty->ip[-1])               \
+                (ty->ip ? GetInstructionName(ty->ip[0]) : "--")       \
                 __VA_OPT__(,) __VA_ARGS__ \
         ); \
 } while (0)
 #if 0
+        Expr const *ret    = vN(ty->st.calls)  ? compiler_find_expr(ty, v_L(ty->st.calls)) : NULL; \
+        Expr const *parent = (vN(ty->st.frames) > 1) ? compiler_find_expr(ty, (vZ(ty->st.frames) - 2)->ip) : NULL; \
         if (ret != NULL) { \
                 LOGX("    returning to [%s:%d:%d]: %s", \
                         GetExpressionModule(ret), \

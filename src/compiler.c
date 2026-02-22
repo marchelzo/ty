@@ -18176,7 +18176,7 @@ DumpProgram(
                         dump(
                                 out,
                                 "                    %s%7td%s       %s-->  %s%s%s",
-                                TERM(92), pc, TERM(0),
+                                TERM(92), pc - (iptr)code, TERM(0),
                                 TERM(92),
                                 TERM(93;4), GetInstructionName(*c), TERM(0)
                         );
@@ -18184,7 +18184,7 @@ DumpProgram(
                         dump(
                                 out,
                                 "                    %s%7td%s            %s%s%s",
-                                TERM(94), pc, TERM(0),
+                                TERM(94), pc - (iptr)code, TERM(0),
                                 TERM(93), GetInstructionName(*c), TERM(0)
                         );
                 }
@@ -18192,7 +18192,7 @@ DumpProgram(
 
                 dont_printf(
                         "%s%7td%s            %s%s%s      %ju\n",
-                        TERM(94), pc, TERM(0),
+                        TERM(94), pc - (iptr)code, TERM(0),
                         TERM(93), GetInstructionName(*c), TERM(0),
                         (uptr)ty->ip
                 );

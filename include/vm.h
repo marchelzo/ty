@@ -264,6 +264,9 @@ vm_jit_loop_check(Ty *ty, int z);
 void
 vm_jit_dict_literal(Ty *ty, Value *dflt);
 
+void
+DoSubscript(Ty *ty, bool exec);
+
 #define VM_TRY() (setjmp(vm_push_try(ty)->jb) == 0)
 
 #endif
