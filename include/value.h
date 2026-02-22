@@ -1410,6 +1410,18 @@ self_of(Value const *f)
         }
 }
 
+static inline void *
+jit_of(Value const *f)
+{
+        return (void *)*(uptr *)info_of(f, FUN_JIT);
+}
+
+static inline void
+set_jit_of(Value const *f, void *code)
+{
+        *(uptr *)info_of(f, FUN_JIT) = (uptr)code;
+}
+
 static inline bool
 from_eval(Value const *f)
 {

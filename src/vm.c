@@ -87,6 +87,7 @@
 #include "utf8.h"
 #include "xd.h"
 #include "value.h"
+#include "jit.h"
 #include "vm.h"
 
 #define TY_LOG_VERBOSE 1
@@ -407,6 +408,8 @@ InitializeTy(Ty *ty, ThreadGroup *group)
         ty->locked = true;
         ty->state = alloc0(sizeof *ty->state);
         ty->group = group;
+
+        xvR(STACK, 4096);
 }
 
 inline static void
@@ -853,13 +856,13 @@ inline static Value *
         return topN(1);
 }
 
-inline static void
+void
 xprint_stack(Ty *ty, int n)
 {
-        printf("STACK: (%zu)\n", vN(STACK));
+        fprintf(stderr, "STACK: (%zu)\n", vN(STACK));
         for (int i = 0; i < zminu(n, vN(STACK)); ++i) {
                 if (vN(FRAMES) == 0) {
-                        printf("      %s\n", VSC(top() - i));
+                        fprintf(stderr, "      %s\n", VSC(top() - i));
                         continue;
                 }
 
@@ -872,7 +875,8 @@ xprint_stack(Ty *ty, int n)
                                  : NULL;
 
                 if (off == 0) {
-                        printf(
+                        fprintf(
+                                stderr,
                                 "%s%8.8s%s --> %s%8.8s%s = %s\n",
                                 TERM(95;1),
                                 (func == NULL ? "???" : func->name),
@@ -883,7 +887,8 @@ xprint_stack(Ty *ty, int n)
                                 VSC(top() - i)
                         );
                 } else if (name != NULL) {
-                        printf(
+                        fprintf(
+                                stderr,
                                 "   %s%18.18s%s = %s\n",
                                 TERM(33),
                                 name,
@@ -891,7 +896,8 @@ xprint_stack(Ty *ty, int n)
                                 VSC(top() - i)
                         );
                 } else {
-                        printf(
+                        fprintf(
+                                stderr,
                                 "%24s%s\n",
                                 "",
                                 VSC(top() - i)
@@ -983,6 +989,12 @@ GetSelf(Ty *ty)
         }
 
         return v;
+}
+
+void
+vm_push_self(Ty *ty)
+{
+        push(GetSelf(ty));
 }
 
 inline static Value
@@ -1179,6 +1191,67 @@ co_yield_value(Ty *ty)
         return true;
 }
 
+inline static bool
+call_jit(Ty *ty, Value const *f)
+{
+        void *jit = jit_of(f);
+
+        if (UNLIKELY(jit == (void *)0xFA57)) {
+                JitInfo *info = jit_compile(ty, f);
+                jit = (info != NULL) ? info->code : NULL;
+                set_jit_of(f, jit);
+        }
+
+        if (UNLIKELY(jit == NULL)) {
+                return false;
+        }
+
+        if (UNLIKELY(vN(STACK) + 256 > vC(STACK))) {
+                xvR(STACK, vN(STACK) + 256);
+        }
+
+        //LOGX(
+        //        "Call JIT func: %s  (frame size %d, stk=%zu, stk_cap=%zu)",
+        //        name_of(f),
+        //        f->info[FUN_INFO_BOUND],
+        //        vN(STACK),
+        //        vC(STACK)
+        //);
+
+        char *ip = IP;
+        usize fp = vvL(FRAMES)->fp;
+        Value v;
+
+        int np = f->info[FUN_INFO_PARAM_COUNT];
+        int bound = f->info[FUN_INFO_BOUND];
+
+#if 1
+        LOGX("[jit] call %s: fp=%d   stk=%zu  bound=%d", SHOW(f, BASIC), (int)fp, vN(STACK), bound);
+        for (int i = 0; i < np; ++i) {
+                LOGX("    arg%d = %s", i, SHOW(v_(STACK, fp + i), BASIC, ABBREV));
+        }
+        if (f->info[FUN_INFO_CLASS] != -1) {
+                LOGX("    self = %s", SHOW(v_(STACK, fp + np), BASIC, ABBREV));
+        }
+#endif
+
+        EXEC_DEPTH += 1;
+        ((JitFn)jit)(ty, &v, v_(STACK, fp), f->env);
+        EXEC_DEPTH -= 1;
+
+        PRINT_CTX("%sJIT RETURN%s: %s", TERM(95;1), TERM(0), SHOW(&v, BASIC, ABBREV));
+
+        vN(STACK) = fp + 1;
+        put(v);
+
+        vXx(FRAMES);
+        vXx(CALLS);
+
+        IP = ip;
+
+        return true;
+}
+
 #if !defined(TY_RELEASE)
 __attribute__((optnone, noinline))
 #endif
@@ -1206,6 +1279,8 @@ xcall(Ty *ty, Value const *f, Value const *pSelf, int argc, Value const *pKwargs
         } else {
                 self = NONE;
         }
+
+        //LOGX("call %s (nframe=%d, argc=%d, n_sp=%zu)", SHOW(f, BASIC, ABBREV), (int)vN(FRAMES), argc, vN(SP_STACK));
 
         LOG(
                 "Calling %s with %d args, bound = %d, self = %s, env size = %d",
@@ -1288,7 +1363,13 @@ call(Ty *ty, Value const *f, Value const *pSelf, int argc, Value const *pKwargs)
                 return false;
         }
 
+        //XXXX("[call] ");
         xcall(ty, f, pSelf, argc, pKwargs, IP);
+
+        if (LIKELY(call_jit(ty, f))) {
+                return false;
+        }
+
         IP = code_of(f);
 
         return true;
@@ -1312,7 +1393,13 @@ call6t(Ty *ty, Value const *f, Value const *pSelf, int argc, Value const *pKwarg
 static void
 exec_fn(Ty *ty, Value const *f, Value const *pSelf, int argc, Value const *pKwargs)
 {
+        //XXXX("[exec] ");
         xcall(ty, f, pSelf, argc, pKwargs, &halt);
+
+        if (LIKELY(call_jit(ty, f))) {
+                return;
+        }
+
         vm_exec(ty, code_of(f));
 }
 
@@ -2002,7 +2089,7 @@ DoThrow(Ty *ty)
         ty->exc = CurrentThrowCtx(ty)->exc;
 
 #if 0
-        //XXX("%s\n", FormatTrace(ty, NULL, NULL));
+        XXX("%s\n", FormatTrace(ty, NULL, NULL));
         if (
                 (ty->exc.type == VALUE_OBJECT)
              && (ty->exc.class == CLASS_RUNTIME_ERROR)
@@ -2067,10 +2154,11 @@ DoThrow(Ty *ty)
                                 return;
 
                         case TRY_THROW:
-                                zPxx(
+                                XXX(
                                         "an exception was thrown while handling another exception: %s%s%s",
                                         TERM(31), VSC(&ty->exc), TERM(39)
                                 );
+                                abort();
                         }
                 }
                 if (UNLIKELY(!co_abort(ty))) {
@@ -2114,7 +2202,7 @@ YieldFix(Ty *ty)
         *top() = NONE;
 }
 
-TY_INSTR_INLINE static Value
+Value
 ArraySubscript(Ty *ty, Value container, Value subscript, bool strict)
 {
         char *ip;
@@ -2295,9 +2383,6 @@ ExecCurrentCall(Ty *ty)
         IP = ip;
 }
 
-static void
-CallMethod(Ty *ty, int i, int n, int nkw, bool b);
-
 static Value
 BuildKwargsDict(Ty *ty, int nkw)
 {
@@ -2363,8 +2448,8 @@ BuildKwargsDict(Ty *ty, int nkw)
         return DICT(kwargs);
 }
 
-static bool
-DoCall(Ty *ty, Value const *f, int n, int nkw, bool auto_this)
+bool
+DoCall(Ty *ty, Value const *f, int n, int nkw, bool auto_this, bool exec)
 {
         Value v = *f;
         Value *vp;
@@ -2395,7 +2480,12 @@ DoCall(Ty *ty, Value const *f, int n, int nkw, bool auto_this)
         switch (v.type) {
         case VALUE_FUNCTION:
         case VALUE_BOUND_FUNCTION:
-                new_frame = call(ty, &v, NULL, n, &kwargs);
+                if (exec) {
+                        exec_fn(ty, &v, NULL, n, &kwargs);
+                        new_frame = false;
+                } else {
+                        new_frame = call(ty, &v, NULL, n, &kwargs);
+                }
                 gX();
                 return new_frame;
 
@@ -2435,21 +2525,20 @@ DoCall(Ty *ty, Value const *f, int n, int nkw, bool auto_this)
                 gX();
                 switch (n) {
                 case 1:
-                        DoUnaryOp(ty, v.uop, false);
-                        break;
+                        DoUnaryOp(ty, v.uop, exec);
+                        return !exec;
 
                 case 2:
                         b = pop();
                         a = pop();
                         xpush(vm_2op(ty, v.bop, &a, &b));
-                        break;
+                        return false;
 
                 default:
                         push(TAG(TAG_DISPATCH_ERR));
                         RaiseException(ty);
-                        break;
                 }
-                return false;
+                break;
 
         case VALUE_TAG:
                 gP(&kwargs);
@@ -2463,9 +2552,15 @@ DoCall(Ty *ty, Value const *f, int n, int nkw, bool auto_this)
                 if (vp == NULL) {
                         goto NotCallable;
                 }
-                new_frame = call(ty, vp, &v, n, &kwargs);
-                gX();
-                return new_frame;
+                if (exec) {
+                        exec_fn(ty, vp, &v, n, &kwargs);
+                        gX();
+                        return false;
+                } else {
+                        new_frame = call(ty, vp, &v, n, &kwargs);
+                        gX();
+                        return new_frame;
+                }
 
         case VALUE_CLASS:
                 gP(&kwargs);
@@ -2490,9 +2585,15 @@ DoCall(Ty *ty, Value const *f, int n, int nkw, bool auto_this)
                         memmove(top() - (n - 1), top() - n, n * sizeof (Value));
                         top()[-n++] = v.this[1];
                 }
-                new_frame = call(ty, v.method, v.this, n, &kwargs);
-                gX();
-                return new_frame;
+                if (exec) {
+                        exec_fn(ty, v.method, v.this, n, &kwargs);
+                        gX();
+                        return false;
+                } else {
+                        new_frame = call(ty, v.method, v.this, n, &kwargs);
+                        gX();
+                        return new_frame;
+                }
 
         case VALUE_REGEX:
                 if (UNLIKELY(n != 1)) {
@@ -2550,6 +2651,8 @@ DoCall(Ty *ty, Value const *f, int n, int nkw, bool auto_this)
         default:
                 zP("attempt to call non-callable value %s", VSC(&v));
         }
+
+        return false;
 }
 
 inline static u16
@@ -2673,7 +2776,7 @@ LoadFieldFast(Ty *ty, Value *v, i32 id)
 }
 
 inline static bool
-DispatchMethodFast(Ty *ty, Value self, i32 id, int argc, int nkw)
+DispatchMethodFast(Ty *ty, Value self, i32 id, int argc, int nkw, bool exec)
 {
         Value *v = &self;
 
@@ -2694,7 +2797,7 @@ DispatchMethodFast(Ty *ty, Value self, i32 id, int argc, int nkw)
         switch (type) {
         case OFF_FIELD:
                 pop();
-                DoCall(ty, &v->object->slots[off], argc, nkw, false);
+                DoCall(ty, &v->object->slots[off], argc, nkw, false, exec);
                 break;
 
         case OFF_GETTER:
@@ -2702,7 +2805,7 @@ DispatchMethodFast(Ty *ty, Value self, i32 id, int argc, int nkw)
                 exec_fn(ty, vp, v, 0, NULL);
                 fn = pop();
                 pop();
-                DoCall(ty, &fn, argc, nkw, false);
+                DoCall(ty, &fn, argc, nkw, false, exec);
                 break;
 
         case OFF_GETTER_X:
@@ -2710,21 +2813,29 @@ DispatchMethodFast(Ty *ty, Value self, i32 id, int argc, int nkw)
                 exec_fn(ty, vp, v, 0, NULL);
                 fn = pop();
                 pop();
-                DoCall(ty, &fn, argc, nkw, false);
+                DoCall(ty, &fn, argc, nkw, false, exec);
                 break;
 
         case OFF_METHOD:
                 vp = v_(class->methods.values, off);
                 pop();
                 kwargs = BuildKwargsDict(ty, nkw);
-                call(ty, vp, v, argc, &kwargs);
+                if (exec) {
+                        exec_fn(ty, vp, v, argc, &kwargs);
+                } else {
+                        call(ty, vp, v, argc, &kwargs);
+                }
                 break;
 
         case OFF_METHOD_X:
                 vp = &v->object->slots[off];
                 pop();
                 kwargs = BuildKwargsDict(ty, nkw);
-                call(ty, vp, v, argc, &kwargs);
+                if (exec) {
+                        exec_fn(ty, vp, v, argc, &kwargs);
+                } else {
+                        call(ty, vp, v, argc, &kwargs);
+                }
                 break;
 
         default:
@@ -2771,7 +2882,7 @@ GetMember(Ty *ty, Value v, int member, bool try_missing, bool exec)
                 }
                 v.type = VALUE_DICT;
                 v.tags = 0;
-                this = mAo(sizeof *this, GC_VALUE);
+                this = uAo(sizeof *this, GC_VALUE);
                 *this = v;
                 return BUILTIN_METHOD(member, func, this);
 
@@ -2783,7 +2894,7 @@ GetMember(Ty *ty, Value v, int member, bool try_missing, bool exec)
                 }
                 v.type = VALUE_ARRAY;
                 v.tags = 0;
-                this = mAo(sizeof *this, GC_VALUE);
+                this = uAo(sizeof *this, GC_VALUE);
                 *this = v;
                 return BUILTIN_METHOD(member, func, this);
 
@@ -2795,7 +2906,7 @@ GetMember(Ty *ty, Value v, int member, bool try_missing, bool exec)
                 }
                 v.type = VALUE_STRING;
                 v.tags = 0;
-                this = mAo(sizeof *this, GC_VALUE);
+                this = uAo(sizeof *this, GC_VALUE);
                 *this = v;
                 return BUILTIN_METHOD(member, func, this);
 
@@ -2807,7 +2918,7 @@ GetMember(Ty *ty, Value v, int member, bool try_missing, bool exec)
                 }
                 v.type = VALUE_BLOB;
                 v.tags = 0;
-                this = mAo(sizeof *this, GC_VALUE);
+                this = uAo(sizeof *this, GC_VALUE);
                 *this = v;
                 return BUILTIN_METHOD(member, func, this);
 
@@ -3109,8 +3220,8 @@ GetDynamicMemberId(Ty *ty, bool strict)
         }
 }
 
-static void
-CallMethod(Ty *ty, int i, int n, int nkw, bool b)
+bool
+CallMethod(Ty *ty, int i, int n, int nkw, bool maybe, bool exec)
 {
         int class;
         Value v;
@@ -3122,7 +3233,7 @@ CallMethod(Ty *ty, int i, int n, int nkw, bool b)
         char const *method;
 
         if (i == -1) {
-                i = GetDynamicMemberId(ty, !b);
+                i = GetDynamicMemberId(ty, !maybe);
                 if (i == -1) {
                         goto QuietFailure;
                 }
@@ -3256,8 +3367,8 @@ CallMethod(Ty *ty, int i, int n, int nkw, bool b)
                 break;
 
         case VALUE_OBJECT:
-                if (DispatchMethodFast(ty, value, i, n, nkw)) {
-                        return;
+                if (DispatchMethodFast(ty, value, i, n, nkw, exec)) {
+                        return !exec;
                 }
                 class = value.class;
                 if (0) {
@@ -3275,7 +3386,7 @@ ClassLookup:
                 (void)BuildKwargsDict(ty, nkw);
                 STACK.count -= (n + 1);
                 push(NIL);
-                return;
+                return false;
 
         default:
                 class = CLASS_OBJECT;
@@ -3293,7 +3404,7 @@ ClassLookup:
                 gX();
                 STACK.count -= n;
                 push(v);
-                return;
+                return false;
         }
 
         if (
@@ -3318,8 +3429,7 @@ ClassLookup:
                 exec_fn(ty, vp, &value, 1, NULL);
                 v = pop();
                 pop();
-                DoCall(ty, &v, n, nkw, false);
-                return;
+                return DoCall(ty, &v, n, nkw, false, exec);
         }
 
 DoCall:
@@ -3327,15 +3437,16 @@ DoCall:
                 pop();
                 if (self != NULL) {
                         v = METHOD(i, vp, self);
-                        DoCall(ty, &v, n, nkw, true);
+                        return DoCall(ty, &v, n, nkw, true, exec);
                 } else {
                         v = *vp;
-                        DoCall(ty, &v, n, nkw, false);
+                        return DoCall(ty, &v, n, nkw, false, exec);
                 }
-        } else if (b) {
+        } else if (maybe) {
 QuietFailure:
                 STACK.count -= (n + 1 + nkw);
                 xpush(NIL);
+                return false;
         } else {
                 zP("call to non-existent method '%s' on %s", M_NAME(i), VSC(&value));
         }
@@ -3440,10 +3551,7 @@ DoQuestion(Ty *ty, bool exec)
         if (top()->type == VALUE_NIL) {
                 *top() = BOOLEAN(false);
         } else {
-                CallMethod(ty, OP_QUESTION, 0, 0, false);
-                if (exec) {
-                        ExecCurrentCall(ty);
-                }
+                CallMethod(ty, OP_QUESTION, 0, 0, false, exec);
         }
 }
 
@@ -3457,14 +3565,11 @@ DoNeg(Ty *ty, bool exec)
         } else if (v.type == VALUE_REAL) {
                 xpush(REAL(-v.real));
         } else {
-                CallMethod(ty, OP_NEG, 0, 0, false);
-                if (exec) {
-                        ExecCurrentCall(ty);
-                }
+                CallMethod(ty, OP_NEG, 0, 0, false, exec);
         }
 }
 
-TY_INSTR_INLINE static void
+void
 DoCount(Ty *ty, bool exec)
 {
         Value v = pop();
@@ -3484,10 +3589,7 @@ DoCount(Ty *ty, bool exec)
         case VALUE_OBJECT:
         case VALUE_CLASS:
                 xpush(v);
-                CallMethod(ty, NAMES._len_, 0, 0, false);
-                if (exec) {
-                        ExecCurrentCall(ty);
-                }
+                CallMethod(ty, NAMES._len_, 0, 0, false, exec);
                 break;
 
         default:
@@ -4215,12 +4317,7 @@ DoMutShr(Ty *ty)
         }
 }
 
-#ifndef TY_RELEASE
-__attribute__((noinline))
-#else
-TY_INSTR_INLINE
-#endif
-static void
+void
 DoAssign(Ty *ty)
 {
         uptr m, c, p = (uptr)poptarget();
@@ -4265,7 +4362,7 @@ DoAssign(Ty *ty)
         }
 }
 
-static void
+void
 DoTargetMember(Ty *ty, Value v, i32 z)
 {
         Value *vp;
@@ -4371,7 +4468,7 @@ DoTargetMember(Ty *ty, Value v, i32 z)
         }
 }
 
-static void
+void
 DoTargetSubscript(Ty *ty)
 {
         Value v;
@@ -4445,8 +4542,8 @@ DoTargetSubscript(Ty *ty)
         pop();
 }
 
-static void
-DoAssignSubscript(Ty *ty)
+void
+DoAssignSubscript(Ty *ty, bool exec)
 {
         Value v;
         Value p;
@@ -4511,7 +4608,11 @@ DoAssignSubscript(Ty *ty)
                 swap();
                 f = class_lookup_setter_i(ty, container.class, NAMES.subscript);
                 if (f != NULL) {
-                        call(ty, f, &container, 2, NULL);
+                        if (exec) {
+                                exec_fn(ty, f, &container, 2, NULL);
+                        } else {
+                                call(ty, f, &container, 2, NULL);
+                        }
                 }
                 return;
 
@@ -4521,7 +4622,11 @@ DoAssignSubscript(Ty *ty)
                 swap();
                 f = class_lookup_s_setter_i(ty, container.class, NAMES.subscript);
                 if (f != NULL) {
-                        call(ty, f, &container, 2, NULL);
+                        if (exec) {
+                                exec_fn(ty, f, &container, 2, NULL);
+                        } else {
+                                call(ty, f, &container, 2, NULL);
+                        }
                 }
                 return;
 
@@ -5030,6 +5135,47 @@ DoMatchString(Ty *ty)
         DOJUMP(fail);
 }
 
+void
+DoCheckMatch(Ty *ty, bool exec)
+{
+        Value v;
+        Value value;
+
+        switch (top()->type) {
+        case VALUE_CLASS:
+                v = pop();
+                *top() = BOOLEAN(class_is_subclass(ty, ClassOf(top()), v.class));
+                break;
+
+        case VALUE_TAG:
+                v = pop();
+                *top() = BOOLEAN(
+                        (top()->type == VALUE_TAG && top()->tag == v.tag)
+                     || (tags_first(ty, top()->tags) == v.tag)
+                );
+                break;
+
+        case VALUE_BOOLEAN:
+                v = pop();
+                *top() = v;
+                break;
+
+        case VALUE_TYPE:
+                v = pop();
+                value = pop();
+                xpush(BOOLEAN(TypeCheck(ty, v.ptr, &value)));
+                break;
+
+        case VALUE_NIL:
+                v = pop();
+                *top() = BOOLEAN(top()->type == VALUE_NIL);
+                break;
+
+        default:
+                CallMethod(ty, NAMES.match, 1, 0, false, exec);
+        }
+}
+
 static void
 InstallMethods(Ty *ty, i32 c, struct itable *table, i32 n)
 {
@@ -5213,6 +5359,8 @@ vm_exec(Ty *ty, char *code)
         EXEC_DEPTH += 1;
         LOG("vm_exec(): ==> %d", EXEC_DEPTH);
 
+        PRINT_CTX("%s============== vm_exec() ==============%s", TERM(35), TERM(0));
+
         RC = 0;
 
         for (;;) {
@@ -5293,7 +5441,12 @@ NextInstruction:
                         LOG("Loading local: %s (%d)", IP, n);
                         SKIPSTR();
 #endif
-                        push(*local(ty, n));
+                        if (UNLIKELY(vN(FRAMES) == 0)) {
+                                XXX("LOAD_LOCAL %d with no active frame: pushing %s", n, SHOW(v_(Globals, n), BASIC));
+                                push(v__(Globals, n));
+                        } else {
+                                push(*local(ty, n));
+                        }
                         break;
 
                 CASE(LOAD_REF)
@@ -5592,7 +5745,7 @@ NextInstruction:
                         break;
 
                 CASE(ASSIGN_SUBSCRIPT)
-                        DoAssignSubscript(ty);
+                        DoAssignSubscript(ty, false);
                         break;
 
                 CASE(TARGET_REF)
@@ -6223,6 +6376,9 @@ TargetMember:
                         break;
 
                 CASE(ARRAY)
+                        if (vN(SP_STACK) == 0) {
+                                zP("aaaaaa");
+                        }
                         n = STACK.count - *vvX(SP_STACK);
                         v = ARRAY(vAn(n));
                         v.array->count = n;
@@ -6277,7 +6433,7 @@ TargetMember:
                                 char *s = VSC(top());
                                 put(STRING_NOGC(s, strlen(s)));
                         } else {
-                                CallMethod(ty, NAMES._str_, 0, 0, false);
+                                CallMethod(ty, NAMES._str_, 0, 0, false, false);
                         }
                         break;
 
@@ -6772,7 +6928,7 @@ BadField:
                         break;
 
                 CASE(SLICE)
-                        CallMethod(ty, NAMES.slice, 3, 0, false);
+                        CallMethod(ty, NAMES.slice, 3, 0, false, false);
                         break;
 
                 CASE(SUBSCRIPT)
@@ -6863,7 +7019,7 @@ BadField:
                         case VALUE_CLASS:
                         case VALUE_TAG:
                                 swap();
-                                CallMethod(ty, NAMES.subscript, 1, 0, false);
+                                CallMethod(ty, NAMES.subscript, 1, 0, false, false);
                                 break;
 
                         case VALUE_PTR:
@@ -6990,39 +7146,7 @@ BadContainer:
                         break;
 
                 CASE(CHECK_MATCH)
-                        switch (top()->type) {
-                        case VALUE_CLASS:
-                                v = pop();
-                                *top() = BOOLEAN(class_is_subclass(ty, ClassOf(top()), v.class));
-                                break;
-
-                        case VALUE_TAG:
-                                v = pop();
-                                *top() = BOOLEAN(
-                                        (top()->type == VALUE_TAG && top()->tag == v.tag)
-                                     || (tags_first(ty, top()->tags) == v.tag)
-                                );
-                                break;
-
-                        case VALUE_BOOLEAN:
-                                v = pop();
-                                *top() = v;
-                                break;
-
-                        case VALUE_TYPE:
-                                v = pop();
-                                value = pop();
-                                xpush(BOOLEAN(TypeCheck(ty, v.ptr, &value)));
-                                break;
-
-                        case VALUE_NIL:
-                                v = pop();
-                                *top() = BOOLEAN(top()->type == VALUE_NIL);
-                                break;
-
-                        default:
-                                CallMethod(ty, NAMES.match, 1, 0, false);
-                        }
+                        DoCheckMatch(ty, false);
                         break;
 
                 CASE(LT)
@@ -7422,7 +7546,7 @@ BinaryOp:
                         default:
                                 DOJUMP(jump);
                                 push(peek());
-                                if (DoCall(ty, &v, 1, 0, false)) {
+                                if (DoCall(ty, &v, 1, 0, false, false)) {
                                         xvP(CALLS, unapply);
                                 }
                                 break;
@@ -7460,28 +7584,28 @@ BinaryOp:
                         v = pop();
                         READVALUE(n);
                         READVALUE(nkw);
-                        DoCall(ty, &v, n, nkw, false);
+                        DoCall(ty, &v, n, nkw, false, false);
                         break;
 
                 CASE(CALL_GLOBAL)
                         READVALUE(i);
                         READVALUE(n);
                         READVALUE(nkw);
-                        DoCall(ty, v_(Globals, i), n, nkw, false);
+                        DoCall(ty, v_(Globals, i), n, nkw, false, false);
                         break;
 
                 CASE(TRY_CALL_METHOD)
                         READVALUE(n);
                         READVALUE(i);
                         READVALUE(nkw);
-                        CallMethod(ty, i, n, nkw, true);
+                        CallMethod(ty, i, n, nkw, true, false);
                         break;
 
                 CASE(CALL_METHOD)
                         READVALUE(n);
                         READVALUE(z);
                         READVALUE(nkw);
-                        CallMethod(ty, z, n, nkw, false);
+                        CallMethod(ty, z, n, nkw, false, false);
                         break;
 
                 CASE(CALL_SELF_METHOD)
@@ -7489,7 +7613,7 @@ BinaryOp:
                         READVALUE(z);
                         READVALUE(nkw);
                         push(GetSelf(ty));
-                        CallMethod(ty, z, n, nkw, false);
+                        CallMethod(ty, z, n, nkw, false, false);
                         break;
 
                 CASE(CALL_SELF_STATIC)
@@ -7498,7 +7622,7 @@ BinaryOp:
                         READVALUE(nkw);
                         v = GetSelf(ty);
                         push(CLASS(ClassOf(&v)));
-                        CallMethod(ty, z, n, nkw, false);
+                        CallMethod(ty, z, n, nkw, false, false);
                         break;
 
                 CASE(CALL_STATIC_METHOD)
@@ -7507,7 +7631,7 @@ BinaryOp:
                         READVALUE(z);
                         READVALUE(nkw);
                         push(CLASS(i));
-                        CallMethod(ty, z, n, nkw, false);
+                        CallMethod(ty, z, n, nkw, false, false);
                         break;
 
                 CASE(SAVE_STACK_POS)
@@ -7559,6 +7683,7 @@ BinaryOp:
 
 RETURN:
                 CASE(RETURN)
+                        PRINT_CTX("<-- %sreturn%s from %s: %s", TERM(93), TERM(0), VSC(ActiveFun(ty)), VSC(top()));
                         n = vvX(FRAMES)->fp;
                         STACK.items[n] = peek();
                         STACK.count = n + 1;
@@ -7570,6 +7695,7 @@ RETURN:
                         EXEC_DEPTH -= 1;
                         IP = _ip;
                         LOG("vm_exec(): <== %d (HALT: IP=%p)", EXEC_DEPTH, (void *)IP);
+                        //LOGX("halt (n_sp=%zu)", vN(SP_STACK));
                         return;
 
                 default:
@@ -7718,7 +7844,7 @@ FormatTrace(Ty *ty, ThrowCtx const *ctx, byte_vector *out)
                                                         val = vm_catch(ty);
                                                         good = false;
                                                 } else {
-                                                        show = SHOW(&val, REPR);
+                                                        show = SHOW(&val, BASIC);
                                                         vm_finally(ty);
                                                 }
                                         }
@@ -8871,6 +8997,7 @@ vm_call(Ty *ty, Value const *f, int argc)
 {
         Value a, b, v;
         Value *vp;
+
         usize n = vN(STACK) - argc;
 
         CheckPendingSignals(ty);
@@ -10144,15 +10271,20 @@ tdb_go2(Ty *ty)
 Value
 CompleteCurrentFunction(Ty *ty)
 {
-        xvP(CALLS, &halt);
-        vm_exec(ty, IP);
+        LOGX("%s>>> completing%s %s", TERM(95;1), TERM(0), VSC(ActiveFun(ty)));
+        ExecCurrentCall(ty);
         return pop();
+        //xvP(CALLS, &halt);
+        //vm_exec(ty, IP);
+        //return pop();
 }
 
 Value *
 vm_global(Ty *ty, int i)
 {
-        return (vN(Globals) > i) ? v_(Globals, i) : NULL;
+        //LOGX("%s>>> loading global %d%s: %s", TERM(95;1), i, TERM(0), SHOW(v_(Globals, i), BASIC));
+        return v_(Globals, i);
+        //return (vN(Globals) > i) ? v_(Globals, i) : NULL;
 }
 
 Value *

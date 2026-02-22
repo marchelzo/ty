@@ -7390,6 +7390,7 @@ BUILTIN_FUNCTION(type)
         case VALUE_BUILTIN_METHOD:
         case VALUE_BUILTIN_FUNCTION:
         case VALUE_FOREIGN_FUNCTION:
+        case VALUE_NATIVE_FUNCTION:
         case VALUE_OPERATOR:
         case VALUE_FUNCTION:  return (Value) { .type = VALUE_CLASS, .class = CLASS_FUNCTION  };
         case VALUE_GENERATOR: return (Value) { .type = VALUE_CLASS, .class = CLASS_GENERATOR };

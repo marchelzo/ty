@@ -434,7 +434,7 @@ pub fn rand-hsl(
 }
 
 @memoized
-fn parse-style(style: String, chalk: Chalk) -> ?TermStyle {
+fn parse-style(style: String, chalk: Chalk) -> TermStyle | nil {
     match style {
         /.*\?$/ => do {
             let (h, s, l) = rand-hsl()

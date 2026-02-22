@@ -178,6 +178,7 @@ enum {
         VALUE_BUILTIN_FUNCTION ,
         VALUE_BUILTIN_METHOD   ,
         VALUE_FOREIGN_FUNCTION ,
+        VALUE_NATIVE_FUNCTION  ,
         VALUE_CLASS            ,
         VALUE_GENERATOR        ,
         VALUE_TAG              ,
@@ -237,7 +238,8 @@ enum {
         FF_FROM_EVAL = (1 << 1),
         FF_DECORATED = (1 << 2),
         FF_HAS_META  = (1 << 3),
-        FF_OVERLOAD  = (1 << 4)
+        FF_OVERLOAD  = (1 << 4),
+        FF_JIT       = (1 << 5)
 };
 
 enum {
@@ -256,7 +258,8 @@ enum {
         FUN_META        = FUN_DOC         + sizeof (uptr),
         FUN_NAME        = FUN_META        + sizeof (uptr),
         FUN_EXPR        = FUN_NAME        + sizeof (uptr),
-        FUN_PARAM_NAMES = FUN_EXPR        + sizeof (uptr)
+        FUN_JIT         = FUN_EXPR        + sizeof (uptr),
+        FUN_PARAM_NAMES = FUN_JIT         + sizeof (uptr)
 };
 
 #define TY_ERROR_TYPES           \
@@ -1765,6 +1768,57 @@ TyStrLen(Value const *str)
 #define adump(...) ((adump)(ty, __VA_ARGS__))
 #define sxdf(...) ((sxdf)(ty, __VA_ARGS__))
 #define sfmt(...) ((sfmt)(ty, __VA_ARGS__))
+
+#define XPRINT_CTX(fmt, ...) do { \
+        Expr const *expr   = compiler_find_expr(ty, ty->ip - 1);   \
+        Expr const *ret    = vN(ty->st.calls)  ? compiler_find_expr(ty, v_L(ty->st.calls)) : NULL; \
+        Expr const *parent = (vN(ty->st.frames) > 1) ? compiler_find_expr(ty, (vZ(ty->st.frames) - 2)->ip) : NULL; \
+        LOGX( \
+                "(%d:%s) [sp=%3zu fr=%2zu call=%2zu] %s[%12.12s]%s [%s:%d:%d]: %s: " fmt, \
+                (int)ty->id,                             \
+                (co_active() != ty->co_top) ? ">" : " ", \
+                vN(ty->stack),                               \
+                vN(ty->st.frames),                              \
+                vN(ty->st.calls),                               \
+                TERM(91;1), (vN(ty->st.frames) > 0) ? name_of(&vvL(ty->st.frames)->f) : "   --  ", TERM(0), \
+                expr ? GetExpressionModule(expr) : "?",  \
+                (expr ? expr->start.line : 0) + 1,       \
+                (expr ? expr->start.col : 0) + 1,        \
+                GetInstructionName(ty->ip[-1])               \
+                __VA_OPT__(,) __VA_ARGS__ \
+        ); \
+} while (0)
+#if 0
+        if (ret != NULL) { \
+                LOGX("    returning to [%s:%d:%d]: %s", \
+                        GetExpressionModule(ret), \
+                        (ret->start.line) + 1, \
+                        (ret->start.col) + 1, \
+                        GetInstructionName(*v_L(ty->st.calls)) \
+                ); \
+        } else if (vN(ty->st.calls) > 0) { \
+                LOGX("    returning to [unknown]: %s", \
+                        GetInstructionName(*v_L(ty->st.calls)) \
+                ); \
+        } \
+        if (parent != NULL || vN(ty->st.frames) > 1) { \
+                LOGX("    parent %s[%s:%12.12s]%s:%d:%d: %s", \
+                        TERM(94), \
+                        parent ? GetExpressionModule(parent) : "?", \
+                        name_of(&(vZ(ty->st.frames) - 2)->f), \
+                        TERM(0), \
+                        parent ? (parent->start.line) + 1 : 0, \
+                        parent ? (parent->start.col) + 1 : 0, \
+                        parent ? GetInstructionName(*(vZ(ty->st.frames) - 2)->ip) : "?" \
+                ); \
+        } \
+} while (0)
+#endif
+#if 0
+#define PRINT_CTX(fmt, ...) XPRINT_CTX(fmt, __VA_ARGS__)
+#else
+#define PRINT_CTX(fmt, ...) ((void)0)
+#endif
 
 #endif
 

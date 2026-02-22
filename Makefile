@@ -118,6 +118,20 @@ ifdef WITHOUT_OS
         CFLAGS += -DTY_WITHOUT_OS
 endif
 
+# DynASM configuration
+LUAJIT := luajit
+DYNASM := $(LUAJIT) LuaJIT/dynasm/dynasm.lua
+
+ifeq ($(shell uname -m),arm64)
+        DYNASM_ARCH := arm64
+        JIT_DASC := src/jit_arm64.dasc
+        JIT_HDR  := src/jit_arm64.h
+else
+        DYNASM_ARCH := x64
+        JIT_DASC := src/jit_x64.dasc
+        JIT_HDR  := src/jit_x64.h
+endif
+
 SOURCES := $(wildcard src/*.c)
 OBJECTS := $(patsubst src/%.c,obj/%.o,$(SOURCES))
 TYLS_OBJECTS := $(patsubst src/%.c,obj/tyls/%.o,$(SOURCES))
@@ -126,12 +140,21 @@ ASSEMBLY := $(patsubst %.c,%.s,$(SOURCES))
 
 all: $(PROG)
 
+# DynASM pre-build step: generate JIT code emission header
+$(JIT_HDR): $(JIT_DASC)
+	@echo dynasm $<
+	@$(DYNASM) -o $@ $<
+
 include/keywords.h: src/keywords.gperf
 	@echo gperf $<
 	@gperf $< > $@
 
 obj/token.o: include/keywords.h
 obj/tyls/token.o: include/keywords.h
+
+# jit.c depends on the generated DynASM header
+obj/jit.o: $(JIT_HDR)
+obj/tyls/jit.o: $(JIT_HDR)
 
 ty: ty.c $(OBJECTS) $(EXTERNAL)
 	@echo cc $<

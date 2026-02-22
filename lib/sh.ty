@@ -97,15 +97,17 @@ pub fn sh(
 
     let (_, status) = os.wait(p.pid)!
 
+    if timedOut {
+        return nil
+    }
+
     let out = out.str!()
 
-    if !timedOut {
-        return out, {
-            signal: os.WIFSIGNALED(status) ? os.WTERMSIG(status) : nil,
-            stdout: out,
-            status: os.WEXITSTATUS(status),
-            stderr: err.str!()
-        }
+    return out, {
+        signal: os.WIFSIGNALED(status) ? os.WTERMSIG(status) : nil,
+        stdout: out,
+        status: os.WEXITSTATUS(status),
+        stderr: err.str!()
     }
 #|else
     let stdoutThread = Thread(-> do {

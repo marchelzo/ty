@@ -17,8 +17,8 @@ if __windows__ {
             print('FAIL4')
     }
 
-    if let $out = sh('sleep 0.25', timeoutMs: 100) {
-        print('FAIL5')
+    if let $out = sh('sleep 0.25', timeoutMs=100) {
+        print("FAIL: {show(out)}")
     }
 }
 

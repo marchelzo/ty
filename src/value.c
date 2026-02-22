@@ -1213,6 +1213,17 @@ BasicObject:
                 true
         );
 
+        if (flags & TY_SHOW_ABBREV) {
+                result[min(strcspn(result, "\0"), 80)] = '\0';
+                char *x1b = strrchr(result, '\x1b');
+                if (x1b != NULL) {
+                        char *x0m = strchr(x1b, 'm');
+                        if (x0m == NULL) {
+                                *x1b = '\0';
+                        }
+                }
+        }
+
         return result;
 }
 
@@ -1716,6 +1727,15 @@ mark_method(Ty *ty, Value const *v)
 {
         MARK(v->this);
         MarkNext(ty, v->this);
+}
+
+inline static void
+mark_native_function(Ty *ty, Value const *v)
+{
+        if (v->xinfo != NULL) {
+                MARK(v->xinfo);
+        }
+        // TODO: when JIT closures are supported, mark env entries via JitInfo
 }
 
 inline static void
