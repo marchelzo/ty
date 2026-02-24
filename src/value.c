@@ -1185,10 +1185,12 @@ BasicObject:
                         snprintf(
                                 buffer,
                                 SHOW_BUF_SZ,
-                                "%s<%s%s%s object at %s%p%s>%s",
+                                "%s<%s%s%s%s%s object at %s%p%s>%s",
                                 TERM(96),
                                 TERM(34),
                                 class_name(ty, v->class),
+                                TERM(91;1),
+                                v->object->dynamic ? "*" : "",
                                 TERM(96),
                                 TERM(94),
                                 (void *)v->object,

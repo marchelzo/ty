@@ -44,6 +44,7 @@ bool CheckConstraints = true;
 bool DetailedExceptions = true;
 bool CompileOnly = true;
 bool AllowErrors = false;
+bool NoJIT = true;
 bool InteractiveSession = false;
 
 enum {

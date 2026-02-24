@@ -351,7 +351,7 @@ class Object {
     }
 
     ?() {
-        (x -> x == nil) | self
+        x -> (x == nil) || (x :: self)
     }
 
     __str__() {
@@ -4441,7 +4441,7 @@ fn memoized[F](fun: F, max: Int = nil) -> F {
     __eval__(ty.Func({name: fun.__name__, params, body}))
 }
 
-macro assert(condition, message) {
+macro assert2(condition, message) {
     let condition-str = ty.String(parse.show(condition))
 
     let (op, lhs, rhs) = match condition {
@@ -4517,6 +4517,8 @@ macro assert(condition, message) {
         $$]
     }
 }
+
+macro assert(cond) = if !$$cond { die("Assertion failed: {$${parse.show(cond)}}") }
 
 macro unreachable! = assert(false, 'unreachable')
 

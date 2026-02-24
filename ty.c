@@ -86,6 +86,7 @@ bool AllowErrors        = false;
 bool CheckTypes         = true;
 bool CheckConstraints   = true;
 bool DetailedExceptions = true;
+bool NoJIT              = false;
 bool InteractiveSession = false;
 
 static char const *HighlightTheme = NULL;
@@ -114,6 +115,7 @@ usage(void)
                 "    -e EXPR       Evaluate and print EXPR                                                \0"
                 "    -f FILE       Interpret FILE before continuing. This differs from -M in that *all*   \0"
                 "                  top-level symbols from FILE will be visible, not just public ones      \0"
+                "    -j            Disable JIT                                                            \0"
                 "    -m MODULE     Import module MODULE before continuing                                 \0"
                 "    -M MODULE     Like -m, but uses an unqualified import: import MODULE (..)            \0"
                 "    -p            Print the value of the last-evaluated expression before exiting        \0"
@@ -565,6 +567,10 @@ ProcessArgs(char *argv[], bool first)
 
                                 case 'x':
                                         DetailedExceptions = true;
+                                        break;
+
+                                case 'j':
+                                        NoJIT = true;
                                         break;
 
                                 case 'e':

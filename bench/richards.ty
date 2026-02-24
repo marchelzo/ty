@@ -22,7 +22,7 @@ class Packet {
     datum: Int
     data: Array[Int]
 
-    __jit__ init(l: Packet | nil, i: Int, k: Int) {
+    init(l: Packet | nil, i: Int, k: Int) {
         link = l;
         ident = i;
         kind = k;
@@ -31,7 +31,7 @@ class Packet {
     }
 }
 
-__jit__ fn packet_append_to(pkt: Packet, lst: Packet | nil) -> Packet {
+fn packet_append_to(pkt: Packet, lst: Packet | nil) -> Packet {
     pkt.link = nil;
     match lst {
         $lst => {
@@ -50,7 +50,7 @@ __jit__ fn packet_append_to(pkt: Packet, lst: Packet | nil) -> Packet {
 class DeviceTaskRec {
     pending: Packet | nil
 
-    __jit__ init() {
+    init() {
         pending = nil;
     }
 }
@@ -59,7 +59,7 @@ class IdleTaskRec {
     control: Int
     count: Int
 
-    __jit__ init() {
+    init() {
         control = 1;
         count = 10000;
     }
@@ -69,17 +69,17 @@ class HandlerTaskRec {
     work_in: Packet | nil
     device_in: Packet | nil
 
-    __jit__ init() {
+    init() {
         work_in = nil;
         device_in = nil;
     }
 
-    __jit__ work_in_add(p: Packet) -> Packet | nil {
+    work_in_add(p: Packet) -> Packet | nil {
         work_in = packet_append_to(p, work_in);
         work_in
     }
 
-    __jit__ device_in_add(p: Packet) -> Packet | nil {
+    device_in_add(p: Packet) -> Packet | nil {
         device_in = packet_append_to(p, device_in);
         device_in
     }
@@ -89,7 +89,7 @@ class WorkerTaskRec {
     destination: Int
     count: Int
 
-    __jit__ init() {
+    init() {
         destination = I_HANDLERA;
         count = 0;
     }
@@ -100,34 +100,34 @@ class TaskState {
     task_waiting: Bool
     task_holding: Bool
 
-    __jit__ init(pp: Bool, tw: Bool, th: Bool) {
+    init(pp: Bool, tw: Bool, th: Bool) {
         packet_pending = pp;
         task_waiting = tw;
         task_holding = th;
     }
 
-    __jit__ mark_pending() {
+    mark_pending() {
         packet_pending = true;
         task_waiting = false;
         task_holding = false;
     }
 
-    __jit__ set_running() {
+    set_running() {
         packet_pending = false;
         task_waiting = false;
         task_holding = false;
     }
 }
 
-__jit__ fn task_state_running() -> TaskState {
+fn task_state_running() -> TaskState {
     TaskState(false, false, false)
 }
 
-__jit__ fn task_state_waiting() -> TaskState {
+fn task_state_waiting() -> TaskState {
     TaskState(false, true, false)
 }
 
-__jit__ fn task_state_waiting_with_packet() -> TaskState {
+fn task_state_waiting_with_packet() -> TaskState {
     TaskState(true, true, false)
 }
 
@@ -142,7 +142,7 @@ class Task {
     kind: Device | Idle | Handler | Worker
     rec: _
 
-    __jit__ init(l: Task | nil, i: Int, p: Int, w: Packet | nil, state: TaskState, k: Device | Idle | Handler | Worker, r: _) {
+    init(l: Task | nil, i: Int, p: Int, w: Packet | nil, state: TaskState, k: Device | Idle | Handler | Worker, r: _) {
         link = l;
         ident = i;
         priority = p;
@@ -154,15 +154,15 @@ class Task {
         rec = r;
     }
 
-    __jit__ is_waiting_with_packet() -> Bool {
+    is_waiting_with_packet() -> Bool {
         packet_pending && task_waiting && !task_holding
     }
 
-    __jit__ is_holding_or_waiting() -> Bool {
+    is_holding_or_waiting() -> Bool {
         task_holding || (!packet_pending && task_waiting)
     }
 
-    __jit__ add_packet(p: Packet, old: Task) -> Task {
+    add_packet(p: Packet, old: Task) -> Task {
         if input == nil {
             input = p;
             packet_pending = true;
@@ -175,18 +175,18 @@ class Task {
         old
     }
 
-    __jit__ wait_task() -> Task {
+    wait_task() -> Task {
         task_waiting = true;
         self
     }
 
-    __jit__ set_running() {
+    set_running() {
         packet_pending = false;
         task_waiting = false;
         task_holding = false;
     }
 
-    __jit__ mark_pending() {
+    mark_pending() {
         packet_pending = true;
         task_waiting = false;
         task_holding = false;
@@ -199,21 +199,21 @@ class TaskWorkArea {
     hold_count: Int
     qpkt_count: Int
 
-    __jit__ init() {
+    init() {
         task_list = nil;
         task_tab = [nil, nil, nil, nil, nil, nil, nil, nil, nil, nil];
         hold_count = 0;
         qpkt_count = 0;
     }
 
-    __jit__ task_new(i: Int, p: Int, w: Packet | nil, state: TaskState, kind: Device | Idle | Handler | Worker, rec: _) -> Task {
+    task_new(i: Int, p: Int, w: Packet | nil, state: TaskState, kind: Device | Idle | Handler | Worker, rec: _) -> Task {
         let t = Task(task_list, i, p, w, state, kind, rec);
         task_list = t;
         task_tab[i] = t;
         t
     }
 
-    __jit__ find_tcb(id: Int) -> Task {
+    find_tcb(id: Int) -> Task {
         if not let $t = task_tab[id] {
             throw "Bad task id";
         }
@@ -221,7 +221,7 @@ class TaskWorkArea {
     }
 }
 
-__jit__ fn task_qpkt(t: Task, pkt: Packet, work: TaskWorkArea) -> Task {
+fn task_qpkt(t: Task, pkt: Packet, work: TaskWorkArea) -> Task {
     let target = work.find_tcb(pkt.ident);
     work.qpkt_count = work.qpkt_count + 1;
     pkt.link = nil;
@@ -229,13 +229,13 @@ __jit__ fn task_qpkt(t: Task, pkt: Packet, work: TaskWorkArea) -> Task {
     target.add_packet(pkt, t)
 }
 
-__jit__ fn task_hold(t: Task, work: TaskWorkArea) -> Task | nil {
+fn task_hold(t: Task, work: TaskWorkArea) -> Task | nil {
     work.hold_count = work.hold_count + 1;
     t.task_holding = true;
     t.link
 }
 
-__jit__ fn task_release(t: Task, i: Int, work: TaskWorkArea) -> Task {
+fn task_release(t: Task, i: Int, work: TaskWorkArea) -> Task {
     let target = work.find_tcb(i);
     target.task_holding = false;
     if target.priority > t.priority {
@@ -245,7 +245,7 @@ __jit__ fn task_release(t: Task, i: Int, work: TaskWorkArea) -> Task {
     }
 }
 
-__jit__ fn task_run_task(t: Task, work: TaskWorkArea) -> Task | nil {
+fn task_run_task(t: Task, work: TaskWorkArea) -> Task | nil {
     let msg: Packet | nil = nil
     if t.is_waiting_with_packet() {
         msg = t.input;
@@ -265,7 +265,7 @@ __jit__ fn task_run_task(t: Task, work: TaskWorkArea) -> Task | nil {
     }
 }
 
-__jit__ fn device_fn(t: Task, pkt: Packet | nil, work: TaskWorkArea) -> Task | nil {
+fn device_fn(t: Task, pkt: Packet | nil, work: TaskWorkArea) -> Task | nil {
     let d: DeviceTaskRec = t.rec;
 
     if let $pkt = pkt {
@@ -284,7 +284,7 @@ __jit__ fn device_fn(t: Task, pkt: Packet | nil, work: TaskWorkArea) -> Task | n
     return task_qpkt(t, pkt, work);
 }
 
-__jit__ fn handler_fn(t: Task, pkt: Packet | nil, work: TaskWorkArea) -> Task | nil {
+fn handler_fn(t: Task, pkt: Packet | nil, work: TaskWorkArea) -> Task | nil {
     let h: HandlerTaskRec = t.rec;
     if pkt != nil {
         if pkt.kind == K_WORK {
@@ -316,7 +316,7 @@ __jit__ fn handler_fn(t: Task, pkt: Packet | nil, work: TaskWorkArea) -> Task | 
     task_qpkt(t, dev, work)
 }
 
-__jit__ fn idle_fn(t: Task, pkt: Packet | nil, work: TaskWorkArea) -> Task | nil {
+fn idle_fn(t: Task, pkt: Packet | nil, work: TaskWorkArea) -> Task | nil {
     let i: IdleTaskRec = t.rec;
     i.count = i.count - 1;
     if i.count == 0 {
@@ -330,7 +330,7 @@ __jit__ fn idle_fn(t: Task, pkt: Packet | nil, work: TaskWorkArea) -> Task | nil
     }
 }
 
-__jit__ fn worker_fn(t: Task, pkt: Packet | nil, work: TaskWorkArea) -> Task | nil {
+fn worker_fn(t: Task, pkt: Packet | nil, work: TaskWorkArea) -> Task | nil {
     let w: WorkerTaskRec = t.rec;
     if pkt == nil {
         return t.wait_task();
@@ -352,7 +352,7 @@ __jit__ fn worker_fn(t: Task, pkt: Packet | nil, work: TaskWorkArea) -> Task | n
     task_qpkt(t, pkt, work)
 }
 
-__jit__ fn schedule(work: TaskWorkArea) {
+fn schedule(work: TaskWorkArea) {
     let t = work.task_list;
     while t != nil {
         if t.is_holding_or_waiting() {
@@ -363,7 +363,7 @@ __jit__ fn schedule(work: TaskWorkArea) {
     }
 }
 
-__jit__ fn richards_run(iterations: Int) -> Bool {
+fn richards_run(iterations: Int) -> Bool {
     for _ in 0..iterations {
         let work = TaskWorkArea();
 
@@ -396,7 +396,7 @@ __jit__ fn richards_run(iterations: Int) -> Bool {
 }
 
 fn main() {
-    let result = richards_run(50);
+    let result = richards_run(100);
     print(if result { "PASS" } else { "FAIL" });
 }
 

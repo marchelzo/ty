@@ -140,6 +140,9 @@ vm_call_method_fast(Ty *ty, Value const *self, Value const *f, int argc);
 void
 vm_push_self(Ty *ty);
 
+Value *
+vm_get_self(Ty *ty);
+
 Value
 vm_eval_function(Ty *ty, Value const *f, ...);
 
@@ -266,6 +269,60 @@ vm_jit_dict_literal(Ty *ty, Value *dflt);
 
 void
 DoSubscript(Ty *ty, bool exec);
+
+void
+DoMutAdd(Ty *ty, bool exec);
+
+void
+DoMutSub(Ty *ty, bool exec);
+
+void
+DoMutMul(Ty *ty, bool exec);
+
+void
+DoMutDiv(Ty *ty, bool exec);
+
+void
+DoMutMod(Ty *ty, bool exec);
+
+void
+DoMutAnd(Ty *ty, bool exec);
+
+void
+DoMutOr(Ty *ty, bool exec);
+
+void
+DoMutXor(Ty *ty, bool exec);
+
+void
+DoMutShl(Ty *ty, bool exec);
+
+void
+DoMutShr(Ty *ty, bool exec);
+
+void
+DoBinaryOp(Ty *ty, int op, bool exec);
+
+void
+IncValue(Ty *ty, Value *v);
+
+void
+DecValue(Ty *ty, Value *v);
+
+void
+DoCmp(Ty *ty);
+
+void
+DoLt(Ty *ty);
+
+void
+DoGt(Ty *ty);
+
+void
+DoLeq(Ty *ty);
+
+void
+DoGeq(Ty *ty);
 
 #define VM_TRY() (setjmp(vm_push_try(ty)->jb) == 0)
 
