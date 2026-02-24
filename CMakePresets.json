@@ -100,9 +100,29 @@
             }
         },
         {
+            "name": "clang-windows",
+            "inherits": "base-windows",
+            "displayName": "Clang - Release",
+            "description": "Using clang compiler",
+            "generator": "Ninja",
+            "cacheVariables": {
+                "CMAKE_C_COMPILER": "clang-cl.exe",
+                "CMAKE_CXX_COMPILER": "clang-cl.exe"
+            }
+        },
+        {
+            "name": "clang-windows-debug",
+            "inherits": "clang-windows",
+            "displayName": "Clang - Debug",
+            "description": "Using clang compiler (debug build)",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug"
+            }
+        },
+        {
             "name": "msvc2022",
             "inherits": "base-windows",
-            "displayName": "Visual Studio Community 2022 - amd64 - Release",
+            "displayName": "Visual Studio 2022 - amd64 - Release",
             "description": "Using compilers for Visual Studio 17 2022",
             "generator": "Visual Studio 17 2022",
             "toolset": "host=x64",
@@ -115,7 +135,7 @@
         {
             "name": "msvc2022-debug",
             "inherits": "msvc2022",
-            "displayName": "Visual Studio Community 2022 - amd64 - Debug",
+            "displayName": "Visual Studio 2022 - amd64 - Debug",
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "Debug"
             }
@@ -123,7 +143,7 @@
         {
             "name": "msvc2022-shared",
             "inherits": "msvc2022",
-            "displayName": "Visual Studio Community 2022 - amd64 - Release (.dll dependencies)",
+            "displayName": "Visual Studio 2022 - amd64 - Release (.dll dependencies)",
             "description": "Using compilers for Visual Studio 17 2022",
             "generator": "Visual Studio 17 2022",
             "toolset": "host=x64",
@@ -135,7 +155,7 @@
         {
             "name": "msvc2022-shared-debug",
             "inherits": "msvc2022-shared",
-            "displayName": "Visual Studio Community 2022 - amd64 - Debug (.dll dependencies)",
+            "displayName": "Visual Studio 2022 - amd64 - Debug (.dll dependencies)",
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "Debug"
             }
@@ -148,50 +168,94 @@
             "targets": "install"
         },
         {
-            "name": "msvc2022",
+            "name": "base-build-windows",
+            "hidden": true,
             "inherits": "base-build",
-            "displayName": "Visual Studio Community 2022 - amd64 - Release",
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Windows"
+            }
+        },
+        {
+            "name": "base-build-linux",
+            "hidden": true,
+            "inherits": "base-build",
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Linux"
+            }
+        },
+        {
+            "name": "base-build-osx",
+            "hidden": true,
+            "inherits": "base-build",
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Darwin"
+            }
+        },
+        {
+            "name": "clang-windows",
+            "inherits": "base-build-windows",
+            "displayName": "Clang - Windows - Release",
+            "configurePreset": "clang-windows",
+            "configuration": "Release"
+        },
+        {
+            "name": "clang-windows-debug",
+            "inherits": "base-build-windows",
+            "displayName": "Clang - Windows - Debug",
+            "configurePreset": "clang-windows-debug",
+            "configuration": "Debug"
+        },
+        {
+            "name": "msvc2022",
+            "inherits": "base-build-windows",
+            "displayName": "Visual Studio 2022 - amd64 - Release",
             "configurePreset": "msvc2022",
             "configuration": "Release"
         },
         {
             "name": "msvc2022-debug",
-            "inherits": "base-build",
-            "displayName": "Visual Studio Community 2022 - amd64 - Debug",
+            "inherits": "base-build-windows",
+            "displayName": "Visual Studio 2022 - amd64 - Debug",
             "configurePreset": "msvc2022-debug",
             "configuration": "Debug"
         },
         {
             "name": "msvc2022-shared",
-            "inherits": "base-build",
-            "displayName": "Visual Studio Community 2022 - amd64 - Release (.dll dependencies)",
+            "inherits": "base-build-windows",
+            "displayName": "Visual Studio  2022 - amd64 - Release (.dll dependencies)",
             "configurePreset": "msvc2022-shared",
             "configuration": "Release"
         },
         {
             "name": "msvc2022-shared-debug",
-            "inherits": "base-build",
-            "displayName": "Visual Studio Community 2022 - amd64 - Debug (.dll dependencies)",
+            "inherits": "base-build-windows",
+            "displayName": "Visual Studio  2022 - amd64 - Debug (.dll dependencies)",
             "configurePreset": "msvc2022-shared-debug",
             "configuration": "Debug"
         },
         {
             "name": "gcc",
-            "inherits": "base-build",
+            "inherits": "base-build-linux",
             "displayName": "GCC - amd64 - Release",
             "configurePreset": "gcc",
             "configuration": "Release"
         },
         {
             "name": "gcc-ninja",
-            "inherits": "base-build",
+            "inherits": "base-build-linux",
             "displayName": "GCC - amd64 - Release",
             "configurePreset": "gcc-ninja",
             "configuration": "Release"
         },
         {
             "name": "clang-osx",
-            "inherits": "base-build",
+            "inherits": "base-build-osx",
             "displayName": "Clang - amd64 - Release",
             "configurePreset": "clang-osx",
             "configuration": "Release"
@@ -207,13 +271,56 @@
             "packageDirectory": "${sourceDir}/_packages/${presetName}"
         },
         {
-            "name": "msvc2022",
+            "name": "base-package-windows",
+            "hidden": true,
             "inherits": "base-package",
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Windows"
+            }
+        },
+        {
+            "name": "base-package-linux",
+            "hidden": true,
+            "inherits": "base-package",
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Linux"
+            }
+        },
+        {
+            "name": "base-package-osx",
+            "hidden": true,
+            "inherits": "base-package",
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Darwin"
+            }
+        },
+        {
+            "name": "clang-windows",
+            "inherits": "base-package-windows",
+            "configurePreset": "clang-windows"
+        },
+        {
+            "name": "clang-windows-debug",
+            "inherits": "base-package-windows",
+            "configurePreset": "clang-windows-debug",
+            "configurations": [
+                "Debug"
+            ]
+        },
+        {
+            "name": "msvc2022",
+            "inherits": "base-package-windows",
             "configurePreset": "msvc2022"
         },
         {
             "name": "msvc2022-debug",
-            "inherits": "base-package",
+            "inherits": "base-package-windows",
             "configurePreset": "msvc2022-debug",
             "configurations": [
                 "Debug"
@@ -221,12 +328,12 @@
         },
         {
             "name": "msvc2022-shared",
-            "inherits": "base-package",
+            "inherits": "base-package-windows",
             "configurePreset": "msvc2022-shared"
         },
         {
             "name": "msvc2022-shared-debug",
-            "inherits": "base-package",
+            "inherits": "base-package-windows",
             "configurePreset": "msvc2022-shared-debug",
             "configurations": [
                 "Debug"
@@ -234,22 +341,42 @@
         },
         {
             "name": "gcc",
-            "inherits": "base-package",
-            "configurePreset": "gcc",
-            "configurations": [
-                "Debug"
-            ]
+            "inherits": "base-package-linux",
+            "configurePreset": "gcc"
         },
         {
             "name": "clang-osx",
-            "inherits": "base-package",
-            "configurePreset": "clang-osx",
-            "configurations": [
-                "Debug"
-            ]
+            "inherits": "base-package-osx",
+            "configurePreset": "clang-osx"
         }
     ],
     "workflowPresets": [
+        {
+            "name": "clang-windows",
+            "steps": [
+                {
+                    "type": "configure",
+                    "name": "clang-windows"
+                },
+                {
+                    "type": "build",
+                    "name": "clang-windows"
+                }
+            ]
+        },
+        {
+            "name": "clang-windows-debug",
+            "steps": [
+                {
+                    "type": "configure",
+                    "name": "clang-windows-debug"
+                },
+                {
+                    "type": "build",
+                    "name": "clang-windows-debug"
+                }
+            ]
+        },
         {
             "name": "msvc2022",
             "steps": [
