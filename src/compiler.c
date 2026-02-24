@@ -6366,6 +6366,23 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
                         s->value->_type,
                         T_FLAG_STRICT | T_FLAG_AVOID_NIL | (s->value->bang * T_FLAG_BANG)
                 );
+                if (
+                        (s->target->type == EXPRESSION_IDENTIFIER)
+                     && (s->value->type  == EXPRESSION_IDENTIFIER)
+                     && IsTopLevel(s->value->symbol)
+                     && SymbolIsConst(s->target->symbol)
+                ) {
+                        u32 i = s->target->symbol->i;
+                        u32 j = s->value->symbol->i;
+                        while (vN(Globals) <= i) {
+                                Symbol *sym = v__(
+                                        GlobalScope->owned,
+                                        vN(GlobalScope->owned)
+                                );
+                                xvP(Globals, UNINITIALIZED(sym));
+                        }
+                        *v_(Globals, i) = v__(Globals, j);
+                }
                 if (s->target->type == EXPRESSION_IDENTIFIER) {
                        dont_printf(
                                 "%s ::= %s\n",
