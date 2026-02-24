@@ -1289,6 +1289,7 @@ typedef struct {
         int sp;             // Current operand stack depth (compile-time)
         int max_sp;         // Maximum operand stack depth seen
         int next_label;
+        int label_capacity;
         int param_count;
         int bound;
         char const *name;
@@ -1337,6 +1338,17 @@ typedef struct {
 // Operand stack offset: address of ops[i] relative to BC_OPS
 #define OP_OFF(i) ((i) * VALUE_SIZE)
 
+// Allocate a new DynASM PC label, growing the pclabel array if needed
+static int
+bc_next_label(JitBcCtx *ctx)
+{
+        if (ctx->next_label >= ctx->label_capacity) {
+                ctx->label_capacity *= 2;
+                dasm_growpc(&ctx->asm, ctx->label_capacity);
+        }
+        return ctx->next_label++;
+}
+
 // Get a DynASM label for a bytecode offset, creating one if needed
 static int
 bc_label_for(JitBcCtx *ctx, int offset)
@@ -1349,7 +1361,7 @@ bc_label_for(JitBcCtx *ctx, int offset)
         if (ctx->label_count >= MAX_BC_LABELS) {
                 return -1;
         }
-        int label = ctx->next_label++;
+        int label = bc_next_label(ctx);
         ctx->labels[ctx->label_count].offset = offset;
         ctx->labels[ctx->label_count].label = label;
         ctx->labels[ctx->label_count].sp = -1; // unknown until emission
@@ -2454,8 +2466,8 @@ bc_emit_arith(JitBcCtx *ctx, void *helper)
         int a_off = OP_OFF(ctx->sp - 2);
         int b_off = OP_OFF(ctx->sp - 1);
 
-        int lbl_slow = ctx->next_label++;
-        int lbl_done = ctx->next_label++;
+        int lbl_slow = bc_next_label(ctx);
+        int lbl_done = bc_next_label(ctx);
 
         // Check a->type == VALUE_INTEGER
         jit_emit_ldrb(asm, BC_S0, BC_OPS, a_off + VAL_OFF_TYPE);
@@ -2536,9 +2548,9 @@ bc_emit_cmp(JitBcCtx *ctx, void *helper)
         int a_off = OP_OFF(ctx->sp - 2);
         int b_off = OP_OFF(ctx->sp - 1);
 
-        int lbl_nil_check = ctx->next_label++;
-        int lbl_slow = ctx->next_label++;
-        int lbl_done = ctx->next_label++;
+        int lbl_nil_check = bc_next_label(ctx);
+        int lbl_slow = bc_next_label(ctx);
+        int lbl_done = bc_next_label(ctx);
 
         // Load both types
         jit_emit_ldrb(asm, BC_S0, BC_OPS, a_off + VAL_OFF_TYPE); // a.type
@@ -2579,7 +2591,7 @@ bc_emit_cmp(JitBcCtx *ctx, void *helper)
                 // BC_S0 = a.type, BC_S1 = b.type (already loaded)
                 // If either is nil, result = (a.type == b.type) for EQ, != for NEQ
                 jit_emit_cmp_ri(asm, BC_S0, VALUE_NIL);
-                int lbl_a_nil = ctx->next_label++;
+                int lbl_a_nil = bc_next_label(ctx);
                 jit_emit_branch_eq(asm, lbl_a_nil);
                 jit_emit_cmp_ri(asm, BC_S1, VALUE_NIL);
                 jit_emit_branch_ne(asm, lbl_slow);
@@ -2614,10 +2626,10 @@ bc_emit_truthy(JitBcCtx *ctx)
         dasm_State **asm = &ctx->asm;
         int off = OP_OFF(ctx->sp - 1);
 
-        int lbl_nil  = ctx->next_label++;
-        int lbl_bool = ctx->next_label++;
-        int lbl_int  = ctx->next_label++;
-        int lbl_done = ctx->next_label++;
+        int lbl_nil  = bc_next_label(ctx);
+        int lbl_bool = bc_next_label(ctx);
+        int lbl_int  = bc_next_label(ctx);
+        int lbl_done = bc_next_label(ctx);
 
         // Load type byte
         jit_emit_ldrb(asm, BC_S0, BC_OPS, off + VAL_OFF_TYPE);
@@ -2687,8 +2699,8 @@ bc_emit_self_member_read_fast(JitBcCtx *ctx, int member_id, char const *bc_ip)
 
         dasm_State **asm = &ctx->asm;
         int self_val_off = ctx->param_count * VALUE_SIZE;
-        int lbl_slow = ctx->next_label++;
-        int lbl_done = ctx->next_label++;
+        int lbl_slow = bc_next_label(ctx);
+        int lbl_done = bc_next_label(ctx);
 
         // Allocate the output slot
         int out_off = OP_OFF(ctx->sp);
@@ -2762,8 +2774,8 @@ bc_emit_self_member_write_fast(JitBcCtx *ctx, int member_id, char const *bc_ip)
 
         dasm_State **asm = &ctx->asm;
         int self_val_off = ctx->param_count * VALUE_SIZE;
-        int lbl_slow = ctx->next_label++;
-        int lbl_done = ctx->next_label++;
+        int lbl_slow = bc_next_label(ctx);
+        int lbl_done = bc_next_label(ctx);
         int val_off = OP_OFF(ctx->sp - 1);
 
         // Check self.type == VALUE_OBJECT
@@ -3092,8 +3104,8 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                                 int addend_off = OP_OFF(ctx->sp - 1);
                                 int local_off = n * VALUE_SIZE;
 
-                                int lbl_slow = ctx->next_label++;
-                                int lbl_done = ctx->next_label++;
+                                int lbl_slow = bc_next_label(ctx);
+                                int lbl_done = bc_next_label(ctx);
 
                                 // Fast path: check both are VALUE_INTEGER
                                 jit_emit_ldrb(asm, BC_S0, BC_LOC, local_off + VAL_OFF_TYPE);
@@ -3259,8 +3271,8 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
 
                 CASE(NEG) {
                         int off = OP_OFF(ctx->sp - 1);
-                        int lbl_slow = ctx->next_label++;
-                        int lbl_done = ctx->next_label++;
+                        int lbl_slow = bc_next_label(ctx);
+                        int lbl_done = bc_next_label(ctx);
 
                         jit_emit_ldrb(asm, BC_S0, BC_OPS, off + VAL_OFF_TYPE);
                         jit_emit_cmp_ri(asm, BC_S0, VALUE_INTEGER);
@@ -3282,10 +3294,10 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                 CASE(NOT) {
                         // !value: for booleans, flip; for nil, true; for int, z==0; else call helper
                         int off = OP_OFF(ctx->sp - 1);
-                        int lbl_bool = ctx->next_label++;
-                        int lbl_nil  = ctx->next_label++;
-                        int lbl_slow = ctx->next_label++;
-                        int lbl_done = ctx->next_label++;
+                        int lbl_bool = bc_next_label(ctx);
+                        int lbl_nil  = bc_next_label(ctx);
+                        int lbl_slow = bc_next_label(ctx);
+                        int lbl_done = bc_next_label(ctx);
 
                         jit_emit_ldrb(asm, BC_S0, BC_OPS, off + VAL_OFF_TYPE);
 
@@ -3472,9 +3484,9 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                         int b_off = OP_OFF(ctx->sp - 1);
                         bool is_eq = (op == INSTR_JEQ);
 
-                        int lbl_nil_check = ctx->next_label++;
-                        int lbl_slow = ctx->next_label++;
-                        int lbl_done = ctx->next_label++;
+                        int lbl_nil_check = bc_next_label(ctx);
+                        int lbl_slow = bc_next_label(ctx);
+                        int lbl_done = bc_next_label(ctx);
 
                         // Load both types
                         jit_emit_ldrb(asm, BC_S0, BC_OPS, a_off + VAL_OFF_TYPE); // a.type
@@ -3506,7 +3518,7 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                         jit_emit_ldrb(asm, BC_S0, BC_OPS, a_off + VAL_OFF_TYPE);
                         jit_emit_ldrb(asm, BC_S1, BC_OPS, b_off + VAL_OFF_TYPE);
                         jit_emit_cmp_ri(asm, BC_S0, VALUE_NIL);
-                        int lbl_a_nil = ctx->next_label++;
+                        int lbl_a_nil = bc_next_label(ctx);
                         jit_emit_branch_eq(asm, lbl_a_nil);
                         jit_emit_cmp_ri(asm, BC_S1, VALUE_NIL);
                         jit_emit_branch_ne(asm, lbl_slow);
@@ -3560,8 +3572,8 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                         int a_off = OP_OFF(ctx->sp - 2);
                         int b_off = OP_OFF(ctx->sp - 1);
 
-                        int lbl_slow = ctx->next_label++;
-                        int lbl_done = ctx->next_label++;
+                        int lbl_slow = bc_next_label(ctx);
+                        int lbl_done = bc_next_label(ctx);
 
                         // Load both types
                         jit_emit_ldrb(asm, BC_S0, BC_OPS, a_off + VAL_OFF_TYPE);
@@ -3634,8 +3646,8 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
 
                                                 if (slot_byte_off + 16 <= 504) {
                                                         int obj_off = OP_OFF(ctx->sp - 1);
-                                                        int lbl_slow = ctx->next_label++;
-                                                        int lbl_done = ctx->next_label++;
+                                                        int lbl_slow = bc_next_label(ctx);
+                                                        int lbl_done = bc_next_label(ctx);
 
                                                         // Check obj.type == VALUE_OBJECT
                                                         jit_emit_ldrb(asm, BC_S0, BC_OPS, obj_off + VAL_OFF_TYPE);
@@ -3751,8 +3763,8 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                                                         if (slot_byte_off + 16 <= 504) {
                                                                 int obj_off = OP_OFF(ctx->sp - 1);
                                                                 int val_off = OP_OFF(ctx->sp - 2);
-                                                                int lbl_slow = ctx->next_label++;
-                                                                int lbl_done = ctx->next_label++;
+                                                                int lbl_slow = bc_next_label(ctx);
+                                                                int lbl_done = bc_next_label(ctx);
 
                                                                 // Check obj.type == VALUE_OBJECT
                                                                 jit_emit_ldrb(asm, BC_S0, BC_OPS, obj_off + VAL_OFF_TYPE);
@@ -3891,12 +3903,12 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                         jit_emit_call_reg(asm, BC_CALL);
 
                         // Check return: 0 = handled inline, 1 = JIT callee pending
-                        int lbl_done = ctx->next_label++;
+                        int lbl_done = bc_next_label(ctx);
                         jit_emit_cbz(asm, BC_RET, lbl_done);
 
                         // JIT callee detected: save resume index, signal trampoline, return
                         int site_idx = ctx->call_site_count++;
-                        int resume_lbl = ctx->next_label++;
+                        int resume_lbl = bc_next_label(ctx);
                         ctx->resume_labels[site_idx] = resume_lbl;
 
                         jit_emit_load_imm(asm, BC_S0, JIT_CALL);
@@ -3989,7 +4001,7 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                                         jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_baked_call);
                                         jit_emit_call_reg(asm, BC_CALL);
 
-                                        int lbl_cm_done = ctx->next_label++;
+                                        int lbl_cm_done = bc_next_label(ctx);
 
                                         // If return 1: handled (result on stack), skip slow path
                                         jit_emit_cbnz(asm, BC_RET, lbl_cm_done);
@@ -4136,8 +4148,8 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                         jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_fast_global_call);
                         jit_emit_call_reg(asm, BC_CALL);
 
-                        int lbl_cg_slow = ctx->next_label++;
-                        int lbl_cg_done = ctx->next_label++;
+                        int lbl_cg_slow = bc_next_label(ctx);
+                        int lbl_cg_done = bc_next_label(ctx);
 
                         // If return 0: not JIT'd or not simple, use slow path
                         jit_emit_cbz(asm, BC_RET, lbl_cg_slow);
@@ -4160,11 +4172,11 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                         jit_emit_call_reg(asm, BC_CALL);
 
                         // Old trampoline may also signal JIT_CALL
-                        int lbl_cg_done2 = ctx->next_label++;
+                        int lbl_cg_done2 = bc_next_label(ctx);
                         jit_emit_cbz(asm, BC_RET, lbl_cg_done2);
 
                         int cg_site_idx2 = ctx->call_site_count++;
-                        int cg_resume_lbl2 = ctx->next_label++;
+                        int cg_resume_lbl2 = bc_next_label(ctx);
                         ctx->resume_labels[cg_site_idx2] = cg_resume_lbl2;
 
                         jit_emit_load_imm(asm, BC_S0, JIT_CALL);
@@ -4207,7 +4219,7 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                         int top_off = OP_OFF(ctx->sp - 1);
                         jit_emit_ldrb(asm, BC_S0, BC_OPS, top_off + VAL_OFF_TYPE);
                         jit_emit_cmp_ri(asm, BC_S0, VALUE_NONE);
-                        int lbl_skip = ctx->next_label++;
+                        int lbl_skip = bc_next_label(ctx);
                         jit_emit_branch_eq(asm, lbl_skip);
                         // Not NONE --- return this value
                         bc_copy_value(ctx, BC_RES, 0, BC_OPS, top_off);
@@ -4365,8 +4377,8 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
 #ifndef TY_NO_LOG
                         BC_SKIPSTR();
 #endif
-                        int lbl_loop = ctx->next_label++;
-                        int lbl_done = ctx->next_label++;
+                        int lbl_loop = bc_next_label(ctx);
+                        int lbl_done = bc_next_label(ctx);
                         jit_emit_add_imm(asm, BC_S3, BC_LOC, n * VALUE_SIZE);
                         jit_emit_label(asm, lbl_loop);
                         jit_emit_ldrb(asm, BC_S0, BC_S3, VAL_OFF_TYPE);
@@ -4382,8 +4394,8 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                 CASE(TARGET_REF) {
                         int n;
                         BC_READ(n);
-                        int lbl_loop = ctx->next_label++;
-                        int lbl_done = ctx->next_label++;
+                        int lbl_loop = bc_next_label(ctx);
+                        int lbl_done = bc_next_label(ctx);
                         jit_emit_add_imm(asm, BC_S3, BC_LOC, n * VALUE_SIZE);
                         jit_emit_label(asm, lbl_loop);
                         jit_emit_ldrb(asm, BC_S0, BC_S3, VAL_OFF_TYPE);
@@ -4401,8 +4413,8 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                                 u8 mut_op = (u8)*ip++;
                                 int addend_off = OP_OFF(ctx->sp - 1);
 
-                                int lbl_slow = ctx->next_label++;
-                                int lbl_done = ctx->next_label++;
+                                int lbl_slow = bc_next_label(ctx);
+                                int lbl_done = bc_next_label(ctx);
 
                                 jit_emit_ldrb(asm, BC_S0, BC_S3, VAL_OFF_TYPE);
                                 jit_emit_cmp_ri(asm, BC_S0, VALUE_INTEGER);
@@ -4483,8 +4495,8 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                         int con_off = OP_OFF(ctx->sp - 2);
                         int val_off = OP_OFF(ctx->sp - 3);
 
-                        int lbl_slow = ctx->next_label++;
-                        int lbl_done = ctx->next_label++;
+                        int lbl_slow = bc_next_label(ctx);
+                        int lbl_done = bc_next_label(ctx);
 
                         // Fast path: container is array, subscript is non-negative int
                         jit_emit_ldrb(asm, BC_S0, BC_OPS, con_off + VAL_OFF_TYPE);
@@ -4596,8 +4608,8 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                         int sub_off = OP_OFF(ctx->sp - 1);
                         int res_off = con_off; // result overwrites container slot
 
-                        int lbl_slow = ctx->next_label++;
-                        int lbl_done = ctx->next_label++;
+                        int lbl_slow = bc_next_label(ctx);
+                        int lbl_done = bc_next_label(ctx);
 
                         Type *t0 = type_resolve_var(ctx->op_types[ctx->sp - 2]);
                         Class *c = expected_class_of(t0);
@@ -4661,7 +4673,7 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                 CASE(NONE_IF_NIL) {
                         // If TOS is nil, replace with NONE
                         int off = OP_OFF(ctx->sp - 1);
-                        int lbl_not_nil = ctx->next_label++;
+                        int lbl_not_nil = bc_next_label(ctx);
                         jit_emit_ldrb(asm, BC_S0, BC_OPS, off + VAL_OFF_TYPE);
                         jit_emit_cmp_ri(asm, BC_S0, VALUE_NIL);
                         jit_emit_branch_ne(asm, lbl_not_nil);
@@ -4679,7 +4691,7 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                 CASE(THROW_IF_NIL) {
                         // If TOS is nil, tag with MatchError and throw
                         int off = OP_OFF(ctx->sp - 1);
-                        int lbl_not_nil = ctx->next_label++;
+                        int lbl_not_nil = bc_next_label(ctx);
                         jit_emit_ldrb(asm, BC_S0, BC_OPS, off + VAL_OFF_TYPE);
                         jit_emit_cmp_ri(asm, BC_S0, VALUE_NIL);
                         jit_emit_branch_ne(asm, lbl_not_nil);
@@ -4749,8 +4761,8 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                 // --- INC/DEC (in-place on TOS) ---
                 CASE(INC) {
                         int off = OP_OFF(ctx->sp - 1);
-                        int lbl_slow = ctx->next_label++;
-                        int lbl_done = ctx->next_label++;
+                        int lbl_slow = bc_next_label(ctx);
+                        int lbl_done = bc_next_label(ctx);
 
                         // Fast path: if int, add 1 to z
                         jit_emit_ldrb(asm, BC_S0, BC_OPS, off + VAL_OFF_TYPE);
@@ -4775,8 +4787,8 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
 
                 CASE(DEC) {
                         int off = OP_OFF(ctx->sp - 1);
-                        int lbl_slow = ctx->next_label++;
-                        int lbl_done = ctx->next_label++;
+                        int lbl_slow = bc_next_label(ctx);
+                        int lbl_done = bc_next_label(ctx);
 
                         jit_emit_ldrb(asm, BC_S0, BC_OPS, off + VAL_OFF_TYPE);
                         jit_emit_cmp_ri(asm, BC_S0, VALUE_INTEGER);
@@ -4860,8 +4872,8 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                         // Pop value, push its tag (or nil if no tag)
                         // For now, use a helper
                         int off = OP_OFF(ctx->sp - 1);
-                        int lbl_has_tag = ctx->next_label++;
-                        int lbl_done = ctx->next_label++;
+                        int lbl_has_tag = bc_next_label(ctx);
+                        int lbl_done = bc_next_label(ctx);
 
                         // Check tags field
                         jit_emit_ldr32(asm, BC_S0, BC_OPS, off + VAL_OFF_TAGS);
@@ -5593,8 +5605,8 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
 
                         if (ctx->tgt_kind == TGT_LOCAL) {
                                 int local_off = ctx->tgt_index * VALUE_SIZE;
-                                int lbl_slow = ctx->next_label++;
-                                int lbl_done = ctx->next_label++;
+                                int lbl_slow = bc_next_label(ctx);
+                                int lbl_done = bc_next_label(ctx);
 
                                 if (op == INSTR_MUT_ADD || op == INSTR_MUT_SUB) {
                                         // Fast path: check both are VALUE_INTEGER
@@ -5876,6 +5888,7 @@ jit_compile(Ty *ty, Value const *func)
         ctx.sp = 0;
         ctx.max_sp = 0;
         ctx.next_label = 0;
+        ctx.label_capacity = MAX_BC_LABELS;
         ctx.label_count = 0;
         ctx.save_sp_top = -1;
         memset(ctx.op_local, -1, sizeof ctx.op_local);
@@ -5910,7 +5923,6 @@ jit_compile(Ty *ty, Value const *func)
         // Set up DynASM
         dasm_State *asm;
         dasm_init(&asm, DASM_MAXSECTION);
-        ctx.asm = asm;
 
         void *global_labels[JIT_GLOB__MAX];
         dasm_setupglobal(&asm, global_labels, JIT_GLOB__MAX);
@@ -5919,24 +5931,29 @@ jit_compile(Ty *ty, Value const *func)
 
         jit_emit_gen_prologue(&asm, bound);
 
+        ctx.asm = asm; // sync after DynASM setup
+
         // Trampoline support: check if we're resuming after a sub-call.
         // Load ty->jit.resume_idx; if non-zero, jump to a dispatch block
         // that redirects to the appropriate resume label.
-        int lbl_dispatch = ctx.next_label++;
-        int lbl_normal_start = ctx.next_label++;
+        int lbl_dispatch = bc_next_label(&ctx);
+        int lbl_normal_start = bc_next_label(&ctx);
         ctx.call_site_count = 0;
+
+        asm = ctx.asm; // sync: bc_next_label may have grown pclabels
 
         jit_emit_ldr32(&asm, BC_S0, BC_TY, OFF_JIT_RESUME);
         jit_emit_cbnz(&asm, BC_S0, lbl_dispatch);
         jit_emit_label(&asm, lbl_normal_start);
 
         // Emit bytecode
-        ctx.asm = asm; // refresh after prologue might have changed it
+        ctx.asm = asm;
         if (!bc_emit(&ctx, bc, code_size)) {
                 LOG("JIT[bc]: emission failed for %s", name);
                 dasm_free(&asm);
                 return NULL;
         }
+        asm = ctx.asm; // refresh: bc_emit may have grown pclabels
 
         // Emit return epilogue at the special label
         int lbl_ret = bc_find_label(&ctx, -1);
