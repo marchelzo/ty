@@ -52,7 +52,7 @@ ifdef PROFILE_TYPES
 	CFLAGS += -DTY_PROFILE_TYPES
 endif
 
-ifndef NO_JIT
+ifdef NO_JIT
 	CFLAGS += -DTY_NO_JIT
 endif
 
