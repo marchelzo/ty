@@ -1255,6 +1255,7 @@ jit_rt_assign_global(Ty *ty, int n, Value *val)
 #define BC_A3  3    // x3
 #define BC_A4  4    // x4
 #define BC_A5  5    // x5
+#define BC_RET 0    // x0 - return value register
 #elif JIT_ARCH_X64
 // x86-64 callee-saved register assignments
 #define BC_TY    12   // r12
@@ -1275,6 +1276,7 @@ jit_rt_assign_global(Ty *ty, int n, Value *val)
 #define BC_A3  1    // rcx
 #define BC_A4  8    // r8  (aliases BC_S0, fine before call)
 #define BC_A5  9    // r9  (aliases BC_S1, fine before call)
+#define BC_RET 0    // rax - return value register
 #endif
 
 // Pack two 32-bit ints into a single 64-bit immediate for register-only calls
@@ -3745,7 +3747,7 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
 
                         // Check return: 0 = handled inline, 1 = JIT callee pending
                         int lbl_done = ctx->next_label++;
-                        jit_emit_cbz(asm, BC_A0, lbl_done);
+                        jit_emit_cbz(asm, BC_RET, lbl_done);
 
                         // JIT callee detected: save resume index, signal trampoline, return
                         int site_idx = ctx->call_site_count++;
@@ -3972,7 +3974,7 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
 
                         // Check return: 0 = handled inline, 1 = JIT callee pending
                         int lbl_cg_done = ctx->next_label++;
-                        jit_emit_cbz(asm, BC_A0, lbl_cg_done);
+                        jit_emit_cbz(asm, BC_RET, lbl_cg_done);
 
                         // JIT callee detected: save resume index, signal trampoline, return
                         int cg_site_idx = ctx->call_site_count++;
