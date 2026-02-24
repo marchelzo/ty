@@ -7388,6 +7388,9 @@ emit_function(Ty *ty, Expr const *e)
                           && (RUNTIME_CONSTRAINTS || (e->overload != NULL));
                 JumpPlaceholder defaulted;
                 JumpPlaceholder good;
+                if (dflt == NULL && !check) {
+                        continue;
+                }
                 if (dflt != NULL) {
                         emit_load_instr(ty, s->identifier, INSTR_LOAD_LOCAL, s->i);
                         defaulted = (PLACEHOLDER_JUMP)(ty, INSTR_JUMP_IF_NIL);

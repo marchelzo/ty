@@ -268,8 +268,15 @@ static void jit_emit_add_imm(dasm_State **Dst, int dst, int src, int imm) {
                 if (dst != src) {
                         |  mov Rx(dst), Rx(src)
                 }
-        } else {
+        } else if (imm > 0 && imm <= 4095) {
                 |  add Rx(dst), Rx(src), #imm
+        } else if (imm < 0 && imm >= -4095) {
+                int neg = -imm;
+                |  sub Rx(dst), Rx(src), #neg
+        } else {
+                // Large immediate: load into scratch register, then add
+                jit_emit_load_imm(Dst, dst, (iptr)imm);
+                |  add Rx(dst), Rx(dst), Rx(src)
         }
 }
 

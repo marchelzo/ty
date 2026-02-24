@@ -107,7 +107,7 @@ JitInfo *jit_compile(Ty *ty, Value const *func) { (void)ty; (void)func; return N
 // Fast-path statistics (compile with -DJIT_STATS=1 to enable)
 // ============================================================================
 #ifndef JIT_STATS
-#define JIT_STATS 0
+#define JIT_STATS 1
 #endif
 
 #if JIT_STATS
@@ -1847,7 +1847,7 @@ jit_rt_call_method_fast(Ty *ty, Value *result, Value *self, int member_id, int a
         ptrdiff_t idx = (result - vv(ty->stack));
         vN(ty->stack) = idx + argc;
 
-        if (0 && LIKELY(self->type == VALUE_OBJECT)) {
+        if (LIKELY(self->type == VALUE_OBJECT)) {
                 Class *cls = class_get(ty, self->class);
                 if (LIKELY(member_id < (int)vN(cls->offsets_r))) {
                         u16 off = v__(cls->offsets_r, member_id);
@@ -1920,14 +1920,44 @@ bc_copy_value(JitBcCtx *ctx, int dst_reg, int dst_off, int src_reg, int src_off)
         int sa = src_reg, so0 = src_off, so1 = src_off + 16;
         int da = dst_reg, do0 = dst_off, do1 = dst_off + 16;
 
-        if (!src_direct) {
+        // Detect register conflicts between fixup targets and direct operands:
+        //   src fixup writes BC_S2 — conflicts if dst_reg == BC_S2 and dst is direct
+        //   dst fixup writes BC_S3 — conflicts if src_reg == BC_S3 and src is direct
+        // Fix: force the direct side into its scratch reg first to save the base.
+        if (src_direct && src_reg == BC_S3 && !dst_direct) {
                 jit_emit_add_imm(asm, BC_S2, src_reg, src_off);
                 sa = BC_S2; so0 = 0; so1 = 16;
+                src_direct = false;
         }
-
-        if (!dst_direct) {
+        if (dst_direct && dst_reg == BC_S2 && !src_direct) {
                 jit_emit_add_imm(asm, BC_S3, dst_reg, dst_off);
                 da = BC_S3; do0 = 0; do1 = 16;
+                dst_direct = false;
+        }
+
+        // When both need fixup and dst_reg == BC_S2, compute dst first
+        // so src fixup doesn't clobber the dst base register.
+        if (!src_direct && !dst_direct && sa != BC_S2 && da != BC_S3) {
+                if (dst_reg == BC_S2) {
+                        jit_emit_add_imm(asm, BC_S3, dst_reg, dst_off);
+                        da = BC_S3; do0 = 0; do1 = 16;
+                        jit_emit_add_imm(asm, BC_S2, src_reg, src_off);
+                        sa = BC_S2; so0 = 0; so1 = 16;
+                } else {
+                        jit_emit_add_imm(asm, BC_S2, src_reg, src_off);
+                        sa = BC_S2; so0 = 0; so1 = 16;
+                        jit_emit_add_imm(asm, BC_S3, dst_reg, dst_off);
+                        da = BC_S3; do0 = 0; do1 = 16;
+                }
+        } else {
+                if (!src_direct && sa != BC_S2) {
+                        jit_emit_add_imm(asm, BC_S2, src_reg, src_off);
+                        sa = BC_S2; so0 = 0; so1 = 16;
+                }
+                if (!dst_direct && da != BC_S3) {
+                        jit_emit_add_imm(asm, BC_S3, dst_reg, dst_off);
+                        da = BC_S3; do0 = 0; do1 = 16;
+                }
         }
 
         jit_emit_ldp64(asm, BC_S0, BC_S1, sa, so0);
