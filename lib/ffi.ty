@@ -96,17 +96,34 @@ pub fn array[T](type: CType[T], xs: Iterable[T, Int]) {
     return buffer
 }
 
-pub fn ffi-type(t0: _) -> _ {
-    match t0 {
+/**
+ * Try tomap a type expression denoting a C type to the corresponding Ty type
+ * e.g.
+ *
+ * ```
+ * const __u32 = c.u32
+ *
+ * C! struct Foo {
+ *     __u32 a;
+ * }
+ * ```
+ *
+ * ffi-type($$[ __u32 $$]) => Int, so the generated getter for `a` will have a
+ * return type annotation of Int
+ */
+pub fn ffi-type(expr: _) -> _ {
+    catch _ {
+        return ty.Any
+    }
+
+    match ty.eval(expr, ty.scope()) {
         c::u8, c::u16, c::u32, c::u64,
         c::i8, c::i16, c::i32, c::i64,
         c::int, c::uint, c::long, c::ulong => $$[ $$::(Int) $$],
 
         c::float, c::double => $$[ $$::(Float) $$],
 
-        c::ptr => $$[ $$::(Ptr)[_] $$],
-
-        _ => nil
+        c::ptr => $$[ $$::(Ptr)[_] $$]
     }
 }
 
@@ -667,8 +684,7 @@ fn strct() {
                     name: name,
                     params: [],
                     body: getter-body,
-                    rt: try { ffi-type(ty.eval(t, ty.scope())) } catch _ { ty.Any },
-                    //rt: ty.Any,
+                    rt: ffi-type(t),
                     decorators: []
                 )
             )
@@ -682,6 +698,7 @@ fn strct() {
                     decorators: []
                 )
             )
+
             fields.push($$[($${name}, *$${c.fields}($$ctype)[$${i}])$$])
         }
     }
