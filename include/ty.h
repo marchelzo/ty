@@ -802,6 +802,7 @@ extern bool RunningTests;
 extern bool CheckTypes;
 extern bool CheckConstraints;
 extern bool DetailedExceptions;
+extern bool NoJIT;
 extern bool CompileOnly;
 extern bool AllowErrors;
 extern bool InteractiveSession;
@@ -1776,7 +1777,7 @@ TyStrLen(Value const *str)
         Expr const *expr   = compiler_find_expr(ty, ty->ip - 1);   \
         char const *func   = (vN(ty->st.frames) > 0) ? name_of(&vvL(ty->st.frames)->f) : NULL; \
         LOGX( \
-                "(%d:%s) [sp=%3zu fr=%2zu call=%2zu] %s[%12.12s]%s [%s:%d:%d]: %s: " fmt, \
+                "(%d:%s) [s=%2zu f=%2zu c=%2zu] %s[%20.20s]%s [%s:%d:%d]: %s: " fmt, \
                 (int)ty->id,                             \
                 (co_active() != ty->co_top) ? ">" : " ", \
                 vN(ty->stack),                               \
@@ -1786,7 +1787,7 @@ TyStrLen(Value const *str)
                 expr ? GetExpressionModule(expr) : "?",  \
                 (expr ? expr->start.line : 0) + 1,       \
                 (expr ? expr->start.col : 0) + 1,        \
-                (ty->ip ? GetInstructionName(ty->ip[0]) : "--")       \
+                (ty->ip ? GetInstructionName(ty->ip[-1]) : "--")       \
                 __VA_OPT__(,) __VA_ARGS__ \
         ); \
 } while (0)

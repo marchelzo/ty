@@ -1,5 +1,6 @@
 import ty (tests)
 import chalk (chalk)
+import os
 
 pub fn run() {
     let pass = 0
@@ -14,6 +15,7 @@ pub fn run() {
             print(chalk"[bright green b]OK[/]")
             pass += 1
         } catch err {
+            //os.exit(1)
             print(chalk"[bright red b]FAIL[/]\n\n{err}\n")
             if err :: RuntimeError {
                 print(str(err.trace()))

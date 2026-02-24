@@ -12,6 +12,7 @@
 #include "class.h"
 #include "types.h"
 #include "ty.h"
+#include "jit.h"
 
 static vec(Class *) classes;
 static vec(Class *) traits;
@@ -885,15 +886,40 @@ eliminate_refs(struct itable *t)
         }
 }
 
+#if defined(TY_ENABLE_JIT)
+inline static void
+jit_methods(Ty *ty, struct itable *t)
+{
+        for (u32 i = 0; i < vN(t->values); ++i) {
+                Value *v = v_(t->values, i);
+                if (expr_of(v)->must_jit) {
+                        if (UNLIKELY(try_jit(ty, v) == NULL)) {
+                                zP("failed to JIT compile function %s", SHOW(v));
+                        }
+                }
+        }
+}
+#endif
+
 static void
 really_finalize(Ty *ty, Class *c)
 {
         eliminate_refs(&c->s_fields);
         eliminate_refs(&c->s_methods);
         eliminate_refs(&c->s_getters);
+        eliminate_refs(&c->s_setters);
         eliminate_refs(&c->methods);
         eliminate_refs(&c->getters);
         eliminate_refs(&c->setters);
+
+#if defined(TY_ENABLE_JIT)
+        jit_methods(ty, &c->s_methods);
+        jit_methods(ty, &c->s_getters);
+        jit_methods(ty, &c->s_setters);
+        jit_methods(ty, &c->methods);
+        jit_methods(ty, &c->getters);
+        jit_methods(ty, &c->setters);
+#endif
 
         if (vN(c->offsets_r) > NAMES.init) {
                 u16 off = v__(c->offsets_r, NAMES.init) & OFF_MASK;

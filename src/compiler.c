@@ -210,13 +210,12 @@ enum {
         Ei32(0);                                    \
 } while (0)
 
-#define CHECK_INIT() if (CheckTypes) { INSN(CHECK_INIT); }
-
 #define SET_TYPE_SRC(e) ((e) != NULL && (e)->_type != NULL && ((e)->_type->src = (Expr *)(e)))
 
 #define NO_TYPES (!CheckTypes || TY_IS_READY)
 
 #define RUNTIME_CONSTRAINTS 0
+#define CHECK_INIT() do { if (RUNTIME_CONSTRAINTS) { INSN(CHECK_INIT); } } while (0)
 
 #if defined(TY_PROFILER) || 1
 #define KEEP_LOCATION(e) true
@@ -1378,11 +1377,6 @@ CompileError(Ty *ty, u32 type, char const *fmt, ...)
         ContextList = NULL;
 
         STATE.module->flags |= type;
-
-        if (strstr(vv(ErrorBuffer), "imbalance") != NULL) {
-                XXX("CompileError: %s", vv(ErrorBuffer));
-                *(volatile int *)0 = 0;
-        }
 
         TY_THROW_ERROR();
 }
@@ -7357,7 +7351,11 @@ emit_function(Ty *ty, Expr const *e)
         EP(fun_name);
         EP(e);
 #if defined(TY_ENABLE_JIT)
-        EP((e->type == EXPRESSION_FUNCTION) ? (void *)0xFA57 : NULL);
+        if (!NoJIT && (e->type == EXPRESSION_FUNCTION)) {
+                EP((void *)0xFA57);
+        } else {
+                EP(NULL);
+        }
 #endif
 
         LOG("COMPILING FUNCTION: %s", scope_name(ty, e->scope));
@@ -7647,8 +7645,10 @@ emit_coalesce(Ty *ty, Expr const *left, Expr const *right)
 {
         EE(left);
         PLACEHOLDER_JUMP(JUMP_WTF, left_good);
+        PEEPHOLE_BARRIER();
         EE(right);
         PATCH_JUMP(left_good);
+        PEEPHOLE_BARRIER();
 }
 
 static void
@@ -10081,6 +10081,7 @@ emit_conditional(Ty *ty, Expr const *e)
         EE(e->otherwise);
         PLACEHOLDER_JUMP(JUMP, end);
         PATCH_JUMP(then);
+        PEEPHOLE_BARRIER();
         WITH_STACK() {
                 EE(e->then);
         }

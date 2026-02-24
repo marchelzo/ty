@@ -11948,4 +11948,10 @@ type_any_of(Ty *ty, TypeVector const *types)
         return t1;
 }
 
+Type *
+type_resolve_var(Type *t0)
+{
+        return ResolveVar(t0);
+}
+
 /* vim: set sts=8 sw=8 expandtab: */

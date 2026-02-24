@@ -6,6 +6,7 @@
 #include "ast.h"
 
 #define JIT_RT_DEBUG 0
+#define JIT_RT_TRACE 0
 #define JIT_SCAN_LOG 0
 #define JIT_DUMP_DIS 0
 
@@ -20,7 +21,7 @@ typedef struct jit_info {
         int env_count;    // Number of captured values
 } JitInfo;
 
-typedef void (*JitFn)(Ty *, Value *, Value *, Value **);
+typedef void (JitFn)(Ty *, Value *, Value *, Value **);
 
 // Initialize the JIT subsystem
 void
@@ -34,6 +35,31 @@ jit_compile(Ty *ty, Value const *func);
 // Free JIT resources
 void
 jit_free(Ty *ty);
+
+inline static JitFn *
+try_jit(Ty *ty, Value const *f)
+{
+#if defined(TY_ENABLE_JIT)
+        void *jit = jit_of(f);
+
+        if (LIKELY(jit != (void *)0xFA57)) {
+                return jit;
+        }
+
+        JitInfo *info = jit_compile(ty, f);
+        if (LIKELY(info != NULL)) {
+                jit = info->code;
+        } else {
+                jit = NULL;
+        }
+
+        set_jit_of(f, jit);
+
+        return jit;
+#else
+        return NULL;
+#endif
+}
 
 #endif
 

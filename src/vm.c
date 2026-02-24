@@ -98,8 +98,9 @@
 #define READJUMP(c)  (((c) = IP), (IP += sizeof (int)))
 #define DOJUMP(c)    (IP = (c) + load_int((c)) + sizeof (int))
 
-#if defined(TY_LOG_VERBOSE) && !defined(TY_NO_LOG)
 static _Thread_local Expr *expr;
+
+#if defined(TY_LOG_VERBOSE) && !defined(TY_NO_LOG)
 static Ty *ty = &vvv;
 #define CASE(i)                                          \
         case INSTR_##i:                                  \
@@ -128,15 +129,17 @@ static Ty *ty = &vvv;
                 (expr ? expr->start.col : 0) + 1         \
         );
 #else
-#define XXCASE(i)                                           \
+#define XCASE(i)                                           \
         case INSTR_##i:                                     \
                 expr = compiler_find_expr(ty, IP);          \
                 fprintf(                                    \
                         stderr,                             \
-                        "%s:%d:%d: " #i "\n",               \
+                        "%s:%d:%d: " #i ": %s (%zu)\n",     \
                         GetExpressionModule(expr),          \
                         (expr ? expr->start.line : 0) + 1,  \
-                        (expr ? expr->start.col : 0) + 1    \
+                        (expr ? expr->start.col : 0) + 1,   \
+                        (vN(STACK) ? VSC(top()) : "empty"), \
+                        vN(STACK)                           \
                 );
 #define CASE(i) case INSTR_##i:
 #endif
@@ -991,10 +994,20 @@ GetSelf(Ty *ty)
         return v;
 }
 
-void
-vm_push_self(Ty *ty)
+Value *
+vm_get_self(Ty *ty)
 {
-        push(GetSelf(ty));
+        Value const *fun = ActiveFun(ty);
+        u32 np = param_count_of(fun);
+
+        usize i = vvL(FRAMES)->fp + np;
+        Value *v = v_(STACK, i);
+
+        while (v->type == VALUE_REF) {
+                v = v->ref;
+        }
+
+        return v;
 }
 
 inline static Value
@@ -1213,22 +1226,9 @@ co_yield_value(Ty *ty)
 inline static bool
 call_jit(Ty *ty, Value const *f)
 {
-        void *jit = jit_of(f);
+        JitFn *func = try_jit(ty, f);
 
-        if (UNLIKELY(jit == (void *)0xFA57)) {
-                JitInfo *info = jit_compile(ty, f);
-                if (info == NULL) {
-                        if (expr_of(f)->must_jit) {
-                                zP("failed to JIT compile function %s", SHOW(f));
-                        }
-                        jit = NULL;
-                } else {
-                        jit = info->code;
-                }
-                set_jit_of(f, jit);
-        }
-
-        if (UNLIKELY(jit == NULL)) {
+        if (func == NULL) {
                 return false;
         }
 
@@ -1261,7 +1261,7 @@ call_jit(Ty *ty, Value const *f)
 #endif
 
         EXEC_DEPTH += 1;
-        ((JitFn)jit)(ty, &v, v_(STACK, fp), f->env);
+        (*func)(ty, &v, v_(STACK, fp), f->env);
         EXEC_DEPTH -= 1;
 
 #if JIT_RT_DEBUG
@@ -1393,7 +1393,7 @@ call(Ty *ty, Value const *f, Value const *pSelf, int argc, Value const *pKwargs)
         xcall(ty, f, pSelf, argc, pKwargs, IP);
 
 #if defined(TY_ENABLE_JIT)
-        if (LIKELY(call_jit(ty, f))) {
+        if (call_jit(ty, f)) {
                 return false;
         }
 #endif
@@ -2678,6 +2678,17 @@ DoCall(Ty *ty, Value const *f, int n, int nkw, bool auto_this, bool exec)
 
         NotCallable:
         default:
+                LOGX("attempt to call non-callable value %s", VSC(&v));
+                xprint_stack(ty, 8);
+                for (int i = vN(FRAMES) - 1; i >= 0; --i) {
+                        Frame *f = v_(FRAMES, i);
+                        LOGX(
+                                "  frame %d: %s",
+                                i,
+                                VSC(&f->f)
+                        );
+                }
+                *(volatile int *)0 = 0;
                 zP("attempt to call non-callable value %s", VSC(&v));
         }
 
@@ -3483,7 +3494,7 @@ QuietFailure:
 
 // ===/ < > <= >= == != /=======================================================
 #define DEFINE_RELATIONAL_OP(name, op, _op, _op_neg)                            \
-TY_INSTR_INLINE static void                                                     \
+void                                                                            \
 name(Ty *ty)                                                                    \
 {                                                                               \
         Value v;                                                                \
@@ -3551,10 +3562,9 @@ DEFINE_RELATIONAL_OP(DoLt,  <,  OP_LT,  OP_GEQ)
 #undef DEFINE_RELATIONAL_OP
 // =============================================================================
 
-TY_INSTR_INLINE static void
+void
 DoCmp(Ty *ty)
 {
-
         int i = value_compare(ty, top() - 1, top());
 
         pop();
@@ -3660,7 +3670,7 @@ DoUnaryOp(Ty *ty, int op, bool exec)
         }
 }
 
-TY_INSTR_INLINE static void
+void
 DoBinaryOp(Ty *ty, int op, bool exec)
 {
         switch (op) {
@@ -3737,8 +3747,8 @@ DoPtrMutOp(Ty *ty, int op)
         put(val);
 }
 
-TY_INSTR_INLINE static void
-DoMutDiv(Ty *ty)
+void
+DoMutDiv(Ty *ty, bool exec)
 {
         uptr c, p = (uptr)poptarget();
         TyObject *o;
@@ -3783,7 +3793,11 @@ DoMutDiv(Ty *ty)
                 exec_fn(ty, vp, &OBJECT(o, c), 0, NULL);
                 top()[-1] = vm_2op(ty, OP_DIV, top(), top() - 1);
                 pop();
-                call(ty, v, &OBJECT(o, c), 1, NULL);
+                if (exec) {
+                        exec_fn(ty, v, &OBJECT(o, c), 1, NULL);
+                } else {
+                        call(ty, v, &OBJECT(o, c), 1, NULL);
+                }
                 break;
 
         case 5:
@@ -3795,8 +3809,8 @@ DoMutDiv(Ty *ty)
         }
 }
 
-TY_INSTR_INLINE static void
-DoMutMod(Ty *ty)
+void
+DoMutMod(Ty *ty, bool exec)
 {
         uptr c, p = (uptr)poptarget();
         TyObject *o;
@@ -3837,7 +3851,11 @@ DoMutMod(Ty *ty)
                 exec_fn(ty, vp, &OBJECT(o, c), 0, NULL);
                 top()[-1] = vm_2op(ty, OP_MOD, top(), top() - 1);
                 pop();
-                call(ty, v, &OBJECT(o, c), 1, NULL);
+                if (exec) {
+                        exec_fn(ty, v, &OBJECT(o, c), 1, NULL);
+                } else {
+                        call(ty, v, &OBJECT(o, c), 1, NULL);
+                }
                 break;
 
         case 5:
@@ -3849,8 +3867,8 @@ DoMutMod(Ty *ty)
         }
 }
 
-TY_INSTR_INLINE static void
-DoMutMul(Ty *ty)
+void
+DoMutMul(Ty *ty, bool exec)
 {
         uptr c, p = (uptr)poptarget();
         TyObject *o;
@@ -3891,7 +3909,11 @@ DoMutMul(Ty *ty)
                 exec_fn(ty, vp, &OBJECT(o, c), 0, NULL);
                 top()[-1] = vm_2op(ty, OP_MUL, top(), top() - 1);
                 pop();
-                call(ty, v, &OBJECT(o, c), 1, NULL);
+                if (exec) {
+                        exec_fn(ty, v, &OBJECT(o, c), 1, NULL);
+                } else {
+                        call(ty, v, &OBJECT(o, c), 1, NULL);
+                }
                 break;
 
         case 5:
@@ -3903,8 +3925,8 @@ DoMutMul(Ty *ty)
         }
 }
 
-TY_INSTR_INLINE static void
-DoMutSub(Ty *ty)
+void
+DoMutSub(Ty *ty, bool exec)
 {
         uptr c, p = (uptr)poptarget();
         TyObject *o;
@@ -3964,7 +3986,11 @@ DoMutSub(Ty *ty)
                 exec_fn(ty, vp, &OBJECT(o, c), 0, NULL);
                 top()[-1] = vm_2op(ty, OP_SUB, top(), top() - 1);
                 pop();
-                call(ty, v, &OBJECT(o, c), 1, NULL);
+                if (exec) {
+                        exec_fn(ty, v, &OBJECT(o, c), 1, NULL);
+                } else {
+                        call(ty, v, &OBJECT(o, c), 1, NULL);
+                }
                 break;
 
         case 5:
@@ -3976,8 +4002,8 @@ DoMutSub(Ty *ty)
         }
 }
 
-TY_INSTR_INLINE static void
-DoMutAdd(Ty *ty)
+void
+DoMutAdd(Ty *ty, bool exec)
 {
         uptr c, p = (uptr)poptarget();
         TyObject *o;
@@ -4042,7 +4068,11 @@ DoMutAdd(Ty *ty)
                 exec_fn(ty, vp, &OBJECT(o, c), 0, NULL);
                 top()[-1] = vm_2op(ty, OP_ADD, top(), top() - 1);
                 pop();
-                call(ty, v, &OBJECT(o, c), 1, NULL);
+                if (exec) {
+                        exec_fn(ty, v, &OBJECT(o, c), 1, NULL);
+                } else {
+                        call(ty, v, &OBJECT(o, c), 1, NULL);
+                }
                 break;
 
         case 5:
@@ -4054,8 +4084,8 @@ DoMutAdd(Ty *ty)
         }
 }
 
-TY_INSTR_INLINE static void
-DoMutAnd(Ty *ty)
+void
+DoMutAnd(Ty *ty, bool exec)
 {
         uptr c, p = (uptr)poptarget();
         TyObject *o;
@@ -4102,7 +4132,11 @@ DoMutAnd(Ty *ty)
                 exec_fn(ty, vp, &OBJECT(o, c), 0, NULL);
                 top()[-1] = vm_2op(ty, OP_BIT_AND, top(), top() - 1);
                 pop();
-                call(ty, v, &OBJECT(o, c), 1, NULL);
+                if (exec) {
+                        exec_fn(ty, v, &OBJECT(o, c), 1, NULL);
+                } else {
+                        call(ty, v, &OBJECT(o, c), 1, NULL);
+                }
                 break;
 
         case 5:
@@ -4114,8 +4148,8 @@ DoMutAnd(Ty *ty)
         }
 }
 
-TY_INSTR_INLINE static void
-DoMutOr(Ty *ty)
+void
+DoMutOr(Ty *ty, bool exec)
 {
         uptr c, p = (uptr)poptarget();
         TyObject *o;
@@ -4162,7 +4196,11 @@ DoMutOr(Ty *ty)
                 exec_fn(ty, vp, &OBJECT(o, c), 0, NULL);
                 top()[-1] = vm_2op(ty, OP_BIT_OR, top(), top() - 1);
                 pop();
-                call(ty, v, &OBJECT(o, c), 1, NULL);
+                if (exec) {
+                        exec_fn(ty, v, &OBJECT(o, c), 1, NULL);
+                } else {
+                        call(ty, v, &OBJECT(o, c), 1, NULL);
+                }
                 break;
 
         case 5:
@@ -4174,8 +4212,8 @@ DoMutOr(Ty *ty)
         }
 }
 
-TY_INSTR_INLINE static void
-DoMutXor(Ty *ty)
+void
+DoMutXor(Ty *ty, bool exec)
 {
         uptr c, p = (uptr)poptarget();
         TyObject *o;
@@ -4222,7 +4260,11 @@ DoMutXor(Ty *ty)
                 exec_fn(ty, vp, &OBJECT(o, c), 0, NULL);
                 top()[-1] = vm_2op(ty, OP_BIT_XOR, top(), top() - 1);
                 pop();
-                call(ty, v, &OBJECT(o, c), 1, NULL);
+                if (exec) {
+                        exec_fn(ty, v, &OBJECT(o, c), 1, NULL);
+                } else {
+                        call(ty, v, &OBJECT(o, c), 1, NULL);
+                }
                 break;
 
         case 5:
@@ -4234,8 +4276,8 @@ DoMutXor(Ty *ty)
         }
 }
 
-TY_INSTR_INLINE static void
-DoMutShl(Ty *ty)
+void
+DoMutShl(Ty *ty, bool exec)
 {
         uptr c, p = (uptr)poptarget();
         TyObject *o;
@@ -4278,7 +4320,11 @@ DoMutShl(Ty *ty)
                 exec_fn(ty, vp, &OBJECT(o, c), 0, NULL);
                 top()[-1] = vm_2op(ty, OP_BIT_SHL, top(), top() - 1);
                 pop();
-                call(ty, v, &OBJECT(o, c), 1, NULL);
+                if (exec) {
+                        exec_fn(ty, v, &OBJECT(o, c), 1, NULL);
+                } else {
+                        call(ty, v, &OBJECT(o, c), 1, NULL);
+                }
                 break;
 
         case 5:
@@ -4290,8 +4336,8 @@ DoMutShl(Ty *ty)
         }
 }
 
-TY_INSTR_INLINE static void
-DoMutShr(Ty *ty)
+void
+DoMutShr(Ty *ty, bool exec)
 {
         uptr c, p = (uptr)poptarget();
         TyObject *o;
@@ -4334,7 +4380,11 @@ DoMutShr(Ty *ty)
                 exec_fn(ty, vp, &OBJECT(o, c), 0, NULL);
                 top()[-1] = vm_2op(ty, OP_BIT_SHR, top(), top() - 1);
                 pop();
-                call(ty, v, &OBJECT(o, c), 1, NULL);
+                if (exec) {
+                        exec_fn(ty, v, &OBJECT(o, c), 1, NULL);
+                } else {
+                        call(ty, v, &OBJECT(o, c), 1, NULL);
+                }
                 break;
 
         case 5:
@@ -4391,7 +4441,6 @@ DoAssign(Ty *ty)
         }
 }
 
-// Like DoAssign but synchronously executes setters (for use from JIT helpers)
 void
 DoAssignExec(Ty *ty)
 {
@@ -4873,7 +4922,7 @@ DoTupleLiteral(Ty *ty)
         push(v);
 }
 
-static void
+void
 IncValue(Ty *ty, Value *v)
 {
         i32 n;
@@ -4917,7 +4966,7 @@ IncValue(Ty *ty, Value *v)
         }
 }
 
-static void
+void
 DecValue(Ty *ty, Value *v)
 {
         Value *vp;
@@ -4955,7 +5004,7 @@ DecValue(Ty *ty, Value *v)
 }
 
 static void
-IterGetNext(Ty *ty)
+IterGetNext(Ty *ty, bool exec)
 {
         Value v;
         Value *vp;
@@ -4967,6 +5016,7 @@ IterGetNext(Ty *ty)
         int i;
         int n;
 
+Top:
         v = top()[-1];
         i = top()[-2].i++;
 
@@ -5007,19 +5057,37 @@ IterGetNext(Ty *ty)
         case VALUE_FUNCTION:
         case VALUE_BOUND_FUNCTION:
                 push(INTEGER(i));
-                call(ty, &v, NULL, 1, NULL);
+                if (exec) {
+                        exec_fn(ty, &v, NULL, 1, NULL);
+                } else {
+                        call(ty, &v, NULL, 1, NULL);
+                }
                 break;
 
         case VALUE_OBJECT:
-                if ((vp = class_method(ty, v.class, "__next__")) != NULL) {
-                        push(INTEGER(i));
-                        call6t(ty, vp, &v, 1, NULL, next_fix);
+                if ((vp = class_lookup_method_i(ty, v.class, NAMES._next_)) != NULL) {
+                        if (exec) {
+                                exec_fn(ty, vp, &v, 1, NULL);
+                                if (top()->type == VALUE_NIL) {
+                                        top()->type = VALUE_NONE;
+                                }
+                        } else {
+                                push(INTEGER(i));
+                                call6t(ty, vp, &v, 1, NULL, next_fix);
+                        }
                 } else if ((vp = class_lookup_method_i(ty, v.class, NAMES._iter_)) != NULL) {
                         pop();
                         pop();
                         --top()->i;
-                        /* Have to repeat this instruction */
-                        call6t(ty, vp, &v, 0, NULL, iter_fix);
+                        if (exec) {
+                                exec_fn(ty, vp, &v, 0, NULL);
+                                RC = 0;
+                                push(SENTINEL);
+                                goto Top;
+                        } else {
+                                /* Have to repeat this instruction */
+                                call6t(ty, vp, &v, 0, NULL, iter_fix);
+                        }
                         return;
                 } else {
                         goto NoIter;
@@ -5059,6 +5127,9 @@ IterGetNext(Ty *ty)
 
         default:
 NoIter:
+                LOGX("for-each loop on non-iterable value: %s", VSC(&v));
+                xprint_stack(ty, 20);
+                *(volatile int *)0 = 0;
                 zP("for-each loop on non-iterable value: %s", VSC(&v));
         }
 }
@@ -5113,7 +5184,7 @@ vm_jit_loop_iter(Ty *ty)
 {
         push(SENTINEL);
         RC = 0;
-        IterGetNext(ty);
+        IterGetNext(ty, true);
 }
 
 bool
@@ -5691,12 +5762,8 @@ NextInstruction:
                         LOG("Loading local: %s (%d)", IP, n);
                         SKIPSTR();
 #endif
-                        if (UNLIKELY(vN(FRAMES) == 0)) {
-                                XXX("LOAD_LOCAL %d with no active frame: pushing %s", n, SHOW(v_(Globals, n), BASIC));
-                                push(v__(Globals, n));
-                        } else {
-                                push(*local(ty, n));
-                        }
+                        //LOGX("LOAD_LOCAL[%d] (%jd): %s", n, local(ty, n) - vv(STACK), VSC(local(ty, n)));
+                        push(*local(ty, n));
                         break;
 
                 CASE(LOAD_REF)
@@ -6663,13 +6730,6 @@ TargetMember:
                         DoDictLiteral(ty, &value);
                         break;
 
-                CASE(SELF)
-                        if (FRAMES.count == 0) {
-                        } else {
-                                push(NIL);
-                        }
-                        break;
-
                 CASE(NIL)
                         push(NIL);
                         break;
@@ -6766,13 +6826,13 @@ YIELD:
                         break;
 
                 CASE(GET_NEXT)
-                        IterGetNext(ty);
+                        IterGetNext(ty, false);
                         break;
 
                 CASE(LOOP_ITER)
                         push(SENTINEL);
                         RC = 0;
-                        IterGetNext(ty);
+                        IterGetNext(ty, false);
                         break;
 
                 CASE(ARRAY_COMPR)
@@ -7349,43 +7409,43 @@ BadField:
                         break;
 
                 CASE(MUT_ADD)
-                        DoMutAdd(ty);
+                        DoMutAdd(ty, false);
                         break;
 
                 CASE(MUT_MUL)
-                        DoMutMul(ty);
+                        DoMutMul(ty, false);
                         break;
 
                 CASE(MUT_DIV)
-                        DoMutDiv(ty);
+                        DoMutDiv(ty, false);
                         break;
 
                 CASE(MUT_MOD)
-                        DoMutMod(ty);
+                        DoMutMod(ty, false);
                         break;
 
                 CASE(MUT_SUB)
-                        DoMutSub(ty);
+                        DoMutSub(ty, false);
                         break;
 
                 CASE(MUT_AND)
-                        DoMutAnd(ty);
+                        DoMutAnd(ty, false);
                         break;
 
                 CASE(MUT_OR)
-                        DoMutOr(ty);
+                        DoMutOr(ty, false);
                         break;
 
                 CASE(MUT_XOR)
-                        DoMutXor(ty);
+                        DoMutXor(ty, false);
                         break;
 
                 CASE(MUT_SHL)
-                        DoMutShl(ty);
+                        DoMutShl(ty, false);
                         break;
 
                 CASE(MUT_SHR)
-                        DoMutShr(ty);
+                        DoMutShr(ty, false);
                         break;
 
                 CASE(BINARY_OP)
@@ -7543,15 +7603,18 @@ BinaryOp:
                                         v.env[j] = p;
                                 }
                         }
-
-                        push(v);
-
-                        GC_RESUME();
-
+#if defined(TY_ENABLE_JIT)
+                        if (!NoJIT && expr_of(&v)->must_jit) {
+                                if (UNLIKELY(try_jit(ty, &v) == NULL)) {
+                                        zP("failed to JIT compile function %s", SHOW(&v));
+                                }
+                        }
+#endif
                         if (from_eval(&v)) {
                                 OKGC(v.info);
                         }
-
+                        push(v);
+                        GC_RESUME();
                         break;
                 }
 
@@ -9026,9 +9089,7 @@ Value
 vm_call_method(Ty *ty, Value const *self, Value const *f, int argc)
 {
         CheckPendingSignals(ty);
-
         exec_fn(ty, f, self, argc, NULL);
-
         return pop();
 }
 
@@ -9439,6 +9500,8 @@ GetInstructionName(u8 i)
 char *
 StepInstruction(char const *ip)
 {
+#undef  CASE
+#define CASE(name) case INSTR_##name:
 #undef  SKIPSTR
 #undef  READVALUE
 #define SKIPSTR() (ip += strlen(ip) + 1)
@@ -10428,22 +10491,6 @@ Value *
 vm_local(Ty *ty, int i)
 {
         return local(ty, i);
-}
-
-void
-vm_to_string(Ty *ty, Value *v)
-{
-        if (v->type == VALUE_STRING) return;
-        xvP(ty->stack, *v);
-        if (UNLIKELY(v->type == VALUE_PTR)) {
-                char *s = VSC(v);
-                *v = STRING_NOGC(s, strlen(s));
-                vN(ty->stack) -= 1;
-        } else {
-                CallMethod(ty, NAMES._str_, 0, 0, false, false);
-                *v = *vvL(ty->stack);
-                vN(ty->stack) -= 1;
-        }
 }
 
 Value
