@@ -107,7 +107,7 @@ JitInfo *jit_compile(Ty *ty, Value const *func) { (void)ty; (void)func; return N
 // Fast-path statistics (compile with -DJIT_STATS=1 to enable)
 // ============================================================================
 #ifndef JIT_STATS
-#define JIT_STATS 1
+#define JIT_STATS 0
 #endif
 
 #if JIT_STATS
@@ -131,7 +131,159 @@ static struct {
         _Atomic u64 jcmp_slow;
 } jit_stats;
 
+// ============================================================================
+// Per-site slow path tracking
+// ============================================================================
+enum {
+        SLOW_MEMBER_ACCESS,
+        SLOW_MEMBER_SET,
+        SLOW_SELF_MEMBER_READ,
+        SLOW_SELF_MEMBER_WRITE,
+        SLOW_CALL_METHOD,
+        SLOW_JEQ,
+        SLOW_JCMP,
+        SLOW_KIND_COUNT
+};
+
+static char const *slow_kind_names[] = {
+        [SLOW_MEMBER_ACCESS]     = "member_access",
+        [SLOW_MEMBER_SET]        = "member_set",
+        [SLOW_SELF_MEMBER_READ]  = "self_member_read",
+        [SLOW_SELF_MEMBER_WRITE] = "self_member_write",
+        [SLOW_CALL_METHOD]       = "call_method",
+        [SLOW_JEQ]               = "eq/ne",
+        [SLOW_JCMP]              = "cmp",
+};
+
+#define SLOW_TABLE_SIZE  2048  /* must be power of 2 */
+#define SLOW_MAX_TYPES   8     /* top operand types tracked per site */
+#define SLOW_PROBE_LIMIT 8
+
+typedef struct {
+        char const *ip;        /* bytecode IP (NULL = empty slot) */
+        u8 kind;
+        _Atomic u64 count;
+        struct {
+                i32 class_id;
+                _Atomic u64 count;
+        } types[SLOW_MAX_TYPES];
+} SlowPathSite;
+
+static SlowPathSite slow_table[SLOW_TABLE_SIZE];
+
+static inline void
+slow_record_type(SlowPathSite *s, int class_id)
+{
+        /* Find existing or empty slot in the small type array */
+        int empty = -1;
+        u64 min_count = UINT64_MAX;
+        int min_idx = 0;
+
+        for (int i = 0; i < SLOW_MAX_TYPES; ++i) {
+                u64 c = s->types[i].count;
+                if (c == 0) {
+                        if (empty < 0) empty = i;
+                        continue;
+                }
+                if (s->types[i].class_id == class_id) {
+                        ++s->types[i].count;
+                        return;
+                }
+                if (c < min_count) {
+                        min_count = c;
+                        min_idx = i;
+                }
+        }
+
+        if (empty >= 0) {
+                s->types[empty].class_id = class_id;
+                s->types[empty].count = 1;
+        } else {
+                /* Evict least-frequent */
+                s->types[min_idx].class_id = class_id;
+                s->types[min_idx].count = 1;
+        }
+}
+
+static void
+slow_record(Ty *ty, char const *ip, int kind, Value const *v1, Value const *v2)
+{
+        (void)ty;
+        uptr h = (((uptr)ip >> 2) * 2654435761u) & (SLOW_TABLE_SIZE - 1);
+
+        for (int i = 0; i < SLOW_PROBE_LIMIT; ++i) {
+                SlowPathSite *s = &slow_table[(h + i) & (SLOW_TABLE_SIZE - 1)];
+
+                if (s->ip == ip && s->kind == (u8)kind) {
+                        ++s->count;
+                        if (v1) slow_record_type(s, ClassOf(v1));
+                        if (v2) slow_record_type(s, ClassOf(v2));
+                        return;
+                }
+
+                if (s->ip == NULL) {
+                        s->ip = ip;
+                        s->kind = (u8)kind;
+                        s->count = 1;
+                        if (v1) slow_record_type(s, ClassOf(v1));
+                        if (v2) slow_record_type(s, ClassOf(v2));
+                        return;
+                }
+        }
+        /* Table full at this bucket — just drop */
+}
+
+/* Callable from JIT: record slow path with 1 operand */
+static void
+jit_rt_slow1(Ty *ty, char const *ip, int kind, Value const *v)
+{
+        slow_record(ty, ip, kind, v, NULL);
+}
+
+/* Callable from JIT: record slow path with 2 operands */
+static void
+jit_rt_slow2(Ty *ty, char const *ip, int kind, Value const *a, Value const *b)
+{
+        slow_record(ty, ip, kind, a, b);
+}
+
+/* Thread-local bytecode IP for call_method slow path recording.
+ * Set by JIT before calling runtime helpers that use all 6 register args. */
+static _Thread_local char const *jit_stats_call_ip;
+
+static void
+jit_rt_set_call_ip(char const *ip)
+{
+        jit_stats_call_ip = ip;
+}
+
+static int
+slow_cmp(void const *a, void const *b)
+{
+        u64 ca = ((SlowPathSite const *)a)->count;
+        u64 cb = ((SlowPathSite const *)b)->count;
+        return (cb > ca) - (cb < ca);
+}
+
 __attribute__((destructor)) static void jit_stats_print(void) {
+  Ty *ty = &vvv;
+
+  /* Compute slow-path totals from per-site table */
+  u64 slow_totals[SLOW_KIND_COUNT] = {0};
+  for (int i = 0; i < SLOW_TABLE_SIZE; ++i) {
+          if (slow_table[i].ip != NULL && slow_table[i].count > 0) {
+                  slow_totals[slow_table[i].kind] += slow_table[i].count;
+          }
+  }
+
+  /* Merge in counts from C runtime helpers (non-guarded paths) */
+  slow_totals[SLOW_MEMBER_ACCESS] += jit_stats.member_slow;
+  slow_totals[SLOW_MEMBER_SET]    += jit_stats.member_set_slow;
+  slow_totals[SLOW_CALL_METHOD]   += jit_stats.call_method_slow;
+
+#define FAST_PCT(fast, slow) \
+  ((fast) + (slow)) ? 100.0 * (fast) / ((fast) + (slow)) : 0.0
+
   fprintf(stderr,
           "\n=== JIT Fast-Path Stats ===\n"
           "  member_access:    fast=%-8llu  slow=%-8llu  (%.1f%% fast)\n"
@@ -143,40 +295,75 @@ __attribute__((destructor)) static void jit_stats_print(void) {
           "  jeq/jne:          int=%-9llu  nil=%-9llu  slow=%-8llu\n"
           "  jlt/jgt/jle/jge:  int=%-9llu  slow=%-8llu\n",
           (unsigned long long)jit_stats.member_fast,
-          (unsigned long long)jit_stats.member_slow,
-          (jit_stats.member_fast + jit_stats.member_slow)
-              ? 100.0 * jit_stats.member_fast /
-                    (jit_stats.member_fast + jit_stats.member_slow)
-              : 0.0,
+          (unsigned long long)slow_totals[SLOW_MEMBER_ACCESS],
+          FAST_PCT((double)jit_stats.member_fast, (double)slow_totals[SLOW_MEMBER_ACCESS]),
           (unsigned long long)jit_stats.member_set_fast,
-          (unsigned long long)jit_stats.member_set_slow,
-          (jit_stats.member_set_fast + jit_stats.member_set_slow)
-              ? 100.0 * jit_stats.member_set_fast /
-                    (jit_stats.member_set_fast + jit_stats.member_set_slow)
-              : 0.0,
+          (unsigned long long)slow_totals[SLOW_MEMBER_SET],
+          FAST_PCT((double)jit_stats.member_set_fast, (double)slow_totals[SLOW_MEMBER_SET]),
           (unsigned long long)jit_stats.self_member_read_fast,
-          (unsigned long long)jit_stats.self_member_read_slow,
-          (jit_stats.self_member_read_fast + jit_stats.self_member_read_slow)
-              ? 100.0 * jit_stats.self_member_read_fast /
-                    (jit_stats.self_member_read_fast +
-                     jit_stats.self_member_read_slow)
-              : 0.0,
+          (unsigned long long)slow_totals[SLOW_SELF_MEMBER_READ],
+          FAST_PCT((double)jit_stats.self_member_read_fast, (double)slow_totals[SLOW_SELF_MEMBER_READ]),
           (unsigned long long)jit_stats.self_member_write_fast,
-          (unsigned long long)jit_stats.self_member_write_slow,
-          (jit_stats.self_member_write_fast + jit_stats.self_member_write_slow)
-              ? 100.0 * jit_stats.self_member_write_fast /
-                    (jit_stats.self_member_write_fast +
-                     jit_stats.self_member_write_slow)
-              : 0.0,
+          (unsigned long long)slow_totals[SLOW_SELF_MEMBER_WRITE],
+          FAST_PCT((double)jit_stats.self_member_write_fast, (double)slow_totals[SLOW_SELF_MEMBER_WRITE]),
           (unsigned long long)jit_stats.call_method_baked,
           (unsigned long long)jit_stats.call_method_builtin,
           (unsigned long long)jit_stats.call_method_fast_dispatch,
-          (unsigned long long)jit_stats.call_method_slow,
+          (unsigned long long)slow_totals[SLOW_CALL_METHOD],
           (unsigned long long)jit_stats.jeq_int,
           (unsigned long long)jit_stats.jeq_nil,
-          (unsigned long long)jit_stats.jeq_slow,
+          (unsigned long long)slow_totals[SLOW_JEQ],
           (unsigned long long)jit_stats.jcmp_int,
-          (unsigned long long)jit_stats.jcmp_slow);
+          (unsigned long long)slow_totals[SLOW_JCMP]);
+
+  /* Collect non-empty entries and sort by count */
+  SlowPathSite sorted[SLOW_TABLE_SIZE];
+  int n = 0;
+  for (int i = 0; i < SLOW_TABLE_SIZE; ++i) {
+          if (slow_table[i].ip != NULL && slow_table[i].count > 0) {
+                  sorted[n++] = slow_table[i];
+          }
+  }
+
+  if (n == 0) return;
+
+  qsort(sorted, n, sizeof sorted[0], slow_cmp);
+
+  int show = n < 25 ? n : 25;
+
+  fprintf(stderr, "\n=== Top %d Slow-Path Sites ===\n", show);
+
+  for (int i = 0; i < show; ++i) {
+          SlowPathSite *s = &sorted[i];
+          Expr const *e = compiler_find_expr(ty, s->ip);
+
+          fprintf(stderr, "  %2d. [%-18s] %8llu hits",
+                  i + 1,
+                  slow_kind_names[s->kind],
+                  (unsigned long long)s->count);
+
+          if (e && e->mod && e->mod->path) {
+                  fprintf(stderr, "  %s:%u:%u",
+                          e->mod->path, e->start.line + 1, e->start.col + 1);
+          }
+
+          /* Print operand type breakdown */
+          bool first = true;
+          for (int j = 0; j < SLOW_MAX_TYPES; ++j) {
+                  if (s->types[j].count == 0) continue;
+                  if (first) {
+                          fprintf(stderr, "  types: ");
+                          first = false;
+                  } else {
+                          fprintf(stderr, ", ");
+                  }
+                  fprintf(stderr, "%s=%llu",
+                          class_name(ty, s->types[j].class_id),
+                          (unsigned long long)s->types[j].count);
+          }
+
+          fprintf(stderr, "\n");
+  }
 }
 
 #define STAT(name) (++jit_stats.name)
@@ -184,9 +371,7 @@ __attribute__((destructor)) static void jit_stats_print(void) {
 static void jit_rt_stat_member_fast(void)            { STAT(member_fast); }
 static void jit_rt_stat_member_set_fast(void)        { STAT(member_set_fast); }
 static void jit_rt_stat_self_member_read_fast(void)  { STAT(self_member_read_fast); }
-static void jit_rt_stat_self_member_read_slow(void)  { STAT(self_member_read_slow); }
 static void jit_rt_stat_self_member_write_fast(void) { STAT(self_member_write_fast); }
-static void jit_rt_stat_self_member_write_slow(void) { STAT(self_member_write_slow); }
 static void jit_rt_stat_jeq_int(void)                { STAT(jeq_int); }
 static void jit_rt_stat_jeq_nil(void)                { STAT(jeq_nil); }
 static void jit_rt_stat_jcmp_int(void)               { STAT(jcmp_int); }
@@ -195,9 +380,45 @@ static void jit_rt_stat_jcmp_int(void)               { STAT(jcmp_int); }
         jit_emit_load_imm(asm, BC_CALL, (iptr)(fn_ptr));          \
         jit_emit_call_reg(asm, BC_CALL);                              \
 } while (0)
+
+/* Emit a slow-path record call with 1 operand: jit_rt_slow1(ty, ip, kind, v) */
+#define EMIT_SLOW1(bc_ip, kind, val_reg, val_off) do {                \
+        jit_emit_mov(asm, BC_A0, BC_TY);                              \
+        jit_emit_load_imm(asm, BC_A1, (iptr)(bc_ip));             \
+        jit_emit_load_imm(asm, BC_A2, (kind));                    \
+        jit_emit_add_imm(asm, BC_A3, (val_reg), (val_off));          \
+        jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_slow1);     \
+        jit_emit_call_reg(asm, BC_CALL);                              \
+} while (0)
+
+/* Emit a slow-path record call with 2 operands: jit_rt_slow2(ty, ip, kind, a, b) */
+#define EMIT_SLOW2(bc_ip, kind, a_reg, a_off, b_reg, b_off) do {     \
+        jit_emit_mov(asm, BC_A0, BC_TY);                              \
+        jit_emit_load_imm(asm, BC_A1, (iptr)(bc_ip));             \
+        jit_emit_load_imm(asm, BC_A2, (kind));                    \
+        jit_emit_add_imm(asm, BC_A3, (a_reg), (a_off));              \
+        jit_emit_add_imm(asm, BC_A4, (b_reg), (b_off));              \
+        jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_slow2);     \
+        jit_emit_call_reg(asm, BC_CALL);                              \
+} while (0)
+
+/* Store bytecode IP in TLS before calling a runtime helper that has no room for an IP arg */
+#define EMIT_SET_CALL_IP(bc_ip) do {                                  \
+        jit_emit_load_imm(asm, BC_A0, (iptr)(bc_ip));             \
+        jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_set_call_ip);\
+        jit_emit_call_reg(asm, BC_CALL);                              \
+} while (0)
+
+/* Record slow path in C runtime helpers (call_method paths) */
+#define SLOW_RECORD(...) slow_record(__VA_ARGS__)
+
 #else
 #define STAT(name) ((void)0)
 #define EMIT_STAT(fn_ptr) ((void)0)
+#define EMIT_SLOW1(bc_ip, kind, val_reg, val_off) ((void)0)
+#define EMIT_SLOW2(bc_ip, kind, a_reg, a_off, b_reg, b_off) ((void)0)
+#define EMIT_SET_CALL_IP(bc_ip) ((void)0)
+#define SLOW_RECORD(...) ((void)0)
 #endif
 
 #if JIT_RT_DEBUG
@@ -514,7 +735,7 @@ jit_rt_member(Ty *ty, Value *result, Value *obj, int member_id)
                 }
         }
 
-        //STAT(member_slow);
+        STAT(member_slow);
 
         ptrdiff_t idx = result - vv(ty->stack);
         vN(ty->stack) = idx;
@@ -1804,6 +2025,7 @@ jit_rt_call_self_method_guarded(Ty *ty, Value *result, Value *self,
                 jit_rt_call_method_direct(ty, result, self, baked, argc);
         } else {
                 STAT(call_method_slow);
+                SLOW_RECORD(ty, jit_stats_call_ip, SLOW_CALL_METHOD, self, NULL);
                 jit_rt_call_method(ty, result, self, member_id, argc);
         }
 }
@@ -1831,6 +2053,7 @@ jit_rt_call_builtin_method(Ty *ty, Value *result, Value *self,
                 *v_(ty->stack, idx) = val;
         } else {
                 STAT(call_method_slow);
+                SLOW_RECORD(ty, jit_stats_call_ip, SLOW_CALL_METHOD, &_self, NULL);
                 jit_rt_call_method(ty, result, &_self, member_id, argc);
         }
 }
@@ -1866,6 +2089,7 @@ jit_rt_call_method_fast(Ty *ty, Value *result, Value *self, int member_id, int a
         }
 
         STAT(call_method_slow);
+        SLOW_RECORD(ty, jit_stats_call_ip, SLOW_CALL_METHOD, &_self, NULL);
 
         jit_rt_call_method(ty, result, self, member_id, argc);
 }
@@ -2297,8 +2521,9 @@ bc_emit_truthy(JitBcCtx *ctx)
 }
 
 static bool
-bc_emit_self_member_read_fast(JitBcCtx *ctx, int member_id)
+bc_emit_self_member_read_fast(JitBcCtx *ctx, int member_id, char const *bc_ip)
 {
+        (void)bc_ip;
         if (ctx->self_class == NULL) return false;
 
         Ty *ty = ctx->ty;
@@ -2357,7 +2582,7 @@ bc_emit_self_member_read_fast(JitBcCtx *ctx, int member_id)
 
         // Slow path: copy self to ops, call jit_rt_member
         jit_emit_label(asm, lbl_slow);
-        EMIT_STAT(jit_rt_stat_self_member_read_slow);
+        EMIT_SLOW1(bc_ip, SLOW_SELF_MEMBER_READ, BC_LOC, self_val_off);
         bc_copy_value(ctx, BC_OPS, out_off, BC_LOC, self_val_off);
         jit_emit_mov(asm, BC_A0, BC_TY);
         jit_emit_add_imm(asm, BC_A1, BC_OPS, out_off);
@@ -2372,8 +2597,9 @@ bc_emit_self_member_read_fast(JitBcCtx *ctx, int member_id)
 
 // Type-guided fast path: TARGET_SELF_MEMBER + ASSIGN with known class
 static bool
-bc_emit_self_member_write_fast(JitBcCtx *ctx, int member_id)
+bc_emit_self_member_write_fast(JitBcCtx *ctx, int member_id, char const *bc_ip)
 {
+        (void)bc_ip;
         if (ctx->self_class == NULL) return false;
 
         Ty *ty = ctx->ty;
@@ -2420,7 +2646,7 @@ bc_emit_self_member_write_fast(JitBcCtx *ctx, int member_id)
 
         // Slow path: call jit_rt_member_set
         jit_emit_label(asm, lbl_slow);
-        EMIT_STAT(jit_rt_stat_self_member_write_slow);
+        EMIT_SLOW1(bc_ip, SLOW_SELF_MEMBER_WRITE, BC_LOC, self_val_off);
         jit_emit_mov(asm, BC_A0, BC_TY);
         jit_emit_load_imm(asm, BC_A1, 0);
         jit_emit_load_imm(asm, BC_A2, member_id);
@@ -3087,6 +3313,7 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                 // --- Fused compare-and-branch ---
                 CASE(JEQ)
                 CASE(JNE) {
+                        char const *op_ip = code + off;
                         int n;
                         BC_READ(n);
                         int target = (int)(ip - code) + n;
@@ -3154,6 +3381,7 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
 
                         // === Slow path: call helper ===
                         jit_emit_label(asm, lbl_slow);
+                        EMIT_SLOW2(op_ip, SLOW_JEQ, BC_OPS, a_off, BC_OPS, b_off);
                         void *helper = is_eq ? (void *)jit_rt_eq : (void *)jit_rt_ne;
                         jit_emit_mov(asm, BC_A0, BC_TY);
                         jit_emit_add_imm(asm, BC_A1, BC_OPS, a_off);
@@ -3174,21 +3402,52 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                 CASE(JGT)
                 CASE(JLE)
                 CASE(JGE) {
+                        char const *op_ip = code + off;
                         int n;
                         BC_READ(n);
                         int target = (int)(ip - code) + n;
                         int lbl_target = bc_find_label(ctx, target);
                         if (lbl_target < 0) BAIL("invalid jump target %d", target);
 
-                        // Ordering compare: call jit_rt_compare(ty, &a, &b)
+                        int a_off = OP_OFF(ctx->sp - 2);
+                        int b_off = OP_OFF(ctx->sp - 1);
+
+                        int lbl_slow = ctx->next_label++;
+                        int lbl_done = ctx->next_label++;
+
+                        // Load both types
+                        jit_emit_ldrb(asm, BC_S0, BC_OPS, a_off + VAL_OFF_TYPE);
+                        jit_emit_ldrb(asm, BC_S1, BC_OPS, b_off + VAL_OFF_TYPE);
+
+                        // Check a.type == VALUE_INTEGER
+                        jit_emit_cmp_ri(asm, BC_S0, VALUE_INTEGER);
+                        jit_emit_branch_ne(asm, lbl_slow);
+
+                        // Check b.type == VALUE_INTEGER
+                        jit_emit_cmp_ri(asm, BC_S1, VALUE_INTEGER);
+                        jit_emit_branch_ne(asm, lbl_slow);
+
+                        // === Integer fast path: compare a.z vs b.z ===
+                        EMIT_STAT(jit_rt_stat_jcmp_int);
+                        jit_emit_ldr64(asm, BC_S0, BC_OPS, a_off + VAL_OFF_Z);
+                        jit_emit_ldr64(asm, BC_S1, BC_OPS, b_off + VAL_OFF_Z);
+                        jit_emit_cmp_rr(asm, BC_S0, BC_S1);
+                        switch (op) {
+                        case INSTR_JLT: jit_emit_branch_lt(asm, lbl_target); break;
+                        case INSTR_JGT: jit_emit_branch_gt(asm, lbl_target); break;
+                        case INSTR_JLE: jit_emit_branch_le(asm, lbl_target); break;
+                        case INSTR_JGE: jit_emit_branch_ge(asm, lbl_target); break;
+                        }
+                        jit_emit_jump(asm, lbl_done);
+
+                        // === Slow path: call jit_rt_compare(ty, &a, &b) ===
+                        jit_emit_label(asm, lbl_slow);
+                        EMIT_SLOW2(op_ip, SLOW_JCMP, BC_OPS, a_off, BC_OPS, b_off);
                         jit_emit_mov(asm, BC_A0, BC_TY);
-                        jit_emit_add_imm(asm, BC_A1, BC_OPS, OP_OFF(ctx->sp - 2));
-                        jit_emit_add_imm(asm, BC_A2, BC_OPS, OP_OFF(ctx->sp - 1));
+                        jit_emit_add_imm(asm, BC_A1, BC_OPS, a_off);
+                        jit_emit_add_imm(asm, BC_A2, BC_OPS, b_off);
                         jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_compare);
                         jit_emit_call_reg(asm, BC_CALL);
-
-                        ctx->sp -= 2;
-                        bc_set_label_sp(ctx, target, ctx->sp);
 
                         // Result in w0: <0, 0, >0 (int, 32-bit)
                         jit_emit_cmp_ri32(asm, 0, 0);
@@ -3198,11 +3457,16 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                         case INSTR_JLE: jit_emit_branch_le(asm, lbl_target); break;
                         case INSTR_JGE: jit_emit_branch_ge(asm, lbl_target); break;
                         }
+
+                        jit_emit_label(asm, lbl_done);
+                        ctx->sp -= 2;
+                        bc_set_label_sp(ctx, target, ctx->sp);
                         break;
                 }
 
                 // --- Member access ---
                 CASE(MEMBER_ACCESS) {
+                        char const *op_ip = code + off;
                         int z;
                         BC_READ(z);
 
@@ -3246,6 +3510,7 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
 
                                                         // Slow: call helper
                                                         jit_emit_label(asm, lbl_slow);
+                                                        EMIT_SLOW1(op_ip, SLOW_MEMBER_ACCESS, BC_OPS, obj_off);
                                                         jit_emit_mov(asm, BC_A0, BC_TY);
                                                         jit_emit_add_imm(asm, BC_A1, BC_OPS, obj_off);
                                                         jit_emit_mov(asm, BC_A2, BC_A1);
@@ -3279,11 +3544,12 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                 }
 
                 CASE(SELF_MEMBER_ACCESS) {
+                        char const *op_ip = code + off;
                         int z;
                         BC_READ(z);
 
                         // Try type-guided fast path (baked slot offset)
-                        if (bc_emit_self_member_read_fast(ctx, z)) {
+                        if (bc_emit_self_member_read_fast(ctx, z, op_ip)) {
                                 break;
                         }
 
@@ -3311,6 +3577,7 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
 
                 // --- Target member + Assign fusion ---
                 CASE(TARGET_MEMBER) {
+                        char const *op_ip = code + off;
                         int z;
                         BC_READ(z);
 
@@ -3360,6 +3627,7 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
 
                                                                 // Slow: call helper
                                                                 jit_emit_label(asm, lbl_slow);
+                                                                EMIT_SLOW1(op_ip, SLOW_MEMBER_SET, BC_OPS, obj_off);
                                                                 jit_emit_mov(asm, BC_A0, BC_TY);
                                                                 jit_emit_add_imm(asm, BC_A1, BC_OPS, obj_off);
                                                                 jit_emit_load_imm(asm, BC_A2, z);
@@ -3396,6 +3664,7 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                 }
 
                 CASE(TARGET_SELF_MEMBER) {
+                        char const *op_ip = code + off;
                         int z;
                         BC_READ(z);
 
@@ -3403,7 +3672,7 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                                 ip++; // consume ASSIGN
 
                                 // Try type-guided fast path
-                                if (bc_emit_self_member_write_fast(ctx, z)) {
+                                if (bc_emit_self_member_write_fast(ctx, z, op_ip)) {
                                         break;
                                 }
 
@@ -3516,6 +3785,7 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                 }
 
                 CASE(CALL_METHOD) {
+                        char const *op_ip = code + off;
                         int n, z, nkw;
                         BC_READ(n);
                         BC_READ(z);
@@ -3523,6 +3793,8 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                         for (int q = 0; q < nkw; ++q) BC_SKIPSTR();
 
                         DBG("CALL_METHOD[%s]: n=%d, z=%d, nkw=%d", M_NAME(z), n, z, nkw);
+
+                        EMIT_SET_CALL_IP(op_ip);
 
                         if (nkw > 0 || n == -1) {
                                 BAIL("CALL_METHOD with kwargs/spread not supported");
@@ -3594,11 +3866,14 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                 }
 
                 CASE(CALL_SELF_METHOD) {
+                        char const *op_ip = code + off;
                         int n, z, nkw;
                         BC_READ(n);
                         BC_READ(z);
                         BC_READ(nkw);
                         for (int q = 0; q < nkw; ++q) BC_SKIPSTR();
+
+                        EMIT_SET_CALL_IP(op_ip);
 
                         if (nkw > 0 || n == -1) {
                                 BAIL("CALL_SELF_METHOD with kwargs/spread not supported");
