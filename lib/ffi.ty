@@ -556,7 +556,7 @@ fn strct() {
         decl            => decl.name
     }).flat()
 
-    let init-params = [ty.Param({name: it}) for member-names]
+    let init-params = [ty.Param({name: it, constraint: ty.Any}) for member-names]
 
     let init = ty.Func(
         name: 'init',
