@@ -1,3 +1,5 @@
+import time (now)
+
 // Task IDs
 const I_IDLE = 1;
 const I_WORK = 2;
@@ -363,8 +365,10 @@ fn schedule(work: TaskWorkArea) {
     }
 }
 
-fn richards_run(iterations: Int) -> Bool {
-    for _ in 0..iterations {
+fn richards_run(iterations: Int) -> Float {
+    let t0 = now()
+
+    for ..iterations {
         let work = TaskWorkArea();
 
         work.task_new(I_IDLE, 1, nil, task_state_running(), Idle, IdleTaskRec());
@@ -388,16 +392,25 @@ fn richards_run(iterations: Int) -> Bool {
 
         schedule(work);
 
-        if work.hold_count != 9297 || work.qpkt_count != 23246 {
-            return false;
-        }
+        assert(work.hold_count == 9297)
+        assert(work.qpkt_count == 23246)
     }
-    true
+
+    now() - t0
 }
 
 fn main() {
-    let result = richards_run(100);
-    print(if result { "PASS" } else { "FAIL" });
+    let n = match argv[1;] {
+        [int ~> $n] => n,
+        []          => 100,
+        _           => throw "Usage: richards [iterations]"
+    }
+
+    print("======= Richards Benchmark ({n} iterations) =======")
+    print("Warmup: {richards_run(1) * 1000:.2}ms")
+    let total = richards_run(n)
+    print("Total: {total:.2}s")
+    print("Mean iteration duration: {(total / n) * 1000:.2}ms")
 }
 
 main()

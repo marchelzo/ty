@@ -56,6 +56,10 @@ ifdef JIT
 	CFLAGS += -DTY_ENABLE_JIT
 endif
 
+ifdef JIT_STATS
+	CFLAGS += -DJIT_STATS=1
+endif
+
 TEST_FILTER ?= "."
 
 PROG := ty
