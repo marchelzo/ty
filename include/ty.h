@@ -21,7 +21,7 @@
 #include "log.h"
 #include "xd.h"
 
-#define TY_MAX_CALL_DEPTH (1UL << 9)
+#define TY_MAX_CALL_DEPTH (1UL << 10)
 #define TY_TMP_BUF_COUNT 3
 
 #if defined(TY_RELEASE)
@@ -549,6 +549,7 @@ struct try {
         u32 nsp;
         u16 vs;
         u16 ed;
+        u16 jit_depth;
 
         bool executing;
         bool need_trace;
@@ -708,6 +709,23 @@ typedef struct ty {
 
         TyTDB *tdb;
         TY *ty;
+
+#if defined(TY_ENABLE_JIT)
+        struct {
+                int depth;
+                int resume_idx;
+                int status;
+                int saved_resume_idx;
+                void *pending_fn;
+                Value **pending_env;
+                struct jit_cont {
+                        void *fn;
+                        Value **env;
+                        Value *fn_result;
+                        int resume_idx;
+                } cont[TY_MAX_CALL_DEPTH];
+        } jit;
+#endif
 } Ty;
 
 typedef struct {
@@ -767,6 +785,7 @@ typedef struct {
         int pp;
         int pretty;
         int q;
+        int jit;
         int TEST;
         int tests;
         int tdb_hook;
@@ -790,6 +809,7 @@ enum {
 extern Ty vvv;
 extern TY xD;
 
+extern ValueVector Globals;
 extern InternedNames NAMES;
 
 extern int  ColorMode;

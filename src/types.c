@@ -11949,7 +11949,7 @@ type_any_of(Ty *ty, TypeVector const *types)
 }
 
 Type *
-type_resolve_var(Type *t0)
+type_resolve_var(Type const *t0)
 {
         return ResolveVar(t0);
 }

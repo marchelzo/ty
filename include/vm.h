@@ -152,6 +152,9 @@ vm_load_c_module(Ty *ty, char const *name, void *p);
 void
 vm_exec(Ty *ty, char *ip);
 
+void
+vm_xcall(Ty *ty, Value const *f, Value const *pSelf, int argc, Value const *pKwargs);
+
 bool
 vm_try_exec(Ty *ty, char *ip, Value *ret);
 
