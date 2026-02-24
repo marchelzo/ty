@@ -8650,15 +8650,15 @@ num_choices_of(Expr const *p)
         return (p->type == EXPRESSION_CHOICE_PATTERN) ? vN(p->es) : 1;
 }
 
-inline static Expr const *const *
-choices_of(Expr const *const *p)
+inline static Expr **
+choices_of(Expr **p)
 {
         while ((*p)->type == EXPRESSION_ALIAS_PATTERN) {
-                p = &(*p)->aliased;
+                p = (Expr **)&(*p)->aliased;
         }
 
         return ((*p)->type == EXPRESSION_CHOICE_PATTERN)
-             ? (Expr const *const *)vv((*p)->es)
+             ? vv((*p)->es)
              : p;
 }
 
@@ -8712,8 +8712,8 @@ degenerate_tag_set(Ty *ty, ExprVec const *patterns, int start, int count)
         i32Vector set = {0};
 
         for (int i = start; i < start + count; ++i) {
-                Expr const *const *choices = choices_of(&v__(*patterns, i));
-                int  const       n_choices = num_choices_of(v__(*patterns, i));
+                Expr *const *choices = choices_of(&v__(*patterns, i));
+                int const n_choices  = num_choices_of(v__(*patterns, i));
 
                 for (int i = 0; i < n_choices; ++i) {
                         int tag = tag_id_of(choices[i]);
@@ -8729,8 +8729,8 @@ degenerate_tag_set(Ty *ty, ExprVec const *patterns, int start, int count)
 static void
 emit_tag_entries(Ty *ty, TagMatchTable *table, Expr const *p, u32 pi)
 {
-        Expr const *const *choices = choices_of(&p);
-        int  const       n_choices = num_choices_of(p);
+        Expr *const *choices = choices_of((Expr **)&p);
+        int const n_choices  = num_choices_of(p);
 
         usize start = vN(STATE.code);
 
@@ -8753,8 +8753,8 @@ emit_tag_entries(Ty *ty, TagMatchTable *table, Expr const *p, u32 pi)
 inline static void
 patch_arm_entries(Ty *ty, TagMatchTable *table, Expr const *p)
 {
-        Expr const *const *choices = choices_of(&p);
-        int  const       n_choices = num_choices_of(p);
+        Expr *const *choices = choices_of((Expr **)&p);
+        int const n_choices  = num_choices_of(p);
 
         for (int i = 0; i < n_choices; ++i) {
                 i32 tag = tag_id_of(choices[i]);
@@ -8771,8 +8771,8 @@ patch_arm_entries(Ty *ty, TagMatchTable *table, Expr const *p)
 inline static bool
 emit_next_jump(Ty *ty, TagMatchTable *table, Expr const *p, u32 pi)
 {
-        Expr const *const *choices = choices_of(&p);
-        int  const       n_choices = num_choices_of(p);
+        Expr *const *choices = choices_of((Expr **)&p);
+        int const n_choices  = num_choices_of(p);
 
         u32 near_pi = 0xFFFFFFFF;
         i32 near_i  = -1;
@@ -8918,7 +8918,7 @@ emit_tag_group_expr(Ty *ty, Expr const *e, int start, int count, int kind)
 
         for (int i = start; i < start + count; ++i) {
                 Expr *pattern = v__(*patterns, i);
-                Stmt *then = v__(e->thens, i);
+                Expr *then = v__(e->thens, i);
 
                 patch_arm_entries(ty, &table, pattern);
                 patch_next_jumps(ty, &table, i);
@@ -9222,8 +9222,8 @@ build_pattern_groups(Ty *ty, ExprVec const *patterns, PatternGroup *groups)
 static bool
 emit_match_stmt_group(Ty *ty, Stmt const *stmt, PatternGroup *grp, bool keep, bool last)
 {
-        Expr const **patterns = vv(stmt->match.patterns);
-        Stmt const **thens = vv(stmt->match.statements);
+        Expr *const *patterns = vv(stmt->match.patterns);
+        Stmt *const *thens = vv(stmt->match.statements);
 
         int i = grp->start;
         int n = grp->count;
@@ -9650,8 +9650,8 @@ emit_if(Ty *ty, Stmt const *s, bool want_result)
 static bool
 emit_match_expr_group(Ty *ty, Expr const *expr, PatternGroup *grp, bool last)
 {
-        Expr const **patterns = vv(expr->patterns);
-        Expr const **thens    = vv(expr->thens);
+        Expr *const *patterns = vv(expr->patterns);
+        Expr *const *thens    = vv(expr->thens);
 
         int i = grp->start;
         int n = grp->count;
@@ -12446,7 +12446,7 @@ annotate_tokens(Ty *ty, void const *ast)
 
         return (((Expr *)ast)->type < EXPRESSION_MAX_TYPE)
              ? (void *)visit_expression(ty, (Expr *)ast, NULL, &visitor)
-             : (void *)visit_statement(ty, ast, NULL, &visitor);
+             : (void *)visit_statement(ty, (Stmt *)ast, NULL, &visitor);
 }
 
 static Expr *
