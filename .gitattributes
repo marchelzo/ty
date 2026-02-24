@@ -1,1 +1,2 @@
 *.ty linguist-language=TypeScript
+*.sh text eol=LF
