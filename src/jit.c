@@ -86,22 +86,18 @@ static int const x64_param_regs[] = { 7, 6, 2, 1 };
 #else
 #  define JIT_ARCH_NONE 1
 #endif
-#ifdef JIT_ARCH_NONE
-
+#if defined(TY_NO_JIT) || defined(JIT_ARCH_NONE)
 void jit_init(Ty *ty) { (void)ty; }
 void jit_free(Ty *ty) { (void)ty; }
 JitInfo *jit_compile(Ty *ty, Value const *func) { (void)ty; (void)func; return NULL; }
-
 #else
 
-#if defined(TY_ENABLE_JIT)
 // JIT trampoline offsets
 #define OFF_JIT_RESUME    offsetof(Ty, jit.resume_idx)
 #define OFF_JIT_STATUS    offsetof(Ty, jit.status)
 #define OFF_JIT_SAVED_RES offsetof(Ty, jit.saved_resume_idx)
 #define OFF_JIT_PEND_FN   offsetof(Ty, jit.pending_fn)
 #define OFF_JIT_PEND_ENV  offsetof(Ty, jit.pending_env)
-#endif
 
 // ============================================================================
 // Fast-path statistics (compile with -DJIT_STATS=1 to enable)
@@ -1953,7 +1949,6 @@ jit_rt_call(Ty *ty, Value *result, Value *fn, int argc)
         DoCall(ty, &_fn, argc, 0, false, true);
 }
 
-#if defined(TY_ENABLE_JIT)
 // Trampoline-aware call helper.
 // Returns 0 if the call was handled synchronously (non-JIT or interpreted).
 // Returns 1 if the callee is JIT-compiled and the trampoline should dispatch it.
@@ -1986,7 +1981,151 @@ jit_rt_call_trampoline(Ty *ty, Value *result, Value *fn, int argc)
 
         return 1;
 }
-#endif
+// Fast frame setup for simple functions (no rest args, no kwargs).
+// Replaces the expensive xcall() path for known-simple functions.
+static inline void
+jit_fast_frame(Ty *ty, Value const *fn, Value const *self, int argc)
+{
+        int bound = fn->info[FUN_INFO_BOUND];
+        int fp = vN(ty->stack) - argc;
+
+        // Ensure stack capacity
+        int needed = fp + bound;
+        if (UNLIKELY((usize)needed > vC(ty->stack))) {
+                xvR(ty->stack, needed + 256);
+        }
+
+        // NIL-fill locals beyond args
+        Value *base = vv(ty->stack) + fp;
+        for (int i = argc; i < bound; i++) {
+                base[i] = NIL;
+        }
+        vN(ty->stack) = needed;
+
+        // Set self for methods
+        if (self != NULL) {
+                int np = fn->info[FUN_INFO_PARAM_COUNT];
+                base[np] = *self;
+        }
+
+        // Push frame and call return address
+        xvP(ty->st.frames, ((Frame){ .fp = fp, .f = *fn, .ip = NULL }));
+        xvP(ty->st.calls, (char *)NULL);
+}
+
+// Run a JIT function through an inline trampoline loop.
+// Handles nested JIT-to-JIT calls without returning to the outer trampoline.
+static inline void
+jit_run_trampoline(Ty *ty, JitFn *jit, Value **env)
+{
+        int base_depth = ty->jit.depth;
+        Value result, cv;
+
+        ty->jit.cont[ty->jit.depth++] = (struct jit_cont){
+                .fn = jit,
+                .env = env,
+                .fn_result = &result,
+                .resume_idx = 0,
+        };
+
+        while (ty->jit.depth > base_depth) {
+                struct jit_cont *top = &ty->jit.cont[ty->jit.depth - 1];
+                usize cfp = vvL(ty->st.frames)->fp;
+                Value *args = vv(ty->stack) + cfp;
+
+                if (UNLIKELY(vN(ty->stack) + 256 > vC(ty->stack))) {
+                        xvR(ty->stack, vN(ty->stack) + 256);
+                        args = vv(ty->stack) + cfp;
+                }
+
+                ty->jit.resume_idx = top->resume_idx;
+                ty->jit.status = JIT_RETURN;
+
+                (*(JitFn *)top->fn)(ty, top->fn_result, args, top->env);
+
+                if (ty->jit.status == JIT_CALL) {
+                        top->resume_idx = ty->jit.saved_resume_idx;
+                        ty->jit.cont[ty->jit.depth++] = (struct jit_cont){
+                                .fn = ty->jit.pending_fn,
+                                .env = ty->jit.pending_env,
+                                .fn_result = &cv,
+                                .resume_idx = 0,
+                        };
+                } else {
+                        ty->jit.depth -= 1;
+                        if (ty->jit.depth > base_depth) {
+                                cfp = vvL(ty->st.frames)->fp;
+                                vN(ty->stack) = cfp + 1;
+                                *v_(ty->stack, cfp) = cv;
+                                vXx(ty->st.frames);
+                                vXx(ty->st.calls);
+                        }
+                }
+        }
+
+        // Clean up the initial callee's frame
+        usize cfp = vvL(ty->st.frames)->fp;
+        vN(ty->stack) = cfp + 1;
+        *v_(ty->stack, cfp) = result;
+        vXx(ty->st.frames);
+        vXx(ty->st.calls);
+}
+
+// Fast baked method call with inline trampoline.
+// Returns 1 if handled (result on stack), 0 for fallback to slow path.
+static int
+jit_rt_baked_call(Ty *ty, Value *self_ptr, Value *fn, int class_id, int argc)
+{
+        // Class guard
+        if (UNLIKELY(self_ptr->type != VALUE_OBJECT || self_ptr->class != class_id)) {
+                return 0;
+        }
+
+        // Check if callee is JIT-compiled
+        JitFn *jit = try_jit(ty, fn);
+        if (UNLIKELY(jit == NULL)) {
+                return 0;
+        }
+
+        Value self = *self_ptr;
+
+        STAT(call_method_baked);
+
+        // Fast frame setup (no xcall overhead)
+        jit_fast_frame(ty, fn, &self, argc);
+
+        // Run callee via inline trampoline (handles nested JIT calls)
+        jit_run_trampoline(ty, jit, fn->env);
+
+        return 1;
+}
+
+// Fast global function call with inline trampoline.
+// Returns 1 if handled, 0 for fallback.
+static int
+jit_rt_fast_global_call(Ty *ty, int gi, int argc)
+{
+        Value *fn = vm_global(ty, gi);
+
+        // Only attempt for simple function types
+        if (fn->type != VALUE_FUNCTION && fn->type != VALUE_BOUND_FUNCTION) {
+                return 0;
+        }
+
+        // Check if callee is JIT-compiled
+        JitFn *jit = try_jit(ty, fn);
+        if (jit == NULL) {
+                return 0;
+        }
+
+        // Fast frame setup
+        jit_fast_frame(ty, fn, NULL, argc);
+
+        // Run callee via inline trampoline
+        jit_run_trampoline(ty, jit, fn->env);
+
+        return 1;
+}
 
 static void
 jit_rt_call_method(Ty *ty, Value *result, Value *self, int member_id, int argc)
@@ -2665,6 +2804,13 @@ static Type *
 expected_return_type_of(Type const *t)
 {
         t = type_resolve_var(t);
+
+        if (
+                (TypeType(t) == TYPE_INTERSECT)
+             && (vN(t->types) > 0)
+        ) {
+                t = type_resolve_var(v__(t->types, 0));
+        }
 
         if (TypeType(t) == TYPE_FUNCTION) {
                 return t->rt;
@@ -3736,7 +3882,6 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                         // Sync the Ty stack count so the helper can set up the callee's frame
                         jit_emit_sync_stack_count(asm, ctx->bound, ctx->sp);
 
-#if defined(TY_ENABLE_JIT)
                         // Use trampoline-aware helper: returns 0 if handled, 1 if callee is JIT
                         jit_emit_mov(asm, BC_A0, BC_TY);
                         jit_emit_add_imm(asm, BC_A1, BC_OPS, result_off);  // result
@@ -3770,14 +3915,6 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
 
                         // Join point for both paths
                         jit_emit_label(asm, lbl_done);
-#else
-                        jit_emit_mov(asm, BC_A0, BC_TY);
-                        jit_emit_add_imm(asm, BC_A1, BC_OPS, result_off);
-                        jit_emit_add_imm(asm, BC_A2, BC_OPS, fn_off);
-                        jit_emit_load_imm(asm, BC_A3, n);
-                        jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_call);
-                        jit_emit_call_reg(asm, BC_CALL);
-#endif
 
                         // Pop fn + n args, push result
                         ctx->sp -= n; // was n+1 slots (args+fn), now 1 slot (result)
@@ -3835,15 +3972,51 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                                 jit_emit_call_reg(asm, BC_CALL);
                                 DBG("CALL_METHOD (builtin fast path for %s)", M_NAME(z));
                         } else if (baked_method != NULL) {
-                                // Guarded fast path for user-defined classes
-                                jit_emit_mov(asm, BC_A0, BC_TY);
-                                jit_emit_add_imm(asm, BC_A1, BC_OPS, result_off);
-                                jit_emit_add_imm(asm, BC_A2, BC_OPS, self_off);
-                                jit_emit_load_imm(asm, BC_A3, (iptr)baked_method);
-                                jit_emit_load_imm(asm, BC_A4, PACK32(receiver_class->i, z));
-                                jit_emit_load_imm(asm, BC_A5, n);
-                                jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_call_self_method_guarded);
-                                jit_emit_call_reg(asm, BC_CALL);
+                                // Check if the baked method is simple enough for fast trampoline
+                                bool can_tramp = (rest_idx_of(baked_method) == -1)
+                                              && (kwargs_idx_of(baked_method) == -1);
+                                if (can_tramp) {
+                                        // Fast trampoline path: skip xcall entirely
+                                        // Sync to sp-1 (exclude self): callee's fp = vN - argc
+                                        // must land on arg0, which is at op position sp-1-n
+                                        jit_emit_sync_stack_count(asm, ctx->bound, ctx->sp - 1);
+
+                                        jit_emit_mov(asm, BC_A0, BC_TY);
+                                        jit_emit_add_imm(asm, BC_A1, BC_OPS, self_off);
+                                        jit_emit_load_imm(asm, BC_A2, (iptr)baked_method);
+                                        jit_emit_load_imm(asm, BC_A3, receiver_class->i);
+                                        jit_emit_load_imm(asm, BC_A4, n);
+                                        jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_baked_call);
+                                        jit_emit_call_reg(asm, BC_CALL);
+
+                                        int lbl_cm_done = ctx->next_label++;
+
+                                        // If return 1: handled (result on stack), skip slow path
+                                        jit_emit_cbnz(asm, BC_RET, lbl_cm_done);
+
+                                        // Slow fallback: guard failed or not JIT'd
+                                        jit_emit_mov(asm, BC_A0, BC_TY);
+                                        jit_emit_add_imm(asm, BC_A1, BC_OPS, result_off);
+                                        jit_emit_add_imm(asm, BC_A2, BC_OPS, self_off);
+                                        jit_emit_load_imm(asm, BC_A3, (iptr)baked_method);
+                                        jit_emit_load_imm(asm, BC_A4, PACK32(receiver_class->i, z));
+                                        jit_emit_load_imm(asm, BC_A5, n);
+                                        jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_call_self_method_guarded);
+                                        jit_emit_call_reg(asm, BC_CALL);
+
+                                        jit_emit_label(asm, lbl_cm_done);
+                                        DBG("CALL_METHOD (baked trampoline for %s)", M_NAME(z));
+                                } else {
+                                        // Guarded fast path for user-defined classes (no trampoline)
+                                        jit_emit_mov(asm, BC_A0, BC_TY);
+                                        jit_emit_add_imm(asm, BC_A1, BC_OPS, result_off);
+                                        jit_emit_add_imm(asm, BC_A2, BC_OPS, self_off);
+                                        jit_emit_load_imm(asm, BC_A3, (iptr)baked_method);
+                                        jit_emit_load_imm(asm, BC_A4, PACK32(receiver_class->i, z));
+                                        jit_emit_load_imm(asm, BC_A5, n);
+                                        jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_call_self_method_guarded);
+                                        jit_emit_call_reg(asm, BC_CALL);
+                                }
                         } else {
                                 // Generic path with fast dispatch
                                 jit_emit_mov(asm, BC_A0, BC_TY);
@@ -3956,15 +4129,29 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                         // Sync the Ty stack count
                         jit_emit_sync_stack_count(asm, ctx->bound, ctx->sp + n);
 
-                        // Load global[gi] address
+                        // Try fast trampoline path (skips xcall overhead)
+                        jit_emit_mov(asm, BC_A0, BC_TY);
+                        jit_emit_load_imm(asm, BC_A1, gi);
+                        jit_emit_load_imm(asm, BC_A2, n);
+                        jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_fast_global_call);
+                        jit_emit_call_reg(asm, BC_CALL);
+
+                        int lbl_cg_slow = ctx->next_label++;
+                        int lbl_cg_done = ctx->next_label++;
+
+                        // If return 0: not JIT'd or not simple, use slow path
+                        jit_emit_cbz(asm, BC_RET, lbl_cg_slow);
+
+                        // Fast path handled: result already on stack, skip slow path
+                        jit_emit_jump(asm, lbl_cg_done);
+
+                        // Slow fallback: load global + call trampoline
+                        jit_emit_label(asm, lbl_cg_slow);
                         jit_emit_mov(asm, BC_A0, BC_TY);
                         jit_emit_load_imm(asm, BC_A1, gi);
                         jit_emit_load_imm(asm, BC_S0, (iptr)vm_global);
                         jit_emit_call_reg(asm, BC_S0);
                         // x0 now has Value* to the global
-
-#if defined(TY_ENABLE_JIT)
-                        // Use trampoline-aware helper
                         jit_emit_mov(asm, BC_A2, 0);  // fn ptr (was in x0)
                         jit_emit_mov(asm, BC_A0, BC_TY);
                         jit_emit_add_imm(asm, BC_A1, BC_OPS, OP_OFF(ctx->sp)); // result
@@ -3972,38 +4159,32 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                         jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_call_trampoline);
                         jit_emit_call_reg(asm, BC_CALL);
 
-                        // Check return: 0 = handled inline, 1 = JIT callee pending
-                        int lbl_cg_done = ctx->next_label++;
-                        jit_emit_cbz(asm, BC_RET, lbl_cg_done);
+                        // Old trampoline may also signal JIT_CALL
+                        int lbl_cg_done2 = ctx->next_label++;
+                        jit_emit_cbz(asm, BC_RET, lbl_cg_done2);
 
-                        // JIT callee detected: save resume index, signal trampoline, return
-                        int cg_site_idx = ctx->call_site_count++;
-                        int cg_resume_lbl = ctx->next_label++;
-                        ctx->resume_labels[cg_site_idx] = cg_resume_lbl;
+                        int cg_site_idx2 = ctx->call_site_count++;
+                        int cg_resume_lbl2 = ctx->next_label++;
+                        ctx->resume_labels[cg_site_idx2] = cg_resume_lbl2;
 
                         jit_emit_load_imm(asm, BC_S0, JIT_CALL);
                         jit_emit_str32(asm, BC_S0, BC_TY, OFF_JIT_STATUS);
-                        jit_emit_load_imm(asm, BC_S0, cg_site_idx + 1);
+                        jit_emit_load_imm(asm, BC_S0, cg_site_idx2 + 1);
                         jit_emit_str32(asm, BC_S0, BC_TY, OFF_JIT_SAVED_RES);
 
-                        int lbl_cg_ret = bc_label_for(ctx, -1);
-                        jit_emit_jump(asm, lbl_cg_ret);
+                        int lbl_cg_ret2 = bc_label_for(ctx, -1);
+                        jit_emit_jump(asm, lbl_cg_ret2);
 
-                        jit_emit_label(asm, cg_resume_lbl);
+                        jit_emit_label(asm, cg_resume_lbl2);
+                        jit_emit_label(asm, lbl_cg_done2);
+
                         jit_emit_label(asm, lbl_cg_done);
-#else
-                        jit_emit_mov(asm, BC_A2, 0);
-                        jit_emit_mov(asm, BC_A0, BC_TY);
-                        jit_emit_add_imm(asm, BC_A1, BC_OPS, OP_OFF(ctx->sp));
-                        jit_emit_load_imm(asm, BC_A3, n);
-                        jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_call);
-                        jit_emit_call_reg(asm, BC_CALL);
-#endif
 
                         ctx->sp++;
                         if (ctx->sp > ctx->max_sp) ctx->max_sp = ctx->sp;
-                        Type *f0 = compiler_global_sym(ty, gi)->type;
-                        ctx->op_types[ctx->sp - 1] = expected_return_type_of(f0);
+
+                        Type *r0 = expected_return_type_of(globals[gi]->type);
+                        ctx->op_types[ctx->sp - 1] = r0;
                         DBG("CALL_GLOBAL(%s)", VSC(vm_global(ty, gi)));
                         break;
                 }
@@ -5738,7 +5919,6 @@ jit_compile(Ty *ty, Value const *func)
 
         jit_emit_gen_prologue(&asm, bound);
 
-#if defined(TY_ENABLE_JIT)
         // Trampoline support: check if we're resuming after a sub-call.
         // Load ty->jit.resume_idx; if non-zero, jump to a dispatch block
         // that redirects to the appropriate resume label.
@@ -5749,7 +5929,6 @@ jit_compile(Ty *ty, Value const *func)
         jit_emit_ldr32(&asm, BC_S0, BC_TY, OFF_JIT_RESUME);
         jit_emit_cbnz(&asm, BC_S0, lbl_dispatch);
         jit_emit_label(&asm, lbl_normal_start);
-#endif
 
         // Emit bytecode
         ctx.asm = asm; // refresh after prologue might have changed it
@@ -5767,7 +5946,6 @@ jit_compile(Ty *ty, Value const *func)
 
         jit_emit_gen_epilogue(&asm);
 
-#if defined(TY_ENABLE_JIT)
         // Emit the resume dispatch block.
         // This is reached when jit.resume_idx != 0 (checked at function entry).
         // BC_S0 still holds the resume_idx value loaded before the cbnz.
@@ -5784,7 +5962,6 @@ jit_compile(Ty *ty, Value const *func)
                 jit_emit_label(&asm, lbl_dispatch);
                 jit_emit_jump(&asm, lbl_normal_start);
         }
-#endif
 
         // Link and encode
         usize final_size;
@@ -5858,6 +6035,6 @@ jit_free(Ty *ty)
         // TODO: munmap all cached JIT code
 }
 
-#endif // JIT_ARCH_NONE
+#endif // TY_NO_JIT || JIT_ARCH_NONE
 
 /* vim: set sts=8 sw=8 expandtab: */

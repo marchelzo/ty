@@ -52,8 +52,8 @@ ifdef PROFILE_TYPES
 	CFLAGS += -DTY_PROFILE_TYPES
 endif
 
-ifdef JIT
-	CFLAGS += -DTY_ENABLE_JIT
+ifndef NO_JIT
+	CFLAGS += -DTY_NO_JIT
 endif
 
 ifdef JIT_STATS

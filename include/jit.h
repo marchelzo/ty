@@ -42,7 +42,7 @@ jit_free(Ty *ty);
 inline static JitFn *
 try_jit(Ty *ty, Value const *f)
 {
-#if defined(TY_ENABLE_JIT)
+#if !defined(TY_NO_JIT)
         void *jit = jit_of(f);
 
         if (LIKELY(jit != (void *)0xFA57)) {

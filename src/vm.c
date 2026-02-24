@@ -1223,7 +1223,7 @@ co_yield_value(Ty *ty)
         return true;
 }
 
-#if defined(TY_ENABLE_JIT)
+#if !defined(TY_NO_JIT)
 inline static bool
 call_jit(Ty *ty, Value const *f)
 {
@@ -1312,7 +1312,7 @@ call_jit(Ty *ty, Value const *f)
 
         return true;
 }
-#endif /* TY_ENABLE_JIT */
+#endif /* TY_NO_JIT */
 
 #if !defined(TY_RELEASE)
 __attribute__((optnone, noinline))
@@ -1427,7 +1427,7 @@ call(Ty *ty, Value const *f, Value const *pSelf, int argc, Value const *pKwargs)
 
         xcall(ty, f, pSelf, argc, pKwargs, IP);
 
-#if defined(TY_ENABLE_JIT)
+#if !defined(TY_NO_JIT)
         if (call_jit(ty, f)) {
                 return false;
         }
@@ -1464,7 +1464,7 @@ exec_fn(Ty *ty, Value const *f, Value const *pSelf, int argc, Value const *pKwar
 {
         xcall(ty, f, pSelf, argc, pKwargs, &halt);
 
-#if defined(TY_ENABLE_JIT)
+#if !defined(TY_NO_JIT)
         if (LIKELY(call_jit(ty, f))) {
                 return;
         }
@@ -2146,7 +2146,7 @@ PushTry(Ty *ty)
         t->nsp   = vN(SP_STACK);
         t->vs    = vN(VISITING);
         t->ed    = EXEC_DEPTH;
-#if defined(TY_ENABLE_JIT)
+#if !defined(TY_NO_JIT)
         t->jit_depth = ty->jit.depth;
 #endif
         t->ss    = SaveScratch(ty);
@@ -2201,7 +2201,7 @@ DoThrow(Ty *ty)
                                 }
 
                                 EXEC_DEPTH   = t->ed;
-#if defined(TY_ENABLE_JIT)
+#if !defined(TY_NO_JIT)
                                 ty->jit.depth = t->jit_depth;
 #endif
                                 vN(STACK)    = t->sp;
@@ -7650,7 +7650,7 @@ BinaryOp:
                                         v.env[j] = p;
                                 }
                         }
-#if defined(TY_ENABLE_JIT)
+#if !defined(TY_NO_JIT)
                         if (!NoJIT && expr_of(&v)->must_jit) {
                                 if (UNLIKELY(try_jit(ty, &v) == NULL)) {
                                         zP("failed to JIT compile function %s", SHOW(&v));

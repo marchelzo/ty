@@ -257,7 +257,7 @@ enum {
         FUN_META        = FUN_DOC         + sizeof (uptr),
         FUN_NAME        = FUN_META        + sizeof (uptr),
         FUN_EXPR        = FUN_NAME        + sizeof (uptr),
-#if defined(TY_ENABLE_JIT)
+#if !defined(TY_NO_JIT)
         FUN_JIT         = FUN_EXPR        + sizeof (uptr),
         FUN_PARAM_NAMES = FUN_JIT         + sizeof (uptr)
 #else
@@ -710,7 +710,7 @@ typedef struct ty {
         TyTDB *tdb;
         TY *ty;
 
-#if defined(TY_ENABLE_JIT)
+#if !defined(TY_NO_JIT)
         struct {
                 int depth;
                 int resume_idx;
