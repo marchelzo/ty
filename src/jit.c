@@ -121,40 +121,52 @@ static struct {
         _Atomic u64 jcmp_slow;
 } jit_stats;
 
-__attribute__((destructor))
-static void jit_stats_print(void)
-{
-        fprintf(stderr,
-                "\n=== JIT Fast-Path Stats ===\n"
-                "  member_access:    fast=%-8llu  slow=%-8llu  (%.1f%% fast)\n"
-                "  member_set:       fast=%-8llu  slow=%-8llu  (%.1f%% fast)\n"
-                "  self_member_read: fast=%-8llu  slow=%-8llu  (%.1f%% fast)\n"
-                "  self_member_write:fast=%-8llu  slow=%-8llu  (%.1f%% fast)\n"
-                "  call_method:      baked=%-7llu  builtin=%-5llu  fast_disp=%-5llu  slow=%-8llu\n"
-                "  jeq/jne:          int=%-9llu  nil=%-9llu  slow=%-8llu\n"
-                "  jlt/jgt/jle/jge:  int=%-9llu  slow=%-8llu\n",
-                (unsigned long long)jit_stats.member_fast,
-                (unsigned long long)jit_stats.member_slow,
-                (jit_stats.member_fast + jit_stats.member_slow) ? 100.0 * jit_stats.member_fast / (jit_stats.member_fast + jit_stats.member_slow) : 0.0,
-                (unsigned long long)jit_stats.member_set_fast,
-                (unsigned long long)jit_stats.member_set_slow,
-                (jit_stats.member_set_fast + jit_stats.member_set_slow) ? 100.0 * jit_stats.member_set_fast / (jit_stats.member_set_fast + jit_stats.member_set_slow) : 0.0,
-                (unsigned long long)jit_stats.self_member_read_fast,
-                (unsigned long long)jit_stats.self_member_read_slow,
-                (jit_stats.self_member_read_fast + jit_stats.self_member_read_slow) ? 100.0 * jit_stats.self_member_read_fast / (jit_stats.self_member_read_fast + jit_stats.self_member_read_slow) : 0.0,
-                (unsigned long long)jit_stats.self_member_write_fast,
-                (unsigned long long)jit_stats.self_member_write_slow,
-                (jit_stats.self_member_write_fast + jit_stats.self_member_write_slow) ? 100.0 * jit_stats.self_member_write_fast / (jit_stats.self_member_write_fast + jit_stats.self_member_write_slow) : 0.0,
-                (unsigned long long)jit_stats.call_method_baked,
-                (unsigned long long)jit_stats.call_method_builtin,
-                (unsigned long long)jit_stats.call_method_fast_dispatch,
-                (unsigned long long)jit_stats.call_method_slow,
-                (unsigned long long)jit_stats.jeq_int,
-                (unsigned long long)jit_stats.jeq_nil,
-                (unsigned long long)jit_stats.jeq_slow,
-                (unsigned long long)jit_stats.jcmp_int,
-                (unsigned long long)jit_stats.jcmp_slow
-        );
+__attribute__((destructor)) static void jit_stats_print(void) {
+  fprintf(stderr,
+          "\n=== JIT Fast-Path Stats ===\n"
+          "  member_access:    fast=%-8llu  slow=%-8llu  (%.1f%% fast)\n"
+          "  member_set:       fast=%-8llu  slow=%-8llu  (%.1f%% fast)\n"
+          "  self_member_read: fast=%-8llu  slow=%-8llu  (%.1f%% fast)\n"
+          "  self_member_write:fast=%-8llu  slow=%-8llu  (%.1f%% fast)\n"
+          "  call_method:      baked=%-7llu  builtin=%-5llu  fast_disp=%-5llu  "
+          "slow=%-8llu\n"
+          "  jeq/jne:          int=%-9llu  nil=%-9llu  slow=%-8llu\n"
+          "  jlt/jgt/jle/jge:  int=%-9llu  slow=%-8llu\n",
+          (unsigned long long)jit_stats.member_fast,
+          (unsigned long long)jit_stats.member_slow,
+          (jit_stats.member_fast + jit_stats.member_slow)
+              ? 100.0 * jit_stats.member_fast /
+                    (jit_stats.member_fast + jit_stats.member_slow)
+              : 0.0,
+          (unsigned long long)jit_stats.member_set_fast,
+          (unsigned long long)jit_stats.member_set_slow,
+          (jit_stats.member_set_fast + jit_stats.member_set_slow)
+              ? 100.0 * jit_stats.member_set_fast /
+                    (jit_stats.member_set_fast + jit_stats.member_set_slow)
+              : 0.0,
+          (unsigned long long)jit_stats.self_member_read_fast,
+          (unsigned long long)jit_stats.self_member_read_slow,
+          (jit_stats.self_member_read_fast + jit_stats.self_member_read_slow)
+              ? 100.0 * jit_stats.self_member_read_fast /
+                    (jit_stats.self_member_read_fast +
+                     jit_stats.self_member_read_slow)
+              : 0.0,
+          (unsigned long long)jit_stats.self_member_write_fast,
+          (unsigned long long)jit_stats.self_member_write_slow,
+          (jit_stats.self_member_write_fast + jit_stats.self_member_write_slow)
+              ? 100.0 * jit_stats.self_member_write_fast /
+                    (jit_stats.self_member_write_fast +
+                     jit_stats.self_member_write_slow)
+              : 0.0,
+          (unsigned long long)jit_stats.call_method_baked,
+          (unsigned long long)jit_stats.call_method_builtin,
+          (unsigned long long)jit_stats.call_method_fast_dispatch,
+          (unsigned long long)jit_stats.call_method_slow,
+          (unsigned long long)jit_stats.jeq_int,
+          (unsigned long long)jit_stats.jeq_nil,
+          (unsigned long long)jit_stats.jeq_slow,
+          (unsigned long long)jit_stats.jcmp_int,
+          (unsigned long long)jit_stats.jcmp_slow);
 }
 
 #define STAT(name) (++jit_stats.name)
@@ -169,9 +181,9 @@ static void jit_rt_stat_jeq_int(void)                { STAT(jeq_int); }
 static void jit_rt_stat_jeq_nil(void)                { STAT(jeq_nil); }
 static void jit_rt_stat_jcmp_int(void)               { STAT(jcmp_int); }
 
-#define EMIT_STAT(fn_ptr) do {                                         \
+#define EMIT_STAT(fn_ptr) do {                                        \
         jit_emit_load_imm(asm, BC_CALL, (intptr_t)(fn_ptr));          \
-        jit_emit_call_reg(asm, BC_CALL);                               \
+        jit_emit_call_reg(asm, BC_CALL);                              \
 } while (0)
 #else
 #define STAT(name) ((void)0)
@@ -179,12 +191,12 @@ static void jit_rt_stat_jcmp_int(void)               { STAT(jcmp_int); }
 #endif
 
 #if JIT_RT_DEBUG
-#define DBG(fmt, ...) do {                                      \
-        jit_emit_mov(asm, 0, BC_TY);                            \
-        jit_emit_load_imm(asm, 1, ctx->sp);                     \
-        jit_emit_load_imm(asm, 2, ((intptr_t)xfmt(fmt __VA_OPT__(,) __VA_ARGS__)));            \
-        jit_emit_load_imm(asm, BC_CALL, (intptr_t)jit_rt_dbg);  \
-        jit_emit_call_reg(asm, BC_CALL);                        \
+#define DBG(fmt, ...) do {                                                                 \
+        jit_emit_mov(asm, BC_A0, BC_TY);                                                 \
+        jit_emit_load_imm(asm, BC_A1, ctx->sp);                                          \
+        jit_emit_load_imm(asm, BC_A2, ((intptr_t)xfmt(fmt __VA_OPT__(,) __VA_ARGS__)));  \
+        jit_emit_load_imm(asm, BC_CALL, (intptr_t)jit_rt_dbg);                             \
+        jit_emit_call_reg(asm, BC_CALL);                                                   \
 } while (0)
 #else
 #define DBG(fmt, ...)
@@ -292,6 +304,7 @@ static void
 jit_rt_div(Ty *ty, Value *result, Value *a, Value *b)
 {
         if (a->type == VALUE_INTEGER && b->type == VALUE_INTEGER) {
+                if (b->z == 0) ZeroDividePanic(ty);
                 *result = INTEGER(a->z / b->z);
                 return;
         }
@@ -307,6 +320,7 @@ static void
 jit_rt_mod(Ty *ty, Value *result, Value *a, Value *b)
 {
         if (a->type == VALUE_INTEGER && b->type == VALUE_INTEGER) {
+                if (b->z == 0) ZeroDividePanic(ty);
                 *result = INTEGER(a->z % b->z);
                 return;
         }
@@ -560,7 +574,7 @@ jit_rt_member_set(Ty *ty, Value *obj, int member_id, Value *val)
         DoAssignExec(ty);
 }
 
-static bool
+static int
 jit_rt_try_tag_pop(Ty *ty, Value *val, int tag)
 {
         return TryUnwrap(val, tag);
@@ -575,18 +589,18 @@ jit_rt_render_template(Ty *ty, Value *result, uptr expr_ptr)
         *v_(ty->stack, idx) = val;
 }
 
-static bool
-jit_rt_index_tuple(Ty *ty, Value *tos, Value *dst, int i)
+static int
+jit_rt_index_tuple(Value *tos, Value *dst, int i)
 {
         if (tos->type != VALUE_TUPLE || tos->count <= i) {
-                return false;
+                return 0;
         }
         *dst = tos->items[i];
-        return true;
+        return 1;
 }
 
 static int
-jit_rt_try_tuple_member(Ty *ty, Value *tos, Value *dst, bool required, int name_id)
+jit_rt_try_tuple_member(Value *tos, Value *dst, bool required, int name_id)
 {
         if (tos->type != VALUE_TUPLE) {
                 return 0;
@@ -609,19 +623,19 @@ jit_rt_try_tuple_member(Ty *ty, Value *tos, Value *dst, bool required, int name_
         return 0;
 }
 
-static bool
+static int
 jit_rt_try_steal_tag(Ty *ty, Value *tos, Value *target)
 {
         if (tos->tags > 0) {
                 *target = TAG(tags_first(ty, tos->tags));
                 (PopTag)(ty, tos);
-                return true;
+                return 1;
         }
 
-        return false;
+        return 0;
 }
 
-static bool
+static int
 jit_rt_jii(Ty *ty, Value *v, int class_id)
 {
         return class_is_subclass(ty, ClassOf(v), class_id);
@@ -722,14 +736,14 @@ jit_rt_bind_instance(Ty *ty, Value *result, int n, int z)
         }
 }
 
-static bool
+static int
 jit_rt_ensure_equals_var(Ty *ty, Value *a, Value *b)
 {
         return value_test_equality(ty, a, b);
 }
 
 static int
-jit_rt_try_index(Ty *ty, Value *tos, Value *dst, int i, bool required)
+jit_rt_try_index(Value *tos, Value *dst, int i, bool required)
 {
         if (tos->type != VALUE_ARRAY) {
                 return 0;
@@ -770,7 +784,7 @@ jit_rt_subscript(Ty *ty, Value *top)
         DoSubscript(ty, true);
 }
 
-static bool
+static int
 jit_rt_truthy(Ty *ty, Value *v)
 {
         return value_truthy(ty, v);
@@ -919,7 +933,7 @@ jit_rt_loop_iter(Ty *ty, Value *top)
 }
 
 // LOOP_CHECK: returns true if loop is done (NONE detected)
-static bool
+static int
 jit_rt_loop_check(Ty *ty, int z, Value *top)
 {
         TOP_OF_STACK(top);
@@ -990,19 +1004,50 @@ jit_rt_assign_global(Ty *ty, int n, Value *val)
         *vm_global(ty, n) = *val;
 }
 
-#define BC_TY    19
-#define BC_RES   20
-#define BC_LOC   21
-#define BC_ENV   22
-#define BC_OPS   23
-
+#if JIT_ARCH_ARM64
+// ARM64 callee-saved register assignments
+#define BC_TY    19   // x19
+#define BC_RES   20   // x20
+#define BC_LOC   21   // x21
+#define BC_ENV   22   // x22
+#define BC_OPS   23   // x23
 // Scratch registers (caller-saved, trashed by helper calls)
-#define BC_S0    8   // x8
-#define BC_S1    9   // x9
-#define BC_S2   10   // x10
-#define BC_S3   11   // x11
+#define BC_S0    8    // x8
+#define BC_S1    9    // x9
+#define BC_S2   10    // x10
+#define BC_S3   11    // x11
+#define BC_CALL 16    // x16 - call target / scratch
+// C calling convention argument registers
+#define BC_A0  0    // x0
+#define BC_A1  1    // x1
+#define BC_A2  2    // x2
+#define BC_A3  3    // x3
+#define BC_A4  4    // x4
+#define BC_A5  5    // x5
+#elif JIT_ARCH_X64
+// x86-64 callee-saved register assignments
+#define BC_TY    12   // r12
+#define BC_RES   13   // r13
+#define BC_LOC   14   // r14
+#define BC_ENV   15   // r15
+#define BC_OPS    3   // rbx
+// Scratch registers (caller-saved, trashed by helper calls)
+#define BC_S0    8    // r8
+#define BC_S1    9    // r9
+#define BC_S2   10    // r10
+#define BC_S3   11    // r11
+#define BC_CALL 10    // r10 - call target / scratch (aliases BC_S2)
+// C calling convention argument registers (System V AMD64 ABI)
+#define BC_A0  7    // rdi
+#define BC_A1  6    // rsi
+#define BC_A2  2    // rdx
+#define BC_A3  1    // rcx
+#define BC_A4  8    // r8  (aliases BC_S0, fine before call)
+#define BC_A5  9    // r9  (aliases BC_S1, fine before call)
+#endif
 
-#define BC_CALL 16   // x16 - call target / scratch
+// Pack two 32-bit ints into a single 64-bit immediate for register-only calls
+#define PACK32(hi, lo) (((int64_t)(hi) << 32) | ((int64_t)(unsigned int)(lo)))
 
 #define MAX_BC_OPS    64   // Max operand stack depth
 #define MAX_BC_LABELS 512  // Max DynASM labels
@@ -1129,9 +1174,9 @@ bc_get_label_sp(JitBcCtx *ctx, int offset)
 inline static void
 idbg(JitBcCtx *ctx, char const *op)
 {
-        jit_emit_mov(&ctx->asm, 0, BC_TY);
-        jit_emit_load_imm(&ctx->asm, 1, ctx->sp);
-        jit_emit_load_imm(&ctx->asm, 2, ((intptr_t)op));
+        jit_emit_mov(&ctx->asm, BC_A0, BC_TY);
+        jit_emit_load_imm(&ctx->asm, BC_A1, ctx->sp);
+        jit_emit_load_imm(&ctx->asm, BC_A2, ((intptr_t)op));
         jit_emit_load_imm(&ctx->asm, BC_CALL, (intptr_t)jit_rt_idbg);
         jit_emit_call_reg(&ctx->asm, BC_CALL);
 }
@@ -1160,9 +1205,9 @@ itrc(JitBcCtx *ctx, char *ip, char const *op)
                 ctx->sp,
                 op
         );
-        jit_emit_mov(&ctx->asm, 0, BC_TY);
-        jit_emit_load_imm(&ctx->asm, 1, ctx->sp);
-        jit_emit_load_imm(&ctx->asm, 2, ((intptr_t)msg));
+        jit_emit_mov(&ctx->asm, BC_A0, BC_TY);
+        jit_emit_load_imm(&ctx->asm, BC_A1, ctx->sp);
+        jit_emit_load_imm(&ctx->asm, BC_A2, ((intptr_t)msg));
         jit_emit_load_imm(&ctx->asm, BC_CALL, (intptr_t)jit_rt_itrc);
         jit_emit_call_reg(&ctx->asm, BC_CALL);
 }
@@ -1693,11 +1738,15 @@ jit_rt_call_method_direct(Ty *ty, Value *result, Value *self, Value *method, int
         *v_(ty->stack, idx) = val;
 }
 
-// Guarded CALL_SEFL_METHOD fast path w/ baked method ptr
+// Guarded CALL_SELF_METHOD fast path w/ baked method ptr
+// class_and_member packs class_id (high 32) and member_id (low 32)
 static void
 jit_rt_call_self_method_guarded(Ty *ty, Value *result, Value *self,
-                                Value *baked, int class_id, int member_id, int argc)
+                                Value *baked, int64_t class_and_member, int argc)
 {
+        int class_id  = (int)(class_and_member >> 32);
+        int member_id = (int)(class_and_member);
+
         if (self == NULL) {
                 self = vm_get_self(ty);
         }
@@ -1711,10 +1760,14 @@ jit_rt_call_self_method_guarded(Ty *ty, Value *result, Value *self,
 }
 
 // Guarded CALL_METHOD fast path for primitive type builtins
+// vtype_and_member packs value_type (high 32) and member_id (low 32)
 static void
 jit_rt_call_builtin_method(Ty *ty, Value *result, Value *self,
-                           BuiltinMethod *func, int value_type, int member_id, int argc)
+                           BuiltinMethod *func, int64_t vtype_and_member, int argc)
 {
+        int value_type = (int)(vtype_and_member >> 32);
+        int member_id  = (int)(vtype_and_member);
+
         if (self == NULL) {
                 self = vm_get_self(ty);
         }
@@ -1923,13 +1976,13 @@ bc_emit_binop_helper(JitBcCtx *ctx, void *helper)
         dasm_State **asm = &ctx->asm;
 
         // x0 = ty
-        jit_emit_mov(asm, 0, BC_TY);
+        jit_emit_mov(asm, BC_A0, BC_TY);
         // x1 = &ops[sp-2] (result)
-        jit_emit_add_imm(asm, 1, BC_OPS, OP_OFF(ctx->sp - 2));
+        jit_emit_add_imm(asm, BC_A1, BC_OPS, OP_OFF(ctx->sp - 2));
         // x2 = &ops[sp-2] (a)
-        jit_emit_mov(asm, 2, 1);
+        jit_emit_mov(asm, BC_A2, BC_A1);
         // x3 = &ops[sp-1] (b)
-        jit_emit_add_imm(asm, 3, BC_OPS, OP_OFF(ctx->sp - 1));
+        jit_emit_add_imm(asm, BC_A3, BC_OPS, OP_OFF(ctx->sp - 1));
 
         jit_emit_load_imm(asm, BC_CALL, (intptr_t)helper);
         jit_emit_call_reg(asm, BC_CALL);
@@ -1942,9 +1995,9 @@ bc_emit_unop_helper(JitBcCtx *ctx, void *helper)
 {
         dasm_State **asm = &ctx->asm;
 
-        jit_emit_mov(asm, 0, BC_TY);
-        jit_emit_add_imm(asm, 1, BC_OPS, OP_OFF(ctx->sp - 1));
-        jit_emit_mov(asm, 2, 1);
+        jit_emit_mov(asm, BC_A0, BC_TY);
+        jit_emit_add_imm(asm, BC_A1, BC_OPS, OP_OFF(ctx->sp - 1));
+        jit_emit_mov(asm, BC_A2, BC_A1);
 
         jit_emit_load_imm(asm, BC_CALL, (intptr_t)helper);
         jit_emit_call_reg(asm, BC_CALL);
@@ -1973,6 +2026,11 @@ bc_emit_arith(JitBcCtx *ctx, void *helper)
         // Fast path: load integers, compute, store result
         jit_emit_ldr64(asm, BC_S0, BC_OPS, a_off + VAL_OFF_Z);
         jit_emit_ldr64(asm, BC_S1, BC_OPS, b_off + VAL_OFF_Z);
+
+        // Guard div/mod against zero divisor (SIGFPE on x64, wrong result on arm64)
+        if (helper == (void *)jit_rt_div || helper == (void *)jit_rt_mod) {
+                jit_emit_cbz(asm, BC_S1, lbl_slow);
+        }
 
         if (helper == (void *)jit_rt_add) {
                 jit_emit_add(asm, BC_S0, BC_S0, BC_S1);
@@ -2133,8 +2191,8 @@ bc_emit_truthy(JitBcCtx *ctx)
         jit_emit_branch_eq(asm, lbl_int);
 
         // Everything else: call helper
-        jit_emit_mov(asm, 0, BC_TY);
-        jit_emit_add_imm(asm, 1, BC_OPS, off);
+        jit_emit_mov(asm, BC_A0, BC_TY);
+        jit_emit_add_imm(asm, BC_A1, BC_OPS, off);
         jit_emit_load_imm(asm, BC_CALL, (intptr_t)jit_rt_truthy);
         jit_emit_call_reg(asm, BC_CALL);
         jit_emit_mov(asm, BC_S0, 0);
@@ -2222,10 +2280,10 @@ bc_emit_self_member_read_fast(JitBcCtx *ctx, int member_id)
         jit_emit_label(asm, lbl_slow);
         EMIT_STAT(jit_rt_stat_self_member_read_slow);
         bc_copy_value(ctx, BC_OPS, out_off, BC_LOC, self_val_off);
-        jit_emit_mov(asm, 0, BC_TY);
-        jit_emit_add_imm(asm, 1, BC_OPS, out_off);
-        jit_emit_load_imm(asm, 2, 0);
-        jit_emit_load_imm(asm, 3, member_id);
+        jit_emit_mov(asm, BC_A0, BC_TY);
+        jit_emit_add_imm(asm, BC_A1, BC_OPS, out_off);
+        jit_emit_load_imm(asm, BC_A2, 0);
+        jit_emit_load_imm(asm, BC_A3, member_id);
         jit_emit_load_imm(asm, BC_CALL, (intptr_t)jit_rt_member);
         jit_emit_call_reg(asm, BC_CALL);
 
@@ -2284,10 +2342,10 @@ bc_emit_self_member_write_fast(JitBcCtx *ctx, int member_id)
         // Slow path: call jit_rt_member_set
         jit_emit_label(asm, lbl_slow);
         EMIT_STAT(jit_rt_stat_self_member_write_slow);
-        jit_emit_mov(asm, 0, BC_TY);
-        jit_emit_load_imm(asm, 1, 0);
-        jit_emit_load_imm(asm, 2, member_id);
-        jit_emit_add_imm(asm, 3, BC_OPS, val_off);
+        jit_emit_mov(asm, BC_A0, BC_TY);
+        jit_emit_load_imm(asm, BC_A1, 0);
+        jit_emit_load_imm(asm, BC_A2, member_id);
+        jit_emit_add_imm(asm, BC_A3, BC_OPS, val_off);
         jit_emit_load_imm(asm, BC_CALL, (intptr_t)jit_rt_member_set);
         jit_emit_call_reg(asm, BC_CALL);
 
@@ -2602,10 +2660,10 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
 
                                 // Slow path: call runtime helper
                                 jit_emit_label(asm, lbl_slow);
-                                jit_emit_mov(asm, 0, BC_TY);                            // arg0: ty
-                                jit_emit_add_imm(asm, 1, BC_LOC, local_off);            // arg1: target
-                                jit_emit_add_imm(asm, 2, BC_OPS, addend_off);           // arg2: addend
-                                jit_emit_mov(asm, 3, 2);                                // arg3: result = addend slot
+                                jit_emit_mov(asm, BC_A0, BC_TY);                            // arg0: ty
+                                jit_emit_add_imm(asm, BC_A1, BC_LOC, local_off);            // arg1: target
+                                jit_emit_add_imm(asm, BC_A2, BC_OPS, addend_off);           // arg2: addend
+                                jit_emit_mov(asm, BC_A3, BC_A2);                                // arg3: result = addend slot
                                 if (mut_op == INSTR_MUT_ADD) {
                                         jit_emit_load_imm(asm, BC_CALL, (intptr_t)jit_rt_mut_add);
                                 } else {
@@ -2620,8 +2678,8 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                                 ctx->tgt_kind = TGT_LOCAL;
                                 ctx->tgt_index = n;
                         } else {
-                                jit_emit_mov(asm, 0, BC_TY);
-                                jit_emit_add_imm(asm, 1, BC_LOC, n * VALUE_SIZE);
+                                jit_emit_mov(asm, BC_A0, BC_TY);
+                                jit_emit_add_imm(asm, BC_A1, BC_LOC, n * VALUE_SIZE);
                                 jit_emit_load_imm(asm, BC_CALL, (intptr_t)vm_jit_push_target);
                                 jit_emit_call_reg(asm, BC_CALL);
                         }
@@ -3008,10 +3066,10 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                         // === Slow path: call helper ===
                         jit_emit_label(asm, lbl_slow);
                         void *helper = is_eq ? (void *)jit_rt_eq : (void *)jit_rt_ne;
-                        jit_emit_mov(asm, 0, BC_TY);
-                        jit_emit_add_imm(asm, 1, BC_OPS, a_off);
-                        jit_emit_add_imm(asm, 2, BC_OPS, a_off);
-                        jit_emit_add_imm(asm, 3, BC_OPS, b_off);
+                        jit_emit_mov(asm, BC_A0, BC_TY);
+                        jit_emit_add_imm(asm, BC_A1, BC_OPS, a_off);
+                        jit_emit_add_imm(asm, BC_A2, BC_OPS, a_off);
+                        jit_emit_add_imm(asm, BC_A3, BC_OPS, b_off);
                         jit_emit_load_imm(asm, BC_CALL, (intptr_t)helper);
                         jit_emit_call_reg(asm, BC_CALL);
                         jit_emit_ldrb(asm, BC_S0, BC_OPS, a_off + VAL_OFF_BOOL);
@@ -3034,9 +3092,9 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                         if (lbl_target < 0) BAIL("invalid jump target %d", target);
 
                         // Ordering compare: call jit_rt_compare(ty, &a, &b)
-                        jit_emit_mov(asm, 0, BC_TY);
-                        jit_emit_add_imm(asm, 1, BC_OPS, OP_OFF(ctx->sp - 2));
-                        jit_emit_add_imm(asm, 2, BC_OPS, OP_OFF(ctx->sp - 1));
+                        jit_emit_mov(asm, BC_A0, BC_TY);
+                        jit_emit_add_imm(asm, BC_A1, BC_OPS, OP_OFF(ctx->sp - 2));
+                        jit_emit_add_imm(asm, BC_A2, BC_OPS, OP_OFF(ctx->sp - 1));
                         jit_emit_load_imm(asm, BC_CALL, (intptr_t)jit_rt_compare);
                         jit_emit_call_reg(asm, BC_CALL);
 
@@ -3099,10 +3157,10 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
 
                                                         // Slow: call helper
                                                         jit_emit_label(asm, lbl_slow);
-                                                        jit_emit_mov(asm, 0, BC_TY);
-                                                        jit_emit_add_imm(asm, 1, BC_OPS, obj_off);
-                                                        jit_emit_mov(asm, 2, 1);
-                                                        jit_emit_load_imm(asm, 3, z);
+                                                        jit_emit_mov(asm, BC_A0, BC_TY);
+                                                        jit_emit_add_imm(asm, BC_A1, BC_OPS, obj_off);
+                                                        jit_emit_mov(asm, BC_A2, BC_A1);
+                                                        jit_emit_load_imm(asm, BC_A3, z);
                                                         jit_emit_load_imm(asm, BC_CALL, (intptr_t)jit_rt_member);
                                                         jit_emit_call_reg(asm, BC_CALL);
 
@@ -3115,10 +3173,10 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
 
                         if (!emitted_fast) {
                                 // Generic path (no type info --- not trapped)
-                                jit_emit_mov(asm, 0, BC_TY);
-                                jit_emit_add_imm(asm, 1, BC_OPS, OP_OFF(ctx->sp - 1));
-                                jit_emit_mov(asm, 2, 1);
-                                jit_emit_load_imm(asm, 3, z);
+                                jit_emit_mov(asm, BC_A0, BC_TY);
+                                jit_emit_add_imm(asm, BC_A1, BC_OPS, OP_OFF(ctx->sp - 1));
+                                jit_emit_mov(asm, BC_A2, BC_A1);
+                                jit_emit_load_imm(asm, BC_A3, z);
                                 jit_emit_load_imm(asm, BC_CALL, (intptr_t)jit_rt_member);
                                 jit_emit_call_reg(asm, BC_CALL);
                         }
@@ -3146,10 +3204,10 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
 
                         ctx->sp++; // make room for result (helper will write to sp-1)
 
-                        jit_emit_mov(asm, 0, BC_TY);
-                        jit_emit_add_imm(asm, 1, BC_OPS, OP_OFF(ctx->sp - 1));
-                        jit_emit_load_imm(asm, 2, 0);
-                        jit_emit_load_imm(asm, 3, z);
+                        jit_emit_mov(asm, BC_A0, BC_TY);
+                        jit_emit_add_imm(asm, BC_A1, BC_OPS, OP_OFF(ctx->sp - 1));
+                        jit_emit_load_imm(asm, BC_A2, 0);
+                        jit_emit_load_imm(asm, BC_A3, z);
                         jit_emit_load_imm(asm, BC_CALL, (intptr_t)jit_rt_member);
                         jit_emit_call_reg(asm, BC_CALL);
 
@@ -3213,10 +3271,10 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
 
                                                                 // Slow: call helper
                                                                 jit_emit_label(asm, lbl_slow);
-                                                                jit_emit_mov(asm, 0, BC_TY);
-                                                                jit_emit_add_imm(asm, 1, BC_OPS, obj_off);
-                                                                jit_emit_load_imm(asm, 2, z);
-                                                                jit_emit_add_imm(asm, 3, BC_OPS, val_off);
+                                                                jit_emit_mov(asm, BC_A0, BC_TY);
+                                                                jit_emit_add_imm(asm, BC_A1, BC_OPS, obj_off);
+                                                                jit_emit_load_imm(asm, BC_A2, z);
+                                                                jit_emit_add_imm(asm, BC_A3, BC_OPS, val_off);
                                                                 jit_emit_load_imm(asm, BC_CALL, (intptr_t)jit_rt_member_set);
                                                                 jit_emit_call_reg(asm, BC_CALL);
 
@@ -3228,10 +3286,10 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                                 }
 
                                 if (!wrote_fast) {
-                                        jit_emit_mov(asm, 0, BC_TY);
-                                        jit_emit_add_imm(asm, 1, BC_OPS, OP_OFF(ctx->sp - 1));
-                                        jit_emit_load_imm(asm, 2, z);
-                                        jit_emit_add_imm(asm, 3, BC_OPS, OP_OFF(ctx->sp - 2));
+                                        jit_emit_mov(asm, BC_A0, BC_TY);
+                                        jit_emit_add_imm(asm, BC_A1, BC_OPS, OP_OFF(ctx->sp - 1));
+                                        jit_emit_load_imm(asm, BC_A2, z);
+                                        jit_emit_add_imm(asm, BC_A3, BC_OPS, OP_OFF(ctx->sp - 2));
                                         jit_emit_load_imm(asm, BC_CALL, (intptr_t)jit_rt_member_set);
                                         jit_emit_call_reg(asm, BC_CALL);
                                 }
@@ -3261,10 +3319,10 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                                 }
 
                                 // Generic path: call helper
-                                jit_emit_mov(asm, 0, BC_TY);
-                                jit_emit_load_imm(asm, 1, 0);
-                                jit_emit_load_imm(asm, 2, z);
-                                jit_emit_add_imm(asm, 3, BC_OPS, OP_OFF(ctx->sp - 1));
+                                jit_emit_mov(asm, BC_A0, BC_TY);
+                                jit_emit_load_imm(asm, BC_A1, 0);
+                                jit_emit_load_imm(asm, BC_A2, z);
+                                jit_emit_add_imm(asm, BC_A3, BC_OPS, OP_OFF(ctx->sp - 1));
                                 jit_emit_load_imm(asm, BC_CALL, (intptr_t)jit_rt_member_set);
                                 jit_emit_call_reg(asm, BC_CALL);
                                 // val stays on stack (ASSIGN peeks, doesn't pop)
@@ -3315,10 +3373,10 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                         // Result overwrites the fn slot, args+fn all consumed => sp -= (n+1), push result => sp += 1
                         int fn_off = OP_OFF(ctx->sp - 1);
                         int result_off = OP_OFF(ctx->sp - n - 1); // where result goes (replaces args+fn with one value)
-                        jit_emit_mov(asm, 0, BC_TY);
-                        jit_emit_add_imm(asm, 1, BC_OPS, result_off);  // result
-                        jit_emit_add_imm(asm, 2, BC_OPS, fn_off);      // fn
-                        jit_emit_load_imm(asm, 3, n);
+                        jit_emit_mov(asm, BC_A0, BC_TY);
+                        jit_emit_add_imm(asm, BC_A1, BC_OPS, result_off);  // result
+                        jit_emit_add_imm(asm, BC_A2, BC_OPS, fn_off);      // fn
+                        jit_emit_load_imm(asm, BC_A3, n);
                         jit_emit_load_imm(asm, BC_CALL, (intptr_t)jit_rt_call);
                         jit_emit_call_reg(asm, BC_CALL);
                         // Pop fn + n args, push result
@@ -3364,34 +3422,32 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
 
                         if (builtin_method != NULL) {
                                 // Direct builtin call with type guard
-                                jit_emit_mov(asm, 0, BC_TY);
-                                jit_emit_add_imm(asm, 1, BC_OPS, result_off);          // result
-                                jit_emit_add_imm(asm, 2, BC_OPS, self_off);            // self
-                                jit_emit_load_imm(asm, 3, (intptr_t)builtin_method);   // C function
-                                jit_emit_load_imm(asm, 4, builtin_vtype);              // value type
-                                jit_emit_load_imm(asm, 5, z);                          // member_id
-                                jit_emit_load_imm(asm, 6, n);                          // argc
+                                jit_emit_mov(asm, BC_A0, BC_TY);
+                                jit_emit_add_imm(asm, BC_A1, BC_OPS, result_off);
+                                jit_emit_add_imm(asm, BC_A2, BC_OPS, self_off);
+                                jit_emit_load_imm(asm, BC_A3, (intptr_t)builtin_method);
+                                jit_emit_load_imm(asm, BC_A4, PACK32(builtin_vtype, z));
+                                jit_emit_load_imm(asm, BC_A5, n);
                                 jit_emit_load_imm(asm, BC_CALL, (intptr_t)jit_rt_call_builtin_method);
                                 jit_emit_call_reg(asm, BC_CALL);
                                 DBG("CALL_METHOD (builtin fast path for %s)", M_NAME(z));
                         } else if (baked_method != NULL) {
                                 // Guarded fast path for user-defined classes
-                                jit_emit_mov(asm, 0, BC_TY);
-                                jit_emit_add_imm(asm, 1, BC_OPS, result_off);  // result
-                                jit_emit_add_imm(asm, 2, BC_OPS, self_off);    // self
-                                jit_emit_load_imm(asm, 3, (intptr_t)baked_method);
-                                jit_emit_load_imm(asm, 4, receiver_class->i);  // class_id
-                                jit_emit_load_imm(asm, 5, z);                  // member_id
-                                jit_emit_load_imm(asm, 6, n);                  // argc
+                                jit_emit_mov(asm, BC_A0, BC_TY);
+                                jit_emit_add_imm(asm, BC_A1, BC_OPS, result_off);
+                                jit_emit_add_imm(asm, BC_A2, BC_OPS, self_off);
+                                jit_emit_load_imm(asm, BC_A3, (intptr_t)baked_method);
+                                jit_emit_load_imm(asm, BC_A4, PACK32(receiver_class->i, z));
+                                jit_emit_load_imm(asm, BC_A5, n);
                                 jit_emit_load_imm(asm, BC_CALL, (intptr_t)jit_rt_call_self_method_guarded);
                                 jit_emit_call_reg(asm, BC_CALL);
                         } else {
                                 // Generic path with fast dispatch
-                                jit_emit_mov(asm, 0, BC_TY);
-                                jit_emit_add_imm(asm, 1, BC_OPS, result_off);  // result
-                                jit_emit_add_imm(asm, 2, BC_OPS, self_off);    // self
-                                jit_emit_load_imm(asm, 3, z);
-                                jit_emit_load_imm(asm, 4, n);
+                                jit_emit_mov(asm, BC_A0, BC_TY);
+                                jit_emit_add_imm(asm, BC_A1, BC_OPS, result_off);  // result
+                                jit_emit_add_imm(asm, BC_A2, BC_OPS, self_off);    // self
+                                jit_emit_load_imm(asm, BC_A3, z);
+                                jit_emit_load_imm(asm, BC_A4, n);
                                 jit_emit_load_imm(asm, BC_CALL, (intptr_t)jit_rt_call_method_fast);
                                 jit_emit_call_reg(asm, BC_CALL);
                                 DBG("CALL_METHOD (generic fast path)");
@@ -3436,35 +3492,33 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
 
                         if (builtin_method != NULL) {
                                 // Direct builtin call with type guard
-                                jit_emit_mov(asm, 0, BC_TY);
-                                jit_emit_add_imm(asm, 1, BC_OPS, result_off);          // result
-                                jit_emit_load_imm(asm, 2, 0);
-                                jit_emit_load_imm(asm, 3, (intptr_t)builtin_method);   // C function
-                                jit_emit_load_imm(asm, 4, builtin_vtype);              // value type
-                                jit_emit_load_imm(asm, 5, z);                          // member_id
-                                jit_emit_load_imm(asm, 6, n);                          // argc
+                                jit_emit_mov(asm, BC_A0, BC_TY);
+                                jit_emit_add_imm(asm, BC_A1, BC_OPS, result_off);
+                                jit_emit_load_imm(asm, BC_A2, 0);
+                                jit_emit_load_imm(asm, BC_A3, (intptr_t)builtin_method);
+                                jit_emit_load_imm(asm, BC_A4, PACK32(builtin_vtype, z));
+                                jit_emit_load_imm(asm, BC_A5, n);
                                 jit_emit_load_imm(asm, BC_CALL, (intptr_t)jit_rt_call_builtin_method);
                                 jit_emit_call_reg(asm, BC_CALL);
                                 DBG("CALL_METHOD (builtin fast path for %s)", M_NAME(z));
                         } else if (baked_method != NULL) {
                                 // Guarded fast path for user-defined classes
-                                jit_emit_mov(asm, 0, BC_TY);
-                                jit_emit_add_imm(asm, 1, BC_OPS, result_off);  // result
-                                jit_emit_load_imm(asm, 2, 0);
-                                jit_emit_load_imm(asm, 3, (intptr_t)baked_method);
-                                jit_emit_load_imm(asm, 4, ctx->self_class->i);  // class_id
-                                jit_emit_load_imm(asm, 5, z);                  // member_id
-                                jit_emit_load_imm(asm, 6, n);                  // argc
+                                jit_emit_mov(asm, BC_A0, BC_TY);
+                                jit_emit_add_imm(asm, BC_A1, BC_OPS, result_off);
+                                jit_emit_load_imm(asm, BC_A2, 0);
+                                jit_emit_load_imm(asm, BC_A3, (intptr_t)baked_method);
+                                jit_emit_load_imm(asm, BC_A4, PACK32(ctx->self_class->i, z));
+                                jit_emit_load_imm(asm, BC_A5, n);
                                 jit_emit_load_imm(asm, BC_CALL, (intptr_t)jit_rt_call_self_method_guarded);
                                 jit_emit_call_reg(asm, BC_CALL);
                         } else {
                                 // Generic path: runtime method lookup
                                 // self=NULL tells jit_rt_call_method to use vm_get_self
-                                jit_emit_mov(asm, 0, BC_TY);
-                                jit_emit_add_imm(asm, 1, BC_OPS, result_off);  // result
-                                jit_emit_load_imm(asm, 2, 0);                  // self = NULL
-                                jit_emit_load_imm(asm, 3, z);                  // member_id
-                                jit_emit_load_imm(asm, 4, n);                  // argc
+                                jit_emit_mov(asm, BC_A0, BC_TY);
+                                jit_emit_add_imm(asm, BC_A1, BC_OPS, result_off);  // result
+                                jit_emit_load_imm(asm, BC_A2, 0);                  // self = NULL
+                                jit_emit_load_imm(asm, BC_A3, z);                  // member_id
+                                jit_emit_load_imm(asm, BC_A4, n);                  // argc
                                 jit_emit_load_imm(asm, BC_CALL, (intptr_t)jit_rt_call_method);
                                 jit_emit_call_reg(asm, BC_CALL);
                         }
@@ -3494,17 +3548,17 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                         ctx->sp -= n;
 
                         // Load global[gi] address
-                        jit_emit_mov(asm, 0, BC_TY);
-                        jit_emit_load_imm(asm, 1, gi);
+                        jit_emit_mov(asm, BC_A0, BC_TY);
+                        jit_emit_load_imm(asm, BC_A1, gi);
                         jit_emit_load_imm(asm, BC_S0, (intptr_t)vm_global);
                         jit_emit_call_reg(asm, BC_S0);
                         // x0 now has Value* to the global
 
                         // jit_rt_call(ty, &result, fn_ptr, n)
-                        jit_emit_mov(asm, 2, 0);  // fn ptr (was in x0)
-                        jit_emit_mov(asm, 0, BC_TY);
-                        jit_emit_add_imm(asm, 1, BC_OPS, OP_OFF(ctx->sp)); // result
-                        jit_emit_load_imm(asm, 3, n);
+                        jit_emit_mov(asm, BC_A2, 0);  // fn ptr (was in x0)
+                        jit_emit_mov(asm, BC_A0, BC_TY);
+                        jit_emit_add_imm(asm, BC_A1, BC_OPS, OP_OFF(ctx->sp)); // result
+                        jit_emit_load_imm(asm, BC_A3, n);
                         jit_emit_load_imm(asm, BC_CALL, (intptr_t)jit_rt_call);
                         jit_emit_call_reg(asm, BC_CALL);
                         ctx->sp++;
@@ -3554,10 +3608,10 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                         BC_SKIPSTR();
 #endif
                         // Load global[n]
-                        jit_emit_mov(asm, 0, BC_TY);
-                        jit_emit_add_imm(asm, 1, BC_OPS, OP_OFF(ctx->sp)); // result
-                        jit_emit_load_imm(asm, 2, n);
-                        jit_emit_mov(asm, 3, BC_LOC);
+                        jit_emit_mov(asm, BC_A0, BC_TY);
+                        jit_emit_add_imm(asm, BC_A1, BC_OPS, OP_OFF(ctx->sp)); // result
+                        jit_emit_load_imm(asm, BC_A2, n);
+                        jit_emit_mov(asm, BC_A3, BC_LOC);
                         jit_emit_load_imm(asm, BC_CALL, (intptr_t)jit_rt_global);
                         jit_emit_call_reg(asm, BC_CALL);
                         ctx->sp++;
@@ -3573,8 +3627,8 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                         BC_SKIPSTR();
 #endif
                         // Same as LOAD_GLOBAL for now
-                        jit_emit_mov(asm, 0, BC_TY);
-                        jit_emit_load_imm(asm, 1, n);
+                        jit_emit_mov(asm, BC_A0, BC_TY);
+                        jit_emit_load_imm(asm, BC_A1, n);
                         jit_emit_load_imm(asm, BC_CALL, (intptr_t)vm_global);
                         jit_emit_call_reg(asm, BC_CALL);
                         bc_push_from(ctx, 0, 0);
@@ -3655,10 +3709,10 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                         // Call helper: jit_rt_array(ty, &ops[save_sp], n, &ops[save_sp])
                         // Result overwrites first element slot, sp = save_sp + 1
                         int base_off = OP_OFF(saved);
-                        jit_emit_mov(asm, 0, BC_TY);
-                        jit_emit_add_imm(asm, 1, BC_OPS, base_off); // result
-                        jit_emit_mov(asm, 2, 1);                    // elements
-                        jit_emit_load_imm(asm, 3, n);               // count
+                        jit_emit_mov(asm, BC_A0, BC_TY);
+                        jit_emit_add_imm(asm, BC_A1, BC_OPS, base_off); // result
+                        jit_emit_mov(asm, BC_A2, BC_A1);                    // elements
+                        jit_emit_load_imm(asm, BC_A3, n);               // count
                         jit_emit_load_imm(asm, BC_CALL, (intptr_t)jit_rt_array);
                         jit_emit_call_reg(asm, BC_CALL);
                         ctx->sp = saved + 1;
@@ -3670,8 +3724,8 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                 CASE(ARRAY0) {
                         // Empty array
                         int off = OP_OFF(ctx->sp);
-                        jit_emit_mov(asm, 0, BC_TY);
-                        jit_emit_add_imm(asm, 1, BC_OPS, off);
+                        jit_emit_mov(asm, BC_A0, BC_TY);
+                        jit_emit_add_imm(asm, BC_A1, BC_OPS, off);
                         jit_emit_load_imm(asm, BC_CALL, (intptr_t)jit_rt_array0);
                         jit_emit_call_reg(asm, BC_CALL);
                         ctx->sp++;
@@ -3760,10 +3814,10 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                                 jit_emit_jump(asm, lbl_done);
 
                                 jit_emit_label(asm, lbl_slow);
-                                jit_emit_mov(asm, 0, BC_TY);
-                                jit_emit_mov(asm, 1, BC_S3);
-                                jit_emit_add_imm(asm, 2, BC_OPS, addend_off);
-                                jit_emit_mov(asm, 3, 2);
+                                jit_emit_mov(asm, BC_A0, BC_TY);
+                                jit_emit_mov(asm, BC_A1, BC_S3);
+                                jit_emit_add_imm(asm, BC_A2, BC_OPS, addend_off);
+                                jit_emit_mov(asm, BC_A3, BC_A2);
                                 if (mut_op == INSTR_MUT_ADD) {
                                         jit_emit_load_imm(asm, BC_CALL, (intptr_t)jit_rt_mut_add);
                                 } else {
@@ -3796,10 +3850,10 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                         int res_off = OP_OFF(ctx->sp);
 
                         // Call jit_rt_check_match(ty, &result, &value, &pattern)
-                        jit_emit_mov(asm, 0, BC_TY);
-                        jit_emit_add_imm(asm, 1, BC_OPS, res_off);
-                        jit_emit_add_imm(asm, 2, BC_OPS, val_off);
-                        jit_emit_add_imm(asm, 3, BC_OPS, pat_off);
+                        jit_emit_mov(asm, BC_A0, BC_TY);
+                        jit_emit_add_imm(asm, BC_A1, BC_OPS, res_off);
+                        jit_emit_add_imm(asm, BC_A2, BC_OPS, val_off);
+                        jit_emit_add_imm(asm, BC_A3, BC_OPS, pat_off);
                         jit_emit_load_imm(asm, BC_CALL, (intptr_t)jit_rt_check_match);
                         jit_emit_call_reg(asm, BC_CALL);
 
@@ -3863,10 +3917,10 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
 
                         // Slow path: call helper
                         jit_emit_label(asm, lbl_slow);
-                        jit_emit_mov(asm, 0, BC_TY);
-                        jit_emit_add_imm(asm, 1, BC_OPS, val_off);
-                        jit_emit_add_imm(asm, 2, BC_OPS, con_off);
-                        jit_emit_add_imm(asm, 3, BC_OPS, sub_off);
+                        jit_emit_mov(asm, BC_A0, BC_TY);
+                        jit_emit_add_imm(asm, BC_A1, BC_OPS, val_off);
+                        jit_emit_add_imm(asm, BC_A2, BC_OPS, con_off);
+                        jit_emit_add_imm(asm, BC_A3, BC_OPS, sub_off);
                         jit_emit_load_imm(asm, BC_CALL, (intptr_t)jit_rt_assign_subscript);
                         jit_emit_call_reg(asm, BC_CALL);
 
@@ -3974,8 +4028,8 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
 
                         // Slow path
                         jit_emit_label(asm, lbl_slow);
-                        jit_emit_mov(asm, 0, BC_TY);
-                        jit_emit_add_imm(asm, 1, BC_OPS, res_off);
+                        jit_emit_mov(asm, BC_A0, BC_TY);
+                        jit_emit_add_imm(asm, BC_A1, BC_OPS, res_off);
                         jit_emit_load_imm(asm, BC_CALL, (intptr_t)jit_rt_subscript);
                         jit_emit_call_reg(asm, BC_CALL);
 
@@ -4017,8 +4071,8 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                         jit_emit_ldrb(asm, BC_S0, BC_OPS, off + VAL_OFF_TYPE);
                         jit_emit_cmp_ri(asm, BC_S0, VALUE_NIL);
                         jit_emit_branch_ne(asm, lbl_not_nil);
-                        jit_emit_mov(asm, 0, BC_TY);
-                        jit_emit_add_imm(asm, 1, BC_OPS, off);
+                        jit_emit_mov(asm, BC_A0, BC_TY);
+                        jit_emit_add_imm(asm, BC_A1, BC_OPS, off);
                         jit_emit_load_imm(asm, BC_CALL, (intptr_t)jit_rt_bad_match);
                         jit_emit_call_reg(asm, BC_CALL);
                         jit_emit_label(asm, lbl_not_nil);
@@ -4029,8 +4083,8 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                         // TOS is the exception value --- call vm_throw(ty, &exc)
                         int exc_off = OP_OFF(ctx->sp - 1);
                         ctx->sp--;
-                        jit_emit_mov(asm, 0, BC_TY);
-                        jit_emit_add_imm(asm, 1, BC_OPS, exc_off);
+                        jit_emit_mov(asm, BC_A0, BC_TY);
+                        jit_emit_add_imm(asm, BC_A1, BC_OPS, exc_off);
                         jit_emit_load_imm(asm, BC_CALL, (intptr_t)jit_rt_throw);
                         jit_emit_call_reg(asm, BC_CALL);
                         // vm_throw never returns
@@ -4046,8 +4100,8 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
 
                 CASE(BAD_MATCH)
                         int tos_off = OP_OFF(ctx->sp - 1);
-                        jit_emit_mov(asm, 0, BC_TY);
-                        jit_emit_add_imm(asm, 1, BC_OPS, tos_off);
+                        jit_emit_mov(asm, BC_A0, BC_TY);
+                        jit_emit_add_imm(asm, BC_A1, BC_OPS, tos_off);
                         jit_emit_load_imm(asm, BC_CALL, (intptr_t)jit_rt_bad_match);
                         jit_emit_call_reg(asm, BC_CALL);
                         break;
@@ -4098,8 +4152,8 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
 
                         // Slow path: call IncValue(ty, &ops[sp-1])
                         jit_emit_label(asm, lbl_slow);
-                        jit_emit_mov(asm, 0, BC_TY);
-                        jit_emit_add_imm(asm, 1, BC_OPS, off);
+                        jit_emit_mov(asm, BC_A0, BC_TY);
+                        jit_emit_add_imm(asm, BC_A1, BC_OPS, off);
                         jit_emit_load_imm(asm, BC_CALL, (intptr_t)jit_rt_inc);
                         jit_emit_call_reg(asm, BC_CALL);
 
@@ -4123,8 +4177,8 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                         jit_emit_jump(asm, lbl_done);
 
                         jit_emit_label(asm, lbl_slow);
-                        jit_emit_mov(asm, 0, BC_TY);
-                        jit_emit_add_imm(asm, 1, BC_OPS, off);
+                        jit_emit_mov(asm, BC_A0, BC_TY);
+                        jit_emit_add_imm(asm, BC_A1, BC_OPS, off);
                         jit_emit_load_imm(asm, BC_CALL, (intptr_t)jit_rt_dec);
                         jit_emit_call_reg(asm, BC_CALL);
 
@@ -4138,9 +4192,9 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                         BC_READ(n);
                         // jit_rt_string(ty, &ops[sp], n)
                         int off = OP_OFF(ctx->sp);
-                        jit_emit_mov(asm, 0, BC_TY);
-                        jit_emit_add_imm(asm, 1, BC_OPS, off);
-                        jit_emit_load_imm(asm, 2, n);
+                        jit_emit_mov(asm, BC_A0, BC_TY);
+                        jit_emit_add_imm(asm, BC_A1, BC_OPS, off);
+                        jit_emit_load_imm(asm, BC_A2, n);
                         jit_emit_load_imm(asm, BC_CALL, (intptr_t)jit_rt_string);
                         jit_emit_call_reg(asm, BC_CALL);
                         ctx->sp++;
@@ -4211,8 +4265,8 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
 
                         // Has tag: call tags_first(ty, tags) and make TAG value
                         jit_emit_label(asm, lbl_has_tag);
-                        jit_emit_mov(asm, 0, BC_TY);
-                        jit_emit_ldr32(asm, 1, BC_OPS, off + VAL_OFF_TAGS);
+                        jit_emit_mov(asm, BC_A0, BC_TY);
+                        jit_emit_ldr32(asm, BC_A1, BC_OPS, off + VAL_OFF_TAGS);
                         jit_emit_load_imm(asm, BC_CALL, (intptr_t)tags_first);
                         jit_emit_call_reg(asm, BC_CALL);
                         // Result in w0 (tag id)
@@ -4247,8 +4301,8 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                                 jit_emit_and(asm, BC_S0, BC_S0, BC_S1);
                                 jit_emit_cbz(asm, BC_S0, fail_lbl);
                                 // Get tag id: tags_first(ty, top->tags)
-                                jit_emit_mov(asm, 0, BC_TY);
-                                jit_emit_ldr32(asm, 1, BC_OPS, off + VAL_OFF_TAGS);
+                                jit_emit_mov(asm, BC_A0, BC_TY);
+                                jit_emit_ldr32(asm, BC_A1, BC_OPS, off + VAL_OFF_TAGS);
                                 jit_emit_load_imm(asm, BC_CALL, (intptr_t)tags_first);
                                 jit_emit_call_reg(asm, BC_CALL);
                                 // Result tag id in w0
@@ -4322,8 +4376,8 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                 CASE(TO_STRING) {
                         // Convert TOS to string in-place
                         int top_off = OP_OFF(ctx->sp - 1);
-                        jit_emit_mov(asm, 0, BC_TY);
-                        jit_emit_add_imm(asm, 1, BC_OPS, top_off);
+                        jit_emit_mov(asm, BC_A0, BC_TY);
+                        jit_emit_add_imm(asm, BC_A1, BC_OPS, top_off);
                         jit_emit_load_imm(asm, BC_CALL, (intptr_t)jit_rt_to_string);
                         jit_emit_call_reg(asm, BC_CALL);
                         break;
@@ -4336,10 +4390,10 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                         int base_off = OP_OFF(ctx->sp - n);
                         ctx->sp -= n;
                         int res_off = OP_OFF(ctx->sp);
-                        jit_emit_mov(asm, 0, BC_TY);
-                        jit_emit_add_imm(asm, 1, BC_OPS, res_off); // result
-                        jit_emit_add_imm(asm, 2, BC_OPS, base_off); // base
-                        jit_emit_load_imm(asm, 3, n);
+                        jit_emit_mov(asm, BC_A0, BC_TY);
+                        jit_emit_add_imm(asm, BC_A1, BC_OPS, res_off); // result
+                        jit_emit_add_imm(asm, BC_A2, BC_OPS, base_off); // base
+                        jit_emit_load_imm(asm, BC_A3, n);
                         jit_emit_load_imm(asm, BC_CALL, (intptr_t)jit_rt_concat_strings);
                         jit_emit_call_reg(asm, BC_CALL);
                         ctx->sp++;
@@ -4355,10 +4409,10 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                         int b_off = OP_OFF(ctx->sp - 1);
                         ctx->sp -= 2;
                         int res_off = OP_OFF(ctx->sp);
-                        jit_emit_mov(asm, 0, BC_TY);
-                        jit_emit_add_imm(asm, 1, BC_OPS, res_off);
-                        jit_emit_add_imm(asm, 2, BC_OPS, a_off);
-                        jit_emit_add_imm(asm, 3, BC_OPS, b_off);
+                        jit_emit_mov(asm, BC_A0, BC_TY);
+                        jit_emit_add_imm(asm, BC_A1, BC_OPS, res_off);
+                        jit_emit_add_imm(asm, BC_A2, BC_OPS, a_off);
+                        jit_emit_add_imm(asm, BC_A3, BC_OPS, b_off);
                         jit_emit_load_imm(asm, BC_CALL,
                                 (intptr_t)(op == INSTR_RANGE ? jit_rt_range : jit_rt_incrange));
                         jit_emit_call_reg(asm, BC_CALL);
@@ -4374,9 +4428,9 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                         // Stack: ..., value (TOS) => pops value
                         int val_off = OP_OFF(ctx->sp - 1);
                         ctx->sp--;
-                        jit_emit_mov(asm, 0, BC_TY);
-                        jit_emit_load_imm(asm, 1, n);
-                        jit_emit_add_imm(asm, 2, BC_OPS, val_off);
+                        jit_emit_mov(asm, BC_A0, BC_TY);
+                        jit_emit_load_imm(asm, BC_A1, n);
+                        jit_emit_add_imm(asm, BC_A2, BC_OPS, val_off);
                         jit_emit_load_imm(asm, BC_CALL, (intptr_t)jit_rt_assign_global);
                         jit_emit_call_reg(asm, BC_CALL);
                         break;
@@ -4390,9 +4444,9 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                                 ip++; // consume ASSIGN
                                 // globals[n] = peek TOS
                                 int val_off = OP_OFF(ctx->sp - 1);
-                                jit_emit_mov(asm, 0, BC_TY);
-                                jit_emit_load_imm(asm, 1, n);
-                                jit_emit_add_imm(asm, 2, BC_OPS, val_off);
+                                jit_emit_mov(asm, BC_A0, BC_TY);
+                                jit_emit_load_imm(asm, BC_A1, n);
+                                jit_emit_add_imm(asm, BC_A2, BC_OPS, val_off);
                                 jit_emit_load_imm(asm, BC_CALL, (intptr_t)jit_rt_assign_global);
                                 jit_emit_call_reg(asm, BC_CALL);
                         } else {
@@ -4424,10 +4478,10 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                                 // Load env[n] pointer => BC_S2
                                 jit_emit_ldr64(asm, BC_S2, BC_ENV, n * 8);
                                 // Call runtime: jit_rt_mut_add/sub(ty, target=*env[n], addend, result)
-                                jit_emit_mov(asm, 0, BC_TY);
-                                jit_emit_mov(asm, 1, BC_S2);                            // target = env[n]
-                                jit_emit_add_imm(asm, 2, BC_OPS, addend_off);           // addend
-                                jit_emit_mov(asm, 3, 2);                                // result = addend slot
+                                jit_emit_mov(asm, BC_A0, BC_TY);
+                                jit_emit_mov(asm, BC_A1, BC_S2);                            // target = env[n]
+                                jit_emit_add_imm(asm, BC_A2, BC_OPS, addend_off);           // addend
+                                jit_emit_mov(asm, BC_A3, BC_A2);                                // result = addend slot
                                 if (mut_op == INSTR_MUT_ADD) {
                                         jit_emit_load_imm(asm, BC_CALL, (intptr_t)jit_rt_mut_add);
                                 } else {
@@ -4437,8 +4491,8 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                                 // sp unchanged
                         } else {
                                 // Load env[n] pointer => BC_S2
-                                jit_emit_mov(asm, 0, BC_TY);
-                                jit_emit_ldr64(asm, 1, BC_ENV, n * 8);
+                                jit_emit_mov(asm, BC_A0, BC_TY);
+                                jit_emit_ldr64(asm, BC_A1, BC_ENV, n * 8);
                                 jit_emit_load_imm(asm, BC_CALL, (intptr_t)vm_jit_push_target);
                                 jit_emit_call_reg(asm, BC_CALL);
                         }
@@ -4463,10 +4517,10 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                         }
 
                         int base_off = OP_OFF(ctx->sp - n);
-                        jit_emit_mov(asm, 0, BC_TY);
-                        jit_emit_add_imm(asm, 1, BC_OPS, base_off);
-                        jit_emit_mov(asm, 2, 1);
-                        jit_emit_load_imm(asm, 3, n);
+                        jit_emit_mov(asm, BC_A0, BC_TY);
+                        jit_emit_add_imm(asm, BC_A1, BC_OPS, base_off);
+                        jit_emit_mov(asm, BC_A2, BC_A1);
+                        jit_emit_load_imm(asm, BC_A3, n);
                         jit_emit_load_imm(asm, BC_CALL, (intptr_t)jit_rt_tuple);
                         jit_emit_call_reg(asm, BC_CALL);
 
@@ -4530,9 +4584,9 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
 
                         int val_off = OP_OFF(ctx->sp - 1);
 
-                        jit_emit_mov(asm, 0, BC_TY);
-                        jit_emit_add_imm(asm, 1, BC_OPS, val_off);
-                        jit_emit_load_imm(asm, 2, tag);
+                        jit_emit_mov(asm, BC_A0, BC_TY);
+                        jit_emit_add_imm(asm, BC_A1, BC_OPS, val_off);
+                        jit_emit_load_imm(asm, BC_A2, tag);
                         jit_emit_load_imm(asm, BC_CALL, (intptr_t)jit_rt_try_tag_pop);
                         jit_emit_call_reg(asm, BC_CALL);
 
@@ -4547,9 +4601,9 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                         uptr expr_ptr;
                         BC_READ(expr_ptr);
                         int dst = OP_OFF(ctx->sp);
-                        jit_emit_mov(asm, 0, BC_TY);
-                        jit_emit_add_imm(asm, 1, BC_OPS, dst);
-                        jit_emit_load_imm(asm, 2, (intptr_t)expr_ptr);
+                        jit_emit_mov(asm, BC_A0, BC_TY);
+                        jit_emit_add_imm(asm, BC_A1, BC_OPS, dst);
+                        jit_emit_load_imm(asm, BC_A2, (intptr_t)expr_ptr);
                         jit_emit_load_imm(asm, BC_CALL, (intptr_t)jit_rt_render_template);
                         jit_emit_call_reg(asm, BC_CALL);
                         ctx->sp++;
@@ -4571,10 +4625,9 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                         int tos_off = OP_OFF(ctx->sp - 1);
                         int dst_off = OP_OFF(ctx->sp);
 
-                        jit_emit_mov(asm, 0, BC_TY);
-                        jit_emit_add_imm(asm, 1, BC_OPS, tos_off);
-                        jit_emit_add_imm(asm, 2, BC_OPS, dst_off);
-                        jit_emit_load_imm(asm, 3, idx);
+                        jit_emit_add_imm(asm, BC_A0, BC_OPS, tos_off);
+                        jit_emit_add_imm(asm, BC_A1, BC_OPS, dst_off);
+                        jit_emit_load_imm(asm, BC_A2, idx);
                         jit_emit_load_imm(asm, BC_CALL, (intptr_t)jit_rt_index_tuple);
                         jit_emit_call_reg(asm, BC_CALL);
 
@@ -4603,11 +4656,10 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                         int tos_off = OP_OFF(ctx->sp - 1);
                         int dst_off = OP_OFF(ctx->sp);
 
-                        jit_emit_mov(asm, 0, BC_TY);
-                        jit_emit_add_imm(asm, 1, BC_OPS, tos_off);
-                        jit_emit_add_imm(asm, 2, BC_OPS, dst_off);
-                        jit_emit_load_imm(asm, 3, required);
-                        jit_emit_load_imm(asm, 4, name_id);
+                        jit_emit_add_imm(asm, BC_A0, BC_OPS, tos_off);
+                        jit_emit_add_imm(asm, BC_A1, BC_OPS, dst_off);
+                        jit_emit_load_imm(asm, BC_A2, required);
+                        jit_emit_load_imm(asm, BC_A3, name_id);
                         jit_emit_load_imm(asm, BC_CALL, (intptr_t)jit_rt_try_tuple_member);
                         jit_emit_call_reg(asm, BC_CALL);
 
@@ -4630,12 +4682,12 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
 
                         int tos_off = OP_OFF(ctx->sp - 1);
 
-                        jit_emit_mov(asm, 0, BC_TY);
+                        jit_emit_mov(asm, BC_A0, BC_TY);
                         jit_emit_load_imm(asm, BC_CALL, (intptr_t)vm_jit_pop_target);
                         jit_emit_call_reg(asm, BC_CALL);
-                        jit_emit_mov(asm, 2, 0);
-                        jit_emit_mov(asm, 0, BC_TY);
-                        jit_emit_add_imm(asm, 1, BC_OPS, tos_off);
+                        jit_emit_mov(asm, BC_A2, 0);
+                        jit_emit_mov(asm, BC_A0, BC_TY);
+                        jit_emit_add_imm(asm, BC_A1, BC_OPS, tos_off);
                         jit_emit_load_imm(asm, BC_CALL, (intptr_t)jit_rt_try_steal_tag);
                         jit_emit_call_reg(asm, BC_CALL);
 
@@ -4661,9 +4713,9 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
 
                         int val_off = OP_OFF(ctx->sp - 1);
 
-                        jit_emit_mov(asm, 0, BC_TY);
-                        jit_emit_add_imm(asm, 1, BC_OPS, val_off);
-                        jit_emit_load_imm(asm, 2, actual_class);
+                        jit_emit_mov(asm, BC_A0, BC_TY);
+                        jit_emit_add_imm(asm, BC_A1, BC_OPS, val_off);
+                        jit_emit_load_imm(asm, BC_A2, actual_class);
                         jit_emit_load_imm(asm, BC_CALL, (intptr_t)jit_rt_jii);
                         jit_emit_call_reg(asm, BC_CALL);
 
@@ -4686,10 +4738,10 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
 
                         int tos_off = OP_OFF(ctx->sp - 1);
 
-                        jit_emit_mov(asm, 0, BC_TY);
-                        jit_emit_add_imm(asm, 1, BC_OPS, tos_off);
-                        jit_emit_load_imm(asm, 2, n);
-                        jit_emit_load_imm(asm, 3, z);
+                        jit_emit_mov(asm, BC_A0, BC_TY);
+                        jit_emit_add_imm(asm, BC_A1, BC_OPS, tos_off);
+                        jit_emit_load_imm(asm, BC_A2, n);
+                        jit_emit_load_imm(asm, BC_A3, z);
                         jit_emit_load_imm(asm, BC_CALL, (intptr_t)jit_rt_bind_instance);
                         jit_emit_call_reg(asm, BC_CALL);
                         break;
@@ -4706,9 +4758,9 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                         int tos_off = OP_OFF(ctx->sp - 2);
                         ctx->sp--;
 
-                        jit_emit_mov(asm, 0, BC_TY);
-                        jit_emit_add_imm(asm, 1, BC_OPS, tos_off);
-                        jit_emit_add_imm(asm, 2, BC_OPS, val_off);
+                        jit_emit_mov(asm, BC_A0, BC_TY);
+                        jit_emit_add_imm(asm, BC_A1, BC_OPS, tos_off);
+                        jit_emit_add_imm(asm, BC_A2, BC_OPS, val_off);
                         jit_emit_load_imm(asm, BC_CALL, (intptr_t)jit_rt_ensure_equals_var);
                         jit_emit_call_reg(asm, BC_CALL);
 
@@ -4733,11 +4785,10 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                         int tos_off = OP_OFF(ctx->sp - 1);
                         int dst_off = OP_OFF(ctx->sp);
 
-                        jit_emit_mov(asm, 0, BC_TY);
-                        jit_emit_add_imm(asm, 1, BC_OPS, tos_off);
-                        jit_emit_add_imm(asm, 2, BC_OPS, dst_off);
-                        jit_emit_load_imm(asm, 3, idx);
-                        jit_emit_load_imm(asm, 4, required);
+                        jit_emit_add_imm(asm, BC_A0, BC_OPS, tos_off);
+                        jit_emit_add_imm(asm, BC_A1, BC_OPS, dst_off);
+                        jit_emit_load_imm(asm, BC_A2, idx);
+                        jit_emit_load_imm(asm, BC_A3, required);
                         jit_emit_load_imm(asm, BC_CALL, (intptr_t)jit_rt_try_index);
                         jit_emit_call_reg(asm, BC_CALL);
 
@@ -4765,9 +4816,9 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
 
                         int val_off = OP_OFF(ctx->sp - 1);
 
-                        jit_emit_mov(asm, 0, BC_TY);
-                        jit_emit_add_imm(asm, 1, BC_OPS, val_off);
-                        jit_emit_load_imm(asm, 2, actual_class);
+                        jit_emit_mov(asm, BC_A0, BC_TY);
+                        jit_emit_add_imm(asm, BC_A1, BC_OPS, val_off);
+                        jit_emit_load_imm(asm, BC_A2, actual_class);
                         jit_emit_load_imm(asm, BC_CALL, (intptr_t)jit_rt_jii);
                         jit_emit_call_reg(asm, BC_CALL);
 
@@ -4820,8 +4871,8 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                 // --- LOOP_ITER ---
                 CASE(LOOP_ITER) {
                         // Call runtime helper: push SENTINEL, RC=0, IterGetNext
-                        jit_emit_mov(asm, 0, BC_TY);
-                        jit_emit_add_imm(asm, 1, BC_OPS, OP_OFF(ctx->sp));
+                        jit_emit_mov(asm, BC_A0, BC_TY);
+                        jit_emit_add_imm(asm, BC_A1, BC_OPS, OP_OFF(ctx->sp));
                         jit_emit_load_imm(asm, BC_CALL, (intptr_t)jit_rt_loop_iter);
                         jit_emit_call_reg(asm, BC_CALL);
                         // Compiler tracks LOOP_ITER as sp += 2 (SENTINEL + one result)
@@ -4842,9 +4893,9 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                         BC_READ(var_count);
 
                         // Call runtime helper: returns true if loop done (NONE)
-                        jit_emit_mov(asm, 0, BC_TY);
-                        jit_emit_load_imm(asm, 1, var_count);
-                        jit_emit_add_imm(asm, 2, BC_OPS, OP_OFF(ctx->sp - 1));
+                        jit_emit_mov(asm, BC_A0, BC_TY);
+                        jit_emit_load_imm(asm, BC_A1, var_count);
+                        jit_emit_add_imm(asm, BC_A2, BC_OPS, OP_OFF(ctx->sp - 1));
                         jit_emit_load_imm(asm, BC_CALL, (intptr_t)jit_rt_loop_check);
                         jit_emit_call_reg(asm, BC_CALL);
 
@@ -4870,9 +4921,9 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                                 BAIL("DEFAULT_DICT stack underflow");
                         }
                         ctx->sp = ctx->save_sp_stack[ctx->save_sp_top--];
-                        jit_emit_mov(asm, 0, BC_TY);
-                        jit_emit_add_imm(asm, 1, BC_OPS, dflt_off);
-                        jit_emit_add_imm(asm, 2, BC_OPS, OP_OFF(ctx->sp));
+                        jit_emit_mov(asm, BC_A0, BC_TY);
+                        jit_emit_add_imm(asm, BC_A1, BC_OPS, dflt_off);
+                        jit_emit_add_imm(asm, BC_A2, BC_OPS, OP_OFF(ctx->sp));
                         jit_emit_load_imm(asm, BC_CALL, (intptr_t)jit_rt_default_dict);
                         jit_emit_call_reg(asm, BC_CALL);
                         ctx->sp++;
@@ -4896,12 +4947,12 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                         // Result replaces the args: goes at ops[sp - argc]
                         int result_off = OP_OFF(ctx->sp - argc);
 
-                        jit_emit_mov(asm, 0, BC_TY);
-                        jit_emit_add_imm(asm, 1, BC_OPS, result_off);
-                        jit_emit_load_imm(asm, 2, class_id);
-                        jit_emit_load_imm(asm, 3, argc);
-                        jit_emit_load_imm(asm, 4, method_id);
-                        jit_emit_load_imm(asm, 5, nkw);
+                        jit_emit_mov(asm, BC_A0, BC_TY);
+                        jit_emit_add_imm(asm, BC_A1, BC_OPS, result_off);
+                        jit_emit_load_imm(asm, BC_A2, class_id);
+                        jit_emit_load_imm(asm, BC_A3, argc);
+                        jit_emit_load_imm(asm, BC_A4, method_id);
+                        jit_emit_load_imm(asm, BC_A5, nkw);
                         jit_emit_load_imm(asm, BC_CALL, (intptr_t)jit_rt_call_static_method);
                         jit_emit_call_reg(asm, BC_CALL);
 
@@ -4960,10 +5011,10 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
 
                                 // Slow path (always taken for MUL/DIV/MOD)
                                 jit_emit_label(asm, lbl_slow);
-                                jit_emit_mov(asm, 0, BC_TY);
-                                jit_emit_add_imm(asm, 1, BC_LOC, local_off);
-                                jit_emit_add_imm(asm, 2, BC_OPS, addend_off);
-                                jit_emit_mov(asm, 3, 2);
+                                jit_emit_mov(asm, BC_A0, BC_TY);
+                                jit_emit_add_imm(asm, BC_A1, BC_LOC, local_off);
+                                jit_emit_add_imm(asm, BC_A2, BC_OPS, addend_off);
+                                jit_emit_mov(asm, BC_A3, BC_A2);
                                 intptr_t local_helper =
                                         op == INSTR_MUT_ADD ? (intptr_t)jit_rt_mut_add :
                                         op == INSTR_MUT_SUB ? (intptr_t)jit_rt_mut_sub :
@@ -4982,10 +5033,10 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                         } else if (ctx->tgt_kind == TGT_CAPTURED) {
                                 // Load env[n] => BC_S2, then call helper
                                 jit_emit_ldr64(asm, BC_S2, BC_ENV, ctx->tgt_index * 8);
-                                jit_emit_mov(asm, 0, BC_TY);
-                                jit_emit_mov(asm, 1, BC_S2);
-                                jit_emit_add_imm(asm, 2, BC_OPS, addend_off);
-                                jit_emit_mov(asm, 3, 2);
+                                jit_emit_mov(asm, BC_A0, BC_TY);
+                                jit_emit_mov(asm, BC_A1, BC_S2);
+                                jit_emit_add_imm(asm, BC_A2, BC_OPS, addend_off);
+                                jit_emit_mov(asm, BC_A3, BC_A2);
                                 intptr_t cap_helper =
                                         op == INSTR_MUT_ADD ? (intptr_t)jit_rt_mut_add :
                                         op == INSTR_MUT_SUB ? (intptr_t)jit_rt_mut_sub :
@@ -5007,11 +5058,11 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                                         return false;
                                 }
                                 int obj_off = OP_OFF(ctx->tgt_obj_sp);
-                                jit_emit_mov(asm, 0, BC_TY);
-                                jit_emit_add_imm(asm, 1, BC_OPS, obj_off);       // obj
-                                jit_emit_load_imm(asm, 2, ctx->tgt_index);       // member_id
-                                jit_emit_add_imm(asm, 3, BC_OPS, addend_off);    // addend
-                                jit_emit_add_imm(asm, 4, BC_OPS, addend_off);    // result = addend slot
+                                jit_emit_mov(asm, BC_A0, BC_TY);
+                                jit_emit_add_imm(asm, BC_A1, BC_OPS, obj_off);       // obj
+                                jit_emit_load_imm(asm, BC_A2, ctx->tgt_index);       // member_id
+                                jit_emit_add_imm(asm, BC_A3, BC_OPS, addend_off);    // addend
+                                jit_emit_add_imm(asm, BC_A4, BC_OPS, addend_off);    // result = addend slot
                                 intptr_t mem_helper =
                                         op == INSTR_MUT_ADD ? (intptr_t)jit_rt_member_mut_add :
                                         op == INSTR_MUT_SUB ? (intptr_t)jit_rt_member_mut_sub :
@@ -5028,11 +5079,11 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                                         return false;
                                 }
                                 int self_off = ctx->param_count * VALUE_SIZE;
-                                jit_emit_mov(asm, 0, BC_TY);
-                                jit_emit_add_imm(asm, 1, BC_LOC, self_off);      // obj = self
-                                jit_emit_load_imm(asm, 2, ctx->tgt_index);       // member_id
-                                jit_emit_add_imm(asm, 3, BC_OPS, addend_off);    // addend
-                                jit_emit_add_imm(asm, 4, BC_OPS, addend_off);    // result = addend slot
+                                jit_emit_mov(asm, BC_A0, BC_TY);
+                                jit_emit_add_imm(asm, BC_A1, BC_LOC, self_off);      // obj = self
+                                jit_emit_load_imm(asm, BC_A2, ctx->tgt_index);       // member_id
+                                jit_emit_add_imm(asm, BC_A3, BC_OPS, addend_off);    // addend
+                                jit_emit_add_imm(asm, BC_A4, BC_OPS, addend_off);    // result = addend slot
                                 intptr_t self_helper =
                                         op == INSTR_MUT_ADD ? (intptr_t)jit_rt_member_mut_add :
                                         op == INSTR_MUT_SUB ? (intptr_t)jit_rt_member_mut_sub :
@@ -5052,10 +5103,10 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                                 int container_off = OP_OFF(ctx->tgt_obj_sp);
                                 int subscript_off = OP_OFF(ctx->tgt_index);
                                 // jit_rt_subscript_mut_*(ty, val, container, subscript)
-                                jit_emit_mov(asm, 0, BC_TY);
-                                jit_emit_add_imm(asm, 1, BC_OPS, addend_off);      // val
-                                jit_emit_add_imm(asm, 2, BC_OPS, container_off);   // container
-                                jit_emit_add_imm(asm, 3, BC_OPS, subscript_off);   // subscript
+                                jit_emit_mov(asm, BC_A0, BC_TY);
+                                jit_emit_add_imm(asm, BC_A1, BC_OPS, addend_off);      // val
+                                jit_emit_add_imm(asm, BC_A2, BC_OPS, container_off);   // container
+                                jit_emit_add_imm(asm, BC_A3, BC_OPS, subscript_off);   // subscript
                                 intptr_t sub_helper =
                                         op == INSTR_MUT_ADD ? (intptr_t)jit_rt_subscript_mut_add :
                                         op == INSTR_MUT_SUB ? (intptr_t)jit_rt_subscript_mut_sub :
@@ -5104,10 +5155,10 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                         BC_READ(env_idx);
 
                         // jit_rt_capture(ty, &locals[local_idx], env, env_idx)
-                        jit_emit_mov(asm, 0, BC_TY);
-                        jit_emit_add_imm(asm, 1, BC_LOC, local_idx * VALUE_SIZE);
-                        jit_emit_mov(asm, 2, BC_ENV);
-                        jit_emit_load_imm(asm, 3, env_idx);
+                        jit_emit_mov(asm, BC_A0, BC_TY);
+                        jit_emit_add_imm(asm, BC_A1, BC_LOC, local_idx * VALUE_SIZE);
+                        jit_emit_mov(asm, BC_A2, BC_ENV);
+                        jit_emit_load_imm(asm, BC_A3, env_idx);
                         jit_emit_load_imm(asm, BC_CALL, (intptr_t)jit_rt_capture);
                         jit_emit_call_reg(asm, BC_CALL);
                         break;
@@ -5139,10 +5190,10 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
 
                         // Emit: call jit_rt_function(ty, &ops[sp], fn_ip, bound_caps) => returns new ip
                         int dst = OP_OFF(ctx->sp);
-                        jit_emit_mov(asm, 0, BC_TY);
-                        jit_emit_add_imm(asm, 1, BC_OPS, dst);
-                        jit_emit_load_imm(asm, 2, (intptr_t)fn_ip);
-                        jit_emit_load_imm(asm, 3, bound_caps);
+                        jit_emit_mov(asm, BC_A0, BC_TY);
+                        jit_emit_add_imm(asm, BC_A1, BC_OPS, dst);
+                        jit_emit_load_imm(asm, BC_A2, (intptr_t)fn_ip);
+                        jit_emit_load_imm(asm, BC_A3, bound_caps);
                         jit_emit_load_imm(asm, BC_CALL, (intptr_t)jit_rt_function);
                         jit_emit_call_reg(asm, BC_CALL);
                         // Return value (new ip) is in x0 but we don't need it ---
@@ -5319,7 +5370,7 @@ jit_compile(Ty *ty, Value const *func)
         ji->env = NULL;
         ji->env_count = info[FUN_INFO_CAPTURES];
 
-#if JIT_LOG_SCAN
+#if JIT_SCAN_LOG
         LOGX("JIT[bc]: compiled %s (%d params, %d bound, %zu bytes native)",
             name, param_count, bound, final_size);
 #endif

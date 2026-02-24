@@ -221,39 +221,46 @@ static void jit_emit_label(dasm_State **Dst, int label) {
 // Callee-saved register assignments:
 //   r12 = Ty *ty
 //   r13 = Value *result
-//   r14 = Value *args
+//   r14 = Value *args (== &stack.items[fp])
 //   r15 = Value *env
-//   rbx = slot base pointer (== rsp after slot allocation)
+//   rbx = operand base pointer (== &stack.items[fp + bound])
+//   rbp = fp byte offset into stack (stable across reallocs)
+//
+// Value slots live in the interpreter's stack at [rbx + i*32].
 // ============================================================================
 
-static void jit_emit_gen_prologue(dasm_State **Dst, int slot_bytes) {
+static void jit_emit_gen_prologue(dasm_State **Dst, int bound) {
         |->entry:
         |  push rbp
-        |  mov rbp, rsp
         |  push rbx
         |  push r12
         |  push r13
         |  push r14
         |  push r15
-        // 5 pushes + rbp = 6 * 8 = 48 bytes. RSP was 16n-8 on entry,
-        // now 16n-56. Need 8 bytes padding for alignment.
+        // 6 pushes = 48 bytes. RSP was 16n-8 on entry, now 16n-56.
+        // Need 8 bytes padding for 16-byte alignment before calls.
         |  sub rsp, 8
-        // Stash args
-        |  mov r12, rdi
-        |  mov r13, rsi
-        |  mov r14, rdx
-        |  mov r15, rcx
-        // Allocate value slots (slot_bytes must be multiple of 16)
-        if (slot_bytes > 0) {
-                |  sub rsp, slot_bytes
+        // Stash incoming args into callee-saved registers
+        |  mov r12, rdi   // ty
+        |  mov r13, rsi   // result
+        |  mov r14, rdx   // args
+        |  mov r15, rcx   // env
+        // rbp = byte offset of fp into stack.items (survives realloc)
+        // rbp = args - stack.items
+        |  mov rax, [r12+OFF_TY_STACK+OFF_VEC_DATA]
+        |  sub r14, rax
+        |  mov rbp, r14
+        |  add r14, rax
+        // rbx = args + bound * VALUE_SIZE = &stack.items[fp + bound]
+        int ops_off = bound * VALUE_SIZE;
+        if (ops_off > 0) {
+                |  lea rbx, [r14+ops_off]
+        } else {
+                |  mov rbx, r14
         }
-        |  mov rbx, rsp
 }
 
-static void jit_emit_gen_epilogue(dasm_State **Dst, int slot_bytes) {
-        if (slot_bytes > 0) {
-                |  add rsp, slot_bytes
-        }
+static void jit_emit_gen_epilogue(dasm_State **Dst) {
         |  add rsp, 8
         |  pop r15
         |  pop r14
@@ -264,45 +271,78 @@ static void jit_emit_gen_epilogue(dasm_State **Dst, int slot_bytes) {
         |  ret
 }
 
+// --- Reload r14/rbx after calls that may realloc the stack ---
+// rbp holds the stable fp byte offset; bound is known at compile time.
+static void jit_emit_reload_stack(dasm_State **Dst, int bound) {
+        |  mov rax, [r12+OFF_TY_STACK+OFF_VEC_DATA]
+        |  lea r14, [rax+rbp]
+        int ops_off = bound * VALUE_SIZE;
+        if (ops_off > 0) {
+                |  lea rbx, [r14+ops_off]
+        } else {
+                |  mov rbx, r14
+        }
+}
+
+// Sync interpreter stack count to JIT's current sp.
+// Sets ty->stack.count = (fp + bound + sp)
+// rbp holds fp * VALUE_SIZE, so fp = rbp / VALUE_SIZE = rbp >> 5
+static void jit_emit_sync_stack_count(dasm_State **Dst, int bound, int sp) {
+        |  mov rax, rbp
+        |  shr rax, 5
+        int total = bound + sp;
+        if (total > 0) {
+                |  add rax, total
+        }
+        |  mov [r12+OFF_TY_STACK+OFF_VEC_LEN], rax
+}
+
 // --- Memory operations ---
 
+// Load 64-bit from [base + offset]
 static void jit_emit_ldr64(dasm_State **Dst, int dst, int base, int offset) {
         |  mov Rq(dst), [Rq(base)+offset]
 }
 
+// Store 64-bit to [base + offset]
 static void jit_emit_str64(dasm_State **Dst, int src, int base, int offset) {
         |  mov [Rq(base)+offset], Rq(src)
 }
 
+// Load byte from [base + offset]
 static void jit_emit_ldrb(dasm_State **Dst, int dst, int base, int offset) {
         |  movzx Rd(dst), byte [Rq(base)+offset]
 }
 
+// Store byte to [base + offset]
 static void jit_emit_strb(dasm_State **Dst, int src, int base, int offset) {
         |  mov byte [Rq(base)+offset], Rb(src)
 }
 
+// Store halfword (16-bit) to [base + offset]
 static void jit_emit_strh(dasm_State **Dst, int src, int base, int offset) {
         |  mov word [Rq(base)+offset], Rw(src)
 }
 
+// Store 32-bit word to [base + offset]
 static void jit_emit_str32(dasm_State **Dst, int src, int base, int offset) {
         |  mov dword [Rq(base)+offset], Rd(src)
 }
 
+// Load 32-bit word from [base + offset]
 static void jit_emit_ldr32(dasm_State **Dst, int dst, int base, int offset) {
         |  mov Rd(dst), dword [Rq(base)+offset]
 }
 
-// Load/store pairs (just two sequential loads/stores on x64)
-static void jit_emit_ldp64(dasm_State **Dst, int r1, int r2, int base, int offset) {
-        |  mov Rq(r1), [Rq(base)+offset]
-        |  mov Rq(r2), [Rq(base)+(offset+8)]
+// Load/store pairs (two sequential loads/stores on x64)
+static void jit_emit_ldp64(dasm_State **Dst, int dst1, int dst2, int base, int offset) {
+        |  mov Rq(dst1), [Rq(base)+offset]
+        |  mov Rq(dst2), [Rq(base)+(offset+8)]
 }
 
-static void jit_emit_stp64(dasm_State **Dst, int r1, int r2, int base, int offset) {
-        |  mov [Rq(base)+offset], Rq(r1)
-        |  mov [Rq(base)+(offset+8)], Rq(r2)
+static void jit_emit_stp64(dasm_State **Dst, int src1, int src2, int base, int offset) {
+        |  mov [Rq(base)+offset], Rq(src1)
+        |  mov [Rq(base)+(offset+8)], Rq(src2)
 }
 
 // --- Add immediate ---
@@ -321,9 +361,19 @@ static void jit_emit_call_reg(dasm_State **Dst, int reg) {
         |  call Rq(reg)
 }
 
+// --- Compare register with register (sets flags for branch_eq/ne/lt/gt/le/ge) ---
+static void jit_emit_cmp_rr(dasm_State **Dst, int left, int right) {
+        |  cmp Rq(left), Rq(right)
+}
+
 // --- Compare register with immediate ---
 static void jit_emit_cmp_ri(dasm_State **Dst, int reg, int imm) {
         |  cmp Rq(reg), imm
+}
+
+// Compare 32-bit register with immediate (for int return values)
+static void jit_emit_cmp_ri32(dasm_State **Dst, int reg, int imm) {
+        |  cmp Rd(reg), imm
 }
 
 // --- Conditional branches (use after cmp) ---
@@ -333,4 +383,20 @@ static void jit_emit_branch_eq(dasm_State **Dst, int label) {
 
 static void jit_emit_branch_ne(dasm_State **Dst, int label) {
         |  jne =>label
+}
+
+static void jit_emit_branch_lt(dasm_State **Dst, int label) {
+        |  jl =>label
+}
+
+static void jit_emit_branch_gt(dasm_State **Dst, int label) {
+        |  jg =>label
+}
+
+static void jit_emit_branch_le(dasm_State **Dst, int label) {
+        |  jle =>label
+}
+
+static void jit_emit_branch_ge(dasm_State **Dst, int label) {
+        |  jge =>label
 }
