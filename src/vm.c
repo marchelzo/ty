@@ -165,8 +165,7 @@ static char hook_fix[]  = { INSTR_POP, INSTR_RETURN_PRESERVE_CTX };
 static char unapply[]   = { INSTR_RETURN_PRESERVE_CTX };
 
 InternedNames NAMES;
-
-static ValueVector Globals;
+ValueVector Globals;
 /* ========================================================================== */
 
 #define FRAME(n, fn, from) ((Frame){ .fp = (n), .f = (fn), .ip = (from) })
@@ -758,6 +757,7 @@ add_builtins(Ty *ty, int ac, char **av)
         BUILTIN_NAMED_VAR(NULL,  "pretty",         pretty    ) = NIL;
         BUILTIN_NAMED_VAR(NULL,  "pp",             pp        ) = NIL;
         BUILTIN_NAMED_VAR("ty",  "q",              q         ) = BOOLEAN(!CheckTypes);
+        BUILTIN_NAMED_VAR("ty",  "jit",            jit       ) = BOOLEAN(!NoJIT);
         BUILTIN_NAMED_VAR("ty",  "TEST",           TEST      ) = BOOLEAN(RunningTests);
         BUILTIN_NAMED_VAR("ty",  "tests",          tests     ) = ARRAY(vA());
 
@@ -1223,6 +1223,7 @@ co_yield_value(Ty *ty)
         return true;
 }
 
+#if defined(TY_ENABLE_JIT)
 inline static bool
 call_jit(Ty *ty, Value const *f)
 {
@@ -1236,37 +1237,70 @@ call_jit(Ty *ty, Value const *f)
                 xvR(STACK, vN(STACK) + 256);
         }
 
-        //LOGX(
-        //        "Call JIT func: %s  (frame size %d, stk=%zu, stk_cap=%zu)",
-        //        name_of(f),
-        //        f->info[FUN_INFO_BOUND],
-        //        vN(STACK),
-        //        vC(STACK)
-        //);
-
         char *ip = IP;
         usize fp = vvL(FRAMES)->fp;
         Value v;
 
-#if JIT_RT_DEBUG
-        int np = f->info[FUN_INFO_PARAM_COUNT];
-        int bound = f->info[FUN_INFO_BOUND];
-        LOGX("[jit] call %s: fp=%d   stk=%zu  bound=%d", SHOW(f, BASIC), (int)fp, vN(STACK), bound);
-        for (int i = 0; i < np; ++i) {
-                LOGX("    arg%d = %s", i, SHOW(v_(STACK, fp + i), BASIC, ABBREV));
-        }
-        if (f->info[FUN_INFO_CLASS] != -1) {
-                LOGX("    self = %s", SHOW(v_(STACK, fp + np), BASIC, ABBREV));
-        }
-#endif
+        int base_depth = ty->jit.depth;
 
         EXEC_DEPTH += 1;
-        (*func)(ty, &v, v_(STACK, fp), f->env);
-        EXEC_DEPTH -= 1;
 
-#if JIT_RT_DEBUG
-        XPRINT_CTX("%sJIT RETURN%s: %s", TERM(95;1), TERM(0), SHOW(&v, BASIC, ABBREV));
-#endif
+        // Push initial frame onto the JIT continuation stack
+        ty->jit.cont[ty->jit.depth++] = (struct jit_cont){
+                .fn = func,
+                .env = f->env,
+                .fn_result = &v,
+                .resume_idx = 0,
+        };
+
+        // Trampoline loop: dispatch JIT functions without nesting C stack frames
+        Value cv;
+        while (ty->jit.depth > base_depth) {
+                struct jit_cont *top = &ty->jit.cont[ty->jit.depth - 1];
+
+                usize cfp = vvL(FRAMES)->fp;
+                Value *args = v_(STACK, cfp);
+
+                if (UNLIKELY(vN(STACK) + 256 > vC(STACK))) {
+                        xvR(STACK, vN(STACK) + 256);
+                        args = v_(STACK, cfp);
+                }
+
+                ty->jit.resume_idx = top->resume_idx;
+                ty->jit.status = JIT_RETURN;
+
+                (*(JitFn *)top->fn)(ty, top->fn_result, args, top->env);
+
+                if (ty->jit.status == JIT_CALL) {
+                        // JIT function wants to call another JIT function.
+                        // Save the resume index so we can re-enter at the right point.
+                        top->resume_idx = ty->jit.saved_resume_idx;
+
+                        // Push callee frame
+                        ty->jit.cont[ty->jit.depth++] = (struct jit_cont){
+                                .fn = ty->jit.pending_fn,
+                                .env = ty->jit.pending_env,
+                                .fn_result = &cv,
+                                .resume_idx = 0,
+                        };
+                } else {
+                        // Normal return: pop this frame
+                        ty->jit.depth -= 1;
+
+                        if (ty->jit.depth > base_depth) {
+                                // Clean up the callee's Ty frame:
+                                // put result on stack where the caller expects it
+                                cfp = vvL(FRAMES)->fp;
+                                vN(STACK) = cfp + 1;
+                                *v_(STACK, cfp) = cv;
+                                vXx(FRAMES);
+                                vXx(CALLS);
+                        }
+                        // If depth == base_depth, result is already in `v` via fn_result
+                }
+        }
+
+        EXEC_DEPTH -= 1;
 
         vN(STACK) = fp + 1;
         put(v);
@@ -1278,6 +1312,7 @@ call_jit(Ty *ty, Value const *f)
 
         return true;
 }
+#endif /* TY_ENABLE_JIT */
 
 #if !defined(TY_RELEASE)
 __attribute__((optnone, noinline))
@@ -1416,6 +1451,12 @@ call6t(Ty *ty, Value const *f, Value const *pSelf, int argc, Value const *pKwarg
         xvP(CALLS, IP);
         xcall(ty, f, pSelf, argc, pKwargs, whence);
         IP = code_of(f);
+}
+
+void
+vm_xcall(Ty *ty, Value const *f, Value const *pSelf, int argc, Value const *pKwargs)
+{
+        xcall(ty, f, pSelf, argc, pKwargs, &halt);
 }
 
 static void
@@ -2105,6 +2146,9 @@ PushTry(Ty *ty)
         t->nsp   = vN(SP_STACK);
         t->vs    = vN(VISITING);
         t->ed    = EXEC_DEPTH;
+#if defined(TY_ENABLE_JIT)
+        t->jit_depth = ty->jit.depth;
+#endif
         t->ss    = SaveScratch(ty);
         t->state = TRY_TRY;
         v0(t->defer);
@@ -2157,6 +2201,9 @@ DoThrow(Ty *ty)
                                 }
 
                                 EXEC_DEPTH   = t->ed;
+#if defined(TY_ENABLE_JIT)
+                                ty->jit.depth = t->jit_depth;
+#endif
                                 vN(STACK)    = t->sp;
                                 vN(SP_STACK) = t->nsp;
                                 vN(FRAMES)   = t->ctxs;

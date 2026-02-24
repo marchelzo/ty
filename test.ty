@@ -1,10 +1,11 @@
-import os (..)
-import sh (sh)
 import chalk (..)
+import ffi as c (C!)
+import os (..)
+import path (Path)
+import sh (sh)
 import time
 import tp (ThreadPool)
 import ty
-import ffi as c (C!)
 
 let start = time.now()
 
@@ -21,26 +22,17 @@ let r = chalk['bold red']
 let m = chalk['bold bright magenta']
 let b = chalk['bold blue']
 
-let TY_PATH = getenv('TY_PATH') ?? ty.executable
-
-let q = (ty.q ? '-q' : '')
-
-fn getTyCommand(test) {
-#|if __windows__
-        "{TY_PATH} {q} tests\\{test}"
-#|else
-        "{TY_PATH} {q} tests/{test}"
-#|]
-}
+const TY_CMD = getenv('TY_PATH') ?? ty.executable
+const TY_FLAGS = ['-q' if ty.q, '-j' if !ty.jit].join(' ')
 
 C! fn {
     char const *strsignal(int);
 }
 
-fn doTest(name: String) {
+fn doTest(path: Path) {
     let testStart = time.now()
 
-    let _, result = sh(getTyCommand(name), timeoutMs=2000)
+    let _, result = sh("{TY_CMD} {TY_FLAGS} {path}", timeoutMs=2000)
 
     let msg = match result {
         nil => do {
@@ -78,14 +70,14 @@ fn doTest(name: String) {
         }
     }
 
-    print("{b("{name.comb(/\.ty$/):16}")} ... {msg}")
+    print("{b("{path.stem:16}")} ... {msg}")
 }
 
 let pool = ThreadPool(os.ncpu(), doTest)
 let fs = []
 
-for test in listdir('tests') if test.match?(/\.ty$/) {
-    fs.push(pool.submit(test))
+for Path('tests').glob('*.ty') {
+    fs.push(pool.submit(it))
 }
 
 fs.map(&wait)

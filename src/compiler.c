@@ -13645,6 +13645,12 @@ compiler_global_sym(Ty *ty, usize i)
         return v__(GlobalScope->owned, i);
 }
 
+symbol_vector *
+compiler_globals(Ty *ty)
+{
+        return &GlobalScope->owned;
+}
+
 inline static char *
 (mkcstr)(Ty *ty, Value const *v)
 {

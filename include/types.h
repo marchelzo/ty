@@ -329,7 +329,7 @@ void
 unify2(Ty *ty, Type **t0, Type *t1);
 
 Type *
-type_resolve_var(Type *t0);
+type_resolve_var(Type const *t0);
 
 void
 type_intersect(Ty *ty, Type **t0, Type *t1);

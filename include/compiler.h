@@ -340,6 +340,9 @@ compiler_global_count(Ty *ty);
 Symbol *
 compiler_global_sym(Ty *ty, usize i);
 
+symbol_vector *
+compiler_globals(Ty *ty);
+
 Value
 compiler_render_template(Ty *ty, Expr *);
 
