@@ -1302,7 +1302,9 @@ class_of(Value const *v)
 static inline Expr *
 expr_of(Value const *f)
 {
-        return (Expr *)*(uptr *)info_of(f, FUN_EXPR);
+        uptr expr;
+        memcpy(&expr, (char *)f->info + FUN_EXPR, sizeof expr);
+        return (Expr *)expr;
 }
 
 static inline char const *
@@ -1413,20 +1415,20 @@ self_of(Value const *f)
 static inline void *
 jit_of(Value const *f)
 {
-#if !defined(TY_NO_JIT)
         uptr jit;
+#if !defined(TY_NO_JIT)
         memcpy(&jit, (char *)f->info + FUN_JIT, sizeof jit);
-        return (void *)jit;
 #else
-        return NULL;
+        jit = 0;
 #endif
+        return (void *)jit;
 }
 
 static inline void
 set_jit_of(Value const *f, void *code)
 {
-#if !defined(TY_NO_JIT)
         uptr jit = (uptr)code;
+#if !defined(TY_NO_JIT)
         memcpy((char *)f->info + FUN_JIT, &jit, sizeof jit);
 #endif
 }

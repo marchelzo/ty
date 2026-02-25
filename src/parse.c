@@ -570,26 +570,36 @@ mkdef(Ty *ty, Expr *lvalue, char *name)
         return s;
 }
 
-#define to_expr(e) ((to_expr)(ty, (e)))
+#define to_expr(e) ((to_expr)(ty, (Stmt *)(e)))
 inline static Expr *
 (to_expr)(Ty *ty, Stmt *s)
 {
+        if (s->type < EXPRESSION_MAX_TYPE) {
+                return (Expr *)s;
+        }
+
         Expr *e = mkxpr(STATEMENT);
         e->start = s->start;
         e->end = s->end;
         e->statement = s;
+
         return e;
 }
 
-#define to_stmt(e) ((to_stmt)(ty, (e)))
+#define to_stmt(e) ((to_stmt)(ty, (Expr *)(e)))
 inline static Stmt *
 (to_stmt)(Ty *ty, Expr *e)
 {
+        if (e->type >= EXPRESSION_MAX_TYPE) {
+                return (Stmt *)e;
+        }
+
         Stmt *s = mkstmt(ty);
         s->type = STATEMENT_EXPRESSION;
         s->start = e->start;
         s->end = e->end;
         s->expression = e;
+
         return s;
 }
 
@@ -1444,20 +1454,21 @@ parse_decorator_macro(Ty *ty)
 }
 
 
-static ExprVec
-parse_decorators(Ty *ty)
+static void
+parse_decorators(Ty *ty, ExprVec *decs, ExprVec *macro_decs)
 {
-        ExprVec decorators = {0};
+        Location start = tok()->start;
 
         while (try_consume('@')) {
                 Expr *f = parse_expr(ty, 0);
+                f->start = start;
 
                 if (
                         (f->type != EXPRESSION_FUNCTION_CALL)
                      && (f->type != EXPRESSION_METHOD_CALL)
                 ) {
                         Expr *call = mkexpr(ty);
-                        call->start = f->start;
+                        call->start = start;
                         call->end = f->end;
                         if (f->type == EXPRESSION_MEMBER_ACCESS) {
                                 call->type = EXPRESSION_METHOD_CALL;
@@ -1487,13 +1498,17 @@ parse_decorators(Ty *ty)
                         UNREACHABLE();
                 }
 
-                avP(decorators, f);
+                if (IsMacroInvocation(ty, f)) {
+                        svP(*macro_decs, f);
+                } else {
+                        avP(*decs, f);
+                }
 
                 try_consume(',');
                 try_consume(';');
-        }
 
-        return decorators;
+                start = tok()->start;
+        }
 }
 
 static Expr *
@@ -2039,23 +2054,11 @@ parse_expr_template(Ty *ty)
 }
 
 static Expr *
-parse_function(Ty *ty, ExprVec const *decorators, Expr **name, bool *is_operator)
+parse_function(Ty *ty, Expr **name, bool *is_operator)
 {
         Expr *e = mkfunc(ty);
 
-        ExprVec macro_decorators = {0};
         bool sugared_generator = false;
-
-        SCRATCH_SAVE();
-
-        for (int i = 0; i < vN(*decorators); ++i) {
-                Expr *dec = v__(*decorators, i);
-                if (IsMacroInvocation(ty, dec)) {
-                        svP(macro_decorators, dec);
-                } else {
-                        avP(e->decorators, dec);
-                }
-        }
 
         int type = K0;
 
@@ -2101,7 +2104,6 @@ parse_function(Ty *ty, ExprVec const *decorators, Expr **name, bool *is_operator
                         die_at(f, "expected function expression");
                 }
                 f->name = e->name;
-                SCRATCH_RESTORE();
                 return f;
         }
 
@@ -2230,42 +2232,32 @@ Body:
                 e->body->expression->name = afmt("<%s:gen>", e->name);
         }
 
-        Expr *last_decorator = NULL;
-
-        while (vN(macro_decorators) > 0) {
-                Expr *dec = *vvX(macro_decorators);
-                last_decorator = dec->function;
-                v__(dec->args, 0) = e;
-                e = dec;
-                expedite_fun(ty, e, NULL);
-        }
-
-        if (
-                (last_decorator != NULL)
-             && (e->type != EXPRESSION_FUNCTION)
-             && (e->type != EXPRESSION_GENERATOR)
-        ) {
-                die_at(
-                        e,
-                        "function-like decorator macro '%s%s%s' expanded to non-function:\n"
-                        FMT_MORE "%s",
-                        TERM(93;1),
-                        QualifiedName(last_decorator),
-                        TERM(0),
-                        EDBG(e)
-                );
-        }
-
-        SCRATCH_RESTORE();
-
         return e;
 }
 
 static Expr *
 prefix_function(Ty *ty)
 {
-        ExprVec decorators = parse_decorators(ty);
-        return parse_function(ty, &decorators, NULL, NULL);
+        ExprVec decorators       = {0};
+        ExprVec macro_decorators = {0};
+
+        SCRATCH_SAVE();
+
+        parse_decorators(ty, &decorators, &macro_decorators);
+
+        Expr *fun = parse_function(ty, NULL, NULL);
+        fun->decorators = decorators;
+
+        while (vN(macro_decorators) > 0) {
+                Expr *dec = *vvX(macro_decorators);
+                v__(dec->args, 0) = fun;
+                fun = dec;
+                expedite_fun(ty, fun, NULL);
+        }
+
+        SCRATCH_RESTORE();
+
+        return fun;
 }
 
 static Expr *
@@ -2986,7 +2978,7 @@ parse_method_call(Ty *ty, Expr *e)
                 parse_method_args(ty, e);
                 e->end = TEnd;
                 return e;
-        case TOKEN_AT:
+        case '@':
                 next();
                 parse_method_args(ty, e);
                 e->end = TEnd;
@@ -4348,7 +4340,7 @@ infix_member_access(Ty *ty, Expr *left)
         if (
                 !have_without_nl(ty, '(')
              && !have_without_nl(ty, '$')
-             && !have_without_nl(ty, TOKEN_AT)
+             && !have_without_nl(ty, '@')
         ) {
                 e->end = TEnd;
                 return e;
@@ -4724,7 +4716,7 @@ get_prefix_parser(Ty *ty)
 
         case TOKEN_QUESTION:           return prefix_is_nil;
         case TOKEN_BANG:               return prefix_bang;
-        case TOKEN_AT:                 return prefix_at;
+        case '@':                      return prefix_at;
         case TOKEN_MINUS:              return prefix_minus;
         case TOKEN_INC:                return prefix_inc;
         case TOKEN_DEC:                return prefix_dec;
@@ -4845,7 +4837,7 @@ get_infix_parser(Ty *ty)
         case TOKEN_QUESTION:       return infix_conditional;
 
         case '\\':     return next_without_nl(ty, '(') ? infix_slash  : NULL;
-        case TOKEN_AT: return next_without_nl(ty, '(') ? infix_at     : NULL;
+        case '@':      return next_without_nl(ty, '(') ? infix_at     : NULL;
 
         default:                   return NULL;
         }
@@ -4892,7 +4884,7 @@ get_infix_prec(Ty *ty)
                 return (tok()->start.s == token(-1)->end.s) ? 11 : -3;
 
         case '\\':
-        case TOKEN_AT:
+        case '@':
                 return next_without_nl(ty, '(') ? 11 : -3;
 
         case TOKEN_INC:            return 10;
@@ -5625,30 +5617,31 @@ parse_function_definition(Ty *ty)
                 s->type = STATEMENT_FUNCTION_DEFINITION;
         }
 
-        ExprVec decorators = parse_decorators(ty);
-
         s->pub = try_consume(KEYWORD_PUB);
 
         expect_one_of(KEYWORD_FUNCTION, KEYWORD_MACRO);
 
-        Expr *target;
-        bool is_operator;
-        Expr *func = parse_function(ty, &decorators, &target, &is_operator);
+        Expr *target     = NULL;
+        bool is_operator = false;
 
-        if (func->name == NULL) {
+        Expr *func = parse_function(ty, &target, &is_operator);
+
+        if (target == NULL) {
                 die("anonymous function definition appears in statement context");
         }
 
-        func->must_jit = jit;
-
-        if (is_operator) {
-                s->type = STATEMENT_OPERATOR_DEFINITION;
-        }
-
-        if (s->type == STATEMENT_MACRO_DEFINITION) {
-                avI(func->params, "self", 0);
-                avI(func->constraints, NULL, 0);
-                avI(func->dflts, NULL, 0);
+        if (func->type == EXPRESSION_FUNCTION) {
+                func->must_jit = jit;
+                if (is_operator) {
+                        s->type = STATEMENT_OPERATOR_DEFINITION;
+                }
+                if (s->type == STATEMENT_MACRO_DEFINITION) {
+                        avI(func->params, "self", 0);
+                        avI(func->constraints, NULL, 0);
+                        avI(func->dflts, NULL, 0);
+                }
+        } else {
+                s->type = STATEMENT_DEFINITION;
         }
 
         s->target = target;
@@ -6194,10 +6187,12 @@ parse_class_definition(Ty *ty)
                         consume('}');
                 }
 
-                ExprVec decorators = {0};
-                if (T0 == TOKEN_AT) {
-                        decorators = parse_decorators(ty);
-                }
+                ExprVec decorators       = {0};
+                ExprVec macro_decorators = {0};
+
+                SCRATCH_SAVE();
+
+                parse_decorators(ty, &decorators, &macro_decorators);
 
                 bool     dbg = try_consume(KEYWORD_DBG);
                 bool _static = try_consume(KEYWORD_STATIC);
@@ -6296,6 +6291,8 @@ parse_class_definition(Ty *ty)
 
                         TagTokenOf(ty, meth, TT_FUNC);
                 }
+
+                SCRATCH_RESTORE();
         }
 
         if (vN(init_params) > 0) {
@@ -6648,12 +6645,6 @@ _parse_statement(Ty *ty, int prec)
         setctx(LEX_PREFIX);
 
         switch (T0) {
-        case TOKEN_AT:
-                if (T1 == '{') {
-                        goto Expression;
-                }
-                return parse_function_definition(ty);
-
         case '{':            return parse_block(ty);
         case ';':            return parse_null_statement(ty);
         case TOKEN_KEYWORD:  goto Keyword;
@@ -6729,7 +6720,45 @@ parse_statement(Ty *ty, int prec)
         //        return &NullStatement;
         //}
 
+        ExprVec decorators       = {0};
+        ExprVec macro_decorators = {0};
+
+        SCRATCH_SAVE();
+
+        parse_decorators(ty, &decorators, &macro_decorators);
+
+        bool pub = try_consume(KEYWORD_PUB);
+
         Stmt *stmt = _parse_statement(ty, prec);
+
+        if (vN(decorators) > 0) {
+                if (stmt->type != STATEMENT_FUNCTION_DEFINITION) {
+                        die_at(
+                                v__(decorators, 0),
+                                "decorator applied to undecoratable statement"
+                        );
+                }
+                stmt->value->decorators = decorators;
+        }
+
+        while (vN(macro_decorators) > 0) {
+                Expr *dec = *vvX(macro_decorators);
+                v__(dec->args, 0) = to_expr(stmt);
+                stmt = to_stmt(dec);
+                expedite_fun(ty, to_expr(stmt), NULL);
+                stmt = to_stmt(stmt);
+        }
+
+        SCRATCH_RESTORE();
+
+        if (
+                (stmt->type == STATEMENT_FUNCTION_DEFINITION)
+             || (stmt->type == STATEMENT_MACRO_DEFINITION)
+             || (stmt->type == STATEMENT_OPERATOR_DEFINITION)
+             || (stmt->type == STATEMENT_DEFINITION)
+        ) {
+                stmt->pub |= pub;
+        }
 
         //if (AllowErrors) {
         //        EndCatch();

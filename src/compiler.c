@@ -4118,10 +4118,30 @@ symbolize_pattern(Ty *ty, Scope *scope, Expr *e, Scope *reuse, bool def)
         }
 }
 
+inline static Expr *
+unfurl(Expr const *e)
+{
+        for (;;) {
+                switch (e->type) {
+                case EXPRESSION_STATEMENT:
+                        e = (Expr *)e->statement;
+                        break;
+
+                case STATEMENT_EXPRESSION:
+                        e = ((Stmt *)e)->expression;
+                        break;
+
+                default:
+                        return (Expr *)e;
+                }
+        }
+}
 
 bool
 expedite_fun(Ty *ty, Expr *e, void *ctx)
 {
+        e = unfurl(e);
+
         if (e->type != EXPRESSION_FUNCTION_CALL) {
                 return false;
         }

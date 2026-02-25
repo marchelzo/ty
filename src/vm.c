@@ -2771,17 +2771,6 @@ DoCall(Ty *ty, Value const *f, int n, int nkw, bool auto_this, bool exec)
 
         NotCallable:
         default:
-                LOGX("attempt to call non-callable value %s", VSC(&v));
-                xprint_stack(ty, 8);
-                for (int i = vN(FRAMES) - 1; i >= 0; --i) {
-                        Frame *f = v_(FRAMES, i);
-                        LOGX(
-                                "  frame %d: %s",
-                                i,
-                                VSC(&f->f)
-                        );
-                }
-                *(volatile int *)0 = 0;
                 zP("attempt to call non-callable value %s", VSC(&v));
         }
 
@@ -5303,9 +5292,6 @@ Top:
 
         default:
 NoIter:
-                LOGX("for-each loop on non-iterable value: %s", VSC(&v));
-                xprint_stack(ty, 20);
-                *(volatile int *)0 = 0;
                 zP("for-each loop on non-iterable value: %s", VSC(&v));
         }
 }
