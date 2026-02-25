@@ -1414,7 +1414,9 @@ static inline void *
 jit_of(Value const *f)
 {
 #if !defined(TY_NO_JIT)
-        return (void *)*(uptr *)info_of(f, FUN_JIT);
+        uptr jit;
+        memcpy(&jit, (char *)f->info + FUN_JIT, sizeof jit);
+        return (void *)jit;
 #else
         return NULL;
 #endif
@@ -1424,7 +1426,8 @@ static inline void
 set_jit_of(Value const *f, void *code)
 {
 #if !defined(TY_NO_JIT)
-        *(uptr *)info_of(f, FUN_JIT) = (uptr)code;
+        uptr jit = (uptr)code;
+        memcpy((char *)f->info + FUN_JIT, &jit, sizeof jit);
 #endif
 }
 
