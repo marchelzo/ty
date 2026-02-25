@@ -2810,6 +2810,8 @@ StrictClassOf(Type const *t0)
 static int
 ClassOfType(Ty *ty, Type const *t0)
 {
+        t0 = ResolveVar(t0);
+
         if (IsBottom(t0)) {
                 return CLASS_BOTTOM;
         }
@@ -2848,9 +2850,6 @@ ClassOfType(Ty *ty, Type const *t0)
 
         case TYPE_BOOL:
                 return CLASS_BOOL;
-
-        case TYPE_VARIABLE:
-                return IsBoundVar(t0) ? ClassOfType(ty, t0->val) : CLASS_TOP;
 
         case TYPE_NIL:
                 return CLASS_NIL;
@@ -11952,6 +11951,64 @@ Type *
 type_resolve_var(Type const *t0)
 {
         return ResolveVar(t0);
+}
+
+Class *
+type_guess_class_of(Ty *ty, Type const *t0)
+{
+        t0 = ResolveVar(t0);
+
+        if (IsBottom(t0)) {
+                return NULL;
+        }
+
+        if (IsAny(t0)) {
+                return NULL;
+        }
+
+        int class = CLASS_BOTTOM;
+
+        switch (t0->type) {
+        case TYPE_UNION:
+                for (int i = 0; i < vN(t0->types); ++i) {
+                        int c = ClassOfType(ty, v__(t0->types, i));
+                        if (c == class || c == CLASS_NIL) {
+                                continue;
+                        }
+                        if (class_is_subclass(ty, class, c)) {
+                                class = c;
+                        } else if (!class_is_subclass(ty, c, class)) {
+                                return NULL;
+                        }
+                }
+                break;
+
+        case TYPE_OBJECT:
+                class = t0->class->i;
+                break;
+
+        case TYPE_CLASS:
+                class = CLASS_CLASS;
+                break;
+
+        case TYPE_INT:
+                class = CLASS_INT;
+                break;
+
+        case TYPE_STRING:
+                class = CLASS_STRING;
+                break;
+
+        case TYPE_BOOL:
+                class = CLASS_BOOL;
+                break;
+        }
+
+        if (class == CLASS_TOP || class == CLASS_BOTTOM) {
+                return NULL;
+        }
+
+        return class_get(ty, class);
 }
 
 /* vim: set sts=8 sw=8 expandtab: */

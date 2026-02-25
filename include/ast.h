@@ -15,10 +15,12 @@ typedef struct type Type;
 typedef struct expression Expr;
 typedef struct statement Stmt;
 typedef struct type_bound TypeBound;
+typedef struct type_hint  TypeHint;
 typedef struct type Type;
 
 typedef vec(Expr *) ExprVec;
 typedef vec(TypeBound) TypeBoundVector;
+typedef vec(TypeHint) TypeHintVector;
 
 typedef Expr *ExprTransform(Expr *, Scope *, void *);
 typedef Expr *TypeTransform(Expr *, Scope *, void *);
@@ -304,6 +306,10 @@ typedef struct type_bound {
         Expr *bound;
 } TypeBound;
 
+typedef struct type_hint {
+        Type *type;
+        iptr pc;
+} TypeHint;
 
 struct expression {
         void *arena;
@@ -451,6 +457,9 @@ struct expression {
                         Stmt *body;
                         Class *class;
                         Expr *overload;
+#if !defined(TY_NO_JIT)
+                        TypeHintVector type_hints;
+#endif
                         bool has_defer;
                         bool must_jit;
                         int ikwargs;

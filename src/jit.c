@@ -41,6 +41,7 @@
 #define VAL_OFF_OBJECT  offsetof(Value, object)  // void *object (for VALUE_OBJECT)
 #define VAL_OFF_COUNT   offsetof(Value, count)   // i32 count (for VALUE_TUPLE)
 #define VAL_OFF_REF     offsetof(Value, ref)     // Value *ref (for VALUE_REF)
+#define VAL_OFF_REGEX   offsetof(Value, regex)   // Regex *regex (for VALUE_REGEX)
 
 #define OFF_TY_STACK  offsetof(Ty, stack)
 #define OFF_TY_ST     offsetof(Ty, st)
@@ -1557,6 +1558,7 @@ bc_prescan(JitBcCtx *ctx, char const *code, int code_size)
                 case INSTR_NONE:
                 case INSTR_RETURN_IF_NOT_NONE:
                 case INSTR_TO_STRING:
+                case INSTR_SLICE:
                         break;
 
                 case INSTR_LOAD_LOCAL:
@@ -1687,6 +1689,7 @@ bc_prescan(JitBcCtx *ctx, char const *code, int code_size)
 
                 case INSTR_VALUE:
                 case INSTR_TYPE:
+                case INSTR_REGEX:
                         BC_SKIP(uptr);
                         break;
 
@@ -2086,10 +2089,10 @@ jit_run_trampoline(Ty *ty, JitFn *jit, Value **env)
 // Fast baked method call with inline trampoline.
 // Returns 1 if handled (result on stack), 0 for fallback to slow path.
 static int
-jit_rt_baked_call(Ty *ty, Value *self_ptr, Value *fn, int class_id, int argc)
+jit_rt_baked_call(Ty *ty, Value *self, Value *fn, int class_id, int argc)
 {
         // Class guard
-        if (UNLIKELY(self_ptr->type != VALUE_OBJECT || self_ptr->class != class_id)) {
+        if (UNLIKELY(ClassOf(self) != class_id)) {
                 return 0;
         }
 
@@ -2099,12 +2102,12 @@ jit_rt_baked_call(Ty *ty, Value *self_ptr, Value *fn, int class_id, int argc)
                 return 0;
         }
 
-        Value self = *self_ptr;
+        Value _self = *self;
 
         STAT(call_method_baked);
 
         // Fast frame setup (no xcall overhead)
-        jit_fast_frame(ty, fn, &self, argc);
+        jit_fast_frame(ty, fn, &_self, argc);
 
         // Run callee via inline trampoline (handles nested JIT calls)
         jit_run_trampoline(ty, jit, fn->env);
@@ -2173,7 +2176,8 @@ jit_rt_call_self_method_guarded(Ty *ty, Value *result, Value *self,
         if (self == NULL) {
                 self = vm_get_self(ty);
         }
-        if (self->type == VALUE_OBJECT && self->class == class_id) {
+
+        if (ClassOf(self) == class_id) {
                 STAT(call_method_baked);
                 jit_rt_call_method_direct(ty, result, self, baked, argc);
         } else {
@@ -2812,61 +2816,37 @@ bc_emit_self_member_write_fast(JitBcCtx *ctx, int member_id, char const *bc_ip)
         return true;
 }
 
-static Type *
-expected_return_type_of(Type const *t)
-{
-        t = type_resolve_var(t);
-
-        if (
-                (TypeType(t) == TYPE_INTERSECT)
-             && (vN(t->types) > 0)
-        ) {
-                t = type_resolve_var(v__(t->types, 0));
-        }
-
-        if (TypeType(t) == TYPE_FUNCTION) {
-                return t->rt;
-        }
-
-        return NULL;
-}
-
 static Class *
-expected_class_of(Type const *t)
+expected_class_of(Ty *ty, Type const *t)
 {
-        t = type_resolve_var(t);
-
-        Class *c = NULL;
-        Type *u0 = NULL;
-
-        switch (TypeType(t)) {
-        case TYPE_OBJECT:
-                c = t->class;
-                break;
-
-        case TYPE_UNION:
-                for (int i = 0; i < (int)vN(t->types); ++i) {
-                        Type *u00 = type_resolve_var(v__(t->types, i));
-                        if (TypeType(u00) != TYPE_NIL) {
-                                if (u0 == NULL) {
-                                        u0 = u00;
-                                } else {
-                                        u0 = NULL;
-                                        break;
-                                }
-                        }
-                }
-                if (TypeType(u0) == TYPE_OBJECT) {
-                        c = u0->class;
-                }
-                break;
-        }
+        Class *c = type_guess_class_of(ty, t);
 
         if (c != NULL && c->is_trait) {
                 c = NULL;
         }
 
         return c;
+}
+
+static Type *
+find_type_hint(TypeHintVector const *hints, iptr off)
+{
+        isize lo = 0;
+        isize hi = vN(*hints) - 1;
+
+        while (lo <= hi) {
+                isize m = (lo + hi) / 2;
+                TypeHint *hint = v_(*hints, m);
+                if (hint->pc == off) {
+                        return hint->type;
+                } else if (hint->pc < off) {
+                        lo = m + 1;
+                } else {
+                        hi = m - 1;
+                }
+        }
+
+        return NULL;
 }
 
 static Value *
@@ -2890,11 +2870,17 @@ bc_resolve_method(JitBcCtx *ctx, Class *cls, int member_id)
 
         u16 method_idx = (off & OFF_MASK);
 
+        Value *method = v_(cls->methods.values, method_idx);
+
+        if (method->type != VALUE_FUNCTION) {
+                return NULL;
+        }
+
         return v_(cls->methods.values, method_idx);
 }
 
 static BuiltinMethod *
-bc_resolve_builtin_method(Class *cls, int member_id, int *out_value_type)
+bc_resolve_builtin_method(Class *cls, int member_id, int *value_type)
 {
         BuiltinMethod *func = NULL;
         int vtype = -1;
@@ -2924,8 +2910,8 @@ bc_resolve_builtin_method(Class *cls, int member_id, int *out_value_type)
                 break;
         }
 
-        if (func != NULL && out_value_type != NULL) {
-                *out_value_type = vtype;
+        if (func != NULL && value_type != NULL) {
+                *value_type = vtype;
         }
 
         return func;
@@ -2976,6 +2962,111 @@ bc_resolve_builtin_method(Class *cls, int member_id, int *out_value_type)
 #define EMIT_SP_SYNC()
 #endif
 
+static void
+bc_emit_call_method(JitBcCtx *ctx, char const *op_ip, int z, int n, int nkw)
+{
+        dasm_State **asm = &ctx->asm;
+
+        DBG("CALL_METHOD[%s]: n=%d, z=%d, nkw=%d", M_NAME(z), n, z, nkw);
+
+        EMIT_SET_CALL_IP(op_ip);
+
+        // VM stack layout: [... arg0 arg1 ... argN-1 self]
+        // self is at ops[sp-1] (top), args at ops[sp-1-n..sp-2]
+
+        // Try to resolve method at compile time using receiver type info
+        Class *recv_cls = expected_class_of(ctx->ty, ctx->op_types[ctx->sp - 1]);
+
+        // Try builtin type fast path (String, Array, Dict, Blob)
+        int builtin_vtype = -1;
+        BuiltinMethod *builtin_method = (recv_cls != NULL)
+                ? bc_resolve_builtin_method(recv_cls, z, &builtin_vtype)
+                : NULL;
+
+        // Try object method baking (for user-defined classes)
+        Value *baked_method = (recv_cls != NULL)
+                ? bc_resolve_method(ctx, recv_cls, z)
+                : NULL;
+
+        // self is at ops[sp-1], result goes where args+self were
+        int self_off = OP_OFF(ctx->sp - 1);
+        int result_off = OP_OFF(ctx->sp - 1 - n); // replaces args+self with result
+
+        if (builtin_method != NULL) {
+                // Direct builtin call with type guard
+                jit_emit_mov(asm, BC_A0, BC_TY);
+                jit_emit_add_imm(asm, BC_A1, BC_OPS, result_off);
+                jit_emit_add_imm(asm, BC_A2, BC_OPS, self_off);
+                jit_emit_load_imm(asm, BC_A3, (iptr)builtin_method);
+                jit_emit_load_imm(asm, BC_A4, PACK32(builtin_vtype, z));
+                jit_emit_load_imm(asm, BC_A5, n);
+                jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_call_builtin_method);
+                jit_emit_call_reg(asm, BC_CALL);
+                DBG("CALL_METHOD (builtin fast path for %s)", M_NAME(z));
+        } else if (baked_method != NULL) {
+                // Check if the baked method is simple enough for fast trampoline
+                bool can_tramp = (rest_idx_of(baked_method) == -1)
+                              && (kwargs_idx_of(baked_method) == -1);
+                if (can_tramp) {
+                        // Fast trampoline path: skip xcall entirely
+                        // Sync to sp-1 (exclude self): callee's fp = vN - argc
+                        // must land on arg0, which is at op position sp-1-n
+                        jit_emit_sync_stack_count(asm, ctx->bound, ctx->sp - 1);
+
+                        jit_emit_mov(asm, BC_A0, BC_TY);
+                        jit_emit_add_imm(asm, BC_A1, BC_OPS, self_off);
+                        jit_emit_load_imm(asm, BC_A2, (iptr)baked_method);
+                        jit_emit_load_imm(asm, BC_A3, recv_cls->i);
+                        jit_emit_load_imm(asm, BC_A4, n);
+                        jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_baked_call);
+                        jit_emit_call_reg(asm, BC_CALL);
+
+                        int lbl_cm_done = bc_next_label(ctx);
+
+                        // If return 1: handled (result on stack), skip slow path
+                        jit_emit_cbnz(asm, BC_RET, lbl_cm_done);
+
+                        // Slow fallback: guard failed or not JIT'd
+                        jit_emit_mov(asm, BC_A0, BC_TY);
+                        jit_emit_add_imm(asm, BC_A1, BC_OPS, result_off);
+                        jit_emit_add_imm(asm, BC_A2, BC_OPS, self_off);
+                        jit_emit_load_imm(asm, BC_A3, (iptr)baked_method);
+                        jit_emit_load_imm(asm, BC_A4, PACK32(recv_cls->i, z));
+                        jit_emit_load_imm(asm, BC_A5, n);
+                        jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_call_self_method_guarded);
+                        jit_emit_call_reg(asm, BC_CALL);
+
+                        jit_emit_label(asm, lbl_cm_done);
+                        DBG("CALL_METHOD (baked trampoline for %s)", M_NAME(z));
+                } else {
+                        // Guarded fast path for user-defined classes (no trampoline)
+                        jit_emit_mov(asm, BC_A0, BC_TY);
+                        jit_emit_add_imm(asm, BC_A1, BC_OPS, result_off);
+                        jit_emit_add_imm(asm, BC_A2, BC_OPS, self_off);
+                        jit_emit_load_imm(asm, BC_A3, (iptr)baked_method);
+                        jit_emit_load_imm(asm, BC_A4, PACK32(recv_cls->i, z));
+                        jit_emit_load_imm(asm, BC_A5, n);
+                        jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_call_self_method_guarded);
+                        jit_emit_call_reg(asm, BC_CALL);
+                }
+        } else {
+                // Generic path with fast dispatch
+                jit_emit_mov(asm, BC_A0, BC_TY);
+                jit_emit_add_imm(asm, BC_A1, BC_OPS, result_off);  // result
+                jit_emit_add_imm(asm, BC_A2, BC_OPS, self_off);    // self
+                jit_emit_load_imm(asm, BC_A3, z);
+                jit_emit_load_imm(asm, BC_A4, n);
+                jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_call_method_fast);
+                jit_emit_call_reg(asm, BC_CALL);
+                DBG("CALL_METHOD (generic fast path)");
+        }
+
+        // Pop self + n args, push result
+        ctx->sp -= n; // was n+1 slots (args+self), now 1 slot (result)
+
+        DBG("CALL_METHOD[%s]", M_NAME(z));
+}
+
 // Main bytecode emission pass
 static bool
 bc_emit(JitBcCtx *ctx, char const *code, int code_size)
@@ -2991,6 +3082,8 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
         Symbol **captures = vv(expr_of(ctx->func)->scope->captured);
         Symbol  **globals = vv(*compiler_globals(ctx->ty));
 
+        TypeHintVector const *hints = &expr_of(ctx->func)->type_hints;
+
         Type *ARRAY_TYPE = class_get(ty, CLASS_ARRAY)->object_type;
 
 #define BC_READ(var)  do { __builtin_memcpy(&var, ip, sizeof var); ip += sizeof var; } while (0)
@@ -3005,6 +3098,11 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
 
         while (ip < end) {
                 int off = (int)(ip - code);
+
+                Type *hint0 = find_type_hint(hints, off);
+                if (hint0 != NULL) {
+                        ctx->op_types[ctx->sp - 1] = hint0;
+                }
 
                 // If this offset is a jump target, emit label and sync sp + save_sp
                 int lbl = bc_find_label(ctx, off);
@@ -3632,7 +3730,7 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
 
                         // Try type-guided fast path using local type info
                         Type *t0 = ctx->op_types[ctx->sp - 1];
-                        Class *obj_class = expected_class_of(t0);
+                        Class *obj_class = expected_class_of(ctx->ty, t0);
 
                         bool emitted_fast = false;
                         if (obj_class != NULL) {
@@ -3695,10 +3793,6 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                                 jit_emit_call_reg(asm, BC_CALL);
                         }
                         
-                        if (t0 != NULL) {
-                                ctx->op_types[ctx->sp - 1] =
-                                        type_member_access_t(ctx->ty, t0, M_NAME(z), false);
-                        }
                         DBG("MEMBER_ACCESS");
                         break;
                 }
@@ -3726,11 +3820,6 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                         jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_member);
                         jit_emit_call_reg(asm, BC_CALL);
 
-                        if (t0 != NULL) {
-                                ctx->op_types[ctx->sp - 1] =
-                                        type_member_access_t(ctx->ty, t0, M_NAME(z), false);
-                        }
-
                         DBG("SELF_MEMBER_ACCESS");
                         break;
                 }
@@ -3748,7 +3837,7 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                                 // TARGET_MEMBER pops obj, ASSIGN peeks val (doesn't pop)
 
                                 // Try type-guided fast path
-                                Class *obj_class = expected_class_of(ctx->op_types[ctx->sp - 1]);
+                                Class *obj_class = expected_class_of(ctx->ty, ctx->op_types[ctx->sp - 1]);
 
                                 bool wrote_fast = false;
                                 if (obj_class != NULL) {
@@ -3930,7 +4019,6 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
 
                         // Pop fn + n args, push result
                         ctx->sp -= n; // was n+1 slots (args+fn), now 1 slot (result)
-                        ctx->op_types[ctx->sp - 1] = expected_return_type_of(f0);
                         DBG("CALL");
                         break;
                 }
@@ -3943,112 +4031,11 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                         BC_READ(nkw);
                         for (int q = 0; q < nkw; ++q) BC_SKIPSTR();
 
-                        DBG("CALL_METHOD[%s]: n=%d, z=%d, nkw=%d", M_NAME(z), n, z, nkw);
-
-                        EMIT_SET_CALL_IP(op_ip);
-
                         if (nkw > 0 || n == -1) {
                                 BAIL("CALL_METHOD with kwargs/spread not supported");
                         }
 
-                        // VM stack layout: [... arg0 arg1 ... argN-1 self]
-                        // self is at ops[sp-1] (top), args at ops[sp-1-n..sp-2]
-
-                        // Try to resolve method at compile time using receiver type info
-                        Class *receiver_class = expected_class_of(ctx->op_types[ctx->sp - 1]);
-
-                        // Try builtin type fast path (String, Array, Dict, Blob)
-                        int builtin_vtype = -1;
-                        BuiltinMethod *builtin_method = (receiver_class != NULL)
-                                ? bc_resolve_builtin_method(receiver_class, z, &builtin_vtype)
-                                : NULL;
-
-                        // Try object method baking (for user-defined classes)
-                        Value *baked_method = (receiver_class != NULL && builtin_method == NULL)
-                                ? bc_resolve_method(ctx, receiver_class, z)
-                                : NULL;
-
-                        // self is at ops[sp-1], result goes where args+self were
-                        int self_off = OP_OFF(ctx->sp - 1);
-                        int result_off = OP_OFF(ctx->sp - 1 - n); // replaces args+self with result
-
-                        if (builtin_method != NULL) {
-                                // Direct builtin call with type guard
-                                jit_emit_mov(asm, BC_A0, BC_TY);
-                                jit_emit_add_imm(asm, BC_A1, BC_OPS, result_off);
-                                jit_emit_add_imm(asm, BC_A2, BC_OPS, self_off);
-                                jit_emit_load_imm(asm, BC_A3, (iptr)builtin_method);
-                                jit_emit_load_imm(asm, BC_A4, PACK32(builtin_vtype, z));
-                                jit_emit_load_imm(asm, BC_A5, n);
-                                jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_call_builtin_method);
-                                jit_emit_call_reg(asm, BC_CALL);
-                                DBG("CALL_METHOD (builtin fast path for %s)", M_NAME(z));
-                        } else if (baked_method != NULL) {
-                                // Check if the baked method is simple enough for fast trampoline
-                                bool can_tramp = (rest_idx_of(baked_method) == -1)
-                                              && (kwargs_idx_of(baked_method) == -1);
-                                if (can_tramp) {
-                                        // Fast trampoline path: skip xcall entirely
-                                        // Sync to sp-1 (exclude self): callee's fp = vN - argc
-                                        // must land on arg0, which is at op position sp-1-n
-                                        jit_emit_sync_stack_count(asm, ctx->bound, ctx->sp - 1);
-
-                                        jit_emit_mov(asm, BC_A0, BC_TY);
-                                        jit_emit_add_imm(asm, BC_A1, BC_OPS, self_off);
-                                        jit_emit_load_imm(asm, BC_A2, (iptr)baked_method);
-                                        jit_emit_load_imm(asm, BC_A3, receiver_class->i);
-                                        jit_emit_load_imm(asm, BC_A4, n);
-                                        jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_baked_call);
-                                        jit_emit_call_reg(asm, BC_CALL);
-
-                                        int lbl_cm_done = bc_next_label(ctx);
-
-                                        // If return 1: handled (result on stack), skip slow path
-                                        jit_emit_cbnz(asm, BC_RET, lbl_cm_done);
-
-                                        // Slow fallback: guard failed or not JIT'd
-                                        jit_emit_mov(asm, BC_A0, BC_TY);
-                                        jit_emit_add_imm(asm, BC_A1, BC_OPS, result_off);
-                                        jit_emit_add_imm(asm, BC_A2, BC_OPS, self_off);
-                                        jit_emit_load_imm(asm, BC_A3, (iptr)baked_method);
-                                        jit_emit_load_imm(asm, BC_A4, PACK32(receiver_class->i, z));
-                                        jit_emit_load_imm(asm, BC_A5, n);
-                                        jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_call_self_method_guarded);
-                                        jit_emit_call_reg(asm, BC_CALL);
-
-                                        jit_emit_label(asm, lbl_cm_done);
-                                        DBG("CALL_METHOD (baked trampoline for %s)", M_NAME(z));
-                                } else {
-                                        // Guarded fast path for user-defined classes (no trampoline)
-                                        jit_emit_mov(asm, BC_A0, BC_TY);
-                                        jit_emit_add_imm(asm, BC_A1, BC_OPS, result_off);
-                                        jit_emit_add_imm(asm, BC_A2, BC_OPS, self_off);
-                                        jit_emit_load_imm(asm, BC_A3, (iptr)baked_method);
-                                        jit_emit_load_imm(asm, BC_A4, PACK32(receiver_class->i, z));
-                                        jit_emit_load_imm(asm, BC_A5, n);
-                                        jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_call_self_method_guarded);
-                                        jit_emit_call_reg(asm, BC_CALL);
-                                }
-                        } else {
-                                // Generic path with fast dispatch
-                                jit_emit_mov(asm, BC_A0, BC_TY);
-                                jit_emit_add_imm(asm, BC_A1, BC_OPS, result_off);  // result
-                                jit_emit_add_imm(asm, BC_A2, BC_OPS, self_off);    // self
-                                jit_emit_load_imm(asm, BC_A3, z);
-                                jit_emit_load_imm(asm, BC_A4, n);
-                                jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_call_method_fast);
-                                jit_emit_call_reg(asm, BC_CALL);
-                                DBG("CALL_METHOD (generic fast path)");
-                        }
-                        // Pop self + n args, push result
-                        ctx->sp -= n; // was n+1 slots (args+self), now 1 slot (result)
-                        if (baked_method != NULL) {
-                                Expr *meth = expr_of(baked_method);
-                                ctx->op_types[ctx->sp - 1] = (meth != NULL)
-                                                           ? expected_return_type_of(meth->_type)
-                                                           : NULL;
-                        }
-                        DBG("CALL_METHOD[%s]", M_NAME(z));
+                        bc_emit_call_method(ctx, op_ip, z, n, nkw);
                         break;
                 }
 
@@ -4068,13 +4055,14 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
 
                         // Try builtin type fast path (String, Array, Dict, Blob)
                         int builtin_vtype = -1;
-                        BuiltinMethod *builtin_method =
-                                bc_resolve_builtin_method(ctx->self_class, z, &builtin_vtype);
+                        BuiltinMethod *builtin_method = bc_resolve_builtin_method(
+                                ctx->self_class,
+                                z,
+                                &builtin_vtype
+                        );
 
                         // Try object method baking (for user-defined classes)
-                        Value *baked_method = (builtin_method == NULL)
-                                ? bc_resolve_method(ctx, ctx->self_class, z)
-                                : NULL;
+                        Value *baked_method = bc_resolve_method(ctx, ctx->self_class, z);
 
                         // For CALL_SELF_METHOD, self is implicit (not on operand stack).
                         // Operand stack: [...][arg0][arg1]...[argN-1]
@@ -4113,13 +4101,10 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                                 jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_call_method);
                                 jit_emit_call_reg(asm, BC_CALL);
                         }
+
                         // n args consumed, 1 result produced
                         ctx->sp -= (n - 1);
                         if (ctx->sp > ctx->max_sp) ctx->max_sp = ctx->sp;
-                        Expr *meth = FindMethod(ctx->self_class, M_NAME(z));
-                        ctx->op_types[ctx->sp - 1] = (meth != NULL)
-                                                   ? expected_return_type_of(meth->_type)
-                                                   : NULL;
                         break;
                 }
 
@@ -4195,8 +4180,6 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                         ctx->sp++;
                         if (ctx->sp > ctx->max_sp) ctx->max_sp = ctx->sp;
 
-                        Type *r0 = expected_return_type_of(globals[gi]->type);
-                        ctx->op_types[ctx->sp - 1] = r0;
                         DBG("CALL_GLOBAL(%s)", VSC(vm_global(ty, gi)));
                         break;
                 }
@@ -4263,8 +4246,6 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                 CASE(VALUE) {
                         uptr p;
                         BC_READ(p);
-                        // p is a pointer to a Value stored at compile time
-                        // Use S2, not S0 (bc_copy_value clobbers S0/S1)
                         jit_emit_load_imm(asm, BC_S2, (iptr)p);
                         bc_push_from(ctx, BC_S2, 0);
                         break;
@@ -4273,8 +4254,6 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                 CASE(TYPE) {
                         uptr p;
                         BC_READ(p);
-                        // TYPE pushes a Type* as a value
-                        // Build TYPE value on operand stack
                         int off = OP_OFF(ctx->sp);
                         jit_emit_load_imm(asm, BC_S0, 0);
                         jit_emit_stp64(asm, BC_S0, BC_S0, BC_OPS, off);
@@ -4283,6 +4262,22 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                         jit_emit_strb(asm, BC_S0, BC_OPS, off + VAL_OFF_TYPE);
                         jit_emit_load_imm(asm, BC_S0, (iptr)p);
                         jit_emit_str64(asm, BC_S0, BC_OPS, off + VAL_OFF_Z);
+                        ctx->sp++;
+                        if (ctx->sp > ctx->max_sp) ctx->max_sp = ctx->sp;
+                        break;
+                }
+
+                CASE(REGEX) {
+                        uptr p;
+                        BC_READ(p);
+                        int off = OP_OFF(ctx->sp);
+                        jit_emit_load_imm(asm, BC_S0, 0);
+                        jit_emit_stp64(asm, BC_S0, BC_S0, BC_OPS, off);
+                        jit_emit_stp64(asm, BC_S0, BC_S0, BC_OPS, off + 16);
+                        jit_emit_load_imm(asm, BC_S0, VALUE_REGEX);
+                        jit_emit_strb(asm, BC_S0, BC_OPS, off + VAL_OFF_TYPE);
+                        jit_emit_load_imm(asm, BC_S0, (iptr)p);
+                        jit_emit_str64(asm, BC_S0, BC_OPS, off + VAL_OFF_REGEX);
                         ctx->sp++;
                         if (ctx->sp > ctx->max_sp) ctx->max_sp = ctx->sp;
                         break;
@@ -4612,7 +4607,7 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                         int lbl_done = bc_next_label(ctx);
 
                         Type *t0 = type_resolve_var(ctx->op_types[ctx->sp - 2]);
-                        Class *c = expected_class_of(t0);
+                        Class *c = expected_class_of(ctx->ty, t0);
 
                         // Fast path: array[int]
                         if (c == NULL || c->i == CLASS_ARRAY) {
@@ -4659,14 +4654,6 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
 
                         jit_emit_label(asm, lbl_done);
                         ctx->sp--;
-                        if (
-                                (TypeType(t0) == TYPE_OBJECT)
-                             && (vN(t0->args) > 0)
-                        ) {
-                                ctx->op_types[ctx->sp - 1] = v__(t0->args, 0);
-                        } else {
-                                ctx->op_types[ctx->sp - 1] = NULL;
-                        }
                         break;
                 }
 
@@ -4855,6 +4842,10 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                         ctx->op_types[ctx->sp - 1] = TYPE_FLOAT;
                         break;
                 }
+
+                CASE(SLICE)
+                        bc_emit_call_method(ctx, code + off, NAMES.slice, 3, -1);
+                        break;
 
                 // --- CMP (three-way compare) ---
                 CASE(CMP)

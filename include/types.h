@@ -331,6 +331,9 @@ unify2(Ty *ty, Type **t0, Type *t1);
 Type *
 type_resolve_var(Type const *t0);
 
+Class *
+type_guess_class_of(Ty *ty, Type const *t0);
+
 void
 type_intersect(Ty *ty, Type **t0, Type *t1);
 
