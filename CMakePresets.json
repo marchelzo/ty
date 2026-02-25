@@ -120,11 +120,11 @@
             }
         },
         {
-            "name": "msvc2022",
+            "name": "msvc2026",
             "inherits": "base-windows",
-            "displayName": "Visual Studio 2022 - amd64 - Release",
-            "description": "Using compilers for Visual Studio 17 2022",
-            "generator": "Visual Studio 17 2022",
+            "displayName": "Visual Studio 2026 - amd64 - Release",
+            "description": "Using compilers for Visual Studio 18 2026",
+            "generator": "Visual Studio 18 2026",
             "toolset": "host=x64",
             "architecture": "x64",
             "cacheVariables": {
@@ -133,19 +133,19 @@
             }
         },
         {
-            "name": "msvc2022-debug",
-            "inherits": "msvc2022",
-            "displayName": "Visual Studio 2022 - amd64 - Debug",
+            "name": "msvc2026-debug",
+            "inherits": "msvc2026",
+            "displayName": "Visual Studio 2026 - amd64 - Debug",
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "Debug"
             }
         },
         {
-            "name": "msvc2022-shared",
-            "inherits": "msvc2022",
-            "displayName": "Visual Studio 2022 - amd64 - Release (.dll dependencies)",
-            "description": "Using compilers for Visual Studio 17 2022",
-            "generator": "Visual Studio 17 2022",
+            "name": "msvc2026-shared",
+            "inherits": "msvc2026",
+            "displayName": "Visual Studio 2026 - amd64 - Release (.dll dependencies)",
+            "description": "Using compilers for Visual Studio 18 2026",
+            "generator": "Visual Studio 18 2026",
             "toolset": "host=x64",
             "architecture": "x64",
             "cacheVariables": {
@@ -153,9 +153,9 @@
             }
         },
         {
-            "name": "msvc2022-shared-debug",
-            "inherits": "msvc2022-shared",
-            "displayName": "Visual Studio 2022 - amd64 - Debug (.dll dependencies)",
+            "name": "msvc2026-shared-debug",
+            "inherits": "msvc2026-shared",
+            "displayName": "Visual Studio 2026 - amd64 - Debug (.dll dependencies)",
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "Debug"
             }
@@ -212,31 +212,31 @@
             "configuration": "Debug"
         },
         {
-            "name": "msvc2022",
+            "name": "msvc2026",
             "inherits": "base-build-windows",
-            "displayName": "Visual Studio 2022 - amd64 - Release",
-            "configurePreset": "msvc2022",
+            "displayName": "Visual Studio 2026 - amd64 - Release",
+            "configurePreset": "msvc2026",
             "configuration": "Release"
         },
         {
-            "name": "msvc2022-debug",
+            "name": "msvc2026-debug",
             "inherits": "base-build-windows",
-            "displayName": "Visual Studio 2022 - amd64 - Debug",
-            "configurePreset": "msvc2022-debug",
+            "displayName": "Visual Studio 2026 - amd64 - Debug",
+            "configurePreset": "msvc2026-debug",
             "configuration": "Debug"
         },
         {
-            "name": "msvc2022-shared",
+            "name": "msvc2026-shared",
             "inherits": "base-build-windows",
-            "displayName": "Visual Studio  2022 - amd64 - Release (.dll dependencies)",
-            "configurePreset": "msvc2022-shared",
+            "displayName": "Visual Studio  2026 - amd64 - Release (.dll dependencies)",
+            "configurePreset": "msvc2026-shared",
             "configuration": "Release"
         },
         {
-            "name": "msvc2022-shared-debug",
+            "name": "msvc2026-shared-debug",
             "inherits": "base-build-windows",
-            "displayName": "Visual Studio  2022 - amd64 - Debug (.dll dependencies)",
-            "configurePreset": "msvc2022-shared-debug",
+            "displayName": "Visual Studio  2026 - amd64 - Debug (.dll dependencies)",
+            "configurePreset": "msvc2026-shared-debug",
             "configuration": "Debug"
         },
         {
@@ -314,27 +314,27 @@
             ]
         },
         {
-            "name": "msvc2022",
+            "name": "msvc2026",
             "inherits": "base-package-windows",
-            "configurePreset": "msvc2022"
+            "configurePreset": "msvc2026"
         },
         {
-            "name": "msvc2022-debug",
+            "name": "msvc2026-debug",
             "inherits": "base-package-windows",
-            "configurePreset": "msvc2022-debug",
+            "configurePreset": "msvc2026-debug",
             "configurations": [
                 "Debug"
             ]
         },
         {
-            "name": "msvc2022-shared",
+            "name": "msvc2026-shared",
             "inherits": "base-package-windows",
-            "configurePreset": "msvc2022-shared"
+            "configurePreset": "msvc2026-shared"
         },
         {
-            "name": "msvc2022-shared-debug",
+            "name": "msvc2026-shared-debug",
             "inherits": "base-package-windows",
-            "configurePreset": "msvc2022-shared-debug",
+            "configurePreset": "msvc2026-shared-debug",
             "configurations": [
                 "Debug"
             ]
@@ -378,54 +378,54 @@
             ]
         },
         {
-            "name": "msvc2022",
+            "name": "msvc2026",
             "steps": [
                 {
                     "type": "configure",
-                    "name": "msvc2022"
+                    "name": "msvc2026"
                 },
                 {
                     "type": "build",
-                    "name": "msvc2022"
+                    "name": "msvc2026"
                 }
             ]
         },
         {
-            "name": "msvc2022-debug",
+            "name": "msvc2026-debug",
             "steps": [
                 {
                     "type": "configure",
-                    "name": "msvc2022-debug"
+                    "name": "msvc2026-debug"
                 },
                 {
                     "type": "build",
-                    "name": "msvc2022-debug"
+                    "name": "msvc2026-debug"
                 }
             ]
         },
         {
-            "name": "msvc2022-shared",
+            "name": "msvc2026-shared",
             "steps": [
                 {
                     "type": "configure",
-                    "name": "msvc2022-shared"
+                    "name": "msvc2026-shared"
                 },
                 {
                     "type": "build",
-                    "name": "msvc2022-shared"
+                    "name": "msvc2026-shared"
                 }
             ]
         },
         {
-            "name": "msvc2022-shared-debug",
+            "name": "msvc2026-shared-debug",
             "steps": [
                 {
                     "type": "configure",
-                    "name": "msvc2022-shared-debug"
+                    "name": "msvc2026-shared-debug"
                 },
                 {
                     "type": "build",
-                    "name": "msvc2022-shared-debug"
+                    "name": "msvc2026-shared-debug"
                 }
             ]
         },
