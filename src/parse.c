@@ -662,7 +662,7 @@ inline static Token *
 (tokenx)(Ty *ty, int i)
 {
         int n    = abs(i);
-        int step = i / n;
+        int step = (n == 0) ? 1 : (i / n);
 
         if (i >= 0) while (invisible(ty, tokenxx(ty, 0))) {
                 TokenIndex += 1;
