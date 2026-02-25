@@ -1,4 +1,4 @@
-import os (..)
+import os hiding (listen)
 import errno
 
 class GAIError < RuntimeError {

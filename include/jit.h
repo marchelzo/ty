@@ -1,6 +1,8 @@
 #ifndef JIT_H_INCLUDED
 #define JIT_H_INCLUDED
 
+#include <stdio.h>
+
 #include "ty.h"
 #include "value.h"
 #include "ast.h"
@@ -38,6 +40,12 @@ jit_compile(Ty *ty, Value const *func);
 // Free JIT resources
 void
 jit_free(Ty *ty);
+
+#ifdef TY_PROFILER
+// Print JIT stats report (compilation info, fast/slow paths, top slow sites)
+void
+jit_stats_report(Ty *ty, FILE *out);
+#endif
 
 inline static JitFn *
 try_jit(Ty *ty, Value const *f)

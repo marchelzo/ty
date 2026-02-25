@@ -339,6 +339,13 @@ DoGeq(Ty *ty);
 
 #define VM_TRY() (setjmp(vm_push_try(ty)->jb) == 0)
 
+#ifdef TY_PROFILER
+void
+jit_profiler_tick(Ty *ty, char const *ip);
+
+extern u64 ProfileSampleInterval;
+#endif
+
 #endif
 
 /* vim: set sts=8 sw=8 expandtab: */

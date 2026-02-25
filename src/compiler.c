@@ -172,14 +172,14 @@ enum {
 
 #define JUMP(loc)                                                          \
         do {                                                               \
-                annotate("%sL%d%s", TERM(95), (loc).label + 1, TERM(0));   \
+                annotate("%sL%d%s", TERM1(95), (loc).label + 1, TERM1(0)); \
                 INSN(JUMP);                                                \
                 Ei32((loc).off - vN(STATE.code) - sizeof (int));           \
         } while (0)
 
 #define JUMP_IF_NOT(loc)                                                   \
         do {                                                               \
-                annotate("%sL%d%s", TERM(95), (loc).label + 1, TERM(0));   \
+                annotate("%sL%d%s", TERM1(95), (loc).label + 1, TERM1(0)); \
                 INSN(JUMP_IF_NOT);                                         \
                 Ei32((loc).off - vN(STATE.code) - sizeof (int));           \
         } while (0)
@@ -18255,7 +18255,7 @@ DumpProgram(
                 i64 max_ticks, total_ticks;
                 istat_count(&prof, &max_ticks, &total_ticks);
 
-                if (*PTERM(0)) {
+                if (*TERM(0)) {
                         color_sequence(stat == NULL ? 0.0 : 0.75 * stat->t / (double)max_ticks, color_buffer);
                 }
 

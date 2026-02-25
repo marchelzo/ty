@@ -206,6 +206,9 @@ ValueVector Globals;
         atomic_load_explicit(&ty->group->WantGC, memory_order_relaxed)
 
 #ifdef TY_PROFILER
+static void
+ProfileReport(Ty *ty);
+
 bool UseWallTime = false;
 FILE *ProfileOut = NULL;
 
@@ -282,9 +285,6 @@ CompareProfileEntriesByLocation(void const *a_, void const *b_)
         return 0;
 }
 
-static void
-ProfileReport(Ty *ty);
-
 static _Thread_local char *LastIP;
 static _Thread_local u64 LastThreadTime;
 static _Thread_local u64 LastThreadGCTime;
@@ -295,6 +295,89 @@ istat prof;
 
 static bool WantReport = false;
 static int64_t LastReportRequest;
+
+u64 ProfileSampleInterval = 0;
+static _Thread_local i32 ProfileCountdown = 0;
+static _Thread_local i32 ProfileCalibrate = 100;
+
+/*
+ * Records a sample for `prev_ip` (the instruction whose time we're measuring),
+ * then sets LastIP = `next_ip` (the instruction about to execute).
+ *
+ * `prev_ip == NULL` => skip recording (used by vm_exec for synthetic IPs).
+ *
+ * Returns true if the slow path ran (sample was considered), false if
+ * the countdown fast-path returned early.
+ */
+inline static bool
+profiler_tick(Ty *ty, char const *prev_ip, char const *next_ip)
+{
+        if (Samples == NULL) return false;
+
+        if (ProfileSampleInterval > 0 && --ProfileCountdown > 0) {
+                return false;
+        }
+
+        u64 now = TyThreadTime();
+
+        if (LastThreadGCTime > 0) {
+                if (ProfileSampleInterval == 0) {
+                        Value *count = dict_put_key_if_not_exists(
+                                ty,
+                                FuncSamples,
+                                PTR((void *)GC_ENTRY)
+                        );
+                        if (count->type == VALUE_NIL) {
+                                *count = INTEGER(LastThreadGCTime);
+                        } else {
+                                count->z += LastThreadGCTime;
+                        }
+                }
+                LastThreadGCTime = 0;
+        }
+
+        if (prev_ip != NULL && LastThreadTime != 0) {
+                u64 dt = now - LastThreadTime;
+
+                TySpinLockLock(&ProfileMutex);
+
+                istat_add(&prof, prev_ip, dt);
+
+                Value *count = dict_put_key_if_not_exists(ty, Samples, PTR(prev_ip));
+                if (count->type == VALUE_NIL) {
+                        *count = INTEGER(dt);
+                } else {
+                        count->z += dt;
+                }
+
+                int *func = (ty->st.frames.count > 0) ? ActiveFun(ty)->info : NULL;
+                count = dict_put_key_if_not_exists(ty, FuncSamples, PTR(func));
+                if (count->type == VALUE_NIL) {
+                        *count = INTEGER(dt);
+                } else {
+                        count->z += dt;
+                }
+
+                TySpinLockUnlock(&ProfileMutex);
+
+                if (ProfileSampleInterval > 0 && dt > 0) {
+                        i32 cal = (i32)((u64)ProfileCalibrate * ProfileSampleInterval / dt);
+                        ProfileCalibrate = (cal < 1) ? 1 : (cal > 1000000) ? 1000000 : cal;
+                }
+        }
+
+        LastIP = (char *)next_ip;
+        LastThreadTime = now;
+        ProfileCountdown = ProfileCalibrate;
+
+        return true;
+}
+
+void
+jit_profiler_tick(Ty *ty, char const *ip)
+{
+        profiler_tick(ty, LastIP, ip);
+}
 #endif
 
 #if !defined(TY_RELEASE)
@@ -5843,57 +5926,24 @@ vm_exec(Ty *ty, char *code)
 NextInstruction:
                 CheckFlags(ty);
 #ifdef TY_PROFILER
-                if (Samples != NULL) {
-                        u64 now = TyThreadTime();
+                {
+                        char *prev = LastIP;
 
-                        if (LastThreadGCTime > 0) {
-                                Value *count = dict_put_key_if_not_exists(ty, FuncSamples, PTR((void *)GC_ENTRY));
-                                if (count->type == VALUE_NIL) {
-                                        *count = INTEGER(LastThreadGCTime);
-                                } else {
-                                        count->z += LastThreadGCTime;
-                                }
-                                LastThreadGCTime = 0;
+                        if (prev == StartIPLocal
+                            || (prev != NULL && (*prev == INSTR_HALT
+                                || prev == next_fix  || prev == iter_fix
+                                || prev == next_fix + 1 || prev == iter_fix + 1
+                                || prev == &throw)))
+                        {
+                                prev = NULL;
                         }
 
-                        if (StartIPLocal != LastIP && LastThreadTime != 0 && *LastIP != INSTR_HALT &&
-                            LastIP != next_fix && LastIP != iter_fix && LastIP != next_fix + 1 &&
-                            LastIP != iter_fix + 1 && LastIP != &throw) {
-
-                                u64 dt = now - LastThreadTime;
-
-                                TySpinLockLock(&ProfileMutex);
-
-                                istat_add(&prof, LastIP, dt);
-
-                                Value *count = dict_put_key_if_not_exists(ty, Samples, PTR(LastIP));
-                                if (count->type == VALUE_NIL) {
-                                        *count = INTEGER(dt);
-                                } else {
-                                        count->z += dt;
-                                }
-
-                                int *func = (FRAMES.count > 0) ? ActiveFun(ty)->info : NULL;
-                                count = dict_put_key_if_not_exists(ty, FuncSamples, PTR(func));
-                                if (count->type == VALUE_NIL) {
-                                        *count = INTEGER(dt);
-                                } else {
-                                        count->z += dt;
-                                }
-
-                                TySpinLockUnlock(&ProfileMutex);
-                        }
-
-                        if (WantReport) {
+                        if (profiler_tick(ty, prev, IP) && WantReport) {
                                 TySpinLockLock(&ProfileMutex);
                                 ProfileReport(ty);
                                 TySpinLockUnlock(&ProfileMutex);
                                 WantReport = false;
                         }
-
-                        LastIP = IP;
-                        LastThreadTime = TyThreadTime();
-
                 }
 #endif
                 //XXLOG("stack=%zu, instruction = %s", vN(STACK), GetInstructionName(*IP));
@@ -8892,6 +8942,11 @@ ProfileReport(Ty *ty)
         fputc('\n', ProfileOut);
 
 #endif
+
+#if !defined(TY_NO_JIT)
+        jit_stats_report(ty, ProfileOut);
+#endif
+
         fputc('\n', ProfileOut);
 }
 
@@ -9166,10 +9221,6 @@ vm_execute(Ty *ty, char const *source, char const *file)
 
         TY_IS_READY = true;
         vm_exec(ty, ty->code);
-
-#ifdef TY_PROFILER
-        ProfileReport(ty);
-#endif
 
         if (PrintResult && vC(STACK) > 0) {
                 vN(STACK) += 1;

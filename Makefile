@@ -56,10 +56,6 @@ ifdef NO_JIT
 	CFLAGS += -DTY_NO_JIT
 endif
 
-ifdef JIT_STATS
-	CFLAGS += -DJIT_STATS=1
-endif
-
 TEST_FILTER ?= "."
 
 PROG := ty
@@ -101,7 +97,7 @@ else
 	CFLAGS += -O1
 endif
 
-ifdef TY_PROFILER
+ifdef PROF
 	CFLAGS += -DTY_PROFILER
 endif
 

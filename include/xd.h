@@ -26,7 +26,7 @@
 
 #define PTERM(n) (ColorProfile ? ("\x1b[" #n "m") : "")
 #define TERM1(n) (ColorStdout  ? ("\x1b[" #n "m") : "")
-#define TERM(n)  (ColorStderr  ? ("\x1b[" #n "m") : "")
+#define TERM(n)  (ColorOutput  ? ("\x1b[" #n "m") : "")
 
 #define SWAP(t, a, b) do { t _swap_tmp_ = a; a = b; b = _swap_tmp_; } while (0)
 

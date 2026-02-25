@@ -931,10 +931,12 @@ value_show_colorx(Ty *ty, Value const *v, u32 flags)
                         snprintf(
                                 buffer,
                                 SHOW_BUF_SZ,
-                                "%s<func %s%s%s>%s",
+                                "%s<func %s%s%s%s%s>%s",
                                 TERM(96),
                                 TERM(92),
                                 name_of(v),
+                                TERM(95),
+                                (jit_of(v) != NULL) ? " [jit]" : "",
                                 TERM(96),
                                 TERM(0)
                         );
@@ -943,11 +945,13 @@ value_show_colorx(Ty *ty, Value const *v, u32 flags)
                         snprintf(
                                 buffer,
                                 SHOW_BUF_SZ,
-                                "%s<func %s%s.%s%s>%s",
+                                "%s<func %s%s.%s%s%s%s>%s",
                                 TERM(96),
                                 TERM(92),
                                 class,
                                 name_of(v),
+                                TERM(95),
+                                (jit_of(v) != NULL) ? " [jit]" : "",
                                 TERM(96),
                                 TERM(0)
                         );

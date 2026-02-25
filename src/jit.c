@@ -107,13 +107,10 @@ JitInfo *jit_compile(Ty *ty, Value const *func) { (void)ty; (void)func; return N
 #define OFF_JIT_PEND_ENV  offsetof(Ty, jit._env)
 
 // ============================================================================
-// Fast-path statistics (compile with -DJIT_STATS=1 to enable)
+// Fast-path statistics (enabled by TY_PROFILER / make PROF=1)
 // ============================================================================
-#ifndef JIT_STATS
-#define JIT_STATS 0
-#endif
 
-#if JIT_STATS
+#ifdef TY_PROFILER
 static struct {
         _Atomic u64 member_fast;
         _Atomic u64 member_slow;
@@ -173,6 +170,39 @@ typedef struct {
 } SlowPathSite;
 
 static SlowPathSite slow_table[SLOW_TABLE_SIZE];
+
+// ============================================================================
+// JIT compilation tracking
+// ============================================================================
+
+typedef struct {
+        char const *name;
+        char const *class_name;
+        Expr const *expr;
+        size_t native_size;
+        u64 compile_time_ns;
+        int bc_code_size;
+} JitCompileRecord;
+
+static vec(JitCompileRecord) jit_compile_log = {0};
+static u64 jit_total_compile_ns = 0;
+static size_t jit_total_native_bytes = 0;
+
+inline static u64
+jit_wall_time(void)
+{
+        struct timespec t;
+        clock_gettime(CLOCK_MONOTONIC, &t);
+        return 1000000000ULL * t.tv_sec + t.tv_nsec;
+}
+
+static int
+jit_compile_cmp(void const *a, void const *b)
+{
+        u64 ta = ((JitCompileRecord const *)a)->compile_time_ns;
+        u64 tb = ((JitCompileRecord const *)b)->compile_time_ns;
+        return (tb > ta) - (tb < ta);
+}
 
 static inline void
 slow_record_type(SlowPathSite *s, int class_id)
@@ -268,105 +298,262 @@ slow_cmp(void const *a, void const *b)
         return (cb > ca) - (cb < ca);
 }
 
-__attribute__((destructor)) static void jit_stats_print(void) {
-  Ty *ty = &vvv;
+static void
+fmt_size(char *buf, size_t sz, size_t bytes)
+{
+        if (bytes >= 1024 * 1024)
+                snprintf(buf, sz, "%.1f MB", bytes / (1024.0 * 1024.0));
+        else if (bytes >= 1024)
+                snprintf(buf, sz, "%.1f KB", bytes / 1024.0);
+        else
+                snprintf(buf, sz, "%zu B", bytes);
+}
 
-  /* Compute slow-path totals from per-site table */
-  u64 slow_totals[SLOW_KIND_COUNT] = {0};
-  for (int i = 0; i < SLOW_TABLE_SIZE; ++i) {
-          if (slow_table[i].ip != NULL && slow_table[i].count > 0) {
-                  slow_totals[slow_table[i].kind] += slow_table[i].count;
-          }
-  }
+static void
+fmt_time(char *buf, size_t sz, u64 ns)
+{
+        if (ns >= 1000000000ULL)
+                snprintf(buf, sz, "%.2f s", ns / 1e9);
+        else if (ns >= 1000000ULL)
+                snprintf(buf, sz, "%.2f ms", ns / 1e6);
+        else if (ns >= 1000ULL)
+                snprintf(buf, sz, "%.1f us", ns / 1e3);
+        else
+                snprintf(buf, sz, "%llu ns", (unsigned long long)ns);
+}
 
-  /* Merge in counts from C runtime helpers (non-guarded paths) */
-  slow_totals[SLOW_MEMBER_ACCESS] += jit_stats.member_slow;
-  slow_totals[SLOW_MEMBER_SET]    += jit_stats.member_set_slow;
-  slow_totals[SLOW_CALL_METHOD]   += jit_stats.call_method_slow;
+static void
+pct_bar(FILE *out, double pct, int width)
+{
+        char const *color;
 
-#define FAST_PCT(fast, slow) \
-  ((fast) + (slow)) ? 100.0 * (fast) / ((fast) + (slow)) : 0.0
+        if (pct >= 99.0)      color = PTERM(92);
+        else if (pct >= 95.0) color = PTERM(32);
+        else if (pct >= 80.0) color = PTERM(93);
+        else if (pct >= 50.0) color = PTERM(33);
+        else                  color = PTERM(91);
 
-  fprintf(stderr,
-          "\n=== JIT Fast-Path Stats ===\n"
-          "  member_access:    fast=%-8llu  slow=%-8llu  (%.1f%% fast)\n"
-          "  member_set:       fast=%-8llu  slow=%-8llu  (%.1f%% fast)\n"
-          "  self_member_read: fast=%-8llu  slow=%-8llu  (%.1f%% fast)\n"
-          "  self_member_write:fast=%-8llu  slow=%-8llu  (%.1f%% fast)\n"
-          "  call_method:      baked=%-7llu  builtin=%-5llu  "
-          "slow=%-8llu\n"
-          "  jeq/jne:          int=%-9llu  str=%-9llu  nil=%-9llu  slow=%-8llu\n"
-          "  jlt/jgt/jle/jge:  int=%-9llu  slow=%-8llu\n",
-          (unsigned long long)jit_stats.member_fast,
-          (unsigned long long)slow_totals[SLOW_MEMBER_ACCESS],
-          FAST_PCT((double)jit_stats.member_fast, (double)slow_totals[SLOW_MEMBER_ACCESS]),
-          (unsigned long long)jit_stats.member_set_fast,
-          (unsigned long long)slow_totals[SLOW_MEMBER_SET],
-          FAST_PCT((double)jit_stats.member_set_fast, (double)slow_totals[SLOW_MEMBER_SET]),
-          (unsigned long long)jit_stats.self_member_read_fast,
-          (unsigned long long)slow_totals[SLOW_SELF_MEMBER_READ],
-          FAST_PCT((double)jit_stats.self_member_read_fast, (double)slow_totals[SLOW_SELF_MEMBER_READ]),
-          (unsigned long long)jit_stats.self_member_write_fast,
-          (unsigned long long)slow_totals[SLOW_SELF_MEMBER_WRITE],
-          FAST_PCT((double)jit_stats.self_member_write_fast, (double)slow_totals[SLOW_SELF_MEMBER_WRITE]),
-          (unsigned long long)jit_stats.call_method_baked,
-          (unsigned long long)jit_stats.call_method_builtin,
-          (unsigned long long)slow_totals[SLOW_CALL_METHOD],
-          (unsigned long long)jit_stats.jeq_int,
-          (unsigned long long)jit_stats.jeq_str,
-          (unsigned long long)jit_stats.jeq_nil,
-          (unsigned long long)slow_totals[SLOW_JEQ],
-          (unsigned long long)jit_stats.jcmp_int,
-          (unsigned long long)slow_totals[SLOW_JCMP]);
+        int filled = (int)(pct / 100.0 * width + 0.5);
+        if (filled > width) filled = width;
 
-  /* Collect non-empty entries and sort by count */
-  SlowPathSite sorted[SLOW_TABLE_SIZE];
-  int n = 0;
-  for (int i = 0; i < SLOW_TABLE_SIZE; ++i) {
-          if (slow_table[i].ip != NULL && slow_table[i].count > 0) {
-                  sorted[n++] = slow_table[i];
-          }
-  }
+        fprintf(out, "%s", color);
+        for (int i = 0; i < filled; ++i) fputc('|', out);
+        fprintf(out, "%s", PTERM(0));
+        for (int i = filled; i < width; ++i) fputc(' ', out);
+}
 
-  if (n == 0) return;
+static void
+fast_path_row(FILE *out, char const *label, u64 fast, u64 slow)
+{
+        u64 total = fast + slow;
+        if (total == 0) return;
+        double pct = 100.0 * fast / total;
 
-  qsort(sorted, n, sizeof sorted[0], slow_cmp);
+        fprintf(out, "   %-20s %12llu  %12llu   %s%5.1f%%%s  ",
+                label,
+                (unsigned long long)fast,
+                (unsigned long long)slow,
+                pct >= 95.0 ? PTERM(92) : pct >= 80.0 ? PTERM(93) : PTERM(91),
+                pct,
+                PTERM(0));
+        pct_bar(out, pct, 20);
+        fputc('\n', out);
+}
 
-  int show = n < 25 ? n : 25;
+void
+jit_stats_report(Ty *ty, FILE *out)
+{
+        /* ====== Section 1: JIT compilation summary ====== */
+        int ncompiled = vN(jit_compile_log);
 
-  fprintf(stderr, "\n=== Top %d Slow-Path Sites ===\n", show);
+        if (ncompiled > 0) {
+                char time_buf[32], size_buf[32];
+                fmt_time(time_buf, sizeof time_buf, jit_total_compile_ns);
+                fmt_size(size_buf, sizeof size_buf, jit_total_native_bytes);
 
-  for (int i = 0; i < show; ++i) {
-          SlowPathSite *s = &sorted[i];
-          Expr const *e = compiler_find_expr(ty, s->ip);
+                fprintf(out, "%s======= JIT summary =======%s\n\n",
+                        PTERM(95), PTERM(0));
 
-          fprintf(stderr, "  %2d. [%-18s] %8llu hits",
-                  i + 1,
-                  slow_kind_names[s->kind],
-                  (unsigned long long)s->count);
+                fprintf(out, "   Compiled: %s%d%s functions  (%s%s%s compile time, %s%s%s native code)\n\n",
+                        PTERM(1), ncompiled, PTERM(0),
+                        PTERM(93), time_buf, PTERM(0),
+                        PTERM(93), size_buf, PTERM(0));
 
-          if (e && e->mod && e->mod->path) {
-                  fprintf(stderr, "  %s:%u:%u",
-                          e->mod->path, e->start.line + 1, e->start.col + 1);
-          }
+                /* Sort by compile time descending */
+                qsort(vv(jit_compile_log), ncompiled,
+                      sizeof(JitCompileRecord), jit_compile_cmp);
 
-          /* Print operand type breakdown */
-          bool first = true;
-          for (int j = 0; j < SLOW_MAX_TYPES; ++j) {
-                  if (s->types[j].count == 0) continue;
-                  if (first) {
-                          fprintf(stderr, "  types: ");
-                          first = false;
-                  } else {
-                          fprintf(stderr, ", ");
-                  }
-                  fprintf(stderr, "%s=%llu",
-                          class_name(ty, s->types[j].class_id),
-                          (unsigned long long)s->types[j].count);
-          }
+                fprintf(out, "   %s%-4s  %-36s %8s  %8s  %5s  %9s%s\n",
+                        PTERM(90),
+                        "#", "Function", "BC", "Native", "Ratio", "Compile",
+                        PTERM(0));
 
-          fprintf(stderr, "\n");
-  }
+                int show = ncompiled < 20 ? ncompiled : 20;
+                for (int i = 0; i < show; ++i) {
+                        JitCompileRecord *r = &vv(jit_compile_log)[i];
+                        char tbuf[32], nbuf[32], bbuf[32];
+                        fmt_time(tbuf, sizeof tbuf, r->compile_time_ns);
+                        fmt_size(nbuf, sizeof nbuf, r->native_size);
+                        fmt_size(bbuf, sizeof bbuf, r->bc_code_size);
+
+                        double ratio = r->bc_code_size > 0
+                                ? (double)r->native_size / r->bc_code_size
+                                : 0.0;
+
+                        char fname[48];
+                        if (r->class_name[0])
+                                snprintf(fname, sizeof fname, "%s.%s", r->class_name, r->name);
+                        else
+                                snprintf(fname, sizeof fname, "%s", r->name);
+
+                        fprintf(out, "   %s%-4d%s  %s%-36s%s %8s  %8s  %s%4.1fx%s  %9s\n",
+                                PTERM(90), i + 1, PTERM(0),
+                                PTERM(34), fname, PTERM(0),
+                                bbuf, nbuf,
+                                ratio > 6.0 ? PTERM(91) : ratio > 3.0 ? PTERM(93) : PTERM(92),
+                                ratio, PTERM(0),
+                                tbuf);
+                }
+
+                if (ncompiled > show)
+                        fprintf(out, "   %s... and %d more%s\n", PTERM(90), ncompiled - show, PTERM(0));
+
+                fputc('\n', out);
+        }
+
+        /* ====== Section 2: Fast-path stats ====== */
+        u64 slow_totals[SLOW_KIND_COUNT] = {0};
+        for (int i = 0; i < SLOW_TABLE_SIZE; ++i) {
+                if (slow_table[i].ip != NULL && slow_table[i].count > 0) {
+                        slow_totals[slow_table[i].kind] += slow_table[i].count;
+                }
+        }
+
+        slow_totals[SLOW_MEMBER_ACCESS] += jit_stats.member_slow;
+        slow_totals[SLOW_MEMBER_SET]    += jit_stats.member_set_slow;
+        slow_totals[SLOW_CALL_METHOD]   += jit_stats.call_method_slow;
+
+        u64 total_fast = jit_stats.member_fast + jit_stats.member_set_fast
+                       + jit_stats.self_member_read_fast + jit_stats.self_member_write_fast
+                       + jit_stats.call_method_baked + jit_stats.call_method_builtin
+                       + jit_stats.jeq_int + jit_stats.jeq_str + jit_stats.jeq_nil
+                       + jit_stats.jcmp_int;
+        u64 total_slow = 0;
+        for (int i = 0; i < SLOW_KIND_COUNT; ++i) total_slow += slow_totals[i];
+
+        if (total_fast + total_slow > 0) {
+                fprintf(out, "%s======= JIT fast paths =======%s\n\n",
+                        PTERM(95), PTERM(0));
+
+                fprintf(out, "   %s%-20s %12s  %12s   %6s%s\n",
+                        PTERM(90),
+                        "Operation", "Fast", "Slow", "Fast %",
+                        PTERM(0));
+
+                fast_path_row(out, "member_access",     jit_stats.member_fast,            slow_totals[SLOW_MEMBER_ACCESS]);
+                fast_path_row(out, "member_set",         jit_stats.member_set_fast,         slow_totals[SLOW_MEMBER_SET]);
+                fast_path_row(out, "self_member_read",   jit_stats.self_member_read_fast,   slow_totals[SLOW_SELF_MEMBER_READ]);
+                fast_path_row(out, "self_member_write",  jit_stats.self_member_write_fast,  slow_totals[SLOW_SELF_MEMBER_WRITE]);
+
+                /* call_method has 3 categories, not a simple fast/slow */
+                u64 cm_fast = jit_stats.call_method_baked + jit_stats.call_method_builtin;
+                u64 cm_slow = slow_totals[SLOW_CALL_METHOD];
+                if (cm_fast + cm_slow > 0) {
+                        double pct = 100.0 * cm_fast / (cm_fast + cm_slow);
+                        fprintf(out, "   %-20s %s%12llu%s  %12llu   %s%5.1f%%%s  ",
+                                "call_method",
+                                PTERM(34),
+                                (unsigned long long)cm_fast,
+                                PTERM(0),
+                                (unsigned long long)cm_slow,
+                                pct >= 95.0 ? PTERM(92) : pct >= 80.0 ? PTERM(93) : PTERM(91),
+                                pct,
+                                PTERM(0));
+                        pct_bar(out, pct, 20);
+                        fprintf(out, "\n      %sbaked=%llu  builtin=%llu%s\n",
+                                PTERM(90),
+                                (unsigned long long)jit_stats.call_method_baked,
+                                (unsigned long long)jit_stats.call_method_builtin,
+                                PTERM(0));
+                }
+
+                fast_path_row(out, "eq/ne", jit_stats.jeq_int + jit_stats.jeq_str + jit_stats.jeq_nil, slow_totals[SLOW_JEQ]);
+                if (jit_stats.jeq_int + jit_stats.jeq_str + jit_stats.jeq_nil + slow_totals[SLOW_JEQ] > 0) {
+                        fprintf(out, "      %sint=%llu  str=%llu  nil=%llu%s\n",
+                                PTERM(90),
+                                (unsigned long long)jit_stats.jeq_int,
+                                (unsigned long long)jit_stats.jeq_str,
+                                (unsigned long long)jit_stats.jeq_nil,
+                                PTERM(0));
+                }
+
+                fast_path_row(out, "cmp", jit_stats.jcmp_int, slow_totals[SLOW_JCMP]);
+
+                fputc('\n', out);
+        }
+
+        /* ====== Section 3: Top slow-path sites ====== */
+        SlowPathSite sorted[SLOW_TABLE_SIZE];
+        int n = 0;
+        for (int i = 0; i < SLOW_TABLE_SIZE; ++i) {
+                if (slow_table[i].ip != NULL && slow_table[i].count > 0) {
+                        sorted[n++] = slow_table[i];
+                }
+        }
+
+        if (n > 0) {
+                qsort(sorted, n, sizeof sorted[0], slow_cmp);
+
+                int show = n < 20 ? n : 20;
+
+                fprintf(out, "%s======= top slow-path sites =======%s\n\n",
+                        PTERM(95), PTERM(0));
+
+                for (int i = 0; i < show; ++i) {
+                        SlowPathSite *s = &sorted[i];
+                        Expr const *e = compiler_find_expr(ty, s->ip);
+
+                        fprintf(out, "   %s%2d.%s  [%s%-18s%s] %s%8llu%s hits",
+                                PTERM(90), i + 1, PTERM(0),
+                                PTERM(34), slow_kind_names[s->kind], PTERM(0),
+                                PTERM(1), (unsigned long long)s->count, PTERM(0));
+
+                        if (e && e->mod && e->mod->path) {
+                                fprintf(out, "  %s%s:%u:%u%s",
+                                        PTERM(94),
+                                        e->mod->path,
+                                        e->start.line + 1,
+                                        e->start.col + 1,
+                                        PTERM(0));
+                        }
+
+                        fputc('\n', out);
+
+                        /* Type breakdown on next line */
+                        bool has_types = false;
+                        for (int j = 0; j < SLOW_MAX_TYPES; ++j) {
+                                if (s->types[j].count > 0) { has_types = true; break; }
+                        }
+
+                        if (has_types) {
+                                fprintf(out, "       %stypes:%s ", PTERM(90), PTERM(0));
+                                bool first = true;
+                                for (int j = 0; j < SLOW_MAX_TYPES; ++j) {
+                                        if (s->types[j].count == 0) continue;
+                                        if (!first) fprintf(out, ", ");
+                                        first = false;
+                                        fprintf(out, "%s%s%s=%llu",
+                                                PTERM(93),
+                                                class_name(ty, s->types[j].class_id),
+                                                PTERM(0),
+                                                (unsigned long long)s->types[j].count);
+                                }
+                                fputc('\n', out);
+                        }
+                }
+
+                fputc('\n', out);
+        }
 }
 
 #define STAT(name) (++jit_stats.name)
@@ -3208,6 +3395,13 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                 jit_emit_reload_stack(asm, ctx->bound);
                 EMIT_SP_SYNC();
 
+#ifdef TY_PROFILER
+                jit_emit_mov(asm, BC_A0, BC_TY);
+                jit_emit_load_imm(asm, BC_A1, (iptr)(code + off));
+                jit_emit_load_imm(asm, BC_CALL, (iptr)jit_profiler_tick);
+                jit_emit_call_reg(asm, BC_CALL);
+#endif
+
                 u8 op = (u8)*ip++;
 
 #if JIT_SCAN_LOG
@@ -6038,6 +6232,10 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
 JitInfo *
 jit_compile(Ty *ty, Value const *func)
 {
+#ifdef TY_PROFILER
+        u64 compile_t0 = jit_wall_time();
+#endif
+
         i32 const *info = func->info;
         int code_size   = info[FUN_INFO_CODE_SIZE];
         int bound       = info[FUN_INFO_BOUND];
@@ -6213,6 +6411,22 @@ jit_compile(Ty *ty, Value const *func)
 #if JIT_SCAN_LOG
         LOGX("JIT[bc]: compiled %s (%d params, %d bound, %zu bytes native)",
             name, param_count, bound, final_size);
+#endif
+
+#ifdef TY_PROFILER
+        {
+                u64 dt = jit_wall_time() - compile_t0;
+                jit_total_compile_ns += dt;
+                jit_total_native_bytes += final_size;
+                xvP(jit_compile_log, ((JitCompileRecord) {
+                        .name = name,
+                        .class_name = clsn,
+                        .expr = expr_of(func),
+                        .native_size = final_size,
+                        .compile_time_ns = dt,
+                        .bc_code_size = code_size,
+                }));
+        }
 #endif
 
         return ji;
