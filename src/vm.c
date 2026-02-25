@@ -1107,6 +1107,15 @@ vm_jit_bind_method(Ty *ty, Value *f, Value *v)
         return BindMethod(ty, f, v);
 }
 
+void
+vm_jit_fail(Ty *ty, Value *top, char *ip)
+{
+        XXX("jit_fail");
+        vN(STACK) = top - vv(STACK);
+        vm_exec(ty, ip);
+        UNREACHABLE();
+}
+
 static bool
 co_yield_value(Ty *ty);
 
@@ -4999,13 +5008,11 @@ DoStringLiteral(Ty *ty, i32 i)
         );
 }
 
-static void
-DoDictLiteral(Ty *ty, Value const *dflt)
+void
+DoDictLiteral(Ty *ty, i32 n, Value const *dflt)
 {
         Dict *dict = dict_new(ty);
         Value val  = DICT(dict);
-
-        usize n = (vN(STACK) - *vvX(SP_STACK));
 
         gP(&val);
 
@@ -5390,12 +5397,6 @@ vm_jit_loop_check(Ty *ty, int z)
         }
 
         return false;
-}
-
-void
-vm_jit_dict_literal(Ty *ty, Value *dflt)
-{
-        DoDictLiteral(ty, dflt);
 }
 
 inline static void
@@ -6880,12 +6881,14 @@ TargetMember:
                         break;
 
                 CASE(DICT)
-                        DoDictLiteral(ty, NULL);
+                        n = vN(STACK) - *vvX(SP_STACK);
+                        DoDictLiteral(ty, n, NULL);
                         break;
 
                 CASE(DEFAULT_DICT)
                         value = pop();
-                        DoDictLiteral(ty, &value);
+                        n = vN(STACK) - *vvX(SP_STACK);
+                        DoDictLiteral(ty, n, &value);
                         break;
 
                 CASE(NIL)
