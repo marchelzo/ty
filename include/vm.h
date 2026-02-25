@@ -275,7 +275,10 @@ bool
 vm_jit_loop_check(Ty *ty, int z);
 
 void
-vm_jit_dict_literal(Ty *ty, Value *dflt);
+vm_jit_fail(Ty *ty, Value *top, char *ip);
+
+void
+DoDictLiteral(Ty *ty, i32 n, Value const *dflt);
 
 void
 DoSubscript(Ty *ty, bool exec);

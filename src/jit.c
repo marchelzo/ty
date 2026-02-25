@@ -40,15 +40,19 @@
 #define VAL_OFF_CLASS   offsetof(Value, class)   // u16 class (for VALUE_CLASS / VALUE_OBJECT)
 #define VAL_OFF_OBJECT  offsetof(Value, object)  // void *object (for VALUE_OBJECT)
 #define VAL_OFF_COUNT   offsetof(Value, count)   // i32 count (for VALUE_TUPLE)
+#define VAL_OFF_ITEMS   offsetof(Value, items)   // Value *items (for VALUE_TUPLE)
 #define VAL_OFF_REF     offsetof(Value, ref)     // Value *ref (for VALUE_REF)
 #define VAL_OFF_REGEX   offsetof(Value, regex)   // Regex *regex (for VALUE_REGEX)
 #define VAL_OFF_STR     offsetof(Value, str)     // u8 const *str (for VALUE_STRING)
 #define VAL_OFF_BYTES   offsetof(Value, bytes)   // u32 bytes (for VALUE_STRING)
+#define VAL_OFF_UOP     offsetof(Value, uop)
+#define VAL_OFF_BOP     offsetof(Value, bop)
 
 #define OFF_TY_STACK  offsetof(Ty, stack)
 #define OFF_TY_ST     offsetof(Ty, st)
 #define OFF_TY_TLS    offsetof(Ty, tls)
 #define OFF_ST_FRAMES offsetof(co_state, frames)
+#define OFF_ST_RC     offsetof(co_state, rc)
 #define OFF_FRAME_FP  offsetof(Frame, fp)
 #define OFF_VEC_DATA  offsetof(ValueVector, items)
 #define OFF_VEC_LEN   offsetof(ValueVector, count)
@@ -1151,15 +1155,21 @@ jit_rt_call_static_method(Ty *ty, Value *result, int class_id, int argc, int met
         *result = *vm_pop(ty);
 }
 
-// DEFAULT_DICT: pop default value, create dict with default
 static void
-jit_rt_default_dict(Ty *ty, Value *dflt, Value *from)
+jit_rt_default_dict(Ty *ty, Value *top, i32 n)
 {
-        ptrdiff_t sp0 = (from - vv(ty->stack));
-        ptrdiff_t idx = (dflt - vv(ty->stack));
-        xvP(ty->st.sps, sp0);
-        vN(ty->stack) = idx + 1;
-        vm_jit_dict_literal(ty, dflt);
+        ptrdiff_t idx = top - vv(ty->stack);
+        vN(ty->stack) = idx;
+        Value dflt = vXx(ty->stack);
+        DoDictLiteral(ty, n, &dflt);
+}
+
+static void
+jit_rt_dict(Ty *ty, Value *top, i32 n)
+{
+        ptrdiff_t idx = top - vv(ty->stack);
+        vN(ty->stack) = idx;
+        DoDictLiteral(ty, n, NULL);
 }
 
 // LOOP_ITER: push SENTINEL, RC=0, IterGetNext
@@ -1566,6 +1576,7 @@ bc_prescan(JitBcCtx *ctx, char const *code, int code_size)
                 case INSTR_THROW_IF_NIL:
                 case INSTR_THROW:
                 case INSTR_NONE:
+                case INSTR_SENTINEL:
                 case INSTR_RETURN_IF_NOT_NONE:
                 case INSTR_TO_STRING:
                 case INSTR_SLICE:
@@ -1606,6 +1617,11 @@ bc_prescan(JitBcCtx *ctx, char const *code, int code_size)
                         break;
 
                 case INSTR_STRING:
+                        BC_SKIP(i32);
+                        break;
+
+                case INSTR_OPERATOR:
+                        BC_SKIP(i32);
                         BC_SKIP(i32);
                         break;
 
@@ -1676,7 +1692,8 @@ bc_prescan(JitBcCtx *ctx, char const *code, int code_size)
                         break;
 
                 case INSTR_LOAD_THREAD_LOCAL:
-                        return false; // not supported in JIT
+                        BC_SKIP(i32);
+                        break;
 
                 case INSTR_LOAD_GLOBAL:
                         BC_SKIP(i32);
@@ -1826,6 +1843,10 @@ bc_prescan(JitBcCtx *ctx, char const *code, int code_size)
                         BC_SKIP(i32); // z
                         break;
 
+                case INSTR_PUSH_TUPLE_ELEM:
+                        BC_SKIP(i32);
+                        break;
+
                 case INSTR_INDEX_TUPLE: {
                         i32 jump_off;
                         BC_READ(jump_off);
@@ -1903,6 +1924,8 @@ bc_prescan(JitBcCtx *ctx, char const *code, int code_size)
                 }
 
                 case INSTR_LOOP_ITER:
+                case INSTR_CLEAR_RC:
+                case INSTR_DICT:
                 case INSTR_DEFAULT_DICT:
                         break;
 
@@ -3359,16 +3382,44 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                         bc_push_nil(ctx);
                         break;
 
-                CASE(NONE) {
-                        // Push NONE value (type = VALUE_NONE)
+                CASE(SENTINEL) {
                         int dst = OP_OFF(ctx->sp);
-                        jit_emit_load_imm(asm, BC_S0, VALUE_NONE);
+                        jit_emit_load_imm(asm, BC_S0, VALUE_SENTINEL);
                         jit_emit_strb(asm, BC_S0, BC_OPS, dst + VAL_OFF_TYPE);
-                        // Zero out the rest
                         jit_emit_load_imm(asm, BC_S0, 0);
                         jit_emit_str64(asm, BC_S0, BC_OPS, dst + 8);
                         jit_emit_str64(asm, BC_S0, BC_OPS, dst + 16);
                         jit_emit_str64(asm, BC_S0, BC_OPS, dst + 24);
+                        ctx->sp++;
+                        if (ctx->sp > ctx->max_sp) ctx->max_sp = ctx->sp;
+                        break;
+                }
+
+                CASE(NONE) {
+                        int dst = OP_OFF(ctx->sp);
+                        jit_emit_load_imm(asm, BC_S0, VALUE_NONE);
+                        jit_emit_strb(asm, BC_S0, BC_OPS, dst + VAL_OFF_TYPE);
+                        jit_emit_load_imm(asm, BC_S0, 0);
+                        jit_emit_str64(asm, BC_S0, BC_OPS, dst + 8);
+                        jit_emit_str64(asm, BC_S0, BC_OPS, dst + 16);
+                        jit_emit_str64(asm, BC_S0, BC_OPS, dst + 24);
+                        ctx->sp++;
+                        if (ctx->sp > ctx->max_sp) ctx->max_sp = ctx->sp;
+                        break;
+                }
+
+                CASE(OPERATOR) {
+                        int u_op;
+                        int b_op;
+                        BC_READ(u_op);
+                        BC_READ(b_op);
+                        int dst = OP_OFF(ctx->sp);
+                        jit_emit_load_imm(asm, BC_S0, VALUE_OPERATOR);
+                        jit_emit_strb(asm, BC_S0, BC_OPS, dst + VAL_OFF_TYPE);
+                        jit_emit_load_imm(asm, BC_S0, u_op);
+                        jit_emit_str32(asm, BC_S0, BC_OPS, dst + VAL_OFF_UOP);
+                        jit_emit_load_imm(asm, BC_S0, b_op);
+                        jit_emit_str32(asm, BC_S0, BC_OPS, dst + VAL_OFF_BOP);
                         ctx->sp++;
                         if (ctx->sp > ctx->max_sp) ctx->max_sp = ctx->sp;
                         break;
@@ -5325,6 +5376,30 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                         break;
                 }
 
+                CASE(PUSH_TUPLE_ELEM) {
+                        i32 idx;
+                        BC_READ(idx);
+                        int lbl_fail = bc_next_label(ctx);
+                        int lbl_done = bc_next_label(ctx);
+                        jit_emit_ldrb(asm, BC_S0, BC_OPS, OP_OFF(ctx->sp - 1) + VAL_OFF_TYPE);
+                        jit_emit_cmp_ri(asm, BC_S0, VALUE_TUPLE);
+                        jit_emit_branch_ne(asm, lbl_fail);
+                        jit_emit_ldr32(asm, BC_S0, BC_OPS, OP_OFF(ctx->sp - 1) + VAL_OFF_COUNT);
+                        jit_emit_cmp_ri(asm, BC_S0, idx);
+                        jit_emit_branch_le(asm, lbl_fail);
+                        jit_emit_ldr64(asm, BC_S3, BC_OPS, OP_OFF(ctx->sp - 1) + VAL_OFF_ITEMS);
+                        bc_push_from(ctx, BC_S3, idx * sizeof (Value));
+                        jit_emit_jump(asm, lbl_done);
+                        jit_emit_label(asm, lbl_fail);
+                        jit_emit_mov(asm, BC_A0, BC_TY);
+                        jit_emit_add_imm(asm, BC_A1, BC_OPS, OP_OFF(ctx->sp - 1));
+                        jit_emit_load_imm(asm, BC_A2, (iptr)(code + off));
+                        jit_emit_load_imm(asm, BC_CALL, (iptr)vm_jit_fail);
+                        jit_emit_call_reg(asm, BC_CALL);
+                        jit_emit_label(asm, lbl_done);
+                        break;
+                }
+
                 // --- INDEX_TUPLE ---
                 CASE(INDEX_TUPLE) {
                         int jump_off;
@@ -5576,7 +5651,13 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                         break;
                 }
 
-                // --- LOOP_ITER ---
+                CASE(CLEAR_RC) {
+                        // ty->st.rc = 0;
+                        jit_emit_load_imm(asm, BC_S0, 0);
+                        jit_emit_str32(asm, BC_S0, BC_TY, (int)offsetof(Ty, st.rc));
+                        break;
+                }
+
                 CASE(GET_NEXT) {
                         BAIL("GET_NEXT not supported (use LOOP_ITER/LOOP_CHECK)");
                         return false;
@@ -5627,20 +5708,35 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                         break;
                 }
 
-                // --- DEFAULT_DICT ---
+                CASE(DICT) {
+                        if (ctx->save_sp_top < 0) {
+                                if (ctx->dead) break;
+                                BAIL("DICT stack underflow");
+                        }
+                        int saved = ctx->save_sp_stack[ctx->save_sp_top--];
+                        int count = ctx->sp - saved;
+                        jit_emit_mov(asm, BC_A0, BC_TY);
+                        jit_emit_add_imm(asm, BC_A1, BC_OPS, OP_OFF(ctx->sp));
+                        jit_emit_load_imm(asm, BC_A2, count);
+                        jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_dict);
+                        jit_emit_call_reg(asm, BC_CALL);
+                        ctx->sp = saved + 1;
+                        break;
+                }
+
                 CASE(DEFAULT_DICT) {
-                        int dflt_off = OP_OFF(ctx->sp - 1);
                         if (ctx->save_sp_top < 0) {
                                 if (ctx->dead) break;
                                 BAIL("DEFAULT_DICT stack underflow");
                         }
-                        ctx->sp = ctx->save_sp_stack[ctx->save_sp_top--];
+                        int saved = ctx->save_sp_stack[ctx->save_sp_top--];
+                        int count = ctx->sp - 1 - saved;
                         jit_emit_mov(asm, BC_A0, BC_TY);
-                        jit_emit_add_imm(asm, BC_A1, BC_OPS, dflt_off);
-                        jit_emit_add_imm(asm, BC_A2, BC_OPS, OP_OFF(ctx->sp));
+                        jit_emit_add_imm(asm, BC_A1, BC_OPS, OP_OFF(ctx->sp));
+                        jit_emit_load_imm(asm, BC_A2, count);
                         jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_default_dict);
                         jit_emit_call_reg(asm, BC_CALL);
-                        ctx->sp++;
+                        ctx->sp = saved + 1;
                         break;
                 }
 
