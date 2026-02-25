@@ -5,7 +5,7 @@ macro upper(def) {
     ty.FuncDef({*f, body: $$[ $$(f.body).upper() $$]})
 }
 
-@{upper}
+@upper
 function f() {
     'pass'
 }

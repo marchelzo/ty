@@ -1326,7 +1326,6 @@ typedef struct {
 
         // Track which local each operand stack slot came from (-1 = unknown)
         // Used to look up types for CALL_METHOD/MEMBER_ACCESS fast paths
-        int op_local[MAX_BC_OPS];
         Type *op_types[MAX_BC_OPS];
 
         // Label map: bytecode offset => DynASM label + expected sp + save_sp state
@@ -2240,9 +2239,10 @@ jit_rt_call_builtin_method(Ty *ty, Value *result, Value *self,
                 vN(ty->stack) = idx + argc;
                 gP(&_self);
                 Value val = (*func)(ty, &_self, argc, NULL);
+                vN(ty->stack) = idx + 1;
+                v_L(ty->stack) = val;
                 vm_check_flags(ty);
                 gX();
-                *v_(ty->stack, idx) = val;
         } else {
                 STAT(call_method_slow);
                 SLOW_RECORD(ty, jit_stats_call_ip, SLOW_CALL_METHOD, &_self, NULL);
@@ -2257,8 +2257,9 @@ jit_rt_call_builtin_function(Ty *ty, Value *result, BuiltinFunction *func, int a
         ptrdiff_t idx = (result - vv(ty->stack));
         vN(ty->stack) = idx + argc;
         Value val = func(ty, argc, NULL);
+        vN(ty->stack) = idx + 1;
+        v_L(ty->stack) = val;
         vm_check_flags(ty);
-        *v_(ty->stack, idx) = val;
 }
 
 static void
@@ -2312,8 +2313,8 @@ bc_copy_value(JitBcCtx *ctx, int dst_reg, int dst_off, int src_reg, int src_off)
         int da = dst_reg, do0 = dst_off, do1 = dst_off + 16;
 
         // Detect register conflicts between fixup targets and direct operands:
-        //   src fixup writes BC_S2 — conflicts if dst_reg == BC_S2 and dst is direct
-        //   dst fixup writes BC_S3 — conflicts if src_reg == BC_S3 and src is direct
+        //   src fixup writes BC_S2; conflicts if dst_reg == BC_S2 and dst is direct
+        //   dst fixup writes BC_S3; conflicts if src_reg == BC_S3 and src is direct
         // Fix: force the direct side into its scratch reg first to save the base.
         if (src_direct && src_reg == BC_S3 && !dst_direct) {
                 jit_emit_add_imm(asm, BC_S2, src_reg, src_off);
@@ -2361,7 +2362,6 @@ static void
 bc_push_from(JitBcCtx *ctx, int src_reg, int src_off)
 {
         bc_copy_value(ctx, BC_OPS, OP_OFF(ctx->sp), src_reg, src_off);
-        ctx->op_local[ctx->sp] = -1; // default: unknown origin
         ctx->sp++;
         if (ctx->sp > ctx->max_sp) ctx->max_sp = ctx->sp;
 }
@@ -3234,8 +3234,6 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
 #endif
                         bc_push_from(ctx, BC_LOC, n * VALUE_SIZE);
 
-                        // Track which local this came from (for type-guided fast paths)
-                        ctx->op_local[ctx->sp - 1] = n;
                         ctx->op_types[ctx->sp - 1] = locals[n]->type;
 
                         DBG("LOAD_LOCAL %s%s%s (%d)", TERM(93;1), locals[n]->identifier, TERM(0), n);
@@ -6077,7 +6075,6 @@ jit_compile(Ty *ty, Value const *func)
         ctx.label_capacity = MAX_BC_LABELS;
         ctx.label_count = 0;
         ctx.save_sp_top = -1;
-        memset(ctx.op_local, -1, sizeof ctx.op_local);
 
         // Extract type information for fast paths
         ctx.func_type = NULL;
