@@ -11212,8 +11212,8 @@ TypeCheckXD(Ty *ty, TypeCheckStack *stack, Type *t0, Value const *v)
                                 if (name == NULL) {
                                         goto End;
                                 }
-                                int id = M_ID(name);
-                                Value item = GetMember(ty, *v, id, false, true);
+                                vmP(v);
+                                Value item = GetMember(ty, M_ID(name), false, true);
                                 if (IsNone(item)) {
                                         if (!v__(t0->required, i)) {
                                                 continue;

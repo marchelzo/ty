@@ -212,7 +212,7 @@ fn print(*args: Any, sep: String = ', ', end: String = '\n', file: _, flush: Boo
 fn str(x: Any) -> String;
 fn int[a](x: a, base: ?Int) -> Int;
 fn float[a](x: a) -> Float;
-fn regex(pattern: String, flags: String = '') -> Regex;
+fn regex(pattern: String, flags: String = '') -> Regex & RegexV;
 fn min[...Ts](*xs: ...Ts) -> ...(Ts |) where (...(Ts |) <=> ...(Ts |)): Int;
 fn max[...Ts](*xs: ...Ts) -> ...(Ts |) where (...(Ts |) <=> ...(Ts |)): Int;
 fn fmt(str: String, *args: _);

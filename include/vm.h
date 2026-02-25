@@ -174,7 +174,7 @@ Value
 vm_make_range(Ty *ty, Value const *a, Value const *b, bool inclusive);
 
 Value
-GetMember(Ty *ty, Value v, int i, bool try_missing, bool exec);
+GetMember(Ty *ty, int i, bool try_missing, bool exec);
 
 Value
 CompleteCurrentFunction(Ty *ty);

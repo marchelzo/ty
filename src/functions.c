@@ -7467,8 +7467,9 @@ BUILTIN_FUNCTION(member)
         int id = M_ID(TY_TMP_C_STR(name));
 
         if (argc == 2) {
-                Value v = GetMember(ty, o, id, false, true);
-                return (v.type == VALUE_NONE) ? NIL : v;
+                vmP(&o);
+                Value v = GetMember(ty, id, false, true);
+                return !IsNone(v) ? v : NIL;
         } else if (o.type == VALUE_OBJECT) {
                 PutMember(o, id, ARG(2));
                 return ARG(2);

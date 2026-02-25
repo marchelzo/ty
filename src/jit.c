@@ -42,6 +42,8 @@
 #define VAL_OFF_COUNT   offsetof(Value, count)   // i32 count (for VALUE_TUPLE)
 #define VAL_OFF_REF     offsetof(Value, ref)     // Value *ref (for VALUE_REF)
 #define VAL_OFF_REGEX   offsetof(Value, regex)   // Regex *regex (for VALUE_REGEX)
+#define VAL_OFF_STR     offsetof(Value, str)     // u8 const *str (for VALUE_STRING)
+#define VAL_OFF_BYTES   offsetof(Value, bytes)   // u32 bytes (for VALUE_STRING)
 
 #define OFF_TY_STACK  offsetof(Ty, stack)
 #define OFF_TY_ST     offsetof(Ty, st)
@@ -94,11 +96,11 @@ JitInfo *jit_compile(Ty *ty, Value const *func) { (void)ty; (void)func; return N
 #else
 
 // JIT trampoline offsets
-#define OFF_JIT_RESUME    offsetof(Ty, jit.resume_idx)
+#define OFF_JIT_RESUME    offsetof(Ty, jit.idx)
 #define OFF_JIT_STATUS    offsetof(Ty, jit.status)
-#define OFF_JIT_SAVED_RES offsetof(Ty, jit.saved_resume_idx)
-#define OFF_JIT_PEND_FN   offsetof(Ty, jit.pending_fn)
-#define OFF_JIT_PEND_ENV  offsetof(Ty, jit.pending_env)
+#define OFF_JIT_SAVED_RES offsetof(Ty, jit._idx)
+#define OFF_JIT_PEND_FN   offsetof(Ty, jit._fn)
+#define OFF_JIT_PEND_ENV  offsetof(Ty, jit._env)
 
 // ============================================================================
 // Fast-path statistics (compile with -DJIT_STATS=1 to enable)
@@ -119,9 +121,9 @@ static struct {
         _Atomic u64 self_member_write_slow;
         _Atomic u64 call_method_baked;
         _Atomic u64 call_method_builtin;
-        _Atomic u64 call_method_fast_dispatch;
         _Atomic u64 call_method_slow;
         _Atomic u64 jeq_int;
+        _Atomic u64 jeq_str;
         _Atomic u64 jeq_nil;
         _Atomic u64 jeq_slow;
         _Atomic u64 jcmp_int;
@@ -152,9 +154,9 @@ static char const *slow_kind_names[] = {
         [SLOW_JCMP]              = "cmp",
 };
 
-#define SLOW_TABLE_SIZE  2048  /* must be power of 2 */
-#define SLOW_MAX_TYPES   8     /* top operand types tracked per site */
-#define SLOW_PROBE_LIMIT 8
+#define SLOW_TABLE_SIZE  4906   /* must be power of 2 */
+#define SLOW_MAX_TYPES   16     /* top operand types tracked per site */
+#define SLOW_PROBE_LIMIT 16
 
 typedef struct {
         char const *ip;        /* bytecode IP (NULL = empty slot) */
@@ -287,9 +289,9 @@ __attribute__((destructor)) static void jit_stats_print(void) {
           "  member_set:       fast=%-8llu  slow=%-8llu  (%.1f%% fast)\n"
           "  self_member_read: fast=%-8llu  slow=%-8llu  (%.1f%% fast)\n"
           "  self_member_write:fast=%-8llu  slow=%-8llu  (%.1f%% fast)\n"
-          "  call_method:      baked=%-7llu  builtin=%-5llu  fast_disp=%-5llu  "
+          "  call_method:      baked=%-7llu  builtin=%-5llu  "
           "slow=%-8llu\n"
-          "  jeq/jne:          int=%-9llu  nil=%-9llu  slow=%-8llu\n"
+          "  jeq/jne:          int=%-9llu  str=%-9llu  nil=%-9llu  slow=%-8llu\n"
           "  jlt/jgt/jle/jge:  int=%-9llu  slow=%-8llu\n",
           (unsigned long long)jit_stats.member_fast,
           (unsigned long long)slow_totals[SLOW_MEMBER_ACCESS],
@@ -305,9 +307,9 @@ __attribute__((destructor)) static void jit_stats_print(void) {
           FAST_PCT((double)jit_stats.self_member_write_fast, (double)slow_totals[SLOW_SELF_MEMBER_WRITE]),
           (unsigned long long)jit_stats.call_method_baked,
           (unsigned long long)jit_stats.call_method_builtin,
-          (unsigned long long)jit_stats.call_method_fast_dispatch,
           (unsigned long long)slow_totals[SLOW_CALL_METHOD],
           (unsigned long long)jit_stats.jeq_int,
+          (unsigned long long)jit_stats.jeq_str,
           (unsigned long long)jit_stats.jeq_nil,
           (unsigned long long)slow_totals[SLOW_JEQ],
           (unsigned long long)jit_stats.jcmp_int,
@@ -370,40 +372,41 @@ static void jit_rt_stat_member_set_fast(void)        { STAT(member_set_fast); }
 static void jit_rt_stat_self_member_read_fast(void)  { STAT(self_member_read_fast); }
 static void jit_rt_stat_self_member_write_fast(void) { STAT(self_member_write_fast); }
 static void jit_rt_stat_jeq_int(void)                { STAT(jeq_int); }
+static void jit_rt_stat_jeq_str(void)                { STAT(jeq_str); }
 static void jit_rt_stat_jeq_nil(void)                { STAT(jeq_nil); }
 static void jit_rt_stat_jcmp_int(void)               { STAT(jcmp_int); }
 
-#define EMIT_STAT(fn_ptr) do {                                        \
-        jit_emit_load_imm(asm, BC_CALL, (iptr)(fn_ptr));          \
-        jit_emit_call_reg(asm, BC_CALL);                              \
+#define EMIT_STAT(fn_ptr) do {                                         \
+        jit_emit_load_imm(asm, BC_CALL, (iptr)(fn_ptr));               \
+        jit_emit_call_reg(asm, BC_CALL);                               \
 } while (0)
 
 /* Emit a slow-path record call with 1 operand: jit_rt_slow1(ty, ip, kind, v) */
-#define EMIT_SLOW1(bc_ip, kind, val_reg, val_off) do {                \
-        jit_emit_mov(asm, BC_A0, BC_TY);                              \
-        jit_emit_load_imm(asm, BC_A1, (iptr)(bc_ip));             \
-        jit_emit_load_imm(asm, BC_A2, (kind));                    \
-        jit_emit_add_imm(asm, BC_A3, (val_reg), (val_off));          \
-        jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_slow1);     \
-        jit_emit_call_reg(asm, BC_CALL);                              \
+#define EMIT_SLOW1(bc_ip, kind, val_reg, val_off) do {                           \
+        jit_emit_mov(asm, BC_A0, BC_TY);                                         \
+        jit_emit_load_imm(asm, BC_A1, (iptr)(bc_ip));                            \
+        jit_emit_load_imm(asm, BC_A2, (kind));                                   \
+        jit_emit_add_imm(asm, BC_A3, (val_reg), (val_off));                      \
+        jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_slow1);                     \
+        jit_emit_call_reg(asm, BC_CALL);                                         \
 } while (0)
 
 /* Emit a slow-path record call with 2 operands: jit_rt_slow2(ty, ip, kind, a, b) */
-#define EMIT_SLOW2(bc_ip, kind, a_reg, a_off, b_reg, b_off) do {     \
-        jit_emit_mov(asm, BC_A0, BC_TY);                              \
-        jit_emit_load_imm(asm, BC_A1, (iptr)(bc_ip));             \
-        jit_emit_load_imm(asm, BC_A2, (kind));                    \
-        jit_emit_add_imm(asm, BC_A3, (a_reg), (a_off));              \
-        jit_emit_add_imm(asm, BC_A4, (b_reg), (b_off));              \
-        jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_slow2);     \
-        jit_emit_call_reg(asm, BC_CALL);                              \
+#define EMIT_SLOW2(bc_ip, kind, a_reg, a_off, b_reg, b_off) do {                     \
+        jit_emit_mov(asm, BC_A0, BC_TY);                                             \
+        jit_emit_load_imm(asm, BC_A1, (iptr)(bc_ip));                                \
+        jit_emit_load_imm(asm, BC_A2, (kind));                                       \
+        jit_emit_add_imm(asm, BC_A3, (a_reg), (a_off));                              \
+        jit_emit_add_imm(asm, BC_A4, (b_reg), (b_off));                              \
+        jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_slow2);                         \
+        jit_emit_call_reg(asm, BC_CALL);                                             \
 } while (0)
 
 /* Store bytecode IP in TLS before calling a runtime helper that has no room for an IP arg */
-#define EMIT_SET_CALL_IP(bc_ip) do {                                  \
-        jit_emit_load_imm(asm, BC_A0, (iptr)(bc_ip));             \
-        jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_set_call_ip);\
-        jit_emit_call_reg(asm, BC_CALL);                              \
+#define EMIT_SET_CALL_IP(bc_ip) do {                                   \
+        jit_emit_load_imm(asm, BC_A0, (iptr)(bc_ip));                  \
+        jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_set_call_ip);     \
+        jit_emit_call_reg(asm, BC_CALL);                               \
 } while (0)
 
 /* Record slow path in C runtime helpers (call_method paths) */
@@ -419,12 +422,12 @@ static void jit_rt_stat_jcmp_int(void)               { STAT(jcmp_int); }
 #endif
 
 #if JIT_RT_DEBUG
-#define DBG(fmt, ...) do {                                                                 \
-        jit_emit_mov(asm, BC_A0, BC_TY);                                                 \
-        jit_emit_load_imm(asm, BC_A1, ctx->sp);                                          \
-        jit_emit_load_imm(asm, BC_A2, ((iptr)xfmt(fmt __VA_OPT__(,) __VA_ARGS__)));  \
-        jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_dbg);                             \
-        jit_emit_call_reg(asm, BC_CALL);                                                   \
+#define DBG(fmt, ...) do {                                                                  \
+        jit_emit_mov(asm, BC_A0, BC_TY);                                                    \
+        jit_emit_load_imm(asm, BC_A1, ctx->sp);                                             \
+        jit_emit_load_imm(asm, BC_A2, ((iptr)xfmt(fmt __VA_OPT__(,) __VA_ARGS__)));         \
+        jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_dbg);                                  \
+        jit_emit_call_reg(asm, BC_CALL);                                                    \
 } while (0)
 #else
 #define DBG(fmt, ...)
@@ -613,6 +616,13 @@ jit_rt_ne(Ty *ty, Value *result, Value *a, Value *b)
         *v_(ty->stack, idx) = val;
 }
 
+static bool
+jit_rt_str_eq(Value *a, Value *b)
+{
+        return (a->bytes == b->bytes)
+            && (memcmp(a->str, b->str, a->bytes) == 0);
+}
+
 static void
 jit_rt_lt(Ty *ty, Value *result, Value *a, Value *b)
 {
@@ -712,11 +722,14 @@ jit_rt_dbg_self(Ty *ty, Value *self, int m_id)
 static void
 jit_rt_member(Ty *ty, Value *result, Value *obj, int member_id)
 {
+        ptrdiff_t idx = result - vv(ty->stack);
+        vN(ty->stack) = idx + 1;
+
         if (obj == NULL) {
                 obj = vm_get_self(ty);
+                v_L(ty->stack) = *obj;
         }
 
-        // Inline fast path (equivalent to LoadFieldFast for OFF_FIELD case)
         if (obj->type == VALUE_OBJECT) {
                 Class *cls = class_get(ty, obj->class);
                 if (member_id < vN(cls->offsets_r)) {
@@ -734,10 +747,7 @@ jit_rt_member(Ty *ty, Value *result, Value *obj, int member_id)
 
         STAT(member_slow);
 
-        ptrdiff_t idx = result - vv(ty->stack);
-        vN(ty->stack) = idx;
-
-        Value v = GetMember(ty, *obj, member_id, true, true);
+        Value v = GetMember(ty, member_id, true, true);
         if (UNLIKELY(v.type == VALUE_NONE)) {
                 v = NIL;
         }
@@ -1991,8 +2001,8 @@ jit_rt_call_trampoline(Ty *ty, Value *result, Value *fn, int argc)
         // Callee is JIT-compiled: set up its frame and signal the trampoline
         vm_xcall(ty, &_fn, NULL, argc, NULL);
 
-        ty->jit.pending_fn = jit;
-        ty->jit.pending_env = _fn.env;
+        ty->jit._fn = jit;
+        ty->jit._env = _fn.env;
 
         return 1;
 }
@@ -2031,20 +2041,21 @@ jit_fast_frame(Ty *ty, Value const *fn, Value const *self, int argc)
 // Run a JIT function through an inline trampoline loop.
 // Handles nested JIT-to-JIT calls without returning to the outer trampoline.
 static inline void
-jit_run_trampoline(Ty *ty, JitFn *jit, Value **env)
+jit_run_trampoline(Ty *ty, JitFn *jit, Value **env, int nenv)
 {
         int base_depth = ty->jit.depth;
-        Value result, cv;
+        Value result = {0};
+        Value cv = {0};
 
-        ty->jit.cont[ty->jit.depth++] = (struct jit_cont){
-                .fn = jit,
-                .env = env,
-                .fn_result = &result,
-                .resume_idx = 0,
+        ty->jit.cont[ty->jit.depth++] = (JitCont) {
+                .fn   = jit,
+                .env  = env,
+                .ret  = &result,
+                .idx  = 0,
         };
 
         while (ty->jit.depth > base_depth) {
-                struct jit_cont *top = &ty->jit.cont[ty->jit.depth - 1];
+                JitCont *top = &ty->jit.cont[ty->jit.depth - 1];
                 usize cfp = vvL(ty->st.frames)->fp;
                 Value *args = vv(ty->stack) + cfp;
 
@@ -2053,28 +2064,25 @@ jit_run_trampoline(Ty *ty, JitFn *jit, Value **env)
                         args = vv(ty->stack) + cfp;
                 }
 
-                ty->jit.resume_idx = top->resume_idx;
+                ty->jit.idx    = top->idx;
                 ty->jit.status = JIT_RETURN;
 
-                (*(JitFn *)top->fn)(ty, top->fn_result, args, top->env);
+                (*(JitFn *)top->fn)(ty, top->ret, args, top->env);
 
                 if (ty->jit.status == JIT_CALL) {
-                        top->resume_idx = ty->jit.saved_resume_idx;
-                        ty->jit.cont[ty->jit.depth++] = (struct jit_cont){
-                                .fn = ty->jit.pending_fn,
-                                .env = ty->jit.pending_env,
-                                .fn_result = &cv,
-                                .resume_idx = 0,
+                        top->idx = ty->jit._idx;
+                        ty->jit.cont[ty->jit.depth++] = (JitCont) {
+                                .fn   = ty->jit._fn,
+                                .env  = ty->jit._env,
+                                .ret  = &cv,
+                                .idx  = 0,
                         };
-                } else {
-                        ty->jit.depth -= 1;
-                        if (ty->jit.depth > base_depth) {
-                                cfp = vvL(ty->st.frames)->fp;
-                                vN(ty->stack) = cfp + 1;
-                                *v_(ty->stack, cfp) = cv;
-                                vXx(ty->st.frames);
-                                vXx(ty->st.calls);
-                        }
+                } else if (--ty->jit.depth > base_depth) {
+                        cfp = vvL(ty->st.frames)->fp;
+                        vN(ty->stack) = cfp + 1;
+                        *v_(ty->stack, cfp) = cv;
+                        vXx(ty->st.frames);
+                        vXx(ty->st.calls);
                 }
         }
 
@@ -2110,7 +2118,7 @@ jit_rt_baked_call(Ty *ty, Value *self, Value *fn, int class_id, int argc)
         jit_fast_frame(ty, fn, &_self, argc);
 
         // Run callee via inline trampoline (handles nested JIT calls)
-        jit_run_trampoline(ty, jit, fn->env);
+        jit_run_trampoline(ty, jit, fn->env, fn->info[FUN_INFO_CAPTURES]);
 
         return 1;
 }
@@ -2137,7 +2145,7 @@ jit_rt_fast_global_call(Ty *ty, int gi, int argc)
         jit_fast_frame(ty, fn, NULL, argc);
 
         // Run callee via inline trampoline
-        jit_run_trampoline(ty, jit, fn->env);
+        jit_run_trampoline(ty, jit, fn->env, fn->info[FUN_INFO_CAPTURES]);
 
         return 1;
 }
@@ -2206,49 +2214,15 @@ jit_rt_call_builtin_method(Ty *ty, Value *result, Value *self,
                 STAT(call_method_builtin);
                 ptrdiff_t idx = (result - vv(ty->stack));
                 vN(ty->stack) = idx + argc;
+                gP(&_self);
                 Value val = (*func)(ty, &_self, argc, NULL);
+                gX();
                 *v_(ty->stack, idx) = val;
         } else {
                 STAT(call_method_slow);
                 SLOW_RECORD(ty, jit_stats_call_ip, SLOW_CALL_METHOD, &_self, NULL);
                 jit_rt_call_method(ty, result, &_self, member_id, argc);
         }
-}
-
-static void
-jit_rt_call_method_fast(Ty *ty, Value *result, Value *self, int member_id, int argc)
-{
-        if (self == NULL) {
-                self = vm_get_self(ty);
-        }
-
-        Value _self = *self;
-
-        ptrdiff_t idx = (result - vv(ty->stack));
-        vN(ty->stack) = idx + argc;
-
-        if (LIKELY(self->type == VALUE_OBJECT)) {
-                Class *cls = class_get(ty, self->class);
-                if (LIKELY(member_id < (int)vN(cls->offsets_r))) {
-                        u16 off = v__(cls->offsets_r, member_id);
-                        if (LIKELY(off != OFF_NOT_FOUND)) {
-                                u16 kind = off >> OFF_SHIFT;
-                                u16 slot = off & OFF_MASK;
-                                if (LIKELY(kind == OFF_METHOD)) {
-                                        STAT(call_method_fast_dispatch);
-                                        Value *method = v_(cls->methods.values, slot);
-                                        Value val = vm_call_method(ty, &_self, method, argc);
-                                        *v_(ty->stack, idx) = val;
-                                        return;
-                                }
-                        }
-                }
-        }
-
-        STAT(call_method_slow);
-        SLOW_RECORD(ty, jit_stats_call_ip, SLOW_CALL_METHOD, &_self, NULL);
-
-        jit_rt_call_method(ty, result, self, member_id, argc);
 }
 
 static void
@@ -2361,6 +2335,21 @@ bc_pop_to(JitBcCtx *ctx, int dst_reg, int dst_off)
 {
         ctx->sp--;
         bc_copy_value(ctx, dst_reg, dst_off, BC_OPS, OP_OFF(ctx->sp));
+}
+
+static void
+bc_emit_deref(JitBcCtx *ctx, int dst, int src, int src_off)
+{
+        dasm_State **asm = &ctx->asm;
+
+        int lbl_skip = bc_next_label(ctx);
+
+        jit_emit_add_imm(asm, dst, src, src_off);
+        jit_emit_ldrb(asm, BC_S0, dst, VAL_OFF_TYPE);
+        jit_emit_cmp_ri(asm, BC_S0, VALUE_REF);
+        jit_emit_branch_ne(asm, lbl_skip);
+        jit_emit_ldr64(asm, dst, dst, VAL_OFF_REF);
+        jit_emit_label(asm, lbl_skip);
 }
 
 static void
@@ -2541,16 +2530,29 @@ bc_write_bool(JitBcCtx *ctx, int off, int val_reg)
         jit_emit_str64(asm, val_reg, BC_OPS, off + VAL_OFF_Z);
 }
 
-// Emit: inline fast paths for comparison ops
-// 1. Both int => inline cmp
-// 2. Either is nil (EQ/NEQ only) => type comparison
-// 3. Everything else => helper call
+static Class *expected_class_of(Ty *ty, Type const *t);
+
+// Emit: type-directed fast paths for comparison ops.
+// Uses expected_class_of() to decide which fast path to emit:
+//   CLASS_INT    => inline integer comparison
+//   CLASS_STRING => call jit_rt_str_eq (EQ/NEQ only)
+//   NULL/other   => no typed fast path
+// EQ/NEQ always get a cheap nil check before the slow path.
 static void
 bc_emit_cmp(JitBcCtx *ctx, void *helper)
 {
         dasm_State **asm = &ctx->asm;
         int a_off = OP_OFF(ctx->sp - 2);
         int b_off = OP_OFF(ctx->sp - 1);
+
+        bool is_eq_or_ne = (helper == (void *)jit_rt_eq || helper == (void *)jit_rt_ne);
+        Class *cls = expected_class_of(ctx->ty, ctx->op_types[ctx->sp - 1]);
+
+        // For non-equality ops with no int fast path, just call the helper
+        if (!is_eq_or_ne && (cls == NULL || cls->i != CLASS_INT)) {
+                bc_emit_binop_helper(ctx, helper);
+                return;
+        }
 
         int lbl_nil_check = bc_next_label(ctx);
         int lbl_slow = bc_next_label(ctx);
@@ -2560,40 +2562,61 @@ bc_emit_cmp(JitBcCtx *ctx, void *helper)
         jit_emit_ldrb(asm, BC_S0, BC_OPS, a_off + VAL_OFF_TYPE); // a.type
         jit_emit_ldrb(asm, BC_S1, BC_OPS, b_off + VAL_OFF_TYPE); // b.type
 
-        // Check a.type == VALUE_INTEGER
-        jit_emit_cmp_ri(asm, BC_S0, VALUE_INTEGER);
-        jit_emit_branch_ne(asm, lbl_nil_check);
+        if (cls != NULL && cls->i == CLASS_INT) {
+                // === Integer fast path ===
+                jit_emit_cmp_ri(asm, BC_S0, VALUE_INTEGER);
+                jit_emit_branch_ne(asm, is_eq_or_ne ? lbl_nil_check : lbl_slow);
 
-        // Check b.type == VALUE_INTEGER
-        jit_emit_cmp_ri(asm, BC_S1, VALUE_INTEGER);
-        jit_emit_branch_ne(asm, lbl_nil_check);
+                jit_emit_cmp_ri(asm, BC_S1, VALUE_INTEGER);
+                jit_emit_branch_ne(asm, is_eq_or_ne ? lbl_nil_check : lbl_slow);
 
-        // === Integer fast path ===
-        jit_emit_ldr64(asm, BC_S0, BC_OPS, a_off + VAL_OFF_Z);
-        jit_emit_ldr64(asm, BC_S1, BC_OPS, b_off + VAL_OFF_Z);
+                jit_emit_ldr64(asm, BC_S0, BC_OPS, a_off + VAL_OFF_Z);
+                jit_emit_ldr64(asm, BC_S1, BC_OPS, b_off + VAL_OFF_Z);
 
-        if (helper == (void *)jit_rt_eq) {
-                jit_emit_cmp_eq(asm, BC_S0, BC_S0, BC_S1);
-        } else if (helper == (void *)jit_rt_ne) {
-                jit_emit_cmp_ne(asm, BC_S0, BC_S0, BC_S1);
-        } else if (helper == (void *)jit_rt_lt) {
-                jit_emit_cmp_lt(asm, BC_S0, BC_S0, BC_S1);
-        } else if (helper == (void *)jit_rt_gt) {
-                jit_emit_cmp_gt(asm, BC_S0, BC_S0, BC_S1);
-        } else if (helper == (void *)jit_rt_le) {
-                jit_emit_cmp_le(asm, BC_S0, BC_S0, BC_S1);
-        } else if (helper == (void *)jit_rt_ge) {
-                jit_emit_cmp_ge(asm, BC_S0, BC_S0, BC_S1);
+                if (helper == (void *)jit_rt_eq) {
+                        jit_emit_cmp_eq(asm, BC_S0, BC_S0, BC_S1);
+                } else if (helper == (void *)jit_rt_ne) {
+                        jit_emit_cmp_ne(asm, BC_S0, BC_S0, BC_S1);
+                } else if (helper == (void *)jit_rt_lt) {
+                        jit_emit_cmp_lt(asm, BC_S0, BC_S0, BC_S1);
+                } else if (helper == (void *)jit_rt_gt) {
+                        jit_emit_cmp_gt(asm, BC_S0, BC_S0, BC_S1);
+                } else if (helper == (void *)jit_rt_le) {
+                        jit_emit_cmp_le(asm, BC_S0, BC_S0, BC_S1);
+                } else if (helper == (void *)jit_rt_ge) {
+                        jit_emit_cmp_ge(asm, BC_S0, BC_S0, BC_S1);
+                }
+
+                bc_write_bool(ctx, a_off, BC_S0);
+                jit_emit_jump(asm, lbl_done);
+        } else if (is_eq_or_ne && cls != NULL && cls->i == CLASS_STRING) {
+                // === String fast path (EQ/NEQ only) ===
+                jit_emit_cmp_ri(asm, BC_S0, VALUE_STRING);
+                jit_emit_branch_ne(asm, lbl_nil_check);
+
+                jit_emit_cmp_ri(asm, BC_S1, VALUE_STRING);
+                jit_emit_branch_ne(asm, lbl_nil_check);
+
+                // Both strings: call jit_rt_str_eq(a, b)
+                jit_emit_add_imm(asm, BC_A0, BC_OPS, a_off);
+                jit_emit_add_imm(asm, BC_A1, BC_OPS, b_off);
+                jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_str_eq);
+                jit_emit_call_reg(asm, BC_CALL);
+                jit_emit_mov(asm, BC_S0, 0); // return value
+
+                if (helper == (void *)jit_rt_ne) {
+                        jit_emit_load_imm(asm, BC_S1, 1);
+                        jit_emit_xor(asm, BC_S0, BC_S0, BC_S1);
+                }
+
+                bc_write_bool(ctx, a_off, BC_S0);
+                jit_emit_jump(asm, lbl_done);
         }
-
-        bc_write_bool(ctx, a_off, BC_S0);
-        jit_emit_jump(asm, lbl_done);
 
         // === Nil fast path (EQ/NEQ only) ===
         jit_emit_label(asm, lbl_nil_check);
-        if (helper == (void *)jit_rt_eq || helper == (void *)jit_rt_ne) {
-                // BC_S0 = a.type, BC_S1 = b.type (already loaded)
-                // If either is nil, result = (a.type == b.type) for EQ, != for NEQ
+        if (is_eq_or_ne) {
+                // BC_S0 = a.type, BC_S1 = b.type (still valid from initial load)
                 jit_emit_cmp_ri(asm, BC_S0, VALUE_NIL);
                 int lbl_a_nil = bc_next_label(ctx);
                 jit_emit_branch_eq(asm, lbl_a_nil);
@@ -2711,29 +2734,25 @@ bc_emit_self_member_read_fast(JitBcCtx *ctx, int member_id, char const *bc_ip)
         ctx->sp++;
         if (ctx->sp > ctx->max_sp) ctx->max_sp = ctx->sp;
 
-        // Check self.type == VALUE_OBJECT
-        jit_emit_ldrb(asm, BC_S0, BC_LOC, self_val_off + VAL_OFF_TYPE);
-        jit_emit_cmp_ri(asm, BC_S0, VALUE_OBJECT);
-        jit_emit_branch_ne(asm, lbl_slow);
+        bc_emit_deref(ctx, BC_S3, BC_LOC, self_val_off);
 
-        // Check self.class == expected_class_id
-        jit_emit_ldr32(asm, BC_S0, BC_LOC, self_val_off + VAL_OFF_CLASS);
-        jit_emit_cmp_ri(asm, BC_S0, class_id);
-        jit_emit_branch_ne(asm, lbl_slow);
+        // Skip class ID check for private fields since they can't be overridden
+        if (strchr(M_NAME(member_id), '$') == NULL) {
+                // Check self.class == expected_class_id
+                jit_emit_ldr32(asm, BC_S0, BC_S3, VAL_OFF_CLASS);
+                jit_emit_cmp_ri(asm, BC_S0, class_id);
+                jit_emit_branch_ne(asm, lbl_slow);
+        }
 
         // Check self.object->dynamic == NULL (layout changed at runtime)
-        jit_emit_ldr64(asm, BC_S0, BC_LOC, self_val_off + VAL_OFF_OBJECT);
+        jit_emit_ldr64(asm, BC_S0, BC_S3, VAL_OFF_OBJECT);
         jit_emit_ldr64(asm, BC_S0, BC_S0, OBJ_OFF_DYN);
         jit_emit_cmp_ri(asm, BC_S0, 0);
         jit_emit_branch_ne(asm, lbl_slow);
 
         // Fast path: load self.object => BC_S2, then copy slot to ops
         EMIT_STAT(jit_rt_stat_self_member_read_fast);
-        jit_emit_ldr64(asm, BC_S2, BC_LOC, self_val_off + VAL_OFF_OBJECT);
-        //jit_emit_ldp64(asm, BC_S0, BC_S1, BC_S2, slot_byte_off);
-        //jit_emit_stp64(asm, BC_S0, BC_S1, BC_OPS, out_off);
-        //jit_emit_ldp64(asm, BC_S0, BC_S1, BC_S2, slot_byte_off + 16);
-        //jit_emit_stp64(asm, BC_S0, BC_S1, BC_OPS, out_off + 16);
+        jit_emit_ldr64(asm, BC_S2, BC_S3, VAL_OFF_OBJECT);
         bc_copy_value(ctx, BC_OPS, out_off, BC_S2, slot_byte_off);
         jit_emit_jump(asm, lbl_done);
 
@@ -2782,19 +2801,24 @@ bc_emit_self_member_write_fast(JitBcCtx *ctx, int member_id, char const *bc_ip)
         int lbl_done = bc_next_label(ctx);
         int val_off = OP_OFF(ctx->sp - 1);
 
-        // Check self.type == VALUE_OBJECT
-        jit_emit_ldrb(asm, BC_S0, BC_LOC, self_val_off + VAL_OFF_TYPE);
-        jit_emit_cmp_ri(asm, BC_S0, VALUE_OBJECT);
-        jit_emit_branch_ne(asm, lbl_slow);
+        bc_emit_deref(ctx, BC_S3, BC_LOC, self_val_off);
 
-        // Check self.class == expected_class_id
-        jit_emit_ldr32(asm, BC_S0, BC_LOC, self_val_off + VAL_OFF_CLASS);
-        jit_emit_cmp_ri(asm, BC_S0, class_id);
+        if (strchr(M_NAME(member_id), '$') == NULL) {
+                // Check self.class == expected_class_id
+                jit_emit_ldr32(asm, BC_S0, BC_S3, VAL_OFF_CLASS);
+                jit_emit_cmp_ri(asm, BC_S0, class_id);
+                jit_emit_branch_ne(asm, lbl_slow);
+        }
+
+        // Check self.object->dynamic == NULL (layout changed at runtime)
+        jit_emit_ldr64(asm, BC_S0, BC_S3, VAL_OFF_OBJECT);
+        jit_emit_ldr64(asm, BC_S0, BC_S0, OBJ_OFF_DYN);
+        jit_emit_cmp_ri(asm, BC_S0, 0);
         jit_emit_branch_ne(asm, lbl_slow);
 
         // Fast path: load self.object => BC_S2, copy val to slot
         EMIT_STAT(jit_rt_stat_self_member_write_fast);
-        jit_emit_ldr64(asm, BC_S2, BC_LOC, self_val_off + VAL_OFF_OBJECT);
+        jit_emit_ldr64(asm, BC_S2, BC_S3, VAL_OFF_OBJECT);
         jit_emit_ldp64(asm, BC_S0, BC_S1, BC_OPS, val_off);
         jit_emit_stp64(asm, BC_S0, BC_S1, BC_S2, slot_byte_off);
         jit_emit_ldp64(asm, BC_S0, BC_S1, BC_OPS, val_off + 16);
@@ -3050,13 +3074,12 @@ bc_emit_call_method(JitBcCtx *ctx, char const *op_ip, int z, int n, int nkw)
                         jit_emit_call_reg(asm, BC_CALL);
                 }
         } else {
-                // Generic path with fast dispatch
                 jit_emit_mov(asm, BC_A0, BC_TY);
                 jit_emit_add_imm(asm, BC_A1, BC_OPS, result_off);  // result
                 jit_emit_add_imm(asm, BC_A2, BC_OPS, self_off);    // self
                 jit_emit_load_imm(asm, BC_A3, z);
                 jit_emit_load_imm(asm, BC_A4, n);
-                jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_call_method_fast);
+                jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_call_method);
                 jit_emit_call_reg(asm, BC_CALL);
                 DBG("CALL_METHOD (generic fast path)");
         }
@@ -3582,6 +3605,8 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                         int b_off = OP_OFF(ctx->sp - 1);
                         bool is_eq = (op == INSTR_JEQ);
 
+                        Class *cls = expected_class_of(ctx->ty, ctx->op_types[ctx->sp - 1]);
+
                         int lbl_nil_check = bc_next_label(ctx);
                         int lbl_slow = bc_next_label(ctx);
                         int lbl_done = bc_next_label(ctx);
@@ -3590,29 +3615,49 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                         jit_emit_ldrb(asm, BC_S0, BC_OPS, a_off + VAL_OFF_TYPE); // a.type
                         jit_emit_ldrb(asm, BC_S1, BC_OPS, b_off + VAL_OFF_TYPE); // b.type
 
-                        // Check a.type == VALUE_INTEGER
-                        jit_emit_cmp_ri(asm, BC_S0, VALUE_INTEGER);
-                        jit_emit_branch_ne(asm, lbl_nil_check);
+                        if (cls != NULL && cls->i == CLASS_INT) {
+                                // === Integer fast path ===
+                                jit_emit_cmp_ri(asm, BC_S0, VALUE_INTEGER);
+                                jit_emit_branch_ne(asm, lbl_nil_check);
 
-                        // Check b.type == VALUE_INTEGER
-                        jit_emit_cmp_ri(asm, BC_S1, VALUE_INTEGER);
-                        jit_emit_branch_ne(asm, lbl_slow);
+                                jit_emit_cmp_ri(asm, BC_S1, VALUE_INTEGER);
+                                jit_emit_branch_ne(asm, lbl_slow);
 
-                        // === Integer fast path: compare a.z vs b.z ===
-                        EMIT_STAT(jit_rt_stat_jeq_int);
-                        jit_emit_ldr64(asm, BC_S0, BC_OPS, a_off + VAL_OFF_Z);
-                        jit_emit_ldr64(asm, BC_S1, BC_OPS, b_off + VAL_OFF_Z);
-                        jit_emit_cmp_rr(asm, BC_S0, BC_S1);
-                        if (is_eq)
-                                jit_emit_branch_eq(asm, lbl_target);
-                        else
-                                jit_emit_branch_ne(asm, lbl_target);
-                        jit_emit_jump(asm, lbl_done);
+                                EMIT_STAT(jit_rt_stat_jeq_int);
+                                jit_emit_ldr64(asm, BC_S0, BC_OPS, a_off + VAL_OFF_Z);
+                                jit_emit_ldr64(asm, BC_S1, BC_OPS, b_off + VAL_OFF_Z);
+                                jit_emit_cmp_rr(asm, BC_S0, BC_S1);
+                                if (is_eq)
+                                        jit_emit_branch_eq(asm, lbl_target);
+                                else
+                                        jit_emit_branch_ne(asm, lbl_target);
+                                jit_emit_jump(asm, lbl_done);
+                        } else if (cls != NULL && cls->i == CLASS_STRING) {
+                                // === String fast path ===
+                                jit_emit_cmp_ri(asm, BC_S0, VALUE_STRING);
+                                jit_emit_branch_ne(asm, lbl_nil_check);
+
+                                jit_emit_cmp_ri(asm, BC_S1, VALUE_STRING);
+                                jit_emit_branch_ne(asm, lbl_slow);
+
+                                EMIT_STAT(jit_rt_stat_jeq_str);
+                                jit_emit_add_imm(asm, BC_A0, BC_OPS, a_off);
+                                jit_emit_add_imm(asm, BC_A1, BC_OPS, b_off);
+                                jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_str_eq);
+                                jit_emit_call_reg(asm, BC_CALL);
+                                // Return value in register 0
+                                if (is_eq)
+                                        jit_emit_cbnz(asm, 0, lbl_target);
+                                else
+                                        jit_emit_cbz(asm, 0, lbl_target);
+                                jit_emit_jump(asm, lbl_done);
+                        }
 
                         // === Nil fast path ===
                         jit_emit_label(asm, lbl_nil_check);
-                        // BC_S0 = a.type, BC_S1 = b.type
-                        // Reload types since EMIT_STAT may have clobbered them
+                        // Reload types (EMIT_STAT or call may have clobbered them,
+                        // or we fell through with no fast path and they're still valid,
+                        // but reloading is cheap and safe in all cases)
                         jit_emit_ldrb(asm, BC_S0, BC_OPS, a_off + VAL_OFF_TYPE);
                         jit_emit_ldrb(asm, BC_S1, BC_OPS, b_off + VAL_OFF_TYPE);
                         jit_emit_cmp_ri(asm, BC_S0, VALUE_NIL);
@@ -4372,16 +4417,7 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
 #ifndef TY_NO_LOG
                         BC_SKIPSTR();
 #endif
-                        int lbl_loop = bc_next_label(ctx);
-                        int lbl_done = bc_next_label(ctx);
-                        jit_emit_add_imm(asm, BC_S3, BC_LOC, n * VALUE_SIZE);
-                        jit_emit_label(asm, lbl_loop);
-                        jit_emit_ldrb(asm, BC_S0, BC_S3, VAL_OFF_TYPE);
-                        jit_emit_cmp_ri(asm, BC_S0, VALUE_REF);
-                        jit_emit_branch_ne(asm, lbl_done);
-                        jit_emit_ldr64(asm, BC_S3, BC_S3, VAL_OFF_REF);
-                        jit_emit_jump(asm, lbl_loop);
-                        jit_emit_label(asm, lbl_done);
+                        bc_emit_deref(ctx, BC_S3, BC_LOC, n * VALUE_SIZE);
                         bc_push_from(ctx, BC_S3, 0);
                         break;
                 }
@@ -5846,14 +5882,14 @@ JitInfo *
 jit_compile(Ty *ty, Value const *func)
 {
         i32 const *info = func->info;
-        int code_size  = info[FUN_INFO_CODE_SIZE];
-        int bound      = info[FUN_INFO_BOUND];
+        int code_size   = info[FUN_INFO_CODE_SIZE];
+        int bound       = info[FUN_INFO_BOUND];
         int param_count = info[FUN_INFO_PARAM_COUNT];
-        char const *bc = (char const *)info + info[FUN_INFO_HEADER_SIZE];
+        char const *bc  = (char const *)info + info[FUN_INFO_HEADER_SIZE];
 
         char const *name = name_of(func);
 
-        Expr const *_e = expr_of(func);
+        Expr const *_e = !from_eval(func) ? expr_of(func) : NULL;
         char const *clsn = (_e && _e->class) ? _e->class->name : "";
 
 #if JIT_SCAN_LOG
