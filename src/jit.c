@@ -2083,6 +2083,7 @@ jit_run_trampoline(Ty *ty, JitFn *jit, Value **env, int nenv)
                         *v_(ty->stack, cfp) = cv;
                         vXx(ty->st.frames);
                         vXx(ty->st.calls);
+                        vm_check_flags(ty);
                 }
         }
 
@@ -2216,6 +2217,7 @@ jit_rt_call_builtin_method(Ty *ty, Value *result, Value *self,
                 vN(ty->stack) = idx + argc;
                 gP(&_self);
                 Value val = (*func)(ty, &_self, argc, NULL);
+                vm_check_flags(ty);
                 gX();
                 *v_(ty->stack, idx) = val;
         } else {
@@ -2223,6 +2225,17 @@ jit_rt_call_builtin_method(Ty *ty, Value *result, Value *self,
                 SLOW_RECORD(ty, jit_stats_call_ip, SLOW_CALL_METHOD, &_self, NULL);
                 jit_rt_call_method(ty, result, &_self, member_id, argc);
         }
+}
+
+// Direct call to a builtin function (global known to be const at JIT compile time)
+static void
+jit_rt_call_builtin_function(Ty *ty, Value *result, BuiltinFunction *func, int argc)
+{
+        ptrdiff_t idx = (result - vv(ty->stack));
+        vN(ty->stack) = idx + argc;
+        Value val = func(ty, argc, NULL);
+        vm_check_flags(ty);
+        *v_(ty->stack, idx) = val;
 }
 
 static void
@@ -2350,6 +2363,22 @@ bc_emit_deref(JitBcCtx *ctx, int dst, int src, int src_off)
         jit_emit_branch_ne(asm, lbl_skip);
         jit_emit_ldr64(asm, dst, dst, VAL_OFF_REF);
         jit_emit_label(asm, lbl_skip);
+}
+
+static void
+bc_emit_interrupt_check(JitBcCtx *ctx)
+{
+        dasm_State **asm = &ctx->asm;
+
+        int lbl_no_irq = bc_next_label(ctx);
+        jit_emit_load_imm(asm, BC_S0, (iptr)&JitInterruptFlag);
+        jit_emit_ldr32(asm, BC_S0, BC_S0, 0);
+        jit_emit_cbz(asm, BC_S0, lbl_no_irq);
+        jit_emit_mov(asm, BC_A0, BC_TY);
+        jit_emit_add_imm(asm, BC_A1, BC_OPS, OP_OFF(ctx->sp));
+        jit_emit_load_imm(asm, BC_CALL, (iptr)vm_jit_handle_interrupt);
+        jit_emit_call_reg(asm, BC_CALL);
+        jit_emit_label(asm, lbl_no_irq);
 }
 
 static void
@@ -2986,6 +3015,12 @@ bc_resolve_builtin_method(Class *cls, int member_id, int *value_type)
 #define EMIT_SP_SYNC()
 #endif
 
+#define IRQ_CHECK(n) do {                      \
+        if ((n) < 0) {                         \
+                bc_emit_interrupt_check(ctx);  \
+        }                                      \
+} while (0)
+
 static void
 bc_emit_call_method(JitBcCtx *ctx, char const *op_ip, int z, int n, int nkw)
 {
@@ -3484,6 +3519,7 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                 CASE(JUMP) {
                         int n;
                         BC_READ(n);
+                        IRQ_CHECK(n);
                         int target = (int)(ip - code) + n;
                         int lbl = bc_find_label(ctx, target);
                         if (lbl < 0) BAIL("invalid jump target %d", target);
@@ -3496,6 +3532,7 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                 CASE(JUMP_IF) {
                         int n;
                         BC_READ(n);
+                        IRQ_CHECK(n);
                         int target = (int)(ip - code) + n;
                         int lbl_target = bc_find_label(ctx, target);
                         if (lbl_target < 0) BAIL("invalid jump target %d", target);
@@ -3513,6 +3550,7 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                 CASE(JUMP_IF_NOT) {
                         int n;
                         BC_READ(n);
+                        IRQ_CHECK(n);
                         int target = (int)(ip - code) + n;
                         int lbl_target = bc_find_label(ctx, target);
                         if (lbl_target < 0) BAIL("invalid jump target %d", target);
@@ -3529,6 +3567,7 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                 CASE(JUMP_IF_NIL) {
                         int n;
                         BC_READ(n);
+                        IRQ_CHECK(n);
                         int target = (int)(ip - code) + n;
                         int lbl_target = bc_find_label(ctx, target);
                         if (lbl_target < 0) BAIL("invalid jump target %d", target);
@@ -3543,6 +3582,7 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                 CASE(JUMP_IF_NONE) {
                         int n;
                         BC_READ(n);
+                        IRQ_CHECK(n);
                         int target = (int)(ip - code) + n;
                         int lbl_target = bc_find_label(ctx, target);
                         if (lbl_target < 0) BAIL("invalid jump target %d", target);
@@ -3558,6 +3598,7 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                 CASE(JUMP_AND) {
                         int n;
                         BC_READ(n);
+                        IRQ_CHECK(n);
                         int target = (int)(ip - code) + n;
                         int lbl_target = bc_find_label(ctx, target);
                         if (lbl_target < 0) BAIL("invalid jump target %d", target);
@@ -3575,6 +3616,7 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                 CASE(JUMP_OR) {
                         int n;
                         BC_READ(n);
+                        IRQ_CHECK(n);
                         int target = (int)(ip - code) + n;
                         int lbl_target = bc_find_label(ctx, target);
                         if (lbl_target < 0) BAIL("invalid jump target %d", target);
@@ -3597,6 +3639,7 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                         char const *op_ip = code + off;
                         int n;
                         BC_READ(n);
+                        IRQ_CHECK(n);
                         int target = (int)(ip - code) + n;
                         int lbl_target = bc_find_label(ctx, target);
                         if (lbl_target < 0) BAIL("invalid jump target %d", target);
@@ -3708,6 +3751,7 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
                         char const *op_ip = code + off;
                         int n;
                         BC_READ(n);
+                        IRQ_CHECK(n);
                         int target = (int)(ip - code) + n;
                         int lbl_target = bc_find_label(ctx, target);
                         if (lbl_target < 0) BAIL("invalid jump target %d", target);
@@ -4170,6 +4214,25 @@ bc_emit(JitBcCtx *ctx, char const *code, int code_size)
 
                         // Sync the Ty stack count
                         jit_emit_sync_stack_count(asm, ctx->bound, ctx->sp + n);
+
+                        // If the global is a const builtin function, emit a direct call
+                        if (SymbolIsConst(globals[gi]) && v_(Globals, gi)->type == VALUE_BUILTIN_FUNCTION) {
+                                BuiltinFunction *fn = v_(Globals, gi)->builtin_function;
+                                int result_off = OP_OFF(ctx->sp);
+
+                                jit_emit_mov(asm, BC_A0, BC_TY);
+                                jit_emit_add_imm(asm, BC_A1, BC_OPS, result_off);
+                                jit_emit_load_imm(asm, BC_A2, (iptr)fn);
+                                jit_emit_load_imm(asm, BC_A3, n);
+                                jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_call_builtin_function);
+                                jit_emit_call_reg(asm, BC_CALL);
+
+                                DBG("CALL_GLOBAL(%s) [direct builtin]", VSC(vm_global(ty, gi)));
+
+                                ctx->sp++;
+                                if (ctx->sp > ctx->max_sp) ctx->max_sp = ctx->sp;
+                                break;
+                        }
 
                         // Try fast trampoline path (skips xcall overhead)
                         jit_emit_mov(asm, BC_A0, BC_TY);

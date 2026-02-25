@@ -340,6 +340,7 @@ enum {
         LV_CONST = (1 << 0),
         LV_DECL  = (1 << 1),
         LV_PUB   = (1 << 2),
+        LV_PROTO = (1 << 3)
 };
 
 bool SuggestCompletions = false;
@@ -727,11 +728,11 @@ HasBody(Expr const *fun)
         return false;
 }
 
-static bool
-HasUserConstructor(Class const *class)
+static Expr *
+FindUserConstructor(Class const *class)
 {
         if (class == NULL || class->i == CLASS_OBJECT) {
-                return false;
+                return NULL;
         }
 
         ClassDefinition const *def = &class->def->class;
@@ -739,13 +740,14 @@ HasUserConstructor(Class const *class)
         for (int i = 0; i < vN(def->methods); ++i) {
                 Expr const *method = v__(def->methods, i);
                 if (s_eq(method->name, "init")) {
-                        return (method->type == EXPRESSION_MULTI_FUNCTION)
-                            || (method->body != NULL);
+                        bool is_user = (method->type == EXPRESSION_MULTI_FUNCTION)
+                                    || (method->body != NULL);
+                        return is_user ? (Expr *)method : NULL;
                 }
 
         }
 
-        return HasUserConstructor(class->super);
+        return FindUserConstructor(class->super);
 }
 
 static bool
@@ -3709,9 +3711,10 @@ symbolize_lvalue_(Ty *ty, Scope *scope, Expr *target, u32 flags)
 
         target->xfunc = STATE.func;
 
-        bool decl = (flags & LV_DECL);
-        bool pub  = (flags & LV_PUB);
-        bool cnst = (flags & LV_CONST);
+        bool decl  = (flags & LV_DECL);
+        bool pub   = (flags & LV_PUB);
+        bool cnst  = (flags & LV_CONST);
+        bool proto = (flags & LV_PROTO);
 
         switch (target->type) {
         case EXPRESSION_MATCH_ANY:
@@ -3764,7 +3767,7 @@ symbolize_lvalue_(Ty *ty, Scope *scope, Expr *target, u32 flags)
                                 target->symbol->loc = target->start;
                         }
 
-                        if (SymbolIsConst(target->symbol) && !HAVE_COMPILER_FLAG(MUT_CONST)) {
+                        if (!proto && SymbolIsConst(target->symbol) && !HAVE_COMPILER_FLAG(MUT_CONST)) {
                                 fail(
                                         "assignment to const variable %s%s%s%s%s",
                                         TERM(34),
@@ -5969,7 +5972,7 @@ symbolize_fun_decl(Ty *ty, Scope *scope, Stmt *s, u32 flag)
                 ty,
                 scope,
                 s->target,
-                (s->pub * LV_PUB) | (def * LV_DECL)
+                (s->pub * LV_PUB) | (def * LV_DECL) | (!def * LV_PROTO)
         );
 
         s->target->symbol->flags &= ~SYM_TRANSIENT;
@@ -12207,13 +12210,17 @@ InjectRedpill(Ty *ty, Stmt *s)
                 } else {
                         super = NULL;
                 }
-                if (
-                        !HasUserConstructor(class)
-                     && (HasPublicFields(class) || HasDecoratedMethods(class))
-                ) {
-                        Expr *init = DefaultConstructor(ty, class);
-                        if (super != NULL) {
-                                AddInheritedFieldParams(ty, init, super);
+                if (HasPublicFields(class) || HasDecoratedMethods(class)) {
+                        Expr *init = FindUserConstructor(class);
+                        if (init == NULL) {
+                                init = DefaultConstructor(ty, class);
+                                if (super != NULL) {
+                                        AddInheritedFieldParams(ty, init, super);
+                                }
+                        } else {
+                                init = aclone(init);
+                                init->arena = GetArenaAlloc(ty);
+                                init->class = class;
                         }
                         avI(def->methods, init, 0);
                 }
