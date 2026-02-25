@@ -326,6 +326,7 @@ ValueVector                  SignalGCRoots;
 static Value                 SignalHandlers[NSIG];
 static volatile u8           SignalStates[NSIG];
 static volatile sig_atomic_t AnySignalPending;
+volatile sig_atomic_t        JitInterruptFlag;
 static pthread_rwlock_t      SignalLock = PTHREAD_RWLOCK_INITIALIZER;
 
 void
@@ -333,6 +334,7 @@ vm_do_signal(int sig, siginfo_t *info, void *ctx)
 {
         SignalStates[sig] = 1;
         AnySignalPending  = 1;
+        JitInterruptFlag  = 1;
 }
 // =====================================================================
 
@@ -544,6 +546,7 @@ DoGC(Ty *ty)
         GCLOG("Storing true in WantGC on thread %llu", TID);
 
         ty->group->WantGC = true;
+        JitInterruptFlag  = 1;
 
         static int *blockedThreads;
         static int *runningThreads;
@@ -697,6 +700,7 @@ add_builtins(Ty *ty, int ac, char **av)
                         v->name = M_ID(builtins[i].name);
                         v->module = builtins[i].module;
                         sym->flags |= SYM_FUNCTION;
+                        sym->flags |= SYM_CONST;
                 }
                 xvP(Globals, builtins[i].value);
                 switch (ClassOf(v)) {
@@ -992,6 +996,62 @@ GetSelf(Ty *ty)
         }
 
         return v;
+}
+
+static void
+HandlePendingSignals(Ty *ty)
+{
+        GC_STOP();
+
+        for (int sig = 0; sig < NSIG; sig++) {
+                if (!__sync_bool_compare_and_swap(&SignalStates[sig], 1, 0)) {
+                        continue;
+                }
+
+                pthread_rwlock_rdlock(&SignalLock);
+                Value fn = SignalHandlers[sig];
+                pthread_rwlock_unlock(&SignalLock);
+
+                if (!IsZero(fn)) {
+                        push(INTEGER(sig));
+                        vm_call(ty, &fn, 1);
+                }
+        }
+
+        GC_RESUME();
+}
+
+inline static bool
+TakePendingSignals(void)
+{
+        return (
+                UNLIKELY(AnySignalPending)
+            && __sync_bool_compare_and_swap(&AnySignalPending, 1, 0)
+        );
+}
+
+inline static void
+CheckPendingSignals(Ty *ty)
+{
+        if (UNLIKELY(TakePendingSignals())) {
+                HandlePendingSignals(ty);
+        }
+}
+
+__attribute__((always_inline))
+inline static void
+CheckFlags(Ty *ty)
+{
+        bool signaled = TakePendingSignals();
+
+        if (UNLIKELY(GC_IS_WAITING | signaled)) {
+                if (GC_IS_WAITING) {
+                        WaitGC(ty);
+                }
+                if (UNLIKELY(signaled)) {
+                        HandlePendingSignals(ty);
+                }
+        }
 }
 
 Value *
@@ -2017,44 +2077,26 @@ vm_get_sigfn(Ty *ty, int sig)
         return IsZero(f) ? NIL : f;
 }
 
-static void
-HandlePendingSignals(Ty *ty)
+void
+vm_jit_handle_interrupt(Ty *ty, Value *top)
 {
-        GC_STOP();
+        vN(STACK) = (top - vv(STACK));
 
-        for (int sig = 0; sig < NSIG; sig++) {
-                if (!__sync_bool_compare_and_swap(&SignalStates[sig], 1, 0)) {
-                        continue;
-                }
-
-                pthread_rwlock_rdlock(&SignalLock);
-                Value fn = SignalHandlers[sig];
-                pthread_rwlock_unlock(&SignalLock);
-
-                if (!IsZero(fn)) {
-                        push(INTEGER(sig));
-                        vm_call(ty, &fn, 1);
-                }
+        if (GC_IS_WAITING) {
+                WaitGC(ty);
         }
 
-        GC_RESUME();
-}
+        JitInterruptFlag = 0;
 
-inline static bool
-TakePendingSignals(void)
-{
-        return (
-                UNLIKELY(AnySignalPending)
-            && __sync_bool_compare_and_swap(&AnySignalPending, 1, 0)
-        );
-}
-
-inline static void
-CheckPendingSignals(Ty *ty)
-{
-        if (UNLIKELY(TakePendingSignals())) {
+        if (TakePendingSignals()) {
                 HandlePendingSignals(ty);
         }
+}
+
+void
+vm_check_flags(Ty *ty)
+{
+        CheckFlags(ty);
 }
 
 #ifndef TY_RELEASE
@@ -5775,7 +5817,6 @@ vm_exec(Ty *ty, char *code)
         imax k;
 
         bool b;
-        bool signaled;
 
         int i;
         int j;
@@ -5813,17 +5854,7 @@ vm_exec(Ty *ty, char *code)
 
         for (;;) {
 NextInstruction:
-                signaled = TakePendingSignals();
-
-                if (UNLIKELY(GC_IS_WAITING | signaled)) {
-                        if (GC_IS_WAITING) {
-                                WaitGC(ty);
-                        }
-                        if (UNLIKELY(signaled)) {
-                                HandlePendingSignals(ty);
-                        }
-                }
-
+                CheckFlags(ty);
 #ifdef TY_PROFILER
                 if (Samples != NULL) {
                         u64 now = TyThreadTime();
@@ -10640,6 +10671,7 @@ TyReloadModule(Ty *ty, char const *module)
         TySpinLockLock(&ty->group->Lock);
 
         ty->group->WantGC = true;
+        JitInterruptFlag  = 1;
 
         static int *blockedThreads;
         static int *runningThreads;

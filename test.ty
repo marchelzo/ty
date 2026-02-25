@@ -25,10 +25,6 @@ let b = chalk['bold blue']
 const TY_CMD = getenv('TY_PATH') ?? ty.executable
 const TY_FLAGS = ['-q' if ty.q, '-j' if !ty.jit].join(' ')
 
-C! fn {
-    char const *strsignal(int);
-}
-
 fn doTest(path: Path) {
     let testStart = time.now()
 

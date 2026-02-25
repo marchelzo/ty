@@ -14,6 +14,7 @@
 #include "log.h"
 
 extern bool PrintResult;
+extern volatile sig_atomic_t JitInterruptFlag;
 
 bool
 vm_init(Ty *ty, int ac, char **av);
@@ -250,6 +251,12 @@ vm_rethrow(Ty *ty);
 
 void
 xprint_stack(Ty *ty, int n);
+
+void
+vm_jit_handle_interrupt(Ty *ty, Value *top);
+
+void
+vm_check_flags(Ty *ty);
 
 // JIT helpers (implemented in vm.c, called from jit.c)
 void
