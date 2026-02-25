@@ -322,6 +322,19 @@ enum {
         vvX(STATE.loop_stmts);    \
 } while (0);
 
+#if !defined(TY_NO_JIT)
+#define HINT_TYPE(t0) do {                                 \
+        if (STATE.func != NULL) {                          \
+                avP(STATE.func->type_hints, ((TypeHint) {  \
+                        .type = (t0),                      \
+                        .pc   = vN(STATE.code)             \
+                }));                                       \
+        }                                                  \
+} while (0)
+#else
+#define HINT_TYPE(...)
+#endif
+
 enum {
         LV_NONE,
         LV_CONST = (1 << 0),
@@ -733,6 +746,42 @@ HasUserConstructor(Class const *class)
         }
 
         return HasUserConstructor(class->super);
+}
+
+static bool
+HasDecoratedMethods(Class const *class)
+{
+        if (class == NULL || class->i == CLASS_OBJECT) {
+                return false;
+        }
+
+        ClassDefinition const *def = &class->def->class;
+
+        for (int i = 0; i < vN(def->methods); ++i) {
+                Expr const *meth = v__(def->methods, i);
+                if (vN(meth->decorators) > 0) {
+                        return true;
+                }
+
+        }
+
+        for (int i = 0; i < vN(def->getters); ++i) {
+                Expr const *meth = v__(def->getters, i);
+                if (vN(meth->decorators) > 0) {
+                        return true;
+                }
+
+        }
+
+        for (int i = 0; i < vN(def->setters); ++i) {
+                Expr const *meth = v__(def->setters, i);
+                if (vN(meth->decorators) > 0) {
+                        return true;
+                }
+
+        }
+
+        return HasDecoratedMethods(class->super);
 }
 
 static bool
@@ -6687,12 +6736,14 @@ emit_load(Ty *ty, Symbol const *s, Scope const *scope)
 
                 case SELF_FROM_SYMBOL:
                         emit_load(ty, STATE.self, scope);
+                        HINT_TYPE(STATE.self->type);
                         INSN(MEMBER_ACCESS);
                         break;
 
                 case SELF_FROM_SYMBOL_CLASS:
                         emit_load(ty, STATE.self, scope);
                         INSN(CLASS_OF);
+                        HINT_TYPE(STATE.class->type);
                         INSN(MEMBER_ACCESS);
                         break;
 
@@ -6758,12 +6809,14 @@ emit_tgt(Ty *ty, Symbol *s, Scope const *scope, bool def)
 
                 case SELF_FROM_SYMBOL:
                         emit_load(ty, STATE.self, scope);
+                        HINT_TYPE(STATE.self->type);
                         INSN(TARGET_MEMBER);
                         break;
 
                 case SELF_FROM_SYMBOL_CLASS:
                         emit_load(ty, STATE.self, scope);
                         INSN(CLASS_OF);
+                        HINT_TYPE(STATE.class->type);
                         INSN(TARGET_MEMBER);
                         break;
                 }
@@ -7329,8 +7382,10 @@ emit_function(Ty *ty, Expr const *e)
         bool decorated = (vN(e->decorators) > 0)
                       && ((e->mtype & MT_STATIC) || (e->mtype == MT_NONE));
 
+        bool from_eval = (GetArenaAlloc(ty) != NULL);
+
         Ei16(
-                (FF_FROM_EVAL * (GetArenaAlloc(ty) != NULL))
+                (FF_FROM_EVAL * from_eval)
               | (FF_HIDDEN    * (e->type == EXPRESSION_MULTI_FUNCTION))
               | (FF_OVERLOAD  * (e->overload != NULL))
               | (FF_DECORATED * decorated)
@@ -7368,7 +7423,7 @@ emit_function(Ty *ty, Expr const *e)
         EP(fun_name);
         EP(e);
 #if !defined(TY_NO_JIT)
-        if (!NoJIT && (e->type == EXPRESSION_FUNCTION)) {
+        if (!NoJIT && !from_eval && (e->type == EXPRESSION_FUNCTION)) {
                 EP((void *)0xFA57);
         } else {
                 EP(NULL);
@@ -11432,14 +11487,7 @@ emit_expr(Ty *ty, Expr const *e, bool need_loc)
                 add_location(ty, e, start, vN(STATE.code));
         }
 
-#if !defined(TY_NO_JIT)
-        if (STATE.func != NULL) {
-                avP(STATE.func->type_hints, ((TypeHint) {
-                        .type = e->_type,
-                        .pc   = vN(STATE.code)
-                }));
-        }
-#endif
+        HINT_TYPE(e->_type);
 
         return returns;
 }
@@ -12159,7 +12207,10 @@ InjectRedpill(Ty *ty, Stmt *s)
                 } else {
                         super = NULL;
                 }
-                if (!HasUserConstructor(class) && HasPublicFields(class)) {
+                if (
+                        !HasUserConstructor(class)
+                     && (HasPublicFields(class) || HasDecoratedMethods(class))
+                ) {
                         Expr *init = DefaultConstructor(ty, class);
                         if (super != NULL) {
                                 AddInheritedFieldParams(ty, init, super);

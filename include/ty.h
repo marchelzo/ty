@@ -301,7 +301,8 @@ struct value {
         u16 tags;
         u32 src;
         union {
-                short tag;
+                u16 tag;
+                imax z;
                 double real;
                 bool boolean;
                 Array *array;
@@ -319,13 +320,8 @@ struct value {
                         void *extra;
                 };
                 struct {
-                        imax z;
-                        char const *constant;
-                };
-                struct {
                         i32 class;
                         TyObject *object;
-                        Type **t0;
                 };
                 struct {
                         i32 uop;
@@ -549,7 +545,7 @@ struct try {
         u32 nsp;
         u16 vs;
         u16 ed;
-        u16 jit_depth;
+        u16 jd;
 
         bool executing;
         bool need_trace;
@@ -649,6 +645,25 @@ typedef struct {
         byte_vector context_buffer;
 } TyTDB;
 
+#if !defined(TY_NO_JIT)
+typedef struct {
+        void *fn;
+        Value **env;
+        Value *ret;
+        int idx;
+} JitCont;
+
+typedef struct {
+        int depth;
+        int idx;
+        int status;
+        int _idx;
+        void *_fn;
+        Value **_env;
+        JitCont cont[TY_MAX_CALL_DEPTH];
+} JitState;
+#endif
+
 typedef struct ty {
         char *ip;
 
@@ -711,20 +726,7 @@ typedef struct ty {
         TY *ty;
 
 #if !defined(TY_NO_JIT)
-        struct {
-                int depth;
-                int resume_idx;
-                int status;
-                int saved_resume_idx;
-                void *pending_fn;
-                Value **pending_env;
-                struct jit_cont {
-                        void *fn;
-                        Value **env;
-                        Value *fn_result;
-                        int resume_idx;
-                } cont[TY_MAX_CALL_DEPTH];
-        } jit;
+        JitState jit;
 #endif
 } Ty;
 

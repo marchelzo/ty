@@ -218,7 +218,8 @@ class HttpServer {
                 polling.push((it.fd, POLLIN, it))
             }
 
-            if poll(polling, events, -1) <= 0 {
+            let n = poll(polling, events, -1)
+            if n<= 0 {
                 log::warn!("poll(): {errno.str()}")
                 continue
             }
@@ -249,8 +250,8 @@ class HttpServer {
                         buf.clear()
                     } else {
                         close(fd)
-                        __conns.remove!(c)
                         __free.push(c)
+                        __conns.remove!(c)
                     }
                 },
 

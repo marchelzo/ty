@@ -1239,24 +1239,24 @@ call_jit(Ty *ty, Value const *f)
 
         char *ip = IP;
         usize fp = vvL(FRAMES)->fp;
-        Value v;
+        Value v = {0};
 
         int base_depth = ty->jit.depth;
 
         EXEC_DEPTH += 1;
 
         // Push initial frame onto the JIT continuation stack
-        ty->jit.cont[ty->jit.depth++] = (struct jit_cont){
-                .fn = func,
-                .env = f->env,
-                .fn_result = &v,
-                .resume_idx = 0,
+        ty->jit.cont[ty->jit.depth++] = (JitCont) {
+                .fn   = func,
+                .env  = f->env,
+                .ret  = &v,
+                .idx  = 0,
         };
 
         // Trampoline loop: dispatch JIT functions without nesting C stack frames
-        Value cv;
+        Value cv = {0};
         while (ty->jit.depth > base_depth) {
-                struct jit_cont *top = &ty->jit.cont[ty->jit.depth - 1];
+                JitCont *top = &ty->jit.cont[ty->jit.depth - 1];
 
                 usize cfp = vvL(FRAMES)->fp;
                 Value *args = v_(STACK, cfp);
@@ -1266,36 +1266,31 @@ call_jit(Ty *ty, Value const *f)
                         args = v_(STACK, cfp);
                 }
 
-                ty->jit.resume_idx = top->resume_idx;
+                ty->jit.idx = top->idx;
                 ty->jit.status = JIT_RETURN;
 
-                (*(JitFn *)top->fn)(ty, top->fn_result, args, top->env);
+                (*(JitFn *)top->fn)(ty, top->ret, args, top->env);
 
                 if (ty->jit.status == JIT_CALL) {
                         // JIT function wants to call another JIT function.
                         // Save the resume index so we can re-enter at the right point.
-                        top->resume_idx = ty->jit.saved_resume_idx;
+                        top->idx = ty->jit._idx;
 
                         // Push callee frame
-                        ty->jit.cont[ty->jit.depth++] = (struct jit_cont){
-                                .fn = ty->jit.pending_fn,
-                                .env = ty->jit.pending_env,
-                                .fn_result = &cv,
-                                .resume_idx = 0,
+                        ty->jit.cont[ty->jit.depth++] = (JitCont) {
+                                .fn   = ty->jit._fn,
+                                .env  = ty->jit._env,
+                                .ret  = &cv,
+                                .idx  = 0,
                         };
-                } else {
-                        // Normal return: pop this frame
-                        ty->jit.depth -= 1;
-
-                        if (ty->jit.depth > base_depth) {
-                                // Clean up the callee's Ty frame:
-                                // put result on stack where the caller expects it
-                                cfp = vvL(FRAMES)->fp;
-                                vN(STACK) = cfp + 1;
-                                *v_(STACK, cfp) = cv;
-                                vXx(FRAMES);
-                                vXx(CALLS);
-                        }
+                } else if (--ty->jit.depth > base_depth) {
+                        // Clean up the callee's Ty frame:
+                        // put result on stack where the caller expects it
+                        cfp = vvL(FRAMES)->fp;
+                        vN(STACK) = cfp + 1;
+                        *v_(STACK, cfp) = cv;
+                        vXx(FRAMES);
+                        vXx(CALLS);
                         // If depth == base_depth, result is already in `v` via fn_result
                 }
         }
@@ -2147,7 +2142,7 @@ PushTry(Ty *ty)
         t->vs    = vN(VISITING);
         t->ed    = EXEC_DEPTH;
 #if !defined(TY_NO_JIT)
-        t->jit_depth = ty->jit.depth;
+        t->jd    = ty->jit.depth;
 #endif
         t->ss    = SaveScratch(ty);
         t->state = TRY_TRY;
@@ -2200,18 +2195,18 @@ DoThrow(Ty *ty)
                                         DoDrop(ty);
                                 }
 
-                                EXEC_DEPTH   = t->ed;
+                                EXEC_DEPTH    = t->ed;
+                                vN(STACK)     = t->sp;
+                                vN(SP_STACK)  = t->nsp;
+                                vN(FRAMES)    = t->ctxs;
+                                vN(TARGETS)   = t->ts;
+                                vN(CALLS)     = t->cs;
+                                vN(RootSet)   = min(vN(RootSet), t->gc);
+                                vN(VISITING)  = t->vs;
+                                IP            = t->catch;
 #if !defined(TY_NO_JIT)
-                                ty->jit.depth = t->jit_depth;
+                                ty->jit.depth = t->jd;
 #endif
-                                vN(STACK)    = t->sp;
-                                vN(SP_STACK) = t->nsp;
-                                vN(FRAMES)   = t->ctxs;
-                                vN(TARGETS)  = t->ts;
-                                vN(CALLS)    = t->cs;
-                                vN(RootSet)  = min(vN(RootSet), t->gc);
-                                vN(VISITING) = t->vs;
-                                IP           = t->catch;
 
                                 RestoreScratch(ty, t->ss);
 
@@ -2822,9 +2817,11 @@ TargetFieldFast(Ty *ty, Value *v, i32 id)
 }
 
 inline static Value
-LoadFieldFast(Ty *ty, Value *v, i32 id)
+LoadFieldFast(Ty *ty, i32 id)
 {
-        u16 off = FastReadOffset(ty, v, id);
+        Value v = peek();
+
+        u16 off = FastReadOffset(ty, &v, id);
         if (off == OFF_NOT_FOUND) {
                 return NONE;
         }
@@ -2835,26 +2832,30 @@ LoadFieldFast(Ty *ty, Value *v, i32 id)
         Value *vp;
         Value *this;
 
-        Class *class = class_get(ty, v->class);
+        Class *class = class_get(ty, v.class);
 
         switch (type) {
         case OFF_FIELD:
-                return v->object->slots[off];
+                pop();
+                return v.object->slots[off];
 
         case OFF_GETTER:
                 vp = v_(class->getters.values, off);
-                call(ty, vp, v, 0, NULL);
+                pop();
+                call(ty, vp, &v, 0, NULL);
                 return BREAK;
 
         case OFF_GETTER_X:
-                vp = &v->object->slots[off];
-                call(ty, vp, v, 0, NULL);
+                vp = &v.object->slots[off];
+                pop();
+                call(ty, vp, &v, 0, NULL);
                 return BREAK;
 
         case OFF_METHOD:
                 vp = v_(class->methods.values, off);
                 this = uAo(sizeof *this, GC_VALUE);
-                *this = *v;
+                *this = v;
+                pop();
                 return METHOD(id, vp, this);
 
         default:
@@ -2933,7 +2934,7 @@ DispatchMethodFast(Ty *ty, Value self, i32 id, int argc, int nkw, bool exec)
 }
 
 Value
-GetMember(Ty *ty, Value v, int member, bool try_missing, bool exec)
+GetMember(Ty *ty, int member, bool try_missing, bool exec)
 {
         int n;
         Value *this;
@@ -2941,11 +2942,14 @@ GetMember(Ty *ty, Value v, int member, bool try_missing, bool exec)
         Value meta;
         BuiltinMethod *func;
 
+        Value v = peek();
+
         if (v.type & VALUE_TAGGED) {
                 vp = tags_lookup_method_i(ty, tags_first(ty, v.tags), member);
                 if (vp != NULL)  {
                         Value *this = mAo(sizeof *this, GC_VALUE);
                         *this = unwrap(ty, &v);
+                        pop();
                         return METHOD(member, vp, this);
                 }
                 n = CLASS_OBJECT;
@@ -2959,6 +2963,7 @@ GetMember(Ty *ty, Value v, int member, bool try_missing, bool exec)
                         n = CLASS_TUPLE;
                         goto ClassLookup;
                 }
+                pop();
                 return *vp;
 
         case VALUE_DICT:
@@ -2969,8 +2974,9 @@ GetMember(Ty *ty, Value v, int member, bool try_missing, bool exec)
                 }
                 v.type = VALUE_DICT;
                 v.tags = 0;
-                this = uAo(sizeof *this, GC_VALUE);
+                this = mAo(sizeof *this, GC_VALUE);
                 *this = v;
+                pop();
                 return BUILTIN_METHOD(member, func, this);
 
         case VALUE_ARRAY:
@@ -2981,8 +2987,9 @@ GetMember(Ty *ty, Value v, int member, bool try_missing, bool exec)
                 }
                 v.type = VALUE_ARRAY;
                 v.tags = 0;
-                this = uAo(sizeof *this, GC_VALUE);
+                this = mAo(sizeof *this, GC_VALUE);
                 *this = v;
+                pop();
                 return BUILTIN_METHOD(member, func, this);
 
         case VALUE_STRING:
@@ -2993,8 +3000,9 @@ GetMember(Ty *ty, Value v, int member, bool try_missing, bool exec)
                 }
                 v.type = VALUE_STRING;
                 v.tags = 0;
-                this = uAo(sizeof *this, GC_VALUE);
+                this = mAo(sizeof *this, GC_VALUE);
                 *this = v;
+                pop();
                 return BUILTIN_METHOD(member, func, this);
 
         case VALUE_BLOB:
@@ -3005,8 +3013,9 @@ GetMember(Ty *ty, Value v, int member, bool try_missing, bool exec)
                 }
                 v.type = VALUE_BLOB;
                 v.tags = 0;
-                this = uAo(sizeof *this, GC_VALUE);
+                this = mAo(sizeof *this, GC_VALUE);
                 *this = v;
+                pop();
                 return BUILTIN_METHOD(member, func, this);
 
         case VALUE_GENERATOR:
@@ -3039,12 +3048,16 @@ GetMember(Ty *ty, Value v, int member, bool try_missing, bool exec)
 
         case VALUE_METHOD:
                 if (member == NAMES._class_) {
+                        pop();
                         return (class_of(v.method) != -1) ? CLASS(class_of(v.method)) : NIL;
                 } else if (member == NAMES._name_) {
+                        pop();
                         return xSz(name_of(v.method));
                 } else if (member == NAMES._fqn_) {
+                        pop();
                         return vSsz(fqn_of(v.method));
                 } else if (member == NAMES._def_) {
+                        pop();
                         return FunDef(ty, v.method);
                 }
                 n = CLASS_FUNCTION;
@@ -3053,16 +3066,22 @@ GetMember(Ty *ty, Value v, int member, bool try_missing, bool exec)
         case VALUE_FUNCTION:
         case VALUE_BOUND_FUNCTION:
                 if (member == NAMES._class_) {
+                        pop();
                         return (class_of(&v) != -1) ? CLASS(class_of(&v)) : NIL;
                 } else if (member == NAMES._name_) {
+                        pop();
                         return xSz(name_of(&v));
                 } else if (member == NAMES._fqn_) {
+                        pop();
                         return vSsz(fqn_of(&v));
                 } else if (member == NAMES._def_) {
+                        pop();
                         return FunDef(ty, &v);
                 } else if (has_meta(&v)) {
-                        meta = GetMember(ty, *meta_of(ty, v.method), member, false, exec);
+                        push(*meta_of(ty, v.method));
+                        meta = GetMember(ty, member, false, exec);
                         if (!IsNone(meta)) {
+                                pop();
                                 return meta;
                         }
                 }
@@ -3071,10 +3090,13 @@ GetMember(Ty *ty, Value v, int member, bool try_missing, bool exec)
 
         case VALUE_FOREIGN_FUNCTION:
                 if (member == NAMES._class_) {
+                        pop();
                         return NIL;
                 } else if (member == NAMES._name_ || member == NAMES._fqn_) {
+                        pop();
                         return xSz(name_of(&v));
                 } else if (member == NAMES._def_) {
+                        pop();
                         return NIL;
                 }
                 n = CLASS_FUNCTION;;
@@ -3082,10 +3104,13 @@ GetMember(Ty *ty, Value v, int member, bool try_missing, bool exec)
 
         case VALUE_BUILTIN_METHOD:
                 if (member == NAMES._class_) {
+                        pop();
                         return CLASS(ClassOf(v.this));
                 } else if (member == NAMES._name_) {
+                        pop();
                         return xSz(M_NAME(v.name));
                 } else if (member == NAMES._fqn_) {
+                        pop();
                         return STRING_FORMAT(
                                 ty,
                                 "%s.%s",
@@ -3093,6 +3118,7 @@ GetMember(Ty *ty, Value v, int member, bool try_missing, bool exec)
                                 M_NAME(v.name)
                         );
                 } else if (member == NAMES._def_) {
+                        pop();
                         return NIL;
                 }
                 n = CLASS_FUNCTION;;
@@ -3100,10 +3126,13 @@ GetMember(Ty *ty, Value v, int member, bool try_missing, bool exec)
 
         case VALUE_BUILTIN_FUNCTION:
                 if (member == NAMES._class_) {
+                        pop();
                         return NIL;
                 } else if (member == NAMES._name_ || member == NAMES._fqn_) {
+                        pop();
                         return xSz(M_NAME(v.name));
                 } else if (member == NAMES._def_) {
+                        pop();
                         return NIL;
                 }
                 n = CLASS_FUNCTION;
@@ -3111,10 +3140,13 @@ GetMember(Ty *ty, Value v, int member, bool try_missing, bool exec)
 
         case VALUE_OPERATOR:
                 if (member == NAMES._class_) {
+                        pop();
                         return NIL;
                 } else if (member == NAMES._name_ || member == NAMES._fqn_) {
+                        pop();
                         return xSz(intern_entry(&xD.b_ops, v.bop)->name);
                 } else if (member == NAMES._def_) {
+                        pop();
                         return NIL;
                 }
                 n = CLASS_FUNCTION;
@@ -3124,67 +3156,90 @@ GetMember(Ty *ty, Value v, int member, bool try_missing, bool exec)
                 switch (v.class) {
                 case CLASS_ARRAY:
                         if ((func = get_array_method_i(member)) != NULL) {
+                                pop();
                                 return PTR((void *)func);
                         }
                         break;
 
                 case CLASS_STRING:
                         if ((func = get_string_method_i(member)) != NULL) {
+                                pop();
                                 return PTR((void *)func);
                         }
                         break;
 
                 case CLASS_DICT:
                         if ((func = get_dict_method_i(member)) != NULL) {
+                                pop();
                                 return PTR((void *)func);
                         }
                         break;
 
                 case CLASS_BLOB:
                         if ((func = get_blob_method_i(member)) != NULL) {
+                                pop();
                                 return PTR((void *)func);
                         }
                         break;
                 }
                 if ((vp = class_lookup_s_getter_i(ty, v.class, member)) != NULL) {
-                        return !exec ? (call(ty, vp, &v, 0, NULL), BREAK)
-                                     : (exec_fn(ty, vp, &v, 0, NULL), pop());
+                        if (exec) {
+                                exec_fn(ty, vp, &v, 0, NULL);
+                                v = pop();
+                                pop();
+                                return v;
+                        } else {
+                                pop();
+                                call(ty, vp, &v, 0, NULL);
+                                return BREAK;
+                        }
                 }
                 if ((vp = class_lookup_field(ty, v.class, member)) != NULL) {
+                        pop();
                         return *vp;
                 }
                 if ((vp = class_lookup_s_method_i(ty, v.class, member)) != NULL) {
                         goto BoundMethod;
                 }
                 if ((vp = class_lookup_method_i(ty, v.class, member)) != NULL) {
+                        pop();
                         return *vp;
                 }
                 if (member == NAMES._name_) {
+                        pop();
                         return xSz(class_name(ty, v.class));
                 }
                 if (member == NAMES._super_) {
                         Class *super = class_get(ty, v.class)->super;
+                        pop();
                         return (super != NULL) ? CLASS(super->i) : NIL;
                 }
                 if (member == NAMES._fields_) {
+                        pop();
                         return itable_dict(ty, &class_get(ty, v.class)->fields);
                 }
                 if (member == NAMES._methods_) {
+                        pop();
                         return itable_dict(ty, &class_get(ty, v.class)->methods);
                 }
                 if (member == NAMES._getters_) {
+                        pop();
                         return itable_dict(ty, &class_get(ty, v.class)->getters);
                 }
                 if (member == NAMES._setters_) {
+                        pop();
                         return itable_dict(ty, &class_get(ty, v.class)->setters);
                 }
                 if (member == NAMES._static_fields_) {
+                        pop();
                         return itable_dict(ty, &class_get(ty, v.class)->s_fields);
                 }
                 if (member == NAMES._static_methods_) {
+                        pop();
                         return itable_dict(ty, &class_get(ty, v.class)->s_methods);
                 }
                 if (member == NAMES._static_getters_) {
+                        pop();
                         return itable_dict(ty, &class_get(ty, v.class)->s_getters);
                 }
                 n = CLASS_CLASS;
@@ -3193,58 +3248,76 @@ GetMember(Ty *ty, Value v, int member, bool try_missing, bool exec)
         case VALUE_OBJECT:
                 vp = ObjectMember(v, member);
                 if (vp != NULL) {
+                        pop();
                         return *vp;
                 }
                 n = v.class;
 ClassLookup:
                 vp = class_lookup_getter_i(ty, n, member);
                 if (vp != NULL) {
-                        return !exec ? (call(ty, vp, &v, 0, NULL), BREAK)
-                                     : (exec_fn(ty, vp, &v, 0, NULL), pop());
+                        if (exec) {
+                                exec_fn(ty, vp, &v, 0, NULL);
+                                v = pop();
+                                pop();
+                                return v;
+                        } else {
+                                pop();
+                                call(ty, vp, &v, 0, NULL);
+                                return BREAK;
+                        }
                 }
                 vp = class_lookup_method_i(ty, n, member);
                 if (vp != NULL) {
 BoundMethod:
                         this = mAo(sizeof *this, GC_VALUE);
                         *this = v;
+                        pop();
                         return METHOD(member, vp, this);
                 }
                 if (!try_missing) {
                         break;
                 }
                 if ((vp = class_lookup_method_i(ty, n, NAMES.missing)) != NULL) {
-                        return !exec ? (
-                                push(xSz(M_NAME(member))),
-                                call(ty, vp, &v, 1, NULL),
-                                BREAK
-                        ) : (
-                                push(xSz(M_NAME(member))),
-                                vmC(&METHOD(NAMES.missing, vp, &v), 1)
-                        );
+                        if (exec) {
+                                push(xSz(M_NAME(member)));
+                                exec_fn(ty, vp, &v, 1, NULL);
+                                v = pop();
+                                pop();
+                                return v;
+                        } else {
+                                put(xSz(M_NAME(member)));
+                                call(ty, vp, &v, 1, NULL);
+                                return BREAK;
+                        }
                 }
                 if ((vp = class_lookup_method_i(ty, n, NAMES.method_missing)) != NULL) {
                         this = mAo(sizeof (Value [3]), GC_VALUE);
                         this[0] = v;
                         this[1] = xSz(M_NAME(member));
+                        pop();
                         return METHOD(NAMES.method_missing, vp, this);
                 }
                 if (v.type != VALUE_CLASS) {
                         break;
                 }
                 if ((vp = class_lookup_s_method_i(ty, v.class, NAMES.missing)) != NULL) {
-                        return !exec ? (
-                                push(xSz(M_NAME(member))),
-                                call(ty, vp, &v, 1, NULL),
-                                BREAK
-                        ) : (
-                                push(xSz(M_NAME(member))),
-                                vmC(&METHOD(NAMES.missing, vp, &v), 1)
-                        );
+                        if (exec) {
+                                push(xSz(M_NAME(member)));
+                                exec_fn(ty, vp, &CLASS(v.class), 1, NULL);
+                                v = pop();
+                                pop();
+                                return v;
+                        } else {
+                                put(xSz(M_NAME(member)));
+                                call(ty, vp, &CLASS(v.class), 1, NULL);
+                                return BREAK;
+                        }
                 }
                 if ((vp = class_lookup_s_method_i(ty, v.class, NAMES.method_missing)) != NULL) {
                         this = mAo(sizeof (Value [3]), GC_VALUE);
                         this[0] = v;
                         this[1] = xSz(M_NAME(member));
+                        pop();
                         return METHOD(NAMES.method_missing, vp, this);
                 }
                 break;
@@ -3254,8 +3327,14 @@ BoundMethod:
                 if (vp == NULL) {
                         vp = tags_lookup_method_i(ty, v.tag, member);
                 }
-                return (vp == NULL) ? NONE : *vp;
+                if (vp != NULL) {
+                        pop();
+                        return *vp;
+                }
+                break;
         }
+
+        pop();
 
         return NONE;
 }
@@ -3463,7 +3542,8 @@ ClassLookup:
                         vp = class_lookup_method_i(ty, class, i);
                 }
                 if (vp == NULL) {
-                        attr = GetMember(ty, value, i, false, true);
+                        push(value);
+                        attr = GetMember(ty, i, false, true);
                         vp = (attr.type == VALUE_NONE) ? NULL : &attr;
                         self = NULL;
                 }
@@ -7171,10 +7251,10 @@ YIELD:
                 CASE(SELF_MEMBER_ACCESS)
                         READVALUE(z);
 
-                        value = GetSelf(ty);
+                        push(GetSelf(ty));
 
-                        if (UNLIKELY(IsNone((v = LoadFieldFast(ty, &value, z))))) {
-                                v = GetMember(ty, value, z, false, false);
+                        if (UNLIKELY(IsNone((v = LoadFieldFast(ty, z))))) {
+                                v = GetMember(ty, z, false, false);
                         }
 
                         switch (v.type) {
@@ -7182,7 +7262,7 @@ YIELD:
                                 continue;
 
                         default:
-                                push(v);
+                                xpush(v);
                                 continue;
                         }
                         break;
@@ -7191,14 +7271,15 @@ YIELD:
                         READVALUE(z);
 
                         v = GetSelf(ty);
-                        v = GetMember(ty, CLASS(ClassOf(&v)), z, false, false);
+                        push(CLASS(ClassOf(&v)));
+                        v = GetMember(ty, z, false, false);
 
                         switch (v.type) {
                         case VALUE_BREAK:
                                 continue;
 
                         default:
-                                push(v);
+                                xpush(v);
                                 continue;
                         }
                         break;
@@ -7207,14 +7288,15 @@ YIELD:
                         READVALUE(i);
                         READVALUE(z);
 
-                        v = GetMember(ty, CLASS(i), z, false, false);
+                        push(CLASS(i));
+                        v = GetMember(ty, z, false, false);
 
                         switch (v.type) {
                         case VALUE_BREAK:
                                 continue;
 
                         default:
-                                push(v);
+                                xpush(v);
                                 continue;
                         }
                         break;
@@ -7222,10 +7304,7 @@ YIELD:
                 CASE(TRY_MEMBER_ACCESS)
                         READVALUE(z);
 
-                        value = pop();
-                        gP(&value);
-                        v = GetMember(ty, value, z, true, false);
-                        gX();
+                        v = GetMember(ty, z, true, false);
 
                         switch (v.type) {
                         case VALUE_BREAK:
@@ -7244,10 +7323,8 @@ YIELD:
                 CASE(MEMBER_ACCESS)
                         READVALUE(z);
 MemberAccess:
-                        value = pop();
-
-                        if (IsNone((v = LoadFieldFast(ty, &value, z)))) {
-                                v = GetMember(ty, value, z, true, false);
+                        if (IsNone((v = LoadFieldFast(ty, z)))) {
+                                v = GetMember(ty, z, true, false);
                         }
 
                         switch (v.type) {
@@ -7268,7 +7345,8 @@ BadField:
                         READJUMP(jump);
                         READVALUE(z);
 
-                        v = GetMember(ty, peek(), z, false, false);
+                        push(peek());
+                        v = GetMember(ty, z, false, false);
 
                         switch (v.type) {
                         case VALUE_BREAK:
@@ -7279,7 +7357,7 @@ BadField:
                                 continue;
 
                         default:
-                                push(v);
+                                xpush(v);
                                 continue;
                         }
                         break;
@@ -10376,35 +10454,36 @@ tdb_step_into(Ty *ty)
         CASE(TRY_CALL_METHOD)
                 READVALUE(i);
                 READVALUE(i);
-                v = GetMember(ty, peek(), i, false, true);
+                v = GetMember(ty, i, false, true);
                 break;
 
         CASE(CALL_METHOD)
                 READVALUE(i);
                 READVALUE(i);
-                v = GetMember(ty, peek(), i, true, true);
+                v = GetMember(ty, i, true, true);
                 break;
 
         CASE(CALL_SELF_METHOD)
                 READVALUE(i);
                 READVALUE(i);
-                v = GetMember(ty, GetSelf(ty), i, false, true);
+                push(GetSelf(ty));
+                v = GetMember(ty, i, false, true);
                 break;
 
         CASE(CALL_SELF_STATIC)
                 READVALUE(i);
                 READVALUE(i);
                 v = GetSelf(ty);
-                v = CLASS(ClassOf(&v));
-                v = GetMember(ty, v, i, false, true);
+                push(CLASS(ClassOf(&v)));
+                v = GetMember(ty, i, false, true);
                 break;
 
         CASE(CALL_STATIC_METHOD)
                 READVALUE(c);
                 READVALUE(i);
                 READVALUE(i);
-                v = CLASS(c);
-                v = GetMember(ty, v, i, false, true);
+                push(CLASS(c));
+                v = GetMember(ty, i, false, true);
                 break;
         }
 
