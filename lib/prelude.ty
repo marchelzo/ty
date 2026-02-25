@@ -508,6 +508,7 @@ class Array[T] : Iterable[T] {
     sort(cmp: (T, T) -> Any, desc: Bool = false) -> Array[T];
     sort[U](by: T -> U, desc: Bool = false) -> Array[T] where (U <=> U): Int;
     sort(desc: Bool = false) -> Array[T] where (T <=> T): Int;
+    slice(i: Int | nil, j: Int | nil, k: Int | nil) -> Array[T];
     splice(i: Int = 0, n: Int = #self) -> Array[T];
     split(i: Int) -> (Array[T], Array[T]);
     sum() -> T | nil where (T + T): T;
@@ -521,6 +522,9 @@ class Array[T] : Iterable[T] {
     uniq!() -> Array[T];
     uniq() -> Array[T];
     partition(p: T -> Any) -> (Array[T], Array[T]);
+
+    window[U](n: Int, f: (*T) -> U) -> Array[U];
+    window(n: Int) -> Array[Array[T]];
 
     zip[...U, R](
         *ys: ...Array[U],
@@ -743,7 +747,7 @@ class Array[T] : Iterable[T] {
     }
 
     [;;](i: Int = 0, j: Int | nil = nil, k: Int = 1) -> Array[T] {
-        self.slice(i, j, k)
+        slice(i, j, k)
     }
 
     #() { len() }

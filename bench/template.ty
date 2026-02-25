@@ -1,0 +1,84 @@
+import ety
+import time
+
+class Post (
+    title: String,
+    views: Int
+) {}
+    
+class User (
+    name: String,
+    email: String,
+    active: Bool,
+    posts: Array[Post]
+) {}
+    
+
+fn generate_users(n: Int) -> Array[User] {
+    let users = []
+
+    for i in ..n {
+        users.push(User(
+            "User {i}",
+            "user{i}@example.com",
+            i % 2 == 0,
+            [Post("Post {j}", j * 100) for j in 0..10]
+        ));
+    }
+
+    users
+}
+
+fn benchmark(iterations: Int) {
+    let template = ety.compile(
+        '''
+        <html>
+        <body>
+        <% for user in users { %>
+          <div class='user'>
+            <h2><%= user.name %></h2>
+            <p>Email: <%= user.email %></p>
+            <% if user.active { %>
+              <span class='badge'>Active</span>
+            <% } %>
+            <ul>
+            <% for post in user.posts { %>
+              <li><%= post.title %> - <%= post.views %> views</li>
+            <% } %>
+            </ul>
+          </div>
+        <% } %>
+        </body>
+        </html>
+        ''',
+        ['users']
+    )
+
+    let users = generate_users(300)
+
+    let start = time.now()
+
+    for ..iterations {
+        let result = template(users)
+    }
+
+    return time.now() - start
+}
+
+fn main() {
+    let t = benchmark(500)
+    print("Warmup: {t * 1000:.2}ms")
+
+    let times = []
+    for ..10 {
+        let t = benchmark(500)
+        times.push(t)
+    }
+
+    print("Timings for 10 runs:")
+    print(["{it * 1000:.2}ms" for times].groups-of(5).map(\"    {_.join('   ')}").unlines())
+
+    print("Mean: {times.mean() * 1000:.2}ms")
+}
+
+main()

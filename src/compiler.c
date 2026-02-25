@@ -7610,6 +7610,13 @@ emit_function(Ty *ty, Expr const *e)
                 Ei32(self_cap);
         }
 
+#if !defined(TY_NO_JIT)
+        for (usize i = 0; i < vN(e->type_hints); ++i) {
+                TypeHint *hint = v_(e->type_hints, i);
+                hint->pc -= start_offset;
+        }
+#endif
+
         STATE.func = func_save;
 
         if (decorated) {
@@ -11417,13 +11424,22 @@ emit_expr(Ty *ty, Expr const *e, bool need_loc)
                 );
         }
 
+        STACK_END(1, e);
+
+        RestoreContext(ty, ctx);
+
         if (KEEP_LOCATION(e) || need_loc) {
                 add_location(ty, e, start, vN(STATE.code));
         }
 
-        STACK_END(1, e);
-
-        RestoreContext(ty, ctx);
+#if !defined(TY_NO_JIT)
+        if (STATE.func != NULL) {
+                avP(STATE.func->type_hints, ((TypeHint) {
+                        .type = e->_type,
+                        .pc   = vN(STATE.code)
+                }));
+        }
+#endif
 
         return returns;
 }
