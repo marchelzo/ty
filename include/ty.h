@@ -818,6 +818,7 @@ extern int  ColorMode;
 extern bool ColorStdout;
 extern bool ColorStderr;
 extern bool ColorProfile;
+extern bool ColorOutput;
 extern char const *COLOR_MODE_NAMES[TY_COLOR_MODE_COUNT];
 
 extern bool RunningTests;

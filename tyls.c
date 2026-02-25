@@ -31,6 +31,7 @@ usize TotalBytesAllocated = 0;
 int  ColorMode = TY_COLOR_NEVER;
 bool ColorStdout;
 bool ColorStderr;
+bool ColorOutput;
 
 char const *COLOR_MODE_NAMES[] = {
         [TY_COLOR_AUTO]   = "auto",

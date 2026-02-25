@@ -42,7 +42,6 @@ static Ty *ty;
 static bool basic = false;
 static char buffer[8192];
 static char *completions[MAX_COMPLETIONS + 1];
-static char ToolQuery[512];
 
 static char const *print_function = "print";
 
@@ -78,6 +77,7 @@ char const *COLOR_MODE_NAMES[] = {
 int  ColorMode = TY_COLOR_AUTO;
 bool ColorStdout;
 bool ColorStderr;
+bool ColorOutput;
 
 bool RunningTests       = false;
 bool CompileOnly        = false;
@@ -94,7 +94,8 @@ static char const *HighlightTheme = NULL;
 extern bool ProduceAnnotation;
 extern FILE *DisassemblyOut;
 
-#ifdef TY_PROFILER
+#if defined(TY_PROFILER)
+extern u64 ProfileSampleInterval;
 extern FILE *ProfileOut;
 bool ColorProfile;
 #endif
@@ -122,12 +123,11 @@ usage(void)
                 "    -q            Ignore constraints on function parameters and return values            \0"
                 "    -S FILE       Write the program's annotated disassembly to FILE                      \0"
                 "                    (- is interpreted as stdout, and @ is interpreted as stderr)         \0"
-                "    -t LINE:COL   Find the definition of the symbol which occurs at LINE:COL             \0"
-                "                  in the specified source file                                           \0"
                 "    --test        Any top-level functions decorated with @test will be executed after    \0"
                 "                  initialization. If all tests pass, ty will exit normally; otherwise, it\0"
                 "                  will exit with a non-zero status code                                  \0"
 #ifdef TY_PROFILER
+                "    -F FREQ       Set profiler sampling frequency in Hz (default: every instruction)     \0"
                 "    -o FILE       Write profile data to FILE instead of stdout                           \0"
                 "                    (- is interpreted as stdout, and @ is interpreted as stderr)         \0"
                 "    --wall        Profile based on wall time instead of CPU time                         \0"
@@ -221,7 +221,7 @@ execln(Ty *ty, char *line)
                         puts("Types: \x1b[91;1mOFF\x1b[0m");
                 }
                 goto End;
-#ifdef TY_RELEASE
+#if defined(TY_RELEASE)
         } else if (strncmp(line, ":u ", 3) == 0) {
                 dump(&buffer, "(__type!((%s)))", line + 3);
 
@@ -550,21 +550,6 @@ ProcessArgs(char *argv[], bool first)
                                         PrintResult |= !first;
                                         break;
 
-                                case 't':
-                                        ColorStdout = false;
-                                        ColorStderr = false;
-                                        if (opt[1] == '\0') {
-                                                if (argv[argi + 1] == NULL) {
-                                                        fprintf(stderr, "Missing argument for -t\n");
-                                                        exit(1);
-                                                }
-                                                snprintf(ToolQuery, sizeof ToolQuery - 1, "%s", argv[++argi]);
-                                        } else {
-                                                snprintf(ToolQuery, sizeof ToolQuery - 1, "%s", opt + 1);
-                                                while (opt[1] != '\0') ++opt;
-                                        }
-                                        break;
-
                                 case 'x':
                                         DetailedExceptions = true;
                                         break;
@@ -614,7 +599,31 @@ ProcessArgs(char *argv[], bool first)
 
                                         goto NextOption;
                                 }
-#ifdef TY_PROFILER
+#if defined(TY_PROFILER)
+                                case 'F':
+                                {
+                                        char const *arg;
+                                        if (opt[1] != '\0') {
+                                                arg = opt + 1;
+                                                while (opt[1] != '\0') ++opt;
+                                        } else if (argv[argi + 1] != NULL) {
+                                                arg = argv[++argi];
+                                        } else {
+                                                fprintf(stderr, "Missing argument for -F\n");
+                                                exit(1);
+                                        }
+                                        char *end;
+                                        long freq = strtol(arg, &end, 10);
+                                        if (*end != '\0' || freq < 0) {
+                                                fprintf(stderr, "Invalid frequency for -F: %s\n", arg);
+                                                exit(1);
+                                        }
+                                        if (freq > 0) {
+                                                ProfileSampleInterval = 1000000000ULL / (u64)freq;
+                                        }
+                                        goto NextOption;
+                                }
+
                                 case 'o':
                                         if (opt[1] == '\0') {
                                                 if (argv[argi + 1] == NULL) {
@@ -675,49 +684,6 @@ NextOption:
         return argi;
 }
 
-enum {
-        TOOL_COMPLETE    = 1,
-        TOOL_SIGNATURE   = 2,
-        TOOL_DEFINITION  = 4
-};
-
-static int
-do_tool_opts(char *arg)
-{
-        int query = 0;
-
-        while (*arg < '0' || *arg > '9') {
-                switch (*arg++) {
-                case  'd': query |= TOOL_DEFINITION; break;
-                case  'c': query |= TOOL_COMPLETE;   break;
-                case  's': query |= TOOL_SIGNATURE;  break;
-                }
-        }
-
-        char *colon = strchr(arg, ':');
-        if (colon == NULL) {
-                return -1;
-        }
-
-        *colon = '\0';
-
-        if (
-                SourceFileName == NULL
-             && realpath(SourceFile, SourceFilePath) == NULL
-        ) {
-                return -1;
-        }
-
-        SourceFileName = SourceFilePath;
-        QueryFile = SourceFilePath;
-        QueryLine = atoi(arg) - 1;
-        QueryCol  = atoi(colon + 1) - 1;
-        CompileOnly = true;
-        AllowErrors = (query & TOOL_COMPLETE);
-
-        return query;
-}
-
 int
 main(int argc, char **argv)
 {
@@ -735,26 +701,7 @@ main(int argc, char **argv)
         case TY_COLOR_NEVER:  ColorStdout = false;     ColorStderr = false;     break;
         }
 
-        int query;
-        if (*ToolQuery != '\0') {
-                query = do_tool_opts(ToolQuery);
-                if (query == -1) {
-                        return -1;
-                }
-                if (query & TOOL_DEFINITION) {
-                        FindDefinition = true;
-                }
-                if (query & TOOL_COMPLETE) {
-                        SuggestCompletions = true;
-                }
-                if (query & TOOL_SIGNATURE) {
-                        SuggestCompletions = true;
-                }
-        } else {
-                query = 0;
-        }
-
-#ifdef TY_PROFILER
+#if defined(TY_PROFILER)
         if (ProfileOut == NULL) {
                 ProfileOut = stdout;
         }
@@ -764,6 +711,10 @@ main(int argc, char **argv)
         case TY_COLOR_ALWAYS: ColorProfile = true;                       break;
         case TY_COLOR_NEVER:  ColorProfile = false;                      break;
         }
+
+        ColorOutput = ColorProfile;
+#else
+        ColorOutput = ColorStderr;
 #endif
 
         if (!vm_init(ty, argc - nopt, argv + nopt)) {
@@ -795,162 +746,6 @@ main(int argc, char **argv)
                 byte_vector out = {0};
 
                 syntax_highlight(ty, &out, mod, 0, strlen(source), NULL, HighlightTheme);
-                fputs(vv(out), stdout);
-
-                return 0;
-        }
-
-        if (query & TOOL_DEFINITION) {
-                bool ok = (QueryResult != NULL) || vm_execute(ty, source, SourceFileName);
-
-                if (QueryResult == NULL || QueryResult->mod == NULL) {
-                        return 2;
-                }
-
-                Value result = vTn(
-                        "name",  xSz(QueryResult->identifier),
-                        "line",  INTEGER(QueryResult->loc.line + 1),
-                        "col",   INTEGER(QueryResult->loc.col + 1),
-                        "file",  xSz(QueryResult->mod->path),
-                        "type",  xSz(type_show(ty, QueryResult->type)),
-                        "doc",   (QueryResult->doc == NULL) ? NIL : xSz(QueryResult->doc),
-                        "error", ok ? NIL : xSz(TyError(ty))
-                );
-
-                byte_vector out = {0};
-
-                if (!json_dump(ty, &result, &out)) {
-                        return 3;
-                }
-
-                xvP(out, '\n');
-                xvP(out, '\0');
-
-                fputs(out.items, stdout);
-
-                return 0;
-        }
-
-        if (query & TOOL_COMPLETE) {
-                bool ok = (QueryExpr != NULL) || vm_execute(ty, source, SourceFileName);
-
-                if (QueryExpr == NULL) {
-                        if (!ok) {
-                                fprintf(stderr, "%s\n", TyError(ty));
-                                return 4;
-                        } else {
-                                return 2;
-                        }
-                }
-
-                ValueVector completions = {0};
-
-                type_completions(ty, QueryExpr->_type, "", &completions);
-
-                Value result = vTn(
-                        "source",      xSs(QueryExpr->start.s, QueryExpr->end.s - QueryExpr->start.s),
-                        "type",        xSz(type_show(ty, QueryExpr->_type)),
-                        "completions", ARRAY((Array *)&completions),
-                        "error",       ok ? NIL : xSz(TyError(ty))
-                );
-
-                byte_vector out = {0};
-
-                if (!json_dump(ty, &result, &out)) {
-                        return 3;
-                }
-
-                xvP(out, '\n');
-                xvP(out, '\0');
-
-                fputs(out.items, stdout);
-
-                return 0;
-        }
-
-        if (query & TOOL_SIGNATURE) {
-                bool ok = (QueryExpr != NULL) || vm_execute(ty, source, SourceFileName);
-
-                if (QueryExpr == NULL) {
-                        if (!ok) {
-                                fprintf(stderr, "%s\n", TyError(ty));
-                                return 4;
-                        } else {
-                                return 2;
-                        }
-                }
-
-                Expr *fun = NULL;
-                Type *t0 = NULL;
-
-                switch (QueryExpr->type) {
-                case EXPRESSION_FUNCTION_CALL:
-                        t0 = QueryExpr->function->_type;
-                        if (QueryExpr->type == EXPRESSION_IDENTIFIER) {
-                                fun = QueryExpr->symbol->expr;
-                        }
-                        break;
-                case EXPRESSION_METHOD_CALL:
-                        type_find_method(
-                                ty,
-                                QueryExpr->object->_type,
-                                QueryExpr->method->identifier,
-                                &t0,
-                                &fun
-                        );
-                        break;
-                }
-
-                if (t0 == NULL || t0->type != TYPE_FUNCTION) {
-                        return 6;
-                }
-
-                ValueVector params = {0};
-
-                for (int i = 0; i < vN(t0->params); ++i) {
-                        Param const *p = v_(t0->params, i);
-                        xvP(
-                                params,
-                                vTn(
-                                        "name",     (p->name != NULL) ? xSz(p->name) : NIL,
-                                        "type",     type_show(ty, p->type),
-                                        "required", BOOLEAN(p->required),
-                                        "kwargs",   BOOLEAN(p->kws),
-                                        "variadic", BOOLEAN(p->rest)
-                                )
-                        );
-                }
-
-                Value doc   = (fun != NULL && fun->doc  != NULL) ? xSz(fun->doc)   : NIL;
-                Value name  = (fun != NULL && fun->name != NULL) ? xSz(fun->name)  : NIL;
-                Value proto = (fun != NULL && fun->name != NULL) ? xSz(fun->proto) : NIL;
-
-                ValueVector sigs = {0};
-                xvP(
-                        sigs,
-                        vTn(
-                                "name",    name,
-                                "proto",   proto,
-                                "type",    xSz(type_show(ty, t0)),
-                                "doc",     doc,
-                                "params",  ARRAY((Array *)&completions)
-                        )
-                );
-
-                Value result = vTn(
-                        "signatures", ARRAY((Array *)&sigs),
-                        "error",      ok ? NIL : xSz(TyError(ty))
-                );
-
-                byte_vector out = {0};
-
-                if (!json_dump(ty, &result, &out)) {
-                        return 3;
-                }
-
-                xvP(out, '\n');
-                xvP(out, '\0');
-
                 fputs(vv(out), stdout);
 
                 return 0;
