@@ -9893,10 +9893,6 @@ emit_target(Ty *ty, Expr *target, bool def)
                 emit_target(ty, target->target, false);
                 break;
 
-        case EXPRESSION_MATCH_ANY:
-                *(volatile int *)0 = 0;
-                break;
-
         default:
                 fail("oh no!");
         }
