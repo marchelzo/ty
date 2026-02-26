@@ -202,6 +202,14 @@ ValueVector Globals;
 #define GC_IS_WAITING \
         atomic_load_explicit(&ty->group->WantGC, memory_order_relaxed)
 
+#if defined(TY_GC_STATS)
+static u64 GCTimeTotal  = 0;
+static u64 GCTimeWait   = 0;
+static u64 GCTimeMark   = 0;
+static u64 GCTimeSweep  = 0;
+static u64 GCRunCount   = 0;
+#endif
+
 #ifdef TY_PROFILER
 static void
 ProfileReport(Ty *ty);
@@ -609,8 +617,8 @@ DoGC(Ty *ty)
                 return;
         }
 
-#ifdef TY_PROFILER
-        u64 start = TyThreadTime();
+#if defined(TY_PROFILER) || defined(TY_GC_STATS)
+        u64 start = TyMonotonicTime();
 #endif
 
         GCLOG("Doing GC: ty->group = %p, (%zu threads)", ty->group, ty->group->ThreadList.count);
@@ -669,6 +677,10 @@ DoGC(Ty *ty)
 
         TyBarrierWait(&ty->group->GCBarrierStart);
 
+#if defined(TY_GC_STATS)
+        u64 mark = TyMonotonicTime();
+#endif
+
         for (int i = 0; i < nBlocked; ++i) {
                 GCLOG("Marking thread %d storage from thread %llu", blockedThreads[i], TID);
                 MarkStorage(v__(ty->group->TyList, blockedThreads[i]));
@@ -699,6 +711,10 @@ DoGC(Ty *ty)
 
         TyBarrierWait(&ty->group->GCBarrierMark);
 
+#if defined(TY_GC_STATS)
+        u64 sweep = TyMonotonicTime();
+#endif
+
         GCLOG("Storing false in WantGC on thread %llu", TID);
         ty->group->WantGC = false;
 
@@ -727,8 +743,18 @@ DoGC(Ty *ty)
 
         TyBarrierWait(&ty->group->GCBarrierDone);
 
-#ifdef TY_PROFILER
-        LastThreadGCTime = TyThreadTime() - start;
+#if defined(TY_GC_STATS) || defined(TY_PROFILER)
+        u64 end = TyMonotonicTime();
+#endif
+
+#if defined(TY_GC_STATS)
+        GCTimeTotal += end - start;
+        GCTimeWait += mark - start;
+        GCTimeMark += sweep - mark;
+        GCTimeSweep += end - sweep;
+        GCRunCount += 1;
+#elif defined(TY_PROFILER)
+        LastThreadGCTime = end - start;
 #endif
 
         dont_printf("Thread %-3llu: %.6fs\n", TID, (t1 - t0) / 1.0e9);
@@ -9299,7 +9325,15 @@ vm_execute(Ty *ty, char const *source, char const *file)
         }
 
 #if defined(TY_GC_STATS)
-        printf("%.2f MB\n", TotalBytesAllocated / 1.0e6);
+        printf("--------------------------------------\n");
+        printf("GC stats (ran %llu times):\n", GCRunCount);
+        printf("--------------------------------------\n");
+        printf("  Allocated: %.2f MB\n", TotalBytesAllocated / 1.0e6);
+        printf("  Total time: %.4fs\n", GCTimeTotal / 1.0e9);
+        printf("       Wait time:  %.4fs\n", GCTimeWait / 1.0e9);
+        printf("       Mark time:  %.4fs\n", GCTimeMark / 1.0e9);
+        printf("       Sweep time: %.4fs\n", GCTimeSweep / 1.0e9);
+        printf("--------------------------------------\n");
 #endif
 
         TY_CATCH_END();
