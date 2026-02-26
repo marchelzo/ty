@@ -9,6 +9,8 @@ include(cmake/VersionInfoTarget.cmake)
 # ---
 
 option(BUILD_PROFILER "Build the typrof executable for profiling" OFF)
+option(USE_NSYNC "Use nsync synchronization primitives on supported platforms" ON)
+option(NO_JIT "Disable JIT code generation" OFF)
 
 # ---
 #   find 3rd-party dependencies
@@ -192,6 +194,13 @@ add_subdirectory(libmd)
 set_target_properties(md PROPERTIES INTERPROCEDURAL_OPTIMIZATION FALSE)
 
 # ---
+#  target: nsync
+# ---
+if (USE_NSYNC)
+  add_subdirectory(nsync)
+endif()
+
+# ---
 #  target: unibilium
 # ---
 add_subdirectory(unibilium)
@@ -346,6 +355,10 @@ target_link_libraries(${_tgt_ty_interface}
     $<$<BOOL:${WIN32}>:Shlwapi.lib>
 )
 
+if(USE_NSYNC)
+  target_link_libraries(${_tgt_ty_interface} INTERFACE nsync)
+endif()
+
 if(APPLE)
   target_link_libraries(${_tgt_ty_interface} INTERFACE
     -Wl,-force_load,$<TARGET_FILE:unibilium>
@@ -374,6 +387,8 @@ target_compile_definitions(${_tgt_ty_interface}
   INTERFACE
     $<$<C_COMPILER_ID:GNU>:_GNU_SOURCE>
     $<$<NOT:$<CONFIG:Debug>>:TY_RELEASE>
+    $<$<BOOL:${NO_JIT}>:TY_NO_JIT>
+    $<$<BOOL:${USE_NSYNC}>:TY_USE_NSYNC>
     $<$<NOT:$<CONFIG:Debug>>:TY_NO_LOG>
     TY_HAVE_VERSION_INFO
     PCRE2_CODE_UNIT_WIDTH=8

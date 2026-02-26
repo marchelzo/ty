@@ -1,0 +1,721 @@
+import os (sleep, ncpu)
+import thread
+import tp (..)
+
+fn test_mutex_lock_unlock() {
+    let mtx = Mutex()
+    mtx.lock()
+    mtx.unlock()
+}
+
+fn test_mutex_trylock() {
+    let mtx = Mutex()
+    assert(mtx.tryLock() != nil)
+    mtx.unlock()
+}
+
+fn test_mutex_with_block() {
+    let mtx = Mutex()
+    let x = 0
+    with mtx {
+        x = 42
+    }
+    assert(x == 42)
+}
+
+fn test_mutex_protects_data() {
+    let mtx = Mutex()
+    let count = 0
+    let N = 100
+
+    fn go() {
+        for ..N {
+            with mtx {
+                count += 1
+            }
+        }
+    }
+
+    let threads = [Thread(go) for ..4]
+    for threads { it.join() }
+
+    assert(count == 4 * N)
+}
+
+fn test_condvar_signal() {
+    let mtx = Mutex()
+    let cv = CondVar()
+    let ready = false
+
+    let t = Thread(function () {
+        with mtx {
+            ready = true
+        }
+        cv.signal()
+    })
+
+    mtx.lock()
+    while !ready {
+        cv.wait(mtx)
+    }
+    assert(ready)
+    mtx.unlock()
+
+    t.join()
+}
+
+fn test_condvar_broadcast() {
+    let mtx = Mutex()
+    let cv = CondVar()
+    let go = false
+    let arrived = 0
+    let N = 4
+
+    let threads = [Thread(function () {
+        mtx.lock()
+        arrived += 1
+        while !go {
+            cv.wait(mtx)
+        }
+        mtx.unlock()
+    }) for _ in ..N]
+
+    // Wait for all threads to arrive
+    for (;;) {
+        with mtx {
+            break if arrived == N
+        }
+        sleep(0.001)
+    }
+
+    // Release them all
+    with mtx { go = true }
+    cv.broadcast()
+
+    for t in threads { t.join() }
+    assert(arrived == N)
+}
+
+fn test_condvar_timed_wait() {
+    let mtx = Mutex()
+    let cv = CondVar()
+
+    mtx.lock()
+    let ok = cv.wait(mtx, 0.01)
+    // Timed out -- ok should be false
+    assert(!ok)
+    mtx.unlock()
+}
+
+fn test_shared_queue_single_thread() {
+    let q = SharedQueue()
+    q.put(1)
+    q.put(2)
+    q.put(3)
+    assert(q.take() == 1)
+    assert(q.take() == 2)
+    assert(q.take() == 3)
+}
+
+fn test_shared_queue_multi_thread() {
+    let q = SharedQueue()
+    let N = 50
+
+    let producers = [Thread(function () {
+        for j in ..N {
+            q.put(i * N + j)
+        }
+    }) for i in ..4]
+
+    let results = Sync([])
+    let consumers = [Thread(function () {
+        for _ in ..2*N {
+            results.push(q.take())
+        }
+    }) for _ in ..2]
+
+    for t in producers  { t.join() }
+    for t in consumers  { t.join() }
+
+    let got = results.sort()
+    let expected = [i for i in 0..4*N]
+    assert(#got == #expected)
+    assert(got == expected)
+}
+
+fn test_shared_queue_try_take() {
+    let q = SharedQueue()
+    assert(q.try-take() == None)
+    q.put(42)
+    assert(q.try-take() == Some(42))
+    assert(q.try-take() == None)
+}
+
+//
+// ThreadPool (lib/tp.ty -- uses SharedQueue, Mutex, CondVar)
+//
+fn test_thread_pool_basic() {
+    let pool = ThreadPool(2, function (x) { x * 2 })
+
+    let futures = [pool.submit(i) for i in 1..5]
+
+    let results: Array[Int] = [f.wait() for f in futures]
+    assert(results.sort() == [2, 4, 6, 8])
+
+    pool.close()
+}
+
+fn test_thread_pool_many_tasks() {
+    let N = 20
+    let pool = ThreadPool(4, function (x) { x + 1 })
+
+    let futures = [pool.submit(i) for i in 0..N]
+
+    let results: Array[Int] = [f.wait() for f in futures]
+    assert(results.sort() == [i for i in 1..N+1])
+
+    pool.close()
+}
+
+fn test_future_cancel() {
+    let pool = ThreadPool(1, function (x) {
+        sleep(0.02)
+        x
+    })
+
+    let f1 = pool.submit(1)
+    let f2 = pool.submit(2)
+
+    // f2 should still be cancelable since f1 blocks the only worker
+    let canceled = f2.cancel()
+
+    pool.close()
+
+    assert(canceled)
+    assert(f2.canceled?)
+}
+
+//
+// Note (nsync_note -- one-shot notification)
+//
+fn test_note_create_and_query() {
+    let n = thread.note()
+    assert(!thread.notified?(n))
+    thread.notify(n)
+    assert(thread.notified?(n))
+    thread.destroy(n)
+}
+
+fn test_note_notify_is_idempotent() {
+    let n = thread.note()
+    thread.notify(n)
+    thread.notify(n)  // should not crash
+    assert(thread.notified?(n))
+    thread.destroy(n)
+}
+
+fn test_note_wait_already_notified() {
+    let n = thread.note()
+    thread.notify(n)
+    assert(thread.wait-note(n, 100))
+    thread.destroy(n)
+}
+
+fn test_note_wait_timeout() {
+    let n = thread.note()
+    assert(!thread.wait-note(n, 10))
+    thread.destroy(n)
+}
+
+fn test_note_cross_thread() {
+    let n = thread.note()
+
+    let t = Thread(function () {
+        sleep(0.001)
+        thread.notify(n)
+    })
+
+    assert(thread.wait-note(n, 2000))
+    assert(thread.notified?(n))
+    t.join()
+    thread.destroy(n)
+}
+
+fn test_note_multiple_waiters() {
+    let n = thread.note()
+
+    let threads = [Thread(function () {
+        thread.wait-note(n, 2000)
+    }) for _ in ..4]
+
+    sleep(0.001)
+    thread.notify(n)
+
+    for t in threads { t.join() }
+    assert(thread.notified?(n))
+    thread.destroy(n)
+}
+
+//
+// Counter (nsync_counter -- count-down latch)
+//
+fn test_counter_create_and_query() {
+    let c = thread.counter(5)
+    assert(thread.countValue(c) == 5)
+    thread.destroy(c)
+}
+
+fn test_counter_add() {
+    let c = thread.counter(10)
+    assert(thread.count-add(c, -3) == 7)
+    assert(thread.countValue(c) == 7)
+    assert(thread.count-add(c, -7) == 0)
+    assert(thread.countValue(c) == 0)
+    thread.destroy(c)
+}
+
+fn test_counter_wait_already_zero() {
+    let c = thread.counter(0)
+    let v = thread.count-wait(c, 100)
+    assert(v == 0)
+    thread.destroy(c)
+}
+
+fn test_counter_wait_timeout() {
+    let c = thread.counter(1)
+    let v = thread.count-wait(c, 10)
+    // Timed out, counter still at 1
+    assert(v != 0)
+    thread.destroy(c)
+}
+
+fn test_counter_wait_cross_thread() {
+    let N = 4
+    let c = thread.counter(N)
+
+    let threads = [Thread(function () {
+        sleep(0.001)
+        thread.count-add(c, -1)
+    }) for _ in ..N]
+
+    let v = thread.count-wait(c, 2000)
+    assert(v == 0)
+
+    for t in threads { t.join() }
+    thread.destroy(c)
+}
+
+fn test_counter_as_join_barrier() {
+    let c = thread.counter(3)
+    let results = Sync([])
+
+    let threads = [Thread(function () {
+        results.push(i)
+        thread.count-add(c, -1)
+    }) for i in ..3]
+
+    let v = thread.count-wait(c, 2000)
+    assert(v == 0)
+    assert(#results == 3)
+
+    for t in threads { t.join() }
+    thread.destroy(c)
+}
+
+//
+// wait-any -- select/poll for sync objects
+//
+fn test_wait_any_single_note_notified() {
+    let n = thread.note()
+    thread.notify(n)
+    let idx = thread.wait-any([n], 100)
+    assert(idx == 0)
+    thread.destroy(n)
+}
+
+fn test_wait_any_timeout() {
+    let n1 = thread.note()
+    let n2 = thread.note()
+    let idx = thread.wait-any([n1, n2], 10)
+    assert(idx == 2)  // count = timeout
+    thread.destroy(n1)
+    thread.destroy(n2)
+}
+
+fn test_wait_any_second_note() {
+    let n1 = thread.note()
+    let n2 = thread.note()
+    thread.notify(n2)
+    let idx = thread.wait-any([n1, n2], 100)
+    assert(idx == 1)
+    thread.destroy(n1)
+    thread.destroy(n2)
+}
+
+fn test_wait_any_counter_at_zero() {
+    let c = thread.counter(0)
+    let idx = thread.wait-any([c], 100)
+    assert(idx == 0)
+    thread.destroy(c)
+}
+
+fn test_wait_any_mixed_types() {
+    let n = thread.note()
+    let c = thread.counter(0)  // already at zero
+    // counter is ready, note is not
+    let idx = thread.wait-any([n, c], 100)
+    assert(idx == 1)
+    thread.destroy(n)
+    thread.destroy(c)
+}
+
+fn test_wait_any_cross_thread() {
+    let n1 = thread.note()
+    let n2 = thread.note()
+
+    let t = Thread(function () {
+        sleep(0.001)
+        thread.notify(n2)
+    })
+
+    let idx = thread.wait-any([n1, n2], 2000)
+    assert(idx == 1)
+
+    t.join()
+    thread.destroy(n1)
+    thread.destroy(n2)
+}
+
+fn test_wait_any_multiple_ready() {
+    let n1 = thread.note()
+    let n2 = thread.note()
+    thread.notify(n1)
+    thread.notify(n2)
+    let idx = thread.wait-any([n1, n2], 100)
+    // Should return one of the ready indices (0 or 1)
+    assert(idx == 0 || idx == 1)
+    thread.destroy(n1)
+    thread.destroy(n2)
+}
+
+fn test_wait_any_empty_array() {
+    // With no waitables, should return 0 (count) immediately
+    let idx = thread.wait-any([], 10)
+    assert(idx == 0)
+}
+
+fn test_wait_any_counter_cross_thread() {
+    // Counter decremented to zero by a worker — waitAny should detect it
+    let c = thread.counter(1)
+    let n = thread.note()
+
+    let t = Thread(function () {
+        sleep(0.001)
+        thread.count-add(c, -1)
+    })
+
+    let idx = thread.wait-any([n, c], 2000)
+    assert(idx == 1)  // counter reached zero first
+
+    t.join()
+    thread.destroy(n)
+    thread.destroy(c)
+}
+
+fn test_wait_any_note_before_counter() {
+    // Note fires before counter reaches zero
+    let c = thread.counter(1)
+    let n = thread.note()
+
+    let t = Thread(function () {
+        sleep(0.001)
+        thread.notify(n)
+    })
+
+    let idx = thread.wait-any([n, c], 2000)
+    assert(idx == 0)  // note fired, counter still at 1
+
+    t.join()
+    thread.destroy(n)
+    thread.destroy(c)
+}
+
+fn test_wait_any_many_mixed() {
+    // Several notes and counters, only one fires
+    let n1 = thread.note()
+    let n2 = thread.note()
+    let c1 = thread.counter(5)
+    let c2 = thread.counter(1)
+
+    let t = Thread(function () {
+        sleep(0.001)
+        thread.count-add(c2, -1)  // only c2 reaches zero
+    })
+
+    let idx = thread.wait-any([n1, c1, n2, c2], 2000)
+    assert(idx == 3)  // c2 is at index 3
+
+    t.join()
+    thread.destroy(n1)
+    thread.destroy(n2)
+    thread.destroy(c1)
+    thread.destroy(c2)
+}
+
+fn test_wait_any_mixed_both_ready() {
+    // Both a note and a counter are already ready
+    let n = thread.note()
+    let c = thread.counter(0)
+    thread.notify(n)
+    let idx = thread.wait-any([n, c], 100)
+    // Either 0 or 1 is valid
+    assert(idx == 0 || idx == 1)
+    thread.destroy(n)
+    thread.destroy(c)
+}
+
+fn test_wait_any_mixed_timeout() {
+    // Neither note nor counter is ready — should timeout
+    let n = thread.note()
+    let c = thread.counter(3)
+    let idx = thread.wait-any([n, c], 10)
+    assert(idx == 2)  // count = timeout
+    thread.destroy(n)
+    thread.destroy(c)
+}
+
+fn test_wait_any_condvar_signaled() {
+    // Wait on a condvar that gets signaled by another thread
+    let mu = thread.mutex()
+    let cv = thread.cond()
+    let ready = false
+
+    let t = Thread(function () {
+        sleep(0.001)
+        thread.lock(mu)
+        ready = true
+        thread.unlock(mu)
+        thread.signal-cond(cv)
+    })
+
+    thread.lock(mu)
+    let idx = thread.wait-any([cv], 2000, mu)
+    assert(idx == 0)
+    assert(ready)
+    thread.unlock(mu)
+
+    t.join()
+    thread.destroy(cv)
+    thread.destroy(mu)
+}
+
+fn test_wait_any_condvar_vs_note() {
+    // Condvar and note in the same list — note fires first
+    let mu = thread.mutex()
+    let cv = thread.cond()
+    let n = thread.note()
+
+    let t = Thread(function () {
+        sleep(0.001)
+        thread.notify(n)
+    })
+
+    thread.lock(mu)
+    let idx = thread.wait-any([n, cv], 2000, mu)
+    assert(idx == 0)  // note fired, condvar was not signaled
+    thread.unlock(mu)
+
+    t.join()
+    thread.destroy(n)
+    thread.destroy(cv)
+    thread.destroy(mu)
+}
+
+fn test_wait_any_condvar_vs_counter() {
+    // Condvar and counter — counter reaches zero first
+    let mu = thread.mutex()
+    let cv = thread.cond()
+    let c = thread.counter(1)
+
+    let t = Thread(function () {
+        sleep(0.001)
+        thread.count-add(c, -1)
+    })
+
+    thread.lock(mu)
+    let idx = thread.wait-any([cv, c], 2000, mu)
+    assert(idx == 1)  // counter reached zero
+    thread.unlock(mu)
+
+    t.join()
+    thread.destroy(cv)
+    thread.destroy(mu)
+    thread.destroy(c)
+}
+
+fn test_wait_any_condvar_fires_in_mixed() {
+    // Condvar fires while note and counter stay idle
+    let mu = thread.mutex()
+    let cv = thread.cond()
+    let n = thread.note()
+    let c = thread.counter(5)
+
+    let t = Thread(function () {
+        sleep(0.001)
+        thread.lock(mu)
+        thread.unlock(mu)
+        thread.signal-cond(cv)
+    })
+
+    thread.lock(mu)
+    let idx = thread.wait-any([n, cv, c], 2000, mu)
+    assert(idx == 1)  // condvar was signaled
+    thread.unlock(mu)
+
+    t.join()
+    thread.destroy(n)
+    thread.destroy(cv)
+    thread.destroy(mu)
+    thread.destroy(c)
+}
+
+fn test_wait_any_two_condvars() {
+    // Two condvars sharing the same mutex — second one gets signaled
+    let mu = thread.mutex()
+    let cv1 = thread.cond()
+    let cv2 = thread.cond()
+
+    let t = Thread(function () {
+        sleep(0.001)
+        thread.lock(mu)
+        thread.unlock(mu)
+        thread.signal-cond(cv2)
+    })
+
+    thread.lock(mu)
+    let idx = thread.wait-any([cv1, cv2], 2000, mu)
+    assert(idx == 1)
+    thread.unlock(mu)
+
+    t.join()
+    thread.destroy(cv1)
+    thread.destroy(cv2)
+    thread.destroy(mu)
+}
+
+//
+// Integration: notes + threads + mutex
+//
+fn test_note_with_mutex_handoff() {
+    let mtx = Mutex()
+    let done = thread.note()
+    let result = 0
+
+    let t = Thread(function () {
+        with mtx {
+            result = 42
+        }
+        thread.notify(done)
+    })
+
+    thread.wait-note(done, 2000)
+    with mtx {
+        assert(result == 42)
+    }
+
+    t.join()
+    thread.destroy(done)
+}
+
+//
+// Integration: counter as a fan-out/fan-in pattern
+//
+fn test_counter_fan_out_fan_in() {
+    let N = 8
+    let c = thread.counter(N)
+    let mtx = Mutex()
+    let total = 0
+
+    let threads = [Thread(function () {
+        // Each worker contributes its index
+        with mtx { total += i }
+        thread.count-add(c, -1)
+    }) for i in ..N]
+
+    let v = thread.count-wait(c, 2000)
+    assert(v == 0)
+
+    // Sum of 0..N = N*(N-1)/2
+    with mtx {
+        assert(total == N * (N - 1) / 2)
+    }
+
+    for t in threads { t.join() }
+    thread.destroy(c)
+}
+
+//
+// Run all tests
+//
+let tests = [
+    // Mutex
+    test_mutex_lock_unlock,
+    test_mutex_trylock,
+    test_mutex_with_block,
+    test_mutex_protects_data,
+    // CondVar
+    test_condvar_signal,
+    test_condvar_broadcast,
+    test_condvar_timed_wait,
+    // SharedQueue
+    test_shared_queue_single_thread,
+    test_shared_queue_multi_thread,
+    test_shared_queue_try_take,
+    // ThreadPool
+    test_thread_pool_basic,
+    test_thread_pool_many_tasks,
+    test_future_cancel,
+    // Note
+    test_note_create_and_query,
+    test_note_notify_is_idempotent,
+    test_note_wait_already_notified,
+    test_note_wait_timeout,
+    test_note_cross_thread,
+    test_note_multiple_waiters,
+    // Counter
+    test_counter_create_and_query,
+    test_counter_add,
+    test_counter_wait_already_zero,
+    test_counter_wait_timeout,
+    test_counter_wait_cross_thread,
+    test_counter_as_join_barrier,
+    // wait-any
+    test_wait_any_single_note_notified,
+    test_wait_any_timeout,
+    test_wait_any_second_note,
+    test_wait_any_counter_at_zero,
+    test_wait_any_mixed_types,
+    test_wait_any_cross_thread,
+    test_wait_any_multiple_ready,
+    test_wait_any_empty_array,
+    test_wait_any_counter_cross_thread,
+    test_wait_any_note_before_counter,
+    test_wait_any_many_mixed,
+    test_wait_any_mixed_both_ready,
+    test_wait_any_mixed_timeout,
+    // wait-any with condvars
+    test_wait_any_condvar_signaled,
+    test_wait_any_condvar_vs_note,
+    test_wait_any_condvar_vs_counter,
+    test_wait_any_condvar_fires_in_mixed,
+    test_wait_any_two_condvars,
+    // Integration
+    test_note_with_mutex_handoff,
+    test_counter_fan_out_fan_in,
+]
+
+for test in tests {
+    test()
+}
+
+print('PASS')
