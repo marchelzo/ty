@@ -298,10 +298,8 @@ TyWaitAny(TyWaitable *items, int count, u64 timeout_ms, void *scratch,
 
 #include <pthread.h>
 #include <signal.h>
-#include "barrier.h"
 
 typedef pthread_t            TyThread;
-typedef pthread_barrier_t    TyBarrier;
 typedef void                *TyThreadFunc(void *);
 typedef void                *TyThreadReturnValue;
 
@@ -309,9 +307,9 @@ typedef void                *TyThreadReturnValue;
 
 #include <nsync.h>
 
+typedef nsync_counter        TyBarrier;
 typedef nsync_mu             TyMutex;
 typedef nsync_mu             TyRwLock;
-typedef nsync_mu             TySpinLock;
 typedef nsync_cv             TyCondVar;
 typedef nsync_note           TyNote;
 typedef nsync_counter        TyCounter;
@@ -319,6 +317,10 @@ typedef nsync_counter        TyCounter;
 #define TY_RWLOCK_INIT NSYNC_MU_INIT
 
 #else /* !TY_USE_NSYNC */
+
+#include "barrier.h"
+
+typedef pthread_barrier_t    TyBarrier;
 
 typedef pthread_mutex_t      TyMutex;
 typedef pthread_cond_t       TyCondVar;
@@ -328,18 +330,20 @@ typedef void                *TyCounter;
 
 #define TY_RWLOCK_INIT PTHREAD_RWLOCK_INITIALIZER
 
-#if defined(__linux__)
-typedef pthread_spinlock_t   TySpinLock;
-#elif defined(__APPLE__)
-#include <os/lock.h>
-typedef os_unfair_lock TySpinLock;
-#else
-#error "TODO"
-#endif
-
 #endif /* TY_USE_NSYNC */
 
 #define TY_THREAD_OK   NULL
+
+#if defined(__APPLE__)
+  #include <os/lock.h>
+  typedef os_unfair_lock TySpinLock;
+#elif defined(TY_USE_NSYNC)
+  typedef TyMutex TySpinLock;
+#elif defined(__linux__)
+  typedef pthread_spinlock_t TySpinLock;
+#else
+  #error "TODO"
+#endif
 
 /*
  * Thread functions (always pthreads)
@@ -406,23 +410,27 @@ TyThreadEqual(TyThread t1, TyThread t2)
         return pthread_equal(t1, t2);
 }
 
+#ifdef TY_USE_NSYNC
+
 /*
- * Barrier functions (always pthreads)
+ * Barrier functions (nsync counter)
  */
 
 inline static void
 TyBarrierInit(TyBarrier *b, int n)
 {
-        pthread_barrier_init(b, NULL, n);
+        if (*b != NULL) {
+                nsync_counter_free(*b);
+        }
+        *b = nsync_counter_new(n);
 }
 
 inline static bool
 TyBarrierWait(TyBarrier *b)
 {
-        return pthread_barrier_wait(b) == 0;
+        nsync_counter_add(*b, -1);
+        return nsync_counter_wait(*b, nsync_time_no_deadline) == 0;
 }
-
-#ifdef TY_USE_NSYNC
 
 /*
  * Mutex functions (nsync)
@@ -738,13 +746,23 @@ TyWaitAny(TyWaitable *items, int count, u64 timeout_ms, void *scratch,
         }
 }
 
-#define TySpinLockInit    TyMutexInit
-#define TySpinLockTryLock TyMutexTryLock
-#define TySpinLockLock    TyMutexLock
-#define TySpinLockUnlock  TyMutexUnlock
-#define TySpinLockDestroy TyMutexDestroy
-
 #else /* !TY_USE_NSYNC */
+
+/*
+ * Barrier functions (pthreads)
+ */
+
+inline static void
+TyBarrierInit(TyBarrier *b, int n)
+{
+        pthread_barrier_init(b, NULL, n);
+}
+
+inline static bool
+TyBarrierWait(TyBarrier *b)
+{
+        return pthread_barrier_wait(b) == 0;
+}
 
 /*
  * Mutex functions (pthreads)
@@ -945,6 +963,7 @@ TyWaitAny(TyWaitable *items, int count, u64 timeout_ms, void *scratch,
         (void)locks; (void)nlocks;
         return count;
 }
+#endif /* TY_USE_NSYNC */
 
 #ifdef __APPLE__
 inline static bool
@@ -979,7 +998,13 @@ TySpinLockDestroy(TySpinLock *spin)
 {
         return true;
 }
-#else // __APPLE__
+#elif defined(TY_USE_NSYNC)
+  #define TySpinLockInit TyMutexInit
+  #define TySpinLockTryLock TyMutexTryLock
+  #define TySpinLockLock    TyMutexLock
+  #define TySpinLockUnlock  TyMutexUnlock
+  #define TySpinLockDestroy TyMutexDestroy
+#else
 inline static bool
 TySpinLockInit(TySpinLock *spin)
 {
@@ -1009,8 +1034,8 @@ TySpinLockDestroy(TySpinLock *spin)
 {
         return pthread_spin_destroy(spin) == 0;
 }
-#endif // __APPLE__
-#endif /* TY_USE_NSYNC */
+#endif
+
 #endif /* _WIN32 */
 
 #endif

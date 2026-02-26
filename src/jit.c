@@ -1342,6 +1342,16 @@ jit_rt_array0(Ty *ty, Value *result)
         *result = ARRAY(uAo0(sizeof (Array), GC_ARRAY));
 }
 
+
+static void
+jit_rt_array_compr(Ty *ty, Value *top, i32 idx, i32 n)
+{
+        vN(ty->stack) = top - vv(ty->stack);
+        Value *array = vZ(ty->stack) - (idx + n + 1);
+        vvPn(*array->array, vZ(ty->stack) - n, n);
+        vN(ty->stack) -= n;
+}
+
 // CALL_STATIC_METHOD: push CLASS value as self, then CallMethod
 static void
 jit_rt_call_static_method(Ty *ty, Value *result, int class_id, int argc, int method_id, int nkw)
@@ -1937,6 +1947,10 @@ bc_prescan(JitCtx *ctx, char const *code, int code_size)
 
                 case INSTR_ARRAY:
                 case INSTR_ARRAY0:
+                        break;
+
+                case INSTR_ARRAY_COMPR:
+                        BC_SKIP(i32);
                         break;
 
                 case INSTR_TUPLE:
@@ -4666,20 +4680,14 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                         break;
 
                 CASE(ARRAY) {
-                        // Elements are on ops stack from save_sp to sp
-                        // Pop from compile-time save_sp stack
                         if (ctx->save_sp_top < 0) BAIL("ARRAY requires SAVE_STACK_POS");
                         int saved = ctx->save_sp_stack[ctx->save_sp_top--];
-                        int n = ctx->sp - saved;
-                        // Pop from runtime SP_STACK (mirrors VM's *vvX(SP_STACK))
-                        DROP_STACK_POS();
-                        // Call helper: jit_rt_array(ty, &ops[save_sp], n, &ops[save_sp])
-                        // Result overwrites first element slot, sp = save_sp + 1
+                        int count = ctx->sp - saved;
                         int base_off = OP_OFF(saved);
                         jit_emit_mov(asm, BC_A0, BC_TY);
-                        jit_emit_add_imm(asm, BC_A1, BC_OPS, base_off); // result
-                        jit_emit_mov(asm, BC_A2, BC_A1);                    // elements
-                        jit_emit_load_imm(asm, BC_A3, n);               // count
+                        jit_emit_add_imm(asm, BC_A1, BC_OPS, base_off);
+                        jit_emit_mov(asm, BC_A2, BC_A1);
+                        jit_emit_load_imm(asm, BC_A3, count);
                         jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_array);
                         jit_emit_call_reg(asm, BC_CALL);
                         ctx->sp = saved + 1;
@@ -4697,6 +4705,24 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                         jit_emit_call_reg(asm, BC_CALL);
                         ctx->sp++;
                         if (ctx->sp > ctx->max_sp) ctx->max_sp = ctx->sp;
+                        break;
+                }
+
+                CASE(ARRAY_COMPR) {
+                        i32 idx;
+                        BC_READ(idx);
+
+                        int saved = ctx->save_sp_stack[ctx->save_sp_top--];
+                        int count = ctx->sp - saved;
+
+                        int off = OP_OFF(ctx->sp);
+                        jit_emit_mov(asm, BC_A0, BC_TY);
+                        jit_emit_add_imm(asm, BC_A1, BC_OPS, off);
+                        jit_emit_load_imm(asm, BC_A2, idx);
+                        jit_emit_load_imm(asm, BC_A3, count);
+                        jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_array_compr);
+                        jit_emit_call_reg(asm, BC_CALL);
+                        ctx->sp = saved;
                         break;
                 }
 

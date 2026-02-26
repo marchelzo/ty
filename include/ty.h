@@ -238,7 +238,8 @@ enum {
         FF_FROM_EVAL = (1 << 1),
         FF_DECORATED = (1 << 2),
         FF_HAS_META  = (1 << 3),
-        FF_OVERLOAD  = (1 << 4)
+        FF_OVERLOAD  = (1 << 4),
+        FF_JIT_FIRST = (1 << 5)
 };
 
 enum {
