@@ -6,14 +6,14 @@
 #include <time.h>
 #include <stdio.h>
 
-typedef uint64_t u64;
+#include "defs.h"
 
 #define TY_1e3 1000UL
 #define TY_1e6 1000000UL
 #define TY_1e9 1000000000ULL
 
 inline static u64
-TyThreadGetTime()
+TyThreadGetTime(void)
 {
 #ifdef _WIN32
         LARGE_INTEGER counter;
@@ -27,6 +27,26 @@ TyThreadGetTime()
         return 1000000000ULL * t.tv_sec + t.tv_nsec;
 #endif
 }
+
+/*
+ * Waitable object tags (matching TGCPTR extra tags in builtins)
+ */
+#define TY_WAITABLE_MUTEX    1
+#define TY_WAITABLE_SPINLOCK 2
+#define TY_WAITABLE_CONDVAR  3
+#define TY_WAITABLE_NOTE     4
+#define TY_WAITABLE_COUNTER  5
+
+typedef struct {
+        void *obj;
+        int   tag;
+} TyWaitable;
+
+#ifdef TY_USE_NSYNC
+#define TY_WAIT_SCRATCH(n) ((n) * (sizeof (struct nsync_waitable_s) + sizeof (struct nsync_waitable_s *)))
+#else
+#define TY_WAIT_SCRATCH(n) (0)
+#endif
 
 #ifdef _WIN32
 
@@ -143,7 +163,7 @@ TyCondVarWait(TyCondVar *cv, TyMutex *m)
 }
 
 inline static bool
-TyCondVarTimedWaitRelative(TyCondVar *cv, TyMutex *m, uint64_t nMs)
+TyCondVarTimedWaitRelative(TyCondVar *cv, TyMutex *m, u64 nMs)
 {
         return SleepConditionVariableCS(cv, m, nMs);
 }
@@ -232,19 +252,82 @@ TyBarrierWait(TyBarrier *b)
         return EnterSynchronizationBarrier(b, 0);
 }
 
-#else
+typedef void *TyNote;
+typedef void *TyCounter;
+
+inline static TyNote
+TyNoteNew(void) { return NULL; }
+
+inline static void
+TyNoteFree(TyNote n) { (void)n; }
+
+inline static void
+TyNoteNotify(TyNote n) { (void)n; }
+
+inline static bool
+TyNoteIsNotified(TyNote n) { (void)n; return false; }
+
+inline static bool
+TyNoteWait(TyNote n, u64 ms) { (void)n; (void)ms; return false; }
+
+inline static TyCounter
+TyCounterNew(u32 v) { (void)v; return NULL; }
+
+inline static void
+TyCounterFree(TyCounter c) { (void)c; }
+
+inline static u32
+TyCounterAdd(TyCounter c, i32 d) { (void)c; (void)d; return 0; }
+
+inline static u32
+TyCounterValue(TyCounter c) { (void)c; return 0; }
+
+inline static u32
+TyCounterWait(TyCounter c, u64 ms) { (void)c; (void)ms; return 0; }
+
+inline static int
+TyWaitAny(TyWaitable *items, int count, u64 timeout_ms, void *scratch,
+          TyMutex **locks, int nlocks)
+{
+        (void)items; (void)count; (void)timeout_ms; (void)scratch;
+        (void)locks; (void)nlocks;
+        return count;
+}
+
+#else /* !_WIN32 */
 
 #include <pthread.h>
 #include <signal.h>
 #include "barrier.h"
 
 typedef pthread_t            TyThread;
-typedef pthread_mutex_t      TyMutex;
-typedef pthread_cond_t       TyCondVar;
-typedef pthread_rwlock_t     TyRwLock;
 typedef pthread_barrier_t    TyBarrier;
 typedef void                *TyThreadFunc(void *);
 typedef void                *TyThreadReturnValue;
+
+#ifdef TY_USE_NSYNC
+
+#include <nsync.h>
+
+typedef nsync_mu             TyMutex;
+typedef nsync_cv             TyCondVar;
+typedef nsync_mu             TyRwLock;
+typedef nsync_note           TyNote;
+typedef nsync_counter        TyCounter;
+
+#define TY_RWLOCK_INIT NSYNC_MU_INIT
+
+#else /* !TY_USE_NSYNC */
+
+typedef pthread_mutex_t      TyMutex;
+typedef pthread_cond_t       TyCondVar;
+typedef pthread_rwlock_t     TyRwLock;
+typedef void                *TyNote;
+typedef void                *TyCounter;
+
+#define TY_RWLOCK_INIT PTHREAD_RWLOCK_INITIALIZER
+
+#endif /* TY_USE_NSYNC */
 
 #if defined(__linux__)
 typedef pthread_spinlock_t   TySpinLock;
@@ -255,9 +338,11 @@ typedef os_unfair_lock TySpinLock;
 #error "TODO"
 #endif
 
-
 #define TY_THREAD_OK   NULL
-#define TY_RWLOCK_INIT PTHREAD_RWLOCK_INITIALIZER
+
+/*
+ * Thread functions (always pthreads)
+ */
 
 inline static int
 TyThreadCreate(TyThread *t, TyThreadFunc *f, void *arg)
@@ -320,6 +405,344 @@ TyThreadEqual(TyThread t1, TyThread t2)
         return pthread_equal(t1, t2);
 }
 
+/*
+ * Barrier functions (always pthreads)
+ */
+
+inline static void
+TyBarrierInit(TyBarrier *b, int n)
+{
+        pthread_barrier_init(b, NULL, n);
+}
+
+inline static bool
+TyBarrierWait(TyBarrier *b)
+{
+        return pthread_barrier_wait(b) == 0;
+}
+
+#ifdef TY_USE_NSYNC
+
+/*
+ * Mutex functions (nsync)
+ */
+
+inline static bool
+TyMutexInit(TyMutex *m)
+{
+        nsync_mu_init(m);
+        return true;
+}
+
+inline static bool
+TyMutexInitRecursive(TyMutex *m)
+{
+        /* nsync_mu does not support recursive locking */
+        nsync_mu_init(m);
+        return true;
+}
+
+inline static bool
+TyMutexDestroy(TyMutex *m)
+{
+        (void)m;
+        return true;
+}
+
+inline static bool
+TyMutexLock(TyMutex *m)
+{
+        nsync_mu_lock(m);
+        return true;
+}
+
+inline static bool
+TyMutexTryLock(TyMutex *m)
+{
+        return nsync_mu_trylock(m) != 0;
+}
+
+inline static bool
+TyMutexUnlock(TyMutex *m)
+{
+        nsync_mu_unlock(m);
+        return true;
+}
+
+/*
+ * Condition variable functions (nsync)
+ */
+
+inline static void
+TyCondVarInit(TyCondVar *cv)
+{
+        nsync_cv_init(cv);
+}
+
+inline static bool
+TyCondVarWait(TyCondVar *cv, TyMutex *m)
+{
+        nsync_cv_wait(cv, m);
+        return true;
+}
+
+inline static bool
+TyCondVarTimedWaitRelative(TyCondVar *cv, TyMutex *m, u64 nMs)
+{
+        nsync_time abs_deadline = nsync_time_add(
+                nsync_time_now(),
+                nsync_time_ms((unsigned)nMs)
+        );
+        return nsync_cv_wait_with_deadline(cv, m, abs_deadline, NULL) == 0;
+}
+
+inline static bool
+TyCondVarSignal(TyCondVar *cv)
+{
+        nsync_cv_signal(cv);
+        return true;
+}
+
+inline static bool
+TyCondVarBroadcast(TyCondVar *cv)
+{
+        nsync_cv_broadcast(cv);
+        return true;
+}
+
+inline static bool
+TyCondVarDestroy(TyCondVar *cv)
+{
+        (void)cv;
+        return true;
+}
+
+/*
+ * Read-write lock functions (nsync_mu in reader/writer mode)
+ */
+
+inline static void
+TyRwLockInit(TyRwLock *m)
+{
+        nsync_mu_init(m);
+}
+
+inline static bool
+TyRwLockDestroy(TyRwLock *m)
+{
+        (void)m;
+        return true;
+}
+
+inline static bool
+TyRwLockRdLock(TyRwLock *m)
+{
+        nsync_mu_rlock(m);
+        return true;
+}
+
+inline static bool
+TyRwLockTryRdLock(TyRwLock *m)
+{
+        return nsync_mu_rtrylock(m) != 0;
+}
+
+inline static bool
+TyRwLockWrLock(TyRwLock *m)
+{
+        nsync_mu_lock(m);
+        return true;
+}
+
+inline static bool
+TyRwLockTryWrLock(TyRwLock *m)
+{
+        return nsync_mu_trylock(m) != 0;
+}
+
+inline static bool
+TyRwLockRdUnlock(TyRwLock *m)
+{
+        nsync_mu_runlock(m);
+        return true;
+}
+
+inline static bool
+TyRwLockWrUnlock(TyRwLock *m)
+{
+        nsync_mu_unlock(m);
+        return true;
+}
+
+/*
+ * Note functions (nsync)
+ */
+
+inline static TyNote
+TyNoteNew(void)
+{
+        return nsync_note_new(NULL, nsync_time_no_deadline);
+}
+
+inline static void
+TyNoteFree(TyNote n)
+{
+        nsync_note_free(n);
+}
+
+inline static void
+TyNoteNotify(TyNote n)
+{
+        nsync_note_notify(n);
+}
+
+inline static bool
+TyNoteIsNotified(TyNote n)
+{
+        return nsync_note_is_notified(n) != 0;
+}
+
+inline static bool
+TyNoteWait(TyNote n, u64 ms)
+{
+        nsync_time deadline = (ms == (u64)-1)
+                ? nsync_time_no_deadline
+                : nsync_time_add(nsync_time_now(), nsync_time_ms((unsigned)ms));
+        return nsync_note_wait(n, deadline) != 0;
+}
+
+/*
+ * Counter functions (nsync)
+ */
+
+inline static TyCounter
+TyCounterNew(u32 v)
+{
+        return nsync_counter_new(v);
+}
+
+inline static void
+TyCounterFree(TyCounter c)
+{
+        nsync_counter_free(c);
+}
+
+inline static u32
+TyCounterAdd(TyCounter c, i32 d)
+{
+        return nsync_counter_add(c, d);
+}
+
+inline static u32
+TyCounterValue(TyCounter c)
+{
+        return nsync_counter_value(c);
+}
+
+inline static u32
+TyCounterWait(TyCounter c, u64 ms)
+{
+        nsync_time deadline = (ms == (u64)-1)
+                ? nsync_time_no_deadline
+                : nsync_time_add(nsync_time_now(), nsync_time_ms((unsigned)ms));
+        return nsync_counter_wait(c, deadline);
+}
+
+/*
+ * Wait for any of several objects (nsync)
+ */
+
+typedef struct {
+        TyMutex *mu[16];
+        int      n;
+} TyWaitMuSet;
+
+static void
+TyWaitMuSetLock(void *v)
+{
+        TyWaitMuSet *s = v;
+        for (int i = 0; i < s->n; i++) {
+                TyMutexLock(s->mu[i]);
+        }
+}
+
+static void
+TyWaitMuSetUnlock(void *v)
+{
+        TyWaitMuSet *s = v;
+        for (int i = s->n - 1; i >= 0; i--) {
+                TyMutexUnlock(s->mu[i]);
+        }
+}
+
+static void
+TyWaitMuLock(void *v)
+{
+        TyMutexLock(v);
+}
+
+static void
+TyWaitMuUnlock(void *v)
+{
+        TyMutexUnlock(v);
+}
+
+inline static int
+TyWaitAny(TyWaitable *items, int count, u64 timeout_ms, void *scratch,
+          TyMutex **locks, int nlocks)
+{
+        struct nsync_waitable_s *w = scratch;
+        struct nsync_waitable_s **pw = (struct nsync_waitable_s **)((char *)scratch + count * sizeof *w);
+
+        for (int i = 0; i < count; i++) {
+                switch (items[i].tag) {
+                case TY_WAITABLE_NOTE:
+                        w[i].v = (void *)*(TyNote *)items[i].obj;
+                        w[i].funcs = &nsync_note_waitable_funcs;
+                        break;
+
+                case TY_WAITABLE_COUNTER:
+                        w[i].v = (void *)*(TyCounter *)items[i].obj;
+                        w[i].funcs = &nsync_counter_waitable_funcs;
+                        break;
+
+                case TY_WAITABLE_CONDVAR:
+                        w[i].v = items[i].obj;
+                        w[i].funcs = &nsync_cv_waitable_funcs;
+                        break;
+
+                default:
+                        return -1;
+                }
+                pw[i] = &w[i];
+        }
+
+        nsync_time deadline = (timeout_ms == (u64)-1)
+                ? nsync_time_no_deadline
+                : nsync_time_add(nsync_time_now(), nsync_time_ms((u32)timeout_ms));
+
+        if (nlocks == 1) {
+                return nsync_wait_n(locks[0], &TyWaitMuLock, &TyWaitMuUnlock,
+                                    deadline, count, pw);
+        } else if (nlocks > 1) {
+                TyWaitMuSet mus;
+                mus.n = nlocks > 16 ? 16 : nlocks;
+                for (int i = 0; i < mus.n; i++) {
+                        mus.mu[i] = locks[i];
+                }
+                return nsync_wait_n(&mus, &TyWaitMuSetLock, &TyWaitMuSetUnlock,
+                                    deadline, count, pw);
+        } else {
+                return nsync_wait_n(NULL, NULL, NULL, deadline, count, pw);
+        }
+}
+
+#else /* !TY_USE_NSYNC */
+
+/*
+ * Mutex functions (pthreads)
+ */
+
 inline static bool
 TyMutexInit(TyMutex *m)
 {
@@ -365,6 +788,10 @@ TyMutexUnlock(TyMutex *m)
         return pthread_mutex_unlock(m) == 0;
 }
 
+/*
+ * Condition variable functions (pthreads)
+ */
+
 inline static void
 TyCondVarInit(TyCondVar *cv)
 {
@@ -409,17 +836,9 @@ TyCondVarDestroy(TyCondVar *cv)
         return pthread_cond_destroy(cv) == 0;
 }
 
-inline static void
-TyBarrierInit(TyBarrier *b, int n)
-{
-        pthread_barrier_init(b, NULL, n);
-}
-
-inline static bool
-TyBarrierWait(TyBarrier *b)
-{
-        return pthread_barrier_wait(b) == 0;
-}
+/*
+ * Read-write lock functions (pthreads)
+ */
 
 inline static void
 TyRwLockInit(TyRwLock *m)
@@ -469,7 +888,60 @@ TyRwLockWrUnlock(TyRwLock *m)
         return pthread_rwlock_unlock(m) == 0;
 }
 
-#endif
+/*
+ * Note functions (pthreads stub)
+ */
+
+inline static TyNote
+TyNoteNew(void) { return NULL; }
+
+inline static void
+TyNoteFree(TyNote n) { (void)n; }
+
+inline static void
+TyNoteNotify(TyNote n) { (void)n; }
+
+inline static bool
+TyNoteIsNotified(TyNote n) { (void)n; return false; }
+
+inline static bool
+TyNoteWait(TyNote n, u64 ms) { (void)n; (void)ms; return false; }
+
+/*
+ * Counter functions (pthreads stub)
+ */
+
+inline static TyCounter
+TyCounterNew(u32 v) { (void)v; return NULL; }
+
+inline static void
+TyCounterFree(TyCounter c) { (void)c; }
+
+inline static u32
+TyCounterAdd(TyCounter c, i32 d) { (void)c; (void)d; return 0; }
+
+inline static u32
+TyCounterValue(TyCounter c) { (void)c; return 0; }
+
+inline static u32
+TyCounterWait(TyCounter c, u64 ms) { (void)c; (void)ms; return 0; }
+
+/*
+ * Wait for any (pthreads stub)
+ */
+
+inline static int
+TyWaitAny(TyWaitable *items, int count, u64 timeout_ms, void *scratch,
+          TyMutex **locks, int nlocks)
+{
+        (void)items; (void)count; (void)timeout_ms; (void)scratch;
+        (void)locks; (void)nlocks;
+        return count;
+}
+
+#endif /* TY_USE_NSYNC */
+
+#endif /* _WIN32 */
 
 #ifdef __APPLE__
 inline static bool

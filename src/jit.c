@@ -187,6 +187,7 @@ typedef struct {
 static vec(JitCompileRecord) jit_compile_log = {0};
 static u64 jit_total_compile_ns = 0;
 static usize jit_total_native_bytes = 0;
+static TySpinLock JitLogMutex;
 
 inline static u64
 jit_wall_time(void)
@@ -364,6 +365,7 @@ void
 jit_stats_report(Ty *ty, FILE *out)
 {
         /* ====== Section 1: JIT compilation summary ====== */
+        TySpinLockLock(&JitLogMutex);
         int ncompiled = vN(jit_compile_log);
 
         if (ncompiled > 0) {
@@ -421,6 +423,8 @@ jit_stats_report(Ty *ty, FILE *out)
 
                 fputc('\n', out);
         }
+
+        TySpinLockUnlock(&JitLogMutex);
 
         /* ====== Section 2: Fast-path stats ====== */
         u64 slow_totals[SLOW_KIND_COUNT] = {0};
@@ -6417,6 +6421,7 @@ jit_compile(Ty *ty, Value const *func)
 #ifdef TY_PROFILER
         {
                 u64 dt = jit_wall_time() - compile_t0;
+                TySpinLockLock(&JitLogMutex);
                 jit_total_compile_ns += dt;
                 jit_total_native_bytes += final_size;
                 xvP(jit_compile_log, ((JitCompileRecord) {
@@ -6427,6 +6432,7 @@ jit_compile(Ty *ty, Value const *func)
                         .compile_time_ns = dt,
                         .bc_code_size = code_size,
                 }));
+                TySpinLockUnlock(&JitLogMutex);
         }
 #endif
 
@@ -6441,6 +6447,9 @@ void
 jit_init(Ty *ty)
 {
         (void)ty;
+#ifdef TY_PROFILER
+        TySpinLockInit(&JitLogMutex);
+#endif
 }
 
 void

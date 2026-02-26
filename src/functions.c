@@ -3801,6 +3801,141 @@ BUILTIN_FUNCTION(thread_cond_broadcast)
         return BOOLEAN(TyCondVarBroadcast(PTR_ARG(0)));
 }
 
+BUILTIN_FUNCTION(thread_note)
+{
+        ASSERT_ARGC("thread.note()", 0);
+        TyNote *np = mAo(sizeof *np, GC_ANY);
+        *np = TyNoteNew();
+        return TGCPTR(np, (void *)TY_WAITABLE_NOTE, np);
+}
+
+BUILTIN_FUNCTION(thread_notify)
+{
+        ASSERT_ARGC("thread.notify()", 1);
+        TyNote *np = PTR_ARG(0);
+        TyNoteNotify(*np);
+        return NIL;
+}
+
+BUILTIN_FUNCTION(thread_is_notified)
+{
+        ASSERT_ARGC("thread.isNotified()", 1);
+        TyNote *np = PTR_ARG(0);
+        return BOOLEAN(TyNoteIsNotified(*np));
+}
+
+BUILTIN_FUNCTION(thread_wait_note)
+{
+        ASSERT_ARGC("thread.waitNote()", 1, 2);
+
+        TyNote *np = PTR_ARG(0);
+        u64 ms = (argc == 2) ? (u64)MSEC_ARG(1) : (u64)-1;
+
+        lGv(true);
+        bool ok = TyNoteWait(*np, ms);
+        lTk();
+
+        return BOOLEAN(ok);
+}
+
+BUILTIN_FUNCTION(thread_counter)
+{
+        ASSERT_ARGC("thread.counter()", 1);
+        TyCounter *cp = mAo(sizeof *cp, GC_ANY);
+        *cp = TyCounterNew((u32)INT_ARG(0));
+        return TGCPTR(cp, (void *)TY_WAITABLE_COUNTER, cp);
+}
+
+BUILTIN_FUNCTION(thread_count_add)
+{
+        ASSERT_ARGC("thread.countAdd()", 2);
+        TyCounter *cp = PTR_ARG(0);
+        i32 delta = (i32)INT_ARG(1);
+        return INTEGER(TyCounterAdd(*cp, delta));
+}
+
+BUILTIN_FUNCTION(thread_count_value)
+{
+        ASSERT_ARGC("thread.count-value()", 1);
+        TyCounter *cp = PTR_ARG(0);
+        return INTEGER(TyCounterValue(*cp));
+}
+
+BUILTIN_FUNCTION(thread_count_wait)
+{
+        ASSERT_ARGC("thread.count-wait()", 1, 2);
+
+        TyCounter *cp = PTR_ARG(0);
+        u64 ms = (argc == 2) ? (u64)MSEC_ARG(1) : (u64)-1;
+
+        lGv(true);
+        u32 v = TyCounterWait(*cp, ms);
+        lTk();
+
+        return INTEGER(v);
+}
+
+BUILTIN_FUNCTION(thread_wait_any)
+{
+        ASSERT_ARGC("thread.wait-any()", 1, 2, 3);
+
+        Value arr = ARGx(0, VALUE_ARRAY);
+        u64 ms = (argc >= 2) ? (u64)MSEC_ARG(1) : (u64)-1;
+
+        int n = arr.array->count;
+
+        SCRATCH_SAVE();
+
+        TyWaitable *items = smA(n * sizeof *items);
+        void *scratch = smA(TY_WAIT_SCRATCH(n));
+
+        for (int i = 0; i < n; ++i) {
+                Value v = arr.array->items[i];
+                if (v.type != VALUE_PTR) {
+                        zP("thread.wait-any(): element %d is not a waitable object", i);
+                }
+                int tag = (int)(uptr)v.extra;
+                if (tag != TY_WAITABLE_NOTE && tag != TY_WAITABLE_COUNTER && tag != TY_WAITABLE_CONDVAR) {
+                        zP("thread.wait-any(): element %d (tag=%d) is not a waitable type", i, tag);
+                }
+                items[i].obj = v.ptr;
+                items[i].tag = tag;
+        }
+
+        /* Collect locks from optional 3rd argument (single mutex or array of mutexes) */
+        TyMutex **locks = NULL;
+        int nlocks = 0;
+
+        if (argc == 3) {
+                Value lk = ARG(2);
+                if (lk.type == VALUE_PTR && (int)(uptr)lk.extra == TY_WAITABLE_MUTEX) {
+                        locks = smA(sizeof *locks);
+                        locks[0] = lk.ptr;
+                        nlocks = 1;
+                } else if (lk.type == VALUE_ARRAY) {
+                        nlocks = lk.array->count;
+                        locks = smA(nlocks * sizeof *locks);
+                        for (int i = 0; i < nlocks; ++i) {
+                                Value m = lk.array->items[i];
+                                if (m.type != VALUE_PTR || (int)(uptr)m.extra != TY_WAITABLE_MUTEX) {
+                                        zP("thread.wait-any(): lock %d is not a Mutex", i);
+                                }
+                                locks[i] = m.ptr;
+                        }
+                } else {
+                        zP("thread.wait-any(): 3rd argument must be a Mutex or array of Mutexes");
+                }
+        }
+
+        lGv(true);
+        int idx = TyWaitAny(items, n, ms, scratch, locks, nlocks);
+        lTk();
+
+        SCRATCH_RESTORE();
+
+        return (idx != -1) ? INTEGER(idx) : NIL;
+}
+
 BUILTIN_FUNCTION(thread_destroy)
 {
         ASSERT_ARGC("thread.destroy()", 1);
@@ -3819,6 +3954,16 @@ BUILTIN_FUNCTION(thread_destroy)
 
         case 3:
                 ok = TyCondVarDestroy(object.ptr);
+                break;
+
+        case 4:
+                TyNoteFree(*(TyNote *)object.ptr);
+                ok = true;
+                break;
+
+        case 5:
+                TyCounterFree(*(TyCounter *)object.ptr);
+                ok = true;
                 break;
 
         default:
