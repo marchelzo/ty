@@ -7316,13 +7316,15 @@ PatchAnnotations(Ty *ty)
 static void
 emit_function(Ty *ty, Expr const *e)
 {
+        bool simple = (vN(e->bound_symbols) == 0)
+                   && (vN(e->scope->captured) == 0);
+
         // =====================================================================
         //
         // Save a bunch of function-related state so we can restore after this
         //
         symbol_vector syms_save = STATE.bound_symbols;
-        STATE.bound_symbols.items = e->bound_symbols.items;
-        vN(STATE.bound_symbols) = vN(e->bound_symbols);
+        STATE.bound_symbols = e->bound_symbols;
 
         LoopStates loops = STATE.loops;
         v00(STATE.loops);
@@ -7341,6 +7343,12 @@ emit_function(Ty *ty, Expr const *e)
 
         Expr *func_save = STATE.func;
         STATE.func = (Expr *)e;
+
+        byte_vector code_save;
+        if (simple) {
+                code_save = STATE.code;
+                v00(STATE.code);
+        }
         // =====================================================================
 
         Symbol **caps        = vv(e->scope->captured);
@@ -7373,19 +7381,19 @@ emit_function(Ty *ty, Expr const *e)
                 }
         }
 
-        INSN(FUNCTION);
-
-        Ei32(bound_caps);
-
-        while (!IS_ALIGNED_FOR(i64, vZ(STATE.code))) {
-                avP(STATE.code, 0);
+        if (!simple) {
+                INSN(FUNCTION);
+                Ei32(bound_caps);
+                while (!IS_ALIGNED_FOR(i64, vZ(STATE.code))) {
+                        avP(STATE.code, 0);
+                }
         }
 
 // ====/ New function /=============================================================
-        usize hs_offset = vN(STATE.code);
+        usize begin = vN(STATE.code);
         Ei32(0);
 
-        usize size_offset = vN(STATE.code);
+        usize size_off = vN(STATE.code);
         Ei32(0);
 
         Ei32(ncaps);
@@ -7463,8 +7471,8 @@ emit_function(Ty *ty, Expr const *e)
                 emit_string(ty, v__(e->param_symbols, i)->identifier);
         }
 
-        int hs = vN(STATE.code) - hs_offset;
-        memcpy(v_(STATE.code, hs_offset), &hs, sizeof hs);
+        u32 header_size = vN(STATE.code) - begin;
+        memcpy(v_(STATE.code, begin), &header_size, sizeof header_size);
 
         StackState stack = STATE.stack;
         m0(STATE.stack);
@@ -7473,7 +7481,7 @@ emit_function(Ty *ty, Expr const *e)
          * Remember where in the code this function's code begins so that we can compute
          * the relative offset of references to non-local variables.
          */
-        usize start_offset = vN(STATE.code);
+        usize body_off = vN(STATE.code);
 
         for (int i = 0; i < vN(e->param_symbols); ++i) {
                 Expr const *constraint = v__(e->constraints, i);
@@ -7644,15 +7652,8 @@ emit_function(Ty *ty, Expr const *e)
 
         STATE.function_resources = function_resources;
 
-        // TODO: what to do here?
-        //add_annotation(ty, e->proto, start_offset, vN(STATE.code));
-
-        int bytes = vN(STATE.code) - start_offset;
-        memcpy(v_(STATE.code, size_offset), &bytes, sizeof bytes);
-        LOG("bytes in func = %d", bytes);
-
-        // JIT compilation is deferred to VM's INSTR_FUNCTION handler
-        // (sentinel 0xFA57 was written to FUN_JIT above)
+        u32 bytes = vN(STATE.code) - body_off;
+        memcpy(v_(STATE.code, size_off), &bytes, sizeof bytes);
 
         int self_cap = -1;
 
@@ -7671,6 +7672,13 @@ emit_function(Ty *ty, Expr const *e)
                 Ei32(i);
         }
 
+#if !defined(TY_NO_JIT)
+        for (usize i = 0; i < vN(e->type_hints); ++i) {
+                TypeHint *hint = v_(e->type_hints, i);
+                hint->pc -= body_off;
+        }
+#endif
+
         //STATE.annotation = annotation;
         STATE.label          = label_save;
         STATE.fscope         = fs_save;
@@ -7679,21 +7687,19 @@ emit_function(Ty *ty, Expr const *e)
         STATE.tries          = tries;
         STATE.stack          = stack;
         t                    = t_save;
-// ===========/ Back to parent function /===========================================
 
-        LOG("STATE.fscope: %s", scope_name(ty, STATE.fscope));
+        if (simple) {
+                void *code = vv(STATE.code);
+                STATE.code = code_save;
+                INSN(FUNCTION0);
+                EP(code);
+        }
+// ===========/ Back to parent function /===========================================
 
         if (self_cap != -1) {
                 INSN(PATCH_ENV);
                 Ei32(self_cap);
         }
-
-#if !defined(TY_NO_JIT)
-        for (usize i = 0; i < vN(e->type_hints); ++i) {
-                TypeHint *hint = v_(e->type_hints, i);
-                hint->pc -= start_offset;
-        }
-#endif
 
         STATE.func = func_save;
 
@@ -18202,6 +18208,7 @@ DumpProgram(
         bool b = false;
         double x;
         int n, nkw = 0, i, j, tag;
+        Value f;
 
         bool DebugScan = DEBUGGING;
         u32 limit = UINT32_MAX;
@@ -18868,6 +18875,14 @@ DumpProgram(
                 CASE(INIT_STATIC_FIELD)
                         READCLASS(i);
                         READMEMBER(i);
+                        break;
+                CASE(FUNCTION0)
+                        READVALUE(s);
+                        f = (Value) {
+                                .type = VALUE_FUNCTION,
+                                .info = (i32 *)s
+                        };
+                        dump(out, " %s", SHOW(&f));
                         break;
                 CASE(FUNCTION)
                 {

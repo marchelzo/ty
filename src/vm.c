@@ -7737,6 +7737,14 @@ BinaryOp:
                         break;
                 }
 
+                CASE(FUNCTION0)
+                        READVALUE(s);
+                        m0(v);
+                        v.type = VALUE_FUNCTION;
+                        v.info = (i32 *)s;
+                        push(v);
+                        break;
+
                 CASE(FUNCTION)
                 {
                         m0(v);
@@ -10176,6 +10184,9 @@ StepInstruction(char const *ip)
         CASE(INIT_STATIC_FIELD)
                 SKIPVALUE(i);
                 SKIPVALUE(i);
+                break;
+        CASE(FUNCTION0)
+                READVALUE(s);
                 break;
         CASE(FUNCTION)
         {
