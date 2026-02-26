@@ -1146,7 +1146,7 @@ jit_rt_bind_instance(Ty *ty, Value *result, int n, int z)
         } else {
                 u16 off = OFF_NOT_FOUND;
                 if (result->type == VALUE_OBJECT) {
-                        Class *c = class_get(ty, result->class);
+                        Class *c = class_get(ty, n);
                         if (z < vN(c->offsets_r)) {
                                 off = v__(c->offsets_r, z);
                         }
@@ -2048,8 +2048,9 @@ bc_prescan(JitCtx *ctx, char const *code, int code_size)
                         break;
 
                 case INSTR_BIND_INSTANCE:
-                        BC_SKIP(i32); // n
-                        BC_SKIP(i32); // z
+                        return false;
+                        BC_SKIP(i32);
+                        BC_SKIP(i32);
                         break;
 
                 case INSTR_PUSH_TUPLE_ELEM:
@@ -5708,8 +5709,8 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
 
                 CASE(BIND_INSTANCE) {
                         int n;
-                        BC_READ(n);
                         int z;
+                        BC_READ(n);
                         BC_READ(z);
 
                         int tos_off = OP_OFF(ctx->sp - 1);
