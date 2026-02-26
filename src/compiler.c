@@ -12233,12 +12233,16 @@ InjectRedpill(Ty *ty, Stmt *s)
                                 if (super != NULL) {
                                         AddInheritedFieldParams(ty, init, super);
                                 }
-                        } else {
+                        } else if (init->class != class) {
                                 init = aclone(init);
                                 init->arena = GetArenaAlloc(ty);
                                 init->class = class;
+                        } else {
+                                init = NULL;
                         }
-                        avI(def->methods, init, 0);
+                        if (init != NULL) {
+                                avI(def->methods, init, 0);
+                        }
                 }
                 AddClassTraits(ty, def);
                 ResolveFieldTypes(ty, def->scope, &def->fields);
