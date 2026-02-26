@@ -2,6 +2,7 @@
 #define JIT_H_INCLUDED
 
 #include <stdio.h>
+#include <stdatomic.h>
 
 #include "ty.h"
 #include "value.h"
@@ -55,6 +56,26 @@ try_jit(Ty *ty, Value const *f)
 
         if (LIKELY(jit != (void *)0xFA57)) {
                 return jit;
+        }
+
+        _Atomic i16 *flags = (void *)flags_of(f);
+        i16 flags0 = atomic_load_explicit(flags, memory_order_relaxed);
+
+        if (UNLIKELY(flags0 & FF_JIT_FIRST)) {
+                return NULL;
+        }
+
+        bool miss = !atomic_compare_exchange_strong_explicit(
+                flags,
+                &flags0,
+                flags0 | FF_JIT_FIRST,
+                memory_order_acq_rel,
+                memory_order_relaxed
+
+        );
+
+        if (UNLIKELY(miss)) {
+                return NULL;
         }
 
         JitInfo *info = jit_compile(ty, f);
