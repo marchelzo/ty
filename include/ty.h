@@ -1055,6 +1055,7 @@ extern usize TotalBytesAllocated;
         X(POST_INC),              \
         X(PRE_DEC),               \
         X(POST_DEC),              \
+        X(FUNCTION0),             \
         X(FUNCTION),              \
         X(JUMP),                  \
         X(JUMP_IF),               \
