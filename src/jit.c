@@ -3415,9 +3415,6 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                         jit_emit_label(asm, lbl);
                 }
 
-                jit_emit_reload_stack(asm, ctx->bound);
-                EMIT_SP_SYNC();
-
 #ifdef TY_PROFILER
                 jit_emit_mov(asm, BC_A0, BC_TY);
                 jit_emit_load_imm(asm, BC_A1, (iptr)(code + off));
@@ -3426,6 +3423,20 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
 #endif
 
                 u8 op = (u8)*ip++;
+
+                switch (op) {
+                case INSTR_SAVE_STACK_POS:
+                case INSTR_DROP_STACK_POS:
+                case INSTR_RESTORE_STACK_POS:
+                case INSTR_POP_STACK_POS_POP:
+                        break;
+
+                case INSTR_JUMP:
+                        break;
+
+                default:
+                        jit_emit_reload_stack(asm, ctx->bound);
+                }
 
 #if JIT_SCAN_LOG
                 LOGX(
