@@ -1,24 +1,33 @@
-// jit_x64.dasc - DynASM x86-64 code generation templates for ty JIT
+/**
+ * jit_x64.dasc - DynASM x86-64 code generation templates for ty JIT
+ *
+ * Processed by: luajit LuaJIT/dynasm/dynasm.lua -o src/jit_x64.h src/jit_x64.dasc
+ *
+ * The generated jit_x64.h is included by src/jit.c
+ */
+
+
+// ============================================================================
+// Calling convention:
+//   void fn(Ty *ty, Value *result, Value *args, Value *env)
+//   rdi=ty, rsi=result, rdx=args, rcx=env
 //
-// Processed by: luajit LuaJIT/dynasm/dynasm.lua -o src/jit_x64.h src/jit_x64.dasc
+// Callee-saved register assignments:
+//   r12 = Ty *ty
+//   r13 = Value *result
+//   r14 = Value *args (== &stack.items[fp])
+//   r15 = Value *env
+//   rbx = operand base pointer (== &stack.items[fp + bound])
+//   rbp = fp byte offset into stack (stable across reallocs)
 //
-// The generated jit_x64.h is included by src/jit.c
-//
+// Value slots live in the interpreter's stack at [rbx + i*32].
+// ============================================================================
+
 
 |.arch x64
 |.actionlist jit_actions
 |.section code
 |.globals JIT_GLOB_
-
-// ============================================================================
-// INT MODE: Pure integer functions
-//
-// x86-64 System V calling convention:
-//   intmax_t fn(intmax_t a0, intmax_t a1, intmax_t a2, intmax_t a3)
-//   Arguments: rdi, rsi, rdx, rcx
-//   Return: rax
-//   Scratch: r8-r11 (caller-saved)
-// ============================================================================
 
 |.define ARG0, rdi
 |.define ARG1, rsi
@@ -211,25 +220,7 @@ static void jit_emit_label(dasm_State **Dst, int label) {
         |=>label:
 }
 
-// ============================================================================
-// GENERIC MODE: Value-typed functions with C helper calls
-//
-// Calling convention:
-//   void fn(Ty *ty, Value *result, Value *args, Value *env)
-//   rdi=ty, rsi=result, rdx=args, rcx=env
-//
-// Callee-saved register assignments:
-//   r12 = Ty *ty
-//   r13 = Value *result
-//   r14 = Value *args (== &stack.items[fp])
-//   r15 = Value *env
-//   rbx = operand base pointer (== &stack.items[fp + bound])
-//   rbp = fp byte offset into stack (stable across reallocs)
-//
-// Value slots live in the interpreter's stack at [rbx + i*32].
-// ============================================================================
-
-static void jit_emit_gen_prologue(dasm_State **Dst, int bound) {
+static void jit_emit_prologue(dasm_State **Dst, int bound) {
         |->entry:
         |  push rbp
         |  push rbx
@@ -260,7 +251,7 @@ static void jit_emit_gen_prologue(dasm_State **Dst, int bound) {
         }
 }
 
-static void jit_emit_gen_epilogue(dasm_State **Dst) {
+static void jit_emit_epilogue(dasm_State **Dst) {
         |  add rsp, 8
         |  pop r15
         |  pop r14

@@ -41,7 +41,6 @@ static Ty *ty;
 
 static bool basic = false;
 static char buffer[8192];
-static char *completions[MAX_COMPLETIONS + 1];
 
 static char const *print_function = "print";
 

@@ -39,7 +39,6 @@ chalk.aqua   = '#89b482'
 chalk.grey   = '#847a6d'
 chalk.pink   = '#d677be'
 
-
 let groups = %{
     'fg0': 'id',
     'fg1': '[ ] { } ( ) . .? , ] ->',
@@ -47,23 +46,23 @@ let groups = %{
         =   ==  ++  --  +   -  *    /   %   ^    |     &    <=   >=
         +=  -=  *=  /=  %=  @  #    &&  ||  <=>  !     ~    **
         ~>  =>  $~> >   <  !=  ??   >>  <<  <<=  >>=   |>   !::
-        *** &&& <$> <%> ?> <?  <*>  *>  <*  ..%. .%..  .%
+        *** &&& <$> <%> ?> <?  <*>  *>  <*  ..%. .%..  .%   op
         ::  ?=  |=  &=  ^=  ?  :    ?:  ..  ...  $     :>
     ',
     'purple': 'true false nil int float use import',
     'red': '
-        for        while     if       let       and    fn     const
-        do         try       catch    operator  or     in     yield
-        match      else      with     break     pub    as     static
-        continue   return    macro    where     not    throw  defer
-        finally    __eval__
+        for        while     if         let       and    fn     const
+        do         try       catch      operator  or     in     yield
+        match      else      with       break     pub    as     static
+        continue   return    macro      where     not    throw  defer
+        finally    __eval__  generator  ns
 
         id_keyword
     ',
     'b yellow': 'type type_member type_func id_type type_type',
     'yellow': 'class tag trait id_module, id_param id_module',
     'green': 'string " f-string',
-    'green2': 'fun_member fun fun_func id_func (_call )_call',
+    'green2': 'fun_member fun fun_func fun_call id_func (_call )_call',
     'blue': 'id_member id_field',
     'blue2': 'typeof __set_type__',
     'aqua': 'regex',
@@ -71,7 +70,7 @@ let groups = %{
     'pink': 'pp id_macro fun_macro type_macro $$[ $$] $$ __defined__'
 }
 
-let colors = [%{t: c for t in g.words()} for c, g in groups].sum() ?? %{}
+let colors = [ %{ t: c for t in g.words() } for c, g in groups ].sum() ?? %{}
 
 @memoized
 fn color-and-break(module: String) -> Array[(Int, String)] {
@@ -80,9 +79,17 @@ fn color-and-break(module: String) -> Array[(Int, String)] {
     }
 
     let tokens = tokens.remove!(nil).map!(t -> match t {
-        {id: /^[A-Z]\w*[a-z]\w*$/, *}            => do { let x: _ = t; ({*x, type: 'type'}) },
-        {id, end, *} and source[end.byte] == '(' => do { let x: _ = t; ({*x, type: 'fun'}) },
-        _ => t
+        {id: /^[A-Z]\w*[a-z]\w*$/, *}
+            => ({*t, type: 'type'}),
+
+        {meta: 'operator', *}
+            => ({*t, type: 'op', meta: nil}),
+
+        {id, end, *} and chr(source.byte(end.byte)) == '('
+            => ({*t, type: 'fun'})
+
+        _
+            => t
     })
 
     let parts = [(it, '') for source]
@@ -134,13 +141,13 @@ fn color-and-break(module: String) -> Array[(Int, String)] {
     out.str!().lines().enumerate!()
 }
 
-fn next-line(line: Int) -> (Token -> Bool) do (
-    match ({start, *}) => start.line != line
-)
+fn next-line(line: Int) -> (Token -> Bool) {
+    (match ({start, *}) => start.line != line)
+}
 
-fn next-call(start-func, start-fp) do (
-    match ({fp, *}) => (fp != start-fp)
-)
+fn next-call(start-func, start-depth) {
+    (match ({depth, *}) => (depth != start-depth))
+}
 
 fn end-of-expr() (
     match tdb.span() {
@@ -155,7 +162,7 @@ let current-line: Int = -1
 let current-mode = Source
 let current-range = 0..1
 let expr-span = nil
-let depth = 0
+let tdb-depth = 0
 let state: _ = nil
 
 let keybinds = %{
@@ -178,8 +185,8 @@ let readln = readln::readln@(_, keybinds=keybinds, erase=false, **)
 tdb.hook = fn hook() {
     state = tdb.state()
 
-    let { mod, file, expr, prog
-        , insn, ip, fp, sp, func } = state
+    let { mod,   file, expr, prog, insn
+        , depth, ip,   fp,   sp,   func } = state
 
     if not let ty.src $~> {start, end, *} = expr {
         step()
@@ -197,8 +204,8 @@ tdb.hook = fn hook() {
 
     let (H, W) = term::size(1)
 
-    depth += 1
-    defer depth -= 1
+    tdb-depth += 1
+    defer tdb-depth -= 1
 
     match current-mode {
         Source => {
@@ -213,7 +220,7 @@ tdb.hook = fn hook() {
         }
     }
 
-    while match readln("(tdb)[{depth}] ") {
+    while match readln("(tdb)[{tdb-depth}] ") {
         /^p (.*)$/ => match tdb.eval($1) {
             Err(msg) => print(msg),
             Ok(val)  => pp(val)
@@ -290,7 +297,7 @@ tdb.hook = fn hook() {
         },
 
         's' => {
-            stop-cond = next-call(func, fp)
+            stop-cond = next-call(func, depth)
             step = () -> tdb.into() || tdb.over()
             break
         },
@@ -330,13 +337,9 @@ fn print-source(module: String, range: Range, state: _) {
     let lines = color-and-break(module)
     let range = range.clamp(0, #lines)
 
-    let buf = Blob()
-    let put = fn (x) {
-        buf.push(str(x))
-        buf.push('\n')
-    }
+    let buf = Blob("\x1b[2J\x1b[H")
+    let put = buf.push@("{_}\n")
 
-    print("\x1b[2J\x1b[H", :flush)
     put(chalk"[yellow]File:[/] [blue]{state.file}[/]")
 
     let ndigit = int(log10(range.high)) + 1
@@ -354,7 +357,9 @@ fn print-source(module: String, range: Range, state: _) {
         }
         put(chalk"{margin} {source-line}")
     }
+
     put(chalk"[yellow]Current instruction:[/] [blue]{state.insn}[/]")
-    print(buf.str!(), end='')
+
+    print(buf.str!(), end='', flush=true)
 }
 

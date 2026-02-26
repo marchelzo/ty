@@ -9250,21 +9250,21 @@ BUILTIN_FUNCTION(tdb_over)
 {
         ASSERT_ARGC("tdb.over()", 0);
         TDB_MUST_NOT_BE(STOPPED);
-        return BOOLEAN(tdb_step_over(TDB->host));
+        return BOOLEAN(tdb_step_over(ty));
 }
 
 BUILTIN_FUNCTION(tdb_into)
 {
         ASSERT_ARGC("tdb.into()", 0);
         TDB_MUST_NOT_BE(STOPPED);
-        return BOOLEAN(tdb_step_into(TDB->host));
+        return BOOLEAN(tdb_step_into(ty));
 }
 
 BUILTIN_FUNCTION(tdb_step)
 {
         ASSERT_ARGC("tdb.step()", 0);
         TDB_MUST_NOT_BE(STOPPED);
-        return BOOLEAN(tdb_step_line(TDB->host));
+        return BOOLEAN(tdb_step_line(ty));
 }
 
 BUILTIN_FUNCTION(tdb_backtrace)
@@ -9398,7 +9398,8 @@ BUILTIN_FUNCTION(tdb_state)
                 "expr",  expr,
                 "func",  f,
                 "fp",    fp,
-                "sp",    INTEGER(TDB->host->stack.count)
+                "depth", INTEGER(vN(TDB->host->st.frames)),
+                "sp",    INTEGER(vN(TDB->host->stack))
         );
 }
 

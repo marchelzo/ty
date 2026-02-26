@@ -129,17 +129,14 @@ static Ty *ty = &vvv;
                 (expr ? expr->start.col : 0) + 1         \
         );
 #else
-#define XCASE(i)                                           \
+#define XCASE(i)                                            \
         case INSTR_##i:                                     \
-                expr = compiler_find_expr(ty, IP);          \
                 fprintf(                                    \
                         stderr,                             \
-                        "%s:%d:%d: " #i ": %s (%zu)\n",     \
-                        GetExpressionModule(expr),          \
-                        (expr ? expr->start.line : 0) + 1,  \
-                        (expr ? expr->start.col : 0) + 1,   \
-                        (vN(STACK) ? VSC(top()) : "empty"), \
-                        vN(STACK)                           \
+                        "[%s:%s]: %s\n", \
+                        I_AM_TDB ? "TDB" : "Ty", \
+                        TDB_STATE_NAME, \
+                        GetInstructionName(IP[-1]) \
                 );
 #define CASE(i) case INSTR_##i:
 #endif
@@ -1193,7 +1190,6 @@ vm_jit_bind_method(Ty *ty, Value *f, Value *v)
 void
 vm_jit_fail(Ty *ty, Value *top, char *ip)
 {
-        XXX("jit_fail");
         vN(STACK) = top - vv(STACK);
         vm_exec(ty, ip);
         UNREACHABLE();
@@ -1752,9 +1748,7 @@ RealThreadId(void)
 void
 TakeLock(Ty *ty)
 {
-        GCLOG("Taking MyLock%s", "");
         TySpinLockLock(ty->lock);
-        GCLOG("Took MyLock");
         ty->locked = true;
 }
 
@@ -1768,7 +1762,6 @@ void
 ReleaseLock(Ty *ty, bool blocked)
 {
         SetState(ty, blocked);
-        GCLOG("Releasing MyLock: %d", (int)blocked);
         TySpinLockUnlock(ty->lock);
         ty->locked = false;
 }
@@ -2019,16 +2012,78 @@ tdb_set_trap(DebugBreakpoint *breakpoint, char *ip)
 {
         breakpoint->ip = ip;
         breakpoint->op = *ip;
-        *ip = (char)INSTR_TRAP_TY;
+}
+
+inline static void
+tdb_clear_next(Ty *ty)
+{
+        if (TDB->next.ip != NULL) {
+                *TDB->next.ip = TDB->next.op;
+                TDB->next.ip = NULL;
+        }
+
+        if (TDB->alt.ip != NULL) {
+                *TDB->alt.ip = TDB->alt.op;
+                TDB->alt.ip = NULL;
+        }
+}
+
+inline static void
+tdb_disarm_next(Ty *ty)
+{
+        if (TDB->next.ip != NULL) {
+                *TDB->next.ip = TDB->next.op;
+        }
+
+        if (TDB->alt.ip != NULL) {
+                *TDB->next.ip = TDB->next.op;
+                *TDB->alt.ip = TDB->alt.op;
+        }
+}
+
+inline static void
+tdb_disarm_traps(Ty *ty)
+{
+        tdb_disarm_next(ty);
+
+        for (int i = 0; i < vN(TDB->breaks); ++i) {
+                DebugBreakpoint *_break = v_(TDB->breaks, i);
+                if (_break->ip != NULL) {
+                        *_break->ip = _break->op;
+                }
+        }
+}
+
+inline static void
+tdb_arm_traps(Ty *ty)
+{
+        if (TDB->next.ip != NULL) {
+                *TDB->next.ip = (char)INSTR_TRAP_TY;
+        }
+
+        if (TDB->alt.ip != NULL) {
+                tdb_set_trap(&TDB->alt, TDB->alt.ip);
+                *TDB->alt.ip = (char)INSTR_TRAP_TY;
+        }
+
+        for (int i = 0; i < vN(TDB->breaks); ++i) {
+                DebugBreakpoint *_break = v_(TDB->breaks, i);
+                if (_break->ip != NULL) {
+                        *_break->ip = (char)INSTR_TRAP_TY;
+                }
+        }
 }
 
 static TyThreadReturnValue
 vm_run_tdb(void *ctx)
 {
-        Ty *ty = mrealloc(NULL, sizeof *ty);
-        InitializeTy(ty, TDB->host->group);
+        TyTDB *tdb = ctx;
 
-        TDB = ctx;
+        Ty *ty = mrealloc(NULL, sizeof *ty);
+
+        InitializeTy(ty, tdb->host->group);
+        TDB = tdb;
+
         Thread *t = TDB->thread.thread;
 
         MyTy = TDB->ty = ty;
@@ -2067,19 +2122,13 @@ vm_run_tdb(void *ctx)
                 }
 
                 lGv(true);
-
                 TyMutexLock(&TDB_MUTEX);
                 while (TDB_IS(STOPPED)) {
                         TyCondVarWait(&TDB_CONDVAR, &TDB_MUTEX);
                 }
-
                 lTk();
 
-                DebugBreakpoint *breakpoint = tdb_get_break(ty, TDB->host->ip);
-
-                if (breakpoint   != NULL) *breakpoint->ip = breakpoint->op;
-                if (TDB->next.ip != NULL) *TDB->next.ip   = TDB->next.op;
-                if (TDB->alt.ip  != NULL) *TDB->alt.ip    = TDB->alt.op;
+                tdb_clear_next(ty);
 
                 Value *hook;
                 if (
@@ -2100,8 +2149,8 @@ vm_run_tdb(void *ctx)
                 TY_CATCH_END();
 
 KeepRunning:
+                tdb_arm_traps(ty);
                 TDB_SET_STATE(next);
-
                 TyMutexUnlock(&TDB_MUTEX);
                 TyCondVarSignal(&TDB_CONDVAR);
         }
@@ -5901,8 +5950,6 @@ vm_exec(Ty *ty, char *code)
         Value v;
         Value value;
         Value key;
-        Value container;
-        Value subscript;
 
         char *str;
         char *jump;
@@ -6056,6 +6103,9 @@ NextInstruction:
 
                 CASE(JUMP)
                         READVALUE(n);
+                        if (n == 0) {
+                                zP("invalid jump offset: 0");
+                        }
                         IP += n;
                         break;
 
@@ -6904,6 +6954,20 @@ TargetMember:
                         break;
 
                 CASE(TUPLE)
+                        READVALUE(n);
+                        READVALUE(s);
+                        v = (Value) {
+                                .type = VALUE_TUPLE,
+                                .count = n,
+                                .ids = (i32 *)s,
+                                .items = mAo(n * sizeof (Value), GC_TUPLE)
+                        };
+                        memcpy(v.items, topN(n), n * sizeof (Value));
+                        STACK.count -= n;
+                        push(v);
+                        break;
+
+                CASE(XTUPLE)
                         DoTupleLiteral(ty);
                         break;
 
@@ -7014,6 +7078,7 @@ YIELD:
                         if (DEBUGGING && !I_AM_TDB) {
                                 tdb_go(ty);
                         } else if (DEBUGGING) {
+                                TDB_IS(STEPPING);
                                 DebugBreakpoint *breakpoint = tdb_get_break(ty, IP);
                                 *IP = breakpoint->op;
                                 goto NextInstruction;
@@ -7736,14 +7801,6 @@ BinaryOp:
                         *vp = v;
                         break;
                 }
-
-                CASE(FUNCTION0)
-                        READVALUE(s);
-                        m0(v);
-                        v.type = VALUE_FUNCTION;
-                        v.info = (i32 *)s;
-                        push(v);
-                        break;
 
                 CASE(FUNCTION)
                 {
@@ -9982,6 +10039,10 @@ StepInstruction(char const *ip)
         CASE(ARRAY0)
                 break;
         CASE(TUPLE)
+                SKIPVALUE(n);
+                SKIPVALUE(s);
+                break;
+        CASE(XTUPLE)
                 READVALUE(n);
                 while (n --> 0) {
                         SKIPVALUE(i);
@@ -10185,9 +10246,6 @@ StepInstruction(char const *ip)
                 SKIPVALUE(i);
                 SKIPVALUE(i);
                 break;
-        CASE(FUNCTION0)
-                READVALUE(s);
-                break;
         CASE(FUNCTION)
         {
                 Value v;
@@ -10344,7 +10402,11 @@ LocalsDict(Ty *ty)
 Value
 tdb_locals(Ty *ty)
 {
-        return LocalsDict(TDB->host);
+        lGv(true);
+        Value locals = LocalsDict(TDB->host);
+        lTk();
+
+        return locals;
 }
 
 void
@@ -10378,6 +10440,14 @@ tdb_set_break(Ty *ty, char *ip)
 DebugBreakpoint *
 tdb_get_break(Ty *ty, char const *ip)
 {
+        if (TDB->next.ip == ip) {
+                return &TDB->next;
+        }
+
+        if (TDB->alt.ip == ip) {
+                return &TDB->alt;
+        }
+
         for (int i = 0; i < vN(TDB->breaks); ++i) {
                 if (v_(TDB->breaks, i)->ip == ip) {
                         return v_(TDB->breaks, i);
@@ -10426,28 +10496,25 @@ tdb_step_over_x(Ty *ty, char *ip, i32 i)
                 return true;
         }
 
+        i32 off;
+
         switch ((u8)*ip) {
         CASE(HALT)
                 return true;
 
         CASE(RETURN)
-                return (i < vN(CALLS))
-                    && tdb_step_over_x(ty, vvL(CALLS)[-i], i + 1);
+                return (i < vN(TDB->host->st.calls))
+                    && tdb_step_over_x(ty, vvL(TDB->host->st.calls)[-i], i + 1);
 
         CASE(MATCH_TAG)
-        {
-                /* default offset is at ip + 1 (mode) + sizeof(i32) (n) */
-                char *def_off = ip + 1 + sizeof (i32);
-                tdb_set_trap(&TDB->alt, def_off + sizeof (int) + load_int(def_off));
+                off = load_int(ip + 1);
+                tdb_set_trap(&TDB->alt, ip + 1 + sizeof (i32) + off);
                 break;
-        }
 
         CASE(MATCH_STRING)
-        {
-                char *def_off = ip + sizeof (i32);
-                tdb_set_trap(&TDB->alt, def_off + sizeof (int) + load_int(def_off));
+                off = load_int(ip + 1 + sizeof (i32));
+                tdb_set_trap(&TDB->alt, ip + 1 + sizeof (i32) + sizeof (i32) + off);
                 break;
-        }
 
         CASE(ARRAY_REST)
         CASE(ENSURE_CONTAINS)
@@ -10492,7 +10559,14 @@ tdb_step_over_x(Ty *ty, char *ip, i32 i)
         CASE(TRY_MEMBER)
         CASE(TRY_UNAPPLY)
         CASE(TUPLE_REST)
-                tdb_set_trap(&TDB->alt, ip + 1 + load_int(ip + 1) + sizeof (int));
+                off = load_int(ip + 1);
+                if (off != 0) {
+                        tdb_set_trap(
+                                &TDB->alt,
+                                ip + 1 + sizeof (i32) + off
+                        );
+                }
+                break;
         }
 
         tdb_set_trap(&TDB->next, StepInstruction(ip));
@@ -10503,7 +10577,7 @@ tdb_step_over_x(Ty *ty, char *ip, i32 i)
 bool
 tdb_step_over(Ty *ty)
 {
-        bool ok = tdb_step_over_x(ty, IP, 0);
+        bool ok = tdb_step_over_x(ty, TDB->host->ip, 0);
 
         if (!ok) {
                 puts("no..");
@@ -10516,46 +10590,48 @@ bool
 tdb_step_into(Ty *ty)
 {
         Value *vp;
-        Value v = NONE;
-        char *ip = IP;
         int i;
         int c;
 
-        ty = TDB->host;
+        Value v = NONE;
+        char *ip = TDB->host->ip;
+        usize sp = vN(STACK);
 
-        switch ((u8)*IP) {
+        switch ((u8)*ip++) {
         CASE(CALL_GLOBAL)
                 READVALUE(i);
                 v = v__(Globals, i);
                 break;
 
         CASE(CALL)
-                v = peek();
+                v = v_L(TDB->host->stack);
                 break;
 
         CASE(TRY_CALL_METHOD)
                 READVALUE(i);
                 READVALUE(i);
+                push(v_L(TDB->host->stack));
                 v = GetMember(ty, i, false, true);
                 break;
 
         CASE(CALL_METHOD)
                 READVALUE(i);
                 READVALUE(i);
+                push(v_L(TDB->host->stack));
                 v = GetMember(ty, i, true, true);
                 break;
 
         CASE(CALL_SELF_METHOD)
                 READVALUE(i);
                 READVALUE(i);
-                push(GetSelf(ty));
+                push(GetSelf(TDB->host));
                 v = GetMember(ty, i, false, true);
                 break;
 
         CASE(CALL_SELF_STATIC)
                 READVALUE(i);
                 READVALUE(i);
-                v = GetSelf(ty);
+                v = GetSelf(TDB->host);
                 push(CLASS(ClassOf(&v)));
                 v = GetMember(ty, i, false, true);
                 break;
@@ -10569,8 +10645,7 @@ tdb_step_into(Ty *ty)
                 break;
         }
 
-        IP = ip;
-        ip = NULL;
+        vN(STACK) = sp;
 
         switch (v.type) {
         case VALUE_FUNCTION:
@@ -10583,7 +10658,7 @@ tdb_step_into(Ty *ty)
                 break;
 
         case VALUE_CLASS:
-                vp = class_lookup_method_i(ty, v.class, NAMES.init);
+                vp = class_ctor(ty, v.class);
                 ip = (vp != NULL) ? code_of(vp) : NULL;
                 break;
 
@@ -10591,7 +10666,8 @@ tdb_step_into(Ty *ty)
                 ip = v.gen->ip;
                 break;
 
-        case VALUE_NONE:
+        default:
+                ip = NULL;
                 break;
         }
 
