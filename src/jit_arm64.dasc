@@ -1,9 +1,28 @@
-// jit_arm64.dasc - DynASM ARM64 code generation templates for ty JIT
+/**
+ * jit_arm64.dasc - DynASM ARM64 code generation templates for ty JIT
+ *
+ * Processed by: luajit LuaJIT/dynasm/dynasm.lua -o src/jit_arm64.h src/jit_arm64.dasc
+ *
+ * The generated jit_arm64.h is included by src/jit.c
+ */
+
+
+// ============================================================================
+// Calling convention:
+//   void fn(Ty *ty, Value *result, Value *args, Value *env)
+//   x0=ty, x1=result, x2=args, x3=env
 //
-// Processed by: luajit LuaJIT/dynasm/dynasm.lua -o src/jit_arm64.h src/jit_arm64.dasc
+// Callee-saved register assignments:
+//   x19 = Ty *ty
+//   x20 = Value *result
+//   x21 = Value *args (== &stack.items[fp])
+//   x22 = Value *env
+//   x23 = operand base pointer (== &stack.items[fp + bound])
+//   x24 = fp byte offset into stack (stable across reallocs)
 //
-// The generated jit_arm64.h is included by src/jit.c
-//
+// Value slots live in the interpreter's stack at [x23 + i*32].
+// ============================================================================
+
 
 |.arch arm64
 |.actionlist jit_actions
@@ -139,24 +158,7 @@ static void jit_emit_label(dasm_State **Dst, int label) {
         |=>label:
 }
 
-// ============================================================================
-// GENERIC MODE: Value-typed functions with C helper calls
-//
-// Calling convention:
-//   void fn(Ty *ty, Value *result, Value *args, Value *env)
-//   x0=ty, x1=result, x2=args, x3=env
-//
-// Callee-saved register assignments:
-//   x19 = Ty *ty
-//   x20 = Value *result
-//   x21 = Value *args (== &stack.items[fp])
-//   x22 = Value *env
-//   x23 = operand base pointer (== &stack.items[fp + bound])
-//   x24 = fp byte offset into stack (stable across reallocs)
-//
-// Value slots live in the interpreter's stack at [x23 + i*32].
-// ============================================================================
-static void jit_emit_gen_prologue(dasm_State **Dst, int bound) {
+static void jit_emit_prologue(dasm_State **Dst, int bound) {
         |->entry:
         |  stp x29, x30, [sp, #-16]!
         |  mov x29, sp
@@ -181,7 +183,7 @@ static void jit_emit_gen_prologue(dasm_State **Dst, int bound) {
         }
 }
 
-static void jit_emit_gen_epilogue(dasm_State **Dst) {
+static void jit_emit_epilogue(dasm_State **Dst) {
         |  ldp x23, x24, [sp], #16
         |  ldp x21, x22, [sp], #16
         |  ldp x19, x20, [sp], #16

@@ -840,6 +840,8 @@ DefaultConstructor(Ty *ty, Class *class)
         ctor->body  = NULL;
         ctor->rest  = -1;
         ctor->ikwargs = -1;
+        ctor->start = class->def->start;
+        ctor->end   = class->def->end;
 
         AddFieldParams(ty, ctor, &class->def->class.fields);
 
@@ -6573,7 +6575,7 @@ EmitCallMethodOp(
 inline static void
 EmitTupleOp(Ty *ty, i32 n)
 {
-        INSN(TUPLE);
+        INSN(XTUPLE);
         Ei32(n);
         AdjStack(ty, 1 - n);
 }
@@ -7316,16 +7318,10 @@ PatchAnnotations(Ty *ty)
 static void
 emit_function(Ty *ty, Expr const *e)
 {
-        bool simple = (vN(e->bound_symbols) == 0)
-                   && (vN(e->scope->captured) == 0);
-
         // =====================================================================
         //
         // Save a bunch of function-related state so we can restore after this
         //
-        symbol_vector syms_save = STATE.bound_symbols;
-        STATE.bound_symbols = e->bound_symbols;
-
         LoopStates loops = STATE.loops;
         v00(STATE.loops);
 
@@ -7344,11 +7340,8 @@ emit_function(Ty *ty, Expr const *e)
         Expr *func_save = STATE.func;
         STATE.func = (Expr *)e;
 
-        byte_vector code_save;
-        if (simple) {
-                code_save = STATE.code;
-                v00(STATE.code);
-        }
+        offset_vector co_returns = STATE.co_returns;
+        v00(STATE.co_returns);
         // =====================================================================
 
         Symbol **caps        = vv(e->scope->captured);
@@ -7356,8 +7349,6 @@ emit_function(Ty *ty, Expr const *e)
         int      ncaps       = vN(e->scope->captured);
         int      bound       = vN(e->scope->owned);
         int      bound_caps  = 0;
-
-        LOG("Compiling %s. scope=%s", e->name == NULL ? "(anon)" : e->name, scope_name(ty, e->scope));
 
         for (int i = ncaps - 1; i >= 0; --i) {
                 if (caps[i]->scope->function == e->scope) {
@@ -7381,12 +7372,10 @@ emit_function(Ty *ty, Expr const *e)
                 }
         }
 
-        if (!simple) {
-                INSN(FUNCTION);
-                Ei32(bound_caps);
-                while (!IS_ALIGNED_FOR(i64, vZ(STATE.code))) {
-                        avP(STATE.code, 0);
-                }
+        INSN(FUNCTION);
+        Ei32(bound_caps);
+        while (!IS_ALIGNED_FOR(i64, vZ(STATE.code))) {
+                avP(STATE.code, 0);
         }
 
 // ====/ New function /=============================================================
@@ -7491,7 +7480,7 @@ emit_function(Ty *ty, Expr const *e)
                           && (RUNTIME_CONSTRAINTS || (e->overload != NULL));
                 JumpPlaceholder defaulted;
                 JumpPlaceholder good;
-                if (dflt == NULL && !check) {
+                if (!check && (dflt == NULL || dflt->type == EXPRESSION_NIL)) {
                         continue;
                 }
                 if (dflt != NULL) {
@@ -7568,6 +7557,8 @@ emit_function(Ty *ty, Expr const *e)
              && s_eq(e->name, "init")
         ) {
                 Stmt *def = e->class->def;
+                usize init_begin = vN(STATE.code);
+
                 EmitFieldInitializers(ty, &def->class);
 
                 // Default constructor
@@ -7584,6 +7575,10 @@ emit_function(Ty *ty, Expr const *e)
                                 PATCH_JUMP(skip);
                         }
                 }
+
+                if (vN(STATE.code) > init_begin) {
+                        add_location(ty, e, init_begin, vN(STATE.code));
+                }
         }
 
         if (e->type == EXPRESSION_GENERATOR) {
@@ -7593,7 +7588,7 @@ emit_function(Ty *ty, Expr const *e)
                 INSN(YIELD_NONE);
                 INSN(POP);
                 JUMP(end);
-                patch_jumps_to(&STATE.generator_returns, end.off);
+                patch_jumps_to(&STATE.co_returns, end.off);
         } else if (e->type == EXPRESSION_MULTI_FUNCTION) {
                 for (int i = 0; i < vN(e->functions); ++i) {
                         Expr *f = *v_(e->functions, i);
@@ -7682,18 +7677,12 @@ emit_function(Ty *ty, Expr const *e)
         //STATE.annotation = annotation;
         STATE.label          = label_save;
         STATE.fscope         = fs_save;
-        STATE.bound_symbols  = syms_save;
         STATE.loops          = loops;
         STATE.tries          = tries;
         STATE.stack          = stack;
+        STATE.co_returns     = co_returns;
         t                    = t_save;
 
-        if (simple) {
-                void *code = vv(STATE.code);
-                STATE.code = code_save;
-                INSN(FUNCTION0);
-                EP(code);
-        }
 // ===========/ Back to parent function /===========================================
 
         if (self_cap != -1) {
@@ -8092,16 +8081,14 @@ emit_for_loop(Ty *ty, Stmt const *s, bool want_result)
                 emit_statement(ty, s->for_loop.init, false);
         }
 
-        PLACEHOLDER_JUMP(JUMP, skip_next);
-
         LABEL(begin);
 
         if (s->for_loop.next != NULL) {
+                PLACEHOLDER_JUMP(JUMP, skip_next);
                 EE(s->for_loop.next);
                 INSN(POP);
+                PATCH_JUMP(skip_next);
         }
-
-        PATCH_JUMP(skip_next);
 
         JumpPlaceholder end_jump;
         if (s->for_loop.cond != NULL) {
@@ -9727,24 +9714,26 @@ emit_if(Ty *ty, Stmt const *s, bool want_result)
 
         bool returns = emit_statement(ty, s->iff.then, want_result);
 
-        PLACEHOLDER_JUMP(JUMP, done);
-
-        PATCH_FAILS {
-                if (!simple) {
-                        INSN(POP_STACK_POS);
+        if (!simple | want_result | (s->iff.otherwise != NULL)) {
+                PLACEHOLDER_JUMP(JUMP, done);
+                PATCH_FAILS {
+                        if (!simple) {
+                                INSN(POP_STACK_POS);
+                        }
                 }
-        }
-
-        if (s->iff.otherwise != NULL) {
-                returns &= emit_statement(ty, s->iff.otherwise, want_result);
+                if (s->iff.otherwise != NULL) {
+                        returns &= emit_statement(ty, s->iff.otherwise, want_result);
+                } else {
+                        returns = false;
+                        if (want_result) {
+                                INSN(NIL);
+                        }
+                }
+                PATCH_JUMP(done);
         } else {
+                PATCH_FAILS;
                 returns = false;
-                if (want_result) {
-                        INSN(NIL);
-                }
         }
-
-        PATCH_JUMP(done);
 
         if (has_resources) {
                 INSN(DROP);
@@ -11395,8 +11384,16 @@ emit_expr(Ty *ty, Expr const *e, bool need_loc)
                 break;
 
         case EXPRESSION_TUPLE:
+        {
+                bool simple = true;
+                bool names  = false;
+
                 for (int i = 0; i < vN(e->es); ++i) {
+                        if (v__(e->names, i) != NULL) {
+                                names = true;
+                        }
                         if (v__(e->tconds, i) != NULL) {
+                                simple = false;
                                 EE(v__(e->tconds, i));
                                 PLACEHOLDER_JUMP(JUMP_IF_NOT, skip);
                                 if (!v__(e->required, i)) {
@@ -11411,26 +11408,49 @@ emit_expr(Ty *ty, Expr const *e, bool need_loc)
                                 }
                                 PATCH_JUMP(good);
                         } else if (!v__(e->required, i)) {
+                                simple = false;
                                 emit_non_nil_expr(ty, v__(e->es, i), true);
                         } else if (v__(e->es, i)->type == EXPRESSION_SPREAD) {
+                                simple = false;
                                 emit_spread_tuple(ty, v__(e->es, i)->value);
                         } else {
                                 EE(v__(e->es, i));
                         }
                 }
-                ETUPLE(vN(e->es));
-                for (int i = 0; i < vN(e->names); ++i) {
-                        if (v__(e->names, i) != NULL) {
-                                if (s_eq(v__(e->names, i), "*")) {
-                                        Ei32(-2);
-                                } else {
-                                        Ei32(M_ID(v__(e->names, i)));
+                if (simple) {
+                        i32 *ids;
+                        if (names) {
+                                ids = mA(vN(e->names) * sizeof (i32));
+                                for (int i = 0; i < vN(e->names); ++i) {
+                                        if (v__(e->names, i) != NULL) {
+                                                ids[i] = M_ID(v__(e->names, i));
+                                        } else {
+                                                ids[i] = -1;
+                                        }
                                 }
                         } else {
-                                Ei32(-1);
+                                ids = NULL;
+                        }
+                        INSN(TUPLE);
+                        Ei32(vN(e->es));
+                        EP(ids);
+                        STK(1 - (i32)vN(e->es));
+                } else {
+                        ETUPLE(vN(e->es));
+                        for (int i = 0; i < vN(e->names); ++i) {
+                                if (v__(e->names, i) != NULL) {
+                                        if (s_eq(v__(e->names, i), "*")) {
+                                                Ei32(-2);
+                                        } else {
+                                                Ei32(M_ID(v__(e->names, i)));
+                                        }
+                                } else {
+                                        Ei32(-1);
+                                }
                         }
                 }
                 break;
+        }
 
         case EXPRESSION_TUPLE_SPEC:
                 INSN(SAVE_STACK_POS);
@@ -11776,7 +11796,7 @@ emit_statement(Ty *ty, Stmt const *s, bool want_result)
         case STATEMENT_GENERATOR_RETURN:
                 emit_yield(ty, (Expr const **)vv(s->returns), vN(s->returns), false);
                 INSN(JUMP);
-                avP(STATE.generator_returns, vN(STATE.code));
+                avP(STATE.co_returns, vN(STATE.code));
                 Ei32(0);
                 STK(-1);
                 break;
@@ -12962,7 +12982,7 @@ NoEmit:
         add_location_info(ty);
 
         v0(STATE.class_ops);
-        v0(STATE.generator_returns);
+        v0(STATE.co_returns);
         v0(STATE.tries);
         v0(STATE.loops);
         m0(STATE.stack);
@@ -18637,6 +18657,17 @@ DumpProgram(
                         break;
                 CASE(TUPLE)
                         READVALUE(n);
+                        READVALUE_(s);
+                        if (s && !DebugScan) {
+                                for (int i = 0; i < n; ++i) {
+                                        i32 id = ((i32 *)s)[i];
+                                        char const *name = (id == -1) ? "_" : M_NAME(id);
+                                        DUMPSTR(name);
+                                }
+                        }
+                        break;
+                CASE(XTUPLE)
+                        READVALUE(n);
                         while (n --> 0) {
                                 READVALUE_(i);
                                 if (!DebugScan) switch (i) {
@@ -18875,14 +18906,6 @@ DumpProgram(
                 CASE(INIT_STATIC_FIELD)
                         READCLASS(i);
                         READMEMBER(i);
-                        break;
-                CASE(FUNCTION0)
-                        READVALUE(s);
-                        f = (Value) {
-                                .type = VALUE_FUNCTION,
-                                .info = (i32 *)s
-                        };
-                        dump(out, " %s", SHOW(&f));
                         break;
                 CASE(FUNCTION)
                 {
