@@ -1743,7 +1743,23 @@ TyThreadCPUTime(void)
 }
 
 inline static u64
-TyRealTime()
+TyMonotonicTime(void)
+{
+#ifdef _WIN32
+        LARGE_INTEGER counter;
+        LARGE_INTEGER frequency;
+        QueryPerformanceCounter(&counter);
+        QueryPerformanceFrequency(&frequency);
+        return (u64)(counter.QuadPart * 1000000000ULL / frequency.QuadPart);
+#else
+        struct timespec t;
+        clock_gettime(CLOCK_MONOTONIC, &t);
+        return 1000000000ULL * t.tv_sec + t.tv_nsec;
+#endif
+}
+
+inline static u64
+TyRealTime(void)
 {
 #ifdef _WIN32
         LARGE_INTEGER counter;

@@ -298,16 +298,17 @@ TyWaitAny(TyWaitable *items, int count, u64 timeout_ms, void *scratch,
 
 #include <pthread.h>
 #include <signal.h>
+#include "barrier.h"
 
 typedef pthread_t            TyThread;
 typedef void                *TyThreadFunc(void *);
 typedef void                *TyThreadReturnValue;
+typedef pthread_barrier_t    TyBarrier;
 
 #ifdef TY_USE_NSYNC
 
 #include <nsync.h>
 
-typedef nsync_counter        TyBarrier;
 typedef nsync_mu             TyMutex;
 typedef nsync_mu             TyRwLock;
 typedef nsync_cv             TyCondVar;
@@ -317,10 +318,6 @@ typedef nsync_counter        TyCounter;
 #define TY_RWLOCK_INIT NSYNC_MU_INIT
 
 #else /* !TY_USE_NSYNC */
-
-#include "barrier.h"
-
-typedef pthread_barrier_t    TyBarrier;
 
 typedef pthread_mutex_t      TyMutex;
 typedef pthread_cond_t       TyCondVar;
@@ -411,27 +408,6 @@ TyThreadEqual(TyThread t1, TyThread t2)
 }
 
 #ifdef TY_USE_NSYNC
-
-/*
- * Barrier functions (nsync counter)
- */
-
-inline static void
-TyBarrierInit(TyBarrier *b, int n)
-{
-        if (*b != NULL) {
-                nsync_counter_free(*b);
-        }
-        *b = nsync_counter_new(n);
-}
-
-inline static bool
-TyBarrierWait(TyBarrier *b)
-{
-        nsync_counter_add(*b, -1);
-        return nsync_counter_wait(*b, nsync_time_no_deadline) == 0;
-}
-
 /*
  * Mutex functions (nsync)
  */
@@ -747,23 +723,6 @@ TyWaitAny(TyWaitable *items, int count, u64 timeout_ms, void *scratch,
 }
 
 #else /* !TY_USE_NSYNC */
-
-/*
- * Barrier functions (pthreads)
- */
-
-inline static void
-TyBarrierInit(TyBarrier *b, int n)
-{
-        pthread_barrier_init(b, NULL, n);
-}
-
-inline static bool
-TyBarrierWait(TyBarrier *b)
-{
-        return pthread_barrier_wait(b) == 0;
-}
-
 /*
  * Mutex functions (pthreads)
  */
@@ -965,7 +924,7 @@ TyWaitAny(TyWaitable *items, int count, u64 timeout_ms, void *scratch,
 }
 #endif /* TY_USE_NSYNC */
 
-#ifdef __APPLE__
+#if defined(__APPLE__)
 inline static bool
 TySpinLockInit(TySpinLock *spin)
 {
@@ -999,7 +958,7 @@ TySpinLockDestroy(TySpinLock *spin)
         return true;
 }
 #elif defined(TY_USE_NSYNC)
-  #define TySpinLockInit TyMutexInit
+  #define TySpinLockInit    TyMutexInit
   #define TySpinLockTryLock TyMutexTryLock
   #define TySpinLockLock    TyMutexLock
   #define TySpinLockUnlock  TyMutexUnlock
@@ -1035,6 +994,22 @@ TySpinLockDestroy(TySpinLock *spin)
         return pthread_spin_destroy(spin) == 0;
 }
 #endif
+
+/*
+ * Barrier functions (pthreads)
+ */
+
+inline static void
+TyBarrierInit(TyBarrier *b, int n)
+{
+        pthread_barrier_init(b, NULL, n);
+}
+
+inline static bool
+TyBarrierWait(TyBarrier *b)
+{
+        return pthread_barrier_wait(b) == 0;
+}
 
 #endif /* _WIN32 */
 

@@ -6,6 +6,8 @@
 #include <setjmp.h>
 #include <stdbool.h>
 
+#define TY_GC_STATS 1
+
 #include "vec.h"
 
 #define CAT(a, b) a ## b
