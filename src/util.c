@@ -14,18 +14,20 @@
 #endif
 
 #ifdef _WIN32
-#include <windows.h>
-#include <shlwapi.h>
+ #include <windows.h>
+ #include <shlwapi.h>
 #else
-#include <libgen.h>
-#include <sys/mman.h>
-#include <sys/ioctl.h>
+ #include <libgen.h>
+ #include <sys/mman.h>
+ #include <sys/ioctl.h>
 #endif
 
 #if !defined(S_ISREG) && defined(S_IFMT) && defined(S_IFREG)
-#define S_ISREG(m) (((m) & S_IFMT) == S_IFREG)
-#define S_ISLNK(m) 0
+ #define S_ISREG(m) (((m) & S_IFMT) == S_IFREG)
+ #define S_ISLNK(m) 0
 #endif
+
+#define STB_SPRINTF_IMPLEMENTATION
 
 #include "panic.h"
 #include "alloc.h"
@@ -260,7 +262,7 @@ vdump(byte_vector *b, char const *fmt, va_list ap)
                 int need;
 
                 va_copy(ap_, ap);
-                need = vsnprintf(b->items + b->count, avail, fmt, ap_);
+                need = ty_vsnprintf(b->items + b->count, avail, fmt, ap_);
                 va_end(ap_);
 
                 if (1 + need >= avail) {
@@ -285,7 +287,7 @@ dump(byte_vector *b, char const *fmt, ...)
                 isize need;
 
                 va_start(ap, fmt);
-                need = vsnprintf(b->items + b->count, avail, fmt, ap);
+                need = ty_vsnprintf(b->items + b->count, avail, fmt, ap);
                 va_end(ap);
 
                 if (1 + need >= avail) {
@@ -310,7 +312,7 @@ avdump(Ty *ty, byte_vector *str, char const *fmt, va_list ap)
                 isize need;
 
                 va_copy(ap_, ap);
-                need = vsnprintf(vZ(*str), avail, fmt, ap_);
+                need = ty_vsnprintf(vZ(*str), avail, fmt, ap_);
                 va_end(ap_);
 
                 if (1 + need >= avail) {
@@ -348,7 +350,7 @@ scvdump(Ty *ty, byte_vector *str, char const *fmt, va_list ap)
                 isize need;
 
                 va_copy(ap_, ap);
-                need = vsnprintf(vZ(*str), avail, fmt, ap_);
+                need = ty_vsnprintf(vZ(*str), avail, fmt, ap_);
                 va_end(ap_);
 
                 if (1 + need >= avail) {
