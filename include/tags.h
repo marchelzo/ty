@@ -40,6 +40,12 @@ tags_first(Ty *ty, int tags);
 char *
 tags_wrap(Ty *ty, char const *s, int tags, bool color);
 
+char *
+tags_open(Ty *ty, int tags, bool color);
+
+char *
+tags_close(Ty *ty, int tags, bool color);
+
 char const *
 tags_name(Ty *ty, int tag);
 

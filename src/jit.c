@@ -415,8 +415,9 @@ jit_stats_report(Ty *ty, FILE *out)
                                 tbuf);
                 }
 
-                if (ncompiled > show)
+                if (ncompiled > show) {
                         fprintf(out, "   %s... and %d more%s\n", PTERM(90), ncompiled - show, PTERM(0));
+                }
 
                 fputc('\n', out);
         }

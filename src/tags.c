@@ -191,6 +191,65 @@ tags_wrap(Ty *ty, char const *s, int tags, bool color)
         return vv(cs);
 }
 
+char *
+tags_open(Ty *ty, int tags, bool color)
+{
+        vec(char) cs = {0};
+
+        struct tags *list = lists.items[tags];
+
+        if (color && list->tag != 0) {
+                svPn(cs, TERM(94), strlen(TERM(94)));
+        }
+
+        while (list->tag != 0) {
+                char const *name = names.items[list->tag - 1];
+                svPn(cs, name, strlen(name));
+                svP(cs, '(');
+                list = list->next;
+        }
+
+        if (color && vN(cs) > 0) {
+                svPn(cs, TERM(0), strlen(TERM(0)));
+        }
+
+        svP(cs, '\0');
+
+        return vv(cs);
+}
+
+char *
+tags_close(Ty *ty, int tags, bool color)
+{
+        vec(char) cs = {0};
+
+        struct tags *list = lists.items[tags];
+
+        i32 n = 0;
+        while (list->tag != 0) {
+                list = list->next;
+                n += 1;
+        }
+
+        if (n > 0) {
+                if (color) {
+                        svPn(cs, TERM(94), strlen(TERM(94)));
+                }
+
+                for (i32 i = 0; i < n; ++i) {
+                        svP(cs, ')');
+                }
+
+                if (color) {
+                        svPn(cs, TERM(0), strlen(TERM(0)));
+                }
+        }
+
+        svP(cs, '\0');
+
+        return vv(cs);
+}
+
 int
 tags_lookup(Ty *ty, char const *name)
 {

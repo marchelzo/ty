@@ -5,6 +5,7 @@
 #include <stdbool.h>
 #include <inttypes.h>
 
+#include <pcre2.h>
 #include <xxhash.h>
 
 #include "ty.h"
@@ -27,10 +28,6 @@ static _Thread_local vec(Array *) show_arrays;
 
 static char *value_showx(Ty *ty, Value const *v, u32 flags);
 static char *value_show_colorx(Ty *ty, Value const *v, u32 flags);
-
-enum {
-        SHOW_BUF_SZ = 4096
-};
 
 void
 TyValueCleanup(void)
@@ -359,153 +356,6 @@ value_hash(Ty *ty, Value const *val)
         return ((u64)val->tags) ^ hash(ty, val);
 }
 
-char *
-show_dict(Ty *ty, Value const *d, bool color, u32 flags)
-{
-        for (int i = 0; i < vN(show_dicts); ++i) {
-                if (v__(show_dicts, i) == d->dict) {
-                        return "{...}";
-                }
-        }
-
-        xvP(show_dicts, d->dict);
-
-        byte_vector buf = {0};
-
-        if (color) {
-                sxdf(&buf, "%s%%{%s", TERM(94;1), TERM(0));
-        } else {
-                svP(buf, '%');
-                svP(buf, '{');
-        }
-
-        int i = 0;
-
-        dfor(d->dict, {
-                char *k = color
-                          ? value_show_colorx(ty, key, flags)
-                          : value_showx(ty, key, flags);
-                u32 nkey = strlen(k);
-
-                char *v = color
-                          ? value_show_colorx(ty, val, flags)
-                          : value_showx(ty, val, flags);
-                u32 nval = strlen(v);
-
-                if (i++ > 0) {
-                        svP(buf, ',');
-                        svP(buf, ' ');
-                }
-
-                svPn(buf, k, nkey);
-
-                if (val->type != VALUE_NIL) {
-                        svP(buf, ':');
-                        svP(buf, ' ');
-                        svPn(buf, v, nval);
-                }
-        });
-
-        if (color) {
-                sxdf(&buf, "%s}%s", TERM(94;1), TERM(0));
-        } else {
-                svP(buf, '}');
-        }
-
-        svP(buf, '\0');
-
-        vvX(show_dicts);
-
-        return vv(buf);
-}
-
-char *
-show_array(Ty *ty, Value const *a, bool color, u32 flags)
-{
-        for (int i = 0; i < vN(show_arrays); ++i) {
-                if (v__(show_arrays, i) == a->array) {
-                        return "[...]";
-                }
-        }
-
-        xvP(show_arrays, a->array);
-
-        byte_vector buf = {0};
-
-        svP(buf, '[');
-
-        for (size_t i = 0; i < vN(*a->array); ++i) {
-                char *val = color
-                         ? value_show_colorx(ty, v_(*a->array, i), flags)
-                         : value_showx(ty, v_(*a->array, i), flags);
-                if (i > 0) {
-                        svP(buf, ',');
-                        svP(buf, ' ');
-                }
-                u32 n = strlen(val);
-                svPn(buf, val, n);
-        }
-
-        svP(buf, ']');
-        svP(buf, '\0');
-
-        vvX(show_arrays);
-
-        return vv(buf);
-}
-
-char *
-show_tuple(Ty *ty, Value const *v, bool color, u32 flags)
-{
-        for (int i = 0; i < vN(show_tuples); ++i) {
-                if (v__(show_tuples, i) == v->items) {
-                        return "(...)";
-                }
-        }
-
-        xvP(show_tuples, v->items);
-
-
-        byte_vector buf = {0};
-        bool tagged = (v->type & VALUE_TAGGED);
-
-        if (!tagged) {
-                svP(buf, '(');
-        }
-
-        for (size_t i = 0; i < v->count; ++i) {
-                if (i > 0) {
-                        svP(buf, ',');
-                        svP(buf, ' ');
-                }
-                if (v->ids != NULL && v->ids[i] != -1) {
-                        char const *name = M_NAME(v->ids[i]);
-                        if (color) {
-                                sxdf(&buf, "%s%s%s: ", TERM(34), name, TERM(0));
-                        } else {
-                                sxdf(&buf, "%s: ", name);
-                        }
-                }
-
-                char *val = color
-                          ? value_show_colorx(ty, &v->items[i], flags)
-                          : value_showx(ty, &v->items[i], flags);
-                u32 n = strlen(val);
-
-                svPn(buf, val, n);
-        }
-
-        if (!tagged) {
-                svP(buf, ')');
-        }
-
-        svP(buf, '\0');
-
-        vvX(show_tuples);
-
-        return vv(buf);
-}
-
 static char *
 show_string(Ty *ty, u8 const *s, size_t n, bool use_color)
 {
@@ -605,625 +455,844 @@ uninit(Ty *ty, Symbol const *s)
         );
 }
 
+enum {
+        SW_LIT     = 0x40,
+        SW_POP_ARY,
+        SW_POP_TPL,
+        SW_POP_DCT,
+        SW_POP_VIS,
+};
+
+#define WLIT(s) svP(work, ((Value) {   \
+        .type = SW_LIT,                \
+        .ptr  = (void *)(s)            \
+}))
+
+#define WPOP(op) svP(work, ((Value) {  \
+        .type = (op)                   \
+}))
+
+static char *
+show_impl(
+        Ty *ty,
+        Value const *root,
+        u32 flags,
+        bool color
+)
+{
+        byte_vector buf  = {0};
+        ValueVector work = {0};
+
+        svP(work, *root);
+
+        while (vN(work) > 0) {
+                Value v = vXx(work);
+
+                switch (v.type) {
+                case SW_LIT:
+                {
+                        char const *s = v.ptr;
+                        svPn(buf, s, strlen(s));
+                        continue;
+                }
+                case SW_POP_ARY: { vvX(show_arrays);   continue; }
+                case SW_POP_TPL: { vvX(show_tuples);   continue; }
+                case SW_POP_DCT: { vvX(show_dicts);    continue; }
+                case SW_POP_VIS: { vvX(ty->visiting);  continue; }
+                }
+
+                if (
+                        (v.type & VALUE_TAGGED)
+                     && (v.type & ~VALUE_TAGGED) != VALUE_TUPLE
+                ) {
+                        WLIT(tags_close(ty, v.tags, color));
+                        svP(work, stripped(&v));
+                        WLIT(tags_open(ty, v.tags, color));
+                        continue;
+                }
+
+                switch (v.type & ~VALUE_TAGGED) {
+                case VALUE_INTEGER:
+                        if (color) {
+                                sxdf(&buf, "%s%"PRIiMAX"%s", TERM(93), v.z, TERM(0));
+                        } else {
+                                sxdf(&buf, "%"PRIiMAX, v.z);
+                        }
+                        break;
+
+                case VALUE_REAL:
+                {
+                        char *r = smA(512);
+                        dtoa(v.real, r, 512);
+                        if (color) {
+                                sxdf(&buf, "%s%s%s", TERM(93), r, TERM(0));
+                        } else {
+                                sxdf(&buf, "%s", r);
+                        }
+                        break;
+                }
+
+                case VALUE_STRING:
+                {
+                        char *s = show_string(ty, ss(v), sN(v), color);
+                        u32 len = strlen(s);
+                        svPn(buf, s, len);
+                        break;
+                }
+
+                case VALUE_BOOLEAN:
+                {
+                        char const *s = v.boolean ? "true" : "false";
+                        if (color) {
+                                sxdf(&buf, "%s%s%s", TERM(36), s, TERM(0));
+                        } else {
+                                sxdf(&buf, "%s", s);
+                        }
+                        break;
+                }
+
+                case VALUE_NIL:
+                        if (color) {
+                                sxdf(&buf, "%snil%s", TERM(95), TERM(0));
+                        } else {
+                                sxdf(&buf, "nil");
+                        }
+                        break;
+
+                case VALUE_TYPE:
+                {
+                        char *s = type_show(ty, v.ptr);
+                        svPn(buf, s, strlen(s));
+                        break;
+                }
+
+                case VALUE_NAMESPACE:
+                        if (color) {
+                                sxdf(
+                                        &buf,
+                                        "%s<ns %s'%s'%s>%s",
+                                        TERM(93),
+                                        TERM(95),
+                                        v.namespace->name,
+                                        TERM(93),
+                                        TERM(0)
+                                );
+                        } else {
+                                sxdf(
+                                        &buf,
+                                        "<ns '%s'>",
+                                        v.namespace->name
+                                );
+                        }
+                        break;
+
+                case VALUE_MODULE:
+                        if (color) {
+                                sxdf(
+                                        &buf,
+                                        "%s<module %s'%s'%s>%s",
+                                        TERM(93),
+                                        TERM(95),
+                                        v.mod->name,
+                                        TERM(93),
+                                        TERM(0)
+                                );
+                        } else {
+                                sxdf(
+                                        &buf,
+                                        "<module '%s'>",
+                                        v.mod->name
+                                );
+                        }
+                        break;
+
+                case VALUE_ARRAY:
+                {
+                        for (int i = 0; i < vN(show_arrays); ++i) {
+                                if (v__(show_arrays, i) == v.array) {
+                                        sxdf(&buf, "[...]");
+                                        goto next;
+                                }
+                        }
+
+                        xvP(show_arrays, v.array);
+
+                        int n = vN(*v.array);
+
+                        WPOP(SW_POP_ARY);
+                        WLIT("]");
+
+                        for (int i = n - 1; i >= 0; --i) {
+                                svP(work, *v_(*v.array, i));
+                                if (i > 0) {
+                                        WLIT(", ");
+                                }
+                        }
+
+                        WLIT("[");
+
+                        break;
+                }
+
+                case VALUE_TUPLE:
+                {
+                        for (int i = 0; i < vN(show_tuples); ++i) {
+                                if (v__(show_tuples, i) == v.items) {
+                                        sxdf(&buf, "(...)");
+                                        goto next;
+                                }
+                        }
+
+                        xvP(show_tuples, v.items);
+
+                        bool tagged = (v.type & VALUE_TAGGED);
+
+                        WPOP(SW_POP_TPL);
+
+                        if (tagged) {
+                                WLIT(tags_close(ty, v.tags, color));
+                        } else {
+                                WLIT(")");
+                        }
+
+                        for (int i = v.count - 1; i >= 0; --i) {
+                                svP(work, v.items[i]);
+                                if (v.ids != NULL && v.ids[i] != -1) {
+                                        char const *name = M_NAME(v.ids[i]);
+                                        if (color) {
+                                                WLIT(sfmt(
+                                                        "%s%s%s: ",
+                                                        TERM(34),
+                                                        name,
+                                                        TERM(0)
+                                                ));
+                                        } else {
+                                                WLIT(sfmt(
+                                                        "%s: ",
+                                                        name
+                                                ));
+                                        }
+                                }
+                                if (i > 0) {
+                                        WLIT(", ");
+                                }
+                        }
+
+                        if (tagged) {
+                                WLIT(tags_open(ty, v.tags, color));
+                        } else {
+                                WLIT("(");
+                        }
+
+                        break;
+                }
+
+                case VALUE_DICT:
+                {
+                        for (int i = 0; i < vN(show_dicts); ++i) {
+                                if (v__(show_dicts, i) == v.dict) {
+                                        sxdf(&buf, "{...}");
+                                        goto next;
+                                }
+                        }
+
+                        xvP(show_dicts, v.dict);
+
+                        typedef struct { Value k, v; } KV;
+                        vec(KV) items = {0};
+
+                        dfor(v.dict, {
+                                svP(items, ((KV){
+                                        *key,
+                                        *val
+                                }));
+                        });
+
+                        int n = vN(items);
+
+                        WPOP(SW_POP_DCT);
+                        WLIT(color ? sfmt("%s}%s", TERM(94;1), TERM(0)) : "}");
+
+                        for (int i = n - 1; i >= 0; --i) {
+                                KV kv = v__(items, i);
+                                if (kv.v.type != VALUE_NIL) {
+                                        svP(work, kv.v);
+                                        WLIT(": ");
+                                }
+                                svP(work, kv.k);
+                                if (i > 0) {
+                                        WLIT(", ");
+                                }
+                        }
+
+                        WLIT(color ? sfmt("%s%%{%s", TERM(94;1), TERM(0)) : "%{");
+
+                        break;
+                }
+
+                case VALUE_REGEX:
+                {
+                        long bits = 0;
+                        int  nf   = 0;
+                        char flags[16] = {0};
+
+                        pcre2_pattern_info(v.regex->pcre2, PCRE2_INFO_ALLOPTIONS, &bits);
+
+                        if (bits & PCRE2_MULTILINE) { flags[nf++] = 'm'; }
+                        if (bits & PCRE2_DOTALL)    { flags[nf++] = 's'; }
+                        if (bits & PCRE2_UTF)       { flags[nf++] = 'u'; }
+                        if (bits & PCRE2_CASELESS)  { flags[nf++] = 'i'; }
+                        if (bits & PCRE2_EXTENDED)  { flags[nf++] = 'x'; }
+                        if (bits & PCRE2_ANCHORED)  { flags[nf++] = 'a'; }
+                        if (bits & PCRE2_UNGREEDY)  { flags[nf++] = 'U'; }
+                        if (bits & PCRE2_NEVER_UTF) { flags[nf++] = '7'; }
+                        flags[nf] = '\0';
+
+                        if (color) {
+                                sxdf(
+                                        &buf,
+                                        "%s/%s/%s%s%s",
+                                        TERM(38;2;127;197;78),
+                                        v.regex->pattern,
+                                        TERM(38;2;63;189;142),
+                                        flags,
+                                        TERM(0)
+                                );
+                        } else {
+                                sxdf(&buf, "/%s/%s", v.regex->pattern, flags);
+                        }
+                        break;
+                }
+
+                case VALUE_FUNCTION:
+                {
+                        char const *cls  = class_name(ty, class_of(&v));
+                        char const *name = name_of(&v);
+                        char const *jit  = jit_of(&v) ? " [jit]" : "";
+
+                        if (color) {
+                                if (class_of(&v) == -1) {
+                                        sxdf(
+                                                &buf,
+                                                "%s<func %s%s%s%s%s>%s",
+                                                TERM(96),
+                                                TERM(92),
+                                                name,
+                                                TERM(95),
+                                                jit,
+                                                TERM(96),
+                                                TERM(0)
+                                        );
+                                } else {
+                                        sxdf(
+                                                &buf,
+                                                "%s<func %s%s.%s%s%s%s>%s",
+                                                TERM(96),
+                                                TERM(92),
+                                                cls,
+                                                name,
+                                                TERM(95),
+                                                jit,
+                                                TERM(96),
+                                                TERM(0)
+                                        );
+                                }
+                        } else {
+                                if (class_of(&v) == -1) {
+                                        sxdf(&buf, "<func %s>", name);
+                                } else {
+                                        sxdf(&buf, "<func %s.%s>", cls, name);
+                                }
+                        }
+                        break;
+                }
+
+                case VALUE_BOUND_FUNCTION:
+                {
+                        char const *cls  = class_name(ty, class_of(&v));
+                        char const *name = name_of(&v);
+
+                        if (color) {
+                                Value self = self_of(&v);
+                                WLIT(sfmt(
+                                        "%s>%s",
+                                        TERM(96),
+                                        TERM(0)
+                                ));
+                                svP(work, self);
+                                WLIT(sfmt(
+                                        "%s<func %s%s.%s %sbound to %s",
+                                        TERM(96),
+                                        TERM(92),
+                                        cls,
+                                        name,
+                                        TERM(96),
+                                        TERM(0)
+                                ));
+                        } else {
+                                if (class_of(&v) == -1) {
+                                        sxdf(
+                                                &buf,
+                                                "<func %s>",
+                                                name
+                                        );
+                                } else {
+                                        sxdf(
+                                                &buf,
+                                                "<func %s.%s>",
+                                                cls,
+                                                name
+                                        );
+                                }
+                        }
+                        break;
+                }
+
+                case VALUE_METHOD:
+                        if (v.this == NULL) {
+                                if (color) {
+                                        sxdf(
+                                                &buf,
+                                                "%s<method %s'%s'%s>%s",
+                                                TERM(96),
+                                                TERM(92),
+                                                name_of(v.method),
+                                                TERM(96),
+                                                TERM(0)
+                                        );
+                                } else {
+                                        sxdf(
+                                                &buf,
+                                                "<method '%s' at %p>",
+                                                M_NAME(v.name),
+                                                (void *)v.method
+                                        );
+                                }
+                        } else if (color) {
+                                WLIT(sfmt(
+                                        "%s>%s",
+                                        TERM(96),
+                                        TERM(0)
+                                ));
+                                svP(work, *v.this);
+                                WLIT(sfmt(
+                                        "%s<method %s'%s'%s bound to %s",
+                                        TERM(96),
+                                        TERM(92),
+                                        name_of(v.method),
+                                        TERM(96),
+                                        TERM(0)
+                                ));
+                        } else {
+                                WLIT(">");
+                                svP(work, *v.this);
+                                WLIT(sfmt(
+                                        "<method '%s' bound to ",
+                                        M_NAME(v.name)
+                                ));
+                        }
+                        break;
+
+                case VALUE_BUILTIN_METHOD:
+                        if (color) {
+                                sxdf(
+                                        &buf,
+                                        "%s<bound builtin method %s'%s'%s>%s",
+                                        TERM(96),
+                                        TERM(92),
+                                        M_NAME(v.name),
+                                        TERM(96),
+                                        TERM(0)
+                                );
+                        } else {
+                                sxdf(
+                                        &buf,
+                                        "<bound builtin method '%s'>",
+                                        M_NAME(v.name)
+                                );
+                        }
+                        break;
+
+                case VALUE_BUILTIN_FUNCTION:
+                        if (v.name == -1) {
+                                if (color) {
+                                        sxdf(
+                                                &buf,
+                                                "%s<builtin>%s",
+                                                TERM(96),
+                                                TERM(0)
+                                        );
+                                } else {
+                                        sxdf(&buf, "<builtin>");
+                                }
+                        } else if (v.module == NULL) {
+                                if (color) {
+                                        sxdf(
+                                                &buf,
+                                                "%s<builtin %s'%s'%s>%s",
+                                                TERM(96),
+                                                TERM(92),
+                                                M_NAME(v.name),
+                                                TERM(96),
+                                                TERM(0)
+                                        );
+                                } else {
+                                        sxdf(
+                                                &buf,
+                                                "<builtin %s>",
+                                                M_NAME(v.name)
+                                        );
+                                }
+                        } else {
+                                if (color) {
+                                        sxdf(
+                                                &buf,
+                                                "%s<builtin %s'%s::%s'%s>%s",
+                                                TERM(96),
+                                                TERM(92),
+                                                v.module,
+                                                M_NAME(v.name),
+                                                TERM(96),
+                                                TERM(0)
+                                        );
+                                } else {
+                                        sxdf(
+                                                &buf,
+                                                "<builtin %s.%s>",
+                                                v.module,
+                                                M_NAME(v.name)
+                                        );
+                                }
+                        }
+                        break;
+
+                case VALUE_FOREIGN_FUNCTION:
+                        if (v.xinfo == NULL || v.xinfo->name == NULL) {
+                                if (color) {
+                                        sxdf(
+                                                &buf,
+                                                "%s<foreign function>%s",
+                                                TERM(96),
+                                                TERM(0)
+                                        );
+                                } else {
+                                        sxdf(&buf, "<foreign func>");
+                                }
+                        } else {
+                                if (color) {
+                                        sxdf(
+                                                &buf,
+                                                "%s<foreign function %s'%s'%s>%s",
+                                                TERM(96),
+                                                TERM(92),
+                                                v.xinfo->name,
+                                                TERM(96),
+                                                TERM(0)
+                                        );
+                                } else {
+                                        sxdf(
+                                                &buf,
+                                                "<foreign func %s>",
+                                                v.xinfo->name
+                                        );
+                                }
+                        }
+                        break;
+
+                case VALUE_OPERATOR:
+                        if (color) {
+                                sxdf(
+                                        &buf,
+                                        "%s<%soperator %s%s%s>%s",
+                                        TERM(96),
+                                        TERM(92),
+                                        TERM(94),
+                                        M_NAME(v.uop),
+                                        TERM(96),
+                                        TERM(0)
+                                );
+                        } else {
+                                sxdf(
+                                        &buf,
+                                        "<operator %s>",
+                                        M_NAME(v.uop)
+                                );
+                        }
+                        break;
+
+                case VALUE_CLASS:
+                        if (color) {
+                                sxdf(
+                                        &buf,
+                                        "%s<%sclass %s%s%s>%s",
+                                        TERM(96),
+                                        TERM(92),
+                                        TERM(94),
+                                        class_name(ty, v.class),
+                                        TERM(96),
+                                        TERM(0)
+                                );
+                        } else {
+                                sxdf(
+                                        &buf,
+                                        "<class %s>",
+                                        class_name(ty, v.class)
+                                );
+                        }
+                        break;
+
+                case VALUE_TAG:
+                        if (color) {
+                                sxdf(
+                                        &buf,
+                                        "%s%s%s",
+                                        TERM(34),
+                                        tags_name(ty, v.tag),
+                                        TERM(0)
+                                );
+                        } else {
+                                sxdf(
+                                        &buf,
+                                        "%s",
+                                        tags_name(ty, v.tag)
+                                );
+                        }
+                        break;
+
+                case VALUE_BLOB:
+                {
+                        void *addr = (void *)v.blob;
+                        usize size = vN(*v.blob);
+                        if (color) {
+                                sxdf(
+                                        &buf,
+                                        "%s<blob at %s%p%s (%zu bytes)>%s",
+                                        TERM(96),
+                                        TERM(92),
+                                        addr,
+                                        TERM(96),
+                                        size,
+                                        TERM(0)
+                                );
+                        } else {
+                                sxdf(&buf, "<blob at %p (%zu bytes)>", addr, size);
+                        }
+                        break;
+                }
+
+                case VALUE_PTR:
+                        if (color) {
+                                sxdf(
+                                        &buf,
+                                        "%s<pointer at %s%s%p%s%s>%s",
+                                        TERM(32),
+                                        TERM(1),
+                                        TERM(92),
+                                        v.ptr,
+                                        TERM(0),
+                                        TERM(32),
+                                        TERM(0)
+                                );
+                        } else {
+                                sxdf(&buf, "<pointer at %p>", v.ptr);
+                        }
+                        break;
+
+                case VALUE_GENERATOR:
+                        if (color) {
+                                sxdf(
+                                        &buf,
+                                        "%s<generator at %s%p%s>%s",
+                                        TERM(96),
+                                        TERM(92),
+                                        v.gen,
+                                        TERM(96),
+                                        TERM(0)
+                                );
+                        } else {
+                                sxdf(&buf, "<generator at %p>", v.gen);
+                        }
+                        break;
+
+                case VALUE_THREAD:
+                        if (color) {
+                                sxdf(
+                                        &buf,
+                                        "%s<thread %"PRIu64">%s",
+                                        TERM(33),
+                                        v.thread->i,
+                                        TERM(0)
+                                );
+                        } else {
+                                sxdf(
+                                        &buf,
+                                        "<thread %"PRIu64">",
+                                        v.thread->i
+                                );
+                        }
+                        break;
+
+                case VALUE_SENTINEL:
+                        sxdf(&buf, "<sentinel>");
+                        break;
+
+                case VALUE_REF:
+                        sxdf(&buf, "<reference to %p>", v.ptr);
+                        break;
+
+                case VALUE_NONE:
+                        sxdf(&buf, "<none>");
+                        break;
+
+                case VALUE_TRACE:
+                        if (color) {
+                                sxdf(
+                                        &buf,
+                                        "%s<stack trace %s(%zu frames)%s>%s",
+                                        TERM(38;2;49;161;173),
+                                        TERM(34),
+                                        vN(*(ThrowCtx *)v.ptr),
+                                        TERM(38;2;49;161;173),
+                                        TERM(0)
+                                );
+                        } else {
+                                byte_vector tmp = {0};
+                                svR(tmp, 2048 * 2048);
+                                char *s = FormatTrace(ty, v.ptr, &tmp);
+                                u32 len = strlen(s);
+                                if (s != NULL) {
+                                        svPn(buf, s, len);
+                                }
+                        }
+                        break;
+
+                case VALUE_INDEX:
+                        sxdf(
+                                &buf,
+                                "<index: (%"PRIiMAX", %jd, %d)>",
+                                v.i,
+                                v.off,
+                                v.nt
+                        );
+                        break;
+
+                case VALUE_OBJECT:
+                {
+                        Value *fp = NULL;
+
+                        if (flags & TY_SHOW_BASIC) {
+                                goto BasicObject;
+                        }
+
+                        for (int i = 0; i < vN(ty->visiting); ++i) {
+                                if (*v_(ty->visiting, i) == v.object) {
+                                        goto BasicObject;
+                                }
+                        }
+
+                        i32 meth = (flags & TY_SHOW_REPR) ? NAMES._repr_ : NAMES._str_;
+
+                        if (color) {
+#ifdef TY_NO_LOG
+                                fp = class_lookup_method_i(ty, v.class, meth);
+#endif
+                        } else {
+                                fp = class_lookup_method_i(ty, v.class, meth);
+                        }
+
+                        if (fp != NULL) {
+                                xvP(ty->visiting, v.object);
+                                Value self = stripped(&v);
+                                Value str = vm_call_method(ty, &self, fp, 0);
+                                vvX(ty->visiting);
+                                if (str.type != VALUE_STRING) {
+                                        goto BasicObject;
+                                }
+                                svPn(buf, ss(str), sN(str));
+                        } else {
+BasicObject:
+                                if (color) {
+                                        sxdf(
+                                                &buf,
+                                                "%s<%s%s%s%s%s"
+                                                " object at %s%p%s>%s",
+                                                TERM(96),
+                                                TERM(34),
+                                                class_name(ty, v.class),
+                                                TERM(91;1),
+                                                v.object->dynamic ? "*" : "",
+                                                TERM(96),
+                                                TERM(94),
+                                                (void *)v.object,
+                                                TERM(96),
+                                                TERM(0)
+                                        );
+                                } else {
+                                        sxdf(
+                                                &buf,
+                                                "<%s object at %p>",
+                                                class_name(ty, v.class),
+                                                (void *)v.object
+                                        );
+                                }
+                        }
+                        break;
+                }
+
+                case VALUE_ZERO:
+                        sxdf(&buf, "<zero>");
+                        break;
+
+                case VALUE_UNINITIALIZED:
+                        uninit(ty, v.sym);
+                        break;
+
+                default:
+                        if (color) {
+                                sxdf(&buf, "%s<??>%s", TERM(91;1), TERM(0));
+                        } else {
+                                sxdf(&buf, "<??>");
+                        }
+                        break;
+                }
+
+                next:;
+        }
+
+        svP(buf, '\0');
+
+        return vv(buf);
+}
+
+#undef WLIT
+#undef WPOP
+
 static char *
 value_showx(Ty *ty, Value const *v, u32 flags)
 {
-        byte_vector buf = {0};
-        char *buffer = smA(SHOW_BUF_SZ);
-        char *s = NULL;
-
-        Value *fp;
-        Value val = *v;
-
-        switch (v->type & ~VALUE_TAGGED) {
-        case VALUE_INTEGER:
-                snprintf(buffer, 1024, "%"PRIiMAX, v->z);
-                break;
-
-        case VALUE_REAL:
-                dtoa(v->real, buffer, SHOW_BUF_SZ);
-                break;
-
-        case VALUE_STRING:
-                s = show_string(ty, ss(*v), sN(*v), false);
-                break;
-
-        case VALUE_BOOLEAN:
-                snprintf(buffer, 1024, "%s", v->boolean ? "true" : "false");
-                break;
-
-        case VALUE_NIL:
-                snprintf(buffer, 1024, "%s", "nil");
-                break;
-
-        case VALUE_TYPE:
-                return type_show(ty, v->ptr);
-
-        case VALUE_NAMESPACE:
-                snprintf(
-                        buffer,
-                        SHOW_BUF_SZ,
-                        "<ns '%s'>",
-                        v->namespace->name
-                );
-                break;
-
-        case VALUE_MODULE:
-                snprintf(
-                        buffer,
-                        SHOW_BUF_SZ,
-                        "<module '%s'>",
-                        v->mod->name
-                );
-                break;
-
-        case VALUE_ARRAY:
-                s = show_array(ty, v, false, flags);
-                break;
-
-        case VALUE_TUPLE:
-                s = show_tuple(ty, v, false, flags);
-                break;
-
-        case VALUE_REGEX:
-                snprintf(buffer, 1024, "/%s/", v->regex->pattern);
-                break;
-
-        case VALUE_DICT:
-                s = show_dict(ty, v, false, flags);
-                break;
-
-        case VALUE_FUNCTION:
-        case VALUE_BOUND_FUNCTION:
-                if (class_of(v) == -1) {
-                        snprintf(buffer, 1024, "<func %s>", name_of(v));
-                } else {
-                        char const *class = class_name(ty, class_of(v));
-                        snprintf(buffer, 1024, "<func %s.%s>", class, name_of(v));
-                }
-                break;
-
-        case VALUE_METHOD:
-                if (v->this == NULL) {
-                        snprintf(
-                                buffer,
-                                1024,
-                                "<method '%s' at %p>",
-                                M_NAME(v->name),
-                                (void *)v->method
-                        );
-                } else {
-                        snprintf(
-                                buffer,
-                                1024,
-                                "<method '%s' bound to %s>",
-                                M_NAME(v->name),
-                                value_showx(ty, v->this, flags)
-                        );
-                }
-                break;
-
-        case VALUE_BUILTIN_METHOD:
-                snprintf(buffer, 1024, "<bound builtin method '%s'>", M_NAME(v->name));
-                break;
-
-        case VALUE_BUILTIN_FUNCTION:
-                if (v->name == -1)
-                        snprintf(buffer, 1024, "<builtin>");
-                else if (v->module == NULL)
-                        snprintf(buffer, 1024, "<builtin %s>", M_NAME(v->name));
-                else
-                        snprintf(buffer, 1024, "<builtin %s.%s>", v->module, M_NAME(v->name));
-                break;
-
-        case VALUE_FOREIGN_FUNCTION:
-                if (v->xinfo == NULL || v->xinfo->name == NULL)
-                        snprintf(buffer, 1024, "<foreign func>");
-                else
-                        snprintf(buffer, 1024, "<foreign func %s>", v->xinfo->name);
-                break;
-
-        case VALUE_OPERATOR:
-                snprintf(buffer, 1024, "<operator %s>", M_NAME(v->uop));
-                break;
-
-        case VALUE_CLASS:
-                snprintf(buffer, 1024, "<class %s>", class_name(ty, v->class));
-                break;
-
-        case VALUE_TAG:
-                snprintf(buffer, 1024, "%s", tags_name(ty, v->tag));
-                break;
-
-        case VALUE_BLOB:
-                snprintf(buffer, 1024, "<blob at %p (%zu bytes)>", (void *) v->blob, v->blob->count);
-                break;
-
-        case VALUE_PTR:
-                snprintf(buffer, 1024, "<pointer at %p>", v->ptr);
-                break;
-
-        case VALUE_GENERATOR:
-                snprintf(buffer, 1024, "<generator at %p>", v->gen);
-                break;
-
-        case VALUE_THREAD:
-                snprintf(buffer, 1024, "<thread %"PRIu64">", v->thread->i);
-                break;
-
-        case VALUE_SENTINEL:
-                return "<sentinel>";
-
-        case VALUE_REF:
-                snprintf(buffer, 1024, "<reference to %p>", v->ptr);
-                break;
-
-        case VALUE_NONE:
-                return "<none>";
-
-        case VALUE_TRACE:
-                svR(buf, 2048*2048);
-                s = FormatTrace(ty, v->ptr, &buf);
-                break;
-
-        case VALUE_INDEX:
-                snprintf(buffer, 1024, "<index: (%d, %d, %d)>", (int)v->i, (int)v->off, (int)v->nt);
-                break;
-
-        case VALUE_OBJECT:
-        {
-                if (flags & TY_SHOW_BASIC) {
-                        goto BasicObject;
-                }
-
-                for (int i = 0; i < vN(ty->visiting); ++i) {
-                        if (*v_(ty->visiting, i) == v->object) {
-                                goto BasicObject;
-                        }
-                }
-
-                fp = class_lookup_method_i(
-                        ty,
-                        v->class,
-                        (flags & TY_SHOW_REPR) ? NAMES._repr_ : NAMES._str_
-                );
-
-                if (fp != NULL) {
-                        xvP(ty->visiting, v->object);
-                        Value self = stripped(v);
-                        Value str  = vm_call_method(ty, &self, fp, 0);
-                        vvX(ty->visiting);
-                        if (str.type != VALUE_STRING) {
-                                goto BasicObject;
-                        }
-                        s = smA(sN(str) + 1);
-                        memcpy(s, ss(str), sN(str));
-                        s[sN(str)] = '\0';
-                } else {
-BasicObject:
-                        snprintf(buffer, 1024, "<%s object at %p>", class_name(ty, v->class), (void *)v->object);
-                }
-
-                break;
-        }
-
-        case VALUE_ZERO:
-                snprintf(buffer, 1024, "<zero>");
-                break;
-
-        case VALUE_UNINITIALIZED:
-                uninit(ty, v->sym);
-
-        default:
-                return "<!!!>";
-        }
-
-        char *result = tags_wrap(
-                ty,
-                (s == NULL) ? buffer : s,
-                (val.type & VALUE_TAGGED) ? val.tags : 0,
-                false
-        );
-
-        return result;
+        return show_impl(ty, v, flags, false);
 }
 
 static char *
 value_show_colorx(Ty *ty, Value const *v, u32 flags)
 {
         if (flags & TY_SHOW_NOCOLOR) {
-                return value_showx(ty, v, flags);
+                return show_impl(ty, v, flags, false);
         }
 
-        char *buffer = smA(SHOW_BUF_SZ);
-        char *s      = NULL;
-
-        char *real;
-
-        Value *fp;
-        Value val = *v;
-
-        switch (v->type & ~VALUE_TAGGED) {
-        case VALUE_INTEGER:
-                snprintf(buffer, SHOW_BUF_SZ, "%s%"PRIiMAX"%s", TERM(93), v->z, TERM(0));
-                break;
-
-        case VALUE_REAL:
-                dtoa(v->real, (real = smA(512)), 512);
-                snprintf(buffer, SHOW_BUF_SZ, "%s%s%s", TERM(93), real, TERM(0));
-                break;
-
-        case VALUE_STRING:
-                s = show_string(ty, ss(*v), sN(*v), true);
-                break;
-
-        case VALUE_BOOLEAN:
-                snprintf(buffer, SHOW_BUF_SZ, "%s%s%s", TERM(36), v->boolean ? "true" : "false", TERM(0));
-                break;
-
-        case VALUE_NIL:
-                snprintf(buffer, SHOW_BUF_SZ, "%snil%s", TERM(95), TERM(0));
-                break;
-
-        case VALUE_NAMESPACE:
-                snprintf(
-                        buffer,
-                        SHOW_BUF_SZ,
-                        "%s<ns %s'%s'%s>%s",
-                        TERM(93),
-                        TERM(95),
-                        v->namespace->name,
-                        TERM(93),
-                        TERM(0)
-                );
-                break;
-
-        case VALUE_MODULE:
-                snprintf(
-                        buffer,
-                        SHOW_BUF_SZ,
-                        "%s<module %s'%s'%s>%s",
-                        TERM(93),
-                        TERM(95),
-                        v->mod->name,
-                        TERM(93),
-                        TERM(0)
-                );
-                break;
-
-        case VALUE_ARRAY:
-                s = show_array(ty, v, true, flags);
-                break;
-
-        case VALUE_TUPLE:
-                s = show_tuple(ty, v, true, flags);
-                break;
-
-        case VALUE_REGEX:
-                snprintf(buffer, SHOW_BUF_SZ, "%s/%s/%s", TERM(96), v->regex->pattern, TERM(0));
-                break;
-
-        case VALUE_DICT:
-                s = show_dict(ty, v, true, flags);
-                break;
-
-        case VALUE_BOUND_FUNCTION:
-        {
-                Value self = self_of(v);
-                snprintf(
-                        buffer,
-                        SHOW_BUF_SZ,
-                        "%s<func %s%s.%s %sbound to %s%s>%s",
-                        TERM(96),
-                        TERM(92),
-                        class_name(ty, class_of(v)),
-                        name_of(v),
-                        TERM(96),
-                        value_show_colorx(ty, &self, flags),
-                        TERM(96),
-                        TERM(0)
-                );
-                break;
-        }
-
-        case VALUE_FUNCTION:
-                if (class_of(v) == -1) {
-                        snprintf(
-                                buffer,
-                                SHOW_BUF_SZ,
-                                "%s<func %s%s%s%s%s>%s",
-                                TERM(96),
-                                TERM(92),
-                                name_of(v),
-                                TERM(95),
-                                (jit_of(v) != NULL) ? " [jit]" : "",
-                                TERM(96),
-                                TERM(0)
-                        );
-                } else {
-                        char const *class = class_name(ty, class_of(v));
-                        snprintf(
-                                buffer,
-                                SHOW_BUF_SZ,
-                                "%s<func %s%s.%s%s%s%s>%s",
-                                TERM(96),
-                                TERM(92),
-                                class,
-                                name_of(v),
-                                TERM(95),
-                                (jit_of(v) != NULL) ? " [jit]" : "",
-                                TERM(96),
-                                TERM(0)
-                        );
-                }
-                break;
-
-        case VALUE_METHOD:
-                if (v->this == NULL) {
-                        snprintf(
-                                buffer,
-                                SHOW_BUF_SZ,
-                                "%s<method %s'%s'%s>%s",
-                                TERM(96),
-                                TERM(92),
-                                name_of(v->method),
-                                TERM(96),
-                                TERM(0)
-                        );
-                } else {
-                        char *vs = value_show_colorx(ty, v->this, flags);
-                        snprintf(
-                                buffer,
-                                SHOW_BUF_SZ,
-                                "%s<method %s'%s'%s bound to %s%s%s>%s",
-                                TERM(96),
-                                TERM(92),
-                                name_of(v->method),
-                                TERM(96),
-                                TERM(0),
-                                vs,
-                                TERM(96),
-                                TERM(0)
-                        );
-                }
-                break;
-
-        case VALUE_BUILTIN_METHOD:
-                snprintf(
-                        buffer,
-                        SHOW_BUF_SZ,
-                        "%s<bound builtin method %s'%s'%s>%s",
-                        TERM(96),
-                        TERM(92),
-                        M_NAME(v->name),
-                        TERM(96),
-                        TERM(0)
-                );
-                break;
-
-        case VALUE_BUILTIN_FUNCTION:
-                if (v->name == -1) {
-                        snprintf(
-                                buffer,
-                                SHOW_BUF_SZ,
-                                "%s<builtin>%s",
-                                TERM(96),
-                                TERM(0)
-                        );
-                } else if (v->module == NULL) {
-                        snprintf(
-                                buffer,
-                                SHOW_BUF_SZ,
-                                "%s<builtin %s'%s'%s>%s",
-                                TERM(96),
-                                TERM(92),
-                                M_NAME(v->name),
-                                TERM(96),
-                                TERM(0)
-                        );
-                } else {
-                        snprintf(
-                                buffer,
-                                SHOW_BUF_SZ,
-                                "%s<builtin %s'%s::%s'%s>%s",
-                                TERM(96),
-                                TERM(92),
-                                v->module,
-                                M_NAME(v->name),
-                                TERM(96),
-                                TERM(0)
-                        );
-                }
-                break;
-
-        case VALUE_FOREIGN_FUNCTION:
-                if (v->xinfo == NULL || v->xinfo->name == NULL) {
-                        snprintf(
-                                buffer,
-                                SHOW_BUF_SZ,
-                                "%s<foreign function>%s",
-                                TERM(96),
-                                TERM(0)
-                        );
-                } else {
-                        snprintf(
-                                buffer,
-                                SHOW_BUF_SZ,
-                                "%s<foreign function %s'%s'%s>%s",
-                                TERM(96),
-                                TERM(92),
-                                v->xinfo->name,
-                                TERM(96),
-                                TERM(0)
-                        );
-                }
-                break;
-
-        case VALUE_OPERATOR:
-                snprintf(
-                        buffer,
-                        SHOW_BUF_SZ,
-                        "%s<%soperator %s%s%s>%s",
-                        TERM(96),
-                        TERM(92),
-                        TERM(94),
-                        M_NAME(v->uop),
-                        TERM(96),
-                        TERM(0)
-                );
-                break;
-
-        case VALUE_CLASS:
-                snprintf(
-                        buffer,
-                        SHOW_BUF_SZ,
-                        "%s<%sclass %s%s%s>%s",
-                        TERM(96),
-                        TERM(92),
-                        TERM(94),
-                        class_name(ty, v->class),
-                        TERM(96),
-                        TERM(0)
-                );
-                break;
-
-        case VALUE_TAG:
-                snprintf(buffer, SHOW_BUF_SZ, "%s%s%s", TERM(34), tags_name(ty, v->tag), TERM(0));
-                break;
-
-        case VALUE_BLOB:
-                snprintf(buffer, SHOW_BUF_SZ, "<blob at %p (%zu bytes)>", (void *) v->blob, v->blob->count);
-                break;
-
-        case VALUE_PTR:
-                snprintf(
-                        buffer,
-                        SHOW_BUF_SZ,
-                        "%s<pointer at %s%s%p%s%s>%s",
-                        TERM(32),
-                        TERM(1),
-                        TERM(92),
-                        v->ptr,
-                        TERM(0),
-                        TERM(32),
-                        TERM(0)
-                );
-                break;
-
-        case VALUE_GENERATOR:
-                snprintf(buffer, SHOW_BUF_SZ, "<generator at %p>", v->gen);
-                break;
-
-        case VALUE_THREAD:
-                snprintf(buffer, SHOW_BUF_SZ, "%s<thread %"PRIu64">%s", TERM(33), v->thread->i, TERM(0));
-                break;
-
-        case VALUE_SENTINEL:
-                return "<sentinel>";
-
-        case VALUE_REF:
-                snprintf(buffer, SHOW_BUF_SZ, "<reference to %p>", v->ptr);
-                break;
-
-        case VALUE_NONE:
-                return "<none>";
-
-        case VALUE_INDEX:
-                snprintf(
-                        buffer,
-                        SHOW_BUF_SZ,
-                        "<index: (%"PRIiMAX", %jd, %d)>",
-                        v->i,
-                        v->off,
-                        v->nt
-                );
-                break;
-
-        case VALUE_TRACE:
-                snprintf(
-                        buffer,
-                        SHOW_BUF_SZ,
-                        "%s<stack trace %s(%zu frames)%s>%s",
-                        TERM(38;2;49;161;173),
-                        TERM(34),
-                        vN(*(ThrowCtx *)v->ptr),
-                        TERM(38;2;49;161;173),
-                        TERM(0)
-                );
-                break;
-
-        case VALUE_OBJECT:
-                if (flags & TY_SHOW_BASIC) {
-                        goto BasicObject;
-                }
-
-                for (int i = 0; i < vN(ty->visiting); ++i) {
-                        if (*v_(ty->visiting, i) == v->object) {
-                                goto BasicObject;
-                        }
-                }
-
-#ifdef TY_NO_LOG
-                fp = class_lookup_method_i(
-                        ty,
-                        v->class,
-                        (flags & TY_SHOW_REPR) ? NAMES._repr_ : NAMES._str_
-                );
-#else
-                fp = NULL;
-#endif
-
-                if (fp != NULL) {
-                        xvP(ty->visiting, v->object);
-                        Value self = stripped(v);
-                        Value str  = vm_call_method(ty, &self, fp, 0);
-                        vvX(ty->visiting);
-                        if (str.type != VALUE_STRING) {
-                                goto BasicObject;
-                        }
-                        s = smA(sN(str) + 1);
-                        memcpy(s, ss(str), sN(str));
-                        s[sN(str)] = '\0';
-                } else {
-BasicObject:
-                        snprintf(
-                                buffer,
-                                SHOW_BUF_SZ,
-                                "%s<%s%s%s%s%s object at %s%p%s>%s",
-                                TERM(96),
-                                TERM(34),
-                                class_name(ty, v->class),
-                                TERM(91;1),
-                                v->object->dynamic ? "*" : "",
-                                TERM(96),
-                                TERM(94),
-                                (void *)v->object,
-                                TERM(96),
-                                TERM(0)
-                        );
-                }
-                break;
-
-        case VALUE_UNINITIALIZED:
-                uninit(ty, v->sym);
-                UNREACHABLE();
-
-        default:
-                return value_showx(ty, v, flags);
-        }
-
-        char *result = tags_wrap(
-                ty,
-                (s == NULL) ? buffer : s,
-                (val.type & VALUE_TAGGED) ? val.tags : 0,
-                true
-        );
+        char *result = show_impl(ty, v, flags, true);
 
         if (flags & TY_SHOW_ABBREV) {
                 int len  = strlen(result);
                 int keep = term_fit_cols(result, len, 80);
                 if (keep < len) {
-                        result = sfmt("%.*s%s...%s", keep, result, TERM(90), TERM(0));
+                        result = sfmt(
+                                "%.*s%s...%s",
+                                keep,
+                                result,
+                                TERM(90),
+                                TERM(0)
+                        );
                 }
         }
 
