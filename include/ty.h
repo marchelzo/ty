@@ -459,21 +459,35 @@ typedef volatile long TyThreadState;
 typedef atomic_bool TyThreadState;
 #endif
 
+enum {
+        GC_PHASE_NONE  = (1 << 0),
+        GC_PHASE_WAIT  = (1 << 1),
+        GC_PHASE_MARK  = (1 << 2),
+        GC_PHASE_SWEEP = (1 << 3),
+        GC_PHASE_DONE  = (1 << 4)
+};
+
 typedef struct thread_group {
         TySpinLock Lock;
-        TySpinLock GCLock;
-        vec(TyThread) ThreadList;
+
         vec(Ty *) TyList;
-        vec(TySpinLock *) ThreadLocks;
+
+        vec(TyThread)        ThreadList;
+        vec(TySpinLock *)    ThreadLocks;
         vec(TyThreadState *) ThreadStates;
-        atomic_bool WantGC;
-        TyBarrier GCBarrierStart;
-        TyBarrier GCBarrierMark;
-        TyBarrier GCBarrierSweep;
-        TyBarrier GCBarrierDone;
+
         TySpinLock DLock;
-        AllocList DeadAllocs;
-        isize DeadUsed;
+        AllocList  DeadAllocs;
+        isize      DeadUsed;
+
+        TySpinLock GCLock;
+
+        atomic_bool WantGC;
+        atomic_int  GCReadyCount;
+        TyMutex     GCPhaseLock;
+        TyCondVar   GCPhaseCond;
+        int         GCPhase;
+
 } ThreadGroup;
 
 struct thread {
@@ -687,7 +701,7 @@ typedef struct ty {
 
         AllocList allocs;
         ThreadGroup *group;
-        TyThreadState *state;
+        TyThreadState *blocked;
         TySpinLock *lock;
         bool locked;
 

@@ -500,7 +500,7 @@ InitializeTy(Ty *ty, ThreadGroup *group)
         TySpinLockInit(ty->lock);
         TySpinLockLock(ty->lock);
         ty->locked = true;
-        ty->state = alloc0(sizeof *ty->state);
+        ty->blocked = alloc0(sizeof *ty->blocked);
         ty->group = group;
 
         xvR(STACK, 4096);
@@ -517,7 +517,7 @@ UnlockThreads(Ty *ty, int *threads, int n)
 inline static void
 SetState(Ty *ty, bool blocking)
 {
-        *ty->state = blocking;
+        *ty->blocked = blocking;
 }
 
 inline static bool
@@ -551,6 +551,9 @@ InitThreadGroup(ThreadGroup *group)
         TySpinLockInit(&group->Lock);
         TySpinLockInit(&group->GCLock);
         TySpinLockInit(&group->DLock);
+        TyMutexInit(&group->GCPhaseLock);
+        TyCondVarInit(&group->GCPhaseCond);
+        group->GCPhase = GC_PHASE_NONE;
         return group;
 }
 
@@ -560,44 +563,86 @@ NewThreadGroup(void)
         return InitThreadGroup(mrealloc(NULL, (sizeof (ThreadGroup))));
 }
 
+inline static int
+WaitForGCPhase(Ty *ty, int bits)
+{
+        int phase;
+
+        GCLOG("Waiting for GC phase %d", bits);
+
+        TyMutexLock(&ty->group->GCPhaseLock);
+        while (((phase = ty->group->GCPhase) & bits) == 0) {
+                TyCondVarWait(&ty->group->GCPhaseCond, &ty->group->GCPhaseLock);
+        }
+        TyMutexUnlock(&ty->group->GCPhaseLock);
+
+        //GCLOG("Finished waiting for GC phase %d on thread %llu: current phase is %d", bits, TID, phase);
+
+        return phase;
+}
+
+inline static void
+StartGC(Ty *ty)
+{
+        TyMutexLock(&ty->group->GCPhaseLock);
+        ty->group->GCReadyCount = 0;
+        ty->group->GCPhase = GC_PHASE_MARK;
+        TyMutexUnlock(&ty->group->GCPhaseLock);
+        TyCondVarBroadcast(&ty->group->GCPhaseCond);
+}
+
+inline static void
+EndGC(Ty *ty)
+{
+        TyMutexLock(&ty->group->GCPhaseLock);
+        ty->group->GCPhase = GC_PHASE_NONE;
+        TyMutexUnlock(&ty->group->GCPhaseLock);
+        TyCondVarBroadcast(&ty->group->GCPhaseCond);
+}
+
+inline static void
+NextGCPhase(Ty *ty, int phase, int n_running)
+{
+        while (ty->group->GCReadyCount < n_running) {
+                ;
+        }
+        TyMutexLock(&ty->group->GCPhaseLock);
+        ty->group->GCReadyCount = 0;
+        ty->group->GCPhase = phase;
+        TyMutexUnlock(&ty->group->GCPhaseLock);
+        GCLOG("Starting GC phase %d", phase);
+        TyCondVarBroadcast(&ty->group->GCPhaseCond);
+}
+
 static void
 WaitGC(Ty *ty)
 {
-        GCLOG("Waiting for GC on thread %llu", TID);
-
-        lGv(false);
+        GCLOG("Waiting for GC");
 
 #ifdef TY_PROFILER
         u64 start = TyThreadTime();
 #endif
 
-        while (!*ty->state) {
-                if (!ty->group->WantGC && TryFlipTo(ty->state, true)) {
-                        lTk();
-                        GCLOG("Finished waiting: %llu", TID);
+        ReleaseLock(ty, false);
+        int phase = WaitForGCPhase(ty, GC_PHASE_MARK | GC_PHASE_DONE);
+        TakeLock(ty);
+
+        if (phase == GC_PHASE_DONE) {
+                GCLOG("Finished waiting: %llu", TID);
 #ifdef TY_PROFILER
-                        LastThreadGCTime = TyThreadTime() - start;
+                LastThreadGCTime = TyThreadTime() - start;
 #endif
-                        return;
-                }
+                return;
         }
 
-        lTk();
-
-        GCLOG("Waiting to mark: %llu", TID);
-        TyBarrierWait(&ty->group->GCBarrierStart);
-        GCLOG("Marking: %llu", TID);
         MarkStorage(ty);
+        ty->group->GCReadyCount += 1;
 
-        GCLOG("Waiting to sweep: %llu", TID);
-        TyBarrierWait(&ty->group->GCBarrierMark);
-        GCLOG("Sweeping: %llu", TID);
+        WaitForGCPhase(ty, GC_PHASE_SWEEP);
         GCSweepTy(ty);
+        ty->group->GCReadyCount += 1;
 
-        GCLOG("Waiting to continue execution: %llu", TID);
-        TyBarrierWait(&ty->group->GCBarrierSweep);
-        TyBarrierWait(&ty->group->GCBarrierDone);
-        GCLOG("Continuing execution: %llu", TID);
+        WaitForGCPhase(ty, GC_PHASE_DONE | GC_PHASE_NONE);
 
 #ifdef TY_PROFILER
         LastThreadGCTime = TyThreadTime() - start;
@@ -660,6 +705,7 @@ DoGC(Ty *ty)
                 if (TryFlipTo(v__(ty->group->ThreadStates, i), true)) {
                         GCLOG("Thread %llu is running", ty->group->TyList.items[i]->id);
                         runningThreads[nRunning++] = i;
+                        TySpinLockUnlock(v__(ty->group->ThreadLocks, i));
                 } else {
                         GCLOG("Thread %llu is blocked", ty->group->TyList.items[i]->id);
                         blockedThreads[nBlocked++] = i;
@@ -668,15 +714,7 @@ DoGC(Ty *ty)
 
         GCLOG("nBlocked = %d, nRunning = %d on thread %llu", nBlocked, nRunning, TID);
 
-        TyBarrierInit(&ty->group->GCBarrierStart, nRunning + 1);
-        TyBarrierInit(&ty->group->GCBarrierMark,  nRunning + 1);
-        TyBarrierInit(&ty->group->GCBarrierSweep, nRunning + 1);
-        TyBarrierInit(&ty->group->GCBarrierDone,  nRunning + 1);
-
-        UnlockThreads(ty, runningThreads, nRunning);
-
-        TyBarrierWait(&ty->group->GCBarrierStart);
-
+        StartGC(ty);
 #if defined(TY_GC_STATS)
         u64 mark = TyMonotonicTime();
 #endif
@@ -709,7 +747,7 @@ DoGC(Ty *ty)
                 }
         }
 
-        TyBarrierWait(&ty->group->GCBarrierMark);
+        NextGCPhase(ty, GC_PHASE_SWEEP, nRunning);
 
 #if defined(TY_GC_STATS)
         u64 sweep = TyMonotonicTime();
@@ -723,25 +761,25 @@ DoGC(Ty *ty)
                 GCLOG("Sweeping thread %llu storage from thread %llu", other->id, TID);
                 GCSweepTy(other);
         }
+
         GCLOG("Sweeping own storage on thread %llu", TID);
         GCSweepTy(ty);
+
         GCLOG("Sweeping objects from dead threads on thread %llu", TID);
         TySpinLockLock(&ty->group->DLock);
         GCSweep(ty, &ty->group->DeadAllocs, &ty->group->DeadUsed);
         TySpinLockUnlock(&ty->group->DLock);
 
-        TyBarrierWait(&ty->group->GCBarrierSweep);
-
-        UnlockThreads(ty, blockedThreads, nBlocked);
-
-        GCLOG("Unlocking ThreadsLock and GCLock. Used = %lld, DeadUsed = %lld", MemoryUsed, ty->group->DeadUsed);
+        NextGCPhase(ty, GC_PHASE_DONE, nRunning);
+        EndGC(ty);
 
         TySpinLockUnlock(&ty->group->Lock);
         TySpinLockUnlock(&ty->group->GCLock);
 
-        GCLOG("Unlocked ThreadsLock and GCLock on thread %llu", TID);
+        UnlockThreads(ty, blockedThreads, nBlocked);
+        GCLOG("Unlocking ThreadsLock and GCLock. Used = %lld, DeadUsed = %lld", MemoryUsed, ty->group->DeadUsed);
 
-        TyBarrierWait(&ty->group->GCBarrierDone);
+        GCLOG("Unlocked ThreadsLock and GCLock on thread %llu", TID);
 
 #if defined(TY_GC_STATS) || defined(TY_PROFILER)
         u64 end = TyMonotonicTime();
@@ -1789,9 +1827,9 @@ MaybeTakeLock(Ty *ty)
 void
 ReleaseLock(Ty *ty, bool blocked)
 {
-        SetState(ty, blocked);
-        TySpinLockUnlock(ty->lock);
+        *ty->blocked = blocked;
         ty->locked = false;
+        TySpinLockUnlock(ty->lock);
 }
 
 bool
@@ -1803,7 +1841,7 @@ HoldingLock(Ty *ty)
 void
 NewThread(Ty *ty, Thread *t, Value *call, Value *name, bool isolated)
 {
-        lGv(true);
+        UnlockTy();
 
         atomic_bool created = false;
 
@@ -1830,7 +1868,7 @@ NewThread(Ty *ty, Thread *t, Value *call, Value *name, bool isolated)
                 continue;
         }
 
-        lTk();
+        LockTy();
 }
 
 static void
@@ -1843,7 +1881,7 @@ AddThread(Ty *ty, TyThread self)
         xvP(ty->group->TyList, ty);
         xvP(ty->group->ThreadList, self);
         xvP(ty->group->ThreadLocks, ty->lock);
-        xvP(ty->group->ThreadStates, ty->state);
+        xvP(ty->group->ThreadStates, ty->blocked);
         TySpinLockUnlock(&ty->group->Lock);
         GCLOG("AddThread(): %llu: finished", TID);
         GC_RESUME();
@@ -1867,7 +1905,7 @@ CleanupThread(void *ctx)
         v0(ty->allocs);
         TySpinLockUnlock(&ty->group->DLock);
 
-        lGv(true);
+        UnlockTy();
 
         TySpinLockLock(&ty->group->Lock);
 
@@ -1918,7 +1956,7 @@ CleanupThread(void *ctx)
 
         TySpinLockDestroy(ty->lock);
         xmF((void *)ty->lock);
-        xmF((void *)ty->state);
+        xmF((void *)ty->blocked);
         xvF(STACK);
         xvF(THREAD_LOCALS);
         xvF(RootSet);
@@ -1949,6 +1987,8 @@ CleanupThread(void *ctx)
                 TySpinLockDestroy(&ty->group->Lock);
                 TySpinLockDestroy(&ty->group->GCLock);
                 TySpinLockDestroy(&ty->group->DLock);
+                TyMutexDestroy(&ty->group->GCPhaseLock);
+                TyCondVarDestroy(&ty->group->GCPhaseCond);
                 xvF(ty->group->TyList);
                 xvF(ty->group->ThreadList);
                 xvF(ty->group->ThreadLocks);
@@ -2149,12 +2189,12 @@ vm_run_tdb(void *ctx)
                         goto KeepRunning;
                 }
 
-                lGv(true);
+                UnlockTy();
                 TyMutexLock(&TDB_MUTEX);
                 while (TDB_IS(STOPPED)) {
                         TyCondVarWait(&TDB_CONDVAR, &TDB_MUTEX);
                 }
-                lTk();
+                LockTy();
 
                 tdb_clear_next(ty);
 
@@ -10379,7 +10419,7 @@ tdb_start(Ty *ty)
         TDB->thread = THREAD(t);
         TDB->host = ty;
 
-        lGv(true);
+        UnlockTy();
 
         TyMutexInit(&TDB_MUTEX);
         TyCondVarInit(&TDB_CONDVAR);
@@ -10397,7 +10437,7 @@ tdb_start(Ty *ty)
                 continue;
         }
 
-        lTk();
+        LockTy();
 }
 
 void
@@ -10436,9 +10476,9 @@ LocalsDict(Ty *ty)
 Value
 tdb_locals(Ty *ty)
 {
-        lGv(true);
+        UnlockTy();
         Value locals = LocalsDict(TDB->host);
-        lTk();
+        LockTy();
 
         return locals;
 }
@@ -10716,14 +10756,14 @@ tdb_go(Ty *ty)
         TyMutexUnlock(&TDB_MUTEX);
         TyCondVarSignal(&TDB_CONDVAR);
 
-        lGv(true);
+        UnlockTy();
 
         TyMutexLock(&TDB_MUTEX);
         while (!TDB_IS(STEPPING) && !TDB_IS(STOPPED)) {
                 TyCondVarWait(&TDB_CONDVAR, &TDB_MUTEX);
         }
 
-        lTk();
+        LockTy();
 }
 
 void
@@ -10825,9 +10865,9 @@ vm_make_range(Ty *ty, Value const *a, Value const *b, bool inclusive)
 bool
 TyReloadModule(Ty *ty, char const *module)
 {
-        lGv(true);
+        UnlockTy();
         TySpinLockLock(&ty->group->GCLock);
-        lTk();
+        LockTy();
 
         TySpinLockLock(&ty->group->Lock);
 
@@ -10838,22 +10878,23 @@ TyReloadModule(Ty *ty, char const *module)
         static int *runningThreads;
         static usize capacity;
 
-        if (ty->group->ThreadList.count > capacity) {
-                blockedThreads = mrealloc(blockedThreads, ty->group->ThreadList.count * sizeof *blockedThreads);
-                runningThreads = mrealloc(runningThreads, ty->group->ThreadList.count * sizeof *runningThreads);
-                capacity = ty->group->ThreadList.count;
+        if (vN(ty->group->ThreadList) > capacity) {
+                blockedThreads = mrealloc(blockedThreads, vN(ty->group->ThreadList) * sizeof *blockedThreads);
+                runningThreads = mrealloc(runningThreads, vN(ty->group->ThreadList) * sizeof *runningThreads);
+                capacity = vN(ty->group->ThreadList);
         }
 
         int nBlocked = 0;
         int nRunning = 0;
 
-        for (int i = 0; i < ty->group->ThreadList.count; ++i) {
-                if (ty->lock == ty->group->ThreadLocks.items[i]) {
+        for (int i = 0; i < vN(ty->group->ThreadList); ++i) {
+                if (ty->lock == v__(ty->group->ThreadLocks, i)) {
                         continue;
                 }
-                TySpinLockLock(ty->group->ThreadLocks.items[i]);
-                if (TryFlipTo(ty->group->ThreadStates.items[i], true)) {
+                TySpinLockLock(v__(ty->group->ThreadLocks, i));
+                if (TryFlipTo(v__(ty->group->ThreadStates, i), true)) {
                         runningThreads[nRunning++] = i;
+                        TySpinLockUnlock(v__(ty->group->ThreadLocks, i));
                 } else {
                         blockedThreads[nBlocked++] = i;
                 }
@@ -10861,10 +10902,11 @@ TyReloadModule(Ty *ty, char const *module)
 
         bool ready = ty->ty->ready;
 
-        TyBarrierInit(&ty->group->GCBarrierStart, nRunning + 1);
-        TyBarrierInit(&ty->group->GCBarrierMark, nRunning + 1);
-        TyBarrierInit(&ty->group->GCBarrierSweep, nRunning + 1);
-        TyBarrierInit(&ty->group->GCBarrierDone, nRunning + 1);
+        StartGC(ty);
+
+        while (ty->group->GCReadyCount < nRunning) {
+                ;
+        }
         // ======================================================================================
         GC_STOP();
         ty->ty->ready = false;
@@ -10885,15 +10927,13 @@ TyReloadModule(Ty *ty, char const *module)
         ty->ty->ready = ready;
         GC_RESUME();
         // ======================================================================================
-        TyBarrierWait(&ty->group->GCBarrierStart);
-        TyBarrierWait(&ty->group->GCBarrierMark);
+        NextGCPhase(ty, GC_PHASE_SWEEP, nRunning);
         ty->group->WantGC = false;
-        UnlockThreads(ty, runningThreads, nRunning);
-        TyBarrierWait(&ty->group->GCBarrierSweep);
+        NextGCPhase(ty, GC_PHASE_DONE, nRunning);
+        EndGC(ty);
         UnlockThreads(ty, blockedThreads, nBlocked);
         TySpinLockUnlock(&ty->group->Lock);
         TySpinLockUnlock(&ty->group->GCLock);
-        TyBarrierWait(&ty->group->GCBarrierDone);
 
         return ok;
 }
