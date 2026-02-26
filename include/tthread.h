@@ -310,8 +310,9 @@ typedef void                *TyThreadReturnValue;
 #include <nsync.h>
 
 typedef nsync_mu             TyMutex;
-typedef nsync_cv             TyCondVar;
 typedef nsync_mu             TyRwLock;
+typedef nsync_mu             TySpinLock;
+typedef nsync_cv             TyCondVar;
 typedef nsync_note           TyNote;
 typedef nsync_counter        TyCounter;
 
@@ -327,8 +328,6 @@ typedef void                *TyCounter;
 
 #define TY_RWLOCK_INIT PTHREAD_RWLOCK_INITIALIZER
 
-#endif /* TY_USE_NSYNC */
-
 #if defined(__linux__)
 typedef pthread_spinlock_t   TySpinLock;
 #elif defined(__APPLE__)
@@ -337,6 +336,8 @@ typedef os_unfair_lock TySpinLock;
 #else
 #error "TODO"
 #endif
+
+#endif /* TY_USE_NSYNC */
 
 #define TY_THREAD_OK   NULL
 
@@ -737,6 +738,12 @@ TyWaitAny(TyWaitable *items, int count, u64 timeout_ms, void *scratch,
         }
 }
 
+#define TySpinLockInit    TyMutexInit
+#define TySpinLockTryLock TyMutexTryLock
+#define TySpinLockLock    TyMutexLock
+#define TySpinLockUnlock  TyMutexUnlock
+#define TySpinLockDestroy TyMutexDestroy
+
 #else /* !TY_USE_NSYNC */
 
 /*
@@ -939,10 +946,6 @@ TyWaitAny(TyWaitable *items, int count, u64 timeout_ms, void *scratch,
         return count;
 }
 
-#endif /* TY_USE_NSYNC */
-
-#endif /* _WIN32 */
-
 #ifdef __APPLE__
 inline static bool
 TySpinLockInit(TySpinLock *spin)
@@ -1007,6 +1010,8 @@ TySpinLockDestroy(TySpinLock *spin)
         return pthread_spin_destroy(spin) == 0;
 }
 #endif // __APPLE__
+#endif /* TY_USE_NSYNC */
+#endif /* _WIN32 */
 
 #endif
 

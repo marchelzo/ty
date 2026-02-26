@@ -35,14 +35,6 @@
 |.define ARG3, rcx
 |.define RET,  rax
 
-static void jit_emit_prologue(dasm_State **Dst) {
-        |->entry:
-}
-
-static void jit_emit_epilogue(dasm_State **Dst) {
-        |  ret
-}
-
 // --- Integer arithmetic ---
 
 static void jit_emit_add(dasm_State **Dst, int dst, int left, int right) {
