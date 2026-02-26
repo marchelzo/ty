@@ -9739,7 +9739,7 @@ MarkStorage(Ty *ty)
                         value_mark(ty, (Value *)t);
                 }
                 if (target->gc != NULL) {
-                        value_mark(ty, target->gc);
+                        MARK(target->gc);
                 }
         }
         LOG_REACHED(" => targets reached %llu", TotalReached);
@@ -10250,17 +10250,15 @@ StepInstruction(char const *ip)
                 break;
         CASE(FUNCTION)
         {
-                Value v;
-
                 READVALUE(n);
 
                 ip = ALIGNED_FOR(i64, ip);
 
-                v.info = (int *) ip;
+                i32 *info = (i32 *) ip;
 
-                int hs = v.info[0];
-                int size  = v.info[1];
-                int nEnv = v.info[2];
+                int hs = info[0];
+                int size  = info[1];
+                int nEnv = info[2];
 
                 int ncaps = (n > 0) ? nEnv - n : nEnv;
 

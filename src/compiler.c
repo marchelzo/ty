@@ -976,7 +976,7 @@ inline static char *
 GetPrivateName(char const *name, int class, char *scratch, usize n)
 {
         if (IsPrivateMember(name) && class >= 0) {
-                snprintf(scratch, n, "%s$%d", &name[1], class);
+                ty_snprintf(scratch, n, "%s$%d", &name[1], class);
                 return scratch;
         } else {
                 return (char *)name;
@@ -1196,7 +1196,7 @@ colorize_code(
 
         bool color = *base_color != '\0';
 
-        snprintf(
+        ty_snprintf(
                 out,
                 n == 0 ? 0 : n - 1,
                 "%s%.*s%s%s%.*s%s%s%.*s%s",
@@ -1380,7 +1380,7 @@ PushInfo(Ty *ty, void const *ctx, char const *fmt, ...)
         va_list ap;
 
         va_start(ap, fmt);
-        vsnprintf(buffer, sizeof buffer, fmt, ap);
+        ty_snprintf(buffer, sizeof buffer, fmt, ap);
         va_end(ap);
 
         void *save = PushContext(ty, ctx);
@@ -2065,7 +2065,7 @@ try_slurp_module(Ty *ty, char const *name, char const **path_out)
 
         char const *override = getenv("TY_LIBRARY_PATH");
         if (override != NULL) {
-                snprintf(pathbuf, sizeof pathbuf, "%s/%s.ty", override, name);
+                ty_snprintf(pathbuf, sizeof pathbuf, "%s/%s.ty", override, name);
                 if ((source = slurp(ty, pathbuf)) != NULL) {
                         goto FoundModule;
                 }
@@ -2076,25 +2076,25 @@ try_slurp_module(Ty *ty, char const *name, char const **path_out)
                 home = getenv("USERPROFILE");
         }
         if (home != NULL) {
-                snprintf(pathbuf, sizeof pathbuf, "%s/.ty/%s.ty", home, name);
+                ty_snprintf(pathbuf, sizeof pathbuf, "%s/.ty/%s.ty", home, name);
                 if ((source = slurp(ty, pathbuf)) != NULL) {
                         goto FoundModule;
                 }
         }
 
         if (get_directory_where_chad_looks_for_runtime_dependencies(chadbuf)) {
-                snprintf(pathbuf, sizeof pathbuf, "%s/lib/%s.ty", chadbuf, name);
+                ty_snprintf(pathbuf, sizeof pathbuf, "%s/lib/%s.ty", chadbuf, name);
                 if ((source = slurp(ty, pathbuf)) != NULL) {
                         goto FoundModule;
                 }
-                snprintf(pathbuf, sizeof pathbuf, "%s/../lib/ty/%s.ty", chadbuf, name);
+                ty_snprintf(pathbuf, sizeof pathbuf, "%s/../lib/ty/%s.ty", chadbuf, name);
                 if ((source = slurp(ty, pathbuf)) != NULL) {
                         goto FoundModule;
                 }
         }
 
         char *this_dir = directory_of(STATE.module->path, chadbuf);
-        snprintf(pathbuf, sizeof pathbuf, "%s/%s.ty", this_dir, name);
+        ty_snprintf(pathbuf, sizeof pathbuf, "%s/%s.ty", this_dir, name);
 
         if ((source = slurp(ty, pathbuf)) == NULL) {
                 return NULL;
@@ -3286,7 +3286,7 @@ inline static Symbol *
 RegexCapture(Ty *ty, Scope *scope, int i)
 {
         char id[16];
-        snprintf(id, sizeof id, "$%d", i);
+        ty_snprintf(id, sizeof id, "$%d", i);
 
         Symbol *var = addsymbol(ty, scope, sclonea(ty, id));
         var->type = STRING_TYPE;
@@ -7429,7 +7429,7 @@ emit_function(Ty *ty, Expr const *e)
                 fun_name = "(anonymous function)";
         } else {
                 char buffer[512];
-                snprintf(
+                ty_snprintf(
                         buffer,
                         sizeof buffer,
                         "(anon:%s:%d)",
@@ -12795,7 +12795,7 @@ expand_prog(Ty *ty, Stmt **p)
                                 avP(expanded, p[i + m]);
                                 p[i + m]->pub = false;
                                 p[i + m]->value->overload = multi;
-                                snprintf(buffer, sizeof buffer, "%s#%d", multi->name, m + 1);
+                                ty_snprintf(buffer, sizeof buffer, "%s#%d", multi->name, m + 1);
                                 p[i + m]->target->identifier = p[i + m]->value->name = sclonea(ty, buffer);
                                 p[i + m]->target->symbol = NULL;
                                 p[i + m]->target->xscope = NULL;
@@ -17567,7 +17567,7 @@ WriteExpressionOrigin(Ty *ty, byte_vector *out, Expr const *e)
         int etw = 0;
         int margin = 44 - etw;
 
-        snprintf(
+        ty_snprintf(
                 buffer,
                 sizeof buffer - 1,
                 "%*s %s%s%s:%s%d%s:%s%d %s%*s%s",
@@ -17790,7 +17790,7 @@ WriteExpressionTrace(Ty *ty, byte_vector *out, Expr const *e, int etw, bool firs
                 vt100bytes += strlen(TERM(36;1));
                 vt100bytes += strlen(TERM(0));
                 if (e->xfunc->class == NULL) {
-                        snprintf(
+                        ty_snprintf(
                                 fun_buffer,
                                 sizeof fun_buffer,
                                 "[%s%s%s]",
@@ -17801,7 +17801,7 @@ WriteExpressionTrace(Ty *ty, byte_vector *out, Expr const *e, int etw, bool firs
                 } else {
                         vt100bytes += strlen(TERM(94));
                         vt100bytes += strlen(TERM(0));
-                        snprintf(
+                        ty_snprintf(
                                 fun_buffer,
                                 sizeof fun_buffer,
                                 "[%s%s%s.%s%s%s]",
@@ -17821,7 +17821,7 @@ WriteExpressionTrace(Ty *ty, byte_vector *out, Expr const *e, int etw, bool firs
         int margin = 44 - etw;
 
         vt100bytes += 7 * strlen(TERM(00));
-        snprintf(
+        ty_snprintf(
                 buffer,
                 sizeof buffer,
                 "%*s %s%s%s%s:%s%d%s:%s%d %s%*s%s",
@@ -18937,7 +18937,7 @@ DumpProgram(
                         } else {
                                 char signature[256];
 
-                                snprintf(
+                                ty_snprintf(
                                         signature,
                                         sizeof signature,
                                         "%s%s",

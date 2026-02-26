@@ -31,6 +31,15 @@
  #define ty_aligned_alloc aligned_alloc
 #endif
 
+#if 1
+ #include "stb_sprintf.h"
+ #define ty_snprintf  stbsp_snprintf
+ #define ty_vsnprintf stbsp_vsnprintf
+#else
+ #define ty_snprintf  snprintf
+ #define ty_vsnprintf vsnprintf
+#endif
+
 #if defined(__APPLE__)
 #  define rqsort(base, nel, width, cmp, ctx) qsort_r(base, nel, width, ctx, cmp);
 #elif defined(__linux__)
