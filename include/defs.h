@@ -6,8 +6,6 @@
 #include <setjmp.h>
 #include <stdbool.h>
 
-#define TY_GC_STATS 1
-
 #include "vec.h"
 
 #define CAT(a, b) a ## b
@@ -251,8 +249,8 @@ typedef struct class      Class;
 #define gP(x) (xvP(RootSet, *(x)))
 #define gX()  (vXx(RootSet))
 
-#define lGv(b) ReleaseLock(ty, b)
-#define lTk()  TakeLock(ty)
+#define UnlockTy() ReleaseLock(ty, true)
+#define LockTy()   TakeLock(ty)
 
 #define vmP(x)   vm_push(ty, x)
 #define vmX()    vm_pop(ty)

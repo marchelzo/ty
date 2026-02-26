@@ -840,9 +840,9 @@ cffi_call(Ty *ty, int argc, Value *kwargs)
         Value *out = NAMED("out");
         void  *buf = (out == NULL) ? smA(cif->rtype->size) : ptr_from(ty, out);
 
-        lGv(true);
+        UnlockTy();
         ffi_call(cif, func, buf, vv(args));
-        lTk();
+        LockTy();
 
         Value ret = (out == NULL) ? load(ty, cif->rtype, buf) : PTR(buf);
 
@@ -896,9 +896,9 @@ cffi_fast_call(Ty *ty, Value const *fun, int argc, Value *kwargs)
         Value *out = NAMED("out");
         void  *buf = (out == NULL) ? smA(cif->rtype->size) : ptr_from(ty, out);
 
-        lGv(true);
+        UnlockTy();
         ffi_call(cif, func, buf, vv(args));
-        lTk();
+        LockTy();
 
         Value ret = (out == NULL) ? load(ty, cif->rtype, buf) : PTR(buf);
 

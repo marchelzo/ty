@@ -298,7 +298,7 @@ doprint(Ty *ty, int argc, Value *kwargs, FILE *f)
         Value *flush = NAMED("flush");
         bool do_flush = (flush != NULL) && value_truthy(ty, flush);
 
-        lGv(true);
+        UnlockTy();
         flockfile(f);
 
         imax written = 0;
@@ -314,14 +314,14 @@ doprint(Ty *ty, int argc, Value *kwargs, FILE *f)
                         if (sep != NULL) {
                                 if (fwrite_unlocked(ss(*sep), 1, sN(*sep), f) < sN(*sep)) {
                                         funlockfile(f);
-                                        lTk();
+                                        LockTy();
                                         return -1;
                                 }
                                 written += sN(*sep);
                         } else {
                                 if (fputs_unlocked(", ", f) == EOF) {
                                         funlockfile(f);
-                                        lTk();
+                                        LockTy();
                                         return -1;
                                 }
                                 written += 2;
@@ -349,9 +349,9 @@ doprint(Ty *ty, int argc, Value *kwargs, FILE *f)
                         break;
 
                 default:
-                        lTk();
+                        LockTy();
                         s = VSC(&ARG(i), show_flags);
-                        lGv(true);
+                        UnlockTy();
                         n = strlen(s);
                         need_free = true;
                         break;
@@ -362,7 +362,7 @@ doprint(Ty *ty, int argc, Value *kwargs, FILE *f)
                                 xmF((char *)s);
                         }
                         funlockfile(f);
-                        lTk();
+                        LockTy();
                         return -1;
                 }
 
@@ -377,14 +377,14 @@ doprint(Ty *ty, int argc, Value *kwargs, FILE *f)
         if (end != NULL) {
                 if (fwrite_unlocked(ss(*end), 1, sN(*end), f) < sN(*end)) {
                         funlockfile(f);
-                        lTk();
+                        LockTy();
                         return -1;
                 }
                 written += sN(*end);
         } else {
                 if (fputc_unlocked('\n', f) == EOF) {
                         funlockfile(f);
-                        lTk();
+                        LockTy();
                         return -1;
                 } else {
                         written += 1;
@@ -396,7 +396,7 @@ doprint(Ty *ty, int argc, Value *kwargs, FILE *f)
         }
 
         funlockfile(f);
-        lTk();
+        LockTy();
 
         return written;
 }
@@ -500,11 +500,11 @@ BUILTIN_FUNCTION(slurp)
 
 
                 v0(B);
-                lGv(true);
+                UnlockTy();
                 while (!feof(f) && (r = fread(tmp, 1, TY_TMP_N, f)) > 0) {
                         xvPn(B, tmp, r);
                 }
-                lTk();
+                LockTy();
 
                 Value str = vSs(vv(B), vN(B));
 
@@ -559,12 +559,12 @@ BUILTIN_FUNCTION(read)
         int c;
 
         v0(B);
-        lGv(true);
+        UnlockTy();
         while (c = getchar(), c != EOF && c != '\n') {
                 xvP(B, c);
         }
 
-        lTk();
+        LockTy();
 
         if (vN(B) == 0 && c != '\n') {
                 return NIL;
@@ -2837,9 +2837,9 @@ BUILTIN_FUNCTION(os_read)
 
         ssize_t n_read = 0;
         while (n_read < n) {
-                lGv(true);
+                UnlockTy();
                 ssize_t r = read(fd, vZ(*blob.blob) + n_read, n);
-                lTk();
+                LockTy();
 
                 if (r <= 0) {
                         if (n_read == 0) {
@@ -2904,11 +2904,11 @@ BUILTIN_FUNCTION(os_write)
 
         usize off = 0;
 
-        lGv(true);
+        UnlockTy();
         while (n > 0) {
                 ssize_t r = write(fd, ((unsigned char const *)p) + off, n);
                 if (r < 0) {
-                        lTk();
+                        LockTy();
                         return (off == 0) ? INTEGER(r) : INTEGER(off);
                 }
                 if (r == 0) {
@@ -2922,7 +2922,7 @@ BUILTIN_FUNCTION(os_write)
                         break;
                 }
         }
-        lTk();
+        LockTy();
 
         return INTEGER(off);
 }
@@ -3695,9 +3695,9 @@ BUILTIN_FUNCTION(thread_join)
         }
 
         if ((argc == 1) || (ARG(1).type == VALUE_NIL)) {
-                lGv(true);
+                UnlockTy();
                 TyThreadJoin(t->t);
-                lTk();
+                LockTy();
 
                 t->joined = true;
 
@@ -3705,18 +3705,18 @@ BUILTIN_FUNCTION(thread_join)
         } else {
                 i64 timeoutMs = MSEC_ARG(1);
 
-                lGv(true);
+                UnlockTy();
                 TyMutexLock(&t->mutex);
                 while (t->alive) {
                         if (!TyCondVarTimedWaitRelative(&t->cond, &t->mutex, timeoutMs)) {
                                 TyMutexUnlock(&t->mutex);
-                                lTk();
+                                LockTy();
                                 return None;
                         }
                 }
                 TyMutexUnlock(&t->mutex);
                 TyThreadJoin(t->t);
-                lTk();
+                LockTy();
 
                 t->joined = true;
 
@@ -3780,11 +3780,11 @@ BUILTIN_FUNCTION(thread_cond_wait)
                 forever = true;
         }
 
-        lGv(true);
+        UnlockTy();
         bool ok = forever
                 ? TyCondVarWait(cond, mtx)
                 : TyCondVarTimedWaitRelative(cond, mtx, usec / 1000);
-        lTk();
+        LockTy();
 
         return BOOLEAN(ok);
 }
@@ -3831,9 +3831,9 @@ BUILTIN_FUNCTION(thread_wait_note)
         TyNote *np = PTR_ARG(0);
         u64 ms = (argc == 2) ? (u64)MSEC_ARG(1) : (u64)-1;
 
-        lGv(true);
+        UnlockTy();
         bool ok = TyNoteWait(*np, ms);
-        lTk();
+        LockTy();
 
         return BOOLEAN(ok);
 }
@@ -3868,9 +3868,9 @@ BUILTIN_FUNCTION(thread_count_wait)
         TyCounter *cp = PTR_ARG(0);
         u64 ms = (argc == 2) ? (u64)MSEC_ARG(1) : (u64)-1;
 
-        lGv(true);
+        UnlockTy();
         u32 v = TyCounterWait(*cp, ms);
-        lTk();
+        LockTy();
 
         return INTEGER(v);
 }
@@ -3927,9 +3927,9 @@ BUILTIN_FUNCTION(thread_wait_any)
                 }
         }
 
-        lGv(true);
+        UnlockTy();
         int idx = TyWaitAny(items, n, ms, scratch, locks, nlocks);
-        lTk();
+        LockTy();
 
         SCRATCH_RESTORE();
 
@@ -3980,7 +3980,7 @@ BUILTIN_FUNCTION(thread_lock)
         bool ok;
         Value lock = ARGx(0, VALUE_PTR);
 
-        lGv(true);
+        UnlockTy();
 
         switch ((uptr)lock.extra) {
         case 1:
@@ -3995,7 +3995,7 @@ BUILTIN_FUNCTION(thread_lock)
                 UNREACHABLE("invalid lock type");
         }
 
-        lTk();
+        LockTy();
 
         return BOOLEAN(ok);
 }
@@ -4007,7 +4007,7 @@ BUILTIN_FUNCTION(thread_trylock)
         bool ok;
         Value lock = ARGx(0, VALUE_PTR);
 
-        lGv(true);
+        UnlockTy();
 
         switch ((uptr)lock.extra) {
         case 1:
@@ -4022,7 +4022,7 @@ BUILTIN_FUNCTION(thread_trylock)
                 UNREACHABLE("invalid lock type");
         }
 
-        lTk();
+        LockTy();
 
         return BOOLEAN(ok);
 }
@@ -4098,9 +4098,9 @@ BUILTIN_FUNCTION(thread_send)
 
         Forget(ty, &cv.v, (AllocList *)&cv.as);
 
-        lGv(true);
+        UnlockTy();
         TyMutexLock(&chan->m);
-        lTk();
+        LockTy();
         uvP(chan->q, cv);
         TyMutexUnlock(&chan->m);
         TyCondVarSignal(&chan->c);
@@ -4114,7 +4114,7 @@ BUILTIN_FUNCTION(thread_recv)
 
         Channel *chan = PTR_ARG(0);
 
-        lGv(true);
+        UnlockTy();
         TyMutexLock(&chan->m);
         if (argc == 1) {
                 while (chan->open && chan->q.count == 0) {
@@ -4123,7 +4123,7 @@ BUILTIN_FUNCTION(thread_recv)
         } else {
                 Value t = ARG(1);
                 if (t.type != VALUE_INTEGER) {
-                        lTk();
+                        LockTy();
                         zP("thread.recv(): expected integer but got: %s", VSC(&t));
                 }
                 while (chan->open && chan->q.count == 0) {
@@ -4132,7 +4132,7 @@ BUILTIN_FUNCTION(thread_recv)
                         }
                 }
         }
-        lTk();
+        LockTy();
 
         if (chan->q.count == 0) {
                 TyMutexUnlock(&chan->m);
@@ -4156,9 +4156,9 @@ BUILTIN_FUNCTION(thread_close)
 
         Channel *chan = PTR_ARG(0);
 
-        lGv(true);
+        UnlockTy();
         TyMutexLock(&chan->m);
-        lTk();
+        LockTy();
         chan->open = false;
         TyMutexUnlock(&chan->m);
 
@@ -4667,9 +4667,9 @@ BUILTIN_FUNCTION(os_getpeername)
         struct sockaddr_storage addr;
         socklen_t addr_size = sizeof addr;
 
-        lGv(true);
+        UnlockTy();
         int r = getpeername(ARG(0).z, (void *)&addr, &addr_size);
-        lTk();
+        LockTy();
 
         if (r < 0) {
                 return NIL;
@@ -4692,9 +4692,9 @@ BUILTIN_FUNCTION(os_getsockname)
         struct sockaddr_storage addr;
         socklen_t addr_size = sizeof addr;
 
-        lGv(true);
+        UnlockTy();
         int r = getsockname(ARG(0).z, (void *)&addr, &addr_size);
-        lTk();
+        LockTy();
 
         if (r < 0) {
                 return NIL;
@@ -4918,9 +4918,9 @@ BUILTIN_FUNCTION(os_getaddrinfo)
         hints.ai_socktype = type;
         hints.ai_protocol = protocol;
 
-        lGv(true);
+        UnlockTy();
         int ret = getaddrinfo(node, service, &hints, &res);
-        lTk();
+        LockTy();
         if (ret != 0) {
                 return Err(ty, INTEGER(ret));
         }
@@ -4968,9 +4968,9 @@ BUILTIN_FUNCTION(os_accept)
         struct sockaddr _addr;
         socklen_t n = sizeof _addr;
 
-        lGv(true);
+        UnlockTy();
         int ret = accept(sockfd, &_addr, &n);
-        lTk();
+        LockTy();
 
         if (ret < 0) {
                 return NIL;
@@ -5010,9 +5010,9 @@ BUILTIN_FUNCTION(os_recvfrom)
         struct sockaddr_storage addr;
         socklen_t addr_size = sizeof addr;
 
-        lGv(true);
+        UnlockTy();
         ssize_t r = recvfrom(fd, vv(*buffer.blob), size, flags, (void *)&addr, &addr_size);
-        lTk();
+        LockTy();
         if (r < 0) {
                 return NIL;
         }
@@ -5060,9 +5060,9 @@ BUILTIN_FUNCTION(os_sendto)
         int flags = INT_ARG(2);
         Blob *addr = ARGx(3, VALUE_BLOB).blob;
 
-        lGv(true);
+        UnlockTy();
         ssize_t ret = sendto(fd, data, len, flags, (void *)vv(*addr), vN(*addr));
-        lTk();
+        LockTy();
 
         return INTEGER(ret);
 }
@@ -5140,14 +5140,14 @@ BUILTIN_FUNCTION(os_poll)
         }
 
         NOGC(fds_out);
-        lGv(true);
+        UnlockTy();
 #ifdef _WIN32
         int n = WSAPoll(pfds, vN(*fds), timeout);
 #else
         int n = poll(pfds, vN(*fds), timeout);
 #endif
         int err = errno;
-        lTk();
+        LockTy();
         OKGC(fds_out);
 
         vN(*fds_out) = 0;
@@ -5229,9 +5229,9 @@ BUILTIN_FUNCTION(os_epoll_wait)
 
         struct epoll_event events[32];
 
-        lGv(true);
+        UnlockTy();
         int n = epoll_wait(efd.z, events, sizeof events / sizeof events[0], timeout.z);
-        lTk();
+        LockTy();
 
         if (n == -1)
                 return NIL;
@@ -5284,7 +5284,7 @@ BUILTIN_FUNCTION(os_wait)
         int status;
         int ret;
 
-        lGv(true);
+        UnlockTy();
         for (;;) {
                 ret = waitpid(pid, &status, flags);
                 if (ret == -1 && errno == EINTR) {
@@ -5292,7 +5292,7 @@ BUILTIN_FUNCTION(os_wait)
                 }
                 break;
         }
-        lTk();
+        LockTy();
         if (ret < 0 && errno != ECHILD) {
                 bP("%s", strerror(errno));
         }
@@ -5538,9 +5538,9 @@ BUILTIN_FUNCTION(os_sigsuspend)
 
         IntoSigSet(ty, "os.sigsuspend()", &ARG(0), &set);
 
-        lGv(true);
+        UnlockTy();
         int ret = sigsuspend(&set);
-        lTk();
+        LockTy();
         if (ret != 0 && errno != EINTR) {
                 bP("%s", strerror(errno));
         }
@@ -5637,9 +5637,9 @@ BUILTIN_FUNCTION(os_sigwait)
         IntoSigSet(ty, "os.sigwait()", &ARG(0), &set);
 
         int sig;
-        lGv(true);
+        UnlockTy();
         int ret = sigwait(&set, &sig);
-        lTk();
+        LockTy();
         if (ret != 0) {
                 bP("%s", strerror(ret));
         }
@@ -5879,7 +5879,7 @@ BUILTIN_FUNCTION(os_sleep)
         dur.tv_sec = nsec / TY_1e9;
         dur.tv_nsec = nsec % TY_1e9;
 
-        lGv(true);
+        UnlockTy();
 #ifdef _WIN32
         Sleep(dur.tv_sec * 1000 + dur.tv_nsec / 1000000);
         int ret = 0;
@@ -5887,7 +5887,7 @@ BUILTIN_FUNCTION(os_sleep)
         errno = 0;
         int ret = clock_nanosleep(clk, flags, &dur, &rem);
 #endif
-        lTk();
+        LockTy();
 
         switch (ret) {
         case 0:
@@ -5911,10 +5911,10 @@ BUILTIN_FUNCTION(os_sleep)
         };
         struct timespec rem = {0};
 
-        lGv(true);
+        UnlockTy();
         errno = 0;
         int ret = nanosleep(&dur, &rem);
-        lTk();
+        LockTy();
 
         switch (ret) {
         case -1:
@@ -6874,11 +6874,11 @@ BUILTIN_FUNCTION(stdio_fgets)
 
         int c;
 
-        lGv(true);
+        UnlockTy();
         while ((c = fgetc(fp)) != EOF && c != '\n') {
                 xvP(B, c);
         }
-        lTk();
+        LockTy();
 
         if (B.count == 0 && c == EOF)
                 return NIL;
@@ -6917,12 +6917,12 @@ BUILTIN_FUNCTION(stdio_read_signed)
         char b[sizeof (intmax_t)];
         int n = min(sizeof b, size);
 
-        lGv(true);
+        UnlockTy();
         if (fread(b, n, 1, fp) != 1) {
-                lTk();
+                LockTy();
                 return NIL;
         }
-        lTk();
+        LockTy();
 
         switch (size) {
         case (sizeof (char)):      return INTEGER(*(char *)b);
@@ -6971,9 +6971,9 @@ BUILTIN_FUNCTION(stdio_write_signed)
         default: return BOOLEAN(false);
         }
 
-        lGv(true);
+        UnlockTy();
         size_t n = fwrite(b, size, 1, fp);
-        lTk();
+        LockTy();
 
         return BOOLEAN(n == 1);
 }
@@ -7045,9 +7045,9 @@ BUILTIN_FUNCTION(stdio_write_unsigned)
         default: return BOOLEAN(false);
         }
 
-        lGv(true);
+        UnlockTy();
         size_t n = fwrite(b, size, 1, fp);
-        lTk();
+        LockTy();
 
         return BOOLEAN(n == 1);
 }
@@ -7063,13 +7063,13 @@ BUILTIN_FUNCTION(stdio_read_double)
         double x;
         FILE *fp = f.ptr;
 
-        lGv(true);
+        UnlockTy();
 
         if (fread(&x, sizeof x, 1, fp) == 1) {
-                lTk();
+                LockTy();
                 return REAL(x);
         } else {
-                lTk();
+                LockTy();
                 return NIL;
         }
 }
@@ -7085,13 +7085,13 @@ BUILTIN_FUNCTION(stdio_read_float)
         float x;
         FILE *fp = f.ptr;
 
-        lGv(true);
+        UnlockTy();
 
         if (fread(&x, sizeof x, 1, fp) == 1) {
-                lTk();
+                LockTy();
                 return REAL(x);
         } else {
-                lTk();
+                LockTy();
                 return NIL;
         }
 }
@@ -7111,9 +7111,9 @@ BUILTIN_FUNCTION(stdio_write_float)
         FILE *fp = f.ptr;
         float fx = (float)x.real;
 
-        lGv(true);
+        UnlockTy();
         size_t n = fwrite(&fx, sizeof fx, 1, fp);
-        lTk();
+        LockTy();
 
         return BOOLEAN(n > 0);
 }
@@ -7133,9 +7133,9 @@ BUILTIN_FUNCTION(stdio_write_double)
         FILE *fp = f.ptr;
         double fx = x.real;
 
-        lGv(true);
+        UnlockTy();
         size_t n = fwrite(&fx, sizeof fx, 1, fp);
-        lTk();
+        LockTy();
 
         return BOOLEAN(n > 0);
 }
@@ -7166,12 +7166,12 @@ BUILTIN_FUNCTION(stdio_fread)
         intmax_t bytes = 0;
         int c;
 
-        lGv(true);
+        UnlockTy();
         while (bytes < n.z && (c = fgetc(fp)) != EOF) {
                 uvP(*b, c);
                 bytes += 1;
         }
-        lTk();
+        LockTy();
 
         OKGC(b);
 
@@ -7198,11 +7198,11 @@ BUILTIN_FUNCTION(stdio_slurp)
 
         B.count = 0;
 
-        lGv(true);
+        UnlockTy();
         while ((c = fgetc(fp)) != EOF) {
                 xvP(B, c);
         }
-        lTk();
+        LockTy();
 
         if (c == EOF && B.count == 0)
                 return NIL;
@@ -7220,9 +7220,9 @@ BUILTIN_FUNCTION(stdio_fgetc)
         if (f.type != VALUE_PTR)
                 zP("the argument to stdio.fgetc() must be a pointer");
 
-        lGv(true);
+        UnlockTy();
         int c = fgetc(f.ptr);
-        lTk();
+        LockTy();
 
         return (c == EOF) ? NIL : INTEGER(c);
 }
@@ -7239,9 +7239,9 @@ BUILTIN_FUNCTION(stdio_fputc)
                 zP("the second argument to stdio.fputc() must be an integer");
         }
 
-        lGv(true);
+        UnlockTy();
         int c = fputc((int)ARG(1).z, f.ptr);
-        lTk();
+        LockTy();
 
         return (c == EOF) ? NIL : INTEGER(c);
 }
@@ -7256,7 +7256,7 @@ BUILTIN_FUNCTION(stdio_fwrite)
 
         isize ret;
 
-        lGv(true);
+        UnlockTy();
         switch (data.type) {
         case VALUE_STRING:
                 len = (argc == 3) ? INT_ARG(2) : sN(data);
@@ -7288,7 +7288,7 @@ BUILTIN_FUNCTION(stdio_fwrite)
         default:
                 UNREACHABLE();
         }
-        lTk();
+        LockTy();
 
         return INTEGER(ret);
 }
@@ -7871,13 +7871,13 @@ BUILTIN_FUNCTION(ty_stack_ctx)
 
 BUILTIN_FUNCTION(ty_unlock)
 {
-        lGv(true);
+        UnlockTy();
         return NIL;
 }
 
 BUILTIN_FUNCTION(ty_lock)
 {
-        lTk();
+        LockTy();
         return NIL;
 }
 
