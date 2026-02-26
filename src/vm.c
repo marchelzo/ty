@@ -442,6 +442,8 @@ InitializeTY(Ty *ty)
 
         srandom(TyThreadCPUTime() & 0xFFFFFFFF);
 
+        jit_init(ty);
+
         xD.ty = ty;
 }
 
