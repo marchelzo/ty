@@ -1212,7 +1212,7 @@ jit_rt_tuple(Ty *ty, Value *top, i32 n, i32 *ids)
 
         memcpy(items, vZ(ty->stack) - n, n * sizeof (Value));
         vN(ty->stack) -= n;
-        
+
         xvP(ty->stack, tuple);
 }
 
@@ -4142,7 +4142,7 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                                 jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_member);
                                 jit_emit_call_reg(asm, BC_CALL);
                         }
-                        
+
                         DBG("MEMBER_ACCESS");
                         break;
                 }
