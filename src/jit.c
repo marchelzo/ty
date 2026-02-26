@@ -179,14 +179,14 @@ typedef struct {
         char const *name;
         char const *class_name;
         Expr const *expr;
-        size_t native_size;
+        usize native_size;
         u64 compile_time_ns;
         int bc_code_size;
 } JitCompileRecord;
 
 static vec(JitCompileRecord) jit_compile_log = {0};
 static u64 jit_total_compile_ns = 0;
-static size_t jit_total_native_bytes = 0;
+static usize jit_total_native_bytes = 0;
 
 inline static u64
 jit_wall_time(void)
@@ -299,7 +299,7 @@ slow_cmp(void const *a, void const *b)
 }
 
 static void
-fmt_size(char *buf, size_t sz, size_t bytes)
+fmt_size(char *buf, usize sz, usize bytes)
 {
         if (bytes >= 1024 * 1024)
                 snprintf(buf, sz, "%.1f MB", bytes / (1024.0 * 1024.0));
@@ -310,7 +310,7 @@ fmt_size(char *buf, size_t sz, size_t bytes)
 }
 
 static void
-fmt_time(char *buf, size_t sz, u64 ns)
+fmt_time(char *buf, usize sz, u64 ns)
 {
         if (ns >= 1000000000ULL)
                 snprintf(buf, sz, "%.2f s", ns / 1e9);
@@ -1485,7 +1485,7 @@ jit_rt_assign_global(Ty *ty, int n, Value *val)
 #endif
 
 // Pack two 32-bit ints into a single 64-bit immediate for register-only calls
-#define PACK32(hi, lo) (((int64_t)(hi) << 32) | ((int64_t)(unsigned int)(lo)))
+#define PACK32(hi, lo) (((i64)(hi) << 32) | ((i64)(u32)(lo)))
 
 #define MAX_BC_OPS    64   // Max operand stack depth
 #define MAX_BC_LABELS 512  // Max DynASM labels
