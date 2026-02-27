@@ -805,6 +805,12 @@ DoGC(Ty *ty)
 #define INT(k)        { .type = VALUE_INTEGER,          .z                = (k), .tags = 0 }
 #define BOOL_(b)      { .type = VALUE_BOOLEAN,          .boolean          = (b), .tags = 0 }
 #define POINTER(p)    { .type = VALUE_PTR,              .ptr              = (p), .tags = 0 }
+#ifdef __linux__
+#include <sys/eventfd.h>
+#include <sys/inotify.h>
+#include <sys/signalfd.h>
+#include <sys/timerfd.h>
+#endif
 #include "builtins.h"
 #undef INT
 #undef FLOAT

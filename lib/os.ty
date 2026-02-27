@@ -6,10 +6,12 @@ __set_type__ argv Array[String];
 
 pub fn open(path: String, flags: Int, mode: ?Int) -> Int;
 pub fn close(fd: Int) -> Int;
-pub fn read(fd: Int, n: Int) -> Blob;
-pub fn read(fd: Int, buf: Blob, n: Int) -> Int;
-pub fn write(fd: Int, data: Any, all: Bool) -> Int;
-pub fn write(fd: Int, data: Any) -> Int;
+pub fn read(fd: Int, n: Int, all: Bool = false) -> Blob;
+pub fn read(fd: Int, buf: Blob, n: Int, all: Bool = false) -> Int;
+pub fn write(fd: Int, data: Any, all: Bool = false) -> Int;
+pub fn lseek(fd: Int, offset: Int, whence: Int) -> Int;
+pub fn pread(fd: Int, n: Int, offset: Int) -> Blob;
+pub fn pwrite(fd: Int, data: _, offset: Int) -> Int;
 
 pub fn wait(pid: Int = -1, options: Int = 0) -> (Int, Int) | nil;
 
@@ -43,6 +45,10 @@ pub fn fcntl(fd: Int, cmd: Int, arg: ?Int = nil) -> Int;
 pub fn dup(fd: Int) -> Int;
 pub fn dup2(fd: Int, fd2: Int) -> Int;
 pub fn pipe() -> (Int, Int);
+#|if __linux__
+pub fn pipe2(flags: Int) -> (Int, Int);
+#|]
+pub fn socketpair(domain: Int, type: Int, protocol: Int) -> (Int, Int);
 pub fn splice(
     fin: Int,
     off_in: ?Int = nil,
@@ -55,6 +61,8 @@ pub fn splice(
 pub fn umask(mask: Int) -> Int;
 pub fn chmod(path: String, mode: Int) -> Int;
 pub fn chown(path: String, owner: Int, group: Int) -> Int;
+pub fn fchmod(fd: Int, mode: Int) -> Int;
+pub fn fchown(fd: Int, owner: Int, group: Int) -> Int;
 pub fn ftruncate(path: String, size: Int) -> Int;
 pub fn truncate(path: String, size: Int) -> Int;
 
@@ -86,6 +94,7 @@ pub fn seekdir(dirp: Int, loc: Int);
 
 
 pub fn mktemp(pattern: String = 'tmp.XXXXXX') -> (Int, String);
+pub fn mkfifo(path: String, mode: ?Int) -> Int;
 
 pub fn accept(sock: Int) -> (Int, Blob);
 pub fn listen(sock: Int, n: Int) -> Int;
@@ -129,6 +138,19 @@ pub fn spawn(
     detach: Bool = false,
     ctty:   ?{master: Int, slave: Int} = nil,
 ) -> ProcessDescriptor;
+
+pub fn mprotect(addr: _, length: Int, prot: Int) -> Int;
+
+#|if __linux__
+pub fn eventfd(initval: Int, flags: ?Int) -> Int;
+pub fn inotify_init(flags: ?Int) -> Int;
+pub fn inotify_add_watch(fd: Int, path: String, mask: Int) -> Int;
+pub fn inotify_rm_watch(fd: Int, wd: Int) -> Int;
+pub fn signalfd(fd: Int, mask: _, flags: ?Int) -> Int;
+pub fn timerfd_create(clockid: Int, flags: ?Int) -> Int;
+pub fn timerfd_settime(fd: Int, flags: Int, initial: Float | Int, interval: ?Float | ?Int) -> Int;
+pub fn timerfd_gettime(fd: Int) -> (Float, Float) | nil;
+#|]
 
 class Signals : Iterable[Int] {
     __set: _

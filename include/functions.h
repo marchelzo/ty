@@ -139,6 +139,25 @@ BUILTIN_FUNCTION(os_terminal_size);
 BUILTIN_FUNCTION(os_openpty);
 BUILTIN_FUNCTION(os_mmap);
 BUILTIN_FUNCTION(os_munmap);
+BUILTIN_FUNCTION(os_mprotect);
+BUILTIN_FUNCTION(os_lseek);
+BUILTIN_FUNCTION(os_pread);
+BUILTIN_FUNCTION(os_pwrite);
+BUILTIN_FUNCTION(os_fchmod);
+BUILTIN_FUNCTION(os_fchown);
+BUILTIN_FUNCTION(os_mkfifo);
+BUILTIN_FUNCTION(os_socketpair);
+#ifdef __linux__
+BUILTIN_FUNCTION(os_pipe2);
+BUILTIN_FUNCTION(os_eventfd);
+BUILTIN_FUNCTION(os_inotify_init);
+BUILTIN_FUNCTION(os_inotify_add_watch);
+BUILTIN_FUNCTION(os_inotify_rm_watch);
+BUILTIN_FUNCTION(os_signalfd);
+BUILTIN_FUNCTION(os_timerfd_create);
+BUILTIN_FUNCTION(os_timerfd_settime);
+BUILTIN_FUNCTION(os_timerfd_gettime);
+#endif
 
 BUILTIN_FUNCTION(termios_tcgetattr);
 BUILTIN_FUNCTION(termios_tcsetattr);

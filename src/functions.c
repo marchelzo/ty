@@ -37,6 +37,10 @@
 #ifdef __linux__
 #include <sys/epoll.h>
 #include <sys/sendfile.h>
+#include <sys/eventfd.h>
+#include <sys/inotify.h>
+#include <sys/signalfd.h>
+#include <sys/timerfd.h>
 #include <pty.h>
 #endif
 
@@ -266,7 +270,7 @@ GetCurrentTimespec(struct timespec* ts)
 #endif
 }
 
-static intmax_t
+static imax
 doprint(Ty *ty, int argc, Value *kwargs, FILE *f)
 {
         Value *sep = NAMED("sep");
@@ -455,14 +459,15 @@ BUILTIN_FUNCTION(slurp)
 
         StatStruct st;
         if (fstat(fd, &st) != 0) {
-                close(fd);
+                if (need_close) {
+                        close(fd);
+                }
                 return NIL;
         }
 
         Value *mmap_arg = NAMED("mmap");
 
-        bool try_mmap = (mmap_arg == NULL)
-                     || value_truthy(ty, mmap_arg);
+        bool try_mmap = (mmap_arg == NULL) || v_truthy(mmap_arg);
 
 #ifdef _WIN32
 #define S_ISLNK(m) 0
@@ -475,41 +480,46 @@ BUILTIN_FUNCTION(slurp)
 #endif
 
 #ifndef _WIN32
-        size_t n = st.st_size;
+        usize len = st.st_size;
 
         if (
                 try_mmap
              && (S_ISREG(st.st_mode) || S_ISLNK(st.st_mode))
-             && (n > 0) // If stat() says size==0 skip to read() anyway, e.g. for procfs
+             && (len > 0) // If stat() says size==0 skip to read() anyway, e.g. for procfs
         ) {
-                void *m = mmap(NULL, n, PROT_READ, MAP_SHARED, fd, 0);
-                if (m != MAP_FAILED) {
-                        char *s = value_string_alloc(ty, n);
-                        memcpy(s, m, n);
-                        munmap(m, n);
-                        close(fd);
-                        return STRING(s, n);
+                void *mapped = mmap(NULL, len, PROT_READ, MAP_SHARED, fd, 0);
+                if (mapped != MAP_FAILED) {
+                        Value str = vSs(mapped, len);
+                        munmap(mapped, len);
+                        if (need_close) {
+                                close(fd);
+                        }
+                        return str;
                 }
         }
 #endif
         if (!S_ISDIR(st.st_mode)) {
-                FILE *f = fdopen(fd, "r");
-                int r;
+                FILE *fp = fdopen(fd, "r");
+                if (fp == NULL) {
+                        if (need_close) {
+                                close(fd);
+                        }
+                        return NIL;
+                }
 
                 void *tmp = TY_TMP();
-
-
                 v0(B);
+
                 UnlockTy();
-                while (!feof(f) && (r = fread(tmp, 1, TY_TMP_N, f)) > 0) {
-                        xvPn(B, tmp, r);
+                for (isize n; !feof(fp) && (n = fread(tmp, 1, TY_TMP_N, fp)) > 0;) {
+                        xvPn(B, tmp, n);
                 }
                 LockTy();
 
                 Value str = vSs(vv(B), vN(B));
 
                 if (need_close) {
-                        fclose(f);
+                        fclose(fp);
                 }
 
                 return str;
@@ -557,8 +567,8 @@ BUILTIN_FUNCTION(read)
         ASSERT_ARGC("readLine()", 0);
 
         int c;
-
         v0(B);
+
         UnlockTy();
         while (c = getchar(), c != EOF && c != '\n') {
                 xvP(B, c);
@@ -643,11 +653,11 @@ BUILTIN_FUNCTION(gcd)
                 zP("both arguments to gcd() must be integers");
         }
 
-        intmax_t a = t.z;
-        intmax_t b = u.z;
+        imax a = t.z;
+        imax b = u.z;
 
         while (b != 0) {
-                intmax_t t = b;
+                imax t = b;
                 b = a % b;
                 a = t;
         }
@@ -669,11 +679,11 @@ BUILTIN_FUNCTION(lcm)
                 zP("both arguments to lcm() must be integers");
         }
 
-        intmax_t a = t.z;
-        intmax_t b = u.z;
+        imax a = t.z;
+        imax b = u.z;
 
         while (b != 0) {
-                intmax_t t = b;
+                imax t = b;
                 b = a % b;
                 a = t;
         }
@@ -898,7 +908,7 @@ String:
         errno = 0;
 
         char *end;
-        intmax_t n = strtoimax(string, &end, base);
+        imax n = strtoimax(string, &end, base);
 
         if (errno != 0 || *end != '\0' || end == string) {
                 return NIL;
@@ -1068,7 +1078,7 @@ BadFmt(Ty *ty, char const *spec, int n, Value const *v)
         );
 }
 
-inline static intmax_t
+inline static imax
 int_from(Ty *ty, Value const *v, char const *spec, int n)
 {
         switch (v->type) {
@@ -1090,10 +1100,10 @@ float_from(Ty *ty, Value const *v, char const *spec, int n)
 }
 
 inline static void
-utobsx(char *s, uintmax_t z)
+utobsx(char *s, umax z)
 {
-        int const w = CHAR_BIT * sizeof (uintmax_t);
-        uintmax_t m = UINTMAX_C(1) << (w - 1);
+        int const w = CHAR_BIT * sizeof (umax);
+        umax m = UINTMAX_C(1) << (w - 1);
 
         while (m != 0 && (z & m) == 0) { m >>= 1; }
         do { *s++ = '0' + !!(z & m); m >>= 1; } while (m != 0);
@@ -1144,7 +1154,7 @@ BUILTIN_FUNCTION(fmt)
         }
 
         char const *fmt = (char const *)ss(ARG(0));
-        size_t n = sN(ARG(0));
+        usize n = sN(ARG(0));
         int ai = 0;
 
         struct fspec spec;
@@ -1158,7 +1168,7 @@ BUILTIN_FUNCTION(fmt)
 
         void const *p;
 
-        for (size_t i = 0; i < n; ++i) {
+        for (usize i = 0; i < n; ++i) {
                 if (fmt[i] == '%') {
                         /* %% is just a literal % like printf() */
                         if (i + 1 < n && fmt[i + 1] == '%') {
@@ -1282,7 +1292,7 @@ MissingArgument:
                                 scratch[si++] = 's';
                                 scratch[si] = '\0';
 
-                                utobsx(b, (uintmax_t)int_from(ty, &arg, start, nspec));
+                                utobsx(b, (umax)int_from(ty, &arg, start, nspec));
 
                                 snprintf(
                                         tmp,
@@ -1762,7 +1772,7 @@ BUILTIN_FUNCTION(bit_and)
         if (b.type != VALUE_INTEGER)
                 zP("the second argument to bit.and() must be an integer");
 
-        return INTEGER((uintmax_t)a.z & (uintmax_t)b.z);
+        return INTEGER((umax)a.z & (umax)b.z);
 }
 
 BUILTIN_FUNCTION(bit_or)
@@ -1777,7 +1787,7 @@ BUILTIN_FUNCTION(bit_or)
         if (b.type != VALUE_INTEGER)
                 zP("the second argument to bit.or() must be an integer");
 
-        return INTEGER((uintmax_t)a.z | (uintmax_t)b.z);
+        return INTEGER((umax)a.z | (umax)b.z);
 }
 
 BUILTIN_FUNCTION(bit_xor)
@@ -1792,7 +1802,7 @@ BUILTIN_FUNCTION(bit_xor)
         if (b.type != VALUE_INTEGER)
                 zP("the second argument to bit.xor() must be an integer");
 
-        return INTEGER((uintmax_t)a.z ^ (uintmax_t)b.z);
+        return INTEGER((umax)a.z ^ (umax)b.z);
 }
 
 BUILTIN_FUNCTION(bit_shift_left)
@@ -1807,7 +1817,7 @@ BUILTIN_FUNCTION(bit_shift_left)
         if (b.type != VALUE_INTEGER)
                 zP("the second argument to bit.shiftLeft() must be an integer");
 
-        return INTEGER((uintmax_t)a.z << (uintmax_t)b.z);
+        return INTEGER((umax)a.z << (umax)b.z);
 }
 
 BUILTIN_FUNCTION(bit_shift_right)
@@ -1822,7 +1832,7 @@ BUILTIN_FUNCTION(bit_shift_right)
         if (b.type != VALUE_INTEGER)
                 zP("the second argument to bit.shiftRight() must be an integer");
 
-        return INTEGER((uintmax_t)a.z >> (uintmax_t)b.z);
+        return INTEGER((umax)a.z >> (umax)b.z);
 }
 
 BUILTIN_FUNCTION(bit_complement)
@@ -1833,7 +1843,7 @@ BUILTIN_FUNCTION(bit_complement)
         if (a.type != VALUE_INTEGER)
                 zP("the first argument to bit.complement() must be an integer");
 
-        return INTEGER(~(uintmax_t)a.z);
+        return INTEGER(~(umax)a.z);
 }
 
 BUILTIN_FUNCTION(setenv)
@@ -1998,7 +2008,7 @@ BUILTIN_FUNCTION(md5)
 }
 
 static bool
-b64dec(Ty *ty, u8 const *s, size_t n)
+b64dec(Ty *ty, u8 const *s, usize n)
 {
         static unsigned char table[256] = {
                 ['A'] =  0, ['B'] =  1, ['C'] =  2, ['D'] =  3, ['E'] =  4, ['F'] =  5,
@@ -2025,7 +2035,7 @@ b64dec(Ty *ty, u8 const *s, size_t n)
                 n -= 1;
         }
 
-        for (size_t i = 0; i < n; ++i) {
+        for (usize i = 0; i < n; ++i) {
                 if (s[i] != 'A' && table[(unsigned char)s[i]] == 0) {
                         return false;
                 }
@@ -2036,7 +2046,7 @@ b64dec(Ty *ty, u8 const *s, size_t n)
 
         unsigned char s1, s2, s3, s4;
 
-        for (size_t i = 0; i < d.quot; ++i) {
+        for (usize i = 0; i < d.quot; ++i) {
                 memcpy(g, s + 4*i, 4);
                 s1 = table[g[0]];
                 s2 = table[g[1]];
@@ -2073,7 +2083,7 @@ b64dec(Ty *ty, u8 const *s, size_t n)
 }
 
 static void
-b64enc(Ty *ty, void const *data, size_t n)
+b64enc(Ty *ty, void const *data, usize n)
 {
         B.count = 0;
 
@@ -2086,7 +2096,7 @@ b64enc(Ty *ty, void const *data, size_t n)
                               "+/";
         u8 const *s = data;
 
-        for (size_t i = 0; i < d.quot; ++i) {
+        for (usize i = 0; i < d.quot; ++i) {
                 memcpy(g, s + 3*i, 3);
                 xvP(B, table[g[0] >> 2]);
                 xvP(B, table[((g[0] & 0x03) << 4) | (g[1] >> 4)]);
@@ -2540,13 +2550,13 @@ BUILTIN_FUNCTION(os_unlink)
 
 BUILTIN_FUNCTION(os_link)
 {
-        ASSERT_ARGC("os.symlink()", 2);
+        ASSERT_ARGC("os.link()", 2);
 
         char const *old = TY_TMP_C_STR_A(ARGx(0, VALUE_STRING, VALUE_BLOB, VALUE_PTR));
         char const *new = TY_TMP_C_STR_B(ARGx(1, VALUE_STRING, VALUE_BLOB, VALUE_PTR));
 
 #ifdef _WIN32
-        return INTEGER(!CreateHardLinkA(new, new, NULL));
+        return INTEGER(!CreateHardLinkA(new, old, NULL));
 #else
         return INTEGER(link(old, new));
 #endif
@@ -2630,6 +2640,23 @@ BUILTIN_FUNCTION(os_mkdir)
 #endif
 }
 
+BUILTIN_FUNCTION(os_mkfifo)
+{
+        ASSERT_ARGC("os.mkfifo()", 1, 2);
+#ifdef _WIN32
+        NOT_ON_WINDOWS("os.mkfifo()");
+#else
+        Value path = ARGx(0, VALUE_STRING, VALUE_BLOB, VALUE_PTR);
+        mode_t mode = 0666;
+
+        if (argc == 2 && ARG(1).type != VALUE_NIL) {
+                mode = INT_ARG(1);
+        }
+
+        return INTEGER(mkfifo(TY_TMP_C_STR(path), mode));
+#endif
+}
+
 BUILTIN_FUNCTION(os_rmdir)
 {
         ASSERT_ARGC("os.rmdir()", 1);
@@ -2664,6 +2691,33 @@ BUILTIN_FUNCTION(os_chmod)
         u64 mode = INT_ARG(1);
 
         return INTEGER(chmod(TY_TMP_C_STR(path), mode));
+#endif
+}
+
+BUILTIN_FUNCTION(os_fchmod)
+{
+        ASSERT_ARGC("os.fchmod()", 2);
+#ifdef _WIN32
+        NOT_ON_WINDOWS("os.fchmod()");
+#else
+        int fd = INT_ARG(0);
+        u64 mode = INT_ARG(1);
+
+        return INTEGER(fchmod(fd, mode));
+#endif
+}
+
+BUILTIN_FUNCTION(os_fchown)
+{
+        ASSERT_ARGC("os.fchown()", 3);
+#ifdef _WIN32
+        NOT_ON_WINDOWS("os.fchown()");
+#else
+        int fd = INT_ARG(0);
+        u64 owner = INT_ARG(1);
+        u64 group = INT_ARG(2);
+
+        return INTEGER(fchown(fd, owner, group));
 #endif
 }
 
@@ -2835,10 +2889,10 @@ BUILTIN_FUNCTION(os_read)
         Value *all = NAMED("all");
         bool read_all = all != NULL && value_truthy(ty, all);
 
-        ssize_t n_read = 0;
+        isize n_read = 0;
         while (n_read < n) {
                 UnlockTy();
-                ssize_t r = read(fd, vZ(*blob.blob) + n_read, n);
+                isize r = read(fd, vZ(*blob.blob) + n_read, n - n_read);
                 LockTy();
 
                 if (r <= 0) {
@@ -2906,7 +2960,7 @@ BUILTIN_FUNCTION(os_write)
 
         UnlockTy();
         while (n > 0) {
-                ssize_t r = write(fd, ((unsigned char const *)p) + off, n);
+                isize r = write(fd, ((unsigned char const *)p) + off, n);
                 if (r < 0) {
                         LockTy();
                         return (off == 0) ? INTEGER(r) : INTEGER(off);
@@ -2936,6 +2990,64 @@ BUILTIN_FUNCTION(os_lseek)
         int whence = INT_ARG(2);
 
         return INTEGER(lseek(fd, (off_t)offset, whence));
+}
+
+BUILTIN_FUNCTION(os_pread)
+{
+        ASSERT_ARGC("os.pread()", 3);
+
+        int fd = INT_ARG(0);
+        isize n = INT_ARG(1);
+        isize offset = INT_ARG(2);
+
+        if (n < 0) zP("os.pread(): count must be non-negative");
+
+        Value blob = BLOB(value_blob_new(ty));
+        uvR(*blob.blob, n);
+
+        UnlockTy();
+        isize r = pread(fd, vZ(*blob.blob), n, (off_t)offset);
+        LockTy();
+
+        if (r < 0) return NIL;
+
+        vN(*blob.blob) = r;
+        return blob;
+}
+
+BUILTIN_FUNCTION(os_pwrite)
+{
+        ASSERT_ARGC("os.pwrite()", 3);
+
+        int fd = INT_ARG(0);
+        Value data = ARGx(1, VALUE_STRING, VALUE_BLOB, VALUE_PTR);
+        isize offset = INT_ARG(2);
+
+        void const *p;
+        isize n;
+
+        switch (data.type) {
+        case VALUE_BLOB:
+                p = vv(*data.blob);
+                n = vN(*data.blob);
+                break;
+        case VALUE_STRING:
+                p = ss(data);
+                n = sN(data);
+                break;
+        case VALUE_PTR:
+                p = data.ptr;
+                n = strlen(p);
+                break;
+        default:
+                UNREACHABLE();
+        }
+
+        UnlockTy();
+        isize r = pwrite(fd, p, n, (off_t)offset);
+        LockTy();
+
+        return INTEGER(r);
 }
 
 BUILTIN_FUNCTION(os_ftruncate)
@@ -2989,7 +3101,7 @@ BUILTIN_FUNCTION(os_sendfile)
 #elif defined(__linux__)
         off_t off = offset;
 
-        ssize_t result = sendfile(
+        isize result = sendfile(
                 out_fd,
                 in_fd,
                 (count >= 0 || offset != 0) ? &off : NULL,
@@ -3096,7 +3208,7 @@ BUILTIN_FUNCTION(os_splice)
                 off_out = &offset_out;
         }
 
-        size_t len = INT_ARG(4);
+        usize len = INT_ARG(4);
 
         unsigned int flags = 0;
         if (argc == 6) {
@@ -3213,6 +3325,17 @@ BUILTIN_FUNCTION(os_munmap)
         isize length = INT_ARG(1);
 
         return INTEGER(munmap(addr, length));
+}
+
+BUILTIN_FUNCTION(os_mprotect)
+{
+        ASSERT_ARGC("os.mprotect()", 3);
+
+        void *addr = PTR_ARG(0);
+        isize length = INT_ARG(1);
+        int prot = INT_ARG(2);
+
+        return INTEGER(mprotect(addr, length, prot));
 }
 
 #ifdef _WIN32
@@ -4459,7 +4582,6 @@ BUILTIN_FUNCTION(os_openpty)
 #ifdef _WIN32
         NOT_ON_WINDOWS("os.openpty()");
 #else
-        struct termios tios;
         struct winsize winsz;
         struct winsize *pwinsz;
 
@@ -4484,7 +4606,7 @@ BUILTIN_FUNCTION(os_openpty)
 
         char *name = TY_TMP();
 
-        if (openpty(&master_fd, &slave_fd, name, &tios, pwinsz) == -1) {
+        if (openpty(&master_fd, &slave_fd, name, NULL, pwinsz) == -1) {
                 return NIL;
         }
 
@@ -4516,6 +4638,26 @@ BUILTIN_FUNCTION(os_pipe)
         return fds;
 #endif
 }
+
+#ifdef __linux__
+BUILTIN_FUNCTION(os_pipe2)
+{
+        ASSERT_ARGC("os.pipe2()", 1);
+
+        int flags = INT_ARG(0);
+        int p[2];
+
+        if (pipe2(p, flags) == -1)
+                return NIL;
+
+        Value fds = vT(2);
+
+        fds.items[0] = INTEGER(p[0]);
+        fds.items[1] = INTEGER(p[1]);
+
+        return fds;
+}
+#endif
 
 BUILTIN_FUNCTION(os_dup)
 {
@@ -4556,6 +4698,30 @@ BUILTIN_FUNCTION(os_socket)
         return INTEGER(socket(domain.z, type.z, protocol.z));
 }
 
+BUILTIN_FUNCTION(os_socketpair)
+{
+        ASSERT_ARGC("os.socketpair()", 3);
+#ifdef _WIN32
+        NOT_ON_WINDOWS("os.socketpair()");
+#else
+        int domain = INT_ARG(0);
+        int type = INT_ARG(1);
+        int protocol = INT_ARG(2);
+
+        int sv[2];
+
+        if (socketpair(domain, type, protocol, sv) == -1)
+                return NIL;
+
+        Value fds = vT(2);
+
+        fds.items[0] = INTEGER(sv[0]);
+        fds.items[1] = INTEGER(sv[1]);
+
+        return fds;
+#endif
+}
+
 BUILTIN_FUNCTION(os_setsockopt)
 {
         ASSERT_ARGC_2("os.setsockopt()", 3, 4);
@@ -4569,7 +4735,7 @@ BUILTIN_FUNCTION(os_setsockopt)
                 zP("the second argument to os.setsockopt() must be an integer (level)");
 
         Value option = ARG(2);
-        if (level.type != VALUE_INTEGER)
+        if (option.type != VALUE_INTEGER)
                 zP("the third argument to os.setsockopt() must be an integer (option)");
 
         int o;
@@ -4599,7 +4765,7 @@ BUILTIN_FUNCTION(os_getsockopt)
                 zP("the second argument to os.getsockopt() must be an integer (level)");
 
         Value option = ARG(2);
-        if (level.type != VALUE_INTEGER)
+        if (option.type != VALUE_INTEGER)
                 zP("the third argument to os.getsockopt() must be an integer (option)");
 
         int o;
@@ -4751,9 +4917,14 @@ BUILTIN_FUNCTION(os_connect)
         struct sockaddr_in in_addr;
         struct in_addr ia;
 
+        struct sockaddr *sa;
+        socklen_t sa_len;
+        int ret;
+
         Value *sockaddr = tuple_get(&addr, "address");
         if (sockaddr != NULL && sockaddr->type == VALUE_BLOB) {
-                return INTEGER(connect(sockfd.z, (struct sockaddr *)sockaddr->blob->items, sockaddr->blob->count));
+                sa = (struct sockaddr *)sockaddr->blob->items;
+                sa_len = sockaddr->blob->count;
         } else switch (v->z) {
 #ifndef _WIN32
                 case AF_UNIX:
@@ -4762,8 +4933,10 @@ BUILTIN_FUNCTION(os_connect)
                         v = tuple_get(&addr, "path");
                         if (v == NULL || v->type != VALUE_STRING)
                                 zP("missing or invalid path in dict passed to os.connect()");
-                       memcpy(un_addr.sun_path, ss(*v), min(sN(*v), sizeof un_addr.sun_path));
-                        return INTEGER(connect(sockfd.z, (struct sockaddr *)&un_addr, sizeof un_addr));
+                        memcpy(un_addr.sun_path, ss(*v), min(sN(*v), sizeof un_addr.sun_path));
+                        sa = (struct sockaddr *)&un_addr;
+                        sa_len = sizeof un_addr;
+                        break;
 #endif
                 case AF_INET:
                         memset(&in_addr, 0, sizeof in_addr);
@@ -4778,10 +4951,18 @@ BUILTIN_FUNCTION(os_connect)
                                 zP("missing or invalid port in dict passed to os.connect()");
                         unsigned short p = htons(v->z);
                         memcpy(&in_addr.sin_port, &p, sizeof in_addr.sin_port);
-                        return INTEGER(connect(sockfd.z, (struct sockaddr *)&in_addr, sizeof in_addr));
+                        sa = (struct sockaddr *)&in_addr;
+                        sa_len = sizeof in_addr;
+                        break;
                 default:
                         zP("invalid arguments to os.connect()");
         }
+
+        UnlockTy();
+        ret = connect(sockfd.z, sa, sa_len);
+        LockTy();
+
+        return INTEGER(ret);
 }
 
 BUILTIN_FUNCTION(os_bind)
@@ -4885,23 +5066,19 @@ BUILTIN_FUNCTION(os_getaddrinfo)
         if (host.type != VALUE_NIL) {
                 xvPn(B, ss(host), sN(host));
                 xvP(B, '\0');
-
-                xvPn(B, ss(port), sN(port));
-                xvP(B, '\0');
-
                 node = B.items;
-                service = B.items + sN(host) + 1;
-        } else if (port.type == VALUE_NIL) {
-                xvPn(B, ss(host), sN(host));
-                xvP(B, '\0');
 
-                node = B.items;
-                service = NULL;
+                if (port.type != VALUE_NIL) {
+                        xvPn(B, ss(port), sN(port));
+                        xvP(B, '\0');
+                        service = B.items + sN(host) + 1;
+                } else {
+                        service = NULL;
+                }
         } else {
+                node = NULL;
                 xvPn(B, ss(port), sN(port));
                 xvP(B, '\0');
-
-                node = NULL;
                 service = B.items;
         }
 
@@ -4961,11 +5138,11 @@ BUILTIN_FUNCTION(os_accept)
 
         int sockfd = INT_ARG(0);
 
-        struct sockaddr _addr;
+        struct sockaddr_storage _addr;
         socklen_t n = sizeof _addr;
 
         UnlockTy();
-        int ret = accept(sockfd, &_addr, &n);
+        int ret = accept(sockfd, (struct sockaddr *)&_addr, &n);
         LockTy();
 
         if (ret < 0) {
@@ -5007,7 +5184,7 @@ BUILTIN_FUNCTION(os_recvfrom)
         socklen_t addr_size = sizeof addr;
 
         UnlockTy();
-        ssize_t r = recvfrom(fd, vv(*buffer.blob), size, flags, (void *)&addr, &addr_size);
+        isize r = recvfrom(fd, vv(*buffer.blob), size, flags, (void *)&addr, &addr_size);
         LockTy();
         if (r < 0) {
                 return NIL;
@@ -5054,10 +5231,18 @@ BUILTIN_FUNCTION(os_sendto)
         }
 
         int flags = INT_ARG(2);
-        Blob *addr = ARGx(3, VALUE_BLOB).blob;
+
+        struct sockaddr *sa = NULL;
+        socklen_t sa_len = 0;
+
+        if (argc == 4) {
+                Blob *addr = ARGx(3, VALUE_BLOB).blob;
+                sa = (struct sockaddr *)vv(*addr);
+                sa_len = vN(*addr);
+        }
 
         UnlockTy();
-        ssize_t ret = sendto(fd, data, len, flags, (void *)vv(*addr), vN(*addr));
+        isize ret = sendto(fd, data, len, flags, sa, sa_len);
         LockTy();
 
         return INTEGER(ret);
@@ -5248,6 +5433,136 @@ BUILTIN_FUNCTION(os_epoll_wait)
         gX();
 
         return ARRAY(result);
+}
+
+BUILTIN_FUNCTION(os_eventfd)
+{
+        ASSERT_ARGC("os.eventfd()", 1, 2);
+
+        unsigned int initval = INT_ARG(0);
+        int flags = (argc == 2) ? INT_ARG(1) : 0;
+
+        return INTEGER(eventfd(initval, flags));
+}
+
+BUILTIN_FUNCTION(os_inotify_init)
+{
+        ASSERT_ARGC("os.inotify_init()", 0, 1);
+
+        int flags = (argc == 1) ? INT_ARG(0) : 0;
+
+        return INTEGER(inotify_init1(flags));
+}
+
+BUILTIN_FUNCTION(os_inotify_add_watch)
+{
+        ASSERT_ARGC("os.inotify_add_watch()", 3);
+
+        int fd = INT_ARG(0);
+        Value path = ARGx(1, VALUE_STRING, VALUE_BLOB, VALUE_PTR);
+        u32 mask = INT_ARG(2);
+
+        return INTEGER(inotify_add_watch(fd, TY_TMP_C_STR(path), mask));
+}
+
+BUILTIN_FUNCTION(os_inotify_rm_watch)
+{
+        ASSERT_ARGC("os.inotify_rm_watch()", 2);
+
+        int fd = INT_ARG(0);
+        int wd = INT_ARG(1);
+
+        return INTEGER(inotify_rm_watch(fd, wd));
+}
+
+BUILTIN_FUNCTION(os_signalfd)
+{
+        ASSERT_ARGC("os.signalfd()", 2, 3);
+
+        int fd = INT_ARG(0);
+        Value set = ARG(1);
+        int flags = (argc == 3) ? INT_ARG(2) : 0;
+
+        if (set.type != VALUE_PTR)
+                zP("os.signalfd(): expected a sigset pointer as second argument");
+
+        return INTEGER(signalfd(fd, set.ptr, flags));
+}
+
+BUILTIN_FUNCTION(os_timerfd_create)
+{
+        ASSERT_ARGC("os.timerfd_create()", 1, 2);
+
+        int clockid = INT_ARG(0);
+        int flags = (argc == 2) ? INT_ARG(1) : 0;
+
+        return INTEGER(timerfd_create(clockid, flags));
+}
+
+BUILTIN_FUNCTION(os_timerfd_settime)
+{
+        ASSERT_ARGC("os.timerfd_settime()", 3, 4);
+
+        int fd = INT_ARG(0);
+        int flags = INT_ARG(1);
+
+        /* args 2 = initial expiration (seconds as float or int)
+         * args 3 = interval (seconds as float or int), default 0 */
+
+        Value initial = ARG(2);
+        double initial_sec;
+        if (initial.type == VALUE_REAL)
+                initial_sec = initial.real;
+        else if (initial.type == VALUE_INTEGER)
+                initial_sec = (double)initial.z;
+        else
+                zP("os.timerfd_settime(): initial must be a number");
+
+        double interval_sec = 0.0;
+        if (argc == 4) {
+                Value interval = ARG(3);
+                if (interval.type == VALUE_REAL)
+                        interval_sec = interval.real;
+                else if (interval.type == VALUE_INTEGER)
+                        interval_sec = (double)interval.z;
+                else
+                        zP("os.timerfd_settime(): interval must be a number");
+        }
+
+        struct itimerspec its = {
+                .it_value = {
+                        .tv_sec  = (time_t)initial_sec,
+                        .tv_nsec = (long)((initial_sec - (time_t)initial_sec) * 1e9)
+                },
+                .it_interval = {
+                        .tv_sec  = (time_t)interval_sec,
+                        .tv_nsec = (long)((interval_sec - (time_t)interval_sec) * 1e9)
+                }
+        };
+
+        return INTEGER(timerfd_settime(fd, flags, &its, NULL));
+}
+
+BUILTIN_FUNCTION(os_timerfd_gettime)
+{
+        ASSERT_ARGC("os.timerfd_gettime()", 1);
+
+        int fd = INT_ARG(0);
+
+        struct itimerspec its;
+
+        if (timerfd_gettime(fd, &its) == -1)
+                return NIL;
+
+        Value result = vT(2);
+
+        double initial = its.it_value.tv_sec + its.it_value.tv_nsec / 1e9;
+        double interval = its.it_interval.tv_sec + its.it_interval.tv_nsec / 1e9;
+
+        result.items[0] = REAL(initial);
+        result.items[1] = REAL(interval);
+
+        return result;
 }
 #endif
 
@@ -5587,11 +5902,13 @@ BUILTIN_FUNCTION(os_sigwaitinfo)
         int ret;
 
         errno = 0;
+        UnlockTy();
         if (argc == 1) {
                 ret = sigwaitinfo(&set, &info);
         } else {
                 ret = sigtimedwait(&set, &info, &ts);
         }
+        LockTy();
 
         if (ret == -1) {
                 if (errno == EAGAIN) {
@@ -5695,7 +6012,7 @@ BUILTIN_FUNCTION(os_sigaddset)
 
         int ret = sigaddset(set, sig);
         if (ret != 0) {
-                bP("%s", strerror(ret));
+                bP("%s", strerror(errno));
         }
 
         return ARG(0);
@@ -5713,7 +6030,7 @@ BUILTIN_FUNCTION(os_sigdelset)
 
         int ret = sigdelset(set, sig);
         if (ret != 0) {
-                bP("%s", strerror(ret));
+                bP("%s", strerror(errno));
         }
 
         return ARG(0);
@@ -6069,7 +6386,7 @@ BUILTIN_FUNCTION(os_realpath)
 }
 
 static int
-truncate_file(const char* filename, size_t size)
+truncate_file(const char* filename, usize size)
 {
 #ifdef _WIN32
     HANDLE hFile = CreateFile(
@@ -6289,7 +6606,7 @@ BUILTIN_FUNCTION(os_cpu_count)
         nCPU = sysinfo.dwNumberOfProcessors;
 #elif defined(__APPLE__) || defined(__MACH__)
         int mib[2];
-        size_t len = sizeof nCPU;
+        usize len = sizeof nCPU;
 
         mib[0] = CTL_HW;
         mib[1] = HW_NCPU;
@@ -6702,7 +7019,7 @@ BUILTIN_FUNCTION(time_strftime)
                         if ((vp = tget_t(&v, "yday", VALUE_INTEGER)) != NULL)
                                 t.tm_yday = vp->z;
                         if ((vp = tget_t(&v, "isdst", VALUE_INTEGER)) != NULL)
-                                t.tm_isdst = vp->boolean;
+                                t.tm_isdst = vp->z;
 
                 } else {
                         ARGx(1, VALUE_INTEGER, VALUE_TUPLE);
@@ -6910,7 +7227,7 @@ BUILTIN_FUNCTION(stdio_read_signed)
                 size = sizeof size;
         }
 
-        char b[sizeof (intmax_t)];
+        char b[sizeof (imax)];
         int n = min(sizeof b, size);
 
         UnlockTy();
@@ -6950,14 +7267,14 @@ BUILTIN_FUNCTION(stdio_write_signed)
                 x = ARG(2);
         } else {
                 size = sizeof (int);
-                x = ARG(3);
+                x = ARG(1);
         }
 
         if (x.type != VALUE_INTEGER) {
-                zP("stdio.writeUnsigned(): expected int as last argument but got: %s", VSC(&x));
+                zP("stdio.writeSigned(): expected int as last argument but got: %s", VSC(&x));
         }
 
-        char b[sizeof (intmax_t)];
+        char b[sizeof (imax)];
 
         switch (size) {
         case (sizeof (char)):      memcpy(b, &(char)     {x.z}, size); break;
@@ -6968,7 +7285,7 @@ BUILTIN_FUNCTION(stdio_write_signed)
         }
 
         UnlockTy();
-        size_t n = fwrite(b, size, 1, fp);
+        usize n = fwrite(b, size, 1, fp);
         LockTy();
 
         return BOOLEAN(n == 1);
@@ -6994,7 +7311,7 @@ BUILTIN_FUNCTION(stdio_read_unsigned)
                 size = sizeof size;
         }
 
-        uintmax_t k = 0;
+        umax k = 0;
 
         if (fread(&k, min(size, sizeof k), 1, fp) != 1) {
                 return NIL;
@@ -7024,14 +7341,14 @@ BUILTIN_FUNCTION(stdio_write_unsigned)
                 x = ARG(2);
         } else {
                 size = sizeof (int);
-                x = ARG(3);
+                x = ARG(1);
         }
 
         if (x.type != VALUE_INTEGER) {
                 zP("stdio.writeUnsigned(): expected int as last argument but got: %s", VSC(&x));
         }
 
-        char b[sizeof (uintmax_t)];
+        char b[sizeof (umax)];
 
         switch (size) {
         case (sizeof (unsigned char)):      memcpy(b, &(unsigned char)     {x.z}, size); break;
@@ -7042,7 +7359,7 @@ BUILTIN_FUNCTION(stdio_write_unsigned)
         }
 
         UnlockTy();
-        size_t n = fwrite(b, size, 1, fp);
+        usize n = fwrite(b, size, 1, fp);
         LockTy();
 
         return BOOLEAN(n == 1);
@@ -7096,19 +7413,11 @@ BUILTIN_FUNCTION(stdio_write_float)
 {
         ASSERT_ARGC("stdio.writeFloat()", 2);
 
-        Value f = ARG(0);
-        if (f.type != VALUE_PTR)
-                zP("the first argument to stdio.writeFloat() must be a pointer");
-
-        Value x = ARG(1);
-        if (x.type != VALUE_REAL)
-                zP("the second argument to stdio.writeFloat() must be a float");
-
-        FILE *fp = f.ptr;
-        float fx = (float)x.real;
+        FILE *fp = PTR_ARG(0);
+        float x = FLOAT_ARG(1);
 
         UnlockTy();
-        size_t n = fwrite(&fx, sizeof fx, 1, fp);
+        usize n = fwrite(&x, sizeof x, 1, fp);
         LockTy();
 
         return BOOLEAN(n > 0);
@@ -7118,19 +7427,11 @@ BUILTIN_FUNCTION(stdio_write_double)
 {
         ASSERT_ARGC("stdio.writeDouble()", 2);
 
-        Value f = ARG(0);
-        if (f.type != VALUE_PTR)
-                zP("the first argument to stdio.writeDouble() must be a pointer");
-
-        Value x = ARG(1);
-        if (x.type != VALUE_REAL)
-                zP("the second argument to stdio.writeDouble() must be a float");
-
-        FILE *fp = f.ptr;
-        double fx = x.real;
+        FILE *fp = PTR_ARG(0);
+        double x = FLOAT_ARG(1);
 
         UnlockTy();
-        size_t n = fwrite(&fx, sizeof fx, 1, fp);
+        usize n = fwrite(&x, sizeof x, 1, fp);
         LockTy();
 
         return BOOLEAN(n > 0);
@@ -7141,10 +7442,10 @@ BUILTIN_FUNCTION(stdio_fread)
         ASSERT_ARGC("stdio.fread()", 2, 3);
 
         Value f = ARGx(0, VALUE_PTR);
-
         Value n = ARGx(1, VALUE_INTEGER);
+
         if (n.z < 0) {
-                bP("got negative count: %"PRIiMAX, n.z);
+                bP("negative count: %"PRIiMAX, n.z);
         }
 
         Blob *b;
@@ -7159,7 +7460,7 @@ BUILTIN_FUNCTION(stdio_fread)
         NOGC(b);
 
         FILE *fp = f.ptr;
-        intmax_t bytes = 0;
+        imax bytes = 0;
         int c;
 
         UnlockTy();
@@ -7174,9 +7475,9 @@ BUILTIN_FUNCTION(stdio_fread)
         if (existing_blob) {
                 return INTEGER(bytes);
         } else {
-                if (b->count == 0 && n.z > 0 && c == EOF)
+                if (vN(*b) == 0 && n.z > 0 && c == EOF) {
                         return NIL;
-
+                }
                 return BLOB(b);
         }
 }
@@ -7185,14 +7486,10 @@ BUILTIN_FUNCTION(stdio_slurp)
 {
         ASSERT_ARGC("stdio.slurp()", 1);
 
-        Value f = ARG(0);
-        if (f.type != VALUE_PTR)
-                zP("the argument to stdio.slurp() must be a pointer");
-
-        FILE *fp = f.ptr;
+        FILE *fp = PTR_ARG(0);
         int c;
 
-        B.count = 0;
+        v0(B);
 
         UnlockTy();
         while ((c = fgetc(fp)) != EOF) {
@@ -7200,10 +7497,11 @@ BUILTIN_FUNCTION(stdio_slurp)
         }
         LockTy();
 
-        if (c == EOF && B.count == 0)
+        if (c == EOF && B.count == 0) {
                 return NIL;
+        }
 
-        Value s = vSs(B.items, B.count);
+        Value s = vSs(vv(B), vN(B));
 
         return s;
 }
@@ -7212,12 +7510,10 @@ BUILTIN_FUNCTION(stdio_fgetc)
 {
         ASSERT_ARGC("stdio.fgetc()", 1);
 
-        Value f = ARG(0);
-        if (f.type != VALUE_PTR)
-                zP("the argument to stdio.fgetc() must be a pointer");
+        FILE *fp = PTR_ARG(0);
 
         UnlockTy();
-        int c = fgetc(f.ptr);
+        int c = fgetc(fp);
         LockTy();
 
         return (c == EOF) ? NIL : INTEGER(c);
@@ -7227,16 +7523,11 @@ BUILTIN_FUNCTION(stdio_fputc)
 {
         ASSERT_ARGC("stdio.fputc()", 2);
 
-        Value f = ARG(0);
-        if (f.type != VALUE_PTR)
-                zP("the first argument to stdio.fputc() must be a pointer");
-
-        if (ARG(1).type != VALUE_INTEGER) {
-                zP("the second argument to stdio.fputc() must be an integer");
-        }
+        FILE *fp = PTR_ARG(0);
+        imax ch = INT_ARG(1);
 
         UnlockTy();
-        int c = fputc((int)ARG(1).z, f.ptr);
+        int c = fputc((int)ch, fp);
         LockTy();
 
         return (c == EOF) ? NIL : INTEGER(c);
@@ -7261,12 +7552,12 @@ BUILTIN_FUNCTION(stdio_fwrite)
 
         case VALUE_BLOB:
                 len = (argc == 3) ? INT_ARG(2) : vN(*data.blob);
-                ret = fwrite(vv(*data.blob), 1, vN(*data.blob), f);
+                ret = fwrite(vv(*data.blob), 1, len, f);
                 break;
 
         case VALUE_PTR:
                 len = (argc == 3) ? INT_ARG(2) : strlen(data.ptr);
-                ret = fwrite(data.ptr, 1, 1, f);
+                ret = fwrite(data.ptr, 1, len, f);
                 break;
 
         case VALUE_INTEGER:
@@ -7293,32 +7584,34 @@ BUILTIN_FUNCTION(stdio_puts)
 {
         ASSERT_ARGC("stdio.puts()", 2);
 
-        Value f = ARG(0);
-        if (f.type != VALUE_PTR)
-                zP("the argument to stdio.puts() must be a pointer");
-
-        Value s = ARG(1);
+        FILE *fp = PTR_ARG(0);
+        Value str = ARGx(1, VALUE_STRING, VALUE_BLOB);
 
         errno = 0;
         usize r;
 
-        switch (s.type) {
+        switch (str.type) {
         case VALUE_STRING:
-                r = fwrite(ss(s), 1, sN(s), f.ptr);
-                if (r < sN(s) && errno != 0)
+                r = fwrite(ss(str), 1, sN(str), fp);
+                if (r < sN(str) && errno != 0) {
                         return NIL;
+                }
                 break;
+
         case VALUE_BLOB:
-                r = fwrite(s.blob->items, 1, s.blob->count, f.ptr);
-                if (r < s.blob->count && errno != 0)
+                r = fwrite(vv(*str.blob), 1, vN(*str.blob), fp);
+                if (r < vN(*str.blob) && errno != 0) {
                         return NIL;
+                }
                 break;
+
         default:
                 zP("the second argument to stdio.puts() must be a string or a blob");
         }
 
-        if (fputc('\n', f.ptr) == EOF)
+        if (fputc('\n', fp) == EOF) {
                 return NIL;
+        }
 
         return INTEGER(r + 1);
 }
@@ -7799,7 +8092,7 @@ BUILTIN_FUNCTION(ty_bt)
 
         GC_STOP();
 
-        for (size_t i = 0; i < frames->count; ++i) {
+        for (usize i = 0; i < frames->count; ++i) {
                 if (frames->items[i].ip == NULL) {
                         continue;
                 }

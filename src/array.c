@@ -692,7 +692,7 @@ array_take_mut(Ty *ty, Value *array, int argc, Value *kwargs)
         if (n.type != VALUE_INTEGER)
                 zP("non-integer passed to array.take!()");
 
-        array->array->count = min(array->array->count, n.z);
+        array->array->count = (n.z < 0) ? 0 : min(array->array->count, n.z);
         shrink(ty, array);
 
         return *array;
@@ -711,7 +711,7 @@ array_take(Ty *ty, Value *array, int argc, Value *kwargs)
 
         Value result = ARRAY(vA());
 
-        int count = min(n.z, array->array->count);
+        int count = (n.z < 0) ? 0 : min(n.z, array->array->count);
 
         NOGC(result.array);
         value_array_reserve(ty, result.array, count);
@@ -857,7 +857,7 @@ array_consume_while(Ty *ty, Value *array, int argc, Value *kwargs)
         Value p = ARG(1);
 
         if (!CALLABLE(f)) {
-                zP("Array.consumeWhile(): source is not callable: %s", VSC(&p));
+                zP("Array.consumeWhile(): source is not callable: %s", VSC(&f));
         }
 
         if (!CALLABLE(p)) {
@@ -906,7 +906,7 @@ array_groups_of(Ty *ty, Value *array, int argc, Value *kwargs)
 
         int n = 0;
         int i = 0;
-        while (i + size.z < array->array->count) {
+        while (i + size.z <= array->array->count) {
                 struct array *group = vA();
                 NOGC(group);
                 vvPn(*group, array->array->items + i, size.z);
@@ -2004,7 +2004,7 @@ array_reverse(Ty *ty, Value *array, int argc, Value *kwargs)
 
         isize hi = lo + n - 1;
 
-        if (hi > vN(*array->array)) {
+        if (hi >= vN(*array->array)) {
                 bP(
                         "invalid count %jd for start index %jd and array of size %zu",
                         n, lo, vN(*array->array)
@@ -2038,6 +2038,9 @@ array_rotate(Ty *ty, Value *array, int argc, Value *kwargs)
         } else if (argc != 0) {
                 zP("the rotate method on arrays expects 0 or 1 arguments but got %d", argc);
         }
+
+        if (n == 0)
+                return *array;
 
         d %= n;
         if (d < 0)
