@@ -440,8 +440,7 @@ lexword(Ty *ty)
         int keyword;
         if (!raw && kw_ok && (keyword = keyword_get_number(w)) != -1) {
                 state.need_nl |= (
-                        (keyword == KEYWORD_IMPORT)
-                     || (keyword == KEYWORD_OPERATOR)
+                        (keyword == KEYWORD_OPERATOR)
                      || (keyword == KEYWORD_NAMESPACE)
                 );
                 return mkkw(ty, keyword);
