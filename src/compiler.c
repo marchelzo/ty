@@ -8081,13 +8081,15 @@ emit_for_loop(Ty *ty, Stmt const *s, bool want_result)
                 emit_statement(ty, s->for_loop.init, false);
         }
 
-        LABEL(begin);
-
+        JumpLabel begin;
         if (s->for_loop.next != NULL) {
                 PLACEHOLDER_JUMP(JUMP, skip_next);
+                begin = (LABEL)(ty);
                 EE(s->for_loop.next);
                 INSN(POP);
                 PATCH_JUMP(skip_next);
+        } else {
+                begin = (LABEL)(ty);
         }
 
         JumpPlaceholder end_jump;
