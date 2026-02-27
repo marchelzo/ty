@@ -3769,22 +3769,18 @@ BUILTIN_FUNCTION(thread_cond_wait)
         TyCondVar *cond = PTR_ARG(0);
         TyMutex    *mtx = PTR_ARG(1);
 
-        i64 usec;
-        bool forever;
+        bool ok;
 
-        if (argc == 3) {
-                usec = USEC_ARG(2);
-                forever = (usec == -1)
-                       && (ARG_T(2) == VALUE_INTEGER);
+        if (argc == 3 && !IsNil(ARG(2))) {
+                i64 msec = max(MSEC_ARG(2), 0);
+                UnlockTy();
+                ok = TyCondVarTimedWaitRelative(cond, mtx, msec);
+                LockTy();
         } else {
-                forever = true;
+                UnlockTy();
+                ok = TyCondVarWait(cond, mtx);
+                LockTy();
         }
-
-        UnlockTy();
-        bool ok = forever
-                ? TyCondVarWait(cond, mtx)
-                : TyCondVarTimedWaitRelative(cond, mtx, usec / 1000);
-        LockTy();
 
         return BOOLEAN(ok);
 }

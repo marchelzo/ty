@@ -55,7 +55,7 @@ let groups = %{
         do         try       catch      operator  or     in     yield
         match      else      with       break     pub    as     static
         continue   return    macro      where     not    throw  defer
-        finally    __eval__  generator  ns
+        finally    __eval__  generator  ns        super
 
         id_keyword
     ',

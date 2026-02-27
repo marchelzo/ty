@@ -43,7 +43,7 @@ let groups = %{
         do         try       catch      operator  or     in     yield
         match      else      with       break     pub    as     static
         continue   return    macro      where     not    throw  defer
-        finally    __eval__  generator  ns
+        finally    __eval__  generator  ns        super
 
         id_keyword
     ',
@@ -216,6 +216,10 @@ fn mod-completions(mod: Dict[String, _], prefix: String) -> [([Text | String], S
     return completions.sort!(by=\_.1)
 }
 
+fn get-import(name: String) -> Module | nil {
+    ty.mod.get().imports[name.sub('.', '/')]
+}
+
 pub fn tab-complete(before: String, after: String) -> readln::CompletionAction {
     if let [_, space, prefix] = before.match(/^\s*import\b(\s*)((?:\w|\.)*)$/) {
         let modules-dir = Path.home() / '.ty'
@@ -256,8 +260,8 @@ pub fn tab-complete(before: String, after: String) -> readln::CompletionAction {
             => (expr, '')
     }
 
-    if let ty.Id({name, *}) = subject and let $mod = ty.mod.get(name) {
-        return CycleCompletions(mod-completions(ty.mod.dict(mod), prefix))
+    if let ty.Id({name, *}) = subject and let $mod = get-import(name) {
+        return CycleCompletions(mod-completions(mod.dict, prefix))
     }
 
     return CycleCompletions(

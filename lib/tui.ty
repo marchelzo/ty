@@ -1,0 +1,471 @@
+import os (..)
+import chalk (..)
+import time (now)
+import math (sin, cos)
+
+const FPS = 60
+
+fn bezier3(p1: (Float, Float), p2: (Float, Float), t: Float) -> (Float, Float) {
+    let s = 1 - t
+    let (x1, y1) = p1
+    let (x2, y2) = p2
+    return (
+        s**3 * 0 + 3 * s**2 * t * x1 + 3 * s * t**2 * x2 + t**3 * 1,
+        s**3 * 0 + 3 * s**2 * t * y1 + 3 * s * t**2 * y2 + t**3 * 1
+    )
+}
+
+fn bezier3_inv(p1: (Float, Float), p2: (Float, Float), s: Float) -> Float {
+    let t = s
+    for (;;) {
+        let (x, _) = bezier3(p1, p2, t)
+        break if abs(x - s) < 0.0001
+        let s1 = 1 - t
+        let dx = 3 * s1**2 * (p1.0) + 6 * s1*t * (p2.0 - p1.0) + 3 * t**2 * (1 - p2.0)
+        t = t - (x - s) / dx
+    }
+    return t
+}
+
+fn rgb_blend(c1: (Int, Int, Int), c2: (Int, Int, Int), t: Float) -> (Int, Int, Int) {
+    let (r1, g1, b1) = c1
+    let (r2, g2, b2) = c2
+    let r = int((t*r1**2 + (1-t)*r2**2)**0.5)
+    let g = int((t*g1**2 + (1-t)*g2**2)**0.5)
+    let b = int((t*b1**2 + (1-t)*b2**2)**0.5)
+    return (r, g, b)
+}
+
+fn hex_to_rgb(hex: String) -> (Int, Int, Int) {
+    let [r, g, b] = hex.scan(/[0-9a-fA-F]{2}/)
+    let r = int(r, 16)
+    let g = int(g, 16)
+    let b = int(b, 16)
+    return (r, g, b)
+}
+
+pub ns boxes {
+    pub double = ["╔", "╗", "╚", "╝", "═", "║", "╬", "╦", "╣", "╠", "╩"]
+    pub heavy = ["┏", "┓", "┗", "┛", "━", "┃", "╋", "┳", "┫", "┣", "┻"]
+    pub round = ["╭", "╮", "╰", "╯", "─", "│", "┼", "┬", "┤", "├", "┴"]
+}
+
+class Console {
+    rows: Int
+    cols: Int
+    _msgs: Array[Text | String]
+
+    height -> Int { rows }
+    width -> Int { cols }
+    
+    init(rows: Int, cols: Int) {
+        self.rows = rows
+        self.cols = cols
+        self._msgs = []
+    }
+    
+    log(msg: String | Text) {
+        _msgs.push(msg)
+    }
+    
+    decorate-line(line: Text) -> Text { line }
+    
+    prepare-lines() -> Array[Text] {
+        let lines = []
+        for msg in _msgs[-rows;] {
+            lines += (chalk"{msg}").wrap(cols)
+        }
+        lines[-rows;].map(decorate-line)
+    }
+    
+    render(out: Blob = Blob(), y: Int, x: Int) {
+        out.push("\x1b[{y};{x}H")
+        render(out)
+    }
+    
+    render(out: Blob = Blob()) {
+        let lines = prepare-lines()
+        
+        for ..rows {
+            out.push("\x1b[{cols}X\x1b[1B")
+        }
+        out.push("\x1b[{rows}A")
+        
+        if #lines < rows {
+            out.push("\x1b[{rows - #lines}B")
+        }
+        
+        for line in lines {
+            let width = line.width()
+            out.push("{line}\x1b[{width}D\x1b[1B")
+        }
+        
+        out.push("\x1b[{rows}A")
+        out
+    }
+}
+
+class BoxConsole < Console {
+    __head: Array[Text]
+    __foot: Text
+    __edge: Text
+    
+    init(rows: Int, cols: Int, title: Text | String | nil = nil, style='bright bold yellow', box: Array[String] = boxes.heavy) {
+        super(rows - (title == nil ? 2 : 4), cols - 2)
+
+        if title != nil {
+            let tw = min(title.width() + 4, cols - 4)
+            let hd0 = "{box[0]}{'':{box[4]}<{tw}}{box[1]}"
+            let hd0 = chalk"[{style}]{hd0: ^{cols}}[/]"
+            let hd1 = chalk"{box[5]}{title: ^{tw}}{box[5]}"
+            let hd1 = chalk"[{style}]{box[0]}{hd1:{box[4]}^{cols - 2}}{box[1]}[/]"
+            let hd2 = "{box[2]}{'':{box[4]}<{tw}}{box[3]}"
+            let hd2 = chalk"[{style}]{box[5]}{hd2: ^{cols - 2}}{box[5]}[/]"
+            __head = [hd0, hd1, hd2]
+        } else {
+            __head = [chalk"[{style}]{box[0]}{'':{box[4]}<{cols - 2}}{box[1]}[/]"]
+        }
+
+        __foot = chalk"[{style}]{box[2]}{'':{box[4]}<{cols - 2}}{box[3]}[/]"
+        __edge = chalk"[{style}]{box[5]}[/]"
+    }
+
+    height -> Int { rows + #__head + 1 }
+    width -> Int { cols + 2 }
+    
+    decorate-line(line: Text) -> Text {
+        let w = line.width()
+        let pad = cols - w
+        chalk"{__edge}{line}{'':{pad}}{__edge}"
+    }
+
+    render(out: Blob = Blob(), advance?: Bool = true) -> Blob {
+        let lines = prepare-lines()
+        let home = "\x1b[{width}D"
+        
+        for ..height {
+            out.push("\x1b[{width}X\x1b[1B")
+        }
+        out.push("\x1b[{height}A")
+        
+        for heading in __head {
+            out.push("{heading}{home}\x1b[1B")
+        }
+        
+        for line in lines {
+            out.push("{line}{home}\x1b[1B")
+        }
+        
+        for (#lines).upto(rows) {
+            out.push("{__edge}{'':{cols}}{__edge}{home}\x1b[1B")
+        }
+        
+        if advance? {
+            out.push("{__foot}\n")
+        } else {
+            out.push("{__foot}{home}\x1b[{height}A")
+        }
+        
+        out
+    }
+}
+
+class ProgressBar {
+    width: Int
+    style: String
+    fill_char: String
+    empty_char: String
+    
+    init(width: Int = 40, style: String = '#1eaba5', fill_char: String = '━', empty_char: String = '━') {
+        self.width = width
+        self.style = style  
+        self.fill_char = fill_char
+        self.empty_char = empty_char
+    }
+    
+    render(progress: Float) -> Text {
+        let p = progress.clamp(0.0, 1.0)
+        let filled = int(p * width)
+        let empty = width - filled
+        chalk"[{style}]{fill_char.repeat(filled)}[/][#444]{empty_char.repeat(empty)}[/]"
+    }
+}
+
+class PulseAnimation {
+    width: Int
+    color1: (Int, Int, Int)
+    color2: (Int, Int, Int)
+    p1: (Float, Float)
+    p2: (Float, Float)
+    rate: Float
+    
+    init(width: Int = 40, color1: String = '#ff8aa6', color2: String = '#d32773') {
+        self.width = width
+        self.color1 = hex_to_rgb(color1)
+        self.color2 = hex_to_rgb(color2)
+        self.p1 = (0.2, 0.6)
+        self.p2 = (0.2, 0.9)
+        self.rate = 1.0
+    }
+    
+    render(elapsed: Float) -> Text {
+        let bar = Blob()
+        let t = (rate * elapsed) % 1.0
+        
+        for i in ..width {
+            let x_norm = float(i) / width
+            let t_inv = bezier3_inv(p1, p2, t)
+            let (_, y) = bezier3(p1, p2, t_inv)
+            let x = y * width
+            let intensity = 1.0 / (1 + 0.01*(i - x)**2)
+            let (r, g, b) = rgb_blend(color1, color2, intensity)
+            bar.push("[#{r:02x}{g:02x}{b:02x}]━[/]")
+        }
+        
+        chalk.text(bar.str!())
+    }
+}
+
+class TaskInfo {
+    id: Int
+    desc: String
+    total: Int | nil
+    current: Sync[Int]
+    start_time: Float
+    
+    init(id: Int, desc: String = "", total: Int | nil = nil) {
+        self.id = id
+        self.desc = desc
+        self.total = total
+        self.current = Sync(0)
+        self.start_time = now()
+    }
+    
+    progress() -> Float | nil {
+        total ?: (cast(current.float) / total)
+    }
+    
+    elapsed() -> Float {
+        now() - start_time
+    }
+}
+
+class Tqdm[T] : Iterable[T] {
+    static _active_bars: Array[Tqdm] = []
+    static _render_thread: Thread | nil = nil
+    static _render_mutex: Mutex = Mutex()
+    static _render_cv: CondVar = CondVar()
+    static _print_queue: SharedQueue[String] = SharedQueue()
+    
+    _iterable: Iterable[T]
+    _total: Int | nil
+    _desc: String
+    _task: TaskInfo
+    _progress_bar: ProgressBar
+    _pulse_anim: PulseAnimation
+    _position: Int
+    _leave: Bool
+    _ncols: Int
+
+    _mtx: Mutex
+    _cv: CondVar
+    _stopping: Bool
+    _finished: Bool
+    
+    init(
+        iterable: Iterable[T],
+        desc: String = '',
+        total: Int | nil = nil,
+        leave: Bool = true,
+        ncols: Int = 80,
+        position: Int | nil = nil
+    ) {
+        _iterable       = iterable
+        _total          = iterable.?`#`()
+        _desc           = desc
+        _leave          = leave
+        _ncols          = ncols
+        _mtx            = Mutex()
+        _cv             = CondVar()
+        _stopping       = false
+        _finished       = false
+        _progress_bar   = ProgressBar(ncols - 30)
+        _pulse_anim     = PulseAnimation(ncols - 30)
+
+        with _render_mutex {
+            _task           = TaskInfo(#Tqdm._active_bars, desc, _total)
+            _position       = position ?? #Tqdm._active_bars
+
+            _active_bars.push(self)
+
+            if _render_thread == nil {
+                _render_thread = Thread(Tqdm._render_loop)
+                _render_thread.detach()
+            }
+        }
+    }
+    
+    static _render_loop() {
+        let buf = Blob()
+        let frame_time = 1.0 / FPS
+
+        for (;;) {
+            with _render_mutex {
+                if #_active_bars == 0 {
+                    continue
+                }
+
+                let drop  = []
+                let keep  = []
+
+                let leave = Blob()
+                
+                buf.clear()
+                buf.push("\x1b[?25l")
+
+                for bar in _active_bars {
+                    buf.push("\r\x1b[0K\n")
+                }
+
+                buf.push("\x1b[{#_active_bars}A")
+                
+                for bar in _active_bars {
+                    with bar._mtx {
+                        let line = "{bar._render_line()}\n"
+                        if bar._stopping {
+                            drop.push(bar)
+                            if bar._leave {
+                                leave.push(line)
+                            }
+                        } else {
+                            keep.push(bar)
+                            buf.push(line)
+                        }
+                    }
+                }
+
+                if #keep > 0 {
+                    buf.push("\x1b[{#keep}A")
+                }
+
+                while let Some(msg) = _print_queue.try-take() {
+                    leave.push("{msg}\x1b[0K\n")
+                }
+
+                write(1, Blob(leave, buf))
+
+                for bar in drop {
+                    with bar._mtx {
+                        bar._finished = true
+                    }
+                    bar._cv.signal()
+                }
+
+                _active_bars = keep
+
+                if #_active_bars == 0 {
+                    _render_thread = nil
+                    break
+                }
+            }
+
+            sleep(frame_time)
+        }
+
+        write(1, "\x1b[?25h")
+    }
+    
+    _render_line() -> String {
+        let elapsed = _task.elapsed()
+        let parts = []
+        
+        if #_desc > 0 {
+            parts.push(chalk"[yellow]{_desc:12}[/]: ")
+        }
+        
+        if let $p = _task.progress() {
+            parts.push(_progress_bar.render(p))
+            let progress = "{_task.current}/{_task.total}"
+            if _stopping {
+                parts.push(chalk" [bright green]{progress: <10}[/]")
+            } else {
+                parts.push(chalk" {progress: <10}")
+            }
+        } else {
+            parts.push(_pulse_anim.render(elapsed))
+            if _stopping {
+                let progress = "{_task.current}/{_task.current}"
+                parts.push(chalk" [bright green]{progress: <10}[/]")
+            } else {
+                let progress = "{_task.current}/?"
+                parts.push(chalk" {progress: <10}")
+            }
+        }
+        
+        parts.push(chalk" [#5e5e5e]{elapsed:4.1}s[/]")
+        
+        let line = parts.join()
+        
+        let plain_len = #chalk.plain(line)
+        if plain_len < _ncols {
+            return "{line: <{plain_len}}"
+        }
+        
+        return line
+    }
+    
+    update(n: Int = 1) {
+        _task.current += n
+    }
+
+    label -> String {
+        with _mtx {
+            return _desc
+        }
+    }
+    
+    label=(desc: String) {
+        with _mtx {
+            _desc = desc
+            _task.desc = desc
+        }
+    }
+
+    print(x: Any) {
+        _print_queue.put("{x}")
+    }
+    
+    close() {
+        with _mtx {
+            _stopping = true
+            while !_finished {
+                _cv.wait(_mtx)
+            }
+        }
+    }
+    
+    __iter__*() -> Generator[T] {
+        defer close()
+        for item in _iterable {
+            yield item
+            update()
+        }
+    }
+}
+
+pub fn tqdm[T](
+    iterable: Iterable[T],
+    desc: String = "",
+    total: Int | nil = nil,
+    %kwargs
+) -> Tqdm[T] {
+    Tqdm(iterable, desc, total, **kwargs)
+}
+
+pub fn trange(
+    n: Int,
+    desc: String = "",
+    %kwargs
+) -> Tqdm[Int] {
+    Tqdm(..n, desc, n, **kwargs)
+}
