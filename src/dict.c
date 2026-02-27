@@ -601,7 +601,10 @@ Value
 dict_intersect_copy(Ty *ty, Value *d, int argc, Value *kwargs)
 {
         Value copy = dict_clone(ty, d, 0, NULL);
-        return dict_intersect(ty, &copy, argc, kwargs);
+        gP(&copy);
+        Value result = dict_intersect(ty, &copy, argc, kwargs);
+        gX();
+        return result;
 }
 
 Dict *
@@ -685,8 +688,8 @@ dict_subtract(Ty *ty, Value *d, int argc, Value *kwargs)
                                         vm_eval_function(
                                                 ty,
                                                 &f,
-                                                &d->dict->items[i].v,
-                                                &u->items[j].v,
+                                                &d->dict->items[j].v,
+                                                &u->items[i].v,
                                                 NULL
                                         );
                                         delete(d->dict, j);
@@ -762,6 +765,7 @@ dict_clear(Ty *ty, Value *d, int argc, Value *kwargs)
         memset(d->dict->items, 0, sizeof (DictItem) * d->dict->size);
         d->dict->last = NULL;
         d->dict->count = 0;
+        d->dict->tombs = 0;
 
         return *d;
 }
@@ -912,6 +916,7 @@ DEFINE_METHOD_TABLE(
         { .name = "ptr",          .func = dict_ptr             },
         { .name = "put",          .func = dict_put             },
         { .name = "remove",       .func = dict_remove          },
+        { .name = "subtract",     .func = dict_subtract        },
         { .name = "update",       .func = dict_update          },
         { .name = "values",       .func = dict_values          },
         { .name = "~=",           .func = dict_remove          },

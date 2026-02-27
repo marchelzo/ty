@@ -1275,7 +1275,8 @@ enum {
 #define TAGGED(t, ...) tagged(ty, (t), __VA_ARGS__, NONE)
 #define TAGGED_RECORD(t, ...) tagged(ty, (t), vTn(__VA_ARGS__), NONE)
 
-#define v_eq(a, b) value_test_equality(ty, (a), (b))
+#define v_eq(a, b)   value_test_equality(ty, (a), (b))
+#define v_truthy(v)  value_truthy(ty, (v))
 
 #define TY_UNARY_OPERATORS   \
         X(COMPL,      "~"),  \

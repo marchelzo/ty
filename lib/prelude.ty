@@ -485,7 +485,7 @@ class Array[T] : Iterable[T] {
     filter!(pred: T -> Any) -> Array[T];
     filter(pred: T -> Any) -> Array[T];
     group() -> Array[Array[T]];
-    groups-of(n: Int) -> Array[Array[T]];
+    groups-of(n: Int, keepShort: Bool = true) -> Array[Array[T]];
     insert(i: Int, *xs: T) -> nil;
     join(sep: String = '') -> String;
     len() -> Int;
@@ -496,8 +496,8 @@ class Array[T] : Iterable[T] {
     remove!(x: Any) -> Array[T];
     remove![U](x: nil) -> Array[U] where T: nil | U;
     remove(x: Any) -> Array[T];
-    reverse!() -> Array[T];
-    reverse() -> Array[T];
+    reverse!(start: ?Int, count: ?Int) -> Array[T];
+    reverse(start: ?Int, count: ?Int) -> Array[T];
     rotate(n: Int = 1) -> Array[T];
     rotate!(n: Int = 1) -> Array[T];
     shuffle!() -> Array[T];
@@ -944,7 +944,8 @@ class Dict[K, V] : Iterable[K, V] {
     values() -> Array[V];
     items()  -> Array[(K, V)];
 
-    update(other: Dict[K, V]) -> Dict[K, V];
+    update(other: Dict[K, V], combine: ?((V, V) -> V)) -> Dict[K, V];
+    subtract(other: Dict[K, V], callback: ?((V, V) -> Any)) -> Dict[K, V];
 
     pop(i: ?Int) -> (K, V);
 
