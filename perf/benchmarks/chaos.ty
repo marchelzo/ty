@@ -1,0 +1,220 @@
+import super.lib (bench)
+
+// Chaos game fractal via B-spline evaluation
+
+class GVec {
+    x: Float
+    y: Float
+    z: Float
+
+    init(x: Float = 0.0, y: Float = 0.0, z: Float = 0.0) {
+        self.x = x; self.y = y; self.z = z
+    }
+
+    mag -> Float { (x*x + y*y + z*z).sqrt }
+    dist(o: GVec) -> Float { (self - o).mag }
+}
+
+fn +(a: GVec, b: GVec) -> GVec { GVec(a.x + b.x, a.y + b.y, a.z + b.z) }
+fn -(a: GVec, b: GVec) -> GVec { GVec(a.x - b.x, a.y - b.y, a.z - b.z) }
+fn *(a: GVec, s: Float) -> GVec { GVec(a.x * s, a.y * s, a.z * s) }
+
+fn linear-combination(a: GVec, b: GVec, la: Float, lb: Float) -> GVec {
+    GVec(a.x*la + b.x*lb, a.y*la + b.y*lb, a.z*la + b.z*lb)
+}
+
+class Spline {
+    pts:    [GVec]
+    degree: Int
+    knots:  [Float]
+
+    init(pts: [GVec], degree: Int = 3) {
+        self.pts = pts
+        self.degree = degree
+
+        let n = #pts + degree + 1
+        self.knots = [0.0 for ..n]
+        for i in ..n {
+            knots[i] = if i <= degree {
+                0.0
+            } else if i >= n - degree - 1 {
+                1.0
+            } else {
+                (i - degree).float / (n - 2 * degree - 1).float
+            }
+        }
+    }
+
+    at(u: Float) -> GVec {
+        let n = #pts
+        let k = degree
+
+        // Find knot span
+        let seg = k
+        while seg < n - 1 && knots[seg + 1] <= u {
+            seg += 1
+        }
+
+        let d = [GVec() for ..k + 1]
+        for i in 0...k {
+            d[i] = pts[seg - k + i]
+        }
+
+        for lvl in 1...k {
+            for ii in k.downto(lvl) {
+                let idx = ii - lvl
+                let left  = seg - k + ii
+                let right = left + k - lvl + 1
+                let kl = knots[left]
+                let kr = knots[right]
+                let denom = kr - kl
+                if denom.abs < 1.0e-12 {
+                    d[idx] = d[idx]
+                } else {
+                    let alpha = (u - kl) / denom
+                    d[idx] = linear-combination(d[idx], d[idx + 1], 1.0 - alpha, alpha)
+                }
+            }
+        }
+
+        d[0]
+    }
+}
+
+class ChaosGame {
+    splines:    [Spline]
+    thickness:  Float
+    minx: Float
+    miny: Float
+    maxx: Float
+    maxy: Float
+    num-trafos: [Int]
+    total:      Int
+
+    init(splines: [Spline], thickness: Float = 0.25) {
+        self.splines = splines
+        self.thickness = thickness
+
+        // Compute bounding box
+        minx = 1.0e10;  miny = 1.0e10
+        maxx = -1.0e10; maxy = -1.0e10
+
+        for s in splines {
+            for p in s.pts {
+                minx = min(minx, p.x)
+                miny = min(miny, p.y)
+                maxx = max(maxx, p.x)
+                maxy = max(maxy, p.y)
+            }
+        }
+
+        // Approximate arc lengths and create transformation counts
+        self.num-trafos = [0 for ..#splines]
+        self.total = 0
+
+        for si in ..#splines {
+            let length = 0.0
+            let prev = splines[si].at(0.0)
+            for i in 1...1000 {
+                let cur = splines[si].at(i.float / 1000.0)
+                length += prev.dist(cur)
+                prev = cur
+            }
+            num-trafos[si] = max(1, (length * 2.0).round.int)
+            total += num-trafos[si]
+        }
+    }
+
+    random-trafo() -> (Int, Int) {
+        let r = (rand() * total).int
+        let acc = 0
+        for si in ..#splines {
+            acc += num-trafos[si]
+            if r < acc {
+                return (si, r - (acc - num-trafos[si]))
+            }
+        }
+        (#splines - 1, num-trafos[#splines - 1] - 1)
+    }
+
+    transform(p: GVec, si: Int, seg: Int) -> GVec {
+        let tt = thickness
+        let rangex = maxx - minx
+        let rangey = maxy - miny
+
+        // Normalize point
+        let nx = (p.x - minx) / rangex
+        let ny = (p.y - miny) / rangey
+
+        // Position on spline segment
+        let nt = num-trafos[si]
+        let u0 = seg.float / nt.float
+        let u1 = (seg + 1).float / nt.float
+        let u = u0 + nx * (u1 - u0)
+
+        let base = splines[si].at(u)
+
+        // Derivative (numerical)
+        let du = 1.0 / 50000.0
+        let deriv = splines[si].at(min(1.0, u + du)) - splines[si].at(max(0.0, u - du))
+        let dmag = deriv.mag
+        if dmag < 1.0e-12 { return base }
+
+        // Perpendicular offset
+        let perp = GVec(-deriv.y / dmag, deriv.x / dmag)
+        let offset = (ny - 0.5) * tt
+
+        let result = GVec(base.x + perp.x * offset, base.y + perp.y * offset)
+
+        // Truncate to bounding box
+        GVec(
+            max(minx, min(maxx, result.x)),
+            max(miny, min(maxy, result.y))
+        )
+    }
+
+    run(iterations: Int) -> Int {
+        let p = GVec((minx + maxx) / 2.0, (miny + maxy) / 2.0)
+        let count = 0
+
+        for ..iterations {
+            let (si, seg) = random-trafo()
+            p = transform(p, si, seg)
+            count += 1
+        }
+
+        count
+    }
+}
+
+fn make-splines() -> [Spline] {
+    [
+        Spline([
+            GVec(1.597, 3.304), GVec(1.575, 4.630),
+            GVec(1.313, 5.009), GVec(1.618, 5.876),
+            GVec(1.826, 6.671), GVec(0.233, 7.953),
+            GVec(2.239, 7.318)
+        ]),
+        Spline([
+            GVec(2.239, 7.318), GVec(2.570, 6.954),
+            GVec(3.706, 6.203), GVec(3.760, 5.709),
+            GVec(3.503, 5.601), GVec(3.493, 5.247),
+            GVec(4.028, 4.969)
+        ]),
+        Spline([
+            GVec(4.028, 4.969), GVec(4.279, 4.842),
+            GVec(4.267, 4.318), GVec(4.385, 3.843),
+            GVec(3.596, 3.619), GVec(2.842, 3.490),
+            GVec(1.597, 3.304)
+        ])
+    ]
+}
+
+@bench
+fn chaos-game(n: Int) {
+    for ..n {
+        let game = ChaosGame(make-splines())
+        let count = game.run(5000)
+        assert(count == 5000)
+    }
+}

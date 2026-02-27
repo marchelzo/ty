@@ -1,0 +1,258 @@
+import super.lib (bench)
+
+let EPSILON = 0.00001
+
+class Vec {
+    x: Float
+    y: Float
+    z: Float
+
+    init(x: Float = 0.0, y: Float = 0.0, z: Float = 0.0) {
+        self.x = x; self.y = y; self.z = z
+    }
+
+    mag -> Float { (x*x + y*y + z*z).sqrt }
+
+    dot(o: Vec) -> Float { x*o.x + y*o.y + z*o.z }
+
+    cross(o: Vec) -> Vec {
+        Vec(y * o.z - z * o.y, z * o.x - x * o.z, x * o.y - y * o.x)
+    }
+
+    normalized() -> Vec {
+        let m = mag
+        Vec(x/m, y/m, z/m)
+    }
+
+    negated() -> Vec { Vec(-x, -y, -z) }
+
+    scale(s: Float) -> Vec { Vec(x*s, y*s, z*s) }
+
+    reflect-through(normal: Vec) -> Vec {
+        let d = normal.scale(self.dot(normal))
+        self + d.scale(-2.0)
+    }
+}
+
+fn +(a: Vec, b: Vec) -> Vec { Vec(a.x + b.x, a.y + b.y, a.z + b.z) }
+fn -(a: Vec, b: Vec) -> Vec { Vec(a.x - b.x, a.y - b.y, a.z - b.z) }
+
+class Ray {
+    origin: Vec
+    dir:    Vec
+
+    init(origin: Vec, dir: Vec) {
+        self.origin = origin
+        self.dir = dir.normalized()
+    }
+
+    point-at(t: Float) -> Vec { origin + dir.scale(t) }
+}
+
+class Sphere {
+    center: Vec
+    radius: Float
+
+    init(center: Vec, radius: Float) {
+        self.center = center; self.radius = radius
+    }
+
+    intersect(ray: Ray) -> Float | nil {
+        let cp = center - ray.origin
+        let v  = cp.dot(ray.dir)
+        let disc = radius * radius - (cp.dot(cp) - v * v)
+        if disc < 0.0 { return nil }
+        v - disc.sqrt
+    }
+
+    normal-at(p: Vec) -> Vec { (p - center).normalized() }
+}
+
+class Plane {
+    point:  Vec
+    normal: Vec
+
+    init(point: Vec, normal: Vec) {
+        self.point = point; self.normal = normal.normalized()
+    }
+
+    intersect(ray: Ray) -> Float | nil {
+        let denom = ray.dir.dot(normal)
+        if denom.abs < EPSILON { return nil }
+        let t = (point - ray.origin).dot(normal) / denom
+        if t < EPSILON { return nil }
+        t
+    }
+
+    normal-at(p: Vec) -> Vec { normal }
+}
+
+fn color-scale(color: (Float, Float, Float), s: Float) -> (Float, Float, Float) {
+    (color.0 * s, color.1 * s, color.2 * s)
+}
+
+fn color-add(a: (Float, Float, Float), b: (Float, Float, Float)) -> (Float, Float, Float) {
+    (a.0 + b.0, a.1 + b.1, a.2 + b.2)
+}
+
+class Scene {
+    objects: [_]  // [{shape, surface, color, spec, lambert, ambient}]
+    lights:  [Vec]
+    camera:  Vec
+    max-depth: Int
+
+    init(objects: [_], lights: [Vec], camera: Vec, max-depth: Int = 3) {
+        self.objects = objects; self.lights = lights
+        self.camera = camera; self.max-depth = max-depth
+    }
+
+    trace(ray: Ray, depth: Int = 0) -> (Float, Float, Float) {
+        if depth > max-depth { return (0.0, 0.0, 0.0) }
+
+        let best-t: Float = 1e30
+        let closest-obj = nil
+
+        for obj in objects {
+            if let $t = obj.shape.intersect(ray) and t > EPSILON and t < best-t {
+                best-t = t
+                closest-obj = obj
+            }
+        }
+
+        if closest-obj == nil { return (0.0, 0.0, 0.0) }
+
+        let p = ray.point-at(best-t)
+        let n0 = closest-obj.shape.normal-at(p)
+        let normal = if n0.dot(ray.dir) > 0.0 { n0.negated() } else { n0 }
+
+        let color = closest-obj.color
+
+        // Ambient
+        let result = color-scale(color, closest-obj.ambient)
+
+        // Lambert (diffuse)
+        if closest-obj.lambert > 0.0 {
+            for light in lights {
+                let to-light = (light - p).normalized()
+
+                // Shadow check
+                let shadow-ray = Ray(p, to-light)
+                let blocked = false
+                for obj in objects {
+                    if let $t = obj.shape.intersect(shadow-ray) and t > EPSILON {
+                        blocked = true
+                        break
+                    }
+                }
+
+                if !blocked {
+                    let dp = normal.dot(to-light)
+                    let intensity = if dp > 0.0 { dp } else { 0.0 }
+                    result = color-add(result, color-scale(color, closest-obj.lambert * intensity))
+                }
+            }
+        }
+
+        // Specular (reflection)
+        if closest-obj.spec > 0.0 && depth < max-depth {
+            let reflected = ray.dir.reflect-through(normal)
+            let ref-ray = Ray(p, reflected)
+            let ref-color = trace(ref-ray, depth + 1)
+            result = color-add(result, color-scale(ref-color, closest-obj.spec))
+        }
+
+        result
+    }
+
+    render(w: Int, h: Int) -> Int {
+        let fov = 45.0
+        let aspect = w.float / h.float
+        let pixel-count = 0
+
+        for y in ..h {
+            let yy = -(2.0 * (y.float / h.float) - 1.0)
+            for x in ..w {
+                let xx = (2.0 * (x.float / w.float) - 1.0) * aspect
+                let dir = Vec(xx, yy, -1.0)
+                let ray = Ray(camera, dir)
+                let (r, g, b) = trace(ray)
+                pixel-count += 1
+            }
+        }
+
+        pixel-count
+    }
+}
+
+fn make-scene() -> Scene {
+    let objects = [
+        // Big yellow sphere
+        {
+            shape:   Sphere(Vec(1.0, 3.0, -10.0), 2.0),
+            color:   (1.0, 1.0, 0.0),
+            spec:    0.2,
+            lambert: 0.7,
+            ambient: 0.1
+        },
+        // Small spheres
+        {
+            shape:   Sphere(Vec(-3.0, 2.3, -5.0), 0.4),
+            color:   (1.0, 0.2, 0.2),
+            spec:    0.1,
+            lambert: 0.8,
+            ambient: 0.1
+        },
+        {
+            shape:   Sphere(Vec(-2.0, 2.3, -5.0), 0.4),
+            color:   (0.2, 1.0, 0.2),
+            spec:    0.1,
+            lambert: 0.8,
+            ambient: 0.1
+        },
+        {
+            shape:   Sphere(Vec(-1.0, 2.3, -5.0), 0.4),
+            color:   (0.2, 0.2, 1.0),
+            spec:    0.1,
+            lambert: 0.8,
+            ambient: 0.1
+        },
+        {
+            shape:   Sphere(Vec(0.0, 2.3, -5.0), 0.4),
+            color:   (1.0, 0.5, 0.0),
+            spec:    0.1,
+            lambert: 0.8,
+            ambient: 0.1
+        },
+        {
+            shape:   Sphere(Vec(1.0, 2.3, -5.0), 0.4),
+            color:   (0.5, 0.0, 1.0),
+            spec:    0.1,
+            lambert: 0.8,
+            ambient: 0.1
+        },
+        // Ground plane
+        {
+            shape:   Plane(Vec(0.0, 0.0, 0.0), Vec(0.0, 1.0, 0.0)),
+            color:   (0.5, 0.5, 0.5),
+            spec:    0.1,
+            lambert: 0.6,
+            ambient: 0.3
+        }
+    ]
+
+    let lights = [
+        Vec(30.0, 30.0, 10.0),
+        Vec(-10.0, 100.0, 30.0)
+    ]
+
+    Scene(objects, lights, Vec(0.0, 1.8, 10.0))
+}
+
+@bench
+fn raytrace(n: Int) {
+    let scene = make-scene()
+    for ..n {
+        let pixels = scene.render(80, 80)
+        assert(pixels == 6400)
+    }
+}

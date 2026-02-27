@@ -1,0 +1,57 @@
+import super.lib (bench)
+
+fn eval-A(i: Int, j: Int) -> Float {
+    1.0 / ((i + j) * (i + j + 1) / 2 + i + 1)
+}
+
+fn eval-A-times-u(nn: Int, u: [Float], au: [Float]) {
+    for i in ..nn {
+        au[i] = 0.0
+        for j in ..nn {
+            au[i] += eval-A(i, j) * u[j]
+        }
+    }
+}
+
+fn eval-At-times-u(nn: Int, u: [Float], au: [Float]) {
+    for i in ..nn {
+        au[i] = 0.0
+        for j in ..nn {
+            au[i] += eval-A(j, i) * u[j]
+        }
+    }
+}
+
+fn eval-AtA-times-u(nn: Int, u: [Float], atau: [Float]) {
+    let v = [0.0 for ..nn]
+    eval-A-times-u(nn, u, v)
+    eval-At-times-u(nn, v, atau)
+}
+
+fn spectral(nn: Int) -> Float {
+    let u = [1.0 for ..nn]
+    let v = [0.0 for ..nn]
+
+    for ..10 {
+        eval-AtA-times-u(nn, u, v)
+        eval-AtA-times-u(nn, v, u)
+    }
+
+    let vBv = 0.0
+    let vv  = 0.0
+    for i in ..nn {
+        vBv += u[i] * v[i]
+        vv  += v[i] * v[i]
+    }
+
+    (vBv / vv).sqrt
+}
+
+@bench
+fn spectral-norm(n: Int) {
+    for ..n {
+        let result = spectral(100)
+        // Should be approximately 1.274219991
+        assert((result - 1.274219991).abs < 0.0001)
+    }
+}

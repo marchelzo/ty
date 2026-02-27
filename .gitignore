@@ -6,3 +6,5 @@ _*
 # vcpkg
 vcpkg_installed
 vcpkg
+*.log
+*.err

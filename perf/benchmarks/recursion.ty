@@ -1,0 +1,73 @@
+import super.lib (bench)
+
+// Ackermann function - tests deep recursion and function call overhead
+fn ack(m: Int, n: Int) -> Int {
+    if m == 0 { return n + 1 }
+    if n == 0 { return ack(m - 1, 1) }
+    ack(m - 1, ack(m, n - 1))
+}
+
+// Fibonacci - iterative and recursive
+fn fib-rec(n: Int) -> Int {
+    if n < 2 { return n }
+    fib-rec(n - 1) + fib-rec(n - 2)
+}
+
+fn fib-iter(n: Int) -> Int {
+    let a = 0
+    let b = 1
+    for ..n {
+        let tmp = a + b
+        a = b
+        b = tmp
+    }
+    b
+}
+
+// Towers of Hanoi
+fn hanoi(n: Int, src: Int, dst: Int, aux: Int, moves: [Int]) {
+    if n == 0 { return }
+    hanoi(n - 1, src, aux, dst, moves)
+    moves[0] += 1
+    hanoi(n - 1, aux, dst, src, moves)
+}
+
+// Sieve of Eratosthenes
+fn sieve(limit: Int) -> Int {
+    let is-prime = [true for ..limit]
+    is-prime[0] = false
+    is-prime[1] = false
+
+    let i = 2
+    while i * i < limit {
+        if is-prime[i] {
+            let j = i * i
+            while j < limit {
+                is-prime[j] = false
+                j += i
+            }
+        }
+        i += 1
+    }
+
+    let count = 0
+    for p in is-prime {
+        if p { count += 1 }
+    }
+    count
+}
+
+@bench
+fn recursion(nn: Int) {
+    for ..nn {
+        assert(ack(3, 4) == 125)
+        assert(fib-rec(25) == 75025)
+        fib-iter(70)
+
+        let moves = [0]
+        hanoi(18, 0, 2, 1, moves)
+        assert(moves[0] == 262143)
+
+        assert(sieve(50000) == 5133)
+    }
+}

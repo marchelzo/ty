@@ -1,0 +1,28 @@
+import super.lib (bench)
+
+fn build-tree(lo: Int, hi: Int) {
+    if lo >= hi { return nil }
+    let mid = (lo + hi) / 2
+    (build-tree(lo, mid), mid, build-tree(mid + 1, hi))
+}
+
+fn walk*(node) {
+    if node == nil { return None }
+    let (left, val, right) = node
+    for x in walk(left)  { yield x }
+    yield val
+    for x in walk(right) { yield x }
+}
+
+@bench
+fn gen-tree(nn: Int) {
+    let tree = build-tree(0, 50000)
+
+    for ..nn {
+        let count = 0
+        for _ in walk(tree) {
+            count += 1
+        }
+        assert(count == 50000)
+    }
+}

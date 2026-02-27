@@ -1,0 +1,66 @@
+import super.lib (bench)
+
+fn fannkuch(n: Int) -> Int {
+    let count = [i + 1 for i in ..n]
+    let perm1 = [i for i in ..n]
+    let perm  = [0 for ..n]
+    let max-flips = 0
+    let m = n - 1
+    let r = n
+
+    while true {
+        while r != 1 {
+            count[r - 1] = r
+            r -= 1
+        }
+
+        if perm1[0] != 0 && perm1[m] != m {
+            for i in ..n { perm[i] = perm1[i] }
+
+            let flips = 0
+            while perm[0] != 0 {
+                let k = perm[0]
+                // Reverse perm[0..k]
+                let i = 0
+                let j = k
+                while i < j {
+                    let tmp = perm[i]
+                    perm[i] = perm[j]
+                    perm[j] = tmp
+                    i += 1
+                    j -= 1
+                }
+                flips += 1
+            }
+
+            if flips > max-flips {
+                max-flips = flips
+            }
+        }
+
+        // Generate next permutation
+        while true {
+            if r == n { return max-flips }
+
+            let p0 = perm1[0]
+            for i in ..r {
+                perm1[i] = perm1[i + 1]
+            }
+            perm1[r] = p0
+
+            count[r] -= 1
+            if count[r] > 0 { break }
+            r += 1
+        }
+    }
+
+    max-flips
+}
+
+@bench
+fn fannkuch-bench(n: Int) {
+    for ..n {
+        let result = fannkuch(9)
+        assert(result == 30)
+    }
+}

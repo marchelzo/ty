@@ -1,0 +1,175 @@
+import os
+import time (now)
+import chalk (chalk)
+import json
+import path (Path)
+import clap (clap!)
+
+import lib (
+    run-one,
+    fmt-time,
+    fmt-delta,
+    load-benchmarks,
+    load-results,
+    load-best,
+    save-results,
+    update-best,
+    Result
+)
+
+// ---------------------------------------------------------------------------
+//  CLI
+// ---------------------------------------------------------------------------
+
+/** ty performance suite — run and track benchmarks. */
+clap! PerfRunner {
+    /// Benchmark name filter
+    filter: String, pos: true
+
+    /// Compare with previous and best results
+    compare: Bool, short: 'c'
+
+    /// Don't save results
+    noSave: Bool, short: 'S'
+
+    /// Number of warmup iterations
+    warmup: Int, default: 3, check: 0..100
+
+    /// Number of timed rounds
+    rounds: Int, short: 'n', default: 5, check: 1..100
+}
+
+let RESULTS_FILE = 'perf/results.json'
+let BEST_FILE    = 'perf/best.json'
+
+fn main() {
+    let (opts, _) = PerfRunner.parse()
+
+    let benchmarks = load-benchmarks(Path(__file__).parent / 'benchmarks')
+
+    let running = opts.filter
+        ? benchmarks.filter(\_.name.contains?(opts.filter))
+        : benchmarks
+
+    if #running == 0 {
+        print(chalk"[red bold]No benchmarks matched filter:[/] '{opts.filter}'")
+        let names = benchmarks.map(\_.name).join(', ')
+        print("Available: {names}")
+        os.exit(1)
+    }
+
+    print(chalk"[bold bright cyan]ty performance suite[/]")
+    print(chalk"[dim]{#running} benchmark(s) · {opts.rounds} rounds · {opts.warmup} warmup[/]")
+    print()
+
+    // ---------------------------------------------------------------------------
+    //  Run
+    // ---------------------------------------------------------------------------
+
+    let results: [Result] = []
+    let best = load-best(BEST_FILE)
+
+    let name-width: Int = running.map(\#_.name).max() + 2
+
+    for entry in running {
+        let label = chalk"[bold]{entry.name:{name-width}}[/]"
+        print(chalk"{label} [dim]calibrating...[/]", end='', flush=true)
+
+        let r = run-one(
+            entry.name,
+            entry.run,
+            warmup=opts.warmup,
+            rounds=opts.rounds
+        )
+        results.push(r)
+
+        // Clear the line
+        print("\r\x1b[K", end='')
+
+        let time-str  = fmt-time(r.med)
+        let sd-str    = fmt-time(r.sd)
+
+        // Color relative to all-time best (first run = everything green)
+        let color = if let $b = best[r.name] {
+            let best-med: Float = b['median']
+            let ratio = r.med / best-med
+            if ratio <= 1.02 {
+                'bright green'
+            } else if ratio < 1.10 {
+                'green'
+            } else if ratio < 1.25 {
+                'yellow'
+            } else {
+                'red'
+            }
+        } else {
+            'bright green'
+        }
+
+        print(chalk"{label} [bold {color}]{time-str:>10}[/]/iter [dim]± {sd-str:<8} ({r.iters} iters × {opts.rounds} rounds)[/]")
+    }
+
+    // ---------------------------------------------------------------------------
+    //  Comparison with previous run
+    // ---------------------------------------------------------------------------
+
+    fn print-comparison(title: String, ref-map, results, name-width: Int) {
+        print()
+        print(chalk"[bold bright cyan]{title}[/]")
+        print()
+
+        for r in results {
+            let label = chalk"[bold]{r.name:{name-width}}[/]"
+            if let $old = ref-map[r.name] {
+                let old-med: Float = old['median']
+                let ratio = r.med / old-med
+                let delta = fmt-delta(ratio)
+                let color = if ratio < 0.95 {
+                    'bright green bold'
+                } else if ratio > 1.05 {
+                    'red bold'
+                } else {
+                    'dim'
+                }
+                print(chalk"  {label} {fmt-time(old-med):>10} → {fmt-time(r.med):>10}  [{color}]{delta}[/]")
+            } else {
+                print(chalk"  {label} [dim]no previous data[/]")
+            }
+        }
+    }
+
+    if opts.compare {
+        let prev = load-results(RESULTS_FILE)
+        if prev != nil {
+            let prev-map = %{e['name']: e for e in prev}
+            print-comparison('Comparison with previous run:', prev-map, results, name-width)
+        } else {
+            print(chalk"\n[dim]No previous results to compare against.[/]")
+        }
+    }
+
+    // ---------------------------------------------------------------------------
+    //  Summary
+    // ---------------------------------------------------------------------------
+
+    print()
+    let total = results.map(\_.med).sum()
+    print(chalk"[bold]Total:[/] {fmt-time(total)}")
+
+    // ---------------------------------------------------------------------------
+    //  Save + update best
+    // ---------------------------------------------------------------------------
+
+    if !opts.noSave {
+        save-results(RESULTS_FILE, results)
+        print(chalk"[dim]Results saved to {RESULTS_FILE}[/]")
+    }
+
+    // Compare against all-time best, then update it
+    if #best > 0 {
+        print-comparison('Comparison with all-time best:', best, results, name-width)
+    }
+    update-best(BEST_FILE, results)
+}
+
+main()

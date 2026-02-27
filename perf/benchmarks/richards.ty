@@ -1,0 +1,238 @@
+import super.lib (bench)
+
+// Task IDs
+const I_IDLE = 1
+const I_WORK = 2
+const I_HANDLERA = 3
+const I_HANDLERB = 4
+const I_DEVA = 5
+const I_DEVB = 6
+
+const K_DEV = 1000
+const K_WORK = 1001
+const BUFSIZE = 4
+
+tag Device, Idle, Handler, Worker
+
+class Packet {
+    link:  Packet | nil
+    ident: Int
+    kind:  Int
+    datum: Int
+    data:  [Int]
+
+    init(l: Packet | nil, i: Int, k: Int) {
+        link = l; ident = i; kind = k
+        datum = 0; data = [0, 0, 0, 0]
+    }
+}
+
+fn append-to(pkt: Packet, lst: Packet | nil) -> Packet {
+    pkt.link = nil
+    match lst {
+        $lst => {
+            let p = lst
+            while let $next = p.link { p = next }
+            p.link = pkt
+            lst
+        },
+        _ => pkt
+    }
+}
+
+class TaskState {
+    pp: Bool
+    tw: Bool
+    th: Bool
+
+    init(pp: Bool, tw: Bool, th: Bool) {
+        self.pp = pp; self.tw = tw; self.th = th
+    }
+
+    mark-pending!() { pp = true;  tw = false; th = false }
+    set-running!()  { pp = false; tw = false; th = false }
+}
+
+class Task {
+    link:     Task | nil
+    ident:    Int
+    priority: Int
+    input:    Packet | nil
+    pp:       Bool
+    tw:       Bool
+    th:       Bool
+    kind:     Device | Idle | Handler | Worker
+    rec:      _
+
+    init(l: Task | nil, i: Int, p: Int, w: Packet | nil,
+         state: TaskState, k: _, r: _) {
+        link = l; ident = i; priority = p; input = w
+        pp = state.pp; tw = state.tw; th = state.th
+        kind = k; rec = r
+    }
+
+    waiting-with-packet? -> Bool { pp && tw && !th }
+    holding-or-waiting?  -> Bool { th || (!pp && tw) }
+
+    add-packet(p: Packet, old: Task) -> Task {
+        if input == nil {
+            input = p; pp = true
+            if priority > old.priority { return self }
+        } else {
+            append-to(p, input)
+        }
+        old
+    }
+
+    wait!() -> Task { tw = true; self }
+    set-running!()  { pp = false; tw = false; th = false }
+    mark-pending!() { pp = true;  tw = false; th = false }
+}
+
+class TaskWorkArea {
+    task-list:  Task | nil
+    task-tab:   [Task | nil]
+    hold-count: Int
+    qpkt-count: Int
+
+    init() {
+        task-list = nil
+        task-tab = [nil for ..10]
+        hold-count = 0; qpkt-count = 0
+    }
+
+    new-task(i: Int, p: Int, w: Packet | nil,
+             state: TaskState, kind: _, rec: _) -> Task {
+        let t = Task(task-list, i, p, w, state, kind, rec)
+        task-list = t; task-tab[i] = t; t
+    }
+
+    find(id: Int) -> Task {
+        if not let $t = task-tab[id] { throw "Bad task id" }
+        t
+    }
+}
+
+fn qpkt(t: Task, pkt: Packet, work: TaskWorkArea) -> Task {
+    let target = work.find(pkt.ident)
+    work.qpkt-count += 1
+    pkt.link = nil; pkt.ident = t.ident
+    target.add-packet(pkt, t)
+}
+
+fn hold(t: Task, work: TaskWorkArea) -> Task | nil {
+    work.hold-count += 1; t.th = true; t.link
+}
+
+fn release(t: Task, i: Int, work: TaskWorkArea) -> Task {
+    let target = work.find(i)
+    target.th = false
+    if target.priority > t.priority { target } else { t }
+}
+
+fn device-fn(t: Task, pkt: Packet | nil, work: TaskWorkArea) -> Task | nil {
+    if let $pkt = pkt { t.rec.pending = pkt; return hold(t, work) }
+    if let $p = t.rec.pending { t.rec.pending = nil; return qpkt(t, p, work) }
+    t.wait!()
+}
+
+fn handler-fn(t: Task, pkt: Packet | nil, work: TaskWorkArea) -> Task | nil {
+    let h = t.rec
+    if pkt != nil {
+        if pkt.kind == K_WORK { h.wi = append-to(pkt, h.wi) }
+        else                  { h.di = append-to(pkt, h.di) }
+    }
+
+    if h.wi == nil { return t.wait!() }
+
+    let wp = h.wi
+    if wp.datum >= BUFSIZE { h.wi = wp.link; return qpkt(t, wp, work) }
+    if h.di == nil { return t.wait!() }
+
+    let dev = h.di
+    h.di = dev.link
+    dev.datum = wp.data[wp.datum]
+    wp.datum += 1
+    qpkt(t, dev, work)
+}
+
+fn idle-fn(t: Task, pkt: Packet | nil, work: TaskWorkArea) -> Task | nil {
+    let i = t.rec
+    i.count -= 1
+    if i.count == 0 { return hold(t, work) }
+    if (i.control & 1) == 0 {
+        i.control /= 2
+        release(t, I_DEVA, work)
+    } else {
+        i.control = (i.control / 2) ^ 0xd008
+        release(t, I_DEVB, work)
+    }
+}
+
+fn worker-fn(t: Task, pkt: Packet | nil, work: TaskWorkArea) -> Task | nil {
+    let w = t.rec
+    if pkt == nil { return t.wait!() }
+
+    w.dest = if w.dest == I_HANDLERA { I_HANDLERB } else { I_HANDLERA }
+    pkt.ident = w.dest; pkt.datum = 0
+    for i in 0..BUFSIZE {
+        w.count += 1
+        if w.count > 26 { w.count = 1 }
+        pkt.data[i] = 64 + w.count
+    }
+    qpkt(t, pkt, work)
+}
+
+fn run-task(t: Task, work: TaskWorkArea) -> Task | nil {
+    let msg: Packet | nil = nil
+    if t.waiting-with-packet? {
+        msg = t.input; t.input = msg.link
+        if t.input == nil { t.set-running!() } else { t.mark-pending!() }
+    }
+    match t.kind {
+        Device  => device-fn(t, msg, work),
+        Idle    => idle-fn(t, msg, work),
+        Handler => handler-fn(t, msg, work),
+        Worker  => worker-fn(t, msg, work)
+    }
+}
+
+fn schedule(work: TaskWorkArea) {
+    let t = work.task-list
+    while t != nil {
+        t = if t.holding-or-waiting? { t.link } else { run-task(t, work) }
+    }
+}
+
+fn richards-once() {
+    let work = TaskWorkArea()
+    let running = TaskState(false, false, false)
+    let waiting = TaskState(false, true, false)
+    let ww-pkt  = TaskState(true, true, false)
+
+    work.new-task(I_IDLE, 1, nil, running, Idle, {control: 1, count: 10000})
+
+    let wkq = Packet(Packet(nil, 0, K_WORK), 0, K_WORK)
+    work.new-task(I_WORK, 1000, wkq, ww-pkt, Worker, {dest: I_HANDLERA, count: 0})
+
+    let wkq = Packet(Packet(Packet(nil, I_DEVA, K_DEV), I_DEVA, K_DEV), I_DEVA, K_DEV)
+    work.new-task(I_HANDLERA, 2000, wkq, ww-pkt, Handler, {wi: nil, di: nil})
+
+    let wkq = Packet(Packet(Packet(nil, I_DEVB, K_DEV), I_DEVB, K_DEV), I_DEVB, K_DEV)
+    work.new-task(I_HANDLERB, 3000, wkq, ww-pkt, Handler, {wi: nil, di: nil})
+
+    work.new-task(I_DEVA, 4000, nil, waiting, Device, {pending: nil})
+    work.new-task(I_DEVB, 5000, nil, waiting, Device, {pending: nil})
+
+    schedule(work)
+
+    assert(work.hold-count == 9297)
+    assert(work.qpkt-count == 23246)
+}
+
+@bench
+fn richards-bench(n: Int) {
+    for ..n {
+        richards-once()
+    }
+}
