@@ -6588,7 +6588,11 @@ parse_import(Ty *ty)
                 tok()->tag = TT_MODULE;
                 next();
         } else {
-                s->import.as = s->import.module;
+                char *alias = s->import.module;
+                while (alias[0] == '.' || alias[0] == '/') {
+                        alias++;
+                }
+                s->import.as = alias;
         }
 
         if (

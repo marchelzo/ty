@@ -926,6 +926,13 @@ really_finalize(Ty *ty, Class *c)
                 c->init = v__(c->methods.values, off);
         }
 
+        if (vN(c->offsets_r) > NAMES._free_) {
+                u16 off = v__(c->offsets_r, NAMES._free_);
+                if ((off >> OFF_SHIFT) == OFF_METHOD) {
+                        c->finalizer = v__(c->methods.values, off & OFF_MASK);
+                }
+        }
+
         c->really_final = true;
 }
 
@@ -975,14 +982,6 @@ finalize(Ty *ty, Class *c)
 {
         if (c->final) {
                 return;
-        }
-
-        Value *f = itable_lookup(ty, &c->methods, NAMES._free_);
-        if (f != NULL) {
-                while (f->type == VALUE_REF) {
-                        f = f->ref;
-                }
-                c->finalizer = *f;
         }
 
         class_resolve_all(ty, c->i);

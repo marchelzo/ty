@@ -13011,6 +13011,23 @@ GetModule(Ty *ty, char const *name)
 }
 
 static Module *
+GetModuleByPath(Ty *ty, char const *path)
+{
+        if (path == NULL) {
+                return NULL;
+        }
+
+        for (int i = 0; i < vN(modules); ++i) {
+                Module const *mod = v__(modules, i);
+                if (mod->path != NULL && s_eq(mod->path, path)) {
+                        return (Module *)mod;
+                }
+        }
+
+        return NULL;
+}
+
+static Module *
 GetModuleImport(Ty *ty, Module const *mod, char const *name)
 {
         for (int i = 0; i < vN(mod->imports); ++i) {
@@ -13090,6 +13107,12 @@ load_module(Ty *ty, char const *name, Scope *scope)
         char const *path;
         char *source = slurp_module(ty, name, &path);
 
+        Module *existing = GetModuleByPath(ty, path);
+        if (existing != NULL) {
+                TY_CATCH_END();
+                return existing;
+        }
+
         module = NewModule(ty, name, path, source, scope);
         STATE = freshstate(ty, module);
 
@@ -13153,24 +13176,33 @@ import_module(Ty *ty, Stmt const *s)
 
         for (int i = 0; i < vN(STATE.imports) && !forgive; ++i) {
                 bool collision = s_eq(as, v__(STATE.imports, i).name);
-                bool duplicate = (v__(STATE.imports, i).mod->scope == module_scope);
-
-                if (forgive && (collision || duplicate)) {
+                if (!collision) {
+                        continue;
+                }
+                if (forgive) {
                         vvXi(STATE.imports, i);
                         break;
-                }
-
-                if (collision) {
+                } else {
                         fail("there is already a module imported under the name '%s'", as);
-                }
-
-                if (duplicate) {
-                        fail("the module '%s' has already been imported", name);
                 }
         }
 
         if (module_scope == NULL) {
                 module_scope = load_module(ty, name, NULL)->scope;
+        }
+
+        for (int i = 0; i < vN(STATE.imports); ++i) {
+                if (v__(STATE.imports, i).mod->scope == module_scope) {
+                        if (forgive) {
+                                vvXi(STATE.imports, i);
+                                break;
+                        }
+                        fail(
+                                "the module '%s' has already been imported (as '%s')",
+                                name,
+                                v__(STATE.imports, i).name
+                        );
+                }
         }
 
         char const **identifiers = (char const **)vv(s->import.identifiers);

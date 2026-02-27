@@ -1745,7 +1745,7 @@ mark_generator(Ty *ty, Value const *v)
         for (int i = 0; i < vN(v->gen->st.try_stack); ++i) {
                 struct try *t = v__(v->gen->st.try_stack, i);
                 for (int i = 0; i < vN(t->defer); ++i) {
-                        value_mark(ty, v_(t->defer, i));
+                        MarkNext(ty, v_(t->defer, i));
                 }
         }
 
@@ -1897,7 +1897,7 @@ _value_mark(Ty *ty, Value const *v)
         _value_mark_xd(ty, v);
 
         while (vN(ty->marking) > 0) {
-                v = *vvX(ty->marking);
+                v = vXx(ty->marking);
                 _value_mark_xd(ty, v);
         }
 }
@@ -1905,9 +1905,7 @@ _value_mark(Ty *ty, Value const *v)
 Blob *
 value_blob_new(Ty *ty)
 {
-        Blob *blob = mAo(sizeof *blob, GC_BLOB);
-        vec_init(*blob);
-        return blob;
+        return mAo0(sizeof (Blob), GC_BLOB);
 }
 
 Value
