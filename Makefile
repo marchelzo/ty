@@ -119,7 +119,7 @@ ifdef WITHOUT_OS
 	CFLAGS += -DTY_WITHOUT_OS
 endif
 
-ifdef NSYNC
+ifndef NO_NSYNC
 	CFLAGS += -DTY_USE_NSYNC
 	CFLAGS += -Insync/public
 endif
@@ -129,7 +129,7 @@ NPROC := $(shell nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)
 MAKEFLAGS += -j$(NPROC)
 
 # --- Auto-rebuild on config change ---
-BUILD_SIG := DEBUG=$(DEBUG)|LOG=$(LOG)|JIT=$(JIT)|RELEASE=$(RELEASE)|TDEBUG=$(TDEBUG)|UNSAFE=$(UNSAFE)|LTO=$(LTO)|JEMALLOC=$(JEMALLOC)|TY_PROFILER=$(TY_PROFILER)|DEBUG_NAMES=$(DEBUG_NAMES)|PROFILE_TYPES=$(PROFILE_TYPES)|WITHOUT_OS=$(WITHOUT_OS)|GENPROF=$(GENPROF)|USEPROF=$(USEPROF)|NSYNC=$(NSYNC)
+BUILD_SIG := DEBUG=$(DEBUG)|LOG=$(LOG)|NO_JIT=$(NO_JIT)|RELEASE=$(RELEASE)|TDEBUG=$(TDEBUG)|UNSAFE=$(UNSAFE)|LTO=$(LTO)|JEMALLOC=$(JEMALLOC)|TY_PROFILER=$(TY_PROFILER)|DEBUG_NAMES=$(DEBUG_NAMES)|PROFILE_TYPES=$(PROFILE_TYPES)|WITHOUT_OS=$(WITHOUT_OS)|GENPROF=$(GENPROF)|USEPROF=$(USEPROF)|NO_NSYNC=$(NO_NSYNC)
 BUILD_SIG_FILE := obj/.build_sig
 
 PREV_SIG := $(shell cat $(BUILD_SIG_FILE) 2>/dev/null)
@@ -158,8 +158,8 @@ SOURCES := $(wildcard src/*.c)
 OBJECTS := $(patsubst src/%.c,obj/%.o,$(SOURCES))
 TYLS_OBJECTS := $(patsubst src/%.c,obj/tyls/%.o,$(SOURCES))
 EXTERNAL := libco/libco.o dtoa/dtoa.o libmd/libmd.a
-ifdef NSYNC
-EXTERNAL += nsync/out/libnsync.a
+ifndef NO_NSYNC
+	EXTERNAL += nsync/out/libnsync.a
 endif
 ASSEMBLY := $(patsubst %.c,%.s,$(SOURCES))
 

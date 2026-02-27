@@ -773,11 +773,12 @@ DoGC(Ty *ty)
         NextGCPhase(ty, GC_PHASE_DONE, nRunning);
         EndGC(ty);
 
-        TySpinLockUnlock(&ty->group->Lock);
         TySpinLockUnlock(&ty->group->GCLock);
 
         UnlockThreads(ty, blockedThreads, nBlocked);
         GCLOG("Unlocking ThreadsLock and GCLock. Used = %lld, DeadUsed = %lld", MemoryUsed, ty->group->DeadUsed);
+
+        TySpinLockUnlock(&ty->group->Lock);
 
         GCLOG("Unlocked ThreadsLock and GCLock on thread %llu", TID);
 
@@ -1191,7 +1192,7 @@ CheckFlags(Ty *ty)
         bool signaled = TakePendingSignals();
 
         if (UNLIKELY(GC_IS_WAITING | signaled)) {
-                if (GC_IS_WAITING) {
+                if (GC_IS_WAITING & (ty->GC_OFF_COUNT == 0)) {
                         WaitGC(ty);
                 }
                 if (UNLIKELY(signaled)) {
@@ -2291,7 +2292,7 @@ vm_jit_handle_interrupt(Ty *ty, Value *top)
 {
         vN(STACK) = (top - vv(STACK));
 
-        if (GC_IS_WAITING) {
+        if (GC_IS_WAITING & (ty->GC_OFF_COUNT == 0)) {
                 WaitGC(ty);
         }
 
@@ -5431,13 +5432,11 @@ Top:
 
         case VALUE_OBJECT:
                 if ((vp = class_lookup_method_i(ty, v.class, NAMES._next_)) != NULL) {
+                        push(INTEGER(i));
                         if (exec) {
                                 exec_fn(ty, vp, &v, 1, NULL);
-                                if (top()->type == VALUE_NIL) {
-                                        top()->type = VALUE_NONE;
-                                }
+                                YieldFix(ty);
                         } else {
-                                push(INTEGER(i));
                                 call6t(ty, vp, &v, 1, NULL, next_fix);
                         }
                 } else if ((vp = class_lookup_method_i(ty, v.class, NAMES._iter_)) != NULL) {

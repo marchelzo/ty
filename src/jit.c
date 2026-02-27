@@ -1529,6 +1529,7 @@ typedef struct {
         int self_class_id;  // Class ID for guard checks (-1 if unknown)
 
         int save_sp_stack[16]; // Stack of saved sp values for SAVE_STACK_POS
+        bool save_sp_divergent[16]; // Whether branches caused divergent sp since SAVE_STACK_POS
         int save_sp_top;       // Top of save_sp stack (-1 = empty)
         char const *last_op;   // DEBUG: last opcode name for bail diagnostics
 
@@ -3401,6 +3402,13 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                 if (lbl >= 0) {
                         int target_sp = bc_get_label_sp(ctx, off);
                         if (target_sp >= 0) {
+                                // If we're inside a SAVE_STACK_POS region and the
+                                // branch target has a different sp than the fall-through
+                                // path, the element count between SAVE_STACK_POS and
+                                // ARRAY/DICT/etc. can't be determined statically.
+                                if (ctx->save_sp_top >= 0 && !ctx->dead && target_sp != ctx->sp) {
+                                        ctx->save_sp_divergent[ctx->save_sp_top] = true;
+                                }
                                 ctx->sp = target_sp;
                         }
                         // Restore save_sp state at this label
@@ -4662,7 +4670,9 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                 CASE(SAVE_STACK_POS)
                         // Push current sp onto compile-time save stack
                         if (ctx->save_sp_top >= 15) BAIL("SAVE_STACK_POS stack overflow");
-                        ctx->save_sp_stack[++ctx->save_sp_top] = ctx->sp;
+                        ++ctx->save_sp_top;
+                        ctx->save_sp_stack[ctx->save_sp_top] = ctx->sp;
+                        ctx->save_sp_divergent[ctx->save_sp_top] = false;
                         SAVE_STACK_POS();
                         break;
                 CASE(RESTORE_STACK_POS)
@@ -4693,6 +4703,9 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
 
                 CASE(ARRAY) {
                         if (ctx->save_sp_top < 0) BAIL("ARRAY requires SAVE_STACK_POS");
+                        if (ctx->save_sp_divergent[ctx->save_sp_top]) {
+                                BAIL("ARRAY with divergent stack (conditional elements)");
+                        }
                         int saved = ctx->save_sp_stack[ctx->save_sp_top--];
                         int count = ctx->sp - saved;
                         int base_off = OP_OFF(saved);
@@ -4724,6 +4737,9 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                         i32 idx;
                         BC_READ(idx);
 
+                        if (ctx->save_sp_divergent[ctx->save_sp_top]) {
+                                BAIL("ARRAY_COMPR with divergent stack (conditional elements)");
+                        }
                         int saved = ctx->save_sp_stack[ctx->save_sp_top--];
                         int count = ctx->sp - saved;
 
