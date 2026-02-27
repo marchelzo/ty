@@ -1,0 +1,40 @@
+import super.lib (bench)
+
+fn solve(n: Int) -> Int {
+    let count = 0
+    let cols  = [0 for ..n]
+
+    fn place(row: Int) {
+        if row == n {
+            count += 1
+            return
+        }
+
+        for col in ..n {
+            let ok = true
+            for r in ..row {
+                if cols[r] == col
+                || cols[r] - r == col - row
+                || cols[r] + r == col + row {
+                    ok = false
+                    break
+                }
+            }
+            if ok {
+                cols[row] = col
+                place(row + 1)
+            }
+        }
+    }
+
+    place(0)
+    count
+}
+
+@bench
+fn nqueens(n: Int) {
+    for ..n {
+        let result = solve(10)
+        assert(result == 724)
+    }
+}

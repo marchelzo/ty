@@ -1,0 +1,227 @@
+import time (now)
+import json
+import io
+import path (Path)
+import ty.mod
+
+// ---------------------------------------------------------------------------
+//  Statistics helpers
+// ---------------------------------------------------------------------------
+
+fn median(xs: [Float]) {
+    let sorted = xs.sort()
+    let nn = #sorted
+    if nn % 2 == 0 {
+        (sorted[nn / 2 - 1] + sorted[nn / 2]) / 2.0
+    } else {
+        sorted[nn / 2]
+    }
+}
+
+fn stddev(xs: [Float]) {
+    let m = xs.mean()
+    let variance = xs.map(x -> (x - m) * (x - m)).mean()
+    variance.sqrt
+}
+
+fn percentile(xs: [Float], p: Float) {
+    let sorted = xs.sort()
+    let k = (p / 100.0) * (#sorted - 1)
+    let f = int(k.floor)
+    let c = min(f + 1, #sorted - 1)
+    let d = k - f
+    sorted[f] + d * (sorted[c] - sorted[f])
+}
+
+// ---------------------------------------------------------------------------
+//  Result type
+// ---------------------------------------------------------------------------
+
+pub class Result {
+    name:   String
+    times:  [Float]
+    iters:  Int
+
+    init(name: String, times: [Float], iters: Int = 1) {
+        self.name  = name
+        self.times = times
+        self.iters = iters
+    }
+
+    // Per-iteration times (the meaningful metric)
+    per-iter-times { times.map(t -> t / iters) }
+
+    mean   { times.mean() / iters  }
+    med    { median(per-iter-times) }
+    best   { times.min() / iters   }
+    worst  { times.max() / iters   }
+    sd     { stddev(per-iter-times) }
+    p95    { percentile(per-iter-times, 95.0) }
+    n      { #times }
+
+    to-dict() -> _ {
+        %{
+            'name':   name,
+            'times':  per-iter-times,
+            'iters':  iters,
+            'mean':   mean,
+            'median': med,
+            'min':    best,
+            'max':    worst,
+            'stddev': sd
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+//  Benchmark registry
+// ---------------------------------------------------------------------------
+
+let BENCHMARKS = []
+
+pub fn bench(f) {
+    BENCHMARKS.push({name: f.__name__, run: f})
+    f
+}
+
+pub fn registered() {
+    BENCHMARKS
+}
+
+pub fn load-benchmarks(dir: String | Path) {
+    for Path(dir).glob('*.ty') {
+        ty.mod.load("benchmarks/{it.stem}")
+    }
+
+    return BENCHMARKS
+}
+
+// ---------------------------------------------------------------------------
+//  Runner helpers
+// ---------------------------------------------------------------------------
+
+pub fn calibrate(f, target: Float = 0.5) {
+    let iters = 1
+    while true {
+        let t0 = now()
+        f(iters)
+        let elapsed = now() - t0
+        if elapsed >= target {
+            return iters
+        }
+        iters = if elapsed < 0.01 {
+            iters * 10
+        } else {
+            max(iters + 1, int((iters * target / elapsed).ceil))
+        }
+    }
+    iters
+}
+
+pub fn run-one(
+    name: String,
+    f,
+    warmup:  Int = 3,
+    rounds:  Int = 5,
+    target:  Float = 0.5
+) {
+    // Warmup
+    for ..warmup { f(1) }
+
+    // Calibrate
+    let iters = calibrate(f, target)
+
+    // Timed runs
+    let times: [Float] = []
+    for i in ..rounds {
+        let t0 = now()
+        f(iters)
+        times.push(now() - t0)
+    }
+
+    Result(name, times, iters)
+}
+
+// ---------------------------------------------------------------------------
+//  Formatting helpers
+// ---------------------------------------------------------------------------
+
+pub fn fmt-time(secs) {
+    if secs >= 1.0 {
+        "{secs:.3}s"
+    } else if secs >= 0.001 {
+        "{secs * 1000:.2}ms"
+    } else {
+        "{secs * 1_000_000:.1}us"
+    }
+}
+
+pub fn fmt-delta(ratio: Float) -> String {
+    let pct = (ratio - 1.0) * 100.0
+    if pct.abs < 0.5 {
+        'same'
+    } else if pct > 0 {
+        "+{pct:.1}%"
+    } else {
+        "{pct:.1}%"
+    }
+}
+
+// ---------------------------------------------------------------------------
+//  Persistence (JSON results file)
+// ---------------------------------------------------------------------------
+
+pub fn save-results(path: String, results: [Result]) {
+    let data = [r.to-dict() for r in results]
+    let text = json.encode(data)
+    with f = io.open(path, 'w') {
+        f.write(text)
+    }
+}
+
+pub fn load-results(path: String) {
+    try {
+        json.parse(Path(path).read-text())
+    } catch _ {
+        nil
+    }
+}
+
+// ---------------------------------------------------------------------------
+//  Best-results tracking
+// ---------------------------------------------------------------------------
+
+pub fn load-best(path: String) {
+    try {
+        json.parse(Path(path).read-text())
+    } catch _ {
+        %{}
+    }
+}
+
+pub fn update-best(path: String, results: [Result]) {
+    let best = load-best(path)
+    let updated = false
+
+    for r in results {
+        if let $old = best[r.name] {
+            let old-med: Float = old['median']
+            if r.med < old-med {
+                best[r.name] = r.to-dict()
+                updated = true
+            }
+        } else {
+            best[r.name] = r.to-dict()
+            updated = true
+        }
+    }
+
+    if updated {
+        let text = json.encode(best)
+        with f = io.open(path, 'w') {
+            f.write(text)
+        }
+    }
+
+    best
+}

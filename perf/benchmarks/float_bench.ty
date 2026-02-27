@@ -1,0 +1,46 @@
+import super.lib (bench)
+import math
+
+class Point {
+    x: Float
+    y: Float
+    z: Float
+
+    init(i: Int) {
+        let fi = i.float
+        x = math.sin(fi)
+        y = math.cos(fi) * 3.0
+        let s = math.sin(fi)
+        z = s * s / 2.0
+    }
+
+    normalize!() {
+        let norm = (x * x + y * y + z * z).sqrt
+        x /= norm
+        y /= norm
+        z /= norm
+    }
+
+    maximize!(other: Point) {
+        x = max(x, other.x)
+        y = max(y, other.y)
+        z = max(z, other.z)
+    }
+}
+
+@bench
+fn float-ops(n: Int) {
+    for ..n {
+        let count = 50000
+        let points = [Point(i) for i in ..count]
+
+        for p in points {
+            p.normalize!()
+        }
+
+        let result = points[0]
+        for i in 1..count {
+            result.maximize!(points[i])
+        }
+    }
+}
