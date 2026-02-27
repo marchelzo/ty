@@ -11332,44 +11332,44 @@ emit_expr(Ty *ty, Expr const *e, bool need_loc)
                 break;
 
         case EXPRESSION_STAR_EQ:
-                emit_target(ty, e->target, false);
                 EE(e->value);
+                emit_target(ty, e->target, false);
                 INSN(MUT_MUL);
                 break;
 
         case EXPRESSION_DIV_EQ:
-                emit_target(ty, e->target, false);
                 EE(e->value);
+                emit_target(ty, e->target, false);
                 INSN(MUT_DIV);
                 break;
 
         case EXPRESSION_MOD_EQ:
-                emit_target(ty, e->target, false);
                 EE(e->value);
+                emit_target(ty, e->target, false);
                 INSN(MUT_MOD);
                 break;
 
         case EXPRESSION_MINUS_EQ:
-                emit_target(ty, e->target, false);
                 EE(e->value);
+                emit_target(ty, e->target, false);
                 INSN(MUT_SUB);
                 break;
 
         case EXPRESSION_AND_EQ:
-                emit_target(ty, e->target, false);
                 EE(e->value);
+                emit_target(ty, e->target, false);
                 INSN(MUT_AND);
                 break;
 
         case EXPRESSION_OR_EQ:
-                emit_target(ty, e->target, false);
                 EE(e->value);
+                emit_target(ty, e->target, false);
                 INSN(MUT_OR);
                 break;
 
         case EXPRESSION_XOR_EQ:
-                emit_target(ty, e->target, false);
                 EE(e->value);
+                emit_target(ty, e->target, false);
                 INSN(MUT_XOR);
                 break;
 
@@ -11380,8 +11380,8 @@ emit_expr(Ty *ty, Expr const *e, bool need_loc)
                 break;
 
         case EXPRESSION_SHL_EQ:
-                emit_target(ty, e->target, false);
                 EE(e->value);
+                emit_target(ty, e->target, false);
                 INSN(MUT_SHL);
                 break;
 
@@ -19144,15 +19144,14 @@ TyLoadModule(Ty *ty, char const *name, u32 flags)
         }
 
         TY_IS_READY = false;
-
         if (TY_CATCH_ERROR()) {
                 TY_IS_READY = true;
                 TY_RETHROW();
+        } else {
+                mod = load_module(ty, name, NULL);
+                TY_IS_READY = true;
+                TY_CATCH_END();
         }
-
-        mod = load_module(ty, name, NULL);
-        TY_IS_READY = true;
-        TY_CATCH_END();
 
         return mod;
 }

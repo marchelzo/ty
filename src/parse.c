@@ -6550,15 +6550,20 @@ parse_import(Ty *ty)
 
         consume_kw(IMPORT);
 
+        byte_vector module = {0};
+
+        SCRATCH_SAVE();
+
+        while (try_consume(KEYWORD_SUPER)) {
+                consume('.');
+                sxdf(&module, "../");
+        }
+
         expect(TOKEN_IDENTIFIER);
         char *mod = tok()->module;
         char *id = tok()->identifier;
         tok()->tag = TT_MODULE;
         next();
-
-        SCRATCH_SAVE();
-
-        byte_vector module = {0};
 
         if (mod != NULL) {
                 sxdf(&module, "%s/", mod);
@@ -6632,7 +6637,8 @@ parse_import(Ty *ty)
 
         s->end = TEnd;
 
-        consume('\n');
+        try_consume(';');
+        try_consume('\n');
 
         return s;
 }

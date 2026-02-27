@@ -4188,18 +4188,20 @@ DoMutMod(Ty *ty, bool exec)
 
         switch (p & PMASK3) {
         case 0:
-                if (vp->type == VALUE_OBJECT && (vp2 = class_method(ty, vp->class, "%=")) != NULL) {
-                        gP(vp);
-                        exec_fn(ty, vp2, vp, 1, NULL);
-                        gX();
+                switch (PACK_TYPES(vp->type, top()->type)) {
+                case PAIR_OF(VALUE_INTEGER):
+                        vp->z %= top()->z;
                         pop();
-                } else {
+                        break;
+                default:
                         x = pop();
-                        if ((val = vm_try_2op(ty, OP_MUT_MOD, vp, &x)).type != VALUE_NONE) {
+                        val = vm_try_2op(ty, OP_MUT_MOD, vp, &x);
+                        if (val.type != VALUE_NONE) {
                                 vp = &val;
                         } else {
                                 *vp = vm_2op(ty, OP_MOD, vp, &x);
                         }
+                        break;
                 }
                 xpush(*vp);
                 break;
@@ -4246,18 +4248,34 @@ DoMutMul(Ty *ty, bool exec)
 
         switch (p & PMASK3) {
         case 0:
-                if (vp->type == VALUE_OBJECT && (vp2 = class_method(ty, vp->class, "*=")) != NULL) {
-                        gP(vp);
-                        exec_fn(ty, vp2, vp, 1, NULL);
-                        gX();
+                switch (PACK_TYPES(vp->type, top()->type)) {
+                case PAIR_OF(VALUE_INTEGER):
+                        vp->z *= top()->z;
                         pop();
-                } else {
+                        break;
+                case PAIR_OF(VALUE_REAL):
+                        vp->real *= top()->real;
+                        pop();
+                        break;
+                case PACK_TYPES(VALUE_INTEGER, VALUE_REAL):
+                        vp->type = VALUE_REAL;
+                        vp->real = vp->z;
+                        vp->real *= top()->real;
+                        pop();
+                        break;
+                case PACK_TYPES(VALUE_REAL, VALUE_INTEGER):
+                        vp->real *= top()->z;
+                        pop();
+                        break;
+                default:
                         x = pop();
-                        if ((val = vm_try_2op(ty, OP_MUT_MUL, vp, &x)).type != VALUE_NONE) {
+                        val = vm_try_2op(ty, OP_MUT_MUL, vp, &x);
+                        if (val.type != VALUE_NONE) {
                                 vp = &val;
                         } else {
                                 *vp = vm_2op(ty, OP_MUL, vp, &x);
                         }
+                        break;
                 }
                 xpush(*vp);
                 break;
