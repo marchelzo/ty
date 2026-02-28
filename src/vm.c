@@ -919,6 +919,7 @@ add_builtins(Ty *ty, int ac, char **av)
         BUILTIN_NAMED_VAR("ty",  "tests",          tests     ) = ARRAY(vA());
 
         BUILTIN_VAR("ty",  "executable") = this_executable(ty);
+        BUILTIN_VAR("ty",  "platform")   = xSz(TY_PLATFORM_NAME);
         BUILTIN_VAR("ty",  "color")      = xSz(COLOR_MODE_NAMES[ColorMode]);
 #if defined(_WIN32)
         BUILTIN_VAR("os",  "PAGE_SIZE" ) = INTEGER(4096);
@@ -8361,10 +8362,6 @@ FormatTrace(Ty *ty, ThrowCtx const *ctx, byte_vector *out)
                 if (!InteractiveSession) {
                         WriteExpressionSourceHeading(ty, out, cols, expr);
 
-                        if (expr->origin != NULL) {
-                                WriteExpressionOrigin(ty, out, expr->origin);
-                        }
-
                         Expr const *func;
                         if (
                                 DetailedExceptions
@@ -8442,12 +8439,17 @@ FormatTrace(Ty *ty, ThrowCtx const *ctx, byte_vector *out)
                         } else {
                                 WriteExpressionSourceContext(ty, out, cols, expr, NULL);
                         }
+                } else if (expr->origin != NULL) {
+                        WriteExpressionTrace(ty, out, expr->origin, -1, i == 0);
+                        WriteExpressionOrigin(ty, out, expr);
                 } else {
                         WriteExpressionTrace(ty, out, expr, -1, i == 0);
-                        if (expr->origin != NULL) {
-                                WriteExpressionOrigin(ty, out, expr->origin);
-                        }
                 }
+        }
+
+        if (vN(*out) == 0) {
+                xvP(*out, '\0');
+                vXx(*out);
         }
 
         return vv(*out);
@@ -9167,19 +9169,50 @@ FlipGC_EVERY_ALLOC(int _)
 }
 #endif
 
-static int
+int
 RunTests(Ty *ty)
 {
-        Symbol *_run = compiler_lookup(ty, "ty/test", "run");
-        if (_run == NULL) {
-                zP("internal error: ty was run with --test but ty.test is not loaded");
+        int fail = 0;
+
+        for (usize i = 0; i < vN(xD.tests); ++i) {
+                TyTest const *test = v_(xD.tests, i);
+                Value fun = v__(Globals, test->var->i);
+                if (TY_CATCH_ERROR()) {
+                        char *trace = FormatTrace(ty, NULL, NULL);
+                        Value   exc = TY_CATCH();
+                        fprintf(
+                                stderr,
+                                "%sFAIL%s %s%-32s%s\n%s\n%s\n",
+                                TERM(91;1),
+                                TERM(0),
+                                TERM(93),
+                                test->name,
+                                TERM(0),
+                                trace,
+                                VSC(&exc)
+                        );
+                        fail += 1;
+                } else {
+                        u64 t0 = TyMonotonicTime();
+                        exec_fn(ty, &fun, NULL, 0, NULL);
+                        u64 t1 = TyMonotonicTime();
+                        fprintf(
+                                stderr,
+                                "%sPASS%s %s%-32s%s %s(%.2fms)%s\n",
+                                TERM(92),
+                                TERM(0),
+                                TERM(93),
+                                test->name,
+                                TERM(0),
+                                TERM(90),
+                                (t1 - t0) / 1.0e6,
+                                TERM(0)
+                        );
+                        TY_CATCH_END();
+                }
         }
 
-        Value run = v__(Globals, _run->i);
-
-        exec_fn(ty, &run, NULL, 0, NULL);
-
-        return (int)pop().z;
+        return (fail == 0) ? 0 : 1;
 }
 
 bool
@@ -9381,10 +9414,6 @@ vm_execute(Ty *ty, char const *source, char const *file)
         if (PrintResult && vC(STACK) > 0) {
                 vN(STACK) += 1;
                 printf("%s\n", VSC(top()));
-        }
-
-        if (RunningTests) {
-                RunTests(ty);
         }
 
 #if defined(TY_GC_STATS)

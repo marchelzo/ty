@@ -84,6 +84,7 @@ extern char **environ;
 #include "tags.h"
 #include "value.h"
 #include "parse.h"
+#include "highlight.h"
 #include "vm.h"
 #include "log.h"
 #include "xd.h"
@@ -9184,7 +9185,7 @@ BUILTIN_FUNCTION(ty_get_source)
                 "start", make_location(ty, &src->start),
                 "end",   make_location(ty, &src->end),
                 "file",  file,
-                "mod",   (src->mod != NULL) ? xSz(src->mod->name) : NIL,
+                "mod",   (src->mod != NULL) ? MODULE(src->mod) : NIL,
                 "prog",  xSz(src->start.s - src->start.byte),
                 "src",   xSs(src->start.s, src->end.s - src->start.s)
         );
@@ -9394,6 +9395,79 @@ BUILTIN_FUNCTION(parse_show)
         int n = src->end.s - src->start.s;
 
         return vSs(src->start.s, n);
+}
+
+BUILTIN_FUNCTION(parse_highlight)
+{
+        ASSERT_ARGC("ty.parse.highlight()", 1, 3);
+
+        Value theme = KWARG("theme", STRING);
+
+        char const *palette = !IsMissing(theme) ? TY_TMP_C_STR(theme) : NULL;
+        bool ok = false;
+        byte_vector text = {0};
+
+        Value result = NIL;
+
+        SCRATCH_SAVE();
+
+        if (argc == 1) {
+                Value expr = ARG(0);
+                Expr const *src = (expr.type == VALUE_PTR)     ? expr.ptr
+                                : (expr.type == VALUE_INTEGER) ? source_lookup(ty, expr.z)
+                                :                                source_lookup(ty, expr.src);
+                if (src != NULL) {
+                        ok = syntax_highlight(
+                                ty,
+                                &text,
+                                src->mod,
+                                src->start.byte,
+                                src->end.byte,
+                                NULL,
+                                palette
+                        );
+                }
+        } else {
+                Module *mod = ARGx(0, VALUE_MODULE).mod;
+                usize start = INT_ARG(1);
+                usize end   = INT_ARG(2);
+                ok = syntax_highlight(ty, &text, mod, start, end, NULL, palette);
+        }
+
+        if (ok) {
+                result = vSs(vv(text), vN(text));
+        }
+
+        SCRATCH_RESTORE();
+
+        return result;
+}
+
+BUILTIN_FUNCTION(parse_raw)
+{
+        ASSERT_ARGC("ty.parse.raw()", 1);
+
+        Value expr = ARG(0);
+
+        Expr const *src = (expr.type == VALUE_PTR)
+                        ? expr.ptr
+                        : source_lookup(ty, expr.src);
+
+        if (src == NULL) {
+                return NIL;
+        }
+
+        if (src->type < EXPRESSION_MAX_TYPE) {
+                return TAGGED(TyExpr, PTR(src));
+        } else {
+                return TAGGED(TyStmt, PTR(src));
+        }
+}
+
+BUILTIN_FUNCTION(parse_ast)
+{
+        ASSERT_ARGC("ty.parse.ast()", 1);
+        return CToTyExpr(ty, PTR_ARG(0));
 }
 
 BUILTIN_FUNCTION(parse_fail)

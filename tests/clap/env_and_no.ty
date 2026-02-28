@@ -1,0 +1,19 @@
+import clap (clap!)
+
+ns test
+
+clap! Args {
+    verbose: Bool, long: 'verbose', env: 'MYAPP_VERBOSE'
+    output: String, long: 'output', required: true
+    color: Bool, long: 'color'
+}
+
+pub fn clap-env-and-no() {
+    setenv('MYAPP_VERBOSE', 'true')
+    let argv = ['prog', '--output', 'out.txt', '--no-color']
+    let (opts, rest) = Args.parse(argv)
+    assert(opts.verbose == true)
+    assert(opts.color == false)
+    assert(opts.output == 'out.txt')
+    assert(#rest == 0)
+}

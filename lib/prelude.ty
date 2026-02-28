@@ -610,7 +610,7 @@ class Array[T] : Iterable[T] {
 
     flat(n: ?Int) -> __flat-array!(T);
 
-    flatMap(f) {
+    flatMap[U](f: T -> Array[U]) -> Array[U] {
         map(f).flat(1)
     }
 
@@ -3443,7 +3443,9 @@ class Thread[T] {
     }
 }
 
-macro static!(e) = $${ty.eval(e)} as (typeof $$e)
+macro static!(e) = do {
+    $${ty.eval(e)} as (typeof $$e)
+}
 
 macro print!(*xs) {
     let xs = ty.Array([ty.ArrayItem(item: x) for x in xs])
@@ -4446,8 +4448,16 @@ fn memoized[F](fun: F, max: Int = nil) -> F {
     __eval__(ty.Func({name: fun.__name__, params, body}))
 }
 
-macro assert2(condition, message) {
-    let condition-str = ty.String(parse.show(condition))
+macro assert(condition, message) {
+    let color? = (getenv('NO_COLOR') == nil) && (ty.color != 'never')
+
+    fn pretty-expr(expr) {
+        let {mod, start: {byte: i, *}, end: {byte: j, *}, *} = ty.get-source(expr)
+        color? ? $$[ $$::(parse.highlight)($${mod}, $${i}, $${j}) $$]
+               : ty.String(parse.show(expr))
+    }
+
+    let pretty-cond = pretty-expr(condition)
 
     let (op, lhs, rhs) = match condition {
         ty.Eq(a, b)      => (ty.Eq,      a, b),
@@ -4477,55 +4487,44 @@ macro assert2(condition, message) {
 
         let chalk? = ty.IfDef(name: 'chalk', module: 'chalk')
 
+        let pretty-lhs = pretty-expr(lhs)
+        let pretty-rhs = pretty-expr(rhs)
+
         ty.Block([
             ty.Let(lhs-var, lhs),
             ty.Let(rhs-var, rhs),
-            $$[ if !$$cond {
+            $$[
+                if !$$cond {
                     let what = match $$chalk? {
-                            Some(chalk) => do {
-                                let __loc = chalk"[bright yellow]{__file__}[/]"
-                                                 "{__class__ ? chalk":[magenta]{__class__.__name__}[/]" : ''}"
-                                                 "[green]{__func__ ? "[{__func__}]" : ''}[/]:"
-                                                 "[bright blue]{__line__}[/]"
-
-                                chalk"[bright red b]Assertion failed[/] at {__loc}: [bright red]{$$msg}[/]\n"
-                                     "  [uc-#f00][u]{$$condition-str}[/][/]\n"
-                                     "    [magenta]lhs[/]: {$$show($$lhs-var)}\n"
-                                     "    [magenta]rhs[/]: {$$show($$rhs-var)}"
-                            },
-                            None => do {
-                                let __loc = "{__file__}:"
-                                            "{__class__ ? "{__class__}." : ''}"
-                                            "{__func__ ?? '(top)'}:"
-                                            "{__line__}";
-                                "Assertion failed at {__loc}:{$$msg}\n"
-                                "  {$$condition-str}\n"
-                                "    lhs: {$$show($$lhs-var)}\n"
-                                "    rhs: {$$show($$rhs-var)}"
-                            }
+                        Some(chalk) => do {
+                            chalk"[red b]failed assertion[/]: {$$pretty-cond}{$$msg}\n"
+                                 "    [%20]{$$pretty-lhs}[/]: {$$show($$lhs-var)}\n"
+                                 "    [%20]{$$pretty-rhs}[/]: {$$show($$rhs-var)}"
+                        },
+                        None => do {
+                            "assertion failed: {$$pretty-cond}{$$msg}\n"
+                            "    lhs: {$$show($$lhs-var)}\n"
+                            "    rhs: {$$show($$rhs-var)}"
                         }
+                    }
                     throw AssertionError("{what}")
                 }
             $$]
         ])
-    } else {
-        $$[
-            if !$$condition {
-                let __loc = "{__file__}:"
-                          "{__class__ ? "{__class__}." : ''}"
-                          "{__func__ ?? '(top)'}:"
-                          "{__line__}";
-                throw AssertionError(
-                    "Assertion failed at {__loc}: {$$condition-str}{$$msg}"
-                )
-            }
-        $$]
+    } else $$[
+        if !$$condition {
+            throw AssertionError("assertion failed: {$$pretty-cond}{$$msg}")
+        }
+    $$]
+}
+
+fn assert2(cond: Any, msg: String = 'assertion failed') -> _ {
+    if !cond {
+        throw AssertionError(msg)
     }
 }
 
-macro assert(cond) = if !$$cond { die("Assertion failed: {$${parse.show(cond)}}") }
-
-macro unreachable! = assert(false, 'unreachable')
+macro unreachable! = throw AssertionError('unreachable')
 
 class PatchGuard {
     __restore: _
@@ -4626,15 +4625,6 @@ class Mock {
         (args, tuple(**kwargs)) in __calls
     }
 }
-
-#|if ty.TEST
-fn test[F](fun: F) -> F {
-    ty.tests.push(fun)
-    fun
-}
-#|else
-macro test(fun) { ty.Func({name: (#fun).name, params: [], rt: ty.Nil, body: ty.Nil}) }
-#|]
 
 operator **   10 right
 operator :>   5  left

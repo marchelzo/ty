@@ -275,6 +275,7 @@ typedef struct ParserState {
         bool comments;
 
         Namespace *CurrentNamespace;
+        int ns_test;
 
         Expr *CurrentTemplate;
 
@@ -322,6 +323,7 @@ static Expr NullExpr = {
 
 #define CtxCheckpoint     (state.CtxCheckpoint)
 #define CurrentNamespace  (state.CurrentNamespace)
+#define TestNamespace     (state.ns_test)
 #define CurrentTemplate   (state.CurrentTemplate)
 #define TEnd              (state.TEnd)
 #define EEnd              (state.EEnd)
@@ -1122,21 +1124,58 @@ End:
 inline static Namespace *
 PushNS(Ty *ty, char *id, bool pub)
 {
+        if (s_eq(id, "test")) {
+                TestNamespace += 1;
+        }
+
         Namespace *ns = amA(sizeof *ns);
         ns->id = id;
         ns->pub = pub;
         ns->braced = true;
+        ns->test = (TestNamespace > 0);
         ns->next = CurrentNamespace;
 
-        (void)GetNamespace(ty, ns);
+        CompilerEnterNS(ty, ns);
 
-        return CurrentNamespace = ns;
+        return (CurrentNamespace = ns);
 }
 
 inline static void
 PopNS(Ty *ty)
 {
+        if (s_eq(CurrentNamespace->id, "test")) {
+                TestNamespace -= 1;
+        }
+
+        CompilerLeaveNS(ty);
+
         CurrentNamespace = CurrentNamespace->next;
+}
+
+static void
+SetNamespace(Stmt *s, Namespace *ns)
+{
+        if (!IsExpr(s)) {
+                s->ns = ns;
+        }
+
+        switch (s->type) {
+        case STATEMENT_EXPRESSION:
+                if (s->expression->type == EXPRESSION_STATEMENT) {
+                        SetNamespace(s->expression->statement, ns);
+                }
+                break;
+
+        case STATEMENT_MULTI:
+                for (int i = 0; i < vN(s->statements); ++i) {
+                        SetNamespace(v__(s->statements, i), ns);
+                }
+                break;
+
+        case EXPRESSION_STATEMENT:
+                SetNamespace(((Expr *)s)->statement, ns);
+                break;
+        }
 }
 
 inline static bool
@@ -1693,7 +1732,7 @@ extend_string(Ty *ty, Expr *s)
              || (T0 == '"')
              || (
                         (T0 == TOKEN_IDENTIFIER)
-                     && is_macro(ty, tok()->module, tok()->identifier)
+                     && IsMacroName(ty, tok()->module, tok()->identifier)
                 )
         ) {
                 Expr *s2 = parse_expr(ty, 999);
@@ -1955,7 +1994,7 @@ prefix_identifier(Ty *ty)
 
         consume(TOKEN_IDENTIFIER);
 
-        if (is_macro(ty, e->module, e->identifier)) {
+        if (IsMacro(ty, e)) {
                 Expr *expanded;
                 v_(tokens, i_id)->tag = TT_MACRO;
                 if (TY_CATCH_ERROR()) {
@@ -1972,7 +2011,14 @@ prefix_identifier(Ty *ty)
                         );
                         TyClearError(ty);
                 } else {
-                        expanded = typarse(ty, e, NULL, &e->start, &token(-1)->end);
+                        expanded = typarse(
+                                ty,
+                                e,
+                                NULL,
+                                &e->start,
+                                &token(-1)->end
+                        );
+                        SetNamespace((Stmt *)expanded, CurrentNamespace);
                         TY_CATCH_END();
                 }
                 return expanded;
@@ -2216,8 +2262,7 @@ Body:
         if (T0 == ';') {
                 next();
                 e->body = NULL;
-        } else if (T0 == TOKEN_EQ && type == KEYWORD_MACRO) {
-                next();
+        } else if (type == KEYWORD_MACRO && try_consume('=')) {
                 e->body = to_stmt(parse_expr_template(ty));
         } else {
                 if (CatchError()) {
@@ -2486,22 +2531,20 @@ patternize(Ty *ty, Expr *e);
 static Expr *
 next_pattern(Ty *ty)
 {
-        SAVE_NE(true);
-        SAVE_NC(false);
+        Expr *pat;
 
-        Expr *p = parse_expr(ty, 0);
-        p->end = TEnd;
-
-        if (false && p->type == EXPRESSION_IDENTIFIER && T0 == ':') {
-                next();
-                p->constraint = parse_expr(ty, 0);
-                p->constraint->end = TEnd;
+        if (try_consume(KEYWORD_ELSE)) {
+                pat = &WildCard;
+        } else {
+                SAVE_NE(true);
+                SAVE_NC(false);
+                pat = parse_expr(ty, 0);
+                pat->end = TEnd;
+                LOAD_NC();
+                LOAD_NE();
         }
 
-        LOAD_NC();
-        LOAD_NE();
-
-        return patternize(ty, p);
+        return patternize(ty, pat);
 }
 
 static Expr *
@@ -2510,22 +2553,15 @@ parse_pattern(Ty *ty)
         Expr *pattern = next_pattern(ty);
 
         if (T0 == ',') {
-                Expr *p = mkexpr(ty);
-
-                p->type = EXPRESSION_CHOICE_PATTERN;
-                p->start = pattern->start;
-
-                vec_init(p->es);
-                avP(p->es, pattern);
-
-                while (T0 == ',') {
-                        next();
-                        avP(p->es, next_pattern(ty));
+                Expr *choices = mkexpr(ty);
+                choices->type = EXPRESSION_CHOICE_PATTERN;
+                choices->start = pattern->start;
+                avP(choices->es, pattern);
+                while (try_consume(',')) {
+                        avP(choices->es, next_pattern(ty));
                 }
-
-                p->end = (*vvL(p->es))->end;
-
-                pattern = p;
+                choices->end = v_L(choices->es)->end;
+                pattern = choices;
         }
 
         return pattern;
@@ -2543,7 +2579,7 @@ make_with(Ty *ty, Expr *e, StmtVec defs, Stmt *body)
         try->try.finally = mkstmtx(DROP);
 
         Stmt *s = mkstmtx(MULTI);
-        avPn(s->statements, defs.items, defs.count);
+        avPv(s->statements, defs);
         avP(s->statements, try);
         e->with.block = s;
 
@@ -2598,8 +2634,7 @@ prefix_with(Ty *ty)
                 def->pub = false;
                 def->value = mkxpr(ENTER);
 
-                if (T0 == TOKEN_EQ) {
-                        next();
+                if (try_consume('=')) {
                         def->target = definition_lvalue(ty, e);
                         def->value->operand = parse_expr(ty, 0);
                 } else {
@@ -4315,25 +4350,6 @@ infix_member_access(Ty *ty, Expr *left)
                 e->type = EXPRESSION_DYN_MEMBER_ACCESS;
         } else {
                 e->member = parse_member(ty);
-#if 0
-                if (is_fun_macro(ty, NULL, e->member->identifier)) {
-                        Expr *call = infix_function_call(ty, e->member);
-                        avI(call->args, left, 0);
-                        avI(call->fconds, NULL, 0);
-                        return call;
-                }
-
-                if (is_macro(ty, NULL, e->member->identifier)) {
-                        TagTokenOf(ty, e->member, TT_MACRO);
-                        return typarse(
-                                ty,
-                                e->member,
-                                left,
-                                &e->member->start,
-                                &e->member->end
-                        );
-                }
-#endif
                 TagTokenOf(ty, e->member, TT_MEMBER);
         }
 
@@ -4489,14 +4505,12 @@ infix_kw_or(Ty *ty, Expr *left)
         Expr *e = mkexpr(ty);
 
         e->type = EXPRESSION_CHOICE_PATTERN;
-        vec_init(e->es);
 
         avP(e->es, left);
 
-        do {
-                next();
+        while (try_consume(KEYWORD_OR)) {
                 avP(e->es, parse_expr(ty, 1));
-        } while (have_kw(OR));
+        }
 
         e->start = left->start;
         e->end = TEnd;
@@ -4588,11 +4602,11 @@ infix_conditional(Ty *ty, Expr *left)
         if (T0 != ':') {
                 e->then = parse_expr(ty, 2);
                 consume(':');
-                e->otherwise = parse_expr(ty, 2);
+                e->_else = parse_expr(ty, 2);
         } else {
                 consume(':');
                 e->then = parse_expr(ty, 2);
-                e->otherwise = mkxpr(NIL);
+                e->_else = mkxpr(NIL);
         }
         LOAD_NC();
 
@@ -5428,8 +5442,7 @@ parse_condpart(Ty *ty)
         p->target = NULL;
         p->def = false;
 
-        if (have_kw(LET)) {
-                next();
+        if (try_consume(KEYWORD_LET)) {
                 p->def = true;
                 p->target = parse_definition_lvalue(ty, LV_LET, NULL);
                 consume(TOKEN_EQ);
@@ -5443,8 +5456,7 @@ parse_condpart(Ty *ty)
         Expr *e = parse_expr(ty, 0);
         LOAD_NE();
 
-        if (T0 == TOKEN_EQ) {
-                next();
+        if (try_consume('=')) {
                 p->target = e;
                 p->e = parse_expr(ty, -1);
         } else {
@@ -5457,8 +5469,7 @@ parse_condpart(Ty *ty)
 static condpart_vector
 parse_condparts(Ty *ty, bool neg)
 {
-        condpart_vector parts;
-        vec_init(parts);
+        condpart_vector parts = {0};
 
         SAVE_NA(true);
 
@@ -5515,20 +5526,20 @@ parse_while(Ty *ty)
 
         consume_kw(WHILE);
 
-        vec_init(s->While.parts);
+        vec_init(s->_while.parts);
 
         SAVE_NA(true);
 
-        avP(s->While.parts, parse_condpart(ty));
+        avP(s->_while.parts, parse_condpart(ty));
 
         while (have_kw(AND)) {
                 next();
-                avP(s->While.parts, parse_condpart(ty));
+                avP(s->_while.parts, parse_condpart(ty));
         }
 
         LOAD_NA();
 
-        s->While.block = parse_block(ty);
+        s->_while.block = parse_block(ty);
 
         s->end = TEnd;
 
@@ -5544,15 +5555,15 @@ parse_if(Ty *ty)
 
         consume_kw(IF);
 
-        s->iff.neg = try_consume(KEYWORD_NOT);
-        s->iff.parts = parse_condparts(ty, s->iff.neg);
-        s->iff.then = parse_statement(ty, -1);
+        s->_if.neg   = try_consume(KEYWORD_NOT);
+        s->_if.parts = parse_condparts(ty, s->_if.neg);
+        s->_if.then  = parse_statement(ty, -1);
 
         if (have_kw(ELSE)) {
                 next();
-                s->iff.otherwise = parse_statement(ty, -1);
+                s->_if._else = parse_statement(ty, -1);
         } else {
-                s->iff.otherwise = NULL;
+                s->_if._else = NULL;
         }
 
         s->end = TEnd;
@@ -5719,8 +5730,7 @@ parse_let_definition(Ty *ty)
         Stmt *s = mkstmt(ty);
         s->type = STATEMENT_DEFINITION;
 
-        if (K0 == KEYWORD_CONST) {
-                next();
+        if (try_consume(KEYWORD_CONST)) {
                 s->cnst = true;
         } else {
                 expect_one_of(KEYWORD_LET, KEYWORD_WHERE);
@@ -5742,7 +5752,22 @@ parse_let_definition(Ty *ty)
 
         s->end = TEnd;
 
-        if (T0 == ';') {
+        if (try_consume(KEYWORD_OR)) {
+                struct condpart *let = amA(sizeof *let);
+                let->target = s->target;
+                let->e      = s->value;
+                let->def    = true;
+                Stmt *_if = mkstmtx(IF);
+                _if->_if.then  = parse_statement(ty, -1);
+                _if->_if._else = NULL;
+                _if->_if.neg   = true;
+                avP(_if->_if.parts, let);
+                _if->start = s->start;
+                _if->end   = TEnd;
+                s = _if;
+        }
+
+        while (T0 == ';') {
                 next();
         }
 
@@ -5775,15 +5800,10 @@ try_conditional_from(Ty *ty, Stmt *s)
 
                 Stmt *if_ = mkstmt(ty);
                 if_->type = STATEMENT_IF;
-                if_->iff.neg = have_kw(NOT);
-
-                if (if_->iff.neg) {
-                        next();
-                }
-
-                if_->iff.parts = parse_condparts(ty, if_->iff.neg);
-                if_->iff.then = s;
-                if_->iff.otherwise = NULL;
+                if_->_if.neg = try_consume(KEYWORD_NOT);
+                if_->_if.parts = parse_condparts(ty, if_->_if.neg);
+                if_->_if.then = s;
+                if_->_if._else = NULL;
 
                 s = if_;
         }
@@ -6484,10 +6504,9 @@ parse_try(Ty *ty)
         consume_kw(TRY);
 
         if (T0 != '{') {
-                s->try.s = mkstmt(ty);
-                s->try.s->type = STATEMENT_IF;
-                s->try.s->iff.neg = true;
-                s->try.s->iff.parts = parse_condparts(ty, false);
+                s->try.s = mkstmtx(IF);
+                s->try.s->_if.neg = true;
+                s->try.s->_if.parts = parse_condparts(ty, false);
 
                 while (have_kw(CATCH)) {
                         next();
@@ -6497,21 +6516,20 @@ parse_try(Ty *ty)
                         avP(s->try.handlers, parse_statement(ty, -1));
                 }
 
-                Stmt *otherwise;
+                Stmt *_else;
 
-                if (have_kws(OR, ELSE)) {
-                        skip(2);
-                        otherwise = parse_statement(ty, -1);
+                if (try_consume(KEYWORD_ELSE)) {
+                        _else = parse_statement(ty, -1);
                 } else {
-                        otherwise = mkstmt(ty);
-                        otherwise->type = STATEMENT_NULL;
+                        _else = mkstmt(ty);
+                        _else->type = STATEMENT_NULL;
                 }
 
-                s->try.s->iff.then = otherwise;
-                s->try.s->iff.otherwise = NULL;
+                s->try.s->_if.then  = _else;
+                s->try.s->_if._else = NULL;
 
                 avP(s->try.patterns, &WildCard);
-                avP(s->try.handlers, otherwise);
+                avP(s->try.handlers, _else);
 
                 s->try.finally = NULL;
 
@@ -6775,23 +6793,6 @@ parse_statement(Ty *ty, int prec)
         //}
 
         return stmt;
-}
-
-static void
-SetNamespace(Stmt *s, Namespace *ns)
-{
-        s->ns = ns;
-
-        if (
-                (s->type == STATEMENT_EXPRESSION)
-             && (s->expression->type == EXPRESSION_STATEMENT)
-        ) {
-                SetNamespace(s->expression->statement, ns);
-        } else if (s->type == STATEMENT_MULTI) {
-                for (int i = 0; i < vN(s->statements); ++i) {
-                        SetNamespace(v__(s->statements, i), ns);
-                }
-        }
 }
 
 static void
@@ -7124,16 +7125,18 @@ parse_ex(
 
                 SetNamespace(s, CurrentNamespace);
 
-                if (TY_CATCH_ERROR()) {
-                        (void)TY_CATCH();
-                        TyClearError(ty);
-                        UnresolveExpr(ty, (Expr *)s);
-                } else {
-                        define_top(ty, s, doc);
-                        TY_CATCH_END();
+                bool skip = TestNamespace && !RunningTests;
+                if (!skip) {
+                        if (TY_CATCH_ERROR()) {
+                                TY_CATCH();
+                                TyClearError(ty);
+                                UnresolveExpr(ty, (Expr *)s);
+                        } else {
+                                define_top(ty, s, doc);
+                                TY_CATCH_END();
+                        }
+                        avP(program, s);
                 }
-
-                avP(program, s);
 
 #ifdef TY_DEBUG_NAMES
                 pns(s->ns, true);

@@ -4,324 +4,189 @@ import io
 import errno
 import time
 
-// ============================================================
-// Test: os.read with all=true should not overflow buffer
-// Bug: read() was always requesting n bytes instead of n-n_read
-// ============================================================
-fn test_os_read_all() {
-    let (r, w) = os.pipe()!
+ns test
 
-    // Write 100 bytes in small chunks to force multiple read() iterations
+pub fn test-os-read-all() {
+    let (r, w) = os.pipe()!
     let data = Blob()
     for i in ..100 {
         data.push(i % 256)
     }
     os.write(w, data)
     os.close(w)
-
-    // Read with all=true, requesting exactly 100 bytes
     let result = os.read(r, 100, all: true)
     os.close(r)
-
     if result == nil {
         throw "os.read returned nil"
     }
-
-    assert(#result == 100, "expected 100 bytes, got {#result}")
-
+    assert(#result == 100)
     for i in ..100 {
-        assert(result[i] == i % 256, "byte {i}: expected {i % 256}, got {result[i]}")
+        assert(result[i] == i % 256)
     }
 }
 
-// ============================================================
-// Test: os.read with all=true and pre-existing blob
-// ============================================================
-fn test_os_read_all_into_blob() {
+pub fn test-os-read-all-into-blob() {
     let (r, w) = os.pipe()!
-
     let data = Blob()
     for i in ..200 {
         data.push(i % 256)
     }
     os.write(w, data)
     os.close(w)
-
     let buf = Blob()
     let n = os.read(r, buf, 200, all: true)
     os.close(r)
-
-    assert(n == 200, "expected 200, got {n}")
-    assert(#buf == 200, "blob len: expected 200, got {#buf}")
-
+    assert(n == 200)
+    assert(#buf == 200)
     for i in ..200 {
-        assert(buf[i] == i % 256, "byte {i}: expected {i % 256}, got {buf[i]}")
+        assert(buf[i] == i % 256)
     }
 }
 
-// ============================================================
-// Test: stdio.writeSigned / stdio.readSigned (2-arg form)
-// Bug: 2-arg form did x = ARG(3) instead of ARG(1) — OOB access
-// ============================================================
-fn test_stdio_write_read_signed() {
+pub fn test-stdio-write-read-signed() {
     let (fd, path) = os.mktemp()!
     os.close(fd)
-
     let f = stdio.fdopen(os.open(path, os.O_RDWR), 'w+')
-    assert(f != nil, "fdopen failed")
-
-    // 2-arg form: writeSigned(file, value) — was crashing
+    assert(f != nil)
     stdio.writeSigned(f, 42)
     stdio.fflush(f)
-    stdio.fseek(f, 0, 0)  // SEEK_SET
-
+    stdio.fseek(f, 0, 0)
     let val = stdio.readSigned(f)
-    assert(val == 42, "expected 42, got {val}")
-
-    // 3-arg form: writeSigned(file, size, value)
+    assert(val == 42)
     stdio.fseek(f, 0, 0)
     stdio.writeSigned(f, 1, -5)
     stdio.fflush(f)
     stdio.fseek(f, 0, 0)
-
     let val2 = stdio.readSigned(f, 1)
-    assert(val2 == -5, "expected -5, got {val2}")
-
+    assert(val2 == -5)
     stdio.fclose(f)
     os.unlink(path)
 }
 
-// ============================================================
-// Test: stdio.writeUnsigned / stdio.readUnsigned (2-arg form)
-// Bug: 2-arg form did x = ARG(3) instead of ARG(1) — OOB access
-// ============================================================
-fn test_stdio_write_read_unsigned() {
+pub fn test-stdio-write-read-unsigned() {
     let (fd, path) = os.mktemp()!
     os.close(fd)
-
     let f = stdio.fdopen(os.open(path, os.O_RDWR), 'w+')
-    assert(f != nil, "fdopen failed")
-
-    // 2-arg form: writeUnsigned(file, value) — was crashing
+    assert(f != nil)
     stdio.writeUnsigned(f, 255)
     stdio.fflush(f)
     stdio.fseek(f, 0, 0)
-
     let val = stdio.readUnsigned(f)
-    assert(val == 255, "expected 255, got {val}")
-
+    assert(val == 255)
     stdio.fclose(f)
     os.unlink(path)
 }
 
-// ============================================================
-// Test: stdio.fwrite with blob should respect len argument
-// Bug: blob case was using vN(*blob) instead of computed len
-// ============================================================
-fn test_stdio_fwrite_blob_len() {
+pub fn test-stdio-fwrite-blob-len() {
     let (fd, path) = os.mktemp()!
     os.close(fd)
-
     let f = stdio.fdopen(os.open(path, os.O_RDWR), 'w+')
-    assert(f != nil, "fdopen failed")
-
+    assert(f != nil)
     let data = Blob()
     for i in ..10 {
-        data.push(65 + i)  // ABCDEFGHIJ
+        data.push(65 + i)
     }
-
-    // Write only first 5 bytes
     let written = stdio.fwrite(f, data, 5)
-    assert(written == 5, "expected 5, got {written}")
-
+    assert(written == 5)
     stdio.fflush(f)
     stdio.fseek(f, 0, 0)
-
     let result = stdio.fread(f, 100) ?? throw "fread returned nil"
-    assert(#result == 5, "expected 5 bytes, got {#result}")
-
+    assert(#result == 5)
     for i in ..5 {
-        assert(result[i] == 65 + i, "byte {i}: expected {65 + i}, got {result[i]}")
+        assert(result[i] == 65 + i)
     }
-
     stdio.fclose(f)
     os.unlink(path)
 }
 
-// ============================================================
-// Test: stdio.fwrite with ptr should respect len argument
-// Bug: ptr case was always writing exactly 1 byte
-// ============================================================
-fn test_stdio_fwrite_string_and_ptr() {
+pub fn test-stdio-fwrite-string-and-ptr() {
     let (fd, path) = os.mktemp()!
     os.close(fd)
-
     let f = stdio.fdopen(os.open(path, os.O_RDWR), 'w+')
-    assert(f != nil, "fdopen failed")
-
-    // Test string partial write
+    assert(f != nil)
     let written = stdio.fwrite(f, "Hello, World!", 5)
-    assert(written == 5, "expected 5, got {written}")
-
+    assert(written == 5)
     stdio.fflush(f)
     stdio.fseek(f, 0, 0)
-
     let result = stdio.fread(f, 100)
-    assert(result != nil, "fread returned nil")
-    assert(#result == 5, "expected 5 bytes, got {#result}")
-    assert(result.str() == 'Hello', "expected 'Hello', got '{result.str()}'")
-
+    assert(result != nil)
+    assert(#result == 5)
+    assert(result.str() == 'Hello')
     stdio.fclose(f)
     os.unlink(path)
 }
 
-// ============================================================
-// Test: os.read / os.write round-trip via pipe
-// General smoke test for pipe I/O
-// ============================================================
-fn test_pipe_roundtrip() {
+pub fn test-pipe-roundtrip() {
     let (r, w) = os.pipe()!
-
     let msg = "Hello from pipe!"
     os.write(w, msg)
     os.close(w)
-
     let got = os.read(r, 1024)
     os.close(r)
-
-    assert(got != nil, "read returned nil")
-    assert(got.str() == msg, "expected '{msg}', got '{got.str()}'")
+    assert(got != nil)
+    assert(got.str() == msg)
 }
 
-// ============================================================
-// Test: slurp() should not close a user-provided fd
-// Bug: slurp() called close(fd) unconditionally on mmap path
-// ============================================================
-fn test_slurp_preserves_user_fd() {
+pub fn test-slurp-preserves-user-fd() {
     let (fd, path) = os.mktemp()!
-
     os.write(fd, "hello world")
-
-    // Open a second fd and slurp from it
     let fd2 = os.open(path, os.O_RDONLY)
     let content = slurp(fd2)
-    assert(content == "hello world", "slurp content: expected 'hello world', got '{content}'")
-
-    // fd2 should still be valid — fstat should succeed
+    assert(content == "hello world")
     let st = os.fstat(fd2)
-    assert(st != nil, "fstat after slurp should succeed (fd not closed)")
-
+    assert(st != nil)
     os.close(fd2)
     os.close(fd)
     os.unlink(path)
 }
 
-// ============================================================
-// Test: os.getaddrinfo with nil port should not crash
-// Bug: code did ss(port) on NIL when host was non-nil
-// ============================================================
-fn test_getaddrinfo_nil_port() {
-    // host=localhost, port=nil — should resolve without crashing
+pub fn test-getaddrinfo-nil-port() {
     match os.getaddrinfo("localhost", nil, 0, 0, 0) {
         Ok(results) => {
-            assert(results.len() > 0, "expected at least one result for localhost")
+            assert(results.len() > 0)
         },
         Err(code) => {
-            // Some systems might not resolve 'localhost' — that's OK,
-            // as long as we didn't crash
         }
     }
 }
 
-// ============================================================
-// Test: os.sendto with 3 args (no addr) should not OOB
-// Bug: always accessed ARG(3) even when argc==3
-// ============================================================
-fn test_sendto_no_addr() {
-    // UDP socket — sendto with 3 args (no dest addr) on a
-    // connected socket, or just verify it doesn't crash/OOB.
-    // We connect first so sendto without addr is valid.
+pub fn test-sendto-no-addr() {
     let sock = os.socket(os.AF_INET, os.SOCK_DGRAM, 0)
     os.bind(sock, {family: os.AF_INET, address: 0x7f000001, port: 0})
     let local = os.getsockname(sock)
     os.connect(sock, {family: os.AF_INET, address: 0x7f000001, port: local[2] * 256 + local[3]})
-
-    // 3-arg sendto (no dest addr) — was OOB before fix
     let n = os.sendto(sock, "hi", 0)
-    assert(n == 2, "sendto returned {n}")
-
+    assert(n == 2)
     os.close(sock)
 }
 
-// ============================================================
-// Test: os.accept should handle IPv6 addresses (sockaddr_storage)
-// Bug: used struct sockaddr (16 bytes) instead of sockaddr_storage
-// ============================================================
-fn test_accept_large_addr() {
-    // Create a Unix domain socket to test with larger addresses
+pub fn test-accept-large-addr() {
     let srv = os.socket(os.AF_UNIX, os.SOCK_STREAM, 0)
     let (_, path) = os.mktemp()!
     os.unlink(path)
     os.bind(srv, {family: os.AF_UNIX, path: path})
     os.listen(srv, 1)
-
     let cli = os.socket(os.AF_UNIX, os.SOCK_STREAM, 0)
     os.connect(cli, {family: os.AF_UNIX, path: path})
-
     let (fd, addr) = os.accept(srv)!
-    assert(fd >= 0, "accept returned bad fd")
-
+    assert(fd >= 0)
     os.close(fd)
     os.close(cli)
     os.close(srv)
     os.unlink(path)
 }
 
-// ============================================================
-// Test: time.strftime should use isdst as integer, not boolean
-// Bug: read vp->boolean for isdst after fetching as VALUE_INTEGER
-// ============================================================
-fn test_strftime_isdst() {
-    // Format with isdst=0 (standard time) — was reading wrong union member
+pub fn test-strftime-isdst() {
     let result = time.strftime('%Z', {
         sec: 0, min: 0, hour: 12,
         mday: 1, mon: 6, year: 124,
         wday: 1, yday: 182, isdst: 0,
     })
-    assert(result != nil, "strftime returned nil")
-
-    // And with isdst=1 (DST)
+    assert(result != nil)
     let result2 = time.strftime('%Z', {
         sec: 0, min: 0, hour: 12,
         mday: 1, mon: 6, year: 124,
         wday: 1, yday: 182, isdst: 1,
     })
-    assert(result2 != nil, "strftime returned nil")
-
-    // The key test: isdst=0 and isdst=1 should (often) produce
-    // different timezone abbreviations. But at minimum, neither should crash.
+    assert(result2 != nil)
 }
-
-// ============================================================
-// Run all tests
-// ============================================================
-let tests = [
-    test_pipe_roundtrip,
-    test_os_read_all,
-    test_os_read_all_into_blob,
-    test_stdio_write_read_signed,
-    test_stdio_write_read_unsigned,
-    test_stdio_fwrite_blob_len,
-    test_stdio_fwrite_string_and_ptr,
-    test_slurp_preserves_user_fd,
-    test_getaddrinfo_nil_port,
-    test_sendto_no_addr,
-    test_accept_large_addr,
-    test_strftime_isdst,
-]
-
-for test in tests {
-    test()
-}
-
-print('PASS')

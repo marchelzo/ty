@@ -1,8 +1,9 @@
+ns test
+
 class A {
     foo(x: Int) -> Int {
         x * 2
     }
-
     bar(x: Int) -> Int {
         x * 3
     }
@@ -12,14 +13,12 @@ class B < A {
     foo(msg: String) {
         super(msg.count('.'))
     }
-
     bar(x: Int) {
         x * 5
     }
 }
 
-if B().bar(4) != 20 {
-    print('FAIL')
+pub fn override() {
+    assert(B().bar(4) == 20)
+    assert(B().foo('o.o') == 2)
 }
-
-print(['FAIL', 'FAIL', 'PASS'][B().foo('o.o')])

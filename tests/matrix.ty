@@ -1,34 +1,27 @@
+ns test
+
 pub class Matrix : Iterable[RowVec] {
-    __m: Array[Array[Float]]
-
-    init(m) { __m = m }
-
+    data: Array[Array[Float]]
+    init(m) { data = m }
     cols {
-        #__m[0]
+        #data[0]
     }
-
     rows {
-        #__m
+        #data
     }
-
     col(i) {
-        ColVec([row[i] for row in __m])
+        ColVec([row[i] for row in data])
     }
-
     row(i) {
-        RowVec(__m[i])
+        RowVec(data[i])
     }
-
     __call__(i, j) {
-        __m[i][j]
+        data[i][j]
     }
-
     __fmt__() { self.__str__() }
-
     __str__() {
         '\n' + [row.map(fmt@('% 6.2f', _)).unwords() for row in self].unlines()
     }
-
     __iter__*() {
         for ..rows {
             yield row(it)
@@ -38,11 +31,9 @@ pub class Matrix : Iterable[RowVec] {
 
 class Vec : Iterable[Float] {
     v: Array[Float]
-
     init(v: Array[Float]) {
         self.v = v
     }
-
     __subscript__(i: Int) { v[i] }
     __call__(i) { v[i] }
     __iter__() -> Iter[Float] { v.__iter__() }
@@ -52,9 +43,7 @@ class Vec : Iterable[Float] {
 class RowVec < Vec {
     rows {  1 }
     cols { #v }
-
     __iter__() { v.__iter__() }
-
     row(i: i == 0) { self }
     col(i)         { ColVec([v[i]]) }
 }
@@ -62,7 +51,6 @@ class RowVec < Vec {
 class ColVec < Vec {
     cols { 1   }
     rows { #v }
-
     col(i: i == 0) { self }
     row(i)         { RowVec([v[i]]) }
 }
@@ -89,21 +77,13 @@ fn **(X: Matrix, n: Int) -> Matrix {
     (X for ..n).fold(`*`) as Matrix
 }
 
-let P = m('
-     0.75      0.04      0.14      0.07
-
-     0         1.0       2.0       0
-
-     0.18      0         1.0      -0.44
-
-     0         0.14      0         1.0
-')
-
-
-let X = P ** 10
-
-if abs(-61.7444 - [X.row(i).sum() for i in ..X.rows].sum(0.0)) < 0.001 {
-    print('PASS')
-} else {
-    print('FAIL')
+pub fn matrix-power() {
+    let P = m('
+         0.75      0.04      0.14      0.07
+         0         1.0       2.0       0
+         0.18      0         1.0      -0.44
+         0         0.14      0         1.0
+    ')
+    let X = P ** 10
+    assert(abs(-61.7444 - [X.row(i).sum() for i in ..X.rows].sum(0.0)) < 0.001)
 }

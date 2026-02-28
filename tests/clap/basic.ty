@@ -1,0 +1,22 @@
+import clap (clap!)
+
+ns test
+
+clap! Args {
+    verbose: Bool, short: 'v', long: 'verbose'
+    output: String, short: 'o', long: 'output', required: true
+    debug: Bool, short: 'd', long: 'debug', count: true
+    include: [String], short: 'I', long: 'include', repeat: true
+    files: [String], pos: true, repeat: true, min: 1
+}
+
+fn clap-basic() {
+    let argv = ['prog', '-v', '-dd', '-I', 'inc1', '-Iinc2', '--output', 'out.txt', 'a', 'b']
+    let (opts, rest) = Args.parse(argv)
+    assert(opts.verbose == true)
+    assert(opts.debug == 2)
+    assert(opts.output == 'out.txt')
+    assert(opts.include == ['inc1', 'inc2'])
+    assert(opts.files == ['a', 'b'])
+    assert(#rest == 0)
+}

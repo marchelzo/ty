@@ -1,0 +1,23 @@
+import clap (clap!)
+
+ns test
+
+clap! Init {
+    name: String, pos: true, required: true
+    force: Bool, short: 'f', long: 'force'
+}
+
+clap! Args {
+    output: String, short: 'o', long: 'output', required: true
+    cmd init: Init
+}
+
+fn clap-subcommand() {
+    let argv = ['prog', '--output', 'out.txt', 'init', '-f', 'proj']
+    let (opts, rest) = Args.parse(argv)
+    assert(opts.cmd == 'init')
+    assert(opts.output == 'out.txt')
+    assert(opts.init.force == true)
+    assert(opts.init.name == 'proj')
+    assert(#rest == 0)
+}

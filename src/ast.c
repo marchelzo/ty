@@ -87,34 +87,34 @@ visit_statement(Ty *ty, Stmt *s, Scope *scope, VisitorSet const *hooks)
                 V(s->expression);
                 break;
         case STATEMENT_WHILE:
-                for (int i = 0; i < s->While.parts.count; ++i) {
-                        struct condpart *p = s->While.parts.items[i];
+                for (int i = 0; i < s->_while.parts.count; ++i) {
+                        struct condpart *p = s->_while.parts.items[i];
                         V(p->e);
                         VP(p->target);
                 }
-                SUB(false, "(while)", VS(s->While.block));
+                SUB(false, "(while)", VS(s->_while.block));
                 break;
         case STATEMENT_IF:
-                if (s->iff.neg) {
-                        VS(s->iff.then);
+                if (s->_if.neg) {
+                        VS(s->_if.then);
                         SUB(false, "(if-not)",
-                                for (int i = 0; i < s->iff.parts.count; ++i) {
-                                        struct condpart *p = s->iff.parts.items[i];
+                                for (int i = 0; i < s->_if.parts.count; ++i) {
+                                        struct condpart *p = s->_if.parts.items[i];
                                         VP(p->target);
                                         V(p->e);
                                 }
-                                VS(s->iff.otherwise);
+                                VS(s->_if._else);
                         );
                 } else {
-                        VS(s->iff.otherwise);
+                        VS(s->_if._else);
                         SUB(false, "(if)",
-                                for (int i = 0; i < s->iff.parts.count; ++i) {
-                                        struct condpart *p = s->iff.parts.items[i];
+                                for (int i = 0; i < s->_if.parts.count; ++i) {
+                                        struct condpart *p = s->_if.parts.items[i];
                                         V(p->e);
                                         VP(p->target);
 
                                 }
-                                VS(s->iff.then);
+                                VS(s->_if.then);
                         );
                 }
                 break;
@@ -256,27 +256,29 @@ visit_lvalue(Ty *ty, Expr *t, Scope *scope, VisitorSet const *hooks, bool decl)
         case EXPRESSION_MATCH_NOT_NIL:
         case EXPRESSION_MATCH_REST:
         case EXPRESSION_RESOURCE_BINDING:
-                //sym = scope_add(ty, scope, t->identifier);
-                //sym->file = t->file;
-                //sym->loc = t->start;
                 VT(t->constraint);
                 break;
+
         case EXPRESSION_SPREAD:
                 VL_(t->value);
                 break;
+
         case EXPRESSION_VIEW_PATTERN:
         case EXPRESSION_NOT_NIL_VIEW_PATTERN:
                 V(t->left);
                 VL_(t->right);
                 break;
+
         case EXPRESSION_TAG_APPLICATION:
                 VL_(t->tagged);
                 break;
+
         case EXPRESSION_ARRAY:
                 for (usize i = 0; i < t->elements.count; ++i) {
                         VL_(v__(t->elements, i));
                 }
                 break;
+
         case EXPRESSION_DICT:
                 V(t->dflt);
                 for (int i = 0; i < t->keys.count; ++i) {
@@ -284,21 +286,29 @@ visit_lvalue(Ty *ty, Expr *t, Scope *scope, VisitorSet const *hooks, bool decl)
                         VL_(t->values.items[i]);
                 }
                 break;
+
         case EXPRESSION_SUBSCRIPT:
                 V(t->container);
                 V(t->subscript);
                 break;
+
         case EXPRESSION_MEMBER_ACCESS:
-        case EXPRESSION_DYN_MEMBER_ACCESS:
         case EXPRESSION_SELF_ACCESS:
                 V(t->object);
                 break;
+
+        case EXPRESSION_DYN_MEMBER_ACCESS:
+                V(t->object);
+                V(t->member);
+                break;
+
         case EXPRESSION_TUPLE:
         case EXPRESSION_LIST:
                 for (int i = 0; i < t->es.count; ++i) {
                         VL_(t->es.items[i]);
                 }
                 break;
+
         default:
                 V(t);
         }
@@ -317,18 +327,23 @@ visit_expression(Ty *ty, Expr *e, Scope *scope, VisitorSet const *hooks)
         switch (e->type) {
         case EXPRESSION_IDENTIFIER:
                 break;
+
         case EXPRESSION_COMPILE_TIME:
                 V(e->operand);
                 break;
+
         case EXPRESSION_SPECIAL_STRING:
                 for (int i = 0; i < e->expressions.count; ++i)
                         V(e->expressions.items[i]);
                 break;
+
         case EXPRESSION_TAG:
                 break;
+
         case EXPRESSION_TAG_APPLICATION:
                 V(e->tagged);
                 break;
+
         case EXPRESSION_MATCH:
                 V(e->subject);
                 for (int i = 0; i < e->patterns.count; ++i) {
@@ -342,6 +357,7 @@ visit_expression(Ty *ty, Expr *e, Scope *scope, VisitorSet const *hooks)
                         V(e->thens.items[i]);
                 }
                 break;
+
         case EXPRESSION_USER_OP:
                 V(e->sc);
         case EXPRESSION_PLUS:
@@ -373,6 +389,7 @@ visit_expression(Ty *ty, Expr *e, Scope *scope, VisitorSet const *hooks)
                 V(e->left);
                 V(e->right);
                 break;
+
         case EXPRESSION_KW_AND:
                 V(e->left);
                 for (int i = 0; i < vN(e->p_cond); ++i) {
@@ -381,6 +398,7 @@ visit_expression(Ty *ty, Expr *e, Scope *scope, VisitorSet const *hooks)
                         V(p->e);
                 }
                 break;
+
         case EXPRESSION_DEFINED:
                 /*
                 e->type = EXPRESSION_BOOLEAN;
@@ -392,6 +410,7 @@ visit_expression(Ty *ty, Expr *e, Scope *scope, VisitorSet const *hooks)
                 }
                 */
                 break;
+
         case EXPRESSION_IFDEF:
                 /*
                 if (e->module != NULL) {
@@ -414,6 +433,7 @@ visit_expression(Ty *ty, Expr *e, Scope *scope, VisitorSet const *hooks)
                 }
                 */
                 break;
+
         case EXPRESSION_EVAL:
         case EXPRESSION_PREFIX_HASH:
         case EXPRESSION_PREFIX_BANG:
@@ -425,19 +445,24 @@ visit_expression(Ty *ty, Expr *e, Scope *scope, VisitorSet const *hooks)
         case EXPRESSION_POSTFIX_INC:
         case EXPRESSION_POSTFIX_DEC:
         case EXPRESSION_TYPE_OF:
+        case EXPRESSION_ENTER:
                 V(e->operand);
                 break;
+
         case EXPRESSION_TYPE:
                 VT(e->constraint);
                 break;
+
         case EXPRESSION_CONDITIONAL:
                 V(e->cond);
                 V(e->then);
-                V(e->otherwise);
+                V(e->_else);
                 break;
+
         case EXPRESSION_STATEMENT:
                 VS(e->statement);
                 break;
+
         case EXPRESSION_TEMPLATE:
                 for (usize i = 0; i < vN(e->template.exprs); ++i) {
                         V(v__(e->template.exprs, i));
@@ -449,6 +474,7 @@ visit_expression(Ty *ty, Expr *e, Scope *scope, VisitorSet const *hooks)
                         VS(v__(e->template.stmts, i));
                 }
                 break;
+
         case EXPRESSION_FUNCTION_CALL:
                 V(e->function);
                 for (usize i = 0; i < vN(e->args); ++i) {
@@ -464,22 +490,29 @@ visit_expression(Ty *ty, Expr *e, Scope *scope, VisitorSet const *hooks)
                         V(v__(e->fkwconds, i));
                 }
                 break;
+
         case EXPRESSION_SUBSCRIPT:
                 V(e->container);
                 V(e->subscript);
                 break;
+
         case EXPRESSION_SLICE:
                 V(e->slice.e);
                 V(e->slice.i);
                 V(e->slice.j);
                 V(e->slice.k);
                 break;
+
+        case EXPRESSION_DYN_MEMBER_ACCESS:
+                V(e->member);
         case EXPRESSION_MEMBER_ACCESS:
         case EXPRESSION_SELF_ACCESS:
                 V(e->object);
                 break;
-        case EXPRESSION_METHOD_CALL:
+
         case EXPRESSION_DYN_METHOD_CALL:
+                V(e->method);
+        case EXPRESSION_METHOD_CALL:
                 V(e->object);
                 for (usize i = 0;  i < e->method_args.count; ++i)
                         V(e->method_args.items[i]);
@@ -488,6 +521,7 @@ visit_expression(Ty *ty, Expr *e, Scope *scope, VisitorSet const *hooks)
                 for (usize i = 0; i < e->method_kwargs.count; ++i)
                         V(e->method_kwargs.items[i]);
                 break;
+
         case EXPRESSION_EQ:
         case EXPRESSION_MAYBE_EQ:
         case EXPRESSION_PLUS_EQ:
@@ -503,6 +537,7 @@ visit_expression(Ty *ty, Expr *e, Scope *scope, VisitorSet const *hooks)
                 V(e->value);
                 VL(false, e->target);
                 break;
+
         case EXPRESSION_IMPLICIT_FUNCTION:
         case EXPRESSION_GENERATOR:
         case EXPRESSION_MULTI_FUNCTION:
@@ -528,23 +563,27 @@ visit_expression(Ty *ty, Expr *e, Scope *scope, VisitorSet const *hooks)
                 break;
 
         case EXPRESSION_WITH:
+                vfor(e->with.defs, VS(*it));
                 VS(e->with.block);
-                // FIXME: do anything with e->with.defs?
                 break;
+
         case EXPRESSION_THROW:
                 V(e->throw);
                 break;
+
         case EXPRESSION_YIELD:
                 for (int i = 0; i < e->es.count; ++i) {
                     V(e->es.items[i]);
                 }
                 break;
+
         case EXPRESSION_ARRAY:
                 for (usize i = 0; i < e->elements.count; ++i) {
                         V(e->elements.items[i]);
                         V(e->aconds.items[i]);
                 }
                 break;
+
         case EXPRESSION_ARRAY_COMPR:
                 for (usize i = 0; i < vN(e->compr); ++i) {
                         ComprPart *part = v_(e->compr, i);
@@ -559,6 +598,7 @@ visit_expression(Ty *ty, Expr *e, Scope *scope, VisitorSet const *hooks)
                         V(e->aconds.items[i]);
                 }
                 break;
+
         case EXPRESSION_DICT:
                 V(e->dflt);
                 for (usize i = 0; i < e->keys.count; ++i) {
@@ -566,6 +606,7 @@ visit_expression(Ty *ty, Expr *e, Scope *scope, VisitorSet const *hooks)
                         V(e->values.items[i]);
                 }
                 break;
+
         case EXPRESSION_DICT_COMPR:
                 V(e->dflt);
                 for (usize i = 0; i < vN(e->dcompr); ++i) {
@@ -581,28 +622,34 @@ visit_expression(Ty *ty, Expr *e, Scope *scope, VisitorSet const *hooks)
                         V(v__(e->values, i));
                 }
                 break;
+
         case EXPRESSION_TYPE_UNION:
                 for (int i = 0; i < e->es.count; ++i) {
                         VT(e->es.items[i]);
                 }
                 break;
+
         case EXPRESSION_LIST:
                 for (int i = 0; i < e->es.count; ++i) {
                         V(e->es.items[i]);
                 }
                 break;
+
         case EXPRESSION_TUPLE:
                 for (int i = 0; i < e->es.count; ++i) {
                         V(e->es.items[i]);
                         V(e->tconds.items[i]);
                 }
                 break;
+
         case EXPRESSION_SPREAD:
         case EXPRESSION_SPLAT:
                 V(e->value);
                 break;
+
         case EXPRESSION_MACRO_INVOCATION:
                 break;
+
         }
 
         return E2(e);
@@ -619,28 +666,36 @@ visit_type(Ty *ty, Expr *e, Scope *scope, VisitorSet const *hooks)
         switch (e->type) {
         case EXPRESSION_IDENTIFIER:
                 break;
+
         case EXPRESSION_COMPILE_TIME:
                 VT(e->operand);
                 break;
+
         case EXPRESSION_SPECIAL_STRING:
                 for (int i = 0; i < e->expressions.count; ++i)
                         VT(e->expressions.items[i]);
                 break;
+
         case EXPRESSION_TAG:
                 break;
+
         case EXPRESSION_TAG_APPLICATION:
                 VT(e->tagged);
                 break;
+
         case EXPRESSION_FUNCTION_TYPE:
                 VT(e->left);
                 VT(e->right);
                 break;
+
         case EXPRESSION_TYPE:
                 VT(e->constraint);
                 break;
+
         case EXPRESSION_TYPE_OF:
                 V(e->operand);
                 break;
+
         case EXPRESSION_MATCH:
                 VT(e->subject);
                 for (int i = 0; i < e->patterns.count; ++i) {
@@ -654,6 +709,7 @@ visit_type(Ty *ty, Expr *e, Scope *scope, VisitorSet const *hooks)
                         VT(e->thens.items[i]);
                 }
                 break;
+
         case EXPRESSION_USER_OP:
                 VT(e->sc);
         case EXPRESSION_PLUS:
@@ -682,6 +738,7 @@ visit_type(Ty *ty, Expr *e, Scope *scope, VisitorSet const *hooks)
                 VT(e->left);
                 VT(e->right);
                 break;
+
         case EXPRESSION_KW_AND:
                 VT(e->left);
                 for (int i = 0; i < vN(e->p_cond); ++i) {
@@ -690,6 +747,7 @@ visit_type(Ty *ty, Expr *e, Scope *scope, VisitorSet const *hooks)
                         VT(p->e);
                 }
                 break;
+
         case EXPRESSION_DEFINED:
                 /*
                 e->type = EXPRESSION_BOOLEAN;
@@ -701,6 +759,7 @@ visit_type(Ty *ty, Expr *e, Scope *scope, VisitorSet const *hooks)
                 }
                 */
                 break;
+
         case EXPRESSION_IFDEF:
                 /*
                 if (e->module != NULL) {
@@ -723,6 +782,7 @@ visit_type(Ty *ty, Expr *e, Scope *scope, VisitorSet const *hooks)
                 }
                 */
                 break;
+
         case EXPRESSION_EVAL:
         case EXPRESSION_PREFIX_HASH:
         case EXPRESSION_PREFIX_BANG:
@@ -735,19 +795,23 @@ visit_type(Ty *ty, Expr *e, Scope *scope, VisitorSet const *hooks)
         case EXPRESSION_POSTFIX_DEC:
                 VT(e->operand);
                 break;
+
         case EXPRESSION_CONDITIONAL:
                 VT(e->cond);
                 VT(e->then);
-                VT(e->otherwise);
+                VT(e->_else);
                 break;
+
         case EXPRESSION_STATEMENT:
                 VS(e->statement);
                 break;
+
         case EXPRESSION_TEMPLATE:
                 for (usize i = 0; i < e->template.exprs.count; ++i) {
                         VT(e->template.exprs.items[i]);
                 }
                 break;
+
         case EXPRESSION_FUNCTION_CALL:
                 VT(e->function);
                 for (usize i = 0;  i < e->args.count; ++i)
@@ -757,19 +821,23 @@ visit_type(Ty *ty, Expr *e, Scope *scope, VisitorSet const *hooks)
                 for (usize i = 0; i < e->kwargs.count; ++i)
                         VT(e->kwargs.items[i]);
                 break;
+
         case EXPRESSION_SUBSCRIPT:
                 VT(e->container);
                 VT(e->subscript);
                 break;
+
         case EXPRESSION_SLICE:
                 VT(e->slice.e);
                 VT(e->slice.i);
                 VT(e->slice.j);
                 VT(e->slice.k);
                 break;
+
         case EXPRESSION_MEMBER_ACCESS:
                 VT(e->object);
                 break;
+
         case EXPRESSION_METHOD_CALL:
         case EXPRESSION_DYN_METHOD_CALL:
                 VT(e->object);
@@ -780,6 +848,7 @@ visit_type(Ty *ty, Expr *e, Scope *scope, VisitorSet const *hooks)
                 for (usize i = 0; i < e->method_kwargs.count; ++i)
                         VT(e->method_kwargs.items[i]);
                 break;
+
         case EXPRESSION_EQ:
         case EXPRESSION_MAYBE_EQ:
         case EXPRESSION_PLUS_EQ:
@@ -789,6 +858,7 @@ visit_type(Ty *ty, Expr *e, Scope *scope, VisitorSet const *hooks)
                 VT(e->value);
                 VL(false, e->target);
                 break;
+
         case EXPRESSION_IMPLICIT_FUNCTION:
         case EXPRESSION_GENERATOR:
         case EXPRESSION_MULTI_FUNCTION:
@@ -808,24 +878,28 @@ visit_type(Ty *ty, Expr *e, Scope *scope, VisitorSet const *hooks)
                 VT(e->return_type);
                 VS(e->body);
                 break;
+
         case EXPRESSION_WITH:
                 VS(e->with.block);
-                // FIXME: do anything with e->with.defs?
                 break;
+
         case EXPRESSION_THROW:
                 VT(e->throw);
                 break;
+
         case EXPRESSION_YIELD:
                 for (int i = 0; i < e->es.count; ++i) {
                     VT(e->es.items[i]);
                 }
                 break;
+
         case EXPRESSION_ARRAY:
                 for (usize i = 0; i < e->elements.count; ++i) {
                         VT(e->elements.items[i]);
                         VT(e->aconds.items[i]);
                 }
                 break;
+
         case EXPRESSION_ARRAY_COMPR:
                 for (usize i = 0; i < vN(e->compr); ++i) {
                         ComprPart *part = v_(e->compr, i);
@@ -839,6 +913,7 @@ visit_type(Ty *ty, Expr *e, Scope *scope, VisitorSet const *hooks)
                         VT(e->aconds.items[i]);
                 }
                 break;
+
         case EXPRESSION_DICT:
                 VT(e->dflt);
                 for (usize i = 0; i < e->keys.count; ++i) {
@@ -846,6 +921,7 @@ visit_type(Ty *ty, Expr *e, Scope *scope, VisitorSet const *hooks)
                         VT(e->values.items[i]);
                 }
                 break;
+
         case EXPRESSION_DICT_COMPR:
                 VT(e->dflt);
                 for (usize i = 0; i < vN(e->dcompr); ++i) {
@@ -860,24 +936,29 @@ visit_type(Ty *ty, Expr *e, Scope *scope, VisitorSet const *hooks)
                         VT(e->values.items[i]);
                 }
                 break;
+
         case EXPRESSION_LIST:
         case EXPRESSION_TYPE_UNION:
                 for (int i = 0; i < e->es.count; ++i) {
                         VT(e->es.items[i]);
                 }
                 break;
+
         case EXPRESSION_TUPLE:
                 for (int i = 0; i < e->es.count; ++i) {
                         VT(e->es.items[i]);
                         VT(e->tconds.items[i]);
                 }
                 break;
+
         case EXPRESSION_SPREAD:
         case EXPRESSION_SPLAT:
                 VT(e->value);
                 break;
+
         case EXPRESSION_MACRO_INVOCATION:
                 break;
+
         }
 
         return T2(e);

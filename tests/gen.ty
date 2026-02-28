@@ -1,14 +1,13 @@
-fn f(k) {
-    (yield nil) * k
+ns test
+
+pub fn gen() {
+    fn f(k) {
+        (yield nil) * k
+    }
+    fn g*() {
+        yield f(4)
+    }
+    let co = g()
+    co()
+    assert(co(8) == Some(32))
 }
-
-fn g*() {
-    yield f(4)
-}
-
-let co = g()
-
-co()
-
-assert(co(8) == Some(32))
-print('PASS')

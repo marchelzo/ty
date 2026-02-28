@@ -1,16 +1,16 @@
 import zlib as z
 
-const id = &str
-        .? z.uncompress2
-        .? z.compress
-        .? z.uncompress
-        .? z.compress
+ns test
 
-const alpha = [*'abcdefghijklmnopqrstuvwxyz']
-
-for ..5 {
-    let text = [rand(alpha) for ..3000].join()
-    assert(text == id(text))
+pub fn zlib-roundtrip() {
+    const id = &str
+            .? z.uncompress2
+            .? z.compress
+            .? z.uncompress
+            .? z.compress
+    const alpha = [*'abcdefghijklmnopqrstuvwxyz']
+    for ..5 {
+        let text = [rand(alpha) for ..3000].join()
+        assert(text == id(text))
+    }
 }
-
-print('PASS')

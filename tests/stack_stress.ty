@@ -1,12 +1,8 @@
 import ty
 
-let results = []
+ns test
 
-// ---------------------------------------------------------------------------
-// 1) Tag-match optimization with non-matching subjects inside nested for loops
-//    (the exact bug pattern from the POP_STACK_POS peephole issue)
-// ---------------------------------------------------------------------------
-fn tag_match_in_loop(nodes) {
+fn tag-match-in-loop(nodes) {
     let out = []
     for node in nodes {
         match node {
@@ -22,15 +18,12 @@ fn tag_match_in_loop(nodes) {
     out
 }
 
-let r1 = tag_match_in_loop([['a', 'b'], ['c'], ['d', 'e', 'f']])
-if r1 != [['a', 'b'], ['c'], ['d', 'e', 'f']] {
-    results.push("FAIL tag_match_in_loop: {r1}")
+pub fn test-tag-match-in-loop() {
+    let r = tag-match-in-loop([['a', 'b'], ['c'], ['d', 'e', 'f']])
+    assert(r == [['a', 'b'], ['c'], ['d', 'e', 'f']])
 }
 
-// ---------------------------------------------------------------------------
-// 2) Overlapping tag arms: multiple arms with same outermost tag
-// ---------------------------------------------------------------------------
-fn overlapping_tags(v: AST) -> Int {
+fn overlapping-tags(v: AST) -> Int {
     match v {
         ty.Eq(ty.Int($a), ty.Int($b)) => a + b,
         ty.Eq($a, $b)                 => -1,
@@ -39,16 +32,15 @@ fn overlapping_tags(v: AST) -> Int {
     }
 }
 
-if overlapping_tags(ty.Eq(ty.Int(3), ty.Int(7)))           != 10 { results.push('FAIL overlap 1') }
-if overlapping_tags(ty.Eq(ty.String('x'), ty.String('y'))) != -1 { results.push('FAIL overlap 2') }
-if overlapping_tags(ty.Eq(ty.Int(1), ty.String('z')))      != -1 { results.push('FAIL overlap 3') }
-if overlapping_tags(ty.Int(5))                              != 50 { results.push('FAIL overlap 4') }
-if overlapping_tags(ty.Add(ty.Int(1), ty.Int(2)))           != 0  { results.push('FAIL overlap 5') }
+pub fn test-overlapping-tags() {
+    assert(overlapping-tags(ty.Eq(ty.Int(3), ty.Int(7)))           == 10)
+    assert(overlapping-tags(ty.Eq(ty.String('x'), ty.String('y'))) == -1)
+    assert(overlapping-tags(ty.Eq(ty.Int(1), ty.String('z')))      == -1)
+    assert(overlapping-tags(ty.Int(5))                              == 50)
+    assert(overlapping-tags(ty.Add(ty.Int(1), ty.Int(2)))           == 0)
+}
 
-// ---------------------------------------------------------------------------
-// 3) Tag match inside try/catch/finally with throw
-// ---------------------------------------------------------------------------
-fn tag_try_finally(items: Array[AST]) -> Array[String] {
+fn tag-try-finally(items: Array[AST]) -> Array[String] {
     let acc = []
     for item in items {
         try {
@@ -69,15 +61,12 @@ fn tag_try_finally(items: Array[AST]) -> Array[String] {
     acc
 }
 
-let r3 = tag_try_finally([ty.Int(1), ty.String('hi'), ty.Int(-5), ty.Add(ty.Int(0), ty.Int(0))])
-if r3 != ['1', 'F', 'hi', 'F', 'caught', 'F', '?', 'F'] {
-    results.push("FAIL tag_try_finally: {r3}")
+pub fn test-tag-try-finally() {
+    let r = tag-try-finally([ty.Int(1), ty.String('hi'), ty.Int(-5), ty.Add(ty.Int(0), ty.Int(0))])
+    assert(r == ['1', 'F', 'hi', 'F', 'caught', 'F', '?', 'F'])
 }
 
-// ---------------------------------------------------------------------------
-// 4) Nested loops with continue-continue and tag matching
-// ---------------------------------------------------------------------------
-fn nested_continue(grid: Array[Array[AST]]) -> Array[String] {
+fn nested-continue(grid: Array[Array[AST]]) -> Array[String] {
     let acc = []
     for row in grid {
         for cell in row {
@@ -95,19 +84,16 @@ fn nested_continue(grid: Array[Array[AST]]) -> Array[String] {
     acc
 }
 
-let r4 = nested_continue([
-    [ty.Int(1), ty.Int(2)],
-    [ty.Int(3), ty.Int(0), ty.Int(99)],
-    [ty.Int(4)]
-])
-if r4 != ['1', '2', 'end-row', '3', 'skip-row', '4', 'end-row'] {
-    results.push("FAIL nested_continue: {r4}")
+pub fn test-nested-continue() {
+    let r = nested-continue([
+        [ty.Int(1), ty.Int(2)],
+        [ty.Int(3), ty.Int(0), ty.Int(99)],
+        [ty.Int(4)]
+    ])
+    assert(r == ['1', '2', 'end-row', '3', 'skip-row', '4', 'end-row'])
 }
 
-// ---------------------------------------------------------------------------
-// 5) Match expression as a value inside complex nesting
-// ---------------------------------------------------------------------------
-fn match_as_value(items: Array[AST]) -> Array[String] {
+fn match-as-value(items: Array[AST]) -> Array[String] {
     let out = []
     for item in items {
         let label = match item {
@@ -124,15 +110,12 @@ fn match_as_value(items: Array[AST]) -> Array[String] {
     out
 }
 
-let r5 = match_as_value([ty.Int(0), ty.Int(5), ty.Int(100), ty.String('yo'), ty.Add(ty.Int(0), ty.Int(0))])
-if r5 != ['zero', 'small', 'big', 'str:yo', 'unknown'] {
-    results.push("FAIL match_as_value: {r5}")
+pub fn test-match-as-value() {
+    let r = match-as-value([ty.Int(0), ty.Int(5), ty.Int(100), ty.String('yo'), ty.Add(ty.Int(0), ty.Int(0))])
+    assert(r == ['zero', 'small', 'big', 'str:yo', 'unknown'])
 }
 
-// ---------------------------------------------------------------------------
-// 6) Tag match inside generator with try/finally
-// ---------------------------------------------------------------------------
-fn gen_tag_try*(items: Array[AST]) {
+fn gen-tag-try*(items: Array[AST]) {
     for item in items {
         try {
             let v = match item {
@@ -146,15 +129,12 @@ fn gen_tag_try*(items: Array[AST]) {
     }
 }
 
-let r6 = [x for x in gen_tag_try([ty.Int(3), ty.Add(ty.Int(0), ty.Int(0)), ty.Int(7)])]
-if r6 != [6, -1, 14] {
-    results.push("FAIL gen_tag_try: {r6}")
+pub fn test-gen-tag-try() {
+    let r = [x for x in gen-tag-try([ty.Int(3), ty.Add(ty.Int(0), ty.Int(0)), ty.Int(7)])]
+    assert(r == [6, -1, 14])
 }
 
-// ---------------------------------------------------------------------------
-// 7) Deeply nested: for > try > for > match(tag) > try > match(tag)
-// ---------------------------------------------------------------------------
-fn deep_nest(data: Array[Array[AST]]) -> Array[Int] {
+fn deep-nest(data: Array[Array[AST]]) -> Array[Int] {
     let acc = []
     for batch in data {
         try {
@@ -186,18 +166,15 @@ fn deep_nest(data: Array[Array[AST]]) -> Array[Int] {
     acc
 }
 
-let r7 = deep_nest([
-    [ty.Cond(ty.Int(10), ty.Int(0), ty.Int(0)), ty.Cond(ty.Int(200), ty.Int(0), ty.Int(0)), ty.Cond(ty.String('x'), ty.Int(0), ty.Int(0)), ty.Int(42)],
-    [ty.Cond(ty.Int(5), ty.Int(0), ty.Int(0))]
-])
-if r7 != [10, -1, 0, 42, 5] {
-    results.push("FAIL deep_nest: {r7}")
+pub fn test-deep-nest() {
+    let r = deep-nest([
+        [ty.Cond(ty.Int(10), ty.Int(0), ty.Int(0)), ty.Cond(ty.Int(200), ty.Int(0), ty.Int(0)), ty.Cond(ty.String('x'), ty.Int(0), ty.Int(0)), ty.Int(42)],
+        [ty.Cond(ty.Int(5), ty.Int(0), ty.Int(0))]
+    ])
+    assert(r == [10, -1, 0, 42, 5])
 }
 
-// ---------------------------------------------------------------------------
-// 8) break-break from inside a tag match inside nested loops
-// ---------------------------------------------------------------------------
-fn break_break_tag(matrix: Array[Array[AST]]) -> Int {
+fn break-break-tag(matrix: Array[Array[AST]]) -> Int {
     let found = -1
     for row in matrix {
         for cell in row {
@@ -214,15 +191,12 @@ fn break_break_tag(matrix: Array[Array[AST]]) -> Int {
     found
 }
 
-let r8 = break_break_tag([[ty.Int(1), ty.Int(2)], [ty.Int(3), ty.Int(42), ty.Int(99)]])
-if r8 != 42 {
-    results.push("FAIL break_break_tag: {r8}")
+pub fn test-break-break-tag() {
+    let r = break-break-tag([[ty.Int(1), ty.Int(2)], [ty.Int(3), ty.Int(42), ty.Int(99)]])
+    assert(r == 42)
 }
 
-// ---------------------------------------------------------------------------
-// 9) Choice patterns (|) inside tag match
-// ---------------------------------------------------------------------------
-fn choice_tags(v: AST) -> String {
+fn choice-tags(v: AST) -> String {
     match v {
         ty.Int(0), ty.Int(1) => 'binary',
         ty.Int($n)           => "int:{n}",
@@ -231,16 +205,15 @@ fn choice_tags(v: AST) -> String {
     }
 }
 
-if choice_tags(ty.Int(0))      != 'binary'  { results.push('FAIL choice 1') }
-if choice_tags(ty.Int(1))      != 'binary'  { results.push('FAIL choice 2') }
-if choice_tags(ty.Int(99))     != 'int:99'  { results.push('FAIL choice 3') }
-if choice_tags(ty.String('x')) != 'str:x'   { results.push('FAIL choice 4') }
-if choice_tags(ty.Add(ty.Int(0), ty.Int(0))) != 'other' { results.push('FAIL choice 5') }
+pub fn test-choice-tags() {
+    assert(choice-tags(ty.Int(0))      == 'binary')
+    assert(choice-tags(ty.Int(1))      == 'binary')
+    assert(choice-tags(ty.Int(99))     == 'int:99')
+    assert(choice-tags(ty.String('x')) == 'str:x')
+    assert(choice-tags(ty.Add(ty.Int(0), ty.Int(0))) == 'other')
+}
 
-// ---------------------------------------------------------------------------
-// 10) Tag match in a while loop with mutation
-// ---------------------------------------------------------------------------
-fn while_tag_match(items: Array[AST]) -> Array[Int] {
+fn while-tag-match(items: Array[AST]) -> Array[Int] {
     let acc = []
     let i = 0
     while i < items.len() {
@@ -255,14 +228,11 @@ fn while_tag_match(items: Array[AST]) -> Array[Int] {
     acc
 }
 
-if while_tag_match([ty.Int(3), ty.String('ab'), ty.Add(ty.Int(0), ty.Int(0)), ty.Int(7)]) != [3, 2, 0, 7] {
-    results.push("FAIL while_tag_match")
+pub fn test-while-tag-match() {
+    assert(while-tag-match([ty.Int(3), ty.String('ab'), ty.Add(ty.Int(0), ty.Int(0)), ty.Int(7)]) == [3, 2, 0, 7])
 }
 
-// ---------------------------------------------------------------------------
-// 11) Tag match expression result used in try/catch as value
-// ---------------------------------------------------------------------------
-fn tag_match_try_result(items: Array[AST]) -> Array[Int] {
+fn tag-match-try-result(items: Array[AST]) -> Array[Int] {
     let acc = []
     for item in items {
         let v = try {
@@ -281,14 +251,11 @@ fn tag_match_try_result(items: Array[AST]) -> Array[Int] {
     acc
 }
 
-if tag_match_try_result([ty.Int(5), ty.Int(-3), ty.Add(ty.Int(0), ty.Int(0))]) != [5, -1, 0] {
-    results.push("FAIL tag_match_try_result")
+pub fn test-tag-match-try-result() {
+    assert(tag-match-try-result([ty.Int(5), ty.Int(-3), ty.Add(ty.Int(0), ty.Int(0))]) == [5, -1, 0])
 }
 
-// ---------------------------------------------------------------------------
-// 12) Closure capturing variable across tag match in loop
-// ---------------------------------------------------------------------------
-fn closure_capture_tag(items: Array[AST]) -> Array[Int] {
+fn closure-capture-tag(items: Array[AST]) -> Array[Int] {
     let fns = []
     for item in items {
         let val = match item {
@@ -300,48 +267,34 @@ fn closure_capture_tag(items: Array[AST]) -> Array[Int] {
     fns.map(fn (f) { f() })
 }
 
-if closure_capture_tag([ty.Int(10), ty.Add(ty.Int(0), ty.Int(0)), ty.Int(30)]) != [10, 0, 30] {
-    results.push("FAIL closure_capture_tag")
+pub fn test-closure-capture-tag() {
+    assert(closure-capture-tag([ty.Int(10), ty.Add(ty.Int(0), ty.Int(0)), ty.Int(30)]) == [10, 0, 30])
 }
 
-// ---------------------------------------------------------------------------
-// 13) Multiple tag matches in sequence (peephole stress)
-// ---------------------------------------------------------------------------
-fn sequential_tag_matches(a: AST, b: AST, c: AST) -> Int {
+fn sequential-tag-matches(a: AST, b: AST, c: AST) -> Int {
     let x = match a { ty.Int($n) => n, _ => 0 }
     let y = match b { ty.Int($n) => n, _ => 0 }
     let z = match c { ty.Int($n) => n, _ => 0 }
     x + y + z
 }
 
-if sequential_tag_matches(ty.Int(1), ty.Int(2), ty.Int(3)) != 6 {
-    results.push("FAIL sequential 1")
-}
-if sequential_tag_matches(ty.Int(1), ty.Add(ty.Int(0), ty.Int(0)), ty.Int(3)) != 4 {
-    results.push("FAIL sequential 2")
-}
-if sequential_tag_matches(ty.Add(ty.Int(0), ty.Int(0)), ty.Add(ty.Int(0), ty.Int(0)), ty.Add(ty.Int(0), ty.Int(0))) != 0 {
-    results.push("FAIL sequential 3")
+pub fn test-sequential-tag-matches() {
+    assert(sequential-tag-matches(ty.Int(1), ty.Int(2), ty.Int(3)) == 6)
+    assert(sequential-tag-matches(ty.Int(1), ty.Add(ty.Int(0), ty.Int(0)), ty.Int(3)) == 4)
+    assert(sequential-tag-matches(ty.Add(ty.Int(0), ty.Int(0)), ty.Add(ty.Int(0), ty.Int(0)), ty.Add(ty.Int(0), ty.Int(0))) == 0)
 }
 
-// ---------------------------------------------------------------------------
-// 14) for-loop value with break from inside tag match
-// ---------------------------------------------------------------------------
-let r14 = for item in [ty.Int(1), ty.Int(2), ty.Int(42), ty.Int(99)] {
-    match item {
-        ty.Int($n) and n == 42 => break n,
-        _ => nil
+pub fn test-for-value-tag() {
+    let r = for item in [ty.Int(1), ty.Int(2), ty.Int(42), ty.Int(99)] {
+        match item {
+            ty.Int($n) and n == 42 => break n,
+            _ => nil
+        }
     }
-}
-if r14 != 42 {
-    results.push("FAIL for_value_tag: {r14}")
+    assert(r == 42)
 }
 
-// ---------------------------------------------------------------------------
-// 15) try/catch/finally + continue continue + tag match
-//     Ensures finally blocks run when continue-continue unwinds
-// ---------------------------------------------------------------------------
-fn try_cc_tag(grid: Array[Array[AST]]) -> Array[String] {
+fn try-cc-tag(grid: Array[Array[AST]]) -> Array[String] {
     let acc = []
     for row in grid {
         for cell in row {
@@ -363,19 +316,16 @@ fn try_cc_tag(grid: Array[Array[AST]]) -> Array[String] {
     acc
 }
 
-let r15 = try_cc_tag([
-    [ty.Int(1), ty.Int(2)],
-    [ty.Int(3), ty.Int(0), ty.Int(99)],
-    [ty.Int(4)]
-])
-if r15 != ['1', 'F', '2', 'F', 'end', '3', 'F', 'cc', 'F', '4', 'F', 'end'] {
-    results.push("FAIL try_cc_tag: {r15}")
+pub fn test-try-cc-tag() {
+    let r = try-cc-tag([
+        [ty.Int(1), ty.Int(2)],
+        [ty.Int(3), ty.Int(0), ty.Int(99)],
+        [ty.Int(4)]
+    ])
+    assert(r == ['1', 'F', '2', 'F', 'end', '3', 'F', 'cc', 'F', '4', 'F', 'end'])
 }
 
-// ---------------------------------------------------------------------------
-// 16) Nested tag matches: outer match tag, inner match tag on different subject
-// ---------------------------------------------------------------------------
-fn double_tag_match(outer: AST, inner: AST) -> Int {
+fn double-tag-match(outer: AST, inner: AST) -> Int {
     let a = match outer {
         ty.Int($n) => n,
         _ => 0
@@ -387,15 +337,14 @@ fn double_tag_match(outer: AST, inner: AST) -> Int {
     a * 100 + b
 }
 
-if double_tag_match(ty.Int(3), ty.Int(7))                        != 307 { results.push('FAIL double 1') }
-if double_tag_match(ty.Int(3), ty.String('x'))                   != 300 { results.push('FAIL double 2') }
-if double_tag_match(ty.String('x'), ty.Int(7))                   != 7   { results.push('FAIL double 3') }
-if double_tag_match(ty.String('x'), ty.Add(ty.Int(0), ty.Int(0))) != 0  { results.push('FAIL double 4') }
+pub fn test-double-tag-match() {
+    assert(double-tag-match(ty.Int(3), ty.Int(7))                        == 307)
+    assert(double-tag-match(ty.Int(3), ty.String('x'))                   == 300)
+    assert(double-tag-match(ty.String('x'), ty.Int(7))                   == 7)
+    assert(double-tag-match(ty.String('x'), ty.Add(ty.Int(0), ty.Int(0))) == 0)
+}
 
-// ---------------------------------------------------------------------------
-// 17) Tag match in match statement (not expression) form
-// ---------------------------------------------------------------------------
-fn tag_match_stmt(items: Array[AST]) -> Array[String] {
+fn tag-match-stmt(items: Array[AST]) -> Array[String] {
     let acc = []
     for item in items {
         match item {
@@ -408,16 +357,12 @@ fn tag_match_stmt(items: Array[AST]) -> Array[String] {
     acc
 }
 
-let r17 = tag_match_stmt([ty.Int(5), ty.Int(20), ty.String('hi'), ty.Add(ty.Int(0), ty.Int(0))])
-if r17 != ['small', 'big', 'hi', 'other'] {
-    results.push("FAIL tag_match_stmt: {r17}")
+pub fn test-tag-match-stmt() {
+    let r = tag-match-stmt([ty.Int(5), ty.Int(20), ty.String('hi'), ty.Add(ty.Int(0), ty.Int(0))])
+    assert(r == ['small', 'big', 'hi', 'other'])
 }
 
-// ---------------------------------------------------------------------------
-// 18) Stress test: many iterations with tag match default path
-//     Ensures no stack drift over many iterations
-// ---------------------------------------------------------------------------
-fn stress_default(n: Int) -> Int {
+fn stress-default(n: Int) -> Int {
     let sum = 0
     for i in ..n {
         let v = match ty.String('x') {
@@ -429,16 +374,6 @@ fn stress_default(n: Int) -> Int {
     sum
 }
 
-// sum of 0..99 = 4950
-if stress_default(100) != 4950 {
-    results.push("FAIL stress_default")
-}
-
-// ---------------------------------------------------------------------------
-// Verdict
-// ---------------------------------------------------------------------------
-if results.len() == 0 {
-    print('PASS')
-} else {
-    for r in results { print(r) }
+pub fn test-stress-default() {
+    assert(stress-default(100) == 4950)
 }

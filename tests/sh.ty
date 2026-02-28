@@ -1,25 +1,28 @@
 import sh (sh)
 
-if __windows__ {
-    if not let $out = sh('echo hello') or out.strip() != 'hello' {
-        print('FAIL1')
-    }
+ns test
 
-    if let $out = sh('Sleep 1; echo Hello', shell: ['powershell', '-Command'], timeoutMs: 100) {
-        print('FAIL2')
-    }
-} else {
-    if not let $out = sh('printf based 1>&2', combineOutput=true) or out != 'based' {
-        print('FAIL3')
-    }
-
-    if not let $out = sh('printf based') or out != 'based' {
-            print('FAIL4')
-    }
-
-    if let $out = sh('sleep 0.25', timeoutMs=100) {
-        print("FAIL: {show(out)}")
+pub fn sh-basic() {
+    if __windows__ {
+        let $out = sh('echo hello')
+        assert(out.strip() == 'hello')
+    } else {
+        let $out = sh('printf based')
+        assert(out == 'based')
     }
 }
 
-print('PASS')
+pub fn sh-combine-output() {
+    if not __windows__ {
+        let $out = sh('printf based 1>&2', combineOutput=true)
+        assert(out == 'based')
+    }
+}
+
+pub fn sh-timeout() {
+    if __windows__ {
+        assert(sh('Sleep 1; echo Hello', shell: ['powershell', '-Command'], timeoutMs: 100) == nil)
+    } else {
+        assert(sh('sleep 0.25', timeoutMs=100) == nil)
+    }
+}

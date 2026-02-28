@@ -1,7 +1,13 @@
 import os (..)
 
-(function () {
-    for c in 'PASS\n' {
-        onExit(-> write(1, c))
-    }
-})()
+ns test
+
+let order = []
+
+onExit(-> order.push('a'))
+
+onExit(-> order.push('b'))
+
+onExit(-> order.push('c'))
+
+onExit(-> if order != ['a', 'b', 'c'] { exit(1) })

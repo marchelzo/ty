@@ -1,17 +1,12 @@
-let rng = generator {
-    while true {
-        yield rand()
+ns test
+
+pub fn tee() {
+    let rng = generator {
+        while true {
+            yield rand()
+        }
     }
+    let (r1, r2, r3) = Iter.tee(rng.take(50), n=3)
+    assert([*r1].len() == 50)
+    assert([*r2] == [*r3])
 }
-
-let (r1, r2, r3) = Iter.tee(rng.take(50), n=3)
-
-if [*r1].len() != 50 {
-    print('FAIL')
-}
-
-if [*r2] != [*r3] {
-    print('FAIL')
-}
-
-print('PASS')

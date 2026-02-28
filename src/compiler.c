@@ -1004,6 +1004,32 @@ emit_member(Ty *ty, char const *name)
         Ei32(GetPrivateId(ty, CurrentClassID, name));
 }
 
+static char *
+QualifiedTestName(Ty *ty, Stmt const *def)
+{
+        byte_vector name = {0};
+        StringVector parts = {0};
+
+        dump(&name, "%s", def->mod->name);
+
+        SCRATCH_SAVE();
+
+        for (Namespace const *ns = def->ns; ns->next != NULL; ns = ns->next) {
+                svP(parts, ns->id);
+        }
+
+        for (int i = vN(parts) - 1; i >= 0; --i) {
+                char const *part = v__(parts, i);
+                dump(&name, ".%s", part);
+        }
+
+        SCRATCH_RESTORE();
+
+        dump(&name, ".%s", def->target->identifier);
+
+        return vv(name);
+}
+
 static bool
 QualifiedName_(Expr const *e, byte_vector *b)
 {
@@ -1101,12 +1127,6 @@ is_proc_def(Stmt const *s)
         return (s->type == STATEMENT_FUNCTION_DEFINITION)
             || (s->type == STATEMENT_PATTERN_DEFINITION)
             || (s->type == STATEMENT_OPERATOR_DEFINITION);
-}
-
-inline static bool
-IsStmt(Expr const *expr)
-{
-        return (expr->type > STATEMENT_TYPE_START);
 }
 
 char const *
@@ -1594,7 +1614,7 @@ WillReturn(void const *_e)
 
         case EXPRESSION_CONDITIONAL:
                 return WillReturn(e->then)
-                    && WillReturn(e->otherwise);
+                    && WillReturn(e->_else);
 
         case EXPRESSION_WITH:
                 return e->with.block->will_return;
@@ -4300,7 +4320,7 @@ invoke_fun_macro(Ty *ty, Scope *scope, Expr *e)
 }
 
 Scope *
-GetNamespace(Ty *ty, Namespace *ns)
+GetNamespace(Ty *ty, Namespace const *ns)
 {
         if (ns == NULL) {
                 return STATE.global;
@@ -4311,8 +4331,8 @@ GetNamespace(Ty *ty, Namespace *ns)
 
         if (sym == NULL) {
                 sym = scope_new_namespace(ty, ns->id, scope);
-                sym->flags |= SYM_PUBLIC * ns->pub;
-#ifdef TY_DEBUG_NAMES
+                sym->flags |= (SYM_PUBLIC * ns->pub);
+#if defined(TY_DEBUG_NAMES)
                 printf("new ns %s (scope=%s) added to %s\n", ns->id, scope_name(ty, sym->scope), scope_name(ty, scope));
 #endif
         } else if (!SymbolIsNamespace(sym)) {
@@ -4417,7 +4437,7 @@ TryResolveExpr(Ty *ty, Scope *scope, Expr *e)
         case EXPRESSION_CONDITIONAL:
                 ok &= TryResolveExpr(ty, scope, e->cond);
                 ok &= TryResolveExpr(ty, scope, e->then);
-                ok &= TryResolveExpr(ty, scope, e->otherwise);
+                ok &= TryResolveExpr(ty, scope, e->_else);
                 break;
 
         case EXPRESSION_STATEMENT:
@@ -4938,7 +4958,7 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                 symbolize_expression(ty, scope, e->cond);
                 AddRefinements(ty, e->cond, subscope, scope);
                 symbolize_expression(ty, subscope, e->then);
-                symbolize_expression(ty, scope, e->otherwise);
+                symbolize_expression(ty, scope, e->_else);
                 e->_type = type_conditional(ty, e);
                 break;
 
@@ -6278,8 +6298,8 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
 
         case STATEMENT_WHILE:
                 subscope = scope_new(ty, "(while)", scope, false);
-                for (int i = 0; i < vN(s->While.parts); ++i) {
-                        struct condpart *p = v__(s->While.parts, i);
+                for (int i = 0; i < vN(s->_while.parts); ++i) {
+                        struct condpart *p = v__(s->_while.parts, i);
                         fix_part(ty, p, scope);
                         symbolize_expression(ty, subscope, p->e);
                         symbolize_pattern(ty, subscope, p->target, NULL, p->def);
@@ -6289,7 +6309,7 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
                                 AddRefinements(ty, p->e, subscope, NULL);
                         }
                 }
-                WITH_LOOP(symbolize_statement(ty, subscope, s->While.block));
+                WITH_LOOP(symbolize_statement(ty, subscope, s->_while.block));
                 if (s->_type == NULL) {
                         s->_type = NIL_TYPE;
                 }
@@ -6299,10 +6319,10 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
                 // if not let Ok(x) = f() or not [y] = bar() { ... }
                 subscope = scope_new(ty, "(if)", scope, false);
                 subscope2 = scope_new(ty, "(else)", scope, false);
-                if (s->iff.neg) {
-                        symbolize_statement(ty, scope, s->iff.then);
-                        for (int i = 0; i < vN(s->iff.parts); ++i) {
-                                struct condpart *p = v__(s->iff.parts, i);
+                if (s->_if.neg) {
+                        symbolize_statement(ty, scope, s->_if.then);
+                        for (int i = 0; i < vN(s->_if.parts); ++i) {
+                                struct condpart *p = v__(s->_if.parts, i);
                                 fix_part(ty, p, scope);
                                 symbolize_pattern(ty, scope, p->target, NULL, p->def);
                                 symbolize_expression(ty, subscope, p->e);
@@ -6310,10 +6330,10 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
                                         type_assign(ty, p->target, p->e->_type, 0);
                                 }
                         }
-                        symbolize_statement(ty, subscope, s->iff.otherwise);
+                        symbolize_statement(ty, subscope, s->_if._else);
                 } else {
-                        for (int i = 0; i < vN(s->iff.parts); ++i) {
-                                struct condpart *p = v__(s->iff.parts, i);
+                        for (int i = 0; i < vN(s->_if.parts); ++i) {
+                                struct condpart *p = v__(s->_if.parts, i);
                                 fix_part(ty, p, scope);
                                 symbolize_expression(ty, subscope, p->e);
                                 symbolize_pattern(ty, subscope, p->target, NULL, p->def);
@@ -6328,31 +6348,31 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
                                         );
                                 }
                         }
-                        symbolize_statement(ty, subscope2, s->iff.otherwise);
-                        symbolize_statement(ty, subscope, s->iff.then);
-                        if (WillReturn(s->iff.then) && !WillReturn(s->iff.otherwise)) {
+                        symbolize_statement(ty, subscope2, s->_if._else);
+                        symbolize_statement(ty, subscope, s->_if.then);
+                        if (WillReturn(s->_if.then) && !WillReturn(s->_if._else)) {
                                 avPv(scope->refinements, subscope2->refinements);
                                 v0(subscope2->refinements);
-                        } else if (WillReturn(s->iff.otherwise) && !WillReturn(s->iff.then)) {
+                        } else if (WillReturn(s->_if._else) && !WillReturn(s->_if.then)) {
                                 avPv(scope->refinements, subscope->refinements);
                                 v0(subscope->refinements);
                         } else {
                                 MergeRefinements(ty, scope, subscope, subscope2);
                         }
                 }
-                if (s->iff.then != NULL) {
-                        unify2(ty, &s->_type, s->iff.then->_type);
-                        s->will_return = s->iff.then->will_return;
+                if (s->_if.then != NULL) {
+                        unify2(ty, &s->_type, s->_if.then->_type);
+                        s->will_return = s->_if.then->will_return;
                 } else {
                         unify2(ty, &s->_type, NIL_TYPE);
                 }
-                if (s->iff.otherwise != NULL) {
-                        unify2(ty, &s->_type, s->iff.otherwise->_type);
+                if (s->_if._else != NULL) {
+                        unify2(ty, &s->_type, s->_if._else->_type);
                 } else {
                         unify2(ty, &s->_type, NIL_TYPE);
                 }
-                s->will_return = (s->iff.then != NULL && s->iff.then->will_return)
-                              && (s->iff.otherwise != NULL && s->iff.otherwise->will_return);
+                s->will_return = (s->_if.then != NULL && s->_if.then->will_return)
+                              && (s->_if._else != NULL && s->_if._else->will_return);
                 break;
 
         case STATEMENT_FOR_LOOP:
@@ -6486,6 +6506,13 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
 
         case STATEMENT_FUNCTION_DEFINITION:
                 symbolize_fun_def(ty, scope, s, SYM_FUNCTION);
+                if (s->ns != NULL && s->ns->test && s->pub) {
+                        char const *name = QualifiedTestName(ty, s);
+                        xvP(xD.tests, ((TyTest) {
+                                .name = name,
+                                .var  = s->target->symbol
+                        }));
+                }
                 break;
 
         case STATEMENT_PATTERN_DEFINITION:
@@ -7438,7 +7465,6 @@ emit_function(Ty *ty, Expr const *e)
                 );
                 fun_name = sclonea(ty, buffer);
         }
-        
 
         EP(fun_name);
         EP(e);
@@ -9487,11 +9513,11 @@ emit_while(Ty *ty, Stmt const *s, bool want_result)
 
         LABEL(start);
 
-        bool simple = is_simple_condition(&s->iff.parts);
+        bool simple = is_simple_condition(&s->_if.parts);
         bool has_resources = false;
 
-        for (int i = 0; i < vN(s->While.parts); ++i) {
-                struct condpart *p = v__(s->While.parts, i);
+        for (int i = 0; i < vN(s->_while.parts); ++i) {
+                struct condpart *p = v__(s->_while.parts, i);
                 if (simple) {
                         fail_match_if_not(ty, p->e);
                 } else {
@@ -9512,7 +9538,7 @@ emit_while(Ty *ty, Stmt const *s, bool want_result)
                 }
         }
 
-        emit_statement(ty, s->While.block, false);
+        emit_statement(ty, s->_while.block, false);
 
         if (has_resources) {
                 INSN(DROP);
@@ -9557,8 +9583,8 @@ emit_if_not(Ty *ty, Stmt const *s, bool want_result)
 
         bool has_resources = false;
 
-        for (int i = 0; i < vN(s->iff.parts); ++i) {
-                struct condpart *p = v__(s->iff.parts, i);
+        for (int i = 0; i < vN(s->_if.parts); ++i) {
+                struct condpart *p = v__(s->_if.parts, i);
                 if (p->target != NULL && p->target->has_resources) {
                         has_resources = true;
                         break;
@@ -9570,10 +9596,10 @@ emit_if_not(Ty *ty, Stmt const *s, bool want_result)
                 STATE.resources += 1;
         }
 
-        bool simple = is_simple_condition(&s->iff.parts);
+        bool simple = is_simple_condition(&s->_if.parts);
 
-        for (int i = 0; i < vN(s->iff.parts); ++i) {
-                struct condpart *p = v__(s->iff.parts, i);
+        for (int i = 0; i < vN(s->_if.parts); ++i) {
+                struct condpart *p = v__(s->_if.parts, i);
                 if (simple) {
                         fail_match_if(ty, p->e);
                 } else {
@@ -9599,10 +9625,10 @@ emit_if_not(Ty *ty, Stmt const *s, bool want_result)
         }
 
         WITH_STACK() {
-                if (s->iff.otherwise != NULL) {
+                if (s->_if._else != NULL) {
                         returns |= emit_statement(
                                 ty,
-                                s->iff.otherwise,
+                                s->_if._else,
                                 want_result
                         );
                 } else if (want_result) {
@@ -9618,7 +9644,7 @@ emit_if_not(Ty *ty, Stmt const *s, bool want_result)
                 }
         }
 
-        returns &= emit_statement(ty, s->iff.then, want_result);
+        returns &= emit_statement(ty, s->_if.then, want_result);
 
         PATCH_JUMP(done);
 
@@ -9642,8 +9668,8 @@ emit_if(Ty *ty, Stmt const *s, bool want_result)
         v00(STATE.match_successes);
 
         /* Special case for 'if not' */
-        if (s->iff.neg) {
-                struct condpart *p = v__(s->iff.parts, 0);
+        if (s->_if.neg) {
+                struct condpart *p = v__(s->_if.parts, 0);
 
                 emit_list(ty, p->e);
                 INSN(FIX_EXTRA);
@@ -9652,14 +9678,14 @@ emit_if(Ty *ty, Stmt const *s, bool want_result)
                         ty,
                         p->target,
                         NULL,
-                        s->iff.otherwise,
+                        s->_if._else,
                         want_result,
                         false
                 );
 
                 INSN(CLEAR_EXTRA);
 
-                returns &= emit_statement(ty, s->iff.then, want_result);
+                returns &= emit_statement(ty, s->_if.then, want_result);
 
                 patch_jumps_to(&STATE.match_successes, vN(STATE.code));
                 STATE.match_successes = successes_save;
@@ -9675,8 +9701,8 @@ emit_if(Ty *ty, Stmt const *s, bool want_result)
 
         bool has_resources = false;
 
-        for (int i = 0; i < vN(s->iff.parts); ++i) {
-                struct condpart *p = v__(s->iff.parts, i);
+        for (int i = 0; i < vN(s->_if.parts); ++i) {
+                struct condpart *p = v__(s->_if.parts, i);
                 if (p->target != NULL && p->target->has_resources) {
                         has_resources = true;
                         break;
@@ -9688,10 +9714,10 @@ emit_if(Ty *ty, Stmt const *s, bool want_result)
                 STATE.resources += 1;
         }
 
-        bool simple = is_simple_condition(&s->iff.parts);
+        bool simple = is_simple_condition(&s->_if.parts);
 
-        for (int i = 0; i < vN(s->iff.parts); ++i) {
-                struct condpart *p = v__(s->iff.parts, i);
+        for (int i = 0; i < vN(s->_if.parts); ++i) {
+                struct condpart *p = v__(s->_if.parts, i);
                 WITH_STACK() {
                         if (simple) {
                                 fail_match_if_not(ty, p->e);
@@ -9714,17 +9740,17 @@ emit_if(Ty *ty, Stmt const *s, bool want_result)
                 INSN(POP);
         }
 
-        bool returns = emit_statement(ty, s->iff.then, want_result);
+        bool returns = emit_statement(ty, s->_if.then, want_result);
 
-        if (!simple | want_result | (s->iff.otherwise != NULL)) {
+        if (!simple | want_result | (s->_if._else != NULL)) {
                 PLACEHOLDER_JUMP(JUMP, done);
                 PATCH_FAILS {
                         if (!simple) {
                                 INSN(POP_STACK_POS);
                         }
                 }
-                if (s->iff.otherwise != NULL) {
-                        returns &= emit_statement(ty, s->iff.otherwise, want_result);
+                if (s->_if._else != NULL) {
+                        returns &= emit_statement(ty, s->_if._else, want_result);
                 } else {
                         returns = false;
                         if (want_result) {
@@ -10176,7 +10202,7 @@ static void
 emit_conditional(Ty *ty, Expr const *e)
 {
         PLACEHOLDER_JUMP_IF(e->cond, then);
-        EE(e->otherwise);
+        EE(e->_else);
         PLACEHOLDER_JUMP(JUMP, end);
         PATCH_JUMP(then);
         PEEPHOLE_BARRIER();
@@ -11626,7 +11652,7 @@ emit_statement(Ty *ty, Stmt const *s, bool want_result)
 
         case STATEMENT_IF:
                 returns |= (
-                        s->iff.neg
+                        s->_if.neg
                       ? emit_if_not(ty, s, want_result)
                       : emit_if(ty, s, want_result)
                 );
@@ -12744,24 +12770,23 @@ UnresolveExpr(Ty *ty, Expr *expr)
                 &visitor
         );
 }
+
 inline static bool
 HaveMulti(Stmt **stmts, int i)
 {
-        for (; stmts[i] != NULL; ++i) {
+        while (stmts[i] != NULL && stmts[i + 1] != NULL) {
+                Stmt const *a = stmts[i++];
+                Stmt const *b = stmts[i];
                 if (
-                        (stmts[i + 1] != NULL)
-                     && (stmts[i    ]->type == STATEMENT_FUNCTION_DEFINITION)
-                     && (stmts[i + 1]->type == STATEMENT_FUNCTION_DEFINITION)
-                     && s_eq(
-                                stmts[i]->target->identifier,
-                                stmts[i + 1]->target->identifier
-                        )
+                        (a->type != STATEMENT_FUNCTION_DEFINITION)
+                     || (b->type != STATEMENT_FUNCTION_DEFINITION)
+                     || (a->ns   != b->ns)
+                     || !s_eq(a->target->identifier, b->target->identifier)
                 ) {
-                        if (HasBody(stmts[i]->value) || HasBody(stmts[i + 1]->value)) {
-                                return true;
-                        }
-                } else {
                         break;
+                }
+                if (HasBody(a->value) || HasBody(b->value)) {
+                        return true;
                 }
         }
 
@@ -12783,6 +12808,7 @@ expand_prog(Ty *ty, Stmt **p)
 
                         def->value = multi;
                         def->pub = pub;
+                        def->ns = p[i]->ns;
 
                         def->target = NewExpr(ty, EXPRESSION_IDENTIFIER);
                         def->target->start      = p[i]->target->start;
@@ -12911,6 +12937,9 @@ compile(Ty *ty, char const *source)
                 for (usize i = 0; p[i] != NULL; ++i) {
                         annotate_tokens(ty, p[i]);
                 }
+                vfor(STATE.class_ops, {
+                        annotate_tokens(ty, *it);
+                });
         }
 
         if (!HAVE_COMPILER_FLAG(EMIT)) {
@@ -14499,7 +14528,7 @@ tyexpr(Ty *ty, Expr const *e, u32 flags)
                         TyCond,
                         go(e->cond),
                         go(e->then),
-                        go(e->otherwise)
+                        go(e->_else)
                 );
                 break;
 
@@ -15000,17 +15029,17 @@ tystmt(Ty *ty, Stmt *s, u32 flags)
         case STATEMENT_WHILE:
                 v = TAGGED(
                         TyWhile,
-                        typarts(ty, &s->While.parts, flags),
-                        go(s->While.block)
+                        typarts(ty, &s->_while.parts, flags),
+                        go(s->_while.block)
                 );
                 break;
 
         case STATEMENT_IF:
                 v = TAGGED(
-                        TyIf,
-                        typarts(ty, &s->iff.parts, flags),
-                        go(s->iff.then),
-                        go(s->iff.otherwise)
+                        !s->_if.neg ? TyIf : TyIfNot,
+                        typarts(ty, &s->_if.parts, flags),
+                        go(s->_if.then),
+                        go(s->_if._else)
                 );
                 break;
 
@@ -15212,18 +15241,18 @@ cstmt(Ty *ty, Value *v)
         }
 
         case TyIfNot:
-                s->iff.neg =  true;
+                s->_if.neg =  true;
         if (0) {
         case TyIf:
-                s->iff.neg = false;
+                s->_if.neg = false;
         }
                 s->type = STATEMENT_IF;
-                s->iff.parts = cparts(ty, &v->items[0]);
-                s->iff.then = cstmt(ty, &v->items[1]);
+                s->_if.parts = cparts(ty, &v->items[0]);
+                s->_if.then = cstmt(ty, &v->items[1]);
                 if (v->count > 2 && v->items[2].type != VALUE_NIL) {
-                        s->iff.otherwise = cstmt(ty, &v->items[2]);
+                        s->_if._else = cstmt(ty, &v->items[2]);
                 } else {
-                        s->iff.otherwise = NULL;
+                        s->_if._else = NULL;
                 }
                 break;
 
@@ -15308,8 +15337,8 @@ cstmt(Ty *ty, Value *v)
 
         case TyWhile:
                 s->type = STATEMENT_WHILE;
-                s->While.parts = cparts(ty, &v->items[0]);
-                s->While.block = cstmt(ty, &v->items[1]);
+                s->_while.parts = cparts(ty, &v->items[0]);
+                s->_while.block = cstmt(ty, &v->items[1]);
                 break;
 
         case TyFor:
@@ -16141,13 +16170,11 @@ cexpr(Ty *ty, Value *v)
 
         case TyWith:
         {
-                Value *lets = &v->items[0];
+                Value *lets = tget_t(v, 0, VALUE_ARRAY);
                 StmtVec defs = {0};
-
-                for (int i = 0; i < lets->array->count; ++i) {
-                        avP(defs, cstmt(ty, &lets->array->items[i]));
+                if (lets != NULL) {
+                        vfor(*lets->array, avP(defs, cstmt(ty, it)));
                 }
-
                 make_with(ty, e, defs, cstmt(ty, &v->items[1]));
                 break;
         }
@@ -16162,7 +16189,7 @@ cexpr(Ty *ty, Value *v)
                 e->type = EXPRESSION_CONDITIONAL;
                 e->cond = cexpr(ty, &v->items[0]);
                 e->then = cexpr(ty, &v->items[1]);
-                e->otherwise = cexpr(ty, &v->items[2]);
+                e->_else = cexpr(ty, &v->items[2]);
                 break;
 
         case TyBool:
@@ -16717,7 +16744,7 @@ typarse(
         Location const *end
 )
 {
-        symbolize_expression(ty, STATE.global, e);
+        symbolize_expression(ty, SCOPE, e);
         DefinePending(ty);
 
         byte_vector code_save = STATE.code;
@@ -16753,7 +16780,7 @@ typarse(
         void *ctx = PushInfo(ty, NULL, "invoking macro %s", name_of(&m));
 
         Scope *macro_scope_save = STATE.macro_scope;
-        STATE.macro_scope = STATE.global;
+        STATE.macro_scope = SCOPE;
 
         Location const mstart = STATE.mstart;
         Location const mend = STATE.mend;
@@ -17295,11 +17322,11 @@ DeclareSymbols(Ty *ty, Stmt *stmt)
                 break;
 
         case STATEMENT_IF:
-                if (!stmt->iff.neg) {
+                if (!stmt->_if.neg) {
                         break;
                 }
-                for (int i = 0; i < vN(stmt->iff.parts); ++i) {
-                        struct condpart *part = v__(stmt->iff.parts, i);
+                for (int i = 0; i < vN(stmt->_if.parts); ++i) {
+                        struct condpart *part = v__(stmt->_if.parts, i);
                         fix_part(ty, part, scope);
                         if (part->target != NULL && part->def) {
                                 symbolize_decl(ty, scope, part->target, false);
@@ -17376,7 +17403,7 @@ define_macro(Ty *ty, Stmt *s, bool fun)
 {
         DefinePending(ty);
 
-        symbolize_statement(ty, STATE.global, s);
+        symbolize_statement(ty, GetNamespace(ty, s->ns), s);
         s->target->symbol->flags &= ~SYM_TRANSIENT;
         s->target->symbol->doc = s->doc;
         s->type = STATEMENT_FUNCTION_DEFINITION;
@@ -17433,37 +17460,36 @@ IsMacroInvocation(Ty *ty, Expr *e)
 }
 
 bool
-is_fun_macro(Ty *ty, char const *module, char const *id)
+IsMacro(Ty *ty, Expr *e)
 {
-        Symbol *s = NULL;
-
-        if (module == NULL) {
-                s = scope_lookup(ty, STATE.global, id);
-        } else {
-                Scope *mod = search_import_scope(ty, module);
-                if (mod != NULL) {
-                        s = scope_lookup(ty, mod, id);
-                }
+        if (e == NULL) {
+                return false;
         }
 
-        return (s != NULL) && SymbolIsFunMacro(s);
+        fixup_access(ty, SCOPE, e, false);
+
+        if (e->type != EXPRESSION_IDENTIFIER) {
+                return false;
+        }
+
+        return SymbolIsMacro(TryResolveIdentifier(ty, e));
 }
 
 bool
-is_macro(Ty *ty, char const *module, char const *id)
+IsMacroName(Ty *ty, char const *mod, char const *name)
 {
-        Symbol *s = NULL;
+        Symbol *sym;
 
-        if (module == NULL) {
-                s = scope_lookup(ty, STATE.global, id);
+        if ((mod == NULL) || (*mod == '\0')) {
+                sym = ScopeLookup(SCOPE, name);
         } else {
-                Scope *mod = search_import_scope(ty, module);
-                if (mod != NULL) {
-                        s = scope_lookup(ty, mod, id);
-                }
+                Scope *scope = search_import_scope(ty, mod);
+                sym = (scope != NULL)
+                    ? ScopeLookupEx(scope, name, SCOPE_EXPLICIT)
+                    : NULL;
         }
 
-        return (s != NULL) && SymbolIsMacro(s);
+        return SymbolIsMacro(sym);
 }
 
 bool
@@ -17606,7 +17632,7 @@ WriteExpressionOrigin(Ty *ty, byte_vector *out, Expr const *e)
                 sizeof buffer - 1,
                 "%*s %s%s%s:%s%d%s:%s%d %s%*s%s",
                 margin,
-                "expanded from",
+                "expanded to",
                 TERM(34),
                 file,
                 TERM(39),
@@ -17950,9 +17976,175 @@ WriteExpressionTrace(Ty *ty, byte_vector *out, Expr const *e, int etw, bool firs
         return n;
 }
 
+static void
+qhighlight(
+        Ty *ty,
+        byte_vector *out,
+        Module *mod,
+        isize start,
+        isize end,
+        char const *attr
+)
+{
+        if (ColorStderr) {
+                syntax_highlight(ty, out, mod, start, end, attr, "muted");
+        } else {
+                sxdf(out, "%.*s", (int)(end - start), mod->source + start);
+        }
+}
+
+static void
+xhighlight(
+        Ty *ty,
+        byte_vector *out,
+        Module *mod,
+        isize start,
+        isize end,
+        char const *attr
+)
+{
+        if (ColorStderr) {
+                syntax_highlight(ty, out, mod, start, end, attr, NULL);
+        } else {
+                sxdf(out, "%.*s", (int)(end - start), mod->source + start);
+        }
+}
+
+static void
+WriteExpansionNote(Ty *ty, byte_vector *out, int cols, Expr const *e)
+{
+        char const *path = e->mod->path;
+
+        int label_len = 22 + term_width(path, -1);
+        int pad = max(0, cols - label_len - 2);
+        int pad_l = 2;
+        int pad_r = max(0, pad - pad_l);
+
+        dump(out, "%s", TERM(38;2;80;80;80));
+
+        for (int i = 0; i < pad_l; ++i)
+                dump(out, "─");
+
+        dump(
+                out,
+                " %snote:%s %sexpanded to%s (%s%s%s) ",
+                TERM(38;2;140;140;140),
+                TERM(38;2;80;80;80),
+                TERM(38;2;110;110;110),
+                TERM(38;2;80;80;80),
+                TERM(38;2;140;180;140),
+                path,
+                TERM(38;2;80;80;80)
+        );
+
+        for (int i = 0; i < pad_r; ++i)
+                dump(out, "─");
+
+        dump(out, "%s\n", TERM(0));
+
+        char const *start = e->start.s;
+        char const *end   = e->end.s;
+
+        int line0 = e->start.line;
+
+        for (int i = 0; i < 3; ++i) {
+                if (start[-1] == '\n') {
+                        --start;
+                        --line0;
+                }
+                while (start[-1] != '\0' && start[-1] != '\n') {
+                        --start;
+                }
+        }
+
+        for (int i = 0; i < 2; ++i) {
+                while (end[0] != '\0' && end[0] != '\n') {
+                        ++end;
+                }
+                if (end[0] == '\n') {
+                        ++end;
+                }
+        }
+
+        byte_vector tmp = {0};
+
+        for (int line = line0; start < end; ++line) {
+                char const *line_start = start;
+                char const *line_end = strchr(line_start, '\n');
+                if (line_end == NULL || line_end > end)
+                        line_end = end;
+
+                bool in_range = (line >= e->start.line)
+                             && (line <= e->end.line);
+
+                char const *arrow = in_range ? ">" : " ";
+                char const *dim   = in_range ? "" : TERM(38;2;90;90;90);
+
+                sxdf(
+                        &tmp,
+                        "%s%s %s%4d%s │ %s",
+                        TERM(38;2;80;80;80),
+                        arrow,
+                        in_range ? TERM(38;2;140;140;140) : TERM(38;2;80;80;80),
+                        line + 1,
+                        TERM(0),
+                        dim
+                );
+
+                if (in_range && line == e->start.line && line == e->end.line) {
+                        int before = e->start.s - line_start;
+                        qhighlight(
+                                ty,
+                                &tmp,
+                                e->mod,
+                                line_start - e->mod->source,
+                                line_start - e->mod->source + before,
+                                NULL
+                        );
+                        qhighlight(
+                                ty,
+                                &tmp,
+                                e->mod,
+                                e->start.s - e->mod->source,
+                                e->end.s   - e->mod->source,
+                                TERM(58:2:114:105:89;4:3)
+                        );
+                        qhighlight(
+                                ty,
+                                &tmp,
+                                e->mod,
+                                e->end.s - e->mod->source,
+                                line_end - e->mod->source,
+                                NULL
+                        );
+                } else {
+                        qhighlight(
+                                ty,
+                                &tmp,
+                                e->mod,
+                                line_start - e->mod->source,
+                                line_end   - e->mod->source,
+                                NULL
+                        );
+                }
+
+                vN(tmp) = term_fit_cols(vv(tmp), vN(tmp), cols);
+                dump(out, "%s%s\n", vv(tmp), TERM(0));
+                v0(tmp);
+
+                start = line_end;
+                if (start[0] == '\n')
+                        ++start;
+        }
+}
+
 void
 WriteExpressionSourceHeading(Ty *ty, byte_vector *out, int cols, Expr const *e)
 {
+        if (e->origin != NULL) {
+                e = e->origin;
+        }
+
         int ctx_len = term_width(e->mod->path, -1);
         if (e->xfunc != NULL && e->xfunc->name != NULL) {
                 ctx_len += 6; // "  ——  "
@@ -18011,23 +18203,6 @@ WriteExpressionSourceHeading(Ty *ty, byte_vector *out, int cols, Expr const *e)
         dump(out, "%s\n", TERM(0));
 }
 
-static void
-xhighlight(
-        Ty *ty,
-        byte_vector *out,
-        Module *mod,
-        isize start,
-        isize end,
-        char const *attr
-)
-{
-        if (ColorStderr) {
-                syntax_highlight(ty, out, mod, start, end, attr, NULL);
-        } else {
-                sxdf(out, "%.*s", (int)(end - start), mod->source + start);
-        }
-}
-
 void
 WriteExpressionSourceContext(
         Ty *ty,
@@ -18037,6 +18212,16 @@ WriteExpressionSourceContext(
         StringVector const *notes
 )
 {
+        Expr const *expansion;
+
+        if (e->origin != NULL) {
+                expansion = e;
+                e = e->origin;
+        } else {
+                expansion = NULL;
+        }
+
+
         char const *start = e->start.s;
         char const *end   = e->end.s;
 
@@ -18168,6 +18353,10 @@ WriteExpressionSourceContext(
                                 note
                         );
                 }
+        }
+
+        if (expansion != NULL) {
+                WriteExpansionNote(ty, out, cols, expansion);
         }
 
         SCRATCH_RESTORE();
@@ -19221,6 +19410,18 @@ void
 CompilerScopePop(Ty *ty)
 {
         STATE.pscope = STATE.pscope->parent;
+        PopScope();
+}
+
+void
+CompilerEnterNS(Ty *ty, Namespace const *ns)
+{
+        PushScope(GetNamespace(ty, ns));
+}
+
+void
+CompilerLeaveNS(Ty *ty)
+{
         PopScope();
 }
 

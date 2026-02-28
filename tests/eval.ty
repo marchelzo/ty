@@ -1,14 +1,13 @@
-function e() {
-    let n = 21
-    __eval__('''
-        let x = 40
-        n += 5
-        x + n
-    ''') + n
-}
+ns test
 
-if e() == 92 {
-    print('PASS')
-} else {
-    print('FAIL')
+pub fn ev() {
+    function e() {
+        let n = 21
+        __eval__('''
+            let x = 40
+            n += 5
+            x + n
+        ''') + n
+    }
+    assert(e() == 92)
 }

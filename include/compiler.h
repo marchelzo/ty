@@ -374,10 +374,10 @@ bool
 IsMacroInvocation(Ty *ty, Expr *e);
 
 bool
-is_macro(Ty *ty, char const *module, char const *id);
+IsMacro(Ty *ty, Expr *e);
 
 bool
-is_fun_macro(Ty *ty, char const *module, char const *id);
+IsMacroName(Ty *ty, char const *mod, char const *name);
 
 Value
 tyexpr(Ty *ty, Expr const *e, u32 flags);
@@ -401,7 +401,13 @@ Value
 CToTyStmt(Ty *ty, Stmt *);
 
 Expr *
-typarse(Ty *ty, Expr *e, Expr *self, Location const *start, Location const *end);
+typarse(
+        Ty *ty,
+        Expr *e,
+        Expr *self,
+        Location const *start,
+        Location const *end
+);
 
 Value
 compiler_eval(Ty *ty, Expr *e);
@@ -488,11 +494,17 @@ CompilerScopePush(Ty *ty);
 void
 CompilerScopePop(Ty *ty);
 
+void
+CompilerEnterNS(Ty *ty, Namespace const *ns);
+
+void
+CompilerLeaveNS(Ty *ty);
+
 bool
 IsTopLevel(Symbol const *sym);
 
 Scope *
-GetNamespace(Ty *ty, Namespace *ns);
+GetNamespace(Ty *ty, Namespace const *ns);
 
 void
 CompilerBlackpill(Ty *ty, Stmt *s);

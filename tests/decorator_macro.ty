@@ -1,13 +1,18 @@
 import ty
 
+ns test
+
 macro upper(def) {
     let ty.FuncDef(f) = def
     ty.FuncDef({*f, body: $$[ $$(f.body).upper() $$]})
 }
 
 @upper
+
 function f() {
     'pass'
 }
 
-print(f())
+pub fn decorator-macro() {
+    assert(f() == 'PASS')
+}

@@ -1,16 +1,13 @@
 import os (..)
 
-let chan = Channel()
+ns test
 
-Thread(isolated=true, fn () {
-    sleep(0.05)
-    chan.send('PASS')
-})
-
-if let Some(x) = chan.recv(0) {
-    print('FAIL')
-}
-
-if let Some(x) = chan.recv() {
-    print(x)
+pub fn chan() {
+    let ch = Channel()
+    Thread(isolated=true, fn () {
+        sleep(0.05)
+        ch.send('hello')
+    })
+    assert(ch.recv(0) == None)
+    assert(ch.recv() == Some('hello'))
 }

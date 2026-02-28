@@ -1,3 +1,5 @@
+ns test
+
 fn go() {
     for ..10 {
         try {
@@ -38,4 +40,5 @@ fn go2() {
 }
 
 go()
+
 go2()

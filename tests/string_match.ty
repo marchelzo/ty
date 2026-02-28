@@ -1,465 +1,419 @@
-// Tests for string match optimization (MATCH_STRING instruction)
-// Exercises: match statements, match expressions, choice patterns,
-// default/catch-all arms, non-matching subjects, non-string subjects
+ns test
 
-fn eq!(*args) {
-	for [a, b] in args.window(2) {
-		assert(a == b, "expected {b}, got {a}")
-	}
+pub fn basic-match() {
+    fn color-name(c) {
+        match c {
+            'red'    => 'R',
+            'green'  => 'G',
+            'blue'   => 'B',
+            'yellow' => 'Y',
+            _        => '?'
+        }
+    }
+    assert(color-name('red') == 'R')
+    assert(color-name('green') == 'G')
+    assert(color-name('blue') == 'B')
+    assert(color-name('yellow') == 'Y')
+    assert(color-name('purple') == '?')
+    assert(color-name('') == '?')
 }
 
-// ─── Basic match statement ───────────────────────────────────────────────────
-
-fn color-name(c) {
-	match c {
-		'red'    => 'R',
-		'green'  => 'G',
-		'blue'   => 'B',
-		'yellow' => 'Y',
-		_        => '?'
-	}
+pub fn match-expr() {
+    fn ext-type(ext) {
+        let t = match ext {
+            '.js'   => 'javascript',
+            '.py'   => 'python',
+            '.rs'   => 'rust',
+            '.c'    => 'c',
+            '.ty'   => 'ty',
+            _       => 'unknown'
+        }
+        t
+    }
+    assert(ext-type('.js') == 'javascript')
+    assert(ext-type('.py') == 'python')
+    assert(ext-type('.rs') == 'rust')
+    assert(ext-type('.c') == 'c')
+    assert(ext-type('.ty') == 'ty')
+    assert(ext-type('.rb') == 'unknown')
 }
 
-eq!(color-name('red'), 'R')
-eq!(color-name('green'), 'G')
-eq!(color-name('blue'), 'B')
-eq!(color-name('yellow'), 'Y')
-eq!(color-name('purple'), '?')
-eq!(color-name(''), '?')
-
-// ─── Match expression (return value) ─────────────────────────────────────────
-
-fn ext-type(ext) {
-	let t = match ext {
-		'.js'   => 'javascript',
-		'.py'   => 'python',
-		'.rs'   => 'rust',
-		'.c'    => 'c',
-		'.ty'   => 'ty',
-		_       => 'unknown'
-	}
-	t
+pub fn choice-patterns() {
+    fn lang-family(lang) {
+        match lang {
+            'c', 'c++', 'rust', 'zig'  => 'systems',
+            'python', 'ruby', 'perl'   => 'scripting',
+            'haskell', 'ocaml', 'sml'  => 'functional',
+            _                           => 'other'
+        }
+    }
+    assert(lang-family('c') == 'systems')
+    assert(lang-family('c++') == 'systems')
+    assert(lang-family('rust') == 'systems')
+    assert(lang-family('zig') == 'systems')
+    assert(lang-family('python') == 'scripting')
+    assert(lang-family('ruby') == 'scripting')
+    assert(lang-family('perl') == 'scripting')
+    assert(lang-family('haskell') == 'functional')
+    assert(lang-family('ocaml') == 'functional')
+    assert(lang-family('sml') == 'functional')
+    assert(lang-family('java') == 'other')
 }
 
-eq!(ext-type('.js'), 'javascript')
-eq!(ext-type('.py'), 'python')
-eq!(ext-type('.rs'), 'rust')
-eq!(ext-type('.c'), 'c')
-eq!(ext-type('.ty'), 'ty')
-eq!(ext-type('.rb'), 'unknown')
-
-// ─── Choice patterns (multiple strings per arm, comma-separated) ─────────────
-
-fn lang-family(lang) {
-	match lang {
-		'c', 'c++', 'rust', 'zig'  => 'systems',
-		'python', 'ruby', 'perl'   => 'scripting',
-		'haskell', 'ocaml', 'sml'  => 'functional',
-		_                           => 'other'
-	}
+pub fn no-catchall() {
+    fn strict(s) {
+        match s {
+            'a' => 1,
+            'b' => 2,
+            'c' => 3
+        }
+    }
+    assert(strict('a') == 1)
+    assert(strict('b') == 2)
+    assert(strict('c') == 3)
+    let caught = false
+    try { strict('d') }
+    catch _ { caught = true }
+    assert(caught, 'expected BAD_MATCH for unmatched string')
 }
 
-eq!(lang-family('c'), 'systems')
-eq!(lang-family('c++'), 'systems')
-eq!(lang-family('rust'), 'systems')
-eq!(lang-family('zig'), 'systems')
-eq!(lang-family('python'), 'scripting')
-eq!(lang-family('ruby'), 'scripting')
-eq!(lang-family('perl'), 'scripting')
-eq!(lang-family('haskell'), 'functional')
-eq!(lang-family('ocaml'), 'functional')
-eq!(lang-family('sml'), 'functional')
-eq!(lang-family('java'), 'other')
-
-// ─── No catch-all (should BAD_MATCH on unknown) ─────────────────────────────
-
-fn strict-match(s) {
-	match s {
-		'a' => 1,
-		'b' => 2,
-		'c' => 3
-	}
+pub fn binding-catchall() {
+    fn with-binding(s) {
+        match s {
+            'hello' => 'greeting',
+            'bye'   => 'farewell',
+            other   => "unknown: {other}"
+        }
+    }
+    assert(with-binding('hello') == 'greeting')
+    assert(with-binding('bye') == 'farewell')
+    assert(with-binding('xyz') == 'unknown: xyz')
 }
 
-eq!(strict-match('a'), 1)
-eq!(strict-match('b'), 2)
-eq!(strict-match('c'), 3)
-
-let caught = false
-try {
-	strict-match('d')
-} catch _ {
-	caught = true
-}
-assert(caught, 'expected BAD_MATCH for unmatched string')
-
-// ─── Match with identifier catch-all (binding) ──────────────────────────────
-
-fn with-binding(s) {
-	match s {
-		'hello' => 'greeting',
-		'bye'   => 'farewell',
-		other   => "unknown: {other}"
-	}
+pub fn non-string-subject() {
+    fn type-check(v) {
+        match v {
+            'foo' => 'string-foo',
+            'bar' => 'string-bar',
+            _     => 'not-a-string'
+        }
+    }
+    assert(type-check('foo') == 'string-foo')
+    assert(type-check('bar') == 'string-bar')
+    assert(type-check(42) == 'not-a-string')
+    assert(type-check(nil) == 'not-a-string')
+    assert(type-check(true) == 'not-a-string')
+    assert(type-check([1, 2]) == 'not-a-string')
 }
 
-eq!(with-binding('hello'), 'greeting')
-eq!(with-binding('bye'), 'farewell')
-eq!(with-binding('xyz'), 'unknown: xyz')
-
-// ─── Non-string subject falls to default ─────────────────────────────────────
-
-fn type-check(v) {
-	match v {
-		'foo' => 'string-foo',
-		'bar' => 'string-bar',
-		_     => 'not-a-string'
-	}
+pub fn inline-match-expr() {
+    let result = match 'world' {
+        'hello' => 1,
+        'world' => 2,
+        'foo'   => 3,
+        _       => 0
+    }
+    assert(result == 2)
 }
 
-eq!(type-check('foo'), 'string-foo')
-eq!(type-check('bar'), 'string-bar')
-eq!(type-check(42), 'not-a-string')
-eq!(type-check(nil), 'not-a-string')
-eq!(type-check(true), 'not-a-string')
-eq!(type-check([1, 2]), 'not-a-string')
-
-// ─── Match expression used inline ────────────────────────────────────────────
-
-let result = match 'world' {
-	'hello' => 1,
-	'world' => 2,
-	'foo'   => 3,
-	_       => 0
-}
-eq!(result, 2)
-
-// ─── Empty string as pattern ─────────────────────────────────────────────────
-
-fn empty-test(s) {
-	match s {
-		''    => 'empty',
-		'a'   => 'a',
-		'ab'  => 'ab',
-		_     => 'other'
-	}
+pub fn empty-string-pattern() {
+    fn empty-test(s) {
+        match s {
+            ''    => 'empty',
+            'a'   => 'a',
+            'ab'  => 'ab',
+            _     => 'other'
+        }
+    }
+    assert(empty-test('') == 'empty')
+    assert(empty-test('a') == 'a')
+    assert(empty-test('ab') == 'ab')
+    assert(empty-test('abc') == 'other')
 }
 
-eq!(empty-test(''), 'empty')
-eq!(empty-test('a'), 'a')
-eq!(empty-test('ab'), 'ab')
-eq!(empty-test('abc'), 'other')
-
-// ─── Many arms (stress test hash table) ──────────────────────────────────────
-
-fn month-name(m) {
-	match m {
-		'jan' => 1,
-		'feb' => 2,
-		'mar' => 3,
-		'apr' => 4,
-		'may' => 5,
-		'jun' => 6,
-		'jul' => 7,
-		'aug' => 8,
-		'sep' => 9,
-		'oct' => 10,
-		'nov' => 11,
-		'dec' => 12,
-		_     => 0
-	}
+pub fn many-arms() {
+    fn month-name(m) {
+        match m {
+            'jan' => 1,  'feb' => 2,  'mar' => 3,
+            'apr' => 4,  'may' => 5,  'jun' => 6,
+            'jul' => 7,  'aug' => 8,  'sep' => 9,
+            'oct' => 10, 'nov' => 11, 'dec' => 12,
+            _     => 0
+        }
+    }
+    assert(month-name('jan') == 1)
+    assert(month-name('feb') == 2)
+    assert(month-name('mar') == 3)
+    assert(month-name('apr') == 4)
+    assert(month-name('may') == 5)
+    assert(month-name('jun') == 6)
+    assert(month-name('jul') == 7)
+    assert(month-name('aug') == 8)
+    assert(month-name('sep') == 9)
+    assert(month-name('oct') == 10)
+    assert(month-name('nov') == 11)
+    assert(month-name('dec') == 12)
+    assert(month-name('xyz') == 0)
 }
 
-eq!(month-name('jan'), 1)
-eq!(month-name('feb'), 2)
-eq!(month-name('mar'), 3)
-eq!(month-name('apr'), 4)
-eq!(month-name('may'), 5)
-eq!(month-name('jun'), 6)
-eq!(month-name('jul'), 7)
-eq!(month-name('aug'), 8)
-eq!(month-name('sep'), 9)
-eq!(month-name('oct'), 10)
-eq!(month-name('nov'), 11)
-eq!(month-name('dec'), 12)
-eq!(month-name('xyz'), 0)
-
-// ─── Computed string subject ─────────────────────────────────────────────────
-
-let prefix = 'hel'
-let suffix = 'lo'
-let word = prefix + suffix
-
-let r = match word {
-	'hello' => 'found',
-	'world' => 'wrong',
-	_       => 'miss'
-}
-eq!(r, 'found')
-
-// ─── Match with side effects in arms ─────────────────────────────────────────
-
-let counter = 0
-
-fn count-match(s) {
-	match s {
-		'inc' => { counter += 1 },
-		'dec' => { counter -= 1 },
-		_     => { }
-	}
+pub fn computed-subject() {
+    let pfx = 'hel'
+    let sfx = 'lo'
+    let w = pfx + sfx
+    let r = match w {
+        'hello' => 'found',
+        'world' => 'wrong',
+        _       => 'miss'
+    }
+    assert(r == 'found')
 }
 
-count-match('inc')
-count-match('inc')
-count-match('inc')
-count-match('dec')
-eq!(counter, 2)
-
-// ─── Match in loop ───────────────────────────────────────────────────────────
-
-let total = 0
-for cmd in ['add', 'add', 'sub', 'add', 'nop', 'sub'] {
-	match cmd {
-		'add' => { total += 10 },
-		'sub' => { total -= 3 },
-		_     => { }
-	}
-}
-eq!(total, 24)
-
-// ─── Choice pattern with comma syntax ────────────────────────────────────────
-
-fn yesno(s) {
-	match s {
-		'yes', 'y', 'Y', 'YES' => true,
-		'no', 'n', 'N', 'NO'   => false,
-		_                       => nil
-	}
+pub fn side-effects() {
+    let ctr = 0
+    fn count-match(s) {
+        match s {
+            'inc' => { ctr += 1 },
+            'dec' => { ctr -= 1 },
+            _     => { }
+        }
+    }
+    count-match('inc')
+    count-match('inc')
+    count-match('inc')
+    count-match('dec')
+    assert(ctr == 2)
 }
 
-eq!(yesno('yes'), true)
-eq!(yesno('y'), true)
-eq!(yesno('Y'), true)
-eq!(yesno('YES'), true)
-eq!(yesno('no'), false)
-eq!(yesno('n'), false)
-eq!(yesno('N'), false)
-eq!(yesno('NO'), false)
-eq!(yesno('maybe'), nil)
-
-// ─── Unicode string patterns ─────────────────────────────────────────────────
-
-fn greet(lang) {
-	match lang {
-		'hello'  => 'english',
-		'hola'   => 'spanish',
-		'こんにちは' => 'japanese',
-		'café'   => 'french',
-		_        => 'unknown'
-	}
+pub fn match-in-loop() {
+    let tot = 0
+    for cmd in ['add', 'add', 'sub', 'add', 'nop', 'sub'] {
+        match cmd {
+            'add' => { tot += 10 },
+            'sub' => { tot -= 3 },
+            _     => { }
+        }
+    }
+    assert(tot == 24)
 }
 
-eq!(greet('hello'), 'english')
-eq!(greet('hola'), 'spanish')
-eq!(greet('こんにちは'), 'japanese')
-eq!(greet('café'), 'french')
-eq!(greet('ciao'), 'unknown')
-
-// ─── Two arms (minimum for optimization) ─────────────────────────────────────
-
-fn two-arm(s) {
-	match s {
-		'a' => 1,
-		'b' => 2
-	}
+pub fn choice-comma-syntax() {
+    fn yesno(s) {
+        match s {
+            'yes', 'y', 'Y', 'YES' => true,
+            'no', 'n', 'N', 'NO'   => false,
+            _                       => nil
+        }
+    }
+    assert(yesno('yes') == true)
+    assert(yesno('y') == true)
+    assert(yesno('Y') == true)
+    assert(yesno('YES') == true)
+    assert(yesno('no') == false)
+    assert(yesno('n') == false)
+    assert(yesno('N') == false)
+    assert(yesno('NO') == false)
+    assert(yesno('maybe') == nil)
 }
 
-eq!(two-arm('a'), 1)
-eq!(two-arm('b'), 2)
-
-// ─── Match expression as function argument ───────────────────────────────────
-
-fn identity(x) { x }
-
-eq!(identity(match 'x' { 'x' => 10, 'y' => 20, _ => 0 }), 10)
-eq!(identity(match 'y' { 'x' => 10, 'y' => 20, _ => 0 }), 20)
-eq!(identity(match 'z' { 'x' => 10, 'y' => 20, _ => 0 }), 0)
-
-// ─── Nested match ────────────────────────────────────────────────────────────
-
-fn nested(a, b) {
-	match a {
-		'x' => match b {
-			'1' => 'x1',
-			'2' => 'x2',
-			_   => 'x?'
-		},
-		'y' => match b {
-			'1' => 'y1',
-			'2' => 'y2',
-			_   => 'y?'
-		},
-		_ => 'other'
-	}
+pub fn unicode-patterns() {
+    fn greet(lang) {
+        match lang {
+            'hello'  => 'english',
+            'hola'   => 'spanish',
+            'こんにちは' => 'japanese',
+            'café'   => 'french',
+            _        => 'unknown'
+        }
+    }
+    assert(greet('hello') == 'english')
+    assert(greet('hola') == 'spanish')
+    assert(greet('こんにちは') == 'japanese')
+    assert(greet('café') == 'french')
+    assert(greet('ciao') == 'unknown')
 }
 
-eq!(nested('x', '1'), 'x1')
-eq!(nested('x', '2'), 'x2')
-eq!(nested('x', '3'), 'x?')
-eq!(nested('y', '1'), 'y1')
-eq!(nested('y', '2'), 'y2')
-eq!(nested('z', '1'), 'other')
-
-// ─── Choice pattern with 'or' keyword ────────────────────────────────────────
-
-fn bool-str(s) {
-	match s {
-		'true' or 'True' or 'TRUE'    => true,
-		'false' or 'False' or 'FALSE' => false,
-		_                              => nil
-	}
+pub fn two-arms() {
+    fn two-arm(s) {
+        match s {
+            'a' => 1,
+            'b' => 2
+        }
+    }
+    assert(two-arm('a') == 1)
+    assert(two-arm('b') == 2)
 }
 
-eq!(bool-str('true'), true)
-eq!(bool-str('True'), true)
-eq!(bool-str('TRUE'), true)
-eq!(bool-str('false'), false)
-eq!(bool-str('False'), false)
-eq!(bool-str('FALSE'), false)
-eq!(bool-str('maybe'), nil)
-
-// ─── Mixed patterns: strings then tag applications (pattern groups) ──────────
-
-fn describe(v) {
-	match v {
-		'red'     => 'str-red',
-		'green'   => 'str-green',
-		'blue'    => 'str-blue',
-		Ok(x)     => "ok: {x}",
-		Some(x)   => "some: {x}",
-		_         => 'other'
-	}
+pub fn match-as-arg() {
+    fn id(x) { x }
+    assert(id(match 'x' { 'x' => 10, 'y' => 20, _ => 0 }) == 10)
+    assert(id(match 'y' { 'x' => 10, 'y' => 20, _ => 0 }) == 20)
+    assert(id(match 'z' { 'x' => 10, 'y' => 20, _ => 0 }) == 0)
 }
 
-eq!(describe('red'), 'str-red')
-eq!(describe('green'), 'str-green')
-eq!(describe('blue'), 'str-blue')
-eq!(describe(Ok(42)), 'ok: 42')
-eq!(describe(Some('hi')), 'some: hi')
-eq!(describe(42), 'other')
-eq!(describe('yellow'), 'other')
-
-// ─── Mixed: strings, then other patterns, then strings ──────────────────────
-
-fn mixed-groups(v) {
-	match v {
-		'hello'  => 1,
-		'world'  => 2,
-		[x, y]   => 3,
-		'foo'    => 5,
-		'bar'    => 6,
-		_        => 0
-	}
+pub fn nested-match() {
+    fn nested(a, b) {
+        match a {
+            'x' => match b {
+                '1' => 'x1',
+                '2' => 'x2',
+                _   => 'x?'
+            },
+            'y' => match b {
+                '1' => 'y1',
+                '2' => 'y2',
+                _   => 'y?'
+            },
+            _ => 'other'
+        }
+    }
+    assert(nested('x', '1') == 'x1')
+    assert(nested('x', '2') == 'x2')
+    assert(nested('x', '3') == 'x?')
+    assert(nested('y', '1') == 'y1')
+    assert(nested('y', '2') == 'y2')
+    assert(nested('z', '1') == 'other')
 }
 
-eq!(mixed-groups('hello'), 1)
-eq!(mixed-groups('world'), 2)
-eq!(mixed-groups([10, 20]), 3)
-eq!(mixed-groups('foo'), 5)
-eq!(mixed-groups('bar'), 6)
-eq!(mixed-groups(99), 0)
-
-// ─── Mixed: tag apps then strings ───────────────────────────────────────────
-
-fn tag-then-str(v) {
-	match v {
-		Ok(x)   => "ok: {x}",
-		Some(x)  => "some: {x}",
-		'yes'   => 'yes-str',
-		'no'    => 'no-str',
-		_       => '?'
-	}
+pub fn choice-or-keyword() {
+    fn bool-str(s) {
+        match s {
+            'true' or 'True' or 'TRUE'    => true,
+            'false' or 'False' or 'FALSE' => false,
+            _                              => nil
+        }
+    }
+    assert(bool-str('true') == true)
+    assert(bool-str('True') == true)
+    assert(bool-str('TRUE') == true)
+    assert(bool-str('false') == false)
+    assert(bool-str('False') == false)
+    assert(bool-str('FALSE') == false)
+    assert(bool-str('maybe') == nil)
 }
 
-eq!(tag-then-str(Ok(1)), 'ok: 1')
-eq!(tag-then-str(Some(2)), 'some: 2')
-eq!(tag-then-str('yes'), 'yes-str')
-eq!(tag-then-str('no'), 'no-str')
-eq!(tag-then-str(42), '?')
-
-// ─── Mixed: strings with one tag app in middle (simulates readln.ty) ────────
-
-fn keybind(key) {
-	match key {
-		'<Enter>'  => 'enter',
-		'<Tab>'    => 'tab',
-		'<Esc>'    => 'escape',
-		'<C-c>'    => 'interrupt',
-		'<C-d>'    => 'eof',
-		'<C-a>'    => 'home',
-		'<C-e>'    => 'end',
-		'<Up>'     => 'up',
-		'<Down>'   => 'down',
-		'<Left>'   => 'left',
-		'<Right>'  => 'right',
-		Some(s)    => "special: {s}",
-		_          => 'unknown'
-	}
+pub fn mixed-string-and-tag() {
+    fn describe(v) {
+        match v {
+            'red'     => 'str-red',
+            'green'   => 'str-green',
+            'blue'    => 'str-blue',
+            Ok(x)     => "ok: {x}",
+            Some(x)   => "some: {x}",
+            _         => 'other'
+        }
+    }
+    assert(describe('red') == 'str-red')
+    assert(describe('green') == 'str-green')
+    assert(describe('blue') == 'str-blue')
+    assert(describe(Ok(42)) == 'ok: 42')
+    assert(describe(Some('hi')) == 'some: hi')
+    assert(describe(42) == 'other')
+    assert(describe('yellow') == 'other')
 }
 
-eq!(keybind('<Enter>'), 'enter')
-eq!(keybind('<Tab>'), 'tab')
-eq!(keybind('<Esc>'), 'escape')
-eq!(keybind('<C-c>'), 'interrupt')
-eq!(keybind('<C-d>'), 'eof')
-eq!(keybind('<C-a>'), 'home')
-eq!(keybind('<C-e>'), 'end')
-eq!(keybind('<Up>'), 'up')
-eq!(keybind('<Down>'), 'down')
-eq!(keybind('<Left>'), 'left')
-eq!(keybind('<Right>'), 'right')
-eq!(keybind(Some('X')), 'special: X')
-eq!(keybind('z'), 'unknown')
-eq!(keybind(42), 'unknown')
-
-// ─── Mixed match expression (not statement) ─────────────────────────────────
-
-let r2 = match 'baz' {
-	'baz'  => 100,
-	'qux'  => 200,
-	Ok(x)  => x,
-	_      => -1
-}
-eq!(r2, 100)
-
-let r3 = match Ok(42) {
-	'baz'  => 100,
-	'qux'  => 200,
-	Ok(x)  => x,
-	_      => -1
-}
-eq!(r3, 42)
-
-let r4 = match 'other' {
-	'baz'  => 100,
-	'qux'  => 200,
-	Ok(x)  => x,
-	_      => -1
-}
-eq!(r4, -1)
-
-// ─── Single-pattern groups (should fall back to sequential) ─────────────────
-
-fn single-groups(v) {
-	match v {
-		'only-str' => 1,
-		[x]        => 2,
-		_          => 0
-	}
+pub fn mixed-groups() {
+    fn mixed(v) {
+        match v {
+            'hello'  => 1,
+            'world'  => 2,
+            [x, y]   => 3,
+            'foo'    => 5,
+            'bar'    => 6,
+            _        => 0
+        }
+    }
+    assert(mixed('hello') == 1)
+    assert(mixed('world') == 2)
+    assert(mixed([10, 20]) == 3)
+    assert(mixed('foo') == 5)
+    assert(mixed('bar') == 6)
+    assert(mixed(99) == 0)
 }
 
-eq!(single-groups('only-str'), 1)
-eq!(single-groups([5]), 2)
-eq!(single-groups(99), 0)
+pub fn tag-then-string() {
+    fn tag-then-str(v) {
+        match v {
+            Ok(x)   => "ok: {x}",
+            Some(x)  => "some: {x}",
+            'yes'   => 'yes-str',
+            'no'    => 'no-str',
+            _       => '?'
+        }
+    }
+    assert(tag-then-str(Ok(1)) == 'ok: 1')
+    assert(tag-then-str(Some(2)) == 'some: 2')
+    assert(tag-then-str('yes') == 'yes-str')
+    assert(tag-then-str('no') == 'no-str')
+    assert(tag-then-str(42) == '?')
+}
 
-print('PASS')
+pub fn keybind-pattern() {
+    fn keybind(key) {
+        match key {
+            '<Enter>'  => 'enter',
+            '<Tab>'    => 'tab',
+            '<Esc>'    => 'escape',
+            '<C-c>'    => 'interrupt',
+            '<C-d>'    => 'eof',
+            '<C-a>'    => 'home',
+            '<C-e>'    => 'end',
+            '<Up>'     => 'up',
+            '<Down>'   => 'down',
+            '<Left>'   => 'left',
+            '<Right>'  => 'right',
+            Some(s)    => "special: {s}",
+            _          => 'unknown'
+        }
+    }
+    assert(keybind('<Enter>') == 'enter')
+    assert(keybind('<Tab>') == 'tab')
+    assert(keybind('<Esc>') == 'escape')
+    assert(keybind('<C-c>') == 'interrupt')
+    assert(keybind('<C-d>') == 'eof')
+    assert(keybind('<C-a>') == 'home')
+    assert(keybind('<C-e>') == 'end')
+    assert(keybind('<Up>') == 'up')
+    assert(keybind('<Down>') == 'down')
+    assert(keybind('<Left>') == 'left')
+    assert(keybind('<Right>') == 'right')
+    assert(keybind(Some('X')) == 'special: X')
+    assert(keybind('z') == 'unknown')
+    assert(keybind(42) == 'unknown')
+}
+
+pub fn mixed-match-expr() {
+    let r2 = match 'baz' {
+        'baz'  => 100,
+        'qux'  => 200,
+        Ok(x)  => x,
+        _      => -1
+    }
+    assert(r2 == 100)
+    let r3 = match Ok(42) {
+        'baz'  => 100,
+        'qux'  => 200,
+        Ok(x)  => x,
+        _      => -1
+    }
+    assert(r3 == 42)
+    let r4 = match 'other' {
+        'baz'  => 100,
+        'qux'  => 200,
+        Ok(x)  => x,
+        _      => -1
+    }
+    assert(r4 == -1)
+}
+
+pub fn single-pattern-groups() {
+    fn single(v) {
+        match v {
+            'only-str' => 1,
+            [x]        => 2,
+            _          => 0
+        }
+    }
+    assert(single('only-str') == 1)
+    assert(single([5]) == 2)
+    assert(single(99) == 0)
+}

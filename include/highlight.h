@@ -3,8 +3,16 @@
 
 #include "ty.h"
 
-void
-syntax_highlight(Ty *ty, byte_vector *out, Module const *mod, usize start, usize end, char const *attr, char const *theme);
+bool
+syntax_highlight(
+        Ty *ty,
+        byte_vector *out,
+        Module const *mod,
+        usize start,
+        usize end,
+        char const *attr,
+        char const *theme
+);
 
 #endif
 

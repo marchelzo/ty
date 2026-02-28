@@ -1,34 +1,32 @@
 import ety
 
-let template = ety.compile(
-    '''
-    ### This is a template string.
-    #### You have <%= #widgets %> widgets:
-    <% for w in widgets { %>
-    - Widget: <%= w.name %>
-    <% } %>
-    ''',
-    ['widgets']
-)
+ns test
 
-let widgets = [
-    { name: 'Widget A' },
-    { name: 'Widget B' },
-    { name: 'Widget C' }
-]
+pub fn template() {
+    let tmpl = ety.compile(
+        '''
+        ### This is a template string.
+        #### You have <%= #widgets %> widgets:
+        <% for w in widgets { %>
+        - Widget: <%= w.name %>
+        <% } %>
+        ''',
+        ['widgets']
+    )
+    let widgets = [
+        { name: 'Widget A' },
+        { name: 'Widget B' },
+        { name: 'Widget C' }
+    ]
+    let output = tmpl(widgets)
+    let expected =
+        '''
+        ### This is a template string.
+        #### You have 3 widgets:
+        - Widget: Widget A
+        - Widget: Widget B
+        - Widget: Widget C
 
-let output = template(widgets)
-
-let expected =
-    '''
-    ### This is a template string.
-    #### You have 3 widgets:
-    - Widget: Widget A
-    - Widget: Widget B
-    - Widget: Widget C
-
-    '''
-
-assert(output == expected)
-
-print('PASS')
+        '''
+    assert(output == expected)
+}

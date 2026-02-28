@@ -1,2 +1,6 @@
-let t = Thread(${'PASS'})
-print(t.join())
+ns test
+
+pub fn thread-return() {
+    let t = Thread(${'PASS'})
+    assert(t.join() == 'PASS')
+}

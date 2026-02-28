@@ -1,16 +1,15 @@
+ns test
+
 class A {
     static foo(x: Float) {
         1
     }
-
     static foo(x: Array[Int]) {
         2
     }
-
     static foo(x: Array[Int | Float]) {
         3
     }
-
     static foo(x: Array) {
         4
     }
@@ -26,14 +25,7 @@ fn bar(a: Int, b: Int) {
 
 fn o() {}
 
-(fn () {
-    if let x = [A.foo(4.0), A.foo([1, 2]), A.foo([1, 2.0]), A.foo(['a'])] and x != [1, 2, 3, 4] {
-        throw "FAIL: {x}"
-    }
-
-    if let x = (bar('x'), bar(4, 5)) and x != (1, 2) {
-        throw "FAIL: {x}"
-    }
-
-    print('PASS')
-})()
+pub fn overload() {
+    assert2([A.foo(4.0), A.foo([1, 2]), A.foo([1, 2.0]), A.foo(['a'])] == [1, 2, 3, 4])
+    assert2((bar('x'), bar(4, 5)) == (1, 2))
+}

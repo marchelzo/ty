@@ -90,6 +90,9 @@ vm_load_program(Ty *ty, char const *source, char const *file);
 bool
 vm_execute_file(Ty *ty, char const *path);
 
+int
+RunTests(Ty *ty);
+
 void
 vm_push(Ty *ty, Value const *v);
 

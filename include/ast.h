@@ -8,20 +8,6 @@
 #include "vec.h"
 #include "scope.h"
 
-typedef struct scope Scope;
-typedef struct symbol Symbol;
-typedef struct type Type;
-
-typedef struct expression Expr;
-typedef struct statement Stmt;
-typedef struct type_bound TypeBound;
-typedef struct type_hint  TypeHint;
-typedef struct type Type;
-
-typedef vec(Expr *) ExprVec;
-typedef vec(TypeBound) TypeBoundVector;
-typedef vec(TypeHint) TypeHintVector;
-
 typedef Expr *ExprTransform(Expr *, Scope *, void *);
 typedef Expr *TypeTransform(Expr *, Scope *, void *);
 typedef Expr *PatternTransform(Expr *, Scope *, void *);
@@ -43,6 +29,7 @@ struct ns {
         char *id;
         bool pub;
         bool braced;
+        bool test;
         Namespace *next;
 };
 
@@ -94,8 +81,6 @@ typedef struct {
 typedef vec(ComprPart) Comprehension;
 
 typedef vec(struct condpart *) condpart_vector;
-typedef vec(Stmt *) StmtVec;
-typedef struct class_definition ClassDefinition;
 
 #define TY_STATEMENT_TYPES        \
         X(FOR_LOOP),              \
@@ -374,7 +359,7 @@ struct expression {
                 struct {
                         Expr *cond;
                         Expr *then;
-                        Expr *otherwise;
+                        Expr *_else;
                 };
                 struct {
                         Regex const *regex;
@@ -589,13 +574,13 @@ struct statement {
                 struct {
                         condpart_vector parts;
                         Stmt *block;
-                } While;
+                } _while;
                 struct {
                         condpart_vector parts;
                         Stmt *then;
-                        Stmt *otherwise;
+                        Stmt *_else;
                         bool neg;
-                } iff;
+                } _if;
                 struct {
                         Expr *target;
                         Expr *value;
@@ -605,6 +590,18 @@ struct statement {
                 };
         };
 };
+
+inline static bool
+IsStmt(Expr const *expr)
+{
+        return (expr->type > STATEMENT_TYPE_START);
+}
+
+inline static bool
+IsExpr(Stmt const *stmt)
+{
+        return (stmt->type < STATEMENT_TYPE_START);
+}
 
 inline static bool
 is_method(Expr const *e) { return e->class != NULL; }

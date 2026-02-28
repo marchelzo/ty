@@ -1,9 +1,10 @@
-let xs = Sync([])
+ns test
 
-for i in 1...100 {
-    xs.push(i)
+pub fn missing() {
+    let xs = Sync([])
+    for i in 1...100 {
+        xs.push(i)
+    }
+    assert(#xs == 100)
+    assert(xs.sum() == 5050)
 }
-
-if #xs != 100 || xs.sum() != 5050 { print('FAIL') }
-
-print('PASS')

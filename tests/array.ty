@@ -1,37 +1,22 @@
-let x = []
+ns test
 
-if x.len() != 0 || #x != 0 {
-	print('FAIL')
-}
-
-match x {
- [] => ;,
- _  => print('FAIL')
-}
-
-x.push(1)
-x.push(2)
-
-if x.len() != 2 {
-	print('FAIL')
-}
-
-x.map!((+5))
-
-if x != [6, 7] {
-	print('FAIL')
-}
-
-if x.sum() != 13 {
-	print('FAIL')
-}
-
-x.splice(0)
-
-if #x > 0 {
-	print('FAIL')
-}
-
-try let a = x[4] or else {
-	print('PASS')
+pub fn arr() {
+    let x = []
+    assert(x.len() == 0 && #x == 0)
+    match x {
+     [] => ;,
+     _  => assert(false)
+    }
+    x.push(1)
+    x.push(2)
+    assert(x.len() == 2)
+    x.map!((+5))
+    assert(x == [6, 7])
+    assert(x.sum() == 13)
+    x.splice(0)
+    assert(#x == 0)
+    let a = try x[4] else {
+        return
+    }
+    assert(false)
 }

@@ -589,6 +589,11 @@ typedef struct {
         Value exc;
 } ThrowCtx;
 
+typedef struct {
+        char const *name;
+        Symbol *var;
+} TyTest;
+
 typedef struct ty0 {
         Ty *ty;
         CompileState *compiler;
@@ -598,6 +603,7 @@ typedef struct ty0 {
         InternSet strings;
         bool initialized;
         bool ready;
+        vec(TyTest) tests;
 } TY;
 
 typedef struct thread_group ThreadGroup;

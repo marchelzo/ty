@@ -1,27 +1,14 @@
 import os (..)
 
-if not let (fd, name) = mktemp('BASED') {
-	print('FAIL')
-}
+ns test
 
-if close(fd) != 0 {
-	print('FAIL')
+pub fn os-basics() {
+    let (fd, name) = mktemp('BASED')
+    assert(close(fd) == 0)
+    assert(name in listdir('.'))
+    assert(unlink(name) == 0)
+    let cwd = getcwd()
+    assert(chdir('tests') == 0)
+    assert(getcwd().match?(/\/tests$/))
+    chdir(cwd)
 }
-
-if name not in listdir('.') {
-	print('FAIL')
-}
-
-if unlink(name) != 0 {
-	print('FAIL')
-}
-
-if chdir('tests') != 0 {
-	print('FAIL')
-}
-
-if !getcwd().match?(/\/tests$/) {
-	print('FAIL')
-}
-
-print('PASS')
