@@ -2,6 +2,8 @@ import ffi as c (C!)
 import ptr
 import io
 
+ns test
+
 C! fn {
     void qsort(void* base, c.u64 nmemb, c.u64 size, void *cmp);
     long labs(long);
@@ -13,25 +15,22 @@ C! closure cmp(pa: c.ptr, pb: c.ptr) -> c.int {
     labs(a) <=> labs(b)
 }
 
-fn check(n: Int) -> Bool {
-    let bytes = with f = io.open('/dev/urandom', 'r') {
-        f.next(n)
-    }
-    if #bytes != n {
-        return false
-    }
-
-    qsort(bytes, #bytes, 1, cmp)
-
-    let p = ptr.typed(bytes.ptr(), c.i8)
-
-    for i in 1..n {
-        if p[i - 1].abs > p[i].abs {
+pub fn sorting() {
+    fn check(n: Int) -> Bool {
+        let bytes = with f = io.open('/dev/urandom', 'r') {
+            f.next(n)
+        }
+        if #bytes != n {
             return false
         }
+        qsort(bytes, #bytes, 1, cmp)
+        let p = ptr.typed(bytes.ptr(), c.i8)
+        for i in 1..n {
+            if p[i - 1].abs > p[i].abs {
+                return false
+            }
+        }
+        true
     }
-
-    true
+    assert(check(1 << 12))
 }
-
-print(check(1 << 12) ? 'PASS' : 'FAIL')

@@ -1,5 +1,7 @@
 import ty
 
+ns test
+
 macro x {
     let s = ty.String('pass')
     $$[
@@ -13,4 +15,6 @@ macro x {
 
 x
 
-print(Test.test())
+pub fn template-macro() {
+    assert(Test.test() == 'PASS')
+}

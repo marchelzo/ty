@@ -1,15 +1,12 @@
 import sodium
 import io
 
-let pass = with f = io::open('/dev/random', 'r') {
-    f.next(64)
+ns test
+
+pub fn sodium-hash() {
+    let pass = with f = io::open('/dev/random', 'r') {
+        f.next(64)
+    }
+    let $h = sodium::hash(pass)
+    assert(sodium::verify(h, pass))
 }
-
-let $h = sodium::hash(pass)
-
-if sodium::verify(h, pass) {
-    print('PASS')
-} else {
-    print('FAIL')
-}
-

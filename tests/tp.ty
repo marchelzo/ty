@@ -1,17 +1,18 @@
 import os
 import tp (..)
 
-let pool = ThreadPool(os.ncpu(), fn (s) {
-    for ..3000 {
-        s.chars().shuffle().sum()
+ns test
+
+pub fn test-thread-pool-stress() {
+    let pool = ThreadPool(os.ncpu(), fn (s) {
+        for ..3000 {
+            s.chars().shuffle().sum()
+        }
+        s
+    })
+    let futures = []
+    for _ in ..64 {
+        futures.push(pool.submit('PASS'))
     }
-    s
-})
-
-let futures = []
-
-for _ in ..64 {
-  futures.push(pool.submit('PASS'))
+    assert(futures[-1].wait() == 'PASS')
 }
-
-print(futures[-1].wait())

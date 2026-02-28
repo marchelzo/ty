@@ -1,12 +1,12 @@
-let g = nil
-let s = ''
+ns test
 
-g = generator {
-    'pass:fail'.chars().map(c -> s += (yield c)(c))
+pub fn yield-from-c() {
+    let g = nil
+    let s = ''
+    g = generator {
+        'pass:fail'.chars().map(c -> s += (yield c)(c))
+    }
+    let f = -> g(&upper)
+    [*f.take(5)]
+    assert(s == 'PASS')
 }
-
-let f = -> g(&upper)
-
-[*f.take(5)]
-
-print(s)

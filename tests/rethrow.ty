@@ -1,13 +1,9 @@
-function f() {
-    try {
-        throw 'FAIL'
-    } catch 'FAIL' {
-        throw 'PASS'
-    }
-}
+ns test
 
-try {
-    f()
-} catch e {
-    print(e)
+pub fn rethrow() {
+    fn f() {
+        try { throw 'nope' } catch 'nope' { throw 'ok' }
+    }
+    let caught = try { f(); nil } catch e { e }
+    assert(caught == 'ok')
 }

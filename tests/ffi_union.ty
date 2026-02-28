@@ -1,5 +1,7 @@
 import ffi as c (C!)
 
+ns test
+
 C! struct Foo {
     int a;
     union {
@@ -10,18 +12,10 @@ C! struct Foo {
     int z;
 };
 
-if #Foo != 16 {
-    print("FAIL: sizeof (Foo) = {#Foo} != 16")
+pub fn ffiunion() {
+    assert(#Foo == 16)
+    let foo = Foo(a=2, c=4.5, z=11)
+    assert(foo.c == 4.5)
+    foo.b = 7
+    assert(foo.b == 7)
 }
-
-let foo = Foo(a=2, c=4.5, z=11)
-if foo.c != 4.5 {
-    print("FAIL: foo.c = {foo.c} != 4.5")
-}
-
-foo.b = 7
-if foo.b != 7 {
-    print("FAIL: foo.b = {foo.b} != 7")
-}
-
-print('PASS')

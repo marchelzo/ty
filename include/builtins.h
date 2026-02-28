@@ -901,6 +901,9 @@ static struct {
   { .module = "ty/parse",   .name = "stmt",                     .value = BUILTIN(builtin_parse_stmt)             },
   { .module = "ty/parse",   .name = "fail",                     .value = BUILTIN(builtin_parse_fail)             },
   { .module = "ty/parse",   .name = "show",                     .value = BUILTIN(builtin_parse_show)             },
+  { .module = "ty/parse",   .name = "highlight",                .value = BUILTIN(builtin_parse_highlight)        },
+  { .module = "ty/parse",   .name = "raw",                      .value = BUILTIN(builtin_parse_raw)              },
+  { .module = "ty/parse",   .name = "ast",                      .value = BUILTIN(builtin_parse_ast)              },
 
   { .module = "ty/lex",     .name = "peekc",                    .value = BUILTIN(builtin_lex_peek_char)          },
   { .module = "ty/lex",     .name = "getc",                     .value = BUILTIN(builtin_lex_next_char)          },

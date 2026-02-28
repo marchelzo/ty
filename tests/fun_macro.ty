@@ -1,5 +1,7 @@
 import ty
 
+ns test
+
 macro fun(e) {
     let ty.Id({name: n}) = e
     $$[ $$(ty.String(n)).upper() $$]
@@ -7,6 +9,7 @@ macro fun(e) {
 
 let p = fun(ssap)
 
-let fun = &reverse
-
-print(fun(p))
+pub fn fun-macro() {
+    let rev = &reverse
+    assert(rev(p) == 'PASS')
+}

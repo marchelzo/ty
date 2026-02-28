@@ -144,12 +144,9 @@ class CompletionCycler {
     }
 
     render() {
-        let out = Blob()
-
-        out.push("{ERASE_REST}\n")
+        let out = Blob("{ERASE_REST}\n")
 
         let ci = (__ci % #__cs)
-
         let (pg-num, pg-start) = __seek(ci)
 
         let page = __pages[pg-num]
@@ -178,7 +175,6 @@ class CompletionCycler {
         }
 
         out.push("\r\x1b[{#page + off + 1}A")
-
         out.str!()
     }
 

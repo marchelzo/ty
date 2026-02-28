@@ -755,6 +755,10 @@ main(int argc, char **argv)
                 exit(67);
         }
 
+        if (UNLIKELY(RunningTests)) {
+                exit(RunTests(ty));
+        }
+
         return 0;
 }
 

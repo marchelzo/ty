@@ -1,43 +1,49 @@
-if let Some(x) = Some(10) and x > 20 {
-  print('1. Bad')
-} else {
-  ;
+ns test
+
+pub fn if-let-guard() {
+    if let Some(x) = Some(10) and x > 20 {
+        assert(false)
+    }
 }
 
-if let Some(x) = Some(Ok(3)) and let Ok(y) = x {
-  ;
-} else {
-  print('2. Bad')
+pub fn nested-if-let() {
+    if let Some(x) = Some(Ok(3)) and let Ok(y) = x {
+        ;
+    } else {
+        assert(false)
+    }
 }
 
-if not let [x] = [] {
-  ;
-} else {
-  print('3. Bad')
+pub fn not-let-empty() {
+    if not let [x] = [] {
+        ;
+    } else {
+        assert(false)
+    }
 }
 
-if not let (a, b) = (4, 5) or a != b {
-  ;
-} else {
-  print('4. Bad')
+pub fn not-let-tuple() {
+    if not let (a, b) = (4, 5) or a != b {
+        ;
+    } else {
+        assert(false)
+    }
 }
 
-if not let (a, b) = (4, 5) or not a != b {
-  print('5. Bad')
-} else {
-  ;
+pub fn not-let-double-neg() {
+    if not let (a, b) = (4, 5) or not a != b {
+        assert(false)
+    }
 }
 
-try [x] = [] or else {
-  ;
+pub fn try-assign() {
+    let [x] = [] or {
+        ;
+    }
+    assert(x == nil)
+    fn g() {
+        throw 100
+    }
+    try [x] = [g()] else return
+    assert(false)
 }
-
-function g() {
-  throw 100
-}
-
-try [x] = [g()] or else {
-  ;
-}
-
-print('PASS')

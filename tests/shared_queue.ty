@@ -1,40 +1,30 @@
 import os (sleep)
 
-let N = 1000
+ns test
 
-let queue = SharedQueue()
-let threads = []
-
-fn thread(f) { let t = Thread(f); threads.push(t); t }
-
-if let Some(_) = queue.try-take() {
-    print('FAIL')
+pub fn shared-queue() {
+    let N = 1000
+    let queue = SharedQueue()
+    let threads = []
+    fn thread(f) { let t = Thread(f); threads.push(t); t }
+    assert(queue.try-take() == None)
+    for _ in ..6 {
+        thread(fn () {
+            sleep(0.01)
+            for i in ..N {
+                queue.put(i)
+            }
+        })
+    }
+    let out = Sync([])
+    for id in ..3 {
+        thread(fn () {
+            for _ in ..2*N {
+                let i = queue.take()
+                out.push(i)
+            }
+        })
+    }
+    for threads { it.join() }
+    assert(out.sort() == [*(i for ..6) for i in ..N].sort())
 }
-
-for _ in ..6 {
-    thread(fn () {
-        sleep(0.01)
-        for i in ..N {
-            queue.put(i)
-        }
-    })
-}
-
-let out = Sync([])
-
-for id in ..3 {
-    thread(fn () {
-        for _ in ..2*N {
-            let i = queue.take()
-            out.push(i)
-        }
-    })
-}
-
-for threads { it.join()  }
-
-if out.sort() != [*(i for ..6) for i in ..N].sort() {
-    print('FAIL')
-}
-
-print('PASS')

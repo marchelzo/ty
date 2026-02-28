@@ -1,16 +1,14 @@
 import base64
 import ffi (memcmp)
 
-for _ in ..100 {
-	let len = rand(1, 1000)
-	let b = Blob(*[rand(256) for _ in ..len])
+ns test
 
-	let encoded = base64.encode(b)
-	let decoded = base64.decode(encoded)
-
-	if b.size() != decoded.size() || memcmp(b, decoded, b.size()) != 0 {
-		print("Failed: {encoded}")
-	}
+pub fn b64() {
+    for _ in ..100 {
+        let len = rand(1, 1000)
+        let b = Blob(*[rand(256) for _ in ..len])
+        let encoded = base64.encode(b)
+        let decoded = base64.decode(encoded)
+        assert(b.size() == decoded.size() && memcmp(b, decoded, b.size()) == 0)
+    }
 }
-
-print('PASS')

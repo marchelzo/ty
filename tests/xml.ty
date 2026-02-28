@@ -1,6 +1,8 @@
 import xml (..)
 
-pub fn go() {
+ns test
+
+pub fn xml-xpath() {
     let doc = parse('''
         <based>
             Here is some text.
@@ -8,19 +10,17 @@ pub fn go() {
             <keyed id="cringe">Mangoes</keyed>
         </based>
     ''')
-
     doc.register-func('lowkey', fn (x) {
         if x[0].props.id == 'based' {
             x[0].props.msg = 'PASS'
         }
         1
     })
-
+    let msgs = []
     for node in doc['//keyed[lowkey(.)]'] {
         if let $msg = node.props.?msg {
-            print(msg)
+            msgs.push(msg)
         }
     }
+    assert(msgs == ['PASS'])
 }
-
-go()

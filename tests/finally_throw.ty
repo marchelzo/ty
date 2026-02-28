@@ -1,19 +1,22 @@
-let s = '''
-    try {
+ns test
+
+pub fn finally-throw() {
+    let s = '''
         try {
-            throw 20
+            try {
+                throw 20
+            } catch _ {
+            } finally {
+                throw 50
+            }
         } catch _ {
-        } finally {
-            throw 50
+            "PASS"
         }
-    } catch _ {
-        "PASS"
+    '''
+    let r = try {
+        __eval__(s)
+    } catch Err(e) {
+        e
     }
-
-'''
-
-try {
-    print(__eval__(s))
-} catch Err(e) {
-    print(e)
+    assert(r == 'PASS')
 }

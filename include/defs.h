@@ -41,11 +41,19 @@
 #endif
 
 #if defined(__APPLE__)
-#  define rqsort(base, nel, width, cmp, ctx) qsort_r(base, nel, width, ctx, cmp);
+  #define rqsort(base, nel, width, cmp, ctx) qsort_r(base, nel, width, ctx, cmp);
 #elif defined(__linux__)
-#  define rqsort(base, nel, width, cmp, ctx) qsort_r(base, nel, width, cmp, ctx);
+  #define rqsort(base, nel, width, cmp, ctx) qsort_r(base, nel, width, cmp, ctx);
 #elif defined(_WIN32)
-#  define rqsort(base, nel, width, cmp, ctx) qsort_s(base, nel, width, cmp, ctx);
+  #define rqsort(base, nel, width, cmp, ctx) qsort_s(base, nel, width, cmp, ctx);
+#endif
+
+#if defined(__linux__)
+  #define TY_PLATFORM_NAME "linux"
+#elif defined(__APPLE__)
+  #define TY_PLATFORM_NAME "darwin"
+#elif defined(_WIN32)
+  #define TY_PLATFORM_NAME "win32"
 #endif
 
 typedef uint8_t   u8;
@@ -64,6 +72,28 @@ typedef int64_t  isize;
 typedef intmax_t imax;
 typedef intptr_t iptr;
 
+typedef struct ty0              TY;
+typedef struct ty               Ty;
+typedef struct ty_save          TySavePoint;
+typedef struct value            Value;
+typedef struct expression       Expr;
+typedef struct statement        Stmt;
+typedef struct module           Module;
+typedef struct symbol           Symbol;
+typedef struct scope            Scope;
+typedef struct frame            Frame;
+typedef struct target           Target;
+typedef struct type             Type;
+typedef struct constraint       Constraint;
+typedef struct refinement       Refinement;
+typedef struct type_bound       TypeBound;
+typedef struct type_hint        TypeHint;
+typedef struct type_env         TypeEnv;
+typedef struct frame            Frame;
+typedef struct table            ValueTable;
+typedef struct class            Class;
+typedef struct class_definition ClassDefinition;
+
 typedef vec(char)           byte_vector;
 typedef vec(bool)           BoolVector;
 typedef vec(int)            int_vector;
@@ -74,44 +104,10 @@ typedef vec(u32)            U32Vector;
 typedef vec(char *)         StringVector;
 typedef vec(char const *)   ConstStringVector;
 typedef vec(jmp_buf *)      JmpBufVector;
-
-typedef struct ty0        TY;
-typedef struct ty         Ty;
-typedef struct ty_save    TySavePoint;
-typedef struct value      Value;
-typedef struct expression Expr;
-typedef struct statement  Stmt;
-typedef struct module     Module;
-typedef struct symbol     Symbol;
-typedef struct scope      Scope;
-typedef struct frame      Frame;
-typedef struct target     Target;
-typedef struct type       Type;
-typedef struct constraint Constraint;
-typedef struct refinement Refinement;
-typedef struct type_env   TypeEnv;
-typedef struct frame      Frame;
-typedef struct table      ValueTable;
-typedef struct class      Class;
-
-typedef struct ty0        TY;
-typedef struct ty         Ty;
-typedef struct ty_save    TySavePoint;
-typedef struct value      Value;
-typedef struct expression Expr;
-typedef struct statement  Stmt;
-typedef struct module     Module;
-typedef struct symbol     Symbol;
-typedef struct scope      Scope;
-typedef struct frame      Frame;
-typedef struct target     Target;
-typedef struct type       Type;
-typedef struct constraint Constraint;
-typedef struct refinement Refinement;
-typedef struct type_env   TypeEnv;
-typedef struct frame      Frame;
-typedef struct table      ValueTable;
-typedef struct class      Class;
+typedef vec(Expr *)         ExprVec;
+typedef vec(Stmt *)         StmtVec;
+typedef vec(TypeBound)      TypeBoundVector;
+typedef vec(TypeHint)       TypeHintVector;
 
 #define m0(x) memset(&(x), 0, sizeof (x))
 

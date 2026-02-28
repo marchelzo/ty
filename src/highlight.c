@@ -1,6 +1,7 @@
 #include <ctype.h>
 #include <string.h>
 #include <stdio.h>
+#include <stdlib.h>
 
 #include "token.h"
 #include "compiler.h"
@@ -317,6 +318,24 @@ static char const *rose_pine[SC_COUNT] = {
         [SC_PREPROC]  = "#c4a7e7",
 };
 
+static char const *muted[SC_COUNT] = {
+        [SC_NONE]     = NULL,
+        [SC_IDENT]    = "#8a8a8a",
+        [SC_PUNCT]    = "#707070",
+        [SC_KEYWORD]  = "#a0a0a0",
+        [SC_OPERATOR] = "#909090",
+        [SC_TYPE]     = "#9a9a8a",
+        [SC_DECL]     = "#9a9a8a",
+        [SC_STRING]   = "#8a9a7a",
+        [SC_FUNCTION] = "#8a9a9a",
+        [SC_FIELD]    = "#7a8a9a",
+        [SC_BUILTIN]  = "#7a8a9a",
+        [SC_REGEX]    = "#8a9a7a",
+        [SC_COMMENT]  = "#606060",
+        [SC_LITERAL]  = "#9a8a9a",
+        [SC_PREPROC]  = "#9a8a9a",
+};
+
 /* ── Theme lookup ──────────────────────────────────────────────────── */
 
 static struct {
@@ -328,6 +347,7 @@ static struct {
         { "github-light",      github_light      },
         { "github-dark",       github_dark       },
         { "monokai",           monokai           },
+        { "muted",             muted             },
         { "one-dark",          one_dark          },
         { "catppuccin-mocha",  catppuccin_mocha  },
         { "catppuccin",        catppuccin_mocha  },
@@ -343,6 +363,10 @@ static struct {
 static char const **
 find_palette(char const *name)
 {
+        if (name == NULL) {
+                name = getenv("TY_DEFAULT_COLORS");
+        }
+
         if (name == NULL) {
                 return NULL;
         }
@@ -574,7 +598,7 @@ find_first(TokenVector const *tokens, usize pos)
 
 /* ── Public API ─────────────────────────────────────────────────────── */
 
-void
+bool
 syntax_highlight(
         Ty *ty,
         byte_vector *out,
@@ -587,8 +611,9 @@ syntax_highlight(
 {
         char const *source = mod->source;
 
-        if (source == NULL)
-                return;
+        if (source == NULL) {
+                return false;
+        }
 
         TokenVector const *tokens = &mod->tokens;
         char const **pal = build_palette(find_palette(theme));
@@ -671,5 +696,7 @@ syntax_highlight(
         }
 
         svP(*out, '\0');
-        vvX(*out);
+        vXx(*out);
+
+        return true;
 }

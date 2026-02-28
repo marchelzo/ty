@@ -1,9 +1,12 @@
-class Foo {
-    foo*(x) {
-        yield __eval__(x)
-    }
-}
+ns test
 
-for f in Foo().foo('&upper') {
-    print(f('pass'))
+pub fn evgen() {
+    class Foo {
+        foo*(x) {
+            yield __eval__(x)
+        }
+    }
+    for f in Foo().foo('&upper') {
+        assert(f('pass') == 'PASS')
+    }
 }

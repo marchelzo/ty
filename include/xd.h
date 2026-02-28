@@ -1,20 +1,14 @@
-#ifndef UTIL_H_INCLUDED
-#define UTIL_H_INCLUDED
+#ifndef XD_H_INCLUDED
+#define XD_H_INCLUDED
 
-#include <stdarg.h>
-#include <stddef.h>
-#include <stdint.h>
 #include <stdio.h>
 #include <string.h>
-#include <inttypes.h>
-#include <stdbool.h>
 
 #include <utf8proc.h>
 #include <xxhash.h>
 
 #include "defs.h"
 #include "panic.h"
-#include "polyfill_unistd.h"
 
 #ifdef max
 #undef max
@@ -285,8 +279,8 @@ term_width(void const *_s, isize n)
 inline static i32
 u8_rune_sz(u8 const *str)
 {
-	i32 cp;
-	i32 n = utf8proc_iterate(str, 8, &cp);
+        i32 cp;
+        i32 n = utf8proc_iterate(str, 8, &cp);
         return (n > 0) ? n : 1;
 }
 

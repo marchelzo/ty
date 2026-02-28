@@ -1,17 +1,13 @@
+ns test
+
 class A {
     static f(x) -> Int {
         x * 2
     }
 }
 
-let a = A()
-
-if a.?f(10) != nil {
-    print('FAIL')
+pub fn static-method() {
+    let a = A()
+    assert(a.?f(10) == nil)
+    assert(A.f(10) == 20)
 }
-
-if A.f(10) != 20 {
-    print('FAIL')
-}
-
-print('PASS')

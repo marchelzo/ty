@@ -5128,7 +5128,10 @@ UnifyXD(Ty *ty, Type *t0, Type *t1, bool super, bool check, bool soft)
         t1 = Resolve(ty, t1);
 
         if (IsComputed(t0) || IsComputed(t1)) {
-                AddConstraint(ty, super ? t0 : t1, super ? t0 : t1);
+                if (TyCompilerState(ty)->func != NULL) {
+                        AddConstraint(ty, super ? t0 : t1, super ? t0 : t1);
+                }
+                OK("deferred computation");
         }
 
         //Type *t0_ = IsConcrete(t0) ? Unlist(ty, t0) : t0;
@@ -10515,7 +10518,7 @@ Type *
 type_conditional(Ty *ty, Expr const *e)
 {
         Type *t0 = e->then->_type;
-        Type *t1 = e->otherwise->_type;
+        Type *t1 = e->_else->_type;
 
         if (UnifyX(ty, t0, t1, true, false)) {
                 return t0;

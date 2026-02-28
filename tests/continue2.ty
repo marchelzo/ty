@@ -1,8 +1,12 @@
+ns test
+
 let n = 0
+
+let drops = 0
 
 class A {
     __drop__() {
-        print('PASS')
+        drops += 1
     }
 }
 
@@ -12,17 +16,17 @@ class B {
     }
 }
 
-for i in ..5 {
-    let ^b = B()
-    break if i == 1
-    for j in ..5 {
-        let ^a = A()
-        continue continue
-        print('FAIL')
+pub fn continue-continue() {
+    n = 0
+    drops = 0
+    for i in ..5 {
+        let ^b = B()
+        break if i == 1
+        for j in ..5 {
+            let ^a = A()
+            continue continue
+        }
     }
-    print('FAIL')
-}
-
-if n != 2 {
-    print('FAIL')
+    assert(n == 2)
+    assert(drops > 0)
 }

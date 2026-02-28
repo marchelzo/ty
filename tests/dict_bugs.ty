@@ -1,48 +1,29 @@
-// ============================================================
-// Test: dict.clear() should reset tombstone counter
-// Bug: clear() reset count but not tombs, causing spurious rehash
-// ============================================================
-fn test_dict_clear_tombs() {
-    let d = %{'a': 1, 'b': 2, 'c': 3, 'd': 4}
+ns test
 
-    // Create tombstones by removing entries
+pub fn test-dict-clear-tombs() {
+    let d = %{'a': 1, 'b': 2, 'c': 3, 'd': 4}
     d.remove('a')
     d.remove('b')
-
-    // Clear should fully reset the dict
     d.clear()
-
-    // After clear, dict should work normally
     d['x'] = 10
     d['y'] = 20
     assert(d['x'] == 10)
     assert(d['y'] == 20)
-    assert(#d == 2, "expected 2 entries, got {#d}")
+    assert(#d == 2)
 }
 
-// ============================================================
-// Test: dict & (intersect copy) basic operation
-// Bug: unrooted copy could be collected by GC during callback
-// ============================================================
-fn test_dict_intersect_copy() {
+pub fn test-dict-intersect-copy() {
     let d1 = %{'a': 1, 'b': 2, 'c': 3}
     let d2 = %{'b': 20, 'c': 30, 'd': 40}
-
-    // 1-arg intersect (no callback)
     let r = d1 & d2
     assert(r.has?('b'))
     assert(r.has?('c'))
     assert(!r.has?('a'))
     assert(!r.has?('d'))
-
-    // Original dict should be unchanged
     assert(d1.has?('a'))
 }
 
-// ============================================================
-// Test: dict.keep!() basic operation
-// ============================================================
-fn test_dict_keep_mut() {
+pub fn test-dict-keep-mut() {
     let d = %{'a': 1, 'b': 2, 'c': 3, 'd': 4}
     d.keep!((k, v) -> v > 2)
     assert(#d == 2)
@@ -52,58 +33,29 @@ fn test_dict_keep_mut() {
     assert(!d.has?('b'))
 }
 
-// ============================================================
-// Test: dict.update() with callback (exercises dict_put_value_with)
-// ============================================================
-fn test_dict_update_with() {
+pub fn test-dict-update-with() {
     let d = %{'a': 1, 'b': 2}
     let u = %{'b': 10, 'c': 30}
     d.update(u, (a, b) -> a + b)
-    assert(d['a'] == 1, "a: expected 1, got {d['a']}")
-    assert(d['b'] == 12, "b: expected 12, got {d['b']}")
-    assert(d['c'] == 30, "c: expected 30, got {d['c']}")
+    assert(d['a'] == 1)
+    assert(d['b'] == 12)
+    assert(d['c'] == 30)
 }
 
-// ============================================================
-// Test: dict.subtract() 2-arg callback receives correct values
-// Bug: indices i/j were swapped — self got other's value & vice versa
-// ============================================================
-fn test_dict_subtract_callback() {
+pub fn test-dict-subtract-callback() {
     let d = %{'a': 100, 'b': 200, 'c': 300}
     let u = %{'a': 1, 'b': 2}
-
     let xs = []
     d.subtract(u, (sv, ov) -> xs.push("{sv},{ov}"))
-
-    // Keys from u should be removed from d
     assert(!d.has?('a'))
     assert(!d.has?('b'))
     assert(d.has?('c') && d['c'] == 300)
-
-    // Callback should get (self_value, other_value)
-    let found_a = false
-    let found_b = false
+    let fa = false
+    let fb = false
     for x in xs {
-        if x == '100,1' { found_a = true }
-        if x == '200,2' { found_b = true }
+        if x == '100,1' { fa = true }
+        if x == '200,2' { fb = true }
     }
-    assert(found_a, "expected (100,1) for key 'a', got: {xs}")
-    assert(found_b, "expected (200,2) for key 'b', got: {xs}")
+    assert(fa)
+    assert(fb)
 }
-
-// ============================================================
-// Run all tests
-// ============================================================
-let tests = [
-    test_dict_clear_tombs,
-    test_dict_intersect_copy,
-    test_dict_keep_mut,
-    test_dict_update_with,
-    test_dict_subtract_callback,
-]
-
-for test in tests {
-    test()
-}
-
-print('PASS')

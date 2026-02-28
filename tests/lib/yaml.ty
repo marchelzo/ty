@@ -1,27 +1,25 @@
 import yaml (..)
 import math (inf, nan)
 
-@test
+ns test
+
 fn test-version() {
     let v = version()
     assert(v.match?(/^\d+\.\d+\.\d+$/), "version should be X.Y.Z, got: {v}")
 }
 
-@test
 fn test-parse-scalar-string() {
     assert(parse('hello') == 'hello')
     assert(parse('"hello"') == 'hello')
     assert(parse("'hello'") == 'hello')
 }
 
-@test
 fn test-parse-scalar-int() {
     assert(parse('42') == 42)
     assert(parse('-7') == -7)
     assert(parse('0') == 0)
 }
 
-@test
 fn test-parse-scalar-float() {
     assert(parse('3.14') == 3.14)
     assert(parse('-0.5') == -0.5)
@@ -31,7 +29,6 @@ fn test-parse-scalar-float() {
     assert(nan != nan)
 }
 
-@test
 fn test-parse-scalar-bool() {
     assert(parse('true') == true)
     assert(parse('false') == false)
@@ -42,13 +39,11 @@ fn test-parse-scalar-bool() {
     assert(parse('off') == 'off')
 }
 
-@test
 fn test-parse-scalar-null() {
     assert(parse('null') == nil)
     assert(parse('~') == nil)
 }
 
-@test
 fn test-parse-quoted-not-converted() {
     assert(parse('"true"') == 'true')
     assert(parse('"42"') == '42')
@@ -56,15 +51,14 @@ fn test-parse-quoted-not-converted() {
     assert(parse("'false'") == 'false')
 }
 
-@test
 fn test-parse-simple-mapping() {
     let result: _ = parse('name: Alice
+
 age: 30')
     assert(result['name'] == 'Alice')
     assert(result['age'] == 30)
 }
 
-@test
 fn test-parse-simple-sequence() {
     let result = parse('- 1
 - 2
@@ -72,7 +66,6 @@ fn test-parse-simple-sequence() {
     assert(result == [1, 2, 3])
 }
 
-@test
 fn test-parse-nested() {
     let yaml = 'person:
   name: Bob
@@ -86,26 +79,26 @@ fn test-parse-nested() {
     assert(result['person']['age'] == 25)
 }
 
-@test
 fn test-parse-flow-sequence() {
     let result = parse('[1, 2, 3]')
     assert(result == [1, 2, 3])
 }
 
-@test
 fn test-parse-flow-mapping() {
     let result: _ = parse('{a: 1, b: 2}')
     assert(result['a'] == 1)
     assert(result['b'] == 2)
 }
 
-@test
 fn test-parse-multi-doc() {
     let yaml = '---
+
 first
 ---
+
 second
 ---
+
 third'
     let result: _ = parse-all(yaml)
     assert(result.len() == 3)
@@ -114,7 +107,6 @@ third'
     assert(result[2] == 'third')
 }
 
-@test
 fn test-parse-anchor-alias() {
     let yaml = 'defaults: &defaults
   adapter: postgres
@@ -128,13 +120,11 @@ development:
     assert(result['development']['database'] == 'dev_db')
 }
 
-@test
 fn test-parse-hex-octal() {
     assert(parse('0xFF') == 255)
     assert(parse('0o77') == 63)
 }
 
-@test
 fn test-dump-simple-scalars() {
     assert(dump(42).strip() == '42')
     assert(dump('hello').strip() == 'hello')
@@ -144,21 +134,18 @@ fn test-dump-simple-scalars() {
     assert(dump(3.14).strip() == '3.14')
 }
 
-@test
 fn test-dump-special-floats() {
     assert(dump(inf).strip() == '.inf')
     assert(dump(-inf).strip() == '-.inf')
     assert(dump(nan).strip() == '.nan')
 }
 
-@test
 fn test-dump-sequence() {
     let result = dump([1, 2, 3])
     let parsed = parse(result)
     assert(parsed == [1, 2, 3])
 }
 
-@test
 fn test-dump-mapping() {
     let data = %{'name': 'Alice', 'age': 30}
     let result = dump(data)
@@ -167,7 +154,6 @@ fn test-dump-mapping() {
     assert(parsed['age'] == 30)
 }
 
-@test
 fn test-dump-nested() {
     let data = %{
         'server': %{
@@ -185,14 +171,12 @@ fn test-dump-nested() {
     assert(parsed['items'] == [1, 2, 3])
 }
 
-@test
 fn test-dump-flow-style() {
     let data = [1, 2, 3]
     let result = dump(data, flow: true)
     assert(result.strip() == '[1, 2, 3]')
 }
 
-@test
 fn test-roundtrip() {
     let data = %{
         'database': %{
@@ -217,7 +201,6 @@ fn test-roundtrip() {
     assert(result['timeout'] == 30.5)
 }
 
-@test
 fn test-dump-all() {
     let docs = [%{'a': 1}, %{'b': 2}]
     let result = dump-all(docs)
@@ -227,29 +210,24 @@ fn test-dump-all() {
     assert(parsed[1]['b'] == 2)
 }
 
-@test
 fn test-dump-quoted-strings() {
     // Strings that look like booleans should be quoted
     let result = dump('true')
     let parsed = parse(result)
     assert(parsed == 'true')
-
     let result2 = dump('42')
     let parsed2 = parse(result2)
     assert(parsed2 == '42')
-
     let result3 = dump('null')
     let parsed3 = parse(result3)
     assert(parsed3 == 'null')
 }
 
-@test
 fn test-parse-empty-doc() {
     assert(parse('---') == nil)
     assert(parse('') == nil)
 }
 
-@test
 fn test-parse-mixed-types() {
     let yaml = '- hello
 - 42
@@ -264,7 +242,6 @@ fn test-parse-mixed-types() {
     assert(result[4] == 3.14)
 }
 
-@test
 fn test-dump-file-and-parse-file() {
     let data = %{'test': [1, 2, 3]}
     let path = '/tmp/ty-yaml-test.yaml'
@@ -273,7 +250,6 @@ fn test-dump-file-and-parse-file() {
     assert(result['test'] == [1, 2, 3])
 }
 
-@test
 fn test-parse-error() {
     let threw = false
     try {
@@ -284,7 +260,6 @@ fn test-parse-error() {
     assert(threw, 'should have thrown on invalid YAML')
 }
 
-@test
 fn test-parse-multiline-string() {
     let yaml = 'text: |
   line one
@@ -296,7 +271,6 @@ fn test-parse-multiline-string() {
     assert(result['text'].contains?('line three'))
 }
 
-@test
 fn test-indent-option() {
     let data = %{'a': %{'b': 1}}
     let result4 = dump(data, indent: 4)
@@ -305,7 +279,6 @@ fn test-indent-option() {
     assert(parsed['a']['b'] == 1)
 }
 
-@test
 fn test-parse-complex-docker-compose() {
     let yaml = '''
         version: "3.8"
@@ -359,7 +332,6 @@ fn test-parse-complex-docker-compose() {
           pgdata:
           nginx-conf:
     '''
-
     let result: _ = parse(yaml)
     assert(result['version'] == '3.8')
     assert(result['services']['web']['image'] == 'nginx:latest')
@@ -376,7 +348,6 @@ fn test-parse-complex-docker-compose() {
     assert(result['services']['redis']['command'] == 'redis-server --maxmemory 128mb')
 }
 
-@test
 fn test-parse-complex-k8s-deployment() {
     let yaml = '''
         apiVersion: apps/v1
@@ -455,7 +426,6 @@ fn test-parse-complex-k8s-deployment() {
                   value: web
                   effect: NoSchedule
     '''
-
     let result: _ = parse(yaml)
     assert(result['apiVersion'] == 'apps/v1')
     assert(result['kind'] == 'Deployment')
@@ -465,7 +435,6 @@ fn test-parse-complex-k8s-deployment() {
     assert(result['spec']['replicas'] == 3)
     assert(result['spec']['strategy']['rollingUpdate']['maxSurge'] == 1)
     assert(result['spec']['strategy']['rollingUpdate']['maxUnavailable'] == 0)
-
     let containers: _ = result['spec']['template']['spec']['containers']
     assert(containers[0]['name'] == 'web')
     assert(containers[0]['ports'][0]['containerPort'] == 8080)
@@ -475,7 +444,6 @@ fn test-parse-complex-k8s-deployment() {
     assert(containers[0]['resources']['limits']['cpu'] == '500m')
     assert(containers[0]['livenessProbe']['initialDelaySeconds'] == 30)
     assert(containers[1]['name'] == 'sidecar')
-
     let tolerations: _ = result['spec']['template']['spec']['tolerations']
     assert(tolerations[0]['key'] == 'dedicated')
     assert(tolerations[0]['effect'] == 'NoSchedule')

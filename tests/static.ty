@@ -1,18 +1,10 @@
-fn eq!(*args) {
-	for [a, b] in args.window(2) {
-		if a != b {
-			print('FAIL')
-			return
-		}
-	}
+ns test
+
+pub fn static-expr() {
+    let ref = nil
+    for _ in ..50 {
+        let xs = static!([rand() for _ in ..100])
+        ref ?= xs
+        assert(xs == ref)
+    }
 }
-
-let ref = nil
-
-for _ in ..50 {
-	let xs = static!([rand() for _ in ..100])
-	ref ?= xs
-	eq!(xs, ref)
-}
-
-print('PASS')

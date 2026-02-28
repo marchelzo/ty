@@ -1,14 +1,7 @@
-function eq!(*args) {
-	for [a, b] in args.window(2) {
-		if a != b {
-			print("FAIL: {a} != {b}")
-			return
-		}
-	}
+ns test
+
+pub fn strsplit() {
+    assert(' one  two three'.split(/\s+/) == ['', 'one', 'two', 'three'])
+    assert('camelCaseSplit'.split(/(?=[[:upper:]])/) == ['camel', 'Case', 'Split'])
+    assert('abcd'.split(/./) == ['', '', '', '', ''])
 }
-
-eq!(' one  two three'.split(/\s+/), ['', 'one', 'two', 'three'])
-eq!('camelCaseSplit'.split(/(?=[[:upper:]])/), ['camel', 'Case', 'Split'])
-eq!('abcd'.split(/./), ['', '', '', '', ''])
-
-print('PASS')

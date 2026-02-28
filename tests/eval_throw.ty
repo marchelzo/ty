@@ -1,13 +1,13 @@
 import ty
 
-function f() {
+ns test
+
+ns test
+
+pub fn evthrow() {
     let e = ty.parse('throw 0')
-
-    try let x = ty.eval(e) or else {
-        return 'PASS'
+    try ty.eval(e) else {
+        return
     }
-
-    return 'FAIL'
+    assert(false)
 }
-
-print(f())

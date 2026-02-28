@@ -1,5 +1,7 @@
 import ty
 
+ns test
+
 macro based {
     ty.Class(
         name: 'Widget',
@@ -30,8 +32,8 @@ macro based {
 
 based
 
-let o = Widget()
-
-o.x = 'pass'
-
-print(o.x)
+pub fn macro-setter() {
+    let o = Widget()
+    o.x = 'pass'
+    assert(o.x == 'PASS')
+}

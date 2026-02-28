@@ -468,8 +468,8 @@ pub class Path {
         }
     }
 
-    walk* -> Generator[(Path, [String], [String])] {
-        for (dir, dirs, files) in os.walk(str(self)) {
+    walk*() -> Generator[(Path, [String], [String])] {
+        for (dir, dirs, files) in os.walk("{self}") {
             yield (Path(dir), dirs, files)
         }
     }

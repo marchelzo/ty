@@ -1,23 +1,20 @@
 import os
 import time
 
+ns test
+
 // ============================================================
 // Test: os.lseek
 // ============================================================
-fn test_lseek() {
+pub fn test_lseek() {
     let (fd, path) = os.mktemp()!
     os.write(fd, "Hello, World!")
-
     assert(os.lseek(fd, 0, os.SEEK_SET) == 0)
-
     let data = os.read(fd, 13) ?? throw "read failed"
     assert(data.str() == "Hello, World!")
-
     assert(os.lseek(fd, -6, os.SEEK_END) == 7)
-
     let tail = os.read(fd, 6) ?? throw "read failed"
     assert(tail.str() == "World!")
-
     os.close(fd)
     os.unlink(path)
 }
@@ -25,18 +22,14 @@ fn test_lseek() {
 // ============================================================
 // Test: os.pread / os.pwrite
 // ============================================================
-fn test_pread_pwrite() {
+pub fn test_pread_pwrite() {
     let (fd, path) = os.mktemp()!
     os.write(fd, "AAAAAAAAAA")
-
     assert(os.pwrite(fd, "BBB", 3) == 3)
-
     let data = os.pread(fd, 10, 0) ?? throw "pread returned nil"
     assert(data.str() == "AAABBBAAAA")
-
     // pread/pwrite shouldn't move the file position
     assert(os.lseek(fd, 0, os.SEEK_CUR) == 10)
-
     os.close(fd)
     os.unlink(path)
 }
@@ -44,13 +37,11 @@ fn test_pread_pwrite() {
 // ============================================================
 // Test: os.fchmod
 // ============================================================
-fn test_fchmod() {
+pub fn test_fchmod() {
     let (fd, path) = os.mktemp()!
-
     os.fchmod(fd, 0o644)
     let st = os.fstat(fd) ?? throw "fstat failed"
     assert((st.mode & 0o777) == 0o644)
-
     os.close(fd)
     os.unlink(path)
 }
@@ -58,11 +49,9 @@ fn test_fchmod() {
 // ============================================================
 // Test: os.fchown (change to same uid/gid — no root needed)
 // ============================================================
-fn test_fchown() {
+pub fn test_fchown() {
     let (fd, path) = os.mktemp()!
-
     assert(os.fchown(fd, os.getuid(), os.getgid()) == 0)
-
     os.close(fd)
     os.unlink(path)
 }
@@ -70,108 +59,92 @@ fn test_fchown() {
 // ============================================================
 // Test: os.mkfifo
 // ============================================================
-fn test_mkfifo() {
-    let (_, path) = os.mktemp()!
-    os.unlink(path)
-
-    assert(os.mkfifo(path, 0o644) == 0)
-
-    let st = os.stat(path) ?? throw "stat failed"
-    assert((st.mode & os.S_IFMT) == os.S_IFIFO)
-
-    os.unlink(path)
+ns mk {
+    pub fn test_mkfifo() {
+        let (_, path) = os.mktemp()!
+        os.unlink(path)
+        assert(os.mkfifo(path, 0o644) == 0)
+        let st = os.stat(path) ?? throw "stat failed"
+        assert((st.mode & os.S_IFMT) == os.S_IFIFO)
+        os.unlink(path)
+    }
 }
 
 // ============================================================
 // Test: os.socketpair
 // ============================================================
-fn test_socketpair() {
+pub fn test_socketpair() {
     let (s1, s2) = os.socketpair(os.AF_UNIX, os.SOCK_STREAM, 0)!
-
     os.write(s1, "hello")
     let data = os.read(s2, 5) ?? throw "read failed"
     assert(data.str() == "hello")
-
     os.close(s1)
     os.close(s2)
 }
 
 // ============================================================
+// Test: os.mprotect
+// ============================================================
+pub fn test_mprotect() {
+    let addr = os.mmap(nil, 4096, os.PROT_READ | os.PROT_WRITE, os.MAP_PRIVATE | os.MAP_ANON, -1, 0)
+    assert(addr != nil, "mmap failed")
+    assert(os.mprotect(addr, 4096, os.PROT_READ) == 0)
+    os.munmap(addr, 4096)
+}
+
+#|if __linux__
+// ============================================================
 // Test: os.pipe2 (Linux)
 // ============================================================
-fn test_pipe2() {
+pub fn test_pipe2() {
     let (r, w) = os.pipe2(os.O_CLOEXEC)!
-
     os.write(w, "test")
     os.close(w)
-
     let data = os.read(r, 4) ?? throw "read failed"
     assert(data.str() == "test")
     os.close(r)
 }
 
 // ============================================================
-// Test: os.mprotect
-// ============================================================
-fn test_mprotect() {
-    let addr = os.mmap(nil, 4096, os.PROT_READ | os.PROT_WRITE, os.MAP_PRIVATE | os.MAP_ANON, -1, 0)
-    assert(addr != nil, "mmap failed")
-
-    assert(os.mprotect(addr, 4096, os.PROT_READ) == 0)
-
-    os.munmap(addr, 4096)
-}
-
-// ============================================================
 // Test: os.eventfd (Linux)
 // ============================================================
-fn test_eventfd() {
+pub fn test_eventfd() {
     let efd = os.eventfd(0, 0)
     assert(efd >= 0)
-
     // eventfd expects 8-byte writes
     let buf = Blob()
     buf.push(1); buf.push(0); buf.push(0); buf.push(0)
     buf.push(0); buf.push(0); buf.push(0); buf.push(0)
     os.write(efd, buf)
-
     let data = os.read(efd, 8) ?? throw "read failed"
     assert(#data == 8)
     assert(data[0] == 1)
-
     os.close(efd)
 }
 
 // ============================================================
 // Test: os.timerfd_create / timerfd_settime / timerfd_gettime
 // ============================================================
-fn test_timerfd() {
+pub fn test_timerfd() {
     let tfd = os.timerfd_create(time.CLOCK_MONOTONIC, 0)
     assert(tfd >= 0)
-
     assert(os.timerfd_settime(tfd, 0, 0.1) == 0)
-
     let (remaining, interval) = os.timerfd_gettime(tfd)!
     assert(remaining > 0.0)
     assert(interval == 0.0)
-
     os.close(tfd)
 }
 
 // ============================================================
 // Test: os.inotify_init / inotify_add_watch / inotify_rm_watch
 // ============================================================
-fn test_inotify() {
+pub fn test_inotify() {
     let ifd = os.inotify_init(os.IN_NONBLOCK)
     assert(ifd >= 0)
-
     let (_, path) = os.mktemp()!
-
     let wd = os.inotify_add_watch(ifd, path, os.IN_MODIFY)
     assert(wd >= 0)
-
     assert(os.inotify_rm_watch(ifd, wd) == 0)
-
     os.close(ifd)
     os.unlink(path)
 }
@@ -179,36 +152,11 @@ fn test_inotify() {
 // ============================================================
 // Test: os.signalfd (Linux)
 // ============================================================
-fn test_signalfd() {
+pub fn test_signalfd() {
     let set = os.sigset()
     os.sigaddset(set, os.SIGUSR1)
-
     let sfd = os.signalfd(-1, set, os.SFD_NONBLOCK)
     assert(sfd >= 0)
-
     os.close(sfd)
 }
-
-// ============================================================
-// Run all tests
-// ============================================================
-let tests = [
-    test_lseek,
-    test_pread_pwrite,
-    test_fchmod,
-    test_fchown,
-    test_mkfifo,
-    test_socketpair,
-    test_pipe2,
-    test_mprotect,
-    test_eventfd,
-    test_timerfd,
-    test_inotify,
-    test_signalfd,
-]
-
-for test in tests {
-    test()
-}
-
-print('PASS')
+#|]

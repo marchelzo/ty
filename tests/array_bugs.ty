@@ -1,8 +1,6 @@
-// ============================================================
-// Test: array.rotate() on empty array should not crash
-// Bug: d %= n with n=0 is UB (SIGFPE on x86)
-// ============================================================
-fn test_rotate_empty() {
+ns test
+
+pub fn test-rotate-empty() {
     let a = []
     a.rotate()
     assert(#a == 0)
@@ -12,114 +10,60 @@ fn test_rotate_empty() {
     assert(#a == 0)
 }
 
-// ============================================================
-// Test: array.rotate() normal operation still works
-// ============================================================
-fn test_rotate_normal() {
+pub fn test-rotate-normal() {
     let a = [1, 2, 3, 4]
     a.rotate!(2)
     assert(a[0] == 3 && a[1] == 4 && a[2] == 1 && a[3] == 2)
 }
 
-// ============================================================
-// Test: array.reverse!() bounds check
-// Bug: hi > count should be hi >= count (off-by-one)
-// ============================================================
-fn test_reverse_bounds() {
+pub fn test-reverse-bounds() {
     let a = [1, 2, 3, 4, 5]
-    // Valid: reverse all 5 elements starting at 0
     a.reverse!(0, 5)
     assert(a[0] == 5 && a[4] == 1)
-
-    // Invalid: count=6 on 5-element array (hi=5, OOB)
     let threw = false
     try {
         a.reverse!(0, 6)
     } catch _ {
         threw = true
     }
-    assert(threw, "reverse!(0, 6) should have thrown")
-
-    // Valid: partial reverse
+    assert(threw)
     let b = [1, 2, 3, 4, 5]
     b.reverse!(1, 3)
     assert(b[0] == 1 && b[1] == 4 && b[2] == 3 && b[3] == 2 && b[4] == 5)
 }
 
-// ============================================================
-// Test: array.groupsOf() with exact multiples
-// Bug: < should be <= — drops last full group when keepShort=false
-// ============================================================
-fn test_groups_of_exact() {
+pub fn test-groups-of-exact() {
     let a = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
-
-    // Exact multiple: 10 / 5 = 2 full groups
     let g = a.groupsOf(5, false)
-    assert(#g == 2, "expected 2 groups, got {#g}")
+    assert(#g == 2)
     assert(#g[0] == 5 && g[0][0] == 1)
     assert(#g[1] == 5 && g[1][0] == 6)
-
-    // Non-exact: 7 / 3 = 2 full + 1 short
     let h = [1, 2, 3, 4, 5, 6, 7].groupsOf(3)
-    assert(#h == 3, "expected 3 groups, got {#h}")
+    assert(#h == 3)
     assert(#h[2] == 1 && h[2][0] == 7)
-
-    // Non-exact with keepShort=false: drop trailing
-    let i = [1, 2, 3, 4, 5, 6, 7].groupsOf(3, false)
-    assert(#i == 2, "expected 2 groups, got {#i}")
+    let xs = [1, 2, 3, 4, 5, 6, 7].groupsOf(3, false)
+    assert(#xs == 2)
 }
 
-// ============================================================
-// Test: array.take!() with negative n
-// Bug: min(count, -1) = -1, assigned to usize = SIZE_MAX
-// ============================================================
-fn test_take_mut_negative() {
+pub fn test-take-mut-negative() {
     let a = [1, 2, 3, 4, 5]
     a.take!(-1)
-    assert(#a == 0, "take!(-1) should give empty array, got {#a}")
-
+    assert(#a == 0)
     let b = [1, 2, 3]
     b.take!(0)
     assert(#b == 0)
-
-    // Normal positive take still works
     let c = [1, 2, 3, 4, 5]
     c.take!(3)
     assert(#c == 3)
     assert(c[0] == 1 && c[2] == 3)
 }
 
-// ============================================================
-// Test: array.take() with negative n
-// Bug: negative count passed to reserve/memmove → hang or crash
-// ============================================================
-fn test_take_negative() {
+pub fn test-take-negative() {
     let a = [1, 2, 3, 4, 5]
     let b = a.take(-1)
-    assert(#b == 0, "take(-1) should give empty array, got {#b}")
-
+    assert(#b == 0)
     let c = a.take(0)
     assert(#c == 0)
-
-    // Normal positive take still works
     let d = a.take(3)
     assert(#d == 3 && d[0] == 1 && d[2] == 3)
 }
-
-// ============================================================
-// Run all tests
-// ============================================================
-let tests = [
-    test_rotate_empty,
-    test_rotate_normal,
-    test_reverse_bounds,
-    test_groups_of_exact,
-    test_take_mut_negative,
-    test_take_negative,
-]
-
-for test in tests {
-    test()
-}
-
-print('PASS')
