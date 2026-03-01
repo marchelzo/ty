@@ -100,7 +100,7 @@ pub fn test_pipe2() {
     let (r, w) = os.pipe2(os.O_CLOEXEC)!
     os.write(w, "test")
     os.close(w)
-    let data = os.read(r, 4) ?? throw "read failed"
+    let $data = os.read(r, 4) or throw "read failed"
     assert(data.str() == "test")
     os.close(r)
 }
@@ -116,7 +116,7 @@ pub fn test_eventfd() {
     buf.push(1); buf.push(0); buf.push(0); buf.push(0)
     buf.push(0); buf.push(0); buf.push(0); buf.push(0)
     os.write(efd, buf)
-    let data = os.read(efd, 8) ?? throw "read failed"
+    let $data = os.read(efd, 8) or throw "read failed"
     assert(#data == 8)
     assert(data[0] == 1)
     os.close(efd)

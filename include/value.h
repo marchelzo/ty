@@ -793,6 +793,9 @@ value_apply_callable(Ty *ty, Value *f, Value *v);
 char *
 value_show(Ty *ty, Value const *v, u32 flags);
 
+char *
+value_show_scratch(Ty *ty, Value const *v, u32 flags);
+
 Value
 value_vshow(Ty *ty, Value const *v, u32 flags);
 

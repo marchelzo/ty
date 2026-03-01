@@ -1,6 +1,5 @@
 import chalk (chalk, hsl-gradient)
 import math (log)
-import ffi as c (C!)
 import os (..)
 import path (Path)
 import sh (sh)
@@ -8,23 +7,11 @@ import time
 import tp (ThreadPool, Future)
 import ty
 
-let TERM_COLS = match terminal-size() {
-    {cols, *} => cols,
-    else      => 80
-}
+let COLUMNS = min(terminal-size().?cols ?? 64, 64)
 
-let pass  = Sync(0)
-let fail  = Sync(0)
-let slow  = Sync(0)
-
-fn +[T, U, V](x: Sync[T], y: Sync[U]) -> V where (T + U): V {
-    Sync.read(x) + Sync.read(y)
-}
-
-let g = chalk['bold green']
-let r = chalk['bold red']
-let m = chalk['bold bright magenta']
-let b = chalk['blue']
+let pass  = Atomic(0)
+let fail  = Atomic(0)
+let slow  = Atomic(0)
 
 const TY_CMD  = getenv('TY_PATH') ?? ty.executable
 const TY_OPTS = ['-q' if ty.q, '-j' if !ty.jit].unwords()
@@ -40,62 +27,58 @@ const time-grad = hsl-gradient((0.33, 0.0, 0.25), (0.0, 1.0, 0.6))
 
 fn show-time(dt: Float) {
     const color = time-grad(dt)
-    if dt < 0.1 {
-        chalk"[{color}]({dt * 1000:.0}ms)[/]"
-    } else {
-        chalk"[{color}]({dt:.2}s)[/]"
-    }
+    (dt < 0.1) ? chalk"[{color}]({dt * 1000:d}ms)[/]"
+               : chalk"[{color}]({dt:.2}s)[/]"
 }
 
 fn run(p: Path) {
     let t0 = time.now()
 
-    let _, res = sh("{TY_CMD} --test {TY_OPTS} {p}", timeoutMs=5000)
+    let _, details = sh("{TY_CMD} --test {TY_OPTS} {p}", timeoutMs=5000)
 
-    let (color, result) = match res {
+    let (color, result) = match details {
         nil => do {
             slow += 1
-            ('', m('TIMEOUT'))
+            ('', chalk"[b bright magenta]TIMEOUT[/]")
         },
 
         {status: 0, signal: nil, *} => do {
             pass += 1
-            let dt = show-time(time.now() - t0)
-            ('#635d56', chalk"[bright green bold]PASS[/] {dt}")
+            ('#635d56', chalk"[bright green bold]PASS[/] {show-time(time.now() - t0)}")
         },
 
-        else => do {
+        {status, signal, stdout, stderr, *} => do {
             fail += 1
-            let report = [
-                r('FAIL'),
-                m("  (exit status: {res.status})") if res.status != 0,
-                b("  ({c.as_str(strsignal(res.signal))})") if res.signal != nil,
+            let parts = [
+                chalk"[b bright red]FAIL[/]",
+                chalk"  [bright magenta](exit status: {status})[/]" if status != 0,
+                chalk"  [blue](SIG{signame(signal)})[/]" if signal != nil,
                 chalk"\n[magenta]================ [yellow]STDOUT[/] ====================================[/]\n",
-                res.stdout,
-                r('~~~~~'),
+                stdout,
                 chalk"\n[magenta]================ [yellow]STDERR[/] ====================================[/]\n",
-                res.stderr,
-                r('~~~~~'),
+                stderr,
                 chalk"\n[magenta]============================================================[/]\n",
-            ].join()
-            ('#c53535', report)
+            ]
+            ('#c53535', parts.join())
         }
     }
 
-    "{chalk"[{color}]{p.stem:24}[/] [#444]...[/]"} {result}"
+    let name = chalk"[{color}]{p.stem:24}[/]"
+    let dots = chalk"[#444]...[/]"
+
+    return "{name} {dots} {result}"
 }
 
 let pool = ThreadPool(ncpu(), run)
-
 let t0 = time.now()
 
 for (dir, _, files) in Path('tests').walk() {
-    let full-cols = min(TERM_COLS, 64)
-    let name-cols = "{dir}".width()
-    let heading = '─' * (full-cols - name-cols - 2)
-    print(chalk"[#333]{heading}[/] [#bd892d]{dir}[/] [#333]──[/]")
-    let jobs = [pool.submit(dir / it) for files]
-    for Future.iter(jobs) {
+    let group = chalk"[#bd892d]{dir}[/]"
+    let pad   = chalk"[#333]─[/]"
+
+    print("{" {group} {pad}{pad}":{pad}>{COLUMNS}}")
+
+    for Future.iter(files.map(pool.submit@(dir / _))) {
         print(it)
     }
 }
@@ -106,12 +89,12 @@ let summary = [
     chalk"[green b]{pass}[/] passed" if pass > 0,
     chalk"[red b]{fail}[/] failed" if fail > 0,
     chalk"[magenta b]{slow}[/] timed out" if slow > 0,
-    chalk"[#ccc b]{(t1 - t0):.2f}s[/] elapsed"
-].join(', ')
+    chalk"[#ccc b]{(t1 - t0):.2}s[/] elapsed"
+]
 
 print()
-print(chalk"[#333]{'─' * min(TERM_COLS, 64)}[/]")
-print(chalk"[#666]{summary}[/]")
-print(chalk"[#333]{'─' * min(TERM_COLS, 64)}[/]")
+print(chalk"[#333]{'─' * COLUMNS}[/]")
+print(chalk"[#666]{summary.join(', ')}[/]")
+print(chalk"[#333]{'─' * COLUMNS}[/]")
 
-exit(fail + slow)
+exit(int(fail > 0 || slow > 0))

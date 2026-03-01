@@ -881,4 +881,4 @@ pub fn rgb-gradient(
     }
 }
 
-pub chalk = Chalk()
+pub __tls::chalk = Chalk()

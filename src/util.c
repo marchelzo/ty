@@ -53,12 +53,6 @@ sclonea(Ty *ty, char const *s)
         return new;
 }
 
-bool
-contains(char const *s, char c)
-{
-        return (c != '\0') && (strchr(s, c) != NULL);
-}
-
 char *
 fslurp(Ty *ty, FILE *f)
 {

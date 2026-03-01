@@ -221,9 +221,9 @@ tags_open(Ty *ty, int tags, bool color)
 char *
 tags_close(Ty *ty, int tags, bool color)
 {
-        vec(char) cs = {0};
+        byte_vector cs = {0};
 
-        struct tags *list = lists.items[tags];
+        struct tags *list = v__(lists, tags);
 
         i32 n = 0;
         while (list->tag != 0) {

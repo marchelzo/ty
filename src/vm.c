@@ -6137,7 +6137,10 @@ NextInstruction:
                         SKIPSTR();
 #endif
                         while (vN(THREAD_LOCALS) <= n) {
-                                xvP(THREAD_LOCALS, NIL);
+                                xvP(THREAD_LOCALS, NONE);
+                        }
+                        if (IsNone(v__(THREAD_LOCALS, n))) {
+                                vm_exec(ty, v__(xD.tls0, n));
                         }
                         push(v__(THREAD_LOCALS, n));
                         break;

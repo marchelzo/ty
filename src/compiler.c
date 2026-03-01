@@ -3276,11 +3276,8 @@ aggregate_overloads(
         u32 n = vN(*ms);
         qsort(vv(*ms), n, sizeof *vv(*ms), method_cmp);
 
-        char *scratch = smA(4096);
-        char const *private;
-
         for (int i = 0; i + 1 < n; ++i) {
-                Expr const *meth0 = v__(*ms, i);
+                Expr *meth0 = v__(*ms, i);
 
                 if (
                         !s_eq(meth0->name, v__(*ms, i + 1)->name)
@@ -3299,8 +3296,7 @@ aggregate_overloads(
 
                 for (int i = 0; i < vN(multi->functions); ++i) {
                         Expr *meth = v__(multi->functions, i);
-                        char const *name = afmt("%s#%d", multi->name, i + 1);
-                        meth->name = name;
+                        meth->name = afmt("%s#%d", multi->name, i + 1);
                         meth->overload = multi;
                         meth->class = class;
                 }
@@ -3642,13 +3638,13 @@ symbolize_var_decl(Ty *ty, Scope *scope, Expr *target, bool pub)
 
         target->symbol->flags |= SYM_TRANSIENT;
 
-        if (pub) {
-                target->symbol->flags |= SYM_PUBLIC;
-        }
-
         if (is_thread_local) {
                 target->symbol = scope_insert(ty, scope, target->symbol);
                 target->symbol->flags |= SYM_THREAD_LOCAL;
+        }
+
+        if (pub) {
+                target->symbol->flags |= SYM_PUBLIC;
         }
 }
 
@@ -11703,7 +11699,21 @@ emit_statement(Ty *ty, Stmt const *s, bool want_result)
                      || (s->value->type == EXPRESSION_MULTI_FUNCTION)
                 ) {
         case STATEMENT_DEFINITION:
-                        if (
+                if (
+                        (s->target->type == EXPRESSION_IDENTIFIER)
+                     && SymbolIsThreadLocal(s->target->symbol)
+                ) {
+                        WITH_STATE(code, ((byte_vector) {0})) {
+                                EE(s->value);
+                                emit_assignment2(ty, s->target, false, true);
+                                INSN(POP);
+                                INSN(HALT);
+                                while (vN(xD.tls0) <= s->target->symbol->i) {
+                                        xvP(xD.tls0, NULL);
+                                }
+                                *v_(xD.tls0, s->target->symbol->i) = vv(STATE.code);
+                        }
+                } else if (
                                 (s->value->type  != EXPRESSION_NIL)
                              || (s->target->type != EXPRESSION_IDENTIFIER)
                              || SymbolIsGlobal(s->target->symbol)

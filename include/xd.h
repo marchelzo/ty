@@ -130,9 +130,6 @@ S2(char const *s)
         return new;
 }
 
-bool
-contains(char const *s, char c);
-
 char *
 slurp(Ty *ty, char const *path);
 
@@ -184,6 +181,12 @@ search_str(StringVector const *ss, char const *s)
         return false;
 }
 
+inline static bool
+contains(char const *s, int c)
+{
+        return (c != '\0') && (strchr(s, c) != NULL);
+}
+
 static isize
 term_fit_cols(void const *_s, isize n, int cols)
 {
@@ -220,11 +223,12 @@ term_fit_cols(void const *_s, isize n, int cols)
                 }
 
                 width += !zwj * utf8proc_charwidth(cp);
-                i += ret;
 
-                if (width >= cols) {
+                if (width > cols) {
                         return i;
                 }
+
+                i += ret;
 
                 zwj = (cp == 0x200d);
         }

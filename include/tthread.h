@@ -697,8 +697,10 @@ TyWaitAny(TyWaitable *items, int count, u64 timeout_ms, void *scratch,
                 ? nsync_time_no_deadline
                 : nsync_time_add(nsync_time_now(), nsync_time_ms((u32)timeout_ms));
 
+        int idx;
+
         if (nlocks == 1) {
-                return nsync_wait_n(locks[0], &TyWaitMuLock, &TyWaitMuUnlock,
+                idx = nsync_wait_n(locks[0], &TyWaitMuLock, &TyWaitMuUnlock,
                                     deadline, count, pw);
         } else if (nlocks > 1) {
                 TyWaitMuSet mus;
@@ -706,11 +708,13 @@ TyWaitAny(TyWaitable *items, int count, u64 timeout_ms, void *scratch,
                 for (int i = 0; i < mus.n; i++) {
                         mus.mu[i] = locks[i];
                 }
-                return nsync_wait_n(&mus, &TyWaitMuSetLock, &TyWaitMuSetUnlock,
+                idx = nsync_wait_n(&mus, &TyWaitMuSetLock, &TyWaitMuSetUnlock,
                                     deadline, count, pw);
         } else {
-                return nsync_wait_n(NULL, NULL, NULL, deadline, count, pw);
+                idx = nsync_wait_n(NULL, NULL, NULL, deadline, count, pw);
         }
+
+        return (idx < count) ? idx : -1;
 }
 
 #else /* !TY_USE_NSYNC */
