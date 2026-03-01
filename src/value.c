@@ -26,9 +26,6 @@ static _Thread_local vec(Dict *) show_dicts;
 static _Thread_local vec(Value *) show_tuples;
 static _Thread_local vec(Array *) show_arrays;
 
-static char *value_showx(Ty *ty, Value const *v, u32 flags);
-static char *value_show_colorx(Ty *ty, Value const *v, u32 flags);
-
 void
 TyValueCleanup(void)
 {
@@ -476,10 +473,11 @@ static char *
 show_impl(
         Ty *ty,
         Value const *root,
-        u32 flags,
-        bool color
+        u32 flags
 )
 {
+        bool color = !(flags & TY_SHOW_NOCOLOR);
+
         byte_vector buf  = {0};
         ValueVector work = {0};
 
@@ -611,7 +609,7 @@ show_impl(
                         for (int i = 0; i < vN(show_arrays); ++i) {
                                 if (v__(show_arrays, i) == v.array) {
                                         sxdf(&buf, "[...]");
-                                        goto next;
+                                        goto Next;
                                 }
                         }
 
@@ -639,7 +637,7 @@ show_impl(
                         for (int i = 0; i < vN(show_tuples); ++i) {
                                 if (v__(show_tuples, i) == v.items) {
                                         sxdf(&buf, "(...)");
-                                        goto next;
+                                        goto Next;
                                 }
                         }
 
@@ -692,7 +690,7 @@ show_impl(
                         for (int i = 0; i < vN(show_dicts); ++i) {
                                 if (v__(show_dicts, i) == v.dict) {
                                         sxdf(&buf, "{...}");
-                                        goto next;
+                                        goto Next;
                                 }
                         }
 
@@ -1256,10 +1254,25 @@ BasicObject:
                         break;
                 }
 
-                next:;
+Next:
+                continue;
         }
 
         svP(buf, '\0');
+        vXx(buf);
+
+        if (flags & TY_SHOW_ABBREV) {
+                int keep = term_fit_cols(vv(buf), vN(buf), 80);
+                if (keep < vN(buf)) {
+                        return sfmt(
+                                "%.*s%s...%s",
+                                keep,
+                                vv(buf),
+                                TERM(90),
+                                TERM(0)
+                        );
+                }
+        }
 
         return vv(buf);
 }
@@ -1267,45 +1280,13 @@ BasicObject:
 #undef WLIT
 #undef WPOP
 
-static char *
-value_showx(Ty *ty, Value const *v, u32 flags)
-{
-        return show_impl(ty, v, flags, false);
-}
-
-static char *
-value_show_colorx(Ty *ty, Value const *v, u32 flags)
-{
-        if (flags & TY_SHOW_NOCOLOR) {
-                return show_impl(ty, v, flags, false);
-        }
-
-        char *result = show_impl(ty, v, flags, true);
-
-        if (flags & TY_SHOW_ABBREV) {
-                int len  = strlen(result);
-                int keep = term_fit_cols(result, len, 80);
-                if (keep < len) {
-                        result = sfmt(
-                                "%.*s%s...%s",
-                                keep,
-                                result,
-                                TERM(90),
-                                TERM(0)
-                        );
-                }
-        }
-
-        return result;
-}
-
 char *
 value_show_color(Ty *ty, Value const *v, u32 flags)
 {
         char *str;
 
         WITH_SCRATCH {
-                str = S2(value_show_colorx(ty, v, flags));
+                str = S2(show_impl(ty, v, flags));
         }
 
         return str;
@@ -1316,11 +1297,19 @@ value_show(Ty *ty, Value const *v, u32 flags)
 {
         char *str;
 
+        flags |= TY_SHOW_NOCOLOR;
+
         WITH_SCRATCH {
-                str = S2(value_showx(ty, v, flags));
+                str = S2(show_impl(ty, v, flags));
         }
 
         return str;
+}
+
+char *
+value_show_scratch(Ty *ty, Value const *v, u32 flags)
+{
+        return show_impl(ty, v, flags);
 }
 
 Value
@@ -1329,7 +1318,7 @@ value_vshow_color(Ty *ty, Value const *v, u32 flags)
         Value str;
 
         WITH_SCRATCH {
-                str = vSsz(value_show_colorx(ty, v, flags));
+                str = vSsz(show_impl(ty, v, flags));
         }
 
         return str;
@@ -1340,8 +1329,10 @@ value_vshow(Ty *ty, Value const *v, u32 flags)
 {
         Value str;
 
+        flags |= TY_SHOW_NOCOLOR;
+
         WITH_SCRATCH {
-                str = vSsz(value_showx(ty, v, flags));
+                str = vSsz(show_impl(ty, v, flags));
         }
 
         return str;

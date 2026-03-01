@@ -3173,12 +3173,28 @@ class Atomic : IntoPtr[Int] {
         thread.fetch-sub(__x, y)
     }
 
+    <=>[U](y: U) -> Int where (Int <=> U): Int {
+        load() <=> y
+    }
+
+    +=(y: Int) {
+        thread.fetch-add(__x, y)
+    }
+
+    -=(y: Int) {
+        thread.fetch-sub(__x, y)
+    }
+
     __str__() {
-        "Atomic({self.load()})"
+        "{load()}"
     }
 
     __fmt__(*args: _) {
-        self.load().__fmt__(*args)
+        load().__fmt__(*args)
+    }
+
+    __repr__() {
+        "Atomic({load()})"
     }
 }
 

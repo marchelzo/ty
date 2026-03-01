@@ -975,7 +975,7 @@ struct fspec {
         bool zero;
         i8 justify;
         char xsep;
-        i32 fill;
+        char fill[64];
         char prec[64];
         char width[64];
 };
@@ -991,38 +991,35 @@ getfmt(char const **s, char const *end, struct fspec *out)
         out->justify = 1;
         out->sep     = false;
         out->sign    = false;
-        out->fill    = 0;
         out->xsep    = '\0';
 
-        i32 rune;
+        m0(out->fill);
+
         int bytes;
 
         for (;;) {
-                if (out->fill == 0) {
-                        bytes = utf8proc_iterate((u8 const *)*s, end - *s, &rune);
-
-                        if (bytes <= 0) {
-                                bytes = 1;
-                                rune = **s;
-                        }
-
-                        if (*s + bytes < end && strchr("<^>", (*s)[bytes]) != NULL) {
-                                out->fill = rune;
+                if (*out->fill == '\0') {
+                        bytes = max(term_fit_cols(*s, end - *s, 1), 1);
+                        if (
+                                (*s + bytes < end)
+                             && contains("<^>", (*s)[bytes])
+                        ) {
+                                memcpy(out->fill, *s, min(sizeof out->fill - 1, bytes));
                                 *s += bytes;
                                 continue;
                         }
                 }
 
                 switch (**s) {
-                case '+':  out->sign    = true; break;
-                case '#':  out->alt     = true; break;
-                case '\'': out->sep     = true; break;
-                case ' ':  out->blank   = true; break;
-                case '0':  out->fill    = '0';  break;
-                case '-':  out->justify = -1;   break;
-                case '<':  out->justify = -1;   break;
-                case '^':  out->justify =  0;   break;
-                case '>':  out->justify =  1;   break;
+                case '+':  out->sign    = true;    break;
+                case '#':  out->alt     = true;    break;
+                case '\'': out->sep     = true;    break;
+                case ' ':  out->blank   = true;    break;
+                case '-':  out->justify = -1;      break;
+                case '<':  out->justify = -1;      break;
+                case '^':  out->justify =  0;      break;
+                case '>':  out->justify =  1;      break;
+                case '0':  strcpy(out->fill, "0"); break;
                 default: goto FlagsComplete;
                 }
 
@@ -1030,41 +1027,46 @@ getfmt(char const **s, char const *end, struct fspec *out)
         }
 
 FlagsComplete:
-        if (out->fill == 0) {
-                out->fill = ' ';
+        if (*out->fill == '\0') {
+                strcpy(out->fill, " ");
         }
 
         if (*s < end && **s == '*') {
-                if (w + 1 >= sizeof out->width)
-                        return '\0';
+                if (w + 1 >= sizeof out->width) {
+                        return -1;
+                }
                 out->width[w++] = *(*s)++;
         } else while (*s < end && isdigit(**s)) {
                 if (w + 1 >= sizeof out->width)
-                        return '\0';
+                        return -1;
                 out->width[w++] = *(*s)++;
         }
 
         if (*s < end && **s == '.') {
-                if (p + 1 >= sizeof out->prec)
-                        return '\0';
+                if (p + 1 >= sizeof out->prec) {
+                        return -1;
+                }
 
                 out->prec[p++] = *(*s)++;
 
                 while (*s < end && **s == ' ') ++*s;
 
                 if (*s < end && **s == '*') {
-                        if (p + 1 >= sizeof out->prec)
-                                return '\0';
+                        if (p + 1 >= sizeof out->prec) {
+                                return -1;
+                        }
                         out->prec[p++] = *(*s)++;
                 } else while (*s < end && isdigit(**s)) {
-                        if (p + 1 >= sizeof out->prec)
-                                return '\0';
+                        if (p + 1 >= sizeof out->prec) {
+                                return -1;
+                        }
                         out->prec[p++] = *(*s)++;
                 }
         }
 
-        if (**s == ' ' || **s == '_' || **s == ',' || **s == '\'')
+        if (*s < end && contains(" _,'", **s)) {
                 out->xsep = *(*s)++;
+        }
 
         while (*s < end && **s == ' ') ++*s;
 
@@ -1168,8 +1170,8 @@ BUILTIN_FUNCTION(fmt)
 
         int len;
 
-        vec(char) cs = {0};
-        vec(char) sb = {0};
+        byte_vector cs = {0};
+        byte_vector sb = {0};
 
         char *tmp = TY_TMP();
 
@@ -1192,7 +1194,7 @@ BUILTIN_FUNCTION(fmt)
 
                         i  = (end - 1) - fmt;
 
-                        if (t == '\0') {
+                        if (t == -1) {
 BadFormatSpecifier:
                                 zP("fmt(): invalid format specifier: %.*s", nspec, start);
                         }
@@ -1211,7 +1213,7 @@ BadFormatSpecifier:
                                         );
                                 }
 
-                                snprintf(spec.width, sizeof spec.width, "%"PRIiMAX, ARG(ai).z);
+                                ty_snprintf(spec.width, sizeof spec.width, "%"PRIiMAX, ARG(ai).z);
                         }
 
                         if (spec.prec[0] == '*') {
@@ -1228,7 +1230,7 @@ BadFormatSpecifier:
                                         );
                                 }
 
-                                snprintf(spec.prec, sizeof spec.prec, "%"PRIiMAX, ARG(ai).z);
+                                ty_snprintf(spec.prec, sizeof spec.prec, "%"PRIiMAX, ARG(ai).z);
                         }
 
                         if (++ai >= argc) {
@@ -1254,7 +1256,7 @@ MissingArgument:
                         if (spec.sign)  scratch[si++] = '+';
 
                         int wlen;
-                        if (spec.fill == '0' && spec.justify != 0) {
+                        if (s_eq(spec.fill, "0") && spec.justify != 0) {
                                 scratch[si++] = '0';
                                 if (spec.justify == -1) {
                                         scratch[si++] = '-';
@@ -1272,6 +1274,12 @@ MissingArgument:
                         memcpy(scratch + si, spec.prec, plen);
                         si += plen;
 
+                        if (t == 0) switch (arg.type) {
+                        case VALUE_INTEGER: t = 'd'; break;
+                        case VALUE_REAL:    t = 'f'; break;
+                        default:            t = 's'; break;
+                        }
+
                         switch (t) {
                         case 'd':
                         case 'i':
@@ -1283,7 +1291,7 @@ MissingArgument:
                                 scratch[si++] = t;
                                 scratch[si] = '\0';
 
-                                snprintf(
+                                ty_snprintf(
                                         tmp,
                                         TY_TMP_N,
                                         scratch,
@@ -1293,22 +1301,22 @@ MissingArgument:
                                 if (spec.xsep != '\0') {
                                         AddThousandsSep(&tmp[spec.blank], spec.xsep);
                                 }
-
                                 break;
+
                         case 'b':
                                 scratch[si++] = 's';
                                 scratch[si] = '\0';
 
                                 utobsx(b, (umax)int_from(ty, &arg, start, nspec));
 
-                                snprintf(
+                                ty_snprintf(
                                         tmp,
                                         TY_TMP_N,
                                         scratch,
                                         b
                                 );
-
                                 break;
+
                         case 'f':
                         case 'F':
                         case 'g':
@@ -1320,7 +1328,7 @@ MissingArgument:
                                 scratch[si++] = t;
                                 scratch[si] = '\0';
 
-                                snprintf(
+                                ty_snprintf(
                                         tmp,
                                         TY_TMP_N,
                                         scratch,
@@ -1330,8 +1338,8 @@ MissingArgument:
                                 if (spec.xsep != '\0') {
                                         AddThousandsSep(&tmp[spec.blank], spec.xsep);
                                 }
-
                                 break;
+
                         case 'q':
                                 scratch[si++] = 'l';
                                 scratch[si++] = 'f';
@@ -1339,7 +1347,7 @@ MissingArgument:
                                 scratch[si++] = '%';
                                 scratch[si] = '\0';
 
-                                len = snprintf(
+                                len = ty_snprintf(
                                         tmp,
                                         TY_TMP_N,
                                         scratch,
@@ -1361,46 +1369,54 @@ MissingArgument:
                                 if (tmp[len - 1] == ' ') {
                                         tmp[--len] = '\0';
                                 }
-
                                 break;
+
                         case 's':
-                                scratch[si++] = t;
+                                scratch[si++] = 's';
                                 scratch[si] = '\0';
 
-                                sb.count = 0;
+                                v0(sb);
 
                                 switch (arg.type) {
                                 case VALUE_STRING:
                                         xvPn(sb, ss(arg), sN(arg));
                                         xvP(sb, '\0');
-                                        p = sb.items;
+                                        p = vv(sb);
                                         break;
+
                                 case VALUE_BLOB:
-                                        xvPn(sb, arg.blob->items, arg.blob->count);
+                                        xvPn(sb, vv(*arg.blob), vN(*arg.blob));
                                         xvP(sb, '\0');
-                                        p = sb.items;
+                                        p = vv(sb);
                                         break;
+
                                 case VALUE_PTR:
                                         p = arg.ptr;
                                         break;
+
                                 default:
-                                        BadFmt(ty, start, nspec, &arg);
+                                        p = SHOW(&arg);
+                                        xvPn(sb, p, strlen(p));
+                                        xvP(sb, '\0');
+                                        xmF((void *)p);
+                                        p = vv(sb);
+                                        break;
                                 }
 
-                                snprintf(
+                                ty_snprintf(
                                         tmp,
                                         TY_TMP_N,
                                         scratch,
                                         p
                                 );
-
                                 break;
+
                         case 'p':
                                 scratch[si++] = t;
                                 scratch[si] = '\0';
 
                                 switch (arg.type) {
-                                case VALUE_STRING:   p = ss(arg); break;
+                                case VALUE_STRING:   p = ss(arg);    break;
                                 case VALUE_BLOB:     p = arg.blob;   break;
                                 case VALUE_OBJECT:   p = arg.object; break;
                                 case VALUE_PTR:      p = arg.ptr;    break;
@@ -1417,8 +1433,8 @@ MissingArgument:
                                         scratch,
                                         p
                                 );
-
                                 break;
+
                         default:
                                 goto BadFormatSpecifier;
                         }
@@ -1427,11 +1443,9 @@ MissingArgument:
                                 int goal = atoi(spec.width);
                                 int curr = term_width(tmp, -1);
 
-                                u8 fill[8];
-                                int sz = utf8proc_encode_char(spec.fill, fill);
-
+                                int sz = strlen(spec.fill);
                                 if (sz <= 0) {
-                                        fill[0] = (u8)spec.fill;
+                                        strcpy(spec.fill, " ");
                                         sz = 1;
                                 }
 
@@ -1441,25 +1455,27 @@ MissingArgument:
                                 switch (spec.justify) {
                                 case 1:
                                         for (int i = 0; i < pad; ++i) {
-                                                xvPn(cs, fill, sz);
+                                                xvPn(cs, spec.fill, sz);
                                         }
                                         xvPn(cs, tmp, strlen(tmp));
                                         break;
+
                                 case 0:
                                         odd = pad & 1;
                                         pad /= 2;
                                         for (int i = 0; i < pad; ++i) {
-                                                xvPn(cs, fill, sz);
+                                                xvPn(cs, spec.fill, sz);
                                         }
                                         xvPn(cs, tmp, strlen(tmp));
                                         for (int i = 0; i < pad + odd; ++i) {
-                                                xvPn(cs, fill, sz);
+                                                xvPn(cs, spec.fill, sz);
                                         }
                                         break;
+
                                 case -1:
                                         xvPn(cs, tmp, strlen(tmp));
                                         for (int i = 0; i < pad; ++i) {
-                                                xvPn(cs, fill, sz);
+                                                xvPn(cs, spec.fill, sz);
                                         }
                                         break;
                                 }

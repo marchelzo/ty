@@ -1308,9 +1308,15 @@ jit_rt_count(Ty *ty, Value *result, Value *v)
 }
 
 static void
-jit_rt_global(Ty *ty, Value *result, i64 n, Value *locals)
+jit_rt_tls0(Ty *ty, Value *top, int n)
 {
-        *result = *vm_global(ty, n);
+        vN(ty->stack) = top - vv(ty->stack);
+
+        while (vN(ty->tls) <= n) {
+                xvP(ty->tls, NONE);
+        }
+
+        vm_exec(ty, v__(xD.tls0, n));
 }
 
 // Subscript assign: container[subscript] = value
@@ -4622,7 +4628,23 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
 #ifndef TY_NO_LOG
                         BC_SKIPSTR();
 #endif
+                        int lbl_slow = bc_next_label(ctx);
+                        int lbl_fast = bc_next_label(ctx);
+                        jit_emit_ldr64(asm, BC_S0, BC_TY, OFF_TY_TLS + OFF_VEC_LEN);
+                        jit_emit_cmp_ri(asm, BC_S0, n);
+                        jit_emit_branch_le(asm, lbl_slow);
                         jit_emit_ldr64(asm, BC_S3, BC_TY, OFF_TY_TLS + OFF_VEC_DATA);
+                        jit_emit_ldrb(asm, BC_S0, BC_S3, n * sizeof (Value) + VAL_OFF_TYPE);
+                        jit_emit_cmp_ri(asm, BC_S0, VALUE_NONE);
+                        jit_emit_branch_ne(asm, lbl_fast);
+                        jit_emit_label(asm, lbl_slow);
+                        jit_emit_mov(asm, BC_A0, BC_TY);
+                        jit_emit_add_imm(asm, BC_A1, BC_OPS, OP_OFF(ctx->sp));
+                        jit_emit_load_imm(asm, BC_A2, n);
+                        jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_tls0);
+                        jit_emit_call_reg(asm, BC_CALL);
+                        jit_emit_ldr64(asm, BC_S3, BC_TY, OFF_TY_TLS + OFF_VEC_DATA);
+                        jit_emit_label(asm, lbl_fast);
                         bc_push_from(ctx, BC_S3, n * sizeof (Value));
                         break;
                 }

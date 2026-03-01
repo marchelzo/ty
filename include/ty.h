@@ -31,7 +31,7 @@
 #endif
 
 typedef vec(struct alloc *) AllocList;
-typedef vec(char *)         CallStack;
+typedef vec(char *)         IPVector;
 typedef vec(void *)         ContextVector;
 typedef vec(cothread_t)     CoThreadVector;
 typedef vec(Constraint)     ConstraintVector;
@@ -436,7 +436,7 @@ typedef struct cothread_state {
         int exec_depth;
         int rc;
         FrameStack frames;
-        CallStack calls;
+        IPVector calls;
         SPStack sps;
         TargetStack targets;
         TryStack try_stack;
@@ -604,6 +604,8 @@ typedef struct ty0 {
         InternSet b_ops;
         InternSet members;
         InternSet strings;
+
+        IPVector tls0;
 
         CompileState *compiler;
 
