@@ -303,7 +303,7 @@ fn fitItems(items: Array[CompletionLabel], W: Int) -> Array[Array[String]] {
     ]
 }
 
-class InteractiveLineReader {
+pub class InteractiveLineReader {
     __tio: TermIO
     __pty: os.PTY | nil
     __borrowed-tio?: Bool

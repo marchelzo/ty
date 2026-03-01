@@ -152,7 +152,7 @@ pub fn timerfd_settime(fd: Int, flags: Int, initial: Float | Int, interval: ?Flo
 pub fn timerfd_gettime(fd: Int) -> (Float, Float) | nil;
 #|]
 
-class Signals : Iterable[Int] {
+pub class Signals : Iterable[Int] {
     __set: _
 
     init(*sigs) {

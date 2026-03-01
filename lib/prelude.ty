@@ -3374,8 +3374,40 @@ class CondVar {
         thread.broadcastCond(__var)
     }
 
+    inner -> _ {
+        __var
+    }
+
     __free__() {
         thread.destroy(__var)
+    }
+}
+
+class Note {
+    __note: _
+
+    init() {
+        __note = thread.note()
+    }
+
+    notify() {
+        thread.notify(__note)
+    }
+
+    wait(timeout: ?Float) {
+        thread.wait-note(__note, timeout if timeout != nil)
+    }
+
+    notified? -> Bool {
+        thread.notified?(__note)
+    }
+
+    inner -> _ {
+        __note
+    }
+
+    __free__() {
+        thread.destroy(__note)
     }
 }
 
@@ -3409,6 +3441,24 @@ class Thread[T] {
     static kill(sig: Int) {
         thread.kill(sig)
     }
+
+    static wait-any(
+        objects: Array[Note | CondVar],
+        timeout: ?Float = nil,
+        lock: Mutex | Array[Mutex] | nil = nil
+    ) -> Int | nil {
+        thread.wait-any(
+            [it.inner for objects],
+            timeout,
+            lock if lock != nil
+        )
+    }
+
+    static wait-any(
+        objects: Array[Note | CondVar],
+        timeout: nil = nil,
+        lock: Mutex | Array[Mutex] | nil = nil
+    ) -> Int;
 
     getName() -> String | nil {
         thread.getName(__handle)

@@ -1,18 +1,17 @@
-import chalk (..)
+import chalk (chalk, hsl-gradient)
+import math (log)
 import ffi as c (C!)
 import os (..)
 import path (Path)
 import sh (sh)
 import time
-import tp (ThreadPool)
+import tp (ThreadPool, Future)
 import ty
 
 let TERM_COLS = match terminal-size() {
     {cols, *} => cols,
     else      => 80
 }
-
-let t0 = time.now()
 
 let pass  = Sync(0)
 let fail  = Sync(0)
@@ -30,12 +29,21 @@ let b = chalk['blue']
 const TY_CMD  = getenv('TY_PATH') ?? ty.executable
 const TY_OPTS = ['-q' if ty.q, '-j' if !ty.jit].unwords()
 
+fn log-scale(lo: Float, hi: Float) -> (Float -> Float) {
+    let lo = log(lo)
+    let hi = log(hi)
+    t -> ((log(t) - lo) / (hi - lo)).clamp(0.0, 1.0)
+}
+
+const time-grad = hsl-gradient((0.33, 0.0, 0.25), (0.0, 1.0, 0.6))
+                . log-scale(0.01, 1.5)
+
 fn show-time(dt: Float) {
-    match int(dt * 1000) {
-        0..100 as ms => chalk"[#5f6b57]({ms}ms)[/]",
-        100..200     => chalk"[#5f6b57]({dt:.2}s)[/]",
-        200..500     => chalk"[#8d7e49]({dt:.2}s)[/]",
-        else         => chalk"[#9c5645]({dt:.2}s)[/]",
+    const color = time-grad(dt)
+    if dt < 0.1 {
+        chalk"[{color}]({dt * 1000:.0}ms)[/]"
+    } else {
+        chalk"[{color}]({dt:.2}s)[/]"
     }
 }
 
@@ -53,7 +61,7 @@ fn run(p: Path) {
         {status: 0, signal: nil, *} => do {
             pass += 1
             let dt = show-time(time.now() - t0)
-            ('#6b6862', chalk"[bright green bold]PASS[/] {dt}")
+            ('#635d56', chalk"[bright green bold]PASS[/] {dt}")
         },
 
         else => do {
@@ -74,39 +82,36 @@ fn run(p: Path) {
         }
     }
 
-    print("{chalk"[{color}]{p.stem:24}[/] [#444]...[/]"} {result}")
+    "{chalk"[{color}]{p.stem:24}[/] [#444]...[/]"} {result}"
 }
 
 let pool = ThreadPool(ncpu(), run)
 
+let t0 = time.now()
+
 for (dir, _, files) in Path('tests').walk() {
     let full-cols = min(TERM_COLS, 64)
     let name-cols = "{dir}".width()
-    let heading = '─' * (full-cols - name-cols - 4)
-    print(chalk"[#555]──[/] [#4484d6]{dir}[/] [#555]{heading}[/]")
+    let heading = '─' * (full-cols - name-cols - 2)
+    print(chalk"[#333]{heading}[/] [#bd892d]{dir}[/] [#333]──[/]")
     let jobs = [pool.submit(dir / it) for files]
-    for jobs {
-        it.wait()
+    for Future.iter(jobs) {
+        print(it)
     }
 }
 
-print()
+let t1 = time.now()
 
-let elapsed = time.now() - t0
-
-if pass > 0 {
-    print("{g('Passed')}: {g(pass)}")
-}
-
-if fail > 0 {
-    print("{r('Failed')}: {r(fail)}")
-}
-
-if slow > 0 {
-    print("{m('Timed out')}: {m(slow)}")
-}
+let summary = [
+    chalk"[green b]{pass}[/] passed" if pass > 0,
+    chalk"[red b]{fail}[/] failed" if fail > 0,
+    chalk"[magenta b]{slow}[/] timed out" if slow > 0,
+    chalk"[#ccc b]{(t1 - t0):.2f}s[/] elapsed"
+].join(', ')
 
 print()
-print("{b('Elapsed')}: {b("{elapsed:.4}s")}")
+print(chalk"[#333]{'─' * min(TERM_COLS, 64)}[/]")
+print(chalk"[#666]{summary}[/]")
+print(chalk"[#333]{'─' * min(TERM_COLS, 64)}[/]")
 
 exit(fail + slow)

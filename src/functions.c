@@ -257,6 +257,12 @@ TryIntoTime(Ty *ty, char const *ctx, Value const *t, i64 factor)
 #define USEC_ARG(i) TryIntoTime(ty, _name__, &ARG(i), 1000000)
 #define MSEC_ARG(i) TryIntoTime(ty, _name__, &ARG(i), 1000)
 
+#define TIMEOUT_ARG(i) (                               \
+        (ARG_T(i) == VALUE_REAL) ? max(MSEC_ARG(i), 0) \
+      : (ARG_T(i) == VALUE_NONE) ? (u64)-1             \
+      : MSEC_ARG(i)                                    \
+)
+
 inline static void
 GetCurrentTimespec(struct timespec* ts)
 {
@@ -3867,7 +3873,7 @@ BUILTIN_FUNCTION(thread_mutex)
         ASSERT_ARGC("thread.mutex()", 0);
         TyMutex *mtx = mAo(sizeof *mtx, GC_ANY);
         TyMutexInit(mtx);
-        return TGCPTR(mtx, (void *)1, mtx);
+        return TGCPTR(mtx, (void *)TY_THREAD_MUTEX, mtx);
 }
 
 BUILTIN_FUNCTION(thread_spinlock)
@@ -3875,7 +3881,7 @@ BUILTIN_FUNCTION(thread_spinlock)
         ASSERT_ARGC("thread.spinLock()", 0);
         TySpinLock *spin = mAo(sizeof *spin, GC_ANY);
         TySpinLockInit(spin);
-        return TGCPTR(spin, (void *)2, spin);
+        return TGCPTR(spin, (void *)TY_THREAD_SPINLOCK, spin);
 }
 
 BUILTIN_FUNCTION(thread_cond)
@@ -3883,7 +3889,7 @@ BUILTIN_FUNCTION(thread_cond)
         ASSERT_ARGC("thread.cond()", 0);
         TyCondVar *cond = mAo(sizeof *cond, GC_ANY);
         TyCondVarInit(cond);
-        return TGCPTR(cond, (void *)3, cond);
+        return TGCPTR(cond, (void *)TY_THREAD_CONDVAR, cond);
 }
 
 BUILTIN_FUNCTION(thread_cond_wait)
@@ -3926,7 +3932,7 @@ BUILTIN_FUNCTION(thread_note)
         ASSERT_ARGC("thread.note()", 0);
         TyNote *np = mAo(sizeof *np, GC_ANY);
         *np = TyNoteNew();
-        return TGCPTR(np, (void *)TY_WAITABLE_NOTE, np);
+        return TGCPTR(np, (void *)TY_THREAD_NOTE, np);
 }
 
 BUILTIN_FUNCTION(thread_notify)
@@ -3963,7 +3969,7 @@ BUILTIN_FUNCTION(thread_counter)
         ASSERT_ARGC("thread.counter()", 1);
         TyCounter *cp = mAo(sizeof *cp, GC_ANY);
         *cp = TyCounterNew((u32)INT_ARG(0));
-        return TGCPTR(cp, (void *)TY_WAITABLE_COUNTER, cp);
+        return TGCPTR(cp, (void *)TY_THREAD_COUNTER, cp);
 }
 
 BUILTIN_FUNCTION(thread_count_add)
@@ -3999,56 +4005,58 @@ BUILTIN_FUNCTION(thread_wait_any)
 {
         ASSERT_ARGC("thread.wait-any()", 1, 2, 3);
 
-        Value arr = ARGx(0, VALUE_ARRAY);
-        u64 ms = (argc >= 2) ? (u64)MSEC_ARG(1) : (u64)-1;
+        Value objects = ARGx(0, VALUE_ARRAY);
+        u64 timeout = TIMEOUT_ARG(1);
 
-        int n = arr.array->count;
+        usize n = vN(*objects.array);
 
         SCRATCH_SAVE();
 
         TyWaitable *items = smA(n * sizeof *items);
         void *scratch = smA(TY_WAIT_SCRATCH(n));
 
-        for (int i = 0; i < n; ++i) {
-                Value v = arr.array->items[i];
-                if (v.type != VALUE_PTR) {
+        for (usize i = 0; i < n; ++i) {
+                Value *v = v_(*objects.array, i);
+                if (v->type != VALUE_PTR) {
                         zP("thread.wait-any(): element %d is not a waitable object", i);
                 }
-                int tag = (int)(uptr)v.extra;
-                if (tag != TY_WAITABLE_NOTE && tag != TY_WAITABLE_COUNTER && tag != TY_WAITABLE_CONDVAR) {
-                        zP("thread.wait-any(): element %d (tag=%d) is not a waitable type", i, tag);
+                int tag = (int)(uptr)v->extra;
+                switch (tag) {
+                case TY_THREAD_NOTE:
+                case TY_THREAD_COUNTER:
+                case TY_THREAD_CONDVAR:
+                        break;
+
+                default:
+                        bP("not a waitable object: %s", SHOW(v, BASIC));
                 }
-                items[i].obj = v.ptr;
+                items[i].obj = v->ptr;
                 items[i].tag = tag;
         }
 
-        /* Collect locks from optional 3rd argument (single mutex or array of mutexes) */
-        TyMutex **locks = NULL;
-        int nlocks = 0;
+        vec(TyMutex *) locks = {0};
 
         if (argc == 3) {
-                Value lk = ARG(2);
-                if (lk.type == VALUE_PTR && (int)(uptr)lk.extra == TY_WAITABLE_MUTEX) {
-                        locks = smA(sizeof *locks);
-                        locks[0] = lk.ptr;
-                        nlocks = 1;
-                } else if (lk.type == VALUE_ARRAY) {
-                        nlocks = lk.array->count;
-                        locks = smA(nlocks * sizeof *locks);
-                        for (int i = 0; i < nlocks; ++i) {
-                                Value m = lk.array->items[i];
-                                if (m.type != VALUE_PTR || (int)(uptr)m.extra != TY_WAITABLE_MUTEX) {
-                                        zP("thread.wait-any(): lock %d is not a Mutex", i);
+                Value lock = ARGx(2, VALUE_PTR, VALUE_ARRAY);
+                switch (lock.type) {
+                case VALUE_PTR:
+                        svP(locks, lock.ptr);
+                        break;
+
+                case VALUE_ARRAY:
+                        for (usize i = 0; i < vN(*lock.array); ++i) {
+                                Value *mtx = v_(*lock.array, i);
+                                if (mtx->type != VALUE_PTR) {
+                                        bP("bad element in locks array: %s", SHOW(mtx, BASIC));
                                 }
-                                locks[i] = m.ptr;
+                                svP(locks, mtx->ptr);
                         }
-                } else {
-                        zP("thread.wait-any(): 3rd argument must be a Mutex or array of Mutexes");
+                        break;
                 }
         }
 
         UnlockTy();
-        int idx = TyWaitAny(items, n, ms, scratch, locks, nlocks);
+        int idx = TyWaitAny(items, n, timeout, scratch, vv(locks), vN(locks));
         LockTy();
 
         SCRATCH_RESTORE();

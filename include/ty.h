@@ -596,13 +596,17 @@ typedef struct {
 
 typedef struct ty0 {
         Ty *ty;
-        CompileState *compiler;
+
+        bool initialized;
+        i32 loading;
+
         InternSet u_ops;
         InternSet b_ops;
         InternSet members;
         InternSet strings;
-        bool initialized;
-        bool ready;
+
+        CompileState *compiler;
+
         vec(TyTest) tests;
 } TY;
 
@@ -824,8 +828,10 @@ enum {
 #define MemoryUsed  (ty->memory_used)
 #define MemoryLimit (ty->memory_limit)
 
-#define TY_IS_READY       (xD.ready)
-#define TY_IS_INITIALIZED (xD.initialized)
+#define TY_BEGIN_LOADING()  (xD.loading += 1)
+#define TY_FINISH_LOADING() (xD.loading -= 1)
+#define TY_IS_READY         (xD.loading == 0)
+#define TY_IS_INITIALIZED   (xD.initialized)
 
 #define EVAL_DEPTH (ty->eval_depth)
 

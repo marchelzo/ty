@@ -623,7 +623,7 @@ pub from_mem = mem -> from_mem(mem, mem.size())
 
 tag InitError;
 
-class Term {
+pub class Term {
     __term: _
 
     init(

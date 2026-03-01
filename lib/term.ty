@@ -464,7 +464,7 @@ pub fn size(fd: Int) -> (Int, Int) {
     _size.get(fd)
 }
 
-class TermIO {
+pub class TermIO {
     __fd: Int
 
     __ti-keys: Dict[String, Int] = %{}

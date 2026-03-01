@@ -56,6 +56,15 @@
   #define TY_PLATFORM_NAME "win32"
 #endif
 
+enum {
+        TY_THREAD_NONE,
+        TY_THREAD_MUTEX,
+        TY_THREAD_SPINLOCK,
+        TY_THREAD_CONDVAR,
+        TY_THREAD_NOTE,
+        TY_THREAD_COUNTER
+};
+
 typedef uint8_t   u8;
 typedef uint16_t  u16;
 typedef uint32_t  u32;
