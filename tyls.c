@@ -171,8 +171,9 @@ main(int argc, char *argv[])
         ValueVector   items     = {0};
         byte_vector   OutBuffer = {0};
 
+        TY_BEGIN_LOADING();
+
         for (;;) {
-                xD.ready = false;
                 AllowErrors = true;
 
                 Value req = builtin_read(ty, 0, NULL);

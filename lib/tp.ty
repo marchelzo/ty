@@ -1,165 +1,191 @@
-class ThreadPool[F: Function] {
-  __f:       F
-  __setup:   _
-  __queue:   SharedQueue[_]
-  __threads: Array[Thread[_]]
+pub class ThreadPool[F: Function] {
+    __f:       F
+    __setup:   _
+    __queue:   SharedQueue[_]
+    __threads: Array[Thread[_]]
 
-  init(n: Int, f: F, setup: _ = nil) {
-    __f       = f
-    __setup   = setup
-    __queue   = SharedQueue()
-    __threads = [Thread(cast(runThread), __f, __setup) for _ in ..n]
-  }
-
-  submit[...Args, T](*args: ...Args, %kwargs: _) -> Future[T] where (Args -> T): F {
-    let future = Future()
-    __queue.put((args, kwargs, future))
-    future
-  }
-
-  runThread(f: _, setup: _ = nil) {
-    let state = if setup != nil {
-        (setup)()
+    init(n: Int, f: F, setup: _ = nil) {
+        __f       = f
+        __setup   = setup
+        __queue   = SharedQueue()
+        __threads = [Thread(cast(runThread), __f, __setup) for _ in ..n]
     }
 
-    catch _: CanceledError {
-        return
+    submit[...Args, T](*args: ...Args, %kwargs: _) -> Future[T] where (Args -> T): F {
+        let future = Future()
+        __queue.put((args, kwargs, future))
+        future
     }
 
-    for (;;) {
-      let (args, kwargs, future) = __queue.take()
+    runThread(f: _, setup: _ = nil) {
+        let state = if setup != nil {
+            (setup)()
+        }
 
-      continue if !future.start()
+        catch _: CanceledError {
+            return
+        }
 
-      try {
-        future.complete(f(*args, state if state != nil, **kwargs))
-      } catch ex {
-        future.abort(ex)
-      }
+        for (;;) {
+            let (args, kwargs, future) = __queue.take()
+
+            continue if !future.start()
+
+            try {
+                future.complete(f(*args, state if state != nil, **kwargs))
+            } catch ex {
+                future.abort(ex)
+            }
+        }
     }
-  }
 
-  close() {
-    __queue.close()
-    __threads.map(&join)
-  }
+    close() {
+        __queue.close()
+        __threads.map(&join)
+    }
 
-  __drop__() {
-    close()
-  }
+    __drop__() {
+        close()
+    }
 }
 
 ns state {
-  const CREATED   = (1 << 0)
-  const RUNNING   = (1 << 1)
-  const CANCELED  = (1 << 2)
-  const ABORTED   = (1 << 3)
-  const COMPLETED = (1 << 4)
+    const CREATED   = (1 << 0)
+    const RUNNING   = (1 << 1)
+    const CANCELED  = (1 << 2)
+    const ABORTED   = (1 << 3)
+    const COMPLETED = (1 << 4)
 }
 
-class Future[T] {
-  _state: Int
-  _mtx:   Mutex
-  _cv:    CondVar
-  _val:   T
-  _err:   Any
+pub class Future[T] {
+    _state: Int
+    _mtx:   Mutex
+    _done:  Note
+    _val:   T
+    _err:   Any
 
-  init() {
-    _state = state.CREATED
-    _cv    = CondVar()
-    _mtx   = Mutex()
-  }
-
-  wait() -> T {
-    let ^_ = _mtx.lock()
-
-    while _state & (state.CREATED | state.RUNNING) {
-      _cv.wait(_mtx)
+    init() {
+        _state = state.CREATED
+        _done  = Note()
+        _mtx   = Mutex()
     }
 
-    match _state {
-        state.CANCELED  => throw CanceledError(),
-        state.ABORTED   => throw _err,
-        state.COMPLETED => return _val
-    }
-  }
-
-  start() -> Bool {
-    with _mtx {
-      if _state == state.CREATED {
-        _state = state.RUNNING
-        true
-      } else {
-        false
-      }
-    }
-  }
-
-  cancel() -> Bool {
-    with _mtx {
-      if _state == state.CREATED {
-        _state = state.CANCELED
-        _cv.signal()
-        true
-      } else {
-        false
-      }
-    }
-  }
-
-  abort(err: Any) {
-    with _mtx {
-      _state = state.ABORTED
-      _err   = err
-      _cv.signal()
-    }
-  }
-
-  running? {
-    with _mtx {
-      _state == state.RUNNING
-    }
-  }
-
-  ready? {
-    with _mtx {
-      _state == state.COMPLETED
-    }
-  }
-
-  canceled? {
-    with _mtx {
-      _state == state.CANCELED
-    }
-  }
-
-  complete(x: T) {
-    with _mtx {
-      _state = state.COMPLETED
-      _val   = x
-      _cv.signal()
-    }
-  }
-
-  abort(err: Any) {
-    with _mtx {
-      _state = state.ABORTED
-      _err   = err
-      _cv.signal()
-    }
-  }
-
-  static all(fs) {
-    let xs = []
-
-    try {
-        for f in fs {
-            xs.push(f.wait())
+    wait() -> T {
+        _done.wait()
+        let ^_ = _mtx.lock()
+        match _state {
+            state.CANCELED  => throw CanceledError(),
+            state.ABORTED   => throw _err,
+            state.COMPLETED => return _val
         }
-    } catch _: CanceledError {
-        return None
     }
 
-    return Some(xs)
-  }
+    start() -> Bool {
+        with _mtx {
+            if _state == state.CREATED {
+                _state = state.RUNNING
+                true
+            } else {
+                false
+            }
+        }
+    }
+
+    cancel() -> Bool {
+        with _mtx {
+            if _state == state.CREATED {
+                _state = state.CANCELED
+                _done.notify()
+                true
+            } else {
+                false
+            }
+        }
+    }
+
+    abort(err: Any) {
+        with _mtx {
+            _state = state.ABORTED
+            _err   = err
+            _done.notify()
+        }
+    }
+
+    running? {
+        with _mtx {
+            _state == state.RUNNING
+        }
+    }
+
+    ready? {
+        with _mtx {
+            _state == state.COMPLETED
+        }
+    }
+
+    canceled? {
+        with _mtx {
+            _state == state.CANCELED
+        }
+    }
+
+    complete(x: T) {
+        with _mtx {
+            _state = state.COMPLETED
+            _val   = x
+            _done.notify()
+        }
+    }
+
+    abort(err: Any) {
+        with _mtx {
+            _state = state.ABORTED
+            _err   = err
+            _done.notify()
+        }
+    }
+
+    done? -> Bool {
+        _done.notified?
+    }
+
+    static any[T](fs: Array[Future[T]]) -> T {
+        let notes = [it._done for fs]
+        let i = Thread.wait-any(notes)
+        fs.swap(i, -1)
+        fs.pop().wait()
+    }
+
+    static all[T](fs: Array[Future[T]]) -> Array[T] {
+        let xs = []
+        let fs = [*fs]
+
+        while fs {
+            xs.push(any(fs))
+        }
+
+        xs
+    }
+
+    static try-all[T](fs: Array[Future[T]]) -> Array[Ok[T] | Err[Any]] {
+        let xs = []
+        let fs = [*fs]
+
+        while fs {
+            try {
+                xs.push(Ok(any(fs)))
+            } catch err {
+                xs.push(Err(err))
+            }
+        }
+
+        xs
+    }
+
+    static iter*[T](fs: Array[Future[T]]) -> Generator[T] {
+        let fs = [*fs]
+        while fs {
+            yield any(fs)
+        }
+    }
 }

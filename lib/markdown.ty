@@ -58,13 +58,13 @@ const CMARK_NO_LIST      = 0
 const CMARK_BULLET_LIST  = 1
 const CMARK_ORDERED_LIST = 2
 
-const ListType = {
+pub const ListType = {
     None: CMARK_NO_LIST,
     Bullet: CMARK_BULLET_LIST,
     Ordered: CMARK_ORDERED_LIST
 }
 
-const NodeType = {
+pub const NodeType = {
   None: CMARK_NODE_NONE,
   Document: CMARK_NODE_DOCUMENT,
   Paragraph: CMARK_NODE_PARAGRAPH,

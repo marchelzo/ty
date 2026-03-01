@@ -28,15 +28,6 @@ TyThreadGetTime(void)
 #endif
 }
 
-/*
- * Waitable object tags (matching TGCPTR extra tags in builtins)
- */
-#define TY_WAITABLE_MUTEX    1
-#define TY_WAITABLE_SPINLOCK 2
-#define TY_WAITABLE_CONDVAR  3
-#define TY_WAITABLE_NOTE     4
-#define TY_WAITABLE_COUNTER  5
-
 typedef struct {
         void *obj;
         int   tag;
@@ -681,17 +672,17 @@ TyWaitAny(TyWaitable *items, int count, u64 timeout_ms, void *scratch,
 
         for (int i = 0; i < count; i++) {
                 switch (items[i].tag) {
-                case TY_WAITABLE_NOTE:
+                case TY_THREAD_NOTE:
                         w[i].v = (void *)*(TyNote *)items[i].obj;
                         w[i].funcs = &nsync_note_waitable_funcs;
                         break;
 
-                case TY_WAITABLE_COUNTER:
+                case TY_THREAD_COUNTER:
                         w[i].v = (void *)*(TyCounter *)items[i].obj;
                         w[i].funcs = &nsync_counter_waitable_funcs;
                         break;
 
-                case TY_WAITABLE_CONDVAR:
+                case TY_THREAD_CONDVAR:
                         w[i].v = items[i].obj;
                         w[i].funcs = &nsync_cv_waitable_funcs;
                         break;

@@ -105,6 +105,9 @@ void
 class_add_s_getter(Ty *ty, int class, char const *, Value f);
 
 void
+class_add_s_setter(Ty *ty, int class, char const *name, Value f);
+
+void
 class_add_getter(Ty *ty, int class, char const *name, Value f);
 
 void

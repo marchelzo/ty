@@ -133,10 +133,11 @@ static Ty *ty = &vvv;
         case INSTR_##i:                                     \
                 fprintf(                                    \
                         stderr,                             \
-                        "[%s:%s]: %s\n", \
+                        "[%s:%s]: %s   %s\n", \
                         I_AM_TDB ? "TDB" : "Ty", \
                         TDB_STATE_NAME, \
-                        GetInstructionName(IP[-1]) \
+                        GetInstructionName(IP[-1]), \
+                        vN(STACK) ? SHOW(top()) : "--" \
                 );
 #define CASE(i) case INSTR_##i:
 #endif
@@ -1559,11 +1560,9 @@ xcall(Ty *ty, Value const *f, Value const *pSelf, int argc, Value const *pKwargs
                 self = NONE;
         }
 
-        //LOGX("call %s (nframe=%d, argc=%d, n_sp=%zu)", SHOW(f, BASIC, ABBREV), (int)vN(FRAMES), argc, vN(SP_STACK));
-
         LOG(
                 "Calling %s with %d args, bound = %d, self = %s, env size = %d",
-                VSC(f), argc, bound, VSC(&self), f->info[2]
+                VSC(f), argc, bound, SHOW(&self, BASIC), f->info[2]
         );
 
         int n = argc;
@@ -9235,7 +9234,7 @@ vm_init(Ty *ty, int ac, char **av)
         InitializeTY(ty);
         InitializeTy(ty, &MainGroup);
 
-        TY_IS_READY = false;
+        TY_BEGIN_LOADING();
 
         MyTy = ty;
         MyId = 0;
@@ -9333,8 +9332,8 @@ vm_init(Ty *ty, int ac, char **av)
         TySpinLockInit(&ProfileMutex);
 #endif
 
+        TY_FINISH_LOADING();
         TY_IS_INITIALIZED = true;
-        TY_IS_READY = true;
 
         return true;
 }
@@ -9342,12 +9341,13 @@ vm_init(Ty *ty, int ac, char **av)
 bool
 vm_load_program(Ty *ty, char const *source, char const *file)
 {
-        TY_IS_READY = false;
+        TY_BEGIN_LOADING();
 
         Module * volatile mod = NULL;
 
         if (TY_CATCH_ERROR()) {
                 TY_CATCH();
+                TY_FINISH_LOADING();
                 return false;
         }
 
@@ -9357,6 +9357,7 @@ vm_load_program(Ty *ty, char const *source, char const *file)
         if (mod == NULL) {
                 TY_CATCH_END();
                 GC_RESUME();
+                TY_FINISH_LOADING();
                 return false;
         }
 
@@ -9369,6 +9370,7 @@ vm_load_program(Ty *ty, char const *source, char const *file)
 
         TY_CATCH_END();
         GC_RESUME();
+        TY_FINISH_LOADING();
 
         ty->code = mod->code;
 
@@ -9378,8 +9380,6 @@ vm_load_program(Ty *ty, char const *source, char const *file)
 bool
 vm_execute(Ty *ty, char const *source, char const *file)
 {
-        TY_IS_READY = false;
-
         if (source != NULL && !vm_load_program(ty, source, file)) {
                 return false;
         }
@@ -9408,7 +9408,6 @@ vm_execute(Ty *ty, char const *source, char const *file)
                 tdb_go(ty);
         }
 
-        TY_IS_READY = true;
         vm_exec(ty, ty->code);
 
         if (PrintResult && vC(STACK) > 0) {
@@ -10878,23 +10877,10 @@ tdb_go2(Ty *ty)
         }
 }
 
-Value
-CompleteCurrentFunction(Ty *ty)
-{
-        LOGX("%s>>> completing%s %s", TERM(95;1), TERM(0), VSC(ActiveFun(ty)));
-        ExecCurrentCall(ty);
-        return pop();
-        //xvP(CALLS, &halt);
-        //vm_exec(ty, IP);
-        //return pop();
-}
-
 Value *
 vm_global(Ty *ty, int i)
 {
-        //LOGX("%s>>> loading global %d%s: %s", TERM(95;1), i, TERM(0), SHOW(v_(Globals, i), BASIC));
         return v_(Globals, i);
-        //return (vN(Globals) > i) ? v_(Globals, i) : NULL;
 }
 
 Value *
@@ -10952,8 +10938,6 @@ TyReloadModule(Ty *ty, char const *module)
                 }
         }
 
-        bool ready = ty->ty->ready;
-
         StartGC(ty);
 
         while (ty->group->GCReadyCount < nRunning) {
@@ -10961,7 +10945,8 @@ TyReloadModule(Ty *ty, char const *module)
         }
         // ======================================================================================
         GC_STOP();
-        ty->ty->ready = false;
+        TY_BEGIN_LOADING();
+
 
         bool ok = false;
 
@@ -10976,7 +10961,7 @@ TyReloadModule(Ty *ty, char const *module)
                 TY_CATCH_END();
         }
 
-        ty->ty->ready = ready;
+        TY_FINISH_LOADING();
         GC_RESUME();
         // ======================================================================================
         NextGCPhase(ty, GC_PHASE_SWEEP, nRunning);

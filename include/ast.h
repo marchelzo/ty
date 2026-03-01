@@ -447,6 +447,7 @@ struct expression {
 #endif
                         bool has_defer;
                         bool must_jit;
+                        bool emit;
                         int ikwargs;
                         int rest;
                         int t;

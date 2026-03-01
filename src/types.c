@@ -4804,13 +4804,6 @@ TryUnifyObjects(Ty *ty, Type *t0, Type *t1, bool super)
                 return UnifyX(ty, t0->class->object_type, TypeArg(t1, 0), super, false);
         }
 
-        if (
-                ((TypeType(t0) == TYPE_TUPLE) && TryUpgradeTuple(ty, t0, t1, super))
-             || ((TypeType(t1) == TYPE_TUPLE) && TryUpgradeTuple(ty, t1, t0, !super))
-        ) {
-                return true;
-        }
-
         // XXX: Does this make sense?
         if (IsRecord(t0) && !t0->closed && (!IsRecord(t1) || t1->closed)) {
                 super = true;

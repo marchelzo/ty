@@ -61,6 +61,19 @@ pub use ChalkStyle = {
 // orange: #ed6d18
 // white:  #f1d2a5
 
+use match RGB {
+    /^#[[:xdigit:]]+$/ => do {
+        let hex = match #$0 {
+            4 => $0[1;].sub(/./, \"{$1}{$1}"),
+            7 => $0[1;]
+        }
+        match hex.scan(/../).map(int@(_, 16)) {
+            [r, g, b] => (r, g, b)
+        }
+    },
+
+    (r: Int, g: Int, b: Int) => (r, g, b)
+}
 
 pub fn escape(text: String) -> String {
     text.sub(/\[|\\/, %{'[': '\\[', '\\': '\\\\'}[])
@@ -296,7 +309,7 @@ pub fn parse(text: String, start: _ = {}) -> String {
     out.str!()
 }
 
-class Text {
+pub class Text {
     __text: String
     __chalk: Chalk
     __fmt: String | nil
@@ -441,15 +454,7 @@ fn parse-style(style: String, chalk: Chalk) -> TermStyle | nil {
             ({fg: [38, 2, r, g, b]})
         },
 
-        /^#[[:xdigit:]]+$/ => do {
-            let hex = match #style {
-                4 => style[1;].sub(/./, \"{$1}{$1}"),
-                7 => style[1;],
-                _ => return nil
-            }
-            let rgb = [int(it, 16) for hex.scan(/../)]
-            ({fg: [38, 2, *rgb]})
-        },
+        RGB(r, g, b) => ({fg: [38, 2, r, g, b]}),
 
         /^bg-(.*)$/ => match parse-style($1, chalk) {
             {fg: [k, *ks], *} => ({bg: [k + 10, *ks]}),
@@ -558,7 +563,7 @@ pub fn trans(a: TermStyle, b: TermStyle) -> String {
          :                      "{combined}\x1b]8;;{b-link}\x1b\\"
 }
 
-class Chalk {
+pub class Chalk {
     __styles: Dict[String, TermStyle | nil]
 
     init() {
@@ -789,34 +794,34 @@ pub fn strip(text: String) -> String {
     text.comb(/\x1b\[[^m]*m|\x1b\]8;[^\x1b]*\x1b\\/)
 }
 
-pub fn hueToRgb(p: Float, q: Float, t: Float) -> Float {
+pub fn hue-to-rgb(p: Float, q: Float, t: Float) -> Float {
   if t < 0.0 { t += 1.0 }
   if t > 1.0 { t -= 1.0 }
   if t < 1.0/6 { return p + (q - p) * 6 * t }
   if t < 1.0/2 { return q }
   if t < 2.0/3 { return p + (q - p) * (2.0/3.0 - t) * 6.0 }
-  return p
+  p
 }
 
-pub fn hslToRgb(h: Float, s: Float, l: Float) -> (Int, Int, Int) {
+pub fn hsl-to-rgb(h: Float, s: Float, l: Float) -> (Int, Int, Int) {
   let (r, g, b) = if s < 0.0001 {
         (l, l, l)
   } else {
     let q = (l < 0.5) ? l * (1.0 + s) : (l + s - l * s)
     let p = 2.0 * l - q
     (
-        hueToRgb(p, q, h + 1.0/3.0),
-        hueToRgb(p, q, h),
-        hueToRgb(p, q, h - 1.0/3.0)
+        hue-to-rgb(p, q, h + 1.0/3.0),
+        hue-to-rgb(p, q, h),
+        hue-to-rgb(p, q, h - 1.0/3.0)
     )
   }
 
-  return (iround(r * 255), iround(g * 255), iround(b * 255))
+  (iround(r * 255), iround(g * 255), iround(b * 255))
 }
 
 pub fn hsl-hex(h, s, l) {
-    let (r, g, b) = hslToRgb(h, s, l)
-    return "#{r:02x}{g:02x}{b:02x}"
+    let (r, g, b) = hsl-to-rgb(h, s, l)
+    "#{r:02x}{g:02x}{b:02x}"
 }
 
 pub fn random(
@@ -825,6 +830,55 @@ pub fn random(
     l: FloatRange = (0.6, 0.75)
 ) {
     return hsl-hex(*rand-hsl(h, s, l))
+}
+
+fn make-gradient(grad: (Float -> (Int, Int, Int))) -> (Float -> String) {
+    return fn (t) {
+        let (r, g, b) = grad(t.clamp(0.0, 1.0))
+        "#{r:02x}{g:02x}{b:02x}"
+    }
+}
+
+pub fn hsl-gradient(
+    c1: (Float, Float, Float),
+    c2: (Float, Float, Float)
+) -> (Float -> String) {
+    let (h1, s1, l1) = c1
+    let (h2, s2, l2) = c2
+    make-gradient(
+        t -> hsl-to-rgb(
+            h1 + (h2 - h1) * t,
+            s1 + (s2 - s1) * t,
+            l1 + (l2 - l1) * t
+        )
+    )
+}
+
+pub fn rgb-gradient(
+    c1: (Int, Int, Int),
+    c2: (Int, Int, Int)
+) -> (Float -> String) {
+    let (r1, g1, b1) = c1
+    let (r2, g2, b2) = c2
+    make-gradient(
+        t -> (
+            iround(r1 + (r2 - r1) * t),
+            iround(g1 + (g2 - g1) * t),
+            iround(b1 + (b2 - b1) * t)
+        )
+    )
+}
+
+pub fn rgb-gradient(
+    c1: String,
+    c2: String
+) -> (Float -> String) {
+    match (c1, c2) {
+        (RGB(c1), RGB(c2))
+            => rgb-gradient(c1, c2),
+        else
+            => throw ValueError("invalid RGB color(s) for gradient: '{c1}', '{c2}'")
+    }
 }
 
 pub chalk = Chalk()

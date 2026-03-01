@@ -272,6 +272,12 @@ class_add_s_getter(Ty *ty, int class, char const *name, Value f)
 }
 
 void
+class_add_s_setter(Ty *ty, int class, char const *name, Value f)
+{
+        itable_put(ty, &C(class)->s_setters, name, f);
+}
+
+void
 class_add_static_i(Ty *ty, int class, int id, Value f)
 {
         itable_add(ty, &C(class)->s_methods, id, f);

@@ -1004,6 +1004,20 @@ emit_member(Ty *ty, char const *name)
         Ei32(GetPrivateId(ty, CurrentClassID, name));
 }
 
+inline static i32
+CountEmitted(ExprVec const *funs)
+{
+        i32 count = 0;
+
+        for (int i = 0; i < vN(*funs); ++i) {
+                if (v__(*funs, i)->emit) {
+                        count += 1;
+                }
+        }
+
+        return count;
+}
+
 static char *
 QualifiedTestName(Ty *ty, Stmt const *def)
 {
@@ -2411,7 +2425,7 @@ addsymbolx(Ty *ty, Scope *scope, char const *name, bool check_ns_shadow)
         s->loc = STATE.start;
 
         if (isupper(name[0])) {
-                s->flags |= SYM_PUBLIC;
+                //s->flags |= SYM_PUBLIC;
         }
 
         return s;
@@ -3252,49 +3266,50 @@ mkmulti(Ty *ty, char *name, bool setters)
 static void
 aggregate_overloads(
         Ty *ty,
-        int class,
+        Class *class,
         ExprVec *ms,
-        add_to_class_fn *add,
         bool setters
 )
 {
         SCRATCH_SAVE();
 
         u32 n = vN(*ms);
-        qsort(ms->items, n, sizeof *ms->items, method_cmp);
+        qsort(vv(*ms), n, sizeof *vv(*ms), method_cmp);
 
         char *scratch = smA(4096);
         char const *private;
 
         for (int i = 0; i + 1 < n; ++i) {
+                Expr const *meth0 = v__(*ms, i);
+
                 if (
-                        !s_eq(ms->items[i]->name, ms->items[i + 1]->name)
-                     || contains(OperatorCharset, ms->items[i]->name[0])
+                        !s_eq(meth0->name, v__(*ms, i + 1)->name)
+                     || contains(OperatorCharset, meth0->name[0])
                 ) {
                         continue;
                 }
 
-                Expr *multi = mkmulti(ty, ms->items[i]->name, setters);
-                int m = 0;
+                Expr *multi = mkmulti(ty, meth0->name, setters);
 
-                do {
-                        char const *name = afmt("%s#%d", ms->items[i + m]->name, m + 1);
-                        ms->items[i + m]->name = name;
-                        ms->items[i + m]->overload = multi;
-                        avP(multi->functions, ms->items[i + m]);
-                        m += 1;
-                } while (
-                        (i + m < n)
-                     && s_eq(ms->items[i + m]->name, multi->name)
-                );
+                avP(multi->functions, meth0);
 
-                multi->class = class_get(ty, class);
-                multi->start = ms->items[i]->start;
-                multi->end   = ms->items[i + m - 1]->end;
+                while (i + 1 < n && s_eq(v__(*ms, i + 1)->name, meth0->name)) {
+                        avP(multi->functions, v__(*ms, ++i));
+                }
+
+                for (int i = 0; i < vN(multi->functions); ++i) {
+                        Expr *meth = v__(multi->functions, i);
+                        char const *name = afmt("%s#%d", multi->name, i + 1);
+                        meth->name = name;
+                        meth->overload = multi;
+                        meth->class = class;
+                }
+
+                multi->class = class;
+                multi->start = meth0->start;
+                multi->end   = v__(*ms, i)->end;
 
                 avP(*ms, multi);
-
-                i += m - 1;
         }
 
         qsort(ms->items, vN(*ms), sizeof *ms->items, method_cmp);
@@ -11725,63 +11740,99 @@ emit_statement(Ty *ty, Stmt const *s, bool want_result)
                 STATE.class = class_get(ty, s->class.symbol);
 
                 for (int i = 0; i < vN(s->class.setters); ++i) {
-                        STATE.meth = v__(s->class.setters, i);
-                        EE(v__(s->class.setters, i));
+                        Expr const *meth = v__(s->class.setters, i);
+                        if (meth->emit) {
+                                STATE.meth = meth;
+                                EE(meth);
+                        }
                 }
                 for (int i = 0; i < vN(s->class.getters); ++i) {
-                        STATE.meth = v__(s->class.getters, i);
-                        EE(v__(s->class.getters, i));
+                        Expr const *meth = v__(s->class.getters, i);
+                        if (meth->emit) {
+                                STATE.meth = meth;
+                                EE(meth);
+                        }
                 }
                 for (int i = 0; i < vN(s->class.methods); ++i) {
-                        STATE.meth = v__(s->class.methods, i);
-                        EE(v__(s->class.methods, i));
+                        Expr const *meth = v__(s->class.methods, i);
+                        if (meth->emit) {
+                                STATE.meth = meth;
+                                EE(meth);
+                        }
                 }
                 for (int i = 0; i < vN(s->class.s_setters); ++i) {
-                        STATE.meth = v__(s->class.s_setters, i);
-                        EE(v__(s->class.s_setters, i));
+                        Expr const *meth = v__(s->class.s_setters, i);
+                        if (meth->emit) {
+                                STATE.meth = meth;
+                                EE(meth);
+                        }
                 }
                 for (int i = 0; i < vN(s->class.s_getters); ++i) {
-                        STATE.meth = v__(s->class.s_getters, i);
-                        EE(v__(s->class.s_getters, i));
+                        Expr const *meth = v__(s->class.s_getters, i);
+                        if (meth->emit) {
+                                STATE.meth = meth;
+                                EE(meth);
+                        }
                 }
                 for (int i = 0; i < vN(s->class.s_methods); ++i) {
-                        STATE.meth = v__(s->class.s_methods, i);
-                        EE(v__(s->class.s_methods, i));
+                        Expr const *meth = v__(s->class.s_methods, i);
+                        if (meth->emit) {
+                                STATE.meth = meth;
+                                EE(meth);
+                        }
                 }
 
                 STATE.meth = NULL;
 
                 INSN(DEFINE_CLASS);
                 Ei32(s->class.symbol);
-                Ei32(vN(s->class.s_methods));
-                Ei32(vN(s->class.s_getters));
-                Ei32(vN(s->class.s_setters));
-                Ei32(vN(s->class.methods));
-                Ei32(vN(s->class.getters));
-                Ei32(vN(s->class.setters));
+                Ei32(CountEmitted(&s->class.s_methods));
+                Ei32(CountEmitted(&s->class.s_getters));
+                Ei32(CountEmitted(&s->class.s_setters));
+                Ei32(CountEmitted(&s->class.methods));
+                Ei32(CountEmitted(&s->class.getters));
+                Ei32(CountEmitted(&s->class.setters));
 
                 for (int i = vN(s->class.s_methods); i > 0; --i) {
-                        EM(v__(s->class.s_methods, i - 1)->name);
+                        Expr const *meth = v__(s->class.s_methods, i - 1);
+                        if (meth->emit) {
+                                EM(meth->name);
+                        }
                 }
 
                 for (int i = vN(s->class.s_getters); i > 0; --i) {
-                        EM(v__(s->class.s_getters, i - 1)->name);
+                        Expr const *meth = v__(s->class.s_getters, i - 1);
+                        if (meth->emit) {
+                                EM(meth->name);
+                        }
                 }
 
                 for (int i = vN(s->class.s_setters); i > 0; --i) {
-                        EM(v__(s->class.s_setters, i - 1)->name);
+                        Expr const *meth = v__(s->class.s_setters, i - 1);
+                        if (meth->emit) {
+                                EM(meth->name);
+                        }
                 }
 
                 for (int i = vN(s->class.methods); i > 0; --i) {
-                        EM(v__(s->class.methods, i - 1)->name);
+                        Expr const *meth = v__(s->class.methods, i - 1);
+                        if (meth->emit) {
+                                EM(meth->name);
+                        }
                 }
 
                 for (int i = vN(s->class.getters); i > 0; --i) {
-                        EM(v__(s->class.getters, i - 1)->name);
+                        Expr const *meth = v__(s->class.getters, i - 1);
+                        if (meth->emit) {
+                                EM(meth->name);
+                        }
                 }
 
                 for (int i = vN(s->class.setters); i > 0; --i) {
-                        EM(v__(s->class.setters, i - 1)->name);
+                        Expr const *meth = v__(s->class.setters, i - 1);
+                        if (meth->emit) {
+                                EM(meth->name);
+                        }
                 }
 
                 for (int i = 0; i < vN(s->class.s_fields); ++i) {
@@ -11795,12 +11846,12 @@ emit_statement(Ty *ty, Stmt const *s, bool want_result)
                 }
 
                 STK(-(
-                        vN(s->class.s_methods)
-                      + vN(s->class.s_getters)
-                      + vN(s->class.s_setters)
-                      + vN(s->class.methods)
-                      + vN(s->class.getters)
-                      + vN(s->class.setters)
+                        CountEmitted(&s->class.s_methods)
+                      + CountEmitted(&s->class.s_getters)
+                      + CountEmitted(&s->class.s_setters)
+                      + CountEmitted(&s->class.methods)
+                      + CountEmitted(&s->class.getters)
+                      + CountEmitted(&s->class.setters)
                 ));
 
                 STATE.class = NULL;
@@ -12296,6 +12347,7 @@ InjectRedpill(Ty *ty, Stmt *s)
                         }
                         if (init != NULL) {
                                 avI(def->methods, init, 0);
+                                init->emit = true;
                         }
                 }
                 AddClassTraits(ty, def);
@@ -16902,6 +16954,9 @@ define_tag(Ty *ty, Stmt *s)
         Symbol *sym = addsymbol(ty, scope, s->tag.name);
         sym->flags |= SYM_CONST;
         sym->flags |= SYM_TAG;
+        if (s->tag.pub) {
+                sym->flags |= SYM_PUBLIC;
+        }
         sym->tag = tags_new(ty, s->tag.name);
         sym->doc = s->tag.doc;
         s->tag.symbol = sym->tag;
@@ -17020,6 +17075,84 @@ define_type(Ty *ty, Stmt *s, Scope *scope)
         RestoreContext(ty, ctx);
 }
 
+static char *
+AddMethSymbol(Ty *ty, Expr *meth, u32 flags)
+{
+        Class *class = meth->class;
+        Scope *scope = (flags & SYM_STATIC)
+                     ? class->def->class.s_scope
+                     : class->def->class.scope;
+
+        char *name = GetPrivateName(
+                meth->name,
+                class->i,
+                smA(512),
+                512
+        );
+
+        Symbol *sym = addsymbol(ty, scope, meth->name);
+        sym->flags |= SYM_MEMBER;
+        sym->flags |= flags;
+        sym->member = M_ID(name);
+        sym->class = class->i;
+        sym->loc = meth->start;
+
+        meth->fn_symbol = sym;
+
+        return name;
+}
+
+inline static void
+InstallMeth(Ty *ty, Expr *meth, char const *name, add_to_class_fn *add)
+{
+        if (HasBody(meth) || (meth->type == EXPRESSION_MULTI_FUNCTION)) {
+                (*add)(ty, meth->class->i, name, REF(NewZero()));
+                meth->emit = true;
+        }
+}
+
+static void
+AddToClass(Ty *ty, Expr *meth, add_to_class_fn *add, u32 flags)
+{
+        char *name = AddMethSymbol(ty, meth, flags);
+
+        if (meth->overload != NULL) {
+                return;
+        }
+
+        if (meth->type != EXPRESSION_MULTI_FUNCTION) {
+                InstallMeth(ty, meth, name, add);
+                return;
+        }
+
+        ExprVec overloads = {0};
+
+        for (int i = 0; i < vN(meth->functions); ++i) {
+                Expr *meth_i = v__(meth->functions, i);
+                if (HasBody(meth_i)) {
+                        svP(overloads, meth_i);
+                }
+        }
+
+        if (vN(overloads) == 0) {
+                return;
+        }
+
+        if (vN(overloads) == 1) {
+                v_0(overloads)->name = meth->name;
+                InstallMeth(ty, v_0(overloads), name, add);
+                return;
+        }
+
+        InstallMeth(ty, meth, name, add);
+
+        for (int i = 0; i < vN(overloads); ++i) {
+                Expr *meth_i = v__(overloads, i);
+                char *name_i = AddMethSymbol(ty, meth_i, flags);
+                InstallMeth(ty, meth_i, name_i, add);
+        }
+}
+
 void
 define_class(Ty *ty, Stmt *s)
 {
@@ -17081,12 +17214,14 @@ define_class(Ty *ty, Stmt *s)
                 TERM(0)
         );
 
+        aggregate_overloads(ty, class, &cd->methods, false);
+        aggregate_overloads(ty, class, &cd->setters, true);
+        aggregate_overloads(ty, class, &cd->s_methods, false);
+
+        SCRATCH_SAVE();
+
         char scratch[512];
         char const *name;
-
-        aggregate_overloads(ty, class->i, &cd->methods, class_add_method, false);
-        aggregate_overloads(ty, class->i, &cd->setters, class_add_setter, true);
-        aggregate_overloads(ty, class->i, &cd->s_methods, class_add_static, false);
 
         int keep = 0;
         for (int i = 0; i < vN(cd->methods); ++i) {
@@ -17135,24 +17270,11 @@ define_class(Ty *ty, Stmt *s)
                 } else {
                         m->class = class;
                         m->_type = UNKNOWN_TYPE;
-
-                        name = GetPrivateName(m->name, sym->class, scratch, sizeof scratch);
-                        class_add_method(ty, sym->class, name, REF(NewZero()));
-
-                        m->fn_symbol = addsymbol(ty, cd->scope, m->name);
-                        m->fn_symbol->flags |= SYM_MEMBER;
-                        m->fn_symbol->flags |= SYM_FUNCTION;
-                        m->fn_symbol->member = M_ID(name);
-                        m->fn_symbol->class = sym->class;
-                        m->fn_symbol->loc = m->start;
-
+                        AddToClass(ty, m, class_add_method, 0);
                         if (vN(m->decorators) > 0) {
-                                SCRATCH_SAVE();
                                 i32 id = ScratchMethodId(ty, m->name, class->i);
                                 class_add_field(ty, class, id, m, m);
-                                SCRATCH_RESTORE();
                         }
-
                         *v_(cd->methods, keep++) = m;
                 }
         }
@@ -17164,68 +17286,31 @@ define_class(Ty *ty, Stmt *s)
                 Expr *m = v__(cd->s_methods, i);
                 m->_type = UNKNOWN_TYPE;
                 m->class = class;
-                name = GetPrivateName(m->name, sym->class, scratch, sizeof scratch);
-                class_add_static(ty, sym->class, name, REF(NewZero()));
-
-                m->fn_symbol = addsymbol(ty, cd->s_scope, m->name);
-                m->fn_symbol->flags |= SYM_MEMBER;
-                m->fn_symbol->flags |= SYM_STATIC;
-                m->fn_symbol->flags |= SYM_FUNCTION;
-                m->fn_symbol->member = M_ID(name);
-                m->fn_symbol->class = sym->class;
-                m->fn_symbol->loc = m->start;
+                AddToClass(ty, m, class_add_static, SYM_STATIC | SYM_FUNCTION);
         }
 
         for (int i = 0; i < vN(cd->s_getters); ++i) {
                 Expr *m = v__(cd->s_getters, i);
                 m->_type = UNKNOWN_TYPE;
                 m->class = class;
-                name = GetPrivateName(m->name, sym->class, scratch, sizeof scratch);
-                class_add_s_getter(ty, sym->class, name, REF(NewZero()));
-
-                m->fn_symbol = addsymbol(ty, cd->s_scope, m->name);
-                m->fn_symbol->flags |= SYM_MEMBER;
-                m->fn_symbol->flags |= SYM_STATIC;
-                m->fn_symbol->flags |= SYM_PROPERTY;
-                m->fn_symbol->member = M_ID(name);
-                m->fn_symbol->class = sym->class;
-                m->fn_symbol->loc = m->start;
+                AddToClass(ty, m, class_add_s_getter, SYM_STATIC | SYM_PROPERTY);
         }
 
         for (int i = 0; i < vN(cd->s_setters); ++i) {
                 Expr *m = v__(cd->s_setters, i);
                 m->_type = UNKNOWN_TYPE;
                 m->class = class;
-                name = GetPrivateName(m->name, sym->class, scratch, sizeof scratch);
-                class_add_s_getter(ty, sym->class, name, REF(NewZero()));
-
-                m->fn_symbol = addsymbol(ty, cd->s_scope, m->name);
-                m->fn_symbol->flags |= SYM_MEMBER;
-                m->fn_symbol->flags |= SYM_STATIC;
-                m->fn_symbol->member = M_ID(name);
-                m->fn_symbol->class = sym->class;
-                m->fn_symbol->loc = m->start;
+                AddToClass(ty, m, class_add_s_setter, SYM_STATIC);
         }
 
         for (int i = 0; i < vN(cd->getters); ++i) {
                 Expr *m = v__(cd->getters, i);
                 m->_type = UNKNOWN_TYPE;
                 m->class = class;
-                name = GetPrivateName(m->name, sym->class, scratch, sizeof scratch);
-                class_add_getter(ty, sym->class, name, REF(NewZero()));
-
-                m->fn_symbol = addsymbol(ty, cd->scope, m->name);
-                m->fn_symbol->flags |= SYM_MEMBER;
-                m->fn_symbol->flags |= SYM_PROPERTY;
-                m->fn_symbol->member = M_ID(name);
-                m->fn_symbol->class = sym->class;
-                m->fn_symbol->loc = m->start;
-
+                AddToClass(ty, m, class_add_getter, SYM_PROPERTY);
                 if (vN(m->decorators) > 0) {
-                        SCRATCH_SAVE();
                         i32 id = ScratchGetterId(ty, m->name, class->i);
                         class_add_field(ty, class, id, m, m);
-                        SCRATCH_RESTORE();
                 }
         }
 
@@ -17233,25 +17318,17 @@ define_class(Ty *ty, Stmt *s)
                 Expr *m = v__(cd->setters, i);
                 m->_type = UNKNOWN_TYPE;
                 m->class = class;
-                name = GetPrivateName(m->name, sym->class, scratch, sizeof scratch);
-                class_add_setter(ty, sym->class, name, REF(NewZero()));
-
-                m->fn_symbol = addsymbol(ty, cd->scope, m->name);
-                m->fn_symbol->flags |= SYM_MEMBER;
-                m->fn_symbol->member = M_ID(name);
-                m->fn_symbol->class = sym->class;
-                m->fn_symbol->loc = m->start;
-
+                AddToClass(ty, m, class_add_setter, 0);
                 if (vN(m->decorators) > 0) {
-                        SCRATCH_SAVE();
                         i32 id = ScratchSetterId(ty, m->name, class->i);
                         class_add_field(ty, class, id, m, m);
-                        SCRATCH_RESTORE();
                 }
         }
 
         AddClassFields(ty, class, cd->scope,   &cd->fields,   class_add_field,   0);
         AddClassFields(ty, class, cd->s_scope, &cd->s_fields, class_add_s_field, SYM_STATIC);
+
+        SCRATCH_RESTORE();
 
         RestoreContext(ty, ctx);
 }
@@ -17538,7 +17615,12 @@ compiler_render_template(Ty *ty, Expr *e)
 {
         Value v;
 
-        if (ty->arena.gc) {
+        if (e->arena != NULL) {
+                Arena *arena = e->arena;
+                if (arena->gc && !arena->immortal) {
+                        e = xclone(ty, e);
+                }
+        } else if (TY_IS_READY && ty->arena.gc) {
                 e = xclone(ty, e);
         }
 
@@ -19364,13 +19446,14 @@ TyLoadModule(Ty *ty, char const *name, u32 flags)
                 return mod;
         }
 
-        TY_IS_READY = false;
+        TY_BEGIN_LOADING();
+
         if (TY_CATCH_ERROR()) {
-                TY_IS_READY = true;
+                TY_FINISH_LOADING();
                 TY_RETHROW();
         } else {
                 mod = load_module(ty, name, NULL);
-                TY_IS_READY = true;
+                TY_FINISH_LOADING();
                 TY_CATCH_END();
         }
 
