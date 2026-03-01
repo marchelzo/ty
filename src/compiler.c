@@ -6278,7 +6278,6 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
         case STATEMENT_TRY:
         {
                 begin_try(ty);
-
                 symbolize_statement(ty, scope, s->try.s);
 
                 get_try(ty, 0)->ctx = TRY_CATCH;
@@ -6292,6 +6291,7 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
                 symbolize_statement(ty, scope, s->try.finally);
 
                 s->try.need_trace = end_try(ty)->need_trace;
+                s->_type = s->try.s->_type;
                 break;
         }
 
@@ -13416,9 +13416,9 @@ compiler_load_builtin_modules(Ty *ty)
                 exit(1);
         }
 
+        load_module(ty, "ty",     get_module_scope("ty"));
         load_module(ty, "ffi",    get_module_scope("ffi"));
         load_module(ty, "os",     get_module_scope("os"));
-        load_module(ty, "ty",     get_module_scope("ty"));
         load_module(ty, "pretty", NULL);
         if (RunningTests) {
                 load_module(ty, "ty/test", NULL);
@@ -14357,6 +14357,14 @@ tyexpr(Ty *ty, Expr const *e, u32 flags)
 
                 break;
         }
+
+        case EXPRESSION_FUNCTION_TYPE:
+                v = TAGGED(
+                        TyFuncType,
+                        go(e->left),
+                        go(e->right)
+                );
+                break;
 
         case EXPRESSION_TAG_PATTERN_CALL:
                 try_symbolize_application(ty, NULL, (Expr *)e);
@@ -15723,19 +15731,15 @@ cexpr(Ty *ty, Value *v)
 
         case TySpread:
         {
-                Value v_ = *v;
-                v_.tags = tags_pop(ty, v_.tags);
                 e->type = EXPRESSION_SPREAD;
-                e->value = cexpr(ty, &v_);
+                e->value = cexpr(ty, &_v);
                 break;
         }
 
         case TySplat:
         {
-                Value v_ = *v;
-                v_.tags = tags_pop(ty, v_.tags);
                 e->type = EXPRESSION_SPLAT;
-                e->value = cexpr(ty, &v_);
+                e->value = cexpr(ty, &_v);
                 break;
         }
 
@@ -16072,6 +16076,12 @@ cexpr(Ty *ty, Value *v)
                 e->body = cstmt(ty, t_(v, "body"));
                 break;
         }
+
+        case TyFuncType:
+                e->type  = EXPRESSION_FUNCTION_TYPE;
+                e->left  = cexpr(ty, t_(v, 0));
+                e->right = cexpr(ty, t_(v, 1));
+                break;
 
         case TyArrayCompr:
         {
@@ -16637,6 +16647,7 @@ cexpr(Ty *ty, Value *v)
                         e->end = e->statement->end;
                 }
                 break;
+
         default:
         Bad:
                 fail("invalid value passed to cexpr(): %s", VSC(v));

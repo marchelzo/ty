@@ -13,8 +13,8 @@
 #include "array.h"
 #include "dict.h"
 
-#define TYPES_LOG      0
-#define FUN_TYPES_LOG  0
+#define TYPES_LOG      1
+#define FUN_TYPES_LOG  1
 
 typedef struct {
         TypeVector id0;
@@ -9333,17 +9333,12 @@ unify2_(Ty *ty, Type **t0, Type *t1, bool check)
         XXTLOG("    %s", ShowType(*t0));
         XXTLOG("    %s\n", ShowType(t1));
 
-        if (IsUnknown(Resolve(ty, t1))) {
-                *t0 = UNKNOWN;
-                return true;
-        }
-
         if (*t0 == NULL || IsAny(t1) || (*t0 == NONE_TYPE)) {
                 *t0 = type_unfixed(ty, t1);
                 return true;
         }
 
-        if (IsUnknown(*t0)) {
+        if (IsUnknown(*t0) || IsUnknown(Resolve(ty, t1))) {
                 return true;
         }
 

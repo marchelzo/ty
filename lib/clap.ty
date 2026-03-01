@@ -58,9 +58,34 @@ fn _coerceVal(constraint, val) {
     val
 }
 
+use OptionSpec = {
+    name: String,
+    short: String | nil,
+    long: String | nil,
+    aliases: [String] | nil,
+    help: String | nil,
+    placeholder: String | nil,
+    default: _ | nil,
+    env: String | nil,
+    required: Bool,
+    pos: Bool,
+    count: Bool,
+    repeat: Bool,
+    delim: String | nil,
+    constraint: _,
+    conv: (String -> _) | nil,
+    check: {pred: _, src: _} | nil,
+    group: String | nil,
+    hidden: Bool,
+    min: Int | nil,
+    max: Int | nil,
+    conflicts: _,
+    requires: _
+}
+
 fn _doParse(cls: _, argv, config) -> _ {
     let argv = argv ?? prelude::argv
-    let specs = cls.info()
+    let specs: Array[OptionSpec] = cls.info()
     let cmds = cls.cmds()
     let cmdDescs: _ = cls.cmdHelps()
     let version = cls.version()
@@ -314,7 +339,7 @@ fn _doParse(cls: _, argv, config) -> _ {
             let expandedIndent = ' '.repeat(12)
 
             // Helper to print a set of option specs
-            fn printOpts(opts) {
+            fn printOpts(opts: Array[OptionSpec]) {
                 for spec in opts {
                     let flag = flagMap[spec.name]
                     let typ = typeMap[spec.name]
@@ -633,7 +658,7 @@ fn _doParse(cls: _, argv, config) -> _ {
 
     // Apply environment variable defaults
     for spec in specs if spec.env != nil && !(spec.name in explicit) {
-        if let $envVal = getenv(spec.env) {
+        if let $envVal = getenv(spec.env !) {
             if spec.constraint == Bool {
                 result[spec.name] = (envVal in boolish) ? boolish[envVal] : true
             } else {

@@ -505,11 +505,9 @@ pub class TermIO {
     ) {
         __fd = fd
 
-        let $unibi-term = unibi.Term()
-        for i in unibi.strs {
-            if unibi.name(i).match?(/^key_/)
-               and let $str = unibi-term[i]
-               and str.size() > 0 {
+        let $terminfo = unibi.Term()
+        for (i, str) in terminfo.strs {
+            if unibi.name(i).match?(/^key_/) {
                 __ti-keys[str] = i
             }
         }

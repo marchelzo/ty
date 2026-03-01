@@ -6,11 +6,11 @@ import time
 import chalk
 import io
 
-const CRITICAL = 0
-const ERROR    = 1
-const WARN     = 2
-const INFO     = 3
-const DEBUG    = 4
+pub const CRITICAL = 0
+pub const ERROR    = 1
+pub const WARN     = 2
+pub const INFO     = 3
+pub const DEBUG    = 4
 
 use LoggingConfig = {
     ?level: ?Int,
@@ -34,7 +34,7 @@ let global-log-lock = Mutex()
 
 pub DEFAULT_LOG_PATH = getenv('TY_LOG')
 
-class Logger {
+pub class Logger {
     __name:   String
     __chalk:  chalk.Chalk
     __prefix: (Int, Bool) -> _
