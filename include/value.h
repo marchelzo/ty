@@ -196,6 +196,7 @@ enum {
         X(Unsafe)               \
         X(Super)                \
         X(TypeOf)               \
+        X(FuncType)             \
         X(Cast)                 \
         X(Stop)
 
@@ -750,6 +751,8 @@ checked_arg_6(
 
 #define ARGxD(...) VA_SELECT(ARG_xD,   __VA_ARGS__)
 #define KWARG(...) VA_SELECT(KWARG_xD, __VA_ARGS__)
+
+#define TRY_ARG(...) ARGxD(__VA_ARGS__, _NIL, _NONE)
 
 #define    INT_ARG(i) ARGx(i, VALUE_INTEGER).z
 #define    PTR_ARG(i) ARGx(i, VALUE_PTR).ptr

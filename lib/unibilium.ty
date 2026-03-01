@@ -614,9 +614,9 @@ C! pub unibi 'unibi_' fn {
     size_t run(const char *, var_t [9], char *, size_t);
 }
 
-pub bools = (boolean._begin + 1)..(boolean._end)
-pub nums = (numeric._begin + 1)..(numeric._end)
-pub strs = (string._begin + 1)..(string._end)
+let _bools = (boolean._begin + 1)..(boolean._end)
+let _nums  = (numeric._begin + 1)..(numeric._end)
+let _strs  = (string._begin + 1)..(string._end)
 
 pub terminfo_dirs = c.dlsym('terminfo_dirs', unibi)
 pub from_mem = mem -> from_mem(mem, mem.size())
@@ -646,23 +646,45 @@ pub class Term {
     }
 
     [](cap: Int) -> Bool | String | Int | nil {
-        if cap :: bools {
+        if cap :: _bools {
             return get_bool(__term, cap) != 0
         }
 
-        if cap :: nums {
+        if cap :: _nums {
             return get_num(__term, cap)
         }
 
-        if cap :: strs {
+        if cap :: _strs {
             return get_str(__term, cap) ?> c::str
+        }
+    }
+
+    strs* -> Generator[(Int, String)] {
+        for cap in _strs {
+            if let $str = get_str(__term, cap) and str[0] != 0 {
+                yield (cap, c.str(str))
+            }
+        }
+    }
+
+    bools* -> Generator[(Int, Bool)] {
+        for cap in _bools {
+            yield (cap, get_bool(__term, cap) != 0)
+        }
+    }
+
+    nums* -> Generator[(Int, Int)] {
+        for cap in _nums {
+            yield (cap, get_num(__term, cap))
         }
     }
 }
 
-pub fn name(cap) {
-    return ((cap :: bools) ? name_bool(cap)
-          : (cap :: nums)  ? name_num(cap)
-          : (cap :: strs)  ? name_str(cap)
-          : nil) ?> c::str
+pub fn name(i: Int) -> String {
+    return (
+        (i :: _bools) ? c.str(name_bool(i))
+      : (i :: _nums)  ? c.str(name_num(i))
+      : (i :: _strs)  ? c.str(name_str(i))
+      : throw ValueError("invalid capability: {i}")
+    )
 }

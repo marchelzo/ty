@@ -169,7 +169,7 @@ pub class MarkdownNode {
   }
 }
 
-pub fn parse(s) -> MarkdownNode | nil {
+pub fn parse(s: String | Blob) -> MarkdownNode | nil {
   if let $doc = cmark_parse_document(s, s.size(), 0) {
     MarkdownNode(doc)
   }

@@ -2913,6 +2913,8 @@ BUILTIN_FUNCTION(os_read)
         bool read_all = all != NULL && value_truthy(ty, all);
 
         isize n_read = 0;
+
+        NOGC(blob.blob);
         while (n_read < n) {
                 UnlockTy();
                 isize r = read(fd, vZ(*blob.blob) + n_read, n - n_read);
@@ -2931,6 +2933,7 @@ BUILTIN_FUNCTION(os_read)
                         break;
                 }
         }
+        OKGC(blob.blob);
 
         if (n_read > 0) {
                 vN(*blob.blob) += n_read;
@@ -3023,18 +3026,25 @@ BUILTIN_FUNCTION(os_pread)
         isize n = INT_ARG(1);
         isize offset = INT_ARG(2);
 
-        if (n < 0) zP("os.pread(): count must be non-negative");
+        if (n < 0) {
+                bP("nevative size: %"PRIiMAX, n);
+        }
 
         Value blob = BLOB(value_blob_new(ty));
         uvR(*blob.blob, n);
 
+        NOGC(blob.blob);
         UnlockTy();
         isize r = pread(fd, vZ(*blob.blob), n, (off_t)offset);
         LockTy();
+        OKGC(blob.blob);
 
-        if (r < 0) return NIL;
+        if (r < 0) {
+                return NIL;
+        }
 
         vN(*blob.blob) = r;
+
         return blob;
 }
 
@@ -5175,10 +5185,10 @@ BUILTIN_FUNCTION(os_accept)
         }
 
         Blob *addr = value_blob_new(ty);
-        GC_STOP();
+        NOGC(addr);
         Value conn = PAIR(INTEGER(ret), BLOB(addr));
         uvPn(*addr, (u8 *)&_addr, n);
-        GC_RESUME();
+        OKGC(addr);
 
         return conn;
 }
@@ -5208,26 +5218,26 @@ BUILTIN_FUNCTION(os_recvfrom)
         struct sockaddr_storage addr;
         socklen_t addr_size = sizeof addr;
 
+        NOGC(buffer.blob);
         UnlockTy();
         isize r = recvfrom(fd, vv(*buffer.blob), size, flags, (void *)&addr, &addr_size);
         LockTy();
+
         if (r < 0) {
+                OKGC(buffer.blob);
                 return NIL;
         }
 
         vN(*buffer.blob) = r;
 
-        GC_STOP();
-
         Blob *b = value_blob_new(ty);
         uvPn(*b, &addr, min(addr_size, sizeof addr));
+        NOGC(b);
 
-        Value result = vT(2);
+        Value result = PAIR(buffer, BLOB(b));
 
-        result.items[0] = buffer;
-        result.items[1] = BLOB(b);
-
-        GC_RESUME();
+        OKGC(buffer.blob);
+        OKGC(b);
 
         return result;
 }
@@ -7473,38 +7483,38 @@ BUILTIN_FUNCTION(stdio_fread)
                 bP("negative count: %"PRIiMAX, n.z);
         }
 
-        Blob *b;
-        bool existing_blob = (argc == 3) && ARG(2).type != VALUE_NIL;
+        Value buf = TRY_ARG(2, "buffer", BLOB);
+        Blob *blob;
 
-        if (existing_blob) {
-                b = ARGx(2, VALUE_BLOB).blob;
+        if (!IsMissing(buf)) {
+                blob = buf.blob;
         } else {
-                b = value_blob_new(ty);
+                blob = value_blob_new(ty);
         }
 
-        NOGC(b);
 
         FILE *fp = f.ptr;
         imax bytes = 0;
         int c;
 
+        NOGC(blob);
         UnlockTy();
         while (bytes < n.z && (c = fgetc(fp)) != EOF) {
-                uvP(*b, c);
+                uvP(*blob, c);
                 bytes += 1;
         }
         LockTy();
+        OKGC(blob);
 
-        OKGC(b);
-
-        if (existing_blob) {
+        if (!IsMissing(buf)) {
                 return INTEGER(bytes);
-        } else {
-                if (vN(*b) == 0 && n.z > 0 && c == EOF) {
-                        return NIL;
-                }
-                return BLOB(b);
         }
+
+        if (vN(*blob) == 0 && n.z > 0 && c == EOF) {
+                return NIL;
+        }
+
+        return BLOB(blob);
 }
 
 BUILTIN_FUNCTION(stdio_slurp)
@@ -9025,6 +9035,26 @@ BUILTIN_FUNCTION(ty_type_type)
 
         Value arg0 = ARG(0);
         Type *t0 = type_from_ty(ty, &arg0);
+
+        return type_to_ty(ty, t0);
+}
+
+BUILTIN_FUNCTION(ty_type_resolve)
+{
+        ASSERT_ARGC("ty.types.resolve()", 1);
+
+        Value ast = ARG(0);
+        Expr *expr = TyToCExpr(ty, &ast);
+
+        if (expr == NULL) {
+                return NIL;
+        }
+
+        Type *t0 = type_resolve(ty, expr);
+
+        if (t0 == NULL) {
+                return NIL;
+        }
 
         return type_to_ty(ty, t0);
 }

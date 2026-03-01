@@ -202,6 +202,10 @@ put(Ty *ty, Dict *d, usize i, u64 h, Value k, Value v)
                 i = find_spot(ty, d->size, d->items, h, &k);
         }
 
+        if (IS_TOMB(d, i)) {
+                d->tombs -= 1;
+        }
+
         if (d->last != NULL) {
                 d->last->next = &d->items[i];
         }

@@ -1946,7 +1946,7 @@ class XMLNode : Iterable[XMLNode] {
         __node = CXMLNode(node)
     }
 
-    ptr {
+    ptr -> _ {
         __node.__ptr__()
     }
 
@@ -2025,6 +2025,7 @@ class XMLNode : Iterable[XMLNode] {
     innerXML -> String {
         let buf = xmlBufferCreate()
         defer xmlBufferFree(buf)
+        let x = __node.doc
         for child in self {
             xmlNodeDump(buf, __node.doc, child.ptr, 0, 0)
         }
@@ -2090,7 +2091,7 @@ class XMLSelection : Iterable[XMLNode] {
     }
 }
 
-class Document {
+class Document : IntoPtr[_] {
     __doc: CXMLDoc
     __xpath_ctx: _
     __closures: Dict[String, _]
@@ -2101,7 +2102,7 @@ class Document {
         __closures = %{}
     }
 
-    ptr {
+    ptr -> _ {
         __doc.__ptr__()
     }
 

@@ -3207,6 +3207,10 @@ class Sync[T] {
         __mtx = mutex
     }
 
+    static of[T](x: T) -> T & Sync[T] {
+        cast(Sync(x))
+    }
+
     static swap[T](x: Sync[T], y: T) {
         with x.__mtx {
             let old = x.__x

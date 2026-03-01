@@ -208,6 +208,7 @@ static u64 GCTimeTotal  = 0;
 static u64 GCTimeWait   = 0;
 static u64 GCTimeMark   = 0;
 static u64 GCTimeSweep  = 0;
+static u64 GCMaxHeap    = 0;
 static u64 GCRunCount   = 0;
 #endif
 
@@ -665,6 +666,7 @@ DoGC(Ty *ty)
 
 #if defined(TY_PROFILER) || defined(TY_GC_STATS)
         u64 start = TyMonotonicTime();
+        u64 heap  = MemoryUsed;
 #endif
 
         GCLOG("Doing GC: ty->group = %p, (%zu threads)", ty->group, ty->group->ThreadList.count);
@@ -703,6 +705,9 @@ DoGC(Ty *ty)
                 }
                 GCLOG("Trying to take lock for thread %llu: %p", (long long unsigned)ty->group->ThreadList.items[i], (void *)ty->group->ThreadLocks.items[i]);
                 TySpinLockLock(v__(ty->group->ThreadLocks, i));
+#if defined(TY_GC_STATS)
+                heap += v__(ty->group->TyList, i)->memory_used;
+#endif
                 if (TryFlipTo(v__(ty->group->ThreadStates, i), true)) {
                         GCLOG("Thread %llu is running", ty->group->TyList.items[i]->id);
                         runningThreads[nRunning++] = i;
@@ -716,7 +721,11 @@ DoGC(Ty *ty)
         GCLOG("nBlocked = %d, nRunning = %d on thread %llu", nBlocked, nRunning, TID);
 
         StartGC(ty);
+
 #if defined(TY_GC_STATS)
+        if (heap > GCMaxHeap) {
+                GCMaxHeap = heap;
+        }
         u64 mark = TyMonotonicTime();
 #endif
 
@@ -9423,6 +9432,7 @@ vm_execute(Ty *ty, char const *source, char const *file)
         printf("GC stats (ran %llu times):\n", GCRunCount);
         printf("--------------------------------------\n");
         printf("  Allocated: %.2f MB\n", TotalBytesAllocated / 1.0e6);
+        printf("  Peak RSS:  %.2f MB\n", GCMaxHeap / 1.0e6);
         printf("  Total time: %.4fs\n", GCTimeTotal / 1.0e9);
         printf("       Wait time:  %.4fs\n", GCTimeWait / 1.0e9);
         printf("       Mark time:  %.4fs\n", GCTimeMark / 1.0e9);

@@ -111,7 +111,7 @@ pub fn array[T](type: CType[T], xs: Iterable[T, Int]) {
  * ffi-type($$[ __u32 $$]) => Int, so the generated getter for `a` will have a
  * return type annotation of Int
  */
-pub fn ffi-type(expr: _) -> _ {
+pub fn ffi-type(expr: _, coerce: Bool = false) -> _ {
     catch _ {
         return ty.Any
     }
@@ -119,11 +119,17 @@ pub fn ffi-type(expr: _) -> _ {
     match ty.eval(expr, ty.scope()) {
         c::u8, c::u16, c::u32, c::u64,
         c::i8, c::i16, c::i32, c::i64,
-        c::int, c::uint, c::long, c::ulong => $$[ $$::(Int) $$],
+        c::int, c::uint, c::long, c::ulong => (
+            coerce ? $$[ $$::(Int) | $$::(Float) $$]
+                   : $$[ $$::(Int) $$]
+        ),
 
-        c::float, c::double => $$[ $$::(Float) $$],
+        c::float, c::double => (
+            coerce ? $$[ $$::(Float) | $$::(Int) $$]
+                   : $$[ $$::(Float) $$]
+        ),
 
-        c::ptr => $$[ $$::(Ptr)[_] $$]
+        c::ptr => coerce ? $$[ $$::(IntoPtr)[_] $$] : $$[ $$::(Ptr)[_] $$],
     }
 }
 
@@ -337,7 +343,7 @@ fn cfun() {
     fn mkfdef(
         name,
         rt: AST,
-        ps: Array[AST],
+        params: Array[AST],
         variadic: Bool = false,
         proto-string: ?String,
         doc-string: ?String
@@ -346,16 +352,26 @@ fn cfun() {
             ty.Arg(arg: lib),
             ty.Arg(arg: ty.String(prefix + name)),
             ty.Arg(arg: rt),
-            *(ty.Arg(arg: p) for (p: AST) in ps)
+            *(ty.Arg(arg: p) for (p: AST) in params)
         ]
+
         let wrap = if variadic {
-            args.insert(2, ty.Arg(arg: ty.Value(#ps)))
+            args.insert(2, ty.Arg(arg: ty.Value(#params)))
             wrap-var
         } else {
             wrap
         }
+
+        let param-types = [ffi-type(it, coerce=true) for params]
+                        + [ty.Spread(ty.Pair($$[$$::(CType)[$$::(Any)]$$], ty.Any)) if variadic]
+
+        let type = ty.FuncType(
+            ty.Record([ty.RecordEntry({item: it}) for param-types]),
+            ffi-type(rt)
+        )
+
         ty.Let(
-            ty.Id(name: name, constraint: ty.Any),
+            ty.Id({name, constraint: type}),
             ty.Call(
                 func: $$[ prelude::set-doc $$],
                 args: [

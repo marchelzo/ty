@@ -389,11 +389,11 @@ pub class InteractiveLineReader {
         let prompt = str(prompt ?? _get-prompt())
         let render = render ?? __render
 
-        let lines = [[]]
-        let nr = 0
+        let lines: Array[Array[String]] = [[]]
+        let nr: Int = 0
 
-        let line = []
-        let i = 0
+        let line: Array[String] = []
+        let i: Int = 0
 
         fn getBefore() {
             line.slice(0, i).str() ?? ''

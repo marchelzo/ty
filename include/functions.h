@@ -343,6 +343,7 @@ BUILTIN_FUNCTION(ty_trace);
 BUILTIN_FUNCTION(ty_stack_ctx);
 BUILTIN_FUNCTION(ty_coro);
 BUILTIN_FUNCTION(ty_type_type);
+BUILTIN_FUNCTION(ty_type_resolve);
 BUILTIN_FUNCTION(ty_type_info);
 BUILTIN_FUNCTION(ty_type_check);
 BUILTIN_FUNCTION(ty_type_inst);
