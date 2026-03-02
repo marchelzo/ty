@@ -4654,13 +4654,13 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                         e->identifier
                 );
 
-                if (e->module == NULL && strcmp(e->identifier, "__module__") == 0) {
+                if (UNLIKELY(e->module == NULL && s_eq(e->identifier, "__module__"))) {
                         e->type = EXPRESSION_STRING;
                         e->string = CurrentModuleName(ty);
                         break;
                 }
 
-                if (e->module == NULL && strcmp(e->identifier, "__file__") == 0) {
+                if (UNLIKELY(e->module == NULL && s_eq(e->identifier, "__file__"))) {
                         e->type = EXPRESSION_STRING;
                         e->string = CurrentModulePath(ty);
                         break;
@@ -4671,7 +4671,7 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                         break;
                 }
 
-                if ((e->module == NULL) && s_eq(e->identifier, "__class__")) {
+                if (UNLIKELY((e->module == NULL) && s_eq(e->identifier, "__class__"))) {
                         if (CurrentClassID != -1) {
                                 e->type = EXPRESSION_IDENTIFIER;
                                 e->symbol = class_get(ty, CurrentClassID)->def->class.var;
@@ -4681,7 +4681,7 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                         break;
                 }
 
-                if (e->module == NULL && strcmp(e->identifier, "__func__") == 0) {
+                if (UNLIKELY(e->module == NULL && s_eq(e->identifier, "__func__"))) {
                         if (STATE.func != NULL && STATE.func->name != NULL) {
                                 e->type = EXPRESSION_STRING;
                                 e->string = STATE.func->name;
@@ -4691,13 +4691,20 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                         break;
                 }
 
-                if (e->module == NULL && strcmp(e->identifier, "__line__") == 0) {
+                if (UNLIKELY(e->module == NULL && s_eq(e->identifier, "__scope__"))) {
+                        e->type = EXPRESSION_VALUE;
+                        e->v    = xmA(sizeof (Value));
+                        *e->v   = PTR(SCOPE);
+                        break;
+                }
+
+                if (UNLIKELY(e->module == NULL && s_eq(e->identifier, "__line__"))) {
                         e->type = EXPRESSION_INTEGER;
                         e->integer = STATE.start.line + 1;
                         break;
                 }
 
-                if (e->module == NULL && strcmp(e->identifier, "__trace__") == 0) {
+                if (UNLIKELY(e->module == NULL && s_eq(e->identifier, "__trace__"))) {
                         if (get_try_ctx(ty) != TRY_CATCH) {
                                 fail(
                                         "%s%s%s%s%s can only be used inside a catch block",
@@ -19400,13 +19407,15 @@ IsTopLevel(Symbol const *sym)
 }
 
 Module *
-TyCompileSource(Ty *ty, char const *source, u32 flags)
+TyCompileSource(Ty *ty, char const *source, Scope *global, u32 flags)
 {
         CompileState state = STATE;
 
-        Scope *global = (flags & TYC_INHERIT_GLOBAL)
-                      ? STATE.global
-                      : GlobalScope;
+        if (global == NULL) {
+                global = (flags & TYC_INHERIT_GLOBAL)
+                       ? STATE.global
+                       : GlobalScope;
+        }
 
         Module *mod = amA0(sizeof (Module));
         mod->name = "(tmp)";

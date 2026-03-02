@@ -153,6 +153,7 @@ static struct {
   { .module = "os",         .name = "truncate",                 .value = BUILTIN(builtin_os_truncate)            },
   { .module = "os",         .name = "ftruncate",                .value = BUILTIN(builtin_os_ftruncate)           },
   { .module = "os",         .name = "access",                   .value = BUILTIN(builtin_os_access)              },
+  { .module = "os",         .name = "eaccess",                  .value = BUILTIN(builtin_os_eaccess)             },
   { .module = "os",         .name = "utimes",                   .value = BUILTIN(builtin_os_utimes)              },
   { .module = "os",         .name = "futimes",                  .value = BUILTIN(builtin_os_futimes)             },
   { .module = "os",         .name = "readlink",                 .value = BUILTIN(builtin_os_readlink)            },

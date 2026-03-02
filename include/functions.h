@@ -106,6 +106,7 @@ BUILTIN_FUNCTION(os_chown);
 BUILTIN_FUNCTION(os_utimes);
 BUILTIN_FUNCTION(os_futimes);
 BUILTIN_FUNCTION(os_access);
+BUILTIN_FUNCTION(os_eaccess);
 BUILTIN_FUNCTION(os_readlink);
 BUILTIN_FUNCTION(os_unlink);
 BUILTIN_FUNCTION(os_rename);
