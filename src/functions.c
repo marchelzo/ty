@@ -2754,6 +2754,20 @@ BUILTIN_FUNCTION(os_access)
         return INTEGER(access(TY_TMP_C_STR(path), mode));
 }
 
+BUILTIN_FUNCTION(os_eaccess)
+{
+        ASSERT_ARGC("os.eaccess()", 2);
+
+#if !defined(__linux__)
+        bP("only available on Linux");
+#else
+        Value path = ARGx(0, VALUE_STRING, VALUE_BLOB, VALUE_PTR);
+        int mode = INT_ARG(1);
+
+        return INTEGER(eaccess(TY_TMP_C_STR(path), mode));
+#endif
+}
+
 BUILTIN_FUNCTION(os_readlink)
 {
         ASSERT_ARGC("os.readlink()", 1);
@@ -8912,6 +8926,9 @@ BUILTIN_FUNCTION(ty_parse)
         char const *tokens_key = HAVE_FLAG("tokens")
                                ? "tokens"
                                : NULL;
+
+        Value scope = KWARG("scope", PTR);
+
         u32 flags = (
                 TYC_PARSE
               | TYC_IMPORT_ALL
@@ -8939,7 +8956,12 @@ BUILTIN_FUNCTION(ty_parse)
                 return Err(ty, exc);
         }
 
-        Module *mod = TyCompileSource(ty, source, flags);
+        Module *mod = TyCompileSource(
+                ty,
+                source,
+                !IsMissing(scope) ? scope.ptr : NULL,
+                flags
+        );
 
         Stmt **prog = mod->prog;
         TokenVector tokens = mod->tokens;

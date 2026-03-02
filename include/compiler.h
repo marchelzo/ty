@@ -296,7 +296,7 @@ compiler_compile_source(
 );
 
 Module *
-TyCompileSource(Ty *ty, char const *source, u32 flags);
+TyCompileSource(Ty *ty, char const *source, Scope *scope, u32 flags);
 
 Module *
 TyLoadModule(Ty *ty, char const *name, u32 flags);

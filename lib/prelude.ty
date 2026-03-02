@@ -75,13 +75,15 @@ fn ty::parse(
     source: String,
     tokens: true,
     deep: Bool = false,
-    resolve: Bool = false
+    resolve: Bool = false,
+    scope: Ptr[_] = nil
 ) -> Ok[(AST, {tokens: [Token]})] | Err[ParseError];
 fn ty::parse(
     source: String,
     tokens: false | nil,
     deep: Bool = false,
-    resolve: Bool = false
+    resolve: Bool = false,
+    scope: Ptr[_] = nil
 ) -> Ok[AST] | Err[ParseError];
 
 fn |>[a, b, c](f: a -> b, g: b -> c) -> (a -> c) { g@(f(*, **)) }
