@@ -1,4 +1,4 @@
-#!/usr/bin/env -S ty -q
+#!/usr/bin/env ty
 
 import io (stdin)
 import json
@@ -56,9 +56,6 @@ let TY_LS_CMD = getenv('TY_LS_CMD').words() ?? ['tyls']
 let tyls = os.spawn(TY_LS_CMD, stdin=SPAWN_PIPE, stdout=SPAWN_PIPE, stderr=err-fd)
 critical!(tyls)
 
-//let responses = io.open(tyls.stdout, 'r', buffering=io.NBF)
-//critical!(responses)
-
 let tyls-stream = io.open(tyls.stdout, 'r')
 
 onExit(fn () {
@@ -83,9 +80,9 @@ use Request = {
 }
 
 fn do-req(msg: Request) {
-    error!("REQUEST TO TYLS: {msg}")
+    error!("Writing to tyls: {pretty(msg, oneline=true, width=72)}")
     let n = write(tyls.stdin, "{json.encode(msg)}\n")
-    error!("WROTE {n} BYTES TO TYLS")
+    info!("write(): {n} bytes")
     get()
 }
 
@@ -128,7 +125,7 @@ fn check[T](msg: T, file: String) -> T {
     }
 }
 
-fn run(request: Request) {
+fn run(request: Request) -> _ {
     let file = request.file
 
     check(do-req({
@@ -191,7 +188,7 @@ fn go() {
     let msg: _ = json.parse(req)
     let id = msg['id']
 
-    info!(pretty(msg, oneline=true))
+    info!(pretty(msg, oneline=true, width=72))
 
     match msg['method'] {
         'initialize' => {
@@ -263,7 +260,7 @@ fn go() {
             send(response)
         },
 
-        'textDocument/hover' as method => {
+        'textDocument/hover' => {
             let %{
                 'textDocument': %{
                     'uri': &[7;] ~> $path,
@@ -286,17 +283,13 @@ fn go() {
                     contents: {
                         kind: 'plaintext',
                         value: "
-                      \>{info['name']} : {info['type']}
-                      \>
-                      \>Defined at {relpath(info['file'])}:{info['line']}.
-                      \>
-                      \>{nice(info['doc'])}
-                      \>"
+                          \>{info['name']} : {info['type']}
+                          \>
+                          \>Defined at {relpath(info['file'])}:{info['line']}.
+                          \>
+                          \>{nice(info['doc'])}
+                          \>"
                     }
-                    //range: {
-                    //    start: { line: line - 6, character: col - 1 },
-                    //    end:   { line: line - 3, character: col + 24 }
-                    //}
                 },
 
                 _ => nil
@@ -306,50 +299,6 @@ fn go() {
         },
 
         'textDocument/signatureHelp' as method => {
-            return
-
-            if not let %{
-                'textDocument': %{
-                    'uri': &[7;] ~> path: String,
-                },
-
-                'position': %{
-                    'line': int ~> line,
-                    'character': int ~> col
-                }
-            } = msg['params'] {
-                return
-            }
-
-            if not let $source = store[path] {
-                return
-            }
-
-            info!("col={col}")
-            info!(source.lines()[line].chars().enumerate())
-
-            let result = if source.lines()[line][col - 1] == ')' {
-                nil
-            } else {
-                let out, {status, *} = run("-t s{line + 1}:{col + 1}", path)
-
-                info!("out = {out}")
-                info!("status = {status}")
-
-                match (status, out) {
-                    (0, json.parse $~> %{signatures}) => ({
-                        signatures: signatures.map(%{params, proto, doc, name, type} -> {
-                            label: name ? "{name}{proto}" : type,
-                            documentation: doc,
-                            parameters: params
-                        })
-                    }),
-
-                    _ => ()
-                }
-            }
-
-            send({id, result})
         },
 
         'textDocument/semanticTokens/full' => {
