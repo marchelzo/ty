@@ -179,9 +179,9 @@ pub fn save-results(path: String, results: [Result]) {
     }
 }
 
-pub fn load-results(path: String) {
+pub fn load-results(path: String) -> Array[_] {
     try {
-        json.parse(Path(path).read-text())
+        cast(json.parse(Path(path).read-text()))
     } catch _ {
         nil
     }
@@ -191,9 +191,9 @@ pub fn load-results(path: String) {
 //  Best-results tracking
 // ---------------------------------------------------------------------------
 
-pub fn load-best(path: String) {
+pub fn load-best(path: String) -> Dict[String, _] {
     try {
-        json.parse(Path(path).read-text())
+        cast(json.parse(Path(path).read-text()))
     } catch _ {
         %{}
     }

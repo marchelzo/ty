@@ -1,0 +1,558 @@
+import io
+import json
+import os (..)
+import ty
+
+// ── LSP Client ──────────────────────────────────────────────────────
+
+let tyd = os.spawn(
+    [ty.executable, 'tyd.ty'],
+    stdin=SPAWN_PIPE,
+    stdout=SPAWN_PIPE,
+    stderr=SPAWN_NULL
+)
+
+let server-in  = io.open(tyd.stdin, 'w')
+let server-out = io.open(tyd.stdout, 'r')
+
+let req-id = 0
+
+fn next-id() {
+    ++req-id
+}
+
+fn send(msg) {
+    let encoded = json.encode(msg)
+    server-in.write("Content-Length: {#encoded}\r\n\r\n{encoded}")
+    server-in.flush()
+}
+
+fn recv() {
+    if not let $line = server-out.nextLine() {
+        throw 'server closed connection'
+    }
+
+    if not let [_, $n] = line.match(/Content-Length:\s*(\d+)/) {
+        throw "bad header: {line}"
+    }
+
+    server-out.nextLine()
+
+    let body = server-out.next(int(n)).str()
+    let result: _ = json.parse(body)
+    result
+}
+
+let pending-notifications = []
+
+fn request(method: String, params: _ = {}) -> _ {
+    let id = next-id()
+    send({jsonrpc: '2.0', id, method, params})
+
+    while true {
+        let msg = recv()
+        if msg['id'] != nil {
+            return msg
+        }
+        pending-notifications.push(msg)
+    }
+}
+
+fn notify(method: String, params: _ = {}) {
+    send({jsonrpc: '2.0', method, params})
+}
+
+fn open-doc(uri: String, src: String) {
+    notify('textDocument/didOpen', {
+        textDocument: { uri, languageId: 'ty', version: 1, text: src }
+    })
+    recv()  // consume publishDiagnostics
+}
+
+fn change-doc(uri: String, version: Int, src: String) {
+    notify('textDocument/didChange', {
+        textDocument: { uri, version },
+        contentChanges: [{ text: src }]
+    })
+}
+
+onExit(fn () { kill(tyd.pid, SIGTERM) })
+
+// ── Sample Documents ────────────────────────────────────────────────
+
+let sample-uri = "file:///tmp/lsp_test_sample.ty"
+let sample-src = '''
+fn greet(name: String) {
+    print("Hello, {name}!")
+}
+
+let x = 42
+let y = x + 1
+
+class Point {
+    x: Int
+    y: Int
+
+    init(x: Int, y: Int) {
+        self.x = x
+        self.y = y
+    }
+
+    mag() -> Float {
+        (x * x + y * y).float().sqrt()
+    }
+}
+
+let p = Point(3, 4)
+'''
+
+let completion-uri = "file:///tmp/lsp_test_completion.ty"
+let completion-src = '''
+class Foo {
+    bar: Int
+    baz: String
+
+    init(bar: Int = 0, baz: String = '') {
+        self.bar = bar
+        self.baz = baz
+    }
+}
+
+let f = Foo()
+f.
+'''
+
+let bad-uri = "file:///tmp/lsp_test_bad.ty"
+let bad-src = '''
+break
+'''
+
+// ── Initialize ──────────────────────────────────────────────────────
+
+let init-resp = request('initialize', {
+    processId: nil,
+    rootUri: nil,
+    capabilities: {}
+})
+
+notify('initialized', {})
+
+// ── Tests ───────────────────────────────────────────────────────────
+
+ns test
+
+pub fn capabilities() {
+    let caps: _ = init-resp['result']['capabilities']
+    assert(caps['hoverProvider'] == true)
+    assert(caps['completionProvider'] != nil)
+    assert(caps['definitionProvider'] == true)
+    assert(caps['declarationProvider'] == true)
+    assert(caps['semanticTokensProvider'] != nil)
+}
+
+pub fn did-open() {
+    open-doc(sample-uri, sample-src)
+}
+
+pub fn hover() {
+    change-doc(sample-uri, 2, sample-src)
+
+    // Hover over 'x' on line 4 ("let x = 42"), character 4
+    let resp = request('textDocument/hover', {
+        textDocument: { uri: sample-uri },
+        position: { line: 4, character: 4 }
+    })
+
+    assert(resp['result'] != nil)
+
+    let val: _ = resp['result']['contents']['value']
+    assert(val.match?(/x/))
+    assert(val.match?(/42|Int/))
+}
+
+pub fn definition() {
+    change-doc(sample-uri, 3, sample-src)
+
+    // 'x' in "let y = x + 1" (line 5, char 8)
+    let resp = request('textDocument/definition', {
+        textDocument: { uri: sample-uri },
+        position: { line: 5, character: 8 }
+    })
+
+    assert(resp['result'] != nil)
+    assert(resp['result']['range'] != nil)
+}
+
+pub fn declaration() {
+    change-doc(sample-uri, 4, sample-src)
+
+    let resp = request('textDocument/declaration', {
+        textDocument: { uri: sample-uri },
+        position: { line: 5, character: 8 }
+    })
+
+    assert(resp['result'] != nil)
+}
+
+pub fn completion() {
+    open-doc(completion-uri, completion-src)
+
+    // After "f." on line 11
+    let resp = request('textDocument/completion', {
+        textDocument: { uri: completion-uri },
+        position: { line: 11, character: 2 }
+    })
+
+    assert(resp['result'] != nil)
+
+    let items: _ = resp['result']['items'] ?? []
+    let labels = items.map(\(_)['label'])
+    assert(labels.any?(\_ == 'bar'))
+    assert(labels.any?(\_ == 'baz'))
+}
+
+pub fn semantic-tokens() {
+    change-doc(sample-uri, 5, sample-src)
+
+    let resp = request('textDocument/semanticTokens/full', {
+        textDocument: { uri: sample-uri }
+    })
+
+    assert(resp['result'] != nil)
+
+    let data: _ = resp['result']['data'] ?? []
+    assert(#data > 0)
+    assert(#data % 5 == 0)
+}
+
+pub fn did-change() {
+    let modified = "let a = 100\nlet b = a * 2\n"
+    change-doc(sample-uri, 6, modified)
+
+    let resp = request('textDocument/hover', {
+        textDocument: { uri: sample-uri },
+        position: { line: 0, character: 4 }
+    })
+
+    assert(resp['result'] != nil)
+}
+
+pub fn diagnostics() {
+    notify('textDocument/didOpen', {
+        textDocument: {
+            uri: bad-uri,
+            languageId: 'ty',
+            version: 1,
+            text: bad-src
+        }
+    })
+
+    // tyd sends an empty "clear" diagnostic first, then the actual errors
+    let got-errors = false
+
+    for _ in 0..3 {
+        let msg = recv()
+        if msg['method'] == 'textDocument/publishDiagnostics' {
+            let dl: _ = msg['params']['diagnostics']
+            if #dl > 0 {
+                got-errors = true
+                break
+            }
+        } else {
+            break
+        }
+    }
+
+    assert(got-errors)
+}
+
+// ── Reload / multi-edit stress tests ────────────────────────────────
+
+let reload-uri = "file:///tmp/lsp_test_reload.ty"
+
+pub fn reload-add-members() {
+    // Start with a simple class, then grow it over several edits
+    let v = 100
+
+    open-doc(reload-uri, '''
+class Dog {
+    name: String
+}
+let d = Dog('Rex')
+''')
+
+    // Add a field
+    change-doc(reload-uri, ++v, '''
+class Dog {
+    name: String
+    age: Int
+}
+let d = Dog('Rex', 3)
+''')
+
+    let resp = request('textDocument/hover', {
+        textDocument: { uri: reload-uri },
+        position: { line: 4, character: 4 }
+    })
+    assert(resp['result'] != nil)
+
+    // Add a method
+    change-doc(reload-uri, ++v, '''
+class Dog {
+    name: String
+    age: Int
+
+    speak() -> String {
+        "{name} says woof"
+    }
+}
+let d = Dog('Rex', 3)
+d.
+''')
+
+    let resp2 = request('textDocument/completion', {
+        textDocument: { uri: reload-uri },
+        position: { line: 10, character: 2 }
+    })
+    assert(resp2['result'] != nil)
+    let items: _ = resp2['result']['items'] ?? []
+    let labels = items.map(\(_)['label'])
+    assert(labels.any?(\_ == 'name'))
+    assert(labels.any?(\_ == 'age'))
+    assert(labels.any?(\_ == 'speak'))
+}
+
+pub fn reload-change-types() {
+    // Change the type of a variable across edits
+    let v = 200
+
+    change-doc(reload-uri, ++v, '''
+let x = 42
+let y = x + 1
+''')
+
+    let resp1 = request('textDocument/hover', {
+        textDocument: { uri: reload-uri },
+        position: { line: 0, character: 4 }
+    })
+    assert(resp1['result'] != nil)
+    let v1: _ = resp1['result']['contents']['value']
+    assert(v1.match?(/42|Int/))
+
+    // Now x becomes a String
+    change-doc(reload-uri, ++v, '''
+let x = 'hello'
+let y = x.len()
+''')
+
+    let resp2 = request('textDocument/hover', {
+        textDocument: { uri: reload-uri },
+        position: { line: 0, character: 4 }
+    })
+    assert(resp2['result'] != nil)
+    let v2: _ = resp2['result']['contents']['value']
+    assert(v2.match?(/hello|String/))
+
+    // Now x becomes a Float
+    change-doc(reload-uri, ++v, '''
+let x = 3.14
+let y = x + 1.0
+''')
+
+    let resp3 = request('textDocument/hover', {
+        textDocument: { uri: reload-uri },
+        position: { line: 0, character: 4 }
+    })
+    assert(resp3['result'] != nil)
+}
+
+pub fn reload-valid-invalid-valid() {
+    // Toggle between valid and invalid code — this stresses error recovery
+    let v = 300
+
+    // Valid
+    change-doc(reload-uri, ++v, '''
+fn add(a: Int, b: Int) -> Int {
+    a + b
+}
+let r = add(1, 2)
+''')
+
+    let resp1 = request('textDocument/hover', {
+        textDocument: { uri: reload-uri },
+        position: { line: 3, character: 4 }
+    })
+    assert(resp1['result'] != nil)
+
+    // Invalid — break with no loop
+    change-doc(reload-uri, ++v, '''
+fn add(a: Int, b: Int) -> Int {
+    a + b
+}
+break
+''')
+
+    let resp2 = request('textDocument/semanticTokens/full', {
+        textDocument: { uri: reload-uri }
+    })
+    // Should get a response (possibly with error diagnostics in notifications)
+    assert(resp2['id'] != nil)
+
+    // Valid again — make sure the server recovered
+    change-doc(reload-uri, ++v, '''
+fn add(a: Int, b: Int) -> Int {
+    a + b
+}
+let r = add(10, 20)
+''')
+
+    let resp3 = request('textDocument/hover', {
+        textDocument: { uri: reload-uri },
+        position: { line: 3, character: 4 }
+    })
+    assert(resp3['result'] != nil)
+}
+
+pub fn reload-class-restructure() {
+    // Completely restructure a class across edits
+    let v = 400
+
+    change-doc(reload-uri, ++v, '''
+class Vec2 {
+    x: Float
+    y: Float
+}
+let v = Vec2(1.0, 2.0)
+v.
+''')
+
+    let resp1 = request('textDocument/completion', {
+        textDocument: { uri: reload-uri },
+        position: { line: 5, character: 2 }
+    })
+    assert(resp1['result'] != nil)
+    let items1: _ = resp1['result']['items'] ?? []
+    let labels1 = items1.map(\(_)['label'])
+    assert(labels1.any?(\_ == 'x'))
+    assert(labels1.any?(\_ == 'y'))
+
+    // Rename fields and add a method
+    change-doc(reload-uri, ++v, '''
+class Vec3 {
+    a: Float
+    b: Float
+    c: Float
+
+    length() -> Float {
+        (a * a + b * b + c * c).sqrt()
+    }
+}
+let v = Vec3(1.0, 2.0, 3.0)
+v.
+''')
+
+    let resp2 = request('textDocument/completion', {
+        textDocument: { uri: reload-uri },
+        position: { line: 11, character: 2 }
+    })
+    assert(resp2['result'] != nil)
+    let items2: _ = resp2['result']['items'] ?? []
+    let labels2 = items2.map(\(_)['label'])
+    assert(labels2.any?(\_ == 'a'))
+    assert(labels2.any?(\_ == 'b'))
+    assert(labels2.any?(\_ == 'c'))
+    assert(labels2.any?(\_ == 'length'))
+
+    // Replace with something totally different
+    change-doc(reload-uri, ++v, '''
+class Config {
+    host: String
+    port: Int
+    debug: Bool
+}
+let c = Config('localhost', 8080, false)
+c.
+''')
+
+    let resp3 = request('textDocument/completion', {
+        textDocument: { uri: reload-uri },
+        position: { line: 7, character: 2 }
+    })
+    assert(resp3['result'] != nil)
+    let items3: _ = resp3['result']['items'] ?? []
+    let labels3 = items3.map(\(_)['label'])
+    assert(labels3.any?(\_ == 'host'))
+    assert(labels3.any?(\_ == 'port'))
+    assert(labels3.any?(\_ == 'debug'))
+}
+
+pub fn reload-rapid-edits() {
+    // Simulate rapid typing — many small changes in quick succession
+    let v = 500
+
+    change-doc(reload-uri, ++v, "let x = 1\n")
+    change-doc(reload-uri, ++v, "let x = 1\nlet y = \n")
+    change-doc(reload-uri, ++v, "let x = 1\nlet y = x\n")
+    change-doc(reload-uri, ++v, "let x = 1\nlet y = x +\n")
+    change-doc(reload-uri, ++v, "let x = 1\nlet y = x + 2\n")
+    change-doc(reload-uri, ++v, "let x = 1\nlet y = x + 2\nlet z = \n")
+    change-doc(reload-uri, ++v, "let x = 1\nlet y = x + 2\nlet z = y\n")
+    change-doc(reload-uri, ++v, "let x = 1\nlet y = x + 2\nlet z = y * y\n")
+
+    // After all those edits, hover should still work
+    let resp = request('textDocument/hover', {
+        textDocument: { uri: reload-uri },
+        position: { line: 2, character: 4 }
+    })
+    assert(resp['result'] != nil)
+    let val: _ = resp['result']['contents']['value']
+    assert(val.match?(/z/))
+}
+
+pub fn reload-fn-signature-change() {
+    // Change a function's signature and call site across edits
+    let v = 600
+
+    change-doc(reload-uri, ++v, '''
+fn compute(x: Int) -> Int {
+    x * 2
+}
+let r = compute(21)
+''')
+
+    let resp1 = request('textDocument/hover', {
+        textDocument: { uri: reload-uri },
+        position: { line: 3, character: 4 }
+    })
+    assert(resp1['result'] != nil)
+
+    // Add a parameter
+    change-doc(reload-uri, ++v, '''
+fn compute(x: Int, y: Int) -> Int {
+    x * y
+}
+let r = compute(6, 7)
+''')
+
+    let resp2 = request('textDocument/hover', {
+        textDocument: { uri: reload-uri },
+        position: { line: 3, character: 4 }
+    })
+    assert(resp2['result'] != nil)
+
+    // Change return type
+    change-doc(reload-uri, ++v, '''
+fn compute(x: Int, y: Int) -> String {
+    "{x * y}"
+}
+let r = compute(6, 7)
+''')
+
+    let resp3 = request('textDocument/hover', {
+        textDocument: { uri: reload-uri },
+        position: { line: 3, character: 4 }
+    })
+    assert(resp3['result'] != nil)
+    let v3: _ = resp3['result']['contents']['value']
+    assert(v3.match?(/String/))
+}
