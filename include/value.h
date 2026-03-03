@@ -45,6 +45,8 @@ enum {
         CLASS_GENERATOR,
         CLASS_TAG,
         CLASS_TUPLE,
+        CLASS_QUEUE,
+        CLASS_SHARED_QUEUE,
         CLASS_MODULE,
         CLASS_PRIMITIVE = CLASS_MODULE,
         CLASS_ERROR,
@@ -59,8 +61,6 @@ enum {
         CLASS_INTO_PTR,
         CLASS_ITERABLE,
         CLASS_ITER,
-        CLASS_QUEUE,
-        CLASS_SHARED_QUEUE,
         CLASS_RANGE,
         CLASS_INC_RANGE,
         CLASS_TUPLE_SPEC,
@@ -275,6 +275,8 @@ TypeName(Ty const *ty, int t0)
         case VALUE_ARRAY:               return "Array";
         case VALUE_DICT:                return "Dict";
         case VALUE_BLOB:                return "Blob";
+        case VALUE_QUEUE:               return "Queue";
+        case VALUE_SHARED_QUEUE:        return "SharedQueue";
         case VALUE_OBJECT:              return "Object";
         case VALUE_BOOLEAN:             return "Bool";
         case VALUE_REGEX:               return "Regex";
@@ -323,75 +325,74 @@ value_show_color(Ty *ty, Value const *v, u32 flags);
 Value
 value_vshow_color(Ty *ty, Value const *v, u32 flags);
 
-#define DEFINE_METHOD_TABLE(...)                                     \
+#define DEFINE_METHOD_TABLE(type, ...)                               \
         static struct {                                              \
                 char const *name;                                    \
                 BuiltinMethod *func;                                 \
-        } funcs[] = { __VA_ARGS__ };                                 \
-        static size_t const nfuncs = sizeof funcs / sizeof funcs[0]; \
-        static vec(BuiltinMethod *) ftable
+        } type##_funcs[] = { __VA_ARGS__ };                          \
+        static vec(BuiltinMethod *) type##_table
 
-#define DEFINE_METHOD_TABLE_BUILDER(type)                                     \
-        void build_ ## type ## _method_table(void)                            \
-        {                                                                     \
-                for (int i = 0; i < nfuncs; ++i) {                            \
-                        InternEntry *e = intern(&xD.members, funcs[i].name);  \
-                        while (ftable.count <= e->id) { xvP(ftable, NULL); }  \
-                        ftable.items[e->id] = funcs[i].func;                  \
-                }                                                             \
+#define DEFINE_METHOD_TABLE_BUILDER(type)                                                 \
+        void build_##type##_method_table(void)                                            \
+        {                                                                                 \
+                for (int i = 0; i < countof(type##_funcs); ++i) {                         \
+                        InternEntry *e = intern(&xD.members, type##_funcs[i].name);       \
+                        while (type##_table.count <= e->id) { xvP(type##_table, NULL); }  \
+                        type##_table.items[e->id] = type##_funcs[i].func;                 \
+                }                                                                         \
         }
 
-#define DEFINE_METHOD_LOOKUP(type)                                   \
-        BuiltinMethod *get_ ## type ## _method_i(int i)              \
-        {                                                            \
-                return (i < ftable.count) ? ftable.items[i] : NULL;  \
-        }                                                            \
-                                                                     \
-        BuiltinMethod *get_ ## type ## _method(char const *name)     \
-        {                                                            \
-                InternEntry *e = intern(&xD.members, name);          \
-                return (get_ ## type ## _method_i)(e->id);           \
+#define DEFINE_METHOD_LOOKUP(type)                                               \
+        BuiltinMethod *get_##type##_method_i(int i)                              \
+        {                                                                        \
+                return (i < type##_table.count) ? type##_table.items[i] : NULL;  \
+        }                                                                        \
+                                                                                 \
+        BuiltinMethod *get_##type##_method(char const *name)                     \
+        {                                                                        \
+                InternEntry *e = intern(&xD.members, name);                      \
+                return (get_##type##_method_i)(e->id);                           \
         }
 
-#define DEFINE_METHOD_LOOKUP2(type) \
-        BuiltinMethod *get_ ## type ## _method(char const *name) \
-        {                                                        \
-                int lo = 0,                                      \
-                    hi = nfuncs - 1;                             \
-                                                                 \
-                while (lo <= hi) {                               \
-                        int m = (lo + hi) / 2;                   \
-                        int c = strcmp(name, funcs[m].name);     \
-                        if      (c < 0) hi = m - 1;              \
-                        else if (c > 0) lo = m + 1;              \
-                        else            return funcs[m].func;    \
-                }                                                \
-                                                                 \
-                return NULL;                                     \
+#define DEFINE_METHOD_LOOKUP2(type)                                   \
+        BuiltinMethod *get_##type##_method(char const *name)          \
+        {                                                             \
+                int lo = 0,                                           \
+                    hi = countof(type##_funcs - 1);                   \
+                                                                      \
+                while (lo <= hi) {                                    \
+                        int m = (lo + hi) / 2;                        \
+                        int c = strcmp(name, type##_funcs[m].name);   \
+                        if      (c < 0) hi = m - 1;                   \
+                        else if (c > 0) lo = m + 1;                   \
+                        else            return type##_funcs[m].func;  \
+                }                                                     \
+                                                                      \
+                return NULL;                                          \
         }
 
-#define DEFINE_METHOD_COMPLETER(type)                                           \
-        int                                                                     \
-        type ## _get_completions(                                               \
-                Ty *ty,                                                         \
-                char const *prefix,                                             \
-                char **out,                                                     \
-                int max                                                         \
-        )                                                                       \
-        {                                                                       \
-                int n = 0;                                                      \
-                int len = strlen(prefix);                                       \
-                                                                                \
-                for (int i = 0; i < nfuncs; ++i) {                              \
-                        if (                                                    \
-                                (n < max)                                       \
-                             && strncmp(funcs[i].name, prefix, len) == 0        \
-                        ) {                                                     \
-                                out[n++] = S2(funcs[i].name);                   \
-                        }                                                       \
-                }                                                               \
-                                                                                \
-                return n;                                                       \
+#define DEFINE_METHOD_COMPLETER(type)                                              \
+        int                                                                        \
+        type##_get_completions(                                                    \
+                Ty *ty,                                                            \
+                char const *prefix,                                                \
+                char **out,                                                        \
+                int max                                                            \
+        )                                                                          \
+        {                                                                          \
+                int n = 0;                                                         \
+                int len = strlen(prefix);                                          \
+                                                                                   \
+                for (int i = 0; i < countof(type##_funcs); ++i) {                  \
+                        if (                                                       \
+                                (n < max)                                          \
+                             && (strncmp(type##_funcs[i].name, prefix, len) == 0)  \
+                        ) {                                                        \
+                                out[n++] = S2(type##_funcs[i].name);               \
+                        }                                                          \
+                }                                                                  \
+                                                                                   \
+                return n;                                                          \
         }
 
 #define ARG(i) (*vm_get(ty, argc - 1 - (i)))
@@ -1173,6 +1174,9 @@ OffsetString(Value const *v, i32 n)
         return str;
 }
 
+struct timespec
+tuple_timespec(Ty *ty, char const *func, Value const *v);
+
 static inline Value
 (RawObject)(Ty *ty, int c)
 {
@@ -1464,6 +1468,8 @@ ClassOf(Value const *v)
         case VALUE_STRING:            return CLASS_STRING;
         case VALUE_BOOLEAN:           return CLASS_BOOL;
         case VALUE_BLOB:              return CLASS_BLOB;
+        case VALUE_QUEUE:             return CLASS_QUEUE;
+        case VALUE_SHARED_QUEUE:      return CLASS_SHARED_QUEUE;
         case VALUE_ARRAY:             return CLASS_ARRAY;
         case VALUE_DICT:              return CLASS_DICT;
         case VALUE_TUPLE:             return CLASS_TUPLE;
@@ -1672,6 +1678,43 @@ static inline Value *
                 return NULL;
         }
 }
+
+inline static i64
+TryIntoTime(Ty *ty, char const *ctx, Value const *t, i64 factor)
+{
+        struct timespec spec;
+
+        switch (t->type) {
+        case VALUE_REAL:
+                return (factor * t->real);
+
+        case VALUE_INTEGER:
+                return t->z;
+
+        case VALUE_TUPLE:
+                spec = tuple_timespec(ty, ctx, t);
+                return (factor * (TY_1e9*spec.tv_sec + spec.tv_nsec)) / TY_1e9;
+
+        case VALUE_NIL:
+                return -1;
+
+        default:
+                zP("%s: invalid timespec: %s", ctx, VSC(t));
+        }
+}
+
+#define NSEC_ARG(i) TryIntoTime(ty, _name__, &ARG(i), 1000000000)
+#define USEC_ARG(i) TryIntoTime(ty, _name__, &ARG(i), 1000000)
+#define MSEC_ARG(i) TryIntoTime(ty, _name__, &ARG(i), 1000)
+
+#define TIMEOUT_ARG(i) (                               \
+        (ARG_T(i) == VALUE_REAL) ? max(MSEC_ARG(i), 0) \
+      : (ARG_T(i) == VALUE_NONE) ? (u64)-1             \
+      : MSEC_ARG(i)                                    \
+)
+
+Value
+ConstructPrimitive(Ty *ty, int class_id, int argc, Value const *kwargs);
 
 #endif
 

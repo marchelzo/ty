@@ -148,6 +148,8 @@ struct refinement {
 
 typedef struct object TyObject;
 
+typedef struct queue Queue;
+typedef struct shared_queue SharedQueue;
 typedef struct dict Dict;
 typedef struct dict_item DictItem;
 
@@ -194,6 +196,8 @@ enum {
         VALUE_NIL              ,
         VALUE_STRING           ,
         VALUE_BLOB             ,
+        VALUE_QUEUE            ,
+        VALUE_SHARED_QUEUE     ,
         VALUE_SENTINEL         ,
         VALUE_INDEX            ,
         VALUE_NONE             ,
@@ -309,6 +313,8 @@ struct value {
                 Array *array;
                 Dict *dict;
                 Blob *blob;
+                Queue *queue;
+                SharedQueue *shared_queue;
                 Thread *thread;
                 Symbol *sym;
                 Module *mod;
@@ -531,6 +537,23 @@ struct dict {
         usize     tombs;
         DictItem *last;
         Value     dflt;
+};
+
+struct queue {
+        Value *items;
+        usize  head;
+        usize  tail;
+        usize  cap;
+};
+
+struct shared_queue {
+        Value *items;
+        usize  head;
+        usize  tail;
+        usize  cap;
+        bool      open;
+        TyMutex   mutex;
+        TyCondVar cond;
 };
 
 typedef struct target {
@@ -1249,6 +1272,8 @@ enum {
 #define ARRAY(a)                 ((Value){ .type = VALUE_ARRAY,            .array          = (a),                                  .tags = 0 })
 #define TUPLE(vs, ns, n, gc)     ((Value){ .type = VALUE_TUPLE,            .items          = (vs), .count = (n),  .ids = (ns),     .tags = 0 })
 #define BLOB(b)                  ((Value){ .type = VALUE_BLOB,             .blob           = (b),                                  .tags = 0 })
+#define QUEUE(q)                 ((Value){ .type = VALUE_QUEUE,            .queue          = (q),                                  .tags = 0 })
+#define SHARED_QUEUE(q)          ((Value){ .type = VALUE_SHARED_QUEUE,     .shared_queue   = (q),                                  .tags = 0 })
 #define DICT(d)                  ((Value){ .type = VALUE_DICT,             .dict           = (d),                                  .tags = 0 })
 #define REGEX(r)                 ((Value){ .type = VALUE_REGEX,            .regex          = (r),                                  .tags = 0 })
 #define FUNCTION()               ((Value){ .type = VALUE_FUNCTION,                                                                 .tags = 0 })

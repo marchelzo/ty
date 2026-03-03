@@ -126,7 +126,7 @@ blob_shrink(Ty *ty, Value *blob, int argc, Value *kwargs)
         return NIL;
 }
 
-static Value
+Value
 blob_push(Ty *ty, Value *blob, int argc, Value *kwargs)
 {
         ASSERT_ARGC("Blob.push()", 1, 2, 3);
@@ -614,6 +614,7 @@ blob_splice(Ty *ty, Value *blob, int argc, Value *kwargs)
 }
 
 DEFINE_METHOD_TABLE(
+        blob,
         { .name = "clear",    .func = blob_clear        },
         { .name = "fill",     .func = blob_fill         },
         { .name = "get",      .func = blob_get          },

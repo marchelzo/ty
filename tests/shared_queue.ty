@@ -2,29 +2,102 @@ import os (sleep)
 
 ns test
 
-pub fn shared-queue() {
+pub fn basic() {
+    let q = SharedQueue()
+    q.put(1)
+    q.put(2)
+    q.put(3)
+    assert(q.take() == 1)
+    assert(q.take() == 2)
+    assert(q.take() == 3)
+}
+
+pub fn try_take_returns_some_none() {
+    let q = SharedQueue()
+    assert(q.try-take() == None)
+    q.put(42)
+    assert(q.try-take() == Some(42))
+    assert(q.try-take() == None)
+}
+
+pub fn try_take_with_timeout() {
+    let q = SharedQueue()
+
+    // Should return None after timeout
+    assert(q.try-take(0.01) == None)
+
+    // Put something and try again
+    q.put(99)
+    assert(q.try-take(1.0) == Some(99))
+}
+
+pub fn try_take_timeout_receives_item() {
+    let q = SharedQueue()
+
+    // Producer puts an item after a short delay
+    let t = Thread(fn () {
+        sleep(0.05)
+        q.put(123)
+    })
+
+    // Should block until item arrives (within timeout)
+    let result = q.try-take(2.0)
+    assert(result == Some(123))
+
+    t.join()
+}
+
+pub fn len_and_empty() {
+    let q = SharedQueue()
+    assert(#q == 0)
+    assert(q.empty?())
+    q.put(1)
+    q.put(2)
+    assert(#q == 2)
+    assert(!q.empty?())
+}
+
+pub fn close_and_open() {
+    let q = SharedQueue()
+    assert(q.open?())
+    q.close()
+    assert(!q.open?())
+}
+
+pub fn to_array() {
+    let q = SharedQueue()
+    q.put(1)
+    q.put(2)
+    q.put(3)
+    assert(q.to-array() == [1, 2, 3])
+}
+
+pub fn threaded_producer_consumer() {
     let N = 1000
-    let queue = SharedQueue()
+    let q = SharedQueue()
     let threads = []
     fn thread(f) { let t = Thread(f); threads.push(t); t }
-    assert(queue.try-take() == None)
+
+    assert(q.try-take() == None)
+
     for _ in ..6 {
         thread(fn () {
-            sleep(0.01)
             for i in ..N {
-                queue.put(i)
+                q.put(i)
             }
         })
     }
+
     let out = Sync([])
-    for id in ..3 {
+    for _ in ..3 {
         thread(fn () {
             for _ in ..2*N {
-                let i = queue.take()
+                let i = q.take()
                 out.push(i)
             }
         })
     }
+
     for threads { it.join() }
     assert(out.sort() == [*(i for ..6) for i in ..N].sort())
 }

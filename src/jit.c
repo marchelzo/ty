@@ -24,6 +24,7 @@
 #include "array.h"
 #include "dict.h"
 #include "blob.h"
+#include "queue.h"
 #include "itable.h"
 #include "compiler.h"
 
@@ -3198,6 +3199,16 @@ bc_resolve_builtin_method(Class *cls, int member_id, int *value_type)
         case CLASS_BLOB:
                 func = get_blob_method_i(member_id);
                 vtype = VALUE_BLOB;
+                break;
+
+        case CLASS_QUEUE:
+                func = get_queue_method_i(member_id);
+                vtype = VALUE_QUEUE;
+                break;
+
+        case CLASS_SHARED_QUEUE:
+                func = get_shared_queue_method_i(member_id);
+                vtype = VALUE_SHARED_QUEUE;
                 break;
 
         default:

@@ -83,6 +83,7 @@ extern char **environ;
 #include "functions.h"
 #include "tags.h"
 #include "value.h"
+#include "blob.h"
 #include "parse.h"
 #include "highlight.h"
 #include "vm.h"
@@ -90,6 +91,7 @@ extern char **environ;
 #include "xd.h"
 #include "token.h"
 #include "json.h"
+#include "queue.h"
 #include "dict.h"
 #include "object.h"
 #include "class.h"
@@ -166,9 +168,6 @@ static noreturn void
         vmE(&exc);
 }
 
-static struct timespec
-tuple_timespec(Ty *ty, char const *func, Value const *v);
-
 inline static void
 IntoSigSet(Ty *ty, char const *ctx, Value const *v, sigset_t *set)
 {
@@ -228,40 +227,6 @@ NewSigSetFrom(Ty *ty, sigset_t const *set)
         *new = *set;
         return GCPTR(new, new);
 }
-
-inline static i64
-TryIntoTime(Ty *ty, char const *ctx, Value const *t, i64 factor)
-{
-        struct timespec spec;
-
-        switch (t->type) {
-        case VALUE_REAL:
-                return (factor * t->real);
-
-        case VALUE_INTEGER:
-                return t->z;
-
-        case VALUE_TUPLE:
-                spec = tuple_timespec(ty, ctx, t);
-                return (factor * (TY_1e9*spec.tv_sec + spec.tv_nsec)) / TY_1e9;
-
-        case VALUE_NIL:
-                return -1;
-
-        default:
-                zP("%s: invalid timespec: %s", ctx, VSC(t));
-        }
-}
-
-#define NSEC_ARG(i) TryIntoTime(ty, _name__, &ARG(i), 1000000000)
-#define USEC_ARG(i) TryIntoTime(ty, _name__, &ARG(i), 1000000)
-#define MSEC_ARG(i) TryIntoTime(ty, _name__, &ARG(i), 1000)
-
-#define TIMEOUT_ARG(i) (                               \
-        (ARG_T(i) == VALUE_REAL) ? max(MSEC_ARG(i), 0) \
-      : (ARG_T(i) == VALUE_NONE) ? (u64)-1             \
-      : MSEC_ARG(i)                                    \
-)
 
 inline static void
 GetCurrentTimespec(struct timespec* ts)
@@ -838,8 +803,44 @@ BUILTIN_FUNCTION(isnan)
 
 BUILTIN_FUNCTION(blob)
 {
-        ASSERT_ARGC("blob()", 0);
-        return BLOB(value_blob_new(ty));
+        ASSERT_ARGC_RANGE("blob()", 0, INT_MAX);
+
+        Blob *blob = value_blob_new(ty);
+
+        for (int i = 0; i < argc; ++i) {
+                Value arg = ARGx(i, VALUE_INTEGER, VALUE_BLOB, VALUE_STRING);
+
+                switch (arg.type) {
+                case VALUE_INTEGER:
+                        if (arg.z < 0 || arg.z > UCHAR_MAX) {
+                                bP("Int argument is outside byte range (0-255)", VSC(&arg));
+                        }
+                        uvP(*blob, arg.z);
+                        break;
+
+                case VALUE_BLOB:
+                        uvPv(*blob, *arg.blob);
+                        break;
+
+                case VALUE_STRING:
+                        uvPn(*blob, ss(arg), sN(arg));
+                        break;
+                }
+        }
+
+        return BLOB(blob);
+}
+
+BUILTIN_FUNCTION(queue)
+{
+        ASSERT_ARGC("queue()", 0);
+        return QUEUE(queue_new(ty));
+}
+
+BUILTIN_FUNCTION(shared_queue)
+{
+        ASSERT_ARGC("share-queue()", 0);
+        return SHARED_QUEUE(shared_queue_new(ty));
 }
 
 BUILTIN_FUNCTION(int)
@@ -1548,30 +1549,23 @@ BUILTIN_FUNCTION(tuple)
         return tuple;
 }
 
-BUILTIN_FUNCTION(regex)
+static Value
+doregex(Ty *ty, Value const *pattern, Value const *flags, bool v)
 {
-        char const *_name__ = "regex()";
-
-        CHECK_ARGC(1, 2);
-
-        Value pattern = ARGx(0, VALUE_STRING, VALUE_REGEX);
-
-        if (pattern.type == VALUE_REGEX) {
-                return pattern;
+        if (pattern->type == VALUE_REGEX) {
+                return *pattern;
         }
 
         u32 options = 0;
-        bool detailed = false;
 
-        if (argc == 2) {
-                Value flags = ARGx(1, VALUE_STRING);
-                for (int i = 0; i < sN(flags); ++i) {
-                        switch (ss(flags)[i]) {
+        if (!IsMissing(*flags)) {
+                for (int i = 0; i < sN(*flags); ++i) {
+                        switch (ss(*flags)[i]) {
                         case 'i': options |= PCRE2_CASELESS;        break;
                         case 'u': options |= PCRE2_UTF | PCRE2_UCP; break;
                         case 'm': options |= PCRE2_MULTILINE;       break;
                         case 'x': options |= PCRE2_EXTENDED;        break;
-                        case 'v': detailed = true;                  break;
+                        case 'v': v = true;                         break;
                         }
                 }
         }
@@ -1580,32 +1574,52 @@ BUILTIN_FUNCTION(regex)
         int err;
         usize off;
 
-        pcre2_code *re = pcre2_compile(
-                (PCRE2_SPTR)ss(pattern),
-                sN(pattern),
+        pcre2_code *pcre2 = pcre2_compile(
+                (PCRE2_SPTR)ss(*pattern),
+                sN(*pattern),
                 options,
                 &err,
                 &off,
                 NULL
         );
 
-        if (re == NULL) {
+        if (pcre2 == NULL) {
                 return NIL;
         }
 
-        err = pcre2_jit_compile(re, PCRE2_JIT_COMPLETE);
+        err = pcre2_jit_compile(pcre2, PCRE2_JIT_COMPLETE);
         if (err < 0) {
-                pcre2_code_free(re);
+                pcre2_code_free(pcre2);
                 return NIL;
         }
 
-        Regex *r = mAo(sizeof *r, GC_REGEX);
-        r->pcre2 = re;
-        r->pattern = TY_C_STR(pattern);
-        r->detailed = detailed;
-        r->gc = true;
+        Regex *re = mAo(sizeof (Regex), GC_REGEX);
+        re->pcre2 = pcre2;
+        re->pattern = TY_C_STR(*pattern);
+        re->detailed = v;
+        re->gc = true;
 
-        return REGEX(r);
+        return REGEX(re);
+}
+
+BUILTIN_FUNCTION(regex)
+{
+        ASSERT_ARGC("regex()", 1, 2);
+
+        Value pattern = ARGx(0, VALUE_STRING, VALUE_REGEX);
+        Value flags   = TRY_ARG(1, "flags", STRING);
+
+        return doregex(ty, &pattern, &flags, false);
+}
+
+BUILTIN_FUNCTION(regexv)
+{
+        ASSERT_ARGC("regexv()", 1, 2);
+
+        Value pattern = ARGx(0, VALUE_STRING, VALUE_REGEX);
+        Value flags   = TRY_ARG(1, "flags", STRING);
+
+        return doregex(ty, &pattern, &flags, true);
 }
 
 BUILTIN_FUNCTION(min)
@@ -6168,45 +6182,6 @@ inline static double
 timespec_seconds(struct timespec const *ts)
 {
         return (double)ts->tv_sec + (double)ts->tv_nsec / 1e9;
-}
-
-static struct timespec
-tuple_timespec(Ty *ty, char const *func, Value const *v)
-{
-        Value *sec = tuple_get(v, "sec");
-
-        if (sec == NULL || sec->type != VALUE_INTEGER) {
-                zP(
-                        "%s: expected timespec %s%s%s to have Int field %s%s%s",
-                        func,
-                        TERM(93),
-                        VSC(v),
-                        TERM(0),
-                        TERM(92),
-                        "sec",
-                        TERM(0)
-                );
-        }
-
-        Value *nsec = tuple_get(v, "nsec");
-
-        if (nsec == NULL || nsec->type != VALUE_INTEGER) {
-                zP(
-                        "%s: expected timespec %s%s%s to have Int field %s%s%s",
-                        func,
-                        TERM(93),
-                        VSC(v),
-                        TERM(0),
-                        TERM(92),
-                        "nsec",
-                        TERM(0)
-                );
-        }
-
-        return (struct timespec) {
-                .tv_sec = sec->z,
-                .tv_nsec = nsec->z
-        };
 }
 
 #if !defined(__APPLE__)

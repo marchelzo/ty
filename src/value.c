@@ -14,17 +14,20 @@
 #include "xd.h"
 #include "dict.h"
 #include "blob.h"
+#include "queue.h"
 #include "tags.h"
 #include "class.h"
 #include "gc.h"
 #include "vm.h"
 #include "ast.h"
 #include "compiler.h"
+#include "functions.h"
 #include "types.h"
 
 static _Thread_local vec(Dict *) show_dicts;
 static _Thread_local vec(Value *) show_tuples;
 static _Thread_local vec(Array *) show_arrays;
+static _Thread_local vec(Queue *) show_queues;
 
 void
 TyValueCleanup(void)
@@ -32,6 +35,7 @@ TyValueCleanup(void)
         xvF(show_dicts);
         xvF(show_tuples);
         xvF(show_arrays);
+        xvF(show_queues);
 }
 
 inline static void
@@ -285,6 +289,21 @@ ary_hash(Ty *ty, Value const *a)
 }
 
 inline static u64
+queue_hash(Ty *ty, Value const *v)
+{
+        Queue *q = v->queue;
+        u64 h = 7234782527432842341ULL;
+        usize n = _queue_count(q->head, q->tail, q->cap);
+
+        for (usize i = 0; i < n; ++i) {
+                u64 x = value_hash(ty, &q->items[(q->head + i) % q->cap]);
+                h = HashCombine(h, x);
+        }
+
+        return h;
+}
+
+inline static u64
 tpl_hash(Ty *ty, Value const *t)
 {
         u64 hash = 1127573292757587281ULL;
@@ -330,6 +349,7 @@ hash(Ty *ty, Value const *val)
         case VALUE_INTEGER:           return hash64(val->z);
         case VALUE_REAL:              return flt_hash(val->real);
         case VALUE_ARRAY:             return ary_hash(ty, val);
+        case VALUE_QUEUE:             return queue_hash(ty, val);
         case VALUE_TUPLE:             return tpl_hash(ty, val);
         case VALUE_DICT:              return ptr_hash(val->dict);
         case VALUE_OBJECT:            return obj_hash(ty, val);
@@ -458,6 +478,7 @@ enum {
         SW_POP_TPL,
         SW_POP_DCT,
         SW_POP_VIS,
+        SW_POP_QUE,
 };
 
 #define WLIT(s) svP(work, ((Value) {   \
@@ -497,6 +518,7 @@ show_impl(
                 case SW_POP_TPL: { vvX(show_tuples);   continue; }
                 case SW_POP_DCT: { vvX(show_dicts);    continue; }
                 case SW_POP_VIS: { vvX(ty->visiting);  continue; }
+                case SW_POP_QUE: { vvX(show_queues);   continue; }
                 }
 
                 if (
@@ -1078,11 +1100,62 @@ show_impl(
                         break;
                 }
 
+                case VALUE_QUEUE:
+                {
+                        Queue *q = v.queue;
+
+                        for (int i = 0; i < vN(show_queues); ++i) {
+                                if (v__(show_queues, i) == q) {
+                                        sxdf(&buf, "Queue([...])");
+                                        goto Next;
+                                }
+                        }
+
+                        xvP(show_queues, q);
+
+                        usize n = _queue_count(q->head, q->tail, q->cap);
+
+                        WPOP(SW_POP_QUE);
+                        WLIT("])");
+
+                        for (int i = (int)n - 1; i >= 0; --i) {
+                                svP(work, q->items[(q->head + i) % q->cap]);
+                                if (i > 0) {
+                                        WLIT(", ");
+                                }
+                        }
+
+                        WLIT("Queue([");
+
+                        break;
+                }
+
+                case VALUE_SHARED_QUEUE:
+                {
+                        SharedQueue *q = v.shared_queue;
+                        usize n = _queue_count(q->head, q->tail, q->cap);
+                        if (color) {
+                                sxdf(
+                                        &buf,
+                                        "%s<SharedQueue at %s%p%s (%zu items)>%s",
+                                        TERM(96),
+                                        TERM(92),
+                                        (void *)q,
+                                        TERM(96),
+                                        n,
+                                        TERM(0)
+                                );
+                        } else {
+                                sxdf(&buf, "<SharedQueue at %p (%zu items)>", (void *)q, n);
+                        }
+                        break;
+                }
+
                 case VALUE_PTR:
                         if (color) {
                                 sxdf(
                                         &buf,
-                                        "%s<pointer at %s%s%p%s%s>%s",
+                                        "%s<ptr:%s%s%p%s%s>%s",
                                         TERM(32),
                                         TERM(1),
                                         TERM(92),
@@ -1092,7 +1165,7 @@ show_impl(
                                         TERM(0)
                                 );
                         } else {
-                                sxdf(&buf, "<pointer at %p>", v.ptr);
+                                sxdf(&buf, "<ptr:%p>", v.ptr);
                         }
                         break;
 
@@ -1437,6 +1510,8 @@ value_truthy(Ty *ty, Value const *v)
         case VALUE_ARRAY:            return (vN(*v->array) != 0);
         case VALUE_TUPLE:            return (v->count != 0);
         case VALUE_BLOB:             return (vN(*v->blob) != 0);
+        case VALUE_QUEUE:            return true;
+        case VALUE_SHARED_QUEUE:     return true;
         case VALUE_REGEX:            return true;
         case VALUE_FUNCTION:         return true;
         case VALUE_BOUND_FUNCTION:   return true;
@@ -1618,6 +1693,24 @@ value_test_equality(Ty *ty, Value const *v1, Value const *v2)
 
         case PAIR_OF(VALUE_BLOB):
                 return (v1->blob == v2->blob);
+
+        case PAIR_OF(VALUE_QUEUE):
+        {
+                Queue *q1 = v1->queue, *q2 = v2->queue;
+                if (q1 == q2) return true;
+                usize n1 = _queue_count(q1->head, q1->tail, q1->cap);
+                usize n2 = _queue_count(q2->head, q2->tail, q2->cap);
+                if (n1 != n2) return false;
+                for (usize i = 0; i < n1; ++i) {
+                        Value a = q1->items[(q1->head + i) % q1->cap];
+                        Value b = q2->items[(q2->head + i) % q2->cap];
+                        if (!value_test_equality(ty, &a, &b)) return false;
+                }
+                return true;
+        }
+
+        case PAIR_OF(VALUE_SHARED_QUEUE):
+                return (v1->shared_queue == v2->shared_queue);
 
         case PAIR_OF(VALUE_FUNCTION):
                 return (v1->info == v2->info);
@@ -1869,6 +1962,8 @@ _value_mark_xd(Ty *ty, Value const *v)
         case VALUE_CLASS:            class_mark(ty, v->class);                                         break;
         case VALUE_REF:              MARK(v->ref); MarkNext(ty, v->ref);                               break;
         case VALUE_BLOB:             MARK(v->blob);                                                    break;
+        case VALUE_QUEUE:            queue_mark(ty, v->queue);                                         break;
+        case VALUE_SHARED_QUEUE:     shared_queue_mark(ty, v->shared_queue);                            break;
         case VALUE_PTR:              mark_pointer(ty, v);                                              break;
         case VALUE_TRACE:            mark_trace(ty, v->ptr);                                           break;
         case VALUE_REGEX:            if (v->regex->gc) MARK(v->regex);                                 break;
@@ -2050,5 +2145,108 @@ Value
         return object;
 }
 
+struct timespec
+tuple_timespec(Ty *ty, char const *func, Value const *v)
+{
+        Value *sec = tuple_get(v, "sec");
+
+        if (sec == NULL || sec->type != VALUE_INTEGER) {
+                zP(
+                        "%s: expected timespec %s%s%s to have Int field %s%s%s",
+                        func,
+                        TERM(93),
+                        VSC(v),
+                        TERM(0),
+                        TERM(92),
+                        "sec",
+                        TERM(0)
+                );
+        }
+
+        Value *nsec = tuple_get(v, "nsec");
+
+        if (nsec == NULL || nsec->type != VALUE_INTEGER) {
+                zP(
+                        "%s: expected timespec %s%s%s to have Int field %s%s%s",
+                        func,
+                        TERM(93),
+                        VSC(v),
+                        TERM(0),
+                        TERM(92),
+                        "nsec",
+                        TERM(0)
+                );
+        }
+
+        return (struct timespec) {
+                .tv_sec = sec->z,
+                .tv_nsec = nsec->z
+        };
+}
+
+Value
+ConstructPrimitive(Ty *ty, int class_id, int argc, Value const *kwargs)
+{
+        switch (class_id) {
+        case CLASS_INT:
+                return builtin_int(ty, argc, kwargs);
+
+        case CLASS_STRING:
+                return builtin_str(ty, argc, kwargs);
+
+        case CLASS_BLOB:
+                return builtin_blob(ty, argc, kwargs);
+
+        case CLASS_ARRAY:
+                return builtin_array(ty, argc, kwargs);
+
+        case CLASS_DICT:
+                return builtin_dict(ty, argc, kwargs);
+
+        case CLASS_QUEUE:
+                return builtin_queue(ty, argc, kwargs);
+
+        case CLASS_SHARED_QUEUE:
+                return builtin_shared_queue(ty, argc, kwargs);
+
+        case CLASS_REGEX:
+                return builtin_regex(ty, argc, kwargs);
+
+        case CLASS_REGEXV:
+                return builtin_regexv(ty, argc, kwargs);
+
+        case CLASS_OBJECT:
+                return builtin_object(ty, argc, kwargs);
+
+        case CLASS_TUPLE:
+                return builtin_tuple(ty, argc, kwargs);
+
+        case CLASS_MODULE:
+                return builtin_ty_mod_load(ty, argc, kwargs);
+
+        case CLASS_PTR:
+        {
+                ASSERT_ARGC("Ptr.init()", 1);
+                return PTR((void *)(iptr)INT_ARG(0));
+        }
+
+        case CLASS_CLASS:
+                zP("Class() is not implemented");
+
+        case CLASS_TAG:
+                zP("Tag() is not implemented");
+
+        case CLASS_FUNCTION:
+                zP("Function() is not implemented");
+
+        case CLASS_GENERATOR:
+                zP("Generator() is not implemented");
+
+        default:
+                zP("unknown primitive type: %s", class_name(ty, class_id));
+        }
+
+        UNREACHABLE();
+}
 
 /* vim: set sts=8 sw=8 expandtab: */

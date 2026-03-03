@@ -899,6 +899,7 @@ dict_ptr(Ty *ty, Value *d, int argc, Value *kwargs)
 }
 
 DEFINE_METHOD_TABLE(
+        dict,
         { .name = "&",            .func = dict_intersect_copy  },
         { .name = "&=",           .func = dict_intersect       },
         { .name = "<<",           .func = dict_put             },

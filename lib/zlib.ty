@@ -87,6 +87,8 @@ pub fn uncompress(s: String | Blob, maxSize = nil) -> Blob | nil {
     c.free(buffer)
   }
 
+  dbg(s)
+
   while match raw.uncompress(buffer, pSize, s, s.size()) {
     Z_OK => break,
 

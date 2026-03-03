@@ -844,6 +844,7 @@ DefaultConstructor(Ty *ty, Class *class)
         ctor->end   = class->def->end;
 
         AddFieldParams(ty, ctor, &class->def->class.fields);
+        class_add_method(ty, class->i, "init", REF(NewZero()));
 
         return ctor;
 }
@@ -13382,14 +13383,16 @@ compiler_init(Ty *ty)
 
         class_set_super(ty, CLASS_ITER, CLASS_ITERABLE);
         class_set_super(ty, CLASS_TAG, CLASS_FUNCTION);
-        class_implement_trait(ty, CLASS_ARRAY,     CLASS_ITERABLE);
-        class_implement_trait(ty, CLASS_BLOB,      CLASS_ITERABLE);
-        class_implement_trait(ty, CLASS_BLOB,      CLASS_INTO_PTR);
-        class_implement_trait(ty, CLASS_DICT,      CLASS_ITERABLE);
-        class_implement_trait(ty, CLASS_GENERATOR, CLASS_ITER);
-        class_implement_trait(ty, CLASS_PTR,       CLASS_INTO_PTR);
-        class_implement_trait(ty, CLASS_STRING,    CLASS_ITERABLE);
-        class_implement_trait(ty, CLASS_STRING,    CLASS_INTO_PTR);
+        class_implement_trait(ty, CLASS_ARRAY,        CLASS_ITERABLE);
+        class_implement_trait(ty, CLASS_DICT,         CLASS_ITERABLE);
+        class_implement_trait(ty, CLASS_QUEUE,        CLASS_ITERABLE);
+        class_implement_trait(ty, CLASS_SHARED_QUEUE, CLASS_ITERABLE);
+        class_implement_trait(ty, CLASS_GENERATOR,    CLASS_ITER);
+        class_implement_trait(ty, CLASS_PTR,          CLASS_INTO_PTR);
+        class_implement_trait(ty, CLASS_STRING,       CLASS_ITERABLE);
+        class_implement_trait(ty, CLASS_STRING,       CLASS_INTO_PTR);
+        class_implement_trait(ty, CLASS_BLOB,         CLASS_ITERABLE);
+        class_implement_trait(ty, CLASS_BLOB,         CLASS_INTO_PTR);
 
         static Class ANY_CLASS = { .i = CLASS_TOP, .name = "Any" };
         static Type  ANY_TYPE  = { .type = TYPE_OBJECT, .class = &ANY_CLASS, .concrete = true };
