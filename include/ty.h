@@ -1303,6 +1303,7 @@ enum {
 #define SENTINEL                 ((Value){ .type = VALUE_SENTINEL,         .i              = 0,    .off   = 0,                     .tags = 0 })
 #define NONE                     ((Value){ .type = VALUE_NONE,             .i              = 0,    .off   = 0,                     .tags = 0 })
 #define BREAK                    ((Value){ .type = VALUE_BREAK,            .i              = 0,    .off   = 0,                     .tags = 0 })
+#define ZERO                     ((Value){ 0 })
 
 #define CALLABLE(v) ((v).type <= VALUE_REGEX)
 #define ARITY(f)    ((f).type == VALUE_FUNCTION ? (((i16 *)((f).info + 5))[0] == -1 ? (f).info[4] : 100) : 1)

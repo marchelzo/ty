@@ -7209,21 +7209,44 @@ BUILTIN_FUNCTION(stdio_fgets)
 
         B.count = 0;
 
-        int c;
+        bool eof = false;
+        bool got_nl = false;
 
         UnlockTy();
-        while ((c = fgetc(fp)) != EOF && c != '\n') {
-                xvP(B, c);
+
+        for (;;) {
+                if (B.capacity - B.count < 256) {
+                        xvR(B, (B.capacity ? B.capacity * 2 : 4096));
+                }
+
+                int space = B.capacity - B.count;
+                char *dst = B.items + B.count;
+
+                if (fgets(dst, space, fp) == NULL) {
+                        eof = true;
+                        break;
+                }
+
+                int n = strlen(dst);
+
+                if (n > 0 && dst[n - 1] == '\n') {
+                        B.count += n - 1;
+                        got_nl = true;
+                        break;
+                }
+
+                B.count += n;
         }
+
         LockTy();
 
-        if (B.count == 0 && c == EOF)
+        if (B.count == 0 && eof)
                 return NIL;
 
         Value s;
 
         if (B.count == 0) {
-                s = (c == EOF) ? NIL : STRING_EMPTY;
+                s = eof ? NIL : STRING_EMPTY;
         } else {
                 s = vSs(B.items, B.count);
         }

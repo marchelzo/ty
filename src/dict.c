@@ -236,7 +236,7 @@ dict_get_value(Ty *ty, Dict *d, Value *key)
         if (d->dflt.type != VALUE_ZERO) {
                 GC_STOP();
                 ENSURE_INIT(d);
-                Value dflt = value_apply_callable(ty, &d->dflt, key);
+                Value dflt = vm_call1(ty, &d->dflt, key);
                 i = find_spot(ty, d->size, d->items, h, key);
                 if (OCCUPIED(d, i)) {
                         d->items[i].v = dflt;
@@ -310,7 +310,7 @@ dict_put_key_if_not_exists(Ty *ty, Dict *d, Value key)
         Value v;
 
         if (d->dflt.type != VALUE_ZERO) {
-                v = value_apply_callable(ty, &d->dflt, &key);
+                v = vm_call1(ty, &d->dflt, &key);
                 i = find_spot(ty, d->size, d->items, h, &key);
                 if (OCCUPIED(d, i)) {
                         return val(d, i);

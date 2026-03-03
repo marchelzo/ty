@@ -52,10 +52,10 @@ compare_by(void const *v1, void const *v2, void *ctx_)
         SortContext *ctx = ctx_;
         Ty *ty = ctx->ty;
 
-        Value k1 = value_apply_callable(ty, &ctx->f, (Value *)v1);
+        Value k1 = vm_call1(ty, &ctx->f, (Value *)v1);
         gP(&k1);
 
-        Value k2 = value_apply_callable(ty, &ctx->f, (Value *)v2);
+        Value k2 = vm_call1(ty, &ctx->f, (Value *)v2);
         gP(&k2);
 
         int result = value_compare(ty, &k1, &k2);
@@ -948,11 +948,11 @@ array_group_by(Ty *ty, Value *array, int argc, Value *kwargs)
                 Value group = ARRAY(vA());
                 NOGC(group.array);
                 Value e = array->array->items[i];
-                v1 = value_apply_callable(ty, &f, &e);
+                v1 = vm_call1(ty, &f, &e);
                 gP(&v1);
                 vAp(group.array, e);
                 while (i + 1 < array->array->count) {
-                        v2 = value_apply_callable(ty, &f, &array->array->items[i + 1]);
+                        v2 = vm_call1(ty, &f, &array->array->items[i + 1]);
                         gP(&v2);
                         if (value_test_equality(ty, &v1, &v2)) {
                                 vAp(group.array, array->array->items[++i]);
@@ -1214,17 +1214,15 @@ array_shuffle(Ty *ty, Value *array, int argc, Value *kwargs)
 static Value
 array_map(Ty *ty, Value *array, int argc, Value *kwargs)
 {
-        if (argc != 1)
-                zP("the map method on arrays expects 1 argument but got %d", argc);
+        ASSERT_ARGC("Array.map()", 1);
 
         Value f = ARG(0);
+        usize n = vN(*array->array);
 
-        if (!CALLABLE(f))
-                zP("non-function passed to the map method on array");
-
-        int n = array->array->count;
-        for (int i = 0; i < n; ++i) {
-                array->array->items[i] = value_apply_callable(ty, &f, &array->array->items[i]);
+        for (usize i = 0; i < n; ++i) {
+                Value x = v__(*array->array, i);
+                Value y = vm_call1(ty, &f, &x);
+                *v_(*array->array, i) = y;
         }
 
         return *array;
@@ -1233,16 +1231,16 @@ array_map(Ty *ty, Value *array, int argc, Value *kwargs)
 static Value
 array_enumerate(Ty *ty, Value *array, int argc, Value *kwargs)
 {
-        if (argc != 0)
-                zP("the enumerate method on arrays expects no arguments but got %d", argc);
+        ASSERT_ARGC("Array.enumerate()", 0);
 
-        int n = array->array->count;
+        usize n = vN(*array->array);
 
         for (int i = 0; i < n; ++i) {
-                Value entry = vT(2);
-                entry.items[0] = INTEGER(i);
-                entry.items[1] = array->array->items[i];
-                array->array->items[i] =  entry;
+                Value entry = PAIR(
+                        INTEGER(i),
+                        v__(*array->array, i)
+                );
+                *v_(*array->array, i) =  entry;
         }
 
         return *array;
@@ -1271,21 +1269,20 @@ array_remove(Ty *ty, Value *array, int argc, Value *kwargs)
 static Value
 array_filter(Ty *ty, Value *array, int argc, Value *kwargs)
 {
-        if (argc != 1)
-                zP("the filter method on arrays expects 1 argument but got %d", argc);
+        ASSERT_ARGC("Array.filter()", 1);
 
         Value pred = ARG(0);
 
-        if (!CALLABLE(pred))
-                zP("non-predicate passed to the filter method on array");
+        usize n0 = vN(*array->array);
+        usize n = 0;
+        for (usize i = 0; i < n0; ++i) {
+                Value x = v__(*array->array, i);
+                if (value_apply_predicate(ty, &pred, &x)) {
+                        *v_(*array->array, n++) = x;
+                }
+        }
 
-        int n = array->array->count;
-        int j = 0;
-        for (int i = 0; i < n; ++i)
-                if (value_apply_predicate(ty, &pred, &array->array->items[i]))
-                        array->array->items[j++] = array->array->items[i];
-
-        array->array->count = j;
+        vN(*array->array) = n;
         shrink(ty, array);
 
         return *array;
@@ -1602,7 +1599,7 @@ array_tally(Ty *ty, Value *array, int argc, Value *kwargs)
                         zP("non-callable passed to array.tally()");
 
                 for (int i = 0; i < array->array->count; ++i) {
-                        Value v = value_apply_callable(ty, &f, &array->array->items[i]);
+                        Value v = vm_call1(ty, &f, &array->array->items[i]);
                         Value *c = dict_get_value(ty, d.dict, &v);
                         if (c == NULL) {
                                 dict_put_value(ty, d.dict, v, INTEGER(1));

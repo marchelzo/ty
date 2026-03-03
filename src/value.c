@@ -1500,112 +1500,20 @@ value_compare(Ty *ty, Value const *v1, Value const *v2)
 }
 
 bool
-value_truthy(Ty *ty, Value const *v)
-{
-        switch (v->type) {
-        case VALUE_REAL:             return (v->real != 0.0);
-        case VALUE_BOOLEAN:          return v->boolean;
-        case VALUE_INTEGER:          return (v->z != 0);
-        case VALUE_STRING:           return (sN(*v) != 0);
-        case VALUE_ARRAY:            return (vN(*v->array) != 0);
-        case VALUE_TUPLE:            return (v->count != 0);
-        case VALUE_BLOB:             return (vN(*v->blob) != 0);
-        case VALUE_QUEUE:            return true;
-        case VALUE_SHARED_QUEUE:     return true;
-        case VALUE_REGEX:            return true;
-        case VALUE_FUNCTION:         return true;
-        case VALUE_BOUND_FUNCTION:   return true;
-        case VALUE_BUILTIN_FUNCTION: return true;
-        case VALUE_BUILTIN_METHOD:   return true;
-        case VALUE_FOREIGN_FUNCTION: return true;
-        case VALUE_OPERATOR:         return true;
-        case VALUE_DICT:             return true;
-        case VALUE_CLASS:            return true;
-        case VALUE_OBJECT:           return true;
-        case VALUE_METHOD:           return true;
-        case VALUE_TAG:              return true;
-        case VALUE_GENERATOR:        return true;
-        case VALUE_TRACE:            return true;
-        case VALUE_PTR:              return (v->ptr != NULL);
-        default:                     return false;
-        }
-}
-
-bool
 value_apply_predicate(Ty *ty, Value *p, Value *v)
 {
         Value b;
         char err[256];
 
         switch (p->type) {
-        case VALUE_FUNCTION:
-        case VALUE_BOUND_FUNCTION:
-        case VALUE_BUILTIN_FUNCTION:
-        case VALUE_METHOD:
-        case VALUE_BUILTIN_METHOD:
-        case VALUE_OPERATOR:
-                vmP(v);
-                b = vmC(p, 1);
-                return value_truthy(ty, &b);
         case VALUE_REGEX:
-                if (v->type != VALUE_STRING) {
-                        zP("regex applied as predicate to non-string");
-                } else {
-                        int rc = pcre2_match(
-                                p->regex->pcre2,
-                                (PCRE2_SPTR)ss(*v),
-                                sN(*v),
-                                0,
-                                0,
-                                ty->pcre2.match,
-                                ty->pcre2.ctx
-                        );
-
-                        if (rc >= 0) {
-                                return true;
-                        }
-
-                        if (rc == PCRE2_ERROR_NOMATCH) {
-                                return false;
-                        }
-
-                        pcre2_get_error_message(rc, (uint8_t *)err, sizeof err);
-                        zP("apply_predicate(): PCRE2 error: %s", err);
-                }
-        case VALUE_TAG:
-                return tags_first(ty, v->tags) == p->tag;
-        case VALUE_CLASS:
-                return (v->type == VALUE_OBJECT) && (v->class == p->class);
-        default:
-                zP("invalid type of value used as a predicate: %s", VSC(v));
-        }
-}
-
-Value
-value_apply_callable(Ty *ty, Value *f, Value *v)
-{
-        switch (f->type) {
-        case VALUE_FUNCTION:
-        case VALUE_BUILTIN_FUNCTION:
-        case VALUE_METHOD:
-        case VALUE_BUILTIN_METHOD:
-        case VALUE_OPERATOR:
-        case VALUE_CLASS:
-        case VALUE_TAG:
-        case VALUE_DICT:
-        case VALUE_ARRAY:
-                vmP(v);
-                return vmC(f, 1);
-
-        case VALUE_REGEX:
-                if (v->type != VALUE_STRING) {
+        {
+                if (UNLIKELY(v->type != VALUE_STRING)) {
                         zP("regex applied as predicate to non-string");
                 }
-
-                size_t *ovec = pcre2_get_ovector_pointer(ty->pcre2.match);
 
                 int rc = pcre2_match(
-                        f->regex->pcre2,
+                        p->regex->pcre2,
                         (PCRE2_SPTR)ss(*v),
                         sN(*v),
                         0,
@@ -1614,41 +1522,23 @@ value_apply_callable(Ty *ty, Value *f, Value *v)
                         ty->pcre2.ctx
                 );
 
-                if (rc < -2) {
-                        zP("error while executing regular expression: %d", rc);
+                if (UNLIKELY(rc < PCRE2_ERROR_NOMATCH)) {
+                        pcre2_get_error_message(rc, (uint8_t *)err, sizeof err);
+                        zP("apply_predicate(): PCRE2 error: %s", err);
                 }
 
-                if (rc <= 0) {
-                        return NIL;
-                }
+                return (rc != PCRE2_ERROR_NOMATCH);
+        }
 
-                Value match;
+        case VALUE_TAG:
+                return (tags_first(ty, v->tags) == p->tag);
 
-                if (rc == 1) {
-                        match = STRING_VIEW(*v, ovec[0], ovec[1] - ovec[0]);
-                } else {
-                        match = ARRAY(vA());
-                        NOGC(match.array);
-                        value_array_reserve(ty, match.array, rc);
+        case VALUE_CLASS:
+                return (v->type == VALUE_OBJECT) && (v->class == p->class);
 
-                        int j = 0;
-                        for (int i = 0; i < rc; ++i, j += 2) {
-                                vAp(
-                                        match.array,
-                                        STRING_VIEW(
-                                                *v,
-                                                ovec[j],
-                                                ovec[j + 1] - ovec[j]
-                                        )
-                                );
-                        }
-
-                        OKGC(match.array);
-                }
-
-                return match;
         default:
-                zP("invalid type of value used as a callable: %s", VSC(f));
+                b = vm_call1(ty, p, v);
+                return value_truthy(ty, &b);
         }
 }
 
@@ -2185,7 +2075,7 @@ tuple_timespec(Ty *ty, char const *func, Value const *v)
 }
 
 Value
-ConstructPrimitive(Ty *ty, int class_id, int argc, Value const *kwargs)
+ConstructPrimitive(Ty *ty, int class_id, int argc, Value *kwargs)
 {
         switch (class_id) {
         case CLASS_INT:

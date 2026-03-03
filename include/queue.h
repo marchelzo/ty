@@ -1,7 +1,8 @@
 #ifndef QUEUE_H_INCLUDED
 #define QUEUE_H_INCLUDED
 
-#include "value.h"
+#include "ty.h"
+#include "gc.h"
 
 #define QUEUE_INITIAL_CAP 8
 
@@ -86,5 +87,20 @@ BuiltinMethod *get_shared_queue_method_i(int);
 
 int queue_get_completions(Ty *ty, char const *prefix, char **out, int max);
 int shared_queue_get_completions(Ty *ty, char const *prefix, char **out, int max);
+
+inline static usize
+queue_count(Queue *q)
+{
+        return _queue_count(q->head, q->tail, q->cap);
+}
+
+inline static usize
+shared_queue_count(SharedQueue *q)
+{
+        TyMutexLock(&q->mutex);
+        usize n = _queue_count(q->head, q->tail, q->cap);
+        TyMutexUnlock(&q->mutex);
+        return n;
+}
 
 #endif
