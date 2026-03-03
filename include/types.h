@@ -214,6 +214,13 @@ IsAliasT(Type const *t0)
         return (TypeType(t0) == TYPE_ALIAS);
 }
 
+inline static bool
+IsNilT(Type const *t0)
+{
+        return (t0 != NULL)
+            && (t0->type == TYPE_NIL);
+}
+
 inline static Type *
 NewType(Ty *ty, int type)
 {
