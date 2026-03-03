@@ -140,6 +140,64 @@ static void jit_emit_cmp_ge(dasm_State **Dst, int dst, int left, int right) {
         |  cset Rx(dst), ge
 }
 
+// --- Float comparisons ---
+// Load doubles from [base+a_off] and [base+b_off], fcmp, and cset result.
+
+static void jit_emit_fcmp_eq(dasm_State **Dst, int dst, int scratch, int base, int a_off, int b_off) {
+        (void)scratch;
+        |  ldr d0, [Rx(base), #a_off]
+        |  ldr d1, [Rx(base), #b_off]
+        |  fcmp d0, d1
+        |  cset Rx(dst), eq
+}
+
+static void jit_emit_fcmp_ne(dasm_State **Dst, int dst, int scratch, int base, int a_off, int b_off) {
+        (void)scratch;
+        |  ldr d0, [Rx(base), #a_off]
+        |  ldr d1, [Rx(base), #b_off]
+        |  fcmp d0, d1
+        |  cset Rx(dst), ne
+}
+
+static void jit_emit_fcmp_lt(dasm_State **Dst, int dst, int scratch, int base, int a_off, int b_off) {
+        (void)scratch;
+        |  ldr d0, [Rx(base), #a_off]
+        |  ldr d1, [Rx(base), #b_off]
+        |  fcmp d0, d1
+        |  cset Rx(dst), mi
+}
+
+static void jit_emit_fcmp_le(dasm_State **Dst, int dst, int scratch, int base, int a_off, int b_off) {
+        (void)scratch;
+        |  ldr d0, [Rx(base), #a_off]
+        |  ldr d1, [Rx(base), #b_off]
+        |  fcmp d0, d1
+        |  cset Rx(dst), ls
+}
+
+static void jit_emit_fcmp_gt(dasm_State **Dst, int dst, int scratch, int base, int a_off, int b_off) {
+        (void)scratch;
+        |  ldr d0, [Rx(base), #a_off]
+        |  ldr d1, [Rx(base), #b_off]
+        |  fcmp d0, d1
+        |  cset Rx(dst), gt
+}
+
+static void jit_emit_fcmp_ge(dasm_State **Dst, int dst, int scratch, int base, int a_off, int b_off) {
+        (void)scratch;
+        |  ldr d0, [Rx(base), #a_off]
+        |  ldr d1, [Rx(base), #b_off]
+        |  fcmp d0, d1
+        |  cset Rx(dst), ge
+}
+
+// Load two doubles and compare: fcmp [base+off0], [base+off1]
+static void jit_emit_fload_cmp(dasm_State **Dst, int base, int off0, int off1) {
+        |  ldr d0, [Rx(base), #off0]
+        |  ldr d1, [Rx(base), #off1]
+        |  fcmp d0, d1
+}
+
 // --- Conditional branches ---
 
 static void jit_emit_cbz(dasm_State **Dst, int reg, int label) {
@@ -330,6 +388,17 @@ static void jit_emit_branch_le(dasm_State **Dst, int label) {
 }
 
 static void jit_emit_branch_ge(dasm_State **Dst, int label) {
+        |  cset x16, ge
+        |  cbnz x16, =>label
+}
+
+// Float branches (use after fcmp)
+static void jit_emit_fbranch_gt(dasm_State **Dst, int label) {
+        |  cset x16, gt
+        |  cbnz x16, =>label
+}
+
+static void jit_emit_fbranch_ge(dasm_State **Dst, int label) {
         |  cset x16, ge
         |  cbnz x16, =>label
 }

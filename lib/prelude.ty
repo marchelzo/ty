@@ -1220,9 +1220,7 @@ class Int : IntoPtr[_] {
     static MAX: Int =  9223372036854775807
     static MIN: Int = -9223372036854775808
 
-    init(x)  {
-        int(x ?? 0)
-    }
+    init(x: Any);
 
     **(x: Float | Int) -> Float | Int {
         type(x)(math.pow(self, x))
@@ -1416,31 +1414,31 @@ class Float {
         self * n
     }
 
-    nan? {
+    nan? -> Bool {
         math.nan?(self)
     }
 
-    abs {
+    abs -> Float {
         ::abs(self)
     }
 
-    sqrt {
+    sqrt -> Float {
         math.sqrt(self)
     }
 
-    floor {
+    floor -> Int {
         ::floor(self)
     }
 
-    ceil {
+    ceil -> Int {
         ::ceil(self)
     }
 
-    round {
+    round -> Float {
         ::round(self)
     }
 
-    iround {
+    iround -> Int {
         ::iround(self)
     }
 
@@ -1466,7 +1464,7 @@ class Float {
         }
     }
 
-    str(prec: ?Int) {
+    str(prec: ?Int) -> String {
         if prec == nil {
             ::str(self)
         } else {
@@ -1474,7 +1472,7 @@ class Float {
         }
     }
 
-    int {
+    int -> Int {
         ::int(self)
     }
 
