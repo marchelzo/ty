@@ -11993,6 +11993,12 @@ type_guess_class_of(Ty *ty, Type const *t0)
         case TYPE_BOOL:
                 class = CLASS_BOOL;
                 break;
+
+        case TYPE_TUPLE:
+                if (IsTuple(t0)) {
+                        class = CLASS_TUPLE;
+                }
+                break;
         }
 
         if (class == CLASS_TOP || class == CLASS_BOTTOM) {

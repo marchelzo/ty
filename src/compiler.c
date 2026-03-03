@@ -5019,7 +5019,9 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                      && SymbolIsFunMacro(e->function->symbol)
                 ) {
                         invoke_fun_macro(ty, scope, e);
-                        symbolize_expression(ty, scope, e);
+                        WITH_EXPECTED_TYPE(t0) {
+                                symbolize_expression(ty, scope, e);
+                        }
                         break;
                 }
 
