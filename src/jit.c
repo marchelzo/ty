@@ -2806,6 +2806,7 @@ static Class *expected_class_of(Ty *ty, Type const *t);
 // Emit: type-directed fast paths for comparison ops.
 // Uses expected_class_of() to decide which fast path to emit:
 //   CLASS_INT    => inline integer comparison
+//   CLASS_FLOAT  => inline float comparison (ucomisd / fcmp)
 //   CLASS_STRING => call jit_rt_str_eq (EQ/NEQ only)
 //   NULL/other   => no typed fast path
 // EQ/NEQ always get a cheap nil check before the slow path.
@@ -2819,8 +2820,8 @@ bc_emit_cmp(JitCtx *ctx, void *helper)
         bool is_eq_or_ne = (helper == (void *)jit_rt_eq || helper == (void *)jit_rt_ne);
         Class *cls = expected_class_of(ctx->ty, ctx->op_types[ctx->sp - 1]);
 
-        // For non-equality ops with no int fast path, just call the helper
-        if (!is_eq_or_ne && (cls == NULL || cls->i != CLASS_INT)) {
+        // For non-equality ops with no int/float fast path, just call the helper
+        if (!is_eq_or_ne && (cls == NULL || (cls->i != CLASS_INT && cls->i != CLASS_FLOAT))) {
                 bc_emit_binop_helper(ctx, helper);
                 return;
         }
@@ -2856,6 +2857,30 @@ bc_emit_cmp(JitCtx *ctx, void *helper)
                         jit_emit_cmp_le(asm, BC_S0, BC_S0, BC_S1);
                 } else if (helper == (void *)jit_rt_ge) {
                         jit_emit_cmp_ge(asm, BC_S0, BC_S0, BC_S1);
+                }
+
+                bc_write_bool(ctx, a_off, BC_S0);
+                jit_emit_jump(asm, lbl_done);
+        } else if (cls != NULL && cls->i == CLASS_FLOAT) {
+                // === Float fast path ===
+                jit_emit_cmp_ri(asm, BC_S0, VALUE_REAL);
+                jit_emit_branch_ne(asm, is_eq_or_ne ? lbl_nil_check : lbl_slow);
+
+                jit_emit_cmp_ri(asm, BC_S1, VALUE_REAL);
+                jit_emit_branch_ne(asm, is_eq_or_ne ? lbl_nil_check : lbl_slow);
+
+                if (helper == (void *)jit_rt_eq) {
+                        jit_emit_fcmp_eq(asm, BC_S0, BC_S1, BC_OPS, a_off + VAL_OFF_Z, b_off + VAL_OFF_Z);
+                } else if (helper == (void *)jit_rt_ne) {
+                        jit_emit_fcmp_ne(asm, BC_S0, BC_S1, BC_OPS, a_off + VAL_OFF_Z, b_off + VAL_OFF_Z);
+                } else if (helper == (void *)jit_rt_lt) {
+                        jit_emit_fcmp_lt(asm, BC_S0, BC_S1, BC_OPS, a_off + VAL_OFF_Z, b_off + VAL_OFF_Z);
+                } else if (helper == (void *)jit_rt_gt) {
+                        jit_emit_fcmp_gt(asm, BC_S0, BC_S1, BC_OPS, a_off + VAL_OFF_Z, b_off + VAL_OFF_Z);
+                } else if (helper == (void *)jit_rt_le) {
+                        jit_emit_fcmp_le(asm, BC_S0, BC_S1, BC_OPS, a_off + VAL_OFF_Z, b_off + VAL_OFF_Z);
+                } else if (helper == (void *)jit_rt_ge) {
+                        jit_emit_fcmp_ge(asm, BC_S0, BC_S1, BC_OPS, a_off + VAL_OFF_Z, b_off + VAL_OFF_Z);
                 }
 
                 bc_write_bool(ctx, a_off, BC_S0);
@@ -2912,7 +2937,6 @@ bc_emit_cmp(JitCtx *ctx, void *helper)
                 jit_emit_jump(asm, lbl_slow);
         }
 
-        // Slow path: call helper
         jit_emit_label(asm, lbl_slow);
         bc_emit_binop_helper(ctx, helper);
         jit_emit_label(asm, lbl_done);
@@ -4172,13 +4196,15 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                         jit_emit_ldrb(asm, BC_S0, BC_OPS, a_off + VAL_OFF_TYPE);
                         jit_emit_ldrb(asm, BC_S1, BC_OPS, b_off + VAL_OFF_TYPE);
 
+                        int lbl_float = bc_next_label(ctx);
+
                         // Check a.type == VALUE_INTEGER
                         jit_emit_cmp_ri(asm, BC_S0, VALUE_INTEGER);
-                        jit_emit_branch_ne(asm, lbl_slow);
+                        jit_emit_branch_ne(asm, lbl_float);
 
                         // Check b.type == VALUE_INTEGER
                         jit_emit_cmp_ri(asm, BC_S1, VALUE_INTEGER);
-                        jit_emit_branch_ne(asm, lbl_slow);
+                        jit_emit_branch_ne(asm, lbl_float);
 
                         // === Integer fast path: compare a.z vs b.z ===
                         EMIT_STAT(jit_rt_stat_jcmp_int);
@@ -4190,6 +4216,36 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                         case INSTR_JGT: jit_emit_branch_gt(asm, lbl_target); break;
                         case INSTR_JLE: jit_emit_branch_le(asm, lbl_target); break;
                         case INSTR_JGE: jit_emit_branch_ge(asm, lbl_target); break;
+                        }
+                        jit_emit_jump(asm, lbl_done);
+
+                        // === Float fast path ===
+                        jit_emit_label(asm, lbl_float);
+
+                        jit_emit_cmp_ri(asm, BC_S0, VALUE_REAL);
+                        jit_emit_branch_ne(asm, lbl_slow);
+
+                        jit_emit_cmp_ri(asm, BC_S1, VALUE_REAL);
+                        jit_emit_branch_ne(asm, lbl_slow);
+
+                        // For lt/le: swap operands so we can use gt/ge branches
+                        switch (op) {
+                        case INSTR_JLT:
+                                jit_emit_fload_cmp(asm, BC_OPS, b_off + VAL_OFF_Z, a_off + VAL_OFF_Z);
+                                jit_emit_fbranch_gt(asm, lbl_target);
+                                break;
+                        case INSTR_JGT:
+                                jit_emit_fload_cmp(asm, BC_OPS, a_off + VAL_OFF_Z, b_off + VAL_OFF_Z);
+                                jit_emit_fbranch_gt(asm, lbl_target);
+                                break;
+                        case INSTR_JLE:
+                                jit_emit_fload_cmp(asm, BC_OPS, b_off + VAL_OFF_Z, a_off + VAL_OFF_Z);
+                                jit_emit_fbranch_ge(asm, lbl_target);
+                                break;
+                        case INSTR_JGE:
+                                jit_emit_fload_cmp(asm, BC_OPS, a_off + VAL_OFF_Z, b_off + VAL_OFF_Z);
+                                jit_emit_fbranch_ge(asm, lbl_target);
+                                break;
                         }
                         jit_emit_jump(asm, lbl_done);
 

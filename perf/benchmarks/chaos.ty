@@ -218,3 +218,7 @@ fn chaos-game(n: Int) {
         assert(count == 5000)
     }
 }
+
+if __module__ == 'main' {
+    chaos-game(10)
+}

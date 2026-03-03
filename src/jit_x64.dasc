@@ -192,6 +192,78 @@ static void jit_emit_cmp_ge(dasm_State **Dst, int dst, int left, int right) {
         |  movzx Rq(dst), Rb(dst)
 }
 
+// --- Float comparisons ---
+// Load doubles from [base+a_off] and [base+b_off] into xmm0/xmm1,
+// perform ucomisd, and set dst GP register to the boolean result.
+// eq/ne need a scratch GP register for the PF (parity) check.
+
+static void jit_emit_fcmp_eq(dasm_State **Dst, int dst, int scratch, int base, int a_off, int b_off) {
+        |  movsd xmm0, qword [Rq(base)+a_off]
+        |  movsd xmm1, qword [Rq(base)+b_off]
+        |  ucomisd xmm0, xmm1
+        |  sete Rb(dst)
+        |  setnp Rb(scratch)
+        |  and Rb(dst), Rb(scratch)
+        |  movzx Rq(dst), Rb(dst)
+}
+
+static void jit_emit_fcmp_ne(dasm_State **Dst, int dst, int scratch, int base, int a_off, int b_off) {
+        |  movsd xmm0, qword [Rq(base)+a_off]
+        |  movsd xmm1, qword [Rq(base)+b_off]
+        |  ucomisd xmm0, xmm1
+        |  setne Rb(dst)
+        |  setp Rb(scratch)
+        |  or Rb(dst), Rb(scratch)
+        |  movzx Rq(dst), Rb(dst)
+}
+
+static void jit_emit_fcmp_lt(dasm_State **Dst, int dst, int scratch, int base, int a_off, int b_off) {
+        (void)scratch;
+        // ucomisd b, a; seta → b > a → a < b (false for NaN)
+        |  movsd xmm0, qword [Rq(base)+b_off]
+        |  movsd xmm1, qword [Rq(base)+a_off]
+        |  ucomisd xmm0, xmm1
+        |  seta Rb(dst)
+        |  movzx Rq(dst), Rb(dst)
+}
+
+static void jit_emit_fcmp_le(dasm_State **Dst, int dst, int scratch, int base, int a_off, int b_off) {
+        (void)scratch;
+        // ucomisd b, a; setae → b >= a → a <= b (false for NaN)
+        |  movsd xmm0, qword [Rq(base)+b_off]
+        |  movsd xmm1, qword [Rq(base)+a_off]
+        |  ucomisd xmm0, xmm1
+        |  setae Rb(dst)
+        |  movzx Rq(dst), Rb(dst)
+}
+
+static void jit_emit_fcmp_gt(dasm_State **Dst, int dst, int scratch, int base, int a_off, int b_off) {
+        (void)scratch;
+        |  movsd xmm0, qword [Rq(base)+a_off]
+        |  movsd xmm1, qword [Rq(base)+b_off]
+        |  ucomisd xmm0, xmm1
+        |  seta Rb(dst)
+        |  movzx Rq(dst), Rb(dst)
+}
+
+static void jit_emit_fcmp_ge(dasm_State **Dst, int dst, int scratch, int base, int a_off, int b_off) {
+        (void)scratch;
+        |  movsd xmm0, qword [Rq(base)+a_off]
+        |  movsd xmm1, qword [Rq(base)+b_off]
+        |  ucomisd xmm0, xmm1
+        |  setae Rb(dst)
+        |  movzx Rq(dst), Rb(dst)
+}
+
+// Load two doubles and compare: ucomisd [base+off0], [base+off1]
+// For gt/ge: off0=a, off1=b (natural order, then ja/jae)
+// For lt/le: off0=b, off1=a (swapped, then ja/jae)
+static void jit_emit_fload_cmp(dasm_State **Dst, int base, int off0, int off1) {
+        |  movsd xmm0, qword [Rq(base)+off0]
+        |  movsd xmm1, qword [Rq(base)+off1]
+        |  ucomisd xmm0, xmm1
+}
+
 // --- Conditional branches ---
 
 static void jit_emit_cbz(dasm_State **Dst, int reg, int label) {
@@ -382,4 +454,14 @@ static void jit_emit_branch_le(dasm_State **Dst, int label) {
 
 static void jit_emit_branch_ge(dasm_State **Dst, int label) {
         |  jge =>label
+}
+
+// Float branches (use after ucomisd)
+// For lt/le we swap operands at the load site, so ja/jae work for all cases.
+static void jit_emit_fbranch_gt(dasm_State **Dst, int label) {
+        |  ja =>label
+}
+
+static void jit_emit_fbranch_ge(dasm_State **Dst, int label) {
+        |  jae =>label
 }
