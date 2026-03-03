@@ -136,7 +136,7 @@ Value
 vm_call_method(Ty *ty, Value const *self, Value const *f, int argc);
 
 Value
-vm_call_fast(Ty *ty, Value const *f, int argc);
+vm_call1(Ty *ty, Value const *f, Value const *x);
 
 Value
 vm_call_method_fast(Ty *ty, Value const *self, Value const *f, int argc);

@@ -1475,20 +1475,45 @@ call_jit(Ty *ty, Value const *f)
         usize fp = vvL(FRAMES)->fp;
         Value v = {0};
 
-        int base_depth = ty->jit.depth;
+        ty->jit.idx = 0;
+        ty->jit.status = JIT_RETURN;
 
         EXEC_DEPTH += 1;
 
-        // Push initial frame onto the JIT continuation stack
+        (*(JitFn *)func)(ty, &v, v_(STACK, fp), f->env);
+
+        if (LIKELY(ty->jit.status == JIT_RETURN)) {
+                EXEC_DEPTH -= 1;
+
+                vN(STACK) = fp + 1;
+                put(v);
+
+                vXx(FRAMES);
+                vXx(CALLS);
+
+                IP = ip;
+
+                return true;
+        }
+
+        int base_depth = ty->jit.depth;
+
         ty->jit.cont[ty->jit.depth++] = (JitCont) {
                 .fn   = func,
                 .env  = f->env,
                 .ret  = &v,
+                .idx  = ty->jit._idx,
+        };
+
+        Value cv = {0};
+
+        ty->jit.cont[ty->jit.depth++] = (JitCont) {
+                .fn   = ty->jit._fn,
+                .env  = ty->jit._env,
+                .ret  = &cv,
                 .idx  = 0,
         };
 
-        // Trampoline loop: dispatch JIT functions without nesting C stack frames
-        Value cv = {0};
         while (ty->jit.depth > base_depth) {
                 JitCont *top = &ty->jit.cont[ty->jit.depth - 1];
 
@@ -1506,11 +1531,7 @@ call_jit(Ty *ty, Value const *f)
                 (*(JitFn *)top->fn)(ty, top->ret, args, top->env);
 
                 if (ty->jit.status == JIT_CALL) {
-                        // JIT function wants to call another JIT function.
-                        // Save the resume index so we can re-enter at the right point.
                         top->idx = ty->jit._idx;
-
-                        // Push callee frame
                         ty->jit.cont[ty->jit.depth++] = (JitCont) {
                                 .fn   = ty->jit._fn,
                                 .env  = ty->jit._env,
@@ -1518,14 +1539,11 @@ call_jit(Ty *ty, Value const *f)
                                 .idx  = 0,
                         };
                 } else if (--ty->jit.depth > base_depth) {
-                        // Clean up the callee's Ty frame:
-                        // put result on stack where the caller expects it
                         cfp = vvL(FRAMES)->fp;
                         vN(STACK) = cfp + 1;
                         *v_(STACK, cfp) = cv;
                         vXx(FRAMES);
                         vXx(CALLS);
-                        // If depth == base_depth, result is already in `v` via fn_result
                 }
         }
 
@@ -1568,7 +1586,7 @@ xcall(Ty *ty, Value const *f, Value const *pSelf, int argc, Value const *pKwargs
         if (class != -1) {
                 self = ((pSelf != NULL) && !IsNone(*pSelf)) ? *pSelf : self_of(f);
         } else {
-                self = NONE;
+                self = ZERO;
         }
 
         LOG(
@@ -1586,7 +1604,7 @@ xcall(Ty *ty, Value const *f, Value const *pSelf, int argc, Value const *pKwargs
                 n += 1;
         }
 
-        if (irest != ikwargs) {
+        if (UNLIKELY(irest != ikwargs)) {
                 gP(&self);
                 gP(&kwargs);
                 if (irest != -1) {
@@ -1623,7 +1641,7 @@ xcall(Ty *ty, Value const *f, Value const *pSelf, int argc, Value const *pKwargs
         xvP(CALLS, whence);
 
         // Fill in kwargs (overwriting positional args)
-        if (!IsNil(kwargs)) {
+        if (UNLIKELY(!IsNil(kwargs))) {
                 char const *name = ((char *)f->info) + FUN_PARAM_NAMES;
                 for (int i = 0; i < np; ++i, name += strlen(name) + 1) {
                         if (i == irest || i == ikwargs) {
@@ -2967,7 +2985,7 @@ DoCall(Ty *ty, Value const *f, int n, int nkw, bool auto_this, bool exec)
                 push(v);
                 v = string_match(ty, &value, 1, NULL);
                 pop();
-                *top() = v;
+                put(v);
                 gX();
                 return false;
 
@@ -4067,13 +4085,13 @@ DoCount(Ty *ty, bool exec)
         }
 
         switch (v.type) {
-        case VALUE_BLOB:   xpush(INTEGER(vN(*v.blob)));                                  break;
-        case VALUE_ARRAY:  xpush(INTEGER(vN(*v.array)));                                 break;
-        case VALUE_QUEUE:        xpush(INTEGER(_queue_count(v.queue->head, v.queue->tail, v.queue->cap))); break;
-        case VALUE_SHARED_QUEUE: xpush(INTEGER(_queue_count(v.shared_queue->head, v.shared_queue->tail, v.shared_queue->cap))); break;
-        case VALUE_DICT:   xpush(INTEGER(v.dict->count));                                break;
-        case VALUE_TUPLE:  xpush(INTEGER(v.count));        break;
-        case VALUE_STRING: xpush(INTEGER(TyStrLen(&v)));   break;
+        case VALUE_BLOB:         xpush(INTEGER(vN(*v.blob)));                        break;
+        case VALUE_ARRAY:        xpush(INTEGER(vN(*v.array)));                       break;
+        case VALUE_QUEUE:        xpush(INTEGER(queue_count(v.queue)));               break;
+        case VALUE_SHARED_QUEUE: xpush(INTEGER(shared_queue_count(v.shared_queue))); break;
+        case VALUE_DICT:         xpush(INTEGER(v.dict->count));                      break;
+        case VALUE_TUPLE:        xpush(INTEGER(v.count));                            break;
+        case VALUE_STRING:       xpush(INTEGER(TyStrLen(&v)));                       break;
 
         case VALUE_OBJECT:
         case VALUE_CLASS:
@@ -9758,6 +9776,59 @@ vm_call(Ty *ty, Value const *f, int argc)
         default:
         NotCallable:
                 zP("non-callable value passed to vm_call(): %s", VSC(f));
+        }
+}
+
+Value
+vm_call1(Ty *ty, Value const *f, Value const *x)
+{
+        Value v;
+        usize n = vN(STACK);
+
+        push(*x);
+
+        switch (f->type) {
+        case VALUE_FUNCTION:
+        case VALUE_BOUND_FUNCTION:
+                exec_fn(ty, f, NULL, 1, NULL);
+                return pop();
+
+        case VALUE_METHOD:
+                exec_fn(ty, f->method, f->this, 1, NULL);
+                return pop();
+
+        case VALUE_BUILTIN_FUNCTION:
+                v = f->builtin_function(ty, 1, NULL);
+                STACK.count = n;
+                return v;
+
+        case VALUE_FOREIGN_FUNCTION:
+                v = cffi_fast_call(ty, f, 1, NULL);
+                STACK.count = n;
+                return v;
+
+        case VALUE_BUILTIN_METHOD:
+                v = f->builtin_method(ty, f->this, 1, NULL);
+                STACK.count = n;
+                return v;
+
+        case VALUE_OPERATOR:
+                DoUnaryOp(ty, f->uop, true);
+                return pop();
+
+        case VALUE_REGEX:
+                v = peek();
+                if (UNLIKELY(v.type != VALUE_STRING)) {
+                        zP("Regex.__call__(): expected String but got: %s", VSC(&v));
+                }
+                push(v);
+                v = string_match(ty, &v, 1, NULL);
+                pop();
+                gX();
+                return v;
+
+        default:
+                return vm_call(ty, f, 1);
         }
 }
 

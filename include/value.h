@@ -19,6 +19,7 @@ typedef struct value Value;
 #include "compiler.h"
 #include "xd.h"
 #include "class.h"
+#include "queue.h"
 
 #define V_ALIGN (_Alignof (Value))
 
@@ -780,19 +781,7 @@ int
 value_compare(Ty *ty, Value const *v1, Value const *v2);
 
 bool
-value_truthy(Ty *ty, Value const *v);
-
-static inline bool
-value_truthy_checked(Ty *ty, Value const *v)
-{
-        return (v != NULL) && value_truthy(ty, v);
-}
-
-bool
 value_apply_predicate(Ty *ty, Value *p, Value *v);
-
-Value
-value_apply_callable(Ty *ty, Value *f, Value *v);
 
 char *
 value_show(Ty *ty, Value const *v, u32 flags);
@@ -1714,7 +1703,45 @@ TryIntoTime(Ty *ty, char const *ctx, Value const *t, i64 factor)
 )
 
 Value
-ConstructPrimitive(Ty *ty, int class_id, int argc, Value const *kwargs);
+ConstructPrimitive(Ty *ty, int class_id, int argc, Value *kwargs);
+
+inline static bool
+value_truthy(Ty *ty, Value const *v)
+{
+        switch (v->type) {
+        case VALUE_REAL:             return (v->real != 0.0);
+        case VALUE_BOOLEAN:          return v->boolean;
+        case VALUE_INTEGER:          return (v->z != 0);
+        case VALUE_STRING:           return (sN(*v) != 0);
+        case VALUE_ARRAY:            return (vN(*v->array) != 0);
+        case VALUE_TUPLE:            return (v->count != 0);
+        case VALUE_BLOB:             return (vN(*v->blob) != 0);
+        case VALUE_QUEUE:            return (queue_count(v->queue) != 0);
+        case VALUE_SHARED_QUEUE:     return true;
+        case VALUE_REGEX:            return true;
+        case VALUE_FUNCTION:         return true;
+        case VALUE_BOUND_FUNCTION:   return true;
+        case VALUE_BUILTIN_FUNCTION: return true;
+        case VALUE_BUILTIN_METHOD:   return true;
+        case VALUE_FOREIGN_FUNCTION: return true;
+        case VALUE_OPERATOR:         return true;
+        case VALUE_DICT:             return true;
+        case VALUE_CLASS:            return true;
+        case VALUE_OBJECT:           return true;
+        case VALUE_METHOD:           return true;
+        case VALUE_TAG:              return true;
+        case VALUE_GENERATOR:        return true;
+        case VALUE_TRACE:            return true;
+        case VALUE_PTR:              return (v->ptr != NULL);
+        default:                     return false;
+        }
+}
+
+static inline bool
+value_truthy_checked(Ty *ty, Value const *v)
+{
+        return (v != NULL) && value_truthy(ty, v);
+}
 
 #endif
 
