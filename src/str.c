@@ -1415,6 +1415,7 @@ string_clone(Ty *ty, Value *string, int argc, Value *kwargs)
 }
 
 DEFINE_METHOD_TABLE(
+        string,
         { .name = "bsearch",   .func = string_bsearch          },
         { .name = "bsearchr",  .func = string_bsearchr         },
         { .name = "bslice",    .func = string_bslice           },

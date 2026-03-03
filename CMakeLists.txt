@@ -243,6 +243,7 @@ set(_src_files
   src/blob.c
   src/class.c
   src/compiler.c
+  src/queue.c
   src/dict.c
   src/ffi.c
   src/functions.c

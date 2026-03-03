@@ -293,12 +293,6 @@ __set_type__ ty::executable String
 const `,` = tuple
 
 class Object {
-    init(%props: Any) {
-        for k, v in props {
-            member(k, v)
-        }
-    }
-
     is?(c) {
         subclass?(type(self), c)
     }
@@ -462,11 +456,7 @@ class Function : Iter {
 }
 
 class Array[T] : Iterable[T] {
-    static NIL: Object = Object()
-
-    init(*xs) {
-        xs
-    }
+    init(*xs: T);
 
     static of(*shape, fill=nil) -> _ {
         match shape {
@@ -719,6 +709,10 @@ class Array[T] : Iterable[T] {
         return i
     }
 
+    str() -> String {
+        join()
+    }
+
     popWhile(p) {
         while #self > 0 && p(self[-1]) {
             self.pop()
@@ -937,13 +931,7 @@ macro __define_ast! {
 use AST = __define_ast!(fn (t0) { t0 })
 
 class Dict[K, V] : Iterable[K, V] {
-    init(ks, vs) {
-        if ks && vs {
-            return %{ k: v for (k, v) in ks.zip(vs) }
-        } else {
-            return %{}
-        }
-    }
+    init();
 
     keys()   -> Array[K];
     values() -> Array[V];
@@ -1507,21 +1495,7 @@ class Float {
 }
 
 class Blob : Iterable[Int], IntoPtr[Int] {
-    init(*args: Any) {
-        let b = blob()
-
-        for arg in args {
-            if (arg :: Iterable) && !(arg :: String) {
-                for c in arg {
-                    b.push(c)
-                }
-            } else {
-                b.push(arg)
-            }
-        }
-
-        return b
-    }
+    init(*args: Any);
 
     searchr(s: String) -> Int | nil {
         for let off = size() - 1; off >= 0; --off {
@@ -2703,7 +2677,7 @@ trait Iter[T] < Iterable[T] {
         fn get() {
             if let Some(x) = it.__next__() {
                 for queue in queues {
-                    queue.put(x)
+                    queue.push(x)
                 }
                 return true
             } else {
@@ -2713,7 +2687,7 @@ trait Iter[T] < Iterable[T] {
 
         fn go*(queue: _) {
             while true {
-                if let Some(x) = queue.tryTake() {
+                if let Some(x) = queue.try-pop() {
                     yield x
                 } else if !get() {
                     return None
@@ -2744,90 +2718,28 @@ trait Iter[T] < Iterable[T] {
 }
 
 class Queue[T] : Iterable[T] {
-    __xs: Array[T]
-    __i: Int
-    __j: Int
-
-    init(xs: Iterable[T] = []) {
-        __xs = []
-        __i = 0
-        __j = 0
-
-        for x in xs {
-            put(x)
-        }
-    }
-
-    #() {
-        if __xs {
-            (__j - __i + #__xs) % #__xs
-        } else {
-            0
-        }
-    }
-
-    empty? {
-        #self == 0
-    }
-
-    put(x: T) {
-        if !__xs {
-            __xs = [x, x]
-            __j = 1
-        } else if (__j + 1) % #__xs == __i {
-            let n = #self
-            __xs.rotate!(__i)
-            __xs += __xs
-            __i = 0
-            __j = n + 1
-            __xs[n] = x
-        } else {
-            __xs[__j] = x
-            __j = (__j + 1) % #__xs
-        }
-    }
-
-    try-peek() -> Some[T] | None {
-        (#self == 0) ? None : Some(__xs[__i])
-    }
-
-    try-take() -> Some[T] | None {
-        if #self == 0 {
-            return None
-        }
-
-        let x = __xs[__i]
-        __i = (__i + 1) % #__xs
-
-        return Some(x)
-    }
-
-    take() -> T {
-        match try-take() {
-            Some(x) => x,
-            None    => throw IndexError(self, 0)
-        }
-    }
-
-    peek() -> T {
-        match try-peek() {
-            Some(x) => x,
-            None    => throw IndexError(self, 0)
-        }
-    }
-
-    __iter__*() {
-        for let i = __i; i != __j; i = (i + 1) % #__xs {
-            yield __xs[i]
-        }
-    }
+    init();
+    push(*xs: T) -> Queue[T];
+    push-front(*xs: T) -> Queue[T];
+    pop() -> T;
+    pop-back() -> T;
+    peek() -> T;
+    peek-back() -> T;
+    try-pop() -> Some[T] | None;
+    try-pop-back() -> Some[T] | None;
+    try-peek() -> Some[T] | None;
+    try-peek-back() -> Some[T] | None;
+    len() -> Int;
+    empty? -> Bool;
+    clear() -> Queue[T];
+    to-array() -> Array[T];
 }
 
 class Range : Iterable[Int] {
     a: Int
     b: Int
 
-    init(a, b) {
+    init(a: Int, b: Int) {
         self.a = a
         self.b = b
     }
@@ -2916,7 +2828,7 @@ class Range : Iterable[Int] {
 }
 
 class InclusiveRange < Range {
-    init(a, b) {
+    init(a: Int, b: Int) {
         self.a = min(a, b)
         self.b = max(a, b) + 1
     }
@@ -3834,121 +3746,19 @@ macro ifdef {
     ty.CompileTime(ty.If([ty.Defined(name: v.id, module: v.module)], ty.Value(then), ty.Value(otherwise ?? ty.Nil)))
 }
 
-class SharedQueue[T] : Iterable[T] {
-    _xs: Array[T]
-    _i:  Int
-    _j:  Int
-    _mutex: Mutex
-    _cond:  CondVar
-    _open:  Bool
-
-    init(xs: Iterable[T] = []) {
-        _xs = []
-        _i  = 0
-        _j  = 0
-        _mutex = Mutex()
-        _cond  = CondVar()
-        _open  = true
-
-        for x in xs {
-            put(x)
-        }
-    }
-
-    #() {
-        with _mutex {
-            if _xs {
-                (_j - _i + #_xs) % #_xs
-            } else {
-                0
-            }
-        }
-    }
-
-    _n -> Int {
-        if _xs {
-            (_j - _i + #_xs) % #_xs
-        } else {
-            0
-        }
-    }
-
-    empty? {
-        #self == 0
-    }
-
-    put(x: T) {
-        with _mutex {
-            _open = true
-            if !_xs {
-                _xs = [x, x]
-                _j = 1
-            } else if (_j + 1) % #_xs == _i {
-                let n = _n
-                _xs.rotate!(_i)
-                _xs += _xs
-                _i = 0
-                _j = n + 1
-                _xs[n] = x
-            } else {
-                _xs[_j] = x
-                _j = (_j + 1) % #_xs
-            }
-        }
-        _cond.signal()
-    }
-
-    try-take(timeoutMs: Int = 0) -> Some[T] | None {
-        let stop = time.now() + (timeoutMs / 1000.0)
-
-        _mutex.lock()
-
-        while _n == 0 {
-            if !_cond.wait(_mutex, stop - time.now()) {
-                _mutex.unlock()
-                return None
-            }
-        }
-
-        let x = _xs[_i]
-        _i = (_i + 1) % #_xs
-
-        _mutex.unlock()
-
-        Some(x)
-    }
-
-    take() -> T {
-        _mutex.lock()
-
-        while _n == 0 {
-            if !_open {
-                _mutex.unlock()
-                throw CanceledError()
-            }
-            _cond.wait(_mutex)
-        }
-
-        let x = _xs[_i]
-        _i = (_i + 1) % #_xs
-
-        _mutex.unlock()
-
-        x
-    }
-
-    close() {
-        with _mutex {
-            _open = false
-        }
-        _cond.broadcast()
-    }
-
-    __iter__*() {
-        for let i = _i; i != _j; i = (i + 1) % #_xs {
-            yield _xs[i]
-        }
-    }
+class SharedQueue[T] {
+    init();
+    put(x: T) -> SharedQueue[T];
+    try-take(timeout: Int | Float = 0) -> Some[T] | None;
+    take() -> T;
+    peek() -> T;
+    try-peek() -> Some[T] | None;
+    len() -> Int;
+    empty? -> Bool;
+    clear() -> SharedQueue[T];
+    close() -> nil;
+    open? -> Bool;
+    to-array() -> Array[T];
 }
 
 class EqualTo[T] {

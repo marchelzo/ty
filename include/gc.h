@@ -56,6 +56,8 @@ enum {
         GC_OBJECT,
         GC_DICT,
         GC_BLOB,
+        GC_QUEUE,
+        GC_SHARED_QUEUE,
         GC_VALUE,
         GC_ENV,
         GC_GENERATOR,

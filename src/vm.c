@@ -68,6 +68,7 @@
 #include "alloc.h"
 #include "array.h"
 #include "blob.h"
+#include "queue.h"
 #include "cffi.h"
 #include "class.h"
 #include "compiler.h"
@@ -157,10 +158,11 @@ static char const *InstructionNames[] = {
 
 /* ======/ RVL Section /============================/ TVSL Types /=========== */
 static char halt = INSTR_HALT;
-static char next_fix[]  = { INSTR_NONE_IF_NIL, INSTR_RETURN_PRESERVE_CTX };
-static char iter_fix[]  = { INSTR_SENTINEL, INSTR_GET_NEXT, INSTR_RETURN_PRESERVE_CTX };
-static char hook_fix[]  = { INSTR_POP, INSTR_RETURN_PRESERVE_CTX };
-static char unapply[]   = { INSTR_RETURN_PRESERVE_CTX };
+static char next_fix[] = { INSTR_NONE_IF_NIL, INSTR_RETURN_PRESERVE_CTX };
+static char iter_fix[] = { INSTR_SENTINEL, INSTR_GET_NEXT, INSTR_RETURN_PRESERVE_CTX };
+static char hook_fix[] = { INSTR_POP, INSTR_RETURN_PRESERVE_CTX };
+static char unapply[]  = { INSTR_RETURN_PRESERVE_CTX };
+static char pop_ret[]  = { INSTR_POP, INSTR_RETURN_PRESERVE_CTX };
 
 InternedNames NAMES;
 ValueVector Globals;
@@ -2902,20 +2904,41 @@ DoCall(Ty *ty, Value const *f, int n, int nkw, bool auto_this, bool exec)
 
         case VALUE_CLASS:
                 gP(&kwargs);
+                if (v.class <= CLASS_PRIMITIVE) {
+                        k = vN(STACK) - n;
+                        value = ConstructPrimitive(ty, v.class, n, &kwargs);
+                        vN(STACK) = k;
+                        xpush(value);
+                        gX();
+                        gX();
+                        return false;
+                }
                 vp = class_ctor(ty, v.class);
-                if (v.class <= CLASS_PRIMITIVE && v.class != CLASS_OBJECT) {
-                        value = NONE;
-                        exec_fn(ty, vp, &value, n, &kwargs);
-                } else {
-                        value = RawObject(v.class);
+                value = RawObject(v.class);
+                if (UNLIKELY(IsZero(*vp))) {
+                        vN(STACK) -= n;
+                        push(value);
+                        gX();
+                        gX();
+                        return false;
+                }
+                if (exec) {
                         gP(&value);
                         exec_fn(ty, vp, &value, n, &kwargs);
                         gX();
                         put(value);
+                        gX();
+                        gX();
+                        return false;
+                } else {
+                        usize i = vN(STACK) - n;
+                        xvI(STACK, value, i);
+                        call6t(ty, vp, &value, n, &kwargs, pop_ret);
+                        gX();
+                        gX();
+                        return true;
                 }
-                gX();
-                gX();
-                return false;
+                UNREACHABLE();
 
         case VALUE_METHOD:
                 if (v.name == NAMES.method_missing) {
@@ -3268,6 +3291,32 @@ GetMember(Ty *ty, int member, bool try_missing, bool exec)
                         goto ClassLookup;
                 }
                 v.type = VALUE_BLOB;
+                v.tags = 0;
+                this = mAo(sizeof *this, GC_VALUE);
+                *this = v;
+                pop();
+                return BUILTIN_METHOD(member, func, this);
+
+        case VALUE_QUEUE:
+                func = get_queue_method_i(member);
+                if (func == NULL) {
+                        n = CLASS_QUEUE;
+                        goto ClassLookup;
+                }
+                v.type = VALUE_QUEUE;
+                v.tags = 0;
+                this = mAo(sizeof *this, GC_VALUE);
+                *this = v;
+                pop();
+                return BUILTIN_METHOD(member, func, this);
+
+        case VALUE_SHARED_QUEUE:
+                func = get_shared_queue_method_i(member);
+                if (func == NULL) {
+                        n = CLASS_SHARED_QUEUE;
+                        goto ClassLookup;
+                }
+                v.type = VALUE_SHARED_QUEUE;
                 v.tags = 0;
                 this = mAo(sizeof *this, GC_VALUE);
                 *this = v;
@@ -3730,6 +3779,22 @@ CallMethod(Ty *ty, int i, int n, int nkw, bool maybe, bool exec)
                 }
                 break;
 
+        case VALUE_QUEUE:
+                func = get_queue_method_i(i);
+                if (func == NULL) {
+                        class = CLASS_QUEUE;
+                        goto ClassLookup;
+                }
+                break;
+
+        case VALUE_SHARED_QUEUE:
+                func = get_shared_queue_method_i(i);
+                if (func == NULL) {
+                        class = CLASS_SHARED_QUEUE;
+                        goto ClassLookup;
+                }
+                break;
+
         case VALUE_INTEGER:
                 class = CLASS_INT;
                 goto ClassLookup;
@@ -4002,9 +4067,11 @@ DoCount(Ty *ty, bool exec)
         }
 
         switch (v.type) {
-        case VALUE_BLOB:   xpush(INTEGER(vN(*v.blob)));    break;
-        case VALUE_ARRAY:  xpush(INTEGER(vN(*v.array)));   break;
-        case VALUE_DICT:   xpush(INTEGER(v.dict->count));  break;
+        case VALUE_BLOB:   xpush(INTEGER(vN(*v.blob)));                                  break;
+        case VALUE_ARRAY:  xpush(INTEGER(vN(*v.array)));                                 break;
+        case VALUE_QUEUE:        xpush(INTEGER(_queue_count(v.queue->head, v.queue->tail, v.queue->cap))); break;
+        case VALUE_SHARED_QUEUE: xpush(INTEGER(_queue_count(v.shared_queue->head, v.shared_queue->tail, v.shared_queue->cap))); break;
+        case VALUE_DICT:   xpush(INTEGER(v.dict->count));                                break;
         case VALUE_TUPLE:  xpush(INTEGER(v.count));        break;
         case VALUE_STRING: xpush(INTEGER(TyStrLen(&v)));   break;
 
@@ -5488,6 +5555,17 @@ Top:
                         return;
                 } else {
                         goto NoIter;
+                }
+                break;
+
+        case VALUE_QUEUE:
+                if (
+                        (v.queue->cap > 0)
+                     && (i < _queue_count(v.queue->head, v.queue->tail, v.queue->cap))
+                ) {
+                        push(v.queue->items[(v.queue->head + i) % v.queue->cap]);
+                } else {
+                        push(NONE);
                 }
                 break;
 
@@ -9254,6 +9332,8 @@ vm_init(Ty *ty, int ac, char **av)
         build_string_method_table();
         build_array_method_table();
         build_blob_method_table();
+        build_queue_method_table();
+        build_shared_queue_method_table();
         build_dict_method_table();
 
         NAMES.a                = M_ID("a");
@@ -9532,18 +9612,17 @@ vm_call_ex(Ty *ty, Value const *f, int argc, Value *kwargs, bool collect)
                 return pop();
 
         case VALUE_CLASS:
-                init = class_ctor(ty, f->class);
-                if (f->class <= CLASS_PRIMITIVE && f->class != CLASS_OBJECT) {
-                        v = NONE;
-                        exec_fn(ty, init, &v, argc, NULL);
-                        return pop();
+                if (f->class <= CLASS_PRIMITIVE) {
+                        v = ConstructPrimitive(ty, f->class, argc, kwargs);
                 } else {
+                        init = class_ctor(ty, f->class);
                         v = RawObject(f->class);
-                        exec_fn(ty, init, &v, argc, NULL);
-                        pop();
-                        return v;
+                        if (LIKELY(!IsZero(*init))) {
+                                exec_fn(ty, init, &v, argc, NULL);
+                                pop();
+                        }
                 }
-                UNREACHABLE();
+                return v;
 
         case VALUE_DICT:
                 vp = (argc >= 1) ? dict_get_value(ty, f->dict, top() - (argc - 1)) : NULL;
@@ -9646,18 +9725,17 @@ vm_call(Ty *ty, Value const *f, int argc)
                 return pop();
 
         case VALUE_CLASS:
-                vp = class_ctor(ty, f->class);
-                if (f->class <= CLASS_PRIMITIVE && f->class != CLASS_OBJECT) {
-                        v = NONE;
-                        exec_fn(ty, vp, NULL, argc, NULL);
-                        return pop();
+                if (f->class <= CLASS_PRIMITIVE) {
+                        v = ConstructPrimitive(ty, f->class, argc, NULL);
                 } else {
+                        vp = class_ctor(ty, f->class);
                         v = RawObject(f->class);
-                        exec_fn(ty, vp, &v, argc, NULL);
-                        pop();
-                        return v;
+                        if (LIKELY(!IsZero(*vp))) {
+                                exec_fn(ty, vp, &v, argc, NULL);
+                                pop();
+                        }
                 }
-                UNREACHABLE();
+                return v;
 
         case VALUE_DICT:
                 vp = (argc >= 1) ? dict_get_value(ty, f->dict, top() - (argc - 1)) : NULL;

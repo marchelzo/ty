@@ -78,7 +78,6 @@ init(Ty *ty, Class *c, Stmt *def)
         c->name        = def->class.name;
         c->doc         = def->class.doc;
         c->def         = def;
-        c->init        = NONE;
         c->finalizer   = NONE;
         c->super       = (c->i != CLASS_OBJECT) ? C(CLASS_OBJECT) : NULL;
         c->type        = type_class(ty, c);
@@ -237,7 +236,7 @@ class_ctor(Ty *ty, int class)
                 really_finalize(ty, c);
         }
 
-        ASSERT(c->init.type == VALUE_FUNCTION);
+        //ASSERT(c->init.type == VALUE_FUNCTION);
 
         return &c->init;
 }
@@ -928,8 +927,10 @@ really_finalize(Ty *ty, Class *c)
 #endif
 
         if (vN(c->offsets_r) > NAMES.init) {
-                u16 off = v__(c->offsets_r, NAMES.init) & OFF_MASK;
-                c->init = v__(c->methods.values, off);
+                u16 off = v__(c->offsets_r, NAMES.init);
+                if ((off >> OFF_SHIFT) == OFF_METHOD) {
+                        c->init = v__(c->methods.values, off & OFF_MASK);
+                }
         }
 
         if (vN(c->offsets_r) > NAMES._free_) {

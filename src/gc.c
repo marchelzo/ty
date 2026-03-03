@@ -41,9 +41,18 @@ collect(Ty *ty, struct alloc *a)
                 dict_free(ty, p);
                 break;
 
+        case GC_QUEUE:
+                mF(((Queue *)p)->items);
+                break;
+
+        case GC_SHARED_QUEUE:
+                mF(((Queue *)p)->items);
+                TyMutexDestroy(&((SharedQueue *)p)->mutex);
+                TyCondVarDestroy(&((SharedQueue *)p)->cond);
+                break;
+
         case GC_GENERATOR:
                 gen = p;
-
                 xvF(gen->frame);
                 xvF(gen->st.calls);
                 xvF(gen->st.frames);
@@ -51,15 +60,11 @@ collect(Ty *ty, struct alloc *a)
                 xvF(gen->st.sps);
                 xvF(gen->st.to_drop);
                 xvF(gen->gc_roots);
-
                 for (int i = 0; i < vC(gen->st.try_stack); ++i) {
                         ty_free(v__(gen->st.try_stack, i));
                 }
-
                 xvF(gen->st.try_stack);
-
                 GCLOG("collect(): free generator   co=%p   ip=%p\n", (void *)gen->co, (void *)gen->ip);
-
                 if (gen->co != ty->co_top) {
                         ty_free(gen->co);
                 }

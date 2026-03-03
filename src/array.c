@@ -2165,6 +2165,7 @@ DEFINE_NO_MUT(zip);
 DEFINE_NO_MUT(next_permutation);
 
 DEFINE_METHOD_TABLE(
+        array,
         { .name = "all?",              .func = array_all                     },
         { .name = "any?",              .func = array_any                     },
         { .name = "bsearch",           .func = array_bsearch_strict          },

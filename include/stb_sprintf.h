@@ -999,8 +999,9 @@ STBSP__PUBLICDEF int STB_SPRINTF_DECORATE(vsprintfcb)(STBSP_SPRINTFCB *callback,
 
       case 'p': // pointer
          fl |= (sizeof(void *) == 8) ? STBSP__INTMAX : 0;
-         pr = sizeof(void *) * 2;
+         pr = 12;
          fl &= ~STBSP__LEADINGZERO; // 'p' only prints the pointer with zeros
+         fl |= STBSP__LEADING_0X;   // 'p' always has 0x
                                     // fall through - to X
 
       case 'X': // upper hex
@@ -1025,11 +1026,15 @@ STBSP__PUBLICDEF int STB_SPRINTF_DECORATE(vsprintfcb)(STBSP_SPRINTFCB *callback,
          // clear tail, and clear leading if value is zero
          tail[0] = 0;
          if (n64 == 0) {
-            lead[0] = 0;
-            if (pr == 0) {
-               l = 0;
-               cs = 0;
-               goto scopy;
+            if (f[0] == 'p') {
+               pr = 0;
+            } else {
+               lead[0] = 0;
+               if (pr == 0) {
+                  l = 0;
+                  cs = 0;
+                  goto scopy;
+               }
             }
          }
          // convert to string
