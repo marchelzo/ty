@@ -4221,6 +4221,7 @@ infix_subscript(Ty *ty, Expr *left)
 {
 
         Expr *e = mkexpr(ty);
+        e->start = left->start;
 
         consume('[');
 
