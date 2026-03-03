@@ -3600,6 +3600,113 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
 
                 CASE(INT8) {
                         int8_t k = (int8_t)*ip++;
+
+                        // Fusion: INT8 k + SUBSCRIPT => constant-index subscript
+                        if (k >= 0 && ip < end && (u8)*ip == INSTR_SUBSCRIPT) {
+                                Type *t_con = type_resolve_var(ctx->op_types[ctx->sp - 1]);
+                                Class *c = expected_class_of(ctx->ty, t_con);
+
+                                if (c != NULL && c->i == CLASS_TUPLE) {
+                                        ip++; // consume SUBSCRIPT
+
+                                        int con_off = OP_OFF(ctx->sp - 1);
+                                        int res_off = con_off;
+                                        int item_byte_off = k * (int)VALUE_SIZE;
+
+                                        int lbl_slow = bc_next_label(ctx);
+                                        int lbl_done = bc_next_label(ctx);
+
+                                        // Check type == VALUE_TUPLE
+                                        jit_emit_ldrb(asm, BC_S0, BC_OPS, con_off + VAL_OFF_TYPE);
+                                        jit_emit_cmp_ri(asm, BC_S0, VALUE_TUPLE);
+                                        jit_emit_branch_ne(asm, lbl_slow);
+
+                                        // Check v.count > k
+                                        jit_emit_ldr32(asm, BC_S0, BC_OPS, con_off + VAL_OFF_COUNT);
+                                        jit_emit_cmp_ri(asm, BC_S0, k + 1);
+                                        jit_emit_branch_lt(asm, lbl_slow);
+
+                                        // Fast: push v.items[k]
+                                        jit_emit_ldr64(asm, BC_S1, BC_OPS, con_off + VAL_OFF_ITEMS);
+                                        jit_emit_add_imm(asm, BC_S1, BC_S1, item_byte_off);
+                                        jit_emit_ldp64(asm, BC_S0, BC_S2, BC_S1, 0);
+                                        jit_emit_stp64(asm, BC_S0, BC_S2, BC_OPS, res_off);
+                                        jit_emit_ldp64(asm, BC_S0, BC_S2, BC_S1, 16);
+                                        jit_emit_stp64(asm, BC_S0, BC_S2, BC_OPS, res_off + 16);
+                                        jit_emit_jump(asm, lbl_done);
+
+                                        // Slow: materialize integer, call helper
+                                        jit_emit_label(asm, lbl_slow);
+                                        int int_off = OP_OFF(ctx->sp);
+                                        jit_emit_load_imm(asm, BC_S0, 0);
+                                        jit_emit_stp64(asm, BC_S0, BC_S0, BC_OPS, int_off);
+                                        jit_emit_stp64(asm, BC_S0, BC_S0, BC_OPS, int_off + 16);
+                                        jit_emit_load_imm(asm, BC_S0, VALUE_INTEGER);
+                                        jit_emit_strb(asm, BC_S0, BC_OPS, int_off + VAL_OFF_TYPE);
+                                        jit_emit_load_imm(asm, BC_S0, k);
+                                        jit_emit_str64(asm, BC_S0, BC_OPS, int_off + VAL_OFF_Z);
+                                        jit_emit_mov(asm, BC_A0, BC_TY);
+                                        jit_emit_add_imm(asm, BC_A1, BC_OPS, con_off);
+                                        jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_subscript);
+                                        jit_emit_call_reg(asm, BC_CALL);
+
+                                        jit_emit_label(asm, lbl_done);
+                                        // sp unchanged: container replaced by result, no int pushed
+                                        break;
+                                }
+
+                                // Again for Array
+                                if (c != NULL && c->i == CLASS_ARRAY) {
+                                        ip++;
+
+                                        int con_off = OP_OFF(ctx->sp - 1);
+                                        int res_off = con_off;
+                                        int item_byte_off = k * (int)VALUE_SIZE;
+
+                                        int lbl_slow = bc_next_label(ctx);
+                                        int lbl_done = bc_next_label(ctx);
+
+                                        // Check v.type == VALUE_ARRAY
+                                        jit_emit_ldrb(asm, BC_S0, BC_OPS, con_off + VAL_OFF_TYPE);
+                                        jit_emit_cmp_ri(asm, BC_S0, VALUE_ARRAY);
+                                        jit_emit_branch_ne(asm, lbl_slow);
+
+                                        // Check vN(*v.array) > k
+                                        jit_emit_ldr64(asm, BC_S1, BC_OPS, con_off + VAL_OFF_Z);
+                                        jit_emit_ldr64(asm, BC_S2, BC_S1, OFF_VEC_LEN);
+                                        jit_emit_cmp_ri(asm, BC_S2, k + 1);
+                                        jit_emit_branch_lt(asm, lbl_slow);
+
+                                        // Fast: push v__(*v.array, k)
+                                        jit_emit_ldr64(asm, BC_S1, BC_S1, 0);
+                                        jit_emit_add_imm(asm, BC_S1, BC_S1, item_byte_off);
+                                        jit_emit_ldp64(asm, BC_S0, BC_S2, BC_S1, 0);
+                                        jit_emit_stp64(asm, BC_S0, BC_S2, BC_OPS, res_off);
+                                        jit_emit_ldp64(asm, BC_S0, BC_S2, BC_S1, 16);
+                                        jit_emit_stp64(asm, BC_S0, BC_S2, BC_OPS, res_off + 16);
+                                        jit_emit_jump(asm, lbl_done);
+
+                                        // Slow: materialize integer, call helper
+                                        jit_emit_label(asm, lbl_slow);
+                                        int int_off = OP_OFF(ctx->sp);
+                                        jit_emit_load_imm(asm, BC_S0, 0);
+                                        jit_emit_stp64(asm, BC_S0, BC_S0, BC_OPS, int_off);
+                                        jit_emit_stp64(asm, BC_S0, BC_S0, BC_OPS, int_off + 16);
+                                        jit_emit_load_imm(asm, BC_S0, VALUE_INTEGER);
+                                        jit_emit_strb(asm, BC_S0, BC_OPS, int_off + VAL_OFF_TYPE);
+                                        jit_emit_load_imm(asm, BC_S0, k);
+                                        jit_emit_str64(asm, BC_S0, BC_OPS, int_off + VAL_OFF_Z);
+                                        jit_emit_mov(asm, BC_A0, BC_TY);
+                                        jit_emit_add_imm(asm, BC_A1, BC_OPS, con_off);
+                                        jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_subscript);
+                                        jit_emit_call_reg(asm, BC_CALL);
+
+                                        jit_emit_label(asm, lbl_done);
+                                        // sp unchanged: container replaced by result, no int pushed
+                                        break;
+                                }
+                        }
+
                         bc_push_integer(ctx, k);
                         break;
                 }
@@ -5013,7 +5120,7 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                         // Stack: ..., container, subscript (TOS) => result
                         int con_off = OP_OFF(ctx->sp - 2);
                         int sub_off = OP_OFF(ctx->sp - 1);
-                        int res_off = con_off; // result overwrites container slot
+                        int res_off = con_off;
 
                         int lbl_slow = bc_next_label(ctx);
                         int lbl_done = bc_next_label(ctx);
@@ -5021,11 +5128,16 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                         Type *t0 = type_resolve_var(ctx->op_types[ctx->sp - 2]);
                         Class *c = expected_class_of(ctx->ty, t0);
 
-                        // Fast path: array[int]
-                        if (c == NULL || c->i == CLASS_ARRAY) {
+                        bool try_array = (c != NULL && c->i == CLASS_ARRAY);
+                        bool try_tuple = (c != NULL && c->i == CLASS_TUPLE);
+
+                        int lbl_tuple = try_tuple ? bc_next_label(ctx) : lbl_slow;
+
+                        // Fast path: Array.[](Int)
+                        if (try_array) {
                                 jit_emit_ldrb(asm, BC_S0, BC_OPS, con_off + VAL_OFF_TYPE);
                                 jit_emit_cmp_ri(asm, BC_S0, VALUE_ARRAY);
-                                jit_emit_branch_ne(asm, lbl_slow);
+                                jit_emit_branch_ne(asm, lbl_tuple);
 
                                 jit_emit_ldrb(asm, BC_S0, BC_OPS, sub_off + VAL_OFF_TYPE);
                                 jit_emit_cmp_ri(asm, BC_S0, VALUE_INTEGER);
@@ -5042,7 +5154,7 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                                 jit_emit_cmp_lt(asm, BC_S2, BC_S0, BC_S2); // BC_S2 = (idx < count)
                                 jit_emit_cbz(asm, BC_S2, lbl_slow);
 
-                                // Compute item address: items + idx * 32
+                                // Item address: items + idx * 32
                                 jit_emit_ldr64(asm, BC_S1, BC_S1, 0);  // items
                                 jit_emit_load_imm(asm, BC_S2, 5);
                                 jit_emit_shl(asm, BC_S0, BC_S0, BC_S2);
@@ -5050,6 +5162,42 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
 
                                 // Copy 32 bytes from items[idx] to ops[res_off]
                                 // Can't use bc_copy_value (clobbers BC_S0/S1)
+                                jit_emit_ldp64(asm, BC_S0, BC_S2, BC_S1, 0);
+                                jit_emit_stp64(asm, BC_S0, BC_S2, BC_OPS, res_off);
+                                jit_emit_ldp64(asm, BC_S0, BC_S2, BC_S1, 16);
+                                jit_emit_stp64(asm, BC_S0, BC_S2, BC_OPS, res_off + 16);
+                                jit_emit_jump(asm, lbl_done);
+                        }
+
+                        // Fast path: (T, ...).[](Int)
+                        if (try_tuple) {
+                                jit_emit_label(asm, lbl_tuple);
+
+                                jit_emit_ldrb(asm, BC_S0, BC_OPS, con_off + VAL_OFF_TYPE);
+                                jit_emit_cmp_ri(asm, BC_S0, VALUE_TUPLE);
+                                jit_emit_branch_ne(asm, lbl_slow);
+
+                                jit_emit_ldrb(asm, BC_S0, BC_OPS, sub_off + VAL_OFF_TYPE);
+                                jit_emit_cmp_ri(asm, BC_S0, VALUE_INTEGER);
+                                jit_emit_branch_ne(asm, lbl_slow);
+
+                                // Load index
+                                jit_emit_ldr64(asm, BC_S0, BC_OPS, sub_off + VAL_OFF_Z); // idx
+
+                                // Bounds check: 0 <= idx < count
+                                jit_emit_ldr32(asm, BC_S2, BC_OPS, con_off + VAL_OFF_COUNT); // count
+                                jit_emit_cmp_ri(asm, BC_S0, 0);
+                                jit_emit_branch_lt(asm, lbl_slow);
+                                jit_emit_cmp_lt(asm, BC_S2, BC_S0, BC_S2); // BC_S2 = (idx < count)
+                                jit_emit_cbz(asm, BC_S2, lbl_slow);
+
+                                // Compute item address: items + idx * 32
+                                jit_emit_ldr64(asm, BC_S1, BC_OPS, con_off + VAL_OFF_ITEMS); // items
+                                jit_emit_load_imm(asm, BC_S2, 5);
+                                jit_emit_shl(asm, BC_S0, BC_S0, BC_S2);
+                                jit_emit_add(asm, BC_S1, BC_S1, BC_S0); // &items[idx]
+
+                                // Copy 32 bytes from items[idx] to ops[res_off]
                                 jit_emit_ldp64(asm, BC_S0, BC_S2, BC_S1, 0);
                                 jit_emit_stp64(asm, BC_S0, BC_S2, BC_OPS, res_off);
                                 jit_emit_ldp64(asm, BC_S0, BC_S2, BC_S1, 16);

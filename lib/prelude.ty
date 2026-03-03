@@ -503,6 +503,8 @@ class Array[T] : Iterable[T] {
     reverse(start: ?Int, count: ?Int) -> Array[T];
     rotate(n: Int = 1) -> Array[T];
     rotate!(n: Int = 1) -> Array[T];
+    search(x: T) -> Int | nil;
+    search-by(predicate: T -> Any) -> Int | nil;
     shuffle!() -> Array[T];
     shuffle() -> Array[T];
     sort!(by: T -> Any, desc: Bool = false) -> Array[T];
@@ -577,7 +579,7 @@ class Array[T] : Iterable[T] {
     }
 
     shift-while(p: T -> Any) -> Array[T] {
-        let i = self.search-by(`!` . p) ?? #self
+        let i = search-by(`!` . p) ?? #self
         splice(0, i)
     }
 

@@ -97,10 +97,6 @@ else
 	CFLAGS += -O1
 endif
 
-ifdef PROF
-	CFLAGS += -DTY_PROFILER
-endif
-
 ifdef GENPROF
 	CFLAGS += -fprofile-generate
 endif
@@ -157,6 +153,7 @@ endif
 SOURCES := $(wildcard src/*.c)
 OBJECTS := $(patsubst src/%.c,obj/%.o,$(SOURCES))
 TYLS_OBJECTS := $(patsubst src/%.c,obj/tyls/%.o,$(SOURCES))
+TYPROF_OBJECTS := $(patsubst src/%.c,obj/typrof/%.o,$(SOURCES))
 EXTERNAL := libco/libco.o dtoa/dtoa.o libmd/libmd.a
 ifndef NO_NSYNC
 	EXTERNAL += nsync/out/libnsync.a
@@ -189,6 +186,10 @@ tyls: tyls.c $(TYLS_OBJECTS) $(EXTERNAL)
 	@echo cc $<
 	@$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
+typrof: ty.c $(TYPROF_OBJECTS) $(EXTERNAL)
+	@echo cc $<
+	@$(CC) $(CFLAGS) -DTY_PROFILER -o $@ $^ $(LDFLAGS)
+
 asm: $(ASSEMBLY)
 
 %.s: src/%.c
@@ -208,6 +209,11 @@ obj/%.o: src/%.c
 obj/tyls/%.o: src/%.c
 	@echo cc $<
 	@$(CC) $(CFLAGS) -c -o $@ -DTY_LS -DFILENAME=$(patsubst src/%.c,%,$<) $<
+
+obj/typrof/%.o: src/%.c
+	@echo cc $<
+	@$(CC) $(CFLAGS) -c -o $@ -DTY_PROFILER -DFILENAME=$(patsubst src/%.c,%,$<) $<
+
 
 clean:
 	rm -rf $(PROG) *.gcda $(OBJECTS) $(TYLS_OBJECTS) libco/libco.o dtoa/dtoa.o include/keywords.h $(BUILD_SIG_FILE)
