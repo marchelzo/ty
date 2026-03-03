@@ -71,3 +71,7 @@ fn recursion(nn: Int) {
         assert(sieve(50000) == 5133)
     }
 }
+
+if __module__ == 'main' {
+    recursion(10)
+}

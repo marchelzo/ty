@@ -894,13 +894,6 @@ IsUnknown(Type const *t0)
 }
 
 inline static bool
-IsNilT(Type const *t0)
-{
-        return (t0 != NULL)
-            && (t0->type == TYPE_NIL);
-}
-
-inline static bool
 IsVariadic(Type const *t0)
 {
         return (t0 != NULL) && t0->variadic;

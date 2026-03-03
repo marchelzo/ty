@@ -2820,6 +2820,9 @@ bc_emit_cmp(JitCtx *ctx, void *helper)
         bool is_eq_or_ne = (helper == (void *)jit_rt_eq || helper == (void *)jit_rt_ne);
         Class *cls = expected_class_of(ctx->ty, ctx->op_types[ctx->sp - 1]);
 
+        bool inline_nil = IsNilT(ctx->op_types[ctx->sp - 1])
+                       || IsNilT(ctx->op_types[ctx->sp - 2]);
+
         // For non-equality ops with no int/float fast path, just call the helper
         if (!is_eq_or_ne && (cls == NULL || (cls->i != CLASS_INT && cls->i != CLASS_FLOAT))) {
                 bc_emit_binop_helper(ctx, helper);
@@ -2837,10 +2840,10 @@ bc_emit_cmp(JitCtx *ctx, void *helper)
         if (cls != NULL && cls->i == CLASS_INT) {
                 // === Integer fast path ===
                 jit_emit_cmp_ri(asm, BC_S0, VALUE_INTEGER);
-                jit_emit_branch_ne(asm, is_eq_or_ne ? lbl_nil_check : lbl_slow);
+                jit_emit_branch_ne(asm, inline_nil ? lbl_nil_check : lbl_slow);
 
                 jit_emit_cmp_ri(asm, BC_S1, VALUE_INTEGER);
-                jit_emit_branch_ne(asm, is_eq_or_ne ? lbl_nil_check : lbl_slow);
+                jit_emit_branch_ne(asm, inline_nil ? lbl_nil_check : lbl_slow);
 
                 jit_emit_ldr64(asm, BC_S0, BC_OPS, a_off + VAL_OFF_Z);
                 jit_emit_ldr64(asm, BC_S1, BC_OPS, b_off + VAL_OFF_Z);
@@ -2864,10 +2867,10 @@ bc_emit_cmp(JitCtx *ctx, void *helper)
         } else if (cls != NULL && cls->i == CLASS_FLOAT) {
                 // === Float fast path ===
                 jit_emit_cmp_ri(asm, BC_S0, VALUE_REAL);
-                jit_emit_branch_ne(asm, is_eq_or_ne ? lbl_nil_check : lbl_slow);
+                jit_emit_branch_ne(asm, inline_nil ? lbl_nil_check : lbl_slow);
 
                 jit_emit_cmp_ri(asm, BC_S1, VALUE_REAL);
-                jit_emit_branch_ne(asm, is_eq_or_ne ? lbl_nil_check : lbl_slow);
+                jit_emit_branch_ne(asm, inline_nil ? lbl_nil_check : lbl_slow);
 
                 if (helper == (void *)jit_rt_eq) {
                         jit_emit_fcmp_eq(asm, BC_S0, BC_S1, BC_OPS, a_off + VAL_OFF_Z, b_off + VAL_OFF_Z);
@@ -2888,10 +2891,10 @@ bc_emit_cmp(JitCtx *ctx, void *helper)
         } else if (is_eq_or_ne && cls != NULL && cls->i == CLASS_STRING) {
                 // === String fast path (EQ/NEQ only) ===
                 jit_emit_cmp_ri(asm, BC_S0, VALUE_STRING);
-                jit_emit_branch_ne(asm, lbl_nil_check);
+                jit_emit_branch_ne(asm, inline_nil ? lbl_nil_check : lbl_slow);
 
                 jit_emit_cmp_ri(asm, BC_S1, VALUE_STRING);
-                jit_emit_branch_ne(asm, lbl_nil_check);
+                jit_emit_branch_ne(asm, inline_nil ? lbl_nil_check : lbl_slow);
 
                 // Both strings: call jit_rt_str_eq(a, b)
                 jit_emit_add_imm(asm, BC_A0, BC_OPS, a_off);
@@ -2911,7 +2914,7 @@ bc_emit_cmp(JitCtx *ctx, void *helper)
 
         // === Nil fast path (EQ/NEQ only) ===
         jit_emit_label(asm, lbl_nil_check);
-        if (is_eq_or_ne) {
+        if (is_eq_or_ne && inline_nil) {
                 // BC_S0 = a.type, BC_S1 = b.type (still valid from initial load)
                 jit_emit_cmp_ri(asm, BC_S0, VALUE_NIL);
                 int lbl_a_nil = bc_next_label(ctx);
@@ -3436,6 +3439,16 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                 Type *hint0 = find_type_hint(hints, off);
                 if (hint0 != NULL) {
                         ctx->op_types[ctx->sp - 1] = hint0;
+#if JIT_SCAN_LOG
+                        Expr const *e = compiler_find_expr(ty, code + off);
+                        LOGX("[jit:%d] [%12.12s:%d] [%16.16s] hint at offset %d: %s",
+                                ctx->sp,
+                                e ? e->mod->path : "??",
+                                e ? e->start.line + 1 : 0,
+                                name_of(ctx->func),
+                                off,
+                                type_show(ty, hint0));
+#endif
                 }
 
                 // If this offset is a jump target, emit label and sync sp + save_sp
@@ -3818,6 +3831,7 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
 
                 CASE(DUP)
                         bc_copy_value(ctx, BC_OPS, OP_OFF(ctx->sp), BC_OPS, OP_OFF(ctx->sp - 1));
+                        ctx->op_types[ctx->sp] = ctx->op_types[ctx->sp - 1];
                         ctx->sp++;
                         if (ctx->sp > ctx->max_sp) ctx->max_sp = ctx->sp;
                         break;
@@ -3835,6 +3849,7 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                         // Store original a (in regs) to b
                         jit_emit_stp64(asm, BC_S0, BC_S1, BC_OPS, b);
                         jit_emit_stp64(asm, BC_S2, BC_S3, BC_OPS, b + 16);
+                        SWAP(Type *, ctx->op_types[ctx->sp - 1], ctx->op_types[ctx->sp - 2]);
                         break;
                 }
 
@@ -4078,82 +4093,105 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                         int b_off = OP_OFF(ctx->sp - 1);
                         bool is_eq = (op == INSTR_JEQ);
 
-                        Class *cls = expected_class_of(ctx->ty, ctx->op_types[ctx->sp - 1]);
+                        Type *a0 = ctx->op_types[ctx->sp - 2];
+                        Type *b0 = ctx->op_types[ctx->sp - 1];
+
+                        Class *a_cls = expected_class_of(ctx->ty, a0);
+                        Class *b_cls = expected_class_of(ctx->ty, b0);
+
+                        bool try_float = (a_cls != NULL && a_cls->i == CLASS_FLOAT)
+                                      || (b_cls != NULL && b_cls->i == CLASS_FLOAT);
+
+                        bool try_int = (a_cls != NULL && a_cls->i == CLASS_INT)
+                                    || (b_cls != NULL && b_cls->i == CLASS_INT);
+
+                        bool try_str = (a_cls != NULL && a_cls->i == CLASS_STRING)
+                                    || (b_cls != NULL && b_cls->i == CLASS_STRING);
+
+                        bool try_nil = IsNilT(a0) || IsNilT(b0) || (a_cls == NULL) || (b_cls == NULL);
 
                         int lbl_nil_check = bc_next_label(ctx);
                         int lbl_slow = bc_next_label(ctx);
                         int lbl_done = bc_next_label(ctx);
 
-                        // Load both types
-                        jit_emit_ldrb(asm, BC_S0, BC_OPS, a_off + VAL_OFF_TYPE); // a.type
-                        jit_emit_ldrb(asm, BC_S1, BC_OPS, b_off + VAL_OFF_TYPE); // b.type
+                        if (try_int | try_float | try_str) {
+                                // Load both types
+                                jit_emit_ldrb(asm, BC_S0, BC_OPS, a_off + VAL_OFF_TYPE); // a.type
+                                jit_emit_ldrb(asm, BC_S1, BC_OPS, b_off + VAL_OFF_TYPE); // b.type
 
-                        if (cls != NULL && cls->i == CLASS_INT) {
-                                // === Integer fast path ===
-                                jit_emit_cmp_ri(asm, BC_S0, VALUE_INTEGER);
-                                jit_emit_branch_ne(asm, lbl_nil_check);
+                                if (try_int) {
+                                        // === Integer fast path ===
+                                        jit_emit_cmp_ri(asm, BC_S0, VALUE_INTEGER);
+                                        jit_emit_branch_ne(asm, try_nil ? lbl_nil_check : lbl_slow);
 
-                                jit_emit_cmp_ri(asm, BC_S1, VALUE_INTEGER);
-                                jit_emit_branch_ne(asm, lbl_slow);
+                                        jit_emit_cmp_ri(asm, BC_S1, VALUE_INTEGER);
+                                        jit_emit_branch_ne(asm, lbl_slow);
 
-                                EMIT_STAT(jit_rt_stat_jeq_int);
-                                jit_emit_ldr64(asm, BC_S0, BC_OPS, a_off + VAL_OFF_Z);
-                                jit_emit_ldr64(asm, BC_S1, BC_OPS, b_off + VAL_OFF_Z);
-                                jit_emit_cmp_rr(asm, BC_S0, BC_S1);
-                                if (is_eq)
-                                        jit_emit_branch_eq(asm, lbl_target);
-                                else
-                                        jit_emit_branch_ne(asm, lbl_target);
-                                jit_emit_jump(asm, lbl_done);
-                        } else if (cls != NULL && cls->i == CLASS_STRING) {
-                                // === String fast path ===
-                                jit_emit_cmp_ri(asm, BC_S0, VALUE_STRING);
-                                jit_emit_branch_ne(asm, lbl_nil_check);
+                                        EMIT_STAT(jit_rt_stat_jeq_int);
+                                        jit_emit_ldr64(asm, BC_S0, BC_OPS, a_off + VAL_OFF_Z);
+                                        jit_emit_ldr64(asm, BC_S1, BC_OPS, b_off + VAL_OFF_Z);
+                                        jit_emit_cmp_rr(asm, BC_S0, BC_S1);
+                                        if (is_eq) {
+                                                jit_emit_branch_eq(asm, lbl_target);
+                                        } else {
+                                                jit_emit_branch_ne(asm, lbl_target);
+                                        }
+                                        jit_emit_jump(asm, lbl_done);
+                                }
+                                if (try_str) {
+                                        // === String fast path ===
+                                        jit_emit_cmp_ri(asm, BC_S0, VALUE_STRING);
+                                        jit_emit_branch_ne(asm, try_nil ? lbl_nil_check : lbl_slow);
 
-                                jit_emit_cmp_ri(asm, BC_S1, VALUE_STRING);
-                                jit_emit_branch_ne(asm, lbl_slow);
+                                        jit_emit_cmp_ri(asm, BC_S1, VALUE_STRING);
+                                        jit_emit_branch_ne(asm, lbl_slow);
 
-                                EMIT_STAT(jit_rt_stat_jeq_str);
-                                jit_emit_add_imm(asm, BC_A0, BC_OPS, a_off);
-                                jit_emit_add_imm(asm, BC_A1, BC_OPS, b_off);
-                                jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_str_eq);
-                                jit_emit_call_reg(asm, BC_CALL);
-                                // Return value in register 0
-                                if (is_eq)
-                                        jit_emit_cbnz(asm, BC_RET, lbl_target);
-                                else
-                                        jit_emit_cbz(asm, BC_RET, lbl_target);
-                                jit_emit_jump(asm, lbl_done);
+                                        EMIT_STAT(jit_rt_stat_jeq_str);
+                                        jit_emit_add_imm(asm, BC_A0, BC_OPS, a_off);
+                                        jit_emit_add_imm(asm, BC_A1, BC_OPS, b_off);
+                                        jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_str_eq);
+                                        jit_emit_call_reg(asm, BC_CALL);
+                                        // Return value in register 0
+                                        if (is_eq) {
+                                                jit_emit_cbnz(asm, BC_RET, lbl_target);
+                                        } else {
+                                                jit_emit_cbz(asm, BC_RET, lbl_target);
+                                        }
+                                        jit_emit_jump(asm, lbl_done);
+                                }
                         }
 
-                        // === Nil fast path ===
-                        jit_emit_label(asm, lbl_nil_check);
-                        // Reload types (EMIT_STAT or call may have clobbered them,
-                        // or we fell through with no fast path and they're still valid,
-                        // but reloading is cheap and safe in all cases)
-                        jit_emit_ldrb(asm, BC_S0, BC_OPS, a_off + VAL_OFF_TYPE);
-                        jit_emit_ldrb(asm, BC_S1, BC_OPS, b_off + VAL_OFF_TYPE);
-                        jit_emit_cmp_ri(asm, BC_S0, VALUE_NIL);
-                        int lbl_a_nil = bc_next_label(ctx);
-                        jit_emit_branch_eq(asm, lbl_a_nil);
-                        jit_emit_cmp_ri(asm, BC_S1, VALUE_NIL);
-                        jit_emit_branch_ne(asm, lbl_slow);
-                        // b is nil, a is not nil: EQ=false(no branch), NEQ=true(branch)
-                        EMIT_STAT(jit_rt_stat_jeq_nil);
-                        if (!is_eq)
-                                jit_emit_jump(asm, lbl_target);
-                        jit_emit_jump(asm, lbl_done);
-                        // a is nil
-                        jit_emit_label(asm, lbl_a_nil);
-                        EMIT_STAT(jit_rt_stat_jeq_nil);
-                        // result = (b.type == VALUE_NIL) --- reload b.type
-                        jit_emit_ldrb(asm, BC_S1, BC_OPS, b_off + VAL_OFF_TYPE);
-                        jit_emit_cmp_ri(asm, BC_S1, VALUE_NIL);
-                        if (is_eq)
-                                jit_emit_branch_eq(asm, lbl_target);
-                        else
-                                jit_emit_branch_ne(asm, lbl_target);
-                        jit_emit_jump(asm, lbl_done);
+                        if (try_nil) {
+                                // === Nil fast path ===
+                                jit_emit_label(asm, lbl_nil_check);
+                                // Reload types (EMIT_STAT or call may have clobbered them,
+                                // or we fell through with no fast path and they're still valid,
+                                // but reloading is cheap and safe in all cases)
+                                jit_emit_ldrb(asm, BC_S0, BC_OPS, a_off + VAL_OFF_TYPE);
+                                jit_emit_ldrb(asm, BC_S1, BC_OPS, b_off + VAL_OFF_TYPE);
+                                jit_emit_cmp_ri(asm, BC_S0, VALUE_NIL);
+                                int lbl_a_nil = bc_next_label(ctx);
+                                jit_emit_branch_eq(asm, lbl_a_nil);
+                                jit_emit_cmp_ri(asm, BC_S1, VALUE_NIL);
+                                jit_emit_branch_ne(asm, lbl_slow);
+                                // b is nil, a is not nil: EQ=false(no branch), NEQ=true(branch)
+                                EMIT_STAT(jit_rt_stat_jeq_nil);
+                                if (!is_eq)
+                                        jit_emit_jump(asm, lbl_target);
+                                jit_emit_jump(asm, lbl_done);
+                                // a is nil
+                                jit_emit_label(asm, lbl_a_nil);
+                                EMIT_STAT(jit_rt_stat_jeq_nil);
+                                // result = (b.type == VALUE_NIL) --- reload b.type
+                                jit_emit_ldrb(asm, BC_S1, BC_OPS, b_off + VAL_OFF_TYPE);
+                                jit_emit_cmp_ri(asm, BC_S1, VALUE_NIL);
+                                if (is_eq) {
+                                        jit_emit_branch_eq(asm, lbl_target);
+                                } else {
+                                        jit_emit_branch_ne(asm, lbl_target);
+                                }
+                                jit_emit_jump(asm, lbl_done);
+                        }
 
                         // === Slow path: call helper ===
                         jit_emit_label(asm, lbl_slow);
@@ -4192,62 +4230,80 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                         int lbl_slow = bc_next_label(ctx);
                         int lbl_done = bc_next_label(ctx);
 
-                        // Load both types
-                        jit_emit_ldrb(asm, BC_S0, BC_OPS, a_off + VAL_OFF_TYPE);
-                        jit_emit_ldrb(asm, BC_S1, BC_OPS, b_off + VAL_OFF_TYPE);
+                        Type *a0 = ctx->op_types[ctx->sp - 2];
+                        Type *b0 = ctx->op_types[ctx->sp - 1];
 
-                        int lbl_float = bc_next_label(ctx);
+                        Class *a_cls = expected_class_of(ctx->ty, a0);
+                        Class *b_cls = expected_class_of(ctx->ty, b0);
 
-                        // Check a.type == VALUE_INTEGER
-                        jit_emit_cmp_ri(asm, BC_S0, VALUE_INTEGER);
-                        jit_emit_branch_ne(asm, lbl_float);
+                        bool try_float = (a_cls != NULL && a_cls->i == CLASS_FLOAT)
+                                      || (b_cls != NULL && b_cls->i == CLASS_FLOAT);
 
-                        // Check b.type == VALUE_INTEGER
-                        jit_emit_cmp_ri(asm, BC_S1, VALUE_INTEGER);
-                        jit_emit_branch_ne(asm, lbl_float);
+                        bool try_int = (a_cls != NULL && a_cls->i == CLASS_INT)
+                                    || (b_cls != NULL && b_cls->i == CLASS_INT);
 
-                        // === Integer fast path: compare a.z vs b.z ===
-                        EMIT_STAT(jit_rt_stat_jcmp_int);
-                        jit_emit_ldr64(asm, BC_S0, BC_OPS, a_off + VAL_OFF_Z);
-                        jit_emit_ldr64(asm, BC_S1, BC_OPS, b_off + VAL_OFF_Z);
-                        jit_emit_cmp_rr(asm, BC_S0, BC_S1);
-                        switch (op) {
-                        case INSTR_JLT: jit_emit_branch_lt(asm, lbl_target); break;
-                        case INSTR_JGT: jit_emit_branch_gt(asm, lbl_target); break;
-                        case INSTR_JLE: jit_emit_branch_le(asm, lbl_target); break;
-                        case INSTR_JGE: jit_emit_branch_ge(asm, lbl_target); break;
+                        if (try_float || try_int) {
+                                // Load both types
+                                jit_emit_ldrb(asm, BC_S0, BC_OPS, a_off + VAL_OFF_TYPE);
+                                jit_emit_ldrb(asm, BC_S1, BC_OPS, b_off + VAL_OFF_TYPE);
+
+                                int lbl_float = bc_next_label(ctx);
+
+                                if (try_int) {
+                                        // Check a.type == VALUE_INTEGER
+                                        jit_emit_cmp_ri(asm, BC_S0, VALUE_INTEGER);
+                                        jit_emit_branch_ne(asm, lbl_slow);
+
+                                        // Check b.type == VALUE_INTEGER
+                                        jit_emit_cmp_ri(asm, BC_S1, VALUE_INTEGER);
+                                        jit_emit_branch_ne(asm, lbl_slow);
+
+                                        // === Integer fast path: compare a.z vs b.z ===
+                                        EMIT_STAT(jit_rt_stat_jcmp_int);
+                                        jit_emit_ldr64(asm, BC_S0, BC_OPS, a_off + VAL_OFF_Z);
+                                        jit_emit_ldr64(asm, BC_S1, BC_OPS, b_off + VAL_OFF_Z);
+                                        jit_emit_cmp_rr(asm, BC_S0, BC_S1);
+                                        switch (op) {
+                                        case INSTR_JLT: jit_emit_branch_lt(asm, lbl_target); break;
+                                        case INSTR_JGT: jit_emit_branch_gt(asm, lbl_target); break;
+                                        case INSTR_JLE: jit_emit_branch_le(asm, lbl_target); break;
+                                        case INSTR_JGE: jit_emit_branch_ge(asm, lbl_target); break;
+                                        }
+                                        jit_emit_jump(asm, lbl_done);
+                                }
+
+                                if (try_float) {
+                                        // === Float fast path ===
+                                        jit_emit_label(asm, lbl_float);
+
+                                        jit_emit_cmp_ri(asm, BC_S0, VALUE_REAL);
+                                        jit_emit_branch_ne(asm, lbl_slow);
+
+                                        jit_emit_cmp_ri(asm, BC_S1, VALUE_REAL);
+                                        jit_emit_branch_ne(asm, lbl_slow);
+
+                                        // For lt/le: swap operands so we can use gt/ge branches
+                                        switch (op) {
+                                        case INSTR_JLT:
+                                                jit_emit_fload_cmp(asm, BC_OPS, b_off + VAL_OFF_Z, a_off + VAL_OFF_Z);
+                                                jit_emit_fbranch_gt(asm, lbl_target);
+                                                break;
+                                        case INSTR_JGT:
+                                                jit_emit_fload_cmp(asm, BC_OPS, a_off + VAL_OFF_Z, b_off + VAL_OFF_Z);
+                                                jit_emit_fbranch_gt(asm, lbl_target);
+                                                break;
+                                        case INSTR_JLE:
+                                                jit_emit_fload_cmp(asm, BC_OPS, b_off + VAL_OFF_Z, a_off + VAL_OFF_Z);
+                                                jit_emit_fbranch_ge(asm, lbl_target);
+                                                break;
+                                        case INSTR_JGE:
+                                                jit_emit_fload_cmp(asm, BC_OPS, a_off + VAL_OFF_Z, b_off + VAL_OFF_Z);
+                                                jit_emit_fbranch_ge(asm, lbl_target);
+                                                break;
+                                        }
+                                        jit_emit_jump(asm, lbl_done);
+                                }
                         }
-                        jit_emit_jump(asm, lbl_done);
-
-                        // === Float fast path ===
-                        jit_emit_label(asm, lbl_float);
-
-                        jit_emit_cmp_ri(asm, BC_S0, VALUE_REAL);
-                        jit_emit_branch_ne(asm, lbl_slow);
-
-                        jit_emit_cmp_ri(asm, BC_S1, VALUE_REAL);
-                        jit_emit_branch_ne(asm, lbl_slow);
-
-                        // For lt/le: swap operands so we can use gt/ge branches
-                        switch (op) {
-                        case INSTR_JLT:
-                                jit_emit_fload_cmp(asm, BC_OPS, b_off + VAL_OFF_Z, a_off + VAL_OFF_Z);
-                                jit_emit_fbranch_gt(asm, lbl_target);
-                                break;
-                        case INSTR_JGT:
-                                jit_emit_fload_cmp(asm, BC_OPS, a_off + VAL_OFF_Z, b_off + VAL_OFF_Z);
-                                jit_emit_fbranch_gt(asm, lbl_target);
-                                break;
-                        case INSTR_JLE:
-                                jit_emit_fload_cmp(asm, BC_OPS, b_off + VAL_OFF_Z, a_off + VAL_OFF_Z);
-                                jit_emit_fbranch_ge(asm, lbl_target);
-                                break;
-                        case INSTR_JGE:
-                                jit_emit_fload_cmp(asm, BC_OPS, a_off + VAL_OFF_Z, b_off + VAL_OFF_Z);
-                                jit_emit_fbranch_ge(asm, lbl_target);
-                                break;
-                        }
-                        jit_emit_jump(asm, lbl_done);
 
                         // === Slow path: call jit_rt_compare(ty, &a, &b) ===
                         jit_emit_label(asm, lbl_slow);
@@ -4912,7 +4968,6 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                         jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_array);
                         jit_emit_call_reg(asm, BC_CALL);
                         ctx->sp = saved + 1;
-                        ctx->op_types[ctx->sp - 1] = ARRAY_TYPE;
                         DBG("ARRAY literal");
                         break;
                 }
@@ -4955,9 +5010,11 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                         // After:  ..., A, B, B, A (sp=N+2)
                         // Copy B (at sp-1) to sp
                         bc_copy_value(ctx, BC_OPS, OP_OFF(ctx->sp), BC_OPS, OP_OFF(ctx->sp - 1));
+                        ctx->op_types[ctx->sp] = ctx->op_types[ctx->sp - 1];
                         ctx->sp++;
                         // Copy A (now at sp-3) to sp
                         bc_copy_value(ctx, BC_OPS, OP_OFF(ctx->sp), BC_OPS, OP_OFF(ctx->sp - 3));
+                        ctx->op_types[ctx->sp] = ctx->op_types[ctx->sp - 3];
                         ctx->sp++;
                         if (ctx->sp > ctx->max_sp) ctx->max_sp = ctx->sp;
                         break;

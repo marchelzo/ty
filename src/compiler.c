@@ -10257,8 +10257,8 @@ BeginRangeLoop(
         Expr *start = !reverse ? range->left  : range->right;
         Expr *stop  = !reverse ? range->right : range->left;
 
-        Expr zero = { .type = EXPRESSION_INTEGER, .integer = 0          };
-        Expr inf  = { .type = EXPRESSION_INTEGER, .integer = INTMAX_MAX };
+        Expr zero = { .type = EXPRESSION_INTEGER, .integer = 0,          ._type = INT_TYPE };
+        Expr inf  = { .type = EXPRESSION_INTEGER, .integer = INTMAX_MAX, ._type = INT_TYPE };
 
         if (start == NULL) start = &zero;
         if (stop  == NULL) stop  = (reverse ? &zero : &inf);
