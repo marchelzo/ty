@@ -11,7 +11,7 @@ pub use BufferingMode = (typeof FBF) | (typeof LBF) | (typeof NBF)
 pub SEEK_SET = stdio.SEEK_SET
 pub SEEK_CUR = stdio.SEEK_CUR
 
-pub class Stream : Iter {
+pub class Stream : Iter[String] {
     __f: _
     __fd: Int
 

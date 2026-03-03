@@ -194,6 +194,7 @@ fn -(a: String, b: Int | Bool) -> String;
 
 fn +[K, U, V](a: Dict[K, U], b: Dict[K, V]) -> Dict[K, U | V];
 fn -[K, V](a: Dict[K, V], b: Dict[K, Any]) -> Dict[K, V];
+fn &[K, V](a: Dict[K, V], b: Dict[K, Any]) -> Dict[K, V];
 
 fn %.*[T, U, *Ts](tpl: (T, Ts), f: T -> U) -> (U, Ts);
 
