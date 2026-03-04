@@ -191,6 +191,37 @@ static void jit_emit_fcmp_ge(dasm_State **Dst, int dst, int scratch, int base, i
         |  cset Rx(dst), ge
 }
 
+// --- Float arithmetic ---
+// Load doubles from [base+a_off] and [base+b_off], compute, store result to [base+a_off].
+
+static void jit_emit_fadd(dasm_State **Dst, int base, int a_off, int b_off) {
+        |  ldr d0, [Rx(base), #a_off]
+        |  ldr d1, [Rx(base), #b_off]
+        |  fadd d0, d0, d1
+        |  str d0, [Rx(base), #a_off]
+}
+
+static void jit_emit_fsub(dasm_State **Dst, int base, int a_off, int b_off) {
+        |  ldr d0, [Rx(base), #a_off]
+        |  ldr d1, [Rx(base), #b_off]
+        |  fsub d0, d0, d1
+        |  str d0, [Rx(base), #a_off]
+}
+
+static void jit_emit_fmul(dasm_State **Dst, int base, int a_off, int b_off) {
+        |  ldr d0, [Rx(base), #a_off]
+        |  ldr d1, [Rx(base), #b_off]
+        |  fmul d0, d0, d1
+        |  str d0, [Rx(base), #a_off]
+}
+
+static void jit_emit_fdiv(dasm_State **Dst, int base, int a_off, int b_off) {
+        |  ldr d0, [Rx(base), #a_off]
+        |  ldr d1, [Rx(base), #b_off]
+        |  fdiv d0, d0, d1
+        |  str d0, [Rx(base), #a_off]
+}
+
 // Load two doubles and compare: fcmp [base+off0], [base+off1]
 static void jit_emit_fload_cmp(dasm_State **Dst, int base, int off0, int off1) {
         |  ldr d0, [Rx(base), #off0]

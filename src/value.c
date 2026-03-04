@@ -2081,6 +2081,9 @@ ConstructPrimitive(Ty *ty, int class_id, int argc, Value *kwargs)
         case CLASS_INT:
                 return builtin_int(ty, argc, kwargs);
 
+        case CLASS_FLOAT:
+                return builtin_float(ty, argc, kwargs);
+
         case CLASS_STRING:
                 return builtin_str(ty, argc, kwargs);
 

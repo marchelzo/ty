@@ -130,6 +130,9 @@ static struct {
         _Atomic u64 jeq_slow;
         _Atomic u64 jcmp_int;
         _Atomic u64 jcmp_slow;
+        _Atomic u64 arith_int;
+        _Atomic u64 arith_float;
+        _Atomic u64 arith_slow;
 } jit_stats;
 
 // ============================================================================
@@ -143,6 +146,7 @@ enum {
         SLOW_CALL_METHOD,
         SLOW_JEQ,
         SLOW_JCMP,
+        SLOW_ARITH,
         SLOW_KIND_COUNT
 };
 
@@ -154,6 +158,7 @@ static char const *slow_kind_names[] = {
         [SLOW_CALL_METHOD]       = "call_method",
         [SLOW_JEQ]               = "eq/ne",
         [SLOW_JCMP]              = "cmp",
+        [SLOW_ARITH]             = "arith",
 };
 
 #define SLOW_TABLE_SIZE  4906   /* must be power of 2 */
@@ -439,11 +444,14 @@ jit_stats_report(Ty *ty, FILE *out)
         slow_totals[SLOW_MEMBER_SET]    += jit_stats.member_set_slow;
         slow_totals[SLOW_CALL_METHOD]   += jit_stats.call_method_slow;
 
+        slow_totals[SLOW_ARITH] += jit_stats.arith_slow;
+
         u64 total_fast = jit_stats.member_fast + jit_stats.member_set_fast
                        + jit_stats.self_member_read_fast + jit_stats.self_member_write_fast
                        + jit_stats.call_method_baked + jit_stats.call_method_builtin
                        + jit_stats.jeq_int + jit_stats.jeq_str + jit_stats.jeq_nil
-                       + jit_stats.jcmp_int;
+                       + jit_stats.jcmp_int
+                       + jit_stats.arith_int + jit_stats.arith_float;
         u64 total_slow = 0;
         for (int i = 0; i < SLOW_KIND_COUNT; ++i) total_slow += slow_totals[i];
 
@@ -494,6 +502,16 @@ jit_stats_report(Ty *ty, FILE *out)
                 }
 
                 fast_path_row(out, "cmp", jit_stats.jcmp_int, slow_totals[SLOW_JCMP]);
+
+                u64 arith_fast = jit_stats.arith_int + jit_stats.arith_float;
+                fast_path_row(out, "arith", arith_fast, slow_totals[SLOW_ARITH]);
+                if (arith_fast + slow_totals[SLOW_ARITH] > 0) {
+                        fprintf(out, "      %sint=%llu  float=%llu%s\n",
+                                PTERM(90),
+                                (unsigned long long)jit_stats.arith_int,
+                                (unsigned long long)jit_stats.arith_float,
+                                PTERM(0));
+                }
 
                 fputc('\n', out);
         }
@@ -572,6 +590,8 @@ static void jit_rt_stat_jeq_int(void)                { STAT(jeq_int); }
 static void jit_rt_stat_jeq_str(void)                { STAT(jeq_str); }
 static void jit_rt_stat_jeq_nil(void)                { STAT(jeq_nil); }
 static void jit_rt_stat_jcmp_int(void)               { STAT(jcmp_int); }
+static void jit_rt_stat_arith_int(void)              { STAT(arith_int); }
+static void jit_rt_stat_arith_float(void)            { STAT(arith_float); }
 
 #define EMIT_STAT(fn_ptr) do {                                         \
         jit_emit_load_imm(asm, BC_CALL, (iptr)(fn_ptr));               \
@@ -691,6 +711,8 @@ jit_rt_add(Ty *ty, Value *result, Value *a, Value *b)
                 return;
         }
 
+        STAT(arith_slow);
+
         ptrdiff_t idx = result - vv(ty->stack);
         vN(ty->stack) = idx + 2;
 
@@ -706,6 +728,8 @@ jit_rt_sub(Ty *ty, Value *result, Value *a, Value *b)
                 return;
         }
 
+        STAT(arith_slow);
+
         ptrdiff_t idx = result - vv(ty->stack);
         vN(ty->stack) = idx + 2;
 
@@ -720,6 +744,8 @@ jit_rt_mul(Ty *ty, Value *result, Value *a, Value *b)
                 *result = INTEGER(a->z * b->z);
                 return;
         }
+
+        STAT(arith_slow);
 
         ptrdiff_t idx = result - vv(ty->stack);
         vN(ty->stack) = idx + 2;
@@ -737,6 +763,8 @@ jit_rt_div(Ty *ty, Value *result, Value *a, Value *b)
                 return;
         }
 
+        STAT(arith_slow);
+
         ptrdiff_t idx = result - vv(ty->stack);
         vN(ty->stack) = idx + 2;
 
@@ -752,6 +780,8 @@ jit_rt_mod(Ty *ty, Value *result, Value *a, Value *b)
                 *result = INTEGER(a->z % b->z);
                 return;
         }
+
+        STAT(arith_slow);
 
         ptrdiff_t idx = result - vv(ty->stack);
         vN(ty->stack) = idx + 2;
@@ -2519,6 +2549,8 @@ jit_rt_concat_strings(Ty *ty, Value *result, Value *base, int n)
 // Bytecode emission
 // ============================================================================
 
+static Class *expected_class_of(Ty *ty, Type const *t);
+
 static void
 bc_copy_value(JitCtx *ctx, int dst_reg, int dst_off, int src_reg, int src_off)
 {
@@ -2730,63 +2762,119 @@ bc_emit_arith(JitCtx *ctx, void *helper)
         int a_off = OP_OFF(ctx->sp - 2);
         int b_off = OP_OFF(ctx->sp - 1);
 
+        Type *a0 = ctx->op_types[ctx->sp - 2];
+        Type *b0 = ctx->op_types[ctx->sp - 1];
+
+        Class *a_cls = expected_class_of(ctx->ty, a0);
+        Class *b_cls = expected_class_of(ctx->ty, b0);
+
+        bool try_float = (a_cls == NULL || a_cls->i == CLASS_FLOAT)
+                      && (b_cls == NULL || b_cls->i == CLASS_FLOAT);
+
+        bool try_int = (a_cls == NULL || a_cls->i == CLASS_INT)
+                    && (b_cls == NULL || b_cls->i == CLASS_INT);
+
+        // Only emit float fast path for basic arithmetic (not bitwise/shift/mod)
+        bool float_arith = try_float
+                        && (helper == (void *)jit_rt_add
+                         || helper == (void *)jit_rt_sub
+                         || helper == (void *)jit_rt_mul
+                         || helper == (void *)jit_rt_div);
+
         int lbl_slow = bc_next_label(ctx);
         int lbl_done = bc_next_label(ctx);
+        int lbl_float = (try_int && float_arith) ? bc_next_label(ctx) : lbl_slow;
 
-        // Check a->type == VALUE_INTEGER
-        jit_emit_ldrb(asm, BC_S0, BC_OPS, a_off + VAL_OFF_TYPE);
-        jit_emit_cmp_ri(asm, BC_S0, VALUE_INTEGER);
-        jit_emit_branch_ne(asm, lbl_slow);
+        if (try_int) {
+                // Check a->type == VALUE_INTEGER
+                jit_emit_ldrb(asm, BC_S0, BC_OPS, a_off + VAL_OFF_TYPE);
+                jit_emit_cmp_ri(asm, BC_S0, VALUE_INTEGER);
+                jit_emit_branch_ne(asm, lbl_float);
 
-        // Check b->type == VALUE_INTEGER
-        jit_emit_ldrb(asm, BC_S0, BC_OPS, b_off + VAL_OFF_TYPE);
-        jit_emit_cmp_ri(asm, BC_S0, VALUE_INTEGER);
-        jit_emit_branch_ne(asm, lbl_slow);
+                // Check b->type == VALUE_INTEGER
+                jit_emit_ldrb(asm, BC_S0, BC_OPS, b_off + VAL_OFF_TYPE);
+                jit_emit_cmp_ri(asm, BC_S0, VALUE_INTEGER);
+                jit_emit_branch_ne(asm, lbl_float);
 
-        // Fast path: load integers, compute, store result
-        jit_emit_ldr64(asm, BC_S0, BC_OPS, a_off + VAL_OFF_Z);
-        jit_emit_ldr64(asm, BC_S1, BC_OPS, b_off + VAL_OFF_Z);
+                // Fast path: load integers, compute, store result
+                jit_emit_ldr64(asm, BC_S0, BC_OPS, a_off + VAL_OFF_Z);
+                jit_emit_ldr64(asm, BC_S1, BC_OPS, b_off + VAL_OFF_Z);
 
-        // Guard div/mod against zero divisor (SIGFPE on x64, wrong result on arm64)
-        if (helper == (void *)jit_rt_div || helper == (void *)jit_rt_mod) {
-                jit_emit_cbz(asm, BC_S1, lbl_slow);
+                // Guard div/mod against zero divisor (SIGFPE on x64, wrong result on arm64)
+                if (helper == (void *)jit_rt_div || helper == (void *)jit_rt_mod) {
+                        jit_emit_cbz(asm, BC_S1, lbl_slow);
+                }
+
+                if (helper == (void *)jit_rt_add) {
+                        jit_emit_add(asm, BC_S0, BC_S0, BC_S1);
+                } else if (helper == (void *)jit_rt_sub) {
+                        jit_emit_sub(asm, BC_S0, BC_S0, BC_S1);
+                } else if (helper == (void *)jit_rt_mul) {
+                        jit_emit_mul(asm, BC_S0, BC_S0, BC_S1);
+                } else if (helper == (void *)jit_rt_div) {
+                        jit_emit_sdiv(asm, BC_S0, BC_S0, BC_S1);
+                } else if (helper == (void *)jit_rt_mod) {
+                        jit_emit_mod(asm, BC_S0, BC_S0, BC_S1);
+                } else if (helper == (void *)jit_rt_bit_and) {
+                        jit_emit_and(asm, BC_S0, BC_S0, BC_S1);
+                } else if (helper == (void *)jit_rt_bit_or) {
+                        jit_emit_or(asm, BC_S0, BC_S0, BC_S1);
+                } else if (helper == (void *)jit_rt_bit_xor) {
+                        jit_emit_xor(asm, BC_S0, BC_S0, BC_S1);
+                } else if (helper == (void *)jit_rt_shl) {
+                        jit_emit_shl(asm, BC_S0, BC_S0, BC_S1);
+                } else if (helper == (void *)jit_rt_shr) {
+                        jit_emit_shr(asm, BC_S0, BC_S0, BC_S1);
+                }
+
+                // Store result z into ops[sp-2]
+                jit_emit_str64(asm, BC_S0, BC_OPS, a_off + VAL_OFF_Z);
+                // Type is already VALUE_INTEGER
+                EMIT_STAT(jit_rt_stat_arith_int);
+                jit_emit_jump(asm, lbl_done);
         }
 
-        if (helper == (void *)jit_rt_add) {
-                jit_emit_add(asm, BC_S0, BC_S0, BC_S1);
-        } else if (helper == (void *)jit_rt_sub) {
-                jit_emit_sub(asm, BC_S0, BC_S0, BC_S1);
-        } else if (helper == (void *)jit_rt_mul) {
-                jit_emit_mul(asm, BC_S0, BC_S0, BC_S1);
-        } else if (helper == (void *)jit_rt_div) {
-                jit_emit_sdiv(asm, BC_S0, BC_S0, BC_S1);
-        } else if (helper == (void *)jit_rt_mod) {
-                jit_emit_mod(asm, BC_S0, BC_S0, BC_S1);
-        } else if (helper == (void *)jit_rt_bit_and) {
-                jit_emit_and(asm, BC_S0, BC_S0, BC_S1);
-        } else if (helper == (void *)jit_rt_bit_or) {
-                jit_emit_or(asm, BC_S0, BC_S0, BC_S1);
-        } else if (helper == (void *)jit_rt_bit_xor) {
-                jit_emit_xor(asm, BC_S0, BC_S0, BC_S1);
-        } else if (helper == (void *)jit_rt_shl) {
-                jit_emit_shl(asm, BC_S0, BC_S0, BC_S1);
-        } else if (helper == (void *)jit_rt_shr) {
-                jit_emit_shr(asm, BC_S0, BC_S0, BC_S1);
-        }
+        if (float_arith) {
+                if (try_int) {
+                        jit_emit_label(asm, lbl_float);
+                }
 
-        // Store result z into ops[sp-2]
-        jit_emit_str64(asm, BC_S0, BC_OPS, a_off + VAL_OFF_Z);
-        // Type is already VALUE_INTEGER
-        jit_emit_jump(asm, lbl_done);
+                // Check a->type == VALUE_REAL
+                jit_emit_ldrb(asm, BC_S0, BC_OPS, a_off + VAL_OFF_TYPE);
+                jit_emit_cmp_ri(asm, BC_S0, VALUE_REAL);
+                jit_emit_branch_ne(asm, lbl_slow);
+
+                // Check b->type == VALUE_REAL
+                jit_emit_ldrb(asm, BC_S0, BC_OPS, b_off + VAL_OFF_TYPE);
+                jit_emit_cmp_ri(asm, BC_S0, VALUE_REAL);
+                jit_emit_branch_ne(asm, lbl_slow);
+
+                // Guard div against zero divisor (+0.0 and -0.0)
+                if (helper == (void *)jit_rt_div) {
+                        jit_emit_ldr64(asm, BC_S0, BC_OPS, b_off + VAL_OFF_Z);
+                        jit_emit_add(asm, BC_S0, BC_S0, BC_S0); // clears sign bit
+                        jit_emit_cbz(asm, BC_S0, lbl_slow);
+                }
+
+                if (helper == (void *)jit_rt_add) {
+                        jit_emit_fadd(asm, BC_OPS, a_off + VAL_OFF_Z, b_off + VAL_OFF_Z);
+                } else if (helper == (void *)jit_rt_sub) {
+                        jit_emit_fsub(asm, BC_OPS, a_off + VAL_OFF_Z, b_off + VAL_OFF_Z);
+                } else if (helper == (void *)jit_rt_mul) {
+                        jit_emit_fmul(asm, BC_OPS, a_off + VAL_OFF_Z, b_off + VAL_OFF_Z);
+                } else if (helper == (void *)jit_rt_div) {
+                        jit_emit_fdiv(asm, BC_OPS, a_off + VAL_OFF_Z, b_off + VAL_OFF_Z);
+                }
+
+                // Type is already VALUE_REAL
+                EMIT_STAT(jit_rt_stat_arith_float);
+                jit_emit_jump(asm, lbl_done);
+        }
 
         // Slow path
         jit_emit_label(asm, lbl_slow);
-        bc_emit_binop_helper(ctx, helper);
-        ctx->sp++; // bc_emit_binop_helper decremented sp, but we want to undo it here
-                   // since we decrement once below
-
+        bc_emit_binop_helper(ctx, helper); // sp--
         jit_emit_label(asm, lbl_done);
-        ctx->sp--;
 }
 
 static void
@@ -2800,8 +2888,6 @@ bc_write_bool(JitCtx *ctx, int off, int val_reg)
         jit_emit_strb(asm, BC_S1, BC_OPS, off + VAL_OFF_TYPE);
         jit_emit_str64(asm, val_reg, BC_OPS, off + VAL_OFF_Z);
 }
-
-static Class *expected_class_of(Ty *ty, Type const *t);
 
 // Emit: type-directed fast paths for comparison ops.
 // Uses expected_class_of() to decide which fast path to emit:

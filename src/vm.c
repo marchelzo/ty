@@ -3958,6 +3958,18 @@ QuietFailure:
         }
 }
 
+void
+DoYield(Ty *ty)
+{
+        Generator *gen = GetCurrentGenerator(ty);
+
+        if (UNLIKELY(gen == NULL)) {
+                zP("attempt to yield from outside of a generator context");
+        }
+
+        co_yield_value(ty);
+}
+
 // ===/ < > <= >= == != /=======================================================
 #define DEFINE_RELATIONAL_OP(name, op, _op, _op_neg)                            \
 void                                                                            \
@@ -7207,27 +7219,19 @@ TargetMember:
                         }
                         break;
 
-YIELD:
                 CASE(YIELD)
-                {
-                        Generator *gen = GetCurrentGenerator(ty);
-
-                        if (UNLIKELY(gen == NULL)) {
-                                zP("attempt to yield from outside of a generator context");
-                        }
-
-                        co_yield_value(ty);
-
+                        DoYield(ty);
                         break;
-                }
 
                 CASE(YIELD_NONE)
                         push(None);
-                        goto YIELD;
+                        DoYield(ty);
+                        break;
 
                 CASE(YIELD_SOME)
-                        *top() = Some(peek());
-                        goto YIELD;
+                        put(Some(peek()));
+                        DoYield(ty);
+                        break;
 
                 CASE(MAKE_GENERATOR)
                         v = GENERATOR(mAo0(sizeof *v.gen, GC_GENERATOR));

@@ -255,6 +255,33 @@ static void jit_emit_fcmp_ge(dasm_State **Dst, int dst, int scratch, int base, i
         |  movzx Rq(dst), Rb(dst)
 }
 
+// --- Float arithmetic ---
+// Load doubles from [base+a_off] and [base+b_off], compute, store result to [base+a_off].
+
+static void jit_emit_fadd(dasm_State **Dst, int base, int a_off, int b_off) {
+        |  movsd xmm0, qword [Rq(base)+a_off]
+        |  addsd xmm0, qword [Rq(base)+b_off]
+        |  movsd qword [Rq(base)+a_off], xmm0
+}
+
+static void jit_emit_fsub(dasm_State **Dst, int base, int a_off, int b_off) {
+        |  movsd xmm0, qword [Rq(base)+a_off]
+        |  subsd xmm0, qword [Rq(base)+b_off]
+        |  movsd qword [Rq(base)+a_off], xmm0
+}
+
+static void jit_emit_fmul(dasm_State **Dst, int base, int a_off, int b_off) {
+        |  movsd xmm0, qword [Rq(base)+a_off]
+        |  mulsd xmm0, qword [Rq(base)+b_off]
+        |  movsd qword [Rq(base)+a_off], xmm0
+}
+
+static void jit_emit_fdiv(dasm_State **Dst, int base, int a_off, int b_off) {
+        |  movsd xmm0, qword [Rq(base)+a_off]
+        |  divsd xmm0, qword [Rq(base)+b_off]
+        |  movsd qword [Rq(base)+a_off], xmm0
+}
+
 // Load two doubles and compare: ucomisd [base+off0], [base+off1]
 // For gt/ge: off0=a, off1=b (natural order, then ja/jae)
 // For lt/le: off0=b, off1=a (swapped, then ja/jae)
