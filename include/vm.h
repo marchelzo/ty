@@ -53,6 +53,9 @@ bool
 CallMethod(Ty *ty, int m_id, int n, int nkw, bool b, bool exec);
 
 void
+DoYield(Ty *ty);
+
+void
 DoTargetSubscript(Ty *ty);
 
 void
@@ -280,6 +283,14 @@ vm_jit_loop_check(Ty *ty, int z);
 void
 vm_jit_fail(Ty *ty, Value *top, char *ip);
 
+#if !defined(TY_NO_JIT)
+JitContStack *
+GetFreeJitContStack(Ty *ty);
+#endif
+
+char *
+DoFunction(Ty *ty, char const *ip);
+
 void
 DoDictLiteral(Ty *ty, i32 n, Value const *dflt);
 
@@ -339,6 +350,9 @@ DoLeq(Ty *ty);
 
 void
 DoGeq(Ty *ty);
+
+char *
+co_colored(Ty *ty);
 
 #define VM_TRY() (setjmp(vm_push_try(ty)->jb) == 0)
 

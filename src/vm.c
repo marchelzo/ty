@@ -134,13 +134,17 @@ static Ty *ty = &vvv;
         case INSTR_##i:                                     \
                 fprintf(                                    \
                         stderr,                             \
-                        "[%s:%s]: %s   %s\n", \
-                        I_AM_TDB ? "TDB" : "Ty", \
-                        TDB_STATE_NAME, \
+                        "[f=%zu fp=%zu sp=%zu]: %s   %s\n", \
+                        vN(FRAMES), \
+                        vN(FRAMES) ? vvL(FRAMES)->fp : 0, \
+                        vN(STACK), \
                         GetInstructionName(IP[-1]), \
                         vN(STACK) ? SHOW(top()) : "--" \
                 );
-#define CASE(i) case INSTR_##i:
+#define YCASE(i) case INSTR_##i:
+#define CASE(i) \
+        case INSTR_##i: \
+                CO_LOG(#i, TERM(93), "%s", SHOW(top()));
 #endif
 
 #define MatchError do {                                          \
@@ -172,12 +176,13 @@ ValueVector Globals;
 
 #define TY_INSTR_INLINE
 
-#define IP            (ty->ip)
-#define CO_THREADS    (ty->cothreads)
-#define JB            (ty->jb)
-#define STACK         (ty->stack)
-#define THREAD_LOCALS (ty->tls)
-#define THROW_STACK   (ty->throw_stack)
+#define IP              (ty->ip)
+#define CO_THREADS      (ty->cothreads)
+#define JIT_STATES      (ty->jit_states)
+#define JB              (ty->jb)
+#define STACK           (ty->stack)
+#define THREAD_LOCALS   (ty->tls)
+#define THROW_STACK     (ty->throw_stack)
 
 #define CALLS         (ty->st.calls)
 #define DROP_STACK    (ty->st.to_drop)
@@ -1284,12 +1289,35 @@ vm_jit_fail(Ty *ty, Value *top, char *ip)
 static bool
 co_yield_value(Ty *ty);
 
-noreturn static void
-do_co(void)
+char *
+co_colored(Ty *ty)
 {
-        Ty *ty = co_ty;
-        vm_exec(ty, IP);
-        UNREACHABLE();
+        static char buf[64];
+
+        void *co = co_active();
+        u64 hash = XXH3_64bits(&co, sizeof co);
+
+        if (ColorOutput) {
+                u8 r = 130 + (hash & 0x7F);
+                u8 g = 130 + ((hash >> 7) & 0x7F);
+                u8 b = 130 + ((hash >> 14) & 0x7F);
+
+                u8 max = r > g ? (r > b ? r : b) : (g > b ? g : b);
+                u8 min = r < g ? (r < b ? r : b) : (g < b ? g : b);
+                if (max - min < 40) {
+                        switch ((hash >> 21) % 3) {
+                        case 0: r = 220 + (hash >> 24) % 36; g = 100 + (hash >> 28) % 80; break;
+                        case 1: g = 220 + (hash >> 24) % 36; b = 100 + (hash >> 28) % 80; break;
+                        case 2: b = 220 + (hash >> 24) % 36; r = 100 + (hash >> 28) % 80; break;
+                        }
+                }
+
+                ty_snprintf(buf, sizeof buf, "\033[38;2;%d;%d;%dm%p\033[0m", r, g, b, co);
+        } else {
+                ty_snprintf(buf, sizeof buf, "%p", co);
+        }
+
+        return buf;
 }
 
 #ifdef __has_feature
@@ -1337,31 +1365,20 @@ GeneratorIsSuspended(Generator *gen)
 inline static Generator *
 GetCurrentGenerator(Ty *ty)
 {
-        if (vN(FRAMES) == 0 || vN(STACK) == 0) {
+        if (UNLIKELY(vN(FRAMES) == 0 || vN(STACK) == 0)) {
                 return NULL;
         }
 
-        usize n = FRAMES.items[0].fp;
+        usize n = vv(FRAMES)->fp;
 
-        if (n == 0 || STACK.items[n - 1].type != VALUE_GENERATOR) {
+        if (UNLIKELY(
+                (n == 0)
+             || (v_(STACK, n - 1)->type != VALUE_GENERATOR)
+        )) {
                 return NULL;
         }
 
-        return STACK.items[n - 1].gen;
-}
-
-inline static cothread_t
-GetFreeCoThread(Ty *ty)
-{
-        void *base;
-        if (vN(CO_THREADS) == 0) {
-                CO_LOG("GetFreeCoThread(): new");
-                base = xmA(CO_STACK_SIZE);
-        } else {
-                CO_LOG("GetFreeCoThread(): recycled");
-                base = *vvX(CO_THREADS);
-        }
-        return co_derive(base, CO_STACK_SIZE, do_co);
+        return v_(STACK, n - 1)->gen;
 }
 
 static char const *
@@ -1412,13 +1429,16 @@ co_abort(Ty *ty)
 static bool
 co_yield_value(Ty *ty)
 {
-        if (vN(FRAMES) == 0 || vN(STACK) == 0) {
+        if (UNLIKELY(vN(FRAMES) == 0 || vN(STACK) == 0)) {
                 return false;
         }
 
-        int n = FRAMES.items[0].fp;
+        int n = vv(FRAMES)->fp;
 
-        if (n == 0 || STACK.items[n - 1].type != VALUE_GENERATOR) {
+        if (UNLIKELY(
+                (n == 0)
+             || (v_(STACK, n - 1)->type != VALUE_GENERATOR)
+        )) {
                 return false;
         }
 
@@ -1430,6 +1450,11 @@ co_yield_value(Ty *ty)
         SWAP(GCRootSet, gen->gc_roots, RootSet);
 
         xvPn(gen->frame, vv(STACK) + n, vN(STACK) - n - 1);
+        CO_LOG("co_yield()", TERM(91;1), "%sYIELD%s: n=%d  #frame = %zu", TERM(92;1), TERM(0), n, vN(gen->frame));
+
+        if ((n == 17 && vN(FRAMES) == 4) || (n == 16 && vN(FRAMES) == 4)) {
+                xprint_stack(ty, 25);
+        }
 
         STACK.items[n - 1] = peek();
         STACK.count = n;
@@ -1439,12 +1464,12 @@ co_yield_value(Ty *ty)
         IP = *vvX(CALLS);
 
         if (gen->st.exec_depth > 1) {
-                CO_LOG("co_yield() [%p]: switch to [%p] with (%zu): %s (RECURSED)", co_active(), gen->co, vN(STACK), VSC(top()));
+                CO_LOG("co_yield()", TERM(91;1), "switch to [%p] (RECURSED): %s", gen->co, VSC(top()));
                 cothread_t co = gen->co;
                 gen->co = co_active();
                 co_switch(co);
         } else {
-                CO_LOG("co_yield() [%p]: switch to [%p] with (%zu): %s", co_active(), gen->co, vN(STACK), VSC(top()));
+                CO_LOG("co_yield()", TERM(91;1), "switch to [%p]: %s", gen->co, VSC(top()));
                 cothread_t co = gen->co;
                 gen->co = NULL;
                 gen->st.exec_depth = 0;
@@ -1452,9 +1477,25 @@ co_yield_value(Ty *ty)
                 co_switch(co);
         }
 
-        CO_LOG("co_yield() [%p]: resume with (%zu): %s", co_active(), vN(STACK), VSC(top()));
+        CO_LOG("co_yield()", TERM(92;1), "resume with: %s", VSC(top()));
+
+        if (vN(FRAMES) == 2 && vN(STACK) == 21) {
+                xprint_stack(ty, 25);
+        }
 
         return true;
+}
+
+inline static JitCont *
+cont(Ty *ty, int i)
+{
+        if (ty->st.jit.cont == NULL) {
+                ty->st.jit.cont = GetFreeJitContStack(ty);
+        }
+
+        xvR(*ty->st.jit.cont, i + 1);
+
+        return v_(*ty->st.jit.cont, i);
 }
 
 #if !defined(TY_NO_JIT)
@@ -1475,15 +1516,19 @@ call_jit(Ty *ty, Value const *f)
         usize fp = vvL(FRAMES)->fp;
         Value v = {0};
 
-        ty->jit.idx = 0;
-        ty->jit.status = JIT_RETURN;
+        ty->st.jit.idx = 0;
+        ty->st.jit.status = JIT_RETURN;
 
         EXEC_DEPTH += 1;
 
+        CO_LOG("jit_call", TERM(96;1), "calling JIT function %p for %s", func, VSC(f));
+
         (*(JitFn *)func)(ty, &v, v_(STACK, fp), f->env);
 
-        if (LIKELY(ty->jit.status == JIT_RETURN)) {
+        if (LIKELY(ty->st.jit.status == JIT_RETURN)) {
                 EXEC_DEPTH -= 1;
+
+                CO_LOG("jit_return", TERM(96;1), "return value: %s", VSC(&v));
 
                 vN(STACK) = fp + 1;
                 put(v);
@@ -1493,29 +1538,32 @@ call_jit(Ty *ty, Value const *f)
 
                 IP = ip;
 
+                CO_LOG("jit_return", TERM(96;1), "%s => done%s", TERM(92;1), TERM(0));
+
                 return true;
         }
 
-        int base_depth = ty->jit.depth;
+        int base_depth = ty->st.jit.depth;
 
-        ty->jit.cont[ty->jit.depth++] = (JitCont) {
+        *cont(ty, ty->st.jit.depth++) = (JitCont) {
                 .fn   = func,
                 .env  = f->env,
                 .ret  = &v,
-                .idx  = ty->jit._idx,
+                .idx  = ty->st.jit._idx,
         };
 
         Value cv = {0};
 
-        ty->jit.cont[ty->jit.depth++] = (JitCont) {
-                .fn   = ty->jit._fn,
-                .env  = ty->jit._env,
+        *cont(ty, ty->st.jit.depth++) = (JitCont) {
+                .fn   = ty->st.jit._fn,
+                .env  = ty->st.jit._env,
                 .ret  = &cv,
                 .idx  = 0,
         };
 
-        while (ty->jit.depth > base_depth) {
-                JitCont *top = &ty->jit.cont[ty->jit.depth - 1];
+        while (ty->st.jit.depth > base_depth) {
+                int d0 = ty->st.jit.depth - 1;
+                JitCont *top = cont(ty, d0);
 
                 usize cfp = vvL(FRAMES)->fp;
                 Value *args = v_(STACK, cfp);
@@ -1525,20 +1573,24 @@ call_jit(Ty *ty, Value const *f)
                         args = v_(STACK, cfp);
                 }
 
-                ty->jit.idx = top->idx;
-                ty->jit.status = JIT_RETURN;
+                ty->st.jit.idx = top->idx;
+                ty->st.jit.status = JIT_RETURN;
+
+                CO_LOG("jit_trampoline", TERM(34;1), "%s => resume%s", TERM(92;1), TERM(0));
 
                 (*(JitFn *)top->fn)(ty, top->ret, args, top->env);
 
-                if (ty->jit.status == JIT_CALL) {
-                        top->idx = ty->jit._idx;
-                        ty->jit.cont[ty->jit.depth++] = (JitCont) {
-                                .fn   = ty->jit._fn,
-                                .env  = ty->jit._env,
+                top = cont(ty, d0);
+
+                if (ty->st.jit.status == JIT_CALL) {
+                        top->idx = ty->st.jit._idx;
+                        *cont(ty, ty->st.jit.depth++) = (JitCont) {
+                                .fn   = ty->st.jit._fn,
+                                .env  = ty->st.jit._env,
                                 .ret  = &cv,
                                 .idx  = 0,
                         };
-                } else if (--ty->jit.depth > base_depth) {
+                } else if (--ty->st.jit.depth > base_depth) {
                         cfp = vvL(FRAMES)->fp;
                         vN(STACK) = cfp + 1;
                         *v_(STACK, cfp) = cv;
@@ -1547,15 +1599,19 @@ call_jit(Ty *ty, Value const *f)
                 }
         }
 
+        CO_LOG("jit_trampoline", TERM(34;1), "%s => end%s", TERM(91;1), TERM(0));
+
         EXEC_DEPTH -= 1;
 
-        vN(STACK) = fp + 1;
+        vN(STACK) = vvL(FRAMES)->fp + 1;
         put(v);
 
         vXx(FRAMES);
         vXx(CALLS);
 
         IP = ip;
+
+        CO_LOG("jit_trampoline", TERM(34;1), "%s => return%s", TERM(91;1), TERM(0));
 
         return true;
 }
@@ -1588,6 +1644,8 @@ xcall(Ty *ty, Value const *f, Value const *pSelf, int argc, Value const *pKwargs
         } else {
                 self = ZERO;
         }
+
+        CO_LOG("XCALL", TERM(91;1), "bound=%d, argc=%d", bound, argc);
 
         LOG(
                 "Calling %s with %d args, bound = %d, self = %s, env size = %d",
@@ -1718,6 +1776,46 @@ exec_fn(Ty *ty, Value const *f, Value const *pSelf, int argc, Value const *pKwar
         vm_exec(ty, code_of(f));
 }
 
+noreturn static void
+do_co(void)
+{
+        Ty *ty = co_ty;
+        CO_LOG("do_co()", TERM(94), "%s", SHOW(ActiveFun(ty), BASIC));
+        if (!call_jit(ty, ActiveFun(ty))) {
+                vm_exec(ty, IP);
+        }
+        UNREACHABLE();
+}
+
+inline static cothread_t
+GetFreeCoThread(Ty *ty)
+{
+        void *base;
+        if (vN(CO_THREADS) == 0) {
+                //CO_LOG("GetFreeCoThread(): new");
+                base = xmA(CO_STACK_SIZE);
+        } else {
+                //CO_LOG("GetFreeCoThread(): recycled");
+                base = *vvX(CO_THREADS);
+        }
+        return co_derive(base, CO_STACK_SIZE, do_co);
+}
+
+#if !defined(TY_NO_JIT)
+JitContStack *
+GetFreeJitContStack(Ty *ty)
+{
+        JitContStack *stack;
+        if (vN(ty->jit_stacks) == 0) {
+                stack = alloc0(sizeof *stack);
+        } else {
+                stack = *vvX(ty->jit_stacks);
+                v0(*stack);
+        }
+        return stack;
+}
+#endif
+
 TY_INSTR_INLINE static void
 call_co_ex(Ty *ty, Value *v, int n, char *whence)
 {
@@ -1728,6 +1826,7 @@ call_co_ex(Ty *ty, Value *v, int n, char *whence)
         }
 
         if (gen->ip != code_of(&gen->f)) {
+                CO_LOG("call_co()", TERM(95), "pushing to gen frame: %s", (n > 0) ? VSC(top()) : "nil");
                 xvP(gen->frame, (n > 0) ? peek() : NIL);
         }
 
@@ -1744,6 +1843,7 @@ call_co_ex(Ty *ty, Value *v, int n, char *whence)
         }
 
         int diff = vN(STACK) - (isize)gen->fp;
+        CO_LOG("call_co()", TERM(95), "adjusting gen frame by %d", diff);
         for (int i = 1; i < vN(gen->st.frames); ++i) {
                 v_(gen->st.frames, i)->fp += diff;
         }
@@ -1767,18 +1867,18 @@ call_co_ex(Ty *ty, Value *v, int n, char *whence)
         if (gen->co != NULL) {
                 cothread_t co = gen->co;
                 gen->co = co_active();
-                CO_LOG("co_call() [%p]: switch to %s on [%p] with (%zu): %s", co_active(), name_of(&gen->f), (void *)co, vN(STACK), VSC(top()));
+                CO_LOG("co_call()", TERM(95), "switch BACK to %s with: %s", name_of(&gen->f), VSC(top()));
                 xco_switch(co);
         } else {
                 cothread_t co = GetFreeCoThread(ty);
                 gen->co = co_active();
-                CO_LOG("co_call() [%p]: switch to %s on [%p] (NEW) with (%zu): %s", co_active(), name_of(&gen->f), (void *)co, vN(STACK), VSC(top()));
+                CO_LOG("co_call()", TERM(95), "switch to FRESH %s with: %s", name_of(&gen->f), VSC(top()));
                 co_ty = ty;
                 xco_switch(co);
 
         }
 
-        CO_LOG("co_call() [%p]: back from %s with (%zu): %s", co_active(), name_of(&v->gen->f), vN(STACK), VSC(top()));
+        CO_LOG("co_call()", TERM(96), "back from %s with: %s", name_of(&gen->f), VSC(top()));
 }
 
 static void
@@ -1982,6 +2082,28 @@ CleanupThread(void *ctx)
                 xmF(v__(CO_THREADS, i));
         }
 
+        for (int i = 0; i < vN(ty->co_states); ++i) {
+                co_state *st = v_(ty->co_states, i);
+                xvF(st->calls);
+                xvF(st->frames);
+                xvF(st->targets);
+                xvF(st->sps);
+                xvF(st->to_drop);
+                for (int i = 0; i < vC(st->try_stack); ++i) {
+                        ty_free(v__(st->try_stack, i));
+                }
+                xvF(st->try_stack);
+        }
+
+#if !defined(TY_NO_JIT)
+        for (int i = 0; i < vN(ty->jit_stacks); ++i) {
+                JitContStack *stack = v__(ty->jit_stacks, i);
+                xvF(*stack);
+                xmF(stack);
+        }
+        xvF(ty->jit_stacks);
+#endif
+
         for (int i = 0; i < TY_TMP_BUF_COUNT; ++i) {
                 xmF(ty->tmp[i].p);
         }
@@ -2004,6 +2126,7 @@ CleanupThread(void *ctx)
         xvF(THROW_STACK);
         xvF(DROP_STACK);
         xvF(CO_THREADS);
+        xvF(ty->co_states);
         xvF(ty->allocs);
         xvF(ty->_2op_cache);
         xvF(ty->err);
@@ -2429,7 +2552,7 @@ PushTry(Ty *ty)
         t->vs    = vN(VISITING);
         t->ed    = EXEC_DEPTH;
 #if !defined(TY_NO_JIT)
-        t->jd    = ty->jit.depth;
+        t->jd    = ty->st.jit.depth;
 #endif
         t->ss    = SaveScratch(ty);
         t->state = TRY_TRY;
@@ -2492,7 +2615,7 @@ DoThrow(Ty *ty)
                                 vN(VISITING)  = t->vs;
                                 IP            = t->catch;
 #if !defined(TY_NO_JIT)
-                                ty->jit.depth = t->jd;
+                                ty->st.jit.depth = t->jd;
 #endif
 
                                 RestoreScratch(ty, t->ss);
@@ -5993,6 +6116,82 @@ BadContainer:
         }
 }
 
+char *
+DoFunction(Ty *ty, char const *ip)
+{
+        Value v = {0};
+
+        v.type = VALUE_FUNCTION;
+
+        int n = load_i32(ip);
+        ip += sizeof (i32);
+
+        ip = ALIGNED_FOR(i64, ip);
+
+        v.info = (i32 *)ip;
+
+        int hs   = v.info[FUN_INFO_HEADER_SIZE];
+        int size = v.info[FUN_INFO_CODE_SIZE];
+        int nEnv = v.info[FUN_INFO_CAPTURES];
+
+        int ncaps = (n > 0) ? nEnv - n : nEnv;
+
+        if (from_eval(&v)) {
+                v.info = mAo(hs + size, GC_ANY);
+                memcpy(v.info, ip, hs + size);
+                NOGC(v.info);
+        }
+
+        ip += size + hs;
+
+        if (nEnv > 0) {
+                LOG("Allocating ENV for %d caps", nEnv);
+                v.env = mAo0(nEnv * sizeof (Value *), GC_ENV);
+        } else {
+                v.env = NULL;
+        }
+
+        GC_STOP();
+
+        for (int i = 0; i < ncaps; ++i) {
+                bool b = *ip++;
+                int j = load_i32(ip);
+                ip += sizeof (i32);
+                Value *p = poptarget();
+                if (b) {
+                        if (p->type == VALUE_REF) {
+                                /* This variable was already captured, just refer to the same object */
+                                v.env[j] = p->ptr;
+                        } else {
+                                // TODO: figure out if this is getting freed too early
+                                Value *new = mAo(sizeof (Value), GC_VALUE);
+                                *new = *p;
+                                *p = REF(new);
+                                v.env[j] = new;
+                        }
+                } else {
+                        v.env[j] = p;
+                }
+        }
+
+#if !defined(TY_NO_JIT)
+        if (!NoJIT && !from_eval(&v) && expr_of(&v)->must_jit) {
+                if (UNLIKELY(try_jit(ty, &v) == NULL)) {
+                        zP("failed to JIT compile function %s", SHOW(&v));
+                }
+        }
+#endif
+
+        if (from_eval(&v)) {
+                OKGC(v.info);
+        }
+
+        push(v);
+        GC_RESUME();
+
+        return (char *)ip;
+}
+
 static void
 InstallMethods(Ty *ty, i32 c, struct itable *table, i32 n)
 {
@@ -7233,18 +7432,6 @@ TargetMember:
                         DoYield(ty);
                         break;
 
-                CASE(MAKE_GENERATOR)
-                        v = GENERATOR(mAo0(sizeof *v.gen, GC_GENERATOR));
-
-                        n = vN(STACK) - vvL(FRAMES)->fp;
-                        xvPn(v.gen->frame, vZ(STACK) - n, n);
-
-                        v.gen->ip = IP;
-                        v.gen->f = *ActiveFun(ty);
-
-                        push(v);
-                        goto RETURN;
-
                 CASE(TYPE)
                         READVALUE(s);
                         push(TYPE((Type *)s));
@@ -8006,78 +8193,34 @@ BinaryOp:
                 }
 
                 CASE(FUNCTION)
+                        IP = DoFunction(ty, IP);
+                        break;
+
+                CASE(GENERATOR)
                 {
-                        m0(v);
+                        IP = DoFunction(ty, IP);
 
-                        v.type = VALUE_FUNCTION;
+                        v = peek();
 
-                        // n: bound_caps
-                        READVALUE(n);
-
-                        IP = ALIGNED_FOR(i64, IP);
-
-                        v.info = (i32 *)IP;
-
-                        int hs   = v.info[FUN_INFO_HEADER_SIZE];
-                        int size = v.info[FUN_INFO_CODE_SIZE];
-                        int nEnv = v.info[FUN_INFO_CAPTURES];
-
-                        int ncaps = (n > 0) ? nEnv - n : nEnv;
-
-                        LOG("Header size: %d", hs);
-                        LOG("Code size: %d", size);
-                        LOG("Bound: %d", v.info[4]);
-                        LOG("ncaps: %d", ncaps);
-                        LOG("Name: %s", VSC(&v));
-
-                        if (from_eval(&v)) {
-                                v.info = mAo(hs + size, GC_ANY);
-                                memcpy(v.info, IP, hs + size);
-                                NOGC(v.info);
+                        Generator *gen = mAo0(sizeof (Generator), GC_GENERATOR);
+                        gen->f = v;
+                        gen->ip = code_of(&v);
+                        for (int i = 0; i < v.info[FUN_INFO_BOUND]; ++i) {
+                                xvP(gen->frame, NIL);
                         }
-
-                        IP += size + hs;
-
-                        if (nEnv > 0) {
-                                LOG("Allocating ENV for %d caps", nEnv);
-                                v.env = mAo0(nEnv * sizeof (Value *), GC_ENV);
-                        } else {
-                                v.env = NULL;
+                        if (vN(ty->co_states) > 0) {
+                                gen->st = vXx(ty->co_states);
+                                v0(gen->st.calls);
+                                v0(gen->st.frames);
+                                v0(gen->st.targets);
+                                v0(gen->st.sps);
+                                v0(gen->st.to_drop);
+                                v0(gen->gc_roots);
+                                v0(gen->st.try_stack);
+                                gen->st.rc = 0;
+                                gen->st.exec_depth = 0;
                         }
-
-                        GC_STOP();
-
-                        for (int i = 0; i < ncaps; ++i) {
-                                READVALUE(b);
-                                READVALUE(j);
-                                Value *p = poptarget();
-                                if (b) {
-                                        if (p->type == VALUE_REF) {
-                                                /* This variable was already captured, just refer to the same object */
-                                                v.env[j] = p->ptr;
-                                        } else {
-                                                // TODO: figure out if this is getting freed too early
-                                                Value *new = mAo(sizeof (Value), GC_VALUE);
-                                                *new = *p;
-                                                *p = REF(new);
-                                                v.env[j] = new;
-                                        }
-                                } else {
-                                        v.env[j] = p;
-                                }
-                        }
-#if !defined(TY_NO_JIT)
-                        if (!NoJIT && expr_of(&v)->must_jit) {
-                                if (UNLIKELY(try_jit(ty, &v) == NULL)) {
-                                        zP("failed to JIT compile function %s", SHOW(&v));
-                                }
-                        }
-#endif
-                        if (from_eval(&v)) {
-                                OKGC(v.info);
-                        }
-                        push(v);
-                        GC_RESUME();
+                        put(GENERATOR(gen));
                         break;
                 }
 
@@ -10356,8 +10499,6 @@ StepInstruction(char const *ip)
         CASE(YIELD_SOME)
         CASE(YIELD_NONE)
                 break;
-        CASE(MAKE_GENERATOR)
-                break;
         CASE(TYPE)
                 SKIPVALUE(s);
                 break;
@@ -10540,6 +10681,7 @@ StepInstruction(char const *ip)
                 SKIPVALUE(i);
                 break;
         CASE(FUNCTION)
+        CASE(GENERATOR)
         {
                 READVALUE(n);
 

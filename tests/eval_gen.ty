@@ -1,11 +1,12 @@
 ns test
 
-pub fn evgen() {
-    class Foo {
-        foo*(x) {
-            yield __eval__(x)
-        }
+class Foo {
+    foo(x) return generator {
+        yield __eval__(x)
     }
+}
+
+pub fn evgen() {
     for f in Foo().foo('&upper') {
         assert(f('pass') == 'PASS')
     }

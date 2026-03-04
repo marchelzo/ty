@@ -1,5 +1,7 @@
 import super.lib (bench)
 
+const N = 50000
+
 fn build-tree(lo: Int, hi: Int) {
     if lo >= hi { return nil }
     let mid = (lo + hi) / 2
@@ -16,13 +18,17 @@ fn walk*(node) {
 
 @bench
 fn gen-tree(nn: Int) {
-    let tree = build-tree(0, 50000)
+    let tree = build-tree(0, N)
 
     for ..nn {
         let count = 0
         for _ in walk(tree) {
             count += 1
         }
-        assert(count == 50000)
+        assert(count == N)
     }
+}
+
+if __module__ == 'main' {
+    gen-tree(5)
 }

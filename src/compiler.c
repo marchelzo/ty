@@ -1824,6 +1824,7 @@ AdjustStack(Ty *ty, int c)
         case INSTR_PUSH_UNTAGGED:
         case INSTR_NONE:
         case INSTR_FUNCTION:
+        case INSTR_GENERATOR:
         case INSTR_PUSH_TUPLE_ELEM:
         case INSTR_PUSH_TUPLE_MEMBER:
         case INSTR_TRY_TUPLE_MEMBER:
@@ -7420,7 +7421,11 @@ emit_function(Ty *ty, Expr const *e)
                 }
         }
 
-        INSN(FUNCTION);
+        if (e->type == EXPRESSION_GENERATOR) {
+                INSN(GENERATOR);
+        } else {
+                INSN(FUNCTION);
+        }
         Ei32(bound_caps);
         while (!IS_ALIGNED_FOR(i64, vZ(STATE.code))) {
                 avP(STATE.code, 0);
@@ -7480,7 +7485,8 @@ emit_function(Ty *ty, Expr const *e)
                 ty_snprintf(
                         buffer,
                         sizeof buffer,
-                        "(anon:%s:%d)",
+                        "(%s:%s:%d)",
+                        (e->type == EXPRESSION_GENERATOR) ? "gen" : "anon",
                         CurrentModuleName(ty),
                         e->start.line + 1
                 );
@@ -7490,7 +7496,7 @@ emit_function(Ty *ty, Expr const *e)
         EP(fun_name);
         EP(e);
 #if !defined(TY_NO_JIT)
-        if (!NoJIT && !from_eval) {
+        if (!NoJIT && !from_eval && (e->type == EXPRESSION_FUNCTION)) {
                 EP((void *)0xFA57);
         } else {
                 EP(NULL);
@@ -7629,7 +7635,6 @@ emit_function(Ty *ty, Expr const *e)
         }
 
         if (e->type == EXPRESSION_GENERATOR) {
-                INSN(MAKE_GENERATOR);
                 emit_statement(ty, body, false);
                 LABEL(end);
                 INSN(YIELD_NONE);
@@ -11200,7 +11205,7 @@ emit_expr(Ty *ty, Expr const *e, bool need_loc)
 
         case EXPRESSION_GENERATOR:
                 emit_function(ty, e);
-                ECALL(0, 0);
+                //ECALL(0, 0);
                 break;
 
         case EXPRESSION_FUNCTION:
@@ -19030,8 +19035,6 @@ DumpProgram(
                 CASE(YIELD_SOME)
                 CASE(YIELD_NONE)
                         break;
-                CASE(MAKE_GENERATOR)
-                        break;
                 CASE(VALUE)
                         READVALUE_(s);
                         if (!DebugScan) {
@@ -19246,6 +19249,7 @@ DumpProgram(
                         READMEMBER(i);
                         break;
                 CASE(FUNCTION)
+                CASE(GENERATOR)
                 {
                         Value v = {0};
 
@@ -19258,7 +19262,6 @@ DumpProgram(
                         int hs    = v.info[FUN_INFO_HEADER_SIZE];
                         int size  = v.info[FUN_INFO_CODE_SIZE];
                         int nEnv  = v.info[FUN_INFO_CAPTURES];
-                        int bound = v.info[FUN_INFO_BOUND];
 
                         int ncaps = (n > 0) ? nEnv - n : nEnv;
 

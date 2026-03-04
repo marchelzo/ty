@@ -353,6 +353,21 @@ static void jit_emit_epilogue(dasm_State **Dst) {
         |  ret
 }
 
+// After a yield helper returns, rax contains the updated frame pointer (index).
+// Update rbp (fp byte offset) = rax * VALUE_SIZE.
+static void jit_emit_update_fp(dasm_State **Dst, int bound) {
+        |  shl rax, 5       // VALUE_SIZE == 32 == 1 << 5
+        |  mov rbp, rax
+        |  mov rax, [r12+OFF_TY_STACK+OFF_VEC_DATA]
+        |  lea r14, [rax+rbp]
+        int ops_off = bound * VALUE_SIZE;
+        if (ops_off > 0) {
+                |  lea rbx, [r14+ops_off]
+        } else {
+                |  mov rbx, r14
+        }
+}
+
 // --- Reload r14/rbx after calls that may realloc the stack ---
 // rbp holds the stable fp byte offset; bound is known at compile time.
 static void jit_emit_reload_stack(dasm_State **Dst, int bound) {

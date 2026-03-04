@@ -432,6 +432,27 @@ struct class {
         Type *object_type;
 };
 
+#if !defined(TY_NO_JIT)
+typedef struct {
+        void *fn;
+        Value **env;
+        Value *ret;
+        int idx;
+} JitCont;
+
+typedef vec(JitCont) JitContStack;
+
+typedef struct {
+        i32 depth;
+        i32 idx;
+        i32 status;
+        i32 _idx;
+        void *_fn;
+        Value **_env;
+        JitContStack *cont;
+} JitState;
+#endif
+
 struct frame {
         Value f;
         usize fp;
@@ -447,6 +468,9 @@ typedef struct cothread_state {
         TargetStack targets;
         TryStack try_stack;
         ValueVector to_drop;
+#if !defined(TY_NO_JIT)
+        JitState jit;
+#endif
 } co_state;
 
 struct generator {
@@ -695,25 +719,6 @@ typedef struct {
         byte_vector context_buffer;
 } TyTDB;
 
-#if !defined(TY_NO_JIT)
-typedef struct {
-        void *fn;
-        Value **env;
-        Value *ret;
-        int idx;
-} JitCont;
-
-typedef struct {
-        int depth;
-        int idx;
-        int status;
-        int _idx;
-        void *_fn;
-        Value **_env;
-        JitCont cont[TY_MAX_CALL_DEPTH];
-} JitState;
-#endif
-
 typedef struct ty {
         char *ip;
 
@@ -741,6 +746,11 @@ typedef struct ty {
         bool locked;
 
         CoThreadVector cothreads;
+        vec(co_state) co_states;
+
+#if !defined(TY_NO_JIT)
+        vec(JitContStack *) jit_stacks;
+#endif
 
         vec(ThrowCtx *) throw_stack;
 
@@ -774,10 +784,6 @@ typedef struct ty {
 
         TyTDB *tdb;
         TY *ty;
-
-#if !defined(TY_NO_JIT)
-        JitState jit;
-#endif
 } Ty;
 
 typedef struct {
@@ -1109,6 +1115,7 @@ extern usize TotalBytesAllocated;
         X(PRE_DEC),               \
         X(POST_DEC),              \
         X(FUNCTION),              \
+        X(GENERATOR),             \
         X(JUMP),                  \
         X(JUMP_IF),               \
         X(JUMP_IF_NIL),           \
@@ -1164,7 +1171,6 @@ extern usize TotalBytesAllocated;
         X(YIELD),                 \
         X(YIELD_NONE),            \
         X(YIELD_SOME),            \
-        X(MAKE_GENERATOR),        \
         X(THROW),                 \
         X(RETHROW),               \
         X(TRY),                   \
