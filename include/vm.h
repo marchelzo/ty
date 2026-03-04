@@ -291,6 +291,9 @@ GetFreeJitContStack(Ty *ty);
 char *
 DoFunction(Ty *ty, char const *ip);
 
+char *
+DoGenerator(Ty *ty, char const *ip);
+
 void
 DoDictLiteral(Ty *ty, i32 n, Value const *dflt);
 
