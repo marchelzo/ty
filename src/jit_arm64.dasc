@@ -280,6 +280,12 @@ static void jit_emit_epilogue(dasm_State **Dst) {
         |  ret
 }
 
+// After a yield helper returns, x0 contains the updated frame pointer (index).
+// Update x24 (fp byte offset) = x0 * VALUE_SIZE.
+static void jit_emit_update_fp(dasm_State **Dst) {
+        |  lsl x24, x0, #5  // VALUE_SIZE == 32 == 1 << 5
+}
+
 // --- Reload x21/x23 after calls that may realloc the stack ---
 // x24 holds the stable fp byte offset; bound is known at compile time.
 static void jit_emit_reload_stack(dasm_State **Dst, int bound) {

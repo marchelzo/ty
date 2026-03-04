@@ -3,10 +3,13 @@ ns test
 pub fn yield-from-c() {
     let g = nil
     let s = ''
+    fn add(c) { s += (yield c)(c) }
     g = generator {
-        'pass:fail'.chars().map(c -> s += (yield c)(c))
+        'pass:fail'.chars().map(add)
     }
-    let f = -> g(&upper)
+    fn f() {
+        g(&upper)
+    }
     [*f.take(5)]
     assert(s == 'PASS')
 }

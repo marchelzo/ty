@@ -53,21 +53,18 @@ collect(Ty *ty, struct alloc *a)
 
         case GC_GENERATOR:
                 gen = p;
-                xvF(gen->frame);
-                xvF(gen->st.calls);
-                xvF(gen->st.frames);
-                xvF(gen->st.targets);
-                xvF(gen->st.sps);
-                xvF(gen->st.to_drop);
                 xvF(gen->gc_roots);
-                for (int i = 0; i < vC(gen->st.try_stack); ++i) {
-                        ty_free(v__(gen->st.try_stack, i));
+                xvF(gen->frame);
+                if (gen->co != ty->co_top && gen->co != NULL) {
+                        xvP(ty->cothreads, gen->co);
                 }
-                xvF(gen->st.try_stack);
-                GCLOG("collect(): free generator   co=%p   ip=%p\n", (void *)gen->co, (void *)gen->ip);
-                if (gen->co != ty->co_top) {
-                        ty_free(gen->co);
+#if !defined(TY_NO_JIT)
+                if (gen->st.jit.cont != NULL) {
+                        xvP(ty->jit_stacks, gen->st.jit.cont);
                 }
+                m0(gen->st.jit);
+#endif
+                xvP(ty->co_states, gen->st);
                 break;
 
         case GC_THREAD:

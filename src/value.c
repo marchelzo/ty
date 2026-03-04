@@ -788,7 +788,7 @@ show_impl(
                 {
                         char const *cls  = class_name(ty, class_of(&v));
                         char const *name = name_of(&v);
-                        char const *jit  = jit_of(&v) ? " [jit]" : "";
+                        char const *jit  = ((iptr)jit_of(&v) > 0xFA57)  ? " [jit]" : "";
 
                         if (color) {
                                 if (class_of(&v) == -1) {

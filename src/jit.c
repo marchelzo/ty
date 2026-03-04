@@ -101,14 +101,14 @@ JitInfo *jit_compile(Ty *ty, Value const *func) { (void)ty; (void)func; return N
 #else
 
 // JIT trampoline offsets
-#define OFF_JIT_RESUME    offsetof(Ty, jit.idx)
-#define OFF_JIT_STATUS    offsetof(Ty, jit.status)
-#define OFF_JIT_SAVED_RES offsetof(Ty, jit._idx)
-#define OFF_JIT_PEND_FN   offsetof(Ty, jit._fn)
-#define OFF_JIT_PEND_ENV  offsetof(Ty, jit._env)
+#define OFF_JIT_RESUME    offsetof(Ty, st.jit.idx)
+#define OFF_JIT_STATUS    offsetof(Ty, st.jit.status)
+#define OFF_JIT_SAVED_RES offsetof(Ty, st.jit._idx)
+#define OFF_JIT_PEND_FN   offsetof(Ty, st.jit._fn)
+#define OFF_JIT_PEND_ENV  offsetof(Ty, st.jit._env)
 
 // ============================================================================
-// Fast-path statistics (enabled by TY_PROFILER / make PROF=1)
+// Fast-path statistics (typrof)
 // ============================================================================
 
 #ifdef TY_PROFILER
@@ -650,6 +650,14 @@ static void jit_rt_stat_arith_float(void)            { STAT(arith_float); }
 #define DBG(fmt, ...)
 #endif
 
+#define XDBG(fmt, ...) do {                                                                 \
+        jit_emit_mov(asm, BC_A0, BC_TY);                                                    \
+        jit_emit_load_imm(asm, BC_A1, ctx->sp);                                             \
+        jit_emit_load_imm(asm, BC_A2, ((iptr)xfmt(fmt __VA_OPT__(,) __VA_ARGS__)));         \
+        jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_dbg);                                  \
+        jit_emit_call_reg(asm, BC_CALL);                                                    \
+} while (0)
+
 #define TOP_OF_STACK(v) (vN(ty->stack) = ((v) - vv(ty->stack)) + 1)
 
 static void
@@ -672,7 +680,7 @@ jit_rt_itrc(Ty *ty, i64 sp, char const *msg)
         //int np = vvL(ty->st.frames)->f.info[FUN_INFO_PARAM_COUNT];
         //Value const *f = &vvL(ty->st.frames)->f;
 
-        XPRINT_CTX("[jit] %s", msg);
+        CO_LOG("[jit]", TERM(31;1), "%s", msg);
 }
 
 static void
@@ -1115,56 +1123,42 @@ jit_rt_capture(Ty *ty, Value *local, Value **env, int env_idx)
         env[env_idx] = vp;
 }
 
-static char const *
-jit_rt_function(Ty *ty, Value *result, char const *ip, int bound_caps)
+static void
+jit_rt_function(Ty *ty, Value *top, char const *ip)
 {
-        Value v = {0};
+        vN(ty->stack) = top - vv(ty->stack);
+        (void)DoFunction(ty, ip);
+}
 
-        ip = ALIGNED_FOR(i64, ip);
+static void
+jit_rt_generator(Ty *ty, Value *result, char const *ip, int bound_caps)
+{
+        jit_rt_function(ty, result, ip);
 
-        v.type = VALUE_FUNCTION;
-        v.info = (i32 *)ip;
+        Generator *gen = uAo0(sizeof (Generator), GC_GENERATOR);
+        gen->f = *result;
+        gen->ip = code_of(result);
 
-        int hs   = v.info[FUN_INFO_HEADER_SIZE];
-        int size = v.info[FUN_INFO_CODE_SIZE];
-        int nEnv = v.info[FUN_INFO_CAPTURES];
+        int bound = result->info[FUN_INFO_BOUND];
 
-        int ncaps = (bound_caps > 0) ? nEnv - bound_caps : nEnv;
-
-        if (from_eval(&v)) {
-                v.info = mAo(hs + size, GC_ANY);
-                memcpy(v.info, ip, hs + size);
+        for (int i = 0; i < bound; ++i) {
+                xvP(gen->frame, NIL);
         }
 
-        ip += size + hs;
-
-        if (nEnv > 0) {
-                v.env = uAo0(nEnv * sizeof (Value *), GC_ENV);
+        if (vN(ty->co_states) > 0) {
+                gen->st = vXx(ty->co_states);
+                v0(gen->st.calls);
+                v0(gen->st.frames);
+                v0(gen->st.targets);
+                v0(gen->st.sps);
+                v0(gen->st.to_drop);
+                v0(gen->gc_roots);
+                v0(gen->st.try_stack);
+                gen->st.rc = 0;
+                gen->st.exec_depth = 0;
         }
 
-        for (int i = 0; i < ncaps; ++i) {
-                bool b;
-                int j;
-                memcpy(&b, ip, sizeof b); ip += sizeof b;
-                memcpy(&j, ip, sizeof j); ip += sizeof j;
-                Value *p = vm_jit_pop_target(ty);
-                if (b) {
-                        if (p->type == VALUE_REF) {
-                                v.env[j] = p->ptr;
-                        } else {
-                                Value *new = uAo(sizeof (Value), GC_VALUE);
-                                *new = *p;
-                                *p = REF(new);
-                                v.env[j] = new;
-                        }
-                } else {
-                        v.env[j] = p;
-                }
-        }
-
-        *result = v;
-
-        return ip;
+        *result = GENERATOR(gen);
 }
 
 static void
@@ -1827,6 +1821,11 @@ bc_prescan(JitCtx *ctx, char const *code, int code_size)
                 case INSTR_SLICE:
                         break;
 
+                case INSTR_YIELD:
+                case INSTR_YIELD_NONE:
+                case INSTR_YIELD_SOME:
+                        return false;
+
                 case INSTR_LOAD_LOCAL:
                 case INSTR_LOAD_REF:
                 case INSTR_LOAD_CAPTURED:
@@ -2194,7 +2193,8 @@ bc_prescan(JitCtx *ctx, char const *code, int code_size)
                         for (int q = 0; q < nkw; ++q) BC_SKIPSTR();
                         break;
 
-                case INSTR_FUNCTION: {
+                case INSTR_FUNCTION:
+                case INSTR_GENERATOR: {
                         i32 bound_caps;
                         BC_READ(bound_caps);
                         ip = ALIGNED_FOR(i64, ip);
@@ -2252,7 +2252,7 @@ static int
 jit_rt_call_trampoline(Ty *ty, Value *result, Value *fn, int argc)
 {
         Value _fn = *fn;
-        ptrdiff_t idx = (result - vv(ty->stack));
+        ptrdiff_t idx = result - vv(ty->stack);
         vN(ty->stack) = idx + argc;
 
         // Only attempt trampoline for simple function types
@@ -2272,11 +2272,12 @@ jit_rt_call_trampoline(Ty *ty, Value *result, Value *fn, int argc)
         // Callee is JIT-compiled: set up its frame and signal the trampoline
         vm_xcall(ty, &_fn, NULL, argc, NULL);
 
-        ty->jit._fn = jit;
-        ty->jit._env = _fn.env;
+        ty->st.jit._fn = jit;
+        ty->st.jit._env = _fn.env;
 
         return 1;
 }
+
 // Fast frame setup for simple functions (no rest args, no kwargs).
 // Replaces the expensive xcall() path for known-simple functions.
 static inline void
@@ -2307,6 +2308,20 @@ jit_fast_frame(Ty *ty, Value const *fn, Value const *self, int argc)
         // Push frame and call return address
         xvP(ty->st.frames, ((Frame){ .fp = fp, .f = *fn, .ip = NULL }));
         xvP(ty->st.calls, (char *)NULL);
+
+        CO_LOG("jit_fast_frame", TERM(33;1), "");
+}
+
+inline static JitCont *
+cont(Ty *ty, int i)
+{
+        if (ty->st.jit.cont == NULL) {
+                ty->st.jit.cont = GetFreeJitContStack(ty);
+        }
+
+        xvR(*ty->st.jit.cont, i + 1);
+
+        return v_(*ty->st.jit.cont, i);
 }
 
 // Run a JIT function through an inline trampoline loop.
@@ -2314,19 +2329,20 @@ jit_fast_frame(Ty *ty, Value const *fn, Value const *self, int argc)
 static inline void
 jit_run_trampoline(Ty *ty, JitFn *jit, Value **env, int nenv)
 {
-        int base_depth = ty->jit.depth;
+        int base_depth = ty->st.jit.depth;
         Value result = {0};
         Value cv = {0};
 
-        ty->jit.cont[ty->jit.depth++] = (JitCont) {
+        *cont(ty, ty->st.jit.depth++) = (JitCont) {
                 .fn   = jit,
                 .env  = env,
                 .ret  = &result,
                 .idx  = 0,
         };
 
-        while (ty->jit.depth > base_depth) {
-                JitCont *top = &ty->jit.cont[ty->jit.depth - 1];
+        while (ty->st.jit.depth > base_depth) {
+                int d0 = ty->st.jit.depth - 1;
+                JitCont *top = cont(ty, d0);
                 usize cfp = vvL(ty->st.frames)->fp;
                 Value *args = vv(ty->stack) + cfp;
 
@@ -2335,20 +2351,24 @@ jit_run_trampoline(Ty *ty, JitFn *jit, Value **env, int nenv)
                         args = vv(ty->stack) + cfp;
                 }
 
-                ty->jit.idx    = top->idx;
-                ty->jit.status = JIT_RETURN;
+                ty->st.jit.idx    = top->idx;
+                ty->st.jit.status = JIT_RETURN;
+
+                CO_LOG("jit_run_trampoline", TERM(31;1), "");
 
                 (*(JitFn *)top->fn)(ty, top->ret, args, top->env);
 
-                if (ty->jit.status == JIT_CALL) {
-                        top->idx = ty->jit._idx;
-                        ty->jit.cont[ty->jit.depth++] = (JitCont) {
-                                .fn   = ty->jit._fn,
-                                .env  = ty->jit._env,
+                top = cont(ty, d0);
+
+                if (ty->st.jit.status == JIT_CALL) {
+                        top->idx = ty->st.jit._idx;
+                        *cont(ty, ty->st.jit.depth++) = (JitCont) {
+                                .fn   = ty->st.jit._fn,
+                                .env  = ty->st.jit._env,
                                 .ret  = &cv,
                                 .idx  = 0,
                         };
-                } else if (--ty->jit.depth > base_depth) {
+                } else if (--ty->st.jit.depth > base_depth) {
                         cfp = vvL(ty->st.frames)->fp;
                         vN(ty->stack) = cfp + 1;
                         *v_(ty->stack, cfp) = cv;
@@ -2358,12 +2378,16 @@ jit_run_trampoline(Ty *ty, JitFn *jit, Value **env, int nenv)
                 }
         }
 
+        CO_LOG("jit_run_trampoline", TERM(31;1), "end");
+
         // Clean up the initial callee's frame
         usize cfp = vvL(ty->st.frames)->fp;
         vN(ty->stack) = cfp + 1;
         *v_(ty->stack, cfp) = result;
         vXx(ty->st.frames);
         vXx(ty->st.calls);
+
+        CO_LOG("jit_run_trampoline", TERM(31;1), "ret");
 }
 
 // Fast baked method call with inline trampoline.
@@ -2511,13 +2535,44 @@ jit_rt_call_builtin_function(Ty *ty, Value *result, BuiltinFunction *func, int a
         vm_check_flags(ty);
 }
 
+static int
+jit_rt_get_fp(Ty *ty)
+{
+        return vvL(ty->st.frames)->fp;
+}
+
+static int
+jit_rt_yield(Ty *ty, Value *top)
+{
+        vN(ty->stack) = top - vv(ty->stack);
+        DoYield(ty);
+        return vvL(ty->st.frames)->fp;
+}
+
+static int
+jit_rt_yield_some(Ty *ty, Value *top)
+{
+        vN(ty->stack) = top - vv(ty->stack);
+        v_L(ty->stack) = Some(v_L(ty->stack));
+        DoYield(ty);
+        return vvL(ty->st.frames)->fp;
+}
+
+static int
+jit_rt_yield_none(Ty *ty, Value *top)
+{
+        vN(ty->stack) = top - vv(ty->stack);
+        xvP(ty->stack, None);
+        DoYield(ty);
+        return vvL(ty->st.frames)->fp;
+}
+
 static void
 jit_rt_check_match(Ty *ty, Value *result, Value *value, Value *pattern)
 {
         vN(ty->stack) = result - vv(ty->stack) + 2;
         DoCheckMatch(ty, true);
 }
-
 
 static int
 jit_rt_compare(Ty *ty, Value *a, Value *b)
@@ -3374,7 +3429,7 @@ bc_resolve_builtin_method(Class *cls, int member_id, int *value_type)
 #define DROP_STACK_POS()
 #define RESTORE_STACK_POS()
 
-#if 0
+#if 1
 #define EMIT_SP_SYNC() jit_emit_sync_stack_count(asm, ctx->bound, ctx->sp);
 #else
 #define EMIT_SP_SYNC()
@@ -3584,6 +3639,7 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                         break;
 
                 default:
+                        DBG("reloading stack before op %d (%s)", op, GetInstructionName(op));
                         jit_emit_reload_stack(asm, ctx->bound);
                 }
 
@@ -4890,6 +4946,38 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                         if (ctx->sp > ctx->max_sp) ctx->max_sp = ctx->sp;
 
                         DBG("CALL_GLOBAL(%s)", VSC(vm_global(ty, gi)));
+                        break;
+                }
+
+                CASE(YIELD) {
+                        DBG("YIELDING");
+                        jit_emit_mov(asm, BC_A0, BC_TY);
+                        jit_emit_add_imm(asm, BC_A1, BC_OPS, OP_OFF(ctx->sp));
+                        jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_yield);
+                        jit_emit_call_reg(asm, BC_CALL);
+                        jit_emit_update_fp(asm, ctx->bound);
+                        DBG("YIELD");
+                        break;
+                }
+
+                CASE(YIELD_SOME) {
+                        DBG("YIELDING SOME");
+                        jit_emit_mov(asm, BC_A0, BC_TY);
+                        jit_emit_add_imm(asm, BC_A1, BC_OPS, OP_OFF(ctx->sp));
+                        jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_yield_some);
+                        jit_emit_call_reg(asm, BC_CALL);
+                        jit_emit_update_fp(asm, ctx->bound);
+                        DBG("YIELD_SOME");
+                        break;
+                }
+
+                CASE(YIELD_NONE) {
+                        jit_emit_mov(asm, BC_A0, BC_TY);
+                        jit_emit_add_imm(asm, BC_A1, BC_OPS, OP_OFF(ctx->sp));
+                        jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_yield_none);
+                        jit_emit_call_reg(asm, BC_CALL);
+                        jit_emit_update_fp(asm, ctx->bound);
+                        ctx->sp++;
                         break;
                 }
 
@@ -6539,13 +6627,14 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                         break;
                 }
 
-                CASE(FUNCTION) {
-                        int bound_caps;
-                        BC_READ(bound_caps);
-
+                CASE(FUNCTION)
+                CASE(GENERATOR) {
                         // Save the current IP position (before alignment)
                         // The runtime helper will align and parse the function info
                         char const *fn_ip = ip;
+
+                        int bound_caps;
+                        BC_READ(bound_caps);
 
                         // Align and skip the function body in our bytecode scan
                         ip = ALIGNED_FOR(i64, ip);
@@ -6567,11 +6656,12 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                         jit_emit_mov(asm, BC_A0, BC_TY);
                         jit_emit_add_imm(asm, BC_A1, BC_OPS, dst);
                         jit_emit_load_imm(asm, BC_A2, (iptr)fn_ip);
-                        jit_emit_load_imm(asm, BC_A3, bound_caps);
-                        jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_function);
+                        if (op == INSTR_GENERATOR) {
+                                jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_generator);
+                        } else {
+                                jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_function);
+                        }
                         jit_emit_call_reg(asm, BC_CALL);
-                        // Return value (new ip) is in x0 but we don't need it ---
-                        // we already advanced ip statically
 
                         ctx->sp++;
                         if (ctx->sp > ctx->max_sp) ctx->max_sp = ctx->sp;
@@ -6682,7 +6772,7 @@ jit_compile(Ty *ty, Value const *func)
         ctx.asm = asm; // sync after DynASM setup
 
         // Trampoline support: check if we're resuming after a sub-call.
-        // Load ty->jit.resume_idx; if non-zero, jump to a dispatch block
+        // Load ty->st.jit.resume_idx; if non-zero, jump to a dispatch block
         // that redirects to the appropriate resume label.
         int lbl_dispatch = bc_next_label(&ctx);
         int lbl_normal_start = bc_next_label(&ctx);
