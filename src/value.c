@@ -1727,8 +1727,8 @@ mark_generator(Ty *ty, Value const *v)
                 MarkNext(ty, v_(v->gen->st.to_drop, i));
         }
 
-        for (int i = 0; i < vN(v->gen->gc_roots); ++i) {
-                MarkNext(ty, v_(v->gen->gc_roots, i));
+        for (int i = 0; i < vN(v->gen->st.gc_roots); ++i) {
+                MarkNext(ty, v_(v->gen->st.gc_roots, i));
         }
 }
 

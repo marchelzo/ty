@@ -468,6 +468,7 @@ typedef struct cothread_state {
         TargetStack targets;
         TryStack try_stack;
         ValueVector to_drop;
+        GCRootSet gc_roots;
 #if !defined(TY_NO_JIT)
         JitState jit;
 #endif
@@ -479,7 +480,6 @@ struct generator {
         char *ip;
         cothread_t co;
         co_state st;
-        GCRootSet gc_roots;
         Value f;
 };
 
@@ -733,7 +733,6 @@ typedef struct ty {
 
         int GC_OFF_COUNT;
 
-        GCRootSet   gc_roots;
         GCWorkStack marking;
 
         isize memory_used;

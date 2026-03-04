@@ -1418,7 +1418,6 @@ co_abort(Ty *ty)
         STACK.count = n - 1;
 
         SWAP(co_state, gen->st, ty->st);
-        SWAP(GCRootSet, gen->gc_roots, RootSet);
 
         vvX(FRAMES);
         IP = *vvX(CALLS);
@@ -1447,7 +1446,6 @@ co_yield_value(Ty *ty)
         v0(gen->frame);
 
         SWAP(co_state, gen->st, ty->st);
-        SWAP(GCRootSet, gen->gc_roots, RootSet);
 
         xvPn(gen->frame, vv(STACK) + n, vN(STACK) - n - 1);
         CO_LOG("co_yield()", TERM(91;1), "%sYIELD%s: n=%d  #frame = %zu", TERM(92;1), TERM(0), n, vN(gen->frame));
@@ -1826,7 +1824,7 @@ call_co_ex(Ty *ty, Value *v, int n, char *whence)
         }
 
         if (gen->ip != code_of(&gen->f)) {
-                CO_LOG("call_co()", TERM(95), "pushing to gen frame: %s", (n > 0) ? VSC(top()) : "nil");
+                CO_LOG("co_call()", TERM(95), "pushing to gen frame: %s", (n > 0) ? VSC(top()) : "nil");
                 xvP(gen->frame, (n > 0) ? peek() : NIL);
         }
 
@@ -1854,7 +1852,6 @@ call_co_ex(Ty *ty, Value *v, int n, char *whence)
         gen->fp = vN(STACK);
 
         SWAP(co_state, gen->st, ty->st);
-        SWAP(GCRootSet, gen->gc_roots, RootSet);
 
         for (int i = 0; i < vN(gen->frame); ++i) {
                 push(v__(gen->frame, i));
@@ -2089,6 +2086,7 @@ CleanupThread(void *ctx)
                 xvF(st->targets);
                 xvF(st->sps);
                 xvF(st->to_drop);
+                xvF(st->gc_roots);
                 for (int i = 0; i < vC(st->try_stack); ++i) {
                         ty_free(v__(st->try_stack, i));
                 }
@@ -6192,6 +6190,38 @@ DoFunction(Ty *ty, char const *ip)
         return (char *)ip;
 }
 
+char *
+DoGenerator(Ty *ty, char const *ip)
+{
+        char *end = DoFunction(ty, ip);
+        Value fun = peek();
+
+        Generator *gen = mAo0(sizeof (Generator), GC_GENERATOR);
+        gen->f = fun;
+        gen->ip = code_of(&fun);
+
+        for (int i = 0; i < fun.info[FUN_INFO_BOUND]; ++i) {
+                xvP(gen->frame, NIL);
+        }
+
+        if (vN(ty->co_states) > 0) {
+                gen->st = vXx(ty->co_states);
+                v0(gen->st.calls);
+                v0(gen->st.frames);
+                v0(gen->st.targets);
+                v0(gen->st.sps);
+                v0(gen->st.to_drop);
+                v0(gen->st.gc_roots);
+                v0(gen->st.try_stack);
+                gen->st.rc = 0;
+                gen->st.exec_depth = 0;
+        }
+
+        put(GENERATOR(gen));
+
+        return end;
+}
+
 static void
 InstallMethods(Ty *ty, i32 c, struct itable *table, i32 n)
 {
@@ -8197,32 +8227,8 @@ BinaryOp:
                         break;
 
                 CASE(GENERATOR)
-                {
-                        IP = DoFunction(ty, IP);
-
-                        v = peek();
-
-                        Generator *gen = mAo0(sizeof (Generator), GC_GENERATOR);
-                        gen->f = v;
-                        gen->ip = code_of(&v);
-                        for (int i = 0; i < v.info[FUN_INFO_BOUND]; ++i) {
-                                xvP(gen->frame, NIL);
-                        }
-                        if (vN(ty->co_states) > 0) {
-                                gen->st = vXx(ty->co_states);
-                                v0(gen->st.calls);
-                                v0(gen->st.frames);
-                                v0(gen->st.targets);
-                                v0(gen->st.sps);
-                                v0(gen->st.to_drop);
-                                v0(gen->gc_roots);
-                                v0(gen->st.try_stack);
-                                gen->st.rc = 0;
-                                gen->st.exec_depth = 0;
-                        }
-                        put(GENERATOR(gen));
+                        IP = DoGenerator(ty, IP);
                         break;
-                }
 
                 CASE(PATCH_ENV)
                         READVALUE(n);

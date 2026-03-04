@@ -1131,34 +1131,10 @@ jit_rt_function(Ty *ty, Value *top, char const *ip)
 }
 
 static void
-jit_rt_generator(Ty *ty, Value *result, char const *ip, int bound_caps)
+jit_rt_generator(Ty *ty, Value *top, char const *ip)
 {
-        jit_rt_function(ty, result, ip);
-
-        Generator *gen = uAo0(sizeof (Generator), GC_GENERATOR);
-        gen->f = *result;
-        gen->ip = code_of(result);
-
-        int bound = result->info[FUN_INFO_BOUND];
-
-        for (int i = 0; i < bound; ++i) {
-                xvP(gen->frame, NIL);
-        }
-
-        if (vN(ty->co_states) > 0) {
-                gen->st = vXx(ty->co_states);
-                v0(gen->st.calls);
-                v0(gen->st.frames);
-                v0(gen->st.targets);
-                v0(gen->st.sps);
-                v0(gen->st.to_drop);
-                v0(gen->gc_roots);
-                v0(gen->st.try_stack);
-                gen->st.rc = 0;
-                gen->st.exec_depth = 0;
-        }
-
-        *result = GENERATOR(gen);
+        vN(ty->stack) = top - vv(ty->stack);
+        (void)DoGenerator(ty, ip);
 }
 
 static void
@@ -4955,7 +4931,6 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                         jit_emit_add_imm(asm, BC_A1, BC_OPS, OP_OFF(ctx->sp));
                         jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_yield);
                         jit_emit_call_reg(asm, BC_CALL);
-                        jit_emit_update_fp(asm, ctx->bound);
                         DBG("YIELD");
                         break;
                 }
@@ -4966,7 +4941,6 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                         jit_emit_add_imm(asm, BC_A1, BC_OPS, OP_OFF(ctx->sp));
                         jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_yield_some);
                         jit_emit_call_reg(asm, BC_CALL);
-                        jit_emit_update_fp(asm, ctx->bound);
                         DBG("YIELD_SOME");
                         break;
                 }
@@ -4976,7 +4950,6 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                         jit_emit_add_imm(asm, BC_A1, BC_OPS, OP_OFF(ctx->sp));
                         jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_yield_none);
                         jit_emit_call_reg(asm, BC_CALL);
-                        jit_emit_update_fp(asm, ctx->bound);
                         ctx->sp++;
                         break;
                 }
