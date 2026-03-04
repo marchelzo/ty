@@ -7490,7 +7490,7 @@ emit_function(Ty *ty, Expr const *e)
         EP(fun_name);
         EP(e);
 #if !defined(TY_NO_JIT)
-        if (!NoJIT && !from_eval && (e->type == EXPRESSION_FUNCTION)) {
+        if (!NoJIT && !from_eval) {
                 EP((void *)0xFA57);
         } else {
                 EP(NULL);

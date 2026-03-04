@@ -1,0 +1,138 @@
+ns test
+
+pub fn basic() {
+    let q = Queue()
+    assert(#q == 0)
+    assert(q.empty?())
+
+    q.push(1)
+    q.push(2)
+    q.push(3)
+    assert(#q == 3)
+    assert(!q.empty?())
+
+    assert(q.pop() == 1)
+    assert(q.pop() == 2)
+    assert(q.pop() == 3)
+    assert(#q == 0)
+}
+
+pub fn push_front() {
+    let q = Queue()
+    q.push-front(1)
+    q.push-front(2)
+    q.push-front(3)
+    assert(q.pop() == 3)
+    assert(q.pop() == 2)
+    assert(q.pop() == 1)
+}
+
+pub fn pop_back() {
+    let q = Queue()
+    q.push(1)
+    q.push(2)
+    q.push(3)
+    assert(q.pop-back() == 3)
+    assert(q.pop-back() == 2)
+    assert(q.pop-back() == 1)
+}
+
+pub fn peek() {
+    let q = Queue()
+    q.push(10)
+    q.push(20)
+    assert(q.peek() == 10)
+    assert(q.peek-back() == 20)
+    assert(#q == 2)
+}
+
+pub fn try_pop() {
+    let q = Queue()
+    assert(q.try-pop() == None)
+    assert(q.try-pop-back() == None)
+    q.push(42)
+    assert(q.try-pop() == Some(42))
+    assert(q.try-pop() == None)
+}
+
+pub fn try_peek() {
+    let q = Queue()
+    assert(q.try-peek() == None)
+    assert(q.try-peek-back() == None)
+    q.push(7)
+    assert(q.try-peek() == Some(7))
+    assert(q.try-peek-back() == Some(7))
+}
+
+pub fn try_pop_with_nil_values() {
+    let q = Queue()
+    q.push(nil)
+    q.push(1)
+    q.push(nil)
+    assert(q.try-pop() == Some(nil))
+    assert(q.try-pop() == Some(1))
+    assert(q.try-pop() == Some(nil))
+    assert(q.try-pop() == None)
+}
+
+pub fn clear() {
+    let q = Queue()
+    q.push(1)
+    q.push(2)
+    q.push(3)
+    q.clear()
+    assert(#q == 0)
+    assert(q.empty?())
+}
+
+pub fn grow() {
+    let q = Queue()
+    for i in ..100 {
+        q.push(i)
+    }
+    assert(#q == 100)
+    for i in ..100 {
+        assert(q.pop() == i)
+    }
+    assert(#q == 0)
+}
+
+pub fn mixed() {
+    let q = Queue()
+    q.push(1)
+    q.push(2)
+    q.push-front(0)
+    q.push-front(-1)
+    assert(q.pop() == -1)
+    assert(q.pop() == 0)
+    assert(q.pop-back() == 2)
+    assert(q.pop-back() == 1)
+}
+
+pub fn to_array() {
+    let q = Queue()
+    q.push(1)
+    q.push(2)
+    q.push(3)
+    assert(q.to-array() == [1, 2, 3])
+}
+
+pub fn multi_push() {
+    let q = Queue()
+    q.push(1, 2, 3)
+    assert(#q == 3)
+    assert(q.to-array() == [1, 2, 3])
+
+    q.clear()
+    q.push-front(1, 2, 3)
+    assert(q.to-array() == [1, 2, 3])
+}
+
+pub fn iter() {
+    let q = Queue()
+    q.push(10)
+    q.push(20)
+    q.push(30)
+    let xs = [x for x in q]
+    assert(xs == [10, 20, 30])
+}
