@@ -1450,12 +1450,8 @@ co_yield_value(Ty *ty)
         xvPn(gen->frame, vv(STACK) + n, vN(STACK) - n - 1);
         CO_LOG("co_yield()", TERM(91;1), "%sYIELD%s: n=%d  #frame = %zu", TERM(92;1), TERM(0), n, vN(gen->frame));
 
-        if ((n == 17 && vN(FRAMES) == 4) || (n == 16 && vN(FRAMES) == 4)) {
-                xprint_stack(ty, 25);
-        }
-
-        STACK.items[n - 1] = peek();
-        STACK.count = n;
+        *v_(STACK, n - 1) = peek();
+        vN(STACK) = n;
 
         vvX(FRAMES);
 
@@ -1477,10 +1473,6 @@ co_yield_value(Ty *ty)
 
         CO_LOG("co_yield()", TERM(92;1), "resume with: %s", VSC(top()));
 
-        if (vN(FRAMES) == 2 && vN(STACK) == 21) {
-                xprint_stack(ty, 25);
-        }
-
         return true;
 }
 
@@ -1501,7 +1493,6 @@ inline static bool
 call_jit(Ty *ty, Value const *f)
 {
         JitFn *func = try_jit(ty, f);
-
         if (func == NULL) {
                 return false;
         }
@@ -1519,25 +1510,15 @@ call_jit(Ty *ty, Value const *f)
 
         EXEC_DEPTH += 1;
 
-        CO_LOG("jit_call", TERM(96;1), "calling JIT function %p for %s", func, VSC(f));
-
         (*(JitFn *)func)(ty, &v, v_(STACK, fp), f->env);
 
         if (LIKELY(ty->st.jit.status == JIT_RETURN)) {
                 EXEC_DEPTH -= 1;
-
-                CO_LOG("jit_return", TERM(96;1), "return value: %s", VSC(&v));
-
                 vN(STACK) = fp + 1;
                 put(v);
-
                 vXx(FRAMES);
                 vXx(CALLS);
-
                 IP = ip;
-
-                CO_LOG("jit_return", TERM(96;1), "%s => done%s", TERM(92;1), TERM(0));
-
                 return true;
         }
 

@@ -15,7 +15,7 @@ fn bezier3(p1: (Float, Float), p2: (Float, Float), t: Float) -> (Float, Float) {
     )
 }
 
-fn bezier3_inv(p1: (Float, Float), p2: (Float, Float), s: Float) -> Float {
+fn bezier3-inv(p1: (Float, Float), p2: (Float, Float), s: Float) -> Float {
     let t = s
     for (;;) {
         let (x, _) = bezier3(p1, p2, t)
@@ -27,7 +27,7 @@ fn bezier3_inv(p1: (Float, Float), p2: (Float, Float), s: Float) -> Float {
     return t
 }
 
-fn rgb_blend(c1: (Int, Int, Int), c2: (Int, Int, Int), t: Float) -> (Int, Int, Int) {
+fn rgb-blend(c1: (Int, Int, Int), c2: (Int, Int, Int), t: Float) -> (Int, Int, Int) {
     let (r1, g1, b1) = c1
     let (r2, g2, b2) = c2
     let r = int((t*r1**2 + (1-t)*r2**2)**0.5)
@@ -36,7 +36,7 @@ fn rgb_blend(c1: (Int, Int, Int), c2: (Int, Int, Int), t: Float) -> (Int, Int, I
     return (r, g, b)
 }
 
-fn hex_to_rgb(hex: String) -> (Int, Int, Int) {
+fn hex-to-rgb(hex: String) -> (Int, Int, Int) {
     let [r, g, b] = hex.scan(/[0-9a-fA-F]{2}/)
     let r = int(r, 16)
     let g = int(g, 16)
@@ -46,8 +46,8 @@ fn hex_to_rgb(hex: String) -> (Int, Int, Int) {
 
 pub ns boxes {
     pub double = ["╔", "╗", "╚", "╝", "═", "║", "╬", "╦", "╣", "╠", "╩"]
-    pub heavy = ["┏", "┓", "┗", "┛", "━", "┃", "╋", "┳", "┫", "┣", "┻"]
-    pub round = ["╭", "╮", "╰", "╯", "─", "│", "┼", "┬", "┤", "├", "┴"]
+    pub heavy  = ["┏", "┓", "┗", "┛", "━", "┃", "╋", "┳", "┫", "┣", "┻"]
+    pub round  = ["╭", "╮", "╰", "╯", "─", "│", "┼", "┬", "┤", "├", "┴"]
 }
 
 class Console {
@@ -173,21 +173,26 @@ class BoxConsole < Console {
 class ProgressBar {
     width: Int
     style: String
-    fill_char: String
-    empty_char: String
+    fill-char: String
+    empty-char: String
     
-    init(width: Int = 40, style: String = '#1eaba5', fill_char: String = '━', empty_char: String = '━') {
+    init(
+        width: Int = 40,
+        style: String = '#1eaba5',
+        fill-char: String = '━',
+        empty-char: String = '━'
+    ) {
         self.width = width
         self.style = style  
-        self.fill_char = fill_char
-        self.empty_char = empty_char
+        self.fill-char = fill-char
+        self.empty-char = empty-char
     }
     
     render(progress: Float) -> Text {
         let p = progress.clamp(0.0, 1.0)
         let filled = int(p * width)
         let empty = width - filled
-        chalk"[{style}]{fill_char.repeat(filled)}[/][#444]{empty_char.repeat(empty)}[/]"
+        chalk"[{style}]{fill-char.repeat(filled)}[/][#444]{empty-char.repeat(empty)}[/]"
     }
 }
 
@@ -201,8 +206,8 @@ class PulseAnimation {
     
     init(width: Int = 40, color1: String = '#ff8aa6', color2: String = '#d32773') {
         self.width = width
-        self.color1 = hex_to_rgb(color1)
-        self.color2 = hex_to_rgb(color2)
+        self.color1 = hex-to-rgb(color1)
+        self.color2 = hex-to-rgb(color2)
         self.p1 = (0.2, 0.6)
         self.p2 = (0.2, 0.9)
         self.rate = 1.0
@@ -213,12 +218,12 @@ class PulseAnimation {
         let t = (rate * elapsed) % 1.0
         
         for i in ..width {
-            let x_norm = float(i) / width
-            let t_inv = bezier3_inv(p1, p2, t)
-            let (_, y) = bezier3(p1, p2, t_inv)
+            let x-norm = float(i) / width
+            let t-inv = bezier3-inv(p1, p2, t)
+            let (_, y) = bezier3(p1, p2, t-inv)
             let x = y * width
             let intensity = 1.0 / (1 + 0.01*(i - x)**2)
-            let (r, g, b) = rgb_blend(color1, color2, intensity)
+            let (r, g, b) = rgb-blend(color1, color2, intensity)
             bar.push("[#{r:02x}{g:02x}{b:02x}]━[/]")
         }
         
@@ -231,38 +236,38 @@ class TaskInfo {
     desc: String
     total: Int | nil
     current: Sync[Int]
-    start_time: Float
+    start-time: Float
     
     init(id: Int, desc: String = "", total: Int | nil = nil) {
         self.id = id
         self.desc = desc
         self.total = total
         self.current = Sync(0)
-        self.start_time = now()
+        self.start-time = now()
     }
     
     progress() -> Float | nil {
-        total ?: (cast(current.float) / total)
+        total ? (current / float(total)) : nil
     }
     
     elapsed() -> Float {
-        now() - start_time
+        now() - start-time
     }
 }
 
-class Tqdm[T] : Iterable[T] {
-    static _active_bars: Array[Tqdm] = []
-    static _render_thread: Thread | nil = nil
-    static _render_mutex: Mutex = Mutex()
-    static _render_cv: CondVar = CondVar()
-    static _print_queue: SharedQueue[String] = SharedQueue()
+pub class Tqdm[T] : Iterable[T] {
+    static _active-bars: Array[Tqdm] = []
+    static _render-thread: Thread | nil = nil
+    static _render-mutex: Mutex = Mutex()
+    static _render-cv: CondVar = CondVar()
+    static _print-queue: SharedQueue[String] = SharedQueue()
     
     _iterable: Iterable[T]
     _total: Int | nil
     _desc: String
     _task: TaskInfo
-    _progress_bar: ProgressBar
-    _pulse_anim: PulseAnimation
+    _progress-bar: ProgressBar
+    _pulse-anim: PulseAnimation
     _position: Int
     _leave: Bool
     _ncols: Int
@@ -289,29 +294,29 @@ class Tqdm[T] : Iterable[T] {
         _cv             = CondVar()
         _stopping       = false
         _finished       = false
-        _progress_bar   = ProgressBar(ncols - 30)
-        _pulse_anim     = PulseAnimation(ncols - 30)
+        _progress-bar   = ProgressBar(ncols - 30)
+        _pulse-anim     = PulseAnimation(ncols - 30)
 
-        with _render_mutex {
-            _task           = TaskInfo(#Tqdm._active_bars, desc, _total)
-            _position       = position ?? #Tqdm._active_bars
+        with _render-mutex {
+            _task           = TaskInfo(#_active-bars, desc, _total)
+            _position       = position ?? #_active-bars
 
-            _active_bars.push(self)
+            _active-bars.push(self)
 
-            if _render_thread == nil {
-                _render_thread = Thread(Tqdm._render_loop)
-                _render_thread.detach()
+            if _render-thread == nil {
+                _render-thread = Thread(_render-loop)
+                _render-thread.detach()
             }
         }
     }
     
-    static _render_loop() {
+    static _render-loop() {
         let buf = Blob()
-        let frame_time = 1.0 / FPS
+        let frame-time = 1.0 / FPS
 
         for (;;) {
-            with _render_mutex {
-                if #_active_bars == 0 {
+            with _render-mutex {
+                if #_active-bars == 0 {
                     continue
                 }
 
@@ -323,15 +328,15 @@ class Tqdm[T] : Iterable[T] {
                 buf.clear()
                 buf.push("\x1b[?25l")
 
-                for bar in _active_bars {
+                for bar in _active-bars {
                     buf.push("\r\x1b[0K\n")
                 }
 
-                buf.push("\x1b[{#_active_bars}A")
+                buf.push("\x1b[{#_active-bars}A")
                 
-                for bar in _active_bars {
+                for bar in _active-bars {
                     with bar._mtx {
-                        let line = "{bar._render_line()}\n"
+                        let line = "{bar._render-line()}\n"
                         if bar._stopping {
                             drop.push(bar)
                             if bar._leave {
@@ -348,7 +353,7 @@ class Tqdm[T] : Iterable[T] {
                     buf.push("\x1b[{#keep}A")
                 }
 
-                while let Some(msg) = _print_queue.try-take() {
+                while let Some(msg) = _print-queue.try-take() {
                     leave.push("{msg}\x1b[0K\n")
                 }
 
@@ -361,21 +366,21 @@ class Tqdm[T] : Iterable[T] {
                     bar._cv.signal()
                 }
 
-                _active_bars = keep
+                _active-bars = keep
 
-                if #_active_bars == 0 {
-                    _render_thread = nil
+                if #_active-bars == 0 {
+                    _render-thread = nil
                     break
                 }
             }
 
-            sleep(frame_time)
+            sleep(frame-time)
         }
 
         write(1, "\x1b[?25h")
     }
     
-    _render_line() -> String {
+    _render-line() -> String {
         let elapsed = _task.elapsed()
         let parts = []
         
@@ -384,7 +389,7 @@ class Tqdm[T] : Iterable[T] {
         }
         
         if let $p = _task.progress() {
-            parts.push(_progress_bar.render(p))
+            parts.push(_progress-bar.render(p))
             let progress = "{_task.current}/{_task.total}"
             if _stopping {
                 parts.push(chalk" [bright green]{progress: <10}[/]")
@@ -392,7 +397,7 @@ class Tqdm[T] : Iterable[T] {
                 parts.push(chalk" {progress: <10}")
             }
         } else {
-            parts.push(_pulse_anim.render(elapsed))
+            parts.push(_pulse-anim.render(elapsed))
             if _stopping {
                 let progress = "{_task.current}/{_task.current}"
                 parts.push(chalk" [bright green]{progress: <10}[/]")
@@ -406,9 +411,9 @@ class Tqdm[T] : Iterable[T] {
         
         let line = parts.join()
         
-        let plain_len = #chalk.plain(line)
-        if plain_len < _ncols {
-            return "{line: <{plain_len}}"
+        let plain-len = #chalk.plain(line)
+        if plain-len < _ncols {
+            return "{line: <{plain-len}}"
         }
         
         return line
@@ -432,7 +437,7 @@ class Tqdm[T] : Iterable[T] {
     }
 
     print(x: Any) {
-        _print_queue.put("{x}")
+        _print-queue.put("{x}")
     }
     
     close() {
