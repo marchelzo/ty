@@ -60,6 +60,7 @@ enum { TY_SCOPE_FLAGS };
         X(NAMESPACE,    Namespace,   21)  \
         X(PARAM_PACK,   ParamPack,   22)  \
         X(TYPE_ALIAS,   TypeAlias,   23)  \
+        X(EXTERNAL,     External,    24)
 
 
 #define X(f, _, i) SYM_##f = (1 << i),

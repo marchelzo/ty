@@ -563,7 +563,7 @@ scope_copy(Ty *ty, Scope *dst, Scope const *src)
 
         for (int i = 0; i < src->size; ++i) {
                 for (Symbol *s = src->table[i]; s != NULL; s = s->next) {
-                        scope_insert(ty, dst, s);
+                        scope_insert(ty, dst, s)->flags |= SYM_EXTERNAL;
                 }
         }
 
@@ -617,6 +617,7 @@ scope_copy_public_except(
                                 (conflict != NULL)
                              && (conflict->scope != src)
                              && SymbolIsPublic(conflict)
+                             && !SymbolIsExternal(conflict)
                         ) {
                                 return conflict->identifier;
                         }
@@ -629,7 +630,12 @@ scope_copy_public_except(
                                 continue;
                         }
                         if (SymbolIsPublic(s)) {
-                                scope_insert(ty, dst, s)->flags |= (SYM_PUBLIC * reexport);
+                                Symbol *new = scope_insert(ty, dst, s);
+                                if (reexport) {
+                                        new->flags |= SYM_PUBLIC;
+                                } else {
+                                        new->flags |= SYM_EXTERNAL;
+                                }
                         }
                 }
         }
@@ -647,6 +653,7 @@ scope_copy_public(Ty *ty, Scope *dst, Scope const *src, bool reexport)
                                 (conflict != NULL)
                              && (conflict->scope != src)
                              && SymbolIsPublic(conflict)
+                             && !SymbolIsExternal(conflict)
                         ) {
                                 return conflict->identifier;
                         }
@@ -656,7 +663,12 @@ scope_copy_public(Ty *ty, Scope *dst, Scope const *src, bool reexport)
         for (int i = 0; i < src->size; ++i) {
                 for (Symbol *s = src->table[i]; s != NULL; s = s->next) {
                         if (SymbolIsPublic(s)) {
-                                scope_insert(ty, dst, s)->flags |= (SYM_PUBLIC * reexport);
+                                Symbol *new = scope_insert(ty, dst, s);
+                                if (reexport) {
+                                        new->flags |= SYM_PUBLIC;
+                                } else {
+                                        new->flags |= SYM_EXTERNAL;
+                                }
                         }
                 }
         }
