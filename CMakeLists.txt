@@ -443,10 +443,10 @@ install(TARGETS ${_tgt_ty} ${_tgt_ty_profiler} ${_tgt_ty_ls}
   DESTINATION ${CMAKE_INSTALL_BINDIR}
 )
 
-file(GLOB _ty_modules LIST_DIRECTORIES false ${PROJECT_SOURCE_DIR}/lib/*.ty)
-install(FILES ${_ty_modules}
+install(DIRECTORY ${PROJECT_SOURCE_DIR}/lib/
   COMPONENT InstallComponentTy
   DESTINATION ${CMAKE_INSTALL_LIBDIR}/ty
+  FILES_MATCHING PATTERN "*.ty"
   PERMISSIONS
     OWNER_READ OWNER_WRITE   # 6
     GROUP_READ               # 4
