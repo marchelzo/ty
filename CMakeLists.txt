@@ -216,8 +216,8 @@ add_subdirectory(unibilium)
 #  DynASM JIT code generation
 # ---
 
-find_program(LUAJIT luajit)
-if(LUAJIT)
+find_program(LUAJIT_EXECUTABLE luajit)
+if(LUAJIT_EXECUTABLE)
   if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64|ARM64")
     set(_jit_dasc ${PROJECT_SOURCE_DIR}/src/jit_arm64.dasc)
     set(_jit_hdr  ${PROJECT_SOURCE_DIR}/src/jit_arm64.h)
@@ -228,7 +228,7 @@ if(LUAJIT)
 
   add_custom_command(
     OUTPUT ${_jit_hdr}
-    COMMAND ${LUAJIT} ${PROJECT_SOURCE_DIR}/LuaJIT/dynasm/dynasm.lua
+    COMMAND ${LUAJIT_EXECUTABLE} ${PROJECT_SOURCE_DIR}/LuaJIT/dynasm/dynasm.lua
       -o ${_jit_hdr} ${_jit_dasc}
     DEPENDS ${_jit_dasc}
     COMMENT "Generating JIT emission header from ${_jit_dasc}"
