@@ -183,22 +183,27 @@ endif()
 # ---
 #  target: libco
 # ---
-add_library(libco)
-target_sources(libco PRIVATE libco/libco.c)
-target_compile_definitions(libco PRIVATE LIBCO_MP)
+
+set(_tgt_libco libco)
+add_library(${_tgt_libco})
+target_sources(${_tgt_libco} PRIVATE libco/libco.c)
+target_compile_definitions(${_tgt_libco} PRIVATE LIBCO_MP)
 
 # ---
 #  target: dtoa
 # ---
-add_library(dtoa)
-target_sources(dtoa PRIVATE dtoa/SwiftDtoa.c)
+set(_tgt_dtoa dtoa)
+add_library(${_tgt_dtoa})
+target_sources(${_tgt_dtoa} PRIVATE dtoa/SwiftDtoa.c)
 
 # ---
 #  target: libmd::md
 # ---
+
+set(_tgt_libmd libmd::md)
 add_subdirectory(libmd)
 # libmd uses C_VISIBILITY_PRESET hidden which breaks ThinLTO symbol resolution
-set_target_properties(md PROPERTIES INTERPROCEDURAL_OPTIMIZATION FALSE)
+set_target_properties(${_tgt_libmd} PROPERTIES INTERPROCEDURAL_OPTIMIZATION FALSE)
 
 # ---
 #  target: nsync
@@ -348,15 +353,15 @@ target_link_libraries(${_tgt_ty_interface}
     ${_tgt_ioctlconstants_h}
     ${_tgt_errnoconstants_h}
     ${_tgt_keywords_h}
+    ${_tgt_libco}
+    ${_tgt_libmd}
+    ${_tgt_dtoa}
     Threads::Threads # pthreads (or equivalent)
-    libco
     mimalloc-static
     xxHash::xxhash
     utf8proc::utf8proc
     PCRE2::8BIT
     unofficial::libffi::libffi
-    libmd::md
-    dtoa
     unofficial::sqlite3::sqlite3
     $<$<NOT:$<BOOL:${WIN32}>>:${CMAKE_DL_LIBS}>
     $<$<NOT:$<BOOL:${WIN32}>>:m>
