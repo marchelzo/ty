@@ -50,6 +50,12 @@ if(_lto_supported)
 endif()
 
 # ---
+#  vendored libraries
+# ---
+
+add_subdirectory(vendored)
+
+# ---
 #  generate ioctl constants
 # ---
 
@@ -179,43 +185,6 @@ if(GPERF_EXECUTABLE)
 else()
   message(WARNING "gperf not found -- keywords.h will not be regenerated")
 endif()
-
-# ---
-#  target: libco
-# ---
-
-set(_tgt_libco libco)
-add_library(${_tgt_libco})
-target_sources(${_tgt_libco} PRIVATE libco/libco.c)
-target_compile_definitions(${_tgt_libco} PRIVATE LIBCO_MP)
-
-# ---
-#  target: dtoa
-# ---
-set(_tgt_dtoa dtoa)
-add_library(${_tgt_dtoa})
-target_sources(${_tgt_dtoa} PRIVATE dtoa/SwiftDtoa.c)
-
-# ---
-#  target: libmd::md
-# ---
-
-set(_tgt_libmd libmd::md)
-add_subdirectory(libmd)
-# libmd uses C_VISIBILITY_PRESET hidden which breaks ThinLTO symbol resolution
-set_target_properties(md PROPERTIES INTERPROCEDURAL_OPTIMIZATION FALSE)
-
-# ---
-#  target: nsync
-# ---
-if (USE_NSYNC)
-  add_subdirectory(nsync)
-endif()
-
-# ---
-#  target: unibilium
-# ---
-add_subdirectory(unibilium)
 
 # ---
 #  DynASM JIT code generation
@@ -353,10 +322,11 @@ target_link_libraries(${_tgt_ty_interface}
     ${_tgt_ioctlconstants_h}
     ${_tgt_errnoconstants_h}
     ${_tgt_keywords_h}
-    ${_tgt_libco}
-    ${_tgt_libmd}
-    ${_tgt_dtoa}
-    $<LINK_LIBRARY:WHOLE_ARCHIVE,unibilium>
+    vendored::libco
+    vendored::libmd
+    vendored::dtoa
+    $<$<BOOL:${USE_NSYNC}>:vendored::nsync>
+    $<LINK_LIBRARY:WHOLE_ARCHIVE,vendored::unibilium>
     Threads::Threads # pthreads (or equivalent)
     mimalloc-static
     xxHash::xxhash
@@ -377,8 +347,6 @@ endif()
 target_include_directories(${_tgt_ty_interface}
   INTERFACE
     ${PROJECT_SOURCE_DIR}/include
-    ${PROJECT_SOURCE_DIR}/libco
-    ${PROJECT_SOURCE_DIR}/dtoa
     ${PROJECT_SOURCE_DIR}/src
 )
 

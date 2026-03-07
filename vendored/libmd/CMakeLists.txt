@@ -51,8 +51,10 @@ add_library(libmd::md ALIAS md)
 set_target_properties(md PROPERTIES
   VERSION ${LIBMD_ABI}
   SOVERSION ${LIBMD_ABI_MAJOR}
-  C_VISIBILITY_PRESET hidden
   OUTPUT_NAME md
+  # C_VISIBILITY_PRESET hidden breaks ThinLTO symbol resolution
+  C_VISIBILITY_PRESET hidden
+  INTERPROCEDURAL_OPTIMIZATION FALSE
 )
 
 target_include_directories(md
@@ -95,7 +97,7 @@ if(NOT CMAKE_C_FLAGS)
     -Wstrict-prototypes
     -Wwrite-strings
   )
-  
+
   foreach(flag ${warning_flags})
     string(REGEX REPLACE "[-=]" "_" flag_var ${flag})
     check_c_compiler_flag(${flag} HAVE${flag_var})
