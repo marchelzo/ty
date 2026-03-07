@@ -842,6 +842,7 @@ jit_rt_ne(Ty *ty, Value *result, Value *a, Value *b)
 {
         if (LIKELY(a->type == VALUE_NIL || b->type == VALUE_NIL)) {
                 *result = BOOLEAN(a->type != b->type);
+                return;
         }
 
         ptrdiff_t idx = result - vv(ty->stack);
