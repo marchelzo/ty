@@ -112,6 +112,8 @@ fi
 #  build project in docker
 # ---
 
+_cpu_cores=$(grep -c 'processor' /proc/cpuinfo || echo 1)
+
 (
   exec 1> >(>&1 sed --unbuffered 's/^/[docker-stdout]: /') # prefix stdout
   exec 2> >(>&2 sed --unbuffered 's/^/[docker-stderr]: /') # prefix stderr
@@ -133,7 +135,7 @@ cmake -S . -B '${_build_dir}' -G 'Ninja' \
   -DCMAKE_TOOLCHAIN_FILE=\${VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake \
   -DVCPKG_INSTALLED_DIR='/opt/vcpkg_installed' \
   -DVCPKG_TARGET_TRIPLET='x64-linux'
-cmake --build '${_build_dir}' --parallel
+cmake --build '${_build_dir}' --parallel ${_cpu_cores:?}
 cmake --install '${_build_dir}'
 "
 ) || {
