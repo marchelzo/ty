@@ -374,12 +374,6 @@ if(USE_NSYNC)
   target_link_libraries(${_tgt_ty_interface} INTERFACE nsync)
 endif()
 
-if(APPLE)
-  target_link_options(${_tgt_ty_interface} INTERFACE -Wl,-export_dynamic)
-else()
-  target_link_options(${_tgt_ty_interface} INTERFACE -rdynamic)
-endif()
-
 target_include_directories(${_tgt_ty_interface}
   INTERFACE
     ${PROJECT_SOURCE_DIR}/include
@@ -427,6 +421,11 @@ if(BUILD_PROFILER)
   target_compile_definitions(${_tgt_ty_profiler} PRIVATE TY_PROFILER)
   target_link_libraries(${_tgt_ty_profiler} PRIVATE ${_tgt_ty_interface})
 endif()
+
+# export symbols (essentially adds the equivalent of: -rdynamic during link)
+foreach(_tgt IN ITEMS ${_tgt_ty} ${_tgt_tyls} ${_tgt_typrof})
+  set_target_properties(${_tgt} PROPERTIES ENABLE_EXPORTS ON)
+endforeach()
 
 # ---
 #  install rules
