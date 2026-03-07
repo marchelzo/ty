@@ -203,7 +203,7 @@ target_sources(${_tgt_dtoa} PRIVATE dtoa/SwiftDtoa.c)
 set(_tgt_libmd libmd::md)
 add_subdirectory(libmd)
 # libmd uses C_VISIBILITY_PRESET hidden which breaks ThinLTO symbol resolution
-set_target_properties(${_tgt_libmd} PROPERTIES INTERPROCEDURAL_OPTIMIZATION FALSE)
+set_target_properties(md PROPERTIES INTERPROCEDURAL_OPTIMIZATION FALSE)
 
 # ---
 #  target: nsync
