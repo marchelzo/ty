@@ -57,6 +57,8 @@ make clean
 - `gperf` generates [include/keywords.h](include/keywords.h) from
   [src/keywords.gperf](src/keywords.gperf)
 - `luajit` + DynASM generates `src/jit_x64.h` or `src/jit_arm64.h` from `.dasc` files
+- `LuaJIT` project must be cloned from `https://github.com/LuaJIT/LuaJIT` into the
+  project root at `<project-root>/LuaJIT` so that the build can find `LuaJIT/dynasm/dynasm.lua`
 
 ## Running Tests
 
