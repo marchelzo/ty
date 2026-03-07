@@ -30,6 +30,7 @@ RUN apt-get update \
     "luajit" \
     "gperf" \
     "unzip" \
+    "ninja-build" \
     "build-essential" \
     && apt-get clean -y \
     && rm -fr /var/lib/apt/lists

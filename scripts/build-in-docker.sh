@@ -123,6 +123,7 @@ fi
     "${_arg_docker_image}" \
     bash -c "
 export CMAKE_COLOR_DIAGNOSTICS=ON
+export CLICOLOR_FORCE=1
 set -evx
 cd /ty/src
 cmake -S . -B '${_build_dir}' -G 'Unix Makefiles' \
