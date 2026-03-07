@@ -356,6 +356,7 @@ target_link_libraries(${_tgt_ty_interface}
     ${_tgt_libco}
     ${_tgt_libmd}
     ${_tgt_dtoa}
+    $<LINK_LIBRARY:WHOLE_ARCHIVE,unibilium>
     Threads::Threads # pthreads (or equivalent)
     mimalloc-static
     xxHash::xxhash
@@ -374,14 +375,8 @@ if(USE_NSYNC)
 endif()
 
 if(APPLE)
-  target_link_libraries(${_tgt_ty_interface} INTERFACE
-    -Wl,-force_load,$<TARGET_FILE:unibilium>
-  )
   target_link_options(${_tgt_ty_interface} INTERFACE -Wl,-export_dynamic)
 else()
-  target_link_libraries(${_tgt_ty_interface} INTERFACE
-    -Wl,--whole-archive unibilium -Wl,--no-whole-archive
-  )
   target_link_options(${_tgt_ty_interface} INTERFACE -rdynamic)
 endif()
 
