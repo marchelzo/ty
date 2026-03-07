@@ -1,4 +1,3 @@
-#include <unistd.h>
 /*	$OpenBSD: helper.c,v 1.9 2010/01/08 13:30:21 oga Exp $	*/
 
 /*
@@ -9,7 +8,6 @@
  * this stuff is worth it, you can buy me a beer in return.   Poul-Henning Kamp
  * ----------------------------------------------------------------------------
  */
-
 
 #include <sys/stat.h>
 
