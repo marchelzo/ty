@@ -159,7 +159,7 @@ class CompletionCycler {
         for row, row-i in page {
             if (i == row-i) && (__ci < #__cs) {
                 row = [*row]
-                row[j] = chalk"[reverse]{row[j]}[/]"
+                row[j] = str(chalk"[reverse]{row[j]}[/]")
             }
 
             let line = row.join("\x1b[0m    ")
@@ -183,7 +183,7 @@ class CompletionCycler {
     }
 }
 
-fn completeFile(before: String, after: String) -> CompletionAction {
+fn complete-file(before: String, after: String) -> CompletionAction {
     let path-prefix = (before.match(/'[^']*$/) ?? before.match(/\S*$/))!
     let parts = path-prefix.comb(/'/).split('/')
 
@@ -210,7 +210,7 @@ fn completeFile(before: String, after: String) -> CompletionAction {
     }
 }
 
-fn fitItems(items: Array[CompletionLabel], W: Int) -> Array[Array[String]] {
+fn fit-items(items: Array[CompletionLabel], W: Int) -> Array[Array[String]] {
     fn width(text: Text | nil) -> Int {
         (text == nil) ? 0 : "{text}".width()
     }
@@ -318,7 +318,7 @@ pub class InteractiveLineReader {
         term: Int | TermIO | os.PTY = 0,
         prompt=nil,
         complete=nil,
-        ctrl_c: ?Bool = false,
+        ctrl-c: ?Bool = false,
         history-file: Path | String | nil = nil,
         render: RenderFunction | nil = nil,
     ) {
@@ -395,25 +395,25 @@ pub class InteractiveLineReader {
         let line: Array[String] = []
         let i: Int = 0
 
-        fn getBefore() {
+        fn get-before() {
             line.slice(0, i).str() ?? ''
         }
 
-        fn getAfter() {
+        fn get-after() {
             line.slice(i).str() ?? ''
         }
 
-        fn getText() {
+        fn get-text() {
             lines.map(\_.str() ?? '').unlines()
         }
 
-        fn printItems(cs, select: Int = nil) {
+        fn print-items(cs, select: Int = nil) {
             write(__tio.fd, "{ERASE_LINE}\rAvailable completions:\n")
 
             let (h, w) = __tio.size()
 
             let n = 0
-            for row in fitItems(cs, w) {
+            for row in fit-items(cs, w) {
                 if select in n.range(0, #row - 1) {
                     row[select - n] = chalk"[reverse]{row[select - n]}[/]"
                 }
@@ -464,22 +464,22 @@ pub class InteractiveLineReader {
         defer __tio.stop()
 
         let hi = 0
-        let hPrefix = nil
-        let hSuffix = nil
+        let h-prefix = nil
+        let h-suffix = nil
 
-        let completionCycler = nil
+        let completion-cycler = nil
         let last-yank-pos = nil
 
         fn kill(chars: Array[String]) {
             if chars { __kill-ring.push(chars) }
         }
 
-        fn hMatch?(i) {
+        fn h-match?(i) {
             if #__history < i { return false }
             let text = __history[-i].0.str() ?? ''
             return (
-                (hPrefix == nil || text.starts?(hPrefix))
-             && (hSuffix == nil || text.ends?(hSuffix))
+                (h-prefix == nil || text.starts?(h-prefix))
+             && (h-suffix == nil || text.ends?(h-suffix))
             )
         }
 
@@ -526,18 +526,18 @@ pub class InteractiveLineReader {
                 func(*__tio.size())
             }
 
-            let hiStart = hi
+            let hi-start = hi
 
-            if (key != '<Tab>') && (completionCycler != nil) {
+            if (key != '<Tab>') && (completion-cycler != nil) {
                 write(__tio.fd, ERASE_REST)
-                completionCycler = nil
+                completion-cycler = nil
             }
 
             let no-op = false
 
             match key {
                 '<Enter>', '\n' => {
-                    let text = getText()
+                    let text = get-text()
 
                     if text != '' && (__history == [] || (line, i) != __history[-1]) {
                         __add-history(lines, nr, i)
@@ -737,29 +737,29 @@ pub class InteractiveLineReader {
                 },
 
                 '<Up>' => {
-                    hPrefix ?= getBefore()
-                    hSuffix ?= getAfter()
+                    h-prefix ?= get-before()
+                    h-suffix ?= get-after()
 
                     while hi < #__history {
                         hi += 1
-                        if hMatch?(hi) {
+                        if h-match?(hi) {
                             break
                         }
                     }
 
-                    if hi < #__history && !hMatch?(hi) {
-                        hi = hiStart
+                    if hi < #__history && !h-match?(hi) {
+                        hi = hi-start
                     }
                 },
 
                 '<Down>' => {
                     hi -= 1
 
-                    while hi > 0 && !hMatch?(hi) {
+                    while hi > 0 && !h-match?(hi) {
                         hi -= 1
                     }
 
-                    if (hi < 0) || (hi > 0 && !hMatch?(hi)) {
+                    if (hi < 0) || (hi > 0 && !h-match?(hi)) {
                         hi = 0
                     }
                 },
@@ -786,15 +786,15 @@ pub class InteractiveLineReader {
                 },
 
                 '<Tab>' => {
-                    if completionCycler != nil {
-                        write(__tio.fd, completionCycler.render())
-                        (line, i) = completionCycler.cycle()
+                    if completion-cycler != nil {
+                        write(__tio.fd, completion-cycler.render())
+                        (line, i) = completion-cycler.cycle()
                     } else {
                         let (before, after) = line.split(i)
                         let result = (
                                complete
                             ?? __complete
-                            ?? completeFile
+                            ?? complete-file
                         )(
                             before.str() ?? '',
                             after.str() ?? ''
@@ -810,13 +810,13 @@ pub class InteractiveLineReader {
                             },
 
                             CycleCompletions(cs) and #cs > 0 => {
-                                completionCycler = CompletionCycler(cs, line, i)
-                                write(__tio.fd, completionCycler.render())
-                                (line, i) = completionCycler.cycle()
+                                completion-cycler = CompletionCycler(cs, line, i)
+                                write(__tio.fd, completion-cycler.render())
+                                (line, i) = completion-cycler.cycle()
                             },
 
                             ListCompletions(cs) and #cs > 0 => {
-                                printItems(cs.map(completion-label))
+                                print-items(cs.map(completion-label))
                             },
 
                             _ => {}
@@ -828,7 +828,7 @@ pub class InteractiveLineReader {
                     __tio.stop()
 
                     let fzf = spawn(
-                        ['fzf', '--read0', '--tac', '--no-sort', '-q', getText()],
+                        ['fzf', '--read0', '--tac', '--no-sort', '-q', get-text()],
                         stdin=SPAWN_PIPE,
                         stdout=SPAWN_PIPE,
                         ctty=__pty if __pty != nil
@@ -885,7 +885,7 @@ pub class InteractiveLineReader {
                 last-yank-pos = nil
             }
 
-            if hi != hiStart {
+            if hi != hi-start {
                 if hi == 0 {
                     line = []
                     i    = 0
@@ -899,8 +899,8 @@ pub class InteractiveLineReader {
                 }
             } else if key != '<Up>' {
                 hi = 0
-                hPrefix = nil
-                hSuffix = nil
+                h-prefix = nil
+                h-suffix = nil
             }
 
             lines[nr] = line
@@ -912,7 +912,7 @@ pub class InteractiveLineReader {
     progress(work, prefix, width, effects=id, cleanup=false) {
         for p in work {
             let w = width ?? (__tio.size().1 - 8).clamp(0, 70)
-            write(__tio.fd, "\r{prefix ?? ''}{effects(progressString(p, w))} {p * 100:.1f}%%")
+            write(__tio.fd, "\r{prefix ?? ''}{effects(progress-string(p, w))} {p * 100:.1f}%%")
         }
 
         if cleanup {
@@ -927,18 +927,18 @@ pub class InteractiveLineReader {
     }
 }
 
-fn progressString(progress: Float, width: Int) {
+fn progress-string(progress: Float, width: Int) {
     let progress = progress.clamp(0.0, 1.0)
-    let wholeWidth = floor(progress * width)
-    let remainderWidth = (progress * width) - wholeWidth
-    let partWidth = floor(remainderWidth * 8)
-    let partChar = [' ', '▏', '▎', '▍', '▌', '▋', '▊', '▉'][partWidth]
+    let whole-width = floor(progress * width)
+    let remainder-width = (progress * width) - whole-width
+    let part-width = floor(remainder-width * 8)
+    let part-char = [' ', '▏', '▎', '▍', '▌', '▋', '▊', '▉'][part-width]
 
-    if width - wholeWidth - 1 < 0 {
-        partChar = ''
+    if width - whole-width - 1 < 0 {
+        part-char = ''
     }
 
-    return "[{'█'.repeat(wholeWidth)}{partChar}{' '.repeat(width - wholeWidth - 1)}]"
+    return "[{'█'.repeat(whole-width)}{part-char}{' '.repeat(width - whole-width - 1)}]"
 }
 
 pub fn progress(work, prefix, width, effects=id, cleanup=false) {
