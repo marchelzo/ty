@@ -126,7 +126,7 @@ export CMAKE_COLOR_DIAGNOSTICS=ON
 export CLICOLOR_FORCE=1
 set -evx
 cd /ty/src
-cmake -S . -B '${_build_dir}' -G 'Unix Makefiles' \
+cmake -S . -B '${_build_dir}' -G 'Ninja' \
   -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_INSTALL_PREFIX='${_install_dir}' \
   -DVCPKG_INSTALL_OPTIONS='--no-print-usage' \
