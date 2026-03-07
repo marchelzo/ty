@@ -68,6 +68,18 @@
             }
         },
         {
+            "name": "base-msvc",
+            "hidden": true,
+            "inherits": "base-windows",
+            "generator": "Visual Studio 18 2026",
+            "toolset": "host=x64",
+            "architecture": "x64",
+            "cacheVariables": {
+                "CMAKE_C_COMPILER": "cl.exe",
+                "CMAKE_CXX_COMPILER": "cl.exe"
+            }
+        },
+        {
             "name": "gcc",
             "inherits": "base-linux",
             "displayName": "GCC - amd64 - Release",
@@ -121,42 +133,29 @@
         },
         {
             "name": "msvc2026",
-            "inherits": "base-windows",
-            "displayName": "Visual Studio 2026 - amd64 - Release",
-            "description": "Using compilers for Visual Studio 18 2026",
-            "generator": "Visual Studio 18 2026",
-            "toolset": "host=x64",
-            "architecture": "x64",
-            "cacheVariables": {
-                "CMAKE_C_COMPILER": "cl.exe",
-                "CMAKE_CXX_COMPILER": "cl.exe"
-            }
+            "inherits": "base-msvc"
         },
         {
             "name": "msvc2026-debug",
-            "inherits": "msvc2026",
-            "displayName": "Visual Studio 2026 - amd64 - Debug",
+            "inherits": "base-msvc",
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "Debug"
             }
         },
         {
             "name": "msvc2026-shared",
-            "inherits": "msvc2026",
+            "inherits": "base-msvc",
             "displayName": "Visual Studio 2026 - amd64 - Release (.dll dependencies)",
-            "description": "Using compilers for Visual Studio 18 2026",
-            "generator": "Visual Studio 18 2026",
-            "toolset": "host=x64",
-            "architecture": "x64",
             "cacheVariables": {
                 "VCPKG_TARGET_TRIPLET": "x64-windows"
             }
         },
         {
             "name": "msvc2026-shared-debug",
-            "inherits": "msvc2026-shared",
+            "inherits": "base-msvc",
             "displayName": "Visual Studio 2026 - amd64 - Debug (.dll dependencies)",
             "cacheVariables": {
+                "VCPKG_TARGET_TRIPLET": "x64-windows",
                 "CMAKE_BUILD_TYPE": "Debug"
             }
         }
@@ -175,6 +174,9 @@
                 "type": "equals",
                 "lhs": "${hostSystemName}",
                 "rhs": "Windows"
+            },
+            "environment": {
+                "CL": "/MP$penv{NUMBER_OF_PROCESSORS} $penv{CL}"
             }
         },
         {
