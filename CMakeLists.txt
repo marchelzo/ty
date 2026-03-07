@@ -148,13 +148,20 @@ endif()
 set(_file_keywords_h  ${_autogen_dir}/include/keywords.h)
 set(_gperf_input      ${PROJECT_SOURCE_DIR}/src/keywords.gperf)
 
-find_program(GPERF gperf)
-if(GPERF)
+set(_tgt_keywords_h "KeywordsH")
+add_library(${_tgt_keywords_h} INTERFACE)
+target_include_directories(${_tgt_keywords_h}
+  INTERFACE
+    ${_autogen_dir}/include
+)
+
+find_program(GPERF_EXECUTABLE gperf)
+if(GPERF_EXECUTABLE)
   add_custom_command(
     OUTPUT
       ${_file_keywords_h}
     COMMAND
-      ${GPERF} "${_gperf_input}" > "${_file_keywords_h}.tmp"
+      ${GPERF_EXECUTABLE} "${_gperf_input}" > "${_file_keywords_h}.tmp"
     COMMAND
       ${CMAKE_COMMAND} -E copy_if_different
         "${_file_keywords_h}.tmp"
@@ -340,6 +347,7 @@ target_link_libraries(${_tgt_ty_interface}
     ${_tgt_ty_interface_version_info}
     ${_tgt_ioctlconstants_h}
     ${_tgt_errnoconstants_h}
+    ${_tgt_keywords_h}
     Threads::Threads # pthreads (or equivalent)
     libco
     mimalloc-static
