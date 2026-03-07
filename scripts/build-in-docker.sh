@@ -122,18 +122,19 @@ fi
     -v "${_project_dir}:/ty/src" \
     "${_arg_docker_image}" \
     bash -c "
-      set -vx \
-      && cd /ty/src \
-      && cmake -S . -B '${_build_dir}' -G 'Unix Makefiles' \
-          -DCMAKE_BUILD_TYPE=Release \
-          -DCMAKE_INSTALL_PREFIX='${_install_dir}' \
-          -DVCPKG_INSTALL_OPTIONS='--no-print-usage' \
-          -DCMAKE_TOOLCHAIN_FILE=\${VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake \
-          -DVCPKG_INSTALLED_DIR='/opt/vcpkg_installed' \
-          -DVCPKG_TARGET_TRIPLET='x64-linux' \
-      && cmake --build '${_build_dir}' --parallel \
-      && cmake --install '${_build_dir}' \
-      "
+export CMAKE_COLOR_DIAGNOSTICS=ON
+set -evx
+cd /ty/src
+cmake -S . -B '${_build_dir}' -G 'Unix Makefiles' \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_INSTALL_PREFIX='${_install_dir}' \
+  -DVCPKG_INSTALL_OPTIONS='--no-print-usage' \
+  -DCMAKE_TOOLCHAIN_FILE=\${VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake \
+  -DVCPKG_INSTALLED_DIR='/opt/vcpkg_installed' \
+  -DVCPKG_TARGET_TRIPLET='x64-linux'
+cmake --build '${_build_dir}' --parallel
+cmake --install '${_build_dir}'
+"
 ) || {
   __print_errormsg "docker run exited with non-zero error code"
   exit 1
