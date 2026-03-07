@@ -25,14 +25,18 @@ target_compile_definitions(unibilium PRIVATE
   TERMINFO_DIRS="${TERMINFO_DIRS}"
 )
 
-target_compile_options(unibilium PRIVATE
-  -Wall
-  -O2
-  -std=c99
-)
+if (WIN32)
+  set(_warning_flags /W3)
+else()
+  set(_warning_flags -Wall)
+endif()
+
+target_compile_options(unibilium PRIVATE ${_warning_flags})
 
 set_target_properties(unibilium PROPERTIES
   POSITION_INDEPENDENT_CODE ON
+  C_STANDARD 99
+  C_STANDARD_REQUIRED ON
 )
 
 target_include_directories(unibilium PUBLIC
