@@ -8,3 +8,7 @@ vcpkg_installed
 vcpkg
 *.log
 *.err
+# agents
+.agents/*
+.claude/*
+*.local.json
