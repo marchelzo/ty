@@ -113,8 +113,8 @@ fi
 # ---
 
 (
-  exec 1> >(>&1 awk '{print "[docker-stdout]: " $0}') # prefix stdout
-  exec 2> >(>&2 awk '{print "[docker-stderr]: " $0}') # prefix stderr
+  exec 1> >(>&1 sed --unbuffered 's/^/[docker-stdout]: /') # prefix stdout
+  exec 2> >(>&2 sed --unbuffered 's/^/[docker-stderr]: /') # prefix stderr
 
   docker run \
     --rm \
