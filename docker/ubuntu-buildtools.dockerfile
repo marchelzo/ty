@@ -27,18 +27,28 @@ RUN apt-get update \
     "git" \
     "pkg-config" \
     "zip" \
+    "luajit" \
+    "gperf" \
     "unzip" \
     "build-essential" \
     && apt-get clean -y \
     && rm -fr /var/lib/apt/lists
 
-# -- switch container default user
+# -- switch container default user to 'user'
 
 RUN chmod -R 777 /opt
 ARG USER_ID
 ARG GROUP_ID
-RUN groupadd -g ${GROUP_ID} "user" \
-    && useradd -u ${USER_ID} -g "user" -m "user"
+RUN if getent group ${GROUP_ID} >/dev/null 2>&1; then \
+      groupmod -n "user" $(getent group ${GROUP_ID} | cut -d: -f1); \
+    else \
+      groupadd -g ${GROUP_ID} "user"; \
+    fi \
+    && if id -u ${USER_ID} >/dev/null 2>&1; then \
+         usermod -l "user" -g "user" -d /home/user -m $(getent passwd ${USER_ID} | cut -d: -f1); \
+       else \
+         useradd -u ${USER_ID} -g "user" -m "user"; \
+       fi
 USER "user"
 
 # -- download vcpkg
