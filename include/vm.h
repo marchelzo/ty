@@ -228,7 +228,7 @@ FrameFun(Ty *ty, Frame const *frame)
 inline static Value const *
 ActiveFun(Ty *ty)
 {
-        return FrameFun(ty, vvL(ty->st.frames));
+        return FrameFun(ty, vvL(ty->st->frames));
 }
 
 Value

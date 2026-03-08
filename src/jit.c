@@ -52,6 +52,7 @@
 #define OFF_TY_STACK  offsetof(Ty, stack)
 #define OFF_TY_ST     offsetof(Ty, st)
 #define OFF_TY_TLS    offsetof(Ty, tls)
+#define OFF_ST_STACK  offsetof(co_state, stack)
 #define OFF_ST_FRAMES offsetof(co_state, frames)
 #define OFF_ST_RC     offsetof(co_state, rc)
 #define OFF_FRAME_FP  offsetof(Frame, fp)
@@ -101,11 +102,11 @@ JitInfo *jit_compile(Ty *ty, Value const *func) { (void)ty; (void)func; return N
 #else
 
 // JIT trampoline offsets
-#define OFF_JIT_RESUME    offsetof(Ty, st.jit.idx)
-#define OFF_JIT_STATUS    offsetof(Ty, st.jit.status)
-#define OFF_JIT_SAVED_RES offsetof(Ty, st.jit._idx)
-#define OFF_JIT_PEND_FN   offsetof(Ty, st.jit._fn)
-#define OFF_JIT_PEND_ENV  offsetof(Ty, st.jit._env)
+#define OFF_JIT_RESUME    offsetof(co_state, jit.idx)
+#define OFF_JIT_STATUS    offsetof(co_state, jit.status)
+#define OFF_JIT_SAVED_RES offsetof(co_state, jit._idx)
+#define OFF_JIT_PEND_FN   offsetof(co_state, jit._fn)
+#define OFF_JIT_PEND_ENV  offsetof(co_state, jit._env)
 
 // ============================================================================
 // Fast-path statistics (typrof)
@@ -658,14 +659,14 @@ static void jit_rt_stat_arith_float(void)            { STAT(arith_float); }
         jit_emit_call_reg(asm, BC_CALL);                                                    \
 } while (0)
 
-#define TOP_OF_STACK(v) (vN(ty->stack) = ((v) - vv(ty->stack)) + 1)
+#define TOP_OF_STACK(v) (vN(STACK) = ((v) - vv(STACK)) + 1)
 
 static void
 jit_rt_dbg(Ty *ty, i64 sp, char const *msg)
 {
-        usize fp = vvL(ty->st.frames)->fp;
-        usize bp = fp + vvL(ty->st.frames)->f.info[FUN_INFO_BOUND];
-        Value const *v = v_(ty->stack, bp + sp - 1);
+        usize fp = vvL(ty->st->frames)->fp;
+        usize bp = fp + vvL(ty->st->frames)->f.info[FUN_INFO_BOUND];
+        Value const *v = v_(STACK, bp + sp - 1);
 
         char const *repr = (sp == 0) ? "<>" : SHOW(v, BASIC, ABBREV);
 
@@ -676,9 +677,9 @@ static void
 jit_rt_itrc(Ty *ty, i64 sp, char const *msg)
 {
 
-        //int fp = vvL(ty->st.frames)->fp;
-        //int np = vvL(ty->st.frames)->f.info[FUN_INFO_PARAM_COUNT];
-        //Value const *f = &vvL(ty->st.frames)->f;
+        //int fp = vvL(ty->st->frames)->fp;
+        //int np = vvL(ty->st->frames)->f.info[FUN_INFO_PARAM_COUNT];
+        //Value const *f = &vvL(ty->st->frames)->f;
 
         CO_LOG("[jit]", TERM(31;1), "%s", msg);
 }
@@ -687,13 +688,13 @@ static void
 jit_rt_idbg(Ty *ty, i64 sp, char const *op)
 {
 
-        int fp = vvL(ty->st.frames)->fp;
-        int np = vvL(ty->st.frames)->f.info[FUN_INFO_PARAM_COUNT];
-        Value const *f = &vvL(ty->st.frames)->f;
+        int fp = vvL(ty->st->frames)->fp;
+        int np = vvL(ty->st->frames)->f.info[FUN_INFO_PARAM_COUNT];
+        Value const *f = &vvL(ty->st->frames)->f;
 
         char *self;
         if (class_of(f) != -1) {
-                self = SHOW(&vv(ty->stack)[fp + np], BASIC, ABBREV);
+                self = SHOW(&vv(STACK)[fp + np], BASIC, ABBREV);
         } else {
                 self = "<no self>";
         }
@@ -721,11 +722,11 @@ jit_rt_add(Ty *ty, Value *result, Value *a, Value *b)
 
         STAT(arith_slow);
 
-        ptrdiff_t idx = result - vv(ty->stack);
-        vN(ty->stack) = idx + 2;
+        ptrdiff_t idx = result - vv(STACK);
+        vN(STACK) = idx + 2;
 
         Value val = vm_2op(ty, OP_ADD, a, b);
-        *v_(ty->stack, idx) = val;
+        *v_(STACK, idx) = val;
 }
 
 static void
@@ -738,11 +739,11 @@ jit_rt_sub(Ty *ty, Value *result, Value *a, Value *b)
 
         STAT(arith_slow);
 
-        ptrdiff_t idx = result - vv(ty->stack);
-        vN(ty->stack) = idx + 2;
+        ptrdiff_t idx = result - vv(STACK);
+        vN(STACK) = idx + 2;
 
         Value val = vm_2op(ty, OP_SUB, a, b);
-        *v_(ty->stack, idx) = val;
+        *v_(STACK, idx) = val;
 }
 
 static void
@@ -755,11 +756,11 @@ jit_rt_mul(Ty *ty, Value *result, Value *a, Value *b)
 
         STAT(arith_slow);
 
-        ptrdiff_t idx = result - vv(ty->stack);
-        vN(ty->stack) = idx + 2;
+        ptrdiff_t idx = result - vv(STACK);
+        vN(STACK) = idx + 2;
 
         Value val = vm_2op(ty, OP_MUL, a, b);
-        *v_(ty->stack, idx) = val;
+        *v_(STACK, idx) = val;
 }
 
 static void
@@ -773,11 +774,11 @@ jit_rt_div(Ty *ty, Value *result, Value *a, Value *b)
 
         STAT(arith_slow);
 
-        ptrdiff_t idx = result - vv(ty->stack);
-        vN(ty->stack) = idx + 2;
+        ptrdiff_t idx = result - vv(STACK);
+        vN(STACK) = idx + 2;
 
         Value val = vm_2op(ty, OP_DIV, a, b);
-        *v_(ty->stack, idx) = val;
+        *v_(STACK, idx) = val;
 }
 
 static void
@@ -791,11 +792,11 @@ jit_rt_mod(Ty *ty, Value *result, Value *a, Value *b)
 
         STAT(arith_slow);
 
-        ptrdiff_t idx = result - vv(ty->stack);
-        vN(ty->stack) = idx + 2;
+        ptrdiff_t idx = result - vv(STACK);
+        vN(STACK) = idx + 2;
 
         Value val = vm_2op(ty, OP_MOD, a, b);
-        *v_(ty->stack, idx) = val;
+        *v_(STACK, idx) = val;
 }
 
 static void
@@ -816,10 +817,10 @@ jit_rt_neg(Ty *ty, Value *result, Value *a)
 static void
 jit_rt_not(Ty *ty, Value *result, Value *a)
 {
-        ptrdiff_t idx = result - vv(ty->stack);
-        vN(ty->stack) = idx + 1;
+        ptrdiff_t idx = result - vv(STACK);
+        vN(STACK) = idx + 1;
         Value val = BOOLEAN(!value_truthy(ty, a));
-        *v_(ty->stack, idx) = val;
+        *v_(STACK, idx) = val;
 }
 
 static void
@@ -830,11 +831,11 @@ jit_rt_eq(Ty *ty, Value *result, Value *a, Value *b)
                 return;
         }
 
-        ptrdiff_t idx = result - vv(ty->stack);
-        vN(ty->stack) = idx + 2;
+        ptrdiff_t idx = result - vv(STACK);
+        vN(STACK) = idx + 2;
 
         Value val = BOOLEAN(value_test_equality(ty, a, b));
-        *v_(ty->stack, idx) = val;
+        *v_(STACK, idx) = val;
 }
 
 static void
@@ -845,11 +846,11 @@ jit_rt_ne(Ty *ty, Value *result, Value *a, Value *b)
                 return;
         }
 
-        ptrdiff_t idx = result - vv(ty->stack);
-        vN(ty->stack) = idx + 2;
+        ptrdiff_t idx = result - vv(STACK);
+        vN(STACK) = idx + 2;
 
         Value val = BOOLEAN(!value_test_equality(ty, a, b));
-        *v_(ty->stack, idx) = val;
+        *v_(STACK, idx) = val;
 }
 
 static int
@@ -867,8 +868,8 @@ jit_rt_lt(Ty *ty, Value *result, Value *a, Value *b)
                 return;
         }
 
-        ptrdiff_t idx = result - vv(ty->stack);
-        vN(ty->stack) = idx + 2;
+        ptrdiff_t idx = result - vv(STACK);
+        vN(STACK) = idx + 2;
 
         DoLt(ty);
 }
@@ -881,8 +882,8 @@ jit_rt_le(Ty *ty, Value *result, Value *a, Value *b)
                 return;
         }
 
-        ptrdiff_t idx = result - vv(ty->stack);
-        vN(ty->stack) = idx + 2;
+        ptrdiff_t idx = result - vv(STACK);
+        vN(STACK) = idx + 2;
 
         DoLeq(ty);
 }
@@ -895,8 +896,8 @@ jit_rt_gt(Ty *ty, Value *result, Value *a, Value *b)
                 return;
         }
 
-        ptrdiff_t idx = result - vv(ty->stack);
-        vN(ty->stack) = idx + 2;
+        ptrdiff_t idx = result - vv(STACK);
+        vN(STACK) = idx + 2;
 
         DoGt(ty);
 }
@@ -909,8 +910,8 @@ jit_rt_ge(Ty *ty, Value *result, Value *a, Value *b)
                 return;
         }
 
-        ptrdiff_t idx = result - vv(ty->stack);
-        vN(ty->stack) = idx + 2;
+        ptrdiff_t idx = result - vv(STACK);
+        vN(STACK) = idx + 2;
 
         DoGeq(ty);
 }
@@ -958,12 +959,12 @@ jit_rt_dbg_self(Ty *ty, Value *self, int m_id)
 static void
 jit_rt_member(Ty *ty, Value *result, Value *obj, int member_id)
 {
-        ptrdiff_t idx = result - vv(ty->stack);
-        vN(ty->stack) = idx + 1;
+        ptrdiff_t idx = result - vv(STACK);
+        vN(STACK) = idx + 1;
 
         if (obj == NULL) {
                 obj = vm_get_self(ty);
-                v_L(ty->stack) = *obj;
+                v_L(STACK) = *obj;
         }
 
         if (obj->type == VALUE_OBJECT) {
@@ -988,39 +989,39 @@ jit_rt_member(Ty *ty, Value *result, Value *obj, int member_id)
                 v = NIL;
         }
 
-        *v_(ty->stack, idx) = v;
+        *v_(STACK, idx) = v;
 }
 
 #define JIT_RT_MUT_OP(op, vm_op)                                                          \
         static void                                                                       \
         jit_rt_mut_##op(Ty *ty, Value *target, Value *val, Value *result)                 \
         {                                                                                 \
-                ptrdiff_t idx = result - vv(ty->stack);                                   \
-                vN(ty->stack) = val - vv(ty->stack) + 1;                                  \
+                ptrdiff_t idx = result - vv(STACK);                                   \
+                vN(STACK) = val - vv(STACK) + 1;                                  \
                 vm_jit_push_target(ty, target);                                           \
                 vm_op(ty, true);                                                          \
-                *v_(ty->stack, idx) = *vm_get(ty, 0);                                     \
+                *v_(STACK, idx) = *vm_get(ty, 0);                                     \
         }                                                                                 \
                                                                                           \
         static void                                                                       \
         jit_rt_member_mut_##op(Ty *ty, Value *obj, int m_id, Value *val, Value *result)   \
         {                                                                                 \
-                ptrdiff_t idx = result - vv(ty->stack);                                   \
-                vN(ty->stack) = val - vv(ty->stack) + 1;                                  \
+                ptrdiff_t idx = result - vv(STACK);                                   \
+                vN(STACK) = val - vv(STACK) + 1;                                  \
                 DoTargetMember(ty, *obj, m_id);                                           \
                 vm_op(ty, true);                                                          \
-                *v_(ty->stack, idx) = *vm_get(ty, 0);                                     \
+                *v_(STACK, idx) = *vm_get(ty, 0);                                     \
         }                                                                                 \
         static void                                                                       \
         jit_rt_subscript_mut_##op(Ty *ty, Value *val, Value *xs, Value *ix)               \
         {                                                                                 \
-                ptrdiff_t idx = val - vv(ty->stack);                                      \
-                vN(ty->stack) = val - vv(ty->stack) + 1;                                  \
-                xvP(ty->stack, *xs);                                                      \
-                xvP(ty->stack, *ix);                                                      \
+                ptrdiff_t idx = val - vv(STACK);                                      \
+                vN(STACK) = val - vv(STACK) + 1;                                  \
+                xvP(STACK, *xs);                                                      \
+                xvP(STACK, *ix);                                                      \
                 DoTargetSubscript(ty);                                                    \
                 vm_op(ty, true);                                                          \
-                *v_(ty->stack, idx) = *vm_get(ty, 0);                                     \
+                *v_(STACK, idx) = *vm_get(ty, 0);                                     \
         }
 
 
@@ -1040,7 +1041,7 @@ static void
 jit_rt_member_set(Ty *ty, Value *obj, int member_id, Value *val)
 {
         STAT(member_set_slow);
-        vN(ty->stack) = val - vv(ty->stack) + 1;
+        vN(STACK) = val - vv(STACK) + 1;
         if (obj == NULL) {
                 obj = vm_get_self(ty);
         }
@@ -1057,10 +1058,10 @@ jit_rt_try_tag_pop(Ty *ty, Value *val, int tag)
 static void
 jit_rt_render_template(Ty *ty, Value *result, uptr expr_ptr)
 {
-        ptrdiff_t idx = result - vv(ty->stack);
-        vN(ty->stack) = idx;
+        ptrdiff_t idx = result - vv(STACK);
+        vN(STACK) = idx;
         Value val = compiler_render_template(ty, (Expr *)expr_ptr);
-        *v_(ty->stack, idx) = val;
+        *v_(STACK, idx) = val;
 }
 
 static int
@@ -1127,14 +1128,14 @@ jit_rt_capture(Ty *ty, Value *local, Value **env, int env_idx)
 static void
 jit_rt_function(Ty *ty, Value *top, char const *ip)
 {
-        vN(ty->stack) = top - vv(ty->stack);
+        vN(STACK) = top - vv(STACK);
         (void)DoFunction(ty, ip);
 }
 
 static void
 jit_rt_generator(Ty *ty, Value *top, char const *ip)
 {
-        vN(ty->stack) = top - vv(ty->stack);
+        vN(STACK) = top - vv(STACK);
         (void)DoGenerator(ty, ip);
 }
 
@@ -1207,22 +1208,22 @@ jit_rt_try_index(Value *tos, Value *dst, int i, bool required)
 static void
 jit_rt_tuple(Ty *ty, Value *top, i32 n, i32 *ids)
 {
-        vN(ty->stack) = top - vv(ty->stack);
+        vN(STACK) = top - vv(STACK);
 
         Value *items = mAo(n * sizeof (Value), GC_TUPLE);
         Value tuple = TUPLE(items, ids, n, false);
 
-        memcpy(items, vZ(ty->stack) - n, n * sizeof (Value));
-        vN(ty->stack) -= n;
+        memcpy(items, vZ(STACK) - n, n * sizeof (Value));
+        vN(STACK) -= n;
 
-        xvP(ty->stack, tuple);
+        xvP(STACK, tuple);
 }
 
 static void
 jit_rt_subscript(Ty *ty, Value *top)
 {
-        ptrdiff_t idx = (top - vv(ty->stack));
-        vN(ty->stack) = idx + 2;
+        ptrdiff_t idx = (top - vv(STACK));
+        vN(STACK) = idx + 2;
         DoSubscript(ty, true);
 }
 
@@ -1295,8 +1296,8 @@ jit_rt_string(Ty *ty, Value *result, i32 i)
 static void
 jit_rt_cmp(Ty *ty, Value *result, Value *a, Value *b)
 {
-        ptrdiff_t idx = (result - vv(ty->stack));
-        vN(ty->stack) = idx + 2;
+        ptrdiff_t idx = (result - vv(STACK));
+        vN(STACK) = idx + 2;
         DoCmp(ty);
 }
 
@@ -1304,15 +1305,15 @@ jit_rt_cmp(Ty *ty, Value *result, Value *a, Value *b)
 static void
 jit_rt_count(Ty *ty, Value *result, Value *v)
 {
-        ptrdiff_t idx = result - vv(ty->stack);
-        vN(ty->stack) = idx + 1;
+        ptrdiff_t idx = result - vv(STACK);
+        vN(STACK) = idx + 1;
         DoCount(ty, true);
 }
 
 static void
 jit_rt_tls0(Ty *ty, Value *top, int n)
 {
-        vN(ty->stack) = top - vv(ty->stack);
+        vN(STACK) = top - vv(STACK);
 
         while (vN(ty->tls) <= n) {
                 xvP(ty->tls, NONE);
@@ -1327,7 +1328,7 @@ jit_rt_tls0(Ty *ty, Value *top, int n)
 static void
 jit_rt_assign_subscript(Ty *ty, Value *value, Value *container, Value *subscript)
 {
-        vN(ty->stack) = value - vv(ty->stack) + 3;
+        vN(STACK) = value - vv(STACK) + 3;
         DoAssignSubscript(ty, true);
 }
 
@@ -1335,12 +1336,12 @@ jit_rt_assign_subscript(Ty *ty, Value *value, Value *container, Value *subscript
 static void
 jit_rt_array(Ty *ty, Value *result, Value *elements, int n)
 {
-        ptrdiff_t idx = result - vv(ty->stack);
-        vN(ty->stack) = idx + n;
+        ptrdiff_t idx = result - vv(STACK);
+        vN(STACK) = idx + n;
         Array *xs = vAn(n);
         vN(*xs) = n;
-        memcpy(vv(*xs), v_(ty->stack, idx), n * sizeof (Value));
-        *v_(ty->stack, idx) = ARRAY(xs);
+        memcpy(vv(*xs), v_(STACK, idx), n * sizeof (Value));
+        *v_(STACK, idx) = ARRAY(xs);
 }
 
 // Create empty array
@@ -1354,19 +1355,19 @@ jit_rt_array0(Ty *ty, Value *result)
 static void
 jit_rt_array_compr(Ty *ty, Value *top, i32 idx, i32 n)
 {
-        vN(ty->stack) = top - vv(ty->stack);
-        Value *array = vZ(ty->stack) - (idx + n + 1);
-        vvPn(*array->array, vZ(ty->stack) - n, n);
-        vN(ty->stack) -= n;
+        vN(STACK) = top - vv(STACK);
+        Value *array = vZ(STACK) - (idx + n + 1);
+        vvPn(*array->array, vZ(STACK) - n, n);
+        vN(STACK) -= n;
 }
 
 // CALL_STATIC_METHOD: push CLASS value as self, then CallMethod
 static void
 jit_rt_call_static_method(Ty *ty, Value *result, int class_id, int argc, int method_id, int nkw)
 {
-        ptrdiff_t idx = result - vv(ty->stack);
-        vN(ty->stack) = idx + argc;
-        xvP(ty->stack, CLASS(class_id));
+        ptrdiff_t idx = result - vv(STACK);
+        vN(STACK) = idx + argc;
+        xvP(STACK, CLASS(class_id));
         CallMethod(ty, method_id, argc, nkw, true, true);
         *result = *vm_pop(ty);
 }
@@ -1374,17 +1375,17 @@ jit_rt_call_static_method(Ty *ty, Value *result, int class_id, int argc, int met
 static void
 jit_rt_default_dict(Ty *ty, Value *top, i32 n)
 {
-        ptrdiff_t idx = top - vv(ty->stack);
-        vN(ty->stack) = idx;
-        Value dflt = vXx(ty->stack);
+        ptrdiff_t idx = top - vv(STACK);
+        vN(STACK) = idx;
+        Value dflt = vXx(STACK);
         DoDictLiteral(ty, n, &dflt);
 }
 
 static void
 jit_rt_dict(Ty *ty, Value *top, i32 n)
 {
-        ptrdiff_t idx = top - vv(ty->stack);
-        vN(ty->stack) = idx;
+        ptrdiff_t idx = top - vv(STACK);
+        vN(STACK) = idx;
         DoDictLiteral(ty, n, NULL);
 }
 
@@ -1408,8 +1409,8 @@ jit_rt_loop_check(Ty *ty, int z, Value *top)
 static void
 jit_rt_throw(Ty *ty, Value *exc)
 {
-        ptrdiff_t idx = (exc - vv(ty->stack));
-        vN(ty->stack) = idx + 1;
+        ptrdiff_t idx = (exc - vv(STACK));
+        vN(STACK) = idx + 1;
         vm_throw(ty, exc);
 }
 
@@ -1426,20 +1427,20 @@ jit_rt_bad_match(Ty *ty, Value *v)
 static void
 jit_rt_range(Ty *ty, Value *result, Value *a, Value *b)
 {
-        ptrdiff_t idx = (result - vv(ty->stack));
-        vN(ty->stack) = idx + 2;
+        ptrdiff_t idx = (result - vv(STACK));
+        vN(STACK) = idx + 2;
         Value val = vm_make_range(ty, a, b, false);
-        *v_(ty->stack, idx) = val;
+        *v_(STACK, idx) = val;
 }
 
 // INCRANGE: create an inclusive range object
 static void
 jit_rt_incrange(Ty *ty, Value *result, Value *a, Value *b)
 {
-        ptrdiff_t idx = (result - vv(ty->stack));
-        vN(ty->stack) = idx + 2;
+        ptrdiff_t idx = (result - vv(STACK));
+        vN(STACK) = idx + 2;
         Value val = vm_make_range(ty, a, b, true);
-        *v_(ty->stack, idx) = val;
+        *v_(STACK, idx) = val;
 }
 
 // TO_STRING: convert value to string
@@ -1456,8 +1457,8 @@ jit_rt_to_string(Ty *ty, Value *val)
                 return;
         }
 
-        ptrdiff_t idx = (val - vv(ty->stack));
-        vN(ty->stack) = idx + 1;
+        ptrdiff_t idx = (val - vv(STACK));
+        vN(STACK) = idx + 1;
         CallMethod(ty, NAMES._str_, 0, 0, false, true);
 }
 
@@ -2217,8 +2218,8 @@ static void
 jit_rt_call(Ty *ty, Value *result, Value *fn, int argc)
 {
         Value _fn = *fn;
-        ptrdiff_t idx = (result - vv(ty->stack));
-        vN(ty->stack) = idx + argc;
+        ptrdiff_t idx = (result - vv(STACK));
+        vN(STACK) = idx + argc;
         DoCall(ty, &_fn, argc, 0, false, true);
 }
 
@@ -2229,8 +2230,8 @@ static int
 jit_rt_call_trampoline(Ty *ty, Value *result, Value *fn, int argc)
 {
         Value _fn = *fn;
-        ptrdiff_t idx = result - vv(ty->stack);
-        vN(ty->stack) = idx + argc;
+        ptrdiff_t idx = result - vv(STACK);
+        vN(STACK) = idx + argc;
 
         // Only attempt trampoline for simple function types
         if (_fn.type != VALUE_FUNCTION && _fn.type != VALUE_BOUND_FUNCTION) {
@@ -2249,8 +2250,8 @@ jit_rt_call_trampoline(Ty *ty, Value *result, Value *fn, int argc)
         // Callee is JIT-compiled: set up its frame and signal the trampoline
         vm_xcall(ty, &_fn, NULL, argc, NULL);
 
-        ty->st.jit._fn = jit;
-        ty->st.jit._env = _fn.env;
+        JIT_STATE._fn = jit;
+        JIT_STATE._env = _fn.env;
 
         return 1;
 }
@@ -2261,20 +2262,20 @@ static inline void
 jit_fast_frame(Ty *ty, Value const *fn, Value const *self, int argc)
 {
         int bound = fn->info[FUN_INFO_BOUND];
-        int fp = vN(ty->stack) - argc;
+        int fp = vN(STACK) - argc;
 
         // Ensure stack capacity
         int needed = fp + bound;
-        if (UNLIKELY((usize)needed > vC(ty->stack))) {
-                xvR(ty->stack, needed + 256);
+        if (UNLIKELY((usize)needed > vC(STACK))) {
+                xvR(STACK, needed + 256);
         }
 
         // NIL-fill locals beyond args
-        Value *base = vv(ty->stack) + fp;
+        Value *base = vv(STACK) + fp;
         for (int i = argc; i < bound; i++) {
                 base[i] = NIL;
         }
-        vN(ty->stack) = needed;
+        vN(STACK) = needed;
 
         // Set self for methods
         if (self != NULL) {
@@ -2283,8 +2284,8 @@ jit_fast_frame(Ty *ty, Value const *fn, Value const *self, int argc)
         }
 
         // Push frame and call return address
-        xvP(ty->st.frames, ((Frame){ .fp = fp, .f = *fn, .ip = NULL }));
-        xvP(ty->st.calls, (char *)NULL);
+        xvP(ty->st->frames, ((Frame){ .fp = fp, .f = *fn, .ip = NULL }));
+        xvP(ty->st->calls, (char *)NULL);
 
         CO_LOG("jit_fast_frame", TERM(33;1), "");
 }
@@ -2292,13 +2293,13 @@ jit_fast_frame(Ty *ty, Value const *fn, Value const *self, int argc)
 inline static JitCont *
 cont(Ty *ty, int i)
 {
-        if (ty->st.jit.cont == NULL) {
-                ty->st.jit.cont = GetFreeJitContStack(ty);
+        if (JIT_STATE.cont == NULL) {
+                JIT_STATE.cont = GetFreeJitContStack(ty);
         }
 
-        xvR(*ty->st.jit.cont, i + 1);
+        xvR(*JIT_STATE.cont, i + 1);
 
-        return v_(*ty->st.jit.cont, i);
+        return v_(*JIT_STATE.cont, i);
 }
 
 // Run a JIT function through an inline trampoline loop.
@@ -2306,30 +2307,30 @@ cont(Ty *ty, int i)
 static inline void
 jit_run_trampoline(Ty *ty, JitFn *jit, Value **env, int nenv)
 {
-        int base_depth = ty->st.jit.depth;
+        int base_depth = JIT_STATE.depth;
         Value result = {0};
         Value cv = {0};
 
-        *cont(ty, ty->st.jit.depth++) = (JitCont) {
+        *cont(ty, JIT_STATE.depth++) = (JitCont) {
                 .fn   = jit,
                 .env  = env,
                 .ret  = &result,
                 .idx  = 0,
         };
 
-        while (ty->st.jit.depth > base_depth) {
-                int d0 = ty->st.jit.depth - 1;
+        while (JIT_STATE.depth > base_depth) {
+                int d0 = JIT_STATE.depth - 1;
                 JitCont *top = cont(ty, d0);
-                usize cfp = vvL(ty->st.frames)->fp;
-                Value *args = vv(ty->stack) + cfp;
+                usize cfp = vvL(ty->st->frames)->fp;
+                Value *args = vv(STACK) + cfp;
 
-                if (UNLIKELY(vN(ty->stack) + 256 > vC(ty->stack))) {
-                        xvR(ty->stack, vN(ty->stack) + 256);
-                        args = vv(ty->stack) + cfp;
+                if (UNLIKELY(vN(STACK) + 256 > vC(STACK))) {
+                        xvR(STACK, vN(STACK) + 256);
+                        args = vv(STACK) + cfp;
                 }
 
-                ty->st.jit.idx    = top->idx;
-                ty->st.jit.status = JIT_RETURN;
+                JIT_STATE.idx    = top->idx;
+                JIT_STATE.status = JIT_RETURN;
 
                 CO_LOG("jit_run_trampoline", TERM(31;1), "");
 
@@ -2337,20 +2338,20 @@ jit_run_trampoline(Ty *ty, JitFn *jit, Value **env, int nenv)
 
                 top = cont(ty, d0);
 
-                if (ty->st.jit.status == JIT_CALL) {
-                        top->idx = ty->st.jit._idx;
-                        *cont(ty, ty->st.jit.depth++) = (JitCont) {
-                                .fn   = ty->st.jit._fn,
-                                .env  = ty->st.jit._env,
+                if (JIT_STATE.status == JIT_CALL) {
+                        top->idx = JIT_STATE._idx;
+                        *cont(ty, JIT_STATE.depth++) = (JitCont) {
+                                .fn   = JIT_STATE._fn,
+                                .env  = JIT_STATE._env,
                                 .ret  = &cv,
                                 .idx  = 0,
                         };
-                } else if (--ty->st.jit.depth > base_depth) {
-                        cfp = vvL(ty->st.frames)->fp;
-                        vN(ty->stack) = cfp + 1;
-                        *v_(ty->stack, cfp) = cv;
-                        vXx(ty->st.frames);
-                        vXx(ty->st.calls);
+                } else if (--JIT_STATE.depth > base_depth) {
+                        cfp = vvL(ty->st->frames)->fp;
+                        vN(STACK) = cfp + 1;
+                        *v_(STACK, cfp) = cv;
+                        vXx(ty->st->frames);
+                        vXx(ty->st->calls);
                         vm_check_flags(ty);
                 }
         }
@@ -2358,11 +2359,11 @@ jit_run_trampoline(Ty *ty, JitFn *jit, Value **env, int nenv)
         CO_LOG("jit_run_trampoline", TERM(31;1), "end");
 
         // Clean up the initial callee's frame
-        usize cfp = vvL(ty->st.frames)->fp;
-        vN(ty->stack) = cfp + 1;
-        *v_(ty->stack, cfp) = result;
-        vXx(ty->st.frames);
-        vXx(ty->st.calls);
+        usize cfp = vvL(ty->st->frames)->fp;
+        vN(STACK) = cfp + 1;
+        *v_(STACK, cfp) = result;
+        vXx(ty->st->frames);
+        vXx(ty->st->calls);
 
         CO_LOG("jit_run_trampoline", TERM(31;1), "ret");
 }
@@ -2426,12 +2427,12 @@ jit_rt_fast_global_call(Ty *ty, int gi, int argc)
 static void
 jit_rt_call_method(Ty *ty, Value *result, Value *self, int member_id, int argc)
 {
-        ptrdiff_t idx = (result - vv(ty->stack));
-        vN(ty->stack) = idx + argc;
+        ptrdiff_t idx = (result - vv(STACK));
+        vN(STACK) = idx + argc;
         if (self == NULL) {
                 self = vm_get_self(ty);
         }
-        xvP(ty->stack, *self);
+        xvP(STACK, *self);
         CallMethod(ty, member_id, argc, 0, true, true);
 }
 
@@ -2439,10 +2440,10 @@ jit_rt_call_method(Ty *ty, Value *result, Value *self, int member_id, int argc)
 static void
 jit_rt_call_method_direct(Ty *ty, Value *result, Value *self, Value *method, int argc)
 {
-        ptrdiff_t idx = (result - vv(ty->stack));
-        vN(ty->stack) = idx + argc;
+        ptrdiff_t idx = (result - vv(STACK));
+        vN(STACK) = idx + argc;
         Value val = vm_call_method(ty, self, method, argc);
-        *v_(ty->stack, idx) = val;
+        *v_(STACK, idx) = val;
 }
 
 // Guarded CALL_SELF_METHOD fast path w/ baked method ptr
@@ -2485,12 +2486,12 @@ jit_rt_call_builtin_method(Ty *ty, Value *result, Value *self,
 
         if (LIKELY(self->type == value_type)) {
                 STAT(call_method_builtin);
-                ptrdiff_t idx = (result - vv(ty->stack));
-                vN(ty->stack) = idx + argc;
+                ptrdiff_t idx = (result - vv(STACK));
+                vN(STACK) = idx + argc;
                 gP(&_self);
                 Value val = (*func)(ty, &_self, argc, NULL);
-                vN(ty->stack) = idx + 1;
-                v_L(ty->stack) = val;
+                vN(STACK) = idx + 1;
+                v_L(STACK) = val;
                 vm_check_flags(ty);
                 gX();
         } else {
@@ -2504,50 +2505,50 @@ jit_rt_call_builtin_method(Ty *ty, Value *result, Value *self,
 static void
 jit_rt_call_builtin_function(Ty *ty, Value *result, BuiltinFunction *func, int argc)
 {
-        ptrdiff_t idx = (result - vv(ty->stack));
-        vN(ty->stack) = idx + argc;
+        ptrdiff_t idx = (result - vv(STACK));
+        vN(STACK) = idx + argc;
         Value val = func(ty, argc, NULL);
-        vN(ty->stack) = idx + 1;
-        v_L(ty->stack) = val;
+        vN(STACK) = idx + 1;
+        v_L(STACK) = val;
         vm_check_flags(ty);
 }
 
 static int
 jit_rt_get_fp(Ty *ty)
 {
-        return vvL(ty->st.frames)->fp;
+        return vvL(ty->st->frames)->fp;
 }
 
 static int
 jit_rt_yield(Ty *ty, Value *top)
 {
-        vN(ty->stack) = top - vv(ty->stack);
+        vN(STACK) = top - vv(STACK);
         DoYield(ty);
-        return vvL(ty->st.frames)->fp;
+        return vvL(ty->st->frames)->fp;
 }
 
 static int
 jit_rt_yield_some(Ty *ty, Value *top)
 {
-        vN(ty->stack) = top - vv(ty->stack);
-        v_L(ty->stack) = Some(v_L(ty->stack));
+        vN(STACK) = top - vv(STACK);
+        v_L(STACK) = Some(v_L(STACK));
         DoYield(ty);
-        return vvL(ty->st.frames)->fp;
+        return vvL(ty->st->frames)->fp;
 }
 
 static int
 jit_rt_yield_none(Ty *ty, Value *top)
 {
-        vN(ty->stack) = top - vv(ty->stack);
-        xvP(ty->stack, None);
+        vN(STACK) = top - vv(STACK);
+        xvP(STACK, None);
         DoYield(ty);
-        return vvL(ty->st.frames)->fp;
+        return vvL(ty->st->frames)->fp;
 }
 
 static void
 jit_rt_check_match(Ty *ty, Value *result, Value *value, Value *pattern)
 {
-        vN(ty->stack) = result - vv(ty->stack) + 2;
+        vN(STACK) = result - vv(STACK) + 2;
         DoCheckMatch(ty, true);
 }
 
@@ -4724,9 +4725,10 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                         ctx->resume_labels[site_idx] = resume_lbl;
 
                         jit_emit_load_imm(asm, BC_S0, JIT_CALL);
-                        jit_emit_str32(asm, BC_S0, BC_TY, OFF_JIT_STATUS);
+                        jit_emit_ldr64(asm, BC_S1, BC_TY, OFF_TY_ST);
+                        jit_emit_str32(asm, BC_S0, BC_S1, OFF_JIT_STATUS);
                         jit_emit_load_imm(asm, BC_S0, site_idx + 1); // 1-based resume index
-                        jit_emit_str32(asm, BC_S0, BC_TY, OFF_JIT_SAVED_RES);
+                        jit_emit_str32(asm, BC_S0, BC_S1, OFF_JIT_SAVED_RES);
 
                         // Jump to epilogue (return to trampoline)
                         int lbl_ret = bc_label_for(ctx, -1);
@@ -4907,9 +4909,10 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                         ctx->resume_labels[cg_site_idx2] = cg_resume_lbl2;
 
                         jit_emit_load_imm(asm, BC_S0, JIT_CALL);
-                        jit_emit_str32(asm, BC_S0, BC_TY, OFF_JIT_STATUS);
+                        jit_emit_ldr64(asm, BC_S1, BC_TY, OFF_TY_ST);
+                        jit_emit_str32(asm, BC_S0, BC_S1, OFF_JIT_STATUS);
                         jit_emit_load_imm(asm, BC_S0, cg_site_idx2 + 1);
-                        jit_emit_str32(asm, BC_S0, BC_TY, OFF_JIT_SAVED_RES);
+                        jit_emit_str32(asm, BC_S0, BC_S1, OFF_JIT_SAVED_RES);
 
                         int lbl_cg_ret2 = bc_label_for(ctx, -1);
                         jit_emit_jump(asm, lbl_cg_ret2);
@@ -6294,9 +6297,9 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                 }
 
                 CASE(CLEAR_RC) {
-                        // ty->st.rc = 0;
+                        // ty->st->rc = 0;
                         jit_emit_load_imm(asm, BC_S0, 0);
-                        jit_emit_str32(asm, BC_S0, BC_TY, (int)offsetof(Ty, st.rc));
+                        jit_emit_str32(asm, BC_S0, BC_TY, (int)offsetof(co_state, rc));
                         break;
                 }
 
@@ -6746,7 +6749,7 @@ jit_compile(Ty *ty, Value const *func)
         ctx.asm = asm; // sync after DynASM setup
 
         // Trampoline support: check if we're resuming after a sub-call.
-        // Load ty->st.jit.resume_idx; if non-zero, jump to a dispatch block
+        // Load JIT_STATE.resume_idx; if non-zero, jump to a dispatch block
         // that redirects to the appropriate resume label.
         int lbl_dispatch = bc_next_label(&ctx);
         int lbl_normal_start = bc_next_label(&ctx);
@@ -6754,7 +6757,8 @@ jit_compile(Ty *ty, Value const *func)
 
         asm = ctx.asm; // sync: bc_next_label may have grown pclabels
 
-        jit_emit_ldr32(&asm, BC_S0, BC_TY, OFF_JIT_RESUME);
+        jit_emit_ldr64(&asm, BC_S1, BC_TY, OFF_TY_ST);
+        jit_emit_ldr32(&asm, BC_S0, BC_S1, OFF_JIT_RESUME);
         jit_emit_cbnz(&asm, BC_S0, lbl_dispatch);
         jit_emit_label(&asm, lbl_normal_start);
 

@@ -2,27 +2,29 @@ import super.lib (bench)
 
 const N = 50000
 
-fn build-tree(lo: Int, hi: Int) {
+use Tree[T] = (Tree[T], T, Tree[T]) | nil
+
+fn build-tree(lo: Int, hi: Int) -> Tree[Int] {
     if lo >= hi { return nil }
     let mid = (lo + hi) / 2
     (build-tree(lo, mid), mid, build-tree(mid + 1, hi))
 }
 
-fn walk*(node) {
+fn walk*(node: Tree[Int]) -> Generator[Int] {
     if node == nil { return None }
     let (left, val, right) = node
-    for x in walk(left)  { yield x }
+    for walk(left) { yield it }
     yield val
-    for x in walk(right) { yield x }
+    for walk(right) { yield it }
 }
 
 @bench
-fn gen-tree(nn: Int) {
+fn gen-tree(n: Int) {
     let tree = build-tree(0, N)
 
-    for ..nn {
+    for ..n {
         let count = 0
-        for _ in walk(tree) {
+        for walk(tree) {
             count += 1
         }
         assert(count == N)

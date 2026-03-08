@@ -8199,9 +8199,9 @@ BUILTIN_FUNCTION(ty_stack_ctx)
         ASSERT_ARGC("ty.stack-ctx()", 0);
 
         return vTn(
-                "stack",  INTEGER(vN(ty->stack)),
-                "fp",     INTEGER(vvL(ty->st.frames)->fp),
-                "frames", INTEGER(vN(ty->st.frames))
+                "stack",  INTEGER(vN(STACK)),
+                "fp",     INTEGER(vvL(ty->st->frames)->fp),
+                "frames", INTEGER(vN(ty->st->frames))
         );
 }
 
@@ -9657,8 +9657,8 @@ BUILTIN_FUNCTION(tdb_stack)
 {
         ASSERT_ARGC("tdb.stack()", 1);
         isize i = INT_ARG(0);
-        return (i >= 0 && i < vN(TDB->host->stack))
-             ? Some(vvL(TDB->host->stack)[-i])
+        return (i >= 0 && i < vN(TDB->host->st->stack))
+             ? Some(vvL(TDB->host->st->stack)[-i])
              : None;
 }
 
@@ -9818,12 +9818,12 @@ BUILTIN_FUNCTION(tdb_state)
 
         Value mod = (context == NULL) ? NIL : xSz(GetExpressionModule(context));
 
-        Value f = (TDB->host->st.frames.count > 0)
-                ? *FrameFun(TDB->host, vvL(TDB->host->st.frames))
+        Value f = (TDB->host->st->frames.count > 0)
+                ? *FrameFun(TDB->host, vvL(TDB->host->st->frames))
                 : NIL;
 
-        Value fp = (TDB->host->st.frames.count > 0)
-                 ? INTEGER(vvL(TDB->host->st.frames)->fp)
+        Value fp = (TDB->host->st->frames.count > 0)
+                 ? INTEGER(vvL(TDB->host->st->frames)->fp)
                  : NIL;
 
         return vTn(
@@ -9835,8 +9835,8 @@ BUILTIN_FUNCTION(tdb_state)
                 "expr",  expr,
                 "func",  f,
                 "fp",    fp,
-                "depth", INTEGER(vN(TDB->host->st.frames)),
-                "sp",    INTEGER(vN(TDB->host->stack))
+                "depth", INTEGER(vN(TDB->host->st->frames)),
+                "sp",    INTEGER(vN(TDB->host->st->stack))
         );
 }
 

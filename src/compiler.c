@@ -7908,21 +7908,58 @@ emit_with(Ty *ty, Expr const *e)
 }
 
 static void
+emit_yield_from(Ty *ty, Expr const *iter)
+{
+        INSN(PUSH_INDEX);
+        Ei32(1);
+
+        EE(iter);
+
+        LABEL(loop);
+
+        INSN(LOOP_ITER);
+        PLACEHOLDER_JUMP(LOOP_CHECK, done);
+        Ei32(1);
+
+        INSN(YIELD_SOME);
+        INSN(POP);
+        INSN(POP);
+        JUMP(loop);
+
+        PATCH_JUMP(done);
+        INSN(NIL);
+}
+
+static void
 emit_yield(Ty *ty, Expr const * const *es, int n, bool wrap)
 {
-        if (STATE.func == NULL) {
+        if (UNLIKELY(STATE.func == NULL)) {
                 fail("invalid yield expression (not inside of a function)");
         }
 
-        if (n > 1) {
+        if (UNLIKELY(n > 1)) {
                 fail("yielding multiple values isn't implemented yet");
         }
 
-        for (int i = 0; i < n; ++i) {
-                EE(es[i]);
+        if (n == 0) {
+                if (wrap) {
+                        INSN(NIL);
+                        INSN(YIELD_SOME);
+                } else {
+                        INSN(NONE);
+                        INSN(YIELD);
+                }
+                return;
         }
 
-        (emit_instr)(ty, wrap ? INSTR_YIELD_SOME : INSTR_YIELD);
+        Expr const *expr = es[0];
+
+        if (expr->type == EXPRESSION_SPREAD) {
+                emit_yield_from(ty, expr->value);
+        } else {
+                EE(expr);
+                (emit_instr)(ty, wrap ? INSTR_YIELD_SOME : INSTR_YIELD);
+        }
 }
 
 static void
@@ -14908,7 +14945,7 @@ tyexpr(Ty *ty, Expr const *e, u32 flags)
                 break;
 
         case EXPRESSION_TEMPLATE_HOLE:
-                if (vN(ty->stack) > e->hole.i) {
+                if (vN(STACK) > e->hole.i) {
                         v = *vm_get(ty, e->hole.i);
                 } else {
                         v = TAG(TyNil);
@@ -14920,7 +14957,7 @@ tyexpr(Ty *ty, Expr const *e, u32 flags)
                 break;
 
         case EXPRESSION_TEMPLATE_VHOLE:
-                if (vN(ty->stack) > e->hole.i) {
+                if (vN(STACK) > e->hole.i) {
                         v = TAGGED(TyValue, *vm_get(ty, e->hole.i));
                 } else {
                         v = TAG(TyNil);
@@ -14928,7 +14965,7 @@ tyexpr(Ty *ty, Expr const *e, u32 flags)
                 break;
 
         case EXPRESSION_TEMPLATE_THOLE:
-                if (vN(ty->stack) > e->hole.i) {
+                if (vN(STACK) > e->hole.i) {
                         v = TAGGED(TyType, *vm_get(ty, e->hole.i));
                 } else {
                         v = TAG(TyUnknownT);
@@ -15825,7 +15862,6 @@ cexpr(Ty *ty, Value *v)
                 if (vN(*v->array) == 0 || vvL(*v->array)->type != VALUE_STRING) {
                         avP(e->strings, "");
                 }
-
                 break;
         }
 

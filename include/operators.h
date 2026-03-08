@@ -12,8 +12,8 @@
 #include "xd.h"
 #include "vm.h"
 
-#define     look(i) (&ty->stack.items[ty->stack.count - 1] + i)
-#define COMPLETE(x) do { Value x__ = x; ty->stack.items[--ty->stack.count - 1] = x__; return true; } while (0)
+#define     look(i) (&STACK.items[STACK.count - 1] + i)
+#define COMPLETE(x) do { Value x__ = x; STACK.items[--STACK.count - 1] = x__; return true; } while (0)
 
 inline static bool
 op_builtin_add(Ty *ty)

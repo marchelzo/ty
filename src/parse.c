@@ -2703,10 +2703,19 @@ prefix_yield(Ty *ty)
 
         consume_kw(YIELD);
 
-        avP(e->es, parse_expr(ty, 1));
-        while (T0 == ',') {
+        if (T0 == TOKEN_STAR) {
+                Expr *spread = mkexpr(ty);
                 next();
+                spread->type = EXPRESSION_SPREAD;
+                spread->value = parse_expr(ty, 1);
+                spread->end = TEnd;
+                avP(e->es, spread);
+        } else {
                 avP(e->es, parse_expr(ty, 1));
+                while (T0 == ',') {
+                        next();
+                        avP(e->es, parse_expr(ty, 1));
+                }
         }
 
         e->end = TEnd;

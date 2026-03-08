@@ -507,8 +507,8 @@ fn strct() {
             }
         }
 
-        fn get-decl() -> Array[FieldDecl] {
-            let t, name = nexttype(array-to-ptr?=false, has-name?=true)
+        fn get-decl() -> Array[SimpleFieldDecl] {
+            let $t, $name = nexttype(array-to-ptr?=false, has-name?=true)
             let names = [(name, get-count())]
 
             while peek().type == ',' {
@@ -523,7 +523,7 @@ fn strct() {
 
         if peek().?id == 'union' {
             let types = []
-            let decls: Array[FieldDecl] = []
+            let decls: Array[UnionMember] = []
 
             next() // union
             next!('{')
@@ -531,7 +531,7 @@ fn strct() {
                 if peek().?id == 'struct' {
                     next() // struct
                     next!('{')
-                    let inner = []
+                    let inner: Array[SimpleFieldDecl] = []
 
                     while peek().type != '}' {
                         inner += get-decl()

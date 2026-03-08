@@ -13,8 +13,8 @@
 #include "array.h"
 #include "dict.h"
 
-#define TYPES_LOG      1
-#define FUN_TYPES_LOG  1
+#define TYPES_LOG      0
+#define FUN_TYPES_LOG  0
 
 typedef struct {
         TypeVector id0;
@@ -3973,11 +3973,11 @@ Occurs(Ty *ty, Type *t0, u32 id, int level)
 
         dont_printf("%*sOccurs(%s)\n", 4*d, "", ShowType(t0));
 
+        t0 = ResolveVar(t0);
+
         if (IsConcrete(t0)) {
                 return false;
         }
-
-        t0 = Resolve(ty, t0);
 
         if (IsConcrete(t0)) {
                 return false;
@@ -4707,11 +4707,10 @@ TryUnifyObjects(Ty *ty, Type *t0, Type *t1, bool super)
                                         if (IsLiteral(v__(t0->types, i)) || IsLiteral(*t2)) {
                                                 return false;
                                         }
-                                        if (!t0->fixed) {
-                                                unify2_(ty, v_(t0->types, i), *t2, false);
-                                        } else if (!t1->fixed) {
-                                                type_intersect(ty, t2, t00);
-                                        } else {
+                                        if (
+                                                (t0->fixed || !unify2_(ty, v_(t0->types, i), *t2, false))
+                                             && (t1->fixed || (type_intersect(ty, t2, t00), true))
+                                        ) {
                                                 return false;
                                         }
                                 }
@@ -4755,11 +4754,10 @@ TryUnifyObjects(Ty *ty, Type *t0, Type *t1, bool super)
                                         if (IsLiteral(*t2) || IsLiteral(v__(t1->types, i))) {
                                                 return false;
                                         }
-                                        if (!t1->fixed) {
-                                                unify2(ty, v_(t1->types, i), *t2);
-                                        } else if (!t0->fixed) {
-                                                type_intersect(ty, t2, v__(t1->types, i));
-                                        } else {
+                                        if (
+                                                (t1->fixed || !unify2_(ty, v_(t1->types, i), *t2, false))
+                                             && (t0->fixed || (type_intersect(ty, t2, v__(t1->types, i)), true))
+                                        ) {
                                                 return false;
                                         }
                                 }

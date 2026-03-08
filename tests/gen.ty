@@ -2,7 +2,8 @@ ns test
 
 pub fn gen() {
     fn f(k) {
-        (yield nil) * k
+        let y = (yield nil)
+        y * k
     }
     fn g*() {
         yield f(4)
