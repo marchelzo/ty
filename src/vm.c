@@ -144,7 +144,7 @@ static Ty *ty = &vvv;
 #define YCASE(i) case INSTR_##i:
 #define CASE(i) \
         case INSTR_##i: \
-                CO_LOG(#i, TERM(93), "%s", SHOW(top()));
+                CO_LOG(#i, TERM(93), "%s", vN(STACK) ? SHOW(top()) : "--");
 #endif
 
 #define MatchError do {                                          \
@@ -178,20 +178,18 @@ ValueVector Globals;
 
 #define IP              (ty->ip)
 #define CO_THREADS      (ty->cothreads)
-#define JIT_STATES      (ty->jit_states)
 #define JB              (ty->jb)
-#define STACK           (ty->stack)
 #define THREAD_LOCALS   (ty->tls)
 #define THROW_STACK     (ty->throw_stack)
 
-#define CALLS         (ty->st.calls)
-#define DROP_STACK    (ty->st.to_drop)
-#define EXEC_DEPTH    (ty->st.exec_depth)
-#define RC            (ty->st.rc)
-#define FRAMES        (ty->st.frames)
-#define SP_STACK      (ty->st.sps)
-#define TARGETS       (ty->st.targets)
-#define TRY_STACK     (ty->st.try_stack)
+#define CALLS         (ty->st->calls)
+#define DROP_STACK    (ty->st->to_drop)
+#define EXEC_DEPTH    (ty->st->exec_depth)
+#define RC            (ty->st->rc)
+#define FRAMES        (ty->st->frames)
+#define SP_STACK      (ty->st->sps)
+#define TARGETS       (ty->st->targets)
+#define TRY_STACK     (ty->st->try_stack)
 #define VISITING      (ty->visiting)
 
 #define top()    ((top)(ty))
@@ -364,7 +362,7 @@ profiler_tick(Ty *ty, char const *prev_ip, char const *next_ip)
                         count->z += dt;
                 }
 
-                int *func = (ty->st.frames.count > 0) ? ActiveFun(ty)->info : NULL;
+                int *func = (ty->st->frames.count > 0) ? ActiveFun(ty)->info : NULL;
                 count = dict_put_key_if_not_exists(ty, FuncSamples, PTR(func));
                 if (count->type == VALUE_NIL) {
                         *count = INTEGER(dt);
@@ -480,6 +478,7 @@ InitializeTy(Ty *ty, ThreadGroup *group)
         ExpandScratch(ty);
         ty->memory_limit = GC_INITIAL_LIMIT;
 
+        ty->st = alloc0(sizeof *ty->st);
         ty->co_top = co_active();
 
         u64 seed = random();
@@ -1369,16 +1368,11 @@ GetCurrentGenerator(Ty *ty)
                 return NULL;
         }
 
-        usize n = vv(FRAMES)->fp;
-
-        if (UNLIKELY(
-                (n == 0)
-             || (v_(STACK, n - 1)->type != VALUE_GENERATOR)
-        )) {
+        if (UNLIKELY(vv(STACK)->type != VALUE_GENERATOR)) {
                 return NULL;
         }
 
-        return v_(STACK, n - 1)->gen;
+        return vv(STACK)->gen;
 }
 
 static char const *
@@ -1396,7 +1390,7 @@ co_up(Ty *ty, co_state *st)
 
         Generator *gen = v_(STACK, n - 1)->gen;
 
-        *st = gen->st;
+        *st = *gen->st;
 
         return gen->ip;
 }
@@ -1417,7 +1411,7 @@ co_abort(Ty *ty)
         Generator *gen = v_(STACK, n - 1)->gen;
         STACK.count = n - 1;
 
-        SWAP(co_state, gen->st, ty->st);
+        SWAP(co_state *, gen->st, ty->st);
 
         vvX(FRAMES);
         IP = *vvX(CALLS);
@@ -1428,36 +1422,29 @@ co_abort(Ty *ty)
 static bool
 co_yield_value(Ty *ty)
 {
-        if (UNLIKELY(vN(FRAMES) == 0 || vN(STACK) == 0)) {
+        if (UNLIKELY((vN(FRAMES) == 0) | (vN(STACK) == 0))) {
                 return false;
         }
 
-        int n = vv(FRAMES)->fp;
-
-        if (UNLIKELY(
-                (n == 0)
-             || (v_(STACK, n - 1)->type != VALUE_GENERATOR)
-        )) {
+        if (UNLIKELY(vv(STACK)->type != VALUE_GENERATOR)) {
                 return false;
         }
 
-        Generator *gen = STACK.items[n - 1].gen;
+        Generator *gen = vv(STACK)->gen;
         gen->ip = IP;
-        v0(gen->frame);
 
-        SWAP(co_state, gen->st, ty->st);
+        Value v = pop();
 
-        xvPn(gen->frame, vv(STACK) + n, vN(STACK) - n - 1);
-        CO_LOG("co_yield()", TERM(91;1), "%sYIELD%s: n=%d  #frame = %zu", TERM(92;1), TERM(0), n, vN(gen->frame));
+        ty->st->stack = STACK;
+        SWAP(co_state *, gen->st, ty->st);
+        STACK = ty->st->stack;
 
-        *v_(STACK, n - 1) = peek();
-        vN(STACK) = n;
+        vN(STACK) = vXx(FRAMES).fp;
+        IP = vXx(CALLS);
 
-        vvX(FRAMES);
+        put(v);
 
-        IP = *vvX(CALLS);
-
-        if (gen->st.exec_depth > 1) {
+        if (gen->st->exec_depth > 1) {
                 CO_LOG("co_yield()", TERM(91;1), "switch to [%p] (RECURSED): %s", gen->co, VSC(top()));
                 cothread_t co = gen->co;
                 gen->co = co_active();
@@ -1466,7 +1453,7 @@ co_yield_value(Ty *ty)
                 CO_LOG("co_yield()", TERM(91;1), "switch to [%p]: %s", gen->co, VSC(top()));
                 cothread_t co = gen->co;
                 gen->co = NULL;
-                gen->st.exec_depth = 0;
+                gen->st->exec_depth = 0;
                 xvP(CO_THREADS, co_active());
                 co_switch(co);
         }
@@ -1479,13 +1466,13 @@ co_yield_value(Ty *ty)
 inline static JitCont *
 cont(Ty *ty, int i)
 {
-        if (ty->st.jit.cont == NULL) {
-                ty->st.jit.cont = GetFreeJitContStack(ty);
+        if (JIT_STATE.cont == NULL) {
+                JIT_STATE.cont = GetFreeJitContStack(ty);
         }
 
-        xvR(*ty->st.jit.cont, i + 1);
+        xvR(*JIT_STATE.cont, i + 1);
 
-        return v_(*ty->st.jit.cont, i);
+        return v_(*JIT_STATE.cont, i);
 }
 
 #if !defined(TY_NO_JIT)
@@ -1505,14 +1492,14 @@ call_jit(Ty *ty, Value const *f)
         usize fp = vvL(FRAMES)->fp;
         Value v = {0};
 
-        ty->st.jit.idx = 0;
-        ty->st.jit.status = JIT_RETURN;
+        JIT_STATE.idx = 0;
+        JIT_STATE.status = JIT_RETURN;
 
         EXEC_DEPTH += 1;
 
         (*(JitFn *)func)(ty, &v, v_(STACK, fp), f->env);
 
-        if (LIKELY(ty->st.jit.status == JIT_RETURN)) {
+        if (LIKELY(JIT_STATE.status == JIT_RETURN)) {
                 EXEC_DEPTH -= 1;
                 vN(STACK) = fp + 1;
                 put(v);
@@ -1522,26 +1509,26 @@ call_jit(Ty *ty, Value const *f)
                 return true;
         }
 
-        int base_depth = ty->st.jit.depth;
+        int base_depth = JIT_STATE.depth;
 
-        *cont(ty, ty->st.jit.depth++) = (JitCont) {
+        *cont(ty, JIT_STATE.depth++) = (JitCont) {
                 .fn   = func,
                 .env  = f->env,
                 .ret  = &v,
-                .idx  = ty->st.jit._idx,
+                .idx  = JIT_STATE._idx,
         };
 
         Value cv = {0};
 
-        *cont(ty, ty->st.jit.depth++) = (JitCont) {
-                .fn   = ty->st.jit._fn,
-                .env  = ty->st.jit._env,
+        *cont(ty, JIT_STATE.depth++) = (JitCont) {
+                .fn   = JIT_STATE._fn,
+                .env  = JIT_STATE._env,
                 .ret  = &cv,
                 .idx  = 0,
         };
 
-        while (ty->st.jit.depth > base_depth) {
-                int d0 = ty->st.jit.depth - 1;
+        while (JIT_STATE.depth > base_depth) {
+                int d0 = JIT_STATE.depth - 1;
                 JitCont *top = cont(ty, d0);
 
                 usize cfp = vvL(FRAMES)->fp;
@@ -1552,8 +1539,8 @@ call_jit(Ty *ty, Value const *f)
                         args = v_(STACK, cfp);
                 }
 
-                ty->st.jit.idx = top->idx;
-                ty->st.jit.status = JIT_RETURN;
+                JIT_STATE.idx = top->idx;
+                JIT_STATE.status = JIT_RETURN;
 
                 CO_LOG("jit_trampoline", TERM(34;1), "%s => resume%s", TERM(92;1), TERM(0));
 
@@ -1561,15 +1548,15 @@ call_jit(Ty *ty, Value const *f)
 
                 top = cont(ty, d0);
 
-                if (ty->st.jit.status == JIT_CALL) {
-                        top->idx = ty->st.jit._idx;
-                        *cont(ty, ty->st.jit.depth++) = (JitCont) {
-                                .fn   = ty->st.jit._fn,
-                                .env  = ty->st.jit._env,
+                if (JIT_STATE.status == JIT_CALL) {
+                        top->idx = JIT_STATE._idx;
+                        *cont(ty, JIT_STATE.depth++) = (JitCont) {
+                                .fn   = JIT_STATE._fn,
+                                .env  = JIT_STATE._env,
                                 .ret  = &cv,
                                 .idx  = 0,
                         };
-                } else if (--ty->st.jit.depth > base_depth) {
+                } else if (--JIT_STATE.depth > base_depth) {
                         cfp = vvL(FRAMES)->fp;
                         vN(STACK) = cfp + 1;
                         *v_(STACK, cfp) = cv;
@@ -1766,6 +1753,28 @@ do_co(void)
         UNREACHABLE();
 }
 
+inline static co_state *
+GetFreeCoState(Ty *ty)
+{
+        co_state *st;
+        if (vN(ty->co_states) > 0) {
+                st = vXx(ty->co_states);
+                v0(st->stack);
+                v0(st->calls);
+                v0(st->frames);
+                v0(st->targets);
+                v0(st->sps);
+                v0(st->to_drop);
+                v0(st->gc_roots);
+                v0(st->try_stack);
+                st->rc = 0;
+                st->exec_depth = 0;
+        } else {
+                st = alloc0(sizeof *st);
+        }
+        return st;
+}
+
 inline static cothread_t
 GetFreeCoThread(Ty *ty)
 {
@@ -1804,40 +1813,27 @@ call_co_ex(Ty *ty, Value *v, int n, char *whence)
                 zP("attempt to invoke an already-active coroutine");
         }
 
-        if (gen->ip != code_of(&gen->f)) {
-                CO_LOG("co_call()", TERM(95), "pushing to gen frame: %s", (n > 0) ? VSC(top()) : "nil");
-                xvP(gen->frame, (n > 0) ? peek() : NIL);
-        }
+        CO_LOG("co_call()", TERM(95), "pushing to gen frame: %s", (n == 0) ? "nil" : VSC(top()));
 
-        STACK.count -= n;
-
-        push(*v);
-        call6(ty, &gen->f, NULL, 0, NULL, whence);
-        STACK.count = vvL(FRAMES)->fp;
-
-        if (vN(gen->st.frames) == 0) {
-                xvP(gen->st.frames, *vvL(FRAMES));
+        if (UNLIKELY(n == 0)) {
+                if (LIKELY(gen->ip != code_of(&gen->f))) {
+                        xvP(gen->st->stack, NIL);
+                }
+                push(*v);
         } else {
-                *v_(gen->st.frames, 0) = *vvL(FRAMES);
+                if (LIKELY(gen->ip != code_of(&gen->f))) {
+                        xvP(gen->st->stack, peek());
+                }
+                put(*v);
         }
 
-        int diff = vN(STACK) - (isize)gen->fp;
-        CO_LOG("call_co()", TERM(95), "adjusting gen frame by %d", diff);
-        for (int i = 1; i < vN(gen->st.frames); ++i) {
-                v_(gen->st.frames, i)->fp += diff;
-        }
-        for (int i = 0; i < vN(gen->st.sps); ++i) {
-                *v_(gen->st.sps, i) += diff;
-        }
+        xvP(FRAMES, FRAME(vN(STACK), gen->f, whence));
+        xvP(CALLS, whence);
+        v_(gen->st->frames, 0)->ip = whence;
 
-        gen->fp = vN(STACK);
-
-        SWAP(co_state, gen->st, ty->st);
-
-        for (int i = 0; i < vN(gen->frame); ++i) {
-                push(v__(gen->frame, i));
-        }
-        v0(gen->frame);
+        ty->st->stack = STACK;
+        SWAP(co_state *, gen->st, ty->st);
+        STACK = ty->st->stack;
 
         IP = gen->ip;
         gen->ip = NULL;
@@ -2061,7 +2057,8 @@ CleanupThread(void *ctx)
         }
 
         for (int i = 0; i < vN(ty->co_states); ++i) {
-                co_state *st = v_(ty->co_states, i);
+                co_state *st = v__(ty->co_states, i);
+                xvF(st->stack);
                 xvF(st->calls);
                 xvF(st->frames);
                 xvF(st->targets);
@@ -2072,6 +2069,7 @@ CleanupThread(void *ctx)
                         ty_free(v__(st->try_stack, i));
                 }
                 xvF(st->try_stack);
+                xmF(st);
         }
 
 #if !defined(TY_NO_JIT)
@@ -2526,12 +2524,12 @@ PushTry(Ty *ty)
         t->cs    = vN(CALLS);
         t->ts    = vN(TARGETS);
         t->ds    = vN(DROP_STACK);
-        t->ctxs  = vN(FRAMES);
+        t->fs    = vN(FRAMES);
         t->nsp   = vN(SP_STACK);
         t->vs    = vN(VISITING);
         t->ed    = EXEC_DEPTH;
 #if !defined(TY_NO_JIT)
-        t->jd    = ty->st.jit.depth;
+        t->jd    = JIT_STATE.depth;
 #endif
         t->ss    = SaveScratch(ty);
         t->state = TRY_TRY;
@@ -2587,14 +2585,14 @@ DoThrow(Ty *ty)
                                 EXEC_DEPTH    = t->ed;
                                 vN(STACK)     = t->sp;
                                 vN(SP_STACK)  = t->nsp;
-                                vN(FRAMES)    = t->ctxs;
+                                vN(FRAMES)    = t->fs;
                                 vN(TARGETS)   = t->ts;
                                 vN(CALLS)     = t->cs;
                                 vN(RootSet)   = min(vN(RootSet), t->gc);
                                 vN(VISITING)  = t->vs;
                                 IP            = t->catch;
 #if !defined(TY_NO_JIT)
-                                ty->st.jit.depth = t->jd;
+                                JIT_STATE.depth = t->jd;
 #endif
 
                                 RestoreScratch(ty, t->ss);
@@ -4071,6 +4069,7 @@ DoYield(Ty *ty)
 
         co_yield_value(ty);
 }
+
 
 // ===/ < > <= >= == != /=======================================================
 #define DEFINE_RELATIONAL_OP(name, op, _op, _op_neg)                            \
@@ -6177,28 +6176,18 @@ DoGenerator(Ty *ty, char const *ip)
         char *end = DoFunction(ty, ip);
         Value fun = peek();
 
-        Generator *gen = mAo0(sizeof (Generator), GC_GENERATOR);
-        gen->f = fun;
-        gen->ip = code_of(&fun);
+        Value gen = GENERATOR(mAo0(sizeof (Generator), GC_GENERATOR));
+        gen.gen->f = fun;
+        gen.gen->ip = code_of(&fun);
+        gen.gen->st = GetFreeCoState(ty);
 
+        xvP(gen.gen->st->frames, FRAME(1, fun, IP));
+        xvP(gen.gen->st->stack, gen);
         for (int i = 0; i < fun.info[FUN_INFO_BOUND]; ++i) {
-                xvP(gen->frame, NIL);
+                xvP(gen.gen->st->stack, NIL);
         }
 
-        if (vN(ty->co_states) > 0) {
-                gen->st = vXx(ty->co_states);
-                v0(gen->st.calls);
-                v0(gen->st.frames);
-                v0(gen->st.targets);
-                v0(gen->st.sps);
-                v0(gen->st.to_drop);
-                v0(gen->st.gc_roots);
-                v0(gen->st.try_stack);
-                gen->st.rc = 0;
-                gen->st.exec_depth = 0;
-        }
-
-        put(GENERATOR(gen));
+        put(gen);
 
         return end;
 }
@@ -8770,7 +8759,7 @@ Next:
 void
 CaptureContextEx(Ty *ty, ThrowCtx *ctx)
 {
-        co_state st = ty->st;
+        co_state st = *ty->st;
         char const *ip = IP;
         char const *up;
 
@@ -8835,7 +8824,7 @@ Next:
 void
 CaptureContext(Ty *ty, ThrowCtx *ctx)
 {
-        co_state st = ty->st;
+        co_state st = *ty->st;
         char const *ip = IP;
         char const *up;
 
@@ -8991,7 +8980,7 @@ tdb_backtrace(Ty *ty)
 
                 if (nf == 0) {
                         if (gen != NULL) {
-                                frames = gen->st.frames;
+                                frames = gen->st->frames;
                                 nf = vN(frames);
                                 gen = NULL;
                         } else {
@@ -10923,8 +10912,8 @@ tdb_step_over_x(Ty *ty, char *ip, i32 i)
                 return true;
 
         CASE(RETURN)
-                return (i < vN(TDB->host->st.calls))
-                    && tdb_step_over_x(ty, vvL(TDB->host->st.calls)[-i], i + 1);
+                return (i < vN(TDB->host->st->calls))
+                    && tdb_step_over_x(ty, vvL(TDB->host->st->calls)[-i], i + 1);
 
         CASE(MATCH_TAG)
                 off = load_int(ip + 1);
@@ -11024,20 +11013,20 @@ tdb_step_into(Ty *ty)
                 break;
 
         CASE(CALL)
-                v = v_L(TDB->host->stack);
+                v = v_L(TDB->host->st->stack);
                 break;
 
         CASE(TRY_CALL_METHOD)
                 READVALUE(i);
                 READVALUE(i);
-                push(v_L(TDB->host->stack));
+                push(v_L(TDB->host->st->stack));
                 v = GetMember(ty, i, false, true);
                 break;
 
         CASE(CALL_METHOD)
                 READVALUE(i);
                 READVALUE(i);
-                push(v_L(TDB->host->stack));
+                push(v_L(TDB->host->st->stack));
                 v = GetMember(ty, i, true, true);
                 break;
 
@@ -11187,11 +11176,11 @@ vm_local(Ty *ty, int i)
 Value
 vm_make_range(Ty *ty, Value const *a, Value const *b, bool inclusive)
 {
-        xvP(ty->stack, *a);
-        xvP(ty->stack, *b);
+        xvP(STACK, *a);
+        xvP(STACK, *b);
         DoRange(ty, inclusive);
-        Value result = *vvL(ty->stack);
-        vN(ty->stack) -= 1;
+        Value result = *vvL(STACK);
+        vN(STACK) -= 1;
         return result;
 }
 

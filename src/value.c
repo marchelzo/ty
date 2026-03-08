@@ -1706,29 +1706,29 @@ mark_generator(Ty *ty, Value const *v)
 
         MarkNext(ty, &v->gen->f);
 
-        for (int i = 0; i < vN(v->gen->frame); ++i) {
-                MarkNext(ty, v_(v->gen->frame, i));
+        for (int i = 0; i < vN(v->gen->st->stack); ++i) {
+                MarkNext(ty, v_(v->gen->st->stack, i));
         }
 
-        for (int i = 0; i < vN(v->gen->st.targets); ++i) {
-                if ((((uptr)v_(v->gen->st.targets, i)->t) & 0x07) == 0) {
-                        MarkNext(ty, v_(v->gen->st.targets, i)->t);
+        for (int i = 0; i < vN(v->gen->st->targets); ++i) {
+                if ((((uptr)v_(v->gen->st->targets, i)->t) & 0x07) == 0) {
+                        MarkNext(ty, v_(v->gen->st->targets, i)->t);
                 }
         }
 
-        for (int i = 0; i < vN(v->gen->st.try_stack); ++i) {
-                struct try *t = v__(v->gen->st.try_stack, i);
+        for (int i = 0; i < vN(v->gen->st->try_stack); ++i) {
+                struct try *t = v__(v->gen->st->try_stack, i);
                 for (int i = 0; i < vN(t->defer); ++i) {
                         MarkNext(ty, v_(t->defer, i));
                 }
         }
 
-        for (int i = 0; i < vN(v->gen->st.to_drop); ++i) {
-                MarkNext(ty, v_(v->gen->st.to_drop, i));
+        for (int i = 0; i < vN(v->gen->st->to_drop); ++i) {
+                MarkNext(ty, v_(v->gen->st->to_drop, i));
         }
 
-        for (int i = 0; i < vN(v->gen->st.gc_roots); ++i) {
-                MarkNext(ty, v_(v->gen->st.gc_roots, i));
+        for (int i = 0; i < vN(v->gen->st->gc_roots); ++i) {
+                MarkNext(ty, v_(v->gen->st->gc_roots, i));
         }
 }
 

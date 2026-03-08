@@ -92,11 +92,11 @@ extern _Atomic(uint64_t) LogCounter;
         XXX("[%s] [%s%14.14s%s] [%ssp=%3zu%s %sfr=%2zu%s %sfp=%3zu%s]  %s%10s%s " _fmt,    \
                 co_colored(ty),                                                            \
                 TERM(92),                                                                  \
-                vN(ty->st.frames) ? name_of(&vvL(ty->st.frames)->f) : "   --  ",           \
+                vN(ty->st->frames) ? name_of(&vvL(ty->st->frames)->f) : "   --  ",           \
                 TERM(0),                                                                   \
-                TERM(91), vN(ty->stack), TERM(0),                                          \
-                TERM(93), vN(ty->st.frames), TERM(0),                                      \
-                TERM(94), vN(ty->st.frames) ? vvL(ty->st.frames)->fp : (usize)0, TERM(0),  \
+                TERM(91), vN(STACK), TERM(0),                                          \
+                TERM(93), vN(ty->st->frames), TERM(0),                                      \
+                TERM(94), vN(ty->st->frames) ? vvL(ty->st->frames)->fp : (usize)0, TERM(0),  \
                 _c, _ev, TERM(0) __VA_OPT__(,)                                             \
                 __VA_ARGS__                                                                \
         );                                                                                 \

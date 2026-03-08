@@ -25,7 +25,7 @@
 #define TY_TMP_BUF_COUNT 3
 
 #if defined(TY_RELEASE)
- #define CO_STACK_SIZE (1UL << 22)
+ #define CO_STACK_SIZE (1UL << 20)
 #else
  #define CO_STACK_SIZE (1UL << 24)
 #endif
@@ -451,6 +451,8 @@ typedef struct {
         Value **_env;
         JitContStack *cont;
 } JitState;
+
+#define JIT_STATE (ty->st->jit)
 #endif
 
 struct frame {
@@ -460,8 +462,7 @@ struct frame {
 };
 
 typedef struct cothread_state {
-        int exec_depth;
-        int rc;
+        ValueVector stack;
         FrameStack frames;
         IPVector calls;
         SPStack sps;
@@ -472,14 +473,15 @@ typedef struct cothread_state {
 #if !defined(TY_NO_JIT)
         JitState jit;
 #endif
+        int exec_depth;
+        int rc;
 } co_state;
 
 struct generator {
         int fp;
-        ValueVector frame;
         char *ip;
         cothread_t co;
-        co_state st;
+        co_state *st;
         Value f;
 };
 
@@ -603,7 +605,7 @@ struct try {
         u32 cs;
         u32 ts;
         u32 ds;
-        u32 ctxs;
+        u32 fs;
         u32 nsp;
         u16 vs;
         u16 ed;
@@ -722,9 +724,9 @@ typedef struct {
 typedef struct ty {
         char *ip;
 
-        ValueStack stack;
+        ValueVector stack;
 
-        co_state st;
+        co_state *st;
         cothread_t co_top;
 
         ValueVector tls;
@@ -745,7 +747,7 @@ typedef struct ty {
         bool locked;
 
         CoThreadVector cothreads;
-        vec(co_state) co_states;
+        vec(co_state *) co_states;
 
 #if !defined(TY_NO_JIT)
         vec(JitContStack *) jit_stacks;
@@ -1403,6 +1405,7 @@ enum {
 #define pT(p) (((uptr)(p)) &  PMASK3)
 #define pP(p) (((uptr)(p)) & ~PMASK3)
 
+#define STACK (ty->stack)
 
 inline static void *
 mrealloc(void *p, usize n)
@@ -1876,14 +1879,14 @@ TyStrLen(Value const *str)
 
 #define XPRINT_CTX(fmt, ...) do { \
         Expr const *expr   = compiler_find_expr(ty, ty->ip - 1);   \
-        char const *func   = (vN(ty->st.frames) > 0) ? name_of(&vvL(ty->st.frames)->f) : NULL; \
+        char const *func   = (vN(ty->st->frames) > 0) ? name_of(&vvL(ty->st->frames)->f) : NULL; \
         LOGX( \
                 "(%d:%s) [s=%2zu f=%2zu c=%2zu] %s[%20.20s]%s [%s:%d:%d]: %s: " fmt, \
                 (int)ty->id,                             \
                 (co_active() != ty->co_top) ? ">" : " ", \
-                vN(ty->stack),                               \
-                vN(ty->st.frames),                              \
-                vN(ty->st.calls),                               \
+                vN(STACK),                               \
+                vN(ty->st->frames),                              \
+                vN(ty->st->calls),                               \
                 TERM(91;1), func ? func : "   --  ", TERM(0), \
                 expr ? GetExpressionModule(expr) : "?",  \
                 (expr ? expr->start.line : 0) + 1,       \

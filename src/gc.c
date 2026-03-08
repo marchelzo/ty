@@ -53,11 +53,10 @@ collect(Ty *ty, struct alloc *a)
 
         case GC_GENERATOR:
                 gen = p;
-                xvF(gen->frame);
                 if (gen->co != ty->co_top && gen->co != NULL) {
                         xvP(ty->cothreads, gen->co);
                 }
-#if !defined(TY_NO_JIT)
+#if !defined(TY_NO_JIT) && 0
                 if (gen->st.jit.cont != NULL) {
                         xvP(ty->jit_stacks, gen->st.jit.cont);
                 }

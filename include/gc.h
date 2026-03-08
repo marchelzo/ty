@@ -47,7 +47,7 @@ HoldingLock(Ty *ty);
 #define resize_unchecked(ptr, n) ((ptr) = gc_resize_unchecked(ty, (ptr), (n)))
 #define resize_nogc(ptr, n) ((ptr) = mrealloc((ptr), (n)))
 
-#define RootSet (ty->st.gc_roots)
+#define RootSet (ty->st->gc_roots)
 
 enum {
         GC_STRING,
