@@ -190,28 +190,26 @@ endif()
 #  DynASM JIT code generation
 # ---
 
-find_program(LUAJIT_EXECUTABLE luajit)
-if(LUAJIT_EXECUTABLE)
-  if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64|ARM64")
-    set(_jit_dasc ${PROJECT_SOURCE_DIR}/src/jit_arm64.dasc)
-    set(_jit_hdr  ${PROJECT_SOURCE_DIR}/src/jit_arm64.h)
-  else()
-    set(_jit_dasc ${PROJECT_SOURCE_DIR}/src/jit_x64.dasc)
-    set(_jit_hdr  ${PROJECT_SOURCE_DIR}/src/jit_x64.h)
-  endif()
-
-  add_custom_command(
-    OUTPUT ${_jit_hdr}
-    COMMAND ${LUAJIT_EXECUTABLE} ${PROJECT_SOURCE_DIR}/LuaJIT/dynasm/dynasm.lua
-      -o ${_jit_hdr} ${_jit_dasc}
-    DEPENDS ${_jit_dasc}
-    COMMENT "Generating JIT emission header from ${_jit_dasc}"
-    VERBATIM
-  )
-  add_custom_target(GenerateJitHeader DEPENDS ${_jit_hdr})
+find_program(LUAJIT_EXECUTABLE luajit REQUIRED
+  HINTS "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/tools/luajit"
+)
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64|ARM64")
+  set(_jit_dasc ${PROJECT_SOURCE_DIR}/src/jit_arm64.dasc)
+  set(_jit_hdr  ${PROJECT_SOURCE_DIR}/src/jit_arm64.h)
 else()
-  message(WARNING "luajit not found -- JIT headers will not be regenerated")
+  set(_jit_dasc ${PROJECT_SOURCE_DIR}/src/jit_x64.dasc)
+  set(_jit_hdr  ${PROJECT_SOURCE_DIR}/src/jit_x64.h)
 endif()
+
+add_custom_command(
+  OUTPUT ${_jit_hdr}
+  COMMAND ${LUAJIT_EXECUTABLE} ${PROJECT_SOURCE_DIR}/LuaJIT/dynasm/dynasm.lua
+    -o ${_jit_hdr} ${_jit_dasc}
+  DEPENDS ${_jit_dasc}
+  COMMENT "Generating JIT emission header from ${_jit_dasc}"
+  VERBATIM
+)
+add_custom_target(GenerateJitHeader DEPENDS ${_jit_hdr})
 
 # ---
 #  target: ty
