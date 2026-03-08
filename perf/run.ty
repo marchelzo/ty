@@ -4,6 +4,7 @@ import chalk (chalk)
 import json
 import path (Path)
 import clap (clap!)
+import ty
 
 import lib (
     run-one,
@@ -39,27 +40,39 @@ clap! PerfRunner {
     rounds: Int, short: 'n', default: 5, check: 1..100
 }
 
-let RESULTS_FILE = 'perf/results.json'
-let BEST_FILE    = 'perf/best.json'
+let JIT_SFX      = if ty.jit { '_jit' } else { '' }
+let RESULTS_FILE = "perf/results{JIT_SFX}.json"
+let BEST_FILE    = "perf/best{JIT_SFX}.json"
 
 fn main() {
     let (opts, _) = PerfRunner.parse()
 
-    let benchmarks = load-benchmarks(Path(__file__).parent / 'benchmarks')
+    let benchmarks = load-benchmarks(
+        Path(__file__).parent / 'benchmarks'
+    )
 
     let running = opts.filter
         ? benchmarks.filter(\_.name.contains?(opts.filter))
         : benchmarks
 
     if #running == 0 {
-        print(chalk"[red bold]No benchmarks matched filter:[/] '{opts.filter}'")
+        print(chalk"[red bold]No benchmarks matched"
+                    " filter:[/] '{opts.filter}'")
         let names = benchmarks.map(\_.name).join(', ')
         print("Available: {names}")
         os.exit(1)
     }
 
-    print(chalk"[bold bright cyan]ty performance suite[/]")
-    print(chalk"[dim]{#running} benchmark(s) · {opts.rounds} rounds · {opts.warmup} warmup[/]")
+    let jit-str = if ty.jit {
+        chalk" [bright green bold]JIT[/]"
+    } else {
+        chalk" [dim]no JIT[/]"
+    }
+    print(chalk"[bold bright cyan]ty performance suite[/]"
+              "{jit-str}")
+    print(chalk"[dim]{#running} benchmark(s)"
+              " · {opts.rounds} rounds"
+              " · {opts.warmup} warmup[/]")
     print()
 
     // ---------------------------------------------------------------------------

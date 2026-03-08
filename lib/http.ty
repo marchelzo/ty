@@ -1,4 +1,4 @@
-import llhttp (..)
+pub import llhttp (..)
 import os (..)
 import json
 import errno
@@ -15,7 +15,7 @@ fn make-pattern(route: String) -> (Array[String], RegexV) {
     (params, regex("^{pattern}/?$", 'v'))
 }
 
-class HttpResponse {
+pub class HttpResponse {
     statusCode: Int
     body:       Blob
     headers:    Dict[String, String]
@@ -79,7 +79,7 @@ use RouteMap = Dict[
     }]
 ];
 
-class HttpServer {
+pub class HttpServer {
     __sock:     Int
     __conns:    Array[HttpConnection]
     __free:     Array[HttpConnection]

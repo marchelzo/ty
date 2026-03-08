@@ -4665,7 +4665,7 @@ TryUnifyObjects(Ty *ty, Type *t0, Type *t1, bool super)
                 return true;
         }
 
-        if ((TypeType(t0) == TYPE_TUPLE) && (TypeType(t1) == TYPE_TUPLE)) {
+        if (PackTypes(t0, t1) == PAIR_OF(TYPE_TUPLE)) {
                 Type **t2;
 
                 if (super) {

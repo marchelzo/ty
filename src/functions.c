@@ -5114,35 +5114,22 @@ BUILTIN_FUNCTION(os_getaddrinfo)
                 flags = INT_ARG(5);
         }
 
-        char const *node;
+        char const *node = !IsNil(host) ? TY_TMP_C_STR_A(host) : NULL;
         char const *service;
 
-        B.count = 0;
+        switch (port.type) {
+        case VALUE_STRING:
+                service = TY_TMP_C_STR_B(port);
+                break;
 
-        char *tmp = TY_TMP();
+        case VALUE_INTEGER:
+                service = TY_TMP();
+                ty_snprintf(service, TY_TMP_N, "%hu", (unsigned short)port.z);
+                break;
 
-        if (port.type == VALUE_INTEGER) {
-                snprintf(tmp, TY_TMP_N, "%hu", (unsigned short)port.z);
-                port = xSz(tmp);
-        }
-
-        if (host.type != VALUE_NIL) {
-                xvPn(B, ss(host), sN(host));
-                xvP(B, '\0');
-                node = B.items;
-
-                if (port.type != VALUE_NIL) {
-                        xvPn(B, ss(port), sN(port));
-                        xvP(B, '\0');
-                        service = B.items + sN(host) + 1;
-                } else {
-                        service = NULL;
-                }
-        } else {
-                node = NULL;
-                xvPn(B, ss(port), sN(port));
-                xvP(B, '\0');
-                service = B.items;
+        case VALUE_NIL:
+                service = NULL;
+                break;
         }
 
         struct addrinfo *res;

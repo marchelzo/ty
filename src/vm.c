@@ -1753,6 +1753,24 @@ do_co(void)
         UNREACHABLE();
 }
 
+inline static void
+DestroyCoState(co_state *st)
+{
+        xvF(st->stack);
+        xvF(st->calls);
+        xvF(st->frames);
+        xvF(st->targets);
+        xvF(st->sps);
+        xvF(st->to_drop);
+        xvF(st->gc_roots);
+        for (int i = 0; i < vC(st->try_stack); ++i) {
+                xvF(v__(st->try_stack, i)->defer);
+                xmF(v__(st->try_stack, i));
+        }
+        xvF(st->try_stack);
+        xmF(st);
+}
+
 inline static co_state *
 GetFreeCoState(Ty *ty)
 {
@@ -2035,12 +2053,6 @@ CleanupThread(void *ctx)
 
         TySpinLockUnlock(&ty->group->Lock);
 
-        for (int i = 0; i < vC(TRY_STACK); ++i) {
-                struct try *t = *v_(TRY_STACK, i);
-                xvF(t->defer);
-                xmF(t);
-        }
-
         for (int i = 0; i < vC(THROW_STACK); ++i) {
                 ThrowCtx *ctx = v__(THROW_STACK, i);
                 xvF(*ctx);
@@ -2057,19 +2069,7 @@ CleanupThread(void *ctx)
         }
 
         for (int i = 0; i < vN(ty->co_states); ++i) {
-                co_state *st = v__(ty->co_states, i);
-                xvF(st->stack);
-                xvF(st->calls);
-                xvF(st->frames);
-                xvF(st->targets);
-                xvF(st->sps);
-                xvF(st->to_drop);
-                xvF(st->gc_roots);
-                for (int i = 0; i < vC(st->try_stack); ++i) {
-                        ty_free(v__(st->try_stack, i));
-                }
-                xvF(st->try_stack);
-                xmF(st);
+                DestroyCoState(v__(ty->co_states, i));
         }
 
 #if !defined(TY_NO_JIT)
@@ -2089,19 +2089,14 @@ CleanupThread(void *ctx)
                 xmF(v_(ty->scratch.arenas, i)->base);
         }
 
+        ty->st->stack = STACK;
+        DestroyCoState(ty->st);
+
         TySpinLockDestroy(ty->lock);
         xmF((void *)ty->lock);
         xmF((void *)ty->blocked);
-        xvF(STACK);
         xvF(THREAD_LOCALS);
-        xvF(RootSet);
-        xvF(CALLS);
-        xvF(FRAMES);
-        xvF(SP_STACK);
-        xvF(TARGETS);
-        xvF(TRY_STACK);
         xvF(THROW_STACK);
-        xvF(DROP_STACK);
         xvF(CO_THREADS);
         xvF(ty->co_states);
         xvF(ty->allocs);
