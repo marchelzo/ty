@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**Ty** is a compiled, statically-typed programming language implementation written in C (C23
+**Ty** is an interpreted, gradually-typed programming language implementation written in C (C23
 standard). It includes a bytecode VM, optional JIT compiler (DynASM-based), garbage collector,
 coroutine system, and a standard library written in Ty itself.
 
@@ -70,8 +70,8 @@ make test             # Runs: ./ty test.ty
 # Run a single test file
 ./ty --test tests/array.ty
 
-# Filter tests by name pattern
-TEST_FILTER="dict" ./ty test.ty
+# Run the full test suite
+./ty test.ty
 ```
 
 The test runner [test.ty](test.ty) is written in Ty itself. It runs test files from
@@ -99,17 +99,17 @@ Source text
 | `vm.c`         | Bytecode interpreter, exception handling, coroutines (~11K LOC) |
 | `functions.c`  | Built-in functions and standard library glue (~10K LOC)       |
 | `parse.c`      | Parser, AST construction (~7.5K LOC)                          |
-| `jit.c`        | JIT driver; arch-specific code in `.dasc` files (~7K LOC)    |
-| `gc.c`         | Incremental mark-and-sweep GC with arena allocators           |
+| `jit.c`        | JIT driver; arch-specific code in `.dasc` files (~7K LOC)     |
+| `gc.c`         | Naive STW mark-and-sweep GC                                   |
 | `ffi.c`        | Foreign function interface via libffi                         |
-| `value.c`      | Core `Value` type (8-byte tagged union)                       |
+| `value.c`      | Core `Value` type (32-byte tagged union)                      |
 | `scope.c`      | Symbol tables and lexical scoping                             |
 | `class.c`      | Class system with inheritance and traits                      |
 
 ### Value Representation
 
-All Ty values are a packed 8-byte `Value` struct (defined in [include/ty.h](include/ty.h)) with a
-type byte, tag byte, and a union payload. This is the central type used throughout the VM and
+All Ty values are a packed 32-byte `Value` struct (defined in [include/ty.h](include/ty.h)) with a
+type byte, 16-bit tag, and a union payload. This is the central type used throughout the VM and
 compiler.
 
 ### Executables
