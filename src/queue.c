@@ -39,6 +39,8 @@ queue_push(Ty *ty, Value *self, int argc, Value *kwargs)
                 _queue_push_back_one(ty, &q->items, &q->head, &q->tail, &q->cap, ARG(i));
         }
 
+        CheckUsed(ty);
+
         return *self;
 }
 
@@ -53,6 +55,8 @@ queue_push_front(Ty *ty, Value *self, int argc, Value *kwargs)
                 _queue_push_front_one(ty, &q->items, &q->head, &q->tail, &q->cap, ARG(i));
         }
 
+        CheckUsed(ty);
+
         return *self;
 }
 
@@ -64,7 +68,7 @@ queue_pop(Ty *ty, Value *self, int argc, Value *kwargs)
         Queue *q = self->queue;
 
         if (_queue_count(q->head, q->tail, q->cap) == 0) {
-                zP("Queue.pop(): queue is empty");
+                bP("empty queue");
         }
 
         Value v = q->items[q->head];
@@ -81,7 +85,7 @@ queue_pop_back(Ty *ty, Value *self, int argc, Value *kwargs)
         Queue *q = self->queue;
 
         if (_queue_count(q->head, q->tail, q->cap) == 0) {
-                zP("Queue.pop-back(): queue is empty");
+                bP("empty queue");
         }
 
         q->tail = (q->tail - 1 + q->cap) % q->cap;
@@ -130,7 +134,7 @@ queue_peek(Ty *ty, Value *self, int argc, Value *kwargs)
         Queue *q = self->queue;
 
         if (_queue_count(q->head, q->tail, q->cap) == 0) {
-                zP("Queue.peek(): queue is empty");
+                bP("empty queue");
         }
 
         return q->items[q->head];
@@ -144,7 +148,7 @@ queue_peek_back(Ty *ty, Value *self, int argc, Value *kwargs)
         Queue *q = self->queue;
 
         if (_queue_count(q->head, q->tail, q->cap) == 0) {
-                zP("Queue.peek-back(): queue is empty");
+                bP("empty queue");
         }
 
         return q->items[(q->tail - 1 + q->cap) % q->cap];
@@ -283,6 +287,8 @@ shared_queue_put(Ty *ty, Value *self, int argc, Value *kwargs)
         TyMutexUnlock(&q->mutex);
         TyCondVarBroadcast(&q->cond);
 
+        CheckUsed(ty);
+
         return *self;
 }
 
@@ -300,7 +306,7 @@ shared_queue_take(Ty *ty, Value *self, int argc, Value *kwargs)
                 if (!q->open) {
                         TyMutexUnlock(&q->mutex);
                         LockTy();
-                        zP("SharedQueue.take(): queue is closed and empty");
+                        bP("queue is closed and empty");
                 }
                 TyCondVarWait(&q->cond, &q->mutex);
         }
@@ -364,7 +370,7 @@ shared_queue_peek(Ty *ty, Value *self, int argc, Value *kwargs)
                 if (!q->open) {
                         TyMutexUnlock(&q->mutex);
                         LockTy();
-                        zP("SharedQueue.peek(): queue is closed and empty");
+                        bP("queue is closed and empty");
                 }
                 TyCondVarWait(&q->cond, &q->mutex);
         }
@@ -482,14 +488,15 @@ shared_queue_to_array(Ty *ty, Value *self, int argc, Value *kwargs)
         TyMutexLock(&q->mutex);
 
         usize n = _queue_count(q->head, q->tail, q->cap);
-        Array *a = vAn(n);
+        Array *a = uAo0(sizeof (Array), GC_ARRAY);
 
         for (usize i = 0; i < n; ++i) {
-                a->items[i] = q->items[(q->head + i) % q->cap];
+                uvP(*a, q->items[(q->head + i) % q->cap]);
         }
-        a->count = n;
 
         TyMutexUnlock(&q->mutex);
+
+        CheckUsed(ty);
 
         return ARRAY(a);
 }

@@ -788,16 +788,18 @@ show_impl(
                 {
                         char const *cls  = class_name(ty, class_of(&v));
                         char const *name = name_of(&v);
+                        char const *star = is_starred(&v) ? "*" : "";
                         char const *jit  = ((iptr)jit_of(&v) > 0xFA57)  ? " [jit]" : "";
 
                         if (color) {
                                 if (class_of(&v) == -1) {
                                         sxdf(
                                                 &buf,
-                                                "%s<func %s%s%s%s%s>%s",
+                                                "%s<func %s%s%s%s%s%s>%s",
                                                 TERM(96),
                                                 TERM(92),
                                                 name,
+                                                star,
                                                 TERM(95),
                                                 jit,
                                                 TERM(96),
@@ -806,11 +808,12 @@ show_impl(
                                 } else {
                                         sxdf(
                                                 &buf,
-                                                "%s<func %s%s.%s%s%s%s>%s",
+                                                "%s<func %s%s.%s%s%s%s%s>%s",
                                                 TERM(96),
                                                 TERM(92),
                                                 cls,
                                                 name,
+                                                star,
                                                 TERM(95),
                                                 jit,
                                                 TERM(96),
@@ -819,9 +822,9 @@ show_impl(
                                 }
                         } else {
                                 if (class_of(&v) == -1) {
-                                        sxdf(&buf, "<func %s>", name);
+                                        sxdf(&buf, "<func %s%s>", name, star);
                                 } else {
-                                        sxdf(&buf, "<func %s.%s>", cls, name);
+                                        sxdf(&buf, "<func %s.%s%s>", cls, name, star);
                                 }
                         }
                         break;
@@ -831,6 +834,7 @@ show_impl(
                 {
                         char const *cls  = class_name(ty, class_of(&v));
                         char const *name = name_of(&v);
+                        char const *star = is_starred(&v) ? "*" : "";
 
                         if (color) {
                                 Value self = self_of(&v);
@@ -841,28 +845,20 @@ show_impl(
                                 ));
                                 svP(work, self);
                                 WLIT(sfmt(
-                                        "%s<func %s%s.%s %sbound to %s",
+                                        "%s<func %s%s.%s%s %sbound to %s",
                                         TERM(96),
                                         TERM(92),
                                         cls,
                                         name,
+                                        star,
                                         TERM(96),
                                         TERM(0)
                                 ));
                         } else {
                                 if (class_of(&v) == -1) {
-                                        sxdf(
-                                                &buf,
-                                                "<func %s>",
-                                                name
-                                        );
+                                        sxdf(&buf, "<func %s%s>", name, star);
                                 } else {
-                                        sxdf(
-                                                &buf,
-                                                "<func %s.%s>",
-                                                cls,
-                                                name
-                                        );
+                                        sxdf(&buf, "<func %s.%s%s>", cls, name, star);
                                 }
                         }
                         break;

@@ -11,15 +11,23 @@ fn build-tree(lo: Int, hi: Int) -> Tree[Int] {
 }
 
 fn walk*(node: Tree[Int]) -> Generator[Int] {
-    fn go(node: Tree[Int]) {
-        if node == nil { return None }
-        let (left, val, right) = node
-        for walk(left) { yield it }
+    if let (left, val, right) = node {
+        yield *walk(left)
         yield val
-        for walk(right) { yield it }
+        yield *walk(right)
     }
-    go(node)
 }
+
+//fn walk*(node: Tree[Int]) -> Generator[Int] {
+//    fn go(node: Tree[Int]) {
+//        if node == nil { return None }
+//        let (left, val, right) = node
+//        go(left)
+//        yield val
+//        go(right)
+//    }
+//    go(node)
+//}
 
 @bench
 fn gen-tree(n: Int) {

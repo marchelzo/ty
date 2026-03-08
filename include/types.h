@@ -384,7 +384,7 @@ Type *
 type_tagged(Ty *ty, int tag, Type *t0);
 
 Type *
-type_generator(Ty *ty, Expr const *e, Type *yield0, Type *send0);
+type_generator(Ty *ty, Type *yield0, Type *send0);
 
 char *
 type_show(Ty *ty, Type const *t0);
@@ -441,7 +441,7 @@ void
 type_finalize_generator(Ty *ty, Expr *e);
 
 Type *
-type_yield(Ty *ty, Type *f0, Type *y0);
+type_yield(Ty *ty, Expr const *e);
 
 void
 type_completions(Ty *ty, Type const *t0, char const *pre, ValueVector *out);

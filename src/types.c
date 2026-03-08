@@ -3473,6 +3473,16 @@ type_class(Ty *ty, Class *class)
         return t;
 }
 
+inline static void
+AddYield(Ty *ty, Type *f0, Type *y0)
+{
+        xDDDDD();
+
+        if (LIKELY(IsFuncT(f0))) {
+                f0->yields = type_either(ty, f0->yields, y0);
+        }
+}
+
 static Type *
 FnExprType(Ty *ty, Expr const *e, bool tmp)
 {
@@ -3671,6 +3681,16 @@ type_fn_end(Ty *ty, Expr *e)
         Type *y0;
         Type *s0;
 
+        if (e->star && e->return_type == NULL && IsFuncT(t0)) {
+                y0 = IsFuncT(t0) ? t0->yields : NULL;
+                s0 = IsFuncT(t0) ? t0->sends  : NULL;
+                if (y0 == NULL) {
+                        y0 = type_var(ty);
+                        s0 = type_var(ty);
+                }
+                t0->rt = type_generator(ty, y0, s0);
+        }
+
         LeaveScope();
         vvX(FunStack);
 
@@ -3682,7 +3702,7 @@ type_fn_end(Ty *ty, Expr *e)
                         y0 = type_var(ty);
                         s0 = type_var(ty);
                 }
-                e->_type = type_generator(ty, e, y0, s0);
+                e->_type = type_generator(ty, y0, s0);
                 break;
 
         case EXPRESSION_FUNCTION:
@@ -6717,7 +6737,7 @@ InferCall0(
                 if (strict && (t0->yields != NULL) && (vN(FunStack) > 0)) {
                         Expr *fun = v_L(FunStack);
                         if (IsFuncT(fun->_type)) {
-                                type_yield(ty, fun->_type, t0->yields);
+                                AddYield(ty, fun->_type, t0->yields);
                                 if (t0->sends != NULL) {
                                         unify(ty, &fun->_type->sends, t0->sends);
                                 }
@@ -7692,7 +7712,7 @@ type_tagged(Ty *ty, int tag, Type *t0)
 }
 
 Type *
-type_generator(Ty *ty, Expr const *e, Type *yield0, Type *send0)
+type_generator(Ty *ty, Type *yield0, Type *send0)
 {
         xDDD();
 
@@ -10833,17 +10853,36 @@ fixup(Ty *ty, Type *t0)
 }
 
 Type *
-type_yield(Ty *ty, Type *f0, Type *y0)
+type_yield(Ty *ty, Expr const *e)
 {
         xDDD();
 
-        if (IsFuncT(f0)) {
-                f0->yields = type_either(ty, f0->yields, y0);
-                return f0->sends;
-        } else {
+        if (UNLIKELY(vN(FunStack) == 0)) {
                 return NULL;
         }
 
+        Type *t0;
+
+        if (vN(e->es) == 0) {
+                t0 = NIL_TYPE;
+        } else {
+                Expr const *e0 = v_0(e->es);
+                if (e0->type == EXPRESSION_SPREAD) {
+                        t0 = type_iterable_type(ty, e0->value->_type, 1);
+                } else {
+                        t0 = e0->_type;
+                }
+        }
+
+        Expr const *fun = v_L(FunStack);
+
+        if (UNLIKELY(!IsFuncT(fun->_type))) {
+                return NULL;
+        }
+
+        AddYield(ty, fun->_type, t0);
+
+        return fun->_type->sends;
 }
 
 static Type *

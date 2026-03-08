@@ -276,6 +276,7 @@ pub class Tqdm[T] : Iterable[T] {
     _cv: CondVar
     _stopping: Bool
     _finished: Bool
+    _display-filled: Int
     
     init(
         iterable: Iterable[T],
@@ -294,6 +295,7 @@ pub class Tqdm[T] : Iterable[T] {
         _cv             = CondVar()
         _stopping       = false
         _finished       = false
+        _display-filled = 0
         _progress-bar   = ProgressBar(ncols - 30)
         _pulse-anim     = PulseAnimation(ncols - 30)
 
@@ -389,8 +391,21 @@ pub class Tqdm[T] : Iterable[T] {
         }
         
         if let $p = _task.progress() {
-            parts.push(_progress-bar.render(p))
-            let progress = "{_task.current}/{_task.total}"
+            let bar-w = _progress-bar.width
+            let real-filled = int(p.clamp(0.0, 1.0) * bar-w)
+
+            // Smooth: advance display by at most 1 column per frame,
+            // but snap to full immediately when complete.
+            if _stopping || real-filled == bar-w {
+                _display-filled = real-filled
+            } else if _display-filled < real-filled {
+                _display-filled += 1
+            }
+
+            let display-p = _display-filled / float(bar-w)
+            parts.push(_progress-bar.render(display-p))
+            let display-current = int(display-p * _task.total)
+            let progress = "{display-current}/{_task.total}"
             if _stopping {
                 parts.push(chalk" [bright green]{progress: <10}[/]")
             } else {

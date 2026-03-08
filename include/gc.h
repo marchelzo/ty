@@ -156,6 +156,42 @@ gc_alloc0(Ty *ty, usize n)
 }
 
 inline static void *
+gc_alloc_unchecked(Ty *ty, usize n)
+{
+        MemoryUsed += n;
+        AddToTotalBytes(n);
+
+        struct alloc *a = ty_malloc(sizeof *a + n);
+        if (UNLIKELY(a == NULL)) {
+                panic("Out of memory!");
+        }
+
+        a->size = n;
+        a->type = GC_ANY;
+        atomic_init(&a->mark, false);
+        atomic_init(&a->hard, 0);
+
+        return a->data;
+}
+
+inline static void *
+gc_alloc0_unchecked(Ty *ty, usize n)
+{
+        MemoryUsed += n;
+        AddToTotalBytes(n);
+
+        struct alloc *a = ty_calloc(1, sizeof *a + n);
+        if (UNLIKELY(a == NULL)) {
+                panic("Out of memory!");
+        }
+
+        a->size = n;
+        a->type = GC_ANY;
+
+        return a->data;
+}
+
+inline static void *
 gc_alloc_object(Ty *ty, usize n, char type)
 {
         if (n == 0) {

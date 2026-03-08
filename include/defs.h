@@ -132,6 +132,8 @@ typedef vec(TypeHint)       TypeHintVector;
 #define mAo0(...)  gc_alloc_object0(ty, __VA_ARGS__)
 #define mF(p)      gc_free(ty, p)
 
+#define uA(...)    gc_alloc_unchecked(ty, __VA_ARGS__)
+#define uA0(...)    gc_alloc0_unchecked(ty, __VA_ARGS__)
 #define uAo(...)   gc_alloc_object_unchecked(ty, __VA_ARGS__)
 #define uAo0(...)  gc_alloc_object0_unchecked(ty, __VA_ARGS__)
 

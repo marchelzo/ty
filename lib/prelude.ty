@@ -2452,7 +2452,7 @@ trait Iter[T] < Iterable[T] {
     }
 
     take*(n: Int) -> Generator[T] {
-        for _ in ..n {
+        for i in ..n {
             if let Some(x) = __next__() {
                 yield x
             } else {
@@ -3055,6 +3055,10 @@ class Channel {
     recv(timeoutMs: ?Int) {
         thread.recv(chan, timeoutMs if timeoutMs != nil)
     }
+
+    close() {
+        thread.close(chan)
+    }
 }
 
 class Atomic : IntoPtr[Int] {
@@ -3511,17 +3515,15 @@ macro time! {
         do {
             let (s: _, x, e: _) = ($${time::now}(), $$(e), $${time::now}())
 
-            if (e - s) > 0.01 {
-                print(
+            if (e - s) > 0.1 {
+                eprint(
                     __module__,
                     ':',
                     __line__,
                     ': ',
                     $$(ty.String(parse.show(e))),
-                    ': ',
-                    (e - s),
-                    's',
-                    sep: ''
+                    ": {(e - s):.4}s",
+                    sep=''
                 )
             }
 

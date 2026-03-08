@@ -19,15 +19,11 @@ _queue_grow(Ty *ty, Value **items, usize *head, usize *tail, usize *cap)
         usize n = _queue_count(*head, *tail, *cap);
         usize new_cap = (*cap == 0) ? QUEUE_INITIAL_CAP : (*cap * 2);
 
-        if (*items != NULL) NOGC(*items);
-
-        Value *new_items = mA(new_cap * sizeof (Value));
+        Value *new_items = uA(new_cap * sizeof (Value));
 
         for (usize i = 0; i < n; ++i) {
                 new_items[i] = (*items)[(*head + i) % *cap];
         }
-
-        if (*items != NULL) OKGC(*items);
 
         *items = new_items;
         *head = 0;

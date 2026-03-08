@@ -2,13 +2,12 @@ ns test
 
 pub fn gen() {
     fn f(k) {
-        let y = (yield nil)
-        y * k
+        (yield nil) * k
     }
     fn g*() {
         yield f(4)
     }
     let co = g()
-    co()
+    co(0)
     assert(co(8) == Some(32))
 }
