@@ -123,10 +123,10 @@ pub class SQLite {
         }
     }
 
-    fetchOne[a](*args, assoc=true) -> a {
+    fetchOne[a](*args, assoc=true) -> a | nil {
         with q = query(*args) {
             if let $row = q.nextRow(assoc=assoc) {
-                row
+                cast(row)
             }
         }
     }
