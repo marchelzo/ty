@@ -176,6 +176,7 @@ enum {
         VALUE_ZERO             ,
         VALUE_FUNCTION = 1     ,
         VALUE_BOUND_FUNCTION   ,
+        VALUE_STAR_FUNCTION    ,
         VALUE_METHOD           ,
         VALUE_BUILTIN_FUNCTION ,
         VALUE_BUILTIN_METHOD   ,
@@ -183,6 +184,7 @@ enum {
         VALUE_NATIVE_FUNCTION  ,
         VALUE_CLASS            ,
         VALUE_GENERATOR        ,
+        VALUE_GENERATOR_0      ,
         VALUE_TAG              ,
         VALUE_ARRAY            ,
         VALUE_DICT             ,
@@ -243,7 +245,8 @@ enum {
         FF_DECORATED = (1 << 2),
         FF_HAS_META  = (1 << 3),
         FF_OVERLOAD  = (1 << 4),
-        FF_JIT_FIRST = (1 << 5)
+        FF_STAR      = (1 << 5),
+        FF_JIT_FIRST = (1 << 6)
 };
 
 enum {
@@ -1088,6 +1091,7 @@ extern usize TotalBytesAllocated;
         X(SUBSCRIPT),             \
         X(SLICE),                 \
         X(TAIL_CALL),             \
+        X(TRY_YIELD_FROM),        \
         X(CALL),                  \
         X(CALL_GLOBAL),           \
         X(CALL_METHOD),           \
@@ -1878,49 +1882,49 @@ TyStrLen(Value const *str)
 #define sfmt(...) ((sfmt)(ty, __VA_ARGS__))
 
 #define XPRINT_CTX(fmt, ...) do { \
-        Expr const *expr   = compiler_find_expr(ty, ty->ip - 1);   \
-        char const *func   = (vN(ty->st->frames) > 0) ? name_of(&vvL(ty->st->frames)->f) : NULL; \
-        LOGX( \
-                "(%d:%s) [s=%2zu f=%2zu c=%2zu] %s[%20.20s]%s [%s:%d:%d]: %s: " fmt, \
-                (int)ty->id,                             \
-                (co_active() != ty->co_top) ? ">" : " ", \
-                vN(STACK),                               \
-                vN(ty->st->frames),                              \
-                vN(ty->st->calls),                               \
-                TERM(91;1), func ? func : "   --  ", TERM(0), \
-                expr ? GetExpressionModule(expr) : "?",  \
-                (expr ? expr->start.line : 0) + 1,       \
-                (expr ? expr->start.col : 0) + 1,        \
-                (ty->ip ? GetInstructionName(ty->ip[-1]) : "--")       \
-                __VA_OPT__(,) __VA_ARGS__ \
-        ); \
+        Expr const *expr   = compiler_find_expr(ty, ty->ip - 1);                                  \
+        char const *func   = (vN(ty->st->frames) > 0) ? name_of(&vvL(ty->st->frames)->f) : NULL;  \
+        LOGX(                                                                                     \
+                "(%d:%s) [s=%2zu f=%2zu c=%2zu] %s[%20.20s]%s [%s:%d:%d]: %s: " fmt,              \
+                (int)ty->id,                                                                      \
+                (co_active() != ty->co_top) ? ">" : " ",                                          \
+                vN(STACK),                                                                        \
+                vN(ty->st->frames),                                                               \
+                vN(ty->st->calls),                                                                \
+                TERM(91;1), func ? func : "   --  ", TERM(0),                                     \
+                expr ? GetExpressionModule(expr) : "?",                                           \
+                (expr ? expr->start.line : 0) + 1,                                                \
+                (expr ? expr->start.col : 0) + 1,                                                 \
+                (ty->ip ? GetInstructionName(ty->ip[-1]) : "--")                                  \
+                __VA_OPT__(,) __VA_ARGS__                                                         \
+        );                                                                                        \
 } while (0)
 #if 0
-        Expr const *ret    = vN(ty->st.calls)  ? compiler_find_expr(ty, v_L(ty->st.calls)) : NULL; \
-        Expr const *parent = (vN(ty->st.frames) > 1) ? compiler_find_expr(ty, (vZ(ty->st.frames) - 2)->ip) : NULL; \
-        if (ret != NULL) { \
-                LOGX("    returning to [%s:%d:%d]: %s", \
-                        GetExpressionModule(ret), \
-                        (ret->start.line) + 1, \
-                        (ret->start.col) + 1, \
-                        GetInstructionName(*v_L(ty->st.calls)) \
-                ); \
-        } else if (vN(ty->st.calls) > 0) { \
-                LOGX("    returning to [unknown]: %s", \
-                        GetInstructionName(*v_L(ty->st.calls)) \
-                ); \
-        } \
-        if (parent != NULL || vN(ty->st.frames) > 1) { \
-                LOGX("    parent %s[%s:%12.12s]%s:%d:%d: %s", \
-                        TERM(94), \
-                        parent ? GetExpressionModule(parent) : "?", \
-                        name_of(&(vZ(ty->st.frames) - 2)->f), \
-                        TERM(0), \
-                        parent ? (parent->start.line) + 1 : 0, \
-                        parent ? (parent->start.col) + 1 : 0, \
-                        parent ? GetInstructionName(*(vZ(ty->st.frames) - 2)->ip) : "?" \
-                ); \
-        } \
+        Expr const *ret    = vN(ty->st.calls)  ? compiler_find_expr(ty, v_L(ty->st.calls)) : NULL;                  \
+        Expr const *parent = (vN(ty->st.frames) > 1) ? compiler_find_expr(ty, (vZ(ty->st.frames) - 2)->ip) : NULL;  \
+        if (ret != NULL) {                                                                                          \
+                LOGX("    returning to [%s:%d:%d]: %s",                                                             \
+                        GetExpressionModule(ret),                                                                   \
+                        (ret->start.line) + 1,                                                                      \
+                        (ret->start.col) + 1,                                                                       \
+                        GetInstructionName(*v_L(ty->st.calls))                                                      \
+                );                                                                                                  \
+        } else if (vN(ty->st.calls) > 0) {                                                                          \
+                LOGX("    returning to [unknown]: %s",                                                              \
+                        GetInstructionName(*v_L(ty->st.calls))                                                      \
+                );                                                                                                  \
+        }                                                                                                           \
+        if (parent != NULL || vN(ty->st.frames) > 1) {                                                              \
+                LOGX("    parent %s[%s:%12.12s]%s:%d:%d: %s",                                                       \
+                        TERM(94),                                                                                   \
+                        parent ? GetExpressionModule(parent) : "?",                                                 \
+                        name_of(&(vZ(ty->st.frames) - 2)->f),                                                       \
+                        TERM(0),                                                                                    \
+                        parent ? (parent->start.line) + 1 : 0,                                                      \
+                        parent ? (parent->start.col) + 1 : 0,                                                       \
+                        parent ? GetInstructionName(*(vZ(ty->st.frames) - 2)->ip) : "?"                             \
+                );                                                                                                  \
+        }                                                                                                           \
 } while (0)
 #endif
 #if 0
@@ -1928,6 +1932,23 @@ TyStrLen(Value const *str)
 #else
 #define PRINT_CTX(fmt, ...) ((void)0)
 #endif
+
+#define SLOW_BEGIN() u64 _ty_t0 = TyMonotonicTime();
+
+#define SLOW_END(fmt, ...) do {                      \
+        u64 _ty_t1 = TyMonotonicTime();              \
+        double _ty_dt = (_ty_t1 - _ty_t0) / 1.e9;    \
+        if (_ty_dt > 0.1) {                          \
+                 LOGX(                               \
+                        "%s%s:%d: [%fs]%s: " fmt,    \
+                        TERM(91;1),                  \
+                        __func__,                    \
+                        __LINE__,                    \
+                        _ty_dt,                      \
+                        TERM(0)                      \
+                        __VA_OPT__(,) __VA_ARGS__);  \
+        }                                            \
+} while (0)
 
 #endif
 

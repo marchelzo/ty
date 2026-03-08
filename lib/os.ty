@@ -311,9 +311,13 @@ pub class Signals : Iterable[Int] {
 }
 
 #|if __defined__(DT_DIR)
-pub fn walk*(path: String, skip: _ = nil) -> Generator[(String, [String], [String])] {
+pub fn walk*(path: String, skip: _ = nil, top: Bool = true) -> Generator[(String, [String], [String])] {
     if not let $d = opendir(path) {
-        throw OSError('opendir()')
+        if top {
+            throw OSError('opendir()')
+        } else {
+            return
+        }
     }
 
     let fs: [String] = []
@@ -332,9 +336,7 @@ pub fn walk*(path: String, skip: _ = nil) -> Generator[(String, [String], [Strin
     for d in ds {
         let path = "{path}/{d}"
         if !skip || !skip(path) {
-            for t in walk(path) {
-                yield t
-            }
+            yield *walk(path, skip, false)
         }
     }
 

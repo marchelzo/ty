@@ -93,6 +93,7 @@ enum {
 #define EA(x)    emit_assertion(ty, (x))
 
 #define ECALL(n, nkw) EmitCallOp(ty, (n), (nkw))
+#define ECALLx(n, nkw, i) EmitCallOpXD(ty, (n), (nkw), (i))
 
 #define EMCALL_5(op, c, m, n, nkw) EmitCallMethodOp(ty, (op), (c), (m), (n), (nkw))
 #define EMCALL_3(m, n, nkw)        EMCALL_5(INSTR_CALL_METHOD, -1, (m), (n), (nkw))
@@ -455,6 +456,9 @@ emit_return_check(Ty *ty, Expr const *f);
 
 static void
 emit_try_match(Ty *ty, Expr const *pattern, bool skip_tag);
+
+static void
+EmitFunctionCall(Ty *ty, Expr const *e);
 
 static Scope *
 get_import_scope(Ty *ty, char const *);
@@ -5267,7 +5271,7 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                        (e->_type != NULL)
                     && (e->body != NULL)
                     && !e->body->will_return
-                    && (e->type != EXPRESSION_GENERATOR)
+                    && !e->star
                 ) {
                         if (e->return_type != NULL) {
                                 unify2(ty, &e->_type->rt, e->body->_type);
@@ -5277,7 +5281,8 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                 }
 
                 if ((e->return_type == NULL) && (e->body != NULL)) {
-                        unify2(ty, &e->_type->rt, type_any_of(ty, &STATE.return_types));
+                        Type *r0 = type_any_of(ty, &STATE.return_types);
+                        unify2(ty, &e->_type->rt, r0);
                 }
 
                 e->bound_symbols.items = e->scope->owned.items;
@@ -5383,7 +5388,7 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                 for (int i = 0; i < vN(e->es); ++i) {
                         symbolize_expression(ty, scope, v__(e->es, i));
                 }
-                e->_type = type_yield(ty, STATE.func->_type, v__(e->es, 0)->_type);
+                e->_type = type_yield(ty, e);
                 break;
 
         case EXPRESSION_ARRAY:
@@ -6440,7 +6445,7 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
                         dont_printf("  return: %s\n", type_show(ty, v__(s->returns, i)->_type));
                 }
 
-                if (STATE.func->type == EXPRESSION_GENERATOR) {
+                if (STATE.func->star || STATE.func->type == EXPRESSION_GENERATOR) {
                         s->type = STATEMENT_GENERATOR_RETURN;
                 } else if (CheckTypes && STATE.func->_type != NULL) {
                         Type *t0 = (vN(s->returns) == 0) ? NIL_TYPE
@@ -6569,9 +6574,9 @@ VecCloned(Ty *ty, i32Vector vec)
 }
 
 inline static void
-EmitCallOp(Ty *ty, i32 argc, i32 kwargc)
+EmitCallOpXD(Ty *ty, i32 argc, i32 kwargc, u8 insn)
 {
-        INSN(CALL);
+        (emit_instr)(ty, insn);
         Ei32(argc);
         Ei32(kwargc);
 
@@ -6581,6 +6586,12 @@ EmitCallOp(Ty *ty, i32 argc, i32 kwargc)
         } else {
                 AdjStack(ty, -(argc + kwargc));
         }
+}
+
+inline static void
+EmitCallOp(Ty *ty, i32 argc, i32 kwargc)
+{
+        EmitCallOpXD(ty, argc, kwargc, INSTR_CALL);
 }
 
 inline static void
@@ -7462,6 +7473,7 @@ emit_function(Ty *ty, Expr const *e)
               | (FF_HIDDEN    * (e->type == EXPRESSION_MULTI_FUNCTION))
               | (FF_OVERLOAD  * (e->overload != NULL))
               | (FF_DECORATED * decorated)
+              | (FF_STAR      * e->star)
         );
 
         if (e->class == NULL) {
@@ -7634,7 +7646,7 @@ emit_function(Ty *ty, Expr const *e)
                 }
         }
 
-        if (e->type == EXPRESSION_GENERATOR) {
+        if (e->star || e->type == EXPRESSION_GENERATOR) {
                 emit_statement(ty, body, false);
                 LABEL(end);
                 INSN(YIELD_NONE);
@@ -7910,10 +7922,14 @@ emit_with(Ty *ty, Expr const *e)
 static void
 emit_yield_from(Ty *ty, Expr const *iter)
 {
+        EE(iter);
+
+        PLACEHOLDER_JUMP(TRY_YIELD_FROM, direct);
+
         INSN(PUSH_INDEX);
         Ei32(1);
 
-        EE(iter);
+        INSN(SWAP);
 
         LABEL(loop);
 
@@ -7928,6 +7944,8 @@ emit_yield_from(Ty *ty, Expr const *iter)
 
         PATCH_JUMP(done);
         INSN(NIL);
+
+        PATCH_JUMP(direct);
 }
 
 static void
@@ -11242,7 +11260,6 @@ emit_expr(Ty *ty, Expr const *e, bool need_loc)
 
         case EXPRESSION_GENERATOR:
                 emit_function(ty, e);
-                //ECALL(0, 0);
                 break;
 
         case EXPRESSION_FUNCTION:
@@ -12261,6 +12278,7 @@ RedpillFun(Ty *ty, Scope *scope, Expr *f, Type *self0)
                 ResolveConstraint(ty, f->return_type);
                 f->_type = type_fn_tmp(ty, f);
                 if (f->fn_symbol != NULL) {
+                        f->fn_symbol->expr = f;
                         f->fn_symbol->type = f->_type;
                 }
         }
@@ -14359,9 +14377,7 @@ tyexpr(Ty *ty, Expr const *e, u32 flags)
                 Array      *params = vA();
                 Array *type_params = vA();
 
-                int tag = (e->type == EXPRESSION_IMPLICIT_FUNCTION)
-                        ? TyImplicitFunc
-                        : TyFunc;
+                int tag = (e->type == EXPRESSION_FUNCTION) ? TyFunc : TyImplicitFunc;
 
                 v = TAGGED(
                         tag,
@@ -14371,7 +14387,8 @@ tyexpr(Ty *ty, Expr const *e, u32 flags)
                                 "rt",         go(e->return_type),
                                 "body",       go(e->body),
                                 "decorators", ARRAY(decorators),
-                                "typeParams", ARRAY(type_params)
+                                "typeParams", ARRAY(type_params),
+                                "star",       BOOLEAN(e->star)
                         )
                 );
 
@@ -16049,7 +16066,7 @@ cexpr(Ty *ty, Value *v)
         case TyFunc:
         case TyImplicitFunc:
         {
-                e->type = (tag == TyFunc)
+                e->type = (tag != TyImplicitFunc)
                         ? EXPRESSION_FUNCTION
                         : EXPRESSION_IMPLICIT_FUNCTION;
                 e->ikwargs = -1;
@@ -16064,11 +16081,13 @@ cexpr(Ty *ty, Value *v)
                 Value         *doc = tget_t(v, "doc", VALUE_STRING);
                 Value       *proto = tget_t(v, "proto", VALUE_STRING);
                 Value *type_params = tget_t(v, "typeParams", VALUE_ARRAY);
+                Value        *star = tget_t(v, "star", VALUE_BOOLEAN);
 
                 e->name          = mkcstr(name);
                 e->doc           = mkcstr(doc);
                 e->proto         = mkcstr(proto);
                 e->return_type   = (rt != NULL) ? cexpr(ty, rt) : NULL;
+                e->star          = (star != NULL) ? star->boolean : false;
 
                 if (decorators != NULL) {
                         for (int i = 0; i < vN(*decorators->array); ++i) {
@@ -17168,6 +17187,7 @@ AddMethSymbol(Ty *ty, Expr *meth, u32 flags)
         sym->flags |= SYM_MEMBER;
         sym->flags |= flags;
         sym->member = M_ID(name);
+        sym->expr = meth;
         sym->class = class->i;
         sym->loc = meth->start;
 

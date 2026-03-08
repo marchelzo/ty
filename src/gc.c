@@ -53,7 +53,7 @@ collect(Ty *ty, struct alloc *a)
 
         case GC_GENERATOR:
                 gen = p;
-                if (gen->co != ty->co_top && gen->co != NULL) {
+                if (UNLIKELY((gen->co != ty->co_top) & (gen->co != NULL))) {
                         xvP(ty->cothreads, gen->co);
                 }
 #if !defined(TY_NO_JIT) && 0
@@ -62,7 +62,9 @@ collect(Ty *ty, struct alloc *a)
                 }
                 m0(gen->st.jit);
 #endif
-                xvP(ty->co_states, gen->st);
+                if (LIKELY(gen->st != NULL)) {
+                        xvP(ty->co_states, gen->st);
+                }
                 break;
 
         case GC_THREAD:

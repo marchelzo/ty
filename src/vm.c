@@ -141,8 +141,8 @@ static Ty *ty = &vvv;
                         GetInstructionName(IP[-1]), \
                         vN(STACK) ? SHOW(top()) : "--" \
                 );
-#define YCASE(i) case INSTR_##i:
-#define CASE(i) \
+#define CASE(i) case INSTR_##i:
+#define YCASE(i) \
         case INSTR_##i: \
                 CO_LOG(#i, TERM(93), "%s", vN(STACK) ? SHOW(top()) : "--");
 #endif
@@ -170,6 +170,8 @@ static char pop_ret[]  = { INSTR_POP, INSTR_RETURN_PRESERVE_CTX };
 
 InternedNames NAMES;
 ValueVector Globals;
+
+static Value NILS[512];
 /* ========================================================================== */
 
 #define FRAME(n, fn, from) ((Frame){ .fp = (n), .f = (fn), .ip = (from) })
@@ -454,6 +456,10 @@ InitializeTY(Ty *ty)
 #undef X
 
         intern(&xD.strings, "");
+
+        for (int i = 0; i < countof(NILS); ++i) {
+                NILS[i] = NIL;
+        }
 
         srandom(TyThreadCPUTime() & 0xFFFFFFFF);
 
@@ -1131,7 +1137,7 @@ local(Ty *ty, int i)
 inline static Value *
 (poptarget)(Ty *ty)
 {
-        return vvX(TARGETS)->t;
+        return vXx(TARGETS).t;
 }
 
 inline static Value *
@@ -1355,6 +1361,57 @@ xco_switch(cothread_t co)
 }
 #endif
 
+noreturn static void
+do_co(void)
+{
+        Ty *ty = co_ty;
+        CO_LOG("do_co()", TERM(94), "%s: %s", SHOW(ActiveFun(ty), BASIC), vN(STACK) > 1 ? SHOW(local(ty, 0), BASIC) : "--");
+        //if (!call_jit(ty, ActiveFun(ty))) {
+                vm_exec(ty, IP);
+        //}
+        UNREACHABLE();
+}
+
+inline static co_state *
+GetFreeCoState(Ty *ty)
+{
+        co_state *st;
+        if (vN(ty->co_states) > 0) {
+                st = vXx(ty->co_states);
+                v0(st->stack);
+                v0(st->calls);
+                v0(st->frames);
+                v0(st->targets);
+                v0(st->sps);
+                v0(st->to_drop);
+                v0(st->gc_roots);
+                v0(st->try_stack);
+                st->rc = 0;
+                st->exec_depth = 0;
+        } else {
+                st = alloc0(sizeof *st);
+        }
+        return st;
+}
+
+inline static void
+DestroyCoState(co_state *st)
+{
+        xvF(st->stack);
+        xvF(st->calls);
+        xvF(st->frames);
+        xvF(st->targets);
+        xvF(st->sps);
+        xvF(st->to_drop);
+        xvF(st->gc_roots);
+        for (int i = 0; i < vC(st->try_stack); ++i) {
+                xvF(v__(st->try_stack, i)->defer);
+                xmF(v__(st->try_stack, i));
+        }
+        xvF(st->try_stack);
+        xmF(st);
+}
+
 inline static bool
 GeneratorIsSuspended(Generator *gen)
 {
@@ -1373,6 +1430,19 @@ GetCurrentGenerator(Ty *ty)
         }
 
         return vv(STACK)->gen;
+}
+
+static Generator *
+NewGenerator(Ty *ty, Value fun)
+{
+        Generator *gen = mAo0(sizeof (Generator), GC_GENERATOR);
+        gen->f = fun;
+        gen->ip = code_of(&fun);
+        gen->st = GetFreeCoState(ty);
+
+        xvP(gen->st->stack, GENERATOR(gen));
+
+        return gen;
 }
 
 static char const *
@@ -1411,10 +1481,12 @@ co_abort(Ty *ty)
         Generator *gen = v_(STACK, n - 1)->gen;
         STACK.count = n - 1;
 
+        ty->st->stack = STACK;
         SWAP(co_state *, gen->st, ty->st);
+        STACK = ty->st->stack;
 
-        vvX(FRAMES);
-        IP = *vvX(CALLS);
+        vXx(FRAMES);
+        IP = vXx(CALLS);
 
         return true;
 }
@@ -1604,6 +1676,7 @@ xcall(Ty *ty, Value const *f, Value const *pSelf, int argc, Value const *pKwargs
         int   class   = f->info[FUN_INFO_CLASS];
 
         int   fp      = vN(STACK) - argc;
+        int   fz      = fp + bound;
 
         if (class != -1) {
                 self = ((pSelf != NULL) && !IsNone(*pSelf)) ? *pSelf : self_of(f);
@@ -1611,22 +1684,14 @@ xcall(Ty *ty, Value const *f, Value const *pSelf, int argc, Value const *pKwargs
                 self = ZERO;
         }
 
-        CO_LOG("XCALL", TERM(91;1), "bound=%d, argc=%d", bound, argc);
+        CO_LOG("XCALL", TERM(91;1), "bound=%d, argc=%d: %s", bound, argc, argc ? VSC(topN(argc)) : "(no args)");
 
         LOG(
                 "Calling %s with %d args, bound = %d, self = %s, env size = %d",
                 VSC(f), argc, bound, SHOW(&self, BASIC), f->info[2]
         );
 
-        int n = argc;
-
-        /*
-         * Default missing arguments to NIL and make space for all of this function's local variables.
-         */
-        while (n < bound) {
-                push(NIL);
-                n += 1;
-        }
+        xvR(STACK, fz);
 
         if (UNLIKELY(irest != ikwargs)) {
                 gP(&self);
@@ -1636,13 +1701,16 @@ xcall(Ty *ty, Value const *f, Value const *pSelf, int argc, Value const *pKwargs
                         Array *extra = vAn(nExtra);
 
                         memcpy(v_(*extra, 0), vv(STACK) + fp + irest, nExtra * sizeof (Value));
+                        memset(vv(STACK) + fp + irest, 0, nExtra * sizeof (Value));
                         extra->count = nExtra;
 
-                        *v_(STACK, fp + irest) = ARRAY(extra);
+                        argc = min(argc, irest + 1);
 
-                        for (int i = irest + 1; i < argc; ++i) {
-                                *v_(STACK, fp + i) = NIL;
+                        if (LIKELY(fp + argc < fz)) {
+                                memcpy(v_(STACK, fp + argc), NILS, (bound - argc) * sizeof (Value));
                         }
+
+                        *v_(STACK, fp + irest) = ARRAY(extra);
                 }
                 if (ikwargs != -1) {
                         // FIXME: don't allocate a dict when there are no kwargs
@@ -1650,12 +1718,11 @@ xcall(Ty *ty, Value const *f, Value const *pSelf, int argc, Value const *pKwargs
                 }
                 gX();
                 gX();
+        } else if (LIKELY(fp + argc < fz)) {
+                memcpy(v_(STACK, fp + argc), NILS, (bound - argc) * sizeof (Value));
         }
 
-        // Throw away extra args
-        if (n > bound) {
-                STACK.count -= (n - bound);
-        }
+        vN(STACK) = fz;
 
         if (class != -1) {
                 *v_(STACK, fp + np) = self;
@@ -1681,9 +1748,37 @@ xcall(Ty *ty, Value const *f, Value const *pSelf, int argc, Value const *pKwargs
         }
 }
 
+inline static void
+SetupGenerator(Ty *ty, Value const *f, Value const *pSelf, int argc, Value const *pKwargs)
+{
+        Value v = GENERATOR(NewGenerator(ty, *f));
+
+        xvPn(v.gen->st->stack, topN(argc), argc);
+        vN(STACK) -= argc;
+
+        ty->st->stack = STACK;
+        SWAP(co_state *, ty->st, v.gen->st);
+        STACK = ty->st->stack;
+
+        xcall(ty, &v.gen->f, pSelf, argc, pKwargs, IP);
+
+        CO_LOG("SetupGenerator()", TERM(95), "initial frame for %s with: %s (self=%s)", VSC(&v.gen->f), VSC(top()), pSelf ? VSC(pSelf) : "--");
+
+        ty->st->stack = STACK;
+        SWAP(co_state *, ty->st, v.gen->st);
+        STACK = ty->st->stack;
+
+        push(v);
+}
+
 static bool
 call(Ty *ty, Value const *f, Value const *pSelf, int argc, Value const *pKwargs)
 {
+        if (UNLIKELY(is_starred(f))) {
+                SetupGenerator(ty, f, pSelf, argc, pKwargs);
+                return false;
+        }
+
         if (
                 is_overload(f)
              && (param_count_of(f) < argc)
@@ -1708,16 +1803,16 @@ call(Ty *ty, Value const *f, Value const *pSelf, int argc, Value const *pKwargs)
 }
 
 static void
-call6(Ty *ty, Value const *f, Value const *pSelf, int argc, Value const *pKwargs, char *whence)
-{
-        xcall(ty, f, pSelf, argc, pKwargs, whence);
-        IP = code_of(f);
-}
-
-static void
 call6t(Ty *ty, Value const *f, Value const *pSelf, int argc, Value const *pKwargs, char *whence)
 {
         xvP(CALLS, IP);
+
+        if (UNLIKELY(is_starred(f))) {
+                SetupGenerator(ty, f, pSelf, argc, pKwargs);
+                IP = whence;
+                return;
+        }
+
         xcall(ty, f, pSelf, argc, pKwargs, whence);
         IP = code_of(f);
 }
@@ -1731,6 +1826,11 @@ vm_xcall(Ty *ty, Value const *f, Value const *pSelf, int argc, Value const *pKwa
 static void
 exec_fn(Ty *ty, Value const *f, Value const *pSelf, int argc, Value const *pKwargs)
 {
+        if (UNLIKELY(is_starred(f))) {
+                SetupGenerator(ty, f, pSelf, argc, pKwargs);
+                return;
+        }
+
         xcall(ty, f, pSelf, argc, pKwargs, &halt);
 
 #if !defined(TY_NO_JIT)
@@ -1742,57 +1842,6 @@ exec_fn(Ty *ty, Value const *f, Value const *pSelf, int argc, Value const *pKwar
         vm_exec(ty, code_of(f));
 }
 
-noreturn static void
-do_co(void)
-{
-        Ty *ty = co_ty;
-        CO_LOG("do_co()", TERM(94), "%s", SHOW(ActiveFun(ty), BASIC));
-        if (!call_jit(ty, ActiveFun(ty))) {
-                vm_exec(ty, IP);
-        }
-        UNREACHABLE();
-}
-
-inline static void
-DestroyCoState(co_state *st)
-{
-        xvF(st->stack);
-        xvF(st->calls);
-        xvF(st->frames);
-        xvF(st->targets);
-        xvF(st->sps);
-        xvF(st->to_drop);
-        xvF(st->gc_roots);
-        for (int i = 0; i < vC(st->try_stack); ++i) {
-                xvF(v__(st->try_stack, i)->defer);
-                xmF(v__(st->try_stack, i));
-        }
-        xvF(st->try_stack);
-        xmF(st);
-}
-
-inline static co_state *
-GetFreeCoState(Ty *ty)
-{
-        co_state *st;
-        if (vN(ty->co_states) > 0) {
-                st = vXx(ty->co_states);
-                v0(st->stack);
-                v0(st->calls);
-                v0(st->frames);
-                v0(st->targets);
-                v0(st->sps);
-                v0(st->to_drop);
-                v0(st->gc_roots);
-                v0(st->try_stack);
-                st->rc = 0;
-                st->exec_depth = 0;
-        } else {
-                st = alloc0(sizeof *st);
-        }
-        return st;
-}
-
 inline static cothread_t
 GetFreeCoThread(Ty *ty)
 {
@@ -1802,7 +1851,7 @@ GetFreeCoThread(Ty *ty)
                 base = xmA(CO_STACK_SIZE);
         } else {
                 //CO_LOG("GetFreeCoThread(): recycled");
-                base = *vvX(CO_THREADS);
+                base = vXx(CO_THREADS);
         }
         return co_derive(base, CO_STACK_SIZE, do_co);
 }
@@ -1815,7 +1864,7 @@ GetFreeJitContStack(Ty *ty)
         if (vN(ty->jit_stacks) == 0) {
                 stack = alloc0(sizeof *stack);
         } else {
-                stack = *vvX(ty->jit_stacks);
+                stack = vXx(ty->jit_stacks);
                 v0(*stack);
         }
         return stack;
@@ -1827,19 +1876,24 @@ call_co_ex(Ty *ty, Value *v, int n, char *whence)
 {
         Generator *gen = v->gen;
 
+        if (UNLIKELY(gen->st == NULL)) {
+                push(None);
+                return;
+        }
+
         if (UNLIKELY(!GeneratorIsSuspended(gen))) {
                 zP("attempt to invoke an already-active coroutine");
         }
 
-        CO_LOG("co_call()", TERM(95), "pushing to gen frame: %s", (n == 0) ? "nil" : VSC(top()));
-
         if (UNLIKELY(n == 0)) {
                 if (LIKELY(gen->ip != code_of(&gen->f))) {
+                        CO_LOG("co_call()", TERM(95), "pushing to gen frame: nil");
                         xvP(gen->st->stack, NIL);
                 }
                 push(*v);
         } else {
                 if (LIKELY(gen->ip != code_of(&gen->f))) {
+                        CO_LOG("co_call()", TERM(95), "pushing to gen frame: %s", VSC(top()));
                         xvP(gen->st->stack, peek());
                 }
                 put(*v);
@@ -1918,13 +1972,13 @@ PushThrowCtx(Ty *ty)
 inline static ThrowCtx *
 CurrentThrowCtx(Ty *ty)
 {
-        return *vvL(THROW_STACK);
+        return v_L(THROW_STACK);
 }
 
 static ThrowCtx *
 PopThrowCtx(Ty *ty)
 {
-        return *vvX(THROW_STACK);
+        return vXx(THROW_STACK);
 }
 
 u64
@@ -2041,10 +2095,10 @@ CleanupThread(void *ctx)
 
         for (int i = 0; i < vN(ty->group->ThreadList); ++i) {
                 if (ty->lock == v__(ty->group->ThreadLocks, i)) {
-                        *v_(ty->group->ThreadList,   i) = *vvX(ty->group->ThreadList);
-                        *v_(ty->group->TyList,       i) = *vvX(ty->group->TyList);
-                        *v_(ty->group->ThreadLocks,  i) = *vvX(ty->group->ThreadLocks);
-                        *v_(ty->group->ThreadStates, i) = *vvX(ty->group->ThreadStates);
+                        *v_(ty->group->ThreadList,   i) = vXx(ty->group->ThreadList);
+                        *v_(ty->group->TyList,       i) = vXx(ty->group->TyList);
+                        *v_(ty->group->ThreadLocks,  i) = vXx(ty->group->ThreadLocks);
+                        *v_(ty->group->ThreadStates, i) = vXx(ty->group->ThreadStates);
                         break;
                 }
         }
@@ -2461,7 +2515,7 @@ DoDrop(Ty *ty)
                 vm_call_method(ty, &v, f, 0);
         }
 
-        vvX(DROP_STACK);
+        vXx(DROP_STACK);
 }
 
 inline static struct try *
@@ -2563,7 +2617,7 @@ DoThrow(Ty *ty)
                         (vN(TRY_STACK) > 0)
                      && (vvL(TRY_STACK)[0]->state == TRY_FINALLY)
                 ) {
-                        vvX(TRY_STACK);
+                        vXx(TRY_STACK);
                 }
 
                 if (vN(TRY_STACK) > 0) {
@@ -2914,7 +2968,7 @@ DoCall(Ty *ty, Value const *f, int n, int nkw, bool auto_this, bool exec)
         bool new_frame = false;
 
         if (n == -1) {
-                n = vN(STACK) - *vvX(SP_STACK) - nkw;
+                n = vN(STACK) - vXx(SP_STACK) - nkw;
         }
 
         /* TODO: optimize more tail calls */
@@ -3826,8 +3880,8 @@ CallMethod(Ty *ty, int i, int n, int nkw, bool maybe, bool exec)
                 }
         }
 
-        if (n == -1) {
-                n = vN(STACK) - *vvX(SP_STACK) - nkw - 1;
+        if (UNLIKELY(n == -1)) {
+                n = vN(STACK) - vXx(SP_STACK) - nkw - 1;
         }
 
         value = peek();
@@ -6169,21 +6223,10 @@ char *
 DoGenerator(Ty *ty, char const *ip)
 {
         char *end = DoFunction(ty, ip);
-        Value fun = peek();
-
-        Value gen = GENERATOR(mAo0(sizeof (Generator), GC_GENERATOR));
-        gen.gen->f = fun;
-        gen.gen->ip = code_of(&fun);
-        gen.gen->st = GetFreeCoState(ty);
-
-        xvP(gen.gen->st->frames, FRAME(1, fun, IP));
-        xvP(gen.gen->st->stack, gen);
-        for (int i = 0; i < fun.info[FUN_INFO_BOUND]; ++i) {
-                xvP(gen.gen->st->stack, NIL);
-        }
-
-        put(gen);
-
+        Generator *gen = NewGenerator(ty, peek());
+        xvPn(gen->st->stack, NILS, gen->f.info[FUN_INFO_BOUND]);
+        xvP(gen->st->frames, FRAME(1, gen->f, IP));
+        put(GENERATOR(gen));
         return end;
 }
 
@@ -6918,8 +6961,8 @@ TargetMember:
                                 goto RETURN;
                         } else {
                                 push(TAG(TAG_DISPATCH_ERR));
-                                vvX(FRAMES);
-                                IP = *vvX(CALLS);
+                                vXx(FRAMES);
+                                IP = vXx(CALLS);
                                 RaiseException(ty);
                         }
                         break;
@@ -6998,7 +7041,7 @@ TargetMember:
 
                 CASE(END_TRY)
                 {
-                        _try = *vvX(TRY_STACK);
+                        _try = vXx(TRY_STACK);
                         if (_try->end == NULL) {
                                 DoThrow(ty);
                         } else {
@@ -7041,7 +7084,7 @@ TargetMember:
                         break;
 
                 CASE(DISCARD_DROP_GROUP)
-                        vvX(DROP_STACK);
+                        vXx(DROP_STACK);
                         break;
 
                 CASE(PUSH_DROP_GROUP)
@@ -7343,17 +7386,10 @@ TargetMember:
                         break;
 
                 CASE(ARRAY)
-                        if (vN(SP_STACK) == 0) {
-                                zP("aaaaaa");
-                        }
-                        n = STACK.count - *vvX(SP_STACK);
+                        n = vN(STACK) - vXx(SP_STACK);
                         v = ARRAY(vAn(n));
                         v.array->count = n;
-                        memcpy(
-                                v.array->items,
-                                topN(n),
-                                n * sizeof (Value)
-                        );
+                        memcpy(vv(*v.array), topN(n), n * sizeof (Value));
                         STACK.count -= n;
                         push(v);
                         break;
@@ -7377,7 +7413,7 @@ TargetMember:
                         break;
 
                 CASE(GATHER_TUPLE)
-                        n = vN(STACK) - *vvX(SP_STACK);
+                        n = vN(STACK) - vXx(SP_STACK);
                         vp = mAo(n * sizeof (Value), GC_TUPLE);
                         v = TUPLE(vp, NULL, n, false);
                         __builtin_memcpy(vp, topN(n), n * sizeof (Value));
@@ -7386,13 +7422,13 @@ TargetMember:
                         break;
 
                 CASE(DICT)
-                        n = vN(STACK) - *vvX(SP_STACK);
+                        n = vN(STACK) - vXx(SP_STACK);
                         DoDictLiteral(ty, n, NULL);
                         break;
 
                 CASE(DEFAULT_DICT)
                         value = pop();
-                        n = vN(STACK) - *vvX(SP_STACK);
+                        n = vN(STACK) - vXx(SP_STACK);
                         DoDictLiteral(ty, n, &value);
                         break;
 
@@ -7418,8 +7454,13 @@ TargetMember:
                         break;
 
                 CASE(YIELD_NONE)
-                        push(None);
-                        DoYield(ty);
+                        if (vN(FRAMES) == 1) {
+                                push(None);
+                                DoYield(ty);
+                        } else {
+                                push(NIL);
+                                goto RETURN;
+                        }
                         break;
 
                 CASE(YIELD_SOME)
@@ -7484,7 +7525,7 @@ TargetMember:
 
                 CASE(ARRAY_COMPR)
                         READVALUE(i);
-                        n = vN(STACK) - *vvX(SP_STACK);
+                        n = vN(STACK) - vXx(SP_STACK);
                         v = top()[-(n + i)];
                         vvPn(*v.array, topN(n), n);
                         STACK.count -= n;
@@ -8372,6 +8413,25 @@ BinaryOp:
                         DoCall(ty, v_(Globals, i), n, nkw, false, false);
                         break;
 
+                CASE(TRY_YIELD_FROM)
+                        READJUMP(jump);
+                        if (UNLIKELY(
+                                (top()->type != VALUE_GENERATOR)
+                             || ((top()->gen->co != NULL) | (u8)(top()->gen->st == NULL))
+                        )) {
+                                break;
+                        }
+                        v = pop();
+                        xvP(FRAMES, v_0(v.gen->st->frames));
+                        vvL(FRAMES)->fp = vN(STACK);
+                        xvPn(STACK, v_(v.gen->st->stack, 1), vN(v.gen->st->stack) - 1);
+                        xvP(ty->co_states, v.gen->st);
+                        v.gen->st = NULL;
+                        DOJUMP(jump);
+                        xvP(CALLS, IP);
+                        IP = v.gen->ip;
+                        break;
+
                 CASE(TRY_CALL_METHOD)
                         READVALUE(n);
                         READVALUE(i);
@@ -8417,23 +8477,23 @@ BinaryOp:
                         break;
 
                 CASE(POP_STACK_POS)
-                        STACK.count = *vvX(SP_STACK);
+                        vN(STACK) = vXx(SP_STACK);
                         break;
 
                 CASE(POP_STACK_POS_POP)
-                        STACK.count = *vvX(SP_STACK) - 1;
+                        vN(STACK) = vXx(SP_STACK) - 1;
                         break;
 
                 CASE(POP_STACK_POS_POP2)
-                        STACK.count = *vvX(SP_STACK) - 2;
+                        vN(STACK) = vXx(SP_STACK) - 2;
                         break;
 
                 CASE(RESTORE_STACK_POS)
-                        STACK.count = *vvL(SP_STACK);
+                        vN(STACK) = v_L(SP_STACK);
                         break;
 
                 CASE(DROP_STACK_POS)
-                        vvX(SP_STACK);
+                        vXx(SP_STACK);
                         break;
 
                 CASE(DEBUG)
@@ -8455,18 +8515,18 @@ BinaryOp:
                                 STACK.items[n + i] = top()[i];
                         }
                         STACK.count = n + 1;
-                        vvX(FRAMES);
-                        IP = *vvX(CALLS);
+                        vXx(FRAMES);
+                        IP = vXx(CALLS);
                         break;
 
 RETURN:
                 CASE(RETURN)
                         PRINT_CTX("<-- %sreturn%s from %s: %s", TERM(93), TERM(0), VSC(ActiveFun(ty)), VSC(top()));
-                        n = vvX(FRAMES)->fp;
+                        n = vXx(FRAMES).fp;
                         STACK.items[n] = peek();
                         STACK.count = n + 1;
                 CASE(RETURN_PRESERVE_CTX)
-                        IP = *vvX(CALLS);
+                        IP = vXx(CALLS);
                         break;
 
                 CASE(HALT)
@@ -8736,7 +8796,7 @@ xDcringe(Ty *ty)
                 }
 
 Next:
-                IP = (char *)vvX(FRAMES)->ip;
+                IP = (char *)vXx(FRAMES).ip;
         }
 
         if (CompilationDepth(ty) > 1) {
@@ -8802,7 +8862,7 @@ Next:
                         break;
                 }
 
-                ip = vvX(st.frames)->ip;
+                ip = vXx(st.frames).ip;
         }
 
         int i = 0;
@@ -8845,7 +8905,7 @@ CaptureContext(Ty *ty, ThrowCtx *ctx)
                         break;
                 }
 Next:
-                ip = vvX(st.frames)->ip;
+                ip = vXx(st.frames).ip;
         }
 
         int i = 0;
@@ -11278,8 +11338,8 @@ vm_catch(Ty *ty)
                 continue;
         }
 
-        vvX(TRY_STACK);
-        vvX(THROW_STACK);
+        vXx(TRY_STACK);
+        vXx(THROW_STACK);
 
         return exc;
 }
@@ -11295,7 +11355,7 @@ vm_rethrow(Ty *ty)
 
         push(exc);
 
-        vvX(TRY_STACK);
+        vXx(TRY_STACK);
         DoThrow(ty);
         vm_exec(ty, IP);
 
@@ -11305,7 +11365,7 @@ vm_rethrow(Ty *ty)
 void
 vm_finally(Ty *ty)
 {
-        vvX(TRY_STACK);
+        vXx(TRY_STACK);
 }
 
 void

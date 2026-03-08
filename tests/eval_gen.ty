@@ -1,7 +1,7 @@
 ns test
 
 class Foo {
-    foo(x) return generator {
+    foo*(x) {
         yield __eval__(x)
     }
 }

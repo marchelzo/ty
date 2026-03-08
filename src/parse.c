@@ -2136,10 +2136,7 @@ parse_function(Ty *ty, Expr **name, bool *is_operator)
                 next();
         }
 
-        if (T0 == TOKEN_STAR) {
-                sugared_generator = true;
-                next();
-        }
+        e->star = try_consume('*');
 
         if (e->name != NULL && tok()->start.s[-1] == ' ') {
                 Expr *f = parse_expr(ty, 0);

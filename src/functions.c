@@ -2429,16 +2429,22 @@ BUILTIN_FUNCTION(os_opendir)
                         errno = ENOENT;
                         return NIL;
                 }
-                dir = opendir(TY_TMP_C_STR(path));
+                char *_path = TY_TMP_C_STR(path);
+                UnlockTy();
+                dir = opendir(_path);
+                LockTy();
         } else if (path.type == VALUE_INTEGER) {
+                UnlockTy();
                 dir = fdopendir(path.z);
+                LockTy();
         } else {
                 ARGx(0, VALUE_INTEGER, VALUE_STRING);
                 UNREACHABLE();
         }
 
-        if (dir == NULL)
+        if (dir == NULL) {
                 return NIL;
+        }
 
         return PTR(dir);
 #endif
@@ -2453,7 +2459,9 @@ BUILTIN_FUNCTION(os_readdir)
 
         DIR *dir = PTR_ARG(0);
 
+        UnlockTy();
         struct dirent *entry = readdir(dir);
+        LockTy();
         if (entry == NULL) {
                 return NIL;
         }
@@ -6327,7 +6335,9 @@ BUILTIN_FUNCTION(os_listdir)
 
         Value dir = ARGx(0, VALUE_STRING);
 
+        UnlockTy();
         DIR *d = opendir(TY_TMP_C_STR(dir));
+        LockTy();
         if (d == NULL) {
                 return NIL;
         }
@@ -6338,7 +6348,7 @@ BUILTIN_FUNCTION(os_listdir)
         GC_STOP();
 
         struct dirent *e;
-        while (e = readdir(d), e != NULL) {
+        while ((UnlockTy(), (e = readdir(d)), LockTy()), e != NULL) {
                 if (
                         (strcmp(e->d_name, ".")  != 0)
                      && (strcmp(e->d_name, "..") != 0)
@@ -6512,7 +6522,10 @@ BUILTIN_FUNCTION(os_lstat)
         ASSERT_ARGC("os.lstat()", 1);
         StatStruct s;
         char const *path = TY_TMP_C_STR(ARGx(0, VALUE_STRING));
-        return xstatv(ty, lstat(path, &s), &s);
+        UnlockTy();
+        int ret = lstat(path, &s);
+        LockTy();
+        return xstatv(ty, ret, &s);
 #endif
 }
 

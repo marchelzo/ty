@@ -52,7 +52,7 @@ fn run(p: Path) {
             let parts = [
                 chalk"[b bright red]FAIL[/]",
                 chalk"  [bright magenta](exit status: {status})[/]" if status != 0,
-                chalk"  [blue](SIG{signame(signal)})[/]" if signal != nil,
+                chalk"  [blue](SIG{signame(signal).upper()})[/]" if signal != nil,
                 chalk"\n[magenta]================ [yellow]STDOUT[/] ====================================[/]\n",
                 stdout,
                 chalk"\n[magenta]================ [yellow]STDERR[/] ====================================[/]\n",

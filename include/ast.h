@@ -430,10 +430,7 @@ struct expression {
                         ExprVec decorators;
                         ExprVec functions;
                         union {
-                                struct {
-                                        Expr *return_type;
-                                        Expr *yield_type;
-                                };
+                                Expr *return_type;
                                 Expr *parent;
                         };
                         symbol_vector param_symbols;
@@ -448,6 +445,7 @@ struct expression {
                         bool has_defer;
                         bool must_jit;
                         bool emit;
+                        bool star;
                         int ikwargs;
                         int rest;
                         int t;
