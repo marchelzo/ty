@@ -28,6 +28,9 @@ find_package(utf8proc CONFIG REQUIRED)
 find_package(pcre2 CONFIG REQUIRED)
 # defines target(s): xxHash::xxhash
 find_package(xxHash CONFIG REQUIRED)
+# defines target(s): nsync
+find_package(nsync CONFIG REQUIRED)
+add_library(nsync::nsync ALIAS nsync) #<-- sadly nsync doesnt do this for us
 # defines target(s): mimalloc, mimalloc-static
 find_package(mimalloc CONFIG REQUIRED)
 set_target_properties(mimalloc-static PROPERTIES
@@ -323,8 +326,8 @@ target_link_libraries(${_tgt_ty_interface}
     vendored::libco
     vendored::libmd
     vendored::dtoa
-    $<$<BOOL:${USE_NSYNC}>:vendored::nsync>
     $<LINK_LIBRARY:WHOLE_ARCHIVE,vendored::unibilium>
+    $<$<BOOL:${USE_NSYNC}>:nsync::nsync>
     Threads::Threads # pthreads (or equivalent)
     mimalloc-static
     xxHash::xxhash

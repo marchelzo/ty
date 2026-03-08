@@ -1,13 +1,4 @@
 # ---
-#  target: nsync
-# ---
-
-if (USE_NSYNC)
-  add_subdirectory(nsync)
-  add_library(vendored::nsync ALIAS nsync)
-endif()
-
-# ---
 #  target: unibilium
 # ---
 
