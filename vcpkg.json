@@ -11,6 +11,7 @@
     },
     "xxhash",
     "mimalloc",
-    "luajit"
+    "luajit",
+    "nsync"
   ]
 }
