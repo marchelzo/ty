@@ -1,0 +1,133 @@
+import ffi as c (C!)
+
+ns test
+
+// Struct with anonymous nested struct, union containing
+// a struct, a nested union, and a plain field.
+C! struct Nested {
+    int id;
+    struct {
+        int x;
+        int y;
+    };
+    union {
+        struct {
+            int r;
+            int g;
+            int b;
+        };
+        union {
+            float opacity;
+            int alpha;
+        };
+        int raw;
+    };
+    int flags;
+};
+
+pub fn nested_anon_struct() {
+    // Anonymous struct fields (x, y) should act as top-level fields
+    let n = Nested(id: 5, x: 100, y: 200, r: 0, g: 0, b: 0, flags: 77)
+
+    assert(n.id == 5)
+    assert(n.x == 100)
+    assert(n.y == 200)
+    assert(n.flags == 77)
+
+    n.x = 300
+    n.y = 400
+    assert(n.x == 300)
+    assert(n.y == 400)
+
+    // Other fields unaffected
+    assert(n.id == 5)
+    assert(n.flags == 77)
+}
+
+pub fn nested_struct_in_union() {
+    let n = Nested(id: 0, x: 0, y: 0, r: 0, g: 0, b: 0, flags: 0)
+
+    // Set struct fields within the union
+    n.r = 1
+    n.g = 2
+    n.b = 3
+
+    assert(n.r == 1)
+    assert(n.g == 2)
+    assert(n.b == 3)
+
+    // r is at offset 0, g at offset 4, b at offset 8 within the union
+    // Setting raw (also at offset 0) should only affect r
+    n.raw = 99
+    assert(n.r == 99)
+    assert(n.g == 2)
+    assert(n.b == 3)
+}
+
+pub fn nested_union_overlap() {
+    let n = Nested(id: 0, x: 0, y: 0, r: 0, g: 0, b: 0, flags: 0)
+
+    // r, alpha, and raw all overlap at offset 0 of the union
+    n.r = 123
+    assert(n.alpha == 123)
+    assert(n.raw == 123)
+
+    n.alpha = 456
+    assert(n.r == 456)
+    assert(n.raw == 456)
+
+    n.raw = 789
+    assert(n.r == 789)
+    assert(n.alpha == 789)
+}
+
+pub fn nested_float_overlap() {
+    let n = Nested(id: 0, x: 0, y: 0, r: 0, g: 0, b: 0, flags: 0)
+
+    // opacity (float) at offset 0 of the nested union, which is at offset 0 of the outer union
+    n.opacity = 1.5
+    assert(n.opacity == 1.5)
+
+    // Setting an int at the same location changes opacity
+    n.alpha = 0
+    assert(n.opacity != 1.5)
+}
+
+// Deeply nested: union inside struct inside union
+C! struct Deep {
+    int tg;
+    union {
+        struct {
+            int kind;
+            union {
+                float f;
+                int i;
+            };
+        };
+        long raw;
+    };
+};
+
+pub fn deep_nesting() {
+    let d = Deep(tg: 1, kind: 0, i: 0)
+
+    assert(d.tg == 1)
+
+    d.kind = 2
+    d.i = 42
+    assert(d.kind == 2)
+    assert(d.i == 42)
+
+    // f and i overlap (nested union within struct within union)
+    d.f = 1.5
+    assert(d.f == 1.5) // 1.5 is exactly representable in float32
+    assert(d.i != 42) // i changed because f overlaps
+
+    d.i = 99
+    assert(d.i == 99)
+
+    // kind is at offset 0 of the outer union's struct alternative
+    // raw is also at offset 0 of the outer union
+    d.raw = 0
+    assert(d.kind == 0)
+}
