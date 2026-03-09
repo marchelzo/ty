@@ -489,105 +489,113 @@ fn strct() {
 
     use SimpleFieldDecl = {t: AST, name: String, count: AST}
 
-    use UnionMember = SimpleFieldDecl | Struct[Array[SimpleFieldDecl]]
-
     use FieldDecl = SimpleFieldDecl
                   | Struct[Array[FieldDecl]]
-                  | Union[(AST, Array[UnionMember])]
+                  | Union[(AST, Array[FieldDecl])]
 
-    let members: Array[FieldDecl] = []
-
-    while peek().type != '}' {
-        let get-count = fn () -> AST {
-            if peek().type == '[' {
-                next()
-                let n = expr(0)
-                next!(']')
-                n
-            }
-        }
-
-        fn get-decl() -> Array[SimpleFieldDecl] {
-            let $t, $name = nexttype(array-to-ptr?=false, has-name?=true)
-            let names = [(name, get-count())]
-
-            while peek().type == ',' {
-                next()
-                names.push((next().id, get-count()))
-            }
-
-            next!(';')
-
-            [{t, name, count} for (name, count) in names]
-        }
-
-        if peek().?id == 'union' {
-            let types = []
-            let decls: Array[UnionMember] = []
-
-            next() // union
-            next!('{')
-            while peek().type != '}' {
-                if peek().?id == 'struct' {
-                    next() // struct
-                    next!('{')
-                    let inner: Array[SimpleFieldDecl] = []
-
-                    while peek().type != '}' {
-                        inner += get-decl()
-                    }
-
-                    next!('}')
-
-                    if (peek().?type, peek(1).?type) == ('id', ';') {
-                        let pre = next().id
-                        inner.map!(field -> {*field, name: "{pre}_{field.name}"})
-                    }
-
-                    next!(';')
-
-                    decls.push(Struct(inner))
-                } else {
-                    let decl = get-decl()
-                    if #decl != 1 {
-                        fail("avoid doing this: {decl}")
-                    }
-                    decls.push(decl[0])
-                }
-            }
-            next!('}')
-            next!(';')
-
-            let type-alternatives: _ = ty.Array(
-                decls.map(fn (x: _) -> _ match x {
-                    Struct((inner: _)) => do {
-                        let ts = inner.map(fn (decl: _) ty.Arg(arg: decl.t))
-                        ty.Call(func: ty.Value(c.struct), args: ts)
-                    },
-
-                    decl: _ => decl.t
-                }).map(t -> ty.ArrayItem(item: t))
-            )
-
-            let type = $$[ $$type-alternatives.max-by($${c.size}) $$]
-
-            members.push(Union(type, decls))
-        } else {
-            members += get-decl()
+    let get-count = fn () -> AST {
+        if peek().type == '[' {
+            next()
+            let n = expr(0)
+            next!(']')
+            n
         }
     }
+
+    fn get-decl() -> Array[SimpleFieldDecl] {
+        let $t, $name = nexttype(array-to-ptr?=false, has-name?=true)
+        let names = [(name, get-count())]
+
+        while peek().type == ',' {
+            next()
+            names.push((next().id, get-count()))
+        }
+
+        next!(';')
+
+        [{t, name, count} for (name, count) in names]
+    }
+
+    fn member-ctype(decl: _) -> _ {
+        match decl {
+            Struct((inner: _)) => do {
+                let ts = inner.map(fn (d: _) ty.Arg(arg: member-ctype(d)))
+                ty.Call(func: ty.Value(c.struct), args: ts)
+            },
+            Union(((ut: _), _)) => ut,
+            {t, count: nil, *} => t,
+            (decl: _) => do {
+                let mkstruct = (t, n) -> c.struct(*[t for ..n])
+                $$[$${mkstruct}($$(decl.t), $$(decl.count))$$]
+            }
+        }
+    }
+
+    fn compute-union-type(decls: _) -> _ {
+        let type-alternatives: _ = ty.Array(
+            decls.map(fn (d: _) -> _ ty.ArrayItem(item: member-ctype(d)))
+        )
+        $$[$$type-alternatives.max-by($${c.size})$$]
+    }
+
+    fn prefix-decl-names(decls: _, pre) {
+        for d, idx in decls {
+            match d {
+                Struct((inner: _))      => prefix-decl-names(inner, pre),
+                Union((_, (inner: _)))  => prefix-decl-names(inner, pre),
+                _                       => { decls[idx] = {*d, name: "{pre}_{d.name}"} }
+            }
+        }
+    }
+
+    fn parse-members() -> Array[FieldDecl] {
+        let members: Array[FieldDecl] = []
+
+        while peek().type != '}' {
+            if peek().?id == 'union' && peek(1).type == '{' {
+                next() // union
+                next!('{')
+                let inner = parse-members()
+                next!('}')
+                next!(';')
+                let ut = compute-union-type(inner)
+                members.push(Union(ut, inner))
+            } else if peek().?id == 'struct' && peek(1).type == '{' {
+                next() // struct
+                next!('{')
+                let inner = parse-members()
+                next!('}')
+
+                if (peek().?type, peek(1).?type) == ('id', ';') {
+                    let pre = next().id
+                    prefix-decl-names(inner, pre)
+                }
+
+                next!(';')
+                members.push(Struct(inner))
+            } else {
+                members += get-decl()
+            }
+        }
+
+        members
+    }
+
+    let members = parse-members()
 
     next!('}')
 
     let ctype = ty.Id(name: "{structName}_C")
 
-    let member-names = members.map(match {
-        Union(_, decls) => decls.map(match {
-            Struct(inner) => inner.map(&.name),
-            decl          => decl.name,
-        }),
-        decl            => decl.name
-    }).flat()
+    fn collect-names(decls: _) -> _ {
+        decls.map(fn (d: _) -> _ match d {
+            Union(_, (inner: _)) => collect-names(inner),
+            Struct((inner: _))   => collect-names(inner),
+            _                    => [d.name]
+        }).flat()
+    }
+
+    let member-names = collect-names(members)
 
     let init-params = [ty.Param({name: it, constraint: ty.Any}) for member-names]
 
@@ -719,29 +727,57 @@ fn strct() {
         }
     }
 
-    for member, i in members {
-        match member {
-            Union(ut, decls) => do {
-                structArgs.push(ty.Arg(arg: ut))
-                let off = $$[ 0 $$]
-                for match decls {
-                    Struct(inner) => do {
-                        for {name, t, count} in inner {
-                            add-member(i, name, t, count, off=off)
-                            off = ty.Add(off, $$[ $${c.size}($$t) $$])
-                        }
-                    },
+    fn member-size(decl: _) -> _ {
+        match decl {
+            Union(((ut: _), _))  => $$[$${c.size}($$ut)$$],
+            Struct((inner: _))   => inner.map(member-size).fold($$[0$$], (a, b) -> ty.Add(a, b)),
+            {t, count: nil, *}   => $$[$${c.size}($$t)$$],
+            (decl: _)            => $$[$${c.size}($$(decl.t)) * $$(decl.count)$$]
+        }
+    }
 
-                    {name, t, count} => {
-                        add-member(i, name, t, count, off=off)
-                    }
+    fn emit-decl(decl: _, i: Int, off: _) {
+        match decl {
+            Union(_, (decls: _)) => do {
+                for d in decls {
+                    emit-decl(d, i, off)
                 }
             },
+            Struct((inner: _)) => do {
+                let cur-off = off
+                for field in inner {
+                    emit-decl(field, i, cur-off)
+                    cur-off = ty.Add(cur-off, member-size(field))
+                }
+            },
+            {name, t, count} => do {
+                add-member(i, name, t, count, off=off)
+            }
+        }
+    }
 
+    fn emit-top-level(member: _) {
+        match member {
+            Union(((ut: _), (decls: _))) => do {
+                let i = #structArgs
+                structArgs.push(ty.Arg(arg: ut))
+                for decl in decls {
+                    emit-decl(decl, i, $$[0$$])
+                }
+            },
+            Struct((inner: _)) => do {
+                for field in inner {
+                    emit-top-level(field)
+                }
+            },
             {name, t, count} => do {
                 add-member(nil, name, t, count)
             }
         }
+    }
+
+    for member in members {
+        emit-top-level(member)
     }
 
     // FIXME
