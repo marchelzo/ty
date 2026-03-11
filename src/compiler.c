@@ -18959,6 +18959,9 @@ DumpProgram(
                         break;
                 CASE(CLEANUP)
                         break;
+                CASE(TRY_YIELD_FROM)
+                        READVALUE(n);
+                        break;
                 CASE(ENSURE_LEN)
                         READVALUE(n);
                         READVALUE(n);

@@ -1,15 +1,24 @@
 ns test
 
+fn gen*(fun) {
+    let cs = 'pass:fail'.chars()
+    print("cs={cs}")
+    cs.map(fun)
+}
+
 pub fn yield-from-c() {
     let g = nil
     let s = ''
-    fn add(c) { s += (yield c)(c) }
-    g = generator {
-        'pass:fail'.chars().map(add)
-    }
+
+    fn add(c) { print("add({c})"); s += (yield c)(c) }
+
+    g = gen(add) 
+
     fn f() {
         g(&upper)
     }
+
     [*f.take(5)]
+
     assert(s == 'PASS')
 }

@@ -162,6 +162,9 @@ vm_exec(Ty *ty, char *ip);
 void
 vm_xcall(Ty *ty, Value const *f, Value const *pSelf, int argc, Value const *pKwargs);
 
+void
+vm_trampoline(Ty *ty);
+
 bool
 vm_try_exec(Ty *ty, char *ip, Value *ret);
 
@@ -282,11 +285,6 @@ vm_jit_loop_check(Ty *ty, int z);
 
 void
 vm_jit_fail(Ty *ty, Value *top, char *ip);
-
-#if !defined(TY_NO_JIT)
-JitContStack *
-GetFreeJitContStack(Ty *ty);
-#endif
 
 char *
 DoFunction(Ty *ty, char const *ip);

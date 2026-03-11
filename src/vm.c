@@ -1298,30 +1298,26 @@ char *
 co_colored(Ty *ty)
 {
         static char buf[64];
-
         void *co = co_active();
         u64 hash = XXH3_64bits(&co, sizeof co);
-
         if (ColorOutput) {
-                u8 r = 130 + (hash & 0x7F);
-                u8 g = 130 + ((hash >> 7) & 0x7F);
-                u8 b = 130 + ((hash >> 14) & 0x7F);
-
+                u8 r = 80 + (hash % 176);
+                u8 g = 80 + ((hash >> 8) % 176);
+                u8 b = 80 + ((hash >> 16) % 176);
                 u8 max = r > g ? (r > b ? r : b) : (g > b ? g : b);
                 u8 min = r < g ? (r < b ? r : b) : (g < b ? g : b);
-                if (max - min < 40) {
-                        switch ((hash >> 21) % 3) {
-                        case 0: r = 220 + (hash >> 24) % 36; g = 100 + (hash >> 28) % 80; break;
-                        case 1: g = 220 + (hash >> 24) % 36; b = 100 + (hash >> 28) % 80; break;
-                        case 2: b = 220 + (hash >> 24) % 36; r = 100 + (hash >> 28) % 80; break;
+                if (max - min < 60) {
+                        u64 h2 = hash ^ (hash >> 32);
+                        switch (h2 % 3) {
+                        case 0: r = 200 + (h2 >> 3) % 56; g = 70 + (h2 >> 9) % 90; b = 70 + (h2 >> 15) % 64; break;
+                        case 1: g = 200 + (h2 >> 3) % 56; b = 70 + (h2 >> 9) % 90; r = 70 + (h2 >> 15) % 64; break;
+                        case 2: b = 200 + (h2 >> 3) % 56; r = 70 + (h2 >> 9) % 90; g = 70 + (h2 >> 15) % 64; break;
                         }
                 }
-
                 ty_snprintf(buf, sizeof buf, "\033[38;2;%d;%d;%dm%p\033[0m", r, g, b, co);
         } else {
                 ty_snprintf(buf, sizeof buf, "%p", co);
         }
-
         return buf;
 }
 
@@ -1360,17 +1356,6 @@ xco_switch(cothread_t co)
         co_switch(co);
 }
 #endif
-
-noreturn static void
-do_co(void)
-{
-        Ty *ty = co_ty;
-        CO_LOG("do_co()", TERM(94), "%s: %s", SHOW(ActiveFun(ty), BASIC), vN(STACK) > 1 ? SHOW(local(ty, 0), BASIC) : "--");
-        //if (!call_jit(ty, ActiveFun(ty))) {
-                vm_exec(ty, IP);
-        //}
-        UNREACHABLE();
-}
 
 inline static co_state *
 GetFreeCoState(Ty *ty)
@@ -1535,19 +1520,85 @@ co_yield_value(Ty *ty)
         return true;
 }
 
-inline static JitCont *
-cont(Ty *ty, int i)
+#if !defined(TY_NO_JIT)
+inline static void
+xgo(Ty *ty, isize depth, JitFn *func, Value *args, Value **env)
 {
-        if (JIT_STATE.cont == NULL) {
-                JIT_STATE.cont = GetFreeJitContStack(ty);
+        if (UNLIKELY(vN(STACK) + 256 > vC(STACK))) {
+                isize ai = args - vv(STACK);
+                xvR(STACK, vN(STACK) + 256);
+                args = v_(STACK, ai);
         }
 
-        xvR(*JIT_STATE.cont, i + 1);
+        EXEC_DEPTH += 2;
+        IP = &JIT;
+        (*func)(ty, NULL, args, env);
+        EXEC_DEPTH -= 2;
 
-        return v_(*JIT_STATE.cont, i);
+
+        if (LIKELY(JIT_STATE.status == JIT_RETURN)) {
+                CO_LOG("jit_return", TERM(93;1), "ret = %s", VSC(vvL(STACK)));
+                Value v = v_L(STACK);
+                IP = vXx(CALLS);
+                vN(STACK) = vXx(FRAMES).fp + 1;
+                v_L(STACK) = v;
+                CO_LOG("jit_return", TERM(92;1), "ret = %s", VSC(vvL(STACK)));
+                return;
+        }
+
+        Frame *top = v_(FRAMES, depth);
+
+        switch (JIT_STATE.status) {
+        case JIT_CALL:
+                CO_LOG("jit_trampoline_call", TERM(94;1), "suspend with resume_idx = %d", JIT_STATE._idx);
+                top->f.tags = JIT_STATE._idx;
+                break;
+
+        case JIT_YIELD_SOME:
+                CO_LOG("jit_yield_some", TERM(91;1), "yielding: %s, resume=%d", VSC(vvL(STACK)), JIT_STATE._idx);
+                top->f.tags = JIT_STATE._idx;
+                v_L(STACK) = Some(v_L(STACK));
+                DoYield(ty);
+                break;
+
+        case JIT_YIELD:
+                CO_LOG("jit_yield", TERM(91;1), "yielding: %s", VSC(vvL(STACK)));
+                top->f.tags = JIT_STATE._idx;
+                DoYield(ty);
+                break;
+
+        case JIT_YIELD_NONE:
+                top->f.tags = JIT_STATE._idx;
+                push(None);
+                CO_LOG("jit_yield_none", TERM(91;1), "yielding: %s", VSC(vvL(STACK)));
+                DoYield(ty);
+                break;
+        }
 }
 
-#if !defined(TY_NO_JIT)
+inline static void
+go(Ty *ty)
+{
+        isize depth0 = vN(FRAMES) - 1;
+
+        while (vN(FRAMES) > depth0) {
+                isize depth = vN(FRAMES) - 1;
+                Frame *top = vvL(FRAMES);
+
+                usize cfp = top->fp;
+                Value *args = v_(STACK, cfp);
+
+                JIT_STATE.idx = top->f.tags;
+                JIT_STATE.status = JIT_RETURN;
+
+                CO_LOG("go()", TERM(34;1), "%s => resume%s: %d", TERM(92;1), TERM(0), JIT_STATE.idx);
+
+                xgo(ty, depth, jit_of(&top->f), args, top->f.env);
+        }
+
+        CO_LOG("go()", TERM(34;1), "%s => end%s", TERM(91;1), TERM(0));
+}
+
 inline static bool
 call_jit(Ty *ty, Value const *f)
 {
@@ -1556,104 +1607,71 @@ call_jit(Ty *ty, Value const *f)
                 return false;
         }
 
-        if (UNLIKELY(vN(STACK) + 256 > vC(STACK))) {
-                xvR(STACK, vN(STACK) + 256);
-        }
-
         char *ip = IP;
-        usize fp = vvL(FRAMES)->fp;
-        Value v = {0};
+
+        CO_LOG("call_jit()", TERM(93;1), "call %s", VSC(f));
 
         JIT_STATE.idx = 0;
         JIT_STATE.status = JIT_RETURN;
 
-        EXEC_DEPTH += 1;
+        usize fp = vvL(FRAMES)->fp;
+        usize f0 = vN(FRAMES) - 1;
 
-        (*(JitFn *)func)(ty, &v, v_(STACK, fp), f->env);
+        Value *activation = &v_(FRAMES, f0)->f;
+        activation->type = VALUE_NATIVE_FUNCTION;
+        activation->tags = 0;
 
-        if (LIKELY(JIT_STATE.status == JIT_RETURN)) {
-                EXEC_DEPTH -= 1;
-                vN(STACK) = fp + 1;
-                put(v);
-                vXx(FRAMES);
-                vXx(CALLS);
+        xgo(ty, f0, func, v_(STACK, fp), f->env);
+
+        if (LIKELY(vN(FRAMES) == f0)) {
                 IP = ip;
                 return true;
         }
 
-        int base_depth = JIT_STATE.depth;
+        while (vN(FRAMES) != f0) {
+                isize i = vN(FRAMES) - 1;
+                Frame *top = vvL(FRAMES);
 
-        *cont(ty, JIT_STATE.depth++) = (JitCont) {
-                .fn   = func,
-                .env  = f->env,
-                .ret  = &v,
-                .idx  = JIT_STATE._idx,
-        };
-
-        Value cv = {0};
-
-        *cont(ty, JIT_STATE.depth++) = (JitCont) {
-                .fn   = JIT_STATE._fn,
-                .env  = JIT_STATE._env,
-                .ret  = &cv,
-                .idx  = 0,
-        };
-
-        while (JIT_STATE.depth > base_depth) {
-                int d0 = JIT_STATE.depth - 1;
-                JitCont *top = cont(ty, d0);
-
-                usize cfp = vvL(FRAMES)->fp;
+                usize cfp = top->fp;
                 Value *args = v_(STACK, cfp);
 
-                if (UNLIKELY(vN(STACK) + 256 > vC(STACK))) {
-                        xvR(STACK, vN(STACK) + 256);
-                        args = v_(STACK, cfp);
-                }
-
-                JIT_STATE.idx = top->idx;
+                JIT_STATE.idx = top->f.tags;
                 JIT_STATE.status = JIT_RETURN;
 
-                CO_LOG("jit_trampoline", TERM(34;1), "%s => resume%s", TERM(92;1), TERM(0));
+                CO_LOG("call_jit()", TERM(34;1), "%s => resume%s: %d", TERM(92;1), TERM(0), JIT_STATE.idx);
 
-                (*(JitFn *)top->fn)(ty, top->ret, args, top->env);
-
-                top = cont(ty, d0);
-
-                if (JIT_STATE.status == JIT_CALL) {
-                        top->idx = JIT_STATE._idx;
-                        *cont(ty, JIT_STATE.depth++) = (JitCont) {
-                                .fn   = JIT_STATE._fn,
-                                .env  = JIT_STATE._env,
-                                .ret  = &cv,
-                                .idx  = 0,
-                        };
-                } else if (--JIT_STATE.depth > base_depth) {
-                        cfp = vvL(FRAMES)->fp;
-                        vN(STACK) = cfp + 1;
-                        *v_(STACK, cfp) = cv;
-                        vXx(FRAMES);
-                        vXx(CALLS);
-                }
+                xgo(ty, i, jit_of(&top->f), args, top->f.env);
         }
 
-        CO_LOG("jit_trampoline", TERM(34;1), "%s => end%s", TERM(91;1), TERM(0));
-
-        EXEC_DEPTH -= 1;
-
-        vN(STACK) = vvL(FRAMES)->fp + 1;
-        put(v);
-
-        vXx(FRAMES);
-        vXx(CALLS);
+        CO_LOG("call_jit()", TERM(34;1), "%s => return%s", TERM(91;1), TERM(0));
 
         IP = ip;
-
-        CO_LOG("jit_trampoline", TERM(34;1), "%s => return%s", TERM(91;1), TERM(0));
 
         return true;
 }
 #endif /* TY_NO_JIT */
+
+noreturn static void
+do_co(void)
+{
+        Ty *ty = co_ty;
+
+        CO_LOG("do_co()", TERM(94), "%s: %s", SHOW(ActiveFun(ty), BASIC), vN(STACK) > 1 ? SHOW(local(ty, 0), BASIC) : "--");
+        while (IP == &JIT) {
+                CO_LOG("do_co()", TERM(92), "resume trampoline with: %s", SHOW(top()));
+                go(ty);
+        }
+
+        Generator *gen = GetCurrentGenerator(ty);
+
+        if (IP == code_of(&gen->f)) {
+                call_jit(ty, &gen->f);
+        }
+
+        vm_exec(ty, IP);
+
+        UNREACHABLE();
+}
 
 #if !defined(TY_RELEASE)
 __attribute__((optnone, noinline))
@@ -1684,7 +1702,7 @@ xcall(Ty *ty, Value const *f, Value const *pSelf, int argc, Value const *pKwargs
                 self = ZERO;
         }
 
-        CO_LOG("XCALL", TERM(91;1), "bound=%d, argc=%d: %s", bound, argc, argc ? VSC(topN(argc)) : "(no args)");
+        CO_LOG("xcall", TERM(91;1), "call %s: bound=%d, argc=%d", VSC(f), bound, argc);
 
         LOG(
                 "Calling %s with %d args, bound = %d, self = %s, env size = %d",
@@ -1820,7 +1838,13 @@ call6t(Ty *ty, Value const *f, Value const *pSelf, int argc, Value const *pKwarg
 void
 vm_xcall(Ty *ty, Value const *f, Value const *pSelf, int argc, Value const *pKwargs)
 {
-        xcall(ty, f, pSelf, argc, pKwargs, &halt);
+        xcall(ty, f, pSelf, argc, pKwargs, IP);
+}
+
+void
+vm_trampoline(Ty *ty)
+{
+        go(ty);
 }
 
 static void
@@ -1831,7 +1855,7 @@ exec_fn(Ty *ty, Value const *f, Value const *pSelf, int argc, Value const *pKwar
                 return;
         }
 
-        xcall(ty, f, pSelf, argc, pKwargs, &halt);
+        xcall(ty, f, pSelf, argc, pKwargs, IP);
 
 #if !defined(TY_NO_JIT)
         if (LIKELY(call_jit(ty, f))) {
@@ -1839,6 +1863,7 @@ exec_fn(Ty *ty, Value const *f, Value const *pSelf, int argc, Value const *pKwar
         }
 #endif
 
+        v_L(CALLS) = &halt;
         vm_exec(ty, code_of(f));
 }
 
@@ -1855,21 +1880,6 @@ GetFreeCoThread(Ty *ty)
         }
         return co_derive(base, CO_STACK_SIZE, do_co);
 }
-
-#if !defined(TY_NO_JIT)
-JitContStack *
-GetFreeJitContStack(Ty *ty)
-{
-        JitContStack *stack;
-        if (vN(ty->jit_stacks) == 0) {
-                stack = alloc0(sizeof *stack);
-        } else {
-                stack = vXx(ty->jit_stacks);
-                v0(*stack);
-        }
-        return stack;
-}
-#endif
 
 TY_INSTR_INLINE static void
 call_co_ex(Ty *ty, Value *v, int n, char *whence)
@@ -2125,15 +2135,6 @@ CleanupThread(void *ctx)
         for (int i = 0; i < vN(ty->co_states); ++i) {
                 DestroyCoState(v__(ty->co_states, i));
         }
-
-#if !defined(TY_NO_JIT)
-        for (int i = 0; i < vN(ty->jit_stacks); ++i) {
-                JitContStack *stack = v__(ty->jit_stacks, i);
-                xvF(*stack);
-                xmF(stack);
-        }
-        xvF(ty->jit_stacks);
-#endif
 
         for (int i = 0; i < TY_TMP_BUF_COUNT; ++i) {
                 xmF(ty->tmp[i].p);
@@ -2577,9 +2578,6 @@ PushTry(Ty *ty)
         t->nsp   = vN(SP_STACK);
         t->vs    = vN(VISITING);
         t->ed    = EXEC_DEPTH;
-#if !defined(TY_NO_JIT)
-        t->jd    = JIT_STATE.depth;
-#endif
         t->ss    = SaveScratch(ty);
         t->state = TRY_TRY;
         v0(t->defer);
@@ -2640,9 +2638,6 @@ DoThrow(Ty *ty)
                                 vN(RootSet)   = min(vN(RootSet), t->gc);
                                 vN(VISITING)  = t->vs;
                                 IP            = t->catch;
-#if !defined(TY_NO_JIT)
-                                JIT_STATE.depth = t->jd;
-#endif
 
                                 RestoreScratch(ty, t->ss);
 
@@ -2878,17 +2873,6 @@ DoTag(Ty *ty, int tag, int n, Value *kws)
         }
 }
 
-
-static void
-ExecCurrentCall(Ty *ty)
-{
-        char *ip = v_L(CALLS);
-        v_L(CALLS) = &halt;
-
-        vm_exec(ty, IP);
-
-        IP = ip;
-}
 
 static Value
 BuildKwargsDict(Ty *ty, int nkw)
@@ -4059,6 +4043,7 @@ ClassLookup:
                 gX();
                 STACK.count -= n;
                 push(v);
+                CO_LOG("CallMethod()", TERM(92), "called builtin method '%s' on %s", M_NAME(i), VSC(&value));
                 return false;
         }
 
@@ -4113,6 +4098,7 @@ DoYield(Ty *ty)
         Generator *gen = GetCurrentGenerator(ty);
 
         if (UNLIKELY(gen == NULL)) {
+                abort();
                 zP("attempt to yield from outside of a generator context");
         }
 
@@ -4444,7 +4430,7 @@ DoMutMod(Ty *ty, bool exec)
 {
         uptr c, p = (uptr)poptarget();
         TyObject *o;
-        Value *vp, *vp2, val, x;
+        Value *vp, val, x;
         void *v = vp = (void *)(p & ~PMASK3);
         unsigned char b;
 
@@ -4504,7 +4490,7 @@ DoMutMul(Ty *ty, bool exec)
 {
         uptr c, p = (uptr)poptarget();
         TyObject *o;
-        Value *vp, *vp2, val, x;
+        Value *vp, val, x;
         void *v = vp = (void *)(p & ~PMASK3);
         unsigned char b;
 
@@ -6410,7 +6396,7 @@ vm_exec(Ty *ty, char *code)
         EXEC_DEPTH += 1;
         LOG("vm_exec(): ==> %d", EXEC_DEPTH);
 
-        PRINT_CTX("%s============== vm_exec() ==============%s", TERM(35), TERM(0));
+        CO_LOG("============== vm_exec() ==============", TERM(91;1), "%d", EXEC_DEPTH);
 
         RC = 0;
 
@@ -8521,10 +8507,11 @@ BinaryOp:
 
 RETURN:
                 CASE(RETURN)
-                        PRINT_CTX("<-- %sreturn%s from %s: %s", TERM(93), TERM(0), VSC(ActiveFun(ty)), VSC(top()));
+                        CO_LOG("RETURN", TERM(91), "<-- %sreturn%s from %s: %s", TERM(93), TERM(0), VSC(ActiveFun(ty)), VSC(top()));
                         n = vXx(FRAMES).fp;
                         STACK.items[n] = peek();
                         STACK.count = n + 1;
+                        CO_LOG("RETURN", TERM(92), "<-- %sreturn%s: %s", TERM(93), TERM(0), VSC(top()));
                 CASE(RETURN_PRESERVE_CTX)
                         IP = vXx(CALLS);
                         break;
@@ -8532,7 +8519,7 @@ RETURN:
                 CASE(HALT)
                         EXEC_DEPTH -= 1;
                         IP = _ip;
-                        LOG("vm_exec(): <== %d (HALT: IP=%p)", EXEC_DEPTH, (void *)IP);
+                        CO_LOG("===== HALT ===========", TERM(91;1), "vm_exec(): <== %d (HALT: IP=%p)", EXEC_DEPTH, (void *)IP);
                         return;
 
                 default:

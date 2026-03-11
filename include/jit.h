@@ -13,8 +13,15 @@
 #define JIT_SCAN_LOG 0
 #define JIT_DUMP_DIS 0
 
-#define JIT_RETURN  0
-#define JIT_CALL    1
+extern char JIT;
+
+enum {
+        JIT_RETURN,
+        JIT_CALL,
+        JIT_YIELD,
+        JIT_YIELD_SOME,
+        JIT_YIELD_NONE
+};
 
 typedef struct jit_info {
         void *code;       // Pointer to JIT'd machine code

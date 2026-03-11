@@ -784,6 +784,7 @@ show_impl(
                         break;
                 }
 
+                case VALUE_NATIVE_FUNCTION:
                 case VALUE_FUNCTION:
                 {
                         char const *cls  = class_name(ty, class_of(&v));
@@ -1839,6 +1840,7 @@ _value_mark_xd(Ty *ty, Value const *v)
         case VALUE_ARRAY:            value_array_mark(ty, v->array);                                   break;
         case VALUE_TUPLE:            mark_tuple(ty, v);                                                break;
         case VALUE_DICT:             dict_mark(ty, v->dict);                                           break;
+        case VALUE_NATIVE_FUNCTION:
         case VALUE_BOUND_FUNCTION:
         case VALUE_FUNCTION:         mark_function(ty, v);                                             break;
         case VALUE_GENERATOR:        mark_generator(ty, v);                                            break;
