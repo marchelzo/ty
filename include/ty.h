@@ -437,31 +437,18 @@ struct class {
 
 #if !defined(TY_NO_JIT)
 typedef struct {
-        void *fn;
-        Value **env;
-        Value *ret;
-        int idx;
-} JitCont;
-
-typedef vec(JitCont) JitContStack;
-
-typedef struct {
-        i32 depth;
         i32 idx;
         i32 status;
         i32 _idx;
-        void *_fn;
-        Value **_env;
-        JitContStack *cont;
 } JitState;
 
 #define JIT_STATE (ty->st->jit)
 #endif
 
 struct frame {
-        Value f;
         usize fp;
         char const *ip;
+        Value f;
 };
 
 typedef struct cothread_state {
@@ -612,7 +599,6 @@ struct try {
         u32 nsp;
         u16 vs;
         u16 ed;
-        u16 jd;
 
         bool executing;
         bool need_trace;
@@ -751,10 +737,6 @@ typedef struct ty {
 
         CoThreadVector cothreads;
         vec(co_state *) co_states;
-
-#if !defined(TY_NO_JIT)
-        vec(JitContStack *) jit_stacks;
-#endif
 
         vec(ThrowCtx *) throw_stack;
 

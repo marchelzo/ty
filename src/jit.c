@@ -28,6 +28,8 @@
 #include "itable.h"
 #include "compiler.h"
 
+char JIT;
+
 #define VALUE_SIZE (sizeof (Value))
 
 // ============================================================================
@@ -664,13 +666,15 @@ static void jit_rt_stat_arith_float(void)            { STAT(arith_float); }
 static void
 jit_rt_dbg(Ty *ty, i64 sp, char const *msg)
 {
-        usize fp = vvL(ty->st->frames)->fp;
-        usize bp = fp + vvL(ty->st->frames)->f.info[FUN_INFO_BOUND];
-        Value const *v = v_(STACK, bp + sp - 1);
+        //usize fp = vvL(ty->st->frames)->fp;
+        //usize bp = fp + vvL(ty->st->frames)->f.info[FUN_INFO_BOUND];
+        //Value const *v = v_(STACK, bp + sp - 1);
 
-        char const *repr = (sp == 0) ? "<>" : SHOW(v, BASIC, ABBREV);
+        //char const *repr = (sp == 0) ? "<>" : SHOW(v, BASIC, ABBREV);
 
-        XPRINT_CTX("%sJIT%s [%zu]: %s%s%s: %s", TERM(91), TERM(0), (usize)(bp + sp - 1 - fp), TERM(34), msg, TERM(0), repr);
+        //XPRINT_CTX("%sJIT%s [%zu]: %s%s%s: %s", TERM(91), TERM(0), (usize)(bp + sp - 1 - fp), TERM(34), msg, TERM(0), repr);
+
+        CO_LOG("[jit]", TERM(31;1), "%s: %s", msg, VSC(vvL(STACK)));
 }
 
 static void
@@ -1802,7 +1806,7 @@ bc_prescan(JitCtx *ctx, char const *code, int code_size)
                 case INSTR_YIELD:
                 case INSTR_YIELD_NONE:
                 case INSTR_YIELD_SOME:
-                        return false;
+                        break;
 
                 case INSTR_LOAD_LOCAL:
                 case INSTR_LOAD_REF:
@@ -2227,22 +2231,19 @@ jit_rt_call(Ty *ty, Value *result, Value *fn, int argc)
 // Returns 0 if the call was handled synchronously (non-JIT or interpreted).
 // Returns 1 if the callee is JIT-compiled and the trampoline should dispatch it.
 static int
-jit_rt_call_trampoline(Ty *ty, Value *result, Value *fn, int argc)
+jit_rt_call_trampoline(Ty *ty, Value *out, Value *fn, int argc)
 {
         Value _fn = *fn;
-        ptrdiff_t idx = result - vv(STACK);
-        vN(STACK) = idx + argc;
 
-        // Only attempt trampoline for simple function types
-        if (_fn.type != VALUE_FUNCTION && _fn.type != VALUE_BOUND_FUNCTION) {
-                DoCall(ty, &_fn, argc, 0, false, true);
-                return 0;
-        }
+        vN(STACK) = (out + argc) - vv(STACK);
 
-        // Check if callee is JIT-compiled
-        JitFn *jit = try_jit(ty, &_fn);
-        if (jit == NULL) {
-                // Not JIT-compiled, run synchronously
+        JitFn *jit;
+
+        if (
+                (_fn.type != VALUE_FUNCTION && _fn.type != VALUE_BOUND_FUNCTION)
+             || is_starred(&_fn)
+             || ((jit = try_jit(ty, &_fn)) == NULL)
+        ) {
                 DoCall(ty, &_fn, argc, 0, false, true);
                 return 0;
         }
@@ -2250,8 +2251,10 @@ jit_rt_call_trampoline(Ty *ty, Value *result, Value *fn, int argc)
         // Callee is JIT-compiled: set up its frame and signal the trampoline
         vm_xcall(ty, &_fn, NULL, argc, NULL);
 
-        JIT_STATE._fn = jit;
-        JIT_STATE._env = _fn.env;
+        vvL(ty->st->frames)->f.type = VALUE_NATIVE_FUNCTION;
+        vvL(ty->st->frames)->f.tags = 0;
+
+        ty->ip = &JIT;
 
         return 1;
 }
@@ -2284,22 +2287,15 @@ jit_fast_frame(Ty *ty, Value const *fn, Value const *self, int argc)
         }
 
         // Push frame and call return address
-        xvP(ty->st->frames, ((Frame){ .fp = fp, .f = *fn, .ip = NULL }));
-        xvP(ty->st->calls, (char *)NULL);
+        xvP(ty->st->frames, ((Frame){ .fp = fp, .f = *fn, .ip = ty->ip }));
+        xvP(ty->st->calls, ty->ip);
+
+        vvL(ty->st->frames)->f.type = VALUE_NATIVE_FUNCTION;
+        vvL(ty->st->frames)->f.tags = 0;
+
+        ty->ip = &JIT;
 
         CO_LOG("jit_fast_frame", TERM(33;1), "");
-}
-
-inline static JitCont *
-cont(Ty *ty, int i)
-{
-        if (JIT_STATE.cont == NULL) {
-                JIT_STATE.cont = GetFreeJitContStack(ty);
-        }
-
-        xvR(*JIT_STATE.cont, i + 1);
-
-        return v_(*JIT_STATE.cont, i);
 }
 
 // Run a JIT function through an inline trampoline loop.
@@ -2307,63 +2303,9 @@ cont(Ty *ty, int i)
 static inline void
 jit_run_trampoline(Ty *ty, JitFn *jit, Value **env, int nenv)
 {
-        int base_depth = JIT_STATE.depth;
-        Value result = {0};
-        Value cv = {0};
+        CO_LOG("jit_run_trampoline", TERM(32;1), "enter");
 
-        *cont(ty, JIT_STATE.depth++) = (JitCont) {
-                .fn   = jit,
-                .env  = env,
-                .ret  = &result,
-                .idx  = 0,
-        };
-
-        while (JIT_STATE.depth > base_depth) {
-                int d0 = JIT_STATE.depth - 1;
-                JitCont *top = cont(ty, d0);
-                usize cfp = vvL(ty->st->frames)->fp;
-                Value *args = vv(STACK) + cfp;
-
-                if (UNLIKELY(vN(STACK) + 256 > vC(STACK))) {
-                        xvR(STACK, vN(STACK) + 256);
-                        args = vv(STACK) + cfp;
-                }
-
-                JIT_STATE.idx    = top->idx;
-                JIT_STATE.status = JIT_RETURN;
-
-                CO_LOG("jit_run_trampoline", TERM(31;1), "");
-
-                (*(JitFn *)top->fn)(ty, top->ret, args, top->env);
-
-                top = cont(ty, d0);
-
-                if (JIT_STATE.status == JIT_CALL) {
-                        top->idx = JIT_STATE._idx;
-                        *cont(ty, JIT_STATE.depth++) = (JitCont) {
-                                .fn   = JIT_STATE._fn,
-                                .env  = JIT_STATE._env,
-                                .ret  = &cv,
-                                .idx  = 0,
-                        };
-                } else if (--JIT_STATE.depth > base_depth) {
-                        cfp = vvL(ty->st->frames)->fp;
-                        vN(STACK) = cfp + 1;
-                        *v_(STACK, cfp) = cv;
-                        vXx(ty->st->frames);
-                        vXx(ty->st->calls);
-                        vm_check_flags(ty);
-                }
-        }
-
-        CO_LOG("jit_run_trampoline", TERM(31;1), "end");
-
-        // Clean up the initial callee's frame
-        usize cfp = vvL(ty->st->frames)->fp;
-        vN(STACK) = cfp + 1;
-        *v_(STACK, cfp) = result;
-        vXx(ty->st->frames);
-        vXx(ty->st->calls);
+        vm_trampoline(ty);
 
         CO_LOG("jit_run_trampoline", TERM(31;1), "ret");
 }
@@ -2375,6 +2317,10 @@ jit_rt_baked_call(Ty *ty, Value *self, Value *fn, int class_id, int argc)
 {
         // Class guard
         if (UNLIKELY(ClassOf(self) != class_id)) {
+                return 0;
+        }
+
+        if (is_starred(fn)) {
                 return 0;
         }
 
@@ -2409,11 +2355,17 @@ jit_rt_fast_global_call(Ty *ty, int gi, int argc)
                 return 0;
         }
 
+        if (is_starred(fn)) {
+                return 0;
+        }
+
         // Check if callee is JIT-compiled
         JitFn *jit = try_jit(ty, fn);
         if (jit == NULL) {
                 return 0;
         }
+
+        CO_LOG("jit_rt_fast_global_call", TERM(32;1), "global %d", gi);
 
         // Fast frame setup
         jit_fast_frame(ty, fn, NULL, argc);
@@ -2459,6 +2411,8 @@ jit_rt_call_self_method_guarded(Ty *ty, Value *result, Value *self,
                 self = vm_get_self(ty);
         }
 
+        CO_LOG("jit_rt_call_self_method_guarded", TERM(32;1), "class_id %d member_id %d", class_id, member_id);
+
         if (ClassOf(self) == class_id) {
                 STAT(call_method_baked);
                 jit_rt_call_method_direct(ty, result, self, baked, argc);
@@ -2483,6 +2437,8 @@ jit_rt_call_builtin_method(Ty *ty, Value *result, Value *self,
         }
 
         Value _self = *self;
+
+        CO_LOG("jit_rt_call_builtin_method", TERM(32;1), "type %d member %d", value_type, member_id);
 
         if (LIKELY(self->type == value_type)) {
                 STAT(call_method_builtin);
@@ -3255,6 +3211,18 @@ bc_emit_self_member_write_fast(JitCtx *ctx, int member_id, char const *bc_ip)
         jit_emit_label(asm, lbl_done);
         // val stays on stack (ASSIGN peeks, doesn't pop)
         return true;
+}
+
+static void
+bc_emit_trampoline_signal(JitCtx *ctx, int status, int idx)
+{
+        dasm_State **asm = &ctx->asm;
+
+        jit_emit_load_imm(asm, BC_S0, status);
+        jit_emit_ldr64(asm, BC_S1, BC_TY, OFF_TY_ST);
+        jit_emit_str32(asm, BC_S0, BC_S1, OFF_JIT_STATUS);
+        jit_emit_load_imm(asm, BC_S0, idx);
+        jit_emit_str32(asm, BC_S0, BC_S1, OFF_JIT_SAVED_RES);
 }
 
 static Class *
@@ -4702,15 +4670,15 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                         // fn is still at ops[sp-1]
                         // Result overwrites the fn slot, args+fn all consumed => sp -= (n+1), push result => sp += 1
                         int fn_off = OP_OFF(ctx->sp - 1);
-                        int result_off = OP_OFF(ctx->sp - n - 1);
+                        int out_off = OP_OFF(ctx->sp - 1 - n);
 
                         // Sync the Ty stack count so the helper can set up the callee's frame
                         jit_emit_sync_stack_count(asm, ctx->bound, ctx->sp);
 
                         // Use trampoline-aware helper: returns 0 if handled, 1 if callee is JIT
                         jit_emit_mov(asm, BC_A0, BC_TY);
-                        jit_emit_add_imm(asm, BC_A1, BC_OPS, result_off);  // result
-                        jit_emit_add_imm(asm, BC_A2, BC_OPS, fn_off);      // fn
+                        jit_emit_add_imm(asm, BC_A1, BC_OPS, out_off);
+                        jit_emit_add_imm(asm, BC_A2, BC_OPS, fn_off);
                         jit_emit_load_imm(asm, BC_A3, n);
                         jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_call_trampoline);
                         jit_emit_call_reg(asm, BC_CALL);
@@ -4724,11 +4692,9 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                         int resume_lbl = bc_next_label(ctx);
                         ctx->resume_labels[site_idx] = resume_lbl;
 
-                        jit_emit_load_imm(asm, BC_S0, JIT_CALL);
-                        jit_emit_ldr64(asm, BC_S1, BC_TY, OFF_TY_ST);
-                        jit_emit_str32(asm, BC_S0, BC_S1, OFF_JIT_STATUS);
-                        jit_emit_load_imm(asm, BC_S0, site_idx + 1); // 1-based resume index
-                        jit_emit_str32(asm, BC_S0, BC_S1, OFF_JIT_SAVED_RES);
+                        //: ty->st->jit.jit_status = JIT_CALL_PENDING;
+                        //: ty->st->jit._idx = site_idx + 1;
+                        bc_emit_trampoline_signal(ctx, JIT_CALL, site_idx + 1);
 
                         // Jump to epilogue (return to trampoline)
                         int lbl_ret = bc_label_for(ctx, -1);
@@ -4895,31 +4861,24 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                         // x0 now has Value* to the global
                         jit_emit_mov(asm, BC_A2, BC_RET);  // fn ptr (was in x0)
                         jit_emit_mov(asm, BC_A0, BC_TY);
-                        jit_emit_add_imm(asm, BC_A1, BC_OPS, OP_OFF(ctx->sp)); // result
+                        jit_emit_add_imm(asm, BC_A1, BC_OPS, OP_OFF(ctx->sp));
                         jit_emit_load_imm(asm, BC_A3, n);
                         jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_call_trampoline);
                         jit_emit_call_reg(asm, BC_CALL);
 
                         // Old trampoline may also signal JIT_CALL
-                        int lbl_cg_done2 = bc_next_label(ctx);
-                        jit_emit_cbz(asm, BC_RET, lbl_cg_done2);
+                        jit_emit_cbz(asm, BC_RET, lbl_cg_done);
 
-                        int cg_site_idx2 = ctx->call_site_count++;
-                        int cg_resume_lbl2 = bc_next_label(ctx);
-                        ctx->resume_labels[cg_site_idx2] = cg_resume_lbl2;
+                        int cg_site_idx = ctx->call_site_count++;
+                        int cg_resume_lbl = bc_next_label(ctx);
+                        ctx->resume_labels[cg_site_idx] = cg_resume_lbl;
 
-                        jit_emit_load_imm(asm, BC_S0, JIT_CALL);
-                        jit_emit_ldr64(asm, BC_S1, BC_TY, OFF_TY_ST);
-                        jit_emit_str32(asm, BC_S0, BC_S1, OFF_JIT_STATUS);
-                        jit_emit_load_imm(asm, BC_S0, cg_site_idx2 + 1);
-                        jit_emit_str32(asm, BC_S0, BC_S1, OFF_JIT_SAVED_RES);
+                        bc_emit_trampoline_signal(ctx, JIT_CALL, cg_site_idx + 1);
 
                         int lbl_cg_ret2 = bc_label_for(ctx, -1);
                         jit_emit_jump(asm, lbl_cg_ret2);
 
-                        jit_emit_label(asm, cg_resume_lbl2);
-                        jit_emit_label(asm, lbl_cg_done2);
-
+                        jit_emit_label(asm, cg_resume_lbl);
                         jit_emit_label(asm, lbl_cg_done);
 
                         ctx->sp++;
@@ -4930,30 +4889,38 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                 }
 
                 CASE(YIELD) {
-                        DBG("YIELDING");
-                        jit_emit_mov(asm, BC_A0, BC_TY);
-                        jit_emit_add_imm(asm, BC_A1, BC_OPS, OP_OFF(ctx->sp));
-                        jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_yield);
-                        jit_emit_call_reg(asm, BC_CALL);
-                        DBG("YIELD");
+                        int site_idx = ctx->call_site_count++;
+                        int resume_lbl = bc_next_label(ctx);
+                        ctx->resume_labels[site_idx] = resume_lbl;
+                        jit_emit_sync_stack_count(asm, ctx->bound, ctx->sp);
+                        bc_emit_trampoline_signal(ctx, JIT_YIELD, site_idx + 1);
+                        int lbl_ret = bc_label_for(ctx, -1);
+                        jit_emit_jump(asm, lbl_ret);
+                        jit_emit_label(asm, resume_lbl);
                         break;
                 }
 
                 CASE(YIELD_SOME) {
-                        DBG("YIELDING SOME");
-                        jit_emit_mov(asm, BC_A0, BC_TY);
-                        jit_emit_add_imm(asm, BC_A1, BC_OPS, OP_OFF(ctx->sp));
-                        jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_yield_some);
-                        jit_emit_call_reg(asm, BC_CALL);
-                        DBG("YIELD_SOME");
+                        int site_idx = ctx->call_site_count++;
+                        int resume_lbl = bc_next_label(ctx);
+                        ctx->resume_labels[site_idx] = resume_lbl;
+                        jit_emit_sync_stack_count(asm, ctx->bound, ctx->sp);
+                        bc_emit_trampoline_signal(ctx, JIT_YIELD_SOME, site_idx + 1);
+                        int lbl_ret = bc_label_for(ctx, -1);
+                        jit_emit_jump(asm, lbl_ret);
+                        jit_emit_label(asm, resume_lbl);
                         break;
                 }
 
                 CASE(YIELD_NONE) {
-                        jit_emit_mov(asm, BC_A0, BC_TY);
-                        jit_emit_add_imm(asm, BC_A1, BC_OPS, OP_OFF(ctx->sp));
-                        jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_yield_none);
-                        jit_emit_call_reg(asm, BC_CALL);
+                        int site_idx = ctx->call_site_count++;
+                        int resume_lbl = bc_next_label(ctx);
+                        ctx->resume_labels[site_idx] = resume_lbl;
+                        jit_emit_sync_stack_count(asm, ctx->bound, ctx->sp);
+                        bc_emit_trampoline_signal(ctx, JIT_YIELD_NONE, site_idx + 1);
+                        int lbl_ret = bc_label_for(ctx, -1);
+                        jit_emit_jump(asm, lbl_ret);
+                        jit_emit_label(asm, resume_lbl);
                         ctx->sp++;
                         break;
                 }
@@ -4961,8 +4928,8 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                 CASE(RETURN)
                 CASE(RETURN_PRESERVE_CTX) {
                         // Result is ops[sp-1], copy to *BC_RES
-                        bc_copy_value(ctx, BC_RES, 0, BC_OPS, OP_OFF(ctx->sp - 1));
-
+                        // bc_copy_value(ctx, BC_RES, 0, BC_OPS, OP_OFF(ctx->sp - 1));
+                        jit_emit_sync_stack_count(asm, ctx->bound, ctx->sp);
                         // Jump to shared epilogue
                         int lbl_ret = bc_label_for(ctx, -1);
                         jit_emit_jump(asm, lbl_ret);
