@@ -67,34 +67,30 @@ blob_clear(Ty *ty, Value *blob, int argc, Value *kwargs)
 static Value
 blob_search(Ty *ty, Value *blob, int argc, Value *kwargs)
 {
+        ASSERT_ARGC("Blob.search()", 1, 2);
 
-        Value start;
+        isize start;
         Value c;
 
         switch (argc) {
         case 1:
-                start = INTEGER(0);
-                c = ARG(0);
+                start = 0;
+                c = ARGx(0, VALUE_STRING, VALUE_BLOB, VALUE_INTEGER);
                 break;
+
         case 2:
-                start = ARG(0);
-                c = ARG(1);
+                start = INT_ARG(0);
+                c = ARGx(1, VALUE_STRING, VALUE_BLOB, VALUE_INTEGER);
                 break;
-        default:
-                zP("blob.search() expects 1 or 2 arguments but got %d", argc);
         }
 
-        if (start.type != VALUE_INTEGER)
-                zP("the offset argument to blob.search() must be an integer");
-
-        if (start.z < 0 || start.z > vN(*blob->blob))
-                zP("invalid offset passed to blob.search()");
-
-        if (vN(*blob->blob) == 0)
+        if (vN(*blob->blob) == 0) {
                 return NIL;
+        }
 
-        char const *haystack = (char const *)blob->blob->items + start.z;
-        int n = vN(*blob->blob) - start.z;
+        isize n = vN(*blob->blob) - start;
+        char const *haystack = (char const *)v_(*blob->blob, start);
+
         char const *s;
 
         switch (c.type) {
@@ -111,11 +107,63 @@ blob_search(Ty *ty, Value *blob, int argc, Value *kwargs)
                         zP("invalid integer passed to blob.search()");
                 s = memchr(haystack, c.z, n);
                 break;
-        default:
-                zP("invalid argument passed to blob.search()");
         }
 
-        return (s == NULL) ? NIL : INTEGER(s - haystack + start.z);
+        return (s == NULL) ? NIL : INTEGER(s - haystack + start);
+}
+
+static Value
+blob_searchr(Ty *ty, Value *blob, int argc, Value *kwargs)
+{
+        ASSERT_ARGC("Blob.searchr()", 1, 2);
+
+        isize end;
+        Value c;
+
+        switch (argc) {
+        case 1:
+                end = vN(*blob->blob);
+                c = ARGx(0, VALUE_STRING, VALUE_BLOB, VALUE_INTEGER);
+                break;
+
+        case 2:
+                end = INT_ARG(0);
+                c = ARGx(1, VALUE_STRING, VALUE_BLOB, VALUE_INTEGER);
+                break;
+        }
+
+        if (end <= 0 || vN(*blob->blob) == 0) {
+                return NIL;
+        }
+
+        if (end > vN(*blob->blob)) {
+                end = vN(*blob->blob);
+        }
+
+        char const *haystack = (char const *)v_(*blob->blob, 0);
+
+        char const *s;
+        u8 byte;
+
+        switch (c.type) {
+        case VALUE_STRING:
+                s = (char const *)mmmmr((u8 const *)haystack, end, (u8 const *)ss(c), sN(c));
+                break;
+
+        case VALUE_BLOB:
+                s = (char const *)mmmmr((u8 const *)haystack, end, (u8 const *)c.blob->items, c.blob->count);
+                break;
+
+        case VALUE_INTEGER:
+                if (c.z < 0 || c.z > UCHAR_MAX) {
+                        bP("bad needle: %s", VSC(&c));
+                }
+                byte = c.z;
+                s = (char const *)mmmmr((u8 const *)haystack, end, &byte, 1);
+                break;
+        }
+
+        return (s == NULL) ? NIL : INTEGER(s - haystack);
 }
 
 static Value
@@ -624,6 +672,7 @@ DEFINE_METHOD_TABLE(
         { .name = "push",     .func = blob_push         },
         { .name = "reserve",  .func = blob_reserve      },
         { .name = "search",   .func = blob_search       },
+        { .name = "searchr",  .func = blob_searchr      },
         { .name = "set",      .func = blob_set          },
         { .name = "shrink",   .func = blob_shrink       },
         { .name = "size",     .func = blob_size         },
