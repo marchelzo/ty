@@ -1,9 +1,9 @@
 CFLAGS += -std=c2x
 CFLAGS += -Wall
 CFLAGS += -Iinclude
-CFLAGS += -Ilibco
-CFLAGS += -Idtoa
-CFLAGS += -Ilibmd/include
+CFLAGS += -Ivendored/libco
+CFLAGS += -Ivendored/dtoa
+CFLAGS += -Ivendored/libmd/include
 CFLAGS += -isystem/usr/local/include
 CFLAGS += $(shell pkg-config --cflags libffi)
 CFLAGS += $(shell pcre2-config --cflags)
@@ -117,7 +117,7 @@ endif
 
 ifndef NO_NSYNC
 	CFLAGS += -DTY_USE_NSYNC
-	CFLAGS += -Insync/public
+	CFLAGS += -Ivendored/nsync/public
 endif
 
 # --- Default to ncpu parallel jobs ---
@@ -154,9 +154,9 @@ SOURCES := $(wildcard src/*.c)
 OBJECTS := $(patsubst src/%.c,obj/%.o,$(SOURCES))
 TYLS_OBJECTS := $(patsubst src/%.c,obj/tyls/%.o,$(SOURCES))
 TYPROF_OBJECTS := $(patsubst src/%.c,obj/typrof/%.o,$(SOURCES))
-EXTERNAL := libco/libco.o dtoa/dtoa.o libmd/libmd.a
+EXTERNAL := vendored/libco/libco.o vendored/dtoa/dtoa.o vendored/libmd/libmd.a
 ifndef NO_NSYNC
-	EXTERNAL += nsync/out/libnsync.a
+	EXTERNAL += vendored/nsync/out/libnsync.a
 endif
 ASSEMBLY := $(patsubst %.c,%.s,$(SOURCES))
 
@@ -196,10 +196,10 @@ asm: $(ASSEMBLY)
 	@echo cc $<
 	$(CC) $(CFLAGS) -S -o asm/$@ -DFILENAME=$(patsubst %.c,%,$<) $<
 
-libco/libco.o: libco/libco.c
+vendored/libco/libco.o: vendored/libco/libco.c
 	$(CC) $(CFLAGS) -c -o $@ -DLIBCO_MP $<
 
-dtoa/dtoa.o: dtoa/SwiftDtoa.c
+vendored/dtoa/dtoa.o: vendored/dtoa/SwiftDtoa.c
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 obj/%.o: src/%.c
@@ -216,7 +216,7 @@ obj/typrof/%.o: src/%.c
 
 
 clean:
-	rm -rf $(PROG) *.gcda $(OBJECTS) $(TYLS_OBJECTS) $(TYPROF_OBJECTS) libco/libco.o dtoa/dtoa.o include/keywords.h $(BUILD_SIG_FILE)
+	rm -rf $(PROG) *.gcda $(OBJECTS) $(TYLS_OBJECTS) $(TYPROF_OBJECTS) vendored/libco/libco.o vendored/dtoa/dtoa.o include/keywords.h $(BUILD_SIG_FILE)
 
 test:
 	./ty test.ty

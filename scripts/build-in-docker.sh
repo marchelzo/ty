@@ -112,9 +112,11 @@ fi
 #  build project in docker
 # ---
 
+_cpu_cores=$(grep -c 'processor' /proc/cpuinfo || echo 1)
+
 (
-  exec 1> >(>&1 awk '{print "[docker-stdout]: " $0}') # prefix stdout
-  exec 2> >(>&2 awk '{print "[docker-stderr]: " $0}') # prefix stderr
+  exec 1> >(>&1 sed --unbuffered 's/^/[docker-stdout]: /') # prefix stdout
+  exec 2> >(>&2 sed --unbuffered 's/^/[docker-stderr]: /') # prefix stderr
 
   docker run \
     --rm \
@@ -122,18 +124,20 @@ fi
     -v "${_project_dir}:/ty/src" \
     "${_arg_docker_image}" \
     bash -c "
-      set -vx \
-      && cd /ty/src \
-      && cmake -S . -B '${_build_dir}' -G 'Unix Makefiles' \
-          -DCMAKE_BUILD_TYPE=Release \
-          -DCMAKE_INSTALL_PREFIX='${_install_dir}' \
-          -DVCPKG_INSTALL_OPTIONS='--no-print-usage' \
-          -DCMAKE_TOOLCHAIN_FILE=\${VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake \
-          -DVCPKG_INSTALLED_DIR='/opt/vcpkg_installed' \
-          -DVCPKG_TARGET_TRIPLET='x64-linux' \
-      && cmake --build '${_build_dir}' --parallel \
-      && cmake --install '${_build_dir}' \
-      "
+export CMAKE_COLOR_DIAGNOSTICS=ON
+export CLICOLOR_FORCE=1
+set -evx
+cd /ty/src
+cmake -S . -B '${_build_dir}' -G 'Ninja' \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_INSTALL_PREFIX='${_install_dir}' \
+  -DVCPKG_INSTALL_OPTIONS='--no-print-usage' \
+  -DCMAKE_TOOLCHAIN_FILE=\${VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake \
+  -DVCPKG_INSTALLED_DIR='/opt/vcpkg_installed' \
+  -DVCPKG_TARGET_TRIPLET='x64-linux'
+cmake --build '${_build_dir}' --parallel ${_cpu_cores:?}
+cmake --install '${_build_dir}'
+"
 ) || {
   __print_errormsg "docker run exited with non-zero error code"
   exit 1

@@ -10,6 +10,8 @@
       ]
     },
     "xxhash",
-    "mimalloc"
+    "mimalloc",
+    "luajit",
+    "nsync"
   ]
 }

@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.21)
+cmake_minimum_required(VERSION 3.25)
 
 project(ty VERSION 0.1 LANGUAGES C)
 
@@ -28,6 +28,9 @@ find_package(utf8proc CONFIG REQUIRED)
 find_package(pcre2 CONFIG REQUIRED)
 # defines target(s): xxHash::xxhash
 find_package(xxHash CONFIG REQUIRED)
+# defines target(s): nsync
+find_package(nsync CONFIG REQUIRED)
+add_library(nsync::nsync ALIAS nsync) #<-- sadly nsync doesnt do this for us
 # defines target(s): mimalloc, mimalloc-static
 find_package(mimalloc CONFIG REQUIRED)
 set_target_properties(mimalloc-static PROPERTIES
@@ -48,6 +51,12 @@ check_ipo_supported(RESULT _lto_supported OUTPUT _lto_error)
 if(_lto_supported)
   set(CMAKE_INTERPROCEDURAL_OPTIMIZATION TRUE)
 endif()
+
+# ---
+#  vendored libraries
+# ---
+
+add_subdirectory(vendored)
 
 # ---
 #  generate ioctl constants
@@ -148,13 +157,20 @@ endif()
 set(_file_keywords_h  ${_autogen_dir}/include/keywords.h)
 set(_gperf_input      ${PROJECT_SOURCE_DIR}/src/keywords.gperf)
 
-find_program(GPERF gperf)
-if(GPERF)
+set(_tgt_keywords_h "KeywordsH")
+add_library(${_tgt_keywords_h} INTERFACE)
+target_include_directories(${_tgt_keywords_h}
+  INTERFACE
+    ${_autogen_dir}/include
+)
+
+find_program(GPERF_EXECUTABLE gperf)
+if(GPERF_EXECUTABLE)
   add_custom_command(
     OUTPUT
       ${_file_keywords_h}
     COMMAND
-      ${GPERF} "${_gperf_input}" > "${_file_keywords_h}.tmp"
+      ${GPERF_EXECUTABLE} "${_gperf_input}" > "${_file_keywords_h}.tmp"
     COMMAND
       ${CMAKE_COMMAND} -E copy_if_different
         "${_file_keywords_h}.tmp"
@@ -174,63 +190,29 @@ else()
 endif()
 
 # ---
-#  target: libco
-# ---
-add_library(libco)
-target_sources(libco PRIVATE libco/libco.c)
-target_compile_definitions(libco PRIVATE LIBCO_MP)
-
-# ---
-#  target: dtoa
-# ---
-add_library(dtoa)
-target_sources(dtoa PRIVATE dtoa/SwiftDtoa.c)
-
-# ---
-#  target: libmd::md
-# ---
-add_subdirectory(libmd)
-# libmd uses C_VISIBILITY_PRESET hidden which breaks ThinLTO symbol resolution
-set_target_properties(md PROPERTIES INTERPROCEDURAL_OPTIMIZATION FALSE)
-
-# ---
-#  target: nsync
-# ---
-if (USE_NSYNC)
-  add_subdirectory(nsync)
-endif()
-
-# ---
-#  target: unibilium
-# ---
-add_subdirectory(unibilium)
-
-# ---
 #  DynASM JIT code generation
 # ---
 
-find_program(LUAJIT luajit)
-if(LUAJIT)
-  if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64|ARM64")
-    set(_jit_dasc ${PROJECT_SOURCE_DIR}/src/jit_arm64.dasc)
-    set(_jit_hdr  ${PROJECT_SOURCE_DIR}/src/jit_arm64.h)
-  else()
-    set(_jit_dasc ${PROJECT_SOURCE_DIR}/src/jit_x64.dasc)
-    set(_jit_hdr  ${PROJECT_SOURCE_DIR}/src/jit_x64.h)
-  endif()
-
-  add_custom_command(
-    OUTPUT ${_jit_hdr}
-    COMMAND ${LUAJIT} ${PROJECT_SOURCE_DIR}/LuaJIT/dynasm/dynasm.lua
-      -o ${_jit_hdr} ${_jit_dasc}
-    DEPENDS ${_jit_dasc}
-    COMMENT "Generating JIT emission header from ${_jit_dasc}"
-    VERBATIM
-  )
-  add_custom_target(GenerateJitHeader DEPENDS ${_jit_hdr})
+find_program(LUAJIT_EXECUTABLE luajit REQUIRED
+  HINTS "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/tools/luajit"
+)
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64|ARM64")
+  set(_jit_dasc ${PROJECT_SOURCE_DIR}/src/jit_arm64.dasc)
+  set(_jit_hdr  ${PROJECT_SOURCE_DIR}/src/jit_arm64.h)
 else()
-  message(WARNING "luajit not found -- JIT headers will not be regenerated")
+  set(_jit_dasc ${PROJECT_SOURCE_DIR}/src/jit_x64.dasc)
+  set(_jit_hdr  ${PROJECT_SOURCE_DIR}/src/jit_x64.h)
 endif()
+
+add_custom_command(
+  OUTPUT ${_jit_hdr}
+  COMMAND ${LUAJIT_EXECUTABLE} ${PROJECT_SOURCE_DIR}/LuaJIT/dynasm/dynasm.lua
+    -o ${_jit_hdr} ${_jit_dasc}
+  DEPENDS ${_jit_dasc}
+  COMMENT "Generating JIT emission header from ${_jit_dasc}"
+  VERBATIM
+)
+add_custom_target(GenerateJitHeader DEPENDS ${_jit_hdr})
 
 # ---
 #  target: ty
@@ -340,15 +322,18 @@ target_link_libraries(${_tgt_ty_interface}
     ${_tgt_ty_interface_version_info}
     ${_tgt_ioctlconstants_h}
     ${_tgt_errnoconstants_h}
+    ${_tgt_keywords_h}
+    vendored::libco
+    vendored::libmd
+    vendored::dtoa
+    $<LINK_LIBRARY:WHOLE_ARCHIVE,vendored::unibilium>
+    $<$<BOOL:${USE_NSYNC}>:nsync::nsync>
     Threads::Threads # pthreads (or equivalent)
-    libco
     mimalloc-static
     xxHash::xxhash
     utf8proc::utf8proc
     PCRE2::8BIT
     unofficial::libffi::libffi
-    libmd::md
-    dtoa
     unofficial::sqlite3::sqlite3
     $<$<NOT:$<BOOL:${WIN32}>>:${CMAKE_DL_LIBS}>
     $<$<NOT:$<BOOL:${WIN32}>>:m>
@@ -360,23 +345,9 @@ if(USE_NSYNC)
   target_link_libraries(${_tgt_ty_interface} INTERFACE nsync)
 endif()
 
-if(APPLE)
-  target_link_libraries(${_tgt_ty_interface} INTERFACE
-    -Wl,-force_load,$<TARGET_FILE:unibilium>
-  )
-  target_link_options(${_tgt_ty_interface} INTERFACE -Wl,-export_dynamic)
-else()
-  target_link_libraries(${_tgt_ty_interface} INTERFACE
-    -Wl,--whole-archive unibilium -Wl,--no-whole-archive
-  )
-  target_link_options(${_tgt_ty_interface} INTERFACE -rdynamic)
-endif()
-
 target_include_directories(${_tgt_ty_interface}
   INTERFACE
     ${PROJECT_SOURCE_DIR}/include
-    ${PROJECT_SOURCE_DIR}/libco
-    ${PROJECT_SOURCE_DIR}/dtoa
     ${PROJECT_SOURCE_DIR}/src
 )
 
@@ -420,6 +391,11 @@ if(BUILD_PROFILER)
   target_link_libraries(${_tgt_ty_profiler} PRIVATE ${_tgt_ty_interface})
 endif()
 
+# export symbols (essentially adds the equivalent of: -rdynamic during link)
+foreach(_tgt IN ITEMS ${_tgt_ty} ${_tgt_tyls} ${_tgt_typrof})
+  set_target_properties(${_tgt} PROPERTIES ENABLE_EXPORTS ON)
+endforeach()
+
 # ---
 #  install rules
 # ---
@@ -430,10 +406,10 @@ install(TARGETS ${_tgt_ty} ${_tgt_ty_profiler} ${_tgt_ty_ls}
   DESTINATION ${CMAKE_INSTALL_BINDIR}
 )
 
-file(GLOB _ty_modules LIST_DIRECTORIES false ${PROJECT_SOURCE_DIR}/lib/*.ty)
-install(FILES ${_ty_modules}
+install(DIRECTORY ${PROJECT_SOURCE_DIR}/lib/
   COMPONENT InstallComponentTy
   DESTINATION ${CMAKE_INSTALL_LIBDIR}/ty
+  FILES_MATCHING PATTERN "*.ty"
   PERMISSIONS
     OWNER_READ OWNER_WRITE   # 6
     GROUP_READ               # 4

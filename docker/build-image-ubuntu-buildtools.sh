@@ -7,7 +7,7 @@ _project_dir=$(readlink -f "${_script_dir}/..")
 #  input variables
 # ---
 
-_default_cmake_version="3.21.7"
+_default_cmake_version="4.2.3"
 _default_ubuntu_version="latest"
 _default_image_prefix="ty"
 _default_image_tag="\${UBUNTU_VERSION}"
