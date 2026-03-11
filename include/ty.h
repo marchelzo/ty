@@ -435,16 +435,6 @@ struct class {
         Type *object_type;
 };
 
-#if !defined(TY_NO_JIT)
-typedef struct {
-        i32 idx;
-        i32 status;
-        i32 _idx;
-} JitState;
-
-#define JIT_STATE (ty->st->jit)
-#endif
-
 struct frame {
         usize fp;
         char const *ip;
@@ -460,9 +450,6 @@ typedef struct cothread_state {
         TryStack try_stack;
         ValueVector to_drop;
         GCRootSet gc_roots;
-#if !defined(TY_NO_JIT)
-        JitState jit;
-#endif
         int exec_depth;
         int rc;
 } co_state;

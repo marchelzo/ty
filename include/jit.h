@@ -23,6 +23,11 @@ enum {
         JIT_YIELD_NONE
 };
 
+// Pack/unpack JIT return values: low 4 bits = reason, upper bits = resume index
+#define JIT_PACK(reason, idx)  (((i32)(idx) << 4) | (reason))
+#define JIT_REASON(packed)     ((packed) & 0xF)
+#define JIT_RESUME(packed)     ((packed) >> 4)
+
 typedef struct jit_info {
         void *code;       // Pointer to JIT'd machine code
         size_t code_size; // Size of the machine code buffer
@@ -34,7 +39,7 @@ typedef struct jit_info {
         int env_count;    // Number of captured values
 } JitInfo;
 
-typedef void (JitFn)(Ty *, Value *, Value *, Value **);
+typedef i32 (JitFn)(Ty *, i32 resume_idx, Value *args, Value **env);
 
 // Initialize the JIT subsystem
 void

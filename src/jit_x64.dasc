@@ -9,12 +9,15 @@
 
 // ============================================================================
 // Calling convention:
-//   void fn(Ty *ty, Value *result, Value *args, Value *env)
-//   rdi=ty, rsi=result, rdx=args, rcx=env
+//   i32 fn(Ty *ty, i32 resume_idx, Value *args, Value **env)
+//   rdi=ty, rsi=resume_idx, rdx=args, rcx=env
+//
+// Return value: packed (resume_idx << 4) | reason
+//   JIT_RETURN=0, JIT_CALL=1, JIT_YIELD=2, JIT_YIELD_SOME=3, JIT_YIELD_NONE=4
 //
 // Callee-saved register assignments:
 //   r12 = Ty *ty
-//   r13 = Value *result
+//   r13 = i32 resume_idx (for dispatch on re-entry)
 //   r14 = Value *args (== &stack.items[fp])
 //   r15 = Value *env
 //   rbx = operand base pointer (== &stack.items[fp + bound])
@@ -324,7 +327,7 @@ static void jit_emit_prologue(dasm_State **Dst, int bound) {
         |  sub rsp, 8
         // Stash incoming args into callee-saved registers
         |  mov r12, rdi   // ty
-        |  mov r13, rsi   // result
+        |  mov r13, rsi   // resume_idx (i32, zero-extended)
         |  mov r14, rdx   // args
         |  mov r15, rcx   // env
         // rbp = byte offset of fp into stack.items (survives realloc)
@@ -342,7 +345,12 @@ static void jit_emit_prologue(dasm_State **Dst, int bound) {
         }
 }
 
+// Epilogue for normal returns: sets return value to 0 (JIT_RETURN)
+// then falls through to the register restore.
+// Trampoline exits set eax before jumping to ->epilogue_restore.
 static void jit_emit_epilogue(dasm_State **Dst) {
+        |  xor eax, eax       // return JIT_RETURN (0)
+        |->epilogue_restore:
         |  add rsp, 8
         |  pop r15
         |  pop r14
@@ -351,6 +359,12 @@ static void jit_emit_epilogue(dasm_State **Dst) {
         |  pop rbx
         |  pop rbp
         |  ret
+}
+
+// Jump to the register-restore epilogue (preserves eax as return value).
+// Used by trampoline signals which set eax before returning.
+static void jit_emit_jump_epilogue_restore(dasm_State **Dst) {
+        |  jmp ->epilogue_restore
 }
 
 // After a yield helper returns, rax contains the updated frame pointer (index).

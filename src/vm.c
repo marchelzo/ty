@@ -1521,8 +1521,8 @@ co_yield_value(Ty *ty)
 }
 
 #if !defined(TY_NO_JIT)
-inline static void
-xgo(Ty *ty, isize depth, JitFn *func, Value *args, Value **env)
+inline static i32
+xjit(Ty *ty, isize depth, JitFn *func, i32 resume_idx, Value *args, Value **env)
 {
         if (UNLIKELY(vN(STACK) + 256 > vC(STACK))) {
                 isize ai = args - vv(STACK);
@@ -1530,54 +1530,59 @@ xgo(Ty *ty, isize depth, JitFn *func, Value *args, Value **env)
                 args = v_(STACK, ai);
         }
 
-        EXEC_DEPTH += 2;
         IP = &JIT;
-        (*func)(ty, NULL, args, env);
+
+        EXEC_DEPTH += 2;
+        i32 rc = (*func)(ty, resume_idx, args, env);
         EXEC_DEPTH -= 2;
 
+        int reason = JIT_REASON(rc);
 
-        if (LIKELY(JIT_STATE.status == JIT_RETURN)) {
+        if (LIKELY(reason == JIT_RETURN)) {
                 CO_LOG("jit_return", TERM(93;1), "ret = %s", VSC(vvL(STACK)));
                 Value v = v_L(STACK);
                 IP = vXx(CALLS);
                 vN(STACK) = vXx(FRAMES).fp + 1;
                 v_L(STACK) = v;
                 CO_LOG("jit_return", TERM(92;1), "ret = %s", VSC(vvL(STACK)));
-                return;
+                return 0;
         }
 
+        i32 next_resume = JIT_RESUME(rc);
         Frame *top = v_(FRAMES, depth);
 
-        switch (JIT_STATE.status) {
+        switch (reason) {
         case JIT_CALL:
-                CO_LOG("jit_trampoline_call", TERM(94;1), "suspend with resume_idx = %d", JIT_STATE._idx);
-                top->f.tags = JIT_STATE._idx;
+                CO_LOG("jit_trampoline_call", TERM(94;1), "suspend with resume_idx = %d", next_resume);
+                top->f.tags = next_resume;
                 break;
 
         case JIT_YIELD_SOME:
-                CO_LOG("jit_yield_some", TERM(91;1), "yielding: %s, resume=%d", VSC(vvL(STACK)), JIT_STATE._idx);
-                top->f.tags = JIT_STATE._idx;
+                CO_LOG("jit_yield_some", TERM(91;1), "yielding: %s, resume=%d", VSC(vvL(STACK)), next_resume);
+                top->f.tags = next_resume;
                 v_L(STACK) = Some(v_L(STACK));
                 DoYield(ty);
                 break;
 
         case JIT_YIELD:
                 CO_LOG("jit_yield", TERM(91;1), "yielding: %s", VSC(vvL(STACK)));
-                top->f.tags = JIT_STATE._idx;
+                top->f.tags = next_resume;
                 DoYield(ty);
                 break;
 
         case JIT_YIELD_NONE:
-                top->f.tags = JIT_STATE._idx;
+                top->f.tags = next_resume;
                 push(None);
                 CO_LOG("jit_yield_none", TERM(91;1), "yielding: %s", VSC(vvL(STACK)));
                 DoYield(ty);
                 break;
         }
+
+        return rc;
 }
 
 inline static void
-go(Ty *ty)
+go_jit(Ty *ty)
 {
         isize depth0 = vN(FRAMES) - 1;
 
@@ -1588,12 +1593,11 @@ go(Ty *ty)
                 usize cfp = top->fp;
                 Value *args = v_(STACK, cfp);
 
-                JIT_STATE.idx = top->f.tags;
-                JIT_STATE.status = JIT_RETURN;
+                i32 resume_idx = top->f.tags;
 
-                CO_LOG("go()", TERM(34;1), "%s => resume%s: %d", TERM(92;1), TERM(0), JIT_STATE.idx);
+                CO_LOG("go()", TERM(34;1), "%s => resume%s: %d", TERM(92;1), TERM(0), resume_idx);
 
-                xgo(ty, depth, jit_of(&top->f), args, top->f.env);
+                xjit(ty, depth, jit_of(&top->f), resume_idx, args, top->f.env);
         }
 
         CO_LOG("go()", TERM(34;1), "%s => end%s", TERM(91;1), TERM(0));
@@ -1611,9 +1615,6 @@ call_jit(Ty *ty, Value const *f)
 
         CO_LOG("call_jit()", TERM(93;1), "call %s", VSC(f));
 
-        JIT_STATE.idx = 0;
-        JIT_STATE.status = JIT_RETURN;
-
         usize fp = vvL(FRAMES)->fp;
         usize f0 = vN(FRAMES) - 1;
 
@@ -1621,7 +1622,7 @@ call_jit(Ty *ty, Value const *f)
         activation->type = VALUE_NATIVE_FUNCTION;
         activation->tags = 0;
 
-        xgo(ty, f0, func, v_(STACK, fp), f->env);
+        xjit(ty, f0, func, 0, v_(STACK, fp), f->env);
 
         if (LIKELY(vN(FRAMES) == f0)) {
                 IP = ip;
@@ -1635,12 +1636,11 @@ call_jit(Ty *ty, Value const *f)
                 usize cfp = top->fp;
                 Value *args = v_(STACK, cfp);
 
-                JIT_STATE.idx = top->f.tags;
-                JIT_STATE.status = JIT_RETURN;
+                i32 resume_idx = top->f.tags;
 
-                CO_LOG("call_jit()", TERM(34;1), "%s => resume%s: %d", TERM(92;1), TERM(0), JIT_STATE.idx);
+                CO_LOG("call_jit()", TERM(34;1), "%s => resume%s: %d", TERM(92;1), TERM(0), resume_idx);
 
-                xgo(ty, i, jit_of(&top->f), args, top->f.env);
+                xjit(ty, i, jit_of(&top->f), resume_idx, args, top->f.env);
         }
 
         CO_LOG("call_jit()", TERM(34;1), "%s => return%s", TERM(91;1), TERM(0));
@@ -1657,15 +1657,15 @@ do_co(void)
         Ty *ty = co_ty;
 
         CO_LOG("do_co()", TERM(94), "%s: %s", SHOW(ActiveFun(ty), BASIC), vN(STACK) > 1 ? SHOW(local(ty, 0), BASIC) : "--");
-        while (IP == &JIT) {
-                CO_LOG("do_co()", TERM(92), "resume trampoline with: %s", SHOW(top()));
-                go(ty);
+
+        Generator *gen = vv(STACK)->gen;
+
+        if (UNLIKELY(IP == code_of(&gen->f))) {
+                call_jit(ty, &gen->f);
         }
 
-        Generator *gen = GetCurrentGenerator(ty);
-
-        if (IP == code_of(&gen->f)) {
-                call_jit(ty, &gen->f);
+        while (IP == &JIT) {
+                go_jit(ty);
         }
 
         vm_exec(ty, IP);
@@ -1844,7 +1844,7 @@ vm_xcall(Ty *ty, Value const *f, Value const *pSelf, int argc, Value const *pKwa
 void
 vm_trampoline(Ty *ty)
 {
-        go(ty);
+        go_jit(ty);
 }
 
 static void
