@@ -103,12 +103,7 @@ void jit_free(Ty *ty) { (void)ty; }
 JitInfo *jit_compile(Ty *ty, Value const *func) { (void)ty; (void)func; return NULL; }
 #else
 
-// JIT trampoline offsets
-#define OFF_JIT_RESUME    offsetof(co_state, jit.idx)
-#define OFF_JIT_STATUS    offsetof(co_state, jit.status)
-#define OFF_JIT_SAVED_RES offsetof(co_state, jit._idx)
-#define OFF_JIT_PEND_FN   offsetof(co_state, jit._fn)
-#define OFF_JIT_PEND_ENV  offsetof(co_state, jit._env)
+// (JitState removed — resume index is passed as arg, return value encodes reason+idx)
 
 // ============================================================================
 // Fast-path statistics (typrof)
@@ -1476,7 +1471,7 @@ jit_rt_assign_global(Ty *ty, int n, Value *val)
 #if JIT_ARCH_ARM64
 // ARM64 callee-saved register assignments
 #define BC_TY    19   // x19
-#define BC_RES   20   // x20
+#define BC_RESUME 20  // x20 - resume index (2nd arg, saved for dispatch)
 #define BC_LOC   21   // x21
 #define BC_ENV   22   // x22
 #define BC_OPS   23   // x23
@@ -1497,7 +1492,7 @@ jit_rt_assign_global(Ty *ty, int n, Value *val)
 #elif JIT_ARCH_X64
 // x86-64 callee-saved register assignments
 #define BC_TY    12   // r12
-#define BC_RES   13   // r13
+#define BC_RESUME 13  // r13 - resume index (2nd arg, saved for dispatch)
 #define BC_LOC   14   // r14
 #define BC_ENV   15   // r15
 #define BC_OPS    3   // rbx
@@ -3218,11 +3213,12 @@ bc_emit_trampoline_signal(JitCtx *ctx, int status, int idx)
 {
         dasm_State **asm = &ctx->asm;
 
-        jit_emit_load_imm(asm, BC_S0, status);
-        jit_emit_ldr64(asm, BC_S1, BC_TY, OFF_TY_ST);
-        jit_emit_str32(asm, BC_S0, BC_S1, OFF_JIT_STATUS);
-        jit_emit_load_imm(asm, BC_S0, idx);
-        jit_emit_str32(asm, BC_S0, BC_S1, OFF_JIT_SAVED_RES);
+        // Load packed return value: (idx << 4) | reason
+        i32 packed = JIT_PACK(status, idx);
+        jit_emit_load_imm(asm, BC_RET, packed);
+
+        // Jump to epilogue (restore regs + ret), preserving the return value
+        jit_emit_jump_epilogue_restore(asm);
 }
 
 static Class *
@@ -4692,13 +4688,7 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                         int resume_lbl = bc_next_label(ctx);
                         ctx->resume_labels[site_idx] = resume_lbl;
 
-                        //: ty->st->jit.jit_status = JIT_CALL_PENDING;
-                        //: ty->st->jit._idx = site_idx + 1;
                         bc_emit_trampoline_signal(ctx, JIT_CALL, site_idx + 1);
-
-                        // Jump to epilogue (return to trampoline)
-                        int lbl_ret = bc_label_for(ctx, -1);
-                        jit_emit_jump(asm, lbl_ret);
 
                         // Resume label: entered when trampoline re-invokes us
                         // The callee's result is already on the Ty stack at the correct position.
@@ -4875,9 +4865,6 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
 
                         bc_emit_trampoline_signal(ctx, JIT_CALL, cg_site_idx + 1);
 
-                        int lbl_cg_ret2 = bc_label_for(ctx, -1);
-                        jit_emit_jump(asm, lbl_cg_ret2);
-
                         jit_emit_label(asm, cg_resume_lbl);
                         jit_emit_label(asm, lbl_cg_done);
 
@@ -4894,8 +4881,6 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                         ctx->resume_labels[site_idx] = resume_lbl;
                         jit_emit_sync_stack_count(asm, ctx->bound, ctx->sp);
                         bc_emit_trampoline_signal(ctx, JIT_YIELD, site_idx + 1);
-                        int lbl_ret = bc_label_for(ctx, -1);
-                        jit_emit_jump(asm, lbl_ret);
                         jit_emit_label(asm, resume_lbl);
                         break;
                 }
@@ -4906,8 +4891,6 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                         ctx->resume_labels[site_idx] = resume_lbl;
                         jit_emit_sync_stack_count(asm, ctx->bound, ctx->sp);
                         bc_emit_trampoline_signal(ctx, JIT_YIELD_SOME, site_idx + 1);
-                        int lbl_ret = bc_label_for(ctx, -1);
-                        jit_emit_jump(asm, lbl_ret);
                         jit_emit_label(asm, resume_lbl);
                         break;
                 }
@@ -4918,8 +4901,6 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                         ctx->resume_labels[site_idx] = resume_lbl;
                         jit_emit_sync_stack_count(asm, ctx->bound, ctx->sp);
                         bc_emit_trampoline_signal(ctx, JIT_YIELD_NONE, site_idx + 1);
-                        int lbl_ret = bc_label_for(ctx, -1);
-                        jit_emit_jump(asm, lbl_ret);
                         jit_emit_label(asm, resume_lbl);
                         ctx->sp++;
                         break;
@@ -4927,8 +4908,7 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
 
                 CASE(RETURN)
                 CASE(RETURN_PRESERVE_CTX) {
-                        // Result is ops[sp-1], copy to *BC_RES
-                        // bc_copy_value(ctx, BC_RES, 0, BC_OPS, OP_OFF(ctx->sp - 1));
+                        // Result stays on top of the interpreter stack
                         jit_emit_sync_stack_count(asm, ctx->bound, ctx->sp);
                         // Jump to shared epilogue
                         int lbl_ret = bc_label_for(ctx, -1);
@@ -4938,14 +4918,14 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                 }
 
                 CASE(RETURN_IF_NOT_NONE) {
-                        // If TOS is not NONE, return it
+                        // If TOS is not NONE, return it (value stays on stack)
                         int top_off = OP_OFF(ctx->sp - 1);
                         jit_emit_ldrb(asm, BC_S0, BC_OPS, top_off + VAL_OFF_TYPE);
                         jit_emit_cmp_ri(asm, BC_S0, VALUE_NONE);
                         int lbl_skip = bc_next_label(ctx);
                         jit_emit_branch_eq(asm, lbl_skip);
-                        // Not NONE --- return this value
-                        bc_copy_value(ctx, BC_RES, 0, BC_OPS, top_off);
+                        // Not NONE --- sync stack and return
+                        jit_emit_sync_stack_count(asm, ctx->bound, ctx->sp);
                         int lbl_ret = bc_label_for(ctx, -1);
                         jit_emit_jump(asm, lbl_ret);
                         jit_emit_label(asm, lbl_skip);
@@ -6716,17 +6696,16 @@ jit_compile(Ty *ty, Value const *func)
         ctx.asm = asm; // sync after DynASM setup
 
         // Trampoline support: check if we're resuming after a sub-call.
-        // Load JIT_STATE.resume_idx; if non-zero, jump to a dispatch block
-        // that redirects to the appropriate resume label.
+        // The resume index is passed as the second argument (BC_RESUME).
+        // If non-zero, jump to a dispatch block that redirects to the
+        // appropriate resume label.
         int lbl_dispatch = bc_next_label(&ctx);
         int lbl_normal_start = bc_next_label(&ctx);
         ctx.call_site_count = 0;
 
         asm = ctx.asm; // sync: bc_next_label may have grown pclabels
 
-        jit_emit_ldr64(&asm, BC_S1, BC_TY, OFF_TY_ST);
-        jit_emit_ldr32(&asm, BC_S0, BC_S1, OFF_JIT_RESUME);
-        jit_emit_cbnz(&asm, BC_S0, lbl_dispatch);
+        jit_emit_cbnz(&asm, BC_RESUME, lbl_dispatch);
         jit_emit_label(&asm, lbl_normal_start);
 
         // Emit bytecode
@@ -6747,12 +6726,12 @@ jit_compile(Ty *ty, Value const *func)
         jit_emit_epilogue(&asm);
 
         // Emit the resume dispatch block.
-        // This is reached when jit.resume_idx != 0 (checked at function entry).
-        // BC_S0 still holds the resume_idx value loaded before the cbnz.
+        // This is reached when resume_idx != 0 (checked at function entry).
+        // BC_RESUME still holds the resume_idx value passed as the 2nd argument.
         if (ctx.call_site_count > 0) {
                 jit_emit_label(&asm, lbl_dispatch);
                 for (int i = 0; i < ctx.call_site_count; ++i) {
-                        jit_emit_cmp_ri(&asm, BC_S0, i + 1);
+                        jit_emit_cmp_ri(&asm, BC_RESUME, i + 1);
                         jit_emit_branch_eq(&asm, ctx.resume_labels[i]);
                 }
                 // Fallback: should never happen, but jump to normal start

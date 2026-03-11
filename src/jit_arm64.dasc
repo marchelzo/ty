@@ -9,12 +9,15 @@
 
 // ============================================================================
 // Calling convention:
-//   void fn(Ty *ty, Value *result, Value *args, Value *env)
-//   x0=ty, x1=result, x2=args, x3=env
+//   i32 fn(Ty *ty, i32 resume_idx, Value *args, Value **env)
+//   x0=ty, x1=resume_idx, x2=args, x3=env
+//
+// Return value: packed (resume_idx << 4) | reason
+//   JIT_RETURN=0, JIT_CALL=1, JIT_YIELD=2, JIT_YIELD_SOME=3, JIT_YIELD_NONE=4
 //
 // Callee-saved register assignments:
 //   x19 = Ty *ty
-//   x20 = Value *result
+//   x20 = i32 resume_idx (for dispatch on re-entry)
 //   x21 = Value *args (== &stack.items[fp])
 //   x22 = Value *env
 //   x23 = operand base pointer (== &stack.items[fp + bound])
@@ -255,10 +258,10 @@ static void jit_emit_prologue(dasm_State **Dst, int bound) {
         |  stp x21, x22, [sp, #-16]!
         |  stp x23, x24, [sp, #-16]!
         // Stash incoming args into callee-saved registers
-        |  mov x19, x0
-        |  mov x20, x1
-        |  mov x21, x2
-        |  mov x22, x3
+        |  mov x19, x0       // ty
+        |  mov x20, x1       // resume_idx
+        |  mov x21, x2       // args
+        |  mov x22, x3       // env
         // x24 = byte offset of fp into stack.items (survives realloc)
         // x24 = args - stack.items
         |  ldr x9, [x19, #OFF_TY_STACK + OFF_VEC_DATA]
@@ -272,12 +275,23 @@ static void jit_emit_prologue(dasm_State **Dst, int bound) {
         }
 }
 
+// Epilogue for normal returns: sets return value to 0 (JIT_RETURN)
+// then falls through to the register restore.
+// Trampoline exits set w0 before jumping to ->epilogue_restore.
 static void jit_emit_epilogue(dasm_State **Dst) {
+        |  mov w0, #0         // return JIT_RETURN (0)
+        |->epilogue_restore:
         |  ldp x23, x24, [sp], #16
         |  ldp x21, x22, [sp], #16
         |  ldp x19, x20, [sp], #16
         |  ldp x29, x30, [sp], #16
         |  ret
+}
+
+// Jump to the register-restore epilogue (preserves x0 as return value).
+// Used by trampoline signals which set x0 before returning.
+static void jit_emit_jump_epilogue_restore(dasm_State **Dst) {
+        |  b ->epilogue_restore
 }
 
 // After a yield helper returns, x0 contains the updated frame pointer (index).
