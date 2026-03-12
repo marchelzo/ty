@@ -229,7 +229,7 @@ if(LUAJIT)
 
   add_custom_command(
     OUTPUT ${_jit_hdr}
-    COMMAND ${LUAJIT} ${PROJECT_SOURCE_DIR}/LuaJIT/dynasm/dynasm.lua
+    COMMAND ${LUAJIT} ${PROJECT_SOURCE_DIR}/dynasm/dynasm.lua
       -o ${_jit_hdr} ${_jit_dasc}
     DEPENDS ${_jit_dasc}
     COMMENT "Generating JIT emission header from ${_jit_dasc}"
