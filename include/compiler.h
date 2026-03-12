@@ -383,7 +383,7 @@ Value
 tyexpr(Ty *ty, Expr const *e, u32 flags);
 
 bool
-tyeval(Ty *ty, Expr *e, Value *ret);
+tyeval(Ty *ty, Expr *e, Value *ret, Scope *scope);
 
 Value
 tystmt(Ty *ty, Stmt *s, u32 flags);

@@ -2190,7 +2190,7 @@ add_location(Ty *ty, Expr const *e, usize start_off, usize end_off)
                 (int)(e->end.s - e->start.s), e->start.s
         );
 
-        avP(
+        xvP(
                 STATE.expression_locations,
                 ((struct eloc) {
                         .start_off = start_off,
@@ -2430,10 +2430,6 @@ addsymbolx(Ty *ty, Scope *scope, char const *name, bool check_ns_shadow)
         s->mod = STATE.module;
         s->loc = STATE.start;
 
-        if (isupper(name[0])) {
-                //s->flags |= SYM_PUBLIC;
-        }
-
         return s;
 }
 
@@ -2448,6 +2444,7 @@ addsymbol(Ty *ty, Scope *scope, char const *name)
                         sym->tag   = -1;
                         sym->type  = NULL;
                         sym->expr  = NULL;
+                        sym->mod   = STATE.module;
                         return sym;
                 }
         }
@@ -4007,7 +4004,7 @@ symbolize_pattern_(Ty *ty, Scope *scope, Expr *e, Scope *reuse, bool def)
                         switch  (e->type) {
                         case EXPRESSION_MATCH_NOT_NIL:
                                 e->_type = t0;
-                                e->symbol->type = type_not_nil(ty, t0);
+                                e->symbol->type = t0;
                                 break;
 
                         case EXPRESSION_ALIAS_PATTERN:
@@ -4103,12 +4100,14 @@ symbolize_pattern_(Ty *ty, Scope *scope, Expr *e, Scope *reuse, bool def)
                 }
                 e->type = EXPRESSION_MATCH_REST;
                 e->identifier = e->value->identifier;
-                if (strcmp(e->identifier, "*") == 0) {
+                if (s_eq(e->identifier, "*")) {
                         e->identifier = "_";
                 }
                 /* fallthrough */
         case EXPRESSION_MATCH_REST:
                 e->symbol = addsymbol(ty, scope, e->identifier);
+                e->symbol->type = type_var(ty);
+                e->_type = e->symbol->type;
                 break;
         case EXPRESSION_OBJECT_PATTERN:
         case EXPRESSION_TAG_APPLICATION:
@@ -4216,7 +4215,7 @@ comptime(Ty *ty, Scope *scope, Expr *e)
         symbolize_expression(ty, scope, e->operand);
 
         Value v;
-        if (!tyeval(ty, e->operand, &v)) {
+        if (!tyeval(ty, e->operand, &v, NULL)) {
                 fail("error evaluating compile-time expression: %s", VSC(&v));
         }
 
@@ -4748,6 +4747,8 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
 
                 if (SymbolIsProperty(e->symbol) && IsFuncT(e->symbol->type)) {
                         e->_type = e->symbol->type->rt;
+                } else if (SymbolIsTypeAlias(e->symbol)) {
+                        e->_type = type_type(ty, e->symbol->type);
                 } else {
                         e->_type = e->symbol->type;
                 }
@@ -4805,7 +4806,7 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                         subscope = scope_new(ty, "(match-branch)", scope, false);
                         symbolize_pattern(ty, subscope, pat, NULL, true);
                         ctx = PushContext(ty, pat);
-                        unify2(ty, &t0, pat->_type);
+                        type_try_assign(ty, pat, t0, 0);
                         ctx = RestoreContext(ty, ctx);
                         symbolize_expression(ty, subscope, v__(e->thens, i));
                         t0 = type_without(ty, t0, pat->_type);
@@ -6082,7 +6083,7 @@ symbolize_match_stmt(Ty *ty, Scope *scope, Stmt *s)
                 Expr *pat = v__(s->match.patterns, i);
                 Scope *subscope = scope_new(ty, "(match-branch)", scope, false);
                 symbolize_pattern(ty, subscope, pat, NULL, true);
-                unify2(ty, &t0, pat->_type);
+                type_try_assign(ty, pat, t0, 0);
                 symbolize_statement(ty, subscope, v__(s->match.statements, i));
                 t0 = type_without(ty, t0, pat->_type);
                 will_return &= v__(s->match.statements, i)->will_return;
@@ -6331,7 +6332,7 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
                         symbolize_expression(ty, subscope, p->e);
                         symbolize_pattern(ty, subscope, p->target, NULL, p->def);
                         if (p->target != NULL) {
-                                type_assign(ty, p->target, p->e->_type, 0);
+                                type_try_assign(ty, p->target, p->e->_type, 0);
                         } else {
                                 AddRefinements(ty, p->e, subscope, NULL);
                         }
@@ -6354,7 +6355,7 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
                                 symbolize_pattern(ty, scope, p->target, NULL, p->def);
                                 symbolize_expression(ty, subscope, p->e);
                                 if (p->target != NULL) {
-                                        type_assign(ty, p->target, p->e->_type, 0);
+                                        type_try_assign(ty, p->target, p->e->_type, 0);
                                 }
                         }
                         symbolize_statement(ty, subscope, s->_if._else);
@@ -6365,7 +6366,7 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
                                 symbolize_expression(ty, subscope, p->e);
                                 symbolize_pattern(ty, subscope, p->target, NULL, p->def);
                                 if (p->target != NULL) {
-                                        type_assign(ty, p->target, p->e->_type, 0);
+                                        type_try_assign(ty, p->target, p->e->_type, 0);
                                 } else {
                                         AddRefinements(
                                                 ty,
@@ -12758,7 +12759,7 @@ lowkey(Expr *e, Scope *scope, void *ctx)
                 (e == NULL)
              || (e->mod == NULL)
              || (e->mod->path == NULL)
-             || (strcmp(e->mod->path, QueryFile) != 0)
+             || !s_eq(e->mod->path, QueryFile)
         ) {
                 return e;
         }
@@ -13144,13 +13145,15 @@ compile(Ty *ty, char const *source)
 NoEmit:
         add_location_info(ty);
 
+        DisableRefinements(ty, STATE.active);
+        STATE.active = NULL;
+
         v0(STATE.class_ops);
         v0(STATE.co_returns);
         v0(STATE.tries);
         v0(STATE.loops);
         m0(STATE.stack);
-
-        DisableRefinements(ty, STATE.active);
+        m0(STATE.annotation);
 
 NoResolve:
         PopScope();
@@ -13471,8 +13474,10 @@ compiler_init(Ty *ty)
 
         if (CheckTypes) {
                 scope_add_type(ty, GlobalScope, "Any")->type = TYPE_ANY;
+                scope_add_type(ty, GlobalScope, "Type")->type = type_type(ty, NULL);
         } else {
                 AnyTypeSymbol = scope_add_type_var(ty, GlobalScope, "Any", 0);
+                (void)scope_add_type_var(ty, GlobalScope, "Type", 0);
         }
 }
 
@@ -13640,9 +13645,7 @@ compiler_compile_source(
 {
         v00(STATE.code);
         v00(STATE.expression_locations);
-        m0(STATE.annotation);
         ContextList = NULL;
-        STATE.active = NULL;
 
         char const *slash = strrchr(file, '/');
 #ifdef _WIN32
@@ -13770,7 +13773,6 @@ compiler_find_expr_x(Ty *ty, char const *code, bool func)
         location_vector *locs = NULL;
 
         uptr c = (uptr)code;
-        //printf("Looking for %lu\n", c);
 
         /*
          * First do a linear search for the group of locations which
@@ -13792,8 +13794,6 @@ compiler_find_expr_x(Ty *ty, char const *code, bool func)
                         continue;
 
                 locs = &v__(location_lists, i);
-
-                //printf("Found range (%lu, %lu)\n", locs->items[0].p_start, end);
 
                 break;
         }
@@ -13836,12 +13836,7 @@ compiler_find_expr_x(Ty *ty, char const *code, bool func)
                 return NULL;
         }
 
-        //printf("Found: (%luu, %lu)\n",
-        //       (uptr)(locs->items[match_index].p_start),
-        //       (uptr)(locs->items[match_index].p_end));
-
         return &locs->items[match_index];
-
 }
 
 Expr const *
@@ -15636,6 +15631,7 @@ cexpr(Ty *ty, Value *v)
         } else {
                 e->start = STATE.mstart;
                 e->end = STATE.mend;
+                e->mod = STATE.module;
         }
 
         e->type = -1;
@@ -16793,51 +16789,57 @@ TyToCExpr(Ty *ty, Value *v)
 }
 
 bool
-tyeval(Ty *ty, Expr *e, Value *ret)
+tyeval(Ty *ty, Expr *e, Value *ret, Scope *scope)
 {
+        if (scope == NULL) {
+                scope = STATE.global;
+        }
+
+        Scope *global = scope;
+
+        while (!ScopeIsTop(global)) {
+                global = global->parent;
+        }
+
+        CompileState state = STATE;
+        TypeCheckState types = types_save(ty);
+
+        Module *mod = amA0(sizeof (Module));
+        mod->name = "(tmp)";
+        mod->path = "(tmp)";
+        mod->source = "\0\0";
+        mod->scope = scope_new(ty, mod->name, global, false);
+
+        STATE = freshstate(ty, mod);
+        STATE.fscope = scope->function;
+
+        EVAL_DEPTH += 1;
+
         if (TY_CATCH_ERROR()) {
                 *ret = TY_CATCH();
+                EVAL_DEPTH -= 1;
+                STATE = state;
+                types_restore(ty, &types);
                 return false;
         }
 
         if (e->xscope == NULL) {
-                Scope *scope = (STATE.macro_scope != NULL)
-                             ? STATE.macro_scope
-                             : STATE.global;
                 symbolize_expression(ty, scope, e);
+                types_iter(ty);
         }
-
-        byte_vector code_save = STATE.code;
-        v00(STATE.code);
-
-        StackState stack = STATE.stack;
-        m0(STATE.stack);
-
-        LoopStates loops = STATE.loops;
-        v00(STATE.loops);
-
-        location_vector locs_save = STATE.expression_locations;
-        v00(STATE.expression_locations);
 
         EE(e);
         INSN(HALT);
+        add_location_info(ty);
 
         TY_CATCH_END();
 
-        usize n_location_lists = vN(location_lists);
-
-        add_location_info(ty);
-
-        EVAL_DEPTH += 1;
         bool ok = vm_try_exec(ty, vv(STATE.code), ret);
+
         EVAL_DEPTH -= 1;
 
-        STATE.loops = loops;
-        STATE.stack = stack;
-        STATE.code = code_save;
-        STATE.expression_locations = locs_save;
-
-        vN(location_lists) = n_location_lists;
+        STATE = state;
+        types_restore(ty, &types);
 
         return ok;
 }
@@ -17666,25 +17668,45 @@ IsMacroName(Ty *ty, char const *mod, char const *name)
 bool
 compiler_symbolize_expression(Ty *ty, Expr *e, Scope *scope)
 {
+        if (scope == NULL) {
+                scope = STATE.global;
+        }
+
+        Scope *global = scope;
+
+        while (!ScopeIsTop(global)) {
+                global = global->parent;
+        }
+
+        CompileState state = STATE;
+        TypeCheckState types = types_save(ty);
+
+        Module *mod = amA0(sizeof (Module));
+        mod->name = "(tmp)";
+        mod->path = "(tmp)";
+        mod->source = "\0\0";
+        mod->scope = scope_new(ty, mod->name, global, false);
+
+        STATE = freshstate(ty, mod);
+        STATE.fscope = scope->function;
+
         EVAL_DEPTH += 1;
 
         if (TY_CATCH_ERROR()) {
                 TY_CATCH();
                 EVAL_DEPTH -= 1;
+                STATE = state;
+                types_restore(ty, &types);
                 return false;
         }
 
-        if (scope == NULL) {
-                symbolize_expression(ty, STATE.global, e);
-        } else {
-                STATE.fscope = scope->function;
-                symbolize_expression(ty, scope, e);
-        }
-
+        symbolize_expression(ty, scope, e);
         types_iter(ty);
+        TY_CATCH_END();
 
         EVAL_DEPTH -= 1;
-        TY_CATCH_END();
+        STATE = state;
+        types_restore(ty, &types);
 
         return true;
 }
@@ -19893,7 +19915,7 @@ CompilerSuggestCompletions(
 bool
 IsUndefinedSymbol(Symbol const *sym)
 {
-        return (sym == &UndefinedSymbol);
+        return (sym->i < 0);
 }
 
 /* vim: set sw=8 sts=8 expandtab: */

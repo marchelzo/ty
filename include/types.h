@@ -185,6 +185,13 @@ extern Type *UNKNOWN_TYPE;
 extern Type *TYPE_ANY;
 extern Type *TYPE_CLASS_;
 
+typedef struct {
+        u32 CurrentLevel;
+        vec(usize) WorkIndex;
+        ConstraintVector ToSolve;
+        vec(Expr *) FunStack;
+        vec(TypeEnv *) EnvStack;
+} TypeCheckState;
 
 #define TY_T_FLAGS      \
         X(UPDATE,    0) \
@@ -368,6 +375,9 @@ type_new_inst(Ty *ty, Type const *t0);
 void
 type_assign(Ty *ty, Expr *e, Type *t0, int flags);
 
+void
+type_try_assign(Ty *ty, Expr *e, Type *t0, int flags);
+
 Type *
 type_fixed(Ty *ty, Type *t0);
 
@@ -457,6 +467,12 @@ type_from_ty(Ty *ty, Value const *v);
 
 void
 types_init(Ty *ty);
+
+TypeCheckState
+types_save(Ty *ty);
+
+void
+types_restore(Ty *ty, TypeCheckState *state);
 
 bool
 type_find_method(Ty *ty, Type const *t0, char const *name, Type **t1, Expr **e);

@@ -53,6 +53,15 @@
             }
         },
         {
+            "name": "base-freebsd",
+            "hidden": true,
+            "inherits": "base",
+            "cacheVariables": {
+                "VCPKG_TARGET_TRIPLET": "x64-freebsd",
+                "VCPKG_CMAKE_SYSTEM_NAME": "FreeBSD"
+            }
+        },
+        {
             "name": "gcc",
             "inherits": "base-linux",
             "displayName": "GCC - amd64 - Release",
@@ -82,6 +91,16 @@
             "cacheVariables": {
                 "CMAKE_C_COMPILER": "clang",
                 "CMAKE_CXX_COMPILER": "clang++"
+            }
+        },
+        {
+            "name": "clang-freebsd",
+            "inherits": "base-freebsd",
+            "displayName": "Clang - amd64 - Release",
+            "description": "Using base system Clang on FreeBSD",
+            "cacheVariables": {
+                "CMAKE_C_COMPILER": "cc",
+                "CMAKE_CXX_COMPILER": "c++"
             }
         },
         {
@@ -181,6 +200,13 @@
             "displayName": "Clang - amd64 - Release",
             "configurePreset": "clang-osx",
             "configuration": "Release"
+        },
+        {
+            "name": "clang-freebsd",
+            "inherits": "base-build",
+            "displayName": "Clang - amd64 - Release",
+            "configurePreset": "clang-freebsd",
+            "configuration": "Release"
         }
     ],
     "packagePresets": [
@@ -225,6 +251,11 @@
             "inherits": "base-package",
             "configurePreset": "clang-osx",
             "configurations": [ "Debug" ]
+        },
+        {
+            "name": "clang-freebsd",
+            "inherits": "base-package",
+            "configurePreset": "clang-freebsd"
         }
     ],
     "workflowPresets": [
@@ -316,6 +347,19 @@
                 {
                     "type": "build",
                     "name": "clang-osx"
+                }
+            ]
+        },
+        {
+            "name": "clang-freebsd",
+            "steps": [
+                {
+                    "type": "configure",
+                    "name": "clang-freebsd"
+                },
+                {
+                    "type": "build",
+                    "name": "clang-freebsd"
                 }
             ]
         }

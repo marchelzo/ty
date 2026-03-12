@@ -1922,26 +1922,42 @@ BUILTIN_FUNCTION(locale_setlocale)
 
 BUILTIN_FUNCTION(json_parse)
 {
-        ASSERT_ARGC("json.parse()", 1);
+        ASSERT_ARGC_RANGE("json.parse()", 1, 2);
 
-        Value json = ARGx(0, VALUE_STRING, VALUE_BLOB);
+        Type *schema = NULL;
+        Value jv;
+
+        if (argc == 2) {
+                Value tv = ARG(0);
+                if (tv.type != VALUE_TYPE) {
+                        zP("json.parse(): expected a type as the first argument, but got: %s", VSC(&tv));
+                }
+                schema = tv.ptr;
+                jv = ARGx(1, VALUE_STRING, VALUE_BLOB);
+        } else {
+                jv = ARGx(0, VALUE_STRING, VALUE_BLOB);
+        }
 
         u8 const *data;
         usize len;
 
-        switch (json.type) {
+        switch (jv.type) {
         case VALUE_STRING:
-                data = ss(json);
-                len  = sN(json);
+                data = ss(jv);
+                len  = sN(jv);
                 break;
 
         case VALUE_BLOB:
-                data = vv(*json.blob);
-                len  = vN(*json.blob);
+                data = vv(*jv.blob);
+                len  = vN(*jv.blob);
                 break;
 
         default:
                 UNREACHABLE();
+        }
+
+        if (schema != NULL) {
+                return json_parse_typed(ty, schema, (char const *)data, len);
         }
 
         return json_parse(ty, (char const *)data, len);
@@ -1949,26 +1965,42 @@ BUILTIN_FUNCTION(json_parse)
 
 BUILTIN_FUNCTION(json_parse_xD)
 {
-        ASSERT_ARGC("json.parse!()", 1);
+        ASSERT_ARGC_RANGE("json.parse!()", 1, 2);
 
-        Value json = ARGx(0, VALUE_STRING, VALUE_BLOB);
+        Type *schema = NULL;
+        Value jv;
+
+        if (argc == 2) {
+                Value tv = ARG(0);
+                if (tv.type != VALUE_TYPE) {
+                        zP("json.parse!(): expected a type as the first argument, but got: %s", VSC(&tv));
+                }
+                schema = tv.ptr;
+                jv = ARGx(1, VALUE_STRING, VALUE_BLOB);
+        } else {
+                jv = ARGx(0, VALUE_STRING, VALUE_BLOB);
+        }
 
         u8 const *data;
         usize len;
 
-        switch (json.type) {
+        switch (jv.type) {
         case VALUE_STRING:
-                data = ss(json);
-                len  = sN(json);
+                data = ss(jv);
+                len  = sN(jv);
                 break;
 
         case VALUE_BLOB:
-                data = vv(*json.blob);
-                len  = vN(*json.blob);
+                data = vv(*jv.blob);
+                len  = vN(*jv.blob);
                 break;
 
         default:
                 UNREACHABLE();
+        }
+
+        if (schema != NULL) {
+                return json_parse_typed(ty, schema, (char const *)data, len);
         }
 
         return json_parse_xD(ty, (char const *)data, len);
@@ -8521,6 +8553,9 @@ BUILTIN_FUNCTION(eval)
         ASSERT_ARGC("ty.eval()", 1, 2);
 
         Scope *scope = (argc == 2) ? PTR_ARG(1) : NULL;
+        Value v;
+
+        EVAL_DEPTH += 1;
 
         if (ARG(0).type == VALUE_STRING) {
                 B.count = 0;
@@ -8540,43 +8575,30 @@ BUILTIN_FUNCTION(eval)
 
                 Expr *e = (Expr *)prog[0];
 
-                if (!compiler_symbolize_expression(ty, e, scope)) {
-                        char const *msg = TyError(ty);
-                        Value e = Err(ty, vSsz(msg));
-                        ReleaseArena(old);
-                        vmE(&e);
-                }
-
-                Value v;
-
-                if (!tyeval(ty, e, &v)) {
+                if (!tyeval(ty, e, &v, scope)) {
                         ReleaseArena(old);
                         vmE(&v);
                 }
 
                 ReleaseArena(old);
-
-                return v;
         } else {
                 compiler_clear_location(ty);
 
                 Value prog = ARG(0);
                 Expr *expr = TyToCExpr(ty, &prog);
-                if (
-                        (expr == NULL)
-                     || !compiler_symbolize_expression(ty, expr, scope)
-                ) {
-                        bP("%s", sfmt("%s", TyError(ty)));
+                if (expr == NULL) {
+                        char const *msg = TyError(ty);
+                        Value e = Err(ty, vSsz(msg));
+                        vmE(&e);
                 }
-
-                Value v;
-
-                if (!tyeval(ty, expr, &v)) {
+                if (!tyeval(ty, expr, &v, scope)) {
                         vmE(&v);
                 }
-
-                return v;
         }
+
+        EVAL_DEPTH -= 1;
+
+        return v;
 }
 
 BUILTIN_FUNCTION(ty_text)
@@ -9625,10 +9647,7 @@ BUILTIN_FUNCTION(tdb_eval)
         Ty save = *TDB->host;
 
         Value v;
-        if (
-                compiler_symbolize_expression(ty, e, scope)
-             && tyeval(TDB->host, e, &v)
-        ) {
+        if (tyeval(TDB->host, e, &v, scope)) {
                 ReleaseArena(old);
                 return Ok(ty, v);
         }

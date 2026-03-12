@@ -14,6 +14,7 @@
 #include "vec.h"
 #include "vm.h"
 #include "ty.h"
+#include "types.h"
 
 #define KW_DELIM(c) (strchr(" \n}],", c) != NULL)
 #define FAIL longjmp(jb, 1)
@@ -591,8 +592,9 @@ encode(Ty *ty, Value const *v, str *out)
 
         case VALUE_TUPLE:
                 xvP(*out, '{');
-                if (!try_visit(v->items))
+                if (!try_visit(v->items)) {
                         return false;
+                }
                 for (int i = 0; i < v->count; ++i) {
                         xvP(*out, '"');
                         if (v->ids != NULL && v->ids[i] != -1) {
@@ -657,8 +659,9 @@ json_parse(Ty *ty, char const *s, usize n)
         Value v = value(ty);
         space();
 
-        if (peek() != '\0')
+        if (peek() != '\0') {
                 v = NIL;
+        }
 
         GC_RESUME();
 
@@ -683,8 +686,296 @@ json_parse_xD(Ty *ty, char const *s, usize n)
         Value v = value(ty);
         space();
 
-        if (peek() != '\0')
+        if (peek() != '\0') {
                 v = NIL;
+        }
+
+        GC_RESUME();
+
+        return v;
+}
+
+static Value
+typed_value(Ty *ty, Type *t0)
+{
+        t0 = type_resolve_var(t0);
+
+        space();
+
+        Value v;
+
+        switch (t0->type) {
+        case TYPE_ALIAS:
+                if (t0->_type != NULL) {
+                        return typed_value(ty, t0->_type);
+                }
+                return value(ty);
+
+        case TYPE_VARIABLE:
+        case TYPE_NONE:
+        case TYPE_BOTTOM:
+                return value(ty);
+
+        case TYPE_NIL:
+                return null();
+
+        case TYPE_INT:
+                v = number();
+                if (v.type != VALUE_INTEGER || v.z != t0->z) {
+                        FAIL;
+                }
+                return v;
+
+        case TYPE_STRING:
+                v = string(ty);
+                if (
+                        (v.type != VALUE_STRING)
+                     || (sN(v) != strlen(t0->str))
+                     || (memcmp(ss(v), t0->str, sN(v)) != 0)
+                ) {
+                        FAIL;
+                }
+                return v;
+
+        case TYPE_OBJECT:
+                switch (t0->class->i) {
+                case CLASS_INT:
+                        v = number();
+                        if (v.type != VALUE_INTEGER) {
+                                FAIL;
+                        }
+                        return v;
+
+                case CLASS_FLOAT:
+                        v = number();
+                        if (v.type == VALUE_INTEGER) {
+                                return REAL((double)v.z);
+                        }
+                        if (v.type != VALUE_REAL) {
+                                FAIL;
+                        }
+                        return v;
+
+                case CLASS_STRING:
+                        return string(ty);
+
+                case CLASS_BOOL:
+                        if (peek() == 't') return jtrue();
+                        if (peek() == 'f') return jfalse();
+                        FAIL;
+
+                case CLASS_ARRAY:
+                {
+                        Type *elem_type = (vN(t0->args) > 0) ? v__(t0->args, 0) : NULL;
+
+                        if (next() != '[') FAIL;
+
+                        Array *a = vA();
+
+                        while (peek() != '\0' && peek() != ']') {
+                                if (elem_type != NULL) {
+                                        vvP(*a, typed_value(ty, elem_type));
+                                } else {
+                                        vvP(*a, value(ty));
+                                }
+                                space();
+                                if (peek() != ']' && next() != ',')
+                                        FAIL;
+                        }
+
+                        if (next() != ']') FAIL;
+
+                        return ARRAY(a);
+                }
+
+                case CLASS_DICT:
+                {
+                        Type *val_type = (vN(t0->args) > 1) ? v__(t0->args, 1) : NULL;
+
+                        if (next() != '{') {
+                                FAIL;
+                        }
+
+                        Dict *obj = dict_new(ty);
+
+                        while (peek() != '\0' && peek() != '}') {
+                                space();
+                                Value key = string(ty);
+                                space();
+                                if (next() != ':') {
+                                        FAIL;
+                                }
+                                Value val;
+                                if (val_type != NULL) {
+                                        val = typed_value(ty, val_type);
+                                } else {
+                                        val = value(ty);
+                                }
+                                dict_put_value(ty, obj, key, val);
+                                space();
+                                if (peek() != '}' && next() != ',') {
+                                        FAIL;
+                                }
+                        }
+
+                        if (next() != '}') {
+                                FAIL;
+                        }
+
+                        return DICT(obj);
+                }
+
+                default:
+                        return value(ty);
+                }
+
+        case TYPE_TUPLE:
+        {
+                if (next() != '{') {
+                        FAIL;
+                }
+
+                SCRATCH_SAVE();
+
+                int nfields = vN(t0->types);
+
+                ValueVector keys   = {0};
+                ValueVector values = {0};
+
+                while (peek() != '\0' && peek() != '}') {
+                        space();
+                        Value key = string(ty);
+                        space();
+                        if (next() != ':') {
+                                SCRATCH_RESTORE();
+                                FAIL;
+                        }
+
+                        char const *kstr = TY_TMP_C_STR(key);
+                        Type *field_type = NULL;
+
+                        for (int i = 0; i < nfields; ++i) {
+                                char const *fname = v__(t0->names, i);
+                                if (fname != NULL && strcmp(fname, kstr) == 0) {
+                                        field_type = v__(t0->types, i);
+                                        break;
+                                }
+                        }
+
+                        Value val;
+                        if (field_type != NULL) {
+                                val = typed_value(ty, field_type);
+                        } else {
+                                val = value(ty);
+                        }
+
+                        space();
+                        if (peek() != '}' && next() != ',') {
+                                SCRATCH_RESTORE();
+                                FAIL;
+                        }
+
+                        svP(keys, key);
+                        svP(values, val);
+                }
+
+                if (next() != '}') {
+                        SCRATCH_RESTORE();
+                        FAIL;
+                }
+
+                Value object = value_record(ty, vN(keys));
+
+                for (u32 i = 0; i < vN(keys); ++i) {
+                        char const *key = TY_TMP_C_STR(v__(keys, i));
+                        object.ids[i]   = M_ID(key);
+                        object.items[i] = v__(values, i);
+                }
+
+                for (int i = 0; i < nfields; ++i) {
+                        if (!v__(t0->required, i)) {
+                                continue;
+                        }
+                        char const *fname = v__(t0->names, i);
+                        if (fname == NULL) {
+                                continue;
+                        }
+                        int fid = M_ID(fname);
+                        bool found = false;
+                        for (u32 j = 0; j < vN(keys); ++j) {
+                                if (object.ids[j] == fid) {
+                                        found = true;
+                                        break;
+                                }
+                        }
+                        if (!found) {
+                                SCRATCH_RESTORE();
+                                FAIL;
+                        }
+                }
+
+                SCRATCH_RESTORE();
+
+                return object;
+        }
+
+        case TYPE_UNION:
+        {
+                char const *saved_json = json;
+                usize saved_len = len;
+
+                for (int i = 0; i < vN(t0->types); ++i) {
+                        json = saved_json;
+                        len = saved_len;
+
+                        jmp_buf saved_jb;
+                        memcpy(saved_jb, jb, sizeof jb);
+
+                        if (setjmp(jb) == 0) {
+                                Value v = typed_value(ty, v__(t0->types, i));
+                                memcpy(jb, saved_jb, sizeof jb);
+                                return v;
+                        }
+
+                        memcpy(jb, saved_jb, sizeof jb);
+                }
+
+                FAIL;
+        }
+
+        default:
+                return value(ty);
+        }
+}
+
+Value
+json_parse_typed(Ty *ty, Type *t0, char const *s, usize n)
+{
+        json = s;
+        len = n;
+
+        xd = true;
+
+        GC_STOP();
+
+        if (setjmp(jb) != 0) {
+                GC_RESUME();
+                zP(
+                        "json.parse(): failed to parse JSON as %s",
+                        type_show(ty, t0)
+                );
+        }
+
+        Value v = typed_value(ty, t0);
+        space();
+
+        if (peek() != '\0') {
+                GC_RESUME();
+                zP(
+                        "json.parse(): unexpected trailing data after parsing %s",
+                        type_show(ty, t0)
+                );
+        }
 
         GC_RESUME();
 

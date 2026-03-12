@@ -10,6 +10,9 @@ Value
 json_parse_xD(Ty *ty, char const *s, usize n);
 
 Value
+json_parse_typed(Ty *ty, Type *t0, char const *s, usize n);
+
+Value
 json_encode(Ty *ty, Value const *v);
 
 bool

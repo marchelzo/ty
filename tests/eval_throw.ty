@@ -2,12 +2,12 @@ import ty
 
 ns test
 
-ns test
-
 pub fn evthrow() {
-    let e = ty.parse('throw 0')
-    try ty.eval(e) else {
-        return
+    let Ok((e, _)) = ty.parse('throw 0') or assert(false)
+    try {
+        ty.eval(e)
+        assert(false)
+    } catch ex {
+        assert(ex == 0)
     }
-    assert(false)
 }
