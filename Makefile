@@ -138,7 +138,7 @@ endif
 
 # DynASM configuration
 LUAJIT := luajit
-DYNASM := $(LUAJIT) LuaJIT/dynasm/dynasm.lua
+DYNASM := $(LUAJIT) dynasm/dynasm.lua
 
 ifeq ($(shell uname -m),arm64)
 	DYNASM_ARCH := arm64
