@@ -1,7 +1,7 @@
 #!/bin/sh
 
 echo '#include <errno.h>' \
-    | gcc -dM -E - \
+    | cc -dM -E - \
     | grep -E '#define E[A-Z]+\s' \
     | cut -d' ' -f2 \
     | sort \

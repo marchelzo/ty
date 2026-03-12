@@ -33,20 +33,20 @@ typedef struct {
 } SortContext;
 
 static int
-#if defined(__APPLE__) || defined(_WIN32)
-compare_default(void *ty, void const *v1, void const *v2)
-#elif defined(__linux__)
+#if defined(__linux__)
 compare_default(void const *v1, void const *v2, void *ty)
+#else
+compare_default(void *ty, void const *v1, void const *v2)
 #endif
 {
         return value_compare(ty, v1, v2);
 }
 
 static int
-#if defined(__APPLE__) || defined(_WIN32)
-compare_by(void *ctx_, void const *v1, void const *v2)
-#elif defined(__linux__)
+#if defined(__linux__)
 compare_by(void const *v1, void const *v2, void *ctx_)
+#else
+compare_by(void *ctx_, void const *v1, void const *v2)
 #endif
 {
         SortContext *ctx = ctx_;
@@ -67,10 +67,10 @@ compare_by(void const *v1, void const *v2, void *ctx_)
 }
 
 static int
-#if defined(__APPLE__) || defined(_WIN32)
-compare_by2(void *ctx_, void const *v1, void const *v2)
-#elif defined(__linux__)
+#if defined(__linux__)
 compare_by2(void const *v1, void const *v2, void *ctx_)
+#else
+compare_by2(void *ctx_, void const *v1, void const *v2)
 #endif
 {
         SortContext *ctx = ctx_;

@@ -322,7 +322,6 @@ target_compile_options(${_tgt_ty_interface}
       -Wno-shorten-64-to-32
       -Wno-cast-qual
       -Wno-declaration-after-statement
-      -mcpu=native
     >
     $<$<C_COMPILER_ID:MSVC>:
       /W4
@@ -358,6 +357,10 @@ target_link_libraries(${_tgt_ty_interface}
 
 if(USE_NSYNC)
   target_link_libraries(${_tgt_ty_interface} INTERFACE nsync)
+endif()
+
+if(BSD)
+  target_link_libraries(${_tgt_ty_interface} INTERFACE util)
 endif()
 
 if(APPLE)

@@ -62,7 +62,7 @@ pub fn sh(
     ]
     let pfds-out = []
 
-#|if __apple__ || __linux__
+#|if __apple__ || __linux__ || __bsd__
     for (;;) {
         let timeout = deadline ?: (deadline - now())
 

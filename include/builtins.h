@@ -7,18 +7,27 @@ static struct {
   { .module = NULL,         .name = "__apple__",                .value = BOOL_(true)                             },
   { .module = NULL,         .name = "__windows__",              .value = BOOL_(false)                            },
   { .module = NULL,         .name = "__linux__",                .value = BOOL_(false)                            },
+  { .module = NULL,         .name = "__bsd__",                  .value = BOOL_(false)                            },
 #elif defined(__linux__)
   { .module = NULL,         .name = "__apple__",                .value = BOOL_(false)                            },
   { .module = NULL,         .name = "__windows__",              .value = BOOL_(false)                            },
   { .module = NULL,         .name = "__linux__",                .value = BOOL_(true)                             },
+  { .module = NULL,         .name = "__bsd__",                  .value = BOOL_(false)                            },
 #elif defined(_WIN32)
   { .module = NULL,         .name = "__apple__",                .value = BOOL_(false)                            },
   { .module = NULL,         .name = "__windows__",              .value = BOOL_(true)                             },
   { .module = NULL,         .name = "__linux__",                .value = BOOL_(false)                            },
+  { .module = NULL,         .name = "__bsd__",                  .value = BOOL_(false)                            },
+#elif defined(__FreeBSD__)
+  { .module = NULL,         .name = "__apple__",                .value = BOOL_(false)                            },
+  { .module = NULL,         .name = "__windows__",              .value = BOOL_(false)                            },
+  { .module = NULL,         .name = "__linux__",                .value = BOOL_(false)                            },
+  { .module = NULL,         .name = "__bsd__",                  .value = BOOL_(true)                             },
 #else
   { .module = NULL,         .name = "__apple__",                .value = BOOL_(false)                            },
   { .module = NULL,         .name = "__windows__",              .value = BOOL_(false)                            },
   { .module = NULL,         .name = "__linux__",                .value = BOOL_(false)                            },
+  { .module = NULL,         .name = "__bsd__",                  .value = BOOL_(false)                            },
 #endif
   { .module = NULL,         .name = "print",                    .value = BUILTIN(builtin_print)                  },
   { .module = NULL,         .name = "eprint",                   .value = BUILTIN(builtin_eprint)                 },
@@ -408,7 +417,7 @@ static struct {
   { .module = "os",         .name = "F_DUPFD",                  .value = INT(F_DUPFD)                            },
   { .module = "os",         .name = "F_SETOWN",                 .value = INT(F_SETOWN)                           },
   { .module = "os",         .name = "F_GETOWN",                 .value = INT(F_GETOWN)                           },
-#ifdef __APPLE__
+#if defined(F_GETPATH) && defined(F_SETNOSIGPIPE)
   { .module = "os",         .name = "F_DUPFD_CLOEXEC",          .value = INT(F_DUPFD_CLOEXEC)                    },
   { .module = "os",         .name = "F_GETPATH",                .value = INT(F_GETPATH)                          },
   { .module = "os",         .name = "F_PREALLOCATE",            .value = INT(F_PREALLOCATE)                      },
@@ -421,7 +430,8 @@ static struct {
   { .module = "os",         .name = "F_FULLFSYNC",              .value = INT(F_FULLFSYNC)                        },
   { .module = "os",         .name = "F_SETNOSIGPIPE",           .value = INT(F_SETNOSIGPIPE)                     },
   { .module = "os",         .name = "F_GETNOSIGPIPE",           .value = INT(F_GETNOSIGPIPE)                     },
-#else
+#endif
+#if defined(F_GETSIG) && defined(F_SETSIG)
   { .module = "os",         .name = "F_GETSIG",                 .value = INT(F_GETSIG)                           },
   { .module = "os",         .name = "F_SETSIG",                 .value = INT(F_SETSIG)                           },
 #endif
@@ -772,11 +782,15 @@ static struct {
   { .module = "termios",    .name = "OCRNL",                    .value = INT(OCRNL)                              },
   { .module = "termios",    .name = "ONOCR",                    .value = INT(ONOCR)                              },
   { .module = "termios",    .name = "ONLRET",                   .value = INT(ONLRET)                             },
+#if defined(OFILL) && defined(OFDEL)
   { .module = "termios",    .name = "OFILL",                    .value = INT(OFILL)                              },
   { .module = "termios",    .name = "OFDEL",                    .value = INT(OFDEL)                              },
+#endif
+#if defined(VTDLY) && defined(VT0) && defined(VT1)
   { .module = "termios",    .name = "VTDLY",                    .value = INT(VTDLY)                              },
   { .module = "termios",    .name = "VT0",                      .value = INT(VT0)                                },
   { .module = "termios",    .name = "VT1",                      .value = INT(VT1)                                },
+#endif
   { .module = "termios",    .name = "B0",                       .value = INT(B0)                                 },
   { .module = "termios",    .name = "B50",                      .value = INT(B50)                                },
   { .module = "termios",    .name = "B75",                      .value = INT(B75)                                },
