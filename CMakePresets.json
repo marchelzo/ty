@@ -104,6 +104,20 @@
             }
         },
         {
+            "name": "freebsd-ports",
+            "displayName": "FreeBSD Ports - amd64 - Release",
+            "description": "Build using system-installed libraries from FreeBSD ports (no vcpkg)",
+            "binaryDir": "${sourceDir}/_build/${presetName}",
+            "installDir": "${sourceDir}/_install/${presetName}",
+            "generator": "Ninja",
+            "cacheVariables": {
+                "CMAKE_C_COMPILER": "cc",
+                "CMAKE_CXX_COMPILER": "c++",
+                "CMAKE_BUILD_TYPE": "Release",
+                "USE_SYSTEM_DEPS": true
+            }
+        },
+        {
             "name": "msvc2022",
             "inherits": "base-windows",
             "displayName": "Visual Studio Community 2022 - amd64 - Release",
@@ -207,6 +221,13 @@
             "displayName": "Clang - amd64 - Release",
             "configurePreset": "clang-freebsd",
             "configuration": "Release"
+        },
+        {
+            "name": "freebsd-ports",
+            "inherits": "base-build",
+            "displayName": "FreeBSD Ports - amd64 - Release",
+            "configurePreset": "freebsd-ports",
+            "configuration": "Release"
         }
     ],
     "packagePresets": [
@@ -256,6 +277,11 @@
             "name": "clang-freebsd",
             "inherits": "base-package",
             "configurePreset": "clang-freebsd"
+        },
+        {
+            "name": "freebsd-ports",
+            "inherits": "base-package",
+            "configurePreset": "freebsd-ports"
         }
     ],
     "workflowPresets": [
@@ -360,6 +386,19 @@
                 {
                     "type": "build",
                     "name": "clang-freebsd"
+                }
+            ]
+        },
+        {
+            "name": "freebsd-ports",
+            "steps": [
+                {
+                    "type": "configure",
+                    "name": "freebsd-ports"
+                },
+                {
+                    "type": "build",
+                    "name": "freebsd-ports"
                 }
             ]
         }

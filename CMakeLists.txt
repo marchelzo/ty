@@ -11,6 +11,7 @@ include(cmake/VersionInfoTarget.cmake)
 option(BUILD_PROFILER "Build the typrof executable for profiling" OFF)
 option(USE_NSYNC "Use nsync synchronization primitives on supported platforms" ON)
 option(NO_JIT "Disable JIT code generation" OFF)
+option(USE_SYSTEM_DEPS "Use system-installed libraries instead of vcpkg (e.g. FreeBSD ports)" OFF)
 
 # ---
 #   find 3rd-party dependencies
@@ -18,21 +19,28 @@ option(NO_JIT "Disable JIT code generation" OFF)
 
 # defines target(s): Threads::Threads
 find_package(Threads REQUIRED)
-# defines target(s): unofficial::libffi::libffi
-find_package(unofficial-libffi CONFIG REQUIRED)
-# defines target(s): unofficial::sqlite3::sqlite3
-find_package(unofficial-sqlite3 CONFIG REQUIRED)
-# defines target(s): utf8proc::utf8proc
-find_package(utf8proc CONFIG REQUIRED)
-# defines target(s): PCRE2::8BIT, PCRE2::16BIT, PCRE2::32BIT, PCRE2::POSIX
-find_package(pcre2 CONFIG REQUIRED)
-# defines target(s): xxHash::xxhash
-find_package(xxHash CONFIG REQUIRED)
-# defines target(s): mimalloc, mimalloc-static
-find_package(mimalloc CONFIG REQUIRED)
-set_target_properties(mimalloc-static PROPERTIES
-  IMPORTED_LINK_INTERFACE_LANGUAGES_RELEASE "C"
-)
+
+if(USE_SYSTEM_DEPS)
+  # Use pkg-config / find_library for system-installed deps (FreeBSD ports, etc.)
+  # Creates the same IMPORTED targets that the vcpkg CONFIG packages would.
+  include(${PROJECT_SOURCE_DIR}/cmake/FindSystemDeps.cmake)
+else()
+  # defines target(s): unofficial::libffi::libffi
+  find_package(unofficial-libffi CONFIG REQUIRED)
+  # defines target(s): unofficial::sqlite3::sqlite3
+  find_package(unofficial-sqlite3 CONFIG REQUIRED)
+  # defines target(s): utf8proc::utf8proc
+  find_package(utf8proc CONFIG REQUIRED)
+  # defines target(s): PCRE2::8BIT, PCRE2::16BIT, PCRE2::32BIT, PCRE2::POSIX
+  find_package(pcre2 CONFIG REQUIRED)
+  # defines target(s): xxHash::xxhash
+  find_package(xxHash CONFIG REQUIRED)
+  # defines target(s): mimalloc, mimalloc-static
+  find_package(mimalloc CONFIG REQUIRED)
+  set_target_properties(mimalloc-static PROPERTIES
+    IMPORTED_LINK_INTERFACE_LANGUAGES_RELEASE "C"
+  )
+endif()
 
 # ---
 #   global compiler variables
