@@ -74,12 +74,15 @@ enum {
 static bool
 is_type_name(char const *id)
 {
-        if (id == NULL || !isupper((unsigned char)id[0]))
+        if (id == NULL || !isupper((unsigned char)id[0])) {
                 return false;
+        }
 
-        for (char const *p = id + 1; *p != '\0'; ++p)
-                if (*p == '_')
+        for (char const *p = id + 1; *p != '\0'; ++p) {
+                if (*p == '_') {
                         return false;
+                }
+        }
 
         return true;
 }
@@ -106,9 +109,12 @@ classify_identifier(Token const *t, char const *source)
 
         if (t->end.s != NULL && source != NULL) {
                 char const *p = t->end.s;
-                while (*p == ' ' || *p == '\t') ++p;
-                if (*p == '(')
+                while (*p == ' ' || *p == '\t') {
+                        ++p;
+                }
+                if (*p == '(') {
                         return SEM_FUNCTION;
+                }
         }
 
         return -1;
@@ -174,6 +180,9 @@ main(int argc, char *argv[])
         TY_BEGIN_LOADING();
 
         for (;;) {
+                CheckUsed(ty);
+                GC_STOP();
+
                 AllowErrors = true;
 
                 Value req = builtin_read(ty, 0, NULL);
@@ -212,9 +221,7 @@ main(int argc, char *argv[])
                         Value   exc = TY_CATCH();
                         dump(&ErrorBuffer, "%s\n\n%s", VSC(&exc), trace);
                         fputs(vv(ErrorBuffer), stderr);
-                        GC_STOP();
                         result = vTn("error", vSsz(vv(ErrorBuffer)));
-                        GC_RESUME();
                         goto NextRequest;
                 }
 
@@ -270,12 +277,12 @@ main(int argc, char *argv[])
                         }
 
                         result = vTn(
-                                "name",  xSz(QueryResult->identifier),
-                                "line",  INTEGER(QueryResult->loc.line),
-                                "col",   INTEGER(QueryResult->loc.col),
-                                "file",  xSz(QueryResult->mod->path),
-                                "type",  xSz(type_show(ty, QueryResult->type)),
-                                "doc",   (QueryResult->doc == NULL) ? NIL : xSz(QueryResult->doc)
+                                "name",  xSz(sym->identifier),
+                                "line",  INTEGER(sym->loc.line),
+                                "col",   INTEGER(sym->loc.col),
+                                "file",  xSz(sym->mod ? sym->mod->path : "<unknown>"),
+                                "type",  xSz(type_show(ty, sym->type)),
+                                "doc",   (sym->doc == NULL) ? NIL : xSz(sym->doc)
                         );
                         break;
 
@@ -316,6 +323,7 @@ EndRequest:
                 TY_CATCH_END();
 
 NextRequest:
+                GC_RESUME();
                 v0(OutBuffer);
 
                 if (json_dump(ty, &result, &OutBuffer)) {

@@ -73,7 +73,7 @@ local_xlookup(Scope const *scope, char const *id, u32 flags)
                         (sym->hash == h)
                      && (member_ok    || !SymbolIsMember(sym))
                      && (transient_ok || !SymbolIsTransient(sym))
-                     && (strcmp(sym->identifier, id) == 0)
+                     && s_eq(sym->identifier, id)
                      && !SymbolIsRecycled(sym)
                 ) {
                                 return sym;
@@ -367,6 +367,7 @@ xadd(Ty *ty, Scope *scope, char const *id)
                         old->expr  = NULL;
                         old->class = -1;
                         old->tag   = -1;
+                        old->mod   = CompilerCurrentModule(ty);
                         return old;
                 }
         }

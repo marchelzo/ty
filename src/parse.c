@@ -2150,7 +2150,7 @@ parse_function(Ty *ty, Expr **name, bool *is_operator)
                 return f;
         }
 
-        char const *proto_start = tok()->start.s;
+        char const *volatile proto_start = tok()->start.s;
 
         SAVE_NE(true);
 

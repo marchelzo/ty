@@ -138,6 +138,24 @@ static char const *gruvbox_material[SC_COUNT] = {
         [SC_PREPROC]  = "#d3869b",
 };
 
+static char const *gruvbox_material_light[SC_COUNT] = {
+        [SC_NONE]     = NULL,
+        [SC_IDENT]    = "#654735",
+        [SC_PUNCT]    = "#a89984",
+        [SC_KEYWORD]  = "#9d0006",
+        [SC_OPERATOR] = "#9d0006",
+        [SC_TYPE]     = "#b57614",
+        [SC_DECL]     = "#b57614",
+        [SC_STRING]   = "#3c7319",
+        [SC_FUNCTION] = "#076678",
+        [SC_FIELD]    = "#654735",
+        [SC_BUILTIN]  = "#076678",
+        [SC_REGEX]    = "#3c7319",
+        [SC_COMMENT]  = "#a89984",
+        [SC_LITERAL]  = "#8f3f71",
+        [SC_PREPROC]  = "#af2528",
+};
+
 static char const *github_light[SC_COUNT] = {
         [SC_NONE]     = NULL,
         [SC_IDENT]    = "#24292e",
@@ -282,6 +300,24 @@ static char const *solarized_dark[SC_COUNT] = {
         [SC_PREPROC]  = "#cb4b16",
 };
 
+static char const *solarized_light[SC_COUNT] = {
+        [SC_NONE]     = NULL,
+        [SC_IDENT]    = "#657b83",
+        [SC_PUNCT]    = "#93a1a1",
+        [SC_KEYWORD]  = "#859900",
+        [SC_OPERATOR] = "#859900",
+        [SC_TYPE]     = "#b58900",
+        [SC_DECL]     = "#b58900",
+        [SC_STRING]   = "#2aa198",
+        [SC_FUNCTION] = "#268bd2",
+        [SC_FIELD]    = "#657b83",
+        [SC_BUILTIN]  = "#268bd2",
+        [SC_REGEX]    = "#2aa198",
+        [SC_COMMENT]  = "#93a1a1",
+        [SC_LITERAL]  = "#d33682",
+        [SC_PREPROC]  = "#cb4b16",
+};
+
 static char const *tokyonight[SC_COUNT] = {
         [SC_NONE]     = NULL,
         [SC_IDENT]    = "#c0caf5",
@@ -342,22 +378,24 @@ static struct {
         char const *name;
         char const **palette;
 } const themes[] = {
-        { "gruvbox",           gruvbox           },
-        { "gruvbox-material",  gruvbox_material  },
-        { "github-light",      github_light      },
-        { "github-dark",       github_dark       },
-        { "monokai",           monokai           },
-        { "muted",             muted             },
-        { "one-dark",          one_dark          },
-        { "catppuccin-mocha",  catppuccin_mocha  },
-        { "catppuccin",        catppuccin_mocha  },
-        { "dracula",           dracula           },
-        { "nord",              nord              },
-        { "solarized-dark",    solarized_dark    },
-        { "solarized",         solarized_dark    },
-        { "tokyonight",        tokyonight        },
-        { "tokyo-night",       tokyonight        },
-        { "rose-pine",         rose_pine         },
+        { "gruvbox",                   gruvbox                },
+        { "gruvbox-material",          gruvbox_material       },
+        { "gruvbox-material-light",    gruvbox_material_light },
+        { "github-light",              github_light           },
+        { "github-dark",               github_dark            },
+        { "monokai",                   monokai                },
+        { "muted",                     muted                  },
+        { "one-dark",                  one_dark               },
+        { "catppuccin-mocha",          catppuccin_mocha       },
+        { "catppuccin",                catppuccin_mocha       },
+        { "dracula",                   dracula                },
+        { "nord",                      nord                   },
+        { "solarized-dark",            solarized_dark         },
+        { "solarized",                 solarized_dark         },
+        { "solarized-light",           solarized_light        },
+        { "tokyonight",                tokyonight             },
+        { "tokyo-night",               tokyonight             },
+        { "rose-pine",                 rose_pine              },
 };
 
 static char const **

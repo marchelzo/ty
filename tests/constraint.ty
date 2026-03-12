@@ -8,7 +8,7 @@ pub fn constraint() {
     try {
         __eval__('f(10, 20)')
         assert(ty.q)
-    } catch Err(msg) :: 'invalid argument type' in msg {
+    } catch ex :: 'invalid argument type' in ex.what {
         ;
     }
 }

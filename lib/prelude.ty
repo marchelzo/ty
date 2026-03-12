@@ -1138,8 +1138,10 @@ class String : Iterable[String], IntoPtr[Int] {
     unhex() {
         let b = Blob()
 
+        fn _int(x, base: ?Int = 0) -> Int | nil { ::int(x, base) }
+
         for octet in scan(/../) {
-            if let $x = ::int(octet, 16) {
+            if let $x = _int(octet, 16) {
                 b.push(x)
             } else {
                 return nil
@@ -2901,6 +2903,7 @@ use JSON = String
          | nil
 
 fn json::parse(json: String) -> JSON;
+fn json::parse[T](schema: Type[T], json: String) -> T;
 fn json::encode(value: Any) -> String;
 
 fn id[T](x: T) -> T { x }

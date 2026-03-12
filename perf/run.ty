@@ -15,7 +15,8 @@ import lib (
     load-best,
     save-results,
     update-best,
-    Result
+    Result,
+    BenchRecord,
 )
 
 // ---------------------------------------------------------------------------
@@ -104,8 +105,7 @@ fn main() {
 
         // Color relative to all-time best (first run = everything green)
         let color = if let $b = best[r.name] {
-            let best-med: Float = b['median']
-            let ratio = r.med / best-med
+            let ratio = r.med / b.median
             if ratio <= 1.02 {
                 'bright green'
             } else if ratio < 1.10 {
@@ -126,7 +126,12 @@ fn main() {
     //  Comparison with previous run
     // ---------------------------------------------------------------------------
 
-    fn print-comparison(title: String, ref-map, results, name-width: Int) {
+    fn print-comparison(
+        title: String,
+        ref-map: Dict[String, BenchRecord],
+        results: Array[Result],
+        name-width: Int
+    ) {
         print()
         print(chalk"[bold bright cyan]{title}[/]")
         print()
@@ -134,8 +139,7 @@ fn main() {
         for r in results {
             let label = chalk"[bold]{r.name:{name-width}}[/]"
             if let $old = ref-map[r.name] {
-                let old-med: Float = old['median']
-                let ratio = r.med / old-med
+                let ratio = r.med / old.median
                 let delta = fmt-delta(ratio)
                 let color = if ratio < 0.95 {
                     'bright green bold'
@@ -144,7 +148,7 @@ fn main() {
                 } else {
                     'dim'
                 }
-                print(chalk"  {label} {fmt-time(old-med):>10} → {fmt-time(r.med):>10}  [{color}]{delta}[/]")
+                print(chalk"  {label} {fmt-time(old.median):>10} → {fmt-time(r.med):>10}  [{color}]{delta}[/]")
             } else {
                 print(chalk"  {label} [dim]no previous data[/]")
             }
@@ -154,7 +158,7 @@ fn main() {
     if opts.compare {
         let prev = load-results(RESULTS_FILE)
         if prev != nil {
-            let prev-map = %{e['name']: e for e in prev}
+            let prev-map = %{e.name: e for e in prev}
             print-comparison('Comparison with previous run:', prev-map, results, name-width)
         } else {
             print(chalk"\n[dim]No previous results to compare against.[/]")

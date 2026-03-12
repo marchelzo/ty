@@ -4,6 +4,20 @@ import io
 import path (Path)
 import ty.mod
 
+pub use BenchRecord = {
+    name: String,
+    times: Array[Float],
+    iters: Int,
+    mean: Float,
+    median: Float,
+    min: Float,
+    max: Float,
+    stddev: Float
+}
+
+pub use SuiteRecord = Array[BenchRecord]
+pub use BestRecord = Dict[String, BenchRecord]
+
 // ---------------------------------------------------------------------------
 //  Statistics helpers
 // ---------------------------------------------------------------------------
@@ -179,21 +193,17 @@ pub fn save-results(path: String, results: [Result]) {
     }
 }
 
-pub fn load-results(path: String) -> Array[_] {
-    try {
-        cast(json.parse(Path(path).read-text()))
-    } catch _ {
-        nil
-    }
+pub fn load-results(path: String) -> Array[BenchRecord] | nil {
+    try json.parse(SuiteRecord, Path(path).read-text()) else nil
 }
 
 // ---------------------------------------------------------------------------
 //  Best-results tracking
 // ---------------------------------------------------------------------------
 
-pub fn load-best(path: String) -> Dict[String, _] {
+pub fn load-best(path: String) -> Dict[String, BenchRecord] {
     try {
-        cast(json.parse(Path(path).read-text()))
+        json.parse(BestRecord, Path(path).read-text())
     } catch _ {
         %{}
     }
@@ -205,8 +215,7 @@ pub fn update-best(path: String, results: [Result]) {
 
     for r in results {
         if let $old = best[r.name] {
-            let old-med: Float = old['median']
-            if r.med < old-med {
+            if r.med < old.median {
                 best[r.name] = r.to-dict()
                 updated = true
             }
