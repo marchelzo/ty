@@ -65,6 +65,10 @@
 #include <termios.h>
 #endif
 
+#if defined(__FreeBSD__)
+#include <netinet/ip_mroute.h>
+#endif
+
 #include "alloc.h"
 #include "array.h"
 #include "blob.h"

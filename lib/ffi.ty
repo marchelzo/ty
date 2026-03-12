@@ -66,7 +66,7 @@ pub fn getCif(rt, *aTypes, nFixed: ?Int) {
 
 pub fn wrap(lib, name: String, rType: _ = nil, *aTypes: _, func-ptr?: Bool = false) -> _ {
     if not let $fp = c.dlsym(name, lib) {
-        throw Err("Failed to load symbol '{name}'")
+        throw RuntimeError("Failed to load symbol '{name}'")
     }
 
     aTypes.remove!(c.void)
@@ -112,24 +112,24 @@ pub fn array[T](type: CType[T], xs: Iterable[T, Int]) {
  * return type annotation of Int
  */
 pub fn ffi-type(expr: _, coerce: Bool = false) -> _ {
-    catch _ {
-        return ty.Any
-    }
+    try {
+        match ty.eval(expr, ty.scope()) {
+            c::u8, c::u16, c::u32, c::u64,
+            c::i8, c::i16, c::i32, c::i64,
+            c::int, c::uint, c::long, c::ulong => (
+                coerce ? $$[ $$::(Int) | $$::(Float) $$]
+                       : $$[ $$::(Int) $$]
+            ),
 
-    match ty.eval(expr, ty.scope()) {
-        c::u8, c::u16, c::u32, c::u64,
-        c::i8, c::i16, c::i32, c::i64,
-        c::int, c::uint, c::long, c::ulong => (
-            coerce ? $$[ $$::(Int) | $$::(Float) $$]
-                   : $$[ $$::(Int) $$]
-        ),
+            c::float, c::double => (
+                coerce ? $$[ $$::(Float) | $$::(Int) $$]
+                       : $$[ $$::(Float) $$]
+            ),
 
-        c::float, c::double => (
-            coerce ? $$[ $$::(Float) | $$::(Int) $$]
-                   : $$[ $$::(Float) $$]
-        ),
-
-        c::ptr => coerce ? $$[ $$::(IntoPtr)[_] $$] : $$[ $$::(Ptr)[_] $$]
+            c::ptr => coerce ? $$[ $$::(IntoPtr)[_] $$] : $$[ $$::(Ptr)[_] $$]
+        }
+    } catch _ {
+        ty.Any
     }
 }
 
@@ -947,16 +947,14 @@ pub fn open(
             lib = "lib{lib}"
         }
 #|]
-        if let $handle = try-open(lib) {
-            return handle
-        }
+
 #|if __apple__
         if !lib.starts?('/') {
             let dirs = [
-                '/usr/lib',
-                '/usr/local/lib',
                 '/opt/homebrew/lib',
                 '/opt/local/lib'
+                '/usr/local/lib',
+                '/usr/lib',
             ]
             for dir in dirs {
                 if let $handle = try-open("{dir}/{lib}") {
@@ -965,7 +963,11 @@ pub fn open(
             }
         }
 #|]
+        if let $handle = try-open(lib) {
+            return handle
+        }
     }
+
 
     return nil
 }

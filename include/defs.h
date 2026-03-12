@@ -31,7 +31,7 @@
  #define ty_aligned_alloc aligned_alloc
 #endif
 
-#if 1
+#if 0
  #include "stb_sprintf.h"
  #define ty_snprintf  stbsp_snprintf
  #define ty_vsnprintf stbsp_vsnprintf
@@ -40,12 +40,12 @@
  #define ty_vsnprintf vsnprintf
 #endif
 
-#if defined(__APPLE__)
-  #define rqsort(base, nel, width, cmp, ctx) qsort_r(base, nel, width, ctx, cmp);
-#elif defined(__linux__)
+#if defined(__linux__)
   #define rqsort(base, nel, width, cmp, ctx) qsort_r(base, nel, width, cmp, ctx);
 #elif defined(_WIN32)
   #define rqsort(base, nel, width, cmp, ctx) qsort_s(base, nel, width, cmp, ctx);
+#else
+  #define rqsort(base, nel, width, cmp, ctx) qsort_r(base, nel, width, ctx, cmp);
 #endif
 
 #if defined(__linux__)
@@ -54,6 +54,8 @@
   #define TY_PLATFORM_NAME "darwin"
 #elif defined(_WIN32)
   #define TY_PLATFORM_NAME "win32"
+#elif defined(__FreeBSD__)
+  #define TY_PLATFORM_NAME "freebsd"
 #endif
 
 enum {

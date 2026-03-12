@@ -13,6 +13,10 @@
 #include <libproc.h>
 #endif
 
+#if defined(__FreeBSD__)
+#include <sys/sysctl.h>
+#endif
+
 #ifdef _WIN32
  #include <windows.h>
  #include <shlwapi.h>
@@ -149,6 +153,10 @@ get_directory_where_chad_looks_for_runtime_dependencies(char *buffer)
         buffer[len] = '\0';
         PathRemoveFileSpecA(buffer);
         return true;
+#elif defined(__FreeBSD__)
+        int mib[4] = { CTL_KERN, KERN_PROC, KERN_PROC_PATHNAME, -1 };
+        size_t len = PATH_MAX;
+        return (sysctl(mib, 4, buffer, &len, NULL, 0) == 0);
 #else
         return false;
 #endif
@@ -157,16 +165,17 @@ get_directory_where_chad_looks_for_runtime_dependencies(char *buffer)
 char *
 directory_of(char const *path, char *buf)
 {
-#if defined(__APPLE__)
-        return dirname_r(path, buf);
-#elif defined(__linux__)
+#if defined(__linux__) || defined(__FreeBSD__)
         strcpy(buf, path);
         return dirname(buf);
 #elif defined(_WIN32)
         strcpy(buf, path);
         PathRemoveFileSpecA(buf);
         return buf;
-
+#elif defined(__APPLE__)
+        return dirname_r(path, buf);
+#else
+        return NULL;
 #endif
 }
 
@@ -194,6 +203,13 @@ this_executable(Ty *ty)
         if (len == 0)
                 return NIL;
         return vSs(path, len);
+#elif defined(__FreeBSD__)
+        int mib[4] = { CTL_KERN, KERN_PROC, KERN_PROC_PATHNAME, -1 };
+        char path[PATH_MAX];
+        size_t len = sizeof path;
+        if (sysctl(mib, 4, path, &len, NULL, 0) != 0)
+                return NIL;
+        return vSs(path, len - 1);
 #else
         return NIL;
 #endif

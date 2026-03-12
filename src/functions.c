@@ -44,9 +44,14 @@
 #include <pty.h>
 #endif
 
-#ifdef __APPLE__
+#if defined(__APPLE__)
 #include <sys/sysctl.h>
 #include <util.h>
+#endif
+
+#if defined(__FreeBSD__)
+#include <sys/sysctl.h>
+#include <libutil.h>
 #endif
 
 #ifdef _WIN32
@@ -3868,7 +3873,9 @@ BUILTIN_FUNCTION(os_spawn)
                         flags |= POSIX_SPAWN_SETPGROUP;
                 }
                 if (setsid) {
+#if defined(POSIX_SPAWN_SETSID)
                         flags |= POSIX_SPAWN_SETSID;
+#endif
                 }
                 posix_spawnattr_setflags(&attr, flags);
         }
@@ -6152,10 +6159,10 @@ BUILTIN_FUNCTION(os_signame)
                 return NIL;
         }
 
-#if defined(__APPLE__)
-        return xSz(sys_signame[sig]);
-#else
+#if defined(__linux__)
         return xSz(sigabbrev_np(sig));
+#else
+        return xSz(sys_signame[sig]);
 #endif
 #endif
 }
@@ -6641,9 +6648,10 @@ BUILTIN_FUNCTION(os_fcntl)
         case F_SETFD:
         case F_SETFL:
         case F_SETOWN:
-#ifdef __APPLE__
+#if defined(F_DUPFD_CLOEXEC)
         case F_DUPFD_CLOEXEC:
-#else
+#endif
+#if defined(F_SETSIG)
         case F_SETSIG:
 #endif
                 return INTEGER(fcntl(fd, op, (int)INT_ARG(2)));
@@ -6660,7 +6668,7 @@ BUILTIN_FUNCTION(os_cpu_count)
         SYSTEM_INFO sysinfo;
         GetSystemInfo(&sysinfo);
         nCPU = sysinfo.dwNumberOfProcessors;
-#elif defined(__APPLE__) || defined(__MACH__)
+#elif defined(__APPLE__) || defined(__MACH__) || defined(__FreeBSD__)
         int mib[2];
         usize len = sizeof nCPU;
 
@@ -7710,7 +7718,7 @@ BUILTIN_FUNCTION(stdio_fclose)
 BUILTIN_FUNCTION(stdio_clearerr)
 {
         ASSERT_ARGC("stdio.clearerr()", 1);
-        clearerr(PTR_ARG(0));
+        clearerr((FILE *)PTR_ARG(0));
         return NIL;
 }
 

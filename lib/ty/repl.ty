@@ -10,7 +10,6 @@ import json
 import readln (readln, InteractiveLineReader, ListCompletions, CycleCompletions)
 import path (Path)
 import time
-import ffi as c (C!)
 
 chalk.fg0    = '#e1c78f'
 chalk.fg1    = '#ddc7a1'

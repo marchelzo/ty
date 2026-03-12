@@ -618,7 +618,7 @@ let _bools = (boolean._begin + 1)..(boolean._end)
 let _nums  = (numeric._begin + 1)..(numeric._end)
 let _strs  = (string._begin + 1)..(string._end)
 
-pub terminfo_dirs = c.dlsym('terminfo_dirs', unibi)
+pub terminfo_dirs = c.dlsym('unibi_terminfo_dirs', unibi)
 pub from_mem = mem -> from_mem(mem, mem.size())
 
 tag InitError;

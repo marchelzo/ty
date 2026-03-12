@@ -1853,8 +1853,8 @@ C! pub libxml fn {
     xmlXPathObject *xmlXPathNewFloat(double);
     xmlXPathObject *xmlXPathNewString(xmlChar *val);
 
-    int valuePush(xmlXPathContext *ctxt, xmlXPathObject *obj);
-    xmlXPathObject *valuePop(xmlXPathContext *ctxt);
+    int xmlXPathValuePush(xmlXPathContext *ctxt, xmlXPathObject *obj);
+    xmlXPathObject *xmlXPathValuePop(xmlXPathContext *ctxt);
 
     void xmlXPathFreeObject(xmlXPathObject *obj);
 
@@ -2119,7 +2119,7 @@ class Document : IntoPtr[_] {
             let args = []
 
             for ..argc {
-                let object = CXMLXPathObject(valuePop(ctx))
+                let object = CXMLXPathObject(xmlXPathValuePop(ctx))
                 args.push(
                     match object.type {
                         ::XPATH_STRING  => c.str(xmlXPathCastToString(object)),
@@ -2130,7 +2130,7 @@ class Document : IntoPtr[_] {
                 )
             }
 
-            valuePush(ctx, match func(*args) {
+            xmlXPathValuePush(ctx, match func(*args) {
                 x: Int | Float => xmlXPathNewFloat(x),
                 x: String      => xmlXPathNewString(x.cstr()),
                 x: Bool        => xmlXPathNewBoolean(int(x)),
