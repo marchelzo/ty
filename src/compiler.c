@@ -8040,6 +8040,9 @@ emit_return(Ty *ty, Stmt const *s)
         }
 
         for (int i = 0; get_try(ty, i) != NULL; ++i) {
+                if (get_try(ty, i)->ctx == TRY_CATCH) {
+                        INSN(CATCH);
+                }
                 INSN(FINALLY);
         }
 
@@ -8152,7 +8155,6 @@ emit_try(Ty *ty, Stmt const *s, bool want_result)
         }
 
         INSN(END_TRY);
-
         PATCH_OFFSET(end_offset);
 
         end_try(ty);
