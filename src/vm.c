@@ -985,6 +985,16 @@ add_builtins(Ty *ty, int ac, char **av)
         if (home == NULL) {
                 home = getenv("USERPROFILE");
         }
+
+        char const *xdg_data = getenv("XDG_DATA_HOME");
+        if (xdg_data != NULL) {
+                ty_snprintf(path, sizeof path, "%s/ty/lib", xdg_data);
+                add(path);
+        } else if (home != NULL) {
+                ty_snprintf(path, sizeof path, "%s/.local/share/ty/lib", home);
+                add(path);
+        }
+
         if (home != NULL) {
                 ty_snprintf(path, sizeof path, "%s/.ty", home);
                 add(path);
