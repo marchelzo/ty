@@ -16,8 +16,9 @@ BUILD_DEPENDS=	gperf:devel/gperf \
 		${LOCALBASE}/lib/libffi.a:devel/libffi \
 		${LOCALBASE}/lib/libmimalloc.a:devel/mimalloc \
 		${LOCALBASE}/lib/libpcre2-8.a:devel/pcre2 \
-		${LOCALBASE}/lib/libutf8proc.a:textproc/utf8proc \
 		${LOCALBASE}/lib/libxxhash.a:devel/xxhash
+
+LIB_DEPENDS=	libutf8proc.so:textproc/utf8proc
 
 RUN_DEPENDS=	terminfo-db>0:misc/terminfo-db
 
@@ -28,9 +29,7 @@ GH_ACCOUNT=	marchelzo
 
 CMAKE_ARGS=	-DUSE_SYSTEM_DEPS:BOOL=ON \
 		-DUSE_NSYNC:BOOL=ON \
-		-DCMAKE_BUILD_TYPE:STRING=Release \
-		-DCMAKE_FIND_LIBRARY_SUFFIXES:STRING=".a" \
-		-DPKG_CONFIG_USE_CMAKE_PREFIX_PATH:BOOL=ON
+		-DCMAKE_BUILD_TYPE:STRING=Release
 
 PLIST_SUB=	TYMODDIR="${TYMODDIR}"
 

@@ -4,23 +4,21 @@
 # and create IMPORTED targets that match the names expected by the rest of
 # CMakeLists.txt (i.e. the vcpkg target names).
 #
-# Prefers static libraries (.a) to produce a self-contained binary.
+# Statically links: libffi, mimalloc, pcre2, xxhash
+# Dynamically links: utf8proc, sqlite3 (no .a available on FreeBSD)
 #
 
 include(FindPkgConfig)
 
 # Helper: find a static library and its headers, create an IMPORTED STATIC target.
-# Uses pkg-config for include dirs but links the .a directly.
 function(_find_static_dep TARGET_NAME PC_NAME LIB_NAMES HEADER)
   pkg_check_modules(_pc_${PC_NAME} QUIET ${PC_NAME})
 
-  # Find the static library
   find_library(_lib_${PC_NAME}
     NAMES ${LIB_NAMES}
     HINTS ${_pc_${PC_NAME}_LIBRARY_DIRS}
   )
 
-  # Find the header
   find_path(_inc_${PC_NAME}
     NAMES ${HEADER}
     HINTS ${_pc_${PC_NAME}_INCLUDE_DIRS}
@@ -42,23 +40,13 @@ function(_find_static_dep TARGET_NAME PC_NAME LIB_NAMES HEADER)
   endif()
 endfunction()
 
-# --- libffi ---
-_find_static_dep(unofficial::libffi::libffi libffi "libffi.a;ffi" ffi.h)
+# --- static deps ---
+_find_static_dep(unofficial::libffi::libffi libffi "libffi.a" ffi.h)
+_find_static_dep(PCRE2::8BIT libpcre2-8 "libpcre2-8.a" pcre2.h)
+_find_static_dep(xxHash::xxhash libxxhash "libxxhash.a" xxhash.h)
 
-# --- sqlite3 ---
-_find_static_dep(unofficial::sqlite3::sqlite3 sqlite3 "libsqlite3.a;sqlite3" sqlite3.h)
-
-# --- utf8proc ---
-_find_static_dep(utf8proc::utf8proc libutf8proc "libutf8proc.a;utf8proc" utf8proc.h)
-
-# --- pcre2 ---
-_find_static_dep(PCRE2::8BIT libpcre2-8 "libpcre2-8.a;pcre2-8" pcre2.h)
-
-# --- xxHash ---
-_find_static_dep(xxHash::xxhash libxxhash "libxxhash.a;xxhash" xxhash.h)
-
-# --- mimalloc ---
-find_library(_mi_lib NAMES libmimalloc-static.a mimalloc-static libmimalloc.a mimalloc)
+# --- mimalloc (static) ---
+find_library(_mi_lib NAMES libmimalloc.a mimalloc)
 find_path(_mi_inc NAMES mimalloc.h PATH_SUFFIXES mimalloc)
 if(_mi_lib AND _mi_inc)
   if(NOT TARGET mimalloc-static)
@@ -71,4 +59,15 @@ if(_mi_lib AND _mi_inc)
   endif()
 else()
   message(FATAL_ERROR "mimalloc: static library not found. Install devel/mimalloc.")
+endif()
+
+# --- shared deps (no .a available on FreeBSD) ---
+pkg_check_modules(_utf8proc REQUIRED IMPORTED_TARGET libutf8proc)
+if(NOT TARGET utf8proc::utf8proc)
+  add_library(utf8proc::utf8proc ALIAS PkgConfig::_utf8proc)
+endif()
+
+pkg_check_modules(_sqlite3 REQUIRED IMPORTED_TARGET sqlite3)
+if(NOT TARGET unofficial::sqlite3::sqlite3)
+  add_library(unofficial::sqlite3::sqlite3 ALIAS PkgConfig::_sqlite3)
 endif()
