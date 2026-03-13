@@ -221,17 +221,12 @@ fn get-import(name: String) -> Module | nil {
 
 pub fn tab-complete(before: String, after: String) -> readln::CompletionAction {
     if let [_, space, prefix] = before.match(/^\s*import\b(\s*)((?:\w|\.)*)$/) {
-        let modules-dir = Path.home() / '.ty'
-        if modules-dir.dir? {
-            let modules = modules-dir.glob('*.ty').map!(\_.stem)
-            return CycleCompletions([
-                (chalk"[bright yellow]{mod}[/]", (space ? '' : ' ') + mod[#prefix;])
-                for mod in modules if mod.starts?(prefix)
-            ])
-        } else {
-            return ListCompletions([])
-        }
-
+        let mod-paths = [Path(dir).glob('*.ty') for dir in ty.path].flat()
+        let mod-names = mod-paths.map(\_.stem).sort!().uniq!()
+        return CycleCompletions([
+            (chalk"[bright yellow]{mod}[/]", (space ? '' : ' ') + mod[#prefix;])
+            for mod in mod-names if mod.starts?(prefix)
+        ])
     }
 
     let expr = match ty.parse("{before} .? \{") {

@@ -2098,55 +2098,35 @@ method_cmp(void const *a_, void const *b_)
 static char *
 try_slurp_module(Ty *ty, char const *name, char const **path_out)
 {
-        char chadbuf[PATH_MAX + 1];
-        char pathbuf[PATH_MAX + 1];
+        char chad[PATH_MAX + 1];
+        char path[PATH_MAX + 1];
 
         char *source = NULL;
+        Array *search = v_(Globals, NAMES.path)->array;
 
-        char const *override = getenv("TY_LIBRARY_PATH");
-        if (override != NULL) {
-                ty_snprintf(pathbuf, sizeof pathbuf, "%s/%s.ty", override, name);
-                if ((source = slurp(ty, pathbuf)) != NULL) {
-                        goto FoundModule;
+        for (int i = 0; i < vN(*search); ++i) {
+                ty_snprintf(path, sizeof path, "%s/%s.ty", ss(v__(*search, i)), name);
+                if ((source = slurp(ty, path)) != NULL) {
+                        break;
                 }
         }
 
-        char const *home = getenv("HOME");
-        if (home == NULL) {
-                home = getenv("USERPROFILE");
-        }
-        if (home != NULL) {
-                ty_snprintf(pathbuf, sizeof pathbuf, "%s/.ty/%s.ty", home, name);
-                if ((source = slurp(ty, pathbuf)) != NULL) {
-                        goto FoundModule;
+        if (source == NULL) {
+                if (directory_of(STATE.module->path, chad) == NULL) {
+                        return NULL;
+                }
+                ty_snprintf(path, sizeof path, "%s/%s.ty", chad, name);
+                if ((source = slurp(ty, path)) == NULL) {
+                        return NULL;
                 }
         }
 
-        if (get_directory_where_chad_looks_for_runtime_dependencies(chadbuf)) {
-                ty_snprintf(pathbuf, sizeof pathbuf, "%s/lib/%s.ty", chadbuf, name);
-                if ((source = slurp(ty, pathbuf)) != NULL) {
-                        goto FoundModule;
-                }
-                ty_snprintf(pathbuf, sizeof pathbuf, "%s/../lib/ty/%s.ty", chadbuf, name);
-                if ((source = slurp(ty, pathbuf)) != NULL) {
-                        goto FoundModule;
-                }
-        }
-
-        char *this_dir = directory_of(STATE.module->path, chadbuf);
-        ty_snprintf(pathbuf, sizeof pathbuf, "%s/%s.ty", this_dir, name);
-
-        if ((source = slurp(ty, pathbuf)) == NULL) {
-                return NULL;
-        }
-
-FoundModule:
-        if (realpath(pathbuf, chadbuf) == NULL) {
+        if (realpath(path, chad) == NULL) {
                 return NULL;
         }
 
         if (path_out != NULL) {
-                *path_out = S2(chadbuf);
+                *path_out = S2(chad);
         }
 
         return source;
