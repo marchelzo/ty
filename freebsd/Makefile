@@ -14,7 +14,7 @@ BUILD_DEPENDS=	gperf:devel/gperf \
 		luajit:lang/luajit \
 		ninja:devel/ninja \
 		${LOCALBASE}/lib/libffi.a:devel/libffi \
-		${LOCALBASE}/lib/libmimalloc-static.a:devel/mimalloc \
+		${LOCALBASE}/lib/libmimalloc.a:devel/mimalloc \
 		${LOCALBASE}/lib/libpcre2-8.a:devel/pcre2 \
 		${LOCALBASE}/lib/libutf8proc.a:textproc/utf8proc \
 		${LOCALBASE}/lib/libxxhash.a:devel/xxhash
