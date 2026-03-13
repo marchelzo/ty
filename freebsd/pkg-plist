@@ -18,10 +18,7 @@ bin/tyls
 %%TYMODDIR%%/io.ty
 %%TYMODDIR%%/kqueue.ty
 %%TYMODDIR%%/llhttp.ty
-%%TYMODDIR%%/llhttp2.ty
 %%TYMODDIR%%/log.ty
-%%TYMODDIR%%/m1.ty
-%%TYMODDIR%%/m2.ty
 %%TYMODDIR%%/markdown.ty
 %%TYMODDIR%%/net.ty
 %%TYMODDIR%%/os.ty
