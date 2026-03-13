@@ -2642,12 +2642,14 @@ DoThrow(Ty *ty)
         ) {
                 Value *what = ObjectMember(ty->exc, NAMES._what);
                 XXX(
-                        "Throw: RuntimeError: %s",
+                        "(%zu) Throw: (%zu) RuntimeError: %s",
+                        vN(TRY_STACK),
+                        vN(STACK),
                         (what != NULL) ? TY_TMP_C_STR(*what) : "<no message>"
                 );
         } else {
                 TY_START(DYING);
-                XXX("Throw: %s", VSC(&ty->exc));
+                XXX("(%zu) Throw: (%zu) %s", vN(TRY_STACK), vN(STACK), VSC(&ty->exc));
                 TY_STOP(DYING);
         }
 
@@ -8990,8 +8992,6 @@ vm_vpanic_ex(Ty *ty, char const *fmt, va_list _ap)
 
         PopThrowCtx(ty);
 
-        //XXX("VM Error: %s", vv(ErrorBuffer));
-
         TY_THROW_ERROR();
 }
 
@@ -9104,10 +9104,6 @@ vm_execute_file(Ty *ty, char const *path)
         }
 
         bool success = vm_execute(ty, source, path);
-
-        GCLOG("Allocs before: %zu", ty->allocs.count);
-        //DoGC(ty);
-        GCLOG("Allocs after: %zu", ty->allocs.count);
 
         /*
          * When we read the file, we copy into an allocated buffer with a 0 byte at
@@ -11354,10 +11350,10 @@ ZeroDividePanic(Ty *ty)
 struct try *
 vm_push_try(Ty *ty)
 {
-       struct try *t = PushTry(ty);
-       t->catch = IP;
-       t->end   = IP;
-       return t;
+        struct try *t = PushTry(ty);
+        t->catch = IP;
+        t->end   = IP;
+        return t;
 }
 
 Value
