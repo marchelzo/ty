@@ -10,13 +10,13 @@
 
 include(FindPkgConfig)
 
-# Helper: find a static library and its headers, create an IMPORTED STATIC target.
-function(_find_static_dep TARGET_NAME PC_NAME LIB_NAMES HEADER)
+# Helper: find a .a file by exact filename using pkg-config hints.
+function(_find_static_dep TARGET_NAME PC_NAME STATIC_FILENAME HEADER)
   pkg_check_modules(_pc_${PC_NAME} QUIET ${PC_NAME})
 
-  find_library(_lib_${PC_NAME}
-    NAMES ${LIB_NAMES}
-    HINTS ${_pc_${PC_NAME}_LIBRARY_DIRS}
+  find_file(_lib_${PC_NAME} "${STATIC_FILENAME}"
+    PATHS ${_pc_${PC_NAME}_LIBRARY_DIRS} /usr/local/lib /usr/lib
+    NO_DEFAULT_PATH
   )
 
   find_path(_inc_${PC_NAME}
@@ -25,7 +25,7 @@ function(_find_static_dep TARGET_NAME PC_NAME LIB_NAMES HEADER)
   )
 
   if(NOT _lib_${PC_NAME})
-    message(FATAL_ERROR "${PC_NAME}: static library not found (searched: ${LIB_NAMES})")
+    message(FATAL_ERROR "${PC_NAME}: ${STATIC_FILENAME} not found")
   endif()
   if(NOT _inc_${PC_NAME})
     message(FATAL_ERROR "${PC_NAME}: header '${HEADER}' not found")
@@ -41,12 +41,15 @@ function(_find_static_dep TARGET_NAME PC_NAME LIB_NAMES HEADER)
 endfunction()
 
 # --- static deps ---
-_find_static_dep(unofficial::libffi::libffi libffi "libffi.a" ffi.h)
-_find_static_dep(PCRE2::8BIT libpcre2-8 "libpcre2-8.a" pcre2.h)
-_find_static_dep(xxHash::xxhash libxxhash "libxxhash.a" xxhash.h)
+_find_static_dep(unofficial::libffi::libffi libffi libffi.a ffi.h)
+_find_static_dep(PCRE2::8BIT libpcre2-8 libpcre2-8.a pcre2.h)
+_find_static_dep(xxHash::xxhash libxxhash libxxhash.a xxhash.h)
 
 # --- mimalloc (static) ---
-find_library(_mi_lib NAMES libmimalloc.a mimalloc)
+find_file(_mi_lib "libmimalloc.a"
+  PATHS /usr/local/lib /usr/lib
+  NO_DEFAULT_PATH
+)
 find_path(_mi_inc NAMES mimalloc.h PATH_SUFFIXES mimalloc)
 if(_mi_lib AND _mi_inc)
   if(NOT TARGET mimalloc-static)
@@ -58,7 +61,7 @@ if(_mi_lib AND _mi_inc)
     )
   endif()
 else()
-  message(FATAL_ERROR "mimalloc: static library not found. Install devel/mimalloc.")
+  message(FATAL_ERROR "mimalloc: libmimalloc.a not found. Install devel/mimalloc.")
 endif()
 
 # --- shared deps (no .a available on FreeBSD) ---
