@@ -14,7 +14,7 @@ BUILD_DEPENDS=	gperf:devel/gperf \
 		luajit:lang/luajit \
 		ninja:devel/ninja
 
-RUN_DEPENDS=	terminfo-db>0:devel/terminfo-db
+RUN_DEPENDS=	terminfo-db>0:misc/terminfo-db
 
 LIB_DEPENDS=	libffi.so:devel/libffi \
 		libmimalloc.so:devel/mimalloc \
