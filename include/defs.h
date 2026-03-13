@@ -31,7 +31,7 @@
  #define ty_aligned_alloc aligned_alloc
 #endif
 
-#if 0
+#if 1
  #include "stb_sprintf.h"
  #define ty_snprintf  stbsp_snprintf
  #define ty_vsnprintf stbsp_vsnprintf
