@@ -10,13 +10,17 @@ LICENSE=	MIT
 LICENSE_FILE=	${WRKSRC}/LICENSE
 
 BUILD_DEPENDS=	gperf:devel/gperf \
+		luajit:lang/luajit \
 		ninja:devel/ninja
 
 LIB_DEPENDS=	libffi.so:devel/libffi \
 		libmimalloc.so:devel/mimalloc \
+		libncursesw.so:devel/ncurses \
 		libpcre2-8.so:devel/pcre2 \
 		libutf8proc.so:textproc/utf8proc \
 		libxxhash.so:devel/xxhash
+
+RUN_DEPENDS=	terminfo-db>0:devel/terminfo-db
 
 USES=		cmake pkgconfig sqlite
 
@@ -24,20 +28,11 @@ USE_GITHUB=	yes
 GH_ACCOUNT=	marchelzo
 
 CMAKE_ARGS=	-DUSE_SYSTEM_DEPS:BOOL=ON \
+		-DUSE_NSYNC:BOOL=ON \
 		-DCMAKE_BUILD_TYPE:STRING=Release
 
 PLIST_SUB=	TYMODDIR="${TYMODDIR}"
 
 TYMODDIR=	lib/ty
-
-OPTIONS_DEFINE=		JIT NSYNC
-OPTIONS_DEFAULT=	NSYNC
-
-JIT_DESC=		Enable JIT code generation (requires luajit)
-JIT_CMAKE_BOOL_OFF=	NO_JIT
-JIT_BUILD_DEPENDS=	luajit:lang/luajit
-
-NSYNC_DESC=		Use nsync synchronization primitives
-NSYNC_CMAKE_BOOL=	USE_NSYNC
 
 .include <bsd.port.mk>
