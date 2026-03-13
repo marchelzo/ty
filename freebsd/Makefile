@@ -10,6 +10,13 @@ WWW=		https://github.com/marchelzo/ty
 LICENSE=	MIT
 LICENSE_FILE=	${WRKSRC}/LICENSE
 
+USES=		cmake pkgconfig sqlite
+
+USE_GITHUB=	yes
+GH_ACCOUNT=	marchelzo
+
+LIB_DEPENDS=	libutf8proc.so:textproc/utf8proc
+
 RUN_DEPENDS=	terminfo-db>0:misc/terminfo-db
 
 BUILD_DEPENDS=	gperf:devel/gperf \
@@ -19,13 +26,6 @@ BUILD_DEPENDS=	gperf:devel/gperf \
 		${LOCALBASE}/lib/libmimalloc.a:devel/mimalloc \
 		${LOCALBASE}/lib/libpcre2-8.a:devel/pcre2 \
 		${LOCALBASE}/lib/libxxhash.a:devel/xxhash
-
-LIB_DEPENDS=	libutf8proc.so:textproc/utf8proc
-
-USES=		cmake pkgconfig sqlite
-
-USE_GITHUB=	yes
-GH_ACCOUNT=	marchelzo
 
 CMAKE_ARGS=	-DUSE_SYSTEM_DEPS:BOOL=ON \
 		-DUSE_NSYNC:BOOL=ON \
