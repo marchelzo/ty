@@ -10,26 +10,26 @@ WWW=		https://github.com/marchelzo/ty
 LICENSE=	MIT
 LICENSE_FILE=	${WRKSRC}/LICENSE
 
+RUN_DEPENDS=	terminfo-db>0:misc/terminfo-db
+
+BUILD_DEPENDS=	${LOCALBASE}/lib/libffi.a:devel/libffi \
+		${LOCALBASE}/lib/libmimalloc.a:devel/mimalloc \
+		${LOCALBASE}/lib/libpcre2-8.a:devel/pcre2 \
+		${LOCALBASE}/lib/libxxhash.a:devel/xxhash \
+		gperf:devel/gperf \
+		luajit:lang/luajit \
+		ninja:devel/ninja
+
+LIB_DEPENDS=	libutf8proc.so:textproc/utf8proc
+
 USES=		cmake pkgconfig sqlite
 
 USE_GITHUB=	yes
 GH_ACCOUNT=	marchelzo
 
-LIB_DEPENDS=	libutf8proc.so:textproc/utf8proc
-
-RUN_DEPENDS=	terminfo-db>0:misc/terminfo-db
-
-BUILD_DEPENDS=	gperf:devel/gperf \
-		luajit:lang/luajit \
-		ninja:devel/ninja \
-		${LOCALBASE}/lib/libffi.a:devel/libffi \
-		${LOCALBASE}/lib/libmimalloc.a:devel/mimalloc \
-		${LOCALBASE}/lib/libpcre2-8.a:devel/pcre2 \
-		${LOCALBASE}/lib/libxxhash.a:devel/xxhash
-
-CMAKE_ARGS=	-DUSE_SYSTEM_DEPS:BOOL=ON \
+CMAKE_ARGS=	-DCMAKE_BUILD_TYPE:STRING=Release \
 		-DUSE_NSYNC:BOOL=ON \
-		-DCMAKE_BUILD_TYPE:STRING=Release
+		-DUSE_SYSTEM_DEPS:BOOL=ON
 
 PLIST_SUB=	TYMODDIR="${TYMODDIR}"
 
