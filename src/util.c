@@ -271,6 +271,11 @@ vdump(byte_vector *b, char const *fmt, va_list ap)
                 int avail = b->capacity - b->count;
                 int need;
 
+                if (avail == 0) {
+                        xvR(*b, max(b->capacity * 2, 256));
+                        continue;
+                }
+
                 va_copy(ap_, ap);
                 need = ty_vsnprintf(b->items + b->count, avail, fmt, ap_);
                 va_end(ap_);
@@ -296,6 +301,11 @@ dump(byte_vector *b, char const *fmt, ...)
                 isize avail = b->capacity - b->count;
                 isize need;
 
+                if (avail == 0) {
+                        xvR(*b, max(b->capacity * 2, 256));
+                        continue;
+                }
+
                 va_start(ap, fmt);
                 need = ty_vsnprintf(b->items + b->count, avail, fmt, ap);
                 va_end(ap);
@@ -320,6 +330,11 @@ avdump(Ty *ty, byte_vector *str, char const *fmt, va_list ap)
         for (;;) {
                 isize avail = vC(*str) - vN(*str);
                 isize need;
+
+                if (avail == 0) {
+                        avR(*str, max(vC(*str) * 2, 256));
+                        continue;
+                }
 
                 va_copy(ap_, ap);
                 need = ty_vsnprintf(vZ(*str), avail, fmt, ap_);
@@ -358,6 +373,11 @@ scvdump(Ty *ty, byte_vector *str, char const *fmt, va_list ap)
         for (;;) {
                 isize avail = vC(*str) - vN(*str);
                 isize need;
+
+                if (avail == 0) {
+                        svR(*str, max(vC(*str) * 2, 256));
+                        continue;
+                }
 
                 va_copy(ap_, ap);
                 need = ty_vsnprintf(vZ(*str), avail, fmt, ap_);
