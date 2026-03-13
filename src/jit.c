@@ -72,10 +72,10 @@ char JIT;
 // DynASM runtime includes
 // ============================================================================
 
-#include "../LuaJIT/dynasm/dasm_proto.h"
+#include "../dynasm/dasm_proto.h"
 
 #if defined(__aarch64__) || defined(_M_ARM64)
-#  include "../LuaJIT/dynasm/dasm_arm64.h"
+#  include "../dynasm/dasm_arm64.h"
 #  include "jit_arm64.h"
 #  define JIT_ARCH_ARM64 1
 #  define PARAM_REG_BASE 0
