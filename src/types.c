@@ -13,7 +13,7 @@
 #include "array.h"
 #include "dict.h"
 
-#define TYPES_LOG      1
+#define TYPES_LOG      0
 #define FUN_TYPES_LOG  0
 
 typedef struct {
