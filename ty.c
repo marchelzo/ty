@@ -466,7 +466,11 @@ ProcessArgs(char *argv[], bool first)
                                 "Platform: %s-%s\n",
                                 VersionInfo_ProjectName,
                                 VersionInfo_ProjectVersion,
+#if defined(TY_HAVE_GIT_STATUS)
                                 VersionInfo_GitCommitDate,
+#else
+                                TY_BUILD_DATE,
+#endif
                                 VersionInfo_CompilerId,
                                 VersionInfo_CompilerVersion,
                                 VersionInfo_Architecture,

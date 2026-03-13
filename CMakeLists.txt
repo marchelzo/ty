@@ -284,8 +284,15 @@ add_library(${_tgt_ty_interface} INTERFACE)
 set(_tgt_ty_interface_version_info "${_tgt_ty_interface}_VersionInfo")
 if(EXISTS "${PROJECT_SOURCE_DIR}/.git")
   set(_git_work_tree_arg GIT_WORK_TREE ${PROJECT_SOURCE_DIR})
+  target_compile_definitions(${_tgt_ty_interface} INTERFACE TY_HAVE_GIT_STATUS)
 else()
   set(_git_work_tree_arg)
+  string(TIMESTAMP _ty_build_date "%a %b %d %H:%M:%S %Y %z")
+  target_compile_definitions(
+    ${_tgt_ty_interface}
+    INTERFACE
+      TY_BUILD_DATE="${_ty_build_date}"
+  )
 endif()
 add_version_info_target(NAME ${_tgt_ty_interface_version_info}
   ${_git_work_tree_arg}
