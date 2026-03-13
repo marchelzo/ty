@@ -10,8 +10,6 @@ WWW=		https://github.com/marchelzo/ty
 LICENSE=	MIT
 LICENSE_FILE=	${WRKSRC}/LICENSE
 
-RUN_DEPENDS=	terminfo-db>0:misc/terminfo-db
-
 BUILD_DEPENDS=	${LOCALBASE}/lib/libffi.a:devel/libffi \
 		${LOCALBASE}/lib/libmimalloc.a:devel/mimalloc \
 		${LOCALBASE}/lib/libpcre2-8.a:devel/pcre2 \
@@ -21,6 +19,8 @@ BUILD_DEPENDS=	${LOCALBASE}/lib/libffi.a:devel/libffi \
 		ninja:devel/ninja
 
 LIB_DEPENDS=	libutf8proc.so:textproc/utf8proc
+
+RUN_DEPENDS=	terminfo-db>0:misc/terminfo-db
 
 USES=		cmake pkgconfig sqlite
 
