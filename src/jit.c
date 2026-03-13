@@ -82,7 +82,7 @@ char JIT;
 #  define SCRATCH_REG_BASE 8
 #  define MAX_SCRATCH_REGS 8
 #elif defined(__x86_64__) || defined(_M_X64)
-#  include "../LuaJIT/dynasm/dasm_x86.h"
+#  include "../dynasm/dasm_x86.h"
 #  include "jit_x64.h"
 #  define JIT_ARCH_X64 1
 static int const x64_param_regs[] = { 7, 6, 2, 1 };
