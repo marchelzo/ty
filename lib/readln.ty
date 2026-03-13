@@ -562,6 +562,11 @@ pub class InteractiveLineReader {
                 },
 
                 '<C-d>' => {
+                    if erase {
+                        write(__tio.fd, "{ERASE_LINE}\r")
+                    } else {
+                        write(__tio.fd, '\n')
+                    }
                     return nil
                 },
 
