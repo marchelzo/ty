@@ -2544,6 +2544,7 @@ freshstate(Ty *ty, Module *mod)
                 .module = mod,
                 .global = mod->scope,
                 .pscope = mod->scope,
+                .fscope = mod->scope,
                 .class  = NULL,
                 .start  = Nowhere,
                 .end    = Nowhere,
@@ -6772,6 +6773,7 @@ emit_load(Ty *ty, Symbol const *s, Scope const *scope)
 {
         bool local = !SymbolIsGlobal(s)
                   && !SymbolIsTypeVar(s)
+                  && (scope != NULL)
                   && (s->scope->function == scope->function);
 
         if (SymbolIsTypeVar(s)) {
@@ -6847,6 +6849,7 @@ inline static void
 emit_tgt(Ty *ty, Symbol *s, Scope const *scope, bool def)
 {
         bool local = !SymbolIsGlobal(s)
+                  && (scope != NULL)
                   && (s->scope->function == scope->function);
 
         if (s == &UndefinedSymbol) {
