@@ -16,10 +16,10 @@ find_path(_ffi_inc NAMES ffi.h HINTS ${_pc_ffi_INCLUDE_DIRS})
 if(NOT _ffi_inc)
   message(FATAL_ERROR "libffi: ffi.h not found")
 endif()
-add_library(unofficial::libffi::libffi INTERFACE IMPORTED)
+add_library(unofficial::libffi::libffi IMPORTED STATIC)
 set_target_properties(unofficial::libffi::libffi PROPERTIES
+  IMPORTED_LOCATION "/usr/local/lib/libffi.a"
   INTERFACE_INCLUDE_DIRECTORIES "${_ffi_inc}"
-  INTERFACE_LINK_LIBRARIES "-Wl,-Bstatic;-lffi;-Wl,-Bdynamic"
 )
 
 # --- pcre2 (static) ---
@@ -28,10 +28,10 @@ find_path(_pcre2_inc NAMES pcre2.h HINTS ${_pc_pcre2_INCLUDE_DIRS})
 if(NOT _pcre2_inc)
   message(FATAL_ERROR "pcre2: pcre2.h not found")
 endif()
-add_library(PCRE2::8BIT INTERFACE IMPORTED)
+add_library(PCRE2::8BIT IMPORTED STATIC)
 set_target_properties(PCRE2::8BIT PROPERTIES
+  IMPORTED_LOCATION "/usr/local/lib/libpcre2-8.a"
   INTERFACE_INCLUDE_DIRECTORIES "${_pcre2_inc}"
-  INTERFACE_LINK_LIBRARIES "-Wl,-Bstatic;-lpcre2-8;-Wl,-Bdynamic"
 )
 
 # --- xxhash (static) ---
@@ -40,10 +40,10 @@ find_path(_xxhash_inc NAMES xxhash.h HINTS ${_pc_xxhash_INCLUDE_DIRS})
 if(NOT _xxhash_inc)
   message(FATAL_ERROR "xxhash: xxhash.h not found")
 endif()
-add_library(xxHash::xxhash INTERFACE IMPORTED)
+add_library(xxHash::xxhash IMPORTED STATIC)
 set_target_properties(xxHash::xxhash PROPERTIES
+  IMPORTED_LOCATION "/usr/local/lib/libxxhash.a"
   INTERFACE_INCLUDE_DIRECTORIES "${_xxhash_inc}"
-  INTERFACE_LINK_LIBRARIES "-Wl,-Bstatic;-lxxhash;-Wl,-Bdynamic"
 )
 
 # --- mimalloc (static) ---
@@ -51,10 +51,10 @@ find_path(_mi_inc NAMES mimalloc.h PATH_SUFFIXES mimalloc)
 if(NOT _mi_inc)
   message(FATAL_ERROR "mimalloc: mimalloc.h not found")
 endif()
-add_library(mimalloc-static INTERFACE IMPORTED)
+add_library(mimalloc-static IMPORTED STATIC)
 set_target_properties(mimalloc-static PROPERTIES
+  IMPORTED_LOCATION "/usr/local/lib/libmimalloc.a"
   INTERFACE_INCLUDE_DIRECTORIES "${_mi_inc}"
-  INTERFACE_LINK_LIBRARIES "-Wl,-Bstatic;-lmimalloc;-Wl,-Bdynamic"
   IMPORTED_LINK_INTERFACE_LANGUAGES_RELEASE "C"
 )
 
