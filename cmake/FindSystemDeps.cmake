@@ -1,82 +1,74 @@
 # FindSystemDeps.cmake
 #
 # When USE_SYSTEM_DEPS is ON (e.g. FreeBSD ports builds), find libraries
-# via pkg-config / find_library and create IMPORTED targets that match the
-# names expected by the rest of CMakeLists.txt (i.e. the vcpkg target names).
+# and create IMPORTED targets that match the names expected by the rest of
+# CMakeLists.txt (i.e. the vcpkg target names).
+#
+# Prefers static libraries (.a) to produce a self-contained binary.
 #
 
 include(FindPkgConfig)
 
+# Helper: find a static library and its headers, create an IMPORTED STATIC target.
+# Uses pkg-config for include dirs but links the .a directly.
+function(_find_static_dep TARGET_NAME PC_NAME LIB_NAMES HEADER)
+  pkg_check_modules(_pc_${PC_NAME} QUIET ${PC_NAME})
+
+  # Find the static library
+  find_library(_lib_${PC_NAME}
+    NAMES ${LIB_NAMES}
+    HINTS ${_pc_${PC_NAME}_LIBRARY_DIRS}
+  )
+
+  # Find the header
+  find_path(_inc_${PC_NAME}
+    NAMES ${HEADER}
+    HINTS ${_pc_${PC_NAME}_INCLUDE_DIRS}
+  )
+
+  if(NOT _lib_${PC_NAME})
+    message(FATAL_ERROR "${PC_NAME}: static library not found (searched: ${LIB_NAMES})")
+  endif()
+  if(NOT _inc_${PC_NAME})
+    message(FATAL_ERROR "${PC_NAME}: header '${HEADER}' not found")
+  endif()
+
+  if(NOT TARGET ${TARGET_NAME})
+    add_library(${TARGET_NAME} IMPORTED STATIC)
+    set_target_properties(${TARGET_NAME} PROPERTIES
+      IMPORTED_LOCATION "${_lib_${PC_NAME}}"
+      INTERFACE_INCLUDE_DIRECTORIES "${_inc_${PC_NAME}}"
+    )
+  endif()
+endfunction()
+
 # --- libffi ---
-pkg_check_modules(_ffi REQUIRED IMPORTED_TARGET libffi)
-if(NOT TARGET unofficial::libffi::libffi)
-  add_library(unofficial::libffi::libffi ALIAS PkgConfig::_ffi)
-endif()
+_find_static_dep(unofficial::libffi::libffi libffi "libffi.a;ffi" ffi.h)
 
 # --- sqlite3 ---
-pkg_check_modules(_sqlite3 REQUIRED IMPORTED_TARGET sqlite3)
-if(NOT TARGET unofficial::sqlite3::sqlite3)
-  add_library(unofficial::sqlite3::sqlite3 ALIAS PkgConfig::_sqlite3)
-endif()
+_find_static_dep(unofficial::sqlite3::sqlite3 sqlite3 "libsqlite3.a;sqlite3" sqlite3.h)
 
 # --- utf8proc ---
-pkg_check_modules(_utf8proc REQUIRED IMPORTED_TARGET libutf8proc)
-if(NOT TARGET utf8proc::utf8proc)
-  add_library(utf8proc::utf8proc ALIAS PkgConfig::_utf8proc)
-endif()
+_find_static_dep(utf8proc::utf8proc libutf8proc "libutf8proc.a;utf8proc" utf8proc.h)
 
 # --- pcre2 ---
-pkg_check_modules(_pcre2 REQUIRED IMPORTED_TARGET libpcre2-8)
-if(NOT TARGET PCRE2::8BIT)
-  add_library(PCRE2::8BIT ALIAS PkgConfig::_pcre2)
-endif()
+_find_static_dep(PCRE2::8BIT libpcre2-8 "libpcre2-8.a;pcre2-8" pcre2.h)
 
 # --- xxHash ---
-# xxHash may not ship a .pc file on all systems; try pkg-config first,
-# fall back to find_library + find_path.
-pkg_check_modules(_xxhash QUIET IMPORTED_TARGET libxxhash)
-if(_xxhash_FOUND)
-  if(NOT TARGET xxHash::xxhash)
-    add_library(xxHash::xxhash ALIAS PkgConfig::_xxhash)
-  endif()
-else()
-  find_library(_xxhash_lib NAMES xxhash)
-  find_path(_xxhash_inc NAMES xxhash.h)
-  if(_xxhash_lib AND _xxhash_inc)
-    add_library(xxHash::xxhash IMPORTED INTERFACE)
-    set_target_properties(xxHash::xxhash PROPERTIES
-      INTERFACE_LINK_LIBRARIES "${_xxhash_lib}"
-      INTERFACE_INCLUDE_DIRECTORIES "${_xxhash_inc}"
-    )
-  else()
-    message(FATAL_ERROR "xxHash not found. Install devel/xxhash.")
-  endif()
-endif()
+_find_static_dep(xxHash::xxhash libxxhash "libxxhash.a;xxhash" xxhash.h)
 
 # --- mimalloc ---
-# mimalloc installs a cmake config on some systems; try that first.
-find_package(mimalloc CONFIG QUIET)
-if(NOT mimalloc_FOUND)
-  find_library(_mi_lib NAMES mimalloc-static mimalloc)
-  find_path(_mi_inc NAMES mimalloc.h PATH_SUFFIXES mimalloc)
-  if(_mi_lib AND _mi_inc)
+find_library(_mi_lib NAMES libmimalloc-static.a mimalloc-static libmimalloc.a mimalloc)
+find_path(_mi_inc NAMES mimalloc.h PATH_SUFFIXES mimalloc)
+if(_mi_lib AND _mi_inc)
+  if(NOT TARGET mimalloc-static)
     add_library(mimalloc-static IMPORTED STATIC)
     set_target_properties(mimalloc-static PROPERTIES
       IMPORTED_LOCATION "${_mi_lib}"
       INTERFACE_INCLUDE_DIRECTORIES "${_mi_inc}"
       IMPORTED_LINK_INTERFACE_LANGUAGES_RELEASE "C"
     )
-  else()
-    message(FATAL_ERROR "mimalloc not found. Install devel/mimalloc.")
   endif()
 else()
-  # mimalloc CONFIG found — make sure the static target exists
-  if(NOT TARGET mimalloc-static)
-    if(TARGET mimalloc)
-      add_library(mimalloc-static ALIAS mimalloc)
-    endif()
-  endif()
-  set_target_properties(mimalloc-static PROPERTIES
-    IMPORTED_LINK_INTERFACE_LANGUAGES_RELEASE "C"
-  )
+  message(FATAL_ERROR "mimalloc: static library not found. Install devel/mimalloc.")
 endif()

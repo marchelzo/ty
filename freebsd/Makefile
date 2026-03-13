@@ -12,15 +12,14 @@ LICENSE_FILE=	${WRKSRC}/LICENSE
 
 BUILD_DEPENDS=	gperf:devel/gperf \
 		luajit:lang/luajit \
-		ninja:devel/ninja
+		ninja:devel/ninja \
+		libffi.a:devel/libffi \
+		${LOCALBASE}/lib/libmimalloc-static.a:devel/mimalloc \
+		libpcre2-8.a:devel/pcre2 \
+		libutf8proc.a:textproc/utf8proc \
+		libxxhash.a:devel/xxhash
 
 RUN_DEPENDS=	terminfo-db>0:misc/terminfo-db
-
-LIB_DEPENDS=	libffi.so:devel/libffi \
-		libmimalloc.so:devel/mimalloc \
-		libpcre2-8.so:devel/pcre2 \
-		libutf8proc.so:textproc/utf8proc \
-		libxxhash.so:devel/xxhash
 
 USES=		cmake pkgconfig sqlite
 
@@ -29,7 +28,9 @@ GH_ACCOUNT=	marchelzo
 
 CMAKE_ARGS=	-DUSE_SYSTEM_DEPS:BOOL=ON \
 		-DUSE_NSYNC:BOOL=ON \
-		-DCMAKE_BUILD_TYPE:STRING=Release
+		-DCMAKE_BUILD_TYPE:STRING=Release \
+		-DCMAKE_FIND_LIBRARY_SUFFIXES:STRING=".a" \
+		-DPKG_CONFIG_USE_CMAKE_PREFIX_PATH:BOOL=ON
 
 PLIST_SUB=	TYMODDIR="${TYMODDIR}"
 
