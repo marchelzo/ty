@@ -2,15 +2,30 @@ cmake_minimum_required(VERSION 3.10)
 project(unibilium VERSION 2.0.0 LANGUAGES C)
 
 if(NOT WIN32)
-  execute_process(
-    COMMAND sh -c "ncursesw6-config --terminfo-dirs 2>/dev/null || \
-                   ncurses6-config  --terminfo-dirs 2>/dev/null || \
-                   ncursesw5-config --terminfo-dirs 2>/dev/null || \
-                   ncurses5-config  --terminfo-dirs 2>/dev/null || \
-                   echo '/etc/terminfo:/lib/terminfo:/usr/share/terminfo:/usr/lib/terminfo:/usr/local/share/terminfo:/usr/local/lib/terminfo'"
-    OUTPUT_VARIABLE TERMINFO_DIRS
-    OUTPUT_STRIP_TRAILING_WHITESPACE
+  set(_terminfo_candidates
+    /etc/terminfo
+    /lib/terminfo
+    /usr/share/terminfo
+    /usr/share/misc/terminfo
+    /usr/lib/terminfo
+    /usr/local/share/terminfo
+    /usr/local/lib/terminfo
+    /usr/share/lib/terminfo
   )
+  set(_terminfo_found "")
+  foreach(_d IN LISTS _terminfo_candidates)
+    if(IS_DIRECTORY "${_d}")
+      if(_terminfo_found)
+        string(APPEND _terminfo_found ":${_d}")
+      else()
+        set(_terminfo_found "${_d}")
+      endif()
+    endif()
+  endforeach()
+  if(NOT _terminfo_found)
+    string(JOIN ":" _terminfo_found ${_terminfo_candidates})
+  endif()
+  set(TERMINFO_DIRS "${_terminfo_found}")
 else()
   set(TERMINFO_DIRS "")
 endif()

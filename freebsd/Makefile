@@ -13,14 +13,13 @@ BUILD_DEPENDS=	gperf:devel/gperf \
 		luajit:lang/luajit \
 		ninja:devel/ninja
 
+RUN_DEPENDS=	terminfo-db>0:devel/terminfo-db
+
 LIB_DEPENDS=	libffi.so:devel/libffi \
 		libmimalloc.so:devel/mimalloc \
-		libncursesw.so:devel/ncurses \
 		libpcre2-8.so:devel/pcre2 \
 		libutf8proc.so:textproc/utf8proc \
 		libxxhash.so:devel/xxhash
-
-RUN_DEPENDS=	terminfo-db>0:devel/terminfo-db
 
 USES=		cmake pkgconfig sqlite
 
