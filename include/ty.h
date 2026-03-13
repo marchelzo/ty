@@ -813,6 +813,7 @@ typedef struct {
         int env;
         int exe;
         int exit_hooks;
+        int path;
         int pp;
         int pretty;
         int q;

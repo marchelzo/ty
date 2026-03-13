@@ -939,6 +939,7 @@ add_builtins(Ty *ty, int ac, char **av)
         BUILTIN_NAMED_VAR(NULL,  "_readln",        _readln   ) = NIL;
         BUILTIN_NAMED_VAR(NULL,  "pretty",         pretty    ) = NIL;
         BUILTIN_NAMED_VAR(NULL,  "pp",             pp        ) = NIL;
+        BUILTIN_NAMED_VAR("ty",  "path",           path      ) = ARRAY(vA());
         BUILTIN_NAMED_VAR("ty",  "q",              q         ) = BOOLEAN(!CheckTypes);
         BUILTIN_NAMED_VAR("ty",  "jit",            jit       ) = BOOLEAN(!NoJIT);
         BUILTIN_NAMED_VAR("ty",  "TEST",           TEST      ) = BOOLEAN(RunningTests);
@@ -960,6 +961,45 @@ add_builtins(Ty *ty, int ac, char **av)
 #undef BUILTIN_VAR
 //===========================================================================
 
+
+//===========================================================================
+// Add default module directories to the module search path
+//---------------------------------------------------------------------------
+#define add(dir) do {                                             \
+        if (realpath(dir, real) != NULL) {                        \
+                vAp(v_(Globals, NAMES.path)->array, vSzz(real));  \
+        }                                                         \
+} while (0)
+//---------------------------------------------------------------------------
+{
+        char path[PATH_MAX + 1];
+        char chad[PATH_MAX + 1];
+        char real[PATH_MAX + 1];
+
+        char const *env_path = getenv("TY_LIBRARY_PATH");
+        if (env_path != NULL) {
+                add(env_path);
+        }
+
+        char const *home = getenv("HOME");
+        if (home == NULL) {
+                home = getenv("USERPROFILE");
+        }
+        if (home != NULL) {
+                ty_snprintf(path, sizeof path, "%s/.ty", home);
+                add(path);
+        }
+
+        if (get_directory_where_chad_looks_for_runtime_dependencies(chad)) {
+                ty_snprintf(path, sizeof path, "%s/lib", chad);
+                add(path);
+                ty_snprintf(path, sizeof path, "%s/../lib/ty", chad);
+                add(path);
+        }
+}
+//---------------------------------------------------------------------------
+#undef add
+//===========================================================================
 
 
 //===========================================================================
