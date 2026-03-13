@@ -13,11 +13,11 @@ LICENSE_FILE=	${WRKSRC}/LICENSE
 BUILD_DEPENDS=	gperf:devel/gperf \
 		luajit:lang/luajit \
 		ninja:devel/ninja \
-		libffi.a:devel/libffi \
+		${LOCALBASE}/lib/libffi.a:devel/libffi \
 		${LOCALBASE}/lib/libmimalloc-static.a:devel/mimalloc \
-		libpcre2-8.a:devel/pcre2 \
-		libutf8proc.a:textproc/utf8proc \
-		libxxhash.a:devel/xxhash
+		${LOCALBASE}/lib/libpcre2-8.a:devel/pcre2 \
+		${LOCALBASE}/lib/libutf8proc.a:textproc/utf8proc \
+		${LOCALBASE}/lib/libxxhash.a:devel/xxhash
 
 RUN_DEPENDS=	terminfo-db>0:misc/terminfo-db
 
