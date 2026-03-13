@@ -282,8 +282,13 @@ set(_tgt_ty_interface "${PROJECT_NAME}_Objects")
 add_library(${_tgt_ty_interface} INTERFACE)
 
 set(_tgt_ty_interface_version_info "${_tgt_ty_interface}_VersionInfo")
+if(EXISTS "${PROJECT_SOURCE_DIR}/.git")
+  set(_git_work_tree_arg GIT_WORK_TREE ${PROJECT_SOURCE_DIR})
+else()
+  set(_git_work_tree_arg)
+endif()
 add_version_info_target(NAME ${_tgt_ty_interface_version_info}
-  GIT_WORK_TREE ${PROJECT_SOURCE_DIR}
+  ${_git_work_tree_arg}
   LANGUAGE C
 )
 
