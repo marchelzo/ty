@@ -117,20 +117,3 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     target_link_options(md PRIVATE "-Wl,--version-script=${CMAKE_CURRENT_SOURCE_DIR}/src/libmd.map")
   endif()
 endif()
-
-install(TARGETS md
-  EXPORT libmdTargets
-  LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
-  ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
-)
-
-install(DIRECTORY include/
-  DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
-  FILES_MATCHING PATTERN "*.h"
-)
-
-install(EXPORT libmdTargets
-  FILE libmdTargets.cmake
-  NAMESPACE libmd::
-  DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/libmd
-)
