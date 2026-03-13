@@ -4,11 +4,13 @@ DISTVERSION=	0.1
 CATEGORIES=	lang
 
 MAINTAINER=	bradgaragan@gmail.com
-COMMENT=	The Ty programming language
+COMMENT=	Ty programming language
 WWW=		https://github.com/marchelzo/ty
 
 LICENSE=	MIT
 LICENSE_FILE=	${WRKSRC}/LICENSE
+
+RUN_DEPENDS=	terminfo-db>0:misc/terminfo-db
 
 BUILD_DEPENDS=	gperf:devel/gperf \
 		luajit:lang/luajit \
@@ -19,8 +21,6 @@ BUILD_DEPENDS=	gperf:devel/gperf \
 		${LOCALBASE}/lib/libxxhash.a:devel/xxhash
 
 LIB_DEPENDS=	libutf8proc.so:textproc/utf8proc
-
-RUN_DEPENDS=	terminfo-db>0:misc/terminfo-db
 
 USES=		cmake pkgconfig sqlite
 
