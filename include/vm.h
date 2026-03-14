@@ -286,6 +286,23 @@ vm_jit_loop_check(Ty *ty, int z);
 void
 vm_jit_fail(Ty *ty, Value *top, char *ip);
 
+// JIT try/catch helpers
+void *
+vm_jit_push_try(Ty *ty, char *catch_addr, char *finally_addr, char *end_addr);
+
+noreturn void
+vm_jit_end_try_rethrow(Ty *ty);
+
+// JIT pattern-matching helpers
+bool
+vm_jit_array_rest(Ty *ty, Value *tos, Value *target, i32 start, i32 suffix);
+
+bool
+vm_jit_tuple_rest(Ty *ty, Value *tos, Value *target, i32 start);
+
+bool
+vm_jit_record_rest(Ty *ty, Value *tos, Value *target, i32 const *excluded_ids);
+
 char *
 DoFunction(Ty *ty, char const *ip);
 
