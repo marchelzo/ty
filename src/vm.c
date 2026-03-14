@@ -11405,6 +11405,92 @@ vm_finally(Ty *ty)
         vXx(TRY_STACK);
 }
 
+void *
+vm_jit_push_try(Ty *ty, char *catch_addr, char *finally_addr, char *end_addr)
+{
+        struct try *t = PushTry(ty);
+        t->catch   = catch_addr;
+        t->finally = finally_addr;
+        t->end     = end_addr;
+        return t->jb;
+}
+
+noreturn void
+vm_jit_end_try_rethrow(Ty *ty)
+{
+        DoThrow(ty);
+        UNREACHABLE();
+}
+
+bool
+vm_jit_array_rest(Ty *ty, Value *tos, Value *target, i32 start, i32 suffix)
+{
+        if (tos->type != VALUE_ARRAY || vN(*tos->array) < start + suffix) {
+                return false;
+        }
+
+        Array *rest = vA();
+        uvPn(*rest, vv(*tos->array) + start, vN(*tos->array) - (start + suffix));
+        *target = ARRAY(rest);
+
+        return true;
+}
+
+bool
+vm_jit_tuple_rest(Ty *ty, Value *tos, Value *target, i32 start)
+{
+        if (tos->type != VALUE_TUPLE) {
+                return false;
+        }
+
+        i32 count = tos->count - start;
+        Value *rest = mAo(count * sizeof (Value), GC_TUPLE);
+        memcpy(rest, tos->items + start, count * sizeof (Value));
+        *target = TUPLE(rest, NULL, count, false);
+
+        return true;
+}
+
+bool
+vm_jit_record_rest(Ty *ty, Value *tos, Value *target, i32 const *excluded_ids)
+{
+        if (tos->type != VALUE_TUPLE) {
+                return false;
+        }
+
+        Value v = *tos;
+
+        vec(i32) ids = {0};
+        vec(i32) indices = {0};
+
+        SCRATCH_SAVE();
+
+        for (i32 i = 0; i < v.count; ++i) {
+                if (v.ids == NULL || v.ids[i] == -1) {
+                        continue;
+                }
+                if (!search_i32(excluded_ids, v.ids[i])) {
+                        svP(ids, v.ids[i]);
+                        svP(indices, i);
+                }
+        }
+
+        Value value = vT(ids.count);
+        value.ids = uAo(value.count * sizeof (i32), GC_TUPLE);
+
+        memcpy(value.ids, vv(ids), value.count * sizeof (i32));
+
+        for (i32 i = 0; i < value.count; ++i) {
+                value.items[i] = v.items[v__(indices, i)];
+        }
+
+        SCRATCH_RESTORE();
+
+        *target = value;
+
+        return true;
+}
+
 void
 TyPostFork(Ty *ty)
 {

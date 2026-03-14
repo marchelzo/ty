@@ -7611,7 +7611,7 @@ emit_function(Ty *ty, Expr const *e)
                 EmitFieldInitializers(ty, &def->class);
 
                 // Default constructor
-                if (e->body == NULL) {
+                if ((e->body == NULL) && (e->type == EXPRESSION_FUNCTION)) {
                         for (int i = 0; i < vN(e->param_symbols); ++i) {
                                 Symbol *sym = v__(e->param_symbols, i);
                                 emit_load_instr(ty, sym->identifier, INSTR_LOAD_LOCAL, sym->i);

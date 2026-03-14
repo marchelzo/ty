@@ -1468,6 +1468,82 @@ jit_rt_assign_global(Ty *ty, int n, Value *val)
         *vm_global(ty, n) = *val;
 }
 
+// TRY: push try block, sync stack, return jmp_buf pointer for _setjmp
+static void *
+jit_rt_push_try(Ty *ty, Value *top, char *catch_addr, char *finally_addr, char *end_addr)
+{
+        TOP_OF_STACK(top);
+        return vm_jit_push_try(ty, catch_addr, finally_addr, end_addr);
+}
+
+// CATCH: pop throw context, set state to TRY_FINALLY
+static void
+jit_rt_catch(Ty *ty)
+{
+        ty->throw_stack.count -= 1;
+        ty->st->try_stack.items[ty->st->try_stack.count - 1]->state = TRY_FINALLY;
+}
+
+// RETHROW: set state to TRY_THROW, end to NULL (triggers re-throw at END_TRY)
+static void
+jit_rt_rethrow_setup(Ty *ty)
+{
+        struct try *t = ty->st->try_stack.items[ty->st->try_stack.count - 1];
+        t->state = TRY_THROW;
+        t->end = NULL;
+}
+
+// FINALLY instruction: set state to TRY_FINALLY, save resume address
+static void
+jit_rt_finally_enter(Ty *ty, char *resume_addr)
+{
+        struct try *t = ty->st->try_stack.items[ty->st->try_stack.count - 1];
+        t->state = TRY_FINALLY;
+        t->end = resume_addr;
+}
+
+// END_TRY: pop try block, return end pointer (NULL means re-throw needed)
+static char *
+jit_rt_end_try(Ty *ty)
+{
+        struct try *t = ty->st->try_stack.items[--ty->st->try_stack.count];
+        return t->end;
+}
+
+// END_TRY re-throw path: call DoThrow (noreturn, longjmps to outer handler)
+static noreturn void
+jit_rt_end_try_rethrow(Ty *ty)
+{
+        vm_jit_end_try_rethrow(ty);
+}
+
+// ARRAY_REST: extract sub-array from index 'start', excluding 'suffix' elements at end
+// Returns 1 on success, 0 on failure
+static int
+jit_rt_array_rest(Ty *ty, Value *tos, i32 start, i32 suffix)
+{
+        Value *target = vm_jit_pop_target(ty);
+        return vm_jit_array_rest(ty, tos, target, start, suffix) ? 1 : 0;
+}
+
+// TUPLE_REST: extract remaining tuple elements from index 'start'
+// Returns 1 on success (target written), 0 on failure (not a tuple)
+static int
+jit_rt_tuple_rest(Ty *ty, Value *tos, i32 start)
+{
+        Value *target = vm_jit_pop_target(ty);
+        return vm_jit_tuple_rest(ty, tos, target, start) ? 1 : 0;
+}
+
+// RECORD_REST: extract fields not in excluded list
+// Returns 1 on success, 0 on failure (not a tuple/record)
+static int
+jit_rt_record_rest(Ty *ty, Value *tos, i32 const *excluded_ids)
+{
+        Value *target = vm_jit_pop_target(ty);
+        return vm_jit_record_rest(ty, tos, target, excluded_ids) ? 1 : 0;
+}
+
 #if JIT_ARCH_ARM64
 // ARM64 callee-saved register assignments
 #define BC_TY    19   // x19
@@ -1517,6 +1593,21 @@ jit_rt_assign_global(Ty *ty, int n, Value *val)
 
 #define MAX_BC_OPS    64   // Max operand stack depth
 #define MAX_BC_LABELS 512  // Max DynASM labels
+#define MAX_JIT_TRY   8    // Max nested try blocks in JIT
+
+// Try block tracking for JIT compilation
+typedef struct {
+        int sp;                    // JIT sp at TRY entry
+        char const *end_addr;      // bytecode address of end (from TRY operand)
+        int finally_label;         // DynASM label for finally code start
+        int end_label;             // DynASM label for after try/catch/finally
+        // Resume points for FINALLY instructions targeting this try block
+        struct {
+                char const *addr;  // bytecode address after FINALLY instruction
+                int label;         // DynASM label for that resume point
+        } finally_resumes[8];
+        int n_finally_resumes;
+} JitTryInfo;
 
 // Bytecode compilation context
 typedef struct {
@@ -1570,6 +1661,10 @@ typedef struct {
         // JIT trampoline: track call sites for resume dispatch
         int call_site_count;
         int resume_labels[MAX_BC_OPS]; // DynASM labels for resume points
+
+        // Try/catch/finally tracking
+        JitTryInfo try_info[MAX_JIT_TRY];
+        int try_depth;
 } JitCtx;
 
 // Operand stack offset: address of ops[i] relative to BC_OPS
@@ -1708,6 +1803,9 @@ bc_prescan(JitCtx *ctx, char const *code, int code_size)
         char const *ip = code;
         char const *end = code + code_size;
 
+        bool has_try = false;
+        bool has_yield = false;
+
 #define BC_READ(var)  do { __builtin_memcpy(&var, ip, sizeof var); ip += sizeof var; } while (0)
 #define BC_SKIP(type) (ip += sizeof(type))
 #define BC_SKIPSTR()  (ip += strlen(ip) + 1)
@@ -1791,6 +1889,10 @@ bc_prescan(JitCtx *ctx, char const *code, int code_size)
                 case INSTR_NONE_IF_NIL:
                 case INSTR_THROW_IF_NIL:
                 case INSTR_THROW:
+                case INSTR_RETHROW:
+                case INSTR_CATCH:
+                case INSTR_FINALLY:
+                case INSTR_END_TRY:
                 case INSTR_NONE:
                 case INSTR_SENTINEL:
                 case INSTR_RETURN_IF_NOT_NONE:
@@ -1798,9 +1900,34 @@ bc_prescan(JitCtx *ctx, char const *code, int code_size)
                 case INSTR_SLICE:
                         break;
 
+                case INSTR_TRY: {
+                        has_try = true;
+
+                        int catch_off, finally_off, end_off;
+
+                        BC_READ(catch_off);
+                        int catch_target = (int)(ip - code) + catch_off;
+                        if (bc_label_for(ctx, catch_target) < 0) return false;
+
+                        BC_READ(finally_off);
+                        if (finally_off != -1) {
+                                int finally_target = (int)(ip - code) + finally_off;
+                                if (bc_label_for(ctx, finally_target) < 0) return false;
+                        }
+
+                        BC_READ(end_off);
+                        if (end_off != -1) {
+                                int end_target = (int)(ip - code) + end_off;
+                                if (bc_label_for(ctx, end_target) < 0) return false;
+                        }
+
+                        break;
+                }
+
                 case INSTR_YIELD:
                 case INSTR_YIELD_NONE:
                 case INSTR_YIELD_SOME:
+                        has_yield = true;
                         break;
 
                 case INSTR_LOAD_LOCAL:
@@ -2147,6 +2274,37 @@ bc_prescan(JitCtx *ctx, char const *code, int code_size)
                         break;
                 }
 
+                case INSTR_ARRAY_REST: {
+                        i32 jump_off;
+                        BC_READ(jump_off);
+                        int target = (int)(ip - code) + jump_off;
+                        if (bc_label_for(ctx, target) < 0) return false;
+                        BC_SKIP(i32); // start index
+                        BC_SKIP(i32); // suffix count
+                        break;
+                }
+
+                case INSTR_TUPLE_REST: {
+                        i32 jump_off;
+                        BC_READ(jump_off);
+                        int target = (int)(ip - code) + jump_off;
+                        if (bc_label_for(ctx, target) < 0) return false;
+                        BC_SKIP(i32); // start index
+                        break;
+                }
+
+                case INSTR_RECORD_REST: {
+                        i32 jump_off;
+                        BC_READ(jump_off);
+                        int target = (int)(ip - code) + jump_off;
+                        if (bc_label_for(ctx, target) < 0) return false;
+                        // Skip alignment padding + i32 list terminated by -1
+                        ip = ALIGNED_FOR(i32, ip);
+                        while (*(i32 const *)ip != -1) ip += sizeof (i32);
+                        ip += sizeof (i32); // skip the -1 sentinel
+                        break;
+                }
+
                 case INSTR_LOOP_ITER:
                 case INSTR_CLEAR_RC:
                 case INSTR_DICT:
@@ -2205,6 +2363,12 @@ bc_prescan(JitCtx *ctx, char const *code, int code_size)
 #undef BC_READ
 #undef BC_SKIP
 #undef BC_SKIPSTR
+
+        // Can't use setjmp-based try blocks in generators: yield suspends
+        // the coroutine, invalidating the setjmp frame.
+        if (has_try && has_yield) {
+                return false;
+        }
 
         return true;
 }
@@ -5485,6 +5649,191 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                         break;
                 }
 
+                CASE(TRY) {
+                        int catch_off, finally_off, end_off;
+                        BC_READ(catch_off);
+                        int catch_target = (int)(ip - code) + catch_off;
+
+                        BC_READ(finally_off);
+                        int finally_target = (finally_off == -1) ? -1 : (int)(ip - code) + finally_off;
+
+                        BC_READ(end_off);
+                        int end_target = (end_off == -1) ? -1 : (int)(ip - code) + end_off;
+
+                        if (ctx->try_depth >= MAX_JIT_TRY) {
+                                BAIL("too many nested try blocks");
+                        }
+
+                        // Record try block info
+                        JitTryInfo *ti = &ctx->try_info[ctx->try_depth++];
+                        ti->sp = ctx->sp;
+                        ti->end_addr = (end_target >= 0) ? (code + end_target) : NULL;
+                        ti->finally_label = (finally_target >= 0) ? bc_label_for(ctx, finally_target) : -1;
+                        ti->end_label = (end_target >= 0) ? bc_label_for(ctx, end_target) : -1;
+                        ti->n_finally_resumes = 0;
+
+                        int catch_label = bc_label_for(ctx, catch_target);
+
+                        // Compute bytecode addresses for catch/finally/end
+                        char *catch_addr = (char *)(code + catch_target);
+                        char *finally_addr = (finally_target >= 0) ? (char *)(code + finally_target) : NULL;
+                        char *end_addr_val = (end_target >= 0) ? (char *)(code + end_target) : NULL;
+
+                        // Sync stack so PushTry saves the correct state
+                        jit_emit_sync_stack_count(asm, ctx->bound, ctx->sp);
+
+                        // Call jit_rt_push_try(ty, ops_top, catch, finally, end) -> returns jmp_buf*
+                        jit_emit_mov(asm, BC_A0, BC_TY);
+                        jit_emit_add_imm(asm, BC_A1, BC_OPS, OP_OFF(ctx->sp));
+                        jit_emit_load_imm(asm, BC_A2, (iptr)catch_addr);
+                        jit_emit_load_imm(asm, BC_A3, (iptr)finally_addr);
+                        jit_emit_load_imm(asm, BC_A4, (iptr)end_addr_val);
+                        jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_push_try);
+                        jit_emit_call_reg(asm, BC_CALL);
+
+                        // Call _setjmp(jmp_buf) from JIT code frame
+                        // BC_RET has the jmp_buf pointer from jit_rt_push_try
+                        jit_emit_mov(asm, BC_A0, BC_RET);
+                        jit_emit_load_imm(asm, BC_CALL, (iptr)_setjmp);
+                        jit_emit_call_reg(asm, BC_CALL);
+
+                        // If _setjmp returned non-zero: exception was caught
+                        // DoThrow has restored VM state and pushed [SENTINEL, exception]
+                        // Reload stack pointers (may have been reallocated) and jump to catch
+                        int lbl_exc = bc_next_label(ctx);
+                        jit_emit_cbnz(asm, BC_RET, lbl_exc);
+
+                        // Normal path: _setjmp returned 0, continue with try body
+                        // Jump over exception setup code
+                        int lbl_try_body = bc_next_label(ctx);
+                        jit_emit_jump(asm, lbl_try_body);
+
+                        // Exception path: reload stack and jump to catch label
+                        jit_emit_label(asm, lbl_exc);
+                        jit_emit_reload_stack(asm, ctx->bound);
+
+                        // Set catch label sp: at catch, stack = try_sp + 2 (SENTINEL + exception)
+                        bc_set_label_sp(ctx, catch_target, ti->sp + 2);
+                        jit_emit_jump(asm, catch_label);
+
+                        // Try body starts here
+                        jit_emit_label(asm, lbl_try_body);
+
+                        break;
+                }
+
+                CASE(CATCH) {
+                        // PopThrowCtx + set state to TRY_FINALLY
+                        jit_emit_mov(asm, BC_A0, BC_TY);
+                        jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_catch);
+                        jit_emit_call_reg(asm, BC_CALL);
+                        break;
+                }
+
+                CASE(RETHROW) {
+                        // Set state to TRY_THROW, end to NULL, jump to finally
+                        jit_emit_mov(asm, BC_A0, BC_TY);
+                        jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_rethrow_setup);
+                        jit_emit_call_reg(asm, BC_CALL);
+
+                        // Jump to finally code for current try block
+                        if (ctx->try_depth <= 0) {
+                                BAIL("RETHROW outside try block");
+                        }
+                        JitTryInfo *ti = &ctx->try_info[ctx->try_depth - 1];
+                        if (ti->finally_label >= 0) {
+                                jit_emit_jump(asm, ti->finally_label);
+                        }
+                        ctx->dead = true;
+                        break;
+                }
+
+                CASE(FINALLY) {
+                        // FINALLY instruction (for early return/break inside try body):
+                        // Set state to TRY_FINALLY, save resume address, jump to finally code
+                        if (ctx->try_depth <= 0) {
+                                BAIL("FINALLY outside try block");
+                        }
+                        JitTryInfo *ti = &ctx->try_info[ctx->try_depth - 1];
+
+                        // The bytecode address right after this FINALLY instruction
+                        // is the resume point after finally code runs
+                        char const *resume_addr = (char *)(code + (int)(ip - code));
+
+                        // Create a label for the resume point
+                        int resume_off = (int)(ip - code);
+                        int resume_label = bc_label_for(ctx, resume_off);
+                        bc_set_label_sp(ctx, resume_off, ctx->sp);
+
+                        // Register this resume in the try info
+                        if (ti->n_finally_resumes < 8) {
+                                ti->finally_resumes[ti->n_finally_resumes].addr = resume_addr;
+                                ti->finally_resumes[ti->n_finally_resumes].label = resume_label;
+                                ti->n_finally_resumes++;
+                        }
+
+                        // Call jit_rt_finally_enter(ty, resume_addr)
+                        jit_emit_mov(asm, BC_A0, BC_TY);
+                        jit_emit_load_imm(asm, BC_A1, (iptr)resume_addr);
+                        jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_finally_enter);
+                        jit_emit_call_reg(asm, BC_CALL);
+
+                        // Jump to finally code
+                        if (ti->finally_label >= 0) {
+                                jit_emit_jump(asm, ti->finally_label);
+                        }
+
+                        ctx->dead = true;
+                        break;
+                }
+
+                CASE(END_TRY) {
+                        if (ctx->try_depth <= 0) {
+                                BAIL("END_TRY outside try block");
+                        }
+                        JitTryInfo *ti = &ctx->try_info[ctx->try_depth - 1];
+
+                        // Call jit_rt_end_try(ty) -> returns _try->end
+                        jit_emit_mov(asm, BC_A0, BC_TY);
+                        jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_end_try);
+                        jit_emit_call_reg(asm, BC_CALL);
+
+                        // If end is NULL: re-throw (doesn't return)
+                        int lbl_not_null = bc_next_label(ctx);
+                        jit_emit_cbnz(asm, BC_RET, lbl_not_null);
+
+                        // Re-throw path
+                        jit_emit_mov(asm, BC_A0, BC_TY);
+                        jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_end_try_rethrow);
+                        jit_emit_call_reg(asm, BC_CALL);
+                        // Doesn't return (longjmps to outer handler)
+
+                        jit_emit_label(asm, lbl_not_null);
+
+                        // Dispatch based on _try->end value
+                        // Check if it's the normal end address
+                        if (ti->end_label >= 0 && ti->end_addr != NULL) {
+                                jit_emit_load_imm(asm, BC_S0, (iptr)ti->end_addr);
+                                jit_emit_cmp_rr(asm, BC_RET, BC_S0);
+                                jit_emit_branch_eq(asm, ti->end_label);
+                        }
+
+                        // Check FINALLY resume points
+                        for (int q = 0; q < ti->n_finally_resumes; ++q) {
+                                jit_emit_load_imm(asm, BC_S0, (iptr)ti->finally_resumes[q].addr);
+                                jit_emit_cmp_rr(asm, BC_RET, BC_S0);
+                                jit_emit_branch_eq(asm, ti->finally_resumes[q].label);
+                        }
+
+                        // Fallback: jump to end label if we have one
+                        if (ti->end_label >= 0) {
+                                jit_emit_jump(asm, ti->end_label);
+                        }
+
+                        ctx->try_depth--;
+                        break;
+                }
+
                 CASE(BAD_CALL)
                         BC_SKIPSTR();
                         BC_SKIPSTR();
@@ -6240,6 +6589,97 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                         // If count > expected_len, jump to fail
                         jit_emit_cmp_ri(asm, BC_S0, expected_len);
                         jit_emit_branch_gt(asm, fail_lbl);
+                        break;
+                }
+
+                CASE(ARRAY_REST) {
+                        int jump_off;
+                        BC_READ(jump_off);
+                        int target = (int)(ip - code) + jump_off;
+                        int fail_lbl = bc_find_label(ctx, target);
+                        if (fail_lbl < 0) BAIL("invalid ARRAY_REST target");
+
+                        int start, suffix;
+                        BC_READ(start);
+                        BC_READ(suffix);
+
+                        int tos_off = OP_OFF(ctx->sp - 1);
+
+                        jit_emit_sync_stack_count(asm, ctx->bound, ctx->sp);
+
+                        jit_emit_mov(asm, BC_A0, BC_TY);
+                        jit_emit_add_imm(asm, BC_A1, BC_OPS, tos_off);
+                        jit_emit_load_imm(asm, BC_A2, start);
+                        jit_emit_load_imm(asm, BC_A3, suffix);
+                        jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_array_rest);
+                        jit_emit_call_reg(asm, BC_CALL);
+
+                        jit_emit_cmp_ri(asm, BC_RET, 0);
+                        bc_set_label_sp(ctx, target, ctx->sp);
+                        jit_emit_branch_eq(asm, fail_lbl);
+                        break;
+                }
+
+                CASE(TUPLE_REST) {
+                        int jump_off;
+                        BC_READ(jump_off);
+                        int target = (int)(ip - code) + jump_off;
+                        int fail_lbl = bc_find_label(ctx, target);
+                        if (fail_lbl < 0) BAIL("invalid TUPLE_REST target");
+
+                        int start;
+                        BC_READ(start);
+
+                        int tos_off = OP_OFF(ctx->sp - 1);
+
+                        // Sync stack for poptarget
+                        jit_emit_sync_stack_count(asm, ctx->bound, ctx->sp);
+
+                        // Call jit_rt_tuple_rest(ty, tos, start)
+                        jit_emit_mov(asm, BC_A0, BC_TY);
+                        jit_emit_add_imm(asm, BC_A1, BC_OPS, tos_off);
+                        jit_emit_load_imm(asm, BC_A2, start);
+                        jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_tuple_rest);
+                        jit_emit_call_reg(asm, BC_CALL);
+
+                        // If returned 0: not a tuple, jump to fail
+                        jit_emit_cmp_ri(asm, BC_RET, 0);
+                        bc_set_label_sp(ctx, target, ctx->sp);
+                        jit_emit_branch_eq(asm, fail_lbl);
+                        break;
+                }
+
+                CASE(RECORD_REST) {
+                        int jump_off;
+                        BC_READ(jump_off);
+                        int target = (int)(ip - code) + jump_off;
+                        int fail_lbl = bc_find_label(ctx, target);
+                        if (fail_lbl < 0) BAIL("invalid RECORD_REST target");
+
+                        // Skip alignment padding, then grab pointer to excluded IDs list
+                        ip = ALIGNED_FOR(i32, ip);
+                        i32 const *excluded_ids = (i32 const *)ip;
+
+                        // Advance ip past the -1 terminated list
+                        while (*(i32 const *)ip != -1) ip += sizeof (i32);
+                        ip += sizeof (i32);
+
+                        int tos_off = OP_OFF(ctx->sp - 1);
+
+                        // Sync stack for poptarget
+                        jit_emit_sync_stack_count(asm, ctx->bound, ctx->sp);
+
+                        // Call jit_rt_record_rest(ty, tos, excluded_ids)
+                        jit_emit_mov(asm, BC_A0, BC_TY);
+                        jit_emit_add_imm(asm, BC_A1, BC_OPS, tos_off);
+                        jit_emit_load_imm(asm, BC_A2, (iptr)excluded_ids);
+                        jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_record_rest);
+                        jit_emit_call_reg(asm, BC_CALL);
+
+                        // If returned 0: not a record, jump to fail
+                        jit_emit_cmp_ri(asm, BC_RET, 0);
+                        bc_set_label_sp(ctx, target, ctx->sp);
+                        jit_emit_branch_eq(asm, fail_lbl);
                         break;
                 }
 
