@@ -67,18 +67,28 @@ pub const ListType = {
 pub const NodeType = {
   None: CMARK_NODE_NONE,
   Document: CMARK_NODE_DOCUMENT,
+  BlockQuote: CMARK_NODE_BLOCK_QUOTE,
   Paragraph: CMARK_NODE_PARAGRAPH,
   Strong: CMARK_NODE_STRONG,
   Emph: CMARK_NODE_EMPH,
   Text: CMARK_NODE_TEXT,
+  SoftBreak: CMARK_NODE_SOFTBREAK,
+  LineBreak: CMARK_NODE_LINEBREAK,
   List: CMARK_NODE_LIST,
   Heading: CMARK_NODE_HEADING,
-  Item: CMARK_NODE_ITEM
+  Item: CMARK_NODE_ITEM,
   Code: CMARK_NODE_CODE,
   CodeBlock: CMARK_NODE_CODE_BLOCK,
+  HtmlBlock: CMARK_NODE_HTML_BLOCK,
+  HtmlInline: CMARK_NODE_HTML_INLINE,
+  ThematicBreak: CMARK_NODE_THEMATIC_BREAK,
   Link: CMARK_NODE_LINK,
   Image: CMARK_NODE_IMAGE
 };
+
+fn escape-html(s: String) -> String {
+  s.sub('&', '&amp;').sub('<', '&lt;').sub('>', '&gt;').sub('"', '&quot;')
+}
 
 pub class MarkdownNode {
   __node: _
@@ -143,6 +153,10 @@ pub class MarkdownNode {
     children.map(\_.html).join()
   }
 
+  render-children(renderers: Dict) -> String {
+    children.map(\_.render(renderers)).join()
+  }
+
   code-tag {
     if let $lang = info-string and #lang > 0 {
       "<code class=\"language-{lang}\">"
@@ -152,19 +166,35 @@ pub class MarkdownNode {
   }
 
   html -> String {
-    match type {
-      NodeType.Emph      => "<em>{children-html}</em>",
-      NodeType.Strong    => "<strong>{children-html}</strong>",
-      NodeType.Text      => "{text}",
-      NodeType.Heading   => "<h{heading-level}>{children-html}</h{heading-level}>",
-      NodeType.Link      => "<a href=\"{url}\">{children-html}</a>",
-      NodeType.Image     => "<img src=\"{url}\">",
-      NodeType.Document  => "<html><body>{children-html}</body></html>",
-      NodeType.Code      => "<code>{text}</code>",
-      NodeType.CodeBlock => "<pre>{code-tag}{text}</code></pre>",
-      NodeType.Paragraph => "<p>{children-html}</p>",
-      NodeType.List      => (list-type == ListType.Bullet) ? "<ul>{children-html}</ul>" : "<ol>{children-html}</ol>",
-      NodeType.Item      => "<li>{children-html}</li>"
+    render(Dict())
+  }
+
+  render(renderers: Dict = Dict()) -> String {
+    let t = type
+
+    if let $custom = renderers[t] {
+      return custom(self, renderers)
+    }
+
+    match t {
+      NodeType.Emph          => "<em>{render-children(renderers)}</em>",
+      NodeType.Strong        => "<strong>{render-children(renderers)}</strong>",
+      NodeType.Text          => escape-html(text ?? ''),
+      NodeType.SoftBreak     => "\n",
+      NodeType.LineBreak     => "<br>",
+      NodeType.Heading       => "<h{heading-level}>{render-children(renderers)}</h{heading-level}>",
+      NodeType.Link          => "<a href=\"{url}\">{render-children(renderers)}</a>",
+      NodeType.Image         => "<img src=\"{url}\">",
+      NodeType.Document      => render-children(renderers),
+      NodeType.BlockQuote    => "<blockquote>{render-children(renderers)}</blockquote>",
+      NodeType.Code          => "<code>{escape-html(text ?? '')}</code>",
+      NodeType.CodeBlock     => "<pre>{code-tag}{escape-html(text ?? '')}</code></pre>",
+      NodeType.HtmlBlock     => text ?? '',
+      NodeType.HtmlInline    => text ?? '',
+      NodeType.ThematicBreak => "<hr>",
+      NodeType.Paragraph     => "<p>{render-children(renderers)}</p>",
+      NodeType.List          => (list-type == ListType.Bullet) ? "<ul>{render-children(renderers)}</ul>" : "<ol>{render-children(renderers)}</ol>",
+      NodeType.Item          => "<li>{render-children(renderers)}</li>"
     }
   }
 }
