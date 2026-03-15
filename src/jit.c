@@ -2138,6 +2138,7 @@ bc_prescan(JitCtx *ctx, char const *code, int code_size)
                 }
 
                 case INSTR_ASSIGN_SUBSCRIPT:
+                        BC_SKIP(u8);
                         break;
 
                 case INSTR_HALT:

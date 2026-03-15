@@ -423,7 +423,7 @@ pub class InteractiveLineReader {
         }
 
         fn draw(start: Int, count: Int) {
-            let i = line[;i].map(`#`).sum() ?? 0
+            let i = line[;i].map(&width).sum() ?? 0
             let lines = [(it.str() ?? '').chars() for lines]
 
             let (lines, line, col) = render(prompt, lines, nr, i)

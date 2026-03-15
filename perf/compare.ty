@@ -1,0 +1,289 @@
+import os
+import json
+import path (Path)
+import chalk (chalk)
+import clap (clap!)
+import math
+import ty
+
+import lib (fmt-time)
+
+/** Head-to-head comparison: ty vs Python. */
+clap! Compare {
+    /// Benchmark name filter
+    filter: String, pos: true
+
+    /// Use last saved results (skip re-run)
+    cached: Bool
+
+    /// Only re-run ty (use cached Python)
+    tyOnly: Bool
+
+    /// Only re-run Python (use cached ty)
+    pyOnly: Bool
+
+    /// Force JIT mode for comparison
+    jit: Bool, short: 'j'
+
+    /// Force non-JIT mode for comparison
+    noJit: Bool, short: 'J'
+
+    /// Number of timed rounds
+    rounds: Int, short: 'n', default: 5, check: 1..100
+
+    /// Number of warmup iterations
+    warmup: Int, default: 3, check: 0..100
+}
+
+let PERF_DIR = Path(__file__).parent
+
+fn ty-results-file(jit: Bool) {
+    let sfx = if jit { '_jit' } else { '' }
+    "{PERF_DIR}/results{sfx}.json"
+}
+
+fn ty-best-file(jit: Bool) {
+    let sfx = if jit { '_jit' } else { '' }
+    "{PERF_DIR}/best{sfx}.json"
+}
+
+let PY_RESULTS = "{PERF_DIR}/results_py.json"
+
+let TY_TO_DISPLAY = %{
+    'chaosGame':     'chaos',
+    'fannkuchBench': 'fannkuch',
+    'floatOps':      'float',
+    'genTree':       'generators',
+    'nbody':         'nbody',
+    'nqueens':       'nqueens',
+    'raytrace':      'raytrace',
+    'recursion':     'recursion',
+    'richardsBench': 'richards',
+    'spectralNorm':  'spectral_norm',
+}
+
+fn fmt-ratio(ratio: Float) -> String {
+    if ratio >= 1.0 { "{ratio:.2}x" }
+    else { let inv = 1.0 / ratio; "{inv:.2}x" }
+}
+
+fn run-suite(cmd: [String]) {
+    let p = os.spawn(cmd)
+    os.wait(p.pid)
+}
+
+fn run-ty(filter, rounds: Int, warmup: Int, jit: Bool) {
+    let ty-bin = "{PERF_DIR.parent}/ty"
+    let cmd = [ty-bin]
+    if !jit { cmd.push('-j') }
+    cmd.push("{PERF_DIR}/run.ty")
+    cmd.push('-n')
+    cmd.push("{rounds}")
+    cmd.push("--warmup={warmup}")
+    if filter { cmd.push(filter) }
+    let mode = if jit { 'JIT' } else { 'no-JIT' }
+    print(chalk"[dim]Running ty benchmarks"
+              " ({mode})...[/]")
+    run-suite(cmd)
+    json.parse(Path(ty-results-file(jit)).read-text())
+}
+
+fn run-python(filter, rounds: Int, warmup: Int) {
+    let cmd = [
+        'python3', "{PERF_DIR}/run_py.py",
+        '-n', "{rounds}", "--warmup={warmup}"
+    ]
+    if filter { cmd.push(filter) }
+    print(chalk"[dim]Running Python benchmarks...[/]")
+    run-suite(cmd)
+    json.parse(Path(PY_RESULTS).read-text())
+}
+
+fn load-cached(path: String, label: String) {
+    try {
+        return json.parse(Path(path).read-text())
+    } catch _ {
+        print(chalk"[red bold]No cached {label} results."
+                    " Run without --cached first.[/]")
+        os.exit(1)
+    }
+}
+
+fn print-table(
+    ty-results, py-results,
+    jit: Bool
+) {
+    let ty-map = %{}
+    for r in ty-results {
+        let d = TY_TO_DISPLAY[r['name']] ?? r['name']
+        ty-map[d] = r
+    }
+
+    let py-map = %{r['name']: r for r in py-results}
+    let names = [*ty-map.keys(), *py-map.keys()]
+        .uniq().sort()
+
+    if #names == 0 {
+        print('No benchmark results to compare.')
+        return
+    }
+
+    let nw = max(9, names.map(\#_).max()) + 2
+    let rule = "{'':─<{nw + 46}}"
+
+    let mode = if jit {
+        chalk"[bright green bold]JIT[/]"
+    } else {
+        chalk"[dim]no JIT[/]"
+    }
+
+    print()
+    print(chalk"[bold bright cyan]"
+              "  ty vs Python[/]  ({mode})")
+    print()
+    print(chalk"[bold]  {'Benchmark':{nw}}"
+              "  {'ty':>10}  {'Python':>10}"
+              "  {'Ratio':>10}  {'Winner':>8}[/]")
+    print(chalk"  [dim]{rule}[/]")
+
+    let ty-wins  = 0
+    let py-wins  = 0
+    let ratios: [Float] = []
+
+    for name in names {
+        if ty-map[name] == nil
+        || py-map[name] == nil {
+            let t = if let $r = ty-map[name] {
+                fmt-time(r['median'])
+            } else { '--' }
+            let p = if let $r = py-map[name] {
+                fmt-time(r['median'])
+            } else { '--' }
+            print(chalk"  [bold]{name:{nw}}[/]"
+                      "  [dim]{t:>10}  {p:>10}"
+                      "  {'--':>10}  {'--':>8}[/]")
+            continue
+        }
+
+        let ty-med: Float = ty-map[name]['median']
+        let py-med: Float = py-map[name]['median']
+        let ratio = py-med / ty-med
+        ratios.push(ratio)
+
+        let t = fmt-time(ty-med)
+        let p = fmt-time(py-med)
+        let rs = fmt-ratio(ratio)
+
+        if ratio > 1.05 {
+            ty-wins += 1
+            print(chalk"  [bold]{name:{nw}}[/]"
+                      "  [bright green]{t:>10}[/]"
+                      "  {p:>10}"
+                      "  [bright green bold]{rs:>10}[/]"
+                      "  [bright green bold]{'ty':>8}[/]")
+        } else if ratio < 0.95 {
+            py-wins += 1
+            print(chalk"  [bold]{name:{nw}}[/]"
+                      "  {t:>10}"
+                      "  [bright green]{p:>10}[/]"
+                      "  [red bold]{rs:>10}[/]"
+                      "  [red bold]{'Python':>8}[/]")
+        } else {
+            print(chalk"  [bold]{name:{nw}}[/]"
+                      "  {t:>10}  {p:>10}"
+                      "  [dim]{'~1.00x':>10}[/]"
+                      "  [dim]{'tie':>8}[/]")
+        }
+    }
+
+    print(chalk"  [dim]{rule}[/]")
+
+    if #ratios == 0 { print(); return }
+
+    let geo = math.exp(
+        ratios.map(\math.log(_)).sum() / #ratios
+    )
+
+    let ty-total = 0.0
+    let py-total = 0.0
+    for name in names {
+        if ty-map[name] != nil
+        && py-map[name] != nil {
+            ty-total += Float(ty-map[name]['median'])
+            py-total += Float(py-map[name]['median'])
+        }
+    }
+
+    fn describe(r: Float) {
+        if r >= 1.0 {
+            chalk"[bright green]ty {r:.2}x faster[/]"
+        } else {
+            let inv = 1.0 / r
+            chalk"[red]Python {inv:.2}x faster[/]"
+        }
+    }
+
+    let geo-str = if geo >= 1.0 {
+        chalk"[bold bright cyan]"
+            "ty {geo:.2}x faster[/]"
+    } else {
+        let inv = 1.0 / geo
+        chalk"[bold red]"
+            "Python {inv:.2}x faster[/]"
+    }
+
+    let tied = #ratios - ty-wins - py-wins
+
+    print()
+    print(chalk"  {'Total time:':24}"
+              " ty [cyan]{fmt-time(ty-total):>10}[/]"
+              "   Python [magenta]"
+              "{fmt-time(py-total):>10}[/]")
+    print("  {'Geometric mean:':24} {geo-str}")
+    print("  {'Best:':24} {describe(ratios.max())}")
+    print("  {'Worst:':24} {describe(ratios.min())}")
+    print("  {'Wins:':24}"
+          " ty {ty-wins}  /  Python {py-wins}"
+          "  /  tied {tied}")
+    print()
+}
+
+fn main() {
+    let (opts, _) = Compare.parse()
+
+    let jit = if opts.noJit { false }
+         else if opts.jit   { true  }
+         else               { ty.jit }
+
+    let ty-res-file = ty-results-file(jit)
+
+    let ty-results: _ = nil
+    let py-results: _ = nil
+
+    if opts.cached {
+        ty-results = load-cached(ty-res-file, 'ty')
+        py-results = load-cached(PY_RESULTS, 'Python')
+    } else {
+        ty-results = if opts.pyOnly {
+            load-cached(ty-res-file, 'ty')
+        } else {
+            run-ty(
+                opts.filter, opts.rounds,
+                opts.warmup, jit
+            )
+        }
+
+        py-results = if opts.tyOnly {
+            load-cached(PY_RESULTS, 'Python')
+        } else {
+            run-python(
+                opts.filter, opts.rounds,
+                opts.warmup
+            )
+        }
+    }
+
+    print-table(ty-results, py-results, jit)
+}
+
+main()
