@@ -862,6 +862,7 @@ macro __define_ast! {
          }]
        | ty.Each[{iter: AST, pattern: AST, expr: AST, ?`if`: AST, ?`while`: AST}]
        | ty.SpecialString[Array[String | AST | (AST, String | nil, Int | nil, AST)]]
+       | ty.LangString[(AST, Array[String | AST | (AST, String | nil, Int | nil, AST)])]
        | ty.Spread[AST]
        | ty.Splat[AST]
        | ty.Block[Array[AST]]
@@ -1008,6 +1009,10 @@ class String : Iterable[String], IntoPtr[Int] {
 
     upper() -> String;
     lower() -> String;
+
+    title() -> String {
+        self.sub(/(?<=[\s\-_]|^)./, &upper)
+    }
 
     comb(pattern: String | Regex) -> String;
 
@@ -4044,6 +4049,14 @@ macro __walk! {
             ),
 
             ty.SpecialString(parts) => ty.SpecialString(
+                parts.map(match {
+                    (e, fmt, w, x) => (walk(e, f), walk(fmt, f), w, walk(x, f)),
+                    e              => walk(e, f),
+                })
+            ),
+
+            ty.LangString(lang, parts) => ty.LangString(
+                walk(lang, f),
                 parts.map(match {
                     (e, fmt, w, x) => (walk(e, f), walk(fmt, f), w, walk(x, f)),
                     e              => walk(e, f),

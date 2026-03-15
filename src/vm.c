@@ -5357,24 +5357,28 @@ DoTargetSubscript(Ty *ty)
 }
 
 void
-DoAssignSubscript(Ty *ty, bool exec)
+DoAssignSubscript(Ty *ty, int n, bool exec)
 {
         Value v;
         Value p;
         Value *f;
-        Value subscript = top()[0];
-        Value container = top()[-1];
-        Value value = top()[-2];
+
+        isize i_xs = vN(STACK) - (n + 1);
+        isize i_x  = i_xs - 1;
+
+        Value subscript = peek();
+        Value container = v__(STACK, i_xs);
+        Value value     = v__(STACK, i_x);
 
         switch (container.type) {
         case VALUE_ARRAY:
-                if (UNLIKELY(subscript.type != VALUE_INTEGER)) {
-                        zP("non-integer index in subscript assignment to Array: %s", VSC(&subscript));
+                if (UNLIKELY((n != 1) || (subscript.type != VALUE_INTEGER))) {
+                        zP("invalid index in subscript assignment to Array: %s", VSC(&subscript));
                 }
                 if (subscript.z < 0) {
-                        subscript.z += container.array->count;
+                        subscript.z += vN(*container.array);
                 }
-                if (UNLIKELY(subscript.z < 0 || subscript.z >= container.array->count)) {
+                if (UNLIKELY(subscript.z < 0 || subscript.z >= vN(*container.array))) {
                         push(TAGGED(TAG_INDEX_ERR, container, subscript));
                         RaiseException(ty);
                 }
@@ -5386,7 +5390,7 @@ DoAssignSubscript(Ty *ty, bool exec)
                 break;
 
         case VALUE_BLOB:
-                if (UNLIKELY(subscript.type != VALUE_INTEGER)) {
+                if (UNLIKELY((n != 1) || (subscript.type != VALUE_INTEGER))) {
                         zP("non-integer index in subscript assignment to Blob: %s", VSC(&subscript));
                 }
                 if (subscript.z < 0) {
@@ -5403,7 +5407,7 @@ DoAssignSubscript(Ty *ty, bool exec)
                 break;
 
         case VALUE_PTR:
-                if (UNLIKELY(subscript.type != VALUE_INTEGER)) {
+                if (UNLIKELY((n != 1) || (subscript.type != VALUE_INTEGER))) {
                         zP("non-integer offset in pointer subscript assignment: %s", VSC(&subscript));
                 }
                 p = vm_2op(ty, OP_ADD, &container, &subscript);
@@ -5417,29 +5421,29 @@ DoAssignSubscript(Ty *ty, bool exec)
                 return;
 
         case VALUE_OBJECT:
-                swap();
-                pop();
-                swap();
+                vvXi(STACK, i_xs);
+                vvXi(STACK, i_x);
+                xpush(value);
                 f = class_lookup_setter_i(ty, container.class, NAMES.subscript);
                 if (f != NULL) {
                         if (exec) {
-                                exec_fn(ty, f, &container, 2, NULL);
+                                exec_fn(ty, f, &container, n + 1, NULL);
                         } else {
-                                call(ty, f, &container, 2, NULL);
+                                call(ty, f, &container, n + 1, NULL);
                         }
                 }
                 return;
 
         case VALUE_CLASS:
-                swap();
-                pop();
-                swap();
+                vvXi(STACK, i_xs);
+                vvXi(STACK, i_x);
+                xpush(value);
                 f = class_lookup_s_setter_i(ty, container.class, NAMES.subscript);
                 if (f != NULL) {
                         if (exec) {
-                                exec_fn(ty, f, &container, 2, NULL);
+                                exec_fn(ty, f, &container, n + 1, NULL);
                         } else {
-                                call(ty, f, &container, 2, NULL);
+                                call(ty, f, &container, n + 1, NULL);
                         }
                 }
                 return;
@@ -5452,8 +5456,7 @@ DoAssignSubscript(Ty *ty, bool exec)
                 );
         }
 
-        pop();
-        pop();
+        vN(STACK) -= (n + 1);
 }
 
 inline static void
@@ -6797,7 +6800,8 @@ NextInstruction:
                         break;
 
                 CASE(ASSIGN_SUBSCRIPT)
-                        DoAssignSubscript(ty, false);
+                        n = *IP++;
+                        DoAssignSubscript(ty, n, false);
                         break;
 
                 CASE(TARGET_REF)
@@ -10343,6 +10347,9 @@ StepInstruction(char const *ip)
         CASE(TARGET_LOCAL)
         CASE(ASSIGN_LOCAL)
                 SKIPVALUE(n);
+                break;
+        CASE(ASSIGN_SUBSCRIPT)
+                READVALUE(b);
                 break;
         CASE(TARGET_REF)
                 SKIPVALUE(n);

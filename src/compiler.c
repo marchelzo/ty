@@ -2045,6 +2045,7 @@ inline static void
         ) {
                 *vvL(STATE.code) = INSTR_ASSIGN_SUBSCRIPT;
                 last3 = INSTR_ASSIGN_SUBSCRIPT;
+                avP(STATE.code, 1);
         } else if (
                 (last3 == INSTR_POP)
              &&     (c == INSTR_POP)
@@ -10647,6 +10648,19 @@ emit_assignment2(Ty *ty, Expr *target, bool maybe, bool def)
                 }
                 break;
 
+        case EXPRESSION_SUBSCRIPT:
+                EE(target->container);
+                if (target->subscript->type == EXPRESSION_LIST) {
+                        vfor(target->subscript->es, EE(*it));
+                        INSN(ASSIGN_SUBSCRIPT);
+                        Eu8(vN(target->subscript->es));
+                } else {
+                        EE(target->subscript);
+                        INSN(ASSIGN_SUBSCRIPT);
+                        Eu8(1);
+                }
+                break;
+
         default:
                 emit_target(ty, target, def);
                 INSNx(instr);
@@ -18835,7 +18849,9 @@ DumpProgram(
                 CASE(TARGET_SUBSCRIPT)
                         break;
                 CASE(ASSIGN)
+                        break;
                 CASE(ASSIGN_SUBSCRIPT)
+                        READVALUE(n8);
                         break;
                 CASE(MAYBE_ASSIGN)
                         break;

@@ -1072,7 +1072,13 @@ static Type *
                 } else if (t1 == NULL) {
                         t1 = t2;
                 } else {
-                        avP(t0->params, PARAM(name, t1, !optional));
+                        if (TypeType(t1) == TYPE_LIST) {
+                                for (int i = 0; i < vN(t1->types); ++i) {
+                                        avP(t0->params, PARAM(name, v__(t1->types, i), !optional));
+                                }
+                        } else {
+                                avP(t0->params, PARAM(name, t1, !optional));
+                        }
                         name = NULL;
                         optional = false;
                         t1 = t2;
@@ -7805,7 +7811,7 @@ type_slice_t(Ty *ty, Type *t0, Type *t1, Type *t2, Type *t3)
 Type *
 type_subscript_t(Ty *ty, Type *t0, Type *t1)
 {
-        if (IsTuple(t0) && TypeType(t1) == TYPE_INT) {
+        if (IsTuple(t0) && IsIntLit(t1)) {
                 return (vN(t0->types) > t1->z)
                      ? v__(t0->types, t1->z)
                      : BOTTOM;
