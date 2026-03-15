@@ -605,6 +605,7 @@ pub class Chalk {
                 ('fg',        {fg, ?bright})    => true,
                 ('bg',        {bg, ?bg-bright}) => true,
                 ('uc',        {uc, ?underline}) => true,
+                ('u',         {underline, ?uc}) => true,
                 ('underline', {underline, ?uc}) => true,
                 ('link',      {link})           => true,
 
@@ -695,11 +696,12 @@ pub class Chalk {
 
         fn stops(stop, style) {
             match (stop, style) {
-                ('fg',   {fg, ?bright})    => true,
-                ('bg',   {bg, ?bg-bright}) => true,
-                ('uc',   {uc, ?underline}) => true,
-                ('u',    {underline, ?uc}) => true,
-                ('link', {link})           => true,
+                ('fg',        {fg, ?bright})    => true,
+                ('bg',        {bg, ?bg-bright}) => true,
+                ('uc',        {uc, ?underline}) => true,
+                ('u',         {underline, ?uc}) => true,
+                ('underline', {underline, ?uc}) => true,
+                ('link',      {link})           => true,
                 _  => (style == __styles[stop])
             }
         }
