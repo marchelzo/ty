@@ -1487,20 +1487,16 @@ NewGenerator(Ty *ty, Value fun)
 static char const *
 co_up(Ty *ty, co_state *st)
 {
-        if (vN(st->frames) == 0 || vN(STACK) == 0) {
+        if (
+                (vN(st->frames) == 0)
+             || (vN(st->stack)  == 0)
+             || (vv(st->stack)->type != VALUE_GENERATOR)
+        ) {
                 return NULL;
         }
 
-        usize n = vv(st->frames)->fp;
-
-        if (n == 0 || v_(STACK, n - 1)->type != VALUE_GENERATOR) {
-                return NULL;
-        }
-
-        Generator *gen = v_(STACK, n - 1)->gen;
-
+        Generator *gen = vv(st->stack)->gen;
         *st = *gen->st;
-
         return gen->ip;
 }
 
@@ -2023,6 +2019,8 @@ PushThrowCtx(Ty *ty)
 
         vN(ctx->locals) = 0;
         //=========================================
+
+        ty->st->stack = STACK;
 
         if (DetailedExceptions) {
                 CaptureContextEx(ty, ctx);

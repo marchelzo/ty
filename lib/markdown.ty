@@ -105,7 +105,7 @@ pub class MarkdownNode {
     if let $p = cmark_node_get_literal(__node) {
       c.str(p)
     } else if let $c = cmark_node_first_child(__node) and c == cmark_node_last_child(__node) {
-      MarkdownNode(c).text()
+      MarkdownNode(c).text
     }
   }
 
