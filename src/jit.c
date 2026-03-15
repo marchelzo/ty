@@ -1325,10 +1325,10 @@ jit_rt_tls0(Ty *ty, Value *top, int n)
 // Stack layout: value, container, subscript (TOS)
 // Pops all 3
 static void
-jit_rt_assign_subscript(Ty *ty, Value *value, Value *container, Value *subscript)
+jit_rt_assign_subscript(Ty *ty, Value *top, int n)
 {
-        vN(STACK) = value - vv(STACK) + 3;
-        DoAssignSubscript(ty, true);
+        vN(STACK) = top - vv(STACK);
+        DoAssignSubscript(ty, n, true);
 }
 
 // Create array from N values on the JIT operand stack
@@ -5389,62 +5389,67 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                 }
 
                 CASE(ASSIGN_SUBSCRIPT) {
+                        u8 n;
+                        BC_READ(n);
+
                         // Stack: ..., value, container, subscript (TOS)
                         // After: ..., value (pops subscript + container, keeps value)
-                        int sub_off = OP_OFF(ctx->sp - 1);
-                        int con_off = OP_OFF(ctx->sp - 2);
-                        int val_off = OP_OFF(ctx->sp - 3);
+                        int sub_off = OP_OFF(ctx->sp - n);
+                        int con_off = OP_OFF(ctx->sp - (n + 1));
+                        int val_off = OP_OFF(ctx->sp - (n + 2));
 
-                        int lbl_slow = bc_next_label(ctx);
                         int lbl_done = bc_next_label(ctx);
 
-                        // Fast path: container is array, subscript is non-negative int
-                        jit_emit_ldrb(asm, BC_S0, BC_OPS, con_off + VAL_OFF_TYPE);
-                        jit_emit_cmp_ri(asm, BC_S0, VALUE_ARRAY);
-                        jit_emit_branch_ne(asm, lbl_slow);
+                        if (n == 1) {
+                                int lbl_slow = bc_next_label(ctx);
 
-                        jit_emit_ldrb(asm, BC_S0, BC_OPS, sub_off + VAL_OFF_TYPE);
-                        jit_emit_cmp_ri(asm, BC_S0, VALUE_INTEGER);
-                        jit_emit_branch_ne(asm, lbl_slow);
+                                // Fast path: container is array, subscript is non-negative int
+                                jit_emit_ldrb(asm, BC_S0, BC_OPS, con_off + VAL_OFF_TYPE);
+                                jit_emit_cmp_ri(asm, BC_S0, VALUE_ARRAY);
+                                jit_emit_branch_ne(asm, lbl_slow);
 
-                        // Load index
-                        jit_emit_ldr64(asm, BC_S0, BC_OPS, sub_off + VAL_OFF_Z); // idx
+                                jit_emit_ldrb(asm, BC_S0, BC_OPS, sub_off + VAL_OFF_TYPE);
+                                jit_emit_cmp_ri(asm, BC_S0, VALUE_INTEGER);
+                                jit_emit_branch_ne(asm, lbl_slow);
 
-                        // Load array pointer
-                        jit_emit_ldr64(asm, BC_S1, BC_OPS, con_off + VAL_OFF_Z); // Array*
+                                // Load index
+                                jit_emit_ldr64(asm, BC_S0, BC_OPS, sub_off + VAL_OFF_Z); // idx
 
-                        // Bounds check: 0 <= idx < array->count
-                        jit_emit_ldr64(asm, BC_S2, BC_S1, 8);  // count (Array+8)
+                                // Load array pointer
+                                jit_emit_ldr64(asm, BC_S1, BC_OPS, con_off + VAL_OFF_Z); // Array*
 
-                        // idx < 0 => slow path (handles negative indices)
-                        jit_emit_cmp_ri(asm, BC_S0, 0);
-                        jit_emit_branch_lt(asm, lbl_slow);
+                                // Bounds check: 0 <= idx < array->count
+                                jit_emit_ldr64(asm, BC_S2, BC_S1, 8);  // count (Array+8)
 
-                        // idx >= count => slow path
-                        // cmp_lt sets BC_S2 = (idx < count), branch if NOT
-                        jit_emit_cmp_lt(asm, BC_S2, BC_S0, BC_S2);
-                        jit_emit_cbz(asm, BC_S2, lbl_slow);
+                                // idx < 0 => slow path (handles negative indices)
+                                jit_emit_cmp_ri(asm, BC_S0, 0);
+                                jit_emit_branch_lt(asm, lbl_slow);
 
-                        // Compute item address: items + idx * 32
-                        jit_emit_ldr64(asm, BC_S1, BC_S1, 0);  // items pointer
-                        // BC_S0 = idx, shift left by 5 (multiply by 32)
-                        jit_emit_load_imm(asm, BC_S2, 5);
-                        jit_emit_shl(asm, BC_S0, BC_S0, BC_S2);
-                        jit_emit_add(asm, BC_S1, BC_S1, BC_S0); // item_addr = items + idx*32
+                                // idx >= count => slow path
+                                // cmp_lt sets BC_S2 = (idx < count), branch if NOT
+                                jit_emit_cmp_lt(asm, BC_S2, BC_S0, BC_S2);
+                                jit_emit_cbz(asm, BC_S2, lbl_slow);
 
-                        // Copy value (32 bytes) from ops[val_off] to item_addr
-                        jit_emit_ldp64(asm, BC_S0, BC_S2, BC_OPS, val_off);
-                        jit_emit_stp64(asm, BC_S0, BC_S2, BC_S1, 0);
-                        jit_emit_ldp64(asm, BC_S0, BC_S2, BC_OPS, val_off + 16);
-                        jit_emit_stp64(asm, BC_S0, BC_S2, BC_S1, 16);
-                        jit_emit_jump(asm, lbl_done);
+                                // Compute item address: items + idx * 32
+                                jit_emit_ldr64(asm, BC_S1, BC_S1, 0);  // items pointer
+                                // BC_S0 = idx, shift left by 5 (multiply by 32)
+                                jit_emit_load_imm(asm, BC_S2, 5);
+                                jit_emit_shl(asm, BC_S0, BC_S0, BC_S2);
+                                jit_emit_add(asm, BC_S1, BC_S1, BC_S0); // item_addr = items + idx*32
 
-                        // Slow path: call helper
-                        jit_emit_label(asm, lbl_slow);
+                                // Copy value (32 bytes) from ops[val_off] to item_addr
+                                jit_emit_ldp64(asm, BC_S0, BC_S2, BC_OPS, val_off);
+                                jit_emit_stp64(asm, BC_S0, BC_S2, BC_S1, 0);
+                                jit_emit_ldp64(asm, BC_S0, BC_S2, BC_OPS, val_off + 16);
+                                jit_emit_stp64(asm, BC_S0, BC_S2, BC_S1, 16);
+                                jit_emit_jump(asm, lbl_done);
+
+                                // Slow path: call helper
+                                jit_emit_label(asm, lbl_slow);
+                        }
                         jit_emit_mov(asm, BC_A0, BC_TY);
-                        jit_emit_add_imm(asm, BC_A1, BC_OPS, val_off);
-                        jit_emit_add_imm(asm, BC_A2, BC_OPS, con_off);
-                        jit_emit_add_imm(asm, BC_A3, BC_OPS, sub_off);
+                        jit_emit_add_imm(asm, BC_A1, BC_OPS, OP_OFF(ctx->sp));
+                        jit_emit_load_imm(asm, BC_A2, n);
                         jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_assign_subscript);
                         jit_emit_call_reg(asm, BC_CALL);
 

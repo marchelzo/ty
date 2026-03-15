@@ -808,6 +808,7 @@ fn strct() {
     let size = ty.Func(
         name: '#',
         params: [],
+        rt: $$[ $$::(Int) $$],
         body: ty.Call(func: ty.Value(c.size), args: [ty.Arg(arg: ctype)])
     )
 

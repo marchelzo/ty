@@ -44,7 +44,7 @@ void
 DoAssignExec(Ty *ty);
 
 void
-DoAssignSubscript(Ty *ty, bool exec);
+DoAssignSubscript(Ty *ty, int n, bool exec);
 
 bool
 DoCall(Ty *ty, Value const *f, int n, int nkw, bool auto_this, bool exec);
