@@ -446,7 +446,7 @@ static void jit_emit_ldr32(dasm_State **Dst, int dst, int base, int offset) {
 }
 
 static void jit_emit_ldr16(dasm_State **Dst, int dst, int base, int offset) {
-        |  movzx Rw(dst), word [Rx(base) + offset]
+        |  movzx Rd(dst), word [Rq(base)+offset]
 }
 
 // Load/store pairs (two sequential loads/stores on x64)
