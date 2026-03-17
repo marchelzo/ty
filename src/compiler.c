@@ -19922,4 +19922,25 @@ IsUndefinedSymbol(Symbol const *sym)
         return (sym->i < 0);
 }
 
+Expr *
+CompilerExprFor(Ty *ty, char const *mod, char const *name)
+{
+        if (mod == NULL || name == NULL) {
+                return NULL;
+        }
+
+        Expr *ident = NewExpr(ty, EXPRESSION_IDENTIFIER);
+        ident->module = sclonea(ty, mod);
+        ident->identifier = sclonea(ty, name);
+        ident->symbol = TryResolveIdentifier(ty, ident);
+
+        if (ident->symbol != NULL) {
+                ident->start = ident->symbol->loc;
+                ident->end   = ident->symbol->loc;
+                ident->mod   = ident->symbol->mod;
+        }
+
+        return ident;
+}
+
 /* vim: set sw=8 sts=8 expandtab: */
