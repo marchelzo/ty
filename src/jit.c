@@ -5395,6 +5395,11 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                         u8 n;
                         BC_READ(n);
 
+                        Type *t0 = type_resolve_var(ctx->op_types[ctx->sp - (n + 1)]);
+                        Class *c = expected_class_of(ctx->ty, t0);
+
+                        bool try_array = (c != NULL && c->i == CLASS_ARRAY);
+
                         // Stack: ..., value, container, subscript (TOS)
                         // After: ..., value (pops subscript + container, keeps value)
                         int sub_off = OP_OFF(ctx->sp - n);
@@ -5403,7 +5408,7 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
 
                         int lbl_done = bc_next_label(ctx);
 
-                        if (n == 1) {
+                        if (try_array && n == 1) {
                                 int lbl_slow = bc_next_label(ctx);
 
                                 // Fast path: container is array, subscript is non-negative int
