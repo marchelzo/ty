@@ -9,9 +9,8 @@ fn go(rule) {
     fn step(x) {
         [(rule >> (4*x[i - 1] + 2*x[i] + x[(i + 1) % #x]) & 1) for i in ..#x]
     }
-
     for step.iter([int(it == 16) for ..33]).take(16) {
-        print(it.map(%{0: ' ', *: '█'}[]).join())
+        print(it.map(\_ ? '█' : ' ').join())
     }
 }
 

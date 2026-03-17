@@ -394,7 +394,7 @@ fn try-src(v) {
 }
 
 fn get-method-source(cls-name: String, method: String) {
-    try let $cls = mod-obj.{cls-name} else do { eprint("{cls-name}.{method}"); return }
+    try let $cls = mod-obj.{cls-name} else return
     try-src(cls.?{method})
         ?? try-src(find-mangled(cls.__methods__, method))
         ?? try-src(find-mangled(cls.__getters__, method))
