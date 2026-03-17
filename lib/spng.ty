@@ -293,37 +293,38 @@ pub fn WritePNG(
     }
 }
 
-@test
-fn test-simple() {
-    let png = ReadPNG('example.png', fmt: SPNG_FMT_RGB8)
+ns test {
+    pub fn test-simple() {
+        let png = ReadPNG('example.png', fmt: SPNG_FMT_RGB8)
 
-    let src = c.blob(png.buffer, png.size)
-    let out = blob()
+        let src = c.blob(png.buffer, png.size)
+        let out = blob()
 
-    for c, i in src {
-        out.push(match i % 3 {
-            0 => min(c + 80, 255),
-            1 => c,
-            2 => min(c + 44, 255)
+        for c, i in src {
+            out.push(match i % 3 {
+                0 => min(c + 80, 255),
+                1 => c,
+                2 => min(c + 44, 255)
+            })
+        }
+
+        pp(match png.colorType {
+            ::SPNG_COLOR_TYPE_GRAYSCALE         => 'Greyscale',
+            ::SPNG_COLOR_TYPE_TRUECOLOR         => 'True color',
+            ::SPNG_COLOR_TYPE_TRUECOLOR_ALPHA   => 'True color with alpha'
         })
-    }
 
-    pp(match png.colorType {
-        ::SPNG_COLOR_TYPE_GRAYSCALE         => 'Greyscale',
-        ::SPNG_COLOR_TYPE_TRUECOLOR         => 'True color',
-        ::SPNG_COLOR_TYPE_TRUECOLOR_ALPHA   => 'True color with alpha'
-    })
+        pp(png)
 
-    pp(png)
-
-    pp(
-        WritePNG(
-            'example_out.png',
-            out,
-            png.width,
-            png.height,
-            png.size,
-            colorType=SPNG_COLOR_TYPE_TRUECOLOR
+        pp(
+            WritePNG(
+                'example_out.png',
+                out,
+                png.width,
+                png.height,
+                png.size,
+                colorType=SPNG_COLOR_TYPE_TRUECOLOR
+            )
         )
-    )
+    }
 }

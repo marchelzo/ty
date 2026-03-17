@@ -41,7 +41,10 @@ pub fn sendfile(
     trailers: ?Blob = nil,
     flags: Int = 0
 ) -> Int;
+
+/** file control. see fcntl(2) for details. */
 pub fn fcntl(fd: Int, cmd: Int, arg: ?Int = nil) -> Int;
+
 pub fn dup(fd: Int) -> Int;
 pub fn dup2(fd: Int, fd2: Int) -> Int;
 pub fn pipe() -> (Int, Int);

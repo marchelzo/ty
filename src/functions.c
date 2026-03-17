@@ -8702,6 +8702,7 @@ MethodSummary(Ty *ty, Type *t0, Expr const *fun)
 
         return vTn(
                 "name", vSsz(fun->name),
+                "doc", (fun->doc != NULL) ? vSsz(fun->doc) : NIL,
                 "type", type_to_ty(ty, u0)
         );
 }
@@ -8788,7 +8789,11 @@ ClassSummary(Ty *ty, Type *t0, ClassDefinition *def)
                 super = NIL;
         }
 
+        Value doc = (def->doc != NULL) ? vSsz(def->doc) : NIL;
+
         Value info = vTn(
+                "name",    vSsz(def->name),
+                "doc",     doc,
                 "params",  ARRAY(params),
                 "super",   super,
                 "traits",  ARRAY(traits),
@@ -8815,23 +8820,44 @@ ScopeDict(Ty *ty, Scope *scope, bool public_only)
 
         for (int i = 0; i < scope->size; ++i) {
                 for (Symbol *sym = scope->table[i]; sym != NULL; sym = sym->next) {
-                        if (!public_only || SymbolIsPublic(sym)) {
-                                Value name = vSsz(sym->identifier);
-                                Value entry;
-                                if (SymbolIsClass(sym)) {
-                                        Class *class = class_get(ty, sym->class);
-                                        entry = ClassSummary(ty, NULL, &class->def->class);
-                                } else if (SymbolIsNamespace(sym)) {
-                                        entry = ScopeDict(ty, sym->scope, public_only);
-                                } else {
-                                        entry = vTn(
-                                                "name", name,
-                                                "type", type_to_ty(ty, sym->type),
-                                                "value", *vm_global(ty, sym->i)
-                                        );
-                                }
-                                dict_put_value(ty, vars, name, entry);
+                        if (SymbolIsExternal(sym)) {
+                                continue;
                         }
+                        if (public_only && !SymbolIsPublic(sym)) {
+                                continue;
+                        }
+                        Value name = vSsz(sym->identifier);
+                        Value doc = (sym->doc == NULL) ? NIL : vSsz(sym->doc);
+                        Value entry;
+                        if (SymbolIsClass(sym)) {
+                                Class *class = class_get(ty, sym->class);
+                                entry = ClassSummary(ty, NULL, &class->def->class);
+                        } else if (SymbolIsNamespace(sym)) {
+                                entry = ScopeDict(ty, sym->scope, public_only);
+                        } else {
+                                Value *pval = vm_global(ty, sym->i);
+                                Value   val = (pval->type == VALUE_UNINITIALIZED) ? NIL : *pval;
+
+                                Value type = SymbolIsTypeAlias(sym) ? type_to_ty(ty, sym->type->_type)
+                                                                    : type_to_ty(ty, sym->type);
+
+                                Value kind = SymbolIsTypeAlias(sym) ? xSz("type")
+                                           : SymbolIsTag(sym)       ? xSz("tag")
+                                           : SymbolIsMacro(sym)     ? xSz("macro")
+                                           : SymbolIsFunMacro(sym)  ? xSz("macro")
+                                           : SymbolIsFunction(sym)  ? xSz("fn")
+                                           : SymbolIsConst(sym)     ? xSz("const")
+                                           :                          xSz("var");
+
+                                entry = vTn(
+                                        "name", name,
+                                        "kind", kind,
+                                        "doc", doc,
+                                        "type", type,
+                                        "value", val
+                                );
+                        }
+                        dict_put_value(ty, vars, name, entry);
                 }
         }
 
@@ -8865,6 +8891,20 @@ BUILTIN_FUNCTION(ty_mod_load)
         Module *mod = TyLoadModule(ty, TY_C_STR(name), 0);
 
         return MODULE(mod);
+}
+
+BUILTIN_FUNCTION(ty_mod_list)
+{
+        ASSERT_ARGC("ty.mod.list()", 0);
+
+        Array *mods = vA();
+        ModuleVector const *_mods = TyActiveModules(ty);
+
+        for (usize i = 0; i < vN(*_mods); ++i) {
+                uvP(*mods, MODULE(v__(*_mods, i)));
+        }
+
+        return ARRAY(mods);
 }
 
 BUILTIN_FUNCTION(ty_mod_dict)

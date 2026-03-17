@@ -11,7 +11,7 @@ if not let $curses = c.open(
     ],
     [nil, 5, 6]
 ) {
-	throw 'Failed to load curses'
+	throw RuntimeError('failed to load curses')
 }
 
 enum! {
@@ -108,22 +108,22 @@ pub fn getyx(win = stdscr) {
     (raw.getcury(win), raw.getcurx(win))
 }
 
-pub fn mvaddstr(i, j, msg) {
+pub fn mvaddstr(i, j, msg: Blob | String) {
 	raw.mvaddnstr(i, j, msg, msg.size())
 }
 
-pub fn mvwaddstr(w, i, j, msg) {
+pub fn mvwaddstr(w, i, j, msg: Blob | String) {
 	raw.mvwaddnstr(w, i, j, msg, msg.size())
 }
 
-pub fn waddstr(w, msg) {
+pub fn waddstr(w, msg: Blob | String) {
     raw.waddnstr(w, msg, msg.size())
 }
 
-pub fn addnstr(msg, n) {
+pub fn addnstr(msg: Blob | String, n) {
     raw.waddnstr(stdscr, msg, n)
 }
 
-pub fn addstr(msg) {
+pub fn addstr(msg: Blob | String) {
     raw.waddnstr(stdscr, msg, msg.size())
 }

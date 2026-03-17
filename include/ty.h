@@ -793,6 +793,7 @@ typedef struct {
         int question;
         int _repr_;
         int slice;
+        int _src_;
         int str;
         int _str_;
         int subscript;

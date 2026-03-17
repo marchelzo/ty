@@ -21,239 +21,239 @@ const CURLversion = c.int
  * Global initialization flags
  * ============================================================================ */
 
-const CURL_GLOBAL_DEFAULT = 3
-const CURL_GLOBAL_SSL     = 1
-const CURL_GLOBAL_WIN32   = 2
-const CURL_GLOBAL_ALL     = 3
-const CURL_GLOBAL_NOTHING = 0
+pub const CURL_GLOBAL_DEFAULT = 3
+pub const CURL_GLOBAL_SSL     = 1
+pub const CURL_GLOBAL_WIN32   = 2
+pub const CURL_GLOBAL_ALL     = 3
+pub const CURL_GLOBAL_NOTHING = 0
 
 /* ============================================================================
  * CURLOPT options
  * ============================================================================ */
 
-const CURLOPT_VERBOSE          = 41
-const CURLOPT_HEADER           = 42
-const CURLOPT_NOPROGRESS       = 43
-const CURLOPT_NOSIGNAL         = 99
-const CURLOPT_WILDCARDMATCH    = 197
+pub const CURLOPT_VERBOSE          = 41
+pub const CURLOPT_HEADER           = 42
+pub const CURLOPT_NOPROGRESS       = 43
+pub const CURLOPT_NOSIGNAL         = 99
+pub const CURLOPT_WILDCARDMATCH    = 197
 
-const CURLOPT_URL              = 10002
-const CURLOPT_PATH_AS_IS       = 234
-const CURLOPT_PROTOCOLS_STR    = 10318
-const CURLOPT_DEFAULT_PROTOCOL = 10238
-const CURLOPT_PROXY            = 10004
-const CURLOPT_PROXYPORT        = 59
-const CURLOPT_PROXYTYPE        = 101
-const CURLOPT_NOPROXY          = 10177
-const CURLOPT_HTTPPROXYTUNNEL  = 61
-const CURLOPT_INTERFACE        = 10062
-const CURLOPT_LOCALPORT        = 139
-const CURLOPT_LOCALPORTRANGE   = 140
-const CURLOPT_DNS_CACHE_TIMEOUT = 92
-const CURLOPT_BUFFERSIZE       = 98
-const CURLOPT_PORT             = 3
-const CURLOPT_TCP_FASTOPEN     = 244
-const CURLOPT_TCP_NODELAY      = 121
-const CURLOPT_TCP_KEEPALIVE    = 213
-const CURLOPT_TCP_KEEPIDLE     = 214
-const CURLOPT_TCP_KEEPINTVL    = 215
+pub const CURLOPT_URL              = 10002
+pub const CURLOPT_PATH_AS_IS       = 234
+pub const CURLOPT_PROTOCOLS_STR    = 10318
+pub const CURLOPT_DEFAULT_PROTOCOL = 10238
+pub const CURLOPT_PROXY            = 10004
+pub const CURLOPT_PROXYPORT        = 59
+pub const CURLOPT_PROXYTYPE        = 101
+pub const CURLOPT_NOPROXY          = 10177
+pub const CURLOPT_HTTPPROXYTUNNEL  = 61
+pub const CURLOPT_INTERFACE        = 10062
+pub const CURLOPT_LOCALPORT        = 139
+pub const CURLOPT_LOCALPORTRANGE   = 140
+pub const CURLOPT_DNS_CACHE_TIMEOUT = 92
+pub const CURLOPT_BUFFERSIZE       = 98
+pub const CURLOPT_PORT             = 3
+pub const CURLOPT_TCP_FASTOPEN     = 244
+pub const CURLOPT_TCP_NODELAY      = 121
+pub const CURLOPT_TCP_KEEPALIVE    = 213
+pub const CURLOPT_TCP_KEEPIDLE     = 214
+pub const CURLOPT_TCP_KEEPINTVL    = 215
 
-const CURLOPT_NETRC            = 51
-const CURLOPT_NETRC_FILE       = 10118
-const CURLOPT_USERPWD          = 10005
-const CURLOPT_PROXYUSERPWD     = 10006
-const CURLOPT_USERNAME         = 10173
-const CURLOPT_PASSWORD         = 10174
-const CURLOPT_HTTPAUTH         = 107
-const CURLOPT_PROXYAUTH        = 111
-const CURLOPT_XOAUTH2_BEARER   = 10220
+pub const CURLOPT_NETRC            = 51
+pub const CURLOPT_NETRC_FILE       = 10118
+pub const CURLOPT_USERPWD          = 10005
+pub const CURLOPT_PROXYUSERPWD     = 10006
+pub const CURLOPT_USERNAME         = 10173
+pub const CURLOPT_PASSWORD         = 10174
+pub const CURLOPT_HTTPAUTH         = 107
+pub const CURLOPT_PROXYAUTH        = 111
+pub const CURLOPT_XOAUTH2_BEARER   = 10220
 
-const CURLOPT_AUTOREFERER      = 58
-const CURLOPT_ACCEPT_ENCODING  = 10102
-const CURLOPT_TRANSFER_ENCODING = 207
-const CURLOPT_FOLLOWLOCATION   = 52
-const CURLOPT_UNRESTRICTED_AUTH = 105
-const CURLOPT_MAXREDIRS        = 68
-const CURLOPT_POSTREDIR        = 161
-const CURLOPT_PUT              = 54
-const CURLOPT_POST             = 47
-const CURLOPT_POSTFIELDS       = 10015
-const CURLOPT_COPYPOSTFIELDS   = 10165
-const CURLOPT_POSTFIELDSIZE    = 60
-const CURLOPT_POSTFIELDSIZE_LARGE = 30120
-const CURLOPT_REFERER          = 10016
-const CURLOPT_USERAGENT        = 10018
-const CURLOPT_HTTPHEADER       = 10023
-const CURLOPT_COOKIE           = 10022
-const CURLOPT_COOKIEFILE       = 10031
-const CURLOPT_COOKIEJAR        = 10082
-const CURLOPT_COOKIESESSION    = 96
-const CURLOPT_COOKIELIST       = 10135
-const CURLOPT_HTTPGET          = 80
-const CURLOPT_HTTP_VERSION     = 84
-const CURLOPT_CUSTOMREQUEST    = 10036
+pub const CURLOPT_AUTOREFERER      = 58
+pub const CURLOPT_ACCEPT_ENCODING  = 10102
+pub const CURLOPT_TRANSFER_ENCODING = 207
+pub const CURLOPT_FOLLOWLOCATION   = 52
+pub const CURLOPT_UNRESTRICTED_AUTH = 105
+pub const CURLOPT_MAXREDIRS        = 68
+pub const CURLOPT_POSTREDIR        = 161
+pub const CURLOPT_PUT              = 54
+pub const CURLOPT_POST             = 47
+pub const CURLOPT_POSTFIELDS       = 10015
+pub const CURLOPT_COPYPOSTFIELDS   = 10165
+pub const CURLOPT_POSTFIELDSIZE    = 60
+pub const CURLOPT_POSTFIELDSIZE_LARGE = 30120
+pub const CURLOPT_REFERER          = 10016
+pub const CURLOPT_USERAGENT        = 10018
+pub const CURLOPT_HTTPHEADER       = 10023
+pub const CURLOPT_COOKIE           = 10022
+pub const CURLOPT_COOKIEFILE       = 10031
+pub const CURLOPT_COOKIEJAR        = 10082
+pub const CURLOPT_COOKIESESSION    = 96
+pub const CURLOPT_COOKIELIST       = 10135
+pub const CURLOPT_HTTPGET          = 80
+pub const CURLOPT_HTTP_VERSION     = 84
+pub const CURLOPT_CUSTOMREQUEST    = 10036
 
-const CURLOPT_MIMEPOST         = 10269
+pub const CURLOPT_MIMEPOST         = 10269
 
-const CURLOPT_WRITEFUNCTION    = 20011
-const CURLOPT_WRITEDATA        = 10001
-const CURLOPT_READFUNCTION     = 20012
-const CURLOPT_READDATA         = 10009
-const CURLOPT_HEADERFUNCTION   = 20079
-const CURLOPT_HEADERDATA       = 10029
-const CURLOPT_XFERINFOFUNCTION = 20219
-const CURLOPT_XFERINFODATA     = 10057
+pub const CURLOPT_WRITEFUNCTION    = 20011
+pub const CURLOPT_WRITEDATA        = 10001
+pub const CURLOPT_READFUNCTION     = 20012
+pub const CURLOPT_READDATA         = 10009
+pub const CURLOPT_HEADERFUNCTION   = 20079
+pub const CURLOPT_HEADERDATA       = 10029
+pub const CURLOPT_XFERINFOFUNCTION = 20219
+pub const CURLOPT_XFERINFODATA     = 10057
 
-const CURLOPT_ERRORBUFFER      = 10010
-const CURLOPT_STDERR           = 10037
-const CURLOPT_FAILONERROR      = 45
+pub const CURLOPT_ERRORBUFFER      = 10010
+pub const CURLOPT_STDERR           = 10037
+pub const CURLOPT_FAILONERROR      = 45
 
-const CURLOPT_TIMEOUT          = 13
-const CURLOPT_TIMEOUT_MS       = 155
-const CURLOPT_LOW_SPEED_LIMIT  = 19
-const CURLOPT_LOW_SPEED_TIME   = 20
-const CURLOPT_MAXCONNECTS      = 71
-const CURLOPT_FRESH_CONNECT    = 74
-const CURLOPT_FORBID_REUSE     = 75
-const CURLOPT_CONNECTTIMEOUT   = 78
-const CURLOPT_CONNECTTIMEOUT_MS = 156
-const CURLOPT_IPRESOLVE        = 113
-const CURLOPT_CONNECT_ONLY     = 141
-const CURLOPT_RESOLVE          = 10203
+pub const CURLOPT_TIMEOUT          = 13
+pub const CURLOPT_TIMEOUT_MS       = 155
+pub const CURLOPT_LOW_SPEED_LIMIT  = 19
+pub const CURLOPT_LOW_SPEED_TIME   = 20
+pub const CURLOPT_MAXCONNECTS      = 71
+pub const CURLOPT_FRESH_CONNECT    = 74
+pub const CURLOPT_FORBID_REUSE     = 75
+pub const CURLOPT_CONNECTTIMEOUT   = 78
+pub const CURLOPT_CONNECTTIMEOUT_MS = 156
+pub const CURLOPT_IPRESOLVE        = 113
+pub const CURLOPT_CONNECT_ONLY     = 141
+pub const CURLOPT_RESOLVE          = 10203
 
-const CURLOPT_SSLCERT          = 10025
-const CURLOPT_SSLCERTTYPE      = 10086
-const CURLOPT_SSLKEY           = 10087
-const CURLOPT_SSLKEYTYPE       = 10088
-const CURLOPT_KEYPASSWD        = 10026
-const CURLOPT_SSLVERSION       = 32
-const CURLOPT_SSL_VERIFYHOST   = 81
-const CURLOPT_SSL_VERIFYPEER   = 64
-const CURLOPT_CAINFO           = 10065
-const CURLOPT_CAPATH           = 10097
-const CURLOPT_SSL_CIPHER_LIST  = 10083
+pub const CURLOPT_SSLCERT          = 10025
+pub const CURLOPT_SSLCERTTYPE      = 10086
+pub const CURLOPT_SSLKEY           = 10087
+pub const CURLOPT_SSLKEYTYPE       = 10088
+pub const CURLOPT_KEYPASSWD        = 10026
+pub const CURLOPT_SSLVERSION       = 32
+pub const CURLOPT_SSL_VERIFYHOST   = 81
+pub const CURLOPT_SSL_VERIFYPEER   = 64
+pub const CURLOPT_CAINFO           = 10065
+pub const CURLOPT_CAPATH           = 10097
+pub const CURLOPT_SSL_CIPHER_LIST  = 10083
 
-const CURLOPT_PRIVATE          = 10103
-const CURLOPT_NOBODY           = 44
-const CURLOPT_UPLOAD           = 46
+pub const CURLOPT_PRIVATE          = 10103
+pub const CURLOPT_NOBODY           = 44
+pub const CURLOPT_UPLOAD           = 46
 
 /* ============================================================================
  * HTTP authentication types
  * ============================================================================ */
 
-const CURLAUTH_NONE         = 0
-const CURLAUTH_BASIC        = (1 << 0)
-const CURLAUTH_DIGEST       = (1 << 1)
-const CURLAUTH_NEGOTIATE    = (1 << 2)
-const CURLAUTH_NTLM         = (1 << 3)
-const CURLAUTH_BEARER       = (1 << 6)
-const CURLAUTH_ANY          = ~(1 << 4)
+pub const CURLAUTH_NONE         = 0
+pub const CURLAUTH_BASIC        = (1 << 0)
+pub const CURLAUTH_DIGEST       = (1 << 1)
+pub const CURLAUTH_NEGOTIATE    = (1 << 2)
+pub const CURLAUTH_NTLM         = (1 << 3)
+pub const CURLAUTH_BEARER       = (1 << 6)
+pub const CURLAUTH_ANY          = ~(1 << 4)
 
 /* ============================================================================
  * HTTP versions
  * ============================================================================ */
 
-const CURL_HTTP_VERSION_NONE = 0
-const CURL_HTTP_VERSION_1_0  = 1
-const CURL_HTTP_VERSION_1_1  = 2
-const CURL_HTTP_VERSION_2_0  = 3
-const CURL_HTTP_VERSION_2TLS = 4
-const CURL_HTTP_VERSION_3    = 30
+pub const CURL_HTTP_VERSION_NONE = 0
+pub const CURL_HTTP_VERSION_1_0  = 1
+pub const CURL_HTTP_VERSION_1_1  = 2
+pub const CURL_HTTP_VERSION_2_0  = 3
+pub const CURL_HTTP_VERSION_2TLS = 4
+pub const CURL_HTTP_VERSION_3    = 30
 
 /* ============================================================================
  * IP resolve options
  * ============================================================================ */
 
-const CURL_IPRESOLVE_WHATEVER = 0
-const CURL_IPRESOLVE_V4       = 1
-const CURL_IPRESOLVE_V6       = 2
+pub const CURL_IPRESOLVE_WHATEVER = 0
+pub const CURL_IPRESOLVE_V4       = 1
+pub const CURL_IPRESOLVE_V6       = 2
 
 /* ============================================================================
  * Proxy types
  * ============================================================================ */
 
-const CURLPROXY_HTTP            = 0
-const CURLPROXY_HTTPS           = 2
-const CURLPROXY_SOCKS4          = 4
-const CURLPROXY_SOCKS5          = 5
-const CURLPROXY_SOCKS5_HOSTNAME = 7
+pub const CURLPROXY_HTTP            = 0
+pub const CURLPROXY_HTTPS           = 2
+pub const CURLPROXY_SOCKS4          = 4
+pub const CURLPROXY_SOCKS5          = 5
+pub const CURLPROXY_SOCKS5_HOSTNAME = 7
 
 /* ============================================================================
  * CURLcode error codes
  * ============================================================================ */
 
-const CURLE_OK                       = 0
-const CURLE_UNSUPPORTED_PROTOCOL     = 1
-const CURLE_FAILED_INIT              = 2
-const CURLE_URL_MALFORMAT            = 3
-const CURLE_COULDNT_RESOLVE_PROXY    = 5
-const CURLE_COULDNT_RESOLVE_HOST     = 6
-const CURLE_COULDNT_CONNECT          = 7
-const CURLE_HTTP_RETURNED_ERROR      = 22
-const CURLE_WRITE_ERROR              = 23
-const CURLE_READ_ERROR               = 26
-const CURLE_OUT_OF_MEMORY            = 27
-const CURLE_OPERATION_TIMEDOUT       = 28
-const CURLE_SSL_CONNECT_ERROR        = 35
-const CURLE_PEER_FAILED_VERIFICATION = 60
-const CURLE_GOT_NOTHING              = 52
-const CURLE_SEND_ERROR               = 55
-const CURLE_RECV_ERROR               = 56
-const CURLE_AGAIN                    = 81
+pub const CURLE_OK                       = 0
+pub const CURLE_UNSUPPORTED_PROTOCOL     = 1
+pub const CURLE_FAILED_INIT              = 2
+pub const CURLE_URL_MALFORMAT            = 3
+pub const CURLE_COULDNT_RESOLVE_PROXY    = 5
+pub const CURLE_COULDNT_RESOLVE_HOST     = 6
+pub const CURLE_COULDNT_CONNECT          = 7
+pub const CURLE_HTTP_RETURNED_ERROR      = 22
+pub const CURLE_WRITE_ERROR              = 23
+pub const CURLE_READ_ERROR               = 26
+pub const CURLE_OUT_OF_MEMORY            = 27
+pub const CURLE_OPERATION_TIMEDOUT       = 28
+pub const CURLE_SSL_CONNECT_ERROR        = 35
+pub const CURLE_PEER_FAILED_VERIFICATION = 60
+pub const CURLE_GOT_NOTHING              = 52
+pub const CURLE_SEND_ERROR               = 55
+pub const CURLE_RECV_ERROR               = 56
+pub const CURLE_AGAIN                    = 81
 
 /* ============================================================================
  * CURLINFO values
  * ============================================================================ */
 
-const CURLINFO_STRING   = 0x100000
-const CURLINFO_LONG     = 0x200000
-const CURLINFO_DOUBLE   = 0x300000
-const CURLINFO_SLIST    = 0x400000
-const CURLINFO_OFF_T    = 0x600000
+pub const CURLINFO_STRING   = 0x100000
+pub const CURLINFO_LONG     = 0x200000
+pub const CURLINFO_DOUBLE   = 0x300000
+pub const CURLINFO_SLIST    = 0x400000
+pub const CURLINFO_OFF_T    = 0x600000
 
-const CURLINFO_EFFECTIVE_URL    = CURLINFO_STRING + 1
-const CURLINFO_RESPONSE_CODE    = CURLINFO_LONG   + 2
-const CURLINFO_TOTAL_TIME       = CURLINFO_DOUBLE + 3
-const CURLINFO_REDIRECT_COUNT   = CURLINFO_LONG   + 20
-const CURLINFO_CONTENT_TYPE     = CURLINFO_STRING + 18
+pub const CURLINFO_EFFECTIVE_URL    = CURLINFO_STRING + 1
+pub const CURLINFO_RESPONSE_CODE    = CURLINFO_LONG   + 2
+pub const CURLINFO_TOTAL_TIME       = CURLINFO_DOUBLE + 3
+pub const CURLINFO_REDIRECT_COUNT   = CURLINFO_LONG   + 20
+pub const CURLINFO_CONTENT_TYPE     = CURLINFO_STRING + 18
 
 /* ============================================================================
  * CURLU (URL API)
  * ============================================================================ */
 
-const CURLUE_OK           = 0
-const CURLUE_NO_SCHEME    = 10
-const CURLUE_NO_USER      = 11
-const CURLUE_NO_PASSWORD  = 12
-const CURLUE_NO_OPTIONS   = 13
-const CURLUE_NO_HOST      = 14
-const CURLUE_NO_PORT      = 15
-const CURLUE_NO_QUERY     = 16
-const CURLUE_NO_FRAGMENT  = 17
-const CURLUE_NO_ZONEID    = 18
+pub const CURLUE_OK           = 0
+pub const CURLUE_NO_SCHEME    = 10
+pub const CURLUE_NO_USER      = 11
+pub const CURLUE_NO_PASSWORD  = 12
+pub const CURLUE_NO_OPTIONS   = 13
+pub const CURLUE_NO_HOST      = 14
+pub const CURLUE_NO_PORT      = 15
+pub const CURLUE_NO_QUERY     = 16
+pub const CURLUE_NO_FRAGMENT  = 17
+pub const CURLUE_NO_ZONEID    = 18
 
-const CURLUPART_URL      = 0
-const CURLUPART_SCHEME   = 1
-const CURLUPART_USER     = 2
-const CURLUPART_PASSWORD = 3
-const CURLUPART_OPTIONS  = 4
-const CURLUPART_HOST     = 5
-const CURLUPART_PORT     = 6
-const CURLUPART_PATH     = 7
-const CURLUPART_QUERY    = 8
-const CURLUPART_FRAGMENT = 9
+pub const CURLUPART_URL      = 0
+pub const CURLUPART_SCHEME   = 1
+pub const CURLUPART_USER     = 2
+pub const CURLUPART_PASSWORD = 3
+pub const CURLUPART_OPTIONS  = 4
+pub const CURLUPART_HOST     = 5
+pub const CURLUPART_PORT     = 6
+pub const CURLUPART_PATH     = 7
+pub const CURLUPART_QUERY    = 8
+pub const CURLUPART_FRAGMENT = 9
 
-const CURLU_APPENDQUERY  = (1 << 8)
-const CURLU_URLENCODE    = (1 << 7)
+pub const CURLU_APPENDQUERY  = (1 << 8)
+pub const CURLU_URLENCODE    = (1 << 7)
 
 /* ============================================================================
- * Multi interface constants
+ * Multi interface pub constants
  * ============================================================================ */
 
-const CURLM_OK             = 0
-const CURLM_INTERNAL_ERROR = 4
+pub const CURLM_OK             = 0
+pub const CURLM_INTERNAL_ERROR = 4
 
-const CURLMSG_DONE = 1
+pub const CURLMSG_DONE = 1
 
 /* ============================================================================
  * C function declarations
@@ -1003,14 +1003,14 @@ class StreamingSession {
 
     __drop__() { __cleanup() }
 
-    __setopt(opt: Int, val: Any, ctx: String) {
+    __setopt[T](opt: Int, val: (CType[T], IntoPtr[T]), ctx: String) {
         let res = curl_easy_setopt(__easy, opt, val)
         if res != CURLE_OK { throw CURLError(res, ctx) }
     }
 
     setopt-str(opt: Int, val: String, ctx: String) { __setopt(opt, (c.ptr, val.cstr()), ctx) }
     setopt-long(opt: Int, val: Int, ctx: String) { __setopt(opt, (c.long, val), ctx) }
-    setopt-ptr(opt: Int, val: Ptr[_] | nil, ctx: String) { __setopt(opt, (c.ptr, val), ctx) }
+    setopt-ptr(opt: Int, val: IntoPtr[_] | nil, ctx: String) { __setopt(opt, (c.ptr, val), ctx) }
 
     __getinfo-long(info: Int) -> Int {
         let out = c.auto(c.box(c.long))
@@ -1328,14 +1328,14 @@ pub class Session {
         __abort = false
     }
 
-    __setopt(opt: Int, val: Any, ctx: String) {
+    __setopt[T](opt: Int, val: (CType[T], IntoPtr[T]), ctx: String) {
         let res = curl_easy_setopt(__handle, opt, val)
         if res != CURLE_OK { throw CURLError(res, ctx) }
     }
 
     setopt-str(opt: Int, val: String, ctx: String) { __setopt(opt, (c.ptr, val.cstr()), ctx) }
     setopt-long(opt: Int, val: Int, ctx: String) { __setopt(opt, (c.long, val), ctx) }
-    setopt-ptr(opt: Int, val: Ptr[_] | nil, ctx: String) { __setopt(opt, (c.ptr, val), ctx) }
+    setopt-ptr(opt: Int, val: IntoPtr[_] | nil, ctx: String) { __setopt(opt, (c.ptr, val), ctx) }
 
     __getinfo-long(info: Int) -> Int {
         let out = c.auto(c.box(c.long))
@@ -1783,151 +1783,3 @@ pub fn version() -> String { c.as_str(curl_version()) }
  * ============================================================================ */
 
 curl_global_init(CURL_GLOBAL_DEFAULT)
-
-/* ============================================================================
- * Tests
- * ============================================================================ */
-
-@test
-fn test-simple-get() {
-    let resp = get('https://httpbin.org/get', query=%{'foo': 'bar'})
-    assert(resp.ok)
-    assert(resp.status == 200)
-}
-
-@test
-fn test-post-json() {
-    let resp = post(
-        'https://httpbin.org/post',
-        json=%{'message': 'Hello, World!'},
-        headers=%{'X-Custom-Header': 'test'}
-    )
-    assert(resp.ok)
-}
-
-@test
-fn test-multipart-form() {
-    let form = FormData()
-    form.append('field1', 'value1')
-    form.append('field2', 'value2')
-    form.append-file-data('file', 'Hello from file!', 'test.txt', 'text/plain')
-
-    let resp = post('https://httpbin.org/post', form=form)
-    assert(resp.ok)
-}
-
-@test
-fn test-basic-auth() {
-    let resp = get('https://httpbin.org/basic-auth/user/passwd', auth=('user', 'passwd'))
-    assert(resp.ok)
-}
-
-@test
-fn test-cookies() {
-    let session = Session()
-    session.defaults.cookies = %{'session': 'abc123'}
-    let resp = session.get('https://httpbin.org/cookies')
-    assert(resp.ok)
-}
-
-@test
-fn test-progress() {
-    let called = false
-    let resp = get(
-        'https://httpbin.org/bytes/1000',
-        on-progress=fn(p: Progress) -> Bool { called = true; true }
-    )
-    assert(resp.ok && called)
-}
-
-@test
-fn test-on-data-callback() {
-    let chunks = []
-    let resp = get(
-        'https://httpbin.org/bytes/1000',
-        on-data=fn(chunk: Blob) -> Bool { chunks.push(chunk); true }
-    )
-    assert(resp.ok)
-    assert(#chunks > 0)
-}
-
-@test
-fn test-url-builder() {
-    let u = URL('https://example.com/path')
-    u.append-query('key1', 'value1')
-    u.append-query(%{'key2': 'value 2', 'key3': 123})
-    assert('key1=value1' in u.str())
-}
-
-@test
-fn test-timeout() {
-    try {
-        let resp = get('https://httpbin.org/delay/5', timeout=1)
-        assert(false, 'Should have timed out')
-    } catch e: CURLError {
-        assert(e.code == CURLE_OPERATION_TIMEDOUT)
-    }
-}
-
-@test
-fn test-version() {
-    assert(version() :: /curl\/\d+\.\d+\.\d+/)
-}
-
-@test
-fn test-sse-parser() {
-    let parser = SSEParser()
-
-    let events = [*parser.feed("event: message\ndata: hello\n\n")]
-    assert(#events == 1)
-    assert(events[0].event == 'message')
-    assert(events[0].data == 'hello')
-
-    events = [*parser.feed("data: line1\ndata: line2\n\n")]
-    assert(#events == 1)
-    assert(events[0].data == "line1\nline2")
-
-    events = [*parser.feed("id: 42\nretry: 5000\ndata: test\n\n")]
-    assert(#events == 1)
-    assert(events[0].id == '42')
-    assert(events[0].retry == 5000)
-    assert(parser.last-id == '42')
-
-    events = [*parser.feed(": this is a comment\ndata: after comment\n\n")]
-    assert(#events == 1)
-    assert(events[0].data == 'after comment')
-
-    events = [*parser.feed("data: par")]
-    assert(#events == 0)
-    events = [*parser.feed("tial\n\n")]
-    assert(#events == 1)
-    assert(events[0].data == 'partial')
-}
-
-@test
-fn test-streaming-chunks() {
-    let stream = get-stream('https://httpbin.org/bytes/500')
-    assert(stream.ok)
-
-    let total = 0
-    for chunk in stream.chunks() { total += #chunk }
-    assert(total == 500)
-}
-
-@test
-fn test-streaming-lines() {
-    let stream = get-stream('https://httpbin.org/robots.txt')
-    assert(stream.ok)
-
-    let lines = [*stream.lines()]
-    assert(#lines > 0)
-}
-
-@test
-fn test-stream-read-all() {
-    let stream = get-stream('https://httpbin.org/bytes/100')
-    assert(stream.ok)
-
-    let data = stream.read()
-    assert(#data == 100)
-}

@@ -2274,6 +2274,8 @@ Body:
                 e->body->expression->name = afmt("<%s:gen>", e->name);
         }
 
+        e->end = TEnd;
+
         return e;
 }
 

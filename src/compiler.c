@@ -361,7 +361,7 @@ static int BuiltinCount;
 static CompileState STATE;
 #define STATE STATE
 
-static vec(Module *) modules;
+static ModuleVector modules;
 static vec(ProgramAnnotation) annotations;
 static vec(location_vector) location_lists;
 static vec(Expr const *) source_map;
@@ -2732,10 +2732,7 @@ symbolize_op_def(Ty *ty, Scope *scope, Stmt *def)
         InternSet  *set = (arity == 1) ? &xD.u_ops : &xD.b_ops;
         InternEntry  *e = intern(set, target->identifier);
 
-        target->symbol = scope_add(ty, GlobalScope, target->identifier);
-        target->symbol->mod = STATE.module;
-        target->symbol->loc = target->start;
-        target->symbol->flags |= SYM_FUNCTION;
+        i32 idx = (target->symbol != NULL) ? target->symbol->i : -1;
 
         for (int i = 0; i < t1.count; ++i) {
                 for (int j = 0; j < t2.count; ++j) {
@@ -2746,14 +2743,14 @@ symbolize_op_def(Ty *ty, Scope *scope, Stmt *def)
                                 class_name(ty, v__(t1, i)),
                                 class_name(ty, v__(t2, j)),
                                 v__(t2, j),
-                                target->symbol->i
+                                idx
                         );
                         if (target->xscope != NULL) {
                                 op_add(
                                         e->id,
                                         v__(t1, i),
                                         v__(t2, j),
-                                        target->symbol->i,
+                                        idx,
                                         func
                                 );
                         } else {
@@ -6018,7 +6015,8 @@ UpdateRefinemenets(Ty *ty, Scope *scope)
 static void
 symbolize_fun_decl(Ty *ty, Scope *scope, Stmt *s, u32 flag)
 {
-        bool def = HasBody(s->value) && (s->target->module == NULL);
+        bool def = (HasBody(s->value) && (s->target->module == NULL))
+                || (flag & SYM_OPERATOR);
 
         symbolize_lvalue(
                 ty,
@@ -6334,8 +6332,8 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
                         for (int i = 0; i < vN(s->_if.parts); ++i) {
                                 struct condpart *p = v__(s->_if.parts, i);
                                 fix_part(ty, p, scope);
-                                symbolize_pattern(ty, scope, p->target, NULL, p->def);
                                 symbolize_expression(ty, subscope, p->e);
+                                symbolize_pattern(ty, scope, p->target, NULL, p->def);
                                 if (p->target != NULL) {
                                         type_try_assign(ty, p->target, p->e->_type, 0);
                                 }
@@ -11768,21 +11766,21 @@ emit_statement(Ty *ty, Stmt const *s, bool want_result)
                      || (s->value->type == EXPRESSION_MULTI_FUNCTION)
                 ) {
         case STATEMENT_DEFINITION:
-                if (
-                        (s->target->type == EXPRESSION_IDENTIFIER)
-                     && SymbolIsThreadLocal(s->target->symbol)
-                ) {
-                        WITH_STATE(code, ((byte_vector) {0})) {
-                                EE(s->value);
-                                emit_assignment2(ty, s->target, false, true);
-                                INSN(POP);
-                                INSN(HALT);
-                                while (vN(xD.tls0) <= s->target->symbol->i) {
-                                        xvP(xD.tls0, NULL);
+                        if (
+                                (s->target->type == EXPRESSION_IDENTIFIER)
+                             && SymbolIsThreadLocal(s->target->symbol)
+                        ) {
+                                WITH_STATE(code, ((byte_vector) {0})) {
+                                        EE(s->value);
+                                        emit_assignment2(ty, s->target, false, true);
+                                        INSN(POP);
+                                        INSN(HALT);
+                                        while (vN(xD.tls0) <= s->target->symbol->i) {
+                                                xvP(xD.tls0, NULL);
+                                        }
+                                        *v_(xD.tls0, s->target->symbol->i) = vv(STATE.code);
                                 }
-                                *v_(xD.tls0, s->target->symbol->i) = vv(STATE.code);
-                        }
-                } else if (
+                        } else if (
                                 (s->value->type  != EXPRESSION_NIL)
                              || (s->target->type != EXPRESSION_IDENTIFIER)
                              || SymbolIsGlobal(s->target->symbol)
@@ -17451,7 +17449,7 @@ DeclareSymbols(Ty *ty, Stmt *stmt)
                 break;
 
         case STATEMENT_OPERATOR_DEFINITION:
-                symbolize_fun_decl(ty, scope, stmt, SYM_FUNCTION);
+                symbolize_fun_decl(ty, scope, stmt, SYM_FUNCTION | SYM_OPERATOR);
                 break;
 
         case STATEMENT_PATTERN_DEFINITION:
@@ -17566,7 +17564,6 @@ define_operator(Ty *ty, Scope *scope, Stmt *s)
         }
 
         RedpillFun(ty, scope, s->value, NULL);
-
         symbolize_op_def(ty, scope, s);
 }
 
@@ -19556,6 +19553,12 @@ TyCompileSource(Ty *ty, char const *source, Scope *global, u32 flags)
         TY_CATCH_END();
 
         return mod;
+}
+
+ModuleVector const *
+TyActiveModules(Ty *ty)
+{
+        return &modules;
 }
 
 Module *

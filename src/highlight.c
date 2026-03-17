@@ -10,20 +10,20 @@
 
 enum {
         SC_NONE,
-        SC_IDENT,       /* default identifiers */
-        SC_PUNCT,       /* brackets, dots, commas, arrows */
-        SC_KEYWORD,     /* control flow: if, for, while, let, return, ... */
-        SC_OPERATOR,    /* +, -, ==, =>, ... */
-        SC_TYPE,        /* type references (PascalCase, tagged as type) */
-        SC_DECL,        /* class/tag/trait keywords, module names, params */
-        SC_STRING,      /* string and interpolated string literals */
-        SC_FUNCTION,    /* function names and calls */
-        SC_FIELD,       /* member and field access */
-        SC_BUILTIN,     /* typeof, __set_type__ */
-        SC_REGEX,       /* regex literals */
-        SC_COMMENT,     /* comments, semicolons */
-        SC_LITERAL,     /* true, false, nil, numbers, import, use */
-        SC_PREPROC,     /* preprocessor, macros, template syntax */
+        SC_IDENT,
+        SC_PUNCT,
+        SC_KEYWORD,
+        SC_OPERATOR,
+        SC_TYPE,
+        SC_DECL,
+        SC_STRING,
+        SC_FUNCTION,
+        SC_FIELD,
+        SC_BUILTIN,
+        SC_REGEX,
+        SC_COMMENT,
+        SC_LITERAL,
+        SC_PREPROC,
         SC_COUNT
 };
 
@@ -100,7 +100,7 @@ build_palette(char const *hexes[SC_COUNT])
         return result;
 }
 
-/* ── Palettes ───────────────────────────────────────────────────────── */
+
 
 static char const *gruvbox[SC_COUNT] = {
         [SC_NONE]     = NULL,
@@ -372,7 +372,7 @@ static char const *muted[SC_COUNT] = {
         [SC_PREPROC]  = "#9a8a9a",
 };
 
-/* ── Theme lookup ──────────────────────────────────────────────────── */
+
 
 static struct {
         char const *name;
@@ -418,7 +418,7 @@ find_palette(char const *name)
         return NULL;
 }
 
-/* ── Token classification ───────────────────────────────────────────── */
+
 
 static bool
 is_type_name(char const *id)
@@ -479,7 +479,7 @@ identifier_color(Token const *t, char const *source)
         if (is_type_name(t->identifier))
                 return SC_TYPE;
 
-        /* Check if followed by '(' => function call */
+
         if (t->end.s != NULL && source != NULL) {
                 char const *p = t->end.s;
                 while (*p == ' ' || *p == '\t') ++p;
@@ -531,7 +531,7 @@ token_color(Token const *t, char const *source)
         case '$$':
                 return SC_PREPROC;
 
-        /* Punctuation */
+
         case '(':
                 return (t->tag == TT_CALL) ? SC_FUNCTION : SC_PUNCT;
         case ')':
@@ -555,7 +555,7 @@ token_color(Token const *t, char const *source)
         case '"':
                 return SC_STRING;
 
-        /* Operators */
+
         case TOKEN_EQ:
         case TOKEN_DBL_EQ:
         case TOKEN_INC:
@@ -634,7 +634,7 @@ find_first(TokenVector const *tokens, usize pos)
         return lo;
 }
 
-/* ── Public API ─────────────────────────────────────────────────────── */
+
 
 bool
 syntax_highlight(
@@ -673,17 +673,17 @@ syntax_highlight(
                 u32 tstart = t->start.byte;
                 u32 tend   = t->end.byte;
 
-                /* Skip tokens outside the expression range */
+
                 if (tend <= start)
                         continue;
                 if (tstart >= end)
                         break;
 
-                /* Clamp to expression range */
+
                 if (tstart < start) tstart = start;
                 if (tend > end)     tend = end;
 
-                /* Emit uncolored source between previous position and this token */
+
                 if (tstart > pos) {
                         sxdf(
                                 out,
@@ -721,7 +721,7 @@ syntax_highlight(
                 pos = tend;
         }
 
-        /* Emit any remaining source after the last token */
+
         if (pos < end) {
                 sxdf(
                         out,

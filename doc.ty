@@ -1,0 +1,908 @@
+import ty.types as T
+import json
+import os
+import chalk
+import clap (clap!)
+
+clap! DocGen {
+    /// Module to document
+    module: String, pos: true, required: true
+
+    /// Emit only the body (no HTML chrome)
+    body: Bool
+
+    /// Emit JSON index and exit
+    emitIndex: Bool
+
+    /// Cross-module type index JSON file
+    typesFile: String
+
+    /// Comma-separated list of all modules
+    modules: String
+
+    /// Search index JSON file
+    searchIndex: String
+}
+
+let (opts, _) = DocGen.parse()
+
+let mod-name  = opts.module
+let d: _      = Module(mod-name).dict
+let mod-obj: _ = Module(mod-name)
+
+let type-index: _ = opts.typesFile
+    ? json.parse(slurp(opts.typesFile))
+    : %{}
+
+let all-modules: _ = opts.modules
+    ? opts.modules.split(',')
+    : []
+
+let search-index-json = opts.searchIndex
+    ? slurp(opts.searchIndex)
+    : '{}'
+
+fn mod-slug(name) { str(name).sub('/', '.') }
+fn html-escape(s) {
+    str(s)
+        .sub('&', '&amp;')
+        .sub('<', '&lt;')
+        .sub('>', '&gt;')
+        .sub('"', '&quot;')
+}
+
+fn esc(x) { html-escape(x) }
+
+let var-names = %{}
+let var-counter = [0]
+
+fn next-var-name() {
+    let letters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
+    let i = var-counter[0]
+    var-counter[0] = i + 1
+    let c = letters.slice(i % 26, 1)
+    i < 26 ? c : "{c}{i / 26}"
+}
+
+fn var-name(id) {
+    if !var-names.has?(id) { var-names[id] = next-var-name() }
+    var-names[id]
+}
+
+fn reset-vars() {
+    for k in var-names.keys() { var-names.remove(k) }
+    var-counter[0] = 0
+}
+
+fn type-link(fqn, display, css) {
+    let span = "<span class=\"{css}\">{display}</span>"
+    type-index.has?(fqn) ? "<a href=\"{type-index[fqn]}\">{span}</a>" : span
+}
+
+let prims = ['Int', 'String', 'Float', 'Bool', 'Blob', 'Nil', 'Any']
+let depth = [0]
+
+fn type-str(t) {
+    if let T.Alias(name, mod, x) = t {
+        return type-link("{mod}.{name}", str(name), 't-cls')
+    }
+    depth[0] += 1
+    if depth[0] > 12 { depth[0] -= 1; return '...' }
+    let r = type-str-inner(t)
+    depth[0] -= 1
+    r
+}
+
+fn type-str-inner(t) {
+    match t {
+        T.Object(cls, targs) => do {
+            let name = Class.name(cls)
+            let fqn = cls.?__fqn__ ?? name
+            let css = prims.contains?(name) ? 't-prim' : 't-cls'
+            (#targs == 0) ? type-link(fqn, name, css)
+                          : "{type-link(fqn, name, css)}[{targs.map(type-str).join(', ')}]"
+        },
+
+        T.Func(tparams, params, ret) => fn-sig-str(tparams, params, ret),
+
+        T.Union(members) => do {
+            let unk = '<span class="t-kw">?</span>'
+            let seen: _ = %{}
+            let parts = []
+            for members.map(type-str) if it not in seen {
+                seen[it] = true
+                parts.push(it)
+            }
+            let parts = parts.any?(\_ != unk) ? parts.filter(\_ != unk) : parts
+            (#parts == 1) ? parts[0] : parts.join(' <span class="t-kw">|</span> ')
+        },
+
+        T.Intersect(overloads) =>
+            overloads.map(type-str).join(' <span class="t-kw">&amp;</span> '),
+
+        T.Var(id) => "<span class=\"t-var\">{var-name(id)}</span>",
+
+        T.Record(elems) => do {
+            let members: _ = elems.members()
+            let named? = false
+            let parts = []
+            for name, typ in members {
+                if !str(name).match?(/^\d+$/) { named? = true }
+                parts.push(named? ? "{name}: {type-str(typ)}" : type-str(typ))
+            }
+            if #parts == 0 {
+                return "({[*elems].map(type-str).join(', ')})"
+            }
+            named? ? "\x7b{parts.join(', ')}\x7d" : "({parts.join(', ')})"
+        },
+
+        T.List(elems) => elems.map(type-str).join(', '),
+
+        T.Tag(name) => do {
+            let fqn = str(name)
+            try { fqn = name.__fqn__ } catch _ { }
+            type-link(fqn, ":{name}", 't-tag')
+        },
+
+        T.Bottom => '<span class="t-kw">Bottom</span>',
+        T.Any    => '<span class="t-prim">Any</span>',
+        T.Nil    => '<span class="t-prim">nil</span>',
+        nil      => '<span class="t-kw">?</span>',
+        t        => str(t)
+    }
+}
+
+fn fn-sig-str(tparams, params, ret) {
+    let tp-str = (#tparams > 0) ? "[{tparams.map(type-str).join(', ')}]" : ''
+    return "{tp-str}({params.map(param-sig).join(', ')}) &rarr; {type-str(ret)}"
+}
+
+fn param-sig(p) {
+    let s = str(p.name)
+    let anonymous? = s == '' or s == 'nil'
+    if anonymous? { s = '_' }
+
+    if !p.required and !p.gather and !p.kwargs and !anonymous? { s = "?{s}" }
+    if p.gather { s = "*{s}" }
+    if p.kwargs { s = "**{s}" }
+
+    let ts = type-str(p.type)
+    if ts == '?' || ts == '<span class="t-kw">?</span>' { return s }
+    if anonymous? and !p.gather and !p.kwargs { return ts }
+    "{s}: {ts}"
+}
+
+let ck = chalk.Chalk()
+
+fn style-to-css(style: _) {
+    let parts = []
+    match style.?fg {
+        [38, 2, r, g, b] => parts.push("color:rgb({r},{g},{b})")
+        a                => ()
+    }
+    match style.?bg {
+        [48, 2, r, g, b] => parts.push("background:rgb({r},{g},{b})")
+        a                => ()
+    }
+    if style.?bold   { parts.push('font-weight:bold') }
+    if style.?italic { parts.push('font-style:italic') }
+    parts.join(';')
+}
+
+fn sgr-to-html(sgr) {
+    ck.spans(chalk.parse(str(sgr))).map(|(style, text)| -> do {
+        let css = style-to-css(style)
+        css != '' ? "<span style=\"{css}\">{html-escape(text)}</span>" : html-escape(text)
+    }).join('')
+}
+
+fn dedent(src) {
+    let lines = str(src).split('\n')
+    let min-indent = 999
+    for line in lines {
+        continue if line.match?(/^\s*$/)
+        if let [_, spaces] = line.match(/^(\s*)/) {
+            if #spaces < min-indent { min-indent = #spaces }
+        }
+    }
+    if min-indent > 0 && min-indent < 999 {
+        lines.map(l -> do {
+            (#l > min-indent) ? l.slice(min-indent, #l - min-indent) : l
+        }).join('\n')
+    } else {
+        src
+    }
+}
+
+fn get-source(val: _) {
+    try {
+        let $src = val.__src__
+        if #str(src) > 0 { return sgr-to-html(dedent(src)) }
+    } catch _ { }
+}
+
+fn src-from-val(val: _) {
+    if val == nil { return nil }
+    get-source(val)
+}
+
+let op-names = %{
+    '+': 'add', '-': 'sub', '*': 'mul', '/': 'div', '%': 'mod',
+    '==': 'eq', '!=': 'neq', '<': 'lt', '>': 'gt', '<=': 'leq', '>=': 'geq',
+    '<=>': 'cmp', '<<': 'shl', '>>': 'shr', '&': 'bitand', '|': 'bitor',
+    '^': 'xor', '~': 'bitnot', '!': 'not', '&&': 'and', '||': 'or',
+    '[]': 'subscript', '[]=': 'subscript-set', '[;;]': 'slice',
+    '()': 'call', '=~': 'match-op', '~=': 'match-op-r',
+    '..': 'range', '...': 'irange',
+    '??': 'coalesce', '**': 'pow', '***': 'fanout',
+    '|>': 'pipe', '<|': 'pipe-r',
+    '+=': 'mut-add', '-=': 'mut-sub', '/=': 'div-eq',
+    '>>*': 'bind', '<*-': 'extend',
+    '*>': 'ap', '<.>': 'compose',
+    '.': 'dot', '.?': 'try-dot', '?>': 'try-pipe',
+    '!::': 'not-check',
+    '&&&': 'split',
+    '%/': 'divmod',
+    ',': 'tuple',
+    '%.*': 'fmt', '.%.*': 'fmt-method', '..%.*': 'fmt-method2',
+}
+
+fn slug(name) {
+    let s = str(name)
+    op-names.has?(s)
+        ? "op-{op-names[s]}"
+        : s.replace(/[^a-zA-Z0-9_-]/, m -> "-{m[0].ord()}-")
+}
+
+fn clean-doc(doc) {
+    let $doc = doc or return nil
+    let lines = str(doc).split('\n')
+        .map(l -> match l.match(/^\s*\*?\s?(.*)$/) { [_, text] => text, a => l })
+    let start = 0
+    while start < #lines and lines[start].match?(/^\s*$/) { start += 1 }
+    let end = #lines
+    while end > start and lines[end - 1].match?(/^\s*$/) { end -= 1 }
+    start >= end ? nil : lines.slice(start, end - start).join('\n')
+}
+
+fn doc-to-html(doc) {
+    let $doc = doc or return ''
+    let s = html-escape(doc).replace(/`([^`]+)`/, m -> "<code>{m[1]}</code>")
+    let lines = s.split('\n')
+    let result = []
+    let in-list? = false
+    for line in lines {
+        if let [_, item] = line.match(/^- (.+)$/) {
+            if !in-list? { result.push('<ul>'); in-list? = true }
+            result.push("<li>{item}</li>")
+        } else {
+            if in-list? { result.push('</ul>'); in-list? = false }
+            result.push(line.match?(/^\s*$/) ? '' : "<p>{line}</p>")
+        }
+    }
+    if in-list? { result.push('</ul>') }
+    result.join('\n')
+}
+
+let classes: _    = []
+let functions: _  = []
+let constants: _  = []
+let types: _      = []
+let macros: _     = []
+let tags: _       = []
+let namespaces: _ = []
+
+for k, v in d {
+    if type(v) == Dict {
+        if !str(k).match?(/^_/) { namespaces.push({name: k, entries: v}) }
+        continue
+    }
+    let m = v.members()
+    if m.has?('methods') {
+        classes.push(v)
+    } else if m.has?('kind') {
+        match str(v.kind) {
+            'fn'    => functions.push(v),
+            'macro' => macros.push(v),
+            'type'  => types.push(v),
+            'tag'   => tags.push(v),
+            k       => constants.push(v)
+        }
+    } else if m.has?('value') {
+        str(type(v.value)).match?(/Function/) ? functions.push(v) : constants.push(v)
+    }
+}
+
+for xs in [classes, functions, constants, types, tags, macros, namespaces] {
+    xs.sort!(by: \_.name)
+}
+
+if opts.emitIndex {
+    let index: _ = %{}
+
+    fn fqn-of(entry: _, fallback) {
+        try { return entry.value.__fqn__ } catch _ { }
+        fallback
+    }
+
+    for cls in classes {
+        let cname = str(cls.name)
+        index[fqn-of(cls, "{mod-name}.{cname}")] = 'class'
+        for m in [*cls.methods, *cls.staticMethods] {
+            let mn = str(m.name)
+            if !mn.contains?('#') { index["{mod-name}.{cname}.{mn}"] = 'method' }
+        }
+        for g in cls.getters { index["{mod-name}.{cname}.{g.name}"] = 'getter' }
+    }
+
+    for t in types     { index["{mod-name}.{t.name}"] = 'type' }
+    for t in tags      { index[fqn-of(t, "{mod-name}.{t.name}")] = 'tag' }
+    for f in functions  { index["{mod-name}.{f.name}"] = 'fn' }
+    for m in macros     { index["{mod-name}.{m.name}"] = 'macro' }
+    for c in constants  { index["{mod-name}.{c.name}"] = 'const' }
+
+    for nsp in namespaces {
+        let nsname = str(nsp.name)
+        index["{mod-name}.{nsname}"] = 'namespace'
+        for k, v in nsp.entries {
+            let m = v.members()
+            if m.has?('kind') {
+                index["{mod-name}.{nsname}.{v.name}"] = str(v.kind)
+            } else if m.has?('methods') {
+                index["{mod-name}.{nsname}.{v.name}"] = 'class'
+            }
+        }
+    }
+
+    print(json.encode(index))
+    os.exit(0)
+}
+
+let src-counter = [0]
+
+fn emit-src(src) {
+    let $src = src or return
+    let sid = src-counter[0]++
+    print(
+        "<button class=\"src-toggle\""
+        " onclick=\"var e=document.getElementById('src-{sid}');"
+        "e.hidden=!e.hidden;this.classList.toggle('open')\">"
+        "source</button>\n"
+        "<pre class=\"src-block\" id=\"src-{sid}\" hidden>"
+        "<code>{src}</code></pre>"
+    )
+}
+
+fn find-mangled(dict: _, name: String) {
+    if let $name = dict[name] {
+        return name
+    }
+    let base = name.comb(/^_+/)
+    for k, v in dict {
+        if k.comb(/^_+|\$\d+$/) == base {
+            return v
+        }
+    }
+}
+
+fn try-src(v) {
+    try {
+        src-from-val(v)
+    } catch _ {
+        nil
+    }
+}
+
+fn get-method-source(cls-name: String, method: String) {
+    try let $cls = mod-obj.{cls-name} else do { eprint("{cls-name}.{method}"); return }
+    try-src(cls.?{method})
+        ?? try-src(find-mangled(cls.__methods__, method))
+        ?? try-src(find-mangled(cls.__getters__, method))
+        ?? try-src(find-mangled(cls.__static_getters__, method))
+        ?? try-src(find-mangled(cls.__static_methods__, method))
+}
+
+fn render-fn-sig(name, t, anchor = nil) {
+    let name-html = anchor != nil
+        ? "<a class=\"fn-name\" href=\"#{anchor}\">{esc(name)}</a>"
+        : "<span class=\"fn-name\">{esc(name)}</span>"
+
+    fn emit-one-sig(tparams, params, ret, wrap = nil) {
+        let tp = (#tparams > 0)
+            ? "[{tparams.map(type-str).join(', ')}]"
+            : ''
+        let ps = params.map(param-sig).join(', ')
+        let rs = type-str(ret)
+        let inner = "<span class=\"sig\">"
+            "{name-html}{tp}({ps}) "
+            "<span class=\"type\">&rarr; {rs}</span>"
+            "</span>"
+        print(wrap != nil
+            ? "<div class=\"overload\">{inner}</div>"
+            : inner)
+    }
+
+    match t {
+        T.Func(tparams, params, ret) =>
+            emit-one-sig(tparams, params, ret),
+        T.Intersect(overloads) => for o in overloads {
+            if let T.Func(tparams, params, ret) = o {
+                emit-one-sig(tparams, params, ret, wrap=true)
+            }
+        },
+        T.Bottom => print("<span class=\"sig\">{name-html}(...)</span>"),
+        t        => print("<span class=\"sig\">{name-html}</span>")
+    }
+}
+
+fn render-method(cls-name, m, static? = false) {
+    reset-vars()
+    let mid = "{slug(cls-name)}.{slug(m.name)}"
+    print("<div class=\"method\" id=\"{mid}\">")
+    if static? { print('<span class="kw-static">static</span> ') }
+    render-fn-sig(str(m.name), m.type, anchor=mid)
+    if let $doc = clean-doc(m.doc) {
+        print("<div class=\"entry-doc\">"
+              "{doc-to-html(doc)}</div>")
+    }
+    emit-src(get-method-source(str(cls-name), str(m.name)))
+    print('</div>')
+}
+
+fn render-class(cls: _) {
+    reset-vars()
+    let cname = str(cls.name)
+    let cid = slug(cls.name)
+    let tp = #cls.params > 0 ? "[{cls.params.map(type-str).join(', ')}]" : ''
+
+    print("<div class=\"class-header\" id=\"{cid}\">")
+    print(
+        "<h3><a class=\"fn-name\" href=\"#{cid}\">"
+        "{esc(cls.name)}</a>"
+        "<span class=\"type\">{tp}</span></h3>"
+    )
+
+    let lineage = []
+    if let T.Object(sup-cls, targs) = cls.super {
+        if Class.name(sup-cls) != 'Object' {
+            lineage.push("extends {type-str(cls.super)}")
+        }
+    }
+    if #cls.traits > 0 {
+        lineage.push("implements {cls.traits.map(type-str).join(', ')}")
+    }
+    if #lineage > 0 { print("<div class=\"super\">{lineage.join(' ')}</div>") }
+    print('</div>')
+
+    let doc = clean-doc(cls.doc)
+    if doc == nil {
+        for m in cls.methods if str(m.name) == 'init' { doc = clean-doc(m.doc) }
+    }
+    if doc != nil { print("<div class=\"entry-doc class-doc\">{doc-to-html(doc)}</div>") }
+
+    for m in cls.methods if str(m.name) == 'init' {
+        if let T.Func(tp, params, rt) = m.type {
+            let ps = params.map(param-sig).join(', ')
+            print(
+                "<div class=\"method\" id=\"{cid}.init\">"
+                "<span class=\"sig\">"
+                "<span class=\"fn-name\">{esc(cname)}</span>"
+                "({ps})</span></div>"
+            )
+        }
+    }
+
+    for f in cls.fields if !str(f.name).match?(/^__/) {
+        print(
+            "<div class=\"method\""
+            " id=\"{cid}.{slug(f.name)}\">"
+            "<span class=\"sig\">{esc(f.name)}: "
+            "<span class=\"type\">"
+            "{type-str(f.type)}</span></span></div>"
+        )
+    }
+
+    for g in cls.getters {
+        let gid = "{cid}.{slug(g.name)}"
+        print("<div class=\"method\" id=\"{gid}\">")
+        match g.type {
+            T.Func(tp, ps, ret) => print(
+                "<span class=\"sig\">"
+                "<a class=\"fn-name\" href=\"#{gid}\">"
+                "{esc(g.name)}</a> "
+                "<span class=\"type\">"
+                "&rarr; {type-str(ret)}</span></span>"
+            ),
+            t => print(
+                "<span class=\"sig\">"
+                "<a class=\"fn-name\" href=\"#{gid}\">"
+                "{esc(g.name)}</a></span>"
+            )
+        }
+        emit-src(get-method-source(cname, str(g.name)))
+        print('</div>')
+    }
+
+    for m in cls.staticMethods { render-method(cls.name, m, static?=true) }
+    for m in cls.methods if str(m.name) != 'init' && !str(m.name).contains?('#') {
+        render-method(cls.name, m)
+    }
+}
+
+fn emit-entry(item, prefix = nil) {
+    reset-vars()
+    let fid = prefix != nil ? "{slug(prefix)}.{slug(item.name)}" : slug(item.name)
+    print("<div class=\"entry\" id=\"{fid}\">")
+    print('<div class="entry-header">')
+    render-fn-sig(str(item.name), item.type, anchor=fid)
+    print('</div>')
+    if let $doc = clean-doc(item.doc) {
+        print("<div class=\"entry-doc\">"
+              "{doc-to-html(doc)}</div>")
+    }
+    if prefix == nil { emit-src(get-source(item.value)) }
+    print('</div>')
+}
+
+fn emit-type-entry(item, prefix = nil) {
+    reset-vars()
+    let tid = prefix != nil
+        ? "{slug(prefix)}.{slug(item.name)}"
+        : slug(item.name)
+    print("<div class=\"entry\" id=\"{tid}\">")
+    print(
+        "<div class=\"entry-header\">"
+        "<span class=\"sig\">"
+        "<span class=\"fn-name\">{esc(item.name)}</span>"
+        " = <span class=\"type\">"
+        "{type-str(item.type)}</span></span></div>"
+    )
+    if let $doc = clean-doc(item.doc) {
+        print("<div class=\"entry-doc\">"
+              "{doc-to-html(doc)}</div>")
+    }
+    print('</div>')
+}
+
+fn emit-const-table(consts: _, prefix = nil) {
+    let sorted = consts.sort(by: \type-str(_.type))
+    print('<table>')
+    print('<tr><th>Name</th><th>Type</th><th>Value</th></tr>')
+    for c in sorted {
+        let val-s = (type(c.value) :: Int | String | Ptr) ? html-escape(str(c.value)) : ''
+        let sid = prefix != nil ? "{slug(prefix)}.{slug(c.name)}" : slug(c.name)
+        print(
+            "<tr id=\"{sid}\">"
+            "<td><code>{esc(c.name)}</code></td>"
+            "<td>{type-str(c.type)}</td>"
+            "<td class=\"const-val\">{val-s}</td></tr>"
+        )
+    }
+    print('</table>')
+}
+
+fn emit-section(label, items: _, render) {
+    if #items > 0 {
+        print("<h2>{label} <span class=\"section-count\">({#items})</span></h2>")
+        for item in items { render(item) }
+    }
+}
+
+fn render-ns(nsp: _) {
+    let nsname = str(nsp.name)
+    print("<h2 id=\"{slug(nsname)}\">{esc(nsname)}</h2>")
+
+    let ns-classes: _ = []
+    let ns-fns: _     = []
+    let ns-types: _   = []
+    let ns-tags: _    = []
+    let ns-consts: _  = []
+
+    for k, v in nsp.entries {
+        let m = v.members()
+        if m.has?('methods') {
+            ns-classes.push(v)
+        } else if let $kind = v.?kind {
+            match kind {
+                'fn' or 'macro' => ns-fns.push(v),
+                'type'          => ns-types.push(v),
+                'tag'           => ns-tags.push(v),
+                _               => ns-consts.push(v)
+            }
+        }
+    }
+
+    for [ns-classes, ns-fns, ns-types, ns-tags] {
+        it.sort!(by=&.name)
+    }
+
+    for ns-classes { render-class(it) }
+    for ns-fns     { emit-entry(it, prefix=nsname) }
+    for ns-types   { emit-type-entry(it, prefix=nsname) }
+
+    if #ns-tags > 0 {
+        print('<div style="display:flex;flex-wrap:wrap;'
+              'gap:0.4rem 1rem;margin:0.5rem 0">')
+        for t in ns-tags {
+            let tid = "{slug(nsname)}.{slug(t.name)}"
+            print("<span class=\"sig\" id=\"{tid}\">"
+                  "<span class=\"t-tag\">"
+                  "{esc(t.name)}</span></span>")
+        }
+        print('</div>')
+    }
+
+    ns-consts.sort!(by: \_.name)
+    if #ns-consts > 0 { emit-const-table(ns-consts, prefix=nsname) }
+}
+
+fn emit-toc() {
+    fn toc-section(label, items: _) {
+        if #items > 0 {
+            print('<div class="toc-group">')
+            print("<div class=\"toc-label\">{label}</div>")
+            for item in items {
+                print("<a href=\"#{slug(item.name)}\">"
+                      "{esc(item.name)}</a>")
+            }
+            print('</div>')
+        }
+    }
+    toc-section('Classes', classes)
+    toc-section('Functions', functions)
+    toc-section('Types', types)
+    toc-section('Macros', macros)
+    toc-section('Tags', tags)
+    toc-section('Constants', constants)
+    for nsp in namespaces if #nsp.entries > 0 {
+        print('<div class="toc-group">')
+        print("<div class=\"toc-label\">{nsp.name}</div>")
+        for k, item in nsp.entries {
+            let href = "#{slug(nsp.name)}.{slug(item.name)}"
+            print("<a href=\"{href}\">"
+                  "{esc(item.name)}</a>")
+        }
+        print('</div>')
+    }
+}
+
+fn emit-module-nav() {
+    print(
+        "<button class=\"mod-btn\" id=\"mod-btn\">"
+        "{mod-name} "
+        "<span class=\"mod-caret\">\u25be</span>"
+        "</button>"
+    )
+    print('<div class="mod-dropdown" id="mod-dropdown" hidden>')
+    print('<div class="mod-grid">')
+    for m in all-modules {
+        let cls = m == mod-name ? 'mod-item active' : 'mod-item'
+        print("<a class=\"{cls}\" href=\"pkg-{mod-slug(m)}.html\">{m}</a>")
+    }
+    print('</div></div>')
+}
+
+if !opts.body {
+    print('''
+        <!DOCTYPE html>
+        <html lang="en">
+        <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        ''')
+    print("<title>{mod-name} &mdash; ty stdlib</title>")
+    print('''
+        <link rel="stylesheet" href="style.css">
+        <link rel="stylesheet" href="pkg.css">
+        </head>
+        <body class="pkg-page">
+        <header class="topbar">
+        <a class="topbar-brand" href="pkg-prelude.html">ty</a>
+        ''')
+    emit-module-nav()
+    print('''
+        <button class="search-trigger" id="search-open" title="Search (/)">
+        <span class="search-key">/</span> Search</button>
+        </header>
+        <div class="palette-backdrop" id="palette" hidden>
+        <div class="palette">
+        <input type="text" id="palette-input"
+               placeholder="Search all symbols..."
+               autocomplete="off" spellcheck="false">
+        <div class="palette-results" id="palette-results"></div>
+        <div class="palette-hint">
+        Type to search &middot; <kbd>&uarr;&darr;</kbd> navigate &middot;
+        <kbd>Enter</kbd> go &middot; <kbd>Esc</kbd> close</div>
+        </div></div>
+        <div class="pkg-layout">
+        <aside class="toc-sidebar" id="toc-sidebar">
+        ''')
+    emit-toc()
+    print('</aside>\n<main class="pkg-content">')
+}
+
+print("<h1>{esc(mod-name)}</h1>")
+
+emit-section('Classes', classes, render-class)
+emit-section('Functions', functions, emit-entry)
+emit-section('Types', types, emit-type-entry)
+emit-section('Macros', macros, item -> do {
+    emit-entry(item)
+    emit-src(get-source(item.value))
+})
+
+if #tags > 0 {
+    print("<h2>Tags <span class=\"section-count\">({#tags})</span></h2>")
+    print('<div style="display: flex; flex-wrap: wrap; gap: 0.4rem 1rem;">')
+    for t in tags {
+        print(
+            "<span class=\"sig\" id=\"{slug(t.name)}\">"
+            "<span class=\"t-tag\">"
+            "{esc(t.name)}</span></span>"
+        )
+    }
+    print('</div>')
+}
+
+if #constants > 0 {
+    print("<h2>Constants <span class=\"section-count\">({#constants})</span></h2>")
+    emit-const-table(constants)
+}
+
+for nsp in namespaces { render-ns(nsp) }
+
+if !opts.body {
+    print("</main></div>\n<script>\nvar _idx={search-index-json};")
+    print('''
+        var _E = Object.entries(_idx).map(function(e) {
+          var f=e[0], k=e[1], d=f.indexOf('.'),
+              m=f.substring(0,d), n=f.substring(d+1);
+          var s = n.replace(/[^a-zA-Z0-9_.-]/g, '_');
+          return {
+            n:n, m:m, k:k,
+            u: 'pkg-'+m.replace(/\//g,'.')+'.html#'+s,
+            l: n.toLowerCase()
+          };
+        });
+
+        (function() {
+          var btn = document.getElementById('mod-btn'),
+              dd  = document.getElementById('mod-dropdown');
+          btn.onclick = function(e) {
+            e.stopPropagation(); dd.hidden = !dd.hidden;
+          };
+          document.addEventListener('click', function(e) {
+            if (!dd.contains(e.target)) dd.hidden = true;
+          });
+          document.addEventListener('keydown', function(e) {
+            if (e.key === 'Escape') dd.hidden = true;
+          });
+        })();
+
+        var pal = document.getElementById('palette'),
+            inp = document.getElementById('palette-input'),
+            res = document.getElementById('palette-results');
+        var sel = -1, hits = [];
+
+        function openPalette() {
+          pal.hidden = false; inp.value = '';
+          res.innerHTML = ''; sel = -1; inp.focus();
+        }
+        document.getElementById('search-open').onclick = openPalette;
+
+        function closePalette() { pal.hidden = true; }
+        pal.addEventListener('click', function(e) {
+          if (e.target === pal) closePalette();
+        });
+
+        document.addEventListener('keydown', function(e) {
+          if (e.key === '/' && pal.hidden &&
+              document.activeElement.tagName !== 'INPUT') {
+            e.preventDefault(); openPalette(); return;
+          }
+          if (e.key === 'Escape' && !pal.hidden) closePalette();
+        });
+
+        inp.addEventListener('input', function() {
+          var q = this.value.toLowerCase().trim();
+          sel = -1;
+          if (!q) { res.innerHTML = ''; hits = []; return; }
+          hits = _E.filter(function(e) {
+            return e.l.indexOf(q) !== -1;
+          });
+          hits.sort(function(a, b) {
+            var ap = a.l.indexOf(q), bp = b.l.indexOf(q);
+            var ae = (a.l===q || a.l.endsWith('.'+q)) ? 0 : 1,
+                be = (b.l===q || b.l.endsWith('.'+q)) ? 0 : 1;
+            if (ae !== be) return ae - be;
+            if (ap !== bp) return ap - bp;
+            return a.l < b.l ? -1 : 1;
+          });
+          renderHits();
+        });
+
+        function renderHits() {
+          var h = '', n = Math.min(hits.length, 40);
+          for (var i = 0; i < n; i++) {
+            var e = hits[i],
+                cls = i === sel ? 'palette-row selected' : 'palette-row';
+            h += '<a class="' + cls + '" href="' + e.u
+              + '" data-i="' + i + '">'
+              + '<span class="pr-name">' + e.n + '</span>'
+              + '<span class="pr-mod">' + e.m + '</span>'
+              + '<span class="pr-kind">' + e.k + '</span>'
+              + '</a>';
+          }
+          if (hits.length > 40)
+            h += '<div class="palette-overflow">'
+              + (hits.length - 40) + ' more</div>';
+          res.innerHTML = h;
+        }
+
+        function navDown() {
+          if (sel < Math.min(hits.length, 40) - 1) {
+            sel++; renderHits(); scrollSel();
+          }
+        }
+        function navUp() {
+          if (sel > 0) { sel--; renderHits(); scrollSel(); }
+          else if (sel === 0) { sel = -1; renderHits(); }
+        }
+        function navGo() {
+          var el = res.querySelector('.selected');
+          var u = el ? el.href
+                     : hits.length > 0 ? hits[0].u : null;
+          if (u) window.location = u;
+        }
+
+        inp.addEventListener('keydown', function(e) {
+          if (e.key === 'ArrowDown' || (e.ctrlKey && e.key === 'n')) {
+            e.preventDefault(); navDown();
+          } else if (e.key === 'ArrowUp' || (e.ctrlKey && e.key === 'p')) {
+            e.preventDefault(); navUp();
+          } else if (e.key === 'Tab') {
+            e.preventDefault();
+            if (e.shiftKey) navUp(); else navDown();
+          } else if (e.key === 'Enter') {
+            e.preventDefault(); navGo();
+          }
+        });
+
+        function scrollSel() {
+          var s = res.querySelector('.selected');
+          if (s) s.scrollIntoView({block: 'nearest'});
+        }
+
+        (function() {
+          var toc = document.getElementById('toc-sidebar');
+          if (!toc) return;
+          var links = toc.querySelectorAll('a[href^="#"]');
+          var targets = [];
+          links.forEach(function(a) {
+            var t = document.getElementById(
+              a.getAttribute('href').slice(1)
+            );
+            if (t) targets.push({a: a, t: t});
+          });
+          var active = null;
+          function spy() {
+            var y = window.scrollY + 80, cur = null;
+            for (var i = targets.length-1; i >= 0; i--) {
+              if (targets[i].t.offsetTop <= y) {
+                cur = targets[i]; break;
+              }
+            }
+            if (cur && cur.a !== active) {
+              if (active) active.classList.remove('active');
+              cur.a.classList.add('active');
+              active = cur.a;
+              active.scrollIntoView({block:'nearest',behavior:'auto'});
+            }
+          }
+          window.addEventListener('scroll', spy, {passive: true});
+          spy();
+        })();
+        </script>
+        </body></html>
+        ''')
+}

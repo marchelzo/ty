@@ -4,6 +4,8 @@
 #include <stdbool.h>
 
 #include "ty.h"
+#include "ast.h"
+#include "compiler.h"
 #include "itable.h"
 
 enum {
@@ -328,6 +330,14 @@ ClassFindMemberImmediate(Class const *c, char const *name)
         }
 
         return FindMethodImmediate(&c->def->class.s_methods, name);
+}
+
+inline static char const *
+ClassModName(Class const *c)
+{
+        return (c->def != NULL && c->def->mod != NULL)
+             ? c->def->mod->name
+             : "<unknown>";
 }
 
 #endif

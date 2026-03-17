@@ -327,6 +327,7 @@ BUILTIN_FUNCTION(ty_scope);
 BUILTIN_FUNCTION(ty_ctx);
 BUILTIN_FUNCTION(ty_mod_get);
 BUILTIN_FUNCTION(ty_mod_load);
+BUILTIN_FUNCTION(ty_mod_list);
 BUILTIN_FUNCTION(ty_mod_name);
 BUILTIN_FUNCTION(ty_mod_path);
 BUILTIN_FUNCTION(ty_mod_dict);

@@ -301,6 +301,9 @@ TyCompileSource(Ty *ty, char const *source, Scope *scope, u32 flags);
 Module *
 TyLoadModule(Ty *ty, char const *name, u32 flags);
 
+ModuleVector const *
+TyActiveModules(Ty *ty);
+
 Symbol *
 TyLookupSymbol(Ty *ty, Module const *mod, char const *name);
 

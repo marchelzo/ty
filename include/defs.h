@@ -119,6 +119,7 @@ typedef vec(Expr *)         ExprVec;
 typedef vec(Stmt *)         StmtVec;
 typedef vec(TypeBound)      TypeBoundVector;
 typedef vec(TypeHint)       TypeHintVector;
+typedef vec(Module *)       ModuleVector;
 
 #define m0(x) memset(&(x), 0, sizeof (x))
 

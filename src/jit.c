@@ -2546,6 +2546,7 @@ jit_rt_call_method(Ty *ty, Value *result, Value *self, int member_id, int argc)
         }
         xvP(STACK, *self);
         CallMethod(ty, member_id, argc, 0, true, true);
+        CO_LOG("jit_rt_call", TERM(32;1), "");
 }
 
 // Call a method directly with a baked Value* (fast path when class is known at JIT time)
@@ -2556,6 +2557,7 @@ jit_rt_call_method_direct(Ty *ty, Value *result, Value *self, Value *method, int
         vN(STACK) = idx + argc;
         Value val = vm_call_method(ty, self, method, argc);
         *v_(STACK, idx) = val;
+        CO_LOG("jit_rt_call_method_direct", TERM(32;1), "");
 }
 
 // Guarded CALL_SELF_METHOD fast path w/ baked method ptr
@@ -6046,7 +6048,7 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                                 jit_emit_cbz(asm, BC_S0, fail_lbl);
                                 // Get tag id: tags_first(ty, top->tags)
                                 jit_emit_mov(asm, BC_A0, BC_TY);
-                                jit_emit_ldr32(asm, BC_A1, BC_OPS, off + VAL_OFF_TAGS);
+                                jit_emit_ldr16(asm, BC_A1, BC_OPS, off + VAL_OFF_TAGS);
                                 jit_emit_load_imm(asm, BC_CALL, (iptr)tags_first);
                                 jit_emit_call_reg(asm, BC_CALL);
                                 // Result tag id in w0

@@ -1,0 +1,521 @@
+import markdown (NodeType)
+import path (Path)
+import json
+import chalk
+import sh (sh)
+import ty
+
+let doc-root  = Path(__file__).parent
+let intro-dir = doc-root / 'intro'
+let out-dir   = doc-root / 'out'
+
+out-dir.mkdir(parents: true, exist-ok: true)
+
+let pkg-skip = %{
+    'main': true, 'sqlite3c': true,
+    'ioctls': true, 'tdb': true
+}
+
+let pkg-mods-set: Dict[String, Bool] = %{}
+
+for m in Module.list {
+    if !pkg-skip.has?(m.name) {
+        pkg-mods-set[m.name] = true
+    }
+}
+
+let lib-dir = doc-root.parent / 'lib'
+
+for f in lib-dir.glob('*.ty') {
+    if !pkg-skip.has?(f.stem) {
+        pkg-mods-set[f.stem] = true
+    }
+}
+
+for f in lib-dir.glob('*/*.ty') {
+    let name = "{f.parent.name}/{f.stem}"
+    if !pkg-skip.has?(name) {
+        pkg-mods-set[name] = true
+    }
+}
+
+let pkg-modules: _ = pkg-mods-set.keys().sort()
+pkg-modules = [
+    'prelude',
+    *pkg-modules.filter(m -> m != 'prelude')
+]
+
+fn mod-slug(name) { str(name).replace('/', '.') }
+
+fn load-pages() {
+    let files = intro-dir.glob('*.md').sort(by: \str(_))
+    files.map(file -> do {
+        let src = file.read-text()
+        let title = match src.match(/^#\s+(.+)$/m) {
+            [_, t] => t,
+            a      => 'Untitled'
+        }
+        return {slug: file.stem, title, src, file}
+    })
+}
+
+fn esc(s: String) -> String {
+    s.sub('&', '&amp;')
+     .sub('<', '&lt;')
+     .sub('>', '&gt;')
+     .sub('"', '&quot;')
+}
+
+let ck = chalk.Chalk()
+
+fn style-to-css(style) {
+    let parts = []
+
+    match style.?fg {
+        [38, 2, r, g, b] => parts.push("color:rgb({r},{g},{b})"),
+        [30]  => parts.push('color:#282828'),
+        [31]  => parts.push('color:#cc241d'),
+        [32]  => parts.push('color:#98971a'),
+        [33]  => parts.push('color:#d79921'),
+        [34]  => parts.push('color:#458588'),
+        [35]  => parts.push('color:#b16286'),
+        [36]  => parts.push('color:#689d6a'),
+        [37]  => parts.push('color:#a89984'),
+        [90]  => parts.push('color:#928374'),
+        [91]  => parts.push('color:#fb4934'),
+        [92]  => parts.push('color:#b8bb26'),
+        [93]  => parts.push('color:#fabd2f'),
+        [94]  => parts.push('color:#83a598'),
+        [95]  => parts.push('color:#d3869b'),
+        [96]  => parts.push('color:#8ec07c'),
+        [97]  => parts.push('color:#ebdbb2'),
+        a     => ()
+    }
+
+    match style.?bg {
+        [48, 2, r, g, b] =>
+            parts.push("background:rgb({r},{g},{b})"),
+        a => ()
+    }
+
+    if style.?bold   { parts.push('font-weight:bold') }
+    if style.?italic { parts.push('font-style:italic') }
+
+    match style.?underline {
+        'u', 'uu', 'u~', 'u.', 'u-' =>
+            parts.push('text-decoration:underline'),
+        [4, *] =>
+            parts.push('text-decoration:underline'),
+        a => ()
+    }
+
+    parts.join(';')
+}
+
+fn sgr-to-html(sgr: String) -> String {
+    let buf = Blob()
+    for (style, text) in ck.spans(chalk.parse(sgr)) {
+        let css = style-to-css(style)
+        buf.push(css
+            ? "<span style=\"{css}\">{esc(text)}</span>"
+            : esc(text))
+    }
+    buf.str!()
+}
+
+fn highlight-ty(code: String) -> String {
+    let sgr, result = sh(
+        'ty --highlight=gruvbox-material-light -',
+        input: code
+    )
+    if not let $out = sgr or result.status != 0 {
+        return esc(code)
+    }
+    sgr-to-html(out)
+}
+
+fn run-ty(code: String) -> String | nil {
+    let out, result = sh(
+        'ty -j --color=always -',
+        input: code,
+        combineOutput: true,
+        timeoutMs: 2500
+    )
+    if not let $raw = out or #raw == 0 { return nil }
+    sgr-to-html(raw.comb(/\n$/))
+}
+
+fn render-code-block(node, renderers) {
+    let lang = node.info-string ?? ''
+    let code = node.text ?? ''
+
+    if lang == 'ty' {
+        let highlighted = highlight-ty(code)
+        let json-code = json.encode(code)
+        let output-html = run-ty(code)
+
+        let html = Blob()
+        html.push(
+            "<div class=\"code-block\">"
+            "<pre><code class=\"language-ty\">"
+            "{highlighted}</code></pre>"
+            "<div class=\"code-toolbar\">"
+            "<button class=\"btn-run\""
+            " onclick=\"runCode(this, "
+            "{esc(json-code)})\">"
+            "Run</button></div>"
+        )
+        html.push(match output-html {
+            $oh => "<div class=\"code-output visible\">"
+                   "{oh}</div>",
+            a   => '<div class="code-output"></div>'
+        })
+        html.push('</div>')
+        return html.str!()
+    }
+
+    (#lang > 0)
+        ? "<pre><code class=\"language-{lang}\">"
+          "{esc(code)}</code></pre>"
+        : "<pre><code>{esc(code)}</code></pre>"
+}
+
+fn render-image(node, renderers) {
+    let src = node.url ?? ''
+    let alt = node.text ?? ''
+
+    if src.match?(/^https?:\/\//) || src.match?(/^data:/) {
+        return "<img src=\"{esc(src)}\""
+               " alt=\"{esc(alt)}\">"
+    }
+
+    let file = intro-dir / src
+    if !file.exists? {
+        return "<img src=\"{esc(src)}\""
+               " alt=\"{esc(alt)}\">"
+    }
+
+    let mime = match file.suffix.lower() {
+        '.png'  => 'image/png',
+        '.jpg'  => 'image/jpeg',
+        '.jpeg' => 'image/jpeg',
+        '.gif'  => 'image/gif',
+        '.svg'  => 'image/svg+xml',
+        '.webp' => 'image/webp',
+        ext     => 'application/octet-stream'
+    }
+
+    let data = file.read-bytes().base64()
+    "<img src=\"data:{mime};base64,{data}\""
+    " alt=\"{esc(alt)}\">"
+}
+
+fn try-parse-table(text: String) -> String | nil {
+    let lines = text.lines().filter(\#_.trim() > 0)
+    if #lines < 2 { return nil }
+
+    for line in lines {
+        if !line.trim().match?(/^\|.*\|$/) {
+            return nil
+        }
+    }
+
+    if !lines[1].match?(/^\|[\s:|-]+\|$/) {
+        return nil
+    }
+
+    fn parse-row(line) {
+        line.trim()
+            .comb(/^\|/)
+            .comb(/\|$/)
+            .split('|')
+            .map(\_.trim())
+    }
+
+    let headers = parse-row(lines[0])
+    let rows = [parse-row(line) for line in lines[2;]]
+
+    let html = Blob()
+    html.push('<table><thead><tr>')
+    for h in headers { html.push("<th>{esc(h)}</th>") }
+    html.push('</tr></thead><tbody>')
+    for row in rows {
+        html.push('<tr>')
+        for cell in row { html.push("<td>{esc(cell)}</td>") }
+        html.push('</tr>')
+    }
+    html.push('</tbody></table>')
+    html.str!()
+}
+
+fn collect-text(node) {
+    let buf = Blob()
+    for child in node.children {
+        match child.type {
+            NodeType.SoftBreak => buf.push('\n'),
+            NodeType.Text      => buf.push(child.text ?? ''),
+            NodeType.Code      => buf.push(child.text ?? ''),
+            t                  => ()
+        }
+    }
+    buf.str!()
+}
+
+fn render-paragraph(node, renderers) {
+    let plain = collect-text(node)
+    if plain.match?(/^\|/) {
+        if let $table = try-parse-table(plain) {
+            return table
+        }
+    }
+    "<p>{node.render-children(renderers)}</p>"
+}
+
+let renderers = Dict()
+renderers[NodeType.CodeBlock] = render-code-block
+renderers[NodeType.Image] = render-image
+renderers[NodeType.Paragraph] = render-paragraph
+
+fn render-page(pg, pages, idx) {
+    let doc = markdown.parse(pg.src)
+    let body = doc.render(renderers)
+
+    let nav-html = Blob('<div class="page-nav">')
+    if idx > 0 {
+        let prev = pages[idx - 1]
+        nav-html.push(
+            "<a class=\"prev\""
+            " href=\"{prev.slug}.html\">"
+            "{prev.title}</a>"
+        )
+    } else {
+        nav-html.push('<span></span>')
+    }
+    if idx < #pages - 1 {
+        let nxt = pages[idx + 1]
+        nav-html.push(
+            "<a class=\"next\""
+            " href=\"{nxt.slug}.html\">"
+            "{nxt.title}</a>"
+        )
+    }
+    nav-html.push('</div>')
+
+    fn sidebar-link(p) {
+        let ac = (p.slug == pg.slug) ? ' class="active"' : '';
+        "<a{ac} href=\"{p.slug}.html\">{p.title}</a>"
+    }
+
+    let sidebar = pages.map(sidebar-link).join('\n        ')
+    let first = pages[0].slug
+
+    '''
+        <!DOCTYPE html>
+        <html lang="en">
+        <head>
+          <meta charset="utf-8">
+          <meta name="viewport"
+                content="width=device-width, initial-scale=1">
+        '''
+    "<title>{pg.title} &mdash; A Tour of Ty</title>\n"
+    '''
+          <link rel="stylesheet" href="style.css">
+        </head>
+        <body>
+          <button class="menu-toggle"
+                  onclick="document.querySelector('.sidebar')
+                          .classList.toggle('open')"
+          >&#x2261;</button>
+          <div class="page">
+            <aside class="sidebar">
+        '''
+    "    <a class=\"sidebar-title\""
+    " href=\"{first}.html\">A Tour of Ty</a>\n"
+    "      <nav>\n"
+    "        {sidebar}\n"
+    '''
+              </nav>
+            </aside>
+            <main class="content">
+        '''
+    "      {body}\n"
+    "      {nav-html.str!()}\n"
+    '''
+            </main>
+          </div>
+          <script src="tour.js"></script>
+        </body>
+        </html>
+        '''
+}
+
+fn write-js() {
+    (out-dir / 'tour.js').write('''
+        async function runCode(btn, code) {
+          if (btn.classList.contains('running')) return;
+          btn.classList.add('running');
+          btn.textContent = 'Running\u2026';
+
+          var output = btn.closest('.code-block')
+                         .querySelector('.code-output');
+          output.className = 'code-output visible';
+          output.textContent = 'Running\u2026';
+
+          try {
+            var res = await fetch('/run.ty', {
+              method: 'POST',
+              headers: {
+                'Content-Type':
+                  'application/x-www-form-urlencoded'
+              },
+              body: 'code='
+                + encodeURIComponent(code)
+                + '&input='
+            });
+            var text = await res.text();
+            output.innerHTML = text || '(no output)';
+            output.className =
+              'code-output visible'
+              + (res.ok ? '' : ' error');
+          } catch (e) {
+            output.innerHTML = 'Error: ' + e.message;
+            output.className =
+              'code-output visible error';
+          }
+
+          btn.classList.remove('running');
+          btn.textContent = 'Run';
+        }
+
+        document.querySelectorAll('.sidebar nav a')
+          .forEach(function(a) {
+            a.addEventListener('click', function() {
+              document.querySelector('.sidebar')
+                .classList.remove('open');
+            });
+          });
+        ''')
+}
+
+fn mtime(p: Path) -> Float {
+    p.exists? ? p.stat.mtime : 0.0
+}
+
+let force-mtime = max(
+    mtime(doc-root / 'make.ty'),
+    mtime(doc-root / 'style.css')
+)
+
+fn needs-rebuild(src: Path, dest: Path) -> Bool {
+    max(mtime(src), force-mtime) > mtime(dest)
+}
+
+let pages = load-pages()
+
+if #pages == 0 {
+    print('No .md files found in {intro-dir}')
+} else {
+    let built = 0
+
+    for i in ..#pages {
+        let pg = pages[i]
+        let dest = out-dir / "{pg.slug}.html"
+        if needs-rebuild(pg.file, dest) {
+            dest.write(render-page(pg, pages, i))
+            print("  {pg.slug}.html")
+            built += 1
+        }
+    }
+
+    let css-dest = out-dir / 'style.css'
+    if needs-rebuild(doc-root / 'style.css', css-dest) {
+        css-dest.write((doc-root / 'style.css').read-text())
+    }
+
+    let first = pages[0].slug
+    (out-dir / 'index.html').write(
+        "<!DOCTYPE html>"
+        "<meta http-equiv=\"refresh\""
+        " content=\"0;url={first}.html\">"
+    )
+
+    let pkg-css-dest = out-dir / 'pkg.css'
+    if needs-rebuild(doc-root / 'pkg.css', pkg-css-dest) {
+        pkg-css-dest.write(
+            (doc-root / 'pkg.css').read-text()
+        )
+    }
+
+    let tour-links = pages.map(p -> do {
+        "<a href=\"{p.slug}.html\">{p.title}</a>"
+    }).join('\n        ')
+
+    let pkg-built = 0
+    let ty-bin = ty.executable
+    let doc-ty = doc-root.parent / 'doc.ty'
+
+    print('Building type index...')
+    let full-index = %{}
+    let search-index = %{}
+
+    for mod in pkg-modules {
+        let idx-json = sh(
+            "{ty-bin} {doc-ty} --emit-index {mod}"
+            " 2>/dev/null"
+        )
+        if idx-json == nil || #str(idx-json) <= 2 {
+            continue
+        }
+        let idx: _ = json.parse(str(idx-json))
+        for fqn, kind in idx {
+            let sfqn = str(fqn)
+            let skind = str(kind)
+            let short = sfqn.split('.')[-1]
+            let sg = short.replace(/[^a-zA-Z0-9_-]/, '_')
+            if (skind == 'class'
+                || skind == 'type'
+                || skind == 'tag')
+                && !full-index.has?(sfqn)
+            {
+                full-index[sfqn] =
+                    "pkg-{mod-slug(mod)}.html#{sg}"
+            }
+            search-index[sfqn] = skind
+        }
+    }
+
+    let index-file = out-dir / '_types.json'
+    index-file.write(json.encode(full-index))
+
+    let search-file = out-dir / '_search.json'
+    search-file.write(json.encode(search-index))
+
+    print("  {#search-index} symbols indexed")
+    write-js()
+
+    for mod in pkg-modules {
+        let dest = out-dir / "pkg-{mod-slug(mod)}.html"
+        let mods-arg = pkg-modules.join(',')
+        let cmd = "{ty-bin} --color=always {doc-ty}"
+            " --types-file {index-file}"
+            " --search-index {search-file}"
+            " --modules {mods-arg}"
+            " {mod} 2>&1"
+        let result = sh(cmd)
+        if result == nil || str(result) == '' {
+            print("  pkg-{mod-slug(mod)}.html SKIPPED")
+            continue
+        }
+        dest.write(str(result))
+        print("  pkg-{mod-slug(mod)}.html")
+        pkg-built += 1
+    }
+
+    built += pkg-built
+
+    if built > 0 {
+        print("\nBuilt {built} pages")
+    } else {
+        print('Everything up to date')
+    }
+}

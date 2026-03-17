@@ -16,7 +16,26 @@ pub class Heap[K, T] {
         __heapify()
     }
 
-    swap(i: Int, j: Int) {
+    __heapify() {
+        let n = #__xs
+        for i in (n / 2 - 1).downto(0) {
+            let l = 2 * i + 1
+            let r = l + 1
+            let c = i
+
+            if __key[l] < __key[c] {
+                c = l
+            }
+            if r < n && __key[r] < __key[c] {
+                c = r
+            }
+            if c != i {
+                __swap(i, c)
+            }
+        }
+    }
+
+    __swap(i: Int, j: Int) {
         __key[i], __key[j] = __key[j], __key[i]
         __xs[i],  __xs[j]  = __xs[j],  __xs[i]
     }

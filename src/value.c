@@ -23,6 +23,7 @@
 #include "compiler.h"
 #include "functions.h"
 #include "types.h"
+#include "highlight.h"
 
 static _Thread_local vec(Dict *) show_dicts;
 static _Thread_local vec(Value *) show_tuples;
@@ -1703,29 +1704,40 @@ mark_generator(Ty *ty, Value const *v)
 
         MarkNext(ty, &v->gen->f);
 
-        for (int i = 0; i < vN(v->gen->st->stack); ++i) {
-                MarkNext(ty, v_(v->gen->st->stack, i));
+        co_state *st = v->gen->st;
+
+        for (int i = 0; i < vN(st->stack) + st->rc && i < vC(st->stack); ++i) {
+                MarkNext(ty, v_(st->stack, i));
         }
 
-        for (int i = 0; i < vN(v->gen->st->targets); ++i) {
-                if ((((uptr)v_(v->gen->st->targets, i)->t) & 0x07) == 0) {
-                        MarkNext(ty, v_(v->gen->st->targets, i)->t);
+        for (int i = 0; i < vN(st->frames); ++i) {
+                MarkNext(ty, &v_(st->frames, i)->f);
+        }
+
+        for (int i = 0; i < vN(st->targets); ++i) {
+                Target *target = v_(st->targets, i);
+                uptr t = (uptr)target->t;
+                if (((t & PMASK3) == 0) && (t > 0x0FFF)) {
+                        MarkNext(ty, (Value *)t);
+                }
+                if (target->gc != NULL) {
+                        MARK(target->gc);
                 }
         }
 
-        for (int i = 0; i < vN(v->gen->st->try_stack); ++i) {
-                struct try *t = v__(v->gen->st->try_stack, i);
+        for (int i = 0; i < vN(st->try_stack); ++i) {
+                struct try *t = v__(st->try_stack, i);
                 for (int i = 0; i < vN(t->defer); ++i) {
                         MarkNext(ty, v_(t->defer, i));
                 }
         }
 
-        for (int i = 0; i < vN(v->gen->st->to_drop); ++i) {
-                MarkNext(ty, v_(v->gen->st->to_drop, i));
+        for (int i = 0; i < vN(st->to_drop); ++i) {
+                MarkNext(ty, v_(st->to_drop, i));
         }
 
-        for (int i = 0; i < vN(v->gen->st->gc_roots); ++i) {
-                MarkNext(ty, v_(v->gen->st->gc_roots, i));
+        for (int i = 0; i < vN(st->gc_roots); ++i) {
+                MarkNext(ty, v_(st->gc_roots, i));
         }
 }
 
@@ -2138,6 +2150,68 @@ ConstructPrimitive(Ty *ty, int class_id, int argc, Value *kwargs)
         }
 
         UNREACHABLE();
+}
+
+Value
+PrettySource(Ty *ty, Value const *v)
+{
+        Module *mod;
+        isize start;
+        isize end;
+
+        Expr *expr;
+        Stmt *stmt;
+
+        switch (v->type) {
+        case VALUE_METHOD:
+                expr = expr_of(v->method);
+                mod = expr->mod;
+                start = expr->start.byte;
+                end = expr->end.byte;
+                break;
+
+        case VALUE_FUNCTION:
+        case VALUE_BOUND_FUNCTION:
+        case VALUE_NATIVE_FUNCTION:
+                expr = expr_of(v);
+                mod = expr->mod;
+                start = expr->start.byte;
+                end = expr->end.byte;
+                break;
+
+        case VALUE_CLASS:
+                stmt = class_get(ty, v->class)->def;
+                mod = stmt->mod;
+                start = stmt->start.byte;
+                end = stmt->end.byte;
+                break;
+
+        defaut:
+                return NIL;
+        }
+
+        if (mod == NULL || mod->source == NULL) {
+                return NIL;
+        }
+
+        byte_vector buf = {0};
+
+        while (start > 0 && mod->source[start - 1] != '\n') {
+                --start;
+        }
+
+        if (ColorOutput) {
+                syntax_highlight(ty, &buf, mod, start, end, NULL, NULL);
+        } else {
+                sxdf(&buf, "%.*s", (int)(end - start), mod->source + start);
+        }
+
+        if (vN(buf) == 0) {
+                return NIL;
+        }
+
+        return vSs(vv(buf), vN(buf));
+        
 }
 
 /* vim: set sts=8 sw=8 expandtab: */
