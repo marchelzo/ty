@@ -394,8 +394,6 @@ pub class Tqdm[T] : Iterable[T] {
             let bar-w = _progress-bar.width
             let real-filled = int(p.clamp(0.0, 1.0) * bar-w)
 
-            // Smooth: advance display by at most 1 column per frame,
-            // but snap to full immediately when complete.
             if _stopping || real-filled == bar-w {
                 _display-filled = real-filled
             } else if _display-filled < real-filled {

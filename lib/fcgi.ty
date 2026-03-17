@@ -330,7 +330,7 @@ class FCGIRequest {
                 }
                 let headers = __body.bsplice(i + #delim + 2, j).split(/\r\n/)
                 offset = __body.bsearch(delim, j)
-                let content = __body.bsplice(j + 4, offset - 2)
+                let content = __body.bsplice(j + 4, (offset - 2)!)
                 let headers = %{k.lower(): v for [k, v] in headers.map(&split(': ', 1))}
                 let disposition = %{k: v for [_, k, v] in headers['content-disposition'].matches(/(\w+)="([^"]+)"/)}
                 let name = disposition['name']

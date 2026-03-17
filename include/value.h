@@ -1626,6 +1626,16 @@ FunDef(Ty *ty, Value const *f)
         return unwrap(ty, &def);
 }
 
+static inline Value
+ClassDef(Ty *ty, Value const *c)
+{
+        Value def = CToTyStmt(ty, class_get(ty, c->class)->def);
+        return unwrap(ty, &def);
+}
+
+Value
+PrettySource(Ty *ty, Value const *v);
+
 static inline Value *
 NewZero(void)
 {

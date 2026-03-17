@@ -685,6 +685,7 @@ DoGC(Ty *ty)
         u64 heap  = MemoryUsed;
 #endif
 
+        CO_LOG("GC", TERM(91), "========== Starting GC on thread %llu ============", TID);
         GCLOG("Doing GC: ty->group = %p, (%zu threads)", ty->group, ty->group->ThreadList.count);
 
         TySpinLockLock(&ty->group->Lock);
@@ -889,8 +890,17 @@ add_builtins(Ty *ty, int ac, char **av)
                         break;
 
                 case CLASS_STRING:
+                        sym->type = type_string(ty, TY_C_STR(*v));
+                        sym->flags |= SYM_CONST;
+                        break;
+
                 case CLASS_BOOL:
+                        sym->type = type_bool(ty, v->boolean);
+                        sym->flags |= SYM_CONST;
+                        break;
+
                 case CLASS_FLOAT:
+                case CLASS_PTR:
                         sym->type = class_get(ty, ClassOf(v))->object_type;
                         sym->flags |= SYM_CONST;
                         break;
@@ -1819,6 +1829,8 @@ xcall(Ty *ty, Value const *f, Value const *pSelf, int argc, Value const *pKwargs
 inline static void
 SetupGenerator(Ty *ty, Value const *f, Value const *pSelf, int argc, Value const *pKwargs)
 {
+        GC_STOP();
+
         Value v = GENERATOR(NewGenerator(ty, *f));
 
         xvPn(v.gen->st->stack, topN(argc), argc);
@@ -1835,6 +1847,8 @@ SetupGenerator(Ty *ty, Value const *f, Value const *pSelf, int argc, Value const
         ty->st->stack = STACK;
         SWAP(co_state *, ty->st, v.gen->st);
         STACK = ty->st->stack;
+
+        GC_RESUME();
 
         push(v);
 }
@@ -3569,6 +3583,9 @@ GetMember(Ty *ty, int member, bool try_missing, bool exec)
                 } else if (member == NAMES._def_) {
                         pop();
                         return FunDef(ty, v.method);
+                } else if (member == NAMES._src_) {
+                        pop();
+                        return PrettySource(ty, &v);
                 }
                 n = CLASS_FUNCTION;
                 goto ClassLookup;
@@ -3587,6 +3604,9 @@ GetMember(Ty *ty, int member, bool try_missing, bool exec)
                 } else if (member == NAMES._def_) {
                         pop();
                         return FunDef(ty, &v);
+                } else if (member == NAMES._src_) {
+                        pop();
+                        return PrettySource(ty, &v);
                 } else if (has_meta(&v)) {
                         push(*meta_of(ty, v.method));
                         meta = GetMember(ty, member, false, exec);
@@ -3623,7 +3643,8 @@ GetMember(Ty *ty, int member, bool try_missing, bool exec)
                         pop();
                         return STRING_FORMAT(
                                 ty,
-                                "%s.%s",
+                                "%s.%s.%s",
+                                class_get(ty, ClassOf(v.this))->def->mod->name,
                                 class_name(ty, ClassOf(v.this)),
                                 M_NAME(v.name)
                         );
@@ -3718,6 +3739,24 @@ GetMember(Ty *ty, int member, bool try_missing, bool exec)
                 if (member == NAMES._name_) {
                         pop();
                         return xSz(class_name(ty, v.class));
+                }
+                if (member == NAMES._fqn_) {
+                        pop();
+                        Class *class = class_get(ty, v.class);
+                        return STRING_FORMAT(
+                                ty,
+                                "%s.%s",
+                                ClassModName(class),
+                                class->name
+                        );
+                }
+                if (member == NAMES._def_) {
+                        pop();
+                        return ClassDef(ty, &v);
+                }
+                if (member == NAMES._src_) {
+                        pop();
+                        return PrettySource(ty, &v);
                 }
                 if (member == NAMES._super_) {
                         Class *super = class_get(ty, v.class)->super;
@@ -3840,6 +3879,16 @@ BoundMethod:
                 if (vp != NULL) {
                         pop();
                         return *vp;
+                }
+                if (member == NAMES._fqn_) {
+                        pop();
+                        Class *class = tags_get_class(ty, v.tag);
+                        return STRING_FORMAT(
+                                ty,
+                                "%s.%s",
+                                ClassModName(class),
+                                class->name
+                        );
                 }
                 break;
         }
@@ -5524,10 +5573,10 @@ DoStringLiteral(Ty *ty, i32 i)
 void
 DoDictLiteral(Ty *ty, i32 n, Value const *dflt)
 {
+        GC_STOP();
+
         Dict *dict = dict_new(ty);
         Value val  = DICT(dict);
-
-        gP(&val);
 
         if (dflt != NULL) {
                 dict->dflt = *dflt;
@@ -5544,11 +5593,10 @@ DoDictLiteral(Ty *ty, i32 n, Value const *dflt)
                 }
         }
 
-        gX();
+        GC_RESUME();
 
-        STACK.count -= n;
-
-        push(val);
+        vN(STACK) -= n;
+        xpush(val);
 }
 
 static void
@@ -7833,7 +7881,7 @@ TargetMember:
                 CASE(TRY_GET_MEMBER)
                         z = GetDynamicMemberId(ty, false);
                         if (z >= 0) {
-                                goto MemberAccess;
+                                goto SafeMemberAccess;
                         } else {
                                 *top() = NIL;
                         }
@@ -7841,13 +7889,10 @@ TargetMember:
 
                 CASE(GET_MEMBER)
                         z = GetDynamicMemberId(ty, true);
-                        if (z >= 0) {
-                                goto MemberAccess;
-                        } else {
+                        if (z < 0) {
                                 z = -(z + 1);
-                                value = pop();
-                                goto BadField;
                         }
+                        goto MemberAccess;
 
                 CASE(TARGET_DYN_MEMBER)
                         z = GetDynamicMemberId(ty, true);
@@ -7908,7 +7953,7 @@ TargetMember:
 
                 CASE(TRY_MEMBER_ACCESS)
                         READVALUE(z);
-
+SafeMemberAccess:
                         v = GetMember(ty, z, true, false);
 
                         switch (v.type) {
@@ -7941,7 +7986,7 @@ MemberAccess:
                                 break;
 BadField:
                         case VALUE_NONE:
-                                BadFieldAccess(ty, &value, z);
+                                BadFieldAccess(ty, top(), z);
                                 UNREACHABLE();
                         }
                         break;
@@ -9600,6 +9645,7 @@ vm_init(Ty *ty, int ac, char **av)
         NAMES.ptr              = M_ID("__ptr__");
         NAMES._repr_           = M_ID("__repr__");
         NAMES.slice            = M_ID("[;;]");
+        NAMES._src_            = M_ID("__src__");
         NAMES.str              = M_ID("str");
         NAMES._str_            = M_ID("__str__");
         NAMES.subscript        = M_ID("[]");
@@ -9717,7 +9763,8 @@ vm_execute(Ty *ty, char const *source, char const *file)
 
         if (TY_CATCH_ERROR()) {
                 char *trace = FormatTrace(ty, NULL, NULL);
-                Value   exc = TY_CATCH();
+                Value   exc = ty->exc;
+                GetCurrentTry(ty)->state = TRY_TRY;
                 dump(
                         &ErrorBuffer,
                         "%s\n%sRuntimeError%s: uncaught exception: %s",
@@ -9726,6 +9773,7 @@ vm_execute(Ty *ty, char const *source, char const *file)
                         TERM(0),
                         VSC(&exc)
                 );
+                (void)TY_CATCH();
                 xmF(trace);
                 return false;
         }
@@ -9785,7 +9833,6 @@ vm_throw(Ty *ty, Value const *v)
         ctx->exc = *v;
         DoThrow(ty);
         vm_exec(ty, IP);
-
         UNREACHABLE();
 }
 

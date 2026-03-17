@@ -1,34 +1,57 @@
-import ffi as c (C!, wrap)
-import io
+import ffi as c (C!)
+import os
 
-import time
+pub const TFD_NONBLOCK      = 0x800
+pub const TFD_CLOEXEC       = 0x80000
+pub const TFD_TIMER_ABSTIME = 1
 
-let timespec = c.struct(
-  c.u64, // sec
-  c.long // nsec
-)
+C! struct Itimerspec {
+    long interval_sec;
+    long interval_nsec;
+    long value_sec;
+    long value_nsec;
+}
 
-let itimerspec = c.struct(
-  timespec, // interval
-  timespec  // value
-)
+C! fn {
+    int timerfd_create(int clockid, int flags);
+    int timerfd_settime(int fd, int flags, void *nv, void *ov);
+    int timerfd_gettime(int fd, void *cv);
+}
 
-pub timerfd_create = wrap(nil, 'timerfd_create', c.int, c.int, c.int)
+pub class TimerFD {
+    __fd: Int
+    __spec: _
 
-let c_timerfd_settime = wrap(nil, 'timerfd_settime', c.int, c.int, c.int, c.ptr, c.ptr)
-let c_timerfd_gettime = wrap(nil, 'timerfd_gettime', c.int, c.int, c.ptr)
+    init(clockid: Int = 1, flags: Int = TFD_CLOEXEC) {
+        __fd = timerfd_create(clockid, flags)
+        __spec = Itimerspec()
+    }
 
-let tspec = c.new(timespec)
-let ispec = c.new(itimerspec)
+    fd -> Int { __fd }
 
-pub function timerfd_settime(fd: Int, flags: Int, value: time.Timespec, interval: time.Timespec) {
-  c.member(timespec, tspec, 0, value.tv_sec ?? 0)
-  c.member(timespec, tspec, 1, value.tv_nsec ?? 0)
-  c.member(itimerspec, ispec, 1, tspec)
+    set(
+        sec:           Int = 0,
+        nsec:          Int = 0,
+        interval-sec:  Int = 0,
+        interval-nsec: Int = 0,
+        flags:         Int = 0
+    ) -> Int {
+        __spec.value_sec      = sec
+        __spec.value_nsec     = nsec
+        __spec.interval_sec   = interval-sec
+        __spec.interval_nsec  = interval-nsec
+        timerfd_settime(__fd, flags, __spec.get(), nil)
+    }
 
-  c.member(timespec, tspec, 0, interval.tv_sec ?? 0)
-  c.member(timespec, tspec, 1, interval.tv_nsec ?? 0)
-  c.member(itimerspec, ispec, 0, tspec)
+    get() -> {expiry: {sec: Int, nsec: Int}, interval: {sec: Int, nsec: Int}} {
+        timerfd_gettime(__fd, __spec.get())
+        return {
+            expiry:   {sec: __spec.value_sec,    nsec: __spec.value_nsec},
+            interval: {sec: __spec.interval_sec, nsec: __spec.interval_nsec}
+        }
+    }
 
-  return c_timerfd_settime(fd, flags, ispec, nil)
+    close() {
+        os.close(__fd)
+    }
 }

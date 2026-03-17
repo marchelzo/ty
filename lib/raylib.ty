@@ -1,6 +1,6 @@
 import ffi as c (C!)
 
-let $raylib = c.dlopen('libraylib.dylib')
+let $raylib = c.open('raylib') or throw RuntimeError('failed to load raylib library')
 
 pub KEY_NULL            = 0;        // Key: NULL, used for no key pressed
 

@@ -1,6 +1,7 @@
 import os (terminal-size)
 import ffi as c (C!)
 import chalk (chalk)
+import json
 
 tag TooMuchError;
 tag TooWideError;
@@ -12,19 +13,25 @@ pub tag Pop;
 pub tag Newline;
 pub tag Raw;
 
-let defaultColors = {
-    dict:  chalk['#e78a4e bold'],
-    array: chalk['#e78a4e bold'],
-    str:   chalk['#a9b665'],
-    quote: chalk['#a9b665 bold'],
-    int:   chalk['#d3869b'],
-    float: chalk['#d3869b'],
-    null:  chalk['#89b482'],
-    t:     chalk['#d8a657'],
-    c:     chalk['#d8a657'],
-    field: chalk['#7daea3'],
-    bool:  chalk['#d3869b'],
-    more:  chalk['#928374']
+fn _load-colors() {
+    let $home = __env['HOME'] or return nil
+    let $conf = slurp("{home}/.config/ty/colors.json") or return nil
+    json.parse!(conf)
+}
+
+let defaultColors = _load-colors() ?? {
+    dict:  '#e78a4e bold',
+    array: '#e78a4e bold',
+    str:   '#a9b665',
+    quote: '#a9b665 bold',
+    int:   '#d3869b',
+    float: '#d3869b',
+    null:  '#89b482',
+    t:     '#d8a657',
+    c:     '#d8a657',
+    field: '#7daea3',
+    bool:  '#d3869b',
+    more:  '#928374'
 }
 
 pub fn escapeString(s) {
@@ -86,15 +93,15 @@ pub class Printer {
         __visiting.take!(num-visiting)
     }
 
-    write(s: String, pen=id, force=false) {
-        let want = #s
+    write(s: String, style=nil, force=false) {
+        let want = s.width()
         let have = max(0, __width - __col)
 
         let off = __color ? "\x1b[0m" : ''
 
-        fn put(x) {
-            __out.push(str(__color ? pen(x) : x))
-            __col += #x
+        fn put(x: String) {
+            __out.push(str((__color && style) ? chalk"[{style}]{x}[/]" : x))
+            __col += x.width()
         }
 
         match have {
@@ -144,7 +151,7 @@ pub class Printer {
                 write(open, color, force)
                 nl(1)
                 for x, i in xs {
-                    if i > 0 { write(',', id, force); nl() }
+                    if i > 0 { write(',', nil, force); nl() }
                     go(x, true, force)
                 }
                 nl(-1)
@@ -175,7 +182,7 @@ pub class Printer {
                     },
 
                     s => {
-                        write(s, id, force!)
+                        write(s, nil, force!)
                     }
                 }
                 write(close, delim-style, force!)
@@ -189,7 +196,7 @@ pub class Printer {
                 write(open, delim-style, force)
                 nl(1)
                 for k, v, i in m {
-                    if i > 0 { write(',', id, force); nl() }
+                    if i > 0 { write(',', nil, force); nl() }
                     write-key(k, true, force)
                     write(eq, delim-style, force)
                     go(v, true, force)
@@ -253,7 +260,7 @@ pub class Printer {
             Object({__pretty__: $f}) => {
                 for match f() {
                     Print(x) => { go(x, canPush, force)   },
-                    Raw(x)   => { write("{x}", id, force) },
+                    Raw(x)   => { write("{x}", nil, force) },
                     Push     => { nl(1)                   },
                     Pop      => { nl(-1)                  },
                     Newline  => { nl()                    }
@@ -265,7 +272,7 @@ pub class Printer {
             },
 
             _ => {
-                write(show(x), id, force)
+                write(show(x), nil, force)
             }
         }
 
@@ -287,11 +294,16 @@ fn term-cols() -> Int {
     terminal-size().?cols ?? 500
 }
 
+@memoized
+fn _printer(kwargs) {
+    Printer(**kwargs)
+}
+
 pretty = fn pretty(x, %kwargs) {
     if 'width' not in kwargs {
         kwargs['width'] = min(term-cols(), 60)
     }
-    Printer(**kwargs).print(x)
+    _printer(kwargs).print(x)
 }
 
 pp = fn pretty-print(x, %kwargs: Any) {

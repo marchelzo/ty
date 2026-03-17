@@ -369,9 +369,10 @@ class Object {
 }
 
 class Class[T] {
-    __name__: String
-    __methods__: Dict[String, _]
-    __fields__:  Array[_]
+    __name__:           String
+    __fqn__:            String
+    __fields__:         Array[_]
+    __methods__:        Dict[String, _]
     __static_methods__: Dict[String, _];
 
     |(other) {
@@ -420,7 +421,7 @@ class Function : Iter {
     }
 
     iter*(x) {
-        while true { yield (x = self(x)) }
+        while true { yield x; x = self(x) }
     }
 
     __match__(x) {
@@ -1156,7 +1157,7 @@ class String : Iterable[String], IntoPtr[Int] {
         return b
     }
 
-    editDistance(other) {
+    edit-distance(other) {
         let a = self
         let b = other
 
@@ -1619,6 +1620,12 @@ class Generator[T, S] : Iter[T] {
 }
 
 class Module {
+    init(name: String) -> Module;
+
+    static list -> Array[Module] {
+        ty.mod.list()
+    }
+
     name -> String { ty.mod.name(self) }
     path -> String { ty.mod.path(self) }
 

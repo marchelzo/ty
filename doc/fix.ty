@@ -1,0 +1,9 @@
+import path (Path)
+
+let files = Path('intro').glob('*.md')
+files.sort!(by=\_.name)
+
+for file, i in files {
+    let name = file.name.sub(/^\d+/, "{(i + 1):02}")
+    file.rename(file.with-name(name))
+}

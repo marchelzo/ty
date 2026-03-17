@@ -8,3 +8,4 @@ vcpkg_installed
 vcpkg
 *.log
 *.err
+.DS_Store

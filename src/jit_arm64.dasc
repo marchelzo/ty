@@ -403,7 +403,11 @@ static void jit_emit_cmp_rr(dasm_State **Dst, int left, int right) {
 
 // --- Compare register with immediate ---
 static void jit_emit_cmp_ri(dasm_State **Dst, int reg, int imm) {
-        |  cmp Rx(reg), #imm
+        if (imm < 0 && imm >= -4095) {
+                |  cmn Rx(reg), #(-imm)
+        } else {
+                |  cmp Rx(reg), #imm
+        }
 }
 
 // Compare 32-bit register with immediate (for int return values)
@@ -457,4 +461,8 @@ static void jit_emit_fbranch_ge(dasm_State **Dst, int label) {
 // Load 32-bit word from [base + offset]
 static void jit_emit_ldr32(dasm_State **Dst, int dst, int base, int offset) {
         |  ldr Rw(dst), [Rx(base), #offset]
+}
+
+static void jit_emit_ldr16(dasm_State **Dst, int dst, int base, int offset) {
+        |  ldrh Rw(dst), [Rx(base), #offset]
 }

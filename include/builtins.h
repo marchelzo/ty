@@ -894,6 +894,7 @@ static struct {
 
   { .module = "ty/mod",     .name = "get",                       .value = BUILTIN(builtin_ty_mod_get)            },
   { .module = "ty/mod",     .name = "load",                      .value = BUILTIN(builtin_ty_mod_load)           },
+  { .module = "ty/mod",     .name = "list",                      .value = BUILTIN(builtin_ty_mod_list)           },
   { .module = "ty/mod",     .name = "name",                      .value = BUILTIN(builtin_ty_mod_name)           },
   { .module = "ty/mod",     .name = "path",                      .value = BUILTIN(builtin_ty_mod_path)           },
   { .module = "ty/mod",     .name = "dict",                      .value = BUILTIN(builtin_ty_mod_dict)           },

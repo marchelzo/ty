@@ -3336,13 +3336,8 @@ type_variable(Ty *ty, Symbol *var)
         }
 
         byte_vector name = {0};
-        if (SymbolIsVariadic(var)) {
-                dump(&name, "*%s", var->identifier);
-        } else if (SymbolIsParamPack(var)) {
-                dump(&name, "...%s", var->identifier);
-        } else {
-                dump(&name, "%s", var->identifier);
-        }
+        dump(&name, "%s", var->identifier);
+
         //dump(&name, "%s%u", var->identifier, t->id);
         *itable_get(ty, &FixedVarNameTable, t->id) = PTR(name.items);
         *itable_get(ty, &VarNameTable, t->id) = PTR(name.items);
@@ -9669,6 +9664,18 @@ type_show(Ty *ty, Type const *t0)
                 break;
 
         case TYPE_UNION:
+                if (vN(t0->types) == 1) {
+                        dump(
+                                &buf,
+                                "%sUnion[%s%s%s]%s",
+                                TERM(93),
+                                TERM(0),
+                                ShowType(v__(t0->types, 0)),
+                                TERM(93),
+                                TERM(0)
+                        );
+                        break;
+                }
                 //dump(&buf, "%sunion[%s", TERM(96), TERM(0));
                 for (int i = 0; i < vN(t0->types); ++i) {
                         if (i > 0) {
@@ -11886,6 +11893,15 @@ type_to_ty(Ty *ty, Type *t0)
                 v = TAG(TyNilT);
                 break;
 
+        case TYPE_ALIAS:
+                v = TAGGED_RECORD(
+                        TyAliasT,
+                        "name", vSsz(t0->name),
+                        "mod",  vSsz(t0->asrc->mod->name),
+                        "type", TYPE(t0->_type)
+                );
+                break;
+
         case TYPE_VARIABLE:
                 if (IsTVar(t0)) {
                         v = tagged(ty, TyVarT, INTEGER(t0->id), NONE);
@@ -11956,10 +11972,11 @@ type_to_ty(Ty *ty, Type *t0)
                         vPx(
                                 *params,
                                 vTn(
-                                        "name",   vSsz(param->name),
-                                        "type",   type_to_ty(ty, param->type),
+                                        "name", vSsz(param->name),
+                                        "type", type_to_ty(ty, param->type),
                                         "gather", BOOLEAN(param->rest),
-                                        "kwargs", BOOLEAN(param->kws)
+                                        "kwargs", BOOLEAN(param->kws),
+                                        "required", BOOLEAN(param->required)
                                 )
                         );
                 }
