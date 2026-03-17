@@ -11759,6 +11759,17 @@ type_from_ty(Ty *ty, Value const *v)
                 t0->types = TyTypeVector(ty, &inner);
                 break;
 
+        case TyAliasT:
+                t0 = NewType(ty, TYPE_ALIAS);
+                t0->name  = mkcstr(ty, tget_t(&inner, "name", VALUE_STRING));
+                t0->_type = type_from_ty(ty, tget_t(&inner, "type", VALUE_TYPE));
+                t0->asrc  = CompilerExprFor(
+                        ty,
+                        TY_TMP_C_STR(tget_or(&inner, "mod", STRING_NOGC_C(""))),
+                        t0->name
+                );
+                break;
+
         case TyObjectT:
                 t0 = NewType(ty, TYPE_OBJECT);
                 if (

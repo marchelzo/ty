@@ -600,6 +600,9 @@ expedite_fun(Ty *ty, Expr *e, void *ctx);
 bool
 IsUndefinedSymbol(Symbol const *sym);
 
+Expr *
+CompilerExprFor(Ty *ty, char const *mod, char const *name);
+
 #define EDBG(e) ((edbg)(ty, (e)))
 
 #endif
