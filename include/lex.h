@@ -88,6 +88,12 @@ lex_state(Ty *ty);
 struct location
 lex_pos(Ty *ty);
 
+void
+lex_push(Ty *ty, LexState const *st);
+
+bool
+lex_pop(Ty *ty);
+
 #endif
 
 /* vim: set sts=8 sw=8 expandtab: */

@@ -1,0 +1,190 @@
+import watchfs (..)
+import path (Path)
+import os
+
+ns test
+
+let TIMEOUT = 2.0
+
+fn after(ms, f) {
+    Thread(fn () {
+        os.sleep(ms / 1e3)
+        f()
+    })
+}
+
+pub fn test-detect-create() {
+    with dir = Path.tempdir('watchfs') {
+        let thrd = after(50, fn () {
+            (dir / 'hello.txt').write('hello')
+        })
+
+        for match watch(dir, timeout=TIMEOUT) {
+            Create(Path(name: 'hello.txt')) => break
+        }
+
+        thrd.join()
+    }
+}
+
+pub fn test-detect-modify() {
+    with dir = Path.tempdir('watchfs') {
+        let file = dir / 'data.txt'
+        file.write('initial')
+
+        let thrd = after(50, fn () {
+            file.write('modified')
+        })
+
+        let got-modify? = false
+        for match watch(dir, timeout=TIMEOUT) {
+            Modify(Path(name: 'data.txt')) => { got-modify? = true; break },
+            _ => ()
+        }
+        assert(got-modify?)
+
+        thrd.join()
+    }
+}
+
+pub fn test-detect-delete() {
+    with dir = Path.tempdir('watchfs') {
+        let file = dir / 'doomed.txt'
+        file.write('bye')
+
+        let thrd = after(50, fn () {
+            file.unlink()
+        })
+
+        for match watch(dir, timeout=TIMEOUT) {
+            Delete(Path(name: 'doomed.txt')) => break
+        }
+
+        thrd.join()
+    }
+}
+
+pub fn test-detect-rename() {
+    with dir = Path.tempdir('watchfs') {
+        let file = dir / 'old.txt'
+        file.write('data')
+
+        let thrd = after(50, fn () {
+            file.rename(dir / 'new.txt')
+        })
+
+        let saw-delete? = false
+        let saw-create? = false
+        for match watch(dir, timeout=TIMEOUT) {
+            Delete(Path(name: 'old.txt')) => {
+                saw-delete? = true
+                break if saw-create?
+            },
+            Create(Path(name: 'new.txt')) => {
+                saw-create? = true
+                break if saw-delete?
+            }
+        }
+
+        assert(saw-delete? || saw-create?)
+
+        thrd.join()
+    }
+}
+
+pub fn test-multiple-events() {
+    with dir = Path.tempdir('watchfs') {
+        let thrd = after(50, fn () {
+            (dir / 'a.txt').write('aaa')
+            os.sleep(0.03)
+            (dir / 'b.txt').write('bbb')
+        })
+
+        let names = %{}
+        for match watch(dir, timeout=TIMEOUT) {
+            (Create(p) or Modify(p) or Delete(p)) => {
+                names[p.name] = true
+                break if 'a.txt' in names && 'b.txt' in names
+            }
+        }
+
+        assert('a.txt' in names)
+        assert('b.txt' in names)
+
+        thrd.join()
+    }
+}
+
+pub fn test-recursive() {
+    with dir = Path.tempdir('watchfs') {
+        let sub = dir / 'sub'
+        sub.mkdir()
+
+        let thrd = after(50, fn () {
+            (sub / 'deep.txt').write('deep')
+        })
+
+        let found? = false
+        for match watch(dir, recursive=true, timeout=TIMEOUT) {
+            Create(p) and p.name == 'deep.txt' => { found? = true; break },
+            _ => ()
+        }
+        assert(found?)
+
+        thrd.join()
+    }
+}
+
+pub fn test-watcher-class() {
+    with dir = Path.tempdir('watchfs') {
+        let w = Watcher(dir)
+
+        let thrd = after(50, fn () {
+            (dir / 'x.txt').write('x')
+        })
+
+        for match w.events(timeout=TIMEOUT) {
+            Create(Path(name: 'x.txt')) => break
+        }
+
+        w.close()
+        thrd.join()
+    }
+}
+
+pub fn test-watcher-dir-property() {
+    with dir = Path.tempdir('watchfs') {
+        let w = Watcher(dir)
+        assert(w.dir == dir)
+        w.close()
+    }
+}
+
+pub fn test-create-then-delete() {
+    with dir = Path.tempdir('watchfs') {
+        let thrd = after(50, fn () {
+            let f = dir / 'ephemeral.txt'
+            f.write('here')
+            os.sleep(0.04)
+            f.unlink()
+        })
+
+        let saw-create? = false
+        let saw-delete? = false
+        for match watch(dir, timeout=TIMEOUT) {
+            Create(Path(name: 'ephemeral.txt')) => {
+                saw-create? = true
+                break if saw-delete?
+            },
+            Delete(Path(name: 'ephemeral.txt')) => {
+                saw-delete? = true
+                break if saw-create?
+            }
+        }
+
+        assert(saw-create?)
+        assert(saw-delete?)
+
+        thrd.join()
+    }
+}

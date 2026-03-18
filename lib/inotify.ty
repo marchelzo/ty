@@ -84,8 +84,12 @@ pub class Inotify {
         return {wd: ev.wd, mask: ev.mask, cookie: ev.cookie, name}
     }
 
-    events*() {
-        for (;;) { yield wait() }
+    ready?(timeout: Float = -1.0) -> Bool {
+        os.poll([(__fd, os.POLLIN)], [], timeout) > 0
+    }
+
+    events*(timeout: Float = -1.0) {
+        while ready?(timeout) { yield wait() }
     }
 
     close() {
