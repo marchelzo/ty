@@ -1,0 +1,148 @@
+import uv
+import os
+
+ns test
+
+fn with-echo-server(f) {
+    uv.run(fn () {
+        let srv = uv.server('127.0.0.1', 0)
+
+        srv.on-connection = fn (server) {
+            let client = server.accept()
+            let data = client.read(5)
+            client.write(data)
+            client.shutdown()
+            client.close()
+        }
+
+        srv.listen()
+
+        let (_, port) = os.getnameinfo(srv.address, os.NI_NUMERICHOST | os.NI_NUMERICSERV)
+
+        f(port)
+
+        srv.close()
+    })
+}
+
+pub fn test-race-fastest-wins() {
+    uv.run(fn () {
+        let result = uv.race([
+            fn () { uv.sleep(200); 'slow' },
+            fn () { uv.sleep(10);  'fast' },
+        ])
+        assert(result == 'fast')
+    })
+}
+
+pub fn test-race-survivor() {
+    uv.run(fn () {
+        let result = uv.race([
+            fn () { throw RuntimeError('boom') },
+            fn () { uv.sleep(10); 'ok' },
+        ])
+        assert(result == 'ok')
+    })
+}
+
+pub fn test-race-all-fail() {
+    uv.run(fn () {
+        let threw? = false
+        try {
+            uv.race([
+                fn () { throw RuntimeError('a') },
+                fn () { throw RuntimeError('b') },
+            ])
+        } catch _ {
+            threw? = true
+        }
+        assert(threw?)
+    })
+}
+
+pub fn test-staggered-fast-fallback() {
+    uv.run(fn () {
+        let order = []
+        let result = uv.race([
+            fn () { order.push('a'); throw RuntimeError('nope') },
+            fn () { order.push('b'); 'ok' },
+        ], stagger=5000)
+        assert(result == 'ok')
+        assert(order == ['a', 'b'])
+    })
+}
+
+pub fn test-staggered-first-wins() {
+    uv.run(fn () {
+        let result = uv.race([
+            fn () { uv.sleep(10); 'first' },
+            fn () { uv.sleep(10); 'second' },
+        ], stagger=5000)
+        assert(result == 'first')
+    })
+}
+
+pub fn test-race-slow-cancels() {
+    uv.run(fn () {
+        let ok = true
+        let result = uv.race([
+            fn () { uv.sleep(300); ok = false; 'slow' },
+            fn () { uv.sleep(10);              'fast' },
+        ], stagger=150)
+        uv.sleep(175)
+        assert(result == 'fast')
+        assert(ok)
+    })
+}
+
+pub fn test-race-slow-wins-with-head-start() {
+    uv.run(fn () {
+        let ok = true
+        let result = uv.race([
+            fn () { uv.sleep(500);             'slow' },
+            fn () { uv.sleep(125); ok = false; 'fast' },
+        ], stagger=475)
+        uv.sleep(175)
+        assert(result == 'slow')
+        assert(ok)
+    })
+}
+
+pub fn test-dial-echo() {
+    with-echo-server(fn (port) {
+        let sock = uv.dial('127.0.0.1', port)
+        sock.write('hello')
+        assert(sock.read(5) == 'hello')
+        sock.close()
+    })
+}
+
+pub fn test-happy-eyeballs() {
+    with-echo-server(fn (port) {
+        let sock = uv.dial('localhost', port)
+        sock.write('hello')
+        assert(sock.read(5) == 'hello')
+        sock.close()
+    })
+}
+
+pub fn test-happy-eyeballs-fast-fallback() {
+    with-echo-server(fn (port) {
+        let sock = uv.dial('localhost', port, stagger=5000)
+        sock.write('hello')
+        assert(sock.read(5) == 'hello')
+        sock.close()
+    })
+}
+
+pub fn test-connection-refused() {
+    uv.run(fn () {
+        let threw? = false
+        try {
+            uv.dial('127.0.0.1', 1)
+        } catch _ {
+            threw? = true
+        }
+        assert(threw?)
+    })
+}
