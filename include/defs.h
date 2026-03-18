@@ -169,6 +169,7 @@ typedef vec(Module *)       ModuleVector;
 #define sN(v) ((v).bytes)
 
 #define vA()       value_array_new(ty)
+#define vAu()      uAo0(sizeof (Array), GC_ARRAY)
 #define vAn(n)     value_array_new_sized(ty, n)
 #define vAp(a, x)  value_array_push(ty, a, x)
 

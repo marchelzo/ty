@@ -270,6 +270,8 @@ typedef struct ParserState {
 
         int depth;
 
+        vec(LexState) stack;
+
         LexState CtxCheckpoint;
         LexContext lctx;
         bool comments;
@@ -619,6 +621,11 @@ inline static Token *
 
         while (vN(tokens) <= i + TokenIndex) {
                 t = lex_token(ty, LCTX);
+
+                if (UNLIKELY(t.type == TOKEN_END) && vN(state.stack) > 0) {
+                        lex_restore(ty, &vXx(state.stack));
+                        continue;
+                }
 
                 if (vN(tokens) == TokenIndex) {
                         lex_save(ty, &CtxCheckpoint);
@@ -6894,6 +6901,7 @@ tokenize(Ty *ty, char const *source, TokenVector *tokens_out)
 {
         lex_save(ty, &CtxCheckpoint);
         ParserState save = state;
+        v00(state.stack);
 
         lex_init(ty, "(tokenize)", source);
 
@@ -7062,9 +7070,7 @@ parse_ex(
                         }
                 }
 
-                parse_sync_lex(ty);
                 lex_need_nl(ty, false);
-
 
                 while (T0 == TOKEN_COMMENT) {
                         doc = tok()->comment;
@@ -7322,6 +7328,7 @@ pp_eval(Ty *ty, Expr *expr)
 {
         lex_save(ty, &CtxCheckpoint);
         ParserState save = state;
+        v00(state.stack);
 
         Value v = compiler_eval(ty, expr);
 
@@ -7339,108 +7346,108 @@ pp_while(Ty *ty)
 static void
 pp_if(Ty *ty)
 {
-        vec(u32) starts   = {0};
-        vec(u32) ends     = {0};
-        vec(Expr *) conds = {0};
+        LexState st0 = *lex_state(ty);
+        st0.need_nl  = false;
 
         int very_start = TokenIndex;
 
-        Token it = *tokenx(1);
+        int depth = 0;
 
-        PLOG("%sPP_IF()%s: BEGIN", TERM(96;1), TERM(0));
+        vec(Expr *)   conds = {0};
+        vec(LexState) arms  = {0};
+
+        SCRATCH_SAVE();
+
+        nextx();
 
         lex_in_pp(ty, true);
 
+        PLOG("%sPP_IF()%s: BEGIN", TERM(96;1), TERM(0));
+
         for (;;) {
-                if (tokenx(0)->type == TOKEN_END) {
-                        EStart = it.start;
-                        EEnd = it.end;
-                        die("unterminated conditional directive");
-                }
+                Token *t0 = tokenx(0);
+                int kw = (t0->type == TOKEN_KEYWORD) ? t0->keyword : -1;
 
-                if (tokenx(0)->type == TOKEN_ERROR) {
-                        EStart = it.start;
-                        EEnd = it.end;
-                        die(NULL);
-                }
+                PLOG(
+                        "%sPP_IF()%s: [%02d] ARM %zu: %s",
+                        TERM(96;1),
+                        TERM(0),
+                        depth,
+                        vN(arms),
+                        token_show(ty, t0)
+                );
 
-                if (tokenx(0)->type == '"') {
-                        skip_ss(ty);
-                        continue;
-                }
-
-                if (tokenx(0)->type != TOKEN_DIRECTIVE) {
-                        nextx();
-                        continue;
-                }
-
-                if (vN(conds) > 0) {
-                        xvP(ends, TokenIndex);
-                }
-
-                nextx();
-
-                if (tokenx(0)->type == ']') {
-                        nextx();
-                        consume('\n');
-                        break;
-                }
-
-                switch (K0) {
+                switch (kw) {
                 case KEYWORD_ELSE:
                         next();
-
-                        if (K0 == KEYWORD_IF) {
-                                next();
+                        if (depth == 1) {
+                                if (K0 == KEYWORD_IF) {
+                                        next();
+                                }
+                                if (T0 != '\n') {
+                                        svP(conds, parse_expr(ty, 0));
+                                } else {
+                                        svP(conds, NULL);
+                                }
+                                consume('\n');
+                                st0.loc = token(0)->start;
+                                svP(arms, st0);
                         }
-
-                        if (T0 != '\n') {
-                                xvP(conds, parse_expr(ty, 0));
-                        } else {
-                                xvP(conds, NULL);
-                        }
-
-                        consume('\n');
-
-                        xvP(starts, TokenIndex);
                         break;
 
                 case KEYWORD_IF:
                         next();
-
-                        xvP(conds, parse_expr(ty, 0));
-
-                        consume('\n');
-
-                        xvP(starts, TokenIndex);
+                        if (++depth == 1) {
+                                svP(conds, parse_expr(ty, 0));
+                                consume('\n');
+                                st0.loc = token(0)->start;
+                                svP(arms, st0);
+                        }
                         break;
 
                 default:
-                        die("encountered invalid directive while parsing conditional");
+                        if (tokenx(0)->type != ']') {
+                                 die(
+                                        "expected `#|if` directive to end"
+                                        " with `#|]` but found: %s",
+                                        token_show(ty, tokenx(0))
+                                );
+                        }
+                        if (--depth == 0) {
+                                nextx();
+                                nextx();
+                                break;
+                        }
                 }
+
+                if (depth == 0) {
+                        break;
+                }
+
+                while (tokenx(0)->type != TOKEN_DIRECTIVE) {
+                        if (tokenx(0)->type == TOKEN_END) {
+                                expect(TOKEN_DIRECTIVE);
+                                UNREACHABLE();
+                        }
+                        if (tokenx(0)->type == '"') {
+                                skip_ss(ty);
+                        } else {
+                                nextx();
+                        }
+                }
+
+                if (vN(arms) > 0) {
+                        vvL(arms)->end = tokenx(0)->start.s;
+                }
+
+                nextx();
         }
 
         int very_end = TokenIndex;
 
-        i32 start = -1;
-        i32 end = -1;
-
-        for (int i = 0; i < vN(conds); ++i) {
-                Value take = (v__(conds, i) != NULL)
-                           ? pp_eval(ty, v__(conds, i))
-                           : BOOLEAN(true);
-                if (value_truthy(ty, &take)) {
-                        start = v__(starts, i);
-                        end = v__(ends, i);
-                        break;
-                }
-        }
-
         PLOG("%sPP_IF()%s: END", TERM(96;1), TERM(0));
         for (int i = very_start; i < very_end; ++i) {
-                if (i < start || i >= end) {
-                        v_(tokens, i)->ctx = LEX_HIDDEN;
-                }
+                v_(tokens, i)->ctx = LEX_HIDDEN;
                 v_(tokens, i)->pp = true;
                 PLOG(
                         "    %s[%5d]%s  (%s)",
@@ -7451,11 +7458,30 @@ pp_if(Ty *ty)
                 );
         }
 
+        LexState *take = NULL;
+
+        for (int i = 0; i < vN(conds); ++i) {
+                Expr *cond = v__(conds, i);
+                Value val  = (cond == NULL) ? BOOLEAN(true)
+                           :                  pp_eval(ty, cond);
+                if (value_truthy(ty, &val)) {
+                        take = v_(arms, i);
+                        break;
+                }
+        }
+
         lex_in_pp(ty, false);
 
-        xvF(conds);
-        xvF(starts);
-        xvF(ends);
+        vN(tokens) = TokenIndex;
+        lex_rewind(ty, &vvL(tokens)->end);
+
+        if (take != NULL) {
+                avP(state.stack, *lex_state(ty));
+                *lex_state(ty) = *take;
+                PLOG("PP_IF() took arm starting at: %.20s", take->loc.s);
+        }
+
+        SCRATCH_RESTORE();
 }
 
 /* vim: set sts=8 sw=8 expandtab: */

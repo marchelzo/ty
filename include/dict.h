@@ -10,6 +10,12 @@ dict_new(Ty *ty)
         return mAo0(sizeof (Dict), GC_DICT);
 }
 
+inline static Dict *
+dict_xnew(Ty *ty)
+{
+        return uAo0(sizeof (Dict), GC_DICT);
+}
+
 Value *
 dict_get_value(Ty *ty, Dict *obj, Value *key);
 

@@ -1138,6 +1138,13 @@ saferegex(Ty *ty)
                 t = mktoken(ty, nextchar(ty));
         } else {
                 t = lexregex(ty);
+                if (
+                        (t.start.line != t.end.line)
+                     && (t.regex->pattern[0] == ' ')
+                ) {
+                        state = save;
+                        t = mktoken(ty, nextchar(ty));
+                }
         }
 
         RESTORE_(jb);

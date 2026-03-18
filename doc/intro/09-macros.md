@@ -64,18 +64,18 @@ macro traced(def) {
     let ty.FuncDef(f) = def
 
     let args = [
-        $$[ "{$$(ty.String(name))}={$$name}" $$]
+        $$[ "{$${name}}={$$name}" $$]
         for ty.Param({name, *}) in f.params
     ]
+    let args = args.fold((a, b) -> $$[ "{$$a}, {$$b}" $$])
 
-    let sig = args.fold((a, b) -> $$[ "{$$a}, {$$b}" $$])
-    let lvl = [0]
+    let d = [0]
 
-    ty.FuncDef({*f, body: ty.Multi([
-        $$[ eprint("{'':{4 * $${lvl}[0]++}}→ {$$(ty.String(f.name))}({$$sig})") $$],
-        $$[ defer eprint("{'':{4 * --$${lvl}[0]}}← {$$(ty.String(f.name))}") $$],
-        f.body
-    ])})
+    ty.FuncDef({*f, body: $$[
+        print("{'':{4 * $${d}[0]++}}→ {$${f.name}}({$$args})")
+        defer print("{'':{4 * --$${d}[0]}}← {$${f.name}}")
+        $$(f.body)
+    $$]})
 }
 
 @traced
@@ -94,11 +94,11 @@ fn tak(x, y, z) {
 print(tak(5, 3, 1))
 ```
 
-The macro destructures the function definition with `let ty.FuncDef(f) = def`, iterates over `f.params` to build a format string for each parameter, and reassembles the function with logging prepended via `ty.Multi`. `defer` ensures the exit message prints even if the function throws. The parameter names are embedded as string literals at compile time, while their values are evaluated at runtime.
+The macro destructures the function definition with `let ty.FuncDef(f) = def`, iterates over `f.params` to build a format string for each parameter, and reassembles the function body with a logging preamble. `defer` ensures the exit message prints even if the function throws or returns early. The parameter names are embedded as string literals at compile time, while their values are evaluated at runtime.
 
 ## Reader macros
 
-Reader macros take control of the parser and consume tokens directly using `ty.token.next()` and `ty.token.peek()`, or parse sub-expressions with `ty.parse.expr()` and `ty.parse.stmt()`.
+Reader macros take control of the parser and consume tokens directly using `ty.token.next()` and `ty.token.peek()`, parse sub-expressions with `ty.parse.expr()` and `ty.parse.stmt()`, or operate on the raw byte stream using `ty.lex.getc()` and `ty.lex.peek()`.
 
 ```ty
 import ty.parse (expr, show)
@@ -122,16 +122,14 @@ Unlike function-like macros, `assert! 2 + 2 == 4` has no parentheses — the mac
 
 ```ty
 fn go() {
-    let table = static!(%{x: x * x for x in ..100})
-    dbg(table[42])
-    table[42] = 123
+    let box = static!([0])
+    box[0]++
 }
 
-go()
-go()
+dbg(go(), go(), go())
 ```
 
-Both calls to `go()` see the same table. The mutation in the first call is visible in the second — the dict was created once during compilation and reused.
+Each call to `go()` sees the same value for `box`. Only one array is allocated — before the function is ever called — so `box[0]` increments across calls.
 
 Under the hood, `static!` uses `ty.eval()` to evaluate the AST and `$${...}` to splice the result back in. You can use these primitives directly when defining your own macros.
 

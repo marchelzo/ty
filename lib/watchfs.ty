@@ -1,0 +1,202 @@
+import path (Path)
+import os
+
+#|if __linux__
+import inotify
+#|else
+import kqueue
+#|]
+
+pub tag Create;
+pub tag Delete;
+pub tag Modify;
+pub tag Attrib;
+
+#|if __linux__
+
+pub class Watcher {
+    __ino: inotify.Inotify
+    __dir: Path
+    __recursive: Bool
+    __wd-to-dir: Dict[Int, Path]
+    __closed: Bool
+
+    init(dir: String | Path, recursive: Bool = false) {
+        __dir = Path(dir)
+        __recursive = recursive
+        __ino = inotify.Inotify()
+        __wd-to-dir = %{}
+        __closed = false
+        __add-dir(__dir)
+    }
+
+    __add-dir(dir: Path) {
+        let mask = inotify.IN_CREATE | inotify.IN_DELETE
+                 | inotify.IN_MODIFY | inotify.IN_ATTRIB
+                 | inotify.IN_MOVED_FROM | inotify.IN_MOVED_TO
+        let wd = __ino.add("{dir}", mask)
+        __wd-to-dir[wd] = dir
+        if __recursive {
+            for name in os.listdir("{dir}") {
+                let p = dir / name
+                if p.dir? { __add-dir(p) }
+            }
+        }
+    }
+
+    dir -> Path { __dir }
+    open? -> Bool { !__closed }
+
+    events*(timeout: Float = -1.0) {
+        for ev in __ino.events(timeout) {
+            let $name = ev.name or continue
+            let $dir = __wd-to-dir[ev.wd] or continue
+            let p = dir / name
+            let m = ev.mask
+
+            if m & (inotify.IN_CREATE | inotify.IN_MOVED_TO) {
+                if __recursive && (p.dir?) { __add-dir(p) }
+                yield Create(p)
+            }
+            if m & (inotify.IN_DELETE | inotify.IN_MOVED_FROM) {
+                yield Delete(p)
+            }
+            if m & inotify.IN_MODIFY {
+                yield Modify(p)
+            }
+            if m & inotify.IN_ATTRIB {
+                yield Attrib(p)
+            }
+        }
+    }
+
+    close() {
+        if __closed { return }
+        __ino.close()
+        __closed = true
+    }
+
+    __drop__() { close() }
+    __free__() { close() }
+}
+
+#|else
+
+const VNODE_FFLAGS = kqueue.NOTE_WRITE | kqueue.NOTE_DELETE
+                   | kqueue.NOTE_RENAME | kqueue.NOTE_ATTRIB
+
+pub class Watcher {
+    __kq: kqueue.Kqueue
+    __dir: Path
+    __recursive: Bool
+    __dir-fds: Dict[Int, Path]
+    __file-fds: Dict[Int, Path]
+    __paths: Dict[String, Int]
+    __closed: Bool
+
+    init(dir: String | Path, recursive: Bool = false) {
+        __dir = Path(dir)
+        __recursive = recursive
+        __kq = kqueue.Kqueue()
+        __dir-fds = %{}
+        __file-fds = %{}
+        __paths = %{}
+        __closed = false
+        __add-dir(__dir)
+    }
+
+    __add-dir(dir: Path) {
+        let ds = "{dir}"
+        if (ds in __paths) { return }
+        let fd = os.open(ds, os.O_RDONLY)
+        if fd == -1 { return }
+        let entries = os.listdir(ds)
+        if entries == nil { os.close(fd); return }
+        __kq.clear(fd, kqueue.EVFILT_VNODE, fflags=kqueue.NOTE_WRITE)
+        __dir-fds[fd] = dir
+        __paths[ds] = fd
+        for name in entries {
+            let p = dir / name
+            if __recursive && (p.dir?) {
+                __add-dir(p)
+            } else {
+                __add-file(p)
+            }
+        }
+    }
+
+    __add-file(p: Path) {
+        let ps = "{p}"
+        if (ps in __paths) { return }
+        let fd = os.open(ps, os.O_RDONLY)
+        if fd == -1 { return }
+        __kq.clear(fd, kqueue.EVFILT_VNODE, fflags=VNODE_FFLAGS)
+        __file-fds[fd] = p
+        __paths[ps] = fd
+    }
+
+    __remove(fd: Int) {
+        if let $p = __file-fds.remove(fd) {
+            __paths.remove("{p}")
+        } else if let $p = __dir-fds.remove(fd) {
+            __paths.remove("{p}")
+        }
+        os.close(fd)
+    }
+
+    dir -> Path { __dir }
+    open? -> Bool { !__closed }
+
+    events*(timeout: Float = -1.0) {
+        for ev in __kq.events(timeout) {
+            let fd = ev.ident
+
+            if fd in __dir-fds {
+                let dir = __dir-fds[fd]
+                for name in os.listdir("{dir}") {
+                    let p = dir / name
+                    if "{p}" not in __paths {
+                        if __recursive && (p.dir?) {
+                            __add-dir(p)
+                        } else {
+                            __add-file(p)
+                        }
+                        yield Create(p)
+                    }
+                }
+                continue
+            }
+
+            if fd in __file-fds {
+                let p = __file-fds[fd]
+                let ff = ev.fflags
+
+                if ff & (kqueue.NOTE_DELETE | kqueue.NOTE_RENAME) {
+                    __remove(fd)
+                    yield Delete(p)
+                } else {
+                    if ff & kqueue.NOTE_WRITE  { yield Modify(p) }
+                    if ff & kqueue.NOTE_ATTRIB { yield Attrib(p) }
+                }
+            }
+        }
+    }
+
+    close() {
+        if __closed { return }
+        for fd in [*__file-fds.keys()] { os.close(fd) }
+        for fd in [*__dir-fds.keys()] { os.close(fd) }
+        __kq.close()
+        __closed = true
+    }
+
+    __drop__() { close() }
+    __free__() { close() }
+}
+
+#|]
+
+pub fn watch*(dir: String | Path, recursive: Bool = false, timeout: Float = -1.0) {
+    let ^w = Watcher(dir, recursive)
+    yield *w.events(timeout)
+}

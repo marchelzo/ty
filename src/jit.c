@@ -991,36 +991,36 @@ jit_rt_member(Ty *ty, Value *result, Value *obj, int member_id)
         *v_(STACK, idx) = v;
 }
 
-#define JIT_RT_MUT_OP(op, vm_op)                                                          \
-        static void                                                                       \
-        jit_rt_mut_##op(Ty *ty, Value *target, Value *val, Value *result)                 \
-        {                                                                                 \
-                ptrdiff_t idx = result - vv(STACK);                                   \
-                vN(STACK) = val - vv(STACK) + 1;                                  \
-                vm_jit_push_target(ty, target);                                           \
-                vm_op(ty, true);                                                          \
-                *v_(STACK, idx) = *vm_get(ty, 0);                                     \
-        }                                                                                 \
-                                                                                          \
-        static void                                                                       \
-        jit_rt_member_mut_##op(Ty *ty, Value *obj, int m_id, Value *val, Value *result)   \
-        {                                                                                 \
-                ptrdiff_t idx = result - vv(STACK);                                   \
-                vN(STACK) = val - vv(STACK) + 1;                                  \
-                DoTargetMember(ty, *obj, m_id);                                           \
-                vm_op(ty, true);                                                          \
-                *v_(STACK, idx) = *vm_get(ty, 0);                                     \
-        }                                                                                 \
-        static void                                                                       \
-        jit_rt_subscript_mut_##op(Ty *ty, Value *val, Value *xs, Value *ix)               \
-        {                                                                                 \
-                ptrdiff_t idx = val - vv(STACK);                                      \
-                vN(STACK) = val - vv(STACK) + 1;                                  \
-                xvP(STACK, *xs);                                                      \
-                xvP(STACK, *ix);                                                      \
-                DoTargetSubscript(ty);                                                    \
-                vm_op(ty, true);                                                          \
-                *v_(STACK, idx) = *vm_get(ty, 0);                                     \
+#define JIT_RT_MUT_OP(op, vm_op)                                                           \
+        static void                                                                        \
+        jit_rt_mut_##op(Ty *ty, Value *target, Value *val, Value *result)                  \
+        {                                                                                  \
+                ptrdiff_t idx = result - vv(STACK);                                        \
+                vN(STACK) = val - vv(STACK) + 1;                                           \
+                vm_jit_push_target(ty, target);                                            \
+                vm_op(ty, true);                                                           \
+                *v_(STACK, idx) = *vm_get(ty, 0);                                          \
+        }                                                                                  \
+                                                                                           \
+        static void                                                                        \
+        jit_rt_member_mut_##op(Ty *ty, Value *obj, int m_id, Value *val, Value *result)    \
+        {                                                                                  \
+                ptrdiff_t idx = result - vv(STACK);                                        \
+                vN(STACK) = val - vv(STACK) + 1;                                           \
+                DoTargetMember(ty, *obj, m_id);                                            \
+                vm_op(ty, true);                                                           \
+                *v_(STACK, idx) = *vm_get(ty, 0);                                          \
+        }                                                                                  \
+        static void                                                                        \
+        jit_rt_subscript_mut_##op(Ty *ty, Value *val, Value *xs, Value *ix)                \
+        {                                                                                  \
+                ptrdiff_t idx = val - vv(STACK);                                           \
+                vN(STACK) = val - vv(STACK) + 1;                                           \
+                xvP(STACK, *xs);                                                           \
+                xvP(STACK, *ix);                                                           \
+                DoTargetSubscript(ty);                                                     \
+                vm_op(ty, true);                                                           \
+                *v_(STACK, idx) = *vm_get(ty, 0);                                          \
         }
 
 
@@ -2446,6 +2446,18 @@ jit_fast_frame(Ty *ty, Value const *fn, Value const *self, int argc)
                 base[np] = *self;
         }
 
+        int irest   = rest_idx_of(fn);
+        int ikwargs = kwargs_idx_of(fn);
+
+        if (UNLIKELY(irest != ikwargs)) {
+                if (irest >= 0) {
+                        base[irest] = ARRAY(vAu());
+                }
+                if (ikwargs >= 0) {
+                        base[ikwargs] = DICT(dict_xnew(ty));
+                }
+        }
+
         // Push frame and call return address
         xvP(ty->st->frames, ((Frame){ .fp = fp, .f = *fn, .ip = ty->ip }));
         xvP(ty->st->calls, ty->ip);
@@ -2470,8 +2482,7 @@ jit_run_trampoline(Ty *ty, JitFn *jit, Value **env, int nenv)
         CO_LOG("jit_run_trampoline", TERM(31;1), "ret");
 }
 
-// Fast baked method call with inline trampoline.
-// Returns 1 if handled (result on stack), 0 for fallback to slow path.
+// ret 1 for handled, 0 for fallback
 static int
 jit_rt_baked_call(Ty *ty, Value *self, Value *fn, int class_id, int argc)
 {
@@ -2480,11 +2491,10 @@ jit_rt_baked_call(Ty *ty, Value *self, Value *fn, int class_id, int argc)
                 return 0;
         }
 
-        if (is_starred(fn)) {
+        if (rest_idx_of(fn) >= 0 || kwargs_idx_of(fn) >= 0 || is_starred(fn)) {
                 return 0;
         }
 
-        // Check if callee is JIT-compiled
         JitFn *jit = try_jit(ty, fn);
         if (UNLIKELY(jit == NULL)) {
                 return 0;
@@ -2494,32 +2504,27 @@ jit_rt_baked_call(Ty *ty, Value *self, Value *fn, int class_id, int argc)
 
         STAT(call_method_baked);
 
-        // Fast frame setup (no xcall overhead)
         jit_fast_frame(ty, fn, &_self, argc);
-
-        // Run callee via inline trampoline (handles nested JIT calls)
         jit_run_trampoline(ty, jit, fn->env, fn->info[FUN_INFO_CAPTURES]);
 
         return 1;
 }
 
-// Fast global function call with inline trampoline.
-// Returns 1 if handled, 0 for fallback.
+// ret 1 for handled, 0 for fallback
 static int
 jit_rt_fast_global_call(Ty *ty, int gi, int argc)
 {
         Value *fn = vm_global(ty, gi);
 
-        // Only attempt for simple function types
-        if (fn->type != VALUE_FUNCTION && fn->type != VALUE_BOUND_FUNCTION) {
+        if (
+                (fn->type != VALUE_FUNCTION && fn->type != VALUE_BOUND_FUNCTION)
+             || (rest_idx_of(fn)   >= 0)
+             || (kwargs_idx_of(fn) >= 0)
+             || is_starred(fn)
+        ){
                 return 0;
         }
 
-        if (is_starred(fn)) {
-                return 0;
-        }
-
-        // Check if callee is JIT-compiled
         JitFn *jit = try_jit(ty, fn);
         if (jit == NULL) {
                 return 0;
@@ -2527,10 +2532,7 @@ jit_rt_fast_global_call(Ty *ty, int gi, int argc)
 
         CO_LOG("jit_rt_fast_global_call", TERM(32;1), "global %d", gi);
 
-        // Fast frame setup
         jit_fast_frame(ty, fn, NULL, argc);
-
-        // Run callee via inline trampoline
         jit_run_trampoline(ty, jit, fn->env, fn->info[FUN_INFO_CAPTURES]);
 
         return 1;
