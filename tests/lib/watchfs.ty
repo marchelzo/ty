@@ -179,7 +179,8 @@ pub fn test-create-then-delete() {
             Delete(Path(name: 'ephemeral.txt')) => {
                 saw-delete? = true
                 break if saw-create?
-            }
+            },
+            _ => ()
         }
 
         assert(saw-create?)

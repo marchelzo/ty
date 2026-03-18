@@ -60,9 +60,13 @@ use Event = {
 
 pub class Inotify {
     __fd: Int
+    __buf: Blob
+    __off: Int
 
     init(flags: Int = 0) {
         __fd = flags != 0 ? inotify_init1(flags) : inotify_init()
+        __buf = Blob()
+        __off = 0
     }
 
     fd -> Int { __fd }
@@ -75,11 +79,23 @@ pub class Inotify {
         inotify_rm_watch(__fd, wd)
     }
 
-    wait() -> Event {
-        let buf = os.read(__fd, __evt_size, all=true)
-        let ev = InotifyEvent(buf.ptr())
+    __fill() -> Bool {
+        __buf.clear()
+        __off = 0
+        let data = os.read(__fd, 4096)
+        if data == nil { return false }
+        __buf = data
+        return true
+    }
+
+    __next-event() -> Event | nil {
+        if __off + __evt_size > __buf.size() { return nil }
+        let ev = InotifyEvent(__buf.ptr() + __off)
+        __off += __evt_size
         let name = if ev.len > 0 {
-            c.str(os.read(__fd, ev.len, all=true).ptr())
+            let s = c.str(__buf.ptr() + __off)
+            __off += ev.len
+            s
         }
         return {wd: ev.wd, mask: ev.mask, cookie: ev.cookie, name}
     }
@@ -89,7 +105,13 @@ pub class Inotify {
     }
 
     events*(timeout: Float = -1.0) {
-        while ready?(timeout) { yield wait() }
+        // Yield any buffered events first
+        while let $ev = __next-event() { yield ev }
+
+        while ready?(timeout) {
+            if !__fill() { break }
+            while let $ev = __next-event() { yield ev }
+        }
     }
 
     close() {
