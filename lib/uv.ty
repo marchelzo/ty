@@ -1,0 +1,1301 @@
+import errno
+import ffi as c (C!)
+import os
+import ty
+import stdio
+
+let libuv = c.open('uv')
+
+const uv_file        = c.int
+const uv_fs_type     = c.int
+const uv_handle_type = c.int
+const uv_os_fd_t     = c.int
+const uv_os_sock_t   = c.int
+const uv_req_type    = c.int
+const uv_run_mode    = c.int
+
+const uv_alloc_cb       = c.ptr
+const uv_close_cb       = c.ptr
+const uv_fs_event_cb    = c.ptr
+const uv_connect_cb     = c.ptr
+const uv_connection_cb  = c.ptr
+const uv_fs_cb          = c.ptr
+const uv_getaddrinfo_cb = c.ptr
+const uv_read_cb        = c.ptr
+const uv_shutdown_cb    = c.ptr
+const uv_timer_cb       = c.ptr
+const uv_walk_cb        = c.ptr
+const uv_write_cb       = c.ptr
+
+const int64_t  = c.i64
+const uint64_t = c.u64
+
+const size_t   = c.u64
+const ssize_t  = c.i64
+
+const socklen_t = c.uint
+
+enum! {
+  UV_RUN_DEFAULT = 0,
+  UV_RUN_ONCE,
+  UV_RUN_NOWAIT
+};
+
+enum! {
+  UV_REQ = 1,
+  UV_CONNECT,
+  UV_WRITE,
+  UV_SHUTDOWN,
+  UV_UDP_SEND,
+  UV_FS,
+  UV_WORK,
+  UV_GETADDRINFO
+  UV_GETNAMEINFO,
+  UV_RANDOM
+};
+
+enum! {
+  UV_ASYNC = 1,
+  UV_CHECK,
+  UV_FS_EVENT,
+  UV_FS_POLL,
+  UV_HANDLE,
+  UV_IDLE,
+  UV_NAMED_PIPE,
+  UV_POLL,
+  UV_PREPARE,
+  UV_PROCESS,
+  UV_STREAM,
+  UV_TCP,
+  UV_TIMER,
+  UV_TTY,
+  UV_UDP,
+  UV_SIGNAL
+}
+
+pub const UV_RENAME = 1
+pub const UV_CHANGE = 2
+
+pub const UV_FS_EVENT_WATCH_ENTRY = 1
+pub const UV_FS_EVENT_STAT        = 2
+pub const UV_FS_EVENT_RECURSIVE   = 4
+
+enum! {
+  UV_FS_UNKNOWN = -1,
+  UV_FS_CUSTOM,
+  UV_FS_OPEN,
+  UV_FS_CLOSE,
+  UV_FS_READ,
+  UV_FS_WRITE,
+  UV_FS_SENDFILE,
+  UV_FS_STAT,
+  UV_FS_LSTAT,
+  UV_FS_FSTAT,
+  UV_FS_FTRUNCATE,
+  UV_FS_UTIME,
+  UV_FS_FUTIME,
+  UV_FS_ACCESS,
+  UV_FS_CHMOD,
+  UV_FS_FCHMOD,
+  UV_FS_FSYNC,
+  UV_FS_FDATASYNC,
+  UV_FS_UNLINK,
+  UV_FS_RMDIR,
+  UV_FS_MKDIR,
+  UV_FS_MKDTEMP,
+  UV_FS_RENAME,
+  UV_FS_SCANDIR,
+  UV_FS_LINK,
+  UV_FS_SYMLINK,
+  UV_FS_READLINK,
+  UV_FS_CHOWN,
+  UV_FS_FCHOWN,
+  UV_FS_REALPATH,
+  UV_FS_COPYFILE,
+  UV_FS_LCHOWN,
+  UV_FS_OPENDIR,
+  UV_FS_READDIR,
+  UV_FS_CLOSEDIR,
+  UV_FS_STATFS,
+  UV_FS_MKSTEMP,
+  UV_FS_LUTIME
+};
+
+#|if __apple__
+C! struct addrinfo {
+	int	ai_flags;	/* AI_PASSIVE, AI_CANONNAME, AI_NUMERICHOST */
+	int	ai_family;	/* PF_xxx */
+	int	ai_socktype;	/* SOCK_xxx */
+	int	ai_protocol;	/* 0 or IPPROTO_xxx for IPv4 and IPv6 */
+	socklen_t ai_addrlen;	/* length of ai_addr */
+	char	*ai_canonname;	/* canonical name for hostname */
+	struct	sockaddr *ai_addr;	/* binary address */
+	struct	addrinfo *ai_next;	/* next structure in linked list */
+};
+#|else
+C! struct addrinfo {
+	int	ai_flags;	/* AI_PASSIVE, AI_CANONNAME, AI_NUMERICHOST */
+	int	ai_family;	/* PF_xxx */
+	int	ai_socktype;	/* SOCK_xxx */
+	int	ai_protocol;	/* 0 or IPPROTO_xxx for IPv4 and IPv6 */
+	socklen_t ai_addrlen;	/* length of ai_addr */
+	struct	sockaddr *ai_addr;	/* binary address */
+	char	*ai_canonname;	/* canonical name for hostname */
+	struct	addrinfo *ai_next;	/* next structure in linked list */
+};
+#|]
+
+
+C! struct uv_metrics_t {
+  uint64_t loop_count;
+  uint64_t events;
+  uint64_t events_waiting;
+  /* private */
+  uint64_t* reserved[13];
+};
+
+C! struct uv_buf_t {
+    char *base;
+    size_t len;
+};
+
+C! libuv fn {
+    size_t uv_loop_size();
+    int uv_loop_init(void *loop);
+    int uv_loop_close(void *loop);
+    uv_loop_t *uv_default_loop();
+    int uv_run(uv_loop_t *loop, uv_run_mode mode);
+    void uv_stop(uv_loop_t *loop);
+    uint64_t uv_now(uv_loop_t *loop);
+    void *uv_loop_get_data(uv_loop_t *loop);
+    void uv_loop_set_data(uv_loop_t *loop, void *data);
+
+    int uv_translate_sys_error(int sys_errno);
+
+    const char* uv_strerror(int err);
+    char* uv_strerror_r(int err, char* buf, size_t buflen);
+
+    const char* uv_err_name(int err);
+    char* uv_err_name_r(int err, char* buf, size_t buflen);
+
+    int uv_cancel(uv_req_t* req);
+
+    int uv_fs_open(uv_loop_t *loop, uv_fs_t *req, const char *path, int flags, int mode, uv_fs_cb cb);
+    int uv_fs_close(uv_loop_t *loop, uv_fs_t *req, uv_file file, uv_fs_cb cb);
+    int uv_fs_read(uv_loop_t *loop, uv_fs_t *req, uv_file file, const uv_buf_t *bufs, unsigned int nbufs, int64_t offset, uv_fs_cb cb);
+    uv_fs_type uv_fs_get_type(const uv_fs_t*);
+    ssize_t uv_fs_get_result(const uv_fs_t*);
+    int uv_fs_get_system_error(const uv_fs_t*);
+    void* uv_fs_get_ptr(const uv_fs_t*);
+    const char* uv_fs_get_path(const uv_fs_t*);
+    uv_stat_t* uv_fs_get_statbuf(uv_fs_t*);
+
+    void uv_fs_req_cleanup(uv_fs_t* req);
+
+    int uv_getaddrinfo(uv_loop_t* loop,
+                       uv_getaddrinfo_t* req,
+                       uv_getaddrinfo_cb getaddrinfo_cb,
+                       const char* node,
+                       const char* service,
+                       const struct addrinfo* hints);
+    void uv_freeaddrinfo(struct addrinfo* ai);
+
+    int uv_listen(uv_stream_t* stream, int backlog, uv_connection_cb cb);
+    int uv_accept(uv_stream_t* server, uv_stream_t* client);
+
+    int uv_tcp_connect(uv_connect_t* req, uv_tcp_t* handle, const struct sockaddr* addr, uv_connect_cb cb);
+    int uv_tcp_init(uv_loop_t*, uv_tcp_t* handle);
+    int uv_tcp_init_ex(uv_loop_t*, uv_tcp_t* handle, unsigned int flags);
+    int uv_tcp_open(uv_tcp_t* handle, uv_os_sock_t sock);
+    int uv_tcp_nodelay(uv_tcp_t* handle, int enable);
+    int uv_tcp_keepalive(uv_tcp_t* handle,
+                               int enable,
+                               unsigned int delay);
+    int uv_tcp_simultaneous_accepts(uv_tcp_t* handle, int enable);
+    int uv_tcp_bind(uv_tcp_t* handle,
+                    const struct sockaddr* addr,
+                    unsigned int flags);
+    int uv_tcp_getsockname(const uv_tcp_t* handle,
+                           struct sockaddr* name,
+                           int* namelen);
+    int uv_tcp_getpeername(const uv_tcp_t* handle,
+                           struct sockaddr* name,
+                           int* namelen);
+    int uv_tcp_close_reset(uv_tcp_t* handle, uv_close_cb close_cb);
+
+    int uv_shutdown(uv_shutdown_t* req,
+                    uv_stream_t* handle,
+                    uv_shutdown_cb cb);
+
+    int uv_timer_init(uv_loop_t*, uv_timer_t* handle);
+    int uv_timer_start(uv_timer_t* handle,
+                       uv_timer_cb cb,
+                       uint64_t timeout,
+                       uint64_t repeat);
+    int uv_timer_stop(uv_timer_t* handle);
+    int uv_timer_again(uv_timer_t* handle);
+    void uv_timer_set_repeat(uv_timer_t* handle, uint64_t repeat);
+    uint64_t uv_timer_get_repeat(const uv_timer_t* handle);
+    uint64_t uv_timer_get_due_in(const uv_timer_t* handle);
+
+
+    size_t uv_handle_size(uv_handle_type type);
+    uv_handle_type uv_handle_get_type(const uv_handle_t *handle);
+    const char *uv_handle_type_name(uv_handle_type type);
+    void *uv_handle_get_data(const uv_handle_t *handle);
+    uv_loop_t *uv_handle_get_loop(const uv_handle_t *handle);
+    void uv_handle_set_data(uv_handle_t *handle, void *data);
+
+    size_t uv_req_size(uv_req_type type);
+    void *uv_req_get_data(const uv_req_t *req);
+    void uv_req_set_data(uv_req_t *req, void *data);
+    uv_req_type uv_req_get_type(const uv_req_t *req);
+    const char *uv_req_type_name(uv_req_type type);
+
+    int uv_is_active(const uv_handle_t *handle);
+
+    int uv_is_readable(const uv_stream_t* handle);
+    int uv_is_writable(const uv_stream_t* handle);
+
+    int uv_stream_set_blocking(uv_stream_t* handle, int blocking);
+
+    int uv_is_closing(const uv_handle_t* handle);
+
+    void uv_walk(uv_loop_t *loop, uv_walk_cb walk_cb, void *arg);
+
+    /* Helpers for ad hoc debugging, no API/ABI stability guaranteed. */
+    void uv_print_all_handles(uv_loop_t *loop, FILE *stream);
+    void uv_print_active_handles(uv_loop_t *loop, FILE *stream);
+
+    int uv_metrics_info(uv_loop_t* loop, uv_metrics_t* metrics);
+    uint64_t uv_metrics_idle_time(uv_loop_t* loop);
+
+    void uv_close(uv_handle_t *handle, uv_close_cb close_cb);
+
+    int uv_send_buffer_size(uv_handle_t *handle, int *value);
+    int uv_recv_buffer_size(uv_handle_t *handle, int *value);
+
+    int uv_fileno(const uv_handle_t *handle, uv_os_fd_t *fd);
+
+    uv_buf_t uv_buf_init(char *base, unsigned int len);
+
+
+    int uv_read_start(uv_stream_t*,
+                      uv_alloc_cb alloc_cb,
+                      uv_read_cb read_cb);
+    int uv_read_stop(uv_stream_t*);
+
+    int uv_write(uv_write_t* req,
+                 uv_stream_t* handle,
+                 const uv_buf_t *bufs,
+                 unsigned int nbufs,
+                 uv_write_cb cb);
+
+    int uv_pipe(uv_file *fds, int read_flags, int write_flags);
+    int uv_socketpair(int type, int protocol, uv_os_sock_t *socket_vector, int flags0, int flags1);
+
+    int uv_fs_event_init(uv_loop_t* loop, uv_fs_event_t* handle);
+    int uv_fs_event_start(uv_fs_event_t* handle, uv_fs_event_cb cb, const char* path, unsigned int flags);
+    int uv_fs_event_stop(uv_fs_event_t* handle);
+    int uv_fs_event_getpath(const uv_fs_event_t* handle, char* buffer, size_t* size);
+}
+
+pub class UVError < RuntimeError {
+    init(ctx: String, err: Int) {
+        super("{ctx}: {c.str(uv_strerror(err))}")
+    }
+}
+
+pub class TimeoutError < RuntimeError {
+    init() {
+        super("Operation timed out")
+    }
+}
+
+pub class CanceledError < RuntimeError {
+    init() {
+        super("Operation was canceled")
+    }
+}
+
+tag Cancel;
+tag QuietCancel;
+tag Running;
+tag Step;
+
+fn fileno(hnd) {
+    let fd = static!(c.box(c.int))
+    let err = uv_fileno(hnd, fd)
+    (err == 0) ? fd[0] : -1
+}
+
+fn _spawn*(func: _, args: _, kwargs: _) {
+    eprint("Coroutine {ty.coro()} started for {func}({args}, {kwargs})")
+    func(*args, **kwargs)
+}
+
+pub fn spawn(func: _, *args: _, %kwargs: _) {
+    eprint("Setting up new coroutine for {func}({args}, {kwargs})")
+    let coro = _spawn(func, args, kwargs)
+    coro()
+}
+
+fn nop() {}
+
+pub fn cancel(coro: Generator[_, _]) {
+   coro(Cancel)
+}
+
+fn suspend(cleanup: _) {
+    match (yield Running) {
+        Cancel => do {
+            cleanup()
+            throw CanceledError()
+        },
+
+        QuietCancel => do {
+            cleanup()
+            yield nil
+        },
+
+        Step => do {
+            yield Running
+        },
+
+        val => val
+    }
+}
+
+pub class UVHandle {
+    __loop: UV
+    __hnd:  Ptr
+
+    init(loop: UV, hnd: Ptr) {
+        __loop = loop
+        __hnd  = hnd
+    }
+
+    handle -> Ptr {
+        __hnd
+    }
+
+    loop -> UV {
+        __loop
+    }
+
+    fileno -> Int {
+        let fd = c.auto(c.box(c.int))
+        let err = uv_fileno(handle, fd)
+        (err == 0) ? fd[0] : -1
+    }
+
+    close() {
+        __loop.close(self)
+    }
+}
+
+pub class UVTimer < UVHandle {
+    __fire_cb: (() -> nil) | nil
+
+
+    on-fire=(cb: () -> nil) {
+        __fire_cb = cb
+    }
+
+    on-fire {
+        __fire_cb
+    }
+
+    start(msecs: Int, repeat: Int = 0) {
+        loop.timer-start(self, msecs, repeat)
+    }
+
+    stop() {
+        loop.timer-stop(self)
+    }
+
+    again() {
+        let err = uv_timer_again(handle)
+        if err != 0 {
+            throw UVError('uv_timer_again()', err)
+        }
+    }
+}
+
+pub class UVStream < UVHandle {
+    __read_cb:  (String -> nil) | nil
+    __eof_cb:   (()     -> nil) | nil
+    __close_cb: (()     -> nil) | nil
+
+    on-read=(cb: (String -> nil) | nil) {
+        if cb == nil {
+            loop.read-stop(self)
+            __read_cb = nil
+        } else {
+            __read_cb = cb
+            loop.read-start(self)
+        }
+    }
+
+    on-eof=(cb: () -> nil) {
+        __eof_cb = cb
+    }
+
+    on-close=(cb: () -> nil) {
+        __close_cb = cb
+    }
+
+    on-read {
+        __read_cb
+    }
+
+    on-eof {
+        __eof_cb
+    }
+
+    on-close {
+        __close_cb
+    }
+
+    read(n: Int) -> String {
+        let buf = Blob()
+        let resume = ty.coro()
+
+        fn cleanup() {
+            self.on-read  = nil
+            self.on-eof   = nil
+            self.on-close = nil
+        }
+
+        self.on-close = resume
+        self.on-eof   = resume
+        self.on-read  = fn (data) {
+            //dbg(data)
+            buf.push(data)
+            if #buf >= n {
+                cleanup()
+                resume()
+            }
+        }
+
+        suspend(cleanup)
+
+        buf.str!()
+    }
+
+    write(data: String | Blob) {
+        loop.write(self, data)
+    }
+
+    shutdown() {
+        loop.shutdown(self)
+    }
+}
+
+pub class UVSocket < UVStream {
+    __address: Blob | nil
+    __connection_cb: (UVSocket -> nil) | nil
+
+    connect(addr: Blob) {
+        loop.connect(self, addr)
+        __address = nil
+    }
+
+    bind(addr: Blob, flags: Int = 0) {
+        loop.bind(self, addr, flags)
+        __address = nil
+    }
+
+    listen(backlog: Int = 512) {
+        loop.listen(self, backlog)
+    }
+
+    accept() -> UVSocket {
+        loop.accept(self)
+    }
+
+    address -> Blob | nil {
+        if __address == nil {
+            let addr = c.auto(c.alloc(128))
+            let len = c.auto(c.box(c.int, 128))
+            let err = uv_tcp_getsockname(handle, addr, len)
+            if err == 0 {
+                __address = Blob(c.as_str(addr, len[0]))
+            }
+        }
+        __address
+    }
+
+    name -> String | nil {
+        if let $addr = address {
+            let (host, serv) = os.getnameinfo(addr, os.NI_NUMERICHOST | os.NI_NUMERICSERV)
+            "{host}:{serv}"
+        }
+    }
+
+    on-connection=(cb: (UVSocket -> nil) | nil) {
+        __connection_cb = cb
+    }
+
+    on-connection {
+        __connection_cb
+    }
+}
+
+pub class UVPipe < UVStream {
+}
+
+pub class UVFSEvent < UVHandle {
+    __event_cb: _
+
+    on-event=(cb) { __event_cb = cb }
+    on-event { __event_cb }
+
+    start(p: String, flags: Int = 0) {
+        loop.fs-event-start(self, p, flags)
+    }
+
+    stop() {
+        loop.fs-event-stop(self)
+    }
+}
+
+pub class SockAddr {
+    family:   Int
+    socktype: Int
+    protocol: Int
+    addr:     Blob
+
+    init(family: Int, socktype: Int, protocol: Int, addr: Blob) {
+        self.family   = family
+        self.socktype = socktype
+        self.protocol = protocol
+        self.addr     = addr
+    }
+
+    addr-string -> String {
+        let (host, serv) = os.getnameinfo(addr, os.NI_NUMERICHOST | os.NI_NUMERICSERV)
+        "{host}:{serv}"
+    }
+}
+
+pub class UV {
+    __loop:          Ptr
+    __reading:       Dict[Ptr, UVStream]
+    __listening:     Dict[Ptr, UVSocket]
+    __ticking:       Dict[Ptr, UVTimer]
+    __watching:      Dict[Ptr, UVFSEvent]
+    __pending:       Dict[Ptr, Generator[_]]
+    __on_close:      Ptr
+    __on_connect:    Ptr
+    __on_connection: Ptr
+    __on_fs:         Ptr
+    __on_fs_event:   Ptr
+    __on_gai:        Ptr
+    __on_read:       Ptr
+    __on_shutdown:   Ptr
+    __on_timer:      Ptr
+    __on_write:      Ptr
+    __alloc_cb:      Ptr
+    __free_reqs:     Dict[Int, Array[Ptr]]
+    __free_hnds:     Dict[Int, Array[Ptr]]
+
+    init(loop: Ptr | nil = nil) {
+        C! closure alloc_cb(
+            handle: c.ptr,
+            suggested_size: size_t,
+            buf: c.ptr
+        ) {
+            let buf = uv_buf_t(buf)
+            buf.base = c.realloc(buf.base, suggested_size)
+            buf.len  = suggested_size
+        }
+
+        C! closure on_gai(req: c.ptr, status: c.int, res: c.ptr) {
+            let cb = __pending.remove(req)
+
+            if status != 0 {
+                cb(Err(status))
+            } else {
+                let addrs = []
+                let ptr = res
+                while ptr != nil {
+                    let ai = addrinfo(ptr)
+                    print(ai)
+                    addrs.push(
+                        SockAddr(
+                            family=ai.ai_family,
+                            socktype=ai.ai_socktype,
+                            protocol=ai.ai_protocol,
+                            addr=Blob(c.as_str(ai.ai_addr, ai.ai_addrlen))
+                        )
+                    )
+                    ptr = ai.ai_next
+                }
+                cb(Ok(addrs))
+            }
+        }
+
+        C! closure on_timer(handle: c.ptr) {
+            let timer = __ticking[handle]
+            timer.on-fire()
+        }
+
+        C! closure on_connect(req: c.ptr, status: c.int) {
+            let cb = __pending.remove(req)
+            if status != 0 {
+                cb(Err(status))
+            } else {
+                cb(Ok(()))
+            }
+        }
+
+        C! closure on_connection(server: c.ptr, status: c.int) {
+            let sock = __listening[server]
+            if status == 0 {
+                spawn(sock.on-connection, sock)
+            } else {
+                throw UVError('on_connection', status)
+            }
+        }
+
+        C! closure on_shutdown(
+            req: c.ptr,
+            status: c.int
+        ) {
+            let cb = __pending.remove(req)
+            if status != 0 {
+                cb(Err(-status))
+            } else {
+                cb(Ok(()))
+            }
+        }
+
+        C! closure on_close(hnd: c.ptr) {
+            __reading.remove(hnd)
+            __listening.remove(hnd)
+            __watching.remove(hnd)
+            _free-hnd(hnd)
+        }
+
+        C! closure on_read(
+            handle: c.ptr,
+            nread: ssize_t,
+            buf: c.ptr
+        ) {
+            let stream = __reading[handle]
+            let buf    = uv_buf_t(buf)
+
+            if nread < 0 {
+                c.free(buf.base)
+                spawn(stream.on-eof)
+                let err = uv_read_stop(handle)
+                if err != 0 {
+                    throw UVError('uv_read_stop()', err)
+                }
+                __reading.remove(handle)
+            } else if nread > 0 {
+                let data = c.str(buf.base, nread)
+                eprint("Read {nread} bytes from {fileno(handle)}:\n{data}------")
+                c.free(buf.base)
+                spawn(stream.on-read, data)
+            }
+        }
+
+        C! closure on_write(
+            req: c.ptr,
+            status: c.int
+        ) {
+            let cb = __pending.remove(req)
+            if status != 0 {
+                cb(Err(-status))
+            } else {
+                cb(Ok(()))
+            }
+        }
+
+        C! closure on_fs(
+            req: c.ptr,
+            status: c.int
+        ) {
+            let cb = __pending.remove(req)
+            if status < 0 {
+                cb(Err(-status))
+            } else {
+                cb(Ok(uv_fs_get_result(req)))
+            }
+        }
+
+        C! closure on_fs_event(
+            handle: c.ptr,
+            filename: c.ptr,
+            events: c.int,
+            status: c.int
+        ) {
+            if status < 0 { return }
+            let watcher = __watching[handle]
+            if let $cb = watcher.on-event {
+                let name = (filename != nil) ? c.str(filename) : nil
+                cb(name, events)
+            }
+        }
+
+        __alloc_cb  = alloc_cb
+
+        __on_close      = on_close
+        __on_connect    = on_connect
+        __on_connection = on_connection
+        __on_fs         = on_fs
+        __on_fs_event   = on_fs_event
+        __on_gai        = on_gai
+        __on_read       = on_read
+        __on_shutdown   = on_shutdown
+        __on_timer      = on_timer
+        __on_write      = on_write
+
+        __loop = match loop {
+            $loop => loop,
+
+            _ => do {
+                let loop = c.alloc(uv_loop_size())
+                let err = uv_loop_init(loop)
+                if err != 0 {
+                    throw UVError('uv_loop_init()', err)
+                }
+                loop
+            }
+        }
+
+        __free_reqs = %{*: []}
+        __free_hnds = %{*: []}
+
+        __pending   = %{}
+        __reading   = %{}
+        __listening = %{}
+        __ticking   = %{}
+        __watching  = %{}
+    }
+
+    _req(type: Int) -> Ptr {
+        if let Some(free) = __free_reqs[type].try-pop() {
+            free
+        } else {
+            c.alloc(uv_req_size(type))
+        }
+    }
+
+    _free-req(req: Ptr) {
+        __free_reqs[uv_req_get_type(req)].push(req)
+    }
+
+    _hnd(type: Int) -> Ptr {
+        if let Some(free) = __free_hnds[type].try-pop() {
+            free
+        } else {
+            c.alloc(uv_handle_size(type))
+        }
+    }
+
+    _free-hnd(hnd: Ptr) {
+        __free_hnds[uv_handle_get_type(hnd)].push(hnd)
+    }
+
+    close(handle: UVHandle) {
+        let hnd = handle.handle
+        if !uv_is_closing(hnd) {
+            uv_close(hnd, __on_close)
+        }
+    }
+
+    shutdown(stream: UVStream) {
+        let req = _req(UV_SHUTDOWN)
+        defer _free-req(req)
+        __pending[req] = ty.coro()
+        let err = uv_shutdown(req, stream.handle, __on_shutdown)
+        if err != 0 {
+            __pending.remove(req)
+            throw UVError('uv_shutdown()', err)
+        }
+        let cleanup = fn () {
+            uv_cancel(req)
+            __pending.remove(req)
+        }
+        if let Err(err) = suspend(cleanup) {
+            throw UVError('uv_shutdown()', err)
+        }
+    }
+
+    tcp-socket() {
+        let hnd = _hnd(UV_TCP)
+        let err = uv_tcp_init(__loop, hnd)
+        if err != 0 {
+            _free-hnd(hnd)
+            throw UVError('uv_tcp_init()', err)
+        }
+        uv_tcp_simultaneous_accepts(hnd, 0)
+        UVSocket(self, hnd)
+    }
+
+    connect(sock: UVSocket, addr: Blob) {
+        let req = _req(UV_CONNECT)
+        defer _free-req(req)
+        __pending[req] = ty.coro()
+        let err = uv_tcp_connect(req, sock.handle, addr, __on_connect)
+        if err != 0 {
+            __pending.remove(req)
+            throw UVError('uv_tcp_connect()', err)
+        }
+        let cleanup = fn () {
+            uv_cancel(req)
+            __pending.remove(req)
+        }
+        if let Err(e) = suspend(cleanup) {
+            throw UVError('uv_tcp_connect()', e)
+        }
+    }
+
+    bind(sock: UVSocket, addr: Blob, flags: Int = 0) {
+        let err = uv_tcp_bind(sock.handle, addr, flags)
+        if err != 0 {
+            throw UVError('uv_tcp_bind()', err)
+        }
+    }
+
+    listen(sock: UVSocket, backlog: Int = 128) {
+        let err = uv_listen(sock.handle, backlog, __on_connection)
+        if err != 0 {
+            throw UVError('uv_listen()', err)
+        }
+        __listening[sock.handle] = sock
+    }
+
+    accept(server: UVSocket) -> UVSocket {
+        let client-hnd = _hnd(UV_TCP)
+        let err = uv_tcp_init(__loop, client-hnd)
+        if err != 0 {
+            _free-hnd(client-hnd)
+            throw UVError('uv_tcp_init()', err)
+        }
+        err = uv_accept(server.handle, client-hnd)
+        if err != 0 {
+            uv_close(client-hnd, nil)
+            _free-hnd(client-hnd)
+            throw UVError('uv_accept()', err)
+        }
+        UVSocket(self, client-hnd)
+    }
+
+    fs-open(path: Any, flags: Int = os.O_RDONLY, mode: Int = 0) -> Int {
+        let req = _req(UV_FS)
+        defer {
+            uv_fs_req_cleanup(req)
+            _free-req(req)
+        }
+        __pending[req] = ty.coro()
+        let err = uv_fs_open(__loop, req, "{path}".cstr(), flags, mode, __on_fs)
+        if err != 0 {
+            __pending.remove(req)
+            throw UVError('uv_fs_open()', err)
+        }
+        let cleanup = fn () {
+            uv_cancel(req)
+            __pending.remove(req)
+        }
+        match suspend(cleanup) {
+            Ok(fd) => {
+                fd
+            },
+            Err(e) => {
+                throw UVError('uv_fs_open()', e)
+            }
+        }
+    }
+
+    fs-close(file: Int) {
+        let req = _req(UV_FS)
+        defer {
+            uv_fs_req_cleanup(req)
+            _free-req(req)
+        }
+        __pending[req] = ty.coro()
+        let err = uv_fs_close(__loop, req, file, __on_fs)
+        if err != 0 {
+            __pending.remove(req)
+            throw UVError('uv_fs_close()', err)
+        }
+        suspend(nop)
+    }
+
+    fs-read(file: Int, n: Int, off: Int = 0) -> String | nil {
+        let req  = _req(UV_FS)
+        let data = c.alloc(n)
+        let buf  = uv_buf_init(data, n)
+        defer {
+            c.free(buf)
+            c.free(data)
+            uv_fs_req_cleanup(req)
+            _free-req(req)
+        }
+        __pending[req] = ty.coro()
+        let err = uv_fs_read(__loop, req, file, buf, 1, off, __on_fs)
+        if err != 0 {
+            __pending.remove(req)
+            throw UVError('uv_fs_read()', err)
+        }
+        let cleanup = fn () {
+            uv_cancel(req)
+            __pending.remove(req)
+        }
+        match suspend(cleanup) {
+            Ok(nread) => {
+                (nread > 0) ?: c.str(buf.base, nread)
+            },
+            Err(e) => {
+                throw UVError('uv_fs_read()', e)
+            }
+        }
+    }
+
+    timer() -> UVTimer {
+        let hnd = _hnd(UV_TIMER)
+        let err = uv_timer_init(__loop, hnd)
+        if err != 0 {
+            _free-hnd(hnd)
+            throw UVError('uv_timer_init()', err)
+        }
+        UVTimer(self, hnd)
+    }
+
+    timer-start(timer: UVTimer, msecs: Int, repeat: Int = 0) {
+        __ticking[timer.handle] = timer
+        let err = uv_timer_start(timer.handle, __on_timer, msecs, repeat)
+        if err != 0 {
+            __ticking.remove(timer.handle)
+            throw UVError('uv_timer_start()', err)
+        }
+    }
+
+    timer-stop(timer: UVTimer) {
+        let err = uv_timer_stop(timer.handle)
+        if err != 0 {
+            throw UVError('uv_timer_stop()', err)
+        }
+        __ticking.remove(timer.handle)
+    }
+
+    timer-again(timer: UVTimer) {
+        __ticking[timer.handle] = timer
+        let err = uv_timer_again(timer.handle)
+        if err != 0 {
+            __ticking.remove(timer.handle)
+            throw UVError('uv_timer_again()', err)
+        }
+    }
+
+    sleep(msecs: Int) {
+        let timer = timer()
+        defer {
+            timer.close()
+        }
+        let resume = ty.coro()
+        let fired = false
+        timer.on-fire = fn () {
+            fired = true
+            timer.stop()
+            resume()
+        }
+        timer.start(msecs)
+        while !fired {
+            suspend(nop)
+        }
+    }
+
+    fs-event() -> UVFSEvent {
+        let hnd = _hnd(UV_FS_EVENT)
+        let err = uv_fs_event_init(__loop, hnd)
+        if err != 0 {
+            _free-hnd(hnd)
+            throw UVError('uv_fs_event_init()', err)
+        }
+        UVFSEvent(self, hnd)
+    }
+
+    fs-event-start(watcher: UVFSEvent, p: String, flags: Int = 0) {
+        __watching[watcher.handle] = watcher
+        let err = uv_fs_event_start(watcher.handle, __on_fs_event, p.cstr(), flags)
+        if err != 0 {
+            __watching.remove(watcher.handle)
+            throw UVError('uv_fs_event_start()', err)
+        }
+    }
+
+    fs-event-stop(watcher: UVFSEvent) {
+        let err = uv_fs_event_stop(watcher.handle)
+        if err != 0 {
+            throw UVError('uv_fs_event_stop()', err)
+        }
+        __watching.remove(watcher.handle)
+    }
+
+    getaddrinfo(
+        host: String,
+        service: Int | String,
+        family: Int = 0,
+        socktype: Int = 0,
+        protocol: Int = 0
+    ) {
+        let req = _req(UV_GETADDRINFO)
+        let hints = addrinfo(
+            ai_family=family,
+            ai_socktype=socktype,
+            ai_protocol=protocol
+        )
+        defer {
+            c.free(hints)
+            _free-req(req)
+        }
+        __pending[req] = ty.coro()
+        let err = uv_getaddrinfo(__loop, req, __on_gai, host.cstr(), "{service}".cstr(), hints)
+        if err != 0 {
+            __pending.remove(req)
+            throw UVError('uv_getaddrinfo()', err)
+        }
+        let cleanup = fn () {
+            uv_cancel(req)
+            __pending.remove(req)
+        }
+        suspend(cleanup)
+    }
+
+    read-start(stream: UVStream) {
+        __reading[stream.handle] = stream
+        let err = uv_read_start(
+            stream.handle,
+            __alloc_cb,
+            __on_read
+        )
+        if err != 0 {
+            __reading.remove(stream.handle)
+            throw UVError('uv_read_start()', err)
+        }
+    }
+
+    read-stop(stream: UVStream) {
+        let err = uv_read_stop(stream.handle)
+        if err != 0 {
+            throw UVError('uv_read_stop()', err)
+        }
+        __reading.remove(stream.handle)
+    }
+
+    write(
+        stream: UVStream,
+        data: String | Blob
+    ) {
+        let req = _req(UV_WRITE)
+        let buf = uv_buf_init(data, data.size())
+        defer {
+            c.free(buf)
+            _free-req(req)
+        }
+        __pending[req] = ty.coro()
+        let err = uv_write(
+            req,
+            stream.handle,
+            buf,
+            1,
+            __on_write
+        )
+        if err != 0 {
+            __pending.remove(req)
+            throw UVError('uv_write()', err)
+        }
+        if let Err(err) = suspend(uv_cancel@(req)) {
+            throw UVError('uv_write()', err)
+        }
+    }
+
+    now() -> Int {
+        uv_now(__loop)
+    }
+
+    stop() {
+        uv_stop(__loop)
+    }
+
+    run() {
+        uv_run(__loop, UV_RUN_DEFAULT)
+    }
+
+    run-once() -> Bool {
+        uv_run(__loop, UV_RUN_ONCE) != 0
+    }
+
+    run-nowait() -> Bool {
+        uv_run(__loop, UV_RUN_NOWAIT) != 0
+    }
+
+    metrics() {
+        let metrics = uv_metrics_t()
+        uv_metrics_info(__loop, metrics)
+        return {
+            loop_count: metrics.loop_count,
+            events: metrics.events,
+            events_waiting: metrics.events_waiting
+        }
+    }
+
+    debug() {
+        let counts = %{*: 0}
+
+        C! closure tally(hnd: c.ptr, arg: c.ptr) {
+            counts[c.str(uv_handle_type_name(uv_handle_get_type(hnd)))] += 1
+        }
+
+        uv_walk(__loop, tally, nil)
+
+        c.free-closure(tally)
+
+        pp({
+            counts,
+            reading: #__reading,
+            listening: #__listening,
+            ticking: #__ticking,
+            pending: #__pending,
+            now: now(),
+            metrics: metrics()
+        })
+    }
+}
+
+let __tls::thread-loop: ?UV = nil
+
+pub fn loop() {
+    thread-loop ?? (thread-loop = UV())
+}
+
+pub fn now() {
+    loop().now()
+}
+
+pub fn run(func: _) {
+    if func != nil {
+        let coro = generator { func() }
+        coro()
+    }
+    loop().run()
+}
+
+pub fn stop() {
+    loop().stop()
+}
+
+pub fn getaddrinfo(
+    host: String,
+    service: Int | String,
+    family: Int = 0,
+    socktype: Int = 0,
+    protocol: Int = 0
+) {
+    loop().getaddrinfo(host, service, family, socktype, protocol)
+}
+
+pub fn dial(host: String, service: Int | String, family: Int = os.AF_UNSPEC) -> UVSocket {
+    let addr = match loop().getaddrinfo(host, service, family, os.SOCK_STREAM) {
+        Ok([addr, *]) => addr.addr,
+        Err(e)        => throw UVError('getaddrinfo()', e)
+    }
+    let sock = loop().tcp-socket()
+    try {
+        sock.connect(addr)
+        sock
+    } catch e: UVError {
+        sock.close()
+        throw e
+    }
+}
+
+pub fn server(addr: String, port: Int | String, family: Int = os.AF_UNSPEC) -> UVSocket {
+    let addr = match loop().getaddrinfo(addr, port, family, os.SOCK_STREAM) {
+        Ok([addr, *]) => addr.addr,
+        Err(e)        => throw UVError('getaddrinfo()', e)
+    }
+    let sock = loop().tcp-socket()
+    try {
+        sock.bind(addr)
+        sock
+    } catch e: UVError {
+        sock.close()
+        throw e
+    }
+}
+
+pub fn server(port: Int | String) -> UVSocket {
+    server('0.0.0.0', port)
+}
+
+pub fn socket() -> UVSocket {
+    loop().tcp-socket()
+}
+
+pub fn sleep(msecs: Int) {
+    loop().sleep(msecs)
+}
+
+pub fn write(stream: UVStream, data: String | Blob) {
+    loop().write(stream, data)
+}
+
+pub fn open(path: Any, flags: Int = os.O_RDONLY, mode: Int = 0) -> Int {
+    loop().fs-open(path, flags, mode)
+}
+
+pub fn read(file: Int, n: Int, off: Int = 0) -> String | nil {
+    loop().fs-read(file, n, off)
+}
+
+pub fn close(file: Int) {
+    loop().fs-close(file)
+}
+
+pub fn slurp(file: Int) -> String {
+    let buf = Blob()
+    let off = 0
+
+    while let $chunk = read(file, 4096, off) {
+        buf.push(chunk)
+        off += #chunk
+    }
+
+    buf.str!()
+}
+
+pub fn slurp(path: Any) -> String {
+    let fd = open(path, os.O_RDONLY)
+    defer close(fd)
+    slurp(fd)
+}
+
+pub class UVDeadline {
+    __coro: _
+
+    init(msec: Int) {
+        __coro = generator {
+            loop().sleep(msec)
+            throw TimeoutError()
+        }
+    }
+
+    __enter__() {
+        (__coro)()
+        self
+    }
+
+    __drop__() {
+        (__coro)(QuietCancel)
+    }
+}
+
+pub fn timeout(msec: Int) {
+    UVDeadline(msec)
+}
