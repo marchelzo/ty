@@ -330,12 +330,10 @@ fn fileno(hnd) {
 }
 
 fn _spawn*(func: _, args: _, kwargs: _) {
-    eprint("Coroutine {ty.coro()} started for {func}({args}, {kwargs})")
     func(*args, **kwargs)
 }
 
 pub fn spawn(func: _, *args: _, %kwargs: _) {
-    eprint("Setting up new coroutine for {func}({args}, {kwargs})")
     let coro = _spawn(func, args, kwargs)
     coro()
 }
@@ -612,7 +610,7 @@ pub class UV {
         }
 
         C! closure on_gai(req: c.ptr, status: c.int, res: c.ptr) {
-            let cb = __pending.remove(req)
+            let $cb = __pending.remove(req) or return
 
             if status != 0 {
                 cb(Err(status))
@@ -621,7 +619,6 @@ pub class UV {
                 let ptr = res
                 while ptr != nil {
                     let ai = addrinfo(ptr)
-                    print(ai)
                     addrs.push(
                         SockAddr(
                             family=ai.ai_family,
@@ -632,6 +629,7 @@ pub class UV {
                     )
                     ptr = ai.ai_next
                 }
+                uv_freeaddrinfo(res)
                 cb(Ok(addrs))
             }
         }
@@ -642,7 +640,7 @@ pub class UV {
         }
 
         C! closure on_connect(req: c.ptr, status: c.int) {
-            let cb = __pending.remove(req)
+            let $cb = __pending.remove(req) or return
             if status != 0 {
                 cb(Err(status))
             } else {
@@ -663,7 +661,7 @@ pub class UV {
             req: c.ptr,
             status: c.int
         ) {
-            let cb = __pending.remove(req)
+            let $cb = __pending.remove(req) or return
             if status != 0 {
                 cb(Err(-status))
             } else {
@@ -696,7 +694,6 @@ pub class UV {
                 __reading.remove(handle)
             } else if nread > 0 {
                 let data = c.str(buf.base, nread)
-                eprint("Read {nread} bytes from {fileno(handle)}:\n{data}------")
                 c.free(buf.base)
                 spawn(stream.on-read, data)
             }
@@ -706,7 +703,7 @@ pub class UV {
             req: c.ptr,
             status: c.int
         ) {
-            let cb = __pending.remove(req)
+            let $cb = __pending.remove(req) or return
             if status != 0 {
                 cb(Err(-status))
             } else {
@@ -718,7 +715,7 @@ pub class UV {
             req: c.ptr,
             status: c.int
         ) {
-            let cb = __pending.remove(req)
+            let $cb = __pending.remove(req) or return
             if status < 0 {
                 cb(Err(-status))
             } else {
@@ -1200,19 +1197,131 @@ pub fn getaddrinfo(
     loop().getaddrinfo(host, service, family, socktype, protocol)
 }
 
-pub fn dial(host: String, service: Int | String, family: Int = os.AF_UNSPEC) -> UVSocket {
-    let addr = match loop().getaddrinfo(host, service, family, os.SOCK_STREAM) {
-        Ok([addr, *]) => addr.addr,
-        Err(e)        => throw UVError('getaddrinfo()', e)
+pub fn race(fns: _, stagger: Int = 0) {
+    if #fns == 0 { throw RuntimeError('race: empty') }
+    if #fns == 1 { return fns[0]() }
+
+    let lp         = loop()
+    let resume     = ty.coro()
+    let winner     = nil
+    let winner-idx = -1
+    let last-err   = nil
+    let coros      = []
+    let pending    = 0
+    let next-idx   = 0
+    let settled?   = false
+    let awaiting?  = false
+    let timer      = lp.timer()
+
+    fn settle() {
+        if !settled? && (winner != nil || (pending == 0 && next-idx >= #fns)) {
+            settled? = true
+            if awaiting? { resume() }
+        }
     }
-    let sock = loop().tcp-socket()
-    try {
-        sock.connect(addr)
-        sock
-    } catch e: UVError {
-        sock.close()
-        throw e
+
+    let launch-next = nil
+
+    launch-next = fn () {
+        if next-idx < #fns && winner == nil {
+            let f = fns[next-idx++]
+            let my-idx = #coros
+            let coro = generator {
+                pending += 1
+                try {
+                    let val = f()
+                    if winner == nil {
+                        winner = val
+                        winner-idx = my-idx
+                    }
+                } catch e: CanceledError {
+                } catch e {
+                    last-err = e
+                    launch-next()
+                }
+                pending -= 1
+                settle()
+            }
+            coros.push(coro)
+            coro()
+            if next-idx < #fns {
+                timer.start(stagger)
+            } else {
+                timer.stop()
+            }
+        }
     }
+
+    timer.on-fire = fn () { launch-next() }
+    launch-next()
+
+    fn cleanup() {
+        timer.stop()
+        timer.close()
+        for coro in coros { coro(Cancel as nil) }
+    }
+
+    if !settled? {
+        awaiting? = true
+        suspend(cleanup)
+    }
+
+    timer.stop()
+    timer.close()
+
+    for coro, i in coros {
+        if i != winner-idx { coro(Cancel as nil) }
+    }
+
+    if let $val = winner { return val }
+
+    throw last-err ?? RuntimeError('race: all attempts failed')
+}
+
+fn interleave-families(addrs) {
+    let v6 = []
+    let v4 = []
+
+    for addr in addrs {
+        if addr.family == os.AF_INET6 {
+            v6.push(addr)
+        } else {
+            v4.push(addr)
+        }
+    }
+
+    let result = []
+    let i = 0
+    let j = 0
+
+    while i < #v6 || j < #v4 {
+        if i < #v6 { result.push(v6[i]); i += 1 }
+        if j < #v4 { result.push(v4[j]); j += 1 }
+    }
+
+    result
+}
+
+pub fn dial(host: String, service: Int | String, family: Int = os.AF_UNSPEC, stagger: Int = 250) -> UVSocket {
+    let addrs = match loop().getaddrinfo(host, service, family, os.SOCK_STREAM) {
+        Ok(addrs) => interleave-families(addrs),
+        Err(e)    => throw UVError('getaddrinfo()', e)
+    }
+
+    if #addrs == 0 {
+        throw RuntimeError('dial: no addresses resolved')
+    }
+
+    race(addrs.map(addr -> fn () {
+        let sock = loop().tcp-socket()
+        try {
+            sock.connect(addr.addr)
+            sock
+        } catch e {
+            sock.close()
+            throw e
+        }
+    }), stagger)
 }
 
 pub fn server(addr: String, port: Int | String, family: Int = os.AF_UNSPEC) -> UVSocket {
