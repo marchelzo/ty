@@ -3801,6 +3801,9 @@ macro __walk! {
         let tree = copySource(tree, match tree {
             ty.Stop(tree) => tree,
 
+            ty.Id({name, ?module, ?constraint})
+                => ty.Id({name, module, constraint: walk(constraint, f)}),
+
             ty.Array(xs) => ty.Array([walk(x, f) for x in xs]),
 
             ty.ArrayItem(x) => ty.ArrayItem(
@@ -3861,11 +3864,11 @@ macro __walk! {
             ty.FuncDef(     func),
             ty.Func(        func),
             ty.ImplicitFunc(func) => type(tree)(
-                name: func.name,
-                decorators: [walk(dec, f) for dec in func.decorators],
-                params: [walk(param, f) for param in func.params],
-                rt: walk(func.rt, f),
-                body: walk(func.body, f)
+                name: func.?name,
+                decorators: [walk(it, f) for func.?decorators ?? []],
+                params: [walk(it, f) for func.?params ?? []],
+                rt: walk(func.?rt, f),
+                body: walk(func.?body, f)
             ),
 
             ty.Param(param) => ty.Param(
@@ -3876,14 +3879,14 @@ macro __walk! {
 
             ty.Class(c) => ty.Class(
                 name: c.name,
-                `super`: walk(c.`super`, f),
-                methods: [walk(m, f) for m in c.methods],
-                getters: [walk(g, f) for g in c.getters],
-                setters: [walk(s, f) for s in c.setters],
-                fields: [walk(s, f) for s in c.fields],
-                static-methods: [walk(s, f) for s in c.static-methods],
-                static-getters: [walk(s, f) for s in c.static-getters],
-                static-fields: [walk(s, f) for s in c.static-fields]
+                `super`: walk(c.?`super`, f),
+                methods: [walk(it, f) for c.?methods ?? []],
+                getters: [walk(it, f) for c.?getters ?? []],
+                setters: [walk(it, f) for c.?setters ?? []],
+                fields:  [walk(it, f) for c.?fields  ?? []],
+                static-methods: [walk(it, f) for c.?static-methods ?? []],
+                static-getters: [walk(it, f) for c.?static-getters ?? []],
+                static-fields:  [walk(it, f) for c.?static-fields  ?? []]
             ),
 
             ty.Cond(cond, a, b) => ty.Cond(
@@ -4436,12 +4439,12 @@ fn assert2(cond: Any, msg: String = 'assertion failed') -> _ {
 macro unreachable! = throw AssertionError('unreachable')
 
 class PatchGuard {
-    __restore: _
-    __mock:    _
+    __mock: _
+    __done: _
 
-    init(mock, restore) {
-        __mock    = mock
-        __restore = restore
+    init(mock, done) {
+        __mock = mock
+        __done = done
     }
 
     __enter__() {
@@ -4449,7 +4452,7 @@ class PatchGuard {
     }
 
     __drop__() {
-        (__restore)()
+        (__done)()
     }
 }
 

@@ -1,10 +1,15 @@
-import sqlite3c (..)
+pub import sqlite3c (..)
+import pretty
 
 fn sqlite3c::open(path: String, flags: ?Int) -> _;
 
-class SQLiteError < RuntimeError {
-    init(code: Int) {
-        super("{code}")
+pub class SQLiteError < RuntimeError {
+    code: Int
+
+    init(code: Int, ctx: String = '') {
+        self.code = code
+        let msg = ::errorMessage(code)
+        super((ctx == '') ? msg : "{ctx}: {msg}")
     }
 }
 
@@ -37,6 +42,9 @@ class SQLiteStatement[a] : Iterable[a] {
             __status = ::step(__p)
             ::finalize(__p)
             __p = nil
+            if __status != SQLITE_DONE && __status != SQLITE_ROW {
+                throw SQLiteError(__status)
+            }
             return __status
         } else {
             throw SQLiteError(SQLITE_MISUSE)
@@ -103,24 +111,30 @@ pub class SQLite {
     __path: String | nil
     __db: _
 
-    init(path: String, fullMutex: Bool = false) {
-        let fullMutexFlags = SQLITE_OPEN_FULLMUTEX
-                           | SQLITE_OPEN_READWRITE
-                           | SQLITE_OPEN_CREATE
+    init(path: String, full-mutex: Bool = false) {
+        let flags = SQLITE_OPEN_FULLMUTEX
+                  | SQLITE_OPEN_READWRITE
+                  | SQLITE_OPEN_CREATE
 
-        if let $db = open(path, fullMutexFlags if fullMutex) {
+        if let $db = open(path, flags if full-mutex) {
             __db = db
             __path = path
         } else {
-            throw SQLiteError(error())
+            throw SQLiteError(error(), path)
         }
     }
+
+    path -> String | nil { __path }
 
     close() {
         if __db {
             ::close(__db)
             __db = nil
         }
+    }
+
+    __drop__() {
+        close()
     }
 
     fetchOne[a](*args, assoc=true) -> a | nil {
@@ -144,8 +158,8 @@ pub class SQLite {
     }
 
     query[a](sql, *ps) -> SQLiteStatement[a] {
-        if not let $s  = ::prepare(__db, sql) {
-            throw SQLiteError(error(__db))
+        if not let $s = ::prepare(__db, sql) {
+            throw SQLiteError(error(__db), sql)
         }
 
         for p, i in ps {
@@ -158,19 +172,71 @@ pub class SQLite {
         return SQLiteStatement(s)
     }
 
-    changes() -> Int {
-        ::changes(__db)
-    }
-
-    totalChanges() -> Int {
-        ::totalChanges(__db)
-    }
-
     exec(sql, *ps) -> Int {
         self.query(sql, *ps).exec()
     }
 
-    errorMessage() -> String {
+    run(sql: String) {
+        for stmt in sql.split(';') {
+            let stmt = stmt.trim()
+            if stmt != '' {
+                exec(stmt)
+            }
+        }
+    }
+
+    changes() -> Int {
+        ::changes(__db)
+    }
+
+    total-changes() -> Int {
+        ::totalChanges(__db)
+    }
+
+    last-insert-rowid() -> Int {
+        ::lastInsertRowid(__db)
+    }
+
+    error-message() -> String {
         ::errorMessage(__db)
+    }
+
+    transaction(f: () -> _) {
+        exec('BEGIN')
+        try {
+            let result = f()
+            exec('COMMIT')
+            result
+        } catch e {
+            exec('ROLLBACK')
+            throw e
+        }
+    }
+
+    table?(name: String) -> Bool {
+        let row = fetchOne(
+            'SELECT 1 FROM sqlite_master WHERE type = ? AND name = ?',
+            'table', name
+        )
+        row != nil
+    }
+
+    tables() -> Array[String] {
+        fetchAll(
+            "SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name",
+            assoc=false
+        ).map(&0)
+    }
+
+    __repr__() -> String {
+        if __path {
+            "SQLite({__path})"
+        } else {
+            "SQLite(:memory:)"
+        }
+    }
+
+    __str__() -> String {
+        __repr__()
     }
 }

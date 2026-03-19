@@ -6819,7 +6819,7 @@ NextInstruction:
                 CASE(TARGET_THREAD_LOCAL)
                         READVALUE(n);
                         while (vN(THREAD_LOCALS) <= n) {
-                                xvP(THREAD_LOCALS, NIL);
+                                xvP(THREAD_LOCALS, NONE);
                         }
                         pushtarget(v_(THREAD_LOCALS, n), NULL);
                         break;
@@ -7205,14 +7205,15 @@ TargetMember:
                 CASE(ENTER)
                         if ((z = ClassOf(top())) < 0) {
                                 break;
-
                         }
-                        if ((vp = class_lookup_method_i(ty, z, NAMES._enter_)) == NULL) {
-                                break;
-
+                        if (vN(DROP_STACK) == 0) {
+                                zP("no active drop group for enter instruction");
                         }
-                        v = pop();
-                        call(ty, vp, &v, 0, NULL);
+                        uvP(*vvL(DROP_STACK)->array, peek());
+                        if ((vp = class_lookup_method_i(ty, z, NAMES._enter_)) != NULL) {
+                                v = pop();
+                                call(ty, vp, &v, 0, NULL);
+                        }
                         break;
 
                 CASE(ENSURE_LEN)

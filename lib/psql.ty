@@ -1,0 +1,267 @@
+import ffi as c (C!)
+
+let libpq = c.open('pq') ?? throw RuntimeError(
+    'failed to load libpq'
+)
+
+const Oid = c.uint
+
+C! libpq fn {
+    void *PQconnectdb(const char *conninfo);
+    void PQfinish(void *conn);
+    int PQstatus(const void *conn);
+    char *PQerrorMessage(const void *conn);
+
+    void *PQexec(void *conn, const char *command);
+    void *PQexecParams(
+        void *conn,
+        const char *command,
+        int nParams,
+        const Oid *paramTypes,
+        const char **paramValues,
+        const int *paramLengths,
+        const int *paramFormats,
+        int resultFormat
+    );
+
+    int PQresultStatus(const void *res);
+    int PQntuples(const void *res);
+    int PQnfields(const void *res);
+    char *PQfname(const void *res, int col);
+    char *PQgetvalue(const void *res, int row, int col);
+    int PQgetisnull(const void *res, int row, int col);
+    int PQgetlength(const void *res, int row, int col);
+    Oid PQftype(const void *res, int col);
+    void PQclear(void *res);
+    char *PQresultErrorMessage(const void *res);
+
+    char *PQescapeLiteral(
+        void *conn,
+        const char *str,
+        size_t len
+    );
+    void PQfreemem(void *ptr);
+}
+
+pub const CONNECTION_OK  = 0
+pub const CONNECTION_BAD = 1
+
+pub const PGRES_EMPTY_QUERY = 0
+pub const PGRES_COMMAND_OK  = 1
+pub const PGRES_TUPLES_OK   = 2
+pub const PGRES_FATAL_ERROR = 7
+
+pub const BOOLOID        = 16
+pub const INT2OID        = 21
+pub const INT4OID        = 23
+pub const INT8OID        = 20
+pub const FLOAT4OID      = 700
+pub const FLOAT8OID      = 701
+pub const TEXTOID        = 25
+pub const NUMERICOID     = 1700
+pub const TIMESTAMPOID   = 1114
+pub const TIMESTAMPTZOID = 1184
+pub const DATEOID        = 1082
+pub const JSONOID        = 114
+pub const JSONBOID       = 3802
+
+pub class PGError < RuntimeError {
+    init(msg: String) {
+        super(msg)
+    }
+}
+
+fn _coerce(val: _) -> String | nil {
+    match val {
+        nil       => nil,
+        v: String => v,
+        v: Bool   => v ? 't' : 'f',
+        v         => "{v}"
+    }
+}
+
+fn _parse-val(raw: String, oid: Int) {
+    match oid {
+        ::BOOLOID => raw == 't',
+
+        ::INT2OID or
+        ::INT4OID or
+        ::INT8OID => int(raw, 10),
+
+        ::FLOAT4OID or
+        ::FLOAT8OID or
+        ::NUMERICOID => float(raw),
+
+        _ => raw
+    }
+}
+
+class PGResult {
+    __res: Ptr
+    __conn: _
+
+    init(res: Ptr, conn: _) {
+        __res = res
+        __conn = conn
+        let status = PQresultStatus(res)
+        if status != PGRES_COMMAND_OK
+        && status != PGRES_TUPLES_OK
+        && status != PGRES_EMPTY_QUERY {
+            let msg = c.str(PQresultErrorMessage(res))
+            PQclear(res)
+            throw PGError(msg.trim())
+        }
+    }
+
+    ntuples -> Int { PQntuples(__res) }
+    nfields -> Int { PQnfields(__res) }
+
+    field-name(col: Int) -> String {
+        c.str(PQfname(__res, col))
+    }
+
+    field-type(col: Int) -> Int {
+        PQftype(__res, col)
+    }
+
+    get-value(row: Int, col: Int) -> String | nil {
+        if PQgetisnull(__res, row, col) != 0 {
+            nil
+        } else {
+            c.str(
+                PQgetvalue(__res, row, col),
+                PQgetlength(__res, row, col)
+            )
+        }
+    }
+
+    rows() {
+        let ncols = nfields
+        let names = [field-name(j) for j in 0..ncols]
+        let oids = [field-type(j) for j in 0..ncols]
+
+        let result = []
+        for i in 0..ntuples {
+            let row = %{}
+            for j in 0..ncols {
+                let raw = get-value(i, j)
+                row[names[j]] = (raw != nil)
+                    ? _parse-val(raw, oids[j])
+                    : nil
+            }
+            result.push(row)
+        }
+        result
+    }
+
+    cmd-tuples() -> Int {
+        let s = c.str(PQgetvalue(__res, 0, 0))
+        int(s, 10) ?? 0
+    }
+
+    __drop__() {
+        if __res != nil {
+            PQclear(__res)
+            __res = nil
+        }
+    }
+}
+
+pub class PG {
+    __conn: Ptr
+
+    init(conninfo: String = '') {
+        __conn = PQconnectdb(conninfo.cstr())
+        if PQstatus(__conn) != CONNECTION_OK {
+            let msg = c.str(PQerrorMessage(__conn))
+            PQfinish(__conn)
+            throw PGError(msg.trim())
+        }
+    }
+
+    close() {
+        if __conn != nil {
+            PQfinish(__conn)
+            __conn = nil
+        }
+    }
+
+    __drop__() {
+        close()
+    }
+
+    error-message() -> String {
+        c.str(PQerrorMessage(__conn))
+    }
+
+    exec(sql: String) -> PGResult {
+        let res = PQexec(__conn, sql.cstr())
+        PGResult(res, self)
+    }
+
+    query(sql: String, *ps) -> PGResult {
+        if #ps == 0 {
+            return exec(sql)
+        }
+
+        let n = #ps
+        let vals = c.auto(c.new(c.ptr, n))
+        let strs = []
+
+        for p, i in ps {
+            let s = _coerce(p)
+            if s != nil {
+                strs.push(s.cstr())
+                vals[i] = strs[-1]
+            } else {
+                vals[i] = nil
+            }
+        }
+
+        let res = PQexecParams(
+            __conn, sql.cstr(),
+            n, nil, vals, nil, nil, 0
+        )
+
+        PGResult(res, self)
+    }
+
+    fetch-one(sql: String, *ps) {
+        let r: _ = query(sql, *ps)
+        let rows: _ = r.rows()
+        (#rows > 0) ? rows[0] : nil
+    }
+
+    fetch-all(sql: String, *ps) {
+        query(sql, *ps).rows()
+    }
+
+    transaction(f) {
+        exec('BEGIN')
+        try {
+            let result = f()
+            exec('COMMIT')
+            result
+        } catch e {
+            exec('ROLLBACK')
+            throw e
+        }
+    }
+
+    table?(name: String) -> Bool {
+        let r: _ = fetch-one(
+            "SELECT 1 FROM information_schema.tables"
+            " WHERE table_name = $1",
+            name
+        )
+        r != nil
+    }
+
+    tables() {
+        fetch-all(
+            "SELECT table_name FROM information_schema.tables"
+            " WHERE table_schema = 'public'"
+            " ORDER BY table_name"
+        ).map(&['table_name'])
+    }
+}
