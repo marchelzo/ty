@@ -5350,7 +5350,7 @@ DoTargetSubscript(Ty *ty)
                         RaiseException(ty);
                         return;
                 }
-                pushtarget(&container.array->items[subscript.z], container.array);
+                pushtarget(v_(*container.array, subscript.z), container.array);
                 break;
 
         case VALUE_DICT:
@@ -5409,6 +5409,10 @@ DoAssignSubscript(Ty *ty, int n, bool exec)
         Value v;
         Value p;
         Value *f;
+
+        if (n == (u8)-1) {
+                n = vN(STACK) - vXx(SP_STACK);
+        }
 
         isize i_xs = vN(STACK) - (n + 1);
         isize i_x  = i_xs - 1;
@@ -5471,7 +5475,7 @@ DoAssignSubscript(Ty *ty, int n, bool exec)
                 vvXi(STACK, i_xs);
                 vvXi(STACK, i_x);
                 xpush(value);
-                f = class_lookup_setter_i(ty, container.class, NAMES.subscript);
+                f = class_lookup_method_i(ty, container.class, NAMES.subscript_eq);
                 if (f != NULL) {
                         if (exec) {
                                 exec_fn(ty, f, &container, n + 1, NULL);
@@ -5485,7 +5489,7 @@ DoAssignSubscript(Ty *ty, int n, bool exec)
                 vvXi(STACK, i_xs);
                 vvXi(STACK, i_x);
                 xpush(value);
-                f = class_lookup_s_setter_i(ty, container.class, NAMES.subscript);
+                f = class_lookup_s_method_i(ty, container.class, NAMES.subscript_eq);
                 if (f != NULL) {
                         if (exec) {
                                 exec_fn(ty, f, &container, n + 1, NULL);
@@ -9659,6 +9663,7 @@ vm_init(Ty *ty, int ac, char **av)
         NAMES.str              = M_ID("str");
         NAMES._str_            = M_ID("__str__");
         NAMES.subscript        = M_ID("[]");
+        NAMES.subscript_eq     = M_ID("[]=");
         NAMES.unapply          = M_ID("unapply");
 
         NAMES._what            = M_ID(sfmt("_what$%d",  CLASS_RUNTIME_ERROR));
@@ -10295,10 +10300,6 @@ MarkStorage(Ty *ty)
         RESET_TOTAL_REACHED();
         for (int i = 0; i < vN(TARGETS); ++i) {
                 Target *target = v_(TARGETS, i);
-                uptr t = (uptr)target->t;
-                if (((t & PMASK3) == 0) && (t > 0x0FFF)) {
-                        value_mark(ty, (Value *)t);
-                }
                 if (target->gc != NULL) {
                         MARK(target->gc);
                 }

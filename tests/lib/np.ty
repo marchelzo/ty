@@ -1,0 +1,755 @@
+import np
+import math
+
+ns test
+
+fn approx?(a, b: Float, tol: Float = 1e-10) -> Bool {
+    let va = (a :: np.NDArray) ? a.item() : Float(a)
+    let d = va - b
+    ((d < 0.0) ? -d : d) < tol
+}
+
+fn must-arr(v) -> np.NDArray {
+    match v { a: np.NDArray => a, _ => throw ValueError("expected NDArray") }
+}
+
+fn arr-approx?(a: np.NDArray, b: np.NDArray, tol: Float = 1e-10) -> Bool {
+    if a.shape != b.shape { return false }
+    for i in 0..a.size {
+        let d = a.ptr[i] - b.ptr[i]
+        if ((d < 0.0) ? -d : d) >= tol { return false }
+    }
+    true
+}
+
+
+pub fn test-array-1d() {
+    let a = np.array([1.0, 2.0, 3.0])
+    assert(a.shape == [3])
+    assert(a.ndim == 1)
+    assert(a.size == 3)
+    assert(#a == 3)
+}
+
+pub fn test-array-2d() {
+    let a = np.array([[1.0, 2.0], [3.0, 4.0]])
+    assert(a.shape == [2, 2])
+    assert(a.ndim == 2)
+    assert(a.size == 4)
+}
+
+pub fn test-array-from-int() {
+    let a = np.array([1, 2, 3])
+    assert(a.size == 3)
+    assert(approx?(a.ptr[0], 1.0))
+    assert(approx?(a.ptr[2], 3.0))
+}
+
+pub fn test-array-2d-from-int() {
+    let a = np.array([[1, 2], [3, 4]])
+    assert(a.shape == [2, 2])
+    assert(approx?(a[0, 0], 1.0))
+    assert(approx?(a[1, 1], 4.0))
+}
+
+pub fn test-zeros() {
+    let a = np.zeros([2, 3])
+    assert(a.shape == [2, 3])
+    assert(a.size == 6)
+    assert(approx?(a.sum(), 0.0))
+}
+
+pub fn test-ones() {
+    let a = np.ones([4])
+    assert(a.shape == [4])
+    assert(approx?(a.sum(), 4.0))
+}
+
+pub fn test-full() {
+    let a = np.full([3, 2], 7.0)
+    assert(a.shape == [3, 2])
+    assert(approx?(a.sum(), 42.0))
+}
+
+pub fn test-eye() {
+    let I = np.eye(3)
+    assert(I.shape == [3, 3])
+    assert(approx?(I[0, 0], 1.0))
+    assert(approx?(I[0, 1], 0.0))
+    assert(approx?(I[1, 1], 1.0))
+    assert(approx?(I[2, 2], 1.0))
+    assert(approx?(I.trace(), 3.0))
+    assert(approx?(I.sum(), 3.0))
+}
+
+pub fn test-diag-fn() {
+    let v = np.array([2.0, 3.0, 4.0])
+    let D = np.diag(v)
+    assert(D.shape == [3, 3])
+    assert(approx?(D[0, 0], 2.0))
+    assert(approx?(D[1, 1], 3.0))
+    assert(approx?(D[2, 2], 4.0))
+    assert(approx?(D[0, 1], 0.0))
+    assert(approx?(D.sum(), 9.0))
+}
+
+pub fn test-arange-int() {
+    let a = np.arange(5)
+    assert(a.shape == [5])
+    assert(approx?(a.ptr[0], 0.0))
+    assert(approx?(a.ptr[4], 4.0))
+}
+
+pub fn test-arange-float() {
+    let a = np.arange(0.0, 1.0, 0.25)
+    assert(a.size == 4)
+    assert(approx?(a.ptr[0], 0.0))
+    assert(approx?(a.ptr[1], 0.25))
+    assert(approx?(a.ptr[3], 0.75))
+}
+
+pub fn test-linspace() {
+    let a = np.linspace(0.0, 1.0, 5)
+    assert(a.size == 5)
+    assert(approx?(a.ptr[0], 0.0))
+    assert(approx?(a.ptr[2], 0.5))
+    assert(approx?(a.ptr[4], 1.0))
+}
+
+pub fn test-linspace-single() {
+    let a = np.linspace(3.0, 3.0, 1)
+    assert(a.size == 1)
+    assert(approx?(a.ptr[0], 3.0))
+}
+
+
+pub fn test-index-1d() {
+    let a = np.array([10.0, 20.0, 30.0])
+    assert(approx?(a.ptr[0], 10.0))
+    assert(approx?(a.ptr[2], 30.0))
+}
+
+pub fn test-index-2d-elem() {
+    let a = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
+    assert(approx?(a[0, 0], 1.0))
+    assert(approx?(a[0, 2], 3.0))
+    assert(approx?(a[1, 1], 5.0))
+    assert(approx?(a[-1, -1], 6.0))
+}
+
+pub fn test-index-2d-row() {
+    let a = np.array([[1.0, 2.0], [3.0, 4.0]])
+    if let row: np.NDArray = a[0] {
+        assert(row.shape == [2])
+        assert(approx?(row.ptr[0], 1.0))
+        assert(approx?(row.ptr[1], 2.0))
+    } else {
+        assert(false)
+    }
+}
+
+pub fn test-assign-1d() {
+    let a = np.zeros([3])
+    a[0] = 99.0
+    a[2] = 42.0
+    assert(approx?(a.ptr[0], 99.0))
+    assert(approx?(a.ptr[1], 0.0))
+    assert(approx?(a.ptr[2], 42.0))
+}
+
+pub fn test-assign-2d() {
+    let a = np.zeros([2, 2])
+    a[0, 1] = 5.0
+    a[1, 0] = 7.0
+    assert(approx?(a[0, 1], 5.0))
+    assert(approx?(a[1, 0], 7.0))
+    assert(approx?(a[0, 0], 0.0))
+}
+
+pub fn test-item() {
+    let a = np.array([42.0])
+    assert(approx?(a.item(), 42.0))
+}
+
+
+pub fn test-add-arrays() {
+    let a = np.array([1.0, 2.0, 3.0])
+    let b = np.array([4.0, 5.0, 6.0])
+    let r = a + b
+    assert(approx?(r.ptr[0], 5.0))
+    assert(approx?(r.ptr[1], 7.0))
+    assert(approx?(r.ptr[2], 9.0))
+}
+
+pub fn test-sub-arrays() {
+    let a = np.array([10.0, 20.0, 30.0])
+    let b = np.array([1.0, 2.0, 3.0])
+    let r = a - b
+    assert(approx?(r.ptr[0], 9.0))
+    assert(approx?(r.ptr[1], 18.0))
+    assert(approx?(r.ptr[2], 27.0))
+}
+
+pub fn test-mul-arrays() {
+    let a = np.array([2.0, 3.0, 4.0])
+    let b = np.array([5.0, 6.0, 7.0])
+    let r = a * b
+    assert(approx?(r.ptr[0], 10.0))
+    assert(approx?(r.ptr[1], 18.0))
+    assert(approx?(r.ptr[2], 28.0))
+}
+
+pub fn test-div-arrays() {
+    let a = np.array([10.0, 20.0, 30.0])
+    let b = np.array([2.0, 4.0, 5.0])
+    let r = a / b
+    assert(approx?(r.ptr[0], 5.0))
+    assert(approx?(r.ptr[1], 5.0))
+    assert(approx?(r.ptr[2], 6.0))
+}
+
+pub fn test-add-scalar() {
+    let a = np.array([1.0, 2.0, 3.0])
+    let b = a + 10.0
+    assert(approx?(b.ptr[0], 11.0))
+    assert(approx?(b.ptr[2], 13.0))
+    let d = 10.0 + a
+    assert(approx?(d.ptr[0], 11.0))
+}
+
+pub fn test-add-int() {
+    let a = np.array([1.0, 2.0])
+    let b = a + 5
+    assert(approx?(b.ptr[0], 6.0))
+    let d = 5 + a
+    assert(approx?(d.ptr[0], 6.0))
+}
+
+pub fn test-sub-scalar() {
+    let a = np.array([10.0, 20.0])
+    let r1 = a - 3.0
+    assert(approx?(r1.ptr[0], 7.0))
+    let r2 = 100.0 - a
+    assert(approx?(r2.ptr[0], 90.0))
+}
+
+pub fn test-mul-scalar() {
+    let a = np.array([1.0, 2.0, 3.0])
+    let b = a * 3.0
+    assert(approx?(b.ptr[0], 3.0))
+    assert(approx?(b.ptr[2], 9.0))
+    let d = 3.0 * a
+    assert(approx?(d.ptr[1], 6.0))
+}
+
+pub fn test-mul-int() {
+    let a = np.array([1.0, 2.0])
+    let b = a * 4
+    assert(approx?(b.ptr[0], 4.0))
+    let d = 4 * a
+    assert(approx?(d.ptr[1], 8.0))
+}
+
+pub fn test-div-scalar() {
+    let a = np.array([10.0, 20.0])
+    let r1 = a / 2.0
+    assert(approx?(r1.ptr[0], 5.0))
+    let r2 = 100.0 / a
+    assert(approx?(r2.ptr[0], 10.0))
+    assert(approx?(r2.ptr[1], 5.0))
+}
+
+pub fn test-pow() {
+    let a = np.array([1.0, 2.0, 3.0])
+    let b = a ** 2.0
+    assert(approx?(b.ptr[0], 1.0))
+    assert(approx?(b.ptr[1], 4.0))
+    assert(approx?(b.ptr[2], 9.0))
+}
+
+pub fn test-pow-int() {
+    let a = np.array([2.0, 3.0])
+    let b = a ** 3
+    assert(approx?(b.ptr[0], 8.0))
+    assert(approx?(b.ptr[1], 27.0))
+}
+
+pub fn test-add-2d() {
+    let a = np.array([[1.0, 2.0], [3.0, 4.0]])
+    let b = np.array([[10.0, 20.0], [30.0, 40.0]])
+    let r = a + b
+    assert(approx?(r[0, 0], 11.0))
+    assert(approx?(r[1, 1], 44.0))
+}
+
+pub fn test-eq() {
+    let a = np.array([1.0, 2.0, 3.0])
+    let b = np.array([1.0, 2.0, 3.0])
+    let d = np.array([1.0, 2.0, 4.0])
+    assert(a == b)
+    assert(!(a == d))
+}
+
+pub fn test-eq-shape-mismatch() {
+    let a = np.array([1.0, 2.0])
+    let b = np.array([1.0, 2.0, 3.0])
+    assert(!(a == b))
+}
+
+
+pub fn test-sum() {
+    assert(approx?(np.array([1.0, 2.0, 3.0, 4.0]).sum(), 10.0))
+}
+
+pub fn test-mean() {
+    assert(approx?(np.array([2.0, 4.0, 6.0, 8.0]).mean(), 5.0))
+}
+
+pub fn test-max() {
+    assert(approx?(np.array([3.0, 1.0, 4.0, 1.0, 5.0]).max(), 5.0))
+}
+
+pub fn test-min() {
+    assert(approx?(np.array([3.0, 1.0, 4.0, 1.0, 5.0]).min(), 1.0))
+}
+
+pub fn test-norm-method() {
+    let a = np.array([3.0, 4.0])
+    assert(approx?(a.norm(), 5.0))
+}
+
+pub fn test-trace() {
+    let a = np.array([[1.0, 2.0], [3.0, 4.0]])
+    assert(approx?(a.trace(), 5.0))
+}
+
+pub fn test-diag-method() {
+    let a = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [7.0, 8.0, 9.0]])
+    let d = a.diag()
+    assert(d.shape == [3])
+    assert(approx?(d.ptr[0], 1.0))
+    assert(approx?(d.ptr[1], 5.0))
+    assert(approx?(d.ptr[2], 9.0))
+}
+
+pub fn test-clip() {
+    let a = np.array([-2.0, -1.0, 0.0, 1.0, 2.0, 3.0])
+    let b = a.clip(0.0, 2.0)
+    assert(approx?(b.ptr[0], 0.0))
+    assert(approx?(b.ptr[1], 0.0))
+    assert(approx?(b.ptr[2], 0.0))
+    assert(approx?(b.ptr[3], 1.0))
+    assert(approx?(b.ptr[4], 2.0))
+    assert(approx?(b.ptr[5], 2.0))
+}
+
+pub fn test-abs() {
+    let a = np.array([-3.0, -1.0, 0.0, 2.0])
+    let b = a.abs()
+    assert(approx?(b.ptr[0], 3.0))
+    assert(approx?(b.ptr[1], 1.0))
+    assert(approx?(b.ptr[2], 0.0))
+    assert(approx?(b.ptr[3], 2.0))
+}
+
+pub fn test-neg() {
+    let a = np.array([1.0, -2.0, 3.0])
+    let b = a.neg
+    assert(approx?(b.ptr[0], -1.0))
+    assert(approx?(b.ptr[1], 2.0))
+    assert(approx?(b.ptr[2], -3.0))
+}
+
+pub fn test-neg-roundtrip() {
+    let a = np.array([1.0, -2.0, 3.0])
+    assert(a == a.neg.neg)
+}
+
+
+pub fn test-transpose-2d() {
+    let a = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
+    let b = a.T
+    assert(b.shape == [3, 2])
+    assert(approx?(b[0, 0], 1.0))
+    assert(approx?(b[0, 1], 4.0))
+    assert(approx?(b[1, 0], 2.0))
+    assert(approx?(b[2, 1], 6.0))
+}
+
+pub fn test-transpose-1d() {
+    let a = np.array([1.0, 2.0, 3.0])
+    let b = a.T
+    assert(b.shape == [3])
+    assert(a == b)
+}
+
+pub fn test-reshape() {
+    let a = np.arange(6)
+    let b = a.reshape([2, 3])
+    assert(b.shape == [2, 3])
+    assert(approx?(b[0, 0], 0.0))
+    assert(approx?(b[0, 2], 2.0))
+    assert(approx?(b[1, 0], 3.0))
+    assert(approx?(b[1, 2], 5.0))
+}
+
+pub fn test-flatten() {
+    let a = np.array([[1.0, 2.0], [3.0, 4.0]])
+    let b = a.flatten()
+    assert(b.shape == [4])
+    assert(approx?(b.ptr[0], 1.0))
+    assert(approx?(b.ptr[3], 4.0))
+}
+
+pub fn test-copy-independence() {
+    let a = np.array([1.0, 2.0, 3.0])
+    let b = a.copy()
+    assert(a == b)
+    b[0] = 99.0
+    assert(approx?(a.ptr[0], 1.0))
+    assert(approx?(b.ptr[0], 99.0))
+}
+
+pub fn test-to-list() {
+    let a = np.array([10.0, 20.0, 30.0])
+    let xs = a.to-list()
+    assert(#xs == 3)
+    assert(xs[0] == 10.0)
+    assert(xs[2] == 30.0)
+}
+
+
+pub fn test-dot-1d() {
+    let a = np.array([1.0, 2.0, 3.0])
+    let b = np.array([4.0, 5.0, 6.0])
+    assert(approx?(a.dot(b), 32.0))
+}
+
+pub fn test-dot-2d() {
+    let a = np.array([[1.0, 2.0], [3.0, 4.0]])
+    let b = np.array([[5.0, 6.0], [7.0, 8.0]])
+    let r = must-arr(a.dot(b))
+    assert(r.shape == [2, 2])
+    assert(approx?(r[0, 0], 19.0))
+    assert(approx?(r[0, 1], 22.0))
+    assert(approx?(r[1, 0], 43.0))
+    assert(approx?(r[1, 1], 50.0))
+}
+
+pub fn test-dot-matvec() {
+    let A = np.array([[1.0, 2.0], [3.0, 4.0]])
+    let v = np.array([1.0, 1.0])
+    let r = must-arr(A.dot(v))
+    assert(r.shape == [2])
+    assert(approx?(r.ptr[0], 3.0))
+    assert(approx?(r.ptr[1], 7.0))
+}
+
+pub fn test-dot-vecmat() {
+    let v = np.array([1.0, 1.0])
+    let A = np.array([[1.0, 2.0], [3.0, 4.0]])
+    let r = must-arr(v.dot(A))
+    assert(r.shape == [2])
+    assert(approx?(r.ptr[0], 4.0))
+    assert(approx?(r.ptr[1], 6.0))
+}
+
+pub fn test-matmul-identity() {
+    let I = np.eye(3)
+    let b = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [7.0, 8.0, 9.0]])
+    assert(arr-approx?(np.matmul(I, b), b))
+}
+
+pub fn test-outer() {
+    let a = np.array([1.0, 2.0])
+    let b = np.array([3.0, 4.0, 5.0])
+    let r = np.outer(a, b)
+    assert(r.shape == [2, 3])
+    assert(approx?(r[0, 0], 3.0))
+    assert(approx?(r[0, 2], 5.0))
+    assert(approx?(r[1, 0], 6.0))
+    assert(approx?(r[1, 2], 10.0))
+}
+
+pub fn test-eye-identity-mul() {
+    let A = np.array([[1.0, 2.0], [3.0, 4.0]])
+    let I = np.eye(2)
+    assert(arr-approx?(must-arr(A.dot(I)), A))
+    assert(arr-approx?(must-arr(I.dot(A)), A))
+}
+
+pub fn test-transpose-dot() {
+    let A = np.array([[1.0, 2.0], [3.0, 4.0]])
+    let AtA = must-arr(A.T.dot(A))
+    assert(approx?(AtA[0, 0], 10.0))
+    assert(approx?(AtA[0, 1], 14.0))
+    assert(approx?(AtA[1, 0], 14.0))
+    assert(approx?(AtA[1, 1], 20.0))
+}
+
+
+pub fn test-sqrt() {
+    let a = np.array([1.0, 4.0, 9.0, 16.0])
+    let b = np.sqrt(a)
+    assert(approx?(b.ptr[0], 1.0))
+    assert(approx?(b.ptr[1], 2.0))
+    assert(approx?(b.ptr[2], 3.0))
+    assert(approx?(b.ptr[3], 4.0))
+}
+
+pub fn test-exp-log-roundtrip() {
+    let a = np.array([1.0, 2.0, 3.0])
+    let b = np.log(np.exp(a))
+    assert(arr-approx?(a, b))
+}
+
+
+pub fn test-solve-2x2() {
+    let A = np.array([[2.0, 1.0], [5.0, 3.0]])
+    let b = np.array([4.0, 7.0])
+    let x = np.linalg.solve(A, b)
+    assert(x.shape == [2])
+    assert(approx?(x.ptr[0], 5.0, tol=1e-8))
+    assert(approx?(x.ptr[1], -6.0, tol=1e-8))
+}
+
+pub fn test-solve-diagonal() {
+    let A = np.array([[1.0, 0.0, 0.0], [0.0, 2.0, 0.0], [0.0, 0.0, 3.0]])
+    let b = np.array([1.0, 4.0, 9.0])
+    let x = np.linalg.solve(A, b)
+    assert(approx?(x.ptr[0], 1.0, tol=1e-8))
+    assert(approx?(x.ptr[1], 2.0, tol=1e-8))
+    assert(approx?(x.ptr[2], 3.0, tol=1e-8))
+}
+
+pub fn test-solve-verify() {
+    let A = np.array([[3.0, 1.0], [1.0, 2.0]])
+    let b = np.array([9.0, 8.0])
+    let x = np.linalg.solve(A, b)
+    let Ax = must-arr(A.dot(x))
+    assert(approx?(Ax.ptr[0], b.ptr[0], tol=1e-8))
+    assert(approx?(Ax.ptr[1], b.ptr[1], tol=1e-8))
+}
+
+pub fn test-inv-times-original() {
+    let A = np.array([[2.0, 1.0], [5.0, 3.0]])
+    let Ai = np.linalg.inv(A)
+    let I = must-arr(A.dot(Ai))
+    assert(approx?(I[0, 0], 1.0, tol=1e-8))
+    assert(approx?(I[0, 1], 0.0, tol=1e-8))
+    assert(approx?(I[1, 0], 0.0, tol=1e-8))
+    assert(approx?(I[1, 1], 1.0, tol=1e-8))
+}
+
+pub fn test-inv-identity() {
+    let I = np.eye(3)
+    let Ii = np.linalg.inv(I)
+    assert(arr-approx?(I, Ii))
+}
+
+pub fn test-det-2x2() {
+    let A = np.array([[2.0, 1.0], [5.0, 3.0]])
+    assert(approx?(np.linalg.det(A), 1.0, tol=1e-8))
+}
+
+pub fn test-det-identity() {
+    assert(approx?(np.linalg.det(np.eye(4)), 1.0, tol=1e-8))
+}
+
+pub fn test-det-singular() {
+    let A = np.array([[1.0, 2.0], [2.0, 4.0]])
+    assert(approx?(np.linalg.det(A), 0.0, tol=1e-8))
+}
+
+pub fn test-det-3x3() {
+    let A = np.array([[1.0, 2.0, 3.0], [0.0, 1.0, 4.0], [5.0, 6.0, 0.0]])
+    assert(approx?(np.linalg.det(A), 1.0, tol=1e-8))
+}
+
+pub fn test-eig-diagonal() {
+    let A = np.array([[3.0, 0.0], [0.0, 7.0]])
+    let (vals, _) = np.linalg.eig(A)
+    assert(vals.size == 2)
+    let v0 = vals.ptr[0]
+    let v1 = vals.ptr[1]
+    let lo = (v0 < v1) ? v0 : v1
+    let hi = (v0 > v1) ? v0 : v1
+    assert(approx?(lo, 3.0, tol=1e-8))
+    assert(approx?(hi, 7.0, tol=1e-8))
+}
+
+pub fn test-eig-identity() {
+    let (vals, _) = np.linalg.eig(np.eye(3))
+    assert(approx?(vals.ptr[0], 1.0, tol=1e-8))
+    assert(approx?(vals.ptr[1], 1.0, tol=1e-8))
+    assert(approx?(vals.ptr[2], 1.0, tol=1e-8))
+}
+
+pub fn test-svd-diagonal() {
+    let A = np.array([[3.0, 0.0, 0.0], [0.0, 2.0, 0.0], [0.0, 0.0, 1.0]])
+    let (u, s, vt) = np.linalg.svd(A)
+    assert(u.shape == [3, 3])
+    assert(s.shape == [3])
+    assert(vt.shape == [3, 3])
+    assert(approx?(s.ptr[0], 3.0, tol=1e-8))
+    assert(approx?(s.ptr[1], 2.0, tol=1e-8))
+    assert(approx?(s.ptr[2], 1.0, tol=1e-8))
+}
+
+pub fn test-svd-reconstruct() {
+    let A = np.array([[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]])
+    let (u, s, vt) = np.linalg.svd(A)
+    let S = np.zeros([3, 2])
+    S[0, 0] = s.ptr[0]
+    S[1, 1] = s.ptr[1]
+    let recon = np.matmul(np.matmul(u, S), vt)
+    assert(arr-approx?(recon, A, tol=1e-8))
+}
+
+pub fn test-norm-vector() {
+    assert(approx?(np.linalg.norm(np.array([3.0, 4.0])), 5.0))
+}
+
+pub fn test-norm-frobenius() {
+    let A = np.array([[1.0, 2.0], [3.0, 4.0]])
+    assert(approx?(np.linalg.norm(A), math.sqrt(30.0), tol=1e-8))
+}
+
+pub fn test-matrix-rank-full() {
+    let A = np.array([[1.0, 0.0], [0.0, 1.0]])
+    assert(np.linalg.matrix-rank(A) == 2)
+}
+
+pub fn test-matrix-rank-deficient() {
+    let A = np.array([[1.0, 2.0], [2.0, 4.0]])
+    assert(np.linalg.matrix-rank(A) == 1)
+}
+
+
+pub fn test-vstack() {
+    let a = np.array([[1.0, 2.0]])
+    let b = np.array([[3.0, 4.0]])
+    let r = np.vstack([a, b])
+    assert(r.shape == [2, 2])
+    assert(approx?(r[0, 0], 1.0))
+    assert(approx?(r[1, 0], 3.0))
+}
+
+pub fn test-hstack() {
+    let a = np.array([1.0, 2.0])
+    let b = np.array([3.0, 4.0, 5.0])
+    let r = np.hstack([a, b])
+    assert(r.shape == [5])
+    assert(approx?(r.ptr[0], 1.0))
+    assert(approx?(r.ptr[2], 3.0))
+    assert(approx?(r.ptr[4], 5.0))
+}
+
+pub fn test-select() {
+    let cond = np.array([1.0, 0.0, 1.0])
+    let x = np.array([10.0, 20.0, 30.0])
+    let y = np.array([40.0, 50.0, 60.0])
+    let r = np.select(cond, x, y)
+    assert(approx?(r.ptr[0], 10.0))
+    assert(approx?(r.ptr[1], 50.0))
+    assert(approx?(r.ptr[2], 30.0))
+}
+
+
+pub fn test-str-1d() {
+    let a = np.array([1.0, 2.0, 3.0])
+    let s = "{a}"
+    assert('1.' in s)
+    assert('2.' in s)
+    assert('3.' in s)
+}
+
+pub fn test-str-2d() {
+    let a = np.eye(2)
+    let s = "{a}"
+    assert('array' in s)
+    assert('1.' in s)
+    assert('0.' in s)
+}
+
+
+pub fn test-broadcast-scalar-add() {
+    let a = np.array([[1.0, 2.0], [3.0, 4.0]])
+    let b = np.array([10.0, 20.0])
+    let r = a + b
+    assert(r.shape == [2, 2])
+    assert(approx?(r[0, 0], 11.0))
+    assert(approx?(r[0, 1], 22.0))
+    assert(approx?(r[1, 0], 13.0))
+    assert(approx?(r[1, 1], 24.0))
+}
+
+pub fn test-broadcast-col-add() {
+    let a = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
+    let b = np.array([[10.0], [20.0]])
+    let r = a + b
+    assert(r.shape == [2, 3])
+    assert(approx?(r[0, 0], 11.0))
+    assert(approx?(r[0, 2], 13.0))
+    assert(approx?(r[1, 0], 24.0))
+    assert(approx?(r[1, 2], 26.0))
+}
+
+pub fn test-broadcast-mul() {
+    let a = np.array([[1.0, 2.0], [3.0, 4.0]])
+    let b = np.array([10.0, 100.0])
+    let r = a * b
+    assert(approx?(r[0, 0], 10.0))
+    assert(approx?(r[0, 1], 200.0))
+    assert(approx?(r[1, 0], 30.0))
+    assert(approx?(r[1, 1], 400.0))
+}
+
+pub fn test-broadcast-div() {
+    let a = np.array([[10.0, 20.0], [30.0, 40.0]])
+    let b = np.array([10.0, 20.0])
+    let r = a / b
+    assert(approx?(r[0, 0], 1.0))
+    assert(approx?(r[0, 1], 1.0))
+    assert(approx?(r[1, 0], 3.0))
+    assert(approx?(r[1, 1], 2.0))
+}
+
+pub fn test-broadcast-sub() {
+    let a = np.array([[10.0, 20.0]])
+    let b = np.array([[1.0], [2.0]])
+    let r = a - b
+    assert(r.shape == [2, 2])
+    assert(approx?(r[0, 0], 9.0))
+    assert(approx?(r[0, 1], 19.0))
+    assert(approx?(r[1, 0], 8.0))
+    assert(approx?(r[1, 1], 18.0))
+}
+
+pub fn test-index-3d() {
+    let a = np.arange(24).reshape([2, 3, 4])
+    if let sub: np.NDArray = a[0] {
+        assert(sub.shape == [3, 4])
+        assert(approx?(sub[0, 0], 0.0))
+        assert(approx?(sub[2, 3], 11.0))
+    } else {
+        assert(false)
+    }
+}
+
+pub fn test-str-3d() {
+    let a = np.arange(8).reshape([2, 2, 2])
+    let s = "{a}"
+    assert('array' in s)
+    assert('0.' in s)
+    assert('7.' in s)
+}
+
+pub fn test-transpose-3d() {
+    let a = np.arange(24).reshape([2, 3, 4])
+    let b = a.T
+    assert(b.shape == [4, 3, 2])
+    assert(approx?(b.ptr[0 * 6 + 0 * 2 + 0], 0.0))
+    assert(approx?(b.ptr[0 * 6 + 0 * 2 + 1], 12.0))
+    assert(approx?(b.ptr[3 * 6 + 2 * 2 + 1], 23.0))
+}

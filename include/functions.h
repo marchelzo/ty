@@ -389,6 +389,38 @@ BUILTIN_FUNCTION(tdb_stack);
 BUILTIN_FUNCTION(tdb_insn);
 BUILTIN_FUNCTION(tdb_backtrace);
 
+BUILTIN_FUNCTION(accel_vmul);
+BUILTIN_FUNCTION(accel_vdiv);
+BUILTIN_FUNCTION(accel_vsadd);
+BUILTIN_FUNCTION(accel_vsmul);
+BUILTIN_FUNCTION(accel_vsdiv);
+BUILTIN_FUNCTION(accel_svdiv);
+BUILTIN_FUNCTION(accel_vneg);
+BUILTIN_FUNCTION(accel_vabs);
+BUILTIN_FUNCTION(accel_vclip);
+BUILTIN_FUNCTION(accel_vfill);
+BUILTIN_FUNCTION(accel_vclr);
+BUILTIN_FUNCTION(accel_vramp);
+BUILTIN_FUNCTION(accel_mtrans);
+BUILTIN_FUNCTION(accel_sve);
+BUILTIN_FUNCTION(accel_maxv);
+BUILTIN_FUNCTION(accel_minv);
+BUILTIN_FUNCTION(accel_vexp);
+BUILTIN_FUNCTION(accel_vlog);
+BUILTIN_FUNCTION(accel_vsqrt);
+BUILTIN_FUNCTION(accel_vpow);
+BUILTIN_FUNCTION(accel_broadcast_binop);
+BUILTIN_FUNCTION(accel_transpose_nd);
+BUILTIN_FUNCTION(accel_vcmp_scalar);
+BUILTIN_FUNCTION(accel_vcmp_array);
+BUILTIN_FUNCTION(accel_count_nz);
+BUILTIN_FUNCTION(accel_bool_index);
+BUILTIN_FUNCTION(accel_bool_assign);
+BUILTIN_FUNCTION(accel_from_bytes);
+BUILTIN_FUNCTION(accel_softmax);
+BUILTIN_FUNCTION(accel_cross_entropy);
+BUILTIN_FUNCTION(accel_sum_axis0);
+
 u64 NextThreadId();
 
 #endif

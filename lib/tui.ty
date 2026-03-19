@@ -387,7 +387,7 @@ pub class Tqdm[T] : Iterable[T] {
         let parts = []
         
         if #_desc > 0 {
-            parts.push(chalk"[yellow]{_desc:12}[/]: ")
+            parts.push(chalk"[yellow]{_desc}[/]: ")
         }
         
         if let $p = _task.progress() {
@@ -442,7 +442,8 @@ pub class Tqdm[T] : Iterable[T] {
         }
     }
     
-    label=(desc: String) {
+    label=(desc: String | Text) {
+        let desc = "{desc}"
         with _mtx {
             _desc = desc
             _task.desc = desc
@@ -473,7 +474,7 @@ pub class Tqdm[T] : Iterable[T] {
 
 pub fn tqdm[T](
     iterable: Iterable[T],
-    desc: String = "",
+    desc: String = '',
     total: Int | nil = nil,
     %kwargs
 ) -> Tqdm[T] {
@@ -482,7 +483,7 @@ pub fn tqdm[T](
 
 pub fn trange(
     n: Int,
-    desc: String = "",
+    desc: String = '',
     %kwargs
 ) -> Tqdm[Int] {
     Tqdm(..n, desc, n, **kwargs)

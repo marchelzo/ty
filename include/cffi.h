@@ -36,6 +36,12 @@ Value
 cffi_auto(Ty *ty, int argc, Value *kwargs);
 
 Value
+cffi_new_auto(Ty *ty, int argc, Value *kwargs);
+
+Value
+cffi_box_auto(Ty *ty, int argc, Value *kwargs);
+
+Value
 cffi_addr(Ty *ty, int argc, Value *kwargs);
 
 Value

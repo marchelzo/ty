@@ -1716,10 +1716,6 @@ mark_generator(Ty *ty, Value const *v)
 
         for (int i = 0; i < vN(st->targets); ++i) {
                 Target *target = v_(st->targets, i);
-                uptr t = (uptr)target->t;
-                if (((t & PMASK3) == 0) && (t > 0x0FFF)) {
-                        MarkNext(ty, (Value *)t);
-                }
                 if (target->gc != NULL) {
                         MARK(target->gc);
                 }

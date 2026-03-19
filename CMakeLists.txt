@@ -245,6 +245,7 @@ endif()
 # ---
 
 set(_src_files
+  src/accelerate.c
   src/alloc.c
   src/array.c
   src/ast.c
