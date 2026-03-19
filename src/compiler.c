@@ -5348,14 +5348,6 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
         case EXPRESSION_WITH:
                 subscope = scope_new(ty, "(with)", scope, false);
                 symbolize_statement(ty, subscope, e->with.block);
-                for (int i = 0; i < subscope->size; ++i) {
-                        for (Symbol *sym = subscope->table[i]; sym != NULL; sym = sym->next) {
-                                // Make sure it's not a tmpsymbol() symbol
-                                if (!isdigit(sym->identifier[0])) {
-                                        avP(vvL(e->with.block->statements)[0]->try.finally->drop, sym);
-                                }
-                        }
-                }
                 e->_type = e->with.block->_type;
                 break;
 
@@ -7896,10 +7888,11 @@ emit_special_string(Ty *ty, Expr const *e)
         }
 }
 
-static void
-emit_with(Ty *ty, Expr const *e)
+static bool
+emit_with(Ty *ty, Expr const *e, bool want_result)
 {
-        emit_statement(ty, e->with.block, true);
+        INSN(PUSH_DROP_GROUP);
+        return emit_statement(ty, e->with.block, want_result);
 }
 
 static void
@@ -11193,7 +11186,7 @@ emit_expr(Ty *ty, Expr const *e, bool need_loc)
                 break;
 
         case EXPRESSION_WITH:
-                emit_with(ty, e);
+                emit_with(ty, e, true);
                 break;
 
         case EXPRESSION_YIELD:
@@ -11745,7 +11738,7 @@ emit_statement(Ty *ty, Stmt const *s, bool want_result)
                 }
                 switch (s->expression->type) {
                 case EXPRESSION_WITH:
-                        returns |= ES(s->expression->with.block, false);
+                        returns |= emit_with(ty, s->expression, false);
                         break;
 
                 default:
@@ -12029,14 +12022,7 @@ emit_statement(Ty *ty, Stmt const *s, bool want_result)
                 break;
 
         case STATEMENT_DROP:
-                for (int i = 0; i < vN(s->drop); ++i) {
-                        emit_load(ty, v__(s->drop, i), STATE.fscope);
-                        INSN(TRY_CALL_METHOD);
-                        Ei32(0);
-                        Ei32(NAMES._drop_);
-                        Ei32(0);
-                        INSN(POP);
-                }
+                INSN(DROP);
                 break;
 
         case STATEMENT_DEFER:

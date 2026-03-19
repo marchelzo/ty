@@ -111,7 +111,7 @@ fn __pad4(n: Int) -> String {
 }
 
 fn __parse-int(s: String) -> Int {
-    Int(s) ?? throw ValueError("expected integer, got '{s}'")
+    int(s, 10) ?? throw ValueError("expected integer, got '{s}'")
 }
 
 fn __unit-nanos(unit: String) -> Int {

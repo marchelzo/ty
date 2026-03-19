@@ -9,3 +9,4 @@ vcpkg
 *.log
 *.err
 .DS_Store
+.history

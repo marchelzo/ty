@@ -1,0 +1,1077 @@
+import ty
+import ty.parse (show as sourceOf)
+import sqlite (SQLite)
+import time
+import temporal
+
+pub __tls::_db: SQLite = SQLite(':memory:')
+let _tables = []
+
+pub class Table {
+    static __init_subclass__() {
+        _tables.push(self)
+        _sync-table(self)
+    }
+}
+
+fn _existing-cols(db: SQLite, table: String) {
+    let rows = db.fetch-all(
+        "PRAGMA table_info({table})"
+    )
+    let by-name = %{}
+    for r in rows {
+        by-name[r['name']] = {
+            type: r['type'],
+            notnull: r['notnull'] == 1,
+            dflt: r['dflt_value'],
+            pk: r['pk'] == 1
+        }
+    }
+    by-name
+}
+
+fn _sync-table(cls: _) {
+    let schema = cls.schema()
+    let table = schema.table
+
+    if !_db.table?(table) {
+        cls.create-table(_db)
+        return
+    }
+
+    let existing = _existing-cols(_db, table)
+    let desired = schema.cols
+    for col in desired {
+        if col.name not in existing {
+            _db.exec(
+                "ALTER TABLE {table}"
+                " ADD COLUMN {_col-def(col)}"
+            )
+        }
+    }
+}
+
+fn _diff-table(cls: _, db: SQLite) {
+    let schema = cls.schema()
+    let table = schema.table
+    let desired = schema.cols
+    let ops = []
+
+    if !db.table?(table) {
+        ops.push({
+            op: 'create-table',
+            table,
+            sql: schema.sql
+        })
+        return ops
+    }
+
+    let existing = _existing-cols(db, table)
+
+    for col in desired {
+        if col.name not in existing {
+            ops.push({
+                op: 'add-column',
+                table,
+                column: col.name,
+                sql: "ALTER TABLE {table}"
+                     " ADD COLUMN {_col-def(col)}"
+            })
+        }
+    }
+
+    let desired-names = %{c.name: true for c in desired}
+    for name, _ in existing {
+        if name not in desired-names {
+            ops.push({
+                op: 'drop-column',
+                table,
+                column: name,
+                sql: "ALTER TABLE {table}"
+                     " DROP COLUMN {_quote(name)}"
+            })
+        }
+    }
+
+    for col in desired {
+        if col.name in existing {
+            let ex = existing[col.name]
+            if ex.type != col.sql-type {
+                ops.push({
+                    op: 'type-change',
+                    table,
+                    column: col.name,
+                    from: ex.type,
+                    to: col.sql-type
+                })
+            }
+        }
+    }
+
+    ops
+}
+
+pub fn connect(path: String, full-mutex: Bool = true) {
+    _db = SQLite(path, full-mutex=full-mutex)
+    for _tables { _sync-table(it) }
+    _db
+}
+
+pub fn disconnect() {
+    _db.close()
+    _db = SQLite(':memory:')
+}
+
+pub fn db() { _db }
+
+pub fn diff(db: SQLite | nil = nil) {
+    let db = _resolve-db(db)
+    [_diff-table(it, db) for _tables].flat()
+}
+
+pub fn migrate!(db: SQLite | nil = nil) {
+    let db = _resolve-db(db)
+    let ops = diff(db)
+    for ops {
+        if let $sql = it.?sql {
+            db.exec(sql)
+        }
+    }
+    ops
+}
+
+fn _resolve-db(db: SQLite | nil) -> SQLite {
+    db ?? _db
+}
+
+fn _snake(s: String) -> String {
+    s.scan(/(?:^[[:lower:]]+)|(?:[[:upper:]][[:lower:]]*)/)
+     .join('_')
+     .lower()
+}
+
+fn _quote(name: String) -> String {
+    name.match?(/[^a-zA-Z0-9_]/) ? "\"{name}\"" : name
+}
+
+fn _sql-type(name: String) -> String {
+    match name {
+        'Int'    => 'INTEGER',
+        'Float'  => 'REAL',
+        'String' => 'TEXT',
+        'Blob'   => 'BLOB',
+        'Bool'   => 'INTEGER',
+        _        => 'TEXT'
+    }
+}
+
+fn _sql-default(val: Int | Float | String | Bool | nil) -> String {
+    match val {
+        v: Int    => "{v}",
+        v: Float  => "{v}",
+        v: String => "'{v}'",
+        true      => '1',
+        false     => '0',
+        nil       => 'NULL',
+        _         => "{val}"
+    }
+}
+
+fn _unwrap-type(node: AST) {
+    match node {
+        ty.Union([$inner, ty.Nil]) => (true,  _unwrap-type(inner).1),
+        ty.Union([ty.Nil, $inner]) => (true,  _unwrap-type(inner).1),
+        ty.Id({name: $n, *})       => (false, n),
+        _                          => (true,  'TEXT')
+    }
+}
+
+fn _col-def(c: _) -> String {
+    return [
+        _quote(c.name),
+        c.sql-type,
+        'PRIMARY KEY' if c.pk,
+        'AUTOINCREMENT' if c.auto,
+        'NOT NULL' if !c.nullable && !c.pk,
+        'UNIQUE' if c.uniq,
+        "DEFAULT {_sql-default(c.dflt)}" if c.dflt != nil,
+        "REFERENCES {c.refs}" if c.refs != nil
+    ].unwords()
+}
+
+fn _create-sql(table: String, cols: Array[_]) -> String {
+    let defs = cols.map(_col-def).join(', ')
+    "CREATE TABLE IF NOT EXISTS {table} ({defs})"
+}
+
+fn _db-exec(sql: String, args: Array) {
+    let db-exec = ty.MemberAccess($$[db$$], 'exec')
+    let all-args = [
+        ty.Arg(arg: ty.String(sql)),
+        *args.map(\ty.Arg(arg: _))
+    ]
+    ty.Call(func: db-exec, args: all-args)
+}
+
+pub class Query {
+    __tbl:      String
+    __from-row: (Dict[String, _] -> _)
+    __cond:     String | nil
+    __params:   Array[_]
+    __ord:      String | nil
+    __lim:      Int | nil
+    __off:      Int | nil
+    __assocs:   Dict[String, _]
+    __incs:     Array[_]
+
+    _clone(%overrides) -> Query {
+        Query(
+            tbl      = overrides['tbl']     ?? __tbl,
+            from-row = overrides['fromRow'] ?? __from-row,
+            cond     = overrides['cond']    ?? __cond,
+            params   = overrides['params']  ?? __params,
+            ord      = overrides['ord']     ?? __ord,
+            lim      = overrides['lim']     ?? __lim,
+            off      = overrides['off']     ?? __off,
+            assocs   = overrides['assocs']  ?? __assocs,
+            incs     = overrides['incs']    ?? __incs
+        )
+    }
+
+    init(
+        tbl: String,
+        from-row: (Dict[String, _] -> _),
+        cond: String | nil = nil,
+        params: Array[_] = [],
+        ord: String | nil = nil,
+        lim: Int | nil = nil,
+        off: Int | nil = nil,
+        assocs: Dict[String, _] = %{},
+        incs: Array[String] = []
+    ) {
+        __tbl      = tbl
+        __from-row = from-row
+        __cond     = cond
+        __params   = params
+        __ord      = ord
+        __lim      = lim
+        __off      = off
+        __assocs   = assocs
+        __incs     = incs
+    }
+
+    includes(*names: String) -> Query {
+        _clone(incs=[*__incs, *names])
+    }
+
+    where(cond: String = '', *ps) -> Query {
+        if cond == '' { return self }
+        let new-cond = __cond
+            ? "({__cond}) AND ({cond})"
+            : cond
+        _clone(
+            cond=new-cond,
+            params=[*__params, *ps]
+        )
+    }
+
+    order(clause: String) -> Query {
+        _clone(ord=clause)
+    }
+
+    limit(n: Int) -> Query {
+        _clone(lim=n)
+    }
+
+    offset(n: Int) -> Query {
+        _clone(off=n)
+    }
+
+    _select-sql(cols: String = '*') -> String {
+        let sql = "SELECT {cols} FROM {__tbl}"
+        if __cond != nil { sql = "{sql} WHERE {__cond}" }
+        if __ord  != nil { sql = "{sql} ORDER BY {__ord}" }
+        if __lim  != nil { sql = "{sql} LIMIT {__lim}" }
+        if __off  != nil { sql = "{sql} OFFSET {__off}" }
+        sql
+    }
+
+    _eager-load!(rows: Array[_], instances: Array[_], db: SQLite) {
+        if #__incs == 0 || #rows == 0 {
+            return
+        }
+        for name in __incs {
+            let $assoc = __assocs[name] or continue
+            let fk-col       = assoc.fk-col
+            let ref-tbl      = assoc.ref-tbl
+            let ref-pk       = assoc.ref-pk
+            let ref-from-row = assoc.from-row
+
+            let fk-vals = rows.map(\_ [fk-col]).filter(\_ != nil).uniq()
+
+            continue if #fk-vals == 0
+
+            let phs = fk-vals.map(_ -> '?').join(', ')
+            let sql = "SELECT * FROM {ref-tbl}"
+                      " WHERE {_quote(ref-pk)}"
+                      " IN ({phs})"
+            let ref-rows = db.fetch-all(sql, *fk-vals)
+            let lookup = %{}
+            for ref-rows {
+                lookup[it[ref-pk]] = ref-from-row(it)
+            }
+
+            for row, i in rows {
+                let fk = row[fk-col]
+                if fk != nil && fk in lookup {
+                    let p = instances[i].preloaded ?? %{}
+                    p[name] = lookup[fk]
+                    instances[i].preloaded = p
+                }
+            }
+        }
+    }
+
+    all(db = nil) {
+        let db = _resolve-db(db)
+        let rows = db.fetch-all(
+            _select-sql(), *__params
+        )
+        let insts = rows.map(__from-row)
+        _eager-load!(rows, insts, db)
+        insts
+    }
+
+    first(db = nil) {
+        let db = _resolve-db(db)
+        let $r = db.fetch-one(limit(1)._select-sql(), *__params) or return
+        let insts = [(__from-row)(r)]
+        _eager-load!([r], insts, db)
+        insts[0]
+    }
+
+    count(db = nil) -> Int {
+        let db = _resolve-db(db)
+        let sql = "SELECT count(*) AS n FROM {__tbl}"
+        if __cond != nil {
+            sql = "{sql} WHERE {__cond}"
+        }
+        db.fetch-one(sql, *__params)!['n']
+    }
+
+    exists?(db = nil) -> Bool {
+        let db = _resolve-db(db)
+        let sql = limit(1)._select-sql('1')
+        db.fetch-one(sql, *__params) != nil
+    }
+
+    pluck(col: String, db = nil) {
+        let db = _resolve-db(db)
+        db.fetch-all(
+            _select-sql(_quote(col)),
+            *__params
+        ).map(\_.values()[0])
+    }
+
+    delete-all!(db: SQLite | nil = nil) {
+        let db = _resolve-db(db)
+        let sql = "DELETE FROM {__tbl}"
+        if __cond != nil {
+            sql = "{sql} WHERE {__cond}"
+        }
+        db.exec(sql, *__params)
+    }
+
+    update-all!(set-clause: String, *set-ps: _, db: SQLite | nil = nil) {
+        let db = _resolve-db(db)
+        let sql = "UPDATE {__tbl} SET {set-clause}"
+        if __cond != nil {
+            sql = "{sql} WHERE {__cond}"
+        }
+        let x = set-ps
+        db.exec(sql, *x, *__params)
+    }
+
+    __iter__() {
+        all().__iter__()
+    }
+}
+
+fn _make-query(tbl: String, from-row: (Dict[String, _] -> _), assocs: Dict[String, _] = %{}) {
+    Query(tbl=tbl, from-row=from-row, assocs=assocs)
+}
+
+fn _build-assocs(specs: Array[Array[_]]) {
+    let d = %{}
+    for s in specs {
+        let name = s[0]
+        d[name] = {
+            fk-col:   s[1],
+            ref-tbl:  s[2],
+            ref-pk:   s[3],
+            from-row: s[4]
+        }
+    }
+    d
+}
+
+fn _do-get(db: SQLite | nil, tbl: String, pkq: String, pk: Int | String | nil) {
+    let db = _resolve-db(db)
+    db.fetch-one(
+        "SELECT * FROM {tbl} WHERE {pkq} = ?",
+        pk
+    )
+}
+
+fn _do-reload(db: SQLite | nil, tbl: String, pkq: String, pk: Int | String | nil) {
+    _do-get(db, tbl, pkq, pk)
+}
+
+fn _do-belongs-to(
+    db: SQLite | nil, tbl: String, pkq: String, fk-val: Int | String | nil
+) {
+    _do-get(db, tbl, pkq, fk-val)
+}
+
+fn _do-has-many(
+    tbl: String, fk-col: String, from-row: (Dict[String, _] -> _), pk-val: Int | String | nil
+) {
+    Query(tbl=tbl, from-row=from-row)
+        .where("{_quote(fk-col)} = ?", pk-val)
+}
+
+pub class ValidationError < RuntimeError {
+    errors: Dict
+
+    init(errors: Dict) {
+        self.errors = errors
+        let msgs = []
+        for k, v in errors {
+            msgs.push("{k}: {v.join(', ')}")
+        }
+        super(msgs.join('; '))
+    }
+}
+
+fn _add-err(errs: Dict, field: String, msg: String) {
+    if field not in errs { errs[field] = [] }
+    errs[field].push(msg)
+}
+
+let _temporal-types = %{
+    'PlainDate':     true,
+    'PlainDateTime': true,
+    'PlainTime':     true,
+    'Instant':       true
+}
+
+fn _temporal?(name: String) -> Bool {
+    name in _temporal-types
+}
+
+fn _deserialize(val: String | nil, tname: String) {
+    if val == nil { return nil }
+    match tname {
+        'PlainDate'     => temporal.PlainDate.from(val),
+        'PlainDateTime' => temporal.PlainDateTime.from(val),
+        'PlainTime'     => temporal.PlainTime.from(val),
+        'Instant'       => temporal.Instant.from(val),
+        _               => val
+    }
+}
+
+fn _now() -> String {
+    time.strftime('%Y-%m-%d %H:%M:%S')
+}
+
+fn _now-dt() {
+    temporal.now()
+}
+
+pub fn transaction(f, db: SQLite | nil = nil) {
+    let db = _resolve-db(db)
+    db.exec('BEGIN')
+    try {
+        let result = f()
+        db.exec('COMMIT')
+        result
+    } catch e {
+        db.exec('ROLLBACK')
+        throw e
+    }
+}
+
+fn _parse-field(field: AST) {
+    match field {
+        ty.Assign((ty.Id($id), $val)) => (id, val),
+        ty.Id($id)                    => (id, nil),
+        _                             => (field, nil)
+    }
+}
+
+use match ForeignKey {
+    ty.Subscript(
+        ty.Id({name: 'ForeignKey', *}),
+        ty.MemberAccess(
+            ty.Id({name: tbl, *}),
+            col
+        )
+    ) => (tbl, col)
+}
+
+fn _find-field(expr: AST, col-names: Dict) {
+    let found = nil
+    ty.walk(expr, match {
+        ty.Id({name: $n, *}) and n in col-names => do {
+            found = found ?? n
+            ty.Id(name: n)
+        },
+        n => n
+    })
+    found ?? 'base'
+}
+
+fn _make-check(stmt: AST, col-names: Dict) {
+    let field = _find-field(stmt, col-names)
+    let src = sourceOf(stmt)
+    let $key = ty.String(field)
+    let $msg = ty.String("failed: {src}")
+
+    $$[
+        if !($$stmt) {
+            $$::(_add-err)(errors, $$key, $$msg)
+        }
+    $$]
+}
+
+pub macro table(def) {
+    let ty.Class($cls) = def
+    let fields = cls.fields
+    let table     = _snake(cls.name)
+
+    if cls.`super` == nil {
+        cls.`super` = $$[ $$::(Table) $$]
+    }
+
+    let valid-checks = []
+    let new-getters = []
+    for g in cls.getters {
+        let ty.Func($f) = g
+        if f.name == 'validate' {
+            let ty.Block($stmts) = f.body
+            for s in stmts { valid-checks.push(s) }
+        } else {
+            new-getters.push(g)
+        }
+    }
+    cls.getters = new-getters
+
+    let cols    = []
+    let has-pk? = false
+
+    for field in fields {
+        let (fld, dflt-node)    = _parse-field(field)
+        let name             = fld.name
+        let constraint       = fld.constraint
+        let (nullable?, tyname) = _unwrap-type(constraint)
+
+        let fk-ref   = nil
+        let fk-table = nil
+        let fk-col   = nil
+
+        match constraint {
+            ForeignKey(tbl, col) => {
+                fk-table = tbl
+                fk-col   = col
+                fk-ref   = "{_snake(tbl)}({col})"
+            },
+            _ => {}
+        }
+
+        let sql-type = (fk-ref != nil)
+            ? 'INTEGER'
+            : _sql-type(tyname)
+        let dflt = (dflt-node != nil)
+            ? ty.eval(dflt-node)
+            : nil
+        let temporal = _temporal?(tyname) ? tyname : nil
+
+        cols.push({
+            name, sql-type, fk-table, fk-col, temporal,
+            pk:   false,
+            auto: false,
+            uniq: false,
+            dflt,
+            refs: fk-ref,
+            nullable: nullable? || (dflt-node != nil)
+        })
+    }
+
+    for c, i in cols {
+        if !has-pk? && (c.sql-type == 'INTEGER') && (c.refs == nil) {
+            cols[i] = {*c, pk: true, auto: true, nullable: true}
+            has-pk? = true
+        }
+    }
+
+    let pk-name = (cols.find(\_.pk) ?? cols[0]).name
+    let pk-q       = _quote(pk-name)
+
+    let schema = {
+        table,
+        pk: pk-name,
+        cols,
+        sql: _create-sql(table, cols)
+    }
+
+    let ins-cols  = cols.filter(\!_.auto)
+    let upd-cols  = cols.filter(\!_.pk)
+    let col-names = cols.map(\_.name)
+
+    fn quoted-names(cs: _) {
+        [_quote(it.name) for cs].join(', ')
+    }
+
+    fn placeholders(cs: _) {
+        ['?' for cs].join(', ')
+    }
+
+    let ins-sql = "INSERT INTO {table}"
+                  " ({quoted-names(ins-cols)})"
+                  " VALUES ({placeholders(ins-cols)})"
+
+    let set-clause = ["{_quote(it.name)} = ?" for upd-cols].join(', ')
+
+    let upd-sql = "UPDATE {table} SET {set-clause} WHERE {pk-q} = ?"
+    let del-sql = "DELETE FROM {table} WHERE {pk-q} = ?"
+
+    fn fld-expr(c: _) {
+        let id = ty.Id(name: c.name)
+        (c.temporal != nil) ? $$[ "{$$id}" $$] : id
+    }
+
+    fn flds(cs: _) { [fld-expr(it) for cs] }
+
+    let tbl = ty.String(table)
+    let pkq = ty.String(pk-q)
+
+    let db-resolve = $$[
+        let db = $$::(_resolve-db)(db)
+    $$]
+
+    let user-methods = cls.methods
+    let has-method = %{*: false}
+    for m in user-methods {
+        let ty.Func($f) = m
+        has-method[f.name] = true
+    }
+
+    let ca-col = cols.find(\_.name == 'createdAt')
+    let ua-col = cols.find(\_.name == 'updatedAt')
+    let has-created-at = ca-col != nil
+    let has-updated-at = ua-col != nil
+
+    let ts-fn = (ca-col != nil && ca-col.temporal == 'PlainDateTime')
+        ? _now-dt
+        : _now
+    let ts-created = $$[ createdAt = $$(ty.Value(ts-fn))() $$]
+    let ts-updated = $$[ updatedAt = $$(ty.Value(ts-fn))() $$]
+
+    fn cb(name) {
+        ty.Call(
+            func: ty.Id(name: name),
+            args: []
+        )
+    }
+
+    let has-validations = #valid-checks > 0
+    let col-name-set = %{c.name: true for c in cols}
+
+    let valid-stmts = [$$[ errors = %{} $$]]
+    for stmt in valid-checks {
+        valid-stmts.push(
+            _make-check(stmt, col-name-set)
+        )
+    }
+    if has-method['validate'] {
+        valid-stmts.push(cb('validate'))
+    }
+    valid-stmts.push($$[ #errors == 0 $$])
+
+    let validate-guard = $$[
+        if !valid?() {
+            throw $$::(ValidationError)(errors)
+        }
+    $$]
+
+    let ins-stmts = [db-resolve]
+    if has-method['beforeInsert'] {
+        ins-stmts.push(cb('beforeInsert'))
+    }
+    if has-created-at { ins-stmts.push(ts-created) }
+    if has-updated-at { ins-stmts.push(ts-updated) }
+    if has-validations || has-method['validate'] {
+        ins-stmts.push(validate-guard)
+    }
+    ins-stmts.push(_db-exec(ins-sql, flds(ins-cols)))
+    ins-stmts.push($$[ $$pk-name = db.last-insert-rowid() $$])
+    if has-method['afterInsert'] {
+        ins-stmts.push(cb('afterInsert'))
+    }
+    ins-stmts.push($$[ self $$])
+    let ins-body = ty.Block(ins-stmts)
+
+    let save-stmts = [db-resolve]
+    if has-method['beforeSave'] {
+        save-stmts.push(cb('beforeSave'))
+    }
+    if has-updated-at { save-stmts.push(ts-updated) }
+    if has-validations || has-method['validate'] {
+        save-stmts.push(validate-guard)
+    }
+    save-stmts.push(_db-exec(upd-sql, [
+        *flds(upd-cols),
+        ty.Id(name: pk-name)
+    ]))
+    if has-method['afterSave'] {
+        save-stmts.push(cb('afterSave'))
+    }
+    save-stmts.push($$[ self $$])
+    let save-body = ty.Block(save-stmts)
+
+    let del-stmts = [db-resolve]
+    if has-method['beforeDelete'] { del-stmts.push(cb('beforeDelete')) }
+    del-stmts.push(_db-exec(del-sql, [ty.Id(name: pk-name)]))
+    if has-method['afterDelete'] { del-stmts.push(cb('afterDelete')) }
+    let del-body = ty.Block(del-stmts)
+
+    let db-p = ty.Param(
+        name: 'db',
+        constraint: ty.Any,
+        default: $$[nil$$]
+    )
+
+    let dict-entries = cols.map(fn (c) {
+        let $k = ty.String(c.name)
+        let v = ty.Id(name: c.name)
+        $$[ d[$$k] = $$v $$]
+    })
+    let to-dict-body = ty.Block([
+        $$[ let d = %{} $$],
+        *dict-entries,
+        $$[ d $$]
+    ])
+
+    let pk-fld = ty.Id(name: pk-name)
+    let cls-id = ty.Id(name: cls.name)
+    let reload-body = $$[
+        let db = $$::(_resolve-db)(db)
+        if let $r = $$::(_do-reload)(
+            db, $$tbl, $$pkq, $$pk-fld
+        ) {
+            $$cls-id.fromRow(r)
+        } else {
+            self
+        }
+    $$]
+
+    let instance-methods = [
+        ty.Func(
+            name: 'valid?',
+            params: [],
+            body: ty.Block(valid-stmts)
+        ),
+        ty.Func(
+            name: 'insert',
+            params: [db-p],
+            body: ins-body
+        ),
+        ty.Func(
+            name: 'save',
+            params: [db-p],
+            body: save-body
+        ),
+        ty.Func(
+            name: 'delete!',
+            params: [db-p],
+            body: del-body
+        ),
+        ty.Func(
+            name: 'toDict',
+            params: [],
+            body: to-dict-body
+        ),
+        ty.Func(
+            name: 'reload',
+            params: [db-p],
+            body: reload-body
+        )
+    ]
+
+    let fk-cols = cols.filter(\_.fk-table != nil)
+    for fk in fk-cols {
+        let ref-tbl = ty.String(_snake(fk.fk-table))
+        let ref-pkq = ty.String(
+            _quote(fk.fk-col)
+        )
+        let ref-cls = ty.Id(name: fk.fk-table)
+        let fk-field = ty.Id(name: fk.name)
+        let assoc-name = ty.String(fk.fk-table.lower())
+
+        instance-methods.push(ty.Func(
+            name: fk.fk-table.lower(),
+            params: [db-p],
+            body: $$[
+                if let $p = preloaded {
+                    if let $cached = p[$$assoc-name] {
+                        return cached
+                    }
+                }
+                if let $r = $$::(_do-belongs-to)(
+                    db, $$ref-tbl, $$ref-pkq,
+                    $$fk-field
+                ) {
+                    $$ref-cls.fromRow(r)
+                }
+            $$]
+        ))
+    }
+
+    fn row-val(c: _) {
+        let $k = ty.String(c.name)
+        if c.temporal != nil {
+            let $tn = ty.String(c.temporal)
+            $$[ $$::(_deserialize)(r[$$k], $$tn) $$]
+        } else {
+            $$[ r[$$k] $$]
+        }
+    }
+
+    let from-row = ty.Func(
+        name: 'fromRow',
+        params: [ty.Param(name: 'r', constraint: ty.Any)],
+        body: ty.Call(
+            func: ty.Id(name: cls.name),
+            args: [ty.Arg(
+                name: it.name,
+                arg: row-val(it)
+            ) for cols]
+        )
+    )
+
+    let create-sql-str = ty.String(schema.sql)
+    let drop-sql-str = ty.String(
+        "DROP TABLE IF EXISTS {table}"
+    )
+
+    let assoc-specs = fk-cols.map(fn (fk) {
+        let $n  = ty.String(fk.fk-table.lower())
+        let $fc = ty.String(fk.name)
+        let $rt = ty.String(_snake(fk.fk-table))
+        let $rp = ty.String(fk.fk-col)
+        let rc  = ty.Id(name: fk.fk-table)
+        $$[ [$$n, $$fc, $$rt, $$rp, $$rc.fromRow] $$]
+    })
+
+    let $assoc-arr = (#assoc-specs > 0)
+        ? assoc-specs.fold($$[ [] $$],
+            (acc, el) -> $$[ [*$$acc, $$el] $$]
+          )
+        : $$[ [] $$]
+
+    let $assocs-expr = $$[
+        $$::(_build-assocs)($$assoc-arr)
+    $$]
+
+    let static-methods = [
+        ty.Func(name: 'schema', body: ty.Value(schema)),
+
+        from-row,
+
+        ty.Func(
+            name: 'createTable',
+            params: [db-p],
+            body: $$[
+                let db = $$::(_resolve-db)(db)
+                db.exec($$create-sql-str)
+            $$]
+        ),
+
+        ty.Func(
+            name: 'dropTable',
+            params: [db-p],
+            body: $$[
+                let db = $$::(_resolve-db)(db)
+                db.exec($$drop-sql-str)
+            $$]
+        ),
+
+        ty.Func(
+            name: 'get',
+            params: ['pk', db-p],
+            body: $$[
+                if let $r = $$::(_do-get)(
+                    db, $$tbl, $$pkq, pk
+                ) {
+                    from-row(r)
+                }
+            $$]
+        ),
+
+        ty.Func(
+            name: 'query',
+            params: [],
+            body: $$[
+                $$::(_make-query)(
+                    $$tbl, self.fromRow,
+                    $$assocs-expr
+                )
+            $$]
+        ),
+
+        ty.Func(
+            name: 'all',
+            params: [db-p],
+            body: $$[
+                $$::(_make-query)(
+                    $$tbl, self.fromRow,
+                    $$assocs-expr
+                ).all(db)
+            $$]
+        ),
+
+        ty.Func(
+            name: 'where',
+            params: ['cond', ty.Gather('ps')],
+            body: $$[
+                $$::(_make-query)(
+                    $$tbl, self.fromRow,
+                    $$assocs-expr
+                ).where(cond, *ps)
+            $$]
+        ),
+
+        ty.Func(
+            name: 'count',
+            params: [
+                ty.Param(
+                    name: 'cond',
+                    default: ty.String('')
+                ),
+                ty.Gather('ps')
+            ],
+            body: $$[
+                $$::(_make-query)(
+                    $$tbl, self.fromRow,
+                    $$assocs-expr
+                ).where(cond, *ps).count()
+            $$]
+        ),
+
+        ty.Func(
+            name: 'findBy',
+            params: ['cond', ty.Gather('ps')],
+            body: $$[
+                $$::(_make-query)(
+                    $$tbl, self.fromRow,
+                    $$assocs-expr
+                ).where(cond, *ps).first()
+            $$]
+        ),
+
+        ty.Func(
+            name: 'exists?',
+            params: ['cond', ty.Gather('ps')],
+            body: $$[
+                $$::(_make-query)(
+                    $$tbl, self.fromRow,
+                    $$assocs-expr
+                ).where(cond, *ps).exists?()
+            $$]
+        ),
+
+        ty.Func(
+            name: 'pluck',
+            params: ['col', ty.Param(
+                name: 'cond',
+                default: ty.String('')
+            ), ty.Gather('ps')],
+            body: $$[
+                $$::(_make-query)(
+                    $$tbl, self.fromRow,
+                    $$assocs-expr
+                ).where(cond, *ps).pluck(col)
+            $$]
+        ),
+
+        ty.Func(
+            name: 'deleteAll',
+            params: [ty.Param(
+                name: 'cond',
+                default: ty.String('')
+            ), ty.Gather('ps')],
+            body: $$[
+                $$::(_make-query)(
+                    $$tbl, self.fromRow,
+                    $$assocs-expr
+                ).where(cond, *ps).delete-all!()
+            $$]
+        )
+    ]
+
+    for fk in fk-cols {
+        let fk-col-str = ty.String(fk.name)
+        let this-cls = ty.Id(name: cls.name)
+
+        static-methods.push(ty.Func(
+            name: "of{fk.fk-table}",
+            params: ['pk'],
+            body: $$[
+                $$::(_do-has-many)(
+                    $$tbl,
+                    $$fk-col-str,
+                    $$this-cls.fromRow,
+                    pk
+                )
+            $$]
+        ))
+    }
+
+    let new-fields = []
+    for field, i in fields {
+        let ci        = cols[i]
+        let (f, dflt) = _parse-field(field)
+        let ce     = f.constraint
+
+        let id = (ci.pk && ci.auto)
+            ? ty.Id(name: ci.name, constraint: $$[ $$ce | nil $$])
+            : ty.Id(name: ci.name, constraint: ce)
+
+        new-fields.push(
+            (dflt != nil) ? ty.Assign(id, dflt) : id
+        )
+    }
+
+    new-fields.push(ty.Assign(
+        ty.Id(name: 'preloaded', constraint: $$[_$$]),
+        $$[nil$$]
+    ))
+
+    new-fields.push(ty.Assign(
+        ty.Id(name: 'errors', constraint: $$[_$$]),
+        $$[%{}$$]
+    ))
+
+    cls.fields  = new-fields
+    cls.methods = [*cls.methods, *instance-methods]
+
+    cls.static-methods = [
+        *cls.static-methods,
+        *static-methods
+    ]
+
+    ty.walk(def, match {
+        ForeignKey(_) => $$[ Int | nil $$],
+        node          => node
+    })
+}
