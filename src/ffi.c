@@ -180,10 +180,11 @@ store(Ty *ty, ffi_type *t, void *p, Value const *v)
 
                 case VALUE_OBJECT:
                         f = class_lookup_method_i(ty, v->class, NAMES.ptr);
-                        if (f != NULL)
+                        if (f != NULL) {
                                 memcpy(p, vm_call_method(ty, v, f, 0).ptr, t->size);
-                        else
+                        } else {
                                 zP("attempt to dereference null-pointer: %s.__ptr__()", VSC(v));
+                        }
                         break;
                 }
                 break;
@@ -524,12 +525,52 @@ cffi_box(Ty *ty, int argc, Value *kwargs)
 }
 
 Value
+cffi_new_auto(Ty *ty, int argc, Value *kwargs)
+{
+        ASSERT_ARGC("ffi.new-auto()", 1, 2, 3);
+
+        ffi_type *t = PTR_ARG(0);
+        usize count = (argc == 2) ? INT_ARG(1) : 1;
+        void *init  = (argc == 3) ? ptr_from(ty, &ARG(2)) : NULL;
+
+        void *mem;
+        if (init == NULL) {
+                mem = mAo0(count * t->size, GC_ANY);
+        } else {
+                mem = mAo(count * t->size, GC_ANY);
+                memcpy(mem, init, count * t->size);
+        }
+
+        return TGCPTR(mem, t, mem);
+}
+
+Value
+cffi_box_auto(Ty *ty, int argc, Value *kwargs)
+{
+        ASSERT_ARGC("ffi.box-auto()", 1, 2);
+
+        ffi_type *t = PTR_ARG(0);
+        Value init  = (argc == 2) ? ARG(1) : ZERO;
+
+        void *mem;
+        if (IsZero(init)) {
+                mem = mAo0(t->size, GC_ANY);
+        } else {
+                mem = mAo(t->size, GC_ANY);
+                NOGC(mem);
+                store(ty, t, mem, &init);
+                OKGC(mem);
+        }
+
+        return TGCPTR(mem, t, mem);
+}
+
+Value
 cffi_pmember(Ty *ty, int argc, Value *kwargs)
 {
         if (argc != 3) {
                 zP("ffi.pmember(): expected 3 arguments but got %d", argc);
         }
-
 
         Value t = ARG(0);
         if (t.type != VALUE_PTR) {

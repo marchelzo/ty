@@ -113,7 +113,7 @@ pub fn uncompress(s: String | Blob, maxSize = nil) -> Blob | nil {
 }
 
 pub fn uncompress2(s: String | Blob, maxSize) -> Blob | nil {
-  let CHUNK = 4096
+  let chunk = (maxSize != nil && maxSize > 4096) ? maxSize : 4096
 
   let zs = ctx ?? (ctx = ZStream())
   raw.inflateInit2_(zs, MAX_WBITS + 32, '1.2.11', #ZStream)
@@ -121,7 +121,7 @@ pub fn uncompress2(s: String | Blob, maxSize) -> Blob | nil {
   zs.avail_in = s.size()
 
   let blob = Blob()
-  let obuf = c.alloc(CHUNK)
+  let obuf = c.alloc(chunk)
 
   defer {
     c.free(obuf)
@@ -130,8 +130,8 @@ pub fn uncompress2(s: String | Blob, maxSize) -> Blob | nil {
 
   let have = nil
 
-  while have == nil || have == CHUNK {
-    zs.avail_out = CHUNK
+  while have == nil || have == chunk {
+    zs.avail_out = chunk
     zs.next_out = obuf
 
     match raw.inflate(zs, Z_NO_FLUSH) {
@@ -140,7 +140,7 @@ pub fn uncompress2(s: String | Blob, maxSize) -> Blob | nil {
       },
 
       _ => {
-        have = CHUNK - zs.avail_out
+        have = chunk - zs.avail_out
         blob.push(obuf, have)
       }
     }

@@ -797,6 +797,7 @@ typedef struct {
         int str;
         int _str_;
         int subscript;
+        int subscript_eq;
         int unapply;
         int _what;
 

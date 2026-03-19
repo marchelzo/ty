@@ -479,7 +479,8 @@ lexname(Ty *ty)
                 if ((c == '*' || c == '=') && !special_ok) {
                         break;
                 }
-                special_ok &= contains(OperatorCharset, c);
+
+                special_ok &= contains(MethodNameChars, c);
 
                 if (
                         (c >= 'a' && c <= 'z')

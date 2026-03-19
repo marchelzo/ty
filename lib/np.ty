@@ -1,0 +1,1183 @@
+import ffi as c (C!)
+import math
+import accelerate hiding (from-bytes, softmax, cross-entropy)
+
+#|if __apple__
+if not let $lib = c.dlopen('/System/Library/Frameworks/Accelerate.framework/Accelerate')
+              ?? c.open(['BLAS', 'blas', 'openblas']) {
+    throw RuntimeError('np: failed to load Accelerate/BLAS')
+}
+
+if not let $lapack = c.dlopen('/System/Library/Frameworks/Accelerate.framework/Accelerate')
+                  ?? c.open(['LAPACK', 'lapack']) {
+    throw RuntimeError('np: failed to load LAPACK')
+}
+#|else
+if not let $lib = c.open(['BLAS', 'blas', 'openblas']) {
+    throw RuntimeError('np: failed to load BLAS')
+}
+
+if not let $lapack = c.open(['LAPACK', 'lapack']) {
+    throw RuntimeError('np: failed to load LAPACK')
+}
+#|]
+
+const ROW_MAJOR = 101
+const NO_TRANS  = 111
+const TRANS     = 112
+
+ns raw {
+    C! lib fn {
+        void cblas_dgemm(int Order, int TransA, int TransB, int M, int N, int K, double alpha, const double *A, int lda, const double *B, int ldb, double beta, double *C, int ldc);
+        void cblas_dgemv(int Order, int Trans, int M, int N, double alpha, const double *A, int lda, const double *X, int incX, double beta, double *Y, int incY);
+        double cblas_ddot(int N, const double *X, int incX, const double *Y, int incY);
+        double cblas_dnrm2(int N, const double *X, int incX);
+        void cblas_dscal(int N, double alpha, double *X, int incX);
+        void cblas_daxpy(int N, double alpha, const double *X, int incX, double *Y, int incY);
+        void cblas_dcopy(int N, const double *X, int incX, double *Y, int incY);
+        double cblas_dasum(int N, const double *X, int incX);
+        int cblas_idamax(int N, const double *X, int incX);
+        void cblas_dger(int Order, int M, int N, double alpha, const double *X, int incX, const double *Y, int incY, double *A, int lda);
+    }
+
+#|if __apple__
+    C! lib fn {
+        void vDSP_vmulD(const double *A, long IA, const double *B, long IB, double *C, long IC, unsigned long N);
+        void vDSP_vdivD(const double *B, long IB, const double *A, long IA, double *C, long IC, unsigned long N);
+        void vDSP_vsaddD(const double *A, long IA, const double *B, double *C, long IC, unsigned long N);
+        void vDSP_vsdivD(const double *A, long IA, const double *B, double *C, long IC, unsigned long N);
+        void vDSP_svdivD(const double *A, const double *B, long IB, double *C, long IC, unsigned long N);
+        void vDSP_vsmulD(const double *A, long IA, const double *B, double *C, long IC, unsigned long N);
+        void vDSP_sveD(const double *A, long IA, double *C, unsigned long N);
+        void vDSP_maxvD(const double *A, long IA, double *C, unsigned long N);
+        void vDSP_minvD(const double *A, long IA, double *C, unsigned long N);
+        void vDSP_vclipD(const double *A, long IA, const double *lo, const double *hi, double *C, long IC, unsigned long N);
+        void vDSP_vabsD(const double *A, long IA, double *C, long IC, unsigned long N);
+        void vDSP_vnegD(const double *A, long IA, double *C, long IC, unsigned long N);
+        void vDSP_vfillD(const double *A, double *C, long IC, unsigned long N);
+        void vDSP_vclrD(double *C, long IC, unsigned long N);
+        void vDSP_vrampD(const double *A, const double *B, double *C, long IC, unsigned long N);
+        void vDSP_mtransD(const double *A, long IA, double *C, long IC, unsigned long M, unsigned long N);
+        void vDSP_vfltu8D(const unsigned char *A, long IA, double *C, long IC, unsigned long N);
+
+        void vvexp(double *y, const double *x, const int *n);
+        void vvlog(double *y, const double *x, const int *n);
+        void vvsqrt(double *y, const double *x, const int *n);
+        void vvpow(double *z, const double *y, const double *x, const int *n);
+    }
+#|]
+
+    C! lapack fn {
+        void dgesv_(int *n, int *nrhs, double *a, int *lda, int *ipiv, double *b, int *ldb, int *info);
+        void dgetrf_(int *m, int *n, double *a, int *lda, int *ipiv, int *info);
+        void dgetri_(int *n, double *a, int *lda, int *ipiv, double *work, int *lwork, int *info);
+        void dgeev_(char *jobvl, char *jobvr, int *n, double *a, int *lda, double *wr, double *wi, double *vl, int *ldvl, double *vr, int *ldvr, double *work, int *lwork, int *info);
+        void dgesvd_(char *jobu, char *jobvt, int *m, int *n, double *a, int *lda, double *s, double *u, int *ldu, double *vt, int *ldvt, double *work, int *lwork, int *info);
+    }
+}
+
+#|if __apple__
+
+fn __transpose(src: Ptr[_], m: Int, n: Int) -> Ptr[_] {
+    let dst = c.new-auto(c.double, m * n)
+    raw.vDSP_mtransD(src, 1, dst, 1, n, m)
+    dst
+}
+
+fn __dup(src: Ptr[_], n: Int) -> Ptr[_] {
+    let dst = c.new-auto(c.double, n)
+    raw.cblas_dcopy(n, src, 1, dst, 1)
+    dst
+}
+
+fn __zeros(n: Int) -> Ptr[_] {
+    let buf = c.new-auto(c.double, n)
+    raw.vDSP_vclrD(buf, 1, n)
+    buf
+}
+
+fn __filled(n: Int, val: Float) -> Ptr[_] {
+    let buf = c.new-auto(c.double, n)
+    let v = c.auto(c.box(c.double, val))
+    raw.vDSP_vfillD(v, buf, 1, n)
+    buf
+}
+
+fn __ramp(start: Float, step: Float, n: Int) -> Ptr[_] {
+    let buf = c.new-auto(c.double, n)
+    let a = c.box-auto(c.double, start)
+    let b = c.box-auto(c.double, step)
+    raw.vDSP_vrampD(a, b, buf, 1, n)
+    buf
+}
+
+#|else
+
+fn __transpose(src: Ptr[_], m: Int, n: Int) -> Ptr[_] {
+    let dst = c.new-auto(c.double, m * n)
+    mtrans(src, dst, m, n)
+    dst
+}
+
+fn __dup(src: Ptr[_], n: Int) -> Ptr[_] {
+    let dst = c.new-auto(c.double, n)
+    raw.cblas_dcopy(n, src, 1, dst, 1)
+    dst
+}
+
+fn __zeros(n: Int) -> Ptr[_] {
+    let buf = c.new-auto(c.double, n)
+    vclr(buf, n)
+    buf
+}
+
+fn __filled(n: Int, val: Float) -> Ptr[_] {
+    let buf = c.new-auto(c.double, n)
+    vfill(val, buf, n)
+    buf
+}
+
+fn __ramp(start: Float, step: Float, n: Int) -> Ptr[_] {
+    let buf = c.new-auto(c.double, n)
+    vramp(start, step, buf, n)
+    buf
+}
+
+#|]
+
+fn __strides-for(shape: Array[Int]) -> Array[Int] {
+    let nd = #shape
+    let s = [1]
+    for d in 0..(nd - 1) { s = [shape[nd - 1 - d] * s[0], *s] }
+    s
+}
+
+fn __broadcast-shape(a: Array[Int], b: Array[Int]) -> Array[Int] {
+    let nd = (#a > #b) ? #a : #b
+    let pa = nd - #a
+    let pb = nd - #b
+    let out = []
+    for d in 0..nd {
+        let da = (d < pa) ? 1 : a[d - pa]
+        let db = (d < pb) ? 1 : b[d - pb]
+        if da != db && da != 1 && db != 1 {
+            throw ValueError("broadcast: {a} vs {b}")
+        }
+        out.push((da > db) ? da : db)
+    }
+    out
+}
+
+fn __bcast-strides(shape: Array[Int], out-shape: Array[Int]) -> Ptr[_] {
+    let nd = #out-shape
+    let pad = nd - #shape
+    let strides = c.new-auto(c.i64, nd)
+    let stride = 1
+    for d in 0..nd {
+        let i = nd - 1 - d
+        let si = i - pad
+        if si < 0 || shape[si] == 1 {
+            strides[i] = 0
+        } else {
+            strides[i] = stride
+            stride *= shape[si]
+        }
+    }
+    strides
+}
+
+fn __shape-ptr(shape: Array[Int]) -> Ptr[_] {
+    let p = c.new-auto(c.i64, #shape)
+    for v, i in shape { p[i] = v }
+    p
+}
+
+const OP_ADD = 0
+const OP_SUB = 1
+const OP_MUL = 2
+const OP_DIV = 3
+const OP_POW = 4
+
+fn __binop(a-data: Ptr[_], a-shape: Array[Int], b-data: Ptr[_], b-shape: Array[Int], op: Int) -> (Ptr[_], Array[Int]) {
+    let out-shape = __broadcast-shape(a-shape, b-shape)
+    let total = out-shape.fold(1, (x, y) -> x * y)
+    let out = c.new-auto(c.double, total)
+    let a-str = __bcast-strides(a-shape, out-shape)
+    let b-str = __bcast-strides(b-shape, out-shape)
+    let o-shp = __shape-ptr(out-shape)
+
+    broadcast-binop(a-data, b-data, out, a-str, b-str, o-shp, #out-shape, total, op)
+
+    (out, out-shape)
+}
+
+
+fn __fmt-elem(v: Float) -> String {
+    if v == 0.0 { return '0.' }
+    let iv = Int(v)
+    if Float(iv) == v { return "{iv}." }
+    "{v}"
+}
+
+fn __fmt-nd(data: Ptr[_], shape: Array[Int], strides: Array[Int], offset: Int, depth: Int) -> String {
+    if depth == #shape - 1 {
+        let n = shape[depth]
+        let st = strides[depth]
+        let parts = []
+        if n > 10 {
+            for j in 0..3 { parts.push(__fmt-elem(data[offset + j * st])) }
+            parts.push('...')
+            for j in (n - 3)..n { parts.push(__fmt-elem(data[offset + j * st])) }
+        } else {
+            for j in 0..n { parts.push(__fmt-elem(data[offset + j * st])) }
+        }
+        return "[{parts.join(', ')}]"
+    }
+
+    let n = shape[depth]
+    let st = strides[depth]
+    let pad = '       ' + ' ' * depth
+    let rows = []
+    if n > 6 {
+        for i in 0..3 { rows.push(__fmt-nd(data, shape, strides, offset + i * st, depth + 1)) }
+        rows.push('...')
+        for i in (n - 3)..n { rows.push(__fmt-nd(data, shape, strides, offset + i * st, depth + 1)) }
+    } else {
+        for i in 0..n { rows.push(__fmt-nd(data, shape, strides, offset + i * st, depth + 1)) }
+    }
+    "[{rows.join(',\n{pad}')}]"
+}
+
+pub class NDArray {
+    _data: Ptr[_]
+    _shape: Array[Int]
+    _size: Int
+
+    init(data: Ptr[_], shape: Array[Int]) {
+        self._data = data
+        self._shape = shape
+        self._size = shape.fold(1, (a, b) -> a * b)
+    }
+
+    shape -> Array[Int] { _shape }
+    ndim -> Int { #_shape }
+    size -> Int { _size }
+    #() { _size }
+    ptr -> Ptr[_] { _data }
+
+    T -> NDArray {
+        if #_shape <= 1 { return copy() }
+        if #_shape == 2 {
+            let [m, n] = _shape
+            return NDArray(__transpose(_data, m, n), [n, m])
+        }
+        let rev = []
+        for d in 0..#_shape { rev.push(_shape[#_shape - 1 - d]) }
+        let shp = __shape-ptr(_shape)
+        let dst = c.new-auto(c.double, _size)
+        transpose-nd(_data, dst, shp, #_shape)
+        NDArray(dst, rev)
+    }
+
+    [](i: Int) -> NDArray | Float {
+        let ri = (i < 0) ? _shape[0] + i : i
+        if #_shape == 1 { return _data[ri] }
+        let sub-size = _size / _shape[0]
+        let out = c.new-auto(c.double, sub-size)
+        raw.cblas_dcopy(sub-size, _data + ri * sub-size, 1, out, 1)
+        let sub-shape = []
+        for d in 1..#_shape { sub-shape.push(_shape[d]) }
+        NDArray(out, sub-shape)
+    }
+
+    [](i: Int, j: Int) -> Float {
+        let ri = (i < 0) ? _shape[0] + i : i
+        let rj = (j < 0) ? _shape[1] + j : j
+        _data[ri * _shape[1] + rj]
+    }
+
+    []=(i: Int, v: Float) {
+        let ri = (i < 0) ? _shape[0] + i : i
+        _data[ri] = v
+    }
+
+    []=(i: Int, j: Int, v: Float) {
+        let ri = (i < 0) ? _shape[0] + i : i
+        let rj = (j < 0) ? _shape[1] + j : j
+        _data[ri * _shape[1] + rj] = v
+    }
+
+    [](mask: NDArray) -> NDArray {
+        let k = count-nz(_data, _size)
+        let out = c.new-auto(c.double, k)
+        bool-index(_data, mask.ptr, out, _size)
+        NDArray(out, [k])
+    }
+
+    []=(mask: NDArray, val: Float) {
+        bool-assign(_data, mask.ptr, val, _size)
+    }
+
+    item() -> Float {
+        if _size != 1 { throw ValueError("item: array size {_size}") }
+        _data[0]
+    }
+
+    at(i: Int) -> Float {
+        _data[(i < 0) ? _size + i : i]
+    }
+
+    at(i: Int, j: Int) -> Float {
+        self[i, j]
+    }
+
+    rows(start: Int, count: Int) -> NDArray {
+        let cols = _size / _shape[0]
+        let sh = [count, *_shape.slice(1, #_shape - 1)]
+        NDArray(_data + start * cols, sh)
+    }
+
+    map(f: Float -> Float) -> NDArray {
+        let out = c.new-auto(c.double, _size)
+        for i in 0.._size { out[i] = f(_data[i]) }
+        NDArray(out, _shape)
+    }
+
+    sum-axis(axis: Int) -> NDArray {
+        if axis == 0 {
+            let cols = _shape[#_shape - 1]
+            let rows = _size / cols
+            let out = __zeros(cols)
+            sum-axis0(_data, out, rows, cols)
+            return NDArray(out, [1, cols])
+        }
+        if axis == 1 && #_shape == 2 {
+            let t = __transpose(_data, _shape[0], _shape[1])
+            let out = __zeros(_shape[0])
+            sum-axis0(t, out, _shape[1], _shape[0])
+            return NDArray(out, [_shape[0], 1])
+        }
+        throw ValueError("sum-axis: axis {axis} not supported for {#_shape}D")
+    }
+
+    argmax-axis(axis: Int) -> NDArray {
+        if axis != 1 || #_shape != 2 { throw ValueError("argmax-axis: need 2D with axis=1") }
+        let [m, n] = _shape
+        let out = c.new-auto(c.double, m)
+        for i in 0..m {
+            let best = 0
+            let bv = _data[i * n]
+            for j in 1..n {
+                if _data[i * n + j] > bv { bv = _data[i * n + j]; best = j }
+            }
+            out[i] = best
+        }
+        NDArray(out, [m])
+    }
+
+    copy() -> NDArray { NDArray(__dup(_data, _size), _shape) }
+
+    axpy!(alpha: Float, x: NDArray) {
+        raw.cblas_daxpy(_size, alpha, x.ptr, 1, _data, 1)
+    }
+
+    add-row!(v: NDArray) {
+        let cols = _shape[#_shape - 1]
+        let rows = _size / cols
+        for i in 0..rows {
+            raw.cblas_daxpy(cols, 1.0, v.ptr, 1, _data + i * cols, 1)
+        }
+    }
+
+    reshape(dims: Array[Int]) -> NDArray {
+        let n = dims.fold(1, (a, b) -> a * b)
+        if n != _size { throw ValueError("reshape: {_shape} -> {dims}") }
+        NDArray(_data, dims)
+    }
+
+    flatten() -> NDArray { NDArray(__dup(_data, _size), [_size]) }
+
+    dot(other: NDArray) -> NDArray | Float {
+        match (#_shape, #other.shape) {
+            (1, 1) => {
+                if _size != other.size { throw ValueError("dot: {_shape} vs {other.shape}") }
+                raw.cblas_ddot(_size, _data, 1, other.ptr, 1)
+            },
+            (2, 1) => {
+                let [m, n] = _shape
+                if other.size != n { throw ValueError("dot: {_shape} x {other.shape}") }
+                let out = c.new-auto(c.double, m)
+                raw.cblas_dgemv(ROW_MAJOR, NO_TRANS, m, n, 1.0, _data, n, other.ptr, 1, 0.0, out, 1)
+                NDArray(out, [m])
+            },
+            (1, 2) => {
+                let [m, n] = other.shape
+                if _size != m { throw ValueError("dot: {_shape} x {other.shape}") }
+                let out = c.new-auto(c.double, n)
+                raw.cblas_dgemv(ROW_MAJOR, TRANS, m, n, 1.0, other.ptr, n, _data, 1, 0.0, out, 1)
+                NDArray(out, [n])
+            },
+            (2, 2) => {
+                let [m, k1] = _shape
+                let [k2, n] = other.shape
+                if k1 != k2 { throw ValueError("dot: {_shape} x {other.shape}") }
+                let out = c.new-auto(c.double, m * n)
+                raw.cblas_dgemm(ROW_MAJOR, NO_TRANS, NO_TRANS, m, n, k1, 1.0, _data, k1, other.ptr, n, 0.0, out, n)
+                NDArray(out, [m, n])
+            },
+            _ => throw ValueError("dot: {#_shape}D x {#other.shape}D")
+        }
+    }
+
+    sum() -> Float {
+#|if __apple__
+        let out = c.box-auto(c.double, 0.0)
+        raw.vDSP_sveD(_data, 1, out, _size)
+        out[0]
+#|else
+        sve(_data, _size)
+#|]
+    }
+
+    mean() -> Float { sum() / _size }
+
+    max() -> Float {
+        if _size == 0 { throw ValueError("max: empty") }
+#|if __apple__
+        let out = c.box-auto(c.double)
+        raw.vDSP_maxvD(_data, 1, out, _size)
+        out[0]
+#|else
+        maxv(_data, _size)
+#|]
+    }
+
+    min() -> Float {
+        if _size == 0 { throw ValueError("min: empty") }
+#|if __apple__
+        let out = c.box-auto(c.double)
+        raw.vDSP_minvD(_data, 1, out, _size)
+        out[0]
+#|else
+        minv(_data, _size)
+#|]
+    }
+
+    argmax() -> Int { raw.cblas_idamax(_size, _data, 1) }
+
+    norm() -> Float { raw.cblas_dnrm2(_size, _data, 1) }
+
+    clip(lo: Float, hi: Float) -> NDArray {
+        let out = c.new-auto(c.double, _size)
+#|if __apple__
+        let lo-p = c.box-auto(c.double, lo)
+        let hi-p = c.box-auto(c.double, hi)
+        raw.vDSP_vclipD(_data, 1, lo-p, hi-p, out, 1, _size)
+#|else
+        vclip(_data, lo, hi, out, _size)
+#|]
+        NDArray(out, _shape)
+    }
+
+    abs() -> NDArray {
+        let out = c.new-auto(c.double, _size)
+#|if __apple__
+        raw.vDSP_vabsD(_data, 1, out, 1, _size)
+#|else
+        vabs(_data, out, _size)
+#|]
+        NDArray(out, _shape)
+    }
+
+    neg -> NDArray {
+        let out = c.new-auto(c.double, _size)
+#|if __apple__
+        raw.vDSP_vnegD(_data, 1, out, 1, _size)
+#|else
+        vneg(_data, out, _size)
+#|]
+        NDArray(out, _shape)
+    }
+
+    trace() -> Float {
+        if #_shape != 2 { throw ValueError("trace: need 2D") }
+        let [m, n] = _shape
+        let mn = (m < n) ? m : n
+        let s = 0.0
+        for i in 0..mn { s += _data[i * n + i] }
+        s
+    }
+
+    diag() -> NDArray {
+        if #_shape != 2 { throw ValueError("diag: need 2D") }
+        let [m, n] = _shape
+        let mn = (m < n) ? m : n
+        let out = c.new-auto(c.double, mn)
+        raw.cblas_dcopy(mn, _data, n + 1, out, 1)
+        NDArray(out, [mn])
+    }
+
+    to-list() -> Array[Float] {
+        let xs = []
+        for i in 0.._size { xs.push(_data[i]) }
+        xs
+    }
+
+    __str__() -> String {
+        if #_shape == 0 { return __fmt-elem(_data[0]) }
+        "array({__fmt-nd(_data, _shape, __strides-for(_shape), 0, 0)})"
+    }
+}
+
+
+fn +(a: NDArray, b: NDArray) -> NDArray {
+    if a.shape == b.shape {
+        let out = __dup(a.ptr, a.size)
+        raw.cblas_daxpy(a.size, 1.0, b.ptr, 1, out, 1)
+        return NDArray(out, a.shape)
+    }
+    let (out, sh) = __binop(a.ptr, a.shape, b.ptr, b.shape, OP_ADD)
+    NDArray(out, sh)
+}
+
+fn -(a: NDArray, b: NDArray) -> NDArray {
+    if a.shape == b.shape {
+        let out = __dup(a.ptr, a.size)
+        raw.cblas_daxpy(a.size, -1.0, b.ptr, 1, out, 1)
+        return NDArray(out, a.shape)
+    }
+    let (out, sh) = __binop(a.ptr, a.shape, b.ptr, b.shape, OP_SUB)
+    NDArray(out, sh)
+}
+
+fn *(a: NDArray, b: NDArray) -> NDArray {
+    if a.shape == b.shape {
+        let out = c.new-auto(c.double, a.size)
+#|if __apple__
+        raw.vDSP_vmulD(a.ptr, 1, b.ptr, 1, out, 1, a.size)
+#|else
+        vmul(a.ptr, b.ptr, out, a.size)
+#|]
+        return NDArray(out, a.shape)
+    }
+    let (out, sh) = __binop(a.ptr, a.shape, b.ptr, b.shape, OP_MUL)
+    NDArray(out, sh)
+}
+
+fn /(a: NDArray, b: NDArray) -> NDArray {
+    if a.shape == b.shape {
+        let out = c.new-auto(c.double, a.size)
+#|if __apple__
+        raw.vDSP_vdivD(b.ptr, 1, a.ptr, 1, out, 1, a.size)
+#|else
+        vdiv(a.ptr, b.ptr, out, a.size)
+#|]
+        return NDArray(out, a.shape)
+    }
+    let (out, sh) = __binop(a.ptr, a.shape, b.ptr, b.shape, OP_DIV)
+    NDArray(out, sh)
+}
+
+fn +(a: NDArray, s: Float) -> NDArray {
+    let out = c.new-auto(c.double, a.size)
+#|if __apple__
+    let sp = c.auto(c.box(c.double, s))
+    raw.vDSP_vsaddD(a.ptr, 1, sp, out, 1, a.size)
+#|else
+    vsadd(a.ptr, s, out, a.size)
+#|]
+    NDArray(out, a.shape)
+}
+fn +(s: Float, a: NDArray) -> NDArray { a + s }
+fn +(a: NDArray, n: Int) -> NDArray { a + Float(n) }
+fn +(n: Int, a: NDArray) -> NDArray { a + Float(n) }
+
+fn -(a: NDArray, s: Float) -> NDArray { a + (-s) }
+fn -(s: Float, a: NDArray) -> NDArray {
+    let out = c.new-auto(c.double, a.size)
+#|if __apple__
+    raw.vDSP_vnegD(a.ptr, 1, out, 1, a.size)
+    let sp = c.auto(c.box(c.double, s))
+    raw.vDSP_vsaddD(out, 1, sp, out, 1, a.size)
+#|else
+    vneg(a.ptr, out, a.size)
+    vsadd(out, s, out, a.size)
+#|]
+    NDArray(out, a.shape)
+}
+
+fn *(a: NDArray, s: Float) -> NDArray {
+    let out = c.new-auto(c.double, a.size)
+#|if __apple__
+    let sp = c.auto(c.box(c.double, s))
+    raw.vDSP_vsmulD(a.ptr, 1, sp, out, 1, a.size)
+#|else
+    vsmul(a.ptr, s, out, a.size)
+#|]
+    NDArray(out, a.shape)
+}
+fn *(s: Float, a: NDArray) -> NDArray { a * s }
+fn *(a: NDArray, n: Int) -> NDArray { a * Float(n) }
+fn *(n: Int, a: NDArray) -> NDArray { a * Float(n) }
+
+fn /(a: NDArray, s: Float) -> NDArray {
+    let out = c.new-auto(c.double, a.size)
+#|if __apple__
+    let sp = c.auto(c.box(c.double, s))
+    raw.vDSP_vsdivD(a.ptr, 1, sp, out, 1, a.size)
+#|else
+    vsdiv(a.ptr, s, out, a.size)
+#|]
+    NDArray(out, a.shape)
+}
+fn /(s: Float, a: NDArray) -> NDArray {
+    let out = c.new-auto(c.double, a.size)
+#|if __apple__
+    let sp = c.auto(c.box(c.double, s))
+    raw.vDSP_svdivD(sp, a.ptr, 1, out, 1, a.size)
+#|else
+    svdiv(s, a.ptr, out, a.size)
+#|]
+    NDArray(out, a.shape)
+}
+
+fn **(a: NDArray, p: Float) -> NDArray {
+    let out = c.new-auto(c.double, a.size)
+    let exp-buf = __filled(a.size, p)
+#|if __apple__
+    let np = c.box-auto(c.int, a.size)
+    raw.vvpow(out, exp-buf, a.ptr, np)
+#|else
+    vpow(a.ptr, exp-buf, out, a.size)
+#|]
+    NDArray(out, a.shape)
+}
+fn **(a: NDArray, p: Int) -> NDArray { a ** Float(p) }
+
+fn ==(a: NDArray, b: NDArray) -> Bool {
+    if a.shape != b.shape { return false }
+    for i in 0..a.size {
+        if a.ptr[i] != b.ptr[i] { return false }
+    }
+    true
+}
+
+const CMP_GT = 0
+const CMP_LT = 1
+const CMP_GE = 2
+const CMP_LE = 3
+const CMP_EQ = 4
+const CMP_NE = 5
+
+fn __cmp-scalar(a: NDArray, s: Float, op: Int) -> NDArray {
+    let out = c.new-auto(c.double, a.size)
+    vcmp-scalar(a.ptr, s, out, a.size, op)
+    NDArray(out, a.shape)
+}
+
+fn __cmp-array(a: NDArray, b: NDArray, op: Int) -> NDArray {
+    if a.shape != b.shape { throw ValueError("cmp: {a.shape} vs {b.shape}") }
+    let out = c.new-auto(c.double, a.size)
+    vcmp-array(a.ptr, b.ptr, out, a.size, op)
+    NDArray(out, a.shape)
+}
+
+fn >(a: NDArray, s: Float) -> NDArray  { __cmp-scalar(a, s, CMP_GT) }
+fn <(a: NDArray, s: Float) -> NDArray  { __cmp-scalar(a, s, CMP_LT) }
+fn >=(a: NDArray, s: Float) -> NDArray { __cmp-scalar(a, s, CMP_GE) }
+fn <=(a: NDArray, s: Float) -> NDArray { __cmp-scalar(a, s, CMP_LE) }
+
+fn >(a: NDArray, s: Int) -> NDArray  { a > Float(s) }
+fn <(a: NDArray, s: Int) -> NDArray  { a < Float(s) }
+fn >=(a: NDArray, s: Int) -> NDArray { a >= Float(s) }
+fn <=(a: NDArray, s: Int) -> NDArray { a <= Float(s) }
+
+fn >(s: Float, a: NDArray) -> NDArray  { a < s }
+fn <(s: Float, a: NDArray) -> NDArray  { a > s }
+fn >=(s: Float, a: NDArray) -> NDArray { a <= s }
+fn <=(s: Float, a: NDArray) -> NDArray { a >= s }
+
+fn >(a: NDArray, b: NDArray) -> NDArray  { __cmp-array(a, b, CMP_GT) }
+fn <(a: NDArray, b: NDArray) -> NDArray  { __cmp-array(a, b, CMP_LT) }
+fn >=(a: NDArray, b: NDArray) -> NDArray { __cmp-array(a, b, CMP_GE) }
+fn <=(a: NDArray, b: NDArray) -> NDArray { __cmp-array(a, b, CMP_LE) }
+
+
+pub fn array(data: Array[Float]) -> NDArray {
+    let n = #data
+    let buf = c.new-auto(c.double, n)
+    for v, i in data { buf[i] = v }
+    NDArray(buf, [n])
+}
+
+pub fn array(data: Array[Array[Float]]) -> NDArray {
+    let m = #data
+    if m == 0 { return NDArray(c.new-auto(c.double, 0), [0, 0]) }
+    let n = #data[0]
+    let buf = c.new-auto(c.double, m * n)
+    for row, i in data {
+        if #row != n { throw ValueError("array: jagged rows") }
+        for v, j in row { buf[i * n + j] = v }
+    }
+    NDArray(buf, [m, n])
+}
+
+pub fn array(data: Array[Int]) -> NDArray {
+    let n = #data
+    let buf = c.new-auto(c.double, n)
+    for v, i in data { buf[i] = v }
+    NDArray(buf, [n])
+}
+
+pub fn array(data: Array[Array[Int]]) -> NDArray {
+    let m = #data
+    if m == 0 { return NDArray(c.new-auto(c.double, 0), [0, 0]) }
+    let n = #data[0]
+    let buf = c.new-auto(c.double, m * n)
+    for row, i in data {
+        if #row != n { throw ValueError("array: jagged rows") }
+        for v, j in row { buf[i * n + j] = v }
+    }
+    NDArray(buf, [m, n])
+}
+
+pub fn zeros(shape: Array[Int]) -> NDArray {
+    let n = shape.fold(1, (a, b) -> a * b)
+    NDArray(__zeros(n), shape)
+}
+
+pub fn ones(shape: Array[Int]) -> NDArray {
+    let n = shape.fold(1, (a, b) -> a * b)
+    NDArray(__filled(n, 1.0), shape)
+}
+
+pub fn full(shape: Array[Int], val: Float) -> NDArray {
+    let n = shape.fold(1, (a, b) -> a * b)
+    NDArray(__filled(n, val), shape)
+}
+
+pub fn eye(n: Int) -> NDArray {
+    let buf = __zeros(n * n)
+    for i in 0..n { buf[i * n + i] = 1.0 }
+    NDArray(buf, [n, n])
+}
+
+pub fn diag(v: NDArray) -> NDArray {
+    if v.ndim != 1 { throw ValueError("diag: expected 1D") }
+    let n = v.size
+    let buf = __zeros(n * n)
+    raw.cblas_dcopy(n, v.ptr, 1, buf, n + 1)
+    NDArray(buf, [n, n])
+}
+
+pub fn arange(stop: Int) -> NDArray {
+    NDArray(__ramp(0.0, 1.0, stop), [stop])
+}
+
+pub fn arange(start: Float, stop: Float, step: Float = 1.0) -> NDArray {
+    let n = Int((stop - start) / step)
+    if n < 0 { n = 0 }
+    NDArray(__ramp(start, step, n), [n])
+}
+
+pub fn linspace(start: Float, stop: Float, n: Int = 50) -> NDArray {
+    match n {
+        0 => NDArray(__zeros(0), [0]),
+        1 => {
+            let buf = c.new-auto(c.double, 1)
+            buf[0] = start
+            NDArray(buf, [1])
+        },
+        _ => NDArray(__ramp(start, (stop - start) / (n - 1), n), [n])
+    }
+}
+
+pub fn from-bytes(blob: Blob, offset: Int, count: Int, scale: Float = 1.0) -> NDArray {
+    let buf = c.new-auto(c.double, count)
+#|if __apple__
+    raw.vDSP_vfltu8D(blob.ptr() + offset, 1, buf, 1, count)
+    if scale != 1.0 {
+        let sp = c.auto(c.box(c.double, scale))
+        raw.vDSP_vsmulD(buf, 1, sp, buf, 1, count)
+    }
+#|else
+    accelerate.from-bytes(blob, offset, buf, count)
+    if scale != 1.0 { vsmul(buf, scale, buf, count) }
+#|]
+    NDArray(buf, [count])
+}
+
+pub fn one-hot(labels: NDArray, classes: Int = 10) -> NDArray {
+    let n = labels.size
+    let buf = __zeros(n * classes)
+    for i in 0..n { buf[i * classes + Int(labels.at(i))] = 1.0 }
+    NDArray(buf, [n, classes])
+}
+
+pub fn randn(rows: Int, cols: Int, scale: Float = 0.01) -> NDArray {
+    let n = rows * cols
+    let buf = c.new-auto(c.double, n)
+    for i in 0..(n / 2) {
+        let u1 = rand() + 1e-15
+        let u2 = rand()
+        let r = scale * math.sqrt(-2.0 * math.log(u1))
+        buf[2 * i]     = r * math.cos(2.0 * 3.141592653589793 * u2)
+        buf[2 * i + 1] = r * math.sin(2.0 * 3.141592653589793 * u2)
+    }
+    if n % 2 == 1 {
+        let u1 = rand() + 1e-15
+        let u2 = rand()
+        buf[n - 1] = scale * math.sqrt(-2.0 * math.log(u1)) * math.cos(2.0 * 3.141592653589793 * u2)
+    }
+    NDArray(buf, [rows, cols])
+}
+
+pub fn dot(a: NDArray, b: NDArray) -> NDArray | Float { a.dot(b) }
+
+fn @@(a: NDArray, b: NDArray) -> NDArray {
+    let [a0, a1] = a.shape
+    let [b0, b1] = b.shape
+    if a1 != b0 { throw ValueError("matmul: shape mismatch") }
+    let out = c.new-auto(c.double, a0 * b1)
+    raw.cblas_dgemm(ROW_MAJOR, NO_TRANS, NO_TRANS, a0, b1, a1, 1.0, a.ptr, a1, b.ptr, b1, 0.0, out, b1)
+    NDArray(out, [a0, b1])
+}
+
+pub fn matmul(a: NDArray, b: NDArray, trans-a: Bool = false, trans-b: Bool = false) -> NDArray {
+    if !trans-a && !trans-b { return a @@ b }
+    let [a0, a1] = a.shape
+    let [b0, b1] = b.shape
+    let m = trans-a ? a1 : a0
+    let k = trans-a ? a0 : a1
+    let k2 = trans-b ? b1 : b0
+    let n = trans-b ? b0 : b1
+    if k != k2 { throw ValueError("matmul: shape mismatch") }
+    let ta = trans-a ? TRANS : NO_TRANS
+    let tb = trans-b ? TRANS : NO_TRANS
+    let out = c.new-auto(c.double, m * n)
+    raw.cblas_dgemm(ROW_MAJOR, ta, tb, m, n, k, 1.0, a.ptr, a1, b.ptr, b1, 0.0, out, n)
+    NDArray(out, [m, n])
+}
+
+pub fn outer(a: NDArray, b: NDArray) -> NDArray {
+    if a.ndim != 1 || b.ndim != 1 { throw ValueError("outer: need 1D") }
+    let m = a.size
+    let n = b.size
+    let out = __zeros(m * n)
+    raw.cblas_dger(ROW_MAJOR, m, n, 1.0, a.ptr, 1, b.ptr, 1, out, n)
+    NDArray(out, [m, n])
+}
+
+pub fn vstack(arrays: Array[NDArray]) -> NDArray {
+    if #arrays == 0 { throw ValueError("vstack: empty") }
+    let cols = match arrays[0].ndim {
+        1 => arrays[0].size,
+        2 => arrays[0].shape[1],
+        _ => throw ValueError("vstack: need 1D or 2D")
+    }
+    let total = 0
+    for a in arrays { total += a.size }
+    let buf = c.new-auto(c.double, total)
+    let off = 0
+    for a in arrays {
+        raw.cblas_dcopy(a.size, a.ptr, 1, buf + off, 1)
+        off += a.size
+    }
+    NDArray(buf, [total / cols, cols])
+}
+
+pub fn hstack(arrays: Array[NDArray]) -> NDArray {
+    if #arrays == 0 { throw ValueError("hstack: empty") }
+    if arrays[0].ndim != 1 { throw ValueError("hstack: need 1D") }
+    let total = 0
+    for a in arrays { total += a.size }
+    let buf = c.new-auto(c.double, total)
+    let off = 0
+    for a in arrays {
+        raw.cblas_dcopy(a.size, a.ptr, 1, buf + off, 1)
+        off += a.size
+    }
+    NDArray(buf, [total])
+}
+
+pub fn concatenate(arrays: Array[NDArray], axis: Int = 0) -> NDArray {
+    (axis == 0) ? vstack(arrays) : hstack(arrays)
+}
+
+pub fn select(cond: NDArray, x: NDArray, y: NDArray) -> NDArray {
+    if cond.shape != x.shape || cond.shape != y.shape {
+        throw ValueError("where: shape mismatch")
+    }
+    let out = c.new-auto(c.double, cond.size)
+    for i in 0..cond.size {
+        out[i] = (cond.ptr[i] != 0.0) ? x.ptr[i] : y.ptr[i]
+    }
+    NDArray(out, cond.shape)
+}
+
+pub fn sqrt(a: NDArray) -> NDArray {
+    let out = c.new-auto(c.double, a.size)
+#|if __apple__
+    let np = c.auto(c.box(c.int, a.size))
+    raw.vvsqrt(out, a.ptr, np)
+#|else
+    vsqrt(a.ptr, out, a.size)
+#|]
+    NDArray(out, a.shape)
+}
+
+pub fn exp(a: NDArray) -> NDArray {
+    let out = c.new-auto(c.double, a.size)
+#|if __apple__
+    let np = c.auto(c.box(c.int, a.size))
+    raw.vvexp(out, a.ptr, np)
+#|else
+    vexp(a.ptr, out, a.size)
+#|]
+    NDArray(out, a.shape)
+}
+
+pub fn log(a: NDArray) -> NDArray {
+    let out = c.new-auto(c.double, a.size)
+#|if __apple__
+    let np = c.auto(c.box(c.int, a.size))
+    raw.vvlog(out, a.ptr, np)
+#|else
+    vlog(a.ptr, out, a.size)
+#|]
+    NDArray(out, a.shape)
+}
+
+pub fn sum(a: NDArray) -> Float { a.sum() }
+pub fn mean(a: NDArray) -> Float { a.mean() }
+pub fn max(a: NDArray) -> Float { a.max() }
+pub fn min(a: NDArray) -> Float { a.min() }
+
+pub fn softmax(logits: NDArray) -> NDArray {
+    let [n, k] = logits.shape
+    let out = c.new-auto(c.double, n * k)
+    accelerate.softmax(logits.ptr, out, n, k)
+    NDArray(out, [n, k])
+}
+
+pub fn cross-entropy(probs: NDArray, targets: NDArray) -> Float {
+    let [n, k] = probs.shape
+    accelerate.cross-entropy(probs.ptr, targets.ptr, n * k) / n
+}
+
+pub fn accuracy(probs: NDArray, labels: NDArray) -> Float {
+    let preds = probs.argmax-axis(axis=1)
+    let n = labels.size
+    let correct = 0
+    for i in 0..n {
+        if Int(preds.at(i)) == Int(labels.at(i)) { correct += 1 }
+    }
+    correct * 1.0 / n
+}
+
+
+pub ns linalg {
+    pub fn solve(a: NDArray, b: NDArray) -> NDArray {
+        if a.ndim != 2 { throw ValueError("solve: a must be 2D") }
+        let [m, n] = a.shape
+        if m != n { throw ValueError("solve: a must be square ({m}x{n})") }
+
+        let a-col = __transpose(a.ptr, n, n)
+        let nrhs = (b.ndim == 2) ? b.shape[1] : 1
+        let b-col = (b.ndim == 2) ? __transpose(b.ptr, n, nrhs) : __dup(b.ptr, n)
+        let ipiv = c.new-auto(c.int, n)
+
+        let n-p    = c.auto(c.box(c.int, n))
+        let nrhs-p = c.auto(c.box(c.int, nrhs))
+        let lda-p  = c.auto(c.box(c.int, n))
+        let ldb-p  = c.auto(c.box(c.int, n))
+        let info-p = c.auto(c.box(c.int, 0))
+
+        raw.dgesv_(n-p, nrhs-p, a-col, lda-p, ipiv, b-col, ldb-p, info-p)
+
+        if info-p[0] != 0 {
+            throw ValueError("solve: singular matrix (info={info-p[0]})")
+        }
+
+        if b.ndim == 2 {
+            let result = __transpose(b-col, nrhs, n)
+            return NDArray(result, [n, nrhs])
+        }
+        NDArray(b-col, [n])
+    }
+
+    pub fn inv(a: NDArray) -> NDArray {
+        if a.ndim != 2 { throw ValueError("inv: a must be 2D") }
+        let [m, n] = a.shape
+        if m != n { throw ValueError("inv: a must be square ({m}x{n})") }
+
+        let a-col = __transpose(a.ptr, n, n)
+        let ipiv = c.new-auto(c.int, n)
+
+        let n-p    = c.auto(c.box(c.int, n))
+        let lda-p  = c.auto(c.box(c.int, n))
+        let info-p = c.auto(c.box(c.int, 0))
+
+        raw.dgetrf_(n-p, n-p, a-col, lda-p, ipiv, info-p)
+        if info-p[0] != 0 {
+            throw ValueError("inv: singular matrix (info={info-p[0]})")
+        }
+
+        let lwork = n * n
+        let lwork-p = c.auto(c.box(c.int, lwork))
+        let work = c.new-auto(c.double, lwork)
+
+        let info2-p = c.auto(c.box(c.int, 0))
+        raw.dgetri_(n-p, a-col, lda-p, ipiv, work, lwork-p, info2-p)
+
+        if info2-p[0] != 0 {
+            throw ValueError("inv: failed (info={info2-p[0]})")
+        }
+
+        let result = __transpose(a-col, n, n)
+        NDArray(result, [n, n])
+    }
+
+    pub fn det(a: NDArray) -> Float {
+        if a.ndim != 2 { throw ValueError("det: a must be 2D") }
+        let [m, n] = a.shape
+        if m != n { throw ValueError("det: a must be square ({m}x{n})") }
+
+        let a-col = __transpose(a.ptr, n, n)
+        let ipiv = c.new-auto(c.int, n)
+
+        let n-p    = c.auto(c.box(c.int, n))
+        let info-p = c.auto(c.box(c.int, 0))
+
+        raw.dgetrf_(n-p, n-p, a-col, n-p, ipiv, info-p)
+
+        if info-p[0] > 0 {
+            return 0.0
+        }
+
+        let d = 1.0
+        let swaps = 0
+        for i in 0..n {
+            d *= a-col[i * n + i]
+            if ipiv[i] != i + 1 { swaps += 1 }
+        }
+
+        (swaps % 2 == 0) ? d : -d
+    }
+
+    pub fn eig(a: NDArray) -> (NDArray, NDArray) {
+        if a.ndim != 2 { throw ValueError("eig: a must be 2D") }
+        let [m, n] = a.shape
+        if m != n { throw ValueError("eig: a must be square ({m}x{n})") }
+
+        let a-col = __transpose(a.ptr, n, n)
+        let wr = c.new-auto(c.double, n)
+        let wi = c.new-auto(c.double, n)
+        let vl = c.new-auto(c.double, 1)
+        let vr = c.new-auto(c.double, n * n)
+        let lwork = 4 * n
+        let work = c.new-auto(c.double, lwork)
+
+        let n-p     = c.box-auto(c.int, n)
+        let one-p   = c.box-auto(c.int, 1)
+        let lwork-p = c.box-auto(c.int, lwork)
+        let info-p  = c.box-auto(c.int, 0)
+
+        raw.dgeev_('N', 'V', n-p, a-col, n-p, wr, wi, vl, one-p, vr, n-p, work, lwork-p, info-p)
+
+        if info-p[0] != 0 {
+            throw ValueError("eig: failed (info={info-p[0]})")
+        }
+
+        let vals = NDArray(wr, [n])
+        let vr-row = __transpose(vr, n, n)
+        let vecs = NDArray(vr-row, [n, n])
+
+        (vals, vecs)
+    }
+
+    pub fn svd(a: NDArray) -> (NDArray, NDArray, NDArray) {
+        if a.ndim != 2 { throw ValueError("svd: a must be 2D") }
+        let [m, n] = a.shape
+        let mn = (m < n) ? m : n
+
+        let a-col = __transpose(a.ptr, m, n)
+        let s  = c.new-auto(c.double, mn)
+        let u  = c.new-auto(c.double, m * m)
+        let vt = c.new-auto(c.double, n * n)
+        let lwork = 5 * ((m > n) ? m : n)
+        let work = c.new-auto(c.double, lwork)
+
+        let m-p     = c.box-auto(c.int, m)
+        let n-p     = c.box-auto(c.int, n)
+        let lwork-p = c.box-auto(c.int, lwork)
+        let info-p  = c.box-auto(c.int, 0)
+
+        raw.dgesvd_('A', 'A', m-p, n-p, a-col, m-p, s, u, m-p, vt, n-p, work, lwork-p, info-p)
+
+        if info-p[0] != 0 {
+            throw ValueError("svd: failed (info={info-p[0]})")
+        }
+
+        let u-row  = __transpose(u, m, m)
+        let vt-row = __transpose(vt, n, n)
+
+        (NDArray(u-row, [m, m]), NDArray(s, [mn]), NDArray(vt-row, [n, n]))
+    }
+
+    pub fn norm(a: NDArray, ord: String | nil = nil) -> Float {
+        match a.ndim {
+            1 => raw.cblas_dnrm2(#a, a.ptr, 1),
+            2 => {
+                if ord == nil || ord == 'fro' {
+                    raw.cblas_dnrm2(#a, a.ptr, 1)
+                } else {
+                    throw ValueError("norm: ord '{ord}' not supported for 2D")
+                }
+            },
+            _ => throw ValueError("norm: {a.ndim}D not supported")
+        }
+    }
+
+    pub fn matrix-rank(a: NDArray, tol: Float | nil = nil) -> Int {
+        let (_, s, _) = svd(a)
+        let sh = a.shape
+        let dim = (sh[0] > sh[1]) ? sh[0] : sh[1]
+        let threshold = tol ?? (s.ptr[0] * dim * 2.2e-16)
+        let rank = 0
+        for i in 0..s.size {
+            if s.ptr[i] > threshold { rank += 1 }
+        }
+        rank
+    }
+
+    pub fn lstsq(a: NDArray, b: NDArray) -> NDArray {
+        let (u, s, vt) = svd(a)
+        let [m, n] = a.shape
+
+        let ut-b = u.T.dot(b)
+        let mn = (m < n) ? m : n
+        let x-data = __zeros(n)
+
+        for i in 0..mn {
+            if s.ptr[i] > 1e-15 {
+                let val = match ut-b {
+                    v: NDArray => v.ptr[i],
+                    f: Float   => f
+                }
+                x-data[i] = val / s.ptr[i]
+            }
+        }
+
+        let x = NDArray(x-data, [n])
+
+        let result = __zeros(n)
+        for i in 0..n {
+            for j in 0..n {
+                result[i] += vt.ptr[j * n + i] * x.ptr[j]
+            }
+        }
+
+        NDArray(result, [n])
+    }
+}

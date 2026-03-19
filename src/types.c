@@ -2047,7 +2047,7 @@ IsSubscriptSingleton(Type const *t0)
         return (TypeType(t0) == TYPE_TUPLE)
             && (vN(t0->names) == 1)
             && (v_0(t0->names) != NULL)
-            && (strcmp(v_0(t0->names), "[]") == 0);
+            && s_eq(v_0(t0->names), "[]");
 }
 
 inline static int
@@ -2679,7 +2679,7 @@ RecordField(Ty *ty, Type *t0, char const *name)
                                 return v__(t0->types, i);
                         }
                 }
-                if (strcmp(name, "[]") == 0) {
+                if (s_eq(name, "[]")) {
                         return TupleSubscriptType(ty, t0);
                 }
                 return NULL;
