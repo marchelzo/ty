@@ -228,6 +228,38 @@ pub class SQLite {
         ).map(&0)
     }
 
+    dialect -> String { 'sqlite' }
+
+    placeholder(n: Int) -> String { '?' }
+
+    auto-pk-type -> String { 'INTEGER PRIMARY KEY AUTOINCREMENT' }
+
+    existing-columns(table: String) {
+        let rows: _ = fetchAll(
+            "PRAGMA table_info({table})",
+            assoc=true
+        )
+        let by-name = %{}
+        for r in rows {
+            by-name[r['name']] = {
+                type: r['type'],
+                notnull: r['notnull'] == 1,
+                dflt: r['dflt_value'],
+                pk: r['pk'] == 1
+            }
+        }
+        by-name
+    }
+
+    insert-returning(
+        sql: String,
+        cols: String,
+        *ps
+    ) -> Int {
+        exec(sql, *ps)
+        last-insert-rowid()
+    }
+
     __repr__() -> String {
         if __path {
             "SQLite({__path})"

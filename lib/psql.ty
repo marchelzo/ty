@@ -204,6 +204,7 @@ pub class PG {
             return exec(sql)
         }
 
+        let sql = PG.rewrite-placeholders(sql)
         let n = #ps
         let vals = c.auto(c.new(c.ptr, n))
         let strs = []
@@ -263,5 +264,51 @@ pub class PG {
             " WHERE table_schema = 'public'"
             " ORDER BY table_name"
         ).map(&['table_name'])
+    }
+
+    dialect -> String { 'postgres' }
+
+    placeholder(n: Int) -> String { "${n}" }
+
+    auto-pk-type -> String { 'SERIAL PRIMARY KEY' }
+
+    existing-columns(table: String) {
+        let rows: _ = fetch-all(
+            "SELECT column_name, data_type,"
+            " is_nullable, column_default"
+            " FROM information_schema.columns"
+            " WHERE table_name = $1",
+            table
+        )
+        let by-name = %{}
+        for r in rows {
+            by-name[r['column_name']] = {
+                type: r['data_type'],
+                notnull: r['is_nullable'] == 'NO',
+                dflt: r['column_default'],
+                pk: false
+            }
+        }
+        by-name
+    }
+
+    insert-returning(
+        sql: String,
+        cols: String,
+        *ps
+    ) -> Int {
+        let r: _ = fetch-one(
+            "{sql} RETURNING {cols}", *ps
+        )
+        r[cols]
+    }
+
+    exec(sql: String, *ps) {
+        query(sql, *ps)
+    }
+
+    static rewrite-placeholders(sql: String) -> String {
+        let n = 0
+        sql.sub(/\?/, _ -> "${n += 1}")
     }
 }

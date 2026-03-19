@@ -1,0 +1,306 @@
+import schema (table, connect, disconnect, transaction, ValidationError)
+import temporal (PlainDate, PlainDateTime)
+
+let dsn = 'postgresql:///ty_psql_test'
+
+@table
+class Person {
+    id:    Int
+    name:  String
+    email: String | nil
+    age:   Int = 0
+}
+
+@table
+class Article {
+    id:         Int
+    title:      String
+    body:       String | nil
+    author:     ForeignKey[Person.id]
+    published:  PlainDate | nil
+    created-at: PlainDateTime | nil
+    updated-at: PlainDateTime | nil
+
+    validate {
+        #title > 0
+    }
+}
+
+ns test
+
+fn fresh() {
+    let db: _ = connect(dsn)
+    db.exec('SET client_min_messages TO WARNING')
+    db.exec('DROP TABLE IF EXISTS article')
+    db.exec('DROP TABLE IF EXISTS person')
+    disconnect()
+    connect(dsn)
+}
+
+pub fn test-create-tables() {
+    fresh()
+    let db: _ = schema::_db
+    assert(db.table?('person'))
+    assert(db.table?('article'))
+}
+
+pub fn test-insert-and-get() {
+    fresh()
+    let p = Person(name='Alice', email='a@b', age=30).insert()
+    assert(p.id == 1)
+    assert(p.name == 'Alice')
+
+    let found = Person.get(p.id)
+    assert(found.name == 'Alice')
+    assert(found.email == 'a@b')
+    assert(found.age == 30)
+}
+
+pub fn test-get-missing() {
+    fresh()
+    assert(Person.get(999) == nil)
+}
+
+pub fn test-defaults() {
+    fresh()
+    let p = Person(name='Bob').insert()
+    let found = Person.get(p.id)
+    assert(found.age == 0)
+    assert(found.email == nil)
+}
+
+pub fn test-all() {
+    fresh()
+    Person(name='A').insert()
+    Person(name='B').insert()
+    assert(#Person.all() == 2)
+}
+
+pub fn test-where() {
+    fresh()
+    Person(name='A', age=30).insert()
+    Person(name='B', age=20).insert()
+    Person(name='C', age=35).insert()
+    assert(Person.where('age >= ?', 25).count() == 2)
+}
+
+pub fn test-count() {
+    fresh()
+    Person(name='A').insert()
+    Person(name='B').insert()
+    assert(Person.count() == 2)
+    assert(Person.count('name = ?', 'A') == 1)
+}
+
+pub fn test-save() {
+    fresh()
+    let p = Person(name='Alice', age=30).insert()
+    p.age = 31
+    p.name = 'Alice Smith'
+    p.save()
+
+    let found = Person.get(p.id)
+    assert(found.age == 31)
+    assert(found.name == 'Alice Smith')
+}
+
+pub fn test-delete() {
+    fresh()
+    let p = Person(name='Alice').insert()
+    p.delete!()
+    assert(Person.get(p.id) == nil)
+    assert(Person.count() == 0)
+}
+
+pub fn test-order-limit-offset() {
+    fresh()
+    for i in 0..10 {
+        Person(name="p{i}", age=i).insert()
+    }
+
+    let page: _ = Person.query()
+        .order('age')
+        .limit(3)
+        .offset(2)
+        .all()
+    assert(#page == 3)
+    assert(page[0].age == 2)
+}
+
+pub fn test-find-by() {
+    fresh()
+    Person(name='Alice', age=30).insert()
+    Person(name='Bob', age=25).insert()
+    assert(Person.find-by('age = ?', 30).name == 'Alice')
+    assert(Person.find-by('age = ?', 99) == nil)
+}
+
+pub fn test-pluck() {
+    fresh()
+    Person(name='C').insert()
+    Person(name='A').insert()
+    Person(name='B').insert()
+    let names: _ = Person.query().order('name').pluck('name')
+    assert(names == ['A', 'B', 'C'])
+}
+
+pub fn test-update-all() {
+    fresh()
+    Person(name='A', age=10).insert()
+    Person(name='B', age=20).insert()
+    Person(name='B', age=30).insert()
+    Person.where('age < ?', 25).update-all!('age = ?', 0)
+    assert(Person.get(1).age == 0)
+    assert(Person.get(2).age == 0)
+    assert(Person.get(3).age == 30)
+}
+
+pub fn test-delete-all() {
+    fresh()
+    Person(name='A').insert()
+    Person(name='B').insert()
+    Person(name='C').insert()
+    Person.where('name = ?', 'B').delete-all!()
+    assert(Person.count() == 2)
+}
+
+pub fn test-transaction-commit() {
+    fresh()
+    transaction(fn () {
+        Person(name='A').insert()
+        Person(name='B').insert()
+    })
+    assert(Person.count() == 2)
+}
+
+pub fn test-transaction-rollback() {
+    fresh()
+    Person(name='Keep').insert()
+    let threw? = false
+    try {
+        transaction(fn () {
+            Person(name='Discard').insert()
+            throw RuntimeError('nope')
+        })
+    } catch _ {
+        threw? = true
+    }
+    assert(threw?)
+    assert(Person.count() == 1)
+}
+
+pub fn test-foreign-key() {
+    fresh()
+    let p = Person(name='Alice').insert()
+    let a = Article(title='Hello', author=p.id).insert()
+    assert(a.author == p.id)
+}
+
+pub fn test-belongs-to() {
+    fresh()
+    let p = Person(name='Alice').insert()
+    Article(title='Post', author=p.id).insert()
+
+    let a = Article.get(1)
+    let author = a.person()
+    assert(author.name == 'Alice')
+}
+
+pub fn test-has-many() {
+    fresh()
+    let alice = Person(name='Alice').insert()
+    let bob = Person(name='Bob').insert()
+    Article(title='A1', author=alice.id).insert()
+    Article(title='A2', author=alice.id).insert()
+    Article(title='B1', author=bob.id).insert()
+
+    assert(Article.of-person(alice.id).count() == 2)
+    assert(Article.of-person(bob.id).count() == 1)
+}
+
+pub fn test-eager-loading() {
+    fresh()
+    let p = Person(name='Author').insert()
+    Article(title='P1', author=p.id).insert()
+    Article(title='P2', author=p.id).insert()
+
+    let articles: _ = Article.query()
+        .includes('person')
+        .all()
+    assert(#articles == 2)
+    assert(articles[0].person().name == 'Author')
+    assert(articles[0].preloaded != nil)
+}
+
+pub fn test-temporal-roundtrip() {
+    fresh()
+    let a = Article(
+        title='Dated',
+        author=Person(name='X').insert().id,
+        published=PlainDate(2026, 6, 15)
+    ).insert()
+
+    let found = Article.get(a.id)
+    assert(found.published :: PlainDate)
+    assert(found.published.year == 2026)
+    assert(found.published.month == 6)
+    assert(found.published.day == 15)
+}
+
+pub fn test-auto-timestamps() {
+    fresh()
+    let a = Article(
+        title='Timestamped',
+        author=Person(name='X').insert().id
+    ).insert()
+    assert(a.created-at :: PlainDateTime)
+    assert(a.updated-at :: PlainDateTime)
+    assert(a.created-at.year == 2026)
+}
+
+pub fn test-validation() {
+    fresh()
+    let threw? = false
+    try {
+        Article(
+            title='',
+            author=Person(name='X').insert().id
+        ).insert()
+    } catch e: ValidationError {
+        threw? = true
+        assert('title' in e.errors)
+    }
+    assert(threw?)
+}
+
+pub fn test-auto-migration() {
+    fresh()
+    let db: _ = schema::_db
+    let cols: _ = db.existing-columns('person')
+    assert('name' in cols)
+    assert('email' in cols)
+    assert('age' in cols)
+}
+
+pub fn test-to-dict() {
+    fresh()
+    let p = Person(
+        name='Alice', email='a@b', age=30
+    ).insert()
+    let d: _ = p.to-dict()
+    assert(d['name'] == 'Alice')
+    assert(d['age'] == 30)
+    assert(d['id'] == p.id)
+}
+
+pub fn test-reload() {
+    fresh()
+    let p = Person(name='Alice', age=30).insert()
+    let db: _ = schema::_db
+    db.exec(
+        'UPDATE person SET age = 99 WHERE id = $1',
+        p.id
+    )
+    let fresh-p = p.reload()
+    assert(fresh-p.age == 99)
+}

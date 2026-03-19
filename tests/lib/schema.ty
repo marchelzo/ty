@@ -1,0 +1,1169 @@
+import schema (table, connect, transaction, ValidationError, diff, migrate!)
+import sqlite (SQLite)
+import path (Path)
+import temporal (PlainDate, PlainDateTime)
+
+@table
+class User {
+    id:    Int
+    name:  String
+    email: String | nil
+    age:   Int = 0
+}
+
+@table
+class Post {
+    id:      Int
+    title:   String
+    body:    String | nil
+    author:  ForeignKey[User.id]
+}
+
+@table
+class Article {
+    id:         Int
+    title:      String
+    slug:       String | nil
+    created-at: String | nil
+    updated-at: String | nil
+
+    before-insert() {
+        slug = title.lower().sub(/ /, '-')
+    }
+
+    before-save() {
+        slug = title.lower().sub(/ /, '-')
+    }
+}
+
+let __tls::callback-log = []
+
+@table
+class Widget {
+    id:   Int
+    name: String
+
+    before-insert() { callback-log.push('bi') }
+    after-insert()  { callback-log.push('ai') }
+    before-save()   { callback-log.push('bs') }
+    after-save()    { callback-log.push('as') }
+    before-delete() { callback-log.push('bd') }
+    after-delete()  { callback-log.push('ad') }
+}
+
+@table
+class Event {
+    id:         Int
+    start-date: PlainDate
+    end-date:   PlainDate
+
+    validate() {
+        if end-date <= start-date {
+            errors['endDate'] = [
+                'must be after start date'
+            ]
+        }
+    }
+}
+
+@table
+class LogEntry {
+    id:         Int
+    message:    String
+    created-at: PlainDateTime | nil
+    updated-at: PlainDateTime | nil
+}
+
+@table
+class Account {
+    id:    Int
+    name:  String
+    email: String
+    age:   Int = 0
+    role:  String = 'user'
+    bio:   String | nil
+
+    validate {
+        #name > 0
+        email :: /@/
+        age in 0..150
+        role in ['admin', 'user', 'guest']
+    }
+}
+
+@table
+class Product {
+    id:    Int
+    sku:   Unique[String]
+    name:  String
+    price: Int = 0
+    category: String | nil
+
+    index = [name, (category, price)]
+}
+
+ns test
+
+fn fresh() { connect(':memory:') }
+
+pub fn test-create-table() {
+    let db = fresh()
+    User.create-table()
+    assert(db.table?('user'))
+}
+
+pub fn test-drop-table() {
+    fresh()
+    User.create-table()
+    User.drop-table()
+}
+
+pub fn test-insert-and-get() {
+    fresh()
+    User.create-table()
+
+    let alice = User(name='Alice', email='a@b.com', age=30).insert()
+    assert(alice.id == 1)
+    assert(alice.name == 'Alice')
+
+    let found = User.get(1)
+    assert(found.name == 'Alice')
+    assert(found.email == 'a@b.com')
+    assert(found.age == 30)
+}
+
+pub fn test-get-missing() {
+    fresh()
+    User.create-table()
+    assert(User.get(999) == nil)
+}
+
+pub fn test-default-values() {
+    fresh()
+    User.create-table()
+
+    let u = User(name='Test').insert()
+    let found = User.get(u.id)
+    assert(found.age == 0)
+    assert(found.email == nil)
+}
+
+pub fn test-all() {
+    fresh()
+    User.create-table()
+    User(name='Alice').insert()
+    User(name='Bob').insert()
+    assert(#User.all() == 2)
+}
+
+pub fn test-where() {
+    fresh()
+    User.create-table()
+    User(name='Alice', age=30).insert()
+    User(name='Bob', age=20).insert()
+    User(name='Carol', age=35).insert()
+    assert(User.where('age >= ?', 25).count() == 2)
+}
+
+pub fn test-count() {
+    fresh()
+    User.create-table()
+    User(name='Alice').insert()
+    User(name='Bob').insert()
+    assert(User.count() == 2)
+    assert(User.count('name = ?', 'Alice') == 1)
+}
+
+pub fn test-save() {
+    fresh()
+    User.create-table()
+
+    let u = User(name='Alice', age=30).insert()
+    u.age = 31
+    u.name = 'Alice Smith'
+    u.save()
+
+    let found = User.get(u.id)
+    assert(found.age == 31)
+    assert(found.name == 'Alice Smith')
+}
+
+pub fn test-delete() {
+    fresh()
+    User.create-table()
+    let u = User(name='Alice').insert()
+    u.delete!()
+    assert(User.get(u.id) == nil)
+    assert(User.count() == 0)
+}
+
+pub fn test-multiple-models() {
+    fresh()
+    User.create-table()
+    Post.create-table()
+
+    let u = User(name='Alice').insert()
+    Post(title='Hello', body='World', author=u.id).insert()
+    Post(title='Second', body='Post', author=u.id).insert()
+
+    assert(Post.count() == 2)
+    assert(Post.where('author = ?', u.id).count() == 2)
+}
+
+pub fn test-schema-metadata() {
+    let s = User.schema()
+    assert(s.table == 'user')
+    assert(s.pk == 'id')
+    assert(#s.cols == 4)
+}
+
+pub fn test-file-persistence() {
+    with tmp = Path.tempdir('schema-test') {
+        let p = "{tmp}/test.db"
+        do {
+            connect(p)
+            User.create-table()
+            User(name='Saved').insert()
+        }
+        connect(p)
+        assert(User.get(1).name == 'Saved')
+    }
+}
+
+pub fn test-auto-increment-ids() {
+    fresh()
+    User.create-table()
+    let a = User(name='A').insert()
+    let b = User(name='B').insert()
+    let c = User(name='C').insert()
+    assert(a.id == 1)
+    assert(b.id == 2)
+    assert(c.id == 3)
+}
+
+pub fn test-null-fields() {
+    fresh()
+    User.create-table()
+    User(name='No-email').insert()
+    let found = User.get(1)
+    assert(found.name == 'No-email')
+    assert(found.email == nil)
+}
+
+pub fn test-generated-sql() {
+    let s = User.schema()
+    assert('PRIMARY KEY' in s.sql)
+    assert('AUTOINCREMENT' in s.sql)
+    assert('NOT NULL' in s.sql)
+    assert('DEFAULT 0' in s.sql)
+}
+
+pub fn test-foreign-key-sql() {
+    let s = Post.schema()
+    assert('REFERENCES user(id)' in s.sql)
+}
+
+pub fn test-methods-preserved() {
+    let u = User(id=1, name='Test', email=nil, age=0)
+    assert(u.name == 'Test')
+}
+
+pub fn test-explicit-db() {
+    let db = SQLite(':memory:')
+    User.create-table(db)
+    User(name='Explicit').insert(db)
+    let found = User.get(1, db)
+    assert(found.name == 'Explicit')
+    assert(#User.all(db) == 1)
+}
+
+pub fn test-implicit-db-isolation() {
+    fresh()
+    User.create-table()
+    User(name='First').insert()
+    assert(User.count() == 1)
+
+    fresh()
+    User.create-table()
+    assert(User.count() == 0)
+
+    User(name='Second').insert()
+    assert(User.count() == 1)
+    assert(User.get(1).name == 'Second')
+}
+
+pub fn test-scoped-db() {
+    fresh()
+    User.create-table()
+    User(name='Outer').insert()
+
+    with patch(schema::_db, SQLite(':memory:')) {
+        User.create-table()
+        User(name='Inner').insert()
+        assert(User.get(1).name == 'Inner')
+    }
+
+    assert(User.get(1).name == 'Outer')
+}
+
+pub fn test-find-by() {
+    fresh()
+    User.create-table()
+    User(name='Alice', age=30).insert()
+    User(name='Bob', age=25).insert()
+    User(name='Carol', age=30).insert()
+
+    let found = User.find-by('age = ?', 30)
+    assert(found.name == 'Alice')
+    assert(User.find-by('age = ?', 99) == nil)
+}
+
+pub fn test-exists() {
+    fresh()
+    User.create-table()
+    User(name='Alice').insert()
+
+    assert(User.exists?('id = ?', 1))
+    assert(!User.exists?('id = ?', 999))
+    assert(User.exists?('name = ?', 'Alice'))
+}
+
+pub fn test-pluck() {
+    fresh()
+    User.create-table()
+    User(name='Alice', age=30).insert()
+    User(name='Bob', age=25).insert()
+    User(name='Carol', age=35).insert()
+
+    let names: _ = User.pluck('name')
+    assert(#names == 3)
+    assert('Alice' in names)
+    assert('Bob' in names)
+
+    let ages: _ = User.pluck('age', 'age > ?', 28)
+    assert(#ages == 2)
+}
+
+pub fn test-delete-all() {
+    fresh()
+    User.create-table()
+    User(name='Alice', age=30).insert()
+    User(name='Bob', age=20).insert()
+    User(name='Carol', age=35).insert()
+
+    User.delete-all('age < ?', 25)
+    assert(User.count() == 2)
+
+    User.delete-all()
+    assert(User.count() == 0)
+}
+
+pub fn test-reload() {
+    fresh()
+    User.create-table()
+    let u = User(name='Alice', age=30).insert()
+
+    let db: _ = schema::_db
+    db.exec(
+        'UPDATE user SET age = ? WHERE id = ?',
+        99, u.id
+    )
+
+    let fresh-u = u.reload()
+    assert(fresh-u.age == 99)
+    assert(fresh-u.name == 'Alice')
+}
+
+pub fn test-to-dict() {
+    let u = User(id=1, name='Alice', email='a@b', age=30)
+    let d: _ = u.to-dict()
+    assert(d['name'] == 'Alice')
+    assert(d['age'] == 30)
+    assert(d['id'] == 1)
+    assert(d['email'] == 'a@b')
+}
+
+pub fn test-belongs-to() {
+    fresh()
+    User.create-table()
+    Post.create-table()
+
+    let u = User(name='Alice').insert()
+    let p = Post(
+        title='Hello', body='World', author=u.id
+    ).insert()
+
+    let author = p.user()
+    assert(author.name == 'Alice')
+    assert(author.id == u.id)
+}
+
+pub fn test-has-many() {
+    fresh()
+    User.create-table()
+    Post.create-table()
+
+    let alice = User(name='Alice').insert()
+    let bob = User(name='Bob').insert()
+    Post(title='A1', author=alice.id).insert()
+    Post(title='A2', author=alice.id).insert()
+    Post(title='B1', author=bob.id).insert()
+
+    assert(Post.of-user(alice.id).count() == 2)
+    assert(Post.of-user(bob.id).count() == 1)
+}
+
+pub fn test-transaction() {
+    fresh()
+    User.create-table()
+
+    transaction(fn () {
+        User(name='Alice').insert()
+        User(name='Bob').insert()
+    })
+    assert(User.count() == 2)
+
+    let threw? = false
+    try {
+        transaction(fn () {
+            User(name='Carol').insert()
+            throw RuntimeError('rollback!')
+        })
+    } catch _ {
+        threw? = true
+    }
+    assert(threw?)
+    assert(User.count() == 2)
+}
+
+pub fn test-order() {
+    fresh()
+    User.create-table()
+    User(name='Carol', age=35).insert()
+    User(name='Alice', age=30).insert()
+    User(name='Bob', age=25).insert()
+
+    let names: _ = User.query()
+        .order('name')
+        .pluck('name')
+    assert(names == ['Alice', 'Bob', 'Carol'])
+
+    let desc: _ = User.query()
+        .order('age desc')
+        .pluck('name')
+    assert(desc == ['Carol', 'Alice', 'Bob'])
+}
+
+pub fn test-limit-offset() {
+    fresh()
+    User.create-table()
+    for i in 0..10 {
+        User(name="user-{i}", age=i).insert()
+    }
+
+    let first-3: _ = User.query()
+        .order('age')
+        .limit(3)
+        .all()
+    assert(#first-3 == 3)
+    assert(first-3[0].age == 0)
+
+    let page-2: _ = User.query()
+        .order('age')
+        .limit(3)
+        .offset(3)
+        .all()
+    assert(#page-2 == 3)
+    assert(page-2[0].age == 3)
+}
+
+pub fn test-chained-where-order-limit() {
+    fresh()
+    User.create-table()
+    User(name='Alice', age=30).insert()
+    User(name='Bob', age=25).insert()
+    User(name='Carol', age=35).insert()
+    User(name='Dave', age=20).insert()
+
+    let result: _ = User.where('age >= ?', 25)
+        .order('age desc')
+        .limit(2)
+        .all()
+    assert(#result == 2)
+    assert(result[0].name == 'Carol')
+    assert(result[1].name == 'Alice')
+}
+
+pub fn test-query-first() {
+    fresh()
+    User.create-table()
+    User(name='Alice', age=30).insert()
+    User(name='Bob', age=25).insert()
+
+    let youngest = User.query().order('age').first()
+    assert(youngest.name == 'Bob')
+
+    let nobody = User.where('age > ?', 99).first()
+    assert(nobody == nil)
+}
+
+pub fn test-query-exists() {
+    fresh()
+    User.create-table()
+    User(name='Alice').insert()
+
+    assert(User.where('name = ?', 'Alice').exists?())
+    assert(!User.where('name = ?', 'Nobody').exists?())
+}
+
+pub fn test-query-pluck-with-order() {
+    fresh()
+    User.create-table()
+    User(name='Carol', age=3).insert()
+    User(name='Alice', age=1).insert()
+    User(name='Bob', age=2).insert()
+
+    let sorted: _ = User.query()
+        .order('age')
+        .pluck('name')
+    assert(sorted == ['Alice', 'Bob', 'Carol'])
+}
+
+pub fn test-query-delete-all() {
+    fresh()
+    User.create-table()
+    User(name='Alice', age=30).insert()
+    User(name='Bob', age=20).insert()
+    User(name='Carol', age=35).insert()
+
+    User.where('age < ?', 25).delete-all!()
+    assert(User.count() == 2)
+}
+
+pub fn test-has-many-returns-query() {
+    fresh()
+    User.create-table()
+    Post.create-table()
+
+    let u = User(name='Alice').insert()
+    Post(title='C', author=u.id).insert()
+    Post(title='A', author=u.id).insert()
+    Post(title='B', author=u.id).insert()
+
+    let sorted: _ = Post.of-user(u.id)
+        .order('title')
+        .pluck('title')
+    assert(sorted == ['A', 'B', 'C'])
+
+    let first = Post.of-user(u.id)
+        .order('title')
+        .first()
+    assert(first.title == 'A')
+}
+
+pub fn test-query-iteration() {
+    fresh()
+    User.create-table()
+    User(name='Alice').insert()
+    User(name='Bob').insert()
+
+    let names = []
+    for u in User.query().order('name') {
+        names.push(u.name)
+    }
+    assert(names == ['Alice', 'Bob'])
+}
+
+pub fn test-eager-loading() {
+    fresh()
+    User.create-table()
+    Post.create-table()
+
+    let alice = User(name='Alice').insert()
+    let bob = User(name='Bob').insert()
+    Post(title='A1', author=alice.id).insert()
+    Post(title='A2', author=alice.id).insert()
+    Post(title='B1', author=bob.id).insert()
+
+    let posts: _ = Post.query()
+        .includes('user')
+        .order('title')
+        .all()
+
+    assert(#posts == 3)
+
+    assert(posts[0].user().name == 'Alice')
+    assert(posts[1].user().name == 'Alice')
+    assert(posts[2].user().name == 'Bob')
+
+    assert(posts[0].preloaded != nil)
+    assert('user' in posts[0].preloaded)
+}
+
+pub fn test-eager-loading-no-n-plus-one() {
+    fresh()
+    User.create-table()
+    Post.create-table()
+
+    let u = User(name='Author').insert()
+    for i in 0..5 {
+        Post(title="Post {i}", author=u.id).insert()
+    }
+
+    let posts: _ = Post.query()
+        .includes('user')
+        .all()
+
+    for p in posts {
+        assert(p.user().name == 'Author')
+    }
+}
+
+pub fn test-includes-with-first() {
+    fresh()
+    User.create-table()
+    Post.create-table()
+
+    let u = User(name='Alice').insert()
+    Post(title='Hello', author=u.id).insert()
+
+    let p = Post.query()
+        .includes('user')
+        .first()
+    assert(p.user().name == 'Alice')
+    assert(p.preloaded != nil)
+}
+
+pub fn test-includes-missing-fk() {
+    fresh()
+    User.create-table()
+    Post.create-table()
+
+    Post(title='Orphan', author=nil).insert()
+
+    let posts: _ = Post.query()
+        .includes('user')
+        .all()
+    assert(#posts == 1)
+    assert(posts[0].user() == nil)
+}
+
+pub fn test-callbacks-order() {
+    fresh()
+    Widget.create-table()
+    callback-log = []
+
+    let w = Widget(name='A').insert()
+    assert(callback-log == ['bi', 'ai'])
+
+    callback-log = []
+    w.name = 'B'
+    w.save()
+    assert(callback-log == ['bs', 'as'])
+
+    callback-log = []
+    w.delete!()
+    assert(callback-log == ['bd', 'ad'])
+}
+
+pub fn test-before-insert-callback() {
+    fresh()
+    Article.create-table()
+
+    let a = Article(title='Hello World').insert()
+    assert(a.slug == 'hello-world')
+}
+
+pub fn test-before-save-callback() {
+    fresh()
+    Article.create-table()
+
+    let a = Article(title='Old Title').insert()
+    a.title = 'New Title'
+    a.save()
+
+    let found = Article.get(a.id)
+    assert(found.slug == 'new-title')
+}
+
+pub fn test-timestamps-on-insert() {
+    fresh()
+    Article.create-table()
+
+    let a = Article(title='Test').insert()
+    assert(a.created-at != nil)
+    assert(a.updated-at != nil)
+    assert(a.created-at :: /^\d{4}-\d{2}-\d{2}/)
+}
+
+pub fn test-timestamps-on-save() {
+    fresh()
+    Article.create-table()
+
+    let a = Article(title='Test').insert()
+    let orig = a.updated-at
+
+    a.title = 'Changed'
+    a.save()
+
+    let found = Article.get(a.id)
+    assert(found.updated-at != nil)
+}
+
+pub fn test-update-all() {
+    fresh()
+    User.create-table()
+    User(name='Alice', age=30).insert()
+    User(name='Bob', age=25).insert()
+    User(name='Carol', age=35).insert()
+
+    User.where('age < ?', 30)
+        .update-all!('age = ?', 0)
+
+    assert(User.get(2).age == 0)
+    assert(User.get(1).age == 30)
+    assert(User.get(3).age == 35)
+}
+
+pub fn test-scopes() {
+    fresh()
+    User.create-table()
+    User(name='Alice', age=30).insert()
+    User(name='Bob', age=15).insert()
+    User(name='Carol', age=25).insert()
+
+    let adults: _ = User.where('age >= ?', 18)
+        .order('name')
+        .all()
+    assert(#adults == 2)
+    assert(adults[0].name == 'Alice')
+    assert(adults[1].name == 'Carol')
+}
+
+pub fn test-valid-instance() {
+    let a = Account(
+        name='Alice', email='a@b.com',
+        age=30, role='admin'
+    )
+    assert(a.valid?())
+    assert(#a.errors == 0)
+}
+
+pub fn test-invalid-name() {
+    let a = Account(name='', email='a@b.com')
+    assert(!a.valid?())
+    assert('name' in a.errors)
+}
+
+pub fn test-invalid-email() {
+    let a = Account(name='Alice', email='bad')
+    assert(!a.valid?())
+    assert('email' in a.errors)
+}
+
+pub fn test-invalid-age-range() {
+    let a = Account(name='Alice', email='a@b', age=200)
+    assert(!a.valid?())
+    assert('age' in a.errors)
+}
+
+pub fn test-invalid-role-inclusion() {
+    let a = Account(name='A', email='a@b', role='root')
+    assert(!a.valid?())
+    assert('role' in a.errors)
+}
+
+pub fn test-multiple-errors() {
+    let a = Account(name='', email='bad', age=-1, role='x')
+    assert(!a.valid?())
+    assert(#a.errors == 4)
+}
+
+pub fn test-validation-blocks-insert() {
+    fresh()
+    Account.create-table()
+
+    let threw? = false
+    try {
+        Account(name='', email='bad').insert()
+    } catch e: ValidationError {
+        threw? = true
+        assert('name' in e.errors)
+        assert('email' in e.errors)
+    }
+    assert(threw?)
+    assert(Account.count() == 0)
+}
+
+pub fn test-validation-blocks-save() {
+    fresh()
+    Account.create-table()
+
+    let a = Account(
+        name='Alice', email='a@b', role='user'
+    ).insert()
+
+    a.email = 'invalid'
+    let threw? = false
+    try {
+        a.save()
+    } catch e: ValidationError {
+        threw? = true
+    }
+    assert(threw?)
+}
+
+pub fn test-valid-insert-succeeds() {
+    fresh()
+    Account.create-table()
+
+    let a = Account(
+        name='Alice', email='a@b.com',
+        age=30, role='admin'
+    ).insert()
+    assert(a.id == 1)
+    assert(Account.count() == 1)
+}
+
+pub fn test-cross-field-validation() {
+    let e = Event(
+        start-date=PlainDate(2026, 3, 20),
+        end-date=PlainDate(2026, 3, 19)
+    )
+    assert(!e.valid?())
+    assert('endDate' in e.errors)
+}
+
+pub fn test-cross-field-valid() {
+    let e = Event(
+        start-date=PlainDate(2026, 3, 19),
+        end-date=PlainDate(2026, 3, 20)
+    )
+    assert(e.valid?())
+}
+
+pub fn test-cross-field-blocks-insert() {
+    fresh()
+    Event.create-table()
+
+    let threw? = false
+    try {
+        Event(
+            start-date=PlainDate(2026, 12, 25),
+            end-date=PlainDate(2026, 12, 24)
+        ).insert()
+    } catch e: ValidationError {
+        threw? = true
+        assert('endDate' in e.errors)
+    }
+    assert(threw?)
+    assert(Event.count() == 0)
+}
+
+pub fn test-cross-field-valid-inserts() {
+    fresh()
+    Event.create-table()
+
+    let e = Event(
+        start-date=PlainDate(2026, 1, 1),
+        end-date=PlainDate(2026, 12, 31)
+    ).insert()
+    assert(e.id == 1)
+}
+
+pub fn test-temporal-roundtrip() {
+    fresh()
+    Event.create-table()
+
+    let e = Event(
+        start-date=PlainDate(2026, 6, 15),
+        end-date=PlainDate(2026, 6, 20)
+    ).insert()
+
+    let found: _ = Event.get(e.id)
+    assert(found.start-date :: PlainDate)
+    assert(found.start-date.year == 2026)
+    assert(found.start-date.month == 6)
+    assert(found.start-date.day == 15)
+    assert(found.end-date.day == 20)
+}
+
+pub fn test-temporal-auto-timestamps() {
+    fresh()
+    LogEntry.create-table()
+
+    let entry = LogEntry(message='hello').insert()
+    assert(entry.created-at :: PlainDateTime)
+    assert(entry.updated-at :: PlainDateTime)
+    assert(entry.created-at.year == 2026)
+}
+
+pub fn test-temporal-updated-at-on-save() {
+    fresh()
+    LogEntry.create-table()
+
+    let entry = LogEntry(message='hello').insert()
+    entry.message = 'updated'
+    entry.save()
+
+    let found: _ = LogEntry.get(entry.id)
+    assert(found.updated-at :: PlainDateTime)
+    assert(found.message == 'updated')
+}
+
+pub fn test-auto-sync-new-table() {
+    let db = connect(':memory:')
+    assert(db.table?('user'))
+    assert(db.table?('post'))
+    assert(db.table?('article'))
+}
+
+pub fn test-auto-add-column-on-connect() {
+    with tmp = Path.tempdir('migrate-test') {
+        let p = "{tmp}/test.db"
+
+        let db = SQLite(p)
+        db.exec(
+            'CREATE TABLE user'
+            ' (id INTEGER PRIMARY KEY AUTOINCREMENT,'
+            ' name TEXT NOT NULL)'
+        )
+        db.exec(
+            "INSERT INTO user (name) VALUES ('Alice')"
+        )
+        db.close()
+
+        connect(p)
+
+        let alice = User.get(1)
+        assert(alice.name == 'Alice')
+        assert(alice.age == 0)
+    }
+}
+
+pub fn test-diff-no-changes() {
+    fresh()
+    let ops: _ = diff()
+    let user-ops = ops.filter(\_.table == 'user')
+    assert(#user-ops == 0)
+}
+
+pub fn test-diff-detects-drop() {
+    with tmp = Path.tempdir('migrate-test') {
+        let p = "{tmp}/test.db"
+
+        let db = SQLite(p)
+        db.exec(
+            'CREATE TABLE user'
+            ' (id INTEGER PRIMARY KEY AUTOINCREMENT,'
+            ' name TEXT NOT NULL,'
+            ' email TEXT,'
+            ' age INTEGER DEFAULT 0,'
+            ' obsolete TEXT)'
+        )
+        db.close()
+
+        connect(p)
+
+        let ops: _ = diff()
+        let drops = ops.filter(\_.op == 'drop-column')
+        assert(drops.any?(\_.column == 'obsolete'))
+    }
+}
+
+pub fn test-migrate-adds-column-preserves-data() {
+    with tmp = Path.tempdir('migrate-test') {
+        let p = "{tmp}/test.db"
+
+        let db = SQLite(p)
+        db.exec(
+            'CREATE TABLE user'
+            ' (id INTEGER PRIMARY KEY AUTOINCREMENT,'
+            ' name TEXT NOT NULL)'
+        )
+        db.exec(
+            "INSERT INTO user (name) VALUES ('Bob')"
+        )
+        db.close()
+
+        connect(p)
+        migrate!()
+
+        let bob = User.get(1)
+        assert(bob.name == 'Bob')
+
+        User(name='Carol', age=25).insert()
+        let carol = User.get(2)
+        assert(carol.age == 25)
+    }
+}
+
+pub fn test-unique-field() {
+    fresh()
+    Product.create-table()
+    Product(sku='ABC', name='Widget').insert()
+
+    let threw? = false
+    try {
+        Product(sku='ABC', name='Dupe').insert()
+    } catch _ {
+        threw? = true
+    }
+    assert(threw?)
+}
+
+pub fn test-unique-field-type() {
+    fresh()
+    Product.create-table()
+    let p = Product(sku='X1', name='Gadget').insert()
+    assert(p.sku == 'X1')
+    assert(p.sku :: String)
+}
+
+pub fn test-indexes-created() {
+    fresh()
+    Product.create-table()
+
+    let idxs: _ = schema::_db.fetch-all(
+        "SELECT name FROM sqlite_master"
+        " WHERE type = 'index'"
+        " AND tbl_name = 'product'"
+    )
+    let names = idxs.map(\_ ['name'])
+    assert(names.any?(\_ :: /idx_product_name/))
+    assert(names.any?(\_ :: /idx_product_category/))
+}
+
+pub fn test-index-speeds-query() {
+    fresh()
+    Product.create-table()
+    for i in 0..100 {
+        Product(sku="sku{i}", name="prod{i}", price=i).insert()
+    }
+    let found = Product.find-by('name = ?', 'prod50')
+    assert(found.price == 50)
+}
+
+pub fn test-composite-index() {
+    fresh()
+    Product.create-table()
+    Product(sku='A', name='X', category='cat1', price=10).insert()
+    Product(sku='B', name='Y', category='cat1', price=20).insert()
+    Product(sku='C', name='Z', category='cat2', price=5).insert()
+
+    let result = Product.where('category = ?', 'cat1')
+        .order('price')
+        .all()
+    assert(#result == 2)
+    assert(result[0].price == 10)
+}
+
+pub fn test-unique-in-schema() {
+    let s: _ = Product.schema()
+    let sku-col: _ = s.cols.find(\_.name == 'sku')
+    assert(sku-col.uniq)
+}
+
+pub fn test-sum() {
+    fresh()
+    User.create-table()
+    User(name='A', age=10).insert()
+    User(name='B', age=20).insert()
+    User(name='C', age=30).insert()
+    assert(User.query().sum('age') == 60)
+    assert(User.where('age > ?', 15).sum('age') == 50)
+}
+
+pub fn test-avg() {
+    fresh()
+    User.create-table()
+    User(name='A', age=10).insert()
+    User(name='B', age=20).insert()
+    User(name='C', age=30).insert()
+    let avg = User.query().avg('age')
+    assert(avg == 20 || avg == 20.0)
+}
+
+pub fn test-min-max() {
+    fresh()
+    User.create-table()
+    User(name='A', age=10).insert()
+    User(name='B', age=30).insert()
+    assert(User.query().min('age') == 10)
+    assert(User.query().max('age') == 30)
+}
+
+pub fn test-group-by() {
+    fresh()
+    Product.create-table()
+    Product(sku='A1', name='X', category='cat1').insert()
+    Product(sku='A2', name='Y', category='cat1').insert()
+    Product(sku='B1', name='Z', category='cat2').insert()
+
+    let groups: _ = Product.query().group-by('category')
+    assert(#groups == 2)
+    let cat1: _ = groups.find(\_ ['category'] == 'cat1')
+    assert(cat1['count'] == 2)
+}
+
+pub fn test-page() {
+    fresh()
+    User.create-table()
+    for i in 0..50 {
+        User(name="u{i}", age=i).insert()
+    }
+
+    let p1 = User.query().order('age').page(1, per=10)
+    assert(p1.count() == 50)
+    let items = p1.all()
+    assert(#items == 10)
+    assert(items[0].age == 0)
+
+    let p3 = User.query().order('age').page(3, per=10).all()
+    assert(#p3 == 10)
+    assert(p3[0].age == 20)
+}
+
+pub fn test-raw() {
+    fresh()
+    User.create-table()
+    User(name='Alice', age=30).insert()
+    User(name='Bob', age=25).insert()
+
+    let users = User.query().raw(
+        'SELECT * FROM user WHERE age > ? ORDER BY name',
+        20
+    )
+    assert(#users == 2)
+    assert(users[0].name == 'Alice')
+}
+
+pub fn test-upsert-insert() {
+    fresh()
+    Product.create-table()
+    let p = Product(sku='NEW', name='Widget', price=10).upsert()
+    assert(p.id == 1)
+    assert(p.name == 'Widget')
+    assert(Product.count() == 1)
+}
+
+pub fn test-upsert-update() {
+    fresh()
+    Product.create-table()
+    Product(sku='X1', name='Old', price=10).insert()
+
+    let p = Product(sku='X1', name='New', price=20).upsert()
+    assert(Product.count() == 1)
+    let found = Product.get(p.id)
+    assert(found.name == 'New')
+    assert(found.price == 20)
+}
+
+pub fn test-upsert-idempotent() {
+    fresh()
+    Product.create-table()
+    Product(sku='ABC', name='Thing', price=5).upsert()
+    Product(sku='ABC', name='Thing', price=5).upsert()
+    Product(sku='ABC', name='Thing', price=5).upsert()
+    assert(Product.count() == 1)
+}
