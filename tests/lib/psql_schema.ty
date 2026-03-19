@@ -1,7 +1,22 @@
 import schema (table, connect, disconnect, transaction, ValidationError)
+import psql (PG)
 import temporal (PlainDate, PlainDateTime)
 
 let dsn = 'postgresql:///ty_psql_test'
+
+fn ensure-db!() {
+    let admin = PG('dbname=postgres')
+    let r: _ = admin.fetch-one(
+        "SELECT 1 FROM pg_database"
+        " WHERE datname = 'ty_psql_test'"
+    )
+    if r == nil {
+        admin.exec('CREATE DATABASE ty_psql_test')
+    }
+    admin.close()
+}
+
+ensure-db!()
 
 @table
 class Person {
