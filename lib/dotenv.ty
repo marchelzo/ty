@@ -1,0 +1,107 @@
+import path (Path)
+
+class ParseError < RuntimeError {
+    init(line) {
+        super("failed to parse line: {line}")
+    }
+}
+
+pub fn parse(s: String) -> Dict[String, String] {
+    let vars = %{}
+
+    for line in s.lines() {
+        match line {
+            /^\s*$/, /^\s*#/ => {},
+
+            /^export\s+(.+)$/ => {
+                let (k, v) = parse-binding($1) or throw ParseError(line)
+                vars[k] = v
+            },
+
+            /^([A-Za-z_]\w*)\s*=(.*)$/ => {
+                vars[$1] = parse-value($2)
+            },
+
+            _ => throw ParseError(line)
+        }
+    }
+
+    vars
+}
+
+fn parse-binding(s) {
+    if s =~ /^([A-Za-z_]\w*)\s*=(.*)$/ {
+        ($1, parse-value($2))
+    }
+}
+
+fn parse-value(raw) {
+    let s = raw.strip()
+    match s {
+        /^"(.*)"$/  => unescape($1),
+        /^'(.*)'$/  => $1,
+        /^`(.*)`$/  => $1,
+        _           => s.sub(/\s+#.*$/, '')
+    }
+}
+
+fn unescape(s) {
+    s.sub(/\\n/,  '\n',  g: true)
+     .sub(/\\r/,  '\r',  g: true)
+     .sub(/\\t/,  '\t',  g: true)
+     .sub(/\\\\/,  '\\', g: true)
+     .sub(/\\"/,  '"',   g: true)
+}
+
+pub fn read(path: Path = Path('.env')) -> Dict[String, String] {
+    try {
+        parse(path.read-text())
+    } catch _ {
+        %{}
+    }
+}
+
+pub fn load(paths: String | Path | Array[String | Path] = '.env', override?: Bool = false) -> Dict[String, String] {
+    let paths = match paths {
+        p: String | Path => [p],
+        ps               => ps
+    }
+
+    let merged = %{}
+    for path in paths {
+        for k, v in read(Path(path)) {
+            merged[k] = v
+            if override? || getenv(k) == nil {
+                setenv(k, v)
+            }
+        }
+    }
+
+    merged
+}
+
+pub fn string(vars: Dict[String, String]) -> String {
+    let b = Blob()
+    for k, v in vars {
+        b.push(match v {
+            /\n/ or /"/  => "{k}=\"{escape(v)}\"",
+            /'/          => "{k}=\"{v}\"",
+            /\s/ or /#/  => "{k}='{v}'",
+            _            => "{k}={v}"
+        })
+        b.push('\n')
+    }
+    b.str!()
+}
+
+fn escape(s) {
+    s.sub(/\\/,  '\\\\', g: true)
+     .sub(/"/,   '\\"',  g: true)
+     .sub(/\n/,  '\\n',  g: true)
+     .sub(/\r/,  '\\r',  g: true)
+     .sub(/\t/,  '\\t',  g: true)
+}
+
+pub fn write(vars: Dict[String, String], path: String | Path = '.env') {
+    Path(path).write(string(vars))
+}

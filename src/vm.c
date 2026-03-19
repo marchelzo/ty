@@ -1772,11 +1772,9 @@ xcall(Ty *ty, Value const *f, Value const *pSelf, int argc, Value const *pKwargs
         xvR(STACK, fz);
 
         if (UNLIKELY(irest != ikwargs)) {
-                gP(&self);
-                gP(&kwargs);
                 if (irest != -1) {
                         int nExtra = max(argc - irest, 0);
-                        Array *extra = vAn(nExtra);
+                        Array *extra = vAun(nExtra);
 
                         memcpy(v_(*extra, 0), vv(STACK) + fp + irest, nExtra * sizeof (Value));
                         memset(vv(STACK) + fp + irest, 0, nExtra * sizeof (Value));
@@ -1789,13 +1787,13 @@ xcall(Ty *ty, Value const *f, Value const *pSelf, int argc, Value const *pKwargs
                         }
 
                         *v_(STACK, fp + irest) = ARRAY(extra);
+                } else if (LIKELY(fp + argc < fz)) {
+                        memcpy(v_(STACK, fp + argc), NILS, (bound - argc) * sizeof (Value));
                 }
                 if (ikwargs != -1) {
                         // FIXME: don't allocate a dict when there are no kwargs
-                        *v_(STACK, fp + ikwargs) = !IsNil(kwargs) ? kwargs : DICT(dict_new(ty));
+                        *v_(STACK, fp + ikwargs) = !IsNil(kwargs) ? kwargs : DICT(dict_xnew(ty));
                 }
-                gX();
-                gX();
         } else if (LIKELY(fp + argc < fz)) {
                 memcpy(v_(STACK, fp + argc), NILS, (bound - argc) * sizeof (Value));
         }
@@ -1824,6 +1822,8 @@ xcall(Ty *ty, Value const *f, Value const *pSelf, int argc, Value const *pKwargs
                         }
                 }
         }
+
+        CheckUsed(ty);
 }
 
 inline static void
@@ -9084,16 +9084,12 @@ vm_panic(Ty *ty, char const *fmt, ...)
 }
 
 noreturn void
-vm_error(Ty *ty, char const *fmt, ...)
+vm_verror(Ty *ty, int kind, char const *fmt, va_list ap)
 {
         GC_STOP();
 
-        va_list ap;
-        va_start(ap, fmt);
         Value msg = STRING_VFORMAT(ty, fmt, ap);
-        va_end(ap);
-
-        Value error = RawObject(CLASS_RUNTIME_ERROR);
+        Value error = RawObject(kind);
         PutMember(error, NAMES._what,  msg);
         PutMember(error, NAMES._ctx,   NIL);
         PutMember(error, NAMES._cause, NIL);
@@ -9101,6 +9097,24 @@ vm_error(Ty *ty, char const *fmt, ...)
         GC_RESUME();
 
         vm_throw(ty, &error);
+}
+
+noreturn void
+vm_error(Ty *ty, char const *fmt, ...)
+{
+        va_list ap;
+        va_start(ap, fmt);
+        vm_verror(ty, CLASS_RUNTIME_ERROR, fmt, ap);
+        UNREACHABLE();
+}
+
+noreturn void
+vm_xerror(Ty *ty, int kind, char const *fmt, ...)
+{
+        va_list ap;
+        va_start(ap, fmt);
+        vm_verror(ty, kind, fmt, ap);
+        UNREACHABLE();
 }
 
 void

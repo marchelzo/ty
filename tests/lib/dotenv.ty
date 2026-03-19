@@ -1,0 +1,250 @@
+import dotenv (..)
+import path (Path)
+
+let seq = 0
+fn fresh-key(prefix) { seq += 1; "__{prefix}_{seq}" }
+
+ns test
+
+pub fn test-parse-simple() {
+    let vars = parse('FOO=bar\nBAZ=qux')
+    assert(vars['FOO'] == 'bar')
+    assert(vars['BAZ'] == 'qux')
+}
+
+pub fn test-parse-empty-value() {
+    let vars = parse('EMPTY=')
+    assert(vars['EMPTY'] == '')
+}
+
+pub fn test-parse-whitespace-around-value() {
+    let vars = parse('KEY=  hello  ')
+    assert(vars['KEY'] == 'hello')
+}
+
+pub fn test-parse-blank-lines-and-comments() {
+    let vars = parse('
+# this is a comment
+FOO=1
+
+  # indented comment
+BAR=2
+
+')
+    assert(#vars == 2)
+    assert(vars['FOO'] == '1')
+    assert(vars['BAR'] == '2')
+}
+
+pub fn test-parse-double-quoted() {
+    let vars = parse('MSG="hello world"')
+    assert(vars['MSG'] == 'hello world')
+}
+
+pub fn test-parse-double-quoted-escapes() {
+    let vars = parse('S="line1\\nline2\\ttab\\\\slash\\"quote"')
+    assert(vars['S'] == "line1\nline2\ttab\\slash\"quote")
+}
+
+pub fn test-parse-single-quoted() {
+    let vars = parse("KEY='no \\n escapes'")
+    assert(vars['KEY'] == 'no \\n escapes')
+}
+
+pub fn test-parse-backtick-quoted() {
+    let vars = parse('CMD=`echo hi`')
+    assert(vars['CMD'] == 'echo hi')
+}
+
+pub fn test-parse-inline-comment() {
+    let vars = parse('PORT=8080 # the port')
+    assert(vars['PORT'] == '8080')
+}
+
+pub fn test-parse-no-inline-comment-in-quotes() {
+    let vars = parse('MSG="has # in it"')
+    assert(vars['MSG'] == 'has # in it')
+}
+
+pub fn test-parse-export-prefix() {
+    let vars = parse('export SECRET=hunter2\nexport DB=postgres')
+    assert(vars['SECRET'] == 'hunter2')
+    assert(vars['DB'] == 'postgres')
+}
+
+pub fn test-parse-export-quoted() {
+    let vars = parse('export GREETING="hello world"')
+    assert(vars['GREETING'] == 'hello world')
+}
+
+pub fn test-parse-underscores-and-digits() {
+    let vars = parse('A_1=x\n_B=y\n__C3__=z')
+    assert(vars['A_1'] == 'x')
+    assert(vars['_B'] == 'y')
+    assert(vars['__C3__'] == 'z')
+}
+
+pub fn test-parse-error-on-bad-line() {
+    let threw? = false
+    try {
+        parse('not a valid line')
+    } catch _: RuntimeError {
+        threw? = true
+    }
+    assert(threw?)
+}
+
+pub fn test-parse-error-on-bad-export() {
+    let threw? = false
+    try {
+        parse('export !!!invalid')
+    } catch _: RuntimeError {
+        threw? = true
+    }
+    assert(threw?)
+}
+
+pub fn test-parse-later-overrides-earlier() {
+    let vars = parse('X=1\nX=2\nX=3')
+    assert(vars['X'] == '3')
+}
+
+pub fn test-read-missing-file() {
+    let vars = read(Path('/tmp/dotenv-test-nonexistent-{rand()}'))
+    assert(#vars == 0)
+}
+
+pub fn test-read-file() {
+    with tmp = Path.tempdir('dotenv-test') {
+        let p = tmp / '.env'
+        p.write("DB_HOST=localhost\nDB_PORT=5432")
+
+        let vars = read(p)
+        assert(vars['DB_HOST'] == 'localhost')
+        assert(vars['DB_PORT'] == '5432')
+    }
+}
+
+pub fn test-load-sets-env() {
+    with tmp = Path.tempdir('dotenv-test') {
+        let p = tmp / '.env'
+        let key = fresh-key('LOAD')
+        p.write("{key}=loaded")
+
+        load(p)
+        assert(getenv(key) == 'loaded')
+    }
+}
+
+pub fn test-load-no-override-by-default() {
+    with tmp = Path.tempdir('dotenv-test') {
+        let p = tmp / '.env'
+        let key = fresh-key('NOOV')
+        setenv(key, 'original')
+        p.write("{key}=new")
+
+        load(p)
+        assert(getenv(key) == 'original')
+    }
+}
+
+pub fn test-load-override() {
+    with tmp = Path.tempdir('dotenv-test') {
+        let p = tmp / '.env'
+        let key = fresh-key('OV')
+        setenv(key, 'original')
+        p.write("{key}=new")
+
+        load(p, override?: true)
+        assert(getenv(key) == 'new')
+    }
+}
+
+pub fn test-load-multiple-files() {
+    with tmp = Path.tempdir('dotenv-test') {
+        let base = tmp / 'base.env'
+        let local = tmp / 'local.env'
+
+        let key-a = fresh-key('A')
+        let key-b = fresh-key('B')
+        let key-c = fresh-key('C')
+        base.write("{key-a}=1\n{key-b}=2")
+        local.write("{key-b}=3\n{key-c}=4")
+
+        let vars = load([base, local])
+        assert(vars[key-a] == '1')
+        assert(vars[key-b] == '3')
+        assert(vars[key-c] == '4')
+    }
+}
+
+pub fn test-load-string-path() {
+    with tmp = Path.tempdir('dotenv-test') {
+        let p = tmp / '.env'
+        let key = fresh-key('STR')
+        p.write("{key}=works")
+
+        load("{p}")
+        assert(getenv(key) == 'works')
+    }
+}
+
+pub fn test-string-bare-value() {
+    assert(string(%{'KEY': 'simple'}) == "KEY=simple\n")
+}
+
+pub fn test-string-quotes-spaces() {
+    let s = string(%{'K': 'has spaces'})
+    assert(s == "K='has spaces'\n")
+}
+
+pub fn test-string-quotes-newlines() {
+    let s = string(%{'K': "line1\nline2"})
+    assert(s == 'K="line1\\nline2"\n')
+}
+
+pub fn test-string-quotes-hash() {
+    let s = string(%{'K': 'has # hash'})
+    assert(s == "K='has # hash'\n")
+}
+
+pub fn test-roundtrip() {
+    let original = %{
+        'SIMPLE':  'value',
+        'SPACED':  'hello world',
+        'NEWLINE': "line1\nline2",
+        'TABBED':  "col1\tcol2",
+    }
+
+    let reparsed = parse(string(original))
+    for k, v in original {
+        assert(reparsed[k] == v)
+    }
+}
+
+pub fn test-write-and-read-back() {
+    with tmp = Path.tempdir('dotenv-test') {
+        let p = tmp / 'out.env'
+        let vars = %{'HOST': 'localhost', 'PORT': '3000'}
+
+        write(vars, p)
+        let got = read(p)
+        assert(got['HOST'] == 'localhost')
+        assert(got['PORT'] == '3000')
+    }
+}
+
+pub fn test-parse-spaces-around-equals() {
+    let vars = parse('KEY = value')
+    assert(vars['KEY'] == 'value')
+}
+
+pub fn test-parse-double-quoted-with-single-quotes() {
+    let vars = parse("KEY=\"it's fine\"")
+    assert(vars['KEY'] == "it's fine")
+}
+
+pub fn test-parse-single-quoted-with-double-quotes() {
+    let vars = parse("KEY='she said \"hi\"'")
+    assert(vars['KEY'] == 'she said "hi"')
+}

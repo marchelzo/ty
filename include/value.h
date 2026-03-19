@@ -935,6 +935,22 @@ value_array_new_sized(Ty *ty, size_t n)
         return a;
 }
 
+static inline Array *
+value_array_new_sized_unchecked(Ty *ty, size_t n)
+{
+        Array *a = uAo(sizeof (Array), GC_ARRAY);
+
+        if (n == 0) {
+                return memset(a, 0, sizeof *a);
+        }
+
+        a->items = uA(n * sizeof (Value));
+        a->capacity = n;
+        a->count = 0;
+
+        return a;
+}
+
 static inline void
 value_array_push(Ty *ty, Array *a, Value v)
 {

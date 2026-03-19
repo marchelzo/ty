@@ -127,6 +127,8 @@ typedef vec(Module *)       ModuleVector;
 #define zPx(...)   vm_panic(ty, __VA_ARGS__)
 #define zPxx(...)   vm_panic_ex(ty, __VA_ARGS__)
 
+#define CanceledError(...) vm_xerror(ty, CLASS_CANCELED_ERROR, __VA_ARGS__)
+
 #define mRE(...)   resize(__VA_ARGS__)
 #define mREu(...)  resize_unchecked(__VA_ARGS__)
 #define mA(...)    gc_alloc(ty, __VA_ARGS__)
@@ -171,6 +173,7 @@ typedef vec(Module *)       ModuleVector;
 #define vA()       value_array_new(ty)
 #define vAu()      uAo0(sizeof (Array), GC_ARRAY)
 #define vAn(n)     value_array_new_sized(ty, n)
+#define vAun(n)    value_array_new_sized_unchecked(ty, n)
 #define vAp(a, x)  value_array_push(ty, a, x)
 
 #define vT(n)     value_tuple(ty, n)
