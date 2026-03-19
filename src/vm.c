@@ -9542,6 +9542,13 @@ FlipGC_EVERY_ALLOC(int _)
 int
 RunTests(Ty *ty)
 {
+        int maxw = 0;
+
+        for (usize i = 0; i < vN(xD.tests); ++i) {
+                TyTest const *test = v_(xD.tests, i);
+                maxw = max(maxw, term_width(test->name, -1));
+        }
+
         int fail = 0;
 
         for (usize i = 0; i < vN(xD.tests); ++i) {
@@ -9552,10 +9559,11 @@ RunTests(Ty *ty)
                         Value   exc = TY_CATCH();
                         fprintf(
                                 stderr,
-                                "%sFAIL%s %s%-32s%s\n%s\n%s\n",
+                                "%sFAIL%s %s%*s%s\n%s\n%s\n",
                                 TERM(91;1),
                                 TERM(0),
                                 TERM(93),
+                                -maxw,
                                 test->name,
                                 TERM(0),
                                 trace,
@@ -9568,10 +9576,11 @@ RunTests(Ty *ty)
                         u64 t1 = TyMonotonicTime();
                         fprintf(
                                 stderr,
-                                "%sPASS%s %s%-32s%s %s(%.2fms)%s\n",
+                                "%sPASS%s %s%*s%s %s(%.2fms)%s\n",
                                 TERM(92),
                                 TERM(0),
                                 TERM(93),
+                                -maxw,
                                 test->name,
                                 TERM(0),
                                 TERM(90),
