@@ -582,7 +582,7 @@ BUILTIN_FUNCTION(rand)
 
         switch (argc) {
         case 0:
-                return REAL(TyRandom(ty));
+                return REAL(z / (double)UINT64_MAX);
 
         case 1:
                 if (ARG_T(0) == VALUE_ARRAY) {
@@ -599,7 +599,20 @@ BUILTIN_FUNCTION(rand)
         }
 
         return INTEGER((z % (high - low)) + low);
+}
 
+BUILTIN_FUNCTION(srand)
+{
+        ASSERT_ARGC("srand()", 0, 1);
+
+        u64 seed = (argc == 1) ? INT_ARG(0) : random();
+
+        ty->prng[0] = splitmix64(&seed);
+        ty->prng[1] = splitmix64(&seed);
+        ty->prng[2] = splitmix64(&seed);
+        ty->prng[3] = splitmix64(&seed);
+
+        return NIL;
 }
 
 BUILTIN_FUNCTION(abs)

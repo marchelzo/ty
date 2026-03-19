@@ -3,7 +3,7 @@ import psql (..)
 let conninfo = 'dbname=ty_psql_test'
 
 fn ensure-db!() {
-    let admin = PG('dbname=postgres')
+    let admin = PostgreSQL('dbname=postgres')
     let r: _ = admin.fetch-one(
         "SELECT 1 FROM pg_database"
         " WHERE datname = 'ty_psql_test'"
@@ -19,7 +19,7 @@ ensure-db!()
 ns test
 
 fn fresh() {
-    let db = PG(conninfo)
+    let db = PostgreSQL(conninfo)
     db.exec('SET client_min_messages TO WARNING')
     db.exec('DROP TABLE IF EXISTS test_posts')
     db.exec('DROP TABLE IF EXISTS test_users')
@@ -35,22 +35,22 @@ fn fresh() {
 }
 
 pub fn test-connect() {
-    let db = PG(conninfo)
+    let db = PostgreSQL(conninfo)
     db.close()
 }
 
 pub fn test-connect-bad() {
     let threw? = false
     try {
-        PG('dbname=nonexistent_db_xyz')
-    } catch e: PGError {
+        PostgreSQL('dbname=nonexistent_db_xyz')
+    } catch e: PostgreSQLError {
         threw? = true
     }
     assert(threw?)
 }
 
 pub fn test-exec-select() {
-    let db = PG(conninfo)
+    let db = PostgreSQL(conninfo)
     let r = db.exec('SELECT 1 AS x')
     assert(r.ntuples == 1)
     assert(r.nfields == 1)
@@ -211,18 +211,18 @@ pub fn test-tables-list() {
 }
 
 pub fn test-error-on-bad-sql() {
-    let db = PG(conninfo)
+    let db = PostgreSQL(conninfo)
     let threw? = false
     try {
         db.exec('INVALID SQL GARBAGE')
-    } catch e: PGError {
+    } catch e: PostgreSQLError {
         threw? = true
     }
     assert(threw?)
 }
 
 pub fn test-boolean-coercion() {
-    let db = PG(conninfo)
+    let db = PostgreSQL(conninfo)
     let row: _ = db.fetch-one(
         'SELECT $1::bool AS flag', true
     )
@@ -234,7 +234,7 @@ pub fn test-boolean-coercion() {
 }
 
 pub fn test-float-type() {
-    let db = PG(conninfo)
+    let db = PostgreSQL(conninfo)
     let row: _ = db.fetch-one(
         'SELECT $1::float8 AS val', 3.14
     )
@@ -285,7 +285,7 @@ pub fn test-update-delete() {
 
 pub fn test-auto-close() {
     do {
-        let db = PG(conninfo)
+        let db = PostgreSQL(conninfo)
         db.exec('SELECT 1')
     }
 }

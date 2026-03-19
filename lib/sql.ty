@@ -106,7 +106,7 @@ fn _diff-table(cls: _, db: SQLite) {
 }
 
 pub fn connect(dsn: String, full-mutex: Bool = true) {
-    fn pg(dsn) { (Module('psql').PG)(dsn) }
+    fn pg(dsn) { (Module('psql').PostgreSQL)(dsn) }
     _db = match dsn {
         /^postgres(ql)?:\/\// => pg(dsn),
         /^psql:\/\//          => pg(dsn.sub(/^psql/, 'postgresql')),

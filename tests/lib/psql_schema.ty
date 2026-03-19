@@ -1,11 +1,11 @@
-import schema (table, connect, disconnect, transaction, ValidationError)
-import psql (PG)
+import sql (table, connect, disconnect, transaction, ValidationError)
+import psql (PostgreSQL)
 import temporal (PlainDate, PlainDateTime)
 
 let dsn = 'postgresql:///ty_psql_test'
 
 fn ensure-db!() {
-    let admin = PG('dbname=postgres')
+    let admin = PostgreSQL('dbname=postgres')
     let r: _ = admin.fetch-one(
         "SELECT 1 FROM pg_database"
         " WHERE datname = 'ty_psql_test'"
@@ -54,7 +54,7 @@ fn fresh() {
 
 pub fn test-create-tables() {
     fresh()
-    let db: _ = schema::_db
+    let db: _ = sql::_db
     assert(db.table?('person'))
     assert(db.table?('article'))
 }
@@ -290,7 +290,7 @@ pub fn test-validation() {
 
 pub fn test-auto-migration() {
     fresh()
-    let db: _ = schema::_db
+    let db: _ = sql::_db
     let cols: _ = db.existing-columns('person')
     assert('name' in cols)
     assert('email' in cols)
@@ -311,7 +311,7 @@ pub fn test-to-dict() {
 pub fn test-reload() {
     fresh()
     let p = Person(name='Alice', age=30).insert()
-    let db: _ = schema::_db
+    let db: _ = sql::_db
     db.exec(
         'UPDATE person SET age = 99 WHERE id = $1',
         p.id

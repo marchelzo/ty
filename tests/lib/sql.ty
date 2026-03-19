@@ -1,4 +1,4 @@
-import schema (table, connect, transaction, ValidationError, diff, migrate!)
+import sql (table, connect, transaction, ValidationError, diff, migrate!)
 import sqlite (SQLite)
 import path (Path)
 import temporal (PlainDate, PlainDateTime)
@@ -297,7 +297,7 @@ pub fn test-scoped-db() {
     User.create-table()
     User(name='Outer').insert()
 
-    with patch(schema::_db, SQLite(':memory:')) {
+    with patch(sql::_db, SQLite(':memory:')) {
         User.create-table()
         User(name='Inner').insert()
         assert(User.get(1).name == 'Inner')
@@ -363,7 +363,7 @@ pub fn test-reload() {
     User.create-table()
     let u = User(name='Alice', age=30).insert()
 
-    let db: _ = schema::_db
+    let db: _ = sql::_db
     db.exec(
         'UPDATE user SET age = ? WHERE id = ?',
         99, u.id
@@ -1024,7 +1024,7 @@ pub fn test-indexes-created() {
     fresh()
     Product.create-table()
 
-    let idxs: _ = schema::_db.fetch-all(
+    let idxs: _ = sql::_db.fetch-all(
         "SELECT name FROM sqlite_master"
         " WHERE type = 'index'"
         " AND tbl_name = 'product'"

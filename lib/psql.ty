@@ -65,7 +65,7 @@ pub const DATEOID        = 1082
 pub const JSONOID        = 114
 pub const JSONBOID       = 3802
 
-pub class PGError < RuntimeError {
+pub class PostgreSQLError < RuntimeError {
     init(msg: String) {
         super(msg)
     }
@@ -96,7 +96,7 @@ fn _parse-val(raw: String, oid: Int) {
     }
 }
 
-class PGResult {
+class PostgreSQLResult {
     __res: Ptr
     __conn: _
 
@@ -109,7 +109,7 @@ class PGResult {
         && status != PGRES_EMPTY_QUERY {
             let msg = c.str(PQresultErrorMessage(res))
             PQclear(res)
-            throw PGError(msg.trim())
+            throw PostgreSQLError(msg.trim())
         }
     }
 
@@ -167,7 +167,7 @@ class PGResult {
     }
 }
 
-pub class PG {
+pub class PostgreSQL {
     __conn: Ptr
 
     init(conninfo: String = '') {
@@ -175,7 +175,7 @@ pub class PG {
         if PQstatus(__conn) != CONNECTION_OK {
             let msg = c.str(PQerrorMessage(__conn))
             PQfinish(__conn)
-            throw PGError(msg.trim())
+            throw PostgreSQLError(msg.trim())
         }
     }
 
@@ -194,17 +194,17 @@ pub class PG {
         c.str(PQerrorMessage(__conn))
     }
 
-    exec(sql: String) -> PGResult {
+    exec(sql: String) -> PostgreSQLResult {
         let res = PQexec(__conn, sql.cstr())
-        PGResult(res, self)
+        PostgreSQLResult(res, self)
     }
 
-    query(sql: String, *ps) -> PGResult {
+    query(sql: String, *ps) -> PostgreSQLResult {
         if #ps == 0 {
             return exec(sql)
         }
 
-        let sql = PG.rewrite-placeholders(sql)
+        let sql = PostgreSQL.rewrite-placeholders(sql)
         let n = #ps
         let vals = c.auto(c.new(c.ptr, n))
         let strs = []
@@ -224,7 +224,7 @@ pub class PG {
             n, nil, vals, nil, nil, 0
         )
 
-        PGResult(res, self)
+        PostgreSQLResult(res, self)
     }
 
     fetch-one(sql: String, *ps) {

@@ -210,10 +210,11 @@ queue_clear(Ty *ty, Value *self, int argc, Value *kwargs)
 static Value
 queue_to_array(Ty *ty, Value *self, int argc, Value *kwargs)
 {
-        ASSERT_ARGC("Queue.toArray()", 0);
+        ASSERT_ARGC("Queue.to-array()", 0);
 
         Queue *q = self->queue;
         usize n = _queue_count(q->head, q->tail, q->cap);
+
         Array *a = vAn(n);
 
         for (usize i = 0; i < n; ++i) {
@@ -306,7 +307,7 @@ shared_queue_take(Ty *ty, Value *self, int argc, Value *kwargs)
                 if (!q->open) {
                         TyMutexUnlock(&q->mutex);
                         LockTy();
-                        bP("queue is closed and empty");
+                        CanceledError("queue is closed and empty");
                 }
                 TyCondVarWait(&q->cond, &q->mutex);
         }
@@ -370,7 +371,7 @@ shared_queue_peek(Ty *ty, Value *self, int argc, Value *kwargs)
                 if (!q->open) {
                         TyMutexUnlock(&q->mutex);
                         LockTy();
-                        bP("queue is closed and empty");
+                        CanceledError("queue is closed and empty");
                 }
                 TyCondVarWait(&q->cond, &q->mutex);
         }
@@ -481,22 +482,17 @@ shared_queue_open(Ty *ty, Value *self, int argc, Value *kwargs)
 static Value
 shared_queue_to_array(Ty *ty, Value *self, int argc, Value *kwargs)
 {
-        ASSERT_ARGC("SharedQueue.toArray()", 0);
+        ASSERT_ARGC("SharedQueue.to-array()", 0);
 
         SharedQueue *q = self->shared_queue;
+        Array *a = mAo0(sizeof (Array), GC_ARRAY);
 
         TyMutexLock(&q->mutex);
-
         usize n = _queue_count(q->head, q->tail, q->cap);
-        Array *a = uAo0(sizeof (Array), GC_ARRAY);
-
         for (usize i = 0; i < n; ++i) {
                 uvP(*a, q->items[(q->head + i) % q->cap]);
         }
-
         TyMutexUnlock(&q->mutex);
-
-        CheckUsed(ty);
 
         return ARRAY(a);
 }

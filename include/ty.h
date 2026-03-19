@@ -1662,6 +1662,9 @@ vm_panic(Ty *ty, char const *fmt, ...);
 noreturn void
 vm_error(Ty *ty, char const *fmt, ...);
 
+noreturn void
+vm_xerror(Ty *ty, int kind, char const *fmt, ...);
+
 #define I_AM_TDB       (ty == TDB_TY)
 #define TDB            (ty->tdb)
 #define TDB_TY         ((TDB == NULL) ? NULL : (Ty *)(TDB->ty))
