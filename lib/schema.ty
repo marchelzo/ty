@@ -4,7 +4,7 @@ import sqlite (SQLite)
 import time
 import temporal
 
-pub __tls::_db: SQLite = SQLite(':memory:')
+pub __tls::_db: _ = SQLite(':memory:')
 let _tables = []
 
 pub class Table {
@@ -14,20 +14,8 @@ pub class Table {
     }
 }
 
-fn _existing-cols(db: SQLite, table: String) {
-    let rows = db.fetch-all(
-        "PRAGMA table_info({table})"
-    )
-    let by-name = %{}
-    for r in rows {
-        by-name[r['name']] = {
-            type: r['type'],
-            notnull: r['notnull'] == 1,
-            dflt: r['dflt_value'],
-            pk: r['pk'] == 1
-        }
-    }
-    by-name
+fn _existing-cols(db: _, table: String) {
+    db.existing-columns(table)
 }
 
 fn _sync-table(cls: _) {
@@ -40,15 +28,19 @@ fn _sync-table(cls: _) {
     }
 
     let existing = _existing-cols(_db, table)
+    let ex-lower = %{k.lower(): true for k, _ in existing}
+    let dialect = _dialect(_db)
     let desired = schema.cols
     for col in desired {
-        if col.name not in existing {
+        if col.name.lower() not in ex-lower {
             _db.exec(
                 "ALTER TABLE {table}"
-                " ADD COLUMN {_col-def(col)}"
+                " ADD COLUMN {_col-def(col, dialect)}"
             )
         }
     }
+
+    _create-indexes(_db, table, schema.indexes)
 }
 
 fn _diff-table(cls: _, db: SQLite) {
@@ -67,22 +59,24 @@ fn _diff-table(cls: _, db: SQLite) {
     }
 
     let existing = _existing-cols(db, table)
+    let ex-lower = %{k.lower(): true for k, _ in existing}
+    let dialect = _dialect(db)
 
     for col in desired {
-        if col.name not in existing {
+        if col.name.lower() not in ex-lower {
             ops.push({
                 op: 'add-column',
                 table,
                 column: col.name,
                 sql: "ALTER TABLE {table}"
-                     " ADD COLUMN {_col-def(col)}"
+                     " ADD COLUMN {_col-def(col, dialect)}"
             })
         }
     }
 
-    let desired-names = %{c.name: true for c in desired}
+    let desired-lower = %{c.name.lower(): true for c in desired}
     for name, _ in existing {
-        if name not in desired-names {
+        if name.lower() not in desired-lower {
             ops.push({
                 op: 'drop-column',
                 table,
@@ -94,8 +88,8 @@ fn _diff-table(cls: _, db: SQLite) {
     }
 
     for col in desired {
-        if col.name in existing {
-            let ex = existing[col.name]
+        if col.name.lower() in ex-lower {
+            let ex = existing[col.name] ?? existing[col.name.lower()]
             if ex.type != col.sql-type {
                 ops.push({
                     op: 'type-change',
@@ -111,8 +105,13 @@ fn _diff-table(cls: _, db: SQLite) {
     ops
 }
 
-pub fn connect(path: String, full-mutex: Bool = true) {
-    _db = SQLite(path, full-mutex=full-mutex)
+pub fn connect(dsn: String, full-mutex: Bool = true) {
+    fn pg(dsn) { (Module('psql').PG)(dsn) }
+    _db = match dsn {
+        /^postgres(ql)?:\/\// => pg(dsn),
+        /^psql:\/\//          => pg(dsn.sub(/^psql/, 'postgresql')),
+        _                     => SQLite(dsn, full-mutex=full-mutex)
+    }
     for _tables { _sync-table(it) }
     _db
 }
@@ -140,8 +139,42 @@ pub fn migrate!(db: SQLite | nil = nil) {
     ops
 }
 
-fn _resolve-db(db: SQLite | nil) -> SQLite {
+fn _resolve-db(db: _) {
     db ?? _db
+}
+
+fn _create-indexes(db: _, table: String, indexes: Array[_]) {
+    for idx in indexes {
+        let cols: _ = idx.map(_quote).join(', ')
+        let name = "idx_{table}_{idx.join('_')}"
+        db.exec(
+            "CREATE INDEX IF NOT EXISTS {name}"
+            " ON {table} ({cols})"
+        )
+    }
+}
+
+fn _dialect(db: _) -> String {
+    db.?dialect ?? 'sqlite'
+}
+
+fn _exec-insert(db: _, sql: String, pk-col: String, *ps) -> Int {
+    if _dialect(db) == 'postgres' {
+        let r: _ = db.fetch-one(
+            "{sql} RETURNING {_quote(pk-col)}",
+            *ps
+        )
+        r[pk-col]
+    } else {
+        db.exec(sql, *ps)
+        db.last-insert-rowid()
+    }
+}
+
+fn _pick-create-sql(schema: _, db: _) -> String {
+    (_dialect(db) == 'postgres')
+        ? schema.pg-sql
+        : schema.sql
 }
 
 fn _snake(s: String) -> String {
@@ -186,12 +219,24 @@ fn _unwrap-type(node: AST) {
     }
 }
 
-fn _col-def(c: _) -> String {
+fn _col-def(c: _, dialect: String = 'sqlite') -> String {
+    let pk-clause = if c.pk && c.auto {
+        match dialect {
+            'postgres' => 'SERIAL PRIMARY KEY',
+            _          => 'INTEGER PRIMARY KEY AUTOINCREMENT'
+        }
+    }
+
+    if pk-clause != nil {
+        return [
+            _quote(c.name),
+            pk-clause,
+        ].unwords()
+    }
+
     return [
         _quote(c.name),
         c.sql-type,
-        'PRIMARY KEY' if c.pk,
-        'AUTOINCREMENT' if c.auto,
         'NOT NULL' if !c.nullable && !c.pk,
         'UNIQUE' if c.uniq,
         "DEFAULT {_sql-default(c.dflt)}" if c.dflt != nil,
@@ -199,8 +244,12 @@ fn _col-def(c: _) -> String {
     ].unwords()
 }
 
-fn _create-sql(table: String, cols: Array[_]) -> String {
-    let defs = cols.map(_col-def).join(', ')
+fn _create-sql(
+    table: String,
+    cols: Array[_],
+    dialect: String = 'sqlite'
+) -> String {
+    let defs = cols.map(c -> _col-def(c, dialect)).join(', ')
     "CREATE TABLE IF NOT EXISTS {table} ({defs})"
 }
 
@@ -213,9 +262,9 @@ fn _db-exec(sql: String, args: Array) {
     ty.Call(func: db-exec, args: all-args)
 }
 
-pub class Query {
+pub class Query[T] : Iterable[T] {
     __tbl:      String
-    __from-row: (Dict[String, _] -> _)
+    __from-row: (Dict[String, _] -> T)
     __cond:     String | nil
     __params:   Array[_]
     __ord:      String | nil
@@ -224,7 +273,7 @@ pub class Query {
     __assocs:   Dict[String, _]
     __incs:     Array[_]
 
-    _clone(%overrides) -> Query {
+    _clone(%overrides) -> Query[T] {
         Query(
             tbl      = overrides['tbl']     ?? __tbl,
             from-row = overrides['fromRow'] ?? __from-row,
@@ -240,7 +289,7 @@ pub class Query {
 
     init(
         tbl: String,
-        from-row: (Dict[String, _] -> _),
+        from-row: (Dict[String, _] -> T),
         cond: String | nil = nil,
         params: Array[_] = [],
         ord: String | nil = nil,
@@ -260,11 +309,11 @@ pub class Query {
         __incs     = incs
     }
 
-    includes(*names: String) -> Query {
+    includes(*names: String) -> Query[T] {
         _clone(incs=[*__incs, *names])
     }
 
-    where(cond: String = '', *ps) -> Query {
+    where(cond: String = '', *ps) -> Query[T] {
         if cond == '' { return self }
         let new-cond = __cond
             ? "({__cond}) AND ({cond})"
@@ -275,15 +324,15 @@ pub class Query {
         )
     }
 
-    order(clause: String) -> Query {
+    order(clause: String) -> Query[T] {
         _clone(ord=clause)
     }
 
-    limit(n: Int) -> Query {
+    limit(n: Int) -> Query[T] {
         _clone(lim=n)
     }
 
-    offset(n: Int) -> Query {
+    offset(n: Int) -> Query[T] {
         _clone(off=n)
     }
 
@@ -332,7 +381,7 @@ pub class Query {
         }
     }
 
-    all(db = nil) {
+    all(db = nil) -> Array[T] {
         let db = _resolve-db(db)
         let rows = db.fetch-all(
             _select-sql(), *__params
@@ -342,7 +391,7 @@ pub class Query {
         insts
     }
 
-    first(db = nil) {
+    first(db = nil) -> T | nil {
         let db = _resolve-db(db)
         let $r = db.fetch-one(limit(1)._select-sql(), *__params) or return
         let insts = [(__from-row)(r)]
@@ -392,12 +441,63 @@ pub class Query {
         db.exec(sql, *x, *__params)
     }
 
+    sum(col: String, db = nil) {
+        let db = _resolve-db(db)
+        let sql = "SELECT sum({_quote(col)}) AS v"
+                  " FROM {__tbl}"
+        if __cond != nil { sql = "{sql} WHERE {__cond}" }
+        db.fetch-one(sql, *__params)!['v']
+    }
+
+    avg(col: String, db = nil) {
+        let db = _resolve-db(db)
+        let sql = "SELECT avg({_quote(col)}) AS v"
+                  " FROM {__tbl}"
+        if __cond != nil { sql = "{sql} WHERE {__cond}" }
+        db.fetch-one(sql, *__params)!['v']
+    }
+
+    min(col: String, db = nil) {
+        let db = _resolve-db(db)
+        let sql = "SELECT min({_quote(col)}) AS v"
+                  " FROM {__tbl}"
+        if __cond != nil { sql = "{sql} WHERE {__cond}" }
+        db.fetch-one(sql, *__params)!['v']
+    }
+
+    max(col: String, db = nil) {
+        let db = _resolve-db(db)
+        let sql = "SELECT max({_quote(col)}) AS v"
+                  " FROM {__tbl}"
+        if __cond != nil { sql = "{sql} WHERE {__cond}" }
+        db.fetch-one(sql, *__params)!['v']
+    }
+
+    group-by(col: String, agg: String = 'count(*) AS count') {
+        let db = _resolve-db(nil)
+        let qc = _quote(col)
+        let sql = "SELECT {qc}, {agg} FROM {__tbl}"
+        if __cond != nil { sql = "{sql} WHERE {__cond}" }
+        sql = "{sql} GROUP BY {qc}"
+        if __ord != nil { sql = "{sql} ORDER BY {__ord}" }
+        db.fetch-all(sql, *__params)
+    }
+
+    page(n: Int, per: Int = 25) -> Query[T] {
+        limit(per).offset((n - 1) * per)
+    }
+
+    raw(sql: String, *ps) -> Array[T] {
+        let db = _resolve-db(nil)
+        db.fetch-all(sql, *ps).map(__from-row)
+    }
+
     __iter__() {
         all().__iter__()
     }
 }
 
-fn _make-query(tbl: String, from-row: (Dict[String, _] -> _), assocs: Dict[String, _] = %{}) {
+fn _make-query[T](tbl: String, from-row: (Dict[String, _] -> T), assocs: Dict[String, _] = %{}) -> Query[T] {
     Query(tbl=tbl, from-row=from-row, assocs=assocs)
 }
 
@@ -433,9 +533,9 @@ fn _do-belongs-to(
     _do-get(db, tbl, pkq, fk-val)
 }
 
-fn _do-has-many(
-    tbl: String, fk-col: String, from-row: (Dict[String, _] -> _), pk-val: Int | String | nil
-) {
+fn _do-has-many[T](
+    tbl: String, fk-col: String, from-row: (Dict[String, _] -> T), pk-val: Int | String | nil
+) -> Query[T] {
     Query(tbl=tbl, from-row=from-row)
         .where("{_quote(fk-col)} = ?", pk-val)
 }
@@ -519,6 +619,13 @@ use match ForeignKey {
     ) => (tbl, col)
 }
 
+use match UniqueType {
+    ty.Subscript(
+        ty.Id({name: 'Unique', *}),
+        $inner
+    ) => inner
+}
+
 fn _find-field(expr: AST, col-names: Dict) {
     let found = nil
     ty.walk(expr, match {
@@ -568,11 +675,48 @@ pub macro table(def) {
 
     let cols    = []
     let has-pk? = false
+    let indexes = []
+
+    let real-fields = []
+    for field in fields {
+        match field {
+            ty.Assign((ty.Id({name: 'index', *}), ty.Array($items))) => {
+                for item in items {
+                    let ty.ArrayItem($ai) = item
+                    match ai.item {
+                        ty.Record($entries) => {
+                            indexes.push(entries.map(fn (e) {
+                                let ty.RecordEntry($re) = e
+                                let ty.Id({name: $n, *}) = re.item
+                                n
+                            }))
+                        },
+                        ty.Id({name: $n, *}) => {
+                            indexes.push([n])
+                        },
+                        _ => {}
+                    }
+                }
+            },
+            _ => real-fields.push(field)
+        }
+    }
+    fields = real-fields
 
     for field in fields {
         let (fld, dflt-node)    = _parse-field(field)
         let name             = fld.name
         let constraint       = fld.constraint
+
+        let uniq? = false
+        match constraint {
+            UniqueType($inner) => {
+                constraint = inner
+                uniq? = true
+            },
+            _ => {}
+        }
+
         let (nullable?, tyname) = _unwrap-type(constraint)
 
         let fk-ref   = nil
@@ -600,7 +744,7 @@ pub macro table(def) {
             name, sql-type, fk-table, fk-col, temporal,
             pk:   false,
             auto: false,
-            uniq: false,
+            uniq: uniq?,
             dflt,
             refs: fk-ref,
             nullable: nullable? || (dflt-node != nil)
@@ -621,6 +765,8 @@ pub macro table(def) {
         table,
         pk: pk-name,
         cols,
+        indexes,
+        pg-sql: _create-sql(table, cols, 'postgres'),
         sql: _create-sql(table, cols)
     }
 
@@ -641,9 +787,20 @@ pub macro table(def) {
                   " VALUES ({placeholders(ins-cols)})"
 
     let set-clause = ["{_quote(it.name)} = ?" for upd-cols].join(', ')
+    let excluded-set = ["{_quote(it.name)} = excluded.{_quote(it.name)}" for upd-cols].join(', ')
 
     let upd-sql = "UPDATE {table} SET {set-clause} WHERE {pk-q} = ?"
     let del-sql = "DELETE FROM {table} WHERE {pk-q} = ?"
+
+    let unique-cols = cols.filter(\_.uniq)
+    let upsert-conflict = (#unique-cols > 0)
+        ? _quote(unique-cols[0].name)
+        : pk-q
+    let upsert-sql = "INSERT INTO {table}"
+                     " ({quoted-names(ins-cols)})"
+                     " VALUES ({placeholders(ins-cols)})"
+                     " ON CONFLICT ({upsert-conflict})"
+                     " DO UPDATE SET {excluded-set}"
 
     fn fld-expr(c: _) {
         let id = ty.Id(name: c.name)
@@ -713,8 +870,18 @@ pub macro table(def) {
     if has-validations || has-method['validate'] {
         ins-stmts.push(validate-guard)
     }
-    ins-stmts.push(_db-exec(ins-sql, flds(ins-cols)))
-    ins-stmts.push($$[ $$pk-name = db.last-insert-rowid() $$])
+    let $ins-sql-str = ty.String(ins-sql)
+    let $pk-col-str = ty.String(pk-name)
+    let ins-exec = ty.Call(
+        func: $$[ $$::(_exec-insert) $$],
+        args: [
+            ty.Arg(arg: $$[db$$]),
+            ty.Arg(arg: ins-sql-str),
+            ty.Arg(arg: pk-col-str),
+            *flds(ins-cols).map(\ty.Arg(arg: _))
+        ]
+    )
+    ins-stmts.push($$[ $$pk-name = $$ins-exec $$])
     if has-method['afterInsert'] {
         ins-stmts.push(cb('afterInsert'))
     }
@@ -738,6 +905,26 @@ pub macro table(def) {
     }
     save-stmts.push($$[ self $$])
     let save-body = ty.Block(save-stmts)
+
+    let $upsert-sql-str = ty.String(upsert-sql)
+    let upsert-exec = ty.Call(
+        func: $$[ $$::(_exec-insert) $$],
+        args: [
+            ty.Arg(arg: $$[db$$]),
+            ty.Arg(arg: upsert-sql-str),
+            ty.Arg(arg: pk-col-str),
+            *flds(ins-cols).map(\ty.Arg(arg: _))
+        ]
+    )
+    let upsert-stmts = [db-resolve]
+    if has-created-at { upsert-stmts.push(ts-created) }
+    if has-updated-at { upsert-stmts.push(ts-updated) }
+    if has-validations || has-method['validate'] {
+        upsert-stmts.push(validate-guard)
+    }
+    upsert-stmts.push($$[ $$pk-name = $$upsert-exec $$])
+    upsert-stmts.push($$[ self $$])
+    let upsert-body = ty.Block(upsert-stmts)
 
     let del-stmts = [db-resolve]
     if has-method['beforeDelete'] { del-stmts.push(cb('beforeDelete')) }
@@ -795,6 +982,11 @@ pub macro table(def) {
             name: 'delete!',
             params: [db-p],
             body: del-body
+        ),
+        ty.Func(
+            name: 'upsert',
+            params: [db-p],
+            body: upsert-body
         ),
         ty.Func(
             name: 'toDict',
@@ -893,7 +1085,9 @@ pub macro table(def) {
             params: [db-p],
             body: $$[
                 let db = $$::(_resolve-db)(db)
-                db.exec($$create-sql-str)
+                let s: _ = self.schema()
+                db.exec($$::(_pick-create-sql)(s, db))
+                $$::(_create-indexes)(db, s.table, s.indexes)
             $$]
         ),
 
@@ -1071,7 +1265,8 @@ pub macro table(def) {
     ]
 
     ty.walk(def, match {
-        ForeignKey(_) => $$[ Int | nil $$],
-        node          => node
+        ForeignKey(_)       => $$[ Int | nil $$],
+        UniqueType($inner)  => inner,
+        node                => node
     })
 }

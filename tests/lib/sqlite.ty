@@ -1,0 +1,336 @@
+import sqlite (..)
+import path (..)
+
+ns test
+
+pub fn test-open-memory() {
+    let db = SQLite(':memory:')
+    db.close()
+}
+
+pub fn test-open-file() {
+    with tmp = Path.tempdir('sqlite-test') {
+        let p = "{tmp}/test.db"
+        let db = SQLite(p)
+        db.exec('CREATE TABLE t (x)')
+        db.close()
+        assert(Path(p).exists?)
+    }
+}
+
+pub fn test-open-bad-path() {
+    let threw? = false
+    try {
+        SQLite('/no/such/dir/db.sqlite')
+    } catch e: SQLiteError {
+        threw? = true
+    }
+    assert(threw?)
+}
+
+pub fn test-create-and-insert() {
+    let db = SQLite(':memory:')
+    db.exec('CREATE TABLE t (id INTEGER PRIMARY KEY, name TEXT)')
+    db.exec('INSERT INTO t (name) VALUES (?)', 'alice')
+    db.exec('INSERT INTO t (name) VALUES (?)', 'bob')
+    assert(db.changes() == 1)
+    assert(db.total-changes() == 2)
+}
+
+pub fn test-last-insert-rowid() {
+    let db = SQLite(':memory:')
+    db.exec('CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT)')
+    db.exec('INSERT INTO t (v) VALUES (?)', 'a')
+    assert(db.last-insert-rowid() == 1)
+    db.exec('INSERT INTO t (v) VALUES (?)', 'b')
+    assert(db.last-insert-rowid() == 2)
+}
+
+pub fn test-fetch-one-assoc() {
+    let db = SQLite(':memory:')
+    db.exec('CREATE TABLE t (x INT, y TEXT)')
+    db.exec('INSERT INTO t VALUES (?, ?)', 1, 'hello')
+
+    let row: _ = db.fetchOne('SELECT * FROM t')
+    assert(row['x'] == 1)
+    assert(row['y'] == 'hello')
+}
+
+pub fn test-fetch-one-tuple() {
+    let db = SQLite(':memory:')
+    db.exec('CREATE TABLE t (x INT, y TEXT)')
+    db.exec('INSERT INTO t VALUES (?, ?)', 42, 'world')
+
+    let row: _ = db.fetchOne('SELECT * FROM t', assoc=false)
+    assert(row[0] == 42)
+    assert(row[1] == 'world')
+}
+
+pub fn test-fetch-one-missing() {
+    let db = SQLite(':memory:')
+    db.exec('CREATE TABLE t (x INT)')
+    assert(db.fetchOne('SELECT * FROM t') == nil)
+}
+
+pub fn test-fetch-all() {
+    let db = SQLite(':memory:')
+    db.exec('CREATE TABLE t (n INT)')
+    for i in 0..5 { db.exec('INSERT INTO t VALUES (?)', i) }
+
+    let rows: _ = db.fetchAll('SELECT n FROM t ORDER BY n', assoc=false)
+    assert(rows == [[0], [1], [2], [3], [4]])
+}
+
+pub fn test-query-iteration() {
+    let db = SQLite(':memory:')
+    db.exec('CREATE TABLE t (v TEXT)')
+    db.exec("INSERT INTO t VALUES ('a')")
+    db.exec("INSERT INTO t VALUES ('b')")
+    db.exec("INSERT INTO t VALUES ('c')")
+
+    let vals = []
+    for row in db.query('SELECT v FROM t ORDER BY v') {
+        vals.push(row['v'])
+    }
+    assert(vals == ['a', 'b', 'c'])
+}
+
+pub fn test-parameterized-types() {
+    let db = SQLite(':memory:')
+    db.exec('CREATE TABLE t (i INT, f REAL, t TEXT, b BLOB, n)')
+    db.exec('INSERT INTO t VALUES (?, ?, ?, ?, ?)', 42, 3.14, 'hi', Blob('bytes'), nil)
+
+    let row: _ = db.fetchOne('SELECT * FROM t')
+    assert(row['i'] == 42)
+    assert(row['f'] > 3.13 && row['f'] < 3.15)
+    assert(row['t'] == 'hi')
+    assert(row['b'].str!() == 'bytes')
+    assert(row['n'] == nil)
+}
+
+pub fn test-multiple-params() {
+    let db = SQLite(':memory:')
+    db.exec('CREATE TABLE t (a INT, b INT, c INT)')
+    db.exec('INSERT INTO t VALUES (?, ?, ?)', 10, 20, 30)
+
+    let row: _ = db.fetchOne('SELECT a + b + c AS total FROM t')
+    assert(row['total'] == 60)
+}
+
+pub fn test-where-clause() {
+    let db = SQLite(':memory:')
+    db.exec('CREATE TABLE t (name TEXT, age INT)')
+    db.exec('INSERT INTO t VALUES (?, ?)', 'alice', 30)
+    db.exec('INSERT INTO t VALUES (?, ?)', 'bob', 25)
+    db.exec('INSERT INTO t VALUES (?, ?)', 'carol', 35)
+
+    let rows: _ = db.fetchAll('SELECT name FROM t WHERE age > ? ORDER BY name', 28)
+    assert(#rows == 2)
+    assert(rows[0]['name'] == 'alice')
+    assert(rows[1]['name'] == 'carol')
+}
+
+pub fn test-transaction-commit() {
+    let db = SQLite(':memory:')
+    db.exec('CREATE TABLE t (x INT)')
+
+    db.transaction(fn () {
+        db.exec('INSERT INTO t VALUES (1)')
+        db.exec('INSERT INTO t VALUES (2)')
+    })
+
+    let all: _ = db.fetchAll('SELECT * FROM t')
+    assert(#all == 2)
+}
+
+pub fn test-transaction-rollback() {
+    let db = SQLite(':memory:')
+    db.exec('CREATE TABLE t (x INT UNIQUE)')
+    db.exec('INSERT INTO t VALUES (1)')
+
+    let threw? = false
+    try {
+        db.transaction(fn () {
+            db.exec('INSERT INTO t VALUES (2)')
+            db.exec('INSERT INTO t VALUES (1)')
+        })
+    } catch _ {
+        threw? = true
+    }
+
+    assert(threw?)
+    let all: _ = db.fetchAll('SELECT * FROM t')
+    assert(#all == 1)
+    let row: _ = db.fetchOne('SELECT x FROM t')
+    assert(row['x'] == 1)
+}
+
+pub fn test-transaction-return-value() {
+    let db = SQLite(':memory:')
+    db.exec('CREATE TABLE t (x INT)')
+    db.exec('INSERT INTO t VALUES (42)')
+
+    let val: _ = db.transaction(fn () {
+        let r: _ = db.fetchOne('SELECT x FROM t')
+        r['x']
+    })
+    assert(val == 42)
+}
+
+pub fn test-run-multi-statement() {
+    let db = SQLite(':memory:')
+
+    db.run("
+        CREATE TABLE a (x INT);
+        CREATE TABLE b (y TEXT)
+    ")
+
+    assert(db.table?('a'))
+    assert(db.table?('b'))
+}
+
+pub fn test-table-exists() {
+    let db = SQLite(':memory:')
+    assert(!db.table?('nope'))
+    db.exec('CREATE TABLE yes (x)')
+    assert(db.table?('yes'))
+    assert(!db.table?('nope'))
+}
+
+pub fn test-tables-list() {
+    let db = SQLite(':memory:')
+    db.run("
+        CREATE TABLE zebra (z);
+        CREATE TABLE alpha (a);
+        CREATE TABLE mid (m)
+    ")
+    assert(db.tables() == ['alpha', 'mid', 'zebra'])
+}
+
+pub fn test-error-message() {
+    let db = SQLite(':memory:')
+    let threw? = false
+    try {
+        db.exec('SELECT * FROM nonexistent')
+    } catch e: SQLiteError {
+        threw? = true
+        assert('nonexistent' in "{e}" || 'no such table' in "{e}")
+    }
+    assert(threw?)
+}
+
+pub fn test-error-code() {
+    let threw? = false
+    try {
+        let db = SQLite(':memory:')
+        db.exec('GARBAGE SQL')
+    } catch e: SQLiteError {
+        threw? = true
+        assert(e.code == SQLITE_ERROR)
+    }
+    assert(threw?)
+}
+
+pub fn test-update-and-delete() {
+    let db = SQLite(':memory:')
+    db.exec('CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT)')
+    db.exec('INSERT INTO t (v) VALUES (?)', 'old')
+
+    db.exec('UPDATE t SET v = ? WHERE id = ?', 'new', 1)
+    assert(db.changes() == 1)
+    let row: _ = db.fetchOne('SELECT v FROM t')
+    assert(row['v'] == 'new')
+
+    db.exec('DELETE FROM t WHERE id = ?', 1)
+    assert(db.changes() == 1)
+    assert(db.fetchOne('SELECT * FROM t') == nil)
+}
+
+pub fn test-auto-close() {
+    with tmp = Path.tempdir('sqlite-test') {
+        let p = "{tmp}/auto.db"
+        do {
+            let db = SQLite(p)
+            db.exec('CREATE TABLE t (x)')
+        }
+        let db = SQLite(p)
+        assert(db.table?('t'))
+    }
+}
+
+pub fn test-reopen-persists() {
+    with tmp = Path.tempdir('sqlite-test') {
+        let p = "{tmp}/persist.db"
+
+        let db = SQLite(p)
+        db.exec('CREATE TABLE t (v TEXT)')
+        db.exec('INSERT INTO t VALUES (?)', 'saved')
+        db.close()
+
+        let db2 = SQLite(p)
+        let row: _ = db2.fetchOne('SELECT v FROM t')
+        assert(row['v'] == 'saved')
+    }
+}
+
+pub fn test-blob-roundtrip() {
+    let db = SQLite(':memory:')
+    db.exec('CREATE TABLE t (data BLOB)')
+
+    let b = Blob()
+    for i in 0..256 { b.push(i) }
+
+    db.exec('INSERT INTO t VALUES (?)', b)
+    let row: _ = db.fetchOne('SELECT data FROM t')
+    let got = row['data']
+    assert(#got == 256)
+    assert(got[0] == 0)
+    assert(got[255] == 255)
+}
+
+pub fn test-large-insert() {
+    let db = SQLite(':memory:')
+    db.exec('CREATE TABLE t (i INT, s TEXT)')
+
+    db.transaction(fn () {
+        for i in 0..1000 {
+            db.exec('INSERT INTO t VALUES (?, ?)', i, "row-{i}")
+        }
+    })
+
+    let r: _ = db.fetchOne('SELECT count(*) AS n FROM t')
+    let count = r['n']
+    assert(count == 1000)
+
+    let row: _ = db.fetchOne('SELECT s FROM t WHERE i = ?', 999)
+    assert(row['s'] == 'row-999')
+}
+
+pub fn test-null-handling() {
+    let db = SQLite(':memory:')
+    db.exec('CREATE TABLE t (a, b, c)')
+    db.exec('INSERT INTO t VALUES (?, ?, ?)', nil, 'mid', nil)
+
+    let row: _ = db.fetchOne('SELECT * FROM t')
+    assert(row['a'] == nil)
+    assert(row['b'] == 'mid')
+    assert(row['c'] == nil)
+}
+
+pub fn test-empty-string() {
+    let db = SQLite(':memory:')
+    db.exec('CREATE TABLE t (s TEXT)')
+    db.exec('INSERT INTO t VALUES (?)', '')
+
+    let row: _ = db.fetchOne('SELECT s FROM t')
+    assert(row['s'] == '')
+}
+
+pub fn test-unicode() {
+    let db = SQLite(':memory:')
+    db.exec('CREATE TABLE t (s TEXT)')
+    db.exec('INSERT INTO t VALUES (?)', '日本語テスト 🎉')
+
+    let row: _ = db.fetchOne('SELECT s FROM t')
+    assert(row['s'] == '日本語テスト 🎉')
+}

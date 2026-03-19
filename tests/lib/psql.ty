@@ -1,0 +1,277 @@
+import psql (..)
+
+let conninfo = 'dbname=ty_psql_test'
+
+ns test
+
+fn fresh() {
+    let db = PG(conninfo)
+    db.exec('SET client_min_messages TO WARNING')
+    db.exec('DROP TABLE IF EXISTS test_posts')
+    db.exec('DROP TABLE IF EXISTS test_users')
+    db.exec(
+        'CREATE TABLE test_users ('
+        '  id SERIAL PRIMARY KEY,'
+        '  name TEXT NOT NULL,'
+        '  email TEXT,'
+        '  age INT DEFAULT 0'
+        ')'
+    )
+    db
+}
+
+pub fn test-connect() {
+    let db = PG(conninfo)
+    db.close()
+}
+
+pub fn test-connect-bad() {
+    let threw? = false
+    try {
+        PG('dbname=nonexistent_db_xyz')
+    } catch e: PGError {
+        threw? = true
+    }
+    assert(threw?)
+}
+
+pub fn test-exec-select() {
+    let db = PG(conninfo)
+    let r = db.exec('SELECT 1 AS x')
+    assert(r.ntuples == 1)
+    assert(r.nfields == 1)
+    assert(r.field-name(0) == 'x')
+}
+
+pub fn test-fetch-one() {
+    let db = fresh()
+    db.exec(
+        "INSERT INTO test_users (name, email, age)"
+        " VALUES ('Alice', 'a@b.com', 30)"
+    )
+    let row: _ = db.fetch-one(
+        'SELECT * FROM test_users WHERE name = $1',
+        'Alice'
+    )
+    assert(row['name'] == 'Alice')
+    assert(row['email'] == 'a@b.com')
+    assert(row['age'] == 30)
+}
+
+pub fn test-fetch-one-missing() {
+    let db = fresh()
+    let row = db.fetch-one(
+        'SELECT * FROM test_users WHERE name = $1',
+        'Nobody'
+    )
+    assert(row == nil)
+}
+
+pub fn test-fetch-all() {
+    let db = fresh()
+    db.exec(
+        "INSERT INTO test_users (name) VALUES ('A')"
+    )
+    db.exec(
+        "INSERT INTO test_users (name) VALUES ('B')"
+    )
+    let rows: _ = db.fetch-all(
+        'SELECT name FROM test_users ORDER BY name'
+    )
+    assert(#rows == 2)
+    assert(rows[0]['name'] == 'A')
+    assert(rows[1]['name'] == 'B')
+}
+
+pub fn test-parameterized-types() {
+    let db = fresh()
+    db.query(
+        'INSERT INTO test_users (name, email, age)'
+        ' VALUES ($1, $2, $3)',
+        'Bob', 'bob@x.com', 25
+    )
+    let row: _ = db.fetch-one(
+        'SELECT * FROM test_users WHERE name = $1',
+        'Bob'
+    )
+    assert(row['name'] == 'Bob')
+    assert(row['age'] == 25)
+}
+
+pub fn test-null-params() {
+    let db = fresh()
+    db.query(
+        'INSERT INTO test_users (name, email)'
+        ' VALUES ($1, $2)',
+        'NullEmail', nil
+    )
+    let row: _ = db.fetch-one(
+        'SELECT * FROM test_users WHERE name = $1',
+        'NullEmail'
+    )
+    assert(row['email'] == nil)
+}
+
+pub fn test-multiple-params() {
+    let db = fresh()
+    db.query(
+        'INSERT INTO test_users (name, age)'
+        ' VALUES ($1, $2)',
+        'Alice', 30
+    )
+    db.query(
+        'INSERT INTO test_users (name, age)'
+        ' VALUES ($1, $2)',
+        'Bob', 20
+    )
+    let rows: _ = db.fetch-all(
+        'SELECT name FROM test_users'
+        ' WHERE age > $1 ORDER BY name',
+        25
+    )
+    assert(#rows == 1)
+    assert(rows[0]['name'] == 'Alice')
+}
+
+pub fn test-transaction-commit() {
+    let db = fresh()
+    db.transaction(fn () {
+        db.query(
+            'INSERT INTO test_users (name)'
+            ' VALUES ($1)', 'A'
+        )
+        db.query(
+            'INSERT INTO test_users (name)'
+            ' VALUES ($1)', 'B'
+        )
+    })
+    let rows: _ = db.fetch-all(
+        'SELECT * FROM test_users'
+    )
+    assert(#rows == 2)
+}
+
+pub fn test-transaction-rollback() {
+    let db = fresh()
+    db.query(
+        'INSERT INTO test_users (name)'
+        ' VALUES ($1)', 'Keep'
+    )
+    let threw? = false
+    try {
+        db.transaction(fn () {
+            db.query(
+                'INSERT INTO test_users (name)'
+                ' VALUES ($1)', 'Discard'
+            )
+            throw RuntimeError('rollback!')
+        })
+    } catch _ {
+        threw? = true
+    }
+    assert(threw?)
+    let rows: _ = db.fetch-all(
+        'SELECT * FROM test_users'
+    )
+    assert(#rows == 1)
+    assert(rows[0]['name'] == 'Keep')
+}
+
+pub fn test-table-exists() {
+    let db = fresh()
+    assert(db.table?('test_users'))
+    assert(!db.table?('nonexistent_xyz'))
+}
+
+pub fn test-tables-list() {
+    let db = fresh()
+    db.exec(
+        'CREATE TABLE test_posts ('
+        '  id SERIAL PRIMARY KEY,'
+        '  title TEXT'
+        ')'
+    )
+    let tbls: _ = db.tables()
+    assert('test_users' in tbls)
+    assert('test_posts' in tbls)
+}
+
+pub fn test-error-on-bad-sql() {
+    let db = PG(conninfo)
+    let threw? = false
+    try {
+        db.exec('INVALID SQL GARBAGE')
+    } catch e: PGError {
+        threw? = true
+    }
+    assert(threw?)
+}
+
+pub fn test-boolean-coercion() {
+    let db = PG(conninfo)
+    let row: _ = db.fetch-one(
+        'SELECT $1::bool AS flag', true
+    )
+    assert(row['flag'] == true)
+    let row2: _ = db.fetch-one(
+        'SELECT $1::bool AS flag', false
+    )
+    assert(row2['flag'] == false)
+}
+
+pub fn test-float-type() {
+    let db = PG(conninfo)
+    let row: _ = db.fetch-one(
+        'SELECT $1::float8 AS val', 3.14
+    )
+    assert(row['val'] > 3.13 && row['val'] < 3.15)
+}
+
+pub fn test-returning() {
+    let db = fresh()
+    let row: _ = db.fetch-one(
+        'INSERT INTO test_users (name, age)'
+        ' VALUES ($1, $2) RETURNING id, name',
+        'Alice', 30
+    )
+    assert(row['id'] == 1)
+    assert(row['name'] == 'Alice')
+}
+
+pub fn test-update-delete() {
+    let db = fresh()
+    db.query(
+        'INSERT INTO test_users (name, age)'
+        ' VALUES ($1, $2)',
+        'Alice', 30
+    )
+
+    db.query(
+        'UPDATE test_users SET age = $1'
+        ' WHERE name = $2',
+        31, 'Alice'
+    )
+    let row: _ = db.fetch-one(
+        'SELECT age FROM test_users'
+        ' WHERE name = $1',
+        'Alice'
+    )
+    assert(row['age'] == 31)
+
+    db.query(
+        'DELETE FROM test_users WHERE name = $1',
+        'Alice'
+    )
+    assert(db.fetch-one(
+        'SELECT * FROM test_users'
+        ' WHERE name = $1',
+        'Alice'
+    ) == nil)
+}
+
+pub fn test-auto-close() {
+    do {
+        let db = PG(conninfo)
+        db.exec('SELECT 1')
+    }
+}
