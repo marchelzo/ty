@@ -647,7 +647,11 @@ pub class TermIO {
 
             for match fds {
                 (self.__notif-r, ev) => {
-                    if let $msg = read(__notif-r, 512) and msg[-1] == 0 {
+                    let msg = read(__notif-r, 512)
+                    if msg == nil || #msg == 0 {
+                        closed? = true
+                        stop? = true
+                    } else if msg[-1] == 0 {
                         __stop()
                         wait-for-resume()
                     }
@@ -750,12 +754,18 @@ pub class TermIO {
         }
     }
 
-    next-event() -> ?event.Event {
+    next-event(timeout: Float | nil = nil) -> ?event.Event {
         if !open? {
             return event.EOF
         }
 
-        let ev = __ev-queue.take()
+        let ev = (timeout == nil)
+            ? __ev-queue.take()
+            : match __ev-queue.try-take(timeout) {
+                Some(ev) => ev,
+                None     => return nil
+            }
+
         if ev == event.EOF {
             close()
         }

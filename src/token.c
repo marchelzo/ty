@@ -143,6 +143,8 @@ token_show_type(Ty *ty, int type)
         case TOKEN_AT:                 return "operator '@'";
         case TOKEN_INC:                return "operator '++'";
         case TOKEN_DEC:                return "operator '--'";
+        case '</':                     return "token '</'";
+        case '/>':                     return "token '/>'";
         case TOKEN_IDENTIFIER:         return "identifier";
         case TOKEN_USER_OP:            return "user-defined operator";
         case TOKEN_STRING:             return "string";
@@ -202,6 +204,8 @@ token_showx(Ty *ty, struct token const *t, char const *c)
                 [0]          = '?',
                 [LEX_HIDDEN] = 'h',
                 [LEX_FMT]    = 'f',
+                [LEX_XFMT]   = 'f',
+                [LEX_TYX]    = 'x',
                 [LEX_FAKE]   = '_',
                 [LEX_PREFIX] = 'p',
                 [LEX_INFIX]  = 'i'
@@ -211,6 +215,8 @@ token_showx(Ty *ty, struct token const *t, char const *c)
                 [0]          = TERM(92),
                 [LEX_HIDDEN] = TERM(34;1),
                 [LEX_FMT]    = TERM(92),
+                [LEX_XFMT]   = TERM(92),
+                [LEX_TYX]    = TERM(94),
                 [LEX_FAKE]   = TERM(92;1),
                 [LEX_PREFIX] = TERM(95;1),
                 [LEX_INFIX]  = TERM(93;1)
@@ -226,7 +232,7 @@ token_showx(Ty *ty, struct token const *t, char const *c)
 
         xvP(out, '\0');
 
-        return out.items;
+        return vv(out);
 }
 
 char const *
