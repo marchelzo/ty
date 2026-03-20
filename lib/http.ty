@@ -128,22 +128,17 @@ pub class HttpServer {
 
         for {params, pattern, fun, *} in handlers {
             if let $m = url.match(pattern) {
-                return (fun, %{params[i]: m[i + 1]! for i in ..#params})
+                return (fun, %{params[it]: m[it + 1]! for ..#params})
             }
         }
     }
 
     stop() { __stopping = true }
 
-    __install(method: String, route: String, f: RequestHandler) {
+    __install(method: String, route: String, fun: RequestHandler) {
         let (params, pattern) = make-pattern(route)
         let handlers = __handlers[method]
-        handlers.push({
-            route,
-            params,
-            pattern,
-            fun: f
-        })
+        handlers.push({route, params, pattern, fun})
         handlers.sort!(by=\-(_.route.search('<') ?? 99999))
     }
 
@@ -266,5 +261,8 @@ pub class HttpServer {
         for __threads {
             it.join()
         }
+
+        close(__ev-r)
+        close(__ev-w)
     }
 }

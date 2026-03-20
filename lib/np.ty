@@ -245,7 +245,7 @@ fn __fmt-nd(data: Ptr[_], shape: Array[Int], strides: Array[Int], offset: Int, d
     } else {
         for i in 0..n { rows.push(__fmt-nd(data, shape, strides, offset + i * st, depth + 1)) }
     }
-    "[{rows.join(',\n{pad}')}]"
+    "[{rows.join(",\n{pad}")}]"
 }
 
 pub class NDArray {
