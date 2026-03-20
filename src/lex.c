@@ -772,6 +772,137 @@ Unterminated:
 }
 
 static Token
+lex_tyx(Ty *ty)
+{
+        static struct {
+                char const *key;
+                char val;
+        } entities[] = {
+                {"amp",  '&' },
+                {"lt",   '<' },
+                {"gt",   '>' },
+                {"quot", '"' },
+                {"apos", '\''}
+        };
+
+        byte_vector text = {0};
+
+        char const *semi;
+        char *end;
+        long rune;
+        int  len;
+        u8   buf[8];
+
+        char const *s = SRC;
+
+        while (isspace(*s)) { ++s; }
+
+        if (s[0] == '<' && s[1] == '/') {
+                skipspace(ty);
+                nextchar(ty);
+                nextchar(ty);
+                return mktoken(ty, '</');
+        }
+
+        if (s[0] == '/' && s[1] == '>') {
+                skipspace(ty);
+                nextchar(ty);
+                nextchar(ty);
+                return mktoken(ty, '/>');
+        }
+
+        if (s[0] == '>') {
+                skipspace(ty);
+                nextchar(ty);
+                return mktoken(ty, '>');
+        }
+
+        if (contains("{}<", C(0))) {
+                return mktoken(ty, nextchar(ty));
+        }
+
+        for (;;) {
+                switch (C(0)) {
+                case '\0':
+                        goto Unterminated;
+
+                case '&':
+                        semi = strchr(SRC, ';');
+                        if (UNLIKELY(semi == NULL)) {
+                                goto Unterminated;
+                        }
+                        if (UNLIKELY(semi - SRC > 31)) {
+                                goto BadEntity;
+                        }
+                        if (SRC[1] == '#') {
+                                rune = strtol(SRC + 2, &end, 10);
+                                if (end != semi) {
+                                        error(
+                                                ty,
+                                                "invalid numeric entity in tyx literal: %.*s",
+                                                (int)(semi - SRC),
+                                                SRC
+                                        );
+                                }
+                                if (!utf8proc_codepoint_valid(rune)) {
+                                        error(ty, "invalid codepoint in tyx literal: %04lx", rune);
+                                }
+                                len = utf8proc_encode_char(rune, buf);
+                                avPn(text, (char *)buf, len);
+                        } else {
+                                end = NULL;
+                                for (int i = 0; i < countof(entities); ++i) {
+                                        if (
+                                                (strlen(entities[i].key) == (semi - SRC))
+                                             && (strncmp(SRC, entities[i].key, semi - SRC) == 0)
+                                        ) {
+                                                end = &entities[i].val;
+                                                break;
+                                        }
+                                }
+                                if (end == NULL) {
+BadEntity:
+                                        error(
+                                                ty,
+                                                "unknown entity in tyx literal: &%.*s;",
+                                                (int)(semi - SRC),
+                                                SRC
+                                        );
+                                }
+                                avP(text, *end);
+                        }
+                        while (SRC <= semi) {
+                                nextchar(ty);
+                        }
+                        break;
+
+                case '<':
+                case '{':
+                case '}':
+                        avP(text, '\0');
+                        return mkstring(ty, vv(text));
+
+                default:
+                        if (isspace(C(0))) {
+                                while (isspace(C(0))) {
+                                        nextchar(ty);
+                                }
+                                avP(text, ' ');
+                        } else {
+                                avP(text, nextchar(ty));
+                        }
+                }
+        }
+
+Unterminated:
+        error(
+                ty,
+                "unterminated tyx literal starting on line %d",
+                Start.line + 1
+        );
+}
+
+static Token
 lexregex(Ty *ty)
 {
         byte_vector pat = {0};
@@ -821,7 +952,7 @@ lexregex(Ty *ty)
 
 Unterminated:
         avP(pat, '\0');
-        error(ty, "unterminated regular expression: %s/%.20s%s...", TERM(36), pat.items, TERM(39));
+        return mktoken(ty, TOKEN_ERROR);
 }
 
 static intmax_t
@@ -1130,27 +1261,16 @@ static Token
 saferegex(Ty *ty)
 {
         LexState save = state;
-        SAVE_(jmp_buf, jb);
-
-        Token t;
-        if (setjmp(jb) != 0) {
-                TyClearError(ty);
+        Token t = lexregex(ty);
+        if (
+                (t.type != TOKEN_REGEX)
+             || ((t.start.line != t.end.line) && (t.regex->pattern[0] == ' '))
+        ) {
                 state = save;
-                t = mktoken(ty, nextchar(ty));
+                return mktoken(ty, nextchar(ty));
         } else {
-                t = lexregex(ty);
-                if (
-                        (t.start.line != t.end.line)
-                     && (t.regex->pattern[0] == ' ')
-                ) {
-                        state = save;
-                        t = mktoken(ty, nextchar(ty));
-                }
+                return t;
         }
-
-        RESTORE_(jb);
-
-        return t;
 }
 
 static Token
@@ -1162,8 +1282,12 @@ Begin:
         start = Start = state.loc;
         state.ctx = ctx;
 
-        if (ctx == LEX_FMT || ctx == LEX_XFMT) {
+        if (UNLIKELY(ctx == LEX_FMT || ctx == LEX_XFMT)) {
                 return lex_ss_string(ty);
+        }
+
+        if (UNLIKELY(ctx == LEX_TYX)) {
+                return lex_tyx(ty);
         }
 
         if (skipspace(ty)) {

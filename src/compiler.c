@@ -508,6 +508,9 @@ ResolveFieldTypes(Ty *ty, Scope *scope, ExprVec const *fields);
 bool
 expedite_fun(Ty *ty, Expr *e, void *ctx);
 
+static Expr *
+xxclone(Ty *ty, Expr *expr);
+
 void
 UnresolveExpr(Ty *ty, Expr *expr);
 
@@ -807,7 +810,8 @@ HasPublicFields(Class const *class)
 
         }
 
-        return HasPublicFields(class->super);
+        return false;
+        //return HasPublicFields(class->super);
 }
 
 static void
@@ -12403,8 +12407,7 @@ InjectRedpill(Ty *ty, Stmt *s)
                                         AddInheritedFieldParams(ty, init, super);
                                 }
                         } else if (init->class != class) {
-                                init = aclone(init);
-                                init->arena = GetArenaAlloc(ty);
+                                init = xxclone(ty, init);
                                 init->class = class;
                         } else {
                                 init = NULL;
@@ -12630,6 +12633,78 @@ xclone(Ty *ty, Expr *expr)
         visitor.t_post = clone_expr;
         visitor.l_post = clone_lvalue;
         visitor.s_post = clone_stmt;
+        visitor.user = ty;
+
+        return visit_expression(
+                ty,
+                expr,
+                NULL,
+                &visitor
+        );
+}
+
+static Expr *
+xclone_expr(Expr *e, Scope *scope, void *ctx)
+{
+        Ty *ty = (Ty *)ctx;
+        e = aclone(e);
+        e->arena = GetArenaAlloc(ty);
+        e->xscope = NULL;
+        switch (e->type) {
+        case EXPRESSION_FUNCTION:
+        case EXPRESSION_MULTI_FUNCTION:
+        case EXPRESSION_IMPLICIT_FUNCTION:
+        case EXPRESSION_GENERATOR:
+                e->scope = NULL;
+                v00(e->param_symbols);
+                break;
+
+        case EXPRESSION_IDENTIFIER:
+        case EXPRESSION_MATCH_REST:
+        case EXPRESSION_MATCH_NOT_NIL:
+                e->symbol = NULL;
+                break;
+        }
+        return e;
+}
+
+static Expr *
+xclone_lvalue(Expr *e, bool _, Scope *scope, void *ctx)
+{
+        Ty *ty = (Ty *)ctx;
+        e = aclone(e);
+        e->arena = GetArenaAlloc(ty);
+        e->xscope = NULL;
+        switch (e->type) {
+        case EXPRESSION_IDENTIFIER:
+        case EXPRESSION_MATCH_REST:
+        case EXPRESSION_MATCH_NOT_NIL:
+                e->symbol = NULL;
+                break;
+        }
+        return e;
+}
+
+static Stmt *
+xclone_stmt(Stmt *s, Scope *scope, void *ctx)
+{
+        Ty *ty = (Ty *)ctx;
+        s = aclone(s);
+        s->arena = GetArenaAlloc(ty);
+        s->xscope = NULL;
+        return s;
+}
+
+static Expr *
+xxclone(Ty *ty, Expr *expr)
+{
+        VisitorSet visitor = visit_identitiy(ty);
+
+        visitor.e_post = xclone_expr;
+        visitor.p_post = xclone_expr;
+        visitor.t_post = xclone_expr;
+        visitor.l_post = xclone_lvalue;
+        visitor.s_post = xclone_stmt;
         visitor.user = ty;
 
         return visit_expression(

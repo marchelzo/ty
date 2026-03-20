@@ -294,6 +294,7 @@ typedef struct ParserState {
         bool NoIn;
         bool NoAndOr;
         bool NoPipe;
+        bool NoLG;
         bool TypeContext;
 } ParserState;
 
@@ -337,6 +338,7 @@ static Expr NullExpr = {
 #define NoEquals          (state.NoEquals)
 #define NoIn              (state.NoIn)
 #define NoPipe            (state.NoPipe)
+#define NoLG              (state.NoLG)
 #define ParseDepth        (state.depth)
 #define SavePoints        (state.SavePoints)
 #define TokenIndex        (state.TokenIndex)
@@ -856,7 +858,7 @@ inline static void
 
         LCTX = ctx;
 
-        Location seek = (ctx == LEX_FMT)
+        Location seek = (ctx == LEX_FMT || ctx == LEX_TYX)
                       ? token(-1)->end
                       : tok()->start;
 
@@ -2443,9 +2445,13 @@ prefix_statement(Ty *ty)
 {
         Expr *e = mkexpr(ty);
 
+        SAVE_NE(false);
+
         e->type = EXPRESSION_STATEMENT;
         e->statement = parse_statement(ty, -1);
         e->end = e->statement->end;
+
+        LOAD_NE();
 
         return e;
 }
@@ -3318,7 +3324,6 @@ prefix_regex(Ty *ty)
         return e;
 }
 
-
 static Expr *
 prefix_array(Ty *ty)
 {
@@ -3611,6 +3616,76 @@ prefix_template_expr(Ty *ty)
         e->end = TEnd;
 
         return e;
+}
+
+static Expr *
+prefix_tyx(Ty *ty)
+{
+#define DEBUG(fmt, ...) do { if (EnableLogging) { LOGX("|%*s" fmt, ParseDepth * 4, "" __VA_OPT__(,) __VA_ARGS__); } } while (0)
+        Expr *tyx = mkxpr(FUNCTION_CALL);
+        Expr *text;
+
+        next();
+
+        tyx->function = parse_expr(ty, 10);
+
+        DEBUG(">> parsing tyx element: %s", show_expr(tyx->function));
+
+        setctx(LEX_TYX);
+        while (T0 != '>' && T0 != '/>') {
+                setctx(LEX_PREFIX);
+                expect(TOKEN_IDENTIFIER);
+                DEBUG("  tyx kwarg: %s", tok()->identifier);
+                avP(tyx->kws, tok()->identifier);
+                next();
+                consume('=');
+                avP(tyx->kwargs, parse_expr(ty, 10));
+                avP(tyx->fkwconds, NULL);
+                setctx(LEX_TYX);
+                DEBUG("  tyx prop: %s", show_expr(v_L(tyx->kwargs)));
+        }
+        if (try_consume('/>')) {
+                goto End;
+        }
+        consume('>');
+        while (T0 != '</') {
+                switch (T0) {
+                case TOKEN_STRING:
+                        text = mkxpr(STRING);
+                        text->string = tok()->string;
+                        avP(tyx->args, text);
+                        avP(tyx->fconds, NULL);
+                        next();
+                        break;
+
+                case '{':
+                        next();
+                        avP(tyx->args, parse_expr(ty, 0));
+                        avP(tyx->fconds, NULL);
+                        consume('}');
+                        DEBUG("  tyx braced arg: %s", show_expr(v_L(tyx->args)));
+                        break;
+
+                case '<':
+                        avP(tyx->args, parse_expr(ty, 999));
+                        avP(tyx->fconds, NULL);
+                        DEBUG("  tyx child: %s", show_expr(v_L(tyx->args)->function));
+                        break;
+
+                default:
+                        die("unexpected token in tyx fragment: %s", token_show(ty, tok()));
+                }
+                setctx(LEX_TYX);
+        }
+        next();
+        (void)parse_expr(ty, 10);
+        setctx(LEX_TYX);
+        consume('>');
+
+End:
+        DEBUG("<< parsed tyx element: %s", show_expr(tyx->function));
+        tyx->end = TEnd;
+        return tyx;
 }
 
 static Expr *
@@ -4444,16 +4519,13 @@ infix_arrow_function(Ty *ty, Expr *left)
                 )
             ) {
                 Expr *l = mkxpr(LIST);
-                vec_init(l->es);
                 avP(l->es, left);
                 left = l;
         } else {
                 left->type = EXPRESSION_LIST;
         }
 
-        Stmt *body = mkstmt(ty);
-        body->type = STATEMENT_BLOCK;
-        vec_init(body->statements);
+        Stmt *body = mkstmtx(BLOCK);
 
         for (int i = 0; i < left->es.count; ++i) {
                 Expr *p = left->es.items[i];
@@ -4737,6 +4809,7 @@ get_prefix_parser(Ty *ty)
         case '$':                      return prefix_dollar;
         case '^':                      return prefix_carat;
         case '>':                      return prefix_greater;
+        case '<':                      return prefix_tyx;
 
         case TOKEN_TEMPLATE_BEGIN:     return prefix_template;
         case '$$':                     return prefix_template_expr;
@@ -4938,8 +5011,10 @@ get_infix_prec(Ty *ty)
         case TOKEN_CMP:            return 7;
         case TOKEN_GEQ:            return 7;
         case TOKEN_LEQ:            return 7;
-        case TOKEN_GT:             return 7;
-        case TOKEN_LT:             return 7;
+
+        case TOKEN_GT:
+        case TOKEN_LT:
+                return (tok()->start.line == token(-1)->end.line) ? 7 : -3;
 
         case TOKEN_SHL:            return 7;
         case TOKEN_SHR:            return 7;
@@ -5004,7 +5079,10 @@ Keyword:
         }
 
 UserOp:
-        p = table_look(ty, &uops, tok()->identifier);
+        if (NoLG && s_eq(tok()->operator, "</")) {
+                return -3;
+        }
+        p = table_look(ty, &uops, tok()->operator);
         return (p != NULL) ? llabs(p->z) : 8;
 }
 

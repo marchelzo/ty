@@ -187,6 +187,18 @@ contains(char const *s, int c)
         return (c != '\0') && (strchr(s, c) != NULL);
 }
 
+inline static bool
+only_blanks(char const *s)
+{
+        for (isize i = 0; i < s[i] != '\0'; ++i) {
+                if (!contains(" \t\r\n", s[i])) {
+                        return false;
+                }
+        }
+
+        return true;
+}
+
 static isize
 term_fit_cols(void const *_s, isize n, int cols)
 {

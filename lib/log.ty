@@ -29,7 +29,8 @@ fn log-open(path: String) {
     open(path, O_RDWR | O_TRUNC | O_CREAT, 0644)
 }
 
-let global-log-fds = %{nil: 2, *: log-open(it)}
+let global-log-fds  = %{nil: 2, *: log-open(it)}
+let global-log-conf = %{}
 let global-log-lock = Mutex()
 
 pub DEFAULT_LOG_PATH = getenv('TY_LOG')
@@ -163,6 +164,12 @@ class LogContextGuard {
 let __tls::_loggers = nil
 let __tls::_chalk   = nil
 
+fn _conf(name: String) {
+    with global-log-lock {
+        global-log-conf[name]
+    }
+}
+
 fn _get(name: String, path: ?String) -> Logger {
     let loggers = _loggers ?? (_loggers = %{})
     let chalk   = _chalk   ?? (_chalk = chalk.Chalk())
@@ -170,6 +177,9 @@ fn _get(name: String, path: ?String) -> Logger {
         logger
     } else {
         loggers[name] = Logger(name, path, chalk)
+        if let $conf = _conf(name) {
+            loggers[name].setup(conf)
+        }
     }
 }
 
@@ -192,8 +202,12 @@ pub macro critical!(expr) { _log(CRITICAL, expr) }
 
 pub macro log-ctx(name) { _ctx(name) }
 
-pub macro logging(config) $$[
+pub macro logging(config) = do {
+    let config = $$config
     let logger = $${_get}(__module__, $$::(DEFAULT_LOG_PATH))
-    logger.setup($$config)
-$$]
+    logger.setup(config)
+    $$::(global-log-lock).lock()
+    $$::(global-log-conf)[__module__] = config
+    $$::(global-log-lock).unlock()
+}
 
