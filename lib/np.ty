@@ -213,10 +213,7 @@ fn __binop(a-data: Ptr[_], a-shape: Array[Int], b-data: Ptr[_], b-shape: Array[I
 
 
 fn __fmt-elem(v: Float) -> String {
-    if v == 0.0 { return '0.' }
-    let iv = Int(v)
-    if Float(iv) == v { return "{iv}." }
-    "{v}"
+    (v == round(v)) ? "{v:d}." : "{v}"
 }
 
 fn __fmt-nd(data: Ptr[_], shape: Array[Int], strides: Array[Int], offset: Int, depth: Int) -> String {
@@ -234,17 +231,25 @@ fn __fmt-nd(data: Ptr[_], shape: Array[Int], strides: Array[Int], offset: Int, d
         return "[{parts.join(', ')}]"
     }
 
-    let n = shape[depth]
-    let st = strides[depth]
-    let pad = '       ' + ' ' * depth
+    let n    = shape[depth]
+    let st   = strides[depth]
+    let pad  = ' ' * (depth + 7)
     let rows = []
+
     if n > 6 {
-        for i in 0..3 { rows.push(__fmt-nd(data, shape, strides, offset + i * st, depth + 1)) }
+        for i in 0..3 {
+            rows.push(__fmt-nd(data, shape, strides, offset + i * st, depth + 1))
+        }
         rows.push('...')
-        for i in (n - 3)..n { rows.push(__fmt-nd(data, shape, strides, offset + i * st, depth + 1)) }
+        for i in (n - 3)..n {
+            rows.push(__fmt-nd(data, shape, strides, offset + i * st, depth + 1))
+        }
     } else {
-        for i in 0..n { rows.push(__fmt-nd(data, shape, strides, offset + i * st, depth + 1)) }
+        for i in 0..n {
+            rows.push(__fmt-nd(data, shape, strides, offset + i * st, depth + 1))
+        }
     }
+
     "[{rows.join(",\n{pad}")}]"
 }
 
