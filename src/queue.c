@@ -282,12 +282,10 @@ shared_queue_put(Ty *ty, Value *self, int argc, Value *kwargs)
         SharedQueue *q = self->shared_queue;
 
         TyMutexLock(&q->mutex);
-
         _queue_push_back_one(ty, &q->items, &q->head, &q->tail, &q->cap, ARG(0));
-
         TyMutexUnlock(&q->mutex);
-        TyCondVarBroadcast(&q->cond);
 
+        TyCondVarSignal(&q->cond);
         CheckUsed(ty);
 
         return *self;

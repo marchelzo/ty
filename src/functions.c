@@ -619,13 +619,12 @@ BUILTIN_FUNCTION(abs)
 {
         ASSERT_ARGC("abs()", 1);
 
-        Value x = ARG(0);
+        Value x = ARGx(0, VALUE_INTEGER, VALUE_REAL);
 
         switch (x.type) {
         case VALUE_INTEGER: return INTEGER(llabs(x.z));
         case VALUE_REAL:    return REAL(fabs(x.real));
-        default:
-                zP("the argument to abs() must be a number");
+        default:            UNREACHABLE();
         }
 }
 
@@ -633,15 +632,11 @@ BUILTIN_FUNCTION(gcd)
 {
         ASSERT_ARGC("gcd()", 2);
 
-        Value t = ARG(0);
-        Value u = ARG(1);
+        Value t = ARGx(0, VALUE_INTEGER, VALUE_REAL);
+        Value u = ARGx(1, VALUE_INTEGER, VALUE_REAL);
 
         if (t.type == VALUE_REAL) t = INTEGER(t.real);
         if (u.type == VALUE_REAL) u = INTEGER(u.real);
-
-        if (t.type != VALUE_INTEGER || u.type != VALUE_INTEGER) {
-                zP("both arguments to gcd() must be integers");
-        }
 
         imax a = t.z;
         imax b = u.z;
@@ -659,18 +654,14 @@ BUILTIN_FUNCTION(lcm)
 {
         ASSERT_ARGC("lcm()", 2);
 
-        Value t = ARG(0);
-        Value u = ARG(1);
+        Value _a = ARGx(0, VALUE_INTEGER, VALUE_REAL);
+        Value _b = ARGx(1, VALUE_INTEGER, VALUE_REAL);
 
-        if (t.type == VALUE_REAL) t = INTEGER(t.real);
-        if (u.type == VALUE_REAL) u = INTEGER(u.real);
+        imax a0 = (_a.type == VALUE_REAL) ? (imax)_a.real : _a.z;
+        imax b0 = (_b.type == VALUE_REAL) ? (imax)_b.real : _b.z;
 
-        if (t.type != VALUE_INTEGER || u.type != VALUE_INTEGER) {
-                zP("both arguments to lcm() must be integers");
-        }
-
-        imax a = t.z;
-        imax b = u.z;
+        imax a = a0;
+        imax b = b0;
 
         while (b != 0) {
                 imax t = b;
@@ -678,20 +669,19 @@ BUILTIN_FUNCTION(lcm)
                 a = t;
         }
 
-        return INTEGER(llabs(t.z * u.z) / a);
+        return INTEGER(llabs(a0 * b0) / a);
 }
 
 BUILTIN_FUNCTION(round)
 {
         ASSERT_ARGC("round()", 1);
 
-        Value x = ARG(0);
+        Value x = ARGx(0, VALUE_INTEGER, VALUE_REAL);
 
         switch (x.type) {
         case VALUE_INTEGER: return REAL(x.z);
         case VALUE_REAL:    return REAL(round(x.real));
-        default:
-                zP("the argument to round() must be a number");
+        default:            UNREACHABLE();
         }
 }
 
@@ -699,13 +689,12 @@ BUILTIN_FUNCTION(iround)
 {
         ASSERT_ARGC("iround()", 1);
 
-        Value x = ARG(0);
+        Value x = ARGx(0, VALUE_INTEGER, VALUE_REAL);
 
         switch (x.type) {
         case VALUE_INTEGER: return x;
         case VALUE_REAL:    return INTEGER(llround(x.real));
-        default:
-                zP("the argument to iround() must be a number");
+        default:            UNREACHABLE();
         }
 }
 
@@ -713,28 +702,28 @@ BUILTIN_FUNCTION(ceil)
 {
         ASSERT_ARGC("ceil()", 1);
 
-        Value x = ARG(0);
+        Value x = ARGx(0, VALUE_INTEGER, VALUE_REAL);
 
         switch (x.type) {
-        case VALUE_INTEGER: return x;
-        case VALUE_REAL:    return INTEGER(ceil(x.real));
-        default:
-                zP("the argument to ceil() must be a number");
+        case VALUE_INTEGER: return REAL(x.z);
+        case VALUE_REAL:    return REAL(ceil(x.real));
+        default:            UNREACHABLE();
         }
+
 }
 
 BUILTIN_FUNCTION(floor)
 {
         ASSERT_ARGC("floor()", 1);
 
-        Value x = ARG(0);
+        Value x = ARGx(0, VALUE_INTEGER, VALUE_REAL);
 
         switch (x.type) {
-        case VALUE_INTEGER: return x;
-        case VALUE_REAL:    return INTEGER(floor(x.real));
-        default:
-                zP("the argument to floor() must be a number");
+        case VALUE_INTEGER: return REAL(x.z);
+        case VALUE_REAL:    return REAL(floor(x.real));
+        default:            UNREACHABLE();
         }
+
 }
 
 BUILTIN_FUNCTION(chr)
@@ -782,30 +771,25 @@ BUILTIN_FUNCTION(float)
 {
         ASSERT_ARGC("float()", 1);
 
-        Value v = ARG(0);
+        Value v = ARGx(0, VALUE_INTEGER, VALUE_REAL, VALUE_STRING);
+        char *end;
+
+        double x;
 
         switch (v.type) {
-        case VALUE_NIL:     return NIL;
-        case VALUE_INTEGER: return REAL((double)v.z);
-        case VALUE_REAL:    return v;
-        case VALUE_STRING:;
-                char buf[128];
-                char *end;
-                unsigned n = min(sN(v), 127);
+        case VALUE_INTEGER: x = (double)v.z; break;
+        case VALUE_REAL:    x = v.real;      break;
 
-                memcpy(buf, ss(v), n);
-                buf[n] = '\0';
-
+        case VALUE_STRING:
                 errno = 0;
-                double x = strtod(buf, &end);
-
-                if (errno != 0 || *end != '\0')
+                x = strtod(TY_TMP_C_STR(v), &end);
+                if (errno != 0 || *end != '\0') {
                         return NIL;
-
-                return REAL(x);
+                }
+                break;
         }
 
-        zP("invalid type passed to float()");
+        return REAL(x);
 }
 
 BUILTIN_FUNCTION(isnan)
