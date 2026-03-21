@@ -446,11 +446,12 @@ struct expression {
                         bool must_jit;
                         bool emit;
                         bool star;
+                        bool clone;
+                        unsigned char ftype;
+                        unsigned char mtype;
                         int ikwargs;
                         int rest;
                         int t;
-                        unsigned char ftype;
-                        unsigned char mtype;
                 };
                 struct {
                         Expr *function;

@@ -7901,6 +7901,9 @@ TargetMember:
 
                 CASE(TARGET_DYN_MEMBER)
                         z = GetDynamicMemberId(ty, true);
+                        if (z < 0) {
+                                z = -(z + 1);
+                        }
                         goto TargetMember;
 
                 CASE(SELF_MEMBER_ACCESS)

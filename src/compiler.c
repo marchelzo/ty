@@ -794,7 +794,7 @@ HasDecoratedMethods(Class const *class)
 }
 
 static bool
-HasPublicFields(Class const *class)
+NeedsConstructor(Class const *class)
 {
         if (class == NULL || class->i == CLASS_OBJECT) {
                 return false;
@@ -803,15 +803,16 @@ HasPublicFields(Class const *class)
         ClassDefinition const *def = &class->def->class;
 
         for (int i = 0; i < vN(def->fields); ++i) {
-                Expr const *field = FieldIdentifier(v__(def->fields, i));
-                if (!IsPrivateMember(field->identifier)) {
+                Expr const *field = v__(def->fields, i);
+                if (
+                        (field->type == EXPRESSION_EQ)
+                     || !IsPrivateMember(field->identifier)
+                ) {
                         return true;
                 }
-
         }
 
         return false;
-        //return HasPublicFields(class->super);
 }
 
 static void
@@ -5186,8 +5187,7 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
 
                 STATE.func = e;
 
-                // TODO
-                bool required = true;
+                bool typecheck = !e->clone;
 
 #if defined(TY_PROFILE_TYPES)
                 u64 time_start = TyThreadCPUTime();
@@ -5198,7 +5198,9 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                         RedpillFun(ty, scope, e, NULL);
                 }
 
-                type_fn_begin(ty, e);
+                if (typecheck) {
+                        type_fn_begin(ty, e);
+                }
 
                 if (e->fn_symbol != NULL) {
                         e->fn_symbol->type = e->_type;
@@ -5223,7 +5225,8 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                 }
 
                 if (
-                        (e->type == EXPRESSION_FUNCTION)
+                        typecheck
+                     && (e->type == EXPRESSION_FUNCTION)
                      && (IsFuncT(t0) || TypeType(t0) == TYPE_ALIAS)
                 ) {
                         unify(ty, &e->_type, t0);
@@ -5252,7 +5255,8 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                 }
 
                 if (
-                       (e->_type != NULL)
+                        typecheck
+                    && (e->_type != NULL)
                     && (e->body != NULL)
                     && !e->body->will_return
                     && !e->star
@@ -5264,7 +5268,7 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                         }
                 }
 
-                if ((e->return_type == NULL) && (e->body != NULL)) {
+                if (typecheck && (e->return_type == NULL) && (e->body != NULL)) {
                         Type *r0 = type_any_of(ty, &STATE.return_types);
                         unify2(ty, &e->_type->rt, r0);
                 }
@@ -5276,7 +5280,7 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                 STATE.tries = tries;
                 STATE.return_types = return_types;
 
-                if (e->type == EXPRESSION_MULTI_FUNCTION) {
+                if (typecheck && (e->type == EXPRESSION_MULTI_FUNCTION)) {
                         e->_type = NULL;
                         for (int i = 0; i < vN(e->functions); ++i) {
                                 Expr const *fun = v__(e->functions, i);
@@ -5293,7 +5297,9 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                         DBG("=== %s.%s() === %s", STATE.class->name, e->name, type_show(ty, e->_type));
                 }
 
-                type_fn_end(ty, e);
+                if (typecheck) {
+                        type_fn_end(ty, e);
+                }
 
                 for (int i = 0; i < vN(e->decorators); ++i) {
                         Expr *dec = v__(e->decorators, i);
@@ -11049,7 +11055,7 @@ emit_expr(Ty *ty, Expr const *e, bool need_loc)
 
         case EXPRESSION_DICT:
                 INSN(SAVE_STACK_POS);
-                for (int i = vN(e->keys) - 1; i >= 0; --i) {
+                for (int i = 0; i < vN(e->keys); ++i) {
                         if (v__(e->keys, i)->type == EXPRESSION_SPREAD) {
                                 emit_spread(ty, v__(e->keys, i)->value, true);
                         } else {
@@ -12399,7 +12405,7 @@ InjectRedpill(Ty *ty, Stmt *s)
                 } else {
                         super = NULL;
                 }
-                if (HasPublicFields(class) || HasDecoratedMethods(class)) {
+                if (NeedsConstructor(class) || HasDecoratedMethods(class)) {
                         Expr *init = FindUserConstructor(class);
                         if (init == NULL) {
                                 init = DefaultConstructor(ty, class);
@@ -12407,8 +12413,10 @@ InjectRedpill(Ty *ty, Stmt *s)
                                         AddInheritedFieldParams(ty, init, super);
                                 }
                         } else if (init->class != class) {
-                                init = xxclone(ty, init);
+                                init = aclone(init);
+                                init->arena = GetArenaAlloc(ty);
                                 init->class = class;
+                                init->clone = true;
                         } else {
                                 init = NULL;
                         }
@@ -17312,16 +17320,17 @@ define_class(Ty *ty, Stmt *s)
 {
         void *ctx = PushContext(ty, s);
 
-        Scope *scope = GetNamespace(ty, s->ns);
+        Scope  *scope = GetNamespace(ty, s->ns);
+        Symbol *sym   = scope_local_lookup(ty, scope, s->class.name);
 
-        s->class.s_scope = scope_new(ty, s->class.name, scope, false);
-        s->class.scope = scope_new(ty, "(instance)", s->class.s_scope, false);
+        Scope *class_scope    = scope_new(ty, s->class.name, scope,       false);
+        Scope *instance_scope = scope_new(ty, "(instance)",  class_scope, false);
 
-        SymbolizeTypeParams(ty, s->class.s_scope, &s->class.type_params);
-
-        Symbol *sym = scope_local_lookup(ty, scope, s->class.name);
+        SymbolizeTypeParams(ty, class_scope, &s->class.type_params);
 
         if (sym == NULL) {
+                s->class.s_scope = class_scope;
+                s->class.scope   = instance_scope;
                 sym = addsymbol(ty, scope, s->class.name);
                 sym->class = s->class.is_trait
                            ? trait_new(ty, s)
@@ -17330,16 +17339,20 @@ define_class(Ty *ty, Stmt *s)
                 (sym->class < CLASS_BUILTIN_END)
              && (sym->class != -1)
         ) {
+                s->class.s_scope = class_scope;
+                s->class.scope   = instance_scope;
                 class_builtin(ty, sym->class, s);
         } else {
-                sometimes_fail(
+                fail_or(
                         "redeclaration of class %s%s%s%s%s",
                         TERM(1),
                         TERM(34),
                         s->class.name,
                         TERM(22),
                         TERM(39)
-                );
+                ) {
+                        return;
+                }
         }
 
         Class *class = class_get(ty, sym->class);

@@ -1,4 +1,4 @@
-import chalk (chalk)
+import chalk (chalk, escape as chalk-escape)
 import term
 import os (SIGWINCH, signal, write, sleep)
 import time (now)
@@ -14,6 +14,8 @@ let __tls::_next-fibers: Dict[String, Any] = %{}
 let __tls::_focused: Any = nil
 let __tls::_focusables: Array[Any] = []
 let __tls::_timers: Array[Any] = []
+let __tls::_ctx-stack: Array[Dict[String, Any]] = [%{}]
+let __tls::_overlays: Array[Any] = []
 
 let _notify-queue = SharedQueue()
 let _has-watchers = false
@@ -23,7 +25,54 @@ const INF  = 100000
 
 pub tag Exit;
 
-tag NodeBox, NodeText;
+pub default-theme = %{
+    'primary':       '#6cad65',
+    'secondary':     '#a571ce',
+    'accent':        '#e5b211',
+    'danger':        '#dd203c',
+    'warning':       '#ed6d18',
+    'info':          '#1d55c6',
+    'success':       '#6cad65',
+    'muted':         '#888',
+    'subtle':        '#555',
+    'fg-default':    '#ccc',
+    'fg-dim':        '#888',
+    'bg-surface':    'bg-#222',
+    'bg-hover':      'bg-#333',
+    'border':        '#555',
+    'border-focus':  'yellow',
+    'border-active': '#a571ce',
+    'selection':     'yellow',
+    'text':          '#ccc',
+    'text-dim':      '#888',
+    'text-bright':   '#fff',
+    'bg-global':     '#1a1a2e'
+}
+
+let __tls::_bg-global-ansi: String = ''
+
+pub fn set-theme(overrides: Dict[String, String] = %{}) {
+    let theme = %{**default-theme, **overrides}
+    for name, val in theme {
+        chalk.{name} = val
+    }
+    _bg-global-ansi = bg-ansi(theme['bg-global'] ?? '') ?? ''
+}
+
+set-theme()
+
+pub fn provide(key, value) {
+    _ctx-stack[-1][key] = value
+}
+
+pub fn context(key, default = nil) {
+    for frame in _ctx-stack[;;-1] {
+        if let $v = frame[key] { return v }
+    }
+    default
+}
+
+tag NodeBox, NodeText, NodeOverlay;
 
 ns border-style {
     pub single = ['┌', '┐', '└', '┘', '─', '│']
@@ -51,19 +100,53 @@ fn strip-ws-children(xs: Array[Any]) -> Array[Any] {
 }
 
 pub class Node {
-    __tag: NodeBox | NodeText
-    __props: Dict[String, Any]
-    __children: Array[Any]
+    `tag`:    NodeBox | NodeText | NodeOverlay
+    props:    Dict[String, Any]
+    children: Array[Any]
 
-    init(tg, props, children) {
-        __tag = tg
-        __props = props
-        __children = children
+    direction: String
+    gap:    Int
+    px:     Int
+    py:     Int
+    mx:     Int
+    my:     Int
+    width:  Int | nil
+    height: Int | nil
+    flex:   Int | nil
+    bg:     String | nil
+    bstyle: Array[String] | nil
+    bcolor: String | nil
+    focusable?: Bool
+    align:   String
+    justify: String
+
+    style: String | nil
+
+    init(tg, prps, chldrn) {
+        `tag`    = tg
+        props    = prps
+        children = chldrn
+
+        let p = props['padding'] ?? 0
+        let m = props['margin'] ?? 0
+
+        direction  = props['direction'] ?? 'column'
+        gap        = int(props['gap'] ?? 0)
+        px         = int(props['paddingX'] ?? p)
+        py         = int(props['paddingY'] ?? p)
+        mx         = int(props['marginX'] ?? m)
+        my         = int(props['marginY'] ?? m)
+        width      = props['width']
+        height     = props['height']
+        flex       = props['flex']
+        bg         = props['bg']
+        bstyle     = resolve-border(props['borderStyle'])
+        bcolor     = props['borderColor']
+        focusable? = props['focusable'] ?? false
+        align      = props['align'] ?? 'start'
+        justify    = props['justify'] ?? 'start'
+        style      = props['style']
     }
-
-    tag { __tag }
-    props { __props }
-    children { __children }
 }
 
 class PendingTimer {
@@ -81,10 +164,10 @@ class PendingTimer {
         __cancelled = false
     }
 
-    deadline  { __deadline }
-    repeat    { __repeat }
-    callback  { __callback }
-    owner     { __owner }
+    deadline   { __deadline  }
+    repeat     { __repeat    }
+    callback   { __callback  }
+    owner      { __owner     }
     cancelled? { __cancelled }
 
     cancel() { __cancelled = true }
@@ -106,30 +189,29 @@ class PendingTimer {
 }
 
 pub class Component {
-    __children: Array[Any]
-    __props: Dict[String, Any]
-    __focused: Bool
-    __mounted: Bool
+    children:      Array[Any]
+    focused?:      Bool
+    mounted?:      Bool
+    alive?:        Bool
+    __prop-names:  Array[String]
 
-    init(*children, %props) {
-        __children = strip-ws-children(children)
-        __props = props
-        __focused = false
-        __mounted = false
+    init(*chldrn, %prps) {
+        children = strip-ws-children(chldrn)
+        focused? = false
+        mounted? = false
+        alive?   = false
+        __prop-names = prps.keys()
+        for prop, val in prps {
+            self.{prop} = val
+        }
     }
 
-    children -> Array[Any] { __children }
-    props -> Dict[String, Any] { __props }
-    focused? -> Bool { __focused }
-    focusable? -> Bool { false }
-    interval -> Float | nil { nil }
+    focusable? -> Bool        { false }
+    interval   -> Float | nil { nil   }
 
-    focus!(v: Bool) { __focused = v }
-
-    mounted? -> Bool { __mounted }
-    mount() { }
-    mount!() { __mounted = true; mount() }
-    tick() { }
+    mount()   {}
+    unmount() {}
+    tick()    {}
 
     after(delay: Float, callback: Function) -> PendingTimer {
         let t = PendingTimer(now() + delay, nil, callback, self)
@@ -148,12 +230,18 @@ pub class Component {
         _notify-queue.put(true)
     }
 
-    adopt(children: Array[Any], props: Dict[String, Any]) {
-        __children = children
-        __props = props
+    adopt(other: Component) {
+        children = other.children
+        for name in other.__prop-names {
+            self.{name} = other.{name}
+        }
     }
 
-    render() -> Node;
+    render();
+
+    focus!(v: Bool) { focused? = v             }
+    mount!()        { mounted? = true; alive? = true; mount() }
+    unmount!()      { alive? = false; unmount() }
 }
 
 pub fn Box(*children, %props) -> Node {
@@ -164,65 +252,75 @@ pub fn Text(*children, %props) -> Node {
     Node(NodeText, props, children.flat())
 }
 
+pub fn Overlay(*children, %props) -> Node {
+    Node(NodeOverlay, props, strip-ws-children(children))
+}
+
 pub class Divider < Component {
-    init(*children, %props) { super(*children, **props) }
+    char:  String | nil
+    color: String | nil
+    title: String | nil
 
     render() -> Node {
-        let ch = props['char'] ?? '─'
-        let color = props['color'] ?? '#555'
-        let title = props['title']
+        let ch = char ?? '─'
+        let color = color ?? 'subtle'
+        let title = title
 
         if title {
             <Box direction="row">
-                <Text color=color>{ch * 2} </Text>
-                <Text color=color bold=true>{title}</Text>
-                <Text color=color> {ch * 20}</Text>
+                <Text style=color>{ch * 2} </Text>
+                <Text style="{color} bold">{title}</Text>
+                <Text style=color> {ch * 20}</Text>
             </Box>
         } else {
-            <Text color=color>{ch * 40}</Text>
+            <Text style=color>{ch * 40}</Text>
         }
     }
 }
 
 pub class Badge < Component {
-    init(*children, %props) { super(*children, **props) }
+    color: String | nil
 
     render() -> Node {
-        let color = props['color'] ?? '#888'
+        let c = color ?? 'muted'
         let label = children.join()
-        <Text color=color reverse=true> {label} </Text>
+        <Text style="{c} reverse"> {label} </Text>
     }
 }
 
 pub class SectionHeader < Component {
-    init(*children, %props) { super(*children, **props) }
+    color: String | nil
 
     render() -> Node {
-        let color = props['color'] ?? '#aaa'
+        let color = color ?? 'fg-default'
         let title = children.join()
-        <Text color=color underline=true>{title}</Text>
+        <Text style="{color} u">{title}</Text>
     }
 }
 
 pub class Card < Component {
-    init(*children, %props) { super(*children, **props) }
+    focus-color:  String | nil
+    border-color: String | nil
+    border-style: String | Array[String] | nil
+    width:     Int | nil
+    focusable: Bool | nil
+    on-click:  Function | nil
 
-    focusable? -> Bool { props['focusable'] ?? false }
+    focusable? -> Bool { focusable ?? false }
 
     render() -> Node {
-        let bc = focused? ? (props['focusColor'] ?? 'yellow') : (props['borderColor'] ?? '#555')
-        let bs = props['borderStyle'] ?? 'round'
-        let w = props['width']
+        let bc = focused? ? (focus-color ?? 'border-focus') : (border-color ?? 'border')
+        let bs = border-style ?? 'round'
 
-        if w {
-            <Box direction="column" border-style=bs border-color=bc width=w paddingX=1
-                on-click=props['onClick']
+        if width {
+            <Box direction="column" border-style=bs border-color=bc width=width paddingX=1
+                on-click=on-click
             >
                 {children}
             </Box>
         } else {
             <Box direction="column" border-style=bs border-color=bc paddingX=1
-                on-click=props['onClick']
+                on-click=on-click
             >
                 {children}
             </Box>
@@ -231,51 +329,55 @@ pub class Card < Component {
 }
 
 pub class StatusBar < Component {
-    init(*children, %props) { super(*children, **props) }
+    color: String | nil
+    bg:    String | nil
 
     render() -> Node {
-        let color = props['color'] ?? '#888'
-        let bg = props['bg'] ?? '#222'
+        let c = color ?? 'fg-dim'
+        let b = bg ?? 'bg-surface'
         <Box direction="row" paddingX=1>
-            <Text color=color bg=bg>{children}</Text>
+            <Text style="{c} {b}">{children}</Text>
         </Box>
     }
 }
 
 pub class ProgressBar < Component {
-    init(*children, %props) { super(*children, **props) }
+    value: Float | nil
+    width: Int | nil
+    color: String | nil
+    bg:    String | nil
 
     render() -> Node {
-        let value: Float = float(props['value'] ?? 0)
-        let w: Int = int(props['width'] ?? 20)
-        let color = props['color'] ?? 'green'
-        let bg = props['bg'] ?? '#333'
+        let value  = float(value ?? 0)
+        let w      = int(width ?? 20)
+        let color  = color ?? 'primary'
+        let bg     = bg ?? 'subtle'
         let filled = int(value.clamp(0.0, 1.0) * w)
-        let empty = w - filled
+        let empty  = w - filled
 
         <Box direction="row">
-            <Text color=color>{'━' * filled}</Text>
-            <Text color=bg>{'━' * empty}</Text>
-            <Text dim=true> {int(value * 100)}%</Text>
+            <Text style=color>{'━' * filled}</Text>
+            <Text style=bg>{'━' * empty}</Text>
+            <Text style="text-dim"> {int(value * 100)}%</Text>
         </Box>
     }
 }
 
 pub class Spinner < Component {
-    __frame: Int
+    speed: Float | nil
+    style: String | nil
+    color: String | nil
+    label: String | nil
 
-    init(*children, %props) {
-        super(*children, **props)
-        __frame = 0
-    }
+    __frame: Int = 0
 
-    interval -> Float { float(props['speed'] ?? 0.08) }
+    interval -> Float { float(speed ?? 0.08) }
     tick() { __frame += 1 }
 
     render() -> Node {
-        let style = props['style'] ?? 'dots'
-        let color = props['color'] ?? 'cyan'
-        let chars = match style {
+        let sty = style ?? 'dots'
+        let c = color ?? 'info'
+        let chars = match sty {
             'dots'   => ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'],
             'line'   => ['|', '/', '-', '\\'],
             'arc'    => ['◜', '◠', '◝', '◞', '◡', '◟'],
@@ -283,81 +385,85 @@ pub class Spinner < Component {
             'bounce' => ['⠁', '⠂', '⠄', '⡀', '⢀', '⠠', '⠐', '⠈'],
             _        => ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
         }
-        let label = props['label']
 
         label
             ? <Box direction="row" gap=1>
-                  <Text color=color>{chars[__frame % #chars]}</Text>
+                  <Text style=c>{chars[__frame % #chars]}</Text>
                   <Text>{label}</Text>
               </Box>
-            : <Text color=color>{chars[__frame % #chars]}</Text>
+            : <Text style=color>{chars[__frame % #chars]}</Text>
     }
 }
 
 pub class TextInput < Component {
-    __value: Array[String]
-    __cursor: Int
-    __scroll: Int
+    placeholder: String | nil
+    on-change:   Function | nil
+    width:       Int | nil
+    color:       String | nil
+    value:       String | nil
 
-    init(*children, %props) {
-        super(*children, **props)
-        let initial = props['value'] ?? ''
-        __value = initial.chars()
-        __cursor = #__value
-        __scroll = 0
-    }
+    __chars:  Array[String] = (value ?? '').chars()
+    __cursor: Int = #__chars
+    __scroll: Int = 0
 
     focusable? -> Bool { true }
 
-    value -> String { __value.join() }
+    text -> String { __chars.join() }
 
     __emit() {
-        if let $cb = props['onChange'] { cb(value) }
+        if on-change { on-change(text) }
     }
 
     on-event(ev) {
         match ev {
             event.Text($ch) => {
-                __value.insert(__cursor++, ch)
+                __chars.insert(__cursor++, ch)
                 __emit()
             },
 
-            event.Key({key: 'LEFT',      event: 1, *})              => { if __cursor > 0 { __cursor -= 1 } },
-            event.Key({key: 'RIGHT',     event: 1, *})              => { if __cursor < #__value { __cursor += 1 } },
-            event.Key({key: 'HOME',      event: 1, *})              => __cursor = 0,
-            event.Key({key: 'END',       event: 1, *})              => __cursor = #__value,
-            event.Key({key: 'BACKSPACE', event: 1, *})              => { if __cursor > 0 { __value.pop(--__cursor); __emit() } },
-            event.Key({key: 'DELETE',    event: 1, *})              => { if __cursor < #__value { __value.pop(__cursor); __emit() } },
-            event.Key({key: 'a' or 97,   event: 1, mods: $m, *}) and (m & CTRL) != 0 => __cursor = 0,
-            event.Key({key: 'e' or 101,  event: 1, mods: $m, *}) and (m & CTRL) != 0 => __cursor = #__value,
-            event.Key({key: 'k' or 107,  event: 1, mods: $m, *}) and (m & CTRL) != 0 => { __value.splice(__cursor, #__value - __cursor); __emit() },
-            event.Key({key: 'u' or 117,  event: 1, mods: $m, *}) and (m & CTRL) != 0 => { __value.splice(0, __cursor); __cursor = 0; __emit() },
+            event.Key({key: 'LEFT',      event: (1 or 2), *})              => { if __cursor > 0 { __cursor -= 1 } },
+            event.Key({key: 'RIGHT',     event: (1 or 2), *})              => { if __cursor < #__chars { __cursor += 1 } },
+            event.Key({key: 'HOME',      event: (1 or 2), *})              => __cursor = 0,
+            event.Key({key: 'END',       event: (1 or 2), *})              => __cursor = #__chars,
+            event.Key({key: 'BACKSPACE', event: (1 or 2), *})              => { if __cursor > 0 { __chars.pop(--__cursor); __emit() } },
+            event.Key({key: 'DELETE',    event: (1 or 2), *})              => { if __cursor < #__chars { __chars.pop(__cursor); __emit() } },
+            event.Key({key: 'a' or 97,   event: (1 or 2), mods: $m, *}) and (m & CTRL) != 0 => __cursor = 0,
+            event.Key({key: 'e' or 101,  event: (1 or 2), mods: $m, *}) and (m & CTRL) != 0 => __cursor = #__chars,
+            event.Key({key: 'k' or 107,  event: (1 or 2), mods: $m, *}) and (m & CTRL) != 0 => { __chars.splice(__cursor, #__chars - __cursor); __emit() },
+            event.Key({key: 'u' or 117,  event: (1 or 2), mods: $m, *}) and (m & CTRL) != 0 => { __chars.splice(0, __cursor); __cursor = 0; __emit() },
+            event.Key({key: 'w' or 119,  event: (1 or 2), mods: $m, *}) and (m & CTRL) != 0 => {
+                let end = __cursor
+                while __cursor > 0 && __chars[__cursor - 1].match?(/\s/) { __cursor -= 1 }
+                while __cursor > 0 && !__chars[__cursor - 1].match?(/\s/) { __cursor -= 1 }
+                __chars.splice(__cursor, end - __cursor)
+                __emit()
+            },
 
             _ => ()
         }
     }
 
     render() -> Node {
-        let w: Int = int(props['width'] ?? 20)
-        let placeholder = props['placeholder'] ?? ''
-        let color = props['color'] ?? (focused? ? 'yellow' : '#ccc')
-        let bc = focused? ? 'yellow' : '#555'
+        let w: Int = int(width ?? 20)
+        let ph = placeholder ?? ''
+        let clr = color ?? (focused? ? 'selection' : 'text')
+        let bc = focused? ? 'border-focus' : 'border'
         let inner-w = max(w - 4, 1)
 
-        let display = (#__value > 0) ? __value.join() : ''
-        let show-placeholder = #__value == 0
+        let display = (#__chars > 0) ? __chars.join() : ''
+        let show-placeholder = #__chars == 0
 
         if __cursor > __scroll + inner-w - 1 { __scroll = __cursor - inner-w + 1 }
         if __cursor < __scroll { __scroll = __cursor }
 
         let visible = show-placeholder
-            ? placeholder.slice(0, inner-w)
+            ? ph.slice(0, inner-w)
             : display.slice(__scroll).slice(0, inner-w)
 
         let cursor-pos = __cursor - __scroll
         let pad = inner-w - visible.width()
 
-        let text-color = show-placeholder ? '#555' : color
+        let text-color = show-placeholder ? 'subtle' : clr
         let content = if focused? {
             let before = visible.slice(0, cursor-pos)
             let cur-ch = (cursor-pos < visible.width()) ? visible.slice(cursor-pos, 1) : ' '
@@ -374,153 +480,314 @@ pub class TextInput < Component {
     }
 }
 
-pub class Select < Component {
-    __selected: Int
-    __open: Bool
+pub class TextArea < Component {
+    width:       Int | nil
+    height:      Int | nil
+    on-change:   Function | nil
+    color:       String | nil
+    placeholder: String | nil
+    value:       String | nil
+
+    __lines:    Array[Array[String]]
+    __row:      Int
+    __col:      Int
+    __scroll-y: Int
+    __scroll-x: Int
 
     init(*children, %props) {
         super(*children, **props)
-        __selected = int(props['selected'] ?? 0)
-        __open = false
+        let initial = value ?? ''
+        let init-lines = initial.lines()
+        __lines = init-lines ? init-lines.map(&chars) : [[]]
+        __row = 0
+        __col = 0
+        __scroll-y = 0
+        __scroll-x = 0
     }
 
     focusable? -> Bool { true }
 
-    selected -> Int { __selected }
-    selected-item { (props['items'] ?? [])[__selected] }
+    text -> String {
+        __lines.map(&join).unlines()
+    }
 
     __emit() {
-        if let $cb = props['onChange'] { cb(__selected) }
+        if on-change { on-change(text) }
+    }
+
+    __line -> Array[String] { __lines[__row] }
+
+    __clamp-col() {
+        __col = min(__col, #__line)
     }
 
     on-event(ev) {
-        let items: Array[String] = props['items'] ?? []
-
         match ev {
-            event.Key({key: 'UP', event: 1, *}) or event.Text('k') => {
-                __selected = (__selected - 1 + #items) % #items; __emit()
+            event.Text($ch) and ch != '\t' => {
+                __line.insert(__col++, ch)
+                __emit()
             },
-            event.Key({key: 'DOWN', event: 1, *}) or event.Text('j') => {
-                __selected = (__selected + 1) % #items; __emit()
+
+            event.Key({key: 'ENTER', event: (1 or 2), *}) => {
+                let rest = __line.splice(__col, #__line - __col)
+                __row += 1
+                __lines.insert(__row, rest)
+                __col = 0
+                __emit()
             },
-            event.Key({key: 'ENTER', event: 1, *}) or event.Text(' ') => __emit(),
+
+            event.Key({key: 'BACKSPACE', event: (1 or 2), *}) => {
+                if __col > 0 {
+                    __line.pop(--__col)
+                } else if __row > 0 {
+                    let removed = __lines.pop(__row)
+                    __row -= 1
+                    __col = #__line
+                    __lines[__row] += removed
+                }
+                __emit()
+            },
+
+            event.Key({key: 'DELETE', event: (1 or 2), *}) => {
+                if __col < #__line {
+                    __line.pop(__col)
+                } else if __row < #__lines - 1 {
+                    __lines[__row] += __lines.pop(__row + 1)
+                }
+                __emit()
+            },
+
+            event.Key({key: 'LEFT',  event: (1 or 2), *}) => {
+                if __col > 0 { __col -= 1 }
+                else if __row > 0 { __row -= 1; __col = #__line }
+            },
+            event.Key({key: 'RIGHT', event: (1 or 2), *}) => {
+                if __col < #__line { __col += 1 }
+                else if __row < #__lines - 1 { __row += 1; __col = 0 }
+            },
+            event.Key({key: 'UP',    event: (1 or 2), *}) => { if __row > 0 { __row -= 1; __clamp-col() } },
+            event.Key({key: 'DOWN',  event: (1 or 2), *}) => { if __row < #__lines - 1 { __row += 1; __clamp-col() } },
+            event.Key({key: 'HOME',  event: (1 or 2), *}) => __col = 0,
+            event.Key({key: 'END',   event: (1 or 2), *}) => __col = #__line,
+
+            event.Key({key: 'a' or 97,  event: (1 or 2), mods: $m, *}) and (m & CTRL) != 0 => __col = 0,
+            event.Key({key: 'e' or 101, event: (1 or 2), mods: $m, *}) and (m & CTRL) != 0 => __col = #__line,
+            event.Key({key: 'k' or 107, event: (1 or 2), mods: $m, *}) and (m & CTRL) != 0 => { __line.splice(__col, #__line - __col); __emit() },
+            event.Key({key: 'p' or 112, event: (1 or 2), mods: $m, *}) and (m & CTRL) != 0 => { if __row > 0 { __row -= 1; __clamp-col() } },
+            event.Key({key: 'n' or 110, event: (1 or 2), mods: $m, *}) and (m & CTRL) != 0 => { if __row < #__lines - 1 { __row += 1; __clamp-col() } },
+            event.Key({key: 'w' or 119, event: (1 or 2), mods: $m, *}) and (m & CTRL) != 0 => {
+                let end = __col
+                while __col > 0 && __line[__col - 1].match?(/\s/) { __col -= 1 }
+                while __col > 0 && !__line[__col - 1].match?(/\s/) { __col -= 1 }
+                __line.splice(__col, end - __col)
+                __emit()
+            },
+
             _ => ()
         }
     }
 
     render() -> Node {
-        let items: Array[String] = props['items'] ?? []
-        let color = props['color'] ?? '#ccc'
-        let sel-color = props['selectedColor'] ?? 'yellow'
-        let bc = focused? ? 'yellow' : '#555'
+        let w: Int = int(width ?? 40)
+        let h: Int = int(height ?? 10)
+        let clr = color ?? (focused? ? 'selection' : 'text')
+        let bc = focused? ? 'border-focus' : 'border'
+        let inner-w = max(w - 2, 1)
+        let inner-h = max(h - 2, 1)
+
+        if __row < __scroll-y { __scroll-y = __row }
+        if __row >= __scroll-y + inner-h { __scroll-y = __row - inner-h + 1 }
+
+        let rendered = []
+        for vi in ..inner-h {
+            let li = __scroll-y + vi
+            if li < #__lines {
+                let line = __lines[li].join()
+                let visible = line.slice(0, inner-w)
+                let pad = inner-w - visible.width()
+
+                if focused? && li == __row {
+                    let cursor-pos = min(__col, inner-w)
+                    let before = visible.slice(0, cursor-pos)
+                    let cur-ch = (cursor-pos < visible.width()) ? visible.slice(cursor-pos, 1) : ' '
+                    let after = (cursor-pos < visible.width()) ? visible.slice(cursor-pos + 1) : ''
+                    let trail = max(pad - ((cursor-pos >= visible.width()) ? 1 : 0), 0)
+                    rendered.push(str(chalk"[{clr}]{before}[/][reverse]{cur-ch}[/][{clr}]{after}[/]{' ' * trail}"))
+                } else {
+                    rendered.push(str(chalk"[{clr}]{visible}[/]{' ' * pad}"))
+                }
+            } else {
+                rendered.push(' ' * inner-w)
+            }
+        }
+
+        <Box border-style="round" border-color=bc direction="column">
+            {rendered.map(line -> <Text>{line}</Text>)}
+        </Box>
+    }
+}
+
+pub class Select < Component {
+    items:          Array[String] | nil
+    selected:       Int | nil
+    on-change:      Function | nil
+    color:          String | nil
+    selected-color: String | nil
+
+    __sel: Int
+
+    init(*children, %props) {
+        super(*children, **props)
+        __sel = int(selected ?? 0)
+    }
+
+    focusable? -> Bool { true }
+
+    selected-index -> Int { __sel }
+    selected-item { (items ?? [])[__sel] }
+
+    __emit() {
+        if on-change { on-change(__sel) }
+    }
+
+    on-event(ev) {
+        let itms = items ?? []
+
+        match ev {
+            event.Key({key: 'UP', event: (1 or 2), *}) or event.Text('k') => {
+                __sel = (__sel - 1 + #itms) % #itms; __emit()
+            },
+            event.Key({key: 'DOWN', event: (1 or 2), *}) or event.Text('j') => {
+                __sel = (__sel + 1) % #itms; __emit()
+            },
+            event.Key({key: 'ENTER', event: (1 or 2), *}) or event.Text(' ') => __emit(),
+            _ => ()
+        }
+    }
+
+    render() -> Node {
+        let itms = items ?? []
+        let clr = color ?? 'text'
+        let sel-clr = selected-color ?? 'selection'
+        let bc = focused? ? 'border-focus' : 'border'
 
         <Box direction="column" border-style="round" border-color=bc paddingX=1>
             {[
                 do {
-                    let sel? = (i == __selected)
+                    let sel? = (i == __sel)
                     let icon = sel? ? '▸' : ' '
-                    let c = sel? ? sel-color : color
-                    <Text color=c bold=sel?>{icon} {item}</Text>
+                    let c = sel? ? sel-clr : clr
+                    <Text style=(sel? ? "{sel-clr} bold" : clr)>{icon} {item}</Text>
                 }
-                for item, i in items
+                for item, i in itms
             ]}
         </Box>
     }
 }
 
 pub class Checkbox < Component {
-    __checked: Bool
+    checked:   Bool | nil
+    on-change: Function | nil
+    label:     String | nil
+
+    __on: Bool
 
     init(*children, %props) {
         super(*children, **props)
-        __checked = props['checked'] ?? false
+        __on = checked ?? false
     }
 
     focusable? -> Bool { true }
 
-    checked? -> Bool { __checked }
+    checked? -> Bool { __on }
 
     on-event(ev) {
         match ev {
-            event.Key({key: 'ENTER', event: 1, *}) or event.Text(' ') or event.Text('x') => {
-                __checked = !__checked
-                if let $cb = props['onChange'] { cb(__checked) }
+            event.Key({key: 'ENTER', event: (1 or 2), *}) or event.Text(' ') or event.Text('x') => {
+                __on = !__on
+                if on-change { on-change(__on) }
             },
             _ => ()
         }
     }
 
     render() -> Node {
-        let label = props['label'] ?? children.join()
-        let color = focused? ? 'yellow' : '#ccc'
-        let icon-color = __checked ? 'green' : (focused? ? 'yellow' : '#555')
-        let icon = __checked ? '✓' : '○'
+        let lbl = label ?? children.join()
+        let clr = focused? ? 'selection' : 'text'
+        let icon-color = __on ? 'success' : (focused? ? 'selection' : 'subtle')
+        let icon = __on ? '✓' : '○'
 
         <Box direction="row" gap=1>
-            <Text color=icon-color bold=__checked>{icon}</Text>
-            <Text color=color bold=focused?>{label}</Text>
+            <Text style=(__on ? "{icon-color} bold" : icon-color)>{icon}</Text>
+            <Text style=(focused? ? "{clr} bold" : clr)>{lbl}</Text>
         </Box>
     }
 }
 
 pub class Slider < Component {
-    __value: Float
+    min-val:   Float | nil
+    max-val:   Float | nil
+    value:     Float | nil
+    step:      Float | nil
+    width:     Int | nil
+    color:     String | nil
+    label:     String | nil
+    format:    Function | nil
+    on-change: Function | nil
+
+    __val: Float
     __track-x: Int
     __track-w: Int
 
     init(*children, %props) {
         super(*children, **props)
-        __value = float(props['value'] ?? 0.5)
+        __val = float(value ?? 0.5)
         __track-x = 0
         __track-w = 0
     }
 
     focusable? -> Bool { true }
 
-    value -> Float { __value }
+    current -> Float { __val }
+
+    __mn -> Float { float(min-val ?? 0.0) }
+    __mx -> Float { float(max-val ?? 1.0) }
 
     __emit() {
-        if let $cb = props['onChange'] { cb(__value) }
+        if on-change { on-change(__val) }
     }
 
-    __jump(mx: Int) {
-        let mn: Float = float(props['min'] ?? 0.0)
-        let mx-val: Float = float(props['max'] ?? 1.0)
+    __jump(click-x: Int) {
         if __track-w > 0 {
-            let rel = (float(mx - __track-x) - 0.5) / float(__track-w)
-            __value = (mn + rel.clamp(0.0, 1.0) * (mx-val - mn))
+            let rel = (float(click-x - __track-x) - 0.5) / float(__track-w)
+            __val = (__mn + rel.clamp(0.0, 1.0) * (__mx - __mn))
             __emit()
         }
     }
 
     on-event(ev) {
-        let mn: Float = float(props['min'] ?? 0.0)
-        let mx: Float = float(props['max'] ?? 1.0)
-        let step: Float = float(props['step'] ?? ((mx - mn) / 20.0))
+        let stp: Float = float(step ?? ((__mx - __mn) / 20.0))
 
         match ev {
-            event.Key({key: 'LEFT',  event: 1, *}) or event.Text('h') => { __value = max(__value - step, mn); __emit() },
-            event.Key({key: 'RIGHT', event: 1, *}) or event.Text('l') => { __value = min(__value + step, mx); __emit() },
-            event.Key({key: 'HOME',  event: 1, *})                    => { __value = mn; __emit() },
-            event.Key({key: 'END',   event: 1, *})                    => { __value = mx; __emit() },
+            event.Key({key: 'LEFT',  event: (1 or 2), *}) or event.Text('h') => { __val = max(__val - stp, __mn); __emit() },
+            event.Key({key: 'RIGHT', event: (1 or 2), *}) or event.Text('l') => { __val = min(__val + stp, __mx); __emit() },
+            event.Key({key: 'HOME',  event: (1 or 2), *})                    => { __val = __mn; __emit() },
+            event.Key({key: 'END',   event: (1 or 2), *})                    => { __val = __mx; __emit() },
             event.MouseDown({x: $mx, *}) or event.MouseMove({x: $mx, *}) => __jump(int(mx) - 1),
             _ => ()
         }
     }
 
     render() -> Node {
-        let mn: Float = float(props['min'] ?? 0.0)
-        let mx: Float = float(props['max'] ?? 1.0)
-        let w: Int = int(props['width'] ?? 20)
-        let color = focused? ? 'yellow' : (props['color'] ?? 'cyan')
-        let bg = '#333'
-        let label = props['label']
-        let label-w = label ? label.width() + 1 : 0
+        let w: Int = int(width ?? 20)
+        let clr = focused? ? 'selection' : (color ?? 'primary')
+        let lbl = label
+        let label-w = lbl ? lbl.width() + 1 : 0
 
         __track-w = w
         __track-x = label-w
 
-        let pct = ((mx - mn) > 0.0) ? (__value - mn) / (mx - mn) : 0.0
+        let pct = ((__mx - __mn) > 0.0) ? (__val - __mn) / (__mx - __mn) : 0.0
         let filled = int(pct.clamp(0.0, 1.0) * w)
         let empty = w - filled
 
@@ -528,11 +795,7 @@ pub class Slider < Component {
         let track-l = '━' * max(filled - 1, 0)
         let track-r = '━' * max(empty - 1, 0)
 
-        let display = if let $fmt = props['format'] {
-            fmt(__value)
-        } else {
-            "{__value:.1f}"
-        }
+        let display = format ? format(__val) : "{__val:.1f}"
 
         let on-track-click = ev -> do {
             if let event.MouseDown({x, *}) = ev.raw {
@@ -540,40 +803,45 @@ pub class Slider < Component {
             }
         }
 
-        if label {
+        let clr-bold = "{clr} bold"
+        if lbl {
             <Box direction="row" gap=1 on-click=on-track-click>
-                <Text bold=focused? color=color>{label}</Text>
-                <Text color=color>{track-l}</Text>
-                <Text color=color bold=true>{thumb}</Text>
-                <Text color=bg>{track-r}</Text>
-                <Text dim=true>{display}</Text>
+                <Text style=(focused? ? clr-bold : clr)>{lbl}</Text>
+                <Text style=clr>{track-l}</Text>
+                <Text style=clr-bold>{thumb}</Text>
+                <Text style="subtle">{track-r}</Text>
+                <Text style="text-dim">{display}</Text>
             </Box>
         } else {
             <Box direction="row" gap=1 on-click=on-track-click>
-                <Text color=color>{track-l}</Text>
-                <Text color=color bold=true>{thumb}</Text>
-                <Text color=bg>{track-r}</Text>
-                <Text dim=true>{display}</Text>
+                <Text style=clr>{track-l}</Text>
+                <Text style=clr-bold>{thumb}</Text>
+                <Text style="subtle">{track-r}</Text>
+                <Text style="text-dim">{display}</Text>
             </Box>
         }
     }
 }
 
 pub class Toast < Component {
+    duration: Float | nil
+    color:    String | nil
+    icon:     String | nil
+
     __visible: Bool
 
     init(*children, %props) {
         super(*children, **props)
         __visible = true
-        after(float(props['duration'] ?? 3.0), -> do { __visible = false })
+        after(float(duration ?? 3.0), -> do { __visible = false })
     }
 
     render() -> Node {
-        let color = props['color'] ?? 'green'
-        let icon = props['icon'] ?? '✓'
+        let clr = color ?? 'success'
+        let icn = icon ?? '✓'
 
         __visible
-            ? <Text color=color bold=true> {icon} {children}</Text>
+            ? <Text style="{clr} bold"> {icn} {children}</Text>
             : <Text> </Text>
     }
 }
@@ -669,42 +937,37 @@ pub class InkEvent {
     stop() { __stopped = true }
 }
 
-fn style-names(props: Dict[String, Any]) -> String | nil {
-    let parts = []
-    if let $color = props['color'] { parts.push(color) }
-    if let $bg = props['bg']       { parts.push("bg-{bg}") }
-    if props['bold']               { parts.push('bold') }
-    if props['dim']                { parts.push('dim') }
-    if props['italic']             { parts.push('italic') }
-    if props['underline']          { parts.push('u') }
-    if props['reverse']            { parts.push('reverse') }
-    parts ? parts.unwords() : nil
-}
-
-fn build-text(children) -> chalk::Text {
-    let parts = children.map(match {
-        (s: String) => chalk"{s}",
-        (n: Node) and n.tag == NodeText => do {
-            let inner = build-text(n.children)
-            if let $styles = style-names(n.props) {
-                chalk"[{styles}]{inner}[/]"
-            } else {
-                inner
-            }
-        },
-        x => chalk"{x}"
-    })
-    parts.fold(chalk"", \chalk"{_}{_}")
+fn build-markup(children) -> String {
+    let buf = Blob()
+    for child in children {
+        match child {
+            (s: String) => buf.push(chalk-escape(s)),
+            (n: Node) and n.tag == NodeText => {
+                let inner = build-markup(n.children)
+                if let $s = n.style {
+                    buf.push("[{s}]{inner}[/]")
+                } else {
+                    buf.push(inner)
+                }
+            },
+            x => buf.push(chalk-escape("{x}"))
+        }
+    }
+    buf.str!()
 }
 
 fn layout-text(node: Node, max-w: Int, max-h: Int, ox: Int, oy: Int) -> (Output, Element) {
-    let content = build-text(node.children)
-    let styled = if let $styles = style-names(node.props) {
-        chalk"[{styles}]{content}[/]"
-    } else {
-        content
+    let markup = build-markup(node.children)
+
+    if #markup == 0 && !node.style {
+        return (Output([], 0), Element(ox, oy, 0, 0, node.props))
     }
-    let rendered = str(styled)
+
+    let rendered = if let $s = node.style {
+        chalk.render("[{s}]{markup}[/]")
+    } else {
+        chalk.render(markup)
+    }
     let lines = rendered.lines() ?? [rendered]
     let w = lines.map(&width).max() ?? 0
     let padded = lines.map(line -> do {
@@ -730,35 +993,122 @@ fn pad-line(line: String, lw: Int, target-w: Int) -> String {
     _buf.str!()
 }
 
-fn stack-column(blocks: Array[Output], gap: Int, min-w: Int = 0) -> (Array[String], Int) {
+fn align-line(line: String, lw: Int, w: Int, align: String) -> String {
+    if lw >= w { return line }
+    let space = w - lw
+    match align {
+        'center' => do {
+            let left = space / 2
+            let right = space - left
+            _buf.clear()
+            _buf.push(' ' * left)
+            _buf.push(line)
+            _buf.push(' ' * right)
+            _buf.str!()
+        },
+        'end' or 'right' => do {
+            _buf.clear()
+            _buf.push(' ' * space)
+            _buf.push(line)
+            _buf.str!()
+        },
+        _ => pad-line(line, lw, w)
+    }
+}
+
+fn compute-gaps(n: Int, content-size: Int, avail: Int, gap: Int, justify: String) -> Array[Int] {
+    if n <= 0 { return [] }
+
+    let total-gap = avail - content-size
+    if total-gap <= 0 || justify == 'start' {
+        return [0] + [(gap) for ..n - 1]
+    }
+
+    match justify {
+        'center' => do {
+            let pad = total-gap / 2
+            let gaps = [pad]
+            for ..n - 1 { gaps.push(gap) }
+            gaps
+        },
+        'end' => do {
+            let gaps = [total-gap - gap * max(n - 1, 0)]
+            for ..n - 1 { gaps.push(gap) }
+            gaps
+        },
+        'space-between' => do {
+            if n == 1 { return [0] }
+            let g = total-gap / (n - 1)
+            let rem = total-gap - g * (n - 1)
+            let gaps = [0]
+            for i in ..n - 1 {
+                gaps.push(g + ((i < rem) ? 1 : 0))
+            }
+            gaps
+        },
+        'space-around' => do {
+            let g = total-gap / (n * 2)
+            [g for ..n]
+        },
+        'space-evenly' => do {
+            let g = total-gap / (n + 1)
+            [g for ..n]
+        },
+        _ => [0] + [(gap) for ..n - 1]
+    }
+}
+
+fn stack-column(blocks: Array[Output], gap: Int, min-w: Int = 0, align: String = 'start', justify: String = 'start', avail-h: Int = 0) -> (Array[String], Int) {
     let w: Int = max(blocks.map(&.width).max() ?? 0, min-w)
     let lines = []
 
+    let use-justify = justify != 'start' && avail-h > 0 && avail-h < INF
+    let content-h = blocks.map(&.height).sum(0) + gap * max(#blocks - 1, 0)
+    let gaps = use-justify
+        ? compute-gaps(#blocks, content-h, avail-h, gap, justify)
+        : nil
+    let blank = ' ' * w
+
     for block, i in blocks {
-        if i > 0 {
-            let blank = ' ' * w
-            for ..gap { lines.push(blank) }
-        }
+        let g = gaps
+            ? ((i < #gaps) ? gaps[i] : 0)
+            : ((i > 0) ? gap : 0)
+        for ..g { lines.push(blank) }
         for line in block.lines {
-            lines.push(pad-line(line, line.width(), w))
+            lines.push(align-line(line, line.width(), w, align))
         }
     }
 
     (lines, w)
 }
 
-fn stack-row(blocks: Array[Output], gap: Int) -> (Array[String], Int) {
+fn stack-row(blocks: Array[Output], gap: Int, align: String = 'start', justify: String = 'start', avail-w: Int = 0) -> (Array[String], Int) {
     let h = blocks.map(&.height).max() ?? 0
-    let w = blocks.map(&.width).sum(0) + gap * max(#blocks - 1, 0)
-    let gap-str = (gap > 0) ? ' ' * gap : nil
+    let content-w = blocks.map(&.width).sum(0) + gap * max(#blocks - 1, 0)
+
+    let use-justify = justify != 'start' && avail-w > 0 && avail-w < INF
+    let w = use-justify ? max(content-w, avail-w) : content-w
+
+    let gaps = use-justify
+        ? compute-gaps(#blocks, content-w, avail-w, gap, justify)
+        : nil
     let lines = []
 
     for row in ..h {
         _buf.clear()
         for block, i in blocks {
-            if i > 0 && gap-str { _buf.push(gap-str) }
-            if row < block.height {
-                _buf.push(block.lines[row])
+            let g = gaps
+                ? ((i < #gaps) ? gaps[i] : 0)
+                : ((i > 0) ? gap : 0)
+            if g > 0 { _buf.push(' ' * g) }
+            let offset = match align {
+                'center'          => (h - block.height) / 2,
+                'end' or 'bottom' => h - block.height,
+                _                 => 0
+            }
+            let r = row - offset
+            if r >= 0 && r < block.height {
+                _buf.push(block.lines[r])
             } else {
                 _buf.push(' ' * block.width)
             }
@@ -841,10 +1191,13 @@ fn apply-border(lines: Array[String], w: Int, chars: Array[String], color: Strin
 fn reconcile(comp: Component, path: String) -> Component {
     let old = _fibers[path]
     if old != nil && type(old) == type(comp) {
-        old.adopt(comp.children, comp.props)
+        old.adopt(comp)
         _next-fibers[path] = old
         old
     } else {
+        if old != nil && old.mounted? {
+            old.unmount!()
+        }
         if !comp.mounted? {
             comp.mount!()
         }
@@ -854,18 +1207,16 @@ fn reconcile(comp: Component, path: String) -> Component {
 }
 
 fn layout-box(node: Node, max-w: Int, max-h: Int, path: String, ox: Int, oy: Int) -> (Output, Element) {
-    let direction = node.props['direction'] ?? 'column'
-    let gap       = node.props['gap'] ?? 0
-    let padding   = node.props['padding'] ?? 0
-    let px        = node.props['paddingX'] ?? node.props['paddingX'] ?? padding
-    let py        = node.props['paddingY'] ?? node.props['paddingY'] ?? padding
-    let margin    = node.props['margin'] ?? 0
-    let mx        = node.props['marginX'] ?? node.props['marginX'] ?? margin
-    let my        = node.props['marginY'] ?? node.props['marginY'] ?? margin
-    let bstyle    = resolve-border(node.props['borderStyle'] ?? node.props['borderStyle'])
-    let bcolor    = node.props['borderColor'] ?? node.props['borderColor']
-    let target-w  = node.props['width']
-    let target-h  = node.props['height']
+    let direction = node.direction
+    let gap       = node.gap
+    let px        = node.px
+    let py        = node.py
+    let mx        = node.mx
+    let my        = node.my
+    let bstyle    = node.bstyle
+    let bcolor    = node.bcolor
+    let target-w  = node.width
+    let target-h  = node.height
 
     let chrome-x = 2 * mx + 2 * px + (bstyle ? 2 : 0)
     let chrome-y = 2 * my + 2 * py + (bstyle ? 2 : 0)
@@ -875,13 +1226,13 @@ fn layout-box(node: Node, max-w: Int, max-h: Int, path: String, ox: Int, oy: Int
     let content-w = max(outer-w - chrome-x, 0)
     let content-h = max(outer-h - chrome-y, 0)
 
-    let content-ox = ox + px + (bstyle ? 1 : 0)
-    let content-oy = oy + py + (bstyle ? 1 : 0)
+    let content-ox = ox + mx + px + (bstyle ? 1 : 0)
+    let content-oy = oy + my + py + (bstyle ? 1 : 0)
 
     fn child-flex(child) -> Int | nil {
         match child {
-            n: Node      => n.props['flex'],
-            c: Component => c.props['flex'],
+            n: Node      => n.flex,
+            c: Component => c.?flex,
             _            => nil
         }
     }
@@ -934,8 +1285,8 @@ fn layout-box(node: Node, max-w: Int, max-h: Int, path: String, ox: Int, oy: Int
             match (child, direction) {
                 (n: Node, 'row')      => Node(n.tag, %{**n.props, 'width': fw}, n.children),
                 (n: Node, 'column')   => Node(n.tag, %{**n.props, 'height': fh}, n.children),
-                (c: Component, 'row') => do { c.adopt(c.children, %{**c.props, 'width': fw}); c },
-                (c: Component, _)     => do { c.adopt(c.children, %{**c.props, 'height': fh}); c },
+                (c: Component, 'row') => do { c.width = fw; c },
+                (c: Component, _)     => do { c.height = fh; c },
                 _                     => child
             }
         } else {
@@ -954,8 +1305,8 @@ fn layout-box(node: Node, max-w: Int, max-h: Int, path: String, ox: Int, oy: Int
     let min-content-w: Int = target-w ? content-w : 0
 
     let (lines, w) = (direction == 'row')
-        ? stack-row(blocks, gap)
-        : stack-column(blocks, gap, min-content-w)
+        ? stack-row(blocks, gap, node.align, node.justify, content-w)
+        : stack-column(blocks, gap, min-content-w, node.align, node.justify, content-h)
 
     if target-w && w < content-w {
         lines = lines.map(line -> pad-line(line, line.width(), content-w))
@@ -972,11 +1323,10 @@ fn layout-box(node: Node, max-w: Int, max-h: Int, path: String, ox: Int, oy: Int
 
     let (lines, w) = apply-padding(lines, w, px, py)
 
-    if let $bg = node.props['bg'] {
-        let fill-w = max(max-w, w)
-        if fill-w > w {
-            lines = lines.map(line -> pad-line(line, line.width(), fill-w))
-            w = fill-w
+    if let $bg = node.bg {
+        if !target-w && max-w < INF && max-w > w {
+            lines = lines.map(line -> pad-line(line, line.width(), max-w))
+            w = max-w
         }
         lines = apply-bg(lines, bg)
     }
@@ -993,11 +1343,38 @@ fn layout-box(node: Node, max-w: Int, max-h: Int, path: String, ox: Int, oy: Int
     (output, Element(ox, oy, w, output.height, node.props, child-elements))
 }
 
+fn layout-overlay(node: Node, max-w: Int, max-h: Int, path: String) -> (Output, Element) {
+    let child = (#node.children == 1) ? node.children[0] : Box(*node.children)
+    let ov-w = node.width
+    let ov-h = node.height
+
+    if ov-w && (child :: Node) {
+        child = Node(child.tag, %{**child.props, 'width': ov-w}, child.children)
+    }
+    if ov-h && (child :: Node) {
+        child = Node(child.tag, %{**child.props, 'height': ov-h}, child.children)
+    }
+
+    let (output, el) = layout-node(child, ov-w ?? max-w, ov-h ?? max-h, "{path}@", 0, 0)
+
+    let ov-x = node.props['x']
+    let ov-y = node.props['y']
+    let center = node.props['center']
+
+    let x: Int = ov-x ?? (center ? max((max-w - output.width) / 2, 0) : 0)
+    let y: Int = ov-y ?? (center ? max((max-h - output.height) / 2, 0) : 0)
+
+    _overlays.push({output, x, y, el})
+
+    (Output([], 0), Element(0, 0, 0, 0, node.props))
+}
+
 fn layout-node(node, max-w: Int = INF, max-h: Int = INF, path: String = '', ox: Int = 0, oy: Int = 0) -> (Output, Element) {
     match node {
         n: Node => match n.tag {
-            NodeBox  => layout-box(n, max-w, max-h, path, ox, oy),
-            NodeText => layout-text(n, max-w, max-h, ox, oy)
+            NodeBox     => layout-box(n, max-w, max-h, path, ox, oy),
+            NodeText    => layout-text(n, max-w, max-h, ox, oy),
+            NodeOverlay => layout-overlay(n, max-w, max-h, path)
         },
         c: Component => do {
             let inst = reconcile(c, path)
@@ -1009,9 +1386,19 @@ fn layout-node(node, max-w: Int = INF, max-h: Int = INF, path: String = '', ox: 
                     inst.every(iv, -> inst.tick())
                 }
             }
-            let (output, el) = layout-node(inst.render(), max-w, max-h, "{path}$", ox, oy)
+            _ctx-stack.push(%{})
+            let rendered = inst.render()
+            if let $w = inst.?width and (rendered :: Node) {
+                rendered = Node(rendered.tag, %{**rendered.props, 'width': w}, rendered.children)
+            }
+            if let $h = inst.?height and (rendered :: Node) {
+                rendered = Node(rendered.tag, %{**rendered.props, 'height': h}, rendered.children)
+            }
+            let (output, el) = layout-node(rendered, max-w, max-h, "{path}$", ox, oy)
+            _ctx-stack.pop()
             (output, Element(ox, oy, output.width, output.height, %{}, [el], component=inst))
         },
+        nil or false => (Output([], 0), Element(ox, oy, 0, 0, %{})),
         x => do {
             let s = "{x}"
             (Output([s], s.width()), Element(ox, oy, s.width(), 1, %{}))
@@ -1022,7 +1409,13 @@ fn layout-node(node, max-w: Int = INF, max-h: Int = INF, path: String = '', ox: 
 fn render-tree(root, max-w: Int, max-h: Int = INF) -> (Output, Element) {
     _next-fibers = %{}
     _focusables = []
+    _overlays = []
     let result = layout-node(root, max-w, max-h)
+    for path, comp in _fibers {
+        if _next-fibers[path] == nil {
+            comp.unmount!()
+        }
+    }
     _fibers = _next-fibers
     result
 }
@@ -1062,14 +1455,27 @@ fn paint-output(output: Output) {
     write(1, _out)
 }
 
-fn paint-fullscreen(output: Output) {
+fn paint-fullscreen(output: Output, rows: Int = INF) {
     _out.clear()
-    _out.push("\x1b[H")
-    for line in output.lines {
-        _out.push(line)
-        _out.push("\x1b[0K\n")
+    let bg = _bg-global-ansi
+    let bg-off = (#bg > 0) ? "\x1b[49m" : ''
+    for line, i in output.lines {
+        _out.push("\x1b[{i + 1};1H\x1b[2K")
+        if #bg > 0 {
+            _out.push("{bg}{line.sub(/\x1b\[0m/, "\x1b[0m{bg}")}{bg-off}")
+        } else {
+            _out.push(line)
+        }
     }
-    _out.push("\x1b[0J")
+    if #output.lines < rows {
+        _out.push("\x1b[{#output.lines + 1};1H{bg}\x1b[0J")
+    }
+    for ov in _overlays {
+        for line, i in ov.output.lines {
+            _out.push("\x1b[{ov.y + i + 1};{ov.x + 1}H")
+            _out.push(line)
+        }
+    }
     write(1, _out)
 }
 
@@ -1138,6 +1544,10 @@ pub fn run(app) {
 
     _out.clear()
     _out.push("\x1b[?1049h\x1b[?25l")
+    if #_bg-global-ansi > 0 {
+        _out.push(_bg-global-ansi)
+        _out.push("\x1b[2J")
+    }
     write(1, _out)
 
     let dirty = true
@@ -1158,7 +1568,7 @@ pub fn run(app) {
         let (rows, cols) = tio.size()
         let (output, t) = render-tree(app.render(), cols, rows)
         tree = t
-        paint-fullscreen(output)
+        paint-fullscreen(output, rows)
         dirty = false
     }
 
@@ -1194,7 +1604,7 @@ pub fn run(app) {
                     }
                 },
 
-                event.Key({key: 'TAB', mods, event: 1, *}) => {
+                event.Key({key: 'TAB', mods, event: (1 or 2), *}) => {
                     if #_focusables > 0 {
                         let idx = (_focused != nil)
                             ? (_focusables.search(_focused) ?? -1)
@@ -1219,6 +1629,12 @@ pub fn run(app) {
         false
     }
 
+    if app :: Component {
+        if let $iv = app.interval {
+            app.every(iv, -> app.tick())
+        }
+    }
+
     tio.start()
     repaint()
 
@@ -1228,8 +1644,8 @@ pub fn run(app) {
         let deadline = next-timer-deadline()
         let timeout  = if !_notify-queue.empty? { 0.0 }
                        else if deadline         { max(deadline - now(), 0.0) }
-                       else if _has-watchers     { 0.016 }
-                       else                      { nil }
+                       else if _has-watchers    { 0.016 }
+                       else                     { nil }
 
         if let $ev = tio.next-event(timeout) and handle(ev) {
             quit = true

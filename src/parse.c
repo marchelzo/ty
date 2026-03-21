@@ -6989,9 +6989,7 @@ tokenize(Ty *ty, char const *source, TokenVector *tokens_out)
                 while (get_prefix_parser(ty) != NULL) {
                         next();
                 }
-
                 setctx(LEX_INFIX);
-
                 next();
         }
 
