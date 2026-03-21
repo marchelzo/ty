@@ -112,7 +112,7 @@ mktoken(Ty *ty, int type)
         };
 }
 
-static Token
+inline static Token
 mkid(Ty *ty, char *id, char *module, bool raw)
 {
         return (Token) {
@@ -127,7 +127,7 @@ mkid(Ty *ty, char *id, char *module, bool raw)
         };
 }
 
-static Token
+inline static Token
 mkstring(Ty *ty, char *string)
 {
         return (Token) {
@@ -903,13 +903,11 @@ Unterminated:
 }
 
 static Token
-lexregex(Ty *ty)
+lexregex(Ty *ty, bool strict)
 {
         byte_vector pat = {0};
 
-        // Initial slash
         nextchar(ty);
-
         while (C(0) != '/') {
                 switch (C(0)) {
                 case '\0': goto Unterminated;
@@ -927,8 +925,6 @@ lexregex(Ty *ty)
                            avP(pat, nextchar(ty));
                 }
         }
-
-        // Closing slash
         nextchar(ty);
 
         int flags = 0;
@@ -941,18 +937,26 @@ lexregex(Ty *ty)
                 case 'm': flags |= PCRE2_MULTILINE;       break;
                 case 'x': flags |= PCRE2_EXTENDED;        break;
                 case 'v': detailed = true;                break;
-                default:  error(ty, "invalid regex flag: %s'%c'%s", TERM(36), C(0), TERM(39));
+                default:  goto BadFlags;
                 }
                 nextchar(ty);
         }
 
         avP(pat, '\0');
 
-        return mkregex(ty, pat.items, flags, detailed);
+        return mkregex(ty, vv(pat), flags, detailed);
 
 Unterminated:
-        avP(pat, '\0');
-        return mktoken(ty, TOKEN_ERROR);
+        if (!strict) {
+                return mktoken(ty, TOKEN_ERROR);
+        }
+        error(ty, "unterminated regex literal");
+
+BadFlags:
+        if (!strict) {
+                return mktoken(ty, TOKEN_ERROR);
+        }
+        error(ty, "invalid regex flags");
 }
 
 static intmax_t
@@ -1261,7 +1265,7 @@ static Token
 saferegex(Ty *ty)
 {
         LexState save = state;
-        Token t = lexregex(ty);
+        Token t = lexregex(ty, false);
         if (
                 (t.type != TOKEN_REGEX)
              || ((t.start.line != t.end.line) && (t.regex->pattern[0] == ' '))
@@ -1328,7 +1332,7 @@ Begin:
         } else if (state.in_pp && C(0) == '/') {
                 return saferegex(ty);
         } else if (ctx == LEX_PREFIX && C(0) == '/') {
-                return lexregex(ty);
+                return lexregex(ty, true);
         } else if (haveid(ty)) {
                 return lexword(ty);
         } else if (C(0) == ':' && C(1) == ':' && !contains(OperatorCharset, C(2))) {

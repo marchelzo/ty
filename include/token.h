@@ -166,6 +166,7 @@ typedef struct token {
                                 char *operator;
                                 char *string;
                                 char *comment;
+                                char const *error;
                         };
                         bool raw;
                 };

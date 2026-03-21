@@ -8575,6 +8575,7 @@ BUILTIN_FUNCTION(eval)
                         char const *msg = TyError(ty);
                         Value e = Err(ty, vSsz(msg));
                         ReleaseArena(old);
+                        EVAL_DEPTH -= 1;
                         vmE(&e);
                 }
 
@@ -8582,6 +8583,7 @@ BUILTIN_FUNCTION(eval)
 
                 if (!tyeval(ty, e, &v, scope)) {
                         ReleaseArena(old);
+                        EVAL_DEPTH -= 1;
                         vmE(&v);
                 }
 
@@ -8594,9 +8596,11 @@ BUILTIN_FUNCTION(eval)
                 if (expr == NULL) {
                         char const *msg = TyError(ty);
                         Value e = Err(ty, vSsz(msg));
+                        EVAL_DEPTH -= 1;
                         vmE(&e);
                 }
                 if (!tyeval(ty, expr, &v, scope)) {
+                        EVAL_DEPTH -= 1;
                         vmE(&v);
                 }
         }
