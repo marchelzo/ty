@@ -861,14 +861,14 @@ class Output {
 }
 
 pub class Element {
-    __x: Int
-    __y: Int
-    __w: Int
-    __h: Int
-    __props: Dict[String, Any]
-    __children: Array[Element]
-    __focusable: Bool
-    __component: Component | nil
+    x: Int
+    y: Int
+    w: Int
+    h: Int
+    props: Dict[String, Any]
+    children: Array[Element]
+    focusable?: Bool
+    component: Component | nil
 
     init(
         x: Int, y: Int, w: Int, h: Int,
@@ -876,32 +876,23 @@ pub class Element {
         children: Array[Element] = [],
         component: Component | nil = nil
     ) {
-        __x = x
-        __y = y
-        __w = w
-        __h = h
-        __props = props
-        __children = children
-        __focusable = props['focusable'] ?? false
-        __component = component
+        self.x = x
+        self.y = y
+        self.w = w
+        self.h = h
+        self.props = props
+        self.children = children
+        focusable? = props['focusable'] ?? false
+        self.component = component
     }
 
-    x { __x }
-    y { __y }
-    w { __w }
-    h { __h }
-    props { __props }
-    children { __children }
-    focusable? { __focusable }
-    component { __component }
-
     contains?(px: Int, py: Int) -> Bool {
-        px >= __x && px < __x + __w && py >= __y && py < __y + __h
+        px >= x && px < x + w && py >= y && py < y + h
     }
 
     hit(px: Int, py: Int) -> Array[Element] | nil {
         if !contains?(px, py) { return nil }
-        for child in __children[;;-1] {
+        for child in children[;;-1] {
             if let $path = child.hit(px, py) {
                 path.push(self)
                 return path
@@ -912,8 +903,8 @@ pub class Element {
 
     focusables() -> Array[Element] {
         let out = []
-        if __focusable { out.push(self) }
-        for child in __children {
+        if focusable? { out.push(self) }
+        for child in children {
             out += child.focusables()
         }
         out
@@ -1460,7 +1451,7 @@ fn paint-fullscreen(output: Output, rows: Int = INF) {
     let bg = _bg-global-ansi
     let bg-off = (#bg > 0) ? "\x1b[49m" : ''
     for line, i in output.lines {
-        _out.push("\x1b[{i + 1};1H\x1b[2K")
+        _out.push("\x1b[{i + 1};1H{bg}\x1b[2K")
         if #bg > 0 {
             _out.push("{bg}{line.sub(/\x1b\[0m/, "\x1b[0m{bg}")}{bg-off}")
         } else {
