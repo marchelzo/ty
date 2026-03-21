@@ -1446,6 +1446,49 @@ fn paint-output(output: Output) {
     write(1, _out)
 }
 
+let __tls::_last-inline-height: Int = 0
+
+fn paint-inline(output: Output) {
+    _out.clear()
+    if _last-inline-height > 0 {
+        _out.push("\x1b[{_last-inline-height}A\r")
+    }
+    _out.push("\x1b[0J")
+    let bg = _bg-global-ansi
+    let bg-off = (#bg > 0) ? "\x1b[49m" : ''
+    for line in output.lines {
+        if #bg > 0 {
+            _out.push("{bg}{line.sub(/\x1b\[0m/, "\x1b[0m{bg}")}{bg-off}\x1b[0K\n")
+        } else {
+            _out.push("{line}\x1b[0K\n")
+        }
+    }
+    for ov in _overlays {
+        for line, i in ov.output.lines {
+            _out.push("\x1b[{ov.y + i + 1};{ov.x + 1}H")
+            _out.push(line)
+        }
+    }
+    if #_overlays > 0 {
+        _out.push("\x1b[{#output.lines};1H")
+    }
+    _last-inline-height = #output.lines
+    write(1, _out)
+}
+
+pub fn ink-log(*args) {
+    _out.clear()
+    if _last-inline-height > 0 {
+        _out.push("\x1b[{_last-inline-height}A\r")
+    }
+    _out.push("\x1b[0J")
+    for arg in args {
+        _out.push("{arg}\n")
+    }
+    _last-inline-height = 0
+    write(1, _out)
+}
+
 fn paint-fullscreen(output: Output, rows: Int = INF) {
     _out.clear()
     let bg = _bg-global-ansi
@@ -1473,6 +1516,13 @@ fn paint-fullscreen(output: Output, rows: Int = INF) {
 fn is-ctrl-c(ev) {
     match ev {
         event.Key({key: 'c' or 99, mods: m, *}) => (m & CTRL) != 0,
+        _ => false
+    }
+}
+
+fn is-ctrl-l(ev) {
+    match ev {
+        event.Key({key: 'l' or 108, mods: m, *}) => (m & CTRL) != 0,
         _ => false
     }
 }
@@ -1524,22 +1574,29 @@ pub fn render(root) {
     paint-output(output)
 }
 
-pub fn run(app) {
+pub fn run(app, fullscreen: Bool = true) {
     if app :: Node {
         render(app)
         return
     }
 
-    let tio = term.TermIO(mouse=true)
+    let tio = term.TermIO(mouse=fullscreen)
     let on-ev = app.?on-event
 
-    _out.clear()
-    _out.push("\x1b[?1049h\x1b[?25l")
-    if #_bg-global-ansi > 0 {
-        _out.push(_bg-global-ansi)
-        _out.push("\x1b[2J")
+    if fullscreen {
+        _out.clear()
+        _out.push("\x1b[?1049h\x1b[?25l")
+        if #_bg-global-ansi > 0 {
+            _out.push(_bg-global-ansi)
+            _out.push("\x1b[2J")
+        }
+        write(1, _out)
+    } else {
+        _out.clear()
+        _out.push("\x1b[?25l")
+        write(1, _out)
+        _last-inline-height = 0
     }
-    write(1, _out)
 
     let dirty = true
     let tree: Element | nil = nil
@@ -1550,7 +1607,11 @@ pub fn run(app) {
     fn cleanup() {
         tio.stop()
         _out.clear()
-        _out.push("\x1b[?25h\x1b[?1049l")
+        if fullscreen {
+            _out.push("\x1b[?25h\x1b[?1049l")
+        } else {
+            _out.push("\x1b[?25h\n")
+        }
         write(1, _out)
         tio.close()
     }
@@ -1559,12 +1620,29 @@ pub fn run(app) {
         let (rows, cols) = tio.size()
         let (output, t) = render-tree(app.render(), cols, rows)
         tree = t
-        paint-fullscreen(output, rows)
+        if fullscreen {
+            paint-fullscreen(output, rows)
+        } else {
+            paint-inline(output)
+        }
         dirty = false
     }
 
     fn handle(ev) -> Bool {
         if ev == event.EOF || is-ctrl-c(ev) { return true }
+
+        if is-ctrl-l(ev) {
+            _out.clear()
+            if fullscreen {
+                _out.push("\x1b[H{_bg-global-ansi}\x1b[2J")
+            } else {
+                _last-inline-height = 0
+                _out.push("\x1b[2J\x1b[H")
+            }
+            write(1, _out)
+            dirty = true
+            return false
+        }
 
         if let $t = tree {
             match ev {
