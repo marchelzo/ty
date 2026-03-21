@@ -377,13 +377,14 @@ pub class Spinner < Component {
     render() -> Node {
         let sty = style ?? 'dots'
         let c = color ?? 'info'
+        let dots = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
         let chars = match sty {
-            'dots'   => ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'],
+            'dots'   => dots,
             'line'   => ['|', '/', '-', '\\'],
             'arc'    => ['◜', '◠', '◝', '◞', '◡', '◟'],
             'star'   => ['✶', '✸', '✹', '✺', '✹', '✷'],
             'bounce' => ['⠁', '⠂', '⠄', '⡀', '⢀', '⠠', '⠐', '⠈'],
-            _        => ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
+            _        => dots
         }
 
         label
@@ -421,20 +422,62 @@ pub class TextInput < Component {
                 __emit()
             },
 
-            event.Key({key: 'LEFT',      event: (1 or 2), *})              => { if __cursor > 0 { __cursor -= 1 } },
-            event.Key({key: 'RIGHT',     event: (1 or 2), *})              => { if __cursor < #__chars { __cursor += 1 } },
-            event.Key({key: 'HOME',      event: (1 or 2), *})              => __cursor = 0,
-            event.Key({key: 'END',       event: (1 or 2), *})              => __cursor = #__chars,
-            event.Key({key: 'BACKSPACE', event: (1 or 2), *})              => { if __cursor > 0 { __chars.pop(--__cursor); __emit() } },
-            event.Key({key: 'DELETE',    event: (1 or 2), *})              => { if __cursor < #__chars { __chars.pop(__cursor); __emit() } },
-            event.Key({key: 'a' or 97,   event: (1 or 2), mods: $m, *}) and (m & CTRL) != 0 => __cursor = 0,
-            event.Key({key: 'e' or 101,  event: (1 or 2), mods: $m, *}) and (m & CTRL) != 0 => __cursor = #__chars,
-            event.Key({key: 'k' or 107,  event: (1 or 2), mods: $m, *}) and (m & CTRL) != 0 => { __chars.splice(__cursor, #__chars - __cursor); __emit() },
-            event.Key({key: 'u' or 117,  event: (1 or 2), mods: $m, *}) and (m & CTRL) != 0 => { __chars.splice(0, __cursor); __cursor = 0; __emit() },
-            event.Key({key: 'w' or 119,  event: (1 or 2), mods: $m, *}) and (m & CTRL) != 0 => {
+            event.Key({key: 'LEFT', event: (1 or 2), *}) =>
+                { if __cursor > 0 { __cursor -= 1 } },
+
+            event.Key({key: 'RIGHT', event: (1 or 2), *}) =>
+                { if __cursor < #__chars { __cursor += 1 } },
+
+            event.Key({key: 'HOME', event: (1 or 2), *}) =>
+                __cursor = 0,
+
+            event.Key({key: 'END', event: (1 or 2), *}) =>
+                __cursor = #__chars,
+
+            event.Key({key: 'BACKSPACE', event: (1 or 2), *}) => do {
+                if __cursor > 0 {
+                    __chars.pop(--__cursor)
+                    __emit()
+                }
+            },
+
+            event.Key({key: 'DELETE', event: (1 or 2), *}) => do {
+                if __cursor < #__chars {
+                    __chars.pop(__cursor)
+                    __emit()
+                }
+            },
+
+            event.Key({key: 'a' or 97, event: (1 or 2), mods: $m, *})
+            and (m & CTRL) != 0 =>
+                __cursor = 0,
+
+            event.Key({key: 'e' or 101, event: (1 or 2), mods: $m, *})
+            and (m & CTRL) != 0 =>
+                __cursor = #__chars,
+
+            event.Key({key: 'k' or 107, event: (1 or 2), mods: $m, *})
+            and (m & CTRL) != 0 => do {
+                __chars.splice(__cursor, #__chars - __cursor)
+                __emit()
+            },
+
+            event.Key({key: 'u' or 117, event: (1 or 2), mods: $m, *})
+            and (m & CTRL) != 0 => do {
+                __chars.splice(0, __cursor)
+                __cursor = 0
+                __emit()
+            },
+
+            event.Key({key: 'w' or 119, event: (1 or 2), mods: $m, *})
+            and (m & CTRL) != 0 => do {
                 let end = __cursor
-                while __cursor > 0 && __chars[__cursor - 1].match?(/\s/) { __cursor -= 1 }
-                while __cursor > 0 && !__chars[__cursor - 1].match?(/\s/) { __cursor -= 1 }
+                while __cursor > 0 && __chars[__cursor - 1].match?(/\s/) {
+                    __cursor -= 1
+                }
+                while __cursor > 0 && !__chars[__cursor - 1].match?(/\s/) {
+                    __cursor -= 1
+                }
                 __chars.splice(__cursor, end - __cursor)
                 __emit()
             },
@@ -466,10 +509,16 @@ pub class TextInput < Component {
         let text-color = show-placeholder ? 'subtle' : clr
         let content = if focused? {
             let before = visible.slice(0, cursor-pos)
-            let cur-ch = (cursor-pos < visible.width()) ? visible.slice(cursor-pos, 1) : ' '
-            let after = (cursor-pos < visible.width()) ? visible.slice(cursor-pos + 1) : ''
+            let cur-ch = (cursor-pos < visible.width())
+                ? visible.slice(cursor-pos, 1)
+                : ' '
+            let after = (cursor-pos < visible.width())
+                ? visible.slice(cursor-pos + 1)
+                : ''
             let trail = ' ' * max(pad - 1, 0)
-            str(chalk"[{text-color}]{before}[/][reverse]{cur-ch}[/][{text-color}]{after}[/]{trail}")
+            str(chalk"[{text-color}]{before}[/]"
+                "[reverse]{cur-ch}[/]"
+                "[{text-color}]{after}[/]{trail}")
         } else {
             str(chalk"[{text-color}]{visible}[/]{' ' * pad}")
         }
@@ -557,28 +606,68 @@ pub class TextArea < Component {
                 __emit()
             },
 
-            event.Key({key: 'LEFT',  event: (1 or 2), *}) => {
+            event.Key({key: 'LEFT', event: (1 or 2), *}) => {
                 if __col > 0 { __col -= 1 }
                 else if __row > 0 { __row -= 1; __col = #__line }
             },
+
             event.Key({key: 'RIGHT', event: (1 or 2), *}) => {
                 if __col < #__line { __col += 1 }
                 else if __row < #__lines - 1 { __row += 1; __col = 0 }
             },
-            event.Key({key: 'UP',    event: (1 or 2), *}) => { if __row > 0 { __row -= 1; __clamp-col() } },
-            event.Key({key: 'DOWN',  event: (1 or 2), *}) => { if __row < #__lines - 1 { __row += 1; __clamp-col() } },
-            event.Key({key: 'HOME',  event: (1 or 2), *}) => __col = 0,
-            event.Key({key: 'END',   event: (1 or 2), *}) => __col = #__line,
 
-            event.Key({key: 'a' or 97,  event: (1 or 2), mods: $m, *}) and (m & CTRL) != 0 => __col = 0,
-            event.Key({key: 'e' or 101, event: (1 or 2), mods: $m, *}) and (m & CTRL) != 0 => __col = #__line,
-            event.Key({key: 'k' or 107, event: (1 or 2), mods: $m, *}) and (m & CTRL) != 0 => { __line.splice(__col, #__line - __col); __emit() },
-            event.Key({key: 'p' or 112, event: (1 or 2), mods: $m, *}) and (m & CTRL) != 0 => { if __row > 0 { __row -= 1; __clamp-col() } },
-            event.Key({key: 'n' or 110, event: (1 or 2), mods: $m, *}) and (m & CTRL) != 0 => { if __row < #__lines - 1 { __row += 1; __clamp-col() } },
-            event.Key({key: 'w' or 119, event: (1 or 2), mods: $m, *}) and (m & CTRL) != 0 => {
+            event.Key({key: 'UP', event: (1 or 2), *}) =>
+                { if __row > 0 { __row -= 1; __clamp-col() } },
+
+            event.Key({key: 'DOWN', event: (1 or 2), *}) => do {
+                if __row < #__lines - 1 {
+                    __row += 1
+                    __clamp-col()
+                }
+            },
+
+            event.Key({key: 'HOME', event: (1 or 2), *}) =>
+                __col = 0,
+
+            event.Key({key: 'END', event: (1 or 2), *}) =>
+                __col = #__line,
+
+            event.Key({key: 'a' or 97, event: (1 or 2), mods: $m, *})
+            and (m & CTRL) != 0 =>
+                __col = 0,
+
+            event.Key({key: 'e' or 101, event: (1 or 2), mods: $m, *})
+            and (m & CTRL) != 0 =>
+                __col = #__line,
+
+            event.Key({key: 'k' or 107, event: (1 or 2), mods: $m, *})
+            and (m & CTRL) != 0 => do {
+                __line.splice(__col, #__line - __col)
+                __emit()
+            },
+
+            event.Key({key: 'p' or 112, event: (1 or 2), mods: $m, *})
+            and (m & CTRL) != 0 => do {
+                if __row > 0 { __row -= 1; __clamp-col() }
+            },
+
+            event.Key({key: 'n' or 110, event: (1 or 2), mods: $m, *})
+            and (m & CTRL) != 0 => do {
+                if __row < #__lines - 1 {
+                    __row += 1
+                    __clamp-col()
+                }
+            },
+
+            event.Key({key: 'w' or 119, event: (1 or 2), mods: $m, *})
+            and (m & CTRL) != 0 => do {
                 let end = __col
-                while __col > 0 && __line[__col - 1].match?(/\s/) { __col -= 1 }
-                while __col > 0 && !__line[__col - 1].match?(/\s/) { __col -= 1 }
+                while __col > 0 && __line[__col - 1].match?(/\s/) {
+                    __col -= 1
+                }
+                while __col > 0 && !__line[__col - 1].match?(/\s/) {
+                    __col -= 1
+                }
                 __line.splice(__col, end - __col)
                 __emit()
             },
@@ -609,10 +698,16 @@ pub class TextArea < Component {
                 if focused? && li == __row {
                     let cursor-pos = min(__col, inner-w)
                     let before = visible.slice(0, cursor-pos)
-                    let cur-ch = (cursor-pos < visible.width()) ? visible.slice(cursor-pos, 1) : ' '
-                    let after = (cursor-pos < visible.width()) ? visible.slice(cursor-pos + 1) : ''
+                    let cur-ch = (cursor-pos < visible.width())
+                        ? visible.slice(cursor-pos, 1)
+                        : ' '
+                    let after = (cursor-pos < visible.width())
+                        ? visible.slice(cursor-pos + 1)
+                        : ''
                     let trail = max(pad - ((cursor-pos >= visible.width()) ? 1 : 0), 0)
-                    rendered.push(str(chalk"[{clr}]{before}[/][reverse]{cur-ch}[/][{clr}]{after}[/]{' ' * trail}"))
+                    rendered.push(str(chalk"[{clr}]{before}[/]"
+                        "[reverse]{cur-ch}[/]"
+                        "[{clr}]{after}[/]{' ' * trail}"))
                 } else {
                     rendered.push(str(chalk"[{clr}]{visible}[/]{' ' * pad}"))
                 }
@@ -703,7 +798,9 @@ pub class Checkbox < Component {
 
     on-event(ev) {
         match ev {
-            event.Key({key: 'ENTER', event: (1 or 2), *}) or event.Text(' ') or event.Text('x') => {
+            event.Key({key: 'ENTER', event: (1 or 2), *})
+            or event.Text(' ')
+            or event.Text('x') => {
                 __on = !__on
                 if on-change { on-change(__on) }
             },
@@ -769,11 +866,24 @@ pub class Slider < Component {
         let stp: Float = float(step ?? ((__mx - __mn) / 20.0))
 
         match ev {
-            event.Key({key: 'LEFT',  event: (1 or 2), *}) or event.Text('h') => { __val = max(__val - stp, __mn); __emit() },
-            event.Key({key: 'RIGHT', event: (1 or 2), *}) or event.Text('l') => { __val = min(__val + stp, __mx); __emit() },
-            event.Key({key: 'HOME',  event: (1 or 2), *})                    => { __val = __mn; __emit() },
-            event.Key({key: 'END',   event: (1 or 2), *})                    => { __val = __mx; __emit() },
-            event.MouseDown({x: $mx, *}) or event.MouseMove({x: $mx, *}) => __jump(int(mx) - 1),
+            event.Key({key: 'LEFT', event: (1 or 2), *})
+            or event.Text('h') =>
+                { __val = max(__val - stp, __mn); __emit() },
+
+            event.Key({key: 'RIGHT', event: (1 or 2), *})
+            or event.Text('l') =>
+                { __val = min(__val + stp, __mx); __emit() },
+
+            event.Key({key: 'HOME', event: (1 or 2), *}) =>
+                { __val = __mn; __emit() },
+
+            event.Key({key: 'END', event: (1 or 2), *}) =>
+                { __val = __mx; __emit() },
+
+            event.MouseDown({x: $mx, *})
+            or event.MouseMove({x: $mx, *}) =>
+                __jump(int(mx) - 1),
+
             _ => ()
         }
     }
@@ -947,7 +1057,10 @@ fn build-markup(children) -> String {
     buf.str!()
 }
 
-fn layout-text(node: Node, max-w: Int, max-h: Int, ox: Int, oy: Int) -> (Output, Element) {
+fn layout-text(
+    node: Node, max-w: Int, max-h: Int,
+    ox: Int, oy: Int
+) -> (Output, Element) {
     let markup = build-markup(node.children)
 
     if #markup == 0 && !node.style {
@@ -1007,7 +1120,10 @@ fn align-line(line: String, lw: Int, w: Int, align: String) -> String {
     }
 }
 
-fn compute-gaps(n: Int, content-size: Int, avail: Int, gap: Int, justify: String) -> Array[Int] {
+fn compute-gaps(
+    n: Int, content-size: Int, avail: Int,
+    gap: Int, justify: String
+) -> Array[Int] {
     if n <= 0 { return [] }
 
     let total-gap = avail - content-size
@@ -1049,7 +1165,11 @@ fn compute-gaps(n: Int, content-size: Int, avail: Int, gap: Int, justify: String
     }
 }
 
-fn stack-column(blocks: Array[Output], gap: Int, min-w: Int = 0, align: String = 'start', justify: String = 'start', avail-h: Int = 0) -> (Array[String], Int) {
+fn stack-column(
+    blocks: Array[Output], gap: Int,
+    min-w: Int = 0, align: String = 'start',
+    justify: String = 'start', avail-h: Int = 0
+) -> (Array[String], Int) {
     let w: Int = max(blocks.map(&.width).max() ?? 0, min-w)
     let lines = []
 
@@ -1073,7 +1193,11 @@ fn stack-column(blocks: Array[Output], gap: Int, min-w: Int = 0, align: String =
     (lines, w)
 }
 
-fn stack-row(blocks: Array[Output], gap: Int, align: String = 'start', justify: String = 'start', avail-w: Int = 0) -> (Array[String], Int) {
+fn stack-row(
+    blocks: Array[Output], gap: Int,
+    align: String = 'start',
+    justify: String = 'start', avail-w: Int = 0
+) -> (Array[String], Int) {
     let h = blocks.map(&.height).max() ?? 0
     let content-w = blocks.map(&.width).sum(0) + gap * max(#blocks - 1, 0)
 
@@ -1111,9 +1235,11 @@ fn stack-row(blocks: Array[Output], gap: Int, align: String = 'start', justify: 
 }
 
 fn bg-ansi(color: String) -> String | nil {
-    if let [_, $r, $g, $b] = color.match(/#([0-9a-fA-F]{2})([0-9a-fA-F]{2})([0-9a-fA-F]{2})/) {
+    let hex2 = /#([0-9a-fA-F]{2})([0-9a-fA-F]{2})([0-9a-fA-F]{2})/
+    let hex1 = /#([0-9a-fA-F])([0-9a-fA-F])([0-9a-fA-F])/
+    if let [_, $r, $g, $b] = color.match(hex2) {
         "\x1b[48;2;{int(r, 16)};{int(g, 16)};{int(b, 16)}m"
-    } else if let [_, $r, $g, $b] = color.match(/#([0-9a-fA-F])([0-9a-fA-F])([0-9a-fA-F])/) {
+    } else if let [_, $r, $g, $b] = color.match(hex1) {
         "\x1b[48;2;{int(r + r, 16)};{int(g + g, 16)};{int(b + b, 16)}m"
     } else {
         nil
@@ -1150,7 +1276,10 @@ fn apply-padding(lines: Array[String], w: Int, px: Int, py: Int) -> (Array[Strin
     (out, total-w)
 }
 
-fn apply-border(lines: Array[String], w: Int, chars: Array[String], color: String | nil) -> (Array[String], Int) {
+fn apply-border(
+    lines: Array[String], w: Int,
+    chars: Array[String], color: String | nil
+) -> (Array[String], Int) {
     let [tl, tr, bl, br, hz, vt] = chars
     let total-w = w + 2
     let out = []
@@ -1197,7 +1326,10 @@ fn reconcile(comp: Component, path: String) -> Component {
     }
 }
 
-fn layout-box(node: Node, max-w: Int, max-h: Int, path: String, ox: Int, oy: Int) -> (Output, Element) {
+fn layout-box(
+    node: Node, max-w: Int, max-h: Int,
+    path: String, ox: Int, oy: Int
+) -> (Output, Element) {
     let direction = node.direction
     let gap       = node.gap
     let px        = node.px
@@ -1243,7 +1375,10 @@ fn layout-box(node: Node, max-w: Int, max-h: Int, path: String, ox: Int, oy: Int
         }
         let avail = max(content-w - fixed-w - num-gaps, 0)
         for i in ..#node.children {
-            child-widths.push(flexes[i] ? max(int(avail * int(flexes[i]) / total-flex), 0) : content-w)
+            let fw = flexes[i]
+                ? max(int(avail * int(flexes[i]) / total-flex), 0)
+                : content-w
+            child-widths.push(fw)
             child-heights.push(content-h)
         }
     } else if total-flex > 0 && direction == 'column' {
@@ -1255,7 +1390,10 @@ fn layout-box(node: Node, max-w: Int, max-h: Int, path: String, ox: Int, oy: Int
         let avail = max(content-h - fixed-h - num-gaps, 0)
         for i in ..#node.children {
             child-widths.push(content-w)
-            child-heights.push(flexes[i] ? max(int(avail * int(flexes[i]) / total-flex), 0) : content-h)
+            let fh = flexes[i]
+                ? max(int(avail * int(flexes[i]) / total-flex), 0)
+                : content-h
+            child-heights.push(fh)
         }
     } else {
         for i in ..#node.children {
@@ -1274,8 +1412,10 @@ fn layout-box(node: Node, max-w: Int, max-h: Int, path: String, ox: Int, oy: Int
         let fh = child-heights[i]
         let child-node = if flexes[i] {
             match (child, direction) {
-                (n: Node, 'row')      => Node(n.tag, %{**n.props, 'width': fw}, n.children),
-                (n: Node, 'column')   => Node(n.tag, %{**n.props, 'height': fh}, n.children),
+                (n: Node, 'row') =>
+                    Node(n.tag, %{**n.props, 'width': fw}, n.children),
+                (n: Node, 'column') =>
+                    Node(n.tag, %{**n.props, 'height': fh}, n.children),
                 (c: Component, 'row') => do { c.width = fw; c },
                 (c: Component, _)     => do { c.height = fh; c },
                 _                     => child
@@ -1360,7 +1500,10 @@ fn layout-overlay(node: Node, max-w: Int, max-h: Int, path: String) -> (Output, 
     (Output([], 0), Element(0, 0, 0, 0, node.props))
 }
 
-fn layout-node(node, max-w: Int = INF, max-h: Int = INF, path: String = '', ox: Int = 0, oy: Int = 0) -> (Output, Element) {
+fn layout-node(
+    node, max-w: Int = INF, max-h: Int = INF,
+    path: String = '', ox: Int = 0, oy: Int = 0
+) -> (Output, Element) {
     match node {
         n: Node => match n.tag {
             NodeBox     => layout-box(n, max-w, max-h, path, ox, oy),
@@ -1372,7 +1515,9 @@ fn layout-node(node, max-w: Int = INF, max-h: Int = INF, path: String = '', ox: 
             inst.focus!(inst == _focused)
             if inst.focusable? { _focusables.push(inst) }
             if let $iv = inst.interval {
-                let exists = _timers.any?(t -> !t.cancelled? && t.owner == inst && t.repeat != nil)
+                let exists = _timers.any?(
+                    t -> !t.cancelled? && t.owner == inst && t.repeat != nil
+                )
                 if !exists {
                     inst.every(iv, -> inst.tick())
                 }
@@ -1380,14 +1525,25 @@ fn layout-node(node, max-w: Int = INF, max-h: Int = INF, path: String = '', ox: 
             _ctx-stack.push(%{})
             let rendered = inst.render()
             if let $w = inst.?width and (rendered :: Node) {
-                rendered = Node(rendered.tag, %{**rendered.props, 'width': w}, rendered.children)
+                rendered = Node(
+                    rendered.tag,
+                    %{**rendered.props, 'width': w},
+                    rendered.children
+                )
             }
             if let $h = inst.?height and (rendered :: Node) {
-                rendered = Node(rendered.tag, %{**rendered.props, 'height': h}, rendered.children)
+                rendered = Node(
+                    rendered.tag,
+                    %{**rendered.props, 'height': h},
+                    rendered.children
+                )
             }
             let (output, el) = layout-node(rendered, max-w, max-h, "{path}$", ox, oy)
             _ctx-stack.pop()
-            (output, Element(ox, oy, output.width, output.height, %{}, [el], component=inst))
+            (output, Element(
+                ox, oy, output.width, output.height,
+                %{}, [el], component=inst
+            ))
         },
         nil or false => (Output([], 0), Element(ox, oy, 0, 0, %{})),
         x => do {
