@@ -239,6 +239,10 @@ pub class Component {
 
     render();
 
+    resolve(val, default = nil) {
+        (val :: Function) ? val(self) : (val ?? default)
+    }
+
     focus!(v: Bool) { focused? = v             }
     mount!()        { mounted? = true; alive? = true; mount() }
     unmount!()      { alive? = false; unmount() }
@@ -397,11 +401,12 @@ pub class Spinner < Component {
 }
 
 pub class TextInput < Component {
-    placeholder: String | nil
-    on-change:   Function | nil
-    width:       Int | nil
-    color:       String | nil
-    value:       String | nil
+    placeholder:  String | nil
+    on-change:    Function | nil
+    width:        Int | nil
+    color:        String | Function | nil
+    border-color: String | Function | nil
+    value:        String | nil
 
     __chars:  Array[String] = (value ?? '').chars()
     __cursor: Int = #__chars
@@ -489,8 +494,8 @@ pub class TextInput < Component {
     render() -> Node {
         let w: Int = int(width ?? 20)
         let ph = placeholder ?? ''
-        let clr = color ?? (focused? ? 'selection' : 'text')
-        let bc = focused? ? 'border-focus' : 'border'
+        let clr = resolve(color, focused? ? 'selection' : 'text')
+        let bc = resolve(border-color, focused? ? 'border-focus' : 'border')
         let inner-w = max(w - 4, 1)
 
         let display = (#__chars > 0) ? __chars.join() : ''
@@ -530,12 +535,13 @@ pub class TextInput < Component {
 }
 
 pub class TextArea < Component {
-    width:       Int | nil
-    height:      Int | nil
-    on-change:   Function | nil
-    color:       String | nil
-    placeholder: String | nil
-    value:       String | nil
+    width:        Int | nil
+    height:       Int | nil
+    on-change:    Function | nil
+    color:        String | Function | nil
+    border-color: String | Function | nil
+    placeholder:  String | nil
+    value:        String | nil
 
     __lines:    Array[Array[String]]
     __row:      Int
@@ -679,8 +685,8 @@ pub class TextArea < Component {
     render() -> Node {
         let w: Int = int(width ?? 40)
         let h: Int = int(height ?? 10)
-        let clr = color ?? (focused? ? 'selection' : 'text')
-        let bc = focused? ? 'border-focus' : 'border'
+        let clr = resolve(color, focused? ? 'selection' : 'text')
+        let bc = resolve(border-color, focused? ? 'border-focus' : 'border')
         let inner-w = max(w - 2, 1)
         let inner-h = max(h - 2, 1)
 
@@ -726,8 +732,9 @@ pub class Select < Component {
     items:          Array[String] | nil
     selected:       Int | nil
     on-change:      Function | nil
-    color:          String | nil
-    selected-color: String | nil
+    color:          String | Function | nil
+    selected-color: String | Function | nil
+    border-color:   String | Function | nil
 
     __sel: Int
 
@@ -762,9 +769,9 @@ pub class Select < Component {
 
     render() -> Node {
         let itms = items ?? []
-        let clr = color ?? 'text'
-        let sel-clr = selected-color ?? 'selection'
-        let bc = focused? ? 'border-focus' : 'border'
+        let clr = resolve(color, 'text')
+        let sel-clr = resolve(selected-color, 'selection')
+        let bc = resolve(border-color, focused? ? 'border-focus' : 'border')
 
         <Box direction="column" border-style="round" border-color=bc paddingX=1>
             {[
@@ -784,6 +791,7 @@ pub class Checkbox < Component {
     checked:   Bool | nil
     on-change: Function | nil
     label:     String | nil
+    color:     String | Function | nil
 
     __on: Bool
 
@@ -810,7 +818,7 @@ pub class Checkbox < Component {
 
     render() -> Node {
         let lbl = label ?? children.join()
-        let clr = focused? ? 'selection' : 'text'
+        let clr = resolve(color, focused? ? 'selection' : 'text')
         let icon-color = __on ? 'success' : (focused? ? 'selection' : 'subtle')
         let icon = __on ? '✓' : '○'
 
@@ -827,7 +835,7 @@ pub class Slider < Component {
     value:     Float | nil
     step:      Float | nil
     width:     Int | nil
-    color:     String | nil
+    color:     String | Function | nil
     label:     String | nil
     format:    Function | nil
     on-change: Function | nil
@@ -890,7 +898,7 @@ pub class Slider < Component {
 
     render() -> Node {
         let w: Int = int(width ?? 20)
-        let clr = focused? ? 'selection' : (color ?? 'primary')
+        let clr = resolve(color, focused? ? 'selection' : 'primary')
         let lbl = label
         let label-w = lbl ? lbl.width() + 1 : 0
 
