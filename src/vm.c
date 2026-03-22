@@ -336,6 +336,8 @@ profiler_tick(Ty *ty, char const *prev_ip, char const *next_ip)
                 return false;
         }
 
+        GC_STOP();
+
         u64 now = TyThreadTime();
 
         if (LastThreadGCTime > 0) {
@@ -387,6 +389,8 @@ profiler_tick(Ty *ty, char const *prev_ip, char const *next_ip)
         LastIP = (char *)next_ip;
         LastThreadTime = now;
         ProfileCountdown = ProfileCalibrate;
+
+        GC_RESUME();
 
         return true;
 }
