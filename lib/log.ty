@@ -176,10 +176,12 @@ fn _get(name: String, path: ?String) -> Logger {
     if let $logger = loggers[name] {
         logger
     } else {
-        loggers[name] = Logger(name, path, chalk)
+        let logger = Logger(name, path, chalk)
         if let $conf = _conf(name) {
-            loggers[name].setup(conf)
+            logger.setup(conf)
         }
+        loggers[name] = logger
+        logger
     }
 }
 

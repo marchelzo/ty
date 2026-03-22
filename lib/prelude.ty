@@ -799,7 +799,9 @@ macro __define_ast! {
        | ty.Resource[{name: String, ?module: String | nil, ?constraint: AST}]
        | ty.NotNil[{name: String, ?module: String | nil, ?constraint: AST}]
        | ty.MemberAccess[(AST, String)]
+       | ty.DynMemberAccess[(AST, AST)]
        | ty.TryMemberAccess[(AST, String)]
+       | ty.TryDynMemberAccess[(AST, String)]
        | ty.Count[AST]
        | ty.Question[AST]
        | ty.Not[AST]
@@ -3931,6 +3933,16 @@ macro __walk! {
             ty.TryMemberAccess(object, member) => ty.TryMemberAccess(
                 walk(object, f),
                 member
+            ),
+
+            ty.DynMemberAccess(object, member) => ty.DynMemberAccess(
+                walk(object, f),
+                walk(member, f)
+            ),
+
+            ty.TryDynMemberAccess(object, member) => ty.TryDynMemberAccess(
+                walk(object, f),
+                walk(member, f)
             ),
 
             ty.Return(values) => ty.Return([walk(v, f) for v in values]),
