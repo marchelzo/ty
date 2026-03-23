@@ -776,6 +776,7 @@ typedef struct {
         int _fqn_;
         int groups;
         int _hash_;
+        int _id_;
         int init;
         int _init_subclass_;
         int _iter_;

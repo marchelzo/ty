@@ -1,0 +1,87 @@
+import ink
+import term (event)
+
+ns test
+
+class AfterApp < ink.Component {
+    fired: Int = 0
+    mount() {
+        after(1.0, -> do { fired += 1 })
+    }
+    render() { <ink.Text>fired={fired}</ink.Text> }
+}
+
+class EveryApp < ink.Component {
+    fired: Int = 0
+    mount() {
+        every(0.5, -> do { fired += 1 })
+    }
+    render() { <ink.Text>fired={fired}</ink.Text> }
+}
+
+class CancelApp < ink.Component {
+    fired: Int = 0
+    __timer: _ = nil
+    mount() {
+        __timer = after(1.0, -> do { fired += 1 })
+    }
+    cancel() {
+        if __timer { __timer.cancel() }
+    }
+    render() { <ink.Text>fired={fired}</ink.Text> }
+}
+
+class TickApp < ink.Component {
+    ticks: Int = 0
+    interval -> Float { 0.1 }
+    tick() { ticks += 1 }
+    render() { <ink.Text>ticks={ticks}</ink.Text> }
+}
+
+pub fn after-fires-once() {
+    let app = AfterApp()
+    let h = ink.TestHarness(app, cols=40, rows=10)
+    assert(app.fired == 0)
+    h.advance(1.0)
+    assert(app.fired == 1)
+    h.advance(1.0)
+    assert(app.fired == 1)
+}
+
+pub fn every-repeats() {
+    let app = EveryApp()
+    let h = ink.TestHarness(app, cols=40, rows=10)
+    assert(app.fired == 0)
+    h.advance(0.5)
+    assert(app.fired == 1)
+    h.advance(0.5)
+    assert(app.fired == 2)
+    h.advance(0.5)
+    assert(app.fired == 3)
+}
+
+pub fn cancel-prevents-fire() {
+    let app = CancelApp()
+    let h = ink.TestHarness(app, cols=40, rows=10)
+    assert(app.fired == 0)
+    app.cancel()
+    h.advance(2.0)
+    assert(app.fired == 0)
+}
+
+pub fn component-interval-tick() {
+    let app = TickApp()
+    let h = ink.TestHarness(app, cols=40, rows=10)
+    assert(app.ticks == 0)
+    h.advance(0.1)
+    assert(app.ticks == 1)
+    h.advance(0.1)
+    assert(app.ticks == 2)
+}
+
+pub fn advance-no-overshoot() {
+    let app = EveryApp()
+    let h = ink.TestHarness(app, cols=40, rows=10)
+    h.advance(0.3)
+    assert(app.fired == 0)
+}

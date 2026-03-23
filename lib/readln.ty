@@ -254,7 +254,7 @@ fn fit-items(items: Array[CompletionLabel], W: Int) -> Array[Array[String]] {
                     },
 
                     _ => 0
-                }).max()
+                }).max() as Int
                 parts.push(w || max-singleton)
             }
 
@@ -274,7 +274,7 @@ fn fit-items(items: Array[CompletionLabel], W: Int) -> Array[Array[String]] {
     ) ?? (#items, widths(#items))
 
     let cols: [[CompletionLabel]] = group-cols(ncol)
-    let nrow: Int = cols.map(&len).max()
+    let nrow = cols.map(&len).max() as Int
 
     fn s(x: Text | nil) -> String {
         match x {

@@ -1,0 +1,146 @@
+import ink
+import term (event)
+
+ns test
+
+class Tracker < ink.Component {
+    renders: Int = 0
+    render() -> ink.Node {
+        renders += 1
+        <ink.Text>r={renders}</ink.Text>
+    }
+}
+
+class TrackerHost < ink.Component {
+    render() -> ink.Node {
+        <ink.Box><Tracker /></ink.Box>
+    }
+}
+
+class PropComp < ink.Component {
+    label: String | nil
+    render() -> ink.Node {
+        <ink.Text>{label ?? 'none'}</ink.Text>
+    }
+}
+
+class PropHost < ink.Component {
+    lbl: String = 'hello'
+    render() -> ink.Node {
+        <ink.Box><PropComp label=lbl /></ink.Box>
+    }
+}
+
+class Removable < ink.Component {
+    render() -> ink.Node {
+        <ink.Text>removable</ink.Text>
+    }
+}
+
+class ToggleHost < ink.Component {
+    show?: Bool = true
+    render() -> ink.Node {
+        show?
+            ? <ink.Box><Removable /></ink.Box>
+            : <ink.Box />
+    }
+}
+
+class TypeA < ink.Component {
+    render() -> ink.Node { <ink.Text>A</ink.Text> }
+}
+
+class TypeB < ink.Component {
+    render() -> ink.Node { <ink.Text>B</ink.Text> }
+}
+
+class SwapHost < ink.Component {
+    use-b?: Bool = false
+    render() -> ink.Node {
+        use-b?
+            ? <ink.Box><TypeB /></ink.Box>
+            : <ink.Box><TypeA /></ink.Box>
+    }
+}
+
+pub fn identity-preservation() {
+    let h = ink.TestHarness(TrackerHost(), cols=40, rows=10)
+    let t1 = h.find(Tracker)
+    assert(t1 != nil)
+    assert(t1.renders == 1)
+
+    h.repaint()
+    let t2 = h.find(Tracker)
+    assert(t1 == t2)
+    assert(t2.renders == 1)
+}
+
+pub fn prop-adoption() {
+    let host = PropHost()
+    let h = ink.TestHarness(host, cols=40, rows=10)
+    h.assert-contains('hello')
+
+    host.lbl = 'world'
+    h.repaint()
+    h.assert-contains('world')
+    let pc = h.find(PropComp)
+    assert(pc != nil && pc.label == 'world')
+}
+
+pub fn unmount-on-removal() {
+    let host = ToggleHost()
+    let h = ink.TestHarness(host, cols=40, rows=10)
+    let r = h.find(Removable)
+    assert(r != nil && r.alive?)
+
+    host.show? = false
+    h.repaint()
+    assert(!r.alive?)
+    assert(h.find(Removable) == nil)
+}
+
+pub fn type-change() {
+    let host = SwapHost()
+    let h = ink.TestHarness(host, cols=40, rows=10)
+    let a = h.find(TypeA)
+    assert(a != nil && a.alive?)
+    h.assert-contains('A')
+
+    host.use-b? = true
+    h.repaint()
+    assert(!a.alive?)
+    let b = h.find(TypeB)
+    assert(b != nil && b.alive?)
+    h.assert-contains('B')
+}
+
+pub fn dirty-tracking() {
+    let h = ink.TestHarness(TrackerHost(), cols=40, rows=10)
+    let t = h.find(Tracker)
+    assert(t.renders == 1)
+
+    h.repaint()
+    h.repaint()
+    h.repaint()
+    assert(t.renders == 1)
+
+    t.invalidate!()
+    h.repaint()
+    assert(t.renders == 2)
+
+    h.repaint()
+    assert(t.renders == 2)
+}
+
+pub fn mount-called-once() {
+    let host = ToggleHost()
+    let h = ink.TestHarness(host, cols=40, rows=10)
+    let r = h.find(Removable)
+    assert(r.mounted?)
+
+    h.repaint()
+    h.repaint()
+    let r2 = h.find(Removable)
+    assert(r == r2)
+    assert(r2.mounted?)
+}

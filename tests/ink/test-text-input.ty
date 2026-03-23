@@ -1,0 +1,258 @@
+import ink
+import term (event)
+
+let CTRL = 4
+
+ns test
+
+class TIApp < ink.Component {
+    submitted: String | nil = nil
+    changed: String | nil = nil
+
+    render() {
+        <ink.Box>
+            <ink.TextInput
+                width=30
+                placeholder="type here"
+                on-submit=(t -> do { submitted = t })
+                on-change=(t -> do { changed = t })
+            />
+        </ink.Box>
+    }
+}
+
+class TIValueApp < ink.Component {
+    val: String = 'preset'
+    render() {
+        <ink.Box><ink.TextInput width=30 value=val /></ink.Box>
+    }
+}
+
+class TIHistApp < ink.Component {
+    hist: Array[String] = []
+    render() {
+        <ink.Box><ink.TextInput width=30 history=hist /></ink.Box>
+    }
+}
+
+fn make() {
+    let app = TIApp()
+    let h = ink.TestHarness(app, cols=40, rows=10)
+    let $ti = h.find(ink.TextInput) or throw 'no TextInput'
+    h.focus!(ti)
+    (h, ti)
+}
+
+fn chars(ti) -> Array[String] {
+    ink.TextInput.__get__(ti, '__chars')
+}
+
+fn cursor(ti) -> Int {
+    ink.TextInput.__get__(ti, '__cursor')
+}
+
+pub fn typing() {
+    let (h, ti) = make()
+    h.send-text('hello')
+    assert(chars(ti).join() == 'hello')
+    assert(cursor(ti) == 5)
+    h.assert-contains('hello')
+}
+
+pub fn backspace() {
+    let (h, ti) = make()
+    h.send-text('abc')
+    h.backspace()
+    assert(chars(ti).join() == 'ab')
+    assert(cursor(ti) == 2)
+}
+
+pub fn delete-key() {
+    let (h, ti) = make()
+    h.send-text('abc')
+    h.home()
+    h.del()
+    assert(chars(ti).join() == 'bc')
+}
+
+pub fn cursor-left-right() {
+    let (h, ti) = make()
+    h.send-text('abcd')
+    assert(cursor(ti) == 4)
+    h.left()
+    assert(cursor(ti) == 3)
+    h.left()
+    assert(cursor(ti) == 2)
+    h.right()
+    assert(cursor(ti) == 3)
+}
+
+pub fn cursor-home-end() {
+    let (h, ti) = make()
+    h.send-text('abcd')
+    h.home()
+    assert(cursor(ti) == 0)
+    h.end()
+    assert(cursor(ti) == 4)
+}
+
+pub fn ctrl-a-e() {
+    let (h, ti) = make()
+    h.send-text('hello')
+    h.send-key('a', mods=CTRL)
+    assert(cursor(ti) == 0)
+    h.send-key('e', mods=CTRL)
+    assert(cursor(ti) == 5)
+}
+
+pub fn ctrl-k() {
+    let (h, ti) = make()
+    h.send-text('hello world')
+    h.send-key('a', mods=CTRL)
+    h.right()
+    h.right()
+    h.right()
+    h.right()
+    h.right()
+    h.send-key('k', mods=CTRL)
+    assert(chars(ti).join() == 'hello')
+}
+
+pub fn ctrl-u() {
+    let (h, ti) = make()
+    h.send-text('hello world')
+    h.send-key('a', mods=CTRL)
+    for ..5 { h.right() }
+    h.send-key('u', mods=CTRL)
+    assert(chars(ti).join() == ' world')
+    assert(cursor(ti) == 0)
+}
+
+pub fn ctrl-w() {
+    let (h, ti) = make()
+    h.send-text('hello world')
+    h.send-key('w', mods=CTRL)
+    assert(chars(ti).join() == 'hello ')
+}
+
+pub fn submit() {
+    let app = TIApp()
+    let h = ink.TestHarness(app, cols=40, rows=10)
+    let $ti = h.find(ink.TextInput) or throw 'no TI'
+    h.focus!(ti)
+    h.send-text('test')
+    h.enter()
+    assert(app.submitted == 'test')
+}
+
+pub fn on-change-fires() {
+    let app = TIApp()
+    let h = ink.TestHarness(app, cols=40, rows=10)
+    let $ti = h.find(ink.TextInput) or throw 'no TI'
+    h.focus!(ti)
+    h.send-text('x')
+    assert(app.changed == 'x')
+    h.send-text('y')
+    assert(app.changed == 'xy')
+}
+
+pub fn placeholder() {
+    let h = ink.TestHarness(TIApp(), cols=40, rows=10)
+    h.assert-contains('type here')
+    let $ti = h.find(ink.TextInput) or throw 'no TI'
+    h.focus!(ti)
+    h.send-text('x')
+    h.assert-not-contains('type here')
+}
+
+pub fn scroll-long-input() {
+    let (h, ti) = make()
+    let long = 'abcdefghijklmnopqrstuvwxyz0123456789'
+    h.send-text(long)
+    assert(chars(ti).join() == long)
+    let scroll = ink.TextInput.__get__(ti, '__scroll')
+    assert(scroll > 0)
+}
+
+pub fn history-up-down() {
+    let app = TIHistApp()
+    let h = ink.TestHarness(app, cols=40, rows=10)
+    let $ti = h.find(ink.TextInput) or throw 'no TI'
+    h.focus!(ti)
+
+    fn clear(h) {
+        h.send-key('a', mods=CTRL)
+        h.send-key('k', mods=CTRL)
+    }
+
+    h.send-text('first')
+    h.enter()
+    clear(h)
+
+    h.send-text('second')
+    h.enter()
+    clear(h)
+
+    h.send-text('third')
+    h.enter()
+    clear(h)
+
+    h.up()
+    assert(chars(ti).join() == 'third')
+    h.up()
+    assert(chars(ti).join() == 'second')
+    h.up()
+    assert(chars(ti).join() == 'first')
+    h.down()
+    assert(chars(ti).join() == 'second')
+    h.down()
+    assert(chars(ti).join() == 'third')
+    h.down()
+    assert(chars(ti).join() == '')
+}
+
+pub fn value-prop() {
+    let app = TIValueApp()
+    let h = ink.TestHarness(app, cols=40, rows=10)
+    h.assert-contains('preset')
+
+    app.val = 'changed'
+    h.repaint()
+    h.assert-contains('changed')
+}
+
+pub fn escape-unfocuses() {
+    let (h, ti) = make()
+    h.assert-focused(ink.TextInput)
+    h.esc()
+    h.assert-unfocused()
+}
+
+pub fn insert-at-cursor() {
+    let (h, ti) = make()
+    h.send-text('ac')
+    h.left()
+    h.send-text('b')
+    assert(chars(ti).join() == 'abc')
+    assert(cursor(ti) == 2)
+}
+
+pub fn backspace-at-start-noop() {
+    let (h, ti) = make()
+    h.backspace()
+    assert(chars(ti).join() == '')
+    assert(cursor(ti) == 0)
+}
+
+pub fn left-at-start-noop() {
+    let (h, ti) = make()
+    h.left()
+    assert(cursor(ti) == 0)
+}
+
+pub fn right-at-end-noop() {
+    let (h, ti) = make()
+    h.send-text('ab')
+    h.right()
+    assert(cursor(ti) == 2)
+}

@@ -1,0 +1,253 @@
+import ink
+import term (event)
+
+ns test
+
+class EmptyBoxApp < ink.Component {
+    render() -> ink.Node { <ink.Box /> }
+}
+
+class TextNodeApp < ink.Component {
+    render() -> ink.Node { <ink.Text>hello</ink.Text> }
+}
+
+class ColumnApp < ink.Component {
+    render() -> ink.Node {
+        <ink.Box direction="column">
+            <ink.Text>aaa</ink.Text>
+            <ink.Text>bbb</ink.Text>
+        </ink.Box>
+    }
+}
+
+class RowApp < ink.Component {
+    render() -> ink.Node {
+        <ink.Box direction="row">
+            <ink.Text>XX</ink.Text>
+            <ink.Text>YY</ink.Text>
+        </ink.Box>
+    }
+}
+
+class PaddingApp < ink.Component {
+    render() -> ink.Node {
+        <ink.Box paddingX=2 paddingY=1>
+            <ink.Text>x</ink.Text>
+        </ink.Box>
+    }
+}
+
+class BorderApp < ink.Component {
+    render() -> ink.Node {
+        <ink.Box borderStyle="round">
+            <ink.Text>hi</ink.Text>
+        </ink.Box>
+    }
+}
+
+class FlexRowApp < ink.Component {
+    render() -> ink.Node {
+        <ink.Box direction="row" width=20>
+            <ink.Box flex=1><ink.Text>L</ink.Text></ink.Box>
+            <ink.Box flex=1><ink.Text>R</ink.Text></ink.Box>
+        </ink.Box>
+    }
+}
+
+class FlexColumnApp < ink.Component {
+    render() -> ink.Node {
+        <ink.Box direction="column" height=6>
+            <ink.Box flex=1><ink.Text>T</ink.Text></ink.Box>
+            <ink.Box flex=1><ink.Text>B</ink.Text></ink.Box>
+        </ink.Box>
+    }
+}
+
+class FixedSizeApp < ink.Component {
+    render() -> ink.Node {
+        <ink.Box width=20 height=5>
+            <ink.Text>content</ink.Text>
+        </ink.Box>
+    }
+}
+
+class AlignCenterApp < ink.Component {
+    render() -> ink.Node {
+        <ink.Box align="center" width=20>
+            <ink.Text>hi</ink.Text>
+        </ink.Box>
+    }
+}
+
+class GapApp < ink.Component {
+    render() -> ink.Node {
+        <ink.Box direction="column" gap=1>
+            <ink.Text>aaa</ink.Text>
+            <ink.Text>bbb</ink.Text>
+        </ink.Box>
+    }
+}
+
+class ClipApp < ink.Component {
+    render() -> ink.Node {
+        <ink.Box width=5>
+            <ink.Text>abcdefghij</ink.Text>
+        </ink.Box>
+    }
+}
+
+class MarginApp < ink.Component {
+    render() -> ink.Node {
+        <ink.Box marginX=2 marginY=1 borderStyle="round">
+            <ink.Text>m</ink.Text>
+        </ink.Box>
+    }
+}
+
+class JustifyApp < ink.Component {
+    render() -> ink.Node {
+        <ink.Box direction="row" justify="space-between" width=30>
+            <ink.Text>A</ink.Text>
+            <ink.Text>B</ink.Text>
+            <ink.Text>C</ink.Text>
+        </ink.Box>
+    }
+}
+
+class OverlayApp < ink.Component {
+    render() -> ink.Node {
+        <ink.Box width=40 height=10>
+            <ink.Text>base</ink.Text>
+            <ink.Overlay x=5 y=2>
+                <ink.Text>popup</ink.Text>
+            </ink.Overlay>
+        </ink.Box>
+    }
+}
+
+pub fn empty-box() {
+    let h = ink.TestHarness(EmptyBoxApp(), cols=40, rows=10)
+    assert(h.line-count == 0)
+    assert(h.plain-text == '')
+}
+
+pub fn text-node() {
+    let h = ink.TestHarness(TextNodeApp(), cols=40, rows=10)
+    assert(h.line-count == 1)
+    assert(h.line(0) == 'hello')
+}
+
+pub fn nested-column() {
+    let h = ink.TestHarness(ColumnApp(), cols=40, rows=10)
+    assert(h.line-count == 2)
+    h.assert-line(0, 'aaa')
+    h.assert-line(1, 'bbb')
+}
+
+pub fn row-direction() {
+    let h = ink.TestHarness(RowApp(), cols=40, rows=10)
+    assert(h.line-count == 1)
+    let l = h.line(0)
+    let xi = l.search('XX') ?? -1
+    let yi = l.search('YY') ?? -1
+    assert(xi >= 0 && yi >= 0 && xi < yi)
+}
+
+pub fn padding() {
+    let h = ink.TestHarness(PaddingApp(), cols=40, rows=10)
+    assert(h.line-count == 3)
+    assert(h.line(0).match?(/^\s+$/))
+    assert(h.line(1).match?(/^\s{2}x/))
+    assert(h.line(2).match?(/^\s+$/))
+}
+
+pub fn border() {
+    let h = ink.TestHarness(BorderApp(), cols=40, rows=10)
+    assert(h.line-count == 3)
+    assert(h.line(0).match?(/╭.*╮/))
+    assert(h.line(1).match?(/│.*hi.*│/))
+    assert(h.line(2).match?(/╰.*╯/))
+    let w0 = h.line(0).width()
+    assert(w0 == h.line(1).width())
+    assert(w0 == h.line(2).width())
+    assert(w0 == 2 + 2)
+}
+
+pub fn flex-row() {
+    let h = ink.TestHarness(FlexRowApp(), cols=40, rows=10)
+    let l = h.line(0)
+    assert(l.width() == 20)
+    let li = l.search('L') ?? 0
+    let ri = l.search('R') ?? 0
+    assert(ri - li >= 9)
+}
+
+pub fn flex-column() {
+    let h = ink.TestHarness(FlexColumnApp(), cols=40, rows=10)
+    assert(h.line-count == 6)
+    assert(h.line(0).match?(/T/))
+    assert(h.line(3).match?(/B/))
+}
+
+pub fn fixed-size() {
+    let h = ink.TestHarness(FixedSizeApp(), cols=80, rows=24)
+    assert(h.line-count == 5)
+    for i in ..5 {
+        assert(h.line(i).width() == 20)
+    }
+    assert(h.line(0).match?(/content/))
+}
+
+pub fn align-center() {
+    let h = ink.TestHarness(AlignCenterApp(), cols=40, rows=10)
+    let l = h.line(0)
+    assert(l.width() == 20)
+    let idx = l.search('hi') ?? -1
+    assert(idx >= 8 && idx <= 10)
+}
+
+pub fn gap-between-children() {
+    let h = ink.TestHarness(GapApp(), cols=40, rows=10)
+    assert(h.line-count == 3)
+    assert(h.line(0).match?(/aaa/))
+    assert(h.line(1).match?(/^\s*$/))
+    assert(h.line(2).match?(/bbb/))
+}
+
+pub fn clipping() {
+    let h = ink.TestHarness(ClipApp(), cols=40, rows=10)
+    let l = h.line(0)
+    assert(l.width() <= 5)
+    assert(l.match?(/abcde/))
+}
+
+pub fn margin() {
+    let h = ink.TestHarness(MarginApp(), cols=40, rows=10)
+    assert(h.line-count >= 5)
+    assert(h.line(0).match?(/^\s+$/))
+    assert(h.line(1).match?(/^\s{2}╭/))
+}
+
+pub fn justify-space-between() {
+    let h = ink.TestHarness(JustifyApp(), cols=40, rows=10)
+    let l = h.line(0)
+    let ai = l.search('A') ?? -1
+    let bi = l.search('B') ?? -1
+    let ci = l.search('C') ?? -1
+    assert(ai < bi && bi < ci)
+    let gap1 = bi - ai
+    let gap2 = ci - bi
+    assert((gap1 - gap2).abs <= 1)
+}
+
+pub fn overlay() {
+    let h = ink.TestHarness(OverlayApp(), cols=40, rows=10)
+    h.assert-contains('base')
+}
+
+pub fn resize() {
+    let h = ink.TestHarness(FixedSizeApp(), cols=80, rows=24)
+    assert(h.line-count == 5)
+    h.resize(20, 5)
+    assert(h.line-count == 5)
+}

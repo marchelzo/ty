@@ -1,0 +1,101 @@
+import ink
+import term (event)
+
+ns test
+
+class RSApp < ink.Component {
+    lo-val: Float = -1.0
+    hi-val: Float = -1.0
+    render() {
+        <ink.Box>
+            <ink.RangeSelector
+                width=30
+                min-val=0.0
+                max-val=1.0
+                low=0.25
+                high=0.75
+                step=0.1
+                on-change=((lo, hi) -> do { lo-val = lo; hi-val = hi })
+            />
+        </ink.Box>
+    }
+}
+
+fn rs-lo(h) -> Float {
+    let $r = h.find(ink.RangeSelector) or throw 'no RS'
+    ink.RangeSelector.__get__(r, '__lo')
+}
+
+fn rs-hi(h) -> Float {
+    let $r = h.find(ink.RangeSelector) or throw 'no RS'
+    ink.RangeSelector.__get__(r, '__hi')
+}
+
+fn rs-active(h) -> Int {
+    let $r = h.find(ink.RangeSelector) or throw 'no RS'
+    ink.RangeSelector.__get__(r, '__active')
+}
+
+pub fn initial-render() {
+    let h = ink.TestHarness(RSApp(), cols=40, rows=10)
+    assert(h.line-count >= 1)
+    assert(h.line(0).match?(/[●◆].*[●◆]/))
+}
+
+pub fn move-active-thumb() {
+    let h = ink.TestHarness(RSApp(), cols=40, rows=10)
+    let $rs = h.find(ink.RangeSelector) or throw 'no RS'
+    h.focus!(rs)
+    let lo0 = rs-lo(h)
+    assert(rs-active(h) == 0)
+    h.right()
+    assert(rs-lo(h) > lo0)
+}
+
+pub fn tab-toggles-active() {
+    let h = ink.TestHarness(RSApp(), cols=40, rows=10)
+    let $rs = h.find(ink.RangeSelector) or throw 'no RS'
+    h.focus!(rs)
+    assert(rs-active(h) == 0)
+    h.send-text('1')
+    assert(rs-active(h) == 1)
+    h.send-text('1')
+    assert(rs-active(h) == 0)
+}
+
+pub fn on-change-fires() {
+    let app = RSApp()
+    let h = ink.TestHarness(app, cols=40, rows=10)
+    let $rs = h.find(ink.RangeSelector) or throw 'no RS'
+    h.focus!(rs)
+    h.right()
+    assert(app.lo-val > 0.0)
+}
+
+pub fn lo-cannot-exceed-hi() {
+    let h = ink.TestHarness(RSApp(), cols=40, rows=10)
+    let $rs = h.find(ink.RangeSelector) or throw 'no RS'
+    h.focus!(rs)
+    for ..20 { h.right() }
+    assert(rs-lo(h) <= rs-hi(h))
+}
+
+pub fn hi-cannot-go-below-lo() {
+    let h = ink.TestHarness(RSApp(), cols=40, rows=10)
+    let $rs = h.find(ink.RangeSelector) or throw 'no RS'
+    h.focus!(rs)
+    h.send-text('1')
+    for ..20 { h.left() }
+    assert(rs-hi(h) >= rs-lo(h))
+}
+
+pub fn values-stay-in-bounds() {
+    let h = ink.TestHarness(RSApp(), cols=40, rows=10)
+    let $rs = h.find(ink.RangeSelector) or throw 'no RS'
+    h.focus!(rs)
+    for ..50 { h.left() }
+    assert(rs-lo(h) >= 0.0)
+    h.send-text('1')
+    for ..50 { h.right() }
+    assert(rs-hi(h) <= 1.0)
+}

@@ -1,0 +1,54 @@
+import ink
+import term (event)
+
+ns test
+
+class DivApp < ink.Component {
+    render() {
+        <ink.Box width=20>
+            <ink.Divider />
+        </ink.Box>
+    }
+}
+
+class DivTitleApp < ink.Component {
+    render() {
+        <ink.Box width=30>
+            <ink.Divider title="Section" />
+        </ink.Box>
+    }
+}
+
+class BadgeApp < ink.Component {
+    render() {
+        <ink.Box><ink.Badge>INFO</ink.Badge></ink.Box>
+    }
+}
+
+class SHApp < ink.Component {
+    render() {
+        <ink.Box><ink.SectionHeader>Title</ink.SectionHeader></ink.Box>
+    }
+}
+
+pub fn divider-chars() {
+    let h = ink.TestHarness(DivApp(), cols=40, rows=10)
+    assert(h.line-count == 1)
+    assert(h.line(0).match?(/─.*─/))
+}
+
+pub fn divider-title() {
+    let h = ink.TestHarness(DivTitleApp(), cols=40, rows=10)
+    h.assert-contains('Section')
+    assert(h.line(0).match?(/─.*Section.*─/))
+}
+
+pub fn badge-label() {
+    let h = ink.TestHarness(BadgeApp(), cols=40, rows=10)
+    h.assert-contains('INFO')
+}
+
+pub fn section-header() {
+    let h = ink.TestHarness(SHApp(), cols=40, rows=10)
+    h.assert-contains('Title')
+}
