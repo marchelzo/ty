@@ -1,0 +1,106 @@
+import ink
+import term (event)
+
+ns test
+
+class FocA < ink.Component {
+    focusable? -> Bool { true }
+    render() { <ink.Text>A</ink.Text> }
+}
+
+class FocB < ink.Component {
+    focusable? -> Bool { true }
+    render() { <ink.Text>B</ink.Text> }
+}
+
+class FocC < ink.Component {
+    focusable? -> Bool { true }
+    render() { <ink.Text>C</ink.Text> }
+}
+
+class MultiFocApp < ink.Component {
+    render() {
+        <ink.Box direction="column">
+            <FocA />
+            <FocB />
+            <FocC />
+        </ink.Box>
+    }
+}
+
+class TIFocApp < ink.Component {
+    render() {
+        <ink.Box direction="column">
+            <ink.TextInput width=20 placeholder="input1" />
+            <ink.TextInput width=20 placeholder="input2" />
+        </ink.Box>
+    }
+}
+
+class ClickApp < ink.Component {
+    render() {
+        <ink.Box direction="column">
+            <ink.Box height=3 width=20>
+                <ink.TextInput width=20 placeholder="top" />
+            </ink.Box>
+            <ink.Box height=3 width=20>
+                <ink.TextInput width=20 placeholder="bot" />
+            </ink.Box>
+        </ink.Box>
+    }
+}
+
+pub fn tab-cycle() {
+    let h = ink.TestHarness(MultiFocApp(), cols=40, rows=10)
+    h.assert-unfocused()
+    h.tab()
+    h.assert-focused(FocA)
+    h.tab()
+    h.assert-focused(FocB)
+    h.tab()
+    h.assert-focused(FocC)
+    h.tab()
+    h.assert-focused(FocA)
+}
+
+pub fn reverse-cycle() {
+    let h = ink.TestHarness(MultiFocApp(), cols=40, rows=10)
+    h.tab()
+    h.assert-focused(FocA)
+    ink.cycle-focus(reverse?=true)
+    h.repaint()
+    h.assert-focused(FocC)
+}
+
+pub fn focus-direct() {
+    let h = ink.TestHarness(MultiFocApp(), cols=40, rows=10)
+    let $b = h.find(FocB) or throw 'no B'
+    h.focus!(b)
+    h.assert-focused(FocB)
+}
+
+pub fn unfocus-esc() {
+    let h = ink.TestHarness(TIFocApp(), cols=40, rows=10)
+    h.tab()
+    h.assert-focused(ink.TextInput)
+    h.esc()
+    h.assert-unfocused()
+}
+
+pub fn focus-by-type() {
+    let h = ink.TestHarness(MultiFocApp(), cols=40, rows=10)
+    ink.focus-by-type(FocB)
+    h.repaint()
+    h.assert-focused(FocB)
+}
+
+pub fn tab-between-text-inputs() {
+    let h = ink.TestHarness(TIFocApp(), cols=40, rows=10)
+    h.tab()
+    h.assert-focused(ink.TextInput)
+    let tis = h.find-all(ink.TextInput)
+    assert(#tis == 2)
+    assert(h.focused == tis[0])
+    h.tab()
+    assert(h.focused == tis[1])
+}

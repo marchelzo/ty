@@ -3754,14 +3754,6 @@ GetMember(Ty *ty, int member, bool try_missing, bool exec)
                                 class->name
                         );
                 }
-                if (member == NAMES._def_) {
-                        pop();
-                        return ClassDef(ty, &v);
-                }
-                if (member == NAMES._src_) {
-                        pop();
-                        return PrettySource(ty, &v);
-                }
                 if (member == NAMES._super_) {
                         Class *super = class_get(ty, v.class)->super;
                         pop();
@@ -3794,6 +3786,18 @@ GetMember(Ty *ty, int member, bool try_missing, bool exec)
                 if (member == NAMES._static_getters_) {
                         pop();
                         return itable_dict(ty, &class_get(ty, v.class)->s_getters);
+                }
+                if (member == NAMES._id_) {
+                        pop();
+                        return INTEGER(v.class);
+                }
+                if (member == NAMES._def_) {
+                        pop();
+                        return ClassDef(ty, &v);
+                }
+                if (member == NAMES._src_) {
+                        pop();
+                        return PrettySource(ty, &v);
                 }
                 n = CLASS_CLASS;
                 goto ClassLookup;
@@ -9671,6 +9675,7 @@ vm_init(Ty *ty, int ac, char **av)
         NAMES._fqn_            = M_ID("__fqn__");
         NAMES.groups           = M_ID("groups");
         NAMES._hash_           = M_ID("__hash__");
+        NAMES._id_             = M_ID("__id__");
         NAMES.init             = M_ID("init");
         NAMES._init_subclass_  = M_ID("__init_subclass__");
         NAMES._iter_           = M_ID("__iter__");

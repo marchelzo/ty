@@ -190,6 +190,7 @@ pub fn context(key, default = nil) {
 }
 
 pub fn focus(comp: Component) {
+    debug!("focus -> {type(comp)}")
     _focused = comp
     comp.focus!(true)
 }
@@ -199,15 +200,18 @@ let __tls::_pending-focus-type: Any = nil
 pub fn focus-by-type(cls) {
     for comp in _focusables {
         if comp :: cls {
+            debug!("focus-by-type({cls}) -> {type(comp)}")
             _focused = comp
             comp.focus!(true)
             return
         }
     }
+    debug!("focus-by-type({cls}): deferred (not yet in tree)")
     _pending-focus-type = cls
 }
 
 pub fn unfocus() {
+    if _focused != nil { debug!("unfocus (was {type(_focused)})") }
     _focused = nil
 }
 
@@ -220,6 +224,7 @@ pub fn cycle-focus(reverse?: Bool = false) {
         ? (idx - 1 + #_focusables) % #_focusables
         : (idx + 1) % #_focusables
     _focused = _focusables[next]
+    debug!("cycle-focus: {idx} -> {next} ({type(_focused)}) [#{#_focusables} focusables]")
 }
 
 tag NodeBox, NodeText, NodeOverlay, NodeRaw;
@@ -291,7 +296,7 @@ fn kitty-delete(id: Int) -> String {
 }
 
 fn kitty-transmit(buf: Blob, pw: Int, ph: Int, cols: Int, rows: Int, id: Int = 0) -> String {
-    warn!("kitty-transmit: {pw}x{ph} id={id} buf={#buf}")
+    debug!("kitty-transmit: {pw}x{ph} id={id} buf={#buf}")
     let payload = base64.encode(buf)
     let plen = #payload
     let out = Blob()
@@ -414,6 +419,7 @@ class PendingTimer {
     cancelled? { __cancelled }
 
     cancel() { __cancelled = true }
+    nudge(dt: Float) { __deadline -= dt }
 
     fire() {
         if !__cancelled { __callback() }
@@ -474,12 +480,14 @@ pub class Component {
     after(delay: Float, callback: Function) -> PendingTimer {
         let t = PendingTimer(now() + delay, nil, callback, self)
         _timers.push(t)
+        debug!("timer after({delay}) registered for {type(self)}")
         t
     }
 
     every(iv: Float, callback: Function) -> PendingTimer {
         let t = PendingTimer(now() + iv, iv, callback, self)
         _timers.push(t)
+        debug!("timer every({iv}) registered for {type(self)}")
         t
     }
 
@@ -494,15 +502,17 @@ pub class Component {
         let new-children = other.children
         if children != new-children { dirty? = true }
         children = new-children
+        let changed-props = []
         for name in other.__prop-names {
             let new-val = other.{name}
             if !dirty? && !(new-val :: Function) && self.{name} != new-val {
                 dirty? = true
+                changed-props.push(name)
             }
             self.{name} = new-val
         }
         if dirty? && !was-dirty {
-            warn!("adopt: {type(self)} dirtied by prop change")
+            debug!("adopt {type(self)}: dirtied by {#changed-props > 0 ? changed-props.join(', ') : 'children'}")
         }
     }
 
@@ -513,17 +523,28 @@ pub class Component {
     }
 
     focus!(v: Bool) {
-        if focused? != v { dirty? = true }
+        if focused? != v {
+            dirty? = true
+            debug!("focus! {type(self)}: {v}")
+        }
         focused? = v
     }
-    mount!()        { mounted? = true; alive? = true; mount() }
+    mount!() {
+        mounted? = true
+        alive? = true
+        debug!("mount {type(self)}")
+        mount()
+    }
     unmount!() {
-        warn!("unmount: {show(ident(self))}")
+        debug!("unmount {type(self)}")
         alive? = false
-        unmount()
+        let n = 0
         for t in _timers if t.owner == self {
             t.cancel()
+            n += 1
         }
+        if n > 0 { debug!("  cancelled {n} timer(s)") }
+        unmount()
     }
 }
 
@@ -733,7 +754,7 @@ pub class TextInput < Component {
                     for line in p.read-text().lines() if #line > 0 {
                         h.push(line)
                     }
-                    warn!("TextInput: loaded {#h} history entries from {f}")
+                    debug!("TextInput: loaded {#h} history entries from {f}")
                 }
             } catch _ { }
         }
@@ -847,7 +868,7 @@ pub class TextInput < Component {
                     if #h == 0 || h[-1] != t {
                         h.push(t)
                         __save-history-entry(t)
-                        warn!("TextInput: history push '{t}', now {#h} entries")
+                        debug!("TextInput: history push, now {#h} entries")
                     }
                 }
                 __hist-idx = -1
@@ -2441,7 +2462,7 @@ pub class LinePlot < Component {
 
         let img-key = (all-series, h, cw, lo, hi, do-fill, clr, clrs)
         if use-kitty && img-key != __cached-img-key {
-            warn!("LinePlot.render: generating kitty image id={kitty-id}")
+            debug!("LinePlot: generating kitty image id={kitty-id} {cw}×{h}")
             __render-kitty(all-series, h, cw, lo, hi, range, clr, clrs, fmt, do-fill)
             __cached-img-key = img-key
         }
@@ -2999,8 +3020,10 @@ fn apply-padding(lines: Array[String], w: Int, px: Int, py: Int) -> (Array[Strin
 }
 
 fn apply-border(
-    lines: Array[String], w: Int,
-    chars: Array[String], color: String | nil
+    lines: Array[String],
+    w: Int,
+    chars: Array[String],
+    color: String | nil
 ) -> (Array[String], Int) {
     let [tl, tr, bl, br, hz, vt] = chars
     let total-w = w + 2
@@ -3038,7 +3061,10 @@ fn reconcile(comp: Component, path: String) -> Component {
         old
     } else {
         if old != nil && old.mounted? {
+            debug!("reconcile [{path}]: type changed {type(old)} -> {type(comp)}")
             old.unmount!()
+        } else if old == nil {
+            debug!("reconcile [{path}]: new {type(comp)}")
         }
         if !comp.mounted? {
             comp.mount!()
@@ -3049,8 +3075,12 @@ fn reconcile(comp: Component, path: String) -> Component {
 }
 
 fn layout-box(
-    node: Node, max-w: Int, max-h: Int,
-    path: String, ox: Int, oy: Int
+    node: Node,
+    max-w: Int,
+    max-h: Int,
+    path: String,
+    ox: Int,
+    oy: Int
 ) -> (Output, Element) {
     let direction = node.direction
     let gap       = node.gap
@@ -3102,6 +3132,7 @@ fn layout-box(
         _focusables.splice(snap-fc, #_focusables - snap-fc)
         _kitty-images.splice(snap-ki, #_kitty-images - snap-ki)
         let avail = max(content-w - fixed-w - num-gaps, 0)
+        debug!("flex-row [{path}]: content-w={content-w} fixed={fixed-w} avail={avail} total-flex={total-flex}")
         for i in ..#node.children {
             let fw = flexes[i]
                 ? max(int(avail * int(flexes[i]) / total-flex), 0)
@@ -3122,6 +3153,7 @@ fn layout-box(
         _focusables.splice(snap-fc, #_focusables - snap-fc)
         _kitty-images.splice(snap-ki, #_kitty-images - snap-ki)
         let avail = max(content-h - fixed-h - num-gaps, 0)
+        debug!("flex-col [{path}]: content-h={content-h} fixed={fixed-h} avail={avail} total-flex={total-flex}")
         for i in ..#node.children {
             child-widths.push(content-w)
             let fh = flexes[i]
@@ -3175,12 +3207,14 @@ fn layout-box(
 
     if target-w {
         if w > content-w {
-            lines = lines.map(line ->
-                (line.width() > content-w) ? clip-line(line, content-w) : line
-            )
+            for line, i in lines if line.width() > content-w {
+                lines[i] = clip-line(line, content-w)
+            }
             w = content-w
         } else if w < content-w {
-            lines = lines.map(line -> pad-line(line, line.width(), content-w))
+            for line, i in lines {
+                lines[i] = pad-line(line, line.width(), content-w)
+            }
             w = content-w
         }
     }
@@ -3191,6 +3225,7 @@ fn layout-box(
         if scroll-offset != nil {
             let total = #lines
             let s = int(scroll-offset).clamp(0, max(total - th, 0))
+            debug!("scroll [{path}]: offset={s} visible={th} total={total}")
             lines = lines[s ; min(s + th, total)]
             node.props['_scroll-total'] = total
         }
@@ -3250,8 +3285,12 @@ fn layout-overlay(node: Node, max-w: Int, max-h: Int, path: String) -> (Output, 
 }
 
 fn layout-node(
-    node, max-w: Int = INF, max-h: Int = INF,
-    path: String = '', ox: Int = 0, oy: Int = 0
+    node: Any,
+    max-w: Int = INF,
+    max-h: Int = INF,
+    path: String = '',
+    ox: Int = 0,
+    oy: Int = 0
 ) -> (Output, Element) {
     match node {
         n: Node => match n.tag {
@@ -3284,10 +3323,11 @@ fn layout-node(
             inst.layout-max-h = max-h
 
             let rendered = if !inst.dirty? && inst.cached-node != nil && same-constraints {
-                warn!("layout: cache hit {type(inst)} path={path}")
+                debug!("render {type(inst)} [{path}]: cache hit")
                 inst.cached-node
             } else {
-                warn!("layout: render {type(inst)} path={path} dirty={inst.dirty?} cached={inst.cached-node != nil}")
+                let reason = inst.dirty? ? 'dirty' : (!inst.cached-node ? 'no cache' : 'constraints changed')
+                debug!("render {type(inst)} [{path}]: {reason} ({max-w}×{max-h})")
                 _ctx-stack.push(%{})
                 let r = inst.render()
                 _ctx-stack.pop()
@@ -3306,7 +3346,7 @@ fn layout-node(
                 let fresh? = entry.fresh? ?? false
                 let x-off = int(entry.?x-off ?? 0)
                 let ki = { id: entry.id, escape: entry.escape, ox: ox + x-off, oy: oy, fresh?: fresh? }
-                warn!("layout: kitty id={ki.id} fresh={fresh?} at ({ox + x-off},{oy}) for {type(inst)}")
+                debug!("layout: kitty id={ki.id} fresh={fresh?} at ({ox + x-off},{oy}) for {type(inst)}")
                 _kitty-ids.push(ki.id)
                 _kitty-images.push(ki)
                 entry.fresh? = false
@@ -3329,21 +3369,27 @@ fn layout-node(
 }
 
 fn render-tree(root, max-w: Int, max-h: Int = INF) -> (Output, Element) {
-    warn!("--- render-tree ---")
+    debug!("--- render-tree ({max-w}×{max-h}) ---")
+    let prev-count = #_fibers
     _next-fibers = %{}
     _focusables = []
     _overlays = []
     _kitty-images = []
     let result = layout-node(root, max-w, max-h)
+    let unmounted = 0
     for path, comp in _fibers {
         if _next-fibers[path] == nil {
+            debug!("render-tree: pruning [{path}] {type(comp)}")
             comp.unmount!()
+            unmounted += 1
         }
     }
     _fibers = _next-fibers
+    debug!("render-tree: {#_fibers} fibers ({#_fibers - prev-count + unmounted} new, {unmounted} removed), {#_focusables} focusables, {#_overlays} overlays")
 
     if let $cls = _pending-focus-type {
         _pending-focus-type = nil
+        debug!("render-tree: resolving deferred focus-by-type({cls})")
         focus-by-type(cls)
     }
 
@@ -3353,18 +3399,25 @@ fn render-tree(root, max-w: Int, max-h: Int = INF) -> (Output, Element) {
 fn process-timers() -> Bool {
     let t = now()
     let fired = false
+    let fire-count = 0
 
     for timer in _timers if !timer.cancelled? {
         if timer.deadline <= t {
+            debug!("timer fired: owner={type(timer.owner)} repeat={timer.repeat != nil}")
             timer.fire()
             if !timer.reschedule() {
                 timer.cancel()
             }
             fired = true
+            fire-count += 1
         }
     }
 
+    let before = #_timers
     _timers = _timers.filter(\!_.cancelled?)
+    if fire-count > 0 || before != #_timers {
+        debug!("process-timers: {fire-count} fired, {before - #_timers} removed, {#_timers} remaining")
+    }
 
     fired
 }
@@ -3388,6 +3441,7 @@ let __tls::_last-inline-height: Int = 0
 
 fn paint-inline(output: Output) {
     _out.clear()
+    _out.push("\x1b[?7l")
     if _last-inline-height > 0 {
         _out.push("\x1b[{_last-inline-height}A\r")
     }
@@ -3396,9 +3450,9 @@ fn paint-inline(output: Output) {
     let bg-off = (#bg > 0) ? "\x1b[49m" : ''
     for line in output.lines {
         if #bg > 0 {
-            _out.push("{bg}{line.sub(/\x1b\[0m/, "\x1b[0m{bg}")}{bg-off}\x1b[0K\n")
+            _out.push("{bg}{line.sub(/\x1b\[0m/, "\x1b[0m{bg}")}{bg-off}\n")
         } else {
-            _out.push("{line}\x1b[0K\n")
+            _out.push("{line}\n")
         }
     }
     for ov in _overlays {
@@ -3414,6 +3468,7 @@ fn paint-inline(output: Output) {
     if #_overlays > 0 {
         _out.push("\x1b[{#output.lines};1H")
     }
+    _out.push("\x1b[?7h")
     _last-inline-height = #output.lines
     write(1, _out)
 }
@@ -3425,7 +3480,15 @@ pub fn ink-log(*args) {
     }
     _out.push("\x1b[0J")
     for arg in args {
-        _out.push("{arg}\n")
+        match arg {
+            (n: Node) or (n: Component) => {
+                let (output, _) = layout-node(n, _tio ? _tio.size().1 : 80)
+                for line in output.lines {
+                    _out.push("{line}\n")
+                }
+            },
+            _ => _out.push("{arg}\n")
+        }
     }
     _last-inline-height = 0
     write(1, _out)
@@ -3440,10 +3503,9 @@ fn paint-fullscreen(output: Output, rows: Int = INF) {
     _out.push("\x1b[?7l")
     let old-kitty-ids = _prev-kitty-ids
     for id in old-kitty-ids if id not in _kitty-ids {
-        warn!("paint: deleting kitty id={id}")
+        debug!("paint: deleting kitty id={id}")
         _out.push(kitty-delete(id))
     }
-    warn!("paint: old-ids={old-kitty-ids} curr-ids={_kitty-ids}")
     let bg = _bg-global-ansi
     let bg-off = (#bg > 0) ? "\x1b[49m" : ''
     for line, i in output.lines {
@@ -3470,15 +3532,13 @@ fn paint-fullscreen(output: Output, rows: Int = INF) {
     for ki in _kitty-images {
         if ki.fresh? || ki.id not in old-kitty-ids {
             if ki.id in old-kitty-ids {
-                warn!("paint: replacing kitty id={ki.id} (delete+emit)")
+                debug!("paint: replacing kitty id={ki.id}")
                 _out.push(kitty-delete(ki.id))
             } else {
-                warn!("paint: emitting new kitty id={ki.id} at ({ki.ox},{ki.oy})")
+                debug!("paint: new kitty id={ki.id} at ({ki.ox},{ki.oy})")
             }
             _out.push("\x1b[{ki.oy + 1};{ki.ox + 1}H")
             _out.push(ki.escape)
-        } else {
-            warn!("paint: skipping kitty id={ki.id} (unchanged)")
         }
     }
     _prev-kitty-ids = _kitty-ids
@@ -3584,10 +3644,12 @@ fn dispatch-mouse(tree: Element, raw-ev, handler-name: String) {
 
     for el in path while !ev.stopped? {
         if let $handler = el.props[handler-name] {
+            debug!("dispatch-mouse: {handler-name} -> prop handler")
             handler(ev)
         }
         if let $comp = el.?component {
             if let $handler = comp.?on-event {
+                debug!("dispatch-mouse: {handler-name} -> {type(comp)}.on-event")
                 handler(raw-ev)
                 comp.invalidate!()
             }
@@ -3621,7 +3683,7 @@ pub fn render(root) {
     paint-output(output)
 }
 
-pub fn run(app, fullscreen: Bool = true) {
+pub fn run(app: Node | Component, fullscreen: Bool = true) {
     if app :: Node {
         render(app)
         return
@@ -3666,7 +3728,10 @@ pub fn run(app, fullscreen: Bool = true) {
 
     fn repaint() {
         let (rows, cols) = tio.size()
-        let (output, t) = render-tree(app.render(), cols, rows)
+        _ctx-stack.push(%{})
+        let root = app.render()
+        _ctx-stack.pop()
+        let (output, t) = render-tree(root, cols, rows)
         tree = t
         if fullscreen {
             paint-fullscreen(output, rows)
@@ -3680,7 +3745,10 @@ pub fn run(app, fullscreen: Bool = true) {
     }
 
     fn handle(ev) -> Bool {
-        if ev == event.EOF || is-ctrl-c(ev) { return true }
+        if ev == event.EOF || is-ctrl-c(ev) {
+            debug!("handle: quit ({(ev == event.EOF) ? 'EOF' : 'Ctrl-C'})")
+            return true
+        }
 
         if is-ctrl-l(ev) {
             _out.clear()
@@ -3705,17 +3773,22 @@ pub fn run(app, fullscreen: Bool = true) {
         if let $t = tree {
             match ev {
                 event.MouseDown({x, y, *}) => {
+                    debug!("handle: MouseDown({x},{y})")
                     let found-focus = false
                     if let $path = t.hit(int(x) - 1, int(y) - 1) {
                         for el in path {
                             if let $c = el.component and c.focusable? {
+                                debug!("  click-focus -> {type(c)}")
                                 _focused = c
                                 found-focus = true
                                 break
                             }
                         }
                     }
-                    if !found-focus { _focused = nil }
+                    if !found-focus {
+                        if _focused != nil { debug!("  click-unfocus (was {type(_focused)})") }
+                        _focused = nil
+                    }
                     dragging = true
                     dispatch-mouse(t, ev, 'onClick')
                 },
@@ -3744,6 +3817,7 @@ pub fn run(app, fullscreen: Bool = true) {
                 _ => match ev {
                     event.Key({key: 'TAB', event: (1 or 2), *})
                     and _focused.?handles-tab? => {
+                        debug!("handle: TAB -> {type(_focused)} (handles-tab)")
                         _focused.on-event(ev)
                         _focused.invalidate!()
                     },
@@ -3753,10 +3827,12 @@ pub fn run(app, fullscreen: Bool = true) {
 
                     _ => {
                         if _focused.?focusable? and let $handler = _focused.?on-event {
+                            debug!("handle: key -> {type(_focused)}")
                             handler(ev)
                             _focused.invalidate!()
                         } else if on-ev
                         && do { app.invalidate!(); on-ev(ev) } == Exit {
+                            debug!("handle: root on-event returned Exit")
                             return true
                         }
                     }
@@ -3787,13 +3863,9 @@ pub fn run(app, fullscreen: Bool = true) {
                        else if _has-watchers      { 0.016 }
                        else                       { nil }
 
-        warn!(
-            "deadline: {show(deadline)}, "
-            "timeout: {show(timeout)}, "
-            "timers: {#_timers}, "
-            "watchers?: {_has-watchers}, "
-            "notify-queue: {#_notify-queue}"
-            "nq-empty?: {_notify-queue.empty?()}"
+        debug!(
+            "poll: timers={#_timers} "
+            "timeout={show(timeout)}"
         )
 
         if let $ev = tio.next-event(timeout) and ev !:: event.Wake {
@@ -3829,7 +3901,7 @@ pub class TestHarness {
     __cols: Int
     __rows: Int
     __on-ev: Function | nil
-    __handle: Function | nil
+    __dragging?: Bool
 
     init(app: Component, cols: Int = 80, rows: Int = 24) {
         __app = app
@@ -3837,7 +3909,15 @@ pub class TestHarness {
         __rows = rows
         __tree = nil
         __output = nil
+        __dragging? = false
         __on-ev = app.?on-event
+
+        _focused = nil
+        _timers = []
+        _fibers = %{}
+        _ctx-stack = [%{}]
+        _prev-kitty-ids = []
+        _kitty-ids = []
 
         if app :: Component {
             if let $iv = app.interval {
@@ -3849,8 +3929,8 @@ pub class TestHarness {
         repaint()
     }
 
-    app { __app }
-    tree { __tree }
+    app   { __app }
+    tree  { __tree }
     output { __output }
     focused { _focused }
     focusables { _focusables }
@@ -3861,141 +3941,215 @@ pub class TestHarness {
 
     plain-text -> String {
         lines.map(line ->
-            line.sub(/\x1b\[[^m]*m/, '')
+            line.comb(/\x1b\[[^m]*m/)
         ).unlines()
     }
 
     repaint() {
-        let (out, t) = render-tree(
-            __app.render(), __cols, __rows
-        )
+        _ctx-stack.push(%{})
+        let root = __app.render()
+        _ctx-stack.pop()
+        let (out, t) = render-tree(root, __cols, __rows)
         __output = out
         __tree = t
     }
 
-    send(ev) {
-        if ev == event.EOF || is-ctrl-c(ev) {
-            return Exit
-        }
+    __dispatch(ev) {
+        if ev == event.EOF || is-ctrl-c(ev) { return Exit }
+        if is-ctrl-l(ev) { return }
 
-        if is-ctrl-l(ev) {
-            repaint()
-            return
-        }
+        let $t = __tree or return
 
-        if let $t = __tree {
-            match ev {
-                event.MouseDown({x, y, *}) => do {
-                    let found = false
-                    if let $path = t.hit(
-                        int(x) - 1, int(y) - 1
-                    ) {
-                        for el in path {
-                            if let $c = el.component
-                            and c.focusable? {
-                                _focused = c
-                                found = true
-                                break
-                            }
+        match ev {
+            event.MouseDown({x, y, *}) => do {
+                let found = false
+                if let $path = t.hit(int(x) - 1, int(y) - 1) {
+                    for el in path {
+                        if let $c = el.component and c.focusable? {
+                            _focused = c
+                            found = true
+                            break
                         }
                     }
-                    if !found { _focused = nil }
-                    dispatch-mouse(t, ev, 'onClick')
+                }
+                if !found { _focused = nil }
+                __dragging? = true
+                dispatch-mouse(t, ev, 'onClick')
+            },
+
+            event.MouseUp(_) => {
+                __dragging? = false
+                dispatch-mouse(t, ev, 'onMouseUp')
+            },
+
+            event.MouseMove(_) => {
+                if __dragging? and let $handler = _focused.?on-event {
+                    handler(ev)
+                    _focused.invalidate!()
+                }
+                dispatch-mouse(t, ev, 'onMouseMove')
+            },
+
+            (event.ScrollUp(_) or event.ScrollDown(_)) =>
+                dispatch-mouse(t, ev, 'onScroll'),
+
+            _ => match ev {
+                event.Key({key: 'TAB', event: (1 or 2), *})
+                and _focused.?handles-tab? => {
+                    _focused.on-event(ev)
+                    _focused.invalidate!()
                 },
 
-                event.MouseUp(_) =>
-                    dispatch-mouse(t, ev, 'onMouseUp'),
+                event.Key({key: 'TAB', event: (1 or 2), *}) =>
+                    cycle-focus(),
 
-                _ => match ev {
-                    event.Key({key: 'TAB', event: (1 or 2), *})
-                    and _focused.?handles-tab? => {
-                        _focused.on-event(ev)
+                _ => {
+                    if _focused.?focusable?
+                    and let $handler = _focused.?on-event {
+                        handler(ev)
                         _focused.invalidate!()
-                    },
-
-                    event.Key({key: 'TAB', event: (1 or 2), *}) =>
-                        cycle-focus(),
-
-                    _ => {
-                        if _focused.?focusable?
-                        and let $handler = _focused.?on-event {
-                            handler(ev)
-                            _focused.invalidate!()
-                        } else if __on-ev
-                        && do { __app.invalidate!(); __on-ev(ev) } == Exit {
-                            return Exit
-                        }
+                    } else if __on-ev
+                    && do { __app.invalidate!(); __on-ev(ev) } == Exit {
+                        return Exit
                     }
                 }
             }
         }
+    }
 
+    send(ev) {
+        let r = __dispatch(ev)
+        if r == Exit { return Exit }
         process-timers()
         repaint()
     }
 
     send-text(s: String) {
-        send(event.Text(s))
+        for ch in s.chars() {
+            let r = __dispatch(event.Text(ch))
+            if r == Exit { return Exit }
+        }
+        process-timers()
+        repaint()
     }
 
-    send-key(
-        key: String | Int,
-        mods: Int = 0,
-        ev-type: Int = 1
-    ) {
+    send-key(key: String | Int, mods: Int = 0, ev-type: Int = 1) {
         send(event.Key({
-            key: key,
-            _key: nil,
-            base: nil,
-            mods: mods,
-            event: ev-type,
-            text: []
+            key: key, _key: nil, base: nil,
+            mods: mods, event: ev-type, text: []
         }))
     }
 
-    tab()   { send-key('TAB') }
-    enter() { send-key('ENTER') }
-    up()    { send-key('UP') }
-    down()  { send-key('DOWN') }
-    left()  { send-key('LEFT') }
-    right() { send-key('RIGHT') }
-    esc()   { send-key('ESCAPE') }
+    tab()      { send-key('TAB') }
+    enter()    { send-key('ENTER') }
+    up()       { send-key('UP') }
+    down()     { send-key('DOWN') }
+    left()     { send-key('LEFT') }
+    right()    { send-key('RIGHT') }
+    esc()      { send-key('ESCAPE') }
+    backspace() { send-key('BACKSPACE') }
+    del()      { send-key('DELETE') }
+    home()     { send-key('HOME') }
+    end()      { send-key('END') }
+    pageup()   { send-key('PAGEUP') }
+    pagedown() { send-key('PAGEDOWN') }
 
-    assert-focused(cls, msg: String = '') {
-        if _focused == nil {
-            throw "assertion failed: nothing focused"
-                + (msg ? " ({msg})" : '')
+    find(cls) {
+        for path, comp in _fibers {
+            if comp :: cls { return comp }
         }
-        if !(_focused :: cls) {
-            throw "assertion failed: focused is"
-                " {type(_focused)}, expected {cls}"
-                + (msg ? " ({msg})" : '')
+        nil
+    }
+
+    find-all(cls) -> Array[Component] {
+        let result: Array[Component] = []
+        for path, comp in _fibers {
+            if comp :: cls { result.push(comp) }
+        }
+        result
+    }
+
+    line(n: Int) -> String {
+        let ls = lines
+        (n >= 0 && n < #ls) ? ls[n].comb(/\x1b\[[^m]*m/) : ''
+    }
+
+    line-count -> Int {
+        __output ? __output.height : 0
+    }
+
+    assert-line(n: Int, pattern: String) {
+        assert(line(n).match?(regex(pattern)))
+    }
+
+    focus!(comp: Component) {
+        _focused = comp
+        comp.focus!(true)
+        repaint()
+    }
+
+    focused-type -> String | nil {
+        _focused ? "{type(_focused)}" : nil
+    }
+
+    advance(dt: Float) {
+        for t in _timers if !t.cancelled? {
+            t.nudge(dt)
+        }
+        process-timers()
+        repaint()
+    }
+
+    click(x: Int, y: Int) {
+        send(event.MouseDown({x: x + 1, y: y + 1, button: 0, mods: 0}))
+        send(event.MouseUp({x: x + 1, y: y + 1, button: 0, mods: 0}))
+    }
+
+    scroll-up(x: Int, y: Int) {
+        send(event.ScrollUp({x: x + 1, y: y + 1, button: 0, mods: 0}))
+    }
+
+    scroll-down(x: Int, y: Int) {
+        send(event.ScrollDown({x: x + 1, y: y + 1, button: 0, mods: 0}))
+    }
+
+    resize(cols: Int, rows: Int) {
+        __cols = cols
+        __rows = rows
+        repaint()
+    }
+
+    snapshot() -> String { plain-text }
+
+    assert-snapshot(name: String) {
+        let p = Path("test/snapshots/{name}.txt")
+        let actual = plain-text
+        if p.file? {
+            let expected = p.read-text()
+            if actual != expected {
+                throw "snapshot mismatch '{name}':\n"
+                    "--- expected ---\n{expected}\n"
+                    "--- actual ---\n{actual}"
+            }
+        } else {
+            p.parent.mkdir(parents=true, exist-ok=true)
+            p.write(actual)
         }
     }
 
-    assert-unfocused(msg: String = '') {
-        if _focused != nil {
-            throw "assertion failed: expected unfocused"
-                " but {type(_focused)} is focused"
-                + (msg ? " ({msg})" : '')
-        }
+    assert-focused(cls) {
+        assert(_focused != nil && _focused :: cls)
     }
 
-    assert-contains(needle: String, msg: String = '') {
-        if !plain-text.match?(regex(needle)) {
-            throw "assertion failed: output does not"
-                " contain '{needle}'"
-                + (msg ? " ({msg})" : '')
-        }
+    assert-unfocused() {
+        assert(_focused == nil)
     }
 
-    assert-not-contains(
-        needle: String, msg: String = ''
-    ) {
-        if plain-text.match?(regex(needle)) {
-            throw "assertion failed: output"
-                " contains '{needle}'"
-                + (msg ? " ({msg})" : '')
-        }
+    assert-contains(needle: String) {
+        assert(plain-text.match?(regex(needle)))
+    }
+
+    assert-not-contains(needle: String) {
+        assert(!plain-text.match?(regex(needle)))
     }
 }

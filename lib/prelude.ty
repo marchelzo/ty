@@ -369,6 +369,7 @@ class Object {
 }
 
 class Class[T] {
+    __id__:             Int
     __name__:           String
     __fqn__:            String
     __fields__:         Array[_]
@@ -389,6 +390,10 @@ class Class[T] {
 
     static name(c) {
         c.__name__
+    }
+
+    __get__(x: Object, field: String) -> _ {
+        x.?{field} ?? x.{"{field[1;]}${self.__id__}"}
     }
 
     [](_) {

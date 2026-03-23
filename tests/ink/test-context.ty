@@ -1,0 +1,59 @@
+import ink
+import term (event)
+
+ns test
+
+class CtxReader < ink.Component {
+    key: String | nil
+    default-val: String | nil
+    render() {
+        let v = ink.context(key ?? 'x', default-val ?? 'none')
+        <ink.Text>{v}</ink.Text>
+    }
+}
+
+class ProviderApp < ink.Component {
+    render() {
+        ink.provide('color', 'red')
+        let v = ink.context('color')
+        <ink.Text>{v}</ink.Text>
+    }
+}
+
+class DefaultApp < ink.Component {
+    render() {
+        let v = ink.context('missing', 'fallback')
+        <ink.Text>{v}</ink.Text>
+    }
+}
+
+class OverrideApp < ink.Component {
+    render() {
+        ink.provide('k', 'first')
+        ink.provide('k', 'second')
+        let v = ink.context('k')
+        <ink.Text>{v}</ink.Text>
+    }
+}
+
+pub fn provide-and-read() {
+    let h = ink.TestHarness(ProviderApp(), cols=40, rows=10)
+    h.assert-contains('red')
+}
+
+pub fn default-value() {
+    let h = ink.TestHarness(DefaultApp(), cols=40, rows=10)
+    h.assert-contains('fallback')
+}
+
+pub fn override-same-frame() {
+    let h = ink.TestHarness(OverrideApp(), cols=40, rows=10)
+    h.assert-contains('second')
+}
+
+pub fn context-isolation() {
+    let h = ink.TestHarness(ProviderApp(), cols=40, rows=10)
+    h.assert-contains('red')
+    let v = ink.context('color', 'nope')
+    assert(v == 'nope')
+}

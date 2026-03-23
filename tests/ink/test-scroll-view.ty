@@ -1,0 +1,92 @@
+import ink
+import term (event)
+
+ns test
+
+class SVApp < ink.Component {
+    render() {
+        <ink.Box>
+            <ink.ScrollView height=3>
+                <ink.Text>line0</ink.Text>
+                <ink.Text>line1</ink.Text>
+                <ink.Text>line2</ink.Text>
+                <ink.Text>line3</ink.Text>
+                <ink.Text>line4</ink.Text>
+                <ink.Text>line5</ink.Text>
+                <ink.Text>line6</ink.Text>
+                <ink.Text>line7</ink.Text>
+                <ink.Text>line8</ink.Text>
+                <ink.Text>line9</ink.Text>
+            </ink.ScrollView>
+        </ink.Box>
+    }
+}
+
+fn scroll-pos(h) -> Int {
+    let $sv = h.find(ink.ScrollView) or throw 'no SV'
+    ink.ScrollView.__get__(sv, '__scroll')
+}
+
+pub fn initial-view() {
+    let h = ink.TestHarness(SVApp(), cols=40, rows=10)
+    assert(h.line-count == 3)
+    h.assert-contains('line0')
+}
+
+pub fn scroll-down() {
+    let h = ink.TestHarness(SVApp(), cols=40, rows=10)
+    let $sv = h.find(ink.ScrollView) or throw 'no SV'
+    h.focus!(sv)
+    h.down()
+    assert(scroll-pos(h) == 1)
+    h.down()
+    assert(scroll-pos(h) == 2)
+}
+
+pub fn scroll-up-clamp() {
+    let h = ink.TestHarness(SVApp(), cols=40, rows=10)
+    let $sv = h.find(ink.ScrollView) or throw 'no SV'
+    h.focus!(sv)
+    assert(scroll-pos(h) == 0)
+    h.up()
+    assert(scroll-pos(h) == 0)
+}
+
+pub fn pagedown() {
+    let h = ink.TestHarness(SVApp(), cols=40, rows=10)
+    let $sv = h.find(ink.ScrollView) or throw 'no SV'
+    h.focus!(sv)
+    h.pagedown()
+    assert(scroll-pos(h) == 3)
+}
+
+pub fn pageup() {
+    let h = ink.TestHarness(SVApp(), cols=40, rows=10)
+    let $sv = h.find(ink.ScrollView) or throw 'no SV'
+    h.focus!(sv)
+    h.pagedown()
+    h.pagedown()
+    h.pageup()
+    assert(scroll-pos(h) == 3)
+}
+
+pub fn home-end() {
+    let h = ink.TestHarness(SVApp(), cols=40, rows=10)
+    let $sv = h.find(ink.ScrollView) or throw 'no SV'
+    h.focus!(sv)
+    h.end()
+    let pos = scroll-pos(h)
+    assert(pos >= 7)
+    h.home()
+    assert(scroll-pos(h) == 0)
+}
+
+pub fn vi-j-k() {
+    let h = ink.TestHarness(SVApp(), cols=40, rows=10)
+    let $sv = h.find(ink.ScrollView) or throw 'no SV'
+    h.focus!(sv)
+    h.send-text('j')
+    assert(scroll-pos(h) == 1)
+    h.send-text('k')
+    assert(scroll-pos(h) == 0)
+}

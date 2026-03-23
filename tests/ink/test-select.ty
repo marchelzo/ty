@@ -1,0 +1,94 @@
+import ink
+import term (event)
+
+ns test
+
+class SelApp < ink.Component {
+    changed: Int = -1
+    render() {
+        <ink.Box>
+            <ink.Select
+                items=['alpha', 'beta', 'gamma']
+                on-change=(i -> do { changed = i })
+            />
+        </ink.Box>
+    }
+}
+
+fn sel-idx(h) -> Int {
+    let $s = h.find(ink.Select) or throw 'no Select'
+    ink.Select.__get__(s, '__sel')
+}
+
+pub fn render-items() {
+    let h = ink.TestHarness(SelApp(), cols=40, rows=10)
+    h.assert-contains('alpha')
+    h.assert-contains('beta')
+    h.assert-contains('gamma')
+}
+
+pub fn nav-down() {
+    let app = SelApp()
+    let h = ink.TestHarness(app, cols=40, rows=10)
+    let $sel = h.find(ink.Select) or throw 'no Select'
+    h.focus!(sel)
+    assert(sel-idx(h) == 0)
+    h.down()
+    assert(sel-idx(h) == 1)
+    h.down()
+    assert(sel-idx(h) == 2)
+}
+
+pub fn nav-up-wrap() {
+    let app = SelApp()
+    let h = ink.TestHarness(app, cols=40, rows=10)
+    let $sel = h.find(ink.Select) or throw 'no Select'
+    h.focus!(sel)
+    assert(sel-idx(h) == 0)
+    h.up()
+    assert(sel-idx(h) == 2)
+}
+
+pub fn vi-keys() {
+    let app = SelApp()
+    let h = ink.TestHarness(app, cols=40, rows=10)
+    let $sel = h.find(ink.Select) or throw 'no Select'
+    h.focus!(sel)
+    h.send-text('j')
+    assert(sel-idx(h) == 1)
+    h.send-text('j')
+    assert(sel-idx(h) == 2)
+    h.send-text('k')
+    assert(sel-idx(h) == 1)
+}
+
+pub fn on-change() {
+    let app = SelApp()
+    let h = ink.TestHarness(app, cols=40, rows=10)
+    let $sel = h.find(ink.Select) or throw 'no Select'
+    h.focus!(sel)
+    h.down()
+    assert(app.changed == 1)
+    h.down()
+    assert(app.changed == 2)
+}
+
+pub fn down-wraps() {
+    let app = SelApp()
+    let h = ink.TestHarness(app, cols=40, rows=10)
+    let $sel = h.find(ink.Select) or throw 'no Select'
+    h.focus!(sel)
+    h.down()
+    h.down()
+    h.down()
+    assert(sel-idx(h) == 0)
+}
+
+pub fn selection-indicator() {
+    let h = ink.TestHarness(SelApp(), cols=40, rows=10)
+    let $sel = h.find(ink.Select) or throw 'no Select'
+    h.focus!(sel)
+    h.assert-contains('▸ alpha')
+    h.down()
+    h.assert-contains('▸ beta')
+}
