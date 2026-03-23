@@ -4318,15 +4318,21 @@ DoQuestion(Ty *ty, bool exec)
 TY_INSTR_INLINE static void
 DoNeg(Ty *ty, bool exec)
 {
-        Value v = pop();
+        Value v = peek();
 
         if (v.type == VALUE_INTEGER) {
-                xpush(INTEGER(-v.z));
+                put(INTEGER(-v.z));
         } else if (v.type == VALUE_REAL) {
-                xpush(REAL(-v.real));
+                put(REAL(-v.real));
         } else {
                 CallMethod(ty, OP_NEG, 0, 0, false, exec);
         }
+}
+
+void
+vm_jit_neg(Ty *ty)
+{
+        DoNeg(ty, true);
 }
 
 void

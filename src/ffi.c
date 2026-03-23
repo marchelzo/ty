@@ -195,8 +195,6 @@ static Value
 xload(Ty *ty, ffi_type *t, void const *p)
 {
         void * _Atomic const *vp;
-        Value v;
-        int n;
 
         switch (t->type) {
         case FFI_TYPE_INT:    return INTEGER(*(int _Atomic const *)p);
@@ -224,6 +222,8 @@ load(Ty *ty, ffi_type *t, void const *p)
         Value v;
         int n;
 
+        usize offsets[128];
+
         switch (t->type) {
         case FFI_TYPE_INT:    return INTEGER(*(int const *)p);
         case FFI_TYPE_SINT8:  return INTEGER(*(i8  const *)p);
@@ -250,7 +250,6 @@ load(Ty *ty, ffi_type *t, void const *p)
                 v = vT(n);
                 gP(&v);
 
-                usize offsets[128];
                 ffi_get_struct_offsets(FFI_DEFAULT_ABI, t, offsets);
 
                 for (int i = 0; i < (n & 0x7F); ++i) {
@@ -1180,6 +1179,411 @@ cffi_closure_free(Ty *ty, int argc, Value *kwargs)
         mF(pointers);
 
         return NIL;
+}
+
+inline static int
+struct_field_size(int c)
+{
+        switch (c) {
+        case 'b': case 'B': case '?': case 'x': return  1;
+        case 'h': case 'H':                     return  2;
+        case 'i': case 'I': case 'f':           return  4;
+        case 'q': case 'Q': case 'd':           return  8;
+        default:                                return -1;
+        }
+}
+
+Value
+cffi_calcsize(Ty *ty, int argc, Value *kwargs)
+{
+        ASSERT_ARGC("ffi.calcsize()", 1);
+
+        Value vFmt = ARGx(0, VALUE_STRING);
+        u8 const *fmt = ss(vFmt);
+        isize n = sN(vFmt);
+
+        int i = 0;
+        int size = 0;
+
+        if (i < n && contains("><!=@", fmt[i])) {
+                i += 1;
+        }
+
+        for (int count = 0; i < n; count = 0) {
+                while (i < n && fmt[i] >= '0' && fmt[i] <= '9') {
+                        count = count * 10 + (fmt[i++] - '0');
+                }
+
+                if (count == 0) {
+                        count = 1;
+                }
+
+                if (i >= n) {
+                        break;
+                }
+
+                int ch = fmt[i++];
+
+                if (ch == 's') {
+                        size += count;
+                } else {
+                        int fs = struct_field_size(ch);
+                        if (fs < 0) {
+                                bP("bad format char '%c'", ch);
+                        }
+                        size += fs * count;
+                }
+        }
+
+        return INTEGER(size);
+}
+
+inline static int
+parsefmt(u8 const *fmt, int n, int *start, bool *big)
+{
+        int i = 0;
+
+        *big = false;
+
+        if (i < n) switch (fmt[i]) {
+        case '>':
+        case '!':
+                *big = true;
+        case '<':
+        case '=':
+        case '@':
+                i += 1;
+                break;
+        }
+
+        *start = i;
+
+        int total = 0;
+
+        for (int count = 0; i < n; count = 0) {
+                while (i < n && fmt[i] >= '0' && fmt[i] <= '9') {
+                        count = count * 10 + (fmt[i++] - '0');
+                }
+
+                if (count == 0) {
+                        count = 1;
+                }
+
+                if (i >= n) {
+                        break;
+                }
+
+                int ch = fmt[i++];
+
+                if (ch == 's') {
+                        total += count;
+                } else {
+                        int fs = struct_field_size(ch);
+                        if (fs < 0) {
+                                return -1;
+                        }
+                        total += fs * count;
+                }
+        }
+
+        return total;
+}
+
+inline static int
+countfields(u8 const *fmt, int n, int start)
+{
+        int nf = 0;
+        int i  = start;
+
+        for (int count = 0; i < n; count = 0) {
+                while (i < n && fmt[i] >= '0' && fmt[i] <= '9') {
+                        count = count * 10 + (fmt[i++] - '0');
+                }
+
+                if (count == 0) {
+                        count = 1;
+                }
+
+                if (i >= n) {
+                        break;
+                }
+
+                int ch = fmt[i++];
+
+                if (ch == 'x') {
+                        continue;
+                }
+
+                nf += (ch == 's') ? 1 : count;
+        }
+
+        return nf;
+}
+
+Value
+cffi_pack(Ty *ty, int argc, Value *kwargs)
+{
+        ASSERT_ARGC_RANGE("ffi.pack()", 1, 64);
+
+        Value vFmt = ARGx(0, VALUE_STRING);
+        u8 const *fmt = ss(vFmt);
+        int fmtlen = sN(vFmt);
+
+        int i;
+        bool big;
+        int total = parsefmt(fmt, fmtlen, &i, &big);
+
+        if (total < 0)
+                zP("ffi.pack(): bad format string");
+
+        GC_STOP();
+
+        Blob *b = value_blob_new(ty);
+        uvR(*b, total);
+        vN(*b) = total;
+        memset(vv(*b), 0, total);
+
+        u8 *buf = vv(*b);
+        int off = 0;
+        int ai  = 1;
+
+        while (i < fmtlen) {
+                int count = 0;
+                while (i < fmtlen && fmt[i] >= '0' && fmt[i] <= '9') {
+                        count = count * 10 + (fmt[i++] - '0');
+                }
+
+                if (count == 0) {
+                        count = 1;
+                }
+
+                if (i >= fmtlen) {
+                        break;
+                }
+
+                int ch = fmt[i++];
+
+                if (ch == 'x') {
+                        off += count;
+                        continue;
+                }
+
+                if (ch == 's') {
+                        if (ai >= argc) {
+                                goto NotEnoughArgs;
+                        }
+                        Value v = ARGx(ai++, VALUE_STRING, VALUE_BLOB);
+                        u8 const *src;
+                        isize srclen;
+                        if (v.type == VALUE_STRING) {
+                                src = ss(v);
+                                srclen = sN(v);
+                        } else {
+                                src = vv(*v.blob);
+                                srclen = vN(*v.blob);
+                        }
+                        memcpy(buf + off, src, min(srclen, count));
+                        off += count;
+                        continue;
+                }
+
+                isize size = struct_field_size(ch);
+
+                for (int r = 0; r < count; ++r) {
+                        if (ai >= argc) {
+                                goto NotEnoughArgs;
+                        }
+
+                        Value v = ARG(ai++);
+
+                        float  _f;
+                        double _d;
+                        u64    _z;
+
+                        switch (ch) {
+                        case '?':
+                                buf[off] = value_truthy(ty, &v) ? 1 : 0;
+                                break;
+
+                        case 'f':
+                                _f = float_from(&v);
+                                memcpy(buf + off, &_f, 4);
+                                if (big) {
+                                        SWAP(u8, buf[off+0], buf[off+3]);
+                                        SWAP(u8, buf[off+1], buf[off+2]);
+                                }
+                                break;
+
+                        case 'd':
+                                _d = float_from(&v);
+                                memcpy(buf + off, &_d, 8);
+                                if (big) {
+                                        for (int k = 0; k < 4; ++k) {
+                                                SWAP(u8, buf[off + k], buf[off + 7 - k]);
+                                        }
+                                }
+                                break;
+
+                        default:
+                                _z = (u64)int_from(&v);
+                                if (big) {
+                                        for (int k = size - 1; k >= 0; --k) {
+                                                buf[off + k] = _z & 0xff;
+                                                _z >>= 8;
+                                        }
+                                } else {
+                                        for (int k = 0; k < size; ++k) {
+                                                buf[off + k] = _z & 0xff;
+                                                _z >>= 8;
+                                        }
+                                }
+                                break;
+                        }
+                        off += size;
+                }
+        }
+
+        GC_RESUME();
+
+        return BLOB(b);
+
+NotEnoughArgs:
+        GC_RESUME();
+        zP("ffi.pack(): not enough arguments");
+}
+
+Value
+cffi_unpack(Ty *ty, int argc, Value *kwargs)
+{
+        ASSERT_ARGC("ffi.unpack()", 2, 3);
+
+        Value vFmt = ARGx(0, VALUE_STRING);
+        u8 const *fmt = ss(vFmt);
+        int fmtlen = sN(vFmt);
+
+        Value vBuf = ARGx(1, VALUE_BLOB, VALUE_PTR);
+
+        unsigned char const *buf = (vBuf.type == VALUE_BLOB)
+                                 ? vv(*vBuf.blob)
+                                 : vBuf.ptr;
+
+        isize offset = (argc == 3) ? INT_ARG(2) : 0;
+
+        int fi;
+        bool big;
+
+        parsefmt(fmt, fmtlen, &fi, &big);
+
+        int nfields = countfields(fmt, fmtlen, fi);
+
+        GC_STOP();
+
+        Value t = (nfields > 1) ? vT(nfields) : NIL;
+        int ti = 0;
+        int off = offset;
+
+        for (int count = 0; fi < fmtlen; count = 0) {
+                while (fi < fmtlen && fmt[fi] >= '0' && fmt[fi] <= '9') {
+                        count = count * 10 + (fmt[fi++] - '0');
+                }
+
+                if (count == 0) {
+                        count = 1;
+                }
+
+                if (fi >= fmtlen) {
+                        break;
+                }
+
+                int ch = fmt[fi++];
+
+                if (ch == 'x') {
+                        off += count;
+                        continue;
+                }
+
+                if (ch == 's') {
+                        Blob *sb = value_blob_new(ty);
+                        uvR(*sb, count);
+                        vN(*sb) = count;
+                        memcpy(vv(*sb), buf + off, count);
+                        t.items[ti++] = BLOB(sb);
+                        off += count;
+                        continue;
+                }
+
+                isize size = struct_field_size(ch);
+
+                for (int r = 0; r < count; ++r) {
+                        Value v;
+
+                        float  _f;
+                        double _d;
+                        u64    _z;
+
+                        switch (ch) {
+                        case '?':
+                                v = BOOLEAN(buf[off] != 0);
+                                break;
+
+                        case 'f':
+                                if (big) {
+                                        u8 tmp[4] = { buf[off+3], buf[off+2], buf[off+1], buf[off] };
+                                        memcpy(&_f, tmp, 4);
+                                } else {
+                                        memcpy(&_f, buf + off, 4);
+                                }
+                                v = REAL(_f);
+                                break;
+
+                        case 'd':
+                                if (big) {
+                                        u8 tmp[8];
+                                        for (int k = 0; k < 8; ++k)
+                                                tmp[k] = buf[off + 7 - k];
+                                        memcpy(&_d, tmp, 8);
+                                } else {
+                                        memcpy(&_d, buf + off, 8);
+                                }
+                                v = REAL(_d);
+                                break;
+
+                        default:
+                                _z = 0;
+                                if (big) {
+                                        for (int k = 0; k < size; ++k)
+                                                _z = (_z << 8) | buf[off + k];
+                                } else {
+                                        for (int k = size - 1; k >= 0; --k)
+                                                _z = (_z << 8) | buf[off + k];
+                                }
+
+                                imax ival;
+                                switch (ch) {
+                                case 'b': ival = (i8)(u8)_z;   break;
+                                case 'h': ival = (i16)(u16)_z; break;
+                                case 'i': ival = (i32)(u32)_z; break;
+                                case 'q': ival = (i64)_z;      break;
+                                default:  ival = (imax)_z;     break;
+                                }
+
+                                v = INTEGER(ival);
+                                break;
+                        }
+
+                        if (nfields == 1) {
+                                GC_RESUME();
+                                return v;
+                        }
+
+                        t.items[ti++] = v;
+                        off += size;
+                }
+        }
+
+        GC_RESUME();
+
+        return t;
 }
 
 /* vim: set sts=8 sw=8 expandtab: */

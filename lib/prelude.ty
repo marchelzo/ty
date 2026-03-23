@@ -1975,11 +1975,11 @@ trait Iterable[T] {
         __iter__().each(f)
     }
 
-    min(k=id) {
+    min(k: T -> Any = id) -> T | nil {
         __iter__().min(k)
     }
 
-    max(k=id) {
+    max(k: T -> Any = id) -> T | nil {
         __iter__().max(k)
     }
 
@@ -2539,7 +2539,7 @@ trait Iter[T] < Iterable[T] {
         }
     }
 
-    max(k = id) {
+    max(k: T -> Any = id) -> T | nil {
         if not let Some(x) = __next__() {
             return nil
         }
@@ -2557,7 +2557,7 @@ trait Iter[T] < Iterable[T] {
         return m
     }
 
-    min(k = id) {
+    min(k: T -> Any = id) -> T | nil {
         if not let Some(x) = __next__() {
             return nil
         }

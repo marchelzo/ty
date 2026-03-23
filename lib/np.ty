@@ -64,6 +64,13 @@ ns raw {
         void vvlog(double *y, const double *x, const int *n);
         void vvsqrt(double *y, const double *x, const int *n);
         void vvpow(double *z, const double *y, const double *x, const int *n);
+        void vvsin(double *y, const double *x, const int *n);
+        void vvcos(double *y, const double *x, const int *n);
+        void vvtan(double *y, const double *x, const int *n);
+        void vvasin(double *y, const double *x, const int *n);
+        void vvacos(double *y, const double *x, const int *n);
+        void vvatan(double *y, const double *x, const int *n);
+        void vvfabs(double *y, const double *x, const int *n);
     }
 #|]
 
@@ -213,7 +220,7 @@ fn __binop(a-data: Ptr[_], a-shape: Array[Int], b-data: Ptr[_], b-shape: Array[I
 
 
 fn __fmt-elem(v: Float) -> String {
-    (v == round(v)) ? "{v:d}." : "{v}"
+    (v == prelude::round(v)) ? "{v:d}." : "{v}"
 }
 
 fn __fmt-nd(data: Ptr[_], shape: Array[Int], strides: Array[Int], offset: Int, depth: Int) -> String {
@@ -269,6 +276,7 @@ pub class NDArray {
     size -> Int { _size }
     #() { _size }
     ptr -> Ptr[_] { _data }
+    -() -> NDArray { self.neg }
 
     T -> NDArray {
         if #_shape <= 1 { return copy() }
@@ -819,22 +827,60 @@ pub fn one-hot(labels: NDArray, classes: Int = 10) -> NDArray {
     NDArray(buf, [n, classes])
 }
 
-pub fn randn(rows: Int, cols: Int, scale: Float = 0.01) -> NDArray {
-    let n = rows * cols
+pub fn randn(*dims: Int, scale: Float = 1.0) -> NDArray {
+    let n = dims.fold(1, \_ * _)
     let buf = c.new-auto(c.double, n)
-    for i in 0..(n / 2) {
-        let u1 = rand() + 1e-15
-        let u2 = rand()
-        let r = scale * math.sqrt(-2.0 * math.log(u1))
-        buf[2 * i]     = r * math.cos(2.0 * 3.141592653589793 * u2)
-        buf[2 * i + 1] = r * math.sin(2.0 * 3.141592653589793 * u2)
-    }
-    if n % 2 == 1 {
-        let u1 = rand() + 1e-15
-        let u2 = rand()
-        buf[n - 1] = scale * math.sqrt(-2.0 * math.log(u1)) * math.cos(2.0 * 3.141592653589793 * u2)
-    }
-    NDArray(buf, [rows, cols])
+    vrandn(buf, n, scale)
+    NDArray(buf, dims)
+}
+
+pub fn rand(*dims: Int) -> NDArray {
+    let n = dims.fold(1, \_ * _)
+    let buf = c.new-auto(c.double, n)
+    vrand(buf, n)
+    NDArray(buf, dims)
+}
+
+pub fn sign(a: NDArray) -> NDArray {
+    let out = c.new-auto(c.double, a.size)
+    vsign(a.ptr, out, a.size)
+    NDArray(out, a.shape)
+}
+
+pub fn floor(a: NDArray) -> NDArray {
+    let out = c.new-auto(c.double, a.size)
+    vfloor(a.ptr, out, a.size)
+    NDArray(out, a.shape)
+}
+
+pub fn ceil(a: NDArray) -> NDArray {
+    let out = c.new-auto(c.double, a.size)
+    vceil(a.ptr, out, a.size)
+    NDArray(out, a.shape)
+}
+
+pub fn round(a: NDArray) -> NDArray {
+    let out = c.new-auto(c.double, a.size)
+    vround(a.ptr, out, a.size)
+    NDArray(out, a.shape)
+}
+
+pub fn cumsum(a: NDArray) -> NDArray {
+    let out = c.new-auto(c.double, a.size)
+    vcumsum(a.ptr, out, a.size)
+    NDArray(out, [a.size])
+}
+
+pub fn clip(a: NDArray, lo: Float, hi: Float) -> NDArray {
+    let out = c.new-auto(c.double, a.size)
+#|if __apple__
+    let lo-p = c.auto(c.box(c.double, lo))
+    let hi-p = c.auto(c.box(c.double, hi))
+    raw.vDSP_vclipD(a.ptr, 1, lo-p, hi-p, out, 1, a.size)
+#|else
+    vclip(a.ptr, out, a.size, lo, hi)
+#|]
+    NDArray(out, a.shape)
 }
 
 pub fn dot(a: NDArray, b: NDArray) -> NDArray | Float { a.dot(b) }
@@ -949,6 +995,83 @@ pub fn log(a: NDArray) -> NDArray {
     raw.vvlog(out, a.ptr, np)
 #|else
     vlog(a.ptr, out, a.size)
+#|]
+    NDArray(out, a.shape)
+}
+
+pub fn abs(a: NDArray) -> NDArray {
+    let out = c.new-auto(c.double, a.size)
+#|if __apple__
+    let np = c.auto(c.box(c.int, a.size))
+    raw.vvfabs(out, a.ptr, np)
+#|else
+    vabs(a.ptr, out, a.size)
+#|]
+    NDArray(out, a.shape)
+}
+
+pub fn sin(a: NDArray) -> NDArray {
+    let out = c.new-auto(c.double, a.size)
+#|if __apple__
+    let np = c.auto(c.box(c.int, a.size))
+    raw.vvsin(out, a.ptr, np)
+#|else
+    vsin(a.ptr, out, a.size)
+#|]
+    NDArray(out, a.shape)
+}
+
+pub fn cos(a: NDArray) -> NDArray {
+    let out = c.new-auto(c.double, a.size)
+#|if __apple__
+    let np = c.auto(c.box(c.int, a.size))
+    raw.vvcos(out, a.ptr, np)
+#|else
+    vcos(a.ptr, out, a.size)
+#|]
+    NDArray(out, a.shape)
+}
+
+pub fn tan(a: NDArray) -> NDArray {
+    let out = c.new-auto(c.double, a.size)
+#|if __apple__
+    let np = c.auto(c.box(c.int, a.size))
+    raw.vvtan(out, a.ptr, np)
+#|else
+    vtan(a.ptr, out, a.size)
+#|]
+    NDArray(out, a.shape)
+}
+
+pub fn asin(a: NDArray) -> NDArray {
+    let out = c.new-auto(c.double, a.size)
+#|if __apple__
+    let np = c.auto(c.box(c.int, a.size))
+    raw.vvasin(out, a.ptr, np)
+#|else
+    vasin(a.ptr, out, a.size)
+#|]
+    NDArray(out, a.shape)
+}
+
+pub fn acos(a: NDArray) -> NDArray {
+    let out = c.new-auto(c.double, a.size)
+#|if __apple__
+    let np = c.auto(c.box(c.int, a.size))
+    raw.vvacos(out, a.ptr, np)
+#|else
+    vacos(a.ptr, out, a.size)
+#|]
+    NDArray(out, a.shape)
+}
+
+pub fn atan(a: NDArray) -> NDArray {
+    let out = c.new-auto(c.double, a.size)
+#|if __apple__
+    let np = c.auto(c.box(c.int, a.size))
+    raw.vvatan(out, a.ptr, np)
+#|else
+    vatan(a.ptr, out, a.size)
 #|]
     NDArray(out, a.shape)
 }

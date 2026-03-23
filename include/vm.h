@@ -369,6 +369,9 @@ DoLeq(Ty *ty);
 void
 DoGeq(Ty *ty);
 
+void
+vm_jit_neg(Ty *ty);
+
 char *
 co_colored(Ty *ty);
 

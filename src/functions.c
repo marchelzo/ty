@@ -4845,17 +4845,19 @@ BUILTIN_FUNCTION(os_setsockopt)
         if (option.type != VALUE_INTEGER)
                 zP("the third argument to os.setsockopt() must be an integer (option)");
 
-        int o;
-
         if (argc == 4) {
                 Value v = ARG(3);
+                if (v.type == VALUE_BLOB) {
+                        struct blob *b = v.blob;
+                        return INTEGER(setsockopt(sock.z, level.z, option.z, b->items, b->count));
+                }
                 if (v.type != VALUE_INTEGER)
-                        zP("the fourth argument to os.setsockopt() must be an integer (opt value)");
-                o = v.z;
-        } else {
-                o = 1;
+                        zP("the fourth argument to os.setsockopt() must be an integer or blob");
+                int o = v.z;
+                return INTEGER(setsockopt(sock.z, level.z, option.z, &o, sizeof o));
         }
 
+        int o = 1;
         return INTEGER(setsockopt(sock.z, level.z, option.z, &o, sizeof o));
 }
 
@@ -5167,7 +5169,7 @@ BUILTIN_FUNCTION(os_getaddrinfo)
                 break;
 
         case VALUE_INTEGER:
-                service = TY_TMP();
+                service = TY_TMP_B();
                 ty_snprintf(service, TY_TMP_N, "%hu", (unsigned short)port.z);
                 break;
 
@@ -5197,6 +5199,7 @@ BUILTIN_FUNCTION(os_getaddrinfo)
         GC_STOP();
         for (struct addrinfo *it = res; it != NULL; it = it->ai_next) {
                 Blob *b = value_blob_new(ty);
+                vvPn(*b, (char *)it->ai_addr, it->ai_addrlen);
 
                 Value entry = vTn(
                         "family",    INTEGER(it->ai_family),
@@ -5207,8 +5210,6 @@ BUILTIN_FUNCTION(os_getaddrinfo)
                 );
 
                 vAp(results.array, entry);
-
-                vvPn(*b, (char *)it->ai_addr, it->ai_addrlen);
 
                 if (it->ai_canonname != NULL) {
                         entry.items[4] = vSsz(it->ai_canonname);

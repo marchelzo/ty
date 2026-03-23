@@ -1,4 +1,5 @@
 #include <math.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "ty.h"
@@ -283,6 +284,90 @@ BUILTIN_FUNCTION(accel_vsqrt)
         return NIL;
 }
 
+BUILTIN_FUNCTION(accel_vsin)
+{
+        ASSERT_ARGC("vsin()", 3);
+
+        double *a   = PTR_ARG(0);
+        double *out = PTR_ARG(1);
+        i64     n   = INT_ARG(2);
+
+        for (i64 i = 0; i < n; ++i)
+                out[i] = sin(a[i]);
+
+        return NIL;
+}
+
+BUILTIN_FUNCTION(accel_vcos)
+{
+        ASSERT_ARGC("vcos()", 3);
+
+        double *a   = PTR_ARG(0);
+        double *out = PTR_ARG(1);
+        i64     n   = INT_ARG(2);
+
+        for (i64 i = 0; i < n; ++i)
+                out[i] = cos(a[i]);
+
+        return NIL;
+}
+
+BUILTIN_FUNCTION(accel_vtan)
+{
+        ASSERT_ARGC("vtan()", 3);
+
+        double *a   = PTR_ARG(0);
+        double *out = PTR_ARG(1);
+        i64     n   = INT_ARG(2);
+
+        for (i64 i = 0; i < n; ++i)
+                out[i] = tan(a[i]);
+
+        return NIL;
+}
+
+BUILTIN_FUNCTION(accel_vasin)
+{
+        ASSERT_ARGC("vasin()", 3);
+
+        double *a   = PTR_ARG(0);
+        double *out = PTR_ARG(1);
+        i64     n   = INT_ARG(2);
+
+        for (i64 i = 0; i < n; ++i)
+                out[i] = asin(a[i]);
+
+        return NIL;
+}
+
+BUILTIN_FUNCTION(accel_vacos)
+{
+        ASSERT_ARGC("vacos()", 3);
+
+        double *a   = PTR_ARG(0);
+        double *out = PTR_ARG(1);
+        i64     n   = INT_ARG(2);
+
+        for (i64 i = 0; i < n; ++i)
+                out[i] = acos(a[i]);
+
+        return NIL;
+}
+
+BUILTIN_FUNCTION(accel_vatan)
+{
+        ASSERT_ARGC("vatan()", 3);
+
+        double *a   = PTR_ARG(0);
+        double *out = PTR_ARG(1);
+        i64     n   = INT_ARG(2);
+
+        for (i64 i = 0; i < n; ++i)
+                out[i] = atan(a[i]);
+
+        return NIL;
+}
+
 BUILTIN_FUNCTION(accel_vpow)
 {
         ASSERT_ARGC("vpow()", 4);
@@ -294,6 +379,119 @@ BUILTIN_FUNCTION(accel_vpow)
 
         for (i64 i = 0; i < n; ++i)
                 out[i] = pow(bases[i], exps[i]);
+
+        return NIL;
+}
+
+BUILTIN_FUNCTION(accel_vrandn)
+{
+        ASSERT_ARGC("vrandn()", 3);
+
+        double *out   = PTR_ARG(0);
+        i64     n     = INT_ARG(1);
+        double  scale = FLOAT_ARG(2);
+
+        static const double TAU = 6.283185307179586;
+
+        for (i64 i = 0; i + 1 < n; i += 2) {
+                double u1 = (drand48() + 1e-15);
+                double u2 = drand48();
+                double r  = scale * sqrt(-2.0 * log(u1));
+                out[i]     = r * cos(TAU * u2);
+                out[i + 1] = r * sin(TAU * u2);
+        }
+
+        if (n % 2 == 1) {
+                double u1 = (drand48() + 1e-15);
+                double u2 = drand48();
+                out[n - 1] = scale * sqrt(-2.0 * log(u1)) * cos(TAU * u2);
+        }
+
+        return NIL;
+}
+
+BUILTIN_FUNCTION(accel_vrand)
+{
+        ASSERT_ARGC("vrand()", 2);
+
+        double *out = PTR_ARG(0);
+        i64     n   = INT_ARG(1);
+
+        for (i64 i = 0; i < n; ++i)
+                out[i] = drand48();
+
+        return NIL;
+}
+
+BUILTIN_FUNCTION(accel_vsign)
+{
+        ASSERT_ARGC("vsign()", 3);
+
+        double *a   = PTR_ARG(0);
+        double *out = PTR_ARG(1);
+        i64     n   = INT_ARG(2);
+
+        for (i64 i = 0; i < n; ++i)
+                out[i] = a[i] > 0 ? 1.0 : a[i] < 0 ? -1.0 : 0.0;
+
+        return NIL;
+}
+
+BUILTIN_FUNCTION(accel_vfloor)
+{
+        ASSERT_ARGC("vfloor()", 3);
+
+        double *a   = PTR_ARG(0);
+        double *out = PTR_ARG(1);
+        i64     n   = INT_ARG(2);
+
+        for (i64 i = 0; i < n; ++i)
+                out[i] = floor(a[i]);
+
+        return NIL;
+}
+
+BUILTIN_FUNCTION(accel_vceil)
+{
+        ASSERT_ARGC("vceil()", 3);
+
+        double *a   = PTR_ARG(0);
+        double *out = PTR_ARG(1);
+        i64     n   = INT_ARG(2);
+
+        for (i64 i = 0; i < n; ++i)
+                out[i] = ceil(a[i]);
+
+        return NIL;
+}
+
+BUILTIN_FUNCTION(accel_vround)
+{
+        ASSERT_ARGC("vround()", 3);
+
+        double *a   = PTR_ARG(0);
+        double *out = PTR_ARG(1);
+        i64     n   = INT_ARG(2);
+
+        for (i64 i = 0; i < n; ++i)
+                out[i] = round(a[i]);
+
+        return NIL;
+}
+
+BUILTIN_FUNCTION(accel_vcumsum)
+{
+        ASSERT_ARGC("vcumsum()", 3);
+
+        double *a   = PTR_ARG(0);
+        double *out = PTR_ARG(1);
+        i64     n   = INT_ARG(2);
+
+        double s = 0.0;
+        for (i64 i = 0; i < n; ++i) {
+                s += a[i];
+                out[i] = s;
+        }
 
         return NIL;
 }

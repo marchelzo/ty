@@ -3,6 +3,7 @@ import ty
 import ty.token (next, peek)
 import ty.parse (expr, stmt)
 import ty.lex as lex
+import ty.types as types
 import ptr (typed)
 
 __set_type__ c::i8      CType[Int];
@@ -35,6 +36,53 @@ fn c::new[T](type: CType[T], count: ?Int) -> Ptr[T];
 fn c::box[T](type: CType[T], val: ?T) -> Ptr[T];
 fn c::alloc[T](size: Int) -> Ptr[T];
 fn ptr::typed[T](ptr: Ptr[Any], type: CType[T]) -> Ptr[T];
+
+macro __unpack-types! $$[
+    $${
+        fn unpacked(t0) {
+            match t0 {
+                types::String(fmt) => do {
+                    let ts = []
+                    let i = 0
+
+                    if i < #fmt and fmt[i] in ['>', '<', '!', '=', '@'] {
+                        i += 1
+                    }
+
+                    while i < #fmt {
+                        let count = 0
+                        while i < #fmt and fmt[i] >= '0' and fmt[i] <= '9' {
+                            count = count * 10 + int(fmt[i])
+                            i += 1
+                        }
+                        if count == 0 { count = 1 }
+                        if i >= #fmt { break }
+
+                        let ch = fmt[i]
+                        i += 1
+
+                        match ch {
+                            'x' => (),
+                            's' => ts.push(types.Object(Blob, [])),
+                            'f' or 'd' => for ..count { ts.push(types.Object(Float, [])) },
+                            '?' => for ..count { ts.push(types.Object(Bool, [])) },
+                            _ => for ..count { ts.push(types.Object(Int, [])) }
+                        }
+                    }
+
+                    match ts {
+                        [t] => t,
+                        _   => types.Record(*ts)
+                    }
+                },
+
+                _ => types.Unknown
+            }
+        }
+    }
+$$]
+
+fn c::unpack[T](fmt: T, buf: IntoPtr[Any], off: Int = 0) -> __unpack-types!(T);
 
 pub __tls::_cif_cache: _ = nil
 
@@ -171,7 +219,7 @@ pub strcpy = wrap(nil, 'strcpy', c.ptr, c.ptr, c.ptr)
 fn _syscall(nr: Int, *args: Any) -> Int { -1 }
 pub syscall: (typeof _syscall) = wrapVar(nil, 'syscall', 1, c.long, c.long)
 
-fn nexttype(array-to-ptr? = true, has-name?: ?Bool = nil) {
+fn nexttype(array-to-ptr?: Bool = true, has-name?: ?Bool = nil) {
     const ignore = /^(?:const|union|struct|restrict|register|auto|volatile|atomic|_Atomic|noreturn|_Noreturn|\*)$/
 
     const types = /^(?:
