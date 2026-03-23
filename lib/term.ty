@@ -43,6 +43,7 @@ pub ns event {
     pub tag ScrollLeft;
     pub tag ScrollRight;
     pub tag Cursor;
+    pub tag Wake;
 
     pub tag Key[T] {
         nice-name() -> String where T: KeyDetails {
@@ -78,6 +79,7 @@ pub use Event = (
   | event.ScrollLeft[event.MouseDetails]
   | event.ScrollRight[event.MouseDetails]
   | event.Cursor[CursorAddress]
+  | event.Wake
   | event.EOF
 )
 
@@ -458,10 +460,26 @@ ns _size {
         ioctl(fd, TIOCGWINSZ, (c.ptr, size.get()))
         (size.lines, size.cols)
     }
+
+    fn get-px(fd: Int) -> (Int, Int) {
+        size = size ?? WinSize()
+        ioctl(fd, TIOCGWINSZ, (c.ptr, size.get()))
+        (size.xpix, size.ypix)
+    }
 }
 
 pub fn size(fd: Int) -> (Int, Int) {
     _size.get(fd)
+}
+
+pub fn cell-size(fd: Int = 0) -> (Int, Int) {
+    let (rows, cols) = _size.get(fd)
+    let (xpix, ypix) = _size.get-px(fd)
+    if xpix > 0 && ypix > 0 && cols > 0 && rows > 0 {
+        (xpix / cols, ypix / rows)
+    } else {
+        (0, 0)
+    }
 }
 
 pub class TermIO {
@@ -775,6 +793,10 @@ pub class TermIO {
         ev
     }
 
+    wake() {
+        __ev-queue.put(event.Wake)
+    }
+
     cursor() -> CursorAddress {
         let ^lock = __cursor.lock.lock()
 
@@ -853,7 +875,10 @@ pub class TermIO {
 if __module__ == 'main' {
         with term = TermIO() {
             while let $ev = term.next-event() {
-                pp(ev)
+                match ev {
+                    event.Key(_key) as key => pp(event.Key({*_key, nice: key.nice-name()})),
+                    _                      => pp(ev)
+                }
                 if ev == event.Text('q') {
                     break
                 }

@@ -2,9 +2,11 @@ import chalk (chalk, escape as chalk-escape)
 import term
 import os (SIGWINCH, signal, write, sleep)
 import time (now)
+import base64
+import path (Path)
 import log (..)
 
-logging({level: DEBUG, path: './ink.log'})
+logging({level: DEBUG})
 
 use term
 
@@ -16,15 +18,19 @@ let __tls::_next-fibers: Dict[String, Any] = %{}
 
 let __tls::_focused: Any = nil
 let __tls::_focusables: Array[Any] = []
-let __tls::_timers: Array[Any] = []
+let __tls::_timers: Array[PendingTimer] = []
 let __tls::_ctx-stack: Array[Dict[String, Any]] = [%{}]
 let __tls::_overlays: Array[Any] = []
 
 let _notify-queue = SharedQueue()
 let _has-watchers = false
+let _tio = nil
 
-const CTRL = 4
-const INF  = 100000
+const CTRL  = 4
+const SHIFT = 1
+const INF   = 100000
+
+let __tls::_debug-borders? = false
 
 pub tag Exit;
 pub tag CycleCompletions, ListCompletions, Insert, ReplaceLine;
@@ -90,8 +96,8 @@ fn fit-items(items: Array[CompletionLabel], W: Int) -> Array[Array[String]] {
                         0
                     },
                     _ => 0
-                }).max()
-                parts.push(w || max-singleton)
+                }).max() 
+                parts.push(w || max-singleton ?? 0)
             }
 
             parts
@@ -110,7 +116,7 @@ fn fit-items(items: Array[CompletionLabel], W: Int) -> Array[Array[String]] {
     ) ?? (#items, widths(#items))
 
     let cols: Array[Array[CompletionLabel]] = group-cols(ncol)
-    let nrow: Int = cols.map(s -> #s).max()
+    let nrow: Int = cols.map(s -> #s).max() ?? 0
 
     fn s(x: StyledText | nil) -> String {
         match x {
@@ -230,6 +236,86 @@ pub fn fg-ansi(color: String) -> String {
 }
 
 let RST = "\x1b[0m"
+let BG_RST = "\x1b[49m"
+
+fn bg-ansi(color: String) -> String {
+    let (r, g, b) = resolve-color-rgb(color)
+    "\x1b[48;2;{r};{g};{b}m"
+}
+
+let kitty-graphics? = do {
+    let tp = getenv('TERM_PROGRAM') ?? ''
+    let tm = getenv('TERM') ?? ''
+    tp == 'ghostty'
+    || tp == 'WezTerm'
+    || tm == 'xterm-kitty'
+    || (getenv('KITTY_WINDOW_ID') ?? '') != ''
+}
+
+fn hex-to-rgb(hex: String) -> (Int, Int, Int) {
+    let h = hex.match?(/^#/) ? hex.slice(1) : hex
+    if #h == 3 {
+        let r = int("0x{h[0]}{h[0]}")
+        let g = int("0x{h[1]}{h[1]}")
+        let b = int("0x{h[2]}{h[2]}")
+        (r, g, b)
+    } else {
+        let r = int("0x{h[;2]}")
+        let g = int("0x{h[2;4]}")
+        let b = int("0x{h[4;6]}")
+        (r, g, b)
+    }
+}
+
+fn resolve-color-rgb(name: String) -> (Int, Int, Int) {
+    let resolved = chalk.render("[{name}]")[;-1]
+    if let $m = resolved.match(/38;2;(\d+);(\d+);(\d+)/) {
+        (int(m[1]), int(m[2]), int(m[3]))
+    } else if name.match?(/^#/) {
+        hex-to-rgb(name)
+    } else {
+        (200, 200, 200)
+    }
+}
+
+let __kitty-next-id = 1
+
+fn kitty-next-id() -> Int {
+    let id = __kitty-next-id
+    __kitty-next-id += 1
+    id
+}
+
+fn kitty-delete(id: Int) -> String {
+    "\x1b_Ga=d,q=2,d=i,i={id}\x1b\\"
+}
+
+fn kitty-transmit(buf: Blob, pw: Int, ph: Int, cols: Int, rows: Int, id: Int = 0) -> String {
+    warn!("kitty-transmit: {pw}x{ph} id={id} buf={#buf}")
+    let payload = base64.encode(buf)
+    let plen = #payload
+    let out = Blob()
+    let chunk-size = 131072
+    let id-part = (id > 0) ? ",i={id}" : ""
+    let hdr = "\x1b_Ga=T,q=2,f=32,s={pw},v={ph},c={cols},r={rows}{id-part}"
+    let i = 0
+
+    while i < plen {
+        let end = min(i + chunk-size, plen)
+        let more = (end < plen) ? 1 : 0
+        let chunk = payload.slice(i, end - i)
+
+        if i == 0 {
+            out.push("{hdr},m={more};{chunk}\x1b\\")
+        } else {
+            out.push("\x1b_Gm={more};{chunk}\x1b\\")
+        }
+
+        i = end
+    }
+
+    out.str!()
+}
 
 ns border-style {
     pub single = ['┌', '┐', '└', '┘', '─', '│']
@@ -378,9 +464,10 @@ pub class Component {
     focusable? -> Bool        { false }
     interval   -> Float | nil { nil   }
 
-    mount()   {}
-    unmount() {}
-    tick()    { dirty? = true }
+    mount()        {}
+    unmount()      {}
+    tick()         {}
+    handles-tab? -> Bool { false }
 
     invalidate!() { dirty? = true }
 
@@ -397,20 +484,25 @@ pub class Component {
     }
 
     notify() {
-        _has-watchers = true
+        dirty? = true
         _notify-queue.put(true)
+        _tio.?wake()
     }
 
     adopt(other: Component) {
+        let was-dirty = dirty?
         let new-children = other.children
         if children != new-children { dirty? = true }
         children = new-children
         for name in other.__prop-names {
             let new-val = other.{name}
-            if !dirty? && self.{name} != new-val {
+            if !dirty? && !(new-val :: Function) && self.{name} != new-val {
                 dirty? = true
             }
             self.{name} = new-val
+        }
+        if dirty? && !was-dirty {
+            warn!("adopt: {type(self)} dirtied by prop change")
         }
     }
 
@@ -452,23 +544,26 @@ pub fn Raw(lines: Array[String], raw-width: Int) -> Node {
 }
 
 pub class Divider < Component {
-    char:  String | nil
-    color: String | nil
-    title: String | nil
+    char:   String | nil
+    color:  String | nil
+    title:  String | nil
+    width:  Int | nil
 
     render() -> Node {
         let ch = char ?? '─'
         let color = color ?? 'subtle'
         let title = title
+        let w = width ?? layout-max-w
 
         if title {
+            let rest = max(w - title.width() - 4, 2)
             <Box direction="row">
                 <Text style=color>{ch * 2} </Text>
                 <Text style="{color} bold">{title}</Text>
-                <Text style=color> {ch * 20}</Text>
+                <Text style=color> {ch * rest}</Text>
             </Box>
         } else {
-            <Text style=color>{ch * 40}</Text>
+            <Text style=color>{ch * w}</Text>
         }
     }
 }
@@ -544,16 +639,18 @@ pub class ProgressBar < Component {
 
     render() -> Node {
         let value  = float(value ?? 0)
-        let w      = int(width ?? 20)
+        let total  = int(width ?? 20)
         let color  = color ?? 'primary'
         let bg     = bg ?? 'subtle'
+        let pct    = " {int(value * 100)}%"
+        let w      = max(total - pct.width(), 2)
         let filled = int(value.clamp(0.0, 1.0) * w)
         let empty  = w - filled
 
         <Box direction="row">
             <Text style=color>{'━' * filled}</Text>
             <Text style=bg>{'━' * empty}</Text>
-            <Text style="text-dim"> {int(value * 100)}%</Text>
+            <Text style="text-dim">{pct}</Text>
         </Box>
     }
 }
@@ -592,14 +689,16 @@ pub class Spinner < Component {
 }
 
 pub class TextInput < Component {
-    placeholder:  String | nil
-    on-change:    Function | nil
-    on-submit:    Function | nil
-    complete:     CompletionFunction | nil
-    width:        Int | nil
-    color:        String | Function | nil
-    border-color: String | Function | nil
-    value:        String | nil
+    placeholder:   String | nil
+    on-change:     Function | nil
+    on-submit:     Function | nil
+    complete:      CompletionFunction | nil
+    history:       Array[String] | nil
+    history-file:  String | nil
+    width:         Int | nil
+    color:         String | Function | nil
+    border-color:  String | Function | nil
+    value:         String | nil
 
     __chars:     Array[String]
     __cursor:    Int
@@ -607,18 +706,53 @@ pub class TextInput < Component {
     __last-val:  String | nil
     __cycler:    _
     __comp-lines: Array[String]
+    __hist-idx:  Int
+    __hist-save: String
+    __hist-loaded?: Bool
 
     init(*children, %props) {
         super(*children, **props)
-        __chars      = (value ?? '').chars()
-        __cursor     = #__chars
-        __scroll     = 0
-        __last-val   = value
-        __cycler     = nil
-        __comp-lines = []
+        __chars        = (value ?? '').chars()
+        __cursor       = #__chars
+        __scroll       = 0
+        __last-val     = value
+        __cycler       = nil
+        __comp-lines   = []
+        __hist-idx     = -1
+        __hist-save    = ''
+        __hist-loaded? = false
+    }
+
+    __load-history() {
+        if __hist-loaded? { return }
+        __hist-loaded? = true
+        if let $f = history-file and let $h = history {
+            try {
+                let p = Path(f)
+                if p.file? {
+                    for line in p.read-text().lines() if #line > 0 {
+                        h.push(line)
+                    }
+                    warn!("TextInput: loaded {#h} history entries from {f}")
+                }
+            } catch _ { }
+        }
+    }
+
+    __save-history-entry(entry: String) {
+        if let $f = history-file {
+            try {
+                let p = Path(f)
+                p.parent.mkdir(parents=true, exist-ok=true)
+                p.append("{entry}\n")
+            } catch _ { }
+        }
     }
 
     focusable? -> Bool { true }
+    handles-tab? -> Bool { complete != nil }
+
+    mount() { __load-history() }
 
     text -> String { __chars.join() }
 
@@ -706,9 +840,46 @@ pub class TextInput < Component {
             event.Key({key: 'TAB', event: (1 or 2), *}) =>
                 __do-tab(),
 
-            event.Key({key: 'ENTER', event: (1 or 2), *}) => {
+            event.Key({key: 'ENTER', event: 1, *}) => {
                 __cancel-completion()
-                if on-submit { on-submit(text) }
+                let t = text
+                if let h: Array[String] = history and #t > 0 {
+                    if #h == 0 || h[-1] != t {
+                        h.push(t)
+                        __save-history-entry(t)
+                        warn!("TextInput: history push '{t}', now {#h} entries")
+                    }
+                }
+                __hist-idx = -1
+                if on-submit { on-submit(t) }
+            },
+
+            event.Key({key: 'UP', event: (1 or 2), *})
+            and let h: Array[String] = history => {
+                __cancel-completion()
+                if #h > 0 {
+                    if __hist-idx == -1 { __hist-save = text }
+                    __hist-idx = min(__hist-idx + 1, #h - 1)
+                    __chars = h[#h - 1 - __hist-idx].chars()
+                    __cursor = #__chars
+                    __emit()
+                }
+            },
+
+            event.Key({key: 'DOWN', event: (1 or 2), *})
+            and let h: Array[String] = history => {
+                __cancel-completion()
+                if __hist-idx > 0 {
+                    __hist-idx -= 1
+                    __chars = h[#h - 1 - __hist-idx].chars()
+                    __cursor = #__chars
+                    __emit()
+                } else if __hist-idx == 0 {
+                    __hist-idx = -1
+                    __chars = __hist-save.chars()
+                    __cursor = #__chars
+                    __emit()
+                }
             },
 
             event.Key({key: 'ESCAPE', event: (1 or 2), *}) => {
@@ -841,13 +1012,10 @@ pub class TextInput < Component {
         let text-color = show-placeholder ? 'subtle' : clr
         let content = if focused? {
             let before = visible.slice(0, cursor-pos)
-            let cur-ch = (cursor-pos < visible.width())
-                ? visible.slice(cursor-pos, 1)
-                : ' '
-            let after = (cursor-pos < visible.width())
-                ? visible.slice(cursor-pos + 1)
-                : ''
-            let trail = ' ' * max(pad - 1, 0)
+            let past-end = cursor-pos >= visible.width()
+            let cur-ch = past-end ? ' ' : visible.slice(cursor-pos, 1)
+            let after  = past-end ? '' : visible.slice(cursor-pos + 1)
+            let trail  = ' ' * max(past-end ? (pad - 1) : pad, 0)
             str(chalk"[{text-color}]{before}[/]"
                 "[reverse]{cur-ch}[/]"
                 "[{text-color}]{after}[/]{trail}")
@@ -1232,8 +1400,7 @@ pub class Slider < Component {
             event.Key({key: 'END', event: (1 or 2), *}) =>
                 { __val = __mx; __emit() },
 
-            event.MouseDown({x: $mx, *})
-            or event.MouseMove({x: $mx, *}) =>
+            event.MouseMove({x: $mx, *}) =>
                 __jump(int(mx) - 1),
 
             _ => ()
@@ -1301,18 +1468,21 @@ pub class RangeSelector < Component {
     label:     String | nil
     format:    Function | nil
     on-change: Function | nil
+    on-set:    Function | nil
 
     __lo: Float
     __hi: Float
     __active: Int
     __track-x: Int
     __track-w: Int
+    __dragging?: Bool
 
     init(*children, %props) {
         super(*children, **props)
         __lo = float(low ?? 0.25)
         __hi = float(high ?? 0.75)
         __active = 0
+        __dragging? = false
         __track-x = 0
         __track-w = 0
     }
@@ -1328,10 +1498,14 @@ pub class RangeSelector < Component {
         if on-change { on-change(__lo, __hi) }
     }
 
+    __emit-set() {
+        __emit()
+        if on-set { on-set(__lo, __hi) }
+    }
+
     __jump(click-x: Int) {
         if __track-w > 0 {
-            let rel = (float(click-x - __track-x) - 0.5)
-                / float(__track-w)
+            let rel = (float(click-x - __track-x) - 0.5) / float(__track-w)
             let v = __mn + rel.clamp(0.0, 1.0) * (__mx - __mn)
             let d-lo = (v - __lo).abs
             let d-hi = (v - __hi).abs
@@ -1357,25 +1531,30 @@ pub class RangeSelector < Component {
                 } else {
                     __hi = max(__hi - stp, __lo)
                 }
-                __emit()
+                __emit-set()
             },
 
-            event.Key({key: 'RIGHT', event: (1 or 2), *})
-            or event.Text('l') => do {
+            event.Key({key: 'RIGHT', event: (1 or 2), *}) or event.Text('l') => do {
                 if __active == 0 {
                     __lo = min(__lo + stp, __hi)
                 } else {
                     __hi = min(__hi + stp, __mx)
                 }
-                __emit()
+                __emit-set()
             },
 
-            event.Text('1') or event.Key({key: 'TAB', event: 1, mods: 0, *}) =>
-                __active = (__active + 1) % 2,
+            event.Text('1') or event.Key({key: 'TAB', event: 1, mods: 0, *}) => {
+                __active = (__active + 1) % 2
+            },
 
-            event.MouseDown({x: $mx, *})
-            or event.MouseMove({x: $mx, *}) =>
-                __jump(int(mx) - 1),
+            event.MouseMove({x, *}) and __dragging? =>
+                __jump(int(x) - 1),
+
+            event.MouseUp({x, *}) and __dragging? => {
+                __dragging? = false
+                __jump(int(x) - 1)
+                if on-set { on-set(__lo, __hi) }
+            },
 
             _ => ()
         }
@@ -1416,6 +1595,7 @@ pub class RangeSelector < Component {
         let clr-bold = "{clr} bold"
         let on-track-click = ev -> do {
             if let event.MouseDown({x, *}) = ev.raw {
+                __dragging? = true
                 __jump(int(x) - 1)
             }
         }
@@ -1442,6 +1622,177 @@ pub class RangeSelector < Component {
                 <Text style="text-dim">{display}</Text>
             </Box>
         }
+    }
+}
+
+pub class TrackBar < Component {
+    value:     Float | nil
+    min-val:   Float | nil
+    max-val:   Float | nil
+    width:     Int | nil
+    color:     String | nil
+    format:    Function | nil
+    label:     String | nil
+    playing?:  Bool | nil
+    speed:     Float | nil
+    speeds:    Array[Float] | nil
+    on-change: Function | nil
+    on-play:   Function | nil
+    on-pause:  Function | nil
+    on-speed:  Function | nil
+    step:      Float | nil
+
+    __dragging?: Bool = false
+    __track-x: Int = 0
+    __track-w: Int = 0
+
+    focusable? -> Bool { true }
+
+    __mn -> Float { float(min-val ?? 0.0) }
+    __mx -> Float { float(max-val ?? 1.0) }
+    __val -> Float { float(value ?? __mn).clamp(__mn, __mx) }
+    __spd -> Float { float(speed ?? 1.0) }
+    __spds -> Array[Float] { speeds ?? [-8.0, -4.0, -2.0, -1.0, -0.5, 0.25, 0.5, 1.0, 2.0, 4.0, 8.0] }
+
+    __emit(v: Float) {
+        if on-change { on-change(v.clamp(__mn, __mx)) }
+    }
+
+    __seek(click-x: Int) {
+        if __track-w > 0 {
+            let local = click-x - __track-x
+            let rel = 1.0 * local / __track-w
+            __emit(__mn + rel * (__mx - __mn))
+        }
+    }
+
+    __cycle-speed(dir: Int) {
+        if !on-speed { return }
+        let sp = __spds
+        if #sp == 0 { return }
+        let cur = __spd
+        let idx = 0
+        let best = (cur - sp[0]).abs
+        for i in 1..#sp {
+            let d = (cur - sp[i]).abs
+            if d < best { idx = i; best = d }
+        }
+        on-speed(sp[(idx + dir).clamp(0, #sp - 1)])
+    }
+
+    __toggle() {
+        if playing? ?? false {
+            if on-pause { on-pause() }
+        } else {
+            if on-play { on-play() }
+        }
+    }
+
+    on-event(ev) {
+        let stp = step ?? ((__mx - __mn) / 200.0)
+
+        match ev {
+            event.Text(' ') => __toggle(),
+
+            (event.Key({key: 'LEFT', event: (1 or 2), *}) or event.Text('h')) =>
+                __emit(__val - stp),
+
+            (event.Key({key: 'RIGHT', event: (1 or 2), *}) or event.Text('l')) =>
+                __emit(__val + stp),
+
+            event.Key({key: 'HOME', event: 1, *}) => __emit(__mn),
+
+            event.Key({key: 'END', event: 1, *}) => __emit(__mx),
+
+            event.Text('[') => __cycle-speed(-1),
+            event.Text(']') => __cycle-speed(1),
+
+            event.MouseMove({x, *}) and __dragging? =>
+                __seek(x - 1),
+
+            event.MouseUp({x, *}) and __dragging? => {
+                __dragging? = false
+                __seek(x - 1)
+            },
+
+            _ => ()
+        }
+    }
+
+    render() -> Node {
+        let total-w = width ?? 40
+        let clr = color ?? 'primary'
+        let fmt = format ?? (v -> "{v:.1f}")
+        let is-playing = playing? ?? false
+        let sp = __spd
+
+        let display = fmt(__val)
+        let lbl = label
+        let label-w = lbl ? lbl.width() + 1 : 0
+        let display-w = display.width() + 1
+        let tw = max(total-w - label-w - display-w, 4)
+
+        __track-w = tw
+        __track-x = label-w
+
+        let rng = __mx - __mn
+        let pos = (rng > 0.0)
+            ? int(((__val - __mn) / rng).clamp(0.0, 1.0) * max(tw - 1, 0))
+            : 0
+
+        let thumb = focused? ? '◆' : '●'
+        let seg-before = '━' * max(pos, 0)
+        let seg-after  = '━' * max(tw - pos - 1, 0)
+        let clr-bold = "{clr} bold"
+
+        let on-track-click = ev -> do {
+            if let event.MouseDown({x, *}) = ev.raw {
+                __dragging? = true
+                __seek(x - 1)
+            }
+        }
+
+        let track-str = str(
+            chalk"[{clr}]{seg-before}[/]"
+                "[{clr-bold}]{thumb}[/]"
+                "[subtle]{seg-after}[/]"
+        )
+
+        let play-icon = is-playing ? '‖' : '▶'
+        let speed-str = match sp {
+            s and s == float(int(s)) and s < 0.0 => "{int(s)}×",
+            s and s == float(int(s))             => "{int(s)}×",
+            s                                    => "{s}×"
+        }
+        let btn = focused? ? "text" : "text-dim"
+
+        <Box direction="column">
+            {if lbl {
+                <Box direction="row" gap=1 on-click=on-track-click>
+                    <Text style=(focused? ? clr-bold : clr)>{lbl}</Text>
+                    <Text>{track-str}</Text>
+                    <Text style="text-dim">{display}</Text>
+                </Box>
+            } else {
+                <Box direction="row" gap=1 on-click=on-track-click>
+                    <Text>{track-str}</Text>
+                    <Text style="text-dim">{display}</Text>
+                </Box>
+            }}
+            <Box direction="row" gap=1>
+                <Box on-click=(ev -> __cycle-speed(-1))>
+                    <Text style=btn>◀◀</Text>
+                </Box>
+                <Box on-click=(ev -> __toggle())>
+                    <Text style=(focused? ? clr-bold : btn)>{play-icon}</Text>
+                </Box>
+                <Box on-click=(ev -> __cycle-speed(1))>
+                    <Text style=btn>▶▶</Text>
+                </Box>
+                <Box flex=1 />
+                <Text style="text-dim">{speed-str}</Text>
+            </Box>
+        </Box>
     }
 }
 
@@ -1547,35 +1898,367 @@ pub class LinePlot < Component {
     colors:  Array[String] | nil
     min-val: Float | nil
     max-val: Float | nil
-    y-axis?: Bool | nil
-    x-lo:    String | nil
-    x-hi:    String | nil
-    format:  Function | nil
-    fill?:   Bool | nil
+    y-axis?:  Bool | nil
+    y-width:  Int | nil
+    x-lo:     String | nil
+    x-hi:     String | nil
+    format:   Function | nil
+    fill?:    Bool | nil
+    kitty?:   Bool | nil
+    x-format:    Function | nil
+    raw-times:   Array[Int] | nil
+    raw-values:  Array[Float] | nil
+    t0:          Int | nil
+    t1:          Int | nil
+    view-t0:     Int | nil
+    view-t1:     Int | nil
+    on-x-zoom:   Function | nil
+    time-format: Function | nil
 
-    render() -> Node {
-        let all-series: Array[Array[Float]] = if let $s = series { s }
-            else if let $d = data { [d] }
-            else { [] }
-        let h   = int(height ?? 8)
-        let clr = color ?? 'primary'
-        let clrs = colors
-        let fmt  = format ?? (v -> "{v:.2f}")
-        let do-fill = fill? ?? false
+    kitty-id: Int = 0
+    kitty-entry: _ = nil
+    __mouse-col: Int | nil = nil
+    __cached-img-key: _ = nil
+    __y-lo: Float | nil = nil
+    __y-hi: Float | nil = nil
+    __x-lo: Int | nil = nil
+    __x-hi: Int | nil = nil
+    __drag?: Bool = false
+    __drag-x0: Int = 0
+    __drag-y0: Int = 0
+    __drag-x1: Int = 0
+    __drag-y1: Int = 0
+    __yw: Int = 0
+    __cw: Int = 0
+    __g-y-lo: Float = 0.0
+    __g-y-hi: Float = 1.0
+    __eff-y-lo: Float = 0.0
+    __eff-y-hi: Float = 1.0
 
-        if #all-series == 0 || all-series.all?(s -> #s == 0) {
-            return <Text style="text-dim">no data</Text>
+    focusable? -> Bool { true }
+
+    mount() {
+        kitty-id = kitty-next-id()
+    }
+
+    unmount() {}
+
+    __bin(ts: Array[Int], vs: Array[Float], vt0: Int, vt1: Int, n: Int) -> (Array[Float], Float, Float) {
+        let lo-i = do {
+            let i = 0
+            while i < #ts && ts[i] < vt0 { i += 1 }
+            i
         }
 
-        let all-vals = all-series.flat()
-        let lo = min-val ?? all-vals.min() ?? 0.0
-        let hi = max-val ?? all-vals.max() ?? 0.0
-        let hi = max(hi, lo + 1.0e-9)
-        let range = hi - lo
+        let end = min(#ts, #vs)
+        let hi-i = do {
+            let i = lo-i
+            while i < end && ts[i] <= vt1 { i += 1 }
+            i
+        }
 
-        let max-len = all-series.map(s -> #s).max() ?? 0
-        let cw = int(width ?? max(max-len / 2, 10))
+        let sample-count = hi-i - lo-i
+        if sample-count == 0 {
+            return ([0.0 for ..n], 0.0, 0.0)
+        }
 
+        let dlo = 1.0e308
+        let dhi = -1.0e308
+        for i in lo-i..hi-i {
+            if vs[i] < dlo { dlo = vs[i] }
+            if vs[i] > dhi { dhi = vs[i] }
+        }
+
+        let result = if sample-count <= n {
+            [vs[i] for i in lo-i..hi-i]
+        } else {
+            let span = max(float(vt1 - vt0), 1.0)
+            let bins   = [0.0 for ..n]
+            let counts = [0 for ..n]
+            for i in lo-i..hi-i {
+                let bi = int((ts[i] - vt0) / span * n).clamp(0, n - 1)
+                bins[bi]   += vs[i]
+                counts[bi] += 1
+            }
+            [(counts[i] > 0) ? bins[i] / counts[i] : bins[i] for i in ..n]
+        }
+
+        (result, dlo, dhi)
+    }
+
+    __commit-zoom() {
+        let dx = (__drag-x1 - __drag-x0).abs
+        let dy = (__drag-y1 - __drag-y0).abs
+        if dx < 2 && dy < 2 { return }
+
+        if dx >= dy {
+            let x0 = min(__drag-x0, __drag-x1) - __yw
+            let x1 = max(__drag-x0, __drag-x1) - __yw
+            let f0 = (float(x0) / float(max(__cw - 1, 1))).clamp(0.0, 1.0)
+            let f1 = (float(x1) / float(max(__cw - 1, 1))).clamp(0.0, 1.0)
+            let et0 = view-t0 ?? __x-lo ?? (t0 ?? 0)
+            let et1 = view-t1 ?? __x-hi ?? (t1 ?? 1)
+            let new-t0 = et0 + int(f0 * float(et1 - et0))
+            let new-t1 = et0 + int(f1 * float(et1 - et0))
+            if on-x-zoom {
+                on-x-zoom(new-t0, new-t1)
+            } else {
+                __x-lo = new-t0
+                __x-hi = new-t1
+            }
+        } else {
+            let h = int(height ?? 8)
+            let y0 = min(__drag-y0, __drag-y1)
+            let y1 = max(__drag-y0, __drag-y1)
+            let f0 = (float(y0) / float(max(h - 1, 1))).clamp(0.0, 1.0)
+            let f1 = (float(y1) / float(max(h - 1, 1))).clamp(0.0, 1.0)
+            __y-hi = __eff-y-hi - f0 * (__eff-y-hi - __eff-y-lo)
+            __y-lo = __eff-y-hi - f1 * (__eff-y-hi - __eff-y-lo)
+        }
+    }
+
+    __reset-zoom() {
+        __y-lo = nil
+        __y-hi = nil
+        if on-x-zoom {
+            on-x-zoom(nil, nil)
+        } else {
+            __x-lo = nil
+            __x-hi = nil
+        }
+    }
+
+    __y-at-mouse(my: Int, h: Int, vlo: Float, vhi: Float) -> Float {
+        let frac = float(my - layout-y) / float(max(h - 1, 1))
+        vhi - frac.clamp(0.0, 1.0) * (vhi - vlo)
+    }
+
+    on-event(ev) {
+        match ev {
+            (event.MouseDown({button: 2, *}) or event.MouseUp({button: 2, *})) => {
+                __drag? = false
+                __reset-zoom()
+                invalidate!()
+            },
+
+            event.MouseDown({button: 0, x, y, *}) => {
+                __drag? = true
+                __drag-x0 = int(x) - 1 - layout-x
+                __drag-y0 = int(y) - 1 - layout-y
+                __drag-x1 = __drag-x0
+                __drag-y1 = __drag-y0
+            },
+
+            event.MouseUp(_) and __drag? => {
+                __drag? = false
+                __commit-zoom()
+                invalidate!()
+            },
+
+            event.MouseMove({x, y, *}) and __drag? => {
+                __drag-x1 = int(x) - 1 - layout-x
+                __drag-y1 = int(y) - 1 - layout-y
+                __mouse-col = int(x) - 1 - layout-x
+                invalidate!()
+            },
+
+            event.MouseMove({x, *}) => {
+                let new-col = int(x) - 1 - layout-x
+                if new-col != __mouse-col {
+                    __mouse-col = new-col
+                    invalidate!()
+                }
+            },
+
+            event.ScrollUp({y: $my, *}) => {
+                let h = int(height ?? 8)
+                let glo = float(min-val ?? __g-y-lo)
+                let ghi = float(max-val ?? __g-y-hi)
+                let vlo = __y-lo ?? glo
+                let vhi = __y-hi ?? ghi
+                let anchor = __y-at-mouse(int(my) - 1, h, vlo, vhi)
+                let factor = 0.8
+                __y-lo = anchor - (anchor - vlo) * factor
+                __y-hi = anchor + (vhi - anchor) * factor
+                invalidate!()
+            },
+
+            event.ScrollDown({y: $my, *}) => {
+                let h = int(height ?? 8)
+                let glo = float(min-val ?? __g-y-lo)
+                let ghi = float(max-val ?? __g-y-hi)
+                let vlo = __y-lo ?? glo
+                let vhi = __y-hi ?? ghi
+                let anchor = __y-at-mouse(int(my) - 1, h, vlo, vhi)
+                let factor = 1.25
+                __y-lo = max(anchor - (anchor - vlo) * factor, glo)
+                __y-hi = min(anchor + (vhi - anchor) * factor, ghi)
+                invalidate!()
+            },
+
+            _ => ()
+        }
+    }
+
+    __render-kitty(
+        all-series: Array[Array[Float]],
+        h: Int, cw: Int,
+        lo: Float, hi: Float, range: Float,
+        clr: String, clrs: Array[String] | nil,
+        fmt: Function, do-fill: Bool
+    ) {
+        let (cell-w, cell-h) = term.cell-size()
+        if cell-w == 0 || cell-h == 0 { cell-w = 8; cell-h = 16 }
+
+        let ya? = y-axis? ?? true
+        let yw = ya? ? max(fmt(lo).width(), fmt(hi).width(), 1) + 1 : 0
+        let dim = fg-ansi('text-dim')
+
+        if range == 0.0 || range != range { range = 1.0 }
+        let pw = min(cw * cell-w, 1120)
+        let ph = min(h * cell-h, 560)
+
+        let buf = Blob()
+        buf.reserve(pw * ph * 4)
+        buf.fill()
+
+        fn plot-px(x: Int, y: Int, r: Int, g: Int, b: Int, a: Int) {
+            if x < 0 || x >= pw || y < 0 || y >= ph { return }
+            let off = (y * pw + x) * 4
+            let old-a = buf[off + 3]
+            if old-a == 0 {
+                buf[off]     = r
+                buf[off + 1] = g
+                buf[off + 2] = b
+                buf[off + 3] = a
+            } else {
+                let af = float(a) / 255.0
+                let inv = 1.0 - af
+                buf[off]     = int(float(r) * af + float(buf[off]) * inv)
+                buf[off + 1] = int(float(g) * af + float(buf[off + 1]) * inv)
+                buf[off + 2] = int(float(b) * af + float(buf[off + 2]) * inv)
+                buf[off + 3] = min(old-a + a, 255)
+            }
+        }
+
+        fn wu-line(x0: Float, y0: Float, x1: Float, y1: Float, r: Int, g: Int, b: Int) {
+            let steep = (y1 - y0).abs > (x1 - x0).abs
+            let (x0, y0, x1, y1) = steep ? (y0, x0, y1, x1) : (x0, y0, x1, y1)
+            let (x0, y0, x1, y1) = (x0 > x1) ? (x1, y1, x0, y0) : (x0, y0, x1, y1)
+
+            let dx = x1 - x0
+            let dy = y1 - y0
+            let grad = (dx < 0.001) ? 1.0 : dy / dx
+
+            let xend = int(x0 + 0.5)
+            let yend = y0 + grad * (float(xend) - x0)
+            let gap  = 1.0 - ((x0 + 0.5) - float(int(x0 + 0.5)))
+            let iy   = int(yend)
+            let frac = yend - float(iy)
+
+            if steep {
+                plot-px(iy,     xend, r, g, b, int((1.0 - frac) * gap * 255.0))
+                plot-px(iy + 1, xend, r, g, b, int(frac * gap * 255.0))
+            } else {
+                plot-px(xend, iy,     r, g, b, int((1.0 - frac) * gap * 255.0))
+                plot-px(xend, iy + 1, r, g, b, int(frac * gap * 255.0))
+            }
+
+            let intery = yend + grad
+
+            let xend2 = int(x1 + 0.5)
+            let yend2 = y1 + grad * (float(xend2) - x1)
+            let gap2  = (x1 + 0.5) - float(int(x1 + 0.5))
+            let iy2   = int(yend2)
+            let frac2 = yend2 - float(iy2)
+
+            if steep {
+                plot-px(iy2,     xend2, r, g, b, int((1.0 - frac2) * gap2 * 255.0))
+                plot-px(iy2 + 1, xend2, r, g, b, int(frac2 * gap2 * 255.0))
+            } else {
+                plot-px(xend2, iy2,     r, g, b, int((1.0 - frac2) * gap2 * 255.0))
+                plot-px(xend2, iy2 + 1, r, g, b, int(frac2 * gap2 * 255.0))
+            }
+
+            for x in xend + 1 .. xend2 {
+                let iy = int(intery)
+                let frac = intery - float(iy)
+                if steep {
+                    plot-px(iy,     x, r, g, b, int((1.0 - frac) * 255.0))
+                    plot-px(iy + 1, x, r, g, b, int(frac * 255.0))
+                } else {
+                    plot-px(x, iy,     r, g, b, int((1.0 - frac) * 255.0))
+                    plot-px(x, iy + 1, r, g, b, int(frac * 255.0))
+                }
+                intery += grad
+            }
+        }
+
+        let rgb-table = []
+        for si in ..#all-series {
+            let c = (clrs && si < #clrs) ? clrs[si] : clr
+            rgb-table.push(resolve-color-rgb(c))
+        }
+
+        for si in ..#all-series {
+            let s = all-series[si]
+            if #s < 2 { continue }
+            let (cr, cg, cb) = rgb-table[si]
+
+            for px in ..pw - 1 {
+                let t0 = float(px) / float(max(pw - 1, 1)) * float(#s - 1)
+                let t1 = float(px + 1) / float(max(pw - 1, 1)) * float(#s - 1)
+                let i0 = int(t0).clamp(0, #s - 2)
+                let i1 = int(t1).clamp(0, #s - 2)
+                let f0 = t0 - float(i0)
+                let f1 = t1 - float(i1)
+                let v0 = s[i0] * (1.0 - f0) + s[i0 + 1] * f0
+                let v1 = s[i1] * (1.0 - f1) + s[i1 + 1] * f1
+                let py0 = (1.0 - (v0 - lo) / range) * float(ph - 1)
+                let py1 = (1.0 - (v1 - lo) / range) * float(ph - 1)
+                wu-line(float(px), py0, float(px + 1), py1, cr, cg, cb)
+            }
+
+            if do-fill {
+                for px in ..pw {
+                    let t = float(px) / float(max(pw - 1, 1)) * float(#s - 1)
+                    let i0 = int(t).clamp(0, #s - 2)
+                    let frac = t - float(i0)
+                    let v = s[i0] * (1.0 - frac) + s[i0 + 1] * frac
+                    let yline = int((1.0 - (v - lo) / range) * float(ph - 1) + 0.5)
+                        .clamp(0, ph - 1)
+                    for py in yline + 1 .. ph {
+                        let off = (py * pw + px) * 4
+                        if buf[off + 3] == 0 {
+                            buf[off]     = cr
+                            buf[off + 1] = cg
+                            buf[off + 2] = cb
+                            buf[off + 3] = 50
+                        }
+                    }
+                }
+            }
+        }
+
+        let img-escape = kitty-transmit(buf, pw, ph, cw, h, id=kitty-id)
+
+        kitty-entry = {
+            id: kitty-id,
+            escape: img-escape,
+            x-off: yw,
+            fresh?: true
+        }
+    }
+
+    __render-braille(
+        all-series: Array[Array[Float]],
+        h: Int, cw: Int,
+        lo: Float, hi: Float, range: Float,
+        clr: String, clrs: Array[String] | nil,
+        fmt: Function, do-fill: Bool,
+        xl-str: String | nil = nil, xr-str: String | nil = nil
+    ) -> Node {
+        if range == 0.0 || range != range { range = 1.0 }
         let ya? = y-axis? ?? true
         let yw = ya? ? max(fmt(lo).width(), fmt(hi).width(), 1) + 1 : 0
         let dim = fg-ansi('text-dim')
@@ -1627,6 +2310,26 @@ pub class LinePlot < Component {
         }
         let default-fg = fg-ansi(clr)
 
+        let (sel-r, sel-g, sel-b) = resolve-color-rgb('selection')
+        let sel-bg = "\x1b[48;2;{sel-r};{sel-g};{sel-b}m"
+        let (sel-c0, sel-c1, sel-r0, sel-r1) = if !__drag? {
+            (-1, -1, -1, -1)
+        } else {
+            let ddx = (__drag-x1 - __drag-x0).abs
+            let ddy = (__drag-y1 - __drag-y0).abs
+            if ddx <= 1 && ddy <= 1 {
+                (-1, -1, -1, -1)
+            } else if ddx >= ddy {
+                ((min(__drag-x0, __drag-x1) - yw).clamp(0, cw),
+                 (max(__drag-x0, __drag-x1) - yw).clamp(0, cw),
+                 -1, -1)
+            } else {
+                (-1, -1,
+                 min(__drag-y0, __drag-y1).clamp(0, h),
+                 max(__drag-y0, __drag-y1).clamp(0, h))
+            }
+        }
+
         let lines = []
         let line-w = 0
 
@@ -1639,30 +2342,283 @@ pub class LinePlot < Component {
             }
 
             let cur-ansi = ''
+            let cur-bg = false
             for col in ..cw {
                 let ci = row * cw + col
                 let ansi = (owner[ci] >= 0 && owner[ci] < #color-table)
                     ? color-table[owner[ci]]
                     : default-fg
-                if ansi != cur-ansi { buf.push("{RST}{ansi}"); cur-ansi = ansi }
+                let want-bg = (col >= sel-c0 && col < sel-c1)
+                    || (row >= sel-r0 && row < sel-r1)
+                if ansi != cur-ansi || want-bg != cur-bg {
+                    buf.push(RST)
+                    buf.push(ansi)
+                    if want-bg { buf.push(sel-bg) }
+                    cur-ansi = ansi
+                    cur-bg = want-bg
+                }
                 buf.push(chr(0x2800 + bits[ci]))
             }
-            if #cur-ansi > 0 { buf.push(RST) }
+            if #cur-ansi > 0 || cur-bg { buf.push(RST) }
 
             let s = buf.str!()
             if row == 0 { line-w = s.width() }
             lines.push(s)
         }
 
-        if (x-lo ?? x-hi) != nil {
-            let xl = x-lo ?? ''
-            let xh = x-hi ?? ''
+        let xl-show = xl-str ?? x-lo
+        let xr-show = xr-str ?? x-hi
+        if (xl-show ?? xr-show) != nil {
+            let xl = xl-show ?? ''
+            let xh = xr-show ?? ''
             let pad = ' ' * yw
-            let mid = ' ' * max(cw - xl.width() - xh.width(), 1)
+            let avail = max(line-w - yw, 0)
+            let mid = ' ' * max(avail - xl.width() - xh.width(), 1)
             lines.push("{dim}{pad}{xl}{mid}{xh}{RST}")
         }
 
         Raw(lines, line-w)
+    }
+
+    render() -> Node {
+        let h   = int(height ?? 8)
+        let clr = color ?? 'primary'
+        let clrs = colors
+        let fmt  = format ?? (v -> "{v:.2f}")
+        let do-fill = fill? ?? false
+        let ya? = y-axis? ?? true
+
+        let raw? = raw-times != nil && raw-values != nil && t0 != nil && t1 != nil
+        let eff-t0 = view-t0 ?? __x-lo ?? (t0 ?? 0)
+        let eff-t1 = view-t1 ?? __x-hi ?? (t1 ?? 1)
+
+        let yw-est = if let $ywo = y-width { ywo }
+            else if ya? && min-val != nil && max-val != nil {
+                max(fmt(float(min-val)).width(), fmt(float(max-val)).width(), 1) + 1
+            } else if ya? { 6 } else { 0 }
+        let total-w-est = int(width ?? 40)
+        let cw-est = max(total-w-est - yw-est, 4)
+
+        let bin-lo = 0.0
+        let bin-hi = 0.0
+        let all-series: Array[Array[Float]] = if let ($ts, $vs) = (raw-times, raw-values) {
+            let n-bins = max(cw-est, 4)
+            let (bins, blo, bhi) = __bin(ts, vs, eff-t0, eff-t1, n-bins)
+            bin-lo = blo
+            bin-hi = bhi
+            [bins]
+        } else if let $s = series { s }
+          else if let $d = data { [d] }
+          else { [] }
+
+        if #all-series == 0 || all-series.all?(s -> #s == 0) {
+            return <Text style="text-dim">no data</Text>
+        }
+
+        let all-vals = all-series.flat()
+        let g-lo = min-val ?? (raw? ? bin-lo : (all-vals.min() ?? 0.0))
+        let g-hi = max-val ?? (raw? ? bin-hi : (all-vals.max() ?? 0.0))
+        let lo = __y-lo ?? g-lo
+        let hi = __y-hi ?? g-hi
+        let hi = max(hi, lo + 1.0e-9)
+        let range = hi - lo
+
+        let yw = if let $ywo = y-width { ywo }
+            else if ya? { max(fmt(lo).width(), fmt(hi).width(), 1) + 1 }
+            else { 0 }
+        let max-len = all-series.map(s -> #s).max() ?? 0
+        let total-w = int(width ?? max(max-len / 2 + yw, 10))
+        let cw = max(total-w - yw, 4)
+
+        __yw = yw
+        __cw = cw
+        __g-y-lo = g-lo
+        __g-y-hi = g-hi
+        __eff-y-lo = lo
+        __eff-y-hi = hi
+
+        let use-kitty = (kitty? ?? true) && kitty-graphics?
+
+        let img-key = (all-series, h, cw, lo, hi, do-fill, clr, clrs)
+        if use-kitty && img-key != __cached-img-key {
+            warn!("LinePlot.render: generating kitty image id={kitty-id}")
+            __render-kitty(all-series, h, cw, lo, hi, range, clr, clrs, fmt, do-fill)
+            __cached-img-key = img-key
+        }
+        if kitty-entry != nil { kitty-entry.x-off = yw }
+
+        let dim = fg-ansi('text-dim')
+        let line-w = total-w
+
+        let xl-label = if raw? && time-format != nil { time-format(eff-t0) } else { x-lo }
+        let xr-label = if raw? && time-format != nil { time-format(eff-t1) } else { x-hi }
+
+        let coord-text = if __drag? {
+            let ddx = (__drag-x1 - __drag-x0).abs
+            let ddy = (__drag-y1 - __drag-y0).abs
+            if ddx >= ddy && ddx > 1 {
+                let cx0 = min(__drag-x0, __drag-x1) - yw
+                let cx1 = max(__drag-x0, __drag-x1) - yw
+                let f0 = (float(cx0) / float(max(cw - 1, 1))).clamp(0.0, 1.0)
+                let f1 = (float(cx1) / float(max(cw - 1, 1))).clamp(0.0, 1.0)
+                if raw? && time-format {
+                    let tv0 = eff-t0 + int(f0 * float(eff-t1 - eff-t0))
+                    let tv1 = eff-t0 + int(f1 * float(eff-t1 - eff-t0))
+                    "⌗ {time-format(tv0)}–{time-format(tv1)}"
+                } else if x-format {
+                    "⌗ {x-format(f0)}–{x-format(f1)}"
+                } else {
+                    "⌗ {f0:.2f}–{f1:.2f}"
+                }
+            } else if ddy > 1 {
+                let ry0 = min(__drag-y0, __drag-y1)
+                let ry1 = max(__drag-y0, __drag-y1)
+                let vf0 = (float(ry0) / float(max(h - 1, 1))).clamp(0.0, 1.0)
+                let vf1 = (float(ry1) / float(max(h - 1, 1))).clamp(0.0, 1.0)
+                let v1 = hi - vf0 * (hi - lo)
+                let v0 = hi - vf1 * (hi - lo)
+                "⌗ {fmt(v0)}–{fmt(v1)}"
+            }
+        } else if (use-kitty || raw?) && __mouse-col != nil {
+            let mx = __mouse-col - yw
+            if mx >= 0 && mx < cw && #all-series > 0 {
+                let frac = float(mx) / float(max(cw - 1, 1))
+                let di = int(frac * float(#all-series[0] - 1) + 0.5)
+                    .clamp(0, #all-series[0] - 1)
+                let xv = if raw? && time-format {
+                    let tv = eff-t0 + int(frac * float(eff-t1 - eff-t0))
+                    time-format(tv)
+                } else if x-format { x-format(frac) }
+                  else { "{frac:.2f}" }
+                let yv = fmt(all-series[0][di])
+                "({xv}, {yv})"
+            }
+        }
+
+        if use-kitty {
+            let (ksr, ksg, ksb) = resolve-color-rgb('selection')
+            let ksel-bg = "\x1b[48;2;{ksr};{ksg};{ksb}m"
+            let (ksel-c0, ksel-c1, ksel-r0, ksel-r1) = if !__drag? {
+                (-1, -1, -1, -1)
+            } else {
+                let ddx = (__drag-x1 - __drag-x0).abs
+                let ddy = (__drag-y1 - __drag-y0).abs
+                if ddx <= 1 && ddy <= 1 {
+                    (-1, -1, -1, -1)
+                } else if ddx >= ddy {
+                    ((min(__drag-x0, __drag-x1) - yw).clamp(0, cw),
+                     (max(__drag-x0, __drag-x1) - yw).clamp(0, cw),
+                     -1, -1)
+                } else {
+                    (-1, -1,
+                     min(__drag-y0, __drag-y1).clamp(0, h),
+                     max(__drag-y0, __drag-y1).clamp(0, h))
+                }
+            }
+
+            fn sel-row(row: Int) -> String {
+                let row-hit = row >= ksel-r0 && row < ksel-r1
+                let col-hit = ksel-c1 > ksel-c0
+                if row-hit {
+                    "{' ' * yw}{ksel-bg}{' ' * cw}{RST}"
+                } else if col-hit {
+                    let pre = ' ' * ksel-c0
+                    let mid = "{ksel-bg}{' ' * (ksel-c1 - ksel-c0)}{RST}"
+                    let post = ' ' * (cw - ksel-c1)
+                    "{' ' * yw}{pre}{mid}{post}"
+                } else {
+                    ' ' * yw
+                }
+            }
+
+            let lines = []
+            if ya? {
+                let y-hi-s = "{dim}{"{fmt(hi):>{yw}}"}{RST}"
+                let y-lo-s = "{dim}{"{fmt(lo):>{yw}}"}{RST}"
+                if let $ct = coord-text and ct.width() < cw {
+                    let rpad = 1
+                    let pad = max(cw - ct.width() - rpad, 0)
+                    lines.push("{y-hi-s}{' ' * pad}{dim}{ct}{RST}{' ' * rpad}")
+                } else {
+                    lines.push(y-hi-s)
+                }
+                for row in 1..(h - 1) { lines.push(sel-row(row)) }
+                lines.push(y-lo-s)
+            } else {
+                if let $ct = coord-text and ct.width() < cw {
+                    let rpad = 1
+                    let pad = max(cw - ct.width() - rpad, 0)
+                    lines.push("{' ' * pad}{dim}{ct}{RST}{' ' * rpad}")
+                } else {
+                    lines.push('')
+                }
+                for row in 1..h { lines.push(sel-row(row)) }
+            }
+
+            if (xl-label ?? xr-label) != nil {
+                let xl = xl-label ?? ''
+                let xh = xr-label ?? ''
+                let pad = ' ' * yw
+                let avail = max(line-w - yw, 0)
+                let mid = ' ' * max(avail - xl.width() - xh.width(), 1)
+                lines.push("{dim}{pad}{xl}{mid}{xh}{RST}")
+            }
+
+            Raw(lines, line-w)
+        } else {
+            __render-braille(all-series, h, cw, lo, hi, range, clr, clrs, fmt, do-fill,
+                xl-str=xl-label, xr-str=xr-label)
+        }
+    }
+}
+
+pub class ScrollView < Component {
+    height: Int | nil
+    scroll-color: String | nil
+
+    __scroll: Int = 0
+    scroll-total: Int = 0
+
+    focusable? -> Bool { true }
+
+    on-event(ev) {
+        let h = int(height ?? 10)
+        match ev {
+            event.ScrollUp(_)
+            or event.Key({key: 'UP', event: (1 or 2), *})
+            or event.Text('k') =>
+                __scroll = max(__scroll - 1, 0),
+
+            event.ScrollDown(_)
+            or event.Key({key: 'DOWN', event: (1 or 2), *})
+            or event.Text('j') =>
+                __scroll += 1,
+
+            event.Key({key: 'PAGEUP', event: (1 or 2), *}) =>
+                __scroll = max(__scroll - h, 0),
+
+            event.Key({key: 'PAGEDOWN', event: (1 or 2), *}) =>
+                __scroll += h,
+
+            event.Key({key: 'HOME', event: (1 or 2), *}) =>
+                __scroll = 0,
+
+            event.Key({key: 'END', event: (1 or 2), *}) =>
+                __scroll = 999999,
+
+            _ => ()
+        }
+    }
+
+    render() -> Node {
+        let h = int(height ?? 10)
+        if scroll-total > 0 {
+            __scroll = __scroll.clamp(0, max(scroll-total - h, 0))
+        }
+
+        <Box direction="column" height=h scroll=__scroll>
+            {children}
+        </Box>
     }
 }
 
@@ -1830,6 +2786,14 @@ fn pad-line(line: String, lw: Int, target-w: Int) -> String {
     _buf.str!()
 }
 
+fn clip-line(line: String, target-w: Int) -> String {
+    if line.width() <= target-w { return line }
+    let n = min(target-w, #line)
+    while n > 0 && line[;n].width() > target-w { n -= 1 }
+    while n < #line && line[;n + 1].width() <= target-w { n += 1 }
+    "{line[;n]}{RST}"
+}
+
 fn align-line(line: String, lw: Int, w: Int, align: String) -> String {
     if lw >= w { return line }
     let space = w - lw
@@ -1913,13 +2877,23 @@ fn stack-column(
         : nil
     let blank = ' ' * w
 
+    let do-align = align != 'start'
+
     for block, i in blocks {
         let g = gaps
             ? ((i < #gaps) ? gaps[i] : 0)
             : ((i > 0) ? gap : 0)
         for ..g { lines.push(blank) }
-        for line in block.lines {
-            lines.push(align-line(line, line.width(), w, align))
+        if do-align {
+            for line in block.lines {
+                lines.push(align-line(line, line.width(), w, align))
+            }
+        } else if block.width >= w {
+            for line in block.lines { lines.push(line) }
+        } else {
+            for line in block.lines {
+                lines.push(pad-line(line, line.width(), w))
+            }
         }
     }
 
@@ -1942,6 +2916,13 @@ fn stack-row(
         : nil
     let lines = []
 
+    let offsets = blocks.map(block -> match align {
+        'center'          => (h - block.height) / 2,
+        'end' or 'bottom' => h - block.height,
+        _                 => 0
+    })
+    let blanks = blocks.map(block -> ' ' * block.width)
+
     for row in ..h {
         _buf.clear()
         for block, i in blocks {
@@ -1949,16 +2930,16 @@ fn stack-row(
                 ? ((i < #gaps) ? gaps[i] : 0)
                 : ((i > 0) ? gap : 0)
             if g > 0 { _buf.push(' ' * g) }
-            let offset = match align {
-                'center'          => (h - block.height) / 2,
-                'end' or 'bottom' => h - block.height,
-                _                 => 0
-            }
-            let r = row - offset
+            let r = row - offsets[i]
             if r >= 0 && r < block.height {
-                _buf.push(block.lines[r])
+                let ln = block.lines[r]
+                _buf.push(
+                    (ln.width() > block.width)
+                        ? clip-line(ln, block.width)
+                        : ln
+                )
             } else {
-                _buf.push(' ' * block.width)
+                _buf.push(blanks[i])
             }
         }
         lines.push(_buf.str!())
@@ -1988,16 +2969,24 @@ fn apply-bg(lines: Array[String], bg: String) -> Array[String] {
 fn apply-padding(lines: Array[String], w: Int, px: Int, py: Int) -> (Array[String], Int) {
     if px == 0 && py == 0 { return (lines, w) }
 
+    if px == 0 {
+        let blank = ' ' * w
+        let out = [blank for ..py]
+        for line in lines { out.push(line) }
+        for ..py { out.push(blank) }
+        return (out, w)
+    }
+
     let total-w = w + 2 * px
     let out = []
-
     let blank = ' ' * total-w
+    let lpad = ' ' * px
+
     for ..py { out.push(blank) }
 
-    let lpad = (px > 0) ? ' ' * px : nil
     for line in lines {
         _buf.clear()
-        if lpad { _buf.push(lpad) }
+        _buf.push(lpad)
         _buf.push(line)
         let fill = total-w - px - line.width()
         if fill > 0 { _buf.push(' ' * fill) }
@@ -2104,12 +3093,14 @@ fn layout-box(
         let fixed-w = 0
         let snap-ov = #_overlays
         let snap-fc = #_focusables
+        let snap-ki = #_kitty-images
         for child, i in node.children if flexes[i] == nil {
             let (o, _) = layout-node(child, content-w, content-h, "{path}.{i}", 0, 0)
             fixed-w += o.width
         }
         _overlays.splice(snap-ov, #_overlays - snap-ov)
         _focusables.splice(snap-fc, #_focusables - snap-fc)
+        _kitty-images.splice(snap-ki, #_kitty-images - snap-ki)
         let avail = max(content-w - fixed-w - num-gaps, 0)
         for i in ..#node.children {
             let fw = flexes[i]
@@ -2122,12 +3113,14 @@ fn layout-box(
         let fixed-h = 0
         let snap-ov = #_overlays
         let snap-fc = #_focusables
+        let snap-ki = #_kitty-images
         for child, i in node.children if flexes[i] == nil {
             let (o, _) = layout-node(child, content-w, content-h, "{path}.{i}", 0, 0)
             fixed-h += o.height
         }
         _overlays.splice(snap-ov, #_overlays - snap-ov)
         _focusables.splice(snap-fc, #_focusables - snap-fc)
+        _kitty-images.splice(snap-ki, #_kitty-images - snap-ki)
         let avail = max(content-h - fixed-h - num-gaps, 0)
         for i in ..#node.children {
             child-widths.push(content-w)
@@ -2180,13 +3173,27 @@ fn layout-box(
         ? stack-row(blocks, gap, node.align, node.justify, content-w)
         : stack-column(blocks, gap, min-content-w, node.align, node.justify, content-h)
 
-    if target-w && w < content-w {
-        lines = lines.map(line -> pad-line(line, line.width(), content-w))
-        w = content-w
+    if target-w {
+        if w > content-w {
+            lines = lines.map(line ->
+                (line.width() > content-w) ? clip-line(line, content-w) : line
+            )
+            w = content-w
+        } else if w < content-w {
+            lines = lines.map(line -> pad-line(line, line.width(), content-w))
+            w = content-w
+        }
     }
 
     if target-h {
         let th = max(int(target-h) - chrome-y, 0)
+        let scroll-offset = node.props['scroll']
+        if scroll-offset != nil {
+            let total = #lines
+            let s = int(scroll-offset).clamp(0, max(total - th, 0))
+            lines = lines[s ; min(s + th, total)]
+            node.props['_scroll-total'] = total
+        }
         if #lines > th { lines = lines[;th] }
         let blank = ' ' * w
         while #lines < th {
@@ -2266,18 +3273,21 @@ fn layout-node(
                     t -> !t.cancelled? && t.owner == inst && t.repeat != nil
                 )
                 if !exists {
-                    inst.every(iv, -> inst.tick())
+                    inst.every(iv, -> do { inst.tick(); inst.invalidate!() })
                 }
             }
-            inst.layout-x     = ox
-            inst.layout-y     = oy
+            inst.layout-x = ox
+            inst.layout-y = oy
+
+            let same-constraints = inst.layout-max-w == max-w && inst.layout-max-h == max-h
             inst.layout-max-w = max-w
             inst.layout-max-h = max-h
 
-            let rendered = if !inst.dirty? && inst.cached-node != nil
-            and inst.layout-max-w == max-w && inst.layout-max-h == max-h {
+            let rendered = if !inst.dirty? && inst.cached-node != nil && same-constraints {
+                warn!("layout: cache hit {type(inst)} path={path}")
                 inst.cached-node
             } else {
+                warn!("layout: render {type(inst)} path={path} dirty={inst.dirty?} cached={inst.cached-node != nil}")
                 _ctx-stack.push(%{})
                 let r = inst.render()
                 _ctx-stack.pop()
@@ -2292,7 +3302,19 @@ fn layout-node(
                 r
             }
 
+            if let $entry = inst.?kitty-entry {
+                let fresh? = entry.fresh? ?? false
+                let x-off = int(entry.?x-off ?? 0)
+                let ki = { id: entry.id, escape: entry.escape, ox: ox + x-off, oy: oy, fresh?: fresh? }
+                warn!("layout: kitty id={ki.id} fresh={fresh?} at ({ox + x-off},{oy}) for {type(inst)}")
+                _kitty-ids.push(ki.id)
+                _kitty-images.push(ki)
+                entry.fresh? = false
+            }
             let (output, el) = layout-node(rendered, max-w, max-h, "{path}$", ox, oy)
+            if (rendered :: Node) and let $st = rendered.props['_scroll-total'] {
+                inst.scroll-total = int(st)
+            }
             (output, Element(
                 ox, oy, output.width, output.height,
                 %{}, [el], component=inst
@@ -2307,9 +3329,11 @@ fn layout-node(
 }
 
 fn render-tree(root, max-w: Int, max-h: Int = INF) -> (Output, Element) {
+    warn!("--- render-tree ---")
     _next-fibers = %{}
     _focusables = []
     _overlays = []
+    _kitty-images = []
     let result = layout-node(root, max-w, max-h)
     for path, comp in _fibers {
         if _next-fibers[path] == nil {
@@ -2346,7 +3370,7 @@ fn process-timers() -> Bool {
 }
 
 fn next-timer-deadline() -> Float | nil {
-    _timers.filter(\!_.cancelled?)
+    return _timers.filter(\!_.cancelled?)
            .map(&.deadline)
            .min()
 }
@@ -2407,9 +3431,19 @@ pub fn ink-log(*args) {
     write(1, _out)
 }
 
+let __tls::_prev-kitty-ids: Array[Int] = []
+let __tls::_kitty-ids: Array[Int] = []
+let __tls::_kitty-images: Array[Any] = []
+
 fn paint-fullscreen(output: Output, rows: Int = INF) {
     _out.clear()
     _out.push("\x1b[?7l")
+    let old-kitty-ids = _prev-kitty-ids
+    for id in old-kitty-ids if id not in _kitty-ids {
+        warn!("paint: deleting kitty id={id}")
+        _out.push(kitty-delete(id))
+    }
+    warn!("paint: old-ids={old-kitty-ids} curr-ids={_kitty-ids}")
     let bg = _bg-global-ansi
     let bg-off = (#bg > 0) ? "\x1b[49m" : ''
     for line, i in output.lines {
@@ -2433,7 +3467,90 @@ fn paint-fullscreen(output: Output, rows: Int = INF) {
             }
         }
     }
+    for ki in _kitty-images {
+        if ki.fresh? || ki.id not in old-kitty-ids {
+            if ki.id in old-kitty-ids {
+                warn!("paint: replacing kitty id={ki.id} (delete+emit)")
+                _out.push(kitty-delete(ki.id))
+            } else {
+                warn!("paint: emitting new kitty id={ki.id} at ({ki.ox},{ki.oy})")
+            }
+            _out.push("\x1b[{ki.oy + 1};{ki.ox + 1}H")
+            _out.push(ki.escape)
+        } else {
+            warn!("paint: skipping kitty id={ki.id} (unchanged)")
+        }
+    }
+    _prev-kitty-ids = _kitty-ids
+    _kitty-ids = []
     _out.push("\x1b[?7h")
+    write(1, _out)
+}
+
+let __tls::_debug-mouse-x: Int = 0
+let __tls::_debug-mouse-y: Int = 0
+
+fn paint-debug-borders(tree: Element, rows: Int) {
+    let mx = _debug-mouse-x
+    let my = _debug-mouse-y
+
+    fn find-deepest(el: Element) -> Element | nil {
+        if mx < el.x || mx >= el.x + el.w { return nil }
+        if my < el.y || my >= el.y + el.h { return nil }
+        for child in el.children[;;-1] {
+            let $found = find-deepest(child) or continue
+            return found
+        }
+        el
+    }
+
+    let $target = find-deepest(tree) or return
+
+    fn draw-el(el: Element, color: String) {
+        if el.w == 0 || el.h == 0 { return }
+        let c = color
+        let x = el.x + 1
+        let y = el.y + 1
+        let w = el.w
+        let h = el.h
+
+        let name = if let $comp = el.component {
+            "{type(comp)}"
+                .sub(/^<class /, '')
+                .sub(/>$/, '')
+        } else { '' }
+
+        for row in ..h if y + row >= 1 && y + row <= rows {
+            _out.push("\x1b[{y + row};{x}H{c}│{RST}")
+            if w > 1 {
+                _out.push("\x1b[{y + row};{x + w - 1}H{c}│{RST}")
+            }
+        }
+
+        if y >= 1 && y <= rows && w > 2 {
+            _out.push("\x1b[{y};{x + 1}H{c}{'─' * (w - 2)}{RST}")
+        }
+        if h >= 2 && y + h - 1 <= rows && w > 2 {
+            _out.push("\x1b[{y + h - 1};{x + 1}H{c}{'─' * (w - 2)}{RST}")
+        }
+
+        if y >= 1 && y <= rows {
+            _out.push("\x1b[{y};{x}H{c}┌{RST}")
+            if w > 1 { _out.push("\x1b[{y};{x + w - 1}H{c}┐{RST}") }
+        }
+        if h >= 2 && y + h - 1 <= rows {
+            _out.push("\x1b[{y + h - 1};{x}H{c}└{RST}")
+            if w > 1 { _out.push("\x1b[{y + h - 1};{x + w - 1}H{c}┘{RST}") }
+        }
+
+        let label = "{name} {w}×{h} @ ({el.x},{el.y})"
+        if #label < w - 2 && y >= 1 && y <= rows {
+            _out.push("\x1b[{y};{x + 1}H{c}\x1b[7m {label} {RST}")
+        }
+    }
+
+    _out.clear()
+    draw-el(target, "\x1b[93m")
     write(1, _out)
 }
 
@@ -2469,8 +3586,11 @@ fn dispatch-mouse(tree: Element, raw-ev, handler-name: String) {
         if let $handler = el.props[handler-name] {
             handler(ev)
         }
-        if let $handler = el.?component.?on-event {
-            handler(ev)
+        if let $comp = el.?component {
+            if let $handler = comp.?on-event {
+                handler(raw-ev)
+                comp.invalidate!()
+            }
         }
     }
 }
@@ -2484,8 +3604,11 @@ fn dispatch-key(tree: Element, focused: Element | nil, raw-ev) -> Bool {
         if let $handler = el.props['onKey'] {
             handler(ev)
         }
-        if let $handler = ev.?component.?on-event {
-            handler(ev)
+        if let $comp = ev.?component {
+            if let $handler = comp.?on-event {
+                handler(ev)
+                comp.invalidate!()
+            }
         }
     }
 
@@ -2505,6 +3628,7 @@ pub fn run(app, fullscreen: Bool = true) {
     }
 
     let tio = term.TermIO(mouse=fullscreen)
+    _tio = tio
     let on-ev = app.?on-event
 
     if fullscreen {
@@ -2549,6 +3673,9 @@ pub fn run(app, fullscreen: Bool = true) {
         } else {
             paint-inline(output)
         }
+        if _debug-borders? and let $t = tree {
+            paint-debug-borders(t, rows)
+        }
         dirty = false
     }
 
@@ -2565,6 +3692,13 @@ pub fn run(app, fullscreen: Bool = true) {
             }
             write(1, _out)
             dirty = true
+            return false
+        }
+
+        if (ev :: event.Key) && ev.nice-name() == 'C-S-i' {
+            _debug-borders? = !_debug-borders?
+            dirty = true
+            critical!("debug: {_debug-borders? ? 'ON' : 'OFF'}")
             return false
         }
 
@@ -2591,21 +3725,40 @@ pub fn run(app, fullscreen: Bool = true) {
                     dispatch-mouse(t, ev, 'onMouseUp')
                 },
 
-                event.MouseMove(_) => {
+                event.MouseMove({x: $dmx, y: $dmy, *}) => {
+                    if _debug-borders? {
+                        _debug-mouse-x = int(dmx) - 1
+                        _debug-mouse-y = int(dmy) - 1
+                        dirty = true
+                    }
                     if dragging and let $handler = _focused.?on-event {
                         handler(ev)
+                        _focused.invalidate!()
                     }
+                    dispatch-mouse(t, ev, 'onMouseMove')
                 },
 
-                _ => {
-                    if _focused.?focusable? and let $handler = _focused.?on-event {
-                        handler(ev)
-                    } else if on-ev && on-ev(ev) == Exit {
-                        return true
-                    } else match ev {
-                        event.Key({key: 'TAB', event: (1 or 2), *}) =>
-                            cycle-focus(),
-                        _ => ()
+                (event.ScrollUp(_) or event.ScrollDown(_)) =>
+                    dispatch-mouse(t, ev, 'onScroll'),
+
+                _ => match ev {
+                    event.Key({key: 'TAB', event: (1 or 2), *})
+                    and _focused.?handles-tab? => {
+                        _focused.on-event(ev)
+                        _focused.invalidate!()
+                    },
+
+                    event.Key({key: 'TAB', event: (1 or 2), *}) =>
+                        cycle-focus(),
+
+                    _ => {
+                        if _focused.?focusable? and let $handler = _focused.?on-event {
+                            handler(ev)
+                            _focused.invalidate!()
+                        } else if on-ev
+                        && do { app.invalidate!(); on-ev(ev) } == Exit {
+                            return true
+                        }
                     }
                 }
             }
@@ -2616,6 +3769,7 @@ pub fn run(app, fullscreen: Bool = true) {
     }
 
     if app :: Component {
+        if !app.mounted? { app.mount!() }
         if let $iv = app.interval {
             app.every(iv, -> app.tick())
         }
@@ -2642,16 +3796,18 @@ pub fn run(app, fullscreen: Bool = true) {
             "nq-empty?: {_notify-queue.empty?()}"
         )
 
-        if let $ev = tio.next-event(timeout) {
+        if let $ev = tio.next-event(timeout) and ev !:: event.Wake {
+            quit = handle(ev)
+        }
+
+        while !quit {
+            let $ev = tio.next-event(0.0) or break
+            if ev :: event.Wake { continue }
             quit = handle(ev)
         }
 
         while let Some(_) = _notify-queue.try-take(0) {
             dirty = true
-        }
-
-        if _has-watchers && _notify-queue.empty?() {
-            _has-watchers = false
         }
 
         if process-timers() {
@@ -2750,17 +3906,25 @@ pub class TestHarness {
                 event.MouseUp(_) =>
                     dispatch-mouse(t, ev, 'onMouseUp'),
 
-                _ => {
-                    if _focused.?focusable?
-                    and let $handler = _focused.?on-event {
-                        handler(ev)
-                    } else if __on-ev
-                    && __on-ev(ev) == Exit {
-                        return Exit
-                    } else match ev {
-                        event.Key({key: 'TAB', event: (1 or 2), *}) =>
-                            cycle-focus(),
-                        _ => ()
+                _ => match ev {
+                    event.Key({key: 'TAB', event: (1 or 2), *})
+                    and _focused.?handles-tab? => {
+                        _focused.on-event(ev)
+                        _focused.invalidate!()
+                    },
+
+                    event.Key({key: 'TAB', event: (1 or 2), *}) =>
+                        cycle-focus(),
+
+                    _ => {
+                        if _focused.?focusable?
+                        and let $handler = _focused.?on-event {
+                            handler(ev)
+                            _focused.invalidate!()
+                        } else if __on-ev
+                        && do { __app.invalidate!(); __on-ev(ev) } == Exit {
+                            return Exit
+                        }
                     }
                 }
             }

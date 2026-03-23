@@ -104,4 +104,13 @@ cffi_closure(Ty *ty, int argc, Value *kwargs);
 Value
 cffi_closure_free(Ty *ty, int argc, Value *kwargs);
 
+Value
+cffi_calcsize(Ty *ty, int argc, Value *kwargs);
+
+Value
+cffi_pack(Ty *ty, int argc, Value *kwargs);
+
+Value
+cffi_unpack(Ty *ty, int argc, Value *kwargs);
+
 #endif

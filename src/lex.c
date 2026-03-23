@@ -794,8 +794,11 @@ lex_tyx(Ty *ty)
         u8   buf[8];
 
         char const *s = SRC;
+        bool have_nl  = false;
 
-        while (isspace(*s)) { ++s; }
+        while (isspace(*s)) {
+                have_nl |= (*s++ == '\n');
+        }
 
         if (s[0] == '<' && s[1] == '/') {
                 skipspace(ty);
@@ -815,6 +818,10 @@ lex_tyx(Ty *ty)
                 skipspace(ty);
                 nextchar(ty);
                 return mktoken(ty, '>');
+        }
+
+        if (have_nl) {
+                skipspace(ty);
         }
 
         if (contains("{}<", C(0))) {

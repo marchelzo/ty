@@ -801,16 +801,19 @@ jit_rt_mod(Ty *ty, Value *result, Value *a, Value *b)
 static void
 jit_rt_neg(Ty *ty, Value *result, Value *a)
 {
-        (void)ty;
         if (a->type == VALUE_INTEGER) {
                 *result = INTEGER(-a->z);
                 return;
         }
+
         if (a->type == VALUE_REAL) {
                 *result = REAL(-a->real);
                 return;
         }
-        zP("JIT -: unsupported operand: %s", SHOW(a));
+
+        vN(STACK) = (result - vv(STACK)) + 1;
+
+        vm_jit_neg(ty);
 }
 
 static void

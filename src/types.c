@@ -3641,7 +3641,7 @@ FnExprType(Ty *ty, Expr const *e, bool tmp)
                                 psym->type = type_fixed(ty, NewDict(STRING_TYPE, p0));
                         } else if (psym->type == NULL && d != NULL) {
                                 if (d->_type != NULL && !IsNilT(d->_type)) {
-                                        UnifyX(ty, p0, d->_type, true, false);
+                                        UnifyX(ty, p0, Relax(d->_type), true, false);
                                 }
                                 psym->type = p0;
                                 p0 = Either(ty, p0, NIL_TYPE);
@@ -5019,7 +5019,7 @@ TryBind(Ty *ty, Type *t0, Type *t1, bool super)
 #endif
                 } else if (!super || !IsAny(t1)) {
                         t0->bounded |= !super;
-                        t1 = Relax(Reduce(ty, t1));
+                        t1 = Reduce(ty, t1);
                         if (!t0->fixed) {
                                 t1 = type_unfixed(ty, t1);
                         }
@@ -5031,7 +5031,7 @@ TryBind(Ty *ty, Type *t0, Type *t1, bool super)
                         BindVar(t1, BOTTOM);
                 } else if (super || !IsAny(t0)) {
                         t1->bounded |= super;
-                        t0 = Relax(Reduce(ty, t0));
+                        t0 = Reduce(ty, t0);
                         if (!t1->fixed) {
                                 t0 = type_unfixed(ty, t0);
                         }
@@ -5808,9 +5808,9 @@ TrySolve2Op(Ty *ty, int op, Type *op0, Type *t0, Type *t1, Type *t2, bool exhaus
                 return UNKNOWN;
         }
 
-        t0 = ResolveVar(t0);
-        t1 = ResolveVar(t1);
-        t2 = ResolveVar(t2);
+        t0 = Relax(ResolveVar(t0));
+        t1 = Relax(ResolveVar(t1));
+        t2 = Relax(ResolveVar(t2));
 
         if (IsUnknown(t0) || IsUnknown(t1) || IsUnknown(t2)) {
                 UnifyX(ty, t0, UNKNOWN, true, true);
@@ -7674,7 +7674,7 @@ type_member_access(Ty *ty, Expr const *e)
 Type *
 type_method_call_t(Ty *ty, Expr const *e, Type *t0, char const *name)
 {
-        t0 = Resolve(ty, t0);
+        t0 = Relax(Resolve(ty, t0));
 
         if (IsNilT(t0)) {
                 return NIL_TYPE;
@@ -7755,7 +7755,7 @@ type_method_call(Ty *ty, Expr const *e)
         return type_method_call_t(
                 ty,
                 e,
-                Relax(e->object->_type),
+                e->object->_type,
                 e->method->identifier
         );
 }
@@ -8634,7 +8634,7 @@ type_list(Ty *ty, Expr const *e)
         Type *t0 = NewType(ty, TYPE_LIST);
 
         for (int i = 0; i < vN(e->es); ++i) {
-                avP(t0->types, Relax(v__(e->es, i)->_type));
+                avP(t0->types, v__(e->es, i)->_type);
         }
 
         return t0;
@@ -8835,6 +8835,7 @@ type_assign(Ty *ty, Expr *e, Type *t0, int flags)
                 t0 = Unlist(ty, t0);
         }
 
+        t0 = Resolve(ty, t0);
         fixup(ty, t0);
 
         switch (e->type) {
@@ -11706,12 +11707,6 @@ type_from_ty(Ty *ty, Value const *v)
         case TyAnyT:
                 return ANY;
 
-        case TyIntT:
-                return INT_TYPE;
-
-        case TyStringT:
-                return STRING_TYPE;
-
         case TyRegexT:
                 return TYPE_REGEX;
 
@@ -11720,9 +11715,6 @@ type_from_ty(Ty *ty, Value const *v)
 
         case TyFloatT:
                 return TYPE_FLOAT;
-
-        case TyBoolT:
-                return BOOL_TYPE;
 
         case TyArrayT:
                 return TYPE_ARRAY;
@@ -11749,6 +11741,33 @@ type_from_ty(Ty *ty, Value const *v)
         }
 
         switch (tag) {
+        case TyIntT:
+                if (inner.type == VALUE_INTEGER) {
+                        t0 = NewType(ty, TYPE_INT);
+                        t0->z = inner.z;
+                } else {
+                        goto Fail;
+                }
+                break;
+
+        case TyStringT:
+                if (inner.type == VALUE_STRING) {
+                        t0 = NewType(ty, TYPE_STRING);
+                        t0->str = mkcstr(ty, &inner);
+                } else {
+                        goto Fail;
+                }
+                break;
+
+        case TyBoolT:
+                if (inner.type == VALUE_BOOLEAN) {
+                        t0 = NewType(ty, TYPE_BOOL);
+                        t0->z = inner.boolean;
+                } else {
+                        goto Fail;
+                }
+                break;
+
         case TyUnionT:
                 t0 = NewType(ty, TYPE_UNION);
                 t0->types = TyTypeVector(ty, &inner);
@@ -11889,7 +11908,7 @@ type_to_ty(Ty *ty, Type *t0)
         Array *bound;
         Param const *param;
 
-        t0 = Relax(ResolveVar(t0));
+        t0 = ResolveVar(t0);
 
         if (IsAny(t0)) {
                 return TAG(TyAnyT);
@@ -11902,6 +11921,18 @@ type_to_ty(Ty *ty, Type *t0)
 
         case TYPE_NIL:
                 v = TAG(TyNilT);
+                break;
+
+        case TYPE_INT:
+                v = tagged(ty, TyIntT, INTEGER(t0->z), NONE);
+                break;
+
+        case TYPE_STRING:
+                v = tagged(ty, TyStringT, vSsz(t0->str), NONE);
+                break;
+
+        case TYPE_BOOL:
+                v = tagged(ty, TyBoolT, BOOLEAN(t0->z), NONE);
                 break;
 
         case TYPE_ALIAS:

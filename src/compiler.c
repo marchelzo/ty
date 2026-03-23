@@ -4929,6 +4929,10 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                 e->_type = type_var(ty);
                 break;
 
+        case EXPRESSION_VALUE:
+                e->_type = UNKNOWN_TYPE;
+                break;
+
         case EXPRESSION_PREFIX_MINUS:
         case EXPRESSION_PREFIX_QUESTION:
         case EXPRESSION_PREFIX_AT:
@@ -4951,6 +4955,10 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                 break;
 
         case EXPRESSION_TYPE_OF:
+                symbolize_expression(ty, scope, e->operand);
+                e->_type = type_type(ty, e->operand->_type);
+                break;
+
         case EXPRESSION_PACK_UNION:
         case EXPRESSION_PACK_INTERSECT:
                 symbolize_expression(ty, scope, e->operand);
