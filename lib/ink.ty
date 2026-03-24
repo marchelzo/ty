@@ -169,14 +169,14 @@ pub default-theme = %{
     'bg-global':     '#1a1a2e'
 }
 
-let __tls::_bg-global-ansi: String = ''
+let __tls::_bg-global-sgr: String = ''
 
 pub fn set-theme(overrides: Dict[String, String] = %{}) {
     let theme = %{**default-theme, **overrides}
     for name, val in theme {
         chalk.{name} = val
     }
-    _bg-global-ansi = bg-ansi(theme['bg-global'] ?? '') ?? ''
+    _bg-global-sgr = resolve-bg-sgr(theme['bg-global'] ?? '') ?? ''
 }
 
 set-theme()
@@ -232,21 +232,21 @@ pub fn cycle-focus(reverse?: Bool = false) {
 
 tag NodeBox, NodeText, NodeOverlay, NodeRaw;
 
-let __color-ansi-cache = %{}
+let __color-sgr-cache = %{}
 
-pub fn fg-ansi(color: String) -> String {
-    if let $c = __color-ansi-cache[color] { return c }
+pub fn fg-sgr(color: String) -> String {
+    if let $c = __color-sgr-cache[color] { return c }
     let s = chalk.render("[{color}]@[/]")
     let i = s.search('@') ?? 0
     let result = s[;i]
-    __color-ansi-cache[color] = result
+    __color-sgr-cache[color] = result
     result
 }
 
 let RST = "\x1b[0m"
 let BG_RST = "\x1b[49m"
 
-fn bg-ansi(color: String) -> String {
+fn resolve-bg-sgr(color: String) -> String {
     let (r, g, b) = resolve-color-rgb(color)
     "\x1b[48;2;{r};{g};{b}m"
 }
@@ -678,6 +678,13 @@ pub class ProgressBar < Component {
     }
 }
 
+ns spin {
+    pub const dots  = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
+    pub const dots2 = ['⣾', '⣷', '⣯', '⣟', '⣻', '⣽', '⣾', '⣷', '⣯', '⣟']
+    pub const bars  = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█', '▇', '▆', '▅', '▄', '▃', '▂']
+    pub const star  = ['✶', '✸', '✹', '✺', '✹', '✷']
+}
+
 pub class Spinner < Component {
     speed: Float | nil
     style: String | nil
@@ -690,24 +697,24 @@ pub class Spinner < Component {
     tick() { __frame += 1 }
 
     render() -> Node {
-        let sty = style ?? 'dots'
         let c = color ?? 'info'
-        let dots = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
-        let chars = match sty {
-            'dots'   => dots,
+        let chars = match style {
+            'dots'   => spin.dots,
+            'dots2'  => spin.dots2,
             'line'   => ['|', '/', '-', '\\'],
             'arc'    => ['◜', '◠', '◝', '◞', '◡', '◟'],
-            'star'   => ['✶', '✸', '✹', '✺', '✹', '✷'],
+            'star'   => spin.star,
             'bounce' => ['⠁', '⠂', '⠄', '⡀', '⢀', '⠠', '⠐', '⠈'],
-            _        => dots
+            'bar'    => spin.bars,
+            _        => spin.star
         }
 
-        label
-            ? <Box direction="row" gap=1>
-                  <Text style=c>{chars[__frame % #chars]}</Text>
-                  <Text>{label}</Text>
-              </Box>
-            : <Text style=color>{chars[__frame % #chars]}</Text>
+        label ? (
+            <Box direction="row" gap=1>
+                <Text style=c>{chars[__frame % #chars]}</Text>
+                <Text>{label}</Text>
+            </Box>
+        ) : <Text style=color>{chars[__frame % #chars]}</Text>
     }
 }
 
@@ -763,12 +770,11 @@ pub class TextInput < Component {
     }
 
     __save-history-entry(entry: String) {
-        if let $f = history-file {
+        if let Path $~> p = history-file {
             try {
-                let p = Path(f)
                 p.parent.mkdir(parents=true, exist-ok=true)
                 p.append("{entry}\n")
-            } catch _ { }
+            }
         }
     }
 
@@ -1854,9 +1860,9 @@ pub class BarChart < Component {
 
         let ya? = y-axis? ?? true
         let yw = ya? ? max(fmt(lo).width(), fmt(hi).width(), 1) + 1 : 0
-        let dim = fg-ansi('text-dim')
+        let dim = fg-sgr('text-dim')
 
-        let color-table = [fg-ansi((clrs && i < #clrs) ? clrs[i] : clr) for i in ..#vs]
+        let color-table = [fg-sgr((clrs && i < #clrs) ? clrs[i] : clr) for i in ..#vs]
 
         let lines = []
         let line-w = 0
@@ -2135,7 +2141,7 @@ pub class LinePlot < Component {
 
         let ya? = y-axis? ?? true
         let yw = ya? ? max(fmt(lo).width(), fmt(hi).width(), 1) + 1 : 0
-        let dim = fg-ansi('text-dim')
+        let dim = fg-sgr('text-dim')
 
         if range == 0.0 || range != range { range = 1.0 }
         let pw = min(cw * cell-w, 1120)
@@ -2284,7 +2290,7 @@ pub class LinePlot < Component {
         if range == 0.0 || range != range { range = 1.0 }
         let ya? = y-axis? ?? true
         let yw = ya? ? max(fmt(lo).width(), fmt(hi).width(), 1) + 1 : 0
-        let dim = fg-ansi('text-dim')
+        let dim = fg-sgr('text-dim')
 
         let dot-h = h * 4
         let dot-w = cw * 2
@@ -2329,12 +2335,11 @@ pub class LinePlot < Component {
         let color-table = []
         for si in ..#all-series {
             let c = (clrs && si < #clrs) ? clrs[si] : clr
-            color-table.push(fg-ansi(c))
+            color-table.push(fg-sgr(c))
         }
-        let default-fg = fg-ansi(clr)
+        let default-fg = fg-sgr(clr)
 
-        let (sel-r, sel-g, sel-b) = resolve-color-rgb('selection')
-        let sel-bg = "\x1b[48;2;{sel-r};{sel-g};{sel-b}m"
+        let sel-bg = resolve-bg-sgr('bg-hover')
         let (sel-c0, sel-c1, sel-r0, sel-r1) = if !__drag? {
             (-1, -1, -1, -1)
         } else {
@@ -2364,25 +2369,27 @@ pub class LinePlot < Component {
                 buf.push("{dim}{"{yl:>{yw}}"}{RST}")
             }
 
-            let cur-ansi = ''
+            let cur-sgr = ''
             let cur-bg = false
             for col in ..cw {
                 let ci = row * cw + col
-                let ansi = (owner[ci] >= 0 && owner[ci] < #color-table)
+                let sgr = (owner[ci] >= 0 && owner[ci] < #color-table)
                     ? color-table[owner[ci]]
                     : default-fg
                 let want-bg = (col >= sel-c0 && col < sel-c1)
-                    || (row >= sel-r0 && row < sel-r1)
-                if ansi != cur-ansi || want-bg != cur-bg {
+                           || (row >= sel-r0 && row < sel-r1)
+                if sgr != cur-sgr || want-bg != cur-bg {
                     buf.push(RST)
-                    buf.push(ansi)
-                    if want-bg { buf.push(sel-bg) }
-                    cur-ansi = ansi
+                    buf.push(sgr)
+                    if want-bg {
+                        buf.push(sel-bg)
+                    }
+                    cur-sgr = sgr
                     cur-bg = want-bg
                 }
                 buf.push(chr(0x2800 + bits[ci]))
             }
-            if #cur-ansi > 0 || cur-bg { buf.push(RST) }
+            if #cur-sgr > 0 || cur-bg { buf.push(RST) }
 
             let s = buf.str!()
             if row == 0 { line-w = s.width() }
@@ -2430,9 +2437,13 @@ pub class LinePlot < Component {
             bin-lo = blo
             bin-hi = bhi
             [bins]
-        } else if let $s = series { s }
-          else if let $d = data { [d] }
-          else { [] }
+        } else if let $s = series {
+            s
+        } else if let $d = data {
+            [d]
+        } else {
+            []
+        }
 
         if #all-series == 0 || all-series.all?(s -> #s == 0) {
             return <Text style="text-dim">no data</Text>
@@ -2470,7 +2481,7 @@ pub class LinePlot < Component {
         }
         if kitty-entry != nil { kitty-entry.x-off = yw }
 
-        let dim = fg-ansi('text-dim')
+        let dim = fg-sgr('text-dim')
         let line-w = total-w
 
         let xl-label = if raw? && time-format != nil { time-format(eff-t0) } else { x-lo }
@@ -2519,9 +2530,8 @@ pub class LinePlot < Component {
         }
 
         if use-kitty {
-            let (ksr, ksg, ksb) = resolve-color-rgb('selection')
-            let ksel-bg = "\x1b[48;2;{ksr};{ksg};{ksb}m"
-            let (ksel-c0, ksel-c1, ksel-r0, ksel-r1) = if !__drag? {
+            let sel-bg = resolve-bg-sgr('bg-hover')
+            let (sel-c0, sel-c1, sel-r0, sel-r1) = if !__drag? {
                 (-1, -1, -1, -1)
             } else {
                 let ddx = (__drag-x1 - __drag-x0).abs
@@ -2540,14 +2550,14 @@ pub class LinePlot < Component {
             }
 
             fn sel-row(row: Int) -> String {
-                let row-hit = row >= ksel-r0 && row < ksel-r1
-                let col-hit = ksel-c1 > ksel-c0
+                let row-hit = row >= sel-r0 && row < sel-r1
+                let col-hit = sel-c1 > sel-c0
                 if row-hit {
-                    "{' ' * yw}{ksel-bg}{' ' * cw}{RST}"
+                    "{' ' * yw}{sel-bg}{' ' * cw}{RST}"
                 } else if col-hit {
-                    let pre = ' ' * ksel-c0
-                    let mid = "{ksel-bg}{' ' * (ksel-c1 - ksel-c0)}{RST}"
-                    let post = ' ' * (cw - ksel-c1)
+                    let pre = ' ' * sel-c0
+                    let mid = "{sel-bg}{' ' * (sel-c1 - sel-c0)}{RST}"
+                    let post = ' ' * (cw - sel-c1)
                     "{' ' * yw}{pre}{mid}{post}"
                 } else {
                     ' ' * yw
@@ -3188,7 +3198,7 @@ fn stack-row(
     (lines, w)
 }
 
-fn bg-ansi(color: String) -> String | nil {
+fn bg-sgr(color: String) -> String | nil {
     let hex2 = /#([0-9a-fA-F]{2})([0-9a-fA-F]{2})([0-9a-fA-F]{2})/
     let hex1 = /#([0-9a-fA-F])([0-9a-fA-F])([0-9a-fA-F])/
     if let [_, $r, $g, $b] = color.match(hex2) {
@@ -3201,7 +3211,7 @@ fn bg-ansi(color: String) -> String | nil {
 }
 
 fn apply-bg(lines: Array[String], bg: String) -> Array[String] {
-    let $on = bg-ansi(bg) or return lines
+    let $on = bg-sgr(bg) or return lines
     let off = "\x1b[49m"
     lines.map(line -> "{on}{line.sub(/\x1b\[0m/, "\x1b[0m{on}")}{off}")
 }
@@ -3566,7 +3576,7 @@ fn layout-node(
                 let x-off = int(entry.?x-off ?? 0)
                 let ki = { id: entry.id, escape: entry.escape, ox: ox + x-off, oy: oy, fresh?: fresh? }
                 debug!("layout: kitty id={ki.id} fresh={fresh?} at ({ox + x-off},{oy}) for {type(inst)}")
-                _kitty-ids.push(ki.id)
+                _kitties.push(ki.id)
                 _kitty-images.push(ki)
                 entry.fresh? = false
             }
@@ -3665,7 +3675,7 @@ fn paint-inline(output: Output) {
         _out.push("\x1b[{_last-inline-height}A\r")
     }
     _out.push("\x1b[0J")
-    let bg = _bg-global-ansi
+    let bg = _bg-global-sgr
     let bg-off = (#bg > 0) ? "\x1b[49m" : ''
     for line in output.lines {
         if #bg > 0 {
@@ -3713,19 +3723,19 @@ pub fn ink-log(*args) {
     write(1, _out)
 }
 
-let __tls::_prev-kitty-ids: Array[Int] = []
-let __tls::_kitty-ids: Array[Int] = []
+let __tls::_prev-kitties: Array[Int] = []
+let __tls::_kitties: Array[Int] = []
 let __tls::_kitty-images: Array[Any] = []
 
 fn paint-fullscreen(output: Output, rows: Int = INF) {
     _out.clear()
     _out.push("\x1b[?7l")
-    let old-kitty-ids = _prev-kitty-ids
-    for id in old-kitty-ids if id not in _kitty-ids {
+    let old-kitties = _prev-kitties
+    for id in old-kitties if id not in _kitties {
         debug!("paint: deleting kitty id={id}")
         _out.push(kitty-delete(id))
     }
-    let bg = _bg-global-ansi
+    let bg = _bg-global-sgr
     let bg-off = (#bg > 0) ? "\x1b[49m" : ''
     for line, i in output.lines {
         _out.push("\x1b[{i + 1};1H{bg}\x1b[2K")
@@ -3749,8 +3759,8 @@ fn paint-fullscreen(output: Output, rows: Int = INF) {
         }
     }
     for ki in _kitty-images {
-        if ki.fresh? || ki.id not in old-kitty-ids {
-            if ki.id in old-kitty-ids {
+        if ki.fresh? || ki.id not in old-kitties {
+            if ki.id in old-kitties {
                 debug!("paint: replacing kitty id={ki.id}")
                 _out.push(kitty-delete(ki.id))
             } else {
@@ -3760,8 +3770,8 @@ fn paint-fullscreen(output: Output, rows: Int = INF) {
             _out.push(ki.escape)
         }
     }
-    _prev-kitty-ids = _kitty-ids
-    _kitty-ids = []
+    _prev-kitties = _kitties
+    _kitties = []
     _out.push("\x1b[?7h")
     write(1, _out)
 }
@@ -3915,8 +3925,8 @@ pub fn run(app: Node | Component, fullscreen: Bool = true) {
     if fullscreen {
         _out.clear()
         _out.push("\x1b[?1049h\x1b[?25l")
-        if #_bg-global-ansi > 0 {
-            _out.push(_bg-global-ansi)
+        if #_bg-global-sgr > 0 {
+            _out.push(_bg-global-sgr)
             _out.push("\x1b[2J")
         }
         write(1, _out)
@@ -3974,7 +3984,7 @@ pub fn run(app: Node | Component, fullscreen: Bool = true) {
         if is-ctrl-l(ev) {
             _out.clear()
             if fullscreen {
-                _out.push("\x1b[H{_bg-global-ansi}\x1b[2J")
+                _out.push("\x1b[H{_bg-global-sgr}\x1b[2J")
             } else {
                 _last-inline-height = 0
                 _out.push("\x1b[2J\x1b[H")
@@ -4125,12 +4135,12 @@ pub class TestHarness {
         __dragging? = false
         __on-ev = app.?on-event
 
-        _focused = nil
-        _timers = []
-        _fibers = %{}
-        _ctx-stack = [%{}]
-        _prev-kitty-ids = []
-        _kitty-ids = []
+        _focused      = nil
+        _timers       = []
+        _fibers       = %{}
+        _ctx-stack    = [%{}]
+        _prev-kitties = []
+        _kitties      = []
 
         if app :: Component {
             if let $iv = app.interval {
