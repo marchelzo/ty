@@ -53,11 +53,11 @@ fn run(p: Path) {
                 chalk"[b bright red]FAIL[/]",
                 chalk"  [bright magenta](exit status: {status})[/]" if status != 0,
                 chalk"  [blue](SIG{signame(signal).upper()})[/]" if signal != nil,
-                chalk"\n[magenta]================ [yellow]STDOUT[/] ====================================[/]\n",
+                chalk"\n[magenta]──────────────── [yellow]STDOUT[/] ────────────────────────────────────[/]\n",
                 stdout,
-                chalk"\n[magenta]================ [yellow]STDERR[/] ====================================[/]\n",
+                chalk"\n[magenta]──────────────── [yellow]STDERR[/] ────────────────────────────────────[/]\n",
                 stderr,
-                chalk"\n[magenta]============================================================[/]\n",
+                chalk"\n[magenta]────────────────────────────────────────────────────────────[/]\n",
             ]
             ('#c53535', parts.join())
         }

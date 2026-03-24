@@ -10486,13 +10486,16 @@ type_binary_op(Ty *ty, Expr const *e)
         case EXPRESSION_USER_OP: op = intern(&xD.b_ops, e->op_name)->id;
         }
 
-        Type *fast = TypeOf2Op(ty, op, e->left->_type, e->right->_type);
+        Type *t0 = Relax(ResolveVar(e->left->_type));
+        Type *t1 = Relax(ResolveVar(e->right->_type));
+
+        Type *fast = TypeOf2Op(ty, op, t0, t1);
         if (fast != NULL) {
                 return fast;
         }
 
-        Type *t0 = Reduce(ty, Relax(e->left->_type));
-        Type *t1 = Reduce(ty, Relax(e->right->_type));
+        t0 = Reduce(ty, t0);
+        t1 = Reduce(ty, t1);
 
         if (IsUnknown(t0) || IsUnknown(t1)) {
                 return UNKNOWN;
