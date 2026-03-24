@@ -1,0 +1,463 @@
+import ink
+import term
+use term
+
+ns test
+
+class Probe < ink.Component {
+    focusable? -> Bool { true }
+    on-event(ev) {}
+    render() { <ink.Text>P</ink.Text> }
+}
+
+fn probe-pos(h) -> (Int, Int) {
+    let $p = h.find(Probe) or throw 'no Probe'
+    (p.layout-x, p.layout-y)
+}
+
+class ColStackApp < ink.Component {
+    render() {
+        <ink.Box direction="column" width=20>
+            <ink.Text>aaa</ink.Text>
+            <ink.Text>bbb</ink.Text>
+            <Probe />
+        </ink.Box>
+    }
+}
+
+pub fn column-stacking() {
+    let h = ink.TestHarness(ColStackApp(), cols=20, rows=10)
+    assert(probe-pos(h) == (0, 2))
+}
+
+class RowStackApp < ink.Component {
+    render() {
+        <ink.Box direction="row" width=20>
+            <ink.Box width=5><ink.Text>aaa</ink.Text></ink.Box>
+            <ink.Box width=5><ink.Text>bbb</ink.Text></ink.Box>
+            <Probe />
+        </ink.Box>
+    }
+}
+
+pub fn row-stacking() {
+    let h = ink.TestHarness(RowStackApp(), cols=20, rows=10)
+    let (px, py) = probe-pos(h)
+    assert(px == 10 && py == 0)
+}
+
+class PadApp < ink.Component {
+    render() {
+        <ink.Box pad-x=3 pad-y=2 width=20>
+            <Probe />
+        </ink.Box>
+    }
+}
+
+pub fn padding-offsets-children() {
+    let h = ink.TestHarness(PadApp(), cols=20, rows=10)
+    assert(probe-pos(h) == (3, 2))
+}
+
+class BdrApp < ink.Component {
+    render() {
+        <ink.Box borderStyle="round" width=20>
+            <Probe />
+        </ink.Box>
+    }
+}
+
+pub fn border-offsets-children() {
+    let h = ink.TestHarness(BdrApp(), cols=20, rows=10)
+    assert(probe-pos(h) == (1, 1))
+}
+
+class MrgApp < ink.Component {
+    render() {
+        <ink.Box marginX=4 marginY=2 width=20>
+            <Probe />
+        </ink.Box>
+    }
+}
+
+pub fn margin-offsets-children() {
+    let h = ink.TestHarness(MrgApp(), cols=20, rows=10)
+    assert(probe-pos(h) == (4, 2))
+}
+
+class NestPadApp < ink.Component {
+    render() {
+        <ink.Box pad-x=2 pad-y=1 width=30>
+            <ink.Box pad-x=3 pad-y=2>
+                <Probe />
+            </ink.Box>
+        </ink.Box>
+    }
+}
+
+pub fn nested-offsets-accumulate() {
+    let h = ink.TestHarness(NestPadApp(), cols=30, rows=15)
+    assert(probe-pos(h) == (5, 3))
+}
+
+class JCenterColApp < ink.Component {
+    render() {
+        <ink.Box direction="column" justify="center" width=20 height=10>
+            <Probe />
+        </ink.Box>
+    }
+}
+
+pub fn justify-center-column() {
+    let h = ink.TestHarness(JCenterColApp(), cols=20, rows=10)
+    let (px, py) = probe-pos(h)
+    assert(px == 0)
+    assert(py >= 4 && py <= 5)
+}
+
+class JEndColApp < ink.Component {
+    render() {
+        <ink.Box direction="column" justify="end" width=20 height=10>
+            <Probe />
+        </ink.Box>
+    }
+}
+
+pub fn justify-end-column() {
+    let h = ink.TestHarness(JEndColApp(), cols=20, rows=10)
+    let (px, py) = probe-pos(h)
+    assert(py == 9)
+}
+
+class JCenterRowApp < ink.Component {
+    render() {
+        <ink.Box direction="row" justify="center" width=20>
+            <Probe />
+        </ink.Box>
+    }
+}
+
+pub fn justify-center-row() {
+    let h = ink.TestHarness(JCenterRowApp(), cols=20, rows=10)
+    let (px, py) = probe-pos(h)
+    assert(py == 0)
+    assert(px >= 9 && px <= 10)
+}
+
+class JEndRowApp < ink.Component {
+    render() {
+        <ink.Box direction="row" justify="end" width=20>
+            <Probe />
+        </ink.Box>
+    }
+}
+
+pub fn justify-end-row() {
+    let h = ink.TestHarness(JEndRowApp(), cols=20, rows=10)
+    let (px, py) = probe-pos(h)
+    assert(px == 19)
+}
+
+class ProbeA < ink.Component {
+    focusable? -> Bool { true }
+    render() { <ink.Text>A</ink.Text> }
+}
+
+class ProbeB < ink.Component {
+    focusable? -> Bool { true }
+    render() { <ink.Text>B</ink.Text> }
+}
+
+class JSpaceBetweenApp < ink.Component {
+    render() {
+        <ink.Box direction="row" justify="space-between" width=20>
+            <ProbeA />
+            <ProbeB />
+        </ink.Box>
+    }
+}
+
+pub fn justify-space-between-row() {
+    let h = ink.TestHarness(JSpaceBetweenApp(), cols=20, rows=10)
+    let $a = h.find(ProbeA) or throw 'no A'
+    let $b = h.find(ProbeB) or throw 'no B'
+    assert(a.layout-x == 0)
+    assert(b.layout-x == 19)
+}
+
+class AlignCenterColApp < ink.Component {
+    render() {
+        <ink.Box direction="column" align="center" width=20>
+            <Probe />
+        </ink.Box>
+    }
+}
+
+pub fn align-center-column() {
+    let h = ink.TestHarness(AlignCenterColApp(), cols=20, rows=10)
+    let (px, py) = probe-pos(h)
+    assert(py == 0)
+    assert(px >= 9 && px <= 10)
+}
+
+class AlignCenterRowApp < ink.Component {
+    render() {
+        <ink.Box direction="row" align="center" width=20 height=10>
+            <Probe />
+        </ink.Box>
+    }
+}
+
+pub fn align-center-row() {
+    let h = ink.TestHarness(AlignCenterRowApp(), cols=20, rows=10)
+    let (px, py) = probe-pos(h)
+    assert(px == 0)
+    assert(py >= 4 && py <= 5)
+}
+
+class TallChild < ink.Component {
+    render() {
+        <ink.Box direction="column" height=6>
+            <ink.Text>tall</ink.Text>
+        </ink.Box>
+    }
+}
+
+class AlignCenterRowSiblingsApp < ink.Component {
+    render() {
+        <ink.Box direction="row" align="center" width=20>
+            <TallChild />
+            <Probe />
+        </ink.Box>
+    }
+}
+
+pub fn align-center-row-siblings() {
+    let h = ink.TestHarness(AlignCenterRowSiblingsApp(), cols=20, rows=10)
+    let $p = h.find(Probe) or throw 'no Probe'
+    assert(p.layout-y >= 2 && p.layout-y <= 3)
+}
+
+class AlignEndRowApp < ink.Component {
+    render() {
+        <ink.Box direction="row" align="end" width=20 height=10>
+            <Probe />
+        </ink.Box>
+    }
+}
+
+pub fn align-end-row() {
+    let h = ink.TestHarness(AlignEndRowApp(), cols=20, rows=10)
+    let (px, py) = probe-pos(h)
+    assert(py == 9)
+}
+
+class GapPosApp < ink.Component {
+    render() {
+        <ink.Box direction="column" gap=3 width=20>
+            <ink.Text>top</ink.Text>
+            <Probe />
+        </ink.Box>
+    }
+}
+
+pub fn gap-affects-position() {
+    let h = ink.TestHarness(GapPosApp(), cols=20, rows=10)
+    let (px, py) = probe-pos(h)
+    assert(py == 4)
+}
+
+class DeepJustApp < ink.Component {
+    render() {
+        <ink.Box direction="column" justify="center" width=40 height=15>
+            <ink.Box direction="row" justify="center" gap=4>
+                <ink.Box borderStyle="round" pad-x=1>
+                    <Probe />
+                </ink.Box>
+            </ink.Box>
+        </ink.Box>
+    }
+}
+
+pub fn deep-nesting-with-justify() {
+    let h = ink.TestHarness(DeepJustApp(), cols=40, rows=15)
+    let (px, py) = probe-pos(h)
+    assert(px > 10 && px < 30)
+    assert(py > 4 && py < 11)
+}
+
+let click-btn-count = [0]
+
+class ClickBtn < ink.Component {
+    focusable? -> Bool { true }
+    on-event(ev) {
+        match ev {
+            event.MouseDown(_) => click-btn-count[0] += 1,
+            _ => ()
+        }
+    }
+    render() { <ink.Text>CLICK</ink.Text> }
+}
+
+class ClickJustApp < ink.Component {
+    render() {
+        <ink.Box direction="column" justify="center" width=30 height=10>
+            <ClickBtn />
+        </ink.Box>
+    }
+}
+
+pub fn click-hits-justified-component() {
+    click-btn-count[0] = 0
+    let h = ink.TestHarness(ClickJustApp(), cols=30, rows=10)
+    let $btn = h.find(ClickBtn) or throw 'no Btn'
+    let bx = btn.layout-x
+    let by = btn.layout-y
+    assert(by > 0)
+    h.click(bx + 1, by)
+    assert(click-btn-count[0] == 1)
+    h.click(0, 0)
+    assert(click-btn-count[0] == 1)
+}
+
+class FocComp < ink.Component {
+    focusable? -> Bool { true }
+    render() { <ink.Text>FOC</ink.Text> }
+}
+
+class ClickFocCenterApp < ink.Component {
+    render() {
+        <ink.Box direction="row" justify="center" width=40>
+            <FocComp />
+        </ink.Box>
+    }
+}
+
+pub fn click-focuses-centered-component() {
+    let h = ink.TestHarness(ClickFocCenterApp(), cols=40, rows=10)
+    h.assert-unfocused()
+    let $f = h.find(FocComp) or throw 'no Foc'
+    assert(f.layout-x > 0)
+    h.click(f.layout-x + 1, f.layout-y)
+    h.assert-focused(FocComp)
+}
+
+class ClickFocEndApp < ink.Component {
+    render() {
+        <ink.Box direction="column" justify="end" width=20 height=10>
+            <FocComp />
+        </ink.Box>
+    }
+}
+
+pub fn click-misses-outside-justified-component() {
+    let h = ink.TestHarness(ClickFocEndApp(), cols=20, rows=10)
+    let $f = h.find(FocComp) or throw 'no Foc'
+    assert(f.layout-y == 9)
+    h.click(0, 0)
+    h.assert-unfocused()
+    h.click(0, 9)
+    h.assert-focused(FocComp)
+}
+
+let hit-tgt-count = [0]
+
+class HitTarget < ink.Component {
+    focusable? -> Bool { true }
+    on-event(ev) {
+        match ev {
+            event.MouseDown(_) => hit-tgt-count[0] += 1,
+            _ => ()
+        }
+    }
+    render() { <ink.Text>TGT</ink.Text> }
+}
+
+class HitBPJApp < ink.Component {
+    render() {
+        <ink.Box direction="column" justify="center" width=40 height=12
+                 borderStyle="round" pad-x=2 pad-y=1>
+            <HitTarget />
+        </ink.Box>
+    }
+}
+
+pub fn hit-test-with-border-padding-justify() {
+    hit-tgt-count[0] = 0
+    let h = ink.TestHarness(HitBPJApp(), cols=40, rows=12)
+    let $tgt = h.find(HitTarget) or throw 'no Target'
+    let tx = tgt.layout-x
+    let ty = tgt.layout-y
+    assert(tx >= 3)
+    assert(ty >= 3)
+    h.click(tx, ty)
+    assert(hit-tgt-count[0] == 1)
+    h.click(0, 0)
+    assert(hit-tgt-count[0] == 1)
+}
+
+class FlexLeft < ink.Component {
+    focusable? -> Bool { true }
+    render() { <ink.Text>L</ink.Text> }
+}
+
+class FlexRight < ink.Component {
+    focusable? -> Bool { true }
+    render() { <ink.Text>R</ink.Text> }
+}
+
+class FlexRowPosApp < ink.Component {
+    render() {
+        <ink.Box direction="row" width=20>
+            <ink.Box flex=1><FlexLeft /></ink.Box>
+            <ink.Box flex=1><FlexRight /></ink.Box>
+        </ink.Box>
+    }
+}
+
+pub fn flex-row-positions() {
+    let h = ink.TestHarness(FlexRowPosApp(), cols=20, rows=10)
+    let $l = h.find(FlexLeft) or throw 'no L'
+    let $r = h.find(FlexRight) or throw 'no R'
+    assert(l.layout-x == 0)
+    assert(r.layout-x == 10)
+}
+
+class SVPosApp < ink.Component {
+    render() {
+        <ink.Box direction="column" width=20 height=10>
+            <ink.Box height=3><ink.Text>header</ink.Text></ink.Box>
+            <ink.ScrollView height=5>
+                <ink.Text>a</ink.Text>
+                <ink.Text>b</ink.Text>
+                <ink.Text>c</ink.Text>
+                <ink.Text>d</ink.Text>
+                <ink.Text>e</ink.Text>
+            </ink.ScrollView>
+            <Probe />
+        </ink.Box>
+    }
+}
+
+pub fn scroll-view-child-positions() {
+    let h = ink.TestHarness(SVPosApp(), cols=20, rows=10)
+    let (px, py) = probe-pos(h)
+    assert(py == 8)
+}
+
+class MultiJustApp < ink.Component {
+    render() {
+        <ink.Box direction="column" justify="space-between" width=20 height=10>
+            <ProbeA />
+            <ProbeB />
+        </ink.Box>
+    }
+}
+
+pub fn justify-space-between-column() {
+    let h = ink.TestHarness(MultiJustApp(), cols=20, rows=10)
+    let $a = h.find(ProbeA) or throw 'no A'
+    let $b = h.find(ProbeB) or throw 'no B'
+    assert(a.layout-y == 0)
+    assert(b.layout-y == 9)
+}
