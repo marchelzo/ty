@@ -8008,6 +8008,7 @@ MemberAccess:
                                 break;
 BadField:
                         case VALUE_NONE:
+                                xpush(*vZ(STACK));
                                 BadFieldAccess(ty, top(), z);
                                 UNREACHABLE();
                         }
@@ -11610,6 +11611,7 @@ vm_jit_get_member(Ty *ty)
                 break;
 
         case VALUE_NONE:
+                xpush(*vZ(STACK));
                 BadFieldAccess(ty, top(), z);
                 UNREACHABLE();
         }
