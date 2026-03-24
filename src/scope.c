@@ -522,8 +522,10 @@ scope_insert_as(Ty *ty, Scope *scope, Symbol *sym, char const *id)
         *new = *sym;
         new->identifier = id;
         new->hash = hash64z(id);
-        new->scope = scope;
-        new->flags &= ~SYM_PUBLIC;
+        if (!SymbolIsNamespace(sym)) {
+                new->scope = scope;
+                new->flags &= ~SYM_PUBLIC;
+        }
         new->flags |= SYM_EXTERNAL;
 
         put(ty, scope, new);
@@ -541,6 +543,7 @@ scope_insert(Ty *ty, Scope *scope, Symbol *sym)
                 new->scope = scope;
                 new->flags &= ~SYM_PUBLIC;
         }
+        new->flags |= SYM_EXTERNAL;
 
         put(ty, scope, new);
 
