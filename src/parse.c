@@ -6640,6 +6640,11 @@ parse_try(Ty *ty)
                 avP(s->try.handlers, parse_statement(ty, -1));
         }
 
+        if (vN(s->try.patterns) == 0) {
+                avP(s->try.patterns, &WildCard);
+                avP(s->try.handlers, mkstmtx(NULL));
+        }
+
         if (have_kw(FINALLY)) {
                 next();
                 s->try.finally = parse_statement(ty, -1);
