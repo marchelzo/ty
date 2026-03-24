@@ -31,7 +31,7 @@ class RowApp < ink.Component {
 
 class PaddingApp < ink.Component {
     render() -> ink.Node {
-        <ink.Box paddingX=2 paddingY=1>
+        <ink.Box pad-x=2 pad-y=1>
             <ink.Text>x</ink.Text>
         </ink.Box>
     }

@@ -998,11 +998,9 @@ getfmt(char const **s, char const *end, struct fspec *out)
 
         m0(out->fill);
 
-        int bytes;
-
         for (;;) {
                 if (*out->fill == '\0') {
-                        bytes = max(term_fit_cols(*s, end - *s, 1), 1);
+                        int bytes = max(term_fit_cols(*s, end - *s, 1), 1);
                         if (
                                 (*s + bytes < end)
                              && contains("<^>", (*s)[bytes])
@@ -1219,7 +1217,7 @@ BadFormatSpecifier:
                                 ty_snprintf(spec.width, sizeof spec.width, "%"PRIiMAX, ARG(ai).z);
                         }
 
-                        if (spec.prec[0] == '*') {
+                        if (spec.prec[0] == '.' && spec.prec[1] == '*') {
                                 if (++ai >= argc) {
                                         goto MissingArgument;
                                 }
@@ -1233,7 +1231,7 @@ BadFormatSpecifier:
                                         );
                                 }
 
-                                ty_snprintf(spec.prec, sizeof spec.prec, "%"PRIiMAX, ARG(ai).z);
+                                ty_snprintf(spec.prec, sizeof spec.prec, ".%"PRIiMAX, ARG(ai).z);
                         }
 
                         if (++ai >= argc) {
@@ -1267,6 +1265,18 @@ MissingArgument:
                                 wlen = strlen(spec.width);
                         } else {
                                 wlen = 0;
+                        }
+
+                        if (spec.prec[0] != '\0') {
+                                if (arg.type == VALUE_STRING) {
+                                        u32 cols  = max(atoll(&spec.prec[1]), 0);
+                                        u32 bytes = term_fit_cols(ss(arg), sN(arg), cols);
+                                        ty_snprintf(spec.prec, sizeof spec.prec, ".%u", bytes);
+                                } else if (arg.type == VALUE_BLOB) {
+                                        u32 cols  = max(atoll(&spec.prec[1]), 0);
+                                        u32 bytes = term_fit_cols(vv(*arg.blob), vN(*arg.blob), cols);
+                                        ty_snprintf(spec.prec, sizeof spec.prec, ".%u", bytes);
+                                }
                         }
 
                         int plen = strlen(spec.prec);
@@ -1406,12 +1416,7 @@ MissingArgument:
                                         break;
                                 }
 
-                                ty_snprintf(
-                                        tmp,
-                                        TY_TMP_N,
-                                        scratch,
-                                        p
-                                );
+                                ty_snprintf(tmp, TY_TMP_N, scratch, p);
                                 break;
 
                         case 'p':

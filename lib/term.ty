@@ -43,7 +43,6 @@ pub ns event {
     pub tag ScrollLeft;
     pub tag ScrollRight;
     pub tag Cursor;
-    pub tag Wake;
 
     pub tag Key[T] {
         nice-name() -> String where T: KeyDetails {
@@ -79,7 +78,6 @@ pub use Event = (
   | event.ScrollLeft[event.MouseDetails]
   | event.ScrollRight[event.MouseDetails]
   | event.Cursor[CursorAddress]
-  | event.Wake
   | event.EOF
 )
 
@@ -519,7 +517,8 @@ pub class TermIO {
     init(
         fd: Int = 0,
         mouse: Bool = true,
-        kitty: Bool = true
+        kitty: Bool = true,
+        events: SharedQueue[event.Event] = SharedQueue()
     ) {
         __fd = fd
 
@@ -534,7 +533,7 @@ pub class TermIO {
         __kitty = kitty
 
         __ev-stream = __read-events()
-        __ev-queue = SharedQueue()
+        __ev-queue = events
 
         __mouse = mouse
         __cursor = {
@@ -791,10 +790,6 @@ pub class TermIO {
         debug!("Event: {ppp(ev)}")
 
         ev
-    }
-
-    wake() {
-        __ev-queue.put(event.Wake)
     }
 
     cursor() -> CursorAddress {

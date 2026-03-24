@@ -6,7 +6,7 @@ import base64
 import path (Path)
 import log (..)
 
-logging({level: DEBUG})
+logging({level: ERROR})
 
 use term
 
@@ -22,10 +22,6 @@ let __tls::_timers: Array[PendingTimer] = []
 let __tls::_ctx-stack: Array[Dict[String, Any]] = [%{}]
 let __tls::_overlays: Array[Any] = []
 
-let _notify-queue = SharedQueue()
-let _has-watchers = false
-let _tio = nil
-
 const CTRL  = 4
 const SHIFT = 1
 const INF   = 100000
@@ -33,6 +29,13 @@ const INF   = 100000
 let __tls::_debug-borders? = false
 
 pub tag Exit;
+pub tag Wake;
+
+use InkEventInternal = Exit | Wake | event.Event
+
+let _event-queue: SharedQueue[InkEventInternal] = SharedQueue()
+let _tio = nil
+
 pub tag CycleCompletions, ListCompletions, Insert, ReplaceLine;
 
 use StyledText = String | chalk::Text
@@ -380,8 +383,8 @@ pub class Node {
 
         direction  = props['direction'] ?? 'column'
         gap        = int(props['gap'] ?? 0)
-        px         = int(props['paddingX'] ?? p)
-        py         = int(props['paddingY'] ?? p)
+        px         = int(props['padX'] ?? p)
+        py         = int(props['padY'] ?? p)
         mx         = int(props['marginX'] ?? m)
         my         = int(props['marginY'] ?? m)
         width      = props['width']
@@ -402,31 +405,31 @@ class PendingTimer {
     __repeat: Float | nil
     __callback: Function
     __owner: Any
-    __cancelled: Bool
+    __canceled: Bool
 
     init(deadline: Float, repeat: Float | nil, callback: Function, owner: Any) {
         __deadline = deadline
         __repeat = repeat
         __callback = callback
         __owner = owner
-        __cancelled = false
+        __canceled = false
     }
 
     deadline   { __deadline  }
     repeat     { __repeat    }
     callback   { __callback  }
     owner      { __owner     }
-    cancelled? { __cancelled }
+    canceled? { __canceled }
 
-    cancel() { __cancelled = true }
+    cancel() { __canceled = true }
     nudge(dt: Float) { __deadline -= dt }
 
     fire() {
-        if !__cancelled { __callback() }
+        if !__canceled { __callback() }
     }
 
     reschedule() {
-        if __repeat && !__cancelled {
+        if __repeat && !__canceled {
             let t = now()
             while __deadline <= t {
                 __deadline += __repeat
@@ -493,8 +496,7 @@ pub class Component {
 
     notify() {
         dirty? = true
-        _notify-queue.put(true)
-        _tio.?wake()
+        _event-queue.put(Wake)
     }
 
     adopt(other: Component) {
@@ -543,7 +545,7 @@ pub class Component {
             t.cancel()
             n += 1
         }
-        if n > 0 { debug!("  cancelled {n} timer(s)") }
+        if n > 0 { debug!("  canceled {n} timer(s)") }
         unmount()
     }
 }
@@ -624,13 +626,13 @@ pub class Card < Component {
         let bs = border-style ?? 'round'
 
         if width {
-            <Box direction="column" border-style=bs border-color=bc width=width paddingX=1
+            <Box direction="column" border-style=bs border-color=bc width=width pad-x=1
                 on-click=on-click
             >
                 {children}
             </Box>
         } else {
-            <Box direction="column" border-style=bs border-color=bc paddingX=1
+            <Box direction="column" border-style=bs border-color=bc pad-x=1
                 on-click=on-click
             >
                 {children}
@@ -646,7 +648,7 @@ pub class StatusBar < Component {
     render() -> Node {
         let c = color ?? 'fg-dim'
         let b = bg ?? 'bg-surface'
-        <Box direction="row" paddingX=1>
+        <Box direction="row" pad-x=1>
             <Text style="{c} {b}">{children}</Text>
         </Box>
     }
@@ -1055,7 +1057,7 @@ pub class TextInput < Component {
                     <Overlay x=layout-x y=popup-y>
                         <Box direction="column" bg="bg-surface"
                              border-style="single" border-color="border"
-                             paddingX=1>
+                             pad-x=1>
                             {__comp-lines.map(l ->
                                 <Text style="text">{l}</Text>
                             )}
@@ -1306,7 +1308,7 @@ pub class Select < Component {
         let sel-clr = resolve(selected-color, 'selection')
         let bc = resolve(border-color, focused? ? 'border-focus' : 'border')
 
-        <Box direction="column" border-style="round" border-color=bc paddingX=1>
+        <Box direction="column" border-style="round" border-color=bc pad-x=1>
             {[
                 do {
                     let sel? = (i == __sel)
@@ -2643,6 +2645,250 @@ pub class ScrollView < Component {
     }
 }
 
+pub class TreeView < Component {
+    root:          Any
+    children:      Function
+    label:         Function
+    key:           Function | nil
+    expandable:    Function | nil
+    icon:          Function | nil
+    on-select:     Function | nil
+    on-cursor:     Function | nil
+    height:        Int | nil
+    width:         Int | nil
+    show-guides?:  Bool | nil
+    guide-color:   String | nil
+    color:         String | Function | nil
+    cursor-color:  String | Function | nil
+
+    __current-root: Any = nil
+    __prev-root:    Any = nil
+    __expanded:     Dict[String, Bool] = %{}
+    __cursor:       Int = 0
+    __scroll:       Int = 0
+    __root-stack:   Array[Any] = []
+    __visible:      Array[Any] = []
+
+    focusable? -> Bool { true }
+
+    __key(node) -> String {
+        key ? key(node) : "{node}"
+    }
+
+    __can-expand?(node) -> Bool {
+        expandable ? expandable(node) : #(try { children(node) } catch _ { [] }) > 0
+    }
+
+    __is-expanded?(node) -> Bool {
+        __expanded[__key(node)] ?? false
+    }
+
+    __toggle!(node) {
+        let k = __key(node)
+        __expanded[k] = !(__expanded[k] ?? false)
+    }
+
+    __expand!(node) { __expanded[__key(node)] = true }
+    __collapse!(node) { __expanded[__key(node)] = false }
+
+    __flatten() -> Array[Any] {
+        let rows: Array[Any] = []
+
+        fn walk(node, depth: Int, lasts: Array[Bool]) {
+            let can? = __can-expand?(node)
+            let exp? = can? && __is-expanded?(node)
+            rows.push({node: node, depth: depth, lasts: lasts, exp?: exp?, can?: can?})
+            if exp? {
+                let kids = try { children(node) } catch _ { [] }
+                for kid, i in kids {
+                    walk(kid, depth + 1, [*lasts, i == #kids - 1])
+                }
+            }
+        }
+
+        walk(__current-root, 0, [])
+        rows
+    }
+
+    __cursor-node {
+        (__cursor >= 0 && __cursor < #__visible)
+            ? __visible[__cursor].node
+            : nil
+    }
+
+    __parent-idx(idx: Int) -> Int | nil {
+        if idx <= 0 || idx >= #__visible { return nil }
+        let target = __visible[idx].depth - 1
+        if target < 0 { return nil }
+        let i = idx - 1
+        while i >= 0 {
+            if __visible[i].depth == target { return i }
+            i -= 1
+        }
+        nil
+    }
+
+    __fire-cursor() {
+        if on-cursor && __cursor >= 0 && __cursor < #__visible {
+            on-cursor(__visible[__cursor].node)
+        }
+    }
+
+    on-event(ev) {
+        let h = int(height ?? 20)
+        let n = #__visible
+
+        fn move-to(idx: Int) {
+            let new-idx = idx.clamp(0, max(n - 1, 0))
+            if new-idx != __cursor {
+                __cursor = new-idx
+                __fire-cursor()
+            }
+        }
+
+        match ev {
+            event.Key({key: 'UP', event: (1 or 2), *}) or event.Text('k') =>
+                move-to(__cursor - 1),
+
+            event.Key({key: 'DOWN', event: (1 or 2), *}) or event.Text('j') =>
+                move-to(__cursor + 1),
+
+            (event.Key({key: 'RIGHT', event: (1 or 2), *}) or event.Text('l')) => {
+                if let $node = __cursor-node and __can-expand?(node) {
+                    if !__is-expanded?(node) {
+                        __expand!(node)
+                    } else {
+                        move-to(__cursor + 1)
+                    }
+                }
+            },
+
+            (event.Key({key: 'LEFT', event: (1 or 2), *}) or event.Text('h')) => {
+                if let $node = __cursor-node {
+                    if __can-expand?(node) && __is-expanded?(node) {
+                        __collapse!(node)
+                    } else if let $pi = __parent-idx(__cursor) {
+                        move-to(pi)
+                    }
+                }
+            },
+
+            event.Key({key: 'ENTER', event: 1, *}) => {
+                if let $node = __cursor-node {
+                    if __can-expand?(node) { __toggle!(node) }
+                    if on-select { on-select(node) }
+                }
+            },
+
+            event.Text(' ') => {
+                if let $node = __cursor-node and __can-expand?(node) {
+                    __toggle!(node)
+                }
+            },
+
+            event.Text('z') => {
+                if let $node = __cursor-node and __can-expand?(node) {
+                    __root-stack.push(__current-root)
+                    __current-root = node
+                    __expand!(node)
+                    __cursor = 0
+                    __scroll = 0
+                }
+            },
+
+            event.Key({key: 'BACKSPACE', event: (1 or 2), *}) => {
+                if #__root-stack > 0 {
+                    __current-root = __root-stack.pop()
+                    __cursor = 0
+                    __scroll = 0
+                }
+            },
+
+            event.Key({key: 'HOME', event: 1, *}) => move-to(0),
+            event.Key({key: 'END', event: 1, *})  => move-to(n - 1),
+
+            event.Key({key: 'PAGEUP', event: (1 or 2), *}) =>
+                move-to(__cursor - h),
+
+            event.Key({key: 'PAGEDOWN', event: (1 or 2), *}) =>
+                move-to(__cursor + h),
+
+            _ => ()
+        }
+    }
+
+    render() -> Node {
+        if __current-root == nil || root != __prev-root {
+            __current-root = root
+            __root-stack = []
+            __cursor = 0
+            __scroll = 0
+            __prev-root = root
+        }
+
+        __visible = __flatten()
+        let h = int(height ?? 20)
+        let guides? = show-guides? ?? true
+        let clr = resolve(color, 'text')
+        let cur-clr = resolve(cursor-color, 'selection')
+        let g-clr = guide-color ?? 'subtle'
+
+        if __cursor >= #__visible { __cursor = max(#__visible - 1, 0) }
+        if __cursor < __scroll { __scroll = __cursor }
+        if __cursor >= __scroll + h { __scroll = __cursor - h + 1 }
+        __scroll = __scroll.clamp(0, max(#__visible - h, 0))
+
+        let rows: Array[Any] = []
+        let vis-end = min(__scroll + h, #__visible)
+
+        for vi in __scroll..vis-end {
+            let row = __visible[vi]
+            let sel? = vi == __cursor
+            let d = row.depth
+            let lasts = row.lasts
+
+            let depth = int(d)
+            let guide-str = ''
+            if guides? && depth > 0 {
+                let buf = Blob()
+                for i in ..depth {
+                    buf.push((i == depth - 1)
+                        ? (lasts[i] ? '└─ ' : '├─ ')
+                        : (lasts[i] ? '   ' : '│  '))
+                }
+                guide-str = buf.str!()
+            } else if depth > 0 {
+                guide-str = '  ' * depth
+            }
+
+            let exp-str = row.can?
+                ? (row.exp? ? '▾ ' : '▸ ')
+                : (icon ? "{icon(row.node)} " : '  ')
+
+            let lbl = label(row.node)
+            let lbl-clr = sel? ? "{cur-clr} bold" : clr
+            let mark = (sel? && focused?) ? '▸ ' : '  '
+            let mark-clr = sel? ? "{cur-clr} bold" : 'text-dim'
+
+            rows.push(
+                <Text>
+                    <Text style=mark-clr>{mark}</Text>
+                    <Text style=g-clr>{guide-str}</Text>
+                    <Text style=lbl-clr>{exp-str}{lbl}</Text>
+                </Text>
+            )
+        }
+
+        if #__visible == 0 {
+            rows.push(<Text style="text-dim">  (empty)</Text>)
+        }
+
+        <Box direction="column" height=h width=width>
+            {rows}
+        </Box>
+    }
+}
+
 pub class Toast < Component {
     duration: Float | nil
     color:    String | nil
@@ -2768,8 +3014,11 @@ fn build-markup(children) -> String {
 }
 
 fn layout-text(
-    node: Node, max-w: Int, max-h: Int,
-    ox: Int, oy: Int
+    node: Node,
+    max-w: Int,
+    max-h: Int,
+    ox: Int,
+    oy: Int
 ) -> (Output, Element) {
     let markup = build-markup(node.children)
 
@@ -2783,58 +3032,28 @@ fn layout-text(
         chalk.render(markup)
     }
     let lines = rendered.lines() ?? [rendered]
-    let w = lines.map(&width).max() ?? 0
-    let padded = lines.map(line -> do {
-        let lw = line.width()
-        if lw < w {
-            _buf.clear()
-            _buf.push(line)
-            _buf.push(' ' * (w - lw))
-            _buf.str!()
-        } else {
-            line
-        }
-    })
-    let output = Output(padded, w)
-    (output, Element(ox, oy, w, output.height, node.props))
+    let width = lines.map(&width).max() ?? 0
+    let padded = lines.map(fmt@('%-*s', width, _))
+    let output = Output(padded, width)
+    (output, Element(ox, oy, width, output.height, node.props))
 }
 
 fn pad-line(line: String, lw: Int, target-w: Int) -> String {
-    if lw >= target-w { return line }
-    _buf.clear()
-    _buf.push(line)
-    _buf.push(' ' * (target-w - lw))
-    _buf.str!()
+    (lw >= target-w) ? line : fmt('%-*s', target-w, line)
 }
 
 fn clip-line(line: String, target-w: Int) -> String {
-    if line.width() <= target-w { return line }
-    let n = min(target-w, #line)
-    while n > 0 && line[;n].width() > target-w { n -= 1 }
-    while n < #line && line[;n + 1].width() <= target-w { n += 1 }
-    "{line[;n]}{RST}"
+    fmt('%.*s%s', target-w, line, RST)
 }
 
 fn align-line(line: String, lw: Int, w: Int, align: String) -> String {
-    if lw >= w { return line }
-    let space = w - lw
+    if lw >= w {
+        return line
+    }
     match align {
-        'center' => do {
-            let left = space / 2
-            let right = space - left
-            _buf.clear()
-            _buf.push(' ' * left)
-            _buf.push(line)
-            _buf.push(' ' * right)
-            _buf.str!()
-        },
-        'end' or 'right' => do {
-            _buf.clear()
-            _buf.push(' ' * space)
-            _buf.push(line)
-            _buf.str!()
-        },
-        _ => pad-line(line, lw, w)
+        'center'       => "{line:^{w}}",
+        'end', 'right' => "{line:>{w}}",
+        _              => "{line:<{w}}"
     }
 }
 
@@ -3309,7 +3528,7 @@ fn layout-node(
             if inst.focusable? { _focusables.push(inst) }
             if let $iv = inst.interval {
                 let exists = _timers.any?(
-                    t -> !t.cancelled? && t.owner == inst && t.repeat != nil
+                    t -> !t.canceled? && t.owner == inst && t.repeat != nil
                 )
                 if !exists {
                     inst.every(iv, -> do { inst.tick(); inst.invalidate!() })
@@ -3397,16 +3616,16 @@ fn render-tree(root, max-w: Int, max-h: Int = INF) -> (Output, Element) {
 }
 
 fn process-timers() -> Bool {
-    let t = now()
+    let t0 = now()
     let fired = false
     let fire-count = 0
 
-    for timer in _timers if !timer.cancelled? {
-        if timer.deadline <= t {
-            debug!("timer fired: owner={type(timer.owner)} repeat={timer.repeat != nil}")
-            timer.fire()
-            if !timer.reschedule() {
-                timer.cancel()
+    for _timers if !it.canceled? {
+        if it.deadline <= t0 {
+            debug!("timer fired: owner={type(it.owner)} repeat={it.repeat != nil}")
+            it.fire()
+            if !it.reschedule() {
+                it.cancel()
             }
             fired = true
             fire-count += 1
@@ -3414,7 +3633,7 @@ fn process-timers() -> Bool {
     }
 
     let before = #_timers
-    _timers = _timers.filter(\!_.cancelled?)
+    _timers.filter!(\!_.canceled?)
     if fire-count > 0 || before != #_timers {
         debug!("process-timers: {fire-count} fired, {before - #_timers} removed, {#_timers} remaining")
     }
@@ -3423,7 +3642,7 @@ fn process-timers() -> Bool {
 }
 
 fn next-timer-deadline() -> Float | nil {
-    return _timers.filter(\!_.cancelled?)
+    return _timers.filter(\!_.canceled?)
            .map(&.deadline)
            .min()
 }
@@ -3689,8 +3908,8 @@ pub fn run(app: Node | Component, fullscreen: Bool = true) {
         return
     }
 
-    let tio = term.TermIO(mouse=fullscreen)
-    _tio = tio
+    let tio = (_tio = term.TermIO(mouse=fullscreen, events=cast(_event-queue)))
+
     let on-ev = app.?on-event
 
     if fullscreen {
@@ -3728,6 +3947,8 @@ pub fn run(app: Node | Component, fullscreen: Bool = true) {
 
     fn repaint() {
         let (rows, cols) = tio.size()
+        app.layout-max-w = cols
+        app.layout-max-h = rows
         _ctx-stack.push(%{})
         let root = app.render()
         _ctx-stack.pop()
@@ -3766,7 +3987,6 @@ pub fn run(app: Node | Component, fullscreen: Bool = true) {
         if (ev :: event.Key) && ev.nice-name() == 'C-S-i' {
             _debug-borders? = !_debug-borders?
             dirty = true
-            critical!("debug: {_debug-borders? ? 'ON' : 'OFF'}")
             return false
         }
 
@@ -3845,41 +4065,36 @@ pub fn run(app: Node | Component, fullscreen: Bool = true) {
     }
 
     if app :: Component {
-        if !app.mounted? { app.mount!() }
+        if !app.mounted? {
+            app.mount!()
+        }
         if let $iv = app.interval {
-            app.every(iv, -> app.tick())
+            app.every(iv, app.tick)
         }
     }
 
     tio.start()
+    defer cleanup()
+
     repaint()
 
-    let quit = false
-
-    while !quit {
+    for (;;) {
         let deadline = next-timer-deadline()
-        let timeout  = if !_notify-queue.empty?() { 0.0 }
-                       else if deadline           { max(deadline - now(), 0.0) }
-                       else if _has-watchers      { 0.016 }
-                       else                       { nil }
+        let timeout  = deadline ? max(deadline - now(), 0.0) : 10.0
 
         debug!(
             "poll: timers={#_timers} "
             "timeout={show(timeout)}"
         )
 
-        if let $ev = tio.next-event(timeout) and ev !:: event.Wake {
-            quit = handle(ev)
-        }
-
-        while !quit {
-            let $ev = tio.next-event(0.0) or break
-            if ev :: event.Wake { continue }
-            quit = handle(ev)
-        }
-
-        while let Some(_) = _notify-queue.try-take(0) {
-            dirty = true
+        while let Some(ev) = _event-queue.try-take(timeout) {
+            debug!("event: {ev}")
+            timeout = 0.0
+            if ev == Wake {
+                dirty = true
+            } else {
+                break break if handle(ev)
+            }
         }
 
         if process-timers() {
@@ -3890,8 +4105,6 @@ pub fn run(app: Node | Component, fullscreen: Bool = true) {
             repaint()
         }
     }
-
-    cleanup()
 }
 
 pub class TestHarness {
@@ -3946,6 +4159,8 @@ pub class TestHarness {
     }
 
     repaint() {
+        __app.layout-max-w = __cols
+        __app.layout-max-h = __rows
         _ctx-stack.push(%{})
         let root = __app.render()
         _ctx-stack.pop()
@@ -4093,7 +4308,7 @@ pub class TestHarness {
     }
 
     advance(dt: Float) {
-        for t in _timers if !t.cancelled? {
+        for t in _timers if !t.canceled? {
             t.nudge(dt)
         }
         process-timers()
