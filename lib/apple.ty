@@ -1,0 +1,702 @@
+import ffi as c (C!)
+import ptr (typed)
+
+const cf = c.dlopen('/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation')
+        ?? throw RuntimeError('apple: failed to load CoreFoundation')
+
+const appsvcs = c.dlopen('/System/Library/Frameworks/ApplicationServices.framework/ApplicationServices')
+             ?? throw RuntimeError('apple: failed to load ApplicationServices')
+
+const iokit = c.dlopen('/System/Library/Frameworks/IOKit.framework/IOKit')
+           ?? throw RuntimeError('apple_iokit: failed to load IOKit')
+
+fn load-sym(name: String, lib: Ptr[Any]) -> Ptr[Any] {
+    let sym = c.dlsym(name, lib) ?? throw RuntimeError("apple: symbol not found: {name}")
+    c.load(c.ptr, sym)
+}
+
+const CGEventField  = c.u32
+const CGEventType   = c.u32
+const CGEventMask   = c.u64
+const CFIndex       = c.long
+const CFTimeInterval = c.double
+const Boolean       = c.int
+const CGDirectDisplayID = c.u32
+const CGWindowID    = c.u32
+const CGError       = c.i32
+const CGWindowLevel = c.i32
+const CGWindowListOption = c.u32
+const pid_t         = c.i32
+
+C! pub cf fn {
+    void CFRelease(const void *cf);
+    const void *CFRetain(const void *cf);
+
+    void *CFRunLoopGetMain(void);
+    void *CFRunLoopGetCurrent(void);
+    int CFRunLoopRunInMode(const void *mode, double seconds, int returnAfterSourceHandled);
+    void CFRunLoopAddSource(void *rl, void *source, const void *mode);
+    void CFRunLoopRemoveSource(void *rl, void *source, const void *mode);
+    void CFRunLoopStop(void *rl);
+
+    void *CFMachPortCreateRunLoopSource(void *allocator, void *port, long order);
+    void CFMachPortInvalidate(void *port);
+
+    void *CFDictionaryCreate(
+        void *allocator,
+        const void **keys,
+        const void **values,
+        long numValues,
+        const void *keyCallBacks,
+        const void *valueCallBacks
+    );
+    long CFDictionaryGetCount(const void *dict);
+    const void *CFDictionaryGetValue(const void *dict, const void *key);
+
+    void *CFArrayGetValueAtIndex(const void *arr, long idx);
+    long CFArrayGetCount(const void *arr);
+
+    void *CFStringCreateWithCString(void *alloc, const char *cStr, unsigned int encoding);
+    int CFStringGetCString(const void *str, char *buffer, long bufferSize, unsigned int encoding);
+    long CFStringGetLength(const void *str);
+
+    int CFNumberGetValue(const void *number, long theType, void *valuePtr);
+    long CFGetTypeID(const void *cf);
+    long CFStringGetTypeID(void);
+    long CFNumberGetTypeID(void);
+    long CFBooleanGetTypeID(void);
+    long CFArrayGetTypeID(void);
+    long CFDictionaryGetTypeID(void);
+    int CFBooleanGetValue(const void *boolean);
+
+    void *CFNotificationCenterGetDistributedCenter(void);
+    void *CFNotificationCenterGetLocalCenter(void);
+    void CFNotificationCenterAddObserver(
+        void *center,
+        const void *observer,
+        void *callBack,
+        const void *name,
+        const void *object,
+        long suspensionBehavior
+    );
+    void CFNotificationCenterRemoveObserver(
+        void *center,
+        const void *observer,
+        const void *name,
+        const void *object
+    );
+    void CFNotificationCenterPostNotification(
+        void *center,
+        const void *name,
+        const void *object,
+        const void *userInfo,
+        int deliverImmediately
+    );
+}
+
+
+C! pub struct CGPoint {
+    c.double x;
+    c.double y;
+}
+
+C! pub struct CGSize {
+    c.double width;
+    c.double height;
+}
+
+C! pub struct CGRect {
+    c.double x;
+    c.double y;
+    c.double width;
+    c.double height;
+}
+
+C! pub appsvcs fn {
+    void *CGEventCreate(void *source);
+    void *CGEventCreateMouseEvent(
+        void *source,
+        unsigned int mouseType,
+        CGPoint location,
+        unsigned int mouseButton
+    );
+    void *CGEventCreateKeyboardEvent(
+        void *source,
+        unsigned short virtualKey,
+        int keyDown
+    );
+    void *CGEventCreateScrollWheelEvent(
+        void *source,
+        unsigned int units,
+        unsigned int wheelCount,
+        ...
+    );
+    void *CGEventCreateCopy(const void *event);
+    void CGEventPost(unsigned int tap, void *event);
+    void CGEventPostToPid(pid_t pid, void *event);
+    unsigned int CGEventGetType(void *event);
+    void CGEventSetType(void *event, unsigned int type);
+    long long CGEventGetIntegerValueField(void *event, unsigned int field);
+    void CGEventSetIntegerValueField(void *event, unsigned int field, long long value);
+    double CGEventGetDoubleValueField(void *event, unsigned int field);
+    void CGEventSetDoubleValueField(void *event, unsigned int field, double value);
+    unsigned long long CGEventGetFlags(void *event);
+    void CGEventSetFlags(void *event, unsigned long long flags);
+    CGPoint CGEventGetLocation(void *event);
+
+    void *CGEventTapCreate(
+        unsigned int tap,
+        unsigned int place,
+        unsigned int options,
+        unsigned long long eventsOfInterest,
+        void *callback,
+        void *userInfo
+    );
+    void CGEventTapEnable(void *tap, int enable);
+
+    int AXIsProcessTrustedWithOptions(void *options);
+    int AXIsProcessTrusted(void);
+
+    unsigned int CGMainDisplayID(void);
+    unsigned int CGDisplayPixelsWide(unsigned int display);
+    unsigned int CGDisplayPixelsHigh(unsigned int display);
+    CGRect CGDisplayBounds(unsigned int display);
+    unsigned int CGDisplayIsActive(unsigned int display);
+    unsigned int CGDisplayIsBuiltin(unsigned int display);
+    unsigned int CGDisplayIsOnline(unsigned int display);
+    int CGGetActiveDisplayList(unsigned int maxDisplays, unsigned int *activeDisplays, unsigned int *displayCount);
+
+    void *CGWindowListCopyWindowInfo(unsigned int option, unsigned int relativeToWindow);
+
+    void *CGDisplayCreateImage(unsigned int displayID);
+    void *CGDisplayCreateImageForRect(unsigned int displayID, CGRect rect);
+
+    unsigned int CGWindowLevelForKey(int key);
+
+    void *CGEventSourceCreate(int stateID);
+}
+
+C! pub iokit fn {
+    unsigned int IOPMAssertionCreateWithName(
+        void *assertionType,
+        unsigned int level,
+        void *name,
+        unsigned int *assertionID
+    );
+    unsigned int IOPMAssertionRelease(unsigned int assertionID);
+}
+
+pub ns CF {
+    pub const kStringEncodingUTF8 = 0x08000100
+    pub const kStringEncodingASCII = 0x0600
+
+    pub const kCFNotificationSuspensionBehaviorDeliverImmediately = 4
+    pub const kCFNotificationSuspensionBehaviorCoalesce           = 2
+    pub const kCFNotificationSuspensionBehaviorHold               = 1
+    pub const kCFNotificationSuspensionBehaviorDrop               = 3
+
+    pub const kCFNumberSInt32Type  = 3
+    pub const kCFNumberSInt64Type  = 4
+    pub const kCFNumberFloat64Type = 6
+}
+
+pub ns cg {
+    pub const kSessionEventTap      = 1
+    pub const kHIDEventTap          = 0
+    pub const kAnnotatedSessionEventTap = 2
+
+    pub const kHeadInsertEventTap   = 0
+    pub const kTailAppendEventTap   = 1
+
+    pub const kEventTapOptionDefault    = 0x00000000
+    pub const kEventTapOptionListenOnly = 0x00000001
+
+    pub const kEventNull           = 0
+    pub const kEventLeftMouseDown  = 1
+    pub const kEventLeftMouseUp    = 2
+    pub const kEventRightMouseDown = 3
+    pub const kEventRightMouseUp   = 4
+    pub const kEventMouseMoved     = 5
+    pub const kEventLeftMouseDragged  = 6
+    pub const kEventRightMouseDragged = 7
+    pub const kEventKeyDown        = 10
+    pub const kEventKeyUp          = 11
+    pub const kEventFlagsChanged   = 12
+    pub const kEventScrollWheel    = 22
+    pub const kEventTabletPointer  = 23
+    pub const kEventTabletProximity = 24
+    pub const kEventOtherMouseDown = 25
+    pub const kEventOtherMouseUp   = 26
+    pub const kEventOtherMouseDragged = 27
+
+    pub const kEventTapDisabledByTimeout   = 0xFFFFFFFE
+    pub const kEventTapDisabledByUserInput = 0xFFFFFFFF
+
+    pub const kEventFlagMaskAlphaShift = 0x00010000
+    pub const kEventFlagMaskShift      = 0x00020000
+    pub const kEventFlagMaskControl    = 0x00040000
+    pub const kEventFlagMaskAlternate  = 0x00080000
+    pub const kEventFlagMaskCommand    = 0x00100000
+    pub const kEventFlagMaskSecondaryFn = 0x00800000
+
+    pub const kEventFieldMouseSubtype  = 55
+    pub const kKeyboardEventKeycode   = 9
+
+    pub const kWindowListOptionAll             = 0
+    pub const kWindowListOptionOnScreenOnly    = (1 << 0)
+    pub const kWindowListExcludeDesktopElements = (1 << 4)
+
+    pub const kNullWindowID = 0
+
+    pub const kEventSourceStatePrivate      = -1
+    pub const kEventSourceStateCombinedSessionState = 0
+    pub const kEventSourceStateHIDSystemState = 1
+
+    pub const kScrollEventUnitPixel = 0
+    pub const kScrollEventUnitLine  = 1
+}
+
+pub ns gesture {
+    pub const EVENT_GESTURE      = 29
+    pub const EVENT_DOCK_CONTROL = 30
+
+    pub const HID_TYPE_DOCK_SWIPE = 23
+
+    pub const MOTION_HORIZONTAL = 1
+
+    pub const BEGAN     = 1
+    pub const CHANGED   = 2
+    pub const ENDED     = 4
+    pub const CANCELLED = 8
+
+    pub const FIELD_TYPE            = 55
+    pub const FIELD_HID_TYPE        = 110
+    pub const FIELD_SCROLL_Y        = 119
+    pub const FIELD_SWIPE_MOTION    = 123
+    pub const FIELD_SWIPE_PROGRESS  = 124
+    pub const FIELD_SWIPE_VELOCITY_X = 129
+    pub const FIELD_SWIPE_VELOCITY_Y = 130
+    pub const FIELD_PHASE           = 132
+    pub const FIELD_SCROLL_FLAG_BITS = 135
+    pub const FIELD_ZOOM_DELTA_X    = 139
+}
+
+let __tls::__cf-tids = nil
+
+fn cfval(ref: Ptr[Any]) -> _ {
+    let tids = __cf-tids ?? (__cf-tids = {
+        string:  CFStringGetTypeID(),
+        number:  CFNumberGetTypeID(),
+        boolean: CFBooleanGetTypeID(),
+        array:   CFArrayGetTypeID(),
+        dict:    CFDictionaryGetTypeID()
+    })
+
+    let tid = CFGetTypeID(ref)
+
+    if tid == tids.string {
+        cfstr-read(ref)
+    } else if tid == tids.boolean {
+        CFBooleanGetValue(ref) != 0
+    } else if tid == tids.number {
+        let out = c.auto(c.box(c.i64))
+        CFNumberGetValue(ref, CF.kCFNumberSInt64Type, out)
+        out[0]
+    } else if tid == tids.array {
+        let n = CFArrayGetCount(ref)
+        [cfval(CFArrayGetValueAtIndex(ref, i)) for i in ..n]
+    } else if tid == tids.dict {
+        ref
+    }
+}
+
+fn cfstr(s: String) -> Ptr[Any] {
+    let ref = CFStringCreateWithCString(nil, s.cstr(), CF.kStringEncodingUTF8)
+    ref ?? throw RuntimeError("CFStringCreateWithCString failed for '{s}'")
+}
+
+fn cfstr-read(ref: Ptr[Any]) -> String {
+    let len = CFStringGetLength(ref) * 4 + 1
+    let buf = c.new(c.char, len)
+    defer c.free(buf)
+    CFStringGetCString(ref, buf, len, CF.kStringEncodingUTF8)
+    c.str(buf)
+}
+
+pub const kCFBooleanTrue  = load-sym('kCFBooleanTrue', cf)
+pub const kCFBooleanFalse = load-sym('kCFBooleanFalse', cf)
+
+pub const kCFRunLoopDefaultMode = load-sym('kCFRunLoopDefaultMode', cf)
+pub const kCFRunLoopCommonModes = load-sym('kCFRunLoopCommonModes', cf)
+
+pub const kCFTypeDictionaryKeyCallBacks   = c.dlsym('kCFTypeDictionaryKeyCallBacks', cf)
+pub const kCFTypeDictionaryValueCallBacks = c.dlsym('kCFTypeDictionaryValueCallBacks', cf)
+
+pub const kAXTrustedCheckOptionPrompt = load-sym('kAXTrustedCheckOptionPrompt', appsvcs)
+
+pub const kIOPMAssertionTypeNoDisplaySleep               = cfstr('NoDisplaySleepAssertion')
+pub const kIOPMAssertionTypeNoIdleSleep                  = cfstr('NoIdleSleepAssertion')
+pub const kIOPMAssertionTypePreventUserIdleDisplaySleep  = cfstr('PreventUserIdleDisplaySleep')
+pub const kIOPMAssertionTypePreventUserIdleSystemSleep   = cfstr('PreventUserIdleSystemSleep')
+
+pub const kIOPMAssertionLevelOn  = 255
+pub const kIOPMAssertionLevelOff = 0
+
+
+pub class CFRef {
+    __ptr: Ptr[Any]
+
+    init(ptr: Ptr[Any]) {
+        __ptr = ptr
+    }
+
+    retain!() {
+        CFRetain(__ptr)
+        self
+    }
+
+    release!() {
+        if __ptr != nil {
+            CFRelease(__ptr)
+            __ptr = nil
+        }
+    }
+
+    __ptr__() { __ptr }
+
+    __free__() {
+        release!()
+    }
+}
+
+pub class CGEvent : IntoPtr[Any] {
+    __ref: Ptr[Any]
+    __owned: Bool
+
+    init(ref: ?Ptr[Any] = nil, owned: Bool = true) {
+        __ref = ref ?? CGEventCreate(nil) ?? throw RuntimeError('CGEventCreate failed')
+        __owned = owned
+    }
+
+    copy() -> CGEvent {
+        CGEvent(CGEventCreateCopy(__ref))
+    }
+
+    get-int(field: Int) -> Int {
+        CGEventGetIntegerValueField(__ref, field)
+    }
+
+    set-int!(field: Int, val: Int) {
+        CGEventSetIntegerValueField(__ref, field, val)
+        self
+    }
+
+    get-float(field: Int) -> Float {
+        CGEventGetDoubleValueField(__ref, field)
+    }
+
+    set-float!(field: Int, val: Float) {
+        CGEventSetDoubleValueField(__ref, field, val)
+        self
+    }
+
+    event-type -> Int {
+        CGEventGetType(__ref)
+    }
+
+    event-type=(t: Int) {
+        CGEventSetType(__ref, t)
+    }
+
+    flags -> Int {
+        CGEventGetFlags(__ref)
+    }
+
+    flags=(f: Int) {
+        CGEventSetFlags(__ref, f)
+    }
+
+    post!(tap: Int = cg.kSessionEventTap) {
+        CGEventPost(tap, __ref)
+    }
+
+    post-to-pid!(pid: Int) {
+        CGEventPostToPid(pid, __ref)
+    }
+
+    __ptr__() { __ref }
+
+    __free__() {
+        if __owned && __ref != nil {
+            CFRelease(__ref)
+            __ref = nil
+        }
+    }
+}
+
+pub fn key-event(keycode: Int, down?: Bool, source: ?Ptr[Any] = nil) -> CGEvent {
+    let ref = CGEventCreateKeyboardEvent(source, keycode, down? ? 1 : 0)
+        ?? throw RuntimeError('CGEventCreateKeyboardEvent failed')
+    CGEvent(ref)
+}
+
+pub fn mouse-event(
+    ev-type: Int,
+    x: Float,
+    y: Float,
+    button: Int = 0,
+    source: ?Ptr[Any] = nil
+) -> CGEvent {
+    let pt = c.auto(c.new(c.double, 2))
+    pt[0] = x
+    pt[1] = y
+    let ref = CGEventCreateMouseEvent(source, ev-type, pt, button)
+        ?? throw RuntimeError('CGEventCreateMouseEvent failed')
+    CGEvent(ref)
+}
+
+pub fn scroll-event(dy: Int, dx: Int = 0, source: ?Ptr[Any] = nil) -> CGEvent {
+    let ref = CGEventCreateScrollWheelEvent(source, cg.kScrollEventUnitLine, 2, (c.i32, dy), (c.i32, dx))
+        ?? throw RuntimeError('CGEventCreateScrollWheelEvent failed')
+    CGEvent(ref)
+}
+
+pub class EventTap {
+    __tap: Ptr[Any]
+    __src: Ptr[Any]
+    __closure: Ptr[Any]
+
+    init(
+        mask: Int,
+        callback: _,
+        location: Int = cg.kSessionEventTap,
+        placement: Int = cg.kHeadInsertEventTap,
+        options: Int = cg.kEventTapOptionDefault
+    ) {
+        C! closure c-cb(proxy: c.ptr, ev-type: c.u32, ev: c.ptr, ctx: c.ptr) -> c.ptr {
+            match ev-type {
+                cg.kEventTapDisabledByTimeout or
+                cg.kEventTapDisabledByUserInput => do {
+                    CGEventTapEnable(__tap, 1)
+                    ev
+                },
+
+                _ => callback(ev-type, CGEvent(ev, owned=false))
+            }
+        }
+
+        __closure = c-cb
+
+        __tap = CGEventTapCreate(location, placement, options, mask, c-cb, nil)
+              ?? throw RuntimeError('CGEventTapCreate failed (check Accessibility permissions)')
+
+        __src = CFMachPortCreateRunLoopSource(nil, __tap, 0)
+        CFRunLoopAddSource(CFRunLoopGetMain(), __src, kCFRunLoopCommonModes)
+        CGEventTapEnable(__tap, 1)
+    }
+
+    enable!() {
+        CGEventTapEnable(__tap, 1)
+    }
+
+    disable!() {
+        CGEventTapEnable(__tap, 0)
+    }
+
+    close() {
+        if __tap != nil {
+            CGEventTapEnable(__tap, 0)
+            CFRunLoopRemoveSource(CFRunLoopGetMain(), __src, kCFRunLoopCommonModes)
+            CFRelease(__src)
+            CFMachPortInvalidate(__tap)
+            CFRelease(__tap)
+            __tap = nil
+        }
+    }
+
+    __drop__() {
+        close()
+    }
+
+    __free__() {
+        close()
+    }
+}
+
+pub ns run-loop {
+    pub fn main() -> Ptr[Any] {
+        CFRunLoopGetMain()
+    }
+
+    pub fn current() -> Ptr[Any] {
+        CFRunLoopGetCurrent()
+    }
+
+    pub fn run(timeout: Float = 1.0) -> Int {
+        CFRunLoopRunInMode(kCFRunLoopDefaultMode, timeout, 1)
+    }
+
+    pub fn stop() {
+        CFRunLoopStop(CFRunLoopGetMain())
+    }
+}
+
+pub fn accessibility-trusted?(prompt?: Bool = true) -> Bool {
+    let keys = c.auto(c.new(c.ptr, 1))
+    let vals = c.auto(c.new(c.ptr, 1))
+
+    keys[0] = kAXTrustedCheckOptionPrompt
+    vals[0] = prompt? ? kCFBooleanTrue : kCFBooleanFalse
+
+    let opts = CFDictionaryCreate(
+        nil, keys, vals, 1,
+        kCFTypeDictionaryKeyCallBacks,
+        kCFTypeDictionaryValueCallBacks
+    )
+    defer CFRelease(opts)
+
+    AXIsProcessTrustedWithOptions(opts) != 0
+}
+
+pub ns display {
+    pub fn main-id() -> Int {
+        CGMainDisplayID()
+    }
+
+    pub fn width(id: ?Int) -> Int {
+        CGDisplayPixelsWide(id ?? main-id())
+    }
+
+    pub fn height(id: ?Int) -> Int {
+        CGDisplayPixelsHigh(id ?? main-id())
+    }
+
+    pub fn size(id: ?Int) -> (Int, Int) {
+        let d = id ?? main-id()
+        (CGDisplayPixelsWide(d), CGDisplayPixelsHigh(d))
+    }
+
+    pub fn active?(id: Int) -> Bool {
+        CGDisplayIsActive(id) != 0
+    }
+
+    pub fn builtin?(id: Int) -> Bool {
+        CGDisplayIsBuiltin(id) != 0
+    }
+
+    pub fn online?(id: Int) -> Bool {
+        CGDisplayIsOnline(id) != 0
+    }
+
+    pub fn bounds(id: ?Int) -> CGRect {
+        CGDisplayBounds(id ?? main-id())
+    }
+
+    pub fn list() -> Array[Int] {
+        let count = c.auto(c.box(c.u32))
+        CGGetActiveDisplayList(0, nil, count)
+        let n: Int = count[0]
+        if n == 0 { return [] }
+        let ids = c.auto(c.new(c.u32, n))
+        CGGetActiveDisplayList(n, ids, count)
+        [ids[i] for i in ..n]
+    }
+}
+
+pub fn window-list(
+    options: Int = cg.kWindowListOptionOnScreenOnly,
+    relative-to: Int = cg.kNullWindowID
+) -> Array[Dict[String, _]] {
+    let arr = CGWindowListCopyWindowInfo(options, relative-to)
+    if arr == nil { return [] }
+    defer CFRelease(arr)
+
+    let key-names = [
+        'kCGWindowNumber',
+        'kCGWindowOwnerPID',
+        'kCGWindowOwnerName',
+        'kCGWindowName',
+        'kCGWindowLayer',
+        'kCGWindowAlpha',
+        'kCGWindowMemoryUsage',
+        'kCGWindowIsOnscreen'
+    ]
+
+    let cf-keys = key-names.map(cfstr)
+    defer for k in cf-keys { CFRelease(k) }
+
+    let n = CFArrayGetCount(arr)
+    let result = []
+
+    for i in ..n {
+        let dict = CFArrayGetValueAtIndex(arr, i)
+        let entry = %{}
+        for name, j in key-names {
+            if let $val = CFDictionaryGetValue(dict, cf-keys[j]) {
+                entry[name] = cfval(val)
+            }
+        }
+        result.push(entry)
+    }
+
+    result
+}
+
+pub fn event-source(state: Int = cg.kEventSourceStatePrivate) -> Ptr[Any] | nil {
+    CGEventSourceCreate(state)
+}
+
+pub class PowerAssertion {
+    __id: Int
+    __active: Bool
+
+    init(type: Ptr[Any], reason: String) {
+        let id-out = c.auto(c.box(c.u32))
+        let cf-reason = cfstr(reason)
+        defer CFRelease(cf-reason)
+
+        let err = IOPMAssertionCreateWithName(type, kIOPMAssertionLevelOn, cf-reason, id-out)
+        if err != 0 {
+            throw RuntimeError("IOPMAssertionCreate failed: error {err}")
+        }
+        __id = id-out[0]
+        __active = true
+    }
+
+    release!() {
+        if __active {
+            IOPMAssertionRelease(__id)
+            __active = false
+        }
+    }
+
+    active? -> Bool { __active }
+
+    __free__() { release!() }
+}
+
+pub fn prevent-display-sleep(reason: String = 'Ty: prevent display sleep') -> PowerAssertion {
+    PowerAssertion(kIOPMAssertionTypeNoDisplaySleep, reason)
+}
+
+pub fn prevent-idle-sleep(reason: String = 'Ty: prevent idle sleep') -> PowerAssertion {
+    PowerAssertion(kIOPMAssertionTypeNoIdleSleep, reason)
+}
+
+pub ns scroll-fields {
+    pub const DELTA_AXIS1         = 11
+    pub const DELTA_AXIS2         = 12
+    pub const FIXED_PT_AXIS1      = 93
+    pub const FIXED_PT_AXIS2      = 94
+    pub const POINT_DELTA_AXIS1   = 96
+    pub const POINT_DELTA_AXIS2   = 97
+    pub const SCROLL_PHASE        = 99
+    pub const SCROLL_COUNT        = 100
+    pub const MOMENTUM_PHASE      = 123
+}
+
+pub fn mouse-location() -> (Float, Float) {
+    let ev = CGEvent()
+    let loc = CGEventGetLocation(ev)
+    return {x: loc.x, y: loc.y}
+}

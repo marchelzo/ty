@@ -2945,8 +2945,6 @@ resolve_access(Ty *ty, Scope const *scope, char **parts, int n, Expr *e, bool st
                 f->namespace = left;
                 f->module = NULL;
                 f->symbol = sym;
-                f->xscope = (Scope *)scope;
-                f->xfunc = STATE.func;
                 f->_type = sym->type;
                 fc.function = f;
 
@@ -2958,8 +2956,6 @@ resolve_access(Ty *ty, Scope const *scope, char **parts, int n, Expr *e, bool st
                 e->namespace = left;
                 e->module = "";
                 e->symbol = sym;
-                e->xscope = (Scope *)scope;
-                e->xfunc = STATE.func;
                 e->_type = sym->type;
         }
 
