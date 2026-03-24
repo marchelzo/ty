@@ -2,7 +2,7 @@ import ty
 import ty.parse (show as sourceOf)
 import sqlite (SQLite)
 import time
-import temporal
+import date
 
 pub __tls::_db: _ = SQLite(':memory:')
 let _tables = []
@@ -558,24 +558,24 @@ fn _add-err(errs: Dict, field: String, msg: String) {
     errs[field].push(msg)
 }
 
-let _temporal-types = %{
+let _date-types = %{
     'PlainDate':     true,
     'PlainDateTime': true,
     'PlainTime':     true,
     'Instant':       true
 }
 
-fn _temporal?(name: String) -> Bool {
-    name in _temporal-types
+fn _date?(name: String) -> Bool {
+    name in _date-types
 }
 
 fn _deserialize(val: String | nil, tname: String) {
     if val == nil { return nil }
     match tname {
-        'PlainDate'     => temporal.PlainDate.from(val),
-        'PlainDateTime' => temporal.PlainDateTime.from(val),
-        'PlainTime'     => temporal.PlainTime.from(val),
-        'Instant'       => temporal.Instant.from(val),
+        'PlainDate'     => date.PlainDate.from(val),
+        'PlainDateTime' => date.PlainDateTime.from(val),
+        'PlainTime'     => date.PlainTime.from(val),
+        'Instant'       => date.Instant.from(val),
         _               => val
     }
 }
@@ -585,7 +585,7 @@ fn _now() -> String {
 }
 
 fn _now-dt() {
-    temporal.now()
+    date.now()
 }
 
 pub fn transaction(f, db: SQLite | nil = nil) {
@@ -738,10 +738,10 @@ pub macro table(def) {
         let dflt = (dflt-node != nil)
             ? ty.eval(dflt-node)
             : nil
-        let temporal = _temporal?(tyname) ? tyname : nil
+        let date = _date?(tyname) ? tyname : nil
 
         cols.push({
-            name, sql-type, fk-table, fk-col, temporal,
+            name, sql-type, fk-table, fk-col, date,
             pk:   false,
             auto: false,
             uniq: uniq?,
@@ -804,7 +804,7 @@ pub macro table(def) {
 
     fn fld-expr(c: _) {
         let id = ty.Id(name: c.name)
-        (c.temporal != nil) ? $$[ "{$$id}" $$] : id
+        (c.date != nil) ? $$[ "{$$id}" $$] : id
     }
 
     fn flds(cs: _) { [fld-expr(it) for cs] }
@@ -817,7 +817,7 @@ pub macro table(def) {
     $$]
 
     let user-methods = cls.methods
-    let has-method = %{*: false}
+    let has-method   = %{*: false}
     for m in user-methods {
         let ty.Func($f) = m
         has-method[f.name] = true
@@ -828,7 +828,7 @@ pub macro table(def) {
     let has-created-at = ca-col != nil
     let has-updated-at = ua-col != nil
 
-    let ts-fn = (ca-col != nil && ca-col.temporal == 'PlainDateTime')
+    let ts-fn = (ca-col != nil && ca-col.date == 'PlainDateTime')
         ? _now-dt
         : _now
     let ts-created = $$[ createdAt = $$(ty.Value(ts-fn))() $$]
@@ -1031,8 +1031,8 @@ pub macro table(def) {
 
     fn row-val(c: _) {
         let $k = ty.String(c.name)
-        if c.temporal != nil {
-            let $tn = ty.String(c.temporal)
+        if c.date != nil {
+            let $tn = ty.String(c.date)
             $$[ $$::(_deserialize)(r[$$k], $$tn) $$]
         } else {
             $$[ r[$$k] $$]

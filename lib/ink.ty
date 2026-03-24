@@ -4,7 +4,7 @@ import os (SIGWINCH, signal, write, sleep)
 import time (now)
 import base64
 import path (Path)
-import temporal
+import date
 import log (..)
 
 logging({level: ERROR})
@@ -2657,7 +2657,7 @@ pub class ScrollView < Component {
 }
 
 pub class DatePicker < Component {
-    value:        temporal.PlainDate | nil
+    value:        date.PlainDate | nil
     on-change:    Function | nil
     on-select:    Function | nil
     first-day:    Int | nil
@@ -2670,7 +2670,7 @@ pub class DatePicker < Component {
     __year:       Int = 0
     __month:      Int = 0
     __day:        Int = 0
-    __today:      temporal.PlainDate | nil = nil
+    __today:      date.PlainDate | nil = nil
     __grid-offset: Int = 0
     __grid-dim:    Int = 0
 
@@ -2678,7 +2678,7 @@ pub class DatePicker < Component {
 
     __ensure-init() {
         if __today { return }
-        let td = temporal.today()
+        let td = date.today()
         __today = td
         let v = value ?? td
         __year  = v.year
@@ -2687,11 +2687,11 @@ pub class DatePicker < Component {
     }
 
     __cursor-date() {
-        temporal.PlainDate(__year, __month, __day.clamp(1, __dim()))
+        date.PlainDate(__year, __month, __day.clamp(1, __dim()))
     }
 
     __dim() -> Int {
-        temporal.PlainDate(__year, __month, 1).daysInMonth
+        date.PlainDate(__year, __month, 1).daysInMonth
     }
 
     __nav(d) {
@@ -2707,7 +2707,7 @@ pub class DatePicker < Component {
         while m > 12 { m -= 12; y += 1 }
         __year  = y
         __month = m
-        __day   = __day.clamp(1, temporal.PlainDate(y, m, 1).daysInMonth)
+        __day   = __day.clamp(1, date.PlainDate(y, m, 1).daysInMonth)
         __fire-change()
     }
 
@@ -2730,16 +2730,16 @@ pub class DatePicker < Component {
         __ensure-init()
         match ev {
             event.Key({key: 'LEFT', event: (1 or 2), *}) or event.Text('h') =>
-                __nav(-1 * temporal.DAY),
+                __nav(-1 * date.DAY),
 
             event.Key({key: 'RIGHT', event: (1 or 2), *}) or event.Text('l') =>
-                __nav(1 * temporal.DAY),
+                __nav(1 * date.DAY),
 
             event.Key({key: 'UP', event: (1 or 2), *}) or event.Text('k') =>
-                __nav(-7 * temporal.DAY),
+                __nav(-7 * date.DAY),
 
             event.Key({key: 'DOWN', event: (1 or 2), *}) or event.Text('j') =>
-                __nav(7 * temporal.DAY),
+                __nav(7 * date.DAY),
 
             event.Key({key: 'PAGEUP', event: (1 or 2), *}) =>
                 __set-month(__year, __month - 1),
@@ -2791,7 +2791,7 @@ pub class DatePicker < Component {
         let dclr  = dim-color ?? 'text-dim'
         let nclr  = color ?? 'text'
 
-        let first = temporal.PlainDate(__year, __month, 1)
+        let first = date.PlainDate(__year, __month, 1)
         let dim   = first.daysInMonth
         let dow1  = first.dayOfWeek % 7
 
@@ -3523,6 +3523,38 @@ fn reconcile(comp: Component, path: String) -> Component {
     }
 }
 
+fn finish-box(
+    lines: Array[String], w: Int,
+    px: Int, py: Int, mx: Int, my: Int,
+    bstyle: Array[String] | nil, bcolor: String | nil,
+    bg: String | nil, target-w: Int | nil, max-w: Int,
+    ox: Int, oy: Int, props: Dict[String, Any],
+    child-elements: Array[Element]
+) -> (Output, Element) {
+    let (lines, w) = apply-padding(lines, w, px, py)
+
+    if let $bg = bg {
+        if !target-w && max-w < INF && max-w > w {
+            for line, i in lines {
+                lines[i] = pad-line(line, line.width(), max-w)
+            }
+            w = max-w
+        }
+        lines = apply-bg(lines, bg)
+    }
+
+    if bstyle {
+        let (lines, w) = apply-border(lines, w, bstyle, bcolor)
+        let (lines, w) = apply-padding(lines, w, mx, my)
+        let output = Output(lines, w)
+        return (output, Element(ox, oy, w, output.height, props, child-elements))
+    }
+
+    let (lines, w) = apply-padding(lines, w, mx, my)
+    let output = Output(lines, w)
+    (output, Element(ox, oy, w, output.height, props, child-elements))
+}
+
 fn layout-box(
     node: Node,
     max-w: Int,
@@ -3531,109 +3563,110 @@ fn layout-box(
     ox: Int,
     oy: Int
 ) -> (Output, Element) {
-    let direction = node.direction
-    let gap       = node.gap
-    let px        = node.px
-    let py        = node.py
-    let mx        = node.mx
-    let my        = node.my
-    let bstyle    = node.bstyle
-    let bcolor    = node.bcolor
-    let target-w  = node.width
-    let target-h  = node.height
+    let children   = node.children
+    let n-children = #children
+    let direction  = node.direction
+    let gap        = node.gap
+    let px         = node.px
+    let py         = node.py
+    let mx         = node.mx
+    let my         = node.my
+    let bstyle     = node.bstyle
+    let bcolor     = node.bcolor
+    let target-w   = node.width
+    let target-h   = node.height
+    let border-v   = bstyle ? 1 : 0
 
-    let chrome-x = 2 * mx + 2 * px + (bstyle ? 2 : 0)
-    let chrome-y = 2 * my + 2 * py + (bstyle ? 2 : 0)
+    let chrome-x = 2 * (mx + px + border-v)
+    let chrome-y = 2 * (my + py + border-v)
 
     let outer-w = target-w ?? max-w
     let outer-h = target-h ?? max-h
     let content-w = max(outer-w - chrome-x, 0)
     let content-h = max(outer-h - chrome-y, 0)
 
-    let content-ox = ox + mx + px + (bstyle ? 1 : 0)
-    let content-oy = oy + my + py + (bstyle ? 1 : 0)
+    let content-ox = ox + mx + px + border-v
+    let content-oy = oy + my + py + border-v
 
-    fn child-flex(child) -> Int | nil {
-        match child {
+    if n-children == 0 {
+        let w = target-w ? content-w : 0
+        let lines: Array[String] = []
+        if target-h {
+            let blank = ' ' * w
+            for ..max(int(target-h) - chrome-y, 0) {
+                lines.push(blank)
+            }
+        }
+        return finish-box(lines, w, px, py, mx, my, bstyle, bcolor,
+                          node.bg, target-w, max-w, ox, oy, node.props, [])
+    }
+
+    let row? = (direction == 'row')
+    let total-flex = 0
+    let has-flex? = false
+    let flexes: Array[Int | nil] = []
+
+    for child in children {
+        let f = match child {
             n: Node      => n.flex,
             c: Component => c.?flex,
             _            => nil
         }
+        flexes.push(f)
+        if f {
+            total-flex += int(f)
+            has-flex? = true
+        }
     }
 
-    let flexes = node.children.map(child-flex)
-    let total-flex: Int = flexes.map(\int(_ ?? 0)).sum(0)
-    let num-gaps = gap * max(#node.children - 1, 0)
+    let child-widths: Array[Int] = []
+    let child-heights: Array[Int] = []
 
-    let child-widths = []
-    let child-heights = []
-
-    if total-flex > 0 && direction == 'row' {
-        let fixed-w = 0
+    if has-flex? {
+        let fixed = 0
         let snap-ov = #_overlays
         let snap-fc = #_focusables
         let snap-ki = #_kitty-images
-        for child, i in node.children if flexes[i] == nil {
+        for child, i in children if flexes[i] == nil {
             let (o, _) = layout-node(child, content-w, content-h, "{path}.{i}", 0, 0)
-            fixed-w += o.width
+            fixed += row? ? o.width : o.height
         }
         _overlays.take!(snap-ov)
         _focusables.take!(snap-fc)
         _kitty-images.take!(snap-ki)
-        let avail = max(content-w - fixed-w - num-gaps, 0)
-        debug!("flex-row [{path}]: content-w={content-w} fixed={fixed-w} avail={avail} total-flex={total-flex}")
-        for i in ..#node.children {
-            let fw = match flexes[i] {
-                    nil => content-w,
-                    f   => max(int(avail * f / total-flex), 0)
-            }
-            child-widths.push(fw)
-            child-heights.push(content-h)
-        }
-    } else if total-flex > 0 && direction == 'column' {
-        let fixed-h = 0
-        let snap-ov = #_overlays
-        let snap-fc = #_focusables
-        let snap-ki = #_kitty-images
-        for child, i in node.children if flexes[i] == nil {
-            let (o, _) = layout-node(child, content-w, content-h, "{path}.{i}", 0, 0)
-            fixed-h += o.height
-        }
-        _overlays.take!(snap-ov)
-        _focusables.take!(snap-fc)
-        _kitty-images.take!(snap-ki)
-        let avail = max(content-h - fixed-h - num-gaps, 0)
-        debug!("flex-col [{path}]: content-h={content-h} fixed={fixed-h} avail={avail} total-flex={total-flex}")
-        for i in ..#node.children {
-            child-widths.push(content-w)
-            let fh = match flexes[i] {
-                    nil => content-h,
-                    f   => max(int(avail * f / total-flex), 0)
-            }
-            child-heights.push(fh)
+        let num-gaps = gap * max(n-children - 1, 0)
+        let pool = max((row? ? content-w : content-h) - fixed - num-gaps, 0)
+        debug!("{row? ? 'flex-row' : 'flex-col'} [{path}]: pool={pool} fixed={fixed} total-flex={total-flex}")
+        for i in ..n-children {
+            let share = flexes[i] ? max(pool * int(flexes[i]) / total-flex, 0) : nil
+            child-widths.push(row?  ? (share ?? content-w) : content-w)
+            child-heights.push(row? ? content-h : (share ?? content-h))
         }
     } else {
-        for i in ..#node.children {
+        for ..n-children {
             child-widths.push(content-w)
             child-heights.push(content-h)
         }
     }
 
-    let blocks = []
-    let child-elements = []
+    let blocks: Array[Output] = []
+    let child-elements: Array[Element] = []
     let cx = content-ox
     let cy = content-oy
+    let flex-prop = row? ? 'width' : 'height'
 
-    for child, i in node.children {
+    for child, i in children {
         let fw = child-widths[i]
         let fh = child-heights[i]
         let child-node = if flexes[i] {
-            match (child, direction) {
-                (n: Node, 'row')      => Node(n.tag, %{**n.props, 'width': fw}, n.children),
-                (n: Node, 'column')   => Node(n.tag, %{**n.props, 'height': fh}, n.children),
-                (c: Component, 'row') => do { c.width  = fw; c },
-                (c: Component, _)     => do { c.height = fh; c },
-                _                     => child
+            match child {
+                n: Node      => Node(n.tag, n.props + %{flex-prop: (row? ? fw : fh)}, n.children),
+                c: Component => do {
+                    if row? { c.width  = fw }
+                    else    { c.height = fh }
+                    c
+                },
+                _            => child
             }
         } else {
             child
@@ -3641,75 +3674,65 @@ fn layout-box(
         let (out, el) = layout-node(child-node, fw, fh, "{path}.{i}", cx, cy)
         blocks.push(out)
         child-elements.push(el)
-        if direction == 'row' {
-            cx += out.width + gap
-        } else {
-            cy += out.height + gap
-        }
+        if row? { cx += out.width  + gap }
+        else    { cy += out.height + gap }
     }
 
     let min-content-w: Int = target-w ? content-w : 0
     let min-content-h: Int = target-h ? content-h : 0
+    let align   = node.align
+    let justify = node.justify
 
-    let (lines, w) = (direction == 'row')
-        ? stack-row(blocks, gap, node.align, node.justify, content-w, min-content-h)
-        : stack-column(blocks, gap, min-content-w, node.align, node.justify, content-h)
+    let (lines, w) = row?
+        ? stack-row(blocks, gap, align, justify, content-w, min-content-h)
+        : stack-column(blocks, gap, min-content-w, align, justify, content-h)
 
-    fn fixup-positions() {
-        if direction == 'column' {
+    if justify != 'start' || align != 'start' {
+        let do-justify = justify != 'start'
+        if !row? {
             let stacked-w = max(blocks.map(&.width).max() ?? 0, min-content-w)
-            let stacked-h = blocks.map(&.height).sum(0) + gap * max(#blocks - 1, 0)
-            let use-justify = (node.justify != 'start') && (content-h > 0) && (content-h < INF)
-            let gaps = use-justify ?: compute-gaps(#blocks, stacked-h, content-h, gap, node.justify)
+            let stacked-h = blocks.map(&.height).sum(0) + gap * max(n-children - 1, 0)
+            let gaps = (do-justify && content-h > 0 && content-h < INF)
+                ? compute-gaps(n-children, stacked-h, content-h, gap, justify)
+                : nil
             let dy = 0
             for el, i in child-elements {
-                let g = gaps
-                    ? ((i < #gaps) ? gaps[i] : 0)
-                    : ((i > 0) ? gap : 0)
+                let g = gaps ? ((i < #gaps) ? gaps[i] : 0) : ((i > 0) ? gap : 0)
                 let extra-y = dy + g - ((i > 0) ? gap : 0)
                 dy += g - ((i > 0) ? gap : 0)
                 if extra-y != 0 {
                     shift-element(el, 0, extra-y)
                 }
-                let dx = match node.align {
-                    'center'          => (stacked-w - el.w) / 2,
-                    'end' or 'right'  => stacked-w - el.w,
-                    _                 => 0
+                let dx = match align {
+                    'center'         => (stacked-w - el.w) / 2,
+                    'end' or 'right' => stacked-w - el.w,
+                    _                => 0
                 }
-                if dx != 0 {
-                    shift-element(el, dx, 0)
-                }
+                if dx != 0 { shift-element(el, dx, 0) }
             }
         } else {
             let stacked-h = max(blocks.map(&.height).max() ?? 0, min-content-h)
-            let use-justify = node.justify != 'start' && content-w > 0 && content-w < INF
-            let stacked-w = blocks.map(&.width).sum(0) + gap * max(#blocks - 1, 0)
-            let gaps = use-justify
-                ? compute-gaps(#blocks, stacked-w, content-w, gap, node.justify)
+            let stacked-w = blocks.map(&.width).sum(0) + gap * max(n-children - 1, 0)
+            let gaps = (do-justify && content-w > 0 && content-w < INF)
+                ? compute-gaps(n-children, stacked-w, content-w, gap, justify)
                 : nil
             let dx = 0
             for el, i in child-elements {
-                let g = gaps
-                    ? ((i < #gaps) ? gaps[i] : 0)
-                    : ((i > 0) ? gap : 0)
+                let g = gaps ? ((i < #gaps) ? gaps[i] : 0) : ((i > 0) ? gap : 0)
                 let extra-x = dx + g - ((i > 0) ? gap : 0)
                 dx += g - ((i > 0) ? gap : 0)
                 if extra-x != 0 {
                     shift-element(el, extra-x, 0)
                 }
-                let dy = match node.align {
+                let dy = match align {
                     'center'          => (stacked-h - el.h) / 2,
                     'end' or 'bottom' => stacked-h - el.h,
                     _                 => 0
                 }
-                if dy != 0 {
-                    shift-element(el, 0, dy)
-                }
+                if dy != 0 { shift-element(el, 0, dy) }
             }
         }
     }
-
-    fixup-positions()
 
     if target-w {
         if w > content-w {
@@ -3732,36 +3755,21 @@ fn layout-box(
             let total = #lines
             let s = int(scroll-offset).clamp(0, max(total - th, 0))
             debug!("scroll [{path}]: offset={s} visible={th} total={total}")
-            lines = lines[s ; min(s + th, total)]
+            lines = lines[s;min(s + th, total)]
             node.props['_scroll-total'] = total
         }
-        if #lines > th { lines = lines[;th] }
-        let blank = ' ' * w
-        while #lines < th {
-            lines.push(blank)
+        if #lines > th {
+            lines.take!(th)
+        } else {
+            let blank = ' ' * w
+            while #lines < th {
+                lines.push(blank)
+            }
         }
     }
 
-    let (lines, w) = apply-padding(lines, w, px, py)
-
-    if let $bg = node.bg {
-        if !target-w && max-w < INF && max-w > w {
-            lines = lines.map(line -> pad-line(line, line.width(), max-w))
-            w = max-w
-        }
-        lines = apply-bg(lines, bg)
-    }
-
-    if bstyle {
-        let (lines, w) = apply-border(lines, w, bstyle, bcolor)
-        let (lines, w) = apply-padding(lines, w, mx, my)
-        let output = Output(lines, w)
-        return (output, Element(ox, oy, w, output.height, node.props, child-elements))
-    }
-
-    let (lines, w) = apply-padding(lines, w, mx, my)
-    let output = Output(lines, w)
-    (output, Element(ox, oy, w, output.height, node.props, child-elements))
+    finish-box(lines, w, px, py, mx, my, bstyle, bcolor,
+               node.bg, target-w, max-w, ox, oy, node.props, child-elements)
 }
 
 fn layout-overlay(node: Node, max-w: Int, max-h: Int, path: String) -> (Output, Element) {

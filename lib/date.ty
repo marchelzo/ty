@@ -1,20 +1,4 @@
-/*
- * temporal.ty — ECMAScript Temporal API for Ty
- *
- * Implements the major types from the TC39 Temporal proposal:
- *   - PlainDate, PlainTime, PlainDateTime, PlainYearMonth, PlainMonthDay
- *   - Instant, ZonedDateTime
- *   - Duration
- *   - Now
- *
- * All calendar arithmetic is ISO 8601 (proleptic Gregorian).
- */
-
 import time
-
-/* ============================================================================
- * Helpers
- * ============================================================================ */
 
 fn __is-leap-year(y: Int) -> Bool {
     y % 4 == 0 && (y % 100 != 0 || y % 400 == 0)
@@ -52,14 +36,13 @@ fn __validate-time(hour: Int, minute: Int, second: Int, millisecond: Int, micros
     if nanosecond < 0 || nanosecond > 999 { throw ValueError("nanosecond must be 0..999, got {nanosecond}") }
 }
 
-/* Convert a date to a day number (days since epoch 1970-01-01) using a fast algorithm */
 fn __date-to-epoch-days(year: Int, month: Int, day: Int) -> Int {
     let y = year
     let m = month
-    if m <= 2 { y -= 1 }
-    let era = (if y >= 0 { y } else { y - 399 }) / 400
+    y -= (m <= 2)
+    let era = ((y >= 0) ? y : y - 399) / 400
     let yoe = y - era * 400
-    let doy = (153 * (m + (if m > 2 { -3 } else { 9 })) + 2) / 5 + day - 1
+    let doy = (153 * (m + ((m > 2) ? -3 : 9)) + 2) / 5 + day - 1
     let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy
     era * 146097 + doe - 719468
 }

@@ -372,6 +372,12 @@ DoGeq(Ty *ty);
 void
 vm_jit_neg(Ty *ty);
 
+void
+vm_jit_get_member(Ty *ty);
+
+void
+vm_jit_try_member_access(Ty *ty, int z);
+
 char *
 co_colored(Ty *ty);
 
