@@ -1,5 +1,5 @@
 import chalk (chalk, escape as chalk-escape)
-import term
+import term (event)
 import os (SIGWINCH, signal, write, sleep)
 import time (now)
 import base64
@@ -8,8 +8,6 @@ import date
 import log (..)
 
 logging({level: ERROR})
-
-use term
 
 let __tls::_out = Blob()
 let __tls::_buf = Blob()

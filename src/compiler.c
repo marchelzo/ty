@@ -2802,9 +2802,9 @@ inline static Expr *
 resolve_access(Ty *ty, Scope const *scope, char **parts, int n, Expr *e, bool strict)
 {
         static byte_vector mod;
-        vN(mod) = 0;
 
         Symbol *sym = NULL;
+        vN(mod) = 0;
 
 #if defined(TY_DEBUG_NAMES)
         printf("resolve_access(): parts=[");
@@ -2852,9 +2852,11 @@ resolve_access(Ty *ty, Scope const *scope, char **parts, int n, Expr *e, bool st
         case EXPRESSION_METHOD_CALL:
                 left = e->object;
                 break;
+
         case EXPRESSION_NAMESPACE:
                 left = e->parent;
                 break;
+
         default:
                 left = NULL;
         }
