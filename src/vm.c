@@ -11587,6 +11587,41 @@ vm_jit_record_rest(Ty *ty, Value *tos, Value *target, i32 const *excluded_ids)
 }
 
 void
+vm_jit_get_member(Ty *ty)
+{
+        i32 z = GetDynamicMemberId(ty, true);
+        if (z < 0) {
+                z = -(z + 1);
+        }
+
+        Value v;
+
+        if (IsNone((v = LoadFieldFast(ty, z)))) {
+                v = GetMember(ty, z, true, true);
+        }
+
+        switch (v.type) {
+        case VALUE_BREAK:
+                vm_exec(ty, IP);
+                break;
+
+        default:
+                xpush(v);
+                break;
+
+        case VALUE_NONE:
+                BadFieldAccess(ty, top(), z);
+                UNREACHABLE();
+        }
+}
+
+void
+vm_jit_try_member_access(Ty *ty, int z)
+{
+        push(GetMember(ty, z, true, true));
+}
+
+void
 TyPostFork(Ty *ty)
 {
         TySpinLockInit(&ty->group->GCLock);

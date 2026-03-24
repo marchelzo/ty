@@ -994,6 +994,20 @@ jit_rt_member(Ty *ty, Value *result, Value *obj, int member_id)
         *v_(STACK, idx) = v;
 }
 
+static void
+jit_rt_try_member(Ty *ty, Value *top, int member_id)
+{
+        vN(STACK) = top - vv(STACK);
+        vm_jit_try_member_access(ty, member_id);
+}
+
+static void
+jit_rt_get_member(Ty *ty, Value *top)
+{
+        vN(STACK) = top - vv(STACK);
+        vm_jit_get_member(ty);
+}
+
 #define JIT_RT_MUT_OP(op, vm_op)                                                           \
         static void                                                                        \
         jit_rt_mut_##op(Ty *ty, Value *target, Value *val, Value *result)                  \
@@ -1977,6 +1991,7 @@ bc_prescan(JitCtx *ctx, char const *code, int code_size)
                         break;
 
                 case INSTR_MEMBER_ACCESS:
+                case INSTR_TRY_MEMBER_ACCESS:
                 case INSTR_SELF_MEMBER_ACCESS:
                         BC_SKIP(i32);
                         break;
@@ -1985,6 +2000,12 @@ bc_prescan(JitCtx *ctx, char const *code, int code_size)
                 case INSTR_TARGET_SELF_MEMBER:
                         BC_SKIP(i32);
                         break;
+
+                case INSTR_GET_MEMBER:
+                        break;
+
+                case INSTR_TARGET_DYN_MEMBER:
+                        return false;
 
                 case INSTR_JUMP: {
                         int off;
@@ -4659,6 +4680,18 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                         break;
                 }
 
+                CASE(TRY_MEMBER_ACCESS) {
+                        int z;
+                        BC_READ(z);
+
+                        jit_emit_mov(asm, BC_A0, BC_TY);
+                        jit_emit_add_imm(asm, BC_A1, BC_OPS, OP_OFF(ctx->sp));
+                        jit_emit_load_imm(asm, BC_A2, z);
+                        jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_try_member);
+                        jit_emit_call_reg(asm, BC_CALL);
+                        break;
+                }
+
                 CASE(SELF_MEMBER_ACCESS) {
                         char const *op_ip = code + off;
                         int z;
@@ -4683,6 +4716,17 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                         jit_emit_call_reg(asm, BC_CALL);
 
                         DBG("SELF_MEMBER_ACCESS");
+                        break;
+                }
+
+                CASE(GET_MEMBER) {
+                        int z;
+                        BC_READ(z);
+
+                        jit_emit_mov(asm, BC_A0, BC_TY);
+                        jit_emit_add_imm(asm, BC_A1, BC_OPS, OP_OFF(ctx->sp));
+                        jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_get_member);
+                        jit_emit_call_reg(asm, BC_CALL);
                         break;
                 }
 

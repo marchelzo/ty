@@ -1,7 +1,7 @@
 import sql (table, connect, transaction, ValidationError, diff, migrate!)
 import sqlite (SQLite)
 import path (Path)
-import temporal (PlainDate, PlainDateTime)
+import date (PlainDate, PlainDateTime)
 
 @table
 class User {
@@ -871,7 +871,7 @@ pub fn test-cross-field-valid-inserts() {
     assert(e.id == 1)
 }
 
-pub fn test-temporal-roundtrip() {
+pub fn test-date-roundtrip() {
     fresh()
     Event.create-table()
 
@@ -888,7 +888,7 @@ pub fn test-temporal-roundtrip() {
     assert(found.end-date.day == 20)
 }
 
-pub fn test-temporal-auto-timestamps() {
+pub fn test-date-auto-timestamps() {
     fresh()
     LogEntry.create-table()
 
@@ -898,7 +898,7 @@ pub fn test-temporal-auto-timestamps() {
     assert(entry.created-at.year == 2026)
 }
 
-pub fn test-temporal-updated-at-on-save() {
+pub fn test-date-updated-at-on-save() {
     fresh()
     LogEntry.create-table()
 

@@ -75,10 +75,9 @@ let t0 = time.now()
 for (dir, _, files) in Path('tests').walk() {
     let group = chalk"[#bd892d]{dir}[/]"
     let pad   = chalk"[#333]─[/]"
-
+    let tests = files.filter(/\.ty$/)
     print("{" {group} {pad}{pad}":{pad}>{COLUMNS}}")
-
-    for Future.iter(files.map(pool.submit@(dir / _))) {
+    for Future.iter(tests.map(pool.submit@(dir / _))) {
         print(it)
     }
 }

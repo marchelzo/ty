@@ -1,6 +1,6 @@
 import sql (table, connect, disconnect, transaction, ValidationError)
 import psql (PostgreSQL)
-import temporal (PlainDate, PlainDateTime)
+import date (PlainDate, PlainDateTime)
 
 let dsn = 'postgresql:///ty_psql_test'
 
@@ -247,7 +247,7 @@ pub fn test-eager-loading() {
     assert(articles[0].preloaded != nil)
 }
 
-pub fn test-temporal-roundtrip() {
+pub fn test-date-roundtrip() {
     fresh()
     let a = Article(
         title='Dated',
