@@ -18,6 +18,11 @@ pub use BenchRecord = {
 pub use SuiteRecord = Array[BenchRecord]
 pub use BestRecord = Dict[String, BenchRecord]
 
+pub use Benchmark = {
+    name: String,
+    run:  Int -> Any
+}
+
 // ---------------------------------------------------------------------------
 //  Statistics helpers
 // ---------------------------------------------------------------------------
@@ -91,18 +96,18 @@ pub class Result {
 //  Benchmark registry
 // ---------------------------------------------------------------------------
 
-let BENCHMARKS = []
+let BENCHMARKS: Array[Benchmark] = []
 
 pub fn bench(f) {
     BENCHMARKS.push({name: f.__name__, run: f})
     f
 }
 
-pub fn registered() {
+pub fn registered() -> Array[Benchmark] {
     BENCHMARKS
 }
 
-pub fn load-benchmarks(dir: String | Path) {
+pub fn load-benchmarks(dir: String | Path) -> Array[Benchmark] {
     for Path(dir).glob('*.ty') {
         ty.mod.load("benchmarks/{it.stem}")
     }

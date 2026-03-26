@@ -48,9 +48,7 @@ let BEST_FILE    = "perf/best{JIT_SFX}.json"
 fn main() {
     let (opts, _) = PerfRunner.parse()
 
-    let benchmarks = load-benchmarks(
-        Path(__file__).parent / 'benchmarks'
-    )
+    let benchmarks = load-benchmarks(Path(__file__).parent / 'benchmarks')
 
     let running = opts.filter
         ? benchmarks.filter(\_.name.contains?(opts.filter))
@@ -80,10 +78,10 @@ fn main() {
     //  Run
     // ---------------------------------------------------------------------------
 
-    let results: [Result] = []
+    let results: Array[Result] = []
     let best = load-best(BEST_FILE)
 
-    let name-width: Int = running.map(\#_.name).max() + 2
+    let name-width: Int = (running.map(\#_.name).max() ?? 0) + 2
 
     for entry in running {
         let label = chalk"[bold]{entry.name:{name-width}}[/]"
