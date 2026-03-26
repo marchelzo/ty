@@ -1565,7 +1565,7 @@ co_yield_value(Ty *ty)
 
         put(v);
 
-        if (gen->st->exec_depth > 1) {
+        if (gen->st->exec_depth > 1 || vN(gen->st->try_stack) > 0) {
                 CO_LOG("co_yield()", TERM(91;1), "switch to [%p] (RECURSED): %s", gen->co, VSC(top()));
                 cothread_t co = gen->co;
                 gen->co = co_active();
