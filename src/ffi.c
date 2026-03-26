@@ -1330,31 +1330,81 @@ cffi_pack(Ty *ty, int argc, Value *kwargs)
 {
         ASSERT_ARGC_RANGE("ffi.pack()", 1, 64);
 
-        Value vFmt = ARGx(0, VALUE_STRING);
-        u8 const *fmt = ss(vFmt);
-        int fmtlen = sN(vFmt);
+        Blob *b;
+        u8 *buf;
+        u8 const *fmt;
+        usize nfmt;
+
+        Value arg0 = ARG(0);
+        Value arg1;
+
+        int ai;
+
+        switch (arg0.type) {
+        case VALUE_STRING:
+                fmt  = ss(arg0);
+                nfmt = sN(arg0);
+                b    = NULL;
+                buf  = NULL;
+                ai   = 1;
+                break;
+
+        case VALUE_PTR:
+                arg1 = ARGx(1, VALUE_STRING);
+                fmt  = ss(arg1);
+                nfmt = sN(arg1);
+                b    = NULL;
+                buf  = arg0.ptr;
+                ai   = 2;
+                break;
+
+        case VALUE_BLOB:
+                arg1 = ARGx(1, VALUE_STRING);
+                fmt  = ss(arg1);
+                nfmt = sN(arg1);
+                b    = arg0.blob;
+                buf  = NULL;
+                ai   = 2;
+                break;
+
+        default:
+                ARGx(0, VALUE_STRING, VALUE_PTR, VALUE_BLOB);
+                UNREACHABLE();
+        }
 
         int i;
         bool big;
-        int total = parsefmt(fmt, fmtlen, &i, &big);
+        int total = parsefmt(fmt, nfmt, &i, &big);
 
-        if (total < 0)
-                zP("ffi.pack(): bad format string");
+        if (total < 0) {
+                bP("bad format");
+        }
 
         GC_STOP();
 
-        Blob *b = value_blob_new(ty);
-        uvR(*b, total);
-        vN(*b) = total;
-        memset(vv(*b), 0, total);
+        if (buf == NULL) {
+                if (b != NULL) {
+                        usize old = vN(*b);
+                        usize new = old + total;
+                        uvR(*b, new);
+                        vN(*b) = new;
+                        buf = vv(*b) + old;
+                } else {
+                        buf = malloc(total);
+                        if (UNLIKELY(buf == NULL)) {
+                                GC_RESUME();
+                                bP("malloc() fail");
+                        }
+                }
+        }
 
-        u8 *buf = vv(*b);
-        int off = 0;
-        int ai  = 1;
+        memset(buf, 0, total);
 
-        while (i < fmtlen) {
+        isize off = 0;
+
+        while (i < nfmt) {
                 int count = 0;
-                while (i < fmtlen && fmt[i] >= '0' && fmt[i] <= '9') {
+                while (i < nfmt && fmt[i] >= '0' && fmt[i] <= '9') {
                         count = count * 10 + (fmt[i++] - '0');
                 }
 
@@ -1362,7 +1412,7 @@ cffi_pack(Ty *ty, int argc, Value *kwargs)
                         count = 1;
                 }
 
-                if (i >= fmtlen) {
+                if (i >= nfmt) {
                         break;
                 }
 
@@ -1450,7 +1500,7 @@ cffi_pack(Ty *ty, int argc, Value *kwargs)
 
         GC_RESUME();
 
-        return BLOB(b);
+        return (b != NULL) ? BLOB(b) : PTR(buf);
 
 NotEnoughArgs:
         GC_RESUME();

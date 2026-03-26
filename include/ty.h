@@ -1445,14 +1445,14 @@ ExpandScratch(Ty *ty)
                         cap = 2 * (vvL(S(arenas))->end - vvL(S(arenas))->base);
                 }
 
-                char *new_ = mrealloc(NULL, cap);
+                char *_new = mrealloc(NULL, cap);
 
                 xvP(
                         S(arenas),
                         ((Arena) {
-                                .base = new_,
-                                .beg  = new_,
-                                .end  = new_ + cap
+                                .base = _new,
+                                .beg  = _new,
+                                .end  = _new + cap
                         })
                 );
         }
@@ -1515,6 +1515,7 @@ ResetScratch(Ty *ty)
         );
 #undef S
 #undef SS
+#undef SSS
 }
 
 #define SCRATCH_SAVE()    ScratchSave _scratch_save = SaveScratch(ty);

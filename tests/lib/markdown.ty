@@ -26,20 +26,20 @@ fn child-count(node) {
     n
 }
 
-fn test-parse-returns-document() {
+pub fn test-parse-returns-document() {
     let doc: _ = parse('hello')
     assert(doc != nil, 'parse should return a node')
     assert(doc.type == NodeType.Document)
 }
 
-fn test-plain-text() {
+pub fn test-plain-text() {
     let doc: _ = parse('hello world')
     assert(doc != nil)
     let html = doc.html
     assert(html.contains?('hello world'), "expected 'hello world' in: {html}")
 }
 
-fn test-heading-levels() {
+pub fn test-heading-levels() {
     for level in 1..7 {
         let prefix = '#' * level
         let doc: _ = parse("{prefix} Heading {level}")
@@ -51,7 +51,7 @@ fn test-heading-levels() {
     }
 }
 
-fn test-heading-node-properties() {
+pub fn test-heading-node-properties() {
     let doc: _ = parse('## My Heading')
     assert(doc != nil)
     let heading = first-child-of-type(doc, NodeType.Heading)
@@ -59,28 +59,28 @@ fn test-heading-node-properties() {
     assert(heading.heading-level == 2, "expected level 2, got {heading.heading-level}")
 }
 
-fn test-emphasis() {
+pub fn test-emphasis() {
     let doc: _ = parse('this is *emphatic*')
     assert(doc != nil)
     let html = doc.html
     assert(html.contains?('<em>emphatic</em>'), "expected <em> in: {html}")
 }
 
-fn test-strong() {
+pub fn test-strong() {
     let doc: _ = parse('this is **bold**')
     assert(doc != nil)
     let html = doc.html
     assert(html.contains?('<strong>bold</strong>'), "expected <strong> in: {html}")
 }
 
-fn test-inline-code() {
+pub fn test-inline-code() {
     let doc: _ = parse('use `foo()` here')
     assert(doc != nil)
     let html = doc.html
     assert(html.contains?('<code>foo()</code>'), "expected <code> in: {html}")
 }
 
-fn test-code-block() {
+pub fn test-code-block() {
     let md = '```
 
 print("hello")
@@ -92,7 +92,7 @@ print("hello")
     assert(html.contains?('print("hello")'), "expected code content in: {html}")
 }
 
-fn test-code-block-with-language() {
+pub fn test-code-block-with-language() {
     let md = '```python
 
 def foo():
@@ -104,10 +104,10 @@ def foo():
     assert(html.contains?('language-python'), "expected language-python in: {html}")
 }
 
-fn test-code-block-info-string() {
+pub fn test-code-block-info-string() {
     let md = '```rust
 
-fn main() {}
+pub fn main() {}
 ```'
     let doc: _ = parse(md)
     assert(doc != nil)
@@ -116,7 +116,7 @@ fn main() {}
     assert(block.info-string == 'rust', "expected 'rust', got: {block.info-string}")
 }
 
-fn test-link() {
+pub fn test-link() {
     let doc: _ = parse('[click here](https://example.com)')
     assert(doc != nil)
     let html = doc.html
@@ -124,7 +124,7 @@ fn test-link() {
     assert(html.contains?('click here'), "expected link text in: {html}")
 }
 
-fn test-link-node-properties() {
+pub fn test-link-node-properties() {
     let doc: _ = parse('[text](https://example.com)')
     assert(doc != nil)
     let para: _ = first-child-of-type(doc, NodeType.Paragraph)
@@ -134,14 +134,14 @@ fn test-link-node-properties() {
     assert(link.url == 'https://example.com', "expected url, got: {link.url}")
 }
 
-fn test-image() {
+pub fn test-image() {
     let doc: _ = parse('![alt text](image.png)')
     assert(doc != nil)
     let html = doc.html
     assert(html.contains?('<img src="image.png">'), "expected img tag in: {html}")
 }
 
-fn test-unordered-list() {
+pub fn test-unordered-list() {
     let md = '- one
 - two
 - three'
@@ -155,7 +155,7 @@ fn test-unordered-list() {
     assert(html.contains?('three'), "expected 'three' in: {html}")
 }
 
-fn test-ordered-list() {
+pub fn test-ordered-list() {
     let md = '1. first
 
 2. second
@@ -169,7 +169,7 @@ fn test-ordered-list() {
     assert(html.contains?('first'), "expected 'first' in: {html}")
 }
 
-fn test-list-type-bullet() {
+pub fn test-list-type-bullet() {
     let md = '- a
 - b'
     let doc: _ = parse(md)
@@ -179,7 +179,7 @@ fn test-list-type-bullet() {
     assert(list.list-type == ListType.Bullet, "expected bullet list")
 }
 
-fn test-list-type-ordered() {
+pub fn test-list-type-ordered() {
     let md = '1. a
 
 2. b'
@@ -190,14 +190,14 @@ fn test-list-type-ordered() {
     assert(list.list-type == ListType.Ordered, "expected ordered list")
 }
 
-fn test-paragraph() {
+pub fn test-paragraph() {
     let doc: _ = parse('A simple paragraph.')
     assert(doc != nil)
     let html = doc.html
     assert(html.contains?('<p>A simple paragraph.</p>'), "expected paragraph in: {html}")
 }
 
-fn test-multiple-paragraphs() {
+pub fn test-multiple-paragraphs() {
     let md = 'First paragraph.
 
 Second paragraph.'
@@ -210,7 +210,7 @@ Second paragraph.'
     assert(paras.len() == 2, "expected 2 paragraphs, got {paras.len()}")
 }
 
-fn test-children-iteration() {
+pub fn test-children-iteration() {
     let md = '# Title
 
 Some text.
@@ -228,7 +228,7 @@ Some text.
     assert(types[2] == NodeType.List)
 }
 
-fn test-nested-formatting() {
+pub fn test-nested-formatting() {
     let doc: _ = parse('this is ***bold and italic***')
     assert(doc != nil)
     let html = doc.html
@@ -236,7 +236,7 @@ fn test-nested-formatting() {
     assert(html.contains?('<em>'), "expected <em> in: {html}")
 }
 
-fn test-empty-input() {
+pub fn test-empty-input() {
     let doc: _ = parse('')
     assert(doc != nil, 'empty input should still return a document node')
     assert(doc.type == NodeType.Document)
@@ -244,7 +244,7 @@ fn test-empty-input() {
     assert(n == 0, "expected 0 children for empty input, got {n}")
 }
 
-fn test-complex-document() {
+pub fn test-complex-document() {
     let md = '# My Document
 
 This is a paragraph with **bold**, *italic*, and `code`.
@@ -284,7 +284,7 @@ Check out [this link](https://example.com) for more.
     assert(html.contains?('<ol>'), "expected ordered list")
 }
 
-fn test-text-node-type() {
+pub fn test-text-node-type() {
     let doc: _ = parse('hello')
     assert(doc != nil)
     let para: _ = first-child-of-type(doc, NodeType.Paragraph)
@@ -294,7 +294,7 @@ fn test-text-node-type() {
     assert(txt.text == 'hello', "expected 'hello', got: {txt.text}")
 }
 
-fn test-document-html-wrapper() {
+pub fn test-document-html-wrapper() {
     let doc: _ = parse('hi')
     assert(doc != nil)
     let html = doc.html

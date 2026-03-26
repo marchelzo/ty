@@ -3,24 +3,24 @@ import math (inf, nan)
 
 ns test
 
-fn test-version() {
+pub fn test-version() {
     let v = version()
     assert(v.match?(/^\d+\.\d+\.\d+$/), "version should be X.Y.Z, got: {v}")
 }
 
-fn test-parse-scalar-string() {
+pub fn test-parse-scalar-string() {
     assert(parse('hello') == 'hello')
     assert(parse('"hello"') == 'hello')
     assert(parse("'hello'") == 'hello')
 }
 
-fn test-parse-scalar-int() {
+pub fn test-parse-scalar-int() {
     assert(parse('42') == 42)
     assert(parse('-7') == -7)
     assert(parse('0') == 0)
 }
 
-fn test-parse-scalar-float() {
+pub fn test-parse-scalar-float() {
     assert(parse('3.14') == 3.14)
     assert(parse('-0.5') == -0.5)
     assert(parse('.inf') == inf)
@@ -29,7 +29,7 @@ fn test-parse-scalar-float() {
     assert(nan != nan)
 }
 
-fn test-parse-scalar-bool() {
+pub fn test-parse-scalar-bool() {
     assert(parse('true') == true)
     assert(parse('false') == false)
     // YAML 1.2: yes/no/on/off are strings, not booleans
@@ -39,19 +39,19 @@ fn test-parse-scalar-bool() {
     assert(parse('off') == 'off')
 }
 
-fn test-parse-scalar-null() {
+pub fn test-parse-scalar-null() {
     assert(parse('null') == nil)
     assert(parse('~') == nil)
 }
 
-fn test-parse-quoted-not-converted() {
+pub fn test-parse-quoted-not-converted() {
     assert(parse('"true"') == 'true')
     assert(parse('"42"') == '42')
     assert(parse('"null"') == 'null')
     assert(parse("'false'") == 'false')
 }
 
-fn test-parse-simple-mapping() {
+pub fn test-parse-simple-mapping() {
     let result: _ = parse('name: Alice
 
 age: 30')
@@ -59,14 +59,14 @@ age: 30')
     assert(result['age'] == 30)
 }
 
-fn test-parse-simple-sequence() {
+pub fn test-parse-simple-sequence() {
     let result = parse('- 1
 - 2
 - 3')
     assert(result == [1, 2, 3])
 }
 
-fn test-parse-nested() {
+pub fn test-parse-nested() {
     let yaml = 'person:
   name: Bob
   hobbies:
@@ -79,18 +79,18 @@ fn test-parse-nested() {
     assert(result['person']['age'] == 25)
 }
 
-fn test-parse-flow-sequence() {
+pub fn test-parse-flow-sequence() {
     let result = parse('[1, 2, 3]')
     assert(result == [1, 2, 3])
 }
 
-fn test-parse-flow-mapping() {
+pub fn test-parse-flow-mapping() {
     let result: _ = parse('{a: 1, b: 2}')
     assert(result['a'] == 1)
     assert(result['b'] == 2)
 }
 
-fn test-parse-multi-doc() {
+pub fn test-parse-multi-doc() {
     let yaml = '---
 
 first
@@ -107,7 +107,7 @@ third'
     assert(result[2] == 'third')
 }
 
-fn test-parse-anchor-alias() {
+pub fn test-parse-anchor-alias() {
     let yaml = 'defaults: &defaults
   adapter: postgres
   host: localhost
@@ -120,12 +120,12 @@ development:
     assert(result['development']['database'] == 'dev_db')
 }
 
-fn test-parse-hex-octal() {
+pub fn test-parse-hex-octal() {
     assert(parse('0xFF') == 255)
     assert(parse('0o77') == 63)
 }
 
-fn test-dump-simple-scalars() {
+pub fn test-dump-simple-scalars() {
     assert(dump(42).strip() == '42')
     assert(dump('hello').strip() == 'hello')
     assert(dump(true).strip() == 'true')
@@ -134,19 +134,19 @@ fn test-dump-simple-scalars() {
     assert(dump(3.14).strip() == '3.14')
 }
 
-fn test-dump-special-floats() {
+pub fn test-dump-special-floats() {
     assert(dump(inf).strip() == '.inf')
     assert(dump(-inf).strip() == '-.inf')
     assert(dump(nan).strip() == '.nan')
 }
 
-fn test-dump-sequence() {
+pub fn test-dump-sequence() {
     let result = dump([1, 2, 3])
     let parsed = parse(result)
     assert(parsed == [1, 2, 3])
 }
 
-fn test-dump-mapping() {
+pub fn test-dump-mapping() {
     let data = %{'name': 'Alice', 'age': 30}
     let result = dump(data)
     let parsed: _ = parse(result)
@@ -154,7 +154,7 @@ fn test-dump-mapping() {
     assert(parsed['age'] == 30)
 }
 
-fn test-dump-nested() {
+pub fn test-dump-nested() {
     let data = %{
         'server': %{
             'host': 'localhost',
@@ -171,13 +171,13 @@ fn test-dump-nested() {
     assert(parsed['items'] == [1, 2, 3])
 }
 
-fn test-dump-flow-style() {
+pub fn test-dump-flow-style() {
     let data = [1, 2, 3]
     let result = dump(data, flow: true)
     assert(result.strip() == '[1, 2, 3]')
 }
 
-fn test-roundtrip() {
+pub fn test-roundtrip() {
     let data = %{
         'database': %{
             'host': 'localhost',
@@ -201,7 +201,7 @@ fn test-roundtrip() {
     assert(result['timeout'] == 30.5)
 }
 
-fn test-dump-all() {
+pub fn test-dump-all() {
     let docs = [%{'a': 1}, %{'b': 2}]
     let result = dump-all(docs)
     let parsed: _ = parse-all(result)
@@ -210,7 +210,7 @@ fn test-dump-all() {
     assert(parsed[1]['b'] == 2)
 }
 
-fn test-dump-quoted-strings() {
+pub fn test-dump-quoted-strings() {
     // Strings that look like booleans should be quoted
     let result = dump('true')
     let parsed = parse(result)
@@ -223,12 +223,12 @@ fn test-dump-quoted-strings() {
     assert(parsed3 == 'null')
 }
 
-fn test-parse-empty-doc() {
+pub fn test-parse-empty-doc() {
     assert(parse('---') == nil)
     assert(parse('') == nil)
 }
 
-fn test-parse-mixed-types() {
+pub fn test-parse-mixed-types() {
     let yaml = '- hello
 - 42
 - true
@@ -242,7 +242,7 @@ fn test-parse-mixed-types() {
     assert(result[4] == 3.14)
 }
 
-fn test-dump-file-and-parse-file() {
+pub fn test-dump-file-and-parse-file() {
     let data = %{'test': [1, 2, 3]}
     let path = '/tmp/ty-yaml-test.yaml'
     dump-file(path, data)
@@ -250,7 +250,7 @@ fn test-dump-file-and-parse-file() {
     assert(result['test'] == [1, 2, 3])
 }
 
-fn test-parse-error() {
+pub fn test-parse-error() {
     let threw = false
     try {
         parse('[invalid: yaml: [[[')
@@ -260,7 +260,7 @@ fn test-parse-error() {
     assert(threw, 'should have thrown on invalid YAML')
 }
 
-fn test-parse-multiline-string() {
+pub fn test-parse-multiline-string() {
     let yaml = 'text: |
   line one
   line two
@@ -271,7 +271,7 @@ fn test-parse-multiline-string() {
     assert(result['text'].contains?('line three'))
 }
 
-fn test-indent-option() {
+pub fn test-indent-option() {
     let data = %{'a': %{'b': 1}}
     let result4 = dump(data, indent: 4)
     // Just verify it round-trips
@@ -279,7 +279,7 @@ fn test-indent-option() {
     assert(parsed['a']['b'] == 1)
 }
 
-fn test-parse-complex-docker-compose() {
+pub fn test-parse-complex-docker-compose() {
     let yaml = '''
         version: "3.8"
         services:
@@ -348,7 +348,7 @@ fn test-parse-complex-docker-compose() {
     assert(result['services']['redis']['command'] == 'redis-server --maxmemory 128mb')
 }
 
-fn test-parse-complex-k8s-deployment() {
+pub fn test-parse-complex-k8s-deployment() {
     let yaml = '''
         apiVersion: apps/v1
         kind: Deployment
