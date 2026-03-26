@@ -4990,8 +4990,9 @@ get_infix_prec(Ty *ty)
         case '@':
                 return next_without_nl(ty, '(') ? 11 : -3;
 
-        case TOKEN_INC:            return 10;
-        case TOKEN_DEC:            return 10;
+        case TOKEN_INC:
+        case TOKEN_DEC:
+                return (tok()->start.line == token(-1)->end.line) ?  10 : -3;
 
         case TOKEN_DIV:            return 9;
         case TOKEN_STAR:           return 9;
