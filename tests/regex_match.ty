@@ -1,0 +1,133 @@
+ns test
+
+pub fn basic-regex-pattern() {
+    match 'hello world' {
+        /(\w+)\s(\w+)/ => {
+            assert($1 == 'hello')
+            assert($2 == 'world')
+        },
+        _ => assert(false)
+    }
+}
+
+pub fn no-match-falls-through() {
+    let matched = match 'hello' {
+        /(\d+)/ => true,
+        _       => false
+    }
+    assert(!matched)
+}
+
+pub fn capture-groups() {
+    let date = '2026-03-26'
+    match date {
+        /(\d{4})-(\d{2})-(\d{2})/ => {
+            assert($1 == '2026')
+            assert($2 == '03')
+            assert($3 == '26')
+        },
+        _ => assert(false)
+    }
+}
+
+pub fn regex-as-expr() {
+    let result = match '42 apples' {
+        /(\d+) (\w+)/ => "{$2}: {$1}",
+        _             => 'nope'
+    }
+    assert(result == 'apples: 42')
+}
+
+pub fn multiple-regex-arms() {
+    fn classify(s) {
+        match s {
+            /^\d+$/       => 'number',
+            /^[a-z]+$/    => 'lower',
+            /^[A-Z]+$/    => 'upper',
+            /^[a-zA-Z]+$/ => 'mixed',
+            _             => 'other'
+        }
+    }
+
+    assert(classify('123') == 'number')
+    assert(classify('abc') == 'lower')
+    assert(classify('ABC') == 'upper')
+    assert(classify('AbC') == 'mixed')
+    assert(classify('!@#') == 'other')
+}
+
+pub fn whole-match-in-dollar-zero() {
+    match 'foo123bar' {
+        /(\w+?)(\d+)(\w+)/ => {
+            assert($0 == 'foo123bar')
+            assert($1 == 'foo')
+            assert($2 == '123')
+            assert($3 == 'bar')
+        },
+        _ => assert(false)
+    }
+}
+
+pub fn regex-match-in-loop() {
+    let lines = [
+        'name: Alice',
+        'age: 30',
+        'name: Bob',
+        'garbage',
+        'name: Carol',
+    ]
+
+    let names = []
+
+    for line in lines {
+        match line {
+            /^name: (\w+)$/ => names.push($1),
+            _               => {}
+        }
+    }
+
+    assert(names == ['Alice', 'Bob', 'Carol'])
+}
+
+pub fn tilde-basic() {
+    if 'hello world' =~ /(\w+)\s(\w+)/ {
+        assert($1 == 'hello')
+        assert($2 == 'world')
+    } else {
+        assert(false)
+    }
+}
+
+pub fn tilde-digits() {
+    if '2026-03-26' =~ /(\d{4})-(\d{2})-(\d{2})/ {
+        assert($1 == '2026')
+        assert($2 == '03')
+        assert($3 == '26')
+    } else {
+        assert(false)
+    }
+}
+
+pub fn tilde-no-match() {
+    if 'hello' =~ /(\d+)/ {
+        assert(false)
+    }
+}
+
+pub fn tilde-whole-match() {
+    if 'foobar' =~ /^(foo)(bar)$/ {
+        assert($0 == 'foobar')
+        assert($1 == 'foo')
+        assert($2 == 'bar')
+    } else {
+        assert(false)
+    }
+}
+
+pub fn non-string-no-match() {
+    let result = match 42 {
+        /\d+/ => 'matched',
+        _     => 'nope'
+    }
+    assert(result == 'nope')
+}
