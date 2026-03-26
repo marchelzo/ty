@@ -4377,6 +4377,13 @@ fn memoized[F](fun: F, max: Int = nil) -> F {
     __eval__(ty.Func({name: fun.__name__, params, body}))
 }
 
+#|if ty.jit && ty.TEST
+fn assert(cond: Any, msg: String = 'assertion failed') -> _ {
+    if !cond {
+        throw AssertionError(msg)
+    }
+}
+#|else
 macro assert(condition, message) {
     let color? = (getenv('NO_COLOR') == nil) && (ty.color != 'never')
 
@@ -4446,12 +4453,7 @@ macro assert(condition, message) {
         }
     $$]
 }
-
-fn assert2(cond: Any, msg: String = 'assertion failed') -> _ {
-    if !cond {
-        throw AssertionError(msg)
-    }
-}
+#|]
 
 macro unreachable! = throw AssertionError('unreachable')
 

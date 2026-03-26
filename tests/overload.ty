@@ -26,6 +26,6 @@ fn bar(a: Int, b: Int) {
 fn o() {}
 
 pub fn overload() {
-    assert2([A.foo(4.0), A.foo([1, 2]), A.foo([1, 2.0]), A.foo(['a'])] == [1, 2, 3, 4])
-    assert2((bar('x'), bar(4, 5)) == (1, 2))
+    assert([A.foo(4.0), A.foo([1, 2]), A.foo([1, 2.0]), A.foo(['a'])] == [1, 2, 3, 4])
+    assert((bar('x'), bar(4, 5)) == (1, 2))
 }
