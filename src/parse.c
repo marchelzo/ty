@@ -7511,7 +7511,9 @@ pp_if(Ty *ty)
                                 expect(TOKEN_DIRECTIVE);
                                 UNREACHABLE();
                         }
-                        if (tokenx(0)->type == '"') {
+                        if (tokenx(0)->type == TOKEN_TEMPLATE_BEGIN) {
+                                (void)prefix_template(ty);
+                        } else if (tokenx(0)->type == '"') {
                                 skip_ss(ty);
                         } else {
                                 nextx();

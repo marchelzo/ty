@@ -1126,6 +1126,47 @@ jit_rt_try_steal_tag(Ty *ty, Value *tos, Value *target)
         return 0;
 }
 
+static void
+jit_rt_tag_push(Ty *ty, Value *v, int tag)
+{
+        v->tags = tags_push(ty, v->tags, tag);
+        v->type |= VALUE_TAGGED;
+}
+
+static int
+jit_rt_try_regex(Ty *ty, Value *str, Regex *re, Value *top)
+{
+        vN(STACK) = top - vv(STACK);
+        Value regex = REGEX(re);
+        xvP(STACK, regex);
+        if (str->type == VALUE_STRING) {
+                Value result = string_match(ty, str, 1, NULL);
+                if (result.type != VALUE_NIL) {
+                        *vvL(STACK) = result;
+                        return 1;
+                }
+        }
+        vvX(STACK);
+        return 0;
+}
+
+static void
+jit_rt_assign_regex_matches(Ty *ty, Value *match, int n)
+{
+        Value *vp = vm_jit_pop_target(ty);
+        if (match->type == VALUE_ARRAY) {
+                int i = 0;
+                for (; i < vN(*match->array); ++i) {
+                        vp[i] = v__(*match->array, i);
+                }
+                while (i < n + 1) {
+                        vp[i++] = NIL;
+                }
+        } else {
+                *vp = *match;
+        }
+}
+
 static int
 jit_rt_jii(Ty *ty, Value *v, int class_id)
 {
@@ -2300,6 +2341,10 @@ bc_prescan(JitCtx *ctx, char const *code, int code_size)
                         break;
                 }
 
+                case INSTR_TAG_PUSH:
+                        BC_SKIP(i32);
+                        break;
+
                 case INSTR_TRY_TAG_POP: {
                         i32 jump_off;
                         BC_READ(jump_off);
@@ -2428,6 +2473,19 @@ bc_prescan(JitCtx *ctx, char const *code, int code_size)
                         if (bc_label_for(ctx, target) < 0) return false;
                         break;
                 }
+
+                case INSTR_TRY_REGEX: {
+                        i32 jump_off;
+                        BC_READ(jump_off);
+                        int target = (int)(ip - code) + jump_off;
+                        if (bc_label_for(ctx, target) < 0) return false;
+                        BC_SKIP(iptr); // regex pointer
+                        break;
+                }
+
+                case INSTR_ASSIGN_REGEX_MATCHES:
+                        BC_SKIP(i32); // n
+                        break;
 
                 case INSTR_JNI: {
                         i32 jump_off;
@@ -6527,6 +6585,20 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                         break;
                 }
 
+                CASE(TAG_PUSH) {
+                        int tag;
+                        BC_READ(tag);
+
+                        int val_off = OP_OFF(ctx->sp - 1);
+
+                        jit_emit_mov(asm, BC_A0, BC_TY);
+                        jit_emit_add_imm(asm, BC_A1, BC_OPS, val_off);
+                        jit_emit_load_imm(asm, BC_A2, tag);
+                        jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_tag_push);
+                        jit_emit_call_reg(asm, BC_CALL);
+                        break;
+                }
+
                 CASE(TRY_TAG_POP) {
                         int jump_off;
                         BC_READ(jump_off);
@@ -6645,6 +6717,50 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
 
                         ctx->sp++;
                         if (ctx->sp > ctx->max_sp) ctx->max_sp = ctx->sp;
+                        break;
+                }
+
+                CASE(TRY_REGEX) {
+                        int jump_off;
+                        BC_READ(jump_off);
+                        int target = (int)(ip - code) + jump_off;
+                        int fail_lbl = bc_find_label(ctx, target);
+                        if (fail_lbl < 0) BAIL("invalid TRY_REGEX target");
+
+                        uptr re;
+                        BC_READ(re);
+
+                        int tos_off = OP_OFF(ctx->sp - 1);
+
+                        jit_emit_mov(asm, BC_A0, BC_TY);
+                        jit_emit_add_imm(asm, BC_A1, BC_OPS, tos_off);
+                        jit_emit_load_imm(asm, BC_A2, (iptr)re);
+                        jit_emit_add_imm(asm, BC_A3, BC_OPS, OP_OFF(ctx->sp));
+                        jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_try_regex);
+                        jit_emit_call_reg(asm, BC_CALL);
+
+                        jit_emit_cmp_ri(asm, BC_RET, 0);
+                        bc_set_label_sp(ctx, target, ctx->sp);
+                        jit_emit_branch_eq(asm, fail_lbl);
+
+                        ctx->sp++;
+                        if (ctx->sp > ctx->max_sp) ctx->max_sp = ctx->sp;
+                        break;
+                }
+
+                CASE(ASSIGN_REGEX_MATCHES) {
+                        int n;
+                        BC_READ(n);
+
+                        int match_off = OP_OFF(ctx->sp - 1);
+
+                        jit_emit_mov(asm, BC_A0, BC_TY);
+                        jit_emit_add_imm(asm, BC_A1, BC_OPS, match_off);
+                        jit_emit_load_imm(asm, BC_A2, n);
+                        jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_assign_regex_matches);
+                        jit_emit_call_reg(asm, BC_CALL);
+
+                        ctx->sp--;
                         break;
                 }
 

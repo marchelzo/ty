@@ -331,7 +331,7 @@ closure_func(ffi_cif *cif, void *ret, void **args, void *data)
         depth -= 1;
 
         if (need_unlock) {
-                ReleaseLock(ty, true);
+                UnlockTy();
         }
 }
 
