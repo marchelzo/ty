@@ -1,0 +1,113 @@
+import ffi as c (C!)
+import os
+import stdio
+import path (Path)
+
+if not let $libvorbisfile = c.open('vorbisfile') {
+    throw RuntimeError('failed to load libvorbisfile')
+}
+
+C! struct ov_callbacks {
+    void *read_func;
+    void *seek_func;
+    void *close_func;
+    void *tell_func;
+}
+
+C! struct vorbis_info {
+    int version;
+    int channels;
+    long rate;
+    long bitrate_upper;
+    long bitrate_nominal;
+    long bitrate_lower;
+    long bitrate_window;
+}
+
+C! struct OggVorbis_File {
+    char opaque[944];
+}
+
+C! libvorbisfile fn {
+    int ov_fopen(const char *path, OggVorbis_File *vf);
+    int ov_clear(OggVorbis_File *vf);
+    vorbis_info *ov_info(OggVorbis_File *vf, int link);
+    long ov_read_float(OggVorbis_File *vf, float ***pcm_channels, int samples, int *bitstream);
+    int64_t ov_pcm_total(OggVorbis_File *vf, int link);
+}
+
+pub class OggAudio {
+    ptr:         Ptr[Float]
+    len:         Int
+    channels:    Int
+    sample_rate: Int
+}
+
+pub fn read(path: String | Path) -> OggAudio {
+    let vf = OggVorbis_File()
+
+    defer ov_clear(vf)
+
+    let err = ov_fopen("{path}", vf)
+    if err != 0 {
+        throw RuntimeError("ov_fopen failed: {err}")
+    }
+
+    let info = vorbis_info(ov_info(vf, -1))
+    let channels    = info.channels
+    let sample_rate = info.rate
+    let total       = int(ov_pcm_total(vf, -1))
+
+    let out = c.new(c.float, total * channels)
+    let pos = 0
+
+    let pcm_ptr   = c.box(c.ptr)
+    let bitstream = c.box(c.int)
+
+    defer {
+        c.free(pcm_ptr)
+        c.free(bitstream)
+    }
+
+    while pos < total * channels {
+        let remaining = total - pos / channels
+        let n = ov_read_float(vf, pcm_ptr, remaining, bitstream)
+        break if n <= 0
+
+        let pcm = pcm_ptr[0].as(c.ptr)
+
+        for i in ..n {
+            for ch in ..channels {
+                let chan = pcm[ch].as(c.float)
+                out[pos] = chan[i]
+                pos += 1
+            }
+        }
+    }
+
+    return OggAudio(out, pos, channels, int(sample_rate))
+}
+
+pub fn read-mono(path: String | Path) -> OggAudio {
+    let audio = read(path)
+
+    if audio.channels == 1 {
+        return audio
+    }
+
+    let frames = audio.len / audio.channels
+    let src    = audio.ptr.as(c.float)
+    let out    = c.new(c.float, frames)
+
+    for i in ..frames {
+        let sum = 0.0
+        for ch in ..audio.channels {
+            sum += src[i * audio.channels + ch]
+        }
+        out[i] = sum / audio.channels
+    }
+
+    c.free(audio.ptr)
+
+    return OggAudio(out, frames, 1, audio.sample_rate)
+}

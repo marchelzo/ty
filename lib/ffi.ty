@@ -32,7 +32,7 @@ fn c::as_str(ptr: IntoPtr[Any], len: ?Int) -> String;
 fn c::load[T](type: CType[T], address: IntoPtr[T]) -> T;
 fn c::size[T](type: CType[T]) -> Int;
 fn c::free(ptr: IntoPtr[Any]) -> nil;
-fn c::new[T](type: CType[T], count: ?Int) -> Ptr[T];
+fn c::new[T](type: CType[T], count: ?Int, init: ?IntoPtr[Any]) -> Ptr[T];
 fn c::box[T](type: CType[T], val: ?T) -> Ptr[T];
 fn c::alloc[T](size: Int) -> Ptr[T];
 fn ptr::typed[T](ptr: Ptr[Any], type: CType[T]) -> Ptr[T];
@@ -1016,6 +1016,7 @@ pub fn open(
         }
     }
 
+    let prog-dir = Module('main').path.comb(/\/[^\/]+$/)
 
-    return nil
+    return try-open("{prog-dir}/{lib}")
 }

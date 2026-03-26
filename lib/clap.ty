@@ -424,13 +424,26 @@ fn _doParse(cls: _, argv, config) -> _ {
 
             for spec in positionals {
                 let label = (spec.long ?? lisp(spec.name)).upper().sub('-', '_')
-                entries.push((label, spec.help ?? ''))
+                let metaParts = []
+                if spec.check != nil && spec.check.pred :: Array {
+                    let choices = spec.check.pred.map(c -> chalk"[magenta]{c}[/]").join("{chalk"[dim],[/] "}")
+                    metaParts.push(chalk"[dim](values: [/]{choices}[dim])[/]")
+                }
+                if spec.check != nil && spec.check.pred :: Range {
+                    metaParts.push(chalk"[dim](range: [cyan]{spec.check.src}[/cyan])[/]")
+                }
+                if spec.default != nil {
+                    metaParts.push(chalk"[dim](default: [bright green]{ty.eval(spec.default.show)}[/bright green])[/]")
+                }
+                let meta = metaParts.join(' ')
+                entries.push((label, spec.help ?? '', meta))
             }
 
             let w = entries.map(\#_[0]).max() ?? 0
 
-            for (label, help) in entries {
-                print(chalk"  [b cyan]{label.rpad(w)}[/]  {chalk.text(help)}")
+            for (label, help, meta) in entries {
+                let suffix = meta ? " {meta}" : ''
+                print(chalk"  [b cyan]{label.rpad(w)}[/]  {chalk.text(help)}{suffix}")
             }
 
             print()
@@ -747,6 +760,14 @@ fn _optWords(specs: _, version: _) -> _ {
     words.join(' ')
 }
 
+fn _posWords(specs: _) -> _ {
+    let words = []
+    for spec in specs if spec.pos && spec.check != nil && spec.check.pred :: Array {
+        words += spec.check.pred.map(&str)
+    }
+    words.join(' ')
+}
+
 fn _choiceSpecs(specs: _) -> _ {
     let result = []
     for spec in specs if !spec.pos && spec.check != nil && spec.check.pred :: Array {
@@ -841,6 +862,10 @@ const BASH_COMPLETION_TEMPLATE = ety.compile(
     <% } %>
                 if [[ "$cur" == -* ]]; then
                     COMPREPLY=( $(compgen -W "<%= sub.optWords %>" -- "$cur") )
+    <% if sub.posWords { %>
+                else
+                    COMPREPLY=( $(compgen -W "<%= sub.posWords %>" -- "$cur") )
+    <% } %>
                 fi
                 return 0
                 ;;
@@ -855,11 +880,14 @@ const BASH_COMPLETION_TEMPLATE = ety.compile(
     <% if #subcmds > 0 { %>
 
         COMPREPLY=( $(compgen -W "<%= subcmds.map(\_.name).join(' ') %>" -- "$cur") )
+    <% } else if posWords { %>
+
+        COMPREPLY=( $(compgen -W "<%= posWords %>" -- "$cur") )
     <% } %>
     }
     complete -F <%= funcName %> <%= prog %>
     ''',
-    ['funcName', 'valCases', 'subcmds', 'optWords', 'prog']
+    ['funcName', 'valCases', 'subcmds', 'optWords', 'posWords', 'prog']
 )
 
 const ZSH_COMPLETION_TEMPLATE = ety.compile(
@@ -890,7 +918,7 @@ const ZSH_COMPLETION_TEMPLATE = ety.compile(
     <% } %>
     }
 
-    <%= funcName %> "$@"
+    compdef <%= funcName %> <%= prog %>
     ''',
     ['funcName', 'argSpecs', 'subcmds', 'prog']
 )
@@ -899,6 +927,9 @@ const FISH_COMPLETION_TEMPLATE = ety.compile(
     '''
     <% for o in opts { %>
     complete -c <%= "{prog}{cond}{o.sf}{o.lf}" %> -d '<%= o.desc %>'<%= o.suffix %>
+    <% } %>
+    <% for pa in posArgs { %>
+    complete -c <%= "{prog}{cond}" %> -f -a '<%= pa.vals %>'<%= pa.desc ? " -d '" + pa.desc + "'" : '' %>
     <% } %>
     complete -c <%= "{prog}{cond}" %> -l help -d 'Show help'
     <% if version != nil { %>
@@ -909,32 +940,49 @@ const FISH_COMPLETION_TEMPLATE = ety.compile(
     <% for o in sub.opts { %>
     complete -c <%= prog %> -n '__fish_seen_subcommand_from <%= sub.name %>'<%= "{o.sf}{o.lf}" %> -d '<%= o.desc %>'<%= o.suffix %>
     <% } %>
+    <% for pa in sub.posArgs { %>
+    complete -c <%= prog %> -n '__fish_seen_subcommand_from <%= sub.name %>' -f -a '<%= pa.vals %>'<%= pa.desc ? " -d '" + pa.desc + "'" : '' %>
+    <% } %>
     complete -c <%= prog %> -n '__fish_seen_subcommand_from <%= sub.name %>' -l help -d 'Show help'
     <% if sub.version != nil { %>
     complete -c <%= prog %> -n '__fish_seen_subcommand_from <%= sub.name %>' -l version -d 'Show version'
     <% } %>
     <% } %>
     ''',
-    ['opts', 'cond', 'subcmds', 'version', 'prog']
+    ['opts', 'posArgs', 'cond', 'subcmds', 'version', 'prog']
 )
 
 fn _bashComplete(specs: _, cmds: _, version: _, prog: _) -> _ {
     let funcName = '__' + prog.sub(/[^a-zA-Z0-9]/, '_') + '_completions'
     let optWords = _optWords(specs, version)
+    let posWords = _posWords(specs)
     let valCases = _choiceSpecs(specs)
     let subcmds = []
     for cn, ce in cmds {
         let cc: _ = ty.eval(ce)
         let ss: _ = cc.info()
         let sv: _ = cc.version()
-        subcmds.push({name: cn, valCases: _choiceSpecs(ss), optWords: _optWords(ss, sv)})
+        subcmds.push({name: cn, valCases: _choiceSpecs(ss), optWords: _optWords(ss, sv), posWords: _posWords(ss)})
     }
-    BASH_COMPLETION_TEMPLATE(funcName, valCases, subcmds, optWords, prog).trim()
+    BASH_COMPLETION_TEMPLATE(funcName, valCases, subcmds, optWords, posWords, prog).trim()
+}
+
+fn _zshPosArgSpec(spec: _, idx: Int) -> _ {
+    let label = (spec.long ?? lisp(spec.name)).upper().sub('-', '_')
+    let desc = chalk.text((spec.help ?? '').lines()[0] ?? '').plain.sub("'", "''").sub('[', '\\[').sub(']', '\\]')
+    let valAction = if spec.check != nil && spec.check.pred :: Array {
+        ':(' + spec.check.pred.join(' ') + ')'
+    } else {
+        ': '
+    }
+    let prefix = spec.repeat ? "'*" : "'{idx}"
+    return "{prefix}:{label}{valAction}'"
 }
 
 fn _zshComplete(specs: _, cmds: _, version: _, prog: _) -> _ {
     let funcName = '_' + prog.sub(/[^a-zA-Z0-9]/, '_')
     let opts = specs.filter(\!_.pos)
+    let poss = specs.filter(&.pos)
     let cmdNames = [n for n, _ in cmds]
 
     let argSpecs = []
@@ -944,6 +992,10 @@ fn _zshComplete(specs: _, cmds: _, version: _, prog: _) -> _ {
     if #cmdNames > 0 {
         argSpecs.push("'1:command:(" + cmdNames.join(' ') + ")'")
         argSpecs.push("'*::arg:->args'")
+    } else {
+        for (i, spec) in poss.enumerate() {
+            argSpecs.push(_zshPosArgSpec(spec, i + 1))
+        }
     }
 
     let subcmds = []
@@ -952,10 +1004,14 @@ fn _zshComplete(specs: _, cmds: _, version: _, prog: _) -> _ {
         let ss: _ = cc.info()
         let sv: _ = cc.version()
         let subOpts = ss.filter(\!_.pos)
+        let subPoss = ss.filter(&.pos)
         let subArgSpecs = []
         for spec in subOpts { subArgSpecs += _zshArgSpec(spec, sv, []) }
         subArgSpecs.push("'--help[Show help]'")
         if sv != nil { subArgSpecs.push("'--version[Show version]'") }
+        for (i, spec) in subPoss.enumerate() {
+            subArgSpecs.push(_zshPosArgSpec(spec, i + 1))
+        }
         subcmds.push({name: cn, argSpecs: subArgSpecs})
     }
 
@@ -970,6 +1026,12 @@ fn _fishComplete(specs: _, cmds: _, version: _, prog: _) -> _ {
     let opts = []
     for spec in specs.filter(\!_.pos) { opts.push(_fishOpt(spec)) }
 
+    let posArgs = []
+    for spec in specs if spec.pos && spec.check != nil && spec.check.pred :: Array {
+        let desc = chalk.text((spec.help ?? '').lines()[0] ?? '').plain.sub("'", "\\'")
+        posArgs.push({vals: spec.check.pred.join(' '), desc: desc})
+    }
+
     let subcmds = []
     for cn, ce in cmds {
         let cc: _ = ty.eval(ce)
@@ -977,10 +1039,15 @@ fn _fishComplete(specs: _, cmds: _, version: _, prog: _) -> _ {
         let sv: _ = cc.version()
         let subOpts = []
         for spec in ss.filter(\!_.pos) { subOpts.push(_fishOpt(spec)) }
-        subcmds.push({name: cn, opts: subOpts, version: sv})
+        let subPosArgs = []
+        for spec in ss if spec.pos && spec.check != nil && spec.check.pred :: Array {
+            let desc = chalk.text((spec.help ?? '').lines()[0] ?? '').plain.sub("'", "\\'")
+            subPosArgs.push({vals: spec.check.pred.join(' '), desc: desc})
+        }
+        subcmds.push({name: cn, opts: subOpts, posArgs: subPosArgs, version: sv})
     }
 
-    FISH_COMPLETION_TEMPLATE(opts, cond, subcmds, version, prog).trim()
+    FISH_COMPLETION_TEMPLATE(opts, posArgs, cond, subcmds, version, prog).trim()
 }
 
 fn _completions(cls, shell, progName) -> _ {

@@ -1,0 +1,91 @@
+import clap (clap!)
+import os
+
+clap! Args {
+    mode: String, pos: true, required: true, check: ['build', 'test', 'run']
+    level: Int, pos: true, required: true, check: 1..5
+    files: [String], pos: true, repeat: true
+}
+
+fn forked(f) {
+    let (r, w) = os.pipe()
+    let pid = os.fork()
+
+    if pid == 0 {
+        os.close(r)
+        os.dup2(w, 2)
+        os.close(w)
+        f()
+        os.exit(0)
+    }
+
+    os.close(w)
+    let err = os.read(r, 4096).str!()
+    os.close(r)
+    let (_, status) = os.wait(pid)!
+    ((status >> 8) & 0xFF, err)
+}
+
+ns test
+
+pub fn clap-pos-check-valid() {
+    let (code, err) = forked(fn () {
+        let (opts, rest) = Args.parse(['prog', 'build', '3', 'a.ty', 'b.ty'])
+        assert(opts.mode == 'build')
+        assert(opts.level == 3)
+        assert(opts.files == ['a.ty', 'b.ty'])
+        assert(#rest == 0)
+    })
+    assert(code == 0, "exit {code}: {err}")
+}
+
+pub fn clap-pos-check-all-modes() {
+    for m in ['build', 'test', 'run'] {
+        let (code, err) = forked(fn () {
+            let (opts, _) = Args.parse(['prog', m, '1'])
+            assert(opts.mode == m)
+        })
+        assert(code == 0, "exit {code}: {err}")
+    }
+}
+
+pub fn clap-pos-check-range-bounds() {
+    for n in 1..5 {
+        let (code, err) = forked(fn () {
+            let (opts, _) = Args.parse(['prog', 'build', "{n}"])
+            assert(opts.level == n)
+        })
+        assert(code == 0, "exit {code}: {err}")
+    }
+}
+
+pub fn clap-pos-check-bash-completions() {
+    let out = Args.completions('bash')
+    assert(out.match?(/build test run/))
+}
+
+pub fn clap-pos-check-zsh-completions() {
+    let out = Args.completions('zsh')
+    assert(out.match?(/build test run/))
+}
+
+pub fn clap-pos-check-fish-completions() {
+    let out = Args.completions('fish')
+    assert(out.match?(/build test run/))
+}
+
+pub fn clap-pos-check-array-reject() {
+    let (code, err) = forked(fn () {
+        Args.parse(['prog', 'bogus', '3'])
+    })
+    assert(code == 1)
+    assert(err.match?(/expected one of/))
+}
+
+pub fn clap-pos-check-range-reject() {
+    let (code, err) = forked(fn () {
+        Args.parse(['prog', 'build', '9'])
+    })
+    assert(code == 1)
+    assert(err.match?(/must be in range/))
+}

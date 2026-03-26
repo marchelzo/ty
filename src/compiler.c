@@ -10277,13 +10277,15 @@ static void
 emit_conditional(Ty *ty, Expr const *e)
 {
         PLACEHOLDER_JUMP_IF(e->cond, then);
+        PEEPHOLE_BARRIER();
         EE(e->_else);
         PLACEHOLDER_JUMP(JUMP, end);
-        PATCH_JUMP(then);
         PEEPHOLE_BARRIER();
+        PATCH_JUMP(then);
         WITH_STACK() {
                 EE(e->then);
         }
+        PEEPHOLE_BARRIER();
         PATCH_JUMP(end);
 }
 

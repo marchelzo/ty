@@ -1,6 +1,5 @@
 import clap (clap!)
-
-ns test
+import os
 
 clap! Init {
     name: String, pos: true, required: true
@@ -12,12 +11,36 @@ clap! Args {
     cmd init: Init
 }
 
-fn clap-subcommand() {
-    let argv = ['prog', '--output', 'out.txt', 'init', '-f', 'proj']
-    let (opts, rest) = Args.parse(argv)
-    assert(opts.cmd == 'init')
-    assert(opts.output == 'out.txt')
-    assert(opts.init.force == true)
-    assert(opts.init.name == 'proj')
-    assert(#rest == 0)
+fn forked(f) {
+    let (r, w) = os.pipe()
+    let pid = os.fork()
+
+    if pid == 0 {
+        os.close(r)
+        os.dup2(w, 2)
+        os.close(w)
+        f()
+        os.exit(0)
+    }
+
+    os.close(w)
+    let err = os.read(r, 4096).str!()
+    os.close(r)
+    let (_, status) = os.wait(pid)!
+    ((status >> 8) & 0xFF, err)
+}
+
+ns test
+
+pub fn clap-subcommand() {
+    let (code, err) = forked(fn () {
+        let argv = ['prog', '--output', 'out.txt', 'init', '-f', 'proj']
+        let (opts, rest) = Args.parse(argv)
+        assert(opts.cmd :: Init)
+        assert(opts.cmd.force == true)
+        assert(opts.cmd.name == 'proj')
+        assert(opts.output == 'out.txt')
+        assert(#rest == 0)
+    })
+    assert(code == 0, "exit {code}: {err}")
 }

@@ -460,10 +460,11 @@ cffi_auto(Ty *ty, int argc, Value *kwargs)
 Value
 cffi_new(Ty *ty, int argc, Value *kwargs)
 {
-        ASSERT_ARGC("ffi.new()", 1, 2);
+        ASSERT_ARGC("ffi.new()", 1, 2, 3);
 
         ffi_type *t = PTR_ARG(0);
-        isize count = (argc == 2) ? INT_ARG(1) : 1;
+        isize count = (argc > 1) ? INT_ARG(1) : 1;
+        void *init  = (argc > 2) ? ptr_from(ty, &ARG(2)) : NULL;
 
         if (count < 0) {
                 bP("negative count: %zd", count);
@@ -487,7 +488,11 @@ cffi_new(Ty *ty, int argc, Value *kwargs)
                 return NIL;
         }
 
-        memset(p.ptr, 0, total);
+        if (init == NULL) {
+                memset(p.ptr, 0, total);
+        } else {
+                memcpy(p.ptr, init, count * t->size);
+        }
 
         return p;
 }

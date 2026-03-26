@@ -1,6 +1,5 @@
 import clap (clap!)
-
-ns test
+import os
 
 clap! Args {
     verbose: Bool, long: 'verbose', env: 'MYAPP_VERBOSE'
@@ -8,12 +7,36 @@ clap! Args {
     color: Bool, long: 'color'
 }
 
+fn forked(f) {
+    let (r, w) = os.pipe()
+    let pid = os.fork()
+
+    if pid == 0 {
+        os.close(r)
+        os.dup2(w, 2)
+        os.close(w)
+        f()
+        os.exit(0)
+    }
+
+    os.close(w)
+    let err = os.read(r, 4096).str!()
+    os.close(r)
+    let (_, status) = os.wait(pid)!
+    ((status >> 8) & 0xFF, err)
+}
+
+ns test
+
 pub fn clap-env-and-no() {
-    setenv('MYAPP_VERBOSE', 'true')
-    let argv = ['prog', '--output', 'out.txt', '--no-color']
-    let (opts, rest) = Args.parse(argv)
-    assert(opts.verbose == true)
-    assert(opts.color == false)
-    assert(opts.output == 'out.txt')
-    assert(#rest == 0)
+    let (code, err) = forked(fn () {
+        setenv('MYAPP_VERBOSE', 'true')
+        let argv = ['prog', '--output', 'out.txt', '--no-color']
+        let (opts, rest) = Args.parse(argv)
+        assert(opts.verbose == true)
+        assert(opts.color == false)
+        assert(opts.output == 'out.txt')
+        assert(#rest == 0)
+    })
+    assert(code == 0, "exit {code}: {err}")
 }
