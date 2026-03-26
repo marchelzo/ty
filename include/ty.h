@@ -25,7 +25,7 @@
 #define TY_TMP_BUF_COUNT 3
 
 #if defined(TY_RELEASE)
- #define CO_STACK_SIZE (1UL << 20)
+ #define CO_STACK_SIZE (1UL << 22)
 #else
  #define CO_STACK_SIZE (1UL << 24)
 #endif
