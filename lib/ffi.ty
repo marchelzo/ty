@@ -82,6 +82,8 @@ macro __unpack-types! $$[
     }
 $$]
 
+fn c::pack(fmt: String, *args: Any) -> Ptr[Any];
+fn c::pack[T](buf: T, fmt: String, *args: Any) -> T;
 fn c::unpack[T](fmt: T, buf: IntoPtr[Any], off: Int = 0) -> __unpack-types!(T);
 
 pub __tls::_cif_cache: _ = nil

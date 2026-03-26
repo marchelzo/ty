@@ -17,18 +17,18 @@ fn load-sym(name: String, lib: Ptr[Any]) -> Ptr[Any] {
     c.load(c.ptr, sym)
 }
 
-const CGEventField  = c.u32
-const CGEventType   = c.u32
-const CGEventMask   = c.u64
-const CFIndex       = c.long
-const CFTimeInterval = c.double
-const Boolean       = c.int
-const CGDirectDisplayID = c.u32
-const CGWindowID    = c.u32
-const CGError       = c.i32
-const CGWindowLevel = c.i32
+const CGEventField       = c.u32
+const CGEventType        = c.u32
+const CGEventMask        = c.u64
+const CFIndex            = c.long
+const CFTimeInterval     = c.double
+const Boolean            = c.int
+const CGDirectDisplayID  = c.u32
+const CGWindowID         = c.u32
+const CGError            = c.i32
+const CGWindowLevel      = c.i32
 const CGWindowListOption = c.u32
-const pid_t         = c.i32
+const pid_t              = c.i32
 
 C! pub cf fn {
     void CFRelease(const void *cf);
@@ -253,7 +253,7 @@ pub ns cg {
     pub const kEventTapOptionDefault    = 0x00000000
     pub const kEventTapOptionListenOnly = 0x00000001
 
-    // --- Event types ---
+
     pub const kEventNull              = 0
     pub const kEventLeftMouseDown     = 1
     pub const kEventLeftMouseUp       = 2
@@ -275,7 +275,7 @@ pub ns cg {
     pub const kEventTapDisabledByTimeout   = 0xFFFFFFFE
     pub const kEventTapDisabledByUserInput = 0xFFFFFFFF
 
-    // --- Event masks ---
+
     pub const kEventMaskAllEvents         = 0xFFFFFFFFFFFFFFFF
     pub const kEventMaskLeftMouseDown     = (1 << 1)
     pub const kEventMaskLeftMouseUp       = (1 << 2)
@@ -292,7 +292,7 @@ pub ns cg {
     pub const kEventMaskOtherMouseUp      = (1 << 26)
     pub const kEventMaskOtherMouseDragged = (1 << 27)
 
-    // --- Modifier flag masks ---
+
     pub const kEventFlagMaskAlphaShift  = 0x00010000
     pub const kEventFlagMaskShift       = 0x00020000
     pub const kEventFlagMaskControl     = 0x00040000
@@ -303,7 +303,7 @@ pub ns cg {
     pub const kEventFlagMaskNumericPad  = 0x00200000
     pub const kEventFlagMaskNonCoalesced = 0x00000100
 
-    // --- CGEventField: mouse ---
+
     pub const kMouseEventNumber         = 0
     pub const kMouseEventClickState     = 1
     pub const kMouseEventPressure       = 2
@@ -315,12 +315,12 @@ pub ns cg {
     pub const kMouseEventWindowUnderMousePointer = 91
     pub const kMouseEventWindowUnderMousePointerThatCanHandleThisEvent = 92
 
-    // --- CGEventField: keyboard ---
+
     pub const kKeyboardEventAutorepeat   = 8
     pub const kKeyboardEventKeycode      = 9
     pub const kKeyboardEventKeyboardType = 10
 
-    // --- CGEventField: scroll wheel ---
+
     pub const kScrollWheelEventDeltaAxis1        = 11
     pub const kScrollWheelEventDeltaAxis2        = 12
     pub const kScrollWheelEventDeltaAxis3        = 13
@@ -335,7 +335,7 @@ pub ns cg {
     pub const kScrollWheelEventMomentumPhase     = 123
     pub const kScrollWheelEventInstantMouser     = 14
 
-    // --- CGEventField: tablet ---
+
     pub const kTabletEventPointX        = 15
     pub const kTabletEventPointY        = 16
     pub const kTabletEventPointZ        = 17
@@ -361,7 +361,7 @@ pub ns cg {
     pub const kTabletProximityEventPointerType       = 37
     pub const kTabletProximityEventEnterProximity    = 38
 
-    // --- CGEventField: general / target ---
+
     pub const kEventTargetProcessSerialNumber = 39
     pub const kEventTargetUnixProcessID       = 40
     pub const kEventSourceUnixProcessID       = 41
@@ -372,16 +372,16 @@ pub ns cg {
     pub const kEventUnacceleratedPointerMovementX = 170
     pub const kEventUnacceleratedPointerMovementY = 171
 
-    // --- Scroll units ---
+
     pub const kScrollEventUnitPixel = 0
     pub const kScrollEventUnitLine  = 1
 
-    // --- Event source states ---
+
     pub const kEventSourceStatePrivate              = -1
     pub const kEventSourceStateCombinedSessionState = 0
     pub const kEventSourceStateHIDSystemState       = 1
 
-    // --- Window list options ---
+
     pub const kWindowListOptionAll                  = 0
     pub const kWindowListOptionOnScreenOnly         = (1 << 0)
     pub const kWindowListOptionOnScreenAboveWindow  = (1 << 1)
@@ -391,7 +391,7 @@ pub ns cg {
 
     pub const kNullWindowID = 0
 
-    // --- Window level keys (for CGWindowLevelForKey) ---
+
     pub const kBaseWindowLevelKey            = 0
     pub const kMinimumWindowLevelKey         = 1
     pub const kDesktopWindowLevelKey         = 2
@@ -414,7 +414,7 @@ pub ns cg {
     pub const kCursorWindowLevelKey          = 19
     pub const kAssistiveTechHighWindowLevelKey = 20
 
-    // --- CGError ---
+
     pub const kErrorSuccess         = 0
     pub const kErrorFailure         = 1000
     pub const kErrorIllegalArgument = 1001
@@ -427,15 +427,15 @@ pub ns cg {
     pub const kErrorInvalidOperation = 1010
     pub const kErrorNoneAvailable   = 1011
 
-    // --- Color spaces ---
-    pub const kColorSpaceSRGB          = "kCGColorSpaceSRGB"
-    pub const kColorSpaceGenericRGB    = "kCGColorSpaceGenericRGB"
-    pub const kColorSpaceGenericGray   = "kCGColorSpaceGenericGray"
-    pub const kColorSpaceDisplayP3     = "kCGColorSpaceDisplayP3"
-    pub const kColorSpaceLinearSRGB    = "kCGColorSpaceLinearSRGB"
-    pub const kColorSpaceExtendedSRGB  = "kCGColorSpaceExtendedSRGB"
 
-    // --- Image alpha info ---
+    pub const kColorSpaceSRGB          = 'kCGColorSpaceSRGB'
+    pub const kColorSpaceGenericRGB    = 'kCGColorSpaceGenericRGB'
+    pub const kColorSpaceGenericGray   = 'kCGColorSpaceGenericGray'
+    pub const kColorSpaceDisplayP3     = 'kCGColorSpaceDisplayP3'
+    pub const kColorSpaceLinearSRGB    = 'kCGColorSpaceLinearSRGB'
+    pub const kColorSpaceExtendedSRGB  = 'kCGColorSpaceExtendedSRGB'
+
+
     pub const kImageAlphaNone              = 0
     pub const kImageAlphaPremultipliedLast  = 1
     pub const kImageAlphaPremultipliedFirst = 2
@@ -445,7 +445,7 @@ pub ns cg {
     pub const kImageAlphaNoneSkipFirst     = 6
     pub const kImageAlphaOnly              = 7
 
-    // --- Bitmap info ---
+
     pub const kBitmapAlphaInfoMask  = 0x1F
     pub const kBitmapFloatInfoMask  = 0xF00
     pub const kBitmapFloatComponents = (1 << 8)
@@ -456,12 +456,12 @@ pub ns cg {
     pub const kBitmapByteOrder16Big = (3 << 12)
     pub const kBitmapByteOrder32Big = (4 << 12)
 
-    // --- Mouse buttons ---
+
     pub const kMouseButtonLeft   = 0
     pub const kMouseButtonRight  = 1
     pub const kMouseButtonCenter = 2
 
-    // --- Mouse event subtypes ---
+
     pub const kMouseEventSubtypeDefault      = 0
     pub const kMouseEventSubtypeTabletPoint  = 1
     pub const kMouseEventSubtypeTabletProximity = 2
@@ -915,6 +915,9 @@ pub fn mouse-location() -> (Float, Float) {
 const audiotoolbox = c.dlopen('/System/Library/Frameworks/AudioToolbox.framework/AudioToolbox')
                    ?? throw RuntimeError('apple: failed to load AudioToolbox')
 
+const coreaudio = c.dlopen('/System/Library/Frameworks/CoreAudio.framework/CoreAudio')
+               ?? throw RuntimeError('apple: failed to load CoreAudio')
+
 const OSStatus          = c.i32
 const AudioFormatID     = c.u32
 const AudioFormatFlags  = c.u32
@@ -939,6 +942,36 @@ C! pub struct AudioQueueBuffer {
     c.u32 mPacketDescriptionCapacity;
     c.ptr mPacketDescriptions;
     c.u32 mPacketDescriptionCount;
+}
+
+C! struct AudioComponentDescription {
+    c.u32 componentType;
+    c.u32 componentSubType;
+    c.u32 componentManufacturer;
+    c.u32 componentFlags;
+    c.u32 componentFlagsMask;
+}
+
+C! struct AURenderCallbackStruct {
+    c.ptr inputProc;
+    c.ptr inputProcRefCon;
+}
+
+C! struct AudioBuffer {
+    c.u32 mNumberChannels;
+    c.u32 mDataByteSize;
+    c.ptr mData;
+}
+
+C! struct AudioBufferList {
+    c.u32 mNumberBuffers;
+    AudioBuffer mBuffers;
+}
+
+C! struct AudioObjectPropertyAddress {
+    c.u32 mSelector;
+    c.u32 mScope;
+    c.u32 mElement;
 }
 
 C! audiotoolbox fn {
@@ -1007,6 +1040,58 @@ C! audiotoolbox fn {
         const void *inData,
         unsigned int inDataSize
     );
+
+    void *AudioComponentFindNext(void *inComponent, const void *inDesc);
+    int AudioComponentInstanceNew(void *inComponent, void **outInstance);
+    int AudioComponentInstanceDispose(void *inInstance);
+
+    int AudioUnitInitialize(void *inUnit);
+    int AudioUnitUninitialize(void *inUnit);
+    int AudioOutputUnitStart(void *inUnit);
+    int AudioOutputUnitStop(void *inUnit);
+
+    int AudioUnitSetProperty(
+        void *inUnit,
+        unsigned int inID,
+        unsigned int inScope,
+        unsigned int inElement,
+        const void *inData,
+        unsigned int inDataSize
+    );
+
+    int AudioUnitGetProperty(
+        void *inUnit,
+        unsigned int inID,
+        unsigned int inScope,
+        unsigned int inElement,
+        void *outData,
+        unsigned int *ioDataSize
+    );
+}
+
+C! coreaudio fn {
+    int AudioObjectGetPropertyData(
+        unsigned int inObjectID,
+        const void *inAddress,
+        unsigned int inQualifierDataSize,
+        const void *inQualifierData,
+        unsigned int *ioDataSize,
+        void *outData
+    );
+
+    int AudioObjectAddPropertyListener(
+        unsigned int inObjectID,
+        const void *inAddress,
+        void *inListener,
+        void *inClientData
+    );
+
+    int AudioObjectRemovePropertyListener(
+        unsigned int inObjectID,
+        const void *inAddress,
+        void *inListener,
+        void *inClientData
+    );
 }
 
 pub ns audio {
@@ -1030,6 +1115,30 @@ pub ns audio {
     pub const QUEUE_PROPERTY_IS_RUNNING          = 1634824814
     pub const QUEUE_PROPERTY_STREAM_DESCRIPTION  = 1634821748
 
+    pub const kAudioUnitType_Output              = 1635086197
+    pub const kAudioUnitSubType_DefaultOutput    = 1684366880
+    pub const kAudioUnitManufacturer_Apple       = 1634758764
+    pub const kAudioUnitScope_Input              = 1
+    pub const kAudioUnitScope_Output             = 2
+    pub const kAudioUnitScope_Global             = 0
+    pub const kAudioUnitProperty_SetRenderCallback = 23
+    pub const kAudioUnitProperty_StreamFormat      = 8
+
+    pub const kAudioObjectSystemObject                       = 1
+    pub const kAudioHardwarePropertyDefaultOutputDevice      = 1682929012
+    pub const kAudioHardwarePropertyDefaultSystemOutputDevice = 1934587508
+    pub const kAudioHardwarePropertyDefaultInputDevice       = 1682533920
+    pub const kAudioHardwarePropertyDevices                  = 1684370979
+    pub const kAudioDevicePropertyBufferFrameSize            = 1718839674
+    pub const kAudioDevicePropertySafetyOffset               = 1935895663
+    pub const kAudioDevicePropertyNominalSampleRate          = 1853059700
+    pub const kAudioDevicePropertyAvailableNominalSampleRates = 1853059683
+    pub const kAudioDevicePropertyStreams                    = 1937009955
+    pub const kAudioObjectPropertyScopeGlobal                = 1735159650
+    pub const kAudioObjectPropertyScopeOutput                = 1869968496
+    pub const kAudioObjectPropertyScopeInput                 = 1768845428
+    pub const kAudioObjectPropertyElementMain                = 0
+
     pub fn pcm-format(
         sample-rate: Float = 44100.0,
         channels: Int = 2,
@@ -1052,6 +1161,101 @@ pub ns audio {
             mBitsPerChannel=bits,
             mReserved=0
         )
+    }
+
+    pub fn default-output-device() -> Int {
+        let addr = AudioObjectPropertyAddress(
+            mSelector=kAudioHardwarePropertyDefaultOutputDevice,
+            mScope=kAudioObjectPropertyScopeGlobal,
+            mElement=kAudioObjectPropertyElementMain
+        )
+        let dev  = c.auto(c.box(c.u32))
+        let size = c.auto(c.box(c.u32))
+        size[0] = 4
+
+        let err = AudioObjectGetPropertyData(
+            kAudioObjectSystemObject, addr.get(), 0, nil, size, dev
+        )
+        if err != 0 {
+            throw RuntimeError("AudioObjectGetPropertyData (default device) failed: {err}")
+        }
+
+        dev[0]
+    }
+
+    pub fn device-buffer-frame-size(device: Int = -1) -> Int {
+        let dev = device == -1 ? default-output-device() : device
+
+        let addr = AudioObjectPropertyAddress(
+            mSelector=kAudioDevicePropertyBufferFrameSize,
+            mScope=kAudioObjectPropertyScopeGlobal,
+            mElement=kAudioObjectPropertyElementMain
+        )
+        let frames = c.auto(c.box(c.u32))
+        let size   = c.auto(c.box(c.u32))
+        size[0] = 4
+
+        let err = AudioObjectGetPropertyData(
+            dev, addr.get(), 0, nil, size, frames
+        )
+        if err != 0 {
+            throw RuntimeError("AudioObjectGetPropertyData (buffer frame size) failed: {err}")
+        }
+
+        frames[0]
+    }
+
+    pub class DeviceListener {
+        __callback: Ptr[Any]
+        __addr: AudioObjectPropertyAddress
+        __queue: SharedQueue
+
+        init(queue: SharedQueue) {
+            __queue = queue
+
+            __addr = AudioObjectPropertyAddress(
+                mSelector=kAudioHardwarePropertyDefaultOutputDevice,
+                mScope=kAudioObjectPropertyScopeGlobal,
+                mElement=kAudioObjectPropertyElementMain
+            )
+
+            C! closure on-change(
+                obj:       c.u32,
+                n_addrs:   c.u32,
+                addrs:     c.ptr,
+                user_data: c.ptr
+            ) -> c.i32 {
+                __queue.put(true)
+                return 0
+            }
+
+            __callback = on-change
+
+            let err = AudioObjectAddPropertyListener(
+                kAudioObjectSystemObject,
+                __addr.get(),
+                on-change,
+                nil
+            )
+            if err != 0 {
+                throw RuntimeError("AudioObjectAddPropertyListener failed: {err}")
+            }
+        }
+
+        close() {
+            if __callback != nil {
+                AudioObjectRemovePropertyListener(
+                    kAudioObjectSystemObject,
+                    __addr.get(),
+                    __callback,
+                    nil
+                )
+                __callback = nil
+            }
+        }
+
+        __drop__() { close() }
+        __free__() { close() }
     }
 }
 
@@ -1193,6 +1397,127 @@ pub class AudioQueue {
             AudioQueueDispose(__queue, 1)
             __queue = nil
             __started = false
+        }
+    }
+
+    __drop__() { close() }
+    __free__() { close() }
+}
+
+pub class AudioOutput {
+    __unit: Ptr[Any]
+    __callback: Ptr[Any]
+    __format: AudioStreamBasicDescription
+    __running: Bool
+
+    init(
+        format: AudioStreamBasicDescription = audio.pcm-format(),
+        render: _
+    ) {
+        __format = format
+        __running = false
+
+        let desc = AudioComponentDescription(
+            componentType=audio.kAudioUnitType_Output,
+            componentSubType=audio.kAudioUnitSubType_DefaultOutput,
+            componentManufacturer=audio.kAudioUnitManufacturer_Apple,
+            componentFlags=0,
+            componentFlagsMask=0
+        )
+
+        let comp = AudioComponentFindNext(nil, desc)
+        if comp == nil {
+            throw RuntimeError("AudioComponentFindNext: no default output component")
+        }
+
+        let unit-out = c.auto(c.box(c.ptr))
+        let err = AudioComponentInstanceNew(comp, unit-out)
+        if err != 0 {
+            throw RuntimeError("AudioComponentInstanceNew failed: {err}")
+        }
+        __unit = unit-out[0]
+
+        err = AudioUnitSetProperty(
+            __unit,
+            audio.kAudioUnitProperty_StreamFormat,
+            audio.kAudioUnitScope_Input, 0,
+            format.get(), #format
+        )
+        if err != 0 {
+            AudioComponentInstanceDispose(__unit)
+            throw RuntimeError("AudioUnitSetProperty (StreamFormat) failed: {err}")
+        }
+
+        let channels: Int = format.mChannelsPerFrame
+
+        C! closure au-render(
+            ref_con:     c.ptr,
+            flags:       c.ptr,
+            timestamp:   c.ptr,
+            bus:         c.u32,
+            frames:      c.u32,
+            buffer_list: c.ptr
+        ) -> c.i32 {
+            let data = c.load(c.ptr, buffer_list + 16)
+            render(data, frames, channels)
+            return 0
+        }
+
+        __callback = au-render
+
+        let cb = AURenderCallbackStruct(
+            inputProc=au-render,
+            inputProcRefCon=nil
+        )
+
+        err = AudioUnitSetProperty(
+            __unit,
+            audio.kAudioUnitProperty_SetRenderCallback,
+            audio.kAudioUnitScope_Input, 0,
+            cb, #cb
+        )
+        if err != 0 {
+            AudioComponentInstanceDispose(__unit)
+            throw RuntimeError("AudioUnitSetProperty (RenderCallback) failed: {err}")
+        }
+
+        err = AudioUnitInitialize(__unit)
+        if err != 0 {
+            AudioComponentInstanceDispose(__unit)
+            throw RuntimeError("AudioUnitInitialize failed: {err}")
+        }
+    }
+
+    start!() {
+        if !__running {
+            let err = AudioOutputUnitStart(__unit)
+            if err != 0 {
+                throw RuntimeError("AudioOutputUnitStart failed: {err}")
+            }
+            __running = true
+        }
+        self
+    }
+
+    stop!() {
+        if __running {
+            AudioOutputUnitStop(__unit)
+            __running = false
+        }
+        self
+    }
+
+    running? -> Bool {
+        __running
+    }
+
+    close() {
+        if __unit != nil {
+            AudioOutputUnitStop(__unit)
+            AudioUnitUninitialize(__unit)
+            AudioComponentInstanceDispose(__unit)
+            __unit = nil
+            __running = false
         }
     }
 

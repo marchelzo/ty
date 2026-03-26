@@ -48,7 +48,7 @@ pub fn read(path: String | Path) -> OggAudio {
 
     defer ov_clear(vf)
 
-    let err = ov_fopen("{path}", vf)
+    let err = ov_fopen(c.c_str("{path}"), vf)
     if err != 0 {
         throw RuntimeError("ov_fopen failed: {err}")
     }
