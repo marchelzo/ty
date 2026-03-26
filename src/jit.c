@@ -1326,6 +1326,124 @@ jit_rt_post_inc_subscript(Ty *ty, Value *xs, Value *ix, Value *top)
         IncValue(ty, x);
 }
 
+static void
+jit_rt_post_dec(Ty *ty, Value *v, Value *top)
+{
+        vN(STACK) = top - vv(STACK);
+        xvP(STACK, *v);
+        DecValue(ty, v);
+}
+
+static void
+jit_rt_post_dec_subscript(Ty *ty, Value *xs, Value *ix, Value *top)
+{
+        vN(STACK) = top - vv(STACK);
+
+        Value _xs = *xs;
+        Value _ix = *ix;
+
+        xvP(STACK, _xs);
+        xvP(STACK, _ix);
+        DoTargetSubscript(ty);
+
+        Value *x = vm_jit_pop_target(ty);
+
+        xvP(STACK, *x);
+        DecValue(ty, x);
+}
+
+static void
+jit_rt_pre_inc(Ty *ty, Value *v, Value *top)
+{
+        vN(STACK) = top - vv(STACK);
+        IncValue(ty, v);
+        xvP(STACK, *v);
+}
+
+static void
+jit_rt_pre_inc_subscript(Ty *ty, Value *xs, Value *ix, Value *top)
+{
+        vN(STACK) = top - vv(STACK);
+
+        Value _xs = *xs;
+        Value _ix = *ix;
+
+        xvP(STACK, _xs);
+        xvP(STACK, _ix);
+        DoTargetSubscript(ty);
+
+        Value *x = vm_jit_pop_target(ty);
+
+        IncValue(ty, x);
+        xvP(STACK, *x);
+}
+
+static void
+jit_rt_pre_dec(Ty *ty, Value *v, Value *top)
+{
+        vN(STACK) = top - vv(STACK);
+        DecValue(ty, v);
+        xvP(STACK, *v);
+}
+
+static void
+jit_rt_pre_dec_subscript(Ty *ty, Value *xs, Value *ix, Value *top)
+{
+        vN(STACK) = top - vv(STACK);
+
+        Value _xs = *xs;
+        Value _ix = *ix;
+
+        xvP(STACK, _xs);
+        xvP(STACK, _ix);
+        DoTargetSubscript(ty);
+
+        Value *x = vm_jit_pop_target(ty);
+
+        DecValue(ty, x);
+        xvP(STACK, *x);
+}
+
+static void
+jit_rt_post_inc_member(Ty *ty, Value *obj, int member_id, Value *top)
+{
+        vN(STACK) = top - vv(STACK);
+        DoTargetMember(ty, *obj, member_id);
+        Value *x = vm_jit_pop_target(ty);
+        xvP(STACK, *x);
+        IncValue(ty, x);
+}
+
+static void
+jit_rt_post_dec_member(Ty *ty, Value *obj, int member_id, Value *top)
+{
+        vN(STACK) = top - vv(STACK);
+        DoTargetMember(ty, *obj, member_id);
+        Value *x = vm_jit_pop_target(ty);
+        xvP(STACK, *x);
+        DecValue(ty, x);
+}
+
+static void
+jit_rt_pre_inc_member(Ty *ty, Value *obj, int member_id, Value *top)
+{
+        vN(STACK) = top - vv(STACK);
+        DoTargetMember(ty, *obj, member_id);
+        Value *x = vm_jit_pop_target(ty);
+        IncValue(ty, x);
+        xvP(STACK, *x);
+}
+
+static void
+jit_rt_pre_dec_member(Ty *ty, Value *obj, int member_id, Value *top)
+{
+        vN(STACK) = top - vv(STACK);
+        DoTargetMember(ty, *obj, member_id);
+        Value *x = vm_jit_pop_target(ty);
+        DecValue(ty, x);
+        xvP(STACK, *x);
+}
+
 // String literal: mirrors static DoStringLiteral in vm.c
 static void
 jit_rt_string(Ty *ty, Value *result, i32 i)
@@ -1916,6 +2034,9 @@ bc_prescan(JitCtx *ctx, char const *code, int code_size)
                 case INSTR_INC:
                 case INSTR_DEC:
                 case INSTR_POST_INC:
+                case INSTR_POST_DEC:
+                case INSTR_PRE_INC:
+                case INSTR_PRE_DEC:
                 case INSTR_COUNT:
                 case INSTR_GET_TAG:
                 case INSTR_CLASS_OF:
@@ -3928,6 +4049,9 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                                   || ((u8)*ip == INSTR_MUT_DIV)
                                   || ((u8)*ip == INSTR_MUT_MOD)
                                   || ((u8)*ip == INSTR_POST_INC)
+                                  || ((u8)*ip == INSTR_POST_DEC)
+                                  || ((u8)*ip == INSTR_PRE_INC)
+                                  || ((u8)*ip == INSTR_PRE_DEC)
                                 )
                         ) {
                                 // Deferred target for MUL/DIV/MOD (no integer fast path)
@@ -7153,6 +7277,22 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                                 jit_emit_call_reg(asm, BC_CALL);
 
                                 jit_emit_label(asm, lbl_done);
+                        } else if (ctx->tgt_kind == TGT_MEMBER) {
+                                int obj_off = OP_OFF(ctx->tgt_obj_sp);
+                                jit_emit_mov(asm, BC_A0, BC_TY);
+                                jit_emit_add_imm(asm, BC_A1, BC_OPS, obj_off);
+                                jit_emit_load_imm(asm, BC_A2, ctx->tgt_index);
+                                jit_emit_add_imm(asm, BC_A3, BC_OPS, OP_OFF(ctx->sp));
+                                jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_post_inc_member);
+                                jit_emit_call_reg(asm, BC_CALL);
+                        } else if (ctx->tgt_kind == TGT_SELF_MEMBER) {
+                                int self_off = ctx->param_count * VALUE_SIZE;
+                                jit_emit_mov(asm, BC_A0, BC_TY);
+                                jit_emit_add_imm(asm, BC_A1, BC_LOC, self_off);
+                                jit_emit_load_imm(asm, BC_A2, ctx->tgt_index);
+                                jit_emit_add_imm(asm, BC_A3, BC_OPS, OP_OFF(ctx->sp));
+                                jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_post_inc_member);
+                                jit_emit_call_reg(asm, BC_CALL);
                         } else if (ctx->tgt_kind == TGT_SUBSCRIPT) {
                                 int container_off = OP_OFF(ctx->tgt_obj_sp);
                                 int subscript_off = OP_OFF(ctx->tgt_index);
@@ -7165,6 +7305,307 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                                 jit_emit_call_reg(asm, BC_CALL);
                         } else {
                                 BAIL("JIT: POST_INC on unsupported target kind");
+                        }
+
+                        ctx->tgt_kind = TGT_NONE;
+                        ctx->sp++;
+                        break;
+                }
+
+                CASE(POST_DEC) {
+                        if (ctx->tgt_kind == TGT_NONE) {
+                                BAIL("JIT: POST_DEC without target");
+                        }
+
+                        if (ctx->tgt_kind == TGT_LOCAL) {
+                                int local_off = ctx->tgt_index * VALUE_SIZE;
+                                int lbl_slow = bc_next_label(ctx);
+                                int lbl_done = bc_next_label(ctx);
+
+                                Type *t0 = locals[ctx->tgt_index]->type;
+                                Class *class0 = expected_class_of(ctx->ty, t0);
+
+                                if (class0 != NULL && class0->i == CLASS_INT) {
+                                        jit_emit_ldrb(asm, BC_S0, BC_LOC, local_off + VAL_OFF_TYPE);
+                                        jit_emit_cmp_ri(asm, BC_S0, VALUE_INTEGER);
+                                        jit_emit_branch_ne(asm, lbl_slow);
+
+                                        bc_copy_value(ctx, BC_OPS, OP_OFF(ctx->sp), BC_LOC, local_off);
+
+                                        jit_emit_ldr64(asm, BC_S0, BC_LOC, local_off + VAL_OFF_Z);
+                                        jit_emit_load_imm(asm, BC_S1, 1);
+                                        jit_emit_sub(asm, BC_S0, BC_S0, BC_S1);
+                                        jit_emit_str64(asm, BC_S0, BC_LOC, local_off + VAL_OFF_Z);
+                                        jit_emit_jump(asm, lbl_done);
+                                }
+
+                                jit_emit_label(asm, lbl_slow);
+                                jit_emit_mov(asm, BC_A0, BC_TY);
+                                jit_emit_add_imm(asm, BC_A1, BC_LOC, local_off);
+                                jit_emit_add_imm(asm, BC_A2, BC_OPS, OP_OFF(ctx->sp));
+                                jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_post_dec);
+                                jit_emit_call_reg(asm, BC_CALL);
+
+                                jit_emit_label(asm, lbl_done);
+                        } else if (ctx->tgt_kind == TGT_CAPTURED) {
+                                int lbl_slow = bc_next_label(ctx);
+                                int lbl_done = bc_next_label(ctx);
+
+                                Type *t0 = locals[ctx->tgt_index]->type;
+                                Class *class0 = expected_class_of(ctx->ty, t0);
+
+                                jit_emit_ldr64(asm, BC_S2, BC_ENV, ctx->tgt_index * 8);
+
+                                if (class0 != NULL && class0->i == CLASS_INT) {
+                                        jit_emit_ldrb(asm, BC_S0, BC_S2, VAL_OFF_TYPE);
+                                        jit_emit_cmp_ri(asm, BC_S0, VALUE_INTEGER);
+                                        jit_emit_branch_ne(asm, lbl_slow);
+
+                                        bc_copy_value(ctx, BC_OPS, OP_OFF(ctx->sp), BC_S2, 0);
+
+                                        jit_emit_ldr64(asm, BC_S0, BC_S2, VAL_OFF_Z);
+                                        jit_emit_load_imm(asm, BC_S1, 1);
+                                        jit_emit_sub(asm, BC_S0, BC_S0, BC_S1);
+                                        jit_emit_str64(asm, BC_S0, BC_S2, VAL_OFF_Z);
+                                        jit_emit_jump(asm, lbl_done);
+                                }
+
+                                jit_emit_label(asm, lbl_slow);
+                                jit_emit_mov(asm, BC_A0, BC_TY);
+                                jit_emit_mov(asm, BC_A1, BC_S2);
+                                jit_emit_add_imm(asm, BC_A2, BC_OPS, OP_OFF(ctx->sp));
+                                jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_post_dec);
+                                jit_emit_call_reg(asm, BC_CALL);
+
+                                jit_emit_label(asm, lbl_done);
+                        } else if (ctx->tgt_kind == TGT_MEMBER) {
+                                int obj_off = OP_OFF(ctx->tgt_obj_sp);
+                                jit_emit_mov(asm, BC_A0, BC_TY);
+                                jit_emit_add_imm(asm, BC_A1, BC_OPS, obj_off);
+                                jit_emit_load_imm(asm, BC_A2, ctx->tgt_index);
+                                jit_emit_add_imm(asm, BC_A3, BC_OPS, OP_OFF(ctx->sp));
+                                jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_post_dec_member);
+                                jit_emit_call_reg(asm, BC_CALL);
+                        } else if (ctx->tgt_kind == TGT_SELF_MEMBER) {
+                                int self_off = ctx->param_count * VALUE_SIZE;
+                                jit_emit_mov(asm, BC_A0, BC_TY);
+                                jit_emit_add_imm(asm, BC_A1, BC_LOC, self_off);
+                                jit_emit_load_imm(asm, BC_A2, ctx->tgt_index);
+                                jit_emit_add_imm(asm, BC_A3, BC_OPS, OP_OFF(ctx->sp));
+                                jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_post_dec_member);
+                                jit_emit_call_reg(asm, BC_CALL);
+                        } else if (ctx->tgt_kind == TGT_SUBSCRIPT) {
+                                int container_off = OP_OFF(ctx->tgt_obj_sp);
+                                int subscript_off = OP_OFF(ctx->tgt_index);
+
+                                jit_emit_mov(asm, BC_A0, BC_TY);
+                                jit_emit_add_imm(asm, BC_A1, BC_OPS, container_off);
+                                jit_emit_add_imm(asm, BC_A2, BC_OPS, subscript_off);
+                                jit_emit_add_imm(asm, BC_A3, BC_OPS, OP_OFF(ctx->sp));
+                                jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_post_dec_subscript);
+                                jit_emit_call_reg(asm, BC_CALL);
+                        } else {
+                                BAIL("JIT: POST_DEC on unsupported target kind");
+                        }
+
+                        ctx->tgt_kind = TGT_NONE;
+                        ctx->sp++;
+                        break;
+                }
+
+                CASE(PRE_INC) {
+                        if (ctx->tgt_kind == TGT_NONE) {
+                                BAIL("JIT: PRE_INC without target");
+                        }
+
+                        if (ctx->tgt_kind == TGT_LOCAL) {
+                                int local_off = ctx->tgt_index * VALUE_SIZE;
+                                int lbl_slow = bc_next_label(ctx);
+                                int lbl_done = bc_next_label(ctx);
+
+                                Type *t0 = locals[ctx->tgt_index]->type;
+                                Class *class0 = expected_class_of(ctx->ty, t0);
+
+                                if (class0 != NULL && class0->i == CLASS_INT) {
+                                        jit_emit_ldrb(asm, BC_S0, BC_LOC, local_off + VAL_OFF_TYPE);
+                                        jit_emit_cmp_ri(asm, BC_S0, VALUE_INTEGER);
+                                        jit_emit_branch_ne(asm, lbl_slow);
+
+                                        jit_emit_ldr64(asm, BC_S0, BC_LOC, local_off + VAL_OFF_Z);
+                                        jit_emit_add_imm(asm, BC_S0, BC_S0, 1);
+                                        jit_emit_str64(asm, BC_S0, BC_LOC, local_off + VAL_OFF_Z);
+
+                                        bc_copy_value(ctx, BC_OPS, OP_OFF(ctx->sp), BC_LOC, local_off);
+                                        jit_emit_jump(asm, lbl_done);
+                                }
+
+                                jit_emit_label(asm, lbl_slow);
+                                jit_emit_mov(asm, BC_A0, BC_TY);
+                                jit_emit_add_imm(asm, BC_A1, BC_LOC, local_off);
+                                jit_emit_add_imm(asm, BC_A2, BC_OPS, OP_OFF(ctx->sp));
+                                jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_pre_inc);
+                                jit_emit_call_reg(asm, BC_CALL);
+
+                                jit_emit_label(asm, lbl_done);
+                        } else if (ctx->tgt_kind == TGT_CAPTURED) {
+                                int lbl_slow = bc_next_label(ctx);
+                                int lbl_done = bc_next_label(ctx);
+
+                                Type *t0 = locals[ctx->tgt_index]->type;
+                                Class *class0 = expected_class_of(ctx->ty, t0);
+
+                                jit_emit_ldr64(asm, BC_S2, BC_ENV, ctx->tgt_index * 8);
+
+                                if (class0 != NULL && class0->i == CLASS_INT) {
+                                        jit_emit_ldrb(asm, BC_S0, BC_S2, VAL_OFF_TYPE);
+                                        jit_emit_cmp_ri(asm, BC_S0, VALUE_INTEGER);
+                                        jit_emit_branch_ne(asm, lbl_slow);
+
+                                        jit_emit_ldr64(asm, BC_S0, BC_S2, VAL_OFF_Z);
+                                        jit_emit_add_imm(asm, BC_S0, BC_S0, 1);
+                                        jit_emit_str64(asm, BC_S0, BC_S2, VAL_OFF_Z);
+
+                                        bc_copy_value(ctx, BC_OPS, OP_OFF(ctx->sp), BC_S2, 0);
+                                        jit_emit_jump(asm, lbl_done);
+                                }
+
+                                jit_emit_label(asm, lbl_slow);
+                                jit_emit_mov(asm, BC_A0, BC_TY);
+                                jit_emit_mov(asm, BC_A1, BC_S2);
+                                jit_emit_add_imm(asm, BC_A2, BC_OPS, OP_OFF(ctx->sp));
+                                jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_pre_inc);
+                                jit_emit_call_reg(asm, BC_CALL);
+
+                                jit_emit_label(asm, lbl_done);
+                        } else if (ctx->tgt_kind == TGT_MEMBER) {
+                                int obj_off = OP_OFF(ctx->tgt_obj_sp);
+                                jit_emit_mov(asm, BC_A0, BC_TY);
+                                jit_emit_add_imm(asm, BC_A1, BC_OPS, obj_off);
+                                jit_emit_load_imm(asm, BC_A2, ctx->tgt_index);
+                                jit_emit_add_imm(asm, BC_A3, BC_OPS, OP_OFF(ctx->sp));
+                                jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_pre_inc_member);
+                                jit_emit_call_reg(asm, BC_CALL);
+                        } else if (ctx->tgt_kind == TGT_SELF_MEMBER) {
+                                int self_off = ctx->param_count * VALUE_SIZE;
+                                jit_emit_mov(asm, BC_A0, BC_TY);
+                                jit_emit_add_imm(asm, BC_A1, BC_LOC, self_off);
+                                jit_emit_load_imm(asm, BC_A2, ctx->tgt_index);
+                                jit_emit_add_imm(asm, BC_A3, BC_OPS, OP_OFF(ctx->sp));
+                                jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_pre_inc_member);
+                                jit_emit_call_reg(asm, BC_CALL);
+                        } else if (ctx->tgt_kind == TGT_SUBSCRIPT) {
+                                int container_off = OP_OFF(ctx->tgt_obj_sp);
+                                int subscript_off = OP_OFF(ctx->tgt_index);
+
+                                jit_emit_mov(asm, BC_A0, BC_TY);
+                                jit_emit_add_imm(asm, BC_A1, BC_OPS, container_off);
+                                jit_emit_add_imm(asm, BC_A2, BC_OPS, subscript_off);
+                                jit_emit_add_imm(asm, BC_A3, BC_OPS, OP_OFF(ctx->sp));
+                                jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_pre_inc_subscript);
+                                jit_emit_call_reg(asm, BC_CALL);
+                        } else {
+                                BAIL("JIT: PRE_INC on unsupported target kind");
+                        }
+
+                        ctx->tgt_kind = TGT_NONE;
+                        ctx->sp++;
+                        break;
+                }
+
+                CASE(PRE_DEC) {
+                        if (ctx->tgt_kind == TGT_NONE) {
+                                BAIL("JIT: PRE_DEC without target");
+                        }
+
+                        if (ctx->tgt_kind == TGT_LOCAL) {
+                                int local_off = ctx->tgt_index * VALUE_SIZE;
+                                int lbl_slow = bc_next_label(ctx);
+                                int lbl_done = bc_next_label(ctx);
+
+                                Type *t0 = locals[ctx->tgt_index]->type;
+                                Class *class0 = expected_class_of(ctx->ty, t0);
+
+                                if (class0 != NULL && class0->i == CLASS_INT) {
+                                        jit_emit_ldrb(asm, BC_S0, BC_LOC, local_off + VAL_OFF_TYPE);
+                                        jit_emit_cmp_ri(asm, BC_S0, VALUE_INTEGER);
+                                        jit_emit_branch_ne(asm, lbl_slow);
+
+                                        jit_emit_ldr64(asm, BC_S0, BC_LOC, local_off + VAL_OFF_Z);
+                                        jit_emit_load_imm(asm, BC_S1, 1);
+                                        jit_emit_sub(asm, BC_S0, BC_S0, BC_S1);
+                                        jit_emit_str64(asm, BC_S0, BC_LOC, local_off + VAL_OFF_Z);
+
+                                        bc_copy_value(ctx, BC_OPS, OP_OFF(ctx->sp), BC_LOC, local_off);
+                                        jit_emit_jump(asm, lbl_done);
+                                }
+
+                                jit_emit_label(asm, lbl_slow);
+                                jit_emit_mov(asm, BC_A0, BC_TY);
+                                jit_emit_add_imm(asm, BC_A1, BC_LOC, local_off);
+                                jit_emit_add_imm(asm, BC_A2, BC_OPS, OP_OFF(ctx->sp));
+                                jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_pre_dec);
+                                jit_emit_call_reg(asm, BC_CALL);
+
+                                jit_emit_label(asm, lbl_done);
+                        } else if (ctx->tgt_kind == TGT_CAPTURED) {
+                                int lbl_slow = bc_next_label(ctx);
+                                int lbl_done = bc_next_label(ctx);
+
+                                Type *t0 = locals[ctx->tgt_index]->type;
+                                Class *class0 = expected_class_of(ctx->ty, t0);
+
+                                jit_emit_ldr64(asm, BC_S2, BC_ENV, ctx->tgt_index * 8);
+
+                                if (class0 != NULL && class0->i == CLASS_INT) {
+                                        jit_emit_ldrb(asm, BC_S0, BC_S2, VAL_OFF_TYPE);
+                                        jit_emit_cmp_ri(asm, BC_S0, VALUE_INTEGER);
+                                        jit_emit_branch_ne(asm, lbl_slow);
+
+                                        jit_emit_ldr64(asm, BC_S0, BC_S2, VAL_OFF_Z);
+                                        jit_emit_load_imm(asm, BC_S1, 1);
+                                        jit_emit_sub(asm, BC_S0, BC_S0, BC_S1);
+                                        jit_emit_str64(asm, BC_S0, BC_S2, VAL_OFF_Z);
+
+                                        bc_copy_value(ctx, BC_OPS, OP_OFF(ctx->sp), BC_S2, 0);
+                                        jit_emit_jump(asm, lbl_done);
+                                }
+
+                                jit_emit_label(asm, lbl_slow);
+                                jit_emit_mov(asm, BC_A0, BC_TY);
+                                jit_emit_mov(asm, BC_A1, BC_S2);
+                                jit_emit_add_imm(asm, BC_A2, BC_OPS, OP_OFF(ctx->sp));
+                                jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_pre_dec);
+                                jit_emit_call_reg(asm, BC_CALL);
+
+                                jit_emit_label(asm, lbl_done);
+                        } else if (ctx->tgt_kind == TGT_MEMBER) {
+                                int obj_off = OP_OFF(ctx->tgt_obj_sp);
+                                jit_emit_mov(asm, BC_A0, BC_TY);
+                                jit_emit_add_imm(asm, BC_A1, BC_OPS, obj_off);
+                                jit_emit_load_imm(asm, BC_A2, ctx->tgt_index);
+                                jit_emit_add_imm(asm, BC_A3, BC_OPS, OP_OFF(ctx->sp));
+                                jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_pre_dec_member);
+                                jit_emit_call_reg(asm, BC_CALL);
+                        } else if (ctx->tgt_kind == TGT_SELF_MEMBER) {
+                                int self_off = ctx->param_count * VALUE_SIZE;
+                                jit_emit_mov(asm, BC_A0, BC_TY);
+                                jit_emit_add_imm(asm, BC_A1, BC_LOC, self_off);
+                                jit_emit_load_imm(asm, BC_A2, ctx->tgt_index);
+                                jit_emit_add_imm(asm, BC_A3, BC_OPS, OP_OFF(ctx->sp));
+                                jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_pre_dec_member);
+                                jit_emit_call_reg(asm, BC_CALL);
+                        } else if (ctx->tgt_kind == TGT_SUBSCRIPT) {
+                                int container_off = OP_OFF(ctx->tgt_obj_sp);
+                                int subscript_off = OP_OFF(ctx->tgt_index);
+
+                                jit_emit_mov(asm, BC_A0, BC_TY);
+                                jit_emit_add_imm(asm, BC_A1, BC_OPS, container_off);
+                                jit_emit_add_imm(asm, BC_A2, BC_OPS, subscript_off);
+                                jit_emit_add_imm(asm, BC_A3, BC_OPS, OP_OFF(ctx->sp));
+                                jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_pre_dec_subscript);
+                                jit_emit_call_reg(asm, BC_CALL);
+                        } else {
+                                BAIL("JIT: PRE_DEC on unsupported target kind");
                         }
 
                         ctx->tgt_kind = TGT_NONE;
