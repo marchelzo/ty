@@ -1,5 +1,7 @@
 import ffi as c (C!)
 import ptr (typed)
+import time
+import os
 
 const cf = c.dlopen('/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation')
         ?? throw RuntimeError('apple: failed to load CoreFoundation')
@@ -189,71 +191,280 @@ C! pub iokit fn {
 pub ns CF {
     pub const kStringEncodingUTF8 = 0x08000100
     pub const kStringEncodingASCII = 0x0600
+    pub const kStringEncodingMacRoman = 0
+    pub const kStringEncodingUTF16 = 0x0100
+    pub const kStringEncodingUTF16BE = 0x10000100
+    pub const kStringEncodingUTF16LE = 0x14000100
+    pub const kStringEncodingUTF32 = 0x0c000100
+    pub const kStringEncodingUTF32BE = 0x18000100
+    pub const kStringEncodingUTF32LE = 0x1c000100
 
-    pub const kCFNotificationSuspensionBehaviorDeliverImmediately = 4
+    pub const kCFNotificationSuspensionBehaviorDrop               = 1
     pub const kCFNotificationSuspensionBehaviorCoalesce           = 2
-    pub const kCFNotificationSuspensionBehaviorHold               = 1
-    pub const kCFNotificationSuspensionBehaviorDrop               = 3
+    pub const kCFNotificationSuspensionBehaviorHold               = 3
+    pub const kCFNotificationSuspensionBehaviorDeliverImmediately = 4
 
-    pub const kCFNumberSInt32Type  = 3
-    pub const kCFNumberSInt64Type  = 4
-    pub const kCFNumberFloat64Type = 6
+    pub const kCFNumberSInt8Type    = 1
+    pub const kCFNumberSInt16Type   = 2
+    pub const kCFNumberSInt32Type   = 3
+    pub const kCFNumberSInt64Type   = 4
+    pub const kCFNumberFloat32Type  = 5
+    pub const kCFNumberFloat64Type  = 6
+    pub const kCFNumberCharType     = 7
+    pub const kCFNumberShortType    = 8
+    pub const kCFNumberIntType      = 9
+    pub const kCFNumberLongType     = 10
+    pub const kCFNumberLongLongType = 11
+    pub const kCFNumberFloatType    = 12
+    pub const kCFNumberDoubleType   = 13
+    pub const kCFNumberCFIndexType  = 14
+    pub const kCFNumberMaxType      = 14
+
+    pub const kCFRunLoopRunFinished    = 1
+    pub const kCFRunLoopRunStopped     = 2
+    pub const kCFRunLoopRunTimedOut    = 3
+    pub const kCFRunLoopRunHandledSource = 4
+
+    pub const kCFCompareEqualTo     = 0
+    pub const kCFCompareLessThan    = -1
+    pub const kCFCompareGreaterThan = 1
+
+    pub const kCFURLPOSIXPathStyle   = 0
+    pub const kCFURLHFSPathStyle     = 1
+    pub const kCFURLWindowsPathStyle = 2
+
+    pub const kCFPropertyListImmutable              = 0
+    pub const kCFPropertyListMutableContainers       = 1
+    pub const kCFPropertyListMutableContainersAndLeaves = 2
+
+    pub const kCFPropertyListOpenStepFormat = 1
+    pub const kCFPropertyListXMLFormat_v1_0 = 100
+    pub const kCFPropertyListBinaryFormat_v1_0 = 200
 }
 
 pub ns cg {
-    pub const kSessionEventTap      = 1
-    pub const kHIDEventTap          = 0
+    pub const kSessionEventTap          = 1
+    pub const kHIDEventTap              = 0
     pub const kAnnotatedSessionEventTap = 2
 
-    pub const kHeadInsertEventTap   = 0
-    pub const kTailAppendEventTap   = 1
+    pub const kHeadInsertEventTap = 0
+    pub const kTailAppendEventTap = 1
 
     pub const kEventTapOptionDefault    = 0x00000000
     pub const kEventTapOptionListenOnly = 0x00000001
 
-    pub const kEventNull           = 0
-    pub const kEventLeftMouseDown  = 1
-    pub const kEventLeftMouseUp    = 2
-    pub const kEventRightMouseDown = 3
-    pub const kEventRightMouseUp   = 4
-    pub const kEventMouseMoved     = 5
+    // --- Event types ---
+    pub const kEventNull              = 0
+    pub const kEventLeftMouseDown     = 1
+    pub const kEventLeftMouseUp       = 2
+    pub const kEventRightMouseDown    = 3
+    pub const kEventRightMouseUp      = 4
+    pub const kEventMouseMoved        = 5
     pub const kEventLeftMouseDragged  = 6
     pub const kEventRightMouseDragged = 7
-    pub const kEventKeyDown        = 10
-    pub const kEventKeyUp          = 11
-    pub const kEventFlagsChanged   = 12
-    pub const kEventScrollWheel    = 22
-    pub const kEventTabletPointer  = 23
-    pub const kEventTabletProximity = 24
-    pub const kEventOtherMouseDown = 25
-    pub const kEventOtherMouseUp   = 26
+    pub const kEventKeyDown           = 10
+    pub const kEventKeyUp             = 11
+    pub const kEventFlagsChanged      = 12
+    pub const kEventScrollWheel       = 22
+    pub const kEventTabletPointer     = 23
+    pub const kEventTabletProximity   = 24
+    pub const kEventOtherMouseDown    = 25
+    pub const kEventOtherMouseUp      = 26
     pub const kEventOtherMouseDragged = 27
 
     pub const kEventTapDisabledByTimeout   = 0xFFFFFFFE
     pub const kEventTapDisabledByUserInput = 0xFFFFFFFF
 
-    pub const kEventFlagMaskAlphaShift = 0x00010000
-    pub const kEventFlagMaskShift      = 0x00020000
-    pub const kEventFlagMaskControl    = 0x00040000
-    pub const kEventFlagMaskAlternate  = 0x00080000
-    pub const kEventFlagMaskCommand    = 0x00100000
+    // --- Event masks ---
+    pub const kEventMaskAllEvents         = 0xFFFFFFFFFFFFFFFF
+    pub const kEventMaskLeftMouseDown     = (1 << 1)
+    pub const kEventMaskLeftMouseUp       = (1 << 2)
+    pub const kEventMaskRightMouseDown    = (1 << 3)
+    pub const kEventMaskRightMouseUp      = (1 << 4)
+    pub const kEventMaskMouseMoved        = (1 << 5)
+    pub const kEventMaskLeftMouseDragged  = (1 << 6)
+    pub const kEventMaskRightMouseDragged = (1 << 7)
+    pub const kEventMaskKeyDown           = (1 << 10)
+    pub const kEventMaskKeyUp             = (1 << 11)
+    pub const kEventMaskFlagsChanged      = (1 << 12)
+    pub const kEventMaskScrollWheel       = (1 << 22)
+    pub const kEventMaskOtherMouseDown    = (1 << 25)
+    pub const kEventMaskOtherMouseUp      = (1 << 26)
+    pub const kEventMaskOtherMouseDragged = (1 << 27)
+
+    // --- Modifier flag masks ---
+    pub const kEventFlagMaskAlphaShift  = 0x00010000
+    pub const kEventFlagMaskShift       = 0x00020000
+    pub const kEventFlagMaskControl     = 0x00040000
+    pub const kEventFlagMaskAlternate   = 0x00080000
+    pub const kEventFlagMaskCommand     = 0x00100000
+    pub const kEventFlagMaskHelp        = 0x00400000
     pub const kEventFlagMaskSecondaryFn = 0x00800000
+    pub const kEventFlagMaskNumericPad  = 0x00200000
+    pub const kEventFlagMaskNonCoalesced = 0x00000100
 
-    pub const kEventFieldMouseSubtype  = 55
-    pub const kKeyboardEventKeycode   = 9
+    // --- CGEventField: mouse ---
+    pub const kMouseEventNumber         = 0
+    pub const kMouseEventClickState     = 1
+    pub const kMouseEventPressure       = 2
+    pub const kMouseEventButtonNumber   = 3
+    pub const kMouseEventDeltaX         = 4
+    pub const kMouseEventDeltaY         = 5
+    pub const kMouseEventInstantMouser  = 6
+    pub const kMouseEventSubtype        = 55
+    pub const kMouseEventWindowUnderMousePointer = 91
+    pub const kMouseEventWindowUnderMousePointerThatCanHandleThisEvent = 92
 
-    pub const kWindowListOptionAll             = 0
-    pub const kWindowListOptionOnScreenOnly    = (1 << 0)
-    pub const kWindowListExcludeDesktopElements = (1 << 4)
+    // --- CGEventField: keyboard ---
+    pub const kKeyboardEventAutorepeat   = 8
+    pub const kKeyboardEventKeycode      = 9
+    pub const kKeyboardEventKeyboardType = 10
+
+    // --- CGEventField: scroll wheel ---
+    pub const kScrollWheelEventDeltaAxis1        = 11
+    pub const kScrollWheelEventDeltaAxis2        = 12
+    pub const kScrollWheelEventDeltaAxis3        = 13
+    pub const kScrollWheelEventFixedPtDeltaAxis1 = 93
+    pub const kScrollWheelEventFixedPtDeltaAxis2 = 94
+    pub const kScrollWheelEventFixedPtDeltaAxis3 = 95
+    pub const kScrollWheelEventPointDeltaAxis1   = 96
+    pub const kScrollWheelEventPointDeltaAxis2   = 97
+    pub const kScrollWheelEventPointDeltaAxis3   = 98
+    pub const kScrollWheelEventScrollPhase       = 99
+    pub const kScrollWheelEventScrollCount       = 100
+    pub const kScrollWheelEventMomentumPhase     = 123
+    pub const kScrollWheelEventInstantMouser     = 14
+
+    // --- CGEventField: tablet ---
+    pub const kTabletEventPointX        = 15
+    pub const kTabletEventPointY        = 16
+    pub const kTabletEventPointZ        = 17
+    pub const kTabletEventPointButtons  = 18
+    pub const kTabletEventPointPressure = 19
+    pub const kTabletEventTiltX         = 20
+    pub const kTabletEventTiltY         = 21
+    pub const kTabletEventRotation      = 22
+    pub const kTabletEventTangentialPressure = 23
+    pub const kTabletEventDeviceID      = 24
+    pub const kTabletEventVendor1       = 25
+    pub const kTabletEventVendor2       = 26
+    pub const kTabletEventVendor3       = 27
+    pub const kTabletProximityEventVendorID          = 28
+    pub const kTabletProximityEventTabletID          = 29
+    pub const kTabletProximityEventPointerID         = 30
+    pub const kTabletProximityEventDeviceID          = 31
+    pub const kTabletProximityEventSystemTabletID    = 32
+    pub const kTabletProximityEventVendorPointerType = 33
+    pub const kTabletProximityEventVendorPointerSerialNumber = 34
+    pub const kTabletProximityEventVendorUniqueID    = 35
+    pub const kTabletProximityEventCapabilityMask    = 36
+    pub const kTabletProximityEventPointerType       = 37
+    pub const kTabletProximityEventEnterProximity    = 38
+
+    // --- CGEventField: general / target ---
+    pub const kEventTargetProcessSerialNumber = 39
+    pub const kEventTargetUnixProcessID       = 40
+    pub const kEventSourceUnixProcessID       = 41
+    pub const kEventSourceUserData            = 42
+    pub const kEventSourceUserID              = 43
+    pub const kEventSourceGroupID             = 44
+    pub const kEventSourceStateID             = 45
+    pub const kEventUnacceleratedPointerMovementX = 170
+    pub const kEventUnacceleratedPointerMovementY = 171
+
+    // --- Scroll units ---
+    pub const kScrollEventUnitPixel = 0
+    pub const kScrollEventUnitLine  = 1
+
+    // --- Event source states ---
+    pub const kEventSourceStatePrivate              = -1
+    pub const kEventSourceStateCombinedSessionState = 0
+    pub const kEventSourceStateHIDSystemState       = 1
+
+    // --- Window list options ---
+    pub const kWindowListOptionAll                  = 0
+    pub const kWindowListOptionOnScreenOnly         = (1 << 0)
+    pub const kWindowListOptionOnScreenAboveWindow  = (1 << 1)
+    pub const kWindowListOptionOnScreenBelowWindow  = (1 << 2)
+    pub const kWindowListOptionIncludingWindow      = (1 << 3)
+    pub const kWindowListExcludeDesktopElements     = (1 << 4)
 
     pub const kNullWindowID = 0
 
-    pub const kEventSourceStatePrivate      = -1
-    pub const kEventSourceStateCombinedSessionState = 0
-    pub const kEventSourceStateHIDSystemState = 1
+    // --- Window level keys (for CGWindowLevelForKey) ---
+    pub const kBaseWindowLevelKey            = 0
+    pub const kMinimumWindowLevelKey         = 1
+    pub const kDesktopWindowLevelKey         = 2
+    pub const kBackstopMenuLevelKey          = 3
+    pub const kNormalWindowLevelKey          = 4
+    pub const kFloatingWindowLevelKey        = 5
+    pub const kTornOffMenuWindowLevelKey     = 6
+    pub const kDockWindowLevelKey            = 7
+    pub const kMainMenuWindowLevelKey        = 8
+    pub const kStatusWindowLevelKey          = 9
+    pub const kModalPanelWindowLevelKey      = 10
+    pub const kPopUpMenuWindowLevelKey       = 11
+    pub const kDraggingWindowLevelKey        = 12
+    pub const kScreenSaverWindowLevelKey     = 13
+    pub const kMaximumWindowLevelKey         = 14
+    pub const kOverlayWindowLevelKey         = 15
+    pub const kHelpWindowLevelKey            = 16
+    pub const kUtilityWindowLevelKey         = 17
+    pub const kDesktopIconWindowLevelKey     = 18
+    pub const kCursorWindowLevelKey          = 19
+    pub const kAssistiveTechHighWindowLevelKey = 20
 
-    pub const kScrollEventUnitPixel = 0
-    pub const kScrollEventUnitLine  = 1
+    // --- CGError ---
+    pub const kErrorSuccess         = 0
+    pub const kErrorFailure         = 1000
+    pub const kErrorIllegalArgument = 1001
+    pub const kErrorInvalidConnection = 1002
+    pub const kErrorInvalidContext  = 1003
+    pub const kErrorCannotComplete  = 1004
+    pub const kErrorNotImplemented  = 1006
+    pub const kErrorRangeCheck      = 1007
+    pub const kErrorTypeCheck       = 1008
+    pub const kErrorInvalidOperation = 1010
+    pub const kErrorNoneAvailable   = 1011
+
+    // --- Color spaces ---
+    pub const kColorSpaceSRGB          = "kCGColorSpaceSRGB"
+    pub const kColorSpaceGenericRGB    = "kCGColorSpaceGenericRGB"
+    pub const kColorSpaceGenericGray   = "kCGColorSpaceGenericGray"
+    pub const kColorSpaceDisplayP3     = "kCGColorSpaceDisplayP3"
+    pub const kColorSpaceLinearSRGB    = "kCGColorSpaceLinearSRGB"
+    pub const kColorSpaceExtendedSRGB  = "kCGColorSpaceExtendedSRGB"
+
+    // --- Image alpha info ---
+    pub const kImageAlphaNone              = 0
+    pub const kImageAlphaPremultipliedLast  = 1
+    pub const kImageAlphaPremultipliedFirst = 2
+    pub const kImageAlphaLast              = 3
+    pub const kImageAlphaFirst             = 4
+    pub const kImageAlphaNoneSkipLast      = 5
+    pub const kImageAlphaNoneSkipFirst     = 6
+    pub const kImageAlphaOnly              = 7
+
+    // --- Bitmap info ---
+    pub const kBitmapAlphaInfoMask  = 0x1F
+    pub const kBitmapFloatInfoMask  = 0xF00
+    pub const kBitmapFloatComponents = (1 << 8)
+    pub const kBitmapByteOrderMask  = 0x7000
+    pub const kBitmapByteOrderDefault = (0 << 12)
+    pub const kBitmapByteOrder16Little = (1 << 12)
+    pub const kBitmapByteOrder32Little = (2 << 12)
+    pub const kBitmapByteOrder16Big = (3 << 12)
+    pub const kBitmapByteOrder32Big = (4 << 12)
+
+    // --- Mouse buttons ---
+    pub const kMouseButtonLeft   = 0
+    pub const kMouseButtonRight  = 1
+    pub const kMouseButtonCenter = 2
+
+    // --- Mouse event subtypes ---
+    pub const kMouseEventSubtypeDefault      = 0
+    pub const kMouseEventSubtypeTabletPoint  = 1
+    pub const kMouseEventSubtypeTabletProximity = 2
 }
 
 pub ns gesture {
@@ -699,4 +910,292 @@ pub fn mouse-location() -> (Float, Float) {
     let ev = CGEvent()
     let loc = CGEventGetLocation(ev)
     return {x: loc.x, y: loc.y}
+}
+
+const audiotoolbox = c.dlopen('/System/Library/Frameworks/AudioToolbox.framework/AudioToolbox')
+                   ?? throw RuntimeError('apple: failed to load AudioToolbox')
+
+const OSStatus          = c.i32
+const AudioFormatID     = c.u32
+const AudioFormatFlags  = c.u32
+
+C! pub struct AudioStreamBasicDescription {
+    c.double mSampleRate;
+    c.u32 mFormatID;
+    c.u32 mFormatFlags;
+    c.u32 mBytesPerPacket;
+    c.u32 mFramesPerPacket;
+    c.u32 mBytesPerFrame;
+    c.u32 mChannelsPerFrame;
+    c.u32 mBitsPerChannel;
+    c.u32 mReserved;
+}
+
+C! pub struct AudioQueueBuffer {
+    c.u32 mAudioDataBytesCapacity;
+    c.ptr mAudioData;
+    c.u32 mAudioDataByteSize;
+    c.ptr mUserData;
+    c.u32 mPacketDescriptionCapacity;
+    c.ptr mPacketDescriptions;
+    c.u32 mPacketDescriptionCount;
+}
+
+C! audiotoolbox fn {
+    int AudioQueueNewOutput(
+        const void *inFormat,
+        void *inCallbackProc,
+        void *inUserData,
+        void *inCallbackRunLoop,
+        void *inCallbackRunLoopMode,
+        unsigned int inFlags,
+        void **outAQ
+    );
+
+    int AudioQueueNewInput(
+        const void *inFormat,
+        void *inCallbackProc,
+        void *inUserData,
+        void *inCallbackRunLoop,
+        void *inCallbackRunLoopMode,
+        unsigned int inFlags,
+        void **outAQ
+    );
+
+    int AudioQueueDispose(void *inAQ, int inImmediate);
+
+    int AudioQueueAllocateBuffer(
+        void *inAQ,
+        unsigned int inBufferByteSize,
+        void **outBuffer
+    );
+
+    int AudioQueueFreeBuffer(void *inAQ, void *inBuffer);
+
+    int AudioQueueEnqueueBuffer(
+        void *inAQ,
+        void *inBuffer,
+        unsigned int inNumPacketDescs,
+        const void *inPacketDescs
+    );
+
+    int AudioQueueStart(void *inAQ, const void *inStartTime);
+    int AudioQueueStop(void *inAQ, int inImmediate);
+    int AudioQueuePause(void *inAQ);
+    int AudioQueueFlush(void *inAQ);
+    int AudioQueueReset(void *inAQ);
+
+    int AudioQueuePrime(
+        void *inAQ,
+        unsigned int inNumberOfFramesToPrepare,
+        unsigned int *outNumberOfFramesPrepared
+    );
+
+    int AudioQueueSetParameter(void *inAQ, unsigned int inParamID, float inValue);
+    int AudioQueueGetParameter(void *inAQ, unsigned int inParamID, float *outValue);
+
+    int AudioQueueGetProperty(
+        void *inAQ,
+        unsigned int inID,
+        void *outData,
+        unsigned int *ioDataSize
+    );
+
+    int AudioQueueSetProperty(
+        void *inAQ,
+        unsigned int inID,
+        const void *inData,
+        unsigned int inDataSize
+    );
+}
+
+pub ns audio {
+    pub const FORMAT_LINEAR_PCM = 1819304813
+
+    pub const FORMAT_FLAG_FLOAT             = (1 << 0)
+    pub const FORMAT_FLAG_BIG_ENDIAN        = (1 << 1)
+    pub const FORMAT_FLAG_SIGNED_INTEGER    = (1 << 2)
+    pub const FORMAT_FLAG_PACKED            = (1 << 3)
+    pub const FORMAT_FLAG_ALIGNED_HIGH      = (1 << 4)
+    pub const FORMAT_FLAG_NON_INTERLEAVED   = (1 << 5)
+    pub const FORMAT_FLAG_NON_MIXABLE       = (1 << 6)
+
+    pub const FORMAT_NATIVE_FLOAT_PACKED = FORMAT_FLAG_FLOAT | FORMAT_FLAG_PACKED
+
+    pub const QUEUE_PARAM_VOLUME          = 1
+    pub const QUEUE_PARAM_PLAYBACK_RATE   = 2
+    pub const QUEUE_PARAM_PITCH           = 3
+    pub const QUEUE_PARAM_VOLUME_RAMP_TIME = 4
+
+    pub const QUEUE_PROPERTY_IS_RUNNING          = 1634824814
+    pub const QUEUE_PROPERTY_STREAM_DESCRIPTION  = 1634821748
+
+    pub fn pcm-format(
+        sample-rate: Float = 44100.0,
+        channels: Int = 2,
+        bits: Int = 32,
+        float?: Bool = true
+    ) -> AudioStreamBasicDescription {
+        let bytes-per-sample = bits / 8
+        let flags = float?
+            ? (FORMAT_FLAG_FLOAT | FORMAT_FLAG_PACKED)
+            : (FORMAT_FLAG_SIGNED_INTEGER | FORMAT_FLAG_PACKED)
+
+        AudioStreamBasicDescription(
+            mSampleRate=sample-rate,
+            mFormatID=FORMAT_LINEAR_PCM,
+            mFormatFlags=flags,
+            mBytesPerPacket=bytes-per-sample * channels,
+            mFramesPerPacket=1,
+            mBytesPerFrame=bytes-per-sample * channels,
+            mChannelsPerFrame=channels,
+            mBitsPerChannel=bits,
+            mReserved=0
+        )
+    }
+}
+
+pub class AudioQueue {
+    __queue: Ptr[Any]
+    __buffers: Array[Ptr[Any]]
+    __callback: Ptr[Any]
+    __format: AudioStreamBasicDescription
+    __fill: _
+    __started: Bool
+    __thread: Thread
+
+    init(
+        format: AudioStreamBasicDescription = audio.pcm-format(),
+        buffer-size: Int = 4096,
+        buffer-count: Int = 3,
+        fill: _
+    ) {
+        __format = format
+        __fill = fill
+        __started = false
+        __buffers = []
+
+        let rl-ready = SharedQueue()
+
+        __thread = Thread(fn () {
+            rl-ready.put(CFRunLoopGetCurrent())
+            for (;;) {
+                if CFRunLoopRunInMode(kCFRunLoopDefaultMode, 1e9, 0) == CF.kCFRunLoopRunFinished {
+                    os.sleep(0.001)
+                }
+            }
+        }, isolated=true)
+
+        let aq-run-loop = rl-ready.take()
+
+        C! closure aq-cb(user: c.ptr, aq: c.ptr, buf: c.ptr) -> c.void {
+            __refill(buf)
+        }
+
+        __callback = aq-cb
+
+        let out = c.auto(c.box(c.ptr))
+        let err = AudioQueueNewOutput(
+            format.get(), aq-cb, nil,
+            aq-run-loop, kCFRunLoopDefaultMode,
+            0, out
+        )
+        if err != 0 {
+            throw RuntimeError("AudioQueueNewOutput failed: {err}")
+        }
+        __queue = out[0]
+
+        for _ in ..buffer-count {
+            let buf-out = c.auto(c.box(c.ptr))
+            let err = AudioQueueAllocateBuffer(__queue, buffer-size, buf-out)
+            if err != 0 {
+                AudioQueueDispose(__queue, 1)
+                throw RuntimeError("AudioQueueAllocateBuffer failed: {err}")
+            }
+            __buffers.push(buf-out[0])
+        }
+    }
+
+    __refill(buf-ptr: Ptr[Any]) {
+        let buf = AudioQueueBuffer(buf-ptr)
+        let capacity = buf.mAudioDataBytesCapacity
+        let data = buf.mAudioData
+        let bytes-per-frame = __format.mBytesPerFrame
+        let frames = capacity / bytes-per-frame
+
+        __fill(typed(data, c.float), frames, __format.mChannelsPerFrame)
+
+        buf.mAudioDataByteSize = capacity
+        AudioQueueEnqueueBuffer(__queue, buf-ptr, 0, nil)
+    }
+
+    start!() {
+        if !__started {
+            for buf in __buffers { __refill(buf) }
+            __started = true
+        }
+        let err = AudioQueueStart(__queue, nil)
+        if err != 0 {
+            throw RuntimeError("AudioQueueStart failed: {err}")
+        }
+        self
+    }
+
+    stop!(immediate?: Bool = true) {
+        if __started {
+            AudioQueueStop(__queue, immediate? ? 1 : 0)
+            __started = false
+        }
+        self
+    }
+
+    pause!() {
+        AudioQueuePause(__queue)
+        self
+    }
+
+    unpause!() {
+        AudioQueueStart(__queue, nil)
+        self
+    }
+
+    flush!() {
+        AudioQueueFlush(__queue)
+        self
+    }
+
+    reset!() {
+        AudioQueueReset(__queue)
+        self
+    }
+
+    volume=(v: Float) {
+        AudioQueueSetParameter(__queue, audio.QUEUE_PARAM_VOLUME, v)
+    }
+
+    volume -> Float {
+        let out = c.auto(c.box(c.float))
+        AudioQueueGetParameter(__queue, audio.QUEUE_PARAM_VOLUME, out)
+        out[0]
+    }
+
+    running? -> Bool {
+        let out = c.auto(c.box(c.u32))
+        let size = c.auto(c.box(c.u32))
+        size[0] = 4
+        AudioQueueGetProperty(__queue, audio.QUEUE_PROPERTY_IS_RUNNING, out, size)
+        out[0] != 0
+    }
+
+    close() {
+        if __queue != nil {
+            AudioQueueStop(__queue, 1)
+            AudioQueueDispose(__queue, 1)
+            __queue = nil
+            __started = false
+        }
+    }
+
+    __drop__() { close() }
+    __free__() { close() }
 }

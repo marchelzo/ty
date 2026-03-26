@@ -669,7 +669,7 @@ jit_rt_dbg(Ty *ty, i64 sp, char const *msg)
 
         //XPRINT_CTX("%sJIT%s [%zu]: %s%s%s: %s", TERM(91), TERM(0), (usize)(bp + sp - 1 - fp), TERM(34), msg, TERM(0), repr);
 
-        CO_LOG("[jit]", TERM(31;1), "%s: %s", msg, VSC(vvL(STACK)));
+        CO_LOG("[jit]", TERM(31;1), "%s: %s", msg, SHOW(vvL(STACK), BASIC, ABBREV));
 }
 
 static void
@@ -1300,6 +1300,32 @@ jit_rt_dec(Ty *ty, Value *v)
         DecValue(ty, v);
 }
 
+static void
+jit_rt_post_inc(Ty *ty, Value *v, Value *top)
+{
+        vN(STACK) = top - vv(STACK);
+        xvP(STACK, *v);
+        IncValue(ty, v);
+}
+
+static void
+jit_rt_post_inc_subscript(Ty *ty, Value *xs, Value *ix, Value *top)
+{
+        vN(STACK) = top - vv(STACK);
+
+        Value _xs = *xs;
+        Value _ix = *ix;
+
+        xvP(STACK, _xs);
+        xvP(STACK, _ix);
+        DoTargetSubscript(ty);
+
+        Value *x = vm_jit_pop_target(ty);
+
+        xvP(STACK, *x);
+        IncValue(ty, x);
+}
+
 // String literal: mirrors static DoStringLiteral in vm.c
 static void
 jit_rt_string(Ty *ty, Value *result, i32 i)
@@ -1889,6 +1915,7 @@ bc_prescan(JitCtx *ctx, char const *code, int code_size)
                 case INSTR_QUESTION:
                 case INSTR_INC:
                 case INSTR_DEC:
+                case INSTR_POST_INC:
                 case INSTR_COUNT:
                 case INSTR_GET_TAG:
                 case INSTR_CLASS_OF:
@@ -3622,6 +3649,7 @@ bc_emit_call_method(JitCtx *ctx, char const *op_ip, int z, int n, int nkw)
                 bool can_tramp = (rest_idx_of(baked_method) == -1)
                               && (kwargs_idx_of(baked_method) == -1);
                 if (can_tramp) {
+#if 0
                         // Fast trampoline path: skip xcall entirely
                         // Sync to sp-1 (exclude self): callee's fp = vN - argc
                         // must land on arg0, which is at op position sp-1-n
@@ -3639,7 +3667,7 @@ bc_emit_call_method(JitCtx *ctx, char const *op_ip, int z, int n, int nkw)
 
                         // If return 1: handled (result on stack), skip slow path
                         jit_emit_cbnz(asm, BC_RET, lbl_cm_done);
-
+#endif
                         // Slow fallback: guard failed or not JIT'd
                         jit_emit_mov(asm, BC_A0, BC_TY);
                         jit_emit_add_imm(asm, BC_A1, BC_OPS, result_off);
@@ -3650,7 +3678,7 @@ bc_emit_call_method(JitCtx *ctx, char const *op_ip, int z, int n, int nkw)
                         jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_call_self_method_guarded);
                         jit_emit_call_reg(asm, BC_CALL);
 
-                        jit_emit_label(asm, lbl_cm_done);
+                        //jit_emit_label(asm, lbl_cm_done);
                         DBG("CALL_METHOD (baked trampoline for %s)", M_NAME(z));
                 } else {
                         // Guarded fast path for user-defined classes (no trampoline)
@@ -3893,7 +3921,15 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
 
                                 jit_emit_label(asm, lbl_done);
                                 // sp unchanged: addend was replaced by result
-                        } else if (ip < end && ((u8)*ip == INSTR_MUT_MUL || (u8)*ip == INSTR_MUT_DIV || (u8)*ip == INSTR_MUT_MOD)) {
+                        } else if (
+                                (ip < end)
+                             && (
+                                     ((u8)*ip == INSTR_MUT_MUL)
+                                  || ((u8)*ip == INSTR_MUT_DIV)
+                                  || ((u8)*ip == INSTR_MUT_MOD)
+                                  || ((u8)*ip == INSTR_POST_INC)
+                                )
+                        ) {
                                 // Deferred target for MUL/DIV/MOD (no integer fast path)
                                 ctx->tgt_kind = TGT_LOCAL;
                                 ctx->tgt_index = n;
@@ -3924,10 +3960,15 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                 }
 
                 CASE(INT8) {
-                        int8_t k = (int8_t)*ip++;
+                        i8 k = (i8)*ip++;
 
                         // Fusion: INT8 k + SUBSCRIPT => constant-index subscript
-                        if (k >= 0 && ip < end && (u8)*ip == INSTR_SUBSCRIPT) {
+                        if (
+                                (k >= 0)
+                             && (ip < end)
+                             && ((u8)*ip == INSTR_SUBSCRIPT)
+                             && (bc_find_label(ctx, off + 2) == -1)
+                        ) {
                                 Type *t_con = type_resolve_var(ctx->op_types[ctx->sp - 1]);
                                 Class *c = expected_class_of(ctx->ty, t_con);
 
@@ -4852,7 +4893,7 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                         // Record for deferred mutation
                         ctx->tgt_kind = TGT_SUBSCRIPT;
                         ctx->tgt_obj_sp = ctx->sp - 2; // container position
-                        ctx->tgt_index = ctx->sp - 1;  // subscript position (reusing field)
+                        ctx->tgt_index  = ctx->sp - 1;  // subscript position (reusing field)
                         ctx->sp -= 2;
                         break;
                 }
@@ -5057,6 +5098,8 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
 
                         // Fast path handled: result already on stack, skip slow path
                         jit_emit_jump(asm, lbl_cg_done);
+
+                        DBG("CALL_GLOBAL[%d](%s) [fast trampoline]", gi, VSC(vm_global(ty, gi)));
 
                         // Slow fallback: load global + call trampoline
                         jit_emit_label(asm, lbl_cg_slow);
@@ -5942,15 +5985,20 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                         int lbl_slow = bc_next_label(ctx);
                         int lbl_done = bc_next_label(ctx);
 
-                        // Fast path: if int, add 1 to z
-                        jit_emit_ldrb(asm, BC_S0, BC_OPS, off + VAL_OFF_TYPE);
-                        jit_emit_cmp_ri(asm, BC_S0, VALUE_INTEGER);
-                        jit_emit_branch_ne(asm, lbl_slow);
+                        Type *t0 = ctx->op_types[ctx->sp - 1];
+                        Class *obj_class = expected_class_of(ctx->ty, t0);
 
-                        jit_emit_ldr64(asm, BC_S0, BC_OPS, off + VAL_OFF_Z);
-                        jit_emit_add_imm(asm, BC_S0, BC_S0, 1);
-                        jit_emit_str64(asm, BC_S0, BC_OPS, off + VAL_OFF_Z);
-                        jit_emit_jump(asm, lbl_done);
+                        // Fast path: if int, add 1 to z
+                        if (obj_class != NULL && obj_class->i == CLASS_INT) {
+                                jit_emit_ldrb(asm, BC_S0, BC_OPS, off + VAL_OFF_TYPE);
+                                jit_emit_cmp_ri(asm, BC_S0, VALUE_INTEGER);
+                                jit_emit_branch_ne(asm, lbl_slow);
+
+                                jit_emit_ldr64(asm, BC_S0, BC_OPS, off + VAL_OFF_Z);
+                                jit_emit_add_imm(asm, BC_S0, BC_S0, 1);
+                                jit_emit_str64(asm, BC_S0, BC_OPS, off + VAL_OFF_Z);
+                                jit_emit_jump(asm, lbl_done);
+                        }
 
                         // Slow path: call IncValue(ty, &ops[sp-1])
                         jit_emit_label(asm, lbl_slow);
@@ -5968,15 +6016,20 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                         int lbl_slow = bc_next_label(ctx);
                         int lbl_done = bc_next_label(ctx);
 
-                        jit_emit_ldrb(asm, BC_S0, BC_OPS, off + VAL_OFF_TYPE);
-                        jit_emit_cmp_ri(asm, BC_S0, VALUE_INTEGER);
-                        jit_emit_branch_ne(asm, lbl_slow);
+                        Type *t0 = ctx->op_types[ctx->sp - 1];
+                        Class *obj_class = expected_class_of(ctx->ty, t0);
 
-                        jit_emit_ldr64(asm, BC_S0, BC_OPS, off + VAL_OFF_Z);
-                        jit_emit_load_imm(asm, BC_S1, 1);
-                        jit_emit_sub(asm, BC_S0, BC_S0, BC_S1);
-                        jit_emit_str64(asm, BC_S0, BC_OPS, off + VAL_OFF_Z);
-                        jit_emit_jump(asm, lbl_done);
+                        if (obj_class != NULL && obj_class->i == CLASS_INT) {
+                                jit_emit_ldrb(asm, BC_S0, BC_OPS, off + VAL_OFF_TYPE);
+                                jit_emit_cmp_ri(asm, BC_S0, VALUE_INTEGER);
+                                jit_emit_branch_ne(asm, lbl_slow);
+
+                                jit_emit_ldr64(asm, BC_S0, BC_OPS, off + VAL_OFF_Z);
+                                jit_emit_load_imm(asm, BC_S1, 1);
+                                jit_emit_sub(asm, BC_S0, BC_S0, BC_S1);
+                                jit_emit_str64(asm, BC_S0, BC_OPS, off + VAL_OFF_Z);
+                                jit_emit_jump(asm, lbl_done);
+                        }
 
                         jit_emit_label(asm, lbl_slow);
                         jit_emit_mov(asm, BC_A0, BC_TY);
@@ -6883,7 +6936,17 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                                 int lbl_slow = bc_next_label(ctx);
                                 int lbl_done = bc_next_label(ctx);
 
-                                if (op == INSTR_MUT_ADD || op == INSTR_MUT_SUB) {
+                                Type *t0 = ctx->op_types[ctx->sp - 1];
+                                Class *class0 = expected_class_of(ctx->ty, t0);
+
+                                Type *t1 = locals[ctx->tgt_index]->type;
+                                Class *class1 = expected_class_of(ctx->ty, t1);
+
+                                if (
+                                        (class0 != NULL && class0->i == CLASS_INT)
+                                     && (class1 != NULL && class1->i == CLASS_INT)
+                                     && (op == INSTR_MUT_ADD || op == INSTR_MUT_SUB)
+                                ) {
                                         // Fast path: check both are VALUE_INTEGER
                                         jit_emit_ldrb(asm, BC_S0, BC_LOC, local_off + VAL_OFF_TYPE);
                                         jit_emit_cmp_ri(asm, BC_S0, VALUE_INTEGER);
@@ -7015,6 +7078,97 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
 
                         ctx->tgt_kind = TGT_NONE;
                         // sp unchanged: addend replaced by result
+                        break;
+                }
+
+                CASE(POST_INC) {
+                        if (ctx->tgt_kind == TGT_NONE) {
+                                BAIL("JIT: POST_INC without target");
+                        }
+
+                        if (ctx->tgt_kind == TGT_LOCAL) {
+                                int local_off = ctx->tgt_index * VALUE_SIZE;
+                                int lbl_slow = bc_next_label(ctx);
+                                int lbl_done = bc_next_label(ctx);
+
+                                Type *t0 = locals[ctx->tgt_index]->type;
+                                Class *class0 = expected_class_of(ctx->ty, t0);
+
+                                if (class0 != NULL && class0->i == CLASS_INT) {
+                                        // Fast path: check target is VALUE_INTEGER
+                                        jit_emit_ldrb(asm, BC_S0, BC_LOC, local_off + VAL_OFF_TYPE);
+                                        jit_emit_cmp_ri(asm, BC_S0, VALUE_INTEGER);
+                                        jit_emit_branch_ne(asm, lbl_slow);
+
+                                        // Push original value as result
+                                        bc_copy_value(ctx, BC_OPS, OP_OFF(ctx->sp), BC_LOC, local_off);
+
+                                        // Mutate local: load, increment, and store back
+                                        jit_emit_ldr64(asm, BC_S0, BC_LOC, local_off + VAL_OFF_Z);
+                                        jit_emit_add_imm(asm, BC_S0, BC_S0, 1);
+                                        jit_emit_str64(asm, BC_S0, BC_LOC, local_off + VAL_OFF_Z);
+                                        jit_emit_jump(asm, lbl_done);
+                                }
+
+                                // Slow path
+                                jit_emit_label(asm, lbl_slow);
+                                jit_emit_mov(asm, BC_A0, BC_TY);
+                                jit_emit_add_imm(asm, BC_A1, BC_LOC, local_off);
+                                jit_emit_add_imm(asm, BC_A2, BC_OPS, OP_OFF(ctx->sp));
+                                jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_post_inc);
+                                jit_emit_call_reg(asm, BC_CALL);
+
+                                jit_emit_label(asm, lbl_done);
+                        } else if (ctx->tgt_kind == TGT_CAPTURED) {
+                                int lbl_slow = bc_next_label(ctx);
+                                int lbl_done = bc_next_label(ctx);
+
+                                Type *t0 = locals[ctx->tgt_index]->type;
+                                Class *class0 = expected_class_of(ctx->ty, t0);
+
+                                jit_emit_ldr64(asm, BC_S2, BC_ENV, ctx->tgt_index * 8);
+
+                                if (class0 != NULL && class0->i == CLASS_INT) {
+                                        // Fast path: check target is VALUE_INTEGER
+                                        jit_emit_ldrb(asm, BC_S0, BC_S2, VAL_OFF_TYPE);
+                                        jit_emit_cmp_ri(asm, BC_S0, VALUE_INTEGER);
+                                        jit_emit_branch_ne(asm, lbl_slow);
+
+                                        // Push original value as result
+                                        bc_copy_value(ctx, BC_OPS, OP_OFF(ctx->sp), BC_S2, 0);
+
+                                        // Mutate local: load, increment, and store back
+                                        jit_emit_ldr64(asm, BC_S0, BC_S2, VAL_OFF_Z);
+                                        jit_emit_add_imm(asm, BC_S0, BC_S0, 1);
+                                        jit_emit_str64(asm, BC_S0, BC_S2, VAL_OFF_Z);
+                                        jit_emit_jump(asm, lbl_done);
+                                }
+
+                                // Slow path
+                                jit_emit_label(asm, lbl_slow);
+                                jit_emit_mov(asm, BC_A0, BC_TY);
+                                jit_emit_mov(asm, BC_A1, BC_S2);
+                                jit_emit_add_imm(asm, BC_A2, BC_OPS, OP_OFF(ctx->sp));
+                                jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_post_inc);
+                                jit_emit_call_reg(asm, BC_CALL);
+
+                                jit_emit_label(asm, lbl_done);
+                        } else if (ctx->tgt_kind == TGT_SUBSCRIPT) {
+                                int container_off = OP_OFF(ctx->tgt_obj_sp);
+                                int subscript_off = OP_OFF(ctx->tgt_index);
+
+                                jit_emit_mov(asm, BC_A0, BC_TY);
+                                jit_emit_add_imm(asm, BC_A1, BC_OPS, container_off);
+                                jit_emit_add_imm(asm, BC_A2, BC_OPS, subscript_off);
+                                jit_emit_add_imm(asm, BC_A3, BC_OPS, OP_OFF(ctx->sp));
+                                jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_post_inc_subscript);
+                                jit_emit_call_reg(asm, BC_CALL);
+                        } else {
+                                BAIL("JIT: POST_INC on unsupported target kind");
+                        }
+
+                        ctx->tgt_kind = TGT_NONE;
+                        ctx->sp++;
                         break;
                 }
 

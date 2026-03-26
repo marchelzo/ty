@@ -145,10 +145,10 @@ static Ty *ty = &vvv;
                         GetInstructionName(IP[-1]), \
                         vN(STACK) ? SHOW(top()) : "--" \
                 );
-#define CASE(i) case INSTR_##i:
-#define YCASE(i) \
+#define YCASE(i) case INSTR_##i:
+#define CASE(i) \
         case INSTR_##i: \
-                CO_LOG(#i, TERM(93), "%s", vN(STACK) ? SHOW(top()) : "--");
+                CO_LOG(#i, TERM(93), "");
 #endif
 
 #define MatchError do {                                          \
@@ -1603,12 +1603,12 @@ xjit(Ty *ty, isize depth, JitFn *func, i32 resume_idx, Value *args, Value **env)
         int reason = JIT_REASON(rc);
 
         if (LIKELY(reason == JIT_RETURN)) {
-                CO_LOG("jit_return", TERM(93;1), "ret = %s", VSC(vvL(STACK)));
+                CO_LOG("jit_return", TERM(93;1), "ret = %s", SHOW(vvL(STACK), BASIC));
                 Value v = v_L(STACK);
                 IP = vXx(CALLS);
                 vN(STACK) = vXx(FRAMES).fp + 1;
                 v_L(STACK) = v;
-                CO_LOG("jit_return", TERM(92;1), "ret = %s", VSC(vvL(STACK)));
+                CO_LOG("jit_return", TERM(92;1), "ret = %s", SHOW(vvL(STACK), BASIC));
                 return 0;
         }
 
@@ -8932,6 +8932,14 @@ CaptureContextEx(Ty *ty, ThrowCtx *ctx)
         char const *up;
 
         while (ip != NULL) {
+                if (ip == &JIT) {
+                        ip = (
+                                code_of(&vvL(st.frames)->f)
+                              + code_size_of(&vvL(st.frames)->f)
+                              - 1
+                        );
+                }
+
                 if (
                         (vN(st.frames) > 0)
                      && is_hidden_fun(FrameFun(ty, vvL(st.frames)))

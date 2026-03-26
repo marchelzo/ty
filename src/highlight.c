@@ -604,6 +604,8 @@ token_color(Token const *t, char const *source)
         case TOKEN_DOT_DOT_DOT:
         case '$':
         case TOKEN_USER_OP:
+        case '</':
+        case '/>':
                 return SC_OPERATOR;
 
         case TOKEN_NEWLINE:

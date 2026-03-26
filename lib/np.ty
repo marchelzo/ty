@@ -26,7 +26,7 @@ const ROW_MAJOR = 101
 const NO_TRANS  = 111
 const TRANS     = 112
 
-ns raw {
+pub ns raw {
     C! lib fn {
         void cblas_dgemm(int Order, int TransA, int TransB, int M, int N, int K, double alpha, const double *A, int lda, const double *B, int ldb, double beta, double *C, int ldc);
         void cblas_dgemv(int Order, int Trans, int M, int N, double alpha, const double *A, int lda, const double *X, int incX, double beta, double *Y, int incY);
@@ -41,7 +41,7 @@ ns raw {
     }
 
 #|if __apple__
-    C! lib fn {
+    C! pub lib fn {
         void vDSP_vmulD(const double *A, long IA, const double *B, long IB, double *C, long IC, unsigned long N);
         void vDSP_vdivD(const double *B, long IB, const double *A, long IA, double *C, long IC, unsigned long N);
         void vDSP_vsaddD(const double *A, long IA, const double *B, double *C, long IC, unsigned long N);
@@ -71,6 +71,36 @@ ns raw {
         void vvacos(double *y, const double *x, const int *n);
         void vvatan(double *y, const double *x, const int *n);
         void vvfabs(double *y, const double *x, const int *n);
+
+        void vDSP_vmul(const float *A, long IA, const float *B, long IB, float *C, long IC, unsigned long N);
+        void vDSP_vadd(const float *A, long IA, const float *B, long IB, float *C, long IC, unsigned long N);
+        void vDSP_vsub(const float *B, long IB, const float *A, long IA, float *C, long IC, unsigned long N);
+        void vDSP_vsmul(const float *A, long IA, const float *B, float *C, long IC, unsigned long N);
+        void vDSP_vsadd(const float *A, long IA, const float *B, float *C, long IC, unsigned long N);
+        void vDSP_vneg(const float *A, long IA, float *C, long IC, unsigned long N);
+        void vDSP_vclr(float *C, long IC, unsigned long N);
+        void vDSP_sve(const float *A, long IA, float *C, unsigned long N);
+        void vDSP_maxv(const float *A, long IA, float *C, unsigned long N);
+        void vDSP_mmov(const float *A, float *C, unsigned long M, unsigned long N, unsigned long TA, unsigned long TC);
+        void vDSP_vma(const float *A, long IA, const float *B, long IB, const float *C, long IC, float *D, long ID, unsigned long N);
+        void vDSP_vmsb(const float *A, long IA, const float *B, long IB, const float *C, long IC, float *D, long ID, unsigned long N);
+        void vDSP_vclip(const float *A, long IA, const float *lo, const float *hi, float *C, long IC, unsigned long N);
+        void vDSP_minv(const float *A, long IA, float *C, unsigned long N);
+        void vDSP_vabs(const float *A, long IA, float *C, long IC, unsigned long N);
+        void vDSP_vfill(const float *A, float *C, long IC, unsigned long N);
+        void vDSP_vramp(const float *A, const float *B, float *C, long IC, unsigned long N);
+        void vDSP_vsmsa(const float *A, long IA, const float *B, const float *C, float *D, long ID, unsigned long N);
+        void vDSP_vintb(const float *A, long IA, const float *B, long IB, const float *C, float *D, long ID, unsigned long N);
+        void vDSP_vtabi(const float *A, long IA, const float *S1, const float *S2, const float *C, unsigned long M, float *D, long ID, unsigned long N);
+        void vDSP_zvmul(const void *A, long IA, const void *B, long IB, const void *C, long IC, unsigned long N, int conjugate);
+
+        void *vDSP_create_fftsetup(unsigned long log2n, int radix);
+        void vDSP_destroy_fftsetup(void *setup);
+        void vDSP_fft_zip(void *setup, void *C, long IC, unsigned long log2n, int direction);
+        void vDSP_fft_zop(void *setup, void *A, long IA, void *C, long IC, unsigned long log2n, int direction);
+
+        void vvsinf(float *y, const float *x, const int *n);
+        void vvcosf(float *y, const float *x, const int *n);
     }
 #|]
 
@@ -1308,4 +1338,154 @@ pub ns linalg {
 
         NDArray(result, [n])
     }
+}
+
+pub const FFT_FORWARD  = 1
+pub const FFT_INVERSE  = -1
+pub const FFT_RADIX2   = 0
+
+pub class F32Array {
+    data: Ptr[Float]
+    n: Int
+
+    __sp: Ptr[Float]
+
+    init(size: Int) {
+        data = c.new-auto(c.float, size)
+        n    = size
+        __sp = c.box-auto(c.float, 0.0)
+    }
+
+    init(ptr: Ptr[Float], size: Int) {
+        data = ptr.as(c.float)
+        n = size
+        __sp = c.box-auto(c.float, 0.0)
+    }
+
+    #() -> Int { n }
+    ptr -> Ptr[Float] { data }
+
+    [](i: Int) -> Float { c.load(c.float, data + i) }
+    []=(i: Int, v: Float) { c.store(c.float, data + i, v) }
+
+    static zeros(size: Int) -> F32Array {
+        let arr = F32Array(size)
+#|if __apple__
+        raw.vDSP_vclr(arr.data, 1, size)
+#|else
+        for i in ..size { c.store(c.float, arr.data + i, 0.0) }
+#|]
+        arr
+    }
+
+    static from-list(xs: Array[Float]) -> F32Array {
+        let arr = F32Array(#xs)
+        for i in ..#xs { c.store(c.float, arr.data + i, xs[i]) }
+        arr
+    }
+
+    to-list() -> Array[Float] {
+        [c.load(c.float, data + i) for i in ..n]
+    }
+
+    scale!(s: Float) {
+#|if __apple__
+        __sp[0] = s
+        raw.vDSP_vsmul(data, 1, __sp, data, 1, n)
+#|else
+        for i in ..n {
+            let v = c.load(c.float, data + i);
+            c.store(c.float, data + i, v * s)
+        }
+#|]
+    }
+
+    add!(other: F32Array) {
+#|if __apple__
+        raw.vDSP_vadd(data, 1, other.data, 1, data, 1, n)
+#|else
+        for i in ..n {
+            let a = c.load(c.float, data + i)
+            let b = c.load(c.float, other.data + i)
+            c.store(c.float, data + i, a + b)
+        }
+#|]
+    }
+
+    mul(other: F32Array) -> F32Array {
+        let out = F32Array(n)
+#|if __apple__
+        raw.vDSP_vmul(data, 1, other.data, 1, out.data, 1, n)
+#|else
+        for i in ..n {
+            let a = c.load(c.float, data + i)
+            let b = c.load(c.float, other.data + i)
+            c.store(c.float, out.data + i, a * b)
+        }
+#|]
+        out
+    }
+
+    slice(start: Int, count: Int) -> F32Array {
+        F32Array(data + start, count)
+    }
+
+    copy() -> F32Array {
+        let out = F32Array(n)
+        c.memcpy(out.data, data, n * 4)
+        out
+    }
+}
+
+#|if __apple__
+pub class FFTSetup {
+    setup: Ptr[Any]
+    log2n: Int
+
+    init(log2n: Int) {
+        self.log2n = log2n
+        setup = raw.vDSP_create_fftsetup(log2n, FFT_RADIX2)
+            ?? throw RuntimeError("vDSP_create_fftsetup failed")
+    }
+
+    __free__() {
+        if setup != nil {
+            raw.vDSP_destroy_fftsetup(setup)
+            setup = nil
+        }
+    }
+
+    fft!(split-re: F32Array, split-im: F32Array, direction: Int = FFT_FORWARD) {
+        let dsp-split = c.new-auto(c.ptr, 2)
+        dsp-split[0] = split-re.data
+        dsp-split[1] = split-im.data
+        raw.vDSP_fft_zip(setup, dsp-split, 1, log2n, direction)
+    }
+}
+#|]
+
+pub fn f32-cos-table(n: Int, base: Float, step: Float) -> F32Array {
+    let angles = F32Array(n)
+    for i in ..n { c.store(c.float, angles.data + i, base + i * step) }
+    let result = F32Array(n)
+#|if __apple__
+    let np = c.box-auto(c.int, n)
+    raw.vvcosf(result.data, angles.data, np)
+#|else
+    for i in ..n { c.store(c.float, result.data + i, math.cos(c.load(c.float, angles.data + i))) }
+#|]
+    result
+}
+
+pub fn f32-sin-table(n: Int, base: Float, step: Float) -> F32Array {
+    let angles = F32Array(n)
+    for i in ..n { c.store(c.float, angles.data + i, base + i * step) }
+    let result = F32Array(n)
+#|if __apple__
+    let np = c.box-auto(c.int, n)
+    raw.vvsinf(result.data, angles.data, np)
+#|else
+    for i in ..n { c.store(c.float, result.data + i, math.sin(c.load(c.float, angles.data + i))) }
+#|]
+    result
 }
