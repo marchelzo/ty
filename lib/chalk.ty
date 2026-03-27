@@ -280,35 +280,8 @@ fn detrans(a: _, b: _) -> String {
     trans
 }
 
-pub fn parse(text: String, start: _ = {}) -> String {
-    if !start { return text.unchalk() }
-
-    let out = Blob()
-    let props = start
-    let style = start
-
-    fn push(text, st) {
-        out.push(detrans(style, st))
-        out.push(escape(text))
-        style = st
-    }
-
-    for match text.split(/\x1b\[([^m]*)m|\x1b\]8;;([^\x1b]*)\x1b\\/v) {
-        m: RegexMatch => {
-            match m.groups {
-                [_, $sgr, *]      => props = record-of(sgr, start=props),
-                [_, _, '' or nil] => props = {*props, link: nil},
-                [_, _, url]       => props = {*props, link: url},
-            }
-        },
-        text => {
-            push(text, props)
-        }
-    }
-
-    push('', start)
-
-    out.str!()
+pub fn parse(text: String) -> String {
+    text.unchalk()
 }
 
 pub class Text {
@@ -572,110 +545,15 @@ pub class Chalk {
         __styles = %{**styles, *: parse-style(it, self)}
     }
 
-    render(text: String, plain: Bool = false) {
+    render(
+        text: String,
 #|if (getenv('NO_COLOR') != nil) || (ty.color == 'never')
-        plain = true
+        plain: Bool = true
+#|else
+        plain: Bool = false
 #|]
-        if !plain { return text.chalk(__styles) }
-
-        let parts = text.split(/(?:\\\\)|(?:\\\[)|\[([\/%]+)?([^]]*)\]/v)
-
-        let stack: _ = [[{}]]
-        let style: TermStyle = {}
-        let out = Blob()
-        let ostack = []
-
-        fn update() {
-            let new-style = stack.flat().fold({}, \{*_, *_})
-            out.push(trans(style, new-style))
-            style = new-style
-        }
-
-        fn get-style(name) {
-            match __styles[name] {
-                $style => style,
-                _      => throw UnknownStyleError(name, text, self)
-            }
-        }
-
-        fn finish-fmt(fmt: String) {
-            ostack[-1].push("{out.str!():{fmt}}")
-            out = ostack.pop()
-        }
-
-        fn stops(stop, style) {
-            match (stop, style) {
-                ('fg',        {fg, ?bright})    => true,
-                ('bg',        {bg, ?bg-bright}) => true,
-                ('uc',        {uc, ?underline}) => true,
-                ('u',         {underline, ?uc}) => true,
-                ('underline', {underline, ?uc}) => true,
-                ('link',      {link})           => true,
-
-                _  => (style == __styles[stop])
-            }
-        }
-
-        let clean = \_.sub(/\\./, &[1])
-
-        for match parts {
-            part: String
-                => out.push(clean(part)),
-
-            RegexMatch({groups: [escaped]})
-                => out.push(escaped[1;]),
-
-            RegexMatch({captures}) => if !plain {
-                match captures {
-                    [nil, &words $~> styles] => {
-                        stack.push(styles.map(get-style))
-                        update()
-                    },
-
-                    ['%', fmt] => {
-                        ostack.push(out)
-                        out = Blob()
-                        stack.push({fmt})
-                    },
-
-                    [&len ~> n, &words $~> []] => {
-                        for ..min(n, #stack) {
-                            match stack.pop() {
-                                {fmt} => finish-fmt(fmt),
-                                _     => update()
-                            }
-                        }
-                    },
-
-                    [_, &words $~> styles] => {
-                        for style in styles {
-                            for entry in stack[;;-1] if entry :: Array {
-                                if let $ii = entry.searchr-by(\style `stops` _) {
-                                    entry.pop(ii)
-                                    break
-                                }
-                            }
-                        }
-                        stack.filter!(\#_ > 0)
-                        update()
-                    }
-                }
-            }
-        }
-
-        for match stack {
-            {fmt} => finish-fmt(fmt),
-            _     => ()
-        }
-
-        stack.filter!(\!matches?(_, {fmt}))
-
-        if !plain {
-            update()
-            out.push("\x1b[0m")
-        }
-
-        out.str!()
+    ) -> String {
+        !plain ? text.chalk() : text.plain()
     }
 
     spans(text: String) -> [(TermStyle, String)] {

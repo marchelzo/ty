@@ -3865,7 +3865,6 @@ fn layout-node(
             if let $entry = inst.?kitty-entry {
                 let fresh? = entry.fresh? ?? false
                 let x-off = int(entry.?x-off ?? 0)
-                print('XXXXXXXXXXXXXXXXXXXXXXXXXx')
                 let ki = { id: entry.id, escape: entry.escape, ox: ox + x-off, oy: oy, fresh?: fresh? }
                 debug!("layout: kitty id={ki.id} fresh={fresh?} at ({ox + x-off},{oy}) for {type(inst)}")
                 _kitties.push(ki.id)
