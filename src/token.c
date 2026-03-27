@@ -79,9 +79,11 @@ static struct {
 int
 operator_get_token_type(char const *s)
 {
-        for (size_t i = 0; i < sizeof operators / sizeof operators[0]; ++i)
-                if (strcmp(s, operators[i].op) == 0)
+        for (usize i = 0; i < sizeof operators / sizeof operators[0]; ++i) {
+                if (s_eq(s, operators[i].op)) {
                         return operators[i].toktype;
+                }
+        }
 
         return -1;
 }

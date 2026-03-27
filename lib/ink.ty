@@ -3817,20 +3817,28 @@ fn layout-node(
         },
         c: Component => do {
             let inst = reconcile(c, path)
+
             inst.focus!(inst == _focused)
-            if inst.focusable? { _focusables.push(inst) }
+            if inst.focusable? {
+                _focusables.push(inst)
+            }
+
             if let $iv = inst.interval {
                 let exists = _timers.any?(
-                    t -> !t.canceled? && t.owner == inst && t.repeat != nil
+                    t -> !t.canceled? && (t.owner == inst) && (t.repeat != nil)
                 )
                 if !exists {
                     inst.every(iv, -> do { inst.tick(); inst.invalidate!() })
                 }
+
             }
+
             inst.layout-x = ox
             inst.layout-y = oy
 
-            let same-constraints = inst.layout-max-w == max-w && inst.layout-max-h == max-h
+            let same-constraints = (inst.layout-max-w == max-w)
+                                && (inst.layout-max-h == max-h)
+
             inst.layout-max-w = max-w
             inst.layout-max-h = max-h
 
@@ -3857,16 +3865,20 @@ fn layout-node(
             if let $entry = inst.?kitty-entry {
                 let fresh? = entry.fresh? ?? false
                 let x-off = int(entry.?x-off ?? 0)
+                print('XXXXXXXXXXXXXXXXXXXXXXXXXx')
                 let ki = { id: entry.id, escape: entry.escape, ox: ox + x-off, oy: oy, fresh?: fresh? }
                 debug!("layout: kitty id={ki.id} fresh={fresh?} at ({ox + x-off},{oy}) for {type(inst)}")
                 _kitties.push(ki.id)
                 _kitty-images.push(ki)
                 entry.fresh? = false
             }
+
             let (output, el) = layout-node(rendered, max-w, max-h, "{path}$", ox, oy)
+
             if (rendered :: Node) and let $st = rendered.props['_scroll-total'] {
                 inst.scroll-total = int(st)
             }
+
             (output, Element(
                 ox, oy, output.width, output.height,
                 %{}, [el], component=inst
