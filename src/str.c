@@ -1415,8 +1415,6 @@ string_clone(Ty *ty, Value *string, int argc, Value *kwargs)
         return vSs(ss(*string), sN(*string));
 }
 
-/* ---- String.unchalk(): ANSI escapes → chalk bracket markup ---- */
-
 enum {
         US_BOLD, US_ITALIC, US_DIM, US_REVERSE,
         US_UL, US_FG, US_BGBR, US_BG, US_UC, US_LNK, US_NA
@@ -1916,7 +1914,72 @@ string_unchalk(Ty *ty, Value *string, int argc, Value *kwargs)
 
 #undef US_SET
 
-/* ---- String.chalk(): render chalk bracket markup → ANSI ---- */
+static Value
+string_plain(Ty *ty, Value *string, int argc, Value *kwargs)
+{
+        ASSERT_ARGC("String.plain()", 0);
+
+        u8 const *s = ss(*string);
+        isize     len = sN(*string);
+
+        SCRATCH_SAVE();
+
+        byte_vector out = {0};
+        isize pos = 0;
+
+        for (;;) {
+                isize ts = pos;
+
+                while (pos < len) {
+                        if (
+                                   s[pos] == '\\'
+                                && pos + 1 < len
+                                && (s[pos + 1] == '\\' || s[pos + 1] == '[')
+                        ) {
+                                break;
+                        }
+                        if (s[pos] == '[') {
+                                break;
+                        }
+                        pos += 1;
+                }
+
+                for (isize i = ts; i < pos; ++i) {
+                        if (s[i] == '\\' && i + 1 < pos) {
+                                i += 1;
+                        }
+                        svPn(out, s + i, 1);
+                }
+
+                if (pos >= len) {
+                        break;
+                }
+
+                if (s[pos] == '\\') {
+                        svPn(out, s + pos + 1, 1);
+                        pos += 2;
+                        continue;
+                }
+
+                pos += 1;
+
+                while (pos < len && s[pos] != ']') {
+                        pos += 1;
+                }
+
+                if (pos < len) {
+                        pos += 1;
+                }
+        }
+
+        Value result = (vN(out) > 0)
+                     ? vSs(vv(out), vN(out))
+                     : STRING_EMPTY;
+
+        SCRATCH_RESTORE();
+
+        return result;
+}
 
 typedef struct {
         i8      bold, italic, dim, reverse;
@@ -2710,6 +2773,7 @@ DEFINE_METHOD_TABLE(
         { .name = "lpad",      .func = string_pad_left         },
         { .name = "rpad",      .func = string_pad_right        },
         { .name = "pad",       .func = string_pad_right        },
+        { .name = "plain",     .func = string_plain            },
         { .name = "ptr",       .func = string_ptr              },
         { .name = "repeat",    .func = string_repeat           },
         { .name = "replace",   .func = string_replace          },
