@@ -1493,6 +1493,40 @@ jit_rt_string(Ty *ty, Value *result, i32 i)
         *result = STRING_NOGC(interned->name, (uptr)interned->data);
 }
 
+static void
+jit_rt_binary_op(Ty *ty, Value *top, int op)
+{
+        vN(STACK) = top - vv(STACK);
+        DoBinaryOp(ty, op, true);
+}
+
+static void
+jit_rt_call_global_kw(Ty *ty, Value *top, int gi, int n, int nkw, char *kw_ip)
+{
+        vN(STACK) = top - vv(STACK);
+        Value kwargs = BuildKwargsDict(ty, &kw_ip, nkw);
+        DoCallEx(ty, v_(Globals, gi), n, &kwargs, true);
+}
+
+static void
+jit_rt_call_kw(Ty *ty, Value *top, int n, int nkw, char *kw_ip)
+{
+        vN(STACK) = top - vv(STACK);
+        Value f = vXx(STACK);
+        Value kwargs = BuildKwargsDict(ty, &kw_ip, nkw);
+        DoCallEx(ty, &f, n, &kwargs, true);
+}
+
+static void
+jit_rt_call_method_kw(Ty *ty, Value *top, int z, int n, int nkw, char *kw_ip)
+{
+        vN(STACK) = top - vv(STACK);
+        char *saved = ty->ip;
+        ty->ip = kw_ip;
+        CallMethod(ty, z, n, nkw, false, true);
+        ty->ip = saved;
+}
+
 // Three-way compare => Value (wraps value_compare into INTEGER)
 static void
 jit_rt_cmp(Ty *ty, Value *result, Value *a, Value *b)
@@ -2416,6 +2450,11 @@ bc_prescan(JitCtx *ctx, char const *code, int code_size)
                         BC_SKIP(i32);
                         break;
 
+                case INSTR_PUSH_ARRAY_ELEM:
+                        BC_SKIP(i32);
+                        BC_SKIP(i32);
+                        break;
+
                 case INSTR_INDEX_TUPLE: {
                         i32 jump_off;
                         BC_READ(jump_off);
@@ -2614,7 +2653,7 @@ jit_rt_call(Ty *ty, Value *result, Value *fn, int argc)
         Value _fn = *fn;
         ptrdiff_t idx = (result - vv(STACK));
         vN(STACK) = idx + argc;
-        DoCall(ty, &_fn, argc, 0, false, true);
+        DoCallEx(ty, &_fn, argc, &NIL, true);
 }
 
 // Trampoline-aware call helper.
@@ -2634,7 +2673,7 @@ jit_rt_call_trampoline(Ty *ty, Value *out, Value *fn, int argc)
              || is_starred(&_fn)
              || ((jit = try_jit(ty, &_fn)) == NULL)
         ) {
-                DoCall(ty, &_fn, argc, 0, false, true);
+                DoCallEx(ty, &_fn, argc, &NIL, true);
                 return 0;
         }
 
@@ -5088,14 +5127,23 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                         int n, nkw;
                         BC_READ(n);
                         BC_READ(nkw);
+                        char const *kw_ip = (char const *)ip;
                         for (int q = 0; q < nkw; ++q) BC_SKIPSTR();
-
-                        if (nkw > 0) {
-                                BAIL("CALL with kwargs not supported");
-                        }
 
                         if (n == -1) {
                                 BAIL("CALL with spread args not supported");
+                        }
+
+                        if (nkw > 0) {
+                                jit_emit_mov(asm, BC_A0, BC_TY);
+                                jit_emit_add_imm(asm, BC_A1, BC_OPS, OP_OFF(ctx->sp));
+                                jit_emit_load_imm(asm, BC_A2, n);
+                                jit_emit_load_imm(asm, BC_A3, nkw);
+                                jit_emit_load_imm(asm, BC_A4, (iptr)kw_ip);
+                                jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_call_kw);
+                                jit_emit_call_reg(asm, BC_CALL);
+                                ctx->sp -= n + nkw;
+                                break;
                         }
 
                         Type *f0 = ctx->op_types[ctx->sp - 1];
@@ -5149,10 +5197,27 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                         BC_READ(n);
                         BC_READ(z);
                         BC_READ(nkw);
+                        char const *kw_ip = (char const *)ip;
                         for (int q = 0; q < nkw; ++q) BC_SKIPSTR();
 
-                        if (nkw > 0 || n == -1) {
-                                BAIL("CALL_METHOD with kwargs/spread not supported");
+                        if (n == -1) {
+                                BAIL("CALL_METHOD with spread not supported");
+                        }
+
+                        if (nkw > 0) {
+                                EMIT_SET_CALL_IP(op_ip);
+                                ctx->sp -= n + nkw + 1;
+                                jit_emit_mov(asm, BC_A0, BC_TY);
+                                jit_emit_add_imm(asm, BC_A1, BC_OPS, OP_OFF(ctx->sp + n + nkw + 1));
+                                jit_emit_load_imm(asm, BC_A2, z);
+                                jit_emit_load_imm(asm, BC_A3, n);
+                                jit_emit_load_imm(asm, BC_A4, nkw);
+                                jit_emit_load_imm(asm, BC_A5, (iptr)kw_ip);
+                                jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_call_method_kw);
+                                jit_emit_call_reg(asm, BC_CALL);
+                                ctx->sp++;
+                                if (ctx->sp > ctx->max_sp) ctx->max_sp = ctx->sp;
+                                break;
                         }
 
                         bc_emit_call_method(ctx, op_ip, z, n, nkw);
@@ -5233,10 +5298,26 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                         BC_READ(gi);
                         BC_READ(n);
                         BC_READ(nkw);
+                        char const *kw_ip = (char const *)ip;
                         for (int q = 0; q < nkw; ++q) BC_SKIPSTR();
 
-                        if (nkw > 0 || n == -1) {
-                                BAIL("CALL_GLOBAL with kwargs/spread not supported");
+                        if (n == -1) {
+                                BAIL("CALL_GLOBAL with spread not supported");
+                        }
+
+                        if (nkw > 0) {
+                                ctx->sp -= n + nkw;
+                                jit_emit_mov(asm, BC_A0, BC_TY);
+                                jit_emit_add_imm(asm, BC_A1, BC_OPS, OP_OFF(ctx->sp + n + nkw));
+                                jit_emit_load_imm(asm, BC_A2, gi);
+                                jit_emit_load_imm(asm, BC_A3, n);
+                                jit_emit_load_imm(asm, BC_A4, nkw);
+                                jit_emit_load_imm(asm, BC_A5, (iptr)kw_ip);
+                                jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_call_global_kw);
+                                jit_emit_call_reg(asm, BC_CALL);
+                                ctx->sp++;
+                                if (ctx->sp > ctx->max_sp) ctx->max_sp = ctx->sp;
+                                break;
                         }
 
                         DBG("CALL_GLOBAL(%s, argc=%d)", VSC(vm_global(ty, gi)), n);
@@ -6383,8 +6464,13 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                 CASE(BINARY_OP) {
                         int n;
                         BC_READ(n);
-                        BAIL("BINARY_OP unsupported");
-                        return false;
+                        jit_emit_mov(asm, BC_A0, BC_TY);
+                        jit_emit_add_imm(asm, BC_A1, BC_OPS, OP_OFF(ctx->sp));
+                        jit_emit_load_imm(asm, BC_A2, n);
+                        jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_binary_op);
+                        jit_emit_call_reg(asm, BC_CALL);
+                        ctx->sp--;
+                        break;
                 }
 
                 CASE(JUMP_WTF) {
@@ -6657,6 +6743,41 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                         jit_emit_load_imm(asm, BC_A2, (iptr)(code + off));
                         jit_emit_load_imm(asm, BC_CALL, (iptr)vm_jit_fail);
                         jit_emit_call_reg(asm, BC_CALL);
+                        jit_emit_label(asm, lbl_done);
+                        break;
+                }
+
+                CASE(PUSH_ARRAY_ELEM) {
+                        i32 idx;
+                        u8 strict;
+                        BC_READ(idx);
+                        BC_READ(strict);
+                        if (idx < 0) {
+                                BAIL("PUSH_ARRAY_ELEM with negative index");
+                        }
+                        int top_off = OP_OFF(ctx->sp - 1);
+                        int lbl_fail = bc_next_label(ctx);
+                        int lbl_done = bc_next_label(ctx);
+                        jit_emit_ldrb(asm, BC_S0, BC_OPS, top_off + VAL_OFF_TYPE);
+                        jit_emit_cmp_ri(asm, BC_S0, VALUE_ARRAY);
+                        jit_emit_branch_ne(asm, lbl_fail);
+                        jit_emit_ldr64(asm, BC_S3, BC_OPS, top_off + VAL_OFF_Z);
+                        jit_emit_ldr64(asm, BC_S0, BC_S3, 8);
+                        jit_emit_cmp_ri(asm, BC_S0, idx);
+                        jit_emit_branch_le(asm, lbl_fail);
+                        jit_emit_ldr64(asm, BC_S3, BC_S3, 0);
+                        bc_push_from(ctx, BC_S3, idx * sizeof (Value));
+                        jit_emit_jump(asm, lbl_done);
+                        jit_emit_label(asm, lbl_fail);
+                        if (strict) {
+                                jit_emit_mov(asm, BC_A0, BC_TY);
+                                jit_emit_add_imm(asm, BC_A1, BC_OPS, top_off);
+                                jit_emit_load_imm(asm, BC_A2, (iptr)(code + off));
+                                jit_emit_load_imm(asm, BC_CALL, (iptr)vm_jit_fail);
+                                jit_emit_call_reg(asm, BC_CALL);
+                        } else {
+                                bc_push_nil(ctx);
+                        }
                         jit_emit_label(asm, lbl_done);
                         break;
                 }

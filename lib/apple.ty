@@ -71,6 +71,8 @@ C! pub cf fn {
     long CFDictionaryGetTypeID(void);
     int CFBooleanGetValue(const void *boolean);
 
+    void *CFNumberCreate(void *allocator, long type, const void *valuePtr);
+
     void *CFNotificationCenterGetDistributedCenter(void);
     void *CFNotificationCenterGetLocalCenter(void);
     void CFNotificationCenterAddObserver(
@@ -176,6 +178,8 @@ C! pub appsvcs fn {
     unsigned int CGWindowLevelForKey(int key);
 
     void *CGEventSourceCreate(int stateID);
+
+    int CGEventSourceKeyState(int stateID, unsigned short key);
 }
 
 C! pub iokit fn {
@@ -186,6 +190,27 @@ C! pub iokit fn {
         unsigned int *assertionID
     );
     unsigned int IOPMAssertionRelease(unsigned int assertionID);
+    void *IOHIDManagerCreate(void *allocator, unsigned int options);
+    int IOHIDManagerOpen(void *manager, unsigned int options);
+    int IOHIDManagerClose(void *manager, unsigned int options);
+    void IOHIDManagerSetDeviceMatching(void *manager, void *matching);
+    void IOHIDManagerRegisterInputValueCallback(void *manager, void *callback, void *context);
+    void IOHIDManagerScheduleWithRunLoop(void *manager, void *runLoop, void *mode);
+    void IOHIDManagerUnscheduleFromRunLoop(void *manager, void *runLoop, void *mode);
+    unsigned int IOHIDElementGetUsagePage(void *element);
+    unsigned int IOHIDElementGetUsage(void *element);
+    void *IOHIDValueGetElement(void *value);
+    long IOHIDValueGetIntegerValue(void *value);
+}
+
+pub ns iokit {
+    pub const kIOHIDOptionsTypeNone = 0
+    pub const kHIDPage_KeyboardOrKeypad = 0x07
+    pub const kHIDPage_GenericDesktop   = 0x01
+    pub const kHIDUsage_GD_Keyboard     = 0x06
+
+    pub const kHIDUsage_KeyA = 0x04
+    pub const kHIDUsage_KeyK = 0x0E
 }
 
 pub ns CF {

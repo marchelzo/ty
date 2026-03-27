@@ -47,7 +47,10 @@ void
 DoAssignSubscript(Ty *ty, int n, bool exec);
 
 bool
-DoCall(Ty *ty, Value const *f, int n, int nkw, bool auto_this, bool exec);
+DoCallEx(Ty *ty, Value const *f, int n, Value const *kwargs, bool exec);
+
+Value
+BuildKwargsDict(Ty *ty, char **ip, int nkw);
 
 bool
 CallMethod(Ty *ty, int m_id, int n, int nkw, bool b, bool exec);

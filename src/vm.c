@@ -2946,8 +2946,8 @@ DoTag(Ty *ty, int tag, int n, Value *kws)
 }
 
 
-static Value
-BuildKwargsDict(Ty *ty, int nkw)
+Value
+BuildKwargsDict(Ty *ty, char **ip, int nkw)
 {
         if (nkw == 0) {
                 return NIL;
@@ -2955,12 +2955,12 @@ BuildKwargsDict(Ty *ty, int nkw)
 
         GC_STOP();
         Dict *kwargs = dict_new(ty);
-        for (int i = 0; i < nkw; ++i, SKIPSTR()) {
+        for (int i = 0; i < nkw; ++i, *ip += strlen(*ip) + 1) {
                 Value v = vZ(STACK)[-(nkw - i)];
                 if (IsNone(v)) {
                         continue;
                 }
-                if (IP[0] == '*') {
+                if (**ip == '*') {
                         if (v.type == VALUE_DICT) {
                                 dfor(v.dict, {
                                         if (UNLIKELY(key->type != VALUE_STRING)) {
@@ -3002,7 +3002,7 @@ BuildKwargsDict(Ty *ty, int nkw)
                                 );
                         }
                 } else {
-                        dict_put_member(ty, kwargs, IP, v);
+                        dict_put_member(ty, kwargs, *ip, v);
                 }
         }
         vN(STACK) -= nkw;
@@ -3012,7 +3012,7 @@ BuildKwargsDict(Ty *ty, int nkw)
 }
 
 bool
-DoCall(Ty *ty, Value const *f, int n, int nkw, bool auto_this, bool exec)
+DoCallEx(Ty *ty, Value const *f, int n, Value const *_kwargs, bool exec)
 {
         Value v = *f;
         Value *vp;
@@ -3023,10 +3023,6 @@ DoCall(Ty *ty, Value const *f, int n, int nkw, bool auto_this, bool exec)
 
         bool new_frame = false;
 
-        if (n == -1) {
-                n = vN(STACK) - vXx(SP_STACK) - nkw;
-        }
-
         /* TODO: optimize more tail calls */
 #if 0
         if (tco) {
@@ -3036,9 +3032,7 @@ DoCall(Ty *ty, Value const *f, int n, int nkw, bool auto_this, bool exec)
         }
 #endif
 
-        gP(auto_this ? v.this : &v);
-
-        Value kwargs = BuildKwargsDict(ty, nkw);
+        Value kwargs = *_kwargs;
 
         switch (v.type) {
         case VALUE_FUNCTION:
@@ -3049,7 +3043,6 @@ DoCall(Ty *ty, Value const *f, int n, int nkw, bool auto_this, bool exec)
                 } else {
                         new_frame = call(ty, &v, NULL, n, &kwargs);
                 }
-                gX();
                 return new_frame;
 
         case VALUE_BUILTIN_FUNCTION:
@@ -3064,7 +3057,6 @@ DoCall(Ty *ty, Value const *f, int n, int nkw, bool auto_this, bool exec)
                 k = vN(STACK) - n;
                 v = (*v.builtin_function)(ty, n, &kwargs);
                 gX();
-                gX();
                 STACK.count = k;
                 push(v);
                 CheckPendingSignals(ty);
@@ -3075,17 +3067,14 @@ DoCall(Ty *ty, Value const *f, int n, int nkw, bool auto_this, bool exec)
                 v = cffi_fast_call(ty, &v, n, NULL);
                 STACK.count = k;
                 push(v);
-                gX();
                 CheckPendingSignals(ty);
                 return false;
 
         case VALUE_GENERATOR:
-                gX();
                 call_co(ty, &v, n);
                 return false;
 
         case VALUE_OPERATOR:
-                gX();
                 switch (n) {
                 case 1:
                         DoUnaryOp(ty, v.uop, exec);
@@ -3107,7 +3096,6 @@ DoCall(Ty *ty, Value const *f, int n, int nkw, bool auto_this, bool exec)
                 gP(&kwargs);
                 DoTag(ty, v.tag, n, &kwargs);
                 gX();
-                gX();
                 return false;
 
         case VALUE_OBJECT:
@@ -3117,11 +3105,9 @@ DoCall(Ty *ty, Value const *f, int n, int nkw, bool auto_this, bool exec)
                 }
                 if (exec) {
                         exec_fn(ty, vp, &v, n, &kwargs);
-                        gX();
                         return false;
                 } else {
                         new_frame = call(ty, vp, &v, n, &kwargs);
-                        gX();
                         return new_frame;
                 }
 
@@ -3133,7 +3119,6 @@ DoCall(Ty *ty, Value const *f, int n, int nkw, bool auto_this, bool exec)
                         vN(STACK) = k;
                         xpush(value);
                         gX();
-                        gX();
                         return false;
                 }
                 vp = class_ctor(ty, v.class);
@@ -3141,7 +3126,6 @@ DoCall(Ty *ty, Value const *f, int n, int nkw, bool auto_this, bool exec)
                 if (UNLIKELY(IsZero(*vp))) {
                         vN(STACK) -= n;
                         push(value);
-                        gX();
                         gX();
                         return false;
                 }
@@ -3151,13 +3135,11 @@ DoCall(Ty *ty, Value const *f, int n, int nkw, bool auto_this, bool exec)
                         gX();
                         put(value);
                         gX();
-                        gX();
                         return false;
                 } else {
                         usize i = vN(STACK) - n;
                         xvI(STACK, value, i);
                         call6t(ty, vp, &value, n, &kwargs, pop_ret);
-                        gX();
                         gX();
                         return true;
                 }
@@ -3171,11 +3153,9 @@ DoCall(Ty *ty, Value const *f, int n, int nkw, bool auto_this, bool exec)
                 }
                 if (exec) {
                         exec_fn(ty, v.method, v.this, n, &kwargs);
-                        gX();
                         return false;
                 } else {
                         new_frame = call(ty, v.method, v.this, n, &kwargs);
-                        gX();
                         return new_frame;
                 }
 
@@ -3191,13 +3171,11 @@ DoCall(Ty *ty, Value const *f, int n, int nkw, bool auto_this, bool exec)
                 v = string_match(ty, &value, 1, NULL);
                 pop();
                 put(v);
-                gX();
                 return false;
 
         case VALUE_BUILTIN_METHOD:
                 gP(&kwargs);
                 v = v.builtin_method(ty, v.this, n, &kwargs);
-                gX();
                 gX();
                 STACK.count -= n;
                 push(v);
@@ -3206,7 +3184,6 @@ DoCall(Ty *ty, Value const *f, int n, int nkw, bool auto_this, bool exec)
         case VALUE_NIL:
                 STACK.count -= n;
                 push(NIL);
-                gX();
                 return false;
 
         case VALUE_DICT:
@@ -3219,7 +3196,6 @@ DoCall(Ty *ty, Value const *f, int n, int nkw, bool auto_this, bool exec)
                 } else {
                         xpush(Some(*vp));
                 }
-                gX();
                 return false;
 
         case VALUE_ARRAY:
@@ -3228,7 +3204,6 @@ DoCall(Ty *ty, Value const *f, int n, int nkw, bool auto_this, bool exec)
                 value = ArraySubscript(ty, v, subscript, false);
                 STACK.count -= (n + 1);
                 xpush(value);
-                gX();
                 return false;
 
         NotCallable:
@@ -3237,6 +3212,18 @@ DoCall(Ty *ty, Value const *f, int n, int nkw, bool auto_this, bool exec)
         }
 
         return false;
+}
+
+inline static bool
+DoCall(Ty *ty, Value const *f, int n, int nkw, bool exec)
+{
+        if (n == -1) {
+                n = vN(STACK) - vXx(SP_STACK) - nkw;
+        }
+
+        Value kwargs = BuildKwargsDict(ty, &IP, nkw);
+
+        return DoCallEx(ty, f, n, &kwargs, exec);
 }
 
 inline static u16
@@ -3387,7 +3374,7 @@ DispatchMethodFast(Ty *ty, Value self, i32 id, int argc, int nkw, bool exec)
         switch (type) {
         case OFF_FIELD:
                 pop();
-                DoCall(ty, &v->object->slots[off], argc, nkw, false, exec);
+                DoCall(ty, &v->object->slots[off], argc, nkw, exec);
                 break;
 
         case OFF_GETTER:
@@ -3395,7 +3382,7 @@ DispatchMethodFast(Ty *ty, Value self, i32 id, int argc, int nkw, bool exec)
                 exec_fn(ty, vp, v, 0, NULL);
                 fn = pop();
                 pop();
-                DoCall(ty, &fn, argc, nkw, false, exec);
+                DoCall(ty, &fn, argc, nkw, exec);
                 break;
 
         case OFF_GETTER_X:
@@ -3403,13 +3390,13 @@ DispatchMethodFast(Ty *ty, Value self, i32 id, int argc, int nkw, bool exec)
                 exec_fn(ty, vp, v, 0, NULL);
                 fn = pop();
                 pop();
-                DoCall(ty, &fn, argc, nkw, false, exec);
+                DoCall(ty, &fn, argc, nkw, exec);
                 break;
 
         case OFF_METHOD:
                 vp = v_(class->methods.values, off);
                 pop();
-                kwargs = BuildKwargsDict(ty, nkw);
+                kwargs = BuildKwargsDict(ty, &IP, nkw);
                 if (exec) {
                         exec_fn(ty, vp, v, argc, &kwargs);
                 } else {
@@ -3420,7 +3407,7 @@ DispatchMethodFast(Ty *ty, Value self, i32 id, int argc, int nkw, bool exec)
         case OFF_METHOD_X:
                 vp = &v->object->slots[off];
                 pop();
-                kwargs = BuildKwargsDict(ty, nkw);
+                kwargs = BuildKwargsDict(ty, &IP, nkw);
                 if (exec) {
                         exec_fn(ty, vp, v, argc, &kwargs);
                 } else {
@@ -4133,7 +4120,7 @@ ClassLookup:
                 break;
 
         case VALUE_NIL:
-                (void)BuildKwargsDict(ty, nkw);
+                (void)BuildKwargsDict(ty, &IP, nkw);
                 STACK.count -= (n + 1);
                 push(NIL);
                 return false;
@@ -4147,7 +4134,7 @@ ClassLookup:
         if (func != NULL) {
                 pop();
                 gP(&value);
-                attr = BuildKwargsDict(ty, nkw);
+                attr = BuildKwargsDict(ty, &IP, nkw);
                 gP(&attr);
                 v = (*func)(ty, &value, n, &attr);
                 gX();
@@ -4180,7 +4167,7 @@ ClassLookup:
                 exec_fn(ty, vp, &value, 1, NULL);
                 v = pop();
                 pop();
-                return DoCall(ty, &v, n, nkw, false, exec);
+                return DoCall(ty, &v, n, nkw, exec);
         }
 
 DoCall:
@@ -4188,11 +4175,10 @@ DoCall:
                 pop();
                 if (self != NULL) {
                         v = METHOD(i, vp, self);
-                        return DoCall(ty, &v, n, nkw, true, exec);
                 } else {
                         v = *vp;
-                        return DoCall(ty, &v, n, nkw, false, exec);
                 }
+                return DoCall(ty, &v, n, nkw, exec);
         } else if (maybe) {
 QuietFailure:
                 STACK.count -= (n + 1 + nkw);
@@ -8477,7 +8463,7 @@ BinaryOp:
                         default:
                                 DOJUMP(jump);
                                 push(peek());
-                                if (DoCall(ty, &v, 1, 0, false, false)) {
+                                if (DoCall(ty, &v, 1, 0, false)) {
                                         xvP(CALLS, unapply);
                                 }
                                 break;
@@ -8515,14 +8501,14 @@ BinaryOp:
                         v = pop();
                         READVALUE(n);
                         READVALUE(nkw);
-                        DoCall(ty, &v, n, nkw, false, false);
+                        DoCall(ty, &v, n, nkw, false);
                         break;
 
                 CASE(CALL_GLOBAL)
                         READVALUE(i);
                         READVALUE(n);
                         READVALUE(nkw);
-                        DoCall(ty, v_(Globals, i), n, nkw, false, false);
+                        DoCall(ty, v_(Globals, i), n, nkw, false);
                         break;
 
                 CASE(TRY_YIELD_FROM)
@@ -11628,7 +11614,8 @@ vm_jit_get_member(Ty *ty)
 void
 vm_jit_try_member_access(Ty *ty, int z)
 {
-        push(GetMember(ty, z, true, true));
+        Value v = GetMember(ty, z, true, true);
+        push(!IsNone(v) ? v : NIL);
 }
 
 void

@@ -22,6 +22,10 @@ ifeq ($(shell uname -m),arm64)
 	LDFLAGS += -Wl,-rpath,/opt/homebrew/lib
 endif
 
+ifeq ($(shell uname -s),Darwin)
+	LDFLAGS += -framework Accelerate
+endif
+
 LDFLAGS += -lm
 LDFLAGS += -lcurses
 LDFLAGS += -L/usr/local/lib

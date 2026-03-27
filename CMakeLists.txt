@@ -388,6 +388,7 @@ if(APPLE)
   target_link_libraries(${_tgt_ty_interface} INTERFACE
     -Wl,-force_load,$<TARGET_FILE:unibilium>
   )
+  target_link_libraries(${_tgt_ty_interface} INTERFACE "-framework Accelerate")
   target_link_options(${_tgt_ty_interface} INTERFACE -Wl,-export_dynamic)
 else()
   target_link_libraries(${_tgt_ty_interface} INTERFACE

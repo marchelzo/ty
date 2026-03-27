@@ -5894,6 +5894,10 @@ AddRefinements(Ty *ty, Expr const *e, Scope *_then, Scope *_else)
                                                 e->right->symbol->class
                                         )
                                 );
+                                Refinement *ref = vvL(_then->refinements);
+                                LogRefine("AddRefinement(%s):", ref->var->identifier);
+                                LogRefine("    %s", type_show(ty, ref->var->type));
+                                LogRefine("--> %s", type_show(ty, ref->t0));
                         }
                         if (_else != NULL) {
                                 ScopeRefineVar(
@@ -5906,11 +5910,11 @@ AddRefinements(Ty *ty, Expr const *e, Scope *_then, Scope *_else)
                                                 class_get(ty, e->right->symbol->class)->object_type
                                         )
                                 );
+                                Refinement *ref = vvL(_else->refinements);
+                                LogRefine("AddRefinement(%s):", ref->var->identifier);
+                                LogRefine("    %s", type_show(ty, ref->var->type));
+                                LogRefine("--> %s", type_show(ty, ref->t0));
                         }
-                        Refinement *ref = vvL(_then->refinements);
-                        LogRefine("AddRefinement(%s):", ref->var->identifier);
-                        LogRefine("    %s", type_show(ty, ref->var->type));
-                        LogRefine("--> %s", type_show(ty, ref->t0));
                 }
                 break;
         }
@@ -7820,7 +7824,6 @@ emit_lang_string(Ty *ty, Expr const *e)
                 Expr const  *fmt = *v_(e->fmts, i);
                 Expr const   *ex = *v_(e->expressions, i);
                 int        width = *v_(e->widths, i);
-
                 EE(ex);
                 if (fmt == NULL) {
                         INSN(NIL);
@@ -7829,11 +7832,10 @@ emit_lang_string(Ty *ty, Expr const *e)
                 }
                 INSN(INTEGER);
                 EiMAX(width);
-                ETUPLE(3);
-                Ei32(-1);
-                Ei32(-1);
-                Ei32(-1);
-
+                INSN(TUPLE);
+                Ei32(3);
+                EP(NULL);
+                STK(-3);
                 if (v__(e->strings, i + 1)[0] != '\0') {
                         INSN(STRING);
                         ESL(v__(e->strings, i + 1));

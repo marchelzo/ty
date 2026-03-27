@@ -87,8 +87,10 @@ pub const NodeType = {
 };
 
 fn escape-html(s: String) -> String {
-  s.sub('&', '&amp;').sub('<', '&lt;').sub('>', '&gt;').sub('"', '&quot;')
+  s.sub('&', '&amp;').sub('<', '&lt;').sub('>', '&gt;')
 }
+
+pub use RenderFunction = (MarkdownNode, Dict[Int, RenderFunction]) -> String
 
 pub class MarkdownNode {
   __node: _
@@ -153,7 +155,7 @@ pub class MarkdownNode {
     children.map(\_.html).join()
   }
 
-  render-children(renderers: Dict) -> String {
+  render-children(renderers: Dict[Int, RenderFunction]) -> String {
     children.map(\_.render(renderers)).join()
   }
 
@@ -166,10 +168,10 @@ pub class MarkdownNode {
   }
 
   html -> String {
-    render(Dict())
+    render()
   }
 
-  render(renderers: Dict = Dict()) -> String {
+  render(renderers: Dict[Int, RenderFunction] = %{}) -> String {
     let t = type
 
     if let $custom = renderers[t] {
@@ -185,7 +187,7 @@ pub class MarkdownNode {
       NodeType.Heading       => "<h{heading-level}>{render-children(renderers)}</h{heading-level}>",
       NodeType.Link          => "<a href=\"{url}\">{render-children(renderers)}</a>",
       NodeType.Image         => "<img src=\"{url}\">",
-      NodeType.Document      => render-children(renderers),
+      NodeType.Document      => "<html><body>{render-children(renderers)}</body></html>",
       NodeType.BlockQuote    => "<blockquote>{render-children(renderers)}</blockquote>",
       NodeType.Code          => "<code>{escape-html(text ?? '')}</code>",
       NodeType.CodeBlock     => "<pre>{code-tag}{escape-html(text ?? '')}</code></pre>",

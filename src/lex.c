@@ -1151,6 +1151,7 @@ lexop(Ty *ty)
         if (
                 (type == -1)
              || (s_eq(op, ".")  && isspace(C(-2)) && isspace(C(0)))
+             || (s_eq(op, "@")  && isspace(C(-2)) && isspace(C(0)))
              || (s_eq(op, ".?") && isspace(C(-3)) && isspace(C(0)))
         ) {
                 Token t = mktoken(ty, TOKEN_USER_OP);
@@ -1420,10 +1421,11 @@ Begin:
         } else if (C(0) == '.' && C(1) == '.') {
                 nextchar(ty);
                 nextchar(ty);
-                if (C(0) == '.')
+                if (C(0) == '.') {
                         return nextchar(ty), mktoken(ty, TOKEN_DOT_DOT_DOT);
-                else
+                } else {
                         return mktoken(ty, TOKEN_DOT_DOT);
+                }
         } else {
                 return mktoken(ty, nextchar(ty));
         }
