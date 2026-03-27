@@ -1417,10 +1417,16 @@ op_fixup(Ty *ty, int i)
         case '!':               token(i)->identifier = "!";    break;
         case '#':               token(i)->identifier = "#";    break;
         case '.':               token(i)->identifier = ".";    break;
-        case '@':               token(i)->identifier = "@";    break;
         case TOKEN_DOT_MAYBE:   token(i)->identifier = ".?";   break;
         case TOKEN_WTF:         token(i)->identifier = "??";   break;
         case TOKEN_USER_OP:                                    break;
+
+        case '@':
+                if (token(i + 1)->type != '(') {
+                        return false;
+                }
+                token(i)->identifier = "@";
+                break;
 
         case '[':
                 if (token(i + 1)->type == ']') {
