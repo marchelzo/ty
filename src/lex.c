@@ -800,13 +800,6 @@ lex_tyx(Ty *ty)
                 have_nl |= (*s++ == '\n');
         }
 
-        if (s[0] == '<' && s[1] == '/') {
-                skipspace(ty);
-                nextchar(ty);
-                nextchar(ty);
-                return mktoken(ty, '</');
-        }
-
         if (s[0] == '/' && s[1] == '>') {
                 skipspace(ty);
                 nextchar(ty);
@@ -814,17 +807,17 @@ lex_tyx(Ty *ty)
                 return mktoken(ty, '/>');
         }
 
-        if (s[0] == '>') {
+        if (have_nl || s[0] == '>') {
                 skipspace(ty);
+        }
+
+        if (C(0) == '<' && C(1) == '/') {
                 nextchar(ty);
-                return mktoken(ty, '>');
+                nextchar(ty);
+                return mktoken(ty, '</');
         }
 
-        if (have_nl) {
-                skipspace(ty);
-        }
-
-        if (contains("{}<", C(0))) {
+        if (contains("{}<>", C(0))) {
                 return mktoken(ty, nextchar(ty));
         }
 

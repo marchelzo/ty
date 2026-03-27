@@ -547,13 +547,13 @@ pub class Chalk {
 
     render(
         text: String,
-#|if (getenv('NO_COLOR') != nil) || (ty.color == 'never')
+#|if getenv('NO_COLOR') || (ty.color == 'never')
         plain: Bool = true
 #|else
         plain: Bool = false
 #|]
     ) -> String {
-        !plain ? text.chalk() : text.plain()
+        !plain ? text.chalk(__styles) : text.plain()
     }
 
     spans(text: String) -> [(TermStyle, String)] {
