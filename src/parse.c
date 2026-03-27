@@ -1,4 +1,4 @@
-#include <stdarg.h>
+# include <stdarg.h>
 #include <string.h>
 #include <ctype.h>
 #include <stdbool.h>
@@ -5246,6 +5246,10 @@ patternize(Ty *ty, Expr *e)
                 return e;
         }
 
+        case EXPRESSION_KW_AND:
+                e->left = patternize(ty, e->left);
+                return e;
+
         default:
                 return e;
         }
@@ -6847,6 +6851,42 @@ Expression:
         return s;
 }
 
+static void
+MakePublic(Ty *ty, Stmt *s)
+{
+        switch (s->type) {
+        case STATEMENT_DEFINITION:
+        case STATEMENT_FUNCTION_DEFINITION:
+        case STATEMENT_MACRO_DEFINITION:
+        case STATEMENT_FUN_MACRO_DEFINITION:
+        case STATEMENT_OPERATOR_DEFINITION:
+                s->pub = true;
+                break;
+
+        case STATEMENT_TAG_DEFINITION:
+        case STATEMENT_CLASS_DEFINITION:
+        case STATEMENT_TYPE_DEFINITION:
+                s->class.pub = true;
+                break;
+
+        case STATEMENT_MULTI:
+                for (int i = 0; i < vN(s->statements); ++i) {
+                        MakePublic(ty, v__(s->statements, i));
+                }
+                break;
+
+        case STATEMENT_EXPRESSION:
+                if (s->expression->type == EXPRESSION_STATEMENT) {
+                        MakePublic(ty, s->expression->statement);
+                        break;
+                }
+                // fallthrough
+
+        default:
+                die("`pub` applied to unexpected statement: %s", ExpressionTypeName((Expr *)s));
+        }
+}
+
 static Stmt *
 parse_statement(Ty *ty, int prec)
 {
@@ -6886,13 +6926,8 @@ parse_statement(Ty *ty, int prec)
 
         SCRATCH_RESTORE();
 
-        if (
-                (stmt->type == STATEMENT_FUNCTION_DEFINITION)
-             || (stmt->type == STATEMENT_MACRO_DEFINITION)
-             || (stmt->type == STATEMENT_OPERATOR_DEFINITION)
-             || (stmt->type == STATEMENT_DEFINITION)
-        ) {
-                stmt->pub |= pub;
+        if (pub) {
+                MakePublic(ty, stmt);
         }
 
         //if (AllowErrors) {
@@ -7016,36 +7051,6 @@ tokenize(Ty *ty, char const *source, TokenVector *tokens_out)
         lex_restore(ty, &CtxCheckpoint);
 
         return true;
-}
-
-
-static void
-MakePublic(Ty *ty, Stmt *s)
-{
-        switch (s->type) {
-        case STATEMENT_DEFINITION:
-        case STATEMENT_FUNCTION_DEFINITION:
-        case STATEMENT_MACRO_DEFINITION:
-        case STATEMENT_FUN_MACRO_DEFINITION:
-        case STATEMENT_OPERATOR_DEFINITION:
-                s->pub = true;
-                break;
-
-        case STATEMENT_TAG_DEFINITION:
-        case STATEMENT_CLASS_DEFINITION:
-        case STATEMENT_TYPE_DEFINITION:
-                s->class.pub = true;
-                break;
-
-        case STATEMENT_MULTI:
-                for (int i = 0; i < vN(s->statements); ++i) {
-                        MakePublic(ty, v__(s->statements, i));
-                }
-                break;
-
-        default:
-                die("`pub` applied to unexpected statement: %s", ExpressionTypeName((Expr *)s));
-        }
 }
 
 static bool

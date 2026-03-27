@@ -1,0 +1,8 @@
+import dbus (..)
+
+@dbus
+pub class Login {
+    service   = 'org.freedesktop.login1'
+    interface = 'org.freedesktop.login1.Manager'
+    path      = '/org/freedesktop/login1'
+}
