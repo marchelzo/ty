@@ -82,7 +82,7 @@ ifdef RELEASE
 	CFLAGS += -mtune=native
 	CFLAGS += -flto
 else ifdef DEBUG
-	CFLAGS += -Og
+	CFLAGS += -O0
 	CFLAGS += -fno-omit-frame-pointer
 	CFLAGS += -fno-sanitize=nonnull-attribute
 	CFLAGS += -fsanitize=address

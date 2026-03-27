@@ -11466,6 +11466,7 @@ TypeCheck(Ty *ty, Type *t0, Value const *v)
 void
 types_init(Ty *ty)
 {
+        FUEL = MAX_FUEL;
         CurrentLevel = 0;
         CurrentDepth = 0;
         v0(WorkIndex);

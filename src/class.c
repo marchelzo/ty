@@ -1002,5 +1002,15 @@ finalize(Ty *ty, Class *c)
         c->final = true;
 }
 
+void
+class_reset(Ty *ty)
+{
+        for (int i = 0; i < vN(classes); ++i) {
+                xmF(v__(classes, i));
+        }
+
+        v0(classes);
+        v0(traits);
+}
 
 /* vim: set sts=8 sw=8 expandtab: */

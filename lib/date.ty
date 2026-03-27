@@ -1040,7 +1040,7 @@ pub class PlainDateTime {
     days-in-year  -> Int  { __days-in-year(year)             }
     in-leap-year  -> Bool { __is-leap-year(year)             }
 
-    with(
+    `with`(
         year: ?Int = nil, month: ?Int = nil, day: ?Int = nil,
         hour: ?Int = nil, minute: ?Int = nil, second: ?Int = nil,
         millisecond: ?Int = nil, microsecond: ?Int = nil, nanosecond: ?Int = nil

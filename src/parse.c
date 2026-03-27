@@ -7580,4 +7580,32 @@ pp_if(Ty *ty)
         SCRATCH_RESTORE();
 }
 
+void
+parse_reset(Ty *ty)
+{
+        table_init(ty, &uops);
+        table_init(ty, &uopcs);
+
+        LastParsedExpr = NULL;
+
+        BlankID = (Expr) {
+                .type = EXPRESSION_IDENTIFIER,
+                .identifier = ""
+        };
+
+        WildCard = (Expr) {
+                .type = EXPRESSION_IDENTIFIER,
+                .identifier = "_"
+        };
+
+        NullStatement = (Stmt) {
+                .type = STATEMENT_NULL
+        };
+
+        NullExpr = (Expr) {
+                .type = EXPRESSION_STATEMENT,
+                .statement = &NullStatement
+        };
+}
+
 /* vim: set sts=8 sw=8 expandtab: */

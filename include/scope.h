@@ -367,6 +367,9 @@ ScopeReset(Scope *scope);
 Symbol *
 ScopeFindRecycled(Scope const *scope, char const *id);
 
+void
+scope_reset(void);
+
 #endif
 
 /* vim: set sts=8 sw=8 expandtab: */

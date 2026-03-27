@@ -16,8 +16,6 @@ struct bucket {
 
 typedef struct table {
         struct bucket buckets[TABLE_SIZE];
-        struct value finalizer;
-        int class;
 } ValueTable;
 
 void
@@ -43,9 +41,6 @@ table_look(Ty *ty, struct table const *t, char const *name)
 {
         return table_lookup(ty, t, name, hash64z(name));
 }
-
-int
-table_get_completions(Ty *ty, struct table const *t, char const *prefix, char **out, int max);
 
 void
 table_release(Ty *ty, struct table *t);

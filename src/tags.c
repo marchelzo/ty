@@ -35,15 +35,13 @@ static vec(Class *) classes;
 static struct tags *
 mklist(int tag, struct tags *next)
 {
-        struct tags *t = NULL;
-        resize_nogc(t, sizeof *t);
+        struct tags *t = alloc0(sizeof *t);
 
-        vec_init(t->links);
         t->n = lists.count;
         t->tag = tag;
         t->next = next;
 
-        vec_nogc_push(lists, t);
+        xvP(lists, t);
 
         return t;
 }
@@ -51,6 +49,14 @@ mklist(int tag, struct tags *next)
 void
 tags_init(Ty *ty)
 {
+        next_id = 0;
+
+        v0(lists);
+        v0(names);
+        v0(tables);
+        v0(statics);
+        v0(classes);
+
         mklist(next_id++, NULL);
 }
 

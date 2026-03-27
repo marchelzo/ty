@@ -159,11 +159,11 @@ op_add(i32 op, i32 t1, i32 t2, i32 ref, Expr *expr)
                 class_name(&vvv, t2)
         );
 
-        if (op >= _2.ops.count) {
+        if (op >= vN(_2.ops)) {
                 TyRwLockWrLock(&_2.lock);
 
                 do {
-                        DispatchGroup *group = mrealloc(NULL, sizeof *group);
+                        DispatchGroup *group = xmA(sizeof *group);
                         *group = (DispatchGroup) { .lock = TY_RWLOCK_INIT };
                         xvP(_2.ops, group);
 
@@ -172,7 +172,7 @@ op_add(i32 op, i32 t1, i32 t2, i32 ref, Expr *expr)
                 TyRwLockWrUnlock(&_2.lock);
         }
 
-        DispatchGroup *group = _2.ops.items[op];
+        DispatchGroup *group = v__(_2.ops, op);
 
         TyRwLockWrLock(&group->lock);
 
@@ -383,7 +383,7 @@ op_type(Ty *ty, i32 op)
         SCRATCH_SAVE();
 
         TyRwLockRdLock(&group->lock);
-        dont_printf("op_type(%s)  (%u defs):\n", intern_entry(&xD.b_ops, op)->name, vN(group->defs));
+        dont_printf("op_type(%s)  (%u defs):\n", intern_entry(&xD.b_ops, op)->name, (int)vN(group->defs));
         if (group->op0 == NULL) {
                 /*
                  * Snapshot the type pointers while holding the lock.
@@ -418,6 +418,19 @@ op_type(Ty *ty, i32 op)
         dont_printf("op_type(%s): %s\n", intern_entry(&xD.b_ops, op)->name, type_show(ty, t0));
 
         return t0;
+}
+
+void
+op_reset(void)
+{
+        for (i32 i = 0; i < vN(_2.ops); ++i) {
+                DispatchGroup *group = v__(_2.ops, i);
+                xvF(group->cache);
+                xvF(group->defs);
+                xmF(group);
+        }
+
+        v0(_2.ops);
 }
 
 void

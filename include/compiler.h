@@ -537,10 +537,22 @@ Module *
 CompilerGetModule(Ty *ty, char const *name);
 
 Module *
+GetModuleByPath(Ty *ty, char const *path);
+
+Module *
 CompilerCurrentModule(Ty *ty);
 
 bool
 CompilerReloadModule(Ty *ty, Module *mod, char const *source);
+
+void
+CompilerUnloadModule(Ty *ty, Module *mod);
+
+void
+CompilerReset(Ty *ty);
+
+int
+ModuleDependents(Module const *mod, ModuleVector *out);
 
 Symbol *
 CompilerFindDefinition(Ty *ty, Module *mod, i32 line, i32 col);

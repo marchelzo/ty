@@ -71,7 +71,7 @@ typedef void (add_to_class_fn)(Ty *, int, char const *, Value);
 typedef void (add_field_to_class_fn)(Ty *, Class *, i32 id, Expr *t0, Expr *dflt);
 
 void
-class_init(Ty *ty);
+class_reset(Ty *ty);
 
 int
 class_new(Ty *ty, Stmt *s);

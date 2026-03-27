@@ -378,6 +378,9 @@ static Location Nowhere = { 0, 0, 0, 0, EmptyString + 1 };
 static Location UnknownStart = { 0, 0, 0, 0, UnknownString + 1 };
 static Location UnknownEnd = { 0, 0, 0, 0, UnknownString + sizeof UnknownString - 1 };
 static Symbol UndefinedSymbol = { .flags = SYM_PUBLIC | SYM_GLOBAL, .i = -1 };
+static Stmt null;
+static Expr nil;
+
 
 typedef struct context_entry ContextEntry;
 
@@ -818,8 +821,6 @@ NeedsConstructor(Class const *class)
 static void
 AddFieldParams(Ty *ty, Expr *ctor, ExprVec const *fields)
 {
-        static Expr nil = { .type = EXPRESSION_NIL };
-
         for (int i = 0; i < vN(*fields); ++i) {
                 Expr *field   = FieldIdentifier(v__(*fields, i));
                 bool has_init = (v__(*fields, i)->type == EXPRESSION_EQ);
@@ -1578,9 +1579,10 @@ ProposeMemberDefinition(Ty *ty, Location start, Location end, Expr const *o, cha
                         ) {
                                 name = member->name;
                                 if (member->fn_symbol != NULL) {
+                                        doc = member->fn_symbol->doc;
+                                }
+                                if (doc == NULL) {
                                         doc = member->doc;
-                                } else {
-                                        doc = member->symbol->doc;
                                 }
                         } else if (member->type == EXPRESSION_TUPLE) {
                                 for (int i = 0; i < vN(member->es); ++i) {
@@ -11674,7 +11676,6 @@ static bool
 emit_statement(Ty *ty, Stmt const *s, bool want_result)
 {
         if (s == NULL) {
-                static Stmt null = { .type = STATEMENT_NULL };
                 s = &null;
         }
 
@@ -13250,7 +13251,7 @@ GetModule(Ty *ty, char const *name)
         return NULL;
 }
 
-static Module *
+Module *
 GetModuleByPath(Ty *ty, char const *path)
 {
         if (path == NULL) {
@@ -13316,7 +13317,7 @@ NewModule(
 
         if (mod == NULL) {
                 mod = amA0(sizeof *mod);
-                avP(modules, mod);
+                xvP(modules, mod);
                 TyImmortalizeArena(ty);
         }
 
@@ -13489,6 +13490,12 @@ compiler_init(Ty *ty)
 {
         tags_init(ty);
 
+        m0(null);
+        null.type = STATEMENT_NULL;
+
+        m0(nil);
+        nil.type = EXPRESSION_NIL;
+
         GlobalScope = scope_new(ty, "GLOBAL", NULL, false);
         GlobalModule = NewModule(ty, "prelude", "(built-in)", NULL, GlobalScope);
 
@@ -13584,12 +13591,16 @@ char *
 compiler_load_prelude(Ty *ty)
 {
         if (TY_CATCH_ERROR()) {
+#if !defined(TY_LS)
                 fprintf(
                         stderr,
                         "Aborting, failed to load prelude: %s\n",
                         TyError(ty)
                 );
                 exit(1);
+#else
+                TY_RETHROW();
+#endif
         }
 
         char const *path;
@@ -19791,6 +19802,47 @@ CompilerGetModule(Ty *ty, char const *name)
         return GetModule(ty, name);
 }
 
+inline static bool
+ContainsModule(ModuleVector const *mods, Module const *mod)
+{
+        for (int i = 0; i < vN(*mods); ++i) {
+                if (v__(*mods, i) == mod) {
+                        return true;
+                }
+        }
+
+        return false;
+}
+
+static bool
+ModuleDependsOn(Module const *mod, Module const *target)
+{
+        for (int i = 0; i < vN(mod->imports); ++i) {
+                Module *imported = v__(mod->imports, i).mod;
+                if (imported == target || ModuleDependsOn(imported, target)) {
+                        return true;
+                }
+        }
+
+        return false;
+}
+
+int
+ModuleDependents(Module const *mod, ModuleVector *out)
+{
+        int found = 0;
+
+        for (int i = 0; i < vN(modules); ++i) {
+                Module *candidate = v__(modules, i);
+                if (ModuleDependsOn(candidate, mod)) {
+                        xvP(*out, candidate);
+                        found += 1;
+                }
+        }
+
+        return found;
+}
+
 bool
 CompilerReloadModule(
         Ty *ty,
@@ -19837,6 +19889,45 @@ CompilerReloadModule(
         return true;
 }
 
+void
+CompilerUnloadModule(Ty *ty, Module *mod)
+{
+        for (int i = 0; i < vN(modules); ++i) {
+                if (v__(modules, i) == mod) {
+                        vvXi(modules, i);
+                        break;
+                }
+        }
+}
+
+void
+CompilerReset(Ty *ty)
+{
+        v0(modules);
+        v0(annotations);
+        v0(location_lists);
+        v0(source_map);
+        v0(PreludeAssertionOffsets);
+
+        MainModule      = NULL;
+        GlobalModule    = NULL;
+        GlobalScope     = NULL;
+        AnyTypeSymbol   = NULL;
+        ThreadLocals    = NULL;
+        ContextList     = NULL;
+        GlobalCount     = 0;
+        builtin_modules = 0;
+        BuiltinCount    = 0;
+
+        t = 0;
+
+        op_reset();
+        scope_reset();
+        class_reset(ty);
+        parse_reset(ty);
+        compiler_init(ty);
+}
+
 Symbol *
 CompilerFindDefinition(Ty *ty, Module *mod, i32 line, i32 col)
 {
@@ -19844,10 +19935,10 @@ CompilerFindDefinition(Ty *ty, Module *mod, i32 line, i32 col)
         STATE.module = mod;
 
         QueryResult = NULL;
-        QueryExpr = NULL;
-        QueryLine = line;
-        QueryCol = col;
-        QueryFile = mod->path;
+        QueryExpr   = NULL;
+        QueryLine   = line;
+        QueryCol    = col;
+        QueryFile   = mod->path;
 
         Stmt **prog = mod->prog;
         for (int i = 0; (prog[i] != NULL) && (QueryResult == NULL); ++i) {
