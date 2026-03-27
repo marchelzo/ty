@@ -970,112 +970,7 @@ isflag(int c)
             || (c == '\'');
 }
 
-struct fspec {
-        bool alt;
-        bool blank;
-        bool sep;
-        bool sign;
-        bool zero;
-        i8 justify;
-        char xsep;
-        char fill[64];
-        char prec[64];
-        char width[64];
-};
-
-inline static int
-getfmt(char const **s, char const *end, struct fspec *out)
-{
-        int w = 0;
-        int p = 0;
-
-        out->alt     = false;
-        out->blank   = false;
-        out->justify = 1;
-        out->sep     = false;
-        out->sign    = false;
-        out->xsep    = '\0';
-
-        m0(out->fill);
-
-        for (;;) {
-                if (*out->fill == '\0') {
-                        int bytes = max(term_fit_cols(*s, end - *s, 1), 1);
-                        if (
-                                (*s + bytes < end)
-                             && contains("<^>", (*s)[bytes])
-                        ) {
-                                memcpy(out->fill, *s, min(sizeof out->fill - 1, bytes));
-                                *s += bytes;
-                                continue;
-                        }
-                }
-
-                switch (**s) {
-                case '+':  out->sign    = true;    break;
-                case '#':  out->alt     = true;    break;
-                case '\'': out->sep     = true;    break;
-                case ' ':  out->blank   = true;    break;
-                case '-':  out->justify = -1;      break;
-                case '<':  out->justify = -1;      break;
-                case '^':  out->justify =  0;      break;
-                case '>':  out->justify =  1;      break;
-                case '0':  strcpy(out->fill, "0"); break;
-                default: goto FlagsComplete;
-                }
-
-                *s += 1;
-        }
-
-FlagsComplete:
-        if (*out->fill == '\0') {
-                strcpy(out->fill, " ");
-        }
-
-        if (*s < end && **s == '*') {
-                if (w + 1 >= sizeof out->width) {
-                        return -1;
-                }
-                out->width[w++] = *(*s)++;
-        } else while (*s < end && isdigit(**s)) {
-                if (w + 1 >= sizeof out->width)
-                        return -1;
-                out->width[w++] = *(*s)++;
-        }
-
-        if (*s < end && **s == '.') {
-                if (p + 1 >= sizeof out->prec) {
-                        return -1;
-                }
-
-                out->prec[p++] = *(*s)++;
-
-                while (*s < end && **s == ' ') ++*s;
-
-                if (*s < end && **s == '*') {
-                        if (p + 1 >= sizeof out->prec) {
-                                return -1;
-                        }
-                        out->prec[p++] = *(*s)++;
-                } else while (*s < end && isdigit(**s)) {
-                        if (p + 1 >= sizeof out->prec) {
-                                return -1;
-                        }
-                        out->prec[p++] = *(*s)++;
-                }
-        }
-
-        if (*s < end && contains(" _,'", **s)) {
-                out->xsep = *(*s)++;
-        }
-
-        while (*s < end && **s == ' ') ++*s;
-
-        out->width[w] = '\0';
-        out->prec[p] = '\0';
-
-        return (*s < end) ? *(*s)++ : '\0';
-}
+#define getfmt fspec_parse
 
 inline static noreturn void
 BadFmt(Ty *ty, char const *spec, int n, Value const *v)
@@ -1447,48 +1342,16 @@ MissingArgument:
                                 goto BadFormatSpecifier;
                         }
 
-                        if (*spec.width) {
-                                int goal = atoi(spec.width);
-                                int curr = term_width(tmp, -1);
-
-                                int sz = strlen(spec.fill);
-                                if (sz <= 0) {
-                                        strcpy(spec.fill, " ");
-                                        sz = 1;
+                        {
+                                isize tl = strlen(tmp);
+                                FspecPad fp = fspec_pad(tmp, tl, &spec);
+                                for (int i = 0; i < fp.left; ++i) {
+                                        xvPn(cs, fp.fill, fp.fill_sz);
                                 }
-
-                                int pad = max(0, goal - curr);
-                                int odd;
-
-                                switch (spec.justify) {
-                                case 1:
-                                        for (int i = 0; i < pad; ++i) {
-                                                xvPn(cs, spec.fill, sz);
-                                        }
-                                        xvPn(cs, tmp, strlen(tmp));
-                                        break;
-
-                                case 0:
-                                        odd = pad & 1;
-                                        pad /= 2;
-                                        for (int i = 0; i < pad; ++i) {
-                                                xvPn(cs, spec.fill, sz);
-                                        }
-                                        xvPn(cs, tmp, strlen(tmp));
-                                        for (int i = 0; i < pad + odd; ++i) {
-                                                xvPn(cs, spec.fill, sz);
-                                        }
-                                        break;
-
-                                case -1:
-                                        xvPn(cs, tmp, strlen(tmp));
-                                        for (int i = 0; i < pad; ++i) {
-                                                xvPn(cs, spec.fill, sz);
-                                        }
-                                        break;
+                                xvPn(cs, tmp, tl);
+                                for (int i = 0; i < fp.right; ++i) {
+                                        xvPn(cs, fp.fill, fp.fill_sz);
                                 }
-                        } else {
-                                xvPn(cs, tmp, strlen(tmp));
                         }
                 } else {
                         xvP(cs, fmt[i]);
