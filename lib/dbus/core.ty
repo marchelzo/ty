@@ -1,0 +1,566 @@
+import ffi as c (C!)
+
+if not let $lib = c.open('systemd', [0]) {
+    throw RuntimeError('failed to load libsystemd')
+}
+
+C! lib fn {
+    int sd_bus_open_system(void **bus);
+    int sd_bus_open_user(void **bus);
+    int sd_bus_default_system(void **bus);
+    int sd_bus_default_user(void **bus);
+    void *sd_bus_flush_close_unref(void *bus);
+
+    int sd_bus_call_method(
+        void *bus,
+        const char *destination,
+        const char *path,
+        const char *interface,
+        const char *member,
+        void *error,
+        void **reply,
+        const char *types,
+        ...
+    );
+
+    int sd_bus_message_read_basic(
+        void *msg, int type, void *p
+    );
+    int sd_bus_message_enter_container(
+        void *msg, char type, const char *contents
+    );
+    int sd_bus_message_exit_container(void *msg);
+    int sd_bus_message_at_end(void *msg, int complete);
+    int sd_bus_message_skip(void *msg, const char *types);
+    void *sd_bus_message_unref(void *msg);
+
+    int sd_bus_get_property_string(
+        void *bus, const char *destination,
+        const char *path, const char *interface,
+        const char *member, void *error,
+        char **value
+    );
+
+    int sd_bus_get_property(
+        void *bus, const char *destination,
+        const char *path, const char *interface,
+        const char *member, void *error,
+        void **reply, const char *type
+    );
+
+    int sd_bus_set_property(
+        void *bus, const char *destination,
+        const char *path, const char *interface,
+        const char *member, void *error,
+        const char *type, ...
+    );
+
+    int sd_bus_match_signal(
+        void *bus, void **slot,
+        const char *sender, const char *path,
+        const char *interface, const char *member,
+        void *callback, void *userdata
+    );
+
+    void *sd_bus_slot_unref(void *slot);
+
+    int sd_bus_process(void *bus, void **ret);
+    int sd_bus_wait(void *bus, uint64_t timeout_usec);
+    int sd_bus_get_fd(void *bus);
+
+    int sd_bus_message_peek_type(
+        void *msg, void *type, void **contents
+    );
+    char *sd_bus_message_get_signature(
+        void *msg, int complete
+    );
+
+    char *strerror(int errnum);
+}
+
+pub class DBusError < RuntimeError {
+    __code: Int
+
+    init(code: Int, ctx: String = '') {
+        __code = code
+        super(
+            (ctx == '')
+                ? c.str(strerror(-code))
+                : "{ctx}: {c.str(strerror(-code))}"
+        )
+    }
+
+    code -> Int { __code }
+}
+
+fn check!(r: Int, ctx: String = '') {
+    if r < 0 { throw DBusError(r, ctx) }
+    r
+}
+
+pub __tls::_system-bus  = connect('system')
+pub __tls::_session-bus = connect('user')
+
+pub fn default-bus(kind: String = 'system') -> Bus {
+    (kind == 'system') ? _system-bus : _session-bus
+}
+
+pub fn connect(kind: String = 'system') {
+    let bus = c.box-auto(c.ptr)
+    match kind {
+        'system' => check!(sd_bus_open_system(bus), 'sd_bus_open_system'),
+        'user'   => check!(sd_bus_open_user(bus), 'sd_bus_open_user'),
+        _        => throw DBusError(-22, "bad bus type: {kind}")
+    }
+    Bus(bus[0])
+}
+
+fn _type-arg(ch: String, v: _) -> _ {
+    match ch {
+        's', 'o', 'g' => (c.ptr, v.cstr()),
+        'b'           => (c.int, v ? 1 : 0),
+        'i'           => (c.i32, v),
+        'u'           => (c.u32, v),
+        'x'           => (c.i64, v),
+        't'           => (c.u64, v),
+        'n'           => (c.i16, v),
+        'q'           => (c.u16, v),
+        'y'           => (c.u8, v),
+        'd'           => (c.double, v),
+        'h'           => (c.int, v),
+        _             => (c.ptr, v)
+    }
+}
+
+fn _type-args(sig: String, args: Array) {
+    [_type-arg(sig[i], args[i]) for i in 0..#sig]
+}
+
+pub class Bus {
+    __bus: _
+
+    init(bus: _) { __bus = bus }
+
+    __drop__() {
+        if __bus != nil {
+            sd_bus_flush_close_unref(__bus)
+        }
+    }
+
+    call(
+        dest: String, path: String,
+        iface: String, method: String,
+        sig: String = '', *args
+    ) -> Message {
+        let pr = c.box-auto(c.ptr)
+        let typed-args = _type-args(sig, args)
+
+        check!(
+            if sig != '' {
+                sd_bus_call_method(
+                    __bus, dest, path, iface, method,
+                    nil, pr, sig, *typed-args
+                )
+            } else {
+                sd_bus_call_method(
+                    __bus, dest, path, iface, method,
+                    nil, pr, nil
+                )
+            },
+            "{iface}.{method}"
+        )
+
+        Message(pr[0])
+    }
+
+    get-property-string(
+        dest: String, path: String,
+        iface: String, prop: String
+    ) -> String {
+        let pv = c.box-auto(c.ptr)
+
+        check!(
+            sd_bus_get_property_string(
+                __bus, dest, path, iface, prop,
+                nil, pv
+            ),
+            "{iface}.{prop}"
+        )
+
+        c.str(pv[0])
+    }
+
+    get-property(
+        dest: String, path: String,
+        iface: String, prop: String,
+        sig: String
+    ) -> Message {
+        let msg = c.box-auto(c.ptr)
+
+        check!(
+            sd_bus_get_property(
+                __bus, dest, path, iface, prop,
+                nil, msg, sig
+            ),
+            "{iface}.{prop}"
+        )
+
+        Message(msg[0])
+    }
+
+    set-property(
+        dest: String, path: String,
+        iface: String, prop: String,
+        sig: String, *args
+    ) {
+        check!(
+            sd_bus_set_property(
+                __bus, dest, path, iface, prop,
+                nil, sig, *args
+            ),
+            "{iface}.{prop}"
+        )
+    }
+
+    match-signal(
+        sender: String | nil,
+        path: String | nil,
+        iface: String | nil,
+        member: String | nil,
+        cb
+    ) {
+        let slot = c.box-auto(c.ptr)
+
+        let handler = C! closure
+            on-signal(
+                msg: c.ptr, ud: c.ptr, err: c.ptr
+            ) -> c.int {
+                cb(Message(msg, owned: false))
+                0
+            }
+
+        check!(
+            sd_bus_match_signal(
+                __bus, slot,
+                sender, path, iface, member,
+                handler, nil
+            ),
+            'match_signal'
+        )
+
+        Slot(slot[0])
+    }
+
+    process() -> Bool {
+        let r = sd_bus_process(__bus, nil)
+        check!(r, 'process')
+        r > 0
+    }
+
+    wait(timeout-usec: Int = -1) {
+        check!(
+            sd_bus_wait(__bus, timeout-usec),
+            'wait'
+        )
+    }
+
+    run(timeout-usec: Int = -1) {
+        while true {
+            if !process() { wait(timeout-usec) }
+        }
+    }
+
+    fd -> Int { sd_bus_get_fd(__bus) }
+
+    ptr -> _ { __bus }
+}
+
+pub class Slot {
+    __slot: _
+
+    init(slot: _) { __slot = slot }
+
+    __drop__() {
+        if __slot != nil {
+            sd_bus_slot_unref(__slot)
+        }
+    }
+
+    ptr -> _ { __slot }
+}
+
+pub class Message {
+    __msg: _
+    __owned: _
+
+    init(msg: _, owned: Bool = true) {
+        __msg = msg
+        __owned = owned
+    }
+
+    __drop__() {
+        if __owned && __msg != nil {
+            sd_bus_message_unref(__msg)
+        }
+    }
+
+    signature() -> String {
+        c.str(sd_bus_message_get_signature(__msg, 1))
+    }
+
+    read-variant() {
+        let tp = c.box-auto(c.u8)
+        let contents = c.box-auto(c.ptr)
+        sd_bus_message_peek_type(__msg, tp, contents)
+        let sig = c.str(contents[0])
+        enter-variant(sig)
+        let v = read-value(sig)
+        exit-container()
+        v
+    }
+
+    read-string() -> String {
+        let p = c.box-auto(c.ptr)
+        check!(
+            sd_bus_message_read_basic(__msg, 0x73, p),
+            'read string'
+        )
+        c.str(p[0])
+    }
+
+    read-object-path() -> String {
+        let p = c.box-auto(c.ptr)
+        check!(
+            sd_bus_message_read_basic(__msg, 0x6f, p),
+            'read object path'
+        )
+        c.str(p[0])
+    }
+
+    read-bool() -> Bool {
+        let p = c.box-auto(c.int)
+        check!(
+            sd_bus_message_read_basic(__msg, 0x62, p),
+            'read bool'
+        )
+        p[0] != 0
+    }
+
+    read-i32() -> Int {
+        let p = c.box-auto(c.i32)
+        check!(
+            sd_bus_message_read_basic(__msg, 0x69, p),
+            'read i32'
+        )
+        p[0]
+    }
+
+    read-u32() -> Int {
+        let p = c.box-auto(c.u32)
+        check!(
+            sd_bus_message_read_basic(__msg, 0x75, p),
+            'read u32'
+        )
+        p[0]
+    }
+
+    read-i64() -> Int {
+        let p = c.box-auto(c.i64)
+        check!(
+            sd_bus_message_read_basic(__msg, 0x78, p),
+            'read i64'
+        )
+        p[0]
+    }
+
+    read-u64() -> Int {
+        let p = c.box-auto(c.u64)
+        check!(
+            sd_bus_message_read_basic(__msg, 0x74, p),
+            'read u64'
+        )
+        p[0]
+    }
+
+    read-double() -> Float {
+        let p = c.box-auto(c.double)
+        check!(
+            sd_bus_message_read_basic(__msg, 0x64, p),
+            'read double'
+        )
+        p[0]
+    }
+
+    read-byte() -> Int {
+        let p = c.box-auto(c.u8)
+        check!(
+            sd_bus_message_read_basic(__msg, 0x79, p),
+            'read byte'
+        )
+        p[0]
+    }
+
+    read-u16() -> Int {
+        let p = c.box-auto(c.u16)
+        check!(
+            sd_bus_message_read_basic(__msg, 0x71, p),
+            'read u16'
+        )
+        p[0]
+    }
+
+    read-i16() -> Int {
+        let p = c.box-auto(c.i16)
+        check!(
+            sd_bus_message_read_basic(__msg, 0x6e, p),
+            'read i16'
+        )
+        p[0]
+    }
+
+    enter-array(sig: String = '') -> Message {
+        check!(
+            sd_bus_message_enter_container(
+                __msg, 0x61, sig
+            ),
+            'enter array'
+        )
+        self
+    }
+
+    enter-struct(sig: String = '') -> Message {
+        check!(
+            sd_bus_message_enter_container(
+                __msg, 0x72, sig
+            ),
+            'enter struct'
+        )
+        self
+    }
+
+    enter-variant(sig: String = '') -> Message {
+        check!(
+            sd_bus_message_enter_container(
+                __msg, 0x76, sig
+            ),
+            'enter variant'
+        )
+        self
+    }
+
+    enter-dict-entry(sig: String = '') -> Message {
+        check!(
+            sd_bus_message_enter_container(
+                __msg, 0x65, sig
+            ),
+            'enter dict-entry'
+        )
+        self
+    }
+
+    exit-container() -> Message {
+        check!(
+            sd_bus_message_exit_container(__msg),
+            'exit container'
+        )
+        self
+    }
+
+    at-end?() -> Bool {
+        sd_bus_message_at_end(__msg, 0) > 0
+    }
+
+    skip(types: String = '') {
+        check!(
+            sd_bus_message_skip(__msg, types), 'skip'
+        )
+    }
+
+    read-value(sig: String) {
+        match sig {
+            's'     => read-string(),
+            'o'     => read-object-path(),
+            'b'     => read-bool(),
+            'i'     => read-i32(),
+            'u'     => read-u32(),
+            'x'     => read-i64(),
+            't'     => read-u64(),
+            'n'     => read-i16(),
+            'q'     => read-u16(),
+            'y'     => read-byte(),
+            'd'     => read-double(),
+            _       => nil
+        }
+    }
+
+    read-array(element-sig: String) -> Array {
+        enter-array(element-sig)
+        let xs = []
+        while !at-end?() {
+            xs.push(read-value(element-sig))
+        }
+        exit-container()
+        xs
+    }
+
+    read-string-array() -> Array[String] {
+        read-array('s')
+    }
+
+    read-dict(
+        key-sig: String, val-sig: String
+    ) -> Dict {
+        let d = %{}
+        let sig = "{key-sig}{val-sig}"
+        enter-array(sig)
+        while !at-end?() {
+            enter-dict-entry(sig)
+            d[read-value(key-sig)] = read-value(val-sig)
+            exit-container()
+        }
+        exit-container()
+        d
+    }
+
+    read-string-dict() -> Dict[String, String] {
+        read-dict('s', 's')
+    }
+
+    ptr -> _ { __msg }
+}
+
+pub fn introspect(
+    dest: String, path: String,
+    kind: String = 'system'
+) -> String {
+    let pp = c.box-auto(c.ptr)
+    match kind {
+        'system' => check!(sd_bus_open_system(pp), 'sd_bus_open_system'),
+        'user'   => check!(sd_bus_open_user(pp), 'sd_bus_open_user'),
+        _        => throw DBusError(-22, "bad bus: {kind}")
+    }
+    let bus = pp[0]
+
+    let pr = c.box-auto(c.ptr)
+
+    check!(
+        sd_bus_call_method(
+            bus,
+            dest.cstr(), path.cstr(),
+            'org.freedesktop.DBus.Introspectable',
+            'Introspect',
+            nil, pr, nil
+        ),
+        'Introspect'
+    )
+
+    let msg = pr[0]
+
+    let sp = c.box-auto(c.ptr)
+    sd_bus_message_read_basic(msg, 0x73, sp)
+    let xml = c.str(sp[0])
+    sd_bus_message_unref(msg)
+    sd_bus_flush_close_unref(bus)
+
+    xml
+}

@@ -1,0 +1,6 @@
+import dbus (..)
+
+@dbus
+pub class Hostname {
+    service = 'org.freedesktop.hostname1'
+}

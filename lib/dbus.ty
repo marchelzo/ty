@@ -1,0 +1,653 @@
+import dbus.core (..)
+import ty
+import ty.token (next, peek)
+import ty.parse (expr)
+
+const BASIC_READER = %{
+    's': 'readString',   'o': 'readObjectPath',
+    'b': 'readBool',     'i': 'readI32',
+    'u': 'readU32',      'x': 'readI64',
+    't': 'readU64',      'n': 'readI16',
+    'q': 'readU16',      'y': 'readByte',
+    'd': 'readDouble',
+}
+
+const BASIC_TYPE = %{
+    's': $$[ $$::(String) $$],  'o': $$[ $$::(String) $$],
+    'b': $$[ $$::(Bool) $$],    'i': $$[ $$::(Int) $$],
+    'u': $$[ $$::(Int) $$],     'x': $$[ $$::(Int) $$],
+    't': $$[ $$::(Int) $$],     'n': $$[ $$::(Int) $$],
+    'q': $$[ $$::(Int) $$],     'y': $$[ $$::(Int) $$],
+    'd': $$[ $$::(Float) $$],
+}
+
+fn _skip-one(sig: String, i: Int) -> Int {
+    match sig[i] {
+        'a' => (sig[i + 1] == '{')
+            ? _skip-one(sig, _skip-one(sig, i + 2)) + 1
+            : _skip-one(sig, i + 1),
+        '(' => do {
+            let j = i + 1
+            while sig[j] != ')' { j = _skip-one(sig, j) }
+            j + 1
+        },
+        _ => i + 1
+    }
+}
+
+fn _sig-type(sig: String, i: Int = 0) -> (_, Int) {
+    if i >= #sig {
+        return ($$[_$$], i)
+    }
+    let ch = sig[i]
+    if ch in BASIC_TYPE {
+        return (BASIC_TYPE[ch], i + 1)
+    }
+
+    if ch == 'a' {
+        if sig[i + 1] == '{' {
+            let r1: _ = _sig-type(sig, i + 2)
+            let r2: _ = _sig-type(sig, r1.1)
+            return ($$[ $$::(Dict)[$$( r1.0 ), $$( r2.0 )] $$], r2.1 + 1)
+        }
+        let r: _ = _sig-type(sig, i + 1)
+        return ($$[ $$::(Array)[$$( r.0 )] $$], r.1)
+    }
+
+    if ch == '(' {
+        let ts = []
+        let j = i + 1
+        while sig[j] != ')' {
+            let next = _skip-one(sig, j)
+            let r: _ = _sig-type(sig[j; next - j])
+            ts.push(r.0)
+            j = next
+        }
+        return (ty.Record(
+            ts.map(t -> ty.RecordEntry(item: t))
+        ), j + 1)
+    }
+
+    return ($$[_$$], i + 1)
+}
+
+fn _msg-call(msg, method: String, *args) {
+    ty.Call(
+        func: ty.MemberAccess(msg, method),
+        args: [ty.Arg(arg: it) for args]
+    )
+}
+
+fn _read-struct(sig: String, msg, i: Int) {
+    let $msg-expr = msg
+    let m-id = ty.Id(name: '__msg')
+    let fields = []
+    let j = i
+    while sig[j] != ')' {
+        let next = _skip-one(sig, j)
+        let r: _ = _sig-read(sig[j; next - j], m-id)
+        fields.push(r.0)
+        j = next
+    }
+    let $inner = ty.String(sig[i; j - i])
+    let tup = ty.Record(
+        fields.map(f -> ty.RecordEntry(item: f))
+    )
+    let expr = $$[ do {
+        let $__msg = $$msg-expr
+        __msg.enter-struct($$inner)
+        let $v = $$tup
+        __msg.exit-container()
+        v
+    } $$]
+    (expr, j + 1)
+}
+
+fn _sig-read(sig: String, msg: _, i: Int = 0) {
+    let ch = sig[i]
+    if ch in BASIC_READER {
+        return (_msg-call(msg, BASIC_READER[ch]), i + 1)
+    }
+
+    if ch == 'a' && sig[i + 1] == '{' {
+        let (_, j) = _sig-type(sig, i + 2)
+        let (_, k) = _sig-type(sig, j)
+        return (_msg-call(
+            msg, 'readDict',
+            ty.String(sig[i + 2]),
+            ty.String(sig[j; k - j])
+        ), k + 1)
+    }
+
+    if ch == 'a' && sig[i + 1] == '(' {
+        let end = _skip-one(sig, i + 1)
+        let $esig = ty.String(sig[i + 1; end - i - 1])
+        let $inner-sig = ty.String(sig[i + 2; end - i - 3])
+        let $msg-expr = msg
+        let m-id = ty.Id(name: '__msg')
+        let inner-fields = []
+        let j = i + 2
+        while sig[j] != ')' {
+            let next = _skip-one(sig, j)
+            let r: _ = _sig-read(sig[j; next - j], m-id)
+            inner-fields.push(r.0)
+            j = next
+        }
+        let tup = ty.Record(
+            inner-fields.map(f ->
+                ty.RecordEntry(item: f)
+            )
+        )
+        let expr = $$[ do {
+            let $__msg = $$msg-expr
+            __msg.enter-array($$esig)
+            let $xs = []
+            while !__msg.at-end?() {
+                __msg.enter-struct($$inner-sig)
+                xs.push($$tup)
+                __msg.exit-container()
+            }
+            __msg.exit-container()
+            xs
+        } $$]
+        return (expr, end)
+    }
+
+    if ch == 'a' {
+        let (_, j) = _sig-type(sig, i + 1)
+        return (_msg-call(
+            msg, 'readArray',
+            ty.String(sig[i + 1; j - i - 1])
+        ), j)
+    }
+
+    if ch == '(' {
+        return _read-struct(sig, msg, i + 1)
+    }
+
+    ($$[ nil $$], i + 1)
+}
+
+const SKIP_IFACES = %{
+    'org.freedesktop.DBus.Peer':           true,
+    'org.freedesktop.DBus.Introspectable': true,
+    'org.freedesktop.DBus.Properties':     true,
+}
+
+fn _xml-attr(line, name) -> String | nil {
+    if let [_, v] = line.match(regex("{name}=\"([^\"]+)\"")) {
+        v
+    }
+}
+
+fn _parse-introspect(xml: String, filter: String | nil) {
+    let ifaces: _ = %{}
+    let cur-iface = nil
+    let cur-elem = nil
+    let cur-kind = nil
+
+    for match xml.lines().map(&strip) {
+        /<interface name="([^"]+)"/ => {
+            cur-iface = $1
+            if $1 not in SKIP_IFACES {
+                ifaces[$1] = {
+                    methods: [], props: [], signals: []
+                }
+            }
+        },
+
+        /<property name="([^"]+)" type="([^"]+)" access="([^"]+)"/ => {
+            if cur-iface not in SKIP_IFACES {
+                ifaces[cur-iface].props.push({
+                    name: $1, sig: $2,
+                    writable: $3 == 'readwrite'
+                })
+            }
+        },
+
+        /<method name="([^"]+)"/ => {
+            cur-elem = {
+                name: $1, in-args: [],
+                out-args: [], out-sig: ''
+            }
+            cur-kind = 'method'
+        },
+
+        /<signal name="([^"]+)"/ => {
+            cur-elem = {name: $1, args: []}
+            cur-kind = 'signal'
+        },
+
+        (/<arg / as line) and cur-elem != nil => {
+            let sig = _xml-attr(line, 'type') ?? ''
+            let name = _xml-attr(line, 'name')
+            let dir = _xml-attr(line, 'direction')
+            if cur-kind == 'method' {
+                let nm = name ?? "arg{
+                    (dir == 'out')
+                        ? #cur-elem.out-args
+                        : #cur-elem.in-args
+                }"
+                match dir {
+                    'in' => cur-elem.in-args.push({
+                        name: nm, sig
+                    }),
+                    _ => {
+                        cur-elem.out-args.push({
+                            name: nm, sig
+                        })
+                        cur-elem.out-sig += sig
+                    }
+                }
+            } else {
+                cur-elem.args.push({
+                    name: name
+                        ?? "arg{#cur-elem.args}",
+                    sig
+                })
+            }
+        },
+
+        /<\/method>/ => {
+            if cur-elem != nil
+            && cur-iface not in SKIP_IFACES {
+                ifaces[cur-iface].methods.push(cur-elem)
+            }
+            cur-elem = nil
+        },
+
+        /<\/signal>/ => {
+            if cur-elem != nil
+            && cur-iface not in SKIP_IFACES {
+                ifaces[cur-iface].signals.push(cur-elem)
+            }
+            cur-elem = nil
+        },
+
+        _ => {}
+    }
+
+    if filter != nil {
+        let $data = ifaces[filter] or throw RuntimeError(
+            "dbus!: interface '{filter}' not found"
+        )
+        return %{filter: data}
+    }
+
+    ifaces
+}
+
+fn camel(s: String) -> String {
+    let parts = s.scan(
+        /[A-Z][a-z]+|[A-Z]+(?=[A-Z][a-z])|[A-Z]+$|^[a-z]+/
+    )
+    if #parts == 0 { return s.lower() }
+    parts[0] = parts[0].lower()
+    for i in 1..#parts {
+        parts[i] = parts[i][0].upper()
+                  + parts[i][1;].lower()
+    }
+    parts.join()
+}
+
+fn _gen-prop-getter(
+    dest: String, path: String,
+    iface: String, p
+) {
+    let (rt, consumed) = _sig-type(p.sig)
+    if consumed != #p.sig { return nil }
+
+    if p.sig in BASIC_READER {
+        return ty.Func(
+            name: camel(p.name),
+            params: [], rt: rt,
+            body: ty.Call(
+                func: ty.MemberAccess(
+                    ty.MethodCall(
+                        object: ty.Id(name: '__bus'),
+                        method: 'getProperty',
+                        args: [
+                            ty.Arg(arg: ty.String(dest)),
+                            ty.Arg(arg: ty.String(path)),
+                            ty.Arg(arg: ty.String(iface)),
+                            ty.Arg(arg: ty.String(p.name)),
+                            ty.Arg(arg: ty.String(p.sig))
+                        ]
+                    ),
+                    BASIC_READER[p.sig]
+                ),
+                args: []
+            )
+        )
+    }
+
+    let $d  = ty.String(dest)
+    let $pa = ty.String(path)
+    let $i  = ty.String(iface)
+    let $pn = ty.String(p.name)
+    let $sc = ty.String(p.sig)
+    let get-msg = $$[
+        __bus.get-property($$d, $$pa, $$i, $$pn, $$sc)
+    $$]
+    let (read-expr, _) = _sig-read(p.sig, get-msg)
+
+    ty.Func(
+        name: camel(p.name), params: [],
+        rt: rt, body: read-expr
+    )
+}
+
+fn _gen-prop-setter(
+    dest: String, path: String,
+    iface: String, p
+) {
+    let $d  = ty.String(dest)
+    let $pa = ty.String(path)
+    let $i  = ty.String(iface)
+    let $pn = ty.String(p.name)
+    let $sc = ty.String(p.sig)
+
+    ty.Func(
+        name: "set{p.name}",
+        params: [ty.Param(
+            name: 'val', constraint: ty.Any
+        )],
+        body: $$[
+            __bus.set-property(
+                $$d, $$pa, $$i, $$pn, $$sc, val
+            )
+        $$]
+    )
+}
+
+fn _gen-method(
+    dest: String, path: String,
+    iface: String, m
+) {
+    let sig-in = m.in-args.map(&.sig).join()
+    let fn-params = []
+    let call-args = []
+
+    for a in m.in-args {
+        let (arg-type, _) = _sig-type(a.sig)
+        fn-params.push(ty.Param(
+            name: camel(a.name), constraint: arg-type
+        ))
+        call-args.push(ty.Id(name: camel(a.name)))
+    }
+
+    let bus-call = ty.MethodCall(
+        object: ty.Id(name: '__bus'),
+        method: 'call',
+        args: [
+            ty.Arg(arg: ty.String(dest)),
+            ty.Arg(arg: ty.String(path)),
+            ty.Arg(arg: ty.String(iface)),
+            ty.Arg(arg: ty.String(m.name)),
+            ty.Arg(arg: ty.String(sig-in)),
+            *call-args.map(a -> ty.Arg(arg: a))
+        ]
+    )
+
+    let out = m.out-sig
+
+    if #out == 0 {
+        return ty.Func(
+            name: camel(m.name),
+            params: fn-params,
+            body: bus-call
+        )
+    }
+
+    let (rt, consumed) = _sig-type(out)
+
+    if consumed == #out && out in BASIC_READER {
+        return ty.Func(
+            name: camel(m.name),
+            params: fn-params, rt: rt,
+            body: ty.Call(
+                func: ty.MemberAccess(
+                    bus-call, BASIC_READER[out]
+                ),
+                args: []
+            )
+        )
+    }
+
+    if consumed == #out {
+        let (read-expr, _) = _sig-read(out, bus-call)
+        return ty.Func(
+            name: camel(m.name),
+            params: fn-params,
+            rt: rt, body: read-expr
+        )
+    }
+
+    let types = []
+    let reads = []
+    let m-id = ty.Id(name: '__msg')
+    let j = 0
+    while j < #out {
+        let next = _skip-one(out, j)
+        let r: _ = _sig-type(out[j; next - j])
+        types.push(r.0)
+        let rd: _ = _sig-read(out[j; next - j], m-id)
+        reads.push(rd.0)
+        j = next
+    }
+
+    let multi-rt = (#types == 1)
+        ? types[0]
+        : ty.Record(
+            types.map(t -> ty.RecordEntry(item: t))
+          )
+
+    let $msg-expr = bus-call
+    let multi-body = if #reads == 1 {
+        reads[0]
+    } else {
+        ty.Record(
+            reads.map(r -> ty.RecordEntry(item: r))
+        )
+    }
+
+    let body = $$[ do {
+        let $__msg = $$msg-expr
+        $$multi-body
+    } $$]
+
+    ty.Func(
+        name: camel(m.name),
+        params: fn-params,
+        rt: multi-rt, body: body
+    )
+}
+
+fn _gen-signal(
+    dest: String, path: String,
+    iface: String, sig
+) {
+    let full-sig = sig.args.map(&.sig).join()
+    let m-id = ty.Id(name: '__msg')
+    let reads = []
+    let types = []
+    let j = 0
+    while j < #full-sig {
+        let next = _skip-one(full-sig, j)
+        let r: _ = _sig-type(full-sig[j; next - j])
+        types.push(r.0)
+        let rd: _ = _sig-read(
+            full-sig[j; next - j], m-id
+        )
+        reads.push(rd.0)
+        j = next
+    }
+
+    let cb-type = ty.Any
+
+    let read-and-call = if #reads == 0 {
+        $$[ cb() $$]
+    } else if #reads == 1 {
+        let $rd = reads[0]
+        $$[ cb($$rd) $$]
+    } else {
+        let tup = ty.Record(
+            reads.map(r -> ty.RecordEntry(item: r))
+        )
+        $$[ cb($$tup) $$]
+    }
+
+    let $dest-str  = ty.String(dest)
+    let $path-str  = ty.String(path)
+    let $iface-str = ty.String(iface)
+    let $sig-name  = ty.String(sig.name)
+
+    ty.Func(
+        name: "on{sig.name}",
+        params: [ty.Param(
+            name: 'cb', constraint: cb-type
+        )],
+        body: $$[
+            __bus.match-signal(
+                $$dest-str, $$path-str,
+                $$iface-str, $$sig-name,
+                fn (__msg) { $$read-and-call }
+            )
+        $$]
+    )
+}
+
+fn _field-val(fields, name: String) {
+    for f in fields {
+        if let ty.Assign((ty.Id({name: $n, *}), $val)) = f {
+            if n == name { return ty.eval(val) }
+        }
+    }
+}
+
+/**
+ * Generate a typed proxy class for a D-Bus interface.
+ *
+ * At compile time, connects to the bus and calls
+ * org.freedesktop.DBus.Introspectable.Introspect on the
+ * target object. The returned XML is parsed and used to
+ * generate typed methods, property accessors, and signal
+ * subscriptions on the decorated class.
+ *
+ * FIELDS
+ *
+ *   service    Well-known bus name (required).
+ *   path       Object path. Defaults to the service name
+ *              with dots replaced by slashes.
+ *   interface  Interface to bind. If omitted, all
+ *              non-standard interfaces on the object are
+ *              included.
+ *   bus        "system" or "user". Defaults to "system".
+ *              Can also be set via @dbus('user').
+ *
+ * The generated class constructor takes an optional Bus
+ * argument. When omitted, the thread-local default
+ * connection for the configured bus type is used.
+ *
+ * EXAMPLES
+ *
+ *   @dbus
+ *   class Hostname {
+ *       service = 'org.freedesktop.hostname1'
+ *   }
+ *
+ *   print(Hostname().hostname())
+ *
+ *   @dbus
+ *   class Login {
+ *       service   = 'org.freedesktop.login1'
+ *       interface = 'org.freedesktop.login1.Manager'
+ *       path      = '/org/freedesktop/login1'
+ *   }
+ *
+ *   let login = Login()
+ *   for (id, uid, user, seat, path) in login.list-sessions() {
+ *       print("{id} {user} {seat}")
+ *   }
+ *
+ *   login.on-session-new(fn (msg) {
+ *       print("new session: {msg.read-string()}")
+ *   })
+ */
+pub macro dbus(def, bus-kind = nil) {
+    let ty.Class($cls) = def
+
+    let kind = (bus-kind != nil)
+        ? ty.eval(bus-kind)
+        : (_field-val(cls.fields, 'bus') ?? 'system')
+
+    let dest = _field-val(cls.fields, 'service')
+        ?? throw RuntimeError(
+            "@dbus: class {cls.name} needs a"
+            " 'service' field"
+        )
+
+    let sep = '/'
+    let path = _field-val(cls.fields, 'path')
+        ?? "{sep}{dest.sub('.', sep)}"
+    let iface = _field-val(cls.fields, 'interface')
+
+    let xml    = introspect(dest, path, kind)
+    let ifaces = _parse-introspect(xml, iface)
+
+    cls.fields = [
+        ty.Id(name: '__bus', constraint: $$[_$$])
+    ]
+
+    let $kind-str = ty.String(kind)
+    let ms = [
+        ty.Func(
+            name: 'init',
+            params: [ty.Param(
+                name: 'bus',
+                constraint: $$[ $$::(Bus) | nil $$],
+                default: $$[ nil $$]
+            )],
+            body: $$[
+                __bus = bus ?? $$::(default-bus)($$kind-str)
+            $$]
+        ),
+        *cls.methods
+    ]
+
+    for iface-name, data in ifaces {
+        for p in data.props {
+            if let $g = _gen-prop-getter(
+                dest, path, iface-name, p
+            ) {
+                ms.push(g)
+            }
+            if p.writable {
+                ms.push(_gen-prop-setter(
+                    dest, path, iface-name, p
+                ))
+            }
+        }
+        for m in data.methods {
+            if let $g = _gen-method(
+                dest, path, iface-name, m
+            ) {
+                ms.push(g)
+            }
+        }
+        for s in data.signals {
+            if let $g = _gen-signal(
+                dest, path, iface-name, s
+            ) {
+                ms.push(g)
+            }
+        }
+    }
+
+    cls.methods = ms
+
+    def
+}
+
+pub fn system()  { default-bus('system') }
+pub fn session() { default-bus('user')   }
