@@ -1855,7 +1855,7 @@ string_unchalk(Ty *ty, Value *string, int argc, Value *kwargs)
                         ) {
                                 isize e = esc + 5;
                                 while (
-                                           e + 1 < len
+                                           (e + 1 < len)
                                         && !(s[e] == '\x1b' && s[e + 1] == '\\')
                                 ) {
                                         e += 1;
@@ -1932,13 +1932,16 @@ string_plain(Ty *ty, Value *string, int argc, Value *kwargs)
 
                 while (pos < len) {
                         if (
-                                   s[pos] == '\\'
-                                && pos + 1 < len
+                                   (s[pos] == '\\')
+                                && (pos + 1 < len)
                                 && (s[pos + 1] == '\\' || s[pos + 1] == '[')
                         ) {
                                 break;
                         }
-                        if (s[pos] == '[') {
+                        if (
+                                   (s[pos] == '[')
+                                && !(pos > 0 && s[pos - 1] == '\x1b')
+                        ) {
                                 break;
                         }
                         pos += 1;
@@ -2022,18 +2025,18 @@ ck_bright_fix(CkSty *s)
 {
         if (
                    s->bright
-                && s->fg_n == 1
-                && s->fg[0] >= 30
-                && s->fg[0] <= 37
+                && (s->fg_n == 1)
+                && (s->fg[0] >= 30)
+                && (s->fg[0] <= 37)
         ) {
                 s->fg[0] += 60;
         }
 
         if (
                    s->bg_bright
-                && s->bg_n == 1
-                && s->bg[0] >= 40
-                && s->bg[0] <= 47
+                && (s->bg_n == 1)
+                && (s->bg[0] >= 40)
+                && (s->bg[0] <= 47)
         ) {
                 s->bg[0] += 60;
         }
@@ -2298,9 +2301,34 @@ ck_try_parse(Ty *ty, char const *nm, isize n,
 }
 
 static bool
-ck_resolve(Ty *ty, char const *nm, isize len,
-           CkSty *out, Dict *custom)
+ck_resolve(Ty *ty, char const *nm, isize len, CkSty *out, Dict *custom)
 {
+// ====================================================================
+        static int _bold      = 0;
+        static int _italic    = 0;
+        static int _dim       = 0;
+        static int _reverse   = 0;
+        static int _bright    = 0;
+        static int _fg        = 0;
+        static int _bg        = 0;
+        static int _uc        = 0;
+        static int _underline = 0;
+        static int _link      = 0;
+// --------------------------------------------------------------------
+        if (UNLIKELY(_bold == 0)) {
+                _bold      = M_ID("bold");
+                _italic    = M_ID("italic");
+                _dim       = M_ID("dim");
+                _reverse   = M_ID("reverse");
+                _bright    = M_ID("bright");
+                _fg        = M_ID("fg");
+                _bg        = M_ID("bg");
+                _uc        = M_ID("uc");
+                _underline = M_ID("underline");
+                _link      = M_ID("link");
+        }
+// ====================================================================
+
         memset(out, 0, sizeof *out);
 
         if (custom != NULL) {
@@ -2337,52 +2365,41 @@ ck_resolve(Ty *ty, char const *nm, isize len,
                 }
 
                 if (v != NULL && v->type == VALUE_TUPLE && v->ids != NULL) {
-                        int id_bold      = M_ID("bold");
-                        int id_italic    = M_ID("italic");
-                        int id_dim       = M_ID("dim");
-                        int id_reverse   = M_ID("reverse");
-                        int id_bright    = M_ID("bright");
-                        int id_fg        = M_ID("fg");
-                        int id_bg        = M_ID("bg");
-                        int id_uc        = M_ID("uc");
-                        int id_underline = M_ID("underline");
-                        int id_link      = M_ID("link");
-
                         for (int i = 0; i < v->count; ++i) {
                                 int    id = v->ids[i];
                                 Value *f  = &v->items[i];
 
-                                if (id == id_bold && f->type == VALUE_BOOLEAN) {
+                                if (id == _bold && f->type == VALUE_BOOLEAN) {
                                         out->bold = f->boolean ? 1 : 2;
-                                } else if (id == id_italic && f->type == VALUE_BOOLEAN) {
+                                } else if (id == _italic && f->type == VALUE_BOOLEAN) {
                                         out->italic = f->boolean ? 1 : 2;
-                                } else if (id == id_dim && f->type == VALUE_BOOLEAN) {
+                                } else if (id == _dim && f->type == VALUE_BOOLEAN) {
                                         out->dim = f->boolean ? 1 : 2;
-                                } else if (id == id_reverse && f->type == VALUE_BOOLEAN) {
+                                } else if (id == _reverse && f->type == VALUE_BOOLEAN) {
                                         out->reverse = f->boolean ? 1 : 2;
-                                } else if (id == id_bright && f->type == VALUE_BOOLEAN) {
+                                } else if (id == _bright && f->type == VALUE_BOOLEAN) {
                                         out->bright = f->boolean ? 1 : 0;
-                                } else if (id == id_fg && f->type == VALUE_ARRAY) {
+                                } else if (id == _fg && f->type == VALUE_ARRAY) {
                                         out->fg_n = min(vN(*f->array), 5);
                                         for (int j = 0; j < out->fg_n; ++j) {
                                                 out->fg[j] = v_(*f->array, j)->z;
                                         }
-                                } else if (id == id_bg && f->type == VALUE_ARRAY) {
+                                } else if (id == _bg && f->type == VALUE_ARRAY) {
                                         out->bg_n = min(vN(*f->array), 5);
                                         for (int j = 0; j < out->bg_n; ++j) {
                                                 out->bg[j] = v_(*f->array, j)->z;
                                         }
-                                } else if (id == id_uc && f->type == VALUE_ARRAY) {
+                                } else if (id == _uc && f->type == VALUE_ARRAY) {
                                         out->uc_n = min(vN(*f->array), 5);
                                         for (int j = 0; j < out->uc_n; ++j) {
                                                 out->uc[j] = v_(*f->array, j)->z;
                                         }
-                                } else if (id == id_underline && f->type == VALUE_ARRAY) {
+                                } else if (id == _underline && f->type == VALUE_ARRAY) {
                                         out->ul_n = min(vN(*f->array), 2);
                                         for (int j = 0; j < out->ul_n; ++j) {
                                                 out->ul[j] = v_(*f->array, j)->z;
                                         }
-                                } else if (id == id_link && f->type == VALUE_STRING) {
+                                } else if (id == _link && f->type == VALUE_STRING) {
                                         out->link     = ss(*f);
                                         out->link_len = sN(*f);
                                 }
@@ -2565,7 +2582,10 @@ string_chalk(Ty *ty, Value *string, int argc, Value *kwargs)
                         ) {
                                 break;
                         }
-                        if (s[pos] == '[') {
+                        if (
+                                   s[pos] == '['
+                                && !(pos > 0 && s[pos - 1] == '\x1b')
+                        ) {
                                 break;
                         }
                         pos += 1;
@@ -2612,6 +2632,7 @@ string_chalk(Ty *ty, Value *string, int argc, Value *kwargs)
 
                 if (plen == 0) {
                         if (nf >= CK_MAX_DEPTH) {
+                                abort();
                                 continue;
                         }
                         CkFrame *f = &stack[nf++];
@@ -2637,6 +2658,7 @@ string_chalk(Ty *ty, Value *string, int argc, Value *kwargs)
                         CK_UPDATE();
                 } else if (plen == 1 && s[ps] == '%') {
                         if (nf >= CK_MAX_DEPTH || nos >= CK_MAX_OSTACK) {
+                                abort();
                                 continue;
                         }
                         ostack[nos++] = out;
