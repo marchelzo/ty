@@ -517,7 +517,7 @@ pub class Component {
         }
     }
 
-    render();
+    render() -> Node | Component;
 
     resolve(val, default = nil) {
         (val :: Function) ? val(self) : (val ?? default)

@@ -910,4 +910,10 @@ ScopeReset(Scope *scope)
         }
 }
 
+void
+scope_reset(void)
+{
+        SYMBOL = 0;
+}
+
 /* vim: set sw=8 sts=8 expandtab: */

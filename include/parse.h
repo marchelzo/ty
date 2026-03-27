@@ -50,4 +50,7 @@ gensym(Ty *ty);
 bool
 tokenize(Ty *ty, char const *source, TokenVector *tokens_out);
 
+void
+parse_reset(Ty *ty);
+
 #endif

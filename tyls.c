@@ -172,15 +172,16 @@ main(int argc, char *argv[])
                 exit(1);
         }
 
-        InternSet     names     = {0};
-        struct itable files     = {0};
         ValueVector   items     = {0};
         byte_vector   OutBuffer = {0};
+        ModuleVector  reload    = {0};
+        Arena         arena     = {0};
+
+        u64 reqs = 0;
 
         TY_BEGIN_LOADING();
 
         for (;;) {
-                CheckUsed(ty);
                 GC_STOP();
 
                 AllowErrors = true;
@@ -206,14 +207,10 @@ main(int argc, char *argv[])
                 char const *file;
                 char const *source;
 
-                i64 name;
-
                 Symbol *sym;
                 Module *mod;
 
-                Value  v;
-                Value *vp;
-
+                Value v;
                 Value result = NIL;
 
                 if (TY_CATCH_ERROR()) {
@@ -226,10 +223,7 @@ main(int argc, char *argv[])
                 }
 
                 file = TY_C_STR(*tget_nn(&req, "file"));
-                name = intern(&names, file)->id;
-                vp   = itable_get(ty, &files, name);
-
-                mod = (vp->type == VALUE_PTR) ? vp->ptr : NULL;
+                mod  = GetModuleByPath(ty, file);
 
                 switch (what) {
                 case LS_COMPILE:
@@ -242,24 +236,26 @@ main(int argc, char *argv[])
 
                         source = TY_0_C_STR(v);
 
+                        FreeArena(&ty->arena);
+                        NewArenaNoGC(ty, 1 << 23);
+
+                        if (!vm_reset(ty)) {
+                                LOGX("vm reset failed: %s\n", TyError(ty));
+                                result = vTn(
+                                        "error", xSz(TyError(ty))
+                                );
+                                goto EndRequest;
+                        }
+
+                        mod = compiler_compile_source(ty, source, file);
                         if (mod == NULL) {
-                                mod = compiler_compile_source(ty, source, file);
-                                if (mod != NULL) {
-                                        *vp = PTR(mod);
-                                } else {
-                                        fputs(TyError(ty), stderr);
-                                        result = vTn(
-                                                "error", xSz(TyError(ty))
-                                        );
-                                }
+                                LOGX("compilation failed: %s\n", TyError(ty));
+                                result = vTn(
+                                        "error", xSz(TyError(ty))
+                                );
+                                goto EndRequest;
                         } else {
-                                if (!CompilerReloadModule(ty, mod, source)) {
-                                        fputs(TyError(ty), stderr);
-                                        result = vTn(
-                                                "error", xSz(TyError(ty))
-                                        );
-                                        goto EndRequest;
-                                }
+                                LOGX("loaded module %s\n", mod->path);
                         }
                         break;
 

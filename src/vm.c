@@ -9754,6 +9754,45 @@ vm_init(Ty *ty, int ac, char **av)
 }
 
 bool
+vm_reset(Ty *ty)
+{
+        v0(Globals);
+        v0(FRAMES);
+        v0(STACK);
+        v0(CALLS);
+
+        for (int i = 0; i < vN(ty->_2op_cache); ++i) {
+                xvF(v__(ty->_2op_cache, i));
+        }
+        v0(ty->_2op_cache);
+
+        LOGX("================== Resetting VM ==================\n");
+
+        GC_STOP();
+        TY_IS_INITIALIZED = false;
+        TY_BEGIN_LOADING();
+        CompilerReset(ty);
+        add_builtins(ty, 0, NULL);
+
+        if (TY_CATCH_ERROR()) {
+                (void)TY_CATCH();
+                GC_RESUME();
+                return false;
+        }
+
+        char *code = compiler_load_prelude(ty);
+        vm_exec(ty, code);
+
+        compiler_load_builtin_modules(ty);
+        sqlite_load(ty);
+        TY_FINISH_LOADING();
+        TY_IS_INITIALIZED = true;
+        GC_RESUME();
+
+        return true;
+}
+
+bool
 vm_load_program(Ty *ty, char const *source, char const *file)
 {
         TY_BEGIN_LOADING();

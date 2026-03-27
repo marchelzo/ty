@@ -19,6 +19,9 @@ extern volatile sig_atomic_t JitInterruptFlag;
 bool
 vm_init(Ty *ty, int ac, char **av);
 
+bool
+vm_reset(Ty *ty);
+
 noreturn void
 vm_panic_ex(Ty *ty, char const *fmt, ...);
 

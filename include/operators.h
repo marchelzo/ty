@@ -512,6 +512,9 @@ op_fun_info(int op, int t1, int t2);
 void
 op_dump(int op);
 
+void
+op_reset(void);
+
 Type *
 op_type(Ty *ty, int op);
 
