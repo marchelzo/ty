@@ -342,6 +342,32 @@ directory_of(char const *path, char *buf);
 bool
 get_terminal_size(int fd, int *rows, int *cols);
 
+struct fspec {
+        bool alt;
+        bool blank;
+        bool sep;
+        bool sign;
+        bool zero;
+        i8 justify;
+        char xsep;
+        char fill[64];
+        char prec[64];
+        char width[64];
+};
+
+int
+fspec_parse(char const **s, char const *end, struct fspec *out);
+
+typedef struct {
+        int left;
+        int right;
+        char const *fill;
+        int fill_sz;
+} FspecPad;
+
+FspecPad
+fspec_pad(char const *text, isize tlen, struct fspec const *spec);
+
 int
 vdump(byte_vector *b, char const *fmt, va_list ap);
 

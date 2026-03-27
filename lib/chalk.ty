@@ -281,6 +281,8 @@ fn detrans(a: _, b: _) -> String {
 }
 
 pub fn parse(text: String, start: _ = {}) -> String {
+    if !start { return text.unchalk() }
+
     let out = Blob()
     let props = start
     let style = start
@@ -571,6 +573,11 @@ pub class Chalk {
     }
 
     render(text: String, plain: Bool = false) {
+#|if (getenv('NO_COLOR') != nil) || (ty.color == 'never')
+        plain = true
+#|]
+        if !plain { return text.chalk(__styles) }
+
         let parts = text.split(/(?:\\\\)|(?:\\\[)|\[([\/%]+)?([^]]*)\]/v)
 
         let stack: _ = [[{}]]
@@ -583,10 +590,6 @@ pub class Chalk {
             out.push(trans(style, new-style))
             style = new-style
         }
-
-#|if (getenv('NO_COLOR') != nil) || (ty.color == 'never')
-        plain = true
-#|]
 
         fn get-style(name) {
             match __styles[name] {
@@ -883,4 +886,4 @@ pub fn rgb-gradient(
     }
 }
 
-pub chalk = Chalk()
+pub __tls::chalk = Chalk()

@@ -3,6 +3,7 @@
 #include <string.h>
 #include <stdint.h>
 #include <stdbool.h>
+#include <ctype.h>
 #include <sys/types.h>
 #include <sys/stat.h>
 #include "polyfill_unistd.h"
@@ -465,6 +466,146 @@ char *
         SCRATCH_RESTORE();
 
         return str;
+}
+
+int
+fspec_parse(char const **s, char const *end, struct fspec *out)
+{
+        int w = 0;
+        int p = 0;
+
+        out->alt     = false;
+        out->blank   = false;
+        out->justify = 1;
+        out->sep     = false;
+        out->sign    = false;
+        out->xsep    = '\0';
+
+        m0(out->fill);
+
+        for (;;) {
+                if (*out->fill == '\0') {
+                        int bytes = term_fit_cols(*s, end - *s, 1);
+                        if (UNLIKELY((end - *s) > 1 && (bytes == 0))) {
+                                bytes = term_fit_cols(*s, end - *s, 2);
+                        }
+                        if (
+                                   (*s + bytes < end)
+                                && contains("<^>", (*s)[bytes])
+                        ) {
+                                memcpy(out->fill, *s, min(sizeof out->fill - 1, bytes));
+                                *s += bytes;
+                                continue;
+                        }
+                }
+
+                switch (**s) {
+                case '+':  out->sign    = true;    break;
+                case '#':  out->alt     = true;    break;
+                case '\'': out->sep     = true;    break;
+                case ' ':  out->blank   = true;    break;
+                case '-':  out->justify = -1;      break;
+                case '<':  out->justify = -1;      break;
+                case '^':  out->justify =  0;      break;
+                case '>':  out->justify =  1;      break;
+                case '0':  strcpy(out->fill, "0"); break;
+                default:   goto FlagsComplete;
+                }
+
+                *s += 1;
+        }
+
+FlagsComplete:
+        if (*out->fill == '\0') {
+                strcpy(out->fill, " ");
+        }
+
+        if (*s < end && **s == '*') {
+                if (w + 1 >= sizeof out->width) {
+                        return -1;
+                }
+                out->width[w++] = *(*s)++;
+        } else while (*s < end && isdigit(**s)) {
+                if (w + 1 >= sizeof out->width) {
+                        return -1;
+                }
+                out->width[w++] = *(*s)++;
+        }
+
+        if (*s < end && **s == '.') {
+                if (p + 1 >= sizeof out->prec) {
+                        return -1;
+                }
+
+                out->prec[p++] = *(*s)++;
+
+                while (*s < end && **s == ' ') {
+                        ++*s;
+                }
+
+                if (*s < end && **s == '*') {
+                        if (p + 1 >= sizeof out->prec) {
+                                return -1;
+                        }
+                        out->prec[p++] = *(*s)++;
+                } else while (*s < end && isdigit(**s)) {
+                        if (p + 1 >= sizeof out->prec) {
+                                return -1;
+                        }
+                        out->prec[p++] = *(*s)++;
+                }
+        }
+
+        if (*s < end && contains(" _,'", **s)) {
+                out->xsep = *(*s)++;
+        }
+
+        while (*s < end && **s == ' ') {
+                ++*s;
+        }
+
+        out->width[w] = '\0';
+        out->prec[p]  = '\0';
+
+        return (*s < end) ? *(*s)++ : '\0';
+}
+
+FspecPad
+fspec_pad(char const *text, isize tlen, struct fspec const *spec)
+{
+        FspecPad r = {
+                .left    = 0,
+                .right   = 0,
+                .fill    = spec->fill,
+                .fill_sz = strlen(spec->fill)
+        };
+
+        if (r.fill_sz <= 0) {
+                r.fill    = " ";
+                r.fill_sz = 1;
+        }
+
+        if (!*spec->width) {
+                return r;
+        }
+
+        int goal = atoi(spec->width);
+        int curr = term_width(text, tlen);
+        int pad  = max(0, goal - curr);
+
+        switch (spec->justify) {
+        case  1: r.left  = pad;                             break;
+        case  0: r.left  = pad / 2; r.right = pad - r.left; break;
+        case -1: r.right = pad;                             break;
+        }
+
+        int fw = term_width(r.fill, r.fill_sz);
+        if (fw > 1) {
+                r.left  /= fw;
+                r.right /= fw;
+        }
+
+        return r;
 }
 
 /* vim: set sw=8 sts=8 expandtab: */
