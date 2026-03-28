@@ -67,6 +67,8 @@ enum {
         TY_THREAD_COUNTER
 };
 
+enum { VALUE_TABLE_SIZE = 16 };
+
 typedef uint8_t   u8;
 typedef uint16_t  u16;
 typedef uint32_t  u32;
@@ -112,6 +114,7 @@ typedef vec(i32)            i32Vector;
 typedef vec(i16)            i16Vector;
 typedef vec(u16)            u16Vector;
 typedef vec(u32)            U32Vector;
+typedef vec(u64)            u64Vector;
 typedef vec(char *)         StringVector;
 typedef vec(char const *)   ConstStringVector;
 typedef vec(jmp_buf *)      JmpBufVector;

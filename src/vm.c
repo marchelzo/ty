@@ -453,17 +453,17 @@ inline static void
 DoUnaryOp(Ty *ty, int op, bool exec);
 
 static void
-InitializeTY(Ty *ty)
+InitializeTY(TY *ty0, Ty *ty)
 {
-#define X(op, id) intern(&xD.b_ops, id)
+#define X(op, id) intern(&ty0->b_ops, id)
         TY_BINARY_OPERATORS;
 #undef X
 
-#define X(op, id) intern(&xD.members, id)
+#define X(op, id) intern(&ty0->members, id)
         TY_UNARY_OPERATORS;
 #undef X
 
-        intern(&xD.strings, "");
+        intern(&ty0->strings, "");
 
         for (int i = 0; i < countof(NILS); ++i) {
                 NILS[i] = NIL;
@@ -471,9 +471,11 @@ InitializeTY(Ty *ty)
 
         srandom(TyThreadCPUTime() & 0xFFFFFFFF);
 
+        mod_init(ty0);
         jit_init(ty);
 
-        xD.ty = ty;
+        ty0->ty = ty;
+        ty->ty  = ty0;
 }
 
 Ty *
@@ -486,8 +488,6 @@ static void
 InitializeTy(Ty *ty, ThreadGroup *group)
 {
         m0(*ty);
-
-        ty->ty = &xD;
 
         ExpandScratch(ty);
         ty->memory_limit = GC_INITIAL_LIMIT;
@@ -9640,9 +9640,8 @@ vm_init(Ty *ty, int ac, char **av)
 #endif
 
         InitThreadGroup(&MainGroup);
-
-        InitializeTY(ty);
         InitializeTy(ty, &MainGroup);
+        InitializeTY(&xD, ty);
 
         TY_BEGIN_LOADING();
 

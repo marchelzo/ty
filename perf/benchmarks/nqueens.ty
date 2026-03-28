@@ -1,4 +1,4 @@
-import super.lib (bench)
+import lib (bench)
 
 fn solve(n: Int) -> Int {
     let count = 0

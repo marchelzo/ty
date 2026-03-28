@@ -1,4 +1,4 @@
-import super.lib (bench)
+import lib (bench)
 
 // Ackermann function - tests deep recursion and function call overhead
 fn ack(m: Int, n: Int) -> Int {

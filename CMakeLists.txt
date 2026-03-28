@@ -258,11 +258,12 @@ set(_src_files
   src/functions.c
   src/gc.c
   src/highlight.c
-  src/jit.c
   src/intern.c
   src/itable.c
+  src/jit.c
   src/json.c
   src/lex.c
+  src/mod.c
   src/object.c
   src/operators.c
   src/panic.c

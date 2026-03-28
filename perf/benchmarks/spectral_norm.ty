@@ -1,4 +1,4 @@
-import super.lib (bench)
+import lib (bench)
 
 fn eval-A(i: Int, j: Int) -> Float {
     1.0 / ((i + j) * (i + j + 1) / 2 + i + 1)

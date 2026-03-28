@@ -1,4 +1,4 @@
-import super.lib (bench)
+import lib (bench)
 
 fn fannkuch(n: Int) -> Int {
     let count = [i + 1 for i in ..n]
