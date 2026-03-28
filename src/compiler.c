@@ -2120,10 +2120,8 @@ try_slurp_module(Ty *ty, char const *name, char const **path_out)
         }
 
         if (source == NULL) {
-                if (directory_of(STATE.module->path, chad) == NULL) {
-                        return NULL;
-                }
-                ty_snprintf(path, sizeof path, "%s/%s.ty", chad, name);
+                char const *root = mod_root(ty, STATE.module->path);
+                ty_snprintf(path, sizeof path, "%s/%s.ty", root, name);
                 if ((source = slurp(ty, path)) == NULL) {
                         return NULL;
                 }

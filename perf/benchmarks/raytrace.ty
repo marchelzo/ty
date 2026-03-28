@@ -1,4 +1,4 @@
-import super.lib (bench)
+import lib (bench)
 
 let EPSILON = 0.00001
 

@@ -1,4 +1,4 @@
-import super.lib (bench)
+import lib (bench)
 
 // Task IDs
 const I_IDLE = 1

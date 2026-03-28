@@ -176,7 +176,7 @@ directory_of(char const *path, char *buf)
 #elif defined(__APPLE__)
         return dirname_r(path, buf);
 #else
-        return NULL;
+#error "directory_of() is not implemented for this platform"
 #endif
 }
 

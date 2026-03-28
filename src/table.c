@@ -4,40 +4,40 @@
 #include "xd.h"
 
 void
-table_init(Ty *ty, struct table *t)
+table_init(Ty *ty, ValueTable *t)
 {
-        for (int i = 0; i < TABLE_SIZE; ++i) {
-                v0(t->buckets[i].hashes);
-                v0(t->buckets[i].names);
-                v0(t->buckets[i].values);
+        for (int i = 0; i < VALUE_TABLE_SIZE; ++i) {
+                v00(t->buckets[i].hashes);
+                v00(t->buckets[i].names);
+                v00(t->buckets[i].values);
         }
 }
 
-struct value *
-table_add(Ty *ty, struct table *t, char const *name, unsigned long h, struct value f)
+Value *
+table_add(Ty *ty, ValueTable *t, char const *name, u64 h, Value const *f)
 {
-        int i = h % TABLE_SIZE;
+        int i = h % VALUE_TABLE_SIZE;
 
-        struct value *m = table_lookup(ty, t, name, h);
+        Value *m = table_lookup(ty, t, name, h);
 
         if (m == NULL) {
                 xvP(t->buckets[i].hashes, h);
                 xvP(t->buckets[i].names, name);
-                xvP(t->buckets[i].values, f);
+                xvP(t->buckets[i].values, *f);
                 return vvL(t->buckets[i].values);
         } else {
-                *m = f;
+                *m = *f;
                 return m;
         }
 }
 
 void
-table_copy(Ty *ty, struct table *dst, struct table const *src)
+table_copy(Ty *ty, ValueTable *dst, ValueTable const *src)
 {
         struct bucket *dt = dst->buckets;
         struct bucket const *st = src->buckets;
 
-        for (int i = 0; i < TABLE_SIZE; ++i) {
+        for (int i = 0; i < VALUE_TABLE_SIZE; ++i) {
                 if (st[i].hashes.count == 0) {
                         continue;
                 }
@@ -59,10 +59,10 @@ table_copy(Ty *ty, struct table *dst, struct table const *src)
         }
 }
 
-struct value *
-table_lookup(Ty *ty, struct table const *t, char const *name, unsigned long h)
+Value *
+table_lookup(Ty *ty, ValueTable const *t, char const *name, u64 h)
 {
-        int i = h % TABLE_SIZE;
+        int i = h % VALUE_TABLE_SIZE;
 
         struct bucket const *b = &t->buckets[i];
 
@@ -79,9 +79,9 @@ table_lookup(Ty *ty, struct table const *t, char const *name, unsigned long h)
 }
 
 void
-table_release(Ty *ty, struct table *t)
+table_release(Ty *ty, ValueTable *t)
 {
-        for (int i = 0; i < TABLE_SIZE; ++i) {
+        for (int i = 0; i < VALUE_TABLE_SIZE; ++i) {
                 mF(t->buckets[i].values.items);
                 mF(t->buckets[i].names.items);
                 mF(t->buckets[i].hashes.items);

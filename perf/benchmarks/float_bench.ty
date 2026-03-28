@@ -1,4 +1,4 @@
-import super.lib (bench)
+import lib (bench)
 import math
 
 class Point {

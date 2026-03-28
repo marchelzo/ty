@@ -5787,16 +5787,16 @@ parse_operator_directive(Ty *ty)
         next();
 
         if (strcmp(assoc, "left") == 0) {
-                table_put(ty, &uops, uop, INTEGER(p));
+                table_put(ty, &uops, uop, &INTEGER(p));
         } else if (strcmp(assoc, "right") == 0) {
-                table_put(ty, &uops, uop, INTEGER(-p));
+                table_put(ty, &uops, uop, &INTEGER(-p));
         } else {
                 die("expected 'left' or 'right' in operator directive");
         }
 
         if (T0 != TOKEN_NEWLINE) {
                 Expr *e = parse_expr(ty, 0);
-                table_put(ty, &uopcs, uop, PTR(e));
+                table_put(ty, &uopcs, uop, &PTR(e));
         }
 
         consume(TOKEN_NEWLINE);

@@ -1,4 +1,4 @@
-import super.lib (bench)
+import lib (bench)
 
 // Chaos game fractal via B-spline evaluation
 

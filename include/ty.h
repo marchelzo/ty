@@ -20,6 +20,7 @@
 #include "vec.h"
 #include "log.h"
 #include "xd.h"
+#include "mod.h"
 
 #define TY_MAX_CALL_DEPTH (1UL << 10)
 #define TY_TMP_BUF_COUNT 3
@@ -87,6 +88,14 @@ struct itable {
         i32Vector   ids;
         ValueVector values;
 };
+
+typedef struct table {
+        struct bucket {
+                u64Vector         hashes;
+                ConstStringVector names;
+                ValueVector       values;
+        } buckets[VALUE_TABLE_SIZE];
+} ValueTable;
 
 struct alloc {
         union {
@@ -633,6 +642,7 @@ typedef struct ty0 {
         IPVector tls0;
 
         CompileState *compiler;
+        PackageCache pkg;
 
         vec(TyTest) tests;
 } TY;
