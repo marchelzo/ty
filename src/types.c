@@ -10408,6 +10408,29 @@ TypeOf2Op(Ty *ty, int op, Type *t0, Type *t1)
         }
 
         if (
+                (TypeType(t0) == TYPE_TUPLE)
+             && (TypeType(t1) == TYPE_TUPLE)
+             && (op == OP_LT || op == OP_GT || op == OP_LEQ || op == OP_GEQ || op == OP_CMP)
+             && (vN(t0->types) == vN(t1->types))
+        ) {
+                for (int i = 0; i < vN(t0->types); ++i) {
+                        Type *r = TypeOf2Op(ty, op, v__(t0->types, i), v__(t1->types, i));
+                        if (r == NULL) {
+                                r = TrySolve2Op(
+                                        ty, op,
+                                        CloneType(ty, op_type(ty, op)),
+                                        v__(t0->types, i),
+                                        v__(t1->types, i),
+                                        NewVar(ty),
+                                        false
+                                );
+                        }
+                        if (r == NULL) return NULL;
+                }
+                return (op == OP_CMP) ? INT_TYPE : BOOL_TYPE;
+        }
+
+        if (
                 (t0->type == TYPE_INT)
              && (t1->type == TYPE_INT)
         ) {
