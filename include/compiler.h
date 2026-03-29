@@ -617,6 +617,41 @@ CompilerExprFor(Ty *ty, char const *mod, char const *name);
 
 #define EDBG(e) ((edbg)(ty, (e)))
 
+#ifdef TY_LS
+
+typedef struct {
+        char *base;
+        char *beg;
+        char *copy;
+        ptrdiff_t used;
+} ArenaSnapshot;
+
+typedef vec(ArenaSnapshot) ArenaSnapshotVector;
+
+typedef struct {
+        int module_count;
+        int class_count;
+        int trait_count;
+        usize global_count;
+        i64 symbol_count;
+        usize owned_count;
+        ArenaSnapshotVector arena_snaps;
+} CompilerBaseline;
+
+CompilerBaseline
+CompilerSaveBaseline(Ty *ty);
+
+void
+CompilerRestoreBaseline(Ty *ty, CompilerBaseline const *b);
+
+void
+CompilerSnapshotArena(Arena const *a, ArenaSnapshotVector *snaps);
+
+void
+CompilerRestoreArena(ArenaSnapshotVector const *snaps);
+
+#endif
+
 #endif
 
 /* vim: set sw=8 sts=8 expandtab: */

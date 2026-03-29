@@ -13740,14 +13740,24 @@ compiler_compile_source(
         char const *module_name = (slash != NULL) ? (slash + 1) : file;
         char const *module_path = realpath(file, NULL);
 
-        // (eval) etc.
         if (module_path == NULL) {
-                module_path = module_name;
+                module_path = file;
         }
 
         dont_printf("mod:      %s\n", STATE.module_name);
         dont_printf("mod_path: %s\n", STATE.module_path);
 
+#ifdef TY_LS
+        Scope *user_scope = scope_new(ty, module_name, STATE.global, false);
+
+        Module *module = STATE.module = NewModule(
+                ty,
+                module_name,
+                module_path,
+                source,
+                user_scope
+        );
+#else
         Module *module = STATE.module = NewModule(
                 ty,
                 module_name,
@@ -13755,6 +13765,7 @@ compiler_compile_source(
                 source,
                 STATE.global
         );
+#endif
 
         if (MainModule == NULL) {
                 MainModule = module;
@@ -13763,6 +13774,12 @@ compiler_compile_source(
 
         i64 symbol = scope_get_symbol(ty);
         CompileState save = STATE;
+
+#ifdef TY_LS
+        STATE.global = user_scope;
+        STATE.pscope = user_scope;
+        STATE.fscope = user_scope;
+#endif
 
         if (TY_CATCH_ERROR()) {
                 TY_CATCH();
@@ -13780,6 +13797,10 @@ compiler_compile_source(
         TY_CATCH_END();
 
         v00(STATE.code);
+
+#ifdef TY_LS
+        STATE = save;
+#endif
 
         return module;
 }
@@ -19953,6 +19974,80 @@ CompilerResetState(Ty *ty)
 {
         v0(STATE.imports);
 }
+
+#ifdef TY_LS
+
+CompilerBaseline
+CompilerSaveBaseline(Ty *ty)
+{
+        return (CompilerBaseline) {
+                .module_count  = vN(modules),
+                .class_count   = class_count(ty),
+                .trait_count   = trait_count(ty),
+                .global_count  = GlobalCount,
+                .symbol_count  = scope_get_symbol(ty),
+                .owned_count   = vN(GlobalScope->owned),
+        };
+}
+
+void
+CompilerRestoreBaseline(Ty *ty, CompilerBaseline const *b)
+{
+        class_truncate(ty, b->class_count, b->trait_count);
+
+        vN(modules)  = b->module_count;
+        MainModule   = NULL;
+        ContextList  = NULL;
+        GlobalCount  = b->global_count;
+
+        UndefinedSymbol = (Symbol) {
+                .flags = SYM_PUBLIC | SYM_GLOBAL,
+                .i = -1
+        };
+
+        scope_set_symbol(ty, b->symbol_count);
+        vN(GlobalScope->owned) = b->owned_count;
+
+        types_init(ty);
+        op_reset();
+
+        for (int i = 0; i < vN(ty->_2op_cache); ++i) {
+                xvF(v__(ty->_2op_cache, i));
+        }
+        v0(ty->_2op_cache);
+}
+
+void
+CompilerSnapshotArena(Arena const *a, ArenaSnapshotVector *snaps)
+{
+        v0(*snaps);
+
+        for (; a->base != NULL; a = NextArena(a)) {
+                Arena *next = NextArena(a);
+                ptrdiff_t used = a->beg - a->base;
+                char *copy = xmA(used);
+                memcpy(copy, a->base, used);
+                xvP(*snaps, ((ArenaSnapshot) {
+                        .base = a->base,
+                        .beg  = a->beg,
+                        .copy = copy,
+                        .used = used
+                }));
+        }
+}
+
+void
+CompilerRestoreArena(ArenaSnapshotVector const *snaps)
+{
+        for (int i = 0; i < vN(*snaps); ++i) {
+                ArenaSnapshot const *s = v_(*snaps, i);
+                memcpy(s->base, s->copy, s->used);
+                Arena *a = (Arena *)s->base;
+                a->beg = s->beg;
+        }
+}
+
+#endif
 
 inline static Value
 SymbolToCompletionItem(Ty *ty, Symbol const *sym, i32 depth)

@@ -17,6 +17,15 @@
 //#define LSLOG(fmt, ...) fprintf(stderr, fmt __VA_OPT__(,) __VA_ARGS__)
 #define LSLOG(fmt, ...)
 
+char *FreedArenaLo;
+char *FreedArenaHi;
+
+static Arena             BaselineArena;
+static CompilerBaseline  LsBaseline;
+
+static char             *LastSource;
+static char             *LastFile;
+
 TY xD;
 Ty *ty;
 Ty vvv;
@@ -172,12 +181,20 @@ main(int argc, char *argv[])
                 exit(1);
         }
 
+        LsBaseline = CompilerSaveBaseline(ty);
+        BaselineArena = ty->arena;
+        CompilerSnapshotArena(&BaselineArena, &LsBaseline.arena_snaps);
+
+        NewArenaNoGC(ty, 1 << 22);
+
         ValueVector   items     = {0};
         byte_vector   OutBuffer = {0};
         ModuleVector  reload    = {0};
         Arena         arena     = {0};
 
         u64 reqs = 0;
+
+        EnableLogging += 1;
 
         TY_BEGIN_LOADING();
 
@@ -196,8 +213,7 @@ main(int argc, char *argv[])
                 req = builtin_json_parse_xD(ty, 1, NULL);
                 vmX();
 
-                fputs(VSC(&req), stderr);
-                fputc('\n', stderr);
+                LOGX("%s", SHOW(&req, ABBREV));
 
                 i32 what = tget_nn(&req, "what")->z;
 
@@ -236,18 +252,35 @@ main(int argc, char *argv[])
 
                         source = TY_0_C_STR(v);
 
-                        FreeArena(&ty->arena);
-                        NewArenaNoGC(ty, 1 << 23);
-
-                        if (!vm_reset(ty)) {
-                                LOGX("vm reset failed: %s\n", TyError(ty));
-                                result = vTn(
-                                        "error", xSz(TyError(ty))
-                                );
+                        if (
+                                   (LastFile != NULL)
+                                && (LastSource != NULL)
+                                && s_eq(file, LastFile)
+                                && s_eq(source, LastSource)
+                                && (GetModuleByPath(ty, file) != NULL)
+                        ) {
                                 goto EndRequest;
                         }
 
+                        if (ty->arena.base != BaselineArena.base) {
+                                FreedArenaLo = (char *)(uintptr_t)-1;
+                                FreedArenaHi = NULL;
+                                for (Arena const *ap = &ty->arena; ap->base != NULL; ap = NextArena(ap)) {
+                                        if (ap->base < FreedArenaLo) FreedArenaLo = ap->base;
+                                        if (ap->end > FreedArenaHi) FreedArenaHi = ap->end;
+                                }
+                                FreeArena(&ty->arena);
+                        }
+                        ty->arena = BaselineArena;
+                        CompilerRestoreArena(&LsBaseline.arena_snaps);
+                        CompilerRestoreBaseline(ty, &LsBaseline);
+                        vN(Globals) = LsBaseline.global_count;
+                        LOGX("RESTORED: arena pages=%zu", vN(LsBaseline.arena_snaps));
+
+                        NewArenaNoGC(ty, 1 << 22);
+
                         mod = compiler_compile_source(ty, source, file);
+
                         if (mod == NULL) {
                                 LOGX("compilation failed: %s\n", TyError(ty));
                                 result = vTn(
@@ -257,6 +290,11 @@ main(int argc, char *argv[])
                         } else {
                                 LOGX("loaded module %s\n", mod->path);
                         }
+
+                        xmF(LastSource);
+                        xmF(LastFile);
+                        LastSource = S2(source);
+                        LastFile   = S2(file);
                         break;
 
                 case LS_DEFINITION:

@@ -119,7 +119,11 @@ class_get(Ty *ty, int class)
 Class *
 class_new_empty(Ty *ty)
 {
+#ifdef TY_LS
+        Class *c = amA0(sizeof *c);
+#else
         Class *c = alloc0(sizeof *c);
+#endif
         c->i = vN(classes);
 
         xvP(classes, c);
@@ -1005,12 +1009,38 @@ finalize(Ty *ty, Class *c)
 void
 class_reset(Ty *ty)
 {
+#ifndef TY_LS
         for (int i = 0; i < vN(classes); ++i) {
                 xmF(v__(classes, i));
         }
+#endif
 
         v0(classes);
         v0(traits);
+}
+
+int
+class_count(Ty *ty)
+{
+        return vN(classes);
+}
+
+int
+trait_count(Ty *ty)
+{
+        return vN(traits);
+}
+
+void
+class_truncate(Ty *ty, int n_classes, int n_traits)
+{
+#ifndef TY_LS
+        for (int i = n_classes; i < vN(classes); ++i) {
+                xmF(v__(classes, i));
+        }
+#endif
+        vN(classes) = n_classes;
+        vN(traits) = n_traits;
 }
 
 /* vim: set sts=8 sw=8 expandtab: */

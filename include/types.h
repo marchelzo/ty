@@ -203,6 +203,11 @@ typedef struct {
 enum { TY_T_FLAGS };
 #undef X
 
+#ifdef TY_LS
+extern char *FreedArenaLo;
+extern char *FreedArenaHi;
+#endif
+
 inline static u32
 TypeType(Type const *t0)
 {

@@ -188,7 +188,7 @@ ty: ty.c $(OBJECTS) $(EXTERNAL)
 
 tyls: tyls.c $(TYLS_OBJECTS) $(EXTERNAL)
 	@echo cc $<
-	@$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+	@$(CC) $(CFLAGS) -DTY_LS -o $@ $^ $(LDFLAGS)
 
 typrof: ty.c $(TYPROF_OBJECTS) $(EXTERNAL)
 	@echo cc $<
