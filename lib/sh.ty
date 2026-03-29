@@ -23,7 +23,8 @@ pub fn sh(
     combineOutput: Bool = false,
     shareStderr: Bool = false,
     chdir: Int | String | Blob | nil = nil,
-    shell: Array[String] = SHELL
+    shell: Array[String] = SHELL,
+    env: Dict[String, String] | nil = nil
 ) -> nil | |String, CmdResult| {
     let stderr = combineOutput ? os.SPAWN_MERGED_STDERR
                : shareStderr   ? os.SPAWN_INHERIT
@@ -36,6 +37,7 @@ pub fn sh(
         stdout=os.SPAWN_PIPE,
         stderr=stderr,
         chdir=chdir,
+        env=env,
         detach=timeoutMs != nil
     ) {
           return nil

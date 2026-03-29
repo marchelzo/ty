@@ -3547,15 +3547,9 @@ BUILTIN_FUNCTION(os_spawn)
 BUILTIN_FUNCTION(os_spawn)
 {
 /* ========================================================================= */
-        static TyMutex     SpawnLock;
-        static atomic_bool SpawnReady = false;
-
-        bool _false = false;
-        if (atomic_compare_exchange_weak(&SpawnReady, &_false, true)) {
-                TyMutexInit(&SpawnLock);
-                SpawnReady = true;
-        }
+        static TyMutex SpawnLock = {0};
 /* ========================================================================= */
+
         ASSERT_ARGC("os.spawn()", 1);
 
         Value cmd = ARGx(0, VALUE_ARRAY);
@@ -3576,6 +3570,7 @@ BUILTIN_FUNCTION(os_spawn)
         Value _v_stdout = KWARG("stdout", INTEGER);
         Value _v_stderr = KWARG("stderr", INTEGER);
         Value _ctty     = KWARG("ctty",   TUPLE, _NIL);
+        Value _env      = KWARG("env",    DICT, _NIL);
 
         int ret;
 
@@ -3675,6 +3670,31 @@ BUILTIN_FUNCTION(os_spawn)
         vec(int) x1  = {0};
 
         Value proc = NIL;
+
+        StringVector env_vec = {0};
+        char **envp;
+
+        if (_env.type == VALUE_DICT) {
+                dfor(k, v, _env.dict, {
+                        if (k->type != VALUE_STRING) {
+                                bP("non-string key in env: %s", SHOW(k, BASIC));
+                        }
+                        if (v->type != VALUE_STRING) {
+                                bP("non-string value in env: %s => %s", SHOW(k, BASIC), SHOW(v, BASIC));
+                        }
+                        char *entry = sfmt(
+                                "%.*s=%.*s",
+                                (int)sN(*k), ss(*k),
+                                (int)sN(*v), ss(*v)
+                        );
+                        svP(env_vec, entry);
+                });
+                svP(env_vec, NULL);
+                envp = vv(env_vec);
+        } else {
+                envp = environ;
+        }
+
 /* ========================================================================= */
 #define X0(x) svP(x0, x)
 #define X1(x) svP(x1, x)
@@ -3750,7 +3770,7 @@ BUILTIN_FUNCTION(os_spawn)
         svP(argv, NULL);
 
         pid_t pid;
-        ret = posix_spawnp(&pid, v_0(argv), &actions, &attr, vv(argv), environ);
+        ret = posix_spawnp(&pid, v_0(argv), &actions, &attr, vv(argv), envp);
 
         posix_spawn_file_actions_destroy(&actions);
         posix_spawnattr_destroy(&attr);
