@@ -886,8 +886,7 @@ const BASH_COMPLETION_TEMPLATE = ety.compile(
     <% } %>
     }
     complete -F <%= funcName %> <%= prog %>
-    ''',
-    ['funcName', 'valCases', 'subcmds', 'optWords', 'posWords', 'prog']
+    '''
 )
 
 const ZSH_COMPLETION_TEMPLATE = ety.compile(
@@ -919,8 +918,7 @@ const ZSH_COMPLETION_TEMPLATE = ety.compile(
     }
 
     compdef <%= funcName %> <%= prog %>
-    ''',
-    ['funcName', 'argSpecs', 'subcmds', 'prog']
+    '''
 )
 
 const FISH_COMPLETION_TEMPLATE = ety.compile(
@@ -948,8 +946,7 @@ const FISH_COMPLETION_TEMPLATE = ety.compile(
     complete -c <%= prog %> -n '__fish_seen_subcommand_from <%= sub.name %>' -l version -d 'Show version'
     <% } %>
     <% } %>
-    ''',
-    ['opts', 'posArgs', 'cond', 'subcmds', 'version', 'prog']
+    '''
 )
 
 fn _bashComplete(specs: _, cmds: _, version: _, prog: _) -> _ {

@@ -87,18 +87,23 @@ fn generate-code(tokens: Array[TemplateToken]) -> String {
     chunks.join()
 }
 
-pub fn compile(source, vars) -> _ {
+pub fn compile(source) -> _ {
     let body = generate-code(tokenize(source))
-    let params = ["{v}: _" for v in vars].join(', ')
-    let prog = (
-        "(
-       \>  fn ({params}) \{
-       \>    let _ety_blob = ::blob();
-       \>    let _ety_push = _ety_blob.push;
-       \>    {body};
-       \>    _ety_blob.str!()
-       \>  \}
-       \>)"
+
+    let (ast, free) = match ty.parse(body, free=true) {
+        Ok((ast, {free, *})) => (ast, free),
+        Err(err)             => throw err
+    }
+
+    let prog = ty.Func(
+         params: [ty.Param({name: it, constraint: ty.Any}) for free if it != '_ety_push'],
+         body: $$[
+            let _ety_blob = ::blob();
+            let _ety_push = _ety_blob.push;
+            $$ast;
+            _ety_blob.str!()
+         $$]
     )
-    __eval__(prog)
+
+    ty.eval(prog)
 }

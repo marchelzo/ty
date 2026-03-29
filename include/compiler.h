@@ -615,6 +615,9 @@ IsUndefinedSymbol(Symbol const *sym);
 Expr *
 CompilerExprFor(Ty *ty, char const *mod, char const *name);
 
+ExprVec
+CompilerFreeVars(Ty *ty, Expr const *expr, Scope *scope);
+
 #define EDBG(e) ((edbg)(ty, (e)))
 
 #ifdef TY_LS
