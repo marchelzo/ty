@@ -917,4 +917,14 @@ scope_reset(void)
         SYMBOL = 0;
 }
 
+void
+ScopeFixup(Ty *ty, Scope *scope)
+{
+        for (i32 i = 0; i < scope->size; ++i) {
+                for (Symbol *sym = scope->table[i]; sym != NULL; sym = sym->next) {
+                        sym->type = type_reduce(ty, sym->type);
+                }
+        }
+}
+
 /* vim: set sw=8 sts=8 expandtab: */

@@ -53,22 +53,63 @@ let err-fd = open('tyls.err', O_WRONLY | O_TRUNC | O_CREAT, 0644)
 
 let TY_LS_CMD = getenv('TY_LS_CMD').words() ?? ['./tyls']
 
-let tyls = os.spawn(TY_LS_CMD, stdin=SPAWN_PIPE, stdout=SPAWN_PIPE, stderr=err-fd)
-critical!(tyls)
+let TYLS_TIMEOUT = 1.75
 
-let tyls-stream = io.open(tyls.stdout, 'r')
+let responses: SharedQueue[(Int, String)] = SharedQueue()
+
+fn spawn-tyls() {
+    let proc = os.spawn(TY_LS_CMD, stdin=SPAWN_PIPE, stdout=SPAWN_PIPE, stderr=err-fd)
+    critical!(proc)
+
+    let stream = io.open(proc.stdout, 'r')
+    let pid = proc.pid
+
+    Thread(fn () {
+        while let $line = stream.next-line() {
+            responses.put((pid, line))
+        }
+    }).detach()
+
+    proc
+}
+
+let tyls = spawn-tyls()
+
+fn restart-tyls!() {
+    warn!("restarting tyls")
+
+    kill(tyls.pid, SIGKILL)
+    wait(tyls.pid)
+
+    responses.clear()
+
+    tyls = spawn-tyls()
+}
 
 onExit(fn () {
     kill(tyls.pid, SIGTERM)
 })
 
 fn get() -> String | nil {
-    if let $line = tyls-stream.next-line() {
-        warn!("TYLS OUTPUT: {line}")
-        return line
-    } else {
-        critical!("DEAD: {wait(tyls.pid)}")
-        return nil
+    let lives = 2
+    while match responses.try-take(TYLS_TIMEOUT) {
+        Some((tyls.pid, line)) => {
+            warn!("TYLS OUTPUT: {line}")
+            return line
+        },
+
+        Some(_) => {
+            warn!("Received response from old tyls process")
+        },
+
+        None => {
+            error!("tyls timed out after {TYLS_TIMEOUT}s")
+            restart-tyls!()
+            if --lives == 0 {
+                error!("tyls failed to respond after 3 restarts, giving up")
+                return nil
+            }
+        }
     }
 }
 

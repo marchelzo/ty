@@ -145,6 +145,9 @@ enum {
 static void
 SolveDeferred(Ty *ty);
 
+static char *
+ShowConstraint(Ty *ty, Constraint *c);
+
 inline static Type *
 TypeArg(Type const *t0, int i);
 
@@ -331,6 +334,23 @@ inline static bool
 IsBottom(Type const *t0)
 {
         return (t0 == NULL) || (t0->type == TYPE_BOTTOM);
+}
+
+static Type *
+CloneType(Ty *ty, Type const *t0)
+{
+        Type *t;
+        if (t0 == NULL) {
+                t = NULL;
+        } else {
+                t = amA(sizeof *t);
+                *t = *t0;
+                t->fixed = false;
+                t->src = t0->src;
+                TypeAllocCounter += 1;
+        }
+
+        return t;
 }
 
 inline static bool
@@ -1180,23 +1200,6 @@ AddScopedParam(Ty *ty, Type *t0)
         return AddParam(ty, t0);
 }
 
-static Type *
-CloneType(Ty *ty, Type const *t0)
-{
-        Type *t;
-        if (t0 == NULL) {
-                t = NULL;
-        } else {
-                t = amA(sizeof *t);
-                *t = *t0;
-                t->fixed = false;
-                t->src = t0->src;
-                TypeAllocCounter += 1;
-        }
-
-        return t;
-}
-
 inline static int
 UnionCount(Type const *t0)
 {
@@ -1494,6 +1497,46 @@ Flatten(Ty *ty, Type *t0)
         }
 }
 
+Type *
+Collapse(Ty *ty, Type const *t0)
+{
+        for (;;) {
+                t0 = ResolveVar(t0);
+                if (
+                        (TypeType(t0) != TYPE_UNION)
+                     && (TypeType(t0) != TYPE_INTERSECT)
+                ) {
+                        break;
+                }
+                if (vN(t0->types) == 0) {
+                        return BOTTOM;
+                }
+                if (vN(t0->types) != 1) {
+                        break;
+                }
+                Type *u0 = v_0(t0->types);
+                bool one = true;
+                while (IsBoundVar(u0)) {
+                        one &= !u0->packed;
+                        one &= !u0->variadic;
+                        u0 = u0->val;
+                }
+                if (IsTVar(u0)) {
+                        one &= !(u0->id & TV_PACK);
+                        one &= !(u0->id & TV_VARIADIC);
+                } else if (u0 != NULL) {
+                        one &= !u0->packed;
+                        one &= !u0->variadic;
+                }
+                if (!one) {
+                        break;
+                }
+                t0 = u0;
+        }
+
+        return (Type *)t0;
+}
+
 typedef struct {
         i32 tag;
         TypeVector types;
@@ -1559,18 +1602,13 @@ CoalesceTagged(Ty *ty, Type *t0)
 
         SCRATCH_RESTORE();
 
-        switch vN(new0->types) {
-        case 0:  return BOTTOM;
-        case 1:  return v_0(new0->types);
-        }
-
         return new0;
 }
 
 static Type *
 Reduce(Ty *ty, Type const *t0)
 {
-        Type *t1 = ResolveVar(t0);
+        Type *t1 = Collapse(ty, t0);
         Type *t2;
         Type *t3;
 
@@ -1710,22 +1748,16 @@ Reduce(Ty *ty, Type const *t0)
                 break;
         }
 
-        while (
-                (TypeType(t1) == TYPE_UNION || TypeType(t1) == TYPE_INTERSECT)
-             && (vN(t1->types) == 1)
-             && !IsPacked(v_0(t1->types))
-        ) {
-                t1 = v_0(t1->types);
-        }
+        t1 = Collapse(ty, t1);
 
         if (fixed) {
                 t1->fixed = true;
         }
 
         if (t1 != ResolveVar(t0)) {
-                TLOG("Reduce():");
-                TLOG("    %s", ShowType(t0));
-                TLOG("    %s", ShowType(t1));
+                XXTLOG("Reduce():");
+                XXTLOG("    %s", ShowType(t0));
+                XXTLOG("    %s", ShowType(t1));
         }
 
         vXx(visiting);
@@ -1847,7 +1879,7 @@ IsPacked(Type *t0)
 
         switch (t0->type) {
         case TYPE_VARIABLE:
-                return (t0->id & TV_PACK);
+                return CanStep(t0) ? IsPacked(t0->val) : (t0->id & TV_PACK);
 
         case TYPE_SUBSCRIPT:
         case TYPE_SLICE:
@@ -2237,7 +2269,6 @@ ResolveVar(Type const *t0)
 
         return (Type *)t0;
 }
-
 
 static Type *
 ComputeType(Ty *ty, Type const *t0)
@@ -3180,9 +3211,6 @@ Uniq(Ty *ty, Type *t0)
                                 }
                         }
                         vPx(t0->types, t00);
-                }
-                if (vN(t0->types) == 1) {
-                        t1 = v__(t0->types, 0);
                 }
                 break;
 
@@ -6025,7 +6053,7 @@ TrySolve2Op(Ty *ty, int op, Type *op0, Type *t0, Type *t1, Type *t2, bool exhaus
                                 }
                         }
                         if (!IsBottom(f0) && !need_retry) {
-                                        if (!exhaustive) {
+                                if (!exhaustive) {
                                         UnifyX(ty, t0, a0, false, false);
                                         UnifyX(ty, t1, b0, false, false);
                                 }
@@ -9568,10 +9596,6 @@ type_show(Ty *ty, Type const *t0)
 
         t0 = ResolveVar(t0);
 
-        if (!EnableLogging) {
-                t0 = Reduce(ty, t0);
-        }
-
         if (t0 == NULL) {
                 return S2("⭕️");
         }
@@ -9592,6 +9616,10 @@ type_show(Ty *ty, Type const *t0)
 
         if (vN(visiting) == 1 && IsAliasT(t0)) {
                 t0 = Resolve(ty, t0);
+        }
+
+        if (!EnableLogging) {
+                t0 = Reduce(ty, t0);
         }
 
         if (IsFixed(t0)) {
@@ -9831,6 +9859,9 @@ type_show(Ty *ty, Type const *t0)
         case TYPE_LIST:
 #if defined(TY_DEBUG_TYPES) || 1
                 dump(&buf, t0->type == TYPE_LIST ? "list" : "seq");
+                if (t0->packed || t0->variadic) {
+                        dump(&buf, "%s*%s", TERM(1;92), TERM(0));
+                }
 #endif
         case TYPE_TUPLE:
                 if (is_record(t0)) {
@@ -12230,6 +12261,13 @@ type_guess_class_of(Ty *ty, Type const *t0)
         }
 
         return class_get(ty, class);
+}
+
+Type *
+type_reduce(Ty *ty, Type const *t0)
+{
+        xDDD();
+        return (t0 != NULL) ? Reduce(ty, t0) : NULL;
 }
 
 TypeCheckState

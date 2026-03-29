@@ -369,6 +369,9 @@ Type *
 type_resolve(Ty *ty, Expr const *e);
 
 Type *
+type_reduce(Ty *ty, Type const *t0);
+
+Type *
 type_inst(Ty *ty, Type const *t0);
 
 Type *
