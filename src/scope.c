@@ -522,6 +522,7 @@ scope_insert_as(Ty *ty, Scope *scope, Symbol *sym, char const *id)
         *new = *sym;
         new->identifier = id;
         new->hash = hash64z(id);
+
         if (!SymbolIsNamespace(sym)) {
                 new->scope = scope;
                 new->flags &= ~SYM_PUBLIC;

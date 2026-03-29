@@ -51,7 +51,7 @@ let init = {
 
 let err-fd = open('tyls.err', O_WRONLY | O_TRUNC | O_CREAT, 0644)
 
-let TY_LS_CMD = getenv('TY_LS_CMD').words() ?? ['tyls']
+let TY_LS_CMD = getenv('TY_LS_CMD').words() ?? ['./tyls']
 
 let tyls = os.spawn(TY_LS_CMD, stdin=SPAWN_PIPE, stdout=SPAWN_PIPE, stderr=err-fd)
 critical!(tyls)

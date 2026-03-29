@@ -7642,8 +7642,6 @@ Type *
 type_member_access_t(Ty *ty, Type const *t0, char const *name, bool strict)
 {
         Type *t1 = type_member_access_t_(ty, Relax(t0), name, strict, false);
-        XXTLOG("MemberAccess(%s, strict=%s):", name, strict ? "true" : "false");
-        XXTLOG("  t0:  %s", ShowType(t0));
         XXTLOG("  t1:  %s\n", ShowType(t1));
         return t1;
 }

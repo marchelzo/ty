@@ -556,3 +556,142 @@ let r = compute(6, 7)
     let v3: _ = resp3['result']['contents']['value']
     assert(v3.match?(/String/))
 }
+
+pub fn import-module() {
+    let v = 700
+
+    change-doc(reload-uri, ++v, '''
+import ini (INIFile)
+
+let f = INIFile()
+f.
+''')
+
+    let resp = request('textDocument/completion', {
+        textDocument: { uri: reload-uri },
+        position: { line: 3, character: 2 }
+    })
+    assert(resp['result'] != nil)
+    let items: _ = resp['result']['items'] ?? []
+    let labels = items.map(\(_)['label'])
+    assert(labels.any?(\_ == 'dict'))
+    assert(labels.any?(\_ == 'load'))
+}
+
+pub fn import-then-change() {
+    let v = 800
+
+    change-doc(reload-uri, ++v, '''
+import ini (..)
+
+let f = INIFile()
+let d = f.dict()
+''')
+
+    let resp1 = request('textDocument/hover', {
+        textDocument: { uri: reload-uri },
+        position: { line: 3, character: 4 }
+    })
+    assert(resp1['result'] != nil)
+
+    change-doc(reload-uri, ++v, '''
+import ini (..)
+
+let f = INIFile()
+let d = f.dict()
+let x = 42
+let y = x + 1
+''')
+
+    let resp2 = request('textDocument/hover', {
+        textDocument: { uri: reload-uri },
+        position: { line: 4, character: 4 }
+    })
+    assert(resp2['result'] != nil)
+
+    let val: _ = resp2['result']['contents']['value']
+    assert(val.match?(/42|Int/))
+}
+
+pub fn operators-after-reload() {
+    let v = 900
+
+    change-doc(reload-uri, ++v, '''
+let xs = [1, 2, 3]
+let ys = xs.map(\_ * 2)
+let sum = ys.fold(0, \_ + _)
+''')
+
+    let resp1 = request('textDocument/hover', {
+        textDocument: { uri: reload-uri },
+        position: { line: 2, character: 4 }
+    })
+    assert(resp1['result'] != nil)
+
+    change-doc(reload-uri, ++v, '''
+let xs = [1, 2, 3]
+let ys = xs.map(\_ * 2)
+let sum = ys.fold(0, \_ + _)
+let avg = sum / #xs
+''')
+
+    let resp2 = request('textDocument/hover', {
+        textDocument: { uri: reload-uri },
+        position: { line: 3, character: 4 }
+    })
+    assert(resp2['result'] != nil)
+}
+
+pub fn switch-imports() {
+    let v = 1000
+
+    change-doc(reload-uri, ++v, '''
+import ini (..)
+
+let f = INIFile()
+''')
+
+    let resp1 = request('textDocument/hover', {
+        textDocument: { uri: reload-uri },
+        position: { line: 2, character: 4 }
+    })
+    assert(resp1['result'] != nil)
+
+    change-doc(reload-uri, ++v, '''
+let x = 'hello'
+let y = x.upper()
+''')
+
+    let resp2 = request('textDocument/hover', {
+        textDocument: { uri: reload-uri },
+        position: { line: 1, character: 4 }
+    })
+    assert(resp2['result'] != nil)
+
+    change-doc(reload-uri, ++v, '''
+import ini (INIFile, Section)
+
+let f = INIFile()
+let d = f.dict()
+''')
+
+    let resp3 = request('textDocument/hover', {
+        textDocument: { uri: reload-uri },
+        position: { line: 3, character: 4 }
+    })
+    assert(resp3['result'] != nil)
+}
+
+pub fn repeated-edits-with-imports() {
+    let v = 1100
+
+    for i in 0..5 {
+        change-doc(reload-uri, ++v, "import ini (..)\nlet f = INIFile()\nlet x = {i}\n")
+    }
+
+    let resp = request('textDocument/hover', {
+        textDocument: { uri: reload-uri },
+        position: { line: 2, character: 4 }
+    })
+    assert(resp['result'] != nil)
+}

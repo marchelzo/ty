@@ -14,7 +14,7 @@ use Section = {
 
 use INIDict = Dict[String, Dict[String, String]]
 
-class INIFile {
+pub class INIFile {
     __sections: Array[Section]
     __update?: Bool
 

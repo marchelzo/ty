@@ -74,6 +74,15 @@ void
 class_reset(Ty *ty);
 
 int
+class_count(Ty *ty);
+
+int
+trait_count(Ty *ty);
+
+void
+class_truncate(Ty *ty, int n_classes, int n_traits);
+
+int
 class_new(Ty *ty, Stmt *s);
 
 Class *
