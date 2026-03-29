@@ -226,6 +226,7 @@ fn nexttype(array-to-ptr?: Bool = true, has-name?: ?Bool = nil) {
 
     const types = /^(?:
         char|short|int|long|signed|unsigned
+       |_Bool|bool
        |float|double
        |u8|u16|u32|u64
        |u?int(?:8|16|32|64)_t
@@ -237,6 +238,8 @@ fn nexttype(array-to-ptr?: Bool = true, has-name?: ?Bool = nil) {
     )$/x
 
     const map = static!(%{
+        'bool':                   c.u8,
+        '_Bool':                  c.u8,
         'char':                   c.char,
         'signed char':            c.char,
         'unsigned char':          c.uchar,
@@ -699,13 +702,12 @@ fn strct() {
             i = #structArgs
 
             let mkstruct = (t, n) -> c.struct(*[t for ..n])
+            let ctype    = $$[ ($$t :: $${Ptr}) ? $$t : $$t.ctype() $$]
 
             if count != nil {
-                structArgs.push(ty.Arg(arg: $$[ $${mkstruct}($$t, $$count) $$]))
+                structArgs.push(ty.Arg(arg: $$[ $${mkstruct}($$ctype, $$count) $$]))
             } else {
-                structArgs.push(
-                    ty.Arg(arg: $$[ ($$t :: $${Ptr}) ? $$t : $$t.ctype() $$])
-                )
+                structArgs.push(ty.Arg(arg: ctype))
             }
         }
 
