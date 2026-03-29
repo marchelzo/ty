@@ -8885,6 +8885,10 @@ BUILTIN_FUNCTION(ty_parse)
                                ? "tokens"
                                : NULL;
 
+        char const *free_key = HAVE_FLAG("free")
+                               ? "free"
+                               : NULL;
+
         Value scope = KWARG("scope", PTR);
 
         u32 flags = (
@@ -8898,6 +8902,7 @@ BUILTIN_FUNCTION(ty_parse)
         );
 
         Value vTokens = NIL;
+        Value vFree   = NIL;
         Value result;
 
 /* = */ GC_STOP(); /* ====================================================== */
@@ -8916,7 +8921,7 @@ BUILTIN_FUNCTION(ty_parse)
 
         Module *mod = TyCompileSource(
                 ty,
-                source,
+                sclonea(ty, source),
                 !IsMissing(scope) ? scope.ptr : NULL,
                 flags
         );
@@ -8945,9 +8950,34 @@ BUILTIN_FUNCTION(ty_parse)
                         "last",     last,
                         tokens_key, vTokens
                 );
-        } else if (tokens_key) {
-                vTokens = make_tokens(ty, &tokens);
-                extra = vTn(tokens_key, vTokens);
+        } else if (tokens_key || free_key) {
+                if (tokens_key) {
+                        vTokens = make_tokens(ty, &tokens);
+                }
+                if (free_key) {
+                        SCRATCH_SAVE();
+                        StringVector names = {0};
+                        vFree = ARRAY(vA());
+                        for (int i = 0; prog[i] != NULL; ++i) {
+                                ExprVec free = CompilerFreeVars(ty, prog[i], NULL);
+                                for (int i = 0; i < vN(free); ++i) {
+                                        char const *name = v__(free, i)->identifier;
+                                        if (!search_str(&names, name)) {
+                                                svP(names, name);
+                                                vAp(vFree.array, vSsz(name));
+                                        }
+                                }
+                        }
+                        SCRATCH_RESTORE();
+                }
+                if (tokens_key) {
+                        extra = vTn(
+                                tokens_key, vTokens,
+                                free_key,   vFree
+                        );
+                } else {
+                        extra = vTn(free_key, vFree);
+                }
         }
 
         if (prog == NULL || prog[0] == NULL) {
