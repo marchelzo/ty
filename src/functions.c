@@ -1492,6 +1492,30 @@ BUILTIN_FUNCTION(regexv)
         return doregex(ty, &pattern, &flags, true);
 }
 
+BUILTIN_FUNCTION(regex_escape)
+{
+        ASSERT_ARGC("regex-escape()", 1);
+
+        Value str = ARGx(0, VALUE_STRING);
+        byte_vector escaped = {0};
+
+        SCRATCH_SAVE();
+
+        for (usize i = 0; i < sN(str); ++i) {
+                u8 c = ss(str)[i];
+                if (contains("\\.^$|?*+()[]{}", c)) {
+                        svP(escaped, '\\');
+                }
+                svP(escaped, c);
+        }
+
+        Value result = vSs(vv(escaped), vN(escaped));
+
+        SCRATCH_RESTORE();
+
+        return result;
+}
+
 BUILTIN_FUNCTION(min)
 {
         if (argc < 2)

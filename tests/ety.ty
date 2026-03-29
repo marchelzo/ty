@@ -10,8 +10,7 @@ pub fn template() {
         <% for w in widgets { %>
         - Widget: <%= w.name %>
         <% } %>
-        ''',
-        ['widgets']
+        '''
     )
     let widgets = [
         { name: 'Widget A' },

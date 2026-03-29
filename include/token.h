@@ -36,6 +36,7 @@ enum {
         TOKEN_SPECIAL_STRING,
         TOKEN_FUN_SPECIAL_STRING,
         TOKEN_REGEX,
+        TOKEN_DYN_REGEX,
         TOKEN_INTEGER,
         TOKEN_REAL,
         TOKEN_END,

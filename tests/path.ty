@@ -143,95 +143,90 @@ pub fn hash-test() {
 }
 
 pub fn file-operations() {
-    let tmp = path.Path("/tmp/ty-path-test-{rand()}")
-    tmp.mkdir(parents=true, exist-ok=true)
-    assert(tmp.exists?)
-    assert(tmp.dir?)
-    let file = tmp / 'test.txt'
-    file.write('hello world')
-    assert(file.exists?)
-    assert(file.file?)
-    let content = file.read-text()
-    assert(content == 'hello world')
-    let bf = tmp / 'test.bin'
-    bf.write(Blob(1, 2, 3, 4))
-    let data = bf.read-bytes()
-    assert(#data == 4)
-    let renamed = tmp / 'renamed.txt'
-    file.rename(renamed)
-    assert(!file.exists?)
-    assert(renamed.exists?)
-    let touched = tmp / 'touched.txt'
-    touched.touch()
-    assert(touched.exists?)
-    for entry in tmp.ls() {
-        entry.unlink()
-    }
-    tmp.rmdir()
-    assert(!tmp.exists?)
-}
-
-pub fn ls() {
-    let tmp = path.Path("/tmp/ty-path-ls-{rand()}")
-    tmp.mkdir()
-    (tmp / 'file1.txt').touch()
-    (tmp / 'file2.txt').touch()
-    (tmp / 'subdir').mkdir()
-    let entries = tmp.ls()
-    assert(#entries == 3)
-    let names = entries.map(\_.name).sort()
-    assert(names == ['file1.txt', 'file2.txt', 'subdir'])
-    for entry in tmp.ls() {
-        if entry.dir? {
-            entry.rmdir()
-        } else {
+    with tmp = path.tempdir() {
+        assert(tmp.exists?)
+        assert(tmp.dir?)
+        let file = tmp / 'test.txt'
+        file.write('hello world')
+        assert(file.exists?)
+        assert(file.file?)
+        let content = file.read-text()
+        assert(content == 'hello world')
+        let bf = tmp / 'test.bin'
+        bf.write(Blob(1, 2, 3, 4))
+        let data = bf.read-bytes()
+        assert(#data == 4)
+        let renamed = tmp / 'renamed.txt'
+        file.rename(renamed)
+        assert(!file.exists?)
+        assert(renamed.exists?)
+        let touched = tmp / 'touched.txt'
+        touched.touch()
+        assert(touched.exists?)
+        for entry in tmp.ls() {
             entry.unlink()
         }
     }
-    tmp.rmdir()
+}
+
+pub fn ls() {
+    with tmp = path.tempdir() {
+        (tmp / 'file1.txt').touch()
+        (tmp / 'file2.txt').touch()
+        (tmp / 'subdir').mkdir()
+        let entries = tmp.ls()
+        assert(#entries == 3)
+        let names = entries.map(\_.name).sort()
+        assert(names == ['file1.txt', 'file2.txt', 'subdir'])
+        for entry in tmp.ls() {
+            if entry.dir? {
+                entry.rmdir()
+            } else {
+                entry.unlink()
+            }
+        }
+    }
 }
 
 pub fn glob-test() {
-    let tmp = path.Path("/tmp/ty-path-glob-{rand()}")
-    tmp.mkdir()
-    (tmp / 'file1.txt').touch()
-    (tmp / 'file2.txt').touch()
-    (tmp / 'file3.py').touch()
-    (tmp / 'subdir').mkdir()
-    (tmp / 'subdir' / 'nested.txt').touch()
-    let tf = tmp.glob('*.txt').map(\_.name).sort()
-    assert(tf == ['file1.txt', 'file2.txt'])
-    let f1 = tmp.glob('file?.txt').map(\_.name).sort()
-    assert(#f1 == 2)
-    let at = tmp.rglob('*.txt').map(\_.name).sort()
-    assert(at == ['file1.txt', 'file2.txt', 'nested.txt'])
-    (tmp / 'subdir' / 'nested.txt').unlink()
-    (tmp / 'subdir').rmdir()
-    for entry in tmp.ls() {
-        entry.unlink()
+    with tmp = path.tempdir() {
+        (tmp / 'file1.txt').touch()
+        (tmp / 'file2.txt').touch()
+        (tmp / 'file3.py').touch()
+        (tmp / 'subdir').mkdir()
+        (tmp / 'subdir' / 'nested.txt').touch()
+        let tf = tmp.glob('*.txt').map(\_.name).sort()
+        assert(tf == ['file1.txt', 'file2.txt'])
+        let f1 = tmp.glob('file?.txt').map(\_.name).sort()
+        assert(#f1 == 2)
+        let at = tmp.rglob('*.txt').map(\_.name).sort()
+        assert(at == ['file1.txt', 'file2.txt', 'nested.txt'])
+        (tmp / 'subdir' / 'nested.txt').unlink()
+        (tmp / 'subdir').rmdir()
+        for entry in tmp.ls() {
+            entry.unlink()
+        }
     }
-    tmp.rmdir()
 }
 
 pub fn walk-test() {
-    let tmp = path.Path("/tmp/ty-path-walk-{rand()}")
-    tmp.mkdir()
-    (tmp / 'file1.txt').touch()
-    (tmp / 'dir1').mkdir()
-    (tmp / 'dir1' / 'file2.txt').touch()
-    (tmp / 'dir1' / 'dir2').mkdir()
-    (tmp / 'dir1' / 'dir2' / 'file3.txt').touch()
-    let ap = []
-    for (dir, dirs, files) in tmp.walk() {
-        ap.push(str(dir))
+    with tmp = path.tempdir() {
+        (tmp / 'file1.txt').touch()
+        (tmp / 'dir1').mkdir()
+        (tmp / 'dir1' / 'file2.txt').touch()
+        (tmp / 'dir1' / 'dir2').mkdir()
+        (tmp / 'dir1' / 'dir2' / 'file3.txt').touch()
+        let ap = []
+        for (dir, dirs, files) in tmp.walk() {
+            ap.push(str(dir))
+        }
+        assert(#ap >= 3)
+        (tmp / 'dir1' / 'dir2' / 'file3.txt').unlink()
+        (tmp / 'dir1' / 'dir2').rmdir()
+        (tmp / 'dir1' / 'file2.txt').unlink()
+        (tmp / 'dir1').rmdir()
+        (tmp / 'file1.txt').unlink()
     }
-    assert(#ap >= 3)
-    (tmp / 'dir1' / 'dir2' / 'file3.txt').unlink()
-    (tmp / 'dir1' / 'dir2').rmdir()
-    (tmp / 'dir1' / 'file2.txt').unlink()
-    (tmp / 'dir1').rmdir()
-    (tmp / 'file1.txt').unlink()
-    tmp.rmdir()
 }
 
 pub fn cwd-home() {
@@ -244,45 +239,42 @@ pub fn cwd-home() {
 }
 
 pub fn chmod-test() {
-    let tmp = path.Path("/tmp/ty-path-chmod-{rand()}")
-    tmp.mkdir()
-    (tmp / 'test.txt').touch()
-    let file = tmp / 'test.txt'
-    file.chmod(0o644)
-    let st = file.stat
-    assert((st.mode & 0o777) == 0o644)
-    file.unlink()
-    tmp.rmdir()
+    with tmp = path.tempdir() {
+        (tmp / 'test.txt').touch()
+        let file = tmp / 'test.txt'
+        file.chmod(0o644)
+        let st = file.stat
+        assert((st.mode & 0o777) == 0o644)
+        file.unlink()
+    }
 }
 
 pub fn symlink-test() {
-    let tmp = path.Path("/tmp/ty-path-symlink-{rand()}")
-    tmp.mkdir()
-    let tgt = tmp / 'target.txt'
-    tgt.write('target content')
-    let lnk = tmp / 'link.txt'
-    os.symlink("{tgt}", "{lnk}")
-    assert(lnk.exists?)
-    assert(lnk.symlink?)
-    assert(!tgt.symlink?)
-    let resolved = lnk.readlink
-    assert(resolved.name == 'target.txt')
-    lnk.unlink()
-    tgt.unlink()
-    tmp.rmdir()
+    with tmp = path.tempdir() {
+        let tgt = tmp / 'target.txt'
+        tgt.write('target content')
+        let lnk = tmp / 'link.txt'
+        os.symlink("{tgt}", "{lnk}")
+        assert(lnk.exists?)
+        assert(lnk.symlink?)
+        assert(!tgt.symlink?)
+        let resolved = lnk.readlink
+        assert(resolved.name == 'target.txt')
+        lnk.unlink()
+        tgt.unlink()
+    }
 }
 
 pub fn stat-test() {
-    let tmp = path.Path("/tmp/ty-path-stat-{rand()}")
-    tmp.mkdir()
-    let file = tmp / 'test.txt'
-    file.write('content')
-    let st = file.stat
-    assert(st.size :: Int)
-    assert(st.mode :: Int)
-    assert((st.mtime :: Int) || (st.mtime :: Float))
-    file.unlink()
-    tmp.rmdir()
+    with tmp = path.tempdir() {
+        let file = tmp / 'test.txt'
+        file.write('content')
+        let st = file.stat
+        assert(st.size :: Int)
+        assert(st.mode :: Int)
+        assert((st.mtime :: Int) || (st.mtime :: Float))
+        file.unlink()
+    }
 }
 
 pub fn edge-cases() {

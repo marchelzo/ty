@@ -906,24 +906,35 @@ static Token
 lexregex(Ty *ty, bool strict)
 {
         byte_vector pat = {0};
+        char const *s = SRC;
 
-        nextchar(ty);
-        while (C(0) != '/') {
-                switch (C(0)) {
-                case '\0': goto Unterminated;
-                case '\\':
-                        if (C(1) == '\0') {
-                                goto Unterminated;
-                        }
-                        if (C(1) == '\\') {
-                                avP(pat, nextchar(ty));
-                        } else if (C(1) == '/') {
-                                nextchar(ty);
-                        }
-                        /* fallthrough */
-                default:
-                           avP(pat, nextchar(ty));
+        while (*++s != '/') switch (*s) {
+        case '\0':
+                goto Unterminated;
+
+        case '$':
+                if (s + 1 < END && s[1] == '{') {
+                        nextchar(ty);
+                        return mktoken(ty, TOKEN_DYN_REGEX);
+                } else {
+                        avP(pat, *s);
                 }
+                break;
+
+        case '\\':
+                if (s + 1 == END || s[1] == '\0') {
+                        goto Unterminated;
+                }
+                if (*++s != '/') {
+                        avP(pat, '\\');
+                }
+
+        default:
+                avP(pat, *s);
+        }
+
+        while (SRC != s) {
+                nextchar(ty);
         }
         nextchar(ty);
 
@@ -957,6 +968,72 @@ BadFlags:
                 return mktoken(ty, TOKEN_ERROR);
         }
         error(ty, "invalid regex flags");
+}
+
+static Token
+lex_re(Ty *ty)
+{
+        if (C(0) == '/') {
+                nextchar(ty);
+                byte_vector flags = {0};
+                while (isalpha(C(0))) {
+                        switch (C(0)) {
+                        case 'i': case 'u': case 'm': case 'x': case 'v':
+                                avP(flags, C(0));
+                                nextchar(ty);
+                                break;
+                        default:
+                                error(ty, "invalid regex flags");
+                        }
+                }
+                avP(flags, '\0');
+                Token t = mktoken(ty, TOKEN_DYN_REGEX);
+                t.string = vv(flags);
+                return t;
+        }
+
+        if (C(0) == '$' && C(1) == '{') {
+                return mktoken(ty, '$');
+        }
+
+        byte_vector pat = {0};
+        char const *s = SRC - 1;
+
+        while (*++s != '/') switch (*s) {
+        case '\0':
+                goto Unterminated;
+
+        case '$':
+                if (s + 1 < END && s[1] == '{') {
+                        goto Stop;
+                } else {
+                        avP(pat, *s);
+                }
+                break;
+
+        case '\\':
+                if (s + 1 == END || s[1] == '\0') {
+                        goto Unterminated;
+                }
+                if (*++s != '/') {
+                        avP(pat, '\\');
+                }
+
+        default:
+                avP(pat, *s);
+        }
+
+Stop:
+        while (SRC != s) {
+                nextchar(ty);
+        }
+
+        avP(pat, '\0');
+
+        return mkstring(ty, vv(pat));
+
+Unterminated:
+        error(ty, "unterminated regex literal");
 }
 
 static intmax_t
@@ -1287,12 +1364,16 @@ Begin:
         start = Start = state.loc;
         state.ctx = ctx;
 
-        if (UNLIKELY(ctx == LEX_FMT || ctx == LEX_XFMT)) {
-                return lex_ss_string(ty);
-        }
-
-        if (UNLIKELY(ctx == LEX_TYX)) {
-                return lex_tyx(ty);
+        if (UNLIKELY(ctx != LEX_PREFIX && ctx != LEX_INFIX)) {
+                if (ctx == LEX_FMT || ctx == LEX_XFMT) {
+                        return lex_ss_string(ty);
+                }
+                if (ctx == LEX_REGEX) {
+                        return lex_re(ty);
+                }
+                if (ctx == LEX_TYX) {
+                        return lex_tyx(ty);
+                }
         }
 
         if (skipspace(ty)) {

@@ -258,6 +258,9 @@ Type *
 type_regex(Ty *ty, Regex const *re);
 
 Type *
+type_dyn_regex(Ty *ty, Expr const *re);
+
+Type *
 type_type(Ty *ty, Type *t0);
 
 Type *

@@ -453,38 +453,6 @@ inline static void
 DoUnaryOp(Ty *ty, int op, bool exec);
 
 static void
-InitializeTY(TY *ty0, Ty *ty)
-{
-#define X(op, id) intern(&ty0->b_ops, id)
-        TY_BINARY_OPERATORS;
-#undef X
-
-#define X(op, id) intern(&ty0->members, id)
-        TY_UNARY_OPERATORS;
-#undef X
-
-        intern(&ty0->strings, "");
-
-        for (int i = 0; i < countof(NILS); ++i) {
-                NILS[i] = NIL;
-        }
-
-        srandom(TyThreadCPUTime() & 0xFFFFFFFF);
-
-        mod_init(ty0);
-        jit_init(ty);
-
-        ty0->ty = ty;
-        ty->ty  = ty0;
-}
-
-Ty *
-get_my_ty(void)
-{
-        return MyTy;
-}
-
-static void
 InitializeTy(Ty *ty, ThreadGroup *group)
 {
         m0(*ty);
@@ -526,6 +494,40 @@ InitializeTy(Ty *ty, ThreadGroup *group)
         ty->group = group;
 
         xvR(STACK, 4096);
+}
+
+static void
+InitializeTY(TY *ty0, Ty *ty)
+{
+#define X(op, id) intern(&ty0->b_ops, id)
+        TY_BINARY_OPERATORS;
+#undef X
+
+#define X(op, id) intern(&ty0->members, id)
+        TY_UNARY_OPERATORS;
+#undef X
+
+        intern(&ty0->strings, "");
+
+        for (int i = 0; i < countof(NILS); ++i) {
+                NILS[i] = NIL;
+        }
+
+        srandom(TyRealTime() & 0xFFFFFFFF);
+
+        InitializeTy(ty, &MainGroup);
+
+        mod_init(ty0);
+        jit_init(ty);
+
+        ty0->ty = ty;
+        ty->ty  = ty0;
+}
+
+Ty *
+get_my_ty(void)
+{
+        return MyTy;
 }
 
 inline static void
@@ -7536,7 +7538,6 @@ TargetMember:
                 CASE(TO_STRING)
                         if (top()->type == VALUE_STRING) {
                                 break;
-
                         }
                         if (UNLIKELY(top()->type == VALUE_PTR)) {
                                 char *s = VSC(top());
@@ -7544,6 +7545,20 @@ TargetMember:
                         } else {
                                 CallMethod(ty, NAMES._str_, 0, 0, false, false);
                         }
+                        break;
+
+                CASE(TO_REGEX)
+                        if (top()->type == VALUE_REGEX) {
+                                put(vSsz(top()->regex->pattern));
+                                break;
+                        }
+                        if (UNLIKELY(top()->type == VALUE_PTR)) {
+                                char *s = VSC(top());
+                                put(STRING_NOGC(s, strlen(s)));
+                        } else {
+                                CallMethod(ty, NAMES._str_, 0, 0, false, false);
+                        }
+                        put(builtin_regex_escape(ty, 1, NULL));
                         break;
 
                 CASE(YIELD)
@@ -7873,6 +7888,14 @@ TargetMember:
                         }
                         STACK.count -= n;
                         vPx(STACK, v);
+                        break;
+
+                CASE(COMPILE_REGEX)
+                        push(xSz(IP));
+                        SKIPSTR();
+                        v = builtin_regex(ty, 2, NULL);
+                        pop();
+                        put(v);
                         break;
 
                 CASE(RANGE)
@@ -9640,7 +9663,6 @@ vm_init(Ty *ty, int ac, char **av)
 #endif
 
         InitThreadGroup(&MainGroup);
-        InitializeTy(ty, &MainGroup);
         InitializeTY(&xD, ty);
 
         TY_BEGIN_LOADING();
@@ -10690,6 +10712,7 @@ StepInstruction(char const *ip)
         CASE(NIL)
                 break;
         CASE(TO_STRING)
+        CASE(TO_REGEX)
                 break;
         CASE(YIELD)
         CASE(YIELD_SOME)
@@ -10780,6 +10803,9 @@ StepInstruction(char const *ip)
                 break;
         CASE(CONCAT_STRINGS)
                 SKIPVALUE(n);
+                break;
+        CASE(COMPILE_REGEX)
+                SKIPSTR();
                 break;
         CASE(RANGE)
         CASE(INCRANGE)
