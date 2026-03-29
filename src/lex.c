@@ -908,7 +908,7 @@ lexregex(Ty *ty, bool strict)
         byte_vector pat = {0};
         char const *s = SRC;
 
-        while (*++s != '/') switch (*s) {
+        while (s < END && *++s != '/') switch (*s) {
         case '\0':
                 goto Unterminated;
 
