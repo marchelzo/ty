@@ -1,15 +1,20 @@
 import ty
 import ty.parse (show as sourceOf)
 import sqlite (SQLite)
+import path (Path)
+import json
 import time
 import date
+import os
+import io
 
 pub __tls::_db: _ = SQLite(':memory:')
 let _tables = []
+let _tables-mu = Mutex()
 
 pub class Table {
     static __init_subclass__() {
-        _tables.push(self)
+        with _tables-mu { _tables.push(self) }
         _sync-table(self)
     }
 }
@@ -31,6 +36,7 @@ fn _sync-table(cls: _) {
     let ex-lower = %{k.lower(): true for k, _ in existing}
     let dialect = _dialect(_db)
     let desired = schema.cols
+
     for col in desired {
         if col.name.lower() not in ex-lower {
             _db.exec(
@@ -50,10 +56,11 @@ fn _diff-table(cls: _, db: SQLite) {
     let ops = []
 
     if !db.table?(table) {
-        ops.push({
-            op: 'create-table',
-            table,
-            sql: schema.sql
+        ops.push(%{
+            "op": 'create-table',
+            "table": table,
+            "sql": schema.sql,
+            "down": "DROP TABLE IF EXISTS {table}"
         })
         return ops
     }
@@ -64,12 +71,14 @@ fn _diff-table(cls: _, db: SQLite) {
 
     for col in desired {
         if col.name.lower() not in ex-lower {
-            ops.push({
-                op: 'add-column',
-                table,
-                column: col.name,
-                sql: "ALTER TABLE {table}"
-                     " ADD COLUMN {_col-def(col, dialect)}"
+            ops.push(%{
+                "op": 'add-column',
+                "table": table,
+                "column": col.name,
+                "sql": "ALTER TABLE {table}"
+                       " ADD COLUMN {_col-def(col, dialect)}",
+                "down": "ALTER TABLE {table}"
+                        " DROP COLUMN {_quote(col.name)}"
             })
         }
     }
@@ -77,12 +86,15 @@ fn _diff-table(cls: _, db: SQLite) {
     let desired-lower = %{c.name.lower(): true for c in desired}
     for name, _ in existing {
         if name.lower() not in desired-lower {
-            ops.push({
-                op: 'drop-column',
-                table,
-                column: name,
-                sql: "ALTER TABLE {table}"
-                     " DROP COLUMN {_quote(name)}"
+            let col-info = existing[name]
+            ops.push(%{
+                "op": 'drop-column',
+                "table": table,
+                "column": name,
+                "sql": "ALTER TABLE {table}"
+                       " DROP COLUMN {_quote(name)}",
+                "down": "ALTER TABLE {table}"
+                        " ADD COLUMN {_col-def-from-existing(table, name, col-info)}"
             })
         }
     }
@@ -91,14 +103,68 @@ fn _diff-table(cls: _, db: SQLite) {
         if col.name.lower() in ex-lower {
             let ex = existing[col.name] ?? existing[col.name.lower()]
             if ex.type != col.sql-type {
-                ops.push({
-                    op: 'type-change',
-                    table,
-                    column: col.name,
-                    from: ex.type,
-                    to: col.sql-type
+                let sql = match dialect {
+                    'postgres' => "ALTER TABLE {table}"
+                                  " ALTER COLUMN {_quote(col.name)}"
+                                  " TYPE {col.sql-type}",
+                    _ => nil
+                }
+                let down = match dialect {
+                    'postgres' => "ALTER TABLE {table}"
+                                  " ALTER COLUMN {_quote(col.name)}"
+                                  " TYPE {ex.type}",
+                    _ => nil
+                }
+                ops.push(%{
+                    "op": 'type-change',
+                    "table": table,
+                    "column": col.name,
+                    "from": ex.type,
+                    "to": col.sql-type,
+                    "sql": sql,
+                    "down": down
                 })
             }
+        }
+    }
+
+    let ex-indexes = _existing-indexes(db, table)
+    let ex-idx-set = %{idx['columns'].sort().join(','):  idx['name'] for idx in ex-indexes}
+    let desired-idx-set = %{}
+    let desired-idxs: _ = schema.indexes
+    for idx in desired-idxs {
+        let sorted: _ = idx.sort()
+        let key = sorted.join(',')
+        let suffix = sorted.join('_')
+        let name = "idx_{table}_{suffix}"
+        desired-idx-set[key] = name
+    }
+
+    for key, name in desired-idx-set {
+        if key not in ex-idx-set {
+            let col-list = key.split(',').map(_quote).join(', ')
+            ops.push(%{
+                "op": 'create-index',
+                "table": table,
+                "index": name,
+                "sql": "CREATE INDEX IF NOT EXISTS {name}"
+                       " ON {table} ({col-list})",
+                "down": "DROP INDEX IF EXISTS {name}"
+            })
+        }
+    }
+
+    for key, name in ex-idx-set {
+        if key not in desired-idx-set {
+            let col-list = key.split(',').map(_quote).join(', ')
+            ops.push(%{
+                "op": 'drop-index',
+                "table": table,
+                "index": name,
+                "sql": "DROP INDEX IF EXISTS {name}",
+                "down": "CREATE INDEX IF NOT EXISTS {name}"
+                        " ON {table} ({col-list})"
+            })
         }
     }
 
@@ -106,13 +172,19 @@ fn _diff-table(cls: _, db: SQLite) {
 }
 
 pub fn connect(dsn: String, full-mutex: Bool = true) {
-    fn pg(dsn) { (Module('psql').PostgreSQL)(dsn) }
+    fn pg(dsn) {
+        let $mod = try { Module('psql') } catch _ {
+            throw RuntimeError("PostgreSQL driver not found: install the 'psql' module")
+        }
+        (mod.PostgreSQL)(dsn)
+    }
     _db = match dsn {
         /^postgres(ql)?:\/\// => pg(dsn),
         /^psql:\/\//          => pg(dsn.sub(/^psql/, 'postgresql')),
         _                     => SQLite(dsn, full-mutex=full-mutex)
     }
-    for _tables { _sync-table(it) }
+    let tbls = with _tables-mu { [*_tables] }
+    for tbls { _sync-table(it) }
     _db
 }
 
@@ -125,14 +197,15 @@ pub fn db() { _db }
 
 pub fn diff(db: SQLite | nil = nil) {
     let db = _resolve-db(db)
-    [_diff-table(it, db) for _tables].flat()
+    let tbls = with _tables-mu { [*_tables] }
+    [_diff-table(it, db) for tbls].flat()
 }
 
 pub fn migrate!(db: SQLite | nil = nil) {
     let db = _resolve-db(db)
     let ops = diff(db)
     for ops {
-        if let $sql = it.?sql {
+        if let $sql = it['sql'] {
             db.exec(sql)
         }
     }
@@ -143,15 +216,192 @@ fn _resolve-db(db: _) {
     db ?? _db
 }
 
+let MIGRATIONS_TABLE = '_schema_migrations'
+
+fn _ensure-migrations-table(db: _) {
+    db.exec(
+        "CREATE TABLE IF NOT EXISTS {MIGRATIONS_TABLE}"
+        " (version TEXT PRIMARY KEY,"
+        "  name TEXT NOT NULL,"
+        "  applied_at TEXT NOT NULL)"
+    )
+}
+
+fn _applied-versions(db: _) -> Array[String] {
+    _ensure-migrations-table(db)
+    db.fetch-all(
+        "SELECT version FROM {MIGRATIONS_TABLE}"
+        " ORDER BY version"
+    ).map(\_ ['version'])
+}
+
+fn _record-migration(db: _, version: String, name: String) {
+    db.exec(
+        "INSERT INTO {MIGRATIONS_TABLE}"
+        " (version, name, applied_at) VALUES (?, ?, ?)",
+        version, name, _now()
+    )
+}
+
+fn _remove-migration(db: _, version: String) {
+    db.exec(
+        "DELETE FROM {MIGRATIONS_TABLE}"
+        " WHERE version = ?",
+        version
+    )
+}
+
+fn _migration-files(dir: String) -> Array[Dict[String, _]] {
+    let p = Path(dir)
+    if !p.exists? { return [] }
+    let files = os.listdir(dir)
+        .filter(\_ .match?(/^\d{14}_.*\.json$/))
+        .sort()
+    files.map(fn (f) {
+        let parts = f.sub(/\.json$/, '').split('_', n=2)
+        let content = io.open("{dir}/{f}").slurp()
+        return %{
+            "version": parts[0],
+            "name": parts[1],
+            "file": f,
+            "ops": json.parse(content)
+        }
+    })
+}
+
+pub fn generate(name: String, dir: String = 'migrations', db: SQLite | nil = nil) -> String | nil {
+    let db = _resolve-db(db)
+    let ops = diff(db)
+    if #ops == 0 { return nil }
+
+    let p = Path(dir)
+    if !p.exists? { os.mkdir(dir) }
+
+    let version = time.strftime('%Y%m%d%H%M%S')
+    let slug = name.lower().sub(/[^a-z0-9]+/, '_').sub(/^_|_$/, '')
+    let filename = "{version}_{slug}.json"
+    let filepath = "{dir}/{filename}"
+
+    let f = io.open(filepath, 'w')
+    f.write(json.encode(ops))
+    f.close()
+
+    return filepath
+}
+
+pub fn up(dir: String = 'migrations', db: SQLite | nil = nil) -> Array[String] {
+    let db = _resolve-db(db)
+    _ensure-migrations-table(db)
+    let applied = _applied-versions(db)
+    let applied-set = %{v: true for v in applied}
+    let pending = _migration-files(dir).filter(\_ ['version'] not in applied-set)
+    let ran = []
+
+    for mig in pending {
+        transaction(fn () {
+            let ops: _ = mig['ops']
+            for op in ops {
+                if let $sql = op['sql'] {
+                    db.exec(sql)
+                }
+            }
+            _record-migration(db, mig['version'], mig['name'])
+        }, db)
+        ran.push(mig['version'])
+    }
+
+    return ran
+}
+
+pub fn down(steps: Int = 1, dir: String = 'migrations', db: SQLite | nil = nil) -> Array[String] {
+    let db = _resolve-db(db)
+    _ensure-migrations-table(db)
+    let applied = _applied-versions(db)
+    let all-migs = _migration-files(dir)
+    let mig-by-version = %{m['version']: m for m in all-migs}
+
+    let to-rollback = applied.reverse()[;steps]
+    let rolled = []
+
+    for version in to-rollback {
+        let $mig = mig-by-version[version] or {
+            throw RuntimeError("migration file not found for version {version}")
+        }
+        transaction(fn () {
+            let ops: _ = mig['ops']
+            for op in ops.reverse() {
+                if let $sql = op['down'] {
+                    db.exec(sql)
+                }
+            }
+            _remove-migration(db, version)
+        }, db)
+        rolled.push(version)
+    }
+
+    return rolled
+}
+
+pub fn redo(steps: Int = 1, dir: String = 'migrations', db: SQLite | nil = nil) -> Array[String] {
+    let rolled = down(steps, dir, db)
+    up(dir, db)
+    return rolled
+}
+
+pub fn migration-status(dir: String = 'migrations', db: SQLite | nil = nil) -> Array[Dict[String, _]] {
+    let db = _resolve-db(db)
+    _ensure-migrations-table(db)
+    let applied-set = %{v: true for v in _applied-versions(db)}
+    let all-migs = _migration-files(dir)
+
+    all-migs.map(fn (mig) {
+        return %{
+            "version":  mig['version'],
+            "name":     mig['name'],
+            "applied?": mig['version'] in applied-set
+        }
+    })
+}
+
+pub fn pending(dir: String = 'migrations', db: SQLite | nil = nil) -> Array[Dict[String, _]] {
+    migration-status(dir, db).filter(\!_ ['applied?'])
+}
+
 fn _create-indexes(db: _, table: String, indexes: Array[_]) {
     for idx in indexes {
         let cols: _ = idx.map(_quote).join(', ')
-        let name = "idx_{table}_{idx.join('_')}"
+        let name = "idx_{table}_{idx.sort().join('_')}"
         db.exec(
             "CREATE INDEX IF NOT EXISTS {name}"
             " ON {table} ({cols})"
         )
     }
+}
+
+fn _existing-indexes(db: _, table: String) -> Array[Dict[String, _]] {
+    let rows = db.fetch-all(
+        "SELECT name FROM sqlite_master"
+        " WHERE type = 'index'"
+        " AND tbl_name = ?"
+        " AND name NOT LIKE 'sqlite_%'",
+        table
+    )
+    let result = []
+    for row in rows {
+        let info = db.fetch-all("PRAGMA index_info('{row['name']}')")
+        result.push(%{
+            "name": row['name'],
+            "columns": info.sort(by=\_ ['seqno']).map(\_ ['name'])
+        })
+    }
+    return result
+}
+
+fn _col-def-from-existing(table: String, name: String, info: _) -> String {
+    let parts = [_quote(name), info.type]
+    if info.notnull { parts.push('NOT NULL') }
+    if info.dflt != nil { parts.push("DEFAULT {info.dflt}") }
+    return parts.join(' ')
 }
 
 fn _dialect(db: _) -> String {
@@ -184,17 +434,30 @@ fn _snake(s: String) -> String {
 }
 
 fn _quote(name: String) -> String {
-    name.match?(/[^a-zA-Z0-9_]/) ? "\"{name}\"" : name
+    name.match?(/[^a-zA-Z0-9_]/)
+        ? "\"{name.replace('"', '""')}\""
+        : name
+}
+
+let _known-sql-types = %{
+    'Int':           'INTEGER',
+    'Float':         'REAL',
+    'String':        'TEXT',
+    'Blob':          'BLOB',
+    'Bool':          'INTEGER',
+    'PlainDate':     'TEXT',
+    'PlainDateTime': 'TEXT',
+    'PlainTime':     'TEXT',
+    'Instant':       'TEXT'
 }
 
 fn _sql-type(name: String) -> String {
-    match name {
-        'Int'    => 'INTEGER',
-        'Float'  => 'REAL',
-        'String' => 'TEXT',
-        'Blob'   => 'BLOB',
-        'Bool'   => 'INTEGER',
-        _        => 'TEXT'
+    match _known-sql-types[name] {
+        $t => t,
+        _  => {
+            print("sql: warning: unknown type '{name}', defaulting to TEXT")
+            'TEXT'
+        }
     }
 }
 
@@ -202,7 +465,7 @@ fn _sql-default(val: Int | Float | String | Bool | nil) -> String {
     match val {
         v: Int    => "{v}",
         v: Float  => "{v}",
-        v: String => "'{v}'",
+        v: String => "'{v.replace("'", "''")}'",
         true      => '1',
         false     => '0',
         nil       => 'NULL',
@@ -349,6 +612,7 @@ pub class Query[T] : Iterable[T] {
         if #__incs == 0 || #rows == 0 {
             return
         }
+        for inst in instances { inst.preloaded = %{} }
         for name in __incs {
             let $assoc = __assocs[name] or continue
             let fk-col       = assoc.fk-col
@@ -473,7 +737,7 @@ pub class Query[T] : Iterable[T] {
         db.fetch-one(sql, *__params)!['v']
     }
 
-    group-by(col: String, agg: String = 'count(*) AS count') {
+    group-by(col: String, agg: String = 'count(*) AS count') -> Array[Dict[String, _]] {
         let db = _resolve-db(nil)
         let qc = _quote(col)
         let sql = "SELECT {qc}, {agg} FROM {__tbl}"
@@ -596,7 +860,7 @@ pub fn transaction(f, db: SQLite | nil = nil) {
         db.exec('COMMIT')
         result
     } catch e {
-        db.exec('ROLLBACK')
+        try { db.exec('ROLLBACK') } catch _ {}
         throw e
     }
 }
@@ -752,6 +1016,12 @@ pub macro table(def) {
     }
 
     for c, i in cols {
+        if !has-pk? && c.name == 'id' && (c.sql-type == 'INTEGER') && (c.refs == nil) {
+            cols[i] = {*c, pk: true, auto: true, nullable: true}
+            has-pk? = true
+        }
+    }
+    for c, i in cols {
         if !has-pk? && (c.sql-type == 'INTEGER') && (c.refs == nil) {
             cols[i] = {*c, pk: true, auto: true, nullable: true}
             has-pk? = true
@@ -778,29 +1048,63 @@ pub macro table(def) {
         [_quote(it.name) for cs].join(', ')
     }
 
-    fn placeholders(cs: _) {
-        ['?' for cs].join(', ')
+    fn placeholders(cs: _, offset: Int = 0, dialect: String = 'sqlite') {
+        match dialect {
+            'postgres' => ["${i + offset + 1}" for _, i in cs].join(', '),
+            _          => ['?' for cs].join(', ')
+        }
     }
 
-    let ins-sql = "INSERT INTO {table}"
-                  " ({quoted-names(ins-cols)})"
-                  " VALUES ({placeholders(ins-cols)})"
+    fn set-clause-for(cs: _, offset: Int = 0, dialect: String = 'sqlite') {
+        match dialect {
+            'postgres' => ["{_quote(c.name)} = ${i + offset + 1}" for c, i in cs].join(', '),
+            _          => ["{_quote(it.name)} = ?" for cs].join(', ')
+        }
+    }
 
-    let set-clause = ["{_quote(it.name)} = ?" for upd-cols].join(', ')
+    fn build-ins-sql(dialect: String) {
+        "INSERT INTO {table}"
+        " ({quoted-names(ins-cols)})"
+        " VALUES ({placeholders(ins-cols, dialect=dialect)})"
+    }
+
+    fn build-upd-sql(dialect: String) {
+        let sc = set-clause-for(upd-cols, dialect=dialect)
+        let ph = (dialect == 'postgres') ? "${#upd-cols + 1}" : '?'
+        return "UPDATE {table} SET {sc} WHERE {pk-q} = {ph}"
+    }
+
+    fn build-del-sql(dialect: String) {
+        let ph = (dialect == 'postgres') ? '$1' : '?'
+        return "DELETE FROM {table} WHERE {pk-q} = {ph}"
+    }
+
     let excluded-set = ["{_quote(it.name)} = excluded.{_quote(it.name)}" for upd-cols].join(', ')
-
-    let upd-sql = "UPDATE {table} SET {set-clause} WHERE {pk-q} = ?"
-    let del-sql = "DELETE FROM {table} WHERE {pk-q} = ?"
-
     let unique-cols = cols.filter(\_.uniq)
+    if #unique-cols == 0 {
+        print("sql: warning: @table {cls.name} has no unique columns — upsert will fall back to PK and always insert for new rows")
+    }
     let upsert-conflict = (#unique-cols > 0)
         ? _quote(unique-cols[0].name)
         : pk-q
-    let upsert-sql = "INSERT INTO {table}"
-                     " ({quoted-names(ins-cols)})"
-                     " VALUES ({placeholders(ins-cols)})"
-                     " ON CONFLICT ({upsert-conflict})"
-                     " DO UPDATE SET {excluded-set}"
+
+    fn build-upsert-sql(dialect: String) {
+        "INSERT INTO {table}"
+        " ({quoted-names(ins-cols)})"
+        " VALUES ({placeholders(ins-cols, dialect=dialect)})"
+        " ON CONFLICT ({upsert-conflict})"
+        " DO UPDATE SET {excluded-set}"
+    }
+
+    let ins-sql    = build-ins-sql('sqlite')
+    let upd-sql    = build-upd-sql('sqlite')
+    let del-sql    = build-del-sql('sqlite')
+    let upsert-sql = build-upsert-sql('sqlite')
+
+    let pg-ins-sql    = build-ins-sql('postgres')
+    let pg-upd-sql    = build-upd-sql('postgres')
+    let pg-del-sql    = build-del-sql('postgres')
+    let pg-upsert-sql = build-upsert-sql('postgres')
 
     fn fld-expr(c: _) {
         let id = ty.Id(name: c.name)
@@ -870,13 +1174,17 @@ pub macro table(def) {
     if has-validations || has-method['validate'] {
         ins-stmts.push(validate-guard)
     }
-    let $ins-sql-str = ty.String(ins-sql)
-    let $pk-col-str = ty.String(pk-name)
+    let $ins-sql-str    = ty.String(ins-sql)
+    let $pg-ins-sql-str = ty.String(pg-ins-sql)
+    let $pk-col-str     = ty.String(pk-name)
+    let ins-sql-pick = $$[
+        ($$::(_dialect)(db) == 'postgres') ? $$pg-ins-sql-str : $$ins-sql-str
+    $$]
     let ins-exec = ty.Call(
         func: $$[ $$::(_exec-insert) $$],
         args: [
             ty.Arg(arg: $$[db$$]),
-            ty.Arg(arg: ins-sql-str),
+            ty.Arg(arg: ins-sql-pick),
             ty.Arg(arg: pk-col-str),
             *flds(ins-cols).map(\ty.Arg(arg: _))
         ]
@@ -896,22 +1204,35 @@ pub macro table(def) {
     if has-validations || has-method['validate'] {
         save-stmts.push(validate-guard)
     }
-    save-stmts.push(_db-exec(upd-sql, [
-        *flds(upd-cols),
-        ty.Id(name: pk-name)
-    ]))
+    let $upd-sql-str    = ty.String(upd-sql)
+    let $pg-upd-sql-str = ty.String(pg-upd-sql)
+    let upd-sql-pick = $$[
+        ($$::(_dialect)(db) == 'postgres') ? $$pg-upd-sql-str : $$upd-sql-str
+    $$]
+    save-stmts.push(ty.Call(
+        func: $$[ db.exec $$],
+        args: [
+            ty.Arg(arg: upd-sql-pick),
+            *flds(upd-cols).map(\ty.Arg(arg: _)),
+            ty.Arg(arg: ty.Id(name: pk-name))
+        ]
+    ))
     if has-method['afterSave'] {
         save-stmts.push(cb('afterSave'))
     }
     save-stmts.push($$[ self $$])
     let save-body = ty.Block(save-stmts)
 
-    let $upsert-sql-str = ty.String(upsert-sql)
+    let $upsert-sql-str    = ty.String(upsert-sql)
+    let $pg-upsert-sql-str = ty.String(pg-upsert-sql)
+    let upsert-sql-pick = $$[
+        ($$::(_dialect)(db) == 'postgres') ? $$pg-upsert-sql-str : $$upsert-sql-str
+    $$]
     let upsert-exec = ty.Call(
         func: $$[ $$::(_exec-insert) $$],
         args: [
             ty.Arg(arg: $$[db$$]),
-            ty.Arg(arg: upsert-sql-str),
+            ty.Arg(arg: upsert-sql-pick),
             ty.Arg(arg: pk-col-str),
             *flds(ins-cols).map(\ty.Arg(arg: _))
         ]
@@ -926,9 +1247,20 @@ pub macro table(def) {
     upsert-stmts.push($$[ self $$])
     let upsert-body = ty.Block(upsert-stmts)
 
+    let $del-sql-str    = ty.String(del-sql)
+    let $pg-del-sql-str = ty.String(pg-del-sql)
+    let del-sql-pick = $$[
+        ($$::(_dialect)(db) == 'postgres') ? $$pg-del-sql-str : $$del-sql-str
+    $$]
     let del-stmts = [db-resolve]
     if has-method['beforeDelete'] { del-stmts.push(cb('beforeDelete')) }
-    del-stmts.push(_db-exec(del-sql, [ty.Id(name: pk-name)]))
+    del-stmts.push(ty.Call(
+        func: $$[ db.exec $$],
+        args: [
+            ty.Arg(arg: del-sql-pick),
+            ty.Arg(arg: ty.Id(name: pk-name))
+        ]
+    ))
     if has-method['afterDelete'] { del-stmts.push(cb('afterDelete')) }
     let del-body = ty.Block(del-stmts)
 
@@ -956,7 +1288,10 @@ pub macro table(def) {
         if let $r = $$::(_do-reload)(
             db, $$tbl, $$pkq, $$pk-fld
         ) {
-            $$cls-id.fromRow(r)
+            let fresh = $$cls-id.fromRow(r)
+            fresh.errors = errors
+            fresh.preloaded = preloaded
+            fresh
         } else {
             self
         }
