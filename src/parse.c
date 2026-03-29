@@ -5880,25 +5880,35 @@ parse_operator_directive(Ty *ty)
 static Stmt *
 parse_return_statement(Ty *ty)
 {
-        Stmt *s = mkstmt(ty);
-        s->type = STATEMENT_RETURN;
-        vec_init(s->returns);
+        Stmt *s = mkstmtx(RETURN);
 
-        consume_kw(RETURN);
+        next();
 
-        if (tok()->start.line != s->start.line || get_prefix_parser(ty) == NULL) {
-                return s;
-        }
-
-        avP(s->returns, parse_expr(ty, 0));
-
-        while (T0 == ',') {
-                next();
+        while (
+                (tok()->start.line == s->start.line)
+             && (get_prefix_parser(ty) != NULL)
+             && (!have_kw(IF) || (T0 == '('))
+        ) {
                 avP(s->returns, parse_expr(ty, 0));
+                if (!try_consume(',')) {
+                        break;
+                }
         }
 
-        if (T0 == ';')
+        if (K0 == KEYWORD_IF) {
+                Stmt *_if = mkstmtx(IF);
                 next();
+                _if->type = STATEMENT_IF;
+                _if->_if.neg = try_consume(KEYWORD_NOT);
+                _if->_if.parts = parse_condparts(ty, _if->_if.neg);
+                _if->_if.then = s;
+                _if->_if._else = NULL;
+                _if->start = s->start;
+                _if->end = TEnd;
+                s = _if;
+        }
+
+        try_consume(';');
 
         return s;
 }
@@ -6004,7 +6014,7 @@ parse_break_statement(Ty *ty)
         }
 
         if (
-                tok()->start.line == s->start.line
+                (tok()->start.line == s->start.line)
              && get_prefix_parser(ty) != NULL
              && (
                         !have_kw(IF)

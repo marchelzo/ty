@@ -696,7 +696,8 @@ pub class Response {
         self.total-time = total-time
     }
 
-    ok -> Bool { status >= 200 && status < 300 }
+    ok -> Bool { status in 200..300 }
+
     text() -> String { body.str() }
     json() -> JSON { json::parse(text()) }
 
