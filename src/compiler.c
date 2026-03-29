@@ -3364,7 +3364,6 @@ try_fun_macro_op(Ty *ty, Scope *scope, Expr *e)
         fun->xscope = scope;
         fun->xfunc = STATE.func;
         fun->identifier = (char *)e->op_name;
-        fun->scope = sym->scope;
         fun->symbol = sym;
 
         Expr *left = e->left;
@@ -20233,4 +20232,94 @@ CompilerExprFor(Ty *ty, char const *mod, char const *name)
         return ident;
 }
 
+typedef struct {
+        Ty *ty;
+        Scope *scope;
+        ExprVec free;
+        Symbol sentinel;
+} FreeVarsCtx;
+
+static Expr *
+e_free(Expr *expr, Scope *_, void *_ctx)
+{
+        FreeVarsCtx *ctx = _ctx;
+        Ty *ty = ctx->ty;
+
+        if (expr->type == EXPRESSION_IDENTIFIER) {
+                Symbol *sym = scope_lookup(ty, ctx->scope, expr->identifier);
+                if (sym == NULL) {
+                        svP(ctx->free, expr);
+                }
+        }
+
+        return expr;
+}
+
+static Expr *
+l_free(Expr *expr, bool _1, Scope *_2, void *_ctx)
+{
+        FreeVarsCtx *ctx = _ctx;
+        Ty *ty = ctx->ty;
+
+        switch (expr->type) {
+        case EXPRESSION_IDENTIFIER:
+        case EXPRESSION_MATCH_NOT_NIL:
+        case EXPRESSION_RESOURCE_BINDING:
+        case EXPRESSION_SPREAD:
+        case EXPRESSION_MATCH_REST:
+                scope_insert_as(ty, ctx->scope, &ctx->sentinel, expr->identifier);
+                break;
+        }
+
+        return expr;
+}
+
+static Expr *
+p_free(Expr *expr, Scope *_, void *_ctx)
+{
+        FreeVarsCtx *ctx = _ctx;
+        Ty *ty = ctx->ty;
+
+        switch (expr->type) {
+        case EXPRESSION_IDENTIFIER:
+        case EXPRESSION_MATCH_NOT_NIL:
+        case EXPRESSION_RESOURCE_BINDING:
+        case EXPRESSION_SPREAD:
+        case EXPRESSION_MATCH_REST:
+                scope_insert_as(ty, ctx->scope, &ctx->sentinel, expr->identifier);
+                break;
+        }
+
+        return expr;
+}
+
+ExprVec
+CompilerFreeVars(Ty *ty, Expr const *expr, Scope *scope)
+{
+        if (scope == NULL) {
+                scope = GlobalScope;
+        }
+
+        FreeVarsCtx ctx = {
+                .ty       = ty,
+                .scope    = scope_new(ty, "(bound)", scope, true),
+                .free     = {0},
+                .sentinel = (Symbol) { .i = -1 }
+        };
+
+        VisitorSet visitor = visit_identitiy(ty);
+
+        visitor.e_pre = e_free;
+        visitor.l_pre = l_free;
+        visitor.p_pre = p_free;
+        visitor.user  = &ctx;
+
+        if (expr != NULL && expr->type >= EXPRESSION_MAX_TYPE) {
+                (void)visit_statement(ty, (Stmt *)expr, NULL, &visitor);
+        } else {
+                (void)visit_expression(ty, expr, NULL, &visitor);
+        }
+
+        return ctx.free;
+}
 /* vim: set sw=8 sts=8 expandtab: */
