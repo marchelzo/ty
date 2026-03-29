@@ -1,7 +1,9 @@
-import sql (table, connect, transaction, ValidationError, diff, migrate!)
+import sql (table, connect, disconnect, transaction, ValidationError, diff, migrate!, generate, up, down, redo, migration-status, pending)
 import sqlite (SQLite)
 import path (Path)
 import date (PlainDate, PlainDateTime)
+import json
+import io
 
 @table
 class User {
@@ -966,8 +968,8 @@ pub fn test-diff-detects-drop() {
         connect(p)
 
         let ops: _ = diff()
-        let drops = ops.filter(\_.op == 'drop-column')
-        assert(drops.any?(\_.column == 'obsolete'))
+        let drops = ops.filter(\_ ['op'] == 'drop-column')
+        assert(drops.any?(\_ ['column'] == 'obsolete'))
     }
 }
 
@@ -1166,4 +1168,177 @@ pub fn test-upsert-idempotent() {
     Product(sku='ABC', name='Thing', price=5).upsert()
     Product(sku='ABC', name='Thing', price=5).upsert()
     assert(Product.count() == 1)
+}
+
+pub fn test-generate-creates-migration-file() {
+    with tmp = Path.tempdir('mig-gen') {
+        let p = "{tmp}/test.db"
+        let db = SQLite(p)
+        db.exec(
+            'CREATE TABLE user'
+            ' (id INTEGER PRIMARY KEY AUTOINCREMENT,'
+            ' name TEXT NOT NULL)'
+        )
+
+        let mig-dir = "{tmp}/migrations"
+        let filepath: _ = generate('add missing columns', dir=mig-dir, db=db)
+        db.close()
+        assert(filepath != nil)
+        assert(Path(filepath).exists?)
+
+        let content = io.open(filepath).slurp()
+        let ops: _ = json.parse(content)
+        assert(#ops > 0)
+        assert(ops.any?(\_ ['op'] == 'add-column'))
+    }
+}
+
+pub fn test-up-applies-migrations() {
+    with tmp = Path.tempdir('mig-up') {
+        let p = "{tmp}/test.db"
+        let db = SQLite(p)
+        db.exec(
+            'CREATE TABLE user'
+            ' (id INTEGER PRIMARY KEY AUTOINCREMENT,'
+            ' name TEXT NOT NULL)'
+        )
+
+        let mig-dir = "{tmp}/migrations"
+        generate('add columns', dir=mig-dir, db=db)
+
+        let ran = up(dir=mig-dir, db=db)
+        assert(#ran == 1)
+
+        let cols: _ = db.existing-columns('user')
+        assert('email' in cols)
+        assert('age' in cols)
+
+        let status: _ = migration-status(dir=mig-dir, db=db)
+        assert(#status == 1)
+        assert(status[0]['applied?'])
+        db.close()
+    }
+}
+
+pub fn test-down-rolls-back() {
+    with tmp = Path.tempdir('mig-down') {
+        let p = "{tmp}/test.db"
+        let db = SQLite(p)
+        db.exec(
+            'CREATE TABLE user'
+            ' (id INTEGER PRIMARY KEY AUTOINCREMENT,'
+            ' name TEXT NOT NULL)'
+        )
+
+        let mig-dir = "{tmp}/migrations"
+        generate('add columns', dir=mig-dir, db=db)
+        let ran = up(dir=mig-dir, db=db)
+        assert(#ran == 1)
+
+        let cols-before: _ = db.existing-columns('user')
+        assert('email' in cols-before)
+
+        let rolled = down(dir=mig-dir, db=db)
+        assert(#rolled == 1)
+
+        let cols-after: _ = db.existing-columns('user')
+        assert('email' not in cols-after)
+        db.close()
+    }
+}
+
+pub fn test-pending-shows-unapplied() {
+    with tmp = Path.tempdir('mig-pending') {
+        let p = "{tmp}/test.db"
+        let db = SQLite(p)
+        db.exec(
+            'CREATE TABLE user'
+            ' (id INTEGER PRIMARY KEY AUTOINCREMENT,'
+            ' name TEXT NOT NULL)'
+        )
+
+        let mig-dir = "{tmp}/migrations"
+        generate('initial', dir=mig-dir, db=db)
+        let p1: _ = pending(dir=mig-dir, db=db)
+        assert(#p1 == 1)
+
+        up(dir=mig-dir, db=db)
+        let p2: _ = pending(dir=mig-dir, db=db)
+        assert(#p2 == 0)
+        db.close()
+    }
+}
+
+pub fn test-generate-returns-nil-when-no-changes() {
+    fresh()
+    with tmp = Path.tempdir('mig-noop') {
+        let mig-dir = "{tmp}/migrations"
+        let result: _ = generate('nothing', dir=mig-dir)
+        assert(result == nil)
+    }
+}
+
+pub fn test-diff-includes-down-sql() {
+    with tmp = Path.tempdir('mig-down-sql') {
+        let p = "{tmp}/test.db"
+        let db = SQLite(p)
+        db.exec(
+            'CREATE TABLE user'
+            ' (id INTEGER PRIMARY KEY AUTOINCREMENT,'
+            ' name TEXT NOT NULL,'
+            ' obsolete TEXT)'
+        )
+
+        let ops: _ = diff(db)
+        for op in ops {
+            assert(op['down'] != nil)
+        }
+        let drops = ops.filter(\_ ['op'] == 'drop-column')
+        assert(#drops > 0)
+        assert(drops[0]['down'].match?(/ADD COLUMN/))
+        db.close()
+    }
+}
+
+pub fn test-diff-detects-index-changes() {
+    with tmp = Path.tempdir('mig-idx') {
+        let p = "{tmp}/test.db"
+        let db = SQLite(p)
+        db.exec(
+            'CREATE TABLE product'
+            ' (id INTEGER PRIMARY KEY AUTOINCREMENT,'
+            ' sku TEXT NOT NULL UNIQUE,'
+            ' name TEXT NOT NULL,'
+            ' price INTEGER DEFAULT 0,'
+            ' category TEXT)'
+        )
+
+        let ops: _ = diff(db)
+        let idx-ops = ops.filter(\_ ['op'] == 'create-index')
+        assert(#idx-ops > 0)
+        db.close()
+    }
+}
+
+pub fn test-redo-rolls-back-and-reapplies() {
+    with tmp = Path.tempdir('mig-redo') {
+        let p = "{tmp}/test.db"
+        let db = SQLite(p)
+        db.exec(
+            'CREATE TABLE user'
+            ' (id INTEGER PRIMARY KEY AUTOINCREMENT,'
+            ' name TEXT NOT NULL)'
+        )
+
+        let mig-dir = "{tmp}/migrations"
+        generate('add columns', dir=mig-dir, db=db)
+        up(dir=mig-dir, db=db)
+
+        let redone = redo(dir=mig-dir, db=db)
+        assert(#redone == 1)
+
+        let cols: _ = db.existing-columns('user')
+        assert('email' in cols)
+        db.close()
+    }
 }
