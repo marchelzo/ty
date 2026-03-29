@@ -1207,13 +1207,15 @@ inline static bool
 inline static bool
 have_without_nl(Ty *ty, int t)
 {
-        return (T0 == t) && (tok()->start.line == TEnd.line);
+        return (T0 == t || K0 == t)
+            && (tok()->start.line == TEnd.line);
 }
 
 inline static bool
 next_without_nl(Ty *ty, int t)
 {
-        return (T1 == t) && (token(1)->start.line == tok()->end.line);
+        return (T1 == t || K1 == t)
+            && (token(1)->start.line == tok()->end.line);
 }
 
 static bool
@@ -1225,9 +1227,9 @@ have_not_in(Ty *ty)
 inline static bool
 no_rhs(Ty *ty, int i)
 {
-        return token(i)->type == ']' ||
-               token(i)->type == ')' ||
-               token(i)->type == '}';
+        return (token(i)->type == ']')
+            || (token(i)->type == ')')
+            || (token(i)->type == '}');
 }
 
 static bool
@@ -5877,6 +5879,26 @@ parse_operator_directive(Ty *ty)
         return &NullStatement;
 }
 
+inline static Stmt *
+try_conditional_from(Ty *ty, Stmt *s)
+{
+        if (tok()->start.line == TEnd.line && have_kw(IF)) {
+                next();
+
+                Stmt *_if = mkstmtx(IF);
+                _if->_if.neg = try_consume(KEYWORD_NOT);
+                _if->_if.parts = parse_condparts(ty, _if->_if.neg);
+                _if->_if.then = s;
+                _if->_if._else = NULL;
+                _if->start = s->start;
+                _if->end = TEnd;
+
+                s = _if;
+        }
+
+        return s;
+}
+
 static Stmt *
 parse_return_statement(Ty *ty)
 {
@@ -5895,18 +5917,7 @@ parse_return_statement(Ty *ty)
                 }
         }
 
-        if (K0 == KEYWORD_IF) {
-                Stmt *_if = mkstmtx(IF);
-                next();
-                _if->type = STATEMENT_IF;
-                _if->_if.neg = try_consume(KEYWORD_NOT);
-                _if->_if.parts = parse_condparts(ty, _if->_if.neg);
-                _if->_if.then = s;
-                _if->_if._else = NULL;
-                _if->start = s->start;
-                _if->end = TEnd;
-                s = _if;
-        }
+        s = try_conditional_from(ty, s);
 
         try_consume(';');
 
@@ -5981,25 +5992,6 @@ parse_defer_statement(Ty *ty)
         return s;
 }
 
-inline static Stmt *
-try_conditional_from(Ty *ty, Stmt *s)
-{
-        if (tok()->start.line == TEnd.line && have_kw(IF)) {
-                next();
-
-                Stmt *if_ = mkstmt(ty);
-                if_->type = STATEMENT_IF;
-                if_->_if.neg = try_consume(KEYWORD_NOT);
-                if_->_if.parts = parse_condparts(ty, if_->_if.neg);
-                if_->_if.then = s;
-                if_->_if._else = NULL;
-
-                s = if_;
-        }
-
-        return s;
-}
-
 static Stmt *
 parse_break_statement(Ty *ty)
 {
@@ -6016,10 +6008,7 @@ parse_break_statement(Ty *ty)
         if (
                 (tok()->start.line == s->start.line)
              && get_prefix_parser(ty) != NULL
-             && (
-                        !have_kw(IF)
-                     || T0 == '('
-                )
+             && (!have_kw(IF) || (T0 == '('))
         ) {
                 s->expression = parse_expr(ty, 0);
         } else {
