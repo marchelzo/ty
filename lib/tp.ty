@@ -107,9 +107,6 @@ pub class Future[T] {
         with _mtx {
             _state = state.ABORTED
             _err   = err
-            if _state == state.RUNNING {
-                let _ = 3;
-            }
             _done.notify()
         }
     }

@@ -20,8 +20,16 @@
 char *FreedArenaLo;
 char *FreedArenaHi;
 
-static Arena             BaselineArena;
-static CompilerBaseline  LsBaseline;
+static Arena             InitArena;
+static CompilerBaseline  InitBaseline;
+
+static Arena             DepsArena;
+static CompilerBaseline  DepsBaseline;
+static ArenaSnapshotVector DepsArenaSnaps;
+static bool              HaveDeps;
+static char             *DepsFile;
+
+static ConstStringVector PendingDeps;
 
 static char             *LastSource;
 static char             *LastFile;
@@ -181,9 +189,9 @@ main(int argc, char *argv[])
                 exit(1);
         }
 
-        LsBaseline = CompilerSaveBaseline(ty);
-        BaselineArena = ty->arena;
-        CompilerSnapshotArena(&BaselineArena, &LsBaseline.arena_snaps);
+        InitBaseline = CompilerSaveBaseline(ty);
+        InitArena = ty->arena;
+        CompilerSnapshotArena(&InitArena, &InitBaseline.arena_snaps);
 
         NewArenaNoGC(ty, 1 << 22);
 
@@ -262,20 +270,43 @@ main(int argc, char *argv[])
                                 goto EndRequest;
                         }
 
-                        if (ty->arena.base != BaselineArena.base) {
-                                FreedArenaLo = (char *)(uintptr_t)-1;
-                                FreedArenaHi = NULL;
-                                for (Arena const *ap = &ty->arena; ap->base != NULL; ap = NextArena(ap)) {
-                                        if (ap->base < FreedArenaLo) FreedArenaLo = ap->base;
-                                        if (ap->end > FreedArenaHi) FreedArenaHi = ap->end;
+                        {
+                                bool same = (DepsFile != NULL) && s_eq(file, DepsFile);
+
+                                if (HaveDeps && same) {
+                                        if (ty->arena.base != DepsArena.base) {
+                                                FreeArena(&ty->arena);
+                                        }
+                                        ty->arena = InitArena;
+                                        CompilerRestoreArena(&InitBaseline.arena_snaps);
+                                        ty->arena = DepsArena;
+                                        CompilerRestoreArena(&DepsArenaSnaps);
+                                        CompilerRestoreBaseline(ty, &DepsBaseline);
+                                        vN(Globals) = DepsBaseline.global_count;
+                                } else {
+                                        if (ty->arena.base != InitArena.base) {
+                                                FreeArena(&ty->arena);
+                                        }
+                                        ty->arena = InitArena;
+                                        CompilerRestoreArena(&InitBaseline.arena_snaps);
+                                        CompilerRestoreBaseline(ty, &InitBaseline);
+                                        vN(Globals) = InitBaseline.global_count;
+                                        HaveDeps = false;
+
+                                        if (same && (vN(PendingDeps) > 0)) {
+                                                NewArenaNoGC(ty, 1 << 22);
+
+                                                for (int i = 0; i < vN(PendingDeps); ++i) {
+                                                        CompilerLoadModuleByPath(ty, v__(PendingDeps, i));
+                                                }
+
+                                                DepsBaseline = CompilerSaveBaseline(ty);
+                                                DepsArena = ty->arena;
+                                                CompilerSnapshotArena(&DepsArena, &DepsArenaSnaps);
+                                                HaveDeps = true;
+                                        }
                                 }
-                                FreeArena(&ty->arena);
                         }
-                        ty->arena = BaselineArena;
-                        CompilerRestoreArena(&LsBaseline.arena_snaps);
-                        CompilerRestoreBaseline(ty, &LsBaseline);
-                        vN(Globals) = LsBaseline.global_count;
-                        LOGX("RESTORED: arena pages=%zu", vN(LsBaseline.arena_snaps));
 
                         NewArenaNoGC(ty, 1 << 22);
 
@@ -289,6 +320,26 @@ main(int argc, char *argv[])
                                 goto EndRequest;
                         } else {
                                 LOGX("loaded module %s\n", mod->path);
+                        }
+
+                        if (!HaveDeps && (mod != NULL)) {
+
+                                for (int i = 0; i < vN(PendingDeps); ++i) {
+                                        xmF((char *)v__(PendingDeps, i));
+                                }
+                                v0(PendingDeps);
+
+                                for (int i = 0; i < vN(mod->imports); ++i) {
+                                        Module *dep = v__(mod->imports, i).mod;
+                                        if (dep != NULL && dep->path != NULL) {
+                                                xvP(PendingDeps, S2(dep->path));
+                                        }
+                                }
+
+                                if (vN(PendingDeps) > 0) {
+                                        xmF(DepsFile);
+                                        DepsFile = S2(file);
+                                }
                         }
 
                         xmF(LastSource);

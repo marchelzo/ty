@@ -513,7 +513,10 @@ void
 op_dump(int op);
 
 void
-op_reset(void);
+op_reset(U32Vector const *base);
+
+U32Vector
+op_baseline(Ty *ty);
 
 Type *
 op_type(Ty *ty, int op);
