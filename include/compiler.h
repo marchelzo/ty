@@ -636,6 +636,7 @@ typedef struct {
         i64 symbol_count;
         usize owned_count;
         ArenaSnapshotVector arena_snaps;
+        U32Vector _2op_baseline;
 } CompilerBaseline;
 
 CompilerBaseline
@@ -643,6 +644,9 @@ CompilerSaveBaseline(Ty *ty);
 
 void
 CompilerRestoreBaseline(Ty *ty, CompilerBaseline const *b);
+
+void
+CompilerLoadModuleByPath(Ty *ty, char const *path);
 
 void
 CompilerSnapshotArena(Arena const *a, ArenaSnapshotVector *snaps);

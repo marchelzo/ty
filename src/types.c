@@ -154,6 +154,9 @@ IsSolved(Type const *t0);
 static bool
 IsFullyBound(Type *t0);
 
+static bool
+IsPacked(Type *t0);
+
 static Type *
 TypeOf2Op(Ty *ty, int op, Type *t0, Type *t1);
 
@@ -1705,6 +1708,14 @@ Reduce(Ty *ty, Type const *t0)
                 }
                 t1 = CullConstraints(ty, t1);
                 break;
+        }
+
+        while (
+                (TypeType(t1) == TYPE_UNION || TypeType(t1) == TYPE_INTERSECT)
+             && (vN(t1->types) == 1)
+             && !IsPacked(v_0(t1->types))
+        ) {
+                t1 = v_0(t1->types);
         }
 
         if (fixed) {

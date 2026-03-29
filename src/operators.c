@@ -420,17 +420,44 @@ op_type(Ty *ty, i32 op)
         return t0;
 }
 
-void
-op_reset(void)
+U32Vector
+op_baseline(Ty *ty)
 {
+        U32Vector base = {0};
+
         for (i32 i = 0; i < vN(_2.ops); ++i) {
+                DispatchGroup *group = v__(_2.ops, i);
+                xvP(base, (u32)vN(group->defs));
+        }
+
+        return base;
+}
+
+void
+op_reset(U32Vector const *base)
+{
+        U32Vector _zero = {0};
+
+        if (base == NULL) {
+                base = &_zero;
+        }
+
+        for (i32 i = 0; i < vN(*base); ++i) {
+                DispatchGroup *group = v__(_2.ops, i);
+                xvF(group->cache);
+                v00(group->cache);
+                vN(group->defs) = v__(*base, i);
+                group->op0 = NULL;
+        }
+
+        for (i32 i = vN(*base); i < vN(_2.ops); ++i) {
                 DispatchGroup *group = v__(_2.ops, i);
                 xvF(group->cache);
                 xvF(group->defs);
                 xmF(group);
         }
 
-        v0(_2.ops);
+        vN(_2.ops) = vN(*base);
 }
 
 void

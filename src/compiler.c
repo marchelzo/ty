@@ -19940,7 +19940,7 @@ CompilerReset(Ty *ty)
 
         t = 0;
 
-        op_reset();
+        op_reset(NULL);
         scope_reset();
         class_reset(ty);
         parse_reset(ty);
@@ -19987,6 +19987,7 @@ CompilerSaveBaseline(Ty *ty)
                 .global_count  = GlobalCount,
                 .symbol_count  = scope_get_symbol(ty),
                 .owned_count   = vN(GlobalScope->owned),
+                ._2op_baseline = op_baseline(ty)
         };
 }
 
@@ -20009,12 +20010,31 @@ CompilerRestoreBaseline(Ty *ty, CompilerBaseline const *b)
         vN(GlobalScope->owned) = b->owned_count;
 
         types_init(ty);
-        op_reset();
+        op_reset(&b->_2op_baseline);
 
         for (int i = 0; i < vN(ty->_2op_cache); ++i) {
                 xvF(v__(ty->_2op_cache, i));
         }
         v0(ty->_2op_cache);
+}
+
+void
+CompilerLoadModuleByPath(Ty *ty, char const *path)
+{
+        if (GetModuleByPath(ty, path) != NULL) {
+                return;
+        }
+
+        char const *slash = strrchr(path, '/');
+        char const *name = (slash != NULL) ? (slash + 1) : path;
+
+        char *dot = strrchr(name, '.');
+        char *module_name = S2(name);
+        if (dot != NULL) {
+                module_name[dot - name] = '\0';
+        }
+
+        load_module(ty, module_name, NULL);
 }
 
 void
