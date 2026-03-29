@@ -1019,7 +1019,7 @@ class String : Iterable[String], IntoPtr[Int] {
     lower() -> String;
 
     title() -> String {
-        self.sub(/(?<=[\s\-_]|^)./, &upper)
+        sub(/(?<=[\s\-_]|^)./, &upper)
     }
 
     comb(pattern: String | Regex) -> String;
@@ -1053,9 +1053,10 @@ class String : Iterable[String], IntoPtr[Int] {
     scan(pattern: Regex) -> Array[Array[String] | String];
 
     sub(pattern: String | Regex, replacement: String) -> String;
-    sub(pattern: RegexV, replacement: String | (RegexMatch -> String)) -> String;
-    sub(pattern: Regex[0], replacement: String | (String -> String)) -> String;
-    sub(pattern: Regex[(1..)], replacement: String | (Array[String] -> String)) -> String;
+    sub(pattern: RegexV, replacement: String | (RegexMatch -> Any)) -> String;
+    sub(pattern: Regex[0], replacement: String | (String -> Any)) -> String;
+    sub(pattern: Regex[(1..)], replacement: String | (Array[String] -> Any)) -> String;
+    sub(pattern: Regex[Any], replacement: String | ((String | Array[String]) -> Any)) -> String;
 
     match(pattern: RegexV) -> RegexMatch;
     match(pattern: Regex[0]) -> String | nil;

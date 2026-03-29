@@ -8983,11 +8983,11 @@ BUILTIN_FUNCTION(ty_parse)
                         StringVector names = {0};
                         vFree = ARRAY(vA());
                         for (int i = 0; prog[i] != NULL; ++i) {
-                                ExprVec free = CompilerFreeVars(ty, prog[i], NULL);
+                                ExprVec free = CompilerFreeVars(ty, (Expr *)prog[i], NULL);
                                 for (int i = 0; i < vN(free); ++i) {
                                         char const *name = v__(free, i)->identifier;
                                         if (!search_str(&names, name)) {
-                                                svP(names, name);
+                                                svP(names, (char *)name);
                                                 vAp(vFree.array, vSsz(name));
                                         }
                                 }
