@@ -13084,6 +13084,8 @@ resolve_prog(Ty *ty, Stmt **p)
 
         types_finish(ty);
 
+        ScopeFixup(ty, STATE.global);
+
         return p;
 }
 

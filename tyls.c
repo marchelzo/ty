@@ -197,12 +197,6 @@ main(int argc, char *argv[])
 
         ValueVector   items     = {0};
         byte_vector   OutBuffer = {0};
-        ModuleVector  reload    = {0};
-        Arena         arena     = {0};
-
-        u64 reqs = 0;
-
-        EnableLogging += 1;
 
         TY_BEGIN_LOADING();
 
