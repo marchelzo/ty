@@ -3417,7 +3417,6 @@ Type *
 type_regex(Ty *ty, Regex const *re)
 {
         Type *t = CloneType(ty, re->detailed ? TYPE_REGEXV : TYPE_REGEX);
-        t->concrete = true;
 
         u32 ncap;
         int err = pcre2_pattern_info(re->pcre2, PCRE2_INFO_CAPTURECOUNT, &ncap);
@@ -3425,6 +3424,19 @@ type_regex(Ty *ty, Regex const *re)
         ASSERT(err == 0);
 
         avP(t->args, type_integer(ty, ncap));
+        t->concrete = true;
+
+        return t;
+}
+
+Type *
+type_dyn_regex(Ty *ty, Expr const *re)
+{
+        bool  v = (re->re_flags != NULL) && contains(re->re_flags, 'v');
+        Type *t = CloneType(ty, v ? TYPE_REGEXV : TYPE_REGEX);
+
+        avP(t->args, UNKNOWN);
+        t->concrete = true;
 
         return t;
 }

@@ -486,7 +486,7 @@ pub class Path {
         str(self) :: regex("^{re}$")
     }
 
-    glob(pattern: String) -> [Path] {
+    glob(pattern: String) -> Array[Path] {
         fn match-part(text: String, pattern: String) -> Bool {
             let re = pattern.sub(/\*/, '[^/]*')
                             .sub(/\?/, '[^/]')
@@ -664,3 +664,4 @@ class TempFile {
 pub cwd = Path.cwd
 pub home = Path.home
 pub temp = Path.temp
+pub tempdir = Path.tempdir

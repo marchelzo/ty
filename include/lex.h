@@ -14,6 +14,7 @@ typedef enum LexContext {
         LEX_MEMBER,
         LEX_FMT,
         LEX_XFMT,
+        LEX_REGEX,
         LEX_TYX,
         LEX_FAKE,
         LEX_HIDDEN

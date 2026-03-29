@@ -1058,6 +1058,8 @@ extern usize TotalBytesAllocated;
         X(CLASS),                 \
         X(TO_STRING),             \
         X(CONCAT_STRINGS),        \
+        X(TO_REGEX),              \
+        X(COMPILE_REGEX),         \
         X(RANGE),                 \
         X(INCRANGE),              \
         X(CLASS_OF),              \

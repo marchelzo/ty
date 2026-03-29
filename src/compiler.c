@@ -82,6 +82,7 @@ enum {
 #define EE(x)    emit_expression(ty, (x))
 #define EM(x)    emit_member(ty, (x))
 #define ESL(s)   emit_string_literal(ty, (s))
+#define ESTR(s)  emit_string(ty, (s))
 #define EiMAX(x) emit_integer(ty, (x))
 #define Ei32(x)  emit_i32(ty, (x))
 #define Ei16(x)  emit_i16(ty, (x))
@@ -4361,6 +4362,7 @@ TryResolveExpr(Ty *ty, Scope *scope, Expr *e)
                 break;
 
         case EXPRESSION_SPECIAL_STRING:
+        case EXPRESSION_DYNAMIC_REGEX:
                 for (int i = 0; i < vN(e->expressions); ++i) {
                         ok &= TryResolveExpr(ty, scope, v__(e->expressions, i));
                 }
@@ -4763,6 +4765,13 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                         symbolize_expression(ty, scope, *v_(e->fmtfs, i));
                 }
                 e->_type = type_special_str(ty, e);
+                break;
+
+        case EXPRESSION_DYNAMIC_REGEX:
+                for (int i = 0; i < vN(e->expressions); ++i) {
+                        symbolize_expression(ty, scope, v__(e->expressions, i));
+                }
+                e->_type = type_dyn_regex(ty, e);
                 break;
 
         case EXPRESSION_TAG:
@@ -6752,7 +6761,7 @@ emit_string_literal(Ty *ty, char const *s)
                 annotate("%s", id);             \
                 (emit_instr)(ty, inst);         \
                 Ei32(i);                        \
-                emit_string(ty, id);            \
+                ESTR(id);                       \
         } while (0)
 #else
 #define emit_load_instr(ty, id, inst, i)        \
@@ -6774,7 +6783,7 @@ target_captured(Ty *ty, Scope const *scope, Symbol const *s)
         INSN(TARGET_CAPTURED);
         Ei32(i);
 #ifndef TY_NO_LOG
-        emit_string(ty, s->identifier);
+        ESTR(s->identifier);
 #endif
 }
 
@@ -7421,7 +7430,7 @@ emit_function(Ty *ty, Expr const *e)
                         INSN(TARGET_CAPTURED);
                         Ei32(cap_indices[i]);
 #ifndef TY_NO_LOG
-                        emit_string(ty, caps[i]->identifier);
+                        ESTR(caps[i]->identifier);
 #endif
                 }
         }
@@ -7516,7 +7525,7 @@ emit_function(Ty *ty, Expr const *e)
         }
 
         for (int i = 0; i < vN(e->param_symbols); ++i) {
-                emit_string(ty, v__(e->param_symbols, i)->identifier);
+                ESTR(v__(e->param_symbols, i)->identifier);
         }
 
         u32 header_size = vN(STATE.code) - begin;
@@ -7570,8 +7579,8 @@ emit_function(Ty *ty, Expr const *e)
                                         good = (PLACEHOLDER_JUMP)(ty, INSTR_JUMP_IF);
                                         emit_load_instr(ty, s->identifier, INSTR_LOAD_LOCAL, s->i);
                                         INSN(BAD_CALL);
-                                        emit_string(ty, fun_name);
-                                        emit_string(ty, v__(e->param_symbols, i)->identifier);
+                                        ESTR(fun_name);
+                                        ESTR(v__(e->param_symbols, i)->identifier);
                                         add_location(ty, v__(e->constraints, i), start, vN(STATE.code));
                                 }
                         }
@@ -7658,7 +7667,7 @@ emit_function(Ty *ty, Expr const *e)
                                 emit_load_instr(ty, "", INSTR_LOAD_GLOBAL, ((Stmt *)f)->target->symbol->i);
                                 CHECK_INIT();
                                 ECALL(-1, 1);
-                                emit_string(ty, "*");
+                                ESTR("*");
                                 INSN(RETURN_IF_NOT_NONE);
                                 INSN(POP);
                         } else if (e->mtype & MT_SET) {
@@ -7676,7 +7685,7 @@ emit_function(Ty *ty, Expr const *e)
                                 emit_load_instr(ty, "[%]", INSTR_LOAD_LOCAL, 1);
                                 emit_load_instr(ty, "self", INSTR_LOAD_LOCAL, 2);
                                 EMCALL(PRIV_ID(f->name), -1, 1);
-                                emit_string(ty, "*");
+                                ESTR("*");
                                 INSN(RETURN_IF_NOT_NONE);
                                 INSN(POP);
                         }
@@ -7848,6 +7857,43 @@ emit_lang_string(Ty *ty, Expr const *e)
 }
 
 static void
+emit_dynamic_regex(Ty *ty, Expr const *e)
+{
+        int n = vN(e->expressions);
+
+        if (v__(e->strings, 0)[0] != '\0') {
+                INSN(STRING);
+                ESL(v__(e->strings, 0));
+                n += 1;
+        }
+
+        for (int i = 1; i < vN(e->strings); ++i) {
+                if (v__(e->strings, i)[0] != '\0') {
+                        n += 1;
+                }
+        }
+
+        for (int i = 0; i < vN(e->expressions); ++i) {
+                Expr const *interp = *v_(e->expressions, i);
+
+                EE(interp);
+                INSN(TO_REGEX);
+
+                if (v__(e->strings, i + 1)[0] != '\0') {
+                        INSN(STRING);
+                        ESL(v__(e->strings, i + 1));
+                }
+        }
+
+        INSN(CONCAT_STRINGS);
+        Ei32(n);
+        STK(-n + 1);
+
+        INSN(COMPILE_REGEX);
+        ESTR((e->re_flags != NULL) ? e->re_flags : "");
+}
+
+static void
 emit_special_string(Ty *ty, Expr const *e)
 {
         int n = vN(e->expressions);
@@ -7985,11 +8031,11 @@ emit_return_check(Ty *ty, Expr const *f)
                 INSN(BAD_CALL);
 
                 if (f->name != NULL) {
-                        emit_string(ty, f->name);
+                        ESTR(f->name);
                 } else {
-                        emit_string(ty, "(anonymous function)");
+                        ESTR("(anonymous function)");
                 }
-                emit_string(ty, "return value");
+                ESTR("return value");
 
                 PATCH_JUMP(good);
         }
@@ -10685,7 +10731,7 @@ emit_assignment2(Ty *ty, Expr *target, bool maybe, bool def)
                                 EA(target->constraint);
                                 PLACEHOLDER_JUMP(JUMP_IF, good);
                                 INSN(BAD_ASSIGN);
-                                emit_string(ty, target->identifier);
+                                ESTR(target->identifier);
                                 PATCH_JUMP(good);
                                 add_location(ty, target->constraint, start, vN(STATE.code));
                         }
@@ -10829,7 +10875,7 @@ EmitMethodCall(
         EMCALL(insn, class, meth, argc, kwc);
 
         for (usize i = 0; i < vN(*kwargs); ++i) {
-                emit_string(ty, v__(*kws, i));
+                ESTR(v__(*kws, i));
         }
 }
 
@@ -10874,7 +10920,7 @@ EmitFunctionCall(Ty *ty, Expr const *e)
         }
 
         for (usize i = 0; i < vN(e->kws); ++i) {
-                emit_string(ty, v__(e->kws, i));
+                ESTR(v__(e->kws, i));
         }
 }
 
@@ -11008,6 +11054,10 @@ emit_expr(Ty *ty, Expr const *e, bool need_loc)
                 } else {
                         emit_special_string(ty, e);
                 }
+                break;
+
+        case EXPRESSION_DYNAMIC_REGEX:
+                emit_dynamic_regex(ty, e);
                 break;
 
         case EXPRESSION_EVAL:
@@ -11816,10 +11866,10 @@ emit_statement(Ty *ty, Stmt const *s, bool want_result)
                 Ei32(vN(s->tag.methods));
                 Ei32(vN(s->tag.s_methods));
                 for (int i = vN(s->tag.methods); i > 0; --i) {
-                        emit_string(ty, v__(s->tag.methods, i - 1)->name);
+                        ESTR(v__(s->tag.methods, i - 1)->name);
                 }
                 for (int i = vN(s->tag.s_methods); i > 0; --i) {
-                        emit_string(ty, v__(s->tag.s_methods, i - 1)->name);
+                        ESTR(v__(s->tag.s_methods, i - 1)->name);
                 }
                 STK(-(vN(s->tag.methods) + vN(s->tag.s_methods)));
                 break;
@@ -19224,6 +19274,7 @@ DumpProgram(
                 CASE(NIL)
                         break;
                 CASE(TO_STRING)
+                CASE(TO_REGEX)
                         break;
                 CASE(YIELD)
                 CASE(YIELD_SOME)
@@ -19331,6 +19382,9 @@ DumpProgram(
                         break;
                 CASE(CONCAT_STRINGS)
                         READVALUE(n);
+                        break;
+                CASE(COMPILE_REGEX)
+                        SKIPSTR();
                         break;
                 CASE(RANGE)
                 CASE(INCRANGE)

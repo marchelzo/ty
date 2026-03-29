@@ -885,7 +885,11 @@ inline static void
 
         // TODO: Should we be discarding LEX_FAKE tokens? (i.e. tokens that were unconsume()d)
 
-        while (vN(tokens) > TokenIndex && v_(tokens, TokenIndex)->ctx != LEX_FMT) {
+        while (
+                (vN(tokens) > TokenIndex)
+             && (v_(tokens, TokenIndex)->ctx != LEX_FMT)
+             // && (v_(tokens, TokenIndex)->ctx != LEX_REGEX)
+        ) {
                 PLOG("  Pop tokens[%zu]: %s", vN(tokens) - 1, token_show(ty, vvL(tokens)));
                 vN(tokens) -= 1;
         }
@@ -1914,6 +1918,74 @@ prefix_ss(Ty *ty)
         e->end = TEnd;
 
         return extend_string(ty, e);
+}
+
+static char *
+re_next_part(Ty *ty)
+{
+        char *str;
+
+        setctx(LEX_REGEX);
+
+        if (T0 != TOKEN_STRING) {
+                return "";
+        }
+
+        str = tok()->string;
+
+        next();
+
+        return str;
+}
+
+static Expr *
+re_inner(Ty *ty)
+{
+        Expr *e = mkxpr(DYNAMIC_REGEX);
+
+        avP(e->strings, re_next_part(ty));
+
+        while (setctx(LEX_PREFIX), (T0 == '$' && T1 == '{')) {
+                next();
+                next();
+
+                lex_need_nl(ty, false);
+
+                SAVE_NE(false);
+                SAVE_NC(true);
+                avP(e->expressions, parse_expr(ty, 0));
+                LOAD_NC();
+                LOAD_NE();
+
+                consume('}');
+
+                avP(e->strings, re_next_part(ty));
+        }
+
+        e->end = TEnd;
+
+        setctx(LEX_REGEX);
+
+        return e;
+}
+
+static Expr *
+prefix_dyn_regex(Ty *ty)
+{
+        Expr *e;
+        Location start = tok()->start;
+
+        consume(TOKEN_DYN_REGEX);
+        e = re_inner(ty);
+
+        expect(TOKEN_DYN_REGEX);
+        e->re_flags = tok()->string;
+        next();
+
+        e->start = start;
+        e->end = TEnd;
+
+        return e;
 }
 
 static Expr *
@@ -4800,6 +4872,7 @@ get_prefix_parser(Ty *ty)
         case TOKEN_REGEX:              return prefix_regex;
 
         case '"':                      return prefix_ss;
+        case TOKEN_DYN_REGEX:          return prefix_dyn_regex;
 
         case TOKEN_IDENTIFIER:         return prefix_identifier;
         case TOKEN_KEYWORD:            goto Keyword;

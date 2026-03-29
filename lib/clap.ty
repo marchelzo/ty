@@ -815,7 +815,7 @@ fn _fishOpt(spec: _) -> _ {
     return {sf, lf, desc, suffix}
 }
 
-const BASH_COMPLETION_TEMPLATE = ety.compile(
+const BASH_COMPLETION_TEMPLATE =
     '''
     <%= funcName %>() {
         local cur prev
@@ -887,9 +887,8 @@ const BASH_COMPLETION_TEMPLATE = ety.compile(
     }
     complete -F <%= funcName %> <%= prog %>
     '''
-)
 
-const ZSH_COMPLETION_TEMPLATE = ety.compile(
+const ZSH_COMPLETION_TEMPLATE =
     '''
     #compdef <%= prog %>
 
@@ -919,9 +918,8 @@ const ZSH_COMPLETION_TEMPLATE = ety.compile(
 
     compdef <%= funcName %> <%= prog %>
     '''
-)
 
-const FISH_COMPLETION_TEMPLATE = ety.compile(
+const FISH_COMPLETION_TEMPLATE =
     '''
     <% for o in opts { %>
     complete -c <%= "{prog}{cond}{o.sf}{o.lf}" %> -d '<%= o.desc %>'<%= o.suffix %>
@@ -947,7 +945,6 @@ const FISH_COMPLETION_TEMPLATE = ety.compile(
     <% } %>
     <% } %>
     '''
-)
 
 fn _bashComplete(specs: _, cmds: _, version: _, prog: _) -> _ {
     let funcName = '__' + prog.sub(/[^a-zA-Z0-9]/, '_') + '_completions'
@@ -961,7 +958,8 @@ fn _bashComplete(specs: _, cmds: _, version: _, prog: _) -> _ {
         let sv: _ = cc.version()
         subcmds.push({name: cn, valCases: _choiceSpecs(ss), optWords: _optWords(ss, sv), posWords: _posWords(ss)})
     }
-    BASH_COMPLETION_TEMPLATE(funcName, valCases, subcmds, optWords, posWords, prog).trim()
+    let render = ety.compile(BASH_COMPLETION_TEMPLATE)
+    render(**{funcName, valCases, subcmds, optWords, posWords, prog}).trim()
 }
 
 fn _zshPosArgSpec(spec: _, idx: Int) -> _ {
@@ -1012,7 +1010,8 @@ fn _zshComplete(specs: _, cmds: _, version: _, prog: _) -> _ {
         subcmds.push({name: cn, argSpecs: subArgSpecs})
     }
 
-    ZSH_COMPLETION_TEMPLATE(funcName, argSpecs, subcmds, prog).trim()
+    let render = ety.compile(ZSH_COMPLETION_TEMPLATE)
+    render(**{funcName, argSpecs, subcmds, prog}).trim()
 }
 
 fn _fishComplete(specs: _, cmds: _, version: _, prog: _) -> _ {
@@ -1044,7 +1043,8 @@ fn _fishComplete(specs: _, cmds: _, version: _, prog: _) -> _ {
         subcmds.push({name: cn, opts: subOpts, posArgs: subPosArgs, version: sv})
     }
 
-    FISH_COMPLETION_TEMPLATE(opts, posArgs, cond, subcmds, version, prog).trim()
+    let render = ety.compile(FISH_COMPLETION_TEMPLATE)
+    render(**{opts, posArgs, cond, subcmds, version, prog}).trim()
 }
 
 fn _completions(cls, shell, progName) -> _ {

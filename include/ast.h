@@ -179,6 +179,7 @@ typedef vec(struct condpart *) condpart_vector;
         X(MUST_EQUAL),                                                                \
         X(REGEX),                                                                     \
         X(SPECIAL_STRING),                                                            \
+        X(DYNAMIC_REGEX),                                                             \
         X(FUNCTION_CALL),                                                             \
         X(MEMBER_ACCESS),                                                             \
         X(DYN_MEMBER_ACCESS),                                                         \
@@ -366,7 +367,10 @@ struct expression {
                         Symbol const *match_symbol;
                 };
                 struct {
-                        Expr *lang;
+                        union {
+                                Expr *lang;
+                                char const *re_flags;
+                        };
                         StringVector strings;
                         ExprVec fmts;
                         ExprVec fmtfs;
