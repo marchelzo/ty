@@ -425,6 +425,7 @@ fn _gen-method(
 
     let types = []
     let reads = []
+    let names = m.out-args.map(\camel(_.name))
     let m-id = ty.Id(name: '__msg')
     let j = 0
     while j < #out {
@@ -438,17 +439,21 @@ fn _gen-method(
 
     let multi-rt = (#types == 1)
         ? types[0]
-        : ty.Record(
-            types.map(t -> ty.RecordEntry(item: t))
-          )
+        : ty.Record([
+            ty.RecordEntry(
+                name: names[i], item: types[i]
+            ) for i in 0..#types
+          ])
 
     let $msg-expr = bus-call
     let multi-body = if #reads == 1 {
         reads[0]
     } else {
-        ty.Record(
-            reads.map(r -> ty.RecordEntry(item: r))
-        )
+        ty.Record([
+            ty.RecordEntry(
+                name: names[i], item: reads[i]
+            ) for i in 0..#reads
+        ])
     }
 
     let body = $$[ do {
@@ -485,16 +490,20 @@ fn _gen-signal(
 
     let cb-type = ty.Any
 
+    let names = sig.args.map(\camel(_.name))
+
     let read-and-call = if #reads == 0 {
         $$[ cb() $$]
     } else if #reads == 1 {
         let $rd = reads[0]
         $$[ cb($$rd) $$]
     } else {
-        let tup = ty.Record(
-            reads.map(r -> ty.RecordEntry(item: r))
-        )
-        $$[ cb($$tup) $$]
+        let rec = ty.Record([
+            ty.RecordEntry(
+                name: names[i], item: reads[i]
+            ) for i in 0..#reads
+        ])
+        $$[ cb($$rec) $$]
     }
 
     let $dest-str  = ty.String(dest)
