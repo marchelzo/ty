@@ -26,6 +26,7 @@ const SHIFT = 1
 const INF   = 100000
 
 let __tls::_debug-borders? = false
+let __tls::_inline? = false
 
 pub tag Exit;
 pub tag Wake;
@@ -1107,7 +1108,7 @@ pub class TextInput < Component {
         let show-comp? = #__comp-lines > 0 && focused?
 
         <Box direction="column">
-            {show-comp? &&
+            {show-comp? && _inline? &&
                 <Box direction="column" bg="bg-surface"
                      border-style="single" border-color="border"
                      pad-x=1>
@@ -1119,6 +1120,21 @@ pub class TextInput < Component {
             <Box border-style="round" border-color=bc>
                 <Text>{content}</Text>
             </Box>
+            {show-comp? && !_inline? &&
+                do {
+                    let popup-h = #__comp-lines + 2
+                    let popup-y = max(layout-y - popup-h, 0)
+                    <Overlay x=layout-x y=popup-y>
+                        <Box direction="column" bg="bg-surface"
+                             border-style="single" border-color="border"
+                             pad-x=1>
+                            {__comp-lines.map(l ->
+                                <Text style="text">{l}</Text>
+                            )}
+                        </Box>
+                    </Overlay>
+                }
+            }
         </Box>
     }
 }
@@ -4279,6 +4295,7 @@ pub fn run(app: Node | Component, fullscreen: Bool = true) {
     }
 
     let tio = (_tio = term.TermIO(mouse=fullscreen, events=cast(_event-queue)))
+    _inline? = !fullscreen
 
     let on-ev = app.?on-event
 
