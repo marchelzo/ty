@@ -1,6 +1,6 @@
 import chalk (chalk, escape as chalk-escape)
 import term (event)
-import os (SIGWINCH, signal, write, sleep)
+import os (SIGWINCH, signal, write, sleep, mktemp, spawn, wait, unlink)
 import time (now)
 import base64
 import path (Path)
@@ -144,6 +144,30 @@ fn fit-items(items: Array[CompletionLabel], W: Int) -> Array[Array[String]] {
     ]
 }
 
+pub native-theme = %{
+    'primary':       'green',
+    'secondary':     'magenta',
+    'accent':        'yellow',
+    'danger':        'red',
+    'warning':       'yellow',
+    'info':          'blue',
+    'success':       'green',
+    'muted':         'bright black',
+    'subtle':        'bright black',
+    'fg-default':    'white',
+    'fg-dim':        'bright black',
+    'bg-surface':    '',
+    'bg-hover':      '',
+    'border':        'bright black',
+    'border-focus':  'yellow',
+    'border-active': 'magenta',
+    'selection':     'yellow',
+    'text':          'white',
+    'text-dim':      'bright black',
+    'text-bright':   'bright white',
+    'bg-global':     ''
+}
+
 pub default-theme = %{
     'primary':       '#6cad65',
     'secondary':     '#a571ce',
@@ -171,11 +195,14 @@ pub default-theme = %{
 let __tls::_bg-global-sgr: String = ''
 
 pub fn set-theme(overrides: Dict[String, String] = %{}) {
-    let theme = %{**default-theme, **overrides}
-    for name, val in theme {
+    let base = (#overrides > 0) ? default-theme : native-theme
+    let theme = %{**base, **overrides}
+    for name, val in theme if #val > 0 {
         chalk.{name} = val
     }
-    _bg-global-sgr = resolve-bg-sgr(theme['bg-global'] ?? '') ?? ''
+    _bg-global-sgr = (theme['bg-global'] ?? '') != ''
+        ? resolve-bg-sgr(theme['bg-global'])
+        : ''
 }
 
 set-theme()
@@ -721,6 +748,7 @@ pub class TextInput < Component {
     placeholder:   String | nil
     on-change:     Function | nil
     on-submit:     Function | nil
+    on-edit:       Function | nil
     complete:      CompletionFunction | nil
     history:       Array[String] | nil
     history-file:  String | nil
@@ -1005,6 +1033,31 @@ pub class TextInput < Component {
                 __emit()
             },
 
+            event.Key({key: 'x' or 120, event: (1 or 2), mods: $m, *})
+            and (m & CTRL) != 0 and on-edit != nil => {
+                __cancel-completion()
+                let (fd, tmp) = mktemp()
+                let seed = __chars.join()
+                if #seed > 0 { write(fd, seed) }
+                os.close(fd)
+                os.chmod(tmp, 0o666)
+
+                if let $tio = _tio {
+                    tio.stop()
+                    write(1, "\x1b[?25h")
+
+                    let ed = spawn([getenv('EDITOR') ?? 'vi', tmp])
+                    wait(ed.pid)
+
+                    write(1, "\x1b[?25l")
+                    tio.start()
+                }
+
+                let out = (slurp(tmp) ?? '').comb(/\r/).trim()
+                unlink(tmp)
+                if #out > 0 { on-edit(out) }
+            },
+
             _ => ()
         }
     }
@@ -1051,25 +1104,21 @@ pub class TextInput < Component {
             str(chalk"[{text-color}]{visible}[/]{' ' * pad}")
         }
 
+        let show-comp? = #__comp-lines > 0 && focused?
+
         <Box direction="column">
+            {show-comp? &&
+                <Box direction="column" bg="bg-surface"
+                     border-style="single" border-color="border"
+                     pad-x=1>
+                    {__comp-lines.map(l ->
+                        <Text style="text">{l}</Text>
+                    )}
+                </Box>
+            }
             <Box border-style="round" border-color=bc>
                 <Text>{content}</Text>
             </Box>
-            {(#__comp-lines > 0 && focused?) &&
-                do {
-                    let popup-h = #__comp-lines + 2
-                    let popup-y = max(layout-y - popup-h, 0)
-                    <Overlay x=layout-x y=popup-y>
-                        <Box direction="column" bg="bg-surface"
-                             border-style="single" border-color="border"
-                             pad-x=1>
-                            {__comp-lines.map(l ->
-                                <Text style="text">{l}</Text>
-                            )}
-                        </Box>
-                    </Overlay>
-                }
-            }
         </Box>
     }
 }
@@ -3965,10 +4014,16 @@ let __tls::_last-inline-height: Int = 0
 fn paint-inline(output: Output) {
     _out.clear()
     _out.push("\x1b[?7l")
+    let new-h = #output.lines
+    let gap = _last-inline-height - new-h
     if _last-inline-height > 0 {
         _out.push("\x1b[{_last-inline-height}A\r")
     }
     _out.push("\x1b[0J")
+    if gap > 0 {
+        _out.push("\x1b[{gap}+T")
+        _out.push("\x1b[{gap}B")
+    }
     let bg = _bg-global-sgr
     let bg-off = (#bg > 0) ? "\x1b[49m" : ''
     for line in output.lines {
@@ -3989,10 +4044,21 @@ fn paint-inline(output: Output) {
         }
     }
     if #_overlays > 0 {
-        _out.push("\x1b[{#output.lines};1H")
+        _out.push("\x1b[{new-h};1H")
     }
     _out.push("\x1b[?7h")
-    _last-inline-height = #output.lines
+    _last-inline-height = new-h
+    write(1, _out)
+}
+
+pub fn ink-write(*args) {
+    _out.clear()
+    if _last-inline-height > 0 {
+        _out.push("\x1b[{_last-inline-height}A\r")
+    }
+    _out.push("\x1b[0J")
+    for arg in args { _out.push("{arg}") }
+    _last-inline-height = 0
     write(1, _out)
 }
 
