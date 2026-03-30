@@ -442,7 +442,7 @@ pub class Path {
         } else if self.file? || (self.symlink? && follow-symlinks) {
             copy-file(self, target-path, follow-symlinks)
         } else if self.symlink? && !follow-symlinks {
-            let link-target = self.readlink()
+            let link-target = self.readlink
             if os.symlink(str(link-target), str(target-path)) == -1 {
                 throw PathError({msg: 'symlink failed', path: str(target-path)})
             }

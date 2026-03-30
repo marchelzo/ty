@@ -50,7 +50,6 @@ u32 TYPES_OFF = 0;
 #define ShowType(t) type_show(ty, (t))
 
 #define NewObject(c, ...) ((NewObject)(ty,    c,  __VA_ARGS__ __VA_OPT__(,) NULL))
-#define NewRecord(...)    ((NewRecord)(ty,        __VA_ARGS__ __VA_OPT__(,) NULL))
 #define NewTuple(...)     ((NewTuple)(ty,         __VA_ARGS__ __VA_OPT__(,) NULL))
 #define NewList(...)      ((NewList)(ty,          __VA_ARGS__ __VA_OPT__(,) NULL))
 #define NewIntersect(...) ((NewIntersect)(ty,     __VA_ARGS__ __VA_OPT__(,) NULL))
@@ -244,9 +243,6 @@ unify2_(Ty *ty, Type **t0, Type *t1, bool check);
 
 static Type *
 (NewObject)(Ty *ty, int class, ...);
-
-static Type *
-(NewRecord)(Ty *ty, ...);
 
 static Type *
 ClassFunctionType(Ty *ty, Type *t0);
@@ -971,7 +967,7 @@ TagOf(Type const *t0)
              : -1;
 }
 
-static Type *
+Type *
 (NewRecord)(Ty *ty, ...)
 {
         Type *t0 = NewType(ty, TYPE_TUPLE);
@@ -9745,6 +9741,18 @@ type_show(Ty *ty, Type const *t0)
                 break;
 
         case TYPE_INTERSECT:
+                if (vN(t0->types) == 1) {
+                        dump(
+                                &buf,
+                                "%sIntersect[%s%s%s]%s",
+                                TERM(93),
+                                TERM(0),
+                                ShowType(v__(t0->types, 0)),
+                                TERM(93),
+                                TERM(0)
+                        );
+                        break;
+                }
                 for (int i = 0; i < vN(t0->types); ++i) {
                         Type *t1 = v__(t0->types, i);
                         if (i > 0) {
@@ -11157,12 +11165,12 @@ type_intersect(Ty *ty, Type **t0, Type *t1)
         dont_printf("    %s\n", ShowType(*t0));
         dont_printf("    %s\n", ShowType(t1));
 
-        if (*t0 == NULL) {
+        if (*t0 == NULL || type_check(ty, *t0, t1)) {
                 *t0 = type_unfixed(ty, t1);
                 return;
         }
 
-        if (t1 == NULL || (*t0)->fixed || type_check(ty, *t0, t1)) {
+        if (t1 == NULL || (*t0)->fixed || type_check(ty, t1, *t0)) {
                 return;
         }
 
@@ -11215,8 +11223,6 @@ type_intersect(Ty *ty, Type **t0, Type *t1)
 
                 return;
         }
-
-        return;
 
         Type *t2 = NewType(ty, TYPE_INTERSECT);
         avP(t2->types, *t0);
