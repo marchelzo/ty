@@ -168,6 +168,7 @@ struct type_env {
 
 #define CONSTRAINT(...) ((Constraint){ __VA_ARGS__ })
 
+#define NewRecord(...) ((NewRecord)(ty, __VA_ARGS__ __VA_OPT__(,) NULL))
 
 extern Type *INT_TYPE;
 extern Type *TYPE_FLOAT;
@@ -241,6 +242,9 @@ NewType(Ty *ty, int type)
         TypeAllocCounter += 1;
         return t0;
 }
+
+Type *
+(NewRecord)(Ty *ty, ...);
 
 Type *
 type_integer(Ty *ty, intmax_t z);

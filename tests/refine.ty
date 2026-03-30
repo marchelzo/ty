@@ -154,3 +154,34 @@ pub fn refine-nested-return-branches() {
     assert(f(3, nil) == 3)
     assert(f(3, 4) == 7)
 }
+
+class Opts { x: Int | nil; y: String | nil }
+
+pub fn refine-member-nil-check() {
+    fn f(o: Opts) -> Int {
+        if o.x != nil { return o.x }
+        0
+    }
+    assert(f(Opts(nil, nil)) == 0)
+    assert(f(Opts(5, nil)) == 5)
+}
+
+pub fn refine-member-nil-check-eq() {
+    fn f(o: Opts) -> Int {
+        if o.x == nil { return -1 }
+        o.x + 1
+    }
+    assert(f(Opts(nil, nil)) == -1)
+    assert(f(Opts(5, nil)) == 6)
+}
+
+pub fn refine-member-sequential() {
+    fn f(o: Opts) -> String {
+        if o.x == nil { return 'no x' }
+        if o.y == nil { return 'no y' }
+        o.y.repeat(o.x)
+    }
+    assert(f(Opts(nil, nil)) == 'no x')
+    assert(f(Opts(2, nil)) == 'no y')
+    assert(f(Opts(3, 'ab')) == 'ababab')
+}

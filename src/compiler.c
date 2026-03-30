@@ -5823,6 +5823,34 @@ UnrefinedType(Refinement *ref)
 }
 
 static void
+RefineMemberType(Ty *ty, Expr const *expr, Type *t0, Scope *_then, Scope *_else)
+{
+        Symbol *sym = expr->object->symbol;
+        char const *name = expr->member->identifier;
+
+        Type *u0 = type_member_access_t(ty, sym->type, name, false);
+
+        if (t0 != NULL) {
+                if (_then != NULL) {
+                        Type *r0 = type_both(ty, type_unfixed(ty, sym->type), NewRecord(name, t0));
+                        ScopeRefineVar(ty, _then, sym, r0);
+                }
+
+                if (_else != NULL) {
+                        Type *t00 = type_without(ty, u0, t0);
+                        Type *r0 = type_both(ty, type_unfixed(ty, sym->type), NewRecord(name, t00));
+                        ScopeRefineVar(ty, _else, sym, r0);
+                }
+        } else {
+                if (_then != NULL) {
+                        Type *t00 = type_without(ty, u0, NIL_TYPE);
+                        Type *r0 = type_both(ty, type_unfixed(ty, sym->type), NewRecord(name, t00));
+                        ScopeRefineVar(ty, _then, sym, r0);
+                }
+        }
+}
+
+static void
 AddRefinements(Ty *ty, Expr const *e, Scope *_then, Scope *_else)
 {
         if (NO_TYPES || e == NULL) {
@@ -5845,10 +5873,10 @@ AddRefinements(Ty *ty, Expr const *e, Scope *_then, Scope *_else)
                 break;
 
         case EXPRESSION_DBL_EQ:
-                if (
-                        (e->left->type == EXPRESSION_IDENTIFIER)
-                     && (e->right->type == EXPRESSION_NIL)
-                ) {
+                if (e->right->type != EXPRESSION_NIL) {
+                        break;
+                }
+                if (e->left->type == EXPRESSION_IDENTIFIER) {
                         if (_then != NULL) {
                                 ScopeRefineVar(
                                         ty,
@@ -5865,27 +5893,42 @@ AddRefinements(Ty *ty, Expr const *e, Scope *_then, Scope *_else)
                                         type_not_nil(ty, e->left->symbol->type)
                                 );
                         }
+                } else if (
+                        (e->left->type == EXPRESSION_MEMBER_ACCESS)
+                     && (e->left->object->type == EXPRESSION_IDENTIFIER)
+                ) {
+                        RefineMemberType(ty, e->left, NIL_TYPE, _then, _else);
                 }
                 break;
 
         case EXPRESSION_NOT_EQ:
-                if (
-                        (e->left->type == EXPRESSION_IDENTIFIER)
-                     && (e->right->type == EXPRESSION_NIL)
-                ) {
-                        e = e->left;
+                if (e->right->type != EXPRESSION_NIL) {
+                        break;
+                }
+                if (e->left->type == EXPRESSION_IDENTIFIER) {
+                        if (_then != NULL) {
+                                ScopeRefineVar(
+                                        ty,
+                                        _then,
+                                        e->left->symbol,
+                                        type_not_nil(ty, e->left->symbol->type)
+                                );
+                        }
                         if (_else != NULL) {
                                 ScopeRefineVar(
                                         ty,
                                         _else,
-                                        e->symbol,
+                                        e->left->symbol,
                                         NIL_TYPE
                                 );
                         }
-                } else {
-                        break;
+                } else if (
+                        (e->left->type == EXPRESSION_MEMBER_ACCESS)
+                     && (e->left->object->type == EXPRESSION_IDENTIFIER)
+                ) {
+                        RefineMemberType(ty, e->left, NIL_TYPE, _else, _then);
                 }
-                //fall
+                break;
 
         case EXPRESSION_IDENTIFIER:
                 if (_then != NULL) {
@@ -5899,6 +5942,12 @@ AddRefinements(Ty *ty, Expr const *e, Scope *_then, Scope *_else)
                         LogRefine("AddRefinement(%s): %s", ref->var->identifier, scope_name(ty, _then));
                         LogRefine("    %s", type_show(ty, ref->var->type));
                         LogRefine("--> %s", type_show(ty, ref->t0));
+                }
+                break;
+
+        case EXPRESSION_MEMBER_ACCESS:
+                if (e->object->type == EXPRESSION_IDENTIFIER) {
+                        RefineMemberType(ty, e, NULL, _then, _else);
                 }
                 break;
 
@@ -5940,6 +5989,18 @@ AddRefinements(Ty *ty, Expr const *e, Scope *_then, Scope *_else)
                                 LogRefine("    %s", type_show(ty, ref->var->type));
                                 LogRefine("--> %s", type_show(ty, ref->t0));
                         }
+                } else if (
+                        (e->left->type == EXPRESSION_MEMBER_ACCESS)
+                     && (e->left->object->type == EXPRESSION_IDENTIFIER)
+                     && IsClassName(e->right)
+                ) {
+                        RefineMemberType(
+                                ty,
+                                e,
+                                class_get(ty, e->right->symbol->class)->object_type,
+                                _then,
+                                _else
+                        );
                 }
                 break;
         }
