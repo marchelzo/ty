@@ -1,0 +1,156 @@
+ns test
+
+let thing: Array[String] | nil = nil
+
+fn go() -> Array[String] {
+    if thing != nil {
+        return thing
+    }
+    thing = ['a', 'bb', 'ccc'].filter(\#_ != 0)
+    thing
+}
+
+pub fn refine-assign-with-lambda() {
+    assert(go() == ['a', 'bb', 'ccc'])
+}
+
+let x: Int | nil = nil
+
+pub fn refine-basic-nil-check() {
+    fn f(v: Int | nil) -> Int {
+        if v == nil { return 0 }
+        v + 1
+    }
+    assert(f(nil) == 0)
+    assert(f(5) == 6)
+}
+
+pub fn refine-nil-check-else() {
+    fn f(v: Int | nil) -> Int {
+        if v != nil {
+            return v * 2
+        }
+        -1
+    }
+    assert(f(nil) == -1)
+    assert(f(3) == 6)
+}
+
+pub fn refine-nested-nil-check() {
+    fn f(a: Int | nil, b: String | nil) -> String {
+        if a == nil { return 'no a' }
+        if b == nil { return 'no b' }
+        b + a
+    }
+    assert(f(nil, nil) == 'no a')
+    assert(f(3, nil) == 'no b')
+    assert(f(3, 'bbba') == 'a')
+}
+
+pub fn refine-assign-updates-type() {
+    let v: Int | nil = nil
+    fn f() -> Int {
+        if v != nil { return v }
+        v = 42
+        v
+    }
+    assert(f() == 42)
+}
+
+pub fn refine-assign-with-method-chain() {
+    let xs: Array[Int] | nil = nil
+    fn f() -> Array[Int] {
+        if xs != nil { return xs }
+        xs = [3, 1, 2].sort().filter(\_ > 1)
+        xs
+    }
+    assert(f() == [2, 3])
+}
+
+pub fn refine-should-reject-unrefined-nil() {
+    try {
+        __eval__('
+            fn bad() -> Int {
+                let v: Int | nil = nil
+                v
+            }
+        ')
+        assert(false)
+    } catch ex :: 'CompileError' in ex.what {
+        ;
+    }
+}
+
+pub fn refine-should-reject-after-scope-exit() {
+    try {
+        __eval__('
+            fn bad(v: Int | nil) -> Int {
+                if v != nil {
+                    print(v)
+                }
+                v
+            }
+        ')
+        assert(false)
+    } catch ex :: 'CompileError' in ex.what {
+        ;
+    }
+}
+
+pub fn refine-should-accept-early-return-guard() {
+    fn good(v: Int | nil) -> Int {
+        if v == nil { return 0 }
+        v
+    }
+    assert(good(nil) == 0)
+    assert(good(7) == 7)
+}
+
+pub fn refine-sequential-guards-reuse-var() {
+    fn f(x: Int | nil, y: Int | nil) -> Int {
+        if x == nil { return 0 }
+        if y == nil { return x }
+        x + y
+    }
+    assert(f(nil, nil) == 0)
+    assert(f(3, nil) == 3)
+    assert(f(3, 4) == 7)
+}
+
+pub fn refine-and-guard() {
+    fn f(x: Int | nil, y: Int | nil) -> Int {
+        if x != nil && y != nil {
+            return x + y
+        }
+        0
+    }
+    assert(f(nil, nil) == 0)
+    assert(f(3, nil) == 0)
+    assert(f(nil, 4) == 0)
+    assert(f(3, 4) == 7)
+}
+
+pub fn refine-or-guard() {
+    fn f(x: Int | nil, y: Int | nil) -> Int {
+        if x == nil || y == nil { return 0 }
+        x + y
+    }
+    assert(f(nil, 1) == 0)
+    assert(f(1, nil) == 0)
+    assert(f(2, 3) == 5)
+}
+
+pub fn refine-nested-return-branches() {
+    fn f(x: Int | nil, y: Int | nil) -> Int {
+        if x == nil {
+            if y == nil { return 0 }
+            return y
+        }
+        if y == nil { return x }
+        x + y
+    }
+    assert(f(nil, nil) == 0)
+    assert(f(nil, 2) == 2)
+    assert(f(3, nil) == 3)
+    assert(f(3, 4) == 7)
+}
