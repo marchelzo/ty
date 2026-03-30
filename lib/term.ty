@@ -43,6 +43,7 @@ pub ns event {
     pub tag ScrollLeft;
     pub tag ScrollRight;
     pub tag Cursor;
+    pub tag Paste;
 
     pub tag Key[T] {
         nice-name() -> String where T: KeyDetails {
@@ -78,6 +79,7 @@ pub use Event = (
   | event.ScrollLeft[event.MouseDetails]
   | event.ScrollRight[event.MouseDetails]
   | event.Cursor[CursorAddress]
+  | event.Paste[String]
   | event.EOF
 )
 
@@ -348,6 +350,9 @@ fn nice-key-name(ev: event.KeyDetails) -> String {
 }
 
 ns ctlseq {
+    pub paste-start = "\x1b[200~"
+    pub paste-end   = "\x1b[201~"
+
     ns pattern {
         pub m-ev-sgr   = /^\x1b\[<(\d+);(\d+);(\d+)([mM])/
         pub k-ev-based = /^\x1b\[([0-9:]*)(?:;([0-9:]*))?(?:;([0-9:]+))?([ABCDEFHPQSu~])/
@@ -502,6 +507,7 @@ pub class TermIO {
 
     __kitty: Bool
     __mouse: Bool
+    __paste: Bool
 
     __enter: String
     __exit:  String
@@ -518,6 +524,7 @@ pub class TermIO {
         fd: Int = 0,
         mouse: Bool = true,
         kitty: Bool = true,
+        paste: Bool = true,
         events: SharedQueue[event.Event] = SharedQueue()
     ) {
         __fd = fd
@@ -531,6 +538,7 @@ pub class TermIO {
 
         __mouse = mouse
         __kitty = kitty
+        __paste = paste
 
         __ev-stream = __read-events()
         __ev-queue = events
@@ -552,29 +560,29 @@ pub class TermIO {
         }
 
         let enter = Blob()
+        let exit = Blob()
+
         if __kitty {
             // kitty progressive enchancement for keyboard input
             enter.push("\x1b[>{1|2|4|8|16}u")
+            exit.push("\x1b[<1u")
         }
         if __mouse {
             // turn on mouse event reporting
             enter.push("\x1b[?1003h")
             // ask for SGR-style mouse reporting instead of X10 compatibility mode
             enter.push("\x1b[?1006h")
-        }
-
-        let exit = Blob()
-        if __kitty {
-            exit.push("\x1b[<1u")
-        }
-        if __mouse {
             exit.push("\x1b[?1006l")
             exit.push("\x1b[?1003l")
+        }
+        if __paste {
+            // enable bracketed paste mode
+            enter.push("\x1b[?2004h")
+            exit.push("\x1b[?2004l")
         }
     
         __enter = enter.str!()
         __exit  = exit.str!()
-
 
         (__notif-r, __notif-w) = pipe()
         __reader = Thread(__run-reader)
@@ -686,6 +694,24 @@ pub class TermIO {
             stop?
         }
 
+        fn do-paste() {
+            let i0 = (i += ctlseq.paste-start.size())
+
+            for (;;) {
+                i = buf.search(i, ctlseq.paste-end) ?? #buf
+                break if i < #buf
+                while !more() {
+                    ;
+                }
+                return if closed?
+            }
+
+            let paste = buf.str!(i0, i - i0)
+            i += ctlseq.paste-end.size()
+
+            yield event.Paste(paste)
+        }
+
         // Initially off
         wait-for-resume()
 
@@ -725,8 +751,13 @@ pub class TermIO {
                 (ctlseq.pattern.cpr,        ctlseq.handler.cpr),
             ]
 
-            // Let's see if we have a terminfo entry that matches
             while i < #buf && buf[i] == 0x1b {
+                if buf.str!(i, ctlseq.paste-start.size()) == ctlseq.paste-start {
+                    do-paste()
+                    continue
+                }
+
+                // Let's see if we have a terminfo entry that matches
                 for key-str, k in __ti-keys {
                     let n = key-str.size()
                     if buf.str!(i, n) == key-str {
