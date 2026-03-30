@@ -495,6 +495,14 @@ pub class InteractiveLineReader {
             }
         }
 
+        fn new-line() {
+            let (before, after) = line.split(i)
+            lines[nr] = before
+            lines.insert(++nr, after)
+            line = lines[nr]
+            i = 0
+        }
+
         draw(0, 0)
 
         while true {
@@ -515,6 +523,9 @@ pub class InteractiveLineReader {
             let key = match ev {
                 term.event.Text(_) as t
                     => t,
+
+                term.event.Paste(_) as p
+                    => p,
 
                 term.event.Key({event: 1 or 2, *}) as key
                     => "<{key.nice-name()}>",
@@ -554,11 +565,7 @@ pub class InteractiveLineReader {
 
                 '<C-Enter>',
                 '<S-Enter>' => {
-                    let (before, after) = line.split(i)
-                    lines[nr] = before
-                    lines.insert(++nr, after)
-                    line = lines[nr]
-                    i = 0
+                    new-line()
                 },
 
                 '<C-d>' => {
@@ -881,6 +888,16 @@ pub class InteractiveLineReader {
 
                 term.event.Text(s) => {
                     line.insert(i++, s)
+                },
+
+                term.event.Paste(s) => {
+                    for s {
+                        if it == '\n' {
+                            new-line()
+                        } else {
+                            line.insert(i++, it)
+                        }
+                    }
                 },
 
                 _ => { no-op = true }
