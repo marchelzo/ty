@@ -915,17 +915,17 @@ fn _make-check(stmt: AST, col-names: Dict) {
     $$]
 }
 
-pub macro table(def) {
+pub macro table(def: _) {
     let ty.Class($cls) = def
     let fields = cls.fields
-    let table     = _snake(cls.name)
+    let table  = _snake(cls.name)
 
     if cls.`super` == nil {
         cls.`super` = $$[ $$::(Table) $$]
     }
 
     let valid-checks = []
-    let new-getters = []
+    let new-getters  = []
     for g in cls.getters {
         let ty.Func($f) = g
         if f.name == 'validate' {
@@ -968,7 +968,7 @@ pub macro table(def) {
     fields = real-fields
 
     for field in fields {
-        let (fld, dflt-node)    = _parse-field(field)
+        let (fld, dflt-node) = _parse-field(field)
         let name             = fld.name
         let constraint       = fld.constraint
 

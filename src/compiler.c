@@ -2122,6 +2122,11 @@ try_slurp_module(Ty *ty, char const *name, char const **path_out)
 
         if (source == NULL) {
                 char const *root = mod_root(ty, STATE.module->path);
+                if (root == NULL) {
+                        if ((root = getcwd(chad, sizeof chad)) == NULL) {
+                                return NULL;
+                        }
+                }
                 ty_snprintf(path, sizeof path, "%s/%s.ty", root, name);
                 if ((source = slurp(ty, path)) == NULL) {
                         return NULL;
@@ -5897,7 +5902,7 @@ AddRefinements(Ty *ty, Expr const *e, Scope *_then, Scope *_else)
                         (e->left->type == EXPRESSION_MEMBER_ACCESS)
                      && (e->left->object->type == EXPRESSION_IDENTIFIER)
                 ) {
-                        RefineMemberType(ty, e->left, NIL_TYPE, _then, _else);
+                        RefineMemberType(ty, e->left, NULL, _else, _then);
                 }
                 break;
 
@@ -5926,7 +5931,7 @@ AddRefinements(Ty *ty, Expr const *e, Scope *_then, Scope *_else)
                         (e->left->type == EXPRESSION_MEMBER_ACCESS)
                      && (e->left->object->type == EXPRESSION_IDENTIFIER)
                 ) {
-                        RefineMemberType(ty, e->left, NIL_TYPE, _else, _then);
+                        RefineMemberType(ty, e->left, NULL, _then, _else);
                 }
                 break;
 
@@ -5996,7 +6001,7 @@ AddRefinements(Ty *ty, Expr const *e, Scope *_then, Scope *_else)
                 ) {
                         RefineMemberType(
                                 ty,
-                                e,
+                                e->left,
                                 class_get(ty, e->right->symbol->class)->object_type,
                                 _then,
                                 _else
