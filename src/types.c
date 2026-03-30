@@ -4240,30 +4240,32 @@ Generalize(Ty *ty, Type *t0)
 static Type *
 NewInst0(Ty *ty, Type *t0, TypeEnv *env)
 {
-        if (CanBind(t0)) {
-                Type *t1 = LookEnv(ty, env, t0->id);
-                if (t1 == NULL) {
-                        t1 = PutEnv(
-                                ty,
-                                env,
-                                t0->id,
-                                t0->fixed ? NewStrictVar(ty) : NewVar(ty)
-                        );
-                        t1->variadic = t0->variadic;
-                        t1->packed = t0->packed;
-                }
-                return t1;
-        }
-
         Type *t00 = t0;
+        Type *t1;
 
         t0 = CloneType(ty, t0);
 
         switch (TypeType(t0)) {
         case TYPE_VARIABLE:
-                if (IsBoundVar(t0)) {
-                        t0->val = NewInst0(ty, t0->val, env);
+                if (IsTVar(t0)) {
+                        break;
                 }
+                t1 = LookEnv(ty, env, t0->id);
+                if (t1 == NULL) {
+                        if (CanBind(t0)) {
+                                t1 = PutEnv(
+                                        ty,
+                                        env,
+                                        t0->id,
+                                        t0->fixed ? NewStrictVar(ty) : NewVar(ty)
+                                );
+                                t1->variadic = t0->variadic;
+                                t1->packed = t0->packed;
+                        } else {
+                                t1 = PutEnv(ty, env, t0->id, NewInst0(ty, t0->val, env));
+                        }
+                }
+                t0 = t1;
                 break;
 
         case TYPE_SUBSCRIPT:
@@ -5272,55 +5274,6 @@ UnifyXD(Ty *ty, Type *t0, Type *t1, bool super, bool check, bool soft)
                 TLOG("After: %s", ShowType(t0));
         }
 
-        if (TypeType(t1) == TYPE_INTERSECT) {
-                if (super) {
-                        for (int i = 0; i < vN(t1->types); ++i) {
-                                TypeEnv env = {0};
-                                if (
-                                        UnifyXD(
-                                                ty,
-                                                NewInst0(ty, t0, &env),
-                                                NewInst0(ty, v__(t1->types, i),  &env),
-                                                super,
-                                                false,
-                                                soft
-                                        )
-                                ) {
-                                        UnifyXD(
-                                                ty,
-                                                t0,
-                                                v__(t1->types, i),
-                                                super,
-                                                false,
-                                                soft
-                                        );
-                                        OK("t1 is an intersection and t0 matches one of its elements: %s", ShowType(v__(t1->types, i)));
-                                        goto Success;
-                                }
-                        }
-                        goto Fail;
-                } else {
-                        for (int i = 0; i < vN(t1->types); ++i) {
-                                TypeEnv env = {0};
-                                if (!UnifyXD(
-                                        ty,
-                                        NewInst0(ty, t0, &env),
-                                        NewInst0(ty, v__(t1->types, i), &env),
-                                        super,
-                                        false,
-                                        soft
-                                )) {
-                                        goto Fail;
-                                }
-                        }
-                        for (int i = 0; i < vN(t1->types); ++i) {
-                                UnifyXD(ty, t0, v__(t1->types, i), super, false, soft);
-                        }
-                        OK("t1 :> t0 is an intersection and t0 is a subtype of every element");
-                        goto Success;
-                }
-        }
-
         if (TypeType(t0) == TYPE_UNION) {
                 if (super) {
                         if (type_check(ty, t0, t1)) {
@@ -5379,6 +5332,55 @@ UnifyXD(Ty *ty, Type *t0, Type *t1, bool super, bool check, bool soft)
                                 }
                         }
                         goto Fail;
+                }
+        }
+
+        if (TypeType(t1) == TYPE_INTERSECT) {
+                if (super) {
+                        for (int i = 0; i < vN(t1->types); ++i) {
+                                TypeEnv env = {0};
+                                if (
+                                        UnifyXD(
+                                                ty,
+                                                NewInst0(ty, t0, &env),
+                                                NewInst0(ty, v__(t1->types, i),  &env),
+                                                super,
+                                                false,
+                                                soft
+                                        )
+                                ) {
+                                        UnifyXD(
+                                                ty,
+                                                t0,
+                                                v__(t1->types, i),
+                                                super,
+                                                false,
+                                                soft
+                                        );
+                                        OK("t1 is an intersection and t0 matches one of its elements: %s", ShowType(v__(t1->types, i)));
+                                        goto Success;
+                                }
+                        }
+                        goto Fail;
+                } else {
+                        for (int i = 0; i < vN(t1->types); ++i) {
+                                TypeEnv env = {0};
+                                if (!UnifyXD(
+                                        ty,
+                                        NewInst0(ty, t0, &env),
+                                        NewInst0(ty, v__(t1->types, i), &env),
+                                        super,
+                                        false,
+                                        soft
+                                )) {
+                                        goto Fail;
+                                }
+                        }
+                        for (int i = 0; i < vN(t1->types); ++i) {
+                                UnifyXD(ty, t0, v__(t1->types, i), super, false, soft);
+                        }
+                        OK("t1 :> t0 is an intersection and t0 is a subtype of every element");
+                        goto Success;
                 }
         }
 
@@ -8286,6 +8288,10 @@ type_check_x_(Ty *ty, Type *t0, Type *t1, bool need)
                 return IsLitSubtype(t0, t1);
         }
 
+        if (t0->type == TYPE_UNION) {
+                return UnionHasSuper(ty, &t0->types, t1, need);
+        }
+
         if (t1->type == TYPE_INTERSECT) {
                 for (int i = 0; i < vN(t1->types); ++i) {
                         if (type_check_x(ty, t0, v__(t1->types, i), false)) {
@@ -8316,10 +8322,6 @@ type_check_x_(Ty *ty, Type *t0, Type *t1, bool need)
                         }
                 }
                 return true;
-        }
-
-        if (t0->type == TYPE_UNION) {
-                return UnionHasSuper(ty, &t0->types, t1, need);
         }
 
         if (t0->type == TYPE_INTERSECT) {
@@ -8904,13 +8906,6 @@ type_assign(Ty *ty, Expr *e, Type *t0, int flags)
                                 t0 = type_either(ty, NewVar(ty), type_unfixed(ty, t0));
                         }
                         if (flags & T_FLAG_UPDATE) {
-                                //Refinement *ref = ScopeRefineVar(
-                                //        ty,
-                                //        TyCompilerState(ty)->active,
-                                //        e->symbol,
-                                //        t0
-                                //);
-                                //ref->mut = true;
                                 Refinement *ref = ScopeFindRefinement(
                                         TyCompilerState(ty)->active,
                                         e->symbol
@@ -8937,7 +8932,8 @@ type_assign(Ty *ty, Expr *e, Type *t0, int flags)
                                 ShowType(e->_type)
                         );
                 } else {
-                        bool ok = UnifyX(ty, t0, OriginalType(ty, e->symbol), false, false);
+                        t2 = OriginalType(ty, e->symbol);
+                        bool ok = UnifyX(ty, t0, t2, false, false);
                         if (
                                 !ok
                              && check
@@ -8961,12 +8957,10 @@ type_assign(Ty *ty, Expr *e, Type *t0, int flags)
                                                 ty,
                                                 TyCompilerState(ty)->active,
                                                 e->symbol,
-                                                e->symbol->type
+                                                t2
                                         );
                                         ref->active = true;
-                                } else {
                                 }
-                                //ref->mut = true;
                                 e->symbol->type = t0;
                         }
                 }
@@ -9075,13 +9069,26 @@ type_assign(Ty *ty, Expr *e, Type *t0, int flags)
                 break;
 
         case EXPRESSION_MEMBER_ACCESS:
-                t1 = type_member_access_t_(
-                        ty,
-                        Resolve(ty, e->object->_type),
-                        e->member->identifier,
-                        false,
-                        true
-                );
+                t2 = Resolve(ty, e->object->_type);
+                t1 = type_member_access_t_(ty, t2, e->member->identifier, false, true);
+                if (
+                        (flags & T_FLAG_UPDATE)
+                     && (e->object->type == EXPRESSION_IDENTIFIER)
+                ) {
+                        Refinement *ref = ScopeFindRefinement(
+                                TyCompilerState(ty)->active,
+                                e->object->symbol
+                        );
+                        if (ref != NULL && ref->active) {
+                                type_intersect(
+                                        ty,
+                                        &e->object->symbol->type,
+                                        NewRecord(e->member->identifier, t0)
+                                );
+                        }
+                        t2 = OriginalType(ty, e->object->symbol);
+                        t1 = type_member_access_t_(ty, t2, e->member->identifier, false, true);
+                }
                 if (t1 != NULL) {
                         Unify(ty, t1, t0, true);
                 } else {

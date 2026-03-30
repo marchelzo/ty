@@ -8,12 +8,6 @@ if not let $libyaml = c.open('yaml') {
     throw "yaml: failed to load libyaml"
 }
 
-// ── Type aliases ──────────────────────────────────────────────────────
-
-const size_t = c.u64
-
-// ── Event type constants ──────────────────────────────────────────────
-
 enum! {
     YAML_NO_EVENT = 0,
     YAML_STREAM_START_EVENT,
@@ -28,16 +22,12 @@ enum! {
     YAML_MAPPING_END_EVENT
 };
 
-// ── Node type constants ──────────────────────────────────────────────
-
 enum! {
     YAML_NO_NODE = 0,
     YAML_SCALAR_NODE,
     YAML_SEQUENCE_NODE,
     YAML_MAPPING_NODE
 };
-
-// ── Scalar style constants ───────────────────────────────────────────
 
 enum! {
     YAML_ANY_SCALAR_STYLE = 0,
@@ -48,11 +38,7 @@ enum! {
     YAML_FOLDED_SCALAR_STYLE
 };
 
-// ── Encoding constants ───────────────────────────────────────────────
-
 const YAML_UTF8_ENCODING = 1
-
-// ── Sequence/mapping style constants ─────────────────────────────────
 
 const YAML_ANY_SEQUENCE_STYLE   = 0
 const YAML_BLOCK_SEQUENCE_STYLE = 1
@@ -62,8 +48,6 @@ const YAML_ANY_MAPPING_STYLE   = 0
 const YAML_BLOCK_MAPPING_STYLE = 1
 const YAML_FLOW_MAPPING_STYLE  = 2
 
-// ── YAML value type (mirrors JSON type from prelude) ─────────────────
-
 use YAML = String
          | Int
          | Float
@@ -72,7 +56,6 @@ use YAML = String
          | Dict[String, YAML]
          | nil
 
-// ── C struct definitions ─────────────────────────────────────────────
 C! struct YamlEvent {
     c.int tp;
     c.int _pad0;
@@ -116,8 +99,6 @@ C! struct YamlEmitter {
     c.u8 _rest[416];
 }
 
-// ── C function bindings ──────────────────────────────────────────────
-
 C! libyaml fn {
     const char *yaml_get_version_string(void);
 
@@ -157,9 +138,7 @@ C! libyaml fn {
     int yaml_alias_event_initialize(void *ev, void *anch);
 }
 
-// ── Error class ──────────────────────────────────────────────────────
-
-pub class YAMLError {
+pub class YAMLError < RuntimeError {
     message: String
     line: ?Int
     column: ?Int
@@ -170,7 +149,7 @@ pub class YAMLError {
         self.column = column
     }
 
-    __str__() -> String {
+    what -> String {
         if let $line = self.line {
             if let $col = self.column {
                 return "YAMLError: {message} (line {line + 1}, column {col + 1})"
@@ -180,8 +159,6 @@ pub class YAMLError {
         "YAMLError: {message}"
     }
 }
-
-// ── Event field access helpers ───────────────────────────────────────
 
 fn event-scalar-value(ev: YamlEvent) -> String {
     if ev.val == nil { return '' }
@@ -198,15 +175,11 @@ fn event-anchor(ev: YamlEvent) -> ?String {
     c.str(ev.anchor)
 }
 
-// ── Parser error extraction ──────────────────────────────────────────
-
 fn parser-error(parser: YamlParser) -> YAMLError {
     let problem = parser.problem
     let msg = if problem != nil { c.str(problem) } else { 'unknown error' }
     YAMLError(msg, Int(parser.pm_line), Int(parser.pm_col))
 }
-
-// ── Scalar type resolution ───────────────────────────────────────────
 
 fn resolve-float(value: String) {
     let lower = value.lower()
@@ -281,8 +254,6 @@ fn resolve-scalar(value: String, tg: ?String, style: Int) {
 
     value
 }
-
-// ── Event-based parser ───────────────────────────────────────────────
 
 fn parse-key(parser: YamlParser, ev: YamlEvent, anchors: Dict[String, YAML]) -> String {
     if ev.tp == YAML_SCALAR_EVENT {
@@ -461,8 +432,6 @@ fn do-parse-all(input: String) -> Array[YAML] {
 
     parse-document(parser, ev)
 }
-
-// ── Emitter helpers ──────────────────────────────────────────────────
 
 fn emit-event(emitter, event) {
     if yaml_emitter_emit(emitter.get(), event.get()) != 1 {
@@ -653,10 +622,7 @@ fn do-emit-all(values: Array, indent: Int = 2, width: Int = 80, flow: Bool = fal
     chunks.join('')
 }
 
-// ── Public API ────────────────────────────────────────────────────────
-
 /// Parse a YAML string into a Ty value.
-/// Mappings → Dict, sequences → Array, scalars → String/Int/Float/Bool/nil.
 pub fn parse(input: String) -> YAML {
     do-parse(input)
 }

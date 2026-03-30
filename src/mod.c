@@ -11,6 +11,10 @@ mod_init(TY *ty)
 char const *
 mod_root(Ty *ty, char const *path)
 {
+        if (strchr(path, '/') == NULL) {
+                return NULL;
+        }
+
         char buf0[PATH_MAX + 1];
         char buf1[PATH_MAX + 1];
         char *dir = directory_of(path, buf0);

@@ -2919,15 +2919,7 @@ fn -(range: Range, n: Int) {
     )
 }
 
-use JSON = String
-         | Int
-         | Float
-         | Bool
-         | Array[JSON]
-         | Dict[String, JSON]
-         | nil
-
-fn json::parse(json: String) -> JSON;
+fn json::parse(json: String) -> _;
 fn json::parse[T](schema: Type[T], json: String) -> T;
 fn json::encode(value: Any) -> String;
 

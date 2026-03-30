@@ -698,8 +698,8 @@ pub class Response {
 
     ok -> Bool { status in 200..300 }
 
-    text() -> String { body.str() }
-    json() -> JSON { json::parse(text()) }
+    text() -> String { body.str()          }
+    json() -> _      { json::parse(text()) }
 
     header(name: String) -> String | nil {
         let key = name.lower()
@@ -828,14 +828,22 @@ pub class SSEEvent {
         self.retry = retry
     }
 
-    json() -> JSON { json::parse(data) }
+    json() -> _ { json::parse(data) }
 
     __str__() -> String {
         let parts = []
-        if let $e = event { parts.push("event: {e}") }
-        for line in data.lines() { parts.push("data: {line}") }
-        if let $i = id { parts.push("id: {i}") }
-        if let $r = retry { parts.push("retry: {r}") }
+        if event {
+            parts.push("event: {event}")
+        }
+        for data.lines() {
+            parts.push("data: {it}")
+        }
+        if id {
+            parts.push("id: {id}")
+        }
+        if retry {
+            parts.push("retry: {retry}")
+        }
         parts.join('\n')
     }
 }
@@ -1226,8 +1234,9 @@ pub class StreamResponse {
         result
     }
 
-    text() -> String { read().str() }
-    json() -> JSON { json::parse(text()) }
+    text() -> String { read().str()        }
+    json() -> _      { json::parse(text()) }
+
     close() { __stream.close() }
 }
 
