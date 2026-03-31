@@ -224,8 +224,8 @@ fn tuple[...Ts](xs: ...Ts) -> (Ts,);
 fn tuple(*xs: _, %kws: _) -> (*_);
 fn abs(k: Int) -> Int;
 fn abs(x: Float) -> Float;
-fn floor(x: Int | Float) -> Int;
-fn ceil(x: Int | Float) -> Int;
+fn floor(x: Int | Float) -> Float;
+fn ceil(x: Int | Float) -> Float;
 fn round(x: Int | Float) -> Float;
 fn iround(x: Int | Float) -> Int;
 fn ord(character: String) -> Int;
@@ -1447,11 +1447,11 @@ class Float {
         math.sqrt(self)
     }
 
-    floor -> Int {
+    floor -> Float {
         ::floor(self)
     }
 
-    ceil -> Int {
+    ceil -> Float {
         ::ceil(self)
     }
 

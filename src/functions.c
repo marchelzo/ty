@@ -77,6 +77,7 @@ typedef struct stat StatStruct;
 #include <sys/ioctl.h>
 #include <sys/mman.h>
 #include <sys/mman.h>
+#include <sys/random.h>
 #include <sys/socket.h>
 #include <sys/time.h>
 #include <sys/un.h>
@@ -615,6 +616,88 @@ BUILTIN_FUNCTION(srand)
         return NIL;
 }
 
+BUILTIN_FUNCTION(random)
+{
+        ASSERT_ARGC("random()", 0, 1, 2);
+
+        if (argc == 0) {
+                u64 v;
+#if defined(__linux__) || defined(__FreeBSD__)
+                while (getrandom(&v, sizeof v, 0) < 0) {
+                        if (errno != EINTR) bP("getrandom() failed: %s", strerror(errno));
+                }
+#elif defined(__APPLE__) && defined(__MACH__)
+                if (getentropy(&v, sizeof v) != 0) {
+                        bP("getentropy() failed: %s", strerror(errno));
+                }
+#elif defined(_WIN32)
+                if (BCryptGenRandom(NULL, (u8 *)&v, sizeof v, BCRYPT_USE_SYSTEM_PREFERRED_RNG) < 0) {
+                        bP("BCryptGenRandom() failed");
+                }
+#else
+  #error "random(): unsupported platform"
+#endif
+                return INTEGER((imax)v);
+        }
+
+        isize n = INT_ARG(0);
+
+        if (n <= 0) {
+                bP("count must be positive");
+        }
+
+        Value blob;
+
+        if (argc == 2) {
+                blob = ARGx(1, VALUE_BLOB);
+        } else {
+                blob = BLOB(value_blob_new(ty));
+        }
+
+        usize off = vN(*blob.blob);
+        uvR(*blob.blob, n + off);
+
+        u8 *p = vZ(*blob.blob);
+        usize rem = (usize)n;
+
+#if defined(__linux__) || defined(__FreeBSD__)
+        while (rem > 0) {
+                isize r = getrandom(p, rem, 0);
+                if (r < 0) {
+                        if (errno == EINTR) continue;
+                        bP("getrandom() failed: %s", strerror(errno));
+                }
+                p   += (usize)r;
+                rem -= (usize)r;
+        }
+#elif defined(__APPLE__) && defined(__MACH__)
+        while (rem > 0) {
+                usize chunk = (rem < 256) ? rem : 256;
+                if (getentropy(p, chunk) != 0) {
+                        bP("getentropy() failed: %s", strerror(errno));
+                }
+                p   += chunk;
+                rem -= chunk;
+        }
+#elif defined(_WIN32)
+        while (rem > 0) {
+                ULONG chunk = (rem > 0xFFFFFFFFUL) ? 0xFFFFFFFFUL : (ULONG)rem;
+                NTSTATUS s = BCryptGenRandom(NULL, p, chunk, BCRYPT_USE_SYSTEM_PREFERRED_RNG);
+                if (s < 0) {
+                        bP("BCryptGenRandom() failed: 0x%lx", (unsigned long)s);
+                }
+                p   += chunk;
+                rem -= chunk;
+        }
+#else
+  #error "random(): unsupported platform"
+#endif
+
+        vN(*blob.blob) = off + n;
+
+        return blob;
+}
+
 BUILTIN_FUNCTION(abs)
 {
         ASSERT_ARGC("abs()", 1);
@@ -892,7 +975,7 @@ CustomBase:
         base = INT_ARG(1);
 
         if (base < 0 || base == 1 || base > 36) {
-                bP("invalid base(): expected 0 or 2..36, but got %"PRIiMAX, b.z);
+                bP("invalid base: expected 0 or 2..36, but got %"PRIiMAX, b.z);
         }
 
         if (sN(s) >= TY_TMP_N) {

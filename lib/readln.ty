@@ -951,9 +951,9 @@ pub class InteractiveLineReader {
 
 fn progress-string(progress: Float, width: Int) {
     let progress = progress.clamp(0.0, 1.0)
-    let whole-width = floor(progress * width)
+    let whole-width = int(progress * width)
     let remainder-width = (progress * width) - whole-width
-    let part-width = floor(remainder-width * 8)
+    let part-width = int(remainder-width * 8)
     let part-char = [' ', '▏', '▎', '▍', '▌', '▋', '▊', '▉'][part-width]
 
     if width - whole-width - 1 < 0 {
