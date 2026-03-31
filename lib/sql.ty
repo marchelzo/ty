@@ -576,7 +576,7 @@ pub class Query[T] : Iterable[T] {
         _clone(incs=[*__incs, *names])
     }
 
-    where(cond: String = '', *ps) -> Query[T] {
+    `where`(cond: String = '', *ps) -> Query[T] {
         if cond == '' { return self }
         let new-cond = __cond
             ? "({__cond}) AND ({cond})"
