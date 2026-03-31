@@ -39,6 +39,7 @@ static struct {
   { .module = NULL,         .name = "readLine",                 .value = BUILTIN(builtin_read)                   },
   { .module = NULL,         .name = "rand",                     .value = BUILTIN(builtin_rand)                   },
   { .module = NULL,         .name = "srand",                    .value = BUILTIN(builtin_srand)                  },
+  { .module = NULL,         .name = "random",                   .value = BUILTIN(builtin_random)                 },
   { .module = NULL,         .name = "abs",                      .value = BUILTIN(builtin_abs)                    },
   { .module = NULL,         .name = "gcd",                      .value = BUILTIN(builtin_gcd)                    },
   { .module = NULL,         .name = "lcm",                      .value = BUILTIN(builtin_lcm)                    },
