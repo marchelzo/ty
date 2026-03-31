@@ -383,7 +383,6 @@ pub class FCGIApp {
 
             match os.poll([__socket, *[(c.0, os.POLLIN, c.1) for c in __clients]], 50) {
                 Ok(fds) => {
-                    warn!(fds)
                     for match fds {
                         (_, ev) and (ev & os.POLLIN) => {
                             error!("Accepting connection!")
