@@ -184,7 +184,7 @@ fn urlDecode(s: String) -> Dict[String, String] {
     return %{k: v for [k, v] in pairs};
 }
 
-class FCGIRequest {
+pub class FCGIRequest {
     __app: FCGIApp
     __fd: Int
     __stream: io.Stream

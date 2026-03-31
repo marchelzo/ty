@@ -1,5 +1,3 @@
-ns test
-
 pub fn len() {
     let s = 'hello world'
     assert(#s == 11)
@@ -360,7 +358,7 @@ pub fn sub-callback() {
     assert('abc'.sub(/\w/, \_.upper()) == 'ABC')
     assert('abc'.sub(/(\w)/, |[_, c]| -> c.upper()) == 'ABC')
     assert('hello world'.sub(/\w+/, |m| -> m.upper()) == 'HELLO WORLD')
-    fn capitalize(m: String) { m[0].upper() + m[1;] }
+    fn capitalize(m) { m[0].upper() + m[1;] }
     assert('hello world'.sub(/\w+/, capitalize) == 'Hello World')
     assert('abc'.sub(/\w+/, |m| -> "{#m}") == '3')
     assert('abc'.sub(/(\w+)/, |m| -> "{#m}") == '2')
