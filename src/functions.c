@@ -640,24 +640,25 @@ BUILTIN_FUNCTION(random)
                 return INTEGER((imax)v);
         }
 
-        isize n = INT_ARG(0);
+        isize n;
+        Blob *blob;
+
+        if (argc == 2) {
+                blob = ARGx(0, VALUE_BLOB).blob;
+                n    = INT_ARG(1);
+        } else {
+                blob = value_blob_new(ty);
+                n    = INT_ARG(0);
+        }
 
         if (n <= 0) {
                 bP("count must be positive");
         }
 
-        Value blob;
+        usize off = vN(*blob);
+        uvR(*blob, n + off);
 
-        if (argc == 2) {
-                blob = ARGx(1, VALUE_BLOB);
-        } else {
-                blob = BLOB(value_blob_new(ty));
-        }
-
-        usize off = vN(*blob.blob);
-        uvR(*blob.blob, n + off);
-
-        u8 *p = vZ(*blob.blob);
+        u8 *p = vZ(*blob);
         usize rem = (usize)n;
 
 #if defined(__linux__) || defined(__FreeBSD__)
@@ -693,9 +694,9 @@ BUILTIN_FUNCTION(random)
   #error "random(): unsupported platform"
 #endif
 
-        vN(*blob.blob) = off + n;
+        vN(*blob) = off + n;
 
-        return blob;
+        return BLOB(blob);
 }
 
 BUILTIN_FUNCTION(abs)
