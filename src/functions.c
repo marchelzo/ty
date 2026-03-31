@@ -1435,6 +1435,7 @@ doregex(Ty *ty, Value const *pattern, Value const *flags, bool v)
                         case 'u': options |= PCRE2_UTF | PCRE2_UCP; break;
                         case 'm': options |= PCRE2_MULTILINE;       break;
                         case 'x': options |= PCRE2_EXTENDED;        break;
+                        case 's': options |= PCRE2_DOTALL;          break;
                         case 'v': v = true;                         break;
                         }
                 }

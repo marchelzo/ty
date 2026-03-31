@@ -947,6 +947,7 @@ lexregex(Ty *ty, bool strict)
                 case 'u': flags |= PCRE2_UTF | PCRE2_UCP; break;
                 case 'm': flags |= PCRE2_MULTILINE;       break;
                 case 'x': flags |= PCRE2_EXTENDED;        break;
+                case 's': flags |= PCRE2_DOTALL;          break;
                 case 'v': detailed = true;                break;
                 default:  goto BadFlags;
                 }
