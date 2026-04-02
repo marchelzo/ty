@@ -707,7 +707,7 @@ pub fn hsl-hex(h, s, l) {
     "#{r:02x}{g:02x}{b:02x}"
 }
 
-pub fn random(
+pub fn rand-hex(
     h: FloatRange = (0.0, 1.0),
     s: FloatRange = (0.4, 1.0),
     l: FloatRange = (0.6, 0.75)

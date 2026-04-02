@@ -6416,6 +6416,7 @@ ClassFunctionType(Ty *ty, Type *t0)
                 break;
 
         default:
+                t2 = NewFunction(t1);
                 break;
         }
 
@@ -7045,10 +7046,14 @@ type_call_t(Ty *ty, Expr const *e, Type *t0)
                 kwargs = &e->kwargs;
                 kws = &e->kws;
                 break;
+
         case EXPRESSION_METHOD_CALL:
                 args = &e->method_args;
                 kwargs = &e->method_kwargs;
                 kws = &e->method_kws;
+                break;
+
+        default:
                 break;
         }
 
@@ -10425,8 +10430,8 @@ TypeOf2Op(Ty *ty, int op, Type *t0, Type *t1)
         if (
                 (TypeType(t0) == TYPE_TUPLE)
              && (TypeType(t1) == TYPE_TUPLE)
-             && (op == OP_LT || op == OP_GT || op == OP_LEQ || op == OP_GEQ || op == OP_CMP)
              && (vN(t0->types) == vN(t1->types))
+             && (op == OP_LT || op == OP_GT || op == OP_LEQ || op == OP_GEQ || op == OP_CMP)
         ) {
                 for (int i = 0; i < vN(t0->types); ++i) {
                         Type *r = TypeOf2Op(ty, op, v__(t0->types, i), v__(t1->types, i));
@@ -12137,7 +12142,7 @@ type_approx_class(Type const *t0)
 void
 types_reset(Ty *ty)
 {
-        vN(ToSolve) = (vN(WorkIndex) > 0) ? *vvL(WorkIndex) : 0;
+        vN(ToSolve) = (vN(WorkIndex) > 0) ? v_L(WorkIndex) : 0;
         FUEL = MAX_FUEL;
 }
 

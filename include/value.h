@@ -1465,7 +1465,7 @@ as_type(Value const *v)
         return v->ptr;
 }
 
-#define PACK_TYPES(t1, t2) (((t1) << 8) | (t2))
+#define PACK_TYPES(t1, t2) ((((u64)t1) << 32) | ((u32)t2))
 #define    PAIR_OF(t)      PACK_TYPES(t, t)
 
 static inline int
