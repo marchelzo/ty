@@ -796,8 +796,9 @@ pub fn from-bytes(blob: Blob, offset: Int, count: Int, scale: Float = 1.0, dtype
 
 pub fn one-hot(labels: NDArray, classes: Int = 10, dtype: DType = float64) -> NDArray {
     let n = labels.size
+    let ids = __cast-if-needed(labels.ptr, n, labels.dtype, dtype)
     let buf = __alloc(dtype, n * classes)
-    accelerate.oneHot(labels.ptr, buf, n, classes, labels.dtype.id)
+    accelerate.oneHot(ids, buf, n, classes, dtype.id)
     NDArray(buf, [n, classes], dtype)
 }
 
