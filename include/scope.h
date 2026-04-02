@@ -365,7 +365,7 @@ void
 ScopeReset(Scope *scope);
 
 void
-ScopeFixup(Ty *ty, Scope *scope);
+ScopeFinalize(Ty *ty, Scope *scope);
 
 Symbol *
 ScopeFindRecycled(Scope const *scope, char const *id);

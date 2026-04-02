@@ -918,7 +918,7 @@ scope_reset(void)
 }
 
 void
-ScopeFixup(Ty *ty, Scope *scope)
+ScopeFinalize(Ty *ty, Scope *scope)
 {
         for (i32 i = 0; i < scope->size; ++i) {
                 for (Symbol *sym = scope->table[i]; sym != NULL; sym = sym->next) {

@@ -983,7 +983,6 @@ pub fn accuracy(probs: NDArray, labels: NDArray) -> Float {
     accelerate.accuracy(preds.ptr, labels.ptr, labels.size, labels.dtype.id, probs.shape[1])
 }
 
-
 pub ns linalg {
     fn __transpose-f64(src: Ptr[_], m: Int, n: Int) -> Ptr[_] {
         let dst = c.new-auto(c.double, m * n)

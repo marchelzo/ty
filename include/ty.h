@@ -1856,7 +1856,7 @@ xoshiro256ss(Ty *ty)
 inline static double
 TyRandom(Ty *ty)
 {
-        return xoshiro256ss(ty) / (double)UINT64_MAX;
+        return xoshiro256ss(ty) / 0x1p64;
 }
 
 inline static isize
