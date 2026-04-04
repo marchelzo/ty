@@ -134,6 +134,8 @@ fn -(a: Int, b: Bool) -> Int;
 fn +(a: Int, b: Bool) -> Int;
 fn *(a: Int, b: Bool) -> Int;
 
+fn **(a: Float, b: Float) -> Float;
+
 fn <(a: Int, b: Int) -> Bool;
 fn <(a: Float, b: Float) -> Bool;
 fn <(a: Int, b: Float) -> Bool;
@@ -1602,8 +1604,14 @@ class Ptr[T] : IntoPtr[T] {
 
     -(other: Ptr[T]) -> Int;
 
+    #() -> Int;
+
     __ptr__() -> Ptr[T] {
         self
+    }
+
+    size() -> Int {
+        #self
     }
 
     static [](x) {

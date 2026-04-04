@@ -4331,6 +4331,7 @@ void
 DoCount(Ty *ty, bool exec)
 {
         Value v = pop();
+        ffi_type *type;
 
         if (v.type & VALUE_TAGGED) {
                 xpush(unwrap(ty, &v));
@@ -4350,6 +4351,11 @@ DoCount(Ty *ty, bool exec)
         case VALUE_CLASS:
                 xpush(v);
                 CallMethod(ty, NAMES._len_, 0, 0, false, exec);
+                break;
+
+        case VALUE_PTR:
+                type = (v.extra != NULL) ? v.extra : &ffi_type_uint8;
+                xpush(INTEGER(type->size));
                 break;
 
         default:

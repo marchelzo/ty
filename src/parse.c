@@ -20,6 +20,7 @@
 #include "value.h"
 #include "vec.h"
 #include "vm.h"
+#include "json.h"
 
 #define BINARY_OPERATOR(name, t, prec, right_assoc)                        \
         static Expr *                                                      \
@@ -1026,6 +1027,33 @@ ParseError(Ty *ty, char const *fmt, ...)
         Location start = EStart;
         Location end = EEnd;
 
+#if defined(TY_LS)
+        GC_STOP();
+
+        Value msg = vSsz(vv(ErrorBuffer));
+        Value trace = ARRAY(vA());
+        vAp(
+                trace.array,
+                vTn(
+                        "file", xSz(CompilerCurrentModule(ty)->path),
+                        "module", vSsz(CompilerCurrentModule(ty)->name),
+                        "start", vTn(
+                                "line", INTEGER(start.line + 1),
+                                "col", INTEGER(start.col + 1)
+                        ),
+                        "end", vTn(
+                                "line", INTEGER(end.line + 1),
+                                "col", INTEGER(end.col + 1)
+                        )
+                )
+        );
+        Value record = vTn("message", msg, "trace", trace);
+        v0(ErrorBuffer);
+        json_dump(ty, &record, &ErrorBuffer);
+        xvP(ErrorBuffer, '\0');
+
+        GC_RESUME();
+#else
         char buffer[1024];
 
         snprintf(
@@ -1117,6 +1145,7 @@ ParseError(Ty *ty, char const *fmt, ...)
                 TERM(39),
                 TERM(22)
         );
+#endif
 
 End:
         if (vN(SavePoints) > 0) {

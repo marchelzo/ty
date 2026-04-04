@@ -13,8 +13,9 @@
 
 #include "vec.h"
 #include "token.h"
-#include "xd.h"
+#include "value.h"
 #include "lex.h"
+#include "json.h"
 #include "compiler.h"
 
 static Token
@@ -45,6 +46,45 @@ error(Ty *ty, char const *fmt, ...)
 {
         va_list ap;
 
+#if defined(TY_LS)
+        dump(
+                &ErrorBuffer,
+                "%s%sSyntaxError%s%s: ",
+                TERM(1),
+                TERM(31),
+                TERM(22),
+                TERM(39)
+        );
+
+        va_start(ap, fmt);
+        vdump(&ErrorBuffer, fmt, ap);
+        va_end(ap);
+        GC_STOP();
+
+        Value msg = vSsz(vv(ErrorBuffer));
+        Value trace = ARRAY(vA());
+        vAp(
+                trace.array,
+                vTn(
+                        "file", xSz(CompilerCurrentModule(ty)->path),
+                        "module", vSsz(CompilerCurrentModule(ty)->name),
+                        "start", vTn(
+                                "line", INTEGER(Start.line + 1),
+                                "col", INTEGER(Start.col + 1)
+                        ),
+                        "end", vTn(
+                                "line", INTEGER(state.loc.line + 1),
+                                "col", INTEGER(state.loc.col + 1)
+                        )
+                )
+        );
+        Value record = vTn("message", msg, "trace", trace);
+        v0(ErrorBuffer);
+        json_dump(ty, &record, &ErrorBuffer);
+        xvP(ErrorBuffer, '\0');
+
+        GC_RESUME();
+#else
         dump(
                 &ErrorBuffer,
                 "%s%sSyntaxError%s%s %s%s%s:%s%d%s:%s%d%s: ",
@@ -96,6 +136,7 @@ error(Ty *ty, char const *fmt, ...)
                 TERM(31),
                 TERM(39)
         );
+#endif
 
         longjmp(jb, 1);
 }

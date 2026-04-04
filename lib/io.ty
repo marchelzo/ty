@@ -88,11 +88,16 @@ pub class Stream : Iter[String] {
         stdio.fgetc(__f)
     }
 
+    read(n: Int, buf: ?Blob) -> Blob {
+        stdio.fread(__f, n, buf)
+    }
+
+    write(data: String | Blob | Ptr[Any], len: Int = data.size()) -> Int {
+        stdio.fwrite(__f, data, len)
+    }
+
     write(s: Any) -> Int {
-        match s {
-            _ :: Blob | String => stdio.fwrite(__f, s),
-            _                  => stdio.fwrite(__f, str(s))
-        }
+        stdio.fwrite(__f, str(s))
     }
 
     writeSigned(*args) {

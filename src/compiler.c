@@ -13929,11 +13929,10 @@ compiler_compile_source(
 #endif
 
         if (TY_CATCH_ERROR()) {
-                TY_CATCH();
                 scope_set_symbol(ty, symbol);
                 AbandonModule(ty, module);
                 STATE = save;
-                return NULL;
+                TY_RETHROW();
         }
 
         Stmt **prog = compile(ty, source);
