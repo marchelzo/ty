@@ -1,6 +1,9 @@
 import ffi as c (C!)
 import math
-import accelerate hiding (from-bytes, softmax, cross-entropy, one-hot, to-list, promote, accuracy)
+import accelerate hiding (
+    from-bytes, softmax, cross-entropy, one-hot, to-list, promote, accuracy,
+    causal-softmax, causal-softmax-backward
+)
 
 #|if __apple__
 if not let $lib = c.dlopen('/System/Library/Frameworks/Accelerate.framework/Accelerate')
@@ -305,6 +308,8 @@ pub class NDArray {
         if #_shape == 1 { return vget(_data, ri, _dtype.id) }
         let sub-size = _size / _shape[0]
         let out = __alloc(_dtype, sub-size)
+        assert(#_data == _dtype.item-size)
+        assert(#out == #(_data + ri * sub-size))
         vcopy(_data + ri * sub-size, out, sub-size, _dtype.id)
         NDArray(out, _shape.slice(1, #_shape - 1), _dtype)
     }
@@ -392,6 +397,7 @@ pub class NDArray {
 
     copy() -> NDArray {
         let out = __alloc(_dtype, _size)
+        assert(#out == #_data)
         vcopy(_data, out, _size, _dtype.id)
         NDArray(out, _shape, _dtype)
     }
@@ -524,6 +530,18 @@ pub class NDArray {
         let out = __alloc(_dtype, mn)
         for i in 0..mn { vset(out, i, vget(_data, i * n + i, _dtype.id), _dtype.id) }
         NDArray(out, [mn], _dtype)
+    }
+
+    slice-cols(start: Int, width: Int) -> NDArray {
+        let rows = _shape[0]
+        let cols = _shape[1]
+        let buf = accelerate.slice-cols(_data, rows, cols, start, width, _dtype.id)
+        NDArray(buf, [rows, width], _dtype)
+    }
+
+    split-heads(n-heads: Int) -> Array[NDArray] {
+        let head-dim = _shape[1] / n-heads
+        [slice-cols(h * head-dim, head-dim) for h in ..n-heads]
     }
 
     to-list() -> Array[Float | Int] {
@@ -894,7 +912,7 @@ fn @(a: NDArray, b: NDArray) -> NDArray {
     NDArray(out, [a0, b1], float64)
 }
 
-__jit__ pub fn matmul(a: NDArray, b: NDArray, trans-a: Bool = false, trans-b: Bool = false) -> NDArray {
+pub fn matmul(a: NDArray, b: NDArray, trans-a: Bool = false, trans-b: Bool = false) -> NDArray {
     if !trans-a && !trans-b { return a @ b }
     let af = __cast-if-needed(a.ptr, a.size, a.dtype, float64)
     let bf = __cast-if-needed(b.ptr, b.size, b.dtype, float64)
@@ -938,6 +956,7 @@ pub fn vstack(arrays: Array[NDArray]) -> NDArray {
     let off = 0
     for a in arrays {
         let ap = __cast-if-needed(a.ptr, a.size, a.dtype, dt)
+        assert(#ap, #(buf + off))
         vcopy(ap, buf + off, a.size, dt.id)
         off += a.size
     }
@@ -945,19 +964,32 @@ pub fn vstack(arrays: Array[NDArray]) -> NDArray {
 }
 
 pub fn hstack(arrays: Array[NDArray]) -> NDArray {
-    if #arrays == 0 { throw ValueError("hstack: empty") }
-    if arrays[0].ndim != 1 { throw ValueError("hstack: need 1D") }
-    let dt = arrays[0].dtype
-    let total = 0
-    for a in arrays { total += a.size }
-    let buf = __alloc(dt, total)
-    let off = 0
-    for a in arrays {
-        let ap = __cast-if-needed(a.ptr, a.size, a.dtype, dt)
-        vcopy(ap, buf + off, a.size, dt.id)
-        off += a.size
+    if #arrays == 0 {
+        throw ValueError("hstack: empty")
     }
-    NDArray(buf, [total], dt)
+    if arrays[0].ndim == 1 {
+        let dt = arrays[0].dtype
+        let total = 0
+        for a in arrays { total += a.size }
+        let buf = __alloc(dt, total)
+        let off = 0
+        for a in arrays {
+            let ap = __cast-if-needed(a.ptr, a.size, a.dtype, dt)
+            vcopy(ap, buf + off, a.size, dt.id)
+            off += a.size
+        }
+        NDArray(buf, [total], dt)
+    } else if arrays[0].ndim == 2 {
+        let dt = arrays[0].dtype
+        let rows = arrays[0].shape[0]
+        let ptrs = [a.ptr for a in arrays]
+        let widths = [a.shape[1] for a in arrays]
+        let total-cols = widths.sum(0)
+        let buf = accelerate.hstack2d(ptrs, widths, #arrays, rows, dt.id)
+        NDArray(buf, [rows, total-cols], dt)
+    } else {
+        throw ValueError("hstack: need 1D or 2D")
+    }
 }
 
 pub fn concatenate(arrays: Array[NDArray], axis: Int = 0) -> NDArray {
@@ -969,6 +1001,23 @@ pub fn softmax(logits: NDArray) -> NDArray {
     let [n, k] = logits.shape
     let out = c.new-auto(c.double, n * k)
     accelerate.softmax(f, out, n, k)
+    NDArray(out, [n, k], float64)
+}
+
+pub fn causal-softmax(scores: NDArray) -> NDArray {
+    let f = __cast-if-needed(scores.ptr, scores.size, scores.dtype, float64)
+    let [n, k] = scores.shape
+    let out = c.new-auto(c.double, n * k)
+    accelerate.causalSoftmax(f, out, n, k)
+    NDArray(out, [n, k], float64)
+}
+
+pub fn causal-softmax-backward(probs: NDArray, grad: NDArray) -> NDArray {
+    let pf = __cast-if-needed(probs.ptr, probs.size, probs.dtype, float64)
+    let gf = __cast-if-needed(grad.ptr, grad.size, grad.dtype, float64)
+    let [n, k] = probs.shape
+    let out = c.new-auto(c.double, n * k)
+    accelerate.causalSoftmaxBackward(pf, gf, out, n, k)
     NDArray(out, [n, k], float64)
 }
 

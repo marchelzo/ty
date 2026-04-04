@@ -232,11 +232,11 @@ main(int argc, char *argv[])
                 Value result = NIL;
 
                 if (TY_CATCH_ERROR()) {
+                        result = vTn("error", vSsz(TyError(ty)));
                         char *trace = FormatTrace(ty, NULL, NULL);
                         Value   exc = TY_CATCH();
                         dump(&ErrorBuffer, "%s\n\n%s", VSC(&exc), trace);
                         fputs(vv(ErrorBuffer), stderr);
-                        result = vTn("error", vSsz(vv(ErrorBuffer)));
                         goto NextRequest;
                 }
 
@@ -246,7 +246,7 @@ main(int argc, char *argv[])
                 switch (what) {
                 case LS_COMPILE:
                         v = tget_or(&req, "source", NIL);
-                        AllowErrors = tget_or(&req, "check", NIL).type == VALUE_NIL;
+                        AllowErrors = (tget_or(&req, "check", NIL).type == VALUE_NIL);
 
                         if (v.type == VALUE_NIL) {
                                 goto EndRequest;
@@ -255,7 +255,8 @@ main(int argc, char *argv[])
                         source = TY_0_C_STR(v);
 
                         if (
-                                   (LastFile != NULL)
+                                   AllowErrors
+                                && (LastFile != NULL)
                                 && (LastSource != NULL)
                                 && s_eq(file, LastFile)
                                 && s_eq(source, LastSource)

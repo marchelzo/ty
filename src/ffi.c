@@ -534,8 +534,8 @@ cffi_new_auto(Ty *ty, int argc, Value *kwargs)
         ASSERT_ARGC("ffi.new-auto()", 1, 2, 3);
 
         ffi_type *t = PTR_ARG(0);
-        usize count = (argc == 2) ? INT_ARG(1) : 1;
-        void *init  = (argc == 3) ? ptr_from(ty, &ARG(2)) : NULL;
+        usize count = (argc >= 2) ? INT_ARG(1) : 1;
+        void *init  = (argc >= 3) ? ptr_from(ty, &ARG(2)) : NULL;
 
         void *mem;
         if (init == NULL) {

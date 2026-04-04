@@ -235,15 +235,23 @@ class TaskInfo {
     id: Int
     desc: String
     total: Int | nil
-    current: Sync[Int]
     start-time: Float
+    _current: Atomic
     
     init(id: Int, desc: String = "", total: Int | nil = nil) {
         self.id = id
         self.desc = desc
         self.total = total
-        self.current = Sync(0)
-        self.start-time = now()
+        start-time = now()
+        _current = Atomic(0)
+    }
+
+    current -> Int {
+        _current.load()
+    }
+
+    update(n: Int = 1) {
+        _current.fetch-add(n)
     }
     
     progress() -> Float | nil {
@@ -287,7 +295,7 @@ pub class Tqdm[T] : Iterable[T] {
         position: Int | nil = nil
     ) {
         _iterable       = iterable
-        _total          = iterable.?`#`()
+        _total          = total ?? iterable.?`#`()
         _desc           = desc
         _leave          = leave
         _ncols          = ncols
@@ -394,13 +402,16 @@ pub class Tqdm[T] : Iterable[T] {
             let bar-w = _progress-bar.width
             let real-filled = int(p.clamp(0.0, 1.0) * bar-w)
 
-            if _stopping || real-filled == bar-w {
+            let display-p = if _stopping || real-filled == bar-w {
                 _display-filled = real-filled
+                p.clamp(0.0, 1.0)
             } else if _display-filled < real-filled {
                 _display-filled += 1
+                _display-filled / float(bar-w)
+            } else {
+                p.clamp(0.0, 1.0)
             }
 
-            let display-p = _display-filled / float(bar-w)
             parts.push(_progress-bar.render(display-p))
             let display-current = int(display-p * _task.total)
             let progress = "{display-current}/{_task.total}"
@@ -433,7 +444,7 @@ pub class Tqdm[T] : Iterable[T] {
     }
     
     update(n: Int = 1) {
-        _task.current += n
+        _task.update(n)
     }
 
     label -> String {

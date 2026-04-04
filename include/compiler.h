@@ -60,7 +60,6 @@ enum {
               | TYC_EMIT
               | TYC_TOKENS
               | TYC_ZFOLD
-              | TYC_FORGIVING
         )
 #else
         TYC_DEFAULT_FLAGS = (

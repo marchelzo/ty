@@ -772,7 +772,7 @@ pub class PlainDate {
         year == other.year && month == other.month && day == other.day
     }
 
-    to-plain-date-time(time: PlainTime = PlainTime(0, 0, 0)) -> PlainDateTime {
+    to-plain-date-time(time: PlainTime = cast(PlainTime)(0, 0, 0)) -> PlainDateTime {
         PlainDateTime(year, month, day, time.hour, time.minute, time.second,
                       time.millisecond, time.microsecond, time.nanosecond)
     }

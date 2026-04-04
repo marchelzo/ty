@@ -443,7 +443,16 @@ BUILTIN_FUNCTION(accel_from_bytes);
 BUILTIN_FUNCTION(accel_accuracy);
 BUILTIN_FUNCTION(accel_softmax);
 BUILTIN_FUNCTION(accel_cross_entropy);
+BUILTIN_FUNCTION(accel_causal_softmax);
+BUILTIN_FUNCTION(accel_causal_softmax_backward);
 BUILTIN_FUNCTION(accel_promote);
+BUILTIN_FUNCTION(accel_from_raw);
+BUILTIN_FUNCTION(accel_hstack_2d);
+BUILTIN_FUNCTION(accel_slice_cols);
+BUILTIN_FUNCTION(accel_mha_backward);
+BUILTIN_FUNCTION(accel_mha_forward);
+BUILTIN_FUNCTION(accel_mha_forward_one);
+BUILTIN_FUNCTION(accel_kv_cache_alloc);
 
 u64 NextThreadId();
 

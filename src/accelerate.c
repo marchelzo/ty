@@ -121,6 +121,18 @@ static const int PROMOTE[8][8] = {
         { 0, 1, 2, 3, 4, 5, 6, 7 },
 };
 
+
+static ffi_type *C_TYPE[] = {
+        [DTYPE_F64]  = &ffi_type_double,
+        [DTYPE_F32]  = &ffi_type_float,
+        [DTYPE_I64]  = &ffi_type_sint64,
+        [DTYPE_I32]  = &ffi_type_sint32,
+        [DTYPE_I16]  = &ffi_type_sint16,
+        [DTYPE_I8]   = &ffi_type_sint8,
+        [DTYPE_U8]   = &ffi_type_uint8,
+        [DTYPE_BOOL] = &ffi_type_uint8,
+};
+
 #define CMP_BODY(LHS, RHS) \
         switch (op) { \
         case 0: r = (LHS) >  (RHS); break; \
@@ -1480,6 +1492,51 @@ BUILTIN_FUNCTION(accel_softmax)
         return NIL;
 }
 
+BUILTIN_FUNCTION(accel_causal_softmax)
+{
+        ASSERT_ARGC("causalSoftmax()", 4);
+
+        void *src = PTR_ARG(0);
+        void *dst = PTR_ARG(1);
+        i64   n   = INT_ARG(2);
+        i64   m   = INT_ARG(3);
+
+        double *restrict sp = src;
+        double *restrict dp = dst;
+        for (i64 i = 0; i < n; ++i) {
+                i64 width = i + 1;
+                if (width > m) {
+                        width = m;
+                }
+
+                const double *restrict row = sp + i * m;
+                double *restrict orow = dp + i * m;
+                double mx = row[0];
+                for (i64 j = 1; j < width; ++j) {
+                        if (row[j] > mx) {
+                                mx = row[j];
+                        }
+                }
+
+                double s = 0.0;
+                for (i64 j = 0; j < width; ++j) {
+                        double e = exp(row[j] - mx);
+                        orow[j] = e;
+                        s += e;
+                }
+
+                double inv = 1.0 / s;
+                for (i64 j = 0; j < width; ++j) {
+                        orow[j] *= inv;
+                }
+                for (i64 j = width; j < m; ++j) {
+                        orow[j] = 0.0;
+                }
+        }
+
+        return NIL;
+}
+
 BUILTIN_FUNCTION(accel_cross_entropy)
 {
         ASSERT_ARGC("crossEntropy()", 3);
@@ -1497,6 +1554,45 @@ BUILTIN_FUNCTION(accel_cross_entropy)
         }
 
         return REAL(loss);
+}
+
+BUILTIN_FUNCTION(accel_causal_softmax_backward)
+{
+        ASSERT_ARGC("causalSoftmaxBackward()", 5);
+
+        void *probs = PTR_ARG(0);
+        void *grad  = PTR_ARG(1);
+        void *dst   = PTR_ARG(2);
+        i64   n     = INT_ARG(3);
+        i64   m     = INT_ARG(4);
+
+        double *restrict pp = probs;
+        double *restrict gp = grad;
+        double *restrict dp = dst;
+
+        for (i64 i = 0; i < n; ++i) {
+                i64 width = i + 1;
+                if (width > m) {
+                        width = m;
+                }
+
+                double *restrict prow = pp + i * m;
+                double *restrict grow = gp + i * m;
+                double *restrict orow = dp + i * m;
+                double dot = 0.0;
+
+                for (i64 j = 0; j < width; ++j) {
+                        dot += prow[j] * grow[j];
+                }
+                for (i64 j = 0; j < width; ++j) {
+                        orow[j] = prow[j] * (grow[j] - dot);
+                }
+                for (i64 j = width; j < m; ++j) {
+                        orow[j] = 0.0;
+                }
+        }
+
+        return NIL;
 }
 
 BUILTIN_FUNCTION(accel_accuracy)
@@ -1583,4 +1679,437 @@ BUILTIN_FUNCTION(accel_promote)
         i64 b = INT_ARG(1);
 
         return INTEGER(PROMOTE[a & 7][b & 7]);
+}
+
+BUILTIN_FUNCTION(accel_slice_cols)
+{
+        ASSERT_ARGC("sliceCols()", 6);
+
+        void *src   = PTR_ARG(0);
+        i64   rows  = INT_ARG(1);
+        i64   cols  = INT_ARG(2);
+        i64   start = INT_ARG(3);
+        i64   width = INT_ARG(4);
+        i64   dt    = INT_ARG(5);
+
+        i64 sz = esz(dt);
+        void *out = mAo(rows * width * sz, GC_ANY);
+
+        if (width == cols) {
+                memcpy(out, src, rows * cols * sz);
+        } else {
+                const char *sp = (const char *)src + start * sz;
+                char *dp = (char *)out;
+                i64 src_stride = cols * sz;
+                i64 dst_stride = width * sz;
+
+                for (i64 r = 0; r < rows; ++r) {
+                        memcpy(dp, sp, dst_stride);
+                        sp += src_stride;
+                        dp += dst_stride;
+                }
+        }
+
+        return TGCPTR(out, C_TYPE[dt], out);
+}
+
+BUILTIN_FUNCTION(accel_hstack_2d)
+{
+        ASSERT_ARGC("hstack2d()", 5);
+
+        Value ptrs_val   = ARG(0);
+        Value widths_val = ARG(1);
+        i64   n_arrays   = INT_ARG(2);
+        i64   rows       = INT_ARG(3);
+        i64   dt         = INT_ARG(4);
+
+        Array *ptrs_arr   = ptrs_val.array;
+        Array *widths_arr = widths_val.array;
+
+        i64 sz = esz(dt);
+
+        i64 total_cols = 0;
+        for (i64 i = 0; i < n_arrays; ++i) {
+                total_cols += widths_arr->items[i].z;
+        }
+
+        void *out = mAo(rows * total_cols * sz, GC_ANY);
+        char *dp = (char *)out;
+        i64 dst_stride = total_cols * sz;
+
+        for (i64 r = 0; r < rows; ++r) {
+                i64 off = 0;
+                for (i64 a = 0; a < n_arrays; ++a) {
+                        i64 w = widths_arr->items[a].z;
+                        i64 w_bytes = w * sz;
+                        const char *sp = (const char *)ptrs_arr->items[a].ptr;
+                        memcpy(dp + off, sp + r * w_bytes, w_bytes);
+                        off += w_bytes;
+                }
+                dp += dst_stride;
+        }
+
+        return TGCPTR(out, C_TYPE[dt], out);
+}
+
+BUILTIN_FUNCTION(accel_from_raw)
+{
+        ASSERT_ARGC("fromRaw()", 3);
+
+        Value v = ARG(0);
+        const void *src;
+        if (v.type == VALUE_BLOB) {
+                src = v.blob->items;
+        } else if (v.type == VALUE_PTR) {
+                src = v.ptr;
+        } else {
+                bP("fromRaw(): arg[0] must be Blob or Ptr");
+        }
+
+        i64 n  = INT_ARG(1);
+        i64 dt = INT_ARG(2);
+
+        i64 sz = esz(dt);
+        void *dst = mAo(n * sz, GC_ANY);
+        memcpy(dst, src, n * sz);
+
+        return TGCPTR(dst, C_TYPE[dt], dst);
+}
+
+BUILTIN_FUNCTION(accel_mha_forward)
+{
+        ASSERT_ARGC("mhaForward()", 11);
+
+        double *x    = PTR_ARG(0);
+        double *Wq   = PTR_ARG(1);
+        double *Wk   = PTR_ARG(2);
+        double *Wv   = PTR_ARG(3);
+        double *Wo   = PTR_ARG(4);
+        i64 n        = INT_ARG(5);
+        i64 n_embd   = INT_ARG(6);
+        i64 n_head   = INT_ARG(7);
+        i64 head_dim = INT_ARG(8);
+        double scale = FLOAT_ARG(9);
+        i64 dt       = INT_ARG(10);
+
+        (void)dt;
+
+        i64 ne = n * n_embd;
+        i64 nn = n * n;
+
+        double *Q          = uAo(ne * sizeof (double), GC_ANY);
+        double *K          = uAo(ne * sizeof (double), GC_ANY);
+        double *V          = uAo(ne * sizeof (double), GC_ANY);
+        double *all_probs  = uAo(n_head * nn * sizeof (double), GC_ANY);
+        double *ctx_merged = uAo(ne * sizeof (double), GC_ANY);
+        double *attn_out   = uAo(ne * sizeof (double), GC_ANY);
+
+        SCRATCH_SAVE();
+        double *scores = smA(nn * sizeof (double));
+
+        cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasTrans,
+                    n, n_embd, n_embd, 1.0, x, n_embd, Wq, n_embd, 0.0, Q, n_embd);
+        cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasTrans,
+                    n, n_embd, n_embd, 1.0, x, n_embd, Wk, n_embd, 0.0, K, n_embd);
+        cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasTrans,
+                    n, n_embd, n_embd, 1.0, x, n_embd, Wv, n_embd, 0.0, V, n_embd);
+
+        memset(ctx_merged, 0, ne * sizeof (double));
+
+        for (i64 h = 0; h < n_head; ++h) {
+                double *qh = Q + h * head_dim;
+                double *kh = K + h * head_dim;
+                double *vh = V + h * head_dim;
+                double *ph = all_probs + h * nn;
+                double *ch = ctx_merged + h * head_dim;
+
+                cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasTrans,
+                            n, n, head_dim, scale,
+                            qh, n_embd, kh, n_embd, 0.0, scores, n);
+
+                for (i64 i = 0; i < n; ++i) {
+                        double *row = scores + i * n;
+
+                        double mx = row[0];
+                        for (i64 j = 1; j <= i; ++j) {
+                                if (row[j] > mx) mx = row[j];
+                        }
+
+                        double sum = 0.0;
+                        for (i64 j = 0; j <= i; ++j) {
+                                row[j] = exp(row[j] - mx);
+                                sum += row[j];
+                        }
+
+                        double inv = 1.0 / sum;
+                        for (i64 j = 0; j <= i; ++j) {
+                                row[j] *= inv;
+                        }
+                        for (i64 j = i + 1; j < n; ++j) {
+                                row[j] = 0.0;
+                        }
+                }
+
+                memcpy(ph, scores, nn * sizeof (double));
+
+                cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,
+                            n, head_dim, n, 1.0,
+                            scores, n, vh, n_embd, 0.0, ch, n_embd);
+        }
+
+        SCRATCH_RESTORE();
+
+        cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasTrans,
+                    n, n_embd, n_embd, 1.0,
+                    ctx_merged, n_embd, Wo, n_embd, 0.0, attn_out, n_embd);
+
+        Value *items = uAo(6 * sizeof (Value), GC_TUPLE);
+        items[0] = TGCPTR(attn_out,   &ffi_type_double, attn_out);
+        items[1] = TGCPTR(Q,          &ffi_type_double, Q);
+        items[2] = TGCPTR(K,          &ffi_type_double, K);
+        items[3] = TGCPTR(V,          &ffi_type_double, V);
+        items[4] = TGCPTR(all_probs,  &ffi_type_double, all_probs);
+        items[5] = TGCPTR(ctx_merged, &ffi_type_double, ctx_merged);
+
+        return TUPLE(items, NULL, 6, false);
+}
+
+BUILTIN_FUNCTION(accel_mha_backward)
+{
+        ASSERT_ARGC("mhaBackward()", 17);
+
+        double *d_attn_out = PTR_ARG(0);
+        double *x_norm     = PTR_ARG(1);
+        double *Q          = PTR_ARG(2);
+        double *K          = PTR_ARG(3);
+        double *V          = PTR_ARG(4);
+        double *all_probs  = PTR_ARG(5);
+        double *ctx_merged = PTR_ARG(6);
+        double *Wq         = PTR_ARG(7);
+        double *Wk         = PTR_ARG(8);
+        double *Wv         = PTR_ARG(9);
+        double *Wo         = PTR_ARG(10);
+        i64 n              = INT_ARG(11);
+        i64 n_embd         = INT_ARG(12);
+        i64 n_head         = INT_ARG(13);
+        i64 head_dim       = INT_ARG(14);
+        double scale       = FLOAT_ARG(15);
+        i64 dt             = INT_ARG(16);
+
+        (void)dt;
+
+        i64 e2 = n_embd * n_embd;
+        i64 ne = n * n_embd;
+        i64 nn = n * n;
+
+        double *dWo     = uAo(e2 * sizeof (double), GC_ANY);
+        double *dWq     = uAo(e2 * sizeof (double), GC_ANY);
+        double *dWk     = uAo(e2 * sizeof (double), GC_ANY);
+        double *dWv     = uAo(e2 * sizeof (double), GC_ANY);
+        double *d_xnorm = uAo(ne * sizeof (double), GC_ANY);
+
+        SCRATCH_SAVE();
+        double *d_ctx_merged = smA(ne * sizeof (double));
+        double *dQ           = smA(ne * sizeof (double));
+        double *dK           = smA(ne * sizeof (double));
+        double *dV           = smA(ne * sizeof (double));
+        double *d_scores     = smA(nn * sizeof (double));
+        double *d_probs      = smA(nn * sizeof (double));
+
+        memset(dQ, 0, ne * sizeof (double));
+        memset(dK, 0, ne * sizeof (double));
+        memset(dV, 0, ne * sizeof (double));
+
+        cblas_dgemm(CblasRowMajor, CblasTrans, CblasNoTrans,
+                    n_embd, n_embd, n, 1.0,
+                    d_attn_out, n_embd, ctx_merged, n_embd, 0.0, dWo, n_embd);
+
+        cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,
+                    n, n_embd, n_embd, 1.0,
+                    d_attn_out, n_embd, Wo, n_embd, 0.0, d_ctx_merged, n_embd);
+
+        for (i64 h = 0; h < n_head; ++h) {
+                double *qh  = Q + h * head_dim;
+                double *kh  = K + h * head_dim;
+                double *vh  = V + h * head_dim;
+                double *ph  = all_probs + h * nn;
+                double *dch = d_ctx_merged + h * head_dim;
+                double *dqh = dQ + h * head_dim;
+                double *dkh = dK + h * head_dim;
+                double *dvh = dV + h * head_dim;
+
+                cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasTrans,
+                            n, n, head_dim, 1.0,
+                            dch, n_embd, vh, n_embd, 0.0, d_probs, n);
+
+                cblas_dgemm(CblasRowMajor, CblasTrans, CblasNoTrans,
+                            n, head_dim, n, 1.0,
+                            ph, n, dch, n_embd, 1.0, dvh, n_embd);
+
+                for (i64 i = 0; i < n; ++i) {
+                        double *pr  = ph + i * n;
+                        double *dpr = d_probs + i * n;
+                        double *dsr = d_scores + i * n;
+
+                        double dot = 0.0;
+                        for (i64 j = 0; j <= i; ++j) {
+                                dot += pr[j] * dpr[j];
+                        }
+                        for (i64 j = 0; j <= i; ++j) {
+                                dsr[j] = pr[j] * (dpr[j] - dot) * scale;
+                        }
+                        for (i64 j = i + 1; j < n; ++j) {
+                                dsr[j] = 0.0;
+                        }
+                }
+
+                cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,
+                            n, head_dim, n, 1.0,
+                            d_scores, n, kh, n_embd, 1.0, dqh, n_embd);
+
+                cblas_dgemm(CblasRowMajor, CblasTrans, CblasNoTrans,
+                            n, head_dim, n, 1.0,
+                            d_scores, n, qh, n_embd, 1.0, dkh, n_embd);
+        }
+
+        cblas_dgemm(CblasRowMajor, CblasTrans, CblasNoTrans,
+                    n_embd, n_embd, n, 1.0,
+                    dQ, n_embd, x_norm, n_embd, 0.0, dWq, n_embd);
+        cblas_dgemm(CblasRowMajor, CblasTrans, CblasNoTrans,
+                    n_embd, n_embd, n, 1.0,
+                    dK, n_embd, x_norm, n_embd, 0.0, dWk, n_embd);
+        cblas_dgemm(CblasRowMajor, CblasTrans, CblasNoTrans,
+                    n_embd, n_embd, n, 1.0,
+                    dV, n_embd, x_norm, n_embd, 0.0, dWv, n_embd);
+
+        cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,
+                    n, n_embd, n_embd, 1.0,
+                    dQ, n_embd, Wq, n_embd, 0.0, d_xnorm, n_embd);
+        cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,
+                    n, n_embd, n_embd, 1.0,
+                    dK, n_embd, Wk, n_embd, 1.0, d_xnorm, n_embd);
+        cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,
+                    n, n_embd, n_embd, 1.0,
+                    dV, n_embd, Wv, n_embd, 1.0, d_xnorm, n_embd);
+
+        SCRATCH_RESTORE();
+
+        Value *items = uAo(5 * sizeof (Value), GC_TUPLE);
+        items[0] = TGCPTR(d_xnorm, &ffi_type_double, d_xnorm);
+        items[1] = TGCPTR(dWq,     &ffi_type_double, dWq);
+        items[2] = TGCPTR(dWk,     &ffi_type_double, dWk);
+        items[3] = TGCPTR(dWv,     &ffi_type_double, dWv);
+        items[4] = TGCPTR(dWo,     &ffi_type_double, dWo);
+
+        return TUPLE(items, NULL, 5, false);
+}
+
+BUILTIN_FUNCTION(accel_kv_cache_alloc)
+{
+        ASSERT_ARGC("kvCacheAlloc()", 4);
+
+        i64 n_layer  = INT_ARG(0);
+        i64 n_head   = INT_ARG(1);
+        i64 max_seq  = INT_ARG(2);
+        i64 head_dim = INT_ARG(3);
+
+        i64 total = n_layer * n_head * max_seq * head_dim;
+        i64 bytes = total * sizeof(double);
+
+        double *k_buf = mAo0(bytes, GC_ANY);
+        double *v_buf = mAo0(bytes, GC_ANY);
+
+        Value *items = mAo(2 * sizeof(Value), GC_TUPLE);
+        items[0] = TGCPTR(k_buf, &ffi_type_double, k_buf);
+        items[1] = TGCPTR(v_buf, &ffi_type_double, v_buf);
+
+        return TUPLE(items, NULL, 2, false);
+}
+
+BUILTIN_FUNCTION(accel_mha_forward_one)
+{
+        ASSERT_ARGC("mhaForwardOne()", 15);
+
+        double *x         = PTR_ARG(0);
+        double *Wq        = PTR_ARG(1);
+        double *Wk        = PTR_ARG(2);
+        double *Wv        = PTR_ARG(3);
+        double *Wo        = PTR_ARG(4);
+        double *k_cache   = PTR_ARG(5);
+        double *v_cache   = PTR_ARG(6);
+        i64     pos       = INT_ARG(7);
+        i64     layer_idx = INT_ARG(8);
+        i64     n_embd    = INT_ARG(9);
+        i64     n_head    = INT_ARG(10);
+        i64     head_dim  = INT_ARG(11);
+        double  scale     = FLOAT_ARG(12);
+        i64     max_seq   = INT_ARG(13);
+        i64     n_layer   = INT_ARG(14);
+
+        (void)n_layer;
+
+        i64 seq_len = pos + 1;
+
+        SCRATCH_SAVE();
+        double *Q   = smA(n_embd * sizeof(double));
+        double *K_t = smA(n_embd * sizeof(double));
+        double *V_t = smA(n_embd * sizeof(double));
+        double *ctx = smA(n_embd * sizeof(double));
+        double *scores = smA(seq_len * sizeof(double));
+        double *probs  = smA(seq_len * sizeof(double));
+
+        cblas_dgemv(CblasRowMajor, CblasNoTrans,
+                    n_embd, n_embd, 1.0, Wq, n_embd, x, 1, 0.0, Q, 1);
+        cblas_dgemv(CblasRowMajor, CblasNoTrans,
+                    n_embd, n_embd, 1.0, Wk, n_embd, x, 1, 0.0, K_t, 1);
+        cblas_dgemv(CblasRowMajor, CblasNoTrans,
+                    n_embd, n_embd, 1.0, Wv, n_embd, x, 1, 0.0, V_t, 1);
+
+        for (i64 h = 0; h < n_head; ++h) {
+                i64 base = (layer_idx * n_head + h) * max_seq * head_dim;
+                memcpy(k_cache + base + pos * head_dim, K_t + h * head_dim, head_dim * sizeof(double));
+                memcpy(v_cache + base + pos * head_dim, V_t + h * head_dim, head_dim * sizeof(double));
+        }
+
+        memset(ctx, 0, n_embd * sizeof(double));
+
+        for (i64 h = 0; h < n_head; ++h) {
+                double *qh = Q + h * head_dim;
+                i64 base = (layer_idx * n_head + h) * max_seq * head_dim;
+                double *k_base = k_cache + base;
+                double *v_base = v_cache + base;
+                double *ch = ctx + h * head_dim;
+
+                cblas_dgemv(CblasRowMajor, CblasNoTrans,
+                            seq_len, head_dim, scale,
+                            k_base, head_dim, qh, 1, 0.0, scores, 1);
+
+                double mx = scores[0];
+                for (i64 j = 1; j < seq_len; ++j) {
+                        if (scores[j] > mx) mx = scores[j];
+                }
+
+                double sum = 0.0;
+                for (i64 j = 0; j < seq_len; ++j) {
+                        probs[j] = exp(scores[j] - mx);
+                        sum += probs[j];
+                }
+
+                double inv = 1.0 / sum;
+                for (i64 j = 0; j < seq_len; ++j) {
+                        probs[j] *= inv;
+                }
+
+                cblas_dgemv(CblasRowMajor, CblasTrans,
+                            seq_len, head_dim, 1.0,
+                            v_base, head_dim, probs, 1, 0.0, ch, 1);
+        }
+
+        double *out = mAo(n_embd * sizeof(double), GC_ANY);
+        cblas_dgemv(CblasRowMajor, CblasNoTrans,
+                    n_embd, n_embd, 1.0, Wo, n_embd, ctx, 1, 0.0, out, 1);
+
+        SCRATCH_RESTORE();
+
+        return TGCPTR(out, &ffi_type_double, out);
 }
