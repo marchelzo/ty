@@ -46,6 +46,8 @@ error(Ty *ty, char const *fmt, ...)
 {
         va_list ap;
 
+        v0(ErrorBuffer);
+
 #if defined(TY_LS)
         dump(
                 &ErrorBuffer,

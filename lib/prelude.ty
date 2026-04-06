@@ -1650,8 +1650,11 @@ class Module {
         ty.mod.list()
     }
 
-    name -> String { ty.mod.name(self) }
-    path -> String { ty.mod.path(self) }
+    name   -> String       { ty.mod.name(self)   }
+    path   -> String       { ty.mod.path(self)   }
+    ast    -> Array[AST]   { ty.mod.ast(self)    }
+    tokens -> Array[Token] { ty.mod.tokens(self) }
+    source -> String       { ty.mod.source(self) }
 
     dict -> Dict[String, _] {
         ty.mod.dict(self)

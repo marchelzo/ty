@@ -1,5 +1,3 @@
-ns test
-
 pub class Matrix : Iterable[RowVec] {
     data: Array[Array[Float]]
     init(m) { data = m }
@@ -76,6 +74,8 @@ fn *(X: Matrix, Y: Matrix) -> Matrix {
 fn **(X: Matrix, n: Int) -> Matrix {
     (X for ..n).fold(`*`) as Matrix
 }
+
+ns test
 
 pub fn matrix-power() {
     let P = m('

@@ -1,13 +1,13 @@
 import ty
 
-ns test
-
 macro fun(e) {
     let ty.Id({name: n}) = e
     $$[ $$(ty.String(n)).upper() $$]
 }
 
 let p = fun(ssap)
+
+ns test
 
 pub fn fun-macro() {
     let rev = &reverse

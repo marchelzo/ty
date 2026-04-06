@@ -6227,7 +6227,6 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
 
         switch (s->type) {
         case STATEMENT_IMPORT:
-                import_module(ty, s);
                 break;
 
         case STATEMENT_USE:
@@ -14257,7 +14256,7 @@ source_register(Ty *ty, void const *src)
 {
         for (u32 i = 0; i < vN(source_map); ++i) {
                 if (v__(source_map, i) == NULL) {
-                        v__(source_map, i) = (Expr const *)src;
+                        *v_(source_map, i) = (Expr const *)src;
                         return i + 1;
                 }
         }
@@ -14694,6 +14693,7 @@ tyexpr(Ty *ty, Expr const *e, u32 flags)
                 break;
 
         case EXPRESSION_TUPLE:
+        case EXPRESSION_TUPLE_SPEC:
                 v = ARRAY(vA());
                 NOGC(v.array);
                 for (int i = 0; i < vN(e->es); ++i) {
@@ -15277,6 +15277,55 @@ tystmt(Ty *ty, Stmt *s, u32 flags)
                 );
                 break;
 
+        case STATEMENT_IMPORT:
+        {
+                Array *names = vA();
+
+                if (s->import.hiding) {
+                        for (int i = 0; i < vN(s->import.identifiers); ++i) {
+                                vAp(names, vSsz(v__(s->import.identifiers, i)));
+                        }
+                } else {
+                        for (int i = 0; i < vN(s->import.identifiers); ++i) {
+                                vAp(
+                                        names,
+                                        PAIR(
+                                                vSsz(v__(s->import.identifiers, i)),
+                                                vSsz(v__(s->import.aliases, i))
+                                        )
+                                );
+                        }
+                }
+
+                v = TAGGED_RECORD(
+                        TyImport,
+                        "module", vSsz(s->import.module),
+                        "as",     (s->import.as == NULL) ? NIL : vSsz(s->import.as),
+                        "names",  (s->import.hiding ? NIL : ARRAY(names)),
+                        "hiding", (s->import.hiding ? ARRAY(names) : NIL),
+                        "pub",    BOOLEAN(s->import.pub)
+                );
+
+                break;
+        }
+
+        case STATEMENT_TYPE_DEFINITION:
+        {
+                Array *params = vA();
+
+                for (int i = 0; i < vN(s->class.type_params); ++i) {
+                        vAp(params, go(v__(s->class.type_params, i)));
+                }
+
+                v = TAGGED(
+                        TyTypeDef,
+                        vSsz(s->class.name),
+                        ARRAY(params),
+                        go(s->class.type)
+                );
+                break;
+        }
+
         case STATEMENT_CLASS_DEFINITION:
                 v = vTn(
                         "name", vSsz(s->class.name),
@@ -15551,6 +15600,55 @@ cstmt(Ty *ty, Value *v)
         switch (tag) {
         case TyStmt:
                 return v->ptr;
+
+        case TyImport:
+        {
+                s->type = STATEMENT_IMPORT;
+
+                Value *pub    = tget_nn(v, "pub");
+                Value *names  = tget_nn(v, "names");
+                Value *hiding = tget_nn(v, "hiding");
+
+                s->import.module = mkcstr(t_(v, "module"));
+                s->import.as = mkcstr(tget_nn(v, "as"));
+                if (s->import.as == NULL) {
+                        s->import.as = s->import.module;
+                }
+
+                s->import.pub = v_truthy(pub);
+
+                if (names != NULL) {
+                        for (int i = 0; i < vN(*names->array); ++i) {
+                                Value item = v__(*names->array, i);
+                                avP(s->import.identifiers, mkcstr(&item.items[0]));
+                                avP(s->import.aliases,     mkcstr(&item.items[1]));
+                        }
+                }
+
+                if (hiding != NULL) {
+                        for (int i = 0; i < vN(*hiding->array); ++i) {
+                                Value item = v__(*hiding->array, i);
+                                avP(s->import.identifiers, mkcstr(&item));
+                        }
+                        s->import.hiding = true;
+                }
+                break;
+        }
+
+        case TyTypeDef:
+        {
+                s->type = STATEMENT_TYPE_DEFINITION;
+                s->class.name = mkcstr(t_(v, 0));
+
+                Value *params = t_(v, 1);
+                for (int i = 0; i < vN(*params->array); ++i) {
+                        Value *param = v_(*params->array, i);
+                        avP(s->class.type_params , cexpr(ty, param));
+                }
+
+                s->class.type = cexpr(ty, t_(v, 2));
+                break;
+        }
 
         case TyLet:
         {
@@ -17175,8 +17273,11 @@ typarse(
         v00(STATE.expression_locations);
 
         Value m = *vm_get(ty, 0);
+        void *ctx = PushInfo(ty, e, "invoking macro %s", SHOW(&m, BASIC));
 
-        void *ctx = PushInfo(ty, NULL, "invoking macro %s", name_of(&m));
+        if (m.type != VALUE_FUNCTION) {
+                fail("macro did not return a function");
+        }
 
         Scope *macro_scope_save = STATE.macro_scope;
         STATE.macro_scope = SCOPE;

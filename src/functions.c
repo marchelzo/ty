@@ -8981,6 +8981,47 @@ BUILTIN_FUNCTION(ty_mod_lookup)
         return *vm_global(ty, sym->i);
 }
 
+BUILTIN_FUNCTION(ty_mod_ast)
+{
+        ASSERT_ARGC("ty.mod.ast()", 0, 1);
+
+        bool this = (argc == 0);
+        Module *mod = this ? CompilerCurrentModule(ty)
+                           : ARGx(0, VALUE_MODULE).mod;
+
+        Array *stmts = vA();
+
+        for (int i = 0; mod->prog[i] != NULL; ++i) {
+                uvP(*stmts, CToTyStmt(ty, mod->prog[i]));
+        }
+
+        return ARRAY(stmts);
+}
+
+BUILTIN_FUNCTION(ty_mod_tokens)
+{
+        ASSERT_ARGC("ty.mod.tokens()", 0, 1);
+
+        bool this = (argc == 0);
+        Module *mod = this ? CompilerCurrentModule(ty)
+                           : ARGx(0, VALUE_MODULE).mod;
+
+        TokenVector tokens = mod->tokens;
+
+        return make_tokens(ty, &tokens);
+}
+
+BUILTIN_FUNCTION(ty_mod_source)
+{
+        ASSERT_ARGC("ty.mod.source()", 0, 1);
+
+        bool this = (argc == 0);
+        Module *mod = this ? CompilerCurrentModule(ty)
+                           : ARGx(0, VALUE_MODULE).mod;
+
+        return vSsz(mod->source);
+}
+
 BUILTIN_FUNCTION(ty_parse)
 {
         ASSERT_ARGC("ty.parse()", 1);

@@ -72,6 +72,8 @@ enum {
         X(Expr)                 \
         X(Stmt)                 \
         X(Value)                \
+        X(Import)               \
+        X(TypeDef)              \
         X(Each)                 \
         X(Match)                \
         X(For)                  \
