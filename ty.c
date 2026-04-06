@@ -84,7 +84,7 @@ bool HighlightOnly      = false;
 bool AllowErrors        = false;
 bool CheckTypes         = true;
 bool CheckConstraints   = true;
-bool DetailedExceptions = true;
+bool DetailedExceptions = false;
 bool NoJIT              = false;
 bool InteractiveSession = false;
 

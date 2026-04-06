@@ -18,11 +18,22 @@ pub fn wait(pid: Int = -1, options: Int = 0) -> (Int, Int) | nil;
 pub fn socket(domain: Int, type: Int, protocol: Int) -> Int;
 pub fn bind(sock: Int, addr: _) -> Int;
 pub fn connect(sock: Int, addr: _) -> Int;
+pub fn sendto(sock: Int, data: Any, flags: Int, addr: ?Blob) -> Int;
+pub fn recvfrom(sock: Int, n: Int, flags: Int) -> (Blob, Blob);
 pub fn getsockname(sock: Int) -> Blob;
 pub fn getpeername(sock: Int) -> Blob;
 pub fn setsockopt(sock: Int, level: Int, opt: Int, val: Any) -> Int;
 pub fn getsockopt(sock: Int, level: Int, opt: Int) -> _;
 pub fn shutdown(sock: Int, how: Int) -> Int;
+
+pub use AddrInfo = {
+    family: Int,
+    type: Int,
+    protocol: Int,
+    address: Blob,
+    canonname: String | nil
+}
+
 pub fn getaddrinfo(
     node: String | nil,
     service: String | Int | nil,
@@ -30,7 +41,8 @@ pub fn getaddrinfo(
     type: Int | nil,
     protocol: Int | nil,
     flags: ?Int = 0,
-) -> Ok[Array[Blob]] | Err[Int];
+) -> Ok[Array[AddrInfo]] | Err[Int];
+
 pub fn gai_strerror(errcode: Int) -> String;
 pub fn sendfile(
     outfd: Int,
