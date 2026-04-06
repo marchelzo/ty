@@ -7891,30 +7891,9 @@ BUILTIN_FUNCTION(type)
                 return TAG(tags_first(ty, v.tags));
         }
 
-        switch (v.type) {
-        case VALUE_INTEGER:  return (Value) { .type = VALUE_CLASS, .class = CLASS_INT     };
-        case VALUE_REAL:     return (Value) { .type = VALUE_CLASS, .class = CLASS_FLOAT   };
-        case VALUE_STRING:   return (Value) { .type = VALUE_CLASS, .class = CLASS_STRING  };
-        case VALUE_ARRAY:    return (Value) { .type = VALUE_CLASS, .class = CLASS_ARRAY   };
-        case VALUE_DICT:     return (Value) { .type = VALUE_CLASS, .class = CLASS_DICT    };
-        case VALUE_BLOB:     return (Value) { .type = VALUE_CLASS, .class = CLASS_BLOB    };
-        case VALUE_OBJECT:   return (Value) { .type = VALUE_CLASS, .class = v.class       };
-        case VALUE_BOOLEAN:  return (Value) { .type = VALUE_CLASS, .class = CLASS_BOOL    };
-        case VALUE_REGEX:    return (Value) { .type = VALUE_CLASS, .class = CLASS_REGEX   };
-        case VALUE_CLASS:    return (Value) { .type = VALUE_CLASS, .class = CLASS_CLASS   };
-        case VALUE_METHOD:
-        case VALUE_BUILTIN_METHOD:
-        case VALUE_BUILTIN_FUNCTION:
-        case VALUE_FOREIGN_FUNCTION:
-        case VALUE_NATIVE_FUNCTION:
-        case VALUE_OPERATOR:
-        case VALUE_FUNCTION:  return (Value) { .type = VALUE_CLASS, .class = CLASS_FUNCTION  };
-        case VALUE_GENERATOR: return (Value) { .type = VALUE_CLASS, .class = CLASS_GENERATOR };
-        case VALUE_TAG:       return (Value) { .type = VALUE_CLASS, .class = CLASS_TAG       };
-        case VALUE_PTR:       return (Value) { .type = VALUE_CLASS, .class = CLASS_PTR       };
-        default:
-        case VALUE_NIL:      return NIL;
-        }
+        i32 c = ClassOf(&v);
+
+        return (c > CLASS_TOP) ? CLASS(c) : NIL;
 }
 
 BUILTIN_FUNCTION(subclass)
@@ -9516,34 +9495,66 @@ BUILTIN_FUNCTION(parse_source)
                 vmE(&err);
         }
 
-        return (p[0] == NULL) ? NIL : tystmt(ty, p[0], 0);
+        return (p[0] == NULL) ? NIL : tyexpr(ty, (Expr *)p[0], 0);
 }
 
 
 BUILTIN_FUNCTION(parse_expr)
 {
-        ASSERT_ARGC_2("ty.parse.expr()", 0, 1);
+        ASSERT_ARGC("ty.parse.expr()", 0, 1, 2);
 
         int prec;
+        Scope *scope;
 
-        if (argc == 1) {
-                if (ARG(0).type != VALUE_INTEGER) {
-                        zP("ty.parse.expr(): expected integer but got: %s", VSC(&ARG(0)));
-                }
-                prec = ARG(0).z;
-        } else {
-                prec = 0;
+        switch (argc) {
+        case 2:
+                prec  = INT_ARG(0);
+                scope = PTR_ARG(1);
+                break;
+
+        case 1:
+                prec  = INT_ARG(0);
+                scope = NULL;
+                break;
+
+        default:
+                prec  = 0;
+                scope = NULL;
+                break;
         }
 
         Value *resolve = NAMED("resolve");
         Value *raw = NAMED("raw");
 
-        return parse_get_expr(
+        if (scope != NULL) {
+                CompileState *state = TyCompilerState(ty);
+                CompilerScopePush(ty);
+
+                Scope *active = state->pscope;
+                Scope *top    = ScopeTop(scope);
+
+                while (ScopeIsNamespace(top)) {
+                        LOGX("copy from: %s", scope_name(ty, top));
+                        scope_copy_public(ty, active, top, true);
+                        top = top->parent;
+                }
+
+                LOGX("copy from: %s", scope_name(ty, top));
+                scope_copy_public(ty, active, top, true);
+        }
+
+        Value expr = parse_get_expr(
                 ty,
                 prec,
                 (resolve != NULL) && value_truthy(ty, resolve),
                 (raw != NULL) && value_truthy(ty, raw)
         );
+
+        if (scope != NULL) {
+                CompilerScopePop(ty);
+        }
+
+        return expr;
 }
 
 BUILTIN_FUNCTION(parse_type)
@@ -9574,22 +9585,55 @@ BUILTIN_FUNCTION(parse_type)
 
 BUILTIN_FUNCTION(parse_stmt)
 {
-        ASSERT_ARGC_2("ty.parse.stmt()", 0, 1);
+        ASSERT_ARGC("ty.parse.stmt()", 0, 1, 2);
 
         int prec;
+        Scope *scope;
 
-        Value *raw = NAMED("raw");
+        switch (argc) {
+        case 2:
+                prec  = INT_ARG(0);
+                scope = PTR_ARG(1);
+                break;
 
-        if (argc == 1) {
-                if (ARG(0).type != VALUE_INTEGER) {
-                        zP("ty.parse.stmt(): expected integer but got: %s", VSC(&ARG(0)));
-                }
-                prec = ARG(0).z;
-        } else {
-                prec = -1;
+        case 1:
+                prec  = INT_ARG(0);
+                scope = NULL;
+                break;
+
+        default:
+                prec  = 0;
+                scope = NULL;
+                break;
         }
 
-        return parse_get_stmt(ty, prec, raw != NULL && value_truthy(ty, raw));
+        Value *resolve = NAMED("resolve");
+        Value *raw     = NAMED("raw");
+
+        if (scope != NULL) {
+                CompileState *state = TyCompilerState(ty);
+                CompilerScopePush(ty);
+
+                Scope *active = state->pscope;
+                Scope *top    = ScopeTop(scope);
+
+                while (ScopeIsNamespace(top)) {
+                        LOGX("copy from: %s", scope_name(ty, top));
+                        scope_copy_public(ty, active, top, true);
+                        top = top->parent;
+                }
+
+                LOGX("copy from: %s", scope_name(ty, top));
+                scope_copy_public(ty, active, top, true);
+        }
+
+        Value expr = parse_get_stmt(ty, prec, (raw != NULL) && v_truthy(raw));
+
+        if (scope != NULL) {
+                CompilerScopePop(ty);
+        }
+
+        return expr;
 }
 
 BUILTIN_FUNCTION(parse_show)

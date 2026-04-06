@@ -66,7 +66,7 @@
 #endif
 
 #define texprx(e, ...) (tyexpr(ty, (e), __VA_ARGS__ + 0))
-#define tstmtx(s, ...) (tystmt(ty, (s), __VA_ARGS__ + 0))
+#define tstmtx(s, ...) (tyexpr(ty, ((Expr *)s), __VA_ARGS__ + 0))
 
 enum {
         TX_NO_RESOLVE = (1 << 0)
@@ -233,7 +233,7 @@ enum {
 #define CurrentClassID ((STATE.class != NULL) ? (STATE.class->i) : -1)
 #define SCOPE v_L(STATE.scopes)
 #define PushScope(scope) avP(STATE.scopes, (scope))
-#define PopScope()       vvX(STATE.scopes)
+#define PopScope()       vXx(STATE.scopes)
 
 #define ScopeLookupEx(scope, name, flags)                   \
         scope_xlookup(                                      \
@@ -336,6 +336,14 @@ enum {
 #else
 #define HINT_TYPE(...)
 #endif
+
+#define CloneVec(v) (                                  \
+        (v).items = memcpy(                            \
+                amA((v).capacity * sizeof *(v).items), \
+                (v).items,                             \
+                ((v).count * sizeof *(v).items)        \
+        )                                              \
+)
 
 enum {
         LV_NONE,
@@ -514,6 +522,9 @@ expedite_fun(Ty *ty, Expr *e, void *ctx);
 
 static Expr *
 xxclone(Ty *ty, Expr *expr);
+
+static Expr *
+xxresolve(Ty *ty, Expr *expr);
 
 void
 UnresolveExpr(Ty *ty, Expr *expr);
@@ -1662,6 +1673,8 @@ ResolveClassSpec(Ty *ty, Expr const *spec)
 {
         i32 c;
 
+        spec = unfurl(spec);
+
         symbolize_expression(ty, STATE.active, (Expr *)spec);
 
 Restart:
@@ -1701,7 +1714,7 @@ Restart:
                 if (c < 0) {
 Sorry:
                         PushContext(ty, spec);
-                        fail("not a valid class specifier");
+                        fail("not a valid class specifier: %s", ExpressionTypeName(spec));
                 }
         }
 
@@ -3710,6 +3723,11 @@ End:
 static void
 symbolize_lvalue_(Ty *ty, Scope *scope, Expr *target, u32 flags)
 {
+        if (UNLIKELY(target->type == EXPRESSION_RESOLVED)) {
+                *target = *target->value;
+                return;
+        }
+
         if (target->mod == NULL) {
                 target->mod = STATE.module;
         }
@@ -4143,25 +4161,6 @@ symbolize_pattern(Ty *ty, Scope *scope, Expr *e, Scope *reuse, bool def)
         }
 }
 
-inline static Expr *
-unfurl(Expr const *e)
-{
-        for (;;) {
-                switch (e->type) {
-                case EXPRESSION_STATEMENT:
-                        e = (Expr *)e->statement;
-                        break;
-
-                case STATEMENT_EXPRESSION:
-                        e = ((Stmt *)e)->expression;
-                        break;
-
-                default:
-                        return (Expr *)e;
-                }
-        }
-}
-
 bool
 expedite_fun(Ty *ty, Expr *e, void *ctx)
 {
@@ -4275,20 +4274,6 @@ invoke_fun_macro(Ty *ty, Scope *scope, Expr *e)
                 QualifiedName(e->function)
         );
 
-        if (TY_CATCH_ERROR()) {
-                Value exc = TY_CATCH();
-                GC_RESUME();
-                RestoreContext(ty, ctx);
-                STATE.macro_scope = mscope;
-                e->type = EXPRESSION_ERROR;
-                e->string = afmt(
-                        "error invoking function-like macro %s: %s",
-                        QualifiedName(e->function),
-                        VSC(&exc)
-                );
-                return;
-        }
-
         for (usize i = 0;  i < vN(e->args); ++i) {
                 Value v = texprx(v__(e->args, i));
                 vmP(&v);
@@ -4314,8 +4299,6 @@ invoke_fun_macro(Ty *ty, Scope *scope, Expr *e)
         STATE.mstart = mstart;
         STATE.mend = mend;
         STATE.macro_scope = mscope;
-
-        TY_CATCH_END();
 
         RestoreContext(ty, ctx);
 
@@ -4585,13 +4568,20 @@ TryResolveExpr(Ty *ty, Scope *scope, Expr *e)
 static void
 symbolize_expression(Ty *ty, Scope *scope, Expr *e)
 {
-        if (e == NULL || e->xscope != NULL) return;
+        if (e == NULL || e->xscope != NULL) {
+                return;
+        }
+
+        if (UNLIKELY(e->type == EXPRESSION_RESOLVED)) {
+                *e = *e->value;
+                return;
+        }
 
         if (e->mod == NULL) {
                 e->mod = STATE.module;
         }
 
-        if (e->type > EXPRESSION_MAX_TYPE) {
+        if (UNLIKELY(e->type > EXPRESSION_MAX_TYPE)) {
                 symbolize_statement(ty, scope, (Stmt *)e);
                 return;
         }
@@ -6180,14 +6170,12 @@ symbolize_match_stmt(Ty *ty, Scope *scope, Stmt *s)
 static void
 symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
 {
-        Scope *subscope;
-        Scope *subscope2;
-
-        ClassDefinition *cd;
-
-        STATE.ctx = CTX_EXPR;
-
         if (s == NULL || s->xscope != NULL) {
+                return;
+        }
+
+        if (s->type < EXPRESSION_MAX_TYPE) {
+                symbolize_expression(ty, scope, (Expr *)s);
                 return;
         }
 
@@ -6199,6 +6187,8 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
                         show_expr((Expr *)s)
                 );
         }
+
+        STATE.ctx = CTX_EXPR;
 
         STATE.start = s->start;
         STATE.end   = s->end;
@@ -6225,6 +6215,11 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
                 }
         }
 
+        Scope *subscope;
+        Scope *subscope2;
+
+        ClassDefinition *cd;
+
         switch (s->type) {
         case STATEMENT_IMPORT:
                 break;
@@ -6238,6 +6233,9 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
                         fail("invalid defer statement (not inside of a function)");
                 }
                 STATE.func->has_defer = true;
+                symbolize_expression(ty, scope, s->expression);
+                break;
+
         case STATEMENT_EXPRESSION:
                 symbolize_expression(ty, scope, s->expression);
                 s->_type = s->expression->_type;
@@ -12745,7 +12743,7 @@ zfold(Expr *e, Scope *scope, void *ctx)
 static Stmt *
 opt(Ty *ty, Stmt *stmt)
 {
-        VisitorSet visitor = visit_identitiy(ty);
+        VisitorCtx visitor = visit_identity(ty);
 
         visitor.e_post = zfold;
         visitor.t_post = zfold;
@@ -12762,8 +12760,61 @@ static Expr *
 clone_expr(Expr *e, Scope *scope, void *ctx)
 {
         Ty *ty = (Ty *)ctx;
+
         e = aclone(e);
         e->arena = GetArenaAlloc(ty);
+        e->xscope = NULL;
+        e->_type = NULL;
+
+        switch (e->type) {
+        case EXPRESSION_ARRAY:
+                CloneVec(e->elements);
+                CloneVec(e->aconds);
+                CloneVec(e->optional);
+                break;
+
+        case EXPRESSION_TUPLE:
+                CloneVec(e->names);
+                CloneVec(e->es);
+                CloneVec(e->required);
+                break;
+
+        case EXPRESSION_DICT:
+                CloneVec(e->keys);
+                CloneVec(e->values);
+                CloneVec(e->dconds);
+                break;
+
+        case EXPRESSION_FUNCTION_CALL:
+                CloneVec(e->args);
+                CloneVec(e->fconds);
+                CloneVec(e->kwargs);
+                CloneVec(e->fkwconds);
+                break;
+
+        case EXPRESSION_METHOD_CALL:
+        case EXPRESSION_DYN_METHOD_CALL:
+                CloneVec(e->method_args);
+                CloneVec(e->mconds);
+                CloneVec(e->method_kwargs);
+                break;
+
+        case EXPRESSION_SPECIAL_STRING:
+                CloneVec(e->fmts);
+                CloneVec(e->fmtfs);
+                CloneVec(e->expressions);
+                break;
+
+        case EXPRESSION_FUNCTION:
+                CloneVec(e->params);
+                CloneVec(e->type_params);
+                CloneVec(e->constraints);
+                CloneVec(e->dflts);
+                CloneVec(e->decorators);
+                v00(e->param_symbols);
+                break;
+        }
+
         return e;
 }
 
@@ -12773,6 +12824,7 @@ clone_lvalue(Expr *e, bool _, Scope *scope, void *ctx)
         Ty *ty = (Ty *)ctx;
         e = aclone(e);
         e->arena = GetArenaAlloc(ty);
+        e->_type = NULL;
         return e;
 }
 
@@ -12780,21 +12832,35 @@ static Stmt *
 clone_stmt(Stmt *s, Scope *scope, void *ctx)
 {
         Ty *ty = (Ty *)ctx;
+
         s = aclone(s);
         s->arena = GetArenaAlloc(ty);
+        s->_type = NULL;
+
+        switch (s->type) {
+        case STATEMENT_BLOCK:
+        case STATEMENT_MULTI:
+                CloneVec(s->statements);
+                break;
+
+        case STATEMENT_RETURN:
+                CloneVec(s->returns);
+                break;
+        }
+
         return s;
 }
 
 static Expr *
 xclone(Ty *ty, Expr *expr)
 {
-        VisitorSet visitor = visit_identitiy(ty);
+        VisitorCtx visitor = visit_identity(ty);
 
-        visitor.e_post = clone_expr;
-        visitor.p_post = clone_expr;
-        visitor.t_post = clone_expr;
-        visitor.l_post = clone_lvalue;
-        visitor.s_post = clone_stmt;
+        visitor.e_pre = clone_expr;
+        visitor.p_pre = clone_expr;
+        visitor.t_pre = clone_expr;
+        visitor.l_pre = clone_lvalue;
+        visitor.s_pre = clone_stmt;
         visitor.user = ty;
 
         return visit_expression(
@@ -12860,7 +12926,7 @@ xclone_stmt(Stmt *s, Scope *scope, void *ctx)
 static Expr *
 xxclone(Ty *ty, Expr *expr)
 {
-        VisitorSet visitor = visit_identitiy(ty);
+        VisitorCtx visitor = visit_identity(ty);
 
         visitor.e_post = xclone_expr;
         visitor.p_post = xclone_expr;
@@ -12875,6 +12941,45 @@ xxclone(Ty *ty, Expr *expr)
                 NULL,
                 &visitor
         );
+}
+
+static Expr *
+xresolve_expr(Expr *e, Scope *scope, void *ctx)
+{
+        if (e->type == EXPRESSION_RESOLVED) {
+                return e->value;
+        } else {
+                return e;
+        }
+}
+
+static Expr *
+xresolve_lvalue(Expr *e, bool _, Scope *scope, void *ctx)
+{
+        return xresolve_expr(e, scope, ctx);
+}
+
+static Stmt *
+xresolve_stmt(Stmt *s, Scope *scope, void *ctx)
+{
+        return s;
+}
+
+static Expr *
+xxresolve(Ty *ty, Expr *expr)
+{
+        VisitorCtx visitor = visit_identity(ty);
+
+        visitor.e_post = xresolve_expr;
+        visitor.p_post = xresolve_expr;
+        visitor.t_post = xresolve_expr;
+        visitor.l_post = xresolve_lvalue;
+        visitor.s_post = xresolve_stmt;
+        visitor.user = ty;
+
+        return (((Expr *)expr)->type < EXPRESSION_MAX_TYPE)
+             ? (void *)visit_expression(ty, (Expr *)expr, NULL, &visitor)
+             : (void *)visit_statement(ty, (Stmt *)expr, NULL, &visitor);
 }
 
 static void
@@ -12958,7 +13063,7 @@ annotate_tokens(Ty *ty, void const *ast)
                 return NULL;
         }
 
-        VisitorSet visitor = visit_identitiy(ty);
+        VisitorCtx visitor = visit_identity(ty);
 
         visitor.e_pre = annotate_expr_tokens;
         visitor.p_pre = annotate_expr_tokens;
@@ -13067,7 +13172,7 @@ highkey(Expr *e, bool _, Scope *scope, void *ctx)
 static Stmt *
 on_god(Ty *ty, Stmt *stmt)
 {
-        VisitorSet visitor = visit_identitiy(ty);
+        VisitorCtx visitor = visit_identity(ty);
 
         visitor.e_post = lowkey;
         visitor.p_post = lowkey;
@@ -13108,7 +13213,7 @@ unresolve_xD(Expr *e, bool _, Scope *scope, void *ctx)
 void
 UnresolveExpr(Ty *ty, Expr *expr)
 {
-        VisitorSet visitor = visit_identitiy(ty);
+        VisitorCtx visitor = visit_identity(ty);
 
         visitor.e_post = unresolve_xd;
         visitor.p_post = unresolve_xd;
@@ -13467,6 +13572,7 @@ NewModule(
 
         if (scope == NULL) {
                 scope = scope_new(ty, name, GlobalScope, false);
+                scope->flags |= SCOPE_MODULE;
         }
 
         mod->source = source;
@@ -14323,6 +14429,7 @@ Missing:
         }
 }
 
+#define go(e) (tyexpr(ty, ((Expr *)(e)), (flags)))
 static Value
 typarts(Ty *ty, condpart_vector const *parts, u32 flags)
 {
@@ -14336,13 +14443,13 @@ typarts(Ty *ty, condpart_vector const *parts, u32 flags)
                                 tagged(
                                         ty,
                                         part->def ? TyLet : TyAssign,
-                                        texprx(part->target, flags),
-                                        texprx(part->e, flags),
+                                        go(part->target),
+                                        go(part->e),
                                         NONE
                                 )
                         );
                 } else {
-                        vAp(v.array, texprx(part->e, flags));
+                        vAp(v.array, go(part->e));
                 }
         }
 
@@ -14350,13 +14457,13 @@ typarts(Ty *ty, condpart_vector const *parts, u32 flags)
 }
 
 inline static Value
-tyaitem(Ty *ty, Expr const *e, int i)
+tyaitem(Ty *ty, Expr const *e, int i, u32 flags)
 {
         return TAGGED(
                 TyArrayItem,
                 vTn(
-                        "item",     texprx(v__(e->elements, i)),
-                        "cond",     texprx(v__(e->aconds, i)),
+                        "item",     go(v__(e->elements, i)),
+                        "cond",     go(v__(e->aconds, i)),
                         "optional", BOOLEAN(v__(e->optional, i))
                 )
         );
@@ -14366,15 +14473,12 @@ Value
 tyexpr(Ty *ty, Expr const *e, u32 flags)
 {
         Value v;
-#define go(e) tyexpr(ty, ((Expr *)(e)), (flags))
 
         if (e == NULL) {
                 return NIL;
         }
 
-        if (e->type > EXPRESSION_MAX_TYPE) {
-                return tstmtx((Stmt *)e, flags);
-        }
+        e = unfurl(e);
 
         GC_STOP();
 
@@ -14389,6 +14493,8 @@ tyexpr(Ty *ty, Expr const *e, u32 flags)
                 fixup_access(ty, scope, (Expr *)e, false);
                 expedite_fun(ty, (Expr *)e, scope);
         }
+
+        Stmt *s = (Stmt *)e;
 
         switch (e->type) {
         case EXPRESSION_IDENTIFIER:
@@ -14505,7 +14611,7 @@ tyexpr(Ty *ty, Expr const *e, u32 flags)
                 v = ARRAY(vA());
                 NOGC(v.array);
                 for (int i = 0; i < vN(e->elements); ++i) {
-                        vAp(v.array, tyaitem(ty, e, i));
+                        vAp(v.array, tyaitem(ty, e, i, flags));
                 }
                 OKGC(v.array);
                 v = TAGGED(TyArray, v);
@@ -14525,7 +14631,7 @@ tyexpr(Ty *ty, Expr const *e, u32 flags)
                 Array *avParts = vA();
 
                 for (int i = 0; i < vN(e->elements); ++i) {
-                        vAp(avElems, tyaitem(ty, e, i));
+                        vAp(avElems, tyaitem(ty, e, i, flags));
                 }
 
                 for (int i = 0; i < vN(e->compr); ++i) {
@@ -14819,14 +14925,14 @@ tyexpr(Ty *ty, Expr const *e, u32 flags)
         case EXPRESSION_DYN_METHOD_CALL:
                 if (1) {
                         v = vTn(
-                                "object", go(e->function),
+                                "object", go(e->object),
                                 "method", go(e->method),
                                 "args",   ARRAY(vA())
                         );
                 } else {
         case EXPRESSION_METHOD_CALL:
                         v = vTn(
-                                "object", go(e->function),
+                                "object", go(e->object),
                                 "method", vSsz(e->method->identifier),
                                 "args",   ARRAY(vA())
                         );
@@ -15208,6 +15314,10 @@ tyexpr(Ty *ty, Expr const *e, u32 flags)
                 v = TAGGED(TyUnsafe, go(e->operand));
                 break;
 
+        case EXPRESSION_RESOLVED:
+                v = TAGGED(TyResolved, PTR(e->value));
+                break;
+
         case EXPRESSION_TEMPLATE_HOLE:
                 if (vN(STACK) > e->hole.i) {
                         v = *vm_get(ty, e->hole.i);
@@ -15217,7 +15327,7 @@ tyexpr(Ty *ty, Expr const *e, u32 flags)
                 break;
 
         case EXPRESSION_TEMPLATE_XHOLE:
-                v = TAGGED(TyExpr, PTR(e->hole.expr));
+                v = TAGGED(TyResolved, PTR(e->hole.expr));
                 break;
 
         case EXPRESSION_TEMPLATE_VHOLE:
@@ -15244,31 +15354,10 @@ tyexpr(Ty *ty, Expr const *e, u32 flags)
                 v = TAGGED(TyValue, *e->v);
                 break;
 
-        default:
-                v = TAGGED(TyExpr, PTR((void *)e));
-        }
+        case EXPRESSION_ERROR:
+                 fail("%s", e->string);
+                 break;
 
-        GC_RESUME();
-
-        v.src = source_register(ty, e);
-
-#undef go
-        return v;
-}
-
-Value
-tystmt(Ty *ty, Stmt *s, u32 flags)
-{
-        Value v;
-#define go(x) tyexpr(ty, ((Expr *)(x)), (flags))
-
-        if (s == NULL) {
-                return NIL;
-        }
-
-        GC_STOP();
-
-        switch (s->type) {
         case STATEMENT_DEFINITION:
                 v = TAGGED(
                         TyLet,
@@ -15514,24 +15603,28 @@ tystmt(Ty *ty, Stmt *s, u32 flags)
                 break;
 
         default:
-                v = TAGGED(TyStmt, PTR((void *)s));
+                v = TAGGED(TyExpr, PTR((void *)e));
         }
 
         GC_RESUME();
 
-        v.src = source_register(ty, s);
+        v.src = source_register(ty, e);
 
-#undef go
         return v;
 }
+#undef go
 
 condpart_vector
 cparts(Ty *ty, Value *v)
 {
         condpart_vector parts = {0};
 
-        for (int i = 0; i < v->array->count; ++i) {
-                Value *part = &v->array->items[i];
+        if (v == NULL || v->type != VALUE_ARRAY) {
+                fail("cparts(): bad arg: %s", SHOW(v));
+        }
+
+        for (int i = 0; i < vN(*v->array); ++i) {
+                Value *part = v_(*v->array, i);
                 struct condpart *cp = amA(sizeof *cp);
                 int tag = tags_first(ty, part->tags);
                 if (tag == TyLet) {
@@ -16030,6 +16123,11 @@ cexpr(Ty *ty, Value *v)
 
         case TyExpr:
                 return v->ptr;
+
+        case TyResolved:
+                e->type = EXPRESSION_RESOLVED;
+                e->value = v->ptr;
+                break;
 
         case TyType:
         {
@@ -17241,8 +17339,13 @@ typarse(
         Location const *end
 )
 {
-        symbolize_expression(ty, SCOPE, e);
+        Scope *scope = SCOPE;
+
+        symbolize_expression(ty, scope, e);
         DefinePending(ty);
+
+        //ScopeVector scopes = STATE.scopes;
+        //v00(STATE.scopes);
 
         byte_vector code_save = STATE.code;
         v00(STATE.code);
@@ -17279,8 +17382,9 @@ typarse(
                 fail("macro did not return a function");
         }
 
-        Scope *macro_scope_save = STATE.macro_scope;
-        STATE.macro_scope = SCOPE;
+        Scope *macro_scope = STATE.macro_scope;
+        STATE.macro_scope = scope;
+        //PushScope(scope);
 
         Location const mstart = STATE.mstart;
         Location const mend = STATE.mend;
@@ -17296,9 +17400,10 @@ typarse(
         }
         vmP(&expr);
 
-        STATE.macro_scope = macro_scope_save;
+        STATE.macro_scope = macro_scope;
+        //STATE.scopes = scopes;
 
-        Expr *e_ = cexpr(ty, &expr);
+        Expr *_e = cexpr(ty, &expr);
 
         STATE.mstart = mstart;
         STATE.mend = mend;
@@ -17309,7 +17414,7 @@ typarse(
 
         RestoreContext(ty, ctx);
 
-        return e_;
+        return _e;
 }
 
 static void
@@ -19711,7 +19816,6 @@ DumpProgram(
 
                         LOG("Header size: %d", hs);
                         LOG("Code size: %d", size);
-                        LOG("Bound: %d", bound);
                         LOG("ncaps: %d", ncaps);
 
                         if (
@@ -19897,7 +20001,7 @@ TyCompileSource(Ty *ty, char const *source, Scope *global, u32 flags)
         i64 symbol = scope_get_symbol(ty);
 
         if (TY_CATCH_ERROR()) {
-                Value exc = TY_CATCH();
+                (void)TY_CATCH(); // FIXME
                 scope_set_symbol(ty, symbol);
                 TYPES_OFF = types;
                 ContextList = ctx;
@@ -20557,7 +20661,7 @@ CompilerFreeVars(Ty *ty, Expr const *expr, Scope *scope)
                 .sentinel = (Symbol) { .i = -1 }
         };
 
-        VisitorSet visitor = visit_identitiy(ty);
+        VisitorCtx visitor = visit_identity(ty);
 
         visitor.e_pre = e_free;
         visitor.l_pre = l_free;

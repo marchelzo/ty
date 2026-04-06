@@ -619,7 +619,10 @@ let _nums  = (numeric._begin + 1)..(numeric._end)
 let _strs  = (string._begin + 1)..(string._end)
 
 pub terminfo_dirs = c.dlsym('unibi_terminfo_dirs', unibi)
-pub from_mem = mem -> from_mem(mem, mem.size())
+
+pub fn from-mem(mem: Blob | String) -> Ptr[_] {
+    from_mem(mem, mem.size())
+}
 
 tag InitError;
 
@@ -636,7 +639,7 @@ pub class Term {
         __term = term
              ?? (fd   ?> from_fd)
              ?? (path ?> from_file)
-             ?? (mem  ?> from_mem)
+             ?? (mem  ?> from-mem)
              ?? (name ?> from_term)
              ?? from_env()
 

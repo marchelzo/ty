@@ -9179,6 +9179,8 @@ type_resolve(Ty *ty, Expr const *e)
         Type *t1;
         Type *t2;
 
+        e = unfurl(e);
+
         if (e == NULL) {
                 return NULL;
         }

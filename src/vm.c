@@ -175,7 +175,7 @@ static char pop_ret[]  = { INSTR_POP, INSTR_RETURN_PRESERVE_CTX };
 InternedNames NAMES;
 ValueVector Globals;
 
-static Value NILS[512];
+static Value NILS[2048];
 /* ========================================================================== */
 
 #define FRAME(n, fn, from) ((Frame){ .fp = (n), .f = (fn), .ip = (from) })
@@ -2566,6 +2566,33 @@ vm_check_flags(Ty *ty)
         CheckFlags(ty);
 }
 
+static void
+xdrop(Ty *ty, Value const *v)
+{
+        Value *f;
+
+        switch (v->type) {
+        case VALUE_ARRAY:
+                for (usize i = 0; i < vN(*v->array); ++i) {
+                        xdrop(ty, v_(*v->array, i));
+                }
+                break;
+
+        case VALUE_TUPLE:
+                for (usize i = 0; i < v->count; ++i) {
+                        xdrop(ty, &v->items[i]);
+                }
+                break;
+
+        case VALUE_OBJECT:
+                f = class_lookup_method_i(ty, v->class, NAMES._drop_);
+                if (f != NULL) {
+                        vm_call_method(ty, v, f, 0);
+                }
+                break;
+        }
+}
+
 #ifndef TY_RELEASE
 __attribute__((noinline))
 #else
@@ -2577,15 +2604,7 @@ DoDrop(Ty *ty)
         Value group = *vvL(DROP_STACK);
 
         for (int i = 0; i < vN(*group.array); ++i) {
-                Value v = v__(*group.array, i);
-                if (v.type != VALUE_OBJECT) {
-                        continue;
-                }
-                Value *f = class_lookup_method_i(ty, v.class, NAMES._drop_);
-                if (f == NULL) {
-                        continue;
-                }
-                vm_call_method(ty, &v, f, 0);
+                xdrop(ty, v_(*group.array, i));
         }
 
         vXx(DROP_STACK);
@@ -3552,6 +3571,10 @@ GetMember(Ty *ty, int member, bool try_missing, bool exec)
                 goto ClassLookup;
 
         case VALUE_REGEX:
+                if (member == NAMES.source) {
+                        pop();
+                        return vSsz(v.regex->pattern);
+                }
                 n = CLASS_REGEX;
                 goto ClassLookup;
 
@@ -7046,9 +7069,6 @@ TargetMember:
                         READVALUE(n);
                         vp = poptarget();
                         if (top()->tags > 0) {
-                                if (top() == vp) {
-                                        zPx("cannot steal tag into self");
-                                }
                                 *vp = TAG(tags_first(ty, top()->tags));
                                 PopTag(top());
                         } else {
@@ -7417,10 +7437,8 @@ TargetMember:
                 CASE(TRY_TAG_POP)
                         READJUMP(jump);
                         READVALUE(tag);
-                        if (!(top()->type & VALUE_TAGGED) || tags_first(ty, top()->tags) != tag) {
+                        if (!TryUnwrap(top(), tag)) {
                                 DOJUMP(jump);
-                        } else {
-                                PopTag(top());
                         }
                         break;
 
@@ -9713,6 +9731,7 @@ vm_init(Ty *ty, int ac, char **av)
         NAMES.ptr              = M_ID("__ptr__");
         NAMES._repr_           = M_ID("__repr__");
         NAMES.slice            = M_ID("[;;]");
+        NAMES.source           = M_ID("source");
         NAMES._src_            = M_ID("__src__");
         NAMES.str              = M_ID("str");
         NAMES._str_            = M_ID("__str__");
@@ -9792,8 +9811,6 @@ vm_reset(Ty *ty)
                 xvF(v__(ty->_2op_cache, i));
         }
         v0(ty->_2op_cache);
-
-        LOGX("================== Resetting VM ==================\n");
 
         GC_STOP();
         TY_IS_INITIALIZED = false;

@@ -1567,14 +1567,11 @@ class Bool {
 }
 
 class Regex < Function {
+    source -> String;
     init(x) { regex(x) }
-
     ~=(s) { s.match(self) }
-
     test(s) { s.match?(self) }
-
     exec(s) { s.match(self) }
-
     __match__(s) {
         (s :: String) && s.match?(self)
     }
@@ -1750,12 +1747,6 @@ class Tuple[...T] {
 
     [](i: Int) -> _ {
         self[i]
-    }
-
-    __drop__() {
-        for x in cast(self) {
-            x.?__drop__()
-        }
     }
 
     __match__(t) {
@@ -3664,7 +3655,9 @@ macro enum! {
 
         while lex.peek().type != '}' and let (name, val) = next-value(i) {
             vars.push(ty.Let(name, val, public: true))
-            if lex.peek().type == ',' lex.next()
+            if lex.peek().type == ',' {
+                lex.next()
+            }
             i = val
         }
 

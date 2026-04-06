@@ -27,7 +27,8 @@
         X(NAMESPACE,   Namespace,  5)  \
         X(ACTIVE,      Active,     6)  \
         X(FUNCTION,    Function,   7)  \
-        X(RELOADING,   Reloading,  8)
+        X(MODULE,      Module,     8)  \
+        X(RELOADING,   Reloading,  9)
 
 
 #define X(f, _, i) SCOPE_##f = (1 << i),
@@ -320,6 +321,19 @@ ScopeIsTop(Scope const *scope)
         return true;
 }
 
+inline static Scope *
+ScopeTop(Scope const *scope)
+{
+        while (
+                (scope->parent != NULL)
+             && !ScopeIsModule(scope)
+             && !ScopeIsNamespace(scope)
+        ) {
+                scope = scope->parent;
+        }
+
+        return (Scope *)scope;
+}
 
 inline static bool
 ScopeIsContainedBy(Scope const *sub, Scope const *scope)

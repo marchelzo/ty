@@ -21,7 +21,7 @@ typedef struct {
         LValueTransform  *l_pre, *l_post;
         StmtTransform    *s_pre, *s_post;
         void *user;
-} VisitorSet;
+} VisitorCtx;
 
 typedef struct ns Namespace;
 
@@ -258,6 +258,7 @@ typedef vec(struct condpart *) condpart_vector;
         X(CTX_INFO),                                                                  \
         X(PLACEHOLDER),                                                               \
         X(VALUE),                                                                     \
+        X(RESOLVED),                                                                  \
         X(ERROR),                                                                     \
         X(MAX_TYPE)
 
@@ -320,13 +321,13 @@ struct expression {
                 char const *string;
                 double real;
                 Stmt *statement;
-                struct value *v;
+                Value *v;
                 void *p;
                 Expr *throw;
                 struct {
                         char const *uop;
                         Expr *operand;
-                        struct scope *escope;
+                        Scope *escope;
                 };
                 struct {
                         StmtVec stmts;
@@ -607,6 +608,27 @@ IsExpr(Stmt const *stmt)
         return (stmt->type < STATEMENT_TYPE_START);
 }
 
+inline static Expr *
+unfurl(Expr const *e)
+{
+        while (e != NULL) {
+                switch (e->type) {
+                case EXPRESSION_STATEMENT:
+                        e = (Expr *)e->statement;
+                        break;
+
+                case STATEMENT_EXPRESSION:
+                        e = ((Stmt *)e)->expression;
+                        break;
+
+                default:
+                        return (Expr *)e;
+                }
+        }
+
+        return (Expr *)e;
+}
+
 inline static bool
 is_method(Expr const *e) { return e->class != NULL; }
 
@@ -614,22 +636,22 @@ char const *
 ExpressionTypeName(Expr const *e);
 
 Stmt *
-visit_statement(Ty *ty, Stmt *s, Scope *, VisitorSet const *);
+visit_statement(Ty *ty, Stmt *s, Scope *, VisitorCtx *);
 
 Expr *
-visit_pattern(Ty *ty, Expr *e, Scope *, VisitorSet const *);
+visit_pattern(Ty *ty, Expr *e, Scope *, VisitorCtx *);
 
 Expr *
-visit_lvalue(Ty *ty, Expr *e, Scope *, VisitorSet const *, bool);
+visit_lvalue(Ty *ty, Expr *e, Scope *, VisitorCtx *, bool);
 
 Expr *
-visit_expression(Ty *ty, Expr *e, Scope *, VisitorSet const *);
+visit_expression(Ty *ty, Expr *e, Scope *, VisitorCtx *);
 
 Expr *
-visit_type(Ty *ty, Expr *e, Scope *scope, VisitorSet const *);
+visit_type(Ty *ty, Expr *e, Scope *scope, VisitorCtx *);
 
-VisitorSet
-visit_identitiy(Ty *ty);
+VisitorCtx
+visit_identity(Ty *ty);
 
 #endif
 

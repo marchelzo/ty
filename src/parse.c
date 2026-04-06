@@ -6962,6 +6962,7 @@ MakePublic(Ty *ty, Stmt *s)
         case STATEMENT_MACRO_DEFINITION:
         case STATEMENT_FUN_MACRO_DEFINITION:
         case STATEMENT_OPERATOR_DEFINITION:
+        case STATEMENT_PATTERN_DEFINITION:
                 s->pub = true;
                 break;
 
@@ -7464,9 +7465,10 @@ parse_get_expr(Ty *ty, int prec, bool resolve, bool want_raw)
         Expr *e;
 
         if (TY_CATCH_ERROR()) {
-                TY_CATCH();
-                v = NIL;
                 seek(ty, save);
+                LOAD_NE();
+                LOAD_NI();
+                TY_RETHROW();
         } else {
                 e = parse_expr(ty, prec);
                 if (!resolve) {
@@ -7501,17 +7503,18 @@ parse_get_stmt(Ty *ty, int prec, bool want_raw)
         Value v;
 
         if (TY_CATCH_ERROR()) {
-                TY_CATCH();
-                v = NIL;
                 seek(ty, save);
+                LOAD_NE();
+                LOAD_NI();
+                TY_RETHROW();
         } else {
                 Stmt *s = parse_statement(ty, prec);
                 if (want_raw) {
                         v = vT(2);
                         v.items[0] = PTR(s);
-                        v.items[1] = tystmt(ty, s, 0);
+                        v.items[1] = tyexpr(ty, (Expr *)s, 0);
                 } else {
-                        v = tystmt(ty, s, 0);
+                        v = tyexpr(ty, (Expr *)s, 0);
                 }
                 TY_CATCH_END();
         }

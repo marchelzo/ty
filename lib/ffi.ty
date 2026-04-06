@@ -178,7 +178,9 @@ pub fn ffi-type(expr: _, coerce: Bool = false) -> _ {
                    : $$[ $$::(Float) $$]
         ),
 
-        c::ptr => coerce ? $$[ $$::(IntoPtr)[_] $$] : $$[ $$::(Ptr)[_] $$]
+        c::ptr => coerce ? $$[ $$::(IntoPtr)[_] $$] : $$[ $$::(Ptr)[_] $$],
+
+        c::void => ty.Nil
     }
 }
 

@@ -6,13 +6,13 @@
 
 char *value_show_color(Ty *ty, Value const *v);
 
-#define V(e) ((e) = visit_expression(ty, e, scope, hooks))
-#define VS(s) ((s) = visit_statement(ty, s, scope, hooks))
-#define VP(e) ((e) = visit_pattern(ty, e, scope, hooks))
-#define VT(t) ((t) = visit_type(ty, t, scope, hooks))
-#define VL(d, t) ((t) = visit_lvalue(ty, t, scope, hooks, (d)))
-#define VL_(t) ((t) = visit_lvalue(ty, t, scope, hooks, decl))
-#define VLT(t) ((t) = visit_lvalue(ty, t, scope, hooks, true))
+#define V(e) ((e) = visit_expression(ty, e, scope, ctxt))
+#define VS(s) ((s) = visit_statement(ty, s, scope, ctxt))
+#define VP(e) ((e) = visit_pattern(ty, e, scope, ctxt))
+#define VT(t) ((t) = visit_type(ty, t, scope, ctxt))
+#define VL(d, t) ((t) = visit_lvalue(ty, t, scope, ctxt, (d)))
+#define VL_(t) ((t) = visit_lvalue(ty, t, scope, ctxt, decl))
+#define VLT(t) ((t) = visit_lvalue(ty, t, scope, ctxt, true))
 
 #define SUB(f, name, ...) do {                           \
         Scope *tmp_scope = scope;                        \
@@ -23,30 +23,30 @@ char *value_show_color(Ty *ty, Value const *v);
         scope = tmp_scope;                               \
 } while (0)
 
-#define E1(e) ((e) = (hooks->e_pre)(e, scope, hooks->user))
-#define E2(e) ((e) = (hooks->e_post)(e, scope, hooks->user))
+#define E1(e) ((e) = (ctxt->e_pre)(e, scope, ctxt->user))
+#define E2(e) ((e) = (ctxt->e_post)(e, scope, ctxt->user))
 
-#define T1(t) ((t) = (hooks->t_pre)(t, scope, hooks->user))
-#define T2(t) ((t) = (hooks->t_post)(t, scope, hooks->user))
+#define T1(t) ((t) = (ctxt->t_pre)(t, scope, ctxt->user))
+#define T2(t) ((t) = (ctxt->t_post)(t, scope, ctxt->user))
 
-#define S1(s) ((s) = (hooks->s_pre)(s, scope, hooks->user))
-#define S2(s) ((s) = (hooks->s_post)(s, scope, hooks->user))
+#define S1(s) ((s) = (ctxt->s_pre)(s, scope, ctxt->user))
+#define S2(s) ((s) = (ctxt->s_post)(s, scope, ctxt->user))
 
-#define P1(p) ((p) = (hooks->p_pre)(p, scope, hooks->user))
-#define P2(p) ((p) = (hooks->p_post)(p, scope, hooks->user))
+#define P1(p) ((p) = (ctxt->p_pre)(p, scope, ctxt->user))
+#define P2(p) ((p) = (ctxt->p_post)(p, scope, ctxt->user))
 
-#define L1(t) ((t) = (hooks->l_pre)(t, decl, scope, hooks->user))
-#define L2(t) ((t) = (hooks->l_post)(t, decl, scope, hooks->user))
+#define L1(t) ((t) = (ctxt->l_pre)(t, decl, scope, ctxt->user))
+#define L2(t) ((t) = (ctxt->l_post)(t, decl, scope, ctxt->user))
 
 static Expr *id_e(Expr *e, Scope *scope, void *u) { return e; }
 static Stmt *id_s(Stmt *s, Scope *scope, void *u) { return s; }
 
 static Expr *id_l(Expr *t, bool decl, Scope *scope, void *u) { return t; }
 
-VisitorSet
-visit_identitiy(Ty *ty)
+VisitorCtx
+visit_identity(Ty *ty)
 {
-        return (VisitorSet) {
+        return (VisitorCtx) {
                 id_e, id_e,
                 id_e, id_e,
                 id_e, id_e,
@@ -57,7 +57,7 @@ visit_identitiy(Ty *ty)
 }
 
 Stmt *
-visit_statement(Ty *ty, Stmt *s, Scope *scope, VisitorSet const *hooks)
+visit_statement(Ty *ty, Stmt *s, Scope *scope, VisitorCtx *ctxt)
 {
         if (s == NULL) {
                 return NULL;
@@ -229,17 +229,17 @@ visit_statement(Ty *ty, Stmt *s, Scope *scope, VisitorSet const *hooks)
 }
 
 Expr *
-visit_pattern(Ty *ty, Expr *p, Scope *scope, VisitorSet const *hooks)
+visit_pattern(Ty *ty, Expr *p, Scope *scope, VisitorCtx *ctxt)
 {
         if (p == NULL) {
                 return NULL;
         }
 
-        return visit_expression(ty, p, scope, hooks);
+        return visit_expression(ty, p, scope, ctxt);
 }
 
 Expr *
-visit_lvalue(Ty *ty, Expr *t, Scope *scope, VisitorSet const *hooks, bool decl)
+visit_lvalue(Ty *ty, Expr *t, Scope *scope, VisitorCtx *ctxt, bool decl)
 {
         Symbol *sym;
 
@@ -251,11 +251,11 @@ visit_lvalue(Ty *ty, Expr *t, Scope *scope, VisitorSet const *hooks, bool decl)
 
         switch (t->type) {
         case EXPRESSION_TAG_PATTERN:
+        case EXPRESSION_RESOURCE_BINDING:
                 VL_(t->tagged);
         case EXPRESSION_IDENTIFIER:
         case EXPRESSION_MATCH_NOT_NIL:
         case EXPRESSION_MATCH_REST:
-        case EXPRESSION_RESOURCE_BINDING:
                 VT(t->constraint);
                 break;
 
@@ -317,7 +317,7 @@ visit_lvalue(Ty *ty, Expr *t, Scope *scope, VisitorSet const *hooks, bool decl)
 }
 
 Expr *
-visit_expression(Ty *ty, Expr *e, Scope *scope, VisitorSet const *hooks)
+visit_expression(Ty *ty, Expr *e, Scope *scope, VisitorCtx *ctxt)
 {
         if (e == NULL)
                 return NULL;
@@ -333,8 +333,10 @@ visit_expression(Ty *ty, Expr *e, Scope *scope, VisitorSet const *hooks)
                 break;
 
         case EXPRESSION_SPECIAL_STRING:
-                for (int i = 0; i < e->expressions.count; ++i)
+                for (int i = 0; i < e->expressions.count; ++i) {
                         V(e->expressions.items[i]);
+                }
+                V(e->lang);
                 break;
 
         case EXPRESSION_TAG:
@@ -656,7 +658,7 @@ visit_expression(Ty *ty, Expr *e, Scope *scope, VisitorSet const *hooks)
 }
 
 Expr *
-visit_type(Ty *ty, Expr *e, Scope *scope, VisitorSet const *hooks)
+visit_type(Ty *ty, Expr *e, Scope *scope, VisitorCtx *ctxt)
 {
         if (e == NULL)
                 return NULL;
@@ -808,7 +810,13 @@ visit_type(Ty *ty, Expr *e, Scope *scope, VisitorSet const *hooks)
 
         case EXPRESSION_TEMPLATE:
                 for (usize i = 0; i < e->template.exprs.count; ++i) {
-                        VT(e->template.exprs.items[i]);
+                        V(e->template.exprs.items[i]);
+                }
+                for (usize i = 0; i < vN(e->template.holes); ++i) {
+                        V(v__(e->template.holes, i));
+                }
+                for (usize i = 0; i < vN(e->template.stmts); ++i) {
+                        VS(v__(e->template.stmts, i));
                 }
                 break;
 

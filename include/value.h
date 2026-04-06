@@ -201,6 +201,7 @@ enum {
         X(TypeOf)               \
         X(FuncType)             \
         X(Cast)                 \
+        X(Resolved)             \
         X(Stop)
 
 #define TY_TYPE_TAGS   \
@@ -300,6 +301,7 @@ TypeName(Ty const *ty, int t0)
         case VALUE_NIL:                 return "nil";
         case VALUE_NONE:                return "<none>";
         case VALUE_ANY:                 return "Any";
+        case VALUE_MODULE:              return "Module";
 
         default:                        return "<internal>";
         }
@@ -759,11 +761,11 @@ checked_arg_6(
 #define TRY_ARG(...) ARGxD(__VA_ARGS__, _NIL, _NONE)
 
 #define    INT_ARG(i) ARGx(i, VALUE_INTEGER).z
-#define    PTR_ARG(i) ARGx(i, VALUE_PTR).ptr
 #define  FLOAT_ARG(i) ARGx(i, VALUE_REAL).real
 #define   BOOL_ARG(i) ARGx(i, VALUE_BOOLEAN).boolean
 #define  ARRAY_ARG(i) ARGx(i, VALUE_ARRAY).array
 #define   DICT_ARG(i) ARGx(i, VALUE_DICT).dict
+#define    PTR_ARG(i) ((ARG_T(i) == VALUE_NIL) ? NULL : ARGx(i, VALUE_PTR).ptr)
 
 #define bP(fmt, ...) zP("%s: " fmt, _name__ __VA_OPT__(,) __VA_ARGS__)
 
