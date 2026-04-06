@@ -1776,6 +1776,7 @@ BUILTIN_FUNCTION(accel_from_raw)
         return TGCPTR(dst, C_TYPE[dt], dst);
 }
 
+#if defined(__APPLE__)
 BUILTIN_FUNCTION(accel_mha_forward)
 {
         ASSERT_ARGC("mhaForward()", 11);
@@ -2113,3 +2114,9 @@ BUILTIN_FUNCTION(accel_mha_forward_one)
 
         return TGCPTR(out, &ffi_type_double, out);
 }
+#else
+BUILTIN_FUNCTION(accel_mha_forward)     { zP("xxx"); }
+BUILTIN_FUNCTION(accel_mha_backward)    { zP("xxx"); }
+BUILTIN_FUNCTION(accel_kv_cache_alloc)  { zP("xxx"); }
+BUILTIN_FUNCTION(accel_mha_forward_one) { zP("xxx"); }
+#endif

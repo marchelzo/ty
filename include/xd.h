@@ -190,7 +190,7 @@ contains(char const *s, int c)
 inline static bool
 only_blanks(char const *s)
 {
-        for (isize i = 0; i < s[i] != '\0'; ++i) {
+        for (isize i = 0; s[i] != '\0'; ++i) {
                 if (!contains(" \t\r\n", s[i])) {
                         return false;
                 }
