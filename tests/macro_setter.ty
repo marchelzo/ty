@@ -1,7 +1,5 @@
 import ty
 
-ns test
-
 macro based {
     ty.Class(
         name: 'Widget',
@@ -31,6 +29,8 @@ macro based {
 }
 
 based
+
+ns test
 
 pub fn macro-setter() {
     let o = Widget()

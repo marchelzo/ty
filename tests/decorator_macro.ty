@@ -1,15 +1,14 @@
 import ty
 
-ns test
-
 macro upper(def) {
     let ty.FuncDef(f) = def
     ty.FuncDef({*f, body: $$[ $$(f.body).upper() $$]})
 }
 
-@upper
+ns test
 
-function f() {
+@upper
+fn f() {
     'pass'
 }
 

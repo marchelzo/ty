@@ -1,5 +1,3 @@
-ns test
-
 class A {
     static foo(x: Float) {
         1
@@ -24,6 +22,8 @@ fn bar(a: Int, b: Int) {
 }
 
 fn o() {}
+
+ns test
 
 pub fn overload() {
     assert([A.foo(4.0), A.foo([1, 2]), A.foo([1, 2.0]), A.foo(['a'])] == [1, 2, 3, 4])

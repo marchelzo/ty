@@ -6894,6 +6894,7 @@ _parse_statement(Ty *ty, int prec)
 Keyword:
 
         switch (K0) {
+        case KEYWORD_IMPORT:   return parse_import(ty);
         case KEYWORD_CLASS:    return parse_class_definition(ty);
         case KEYWORD_TAG:      return parse_class_definition(ty);
         case KEYWORD_TRAIT:    return parse_class_definition(ty);
@@ -7227,6 +7228,8 @@ parse_ex(
                         ok = false;
                         goto End;
                 }
+
+                avP(program, import);
         }
 
         while (TokenIndex > 0 && token(-1)->type == TOKEN_COMMENT) {
@@ -7345,8 +7348,9 @@ parse_ex(
                                 define_top(ty, s, doc);
                                 TY_CATCH_END();
                         }
-                        avP(program, s);
                 }
+
+                avP(program, s);
 
 #ifdef TY_DEBUG_NAMES
                 pns(s->ns, true);

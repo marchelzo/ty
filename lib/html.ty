@@ -317,7 +317,7 @@ fn escape-text(s: String) -> String {
      .sub('>', '&gt;')
      .sub('"', '&quot;')
      .sub("'", '&#39;')
-     .sub(/[\N{U+0000}-\N{U+001F}\N{U+007F}-\N{U+FFFF}]/u, [_, ch] -> "&#{ord(ch)};")
+     .sub(/[\N{U+0000}-\N{U+001F}\N{U+007F}-\N{U+FFFF}]/u, ch -> "&#{ord(ch)};")
 }
 
 fn unescape-text(s: String) -> String {

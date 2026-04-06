@@ -23,6 +23,23 @@ typedef struct {
         vec(u64) times;
 } TypeMemo;
 
+typedef struct {
+        Type const *t0;
+        Type const *t1;
+        u64 time;
+} TypePair;
+
+typedef vec(TypePair) TypePairVector;
+
+static struct {
+        TypeVector     concrete;
+        TypeVector     occurs;
+        TypeVector     propagate;
+        TypeVector     reduce;
+        TypeVector     show;
+        TypePairVector unify;
+} visiting;
+
 u32 TYPES_OFF = 0;
 
 #define ENFORCE (!AllowErrors && (TYPES_OFF == 0) && !DEBUGGING)
@@ -478,14 +495,6 @@ already_visiting(TypeVector const *types, Type const *t0)
 
         return false;
 }
-
-typedef struct {
-        Type const *t0;
-        Type const *t1;
-        u64 time;
-} TypePair;
-
-typedef vec(TypePair) TypePairVector;
 
 inline static void
 visit_pair(TypePairVector *pairs, Type const *t0, Type const *t1)
@@ -1620,11 +1629,10 @@ Reduce(Ty *ty, Type const *t0)
                 return t1;
         }
 
-        static TypeVector visiting;
-        if (already_visiting(&visiting, t1)) {
+        if (already_visiting(&visiting.reduce, t1)) {
                 return t1;
         } else {
-                xvP(visiting, t1);
+                xvP(visiting.reduce, t1);
         }
 
         bool cloned = false;
@@ -1756,7 +1764,7 @@ Reduce(Ty *ty, Type const *t0)
                 XXTLOG("    %s", ShowType(t1));
         }
 
-        vXx(visiting);
+        vXx(visiting.reduce);
 
         return t1;
 }
@@ -3484,6 +3492,7 @@ type_alias(Ty *ty, Symbol *var, Stmt const *def)
 
         var->type->name = def->class.name;
         var->type->asrc = def->class.type;
+
         Type *resolved = type_resolve(ty, def->class.type);
         var->type->_type = (resolved != NULL) ? MakeConcrete(ty, resolved, &refs) : NULL;
 
@@ -3879,11 +3888,10 @@ Propagate(Ty *ty, Type *t0)
                 return NULL;
         }
 
-        static TypeVector visiting;
-        if (already_visiting(&visiting, t0)) {
+        if (already_visiting(&visiting.propagate, t0)) {
                 return t0;
         } else {
-                xvP(visiting, t0);
+                xvP(visiting.propagate, t0);
         }
 
         Type *t1;
@@ -4066,7 +4074,7 @@ Propagate(Ty *ty, Type *t0)
                 break;
         }
 
-        vvX(visiting);
+        vvX(visiting.propagate);
 
         return t0;
 }
@@ -4092,11 +4100,10 @@ Occurs(Ty *ty, Type *t0, u32 id, int level)
                 return IsFixed(t0) ? false : (level == -1);
         }
 
-        static TypeVector visiting;
-        if (already_visiting(&visiting, t0)) {
+        if (already_visiting(&visiting.occurs, t0)) {
                 return true;
         } else {
-                xvP(visiting, t0);
+                xvP(visiting.occurs, t0);
         }
 
         bool ret = false;
@@ -4188,7 +4195,7 @@ Occurs(Ty *ty, Type *t0, u32 id, int level)
 
         d -= 1;
 
-        vvX(visiting);
+        vXx(visiting.occurs);
 
         return ret;
 }
@@ -5096,8 +5103,6 @@ TryBind(Ty *ty, Type *t0, Type *t1, bool super)
 static bool
 UnifyXD(Ty *ty, Type *t0, Type *t1, bool super, bool check, bool soft)
 {
-        static TypePairVector stack = {0};
-
 #define UnifyXD(ty, t0, t1, su, ch, so) ((UnifyXD)(ty, t0, t1, su, ch, so) || ((DPRINT(check, "[%d]: %s   !%s   %s", __LINE__, ShowType(t0), (super ? ">" : "<"), ShowType(t1)), false)))
 
 #if 1
@@ -5132,10 +5137,10 @@ UnifyXD(Ty *ty, Type *t0, Type *t1, bool super, bool check, bool soft)
         bool on_stack = CanResolveAlias(t0) || CanResolveAlias(t1);
 
         if (on_stack) {
-                if (already_visiting_pair(&stack, t0, t1)) {
+                if (already_visiting_pair(&visiting.unify, t0, t1)) {
                         return true;
                 } else {
-                        visit_pair(&stack, t0, t1);
+                        visit_pair(&visiting.unify, t0, t1);
                 }
         }
 
@@ -5634,7 +5639,7 @@ Success:
         }
 
         if (on_stack) {
-                vvX(stack);
+                vXx(visiting.unify);
         }
 
         CurrentDepth -= 1;
@@ -9611,7 +9616,6 @@ VarName(Ty *ty, u32 id)
 char *
 type_show(Ty *ty, Type const *t0)
 {
-        static TypeVector visiting;
         byte_vector buf = {0};
 
         t0 = ResolveVar(t0);
@@ -9628,13 +9632,13 @@ type_show(Ty *ty, Type const *t0)
                 return S2("🔴");
         }
 
-        if (already_visiting(&visiting, t0) || vN(visiting) > 16) {
+        if (already_visiting(&visiting.show, t0) || vN(visiting.show) > 16) {
                 return xfmt("%s[...]%s", TERM(93;1), TERM(0));
         } else {
-                xvP(visiting, (Type *)t0);
+                xvP(visiting.show, (Type *)t0);
         }
 
-        if (vN(visiting) == 1 && IsAliasT(t0)) {
+        if (vN(visiting.show) == 1 && IsAliasT(t0)) {
                 t0 = Resolve(ty, t0);
         }
 
@@ -10092,7 +10096,7 @@ type_show(Ty *ty, Type const *t0)
                 break;
         }
 
-        vvX(visiting);
+        vXx(visiting.show);
 
         return vN(buf) == 0 ? S2("<?>") : vv(buf);
 }
@@ -10207,8 +10211,6 @@ IsSolved(Type const *t0)
 static Type *
 MakeConcrete_(Ty *ty, Type *t0, TypeVector *refs, bool variance)
 {
-        static TypeVector visiting;
-
         while (IsBoundVar(t0)) {
                 if (!t0->bounded) {
                         return variance ? TYPE_ANY : UNKNOWN;
@@ -10237,10 +10239,10 @@ MakeConcrete_(Ty *ty, Type *t0, TypeVector *refs, bool variance)
                 return (t1 != NULL) ? t1 : t0;
         }
 
-        if (already_visiting(&visiting, t0)) {
+        if (already_visiting(&visiting.concrete, t0)) {
                 return UNKNOWN;
         } else {
-                xvP(visiting, t0);
+                xvP(visiting.concrete, t0);
         }
 
         t0 = CloneType(ty, t0);
@@ -10359,7 +10361,7 @@ MakeConcrete_(Ty *ty, Type *t0, TypeVector *refs, bool variance)
                 break;
         }
 
-        vvX(visiting);
+        vXx(visiting.concrete);
 
         return t0;
 }
@@ -11562,6 +11564,12 @@ types_init(Ty *ty)
         FUEL = MAX_FUEL;
         CurrentLevel = 0;
         CurrentDepth = 0;
+        v0(visiting.concrete);
+        v0(visiting.occurs);
+        v0(visiting.propagate);
+        v0(visiting.reduce);
+        v0(visiting.show);
+        v0(visiting.unify);
         v0(WorkIndex);
         v0(ToSolve);
         v0(FunStack);

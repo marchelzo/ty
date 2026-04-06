@@ -454,10 +454,7 @@ let _known-sql-types = %{
 fn _sql-type(name: String) -> String {
     match _known-sql-types[name] {
         $t => t,
-        _  => {
-            print("sql: warning: unknown type '{name}', defaulting to TEXT")
-            'TEXT'
-        }
+        _  => 'TEXT'
     }
 }
 
@@ -1081,9 +1078,6 @@ pub macro table(def: _) {
 
     let excluded-set = ["{_quote(it.name)} = excluded.{_quote(it.name)}" for upd-cols].join(', ')
     let unique-cols = cols.filter(\_.uniq)
-    if #unique-cols == 0 {
-        print("sql: warning: @table {cls.name} has no unique columns — upsert will fall back to PK and always insert for new rows")
-    }
     let upsert-conflict = (#unique-cols > 0)
         ? _quote(unique-cols[0].name)
         : pk-q

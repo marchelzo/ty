@@ -1,6 +1,6 @@
 ns test
 
-fn go() {
+pub fn go() {
     for ..10 {
         try {
             for 'abc' {
@@ -21,7 +21,7 @@ fn go() {
     }
 }
 
-fn go2() {
+pub fn go2() {
     try {
         while let Some(x) = Some(1) {
             try {
@@ -38,7 +38,3 @@ fn go2() {
         print(e)
     }
 }
-
-go()
-
-go2()
