@@ -165,15 +165,14 @@ fn check[T](msg: T, file: String) -> T {
             }]
 
             send-dx(diagnostics)
-
-            throw CompilationError
         },
 
         _ => do {
             send-dx([])
-            msg
         }
     }
+
+    msg
 }
 
 fn run(request: Request) -> _ {
@@ -186,7 +185,7 @@ fn run(request: Request) -> _ {
     }), file)
 
     if not let $rsp = do-req(request) {
-        throw 'NO RESPONSE'
+        return nil
     }
 
     check(rsp, file)
