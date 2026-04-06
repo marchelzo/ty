@@ -582,7 +582,7 @@ pub fn import-then-change() {
     let v = 800
 
     change-doc(reload-uri, ++v, '''
-import ini (..)
+import ini (INIFile)
 
 let f = INIFile()
 let d = f.dict()
@@ -595,7 +595,7 @@ let d = f.dict()
     assert(resp1['result'] != nil)
 
     change-doc(reload-uri, ++v, '''
-import ini (..)
+import ini (INIFile)
 
 let f = INIFile()
 let d = f.dict()
@@ -646,7 +646,7 @@ pub fn switch-imports() {
     let v = 1000
 
     change-doc(reload-uri, ++v, '''
-import ini (..)
+import ini (INIFile)
 
 let f = INIFile()
 ''')
@@ -669,7 +669,7 @@ let y = x.upper()
     assert(resp2['result'] != nil)
 
     change-doc(reload-uri, ++v, '''
-import ini (INIFile, Section)
+import ini (INIFile)
 
 let f = INIFile()
 let d = f.dict()
@@ -686,7 +686,7 @@ pub fn repeated-edits-with-imports() {
     let v = 1100
 
     for i in 0..5 {
-        change-doc(reload-uri, ++v, "import ini (..)\nlet f = INIFile()\nlet x = {i}\n")
+        change-doc(reload-uri, ++v, "import ini (INIFile)\nlet f = INIFile()\nlet x = {i}\n")
     }
 
     let resp = request('textDocument/hover', {
