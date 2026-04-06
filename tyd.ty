@@ -5,6 +5,7 @@ import json
 import sh (sh)
 import os (..)
 import log (..)
+import path (Path)
 
 logging({
     path: './tyd.log',
@@ -51,9 +52,9 @@ let init = {
 
 let err-fd = open('tyls.err', O_WRONLY | O_TRUNC | O_CREAT, 0644)
 
-let TY_LS_CMD = getenv('TY_LS_CMD').words() ?? ['./tyls']
+let TY_LS_CMD = getenv('TY_LS_CMD').words() ?? ['tyls']
 
-let TYLS_TIMEOUT = 1.75
+let TYLS_TIMEOUT = 0.35
 
 let responses: SharedQueue[(Int, String)] = SharedQueue()
 
@@ -61,12 +62,13 @@ fn spawn-tyls() {
     let proc = os.spawn(TY_LS_CMD, stdin=SPAWN_PIPE, stdout=SPAWN_PIPE, stderr=err-fd)
     critical!(proc)
 
-    let stream = io.open(proc.stdout, 'r')
     let pid = proc.pid
 
     Thread(fn () {
-        while let $line = stream.next-line() {
-            responses.put((pid, line))
+        with stream = io.open(proc.stdout, 'r') {
+            while let $line = stream.next-line() {
+                responses.put((pid, line))
+            }
         }
     }).detach()
 
@@ -78,6 +80,7 @@ let tyls = spawn-tyls()
 fn restart-tyls!() {
     warn!("restarting tyls")
 
+    close(tyls.stdin)
     kill(tyls.pid, SIGKILL)
     wait(tyls.pid)
 
@@ -91,7 +94,6 @@ onExit(fn () {
 })
 
 fn get() -> String | nil {
-    let lives = 2
     while match responses.try-take(TYLS_TIMEOUT) {
         Some((tyls.pid, line)) => {
             warn!("TYLS OUTPUT: {line}")
@@ -100,15 +102,14 @@ fn get() -> String | nil {
 
         Some(_) => {
             warn!("Received response from old tyls process")
+            continue
         },
 
         None => {
             error!("tyls timed out after {TYLS_TIMEOUT}s")
             restart-tyls!()
-            if --lives == 0 {
-                error!("tyls failed to respond after 3 restarts, giving up")
-                return nil
-            }
+            error!("tyls failed to respond after 3 restarts, giving up")
+            return nil
         }
     }
 }
@@ -120,11 +121,20 @@ use Request = {
     ?col: Int
 }
 
-fn do-req(msg: Request) {
-    error!("Writing to tyls: {pretty(msg, oneline=true, width=72)}")
-    let n = write(tyls.stdin, "{json.encode(msg)}\n")
-    info!("write(): {n} bytes")
-    get()
+fn do-req(msg: Request) -> _ {
+    for ..3 {
+        error!("Writing to tyls: {pretty(msg, oneline=true, width=72)}")
+        let n = write(tyls.stdin, "{json.encode(msg)}\n")
+        info!("write(): {n} bytes")
+
+        if let $out = get() {
+            return json.parse(out)
+        }
+
+        if it == 2 {
+            Path('./failed.json').append(json.encode(msg) + '\n')
+        }
+    }
 }
 
 fn check[T](msg: T, file: String) -> T {
@@ -175,11 +185,11 @@ fn run(request: Request) -> _ {
         source: store[file]
     }), file)
 
-    if not let $line = do-req(request) {
+    if not let $rsp = do-req(request) {
         throw 'NO RESPONSE'
     }
 
-    return check(json.parse(line), file)
+    check(rsp, file)
 }
 
 
@@ -207,7 +217,12 @@ fn send(msg) {
 }
 
 fn check-file(path: String) {
-    run({what: 0, check: true, file: path, source: store[path]})
+    check(do-req({
+        what: 0,
+        check: true,
+        file: path,
+        source: store[path]
+    }), path)
 }
 
 let skip = [
