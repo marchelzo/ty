@@ -1,5 +1,6 @@
 import yaml (..)
 import math (inf, nan)
+import path (Path)
 
 ns test
 
@@ -244,10 +245,11 @@ pub fn test-parse-mixed-types() {
 
 pub fn test-dump-file-and-parse-file() {
     let data = %{'test': [1, 2, 3]}
-    let path = '/tmp/ty-yaml-test.yaml'
-    dump-file(path, data)
-    let result: _ = parse-file(path)
-    assert(result['test'] == [1, 2, 3])
+    with path = Path.temp() {
+        dump-file(path, data)
+        let result: _ = parse-file(path)
+        assert(result['test'] == [1, 2, 3])
+    }
 }
 
 pub fn test-parse-error() {
