@@ -328,7 +328,7 @@ shared_queue_try_take(Ty *ty, Value *self, int argc, Value *kwargs)
         SharedQueue *q = self->shared_queue;
 
         if (argc == 1) {
-                u64 timeout = TIMEOUT_ARG(0);
+                u64 timeout = MSEC_TIMEOUT_ARG(0);
                 UnlockTy();
                 TyMutexLock(&q->mutex);
                 while (_queue_count(q->head, q->tail, q->cap) == 0) {

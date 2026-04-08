@@ -4101,7 +4101,7 @@ BUILTIN_FUNCTION(thread_wait_any)
         ASSERT_ARGC("thread.wait-any()", 1, 2, 3);
 
         Value objects = ARGx(0, VALUE_ARRAY);
-        u64 timeout = TIMEOUT_ARG(1);
+        u64 timeout = MSEC_TIMEOUT_ARG(1);
 
         usize n = vN(*objects.array);
 
@@ -6216,13 +6216,12 @@ timespec_seconds(struct timespec const *ts)
 #if !defined(__APPLE__)
 BUILTIN_FUNCTION(os_sleep)
 {
-        ASSERT_ARGC("os.sleep()", 1);
+        ASSERT_ARGC("os.sleep()", 0, 1);
 
         struct timespec dur;
         struct timespec rem = {0};
 
-        i64 nsec = NSEC_ARG(0);
-
+        u64 nsecs = NSEC_TIMEOUT_ARG(0);
         int flags = 0;
 
         clockid_t clk;
@@ -6242,8 +6241,8 @@ BUILTIN_FUNCTION(os_sleep)
                 clk = clock->z;
         }
 
-        dur.tv_sec = nsec / TY_1e9;
-        dur.tv_nsec = nsec % TY_1e9;
+        dur.tv_sec = nsecs / TY_1e9;
+        dur.tv_nsec = nsecs % TY_1e9;
 
         UnlockTy();
 #ifdef _WIN32

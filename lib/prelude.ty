@@ -506,6 +506,7 @@ class Array[T] : Iterable[T] {
     rotate!(n: Int = 1) -> Array[T];
     search(x: T) -> Int | nil;
     search-by(predicate: T -> Any) -> Int | nil;
+    find(predicate: T -> Any) -> T | nil;
     shuffle!() -> Array[T];
     shuffle() -> Array[T];
     sort!(by: T -> Any, desc: Bool = false) -> Array[T];
@@ -1032,6 +1033,9 @@ class String : Iterable[String], IntoPtr[Int] {
     split(offset: Int) -> (String, String);
     split(pattern: RegexV, n: ?Int) -> [RegexMatch | String];
     split(pattern: String | Regex, n: ?Int) -> [String];
+
+    pad(n: Int, ch: String = ' ');
+    rpad(n: Int, ch: String = ' ');
 
     bytes() -> [Int];
     chars() -> [String];
