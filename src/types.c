@@ -4249,6 +4249,7 @@ NewInst0(Ty *ty, Type *t0, TypeEnv *env)
 {
         Type *t00 = t0;
         Type *t1;
+        Type *t2;
 
         t0 = CloneType(ty, t0);
 
@@ -4269,7 +4270,8 @@ NewInst0(Ty *ty, Type *t0, TypeEnv *env)
                                 t1->variadic = t0->variadic;
                                 t1->packed = t0->packed;
                         } else {
-                                t1 = PutEnv(ty, env, t0->id, NewInst0(ty, t0->val, env));
+                                t1 = PutEnv(ty, env, t0->id, NewVar(ty));
+                                BindVar(t1, NewInst0(ty, t0->val, env));
                         }
                 }
                 t0 = t1;
@@ -4277,9 +4279,7 @@ NewInst0(Ty *ty, Type *t0, TypeEnv *env)
 
         case TYPE_SUBSCRIPT:
         case TYPE_SLICE:
-                t0 = CanStep(t0)
-                   ? NewInst0(ty, StepVar(t0), env)
-                   : t0;
+                t0 = CanStep(t0) ? NewInst0(ty, StepVar(t0), env) : t0;
                 break;
 
         case TYPE_UNION:

@@ -1731,10 +1731,16 @@ TryIntoTime(Ty *ty, char const *ctx, Value const *t, i64 factor)
 #define USEC_ARG(i) TryIntoTime(ty, _name__, &ARG(i), 1000000)
 #define MSEC_ARG(i) TryIntoTime(ty, _name__, &ARG(i), 1000)
 
-#define TIMEOUT_ARG(i) (                               \
+#define MSEC_TIMEOUT_ARG(i) (                          \
         (ARG_T(i) == VALUE_REAL) ? max(MSEC_ARG(i), 0) \
       : (ARG_T(i) == VALUE_NONE) ? (u64)-1             \
       : MSEC_ARG(i)                                    \
+)
+
+#define NSEC_TIMEOUT_ARG(i) (                          \
+        (ARG_T(i) == VALUE_REAL) ? max(NSEC_ARG(i), 0) \
+      : (ARG_T(i) == VALUE_NONE) ? (u64)-1             \
+      : NSEC_ARG(i)                                    \
 )
 
 Value
