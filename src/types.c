@@ -4357,7 +4357,7 @@ NewInst0(Ty *ty, Type *t0, TypeEnv *env)
         TLOG("    %s", ShowType(t00));
         TLOG("    %s", ShowType(t0));
 
-        return t0;
+        return Reduce(ty, t0);
 }
 
 inline static Type *
