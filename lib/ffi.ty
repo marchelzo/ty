@@ -994,7 +994,9 @@ pub fn open(
     }
 
     let libs = (lib :: String) ? [lib] : lib
-    let prog-dir = Module('main').path.comb(/\/[^\/]+$/)
+    let prog-dir = try {
+        Module('main').path.comb(/\/[^\/]+$/)
+    }
 
     for lib in libs {
 #|if !__windows__
@@ -1022,7 +1024,7 @@ pub fn open(
             return handle
         }
 
-        if let $handle = try-open("{prog-dir}/{lib}") {
+        if prog-dir != nil and let $handle = try-open("{prog-dir}/{lib}") {
             return handle
         }
     }
