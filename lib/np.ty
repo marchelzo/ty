@@ -956,7 +956,7 @@ pub fn vstack(arrays: Array[NDArray]) -> NDArray {
     let off = 0
     for a in arrays {
         let ap = __cast-if-needed(a.ptr, a.size, a.dtype, dt)
-        assert(#ap, #(buf + off))
+        assert(#ap == #(buf + off))
         vcopy(ap, buf + off, a.size, dt.id)
         off += a.size
     }

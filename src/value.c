@@ -1781,15 +1781,6 @@ mark_method(Ty *ty, Value const *v)
 }
 
 inline static void
-mark_native_function(Ty *ty, Value const *v)
-{
-        if (v->xinfo != NULL) {
-                MARK(v->xinfo);
-        }
-        // TODO: when JIT closures are supported, mark env entries via JitInfo
-}
-
-inline static void
 mark_pointer(Ty *ty, Value const *v)
 {
         if (v->gcptr != NULL) {

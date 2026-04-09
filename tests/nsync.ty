@@ -170,7 +170,6 @@ pub fn test-note-create-and-query() {
     assert(!thread.notified?(n))
     thread.notify(n)
     assert(thread.notified?(n))
-    thread.destroy(n)
 }
 
 pub fn test-note-notify-is-idempotent() {
@@ -178,20 +177,17 @@ pub fn test-note-notify-is-idempotent() {
     thread.notify(n)
     thread.notify(n)
     assert(thread.notified?(n))
-    thread.destroy(n)
 }
 
 pub fn test-note-wait-already-notified() {
     let n = thread.note()
     thread.notify(n)
     assert(thread.wait-note(n, 100))
-    thread.destroy(n)
 }
 
 pub fn test-note-wait-timeout() {
     let n = thread.note()
     assert(!thread.wait-note(n, 10))
-    thread.destroy(n)
 }
 
 pub fn test-note-cross-thread() {
@@ -203,7 +199,6 @@ pub fn test-note-cross-thread() {
     assert(thread.wait-note(n, 2000))
     assert(thread.notified?(n))
     t.join()
-    thread.destroy(n)
 }
 
 pub fn test-note-multiple-waiters() {
@@ -215,13 +210,11 @@ pub fn test-note-multiple-waiters() {
     thread.notify(n)
     for t in threads { t.join() }
     assert(thread.notified?(n))
-    thread.destroy(n)
 }
 
 pub fn test-counter-create-and-query() {
     let c = thread.counter(5)
     assert(thread.countValue(c) == 5)
-    thread.destroy(c)
 }
 
 pub fn test-counter-add() {
@@ -230,21 +223,18 @@ pub fn test-counter-add() {
     assert(thread.countValue(c) == 7)
     assert(thread.count-add(c, -7) == 0)
     assert(thread.countValue(c) == 0)
-    thread.destroy(c)
 }
 
 pub fn test-counter-wait-already-zero() {
     let c = thread.counter(0)
     let v = thread.count-wait(c, 100)
     assert(v == 0)
-    thread.destroy(c)
 }
 
 pub fn test-counter-wait-timeout() {
     let c = thread.counter(1)
     let v = thread.count-wait(c, 10)
     assert(v != 0)
-    thread.destroy(c)
 }
 
 pub fn test-counter-wait-cross-thread() {
@@ -257,7 +247,6 @@ pub fn test-counter-wait-cross-thread() {
     let v = thread.count-wait(c, 2000)
     assert(v == 0)
     for t in threads { t.join() }
-    thread.destroy(c)
 }
 
 pub fn test-counter-as-join-barrier() {
@@ -271,7 +260,6 @@ pub fn test-counter-as-join-barrier() {
     assert(v == 0)
     assert(#results == 3)
     for t in threads { t.join() }
-    thread.destroy(c)
 }
 
 pub fn test-wait-any-single-note-notified() {
@@ -279,7 +267,6 @@ pub fn test-wait-any-single-note-notified() {
     thread.notify(n)
     let idx = thread.wait-any([n], 100)
     assert(idx == 0)
-    thread.destroy(n)
 }
 
 pub fn test-wait-any-timeout() {
@@ -287,8 +274,6 @@ pub fn test-wait-any-timeout() {
     let n2 = thread.note()
     let idx = thread.wait-any([n1, n2], 10)
     assert(idx == nil)
-    thread.destroy(n1)
-    thread.destroy(n2)
 }
 
 pub fn test-wait-any-second-note() {
@@ -297,15 +282,12 @@ pub fn test-wait-any-second-note() {
     thread.notify(n2)
     let idx = thread.wait-any([n1, n2], 100)
     assert(idx == 1)
-    thread.destroy(n1)
-    thread.destroy(n2)
 }
 
 pub fn test-wait-any-counter-at-zero() {
     let c = thread.counter(0)
     let idx = thread.wait-any([c], 100)
     assert(idx == 0)
-    thread.destroy(c)
 }
 
 pub fn test-wait-any-mixed-types() {
@@ -313,8 +295,6 @@ pub fn test-wait-any-mixed-types() {
     let c = thread.counter(0)
     let idx = thread.wait-any([n, c], 100)
     assert(idx == 1)
-    thread.destroy(n)
-    thread.destroy(c)
 }
 
 pub fn test-wait-any-cross-thread() {
@@ -327,8 +307,6 @@ pub fn test-wait-any-cross-thread() {
     let idx = thread.wait-any([n1, n2], 2000)
     assert(idx == 1)
     t.join()
-    thread.destroy(n1)
-    thread.destroy(n2)
 }
 
 pub fn test-wait-any-multiple-ready() {
@@ -338,8 +316,6 @@ pub fn test-wait-any-multiple-ready() {
     thread.notify(n2)
     let idx = thread.wait-any([n1, n2], 100)
     assert(idx == 0 || idx == 1)
-    thread.destroy(n1)
-    thread.destroy(n2)
 }
 
 pub fn test-wait-any-empty-array() {
@@ -357,8 +333,6 @@ pub fn test-wait-any-counter-cross-thread() {
     let idx = thread.wait-any([n, c], 2000)
     assert(idx == 1)
     t.join()
-    thread.destroy(n)
-    thread.destroy(c)
 }
 
 pub fn test-wait-any-note-before-counter() {
@@ -371,8 +345,6 @@ pub fn test-wait-any-note-before-counter() {
     let idx = thread.wait-any([n, c], 2000)
     assert(idx == 0)
     t.join()
-    thread.destroy(n)
-    thread.destroy(c)
 }
 
 pub fn test-wait-any-many-mixed() {
@@ -387,10 +359,6 @@ pub fn test-wait-any-many-mixed() {
     let idx = thread.wait-any([n1, c1, n2, c2], 2000)
     assert(idx == 3)
     t.join()
-    thread.destroy(n1)
-    thread.destroy(n2)
-    thread.destroy(c1)
-    thread.destroy(c2)
 }
 
 pub fn test-wait-any-mixed-both-ready() {
@@ -399,8 +367,6 @@ pub fn test-wait-any-mixed-both-ready() {
     thread.notify(n)
     let idx = thread.wait-any([n, c], 100)
     assert(idx == 0 || idx == 1)
-    thread.destroy(n)
-    thread.destroy(c)
 }
 
 pub fn test-wait-any-mixed-timeout() {
@@ -408,8 +374,6 @@ pub fn test-wait-any-mixed-timeout() {
     let c = thread.counter(3)
     let idx = thread.wait-any([n, c], 10)
     assert(idx == nil)
-    thread.destroy(n)
-    thread.destroy(c)
 }
 
 pub fn test-wait-any-condvar-signaled() {
@@ -429,8 +393,6 @@ pub fn test-wait-any-condvar-signaled() {
     assert(ready)
     thread.unlock(mu)
     t.join()
-    thread.destroy(cv)
-    thread.destroy(mu)
 }
 
 pub fn test-wait-any-condvar-vs-note() {
@@ -443,8 +405,6 @@ pub fn test-wait-any-condvar-vs-note() {
     let idx = thread.wait-any([n, cv], 2000)
     assert(idx == 0)
     t.join()
-    thread.destroy(n)
-    thread.destroy(cv)
 }
 
 pub fn test-wait-any-condvar-vs-counter() {
@@ -457,8 +417,6 @@ pub fn test-wait-any-condvar-vs-counter() {
     let idx = thread.wait-any([cv, c], 2000)
     assert(idx == 1)
     t.join()
-    thread.destroy(cv)
-    thread.destroy(c)
 }
 
 pub fn test-wait-any-condvar-fires-in-mixed() {
@@ -476,10 +434,6 @@ pub fn test-wait-any-condvar-fires-in-mixed() {
     assert(idx == 1)
     thread.unlock(mu)
     t.join()
-    thread.destroy(n)
-    thread.destroy(cv)
-    thread.destroy(mu)
-    thread.destroy(c)
 }
 
 pub fn test-wait-any-two-condvars() {
@@ -496,9 +450,6 @@ pub fn test-wait-any-two-condvars() {
     assert(idx == 1)
     thread.unlock(mu)
     t.join()
-    thread.destroy(cv1)
-    thread.destroy(cv2)
-    thread.destroy(mu)
 }
 
 pub fn test-note-with-mutex-handoff() {
@@ -516,7 +467,6 @@ pub fn test-note-with-mutex-handoff() {
         assert(result == 42)
     }
     t.join()
-    thread.destroy(done)
 }
 
 pub fn test-counter-fan-out-fan-in() {
@@ -534,5 +484,4 @@ pub fn test-counter-fan-out-fan-in() {
         assert(total == N * (N - 1) / 2)
     }
     for t in threads { t.join() }
-    thread.destroy(c)
 }

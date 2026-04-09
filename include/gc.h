@@ -66,6 +66,12 @@ enum {
         GC_ARENA,
         GC_FUN_INFO,
         GC_FFI_AUTO,
+        GC_MUTEX,
+        GC_SPINLOCK,
+        GC_CONDVAR,
+        GC_NOTE,
+        GC_COUNTER,
+        GC_CHANNEL,
         GC_ANY
 };
 

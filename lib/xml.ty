@@ -1,8 +1,8 @@
 import ffi as c (C!)
 import ptr
 
-if not let $libxml = c.open(['xml2', 'xml2-2'], ['16.2.0']) {
-    throw RuntimeError("Failed to load libxml2")
+if not let $libxml = c.open(['xml2', 'xml2-2']) {
+    throw RuntimeError("failed to load libxml2")
 }
 
 tag XMLError;

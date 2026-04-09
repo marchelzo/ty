@@ -3010,15 +3010,6 @@ class BaseLock {
         thread.unlock(__lock)
     }
 
-    destroy() {
-        thread.destroy(__lock)
-        __lock = nil
-    }
-
-    __free__() {
-        thread.destroy(__lock)
-    }
-
     __enter__() {
         thread.lock(__lock)
         self
@@ -3325,11 +3316,6 @@ class CondVar {
         __var = thread.cond()
     }
 
-    destroy() {
-        thread.destroy(__var)
-        __var = nil
-    }
-
     wait(mtx: Mutex, *timeout) {
         thread.waitCond(__var, mtx.inner, *timeout)
     }
@@ -3344,10 +3330,6 @@ class CondVar {
 
     inner -> _ {
         __var
-    }
-
-    __free__() {
-        thread.destroy(__var)
     }
 }
 
@@ -3372,10 +3354,6 @@ class Note {
 
     inner -> _ {
         __note
-    }
-
-    __free__() {
-        thread.destroy(__note)
     }
 }
 

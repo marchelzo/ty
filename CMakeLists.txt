@@ -250,6 +250,7 @@ set(_src_files
   src/array.c
   src/ast.c
   src/blob.c
+  src/chan.c
   src/class.c
   src/compiler.c
   src/queue.c

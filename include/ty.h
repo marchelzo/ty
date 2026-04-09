@@ -165,7 +165,6 @@ typedef struct dict_item DictItem;
 typedef struct generator Generator;
 typedef struct thread Thread;
 typedef struct channel Channel;
-typedef struct chanval ChanVal;
 
 typedef struct compiler_state CompileState;
 
@@ -520,16 +519,15 @@ struct thread {
         bool detached;
 };
 
-struct chanval {
-        vec(void *) as;
-        Value v;
-};
-
 struct channel {
-        bool open;
-        TyMutex m;
-        TyCondVar c;
-        vec(ChanVal) q;
+        bool      open;
+        atomic_uint_least32_t waiters;
+        TyMutex      m;
+        TyCondVar    c;
+        Value   **items;
+        usize     head;
+        usize     tail;
+        usize     cap;
 };
 
 typedef atomic_intmax_t TyAtomicInt;
@@ -1941,5 +1939,4 @@ TyStrLen(Value const *str)
 } while (0)
 
 #endif
-
 /* vim: set sts=8 sw=8 expandtab: */
