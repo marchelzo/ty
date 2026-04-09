@@ -87,6 +87,7 @@ extern char **environ;
 #endif
 
 #include "functions.h"
+#include "chan.h"
 #include "tags.h"
 #include "value.h"
 #include "blob.h"
@@ -3966,25 +3967,25 @@ BUILTIN_FUNCTION(thread_detach)
 BUILTIN_FUNCTION(thread_mutex)
 {
         ASSERT_ARGC("thread.mutex()", 0);
-        TyMutex *mtx = mAo(sizeof *mtx, GC_ANY);
+        TyMutex *mtx = mAo(sizeof *mtx, GC_MUTEX);
         TyMutexInit(mtx);
-        return TGCPTR(mtx, (void *)TY_THREAD_MUTEX, mtx);
+        return GCPTR(mtx, mtx);
 }
 
 BUILTIN_FUNCTION(thread_spinlock)
 {
         ASSERT_ARGC("thread.spinLock()", 0);
-        TySpinLock *spin = mAo(sizeof *spin, GC_ANY);
+        TySpinLock *spin = mAo(sizeof *spin, GC_SPINLOCK);
         TySpinLockInit(spin);
-        return TGCPTR(spin, (void *)TY_THREAD_SPINLOCK, spin);
+        return GCPTR(spin, spin);
 }
 
 BUILTIN_FUNCTION(thread_cond)
 {
         ASSERT_ARGC("thread.cond()", 0);
-        TyCondVar *cond = mAo(sizeof *cond, GC_ANY);
+        TyCondVar *cond = mAo(sizeof *cond, GC_CONDVAR);
         TyCondVarInit(cond);
-        return TGCPTR(cond, (void *)TY_THREAD_CONDVAR, cond);
+        return GCPTR(cond, cond);
 }
 
 BUILTIN_FUNCTION(thread_cond_wait)
@@ -4025,9 +4026,9 @@ BUILTIN_FUNCTION(thread_cond_broadcast)
 BUILTIN_FUNCTION(thread_note)
 {
         ASSERT_ARGC("thread.note()", 0);
-        TyNote *np = mAo(sizeof *np, GC_ANY);
+        TyNote *np = mAo(sizeof *np, GC_NOTE);
         *np = TyNoteNew();
-        return TGCPTR(np, (void *)TY_THREAD_NOTE, np);
+        return GCPTR(np, np);
 }
 
 BUILTIN_FUNCTION(thread_notify)
@@ -4062,9 +4063,9 @@ BUILTIN_FUNCTION(thread_wait_note)
 BUILTIN_FUNCTION(thread_counter)
 {
         ASSERT_ARGC("thread.counter()", 1);
-        TyCounter *cp = mAo(sizeof *cp, GC_ANY);
+        TyCounter *cp = mAo(sizeof *cp, GC_COUNTER);
         *cp = TyCounterNew((u32)INT_ARG(0));
-        return TGCPTR(cp, (void *)TY_THREAD_COUNTER, cp);
+        return GCPTR(cp, cp);
 }
 
 BUILTIN_FUNCTION(thread_count_add)
@@ -4112,16 +4113,14 @@ BUILTIN_FUNCTION(thread_wait_any)
 
         for (usize i = 0; i < n; ++i) {
                 Value *v = v_(*objects.array, i);
-                if (v->type != VALUE_PTR) {
-                        zP("thread.wait-any(): element %d is not a waitable object", i);
+                if (v->type != VALUE_PTR || v->gcptr == NULL) {
+                        bP("not a waitable object: %s", SHOW(v, BASIC));
                 }
-                int tag = (int)(uptr)v->extra;
-                switch (tag) {
-                case TY_THREAD_NOTE:
-                case TY_THREAD_COUNTER:
-                case TY_THREAD_CONDVAR:
-                        break;
-
+                int tag;
+                switch (ALLOC_OF(v->gcptr)->type) {
+                case GC_NOTE:     tag = TY_THREAD_NOTE;    break;
+                case GC_COUNTER:  tag = TY_THREAD_COUNTER; break;
+                case GC_CONDVAR:  tag = TY_THREAD_CONDVAR; break;
                 default:
                         bP("not a waitable object: %s", SHOW(v, BASIC));
                 }
@@ -4159,43 +4158,6 @@ BUILTIN_FUNCTION(thread_wait_any)
         return (idx != -1) ? INTEGER(idx) : NIL;
 }
 
-BUILTIN_FUNCTION(thread_destroy)
-{
-        ASSERT_ARGC("thread.destroy()", 1);
-
-        bool ok;
-        Value object = ARGx(0, VALUE_PTR);
-
-        switch ((uptr)object.extra) {
-        case 1:
-                ok = TyMutexDestroy(object.ptr);
-                break;
-
-        case 2:
-                ok = TySpinLockDestroy(object.ptr);
-                break;
-
-        case 3:
-                ok = TyCondVarDestroy(object.ptr);
-                break;
-
-        case 4:
-                TyNoteFree(*(TyNote *)object.ptr);
-                ok = true;
-                break;
-
-        case 5:
-                TyCounterFree(*(TyCounter *)object.ptr);
-                ok = true;
-                break;
-
-        default:
-                UNREACHABLE("invalid object type");
-        }
-
-        return BOOLEAN(ok);
-}
-
 BUILTIN_FUNCTION(thread_lock)
 {
         ASSERT_ARGC("thread.lock()", 1);
@@ -4205,12 +4167,12 @@ BUILTIN_FUNCTION(thread_lock)
 
         UnlockTy();
 
-        switch ((uptr)lock.extra) {
-        case 1:
+        switch (ALLOC_OF(lock.gcptr)->type) {
+        case GC_MUTEX:
                 ok = TyMutexLock(lock.ptr);
                 break;
 
-        case 2:
+        case GC_SPINLOCK:
                 ok = TySpinLockLock(lock.ptr);
                 break;
 
@@ -4232,12 +4194,12 @@ BUILTIN_FUNCTION(thread_trylock)
 
         UnlockTy();
 
-        switch ((uptr)lock.extra) {
-        case 1:
+        switch (ALLOC_OF(lock.gcptr)->type) {
+        case GC_MUTEX:
                 ok = TyMutexTryLock(lock.ptr);
                 break;
 
-        case 2:
+        case GC_SPINLOCK:
                 ok = TySpinLockTryLock(lock.ptr);
                 break;
 
@@ -4257,12 +4219,12 @@ BUILTIN_FUNCTION(thread_unlock)
         bool ok;
         Value lock = ARGx(0, VALUE_PTR);
 
-        switch ((uptr)lock.extra) {
-        case 1:
+        switch (ALLOC_OF(lock.gcptr)->type) {
+        case GC_MUTEX:
                 ok = TyMutexUnlock(lock.ptr);
                 break;
 
-        case 2:
+        case GC_SPINLOCK:
                 ok = TySpinLockUnlock(lock.ptr);
                 break;
 
@@ -4302,10 +4264,15 @@ BUILTIN_FUNCTION(thread_channel)
 {
         ASSERT_ARGC("thread.channel()", 0);
 
-        Channel *chan = mAo(sizeof *chan, GC_ANY);
+        Channel *chan = mAo(sizeof *chan, GC_CHANNEL);
 
-        chan->open = true;
-        v00(chan->q);
+        chan->open    = true;
+        atomic_init(&chan->waiters, 0);
+        chan->items   = NULL;
+        chan->head    = 0;
+        chan->tail    = 0;
+        chan->cap     = 0;
+
         TyCondVarInit(&chan->c);
         TyMutexInit(&chan->m);
 
@@ -4317,16 +4284,9 @@ BUILTIN_FUNCTION(thread_send)
         ASSERT_ARGC("thread.send()", 2);
 
         Channel *chan = PTR_ARG(0);
-        ChanVal cv = { .v = ARG(1) };
+        Value    msg  = ARG(1);
 
-        Forget(ty, &cv.v, (AllocList *)&cv.as);
-
-        UnlockTy();
-        TyMutexLock(&chan->m);
-        LockTy();
-        uvP(chan->q, cv);
-        TyMutexUnlock(&chan->m);
-        TyCondVarSignal(&chan->c);
+        chan_send(ty, chan, msg);
 
         return NIL;
 }
@@ -4336,41 +4296,13 @@ BUILTIN_FUNCTION(thread_recv)
         ASSERT_ARGC("thread.recv()", 1, 2);
 
         Channel *chan = PTR_ARG(0);
+        Value v;
 
-        UnlockTy();
-        TyMutexLock(&chan->m);
-        if (argc == 1) {
-                while (chan->open && chan->q.count == 0) {
-                        TyCondVarWait(&chan->c, &chan->m);
-                }
-        } else {
-                Value t = ARG(1);
-                if (t.type != VALUE_INTEGER) {
-                        LockTy();
-                        zP("thread.recv(): expected integer but got: %s", VSC(&t));
-                }
-                while (chan->open && chan->q.count == 0) {
-                        if (!TyCondVarTimedWaitRelative(&chan->c, &chan->m, t.z)) {
-                                break;
-                        }
-                }
-        }
-        LockTy();
+        bool ok = (argc == 1)
+                ? chan_recv(ty, chan, &v)
+                : chan_try_recv(ty, chan, &v, MSEC_TIMEOUT_ARG(1));
 
-        if (chan->q.count == 0) {
-                TyMutexUnlock(&chan->m);
-                return None;
-        }
-
-        ChanVal v = chan->q.items[0];
-
-        vvXi(chan->q, 0);
-
-        TyMutexUnlock(&chan->m);
-
-        GCTakeOwnership(ty, (AllocList *)&v.as);
-
-        return Some(v.v);
+        return ok ? Some(v) : None;
 }
 
 BUILTIN_FUNCTION(thread_close)
@@ -4381,9 +4313,10 @@ BUILTIN_FUNCTION(thread_close)
 
         UnlockTy();
         TyMutexLock(&chan->m);
-        LockTy();
         chan->open = false;
         TyMutexUnlock(&chan->m);
+        TyCondVarBroadcast(&chan->c);
+        LockTy();
 
         return NIL;
 }

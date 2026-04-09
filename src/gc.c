@@ -11,6 +11,7 @@
 #include "tthread.h"
 #include "compiler.h"
 #include "itable.h"
+#include "chan.h"
 
 static GCRootSet ImmortalSet;
 
@@ -65,6 +66,30 @@ collect(Ty *ty, struct alloc *a)
                 if (LIKELY(gen->st != NULL)) {
                         xvP(ty->co_states, gen->st);
                 }
+                break;
+
+        case GC_MUTEX:
+                TyMutexDestroy(p);
+                break;
+
+        case GC_SPINLOCK:
+                TySpinLockDestroy(p);
+                break;
+
+        case GC_CONDVAR:
+                TyCondVarDestroy(p);
+                break;
+
+        case GC_NOTE:
+                TyNoteFree(*(TyNote *)p);
+                break;
+
+        case GC_COUNTER:
+                TyCounterFree(*(TyCounter *)p);
+                break;
+
+        case GC_CHANNEL:
+                chan_destroy(ty, p);
                 break;
 
         case GC_THREAD:

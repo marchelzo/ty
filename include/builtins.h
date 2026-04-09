@@ -522,7 +522,6 @@ static struct {
   { .module = "thread",     .name = "kill",                     .value = BUILTIN(builtin_thread_kill)             },
   { .module = "thread",     .name = "mutex",                    .value = BUILTIN(builtin_thread_mutex)            },
   { .module = "thread",     .name = "spinLock",                 .value = BUILTIN(builtin_thread_spinlock)         },
-  { .module = "thread",     .name = "destroy",                  .value = BUILTIN(builtin_thread_destroy)          },
   { .module = "thread",     .name = "lock",                     .value = BUILTIN(builtin_thread_lock)             },
   { .module = "thread",     .name = "unlock",                   .value = BUILTIN(builtin_thread_unlock)           },
   { .module = "thread",     .name = "tryLock",                  .value = BUILTIN(builtin_thread_trylock)          },

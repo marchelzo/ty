@@ -64,7 +64,7 @@ enum {
         TY_THREAD_SPINLOCK,
         TY_THREAD_CONDVAR,
         TY_THREAD_NOTE,
-        TY_THREAD_COUNTER
+        TY_THREAD_COUNTER,
 };
 
 enum { VALUE_TABLE_SIZE = 16 };
@@ -275,5 +275,4 @@ typedef vec(Module *)       ModuleVector;
 #define vmC(...) vm_call(ty, __VA_ARGS__)
 
 #endif
-
 /* vim: set sts=8 sw=8 expandtab: */
