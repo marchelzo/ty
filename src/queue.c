@@ -24,7 +24,7 @@ queue_mark(Ty *ty, Queue *q)
         usize n = _queue_count(q->head, q->tail, q->cap);
 
         for (usize i = 0; i < n; ++i) {
-                xvP(ty->marking, &q->items[(q->head + i) % q->cap]);
+                _value_mark_xd(ty, &q->items[(q->head + i) % q->cap]);
         }
 }
 
@@ -39,7 +39,7 @@ queue_push(Ty *ty, Value *self, int argc, Value *kwargs)
                 _queue_push_back_one(ty, &q->items, &q->head, &q->tail, &q->cap, ARG(i));
         }
 
-        CheckUsed(ty);
+        CheckUsed(ty, 0);
 
         return *self;
 }
@@ -55,7 +55,7 @@ queue_push_front(Ty *ty, Value *self, int argc, Value *kwargs)
                 _queue_push_front_one(ty, &q->items, &q->head, &q->tail, &q->cap, ARG(i));
         }
 
-        CheckUsed(ty);
+        CheckUsed(ty, 0);
 
         return *self;
 }
@@ -270,7 +270,7 @@ shared_queue_mark(Ty *ty, SharedQueue *q)
         usize n = _queue_count(q->head, q->tail, q->cap);
 
         for (usize i = 0; i < n; ++i) {
-                xvP(ty->marking, &q->items[(q->head + i) % q->cap]);
+                _value_mark_xd(ty, &q->items[(q->head + i) % q->cap]);
         }
 }
 
@@ -286,7 +286,7 @@ shared_queue_put(Ty *ty, Value *self, int argc, Value *kwargs)
         TyMutexUnlock(&q->mutex);
 
         TyCondVarSignal(&q->cond);
-        CheckUsed(ty);
+        CheckUsed(ty, 0);
 
         return *self;
 }

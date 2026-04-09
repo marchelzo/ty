@@ -40,9 +40,61 @@ TyValueCleanup(void)
 }
 
 inline static void
-MarkNext(Ty *ty, Value *v)
+MarkNextAlloc(Ty *ty, void *p)
 {
-        xvP(ty->marking, v);
+        if (p != NULL && !MARKED(p)) {
+                SHADE_GRAY(p);
+        }
+}
+
+inline static void
+MarkNext(Ty *ty, Value const *v)
+{
+        switch (v->type & ~VALUE_TAGGED) {
+        case VALUE_ARRAY:            MarkNextAlloc(ty, v->array);        break;
+        case VALUE_DICT:             MarkNextAlloc(ty, v->dict);         break;
+        case VALUE_OBJECT:           MarkNextAlloc(ty, v->object);       break;
+        case VALUE_BLOB:             MarkNextAlloc(ty, v->blob);         break;
+        case VALUE_TUPLE:
+                MarkNextAlloc(ty, v->items);
+                if (v->ids != NULL) MARK(v->ids);
+                break;
+        case VALUE_GENERATOR:        MarkNextAlloc(ty, v->gen);          break;
+        case VALUE_THREAD:           MarkNextAlloc(ty, v->thread);       break;
+        case VALUE_QUEUE:            MarkNextAlloc(ty, v->queue);        break;
+        case VALUE_SHARED_QUEUE:     MarkNextAlloc(ty, v->shared_queue); break;
+        case VALUE_REF:              MarkNextAlloc(ty, v->ref);          break;
+        case VALUE_METHOD:
+        case VALUE_BUILTIN_METHOD:   MarkNextAlloc(ty, v->this);         break;
+        case VALUE_STRING:
+                if (!v->ro && v->str0 != NULL) MARK(v->str0);
+                break;
+        case VALUE_FOREIGN_FUNCTION:
+                if (v->xinfo != NULL) MARK(v->xinfo);
+                break;
+        case VALUE_REGEX:
+                if (v->regex != NULL && v->regex->gc) MARK(v->regex);
+                break;
+        case VALUE_NATIVE_FUNCTION:
+        case VALUE_BOUND_FUNCTION:
+        case VALUE_FUNCTION:
+                if (v->info != NULL) {
+                        if (from_eval(v)) MARK(v->info);
+                        if (v->xinfo != NULL) MARK(v->xinfo);
+                        int n = v->info[FUN_INFO_CAPTURES] + (v->type == VALUE_BOUND_FUNCTION);
+                        if (n > 0 && !MARKED(v->env)) {
+                                MARK(v->env);
+                                for (int i = 0; i < n; ++i) {
+                                        if (v->env[i] != NULL) {
+                                                MARK(v->env[i]);
+                                                MarkNext(ty, v->env[i]);
+                                        }
+                                }
+                        }
+                }
+                break;
+        default: break;
+        }
 }
 
 static bool
@@ -1814,7 +1866,7 @@ mark_trace(Ty *ty, ThrowCtx *ctx)
         }
 }
 
-static inline void
+void
 _value_mark_xd(Ty *ty, Value const *v)
 {
         void **src = source_lookup(ty, v->src);
@@ -1864,6 +1916,132 @@ _value_mark_xd(Ty *ty, Value const *v)
 }
 
 void
+gc_scan_alloc(Ty *ty, struct alloc *a)
+{
+        void *p = a->data;
+
+        switch (a->type) {
+        case GC_ARRAY: {
+                Array *arr = p;
+                MARK(arr);
+                if (arr->items != NULL) MARK(arr->items);
+                for (int i = 0; i < arr->count; ++i) {
+                        MarkNext(ty, &arr->items[i]);
+                }
+                break;
+        }
+        case GC_TUPLE: {
+                int count = a->size / sizeof (Value);
+                Value *items = p;
+                for (int i = 0; i < count; ++i) {
+                        MarkNext(ty, &items[i]);
+                }
+                break;
+        }
+        case GC_DICT: {
+                Dict *d = p;
+                MARK(d);
+                if (d->dflt.type != VALUE_ZERO) {
+                        _value_mark_xd(ty, &d->dflt);
+                }
+                if (d->items != NULL) {
+                        MARK(d->items);
+                }
+                dfor(d, {
+                        _value_mark_xd(ty, key);
+                        _value_mark_xd(ty, val);
+                });
+                break;
+        }
+        case GC_OBJECT: {
+                TyObject *o = p;
+                MARK(o);
+                for (int i = 0; i < o->nslot; ++i) {
+                        _value_mark_xd(ty, &o->slots[i]);
+                }
+                if (o->dynamic != NULL) {
+                        for (int i = 0; i < vN(o->dynamic->values); ++i) {
+                                _value_mark_xd(ty, v_(o->dynamic->values, i));
+                        }
+                }
+                break;
+        }
+        case GC_GENERATOR: {
+                Generator *gen = p;
+                MARK(gen);
+                MarkNext(ty, &gen->f);
+                co_state *st = gen->st;
+                if (st != NULL) {
+                        for (int i = 0; i < vN(st->stack) + st->rc && i < vC(st->stack); ++i) {
+                                MarkNext(ty, v_(st->stack, i));
+                        }
+                        for (int i = 0; i < vN(st->frames); ++i) {
+                                MarkNext(ty, &v_(st->frames, i)->f);
+                        }
+                        for (int i = 0; i < vN(st->targets); ++i) {
+                                if (v_(st->targets, i)->gc != NULL) MARK(v_(st->targets, i)->gc);
+                        }
+                        for (int i = 0; i < vN(st->try_stack); ++i) {
+                                struct try *t = v__(st->try_stack, i);
+                                for (int j = 0; j < vN(t->defer); ++j) {
+                                        MarkNext(ty, v_(t->defer, j));
+                                }
+                        }
+                        for (int i = 0; i < vN(st->to_drop); ++i) {
+                                MarkNext(ty, v_(st->to_drop, i));
+                        }
+                        for (int i = 0; i < vN(st->gc_roots); ++i) {
+                                MarkNext(ty, v_(st->gc_roots, i));
+                        }
+                }
+                break;
+        }
+        case GC_THREAD: {
+                Thread *t = p;
+                MARK(t);
+                MarkNext(ty, &t->v);
+                break;
+        }
+        case GC_QUEUE:
+        case GC_SHARED_QUEUE: {
+                Queue *q = p;
+                MARK(q);
+                if (q->items != NULL) {
+                        MARK(q->items);
+                        usize n = _queue_count(q->head, q->tail, q->cap);
+                        for (usize i = 0; i < n; ++i) {
+                                _value_mark_xd(ty, &q->items[(q->head + i) % q->cap]);
+                        }
+                }
+                break;
+        }
+        case GC_VALUE: {
+                MarkNext(ty, (Value *)p);
+                break;
+        }
+        case GC_ENV: {
+                int count = a->size / sizeof (Value *);
+                Value **env = p;
+                for (int i = 0; i < count; ++i) {
+                        if (env[i] != NULL) {
+                                MARK(env[i]);
+                                MarkNext(ty, env[i]);
+                        }
+                }
+                break;
+        }
+        case GC_FFI_AUTO: {
+                Value *vals = p;
+                MarkNext(ty, &vals[0]);
+                MarkNext(ty, &vals[1]);
+                break;
+        }
+        default:
+                break;
+        }
+}
+
+void
 _value_mark(Ty *ty, Value const *v)
 {
         RESET_REACHED();
@@ -1871,8 +2049,8 @@ _value_mark(Ty *ty, Value const *v)
         _value_mark_xd(ty, v);
 
         while (vN(ty->marking) > 0) {
-                v = vXx(ty->marking);
-                _value_mark_xd(ty, v);
+                struct alloc *a = vXx(ty->marking);
+                gc_scan_alloc(ty, a);
         }
 }
 
@@ -1900,7 +2078,7 @@ value_record(Ty *ty, int n)
         Value *items = mAo(n * sizeof (Value), GC_TUPLE);
 
         NOGC(items);
-        int *ids = mAo(n * sizeof (int), GC_TUPLE);
+        int *ids = mAo(n * sizeof (int), GC_ANY);
         OKGC(items);
 
         for (int i = 0; i < n; ++i) {
@@ -1929,7 +2107,7 @@ value_named_tuple(Ty *ty, char const *first, ...)
         Value *items = mAo(n * sizeof (Value), GC_TUPLE);
 
         NOGC(items);
-        int *ids = mAo(n * sizeof (int), GC_TUPLE);
+        int *ids = mAo(n * sizeof (int), GC_ANY);
         OKGC(items);
 
         va_start(ap, first);

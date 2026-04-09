@@ -3622,6 +3622,12 @@ bc_emit_self_member_write_fast(JitCtx *ctx, int member_id, char const *bc_ip)
         jit_emit_cmp_ri(asm, BC_S0, 0);
         jit_emit_branch_ne(asm, lbl_slow);
 
+        // Check if GC cycle is active — if so, take the slow path for the barrier
+        jit_emit_ldr64(asm, BC_S0, BC_TY, offsetof(Ty, group));
+        jit_emit_ldr32(asm, BC_S0, BC_S0, offsetof(ThreadGroup, igc) + offsetof(typeof(((ThreadGroup *)0)->igc), State));
+        jit_emit_cmp_ri(asm, BC_S0, GC_INACTIVE);
+        jit_emit_branch_ne(asm, lbl_slow);
+
         // Fast path: load self.object => BC_S2, copy val to slot
         EMIT_STAT(jit_rt_stat_self_member_write_fast);
         jit_emit_ldr64(asm, BC_S2, BC_S3, VAL_OFF_OBJECT);
@@ -5032,6 +5038,12 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                                                                 jit_emit_cmp_ri(asm, BC_S0, class_id);
                                                                 jit_emit_branch_ne(asm, lbl_slow);
 
+                                                                // Check if GC cycle is active — if so, take the slow path for the barrier
+                                                                jit_emit_ldr64(asm, BC_S0, BC_TY, offsetof(Ty, group));
+                                                                jit_emit_ldr32(asm, BC_S0, BC_S0, offsetof(ThreadGroup, igc) + offsetof(typeof(((ThreadGroup *)0)->igc), State));
+                                                                jit_emit_cmp_ri(asm, BC_S0, GC_INACTIVE);
+                                                                jit_emit_branch_ne(asm, lbl_slow);
+
                                                                 // Fast: load obj.object => BC_S2, copy val to slot
                                                                 EMIT_STAT(jit_rt_stat_member_set_fast);
                                                                 jit_emit_ldr64(asm, BC_S2, BC_OPS, obj_off + VAL_OFF_OBJECT);
@@ -5765,6 +5777,12 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
 
                         if (try_array && n == 1) {
                                 int lbl_slow = bc_next_label(ctx);
+
+                                // If GC cycle is active, take slow path for barrier
+                                jit_emit_ldr64(asm, BC_S0, BC_TY, offsetof(Ty, group));
+                                jit_emit_ldr32(asm, BC_S0, BC_S0, offsetof(ThreadGroup, igc) + offsetof(typeof(((ThreadGroup *)0)->igc), State));
+                                jit_emit_cmp_ri(asm, BC_S0, GC_INACTIVE);
+                                jit_emit_branch_ne(asm, lbl_slow);
 
                                 // Fast path: container is array, subscript is non-negative int
                                 jit_emit_ldrb(asm, BC_S0, BC_OPS, con_off + VAL_OFF_TYPE);

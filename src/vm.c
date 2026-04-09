@@ -578,6 +578,11 @@ InitThreadGroup(ThreadGroup *group)
         TyMutexInit(&group->GCPhaseLock);
         TyCondVarInit(&group->GCPhaseCond);
         group->GCPhase = GC_PHASE_NONE;
+        atomic_init(&group->igc.State, GC_INACTIVE);
+        atomic_init(&group->igc.RootsReady, 0);
+        atomic_init(&group->igc.SweepDone, 0);
+        atomic_init(&group->igc.GlobalsScanned, false);
+        group->igc.NThreads = 0;
         return group;
 }
 
@@ -830,6 +835,403 @@ DoGC(Ty *ty)
 #endif
 
         dont_printf("Thread %-3llu: %.6fs\n", TID, (t1 - t0) / 1.0e9);
+}
+
+void
+GCMarkRoots(Ty *ty)
+{
+        for (int i = 0; i < vN(RootSet); ++i) {
+                _value_mark_xd(ty, v_(RootSet, i));
+        }
+
+        for (int i = 0; i < vN(THREAD_LOCALS); ++i) {
+                _value_mark_xd(ty, v_(THREAD_LOCALS, i));
+        }
+
+        for (int i = 0; i < vN(STACK) + RC && i < vC(STACK); ++i) {
+                _value_mark_xd(ty, v_(STACK, i));
+        }
+
+
+        for (int i = 0; i < vN(TRY_STACK); ++i) {
+                struct try *t = v__(TRY_STACK, i);
+                for (int j = 0; j < vN(t->defer); ++j) {
+                        _value_mark_xd(ty, v_(t->defer, j));
+                }
+        }
+
+        for (int i = 0; i < vN(THROW_STACK); ++i) {
+                ThrowCtx *ctx = v__(THROW_STACK, i);
+                for (int j = 0; j < vN(ctx->locals); ++j) {
+                        ValueVector const *locals = v_(ctx->locals, j);
+                        for (int k = 0; k < vN(*locals); ++k) {
+                                _value_mark_xd(ty, v_(*locals, k));
+                        }
+                }
+                _value_mark_xd(ty, &ctx->exc);
+        }
+        _value_mark_xd(ty, &ty->exc);
+
+        for (int i = 0; i < vN(DROP_STACK); ++i) {
+                _value_mark_xd(ty, v_(DROP_STACK, i));
+        }
+
+        for (int i = 0; i < vN(TARGETS); ++i) {
+                Target *target = v_(TARGETS, i);
+                if (target->gc != NULL) {
+                        MARK(target->gc);
+                }
+        }
+
+        for (int i = 0; i < vN(FRAMES); ++i) {
+                _value_mark_xd(ty, FrameFun(ty, v_(FRAMES, i)));
+        }
+}
+
+static void
+GCMarkGlobals(Ty *ty)
+{
+        for (int i = 0; i < vN(Globals); ++i) {
+                _value_mark_xd(ty, v_(Globals, i));
+        }
+
+        GCRootSet *immortal = GCImmortalSet(ty);
+        for (int i = 0; i < vN(*immortal); ++i) {
+                _value_mark_xd(ty, v_(*immortal, i));
+        }
+
+        for (int i = 0; i < vN(SignalGCRoots); ++i) {
+                _value_mark_xd(ty, v_(SignalGCRoots, i));
+        }
+}
+
+int
+GCMarkSome(Ty *ty, int n)
+{
+        int done = 0;
+        while (done < n && vN(ty->marking) > 0) {
+                struct alloc *a = vXx(ty->marking);
+                gc_scan_alloc(ty, a);
+                done += 1;
+        }
+        return done;
+}
+
+static bool
+AllWorklistsEmpty(Ty *ty)
+{
+        if (ty->group == NULL) {
+                return vN(ty->marking) == 0;
+        }
+
+        TySpinLockLock(&ty->group->Lock);
+
+        for (int i = 0; i < vN(ty->group->TyList); ++i) {
+                Ty *other = v__(ty->group->TyList, i);
+                if (vN(other->marking) == 0) continue;
+                if (other != ty && !other->locked) {
+                        while (vN(other->marking) > 0) {
+                                struct alloc *a = vXx(other->marking);
+                                xvP(ty->marking, a);
+                        }
+                        continue;
+                }
+                TySpinLockUnlock(&ty->group->Lock);
+                return false;
+        }
+
+        TySpinLockUnlock(&ty->group->Lock);
+        return vN(ty->marking) == 0;
+}
+
+static void
+GCMarkForeignRoots(Ty *ty, Ty *other)
+{
+        co_state *st = other->st;
+        if (st == NULL) return;
+
+        for (int i = 0; i < vN(st->gc_roots); ++i) {
+                _value_mark_xd(ty, v_(st->gc_roots, i));
+        }
+
+        for (int i = 0; i < vN(other->tls); ++i) {
+                _value_mark_xd(ty, v_(other->tls, i));
+        }
+
+        for (int i = 0; i < vN(other->stack) + st->rc && i < vC(other->stack); ++i) {
+                _value_mark_xd(ty, v_(other->stack, i));
+        }
+
+        for (int i = 0; i < vN(st->try_stack); ++i) {
+                struct try *t = v__(st->try_stack, i);
+                for (int j = 0; j < vN(t->defer); ++j) {
+                        _value_mark_xd(ty, v_(t->defer, j));
+                }
+        }
+
+        for (int i = 0; i < vN(other->throw_stack); ++i) {
+                ThrowCtx *ctx = v__(other->throw_stack, i);
+                for (int j = 0; j < vN(ctx->locals); ++j) {
+                        ValueVector const *locals = v_(ctx->locals, j);
+                        for (int k = 0; k < vN(*locals); ++k) {
+                                _value_mark_xd(ty, v_(*locals, k));
+                        }
+                }
+                _value_mark_xd(ty, &ctx->exc);
+        }
+        _value_mark_xd(ty, &other->exc);
+
+        for (int i = 0; i < vN(st->to_drop); ++i) {
+                _value_mark_xd(ty, v_(st->to_drop, i));
+        }
+
+        for (int i = 0; i < vN(st->targets); ++i) {
+                Target *target = v_(st->targets, i);
+                if (target->gc != NULL) {
+                        MARK(target->gc);
+                }
+        }
+
+        for (int i = 0; i < vN(st->frames); ++i) {
+                _value_mark_xd(ty, FrameFun(ty, v_(st->frames, i)));
+        }
+}
+
+static bool
+AllRootsScanned(Ty *ty)
+{
+        if (ty->group == NULL) {
+                return ty->gc_roots_scanned;
+        }
+
+        TySpinLockLock(&ty->group->Lock);
+
+        for (int i = 0; i < vN(ty->group->TyList); ++i) {
+                Ty *other = v__(ty->group->TyList, i);
+                if (other->gc_roots_scanned) continue;
+                if (other->locked) {
+                        TySpinLockUnlock(&ty->group->Lock);
+                        return false;
+                }
+                GCMarkForeignRoots(ty, other);
+                other->gc_roots_scanned = true;
+        }
+
+        TySpinLockUnlock(&ty->group->Lock);
+        return true;
+}
+
+void
+GCStartCycle(Ty *ty)
+{
+        GCLOG("Starting incremental GC cycle");
+
+        int expected = GC_INACTIVE;
+        if (!atomic_compare_exchange_strong_explicit(
+                &ty->group->igc.State, &expected, GC_MARK,
+                memory_order_acq_rel, memory_order_acquire
+        )) {
+                return;
+        }
+
+        ty->group->igc.NThreads = vN(ty->group->TyList);
+        atomic_store_explicit(&ty->group->igc.RootsReady, 0, memory_order_relaxed);
+        atomic_store_explicit(&ty->group->igc.SweepDone, 0, memory_order_relaxed);
+        atomic_store_explicit(&ty->group->igc.GlobalsScanned, false, memory_order_relaxed);
+
+        TySpinLockLock(&ty->group->Lock);
+        for (int i = 0; i < vN(ty->group->TyList); ++i) {
+                Ty *t = v__(ty->group->TyList, i);
+                t->gc_sweep_read = 0; t->gc_sweep_write = 0;
+                t->gc_step_credit = 0;
+                t->gc_cycle_heap = vN(t->allocs);
+                t->gc_cycle_limit = MemoryLimit + (MemoryLimit >> 1);
+                t->gc_roots_scanned = false;
+                t->gc_sweep_done = false;
+        }
+        TySpinLockUnlock(&ty->group->Lock);
+
+        GCMarkRoots(ty);
+        ty->gc_roots_scanned = true;
+
+        if (ty->group != NULL) {
+                atomic_fetch_add_explicit(&ty->group->igc.RootsReady, 1, memory_order_release);
+        }
+
+        if (ty->group == &MainGroup
+         && !atomic_exchange_explicit(&ty->group->igc.GlobalsScanned, true, memory_order_acq_rel)) {
+                GCMarkGlobals(ty);
+        } else if (ty->group == NULL) {
+                GCMarkGlobals(ty);
+        }
+}
+
+static void
+IGCTransitionToSweep(Ty *ty)
+{
+        int expected = GC_MARK;
+        atomic_compare_exchange_strong_explicit(
+                &ty->group->igc.State, &expected, GC_SWEEP,
+                memory_order_acq_rel, memory_order_acquire
+        );
+}
+
+void
+GCRunFullCycle(Ty *ty)
+{
+        int expected = GC_INACTIVE;
+        atomic_compare_exchange_strong_explicit(
+                &ty->group->igc.State, &expected, GC_MARK,
+                memory_order_acq_rel, memory_order_acquire
+        );
+        ty->group->igc.NThreads = vN(ty->group->TyList);
+        atomic_store_explicit(&ty->group->igc.RootsReady, 0, memory_order_relaxed);
+        atomic_store_explicit(&ty->group->igc.SweepDone, 0, memory_order_relaxed);
+        atomic_store_explicit(&ty->group->igc.GlobalsScanned, false, memory_order_relaxed);
+
+        TySpinLockLock(&ty->group->Lock);
+        for (int i = 0; i < vN(ty->group->TyList); ++i) {
+                Ty *t = v__(ty->group->TyList, i);
+                t->gc_sweep_read = 0; t->gc_sweep_write = 0;
+                t->gc_step_credit = 0;
+                t->gc_cycle_heap = vN(t->allocs);
+                t->gc_cycle_limit = MemoryLimit + (MemoryLimit >> 1);
+                t->gc_roots_scanned = false;
+                t->gc_sweep_done = false;
+        }
+        TySpinLockUnlock(&ty->group->Lock);
+
+        GCMarkRoots(ty);
+        ty->gc_roots_scanned = true;
+
+        if (ty->group == &MainGroup) {
+                GCMarkGlobals(ty);
+        }
+
+        while (vN(ty->marking) > 0) {
+                struct alloc *a = vXx(ty->marking);
+                gc_scan_alloc(ty, a);
+        }
+
+        if (ty->group != NULL) {
+                TySpinLockLock(&ty->group->Lock);
+                for (int i = 0; i < vN(ty->group->TyList); ++i) {
+                        Ty *other = v__(ty->group->TyList, i);
+                        if (other == ty || other->locked) continue;
+                        GCMarkForeignRoots(ty, other);
+                }
+                TySpinLockUnlock(&ty->group->Lock);
+                while (vN(ty->marking) > 0) {
+                        struct alloc *a = vXx(ty->marking);
+                        gc_scan_alloc(ty, a);
+                }
+        }
+
+        GCSweepTy(ty);
+
+        TySpinLockLock(&ty->group->Lock);
+        for (int i = 0; i < vN(ty->group->TyList); ++i) {
+                Ty *other = v__(ty->group->TyList, i);
+                if (other == ty || other->locked) continue;
+                GCSweepTy(other);
+        }
+        TySpinLockUnlock(&ty->group->Lock);
+
+        TySpinLockLock(&ty->group->DLock);
+        GCSweep(ty, &ty->group->DeadAllocs, &ty->group->DeadUsed);
+        TySpinLockUnlock(&ty->group->DLock);
+
+        atomic_store_explicit(&ty->group->igc.State, GC_INACTIVE, memory_order_release);
+
+        {
+                isize target = MemoryUsed + (MemoryUsed >> 1);
+                if (target < GC_INITIAL_LIMIT) target = GC_INITIAL_LIMIT;
+                if (target > MemoryLimit)      MemoryLimit = target;
+        }
+}
+
+static void
+IGCFinishCycle(Ty *ty)
+{
+        {
+                isize target = MemoryUsed + (MemoryUsed >> 1);
+                if (target < GC_INITIAL_LIMIT) target = GC_INITIAL_LIMIT;
+                if (target > MemoryLimit)      MemoryLimit = target;
+        }
+
+#if defined(TY_GC_STATS)
+        GCRunCount += 1;
+#endif
+
+        int expected = GC_SWEEP;
+        atomic_compare_exchange_strong_explicit(
+                &ty->group->igc.State, &expected, GC_INACTIVE,
+                memory_order_acq_rel, memory_order_acquire
+        );
+}
+
+void
+GCStepN(Ty *ty, int budget)
+{
+        int state = IGCState(ty);
+
+        switch (state) {
+        case GC_MARK:
+                if (!ty->gc_roots_scanned) {
+                        GCMarkRoots(ty);
+                        ty->gc_roots_scanned = true;
+                        atomic_fetch_add_explicit(
+                                &ty->group->igc.RootsReady, 1,
+                                memory_order_release
+                        );
+                        if (ty->group == &MainGroup
+                         && !atomic_exchange_explicit(
+                                &ty->group->igc.GlobalsScanned, true,
+                                memory_order_acq_rel
+                         )) {
+                                GCMarkGlobals(ty);
+                        }
+                }
+
+                GCMarkSome(ty, budget);
+
+                if (vN(ty->marking) == 0
+                 && AllRootsScanned(ty)
+                 && AllWorklistsEmpty(ty)
+                ) {
+                        IGCTransitionToSweep(ty);
+                }
+                break;
+
+        case GC_SWEEP:
+                if (!ty->gc_sweep_done && GCSweepSome(ty, budget)) {
+                        ty->gc_sweep_done = true;
+                }
+
+                if (ty->gc_sweep_done) {
+                        bool all_done = true;
+
+                        TySpinLockLock(&ty->group->Lock);
+                        for (int i = 0; i < vN(ty->group->TyList); ++i) {
+                                Ty *other = v__(ty->group->TyList, i);
+                                if (other == ty) continue;
+                                if (other->gc_sweep_done) continue;
+                                all_done = false;
+                        }
+                        TySpinLockUnlock(&ty->group->Lock);
+
+                        if (all_done) {
+                                TySpinLockLock(&ty->group->DLock);
+                                GCSweep(ty, &ty->group->DeadAllocs, &ty->group->DeadUsed);
+                                TySpinLockUnlock(&ty->group->DLock);
+                                IGCFinishCycle(ty);
+                        }
+                }
+                break;
+
+        default:
+                break;
+        }
 }
 
 //====/ Builtin Values /======================================================================
@@ -1329,6 +1731,8 @@ BindMethod(Ty *ty, Value *f, Value *v)
                 env[nEnv] = this;
                 meth.env = env;
                 meth.type = VALUE_BOUND_FUNCTION;
+                GC_BARRIER_VAL(ty, this);
+                GC_BARRIER_VAL(ty, f);
         }
 
         return meth;
@@ -1829,7 +2233,7 @@ xcall(Ty *ty, Value const *f, Value const *pSelf, int argc, Value const *pKwargs
                 }
         }
 
-        CheckUsed(ty);
+        CheckUsed(ty, 0);
 }
 
 inline static void
@@ -2158,12 +2562,21 @@ CleanupThread(void *ctx)
 
         GCLOG("Cleaning up thread: %zu bytes in use. DeadUsed = %zu", MemoryUsed, ty->group->DeadUsed);
 
-        TySpinLockLock(&ty->group->DLock);
-        if (ty->group->DeadUsed + MemoryUsed > MemoryLimit) {
-                TySpinLockUnlock(&ty->group->DLock);
-                DoGC(ty);
-                TySpinLockLock(&ty->group->DLock);
+        if (IGCState(ty) != GC_INACTIVE) {
+                if (!ty->gc_roots_scanned) {
+                        GCMarkRoots(ty);
+                        ty->gc_roots_scanned = true;
+                }
+                while (vN(ty->marking) > 0) {
+                        struct alloc *a = vXx(ty->marking);
+                        gc_scan_alloc(ty, a);
+                }
+                if (IGCState(ty) == GC_SWEEP) {
+                        GCSweepTy(ty);
+                }
         }
+
+        TySpinLockLock(&ty->group->DLock);
         xvPv(ty->group->DeadAllocs, ty->allocs);
         ty->group->DeadUsed += MemoryUsed;
         v0(ty->allocs);
@@ -5174,6 +5587,7 @@ DoAssign(Ty *ty)
         switch (pT(p)) {
         case 0:
                 *(Value *)v = peek();
+                GC_BARRIER_VAL(ty, (Value *)v);
                 break;
 
         case 1:
@@ -5219,6 +5633,7 @@ DoAssignExec(Ty *ty)
         switch (pT(p)) {
         case 0:
                 *(Value *)v = peek();
+                GC_BARRIER_VAL(ty, (Value *)v);
                 break;
 
         case 1:
@@ -5465,6 +5880,7 @@ DoAssignSubscript(Ty *ty, int n, bool exec)
                         RaiseException(ty);
                 }
                 *v_(*container.array, subscript.z) = value;
+                GC_BARRIER_VAL(ty, v_(*container.array, subscript.z));
                 break;
 
         case VALUE_DICT:
@@ -6325,6 +6741,7 @@ DoFunction(Ty *ty, char const *ip)
                 } else {
                         v.env[j] = p;
                 }
+                GC_BARRIER_VAL(ty, v.env[j]);
         }
 
 #if !defined(TY_NO_JIT)
@@ -6639,6 +7056,7 @@ NextInstruction:
                         *vp = *local(ty, i);
                         *local(ty, i) = REF(vp);
                         ActiveFun(ty)->env[j] = vp;
+                        GC_BARRIER_VAL(ty, vp);
                         break;
 
                 CASE(DECORATE)
@@ -6954,6 +7372,7 @@ TargetMember:
                         vp = poptarget();
                         if (vp->type == VALUE_NIL) {
                                 *vp = peek();
+                                GC_BARRIER_VAL(ty, vp);
                         }
                         break;
 
@@ -11713,6 +12132,13 @@ TyPostFork(Ty *ty)
         TySpinLockInit(&ty->group->DLock);
         TySpinLockInit(ty->lock);
         TySpinLockLock(ty->lock);
+
+        ty->gc_roots_scanned = false;
+        ty->gc_sweep_done = false;
+        ty->gc_sweep_read = 0; ty->gc_sweep_write = 0;
+        v0(ty->marking);
+
+        atomic_store_explicit(&ty->group->igc.State, GC_INACTIVE, memory_order_relaxed);
 }
 
 void

@@ -2754,7 +2754,7 @@ string_chalk(Ty *ty, Value *string, int argc, Value *kwargs)
         svLIT(out, "\x1b[0m");
 
         GC_RESUME();
-        CheckUsed(ty);
+        CheckUsed(ty, 0);
 
         Value result = (vN(out) > 0)
                      ? vSs(vv(out), vN(out))

@@ -8072,7 +8072,7 @@ BUILTIN_FUNCTION(doc)
 BUILTIN_FUNCTION(ty_gc)
 {
         ASSERT_ARGC("ty.gc()", 0);
-        DoGC(ty);
+        gc(ty);
         return NIL;
 }
 

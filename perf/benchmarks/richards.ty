@@ -174,7 +174,7 @@ fn worker-fn(t: Task, pkt: Packet | nil, work: TaskWorkArea) -> Task | nil {
     if pkt == nil { return t.wait!() }
 
     w.dest = if w.dest == I_HANDLERA { I_HANDLERB } else { I_HANDLERA }
-    pkt.ident = w.dest; pkt.datum = 0
+    pkt.ident = w.dest; pkt.datum = (0 as Int)
     for i in 0..BUFSIZE {
         w.count += 1
         if w.count > 26 { w.count = 1 }

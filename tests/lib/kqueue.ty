@@ -293,14 +293,23 @@ pub fn test-ev-set-raw() {
 }
 
 pub fn test-process-exit() {
+    let (r, w) = os.pipe()
+
     let pid = os.fork()
 
     if pid == 0 {
+        os.close(w)
+        os.read(r, 1)
+        os.close(r)
         os.exit(0)
     }
 
+    os.close(r)
+
     let kq = kqueue.Kqueue()
     kq.add(pid, kqueue.EVFILT_PROC, fflags: kqueue.NOTE_EXIT)
+
+    os.close(w)
 
     let evs = kq.poll(sec: 2.0)
     assert(#evs == 1)

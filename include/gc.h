@@ -16,6 +16,24 @@
 void
 DoGC(Ty *ty);
 
+void
+GCStepN(Ty *ty, int budget);
+
+void
+GCStartCycle(Ty *ty);
+
+void
+GCMarkRoots(Ty *ty);
+
+int
+GCMarkSome(Ty *ty, int n);
+
+bool
+GCSweepSome(Ty *ty, int n);
+
+void
+GCRunFullCycle(Ty *ty);
+
 u64
 TyThreadId(Ty *ty);
 
@@ -24,6 +42,10 @@ RealThreadId(void);
 
 bool
 HoldingLock(Ty *ty);
+
+#define GC_MARK_BUDGET  256
+#define GC_SWEEP_BUDGET 512
+#define GC_STEP_BYTES   512
 
 #define AddAlloc(ty, a) do {  \
         xvP(ty->allocs, (a)); \
@@ -105,21 +127,51 @@ gc_resize_unchecked(Ty *ty, void *p, usize n) {
         return a->data;
 }
 
-inline static void
-CheckUsed(Ty *ty)
+inline static int
+IGCState(Ty *ty)
 {
-#if defined(TY_RELEASE)
-        if (UNLIKELY((ty->GC_OFF_COUNT == 0) && (MemoryUsed >= MemoryLimit))) {
-#else
-        if ((ty->GC_OFF_COUNT == 0) && (MemoryUsed >= MemoryLimit || GC_EVERY_ALLOC)) {
-#endif
-                GCLOG("Running GC. Used = %zu MB, Limit = %zu MB", MemoryUsed / 1000000, MemoryLimit / 1000000);
-                DoGC(ty);
-                GCLOG("DoGC() returned: %zu MB still in use", MemoryUsed / 1000000);
-                while (MemoryUsed >= MemoryLimit) {
-                        MemoryLimit <<= 1;
+        return atomic_load_explicit(&ty->group->igc.State, memory_order_acquire);
+}
+
+inline static void
+CheckUsed(Ty *ty, usize n)
+{
+        if (ty->GC_OFF_COUNT != 0) return;
+
+        int state = IGCState(ty);
+
+        if (UNLIKELY(state != GC_INACTIVE)) {
+                ty->gc_step_credit += n;
+                if (ty->gc_step_credit < GC_STEP_BYTES) return;
+                isize heap = ty->gc_cycle_heap;
+                isize headroom = ty->gc_cycle_limit - MemoryUsed;
+                int budget;
+                if (headroom <= 0) {
+                        budget = 65536;
+                } else if (headroom < MemoryUsed) {
+                        budget = (int)((heap * ty->gc_step_credit) / headroom);
+                        if (budget < 64) budget = 64;
+                        if (budget > 65536) budget = 65536;
+                } else {
+                        budget = (int)(ty->gc_step_credit);
+                        if (budget < 16) budget = 16;
                 }
-                GCLOG("Increasing memory limit to %zu MB", MemoryLimit / 1000000);
+                ty->gc_step_credit = 0;
+                GC_STOP();
+                GCStepN(ty, budget);
+                GC_RESUME();
+                return;
+        }
+
+#if defined(TY_RELEASE)
+        if (UNLIKELY(MemoryUsed >= MemoryLimit)) {
+#else
+        if (MemoryUsed >= MemoryLimit || GC_EVERY_ALLOC) {
+#endif
+                GC_STOP();
+                GCStartCycle(ty);
+                GCStepN(ty, GC_MARK_BUDGET);
+                GC_RESUME();
         }
 }
 
@@ -128,7 +180,7 @@ gc_alloc(Ty *ty, usize n)
 {
         MemoryUsed += n;
         AddToTotalBytes(n);
-        CheckUsed(ty);
+        CheckUsed(ty, n);
 
         struct alloc *a = ty_malloc(sizeof *a + n);
         if (UNLIKELY(a == NULL)) {
@@ -137,7 +189,7 @@ gc_alloc(Ty *ty, usize n)
 
         a->size = n;
         a->type = GC_ANY;
-        atomic_init(&a->mark, false);
+        atomic_init(&a->color, GC_WHITE);
         atomic_init(&a->hard, 0);
 
         return a->data;
@@ -148,7 +200,7 @@ gc_alloc0(Ty *ty, usize n)
 {
         MemoryUsed += n;
         AddToTotalBytes(n);
-        CheckUsed(ty);
+        CheckUsed(ty, n);
 
         struct alloc *a = ty_calloc(1, sizeof *a + n);
         if (UNLIKELY(a == NULL)) {
@@ -174,7 +226,7 @@ gc_alloc_unchecked(Ty *ty, usize n)
 
         a->size = n;
         a->type = GC_ANY;
-        atomic_init(&a->mark, false);
+        atomic_init(&a->color, GC_WHITE);
         atomic_init(&a->hard, 0);
 
         return a->data;
@@ -197,6 +249,8 @@ gc_alloc0_unchecked(Ty *ty, usize n)
         return a->data;
 }
 
+#define GC_BIRTH_COLOR(ty) (IGCState(ty) != GC_INACTIVE ? GC_BLACK : GC_WHITE)
+
 inline static void *
 gc_alloc_object(Ty *ty, usize n, char type)
 {
@@ -206,14 +260,14 @@ gc_alloc_object(Ty *ty, usize n, char type)
 
         MemoryUsed += n;
         AddToTotalBytes(n);
-        CheckUsed(ty);
+        CheckUsed(ty, n);
 
         struct alloc *a = ty_malloc(sizeof *a + n);
         if (UNLIKELY(a == NULL)) {
                 panic("Out of memory!");
         }
 
-        atomic_init(&a->mark, false);
+        atomic_init(&a->color, GC_BIRTH_COLOR(ty));
         atomic_init(&a->hard, 0);
         a->type = type;
         a->size = n;
@@ -238,7 +292,7 @@ gc_alloc_object_unchecked(Ty *ty, usize n, char type)
                 panic("Out of memory!");
         }
 
-        atomic_init(&a->mark, false);
+        atomic_init(&a->color, GC_BIRTH_COLOR(ty));
         atomic_init(&a->hard, 0);
         a->type = type;
         a->size = n;
@@ -257,13 +311,15 @@ gc_alloc_object0(Ty *ty, usize n, char type)
 
         MemoryUsed += n;
         AddToTotalBytes(n);
-        CheckUsed(ty);
+        CheckUsed(ty, n);
 
         struct alloc *a = ty_calloc(1, sizeof *a + n);
         if (UNLIKELY(a == NULL)) {
                 panic("Out of memory!");
         }
 
+        atomic_init(&a->color, GC_BIRTH_COLOR(ty));
+        atomic_init(&a->hard, 0);
         a->type = type;
         a->size = n;
 
@@ -287,6 +343,9 @@ gc_alloc_object0_unchecked(Ty *ty, usize n, char type)
                 panic("Out of memory!");
         }
 
+        atomic_init(&a->color, GC_BIRTH_COLOR(ty));
+        atomic_init(&a->hard, 0);
+
         a->type = type;
         a->size = n;
 
@@ -297,6 +356,9 @@ gc_alloc_object0_unchecked(Ty *ty, usize n, char type)
 
 void
 gc_register(Ty *ty, void *p);
+
+void
+gc_shade_value(Ty *ty, Value const *v);
 
 void
 gc_immortalize(Ty *ty, Value const *v);
@@ -345,7 +407,7 @@ gc_resize(Ty *ty, void *p, usize n) {
         MemoryUsed += n;
         AddToTotalBytes(n);
 
-        CheckUsed(ty);
+        CheckUsed(ty, n);
 
         a = ty_realloc(a, sizeof *a + n);
         if (UNLIKELY(a == NULL)) {

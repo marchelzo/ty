@@ -220,6 +220,9 @@ put(Ty *ty, Dict *d, usize i, u64 h, Value k, Value v)
 
         d->count += 1;
 
+        GC_BARRIER_VAL(ty, &d->items[i].k);
+        GC_BARRIER_VAL(ty, &d->items[i].v);
+
         return robinhood(ty, d, i);
 }
 
@@ -241,6 +244,7 @@ dict_get_value(Ty *ty, Dict *d, Value *key)
                 if (OCCUPIED(d, i)) {
                         d->items[i].v = dflt;
                         GC_RESUME();
+                        GC_BARRIER_VAL(ty, &d->items[i].v);
                         return val(d, i);
                 }
                 Value *v = put(ty, d, i, h, *key, dflt);
@@ -274,6 +278,7 @@ dict_put_value(Ty *ty, Dict *d, Value key, Value value)
 
         if (OCCUPIED(d, i)) {
                 d->items[i].v = value;
+                GC_BARRIER_VAL(ty, &d->items[i].v);
         } else {
                 put(ty, d, i, h, key, value);
         }
@@ -289,6 +294,7 @@ dict_put_value_with(Ty *ty, Dict *d, Value key, Value v, Value const *f)
 
         if (OCCUPIED(d, i)) {
                 d->items[i].v = vm_eval_function(ty, f, &d->items[i].v, &v, NULL);
+                GC_BARRIER_VAL(ty, &d->items[i].v);
                 return val(d, i);
         } else {
                 return put(ty, d, i, h, key, v);
@@ -350,7 +356,7 @@ dict_mark(Ty *ty, Dict *d)
         MARK(d);
 
         if (d->dflt.type != VALUE_ZERO) {
-                xvP(ty->marking, &d->dflt);
+                _value_mark_xd(ty, &d->dflt);
         }
 
 #if defined(TY_TRACE_GC)
@@ -360,8 +366,8 @@ dict_mark(Ty *ty, Dict *d)
 #endif
 
         dfor(d, {
-                xvP(ty->marking, key);
-                xvP(ty->marking, val);
+                _value_mark_xd(ty, key);
+                _value_mark_xd(ty, val);
         });
 }
 
@@ -592,6 +598,7 @@ dict_intersect(Ty *ty, Value *d, int argc, Value *kwargs)
                                         &u->items[j].v,
                                         NULL
                                 );
+                                GC_BARRIER_VAL(ty, &d->dict->items[i].v);
                                 i += 1;
                         }
                 }
@@ -753,6 +760,7 @@ dict_get_or_put_with(Ty *ty, Value *d, int argc, Value *kwargs)
         }
         if (OCCUPIED(dict, i)) {
                 dict->items[i].v = val;
+                GC_BARRIER_VAL(ty, &dict->items[i].v);
         } else {
                 put(ty, dict, i, h, key, val);
         }

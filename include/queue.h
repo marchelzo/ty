@@ -39,6 +39,7 @@ _queue_push_back_one(Ty *ty, Value **items, usize *head, usize *tail, usize *cap
         }
 
         (*items)[*tail] = v;
+        GC_BARRIER_VAL(ty, &(*items)[*tail]);
         *tail = (*tail + 1) % *cap;
 }
 
@@ -51,6 +52,7 @@ _queue_push_front_one(Ty *ty, Value **items, usize *head, usize *tail, usize *ca
 
         *head = (*head - 1 + *cap) % *cap;
         (*items)[*head] = v;
+        GC_BARRIER_VAL(ty, &(*items)[*head]);
 }
 
 inline static Queue *

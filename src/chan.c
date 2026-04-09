@@ -409,7 +409,7 @@ dequeue(Ty *ty, Channel *chan, Value *v)
         TyMutexUnlock(&chan->m);
         LockTy();
 
-        CheckUsed(ty);
+        CheckUsed(ty, 0);
         GC_STOP();
 
         usize cursor = 0;

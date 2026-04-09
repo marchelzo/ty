@@ -115,6 +115,9 @@ array_push(Ty *ty, Value *array, int argc, Value *kwargs)
 {
         ASSERT_ARGC_RANGE("Array.push()", 0, INT_MAX);
         vvPn(*array->array, &ARG(0), argc);
+        for (int i = 0; i < argc; ++i) {
+                GC_BARRIER_VAL(ty, vvL(*array->array) - i);
+        }
         return NIL;
 }
 
@@ -134,6 +137,9 @@ array_insert(Ty *ty, Value *array, int argc, Value *kwargs)
         }
 
         vvIn(*array->array, &ARG(1), argc - 1, i);
+        for (int j = 0; j < argc - 1; ++j) {
+                GC_BARRIER_VAL(ty, vvL(*array->array) - j);
+        }
 
         return *array;
 }
@@ -323,6 +329,7 @@ array_window(Ty *ty, Value *array, int argc, Value *kwargs)
                                 vmP(v_(*array->array, j));
                         }
                         *v_(*array->array, i) = vmC(&f, k);
+                        GC_BARRIER_VAL(ty, v_(*array->array, i));
                 }
 
         } else {
@@ -332,6 +339,7 @@ array_window(Ty *ty, Value *array, int argc, Value *kwargs)
                                 vPx(*win, v__(*array->array, j));
                         }
                         *v_(*array->array, i) =  ARRAY(win);
+                        GC_BARRIER_VAL(ty, v_(*array->array, i));
                 }
         }
 
@@ -382,7 +390,7 @@ slice3(Ty *ty, Array const *xs, Value const *_i, Value const *_j, Value const *_
         }
 
         NOGC(slice);
-        CheckUsed(ty);
+        CheckUsed(ty, 0);
         OKGC(slice);
 
         return ARRAY(slice);
@@ -746,17 +754,13 @@ array_drop_mut(Ty *ty, Value *array, int argc, Value *kwargs)
 static Value
 array_drop(Ty *ty, Value *array, int argc, Value *kwargs)
 {
-        if (argc != 1)
-                zP("array.drop() expects 1 argument but got %d", argc);
+        ASSERT_ARGC("Array.drop()", 1);
 
-        Value n = ARG(0);
-
-        if (n.type != VALUE_INTEGER)
-                zP("non-integer passed to array.drop()");
+        imax n = INT_ARG(0);
 
         Value result = ARRAY(vA());
 
-        int d = min(max(n.z, 0), array->array->count);
+        int d = min(max(n, 0), array->array->count);
         int count = array->array->count - d;
 
         NOGC(result.array);
@@ -885,8 +889,7 @@ array_consume_while(Ty *ty, Value *array, int argc, Value *kwargs)
 static Value
 array_groups_of(Ty *ty, Value *array, int argc, Value *kwargs)
 {
-        if (argc != 1 && argc != 2)
-                zP("array.groupsOf() expects 1 or 2 arguments but got %d", argc);
+        ASSERT_ARGC("Array.groups-of()", 1, 2);
 
         Value size = ARG(0);
         if (size.type != VALUE_INTEGER)
@@ -907,16 +910,17 @@ array_groups_of(Ty *ty, Value *array, int argc, Value *kwargs)
         int n = 0;
         int i = 0;
         while (i + size.z <= array->array->count) {
-                struct array *group = vA();
+                Array *group = vA();
                 NOGC(group);
                 vvPn(*group, array->array->items + i, size.z);
                 OKGC(group);
-                array->array->items[n++] = ARRAY(group);
+                *v_(*array->array, n++) = ARRAY(group);
+                GC_BARRIER_VAL(ty, v_(*array->array, n - 1));
                 i += size.z;
         }
 
         if (keep_short && i != array->array->count) {
-                struct array *last = vA();
+                Array *last = vA();
                 NOGC(last);
                 vvPn(*last, array->array->items + i, array->array->count - i);
                 OKGC(last);
@@ -932,13 +936,13 @@ array_groups_of(Ty *ty, Value *array, int argc, Value *kwargs)
 static Value
 array_group_by(Ty *ty, Value *array, int argc, Value *kwargs)
 {
-        if (argc != 1)
-                zP("array.groupBy() expects 1 argument but got %d", argc);
+        ASSERT_ARGC("Array.group-by()", 1);
 
         Value f = ARG(0);
 
-        if (!CALLABLE(f))
-                zP("the argument to array.groupBy() must be callable");
+        if (!CALLABLE(f)) {
+                bP("not callable: %s", VSC(&f));
+        }
 
         Value v1, v2;
         v1 = v2 = NIL;
@@ -965,6 +969,7 @@ array_group_by(Ty *ty, Value *array, int argc, Value *kwargs)
                 gX();
                 OKGC(group.array);
                 array->array->items[len++] = group;
+                GC_BARRIER_VAL(ty, &array->array->items[len - 1]);
         }
 
         array->array->count = len;
@@ -976,21 +981,26 @@ array_group_by(Ty *ty, Value *array, int argc, Value *kwargs)
 static Value
 array_group(Ty *ty, Value *array, int argc, Value *kwargs)
 {
-        if (argc == 1)
-                return array_group_by(ty, array, argc, kwargs);
+        ASSERT_ARGC("Array.group()", 0, 1);
 
-        if (argc != 0)
-                zP("array.group() expects 0 or 1 arguments but got %d", argc);
+        if (argc == 1) {
+                return array_group_by(ty, array, argc, kwargs);
+        }
 
         int len = 0;
         for (int i = 0; i < array->array->count; ++i) {
                 Value group = ARRAY(vA());
                 NOGC(group.array);
                 vAp(group.array, array->array->items[i]);
-                while (i + 1 < array->array->count && value_test_equality(ty, &array->array->items[i], &array->array->items[i + 1]))
+                while (
+                        (i + 1 < array->array->count)
+                     && v_eq(&array->array->items[i], &array->array->items[i + 1])
+                ) {
                         vAp(group.array, array->array->items[++i]);
+                }
                 OKGC(group.array);
                 array->array->items[len++] = group;
+                GC_BARRIER_VAL(ty, &array->array->items[len - 1]);
         }
 
         array->array->count = len;
@@ -1133,16 +1143,16 @@ array_max(Ty *ty, Value *array, int argc, Value *kwargs)
 static Value
 array_max_by(Ty *ty, Value *array, int argc, Value *kwargs)
 {
-        char const *_name__ = "Array.max()";
-        if (argc != 1)
-                zP("the maxBy method on arrays expects 1 argument but got %d", argc);
+        ASSERT_ARGC("Array.max-by()", 1);
 
-        if (array->array->count == 0)
+        if (vN(*array->array) == 0) {
                 return NIL;
+        }
 
         Value f = ARG(0);
-        if (!CALLABLE(f))
-                zP("non-function passed to the maxBy method on array");
+        if (!CALLABLE(f)) {
+                bP("not callable: %s", VSC(&f));
+        }
 
         Value max, v, k, r;
         max = array->array->items[0];
@@ -1187,10 +1197,8 @@ array_max_by(Ty *ty, Value *array, int argc, Value *kwargs)
 static Value
 array_length(Ty *ty, Value *array, int argc, Value *kwargs)
 {
-        if (argc != 0)
-                zP("array.len() expects no arguments but got %d", argc);
-
-        return INTEGER(array->array->count);
+        ASSERT_ARGC("Array.len()", 0);
+        return INTEGER(vN(*array->array));
 }
 
 static Value
@@ -1223,6 +1231,7 @@ array_map(Ty *ty, Value *array, int argc, Value *kwargs)
                 Value x = v__(*array->array, i);
                 Value y = vm_call1(ty, &f, &x);
                 *v_(*array->array, i) = y;
+                GC_BARRIER_VAL(ty, v_(*array->array, i));
         }
 
         return *array;
@@ -1249,18 +1258,19 @@ array_enumerate(Ty *ty, Value *array, int argc, Value *kwargs)
 static Value
 array_remove(Ty *ty, Value *array, int argc, Value *kwargs)
 {
-        if (argc != 1)
-                zP("the remove method on arrays expects 1 argument but got %d", argc);
+        ASSERT_ARGC("Array.remove()", 1);
 
         Value v = ARG(0);
 
-        int n = array->array->count;
-        int j = 0;
-        for (int i = 0; i < n; ++i)
-                if (!value_test_equality(ty, &v, &array->array->items[i]))
-                        array->array->items[j++] = array->array->items[i];
+        isize n = vN(*array->array);
+        isize j = 0;
+        for (int i = 0; i < n; ++i) {
+                if (!v_eq(&v, &array->array->items[i])) {
+                        *v_(*array->array, j++) = v__(*array->array, i);
+                }
+        }
 
-        array->array->count = j;
+        vN(*array->array) = j;
         shrink(ty, array);
 
         return *array;
@@ -1291,18 +1301,19 @@ array_filter(Ty *ty, Value *array, int argc, Value *kwargs)
 static Value
 array_find(Ty *ty, Value *array, int argc, Value *kwargs)
 {
-        if (argc != 1)
-                zP("the find method on arrays expects 1 argument but got %d", argc);
+        ASSERT_ARGC("Array.find()", 1);
 
         Value pred = ARG(0);
+        if (!CALLABLE(pred)) {
+                bP("not callable: %s", VSC(&pred));
+        }
 
-        if (!CALLABLE(pred))
-                zP("non-predicate passed to the find method on array");
-
-        int n = array->array->count;
-        for (int i = 0; i < n; ++i)
-                if (value_apply_predicate(ty, &pred, &array->array->items[i]))
+        isize n = vN(*array->array);
+        for (int i = 0; i < n; ++i) {
+                if (value_apply_predicate(ty, &pred, &array->array->items[i])) {
                         return array->array->items[i];
+                }
+        }
 
         return NIL;
 }
@@ -1310,18 +1321,19 @@ array_find(Ty *ty, Value *array, int argc, Value *kwargs)
 static Value
 array_findr(Ty *ty, Value *array, int argc, Value *kwargs)
 {
-        if (argc != 1)
-                zP("the findr method on arrays expects 1 argument but got %d", argc);
+        ASSERT_ARGC("Array.findr()", 1);
 
         Value pred = ARG(0);
+        if (!CALLABLE(pred)) {
+                bP("not callable: %s", VSC(&pred));
+        }
 
-        if (!CALLABLE(pred))
-                zP("non-predicate passed to the findr method on array");
-
-        int n = array->array->count;
-        for (int i = n - 1; i >= 0; --i)
-                if (value_apply_predicate(ty, &pred, &array->array->items[i]))
+        isize n = vN(*array->array);
+        for (int i = n - 1; i >= 0; --i) {
+                if (value_apply_predicate(ty, &pred, &array->array->items[i])) {
                         return array->array->items[i];
+                }
+        }
 
         return NIL;
 }
@@ -1329,17 +1341,16 @@ array_findr(Ty *ty, Value *array, int argc, Value *kwargs)
 static Value
 array_bsearch(Ty *ty, Value *array, int argc, Value *kwargs)
 {
-        if (argc != 1)
-                zP("the bsearch? method on array expects 1 argument but got %d", argc);
+        ASSERT_ARGC("Array.bsearch()", 1);
 
         Value v = ARG(0);
 
-        int i = 0,
-            lo = 0,
-            hi = array->array->count - 1;
+        isize i = 0,
+             lo = 0,
+             hi = vN(*array->array) - 1;
 
         while (lo <= hi) {
-                int m = (lo + hi) / 2;
+                isize m = (lo + hi) / 2;
                 int c = value_compare(ty, &v, &array->array->items[m]);
                 if      (c < 0) { hi = m - 1; i = m;  }
                 else if (c > 0) { lo = m + 1; i = lo; }
@@ -1352,17 +1363,15 @@ array_bsearch(Ty *ty, Value *array, int argc, Value *kwargs)
 static Value
 array_bsearch_strict(Ty *ty, Value *array, int argc, Value *kwargs)
 {
-        if (argc != 1)
-                zP("the bsearch method on array expects 1 argument but got %d", argc);
+        ASSERT_ARGC("Array.bsearch!()", 1);
 
         Value v = ARG(0);
 
-        // FIXME: is it ok to subtract 1 here when count is 0? implementation-defined?
-        int lo = 0,
-            hi = array->array->count - 1;
+        isize lo = 0,
+              hi = vN(*array->array) - 1;
 
         while (lo <= hi) {
-                int m = (lo + hi) / 2;
+                isize m = (lo + hi) / 2;
                 int c = value_compare(ty, &v, &array->array->items[m]);
                 if      (c < 0) hi = m - 1;
                 else if (c > 0) lo = m + 1;
@@ -1488,10 +1497,10 @@ array_split_at(Ty *ty, Value *array, int argc, Value *kargs)
                 zP("array.split(): index %s%d%s out of range", TERM(96), i, TERM(0));
         }
 
-        struct array *front = vA();
+        Array *front = vA();
         NOGC(front);
 
-        struct array *back = vA();
+        Array *back = vA();
         NOGC(back);
 
         vvPn(*front, array->array->items, i);

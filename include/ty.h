@@ -38,7 +38,7 @@ typedef vec(cothread_t)     CoThreadVector;
 typedef vec(Constraint)     ConstraintVector;
 typedef vec(Frame)          FrameStack;
 typedef vec(Value)          GCRootSet;
-typedef vec(Value *)        GCWorkStack;
+typedef vec(struct alloc *)  GCWorkStack;
 typedef vec(Refinement)     RefinementVector;
 typedef vec(Scope *)        ScopeVector;
 typedef vec(usize)          SPStack;
@@ -97,11 +97,23 @@ typedef struct table {
         } buckets[VALUE_TABLE_SIZE];
 } ValueTable;
 
+enum {
+        GC_WHITE = 0,
+        GC_GRAY  = 1,
+        GC_BLACK = 2
+};
+
+enum {
+        GC_INACTIVE = 0,
+        GC_MARK,
+        GC_SWEEP
+};
+
 struct alloc {
         union {
                 struct {
                         u8 type;
-                        atomic_bool mark;
+                        atomic_uchar color;
                         atomic_uint_least16_t hard;
                         u32 size;
                 };
@@ -505,6 +517,14 @@ typedef struct thread_group {
         TyCondVar   GCPhaseCond;
         int         GCPhase;
 
+        struct {
+                atomic_int   State;
+                atomic_int   RootsReady;
+                atomic_int   SweepDone;
+                atomic_bool  GlobalsScanned;
+                int          NThreads;
+        } igc;
+
 } ThreadGroup;
 
 struct thread {
@@ -721,6 +741,14 @@ typedef struct ty {
 
         GCWorkStack marking;
 
+        int   gc_sweep_read;
+        int   gc_sweep_write;
+        isize gc_step_credit;
+        isize gc_cycle_heap;
+        isize gc_cycle_limit;
+        bool  gc_roots_scanned;
+        bool  gc_sweep_done;
+
         isize memory_used;
         isize memory_limit;
 
@@ -882,13 +910,16 @@ extern u64 TypeCheckTime;
 extern volatile bool GC_EVERY_ALLOC;
 #endif
 
+#define GC_COLOR(v) atomic_load_explicit(&(ALLOC_OF(v))->color, memory_order_relaxed)
+#define GC_SET_COLOR(v, c) atomic_store_explicit(&(ALLOC_OF(v))->color, (c), memory_order_relaxed)
+
 #if defined(TY_TRACE_GC)
 extern _Thread_local u64 ThisReached;
 extern _Thread_local u64 TotalReached;
 #define MARK(v) do {                        \
         atomic_store_explicit(              \
-                &(ALLOC_OF(v))->mark,       \
-                true,                       \
+                &(ALLOC_OF(v))->color,      \
+                GC_BLACK,                   \
                 memory_order_relaxed        \
         );                                  \
         ThisReached += ALLOC_OF(v)->size;  \
@@ -908,8 +939,8 @@ extern _Thread_local u64 TotalReached;
 #else
 #define MARK(v) do {                     \
         atomic_store_explicit(           \
-                &(ALLOC_OF(v))->mark,    \
-                true,                    \
+                &(ALLOC_OF(v))->color,   \
+                GC_BLACK,                \
                 memory_order_relaxed     \
         );                               \
 } while (0)
@@ -918,10 +949,31 @@ extern _Thread_local u64 TotalReached;
 #define RESET_TOTAL_REACHED()
 #define LOG_REACHED(...)
 #endif
-#define MARKED(v) atomic_load_explicit(  \
-        &(ALLOC_OF(v))->mark,            \
+#define MARKED(v) (atomic_load_explicit( \
+        &(ALLOC_OF(v))->color,           \
         memory_order_relaxed             \
-)
+) != GC_WHITE)
+
+#define SHADE_GRAY(v) do {                                      \
+        if (GC_COLOR(v) == GC_WHITE) {                          \
+                GC_SET_COLOR(v, GC_GRAY);                       \
+                xvP(ty->marking, ALLOC_OF(v));                  \
+        }                                                       \
+} while (0)
+
+#define GC_WRITE_BARRIER(ty, target) do {                       \
+        if (UNLIKELY(IGCState(ty) == GC_MARK) && (target) != NULL) { \
+                if (GC_COLOR(target) == GC_WHITE) {             \
+                        GC_SET_COLOR(target, GC_GRAY);          \
+                        xvP((ty)->marking, ALLOC_OF(target));   \
+                }                                               \
+        }                                                       \
+} while (0)
+
+#define GC_BARRIER_VAL(ty, v) do {                              \
+        if (UNLIKELY(IGCState(ty) == GC_MARK))                   \
+                gc_shade_value(ty, v);                           \
+} while (0)
 
 #if defined(TY_GC_STATS)
 extern usize TotalBytesAllocated;

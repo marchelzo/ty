@@ -913,6 +913,12 @@ tuple_get_completions(Ty *ty, Value const *v, char const *prefix, char **out, in
 void
 _value_mark(Ty *ty, Value const *v);
 
+void
+_value_mark_xd(Ty *ty, Value const *v);
+
+void
+gc_scan_alloc(Ty *ty, struct alloc *a);
+
 static inline Array *
 value_array_new(Ty *ty)
 {
@@ -964,6 +970,7 @@ value_array_push(Ty *ty, Array *a, Value v)
         }
 
         a->items[a->count++] = v;
+        GC_BARRIER_VAL(ty, &a->items[a->count - 1]);
 }
 
 static inline void
@@ -1675,6 +1682,7 @@ static inline void
              && ((off = v__(c->offsets_r, m)) != OFF_NOT_FOUND)
         ) {
                 v.object->slots[off & OFF_MASK] = x;
+                GC_BARRIER_VAL(ty, &v.object->slots[off & OFF_MASK]);
         } else {
                 if (v.object->dynamic == NULL) {
                         v.object->dynamic = mA0(sizeof (struct itable));

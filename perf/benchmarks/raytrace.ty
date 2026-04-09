@@ -256,3 +256,7 @@ fn raytrace(n: Int) {
         assert(pixels == 6400)
     }
 }
+
+if __module__ == 'main' {
+    raytrace(10)
+}

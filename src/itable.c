@@ -74,7 +74,7 @@ bfind(struct itable const *t, i64 id, int * restrict i)
                 int m = (lo / 2) + (hi / 2) + (hi & lo & 1);
                 if      (id < ids[m]) { hi = m - 1; i_ = m;   }
                 else if (id > ids[m]) { lo = m + 1; i_ = lo;  }
-                else                  { *i = m; return true; }
+                else                  { *i = m; return true;  }
         }
 
         *i = i_;
@@ -138,19 +138,23 @@ itable_add(Ty *ty, struct itable *t, i64 id, Value v)
                         } else {
                                 uvP(t->ids, id);
                                 m = vvP(t->values, v);
+                                GC_BARRIER_VAL(ty, m);
                         }
                 } else {
                         *m = v;
+                        GC_BARRIER_VAL(ty, m);
                 }
         } else {
 Big:
                 if (bfind(t, id, &i)) {
                         m = v_(t->values, i);
                         *m = v;
+                        GC_BARRIER_VAL(ty, m);
                 } else {
                         vvI(t->ids, id, i);
                         vvI(t->values, v, i);
                         m = v_(t->values, i);
+                        GC_BARRIER_VAL(ty, m);
                 }
         }
 
