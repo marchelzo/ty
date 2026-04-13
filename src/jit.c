@@ -1716,8 +1716,8 @@ jit_rt_push_try(Ty *ty, Value *top, char *catch_addr, char *finally_addr, char *
 static void
 jit_rt_catch(Ty *ty)
 {
-        ty->throw_stack.count -= 1;
-        ty->st->try_stack.items[ty->st->try_stack.count - 1]->state = TRY_FINALLY;
+        vXx(ty->throw_stack);
+        v_L(ty->st->try_stack)->state = TRY_FINALLY;
 }
 
 // RETHROW: set state to TRY_THROW, end to NULL (triggers re-throw at END_TRY)
@@ -1742,15 +1742,7 @@ jit_rt_finally_enter(Ty *ty, char *resume_addr)
 static char *
 jit_rt_end_try(Ty *ty)
 {
-        struct try *t = ty->st->try_stack.items[--ty->st->try_stack.count];
-        return t->end;
-}
-
-// END_TRY re-throw path: call DoThrow (noreturn, longjmps to outer handler)
-static noreturn void
-jit_rt_end_try_rethrow(Ty *ty)
-{
-        vm_jit_end_try_rethrow(ty);
+        return vXx(ty->st->try_stack)->end;
 }
 
 // ARRAY_REST: extract sub-array from index 'start', excluding 'suffix' elements at end
@@ -6172,7 +6164,7 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
 
                         // Re-throw path
                         jit_emit_mov(asm, BC_A0, BC_TY);
-                        jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_end_try_rethrow);
+                        jit_emit_load_imm(asm, BC_CALL, (iptr)vm_jit_end_try_rethrow);
                         jit_emit_call_reg(asm, BC_CALL);
                         // Doesn't return (longjmps to outer handler)
 

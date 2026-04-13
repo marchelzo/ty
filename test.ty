@@ -15,6 +15,7 @@ let slow  = Atomic(0)
 
 const TY_CMD  = getenv('TY_PATH') ?? ty.executable
 const TY_OPTS = ['-q' if ty.q, '-j' if !ty.jit].unwords()
+const FILTER  = regex(argv(1).or-else('.'))
 
 fn log-scale(lo: Float, hi: Float) -> (Float -> Float) {
     let lo = log(lo)
@@ -75,7 +76,7 @@ let t0 = time.now()
 for (dir, _, files) in Path('tests').walk() {
     let group = chalk"[#bd892d]{dir}[/]"
     let pad   = chalk"[#333]─[/]"
-    let tests = files.filter(/\.ty$/)
+    let tests = files.filter(/\.ty$/).filter(\FILTER in "{dir / _}")
     print("{" {group} {pad}{pad}":{pad}>{COLUMNS}}")
     for Future.iter(tests.map(pool.submit@(dir / _))) {
         print(it)
