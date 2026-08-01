@@ -2056,6 +2056,157 @@ BUILTIN_FUNCTION(md5)
         return vSsz(digest);
 }
 
+enum HashAlgorithm {
+        HASH_MD5,
+        HASH_SHA1,
+        HASH_SHA256,
+        HASH_SHA512,
+        HASH_ALGORITHM_COUNT
+};
+
+typedef struct HashState {
+        u32 magic;
+        enum HashAlgorithm algorithm;
+        union {
+                MD5_CTX md5;
+                SHA1_CTX sha1;
+                SHA2_CTX sha2;
+        } context;
+} HashState;
+
+#define HASH_STATE_MAGIC 0x48535954u
+
+static HashState *
+hash_state(Ty *ty, Value state)
+{
+        if (
+                state.type != VALUE_BLOB
+             || vN(*state.blob) != sizeof (HashState)
+        ) {
+                zP("invalid hash state");
+        }
+
+        HashState *hash = (HashState *)vv(*state.blob);
+        if (
+                hash->magic != HASH_STATE_MAGIC
+             || hash->algorithm < 0
+             || hash->algorithm >= HASH_ALGORITHM_COUNT
+        ) {
+                zP("invalid hash state");
+        }
+
+        return hash;
+}
+
+static void
+hash_data(Ty *ty, Value data, u8 const **bytes, usize *size)
+{
+        switch (data.type) {
+        case VALUE_STRING:
+                *bytes = (u8 const *)ss(data);
+                *size = sN(data);
+                break;
+        case VALUE_BLOB:
+                *bytes = vv(*data.blob);
+                *size = vN(*data.blob);
+                break;
+        default:
+                zP("hash input must be a string or blob");
+        }
+}
+
+BUILTIN_FUNCTION(hash_new)
+{
+        ASSERT_ARGC("_hash.new()", 1);
+
+        imax algorithm = INT_ARG(0);
+        if (algorithm < 0 || algorithm >= HASH_ALGORITHM_COUNT) {
+                bP("unknown algorithm: %"PRIiMAX, algorithm);
+        }
+
+        HashState hash = {
+                .magic = HASH_STATE_MAGIC,
+                .algorithm = algorithm
+        };
+
+        switch (hash.algorithm) {
+        case HASH_MD5:    MD5Init(&hash.context.md5);     break;
+        case HASH_SHA1:   SHA1Init(&hash.context.sha1);   break;
+        case HASH_SHA256: SHA256Init(&hash.context.sha2); break;
+        case HASH_SHA512: SHA512Init(&hash.context.sha2); break;
+        default: UNREACHABLE();
+        }
+
+        Blob *state = value_blob_new(ty);
+        uvPn(*state, (u8 const *)&hash, sizeof hash);
+        return BLOB(state);
+}
+
+BUILTIN_FUNCTION(hash_update)
+{
+        ASSERT_ARGC("_hash.update()", 2);
+
+        HashState *hash = hash_state(ty, ARG(0));
+        Value data = ARG(1);
+        u8 const *bytes;
+        usize size;
+        hash_data(ty, data, &bytes, &size);
+
+        switch (hash->algorithm) {
+        case HASH_MD5:    MD5Update(&hash->context.md5, bytes, size);     break;
+        case HASH_SHA1:   SHA1Update(&hash->context.sha1, bytes, size);   break;
+        case HASH_SHA256: SHA256Update(&hash->context.sha2, bytes, size); break;
+        case HASH_SHA512: SHA512Update(&hash->context.sha2, bytes, size); break;
+        default: UNREACHABLE();
+        }
+
+        return NIL;
+}
+
+BUILTIN_FUNCTION(hash_digest)
+{
+        ASSERT_ARGC("_hash.digest()", 1);
+
+        HashState hash = *hash_state(ty, ARG(0));
+        u8 digest[SHA512_DIGEST_LENGTH];
+        usize size;
+
+        switch (hash.algorithm) {
+        case HASH_MD5:
+                MD5Final(digest, &hash.context.md5);
+                size = MD5_DIGEST_LENGTH;
+                break;
+        case HASH_SHA1:
+                SHA1Final(digest, &hash.context.sha1);
+                size = SHA1_DIGEST_LENGTH;
+                break;
+        case HASH_SHA256:
+                SHA256Final(digest, &hash.context.sha2);
+                size = SHA256_DIGEST_LENGTH;
+                break;
+        case HASH_SHA512:
+                SHA512Final(digest, &hash.context.sha2);
+                size = SHA512_DIGEST_LENGTH;
+                break;
+        default:
+                UNREACHABLE();
+        }
+
+        Blob *result = value_blob_new(ty);
+        uvPn(*result, digest, size);
+        return BLOB(result);
+}
+
+BUILTIN_FUNCTION(hash_copy)
+{
+        ASSERT_ARGC("_hash.copy()", 1);
+
+        HashState *hash = hash_state(ty, ARG(0));
+        Blob *copy = value_blob_new(ty);
+        uvPn(*copy, (u8 const *)hash, sizeof *hash);
+        return BLOB(copy);
+}
+
 static bool
 b64dec(Ty *ty, u8 const *s, usize n)
 {

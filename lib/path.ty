@@ -2,6 +2,7 @@ import errno
 import io
 import os
 import time
+import ty
 
 tag PathError;
 
@@ -85,7 +86,7 @@ pub class Path {
     }
 
     __hash__() -> Int {
-        hash((__drv, __root, __parts))
+        ty.hash((__drv, __root, __parts))
     }
 
     /(other: String | Path) -> Path {
@@ -218,7 +219,7 @@ pub class Path {
     resolve -> Path {
         match os.realpath(str(self)) {
             $p => Path(p),
-            _ => throw PathError({msg: 'failed to resolve', path: str(self)})
+            _ => throw os.OSError('realpath()')
         }
     }
 
@@ -281,7 +282,7 @@ pub class Path {
     }
 
     lstat -> _ {
-        os.lstat("{self}") ?? throw os.OSError('stat()')
+        os.lstat("{self}") ?? throw os.OSError('lstat()')
     }
 
     open(how: String = 'r') -> io.Stream {
@@ -322,7 +323,7 @@ pub class Path {
                 
                 if !current.exists? {
                     if os.mkdir(path-str, mode) == -1 {
-                        throw PathError({msg: 'mkdir failed', path: path-str})
+                        throw os.OSError('mkdir()')
                     }
                 } else if !exist-ok {
                     throw PathError({msg: 'directory exists', path: path-str})
@@ -332,7 +333,7 @@ pub class Path {
             let path-str = str(self)
             if os.mkdir(path-str, mode) == -1 {
                 if !exist-ok || errno.get() != errno.EEXIST {
-                    throw PathError({msg: 'mkdir failed', path: path-str})
+                    throw os.OSError('mkdir()')
                 }
             }
         }
@@ -340,13 +341,13 @@ pub class Path {
 
     rmdir() {
         if os.rmdir(str(self)) == -1 {
-            throw PathError({msg: 'rmdir failed', path: str(self)})
+            throw os.OSError('rmdir()')
         }
     }
 
     unlink() {
         if os.unlink(str(self)) == -1 {
-            throw PathError({msg: 'unlink failed', path: str(self)})
+            throw os.OSError('unlink()')
         }
     }
 
@@ -357,7 +358,17 @@ pub class Path {
         }
         
         if os.rename(str(self), str(target-path)) == -1 {
-            throw PathError({msg: 'rename failed', path: str(self)})
+            throw os.OSError('rename()')
+        }
+
+        target-path
+    }
+
+    link(target: String | Path) -> Path {
+        let target-path = (target :: String) ? Path(target) : target
+
+        if os.link(str(self), str(target-path)) == -1 {
+            throw os.OSError('link()')
         }
 
         target-path
@@ -365,30 +376,26 @@ pub class Path {
 
     chmod(mode: Int) {
         if os.chmod(str(self), mode) == -1 {
-            throw PathError({msg: 'chmod failed', path: str(self)})
+            throw os.OSError('chmod()')
         }
     }
 
     touch(mode: Int = 0o644) {
         let fd = os.open(str(self), os.O_CREAT | os.O_WRONLY, mode)
         if fd == -1 {
-            throw PathError({
-                msg: 'touch failed',
-                why: errno.str(errno.get()),
-                path: str(self)
-            })
+            throw os.OSError('open()')
         }
         defer os.close(fd)
         
         let now = time.now()
         if os.futimes(fd, now, now) == -1 {
-            throw PathError({msg: 'futimes failed', path: str(self)})
+            throw os.OSError('futimes()')
         }
     }
 
     chdir() {
         if os.chdir(str(self)) == -1 {
-            throw PathError({msg: 'chdir failed', path: str(self)})
+            throw os.OSError('chdir()')
         }
     }
 
@@ -404,14 +411,14 @@ pub class Path {
 
             let src-fd = os.open(str(src), os.O_RDONLY | flags)
             if src-fd == -1 {
-                throw PathError({msg: 'open source failed', path: str(src)})
+                throw os.OSError('open()')
             }
 
             defer os.close(src-fd)
             
             let dst-fd = os.open(str(dst), os.O_WRONLY | os.O_CREAT | os.O_TRUNC | flags, 0o666)
             if dst-fd == -1 {
-                throw PathError({msg: 'open destination failed', path: str(dst)})
+                throw os.OSError('open()')
             }
 
             defer os.close(dst-fd)
@@ -420,14 +427,14 @@ pub class Path {
             while true {
                 let n = os.read(src-fd, buf, 8192)
                 if n == -1 {
-                    throw PathError({msg: 'read failed', path: str(src)})
+                    throw os.OSError('read()')
                 } else if n == 0 {
                     break
                 }
                 
                 let written = os.write(dst-fd, buf)
                 if written != n {
-                    throw PathError({msg: 'write failed', path: str(dst)})
+                    throw os.OSError('write()')
                 }
 
                 buf.clear()
@@ -444,7 +451,7 @@ pub class Path {
         } else if self.symlink? && !follow-symlinks {
             let link-target = self.readlink
             if os.symlink(str(link-target), str(target-path)) == -1 {
-                throw PathError({msg: 'symlink failed', path: str(target-path)})
+                throw os.OSError('symlink()')
             }
         } else {
             throw PathError({msg: 'source does not exist', path: str(self)})
@@ -581,10 +588,7 @@ pub class Path {
         let name = "{prefix}-XXXXXX{suffix}"
 
         if not let (fd, path) = os.mktemp("{self / name}") {
-            throw PathError({
-                msg: 'mktemp failed',
-                path: str(self / name)
-            })
+            throw os.OSError('mkstemp()')
         }
         
         os.close(fd)

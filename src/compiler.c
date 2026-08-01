@@ -4616,6 +4616,7 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
 #endif
 
         Type *t0 = NULL;
+        bool subject_open;
         SWAP(Type *, t0, STATE.expected_type);
 
         bool debug = e->dbg;
@@ -4785,13 +4786,27 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
 
         case EXPRESSION_MATCH:
                 symbolize_expression(ty, scope, e->subject);
+                subject_open = !type_is_concrete(ty, e->subject->_type);
                 t0 = type_new_inst(ty, e->subject->_type);
                 for (int i = 0; i < vN(e->patterns); ++i) {
                         Expr *pat = v__(e->patterns, i);
                         subscope = scope_new(ty, "(match-branch)", scope, false);
                         symbolize_pattern(ty, subscope, pat, NULL, true);
                         ctx = PushContext(ty, pat);
-                        type_try_assign(ty, pat, t0, 0);
+                        /* An open subject can gain constraints after this arm is
+                         * analyzed, so its irrefutable binding must stay tied to it. */
+                        type_try_assign(
+                                ty,
+                                pat,
+                                (
+                                        subject_open
+                                     && (pat->type == EXPRESSION_IDENTIFIER)
+                                     && (pat->constraint == NULL)
+                                )
+                                        ? e->subject->_type
+                                        : t0,
+                                0
+                        );
                         ctx = RestoreContext(ty, ctx);
                         symbolize_expression(ty, subscope, v__(e->thens, i));
                         t0 = type_without(ty, t0, pat->_type);
