@@ -1,0 +1,70 @@
+import _hash
+import path (Path)
+
+let ALGORITHMS = %{
+    'md5':    (0, 16,  64),
+    'sha1':   (1, 20,  64),
+    'sha256': (2, 32,  64),
+    'sha512': (3, 64, 128)
+}
+
+pub class Hash {
+    __state: Blob
+    __name: String
+    __digest-size: Int
+    __block-size: Int
+
+    init(name: String, data: String | Blob | nil = nil) {
+        __name = name.lower()
+        if __name not in ALGORITHMS {
+            throw ValueError("unsupported hash algorithm: {name}")
+        }
+
+        let (algorithm, digest-size, block-size) = ALGORITHMS[__name]
+        __digest-size = digest-size
+        __block-size = block-size
+        __state = _hash::new(algorithm)
+        if data != nil { update(data) }
+    }
+
+    name -> String { __name }
+    digest-size -> Int { __digest-size }
+    block-size -> Int { __block-size }
+    digest_size -> Int { __digest-size }
+    block_size -> Int { __block-size }
+
+    update(data: String | Blob) {
+        _hash::update(__state, data)
+    }
+
+    update(path: Path) {
+        with file = path.open() {
+            while let $chunk = file.read(1 << 20) { update(chunk) }
+        }
+    }
+
+    digest() -> Blob {
+        _hash::digest(__state)
+    }
+
+    hexdigest() -> String {
+        digest().hex()
+    }
+
+    copy() -> Hash {
+        let hash = Hash(__name)
+        hash.__state = _hash::copy(__state)
+        hash
+    }
+}
+
+pub fn md5(data: String | Blob | nil = nil) -> Hash { Hash('md5', data) }
+pub fn sha1(data: String | Blob | nil = nil) -> Hash { Hash('sha1', data) }
+pub fn sha256(data: String | Blob | nil = nil) -> Hash { Hash('sha256', data) }
+pub fn sha512(data: String | Blob | nil = nil) -> Hash { Hash('sha512', data) }
+
+pub fn sha256-file(path: Path) -> String {
+    let hash = sha256()
+    hash.update(path)
+    hash.hexdigest()
+}

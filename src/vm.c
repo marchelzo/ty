@@ -7587,6 +7587,7 @@ TargetMember:
 
                 CASE(YIELD)
                         DoYield(ty);
+                        ty = MyTy;
                         break;
 
                 CASE(YIELD_NONE)

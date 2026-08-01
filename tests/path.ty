@@ -1,5 +1,6 @@
 import path
 import os
+import ty
 import ty.parse as parse
 
 ns test
@@ -136,8 +137,8 @@ pub fn hash-test() {
     let p1 = path.Path('foo/bar')
     let p2 = path.Path('foo/bar')
     let p3 = path.Path('foo/baz')
-    assert(hash(p1) == hash(p2))
-    assert(hash(p1) != hash(p3))
+    assert(ty.hash(p1) == ty.hash(p2))
+    assert(ty.hash(p1) != ty.hash(p3))
     let d = %{p1: 'value1', p3: 'value2'}
     assert(d[p2] == 'value1')
 }
@@ -160,6 +161,17 @@ pub fn file-operations() {
         file.rename(renamed)
         assert(!file.exists?)
         assert(renamed.exists?)
+        let linked = renamed.link(tmp / 'linked.txt')
+        assert(linked.read-text() == 'hello world')
+        assert(linked.stat.ino == renamed.stat.ino)
+        linked.unlink()
+        let raised = false
+        try {
+            renamed.link(renamed)
+        } catch _: OSError {
+            raised = true
+        }
+        assert(raised)
         let touched = tmp / 'touched.txt'
         touched.touch()
         assert(touched.exists?)
