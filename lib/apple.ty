@@ -96,6 +96,8 @@ C! pub cf fn {
         const void *userInfo,
         int deliverImmediately
     );
+    long CFDataGetLength(const void *data);
+    const unsigned char *CFDataGetBytePtr(const void *data);
 }
 
 
@@ -180,6 +182,31 @@ C! pub appsvcs fn {
     void *CGEventSourceCreate(int stateID);
 
     int CGEventSourceKeyState(int stateID, unsigned short key);
+
+    int PasteboardCreate(
+        const void *name,
+        void **pasteboard
+    );
+
+    unsigned int PasteboardSynchronize(void *pasteboard);
+
+    int PasteboardGetItemCount(
+        void *pasteboard,
+        unsigned int *itemCount
+    );
+
+    int PasteboardGetItemIdentifier(
+        void *pasteboard,
+        long itemIndex,
+        unsigned int *itemID
+    );
+
+    int PasteboardCopyItemFlavorData(
+        void *pasteboard,
+        unsigned int itemID,
+        const void *flavorType,
+        void **data
+    );
 }
 
 C! pub iokit fn {
@@ -577,6 +604,8 @@ pub const kIOPMAssertionTypePreventUserIdleSystemSleep   = cfstr('PreventUserIdl
 
 pub const kIOPMAssertionLevelOn  = 255
 pub const kIOPMAssertionLevelOff = 0
+
+pub const kPasteboardClipboard = cfstr('com.apple.pasteboard.clipboard')
 
 
 pub class CFRef {
@@ -1548,4 +1577,112 @@ pub class AudioOutput {
 
     __drop__() { close() }
     __free__() { close() }
+}
+
+pub class ClipboardImage {
+    __data: Ptr[Any]
+    __type: String
+    __extension: String
+
+    init(data: Ptr[Any], type: String, extension: String) {
+        __data = data
+        __type = type
+        __extension = extension
+    }
+
+    type -> String {
+        __type
+    }
+
+    extension -> String {
+        __extension
+    }
+
+    size -> Int {
+        CFDataGetLength(__data)
+    }
+
+    bytes -> Ptr[Any] {
+        CFDataGetBytePtr(__data)
+    }
+
+    __str__() {
+        "<ClipboardImage type={__type} size={size}>"
+    }
+
+    __free__() {
+        if __data != nil {
+            CFRelease(__data)
+            __data = nil
+        }
+    }
+}
+
+pub fn clipboard-image() -> ?ClipboardImage {
+    let pb-out = c.auto(c.box(c.ptr))
+
+    if PasteboardCreate(kPasteboardClipboard, pb-out) != 0 {
+        return nil
+    }
+
+    let pb = pb-out[0]
+    defer CFRelease(pb)
+
+    PasteboardSynchronize(pb)
+
+    let count-out = c.auto(c.box(c.u32))
+    if PasteboardGetItemCount(pb, count-out) != 0 {
+        return nil
+    }
+
+    /*
+     * PNG is preferred because it is lossless and broadly usable.
+     *
+     * TIFF is also lossless, but usually much larger. JPEG, JPEG 2000,
+     * AVIF and GIF are retained as fallbacks because an application may
+     * expose only one of them.
+     */
+    let formats = [
+        {type: 'public.png',        extension: 'png'},
+        {type: 'public.tiff',       extension: 'tiff'},
+        {type: 'public.jpeg-2000',  extension: 'jp2'},
+        {type: 'public.avif',       extension: 'avif'},
+        {type: 'public.jpeg',       extension: 'jpg'},
+        {type: 'com.compuserve.gif', extension: 'gif'},
+        {type: 'com.microsoft.bmp', extension: 'bmp'}
+    ]
+
+    for item-index in 1..count-out[0] + 1 {
+        let item-out = c.auto(c.box(c.u32))
+
+        if PasteboardGetItemIdentifier(pb, item-index, item-out) != 0 {
+            continue
+        }
+
+        for format in formats {
+            let flavor = cfstr(format.type)
+            defer CFRelease(flavor)
+
+            let data-out = c.auto(c.box(c.ptr))
+
+            if PasteboardCopyItemFlavorData(
+                pb,
+                item-out[0],
+                flavor,
+                data-out
+            ) == 0 && data-out[0] != nil {
+                return ClipboardImage(
+                    data-out[0],
+                    format.type,
+                    format.extension
+                )
+            }
+        }
+    }
+
+    nil
+}
+
+pub fn clipboard-has-image?() -> Bool {
+    clipboard-image() != nil
 }

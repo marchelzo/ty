@@ -920,6 +920,10 @@ scope_reset(void)
 void
 ScopeFinalize(Ty *ty, Scope *scope)
 {
+        if (!CheckTypes) {
+                return;
+        }
+
         for (i32 i = 0; i < scope->size; ++i) {
                 for (Symbol *sym = scope->table[i]; sym != NULL; sym = sym->next) {
                         sym->type = type_reduce(ty, sym->type);

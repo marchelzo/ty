@@ -1,4 +1,5 @@
 import date (..)
+import time
 
 ns test
 
@@ -294,6 +295,15 @@ pub fn test-plain-date-time-to-parts() {
     assert(t == PlainTime(14, 30, 45))
 }
 
+pub fn test-plain-date-time-local-instant-roundtrip() {
+    let dt = PlainDateTime(2024, 6, 15, 14, 30, 45, 123, 456, 789)
+    let result = dt.to-instant-local().to-plain-date-time-local()
+    assert(result == dt)
+
+    let winter = PlainDateTime(2024, 1, 15, 9, 5, 2, 987, 654, 321)
+    assert(winter.to-instant-local().to-plain-date-time-local() == winter)
+}
+
 pub fn test-plain-date-time-with() {
     let dt = PlainDateTime(2024, 6, 15, 14, 30, 0)
     let r = dt.with(hour=8, minute=0)
@@ -331,6 +341,29 @@ pub fn test-instant-from-string-offset() {
     /* 05:30 +05:30 = 00:00 UTC */
     assert(dt.year == 2024 && dt.month == 1 && dt.day == 1)
     assert(dt.hour == 0 && dt.minute == 0)
+}
+
+pub fn test-instant-to-local-date-time() {
+    let i = Instant.from('2024-06-15T10:30:45.123456789Z')
+    let dt = i.to-plain-date-time-local()
+    let tm = time.localtime(i.epoch-seconds)
+
+    assert(dt.year == tm.year + 1900)
+    assert(dt.month == tm.mon + 1)
+    assert(dt.day == tm.mday)
+    assert(dt.hour == tm.hour && dt.minute == tm.min && dt.second == tm.sec)
+    assert(dt.millisecond == 123 && dt.microsecond == 456 && dt.nanosecond == 789)
+}
+
+pub fn test-instant-to-local-date-time-before-epoch() {
+    let i = Instant.from-epoch-nanoseconds(-500000000)
+    let dt = i.to-plain-date-time-local()
+    let tm = time.localtime(-1)
+
+    assert(dt.year == tm.year + 1900)
+    assert(dt.month == tm.mon + 1 && dt.day == tm.mday)
+    assert(dt.hour == tm.hour && dt.minute == tm.min && dt.second == tm.sec)
+    assert(dt.millisecond == 500)
 }
 
 pub fn test-instant-add() {
