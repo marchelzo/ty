@@ -365,12 +365,38 @@ static void jit_emit_str32(dasm_State **Dst, int src, int base, int offset) {
 
 // Load pair of 64-bit values from [base + offset]
 static void jit_emit_ldp64(dasm_State **Dst, int r1, int r2, int base, int offset) {
-        |  ldp Rx(r1), Rx(r2), [Rx(base), #offset]
+        if (offset >= -512 && offset <= 504 && (offset % 8) == 0) {
+                |  ldp Rx(r1), Rx(r2), [Rx(base), #offset]
+        } else if (offset > 0 && offset <= 4095) {
+                |  add x17, Rx(base), #offset
+                |  ldp Rx(r1), Rx(r2), [x17]
+        } else if (offset < 0 && offset >= -4095) {
+                int neg = -offset;
+                |  sub x17, Rx(base), #neg
+                |  ldp Rx(r1), Rx(r2), [x17]
+        } else {
+                jit_emit_load_imm(Dst, 17, (iptr)offset);
+                |  add x17, x17, Rx(base)
+                |  ldp Rx(r1), Rx(r2), [x17]
+        }
 }
 
 // Store pair of 64-bit values to [base + offset]
 static void jit_emit_stp64(dasm_State **Dst, int r1, int r2, int base, int offset) {
-        |  stp Rx(r1), Rx(r2), [Rx(base), #offset]
+        if (offset >= -512 && offset <= 504 && (offset % 8) == 0) {
+                |  stp Rx(r1), Rx(r2), [Rx(base), #offset]
+        } else if (offset > 0 && offset <= 4095) {
+                |  add x17, Rx(base), #offset
+                |  stp Rx(r1), Rx(r2), [x17]
+        } else if (offset < 0 && offset >= -4095) {
+                int neg = -offset;
+                |  sub x17, Rx(base), #neg
+                |  stp Rx(r1), Rx(r2), [x17]
+        } else {
+                jit_emit_load_imm(Dst, 17, (iptr)offset);
+                |  add x17, x17, Rx(base)
+                |  stp Rx(r1), Rx(r2), [x17]
+        }
 }
 
 // --- Add immediate ---

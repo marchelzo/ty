@@ -1147,6 +1147,33 @@ pub class PlainDateTime {
         PlainMonthDay(month, day)
     }
 
+    /* Interpret this wall-clock date-time in the system timezone and convert
+     * it to an instant. Derive the applicable UTC offset from localtime rather
+     * than relying on an omitted tm_isdst field (which some platforms treat as
+     * standard time instead of asking the timezone database). */
+    to-instant-local() -> Instant {
+        let fields = {
+            year: year - 1900,
+            mon: month - 1,
+            mday: day,
+            hour: hour,
+            min: minute,
+            sec: second
+        }
+        let wall-seconds = time.time(fields, utc=true)
+        let local = time.localtime(wall-seconds)
+        let offset = time.time(local, utc=true) - wall-seconds
+        let seconds = wall-seconds - offset
+
+        /* The initial probe can land across a DST boundary. One correction is
+         * sufficient because timezone offsets are piecewise constant. */
+        let corrected-local = time.localtime(seconds)
+        let corrected-offset = time.time(corrected-local, utc=true) - seconds
+        if corrected-offset != offset { seconds = wall-seconds - corrected-offset }
+        let fraction = millisecond * 1000000 + microsecond * 1000 + nanosecond
+        Instant(seconds * 1000000000 + fraction)
+    }
+
     /* Fluent navigation */
     tomorrow -> PlainDateTime { add(Duration(days=1)) }
     yesterday -> PlainDateTime { add(Duration(days=-1)) }
@@ -1312,6 +1339,27 @@ pub class Instant {
                       t.millisecond, t.microsecond, t.nanosecond)
     }
 
+    /* Convert this instant to a wall-clock date-time in the system timezone.
+     * Calendar fields account for the timezone offset and daylight-saving
+     * rules in effect at this instant. Sub-second precision is preserved. */
+    to-plain-date-time-local() -> PlainDateTime {
+        let seconds = __epoch-nanos / 1000000000
+        let fraction = __epoch-nanos % 1000000000
+        if fraction < 0 {
+            seconds -= 1
+            fraction += 1000000000
+        }
+
+        let tm = time.localtime(seconds)
+        PlainDateTime(
+            tm.year + 1900, tm.mon + 1, tm.mday,
+            tm.hour, tm.min, tm.sec,
+            fraction / 1000000,
+            (fraction % 1000000) / 1000,
+            fraction % 1000
+        )
+    }
+
     __str__() -> String {
         let dt = to-plain-date-time-utc()
         "{dt}Z"
@@ -1471,9 +1519,7 @@ fn __instant-now() -> Instant {
 }
 
 fn __local-dt() -> PlainDateTime {
-    let epoch = Int(time.utc())
-    let tm = time.localtime(epoch)
-    PlainDateTime(tm.year + 1900, tm.mon + 1, tm.mday, tm.hour, tm.min, tm.sec)
+    __instant-now().to-plain-date-time-local()
 }
 
 /* now() returns the current local date-time */
