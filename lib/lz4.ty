@@ -1,0 +1,502 @@
+import ffi as c (C!)
+
+if not let $lz4 = c.open('lz4') {
+    throw RuntimeError('failed to open lz4 library')
+}
+
+const LZ4_i8 = c.i8
+const LZ4_byte = c.u8
+const LZ4_u16 = c.u16
+const LZ4_u32 = c.u32
+
+pub const LZ4_FREESTANDING = 0
+pub const LZ4_MAX_INPUT_SIZE = 0x7E000000
+pub const LZ4_MEMORY_USAGE_DEFAULT = 14
+pub const LZ4_MEMORY_USAGE_MAX = 20
+pub const LZ4_MEMORY_USAGE_MIN = 10
+pub const LZ4_STREAMDECODE_MINSIZE = 32
+pub const LZ4_VERSION_MAJOR = 1
+pub const LZ4_VERSION_MINOR = 10
+pub const LZ4_VERSION_RELEASE = 0
+
+C! struct LZ4_stream_t_internal {
+    LZ4_u32 hashTable[(1 << (14 - 2))];
+    LZ4_byte* dictionary;
+    LZ4_stream_t_internal* dictCtx;
+    LZ4_u32 currentOffset;
+    LZ4_u32 tableType;
+    LZ4_u32 dictSize;
+}
+
+C! struct LZ4_streamDecode_t_internal {
+    LZ4_byte* externalDict;
+    LZ4_byte* prefixEnd;
+    size_t extDictSize;
+    size_t prefixSize;
+}
+
+C! lz4 fn {
+    int LZ4_versionNumber (void);
+    const char* LZ4_versionString (void);
+    int LZ4_compress_default(const char* src, char* dst, int srcSize, int dstCapacity);
+    int LZ4_decompress_safe(
+        const char* src,
+        char* dst,
+        int compressedSize,
+        int dstCapacity
+    );
+    int LZ4_compressBound(int inputSize);
+    int LZ4_compress_fast(
+        const char* src,
+        char* dst,
+        int srcSize,
+        int dstCapacity,
+        int acceleration
+    );
+    int LZ4_sizeofState(void);
+    int LZ4_compress_fast_extState(
+        void* state,
+        const char* src,
+        char* dst,
+        int srcSize,
+        int dstCapacity,
+        int acceleration
+    );
+    int LZ4_compress_destSize(
+        const char* src,
+        char* dst,
+        int* srcSizePtr,
+        int targetDstSize
+    );
+    int LZ4_decompress_safe_partial(
+        const char* src,
+        char* dst,
+        int srcSize,
+        int targetOutputSize,
+        int dstCapacity
+    );
+    LZ4_stream_t* LZ4_createStream(void);
+    int LZ4_freeStream (LZ4_stream_t* streamPtr);
+    void LZ4_resetStream_fast (LZ4_stream_t* streamPtr);
+    int LZ4_loadDict (LZ4_stream_t* streamPtr, const char* dictionary, int dictSize);
+    int LZ4_loadDictSlow(LZ4_stream_t* streamPtr, const char* dictionary, int dictSize);
+    void LZ4_attach_dictionary(
+        LZ4_stream_t* workingStream,
+        const LZ4_stream_t* dictionaryStream
+    );
+    int LZ4_compress_fast_continue(
+        LZ4_stream_t* streamPtr,
+        const char* src,
+        char* dst,
+        int srcSize,
+        int dstCapacity,
+        int acceleration
+    );
+    int LZ4_saveDict (LZ4_stream_t* streamPtr, char* safeBuffer, int maxDictSize);
+    LZ4_streamDecode_t* LZ4_createStreamDecode(void);
+    int LZ4_freeStreamDecode (LZ4_streamDecode_t* LZ4_stream);
+    int LZ4_setStreamDecode(
+        LZ4_streamDecode_t* LZ4_streamDecode,
+        const char* dictionary,
+        int dictSize
+    );
+    int LZ4_decoderRingBufferSize(int maxBlockSize);
+    int LZ4_decompress_safe_continue(
+        LZ4_streamDecode_t* LZ4_streamDecode,
+        const char* src,
+        char* dst,
+        int srcSize,
+        int dstCapacity
+    );
+    int LZ4_decompress_safe_usingDict(
+        const char* src,
+        char* dst,
+        int srcSize,
+        int dstCapacity,
+        const char* dictStart,
+        int dictSize
+    );
+    int LZ4_decompress_safe_partial_usingDict(
+        const char* src,
+        char* dst,
+        int compressedSize,
+        int targetOutputSize,
+        int maxOutputSize,
+        const char* dictStart,
+        int dictSize
+    );
+    LZ4_stream_t* LZ4_initStream (void* stateBuffer, size_t size);
+    int LZ4_compress (const char* src, char* dest, int srcSize);
+    int LZ4_compress_limitedOutput(
+        const char* src,
+        char* dest,
+        int srcSize,
+        int maxOutputSize
+    );
+    int LZ4_compress_withState(
+        void* state,
+        const char* source,
+        char* dest,
+        int inputSize
+    );
+    int LZ4_compress_limitedOutput_withState(
+        void* state,
+        const char* source,
+        char* dest,
+        int inputSize,
+        int maxOutputSize
+    );
+    int LZ4_compress_continue(
+        LZ4_stream_t* LZ4_streamPtr,
+        const char* source,
+        char* dest,
+        int inputSize
+    );
+    int LZ4_compress_limitedOutput_continue(
+        LZ4_stream_t* LZ4_streamPtr,
+        const char* source,
+        char* dest,
+        int inputSize,
+        int maxOutputSize
+    );
+    int LZ4_uncompress (const char* source, char* dest, int outputSize);
+    int LZ4_uncompress_unknownOutputSize(
+        const char* source,
+        char* dest,
+        int isize,
+        int maxOutputSize
+    );
+    void* LZ4_create (char* inputBuffer);
+    int LZ4_sizeofStreamState(void);
+    int LZ4_resetStreamState(void* state, char* inputBuffer);
+    char* LZ4_slideInputBuffer (void* state);
+    int LZ4_decompress_safe_withPrefix64k(
+        const char* src,
+        char* dst,
+        int compressedSize,
+        int maxDstSize
+    );
+    int LZ4_decompress_fast_withPrefix64k (const char* src, char* dst, int originalSize);
+    int LZ4_decompress_fast (const char* src, char* dst, int originalSize);
+    int LZ4_decompress_fast_continue(
+        LZ4_streamDecode_t* LZ4_streamDecode,
+        const char* src,
+        char* dst,
+        int originalSize
+    );
+    int LZ4_decompress_fast_usingDict(
+        const char* src,
+        char* dst,
+        int originalSize,
+        const char* dictStart,
+        int dictSize
+    );
+    void LZ4_resetStream (LZ4_stream_t* streamPtr);
+}
+
+const LZ4F_errorCode_t = c.u64
+const LZ4F_blockSizeID_t = c.int
+const LZ4F_blockMode_t = c.int
+const LZ4F_contentChecksum_t = c.int
+const LZ4F_blockChecksum_t = c.int
+const LZ4F_frameType_t = c.int
+
+C! struct LZ4F_frameInfo_t {
+    LZ4F_blockSizeID_t blockSizeID;
+    LZ4F_blockMode_t blockMode;
+    LZ4F_contentChecksum_t contentChecksumFlag;
+    LZ4F_frameType_t frameType;
+    unsigned long long contentSize;
+    unsigned dictID;
+    LZ4F_blockChecksum_t blockChecksumFlag;
+}
+
+C! struct LZ4F_preferences_t {
+    LZ4F_frameInfo_t frameInfo;
+    int compressionLevel;
+    unsigned autoFlush;
+    unsigned favorDecSpeed;
+    unsigned reserved[3];
+}
+
+C! struct LZ4F_compressOptions_t {
+    unsigned stableSrc;
+    unsigned reserved[3];
+}
+
+C! struct LZ4F_decompressOptions_t {
+    unsigned stableDst;
+    unsigned skipChecksums;
+    unsigned reserved1;
+    unsigned reserved0;
+}
+
+C! lz4 fn {
+    unsigned LZ4F_isError(LZ4F_errorCode_t code);
+    const char* LZ4F_getErrorName(LZ4F_errorCode_t code);
+    LZ4F_errorCode_t LZ4F_createCompressionContext(LZ4F_cctx** cctxPtr, unsigned version);
+    LZ4F_errorCode_t LZ4F_freeCompressionContext(LZ4F_cctx* cctx);
+    size_t LZ4F_compressBegin(
+        LZ4F_cctx* cctx,
+        void* dstBuffer,
+        size_t dstCapacity,
+        const LZ4F_preferences_t* prefsPtr
+    );
+    size_t LZ4F_compressBound(size_t srcSize, const LZ4F_preferences_t* prefsPtr);
+    size_t LZ4F_compressUpdate(
+        LZ4F_cctx* cctx,
+        void* dstBuffer,
+        size_t dstCapacity,
+        const void* srcBuffer,
+        size_t srcSize,
+        const LZ4F_compressOptions_t* cOptPtr
+    );
+    size_t LZ4F_flush(
+        LZ4F_cctx* cctx,
+        void* dstBuffer,
+        size_t dstCapacity,
+        const LZ4F_compressOptions_t* cOptPtr
+    );
+    size_t LZ4F_compressEnd(
+        LZ4F_cctx* cctx,
+        void* dstBuffer,
+        size_t dstCapacity,
+        const LZ4F_compressOptions_t* cOptPtr
+    );
+    LZ4F_errorCode_t LZ4F_createDecompressionContext(LZ4F_dctx** dctxPtr, unsigned version);
+    LZ4F_errorCode_t LZ4F_freeDecompressionContext(LZ4F_dctx* dctx);
+    size_t LZ4F_decompress(
+        LZ4F_dctx* dctx,
+        void* dstBuffer,
+        size_t* dstSizePtr,
+        const void* srcBuffer,
+        size_t* srcSizePtr,
+        const LZ4F_decompressOptions_t* dOptPtr
+    );
+    void LZ4F_resetDecompressionContext(LZ4F_dctx* dctx);
+    size_t LZ4F_compressFrame(
+        void* dstBuffer,
+        size_t dstCapacity,
+        const void* srcBuffer,
+        size_t srcSize,
+        const LZ4F_preferences_t* preferencesPtr
+    );
+    size_t LZ4F_compressFrameBound(size_t srcSize, const LZ4F_preferences_t* preferencesPtr);
+}
+
+const LZ4F_VERSION = 100
+
+fn check!(rc) {
+    if LZ4F_isError(rc) != 0 {
+        throw RuntimeError("lz4: {c.as_str(LZ4F_getErrorName(rc))}")
+    }
+    rc
+}
+
+pub fn version() -> String {
+    c.as_str(LZ4_versionString())
+}
+
+fn make-prefs(level: Int = 0) {
+    let p = LZ4F_preferences_t(c.new(LZ4F_preferences_t_C))
+    p.compressionLevel = level
+    p
+}
+
+pub fn compress-frame(data: String | Blob, level: Int = 0) -> Blob {
+    let prefs = make-prefs(level)
+    let bound = LZ4F_compressFrameBound(data.size(), prefs)
+    let buf = c.alloc(bound)
+    defer c.free(buf)
+
+    let n = check!(LZ4F_compressFrame(buf, bound, data, data.size(), prefs))
+
+    let out = Blob()
+    out.push(buf, n)
+    return out
+}
+
+pub fn decompress-frame(data: String | Blob, max-size: Int = 0) -> Blob {
+    let pp = c.box(c.ptr, nil)
+    defer c.free(pp)
+    check!(LZ4F_createDecompressionContext(pp, LZ4F_VERSION))
+    let dctx = c.load(c.ptr, pp)
+    defer LZ4F_freeDecompressionContext(dctx)
+
+    let chunk = (max-size > 0) ? max-size : 4 * data.size()
+    let buf = c.alloc(chunk)
+    defer c.free(buf)
+
+    let out = Blob()
+    let src-size = c.box(c.u64, data.size())
+    let dst-size = c.box(c.u64, chunk)
+    defer { c.free(src-size); c.free(dst-size) }
+
+    let base = data.ptr()
+    let total = data.size()
+    let src-pos = 0
+    for (;;) {
+        c.store(c.u64, src-size, total - src-pos)
+        c.store(c.u64, dst-size, chunk)
+        let hint = check!(LZ4F_decompress(
+            dctx, buf, dst-size,
+            base + src-pos, src-size,
+            nil
+        ))
+        let produced = c.load(c.u64, dst-size)
+        let consumed = c.load(c.u64, src-size)
+        if produced > 0 {
+            out.push(buf, produced)
+        }
+        src-pos += consumed
+        break if hint == 0
+    }
+
+    return out
+}
+
+pub fn compress(data: String | Blob, acceleration: Int = 1) -> Blob {
+    let bound = LZ4_compressBound(data.size())
+    let buf = c.alloc(bound)
+    defer c.free(buf)
+
+    let n = LZ4_compress_fast(data, buf, data.size(), bound, acceleration)
+    if n <= 0 {
+        throw RuntimeError('LZ4 compression failed')
+    }
+
+    let out = Blob()
+    out.push(buf, n)
+    return out
+}
+
+pub fn decompress(data: String | Blob, max-size: Int) -> Blob {
+    let buf = c.alloc(max-size)
+    defer c.free(buf)
+
+    let n = LZ4_decompress_safe(data, buf, data.size(), max-size)
+    if n < 0 {
+        throw RuntimeError('LZ4 decompression failed')
+    }
+
+    let out = Blob()
+    out.push(buf, n)
+    return out
+}
+
+pub class Compressor {
+    __cctx: _
+    __prefs: _
+    __out: Blob
+    __buf-size: Int
+    __buf: _
+    __started?: Bool
+
+    init(level: Int = 0) {
+        let pp = c.box(c.ptr, nil)
+        check!(LZ4F_createCompressionContext(pp, LZ4F_VERSION))
+        __cctx = c.load(c.ptr, pp)
+        c.free(pp)
+        __prefs = make-prefs(level)
+        __out = Blob()
+        __buf-size = LZ4F_compressBound(64 * 1024, __prefs) + 19
+        __buf = c.alloc(__buf-size)
+        __started? = false
+    }
+
+    __begin-if-needed() {
+        if !__started? {
+            let n = check!(LZ4F_compressBegin(__cctx, __buf, __buf-size, __prefs))
+            __out.push(__buf, n)
+            __started? = true
+        }
+    }
+
+    write(data: String | Blob) {
+        __begin-if-needed()
+        let bound = LZ4F_compressBound(data.size(), __prefs)
+        if bound > __buf-size {
+            c.free(__buf)
+            __buf-size = bound
+            __buf = c.alloc(__buf-size)
+        }
+        let n = check!(LZ4F_compressUpdate(__cctx, __buf, __buf-size, data, data.size(), nil))
+        if n > 0 {
+            __out.push(__buf, n)
+        }
+    }
+
+    flush() -> Blob {
+        __begin-if-needed()
+        let n = check!(LZ4F_compressEnd(__cctx, __buf, __buf-size, nil))
+        if n > 0 {
+            __out.push(__buf, n)
+        }
+        let result = __out
+        __out = Blob()
+        __started? = false
+        return result
+    }
+
+    __drop__() {
+        LZ4F_freeCompressionContext(__cctx)
+        c.free(__buf)
+    }
+}
+
+pub class Decompressor {
+    __dctx: _
+    __out: Blob
+    __buf-size: Int
+    __buf: _
+    __src-size: _
+    __dst-size: _
+
+    init() {
+        let pp = c.box(c.ptr, nil)
+        check!(LZ4F_createDecompressionContext(pp, LZ4F_VERSION))
+        __dctx = c.load(c.ptr, pp)
+        c.free(pp)
+        __out = Blob()
+        __buf-size = 64 * 1024
+        __buf = c.alloc(__buf-size)
+        __src-size = c.box(c.u64, 0)
+        __dst-size = c.box(c.u64, 0)
+    }
+
+    write(data: String | Blob) {
+        let base = data.ptr()
+        let total = data.size()
+        let src-pos = 0
+        while src-pos < total {
+            c.store(c.u64, __src-size, total - src-pos)
+            c.store(c.u64, __dst-size, __buf-size)
+            check!(LZ4F_decompress(
+                __dctx, __buf, __dst-size,
+                base + src-pos, __src-size,
+                nil
+            ))
+            let produced = c.load(c.u64, __dst-size)
+            let consumed = c.load(c.u64, __src-size)
+            if produced > 0 {
+                __out.push(__buf, produced)
+            }
+            src-pos += consumed
+            break if consumed == 0
+        }
+    }
+
+    flush() -> Blob {
+        let result = __out
+        __out = Blob()
+        LZ4F_resetDecompressionContext(__dctx)
+        return result
+    }
+
+    __drop__() {
+        LZ4F_freeDecompressionContext(__dctx)
+        c.free(__buf)
+        c.free(__src-size)
+        c.free(__dst-size)
+    }
+}

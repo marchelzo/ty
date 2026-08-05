@@ -12,6 +12,9 @@ const appsvcs = c.dlopen('/System/Library/Frameworks/ApplicationServices.framewo
 const iokit = c.dlopen('/System/Library/Frameworks/IOKit.framework/IOKit')
            ?? throw RuntimeError('apple_iokit: failed to load IOKit')
 
+const security = c.dlopen('/System/Library/Frameworks/Security.framework/Security')
+              ?? throw RuntimeError('apple: failed to load Security')
+
 fn load-sym(name: String, lib: Ptr[Any]) -> Ptr[Any] {
     let sym = c.dlsym(name, lib) ?? throw RuntimeError("apple: symbol not found: {name}")
     c.load(c.ptr, sym)
@@ -98,6 +101,10 @@ C! pub cf fn {
     );
     long CFDataGetLength(const void *data);
     const unsigned char *CFDataGetBytePtr(const void *data);
+}
+
+C! security fn {
+    int SecItemCopyMatching(const void *query, void *result);
 }
 
 
@@ -594,6 +601,85 @@ pub const kCFRunLoopCommonModes = load-sym('kCFRunLoopCommonModes', cf)
 
 pub const kCFTypeDictionaryKeyCallBacks   = c.dlsym('kCFTypeDictionaryKeyCallBacks', cf)
 pub const kCFTypeDictionaryValueCallBacks = c.dlsym('kCFTypeDictionaryValueCallBacks', cf)
+
+/**
+ * Retrieve a generic-password credential from the user's keychain.
+ *
+ * The returned Blob owns a copy of the credential data. A nil result means
+ * that no matching item was found, access was denied, or retrieval failed.
+ * If account is nil, the first credential matching service is returned.
+ */
+pub fn keychain-credential(
+    service: String,
+    account: String | nil = nil
+) -> Blob | nil {
+    let service-name = cfstr(service)
+    defer CFRelease(service-name)
+    let account-name = account == nil ? nil : cfstr(account)
+    if account-name != nil { defer CFRelease(account-name) }
+
+    let key-count = account == nil ? 4 : 5
+    let keys = c.auto(c.new(c.ptr, key-count))
+    let values = c.auto(c.new(c.ptr, key-count))
+    let i = 0
+    keys[i] = load-sym('kSecClass', security)
+    values[i] = load-sym('kSecClassGenericPassword', security)
+    i += 1
+    keys[i] = load-sym('kSecAttrService', security)
+    values[i] = service-name
+    i += 1
+    if account-name != nil {
+        keys[i] = load-sym('kSecAttrAccount', security)
+        values[i] = account-name
+        i += 1
+    }
+    keys[i] = load-sym('kSecMatchLimit', security)
+    values[i] = load-sym('kSecMatchLimitAll', security)
+    i += 1
+    keys[i] = load-sym('kSecReturnPersistentRef', security)
+    values[i] = kCFBooleanTrue
+
+    /* Resolve candidates without exposing their secret data, then fetch one
+     * exact item. Besides avoiding unnecessary authorization prompts, this is
+     * the retrieval pattern required for password items with MatchLimitAll. */
+    let reference-query = CFDictionaryCreate(
+        nil, keys, values, key-count,
+        kCFTypeDictionaryKeyCallBacks,
+        kCFTypeDictionaryValueCallBacks
+    ) ?? return nil
+    defer CFRelease(reference-query)
+
+    let references = c.auto(c.box(c.ptr, nil))
+    let status = SecItemCopyMatching(reference-query, references)
+    if status != 0 || references[0] == nil { return nil }
+    defer CFRelease(references[0])
+
+    let reference = references[0]
+    if CFGetTypeID(references[0]) == CFArrayGetTypeID() {
+        if CFArrayGetCount(references[0]) == 0 { return nil }
+        reference = CFArrayGetValueAtIndex(references[0], 0)
+    }
+
+    let data-keys = c.auto(c.new(c.ptr, 2))
+    let data-values = c.auto(c.new(c.ptr, 2))
+    data-keys[0] = load-sym('kSecValuePersistentRef', security)
+    data-values[0] = reference
+    data-keys[1] = load-sym('kSecReturnData', security)
+    data-values[1] = kCFBooleanTrue
+    let data-query = CFDictionaryCreate(
+        nil, data-keys, data-values, 2,
+        kCFTypeDictionaryKeyCallBacks,
+        kCFTypeDictionaryValueCallBacks
+    ) ?? return nil
+    defer CFRelease(data-query)
+
+    let result = c.auto(c.box(c.ptr, nil))
+    status = SecItemCopyMatching(data-query, result)
+    if status != 0 || result[0] == nil { return nil }
+    defer CFRelease(result[0])
+
+    Blob(c.as_str(CFDataGetBytePtr(result[0]), CFDataGetLength(result[0])))
+}
 
 pub const kAXTrustedCheckOptionPrompt = load-sym('kAXTrustedCheckOptionPrompt', appsvcs)
 

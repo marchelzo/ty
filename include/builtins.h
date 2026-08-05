@@ -598,6 +598,7 @@ static struct {
   { .module = "time",       .name = "utc",                      .value = BUILTIN(builtin_time_utc)               },
   { .module = "time",       .name = "gettime",                  .value = BUILTIN(builtin_time_gettime)           },
   { .module = "time",       .name = "localtime",                .value = BUILTIN(builtin_time_localtime)         },
+  { .module = "time",       .name = "zonetime",                 .value = BUILTIN(builtin_time_zonetime)          },
   { .module = "time",       .name = "gmtime",                   .value = BUILTIN(builtin_time_gmtime)            },
   { .module = "time",       .name = "strptime",                 .value = BUILTIN(builtin_time_strptime)          },
   { .module = "time",       .name = "strftime",                 .value = BUILTIN(builtin_time_strftime)          },

@@ -55,6 +55,26 @@ pub fn test-duration-sign() {
     assert(Duration().sign == 0)
 }
 
+pub fn test-duration-rejects-mixed-signs() {
+    try {
+        Duration(hours=1, minutes=-30)
+        assert(false, 'should have thrown')
+    } catch e: ValueError { assert(true) }
+}
+
+pub fn test-duration-calendar-compare-requires-relative-date() {
+    try {
+        Duration.compare(Duration(months=1), Duration(days=30))
+        assert(false, 'should have thrown')
+    } catch e: ValueError { assert(true) }
+}
+
+pub fn test-duration-calendar-compare-with-relative-date() {
+    let leap-february = PlainDate(2024, 2, 1)
+    assert(Duration.compare(Duration(months=1), Duration(days=29), leap-february) == 0)
+    assert(Duration(months=1).total('days', leap-february) == 29.0)
+}
+
 /* --- PlainDate tests --- */
 
 pub fn test-plain-date-create() {
@@ -90,6 +110,17 @@ pub fn test-plain-date-day-of-year() {
     assert(PlainDate(2024, 1, 1).day-of-year == 1)
     assert(PlainDate(2024, 12, 31).day-of-year == 366)
     assert(PlainDate(2023, 12, 31).day-of-year == 365)
+}
+
+pub fn test-plain-date-iso-week-year-boundaries() {
+    let new-year = PlainDate(2021, 1, 1)
+    assert(new-year.week-of-year == 53)
+    assert(new-year.year-of-week == 2020)
+    let year-end = PlainDate(2018, 12, 31)
+    assert(year-end.week-of-year == 1)
+    assert(year-end.year-of-week == 2019)
+    assert(year-end.month-code == 'M12')
+    assert(year-end.calendar-id == 'iso8601')
 }
 
 pub fn test-plain-date-days-in-month() {
@@ -295,15 +326,6 @@ pub fn test-plain-date-time-to-parts() {
     assert(t == PlainTime(14, 30, 45))
 }
 
-pub fn test-plain-date-time-local-instant-roundtrip() {
-    let dt = PlainDateTime(2024, 6, 15, 14, 30, 45, 123, 456, 789)
-    let result = dt.to-instant-local().to-plain-date-time-local()
-    assert(result == dt)
-
-    let winter = PlainDateTime(2024, 1, 15, 9, 5, 2, 987, 654, 321)
-    assert(winter.to-instant-local().to-plain-date-time-local() == winter)
-}
-
 pub fn test-plain-date-time-with() {
     let dt = PlainDateTime(2024, 6, 15, 14, 30, 0)
     let r = dt.with(hour=8, minute=0)
@@ -343,29 +365,6 @@ pub fn test-instant-from-string-offset() {
     assert(dt.hour == 0 && dt.minute == 0)
 }
 
-pub fn test-instant-to-local-date-time() {
-    let i = Instant.from('2024-06-15T10:30:45.123456789Z')
-    let dt = i.to-plain-date-time-local()
-    let tm = time.localtime(i.epoch-seconds)
-
-    assert(dt.year == tm.year + 1900)
-    assert(dt.month == tm.mon + 1)
-    assert(dt.day == tm.mday)
-    assert(dt.hour == tm.hour && dt.minute == tm.min && dt.second == tm.sec)
-    assert(dt.millisecond == 123 && dt.microsecond == 456 && dt.nanosecond == 789)
-}
-
-pub fn test-instant-to-local-date-time-before-epoch() {
-    let i = Instant.from-epoch-nanoseconds(-500000000)
-    let dt = i.to-plain-date-time-local()
-    let tm = time.localtime(-1)
-
-    assert(dt.year == tm.year + 1900)
-    assert(dt.month == tm.mon + 1 && dt.day == tm.mday)
-    assert(dt.hour == tm.hour && dt.minute == tm.min && dt.second == tm.sec)
-    assert(dt.millisecond == 500)
-}
-
 pub fn test-instant-add() {
     let i = Instant.from-epoch-seconds(0)
     let r = i.add(Duration(hours=24))
@@ -382,7 +381,9 @@ pub fn test-instant-until() {
     let a = Instant.from-epoch-seconds(0)
     let b = Instant.from-epoch-seconds(3661)
     let d = a.until(b)
-    assert(d.hours == 1 && d.minutes == 1 && d.seconds == 1)
+    assert(d.seconds == 3661)
+    let balanced = a.until(b, 'hour')
+    assert(balanced.hours == 1 && balanced.minutes == 1 && balanced.seconds == 1)
 }
 
 pub fn test-instant-comparison() {
@@ -406,7 +407,7 @@ pub fn test-instant-diff-operator() {
     let a = Instant.from-epoch-seconds(0)
     let b = Instant.from-epoch-seconds(7200)
     let d = b - a
-    assert(d.hours == 2)
+    assert(d.seconds == 7200)
 }
 
 pub fn test-instant-roundtrip() {
@@ -415,6 +416,103 @@ pub fn test-instant-roundtrip() {
     let j = Instant.from(s)
     assert(i == j)
 }
+
+pub fn test-instant-rejects-days() {
+    try {
+        Instant.from-epoch-seconds(0).add(Duration(days=1))
+        assert(false, 'should have thrown')
+    } catch e: ValueError {
+        assert(true)
+    }
+}
+
+/* --- ZonedDateTime tests --- */
+
+pub fn test-zoned-date-time-fixed-offset() {
+    let zdt = Instant.from('2024-01-01T00:00:00Z').to-zoned-date-time-iso('+05:30')
+    assert(zdt.to-plain-date-time() == PlainDateTime(2024, 1, 1, 5, 30))
+    assert(zdt.offset == '+05:30')
+    assert("{zdt}" == '2024-01-01T05:30:00+05:30[+05:30]')
+}
+
+#|if !__windows__
+pub fn test-zoned-date-time-from-string() {
+    let zdt = ZonedDateTime.from('2024-01-15T12:00:00-05:00[America/New_York]')
+    assert(zdt.hour == 12 && zdt.offset == '-05:00')
+    assert(zdt.to-instant() == Instant.from('2024-01-15T17:00:00Z'))
+}
+
+pub fn test-zoned-date-time-changes-zone-without-changing-instant() {
+    let ny = Instant.from('2024-06-15T12:00:00Z').to-zoned-date-time-iso('America/New_York')
+    let tokyo = ny.with-time-zone('Asia/Tokyo')
+    assert(ny.epoch-nanoseconds == tokyo.epoch-nanoseconds)
+    assert(ny.hour == 8 && tokyo.hour == 21)
+}
+
+pub fn test-zoned-date-time-normalizes-case-and-compares-aliases() {
+    let instant = Instant.from-epoch-seconds(0)
+    let lower = instant.to-zoned-date-time-iso('america/new_york')
+    assert(lower.time-zone-id == 'America/New_York')
+    let kolkata = instant.to-zoned-date-time-iso('Asia/Kolkata')
+    let calcutta = instant.to-zoned-date-time-iso('Asia/Calcutta')
+    assert(kolkata.equals(calcutta))
+    assert(!instant.to-zoned-date-time-iso('UTC').equals(
+        instant.to-zoned-date-time-iso('+00:00')
+    ))
+}
+
+pub fn test-zoned-date-time-dst-gap-disambiguation() {
+    let dt = PlainDateTime(2024, 3, 10, 2, 30)
+    let compatible = dt.to-zoned-date-time('America/New_York')
+    let earlier = dt.to-zoned-date-time('America/New_York', 'earlier')
+    assert(compatible.hour == 3 && compatible.minute == 30)
+    assert(earlier.hour == 1 && earlier.minute == 30)
+    try {
+        dt.to-zoned-date-time('America/New_York', 'reject')
+        assert(false, 'should have rejected nonexistent local time')
+    } catch e: ValueError { assert(true) }
+}
+
+pub fn test-zoned-date-time-dst-overlap-disambiguation() {
+    let dt = PlainDateTime(2024, 11, 3, 1, 30)
+    let earlier = dt.to-zoned-date-time('America/New_York', 'earlier')
+    let later = dt.to-zoned-date-time('America/New_York', 'later')
+    assert(earlier.offset == '-04:00' && later.offset == '-05:00')
+    assert(earlier.to-instant().until(later.to-instant()).seconds == 3600)
+}
+
+pub fn test-zoned-date-time-calendar-and-clock-arithmetic() {
+    let start = ZonedDateTime.from('2024-03-09T12:00:00-05:00[America/New_York]')
+    let next-day = start.add(Duration(days=1))
+    let next-24-hours = start.add(Duration(hours=24))
+    assert(next-day.hour == 12 && next-day.offset == '-04:00')
+    assert(next-24-hours.hour == 13)
+    assert(start.until(next-day).hours == 23)
+    assert(Duration.compare(Duration(days=1), Duration(hours=24), start) == -1)
+}
+
+pub fn test-zoned-date-time-hours-in-day() {
+    assert(ZonedDateTime.from('2024-03-10T12:00:00-04:00[America/New_York]').hours-in-day == 23.0)
+    assert(ZonedDateTime.from('2024-11-03T12:00:00-05:00[America/New_York]').hours-in-day == 25.0)
+}
+
+pub fn test-zoned-date-time-posix-footer-future-rules() {
+    let ny-summer = Instant.from('2040-06-19T12:00:00Z').to-zoned-date-time-iso('America/New_York')
+    let ny-winter = Instant.from('2040-01-19T12:00:00Z').to-zoned-date-time-iso('America/New_York')
+    assert(ny-summer.offset == '-04:00' && ny-winter.offset == '-05:00')
+
+    let syd-summer = Instant.from('2040-01-19T12:00:00Z').to-zoned-date-time-iso('Australia/Sydney')
+    let syd-winter = Instant.from('2040-06-19T12:00:00Z').to-zoned-date-time-iso('Australia/Sydney')
+    assert(syd-summer.offset == '+11:00' && syd-winter.offset == '+10:00')
+}
+
+pub fn test-plain-date-to-zoned-date-time() {
+    let zdt = PlainDate(2024, 6, 15).to-zoned-date-time(
+        'America/New_York', PlainTime(9, 30)
+    )
+    assert(zdt.hour == 9 && zdt.minute == 30)
+}
+#|]
 
 /* --- PlainYearMonth tests --- */
 
@@ -471,7 +569,7 @@ pub fn test-plain-year-month-to-date() {
 pub fn test-plain-month-day-create() {
     let md = PlainMonthDay(12, 25)
     assert(md.month == 12 && md.day == 25)
-    assert("{md}" == '--12-25')
+    assert("{md}" == '12-25')
 }
 
 pub fn test-plain-month-day-from-string() {

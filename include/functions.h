@@ -300,6 +300,7 @@ BUILTIN_FUNCTION(time_now);
 BUILTIN_FUNCTION(time_utc);
 BUILTIN_FUNCTION(time_gettime);
 BUILTIN_FUNCTION(time_localtime);
+BUILTIN_FUNCTION(time_zonetime);
 BUILTIN_FUNCTION(time_gmtime);
 BUILTIN_FUNCTION(time_strftime);
 BUILTIN_FUNCTION(time_strptime);

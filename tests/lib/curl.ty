@@ -1,4 +1,6 @@
 import curl (..)
+import ty
+import json
 
 ns test
 
@@ -130,4 +132,100 @@ pub fn test-stream-read-all() {
 
     let data = stream.read()
     assert(#data == 100)
+}
+
+pub fn test-http2-multiplexing() {
+    let session = Session()
+    session.defaults.http-version = CURL_HTTP_VERSION_2TLS
+    let multi = session.multi(max-host-connections=1, max-concurrent-streams=4)
+
+    for i in ..2 {
+        let opts = RequestOptions()
+        opts.url = 'https://example.com/'
+        multi.add(opts, context=i)
+    }
+
+    let completed = []
+    for transfer in multi.completed() {
+        let response = transfer.unwrap()
+        assert(response.ok)
+        assert(response.http-version == CURL_HTTP_VERSION_2_0)
+        completed.push(transfer.context)
+
+        /* A completion consumer may replenish the active queue. */
+        if #completed == 1 {
+            let opts = RequestOptions()
+            opts.url = 'https://example.com/'
+            multi.add(opts, context=2)
+        }
+    }
+
+    assert(completed.sort!() == [0, 1, 2])
+    assert(multi.active == 0)
+}
+
+pub fn test-multi-isolates-transfer-errors() {
+    let session = Session()
+    let multi = session.multi()
+
+    let bad = RequestOptions()
+    bad.url = '://not-a-url'
+    multi.add(bad, context='bad')
+
+    let good = RequestOptions()
+    good.url = 'https://example.com/'
+    multi.add(good, context='good')
+
+    let successes = 0
+    let failures = 0
+    for transfer in multi.completed() {
+        if transfer.error {
+            failures += 1
+            assert(transfer.context == 'bad')
+        } else {
+            successes += 1
+            assert(transfer.context == 'good')
+            assert(transfer.unwrap().ok)
+        }
+    }
+    assert(successes == 1 && failures == 1)
+}
+
+pub fn test-http2-multiplexed-json-posts() {
+    let session = Session()
+    session.defaults.http-version = CURL_HTTP_VERSION_2TLS
+    let multi = session.multi(max-host-connections=1, max-concurrent-streams=4)
+    let payload = ['x' for _ in ..16000].join()
+
+    for i in ..4 {
+        let opts = RequestOptions()
+        opts.method = 'POST'
+        opts.url = 'https://nghttp2.org/httpbin/anything'
+        opts.json = %{'index': i, 'payload': payload}
+        multi.add(opts, context=i)
+    }
+
+    let transfers = [*multi.completed()]
+    ty.gc()
+    let completed = 0
+    for transfer in transfers {
+        let response = transfer.unwrap()
+        assert(response.ok)
+        assert(response.http-version == CURL_HTTP_VERSION_2_0)
+        let trace = json.encode(%{'url': response.url, 'body': response.text()})
+        assert('https://nghttp2.org/httpbin/anything' in trace)
+        let echoed = response.json()['json']
+        assert(echoed['index'] == transfer.context)
+        assert(#echoed['payload'] == #payload)
+        completed += 1
+    }
+    assert(completed == 4)
+}
+
+pub fn test-response-compression() {
+    let session = Session()
+    session.defaults.accept-encoding = ''
+    let response = session.get('https://nghttp2.org/httpbin/gzip')
+    assert(response.ok)
+    assert(response.json()['gzipped'] == true)
 }

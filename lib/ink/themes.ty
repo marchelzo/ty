@@ -17,6 +17,7 @@ pub const monokai = %{
     'border-focus':  '#e6db74',
     'border-active': '#ae81ff',
     'selection':     '#e6db74',
+    'selection-text': '#272822',
     'text':          '#f8f8f2',
     'text-dim':      '#75715e',
     'text-bright':   '#f8f8f0'
@@ -41,6 +42,7 @@ pub const gruvbox-dark = %{
     'border-focus':  '#fabd2f',
     'border-active': '#d3869b',
     'selection':     '#fabd2f',
+    'selection-text': '#282828',
     'text':          '#ebdbb2',
     'text-dim':      '#a89984',
     'text-bright':   '#fbf1c7'
@@ -65,6 +67,7 @@ pub const gruvbox-light = %{
     'border-focus':  '#b57614',
     'border-active': '#8f3f71',
     'selection':     '#b57614',
+    'selection-text': '#282828',
     'text':          '#3c3836',
     'text-dim':      '#665c54',
     'text-bright':   '#282828'
@@ -89,6 +92,7 @@ pub const gruvbox-material-dark = %{
     'border-focus':  '#d8a657',
     'border-active': '#d3869b',
     'selection':     '#d8a657',
+    'selection-text': '#282828',
     'text':          '#d4be98',
     'text-dim':      '#a89984',
     'text-bright':   '#ddc7a1'
@@ -113,6 +117,7 @@ pub const gruvbox-material-light = %{
     'border-focus':  '#b47109',
     'border-active': '#945e80',
     'selection':     '#b47109',
+    'selection-text': '#4f3829',
     'text':          '#654735',
     'text-dim':      '#6f6560',
     'text-bright':   '#4f3829'
@@ -137,6 +142,7 @@ pub const onedark = %{
     'border-focus':  '#e5c07b',
     'border-active': '#c678dd',
     'selection':     '#e5c07b',
+    'selection-text': '#282c34',
     'text':          '#abb2bf',
     'text-dim':      '#5c6370',
     'text-bright':   '#d7dae0'
@@ -161,6 +167,7 @@ pub const ayu-dark = %{
     'border-focus':  '#e6b450',
     'border-active': '#d2a6ff',
     'selection':     '#e6b450',
+    'selection-text': '#0d1017',
     'text':          '#bfbdb6',
     'text-dim':      '#565b66',
     'text-bright':   '#e6e1cf'
@@ -185,6 +192,7 @@ pub const ayu-light = %{
     'border-focus':  '#f2ae49',
     'border-active': '#a37acc',
     'selection':     '#f2ae49',
+    'selection-text': '#333840',
     'text':          '#5c6166',
     'text-dim':      '#8a9199',
     'text-bright':   '#333840'
@@ -209,6 +217,7 @@ pub const solarized-dark = %{
     'border-focus':  '#b58900',
     'border-active': '#6c71c4',
     'selection':     '#b58900',
+    'selection-text': '#002b36',
     'text':          '#839496',
     'text-dim':      '#586e75',
     'text-bright':   '#fdf6e3'
@@ -233,6 +242,7 @@ pub const solarized-light = %{
     'border-focus':  '#b58900',
     'border-active': '#6c71c4',
     'selection':     '#b58900',
+    'selection-text': '#002b36',
     'text':          '#657b83',
     'text-dim':      '#93a1a1',
     'text-bright':   '#002b36'
@@ -257,6 +267,7 @@ pub const github-light = %{
     'border-focus':  '#0969da',
     'border-active': '#8250df',
     'selection':     '#0969da',
+    'selection-text': '#ffffff',
     'text':          '#1f2328',
     'text-dim':      '#6e7781',
     'text-bright':   '#000000'

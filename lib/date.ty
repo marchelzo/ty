@@ -1,4 +1,5 @@
 import time
+import path (Path)
 
 fn __is-leap-year(y: Int) -> Bool {
     y % 4 == 0 && (y % 100 != 0 || y % 400 == 0)
@@ -77,12 +78,26 @@ fn __day-of-year(year: Int, month: Int, day: Int) -> Int {
 }
 
 fn __week-of-year(year: Int, month: Int, day: Int) -> Int {
-    let dow = __day-of-week(year, 1, 1)
     let doy = __day-of-year(year, month, day)
-    let week = (doy + dow - 2) / 7 + 1
-    if dow > 4 { week -= 1 }
-    if week == 0 { return __week-of-year(year - 1, 12, 31) }
+    let dow = __day-of-week(year, month, day)
+    let week = (doy - dow + 10) / 7
+    if week < 1 { return __weeks-in-week-year(year - 1) }
+    if week > __weeks-in-week-year(year) { return 1 }
     week
+}
+
+fn __weeks-in-week-year(year: Int) -> Int {
+    let jan1 = __day-of-week(year, 1, 1)
+    (jan1 == 4 || (jan1 == 3 && __is-leap-year(year))) ? 53 : 52
+}
+
+fn __year-of-week(year: Int, month: Int, day: Int) -> Int {
+    let doy = __day-of-year(year, month, day)
+    let dow = __day-of-week(year, month, day)
+    let week = (doy - dow + 10) / 7
+    if week < 1 { year - 1 }
+    else if week > __weeks-in-week-year(year) { year + 1 }
+    else { year }
 }
 
 fn __pad2(n: Int) -> String { "{n:02}" }
@@ -466,6 +481,16 @@ pub class Duration {
         microseconds: Int = 0,
         nanoseconds: Int = 0
     ) {
+        let wanted-sign = 0
+        for value in [years, months, weeks, days, hours, minutes, seconds,
+                      milliseconds, microseconds, nanoseconds] {
+            if value == 0 { continue }
+            let value-sign = value < 0 ? -1 : 1
+            if wanted-sign == 0 { wanted-sign = value-sign }
+            else if wanted-sign != value-sign {
+                throw ValueError('duration fields must have the same sign')
+            }
+        }
         self.years = years
         self.months = months
         self.weeks = weeks
@@ -495,8 +520,9 @@ pub class Duration {
         )
     }
 
-    static compare(a: Duration, b: Duration) -> Int {
-        a.total-nanoseconds <=> b.total-nanoseconds
+    static compare(a: Duration, b: Duration, relative-to: PlainDate | ZonedDateTime | nil = nil) -> Int {
+        __duration-nanoseconds-relative(a, relative-to)
+            <=> __duration-nanoseconds-relative(b, relative-to)
     }
 
     sign -> Int {
@@ -528,6 +554,10 @@ pub class Duration {
     }
 
     add(other: Duration) -> Duration {
+        if years != 0 || months != 0 || weeks != 0
+        || other.years != 0 || other.months != 0 || other.weeks != 0 {
+            throw ValueError('cannot add durations containing years, months, or weeks without a relative date')
+        }
         Duration(
             years=years + other.years,
             months=months + other.months,
@@ -547,6 +577,9 @@ pub class Duration {
     }
 
     total-nanoseconds -> Int {
+        if years != 0 || months != 0 || weeks != 0 {
+            throw ValueError('a relative date is required to total years, months, or weeks')
+        }
         let total = nanoseconds
         total += microseconds * 1000
         total += milliseconds * 1000000
@@ -561,15 +594,16 @@ pub class Duration {
         total-nanoseconds / 1000000000.0
     }
 
-    total(unit: String) -> Float {
+    total(unit: String, relative-to: PlainDate | ZonedDateTime | nil = nil) -> Float {
+        let nanos = __duration-nanoseconds-relative(self, relative-to)
         match unit {
-            'day', 'days'               => total-nanoseconds / 86400000000000.0,
-            'hour', 'hours'             => total-nanoseconds / 3600000000000.0,
-            'minute', 'minutes'         => total-nanoseconds / 60000000000.0,
-            'second', 'seconds'         => total-nanoseconds / 1000000000.0,
-            'millisecond', 'milliseconds' => total-nanoseconds / 1000000.0,
-            'microsecond', 'microseconds' => total-nanoseconds / 1000.0,
-            'nanosecond', 'nanoseconds' => Float(total-nanoseconds),
+            'day', 'days'               => nanos / 86400000000000.0,
+            'hour', 'hours'             => nanos / 3600000000000.0,
+            'minute', 'minutes'         => nanos / 60000000000.0,
+            'second', 'seconds'         => nanos / 1000000000.0,
+            'millisecond', 'milliseconds' => nanos / 1000000.0,
+            'microsecond', 'microseconds' => nanos / 1000.0,
+            'nanosecond', 'nanoseconds' => Float(nanos),
             _ => throw ValueError("invalid unit for total(): '{unit}'")
         }
     }
@@ -723,6 +757,11 @@ pub class PlainDate {
     day-of-week -> Int { __day-of-week(year, month, day) }
     day-of-year -> Int { __day-of-year(year, month, day) }
     week-of-year -> Int { __week-of-year(year, month, day) }
+    year-of-week -> Int { __year-of-week(year, month, day) }
+    month-code -> String { "M{month:02}" }
+    calendar-id -> String { 'iso8601' }
+    days-in-week -> Int { 7 }
+    months-in-year -> Int { 12 }
     days-in-month -> Int { __days-in-month(year, month) }
     days-in-year -> Int { __days-in-year(year) }
     in-leap-year -> Bool { __is-leap-year(year) }
@@ -775,6 +814,10 @@ pub class PlainDate {
     to-plain-date-time(time: PlainTime = cast(PlainTime)(0, 0, 0)) -> PlainDateTime {
         PlainDateTime(year, month, day, time.hour, time.minute, time.second,
                       time.millisecond, time.microsecond, time.nanosecond)
+    }
+
+    to-zoned-date-time(time-zone: String, plain-time: PlainTime = cast(PlainTime)(0, 0, 0), disambiguation: String = 'compatible') -> ZonedDateTime {
+        to-plain-date-time(plain-time).to-zoned-date-time(time-zone, disambiguation)
     }
 
     to-plain-year-month() -> PlainYearMonth {
@@ -904,6 +947,9 @@ pub class PlainTime {
     }
 
     add(dur: Duration) -> PlainTime {
+        if dur.years != 0 || dur.months != 0 || dur.weeks != 0 || dur.days != 0 {
+            throw ValueError('cannot add date units to PlainTime')
+        }
         let nanos = total-nanos() + dur.total-nanoseconds
         let (t, _) = __time-from-nanos(nanos)
         t
@@ -941,6 +987,10 @@ pub class PlainTime {
     to-plain-date-time(date: PlainDate) -> PlainDateTime {
         PlainDateTime(date.year, date.month, date.day,
                       hour, minute, second, millisecond, microsecond, nanosecond)
+    }
+
+    to-zoned-date-time(date: PlainDate, time-zone: String, disambiguation: String = 'compatible') -> ZonedDateTime {
+        to-plain-date-time(date).to-zoned-date-time(time-zone, disambiguation)
     }
 
     __str__() -> String {
@@ -1034,9 +1084,18 @@ pub class PlainDateTime {
     to-plain-date() -> PlainDate { PlainDate(year, month, day) }
     to-plain-time() -> PlainTime { PlainTime(hour, minute, second, millisecond, microsecond, nanosecond) }
 
+    to-zoned-date-time(time-zone: String, disambiguation: String = 'compatible') -> ZonedDateTime {
+        __resolve-zoned-date-time(self, time-zone, disambiguation)
+    }
+
     day-of-week   -> Int  { __day-of-week(year, month, day)  }
     day-of-year   -> Int  { __day-of-year(year, month, day)  }
     week-of-year  -> Int  { __week-of-year(year, month, day) }
+    year-of-week  -> Int  { __year-of-week(year, month, day) }
+    month-code    -> String { "M{month:02}" }
+    calendar-id   -> String { 'iso8601' }
+    days-in-week  -> Int { 7 }
+    months-in-year -> Int { 12 }
     days-in-month -> Int  { __days-in-month(year, month)     }
     days-in-year  -> Int  { __days-in-year(year)             }
     in-leap-year  -> Bool { __is-leap-year(year)             }
@@ -1147,33 +1206,6 @@ pub class PlainDateTime {
         PlainMonthDay(month, day)
     }
 
-    /* Interpret this wall-clock date-time in the system timezone and convert
-     * it to an instant. Derive the applicable UTC offset from localtime rather
-     * than relying on an omitted tm_isdst field (which some platforms treat as
-     * standard time instead of asking the timezone database). */
-    to-instant-local() -> Instant {
-        let fields = {
-            year: year - 1900,
-            mon: month - 1,
-            mday: day,
-            hour: hour,
-            min: minute,
-            sec: second
-        }
-        let wall-seconds = time.time(fields, utc=true)
-        let local = time.localtime(wall-seconds)
-        let offset = time.time(local, utc=true) - wall-seconds
-        let seconds = wall-seconds - offset
-
-        /* The initial probe can land across a DST boundary. One correction is
-         * sufficient because timezone offsets are piecewise constant. */
-        let corrected-local = time.localtime(seconds)
-        let corrected-offset = time.time(corrected-local, utc=true) - seconds
-        if corrected-offset != offset { seconds = wall-seconds - corrected-offset }
-        let fraction = millisecond * 1000000 + microsecond * 1000 + nanosecond
-        Instant(seconds * 1000000000 + fraction)
-    }
-
     /* Fluent navigation */
     tomorrow -> PlainDateTime { add(Duration(days=1)) }
     yesterday -> PlainDateTime { add(Duration(days=-1)) }
@@ -1282,8 +1314,8 @@ pub class Instant {
     epoch-nanoseconds -> Int { __epoch-nanos }
 
     add(dur: Duration) -> Instant {
-        if dur.years != 0 || dur.months != 0 || dur.weeks != 0 {
-            throw ValueError("cannot add calendar units (years/months/weeks) to Instant")
+        if dur.years != 0 || dur.months != 0 || dur.weeks != 0 || dur.days != 0 {
+            throw ValueError("cannot add date units (years/months/weeks/days) to Instant")
         }
         let delta = dur.days * 86400000000000 + dur.hours * 3600000000000 +
                     dur.minutes * 60000000000 + dur.seconds * 1000000000 +
@@ -1296,26 +1328,40 @@ pub class Instant {
         add(dur.negated())
     }
 
-    until(other: Instant) -> Duration {
+    until(other: Instant, largest-unit: String = 'second') -> Duration {
         let diff = other.__epoch-nanos - __epoch-nanos
         let neg = diff < 0
         if neg { diff = -diff }
 
-        let d = diff / 86400000000000;    diff = diff % 86400000000000
-        let h = diff / 3600000000000;     diff = diff % 3600000000000
-        let m = diff / 60000000000;       diff = diff % 60000000000
-        let s = diff / 1000000000;        diff = diff % 1000000000
+        let h = 0
+        let m = 0
+        let s = 0
+        match largest-unit {
+            'hour', 'hours' => { h = diff / 3600000000000; diff %= 3600000000000 },
+            'minute', 'minutes' => { m = diff / 60000000000; diff %= 60000000000 },
+            'second', 'seconds' => { s = diff / 1000000000; diff %= 1000000000 },
+            'millisecond', 'milliseconds', 'microsecond', 'microseconds',
+            'nanosecond', 'nanoseconds' => {},
+            _ => throw ValueError("invalid largest unit for Instant difference: '{largest-unit}'")
+        }
+        if largest-unit == 'hour' || largest-unit == 'hours' {
+            m = diff / 60000000000; diff %= 60000000000
+        }
+        if largest-unit == 'hour' || largest-unit == 'hours'
+        || largest-unit == 'minute' || largest-unit == 'minutes' {
+            s = diff / 1000000000; diff %= 1000000000
+        }
         let ms = diff / 1000000;          diff = diff % 1000000
         let us = diff / 1000;             diff = diff % 1000
         let nano = diff
 
-        let dur = Duration(days=d, hours=h, minutes=m, seconds=s,
+        let dur = Duration(hours=h, minutes=m, seconds=s,
                            milliseconds=ms, microseconds=us, nanoseconds=nano)
         if neg { dur.negated() } else { dur }
     }
 
-    since(other: Instant) -> Duration {
-        other.until(self)
+    since(other: Instant, largest-unit: String = 'second') -> Duration {
+        other.until(self, largest-unit)
     }
 
     equals(other: Instant) -> Bool {
@@ -1339,25 +1385,8 @@ pub class Instant {
                       t.millisecond, t.microsecond, t.nanosecond)
     }
 
-    /* Convert this instant to a wall-clock date-time in the system timezone.
-     * Calendar fields account for the timezone offset and daylight-saving
-     * rules in effect at this instant. Sub-second precision is preserved. */
-    to-plain-date-time-local() -> PlainDateTime {
-        let seconds = __epoch-nanos / 1000000000
-        let fraction = __epoch-nanos % 1000000000
-        if fraction < 0 {
-            seconds -= 1
-            fraction += 1000000000
-        }
-
-        let tm = time.localtime(seconds)
-        PlainDateTime(
-            tm.year + 1900, tm.mon + 1, tm.mday,
-            tm.hour, tm.min, tm.sec,
-            fraction / 1000000,
-            (fraction % 1000000) / 1000,
-            fraction % 1000
-        )
+    to-zoned-date-time-iso(time-zone: String) -> ZonedDateTime {
+        ZonedDateTime(__epoch-nanos, time-zone)
     }
 
     __str__() -> String {
@@ -1374,6 +1403,366 @@ fn >=(a: Instant, b: Instant) -> Bool { !(a < b) }
 fn +(a: Instant, b: Duration) -> Instant { a.add(b) }
 fn -(a: Instant, b: Duration) -> Instant { a.subtract(b) }
 fn -(a: Instant, b: Instant) -> Duration { b.until(a) }
+
+/* ============================================================================
+ * ZonedDateTime
+ * ============================================================================ */
+
+fn __fixed-offset-seconds(zone: String) -> ?Int {
+    if zone == 'UTC' || zone == 'Etc/UTC' || zone == 'GMT' || zone == 'Z' {
+        return 0
+    }
+    if #zone < 3 || (zone[0] != '+' && zone[0] != '-') { return nil }
+    let sign = zone[0] == '-' ? -1 : 1
+    let body = zone[1;]
+    let parts = body.split(':')
+    let h = 0
+    let m = 0
+    let s = 0
+    if #parts == 1 {
+        if #body != 2 && #body != 4 && #body != 6 { return nil }
+        h = int(body[;2], 10) ?? return nil
+        if #body >= 4 { m = int(body[2;4], 10) ?? return nil }
+        if #body == 6 { s = int(body[4;6], 10) ?? return nil }
+    } else {
+        if #parts < 1 || #parts > 3 || #parts[0] != 2 { return nil }
+        h = int(parts[0], 10) ?? return nil
+        if #parts >= 2 {
+            if #parts[1] != 2 { return nil }
+            m = int(parts[1], 10) ?? return nil
+        }
+        if #parts == 3 {
+            if #parts[2] != 2 { return nil }
+            s = int(parts[2], 10) ?? return nil
+        }
+    }
+    if h > 23 || m > 59 || s > 59 { return nil }
+    sign * (h * 3600 + m * 60 + s)
+}
+
+fn __offset-seconds-at(epoch-seconds: Int, zone: String) -> Int {
+    if let $fixed = __fixed-offset-seconds(zone) { return fixed }
+    let tm = time.zonetime(epoch-seconds, zone)
+        ?? throw ValueError("invalid or unavailable time zone: '{zone}'")
+    tm.gmtoff ?? throw ValueError("time zone has no UTC offset: '{zone}'")
+}
+
+fn __zoned-plain-date-time(epoch-nanoseconds: Int, zone: String) -> PlainDateTime {
+    let seconds = epoch-nanoseconds / 1000000000
+    let fraction = epoch-nanoseconds % 1000000000
+    if fraction < 0 { seconds -= 1; fraction += 1000000000 }
+    let offset = __offset-seconds-at(seconds, zone)
+    let local = Instant(seconds * 1000000000 + fraction + offset * 1000000000)
+                    .to-plain-date-time-utc()
+    local
+}
+
+fn __resolve-zoned-date-time(dt: PlainDateTime, zone: String, disambiguation: String = 'compatible') -> ZonedDateTime {
+    if disambiguation != 'compatible' && disambiguation != 'earlier'
+    && disambiguation != 'later' && disambiguation != 'reject' {
+        throw ValueError("invalid disambiguation: '{disambiguation}'")
+    }
+
+    let wall-seconds = __date-to-epoch-days(dt.year, dt.month, dt.day) * 86400
+                     + dt.hour * 3600 + dt.minute * 60 + dt.second
+    let fraction = dt.millisecond * 1000000 + dt.microsecond * 1000 + dt.nanosecond
+    let offsets: Array[Int] = []
+    for probe in [wall-seconds - 172800, wall-seconds, wall-seconds + 172800] {
+        let off = __offset-seconds-at(probe, zone)
+        if !(off in offsets) { offsets.push(off) }
+    }
+
+    let possible: Array[Int] = []
+    let guesses: Array[Int] = []
+    for off in offsets {
+        let candidate = (wall-seconds - off) * 1000000000 + fraction
+        guesses.push(candidate)
+        if __zoned-plain-date-time(candidate, zone) == dt { possible.push(candidate) }
+    }
+
+    let values = possible ? possible : guesses
+    let earlier = values[0]
+    let later = values[0]
+    for value in values[1;] {
+        if value < earlier { earlier = value }
+        if value > later { later = value }
+    }
+    if #possible == 1 { return ZonedDateTime(possible[0], zone) }
+    if #possible == 0 && disambiguation == 'reject' {
+        throw ValueError("local time {dt} does not exist in {zone}")
+    }
+    if #possible > 1 && disambiguation == 'reject' {
+        throw ValueError("local time {dt} is ambiguous in {zone}")
+    }
+    ZonedDateTime(disambiguation == 'earlier' ? earlier : later, zone)
+}
+
+fn __format-offset(seconds: Int) -> String {
+    let sign = seconds < 0 ? '-' : '+'
+    let value = seconds.abs
+    let h = value / 3600
+    let m = (value % 3600) / 60
+    let s = value % 60
+    s == 0 ? "{sign}{h:02}:{m:02}" : "{sign}{h:02}:{m:02}:{s:02}"
+}
+
+fn __system-time-zone-id() -> String {
+    if let $tz = getenv('TZ') {
+        let tz = tz.starts?(':') ? tz[1;] : tz
+        if tz { return tz }
+    }
+#|if !__windows__
+    try {
+        let resolved = "{Path('/etc/localtime').resolve}"
+        if let $i = resolved.search('/zoneinfo/') { return resolved[i + 10;] }
+    } catch _ {}
+    try {
+        let tz = Path('/etc/timezone').read-text().trim()
+        if tz { return tz }
+    } catch _ {}
+#|]
+    'UTC'
+}
+
+fn __normalize-time-zone-id(zone: String) -> String {
+    if zone == 'UTC' || zone == 'Etc/UTC' || zone == 'GMT' || zone == 'Z' { return 'UTC' }
+    if let $fixed = __fixed-offset-seconds(zone) { return __format-offset(fixed) }
+#|if !__windows__
+    for root-name in ['/usr/share/zoneinfo', '/usr/share/lib/zoneinfo', '/var/db/timezone/zoneinfo'] {
+        let current = Path(root-name)
+        if !current.dir? { continue }
+        let actual: Array[String] = []
+        let found = true
+        for component in zone.split('/') {
+            found = false
+            for entry in current.ls() {
+                if entry.name.lower() == component.lower() {
+                    actual.push(entry.name)
+                    current = entry
+                    found = true
+                    break
+                }
+            }
+            if !found { break }
+        }
+        if found && current.file? { return actual.join('/') }
+    }
+#|]
+    zone
+}
+
+let __time-zone-links: Dict[String, String] | nil = nil
+
+fn __linked-time-zone-id(zone: String) -> String {
+#|if !__windows__
+    if __time-zone-links == nil {
+        let links: Dict[String, String] = %{}
+        for name in ['/usr/share/zoneinfo/tzdata.zi', '/var/db/timezone/zoneinfo/tzdata.zi'] {
+            let file = Path(name)
+            if !file.exists? { continue }
+            for line in file.read-text().split('\n') {
+                if !line.starts?('L ') { continue }
+                let fields = line.split(/\s+/)
+                if #fields == 3 { links[fields[2]] = fields[1] }
+            }
+            break
+        }
+        __time-zone-links = links
+    }
+    let links = __time-zone-links ?? %{}
+    return links[zone] ?? zone
+#|else
+    zone
+#|]
+}
+
+fn __time-zone-equivalence-key(zone: String) -> String {
+    let normalized = __normalize-time-zone-id(zone)
+    if normalized == 'UTC' { return 'iana:UTC' }
+    if let $fixed = __fixed-offset-seconds(normalized) { return "offset:{fixed}" }
+#|if !__windows__
+    let linked = __linked-time-zone-id(normalized)
+    for root in ['/usr/share/zoneinfo', '/usr/share/lib/zoneinfo', '/var/db/timezone/zoneinfo'] {
+        let file = Path(root) / linked
+        if file.exists? {
+            try { return "iana:{file.resolve}" } catch _ {}
+        }
+    }
+#|]
+    "iana:{__linked-time-zone-id(normalized).lower()}"
+}
+
+pub class ZonedDateTime {
+    __epoch-nanos: Int
+    time-zone-id: String
+
+    init(epoch-nanoseconds: Int, time-zone: String) {
+        let time-zone = __normalize-time-zone-id(time-zone)
+        /* Validate eagerly so invalid identifiers cannot create latent values. */
+        __offset-seconds-at(epoch-nanoseconds / 1000000000, time-zone)
+        __epoch-nanos = epoch-nanoseconds
+        time-zone-id = time-zone
+    }
+
+    static from(s: String, disambiguation: String = 'compatible', offset-option: String = 'reject') -> ZonedDateTime {
+        if !s.ends?(']') { throw ValueError("ZonedDateTime string requires a time zone: '{s}'") }
+        let open = s.searchr('[') ?? throw ValueError("invalid ZonedDateTime string: '{s}'")
+        let zone = s[open + 1;]
+        zone = zone[;-1]
+        let prefix = s[;open]
+        if !zone { throw ValueError("invalid ZonedDateTime string: '{s}'") }
+
+        if prefix.ends?('Z') || prefix.ends?('z') {
+            return ZonedDateTime(Instant.from(prefix).epoch-nanoseconds, zone)
+        }
+
+        let has-offset = false
+        let offset-seconds = 0
+        let date-time = prefix
+        if #prefix >= 6 {
+            let sign-index = #prefix - 6
+            if (prefix[sign-index] == '+' || prefix[sign-index] == '-') && prefix[#prefix - 3] == ':' {
+                has-offset = true
+                offset-seconds = __fixed-offset-seconds(prefix[sign-index;])
+                    ?? throw ValueError("invalid UTC offset in '{s}'")
+                date-time = prefix[;sign-index]
+            }
+        }
+        let dt = PlainDateTime.from(date-time)
+        if !has-offset { return __resolve-zoned-date-time(dt, zone, disambiguation) }
+        if offset-option != 'use' && offset-option != 'ignore'
+        && offset-option != 'prefer' && offset-option != 'reject' {
+            throw ValueError("invalid offset option: '{offset-option}'")
+        }
+        if offset-option == 'ignore' { return __resolve-zoned-date-time(dt, zone, disambiguation) }
+        let wall = __date-to-epoch-days(dt.year, dt.month, dt.day) * 86400000000000
+                 + dt.to-plain-time().total-nanos()
+        let instant = wall - offset-seconds * 1000000000
+        let valid = __offset-seconds-at(instant / 1000000000, zone) == offset-seconds
+        if valid || offset-option == 'use' { return ZonedDateTime(instant, zone) }
+        if offset-option == 'prefer' { return __resolve-zoned-date-time(dt, zone, disambiguation) }
+        throw ValueError("UTC offset does not match time zone in '{s}'")
+    }
+
+    static compare(a: ZonedDateTime, b: ZonedDateTime) -> Int {
+        a.__epoch-nanos <=> b.__epoch-nanos
+    }
+
+    __plain -> PlainDateTime { __zoned-plain-date-time(__epoch-nanos, time-zone-id) }
+    year -> Int { __plain.year }
+    month -> Int { __plain.month }
+    day -> Int { __plain.day }
+    hour -> Int { __plain.hour }
+    minute -> Int { __plain.minute }
+    second -> Int { __plain.second }
+    millisecond -> Int { __plain.millisecond }
+    microsecond -> Int { __plain.microsecond }
+    nanosecond -> Int { __plain.nanosecond }
+    epoch-milliseconds -> Int { __epoch-nanos / 1000000 }
+    epoch-nanoseconds -> Int { __epoch-nanos }
+    offset-nanoseconds -> Int { __offset-seconds-at(__epoch-nanos / 1000000000, time-zone-id) * 1000000000 }
+    offset -> String { __format-offset(offset-nanoseconds / 1000000000) }
+    day-of-week -> Int { __plain.day-of-week }
+    day-of-year -> Int { __plain.day-of-year }
+    week-of-year -> Int { __plain.week-of-year }
+    year-of-week -> Int { __plain.year-of-week }
+    month-code -> String { "M{month:02}" }
+    calendar-id -> String { 'iso8601' }
+    days-in-week -> Int { 7 }
+    months-in-year -> Int { 12 }
+    days-in-month -> Int { __plain.days-in-month }
+    days-in-year -> Int { __plain.days-in-year }
+    in-leap-year -> Bool { __plain.in-leap-year }
+
+    hours-in-day -> Float {
+        let start = start-of-day()
+        let tomorrow = start.to-plain-date().add(Duration(days=1))
+                            .to-zoned-date-time(time-zone-id)
+        (tomorrow.__epoch-nanos - start.__epoch-nanos) / 3600000000000.0
+    }
+
+    `with`(
+        year: ?Int = nil, month: ?Int = nil, day: ?Int = nil,
+        hour: ?Int = nil, minute: ?Int = nil, second: ?Int = nil,
+        millisecond: ?Int = nil, microsecond: ?Int = nil, nanosecond: ?Int = nil,
+        disambiguation: String = 'compatible'
+    ) -> ZonedDateTime {
+        __plain.with(year=year, month=month, day=day, hour=hour, minute=minute,
+                     second=second, millisecond=millisecond, microsecond=microsecond,
+                     nanosecond=nanosecond).to-zoned-date-time(time-zone-id, disambiguation)
+    }
+
+    with-plain-time(time: PlainTime = cast(PlainTime)(0, 0, 0), disambiguation: String = 'compatible') -> ZonedDateTime {
+        to-plain-date().to-zoned-date-time(time-zone-id, time, disambiguation)
+    }
+
+    with-time-zone(time-zone: String) -> ZonedDateTime {
+        ZonedDateTime(__epoch-nanos, time-zone)
+    }
+
+    add(dur: Duration) -> ZonedDateTime {
+        let local = __plain.add(Duration(years=dur.years, months=dur.months,
+                                         weeks=dur.weeks, days=dur.days))
+        let result = local.to-zoned-date-time(time-zone-id)
+        result = ZonedDateTime(result.__epoch-nanos
+            + dur.hours * 3600000000000 + dur.minutes * 60000000000
+            + dur.seconds * 1000000000 + dur.milliseconds * 1000000
+            + dur.microseconds * 1000 + dur.nanoseconds, time-zone-id)
+        result
+    }
+
+    subtract(dur: Duration) -> ZonedDateTime { add(dur.negated()) }
+    until(other: ZonedDateTime) -> Duration { to-instant().until(other.to-instant(), 'hour') }
+    since(other: ZonedDateTime) -> Duration { other.until(self) }
+    equals(other: ZonedDateTime) -> Bool {
+        __epoch-nanos == other.__epoch-nanos
+        && __time-zone-equivalence-key(time-zone-id) == __time-zone-equivalence-key(other.time-zone-id)
+    }
+    start-of-day() -> ZonedDateTime { to-plain-date().to-zoned-date-time(time-zone-id) }
+    to-instant() -> Instant { Instant(__epoch-nanos) }
+    to-plain-date() -> PlainDate { __plain.to-plain-date() }
+    to-plain-time() -> PlainTime { __plain.to-plain-time() }
+    to-plain-date-time() -> PlainDateTime { __plain }
+
+    __str__() -> String { "{__plain}{offset}[{time-zone-id}]" }
+}
+
+fn ==(a: ZonedDateTime, b: ZonedDateTime) -> Bool { a.equals(b) }
+fn <(a: ZonedDateTime, b: ZonedDateTime) -> Bool { a.epoch-nanoseconds < b.epoch-nanoseconds }
+fn >(a: ZonedDateTime, b: ZonedDateTime) -> Bool { b < a }
+fn <=(a: ZonedDateTime, b: ZonedDateTime) -> Bool { !(b < a) }
+fn >=(a: ZonedDateTime, b: ZonedDateTime) -> Bool { !(a < b) }
+fn +(a: ZonedDateTime, b: Duration) -> ZonedDateTime { a.add(b) }
+fn -(a: ZonedDateTime, b: Duration) -> ZonedDateTime { a.subtract(b) }
+fn -(a: ZonedDateTime, b: ZonedDateTime) -> Duration { b.until(a) }
+
+fn __duration-nanoseconds-relative(dur: Duration, relative-to: PlainDate | ZonedDateTime | nil) -> Int {
+    let has-calendar-units = dur.years != 0 || dur.months != 0 || dur.weeks != 0
+    match relative-to {
+        zoned: ZonedDateTime => {
+            if has-calendar-units || dur.days != 0 {
+                return zoned.add(dur).epoch-nanoseconds - zoned.epoch-nanoseconds
+            }
+        },
+        _ => {}
+    }
+    if !has-calendar-units { return dur.total-nanoseconds }
+    if relative-to == nil {
+        throw ValueError('a relative date is required for years, months, or weeks')
+    }
+    match relative-to {
+        date: PlainDate => {
+            let start = date.to-plain-date-time()
+            let end = start.add(dur)
+            let start-ns = __date-to-epoch-days(start.year, start.month, start.day) * 86400000000000
+                         + start.to-plain-time().total-nanos()
+            let end-ns = __date-to-epoch-days(end.year, end.month, end.day) * 86400000000000
+                       + end.to-plain-time().total-nanos()
+            end-ns - start-ns
+        },
+        zoned: ZonedDateTime => zoned.add(dur).epoch-nanoseconds - zoned.epoch-nanoseconds
+    }
+}
 
 /* ============================================================================
  * PlainYearMonth
@@ -1405,6 +1794,8 @@ pub class PlainYearMonth {
     days-in-year -> Int { __days-in-year(year) }
     in-leap-year -> Bool { __is-leap-year(year) }
     months-in-year -> Int { 12 }
+    month-code -> String { "M{month:02}" }
+    calendar-id -> String { 'iso8601' }
 
     with(year: ?Int = nil, month: ?Int = nil) -> PlainYearMonth {
         PlainYearMonth(year ?? self.year, month ?? self.month)
@@ -1493,6 +1884,9 @@ pub class PlainMonthDay {
         month == other.month && day == other.day
     }
 
+    month-code -> String { "M{month:02}" }
+    calendar-id -> String { 'iso8601' }
+
     to-plain-date(year: Int) -> PlainDate {
         let d = day
         let max = __days-in-month(year, month)
@@ -1501,7 +1895,7 @@ pub class PlainMonthDay {
     }
 
     __str__() -> String {
-        "--{__pad2(month)}-{__pad2(day)}"
+        "{__pad2(month)}-{__pad2(day)}"
     }
 }
 
@@ -1519,7 +1913,7 @@ fn __instant-now() -> Instant {
 }
 
 fn __local-dt() -> PlainDateTime {
-    __instant-now().to-plain-date-time-local()
+    __instant-now().to-zoned-date-time-iso(__system-time-zone-id()).to-plain-date-time()
 }
 
 /* now() returns the current local date-time */
@@ -1553,6 +1947,19 @@ pub WEEK   = Duration(weeks=1)
 
 pub class Now {
     static instant() -> Instant { __instant-now() }
+    static time-zone-id() -> String { __system-time-zone-id() }
+    static zoned-date-time-iso(time-zone: String = __system-time-zone-id()) -> ZonedDateTime {
+        __instant-now().to-zoned-date-time-iso(time-zone)
+    }
+    static plain-date-time-iso(time-zone: String = __system-time-zone-id()) -> PlainDateTime {
+        zoned-date-time-iso(time-zone).to-plain-date-time()
+    }
+    static plain-date-iso(time-zone: String = __system-time-zone-id()) -> PlainDate {
+        zoned-date-time-iso(time-zone).to-plain-date()
+    }
+    static plain-time-iso(time-zone: String = __system-time-zone-id()) -> PlainTime {
+        zoned-date-time-iso(time-zone).to-plain-time()
+    }
     static plain-date-time-utc() -> PlainDateTime { __instant-now().to-plain-date-time-utc() }
     static plain-date-utc() -> PlainDate { let dt = utc-now(); PlainDate(dt.year, dt.month, dt.day) }
     static plain-time-utc() -> PlainTime { let dt = utc-now(); PlainTime(dt.hour, dt.minute, dt.second, dt.millisecond, dt.microsecond, dt.nanosecond) }
