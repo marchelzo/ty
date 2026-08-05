@@ -163,6 +163,7 @@ pub native-theme = %{
     'border-focus':  'yellow',
     'border-active': 'magenta',
     'selection':     'yellow',
+    'selection-text': 'black',
     'text':          'white',
     'text-dim':      'bright black',
     'text-bright':   'bright white',
@@ -187,6 +188,7 @@ pub default-theme = %{
     'border-focus':  'yellow',
     'border-active': '#a571ce',
     'selection':     'yellow',
+    'selection-text': '#222',
     'text':          '#ccc',
     'text-dim':      '#888',
     'text-bright':   '#fff',
@@ -194,10 +196,12 @@ pub default-theme = %{
 }
 
 let __tls::_bg-global-sgr: String = ''
+let __tls::__theme-colors: Dict[String, String] = %{}
 
 pub fn set-theme(overrides: Dict[String, String] = %{}) {
     let base = (#overrides > 0) ? default-theme : native-theme
     let theme = %{**base, **overrides}
+    __theme-colors = theme
     for name, val in theme if #val > 0 {
         chalk.{name} = val
     }
@@ -296,18 +300,23 @@ fn hex-to-rgb(hex: String) -> (Int, Int, Int) {
         (r, g, b)
     } else {
         let r = int("0x{h[;2]}")
-        let g = int("0x{h[2;4]}")
-        let b = int("0x{h[4;6]}")
+        let g = int("0x{h[2;2]}")
+        let b = int("0x{h[4;2]}")
         (r, g, b)
     }
 }
 
 fn resolve-color-rgb(name: String) -> (Int, Int, Int) {
-    let resolved = chalk.render("[{name}]")[;-1]
+    let color = __theme-colors[name]
+    if !color { color = name }
+    // Chalk does not emit styling for an empty span. Render a marker and keep
+    // only its prefix so semantic theme names resolve just like fg-sgr().
+    let rendered = chalk.render("[{color}]@[/]")
+    let resolved = rendered[;rendered.search('@') ?? 0]
     if let $m = resolved.match(/38;2;(\d+);(\d+);(\d+)/) {
         (int(m[1]), int(m[2]), int(m[3]))
-    } else if name.match?(/^#/) {
-        hex-to-rgb(name)
+    } else if color.match?(/^#/) {
+        hex-to-rgb(color)
     } else {
         (200, 200, 200)
     }
@@ -578,7 +587,14 @@ pub class Component {
 }
 
 pub fn Box(*children, %props) -> Node {
-    Node(NodeBox, props, strip-ws-children(children))
+    let box-props = props
+    if props['selected'] ?? false {
+        box-props = %{**props,
+            'bg': props['selectionBg'] ?? 'selection',
+            '_forceFg': props['selectionColor'] ?? 'selection-text'
+        }
+    }
+    Node(NodeBox, box-props, strip-ws-children(children))
 }
 
 pub fn Text(*children, %props) -> Node {
@@ -3481,22 +3497,25 @@ fn stack-row(
     (lines, w)
 }
 
-fn bg-sgr(color: String) -> String | nil {
-    let hex2 = /#([0-9a-fA-F]{2})([0-9a-fA-F]{2})([0-9a-fA-F]{2})/
-    let hex1 = /#([0-9a-fA-F])([0-9a-fA-F])([0-9a-fA-F])/
-    if let [_, $r, $g, $b] = color.match(hex2) {
-        "\x1b[48;2;{int(r, 16)};{int(g, 16)};{int(b, 16)}m"
-    } else if let [_, $r, $g, $b] = color.match(hex1) {
-        "\x1b[48;2;{int(r + r, 16)};{int(g + g, 16)};{int(b + b, 16)}m"
-    } else {
-        nil
-    }
+fn apply-bg(lines: Array[String], bg: String) -> Array[String] {
+    let on = resolve-bg-sgr(bg)
+    let off = "\x1b[49m"
+    lines.map(line ->
+        "{on}{line.sub(/\x1b\[0m/, "\x1b[0m{on}").sub(/\x1b\[49m/, "\x1b[49m{on}")}{off}"
+    )
 }
 
-fn apply-bg(lines: Array[String], bg: String) -> Array[String] {
-    let $on = bg-sgr(bg) or return lines
-    let off = "\x1b[49m"
-    lines.map(line -> "{on}{line.sub(/\x1b\[0m/, "\x1b[0m{on}")}{off}")
+fn apply-forced-fg(lines: Array[String], fg: String) -> Array[String] {
+    let on = fg-sgr(fg)
+    if #on == 0 { return lines }
+    let off = "\x1b[39m"
+    // Selection is an interaction state, so its foreground must win over
+    // semantic colors emitted anywhere below it. Re-assert it after every SGR
+    // sequence while leaving attributes such as bold and reverse intact.
+    lines.map(line -> do {
+        let styled = line.sub(/\x1b\[[0-9:;]*m/, sgr -> "{sgr}{on}")
+        "{on}{styled}{off}"
+    })
 }
 
 fn apply-padding(lines: Array[String], w: Int, px: Int, py: Int) -> (Array[String], Int) {
@@ -3590,11 +3609,16 @@ fn finish-box(
     lines: Array[String], w: Int,
     px: Int, py: Int, mx: Int, my: Int,
     bstyle: Array[String] | nil, bcolor: String | nil,
-    bg: String | nil, target-w: Int | nil, max-w: Int,
+    bg: String | nil, forced-fg: String | nil,
+    target-w: Int | nil, max-w: Int,
     ox: Int, oy: Int, props: Dict[String, Any],
     child-elements: Array[Element]
 ) -> (Output, Element) {
     let (lines, w) = apply-padding(lines, w, px, py)
+
+    if let $fg = forced-fg {
+        lines = apply-forced-fg(lines, fg)
+    }
 
     if let $bg = bg {
         if !target-w && max-w < INF && max-w > w {
@@ -3661,7 +3685,8 @@ fn layout-box(
             }
         }
         return finish-box(lines, w, px, py, mx, my, bstyle, bcolor,
-                          node.bg, target-w, max-w, ox, oy, node.props, [])
+                          node.bg, node.props['_forceFg'], target-w, max-w,
+                          ox, oy, node.props, [])
     }
 
     let row? = (direction == 'row')
@@ -3832,7 +3857,8 @@ fn layout-box(
     }
 
     finish-box(lines, w, px, py, mx, my, bstyle, bcolor,
-               node.bg, target-w, max-w, ox, oy, node.props, child-elements)
+               node.bg, node.props['_forceFg'], target-w, max-w,
+               ox, oy, node.props, child-elements)
 }
 
 fn layout-overlay(node: Node, max-w: Int, max-h: Int, path: String) -> (Output, Element) {
@@ -4025,6 +4051,11 @@ fn paint-output(output: Output) {
     write(1, _out)
 }
 
+fn restore-global-bg(line: String, bg: String) -> String {
+    line.sub(/\x1b\[0m/, "\x1b[0m{bg}")
+        .sub(/\x1b\[49m/, "\x1b[49m{bg}")
+}
+
 let __tls::_last-inline-height: Int = 0
 
 fn paint-inline(output: Output) {
@@ -4044,7 +4075,7 @@ fn paint-inline(output: Output) {
     let bg-off = (#bg > 0) ? "\x1b[49m" : ''
     for line in output.lines {
         if #bg > 0 {
-            _out.push("{bg}{line.sub(/\x1b\[0m/, "\x1b[0m{bg}")}{bg-off}\n")
+            _out.push("{bg}{restore-global-bg(line, bg)}{bg-off}\n")
         } else {
             _out.push("{line}\n")
         }
@@ -4053,7 +4084,7 @@ fn paint-inline(output: Output) {
         for line, i in ov.output.lines {
             _out.push("\x1b[{ov.y + i + 1};{ov.x + 1}H")
             if #bg > 0 {
-                _out.push("{bg}{line.sub(/\x1b\[0m/, "\x1b[0m{bg}")}{bg-off}")
+                _out.push("{bg}{restore-global-bg(line, bg)}{bg-off}")
             } else {
                 _out.push(line)
             }
@@ -4116,7 +4147,7 @@ fn paint-fullscreen(output: Output, rows: Int = INF) {
     for line, i in output.lines {
         _out.push("\x1b[{i + 1};1H{bg}\x1b[2K")
         if #bg > 0 {
-            _out.push("{bg}{line.sub(/\x1b\[0m/, "\x1b[0m{bg}")}{bg-off}")
+            _out.push("{bg}{restore-global-bg(line, bg)}{bg-off}")
         } else {
             _out.push(line)
         }
@@ -4128,7 +4159,7 @@ fn paint-fullscreen(output: Output, rows: Int = INF) {
         for line, i in ov.output.lines {
             _out.push("\x1b[{ov.y + i + 1};{ov.x + 1}H")
             if #bg > 0 {
-                _out.push("{bg}{line.sub(/\x1b\[0m/, "\x1b[0m{bg}")}{bg-off}")
+                _out.push("{bg}{restore-global-bg(line, bg)}{bg-off}")
             } else {
                 _out.push(line)
             }
@@ -4537,6 +4568,13 @@ pub class TestHarness {
 
     lines -> Array[String] {
         __output ? __output.lines : []
+    }
+
+    painted-lines -> Array[String] {
+        let bg = _bg-global-sgr
+        (#bg > 0)
+            ? lines.map(line -> "{bg}{restore-global-bg(line, bg)}{BG_RST}")
+            : lines
     }
 
     plain-text -> String {

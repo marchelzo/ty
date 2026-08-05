@@ -1,4 +1,5 @@
 import ink
+import ink.themes as themes
 import term (event)
 
 ns test
@@ -125,6 +126,29 @@ class OverlayApp < ink.Component {
     }
 }
 
+class ThemeBackgroundApp < ink.Component {
+    render() -> ink.Node {
+        <ink.Box bg="bg-hover"><ink.Text>x</ink.Text></ink.Box>
+    }
+}
+
+class BorderedThemeBackgroundApp < ink.Component {
+    render() -> ink.Node {
+        <ink.Box bg="bg-surface" border-style="round" border-color="border" width=8>
+            <ink.Box bg="bg-hover"><ink.Text>x</ink.Text></ink.Box>
+        </ink.Box>
+    }
+}
+
+class SelectedBoxApp < ink.Component {
+    render() -> ink.Node {
+        <ink.Box direction="row" selected=true paddingX=1>
+            <ink.Text style="danger">danger</ink.Text>
+            <ink.Badge color="success">ok</ink.Badge>
+        </ink.Box>
+    }
+}
+
 pub fn empty-box() {
     let h = ink.TestHarness(EmptyBoxApp(), cols=40, rows=10)
     assert(h.line-count == 0)
@@ -243,6 +267,32 @@ pub fn justify-space-between() {
 pub fn overlay() {
     let h = ink.TestHarness(OverlayApp(), cols=40, rows=10)
     h.assert-contains('base')
+}
+
+pub fn semantic-background-color() {
+    ink.set-theme(%{'bg-hover': '#123456', 'bg-surface': '#0a0b0c', 'bg-global': '#010203'})
+    let h = ink.TestHarness(ThemeBackgroundApp(), cols=40, rows=10)
+    assert(h.lines[0].starts?("\x1b[48;2;18;52;86m"))
+
+    let bordered = ink.TestHarness(BorderedThemeBackgroundApp(), cols=40, rows=10)
+    assert("\x1b[49m\x1b[48;2;10;11;12m" in bordered.lines[1])
+    let middle = bordered.painted-lines[1]
+    let restored = "\x1b[49m\x1b[48;2;1;2;3m"
+    let restore-at = middle.search(restored) ?? -1
+    let right-border-at = middle.searchr('│') ?? -1
+    assert(restore-at >= 0 && restore-at < right-border-at)
+}
+
+pub fn selected-box-colors-entire-subtree() {
+    ink.set-theme(themes.gruvbox-material-dark)
+    let h = ink.TestHarness(SelectedBoxApp(), cols=40, rows=10)
+    let line = h.lines[0]
+    let bg = "\x1b[48;2;216;166;87m"
+    let fg = "\x1b[38;2;40;40;40m"
+    assert(line.starts?("{bg}{fg}"))
+    assert("\x1b[38;2;234;105;98m{fg}" in line)
+    assert("\x1b[38;2;169;182;101m{fg}" in line)
+    assert(h.plain-text.match?(/^danger ok\s+$/))
 }
 
 pub fn resize() {

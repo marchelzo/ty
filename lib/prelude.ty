@@ -284,6 +284,8 @@ pub use time::ClockID =
 fn time::time(tm: ?time::Tm, utc: Bool = false) -> Int;
 fn time::gettime(clock: ?time::ClockID) -> time::Timespec;
 fn time::localtime(time: ?Int) -> time::Tm;
+fn time::zonetime(time: Int, zone: String) -> time::Tm | nil;
+fn time::gmtime(time: ?Int) -> time::Tm;
 fn time::utime(clock: ?time::ClockID) -> Int;
 fn time::now(clock: ?time::ClockID) -> Float;
 

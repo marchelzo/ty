@@ -7097,6 +7097,339 @@ BUILTIN_FUNCTION(time_localtime)
         );
 }
 
+/* Read the UTC offset in effect at an instant from an IANA TZif file.  This
+ * keeps named-zone conversion independent of the process-global TZ setting,
+ * which is important because Ty programs may call time functions concurrently.
+ * TZif v2+ files contain a complete 64-bit transition table after the legacy
+ * 32-bit table; v1 files use the first table. */
+static uint32_t
+tz_u32(unsigned char const *p)
+{
+        return ((uint32_t)p[0] << 24) | ((uint32_t)p[1] << 16)
+             | ((uint32_t)p[2] << 8) | p[3];
+}
+
+static int64_t
+tz_i64(unsigned char const *p)
+{
+        uint64_t n = 0;
+        for (int i = 0; i < 8; i++)
+                n = (n << 8) | p[i];
+        return (int64_t)n;
+}
+
+static bool
+tz_header(unsigned char const *p, size_t n, uint32_t c[6])
+{
+        if (n < 44 || memcmp(p, "TZif", 4) != 0)
+                return false;
+        for (int i = 0; i < 6; i++)
+                c[i] = tz_u32(p + 20 + i * 4);
+        return true;
+}
+
+static bool
+tz_name_ok(char const *s, size_t n)
+{
+        if (n == 0 || s[0] == '/' || s[0] == '\\')
+                return false;
+        for (size_t i = 0; i < n; i++) {
+                unsigned char c = s[i];
+                if (!(isalnum(c) || c == '/' || c == '_' || c == '-' || c == '+' || c == '.'))
+                        return false;
+                if (c == '.' && i + 1 < n && s[i + 1] == '.')
+                        return false;
+        }
+        return true;
+}
+
+typedef struct {
+        int month;
+        int week;
+        int weekday;
+        int seconds;
+} TzMonthRule;
+
+typedef struct {
+        int32_t standard_offset;
+        int32_t daylight_offset;
+        bool has_daylight;
+        TzMonthRule start;
+        TzMonthRule end;
+} TzFooter;
+
+static bool
+tz_parse_number(char const **sp, char const *end, int *out)
+{
+        char const *s = *sp;
+        if (s == end || !isdigit((unsigned char)*s))
+                return false;
+        int n = 0;
+        while (s < end && isdigit((unsigned char)*s)) {
+                n = n * 10 + (*s++ - '0');
+                if (n > 1000000)
+                        return false;
+        }
+        *sp = s;
+        *out = n;
+        return true;
+}
+
+static bool
+tz_skip_name(char const **sp, char const *end)
+{
+        char const *s = *sp;
+        if (s < end && *s == '<') {
+                s++;
+                char const *start = s;
+                while (s < end && *s != '>') s++;
+                if (s == end || s == start) return false;
+                *sp = s + 1;
+                return true;
+        }
+        char const *start = s;
+        while (s < end && isalpha((unsigned char)*s)) s++;
+        if (s - start < 3) return false;
+        *sp = s;
+        return true;
+}
+
+/* Parse a POSIX TZ offset/time. POSIX offsets have the opposite sign from
+ * ISO offsets: EST5 means UTC-05:00. */
+static bool
+tz_parse_hms(char const **sp, char const *end, int *out, bool reverse)
+{
+        char const *s = *sp;
+        int sign = 1;
+        if (s < end && (*s == '+' || *s == '-')) {
+                if (*s++ == '-') sign = -1;
+        }
+        int h, m = 0, sec = 0;
+        if (!tz_parse_number(&s, end, &h)) return false;
+        if (s < end && *s == ':') {
+                s++;
+                if (!tz_parse_number(&s, end, &m) || m > 59) return false;
+                if (s < end && *s == ':') {
+                        s++;
+                        if (!tz_parse_number(&s, end, &sec) || sec > 59) return false;
+                }
+        }
+        int n = sign * (h * 3600 + m * 60 + sec);
+        *out = reverse ? -n : n;
+        *sp = s;
+        return true;
+}
+
+static bool
+tz_parse_month_rule(char const **sp, char const *end, TzMonthRule *r)
+{
+        char const *s = *sp;
+        if (s == end || *s++ != 'M') return false;
+        if (!tz_parse_number(&s, end, &r->month) || s == end || *s++ != '.') return false;
+        if (!tz_parse_number(&s, end, &r->week) || s == end || *s++ != '.') return false;
+        if (!tz_parse_number(&s, end, &r->weekday)) return false;
+        if (r->month < 1 || r->month > 12 || r->week < 1 || r->week > 5
+         || r->weekday < 0 || r->weekday > 6) return false;
+        r->seconds = 2 * 3600;
+        if (s < end && *s == '/') {
+                s++;
+                if (!tz_parse_hms(&s, end, &r->seconds, false)) return false;
+        }
+        *sp = s;
+        return true;
+}
+
+static bool
+tz_parse_footer(char const *s, char const *end, TzFooter *footer)
+{
+        int parsed_offset;
+        if (!tz_skip_name(&s, end)
+         || !tz_parse_hms(&s, end, &parsed_offset, true))
+                return false;
+        footer->standard_offset = parsed_offset;
+        footer->has_daylight = false;
+        if (s == end) return true;
+        if (!tz_skip_name(&s, end)) return false;
+        footer->has_daylight = true;
+        footer->daylight_offset = footer->standard_offset + 3600;
+        if (s < end && *s != ',') {
+                if (!tz_parse_hms(&s, end, &parsed_offset, true))
+                        return false;
+                footer->daylight_offset = parsed_offset;
+        }
+        if (s == end || *s++ != ',' || !tz_parse_month_rule(&s, end, &footer->start)
+         || s == end || *s++ != ',' || !tz_parse_month_rule(&s, end, &footer->end))
+                return false;
+        return s == end;
+}
+
+static int
+tz_days_in_month(int year, int month)
+{
+        static int const days[] = { 31,28,31,30,31,30,31,31,30,31,30,31 };
+        int n = days[month - 1];
+        if (month == 2 && year % 4 == 0 && (year % 100 != 0 || year % 400 == 0)) n++;
+        return n;
+}
+
+static int64_t
+tz_rule_instant(int year, TzMonthRule const *rule, int32_t offset_before)
+{
+        struct tm first = { .tm_year = year - 1900, .tm_mon = rule->month - 1, .tm_mday = 1 };
+        time_t first_seconds = timegm(&first);
+        struct tm first_utc;
+        gmtime_r(&first_seconds, &first_utc);
+        int day = 1 + (rule->weekday - first_utc.tm_wday + 7) % 7 + (rule->week - 1) * 7;
+        int dim = tz_days_in_month(year, rule->month);
+        if (day > dim) day -= 7;
+        return (int64_t)first_seconds + (day - 1) * 86400LL + rule->seconds - offset_before;
+}
+
+static bool
+tz_footer_offset(char const *s, char const *end, int64_t when,
+                 int32_t *offset, bool *isdst)
+{
+        TzFooter footer;
+        if (!tz_parse_footer(s, end, &footer)) return false;
+        if (!footer.has_daylight) {
+                *offset = footer.standard_offset;
+                *isdst = false;
+                return true;
+        }
+        time_t t = (time_t)when;
+        struct tm utc;
+        gmtime_r(&t, &utc);
+        int year = utc.tm_year + 1900;
+        int64_t start = tz_rule_instant(year, &footer.start, footer.standard_offset);
+        int64_t finish = tz_rule_instant(year, &footer.end, footer.daylight_offset);
+        bool daylight = start < finish ? (when >= start && when < finish)
+                                       : (when >= start || when < finish);
+        *offset = daylight ? footer.daylight_offset : footer.standard_offset;
+        *isdst = daylight;
+        return true;
+}
+
+static bool
+tz_offset_at(char const *name, size_t name_n, int64_t when,
+             int32_t *offset, bool *isdst)
+{
+#ifdef _WIN32
+        (void)name; (void)name_n; (void)when; (void)offset; (void)isdst;
+        return false;
+#else
+        if (!tz_name_ok(name, name_n))
+                return false;
+
+        static char const *roots[] = {
+                "/usr/share/zoneinfo/", "/usr/share/lib/zoneinfo/",
+                "/var/db/timezone/zoneinfo/", NULL
+        };
+        FILE *f = NULL;
+        char path[PATH_MAX];
+        for (int i = 0; roots[i] != NULL && f == NULL; i++) {
+                int m = snprintf(path, sizeof(path), "%s%.*s", roots[i],
+                                 (int)name_n, name);
+                if (m > 0 && (size_t)m < sizeof(path))
+                        f = fopen(path, "rb");
+        }
+        if (f == NULL)
+                return false;
+        if (fseek(f, 0, SEEK_END) != 0) { fclose(f); return false; }
+        long file_n = ftell(f);
+        if (file_n < 44 || fseek(f, 0, SEEK_SET) != 0) { fclose(f); return false; }
+        unsigned char *buf = malloc((size_t)file_n);
+        if (buf == NULL) { fclose(f); return false; }
+        bool ok = fread(buf, 1, (size_t)file_n, f) == (size_t)file_n;
+        fclose(f);
+        if (!ok) { free(buf); return false; }
+
+        uint32_t c[6];
+        unsigned char const *h = buf;
+        int width = 4;
+        if (!tz_header(h, (size_t)file_n, c)) { free(buf); return false; }
+        if (h[4] >= '2' && h[4] <= '4') {
+                uint64_t block = (uint64_t)c[3] * 4 + c[3]
+                               + (uint64_t)c[4] * 6 + c[5]
+                               + (uint64_t)c[2] * 8 + c[1] + c[0];
+                uint64_t next = 44 + block;
+                if (next + 44 > (uint64_t)file_n
+                 || !tz_header(buf + next, (size_t)file_n - next, c)) {
+                        free(buf); return false;
+                }
+                h = buf + next;
+                width = 8;
+        }
+
+        uint32_t timecnt = c[3], typecnt = c[4];
+        uint64_t need = 44 + (uint64_t)timecnt * width + timecnt
+                      + (uint64_t)typecnt * 6;
+        if (typecnt == 0 || need > (uint64_t)(buf + file_n - h)) {
+                free(buf); return false;
+        }
+        unsigned char const *times = h + 44;
+        unsigned char const *indices = times + (uint64_t)timecnt * width;
+        unsigned char const *types = indices + timecnt;
+        uint32_t chosen = 0;
+        int64_t last_transition = INT64_MIN;
+        for (uint32_t i = 0; i < timecnt; i++) {
+                int64_t transition = width == 8 ? tz_i64(times + (uint64_t)i * 8)
+                                                : (int32_t)tz_u32(times + (uint64_t)i * 4);
+                last_transition = transition;
+                if (transition > when)
+                        break;
+                chosen = indices[i];
+        }
+        uint64_t block_end = 44 + (uint64_t)timecnt * width + timecnt
+                           + (uint64_t)typecnt * 6 + c[5]
+                           + (uint64_t)c[2] * (width + 4) + c[1] + c[0];
+        if (width == 8 && when > last_transition && block_end + 2 <= (uint64_t)(buf + file_n - h)) {
+                char const *tail = (char const *)(h + block_end);
+                char const *file_end = (char const *)(buf + file_n);
+                if (*tail == '\n') tail++;
+                char const *tail_end = tail;
+                while (tail_end < file_end && *tail_end != '\n' && *tail_end != '\0') tail_end++;
+                if (tail_end > tail && tz_footer_offset(tail, tail_end, when, offset, isdst)) {
+                        free(buf);
+                        return true;
+                }
+        }
+        if (chosen >= typecnt) { free(buf); return false; }
+        *offset = (int32_t)tz_u32(types + (uint64_t)chosen * 6);
+        *isdst = types[(uint64_t)chosen * 6 + 4] != 0;
+        free(buf);
+        return true;
+#endif
+}
+
+BUILTIN_FUNCTION(time_zonetime)
+{
+        ASSERT_ARGC("time.zonetime()", 2);
+        Value t_arg = ARGx(0, VALUE_INTEGER);
+        Value zone = ARGx(1, VALUE_STRING);
+        int64_t seconds = t_arg.z;
+        int32_t offset;
+        bool isdst;
+        if (!tz_offset_at((char const *)ss(zone), sN(zone), seconds, &offset, &isdst))
+                return NIL;
+
+        time_t adjusted = (time_t)(seconds + offset);
+        struct tm r = {0};
+        gmtime_r(&adjusted, &r);
+        return vTn(
+                "sec",     INTEGER(r.tm_sec),
+                "min",     INTEGER(r.tm_min),
+                "hour",    INTEGER(r.tm_hour),
+                "mday",    INTEGER(r.tm_mday),
+                "mon",     INTEGER(r.tm_mon),
+                "year",    INTEGER(r.tm_year),
+                "wday",    INTEGER(r.tm_wday),
+                "yday",    INTEGER(r.tm_yday),
+                "isdst",   BOOLEAN(isdst),
+                "gmtoff",  INTEGER(offset),
+                "zone",    zone
+        );
+}
+
 BUILTIN_FUNCTION(time_gmtime)
 {
         ASSERT_ARGC_2("time.gmtime()", 0, 1);

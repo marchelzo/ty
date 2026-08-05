@@ -92,6 +92,7 @@ pub const CURLOPT_COOKIELIST       = 10135
 pub const CURLOPT_HTTPGET          = 80
 pub const CURLOPT_HTTP_VERSION     = 84
 pub const CURLOPT_CUSTOMREQUEST    = 10036
+pub const CURLOPT_PIPEWAIT         = 237
 
 pub const CURLOPT_MIMEPOST         = 10269
 
@@ -216,6 +217,7 @@ pub const CURLINFO_RESPONSE_CODE    = CURLINFO_LONG   + 2
 pub const CURLINFO_TOTAL_TIME       = CURLINFO_DOUBLE + 3
 pub const CURLINFO_REDIRECT_COUNT   = CURLINFO_LONG   + 20
 pub const CURLINFO_CONTENT_TYPE     = CURLINFO_STRING + 18
+pub const CURLINFO_HTTP_VERSION     = CURLINFO_LONG   + 46
 
 /* ============================================================================
  * CURLU (URL API)
@@ -254,6 +256,11 @@ pub const CURLM_OK             = 0
 pub const CURLM_INTERNAL_ERROR = 4
 
 pub const CURLMSG_DONE = 1
+
+pub const CURLMOPT_PIPELINING           = 3
+pub const CURLMOPT_MAX_HOST_CONNECTIONS = 7
+pub const CURLMOPT_MAX_CONCURRENT_STREAMS = 16
+pub const CURLPIPE_MULTIPLEX             = (1 << 1)
 
 /* ============================================================================
  * C function declarations
@@ -297,6 +304,7 @@ C! libcurl fn {
     void curl_free(void *p);
 
     CURLM *curl_multi_init();
+    CURLMcode curl_multi_setopt(CURLM *multi_handle, int option, ...);
     CURLMcode curl_multi_cleanup(CURLM *multi_handle);
     CURLMcode curl_multi_add_handle(CURLM *multi_handle, CURL *easy_handle);
     CURLMcode curl_multi_remove_handle(CURLM *multi_handle, CURL *easy_handle);
@@ -407,7 +415,9 @@ pub class URL {
         let out = c.auto(c.box(c.ptr))
         let res = curl_url_get(__handle, part, out, flags)
         if res == CURLUE_OK {
-            return c.str(out[0])
+            let value = c.str(out[0])
+            curl_free(out[0])
+            return value
         } else if res in [CURLUE_NO_SCHEME, CURLUE_NO_USER, CURLUE_NO_PASSWORD,
                           CURLUE_NO_OPTIONS, CURLUE_NO_HOST, CURLUE_NO_PORT,
                           CURLUE_NO_QUERY, CURLUE_NO_FRAGMENT, CURLUE_NO_ZONEID] {
@@ -679,6 +689,7 @@ pub class Response {
     url:            String
     redirect-count: Int
     total-time:     Float
+    http-version:   Int
 
     init(
         status: Int,
@@ -686,7 +697,8 @@ pub class Response {
         body: Blob,
         url: String = '',
         redirect-count: Int = 0,
-        total-time: Float = 0.0
+        total-time: Float = 0.0,
+        http-version: Int = CURL_HTTP_VERSION_NONE
     ) {
         self.status = status
         self.headers = headers
@@ -694,6 +706,7 @@ pub class Response {
         self.url = url
         self.redirect-count = redirect-count
         self.total-time = total-time
+        self.http-version = http-version
     }
 
     ok -> Bool { status in 200..300 }
@@ -764,6 +777,7 @@ pub class RequestOptions {
     proxy-type:       Int
     user-agent:       String | nil
     referer:          String | nil
+    accept-encoding:  String | nil
     http-version:     Int
     verbose:          Bool
     fail-on-error:    Bool
@@ -802,6 +816,7 @@ pub class RequestOptions {
         proxy-type       = CURLPROXY_HTTP
         user-agent       = nil
         referer          = nil
+        accept-encoding  = nil
         http-version     = CURL_HTTP_VERSION_NONE
         verbose          = false
         fail-on-error    = false
@@ -949,21 +964,27 @@ class StreamingSession {
     __hdrs:    Dict[String, String | Array[String]]
     __chunks:  Array[Blob]
     __mime:    Ptr[_] | nil
+    __slist:   Ptr[_] | nil
+    __owns-multi: Bool
+    __added:   Bool
     __done:    Bool
     __started: Bool
     __error:   CURLError | nil
 
-    init() {
+    init(shared-multi: Ptr[_] | nil = nil) {
         __easy = curl_easy_init()
         if __easy == nil { throw CURLError(CURLE_FAILED_INIT, 'curl_easy_init()') }
 
-        __multi = curl_multi_init()
+        __owns-multi = shared-multi == nil
+        __multi = shared-multi ?? curl_multi_init()
         if __multi == nil {
             curl_easy_cleanup(__easy)
             throw CURLMError(CURLM_INTERNAL_ERROR, 'curl_multi_init()')
         }
 
         __mime = nil
+        __slist = nil
+        __added = false
         __hdrs = %{}
         __chunks = []
         __done = false
@@ -1005,9 +1026,14 @@ class StreamingSession {
 
     __cleanup() {
         if __mime != nil { curl_mime_free(__mime); __mime = nil }
-        if __easy != nil && __multi != nil { curl_multi_remove_handle(__multi, __easy) }
+        if __slist != nil { curl_slist_free_all(__slist); __slist = nil }
+        if __added && __easy != nil && __multi != nil {
+            curl_multi_remove_handle(__multi, __easy)
+            __added = false
+        }
         if __easy != nil { curl_easy_cleanup(__easy); __easy = nil }
-        if __multi != nil { curl_multi_cleanup(__multi); __multi = nil }
+        if __owns-multi && __multi != nil { curl_multi_cleanup(__multi) }
+        __multi = nil
     }
 
     __drop__() { __cleanup() }
@@ -1033,7 +1059,9 @@ class StreamingSession {
         let res = curl_easy_getinfo(__easy, info, (c.ptr, out))
         if res != CURLE_OK { throw CURLError(res, 'curl_easy_getinfo()') }
         if out[0] == nil { return nil }
-        c.as_str(out[0])
+        /* CURLINFO string pointers are owned by the easy handle. Clone them so
+         * completed multi responses remain valid after their handle closes. */
+        c.str(out[0])
     }
 
     setup-mime(form: FormData) {
@@ -1083,13 +1111,11 @@ class StreamingSession {
             return
         }
 
-        let list = nil
-
         for k, v in headers {
-            list = curl_slist_append(list, "{k}: {v}".cstr())
+            __slist = curl_slist_append(__slist, "{k}: {v}".cstr())
         }
 
-        setopt-ptr(CURLOPT_HTTPHEADER, list, 'CURLOPT_HTTPHEADER')
+        setopt-ptr(CURLOPT_HTTPHEADER, __slist, 'CURLOPT_HTTPHEADER')
     }
 
     start() {
@@ -1097,6 +1123,7 @@ class StreamingSession {
         __started = true
         let res = curl_multi_add_handle(__multi, __easy)
         if res != CURLM_OK { throw CURLMError(res, 'curl_multi_add_handle()') }
+        __added = true
     }
 
     poll(timeout-ms: Int = 100) -> Bool {
@@ -1151,9 +1178,23 @@ class StreamingSession {
 
     close() { __done = true; __cleanup() }
 
+    handle -> Ptr[_] | nil { __easy }
     headers -> Dict[String, String | Array[String]] { __hdrs }
     status -> Int { __getinfo-long(CURLINFO_RESPONSE_CODE) }
     effective-url -> String { __getinfo-str(CURLINFO_EFFECTIVE_URL) ?? '' }
+    redirect-count -> Int { __getinfo-long(CURLINFO_REDIRECT_COUNT) }
+    total-time -> Float {
+        let out = c.auto(c.box(c.double))
+        let res = curl_easy_getinfo(__easy, CURLINFO_TOTAL_TIME, (c.ptr, out))
+        if res != CURLE_OK { throw CURLError(res, 'curl_easy_getinfo()') }
+        out[0]
+    }
+    http-version -> Int { __getinfo-long(CURLINFO_HTTP_VERSION) }
+    body -> Blob {
+        let result = Blob()
+        for chunk in __chunks { result.push(chunk) }
+        result
+    }
 }
 
 /* ============================================================================
@@ -1366,7 +1407,7 @@ pub class Session {
         let res = curl_easy_getinfo(__handle, info, (c.ptr, out))
         if res != CURLE_OK { throw CURLError(res, 'curl_easy_getinfo()') }
         if out[0] == nil { return nil }
-        c.as_str(out[0])
+        c.str(out[0])
     }
 
     __build-url(base: String, query: Dict[String, Any]) -> String {
@@ -1443,6 +1484,7 @@ pub class Session {
         let proxy-type = opts.proxy ? opts.proxy-type : defaults.proxy-type
         let user-agent = opts.user-agent ?? defaults.user-agent
         let referer = opts.referer ?? defaults.referer
+        let accept-encoding = opts.accept-encoding ?? defaults.accept-encoding
         let verbose = opts.verbose || defaults.verbose
 
         let t = target ?? self
@@ -1518,9 +1560,17 @@ pub class Session {
 
         if let $ua = user-agent { t.setopt-str(CURLOPT_USERAGENT, ua, 'CURLOPT_USERAGENT') }
         if let $ref = referer { t.setopt-str(CURLOPT_REFERER, ref, 'CURLOPT_REFERER') }
+        if let $encoding = accept-encoding {
+            /* An empty value asks libcurl to advertise every decoder built
+             * into the local libcurl and transparently decode the response. */
+            t.setopt-str(CURLOPT_ACCEPT_ENCODING, encoding, 'CURLOPT_ACCEPT_ENCODING')
+        }
 
-        if opts.http-version != CURL_HTTP_VERSION_NONE {
-            t.setopt-long(CURLOPT_HTTP_VERSION, opts.http-version, 'CURLOPT_HTTP_VERSION')
+        let http-version = if opts.http-version != CURL_HTTP_VERSION_NONE {
+            opts.http-version
+        } else { defaults.http-version }
+        if http-version != CURL_HTTP_VERSION_NONE {
+            t.setopt-long(CURLOPT_HTTP_VERSION, http-version, 'CURLOPT_HTTP_VERSION')
         }
 
         if verbose { t.setopt-long(CURLOPT_VERBOSE, 1, 'CURLOPT_VERBOSE') }
@@ -1551,6 +1601,7 @@ pub class Session {
         let effective-url = __getinfo-str(CURLINFO_EFFECTIVE_URL) ?? url
         let redirect-count = __getinfo-long(CURLINFO_REDIRECT_COUNT)
         let total-time = __getinfo-double(CURLINFO_TOTAL_TIME)
+        let http-version = __getinfo-long(CURLINFO_HTTP_VERSION)
 
         let response = Response(
             status=status,
@@ -1558,12 +1609,22 @@ pub class Session {
             body=__resp,
             url=effective-url,
             redirect-count=redirect-count,
-            total-time=total-time
+            total-time=total-time,
+            http-version=http-version
         )
 
         if fail-on-error && !response.ok { throw HTTPError(status, __resp, __hdrs) }
 
         response
+    }
+
+    multi(max-host-connections: Int = 0, max-concurrent-streams: Int = 0) -> MultiSession {
+        MultiSession(
+            fn (opts, target) { __configure(opts, target) },
+            defaults.fail-on-error,
+            max-host-connections=max-host-connections,
+            max-concurrent-streams=max-concurrent-streams
+        )
     }
 
     request-stream(opts: RequestOptions) -> StreamResponse {
@@ -1660,7 +1721,7 @@ pub class Session {
     escape(s: String) -> String {
         let result = curl_easy_escape(__handle, s.cstr(), s.size())
         if result == nil { throw CURLError(CURLE_OUT_OF_MEMORY, 'curl_easy_escape()') }
-        let str = c.as_str(result)
+        let str = c.str(result)
         curl_free(result)
         str
     }
@@ -1669,10 +1730,175 @@ pub class Session {
         let out-len = c.auto(c.box(c.int))
         let result = curl_easy_unescape(__handle, s.cstr(), s.size(), out-len)
         if result == nil { throw CURLError(CURLE_OUT_OF_MEMORY, 'curl_easy_unescape()') }
-        let str = c.as_str(result, out-len[0])
+        let str = c.str(result, out-len[0])
         curl_free(result)
         str
     }
+}
+
+/* ============================================================================
+ * Concurrent transfers (one shared connection cache / HTTP/2 multiplexer)
+ * ============================================================================ */
+
+pub class MultiTransfer {
+    context:  Any
+    response: Response | nil
+    error:    RuntimeError | nil
+
+    __stream:        StreamingSession | nil
+    __url:           String
+    __fail-on-error: Bool
+
+    init(stream: StreamingSession, url: String, context: Any = nil, fail-on-error: Bool = false) {
+        __stream = stream
+        __url = url
+        __fail-on-error = fail-on-error
+        self.context = context
+        response = nil
+        error = nil
+    }
+
+    complete(code: Int) {
+        let stream = __stream or return
+        let active-stream: StreamingSession = cast(stream)
+        try {
+            if code != CURLE_OK { throw CURLError(code, 'curl_multi_perform()') }
+            let completed-response = Response(
+                status=active-stream.status,
+                headers=active-stream.headers,
+                body=active-stream.body,
+                url=active-stream.effective-url || __url,
+                redirect-count=active-stream.redirect-count,
+                total-time=active-stream.total-time,
+                http-version=active-stream.http-version
+            )
+            response = completed-response
+            if __fail-on-error && !completed-response.ok {
+                throw HTTPError(completed-response.status, completed-response.body, completed-response.headers)
+            }
+        } catch e: RuntimeError {
+            error = e
+        }
+        active-stream.close()
+        __stream = nil
+    }
+
+    done -> Bool { __stream == nil }
+    ok -> Bool { done && error == nil && response != nil && response.ok }
+
+    unwrap() -> Response {
+        if let $failure = error { throw failure }
+        response ?? throw RuntimeError('transfer has not completed')
+    }
+
+    cancel() {
+        if let $stream = __stream { stream.close(); __stream = nil }
+    }
+
+    handle -> Ptr[_] | nil {
+        let stream: StreamingSession = cast(__stream)
+        stream.handle
+    }
+}
+
+pub class MultiSession {
+    __configure: Function
+    __fail-on-error: Bool
+    __multi:   Ptr[_] | nil
+    __active:  Array[MultiTransfer]
+
+    init(configure: Function, fail-on-error: Bool = false,
+         max-host-connections: Int = 0, max-concurrent-streams: Int = 0) {
+        __configure = configure
+        __fail-on-error = fail-on-error
+        __active = []
+        __multi = curl_multi_init()
+        if __multi == nil { throw CURLMError(CURLM_INTERNAL_ERROR, 'curl_multi_init()') }
+
+        try {
+            /* Multiplexing is enabled by default in modern libcurl, but setting
+             * it explicitly documents the contract and supports older builds. */
+            __setopt-long(CURLMOPT_PIPELINING, CURLPIPE_MULTIPLEX)
+            if max-host-connections > 0 {
+                __setopt-long(CURLMOPT_MAX_HOST_CONNECTIONS, max-host-connections)
+            }
+            if max-concurrent-streams > 0 {
+                __setopt-long(CURLMOPT_MAX_CONCURRENT_STREAMS, max-concurrent-streams)
+            }
+        } catch e {
+            curl_multi_cleanup(__multi)
+            __multi = nil
+            throw e
+        }
+    }
+
+    __setopt-long(option: Int, value: Int) {
+        let res = curl_multi_setopt(__multi, option, (c.long, value))
+        if res != CURLM_OK { throw CURLMError(res, 'curl_multi_setopt()') }
+    }
+
+    add(opts: RequestOptions, context: Any = nil) -> MultiTransfer {
+        if __multi == nil { throw RuntimeError('multi session is closed') }
+        let stream = StreamingSession(__multi)
+        let url = __configure(opts, stream)
+        /* Do not open a speculative extra connection while ALPN on the first
+         * transfer is still deciding whether the origin supports HTTP/2. */
+        stream.setopt-long(CURLOPT_PIPEWAIT, 1, 'CURLOPT_PIPEWAIT')
+        stream.start()
+        let transfer = MultiTransfer(
+            stream,
+            url,
+            context=context,
+            fail-on-error=opts.fail-on-error || __fail-on-error
+        )
+        __active.push(transfer)
+        transfer
+    }
+
+    completed*() {
+        if __multi == nil { throw RuntimeError('multi session is closed') }
+        let running = c.auto(c.box(c.int))
+        let queued = c.auto(c.box(c.int))
+
+        while #__active > 0 {
+            let res = curl_multi_perform(__multi, running)
+            if res != CURLM_OK { throw CURLMError(res, 'curl_multi_perform()') }
+            while let $raw = curl_multi_info_read(__multi, queued) {
+                let msg = CURLMsg(raw)
+                if msg.msg != CURLMSG_DONE { continue }
+                let matched = false
+                for transfer, i in __active {
+                    if transfer.handle == msg.easy_handle {
+                        matched = true
+                        __active.pop(i)
+                        transfer.complete(msg.result)
+                        yield transfer
+                        break
+                    }
+                }
+                if !matched {
+                    throw CURLMError(CURLM_INTERNAL_ERROR, 'unrecognized completed easy handle')
+                }
+            }
+
+            if #__active > 0 {
+                let numfds = c.auto(c.box(c.int))
+                res = curl_multi_poll(__multi, nil, 0, 1000, numfds)
+                if res != CURLM_OK { throw CURLMError(res, 'curl_multi_poll()') }
+            }
+        }
+    }
+
+    close() {
+        if __multi == nil { return }
+        for transfer in __active { transfer.cancel() }
+        __active = []
+        curl_multi_cleanup(__multi)
+        __multi = nil
+    }
+
+    __drop__() { close() }
+    active -> Int { #__active }
 }
 
 /* ============================================================================
