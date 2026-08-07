@@ -300,8 +300,8 @@ fn hex-to-rgb(hex: String) -> (Int, Int, Int) {
         (r, g, b)
     } else {
         let r = int("0x{h[;2]}")
-        let g = int("0x{h[2;2]}")
-        let b = int("0x{h[4;2]}")
+        let g = int("0x{h[2;4]}")
+        let b = int("0x{h[4;6]}")
         (r, g, b)
     }
 }

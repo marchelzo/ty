@@ -59,7 +59,7 @@ fn _sig-type(sig: String, i: Int = 0) -> (_, Int) {
         let j = i + 1
         while sig[j] != ')' {
             let next = _skip-one(sig, j)
-            let r: _ = _sig-type(sig[j; next - j])
+            let r: _ = _sig-type(sig[j;next])
             ts.push(r.0)
             j = next
         }
@@ -85,11 +85,11 @@ fn _read-struct(sig: String, msg, i: Int) {
     let j = i
     while sig[j] != ')' {
         let next = _skip-one(sig, j)
-        let r: _ = _sig-read(sig[j; next - j], m-id)
+        let r: _ = _sig-read(sig[j;next], m-id)
         fields.push(r.0)
         j = next
     }
-    let $inner = ty.String(sig[i; j - i])
+    let $inner = ty.String(sig[i;j])
     let tup = ty.Record(
         fields.map(f -> ty.RecordEntry(item: f))
     )
@@ -115,21 +115,21 @@ fn _sig-read(sig: String, msg: _, i: Int = 0) {
         return (_msg-call(
             msg, 'readDict',
             ty.String(sig[i + 2]),
-            ty.String(sig[j; k - j])
+            ty.String(sig[j;k])
         ), k + 1)
     }
 
     if ch == 'a' && sig[i + 1] == '(' {
         let end = _skip-one(sig, i + 1)
-        let $esig = ty.String(sig[i + 1; end - i - 1])
-        let $inner-sig = ty.String(sig[i + 2; end - i - 3])
+        let $esig = ty.String(sig[i + 1;end])
+        let $inner-sig = ty.String(sig[i + 2;end - 1])
         let $msg-expr = msg
         let m-id = ty.Id(name: '__msg')
         let inner-fields = []
         let j = i + 2
         while sig[j] != ')' {
             let next = _skip-one(sig, j)
-            let r: _ = _sig-read(sig[j; next - j], m-id)
+            let r: _ = _sig-read(sig[j;next], m-id)
             inner-fields.push(r.0)
             j = next
         }
@@ -157,7 +157,7 @@ fn _sig-read(sig: String, msg: _, i: Int = 0) {
         let (_, j) = _sig-type(sig, i + 1)
         return (_msg-call(
             msg, 'readArray',
-            ty.String(sig[i + 1; j - i - 1])
+            ty.String(sig[i + 1;j])
         ), j)
     }
 
@@ -430,9 +430,9 @@ fn _gen-method(
     let j = 0
     while j < #out {
         let next = _skip-one(out, j)
-        let r: _ = _sig-type(out[j; next - j])
+        let r: _ = _sig-type(out[j;next])
         types.push(r.0)
-        let rd: _ = _sig-read(out[j; next - j], m-id)
+        let rd: _ = _sig-read(out[j;next], m-id)
         reads.push(rd.0)
         j = next
     }
@@ -479,10 +479,10 @@ fn _gen-signal(
     let j = 0
     while j < #full-sig {
         let next = _skip-one(full-sig, j)
-        let r: _ = _sig-type(full-sig[j; next - j])
+        let r: _ = _sig-type(full-sig[j;next])
         types.push(r.0)
         let rd: _ = _sig-read(
-            full-sig[j; next - j], m-id
+            full-sig[j;next], m-id
         )
         reads.push(rd.0)
         j = next

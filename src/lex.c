@@ -896,8 +896,8 @@ lex_tyx(Ty *ty)
                                 end = NULL;
                                 for (int i = 0; i < countof(entities); ++i) {
                                         if (
-                                                (strlen(entities[i].key) == (semi - SRC))
-                                             && (strncmp(SRC, entities[i].key, semi - SRC) == 0)
+                                                (strlen(entities[i].key) == (semi - (SRC + 1)))
+                                             && (strncmp(SRC + 1, entities[i].key, semi - (SRC + 1)) == 0)
                                         ) {
                                                 end = &entities[i].val;
                                                 break;
@@ -908,8 +908,8 @@ BadEntity:
                                         error(
                                                 ty,
                                                 "unknown entity in tyx literal: &%.*s;",
-                                                (int)(semi - SRC),
-                                                SRC
+                                                (int)(semi - (SRC + 1)),
+                                                SRC + 1
                                         );
                                 }
                                 avP(text, *end);
@@ -1003,13 +1003,13 @@ lexregex(Ty *ty, bool strict)
 
 Unterminated:
         if (!strict) {
-                return mktoken(ty, TOKEN_ERROR);
+                return mktoken(ty, TOKEN_UNTERMINATED_REGEX);
         }
         error(ty, "unterminated regex literal");
 
 BadFlags:
         if (!strict) {
-                return mktoken(ty, TOKEN_ERROR);
+                return mktoken(ty, TOKEN_INVALID_REGEX_FLAGS);
         }
         error(ty, "invalid regex flags");
 }
@@ -1384,7 +1384,7 @@ skipcomment(Ty *ty)
 }
 
 static Token
-saferegex(Ty *ty)
+saferegex(Ty *ty, bool defer_error)
 {
         LexState save = state;
         Token t = lexregex(ty, false);
@@ -1393,6 +1393,10 @@ saferegex(Ty *ty)
              || ((t.start.line != t.end.line) && (t.regex->pattern[0] == ' '))
         ) {
                 state = save;
+                if (defer_error) {
+                        nextchar(ty);
+                        return mktoken(ty, t.type);
+                }
                 return mktoken(ty, nextchar(ty));
         } else {
                 return t;
@@ -1456,9 +1460,9 @@ Begin:
         } else if (ctx == LEX_NAME) {
                 return lexname(ty);
         } else if (state.in_pp && C(0) == '/') {
-                return saferegex(ty);
+                return saferegex(ty, false);
         } else if (ctx == LEX_PREFIX && C(0) == '/') {
-                return lexregex(ty, true);
+                return saferegex(ty, true);
         } else if (haveid(ty)) {
                 return lexword(ty);
         } else if (C(0) == ':' && C(1) == ':' && !contains(OperatorCharset, C(2))) {

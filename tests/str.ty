@@ -429,14 +429,17 @@ pub fn bslice() {
 
 pub fn slice-syntax() {
     assert('abcde'[0;3] == 'abc')
-    assert('abcde'[1;3] == 'bcd')
+    assert('abcde'[1;3] == 'bc')
     assert('abcde'[1;] == 'bcde')
     assert('abcde'[;3] == 'abc')
     assert('abcde'[-2;] == 'de')
     assert('abcde'[;-1] == 'abcd')
-    assert('abcde'[2;2] == 'cd')
-    try { 'abcde'[0;5;2]; assert(false, 'expected exception') }
-    catch _ { }
+    assert('abcde'[2;2] == '')
+    assert('abcde'[0;5;2] == 'ace')
+    assert('abcde'[1;5;2] == 'bd')
+    assert('abcde'[;;-1] == 'edcba')
+    assert('abcde'[4;1;-1] == 'dcb')
+    assert('àbçdé'[1;5;2] == 'bd')
 }
 
 pub fn string-offset() {
