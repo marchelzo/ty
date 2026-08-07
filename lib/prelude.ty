@@ -1048,7 +1048,7 @@ class String : Iterable[String], IntoPtr[Int] {
     size() -> Int;
     width() -> Int;
 
-    slice(i: Int, j: ?Int) -> String;
+    slice(i: Int, j: ?Int, k: ?Int) -> String;
     bslice(i: Int, j: ?Int) -> String;
 
     to-i -> Int { ::int(self, 0) }
@@ -1126,11 +1126,8 @@ class String : Iterable[String], IntoPtr[Int] {
         bslice(i, j - i)
     }
 
-    [;;](i=0, j=#self, k: Int = 1) -> String {
-        if k != 1 {
-            throw ValueError('String slicing with step is not supported')
-        }
-        slice(i, j)
+    [;;](i: Int = 0, j: Int | nil = nil, k: Int = 1) -> String {
+        slice(i, j, k)
     }
 
     lower?() {
@@ -2963,7 +2960,7 @@ fn uuid4() {
 
     let hex = b.hex()
 
-    "{hex[0;8]}-{hex[8;4]}-{hex[12;4]}-{hex[16;4]}-{hex[20;12]}"
+    "{hex[0;8]}-{hex[8;12]}-{hex[12;16]}-{hex[16;20]}-{hex[20;32]}"
 }
 
 fn uuid7() {
@@ -2983,7 +2980,7 @@ fn uuid7() {
 
     let hex = b.hex()
 
-    "{hex[0;8]}-{hex[8;4]}-{hex[12;4]}-{hex[16;4]}-{hex[20;12]}"
+    "{hex[0;8]}-{hex[8;12]}-{hex[12;16]}-{hex[16;20]}-{hex[20;32]}"
 }
 
 class BaseLock {

@@ -90,8 +90,8 @@ fn parse-basic-date(s: String) -> PlainDate {
     }
     PlainDate(
         parse-int(s[;4], 'year'),
-        parse-int(s[4;2], 'month'),
-        parse-int(s[6;2], 'day')
+        parse-int(s[4;6], 'month'),
+        parse-int(s[6;8], 'day')
     )
 }
 
@@ -101,11 +101,11 @@ fn parse-basic-date-time(s: String) -> PlainDateTime {
     }
     PlainDateTime(
         parse-int(s[;4], 'year'),
-        parse-int(s[4;2], 'month'),
-        parse-int(s[6;2], 'day'),
-        parse-int(s[9;2], 'hour'),
-        parse-int(s[11;2], 'minute'),
-        parse-int(s[13;2], 'second')
+        parse-int(s[4;6], 'month'),
+        parse-int(s[6;8], 'day'),
+        parse-int(s[9;11], 'hour'),
+        parse-int(s[11;13], 'minute'),
+        parse-int(s[13;15], 'second')
     )
 }
 
@@ -146,9 +146,9 @@ pub class UTCOffset {
         if (#s != 5 && #s != 7) || (s[0] != '+' && s[0] != '-') {
             throw ICalError("invalid UTC-OFFSET value: '{s}'")
         }
-        let hours = parse-int(s[1;2], 'UTC offset hour')
-        let minutes = parse-int(s[3;2], 'UTC offset minute')
-        let seconds = if #s == 7 { parse-int(s[5;2], 'UTC offset second') } else { 0 }
+        let hours = parse-int(s[1;3], 'UTC offset hour')
+        let minutes = parse-int(s[3;5], 'UTC offset minute')
+        let seconds = if #s == 7 { parse-int(s[5;7], 'UTC offset second') } else { 0 }
         if hours > 23 || minutes > 59 || seconds > 59 {
             throw ICalError("invalid UTC-OFFSET value: '{s}'")
         }
@@ -248,7 +248,7 @@ fn split-unquoted(s: String, separator: String) -> Array[String] {
 }
 
 fn unquote-parameter(s: String) -> String {
-    if #s >= 2 && s.starts?('"') && s.ends?('"') { s[1;#s - 2] } else { s }
+    if #s >= 2 && s.starts?('"') && s.ends?('"') { s[1;-1] } else { s }
 }
 
 fn quote-parameter(s: String) -> String {

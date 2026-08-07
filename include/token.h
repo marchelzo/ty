@@ -78,6 +78,8 @@ enum {
         TOKEN_COMMENT,
         TOKEN_DIRECTIVE,
         TOKEN_ERROR,
+        TOKEN_UNTERMINATED_REGEX,
+        TOKEN_INVALID_REGEX_FLAGS,
         TOKEN_TYPE_MAX
 };
 

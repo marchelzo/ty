@@ -1772,3 +1772,88 @@ pub fn clipboard-image() -> ?ClipboardImage {
 pub fn clipboard-has-image?() -> Bool {
     clipboard-image() != nil
 }
+
+
+// ---------------------------------------------------------------------------
+// Fast bulk directory metadata (macOS 10.10+)
+// ---------------------------------------------------------------------------
+// getattrlistbulk returns names, vnode types and allocated sizes for many
+// directory children in one syscall. This is substantially cheaper than one
+// lstat call per entry during large filesystem inventories.
+const libsystem = c.dlopen('/usr/lib/libSystem.B.dylib')
+               ?? throw RuntimeError('apple: failed to load libSystem')
+
+C! pub struct BulkAttrList {
+    c.u16 bitmapcount;
+    c.u16 reserved;
+    c.u32 commonattr;
+    c.u32 volattr;
+    c.u32 dirattr;
+    c.u32 fileattr;
+    c.u32 forkattr;
+}
+
+C! libsystem fn {
+    int getattrlistbulk(int dirfd, void *attrlist, void *attributeBuffer,
+                        unsigned long bufferSize, unsigned long long options);
+}
+
+/**
+ * List a directory using getattrlistbulk.
+ *
+ * Returns `(name, vnode-type, allocated-bytes)` records. Names `.` and `..`
+ * are never returned. The allocation is the filesystem estimate and may
+ * overstate bytes freed for APFS clones. An empty result also represents an
+ * unreadable/unsupported directory, so callers should retain a portable
+ * readdir/lstat fallback.
+ */
+pub fn bulk-directory-entries(path: String, buffer-size: Int = 262144)
+        -> [{name: String, type: Int, allocated: Int}] {
+    let fd = os.open(path, os.O_RDONLY)
+    if fd == -1 { return [] }
+    defer os.close(fd)
+
+    // ATTR_CMN_{NAME,OBJTYPE,RETURNED_ATTRS}, ATTR_{DIR,FILE}_ALLOCSIZE.
+    let attrs = BulkAttrList(
+        bitmapcount: 5,
+        reserved: 0,
+        commonattr: 0x80000009,
+        volattr: 0,
+        dirattr: 0x00000008,
+        fileattr: 0x00000004,
+        forkattr: 0
+    )
+
+    let cap = max(4096, buffer-size)
+    let buf = c.new(c.u8, cap)
+    defer c.free(buf)
+    let out: [{name: String, type: Int, allocated: Int}] = []
+
+    while true {
+        let count = getattrlistbulk(fd, attrs.get(), buf, cap, 0)
+        if count <= 0 { break }
+        let off = 0
+        for _ in ..count {
+            let record = buf + off
+            let length = c.load(c.u32, record)
+            if length < 36 || off + length > cap { return out }
+            // Returned attributes occupy 20 bytes after the record length.
+            // The name attrreference is at +24 and is relative to itself.
+            let name-off = c.load(c.i32, record + 24)
+            let name-len = c.load(c.u32, record + 28)
+            let vnode-type = c.load(c.u32, record + 32)
+            let alloc-off = 36 // getattrlistbulk records use 4-byte packing
+            let allocation = if length >= alloc-off + 8 {
+                c.load(c.i64, record + alloc-off)
+            } else { 0 }
+            if name-len > 0 && name-off >= 0 && 24 + name-off + name-len <= length {
+                let name = c.str(record + 24 + name-off, name-len - 1)
+                if name != '.' && name != '..' {
+                    out.push({name, type: vnode-type, allocated: max(0, allocation)})
+                }
+            }
+            off += length
+        }
+    }
+    out
+}

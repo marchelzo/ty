@@ -214,7 +214,64 @@ string_bslice(Ty *ty, Value *string, int argc, Value *kwargs)
 Value
 string_slice(Ty *ty, Value *string, int argc, Value *kwargs)
 {
-        ASSERT_ARGC("String.slice()", 1, 2);
+        ASSERT_ARGC("String.slice()", 1, 2, 3);
+
+        if (argc == 3) {
+                Value _i = ARGx(0, VALUE_INTEGER);
+                Value _j = ARGx(1, VALUE_INTEGER, VALUE_NIL);
+                Value _k = ARGx(2, VALUE_INTEGER, VALUE_NIL);
+
+                u8 const *str = ss(*string);
+                isize sz = sN(*string);
+                isize n = rune_count(str, sz);
+                isize i = _i.z;
+                isize k = (_k.type == VALUE_NIL) ? 1 : (_k.z + !_k.z);
+
+                vec(isize) offsets = {0};
+                vec(u8) result = {0};
+
+                SCRATCH_SAVE();
+
+                svP(offsets, 0);
+                for (isize off = 0; off < sz;) {
+                        i32 rune;
+                        isize bytes = utf8proc_iterate(str + off, sz - off, &rune);
+                        off += (bytes > 0) ? bytes : 1;
+                        if (bytes > 0) {
+                                svP(offsets, off);
+                        }
+                }
+
+                if (k < 0) {
+                        isize j = (_j.type == VALUE_NIL) ? 0 : _j.z;
+                        isize start = min((i - 1 < 0) ? (i - 1 + n) : (i - 1), n - 1);
+                        isize stop = max((j < 0) ? (j + n) : j, 0);
+                        for (isize ix = start; ix >= stop; ix += k) {
+                                if (ix >= 0 && ix < n) {
+                                        svPn(result, str + offsets.items[ix],
+                                             offsets.items[ix + 1] - offsets.items[ix]);
+                                }
+                        }
+                } else {
+                        isize j = (_j.type == VALUE_NIL) ? n : _j.z;
+                        isize start = max((i < 0) ? (i + n) : i, 0);
+                        isize stop = min((j < 0) ? (j + n) : j, n);
+                        for (isize ix = start; ix < stop; ix += k) {
+                                if (ix >= 0 && ix < n) {
+                                        svPn(result, str + offsets.items[ix],
+                                             offsets.items[ix + 1] - offsets.items[ix]);
+                                }
+                        }
+                }
+
+                Value slice = (vN(result) == 0)
+                            ? STRING_EMPTY
+                            : vSs(vv(result), vN(result));
+
+                SCRATCH_RESTORE();
+
+                return slice;
+        }
 
         u8 const *str = ss(*string);
         isize sz = sN(*string);

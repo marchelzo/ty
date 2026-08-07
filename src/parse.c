@@ -3435,6 +3435,18 @@ prefix_regex(Ty *ty)
 }
 
 static Expr *
+prefix_unterminated_regex(Ty *ty)
+{
+        die("unterminated regex literal");
+}
+
+static Expr *
+prefix_invalid_regex_flags(Ty *ty)
+{
+        die("invalid regex flags");
+}
+
+static Expr *
 prefix_array(Ty *ty)
 {
         setctx(LEX_INFIX);
@@ -4897,55 +4909,57 @@ get_prefix_parser(Ty *ty)
         setctx(LEX_PREFIX);
 
         switch (T0) {
-        case TOKEN_INTEGER:            return prefix_integer;
-        case TOKEN_REAL:               return prefix_real;
-        case TOKEN_STRING:             return prefix_string;
-        case TOKEN_REGEX:              return prefix_regex;
+        case TOKEN_INTEGER:             return prefix_integer;
+        case TOKEN_REAL:                return prefix_real;
+        case TOKEN_STRING:              return prefix_string;
+        case TOKEN_REGEX:               return prefix_regex;
+        case TOKEN_UNTERMINATED_REGEX:  return prefix_unterminated_regex;
+        case TOKEN_INVALID_REGEX_FLAGS: return prefix_invalid_regex_flags;
 
-        case '"':                      return prefix_ss;
-        case TOKEN_DYN_REGEX:          return prefix_dyn_regex;
+        case '"':                       return prefix_ss;
+        case TOKEN_DYN_REGEX:           return prefix_dyn_regex;
 
-        case TOKEN_IDENTIFIER:         return prefix_identifier;
-        case TOKEN_KEYWORD:            goto Keyword;
+        case TOKEN_IDENTIFIER:          return prefix_identifier;
+        case TOKEN_KEYWORD:             goto Keyword;
 
-        case '&':                      return prefix_implicit_method;
-        case TOKEN_PERCENT:            return prefix_percent;
-        case '#':                      return prefix_hash;
+        case '&':                       return prefix_implicit_method;
+        case TOKEN_PERCENT:             return prefix_percent;
+        case '#':                       return prefix_hash;
 
-        case '(':                      return prefix_parenthesis;
-        case '[':                      return prefix_array;
-        case '{':                      return prefix_record;
+        case '(':                       return prefix_parenthesis;
+        case '[':                       return prefix_array;
+        case '{':                       return prefix_record;
 
-        case '\\':                     return prefix_slash;
-        case '$':                      return prefix_dollar;
-        case '^':                      return prefix_carat;
-        case '>':                      return prefix_greater;
-        case '<':                      return prefix_tyx;
+        case '\\':                      return prefix_slash;
+        case '$':                       return prefix_dollar;
+        case '^':                       return prefix_carat;
+        case '>':                       return prefix_greater;
+        case '<':                       return prefix_tyx;
 
-        case TOKEN_TEMPLATE_BEGIN:     return prefix_template;
-        case '$$':                     return prefix_template_expr;
+        case TOKEN_TEMPLATE_BEGIN:      return prefix_template;
+        case '$$':                      return prefix_template_expr;
 
-        case TOKEN_DOT_DOT:            return prefix_dot_dot;
-        case TOKEN_DOT_DOT_DOT:        return prefix_dot_dot_dot;
+        case TOKEN_DOT_DOT:             return prefix_dot_dot;
+        case TOKEN_DOT_DOT_DOT:         return prefix_dot_dot_dot;
 
-        case TOKEN_QUESTION:           return prefix_is_nil;
-        case TOKEN_BANG:               return prefix_bang;
-        case '@':                      return prefix_at;
-        case TOKEN_MINUS:              return prefix_minus;
-        case TOKEN_INC:                return prefix_inc;
-        case TOKEN_DEC:                return prefix_dec;
-        case TOKEN_USER_OP:            return prefix_user_op;
-        case '~':                      return prefix_complement;
+        case TOKEN_QUESTION:            return prefix_is_nil;
+        case TOKEN_BANG:                return prefix_bang;
+        case '@':                       return prefix_at;
+        case TOKEN_MINUS:               return prefix_minus;
+        case TOKEN_INC:                 return prefix_inc;
+        case TOKEN_DEC:                 return prefix_dec;
+        case TOKEN_USER_OP:             return prefix_user_op;
+        case '~':                       return prefix_complement;
 
-        case TOKEN_ARROW:              return prefix_arrow;
+        case TOKEN_ARROW:               return prefix_arrow;
 
-        case '|':                      return prefix_bit_or;
+        case '|':                       return prefix_bit_or;
 
-        case TOKEN_STAR:               return prefix_star;
+        case TOKEN_STAR:                return prefix_star;
 
-        case TOKEN_EXPRESSION:         return prefix_expr;
+        case TOKEN_EXPRESSION:          return prefix_expr;
 
-        default:                       return NULL;
+        default:                        return NULL;
         }
 
 Keyword:
