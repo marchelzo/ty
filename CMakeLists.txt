@@ -261,6 +261,7 @@ set(_src_files
   src/highlight.c
   src/intern.c
   src/itable.c
+  src/inline.c
   src/jit.c
   src/json.c
   src/lex.c

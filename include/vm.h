@@ -381,6 +381,9 @@ vm_jit_neg(Ty *ty);
 void
 vm_jit_get_member(Ty *ty);
 
+Value
+vm_jit_member_access(Ty *ty, int z);
+
 void
 vm_jit_try_member_access(Ty *ty, int z);
 

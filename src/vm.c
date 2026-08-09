@@ -11652,6 +11652,63 @@ vm_jit_record_rest(Ty *ty, Value *tos, Value *target, i32 const *excluded_ids)
         return true;
 }
 
+Value
+vm_jit_member_access(Ty *ty, int z)
+{
+        Value receiver = peek();
+
+        if (receiver.type == VALUE_OBJECT) {
+                u16 offset = FastReadOffset(ty, &receiver, z);
+                if (offset != OFF_NOT_FOUND) {
+                        int kind = offset >> OFF_SHIFT;
+                        int index = offset & OFF_MASK;
+                        Value *callee;
+                        Value *self;
+
+                        switch (kind) {
+                        case OFF_FIELD:
+                                pop();
+                                return receiver.object->slots[index];
+
+                        case OFF_GETTER:
+                                callee = v_(
+                                        class_get(ty, receiver.class)->getters.values,
+                                        index
+                                );
+                                exec_fn(ty, callee, &receiver, 0, NULL);
+                                receiver = pop();
+                                pop();
+                                return receiver;
+
+                        case OFF_GETTER_X:
+                                callee = &receiver.object->slots[index];
+                                exec_fn(ty, callee, &receiver, 0, NULL);
+                                receiver = pop();
+                                pop();
+                                return receiver;
+
+                        case OFF_METHOD:
+                                callee = v_(
+                                        class_get(ty, receiver.class)->methods.values,
+                                        index
+                                );
+                                self = uAo(sizeof *self, GC_VALUE);
+                                *self = receiver;
+                                pop();
+                                return METHOD(z, callee, self);
+                        }
+                }
+        }
+
+        Value value = GetMember(ty, z, true, true);
+        if (UNLIKELY(value.type == VALUE_NONE)) {
+                xpush(*vZ(STACK));
+                BadFieldAccess(ty, top(), z);
+                UNREACHABLE();
+        }
+        return value;
+}
+
 void
 vm_jit_get_member(Ty *ty)
 {
@@ -11660,26 +11717,7 @@ vm_jit_get_member(Ty *ty)
                 z = -(z + 1);
         }
 
-        Value v;
-
-        if (IsNone((v = LoadFieldFast(ty, z)))) {
-                v = GetMember(ty, z, true, true);
-        }
-
-        switch (v.type) {
-        case VALUE_BREAK:
-                vm_exec(ty, IP);
-                break;
-
-        default:
-                xpush(v);
-                break;
-
-        case VALUE_NONE:
-                xpush(*vZ(STACK));
-                BadFieldAccess(ty, top(), z);
-                UNREACHABLE();
-        }
+        xpush(vm_jit_member_access(ty, z));
 }
 
 void

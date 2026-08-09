@@ -26,6 +26,8 @@
 #include "blob.h"
 #include "queue.h"
 #include "itable.h"
+#include "inline.h"
+#include "operators.h"
 #include "compiler.h"
 
 char JIT;
@@ -985,13 +987,9 @@ jit_rt_member(Ty *ty, Value *result, Value *obj, int member_id)
         }
 
         STAT(member_slow);
-
-        Value v = GetMember(ty, member_id, true, true);
-        if (UNLIKELY(v.type == VALUE_NONE)) {
-                v = NIL;
-        }
-
-        *v_(STACK, idx) = v;
+        Value value = vm_jit_member_access(ty, member_id);
+        vN(STACK) = idx + 1;
+        *v_(STACK, idx) = value;
 }
 
 static void
@@ -1888,6 +1886,7 @@ typedef struct {
 
         // JIT trampoline: track call sites for resume dispatch
         int call_site_count;
+        int inline_cost;
         int resume_labels[MAX_BC_OPS]; // DynASM labels for resume points
 
         // Try/catch/finally tracking
@@ -3734,6 +3733,24 @@ bc_resolve_method(JitCtx *ctx, Class *cls, int member_id)
         return v_(cls->methods.values, method_idx);
 }
 
+static Value *
+bc_resolve_getter(Class *cls, int member_id)
+{
+        if (member_id < 0 || member_id >= (int)vN(cls->offsets_r)) {
+                return NULL;
+        }
+        u16 offset = v__(cls->offsets_r, member_id);
+        if ((offset >> OFF_SHIFT) != OFF_GETTER) {
+                return NULL;
+        }
+        int getter = offset & OFF_MASK;
+        if (getter >= vN(cls->getters.values)) {
+                return NULL;
+        }
+        Value *value = v_(cls->getters.values, getter);
+        return value->type == VALUE_FUNCTION ? value : NULL;
+}
+
 static BuiltinMethod *
 bc_resolve_builtin_method(Class *cls, int member_id, int *value_type)
 {
@@ -3780,6 +3797,343 @@ bc_resolve_builtin_method(Class *cls, int member_id, int *value_type)
         }
 
         return func;
+}
+
+typedef struct {
+        Class *class;
+        u16 offset;
+} BcInlineField;
+
+static int
+bc_inline_local_pos(TyInlinePlan const *plan, TyInlineKind kind, int base,
+                    int self_pos, int local)
+{
+        if (local >= 0 && local < plan->argc) {
+                return base + local;
+        }
+        if (kind == TY_INLINE_METHOD && local == plan->self_local) {
+                return self_pos;
+        }
+        return -1;
+}
+
+static bool
+bc_resolve_inline_fields(JitCtx *ctx, TyInlinePlan const *plan, TyInlineKind kind,
+                         int base, int self_pos, Class *self_class,
+                         BcInlineField fields[TY_INLINE_MAX_INSNS])
+{
+        for (int i = 0; i < plan->count; ++i) {
+                TyInlineInsn const *insn = &plan->insns[i];
+                if (insn->op != TY_INLINE_FIELD) {
+                        continue;
+                }
+
+                int pos = bc_inline_local_pos(plan, kind, base, self_pos, insn->local);
+                if (pos < 0 || pos >= MAX_BC_OPS) {
+                        return false;
+                }
+
+                Class *class = kind == TY_INLINE_METHOD && insn->local == plan->self_local
+                             ? self_class
+                             : expected_class_of(ctx->ty, ctx->op_types[pos]);
+                if (class == NULL || insn->member >= (int)vN(class->offsets_r)) {
+                        return false;
+                }
+
+                u16 offset = v__(class->offsets_r, insn->member);
+                if (offset == OFF_NOT_FOUND || (offset >> OFF_SHIFT) != OFF_FIELD) {
+                        return false;
+                }
+
+                fields[i].class = class;
+                fields[i].offset = offset;
+        }
+
+        return true;
+}
+
+static bool
+bc_inline_plan_types(JitCtx *ctx, Value const *callee, TyInlinePlan const *plan)
+{
+        bool arithmetic = false;
+        for (int i = 0; i < plan->count; ++i) {
+                u8 op = plan->insns[i].op;
+                arithmetic |= op == TY_INLINE_ADD
+                           || op == TY_INLINE_SUB
+                           || op == TY_INLINE_MUL;
+        }
+        if (!arithmetic) {
+                return true;
+        }
+
+        Type *function = type_resolve_var(type_of(callee));
+        if (!IsFuncT(function)) {
+                return false;
+        }
+        Class *result = expected_class_of(ctx->ty, function->rt);
+        return result != NULL && result->i == CLASS_INT;
+}
+
+static void
+bc_emit_inline_field(JitCtx *ctx, int source_pos, int dest_pos, int member,
+                     BcInlineField const *field, int lbl_slow)
+{
+        dasm_State **asm = &ctx->asm;
+        int source_off = OP_OFF(source_pos);
+        int dest_off = OP_OFF(dest_pos);
+        int items_off = (int)offsetof(Class, offsets_r)
+                      + (int)offsetof(u16Vector, items);
+        int count_off = (int)offsetof(Class, offsets_r)
+                      + (int)offsetof(u16Vector, count);
+
+        jit_emit_ldrb(asm, BC_S0, BC_OPS, source_off + VAL_OFF_TYPE);
+        jit_emit_cmp_ri(asm, BC_S0, VALUE_OBJECT);
+        jit_emit_branch_ne(asm, lbl_slow);
+        jit_emit_ldr64(asm, BC_S2, BC_OPS, source_off + VAL_OFF_OBJECT);
+        jit_emit_ldr64(asm, BC_S3, BC_S2, OBJ_OFF_CLASS);
+        jit_emit_load_imm(asm, BC_S0, (iptr)field->class);
+        jit_emit_cmp_rr(asm, BC_S3, BC_S0);
+        jit_emit_branch_ne(asm, lbl_slow);
+
+        jit_emit_ldr64(asm, BC_S0, BC_S3, count_off);
+        jit_emit_load_imm(asm, BC_S1, member);
+        jit_emit_cmp_rr(asm, BC_S0, BC_S1);
+        jit_emit_branch_ule(asm, lbl_slow);
+        jit_emit_ldr64(asm, BC_S3, BC_S3, items_off);
+        jit_emit_load_imm(asm, BC_S1, (i64)(u32)member * sizeof (u16));
+        jit_emit_ldr16_index(asm, BC_S0, BC_S3, BC_S1);
+        jit_emit_load_imm(asm, BC_S1, field->offset);
+        jit_emit_cmp_rr(asm, BC_S0, BC_S1);
+        jit_emit_branch_ne(asm, lbl_slow);
+
+        int slot_off = OBJ_OFF_SLOTS + (field->offset & OFF_MASK) * VALUE_SIZE;
+        jit_emit_load_imm(asm, BC_S1, slot_off);
+        jit_emit_add(asm, BC_S2, BC_S2, BC_S1);
+        bc_copy_value(ctx, BC_OPS, dest_off, BC_S2, 0);
+}
+
+static bool
+bc_emit_inline_plan(JitCtx *ctx, TyInlinePlan const *plan, TyInlineKind kind,
+                    int base, int self_pos, int scratch, Class *self_class,
+                    int lbl_slow)
+{
+        if (scratch + plan->max_stack > MAX_BC_OPS) {
+                return false;
+        }
+
+        BcInlineField fields[TY_INLINE_MAX_INSNS] = {0};
+        if (!bc_resolve_inline_fields(ctx, plan, kind, base, self_pos,
+                                      self_class, fields)) {
+                return false;
+        }
+
+        dasm_State **asm = &ctx->asm;
+        int depth = 0;
+
+        for (int i = 0; i < plan->count; ++i) {
+                TyInlineInsn const *insn = &plan->insns[i];
+
+                switch (insn->op) {
+                case TY_INLINE_LOCAL:
+                {
+                        int source = bc_inline_local_pos(plan, kind, base, self_pos,
+                                                         insn->local);
+                        bc_copy_value(ctx, BC_OPS, OP_OFF(scratch + depth),
+                                      BC_OPS, OP_OFF(source));
+                        depth++;
+                        break;
+                }
+
+                case TY_INLINE_FIELD:
+                {
+                        int source = bc_inline_local_pos(plan, kind, base, self_pos,
+                                                         insn->local);
+                        bc_emit_inline_field(ctx, source, scratch + depth, insn->member,
+                                             &fields[i], lbl_slow);
+                        depth++;
+                        break;
+                }
+
+                case TY_INLINE_INTEGER:
+                {
+                        int off = OP_OFF(scratch + depth);
+                        jit_emit_load_imm(asm, BC_S0, 0);
+                        jit_emit_stp64(asm, BC_S0, BC_S0, BC_OPS, off);
+                        jit_emit_stp64(asm, BC_S0, BC_S0, BC_OPS, off + 16);
+                        jit_emit_load_imm(asm, BC_S0, VALUE_INTEGER);
+                        jit_emit_strb(asm, BC_S0, BC_OPS, off + VAL_OFF_TYPE);
+                        jit_emit_load_imm(asm, BC_S0, insn->integer);
+                        jit_emit_str64(asm, BC_S0, BC_OPS, off + VAL_OFF_Z);
+                        depth++;
+                        break;
+                }
+
+                case TY_INLINE_ADD:
+                case TY_INLINE_SUB:
+                case TY_INLINE_MUL:
+                {
+                        int left = OP_OFF(scratch + depth - 2);
+                        int right = OP_OFF(scratch + depth - 1);
+                        jit_emit_ldrb(asm, BC_S0, BC_OPS, left + VAL_OFF_TYPE);
+                        jit_emit_cmp_ri(asm, BC_S0, VALUE_INTEGER);
+                        jit_emit_branch_ne(asm, lbl_slow);
+                        jit_emit_ldrb(asm, BC_S0, BC_OPS, right + VAL_OFF_TYPE);
+                        jit_emit_cmp_ri(asm, BC_S0, VALUE_INTEGER);
+                        jit_emit_branch_ne(asm, lbl_slow);
+                        jit_emit_ldr64(asm, BC_S0, BC_OPS, left + VAL_OFF_Z);
+                        jit_emit_ldr64(asm, BC_S1, BC_OPS, right + VAL_OFF_Z);
+                        if (insn->op == TY_INLINE_ADD) {
+                                jit_emit_add(asm, BC_S0, BC_S0, BC_S1);
+                        } else if (insn->op == TY_INLINE_SUB) {
+                                jit_emit_sub(asm, BC_S0, BC_S0, BC_S1);
+                        } else {
+                                jit_emit_mul(asm, BC_S0, BC_S0, BC_S1);
+                        }
+                        jit_emit_str64(asm, BC_S0, BC_OPS, left + VAL_OFF_Z);
+                        depth--;
+                        break;
+                }
+                }
+        }
+
+        if (depth != 1) {
+                return false;
+        }
+
+        bc_copy_value(ctx, BC_OPS, OP_OFF(base), BC_OPS, OP_OFF(scratch));
+        if (scratch + plan->max_stack > ctx->max_sp) {
+                ctx->max_sp = scratch + plan->max_stack;
+        }
+        return true;
+}
+
+static bool
+bc_emit_inline_getter(JitCtx *ctx, char const *op_ip, int member,
+                      Class *receiver_class, Value const *getter)
+{
+        TyInlinePlan plan;
+        if (!ty_inline_analyze(getter, TY_INLINE_METHOD, 0, &plan)
+            || !bc_inline_plan_types(ctx, getter, &plan)
+            || ctx->inline_cost + plan.count > TY_INLINE_MAX_COST) {
+                return false;
+        }
+
+        int base = ctx->sp - 1;
+        int self_pos = base;
+        int scratch = ctx->sp;
+        if (scratch + plan.max_stack > MAX_BC_OPS) {
+                return false;
+        }
+
+        BcInlineField fields[TY_INLINE_MAX_INSNS] = {0};
+        if (!bc_resolve_inline_fields(
+                ctx, &plan, TY_INLINE_METHOD, base, self_pos,
+                receiver_class, fields
+        )) {
+                return false;
+        }
+
+        ctx->inline_cost += plan.count;
+        dasm_State **asm = &ctx->asm;
+        int lbl_slow = bc_next_label(ctx);
+        int lbl_done = bc_next_label(ctx);
+        TyInlineTarget *target = ty_inline_getter_target(
+                receiver_class, member, getter
+        );
+
+        jit_emit_mov(asm, BC_A0, BC_TY);
+        jit_emit_add_imm(asm, BC_A1, BC_OPS, OP_OFF(self_pos));
+        jit_emit_load_imm(asm, BC_A2, (iptr)target);
+        jit_emit_load_imm(asm, BC_CALL, (iptr)ty_inline_guard_member);
+        jit_emit_call_reg(asm, BC_CALL);
+        jit_emit_cbz(asm, BC_RET, lbl_slow);
+
+        bool emitted = bc_emit_inline_plan(
+                ctx, &plan, TY_INLINE_METHOD, base, self_pos, scratch,
+                receiver_class, lbl_slow
+        );
+        ASSERT(emitted);
+        (void)emitted;
+        EMIT_STAT(jit_rt_stat_member_fast);
+        jit_emit_jump(asm, lbl_done);
+
+        jit_emit_label(asm, lbl_slow);
+        EMIT_SLOW1(op_ip, SLOW_MEMBER_ACCESS, BC_OPS, OP_OFF(base));
+        jit_emit_mov(asm, BC_A0, BC_TY);
+        jit_emit_add_imm(asm, BC_A1, BC_OPS, OP_OFF(base));
+        jit_emit_mov(asm, BC_A2, BC_A1);
+        jit_emit_load_imm(asm, BC_A3, member);
+        jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_member);
+        jit_emit_call_reg(asm, BC_CALL);
+
+        jit_emit_label(asm, lbl_done);
+        return true;
+}
+
+static bool
+bc_emit_inline_operator(JitCtx *ctx, int op, void *fallback)
+{
+        if (ctx->sp < 2) {
+                return false;
+        }
+
+        int left_pos = ctx->sp - 2;
+        int right_pos = ctx->sp - 1;
+        Class *left_class = expected_class_of(ctx->ty, ctx->op_types[left_pos]);
+        Class *right_class = expected_class_of(ctx->ty, ctx->op_types[right_pos]);
+        if (left_class == NULL || right_class == NULL) {
+                return false;
+        }
+
+        int ref = op_dispatch(ctx->ty, op, left_class->i, right_class->i);
+        if (ref < 0 || ref >= vN(Globals)) {
+                return false;
+        }
+
+        Value *callee = v_(Globals, ref);
+        TyInlinePlan plan;
+        if (!ty_inline_analyze(callee, TY_INLINE_OPERATOR, 2, &plan)
+            || !bc_inline_plan_types(ctx, callee, &plan)) {
+                return false;
+        }
+
+        BcInlineField fields[TY_INLINE_MAX_INSNS] = {0};
+        if (ctx->inline_cost + plan.count > TY_INLINE_MAX_COST
+            || ctx->sp + plan.max_stack > MAX_BC_OPS
+            || !bc_resolve_inline_fields(
+                    ctx, &plan, TY_INLINE_OPERATOR, left_pos, -1, NULL, fields
+               )) {
+                return false;
+        }
+
+        ctx->inline_cost += plan.count;
+        int lbl_slow = bc_next_label(ctx);
+        int lbl_done = bc_next_label(ctx);
+        TyInlineTarget *target = ty_inline_operator_target(
+                left_class, right_class, op, ref, callee
+        );
+        dasm_State **asm = &ctx->asm;
+
+        jit_emit_mov(asm, BC_A0, BC_TY);
+        jit_emit_add_imm(asm, BC_A1, BC_OPS, OP_OFF(left_pos));
+        jit_emit_add_imm(asm, BC_A2, BC_OPS, OP_OFF(right_pos));
+        jit_emit_load_imm(asm, BC_A3, (iptr)target);
+        jit_emit_load_imm(asm, BC_CALL, (iptr)ty_inline_guard_operator);
+        jit_emit_call_reg(asm, BC_CALL);
+        jit_emit_cbz(asm, BC_RET, lbl_slow);
+
+        bool emitted = bc_emit_inline_plan(
+                ctx, &plan, TY_INLINE_OPERATOR, left_pos, -1, ctx->sp,
+                NULL, lbl_slow
+        );
+        ASSERT(emitted);
+        (void)emitted;
+        jit_emit_jump(asm, lbl_done);
+
+        jit_emit_label(asm, lbl_slow);
+        bc_emit_arith(ctx, fallback);
+        jit_emit_label(asm, lbl_done);
+        return true;
 }
 
 #if JIT_RT_DEBUG
@@ -3862,74 +4216,122 @@ bc_emit_call_method(JitCtx *ctx, char const *op_ip, int z, int n, int nkw)
         // self is at ops[sp-1], result goes where args+self were
         int self_off = OP_OFF(ctx->sp - 1);
         int result_off = OP_OFF(ctx->sp - 1 - n); // replaces args+self with result
+        int inline_done = -1;
 
-        if (builtin_method != NULL) {
-                // Direct builtin call with type guard
-                jit_emit_mov(asm, BC_A0, BC_TY);
-                jit_emit_add_imm(asm, BC_A1, BC_OPS, result_off);
-                jit_emit_add_imm(asm, BC_A2, BC_OPS, self_off);
-                jit_emit_load_imm(asm, BC_A3, (iptr)builtin_method);
-                jit_emit_load_imm(asm, BC_A4, PACK32(builtin_vtype, z));
-                jit_emit_load_imm(asm, BC_A5, n);
-                jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_call_builtin_method);
-                jit_emit_call_reg(asm, BC_CALL);
-                DBG("CALL_METHOD (builtin fast path for %s)", M_NAME(z));
-        } else if (baked_method != NULL) {
-                // Check if the baked method is simple enough for fast trampoline
-                bool can_tramp = (rest_idx_of(baked_method) == -1)
-                              && (kwargs_idx_of(baked_method) == -1)
-                              && !is_starred(baked_method);
-                if (can_tramp) {
-                        // Fast trampoline path: skip xcall entirely
-                        // Sync to sp-1 (exclude self): callee's fp = vN - argc
-                        // must land on arg0, which is at op position sp-1-n
-                        jit_emit_sync_stack_count(asm, ctx->bound, ctx->sp - 1);
+        if (baked_method != NULL && nkw == 0) {
+                TyInlinePlan plan;
+                if (ty_inline_analyze(baked_method, TY_INLINE_METHOD, n, &plan)
+                    && bc_inline_plan_types(ctx, baked_method, &plan)) {
+                        BcInlineField fields[TY_INLINE_MAX_INSNS] = {0};
+                        bool supported = ctx->inline_cost + plan.count <= TY_INLINE_MAX_COST
+                                      && ctx->sp + plan.max_stack <= MAX_BC_OPS
+                                      && bc_resolve_inline_fields(
+                                                ctx, &plan, TY_INLINE_METHOD,
+                                                ctx->sp - 1 - n, ctx->sp - 1,
+                                                recv_cls, fields
+                                         );
+                        if (supported) {
+                                ctx->inline_cost += plan.count;
+                                int inline_slow = bc_next_label(ctx);
+                                inline_done = bc_next_label(ctx);
+                                TyInlineTarget *target = ty_inline_method_target(
+                                        recv_cls, z, baked_method
+                                );
 
-                        jit_emit_mov(asm, BC_A0, BC_TY);
-                        jit_emit_add_imm(asm, BC_A1, BC_OPS, self_off);
-                        jit_emit_load_imm(asm, BC_A2, (iptr)baked_method);
-                        jit_emit_load_imm(asm, BC_A3, recv_cls->i);
-                        jit_emit_load_imm(asm, BC_A4, n);
-                        jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_baked_call);
-                        jit_emit_call_reg(asm, BC_CALL);
+                                jit_emit_mov(asm, BC_A0, BC_TY);
+                                jit_emit_add_imm(asm, BC_A1, BC_OPS, self_off);
+                                jit_emit_load_imm(asm, BC_A2, (iptr)target);
+                                jit_emit_load_imm(asm, BC_CALL,
+                                                  (iptr)ty_inline_guard_member);
+                                jit_emit_call_reg(asm, BC_CALL);
+                                jit_emit_cbz(asm, BC_RET, inline_slow);
 
-                        int lbl_cm_done = bc_next_label(ctx);
-
-                        // If return 1: handled (result on stack), skip slow path
-                        jit_emit_cbnz(asm, BC_RET, lbl_cm_done);
-
-                        // Slow fallback: guard failed or not JIT'd
-                        jit_emit_mov(asm, BC_A0, BC_TY);
-                        jit_emit_add_imm(asm, BC_A1, BC_OPS, result_off);
-                        jit_emit_add_imm(asm, BC_A2, BC_OPS, self_off);
-                        jit_emit_load_imm(asm, BC_A3, (iptr)baked_method);
-                        jit_emit_load_imm(asm, BC_A4, PACK32(recv_cls->i, z));
-                        jit_emit_load_imm(asm, BC_A5, n);
-                        jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_call_self_method_guarded);
-                        jit_emit_call_reg(asm, BC_CALL);
-
-                        jit_emit_label(asm, lbl_cm_done);
-                        DBG("CALL_METHOD (baked trampoline for %s)", M_NAME(z));
-                } else {
-                        // Guarded fast path for user-defined classes (no trampoline)
-                        jit_emit_mov(asm, BC_A0, BC_TY);
-                        jit_emit_add_imm(asm, BC_A1, BC_OPS, result_off);
-                        jit_emit_add_imm(asm, BC_A2, BC_OPS, self_off);
-                        jit_emit_load_imm(asm, BC_A3, (iptr)baked_method);
-                        jit_emit_load_imm(asm, BC_A4, PACK32(recv_cls->i, z));
-                        jit_emit_load_imm(asm, BC_A5, n);
-                        jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_call_self_method_guarded);
-                        jit_emit_call_reg(asm, BC_CALL);
+                                bool emitted = bc_emit_inline_plan(
+                                        ctx, &plan, TY_INLINE_METHOD,
+                                        ctx->sp - 1 - n, ctx->sp - 1, ctx->sp,
+                                        recv_cls, inline_slow
+                                );
+                                ASSERT(emitted);
+                                (void)emitted;
+                                jit_emit_jump(asm, inline_done);
+                                jit_emit_label(asm, inline_slow);
+                                jit_emit_mov(asm, BC_A0, BC_TY);
+                                jit_emit_add_imm(asm, BC_A1, BC_OPS, result_off);
+                                jit_emit_add_imm(asm, BC_A2, BC_OPS, self_off);
+                                jit_emit_load_imm(asm, BC_A3, z);
+                                jit_emit_load_imm(asm, BC_A4, n);
+                                jit_emit_load_imm(asm, BC_CALL,
+                                                  (iptr)jit_rt_call_method);
+                                jit_emit_call_reg(asm, BC_CALL);
+                        }
                 }
-        } else {
-                jit_emit_mov(asm, BC_A0, BC_TY);
-                jit_emit_add_imm(asm, BC_A1, BC_OPS, result_off);  // result
-                jit_emit_add_imm(asm, BC_A2, BC_OPS, self_off);    // self
-                jit_emit_load_imm(asm, BC_A3, z);
-                jit_emit_load_imm(asm, BC_A4, n);
-                jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_call_method);
-                jit_emit_call_reg(asm, BC_CALL);
-                DBG("CALL_METHOD (generic fast path)");
+        }
+
+        if (inline_done < 0) {
+                if (builtin_method != NULL) {
+                        jit_emit_mov(asm, BC_A0, BC_TY);
+                        jit_emit_add_imm(asm, BC_A1, BC_OPS, result_off);
+                        jit_emit_add_imm(asm, BC_A2, BC_OPS, self_off);
+                        jit_emit_load_imm(asm, BC_A3, (iptr)builtin_method);
+                        jit_emit_load_imm(asm, BC_A4, PACK32(builtin_vtype, z));
+                        jit_emit_load_imm(asm, BC_A5, n);
+                        jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_call_builtin_method);
+                        jit_emit_call_reg(asm, BC_CALL);
+                        DBG("CALL_METHOD (builtin fast path for %s)", M_NAME(z));
+                } else if (baked_method != NULL) {
+                        bool can_tramp = (rest_idx_of(baked_method) == -1)
+                                      && (kwargs_idx_of(baked_method) == -1)
+                                      && !is_starred(baked_method);
+                        if (can_tramp) {
+                                jit_emit_sync_stack_count(asm, ctx->bound, ctx->sp - 1);
+
+                                jit_emit_mov(asm, BC_A0, BC_TY);
+                                jit_emit_add_imm(asm, BC_A1, BC_OPS, self_off);
+                                jit_emit_load_imm(asm, BC_A2, (iptr)baked_method);
+                                jit_emit_load_imm(asm, BC_A3, recv_cls->i);
+                                jit_emit_load_imm(asm, BC_A4, n);
+                                jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_baked_call);
+                                jit_emit_call_reg(asm, BC_CALL);
+
+                                int lbl_cm_done = bc_next_label(ctx);
+
+                                jit_emit_cbnz(asm, BC_RET, lbl_cm_done);
+
+                                jit_emit_mov(asm, BC_A0, BC_TY);
+                                jit_emit_add_imm(asm, BC_A1, BC_OPS, result_off);
+                                jit_emit_add_imm(asm, BC_A2, BC_OPS, self_off);
+                                jit_emit_load_imm(asm, BC_A3, (iptr)baked_method);
+                                jit_emit_load_imm(asm, BC_A4, PACK32(recv_cls->i, z));
+                                jit_emit_load_imm(asm, BC_A5, n);
+                                jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_call_self_method_guarded);
+                                jit_emit_call_reg(asm, BC_CALL);
+
+                                jit_emit_label(asm, lbl_cm_done);
+                                DBG("CALL_METHOD (baked trampoline for %s)", M_NAME(z));
+                        } else {
+                                jit_emit_mov(asm, BC_A0, BC_TY);
+                                jit_emit_add_imm(asm, BC_A1, BC_OPS, result_off);
+                                jit_emit_add_imm(asm, BC_A2, BC_OPS, self_off);
+                                jit_emit_load_imm(asm, BC_A3, (iptr)baked_method);
+                                jit_emit_load_imm(asm, BC_A4, PACK32(recv_cls->i, z));
+                                jit_emit_load_imm(asm, BC_A5, n);
+                                jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_call_self_method_guarded);
+                                jit_emit_call_reg(asm, BC_CALL);
+                        }
+                } else {
+                        jit_emit_mov(asm, BC_A0, BC_TY);
+                        jit_emit_add_imm(asm, BC_A1, BC_OPS, result_off);
+                        jit_emit_add_imm(asm, BC_A2, BC_OPS, self_off);
+                        jit_emit_load_imm(asm, BC_A3, z);
+                        jit_emit_load_imm(asm, BC_A4, n);
+                        jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_call_method);
+                        jit_emit_call_reg(asm, BC_CALL);
+                        DBG("CALL_METHOD (generic fast path)");
+                }
+        }
+
+        if (inline_done >= 0) {
+                jit_emit_label(asm, inline_done);
         }
 
         // Pop self + n args, push result
@@ -4445,15 +4847,21 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                 }
 
                 CASE(ADD)
-                        bc_emit_arith(ctx, (void *)jit_rt_add);
+                        if (!bc_emit_inline_operator(ctx, OP_ADD, (void *)jit_rt_add)) {
+                                bc_emit_arith(ctx, (void *)jit_rt_add);
+                        }
                         break;
 
                 CASE(SUB)
-                        bc_emit_arith(ctx, (void *)jit_rt_sub);
+                        if (!bc_emit_inline_operator(ctx, OP_SUB, (void *)jit_rt_sub)) {
+                                bc_emit_arith(ctx, (void *)jit_rt_sub);
+                        }
                         break;
 
                 CASE(MUL)
-                        bc_emit_arith(ctx, (void *)jit_rt_mul);
+                        if (!bc_emit_inline_operator(ctx, OP_MUL, (void *)jit_rt_mul)) {
+                                bc_emit_arith(ctx, (void *)jit_rt_mul);
+                        }
                         break;
 
                 CASE(DIV)
@@ -4931,8 +5339,13 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
 
                         bool emitted_fast = false;
                         if (obj_class != NULL) {
-                                Ty *ty = ctx->ty;
-                                if (z < (int)vN(obj_class->offsets_r)) {
+                                Value *getter = bc_resolve_getter(obj_class, z);
+                                if (getter != NULL) {
+                                        emitted_fast = bc_emit_inline_getter(
+                                                ctx, op_ip, z, obj_class, getter
+                                        );
+                                }
+                                if (!emitted_fast && z < (int)vN(obj_class->offsets_r)) {
                                         u16 off = v__(obj_class->offsets_r, z);
                                         if (off != OFF_NOT_FOUND && (off >> OFF_SHIFT) == OFF_FIELD) {
                                                 u16 slot_idx = off & OFF_MASK;
@@ -5360,38 +5773,108 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                         // Operand stack: [...][arg0][arg1]...[argN-1]
                         // Result replaces args: goes at ops[sp - n]
                         int result_off = OP_OFF(ctx->sp - n);
+                        int inline_done = -1;
 
-                        if (builtin_method != NULL) {
-                                // Direct builtin call with type guard
-                                jit_emit_mov(asm, BC_A0, BC_TY);
-                                jit_emit_add_imm(asm, BC_A1, BC_OPS, result_off);
-                                jit_emit_load_imm(asm, BC_A2, 0);
-                                jit_emit_load_imm(asm, BC_A3, (iptr)builtin_method);
-                                jit_emit_load_imm(asm, BC_A4, PACK32(builtin_vtype, z));
-                                jit_emit_load_imm(asm, BC_A5, n);
-                                jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_call_builtin_method);
-                                jit_emit_call_reg(asm, BC_CALL);
-                                DBG("CALL_METHOD (builtin fast path for %s)", M_NAME(z));
-                        } else if (baked_method != NULL) {
-                                // Guarded fast path for user-defined classes
-                                jit_emit_mov(asm, BC_A0, BC_TY);
-                                jit_emit_add_imm(asm, BC_A1, BC_OPS, result_off);
-                                jit_emit_load_imm(asm, BC_A2, 0);
-                                jit_emit_load_imm(asm, BC_A3, (iptr)baked_method);
-                                jit_emit_load_imm(asm, BC_A4, PACK32(ctx->self_class->i, z));
-                                jit_emit_load_imm(asm, BC_A5, n);
-                                jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_call_self_method_guarded);
-                                jit_emit_call_reg(asm, BC_CALL);
-                        } else {
-                                // Generic path: runtime method lookup
-                                // self=NULL tells jit_rt_call_method to use vm_get_self
-                                jit_emit_mov(asm, BC_A0, BC_TY);
-                                jit_emit_add_imm(asm, BC_A1, BC_OPS, result_off);  // result
-                                jit_emit_load_imm(asm, BC_A2, 0);                  // self = NULL
-                                jit_emit_load_imm(asm, BC_A3, z);                  // member_id
-                                jit_emit_load_imm(asm, BC_A4, n);                  // argc
-                                jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_call_method);
-                                jit_emit_call_reg(asm, BC_CALL);
+                        if (baked_method != NULL && ctx->self_class != NULL) {
+                                TyInlinePlan plan;
+                                if (ty_inline_analyze(
+                                        baked_method, TY_INLINE_METHOD, n, &plan
+                                ) && bc_inline_plan_types(ctx, baked_method, &plan)) {
+                                        int base = ctx->sp - n;
+                                        int self_pos = ctx->sp;
+                                        int scratch = ctx->sp + 1;
+                                        BcInlineField fields[TY_INLINE_MAX_INSNS] = {0};
+                                        bool supported = ctx->inline_cost + plan.count <= TY_INLINE_MAX_COST
+                                                      && scratch + plan.max_stack <= MAX_BC_OPS
+                                                      && bc_resolve_inline_fields(
+                                                                ctx, &plan, TY_INLINE_METHOD,
+                                                                base, self_pos, ctx->self_class,
+                                                                fields
+                                                         );
+                                        if (supported) {
+                                                ctx->inline_cost += plan.count;
+                                                int inline_slow = bc_next_label(ctx);
+                                                inline_done = bc_next_label(ctx);
+                                                TyInlineTarget *target = ty_inline_method_target(
+                                                        ctx->self_class, z, baked_method
+                                                );
+
+                                                bc_copy_value(
+                                                        ctx, BC_OPS, OP_OFF(self_pos), BC_LOC,
+                                                        ctx->param_count * VALUE_SIZE
+                                                );
+                                                jit_emit_mov(asm, BC_A0, BC_TY);
+                                                jit_emit_add_imm(
+                                                        asm, BC_A1, BC_OPS, OP_OFF(self_pos)
+                                                );
+                                                jit_emit_load_imm(
+                                                        asm, BC_A2, (iptr)target
+                                                );
+                                                jit_emit_load_imm(
+                                                        asm, BC_CALL,
+                                                        (iptr)ty_inline_guard_member
+                                                );
+                                                jit_emit_call_reg(asm, BC_CALL);
+                                                jit_emit_cbz(asm, BC_RET, inline_slow);
+
+                                                bool emitted = bc_emit_inline_plan(
+                                                        ctx, &plan, TY_INLINE_METHOD,
+                                                        base, self_pos, scratch,
+                                                        ctx->self_class, inline_slow
+                                                );
+                                                ASSERT(emitted);
+                                                (void)emitted;
+                                                jit_emit_jump(asm, inline_done);
+                                                jit_emit_label(asm, inline_slow);
+                                                jit_emit_mov(asm, BC_A0, BC_TY);
+                                                jit_emit_add_imm(
+                                                        asm, BC_A1, BC_OPS, result_off
+                                                );
+                                                jit_emit_load_imm(asm, BC_A2, 0);
+                                                jit_emit_load_imm(asm, BC_A3, z);
+                                                jit_emit_load_imm(asm, BC_A4, n);
+                                                jit_emit_load_imm(
+                                                        asm, BC_CALL,
+                                                        (iptr)jit_rt_call_method
+                                                );
+                                                jit_emit_call_reg(asm, BC_CALL);
+                                        }
+                                }
+                        }
+
+                        if (inline_done < 0) {
+                                if (builtin_method != NULL) {
+                                        jit_emit_mov(asm, BC_A0, BC_TY);
+                                        jit_emit_add_imm(asm, BC_A1, BC_OPS, result_off);
+                                        jit_emit_load_imm(asm, BC_A2, 0);
+                                        jit_emit_load_imm(asm, BC_A3, (iptr)builtin_method);
+                                        jit_emit_load_imm(asm, BC_A4, PACK32(builtin_vtype, z));
+                                        jit_emit_load_imm(asm, BC_A5, n);
+                                        jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_call_builtin_method);
+                                        jit_emit_call_reg(asm, BC_CALL);
+                                        DBG("CALL_METHOD (builtin fast path for %s)", M_NAME(z));
+                                } else if (baked_method != NULL) {
+                                        jit_emit_mov(asm, BC_A0, BC_TY);
+                                        jit_emit_add_imm(asm, BC_A1, BC_OPS, result_off);
+                                        jit_emit_load_imm(asm, BC_A2, 0);
+                                        jit_emit_load_imm(asm, BC_A3, (iptr)baked_method);
+                                        jit_emit_load_imm(asm, BC_A4, PACK32(ctx->self_class->i, z));
+                                        jit_emit_load_imm(asm, BC_A5, n);
+                                        jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_call_self_method_guarded);
+                                        jit_emit_call_reg(asm, BC_CALL);
+                                } else {
+                                        jit_emit_mov(asm, BC_A0, BC_TY);
+                                        jit_emit_add_imm(asm, BC_A1, BC_OPS, result_off);
+                                        jit_emit_load_imm(asm, BC_A2, 0);
+                                        jit_emit_load_imm(asm, BC_A3, z);
+                                        jit_emit_load_imm(asm, BC_A4, n);
+                                        jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_call_method);
+                                        jit_emit_call_reg(asm, BC_CALL);
+                                }
+                        }
+
+                        if (inline_done >= 0) {
+                                jit_emit_label(asm, inline_done);
                         }
 
                         // n args consumed, 1 result produced
