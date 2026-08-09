@@ -53,6 +53,21 @@ push_insn(TyInlinePlan *plan, TyInlineInsn insn)
         return true;
 }
 
+static bool
+propagate_depth(i16 *depths, int target, int depth, int *queue, int *tail,
+                int count)
+{
+        if (target < 0 || target > count) {
+                return false;
+        }
+        if (depths[target] < 0) {
+                depths[target] = depth;
+                queue[(*tail)++] = target;
+                return true;
+        }
+        return depths[target] == depth;
+}
+
 bool
 ty_inline_analyze(Value const *callee, TyInlineKind kind, int argc, TyInlinePlan *plan)
 {
@@ -76,7 +91,7 @@ ty_inline_analyze(Value const *callee, TyInlineKind kind, int argc, TyInlinePlan
         if (is_starred(callee) || is_decorated(callee)) {
                 return false;
         }
-        if (kind == TY_INLINE_METHOD && is_overload(callee)) {
+        if (kind != TY_INLINE_OPERATOR && is_overload(callee)) {
                 return false;
         }
 
@@ -94,14 +109,21 @@ ty_inline_analyze(Value const *callee, TyInlineKind kind, int argc, TyInlinePlan
                 return false;
         }
 
-        char const *ip = code_of(callee);
-        char const *end = ip + code_size;
-        int depth = 0;
-        int max_depth = 0;
+        char const *code = code_of(callee);
+        char const *ip = code;
+        char const *end = code + code_size;
+        i16 offsets[TY_INLINE_MAX_INSNS] = {0};
+        int return_offset = -1;
+        int branch_count = 0;
+        int jump_count = 0;
+        int branch_index = -1;
+        int jump_index = -1;
 
         while (ip < end) {
+                int offset = (int)(ip - code);
                 u8 op = (u8)*ip++;
                 TyInlineInsn insn = {0};
+                int before = plan->count;
 
                 switch (op) {
                 case INSTR_NOP:
@@ -126,7 +148,6 @@ ty_inline_analyze(Value const *callee, TyInlineKind kind, int argc, TyInlinePlan
                         if (!push_insn(plan, insn)) {
                                 return false;
                         }
-                        depth++;
                         break;
                 }
 
@@ -144,17 +165,14 @@ ty_inline_analyze(Value const *callee, TyInlineKind kind, int argc, TyInlinePlan
                         if (!push_insn(plan, insn)) {
                                 return false;
                         }
-                        depth++;
                         break;
                 }
 
                 case INSTR_MEMBER_ACCESS:
                 {
                         i32 member;
-                        if (!read_bytes(&ip, end, &member, sizeof member)) {
-                                return false;
-                        }
-                        if (depth < 1 || plan->count == 0) {
+                        if (!read_bytes(&ip, end, &member, sizeof member)
+                            || plan->count == 0) {
                                 return false;
                         }
                         TyInlineInsn *top = &plan->insns[plan->count - 1];
@@ -177,56 +195,263 @@ ty_inline_analyze(Value const *callee, TyInlineKind kind, int argc, TyInlinePlan
                         if (!push_insn(plan, insn)) {
                                 return false;
                         }
-                        depth++;
                         break;
                 }
 
                 case INSTR_INTEGER:
                         insn.op = TY_INLINE_INTEGER;
-                        if (!read_bytes(&ip, end, &insn.integer, sizeof insn.integer)) {
+                        if (!read_bytes(&ip, end, &insn.integer, sizeof insn.integer)
+                            || !push_insn(plan, insn)) {
                                 return false;
                         }
-                        if (!push_insn(plan, insn)) {
+                        break;
+
+                case INSTR_REAL:
+                        insn.op = TY_INLINE_REAL;
+                        if (!read_bytes(&ip, end, &insn.real, sizeof insn.real)
+                            || !push_insn(plan, insn)) {
                                 return false;
                         }
-                        depth++;
                         break;
 
                 case INSTR_ADD:
                 case INSTR_SUB:
                 case INSTR_MUL:
-                        if (depth < 2) {
-                                return false;
-                        }
+                case INSTR_EQ:
+                case INSTR_NEQ:
+                case INSTR_LT:
+                case INSTR_GT:
+                case INSTR_LEQ:
+                case INSTR_GEQ:
                         insn.op = op == INSTR_ADD ? TY_INLINE_ADD
                                 : op == INSTR_SUB ? TY_INLINE_SUB
-                                                  : TY_INLINE_MUL;
+                                : op == INSTR_MUL ? TY_INLINE_MUL
+                                : op == INSTR_EQ  ? TY_INLINE_EQ
+                                : op == INSTR_NEQ ? TY_INLINE_NE
+                                : op == INSTR_LT  ? TY_INLINE_LT
+                                : op == INSTR_GT  ? TY_INLINE_GT
+                                : op == INSTR_LEQ ? TY_INLINE_LE
+                                                  : TY_INLINE_GE;
                         if (!push_insn(plan, insn)) {
                                 return false;
                         }
-                        depth--;
                         break;
 
-                case INSTR_RETURN:
-                        if (ip != end || depth != 1 || plan->count == 0) {
+                case INSTR_JLT:
+                case INSTR_JLE:
+                case INSTR_JGT:
+                case INSTR_JGE:
+                case INSTR_JEQ:
+                case INSTR_JNE:
+                {
+                        i32 relative;
+                        if (!read_bytes(&ip, end, &relative, sizeof relative)) {
                                 return false;
                         }
-                        plan->max_stack = max_depth > depth ? max_depth : depth;
-                        return plan->max_stack <= TY_INLINE_MAX_STACK;
+                        insn.op = op == INSTR_JLT ? TY_INLINE_LT
+                                : op == INSTR_JLE ? TY_INLINE_LE
+                                : op == INSTR_JGT ? TY_INLINE_GT
+                                : op == INSTR_JGE ? TY_INLINE_GE
+                                : op == INSTR_JEQ ? TY_INLINE_EQ
+                                                  : TY_INLINE_NE;
+                        if (!push_insn(plan, insn)) {
+                                return false;
+                        }
+                        offsets[before] = offset;
+                        before = plan->count;
+                        insn = (TyInlineInsn) {
+                                .op = TY_INLINE_BRANCH_TRUE,
+                                .member = (i32)(ip - code) + relative,
+                        };
+                        if (!push_insn(plan, insn)) {
+                                return false;
+                        }
+                        branch_count++;
+                        branch_index = plan->count - 1;
+                        break;
+                }
+
+                case INSTR_JUMP:
+                {
+                        i32 relative;
+                        if (!read_bytes(&ip, end, &relative, sizeof relative)) {
+                                return false;
+                        }
+                        insn.op = TY_INLINE_JUMP;
+                        insn.member = (i32)(ip - code) + relative;
+                        if (!push_insn(plan, insn)) {
+                                return false;
+                        }
+                        jump_count++;
+                        jump_index = plan->count - 1;
+                        break;
+                }
+
+                case INSTR_RETURN:
+                        if (ip != end) {
+                                return false;
+                        }
+                        return_offset = offset;
+                        break;
 
                 default:
                         return false;
                 }
 
-                if (depth > max_depth) {
-                        max_depth = depth;
+                for (int i = before; i < plan->count; ++i) {
+                        offsets[i] = offset;
                 }
-                if (depth > TY_INLINE_MAX_STACK) {
+                if (return_offset >= 0) {
+                        break;
+                }
+        }
+
+        if (return_offset < 0 || plan->count == 0) {
+                return false;
+        }
+        if ((branch_count != 0 || jump_count != 0)
+            && (branch_count != 1 || jump_count != 1)) {
+                return false;
+        }
+
+        for (int i = 0; i < plan->count; ++i) {
+                TyInlineInsn *insn = &plan->insns[i];
+                if (insn->op != TY_INLINE_BRANCH_TRUE
+                    && insn->op != TY_INLINE_JUMP) {
+                        continue;
+                }
+                int target = -1;
+                if (insn->member == return_offset) {
+                        target = plan->count;
+                } else {
+                        for (int j = 0; j < plan->count; ++j) {
+                                if (offsets[j] == insn->member) {
+                                        target = j;
+                                        break;
+                                }
+                        }
+                }
+                if (target <= i || target > plan->count) {
+                        return false;
+                }
+                insn->target = target;
+        }
+
+        if (branch_count == 1) {
+                TyInlineInsn const *branch = &plan->insns[branch_index];
+                TyInlineInsn const *jump = &plan->insns[jump_index];
+                if (branch_index <= 0
+                    || branch_index >= jump_index
+                    || jump_index + 1 != branch->target
+                    || jump->target <= branch->target) {
+                        return false;
+                }
+                u8 previous = plan->insns[branch_index - 1].op;
+                if (previous != TY_INLINE_EQ
+                    && previous != TY_INLINE_NE
+                    && previous != TY_INLINE_LT
+                    && previous != TY_INLINE_GT
+                    && previous != TY_INLINE_LE
+                    && previous != TY_INLINE_GE) {
                         return false;
                 }
         }
 
-        return false;
+        i16 depths[TY_INLINE_MAX_INSNS + 1];
+        for (int i = 0; i <= TY_INLINE_MAX_INSNS; ++i) {
+                depths[i] = -1;
+        }
+        int queue[TY_INLINE_MAX_INSNS + 1];
+        int head = 0;
+        int tail = 0;
+        depths[0] = 0;
+        queue[tail++] = 0;
+        int max_depth = 0;
+
+        while (head < tail) {
+                int i = queue[head++];
+                if (i == plan->count) {
+                        continue;
+                }
+                int depth = depths[i];
+                TyInlineInsn const *insn = &plan->insns[i];
+                int next_depth = depth;
+                switch (insn->op) {
+                case TY_INLINE_LOCAL:
+                case TY_INLINE_FIELD:
+                case TY_INLINE_INTEGER:
+                case TY_INLINE_REAL:
+                        next_depth++;
+                        break;
+                case TY_INLINE_ADD:
+                case TY_INLINE_SUB:
+                case TY_INLINE_MUL:
+                case TY_INLINE_EQ:
+                case TY_INLINE_NE:
+                case TY_INLINE_LT:
+                case TY_INLINE_GT:
+                case TY_INLINE_LE:
+                case TY_INLINE_GE:
+                        if (depth < 2) {
+                                return false;
+                        }
+                        next_depth--;
+                        break;
+                case TY_INLINE_BRANCH_TRUE:
+                        if (depth < 1) {
+                                return false;
+                        }
+                        next_depth--;
+                        break;
+                case TY_INLINE_JUMP:
+                        break;
+                }
+                if (next_depth > TY_INLINE_MAX_STACK) {
+                        return false;
+                }
+                if (next_depth > max_depth) {
+                        max_depth = next_depth;
+                }
+
+                if (insn->op == TY_INLINE_BRANCH_TRUE) {
+                        if (!propagate_depth(
+                                depths, i + 1, next_depth, queue, &tail, plan->count
+                            ) || !propagate_depth(
+                                depths, insn->target, next_depth,
+                                queue, &tail, plan->count
+                            )) {
+                                return false;
+                        }
+                } else if (insn->op == TY_INLINE_JUMP) {
+                        if (!propagate_depth(
+                                depths, insn->target, next_depth,
+                                queue, &tail, plan->count
+                            )) {
+                                return false;
+                        }
+                } else if (!propagate_depth(
+                        depths, i + 1, next_depth, queue, &tail, plan->count
+                )) {
+                        return false;
+                }
+        }
+
+        if (depths[plan->count] != 1) {
+                return false;
+        }
+        if (branch_count == 1
+            && depths[branch_index] != depths[branch_index - 1] - 1) {
+                return false;
+        }
+        for (int i = 0; i < plan->count; ++i) {
+                if (depths[i] < 0) {
+                        return false;
+                }
+                plan->depths[i] = depths[i];
+        }
+        plan->depths[plan->count] = depths[plan->count];
+        plan->max_stack = max_depth;
+        return true;
 }
 
 static TyInlineTarget *
@@ -268,6 +493,12 @@ ty_inline_operator_target(Class const *left, Class const *right, int op, int ref
         return new_target(left, right, -1, -1, op, ref, callee);
 }
 
+TyInlineTarget *
+ty_inline_global_target(int global, Value const *callee)
+{
+        return new_target(NULL, NULL, -1, -1, -1, global, callee);
+}
+
 static bool
 same_function(Value const *value, TyInlineTarget const *target)
 {
@@ -275,6 +506,15 @@ same_function(Value const *value, TyInlineTarget const *target)
             && value->type == VALUE_FUNCTION
             && value->info == target->info
             && value->env == target->env;
+}
+
+bool
+ty_inline_guard_global(Ty *ty, TyInlineTarget const *target)
+{
+        (void)ty;
+        return target->ref >= 0
+            && target->ref < vN(Globals)
+            && same_function(v_(Globals, target->ref), target);
 }
 
 bool

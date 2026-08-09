@@ -258,6 +258,55 @@ static void jit_emit_fcmp_ge(dasm_State **Dst, int dst, int scratch, int base, i
         |  movzx Rq(dst), Rb(dst)
 }
 
+static void jit_emit_fcmp_mixed(dasm_State **Dst, int dst, int scratch, int base,
+                                 int a_off, int b_off, bool a_is_int, int op) {
+        if (a_is_int) {
+                |  mov rax, qword [Rq(base)+a_off]
+                |  cvtsi2sd xmm0, rax
+                |  movsd xmm1, qword [Rq(base)+b_off]
+        } else {
+                |  movsd xmm0, qword [Rq(base)+a_off]
+                |  mov rax, qword [Rq(base)+b_off]
+                |  cvtsi2sd xmm1, rax
+        }
+        switch (op) {
+        case 0:
+                |  ucomisd xmm0, xmm1
+                |  sete Rb(dst)
+                |  setnp Rb(scratch)
+                |  and Rb(dst), Rb(scratch)
+                |  movzx Rq(dst), Rb(dst)
+                break;
+        case 1:
+                |  ucomisd xmm0, xmm1
+                |  setne Rb(dst)
+                |  setp Rb(scratch)
+                |  or Rb(dst), Rb(scratch)
+                |  movzx Rq(dst), Rb(dst)
+                break;
+        case 2:
+                |  ucomisd xmm1, xmm0
+                |  seta Rb(dst)
+                |  movzx Rq(dst), Rb(dst)
+                break;
+        case 3:
+                |  ucomisd xmm0, xmm1
+                |  seta Rb(dst)
+                |  movzx Rq(dst), Rb(dst)
+                break;
+        case 4:
+                |  ucomisd xmm1, xmm0
+                |  setae Rb(dst)
+                |  movzx Rq(dst), Rb(dst)
+                break;
+        case 5:
+                |  ucomisd xmm0, xmm1
+                |  setae Rb(dst)
+                |  movzx Rq(dst), Rb(dst)
+                break;
+        }
+}
+
 // --- Float arithmetic ---
 // Load doubles from [base+a_off] and [base+b_off], compute, store result to [base+a_off].
 

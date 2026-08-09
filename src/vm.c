@@ -1917,6 +1917,27 @@ vm_trampoline(Ty *ty)
         go_jit(ty);
 }
 
+void
+vm_trampoline_linked(Ty *ty, JitFn *func, Value **env)
+{
+        isize depth0 = vN(FRAMES) - 1;
+        Frame *frame = vvL(FRAMES);
+        xjit(ty, depth0, func, 0, v_(STACK, frame->fp), env);
+
+        while (vN(FRAMES) > depth0) {
+                isize depth = vN(FRAMES) - 1;
+                Frame *top = vvL(FRAMES);
+                xjit(
+                        ty,
+                        depth,
+                        jit_of(&top->f),
+                        top->f.tags,
+                        v_(STACK, top->fp),
+                        top->f.env
+                );
+        }
+}
+
 static void
 exec_fn(Ty *ty, Value const *f, Value const *pSelf, int argc, Value const *pKwargs)
 {
