@@ -1,3 +1,7 @@
+import path
+import sh (sh)
+import ty
+
 ns test
 
 let thing: Array[String] | nil = nil
@@ -184,4 +188,65 @@ pub fn refine-member-sequential() {
     assert(f(Opts(nil, nil)) == 'no x')
     assert(f(Opts(2, nil)) == 'no y')
     assert(f(Opts(3, 'ab')) == 'ababab')
+}
+
+class RefinedBox {
+    value: Int | String
+
+    init(value: Int | String) {
+        self.value = value
+    }
+}
+
+fn take-refined-box(box: RefinedBox) {}
+fn take-refined-string(value: String) {}
+fn take-refined-int(value: Int) {}
+
+pub fn member-assignment-preserves-and-refines-object() {
+    fn update(box: RefinedBox | nil) {
+        if box == nil { return }
+
+        box.value = 'updated'
+        take-refined-box(box)
+        take-refined-string(box.value)
+
+        box.value = 42
+        take-refined-box(box)
+        take-refined-int(box.value)
+    }
+
+    update(RefinedBox(0))
+}
+
+pub fn member-assignment-refinement-is-scoped() {
+    fn update(box: RefinedBox | nil) {
+        if box == nil { return }
+        box.value = 'scoped'
+        take-refined-string(box.value)
+    }
+
+    let box = RefinedBox(0)
+    update(box)
+    assert(box.value == 'scoped')
+
+    with tmp = path.tempdir() {
+        let source = path.Path("{tmp}/member-refinement-scope.ty")
+        source.write('''
+class Box { value: Int | String }
+fn take-string(value: String) {}
+fn update(box: Box | nil) {
+    if box == nil { return }
+    box.value = 'scoped'
+    take-string(box.value)
+}
+fn bad(box: Box) {
+    update(box)
+    take-string(box.value)
+}
+''')
+        let output, result = sh("{ty.executable} {source}", combineOutput=true)
+        assert(result != nil && result.status != 0)
+        assert(output.contains?('given:    Int | String'))
+        assert(output.contains?('expected: String'))
+    }
 }
