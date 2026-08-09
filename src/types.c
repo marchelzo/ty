@@ -8840,6 +8840,38 @@ ListItem(Ty *ty, Type const *t0, int idx, Type const *alt)
         return t1;
 }
 
+static Type *
+UpdateMemberRefinement(Ty *ty, Type *current, char const *name, Type *value)
+{
+        Type *updated;
+
+        if (TypeType(current) == TYPE_INTERSECT) {
+                updated = CloneType(ty, current);
+                CloneVec(updated->types);
+
+                for (int i = vN(updated->types) - 1; i >= 0; --i) {
+                        Type *part = ResolveVar(v__(updated->types, i));
+                        if (
+                                (TypeType(part) == TYPE_TUPLE)
+                             && (vN(part->types) == 1)
+                             && (vN(part->names) == 1)
+                             && (v_0(part->names) != NULL)
+                             && s_eq(v_0(part->names), name)
+                        ) {
+                                *v_(updated->types, i) = NewRecord(name, value);
+                                return updated;
+                        }
+                }
+        } else {
+                updated = NewType(ty, TYPE_INTERSECT);
+                avP(updated->types, current);
+        }
+
+        avP(updated->types, NewRecord(name, value));
+
+        return updated;
+}
+
 static char const *
 _show_tflags(int flags)
 {
@@ -9090,10 +9122,11 @@ type_assign(Ty *ty, Expr *e, Type *t0, int flags)
                                 e->object->symbol
                         );
                         if (ref != NULL && ref->active) {
-                                type_intersect(
+                                e->object->symbol->type = UpdateMemberRefinement(
                                         ty,
-                                        &e->object->symbol->type,
-                                        NewRecord(e->member->identifier, t0)
+                                        e->object->symbol->type,
+                                        e->member->identifier,
+                                        t0
                                 );
                         }
                         t2 = OriginalType(ty, e->object->symbol);
