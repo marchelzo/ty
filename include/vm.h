@@ -12,6 +12,7 @@
 #include "value.h"
 #include "tthread.h"
 #include "log.h"
+#include "jit.h"
 
 extern bool PrintResult;
 extern volatile sig_atomic_t JitInterruptFlag;
@@ -377,6 +378,9 @@ DoGeq(Ty *ty);
 
 void
 vm_jit_neg(Ty *ty);
+
+void
+vm_trampoline_linked(Ty *ty, JitFn *func, Value **env);
 
 void
 vm_jit_get_member(Ty *ty);

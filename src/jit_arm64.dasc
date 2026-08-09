@@ -194,6 +194,41 @@ static void jit_emit_fcmp_ge(dasm_State **Dst, int dst, int scratch, int base, i
         |  cset Rx(dst), ge
 }
 
+static void jit_emit_fcmp_mixed(dasm_State **Dst, int dst, int scratch, int base,
+                                 int a_off, int b_off, bool a_is_int, int op) {
+        (void)scratch;
+        if (a_is_int) {
+                |  ldr x0, [Rx(base), #a_off]
+                |  scvtf d0, x0
+                |  ldr d1, [Rx(base), #b_off]
+        } else {
+                |  ldr d0, [Rx(base), #a_off]
+                |  ldr x0, [Rx(base), #b_off]
+                |  scvtf d1, x0
+        }
+        |  fcmp d0, d1
+        switch (op) {
+        case 0:
+                |  cset Rx(dst), eq
+                break;
+        case 1:
+                |  cset Rx(dst), ne
+                break;
+        case 2:
+                |  cset Rx(dst), mi
+                break;
+        case 3:
+                |  cset Rx(dst), gt
+                break;
+        case 4:
+                |  cset Rx(dst), ls
+                break;
+        case 5:
+                |  cset Rx(dst), ge
+                break;
+        }
+}
+
 // --- Float arithmetic ---
 // Load doubles from [base+a_off] and [base+b_off], compute, store result to [base+a_off].
 
