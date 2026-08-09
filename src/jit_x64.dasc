@@ -285,6 +285,34 @@ static void jit_emit_fdiv(dasm_State **Dst, int base, int a_off, int b_off) {
         |  movsd qword [Rq(base)+a_off], xmm0
 }
 
+static void jit_emit_farith_mixed(dasm_State **Dst, int base, int a_off, int b_off,
+                                  bool a_is_int, int op) {
+        if (a_is_int) {
+                |  mov rax, qword [Rq(base)+a_off]
+                |  cvtsi2sd xmm0, rax
+                |  movsd xmm1, qword [Rq(base)+b_off]
+        } else {
+                |  movsd xmm0, qword [Rq(base)+a_off]
+                |  mov rax, qword [Rq(base)+b_off]
+                |  cvtsi2sd xmm1, rax
+        }
+        switch (op) {
+        case 0:
+                |  addsd xmm0, xmm1
+                break;
+        case 1:
+                |  subsd xmm0, xmm1
+                break;
+        case 2:
+                |  mulsd xmm0, xmm1
+                break;
+        case 3:
+                |  divsd xmm0, xmm1
+                break;
+        }
+        |  movsd qword [Rq(base)+a_off], xmm0
+}
+
 // Load two doubles and compare: ucomisd [base+off0], [base+off1]
 // For gt/ge: off0=a, off1=b (natural order, then ja/jae)
 // For lt/le: off0=b, off1=a (swapped, then ja/jae)
@@ -449,6 +477,10 @@ static void jit_emit_ldr16(dasm_State **Dst, int dst, int base, int offset) {
         |  movzx Rd(dst), word [Rq(base)+offset]
 }
 
+static void jit_emit_ldr16_index(dasm_State **Dst, int dst, int base, int index) {
+        |  movzx Rd(dst), word [Rq(base)+Rq(index)]
+}
+
 // Load/store pairs (two sequential loads/stores on x64)
 static void jit_emit_ldp64(dasm_State **Dst, int dst1, int dst2, int base, int offset) {
         |  mov Rq(dst1), [Rq(base)+offset]
@@ -510,6 +542,10 @@ static void jit_emit_branch_gt(dasm_State **Dst, int label) {
 
 static void jit_emit_branch_le(dasm_State **Dst, int label) {
         |  jle =>label
+}
+
+static void jit_emit_branch_ule(dasm_State **Dst, int label) {
+        |  jbe =>label
 }
 
 static void jit_emit_branch_ge(dasm_State **Dst, int label) {
