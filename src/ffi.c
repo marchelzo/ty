@@ -12,6 +12,36 @@
 #include "cffi.h"
 #include "class.h"
 
+/*
+ * Ty-created struct types keep their member offsets immediately after the
+ * NULL-terminated elements array.  cffi_struct() computes the layout once,
+ * before publishing the type handle; runtime FFI operations only read it.
+ */
+static usize
+struct_count(ffi_type const *t)
+{
+        usize n = 0;
+        while (t->elements[n] != NULL) {
+                n += 1;
+        }
+        return n;
+}
+
+static usize
+struct_offsets_offset(usize n)
+{
+        usize bytes = (n + 1) * sizeof (ffi_type *);
+        usize alignment = _Alignof(usize);
+        return (bytes + alignment - 1) & ~(alignment - 1);
+}
+
+static usize const *
+struct_offsets(ffi_type const *t)
+{
+        usize offset = struct_offsets_offset(struct_count(t));
+        return (usize const *)((char const *)t->elements + offset);
+}
+
 inline static double
 float_from(Value const *v)
 {
@@ -113,7 +143,7 @@ xstore(Ty *ty, ffi_type *t, void *p, Value const *v)
 static void
 store(Ty *ty, ffi_type *t, void *p, Value const *v)
 {
-        usize offsets[64];
+        usize const *offsets;
         Value *f;
 
         switch (t->type) {
@@ -168,7 +198,10 @@ store(Ty *ty, ffi_type *t, void *p, Value const *v)
         case FFI_TYPE_STRUCT:
                 switch (v->type) {
                 case VALUE_TUPLE:
-                        ffi_get_struct_offsets(FFI_DEFAULT_ABI, t, offsets);
+                        if ((usize)v->count > struct_count(t)) {
+                                zP("too many values for FFI struct: %d", v->count);
+                        }
+                        offsets = struct_offsets(t);
                         for (int i = 0; i < v->count; ++i) {
                                 store(ty, t->elements[i], (char *)p + offsets[i], &v->items[i]);
                         }
@@ -222,7 +255,7 @@ load(Ty *ty, ffi_type *t, void const *p)
         Value v;
         int n;
 
-        usize offsets[128];
+        usize const *offsets;
 
         switch (t->type) {
         case FFI_TYPE_INT:    return INTEGER(*(int const *)p);
@@ -250,9 +283,9 @@ load(Ty *ty, ffi_type *t, void const *p)
                 v = vT(n);
                 gP(&v);
 
-                ffi_get_struct_offsets(FFI_DEFAULT_ABI, t, offsets);
+                offsets = struct_offsets(t);
 
-                for (int i = 0; i < (n & 0x7F); ++i) {
+                for (int i = 0; i < n; ++i) {
                         v.items[i] = load(ty, t->elements[i], (char *)p + offsets[i]);
                 }
 
@@ -474,9 +507,13 @@ cffi_new(Ty *ty, int argc, Value *kwargs)
                 return TPTR(t, NULL);
         }
 
+        if (t->size != 0 && (usize)count > SIZE_MAX / t->size) {
+                bP("allocation size overflow");
+        }
+
         unsigned align = max(t->alignment, sizeof (void *));
         usize total = max(t->size * count, sizeof (void *));
-        total += (total % align);
+        total += (align - (total % align)) % align;
 
 #ifdef _WIN32
         Value p = TPTR(t, _aligned_malloc(total, align));
@@ -505,8 +542,8 @@ cffi_box(Ty *ty, int argc, Value *kwargs)
         ffi_type *t = PTR_ARG(0);
 
         unsigned align = max(t->alignment, sizeof (void *));
-        unsigned size = max(t->size, sizeof (void *));
-        size += (size % align);
+        usize size = max(t->size, sizeof (void *));
+        size += (align - (size % align)) % align;
 
 #ifdef _WIN32
         Value p = TPTR(t, _aligned_malloc(size, align));
@@ -611,8 +648,7 @@ cffi_pmember(Ty *ty, int argc, Value *kwargs)
                 zP("invalid third argument to ffi.pmember(): %s", VSC(&i));
         }
 
-        usize offsets[64];
-        ffi_get_struct_offsets(FFI_DEFAULT_ABI, type, offsets);
+        usize const *offsets = struct_offsets(type);
 
         return PTR(p + offsets[i.z]);
 }
@@ -659,8 +695,7 @@ cffi_member(Ty *ty, int argc, Value *kwargs)
                 zP("invalid third argument to ffi.member(): %s", VSC(&i));
         }
 
-        usize offsets[64];
-        ffi_get_struct_offsets(FFI_DEFAULT_ABI, type, offsets);
+        usize const *offsets = struct_offsets(type);
 
         if (argc == 3) {
                 return load(ty, type->elements[i.z], p + offsets[i.z]);
@@ -676,7 +711,7 @@ cffi_fields(Ty *ty, int argc, Value *kwargs)
 {
         ASSERT_ARGC("ffi.fields()", 1);
 
-        usize *offsets;
+        usize const *offsets;
         ffi_type *type = PTR_ARG(0);
 
         if (type->type != FFI_TYPE_STRUCT) {
@@ -691,9 +726,7 @@ cffi_fields(Ty *ty, int argc, Value *kwargs)
 
         Array *fields = vA();
 
-        SCRATCH_SAVE();
-        offsets = smA(count * sizeof (usize));
-        ffi_get_struct_offsets(FFI_DEFAULT_ABI, type, offsets);
+        offsets = struct_offsets(type);
         GC_STOP();
         for (usize i = 0; i < count; ++i) {
                 uvP(*fields, PAIR(
@@ -702,7 +735,6 @@ cffi_fields(Ty *ty, int argc, Value *kwargs)
                 ));
         }
         GC_RESUME();
-        SCRATCH_RESTORE();
 
         return ARRAY(fields);
 }
@@ -1103,7 +1135,8 @@ cffi_struct(Ty *ty, int argc, Value *kwargs)
         t->type = FFI_TYPE_STRUCT;
         t->size = 0;
         t->alignment = 0;
-        t->elements = mA((argc + 1) * sizeof (ffi_type *));
+        usize offsets_offset = struct_offsets_offset(argc);
+        t->elements = mA(offsets_offset + argc * sizeof (usize));
 
         for (int i = 0; i < argc; ++i) {
                 Value member = ARG(i);
@@ -1117,7 +1150,10 @@ cffi_struct(Ty *ty, int argc, Value *kwargs)
 
         t->elements[argc] = NULL;
 
-        ffi_get_struct_offsets(FFI_DEFAULT_ABI, t, NULL);
+        usize *offsets = (usize *)((char *)t->elements + offsets_offset);
+        if (ffi_get_struct_offsets(FFI_DEFAULT_ABI, t, offsets) != FFI_OK) {
+                zP("ffi.struct(): invalid aggregate type");
+        }
 
         return PTR(t);
 }
