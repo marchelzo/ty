@@ -8,14 +8,14 @@
 void const *InternSentinel = &InternSentinel;
 
 inline static InternEntry *
-find(InternBucket const *bucket, char const *name, u64 hash)
+find(InternBucket const *bucket, char const *name, usize length, u64 hash)
 {
         for (usize i = 0; i < vN(*bucket); ++i) {
                 InternEntry *entry = v_(*bucket, i);
-                if (entry->hash != hash) {
+                if (entry->hash != hash || entry->length != length) {
                         continue;
                 }
-                if (strcmp(entry->name, name) == 0) {
+                if (memcmp(entry->name, name, length) == 0) {
                         return entry;
                 }
         }
@@ -24,12 +24,12 @@ find(InternBucket const *bucket, char const *name, u64 hash)
 }
 
 InternEntry *
-intern_get(InternSet *set, char const *name)
+intern_get_n(InternSet *set, char const *name, usize length)
 {
-        u64 hash = hash64z(name);
+        u64 hash = XXH3_64bits(name, length);
         InternBucket *bucket = &set->set[hash & (INTERN_TABLE_SIZE - 1)];
 
-        InternEntry *entry = find(bucket, name, hash);
+        InternEntry *entry = find(bucket, name, length, hash);
 
         if (entry != NULL) {
                 return entry;
@@ -38,14 +38,21 @@ intern_get(InternSet *set, char const *name)
         xvP(
                 *bucket,
                 ((InternEntry) {
-                        .name = name,
-                        .hash = hash,
-                        .id   = -(bucket + 1 - set->set),
-                        .data = set
+                        .name   = name,
+                        .length = length,
+                        .hash   = hash,
+                        .id     = -(bucket + 1 - set->set),
+                        .data   = set
                 })
         );
 
         return vvX(*bucket);
+}
+
+InternEntry *
+intern_get(InternSet *set, char const *name)
+{
+        return intern_get_n(set, name, strlen(name));
 }
 
 InternEntry *
@@ -54,9 +61,16 @@ intern_put(InternEntry *e, void *data)
         InternSet *set = e->data;
         InternBucket *b = &set->set[-e->id - 1];
 
+        char *owned_name = ty_malloc(e->length + 1);
+        if (owned_name == NULL) {
+                panic("out of memory");
+        }
+        memcpy(owned_name, e->name, e->length);
+        owned_name[e->length] = '\0';
+
+        e->name = owned_name;
         e->data = data;
         e->id   = vN(set->index);
-        e->name = S2(e->name);
 
         xvP(set->index, (b->count << 8u) | (b - set->set));
 

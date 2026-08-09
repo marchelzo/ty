@@ -13,16 +13,25 @@ intern_init(InternSet *set)
 }
 
 InternEntry *
+intern_get_n(InternSet *set, char const *s, usize n);
+
+InternEntry *
 intern_get(InternSet *set, char const *s);
 
 InternEntry *
 intern_put(InternEntry *e, void *data);
 
 inline static InternEntry *
+intern_n(InternSet *set, char const *s, usize n)
+{
+        InternEntry *e = intern_get_n(set, s, n);
+        return (e->id >= 0) ? e : intern_put(e, NULL);
+}
+
+inline static InternEntry *
 intern(InternSet *set, char const *s)
 {
-        InternEntry *e = intern_get(set, s);
-        return (e->id >= 0) ? e : intern_put(e, NULL);
+        return intern_n(set, s, strlen(s));
 }
 
 inline static InternEntry *

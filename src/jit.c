@@ -2271,12 +2271,15 @@ bc_prescan(JitCtx *ctx, char const *code, int code_size)
                         break;
 
                 case INSTR_CALL_METHOD:
-                case INSTR_CALL_SELF_METHOD:
+                case INSTR_CALL_SELF_METHOD: {
+                        int member;
                         BC_SKIP(i32);  // n (argc)
-                        BC_SKIP(i32);  // z (member_id)
+                        BC_READ(member);
+                        if (member < 0) return false;
                         BC_READ(nkw);
                         for (int q = 0; q < nkw; ++q) BC_SKIPSTR();
                         break;
+                }
 
                 case INSTR_LOAD_THREAD_LOCAL:
                         BC_SKIP(i32);
@@ -2694,10 +2697,13 @@ jit_fast_frame(Ty *ty, Value const *fn, Value const *self, int argc)
                 xvR(STACK, needed + 256);
         }
 
-        // NIL-fill locals beyond args
         Value *base = vv(STACK) + fp;
-        for (int i = argc; i < bound; i++) {
-                base[i] = NIL;
+        if (argc < bound) {
+                int n = bound - argc;
+                memset(base + argc, 0, n * sizeof (Value));
+                for (int i = argc; i < bound; ++i) {
+                        base[i].type = VALUE_NIL;
+                }
         }
         vN(STACK) = needed;
 
@@ -3188,8 +3194,13 @@ bc_emit_arith(JitCtx *ctx, void *helper)
         bool try_int = (a_cls == NULL || a_cls->i == CLASS_INT)
                     && (b_cls == NULL || b_cls->i == CLASS_INT);
 
-        // Only emit float fast path for basic arithmetic (not bitwise/shift/mod)
-        bool float_arith = try_float
+        bool mixed_a_int = a_cls != NULL && a_cls->i == CLASS_INT
+                        && b_cls != NULL && b_cls->i == CLASS_FLOAT;
+        bool mixed_b_int = a_cls != NULL && a_cls->i == CLASS_FLOAT
+                        && b_cls != NULL && b_cls->i == CLASS_INT;
+        bool mixed_float = mixed_a_int || mixed_b_int;
+
+        bool float_arith = (try_float || mixed_float)
                         && (helper == (void *)jit_rt_add
                          || helper == (void *)jit_rt_sub
                          || helper == (void *)jit_rt_mul
@@ -3253,24 +3264,34 @@ bc_emit_arith(JitCtx *ctx, void *helper)
                         jit_emit_label(asm, lbl_float);
                 }
 
-                // Check a->type == VALUE_REAL
                 jit_emit_ldrb(asm, BC_S0, BC_OPS, a_off + VAL_OFF_TYPE);
-                jit_emit_cmp_ri(asm, BC_S0, VALUE_REAL);
+                jit_emit_cmp_ri(asm, BC_S0, mixed_a_int ? VALUE_INTEGER : VALUE_REAL);
                 jit_emit_branch_ne(asm, lbl_slow);
 
-                // Check b->type == VALUE_REAL
                 jit_emit_ldrb(asm, BC_S0, BC_OPS, b_off + VAL_OFF_TYPE);
-                jit_emit_cmp_ri(asm, BC_S0, VALUE_REAL);
+                jit_emit_cmp_ri(asm, BC_S0, mixed_b_int ? VALUE_INTEGER : VALUE_REAL);
                 jit_emit_branch_ne(asm, lbl_slow);
 
-                // Guard div against zero divisor (+0.0 and -0.0)
                 if (helper == (void *)jit_rt_div) {
                         jit_emit_ldr64(asm, BC_S0, BC_OPS, b_off + VAL_OFF_Z);
-                        jit_emit_add(asm, BC_S0, BC_S0, BC_S0); // clears sign bit
+                        if (!mixed_b_int) {
+                                jit_emit_add(asm, BC_S0, BC_S0, BC_S0);
+                        }
                         jit_emit_cbz(asm, BC_S0, lbl_slow);
                 }
 
-                if (helper == (void *)jit_rt_add) {
+                if (mixed_float) {
+                        int arith_op = helper == (void *)jit_rt_add ? 0
+                                     : helper == (void *)jit_rt_sub ? 1
+                                     : helper == (void *)jit_rt_mul ? 2 : 3;
+                        jit_emit_farith_mixed(asm, BC_OPS,
+                                             a_off + VAL_OFF_Z, b_off + VAL_OFF_Z,
+                                             mixed_a_int, arith_op);
+                        if (mixed_a_int) {
+                                jit_emit_load_imm(asm, BC_S0, VALUE_REAL);
+                                jit_emit_strb(asm, BC_S0, BC_OPS, a_off + VAL_OFF_TYPE);
+                        }
+                } else if (helper == (void *)jit_rt_add) {
                         jit_emit_fadd(asm, BC_OPS, a_off + VAL_OFF_Z, b_off + VAL_OFF_Z);
                 } else if (helper == (void *)jit_rt_sub) {
                         jit_emit_fsub(asm, BC_OPS, a_off + VAL_OFF_Z, b_off + VAL_OFF_Z);
@@ -3280,7 +3301,6 @@ bc_emit_arith(JitCtx *ctx, void *helper)
                         jit_emit_fdiv(asm, BC_OPS, a_off + VAL_OFF_Z, b_off + VAL_OFF_Z);
                 }
 
-                // Type is already VALUE_REAL
                 EMIT_STAT(jit_rt_stat_arith_float);
                 jit_emit_jump(asm, lbl_done);
         }
@@ -3857,9 +3877,9 @@ bc_emit_call_method(JitCtx *ctx, char const *op_ip, int z, int n, int nkw)
         } else if (baked_method != NULL) {
                 // Check if the baked method is simple enough for fast trampoline
                 bool can_tramp = (rest_idx_of(baked_method) == -1)
-                              && (kwargs_idx_of(baked_method) == -1);
+                              && (kwargs_idx_of(baked_method) == -1)
+                              && !is_starred(baked_method);
                 if (can_tramp) {
-#if 0
                         // Fast trampoline path: skip xcall entirely
                         // Sync to sp-1 (exclude self): callee's fp = vN - argc
                         // must land on arg0, which is at op position sp-1-n
@@ -3877,7 +3897,7 @@ bc_emit_call_method(JitCtx *ctx, char const *op_ip, int z, int n, int nkw)
 
                         // If return 1: handled (result on stack), skip slow path
                         jit_emit_cbnz(asm, BC_RET, lbl_cm_done);
-#endif
+
                         // Slow fallback: guard failed or not JIT'd
                         jit_emit_mov(asm, BC_A0, BC_TY);
                         jit_emit_add_imm(asm, BC_A1, BC_OPS, result_off);
@@ -3888,7 +3908,7 @@ bc_emit_call_method(JitCtx *ctx, char const *op_ip, int z, int n, int nkw)
                         jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_call_self_method_guarded);
                         jit_emit_call_reg(asm, BC_CALL);
 
-                        //jit_emit_label(asm, lbl_cm_done);
+                        jit_emit_label(asm, lbl_cm_done);
                         DBG("CALL_METHOD (baked trampoline for %s)", M_NAME(z));
                 } else {
                         // Guarded fast path for user-defined classes (no trampoline)
@@ -3918,6 +3938,40 @@ bc_emit_call_method(JitCtx *ctx, char const *op_ip, int z, int n, int nkw)
         DBG("CALL_METHOD[%s]", M_NAME(z));
 }
 
+static bool
+bc_preserves_stack_base(u8 op)
+{
+        switch (op) {
+        case INSTR_NOP:
+        case INSTR_DUP:
+        case INSTR_POP:
+        case INSTR_POP2:
+        case INSTR_SWAP:
+        case INSTR_LOAD_LOCAL:
+        case INSTR_LOAD_REF:
+        case INSTR_LOAD_CAPTURED:
+        case INSTR_ASSIGN_LOCAL:
+        case INSTR_INTEGER:
+        case INSTR_REAL:
+        case INSTR_STRING:
+        case INSTR_VALUE:
+        case INSTR_TYPE:
+        case INSTR_REGEX:
+        case INSTR_TRUE:
+        case INSTR_FALSE:
+        case INSTR_NIL:
+        case INSTR_NONE:
+        case INSTR_SENTINEL:
+        case INSTR_LOAD_GLOBAL:
+        case INSTR_DUP2_SWAP:
+        case INSTR_CLEAR_RC:
+        case INSTR_PUSH_INDEX:
+                return true;
+        default:
+                return false;
+        }
+}
+
 // Main bytecode emission pass
 static bool
 bc_emit(JitCtx *ctx, char const *code, int code_size)
@@ -3944,6 +3998,7 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
         ctx->sp     = 0;
         ctx->max_sp = 0;
         ctx->dead   = false;
+        bool stack_base_valid = false;
 
         DBG("=========== BEGIN ============");
 
@@ -3989,6 +4044,7 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                                 }
                         }
                         ctx->dead = false;
+                        stack_base_valid = false;
                         jit_emit_label(asm, lbl);
                 }
 
@@ -3997,6 +4053,7 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                 jit_emit_load_imm(asm, BC_A1, (iptr)(code + off));
                 jit_emit_load_imm(asm, BC_CALL, (iptr)jit_profiler_tick);
                 jit_emit_call_reg(asm, BC_CALL);
+                stack_base_valid = false;
 #endif
 
                 u8 op = (u8)*ip++;
@@ -4012,8 +4069,11 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                         break;
 
                 default:
-                        DBG("reloading stack before op %d (%s)", op, GetInstructionName(op));
-                        jit_emit_reload_stack(asm, ctx->bound);
+                        if (!stack_base_valid) {
+                                DBG("reloading stack before op %d (%s)", op, GetInstructionName(op));
+                                jit_emit_reload_stack(asm, ctx->bound);
+                                stack_base_valid = true;
+                        }
                 }
 
 #if JIT_SCAN_LOG
@@ -4783,11 +4843,11 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                                 if (try_int) {
                                         // Check a.type == VALUE_INTEGER
                                         jit_emit_cmp_ri(asm, BC_S0, VALUE_INTEGER);
-                                        jit_emit_branch_ne(asm, lbl_slow);
+                                        jit_emit_branch_ne(asm, try_float ? lbl_float : lbl_slow);
 
                                         // Check b.type == VALUE_INTEGER
                                         jit_emit_cmp_ri(asm, BC_S1, VALUE_INTEGER);
-                                        jit_emit_branch_ne(asm, lbl_slow);
+                                        jit_emit_branch_ne(asm, try_float ? lbl_float : lbl_slow);
 
                                         // === Integer fast path: compare a.z vs b.z ===
                                         EMIT_STAT(jit_rt_stat_jcmp_int);
@@ -4920,10 +4980,67 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                                 }
                         }
 
-                        if (!emitted_fast) {
-                                // Generic path (no type info --- not trapped)
+                        if (!emitted_fast && z >= 0) {
+                                int obj_off = OP_OFF(ctx->sp - 1);
+                                int lbl_slow = bc_next_label(ctx);
+                                int lbl_done = bc_next_label(ctx);
+                                int offsets_items_off = (int)offsetof(Class, offsets_r)
+                                                      + (int)offsetof(u16Vector, items);
+                                int offsets_count_off = (int)offsetof(Class, offsets_r)
+                                                      + (int)offsetof(u16Vector, count);
+
+                                jit_emit_ldrb(asm, BC_S0, BC_OPS,
+                                              obj_off + VAL_OFF_TYPE);
+                                jit_emit_cmp_ri(asm, BC_S0, VALUE_OBJECT);
+                                jit_emit_branch_ne(asm, lbl_slow);
+
+                                jit_emit_ldr64(asm, BC_S2, BC_OPS,
+                                               obj_off + VAL_OFF_OBJECT);
+                                jit_emit_ldr64(asm, BC_S3, BC_S2, OBJ_OFF_CLASS);
+
+                                jit_emit_ldr64(asm, BC_S0, BC_S3, offsets_count_off);
+                                jit_emit_load_imm(asm, BC_S1, z);
+                                jit_emit_cmp_rr(asm, BC_S0, BC_S1);
+                                jit_emit_branch_ule(asm, lbl_slow);
+
+                                jit_emit_ldr64(asm, BC_S3, BC_S3, offsets_items_off);
+                                jit_emit_load_imm(asm, BC_S1, (i64)(u32)z * sizeof (u16));
+                                jit_emit_ldr16_index(asm, BC_S0, BC_S3, BC_S1);
+                                jit_emit_mov(asm, BC_S1, BC_S0);
+
+                                jit_emit_load_imm(asm, BC_S3, OFF_SHIFT);
+                                jit_emit_shr(asm, BC_S0, BC_S0, BC_S3);
+                                jit_emit_cmp_ri(asm, BC_S0, OFF_FIELD);
+                                jit_emit_branch_ne(asm, lbl_slow);
+
+                                jit_emit_load_imm(asm, BC_S0, OFF_MASK);
+                                jit_emit_and(asm, BC_S1, BC_S1, BC_S0);
+                                jit_emit_load_imm(asm, BC_S0, 5);
+                                jit_emit_shl(asm, BC_S1, BC_S1, BC_S0);
+                                jit_emit_add_imm(asm, BC_S2, BC_S2, OBJ_OFF_SLOTS);
+                                jit_emit_add(asm, BC_S2, BC_S2, BC_S1);
+
+                                jit_emit_ldp64(asm, BC_S0, BC_S1, BC_S2, 0);
+                                jit_emit_stp64(asm, BC_S0, BC_S1, BC_OPS, obj_off);
+                                jit_emit_ldp64(asm, BC_S0, BC_S1, BC_S2, 16);
+                                jit_emit_stp64(asm, BC_S0, BC_S1, BC_OPS, obj_off + 16);
+                                EMIT_STAT(jit_rt_stat_member_fast);
+                                jit_emit_jump(asm, lbl_done);
+
+                                jit_emit_label(asm, lbl_slow);
+                                EMIT_SLOW1(op_ip, SLOW_MEMBER_ACCESS, BC_OPS, obj_off);
                                 jit_emit_mov(asm, BC_A0, BC_TY);
-                                jit_emit_add_imm(asm, BC_A1, BC_OPS, OP_OFF(ctx->sp - 1));
+                                jit_emit_add_imm(asm, BC_A1, BC_OPS, obj_off);
+                                jit_emit_mov(asm, BC_A2, BC_A1);
+                                jit_emit_load_imm(asm, BC_A3, z);
+                                jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_member);
+                                jit_emit_call_reg(asm, BC_CALL);
+
+                                jit_emit_label(asm, lbl_done);
+                        } else if (!emitted_fast) {
+                                int obj_off = OP_OFF(ctx->sp - 1);
+                                jit_emit_mov(asm, BC_A0, BC_TY);
+                                jit_emit_add_imm(asm, BC_A1, BC_OPS, obj_off);
                                 jit_emit_mov(asm, BC_A2, BC_A1);
                                 jit_emit_load_imm(asm, BC_A3, z);
                                 jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_member);
@@ -4974,13 +5091,11 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                 }
 
                 CASE(GET_MEMBER) {
-                        int z;
-                        BC_READ(z);
-
                         jit_emit_mov(asm, BC_A0, BC_TY);
                         jit_emit_add_imm(asm, BC_A1, BC_OPS, OP_OFF(ctx->sp));
                         jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_get_member);
                         jit_emit_call_reg(asm, BC_CALL);
+                        ctx->sp--;
                         break;
                 }
 
@@ -6787,15 +6902,16 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                         int tos_off = OP_OFF(ctx->sp - 1);
                         int dst_off = OP_OFF(ctx->sp);
 
-                        jit_emit_add_imm(asm, BC_A0, BC_OPS, tos_off);
-                        jit_emit_add_imm(asm, BC_A1, BC_OPS, dst_off);
-                        jit_emit_load_imm(asm, BC_A2, idx);
-                        jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_index_tuple);
-                        jit_emit_call_reg(asm, BC_CALL);
-
-                        jit_emit_cmp_ri(asm, BC_RET, 0);
+                        jit_emit_ldrb(asm, BC_S0, BC_OPS, tos_off + VAL_OFF_TYPE);
+                        jit_emit_cmp_ri(asm, BC_S0, VALUE_TUPLE);
                         bc_set_label_sp(ctx, target, ctx->sp);
-                        jit_emit_branch_eq(asm, fail_lbl);
+                        jit_emit_branch_ne(asm, fail_lbl);
+                        jit_emit_ldr32(asm, BC_S0, BC_OPS, tos_off + VAL_OFF_COUNT);
+                        jit_emit_cmp_ri(asm, BC_S0, idx);
+                        jit_emit_branch_le(asm, fail_lbl);
+                        jit_emit_ldr64(asm, BC_S3, BC_OPS, tos_off + VAL_OFF_ITEMS);
+                        bc_copy_value(ctx, BC_OPS, dst_off,
+                                      BC_S3, idx * (int)sizeof (Value));
 
                         ctx->sp++;
                         if (ctx->sp > ctx->max_sp) ctx->max_sp = ctx->sp;
@@ -7372,6 +7488,119 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                                         BAIL("JIT: MUT bitwise on member not yet supported");
                                 }
                                 int obj_off = OP_OFF(ctx->tgt_obj_sp);
+                                int lbl_slow = bc_next_label(ctx);
+                                int lbl_done = bc_next_label(ctx);
+                                bool emitted_fast = false;
+
+                                Class *obj_class = expected_class_of(
+                                        ctx->ty,
+                                        ctx->op_types[ctx->tgt_obj_sp]
+                                );
+                                if (
+                                        op != INSTR_MUT_MOD
+                                     && obj_class != NULL
+                                     && ctx->tgt_index < (int)vN(obj_class->offsets_w)
+                                ) {
+                                        u16 field_off = v__(obj_class->offsets_w, ctx->tgt_index);
+                                        if (
+                                                field_off != OFF_NOT_FOUND
+                                             && (field_off >> OFF_SHIFT) == OFF_FIELD
+                                        ) {
+                                                int slot_off = OBJ_OFF_SLOTS
+                                                             + (field_off & OFF_MASK) * VALUE_SIZE;
+                                                if (slot_off + 16 <= 504) {
+                                                        emitted_fast = true;
+                                                        int lbl_float = bc_next_label(ctx);
+
+                                                        jit_emit_ldrb(asm, BC_S0, BC_OPS,
+                                                                      obj_off + VAL_OFF_TYPE);
+                                                        jit_emit_cmp_ri(asm, BC_S0, VALUE_OBJECT);
+                                                        jit_emit_branch_ne(asm, lbl_slow);
+                                                        jit_emit_ldr32(asm, BC_S0, BC_OPS,
+                                                                       obj_off + VAL_OFF_CLASS);
+                                                        jit_emit_cmp_ri(asm, BC_S0, obj_class->i);
+                                                        jit_emit_branch_ne(asm, lbl_slow);
+                                                        jit_emit_ldr64(asm, BC_S2, BC_OPS,
+                                                                       obj_off + VAL_OFF_OBJECT);
+
+                                                        jit_emit_ldrb(asm, BC_S0, BC_S2,
+                                                                      slot_off + VAL_OFF_TYPE);
+                                                        jit_emit_cmp_ri(asm, BC_S0, VALUE_INTEGER);
+                                                        jit_emit_branch_ne(asm, lbl_float);
+                                                        jit_emit_ldrb(asm, BC_S0, BC_OPS,
+                                                                      addend_off + VAL_OFF_TYPE);
+                                                        jit_emit_cmp_ri(asm, BC_S0, VALUE_INTEGER);
+                                                        jit_emit_branch_ne(asm, lbl_slow);
+                                                        if (op == INSTR_MUT_DIV) {
+                                                                jit_emit_ldr64(asm, BC_S0, BC_OPS,
+                                                                               addend_off + VAL_OFF_Z);
+                                                                jit_emit_cbz(asm, BC_S0, lbl_slow);
+                                                        }
+                                                        bc_copy_value(ctx, BC_OPS, obj_off,
+                                                                      BC_S2, slot_off);
+                                                        jit_emit_ldr64(asm, BC_S0, BC_OPS,
+                                                                       obj_off + VAL_OFF_Z);
+                                                        jit_emit_ldr64(asm, BC_S1, BC_OPS,
+                                                                       addend_off + VAL_OFF_Z);
+                                                        if (op == INSTR_MUT_ADD) {
+                                                                jit_emit_add(asm, BC_S0, BC_S0, BC_S1);
+                                                        } else if (op == INSTR_MUT_SUB) {
+                                                                jit_emit_sub(asm, BC_S0, BC_S0, BC_S1);
+                                                        } else if (op == INSTR_MUT_MUL) {
+                                                                jit_emit_mul(asm, BC_S0, BC_S0, BC_S1);
+                                                        } else {
+                                                                jit_emit_sdiv(asm, BC_S0, BC_S0, BC_S1);
+                                                        }
+                                                        jit_emit_str64(asm, BC_S0, BC_OPS,
+                                                                       obj_off + VAL_OFF_Z);
+                                                        bc_copy_value(ctx, BC_S2, slot_off,
+                                                                      BC_OPS, obj_off);
+                                                        bc_copy_value(ctx, BC_OPS, addend_off,
+                                                                      BC_OPS, obj_off);
+                                                        jit_emit_jump(asm, lbl_done);
+
+                                                        jit_emit_label(asm, lbl_float);
+                                                        jit_emit_cmp_ri(asm, BC_S0, VALUE_REAL);
+                                                        jit_emit_branch_ne(asm, lbl_slow);
+                                                        jit_emit_ldrb(asm, BC_S0, BC_OPS,
+                                                                      addend_off + VAL_OFF_TYPE);
+                                                        jit_emit_cmp_ri(asm, BC_S0, VALUE_REAL);
+                                                        jit_emit_branch_ne(asm, lbl_slow);
+                                                        if (op == INSTR_MUT_DIV) {
+                                                                jit_emit_ldr64(asm, BC_S0, BC_OPS,
+                                                                               addend_off + VAL_OFF_Z);
+                                                                jit_emit_add(asm, BC_S0, BC_S0, BC_S0);
+                                                                jit_emit_cbz(asm, BC_S0, lbl_slow);
+                                                        }
+                                                        bc_copy_value(ctx, BC_OPS, obj_off,
+                                                                      BC_S2, slot_off);
+                                                        if (op == INSTR_MUT_ADD) {
+                                                                jit_emit_fadd(asm, BC_OPS,
+                                                                              obj_off + VAL_OFF_Z,
+                                                                              addend_off + VAL_OFF_Z);
+                                                        } else if (op == INSTR_MUT_SUB) {
+                                                                jit_emit_fsub(asm, BC_OPS,
+                                                                              obj_off + VAL_OFF_Z,
+                                                                              addend_off + VAL_OFF_Z);
+                                                        } else if (op == INSTR_MUT_MUL) {
+                                                                jit_emit_fmul(asm, BC_OPS,
+                                                                              obj_off + VAL_OFF_Z,
+                                                                              addend_off + VAL_OFF_Z);
+                                                        } else {
+                                                                jit_emit_fdiv(asm, BC_OPS,
+                                                                              obj_off + VAL_OFF_Z,
+                                                                              addend_off + VAL_OFF_Z);
+                                                        }
+                                                        bc_copy_value(ctx, BC_S2, slot_off,
+                                                                      BC_OPS, obj_off);
+                                                        bc_copy_value(ctx, BC_OPS, addend_off,
+                                                                      BC_OPS, obj_off);
+                                                        jit_emit_jump(asm, lbl_done);
+                                                }
+                                        }
+                                }
+
+                                jit_emit_label(asm, lbl_slow);
                                 jit_emit_mov(asm, BC_A0, BC_TY);
                                 jit_emit_add_imm(asm, BC_A1, BC_OPS, obj_off);       // obj
                                 jit_emit_load_imm(asm, BC_A2, ctx->tgt_index);       // member_id
@@ -7385,6 +7614,7 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                                                               (iptr)jit_rt_member_mut_mod;
                                 jit_emit_load_imm(asm, BC_CALL, mem_helper);
                                 jit_emit_call_reg(asm, BC_CALL);
+                                if (emitted_fast) jit_emit_label(asm, lbl_done);
                         } else if (ctx->tgt_kind == TGT_SELF_MEMBER) {
                                 // TARGET_SELF_MEMBER + MUT op
                                 if (op == INSTR_MUT_OR || op == INSTR_MUT_AND || op == INSTR_MUT_XOR
@@ -7392,6 +7622,118 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                                         BAIL("JIT: MUT bitwise on self member not yet supported");
                                 }
                                 int self_off = ctx->param_count * VALUE_SIZE;
+                                int lbl_slow = bc_next_label(ctx);
+                                int lbl_done = bc_next_label(ctx);
+                                bool emitted_fast = false;
+
+                                if (
+                                        op != INSTR_MUT_MOD
+                                     && ctx->self_class != NULL
+                                     && ctx->tgt_index < (int)vN(ctx->self_class->offsets_w)
+                                ) {
+                                        u16 field_off = v__(ctx->self_class->offsets_w,
+                                                            ctx->tgt_index);
+                                        if (field_off != OFF_NOT_FOUND
+                                            && (field_off >> OFF_SHIFT) == OFF_FIELD) {
+                                                int slot_off = OBJ_OFF_SLOTS
+                                                             + (field_off & OFF_MASK) * VALUE_SIZE;
+                                                if (slot_off + 16 <= 504) {
+                                                        emitted_fast = true;
+                                                        int lbl_float = bc_next_label(ctx);
+                                                        int scratch_off = OP_OFF(ctx->sp);
+                                                        if (ctx->sp + 1 > ctx->max_sp) {
+                                                                ctx->max_sp = ctx->sp + 1;
+                                                        }
+
+                                                        bc_emit_deref(ctx, BC_S3, BC_LOC, self_off);
+                                                        jit_emit_ldrb(asm, BC_S0, BC_S3, VAL_OFF_TYPE);
+                                                        jit_emit_cmp_ri(asm, BC_S0, VALUE_OBJECT);
+                                                        jit_emit_branch_ne(asm, lbl_slow);
+                                                        jit_emit_ldr32(asm, BC_S0, BC_S3, VAL_OFF_CLASS);
+                                                        jit_emit_cmp_ri(asm, BC_S0,
+                                                                        ctx->self_class_id);
+                                                        jit_emit_branch_ne(asm, lbl_slow);
+                                                        jit_emit_ldr64(asm, BC_S2, BC_S3,
+                                                                       VAL_OFF_OBJECT);
+
+                                                        jit_emit_ldrb(asm, BC_S0, BC_S2,
+                                                                      slot_off + VAL_OFF_TYPE);
+                                                        jit_emit_cmp_ri(asm, BC_S0, VALUE_INTEGER);
+                                                        jit_emit_branch_ne(asm, lbl_float);
+                                                        jit_emit_ldrb(asm, BC_S0, BC_OPS,
+                                                                      addend_off + VAL_OFF_TYPE);
+                                                        jit_emit_cmp_ri(asm, BC_S0, VALUE_INTEGER);
+                                                        jit_emit_branch_ne(asm, lbl_slow);
+                                                        if (op == INSTR_MUT_DIV) {
+                                                                jit_emit_ldr64(asm, BC_S0, BC_OPS,
+                                                                               addend_off + VAL_OFF_Z);
+                                                                jit_emit_cbz(asm, BC_S0, lbl_slow);
+                                                        }
+                                                        bc_copy_value(ctx, BC_OPS, scratch_off,
+                                                                      BC_S2, slot_off);
+                                                        jit_emit_ldr64(asm, BC_S0, BC_OPS,
+                                                                       scratch_off + VAL_OFF_Z);
+                                                        jit_emit_ldr64(asm, BC_S1, BC_OPS,
+                                                                       addend_off + VAL_OFF_Z);
+                                                        if (op == INSTR_MUT_ADD) {
+                                                                jit_emit_add(asm, BC_S0, BC_S0, BC_S1);
+                                                        } else if (op == INSTR_MUT_SUB) {
+                                                                jit_emit_sub(asm, BC_S0, BC_S0, BC_S1);
+                                                        } else if (op == INSTR_MUT_MUL) {
+                                                                jit_emit_mul(asm, BC_S0, BC_S0, BC_S1);
+                                                        } else {
+                                                                jit_emit_sdiv(asm, BC_S0, BC_S0, BC_S1);
+                                                        }
+                                                        jit_emit_str64(asm, BC_S0, BC_OPS,
+                                                                       scratch_off + VAL_OFF_Z);
+                                                        bc_copy_value(ctx, BC_S2, slot_off,
+                                                                      BC_OPS, scratch_off);
+                                                        bc_copy_value(ctx, BC_OPS, addend_off,
+                                                                      BC_OPS, scratch_off);
+                                                        jit_emit_jump(asm, lbl_done);
+
+                                                        jit_emit_label(asm, lbl_float);
+                                                        jit_emit_cmp_ri(asm, BC_S0, VALUE_REAL);
+                                                        jit_emit_branch_ne(asm, lbl_slow);
+                                                        jit_emit_ldrb(asm, BC_S0, BC_OPS,
+                                                                      addend_off + VAL_OFF_TYPE);
+                                                        jit_emit_cmp_ri(asm, BC_S0, VALUE_REAL);
+                                                        jit_emit_branch_ne(asm, lbl_slow);
+                                                        if (op == INSTR_MUT_DIV) {
+                                                                jit_emit_ldr64(asm, BC_S0, BC_OPS,
+                                                                               addend_off + VAL_OFF_Z);
+                                                                jit_emit_add(asm, BC_S0, BC_S0, BC_S0);
+                                                                jit_emit_cbz(asm, BC_S0, lbl_slow);
+                                                        }
+                                                        bc_copy_value(ctx, BC_OPS, scratch_off,
+                                                                      BC_S2, slot_off);
+                                                        if (op == INSTR_MUT_ADD) {
+                                                                jit_emit_fadd(asm, BC_OPS,
+                                                                              scratch_off + VAL_OFF_Z,
+                                                                              addend_off + VAL_OFF_Z);
+                                                        } else if (op == INSTR_MUT_SUB) {
+                                                                jit_emit_fsub(asm, BC_OPS,
+                                                                              scratch_off + VAL_OFF_Z,
+                                                                              addend_off + VAL_OFF_Z);
+                                                        } else if (op == INSTR_MUT_MUL) {
+                                                                jit_emit_fmul(asm, BC_OPS,
+                                                                              scratch_off + VAL_OFF_Z,
+                                                                              addend_off + VAL_OFF_Z);
+                                                        } else {
+                                                                jit_emit_fdiv(asm, BC_OPS,
+                                                                              scratch_off + VAL_OFF_Z,
+                                                                              addend_off + VAL_OFF_Z);
+                                                        }
+                                                        bc_copy_value(ctx, BC_S2, slot_off,
+                                                                      BC_OPS, scratch_off);
+                                                        bc_copy_value(ctx, BC_OPS, addend_off,
+                                                                      BC_OPS, scratch_off);
+                                                        jit_emit_jump(asm, lbl_done);
+                                                }
+                                        }
+                                }
+
+                                jit_emit_label(asm, lbl_slow);
                                 jit_emit_mov(asm, BC_A0, BC_TY);
                                 jit_emit_add_imm(asm, BC_A1, BC_LOC, self_off);      // obj = self
                                 jit_emit_load_imm(asm, BC_A2, ctx->tgt_index);       // member_id
@@ -7405,6 +7747,7 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                                                               (iptr)jit_rt_member_mut_mod;
                                 jit_emit_load_imm(asm, BC_CALL, self_helper);
                                 jit_emit_call_reg(asm, BC_CALL);
+                                if (emitted_fast) jit_emit_label(asm, lbl_done);
                         } else if (ctx->tgt_kind == TGT_SUBSCRIPT) {
                                 // TARGET_SUBSCRIPT + MUT op
                                 if (op == INSTR_MUT_OR || op == INSTR_MUT_AND || op == INSTR_MUT_XOR
@@ -7414,7 +7757,118 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                                 // val=addend at sp-1, container at tgt_obj_sp, subscript at tgt_index
                                 int container_off = OP_OFF(ctx->tgt_obj_sp);
                                 int subscript_off = OP_OFF(ctx->tgt_index);
-                                // jit_rt_subscript_mut_*(ty, val, container, subscript)
+                                int lbl_slow = bc_next_label(ctx);
+                                int lbl_done = bc_next_label(ctx);
+                                Class *container_class = expected_class_of(
+                                        ctx->ty, ctx->op_types[ctx->tgt_obj_sp]
+                                );
+                                Class *subscript_class = expected_class_of(
+                                        ctx->ty, ctx->op_types[ctx->tgt_index]
+                                );
+                                bool emitted_fast = op != INSTR_MUT_MOD
+                                                 && container_class != NULL
+                                                 && container_class->i == CLASS_ARRAY
+                                                 && subscript_class != NULL
+                                                 && subscript_class->i == CLASS_INT;
+
+                                if (emitted_fast) {
+                                        int lbl_float = bc_next_label(ctx);
+
+                                        jit_emit_ldrb(asm, BC_S0, BC_OPS,
+                                                      container_off + VAL_OFF_TYPE);
+                                        jit_emit_cmp_ri(asm, BC_S0, VALUE_ARRAY);
+                                        jit_emit_branch_ne(asm, lbl_slow);
+                                        jit_emit_ldrb(asm, BC_S0, BC_OPS,
+                                                      subscript_off + VAL_OFF_TYPE);
+                                        jit_emit_cmp_ri(asm, BC_S0, VALUE_INTEGER);
+                                        jit_emit_branch_ne(asm, lbl_slow);
+                                        jit_emit_ldr64(asm, BC_S0, BC_OPS,
+                                                       subscript_off + VAL_OFF_Z);
+                                        jit_emit_cmp_ri(asm, BC_S0, 0);
+                                        jit_emit_branch_lt(asm, lbl_slow);
+                                        jit_emit_ldr64(asm, BC_S1, BC_OPS,
+                                                       container_off + VAL_OFF_Z);
+                                        jit_emit_ldr64(asm, BC_S2, BC_S1,
+                                                       (int)offsetof(Array, count));
+                                        jit_emit_cmp_lt(asm, BC_S2, BC_S0, BC_S2);
+                                        jit_emit_cbz(asm, BC_S2, lbl_slow);
+                                        jit_emit_ldr64(asm, BC_S3, BC_S1,
+                                                       (int)offsetof(Array, items));
+                                        jit_emit_load_imm(asm, BC_S2, 5);
+                                        jit_emit_shl(asm, BC_S0, BC_S0, BC_S2);
+                                        jit_emit_add(asm, BC_S3, BC_S3, BC_S0);
+
+                                        jit_emit_ldrb(asm, BC_S0, BC_S3, VAL_OFF_TYPE);
+                                        jit_emit_cmp_ri(asm, BC_S0, VALUE_INTEGER);
+                                        jit_emit_branch_ne(asm, lbl_float);
+                                        jit_emit_ldrb(asm, BC_S0, BC_OPS,
+                                                      addend_off + VAL_OFF_TYPE);
+                                        jit_emit_cmp_ri(asm, BC_S0, VALUE_INTEGER);
+                                        jit_emit_branch_ne(asm, lbl_slow);
+                                        if (op == INSTR_MUT_DIV) {
+                                                jit_emit_ldr64(asm, BC_S0, BC_OPS,
+                                                               addend_off + VAL_OFF_Z);
+                                                jit_emit_cbz(asm, BC_S0, lbl_slow);
+                                        }
+                                        bc_copy_value(ctx, BC_OPS, container_off, BC_S3, 0);
+                                        jit_emit_ldr64(asm, BC_S0, BC_OPS,
+                                                       container_off + VAL_OFF_Z);
+                                        jit_emit_ldr64(asm, BC_S1, BC_OPS,
+                                                       addend_off + VAL_OFF_Z);
+                                        if (op == INSTR_MUT_ADD) {
+                                                jit_emit_add(asm, BC_S0, BC_S0, BC_S1);
+                                        } else if (op == INSTR_MUT_SUB) {
+                                                jit_emit_sub(asm, BC_S0, BC_S0, BC_S1);
+                                        } else if (op == INSTR_MUT_MUL) {
+                                                jit_emit_mul(asm, BC_S0, BC_S0, BC_S1);
+                                        } else {
+                                                jit_emit_sdiv(asm, BC_S0, BC_S0, BC_S1);
+                                        }
+                                        jit_emit_str64(asm, BC_S0, BC_OPS,
+                                                       container_off + VAL_OFF_Z);
+                                        bc_copy_value(ctx, BC_S3, 0, BC_OPS, container_off);
+                                        bc_copy_value(ctx, BC_OPS, addend_off,
+                                                      BC_OPS, container_off);
+                                        jit_emit_jump(asm, lbl_done);
+
+                                        jit_emit_label(asm, lbl_float);
+                                        jit_emit_cmp_ri(asm, BC_S0, VALUE_REAL);
+                                        jit_emit_branch_ne(asm, lbl_slow);
+                                        jit_emit_ldrb(asm, BC_S0, BC_OPS,
+                                                      addend_off + VAL_OFF_TYPE);
+                                        jit_emit_cmp_ri(asm, BC_S0, VALUE_REAL);
+                                        jit_emit_branch_ne(asm, lbl_slow);
+                                        if (op == INSTR_MUT_DIV) {
+                                                jit_emit_ldr64(asm, BC_S0, BC_OPS,
+                                                               addend_off + VAL_OFF_Z);
+                                                jit_emit_add(asm, BC_S0, BC_S0, BC_S0);
+                                                jit_emit_cbz(asm, BC_S0, lbl_slow);
+                                        }
+                                        bc_copy_value(ctx, BC_OPS, container_off, BC_S3, 0);
+                                        if (op == INSTR_MUT_ADD) {
+                                                jit_emit_fadd(asm, BC_OPS,
+                                                              container_off + VAL_OFF_Z,
+                                                              addend_off + VAL_OFF_Z);
+                                        } else if (op == INSTR_MUT_SUB) {
+                                                jit_emit_fsub(asm, BC_OPS,
+                                                              container_off + VAL_OFF_Z,
+                                                              addend_off + VAL_OFF_Z);
+                                        } else if (op == INSTR_MUT_MUL) {
+                                                jit_emit_fmul(asm, BC_OPS,
+                                                              container_off + VAL_OFF_Z,
+                                                              addend_off + VAL_OFF_Z);
+                                        } else {
+                                                jit_emit_fdiv(asm, BC_OPS,
+                                                              container_off + VAL_OFF_Z,
+                                                              addend_off + VAL_OFF_Z);
+                                        }
+                                        bc_copy_value(ctx, BC_S3, 0, BC_OPS, container_off);
+                                        bc_copy_value(ctx, BC_OPS, addend_off,
+                                                      BC_OPS, container_off);
+                                        jit_emit_jump(asm, lbl_done);
+                                }
+
+                                jit_emit_label(asm, lbl_slow);
                                 jit_emit_mov(asm, BC_A0, BC_TY);
                                 jit_emit_add_imm(asm, BC_A1, BC_OPS, addend_off);      // val
                                 jit_emit_add_imm(asm, BC_A2, BC_OPS, container_off);   // container
@@ -7427,6 +7881,7 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                                                               (iptr)jit_rt_subscript_mut_mod;
                                 jit_emit_load_imm(asm, BC_CALL, sub_helper);
                                 jit_emit_call_reg(asm, BC_CALL);
+                                if (emitted_fast) jit_emit_label(asm, lbl_done);
                         }
 
                         ctx->tgt_kind = TGT_NONE;
@@ -7927,6 +8382,17 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                 default:
                         LOG("JIT: unknown emit opcode %d=%s", op, GetInstructionName(op));
                         return false;
+                }
+
+                switch (op) {
+                case INSTR_SAVE_STACK_POS:
+                case INSTR_DROP_STACK_POS:
+                case INSTR_RESTORE_STACK_POS:
+                case INSTR_POP_STACK_POS_POP:
+                        break;
+                default:
+                        stack_base_valid = bc_preserves_stack_base(op);
+                        break;
                 }
         }
 

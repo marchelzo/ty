@@ -58,6 +58,7 @@ enum { INTERN_TABLE_SIZE = 256 };
 typedef struct {
         i64 id;
         char const *name;
+        usize length;
         u64 hash;
         void *data;
 } InternEntry;

@@ -3292,14 +3292,14 @@ TargetFieldFast(Ty *ty, Value *v, i32 id)
 
         Value *_set = NULL;
         Value *_get = NULL;
-        Class *class = class_get(ty, v->class);
 
         switch (type) {
         case OFF_FIELD:
                 pushtarget(&v->object->slots[off], v->object);
                 return true;
 
-        case OFF_SETTER:
+        case OFF_SETTER: {
+                Class *class = class_get(ty, v->class);
                 _set = v_(class->setters.values, off);
                 _get = class_lookup_getter_i(ty, v->class, id);
                 if (_get == NULL) {
@@ -3309,6 +3309,7 @@ TargetFieldFast(Ty *ty, Value *v, i32 id)
                 pushtarget((Value *)(uptr)v->class, v->object);
                 pushtarget((Value *)(((uptr)_set) | 2), NULL);
                 return true;
+        }
 
         case OFF_SETTER_X:
                 _set = &v->object->slots[off];
@@ -3342,15 +3343,13 @@ LoadFieldFast(Ty *ty, i32 id)
         Value *vp;
         Value *this;
 
-        Class *class = class_get(ty, v.class);
-
         switch (type) {
         case OFF_FIELD:
                 pop();
                 return v.object->slots[off];
 
         case OFF_GETTER:
-                vp = v_(class->getters.values, off);
+                vp = v_(class_get(ty, v.class)->getters.values, off);
                 pop();
                 call(ty, vp, &v, 0, NULL);
                 return BREAK;
@@ -3362,7 +3361,7 @@ LoadFieldFast(Ty *ty, i32 id)
                 return BREAK;
 
         case OFF_METHOD:
-                vp = v_(class->methods.values, off);
+                vp = v_(class_get(ty, v.class)->methods.values, off);
                 this = uAo(sizeof *this, GC_VALUE);
                 *this = v;
                 pop();
@@ -3390,8 +3389,6 @@ DispatchMethodFast(Ty *ty, Value self, i32 id, int argc, int nkw, bool exec)
         Value fn;
         Value kwargs;
 
-        Class *class = class_get(ty, v->class);
-
         switch (type) {
         case OFF_FIELD:
                 pop();
@@ -3399,7 +3396,7 @@ DispatchMethodFast(Ty *ty, Value self, i32 id, int argc, int nkw, bool exec)
                 break;
 
         case OFF_GETTER:
-                vp = v_(class->getters.values, off);
+                vp = v_(class_get(ty, v->class)->getters.values, off);
                 exec_fn(ty, vp, v, 0, NULL);
                 fn = pop();
                 pop();
@@ -3415,7 +3412,7 @@ DispatchMethodFast(Ty *ty, Value self, i32 id, int argc, int nkw, bool exec)
                 break;
 
         case OFF_METHOD:
-                vp = v_(class->methods.values, off);
+                vp = v_(class_get(ty, v->class)->methods.values, off);
                 pop();
                 kwargs = BuildKwargsDict(ty, &IP, nkw);
                 if (exec) {
@@ -3926,34 +3923,20 @@ GetDynamicMemberId(Ty *ty, bool strict)
         switch (v.type) {
         case VALUE_STRING:
         {
-                byte_vector name = {0};
-                InternEntry *member;
-
-                SCRATCH_SAVE();
-
-                svPn(name, ss(v), sN(v));
-                svP(name, '\0');
-
-                member = intern_get(&xD.members, v_(name, 0));
+                InternEntry *member = intern_get_n(&xD.members, ss(v), sN(v));
                 if (member->id < 0) {
                         if (!strict) {
-                                SCRATCH_RESTORE();
                                 pop();
                                 return -1;
                         } else {
                                 int z = intern_put(member, NULL)->id;
-                                SCRATCH_RESTORE();
                                 pop();
                                 return -(z + 1);
                         }
                 } else {
-                        SCRATCH_RESTORE();
                         pop();
                         return member->id;
-
                 }
-
-                break;
         }
 
         default:

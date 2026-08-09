@@ -181,6 +181,7 @@ obj/tyls/token.o: include/keywords.h
 # jit.c depends on the generated DynASM header
 obj/jit.o: $(JIT_HDR)
 obj/tyls/jit.o: $(JIT_HDR)
+obj/typrof/jit.o: $(JIT_HDR)
 
 ty: ty.c $(OBJECTS) $(EXTERNAL)
 	@echo cc $<
