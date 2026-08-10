@@ -68,12 +68,6 @@ TyInlineTarget *
 ty_inline_operator_target(Class const *left, Class const *right, int op, int ref,
                           Value const *callee);
 
-TyInlineTarget *
-ty_inline_global_target(int global, Value const *callee);
-
-bool
-ty_inline_guard_global(Ty *ty, TyInlineTarget const *target);
-
 bool
 ty_inline_guard_member(Ty *ty, Value const *receiver, TyInlineTarget const *target);
 
