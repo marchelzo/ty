@@ -2950,9 +2950,14 @@ pub class TreeView < Component {
     icon:          Function | nil
     on-select:     Function | nil
     on-cursor:     Function | nil
+    // Called before built-in key handling. Returning a non-nil value consumes
+    // the event; returning Exit also propagates through Ink's dispatcher.
+    on-key:        Function | nil
     height:        Int | nil
     width:         Int | nil
     show-guides?:  Bool | nil
+    // Forests can use a synthetic root and hide it from the rendered rows.
+    show-root?:    Bool | nil
     guide-color:   String | nil
     color:         String | Function | nil
     cursor-color:  String | Function | nil
@@ -3002,7 +3007,14 @@ pub class TreeView < Component {
             }
         }
 
-        walk(__current-root, 0, [])
+        if show-root? ?? true {
+            walk(__current-root, 0, [])
+        } else {
+            let kids = try { children(__current-root) } catch _ { [] }
+            for kid, i in kids {
+                walk(kid, 0, [i == #kids - 1])
+            }
+        }
         rows
     }
 
@@ -3033,6 +3045,13 @@ pub class TreeView < Component {
     on-event(ev) {
         let h = int(height ?? 20)
         let n = #__visible
+
+        // Applications can layer shortcuts and modes (selection, search, quit)
+        // over the navigation behavior without reimplementing tree flattening.
+        if on-key {
+            let handled = on-key(ev, __cursor-node)
+            if handled != nil { return handled }
+        }
 
         fn move-to(idx: Int) {
             let new-idx = idx.clamp(0, max(n - 1, 0))
@@ -4466,8 +4485,9 @@ pub fn run(app: Node | Component, fullscreen: Bool = true) {
                     _ => {
                         if _focused.?focusable? and let $handler = _focused.?on-event {
                             debug!("handle: key -> {type(_focused)}")
-                            handler(ev)
+                            let handled = handler(ev)
                             _focused.invalidate!()
+                            if handled == Exit { return true }
                         } else if on-ev
                         && do { app.invalidate!(); on-ev(ev) } == Exit {
                             debug!("handle: root on-event returned Exit")
@@ -4646,8 +4666,9 @@ pub class TestHarness {
                 _ => {
                     if _focused.?focusable?
                     and let $handler = _focused.?on-event {
-                        handler(ev)
+                        let handled = handler(ev)
                         _focused.invalidate!()
+                        if handled == Exit { return Exit }
                     } else if __on-ev
                     && do { __app.invalidate!(); __on-ev(ev) } == Exit {
                         return Exit
