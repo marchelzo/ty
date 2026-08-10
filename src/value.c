@@ -1819,7 +1819,6 @@ _value_mark_xd(Ty *ty, Value const *v)
 {
         void **src = source_lookup(ty, v->src);
         if (src != NULL && *src != NULL) {
-                LOGX("*src = %p", *src);
                 MARK(*src);
         }
 
