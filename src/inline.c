@@ -493,12 +493,6 @@ ty_inline_operator_target(Class const *left, Class const *right, int op, int ref
         return new_target(left, right, -1, -1, op, ref, callee);
 }
 
-TyInlineTarget *
-ty_inline_global_target(int global, Value const *callee)
-{
-        return new_target(NULL, NULL, -1, -1, -1, global, callee);
-}
-
 static bool
 same_function(Value const *value, TyInlineTarget const *target)
 {
@@ -506,15 +500,6 @@ same_function(Value const *value, TyInlineTarget const *target)
             && value->type == VALUE_FUNCTION
             && value->info == target->info
             && value->env == target->env;
-}
-
-bool
-ty_inline_guard_global(Ty *ty, TyInlineTarget const *target)
-{
-        (void)ty;
-        return target->ref >= 0
-            && target->ref < vN(Globals)
-            && same_function(v_(Globals, target->ref), target);
 }
 
 bool

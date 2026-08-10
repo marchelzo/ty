@@ -44,6 +44,8 @@ char JIT;
 #define VAL_OFF_BOOL    offsetof(Value, boolean) // intmax_t z (for VALUE_INTEGER)
 #define VAL_OFF_CLASS   offsetof(Value, class)   // u16 class (for VALUE_CLASS / VALUE_OBJECT)
 #define VAL_OFF_OBJECT  offsetof(Value, object)  // void *object (for VALUE_OBJECT)
+#define VAL_OFF_INFO    offsetof(Value, info)
+#define VAL_OFF_ENV     offsetof(Value, env)
 #define VAL_OFF_COUNT   offsetof(Value, count)   // i32 count (for VALUE_TUPLE)
 #define VAL_OFF_ITEMS   offsetof(Value, items)   // Value *items (for VALUE_TUPLE)
 #define VAL_OFF_REF     offsetof(Value, ref)     // Value *ref (for VALUE_REF)
@@ -2755,7 +2757,6 @@ jit_run_trampoline(Ty *ty, JitFn *jit, Value **env)
 static int
 jit_rt_baked_call(Ty *ty, Value *self, Value *fn, int class_id, int argc)
 {
-        // Class guard
         if (UNLIKELY(ClassOf(self) != class_id)) {
                 return 0;
         }
@@ -3243,16 +3244,25 @@ bc_emit_arith(JitCtx *ctx, void *helper)
         int lbl_slow = bc_next_label(ctx);
         int lbl_done = bc_next_label(ctx);
         int lbl_float = (try_int && float_arith) ? bc_next_label(ctx) : lbl_slow;
+        bool reuse_types = try_int && float_arith;
+        if (reuse_types) {
+                jit_emit_ldrb(asm, BC_S2, BC_OPS, a_off + VAL_OFF_TYPE);
+                jit_emit_ldrb(asm, BC_S3, BC_OPS, b_off + VAL_OFF_TYPE);
+        }
 
         if (try_int) {
                 // Check a->type == VALUE_INTEGER
-                jit_emit_ldrb(asm, BC_S0, BC_OPS, a_off + VAL_OFF_TYPE);
-                jit_emit_cmp_ri(asm, BC_S0, VALUE_INTEGER);
+                if (!reuse_types) {
+                        jit_emit_ldrb(asm, BC_S2, BC_OPS, a_off + VAL_OFF_TYPE);
+                }
+                jit_emit_cmp_ri(asm, BC_S2, VALUE_INTEGER);
                 jit_emit_branch_ne(asm, lbl_float);
 
                 // Check b->type == VALUE_INTEGER
-                jit_emit_ldrb(asm, BC_S0, BC_OPS, b_off + VAL_OFF_TYPE);
-                jit_emit_cmp_ri(asm, BC_S0, VALUE_INTEGER);
+                if (!reuse_types) {
+                        jit_emit_ldrb(asm, BC_S3, BC_OPS, b_off + VAL_OFF_TYPE);
+                }
+                jit_emit_cmp_ri(asm, BC_S3, VALUE_INTEGER);
                 jit_emit_branch_ne(asm, lbl_float);
 
                 // Fast path: load integers, compute, store result
@@ -3298,12 +3308,17 @@ bc_emit_arith(JitCtx *ctx, void *helper)
                         jit_emit_label(asm, lbl_float);
                 }
 
-                jit_emit_ldrb(asm, BC_S0, BC_OPS, a_off + VAL_OFF_TYPE);
-                jit_emit_cmp_ri(asm, BC_S0, mixed_a_int ? VALUE_INTEGER : VALUE_REAL);
+                if (!reuse_types) {
+                        jit_emit_ldrb(asm, BC_S2, BC_OPS, a_off + VAL_OFF_TYPE);
+                        jit_emit_ldrb(asm, BC_S3, BC_OPS, b_off + VAL_OFF_TYPE);
+                }
+                jit_emit_cmp_ri(
+                        asm, BC_S2, mixed_a_int ? VALUE_INTEGER : VALUE_REAL
+                );
                 jit_emit_branch_ne(asm, lbl_slow);
-
-                jit_emit_ldrb(asm, BC_S0, BC_OPS, b_off + VAL_OFF_TYPE);
-                jit_emit_cmp_ri(asm, BC_S0, mixed_b_int ? VALUE_INTEGER : VALUE_REAL);
+                jit_emit_cmp_ri(
+                        asm, BC_S3, mixed_b_int ? VALUE_INTEGER : VALUE_REAL
+                );
                 jit_emit_branch_ne(asm, lbl_slow);
 
                 if (helper == (void *)jit_rt_div) {
@@ -3939,26 +3954,31 @@ bc_inline_plan_types(JitCtx *ctx, Value const *callee, TyInlinePlan const *plan)
 }
 
 static void
-bc_emit_inline_field(JitCtx *ctx, int source_pos, int dest_pos, int member,
-                     BcInlineField const *field, int lbl_slow)
+bc_emit_inline_object_guard(JitCtx *ctx, int source_pos, Class const *class,
+                            int lbl_slow)
 {
         dasm_State **asm = &ctx->asm;
         int source_off = OP_OFF(source_pos);
-        int dest_off = OP_OFF(dest_pos);
+        jit_emit_ldrb(asm, BC_S0, BC_OPS, source_off + VAL_OFF_TYPE);
+        jit_emit_cmp_ri(asm, BC_S0, VALUE_OBJECT);
+        jit_emit_branch_ne(asm, lbl_slow);
+        jit_emit_ldr64(asm, BC_S0, BC_OPS, source_off + VAL_OFF_OBJECT);
+        jit_emit_ldr64(asm, BC_S0, BC_S0, OBJ_OFF_CLASS);
+        jit_emit_load_imm(asm, BC_S1, (iptr)class);
+        jit_emit_cmp_rr(asm, BC_S0, BC_S1);
+        jit_emit_branch_ne(asm, lbl_slow);
+}
+
+static void
+bc_emit_inline_layout_guard(JitCtx *ctx, int member,
+                            BcInlineField const *field, int lbl_slow)
+{
+        dasm_State **asm = &ctx->asm;
         int items_off = (int)offsetof(Class, offsets_r)
                       + (int)offsetof(u16Vector, items);
         int count_off = (int)offsetof(Class, offsets_r)
                       + (int)offsetof(u16Vector, count);
-
-        jit_emit_ldrb(asm, BC_S0, BC_OPS, source_off + VAL_OFF_TYPE);
-        jit_emit_cmp_ri(asm, BC_S0, VALUE_OBJECT);
-        jit_emit_branch_ne(asm, lbl_slow);
-        jit_emit_ldr64(asm, BC_S2, BC_OPS, source_off + VAL_OFF_OBJECT);
-        jit_emit_ldr64(asm, BC_S3, BC_S2, OBJ_OFF_CLASS);
-        jit_emit_load_imm(asm, BC_S0, (iptr)field->class);
-        jit_emit_cmp_rr(asm, BC_S3, BC_S0);
-        jit_emit_branch_ne(asm, lbl_slow);
-
+        jit_emit_load_imm(asm, BC_S3, (iptr)field->class);
         jit_emit_ldr64(asm, BC_S0, BC_S3, count_off);
         jit_emit_load_imm(asm, BC_S1, member);
         jit_emit_cmp_rr(asm, BC_S0, BC_S1);
@@ -3969,7 +3989,16 @@ bc_emit_inline_field(JitCtx *ctx, int source_pos, int dest_pos, int member,
         jit_emit_load_imm(asm, BC_S1, field->offset);
         jit_emit_cmp_rr(asm, BC_S0, BC_S1);
         jit_emit_branch_ne(asm, lbl_slow);
+}
 
+static void
+bc_emit_inline_field_load(JitCtx *ctx, int source_pos, int dest_pos,
+                          BcInlineField const *field)
+{
+        dasm_State **asm = &ctx->asm;
+        int source_off = OP_OFF(source_pos);
+        int dest_off = OP_OFF(dest_pos);
+        jit_emit_ldr64(asm, BC_S2, BC_OPS, source_off + VAL_OFF_OBJECT);
         int slot_off = OBJ_OFF_SLOTS + (field->offset & OFF_MASK) * VALUE_SIZE;
         jit_emit_load_imm(asm, BC_S1, slot_off);
         jit_emit_add(asm, BC_S2, BC_S2, BC_S1);
@@ -4149,6 +4178,47 @@ bc_emit_inline_plan(JitCtx *ctx, TyInlinePlan const *plan, TyInlineKind kind,
         }
 
         dasm_State **asm = &ctx->asm;
+        for (int i = 0; i < plan->count; ++i) {
+                TyInlineInsn const *insn = &plan->insns[i];
+                if (insn->op != TY_INLINE_FIELD) {
+                        continue;
+                }
+                int source = bc_inline_local_pos(
+                        plan, kind, base, self_pos, insn->local
+                );
+                bool object_proven = kind == TY_INLINE_METHOD
+                                  && insn->local == plan->self_local;
+                bool layout_proven = false;
+                for (int j = 0; j < i; ++j) {
+                        TyInlineInsn const *previous = &plan->insns[j];
+                        if (previous->op != TY_INLINE_FIELD) {
+                                continue;
+                        }
+                        int previous_source = bc_inline_local_pos(
+                                plan, kind, base, self_pos, previous->local
+                        );
+                        if (previous_source == source
+                            && fields[j].class == fields[i].class) {
+                                object_proven = true;
+                        }
+                        if (previous->member == insn->member
+                            && fields[j].class == fields[i].class
+                            && fields[j].offset == fields[i].offset) {
+                                layout_proven = true;
+                        }
+                }
+                if (!object_proven) {
+                        bc_emit_inline_object_guard(
+                                ctx, source, fields[i].class, lbl_slow
+                        );
+                }
+                if (!layout_proven) {
+                        bc_emit_inline_layout_guard(
+                                ctx, insn->member, &fields[i], lbl_slow
+                        );
+                }
+        }
+
         int labels[TY_INLINE_MAX_INSNS + 1];
         for (int i = 0; i <= plan->count; ++i) {
                 labels[i] = -1;
@@ -4186,8 +4256,9 @@ bc_emit_inline_plan(JitCtx *ctx, TyInlinePlan const *plan, TyInlineKind kind,
                 {
                         int source = bc_inline_local_pos(plan, kind, base, self_pos,
                                                          insn->local);
-                        bc_emit_inline_field(ctx, source, scratch + depth, insn->member,
-                                             &fields[i], lbl_slow);
+                        bc_emit_inline_field_load(
+                                ctx, source, scratch + depth, &fields[i]
+                        );
                         depth++;
                         break;
                 }
@@ -4343,6 +4414,32 @@ bc_emit_inline_getter(JitCtx *ctx, char const *op_ip, int member,
         return true;
 }
 
+static void
+bc_emit_inline_global_guard(JitCtx *ctx, int global, Value const *callee,
+                            int lbl_slow)
+{
+        dasm_State **asm = &ctx->asm;
+        jit_emit_load_imm(asm, BC_S2, (iptr)&Globals);
+        jit_emit_ldr64(asm, BC_S0, BC_S2, OFF_VEC_LEN);
+        jit_emit_load_imm(asm, BC_S1, global);
+        jit_emit_cmp_rr(asm, BC_S0, BC_S1);
+        jit_emit_branch_ule(asm, lbl_slow);
+        jit_emit_ldr64(asm, BC_S3, BC_S2, OFF_VEC_DATA);
+        jit_emit_load_imm(asm, BC_S1, (iptr)global * sizeof (Value));
+        jit_emit_add(asm, BC_S3, BC_S3, BC_S1);
+        jit_emit_ldrb(asm, BC_S0, BC_S3, VAL_OFF_TYPE);
+        jit_emit_cmp_ri(asm, BC_S0, VALUE_FUNCTION);
+        jit_emit_branch_ne(asm, lbl_slow);
+        jit_emit_ldr64(asm, BC_S0, BC_S3, VAL_OFF_INFO);
+        jit_emit_load_imm(asm, BC_S1, (iptr)callee->info);
+        jit_emit_cmp_rr(asm, BC_S0, BC_S1);
+        jit_emit_branch_ne(asm, lbl_slow);
+        jit_emit_ldr64(asm, BC_S0, BC_S3, VAL_OFF_ENV);
+        jit_emit_load_imm(asm, BC_S1, (iptr)callee->env);
+        jit_emit_cmp_rr(asm, BC_S0, BC_S1);
+        jit_emit_branch_ne(asm, lbl_slow);
+}
+
 static int
 bc_emit_inline_global(JitCtx *ctx, Value const *callee, int global, int argc)
 {
@@ -4369,14 +4466,8 @@ bc_emit_inline_global(JitCtx *ctx, Value const *callee, int global, int argc)
         ctx->inline_cost += plan.count;
         int lbl_slow = bc_next_label(ctx);
         int lbl_done = bc_next_label(ctx);
-        TyInlineTarget *target = ty_inline_global_target(global, callee);
         dasm_State **asm = &ctx->asm;
-
-        jit_emit_mov(asm, BC_A0, BC_TY);
-        jit_emit_load_imm(asm, BC_A1, (iptr)target);
-        jit_emit_load_imm(asm, BC_CALL, (iptr)ty_inline_guard_global);
-        jit_emit_call_reg(asm, BC_CALL);
-        jit_emit_cbz(asm, BC_RET, lbl_slow);
+        bc_emit_inline_global_guard(ctx, global, callee, lbl_slow);
 
         bool emitted = bc_emit_inline_plan(
                 ctx, &plan, TY_INLINE_GLOBAL, base, -1, scratch, NULL, lbl_slow
