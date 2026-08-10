@@ -260,6 +260,28 @@ static void jit_emit_fdiv(dasm_State **Dst, int base, int a_off, int b_off) {
         |  str d0, [Rx(base), #a_off]
 }
 
+static void jit_emit_branch_bit_set(dasm_State **Dst, int reg, int bit, int label) {
+        |  tbnz Rx(reg), #bit, =>label
+}
+
+static void jit_emit_farith_to(dasm_State **Dst, int dst_base, int dst_off,
+                               int src_base, int src_off, int op) {
+        |  ldr d0, [Rx(dst_base), #dst_off]
+        |  ldr d1, [Rx(src_base), #src_off]
+        switch (op) {
+        case 0:
+                |  fadd d0, d0, d1
+                break;
+        case 1:
+                |  fsub d0, d0, d1
+                break;
+        default:
+                |  fmul d0, d0, d1
+                break;
+        }
+        |  str d0, [Rx(dst_base), #dst_off]
+}
+
 static void jit_emit_farith_mixed(dasm_State **Dst, int base, int a_off, int b_off,
                                   bool a_is_int, int op) {
         if (a_is_int) {
