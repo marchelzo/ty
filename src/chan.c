@@ -356,7 +356,7 @@ enqueue(Channel *chan, Value *msg)
                         buf[i] = chan->items[(chan->head + i) & qmask(chan)];
                 }
 
-                mrealloc(chan->items, 0);
+                xmF(chan->items);
                 chan->items = buf;
                 chan->head  = 0;
                 chan->tail  = n;

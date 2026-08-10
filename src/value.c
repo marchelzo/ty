@@ -1741,7 +1741,7 @@ inline static void
 mark_function(Ty *ty, Value const *v)
 {
         int n = v->info[FUN_INFO_CAPTURES]
-              + (v->type == VALUE_BOUND_FUNCTION);
+              + ((v->type & ~VALUE_TAGGED) == VALUE_BOUND_FUNCTION);
 
         if (from_eval(v)) {
                 MARK(v->info);

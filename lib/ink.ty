@@ -508,6 +508,9 @@ pub class Component {
 
     focusable? -> Bool        { false }
     interval   -> Float | nil { nil   }
+    // Optional render-loop frame cap. Dirty events and timers continue to be
+    // processed and coalesced; only terminal painting is deferred.
+    max-fps    -> Float | nil { nil   }
 
     mount()        {}
     unmount()      {}
@@ -2961,6 +2964,13 @@ pub class TreeView < Component {
     guide-color:   String | nil
     color:         String | Function | nil
     cursor-color:  String | Function | nil
+    // Optional background applied across the full focused row.
+    cursor-bg:     String | Function | nil
+    // When non-nil, revision opts into flattened-row caching. Change it whenever
+    // children() can return a structurally different tree (including async data
+    // publication or filtering). A nil revision preserves the legacy behavior
+    // of consulting mutable callbacks on every render.
+    revision:      Any = nil
 
     __current-root: Any = nil
     __prev-root:    Any = nil
@@ -2969,8 +2979,12 @@ pub class TreeView < Component {
     __scroll:       Int = 0
     __root-stack:   Array[Any] = []
     __visible:      Array[Any] = []
+    __flat-dirty:   Bool = true
+    __prev-revision: Any = nil
 
     focusable? -> Bool { true }
+
+    __invalidate-flat!() { __flat-dirty = true }
 
     __key(node) -> String {
         key ? key(node) : "{node}"
@@ -2987,10 +3001,24 @@ pub class TreeView < Component {
     __toggle!(node) {
         let k = __key(node)
         __expanded[k] = !(__expanded[k] ?? false)
+        __invalidate-flat!()
     }
 
-    __expand!(node) { __expanded[__key(node)] = true }
-    __collapse!(node) { __expanded[__key(node)] = false }
+    __expand!(node) {
+        let k = __key(node)
+        if !(__expanded[k] ?? false) {
+            __expanded[k] = true
+            __invalidate-flat!()
+        }
+    }
+
+    __collapse!(node) {
+        let k = __key(node)
+        if __expanded[k] ?? false {
+            __expanded[k] = false
+            __invalidate-flat!()
+        }
+    }
 
     __flatten() -> Array[Any] {
         let rows: Array[Any] = []
@@ -3106,6 +3134,7 @@ pub class TreeView < Component {
                     __root-stack.push(__current-root)
                     __current-root = node
                     __expand!(node)
+                    __invalidate-flat!()
                     __cursor = 0
                     __scroll = 0
                 }
@@ -3114,6 +3143,7 @@ pub class TreeView < Component {
             event.Key({key: 'BACKSPACE', event: (1 or 2), *}) => {
                 if #__root-stack > 0 {
                     __current-root = __root-stack.pop()
+                    __invalidate-flat!()
                     __cursor = 0
                     __scroll = 0
                 }
@@ -3139,14 +3169,29 @@ pub class TreeView < Component {
             __cursor = 0
             __scroll = 0
             __prev-root = root
+            __invalidate-flat!()
         }
 
-        __visible = __flatten()
+        // A revision is an explicit promise that children() is structurally
+        // stable until the token changes. Without one, retain TreeView's old
+        // behavior for callers backed by mutable callbacks.
+        if revision == nil {
+            __flat-dirty = true
+        } else if revision != __prev-revision {
+            __prev-revision = revision
+            __flat-dirty = true
+        }
+        if __flat-dirty {
+            __visible = __flatten()
+            __flat-dirty = false
+        }
         let h = int(height ?? 20)
         let guides? = show-guides? ?? true
         let clr = resolve(color, 'text')
         let cur-clr = resolve(cursor-color, 'selection')
+        let cur-bg = cursor-bg ? resolve(cursor-bg, 'selection') : nil
         let g-clr = guide-color ?? 'subtle'
+        let row-w = int(width ?? layout-max-w)
 
         if __cursor >= #__visible { __cursor = max(#__visible - 1, 0) }
         if __cursor < __scroll { __scroll = __cursor }
@@ -3185,13 +3230,16 @@ pub class TreeView < Component {
             let mark = (sel? && focused?) ? '▸ ' : '  '
             let mark-clr = sel? ? "{cur-clr} bold" : 'text-dim'
 
-            rows.push(
-                <Text>
-                    <Text style=mark-clr>{mark}</Text>
-                    <Text style=g-clr>{guide-str}</Text>
-                    <Text style=lbl-clr>{exp-str}{lbl}</Text>
-                </Text>
-            )
+            let content=<Text>
+                <Text style=mark-clr>{mark}</Text>
+                <Text style=g-clr>{guide-str}</Text>
+                <Text style=lbl-clr>{exp-str}{lbl}</Text>
+            </Text>
+            if sel? && cur-bg != nil {
+                rows.push(<Box direction="row" width=row-w bg=cur-bg>{content}</Box>)
+            } else {
+                rows.push(content)
+            }
         }
 
         if #__visible == 0 {
@@ -4367,6 +4415,7 @@ pub fn run(app: Node | Component, fullscreen: Bool = true) {
     let dirty = true
     let tree: Element | nil = nil
     let dragging = false
+    let last-paint = 0.0
 
     signal(SIGWINCH, fn () { dirty = true })
 
@@ -4400,6 +4449,7 @@ pub fn run(app: Node | Component, fullscreen: Bool = true) {
             paint-debug-borders(t, rows)
         }
         dirty = false
+        last-paint = now()
     }
 
     fn handle(ev) -> Bool {
@@ -4519,6 +4569,11 @@ pub fn run(app: Node | Component, fullscreen: Bool = true) {
     for (;;) {
         let deadline = next-timer-deadline()
         let timeout  = deadline ? max(deadline - now(), 0.0) : 10.0
+        // Frame limiting belongs at the renderer boundary: keep consuming input,
+        // wakes, and timers, but coalesce their visual effects into one paint.
+        if dirty and let $fps = app.max-fps and fps > 0.0 {
+            timeout = min(timeout,max(last-paint + 1.0 / fps - now(),0.0))
+        }
 
         debug!(
             "poll: timers={#_timers} "
@@ -4533,6 +4588,12 @@ pub fn run(app: Node | Component, fullscreen: Bool = true) {
             } else {
                 break break if handle(ev)
             }
+            // A continuously busy input/wake queue must not starve a frame that
+            // has reached its deadline.
+            if dirty and let $fps = app.max-fps and fps > 0.0
+            and now() - last-paint >= 1.0 / fps {
+                break
+            }
         }
 
         if process-timers() {
@@ -4540,7 +4601,11 @@ pub fn run(app: Node | Component, fullscreen: Bool = true) {
         }
 
         if dirty {
-            repaint()
+            let ready? = true
+            if let $fps = app.max-fps and fps > 0.0 {
+                ready? = now() - last-paint >= 1.0 / fps
+            }
+            if ready? { repaint() }
         }
     }
 }

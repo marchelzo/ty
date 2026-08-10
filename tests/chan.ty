@@ -2,6 +2,23 @@ import os (..)
 
 ns test
 
+class IsolatedWorker {
+    gate: Channel
+    result: Channel
+    value: Int
+
+    init(gate: Channel, result: Channel, value: Int) {
+        self.gate = gate
+        self.result = result
+        self.value = value
+    }
+
+    run() {
+        gate.recv()
+        result.send(value)
+    }
+}
+
 pub fn chan() {
     let ch = Channel()
     Thread(isolated=true, fn () {
@@ -10,4 +27,32 @@ pub fn chan() {
     })
     assert(ch.recv(0) == None)
     assert(ch.recv() == Some('hello'))
+
+    // The launching group must not own the environment used by an isolated
+    // thread. Force several collections after the launcher drops its closure.
+    let gate = Channel()
+    let result = Channel()
+    let captured = 42
+    let t = Thread(isolated=true, fn () {
+        gate.recv()
+        result.send(captured)
+    })
+    for i in ..100000 {
+        let garbage = "garbage-{i}-{'x' * 64}"
+    }
+    gate.send(nil)
+    assert(result.recv() == Some(captured))
+    t.join()
+
+    // Bound functions have one additional environment cell for self.
+    let bound-gate = Channel()
+    let bound-result = Channel()
+    let worker = IsolatedWorker(bound-gate, bound-result, 99)
+    let bound-thread = Thread(worker.run, isolated=true)
+    for i in ..100000 {
+        let garbage = "bound-garbage-{i}-{'x' * 64}"
+    }
+    bound-gate.send(nil)
+    assert(bound-result.recv() == Some(worker.value))
+    bound-thread.join()
 }

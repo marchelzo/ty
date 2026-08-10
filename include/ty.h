@@ -499,6 +499,8 @@ typedef struct thread_group {
         isize      DeadUsed;
 
         TySpinLock GCLock;
+        int       *GCBlockedThreads;
+        usize      GCThreadCapacity;
 
         atomic_bool WantGC;
         atomic_int  GCReadyCount;
