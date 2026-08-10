@@ -417,6 +417,7 @@ typedef struct {
         Thread *t;
         ThreadGroup *group;
         Ty *ty;
+        bool isolated;
 } NewThreadCtx;
 
 static ThreadGroup MainGroup;
@@ -709,15 +710,15 @@ DoGC(Ty *ty)
         ty->group->WantGC = true;
         JitInterruptFlag  = 1;
 
-        static int *blockedThreads;
-        static int *runningThreads;
-        static usize capacity;
-
-        if (ty->group->ThreadList.count > capacity) {
-                blockedThreads = mrealloc(blockedThreads, vN(ty->group->ThreadList) * sizeof *blockedThreads);
-                runningThreads = mrealloc(runningThreads, vN(ty->group->ThreadList) * sizeof *runningThreads);
-                capacity = vN(ty->group->ThreadList);
+        usize nThreads = vN(ty->group->ThreadList);
+        if (nThreads > ty->group->GCThreadCapacity) {
+                ty->group->GCBlockedThreads = mrealloc(
+                        ty->group->GCBlockedThreads,
+                        nThreads * sizeof *ty->group->GCBlockedThreads
+                );
+                ty->group->GCThreadCapacity = nThreads;
         }
+        int *blockedThreads = ty->group->GCBlockedThreads;
 
         int nBlocked = 0;
         int nRunning = 0;
@@ -733,7 +734,7 @@ DoGC(Ty *ty)
 #endif
                 if (TryFlipTo(v__(ty->group->ThreadStates, i), true)) {
                         GCLOG("Thread %llu is running", ty->group->TyList.items[i]->id);
-                        runningThreads[nRunning++] = i;
+                        nRunning += 1;
                         TySpinLockUnlock(v__(ty->group->ThreadLocks, i));
                 } else {
                         GCLOG("Thread %llu is blocked", ty->group->TyList.items[i]->id);
@@ -2137,7 +2138,8 @@ NewThread(Ty *ty, Thread *t, Value *call, Value *name, bool isolated)
                 .name = name,
                 .created = &created,
                 .t = t,
-                .group = isolated ? NewThreadGroup() : ty->group
+                .group = isolated ? NewThreadGroup() : ty->group,
+                .isolated = isolated
         };
 
         TyMutexInit(&t->mutex);
@@ -2273,10 +2275,82 @@ CleanupThread(void *ctx)
                 xvF(ty->group->ThreadLocks);
                 xvF(ty->group->ThreadStates);
                 xvF(ty->group->DeadAllocs);
+                xmF(ty->group->GCBlockedThreads);
                 xmF(ty->group);
         }
 
         GCLOG("Finished cleaning up on thread: %llu -- releasing threads lock", TID);
+}
+
+/*
+ * An isolated thread's GC cannot keep allocations owned by the launching
+ * thread group alive.  In particular, the function Value copied into the new
+ * thread still points at the launching group's environment and capture cells.
+ * Clone that scaffolding while the launcher is waiting in NewThread(), so the
+ * isolated frame owns the storage it uses for LOAD_CAPTURED.
+ *
+ * Captured Values are intentionally copied shallowly.  Heap objects referenced
+ * by those Values still obey the isolated-thread rule and must be transferred
+ * through Channel when their owning group does not otherwise retain them.
+ */
+static Value
+CloneThreadEnvironment(Ty *ty, Value const *src)
+{
+        Value f = *src;
+        int type = f.type & ~VALUE_TAGGED;
+
+        if (
+                type != VALUE_FUNCTION
+             && type != VALUE_BOUND_FUNCTION
+             && type != VALUE_NATIVE_FUNCTION
+        ) {
+                return f;
+        }
+
+        int n = f.info[FUN_INFO_CAPTURES]
+              + (type == VALUE_BOUND_FUNCTION);
+
+        if (n == 0 || f.env == NULL) {
+                return f;
+        }
+
+        Value **old = f.env;
+        Value **env = uAo0(n * sizeof *env, GC_ENV);
+
+        for (int i = 0; i < n; ++i) {
+                if (old[i] == NULL) {
+                        continue;
+                }
+
+                for (int j = 0; j < i; ++j) {
+                        if (old[i] == old[j]) {
+                                env[i] = env[j];
+                                goto NextCapture;
+                        }
+                }
+
+                env[i] = uAo(sizeof *env[i], GC_VALUE);
+                *env[i] = *old[i];
+
+NextCapture:
+                continue;
+        }
+
+        /* Preserve references between cells in the cloned environment. */
+        for (int i = 0; i < n; ++i) {
+                if (env[i] == NULL || env[i]->type != VALUE_REF) {
+                        continue;
+                }
+                for (int j = 0; j < n; ++j) {
+                        if (env[i]->ref == old[j]) {
+                                env[i]->ref = env[j];
+                                break;
+                        }
+                }
+        }
+
+        f.env = env;
+        return f;
 }
 
 static TyThreadReturnValue
@@ -2289,6 +2363,10 @@ vm_run_thread(void *p)
 
         Ty *ty = mrealloc(NULL, sizeof *ty);
         InitializeTy(ty, ctx->group);
+
+        if (ctx->isolated) {
+                call[0] = CloneThreadEnvironment(ty, &call[0]);
+        }
 
         MyTy = ty;
         MyId = ty->id = t->i;
@@ -11470,15 +11548,15 @@ TyReloadModule(Ty *ty, char const *module)
         ty->group->WantGC = true;
         JitInterruptFlag  = 1;
 
-        static int *blockedThreads;
-        static int *runningThreads;
-        static usize capacity;
-
-        if (vN(ty->group->ThreadList) > capacity) {
-                blockedThreads = mrealloc(blockedThreads, vN(ty->group->ThreadList) * sizeof *blockedThreads);
-                runningThreads = mrealloc(runningThreads, vN(ty->group->ThreadList) * sizeof *runningThreads);
-                capacity = vN(ty->group->ThreadList);
+        usize nThreads = vN(ty->group->ThreadList);
+        if (nThreads > ty->group->GCThreadCapacity) {
+                ty->group->GCBlockedThreads = mrealloc(
+                        ty->group->GCBlockedThreads,
+                        nThreads * sizeof *ty->group->GCBlockedThreads
+                );
+                ty->group->GCThreadCapacity = nThreads;
         }
+        int *blockedThreads = ty->group->GCBlockedThreads;
 
         int nBlocked = 0;
         int nRunning = 0;
@@ -11489,7 +11567,7 @@ TyReloadModule(Ty *ty, char const *module)
                 }
                 TySpinLockLock(v__(ty->group->ThreadLocks, i));
                 if (TryFlipTo(v__(ty->group->ThreadStates, i), true)) {
-                        runningThreads[nRunning++] = i;
+                        nRunning += 1;
                         TySpinLockUnlock(v__(ty->group->ThreadLocks, i));
                 } else {
                         blockedThreads[nBlocked++] = i;
