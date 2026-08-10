@@ -4,6 +4,7 @@
 #include <string.h>
 #include <stdbool.h>
 #include <inttypes.h>
+#include <math.h>
 #include <assert.h>
 #include <stdarg.h>
 #include <stdnoreturn.h>
@@ -12722,12 +12723,39 @@ zfold(Expr *e, Scope *scope, void *ctx)
                 return e;
         }
 
+        if (
+                (e->type == EXPRESSION_USER_OP)
+             && s_eq(e->op_name, "**")
+             && (e->left->type  == EXPRESSION_INTEGER || e->left->type  == EXPRESSION_REAL)
+             && (e->right->type == EXPRESSION_INTEGER || e->right->type == EXPRESSION_REAL)
+        ) {
+                bool integer_result = (e->left->type  == EXPRESSION_INTEGER)
+                                   && (e->right->type == EXPRESSION_INTEGER);
+                double a = (e->left->type == EXPRESSION_INTEGER)
+                         ? (double)e->left->integer
+                         : e->left->real;
+                double b = (e->right->type == EXPRESSION_INTEGER)
+                         ? (double)e->right->integer
+                         : e->right->real;
+                double result = pow(a, b);
+                if (!integer_result) {
+                        e->type = EXPRESSION_REAL;
+                        e->real = result;
+                } else if (isfinite(result)
+                           && result >= (double)INTMAX_MIN
+                           && result < -(double)INTMAX_MIN) {
+                        e->type = EXPRESSION_INTEGER;
+                        e->integer = (i64)result;
+                }
+                return e;
+        }
+
         if (!is_arith(e)) {
                 return e;
         }
 
         if (
-                (e->left->type != EXPRESSION_INTEGER)
+                (e->left->type  != EXPRESSION_INTEGER)
              || (e->right->type != EXPRESSION_INTEGER)
         ) {
                 return e;

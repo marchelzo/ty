@@ -50,8 +50,7 @@ fn benchmark(iterations: Int) {
         <% } %>
         </body>
         </html>
-        ''',
-        ['users']
+        '''
     )
 
     let users = generate_users(300)
