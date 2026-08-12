@@ -1,0 +1,80 @@
+ns test
+
+class JitComparable {
+    value: Int
+
+    init(value: Int) {
+        self.value = value
+    }
+}
+
+fn grow-comparison-stack(depth: Int) -> Int {
+    depth == 0 ? 0 : grow-comparison-stack(depth - 1) + 1
+}
+
+fn <=>(left: JitComparable, right: JitComparable) -> Int {
+    // Force the nested VM call to grow and relocate STACK. The JIT must reload
+    // its locals and operand bases after the overloaded comparison returns.
+    assert(grow-comparison-stack(400) == 400)
+    left.value <=> right.value
+}
+
+fn <=>(left: Int, right: JitComparable) -> Int {
+    assert(grow-comparison-stack(400) == 400)
+    left <=> right.value
+}
+
+fn object-comparison-loop() -> Int {
+    let cursor = JitComparable(0)
+    let end = JitComparable(14)
+    let count = 0
+
+    while cursor <= end {
+        count += 1
+        cursor = JitComparable(cursor.value + 1)
+        if count > 100000 { break }
+    }
+
+    count
+}
+
+fn typed-local-comparison(left: Int, right: Int) -> Bool {
+    left < right
+}
+
+fn typed-local-comparison-guard-miss() -> Bool {
+    let left: Int = cast(JitComparable(1))
+    let right: Int = cast(JitComparable(2))
+    typed-local-comparison(left, right)
+}
+
+fn range-guard-miss() -> Array[Int] {
+    let bound: Int = cast(JitComparable(4))
+    let values = []
+    for value in ..bound { values.push(value) }
+    values
+}
+
+fn keep-first(first: Int, condition: Bool) -> Int {
+    condition ? first : -1
+}
+
+pub fn object-comparison-jit-stack-sync() {
+    for ..20 {
+        assert(object-comparison-loop() == 15)
+    }
+
+    for ..1000 { assert(typed-local-comparison-guard-miss()) }
+    assert(range-guard-miss() == [0, 1, 2, 3])
+
+    let low = JitComparable(2)
+    let high = JitComparable(3)
+    for ..1000 {
+        // The first argument remains below the comparison operands on the JIT
+        // operand stack while the overloaded comparison re-enters the VM.
+        assert(keep-first(42, low < high) == 42)
+        assert(keep-first(42, low <= high) == 42)
+        assert(!(low > high))
+        assert(!(low >= high))
+    }
+}

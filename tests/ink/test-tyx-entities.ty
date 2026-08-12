@@ -1,0 +1,22 @@
+import ink (..)
+
+class EntityText < Component {
+    render() -> Node {
+        <Text>&amp;&lt;&gt;&quot;&apos;&#65;</Text>
+    }
+}
+
+class RegexPropText < Component {
+    render() -> Node {
+        <Box matcher=/>$/ fallback=(nil ?? />$/) />
+    }
+}
+
+ns test
+pub fn named-tyx-entities() {
+    let h = TestHarness(EntityText(), cols=40, rows=4)
+    assert(h.plain-text == '&<>"\'A')
+    // The self-close delimiter override must not steal a regex that begins
+    // an attribute value or one nested inside a parenthesized expression.
+    TestHarness(RegexPropText(), cols=40, rows=4)
+}

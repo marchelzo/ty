@@ -1,0 +1,21 @@
+import ffi as c (C!)
+
+C! struct LayoutTest {
+    c.u16 a;
+    c.u16 b;
+    c.u32 c;
+    c.u32 d;
+    c.u32 e;
+    c.u32 f;
+    c.u32 g;
+}
+
+fn worker() {
+    for _ in ..2000 {
+        let x = LayoutTest(a: 1, b: 2, c: 3, d: 4, e: 5, f: 6, g: 7)
+        assert(x.g == 7)
+    }
+}
+let ts = [Thread(worker) for _ in ..8]
+for t in ts { t.join() }
+assert(#LayoutTest == 24)

@@ -1,0 +1,25 @@
+import path
+import sh (sh)
+import ty
+
+ns test
+pub fn parse-error-is-not-masked-by-tyx-regex-error() {
+    with tmp = path.tempdir() {
+        let source = path.Path("{tmp}/bad.ty")
+        source.write('''
+import ink (..)
+import term
+class Repro < Component {
+    render() -> Node { <Box><Spinner label="x" /></Box> }
+    on-event(ev) {
+        use term.event
+        match ev { Text('q') => return Exit, _ => () }
+    }
+}
+''')
+        let output, result = sh("{ty.executable} -c {source}", combineOutput=true)
+        assert(result != nil && result.status != 0)
+        assert(output.contains?('expected expression'))
+        assert(!output.contains?('invalid regex flags'))
+    }
+}

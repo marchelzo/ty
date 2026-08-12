@@ -1,0 +1,27 @@
+ns test
+
+fn f(x) {
+    return if x == 0
+    123
+}
+
+fn g(x) {
+    return 42 if x > 1
+    0
+}
+
+fn h(xs) {
+    return if not let [x] = xs
+    x
+}
+
+pub fn test-return-if() {
+    assert(f(0) == nil)
+    assert(f(1) == 123)
+
+    assert(g(0) == 0)
+    assert(g(2) == 42)
+
+    assert(h([1]) == 1)
+    assert(h([]) == nil)
+}

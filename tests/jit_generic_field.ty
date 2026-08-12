@@ -1,0 +1,35 @@
+ns test
+
+class RuntimeFieldA {
+    padding: Int
+    value: Int
+
+    init(padding: Int, value: Int) {
+        self.padding = padding
+        self.value = value
+    }
+}
+
+class RuntimeFieldB {
+    value: Int
+    padding: Int
+
+    init(value: Int, padding: Int) {
+        self.value = value
+        self.padding = padding
+    }
+}
+
+fn read-runtime-value(object) {
+    object.value
+}
+
+pub fn jit-generic-runtime-class-field-read() {
+    let a = RuntimeFieldA(11, 22)
+    let b = RuntimeFieldB(33, 44)
+
+    for ..1000 {
+        assert(read-runtime-value(a) == 22)
+        assert(read-runtime-value(b) == 33)
+    }
+}

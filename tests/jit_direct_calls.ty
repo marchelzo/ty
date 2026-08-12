@@ -1,0 +1,110 @@
+import ty
+
+ns test
+
+fn linked-leaf(value: Int) -> Int {
+    value + 1
+}
+
+fn linked-middle(value: Int) -> Int {
+    linked-leaf(value) * 2
+}
+
+fn linked-outer(value: Int) -> Int {
+    let before = value + 3
+    linked-middle(value) + before
+}
+
+pub fn test-linked-global-calls() {
+    for i in ..1000 {
+        assert(linked-outer(i) == i * 3 + 5)
+    }
+}
+
+fn linked-recurse(n: Int) -> Int {
+    if n == 0 { 0 } else { linked-recurse(n - 1) + 1 }
+}
+
+fn linked-recurse-outer(n: Int) -> Int {
+    let before = n + 7
+    linked-recurse(n) + before
+}
+
+pub fn test-linked-recursion-and-stack-growth() {
+    assert(linked-recurse-outer(400) == 807)
+}
+
+class LinkedCounter {
+    recurse(n: Int) -> Int {
+        if n == 0 { 0 } else { recurse(n - 1) + 1 }
+    }
+}
+
+fn linked-method-outer(counter: LinkedCounter, n: Int) -> Int {
+    let before = n + 7
+    counter.recurse(n) + before
+}
+
+pub fn test-linked-method-stack-growth() {
+    assert(linked-method-outer(LinkedCounter(), 400) == 807)
+}
+
+fn linked-throw(n: Int) -> Int {
+    if n == 0 { throw 'linked' }
+    linked-throw(n - 1)
+}
+
+fn linked-catch(n: Int) -> Int {
+    let before = n + 2
+    let caught = try {
+        linked-throw(n)
+    } catch 'linked' {
+        40
+    }
+    before + caught
+}
+
+pub fn test-linked-exceptions() {
+    assert(linked-catch(20) == 62)
+}
+
+fn linked-allocate(n: Int) -> Int {
+    let values = [i for i in ..n]
+    ty.gc()
+    values[0] + values[-1]
+}
+
+fn linked-allocate-outer(n: Int) -> Int {
+    let before = n * 2
+    linked-allocate(n) + before
+}
+
+pub fn test-linked-gc-roots() {
+    assert(linked-allocate-outer(2000) == 5999)
+}
+
+fn linked-default(value: Int = 9) -> Int {
+    value + 1
+}
+
+pub fn test-linked-default-fallback() {
+    for ..1000 {
+        assert(linked-default() == 10)
+    }
+}
+
+let linked-rebind = fn (value: Int) -> Int { value + 1 }
+
+fn linked-rebind-call(value: Int) -> Int {
+    linked-rebind(value)
+}
+
+pub fn test-linked-global-rebind-guard() {
+    for ..1000 {
+        assert(linked-rebind-call(4) == 5)
+    }
+    linked-rebind = fn (value: Int) -> Int { value + 3 }
+    for ..1000 {
+        assert(linked-rebind-call(4) == 7)
+    }
+}

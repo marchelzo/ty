@@ -1,0 +1,137 @@
+import math (nan)
+
+ns test
+
+class InlineNumeric {
+    value: Float
+
+    init(value: Float) {
+        self.value = value
+    }
+
+    add(other: Float) -> Float {
+        value + other
+    }
+
+    mixed(other: Int) -> Float {
+        value * other
+    }
+
+    lower(other: Float) -> Bool {
+        value < other
+    }
+
+    choose(other: Float) -> Float {
+        value < other ? value : other
+    }
+}
+
+class InlineNumericBox {
+    value: Float
+
+    init(value: Float) {
+        self.value = value
+    }
+}
+
+fn +(left: InlineNumericBox, right: InlineNumericBox) -> Float {
+    left.value + right.value
+}
+
+fn <(left: InlineNumericBox, right: InlineNumericBox) -> Bool {
+    left.value < right.value
+}
+
+fn inline-float-add(left: Float, right: Float) -> Float { left + right }
+fn inline-float-sub(left: Float, right: Float) -> Float { left - right }
+fn inline-float-mul(left: Float, right: Float) -> Float { left * right }
+fn inline-mixed-add(left: Int, right: Float) -> Float { left + right }
+fn inline-mixed-sub(left: Float, right: Int) -> Float { left - right }
+fn inline-mixed-mul(left: Int, right: Float) -> Float { left * right }
+fn inline-real-constant() -> Float { 1.25 }
+fn inline-eq(left: Float, right: Float) -> Bool { left == right }
+fn inline-ne(left: Float, right: Float) -> Bool { left != right }
+fn inline-lt(left: Float, right: Float) -> Bool { left < right }
+fn inline-gt(left: Float, right: Float) -> Bool { left > right }
+fn inline-le(left: Float, right: Float) -> Bool { left <= right }
+fn inline-ge(left: Float, right: Float) -> Bool { left >= right }
+fn inline-mixed-eq(left: Int, right: Float) -> Bool { left == right }
+fn inline-mixed-ne(left: Int, right: Float) -> Bool { left != right }
+fn inline-mixed-lt(left: Int, right: Float) -> Bool { left < right }
+fn inline-mixed-ge(left: Float, right: Int) -> Bool { left >= right }
+fn inline-nested-cmp(left: Float, right: Float) -> Bool { left + 0.5 <= right }
+fn inline-choose-int(left: Int, right: Int) -> Int {
+    if left < right { left } else { right }
+}
+fn inline-choose-float(left: Float, right: Float) -> Float {
+    left >= right ? left + 0.25 : right + 0.5
+}
+fn inline-choose-common(left: Int, right: Int) -> Int {
+    (left < right ? left : right) + 1
+}
+
+fn call-inline-add(value: InlineNumeric, other: Float) -> Float { value.add(other) }
+fn call-inline-mixed(value: InlineNumeric, other: Int) -> Float { value.mixed(other) }
+fn call-inline-lower(value: InlineNumeric, other: Float) -> Bool { value.lower(other) }
+fn call-inline-choose(value: InlineNumeric, other: Float) -> Float { value.choose(other) }
+fn call-inline-box-add(left: InlineNumericBox, right: InlineNumericBox) -> Float { left + right }
+fn call-inline-box-lt(left: InlineNumericBox, right: InlineNumericBox) -> Bool { left < right }
+
+pub fn test-inline-float-and-mixed-arithmetic() {
+    let value = InlineNumeric(2.5)
+    let left = InlineNumericBox(1.25)
+    let right = InlineNumericBox(2.75)
+    for ..1000 {
+        assert(inline-float-add(1.5, 2.25) == 3.75)
+        assert(inline-float-sub(4.5, 1.25) == 3.25)
+        assert(inline-float-mul(1.5, 2.0) == 3.0)
+        assert(inline-mixed-add(2, 0.5) == 2.5)
+        assert(inline-mixed-sub(2.5, 2) == 0.5)
+        assert(inline-mixed-mul(3, 0.5) == 1.5)
+        assert(inline-real-constant() == 1.25)
+        assert(call-inline-add(value, 1.5) == 4.0)
+        assert(call-inline-mixed(value, 2) == 5.0)
+        assert(call-inline-box-add(left, right) == 4.0)
+    }
+}
+
+pub fn test-inline-numeric-comparisons() {
+    let value = InlineNumeric(2.5)
+    let left = InlineNumericBox(1.25)
+    let right = InlineNumericBox(2.75)
+    for ..1000 {
+        assert(inline-eq(2.0, 2.0))
+        assert(inline-ne(2.0, 3.0))
+        assert(inline-lt(2.0, 3.0))
+        assert(inline-gt(3.0, 2.0))
+        assert(inline-le(2.0, 2.0))
+        assert(inline-ge(2.0, 2.0))
+        assert(!inline-mixed-eq(2, 2.0))
+        assert(inline-mixed-ne(2, 2.0))
+        assert(inline-mixed-lt(2, 2.5))
+        assert(inline-mixed-ge(2.5, 2))
+        assert(inline-nested-cmp(2.0, 2.5))
+        assert(call-inline-lower(value, 3.0))
+        assert(call-inline-box-lt(left, right))
+    }
+    assert(!inline-eq(nan, nan))
+    assert(inline-ne(nan, nan))
+    assert(!inline-lt(nan, 1.0))
+    assert(!inline-gt(nan, 1.0))
+    assert(!inline-le(nan, 1.0))
+    assert(!inline-ge(nan, 1.0))
+}
+
+pub fn test-inline-small-conditionals() {
+    let value = InlineNumeric(2.5)
+    for ..1000 {
+        assert(inline-choose-int(2, 3) == 2)
+        assert(inline-choose-int(4, 3) == 3)
+        assert(inline-choose-float(3.0, 2.0) == 3.25)
+        assert(inline-choose-float(1.0, 2.0) == 2.5)
+        assert(inline-choose-common(2, 3) == 3)
+        assert(inline-choose-common(4, 3) == 4)
+        assert(call-inline-choose(value, 3.0) == 2.5)
+        assert(call-inline-choose(value, 2.0) == 2.0)
+    }
+}

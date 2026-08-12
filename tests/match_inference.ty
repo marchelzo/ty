@@ -1,0 +1,48 @@
+import path (Path)
+
+fn inferBareMatchCallback() {
+    let files = Path('.').walk()
+                         .map(|(dir, _, names)| -> names.map(\dir / _))
+                         .chain-all()
+
+    files = files.classify(&.stat |> &.size).values()
+    let entries = files.flat-map(match {
+        [path] => [(path, nil)],
+        paths => paths.classify(fn(_) { 'digest' }).items().map(|(digest, identical)| -> do {
+            identical.join('\n- ')
+            (identical[0], digest)
+        })
+    })
+
+    for (path, _) in entries {
+        path.stem
+        path.suffix
+    }
+}
+
+fn inferExpandedMatchCallback() {
+    let files = Path('.').walk()
+                         .map(|(dir, _, names)| -> names.map(\dir / _))
+                         .chain-all()
+
+    files = files.classify(&.stat |> &.size).values()
+    let entries = files.flat-map(x -> match x {
+        [path] => [(path, nil)],
+        paths => paths.classify(fn(_) { 'digest' }).items().map(|(digest, identical)| -> do {
+            identical.join('\n- ')
+            (identical[0], digest)
+        })
+    })
+
+    for (path, _) in entries {
+        path.stem
+        path.suffix
+    }
+}
+
+fn narrowClosedSubject(x: Int | (Int, Int)) -> Int {
+    match x {
+        (_, _) => 0,
+        x      => x
+    }
+}

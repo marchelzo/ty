@@ -1,0 +1,76 @@
+import ffi as c
+import ptr
+import ty
+
+ns test
+
+pub fn custom-auto-destructor-is-retained-and-called-once() {
+    let calls = []
+    let p = c.new(c.i64)
+    p[0] = 73
+    let auto = c.auto(p, fn (raw) {
+        calls.push(c.load(c.i64, raw))
+        c.free(raw)
+    })
+    p = nil
+    auto = nil
+    for _ in 0..3 { ty.gc() }
+    assert(calls == [73])
+    for _ in 0..2 { ty.gc() }
+    assert(calls == [73])
+}
+
+pub fn typed-and-untyped-preserve-custom-auto-owner() {
+    let calls = []
+    let owner = c.auto(c.box(c.i64, 808), fn (raw) {
+        calls.push(c.load(c.i64, raw))
+        c.free(raw)
+    })
+    let typed = ptr.typed(ptr.untyped(owner), c.i64)
+
+    owner = nil
+    for _ in 0..3 { ty.gc() }
+    assert(typed[0] == 808)
+    assert(calls == [])
+
+    typed = nil
+    for _ in 0..3 { ty.gc() }
+    assert(calls == [808])
+}
+
+pub fn new-auto-remains-typed-and-alive() {
+    let p = c.new-auto(c.i64, 2)
+    p[0] = 11
+    p[1] = 29
+    for _ in 0..3 { ty.gc() }
+    assert(p[0] == 11)
+    assert(p[1] == 29)
+}
+
+pub fn typed-and-untyped-preserve-auto-owner() {
+    let p = c.new-auto(c.i64)
+    p[0] = 91
+    let raw = ptr.untyped(p)
+    let typed = ptr.typed(raw, c.i64)
+    p = nil
+    raw = nil
+    for _ in 0..3 { ty.gc() }
+    assert(typed[0] == 91)
+}
+
+pub fn box-auto-remains-typed-and-alive() {
+    let p = c.box-auto(c.i64, 1234)
+    for _ in 0..3 { ty.gc() }
+    assert(p[0] == 1234)
+}
+
+pub fn closure-retains-callback-across-gc() {
+    let captured = 17
+    let closure = c.closure(c.i64, c.i64, fn (x) { x + captured })
+    let cif = c.cif(c.i64, c.i64)
+
+    for _ in 0..3 { ty.gc() }
+    assert(c.call(cif, closure, 25) == 42)
+
+    c.freeClosure(closure)
+}

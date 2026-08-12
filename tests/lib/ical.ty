@@ -1,0 +1,171 @@
+import ical (..)
+import date (PlainDate, PlainDateTime, Duration)
+
+ns test
+
+let example = 'BEGIN:VCALENDAR\r\n' +
+    'PRODID:-//Example Corp.//CalDAV Client//EN\r\n' +
+    'VERSION:2.0\r\n' +
+    'X-WR-CALNAME:Work\r\n' +
+    'BEGIN:VEVENT\r\n' +
+    'UID:one@example.test\r\n' +
+    'DTSTAMP:20260804T120000Z\r\n' +
+    'DTSTART;TZID=America/Halifax:20260805T103000\r\n' +
+    'DTEND;TZID=America/Halifax:20260805T120000\r\n' +
+    'SUMMARY:Sprint demo\r\n' +
+    'DESCRIPTION:First line\\nSecond line with a comma\\, and semicolon\\;\r\n' +
+    'RRULE:FREQ=WEEKLY;INTERVAL=2;BYDAY=TU,TH;WKST=MO\r\n' +
+    'CATEGORIES:WORK,MEETING\r\n' +
+    'X-EXAMPLE:preserved\r\n' +
+    'BEGIN:VALARM\r\n' +
+    'ACTION:DISPLAY\r\n' +
+    'TRIGGER:-PT15M\r\n' +
+    'DESCRIPTION:Reminder\r\n' +
+    'END:VALARM\r\n' +
+    'END:VEVENT\r\n' +
+    'END:VCALENDAR\r\n'
+
+pub fn test-parse-calendar-and-event() {
+    let calendar = parse(example)
+    assert(calendar.version == '2.0')
+    assert(calendar.text('X-WR-CALNAME') == 'Work')
+    assert(#calendar.events == 1)
+
+    let event = calendar.events[0]
+    assert(event.uid == 'one@example.test')
+    assert(event.summary == 'Sprint demo')
+    assert(event.description == 'First line\nSecond line with a comma, and semicolon;')
+    assert(event.raw('X-EXAMPLE') == 'preserved')
+    let $start = event.start or throw 'missing DTSTART'
+    assert(start.tzid == 'America/Halifax')
+    assert(start.date-time == PlainDateTime(2026, 8, 5, 10, 30))
+    let $stamp = event.stamp or throw 'missing DTSTAMP'
+    assert(stamp.utc?)
+    assert(stamp.instant != nil)
+    assert(event.categories == ['WORK', 'MEETING'])
+    assert(#event.children('VALARM') == 1)
+}
+
+pub fn test-folded-lines-and-parameters() {
+    let source = 'BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:x\r\n' +
+        'BEGIN:VEVENT\r\nUID:1\r\nSUMMARY:A long summary that is fo\r\n' +
+        ' lded here\r\nATTENDEE;CN="Doe, Jane";ROLE=REQ-PARTICIPANT:mailto:jane@example.test\r\n' +
+        'END:VEVENT\r\nEND:VCALENDAR\r\n'
+    let event = parse(source).events[0]
+    assert(event.summary == 'A long summary that is folded here')
+    let attendee = event.property('ATTENDEE')!
+    assert(attendee.parameter-value('CN') == 'Doe, Jane')
+    assert(attendee.value == 'mailto:jane@example.test')
+}
+
+pub fn test-date-and-date-time-values() {
+    let d = parse-date-time('20260804', value-type='DATE')
+    assert(d.date?)
+    assert(d.date == PlainDate(2026, 8, 4))
+    assert(format-date-time(d) == '20260804')
+
+    let utc = parse-date-time('20260804T073104Z')
+    assert(utc.utc?)
+    assert(utc.date-time == PlainDateTime(2026, 8, 4, 7, 31, 4))
+    assert(format-date-time(utc) == '20260804T073104Z')
+}
+
+pub fn test-recurrence-rule() {
+    let rule = RecurrenceRule.from('FREQ=YEARLY;INTERVAL=1;BYDAY=-1SU;BYMONTH=10')
+    assert(rule.freq == 'YEARLY')
+    assert(rule.interval == 1)
+    assert(rule.by-day == ['-1SU'])
+    assert(rule.by-month == [10])
+    assert("{rule}" == 'FREQ=YEARLY;INTERVAL=1;BYDAY=-1SU;BYMONTH=10')
+}
+
+pub fn test-offset-period-and-value-lists() {
+    assert(UTCOffset.from('-0330').seconds == -12600)
+    assert("{UTCOffset.from('+053045')}" == '+053045')
+    let period = Period.from('20260804T120000Z/PT1H30M')
+    assert(period.start.utc?)
+    assert(period.end :: Duration)
+
+    let event = Event()
+    event.add('EXDATE', '20260804T120000Z,20260811T120000Z')
+    assert(#event.exception-dates == 2)
+    assert(event.exception-dates[1].date-time == PlainDateTime(2026, 8, 11, 12))
+}
+
+pub fn test-build-and-round-trip() {
+    let calendar = Calendar()
+    let event = Event()
+    event.uid = 'built@example.test'
+    event.summary = 'Planning, review'
+    event.start = DateTime(PlainDateTime(2026, 8, 4, 9), tzid='America/Halifax')
+    event.end = DateTime(PlainDateTime(2026, 8, 4, 10), tzid='America/Halifax')
+    calendar.add(event)
+
+    let encoded = serialize(calendar)
+    assert(encoded.search('\r\n') != nil)
+    let decoded = parse(encoded).events[0]
+    assert(decoded.summary == 'Planning, review')
+    let $start = decoded.start or throw 'missing DTSTART'
+    assert(start.tzid == 'America/Halifax')
+}
+
+pub fn test-line-folding-round-trip() {
+    let line = 'DESCRIPTION:' + ('abcdef' * 30)
+    let folded = fold(line)
+    assert(folded.search('\r\n ') != nil)
+    assert(unfold(folded)[0] == line)
+}
+
+pub fn test-invalid-nesting() {
+    let failed = false
+    try {
+        parse('BEGIN:VCALENDAR\r\nEND:VEVENT\r\n')
+    } catch _: ICalError {
+        failed = true
+    }
+    assert(failed)
+}
+
+pub fn test-occurrence-expansion-and-cancelled-override() {
+    let source = 'BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:x\r\n' +
+        'BEGIN:VEVENT\r\nUID:weekly\r\nDTSTART:20260803T090000\r\n' +
+        'DTEND:20260803T093000\r\nRRULE:FREQ=WEEKLY;BYDAY=MO;COUNT=3\r\n' +
+        'SUMMARY:Standup\r\nEND:VEVENT\r\n' +
+        'BEGIN:VEVENT\r\nUID:weekly\r\nRECURRENCE-ID:20260810T090000\r\n' +
+        'DTSTART:20260810T090000\r\nDTEND:20260810T093000\r\n' +
+        'SUMMARY:Canceled: Standup\r\nSTATUS:CONFIRMED\r\nEND:VEVENT\r\n' +
+        'END:VCALENDAR\r\n'
+    let occurrences = parse(source).occurrences(PlainDate(2026, 8, 1), PlainDate(2026, 8, 31))
+    assert(#occurrences == 2)
+    assert(occurrences[0].start.date == PlainDate(2026, 8, 3))
+    assert(occurrences[1].start.date == PlainDate(2026, 8, 17))
+    let $first-duration = occurrences[0].duration or throw 'missing occurrence duration'
+    assert(first-duration.total('minutes') == 30.0)
+}
+
+pub fn test-detached-occurrence-replaces-generated-time() {
+    let source = 'BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:x\r\n' +
+        'BEGIN:VEVENT\r\nUID:weekly\r\nDTSTART:20260803T090000\r\n' +
+        'DTEND:20260803T100000\r\nRRULE:FREQ=WEEKLY;BYDAY=MO;COUNT=2\r\n' +
+        'SUMMARY:Planning\r\nEND:VEVENT\r\n' +
+        'BEGIN:VEVENT\r\nUID:weekly\r\nRECURRENCE-ID:20260810T090000\r\n' +
+        'DTSTART:20260811T130000\r\nDTEND:20260811T143000\r\n' +
+        'SUMMARY:Planning moved\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n'
+    let occurrences = parse(source).occurrences(PlainDate(2026, 8, 1), PlainDate(2026, 8, 31))
+    assert(#occurrences == 2)
+    assert(occurrences[1].start.date == PlainDate(2026, 8, 11))
+    let $moved-duration = occurrences[1].duration or throw 'missing moved duration'
+    assert(moved-duration.total('minutes') == 90.0)
+}
+
+pub fn test-exdate-removes-occurrence() {
+    let source = 'BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:x\r\n' +
+        'BEGIN:VEVENT\r\nUID:weekly\r\nDTSTART:20260803T090000\r\n' +
+        'DTEND:20260803T093000\r\nRRULE:FREQ=WEEKLY;BYDAY=MO;COUNT=3\r\n' +
+        'EXDATE:20260810T090000\r\nSUMMARY:Standup\r\nEND:VEVENT\r\n' +
+        'END:VCALENDAR\r\n'
+    let occurrences = parse(source).occurrences(PlainDate(2026, 8, 1), PlainDate(2026, 8, 31))
+    assert(#occurrences == 2)
+    assert(occurrences[0].start.date == PlainDate(2026, 8, 3))
+    assert(occurrences[1].start.date == PlainDate(2026, 8, 17))
+}
