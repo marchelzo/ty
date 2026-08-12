@@ -1,0 +1,66 @@
+import hash
+import path (Path)
+
+ns test
+
+let CASES = [
+    (hash.md5,    md5,    '900150983cd24fb0d6963f7d28e17f72'),
+    (hash.sha1,   sha1,   'a9993e364706816aba3e25717850c26c9cd0d89d'),
+    (hash.sha256, sha256, 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad'),
+    (hash.sha512, sha512, 'ddaf35a193617abacc417349ae20413112e6fa4e89a97ea20a9eeee64b55d39a' +
+                          '2192992a274fc1a836ba3c23a3feebbd454d4423643ce80e2a9ac94fa54ca49f')
+]
+
+pub fn online-hashes() {
+    for (constructor, one-shot, expected) in CASES {
+        let h = constructor()
+        h.update('a')
+        h.update(Blob('b'))
+        h.update('c')
+        assert(h.hexdigest() == expected)
+        assert(h.hexdigest() == one-shot('abc'))
+        assert(h.digest().hex() == expected)
+    }
+}
+
+pub fn initial-data-and-copy() {
+    let original = hash.sha256('a')
+    let copy = original.copy()
+    original.update('b')
+    copy.update('c')
+    assert(original.hexdigest() == sha256('ab'))
+    assert(copy.hexdigest() == sha256('ac'))
+}
+
+pub fn block-boundaries() {
+    let data = '0123456789abcdef'.repeat(1000)
+    for (constructor, one-shot, _) in CASES {
+        let h = constructor()
+        let i = 0
+        while i < #data {
+            h.update(data[i;i + 113])
+            i += 113
+        }
+        assert(h.hexdigest() == one-shot(data))
+    }
+}
+
+pub fn file-input() {
+    with file = Path.temp('hash') {
+        let data = 'stream me'.repeat(1000)
+        file.write(data)
+        let h = hash.sha256()
+        h.update(file)
+        assert(h.hexdigest() == sha256(data))
+        assert(hash.sha256-file(file) == sha256(data))
+    }
+}
+
+pub fn metadata-and-new() {
+    let h = hash.Hash('SHA512')
+    assert(h.name == 'sha512')
+    assert(h.digest-size == 64)
+    assert(h.block-size == 128)
+    assert(h.digest_size == 64)
+    assert(h.block_size == 128)
+}

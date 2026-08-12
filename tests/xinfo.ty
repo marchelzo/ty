@@ -1,0 +1,188 @@
+import ffi as c (C!)
+import ty
+
+ns test
+
+/// Original user-function documentation.
+fn documented(x: Int, y: String = 'ok') -> String {
+    "{x}:{y}"
+}
+
+C! fn {
+    /// Absolute-value foreign function.
+    long labs(long);
+}
+
+class MetadataFixture {
+    /// Instance-method documentation.
+    method(x: Int) -> Int { x + 1 }
+
+    /// Static-method documentation.
+    static twice(x: Int) -> Int { x * 2 }
+}
+
+pub fn declared-function-info() {
+    assert(doc(documented) == (
+        'documented',
+        "(x: Int, y: String = 'ok') -> String",
+        'Original user-function documentation.'
+    ))
+    assert(documented.__name__ == 'documented')
+    assert(documented.__class__ == nil)
+}
+
+pub fn set-doc-is-attached-to-function-value() {
+    let renamed = set-doc(
+        documented,
+        name='renamed',
+        proto='(value: Int) -> String',
+        doc='Replacement documentation.'
+    )
+
+    assert(renamed(7, 'yes') == '7:yes')
+    assert(renamed.__name__ == 'renamed')
+    assert(doc(renamed) == (
+        'renamed',
+        '(value: Int) -> String',
+        'Replacement documentation.'
+    ))
+
+    // Attaching xinfo to one function value must not rewrite another copy.
+    assert(documented.__name__ == 'documented')
+    assert(doc(documented).2 == 'Original user-function documentation.')
+}
+
+pub fn partial-and-nil-set-doc-updates-preserve-fields() {
+    let f = set-doc(documented, name='first', proto='(a)', doc='first doc')
+    let g = set-doc(f, doc='second doc')
+    let h = set-doc(g, name=nil, proto=nil, doc=nil)
+
+    assert(doc(g) == ('first', '(a)', 'second doc'))
+    assert(doc(h) == ('first', '(a)', 'second doc'))
+}
+
+pub fn xinfo-survives-garbage-collection() {
+    let suffix = ['kept', 'alive'].join('-')
+    let f = set-doc(
+        documented,
+        name="dynamic-{suffix}",
+        proto="(dynamic-{suffix})",
+        doc="documentation-{suffix}"
+    )
+
+    for _ in 0..4 { ty.gc() }
+
+    assert(f.__name__ == 'dynamic-kept-alive')
+    assert(doc(f) == (
+        'dynamic-kept-alive',
+        '(dynamic-kept-alive)',
+        'documentation-kept-alive'
+    ))
+}
+
+pub fn function-object-metadata-coexists-with-xinfo() {
+    fn f(x: Int) -> Int { x + 10 }
+
+    f.label = 'attached metadata'
+    f.payload = {answer: 42}
+
+    let renamed = set-doc(f, name='with-metadata', doc='Has both kinds of metadata.')
+    for _ in 0..2 { ty.gc() }
+
+    assert(renamed(5) == 15)
+    assert(renamed.label == 'attached metadata')
+    assert(renamed.payload.answer == 42)
+    assert(doc(renamed) == (
+        'with-metadata',
+        '(x: Int) -> Int',
+        'Has both kinds of metadata.'
+    ))
+}
+
+pub fn attaching-object-metadata-after-xinfo-preserves-both() {
+    let f = set-doc(fn (x: Int) -> Int { x * 3 }, name='tripler', doc='Triples.')
+
+    f.category = 'arithmetic'
+    f.details = {factor: 3}
+
+    assert(f(6) == 18)
+    assert(f.category == 'arithmetic')
+    assert(f.details.factor == 3)
+    assert(f.__name__ == 'tripler')
+    assert(doc(f) == ('tripler', '(x: Int) -> Int', 'Triples.'))
+}
+
+pub fn method-xinfo-includes-class-and-is-overridable() {
+    let method = MetadataFixture.__methods__['method']
+    let static-method = MetadataFixture.__static_methods__['twice']
+
+    assert(method.__name__ == 'method')
+    assert(method.__class__ == MetadataFixture)
+    assert(doc(method) == (
+        'MetadataFixture.method',
+        '(x: Int) -> Int',
+        'Instance-method documentation.'
+    ))
+    assert(static-method.__name__ == 'twice')
+    assert(static-method.__class__ == MetadataFixture)
+    assert(doc(static-method) == (
+        'MetadataFixture.twice',
+        '(x: Int) -> Int',
+        'Static-method documentation.'
+    ))
+
+    let renamed = set-doc(method, name='renamed', proto='(value)', doc='Overridden.')
+    assert(renamed.__class__ == MetadataFixture)
+    assert(renamed.__name__ == 'renamed')
+    assert(doc(renamed) == ('MetadataFixture.renamed', '(value)', 'Overridden.'))
+}
+
+pub fn class-doc-inspection-uses-method-xinfo() {
+    let (name, class-doc, methods) = doc(MetadataFixture)
+    assert(name == 'MetadataFixture')
+    assert(class-doc == nil)
+
+    let instance-info = nil
+    let static-info = nil
+    for info in methods {
+        if info.0 == 'MetadataFixture.method' { instance-info = info }
+        if info.0 == 'MetadataFixture.twice' { static-info = info }
+    }
+
+    assert(instance-info == (
+        'MetadataFixture.method',
+        '(x: Int) -> Int',
+        'Instance-method documentation.'
+    ))
+    assert(static-info == (
+        'MetadataFixture.twice',
+        '(x: Int) -> Int',
+        'Static-method documentation.'
+    ))
+}
+
+pub fn foreign-function-info-and-overrides() {
+    assert(labs.__name__ == 'labs')
+    assert(labs.__class__ == nil)
+    assert(doc(labs) == (
+        'labs',
+        '(long) -> long',
+        'Absolute-value foreign function.'
+    ))
+
+    let renamed = set-doc(labs, name='absolute', proto='(integer)', doc='Replacement FFI docs.')
+    assert(renamed(-19) == 19)
+    assert(renamed.__name__ == 'absolute')
+    assert(renamed.__class__ == nil)
+    assert(doc(renamed) == ('absolute', '(integer)', 'Replacement FFI docs.'))
+
+    // Existing foreign xinfo is shared by copies of the foreign value.
+    assert(labs.__name__ == 'absolute')
+    assert(doc(labs) == ('absolute', '(integer)', 'Replacement FFI docs.'))
+}
+
+pub fn builtin-function-inspection() {
+    assert(print.__name__ == 'print')
+    assert(print.__class__ == nil)
+    assert(doc(print) == nil)
+}

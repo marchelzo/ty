@@ -1,0 +1,94 @@
+import lz4
+
+ns test
+
+pub fn version() {
+    let v = lz4.version()
+    assert(v.match?(/^\d+\.\d+\.\d+$/))
+}
+
+pub fn compress-decompress-string() {
+    let data = 'Hello from LZ4 compression!'
+    let compressed = lz4.compress(data)
+    assert(compressed.size() > 0)
+    let decompressed = lz4.decompress(compressed, #data)
+    assert(decompressed.str!() == data)
+}
+
+pub fn compress-decompress-blob() {
+    let data = Blob()
+    data.push('blob round-trip test')
+    let compressed = lz4.compress(data)
+    let decompressed = lz4.decompress(compressed, data.size())
+    assert(decompressed.str!() == data.str!())
+}
+
+pub fn compress-actually-shrinks() {
+    let data = 'aaaa' * 1000
+    let compressed = lz4.compress(data)
+    assert(compressed.size() < data.size())
+}
+
+pub fn round-trip-empty() {
+    let data = ''
+    let compressed = lz4.compress(data)
+    let decompressed = lz4.decompress(compressed, 0)
+    assert(decompressed.str!() == '')
+}
+
+pub fn acceleration() {
+    let data = 'test data for acceleration param' * 100
+    let c1 = lz4.compress(data, acceleration: 1)
+    let c2 = lz4.compress(data, acceleration: 10)
+    assert(lz4.decompress(c1, #data).str!() == data)
+    assert(lz4.decompress(c2, #data).str!() == data)
+}
+
+pub fn bad-decompress-throws() {
+    try {
+        lz4.decompress('not valid lz4 data', 1024)
+        assert(false)
+    } catch e: RuntimeError {
+    }
+}
+
+pub fn frame-round-trip() {
+    let data = 'LZ4 frame format round-trip!' * 50
+    let compressed = lz4.compress-frame(data)
+    let decompressed = lz4.decompress-frame(compressed)
+    assert(decompressed.str!() == data)
+}
+
+pub fn frame-with-level() {
+    let data = 'abcdef' * 500
+    let c0 = lz4.compress-frame(data)
+    let c9 = lz4.compress-frame(data, level: 9)
+    assert(lz4.decompress-frame(c0).str!() == data)
+    assert(lz4.decompress-frame(c9).str!() == data)
+    assert(c9.size() <= c0.size())
+}
+
+pub fn streaming-compress-decompress() {
+    let comp = lz4.Compressor()
+    comp.write('hello ')
+    comp.write('streaming ')
+    comp.write('world!')
+    let compressed = comp.flush()
+
+    let decomp = lz4.Decompressor()
+    decomp.write(compressed)
+    let result = decomp.flush()
+    assert(result.str!() == 'hello streaming world!')
+}
+
+pub fn streaming-chunked-decompress() {
+    let data = 'chunked decompression test data' * 100
+    let compressed = lz4.compress-frame(data)
+
+    let decomp = lz4.Decompressor()
+    let mid = compressed.size() / 2
+    decomp.write(compressed.slice(0, mid))
+    decomp.write(compressed.slice(mid))
+    let result = decomp.flush()
+    assert(result.str!() == data)
+}

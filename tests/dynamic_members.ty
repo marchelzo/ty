@@ -1,0 +1,42 @@
+ns test
+
+class DynamicMemberBox {
+    value: Int
+
+    init(value: Int) {
+        self.value = value
+    }
+
+    answer() {
+        self.value + 1
+    }
+}
+
+fn dynamic-read(object, name) {
+    object.{name}
+}
+
+fn dynamic-write(object, name, value) {
+    object.{name} = value
+}
+
+fn dynamic-call(object: Any, name: String) {
+    object.{name}()
+}
+
+pub fn computed-member-names() {
+    let box = DynamicMemberBox(7)
+
+    let value-name = 'valueXXX'[;5]
+    let method-name = 'answerXXX'[;6]
+
+    assert(dynamic-read(box, value-name) == 7)
+    assert(dynamic-call(box, method-name) == 8)
+
+    dynamic-write(box, value-name, 10)
+    assert(dynamic-read(box, value-name) == 10)
+
+    assert(box.?{'missing'} == nil)
+
+    assert(box.?{'value\0tail'} == nil)
+}

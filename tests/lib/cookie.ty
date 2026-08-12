@@ -1,0 +1,191 @@
+import cookie (..)
+import path (Path)
+import sqlite (SQLite)
+import time
+
+ns test
+
+pub fn test-chrome-expiry-conversion() {
+    assert(chrome-expiry(0) == nil)
+    assert(chrome-expiry(11644473600000000) == 0.0)
+    assert(chrome-expiry(11644473601000000) == 1.0)
+}
+
+pub fn test-chrome-v10-decryption() {
+    /* AES-128-CBC fixture derived with Chrome's PBKDF2 parameters. This catches
+     * regressions in both key derivation and removal of the v10 prefix. */
+    let encrypted = Blob('v10')
+    encrypted.push('fe6e00445e4437eccc8fa4c165d329eb'.unhex()!)
+    let decryptor = get-cookie-decryptor(password='test', meta-version=23)
+    assert(decryptor.key-available)
+    assert(decryptor.decrypt(encrypted) == 'hello')
+    assert(decryptor.decryption-failures == 0)
+}
+
+pub fn test-windows-chrome-v10-decryption() {
+    /* Windows Chrome uses a 32-byte profile key with AES-256-GCM. The payload
+     * after v10 is a 12-byte nonce, ciphertext, and a 16-byte authentication
+     * tag. */
+    let encrypted = '763130202122232425262728292a2bba5fca1c03b87c7c751162b9a8769096a73a5292a7bda43dd3e065c149adc4e00aa7'.unhex()!
+    let key = Blob(*[i for i in ..32])
+    let decryptor = get-cookie-decryptor(windows-key=key, meta-version=23)
+    assert(decryptor.key-available)
+    assert(decryptor.decrypt(encrypted) == 'hello from windows')
+    assert(decryptor.decryption-failures == 0)
+
+    encrypted[-1] ^= 1
+    assert(decryptor.decrypt(encrypted) == nil)
+    assert(decryptor.decryption-failures == 1)
+}
+
+pub fn test-windows-path-to-wsl-conversion() {
+    assert("{windows-path-to-wsl('C:\\Users\\Alice\\AppData\\Local')}"
+        == '/mnt/c/Users/Alice/AppData/Local')
+    assert(windows-path-to-wsl('/home/alice') == nil)
+}
+
+pub fn test-domain-limited-browser-extraction() {
+    with root = Path.tempdir('ty-cookie-test') {
+        let network = root / 'Default' / 'Network'
+        network.mkdir(parents=true, exist-ok=true)
+        let database = network / 'Cookies'
+        with db = SQLite(str(database)) {
+            db.exec('CREATE TABLE meta (key TEXT, value TEXT)')
+            db.exec("INSERT INTO meta VALUES ('version', '23')")
+            db.exec('CREATE TABLE cookies (host_key TEXT, name TEXT, value TEXT, encrypted_value BLOB, path TEXT, expires_utc INTEGER, is_secure INTEGER)')
+            let future = int((time.utc() + 3600.0 + 11644473600.0) * 1000000.0)
+            let past = int((time.utc() - 3600.0 + 11644473600.0) * 1000000.0)
+            db.exec('INSERT INTO cookies VALUES (?, ?, ?, ?, ?, ?, ?)',
+                '.rippling.com', 'session', 'live', Blob(), '/', future, 1)
+            db.exec('INSERT INTO cookies VALUES (?, ?, ?, ?, ?, ?, ?)',
+                '.rippling.com', 'expired', 'old', Blob(), '/', past, 1)
+            db.exec('INSERT INTO cookies VALUES (?, ?, ?, ?, ?, ?, ?)',
+                'accounts.rippling.com', 'sibling', 'nope', Blob(), '/', future, 1)
+            db.exec('INSERT INTO cookies VALUES (?, ?, ?, ?, ?, ?, ?)',
+                '.example.com', 'unrelated', 'secret', Blob(), '/', future, 1)
+        }
+
+        let jar = extract-chrome-cookies(root, password='test', domains=['rippling.com'])
+        assert(#jar == 3)
+        assert(jar.get-cookie-header('https://app.rippling.com/api') == 'session=live')
+    }
+}
+
+pub fn test-browser-extraction-includes-wal() {
+    with root = Path.tempdir('ty-cookie-wal-test') {
+        let network = root / 'Default' / 'Network'
+        network.mkdir(parents=true, exist-ok=true)
+        let database = network / 'Cookies'
+        with db = SQLite(str(database)) {
+            db.exec('CREATE TABLE meta (key TEXT, value TEXT)')
+            db.exec("INSERT INTO meta VALUES ('version', '23')")
+            db.exec('CREATE TABLE cookies (host_key TEXT, name TEXT, value TEXT, encrypted_value BLOB, path TEXT, expires_utc INTEGER, is_secure INTEGER)')
+        }
+
+        with db = SQLite(str(database)) {
+            db.fetchOne('PRAGMA journal_mode=WAL')
+            db.exec('PRAGMA wal_autocheckpoint=0')
+            let future = int((time.utc() + 3600.0 + 11644473600.0) * 1000000.0)
+            db.exec('INSERT INTO cookies VALUES (?, ?, ?, ?, ?, ?, ?)',
+                '.example.com', 'from-wal', 'yes', Blob(), '/', future, 1)
+
+            assert(Path("{database}-wal").exists?)
+            let jar = extract-chrome-cookies(root, password='test')
+            assert(jar.get-cookie-header('https://www.example.com/') == 'from-wal=yes')
+        }
+    }
+}
+
+pub fn test-expiry-uses-wall-clock() {
+    let now = time.utc()
+    assert(Cookie('old', 'value', expires=now - 60).is-expired())
+    assert(!Cookie('live', 'value', expires=now + 60).is-expired())
+
+    let jar = CookieJar()
+    jar.set-cookie(Cookie('old', 'value', domain='example.com', expires=now - 60))
+    jar.set-cookie(Cookie('live', 'value', domain='example.com', expires=now + 60))
+    assert(jar.get-cookie-header('http://example.com/') == 'live=value')
+}
+
+pub fn test-cookie-file-filtering-uses-wall-clock() {
+    with root = Path.tempdir('ty-cookie-time-test') {
+        let input = root / 'input.txt'
+        let output = root / 'output.txt'
+        let now = int(time.utc())
+        input.write([
+            '# Netscape HTTP Cookie File',
+            "example.com\tFALSE\t/\tFALSE\t{now - 60}\told\tvalue",
+            "example.com\tFALSE\t/\tFALSE\t{now + 60}\tlive\tvalue",
+            ''
+        ].join('\n'))
+
+        let jar = CookieJar(input).load(ignore-expires=false)
+        assert(#jar == 1)
+        assert(jar.get-cookie-header('http://example.com/') == 'live=value')
+
+        let all = CookieJar(input).load()
+        all.save(output, ignore-expires=false)
+        let saved = output.read-text()
+        assert(!('old\tvalue' in saved))
+        assert('live\tvalue' in saved)
+    }
+}
+
+pub fn test-netscape-subdomain-column() {
+    with root = Path.tempdir('ty-cookie-domain-test') {
+        let input = root / 'cookies.txt'
+        input.write([
+            '# Netscape HTTP Cookie File',
+            'example.com\tTRUE\t/\tFALSE\t0\tdomain\tyes',
+            '.host.test\tFALSE\t/\tFALSE\t0\thost\tyes',
+            ''
+        ].join('\n'))
+
+        let jar = CookieJar(input).load()
+        assert(jar.get-cookie-header('http://www.example.com/') == 'domain=yes')
+        assert(jar.get-cookie-header('http://sub.host.test/') == nil)
+        assert(jar.get-cookie-header('http://host.test/') == 'host=yes')
+    }
+}
+
+pub fn test-http-only-round-trip-and-case-insensitive-scheme() {
+    with root = Path.tempdir('ty-cookie-http-only-test') {
+        let file = root / 'cookies.txt'
+        let jar = CookieJar(file)
+        jar.set-cookie(Cookie(
+            'session', 'secret', domain='.example.com', secure=true,
+            rest=%{'HttpOnly': true}
+        ))
+        jar.save()
+
+        assert('#HttpOnly_.example.com\tTRUE' in file.read-text())
+        let loaded = CookieJar(file).load()
+        let cookies = [cookie for cookie in loaded]
+        assert(cookies[0].rest['HttpOnly'] == true)
+        assert(loaded.get-cookie-header('HTTPS://www.example.com/') == 'session=secret')
+    }
+}
+
+pub fn test-cookie-file-crlf-and-invalid-expiry() {
+    with root = Path.tempdir('ty-cookie-crlf-test') {
+        let input = root / 'cookies.txt'
+        input.write([
+            '# Netscape HTTP Cookie File',
+            'example.com\tFALSE\t/\tFALSE\t0\tvalid\tclean',
+            'example.com\tFALSE\t/\tFALSE\tnot-a-time\tinvalid\tunsafe',
+            ''
+        ].join('\r\n'))
+
+        let jar = CookieJar(input).load()
+        assert(#jar == 1)
+        assert(jar.get-cookie-header('http://example.com/') == 'valid=clean')
+    }
+}
+
+pub fn test-cookie-identity-has-case-insensitive-domain() {
+    let jar = CookieJar()
+    jar.set-cookie(Cookie('name', 'old', domain='.Example.COM'))
+    jar.set-cookie(Cookie('name', 'new', domain='.example.com'))
+    assert(#jar == 1)
+    assert(jar.get-cookie-header('http://www.example.com/') == 'name=new')
+}

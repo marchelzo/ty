@@ -1,0 +1,82 @@
+ns test
+
+class GlobalInlinePoint {
+    x: Int
+
+    init(x: Int) {
+        self.x = x
+    }
+}
+
+class GlobalInlinePointChild < GlobalInlinePoint {}
+
+fn inline-global-add(value: Int) -> Int {
+    value + 3
+}
+
+fn inline-global-sub(left: Int, right: Int) -> Int {
+    left - right
+}
+
+fn inline-global-constant() -> Int {
+    17
+}
+
+fn inline-global-field(point: GlobalInlinePoint) -> Int {
+    point.x
+}
+
+fn inline-global-identity(value) {
+    value
+}
+
+let inline-global-rebind = fn (value: Int) -> Int { value + 1 }
+
+fn call-inline-global-rebind(value: Int) -> Int {
+    inline-global-rebind(value)
+}
+
+pub fn test-inline-global-leaves() {
+    let point = GlobalInlinePoint(11)
+    let child = GlobalInlinePointChild(13)
+    for i in ..1000 {
+        assert(inline-global-add(i) == i + 3)
+        assert(inline-global-sub(i, 4) == i - 4)
+        assert(inline-global-constant() == 17)
+        assert(inline-global-field(point) == 11)
+        assert(inline-global-field(child) == 13)
+        assert(inline-global-identity('ok') == 'ok')
+    }
+}
+
+pub fn test-inline-global-rebinding() {
+    for ..1000 {
+        assert(call-inline-global-rebind(4) == 5)
+    }
+    inline-global-rebind = fn (value: Int) -> Int { value + 5 }
+    for ..1000 {
+        assert(call-inline-global-rebind(4) == 9)
+    }
+    inline-global-rebind = abs
+    for ..1000 {
+        assert(call-inline-global-rebind(-4) == 4)
+    }
+}
+
+let inline-global-mid = fn (value: Int) -> Int { value + 1 }
+
+fn inline-global-mid-old(value: Int) -> Int { value + 1 }
+fn inline-global-mid-new(value: Int) -> Int { value + 9 }
+
+fn inline-global-change(f, value: Int) {
+    let before = inline-global-mid(value)
+    inline-global-mid = f
+    [before, inline-global-mid(value)]
+}
+
+pub fn test-inline-global-mutation-mid-call() {
+    for ..1000 {
+        assert(inline-global-change(inline-global-mid-old, 1) == [2, 2])
+    }
+    assert(inline-global-change(inline-global-mid-new, 1) == [2, 10])
+}

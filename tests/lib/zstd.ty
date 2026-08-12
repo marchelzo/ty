@@ -1,0 +1,78 @@
+import zstd
+
+ns test
+
+pub fn compress-decompress() {
+    let data = 'Hello from zstd!'
+    let compressed = zstd.compress(data)
+    assert(compressed.size() > 0)
+    let decompressed = zstd.decompress(compressed, #data)
+    assert(decompressed.str!() == data)
+}
+
+pub fn compress-with-level() {
+    let data = 'abcdef' * 500
+    let c1 = zstd.compress(data, level: 1)
+    let c19 = zstd.compress(data, level: 19)
+    assert(zstd.decompress(c1, #data).str!() == data)
+    assert(zstd.decompress(c19, #data).str!() == data)
+    assert(c19.size() <= c1.size())
+}
+
+pub fn streaming-compress-decompress() {
+    let comp = zstd.Compressor(level: 3)
+    comp.write('hello ')
+    comp.write('streaming ')
+    comp.write('zstd!')
+    let compressed = comp.flush()
+
+    let decomp = zstd.Decompressor()
+    decomp.write(compressed)
+    let result = decomp.flush()
+    assert(result.str!() == 'hello streaming zstd!')
+}
+
+pub fn streaming-large-data() {
+    let chunk = 'x' * 4096
+    let comp = zstd.Compressor()
+    for _ in 0..100 {
+        comp.write(chunk)
+    }
+    let compressed = comp.flush()
+    assert(compressed.size() < 4096 * 100)
+
+    let decomp = zstd.Decompressor()
+    decomp.write(compressed)
+    let result = decomp.flush()
+    assert(result.size() == 4096 * 100)
+}
+
+pub fn streaming-reuse() {
+    let comp = zstd.Compressor()
+
+    comp.write('first message')
+    let c1 = comp.flush()
+
+    comp.write('second message')
+    let c2 = comp.flush()
+
+    let decomp = zstd.Decompressor()
+
+    decomp.write(c1)
+    assert(decomp.flush().str!() == 'first message')
+
+    decomp.write(c2)
+    assert(decomp.flush().str!() == 'second message')
+}
+
+pub fn streaming-chunked-decompress() {
+    let data = 'chunked decompression test' * 100
+    let compressed = zstd.compress(data)
+
+    let decomp = zstd.Decompressor()
+    let mid = compressed.size() / 2
+    decomp.write(compressed.slice(0, mid))
+    decomp.write(compressed.slice(mid))
+    let result = decomp.flush()
+    assert(result.str!() == data)
+}

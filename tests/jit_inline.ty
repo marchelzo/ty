@@ -1,0 +1,179 @@
+ns test
+
+
+class InlinePoint {
+    x: Int
+    y: Int
+
+    init(x: Int, y: Int) {
+        self.x = x
+        self.y = y
+    }
+
+    sum() {
+        self.x + self.y
+    }
+
+    add(value: Int) {
+        self.x + value
+    }
+
+    get() {
+        self.x
+    }
+
+    first -> Int {
+        x
+    }
+
+    total -> Int {
+        x + y
+    }
+
+    computed -> Int {
+        self.sum()
+    }
+
+    twice() {
+        self.sum() + self.sum()
+    }
+
+    captured() {
+        let get = fn () { self.x }
+        self.sum() + get()
+    }
+}
+
+class InlinePointChild < InlinePoint {
+    get() {
+        self.x + 10
+    }
+
+    total -> Int {
+        x + y + 10
+    }
+}
+
+class InlineScore {
+    value: Int
+
+    init(value: Int) {
+        self.value = value
+    }
+}
+
+fn +(left: InlineScore, right: InlineScore) -> Int {
+    left.value + right.value
+}
+
+fn inline-point-sum(point: InlinePoint) {
+    point.sum()
+}
+
+fn inline-point-add(point: InlinePoint, value: Int) {
+    point.add(value)
+}
+
+fn inline-point-get(point: InlinePoint) {
+    point.get()
+}
+
+fn inline-point-first(point: InlinePoint) {
+    point.first
+}
+
+fn inline-point-total(point: InlinePoint) {
+    point.total
+}
+
+fn inline-point-computed(point: InlinePoint) {
+    point.computed
+}
+
+fn inline-point-twice(point: InlinePoint) {
+    point.twice()
+}
+
+fn inline-point-captured(point: InlinePoint) {
+    point.captured()
+}
+
+fn inline-score-add(left: InlineScore, right: InlineScore) {
+    left + right
+}
+
+fn inline-replacement() {
+    99
+}
+
+pub fn jit-inline-leaf-methods-and-operators() {
+    let point = InlinePoint(2, 3)
+    let child = InlinePointChild(4, 5)
+    let left = InlineScore(6)
+    let right = InlineScore(7)
+
+    for ..1000 {
+        assert(inline-point-sum(point) == 5)
+        assert(inline-point-add(point, 8) == 10)
+        assert(inline-point-get(point) == 2)
+        assert(inline-point-get(child) == 14)
+        assert(inline-point-first(point) == 2)
+        assert(inline-point-first(child) == 4)
+        assert(inline-point-total(point) == 5)
+        assert(inline-point-total(child) == 19)
+        assert(inline-point-computed(point) == 5)
+        assert(inline-point-computed(child) == 9)
+        assert(inline-point-twice(point) == 10)
+        assert(inline-point-captured(point) == 7)
+        assert(inline-score-add(left, right) == 13)
+    }
+
+    defineMethod(InlinePoint, 'get', inline-replacement)
+
+    for ..1000 {
+        assert(inline-point-get(point) == 99)
+        assert(inline-point-get(child) == 14)
+        assert(inline-point-first(point) == 2)
+        assert(inline-point-total(point) == 5)
+        assert(inline-point-total(child) == 19)
+        assert(inline-point-computed(point) == 5)
+        assert(inline-point-computed(child) == 9)
+    }
+}
+
+class GuardFields {
+    x: Int
+
+    init(x: Int) {
+        self.x = x
+    }
+
+    thrice() {
+        x + x + x
+    }
+
+    choose(limit: Int) {
+        x < limit ? x : x + 1
+    }
+}
+
+class GuardFieldsChild < GuardFields {}
+
+fn guard-fields-thrice(value: GuardFields) {
+    value.thrice()
+}
+
+fn guard-fields-choose(value: GuardFields, limit: Int) {
+    value.choose(limit)
+}
+
+pub fn jit-factored-field-guards() {
+    let value = GuardFields(4)
+    let child = GuardFieldsChild(5)
+    for ..1000 {
+        assert(guard-fields-thrice(value) == 12)
+        assert(guard-fields-thrice(child) == 15)
+        assert(guard-fields-choose(value, 5) == 4)
+        assert(guard-fields-choose(value, 3) == 5)
+    }
+}

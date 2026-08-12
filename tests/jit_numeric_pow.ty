@@ -1,0 +1,48 @@
+ns test
+
+pub class PowBox {
+    value: Int
+
+    init(value: Int) {
+        self.value = value
+    }
+}
+
+fn **(box: PowBox, other: Int) -> Int {
+    box.value + other
+}
+
+fn pow-ii(a: Int, b: Int) { a ** b }
+fn pow-if(a: Int, b: Float) { a ** b }
+fn pow-fi(a: Float, b: Int) { a ** b }
+fn pow-ff(a: Float, b: Float) { a ** b }
+fn pow-dynamic(a, b) { a ** b }
+
+pub fn jit-numeric-pow() {
+    let ii = pow-ii(2, 10)
+    let int-float = pow-if(9, 0.5)
+    let float-int = pow-fi(2.0, -3)
+    let float-float = pow-ff(2.0, 3.5)
+    assert(ii == 1024 && type(ii) == Int)
+    assert(int-float == 3.0 && type(int-float) == Float)
+    assert(float-int == 0.125 && type(float-int) == Float)
+    assert((float-float - 11.313708498984761).abs < 0.000000000001)
+    assert(type(float-float) == Float)
+    assert(pow-ii(2, -1) == 0)
+    assert(pow-ii(-2, 3) == -8)
+    assert(pow-ii(0, 0) == 1)
+    assert(pow-ii(-1, 9223372036854775807) == 1)
+    assert(pow-dynamic(4, 3.0) == 64.0)
+    assert(PowBox(7) ** 5 == 12)
+}
+
+pub fn constant-numeric-pow-folding() {
+    let ii = 2 ** 32
+    let float-int = 2.0 ** 32
+    let int-float = 16 ** 0.5
+    let float-float = 16.0 ** 0.5
+    assert(ii == 4294967296 && type(ii) == Int)
+    assert(float-int == 4294967296.0 && type(float-int) == Float)
+    assert(int-float == 4.0 && type(int-float) == Float)
+    assert(float-float == 4.0 && type(float-float) == Float)
+}
