@@ -167,11 +167,11 @@ typedef vec(Module *)       ModuleVector;
 #define vSsz(s)    STRING_CLONE_C(ty, (s))
 #define vSzz(s)    STRING_C_CLONE_C(ty, (s))
 
-#define xSs(s, n) STRING_NOGC((s), (n))
-#define xSz(s)    STRING_NOGC_C(s)
+#define xSs(s, n) STRING_NOGC(ty, (s), (n))
+#define xSz(s)    STRING_NOGC_C(ty, s)
 
-#define ss(v) ((v).str)
-#define sN(v) ((v).bytes)
+#define ss(v) V_STR(v)
+#define sN(v) V_BYTES(v)
 
 #define vA()       value_array_new(ty)
 #define vAu()      uAo0(sizeof (Array), GC_ARRAY)

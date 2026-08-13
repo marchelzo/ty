@@ -74,7 +74,7 @@ ty_inline_analyze(Value const *callee, TyInlineKind kind, int argc, TyInlinePlan
         memset(plan, 0, sizeof *plan);
         plan->self_local = -1;
 
-        if (callee == NULL || callee->type != VALUE_FUNCTION) {
+        if (callee == NULL || V_TYPE(*(callee)) != VALUE_FUNCTION) {
                 return false;
         }
         if (argc < 0
@@ -82,7 +82,7 @@ ty_inline_analyze(Value const *callee, TyInlineKind kind, int argc, TyInlinePlan
             || argc != param_count_of(callee)) {
                 return false;
         }
-        if (callee->info[FUN_INFO_CAPTURES] != 0) {
+        if (V_INFO(*(callee))[FUN_INFO_CAPTURES] != 0) {
                 return false;
         }
         if (rest_idx_of(callee) != -1 || kwargs_idx_of(callee) != -1) {
@@ -96,7 +96,7 @@ ty_inline_analyze(Value const *callee, TyInlineKind kind, int argc, TyInlinePlan
         }
 
         int expected_bound = argc + (kind == TY_INLINE_METHOD);
-        if (callee->info[FUN_INFO_BOUND] != expected_bound) {
+        if (V_INFO(*(callee))[FUN_INFO_BOUND] != expected_bound) {
                 return false;
         }
         if (kind == TY_INLINE_METHOD) {
@@ -214,9 +214,38 @@ ty_inline_analyze(Value const *callee, TyInlineKind kind, int argc, TyInlinePlan
                         }
                         break;
 
+                case INSTR_TRUE:
+                case INSTR_FALSE:
+                        insn.op = TY_INLINE_BOOLEAN;
+                        insn.integer = op == INSTR_TRUE;
+                        if (!push_insn(plan, insn)) return false;
+                        break;
+
+                case INSTR_TARGET_SELF_MEMBER:
+                {
+                        i32 member;
+                        if (!read_bytes(&ip, end, &member, sizeof member)
+                            || kind != TY_INLINE_METHOD || plan->count == 0) return false;
+                        TyInlineInsn *value = &plan->insns[plan->count - 1];
+                        if (value->op != TY_INLINE_BOOLEAN) return false;
+                        value->op = TY_INLINE_STORE_FIELD;
+                        value->local = plan->self_local;
+                        value->member = member;
+                        break;
+                }
+
+                case INSTR_ASSIGN:
+                        break;
+
+                case INSTR_POP:
+                        insn.op = TY_INLINE_POP;
+                        if (!push_insn(plan, insn)) return false;
+                        break;
+
                 case INSTR_ADD:
                 case INSTR_SUB:
                 case INSTR_MUL:
+                case INSTR_DIV:
                 case INSTR_EQ:
                 case INSTR_NEQ:
                 case INSTR_LT:
@@ -226,6 +255,7 @@ ty_inline_analyze(Value const *callee, TyInlineKind kind, int argc, TyInlinePlan
                         insn.op = op == INSTR_ADD ? TY_INLINE_ADD
                                 : op == INSTR_SUB ? TY_INLINE_SUB
                                 : op == INSTR_MUL ? TY_INLINE_MUL
+                                : op == INSTR_DIV ? TY_INLINE_DIV
                                 : op == INSTR_EQ  ? TY_INLINE_EQ
                                 : op == INSTR_NEQ ? TY_INLINE_NE
                                 : op == INSTR_LT  ? TY_INLINE_LT
@@ -381,11 +411,18 @@ ty_inline_analyze(Value const *callee, TyInlineKind kind, int argc, TyInlinePlan
                 case TY_INLINE_FIELD:
                 case TY_INLINE_INTEGER:
                 case TY_INLINE_REAL:
+                case TY_INLINE_BOOLEAN:
+                case TY_INLINE_STORE_FIELD:
                         next_depth++;
+                        break;
+                case TY_INLINE_POP:
+                        if (depth < 1) return false;
+                        next_depth--;
                         break;
                 case TY_INLINE_ADD:
                 case TY_INLINE_SUB:
                 case TY_INLINE_MUL:
+                case TY_INLINE_DIV:
                 case TY_INLINE_EQ:
                 case TY_INLINE_NE:
                 case TY_INLINE_LT:
@@ -464,8 +501,8 @@ new_target(Class const *left, Class const *right, int member, int offset_kind,
                 .right = right,
                 .left_id = left != NULL ? left->i : -1,
                 .right_id = right != NULL ? right->i : -1,
-                .info = callee->info,
-                .env = callee->env,
+                .info = V_INFO(*(callee)),
+                .env = V_ENV(*(callee)),
                 .member = member,
                 .offset_kind = offset_kind,
                 .op = op,
@@ -497,20 +534,20 @@ static bool
 same_function(Value const *value, TyInlineTarget const *target)
 {
         return value != NULL
-            && value->type == VALUE_FUNCTION
-            && value->info == target->info
-            && value->env == target->env;
+            && V_TYPE(*(value)) == VALUE_FUNCTION
+            && V_INFO(*(value)) == target->info
+            && V_ENV(*(value)) == target->env;
 }
 
 bool
 ty_inline_guard_member(Ty *ty, Value const *receiver, TyInlineTarget const *target)
 {
         (void)ty;
-        if (receiver->type != VALUE_OBJECT || receiver->object == NULL) {
+        if (V_TYPE(*(receiver)) != VALUE_OBJECT || V_OBJECT(*(receiver)) == NULL) {
                 return false;
         }
-        if (receiver->class != target->left_id
-            || receiver->object->class != target->left) {
+        if (V_CLASS(*(receiver)) != target->left_id
+            || V_OBJECT(*(receiver))->class != target->left) {
                 return false;
         }
         Class const *class = target->left;
@@ -541,7 +578,7 @@ bool
 ty_inline_guard_operator(Ty *ty, Value const *left, Value const *right,
                          TyInlineTarget const *target)
 {
-        if (left->type != VALUE_OBJECT || right->type != VALUE_OBJECT) {
+        if (V_TYPE(*(left)) != VALUE_OBJECT || V_TYPE(*(right)) != VALUE_OBJECT) {
                 return false;
         }
         if (ClassOf(left) != target->left_id || ClassOf(right) != target->right_id) {

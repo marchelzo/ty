@@ -59,7 +59,7 @@ space(void)
 }
 
 static Value
-number(void)
+number(Ty *ty)
 {
         char numbuf[512];
         char const *num = json;
@@ -249,14 +249,14 @@ string(Ty *ty)
         n = str.count;
 
         if (n == 0)
-                return STRING_NOGC(NULL, 0);
+                return STRING_NOGC(ty, NULL, 0);
 
         char *s = value_string_alloc(ty, n);
         memcpy(s, str.items, n);
 
         xvF(str);
 
-        return STRING(s, n);
+        return STRING(ty, s, n);
 }
 
 static Value
@@ -348,8 +348,8 @@ object_xD(Ty *ty)
 
         for (u32 i = 0; i < vN(keys); ++i) {
                 char const *key = TY_TMP_C_STR(v__(keys, i));
-                object.ids[i]   = M_ID(key);
-                object.items[i] = v__(values, i);
+                V_IDS(object)[i]   = M_ID(key);
+                V_ITEMS(object)[i] = v__(values, i);
         }
 
         SCRATCH_RESTORE();
@@ -377,7 +377,7 @@ value(Ty *ty)
         case 'f': return jfalse();
         case '-': case '0': case '1': case '2': case '3': case '4':
         case '5': case '6': case '7': case '8': case '9':
-                return number();
+                return number(ty);
         default: FAIL;
         }
 }
@@ -408,14 +408,11 @@ try_visit(void const *p)
 static bool
 encode(Ty *ty, Value const *v, str *out)
 {
-        if (v->type & VALUE_TAGGED) {
+        if (V_TYPE(*(v)) & VALUE_TAGGED) {
                 Value val = *v;
-                char const *tn = tags_name(ty, tags_first(ty, v->tags));
+                char const *tn = tags_name(ty, tags_first(ty, V_TAGS(*(v))));
 
-                val.tags = tags_pop(ty, v->tags);
-                if (val.tags == 0) {
-                        val.type &= ~VALUE_TAGGED;
-                }
+                val = value_with_tags(ty, val, tags_pop(ty, V_TAGS(*v)));
 
                 dump((void *)out, "{\"type\":\"%s\",\"value\":", tn);
 
@@ -430,13 +427,13 @@ encode(Ty *ty, Value const *v, str *out)
 
         bool first = true;
 
-        switch (v->type & ~VALUE_TAGGED) {
+        switch (V_TYPE(*(v)) & ~VALUE_TAGGED) {
         case VALUE_NIL:
                 xvPn(*out, "null", 4);
                 break;
 
         case VALUE_TAG:
-                dump((void *)out, "\"%s\"", tags_name(ty, v->tag));
+                dump((void *)out, "\"%s\"", tags_name(ty, V_TAG(*(v))));
                 break;
 
         case VALUE_STRING:
@@ -484,7 +481,7 @@ encode(Ty *ty, Value const *v, str *out)
                 break;
 
         case VALUE_BOOLEAN:
-                if (v->boolean)
+                if (V_BOOL(*(v)))
                         xvPn(*out, "true", 4);
                 else
                         xvPn(*out, "false", 5);
@@ -492,22 +489,22 @@ encode(Ty *ty, Value const *v, str *out)
 
         case VALUE_INTEGER:
                 xvR(*out, out->count + 64);
-                out->count += snprintf(out->items + out->count, 64, "%"PRIiMAX, v->z);
+                out->count += snprintf(out->items + out->count, 64, "%"PRIiMAX, V_Z(*v));
                 break;
 
         case VALUE_REAL:
                 xvR(*out, out->count + 64);
-                out->count += dtoa(v->real, out->items + out->count, 64);
+                out->count += dtoa(V_REAL(*(v)), out->items + out->count, 64);
                 break;
 
         case VALUE_ARRAY:
                 xvP(*out, '[');
-                if (!try_visit(v->array))
+                if (!try_visit(V_ARRAY(*(v))))
                         return false;
-                for (int i = 0; i < v->array->count; ++i) {
-                        if (!encode(ty, &v->array->items[i], out))
+                for (int i = 0; i < V_ARRAY(*(v))->count; ++i) {
+                        if (!encode(ty, &V_ARRAY(*(v))->items[i], out))
                                 return false;
-                        if (i + 1 < v->array->count)
+                        if (i + 1 < V_ARRAY(*(v))->count)
                                 xvP(*out, ',');
                 }
                 vvX(Visiting);
@@ -516,11 +513,11 @@ encode(Ty *ty, Value const *v, str *out)
 
         case VALUE_DICT:
                 xvP(*out, '{');
-                if (!try_visit(v->dict)) {
+                if (!try_visit(V_DICT(*(v)))) {
                         return false;
                 }
-                dfor(v->dict, {
-                        if (key->type != VALUE_STRING) {
+                dfor(V_DICT(*v), {
+                        if (V_TYPE(*key) != VALUE_STRING) {
                                 continue;
                         }
                         if (!first) {
@@ -541,15 +538,15 @@ encode(Ty *ty, Value const *v, str *out)
 
         case VALUE_OBJECT:
         {
-                if (!try_visit(v->object))
+                if (!try_visit(V_OBJECT(*(v))))
                         return false;
 
-                Value *vp = class_lookup_method_i(ty, v->class, NAMES.json);
+                Value *vp = class_lookup_method_i(ty, V_CLASS(*(v)), NAMES.json);
 
                 if (vp != NULL) {
                         Value method = METHOD(NAMES.json, vp, v);
                         Value s = vm_eval_function(ty, NULL, &method, NULL);
-                        if (s.type == VALUE_STRING) {
+                        if (V_TYPE(s) == VALUE_STRING) {
                                 gP(&s);
                                 xvPn(*out, ss(s), sN(s));
                                 gX();
@@ -558,23 +555,23 @@ encode(Ty *ty, Value const *v, str *out)
                         }
                 } else {
                         xvP(*out, '{');
-                        for (int i = 0; i < v->object->nslot; ++i) {
-                                char const *name = M_NAME(v__(v->object->class->fields.ids, i));
+                        for (int i = 0; i < V_OBJECT(*(v))->nslot; ++i) {
+                                char const *name = M_NAME(v__(V_OBJECT(*v)->class->fields.ids, i));
                                 xvPn(*out, name, strlen(name));
                                 xvP(*out, '"');
                                 xvP(*out, ':');
-                                if (!encode(ty, &v->object->slots[i], out)) {
+                                if (!encode(ty, &V_OBJECT(*(v))->slots[i], out)) {
                                         return false;
                                 }
                                 xvP(*out, ',');
                         }
-                        if (v->object->dynamic != NULL) {
-                                for (int i = 0; i < vN(v->object->dynamic->ids); ++i) {
-                                        char const *name = M_NAME(v__(v->object->dynamic->ids, i));
+                        if (V_OBJECT(*(v))->dynamic != NULL) {
+                                for (int i = 0; i < vN(V_OBJECT(*v)->dynamic->ids); ++i) {
+                                        char const *name = M_NAME(v__(V_OBJECT(*v)->dynamic->ids, i));
                                         xvPn(*out, name, strlen(name));
                                         xvP(*out, '"');
                                         xvP(*out, ':');
-                                        if (!encode(ty, &v->object->slots[i], out)) {
+                                        if (!encode(ty, &V_OBJECT(*(v))->slots[i], out)) {
                                                 return false;
                                         }
                                         xvP(*out, ',');
@@ -592,13 +589,13 @@ encode(Ty *ty, Value const *v, str *out)
 
         case VALUE_TUPLE:
                 xvP(*out, '{');
-                if (!try_visit(v->items)) {
+                if (!try_visit(V_ITEMS(*(v)))) {
                         return false;
                 }
-                for (int i = 0; i < v->count; ++i) {
+                for (int i = 0; i < V_COUNT(*(v)); ++i) {
                         xvP(*out, '"');
-                        if (v->ids != NULL && v->ids[i] != -1) {
-                                char const *name = M_NAME(v->ids[i]);
+                        if (V_IDS(*(v)) != NULL && V_IDS(*(v))[i] != -1) {
+                                char const *name = M_NAME(V_IDS(*v)[i]);
                                 xvPn(*out, name, strlen(name));
                         } else {
                                 char b[32];
@@ -607,7 +604,7 @@ encode(Ty *ty, Value const *v, str *out)
                         }
                         xvP(*out, '"');
                         xvP(*out, ':');
-                        if (!encode(ty, &v->items[i], out)) {
+                        if (!encode(ty, &V_ITEMS(*(v))[i], out)) {
                                 return false;
                         }
                         xvP(*out, ',');
@@ -622,9 +619,9 @@ encode(Ty *ty, Value const *v, str *out)
 
         case VALUE_BLOB:
                 xvP(*out, '"');
-                for (int i = 0; i < v->blob->count; ++i) {
+                for (int i = 0; i < V_BLOB(*(v))->count; ++i) {
                         char b[3];
-                        snprintf(b, sizeof b, "%.2X", (unsigned)v->blob->items[i]);
+                        snprintf(b, sizeof b, "%.2X", (unsigned)V_BLOB(*v)->items[i]);
                         xvP(*out, '\\');
                         xvP(*out, 'x');
                         xvP(*out, b[0]);
@@ -720,8 +717,8 @@ typed_value(Ty *ty, Type *t0)
                 return null();
 
         case TYPE_INT:
-                v = number();
-                if (v.type != VALUE_INTEGER || v.z != t0->z) {
+                v = number(ty);
+                if (V_TYPE(v) != VALUE_INTEGER || V_Z(v) != t0->z) {
                         FAIL;
                 }
                 return v;
@@ -729,7 +726,7 @@ typed_value(Ty *ty, Type *t0)
         case TYPE_STRING:
                 v = string(ty);
                 if (
-                        (v.type != VALUE_STRING)
+                        (V_TYPE(v) != VALUE_STRING)
                      || (sN(v) != strlen(t0->str))
                      || (memcmp(ss(v), t0->str, sN(v)) != 0)
                 ) {
@@ -740,18 +737,18 @@ typed_value(Ty *ty, Type *t0)
         case TYPE_OBJECT:
                 switch (t0->class->i) {
                 case CLASS_INT:
-                        v = number();
-                        if (v.type != VALUE_INTEGER) {
+                        v = number(ty);
+                        if (V_TYPE(v) != VALUE_INTEGER) {
                                 FAIL;
                         }
                         return v;
 
                 case CLASS_FLOAT:
-                        v = number();
-                        if (v.type == VALUE_INTEGER) {
-                                return REAL((double)v.z);
+                        v = number(ty);
+                        if (V_TYPE(v) == VALUE_INTEGER) {
+                                return REAL((double)V_Z(v));
                         }
-                        if (v.type != VALUE_REAL) {
+                        if (V_TYPE(v) != VALUE_REAL) {
                                 FAIL;
                         }
                         return v;
@@ -888,8 +885,8 @@ typed_value(Ty *ty, Type *t0)
 
                 for (u32 i = 0; i < vN(keys); ++i) {
                         char const *key = TY_TMP_C_STR(v__(keys, i));
-                        object.ids[i]   = M_ID(key);
-                        object.items[i] = v__(values, i);
+                        V_IDS(object)[i]   = M_ID(key);
+                        V_ITEMS(object)[i] = v__(values, i);
                 }
 
                 for (int i = 0; i < nfields; ++i) {
@@ -903,7 +900,7 @@ typed_value(Ty *ty, Type *t0)
                         int fid = M_ID(fname);
                         bool found = false;
                         for (u32 j = 0; j < vN(keys); ++j) {
-                                if (object.ids[j] == fid) {
+                                if (V_IDS(object)[j] == fid) {
                                         found = true;
                                         break;
                                 }

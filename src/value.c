@@ -39,6 +39,95 @@ TyValueCleanup(void)
         xvF(show_queues);
 }
 
+Value
+value_box(Ty *ty, ValuePayload payload)
+{
+        /* Do not trigger a collection between evaluating the payload pointer(s) and
+         * making the box visible as a Value/root.  Ordinary allocations still
+         * perform the limit check; boxes use the registered unchecked path. */
+        /* Do not trigger a collection between evaluating the payload pointer(s) and
+         * making the box visible as a Value/root.  Ordinary allocations still
+         * perform the limit check; boxes use the registered unchecked path. */
+        ValueBox *box = gc_alloc_object0_unchecked(ty, sizeof *box, GC_VALUE_BOX);
+        if (!TY_IS_READY) {
+                /* Loader/compiler structures retain Values outside traced GC
+                 * containers for the process lifetime. */
+                NOGC(box);
+        }
+        box->payload = payload;
+        return (Value){ .bits = nanbox_from_pointer(box) };
+}
+
+Value
+value_integer(Ty *ty, imax z)
+{
+        if (z >= INT32_MIN && z <= INT32_MAX) {
+                return (Value){ .bits = nanbox_from_int((int32_t)z) };
+        }
+        return value_box(ty, (ValuePayload){ .type = VALUE_INTEGER, .z = z });
+}
+
+Value
+value_real(double real)
+{
+        return (Value){ .bits = nanbox_from_double(real) };
+}
+
+Value
+value_boolean(bool boolean)
+{
+        return (Value){ .bits = nanbox_from_boolean(boolean) };
+}
+
+ValuePayload
+value_payload(Value value)
+{
+        if (value_is_direct_array(value)) return (ValuePayload){ .type=VALUE_ARRAY, .array=value_direct_array_ptr(value) };
+        if (value_is_direct_class(value)) return (ValuePayload){ .type=VALUE_CLASS, .class=value_direct_class_id(value) };
+        if (value_is_direct_tag(value)) return (ValuePayload){ .type=VALUE_TAG, .tag=value_direct_tag_id(value) };
+        if (value_is_direct_object(value)) return (ValuePayload){ .type=VALUE_OBJECT, .object=value_direct_object_ptr(value), .class=value_direct_object_ptr(value)->class->i };
+        if (value_is_direct_tagged_int(value)) return (ValuePayload){ .type=VALUE_INTEGER | VALUE_TAGGED, .tags=value_direct_tagged_int_tags(value), .z=value_direct_tagged_int_value(value) };
+        if (nanbox_is_pointer(value.bits)) return value_box_ptr(value)->payload;
+        if (nanbox_is_int(value.bits)) return (ValuePayload){ .type=VALUE_INTEGER, .z=nanbox_to_int(value.bits) };
+        if (nanbox_is_double(value.bits)) return (ValuePayload){ .type=VALUE_REAL, .real=nanbox_to_double(value.bits) };
+        if (nanbox_is_boolean(value.bits)) return (ValuePayload){ .type=VALUE_BOOLEAN, .boolean=nanbox_to_boolean(value.bits) };
+        if (nanbox_is_null(value.bits)) return (ValuePayload){ .type=VALUE_NIL };
+        if (nanbox_is_undefined(value.bits)) return (ValuePayload){ .type=VALUE_NONE };
+        assert(nanbox_is_empty(value.bits));
+        return (ValuePayload){ .type=VALUE_ZERO };
+}
+
+Value
+value_with_src(Ty *ty, Value value, u32 src)
+{
+        ValuePayload payload = value_payload(value);
+        payload.src = src;
+        return value_box(ty, payload);
+}
+
+Value
+value_with_tags(Ty *ty, Value value, u16 tags)
+{
+        if (tags != 0 && nanbox_is_int(value.bits))
+                return value_direct_tagged_int(nanbox_to_int(value.bits), tags);
+        if (value_is_direct_tagged_int(value)) {
+                if (tags != 0) return value_direct_tagged_int(value_direct_tagged_int_value(value), tags);
+                return value_integer(ty, value_direct_tagged_int_value(value));
+        }
+        ValuePayload payload = value_payload(value);
+        payload.tags = tags;
+        payload.type = tags ? (payload.type | VALUE_TAGGED) : (payload.type & ~VALUE_TAGGED);
+        return value_box(ty, payload);
+}
+
+Value
+value_with_type(Ty *ty, Value value, u8 type)
+{
+        ValuePayload payload = value_payload(value);
+        payload.type = type;
+        return value_box(ty, payload);
+}
+
 inline static void
 MarkNext(Ty *ty, Value *v)
 {
@@ -48,22 +137,22 @@ MarkNext(Ty *ty, Value *v)
 static bool
 arrays_equal(Ty *ty, Value const *v1, Value const *v2)
 {
-        if (v1->array == v2->array) {
+        if (V_ARRAY(*(v1)) == V_ARRAY(*(v2))) {
                 return true;
         }
 
-        if (vN(*v1->array) != vN(*v2->array)) {
+        if (vN(*V_ARRAY(*v1)) != vN(*V_ARRAY(*v2))) {
                 return false;
         }
 
-        usize n = vN(*v1->array);
+        usize n = vN(*V_ARRAY(*v1));
 
         for (usize i = 0; i < n; ++i) {
                 if (
                         !value_test_equality(
                                 ty,
-                                v_(*v1->array, i),
-                                v_(*v2->array, i)
+                                v_(*V_ARRAY(*v1), i),
+                                v_(*V_ARRAY(*v2), i)
                         )
                 )  {
                         return false;
@@ -103,25 +192,25 @@ records_equal(Ty *ty, Value const *v1, Value const *v2)
 
         SCRATCH_SAVE();
 
-        for (usize i = 0; i < v1->count; ++i) {
-                if (LIKELY(v1->ids[i] != -1)) {
+        for (usize i = 0; i < V_COUNT(*(v1)); ++i) {
+                if (LIKELY(V_IDS(*v1)[i] != -1)) {
                         svP(xs_named, ((RecordItem) {
-                                .id  = v1->ids[i],
-                                .val = v1->items[i]
+                                .id  = V_IDS(*v1)[i],
+                                .val = V_ITEMS(*v1)[i]
                         }));
                 } else {
-                        svP(xs_unnamed, v1->items[i]);
+                        svP(xs_unnamed, V_ITEMS(*v1)[i]);
                 }
         }
 
-        for (usize i = 0; i < v2->count; ++i) {
-                if (LIKELY(v2->ids[i] != -1)) {
+        for (usize i = 0; i < V_COUNT(*(v2)); ++i) {
+                if (LIKELY(V_IDS(*v2)[i] != -1)) {
                         svP(ys_named, ((RecordItem) {
-                                .id  = v2->ids[i],
-                                .val = v2->items[i]
+                                .id  = V_IDS(*v2)[i],
+                                .val = V_ITEMS(*v2)[i]
                         }));
                 } else {
-                        svP(ys_unnamed, v2->items[i]);
+                        svP(ys_unnamed, V_ITEMS(*v2)[i]);
                 }
         }
 
@@ -167,30 +256,30 @@ compare_records(Ty *ty, Value const *v1, Value const *v2)
 
         SCRATCH_SAVE();
 
-        for (usize i = 0; i < v1->count; ++i) {
-                if (LIKELY(v1->ids[i] != -1)) {
+        for (usize i = 0; i < V_COUNT(*(v1)); ++i) {
+                if (LIKELY(V_IDS(*v1)[i] != -1)) {
                         svP(xs, ((RecordItem) {
-                                .id  = v1->ids[i],
-                                .val = v1->items[i]
+                                .id  = V_IDS(*v1)[i],
+                                .val = V_ITEMS(*v1)[i]
                         }));
                 } else {
                         svP(xs, ((RecordItem) {
                                 .id  = -1,
-                                .val = v1->items[i]
+                                .val = V_ITEMS(*v1)[i]
                         }));
                 }
         }
 
-        for (usize i = 0; i < v2->count; ++i) {
-                if (LIKELY(v2->ids[i] != -1)) {
+        for (usize i = 0; i < V_COUNT(*(v2)); ++i) {
+                if (LIKELY(V_IDS(*v2)[i] != -1)) {
                         svP(ys, ((RecordItem) {
-                                .id  = v2->ids[i],
-                                .val = v2->items[i]
+                                .id  = V_IDS(*v2)[i],
+                                .val = V_ITEMS(*v2)[i]
                         }));
                 } else {
                         svP(ys, ((RecordItem) {
                                 .id  = -1,
-                                .val = v2->items[i]
+                                .val = V_ITEMS(*v2)[i]
                         }));
                 }
         }
@@ -218,24 +307,24 @@ compare_records(Ty *ty, Value const *v1, Value const *v2)
 static bool
 tuples_equal(Ty *ty, Value const *v1, Value const *v2)
 {
-        if (v1->items == v2->items)
+        if (V_ITEMS(*(v1)) == V_ITEMS(*(v2)))
                 return true;
 
-        if (v1->count != v2->count)
+        if (V_COUNT(*(v1)) != V_COUNT(*(v2)))
                 return false;
 
-        if (v1->ids != NULL && v2->ids != NULL) {
+        if (V_IDS(*(v1)) != NULL && V_IDS(*(v2)) != NULL) {
                 return records_equal(ty, v1, v2);
         }
 
-        usize n = v1->count;
+        usize n = V_COUNT(*(v1));
 
         for (usize i = 0; i < n; ++i) {
                 if (
                         !value_test_equality(
                                 ty,
-                                &v1->items[i],
-                                &v2->items[i]
+                                &V_ITEMS(*(v1))[i],
+                                &V_ITEMS(*(v2))[i]
                         )
                 ) {
                         return false;
@@ -281,8 +370,8 @@ ary_hash(Ty *ty, Value const *a)
 {
         u64 hash = 7234782527432842341ULL;
 
-        for (usize i = 0; i < vN(*a->array); ++i) {
-                u64 x = value_hash(ty, &a->array->items[i]);
+        for (usize i = 0; i < vN(*V_ARRAY(*a)); ++i) {
+                u64 x = value_hash(ty, &V_ARRAY(*(a))->items[i]);
                 hash = HashCombine(hash, x);
         }
 
@@ -292,7 +381,7 @@ ary_hash(Ty *ty, Value const *a)
 inline static u64
 queue_hash(Ty *ty, Value const *v)
 {
-        Queue *q = v->queue;
+        Queue *q = V_QUEUE(*(v));
         u64 h = 7234782527432842341ULL;
         usize n = _queue_count(q->head, q->tail, q->cap);
 
@@ -309,11 +398,11 @@ tpl_hash(Ty *ty, Value const *t)
 {
         u64 hash = 1127573292757587281ULL;
 
-        for (int i = 0; i < t->count; ++i) {
-                u64 x = value_hash(ty, &t->items[i]);
+        for (int i = 0; i < V_COUNT(*(t)); ++i) {
+                u64 x = value_hash(ty, &V_ITEMS(*(t))[i]);
                 hash = HashCombine(hash, x);
-                if (t->ids != NULL && t->ids[i] != -1) {
-                        hash *= (t->ids[i] + 1);
+                if (V_IDS(*(t)) != NULL && V_IDS(*(t))[i] != -1) {
+                        hash *= (V_IDS(*(t))[i] + 1);
                 }
         }
 
@@ -323,47 +412,47 @@ tpl_hash(Ty *ty, Value const *t)
 inline static u64
 obj_hash(Ty *ty, Value const *v)
 {
-        Value const *f = class_lookup_method_i(ty, v->class, NAMES._hash_);
+        Value const *f = class_lookup_method_i(ty, V_CLASS(*(v)), NAMES._hash_);
 
         if (f != NULL) {
                 Value hash = vm_call_method(ty, v, f, 0);
-                if (hash.type != VALUE_INTEGER) {
+                if (V_TYPE(hash) != VALUE_INTEGER) {
                         zP(
                                 "%s.__hash__() returned non-integer: %s",
-                                class_name(ty, v->class),
+                                class_name(ty, V_CLASS(*v)),
                                 VSC(v)
                         );
                 }
-                return (u64)hash.z;
+                return (u64)V_Z(hash);
         } else {
-                return ptr_hash(v->object);
+                return ptr_hash(V_OBJECT(*(v)));
         }
 }
 
 static u64
 hash(Ty *ty, Value const *val)
 {
-        switch (val->type & ~VALUE_TAGGED) {
+        switch (V_TYPE(*(val)) & ~VALUE_TAGGED) {
         case VALUE_NIL:               return 0xDEADDEADDEADULL;
-        case VALUE_BOOLEAN:           return val->boolean ? 0xABCULL : 0xDEFULL;
+        case VALUE_BOOLEAN:           return V_BOOL(*(val)) ? 0xABCULL : 0xDEFULL;
         case VALUE_STRING:            return XXH3_64bits(ss(*val), sN(*val));
-        case VALUE_INTEGER:           return hash64(val->z);
-        case VALUE_REAL:              return flt_hash(val->real);
+        case VALUE_INTEGER:           return hash64(V_Z(*(val)));
+        case VALUE_REAL:              return flt_hash(V_REAL(*(val)));
         case VALUE_ARRAY:             return ary_hash(ty, val);
         case VALUE_QUEUE:             return queue_hash(ty, val);
         case VALUE_TUPLE:             return tpl_hash(ty, val);
-        case VALUE_DICT:              return ptr_hash(val->dict);
+        case VALUE_DICT:              return ptr_hash(V_DICT(*(val)));
         case VALUE_OBJECT:            return obj_hash(ty, val);
-        case VALUE_METHOD:            return HashCombine(ptr_hash(val->method), ptr_hash(val->this));
-        case VALUE_BUILTIN_METHOD:    return HashCombine(ptr_hash(val->builtin_method), ptr_hash(val->this));
-        case VALUE_BUILTIN_FUNCTION:  return ptr_hash(val->builtin_function);
+        case VALUE_METHOD:            return HashCombine(ptr_hash(V_METHOD(*val)), ptr_hash(V_THIS(*(val))));
+        case VALUE_BUILTIN_METHOD:    return HashCombine(ptr_hash(V_BUILTIN_METHOD(*val)), ptr_hash(V_THIS(*(val))));
+        case VALUE_BUILTIN_FUNCTION:  return ptr_hash(V_BUILTIN_FUNCTION(*(val)));
         case VALUE_BOUND_FUNCTION:
-        case VALUE_FUNCTION:          return HashCombine(ptr_hash(val->info), ptr_hash(val->env));
-        case VALUE_FOREIGN_FUNCTION:  return HashCombine(ptr_hash((void *)val->ff), ptr_hash(val->ffi));
-        case VALUE_REGEX:             return ptr_hash(val->regex);
-        case VALUE_PTR:               return ptr_hash(val->ptr);
-        case VALUE_TAG:               return (((u64)val->tag) * 517929173925273293ULL);
-        case VALUE_CLASS:             return (((u64)val->class) * 817364735284283413ULL);
+        case VALUE_FUNCTION:          return HashCombine(ptr_hash(V_INFO(*(val))), ptr_hash(V_ENV(*(val))));
+        case VALUE_FOREIGN_FUNCTION:  return HashCombine(ptr_hash((void *)V_FF(*(val))), ptr_hash(V_FFI(*(val))));
+        case VALUE_REGEX:             return ptr_hash(V_REGEX(*(val)));
+        case VALUE_PTR:               return ptr_hash(V_PTR(*(val)));
+        case VALUE_TAG:               return (((u64)V_TAG(*(val))) * 517929173925273293ULL);
+        case VALUE_CLASS:             return (((u64)V_CLASS(*(val))) * 817364735284283413ULL);
         default:                      zP("attempt to hash invalid value: %s", VSC(val));
         }
 }
@@ -371,7 +460,7 @@ hash(Ty *ty, Value const *val)
 u64
 value_hash(Ty *ty, Value const *val)
 {
-        return ((u64)val->tags) ^ hash(ty, val);
+        return ((u64)V_TAGS(*(val))) ^ hash(ty, val);
 }
 
 static char *
@@ -482,14 +571,8 @@ enum {
         SW_POP_QUE,
 };
 
-#define WLIT(s) svP(work, ((Value) {   \
-        .type = SW_LIT,                \
-        .ptr  = (void *)(s)            \
-}))
-
-#define WPOP(op) svP(work, ((Value) {  \
-        .type = (op)                   \
-}))
+#define WLIT(s) svP(work, VALUE_BOX_(.type=SW_LIT, .ptr=(void *)(s)))
+#define WPOP(op) svP(work, VALUE_BOX_(.type=(op)))
 
 static char *
 show_impl(
@@ -508,10 +591,10 @@ show_impl(
         while (vN(work) > 0) {
                 Value v = vXx(work);
 
-                switch (v.type) {
+                switch (V_TYPE(v)) {
                 case SW_LIT:
                 {
-                        char const *s = v.ptr;
+                        char const *s = V_PTR(v);
                         svPn(buf, s, strlen(s));
                         continue;
                 }
@@ -523,28 +606,28 @@ show_impl(
                 }
 
                 if (
-                        (v.type & VALUE_TAGGED)
-                     && (v.type & ~VALUE_TAGGED) != VALUE_TUPLE
+                        (V_TYPE(v) & VALUE_TAGGED)
+                     && (V_TYPE(v) & ~VALUE_TAGGED) != VALUE_TUPLE
                 ) {
-                        WLIT(tags_close(ty, v.tags, color));
-                        svP(work, stripped(&v));
-                        WLIT(tags_open(ty, v.tags, color));
+                        WLIT(tags_close(ty, V_TAGS(v), color));
+                        svP(work, stripped(ty, &v));
+                        WLIT(tags_open(ty, V_TAGS(v), color));
                         continue;
                 }
 
-                switch (v.type & ~VALUE_TAGGED) {
+                switch (V_TYPE(v) & ~VALUE_TAGGED) {
                 case VALUE_INTEGER:
                         if (color) {
-                                sxdf(&buf, "%s%"PRIiMAX"%s", TERM(93), v.z, TERM(0));
+                                sxdf(&buf, "%s%"PRIiMAX"%s", TERM(93), V_Z(v), TERM(0));
                         } else {
-                                sxdf(&buf, "%"PRIiMAX, v.z);
+                                sxdf(&buf, "%"PRIiMAX, V_Z(v));
                         }
                         break;
 
                 case VALUE_REAL:
                 {
                         char *r = smA(512);
-                        dtoa(v.real, r, 512);
+                        dtoa(V_REAL(v), r, 512);
                         if (color) {
                                 sxdf(&buf, "%s%s%s", TERM(93), r, TERM(0));
                         } else {
@@ -563,7 +646,7 @@ show_impl(
 
                 case VALUE_BOOLEAN:
                 {
-                        char const *s = v.boolean ? "true" : "false";
+                        char const *s = V_BOOL(v) ? "true" : "false";
                         if (color) {
                                 sxdf(&buf, "%s%s%s", TERM(36), s, TERM(0));
                         } else {
@@ -582,7 +665,7 @@ show_impl(
 
                 case VALUE_TYPE:
                 {
-                        char *s = type_show(ty, v.ptr);
+                        char *s = type_show(ty, V_PTR(v));
                         svPn(buf, s, strlen(s));
                         break;
                 }
@@ -594,7 +677,7 @@ show_impl(
                                         "%s<ns %s'%s'%s>%s",
                                         TERM(93),
                                         TERM(95),
-                                        v.namespace->name,
+                                        V_NAMESPACE(v)->name,
                                         TERM(93),
                                         TERM(0)
                                 );
@@ -602,7 +685,7 @@ show_impl(
                                 sxdf(
                                         &buf,
                                         "<ns '%s'>",
-                                        v.namespace->name
+                                        V_NAMESPACE(v)->name
                                 );
                         }
                         break;
@@ -614,7 +697,7 @@ show_impl(
                                         "%s<module %s'%s'%s>%s",
                                         TERM(93),
                                         TERM(95),
-                                        v.mod->name,
+                                        V_MOD(v)->name,
                                         TERM(93),
                                         TERM(0)
                                 );
@@ -622,7 +705,7 @@ show_impl(
                                 sxdf(
                                         &buf,
                                         "<module '%s'>",
-                                        v.mod->name
+                                        V_MOD(v)->name
                                 );
                         }
                         break;
@@ -630,21 +713,21 @@ show_impl(
                 case VALUE_ARRAY:
                 {
                         for (int i = 0; i < vN(show_arrays); ++i) {
-                                if (v__(show_arrays, i) == v.array) {
+                                if (v__(show_arrays, i) == V_ARRAY(v)) {
                                         sxdf(&buf, "[...]");
                                         goto Next;
                                 }
                         }
 
-                        xvP(show_arrays, v.array);
+                        xvP(show_arrays, V_ARRAY(v));
 
-                        int n = vN(*v.array);
+                        int n = vN(*V_ARRAY(v));
 
                         WPOP(SW_POP_ARY);
                         WLIT("]");
 
                         for (int i = n - 1; i >= 0; --i) {
-                                svP(work, *v_(*v.array, i));
+                                svP(work, *v_(*V_ARRAY(v), i));
                                 if (i > 0) {
                                         WLIT(", ");
                                 }
@@ -658,28 +741,28 @@ show_impl(
                 case VALUE_TUPLE:
                 {
                         for (int i = 0; i < vN(show_tuples); ++i) {
-                                if (v__(show_tuples, i) == v.items) {
+                                if (v__(show_tuples, i) == V_ITEMS(v)) {
                                         sxdf(&buf, "(...)");
                                         goto Next;
                                 }
                         }
 
-                        xvP(show_tuples, v.items);
+                        xvP(show_tuples, V_ITEMS(v));
 
-                        bool tagged = (v.type & VALUE_TAGGED);
+                        bool tagged = (V_TYPE(v) & VALUE_TAGGED);
 
                         WPOP(SW_POP_TPL);
 
                         if (tagged) {
-                                WLIT(tags_close(ty, v.tags, color));
+                                WLIT(tags_close(ty, V_TAGS(v), color));
                         } else {
                                 WLIT(")");
                         }
 
-                        for (int i = v.count - 1; i >= 0; --i) {
-                                svP(work, v.items[i]);
-                                if (v.ids != NULL && v.ids[i] != -1) {
-                                        char const *name = M_NAME(v.ids[i]);
+                        for (int i = V_COUNT(v) - 1; i >= 0; --i) {
+                                svP(work, V_ITEMS(v)[i]);
+                                if (V_IDS(v) != NULL && V_IDS(v)[i] != -1) {
+                                        char const *name = M_NAME(V_IDS(v)[i]);
                                         if (color) {
                                                 WLIT(sfmt(
                                                         "%s%s%s: ",
@@ -700,7 +783,7 @@ show_impl(
                         }
 
                         if (tagged) {
-                                WLIT(tags_open(ty, v.tags, color));
+                                WLIT(tags_open(ty, V_TAGS(v), color));
                         } else {
                                 WLIT("(");
                         }
@@ -711,18 +794,18 @@ show_impl(
                 case VALUE_DICT:
                 {
                         for (int i = 0; i < vN(show_dicts); ++i) {
-                                if (v__(show_dicts, i) == v.dict) {
+                                if (v__(show_dicts, i) == V_DICT(v)) {
                                         sxdf(&buf, "{...}");
                                         goto Next;
                                 }
                         }
 
-                        xvP(show_dicts, v.dict);
+                        xvP(show_dicts, V_DICT(v));
 
                         typedef struct { Value k, v; } KV;
                         vec(KV) items = {0};
 
-                        dfor(v.dict, {
+                        dfor(V_DICT(v), {
                                 svP(items, ((KV){
                                         *key,
                                         *val
@@ -736,7 +819,7 @@ show_impl(
 
                         for (int i = n - 1; i >= 0; --i) {
                                 KV kv = v__(items, i);
-                                if (kv.v.type != VALUE_NIL) {
+                                if (V_TYPE(kv.v) != VALUE_NIL) {
                                         svP(work, kv.v);
                                         WLIT(": ");
                                 }
@@ -757,7 +840,7 @@ show_impl(
                         int  nf   = 0;
                         char flags[16] = {0};
 
-                        pcre2_pattern_info(v.regex->pcre2, PCRE2_INFO_ALLOPTIONS, &bits);
+                        pcre2_pattern_info(V_REGEX(v)->pcre2, PCRE2_INFO_ALLOPTIONS, &bits);
 
                         if (bits & PCRE2_MULTILINE) { flags[nf++] = 'm'; }
                         if (bits & PCRE2_DOTALL)    { flags[nf++] = 's'; }
@@ -774,13 +857,13 @@ show_impl(
                                         &buf,
                                         "%s/%s/%s%s%s",
                                         TERM(38;2;127;197;78),
-                                        v.regex->pattern,
+                                        V_REGEX(v)->pattern,
                                         TERM(38;2;63;189;142),
                                         flags,
                                         TERM(0)
                                 );
                         } else {
-                                sxdf(&buf, "/%s/%s", v.regex->pattern, flags);
+                                sxdf(&buf, "/%s/%s", V_REGEX(v)->pattern, flags);
                         }
                         break;
                 }
@@ -867,14 +950,14 @@ show_impl(
                 }
 
                 case VALUE_METHOD:
-                        if (v.this == NULL) {
+                        if (V_THIS(v) == NULL) {
                                 if (color) {
                                         sxdf(
                                                 &buf,
                                                 "%s<method %s'%s'%s>%s",
                                                 TERM(96),
                                                 TERM(92),
-                                                name_of(v.method),
+                                                name_of(V_METHOD(v)),
                                                 TERM(96),
                                                 TERM(0)
                                         );
@@ -882,8 +965,8 @@ show_impl(
                                         sxdf(
                                                 &buf,
                                                 "<method '%s' at %p>",
-                                                M_NAME(v.name),
-                                                (void *)v.method
+                                                M_NAME(V_NAME(v)),
+                                                (void *)V_METHOD(v)
                                         );
                                 }
                         } else if (color) {
@@ -892,21 +975,21 @@ show_impl(
                                         TERM(96),
                                         TERM(0)
                                 ));
-                                svP(work, *v.this);
+                                svP(work, *V_THIS(v));
                                 WLIT(sfmt(
                                         "%s<method %s'%s'%s bound to %s",
                                         TERM(96),
                                         TERM(92),
-                                        name_of(v.method),
+                                        name_of(V_METHOD(v)),
                                         TERM(96),
                                         TERM(0)
                                 ));
                         } else {
                                 WLIT(">");
-                                svP(work, *v.this);
+                                svP(work, *V_THIS(v));
                                 WLIT(sfmt(
                                         "<method '%s' bound to ",
-                                        M_NAME(v.name)
+                                        M_NAME(V_NAME(v))
                                 ));
                         }
                         break;
@@ -918,7 +1001,7 @@ show_impl(
                                         "%s<bound builtin method %s'%s'%s>%s",
                                         TERM(96),
                                         TERM(92),
-                                        M_NAME(v.name),
+                                        M_NAME(V_NAME(v)),
                                         TERM(96),
                                         TERM(0)
                                 );
@@ -926,13 +1009,13 @@ show_impl(
                                 sxdf(
                                         &buf,
                                         "<bound builtin method '%s'>",
-                                        M_NAME(v.name)
+                                        M_NAME(V_NAME(v))
                                 );
                         }
                         break;
 
                 case VALUE_BUILTIN_FUNCTION:
-                        if (v.name == -1) {
+                        if (V_NAME(v) == -1) {
                                 if (color) {
                                         sxdf(
                                                 &buf,
@@ -943,14 +1026,14 @@ show_impl(
                                 } else {
                                         sxdf(&buf, "<builtin>");
                                 }
-                        } else if (v.module == NULL) {
+                        } else if (V_MODULE(v) == NULL) {
                                 if (color) {
                                         sxdf(
                                                 &buf,
                                                 "%s<builtin %s'%s'%s>%s",
                                                 TERM(96),
                                                 TERM(92),
-                                                M_NAME(v.name),
+                                                M_NAME(V_NAME(v)),
                                                 TERM(96),
                                                 TERM(0)
                                         );
@@ -958,7 +1041,7 @@ show_impl(
                                         sxdf(
                                                 &buf,
                                                 "<builtin %s>",
-                                                M_NAME(v.name)
+                                                M_NAME(V_NAME(v))
                                         );
                                 }
                         } else {
@@ -968,8 +1051,8 @@ show_impl(
                                                 "%s<builtin %s'%s::%s'%s>%s",
                                                 TERM(96),
                                                 TERM(92),
-                                                v.module,
-                                                M_NAME(v.name),
+                                                V_MODULE(v),
+                                                M_NAME(V_NAME(v)),
                                                 TERM(96),
                                                 TERM(0)
                                         );
@@ -977,15 +1060,15 @@ show_impl(
                                         sxdf(
                                                 &buf,
                                                 "<builtin %s.%s>",
-                                                v.module,
-                                                M_NAME(v.name)
+                                                V_MODULE(v),
+                                                M_NAME(V_NAME(v))
                                         );
                                 }
                         }
                         break;
 
                 case VALUE_FOREIGN_FUNCTION:
-                        if (v.xinfo == NULL || v.xinfo->name == NULL) {
+                        if (V_XINFO(v) == NULL || V_XINFO(v)->name == NULL) {
                                 if (color) {
                                         sxdf(
                                                 &buf,
@@ -1003,7 +1086,7 @@ show_impl(
                                                 "%s<foreign function %s'%s'%s>%s",
                                                 TERM(96),
                                                 TERM(92),
-                                                v.xinfo->name,
+                                                V_XINFO(v)->name,
                                                 TERM(96),
                                                 TERM(0)
                                         );
@@ -1011,7 +1094,7 @@ show_impl(
                                         sxdf(
                                                 &buf,
                                                 "<foreign func %s>",
-                                                v.xinfo->name
+                                                V_XINFO(v)->name
                                         );
                                 }
                         }
@@ -1025,7 +1108,7 @@ show_impl(
                                         TERM(96),
                                         TERM(92),
                                         TERM(94),
-                                        M_NAME(v.uop),
+                                        M_NAME(V_UOP(v)),
                                         TERM(96),
                                         TERM(0)
                                 );
@@ -1033,7 +1116,7 @@ show_impl(
                                 sxdf(
                                         &buf,
                                         "<operator %s>",
-                                        M_NAME(v.uop)
+                                        M_NAME(V_UOP(v))
                                 );
                         }
                         break;
@@ -1046,7 +1129,7 @@ show_impl(
                                         TERM(96),
                                         TERM(92),
                                         TERM(94),
-                                        class_name(ty, v.class),
+                                        class_name(ty, V_CLASS(v)),
                                         TERM(96),
                                         TERM(0)
                                 );
@@ -1054,7 +1137,7 @@ show_impl(
                                 sxdf(
                                         &buf,
                                         "<class %s>",
-                                        class_name(ty, v.class)
+                                        class_name(ty, V_CLASS(v))
                                 );
                         }
                         break;
@@ -1065,22 +1148,22 @@ show_impl(
                                         &buf,
                                         "%s%s%s",
                                         TERM(34),
-                                        tags_name(ty, v.tag),
+                                        tags_name(ty, V_TAG(v)),
                                         TERM(0)
                                 );
                         } else {
                                 sxdf(
                                         &buf,
                                         "%s",
-                                        tags_name(ty, v.tag)
+                                        tags_name(ty, V_TAG(v))
                                 );
                         }
                         break;
 
                 case VALUE_BLOB:
                 {
-                        void *addr = (void *)v.blob;
-                        usize size = vN(*v.blob);
+                        void *addr = (void *)V_BLOB(v);
+                        usize size = vN(*V_BLOB(v));
                         if (color) {
                                 sxdf(
                                         &buf,
@@ -1100,7 +1183,7 @@ show_impl(
 
                 case VALUE_QUEUE:
                 {
-                        Queue *q = v.queue;
+                        Queue *q = V_QUEUE(v);
 
                         for (int i = 0; i < vN(show_queues); ++i) {
                                 if (v__(show_queues, i) == q) {
@@ -1130,7 +1213,7 @@ show_impl(
 
                 case VALUE_SHARED_QUEUE:
                 {
-                        SharedQueue *q = v.shared_queue;
+                        SharedQueue *q = V_SHARED_QUEUE(v);
                         usize n = _queue_count(q->head, q->tail, q->cap);
                         if (color) {
                                 sxdf(
@@ -1157,13 +1240,13 @@ show_impl(
                                         TERM(32),
                                         TERM(1),
                                         TERM(92),
-                                        v.ptr,
+                                        V_PTR(v),
                                         TERM(0),
                                         TERM(32),
                                         TERM(0)
                                 );
                         } else {
-                                sxdf(&buf, "<ptr:%p>", v.ptr);
+                                sxdf(&buf, "<ptr:%p>", V_PTR(v));
                         }
                         break;
 
@@ -1174,12 +1257,12 @@ show_impl(
                                         "%s<generator at %s%p%s>%s",
                                         TERM(96),
                                         TERM(92),
-                                        v.gen,
+                                        V_GEN(v),
                                         TERM(96),
                                         TERM(0)
                                 );
                         } else {
-                                sxdf(&buf, "<generator at %p>", v.gen);
+                                sxdf(&buf, "<generator at %p>", V_GEN(v));
                         }
                         break;
 
@@ -1189,14 +1272,14 @@ show_impl(
                                         &buf,
                                         "%s<thread %"PRIu64">%s",
                                         TERM(33),
-                                        v.thread->i,
+                                        V_THREAD(v)->i,
                                         TERM(0)
                                 );
                         } else {
                                 sxdf(
                                         &buf,
                                         "<thread %"PRIu64">",
-                                        v.thread->i
+                                        V_THREAD(v)->i
                                 );
                         }
                         break;
@@ -1206,7 +1289,7 @@ show_impl(
                         break;
 
                 case VALUE_REF:
-                        sxdf(&buf, "<reference to %p>", v.ptr);
+                        sxdf(&buf, "<reference to %p>", (void *)V_REF(v));
                         break;
 
                 case VALUE_NONE:
@@ -1220,14 +1303,14 @@ show_impl(
                                         "%s<stack trace %s(%zu frames)%s>%s",
                                         TERM(38;2;49;161;173),
                                         TERM(34),
-                                        vN(*(ThrowCtx *)v.ptr),
+                                        vN(*(ThrowCtx *)V_PTR(v)),
                                         TERM(38;2;49;161;173),
                                         TERM(0)
                                 );
                         } else {
                                 byte_vector tmp = {0};
                                 svR(tmp, 2048 * 2048);
-                                char *s = FormatTrace(ty, v.ptr, &tmp);
+                                char *s = FormatTrace(ty, V_PTR(v), &tmp);
                                 u32 len = strlen(s);
                                 if (s != NULL) {
                                         svPn(buf, s, len);
@@ -1239,9 +1322,9 @@ show_impl(
                         sxdf(
                                 &buf,
                                 "<index: (%"PRIiMAX", %jd, %d)>",
-                                v.i,
-                                v.off,
-                                v.nt
+                                V_I(v),
+                                V_OFF(v),
+                                V_NT(v)
                         );
                         break;
 
@@ -1254,7 +1337,7 @@ show_impl(
                         }
 
                         for (int i = 0; i < vN(ty->visiting); ++i) {
-                                if (*v_(ty->visiting, i) == v.object) {
+                                if (*v_(ty->visiting, i) == V_OBJECT(v)) {
                                         goto BasicObject;
                                 }
                         }
@@ -1263,18 +1346,18 @@ show_impl(
 
                         if (color) {
 #ifdef TY_NO_LOG
-                                fp = class_lookup_method_i(ty, v.class, meth);
+                                fp = class_lookup_method_i(ty, V_CLASS(v), meth);
 #endif
                         } else {
-                                fp = class_lookup_method_i(ty, v.class, meth);
+                                fp = class_lookup_method_i(ty, V_CLASS(v), meth);
                         }
 
                         if (fp != NULL) {
-                                xvP(ty->visiting, v.object);
-                                Value self = stripped(&v);
+                                xvP(ty->visiting, V_OBJECT(v));
+                                Value self = stripped(ty, &v);
                                 Value str = vm_call_method(ty, &self, fp, 0);
                                 vvX(ty->visiting);
-                                if (str.type != VALUE_STRING) {
+                                if (V_TYPE(str) != VALUE_STRING) {
                                         goto BasicObject;
                                 }
                                 svPn(buf, ss(str), sN(str));
@@ -1287,12 +1370,12 @@ BasicObject:
                                                 " object at %s%p%s>%s",
                                                 TERM(96),
                                                 TERM(34),
-                                                class_name(ty, v.class),
+                                                class_name(ty, V_CLASS(v)),
                                                 TERM(91;1),
-                                                v.object->dynamic ? "*" : "",
+                                                V_OBJECT(v)->dynamic ? "*" : "",
                                                 TERM(96),
                                                 TERM(94),
-                                                (void *)v.object,
+                                                (void *)V_OBJECT(v),
                                                 TERM(96),
                                                 TERM(0)
                                         );
@@ -1300,8 +1383,8 @@ BasicObject:
                                         sxdf(
                                                 &buf,
                                                 "<%s object at %p>",
-                                                class_name(ty, v.class),
-                                                (void *)v.object
+                                                class_name(ty, V_CLASS(v)),
+                                                (void *)V_OBJECT(v)
                                         );
                                 }
                         }
@@ -1313,7 +1396,7 @@ BasicObject:
                         break;
 
                 case VALUE_UNINITIALIZED:
-                        uninit(ty, v.sym);
+                        uninit(ty, V_SYM(v));
                         break;
 
                 default:
@@ -1412,7 +1495,7 @@ value_vshow(Ty *ty, Value const *v, u32 flags)
 inline static int
 check_cmp_result(Ty *ty, Value const *v1, Value const *v2, Value v)
 {
-        if (v.type == VALUE_NONE) {
+        if (V_TYPE(v) == VALUE_NONE) {
                 zP(
                         "attempt to compare incomparable values\n"
                         FMT_MORE " %sleft%s: %s"
@@ -1424,7 +1507,7 @@ check_cmp_result(Ty *ty, Value const *v1, Value const *v2, Value v)
                 );
         }
 
-        if (v.type != VALUE_INTEGER) {
+        if (V_TYPE(v) != VALUE_INTEGER) {
                 zP(
                         "non-integer returned by user-defined <=> operator\n"
                         FMT_MORE "  %sleft%s: %s"
@@ -1439,7 +1522,7 @@ check_cmp_result(Ty *ty, Value const *v1, Value const *v2, Value v)
                 );
         }
 
-        return v.z;
+        return V_Z(v);
 }
 
 int
@@ -1447,51 +1530,51 @@ value_compare(Ty *ty, Value const *v1, Value const *v2)
 {
         int c;
 
-        switch (PACK_TYPES(v1->type & ~VALUE_TAGGED, v2->type & ~VALUE_TAGGED)) {
+        switch (PACK_TYPES(V_TYPE(*v1) & ~VALUE_TAGGED, V_TYPE(*v2) & ~VALUE_TAGGED)) {
         case PAIR_OF(VALUE_INTEGER):
-                return (v1->z < v2->z) ? -1 : (v1->z != v2->z);
+                return (V_Z(*(v1)) < V_Z(*(v2))) ? -1 : (V_Z(*(v1)) != V_Z(*(v2)));
 
         case PAIR_OF(VALUE_REAL):
-                return (v1->real < v2->real) ? -1 : (v1->real != v2->real);
+                return (V_REAL(*(v1)) < V_REAL(*(v2))) ? -1 : (V_REAL(*(v1)) != V_REAL(*(v2)));
 
         case PACK_TYPES(VALUE_REAL, VALUE_INTEGER):
-                return (v1->real < v2->z) ? -1 : (v1->real != v2->z);
+                return (V_REAL(*(v1)) < V_Z(*(v2))) ? -1 : (V_REAL(*(v1)) != V_Z(*(v2)));
 
         case PACK_TYPES(VALUE_INTEGER, VALUE_REAL):
-                return (v1->z < v2->real) ? -1 : (v1->z != v2->real);
+                return (V_Z(*(v1)) < V_REAL(*(v2))) ? -1 : (V_Z(*(v1)) != V_REAL(*(v2)));
 
         case PAIR_OF(VALUE_STRING):
                 c = memcmp(ss(*v1), ss(*v2), min(sN(*v1), sN(*v2)));
                 return (c != 0) ? c : (int)((isize)sN(*v1) - (isize)sN(*v2));
 
         case PAIR_OF(VALUE_PTR):
-                return ((uptr)v1->ptr < (uptr)v2->ptr)
+                return ((uptr)V_PTR(*(v1)) < (uptr)V_PTR(*(v2)))
                      ? -1
-                     :  ((uptr)v1->ptr != (uptr)v2->ptr)
+                     :  ((uptr)V_PTR(*(v1)) != (uptr)V_PTR(*(v2)))
                      ;
 
         case PAIR_OF(VALUE_ARRAY):
-                for (int i = 0; i < v1->array->count && i < v2->array->count; ++i) {
-                        int o = value_compare(ty, &v1->array->items[i], &v2->array->items[i]);
+                for (int i = 0; i < V_ARRAY(*(v1))->count && i < V_ARRAY(*(v2))->count; ++i) {
+                        int o = value_compare(ty, &V_ARRAY(*(v1))->items[i], &V_ARRAY(*(v2))->items[i]);
                         if (o != 0)
                                 return o;
                 }
-                return ((ptrdiff_t)v1->array->count) - ((ptrdiff_t)v2->array->count);
+                return ((ptrdiff_t)V_ARRAY(*(v1))->count) - ((ptrdiff_t)V_ARRAY(*(v2))->count);
 
         case PAIR_OF(VALUE_TUPLE):
-                if (v1->items == v2->items) {
+                if (V_ITEMS(*(v1)) == V_ITEMS(*(v2))) {
                         return 0;
                 }
-                if (v1->ids != NULL && v2->ids != NULL) {
+                if (V_IDS(*(v1)) != NULL && V_IDS(*(v2)) != NULL) {
                         return compare_records(ty, v1, v2);
                 }
-                for (int i = 0; i < v1->count && i < v2->count; ++i) {
-                        int o = value_compare(ty, &v1->items[i], &v2->items[i]);
+                for (int i = 0; i < V_COUNT(*(v1)) && i < V_COUNT(*(v2)); ++i) {
+                        int o = value_compare(ty, &V_ITEMS(*(v1))[i], &V_ITEMS(*(v2))[i]);
                         if (o != 0) {
                                 return o;
                         }
                 }
-                return ((int)v1->count) - ((int)v2->count);
+                return ((int)V_COUNT(*(v1))) - ((int)V_COUNT(*(v2)));
         }
 
         return check_cmp_result(ty, v1, v2, vm_try_2op(ty, OP_CMP, v1, v2));
@@ -1503,15 +1586,15 @@ value_apply_predicate(Ty *ty, Value *p, Value *v)
         Value b;
         char err[256];
 
-        switch (p->type) {
+        switch (V_TYPE(*(p))) {
         case VALUE_REGEX:
         {
-                if (UNLIKELY(v->type != VALUE_STRING)) {
+                if (UNLIKELY(V_TYPE(*v) != VALUE_STRING)) {
                         zP("regex applied as predicate to non-string");
                 }
 
                 int rc = pcre2_match(
-                        p->regex->pcre2,
+                        V_REGEX(*(p))->pcre2,
                         (PCRE2_SPTR)ss(*v),
                         sN(*v),
                         0,
@@ -1529,10 +1612,10 @@ value_apply_predicate(Ty *ty, Value *p, Value *v)
         }
 
         case VALUE_TAG:
-                return (tags_first(ty, v->tags) == p->tag);
+                return (tags_first(ty, V_TAGS(*(v))) == V_TAG(*(p)));
 
         case VALUE_CLASS:
-                return (v->type == VALUE_OBJECT) && (v->class == p->class);
+                return (V_TYPE(*(v)) == VALUE_OBJECT) && (V_CLASS(*(v)) == V_CLASS(*(p)));
 
         default:
                 b = vm_call1(ty, p, v);
@@ -1543,23 +1626,23 @@ value_apply_predicate(Ty *ty, Value *p, Value *v)
 bool
 value_test_equality(Ty *ty, Value const *v1, Value const *v2)
 {
-        if (v1->tags != v2->tags) {
+        if (V_TAGS(*(v1)) != V_TAGS(*(v2))) {
                 return false;
         }
 
-        int t0 = v1->type & ~VALUE_TAGGED;
-        int t1 = v2->type & ~VALUE_TAGGED;
+        int t0 = V_TYPE(*(v1)) & ~VALUE_TAGGED;
+        int t1 = V_TYPE(*(v2)) & ~VALUE_TAGGED;
 
         switch (PACK_TYPES(t0, t1)) {
         case PAIR_OF(VALUE_INTEGER):
-                return v1->z == v2->z;
+                return V_Z(*(v1)) == V_Z(*(v2));
 
         case PAIR_OF(VALUE_STRING):
                 return (sN(*v1) == sN(*v2))
                     && (memcmp(ss(*v1), ss(*v2), sN(*v1)) == 0);
 
         case PAIR_OF(VALUE_BOOLEAN):
-                return (v1->boolean == v2->boolean);
+                return (V_BOOL(*(v1)) == V_BOOL(*(v2)));
 
         case PAIR_OF(VALUE_ARRAY):
                 return arrays_equal(ty, v1, v2);
@@ -1568,23 +1651,23 @@ value_test_equality(Ty *ty, Value const *v1, Value const *v2)
                 return tuples_equal(ty, v1, v2);
 
         case PAIR_OF(VALUE_DICT):
-                return (v1->dict == v2->dict);
+                return (V_DICT(*(v1)) == V_DICT(*(v2)));
 
         case PAIR_OF(VALUE_CLASS):
-                return (v1->class == v2->class);
+                return (V_CLASS(*(v1)) == V_CLASS(*(v2)));
 
         case PAIR_OF(VALUE_TAG):
-                return (v1->tag == v2->tag);
+                return (V_TAG(*(v1)) == V_TAG(*(v2)));
 
         case PAIR_OF(VALUE_PTR):
-                return (v1->ptr == v2->ptr);
+                return (V_PTR(*(v1)) == V_PTR(*(v2)));
 
         case PAIR_OF(VALUE_BLOB):
-                return (v1->blob == v2->blob);
+                return (V_BLOB(*(v1)) == V_BLOB(*(v2)));
 
         case PAIR_OF(VALUE_QUEUE):
         {
-                Queue *q1 = v1->queue, *q2 = v2->queue;
+                Queue *q1 = V_QUEUE(*(v1)), *q2 = V_QUEUE(*(v2));
                 if (q1 == q2) return true;
                 usize n1 = _queue_count(q1->head, q1->tail, q1->cap);
                 usize n2 = _queue_count(q2->head, q2->tail, q2->cap);
@@ -1598,29 +1681,29 @@ value_test_equality(Ty *ty, Value const *v1, Value const *v2)
         }
 
         case PAIR_OF(VALUE_SHARED_QUEUE):
-                return (v1->shared_queue == v2->shared_queue);
+                return (V_SHARED_QUEUE(*(v1)) == V_SHARED_QUEUE(*(v2)));
 
         case PAIR_OF(VALUE_FUNCTION):
-                return (v1->info == v2->info);
+                return (V_INFO(*(v1)) == V_INFO(*(v2)));
 
         case PAIR_OF(VALUE_BUILTIN_FUNCTION):
-                return (v1->builtin_function == v2->builtin_function);
+                return (V_BUILTIN_FUNCTION(*(v1)) == V_BUILTIN_FUNCTION(*(v2)));
 
         case PAIR_OF(VALUE_BUILTIN_METHOD):
-                return (v1->builtin_method == v2->builtin_method)
-                    && (v1->this == v2->this);
+                return (V_BUILTIN_METHOD(*v1) == V_BUILTIN_METHOD(*v2))
+                    && (V_THIS(*(v1)) == V_THIS(*(v2)));
 
         case PAIR_OF(VALUE_REGEX):
-                return v1->regex == v2->regex;
+                return V_REGEX(*(v1)) == V_REGEX(*(v2));
 
         case PAIR_OF(VALUE_REAL):
-                return v1->real == v2->real;
+                return V_REAL(*(v1)) == V_REAL(*(v2));
 
         case PAIR_OF(VALUE_NIL):
                 return true;
 
         case PAIR_OF(VALUE_OBJECT):
-                if (v1->object == v2->object) {
+                if (V_OBJECT(*(v1)) == V_OBJECT(*(v2))) {
                         return true;
                 }
                 break;
@@ -1632,13 +1715,13 @@ value_test_equality(Ty *ty, Value const *v1, Value const *v2)
 
         Value v = vm_try_2op(ty, OP_EQL, v1, v2);
 
-        if (v.type != VALUE_NONE) {
+        if (V_TYPE(v) != VALUE_NONE) {
                 return value_truthy(ty, &v);
         }
 
         v = vm_try_2op(ty, OP_CMP, v1, v1);
 
-        if (v.type == VALUE_NONE) {
+        if (V_TYPE(v) == VALUE_NONE) {
                 return false;
         }
 
@@ -1666,45 +1749,50 @@ value_array_mark(Ty *ty, struct array *a)
 inline static void
 mark_tuple(Ty *ty, Value const *v)
 {
-        if (v->items == NULL || MARKED(v->items)) return;
+        if (V_ITEMS(*(v)) == NULL || MARKED(V_ITEMS(*v))) return;
 
-        MARK(v->items);
+        MARK(V_ITEMS(*v));
 
-        for (int i = 0; i < v->count; ++i) {
-                MarkNext(ty, &v->items[i]);
+        for (int i = 0; i < V_COUNT(*(v)); ++i) {
+                MarkNext(ty, &V_ITEMS(*(v))[i]);
         }
 
-        if (v->ids != NULL) {
-                MARK(v->ids);
+        if (V_IDS(*(v)) != NULL) {
+                MARK(V_IDS(*v));
         }
 }
 
 inline static void
 mark_thread(Ty *ty, Value const *v)
 {
-        if (MARKED(v->thread)) return;
-        MARK(v->thread);
-        MarkNext(ty, &v->thread->v);
+        if (MARKED(V_THREAD(*v))) return;
+        MARK(V_THREAD(*v));
+        MarkNext(ty, &V_THREAD(*(v))->v);
+        if (V_THREAD(*v)->ctx != NULL) {
+                for (Value *p = V_THREAD(*v)->ctx; V_TYPE(*p) != VALUE_NONE; ++p) {
+                        MarkNext(ty, p);
+                }
+        }
 }
 
 inline static void
 mark_string(Ty *ty, Value const *v)
 {
-        if (!v->ro && v->str0 != NULL) {
-                MARK(v->str0);
+        if (!V_RO(*(v)) && V_STR0(*(v)) != NULL) {
+                MARK(V_STR0(*v));
         }
 }
 
 inline static void
 mark_generator(Ty *ty, Value const *v)
 {
-        if (MARKED(v->gen)) return;
+        if (MARKED(V_GEN(*v))) return;
 
-        MARK(v->gen);
+        MARK(V_GEN(*v));
 
-        MarkNext(ty, &v->gen->f);
+        MarkNext(ty, &V_GEN(*(v))->f);
 
-        co_state *st = v->gen->st;
+        co_state *st = V_GEN(*(v))->st;
 
         for (int i = 0; i < vN(st->stack) + st->rc && i < vC(st->stack); ++i) {
                 MarkNext(ty, v_(st->stack, i));
@@ -1740,11 +1828,11 @@ mark_generator(Ty *ty, Value const *v)
 inline static void
 mark_function(Ty *ty, Value const *v)
 {
-        int n = v->info[FUN_INFO_CAPTURES]
-              + ((v->type & ~VALUE_TAGGED) == VALUE_BOUND_FUNCTION);
+        int n = V_INFO(*(v))[FUN_INFO_CAPTURES]
+              + ((V_TYPE(*(v)) & ~VALUE_TAGGED) == VALUE_BOUND_FUNCTION);
 
         if (from_eval(v)) {
-                MARK(v->info);
+                MARK(V_INFO(*v));
         }
 
         if (has_meta(v)) {
@@ -1755,20 +1843,20 @@ mark_function(Ty *ty, Value const *v)
                 }
         }
 
-        if (v->xinfo != NULL) {
-                MARK(v->xinfo);
+        if (V_XINFO(*(v)) != NULL) {
+                MARK(V_XINFO(*v));
         }
 
-        if (n == 0 || MARKED(v->env)) {
+        if (n == 0 || MARKED(V_ENV(*v))) {
                 return;
         }
 
-        MARK(v->env);
+        MARK(V_ENV(*v));
 
         for (int i = 0; i < n; ++i) {
-                if (v->env[i] != NULL) {
-                        MARK(v->env[i]);
-                        MarkNext(ty, v->env[i]);
+                if (V_ENV(*(v))[i] != NULL) {
+                        MARK(V_ENV(*v)[i]);
+                        MarkNext(ty, V_ENV(*(v))[i]);
                 }
         }
 }
@@ -1776,22 +1864,23 @@ mark_function(Ty *ty, Value const *v)
 inline static void
 mark_method(Ty *ty, Value const *v)
 {
-        MARK(v->this);
-        MarkNext(ty, v->this);
+        MARK(V_THIS(*v));
+        MarkNext(ty, V_THIS(*(v)));
 }
 
 inline static void
 mark_pointer(Ty *ty, Value const *v)
 {
-        if (v->gcptr != NULL) {
-                MARK(v->gcptr);
-                switch (ALLOC_OF(v->gcptr)->type) {
+        if (V_GCPTR(*(v)) != NULL) {
+                MARK(V_GCPTR(*v));
+                switch (ALLOC_OF(V_GCPTR(*v))->type) {
                 case GC_VALUE:
-                        MarkNext(ty, (Value *)v->gcptr);
+                        MarkNext(ty, (Value *)V_GCPTR(*(v)));
                         break;
 
                 case GC_FFI_AUTO:
-                        MarkNext(ty, ((Value *)v->gcptr));
+                        MarkNext(ty, &((Value *)V_GCPTR(*v))[0]);
+                        MarkNext(ty, &((Value *)V_GCPTR(*v))[1]);
                         break;
                 }
         }
@@ -1817,7 +1906,13 @@ mark_trace(Ty *ty, ThrowCtx *ctx)
 static inline void
 _value_mark_xd(Ty *ty, Value const *v)
 {
-        void **src = source_lookup(ty, v->src);
+        /* A complex Value owns its payload box; mark that allocation before
+         * following any pointers stored in the legacy payload. */
+        if (nanbox_is_pointer(v->bits)) {
+                MARK(value_box_ptr(*v));
+        }
+
+        void **src = source_lookup(ty, V_SRC(*(v)));
         if (src != NULL && *src != NULL) {
                 MARK(*src);
         }
@@ -1832,28 +1927,28 @@ _value_mark_xd(Ty *ty, Value const *v)
         ++d;
 #endif
 
-        switch (v->type & ~VALUE_TAGGED) {
-        case VALUE_METHOD:           if (!MARKED(v->this)) { mark_method(ty, v); }                     break;
-        case VALUE_BUILTIN_METHOD:   if (!MARKED(v->this)) { MARK(v->this); MarkNext(ty, v->this); }   break;
-        case VALUE_FOREIGN_FUNCTION: if (v->xinfo != NULL) { MARK(v->xinfo); }                         break;
-        case VALUE_ARRAY:            value_array_mark(ty, v->array);                                   break;
+        switch (V_TYPE(*(v)) & ~VALUE_TAGGED) {
+        case VALUE_METHOD:           if (!MARKED(V_THIS(*v))) { mark_method(ty, v); }                     break;
+        case VALUE_BUILTIN_METHOD:   if (!MARKED(V_THIS(*v))) { MARK(V_THIS(*v)); MarkNext(ty, V_THIS(*(v))); }   break;
+        case VALUE_FOREIGN_FUNCTION: if (V_XINFO(*(v)) != NULL) { MARK(V_XINFO(*v)); }                         break;
+        case VALUE_ARRAY:            value_array_mark(ty, V_ARRAY(*(v)));                                   break;
         case VALUE_TUPLE:            mark_tuple(ty, v);                                                break;
-        case VALUE_DICT:             dict_mark(ty, v->dict);                                           break;
+        case VALUE_DICT:             dict_mark(ty, V_DICT(*(v)));                                           break;
         case VALUE_NATIVE_FUNCTION:
         case VALUE_BOUND_FUNCTION:
         case VALUE_FUNCTION:         mark_function(ty, v);                                             break;
         case VALUE_GENERATOR:        mark_generator(ty, v);                                            break;
         case VALUE_THREAD:           mark_thread(ty, v);                                               break;
         case VALUE_STRING:           mark_string(ty, v);                                               break;
-        case VALUE_OBJECT:           object_mark(ty, v->object);                                       break;
-        case VALUE_CLASS:            class_mark(ty, v->class);                                         break;
-        case VALUE_REF:              MARK(v->ref); MarkNext(ty, v->ref);                               break;
-        case VALUE_BLOB:             MARK(v->blob);                                                    break;
-        case VALUE_QUEUE:            queue_mark(ty, v->queue);                                         break;
-        case VALUE_SHARED_QUEUE:     shared_queue_mark(ty, v->shared_queue);                           break;
+        case VALUE_OBJECT:           object_mark(ty, V_OBJECT(*(v)));                                       break;
+        case VALUE_CLASS:            class_mark(ty, V_CLASS(*(v)));                                         break;
+        case VALUE_REF:              MARK(V_REF(*v)); MarkNext(ty, V_REF(*(v)));                               break;
+        case VALUE_BLOB:             MARK(V_BLOB(*v));                                                    break;
+        case VALUE_QUEUE:            queue_mark(ty, V_QUEUE(*(v)));                                         break;
+        case VALUE_SHARED_QUEUE:     shared_queue_mark(ty, V_SHARED_QUEUE(*(v)));                           break;
         case VALUE_PTR:              mark_pointer(ty, v);                                              break;
-        case VALUE_TRACE:            mark_trace(ty, v->ptr);                                           break;
-        case VALUE_REGEX:            if (v->regex->gc) MARK(v->regex);                                 break;
+        case VALUE_TRACE:            mark_trace(ty, V_PTR(*(v)));                                           break;
+        case VALUE_REGEX:            if (V_REGEX(*(v))->gc) MARK(V_REGEX(*v));                                 break;
         default:                                                                                       break;
         }
 
@@ -1950,13 +2045,13 @@ value_named_tuple(Ty *ty, char const *first, ...)
 Value *
 tuple_get_i(Value const *tuple, int id)
 {
-        if (tuple->ids == NULL) {
+        if (V_IDS(*(tuple)) == NULL) {
                 return NULL;
         }
 
-        for (int i = 0; i < tuple->count; ++i) {
-                if (tuple->ids[i] == id) {
-                        return &tuple->items[i];
+        for (int i = 0; i < V_COUNT(*(tuple)); ++i) {
+                if (V_IDS(*(tuple))[i] == id) {
+                        return &V_ITEMS(*(tuple))[i];
                 }
         }
 
@@ -1991,11 +2086,11 @@ tuple_get_completions(Ty *ty, Value const *v, char const *prefix, char **out, in
         int n = 0;
         int prefix_len = strlen(prefix);
 
-        if (v->ids == NULL) return 0;
+        if (V_IDS(*(v)) == NULL) return 0;
 
-        for (int i = 0; i < v->count && n < max; ++i) {
-                if (v->ids[i] == -1) continue;
-                char const *name = M_NAME(v->ids[i]);
+        for (int i = 0; i < V_COUNT(*(v)) && n < max; ++i) {
+                if (V_IDS(*(v))[i] == -1) continue;
+                char const *name = M_NAME(V_IDS(*v)[i]);
                 if (strncmp(name, prefix, prefix_len) == 0) {
                         out[n++] = S2(name);
                 }
@@ -2037,7 +2132,7 @@ tuple_timespec(Ty *ty, char const *func, Value const *v)
 {
         Value *sec = tuple_get(v, "sec");
 
-        if (sec == NULL || sec->type != VALUE_INTEGER) {
+        if (sec == NULL || V_TYPE(*(sec)) != VALUE_INTEGER) {
                 zP(
                         "%s: expected timespec %s%s%s to have Int field %s%s%s",
                         func,
@@ -2052,7 +2147,7 @@ tuple_timespec(Ty *ty, char const *func, Value const *v)
 
         Value *nsec = tuple_get(v, "nsec");
 
-        if (nsec == NULL || nsec->type != VALUE_INTEGER) {
+        if (nsec == NULL || V_TYPE(*(nsec)) != VALUE_INTEGER) {
                 zP(
                         "%s: expected timespec %s%s%s to have Int field %s%s%s",
                         func,
@@ -2066,8 +2161,8 @@ tuple_timespec(Ty *ty, char const *func, Value const *v)
         }
 
         return (struct timespec) {
-                .tv_sec = sec->z,
-                .tv_nsec = nsec->z
+                .tv_sec = V_Z(*(sec)),
+                .tv_nsec = V_Z(*(nsec))
         };
 }
 
@@ -2149,9 +2244,9 @@ PrettySource(Ty *ty, Value const *v)
         Expr *expr;
         Stmt *stmt;
 
-        switch (v->type) {
+        switch (V_TYPE(*(v))) {
         case VALUE_METHOD:
-                expr = expr_of(v->method);
+                expr = expr_of(V_METHOD(*v));
                 mod = expr->mod;
                 start = expr->start.byte;
                 end = expr->end.byte;
@@ -2167,7 +2262,7 @@ PrettySource(Ty *ty, Value const *v)
                 break;
 
         case VALUE_CLASS:
-                stmt = class_get(ty, v->class)->def;
+                stmt = class_get(ty, V_CLASS(*(v)))->def;
                 mod = stmt->mod;
                 start = stmt->start.byte;
                 end = stmt->end.byte;

@@ -216,7 +216,7 @@ itable_copy_weak(
 {
         for (int i = 0; i < vN(src->ids); ++i) {
                 Value *v = itable_get(ty, dst, v__(src->ids, i));
-                if (v->type == VALUE_NIL) {
+                if (V_TYPE(*(v)) == VALUE_NIL) {
                         *v = v__(src->values, i);
                 }
         }
@@ -285,8 +285,8 @@ itable_dict(Ty *ty, struct itable const *t)
         for (int i = 0; i < vN(t->ids); ++i) {
                 char const *key = M_NAME(v__(t->ids, i));
                 Value val = v__(t->values, i);
-                if (val.type == VALUE_REF) {
-                        val = *val.ref;
+                if (V_TYPE(val) == VALUE_REF) {
+                        val = *V_REF(val);
                 }
                 dict_put_member(ty, dict, key, val);
         }

@@ -26,7 +26,7 @@ qcount(Channel const *chan)
 static bool
 basic(Value const *v)
 {
-        switch (v->type & ~VALUE_TAGGED) {
+        switch (V_TYPE(*v) & ~VALUE_TAGGED) {
         case VALUE_BOOLEAN:
         case VALUE_INTEGER:
         case VALUE_REAL:
@@ -35,10 +35,10 @@ basic(Value const *v)
                 return true;
 
         case VALUE_STRING:
-                return v->ro;
+                return V_RO(*v);
 
         case VALUE_FUNCTION:
-                return (v->env == NULL && v->xinfo == NULL);
+                return (V_ENV(*v) == NULL && V_XINFO(*v) == NULL);
 
         default:
                 return false;
@@ -48,14 +48,14 @@ basic(Value const *v)
 static iptr
 ident(Value const *v)
 {
-        switch (v->type & ~VALUE_TAGGED) {
-        case VALUE_ARRAY:   return (iptr)v->array;
-        case VALUE_DICT:    return (iptr)v->dict;
-        case VALUE_OBJECT:  return (iptr)v->object;
-        case VALUE_BLOB:    return (iptr)v->blob;
-        case VALUE_QUEUE:   return (iptr)v->queue;
-        case VALUE_TUPLE:   return (iptr)v->items;
-        case VALUE_STRING:  return (iptr)v->str0;
+        switch (V_TYPE(*v) & ~VALUE_TAGGED) {
+        case VALUE_ARRAY:   return (iptr)V_ARRAY(*v);
+        case VALUE_DICT:    return (iptr)V_DICT(*v);
+        case VALUE_OBJECT:  return (iptr)V_OBJECT(*v);
+        case VALUE_BLOB:    return (iptr)V_BLOB(*v);
+        case VALUE_QUEUE:   return (iptr)V_QUEUE(*v);
+        case VALUE_TUPLE:   return (iptr)V_ITEMS(*v);
+        case VALUE_STRING:  return (iptr)V_STR0(*v);
         default:            return -1;
         }
 }
@@ -100,103 +100,100 @@ prepare(Ty *ty, ValueVector *out, SeenVec *sv, Value const *v)
                 svP(*sv, ((SeenEntry){ .id = id, .entry = slot }));
         }
 
-        u8 type = v->type & ~VALUE_TAGGED;
+        u8 type = V_TYPE(*v) & ~VALUE_TAGGED;
 
         switch (type) {
         case VALUE_STRING: {
-                u8 *copy = xmA(v->bytes);
-                memcpy(copy, v->str, v->bytes);
-                Value e = {
-                        .type  = v->type,
-                        .tags  = v->tags,
+                u8 *copy = xmA(V_BYTES(*v));
+                memcpy(copy, V_STR(*v), V_BYTES(*v));
+                Value e = VALUE_BOX_(
+                        .type  = V_TYPE(*v),
+                        .tags  = V_TAGS(*v),
                         .str   = copy,
-                        .bytes = v->bytes,
+                        .bytes = V_BYTES(*v),
                         .str0  = copy,
                         .ro    = true,
-                };
+                );
                 emit(ty, out, e);
                 break;
         }
 
         case VALUE_BLOB: {
-                usize n = vN(*v->blob);
+                usize n = vN(*V_BLOB(*v));
                 u8 *copy = xmA(n);
-                memcpy(copy, vv(*v->blob), n);
-                Value e = {
-                        .type  = v->type,
-                        .tags  = v->tags,
+                memcpy(copy, vv(*V_BLOB(*v)), n);
+                Value e = VALUE_BOX_(
+                        .type  = V_TYPE(*v),
+                        .tags  = V_TAGS(*v),
                         .str   = copy,
                         .bytes = n,
-                };
+                );
                 emit(ty, out, e);
                 break;
         }
 
         case VALUE_ARRAY: {
-                Value header = { .type = v->type, .tags = v->tags };
-                header.src = v->array->count;
+                Value header = VALUE_BOX_(.type=V_TYPE(*v), .tags=V_TAGS(*v), .src=V_ARRAY(*v)->count);
                 emit(ty, out, header);
-                for (usize i = 0; i < v->array->count; ++i) {
-                        prepare(ty, out, sv, &v->array->items[i]);
+                for (usize i = 0; i < V_ARRAY(*v)->count; ++i) {
+                        prepare(ty, out, sv, &V_ARRAY(*v)->items[i]);
                 }
                 break;
         }
 
         case VALUE_TUPLE: {
                 i32 *ids = NULL;
-                if (v->ids != NULL) {
-                        ids = xmA(v->count * sizeof (i32));
-                        memcpy(ids, v->ids, v->count * sizeof (i32));
+                if (V_IDS(*v) != NULL) {
+                        ids = xmA(V_COUNT(*v) * sizeof (i32));
+                        memcpy(ids, V_IDS(*v), V_COUNT(*v) * sizeof (i32));
                 }
-                Value header = {
-                        .type  = v->type,
-                        .tags  = v->tags,
-                        .count = v->count,
+                Value header = VALUE_BOX_(
+                        .type  = V_TYPE(*v),
+                        .tags  = V_TAGS(*v),
+                        .count = V_COUNT(*v),
                         .ids   = ids,
-                };
+                );
                 emit(ty, out, header);
-                for (i32 i = 0; i < v->count; ++i) {
-                        prepare(ty, out, sv, &v->items[i]);
+                for (i32 i = 0; i < V_COUNT(*v); ++i) {
+                        prepare(ty, out, sv, &V_ITEMS(*v)[i]);
                 }
                 break;
         }
 
         case VALUE_DICT: {
-                Value header = { .type = v->type, .tags = v->tags };
-                header.src = v->dict->count;
+                Value header = VALUE_BOX_(.type=V_TYPE(*v), .tags=V_TAGS(*v), .src=V_DICT(*v)->count);
                 emit(ty, out, header);
-                for (DictItem *it = DictFirst(v->dict); it != NULL; it = it->next) {
+                for (DictItem *it = DictFirst(V_DICT(*v)); it != NULL; it = it->next) {
                         prepare(ty, out, sv, &it->k);
                         prepare(ty, out, sv, &it->v);
                 }
-                prepare(ty, out, sv, &v->dict->dflt);
+                prepare(ty, out, sv, &V_DICT(*v)->dflt);
                 break;
         }
 
         case VALUE_OBJECT: {
-                Value header = {
-                        .type   = v->type,
-                        .tags   = v->tags,
-                        .class  = v->class,
-                        .object = (TyObject *)(uptr)v->object->nslot,
-                };
+                Value header = VALUE_BOX_(
+                        .type   = V_TYPE(*v),
+                        .tags   = V_TAGS(*v),
+                        .class  = V_CLASS(*v),
+                        .object = (TyObject *)(uptr)V_OBJECT(*v)->nslot,
+                );
                 emit(ty, out, header);
-                for (u32 i = 0; i < v->object->nslot; ++i) {
-                        prepare(ty, out, sv, &v->object->slots[i]);
+                for (u32 i = 0; i < V_OBJECT(*v)->nslot; ++i) {
+                        prepare(ty, out, sv, &V_OBJECT(*v)->slots[i]);
                 }
                 break;
         }
 
         case VALUE_QUEUE: {
                 usize n = 0;
-                Queue *q = v->queue;
+                Queue *q = V_QUEUE(*v);
                 if (q->cap > 0) {
                         n = (q->tail >= q->head)
                           ? (q->tail - q->head)
                           : (q->cap - q->head + q->tail);
                 }
-                Value header = { .type = v->type, .tags = v->tags };
-                header.src = n;
+                Value header = VALUE_BOX_(.type=V_TYPE(*v), .tags=V_TAGS(*v), .src=n);
                 emit(ty, out, header);
                 for (usize i = 0; i < n; ++i) {
                         usize idx = (q->head + i) % q->cap;
@@ -215,10 +212,10 @@ static Value
 reconstruct(Ty *ty, Value *msg, usize *cursor)
 {
         Value e = msg[(*cursor)++];
-        u8 type = e.type & ~VALUE_TAGGED;
+        u8 type = V_TYPE(e) & ~VALUE_TAGGED;
 
         if (type == VALUE_REF) {
-                return msg[(uptr)e.ptr];
+                return msg[(uptr)V_PTR(e)];
         }
 
         if (basic(&e)) {
@@ -227,41 +224,39 @@ reconstruct(Ty *ty, Value *msg, usize *cursor)
 
         switch (type) {
         case VALUE_STRING: {
-                u8 *s = value_string_clone(ty, e.str, e.bytes);
-                xmF((void *)e.str);
-                Value r = {
-                        .type  = e.type,
-                        .tags  = e.tags,
+                u8 *s = value_string_clone(ty, V_STR(e), V_BYTES(e));
+                xmF((void *)V_STR(e));
+                Value r = VALUE_BOX_(
+                        .type  = V_TYPE(e),
+                        .tags  = V_TAGS(e),
                         .str   = s,
-                        .bytes = e.bytes,
+                        .bytes = V_BYTES(e),
                         .str0  = s,
                         .ro    = false,
-                };
+                );
                 msg[*cursor - 1] = r;
                 return r;
         }
 
         case VALUE_BLOB: {
                 Blob *b = value_blob_new(ty);
-                if (e.bytes > 0) {
-                        uvR(*b, e.bytes);
-                        memcpy(vv(*b), e.str, e.bytes);
-                        vN(*b) = e.bytes;
+                if (V_BYTES(e) > 0) {
+                        uvR(*b, V_BYTES(e));
+                        memcpy(vv(*b), V_STR(e), V_BYTES(e));
+                        vN(*b) = V_BYTES(e);
                 }
-                xmF((void *)e.str);
+                xmF((void *)V_STR(e));
                 Value r = BLOB(b);
-                r.type = e.type;
-                r.tags = e.tags;
+                r = value_with_tags(ty, r, V_TAGS(e));
                 msg[*cursor - 1] = r;
                 return r;
         }
 
         case VALUE_ARRAY: {
-                usize n = e.src;
+                usize n = V_SRC(e);
                 Array *a = value_array_new_sized(ty, n);
                 Value r = ARRAY(a);
-                r.type = e.type;
-                r.tags = e.tags;
+                r = value_with_tags(ty, r, V_TAGS(e));
                 msg[*cursor - 1] = r;
                 for (usize i = 0; i < n; ++i) {
                         value_array_push(ty, a, reconstruct(ty, msg, cursor));
@@ -270,17 +265,16 @@ reconstruct(Ty *ty, Value *msg, usize *cursor)
         }
 
         case VALUE_TUPLE: {
-                i32 n = e.count;
+                i32 n = V_COUNT(e);
                 Value *items = mAo(n * sizeof (Value), GC_TUPLE);
                 i32 *ids = NULL;
-                if (e.ids != NULL) {
+                if (V_IDS(e) != NULL) {
                         ids = mA(n * sizeof (i32));
-                        memcpy(ids, e.ids, n * sizeof (i32));
-                        xmF(e.ids);
+                        memcpy(ids, V_IDS(e), n * sizeof (i32));
+                        xmF(V_IDS(e));
                 }
                 Value r = TUPLE(items, ids, n, true);
-                r.type = e.type;
-                r.tags = e.tags;
+                r = value_with_tags(ty, r, V_TAGS(e));
                 msg[*cursor - 1] = r;
                 for (i32 i = 0; i < n; ++i) {
                         items[i] = reconstruct(ty, msg, cursor);
@@ -289,11 +283,10 @@ reconstruct(Ty *ty, Value *msg, usize *cursor)
         }
 
         case VALUE_DICT: {
-                usize n = e.src;
+                usize n = V_SRC(e);
                 Dict *d = dict_new(ty);
                 Value r = DICT(d);
-                r.type = e.type;
-                r.tags = e.tags;
+                r = value_with_tags(ty, r, V_TAGS(e));
                 msg[*cursor - 1] = r;
                 for (usize i = 0; i < n; ++i) {
                         Value k = reconstruct(ty, msg, cursor);
@@ -305,14 +298,13 @@ reconstruct(Ty *ty, Value *msg, usize *cursor)
         }
 
         case VALUE_OBJECT: {
-                u32 nslot = (uptr)e.object;
+                u32 nslot = (uptr)V_OBJECT(e);
                 usize size = sizeof (TyObject) + nslot * sizeof (Value);
                 TyObject *obj = uAo0(size, GC_OBJECT);
-                obj->class = class_get(ty, e.class);
+                obj->class = class_get(ty, V_CLASS(e));
                 obj->nslot = nslot;
-                Value r = OBJECT(obj, e.class);
-                r.type = e.type;
-                r.tags = e.tags;
+                Value r = OBJECT(obj, V_CLASS(e));
+                r = value_with_tags(ty, r, V_TAGS(e));
                 msg[*cursor - 1] = r;
                 for (u32 i = 0; i < nslot; ++i) {
                         obj->slots[i] = reconstruct(ty, msg, cursor);
@@ -321,15 +313,14 @@ reconstruct(Ty *ty, Value *msg, usize *cursor)
         }
 
         case VALUE_QUEUE: {
-                usize n = e.src;
+                usize n = V_SRC(e);
                 Queue *q = mAo0(sizeof (Queue), GC_QUEUE);
                 if (n > 0) {
                         q->items = uA(n * sizeof (Value));
                         q->cap = n;
                 }
                 Value r = QUEUE(q);
-                r.type = e.type;
-                r.tags = e.tags;
+                r = value_with_tags(ty, r, V_TAGS(e));
                 msg[*cursor - 1] = r;
                 for (usize i = 0; i < n; ++i) {
                         q->items[i] = reconstruct(ty, msg, cursor);
@@ -454,7 +445,7 @@ static void
 discard(Value *msg, usize *cursor)
 {
         Value e = msg[(*cursor)++];
-        u8 type = e.type & ~VALUE_TAGGED;
+        u8 type = V_TYPE(e) & ~VALUE_TAGGED;
 
         if (type == VALUE_REF || basic(&e)) {
                 return;
@@ -463,31 +454,31 @@ discard(Value *msg, usize *cursor)
         switch (type) {
         case VALUE_STRING:
         case VALUE_BLOB:
-                xmF((void *)e.str);
+                xmF((void *)V_STR(e));
                 break;
 
         case VALUE_TUPLE:
-                xmF(e.ids);
-                for (i32 i = 0; i < e.count; ++i) {
+                xmF(V_IDS(e));
+                for (i32 i = 0; i < V_COUNT(e); ++i) {
                         discard(msg, cursor);
                 }
                 break;
 
         case VALUE_ARRAY:
         case VALUE_QUEUE:
-                for (usize i = 0; i < e.src; ++i) {
+                for (usize i = 0; i < V_SRC(e); ++i) {
                         discard(msg, cursor);
                 }
                 break;
 
         case VALUE_DICT:
-                for (usize i = 0; i < 2 * e.src + 1; ++i) {
+                for (usize i = 0; i < 2 * V_SRC(e) + 1; ++i) {
                         discard(msg, cursor);
                 }
                 break;
 
         case VALUE_OBJECT:
-                for (u32 i = 0; i < (uptr)e.object; ++i) {
+                for (u32 i = 0; i < (uptr)V_OBJECT(e); ++i) {
                         discard(msg, cursor);
                 }
                 break;

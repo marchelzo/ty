@@ -42,16 +42,16 @@ class_lookup_##what##_i(Ty *ty, int class, int id)            \
         if (v == NULL) {                                      \
                 return NULL;                                  \
         }                                                     \
-        if (v->type != VALUE_REF) {                           \
+        if (V_TYPE(*v) != VALUE_REF) {                           \
                 return v;                                     \
         }                                                     \
-        return (v->ref->type != VALUE_ZERO) ? v->ref : NULL;  \
+        return (V_TYPE(*V_REF(*v)) != VALUE_ZERO) ? V_REF(*v) : NULL;  \
 }                                                             \
 inline static Value *                                         \
 class_lookup_##what##_immediate_i(Ty *ty, int class, int id)  \
 {                                                             \
         Value *v = class_lookup_##what##_i(ty, class, id);    \
-        if (v == NULL || v->type == VALUE_REF) {              \
+        if (v == NULL || V_TYPE(*v) == VALUE_REF) {              \
                 return NULL;                                  \
         }                                                     \
         if (class_of(v) != class) {                           \

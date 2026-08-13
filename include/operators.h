@@ -26,27 +26,27 @@ op_builtin_add(Ty *ty)
 
         Value v;
 
-        switch (PACK_TYPES(left->type, right->type)) {
+        switch (PACK_TYPES(V_TYPE(*left), V_TYPE(*right))) {
         case PAIR_OF(VALUE_INTEGER):
-                COMPLETE(INTEGER(left->z + right->z));
+                COMPLETE(INTEGER(V_Z(*left) + V_Z(*right)));
 
         case PAIR_OF(VALUE_REAL):
-                COMPLETE(REAL(left->real + right->real));
+                COMPLETE(REAL(V_REAL(*left) + V_REAL(*right)));
 
         case PAIR_OF(VALUE_BOOLEAN):
-                COMPLETE(INTEGER(left->boolean + right->boolean));
+                COMPLETE(INTEGER(V_BOOL(*left) + V_BOOL(*right)));
 
         case PACK_TYPES(VALUE_REAL, VALUE_INTEGER):
-                COMPLETE(REAL(left->real + right->z));
+                COMPLETE(REAL(V_REAL(*left) + V_Z(*right)));
 
         case PACK_TYPES(VALUE_INTEGER, VALUE_REAL):
-                COMPLETE(REAL(left->z + right->real));
+                COMPLETE(REAL(V_Z(*left) + V_REAL(*right)));
 
         case PACK_TYPES(VALUE_INTEGER, VALUE_BOOLEAN):
-                COMPLETE(INTEGER(left->z + right->boolean));
+                COMPLETE(INTEGER(V_Z(*left) + V_BOOL(*right)));
 
         case PACK_TYPES(VALUE_BOOLEAN, VALUE_INTEGER):
-                COMPLETE(INTEGER(left->boolean + right->z));
+                COMPLETE(INTEGER(V_BOOL(*left) + V_Z(*right)));
 
         case PAIR_OF(VALUE_STRING):
         {
@@ -54,7 +54,7 @@ op_builtin_add(Ty *ty)
                 if (sN(*right) == 0) COMPLETE(*left);
 
                 n = sN(*left) + sN(*right);
-                v = STRING(value_string_alloc(ty, n), n);
+                v = STRING(ty, value_string_alloc(ty, n), n);
 
                 memcpy(
                         (void *)ss(v),
@@ -72,37 +72,37 @@ op_builtin_add(Ty *ty)
         }
 
         case PACK_TYPES(VALUE_STRING, VALUE_INTEGER):
-                COMPLETE(OffsetString(left, right->z));
+                COMPLETE(OffsetString(left, V_Z(*right)));
 
         case PACK_TYPES(VALUE_STRING, VALUE_BOOLEAN):
-                COMPLETE(OffsetString(left, right->boolean));
+                COMPLETE(OffsetString(left, V_BOOL(*right)));
 
         case PACK_TYPES(VALUE_INTEGER, VALUE_PTR):
                 SWAP(Value const *, left, right);
         case PACK_TYPES(VALUE_PTR, VALUE_INTEGER):
-                t = (left->extra == NULL) ? &ffi_type_uint8 : left->extra;
-                COMPLETE(TPTR(left->extra, (char *)left->ptr + right->z * t->size));
+                t = (V_EXTRA(*(left)) == NULL) ? &ffi_type_uint8 : V_EXTRA(*(left));
+                COMPLETE(TPTR(V_EXTRA(*left), (char *)V_PTR(*left) + V_Z(*right) * t->size));
 
         case PAIR_OF(VALUE_ARRAY):
         {
-                if  (vN(*left->array) == 0) COMPLETE(ARRAY(ArrayClone(ty, right->array)));
-                if (vN(*right->array) == 0) COMPLETE(ARRAY(ArrayClone(ty, left->array)));
+                if  (vN(*V_ARRAY(*left)) == 0) COMPLETE(ARRAY(ArrayClone(ty, V_ARRAY(*right))));
+                if (vN(*V_ARRAY(*right)) == 0) COMPLETE(ARRAY(ArrayClone(ty, V_ARRAY(*left))));
 
-                n = vN(*left->array) + vN(*right->array);
+                n = vN(*V_ARRAY(*left)) + vN(*V_ARRAY(*right));
 
                 v = ARRAY(vAn(n));
-                v.array->count = n;
+                V_ARRAY(v)->count = n;
 
                 memcpy(
-                        vv(*v.array),
-                        vv(*left->array),
-                        vN(*left->array) * sizeof (Value)
+                        vv(*V_ARRAY(v)),
+                        vv(*V_ARRAY(*left)),
+                        vN(*V_ARRAY(*left)) * sizeof (Value)
                 );
 
                 memcpy(
-                        vv(*v.array) + vN(*left->array),
-                        vv(*right->array),
-                        vN(*right->array) * sizeof (Value)
+                        vv(*V_ARRAY(v)) + vN(*V_ARRAY(*left)),
+                        vv(*V_ARRAY(*right)),
+                        vN(*V_ARRAY(*right)) * sizeof (Value)
                 );
 
                 COMPLETE(v);
@@ -110,10 +110,10 @@ op_builtin_add(Ty *ty)
 
         case PAIR_OF(VALUE_DICT):
         {
-                Dict *new = DictClone(ty, left->dict);
+                Dict *new = DictClone(ty, V_DICT(*(left)));
                 NOGC(new);
 
-                DictUpdate(ty, new, right->dict);
+                DictUpdate(ty, new, V_DICT(*(right)));
 
                 OKGC(new);
 
@@ -132,45 +132,45 @@ op_builtin_mul(Ty *ty)
 
         Value v;
 
-        switch (PACK_TYPES(left->type, right->type)) {
+        switch (PACK_TYPES(V_TYPE(*left), V_TYPE(*right))) {
         case PAIR_OF(VALUE_INTEGER):
-                COMPLETE(INTEGER(left->z * right->z));
+                COMPLETE(INTEGER(V_Z(*left) * V_Z(*right)));
 
         case PAIR_OF(VALUE_REAL):
-                COMPLETE(REAL(left->real * right->real));
+                COMPLETE(REAL(V_REAL(*left) * V_REAL(*right)));
 
         case PAIR_OF(VALUE_BOOLEAN):
-                COMPLETE(INTEGER(left->boolean * right->boolean));
+                COMPLETE(INTEGER(V_BOOL(*left) * V_BOOL(*right)));
 
         case PACK_TYPES(VALUE_REAL, VALUE_INTEGER):
-                COMPLETE(REAL(left->real * right->z));
+                COMPLETE(REAL(V_REAL(*left) * V_Z(*right)));
 
         case PACK_TYPES(VALUE_INTEGER, VALUE_REAL):
-                COMPLETE(REAL(left->z * right->real));
+                COMPLETE(REAL(V_Z(*left) * V_REAL(*right)));
 
         case PACK_TYPES(VALUE_BOOLEAN, VALUE_INTEGER):
-                COMPLETE(INTEGER(left->boolean * right->z));
+                COMPLETE(INTEGER(V_BOOL(*left) * V_Z(*right)));
 
         case PACK_TYPES(VALUE_INTEGER, VALUE_BOOLEAN):
-                COMPLETE(INTEGER(left->z * right->boolean));
+                COMPLETE(INTEGER(V_Z(*left) * V_BOOL(*right)));
 
         case PACK_TYPES(VALUE_BOOLEAN, VALUE_REAL):
-                COMPLETE(REAL(left->boolean * right->real));
+                COMPLETE(REAL(V_BOOL(*left) * V_REAL(*right)));
 
         case PACK_TYPES(VALUE_REAL, VALUE_BOOLEAN):
-                COMPLETE(REAL(left->real * right->boolean));
+                COMPLETE(REAL(V_REAL(*left) * V_BOOL(*right)));
 
         case PACK_TYPES(VALUE_STRING, VALUE_INTEGER):
         {
-                if (right->z <= 0) {
+                if (V_Z(*(right)) <= 0) {
                         COMPLETE(STRING_EMPTY);
                 }
 
-                usize n = sN(*left) * right->z;
+                usize n = sN(*left) * V_Z(*(right));
 
-                v = STRING(value_string_alloc(ty, n), n);
+                v = STRING(ty, value_string_alloc(ty, n), n);
 
-                for (imax i = 0; i < right->z; ++i) {
+                for (imax i = 0; i < V_Z(*(right)); ++i) {
                         memcpy(
                                 (void *)(ss(v) + i * sN(*left)),
                                 ss(*left),
@@ -182,19 +182,19 @@ op_builtin_mul(Ty *ty)
         }
 
         case PACK_TYPES(VALUE_STRING, VALUE_BOOLEAN):
-                COMPLETE(right->boolean ? *left : STRING_EMPTY);
+                COMPLETE(V_BOOL(*right) ? *left : STRING_EMPTY);
 
 
         case PAIR_OF(VALUE_ARRAY):
-                v = ARRAY(vAn(vN(*left->array) * vN(*right->array)));
+                v = ARRAY(vAn(vN(*V_ARRAY(*left)) * vN(*V_ARRAY(*right))));
                 gP(&v);
-                for (int i = 0; i < vN(*left->array); ++i) {
-                        for (int j = 0; j < vN(*right->array); ++j) {
+                for (int i = 0; i < vN(*V_ARRAY(*left)); ++i) {
+                        for (int j = 0; j < vN(*V_ARRAY(*right)); ++j) {
                                 vPx(
-                                        *v.array,
+                                        *V_ARRAY(v),
                                         PAIR(
-                                                v__(*left->array, i),
-                                                v__(*right->array, j)
+                                                v__(*V_ARRAY(*left), i),
+                                                v__(*V_ARRAY(*right), j)
                                         )
                                 );
                         }
@@ -204,16 +204,16 @@ op_builtin_mul(Ty *ty)
 
         case PACK_TYPES(VALUE_ARRAY, VALUE_INTEGER):
         {
-                if (right->z <= 0) {
+                if (V_Z(*(right)) <= 0) {
                         COMPLETE(ARRAY(ArrayClone(ty, NULL)));
                 }
-                v = ARRAY(vAn(vN(*left->array) * right->z));
-                vN(*v.array) = vN(*left->array) * right->z;
-                for (int i = 0; i < right->z; ++i) {
+                v = ARRAY(vAn(vN(*V_ARRAY(*left)) * V_Z(*right)));
+                vN(*V_ARRAY(v)) = vN(*V_ARRAY(*left)) * V_Z(*(right));
+                for (int i = 0; i < V_Z(*(right)); ++i) {
                         memcpy(
-                                v.array->items + i * left->array->count,
-                                left->array->items,
-                                left->array->count * sizeof (Value)
+                                V_ARRAY(v)->items + i * V_ARRAY(*left)->count,
+                                V_ARRAY(*left)->items,
+                                V_ARRAY(*left)->count * sizeof (Value)
                         );
                 }
 
@@ -221,8 +221,8 @@ op_builtin_mul(Ty *ty)
         }
 
         case PACK_TYPES(VALUE_ARRAY, VALUE_BOOLEAN):
-                if (right->boolean) {
-                        COMPLETE(ARRAY(ArrayClone(ty, left->array)));
+                if (V_BOOL(*(right))) {
+                        COMPLETE(ARRAY(ArrayClone(ty, V_ARRAY(*left))));
                 } else {
                         COMPLETE(ARRAY(vAn(0)));
                 }
@@ -237,36 +237,36 @@ op_builtin_div(Ty *ty)
         Value const *left = look(-1);
         Value const *right = look(0);
 
-        switch (PACK_TYPES(left->type, right->type)) {
+        switch (PACK_TYPES(V_TYPE(*left), V_TYPE(*right))) {
         case PAIR_OF(VALUE_INTEGER):
-                if (right->z == 0) {
+                if (V_Z(*(right)) == 0) {
                         ZeroDividePanic(ty);
                 }
-                COMPLETE(INTEGER(left->z / right->z));
+                COMPLETE(INTEGER(V_Z(*left) / V_Z(*right)));
 
         case PAIR_OF(VALUE_REAL):
-                if (right->real == 0.0) {
+                if (V_REAL(*(right)) == 0.0) {
                         ZeroDividePanic(ty);
                 }
-                COMPLETE(REAL(left->real / right->real));
+                COMPLETE(REAL(V_REAL(*left) / V_REAL(*right)));
 
         case PACK_TYPES(VALUE_REAL, VALUE_INTEGER):
-                if (right->z == 0) {
+                if (V_Z(*(right)) == 0) {
                         ZeroDividePanic(ty);
                 }
-                COMPLETE(REAL(left->real / right->z));
+                COMPLETE(REAL(V_REAL(*left) / V_Z(*right)));
 
         case PACK_TYPES(VALUE_INTEGER, VALUE_REAL):
-                if (right->real == 0.0) {
+                if (V_REAL(*(right)) == 0.0) {
                         ZeroDividePanic(ty);
                 }
-                COMPLETE(REAL(left->z / right->real));
+                COMPLETE(REAL(V_Z(*left) / V_REAL(*right)));
 
         case PACK_TYPES(VALUE_BOOLEAN, VALUE_REAL):
-                if (right->real == 0.0) {
+                if (V_REAL(*(right)) == 0.0) {
                         ZeroDividePanic(ty);
                 }
-                COMPLETE(REAL(left->boolean / right->real));
+                COMPLETE(REAL(V_BOOL(*left) / V_REAL(*right)));
         }
 
         return false;
@@ -281,59 +281,59 @@ op_builtin_sub(Ty *ty)
         Value v;
         ffi_type *t;
 
-        switch (PACK_TYPES(left->type, right->type)) {
+        switch (PACK_TYPES(V_TYPE(*left), V_TYPE(*right))) {
         case PAIR_OF(VALUE_INTEGER):
-                COMPLETE(INTEGER(left->z - right->z));
+                COMPLETE(INTEGER(V_Z(*left) - V_Z(*right)));
 
         case PAIR_OF(VALUE_REAL):
-                COMPLETE(REAL(left->real - right->real));
+                COMPLETE(REAL(V_REAL(*left) - V_REAL(*right)));
 
         case PAIR_OF(VALUE_BOOLEAN):
-                COMPLETE(INTEGER(left->boolean - (int)right->boolean));
+                COMPLETE(INTEGER(V_BOOL(*left) - (int)V_BOOL(*right)));
 
         case PACK_TYPES(VALUE_REAL, VALUE_INTEGER):
-                COMPLETE(REAL(left->real - right->z));
+                COMPLETE(REAL(V_REAL(*left) - V_Z(*right)));
 
         case PACK_TYPES(VALUE_INTEGER, VALUE_REAL):
-                COMPLETE(REAL(left->z - right->real));
+                COMPLETE(REAL(V_Z(*left) - V_REAL(*right)));
 
         case PACK_TYPES(VALUE_BOOLEAN, VALUE_INTEGER):
-                COMPLETE(INTEGER(left->boolean - right->z));
+                COMPLETE(INTEGER(V_BOOL(*left) - V_Z(*right)));
 
         case PACK_TYPES(VALUE_INTEGER, VALUE_BOOLEAN):
-                COMPLETE(INTEGER(left->z - right->boolean));
+                COMPLETE(INTEGER(V_Z(*left) - V_BOOL(*right)));
 
         case PACK_TYPES(VALUE_STRING, VALUE_INTEGER):
-                COMPLETE(OffsetString(left, -right->z));
+                COMPLETE(OffsetString(left, -V_Z(*right)));
 
         case PACK_TYPES(VALUE_STRING, VALUE_BOOLEAN):
-                COMPLETE(OffsetString(left, -(int)right->boolean));
+                COMPLETE(OffsetString(left, -(int)V_BOOL(*right)));
 
         case PACK_TYPES(VALUE_PTR, VALUE_INTEGER):
-                t = (left->extra == NULL) ? &ffi_type_uint8 : left->extra;
-                COMPLETE(TPTR(left->extra, ((char *)left->ptr) - right->z * t->size));
+                t = (V_EXTRA(*(left)) == NULL) ? &ffi_type_uint8 : V_EXTRA(*(left));
+                COMPLETE(TPTR(V_EXTRA(*left), ((char *)V_PTR(*left)) - V_Z(*right) * t->size));
 
         case PACK_TYPES(VALUE_PTR, VALUE_BOOLEAN):
-                t = (left->extra == NULL) ? &ffi_type_uint8 : left->extra;
-                COMPLETE(TPTR(left->extra, ((char *)left->ptr) - right->boolean * t->size));
+                t = (V_EXTRA(*(left)) == NULL) ? &ffi_type_uint8 : V_EXTRA(*(left));
+                COMPLETE(TPTR(V_EXTRA(*left), ((char *)V_PTR(*left)) - V_BOOL(*right) * t->size));
 
         case PACK_TYPES(VALUE_PTR, VALUE_PTR):
-                if (left->extra != right->extra) {
+                if (V_EXTRA(*(left)) != V_EXTRA(*(right))) {
                         zP("attempt to subtract pointers of different types");
                 }
-                t = (left->extra == NULL) ? &ffi_type_uint8 : left->extra;
-                COMPLETE(INTEGER(((char *)left->ptr - (char *)right->ptr) / t->size));
+                t = (V_EXTRA(*(left)) == NULL) ? &ffi_type_uint8 : V_EXTRA(*(left));
+                COMPLETE(INTEGER(((char *)V_PTR(*left) - (char *)V_PTR(*right)) / t->size));
 
         case PAIR_OF(VALUE_DICT):
         {
-                Value new = DICT(DictClone(ty, left->dict));
-                NOGC(new.dict);
+                Value new = DICT(DictClone(ty, V_DICT(*left)));
+                NOGC(V_DICT(new));
 
                 vm_push(ty, right);
                 dict_subtract(ty, &new, 1, NULL);
                 vm_pop(ty);
 
-                OKGC(new.dict);
+                OKGC(V_DICT(new));
 
                 COMPLETE(new);
         }
@@ -348,30 +348,30 @@ op_builtin_mod(Ty *ty)
         Value const *left = look(-1);
         Value const *right = look(0);
 
-        switch (PACK_TYPES(left->type, right->type)) {
+        switch (PACK_TYPES(V_TYPE(*left), V_TYPE(*right))) {
         case PACK_TYPES(VALUE_INTEGER, VALUE_INTEGER):
-                if (right->z == 0) {
+                if (V_Z(*(right)) == 0) {
                         ZeroDividePanic(ty);
                 }
-                COMPLETE(INTEGER(left->z % right->z));
+                COMPLETE(INTEGER(V_Z(*left) % V_Z(*right)));
 
         case PACK_TYPES(VALUE_REAL, VALUE_INTEGER):
-                if (right->z == 0) {
+                if (V_Z(*(right)) == 0) {
                         ZeroDividePanic(ty);
                 }
-                COMPLETE(REAL(fmod(left->real, right->z)));
+                COMPLETE(REAL(fmod(V_REAL(*left), V_Z(*right))));
 
         case PACK_TYPES(VALUE_INTEGER, VALUE_REAL):
-                if (right->real == 0.0) {
+                if (V_REAL(*(right)) == 0.0) {
                         ZeroDividePanic(ty);
                 }
-                COMPLETE(REAL(fmod(left->z, right->real)));
+                COMPLETE(REAL(fmod(V_Z(*left), V_REAL(*right))));
 
         case PACK_TYPES(VALUE_REAL, VALUE_REAL):
-                if (right->real == 0.0) {
+                if (V_REAL(*(right)) == 0.0) {
                         ZeroDividePanic(ty);
                 }
-                COMPLETE(REAL(fmod(left->real, right->real)));
+                COMPLETE(REAL(fmod(V_REAL(*left), V_REAL(*right))));
         }
 
         return false;
@@ -385,12 +385,12 @@ op_builtin_divmod(Ty *ty)
 
         imaxdiv_t div;
 
-        switch (PACK_TYPES(left->type, right->type)) {
+        switch (PACK_TYPES(V_TYPE(*left), V_TYPE(*right))) {
         case PAIR_OF(VALUE_INTEGER):
-                if (right->z == 0) {
+                if (V_Z(*(right)) == 0) {
                         ZeroDividePanic(ty);
                 }
-                div = imaxdiv(left->z, right->z);
+                div = imaxdiv(V_Z(*(left)), V_Z(*(right)));
                 COMPLETE(PAIR(INTEGER(div.quot), INTEGER(div.rem)));
         }
 
@@ -403,18 +403,18 @@ op_builtin_and(Ty *ty)
         Value const *left = look(-1);
         Value const *right = look(0);
 
-        switch (PACK_TYPES(left->type, right->type)) {
+        switch (PACK_TYPES(V_TYPE(*left), V_TYPE(*right))) {
         case PAIR_OF(VALUE_INTEGER):
-                COMPLETE(INTEGER(left->z & right->z));
+                COMPLETE(INTEGER(V_Z(*left) & V_Z(*right)));
 
         case PAIR_OF(VALUE_BOOLEAN):
-                COMPLETE(INTEGER(left->boolean & right->boolean));
+                COMPLETE(INTEGER(V_BOOL(*left) & V_BOOL(*right)));
 
         case PACK_TYPES(VALUE_INTEGER, VALUE_BOOLEAN):
-                COMPLETE(INTEGER(left->z & right->boolean));
+                COMPLETE(INTEGER(V_Z(*left) & V_BOOL(*right)));
 
         case PACK_TYPES(VALUE_BOOLEAN, VALUE_INTEGER):
-                COMPLETE(INTEGER(left->boolean & right->z));
+                COMPLETE(INTEGER(V_BOOL(*left) & V_Z(*right)));
         }
 
         return false;
@@ -426,18 +426,18 @@ op_builtin_or(Ty *ty)
         Value const *left = look(-1);
         Value const *right = look(0);
 
-        switch (PACK_TYPES(left->type, right->type)) {
+        switch (PACK_TYPES(V_TYPE(*left), V_TYPE(*right))) {
         case PAIR_OF(VALUE_INTEGER):
-                COMPLETE(INTEGER(left->z | right->z));
+                COMPLETE(INTEGER(V_Z(*left) | V_Z(*right)));
 
         case PAIR_OF(VALUE_BOOLEAN):
-                COMPLETE(INTEGER(left->boolean | right->boolean));
+                COMPLETE(INTEGER(V_BOOL(*left) | V_BOOL(*right)));
 
         case PACK_TYPES(VALUE_INTEGER, VALUE_BOOLEAN):
-                COMPLETE(INTEGER(left->z | right->boolean));
+                COMPLETE(INTEGER(V_Z(*left) | V_BOOL(*right)));
 
         case PACK_TYPES(VALUE_BOOLEAN, VALUE_INTEGER):
-                COMPLETE(INTEGER(left->boolean | right->z));
+                COMPLETE(INTEGER(V_BOOL(*left) | V_Z(*right)));
         }
 
         return false;
@@ -449,18 +449,18 @@ op_builtin_xor(Ty *ty)
         Value const *left = look(-1);
         Value const *right = look(0);
 
-        switch (PACK_TYPES(left->type, right->type)) {
+        switch (PACK_TYPES(V_TYPE(*left), V_TYPE(*right))) {
         case PAIR_OF(VALUE_INTEGER):
-                COMPLETE(INTEGER(left->z ^ right->z));
+                COMPLETE(INTEGER(V_Z(*left) ^ V_Z(*right)));
 
         case PAIR_OF(VALUE_BOOLEAN):
-                COMPLETE(INTEGER(left->boolean ^ right->boolean));
+                COMPLETE(INTEGER(V_BOOL(*left) ^ V_BOOL(*right)));
 
         case PACK_TYPES(VALUE_INTEGER, VALUE_BOOLEAN):
-                COMPLETE(INTEGER(left->z ^ right->boolean));
+                COMPLETE(INTEGER(V_Z(*left) ^ V_BOOL(*right)));
 
         case PACK_TYPES(VALUE_BOOLEAN, VALUE_INTEGER):
-                COMPLETE(INTEGER(left->boolean ^ right->z));
+                COMPLETE(INTEGER(V_BOOL(*left) ^ V_Z(*right)));
         }
 
         return false;
@@ -472,12 +472,12 @@ op_builtin_shl(Ty *ty)
         Value const *left = look(-1);
         Value const *right = look(0);
 
-        switch (PACK_TYPES(left->type, right->type)) {
+        switch (PACK_TYPES(V_TYPE(*left), V_TYPE(*right))) {
         case PAIR_OF(VALUE_INTEGER):
-                COMPLETE(INTEGER(left->z << right->z));
+                COMPLETE(INTEGER(V_Z(*left) << V_Z(*right)));
 
         case PACK_TYPES(VALUE_INTEGER, VALUE_BOOLEAN):
-                COMPLETE(INTEGER(left->z << right->boolean));
+                COMPLETE(INTEGER(V_Z(*left) << V_BOOL(*right)));
         }
 
         return false;
@@ -489,12 +489,12 @@ op_builtin_shr(Ty *ty)
         Value const *left = look(-1);
         Value const *right = look(0);
 
-        switch (PACK_TYPES(left->type, right->type)) {
+        switch (PACK_TYPES(V_TYPE(*left), V_TYPE(*right))) {
         case PAIR_OF(VALUE_INTEGER):
-                COMPLETE(INTEGER(left->z >> right->z));
+                COMPLETE(INTEGER(V_Z(*left) >> V_Z(*right)));
 
         case PACK_TYPES(VALUE_INTEGER, VALUE_BOOLEAN):
-                COMPLETE(INTEGER(left->z >> right->boolean));
+                COMPLETE(INTEGER(V_Z(*left) >> V_BOOL(*right)));
         }
 
         return false;

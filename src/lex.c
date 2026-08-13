@@ -66,7 +66,7 @@ error(Ty *ty, char const *fmt, ...)
         Value msg = vSsz(vv(ErrorBuffer));
         Value trace = ARRAY(vA());
         vAp(
-                trace.array,
+                V_ARRAY(trace),
                 vTn(
                         "file", xSz(CompilerCurrentModule(ty)->path),
                         "module", vSsz(CompilerCurrentModule(ty)->name),

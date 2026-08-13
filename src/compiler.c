@@ -427,6 +427,9 @@ static bool
 emit_statement(Ty *ty, Stmt const *s, bool want_result);
 
 static bool
+emit_implicit_tail_body(Ty *ty, Stmt const *body);
+
+static bool
 emit_expression(Ty *ty, Expr const *e);
 
 static bool
@@ -693,7 +696,7 @@ inline static int
 tag_app_tag(Expr const *e)
 {
         if (e->identifier == EmptyString) {
-                return e->constraint->v->tag;
+                return V_TAG(*(e->constraint->v));
         } else {
                 return e->symbol->tag;
         }
@@ -702,10 +705,10 @@ tag_app_tag(Expr const *e)
 inline static int
 wrapped_type(Ty *ty, Value const *v)
 {
-        if (v->tags == 0 || tags_pop(ty, v->tags) == 0) {
-                return v->type & ~VALUE_TAGGED;
+        if (V_TAGS(*(v)) == 0 || tags_pop(ty, V_TAGS(*(v))) == 0) {
+                return V_TYPE(*(v)) & ~VALUE_TAGGED;
         } else {
-                return v->type;
+                return V_TYPE(*(v));
         }
 }
 
@@ -1522,10 +1525,10 @@ show_expr_type(Ty *ty, Expr const *e)
 {
         Value v = texprx(e);
 
-        if (v.type == VALUE_TAG) {
-                return tags_name(ty, v.tag);
+        if (V_TYPE(v) == VALUE_TAG) {
+                return tags_name(ty, V_TAG(v));
         } else {
-                return tags_name(ty, tags_first(ty, v.tags));
+                return tags_name(ty, tags_first(ty, V_TAGS(v)));
         }
 }
 
@@ -2125,7 +2128,7 @@ try_slurp_module(Ty *ty, char const *name, char const **path_out)
         char path[PATH_MAX + 1];
 
         char *source = NULL;
-        Array *search = v_(Globals, NAMES.path)->array;
+        Array *search = V_ARRAY(*v_(Globals, NAMES.path));
 
         for (int i = 0; i < vN(*search); ++i) {
                 ty_snprintf(path, sizeof path, "%s/%s.ty", ss(v__(*search, i)), name);
@@ -7814,7 +7817,8 @@ emit_function(Ty *ty, Expr const *e)
                                 Ei32(i);
                         }
                 }
-                if (!emit_statement(ty, body, true)) {
+                if (!emit_implicit_tail_body(ty, body)
+                    && !emit_statement(ty, body, true)) {
                         if (RUNTIME_CONSTRAINTS && e->return_type != NULL) {
                                 emit_return_check(ty, e);
                         }
@@ -8151,6 +8155,31 @@ emit_return_check(Ty *ty, Expr const *f)
         }
 
         add_location(ty, f->return_type, start, vN(STATE.code));
+}
+
+static bool
+emit_implicit_tail_body(Ty *ty, Stmt const *body)
+{
+        if (body == NULL
+            || (body->type != STATEMENT_BLOCK && body->type != STATEMENT_MULTI)
+            || vN(body->statements) == 0
+            || RUNTIME_CONSTRAINTS && STATE.func->return_type != NULL
+            || STATE.function_resources != STATE.resources
+            || vN(STATE.tries) != 0) return false;
+        Stmt const *last = v__(body->statements, vN(body->statements) - 1);
+        if (last->type != STATEMENT_EXPRESSION) return false;
+        Expr const *call = last->expression;
+        if (!is_call(call) || is_variadic(call)
+            || call->function->type != EXPRESSION_IDENTIFIER
+            || call->function->symbol != STATE.func->fn_symbol
+            || vN(call->args) != vN(STATE.func->params)
+            || vN(call->kwargs) != 0) return false;
+        for (int i = 0; i + 1 < vN(body->statements); ++i) {
+                if (emit_statement(ty, v__(body->statements, i), false)) return true;
+        }
+        for (int i = 0; i < vN(call->args); ++i) EE(v__(call->args, i));
+        INSN(TAIL_CALL);
+        return true;
 }
 
 static bool
@@ -14388,7 +14417,7 @@ inline static char *
 {
         if (
                 (v == NULL)
-             || ((v->type & ~VALUE_TAGGED) != VALUE_STRING)
+             || ((V_TYPE(*(v)) & ~VALUE_TAGGED) != VALUE_STRING)
         ) {
                 return NULL;
         }
@@ -14442,7 +14471,7 @@ ForgetSourceNodesFrom(void const *_base, usize len)
 inline static Value *
 (t_)(Ty *ty, Value const *t, uptr i)
 {
-        if ((t->type & ~VALUE_TAGGED) != VALUE_TUPLE) {
+        if ((V_TYPE(*(t)) & ~VALUE_TAGGED) != VALUE_TUPLE) {
                 if (i == 0) return (Value *)t;
                 else goto Missing;
         }
@@ -14482,7 +14511,7 @@ typarts(Ty *ty, condpart_vector const *parts, u32 flags)
                 struct condpart *part = parts->items[i];
                 if (part->target != NULL) {
                         vAp(
-                                v.array,
+                                V_ARRAY(v),
                                 tagged(
                                         ty,
                                         part->def ? TyLet : TyAssign,
@@ -14492,7 +14521,7 @@ typarts(Ty *ty, condpart_vector const *parts, u32 flags)
                                 )
                         );
                 } else {
-                        vAp(v.array, go(part->e));
+                        vAp(V_ARRAY(v), go(part->e));
                 }
         }
 
@@ -14622,7 +14651,7 @@ tyexpr(Ty *ty, Expr const *e, u32 flags)
                         if (TryUnwrap(&name, TyId)) {
                                 name = *t_(&name, "name");
                         }
-                        if (name.type != VALUE_STRING) {
+                        if (V_TYPE(name) != VALUE_STRING) {
                                 fail(
                                         "template hole in resource binding filled with non-string: %s",
                                         VSC(&name)
@@ -14642,21 +14671,21 @@ tyexpr(Ty *ty, Expr const *e, u32 flags)
 
         case EXPRESSION_TYPE_UNION:
                 v = ARRAY(vA());
-                NOGC(v.array);
+                NOGC(V_ARRAY(v));
                 for (int i = 0; i < vN(e->es); ++i) {
-                        vAp(v.array, go(v__(e->es, i)));
+                        vAp(V_ARRAY(v), go(v__(e->es, i)));
                 }
-                OKGC(v.array);
+                OKGC(V_ARRAY(v));
                 v = tagged(ty, TyUnion, v, NONE);
                 break;
 
         case EXPRESSION_ARRAY:
                 v = ARRAY(vA());
-                NOGC(v.array);
+                NOGC(V_ARRAY(v));
                 for (int i = 0; i < vN(e->elements); ++i) {
-                        vAp(v.array, tyaitem(ty, e, i, flags));
+                        vAp(V_ARRAY(v), tyaitem(ty, e, i, flags));
                 }
-                OKGC(v.array);
+                OKGC(V_ARRAY(v));
                 v = TAGGED(TyArray, v);
                 break;
 
@@ -14737,20 +14766,20 @@ tyexpr(Ty *ty, Expr const *e, u32 flags)
                 if (e->tagged->type == EXPRESSION_TUPLE) {
                         v = vT(vN(e->tagged->es) +  1);
                         for (int i = 0; i < vN(e->tagged->es); ++i) {
-                                v__(v, i + 1) = go(v__(e->tagged->es, i));
+                                V_ITEMS(v)[i + 1] = go(v__(e->tagged->es, i));
                         }
                 } else {
                         v = vT(2);
-                        v__(v, 1) = go(e->tagged);
+                        V_ITEMS(v)[1] = go(e->tagged);
                 }
 
                 if (e->identifier != EmptyString) {
                         Expr *id = amA(sizeof *id);
                         *id = *e;
                         id->type = EXPRESSION_IDENTIFIER;
-                        v__(v, 0) = go(id);
+                        V_ITEMS(v)[0] = go(id);
                 } else {
-                        v__(v, 0) = tagged(ty, TyValue, *e->constraint->v, NONE);
+                        V_ITEMS(v)[0] = tagged(ty, TyValue, *e->constraint->v, NONE);
                 }
 
                 v = TAGGED(TyTagged, v);
@@ -14836,21 +14865,21 @@ tyexpr(Ty *ty, Expr const *e, u32 flags)
                 try_symbolize_application(ty, NULL, (Expr *)e);
         case EXPRESSION_TAG_PATTERN:
                 v = vT(2);
-                v__(v, 0) = vSsz(e->identifier);
-                v__(v, 1) = go(e->tagged);
+                V_ITEMS(v)[0] = vSsz(e->identifier);
+                V_ITEMS(v)[1] = go(e->tagged);
                 v = TAGGED(TyTagPattern, v);
                 break;
 
         case EXPRESSION_TUPLE:
         case EXPRESSION_TUPLE_SPEC:
                 v = ARRAY(vA());
-                NOGC(v.array);
+                NOGC(V_ARRAY(v));
                 for (int i = 0; i < vN(e->es); ++i) {
                         Value name = (v__(e->names, i) == NULL)
                                    ? NIL
                                    : vSsz(v__(e->names, i));
                         vAp(
-                                v.array,
+                                V_ARRAY(v),
                                 tagged(
                                         ty,
                                         TyRecordEntry,
@@ -14864,33 +14893,33 @@ tyexpr(Ty *ty, Expr const *e, u32 flags)
                                 )
                         );
                 }
-                OKGC(v.array);
+                OKGC(V_ARRAY(v));
                 v = TAGGED(TyRecord, v);
                 break;
 
         case EXPRESSION_LIST:
                 v = ARRAY(vA());
-                NOGC(v.array);
+                NOGC(V_ARRAY(v));
                 for (int i = 0; i < vN(e->es); ++i) {
-                        vAp(v.array, go(v__(e->es, i)));
+                        vAp(V_ARRAY(v), go(v__(e->es, i)));
                 }
-                OKGC(v.array);
+                OKGC(V_ARRAY(v));
                 break;
 
         case EXPRESSION_CHOICE_PATTERN:
                 v = ARRAY(vA());
-                NOGC(v.array);
+                NOGC(V_ARRAY(v));
                 for (int i = 0; i < vN(e->es); ++i) {
-                        vAp(v.array, go(v__(e->es, i)));
+                        vAp(V_ARRAY(v), go(v__(e->es, i)));
                 }
-                OKGC(v.array);
+                OKGC(V_ARRAY(v));
                 v = TAGGED(TyChoicePattern, v);
                 break;
 
         case EXPRESSION_YIELD:
                 v = ARRAY(vA());
                 for (int i = 0; i < vN(e->es); ++i) {
-                        vAp(v.array, go(v__(e->es, i)));
+                        vAp(V_ARRAY(v), go(v__(e->es, i)));
                 }
                 v = TAGGED(TyYield, v);
                 break;
@@ -14901,14 +14930,14 @@ tyexpr(Ty *ty, Expr const *e, u32 flags)
 
         case EXPRESSION_MATCH:
                 v = vT(2);
-                v__(v, 0) = go(e->subject);
-                v__(v, 1) = ARRAY(vA());
+                V_ITEMS(v)[0] = go(e->subject);
+                V_ITEMS(v)[1] = ARRAY(vA());
                 for (int i = 0; i < vN(e->patterns); ++i) {
                         Value case_ = vT(2);
-                        v__(case_, 0) = go(v__(e->patterns, i));
-                        v__(case_, 1) = go(v__(e->thens, i));
+                        V_ITEMS(case_)[0] = go(v__(e->patterns, i));
+                        V_ITEMS(case_)[1] = go(v__(e->thens, i));
                         vAp(
-                                v__(v, 1).array,
+                                V_ARRAY(V_ITEMS(v)[1]),
                                 case_
                         );
                 }
@@ -14921,10 +14950,10 @@ tyexpr(Ty *ty, Expr const *e, u32 flags)
                         "items",   ARRAY(vA()),
                         "default", go(e->dflt)
                 );
-                NOGC(v__(v, 0).array);
+                NOGC(V_ARRAY(V_ITEMS(v)[0]));
                 for (int i = 0; i < vN(e->keys); ++i) {
                         vAp(
-                                v__(v, 0).array,
+                                V_ARRAY(V_ITEMS(v)[0]),
                                 TAGGED(
                                         TyDictItem,
                                         go(v__(e->keys, i)),
@@ -14932,7 +14961,7 @@ tyexpr(Ty *ty, Expr const *e, u32 flags)
                                 )
                         );
                 }
-                OKGC(v__(v, 0).array);
+                OKGC(V_ARRAY(V_ITEMS(v)[0]));
                 break;
 
         case EXPRESSION_FUNCTION_CALL:
@@ -14942,7 +14971,7 @@ tyexpr(Ty *ty, Expr const *e, u32 flags)
                 );
                 for (int i = 0; i < vN(e->args); ++i) {
                         vAp(
-                                v__(v, 1).array,
+                                V_ARRAY(V_ITEMS(v)[1]),
                                 TAGGED_RECORD(
                                         TyArg,
                                         "arg",  go(v__(e->args, i)),
@@ -14953,7 +14982,7 @@ tyexpr(Ty *ty, Expr const *e, u32 flags)
                 }
                 for (int i = 0; i < vN(e->kws); ++i) {
                         vAp(
-                                v__(v, 1).array,
+                                V_ARRAY(V_ITEMS(v)[1]),
                                 TAGGED_RECORD(
                                         TyArg,
                                         "arg",  go(v__(e->kwargs, i)),
@@ -14982,7 +15011,7 @@ tyexpr(Ty *ty, Expr const *e, u32 flags)
                 }
                 for (int i = 0; i < vN(e->method_args); ++i) {
                         vAp(
-                                v__(v, 2).array,
+                                V_ARRAY(V_ITEMS(v)[2]),
                                 TAGGED_RECORD(
                                         TyArg,
                                         "arg",  go(v__(e->method_args, i)),
@@ -14993,7 +15022,7 @@ tyexpr(Ty *ty, Expr const *e, u32 flags)
                 }
                 for (int i = 0; i < vN(e->method_kws); ++i) {
                         vAp(
-                                v__(v, 2).array,
+                                V_ARRAY(V_ITEMS(v)[2]),
                                 TAGGED_RECORD(
                                         TyArg,
                                         "arg", go(v__(e->method_kwargs, i)),
@@ -15047,7 +15076,7 @@ tyexpr(Ty *ty, Expr const *e, u32 flags)
         case EXPRESSION_WITH:
                 v = ARRAY(vA());
                 for (int i = 0; i < vN(e->with.defs); ++i) {
-                        vAp(v.array, go(v__(e->with.defs, i)));
+                        vAp(V_ARRAY(v), go(v__(e->with.defs, i)));
                 }
                 v = TAGGED(
                         TyWith,
@@ -15097,7 +15126,7 @@ tyexpr(Ty *ty, Expr const *e, u32 flags)
                 v = ARRAY(vA());
                 gP(&v);
 
-                vAp(v.array, vSsz(v__(e->strings, 0)));
+                vAp(V_ARRAY(v), vSsz(v__(e->strings, 0)));
 
                 for (int i = 0; i < vN(e->expressions); ++i) {
                         Value expr = go(v__(e->expressions, i));
@@ -15111,8 +15140,8 @@ tyexpr(Ty *ty, Expr const *e, u32 flags)
                                 fmt = go(v__(e->fmts, i));
                                 width = INTEGER(v__(e->widths, i));
                         }
-                        vAp(v.array, QUADRUPLE(expr, fmt, width, arg));
-                        vAp(v.array, vSsz(v__(e->strings, i + 1)));
+                        vAp(V_ARRAY(v), QUADRUPLE(expr, fmt, width, arg));
+                        vAp(V_ARRAY(v), vSsz(v__(e->strings, i + 1)));
                 }
 
                 gX();
@@ -15473,31 +15502,31 @@ tyexpr(Ty *ty, Expr const *e, u32 flags)
                         "staticFields",  ARRAY(vA())
                 );
                 for (int i = 0; i < vN(s->class.traits); ++i) {
-                        vAp(v__(v, 2).array, go(v__(s->class.traits, i)));
+                        vAp(V_ARRAY(V_ITEMS(v)[2]), go(v__(s->class.traits, i)));
                 }
                 for (int i = 0; i < vN(s->class.methods); ++i) {
-                        vAp(v__(v, 3).array, go(v__(s->class.methods, i)));
+                        vAp(V_ARRAY(V_ITEMS(v)[3]), go(v__(s->class.methods, i)));
                 }
                 for (int i = 0; i < vN(s->class.getters); ++i) {
-                        vAp(v__(v, 4).array, go(v__(s->class.getters, i)));
+                        vAp(V_ARRAY(V_ITEMS(v)[4]), go(v__(s->class.getters, i)));
                 }
                 for (int i = 0; i < vN(s->class.setters); ++i) {
-                        vAp(v__(v, 5).array, go(v__(s->class.setters, i)));
+                        vAp(V_ARRAY(V_ITEMS(v)[5]), go(v__(s->class.setters, i)));
                 }
                 for (int i = 0; i < vN(s->class.fields); ++i) {
-                        vAp(v__(v, 6).array, go(v__(s->class.fields, i)));
+                        vAp(V_ARRAY(V_ITEMS(v)[6]), go(v__(s->class.fields, i)));
                 }
                 for (int i = 0; i < vN(s->class.s_methods); ++i) {
-                        vAp(v__(v, 7).array, go(v__(s->class.s_methods, i)));
+                        vAp(V_ARRAY(V_ITEMS(v)[7]), go(v__(s->class.s_methods, i)));
                 }
                 for (int i = 0; i < vN(s->class.s_getters); ++i) {
-                        vAp(v__(v, 8).array, go(v__(s->class.s_getters, i)));
+                        vAp(V_ARRAY(V_ITEMS(v)[8]), go(v__(s->class.s_getters, i)));
                 }
                 for (int i = 0; i < vN(s->class.s_setters); ++i) {
-                        vAp(v__(v, 9).array, go(v__(s->class.s_setters, i)));
+                        vAp(V_ARRAY(V_ITEMS(v)[9]), go(v__(s->class.s_setters, i)));
                 }
                 for (int i = 0; i < vN(s->class.s_fields); ++i) {
-                        vAp(v__(v, 10).array, go(v__(s->class.s_fields, i)));
+                        vAp(V_ARRAY(V_ITEMS(v)[10]), go(v__(s->class.s_fields, i)));
                 }
                 v = TAGGED(TyClass, v);
                 break;
@@ -15509,7 +15538,7 @@ tyexpr(Ty *ty, Expr const *e, u32 flags)
         case STATEMENT_RETURN:
                 v = vT(vN(s->returns));
                 for (int i = 0; i < vN(s->returns); ++i) {
-                        v__(v, i) = go(v__(s->returns, i));
+                        V_ITEMS(v)[i] = go(v__(s->returns, i));
                 }
                 v = TAGGED(TyReturn, v);
                 break;
@@ -15528,26 +15557,26 @@ tyexpr(Ty *ty, Expr const *e, u32 flags)
 
         case STATEMENT_MATCH:
                 v = vT(2);
-                v__(v, 0) = go(s->match.e);
-                v__(v, 1) = ARRAY(vA());
+                V_ITEMS(v)[0] = go(s->match.e);
+                V_ITEMS(v)[1] = ARRAY(vA());
                 for (int i = 0; i < vN(s->match.patterns); ++i) {
                         Value case_ = vT(2);
-                        v__(case_, 0) = go(v__(s->match.patterns, i));
-                        v__(case_, 1) = go(v__(s->match.statements, i));
-                        vAp(v__(v, 1).array, case_);
+                        V_ITEMS(case_)[0] = go(v__(s->match.patterns, i));
+                        V_ITEMS(case_)[1] = go(v__(s->match.statements, i));
+                        vAp(V_ARRAY(V_ITEMS(v)[1]), case_);
                 }
                 v = TAGGED(TyMatch, v);
                 break;
 
         case STATEMENT_WHILE_MATCH:
                 v = vT(2);
-                v__(v, 0) = go(s->match.e);
-                v__(v, 1) = ARRAY(vA());
+                V_ITEMS(v)[0] = go(s->match.e);
+                V_ITEMS(v)[1] = ARRAY(vA());
                 for (int i = 0; i < vN(s->match.patterns); ++i) {
                         Value case_ = vT(2);
-                        v__(case_, 0) = go(v__(s->match.patterns, i));
-                        v__(case_, 1) = go(v__(s->match.statements, i));
-                        vAp(v__(v, 1).array, case_);
+                        V_ITEMS(case_)[0] = go(v__(s->match.patterns, i));
+                        V_ITEMS(case_)[1] = go(v__(s->match.statements, i));
+                        vAp(V_ARRAY(V_ITEMS(v)[1]), case_);
                 }
                 v = TAGGED(TyWhileMatch, v);
                 break;
@@ -15582,7 +15611,7 @@ tyexpr(Ty *ty, Expr const *e, u32 flags)
         case STATEMENT_BLOCK:
                 v = ARRAY(vA());
                 for (int i = 0; i < vN(s->statements); ++i) {
-                        vAp(v.array, go(v__(s->statements, i)));
+                        vAp(V_ARRAY(v), go(v__(s->statements, i)));
                 }
                 v = TAGGED(TyBlock, v);
                 break;
@@ -15590,7 +15619,7 @@ tyexpr(Ty *ty, Expr const *e, u32 flags)
         case STATEMENT_MULTI:
                 v = ARRAY(vA());
                 for (int i = 0; i < vN(s->statements); ++i) {
-                        vAp(v.array, go(v__(s->statements, i)));
+                        vAp(V_ARRAY(v), go(v__(s->statements, i)));
                 }
                 v = TAGGED(TyMulti, v);
                 break;
@@ -15617,8 +15646,8 @@ tyexpr(Ty *ty, Expr const *e, u32 flags)
                 Array *avCatches = vA();
                 for (int i = 0; i < vN(s->try.handlers); ++i) {
                         Value catch = vT(2);
-                        v__(catch, 0) = go(v__(s->try.patterns, i));
-                        v__(catch, 1) = go(v__(s->try.handlers, i));
+                        V_ITEMS(catch)[0] = go(v__(s->try.patterns, i));
+                        V_ITEMS(catch)[1] = go(v__(s->try.handlers, i));
                         vAp(avCatches, catch);
                 }
                 v = TAGGED_RECORD(
@@ -15651,7 +15680,7 @@ tyexpr(Ty *ty, Expr const *e, u32 flags)
 
         GC_RESUME();
 
-        v.src = source_register(ty, e);
+        v = value_with_src(ty, v, source_register(ty, e));
 
         return v;
 }
@@ -15662,22 +15691,22 @@ cparts(Ty *ty, Value *v)
 {
         condpart_vector parts = {0};
 
-        if (v == NULL || v->type != VALUE_ARRAY) {
+        if (v == NULL || V_TYPE(*(v)) != VALUE_ARRAY) {
                 fail("cparts(): bad arg: %s", SHOW(v));
         }
 
-        for (int i = 0; i < vN(*v->array); ++i) {
-                Value *part = v_(*v->array, i);
+        for (int i = 0; i < vN(*V_ARRAY(*v)); ++i) {
+                Value *part = v_(*V_ARRAY(*v), i);
                 struct condpart *cp = amA(sizeof *cp);
-                int tag = tags_first(ty, part->tags);
+                int tag = tags_first(ty, V_TAGS(*(part)));
                 if (tag == TyLet) {
                         cp->def = true;
-                        cp->target = cexpr(ty, &part->items[0]);
-                        cp->e = cexpr(ty, &part->items[1]);
+                        cp->target = cexpr(ty, &V_ITEMS(*(part))[0]);
+                        cp->e = cexpr(ty, &V_ITEMS(*(part))[1]);
                 } else if (tag == TyAssign) {
                         cp->def = false;
-                        cp->target = cexpr(ty, &part->items[0]);
-                        cp->e = cexpr(ty, &part->items[1]);
+                        cp->target = cexpr(ty, &V_ITEMS(*(part))[0]);
+                        cp->e = cexpr(ty, &V_ITEMS(*(part))[1]);
                 } else {
                         cp->def = false;
                         cp->target = NULL;
@@ -15692,12 +15721,12 @@ cparts(Ty *ty, Value *v)
 Stmt *
 cstmt(Ty *ty, Value *v)
 {
-        if (v == NULL || v->type == VALUE_NIL) {
+        if (v == NULL || V_TYPE(*(v)) == VALUE_NIL) {
                 return NULL;
         }
 
         Stmt *s = amA0(sizeof *s);
-        Stmt *src = source_lookup(ty, v->src);
+        Stmt *src = source_lookup(ty, V_SRC(*(v)));
 
         s->arena = GetArenaAlloc(ty);
 
@@ -15706,7 +15735,7 @@ cstmt(Ty *ty, Value *v)
         if (src == NULL && wrapped_type(ty, v) == VALUE_TUPLE) {
                 Value *src_val = tuple_get(v, "src");
                 if (src_val != NULL) {
-                        src = source_lookup(ty, src_val->src);
+                        src = source_lookup(ty, V_SRC(*(src_val)));
                 }
         }
 
@@ -15720,7 +15749,7 @@ cstmt(Ty *ty, Value *v)
                 s->mod = STATE.module;
         }
 
-        if (v->type == VALUE_TAG) switch (v->tag) {
+        if (V_TYPE(*(v)) == VALUE_TAG) switch (V_TAG(*(v))) {
         case TyNull:
                 goto Null;
 
@@ -15731,11 +15760,11 @@ cstmt(Ty *ty, Value *v)
                 goto Break;
         }
 
-        int tag = tags_first(ty, v->tags);
+        int tag = tags_first(ty, V_TAGS(*(v)));
 
         switch (tag) {
         case TyStmt:
-                return v->ptr;
+                return V_PTR(*(v));
 
         case TyImport:
         {
@@ -15754,16 +15783,16 @@ cstmt(Ty *ty, Value *v)
                 s->import.pub = v_truthy(pub);
 
                 if (names != NULL) {
-                        for (int i = 0; i < vN(*names->array); ++i) {
-                                Value item = v__(*names->array, i);
-                                avP(s->import.identifiers, mkcstr(&item.items[0]));
-                                avP(s->import.aliases,     mkcstr(&item.items[1]));
+                        for (int i = 0; i < vN(*V_ARRAY(*names)); ++i) {
+                                Value item = v__(*V_ARRAY(*names), i);
+                                avP(s->import.identifiers, mkcstr(&V_ITEMS(item)[0]));
+                                avP(s->import.aliases,     mkcstr(&V_ITEMS(item)[1]));
                         }
                 }
 
                 if (hiding != NULL) {
-                        for (int i = 0; i < vN(*hiding->array); ++i) {
-                                Value item = v__(*hiding->array, i);
+                        for (int i = 0; i < vN(*V_ARRAY(*hiding)); ++i) {
+                                Value item = v__(*V_ARRAY(*hiding), i);
                                 avP(s->import.identifiers, mkcstr(&item));
                         }
                         s->import.hiding = true;
@@ -15777,8 +15806,8 @@ cstmt(Ty *ty, Value *v)
                 s->class.name = mkcstr(t_(v, 0));
 
                 Value *params = t_(v, 1);
-                for (int i = 0; i < vN(*params->array); ++i) {
-                        Value *param = v_(*params->array, i);
+                for (int i = 0; i < vN(*V_ARRAY(*params)); ++i) {
+                        Value *param = v_(*V_ARRAY(*params), i);
                         avP(s->class.type_params , cexpr(ty, param));
                 }
 
@@ -15791,15 +15820,15 @@ cstmt(Ty *ty, Value *v)
                 Value *pub = tuple_get(v, "public");
                 s->type = STATEMENT_DEFINITION;
                 s->pub = pub != NULL && value_truthy(ty, pub);
-                s->target = cexpr(ty, &v->items[0]);
-                s->value = cexpr(ty, &v->items[1]);
+                s->target = cexpr(ty, &V_ITEMS(*(v))[0]);
+                s->value = cexpr(ty, &V_ITEMS(*(v))[1]);
                 break;
         }
 
         case TyFuncDef:
         {
                 Value f = *v;
-                f.tags = tags_push(ty, 0, TyFunc);
+                f = value_with_tags(ty, f, tags_push(ty, 0, TyFunc));
                 s->type = STATEMENT_FUNCTION_DEFINITION;
                 s->value = cexpr(ty, &f);
                 s->doc = s->value->doc;
@@ -15814,7 +15843,7 @@ cstmt(Ty *ty, Value *v)
                 s->class.name = mkcstr(t_(v, "name"));
                 s->class.doc = NULL;
                 Value *super = tuple_get(v, "super");
-                s->class.super = (super != NULL && super->type != VALUE_NIL) ? cexpr(ty, super) : NULL;
+                s->class.super = (super != NULL && V_TYPE(*(super)) != VALUE_NIL) ? cexpr(ty, super) : NULL;
                 Value *pub = tuple_get(v, "public");
                 s->class.pub = (pub != NULL) && value_truthy(ty, pub);
                 Value *traits = tuple_get(v, "traits");
@@ -15826,38 +15855,38 @@ cstmt(Ty *ty, Value *v)
                 Value *s_getters = tuple_get(v, "staticGetters");
                 Value *s_setters = tuple_get(v, "staticSetters");
                 Value *s_fields = tuple_get(v, "staticFields");
-                if (traits != NULL) for (int i = 0; i < vN(*traits->array); ++i) {
-                        avP(s->class.traits, cexpr(ty, v_(*traits->array, i)));
+                if (traits != NULL) for (int i = 0; i < vN(*V_ARRAY(*traits)); ++i) {
+                        avP(s->class.traits, cexpr(ty, v_(*V_ARRAY(*traits), i)));
                 }
-                if (methods != NULL) for (int i = 0; i < methods->array->count; ++i) {
-                        if (tuple_get(v_(*methods->array, i), "name") == NULL) {
+                if (methods != NULL) for (int i = 0; i < V_ARRAY(*(methods))->count; ++i) {
+                        if (tuple_get(v_(*V_ARRAY(*methods), i), "name") == NULL) {
                                 fail("class %s has an unnamed method", s->class.name);
                         }
-                        avP(s->class.methods, cexpr(ty, &methods->array->items[i]));
+                        avP(s->class.methods, cexpr(ty, &V_ARRAY(*methods)->items[i]));
                 }
-                if (getters != NULL) for (int i = 0; i < getters->array->count; ++i) {
-                        avP(s->class.getters, cexpr(ty, &getters->array->items[i]));
+                if (getters != NULL) for (int i = 0; i < V_ARRAY(*(getters))->count; ++i) {
+                        avP(s->class.getters, cexpr(ty, &V_ARRAY(*getters)->items[i]));
                 }
-                if (setters != NULL) for (int i = 0; i < setters->array->count; ++i) {
-                        if (tuple_get(v_(*setters->array, i), "name") == NULL) {
+                if (setters != NULL) for (int i = 0; i < V_ARRAY(*(setters))->count; ++i) {
+                        if (tuple_get(v_(*V_ARRAY(*setters), i), "name") == NULL) {
                                 fail("class %s has an unnamed method", s->class.name);
                         }
-                        avP(s->class.setters, cexpr(ty, &setters->array->items[i]));
+                        avP(s->class.setters, cexpr(ty, &V_ARRAY(*setters)->items[i]));
                 }
-                if (fields != NULL) for (int i = 0; i < vN(*fields->array); ++i) {
-                        avP(s->class.fields, cexpr(ty, v_(*fields->array, i)));
+                if (fields != NULL) for (int i = 0; i < vN(*V_ARRAY(*fields)); ++i) {
+                        avP(s->class.fields, cexpr(ty, v_(*V_ARRAY(*fields), i)));
                 }
-                if (s_methods != NULL) for (int i = 0; i < vN(*s_methods->array); ++i) {
-                        avP(s->class.s_methods, cexpr(ty, v_(*s_methods->array, i)));
+                if (s_methods != NULL) for (int i = 0; i < vN(*V_ARRAY(*s_methods)); ++i) {
+                        avP(s->class.s_methods, cexpr(ty, v_(*V_ARRAY(*s_methods), i)));
                 }
-                if (s_getters != NULL) for (int i = 0; i < vN(*s_getters->array); ++i) {
-                        avP(s->class.s_getters, cexpr(ty, v_(*s_getters->array, i)));
+                if (s_getters != NULL) for (int i = 0; i < vN(*V_ARRAY(*s_getters)); ++i) {
+                        avP(s->class.s_getters, cexpr(ty, v_(*V_ARRAY(*s_getters), i)));
                 }
-                if (s_setters != NULL) for (int i = 0; i < vN(*s_setters->array); ++i) {
-                        avP(s->class.s_setters, cexpr(ty, v_(*s_setters->array, i)));
+                if (s_setters != NULL) for (int i = 0; i < vN(*V_ARRAY(*s_setters)); ++i) {
+                        avP(s->class.s_setters, cexpr(ty, v_(*V_ARRAY(*s_setters), i)));
                 }
-                if (s_fields != NULL) for (int i = 0; i < vN(*s_fields->array); ++i) {
-                        avP(s->class.s_fields, cexpr(ty, v_(*s_fields->array, i)));
+                if (s_fields != NULL) for (int i = 0; i < vN(*V_ARRAY(*s_fields)); ++i) {
+                        avP(s->class.s_fields, cexpr(ty, v_(*V_ARRAY(*s_fields), i)));
                 }
                 break;
         }
@@ -15869,10 +15898,10 @@ cstmt(Ty *ty, Value *v)
                 s->_if.neg = false;
         }
                 s->type = STATEMENT_IF;
-                s->_if.parts = cparts(ty, &v->items[0]);
-                s->_if.then = cstmt(ty, &v->items[1]);
-                if (v->count > 2 && v->items[2].type != VALUE_NIL) {
-                        s->_if._else = cstmt(ty, &v->items[2]);
+                s->_if.parts = cparts(ty, &V_ITEMS(*(v))[0]);
+                s->_if.then = cstmt(ty, &V_ITEMS(*(v))[1]);
+                if (V_COUNT(*(v)) > 2 && V_TYPE(V_ITEMS(*v)[2]) != VALUE_NIL) {
+                        s->_if._else = cstmt(ty, &V_ITEMS(*(v))[2]);
                 } else {
                         s->_if._else = NULL;
                 }
@@ -15889,16 +15918,16 @@ cstmt(Ty *ty, Value *v)
                 Value *vCatches = tuple_get(v, "catches");
                 Value *vFinally = tuple_get(v, "cleanup");
 
-                if (vCatches->type != VALUE_ARRAY) {
+                if (V_TYPE(*(vCatches)) != VALUE_ARRAY) {
                         fail("non-array `catches` in ty.Try construction: %s", SHOW(v));
                 }
 
                 s->try.s = cstmt(ty, vBody);
-                s->try.finally = (vFinally == NULL || vFinally->type == VALUE_NIL) ? NULL : cstmt(ty, vFinally);
+                s->try.finally = (vFinally == NULL || V_TYPE(*(vFinally)) == VALUE_NIL) ? NULL : cstmt(ty, vFinally);
 
-                for (int i = 0; i < vCatches->array->count; ++i) {
-                        Value *catch = &vCatches->array->items[i];
-                        if (catch->type != VALUE_TUPLE || catch->count != 2) {
+                for (int i = 0; i < V_ARRAY(*(vCatches))->count; ++i) {
+                        Value *catch = &V_ARRAY(*(vCatches))->items[i];
+                        if (V_TYPE(*(catch)) != VALUE_TUPLE || V_COUNT(*(catch)) != 2) {
                                 fail_or(
                                         "invalid `catches` entry in ty.Try construction: %s",
                                         SHOW(v)
@@ -15906,15 +15935,15 @@ cstmt(Ty *ty, Value *v)
                                         continue;
                                 }
                         }
-                        avP(s->try.patterns, cexpr(ty, &catch->items[0]));
-                        avP(s->try.handlers, cstmt(ty, &catch->items[1]));
+                        avP(s->try.patterns, cexpr(ty, &V_ITEMS(*catch)[0]));
+                        avP(s->try.handlers, cstmt(ty, &V_ITEMS(*catch)[1]));
                 }
 
                 break;
         }
 
         case TyDefer:
-                v->tags = tags_pop(ty, v->tags);
+                *v = value_with_tags(ty, *v, tags_pop(ty, V_TAGS(*v)));
                 s->type = STATEMENT_DEFER;
                 s->expression = cexpr(ty, v);
                 break;
@@ -15922,15 +15951,15 @@ cstmt(Ty *ty, Value *v)
         case TyMatch:
         {
                 s->type = STATEMENT_MATCH;
-                s->match.e = cexpr(ty, &v->items[0]);
+                s->match.e = cexpr(ty, &V_ITEMS(*(v))[0]);
                 v00(s->match.patterns);
                 v00(s->match.statements);
                 v00(s->match.conds);
-                Value *cases = &v->items[1];
-                for (int i = 0; i < cases->array->count; ++i) {
-                        Value *_case = &cases->array->items[i];
-                        avP(s->match.patterns, cexpr(ty, &_case->items[0]));
-                        avP(s->match.statements, cstmt(ty, &_case->items[1]));
+                Value *cases = &V_ITEMS(*(v))[1];
+                for (int i = 0; i < V_ARRAY(*(cases))->count; ++i) {
+                        Value *_case = &V_ARRAY(*(cases))->items[i];
+                        avP(s->match.patterns, cexpr(ty, &V_ITEMS(*_case)[0]));
+                        avP(s->match.statements, cstmt(ty, &V_ITEMS(*_case)[1]));
                         avP(s->match.conds, NULL);
 
                         if ((*vvL(s->match.patterns))->type == EXPRESSION_LIST) {
@@ -15943,15 +15972,15 @@ cstmt(Ty *ty, Value *v)
         case TyWhileMatch:
         {
                 s->type = STATEMENT_WHILE_MATCH;
-                s->match.e = cexpr(ty, &v->items[0]);
+                s->match.e = cexpr(ty, &V_ITEMS(*(v))[0]);
                 v00(s->match.patterns);
                 v00(s->match.statements);
                 v00(s->match.conds);
-                Value *cases = &v->items[1];
-                for (int i = 0; i < cases->array->count; ++i) {
-                        Value *_case = &cases->array->items[i];
-                        avP(s->match.patterns, cexpr(ty, &_case->items[0]));
-                        avP(s->match.statements, cstmt(ty, &_case->items[1]));
+                Value *cases = &V_ITEMS(*(v))[1];
+                for (int i = 0; i < V_ARRAY(*(cases))->count; ++i) {
+                        Value *_case = &V_ARRAY(*(cases))->items[i];
+                        avP(s->match.patterns, cexpr(ty, &V_ITEMS(*_case)[0]));
+                        avP(s->match.statements, cstmt(ty, &V_ITEMS(*_case)[1]));
                         avP(s->match.conds, NULL);
                 }
                 break;
@@ -15959,16 +15988,16 @@ cstmt(Ty *ty, Value *v)
 
         case TyWhile:
                 s->type = STATEMENT_WHILE;
-                s->_while.parts = cparts(ty, &v->items[0]);
-                s->_while.block = cstmt(ty, &v->items[1]);
+                s->_while.parts = cparts(ty, &V_ITEMS(*(v))[0]);
+                s->_while.block = cstmt(ty, &V_ITEMS(*(v))[1]);
                 break;
 
         case TyFor:
                 s->type = STATEMENT_FOR_LOOP;
-                s->for_loop.init = cstmt(ty, &v->items[0]);
-                s->for_loop.cond = cexpr(ty, &v->items[1]);
-                s->for_loop.next = cexpr(ty, &v->items[2]);
-                s->for_loop.body = cstmt(ty, &v->items[3]);
+                s->for_loop.init = cstmt(ty, &V_ITEMS(*(v))[0]);
+                s->for_loop.cond = cexpr(ty, &V_ITEMS(*(v))[1]);
+                s->for_loop.next = cexpr(ty, &V_ITEMS(*(v))[2]);
+                s->for_loop.body = cstmt(ty, &V_ITEMS(*(v))[3]);
                 break;
 
         case TyEach:
@@ -15977,9 +16006,9 @@ cstmt(Ty *ty, Value *v)
                 s->each.target = NewExpr(ty, EXPRESSION_LIST);
 
                 Value *ps = tuple_get(v, "pattern");
-                if (ps->type == VALUE_ARRAY) {
-                        for (int i = 0; i < ps->array->count; ++i) {
-                                avP(s->each.target->es, cexpr(ty, &ps->array->items[i]));
+                if (V_TYPE(*(ps)) == VALUE_ARRAY) {
+                        for (int i = 0; i < V_ARRAY(*(ps))->count; ++i) {
+                                avP(s->each.target->es, cexpr(ty, &V_ARRAY(*ps)->items[i]));
                         }
                 } else {
                         avP(s->each.target->es, cexpr(ty, ps));
@@ -16000,8 +16029,8 @@ cstmt(Ty *ty, Value *v)
                 s->type = STATEMENT_RETURN;
                 v00(s->returns);
                 if (wrapped_type(ty, v) == VALUE_TUPLE) {
-                        for (int i = 0; i < v->count; ++i) {
-                                avP(s->returns, cexpr(ty, &v->items[i]));
+                        for (int i = 0; i < V_COUNT(*(v)); ++i) {
+                                avP(s->returns, cexpr(ty, &V_ITEMS(*v)[i]));
                         }
                 } else {
                         Value v_ = unwrap(ty, v);
@@ -16019,14 +16048,14 @@ cstmt(Ty *ty, Value *v)
         Break:
         {
                 s->type = STATEMENT_BREAK;
-                if (v->type == VALUE_TAG) {
+                if (V_TYPE(*(v)) == VALUE_TAG) {
                         s->depth = 1;
                         s->expression = NULL;
                 } else {
                         Value *expr = tuple_get(v, "value");
                         Value *depth = tuple_get(v, "depth");
-                        s->depth = (depth == NULL || depth->type == VALUE_NIL) ? 1 : max(1, depth->z);
-                        s->expression = (expr == NULL || expr->type == VALUE_NIL) ? NULL : cexpr(ty, expr);
+                        s->depth = (depth == NULL || V_TYPE(*(depth)) == VALUE_NIL) ? 1 : max(1, V_Z(*(depth)));
+                        s->expression = (expr == NULL || V_TYPE(*(expr)) == VALUE_NIL) ? NULL : cexpr(ty, expr);
                 }
                 break;
         }
@@ -16035,13 +16064,13 @@ cstmt(Ty *ty, Value *v)
         Continue:
         {
                 s->type = STATEMENT_CONTINUE;
-                if (v->type == VALUE_TAG) {
+                if (V_TYPE(*(v)) == VALUE_TAG) {
                         s->depth = 1;
-                } else if ((v->type & ~VALUE_TAGGED) == VALUE_INTEGER) {
-                        s->depth = max(1, v->z);
+                } else if ((V_TYPE(*(v)) & ~VALUE_TAGGED) == VALUE_INTEGER) {
+                        s->depth = max(1, V_Z(*(v)));
                 } else {
                         Value *depth = tuple_get(v, "depth");
-                        s->depth = (depth == NULL || depth->type == VALUE_NIL) ? 1 : max(1, depth->z);
+                        s->depth = (depth == NULL || V_TYPE(*(depth)) == VALUE_NIL) ? 1 : max(1, V_Z(*(depth)));
                 }
                 break;
         }
@@ -16049,19 +16078,19 @@ cstmt(Ty *ty, Value *v)
         case TyBlock:
                 s->type = STATEMENT_BLOCK;
                 v00(s->statements);
-                for (int i = 0; i < v->array->count; ++i) {
-                        if (v->array->items[i].type == VALUE_NIL) {
+                for (int i = 0; i < V_ARRAY(*(v))->count; ++i) {
+                        if (V_TYPE(V_ARRAY(*v)->items[i]) == VALUE_NIL) {
                                 fail("nil in block: %s", SHOW(v));
                         }
-                        avP(s->statements, cstmt(ty, &v->array->items[i]));
+                        avP(s->statements, cstmt(ty, &V_ARRAY(*v)->items[i]));
                 }
                 break;
 
         case TyMulti:
                 s->type = STATEMENT_MULTI;
                 v00(s->statements);
-                for (int i = 0; i < v->array->count; ++i) {
-                        avP(s->statements, cstmt(ty, &v->array->items[i]));
+                for (int i = 0; i < V_ARRAY(*(v))->count; ++i) {
+                        avP(s->statements, cstmt(ty, &V_ARRAY(*v)->items[i]));
                 }
                 break;
 
@@ -16092,12 +16121,12 @@ cstmt(Ty *ty, Value *v)
 Expr *
 cexpr(Ty *ty, Value *v)
 {
-        if (v == NULL || v->type == VALUE_NIL) {
+        if (v == NULL || V_TYPE(*(v)) == VALUE_NIL) {
                 return NULL;
         }
 
         Expr *e = amA0(sizeof *e);
-        Expr *src = source_lookup(ty, v->src);
+        Expr *src = source_lookup(ty, V_SRC(*(v)));
 
         dont_printf("cexpr(): %s\n", SHOW(v));
 
@@ -16106,7 +16135,7 @@ cexpr(Ty *ty, Value *v)
         if (src == NULL && wrapped_type(ty, v) == VALUE_TUPLE) {
                 Value *src_val = tuple_get(v, "src");
                 if (src_val != NULL) {
-                        src = source_lookup(ty, src_val->src);
+                        src = source_lookup(ty, V_SRC(*(src_val)));
                 }
         }
 
@@ -16122,7 +16151,7 @@ cexpr(Ty *ty, Value *v)
 
         e->type = -1;
 
-        if (v->type == VALUE_TAG) switch (v->tag) {
+        if (V_TYPE(*(v)) == VALUE_TAG) switch (V_TAG(*(v))) {
         case TyNil:
                 e->type = EXPRESSION_NIL;
                 return e;
@@ -16136,22 +16165,22 @@ cexpr(Ty *ty, Value *v)
                 goto Any;
         }
 
-        int tag = tags_first(ty, v->tags);
+        int tag = tags_first(ty, V_TAGS(*(v)));
         Value _v = unwrap(ty, v);
 
         switch (tag) {
         case 0:
-                switch (v->type) {
+                switch (V_TYPE(*(v))) {
                 case VALUE_ARRAY:
                         e->type = EXPRESSION_LIST;
-                        for (int i = 0; i < v->array->count; ++i) {
-                                avP(e->es, cexpr(ty, &v->array->items[i]));
+                        for (int i = 0; i < V_ARRAY(*(v))->count; ++i) {
+                                avP(e->es, cexpr(ty, &V_ARRAY(*v)->items[i]));
                         }
                         break;
 
                 case VALUE_TYPE:
                         e->type = EXPRESSION_TYPE;
-                        e->_type = v->ptr;
+                        e->_type = V_PTR(*(v));
                         break;
 
                 case VALUE_STRING:
@@ -16165,11 +16194,11 @@ cexpr(Ty *ty, Value *v)
                 break;
 
         case TyExpr:
-                return v->ptr;
+                return V_PTR(*(v));
 
         case TyResolved:
                 e->type = EXPRESSION_RESOLVED;
-                e->value = v->ptr;
+                e->value = V_PTR(*(v));
                 break;
 
         case TyType:
@@ -16185,10 +16214,7 @@ cexpr(Ty *ty, Value *v)
 
                 *value = *v;
 
-                value->tags = tags_pop(ty, value->tags);
-                if (value->tags == 0) {
-                        value->type &= ~VALUE_TAGGED;
-                }
+                *value = value_with_tags(ty, *value, tags_pop(ty, V_TAGS(*value)));
 
                 e->type = EXPRESSION_VALUE;
                 e->v = value;
@@ -16200,17 +16226,17 @@ cexpr(Ty *ty, Value *v)
 
         case TyInt:
                 e->type = EXPRESSION_INTEGER;
-                e->integer = v->z;
+                e->integer = V_Z(*(v));
                 break;
 
         case TyFloat:
                 e->type = EXPRESSION_REAL;
-                e->real = v->real;
+                e->real = V_REAL(*(v));
                 break;
 
         case TyRegex:
                 e->type = EXPRESSION_REGEX;
-                e->regex = v->regex;
+                e->regex = V_REGEX(*(v));
                 break;
 
         case TyOperator:
@@ -16229,8 +16255,8 @@ cexpr(Ty *ty, Value *v)
 
                 Value *mod = tuple_get(v, "module");
                 Value *constraint = tuple_get(v, "constraint");
-                e->module = (mod != NULL && mod->type != VALUE_NIL) ? mkcstr(mod) : NULL;
-                e->constraint = (constraint != NULL && constraint->type != VALUE_NIL) ? cexpr(ty, constraint) : NULL;
+                e->module = (mod != NULL && V_TYPE(*(mod)) != VALUE_NIL) ? mkcstr(mod) : NULL;
+                e->constraint = (constraint != NULL && V_TYPE(*(constraint)) != VALUE_NIL) ? cexpr(ty, constraint) : NULL;
 
                 if (e->module == NULL && s_eq(e->identifier, "__line__")) {
                         e->start = STATE.mstart;
@@ -16246,8 +16272,8 @@ cexpr(Ty *ty, Value *v)
                 e->identifier = mkcstr(tuple_get(v, "name"));
                 Value *mod = tuple_get(v, "module");
                 Value *constraint = tuple_get(v, "constraint");
-                e->module = (mod != NULL && mod->type != VALUE_NIL) ? mkcstr(mod) : NULL;
-                e->constraint = (constraint != NULL && constraint->type != VALUE_NIL) ? cexpr(ty, constraint) : NULL;
+                e->module = (mod != NULL && V_TYPE(*(mod)) != VALUE_NIL) ? mkcstr(mod) : NULL;
+                e->constraint = (constraint != NULL && V_TYPE(*(constraint)) != VALUE_NIL) ? cexpr(ty, constraint) : NULL;
                 e->aliased = cexpr(ty, tuple_get(v, "pattern"));
                 break;
         }
@@ -16266,8 +16292,8 @@ cexpr(Ty *ty, Value *v)
 
         case TyAny:
         {
-                if (v->count > 0) {
-                        e->constraint = cexpr(ty, &v->items[0]);
+                if (V_COUNT(*(v)) > 0) {
+                        e->constraint = cexpr(ty, &V_ITEMS(*(v))[0]);
                 } else {
                         e->constraint = NULL;
                 }
@@ -16283,7 +16309,7 @@ cexpr(Ty *ty, Value *v)
                 e->type = EXPRESSION_RESOURCE_BINDING;
                 e->identifier = mkcstr(tuple_get(v, "name"));
                 Value *mod = tuple_get(v, "module");
-                e->module = (mod != NULL && mod->type != VALUE_NIL) ? mkcstr(mod) : NULL;
+                e->module = (mod != NULL && V_TYPE(*(mod)) != VALUE_NIL) ? mkcstr(mod) : NULL;
                 break;
         }
 
@@ -16305,10 +16331,10 @@ cexpr(Ty *ty, Value *v)
         {
                 e->type = EXPRESSION_TAG_APPLICATION;
 
-                Expr *t = cexpr(ty, &v->items[0]);
+                Expr *t = cexpr(ty, &V_ITEMS(*(v))[0]);
 
                 if (t->type == EXPRESSION_VALUE) {
-                        if (t->v->type != VALUE_TAG) {
+                        if (V_TYPE(*(t->v)) != VALUE_TAG) {
                                 goto Bad;
                         }
                         e->identifier = (char *)EmptyString;
@@ -16317,14 +16343,14 @@ cexpr(Ty *ty, Value *v)
                         COPY_EXPR(e, t);
                 }
 
-                if (v->count < 2) {
+                if (V_COUNT(*(v)) < 2) {
                         goto Bad;
-                } if (v->count == 2) {
-                        e->tagged = cexpr(ty, &v->items[1]);
+                } if (V_COUNT(*(v)) == 2) {
+                        e->tagged = cexpr(ty, &V_ITEMS(*(v))[1]);
                 } else {
                         e->tagged = NewExpr(ty, EXPRESSION_TUPLE);
-                        for (int i = 1; i < v->count; ++i) {
-                                avP(e->tagged->es, cexpr(ty, &v->items[i]));
+                        for (int i = 1; i < V_COUNT(*(v)); ++i) {
+                                avP(e->tagged->es, cexpr(ty, &V_ITEMS(*v)[i]));
                                 avP(e->tagged->names, NULL);
                                 avP(e->tagged->tconds, NULL);
                                 avP(e->tagged->required, true);
@@ -16346,14 +16372,14 @@ cexpr(Ty *ty, Value *v)
         {
                 e->type = EXPRESSION_SPECIAL_STRING;
 
-                for (int i = 0; i < v->array->count; ++i) {
-                        Value *x = &v->array->items[i];
-                        if (x->type == VALUE_STRING) {
+                for (int i = 0; i < V_ARRAY(*(v))->count; ++i) {
+                        Value *x = &V_ARRAY(*(v))->items[i];
+                        if (V_TYPE(*(x)) == VALUE_STRING) {
                                 avP(e->strings, mkcstr(x));
-                        } else if (x->type == VALUE_TUPLE) {
-                                avP(e->expressions, cexpr(ty, &x->items[0]));
-                                avP(e->fmts, cexpr(ty, &x->items[1]));
-                                avP(e->widths, (x->count > 2) ? x->items[2].z : 0);
+                        } else if (V_TYPE(*(x)) == VALUE_TUPLE) {
+                                avP(e->expressions, cexpr(ty, &V_ITEMS(*x)[0]));
+                                avP(e->fmts, cexpr(ty, &V_ITEMS(*x)[1]));
+                                avP(e->widths, (V_COUNT(*x) > 2) ? V_Z(V_ITEMS(*x)[2]) : 0);
                                 avP(e->fmtfs, cexpr(ty, tget_nn(x, 3)));
                         } else {
                                 avP(e->expressions, cexpr(ty, x));
@@ -16363,7 +16389,7 @@ cexpr(Ty *ty, Value *v)
                         }
                 }
 
-                if (vN(*v->array) == 0 || vvL(*v->array)->type != VALUE_STRING) {
+                if (vN(*V_ARRAY(*v)) == 0 || V_TYPE(*vvL(*V_ARRAY(*v))) != VALUE_STRING) {
                         avP(e->strings, "");
                 }
                 break;
@@ -16373,8 +16399,8 @@ cexpr(Ty *ty, Value *v)
         {
                 e->type = EXPRESSION_ARRAY;
 
-                for (int i = 0; i < vN(*v->array); ++i) {
-                        Value *entry    = v_(*v->array, i);
+                for (int i = 0; i < vN(*V_ARRAY(*v)); ++i) {
+                        Value *entry    = v_(*V_ARRAY(*v), i);
 
                         Value *item     = tuple_get(entry, "item");
                         Value *optional = tuple_get(entry, "optional");
@@ -16385,8 +16411,8 @@ cexpr(Ty *ty, Value *v)
                         }
 
                         avP(e->elements, cexpr(ty, tuple_get(entry, "item")));
-                        avP(e->optional, optional != NULL ? optional->boolean : false);
-                        avP(e->aconds, (cond != NULL && cond->type != VALUE_NIL) ? cexpr(ty, cond) : NULL);
+                        avP(e->optional, optional != NULL ? V_BOOL(*optional) : false);
+                        avP(e->aconds, (cond != NULL && V_TYPE(*cond) != VALUE_NIL) ? cexpr(ty, cond) : NULL);
                 }
 
                 break;
@@ -16396,8 +16422,8 @@ cexpr(Ty *ty, Value *v)
         {
                 e->type = EXPRESSION_TYPE_UNION;
 
-                for (int i = 0; i < vN(*v->array); ++i) {
-                        Value *alt = v_(*v->array, i);
+                for (int i = 0; i < vN(*V_ARRAY(*v)); ++i) {
+                        Value *alt = v_(*V_ARRAY(*v), i);
                         avP(e->es, cexpr(ty, alt));
                 }
 
@@ -16408,12 +16434,12 @@ cexpr(Ty *ty, Value *v)
         {
                 e->type = EXPRESSION_TUPLE;
 
-                if (_v.type != VALUE_ARRAY) {
+                if (V_TYPE(_v) != VALUE_ARRAY) {
                         goto Bad;
                 }
 
-                for (int i = 0; i < vN(*_v.array); ++i) {
-                        Value *entry = v_(*_v.array, i);
+                for (int i = 0; i < vN(*V_ARRAY(_v)); ++i) {
+                        Value *entry = v_(*V_ARRAY(_v), i);
 
                         Value *item     = tuple_get(entry, "item");
                         Value *name     = tget_t(entry, "name", VALUE_STRING);
@@ -16426,7 +16452,7 @@ cexpr(Ty *ty, Value *v)
 
                         avP(e->es, cexpr(ty, item));
                         avP(e->names, (name != NULL) ? mkcstr(name) : NULL);
-                        avP(e->required, optional != NULL ? !optional->boolean : true);
+                        avP(e->required, optional != NULL ? !V_BOOL(*optional) : true);
                         avP(e->tconds, cexpr(ty, cond));
                 }
 
@@ -16437,8 +16463,8 @@ cexpr(Ty *ty, Value *v)
         {
                 e->type = EXPRESSION_CHOICE_PATTERN;
 
-                for (int i = 0; i < v->array->count; ++i) {
-                        Value *entry = &v->array->items[i];
+                for (int i = 0; i < V_ARRAY(*(v))->count; ++i) {
+                        Value *entry = &V_ARRAY(*(v))->items[i];
                         avP(e->es, cexpr(ty, entry));
                         avP(e->names, NULL);
                         avP(e->required, true);
@@ -16456,11 +16482,11 @@ cexpr(Ty *ty, Value *v)
                 Value *items = tuple_get(v, "items");
                 Value *dflt = tuple_get(v, "default");
 
-                e->dflt = (dflt != NULL && dflt->type != VALUE_NIL) ? cexpr(ty, dflt) : NULL;
+                e->dflt = (dflt != NULL && V_TYPE(*(dflt)) != VALUE_NIL) ? cexpr(ty, dflt) : NULL;
 
-                for (int i = 0; i < items->array->count; ++i) {
-                        avP(e->keys, cexpr(ty, &v__(items->array->items[i], 0)));
-                        avP(e->values, cexpr(ty, &v__(items->array->items[i], 1)));
+                for (int i = 0; i < V_ARRAY(*(items))->count; ++i) {
+                        avP(e->keys, cexpr(ty, &V_ITEMS(V_ARRAY(*items)->items[i])[0]));
+                        avP(e->values, cexpr(ty, &V_ITEMS(V_ARRAY(*items)->items[i])[1]));
                 }
 
                 break;
@@ -16475,14 +16501,14 @@ cexpr(Ty *ty, Value *v)
 
                 Value *args = t_(v, "args");
 
-                for (int i = 0; i < vN(*args->array); ++i) {
-                        Value *arg = v_(*args->array, i);
+                for (int i = 0; i < vN(*V_ARRAY(*args)); ++i) {
+                        Value *arg = v_(*V_ARRAY(*args), i);
                         Value *name = tuple_get(arg, "name");
                         Value *cond = tuple_get(arg, "cond");
-                        if (cond != NULL && cond->type == VALUE_NIL) {
+                        if (cond != NULL && V_TYPE(*(cond)) == VALUE_NIL) {
                                 cond = NULL;
                         }
-                        if (name == NULL || name->type == VALUE_NIL) {
+                        if (name == NULL || V_TYPE(*(name)) == VALUE_NIL) {
                                 avP(e->args, cexpr(ty, t_(arg, "arg")));
                                 avP(e->fconds, cexpr(ty, cond));
                         } else {
@@ -16525,8 +16551,8 @@ cexpr(Ty *ty, Value *v)
 
                 Value *args = tuple_get(v, "args");
 
-                for (int i = 0; i < args->array->count; ++i) {
-                        Value *arg = &args->array->items[i];
+                for (int i = 0; i < V_ARRAY(*(args))->count; ++i) {
+                        Value *arg = &V_ARRAY(*(args))->items[i];
                         Value *cond = tget_nn(arg, "cond");
                         Value *name = tget_t(arg, "name", VALUE_STRING);
 
@@ -16574,28 +16600,28 @@ cexpr(Ty *ty, Value *v)
                 e->doc           = mkcstr(doc);
                 e->proto         = mkcstr(proto);
                 e->return_type   = (rt != NULL) ? cexpr(ty, rt) : NULL;
-                e->star          = (star != NULL) ? star->boolean : false;
+                e->star          = (star != NULL) ? V_BOOL(*(star)) : false;
 
                 if (decorators != NULL) {
-                        for (int i = 0; i < vN(*decorators->array); ++i) {
+                        for (int i = 0; i < vN(*V_ARRAY(*decorators)); ++i) {
                                 avP(
                                         e->decorators,
-                                        cexpr(ty, v_(*decorators->array, i))
+                                        cexpr(ty, v_(*V_ARRAY(*decorators), i))
                                 );
                         }
                 }
 
                 if (type_params != NULL) {
-                        for (int i = 0; i < vN(*type_params->array); ++i) {
-                                Value *tp = v_(*type_params->array, i);
+                        for (int i = 0; i < vN(*V_ARRAY(*type_params)); ++i) {
+                                Value *tp = v_(*V_ARRAY(*type_params), i);
                                 avP(e->type_params, cexpr(ty, tp));
                         }
                 }
 
                 if (params != NULL) {
-                        for (int i = 0; i < vN(*params->array); ++i) {
-                                Value *p = v_(*params->array, i);
-                                switch (tags_first(ty, p->tags)) {
+                        for (int i = 0; i < vN(*V_ARRAY(*params)); ++i) {
+                                Value *p = v_(*V_ARRAY(*params), i);
+                                switch (tags_first(ty, V_TAGS(*(p)))) {
                                 case TyParam:
                                 {
                                         avP(e->params, mkcstr(t_(p, "name")));
@@ -16621,7 +16647,7 @@ cexpr(Ty *ty, Value *v)
                                         break;
 
                                 default:
-                                        if (p->type == VALUE_STRING) {
+                                        if (V_TYPE(*(p)) == VALUE_STRING) {
                                                 avP(e->params, mkcstr(p));
                                                 avP(e->constraints, NULL);
                                                 avP(e->dflts, NULL);
@@ -16653,8 +16679,8 @@ cexpr(Ty *ty, Value *v)
                         goto Bad;
                 }
 
-                for (usize i = 0; i < vN(*parts->array); ++i) {
-                        Value *part = v_(*parts->array, i);
+                for (usize i = 0; i < vN(*V_ARRAY(*parts)); ++i) {
+                        Value *part = v_(*V_ARRAY(*parts), i);
                         Value *pattern = tuple_get(part, "pattern");
                         Value *iter    = tuple_get(part, "iter");
                         Value *_while  = tuple_get(part, "while");
@@ -16674,13 +16700,13 @@ cexpr(Ty *ty, Value *v)
                         }));
                 }
 
-                for (int i = 0; i < vN(*items->array); ++i) {
-                        Value *entry = v_(*items->array, i);
+                for (int i = 0; i < vN(*V_ARRAY(*items)); ++i) {
+                        Value *entry = v_(*V_ARRAY(*items), i);
                         Value *optional = tuple_get(entry, "optional");
                         Value *cond = tuple_get(entry, "cond");
                         avP(e->elements, cexpr(ty, tuple_get(entry, "item")));
-                        avP(e->optional, optional != NULL ? optional->boolean : false);
-                        avP(e->aconds, (cond != NULL && cond->type != VALUE_NIL) ? cexpr(ty, cond) : NULL);
+                        avP(e->optional, optional != NULL ? V_BOOL(*optional) : false);
+                        avP(e->aconds, (cond != NULL && V_TYPE(*cond) != VALUE_NIL) ? cexpr(ty, cond) : NULL);
                 }
 
                 break;
@@ -16698,8 +16724,8 @@ cexpr(Ty *ty, Value *v)
                         goto Bad;
                 }
 
-                for (usize i = 0; i < vN(*parts->array); ++i) {
-                        Value *part    = v_(*parts->array, i);
+                for (usize i = 0; i < vN(*V_ARRAY(*parts)); ++i) {
+                        Value *part    = v_(*V_ARRAY(*parts), i);
                         Value *pattern = tuple_get(part, "pattern");
                         Value *iter    = tuple_get(part, "iter");
                         Value *_while  = tuple_get(part, "while");
@@ -16719,8 +16745,8 @@ cexpr(Ty *ty, Value *v)
                         }));
                 }
 
-                for (int i = 0; i < vN(*items->array); ++i) {
-                        Value entry = unwrap(ty, v_(*items->array, i));
+                for (int i = 0; i < vN(*V_ARRAY(*items)); ++i) {
+                        Value entry = unwrap(ty, v_(*V_ARRAY(*items), i));
                         Value *key = tget_nn(&entry, 0);
                         Value *value = tget_nn(&entry, 1);
                         avP(e->keys, cexpr(ty, key));
@@ -16735,44 +16761,44 @@ cexpr(Ty *ty, Value *v)
         case TyTryMemberAccess:
                 e->maybe = true;
         case TyMemberAccess:
-                if (v->items[0].type == VALUE_NIL) {
+                if (V_TYPE(V_ITEMS(*v)[0]) == VALUE_NIL) {
                         e->type = EXPRESSION_SELF_ACCESS;
                 } else {
                         e->type = EXPRESSION_MEMBER_ACCESS;
-                        e->object = cexpr(ty, &v->items[0]);
+                        e->object = cexpr(ty, &V_ITEMS(*(v))[0]);
                         if (e->object == NULL) {
                                 goto Bad;
                         }
                 }
                 e->member = NewExpr(ty, EXPRESSION_IDENTIFIER);
-                e->member->identifier = mkcstr(&v->items[1]);
+                e->member->identifier = mkcstr(&V_ITEMS(*v)[1]);
                 break;
 
         case TyDynMemberAccess:
                 e->type = EXPRESSION_DYN_MEMBER_ACCESS;
-                e->object = cexpr(ty, &v->items[0]);
-                e->member = cexpr(ty, &v->items[1]);
+                e->object = cexpr(ty, &V_ITEMS(*(v))[0]);
+                e->member = cexpr(ty, &V_ITEMS(*(v))[1]);
                 break;
 
         case TyTryDynMemberAccess:
                 e->type = EXPRESSION_DYN_MEMBER_ACCESS;
                 e->maybe = true;
-                e->object = cexpr(ty, &v->items[0]);
-                e->member = cexpr(ty, &v->items[1]);
+                e->object = cexpr(ty, &V_ITEMS(*(v))[0]);
+                e->member = cexpr(ty, &V_ITEMS(*(v))[1]);
                 break;
 
         case TySubscript:
                 e->type = EXPRESSION_SUBSCRIPT;
-                e->container = cexpr(ty, &v->items[0]);
-                e->subscript = cexpr(ty, &v->items[1]);
+                e->container = cexpr(ty, &V_ITEMS(*(v))[0]);
+                e->subscript = cexpr(ty, &V_ITEMS(*(v))[1]);
                 break;
 
         case TySlice:
                 e->type = EXPRESSION_SLICE;
-                e->slice.e = cexpr(ty, &v->items[0]);
-                e->slice.i = cexpr(ty, &v->items[1]);
-                e->slice.j = cexpr(ty, &v->items[2]);
-                e->slice.k = cexpr(ty, &v->items[3]);
+                e->slice.e = cexpr(ty, &V_ITEMS(*(v))[0]);
+                e->slice.i = cexpr(ty, &V_ITEMS(*(v))[1]);
+                e->slice.j = cexpr(ty, &V_ITEMS(*(v))[2]);
+                e->slice.k = cexpr(ty, &V_ITEMS(*(v))[3]);
                 break;
 
         case TyEval:
@@ -16783,13 +16809,13 @@ cexpr(Ty *ty, Value *v)
         case TyYield:
                 e->type = EXPRESSION_YIELD;
                 v00(e->es);
-                if ((v->type & ~VALUE_TAGGED) == VALUE_ARRAY) {
-                        for (int i = 0; i < v->array->count; ++i) {
-                                avP(e->es, cexpr(ty, &v->array->items[i]));
+                if ((V_TYPE(*(v)) & ~VALUE_TAGGED) == VALUE_ARRAY) {
+                        for (int i = 0; i < V_ARRAY(*(v))->count; ++i) {
+                                avP(e->es, cexpr(ty, &V_ARRAY(*v)->items[i]));
                         }
                 } else {
                         Value v_ = *v;
-                        v_.tags = tags_pop(ty, v_.tags);
+                        v_ = value_with_tags(ty, v_, tags_pop(ty, V_TAGS(v_)));
                         avP(e->es, cexpr(ty, &v_));
                 }
                 break;
@@ -16804,277 +16830,277 @@ cexpr(Ty *ty, Value *v)
                 Value *lets = tget_t(v, 0, VALUE_ARRAY);
                 StmtVec defs = {0};
                 if (lets != NULL) {
-                        vfor(*lets->array, avP(defs, cstmt(ty, it)));
+                        vfor(*V_ARRAY(*lets), avP(defs, cstmt(ty, it)));
                 }
-                make_with(ty, e, defs, cstmt(ty, &v->items[1]));
+                make_with(ty, e, defs, cstmt(ty, &V_ITEMS(*(v))[1]));
                 break;
         }
 
         case TyCast:
                 e->type = EXPRESSION_CAST;
-                e->left = cexpr(ty, &v->items[0]);
-                e->right = cexpr(ty, &v->items[1]);
+                e->left = cexpr(ty, &V_ITEMS(*(v))[0]);
+                e->right = cexpr(ty, &V_ITEMS(*(v))[1]);
                 break;
 
         case TyCond:
                 e->type = EXPRESSION_CONDITIONAL;
-                e->cond = cexpr(ty, &v->items[0]);
-                e->then = cexpr(ty, &v->items[1]);
-                e->_else = cexpr(ty, &v->items[2]);
+                e->cond = cexpr(ty, &V_ITEMS(*(v))[0]);
+                e->then = cexpr(ty, &V_ITEMS(*(v))[1]);
+                e->_else = cexpr(ty, &V_ITEMS(*(v))[2]);
                 break;
 
         case TyBool:
                 e->type = EXPRESSION_BOOLEAN;
-                e->boolean = v->boolean;
+                e->boolean = V_BOOL(*(v));
                 break;
 
         case TyAssign:
                 e->type = EXPRESSION_EQ;
-                e->target = cexpr(ty, &v->items[0]);
-                e->value = cexpr(ty, &v->items[1]);
+                e->target = cexpr(ty, &V_ITEMS(*(v))[0]);
+                e->value = cexpr(ty, &V_ITEMS(*(v))[1]);
                 break;
 
         case TyMutAdd:
                 e->type = EXPRESSION_PLUS_EQ;
-                e->target = cexpr(ty, &v->items[0]);
-                e->value = cexpr(ty, &v->items[1]);
+                e->target = cexpr(ty, &V_ITEMS(*(v))[0]);
+                e->value = cexpr(ty, &V_ITEMS(*(v))[1]);
                 break;
 
         case TyMutSub:
                 e->type = EXPRESSION_MINUS_EQ;
-                e->target = cexpr(ty, &v->items[0]);
-                e->value = cexpr(ty, &v->items[1]);
+                e->target = cexpr(ty, &V_ITEMS(*(v))[0]);
+                e->value = cexpr(ty, &V_ITEMS(*(v))[1]);
                 break;
 
         case TyMutMul:
                 e->type = EXPRESSION_STAR_EQ;
-                e->target = cexpr(ty, &v->items[0]);
-                e->value = cexpr(ty, &v->items[1]);
+                e->target = cexpr(ty, &V_ITEMS(*(v))[0]);
+                e->value = cexpr(ty, &V_ITEMS(*(v))[1]);
                 break;
 
         case TyMutDiv:
                 e->type = EXPRESSION_DIV_EQ;
-                e->target = cexpr(ty, &v->items[0]);
-                e->value = cexpr(ty, &v->items[1]);
+                e->target = cexpr(ty, &V_ITEMS(*(v))[0]);
+                e->value = cexpr(ty, &V_ITEMS(*(v))[1]);
                 break;
 
         case TyMutMod:
                 e->type = EXPRESSION_MOD_EQ;
-                e->target = cexpr(ty, &v->items[0]);
-                e->value = cexpr(ty, &v->items[1]);
+                e->target = cexpr(ty, &V_ITEMS(*(v))[0]);
+                e->value = cexpr(ty, &V_ITEMS(*(v))[1]);
                 break;
 
         case TyMutAnd:
                 e->type = EXPRESSION_AND_EQ;
-                e->target = cexpr(ty, &v->items[0]);
-                e->value = cexpr(ty, &v->items[1]);
+                e->target = cexpr(ty, &V_ITEMS(*(v))[0]);
+                e->value = cexpr(ty, &V_ITEMS(*(v))[1]);
                 break;
 
         case TyMutOr:
                 e->type = EXPRESSION_OR_EQ;
-                e->target = cexpr(ty, &v->items[0]);
-                e->value = cexpr(ty, &v->items[1]);
+                e->target = cexpr(ty, &V_ITEMS(*(v))[0]);
+                e->value = cexpr(ty, &V_ITEMS(*(v))[1]);
                 break;
 
         case TyMutXor:
                 e->type = EXPRESSION_XOR_EQ;
-                e->target = cexpr(ty, &v->items[0]);
-                e->value = cexpr(ty, &v->items[1]);
+                e->target = cexpr(ty, &V_ITEMS(*(v))[0]);
+                e->value = cexpr(ty, &V_ITEMS(*(v))[1]);
                 break;
 
         case TyMutShl:
                 e->type = EXPRESSION_SHL_EQ;
-                e->target = cexpr(ty, &v->items[0]);
-                e->value = cexpr(ty, &v->items[1]);
+                e->target = cexpr(ty, &V_ITEMS(*(v))[0]);
+                e->value = cexpr(ty, &V_ITEMS(*(v))[1]);
                 break;
 
         case TyMutShr:
                 e->type = EXPRESSION_SHR_EQ;
-                e->target = cexpr(ty, &v->items[0]);
-                e->value = cexpr(ty, &v->items[1]);
+                e->target = cexpr(ty, &V_ITEMS(*(v))[0]);
+                e->value = cexpr(ty, &V_ITEMS(*(v))[1]);
                 break;
 
         case TyDotDot:
                 e->type = EXPRESSION_DOT_DOT;
-                e->left = cexpr(ty, &v->items[0]);
-                e->right = cexpr(ty, &v->items[1]);
+                e->left = cexpr(ty, &V_ITEMS(*(v))[0]);
+                e->right = cexpr(ty, &V_ITEMS(*(v))[1]);
                 break;
 
         case TyDotDotDot:
                 e->type = EXPRESSION_DOT_DOT_DOT;
-                e->left = cexpr(ty, &v->items[0]);
-                e->right = cexpr(ty, &v->items[1]);
+                e->left = cexpr(ty, &V_ITEMS(*(v))[0]);
+                e->right = cexpr(ty, &V_ITEMS(*(v))[1]);
                 break;
 
         case TyView:
                 e->type = EXPRESSION_VIEW_PATTERN;
-                e->left = cexpr(ty, &v->items[0]);
-                e->right = cexpr(ty, &v->items[1]);
+                e->left = cexpr(ty, &V_ITEMS(*(v))[0]);
+                e->right = cexpr(ty, &V_ITEMS(*(v))[1]);
                 break;
 
         case TyNotNilView:
                 e->type = EXPRESSION_NOT_NIL_VIEW_PATTERN;
-                e->left = cexpr(ty, &v->items[0]);
-                e->right = cexpr(ty, &v->items[1]);
+                e->left = cexpr(ty, &V_ITEMS(*(v))[0]);
+                e->right = cexpr(ty, &V_ITEMS(*(v))[1]);
                 break;
 
         case TyWtf:
                 e->type = EXPRESSION_WTF;
-                e->left = cexpr(ty, &v->items[0]);
-                e->right = cexpr(ty, &v->items[1]);
+                e->left = cexpr(ty, &V_ITEMS(*(v))[0]);
+                e->right = cexpr(ty, &V_ITEMS(*(v))[1]);
                 break;
 
         case TyAdd:
                 e->type = EXPRESSION_PLUS;
-                e->left = cexpr(ty, &v->items[0]);
-                e->right = cexpr(ty, &v->items[1]);
+                e->left = cexpr(ty, &V_ITEMS(*(v))[0]);
+                e->right = cexpr(ty, &V_ITEMS(*(v))[1]);
                 break;
 
         case TySub:
                 e->type = EXPRESSION_MINUS;
-                e->left = cexpr(ty, &v->items[0]);
-                e->right = cexpr(ty, &v->items[1]);
+                e->left = cexpr(ty, &V_ITEMS(*(v))[0]);
+                e->right = cexpr(ty, &V_ITEMS(*(v))[1]);
                 break;
 
         case TyMod:
                 e->type = EXPRESSION_PERCENT;
-                e->left = cexpr(ty, &v->items[0]);
-                e->right = cexpr(ty, &v->items[1]);
+                e->left = cexpr(ty, &V_ITEMS(*(v))[0]);
+                e->right = cexpr(ty, &V_ITEMS(*(v))[1]);
                 break;
 
         case TyDiv:
                 e->type = EXPRESSION_DIV;
-                e->left = cexpr(ty, &v->items[0]);
-                e->right = cexpr(ty, &v->items[1]);
+                e->left = cexpr(ty, &V_ITEMS(*(v))[0]);
+                e->right = cexpr(ty, &V_ITEMS(*(v))[1]);
                 break;
 
         case TyMul:
                 e->type = EXPRESSION_STAR;
-                e->left = cexpr(ty, &v->items[0]);
-                e->right = cexpr(ty, &v->items[1]);
+                e->left = cexpr(ty, &V_ITEMS(*(v))[0]);
+                e->right = cexpr(ty, &V_ITEMS(*(v))[1]);
                 break;
 
         case TyXor:
                 e->type = EXPRESSION_XOR;
-                e->left = cexpr(ty, &v->items[0]);
-                e->right = cexpr(ty, &v->items[1]);
+                e->left = cexpr(ty, &V_ITEMS(*(v))[0]);
+                e->right = cexpr(ty, &V_ITEMS(*(v))[1]);
                 break;
 
         case TyShl:
                 e->type = EXPRESSION_SHL;
-                e->left = cexpr(ty, &v->items[0]);
-                e->right = cexpr(ty, &v->items[1]);
+                e->left = cexpr(ty, &V_ITEMS(*(v))[0]);
+                e->right = cexpr(ty, &V_ITEMS(*(v))[1]);
                 break;
 
         case TyShr:
                 e->type = EXPRESSION_SHR;
-                e->left = cexpr(ty, &v->items[0]);
-                e->right = cexpr(ty, &v->items[1]);
+                e->left = cexpr(ty, &V_ITEMS(*(v))[0]);
+                e->right = cexpr(ty, &V_ITEMS(*(v))[1]);
                 break;
 
         case TyEq:
                 e->type = EXPRESSION_DBL_EQ;
-                e->left = cexpr(ty, &v->items[0]);
-                e->right = cexpr(ty, &v->items[1]);
+                e->left = cexpr(ty, &V_ITEMS(*(v))[0]);
+                e->right = cexpr(ty, &V_ITEMS(*(v))[1]);
                 break;
 
         case TyNotEq:
                 e->type = EXPRESSION_NOT_EQ;
-                e->left = cexpr(ty, &v->items[0]);
-                e->right = cexpr(ty, &v->items[1]);
+                e->left = cexpr(ty, &V_ITEMS(*(v))[0]);
+                e->right = cexpr(ty, &V_ITEMS(*(v))[1]);
                 break;
 
         case TyGT:
                 e->type = EXPRESSION_GT;
-                e->left = cexpr(ty, &v->items[0]);
-                e->right = cexpr(ty, &v->items[1]);
+                e->left = cexpr(ty, &V_ITEMS(*(v))[0]);
+                e->right = cexpr(ty, &V_ITEMS(*(v))[1]);
                 break;
 
         case TyGEQ:
                 e->type = EXPRESSION_GEQ;
-                e->left = cexpr(ty, &v->items[0]);
-                e->right = cexpr(ty, &v->items[1]);
+                e->left = cexpr(ty, &V_ITEMS(*(v))[0]);
+                e->right = cexpr(ty, &V_ITEMS(*(v))[1]);
                 break;
 
         case TyLT:
                 e->type = EXPRESSION_LT;
-                e->left = cexpr(ty, &v->items[0]);
-                e->right = cexpr(ty, &v->items[1]);
+                e->left = cexpr(ty, &V_ITEMS(*(v))[0]);
+                e->right = cexpr(ty, &V_ITEMS(*(v))[1]);
                 break;
 
         case TyLEQ:
                 e->type = EXPRESSION_LEQ;
-                e->left = cexpr(ty, &v->items[0]);
-                e->right = cexpr(ty, &v->items[1]);
+                e->left = cexpr(ty, &V_ITEMS(*(v))[0]);
+                e->right = cexpr(ty, &V_ITEMS(*(v))[1]);
                 break;
 
         case TyCmp:
                 e->type = EXPRESSION_CMP;
-                e->left = cexpr(ty, &v->items[0]);
-                e->right = cexpr(ty, &v->items[1]);
+                e->left = cexpr(ty, &V_ITEMS(*(v))[0]);
+                e->right = cexpr(ty, &V_ITEMS(*(v))[1]);
                 break;
 
         case TyMatches:
                 e->type = EXPRESSION_CHECK_MATCH;
-                e->left = cexpr(ty, &v->items[0]);
-                e->right = cexpr(ty, &v->items[1]);
+                e->left = cexpr(ty, &V_ITEMS(*(v))[0]);
+                e->right = cexpr(ty, &V_ITEMS(*(v))[1]);
                 break;
 
         case TyIn:
                 e->type = EXPRESSION_IN;
-                e->left = cexpr(ty, &v->items[0]);
-                e->right = cexpr(ty, &v->items[1]);
+                e->left = cexpr(ty, &V_ITEMS(*(v))[0]);
+                e->right = cexpr(ty, &V_ITEMS(*(v))[1]);
                 break;
 
         case TyNotIn:
                 e->type = EXPRESSION_NOT_IN;
-                e->left = cexpr(ty, &v->items[0]);
-                e->right = cexpr(ty, &v->items[1]);
+                e->left = cexpr(ty, &V_ITEMS(*(v))[0]);
+                e->right = cexpr(ty, &V_ITEMS(*(v))[1]);
                 break;
 
         case TyOr:
                 e->type = EXPRESSION_OR;
-                e->left = cexpr(ty, &v->items[0]);
-                e->right = cexpr(ty, &v->items[1]);
+                e->left = cexpr(ty, &V_ITEMS(*(v))[0]);
+                e->right = cexpr(ty, &V_ITEMS(*(v))[1]);
                 break;
 
         case TyAnd:
                 e->type = EXPRESSION_AND;
-                e->left = cexpr(ty, &v->items[0]);
-                e->right = cexpr(ty, &v->items[1]);
+                e->left = cexpr(ty, &V_ITEMS(*(v))[0]);
+                e->right = cexpr(ty, &V_ITEMS(*(v))[1]);
                 break;
 
         case TyKwAnd:
                 e->type = EXPRESSION_KW_AND;
-                e->left = cexpr(ty, &v->items[0]);
-                e->p_cond = cparts(ty, &v->items[1]);
+                e->left = cexpr(ty, &V_ITEMS(*(v))[0]);
+                e->p_cond = cparts(ty, &V_ITEMS(*(v))[1]);
                 break;
 
         case TyBitAnd:
                 e->type = EXPRESSION_BIT_AND;
-                e->left = cexpr(ty, &v->items[0]);
-                e->right = cexpr(ty, &v->items[1]);
+                e->left = cexpr(ty, &V_ITEMS(*(v))[0]);
+                e->right = cexpr(ty, &V_ITEMS(*(v))[1]);
                 break;
 
         case TyBitOr:
                 e->type = EXPRESSION_BIT_OR;
-                e->left = cexpr(ty, &v->items[0]);
-                e->right = cexpr(ty, &v->items[1]);
+                e->left = cexpr(ty, &V_ITEMS(*(v))[0]);
+                e->right = cexpr(ty, &V_ITEMS(*(v))[1]);
                 break;
 
         case TyUserOp:
-                switch (v->count) {
+                switch (V_COUNT(*(v))) {
                 case 2:
                         e->type = EXPRESSION_UNARY_OP;
-                        e->uop = mkcstr(&v->items[0]);
-                        e->operand = cexpr(ty, &v->items[1]);
+                        e->uop = mkcstr(&V_ITEMS(*v)[0]);
+                        e->operand = cexpr(ty, &V_ITEMS(*(v))[1]);
                         break;
 
                 case 3:
                         e->type = EXPRESSION_USER_OP;
-                        e->op_name = mkcstr(&v->items[0]);
-                        e->left = cexpr(ty, &v->items[1]);
-                        e->right = cexpr(ty, &v->items[2]);
+                        e->op_name = mkcstr(&V_ITEMS(*v)[0]);
+                        e->left = cexpr(ty, &V_ITEMS(*(v))[1]);
+                        e->right = cexpr(ty, &V_ITEMS(*(v))[2]);
                         break;
 
                 default:
@@ -17085,7 +17111,7 @@ cexpr(Ty *ty, Value *v)
         case TyTypeOf:
         {
                 Value v_ = *v;
-                v_.tags = tags_pop(ty, v_.tags);
+                v_ = value_with_tags(ty, v_, tags_pop(ty, V_TAGS(v_)));
                 e->type = EXPRESSION_TYPE_OF;
                 e->operand = cexpr(ty, &v_);
                 break;
@@ -17094,7 +17120,7 @@ cexpr(Ty *ty, Value *v)
         case TyCount:
         {
                 Value v_ = *v;
-                v_.tags = tags_pop(ty, v_.tags);
+                v_ = value_with_tags(ty, v_, tags_pop(ty, V_TAGS(v_)));
                 e->type = EXPRESSION_PREFIX_HASH;
                 e->operand = cexpr(ty, &v_);
                 break;
@@ -17144,16 +17170,16 @@ cexpr(Ty *ty, Value *v)
         case TyTagPattern:
         {
                 e->type = EXPRESSION_TAG_PATTERN;
-                e->identifier = mkcstr(&v->items[0]);
+                e->identifier = mkcstr(&V_ITEMS(*v)[0]);
                 e->module = NULL;
                 e->constraint = NULL;
-                e->tagged = cexpr(ty, &v->items[1]);
+                e->tagged = cexpr(ty, &V_ITEMS(*(v))[1]);
                 break;
         }
         case TyCompileTime:
         {
                 Value v_ = *v;
-                v_.tags = tags_pop(ty, v_.tags);
+                v_ = value_with_tags(ty, v_, tags_pop(ty, V_TAGS(v_)));
                 e->type = EXPRESSION_COMPILE_TIME;
                 e->operand = cexpr(ty, &v_);
                 break;
@@ -17163,7 +17189,7 @@ cexpr(Ty *ty, Value *v)
                 e->type = EXPRESSION_IFDEF;
                 e->identifier = mkcstr(t_(v, "name"));
                 Value *mod = tuple_get(v, "module");
-                e->module = (mod != NULL && mod->type != VALUE_NIL) ? mkcstr(mod) : NULL;
+                e->module = (mod != NULL && V_TYPE(*(mod)) != VALUE_NIL) ? mkcstr(mod) : NULL;
                 break;
         }
         case TyDefined:
@@ -17171,7 +17197,7 @@ cexpr(Ty *ty, Value *v)
                 e->type = EXPRESSION_DEFINED;
                 e->identifier = mkcstr(t_(v, "name"));
                 Value *mod = tuple_get(v, "module");
-                e->module = (mod != NULL && mod->type != VALUE_NIL) ? mkcstr(mod) : NULL;
+                e->module = (mod != NULL && V_TYPE(*(mod)) != VALUE_NIL) ? mkcstr(mod) : NULL;
                 break;
         }
         case TyUnsafe:
@@ -17421,7 +17447,7 @@ typarse(
         Value m = *vm_get(ty, 0);
         void *ctx = PushInfo(ty, e, "invoking macro %s", SHOW(&m, BASIC));
 
-        if (m.type != VALUE_FUNCTION) {
+        if (V_TYPE(m) != VALUE_FUNCTION) {
                 fail("macro did not return a function");
         }
 
@@ -19843,17 +19869,17 @@ DumpProgram(
                 CASE(FUNCTION)
                 CASE(GENERATOR)
                 {
-                        Value v = {0};
+                        Value v = FUNCTION();
 
                         READVALUE_(n);
 
                         c = ALIGNED_FOR(i64, c);
 
-                        v.info = (int *) c;
+                        V_INFO(v) = (int *) c;
 
-                        int hs    = v.info[FUN_INFO_HEADER_SIZE];
-                        int size  = v.info[FUN_INFO_CODE_SIZE];
-                        int nEnv  = v.info[FUN_INFO_CAPTURES];
+                        int hs    = V_INFO(v)[FUN_INFO_HEADER_SIZE];
+                        int size  = V_INFO(v)[FUN_INFO_CODE_SIZE];
+                        int nEnv  = V_INFO(v)[FUN_INFO_CAPTURES];
 
                         int ncaps = (n > 0) ? nEnv - n : nEnv;
 

@@ -1033,7 +1033,7 @@ ParseError(Ty *ty, char const *fmt, ...)
         Value msg = vSsz(vv(ErrorBuffer));
         Value trace = ARRAY(vA());
         vAp(
-                trace.array,
+                V_ARRAY(trace),
                 vTn(
                         "file", xSz(CompilerCurrentModule(ty)->path),
                         "module", vSsz(CompilerCurrentModule(ty)->name),
@@ -4357,12 +4357,12 @@ infix_user_op(Ty *ty, Expr *left)
 
         struct value *p = table_look(ty, &uops, e->op_name);
         if (p != NULL) {
-                prec = (p->z > 0) ? p->z : llabs(p->z) - 1;
+                prec = (V_Z(*(p)) > 0) ? V_Z(*(p)) : llabs(V_Z(*(p))) - 1;
         }
 
         struct value *sc = table_look(ty, &uopcs, e->op_name);
         if (sc != NULL) {
-                e->sc = sc->ptr;
+                e->sc = V_PTR(*(sc));
         } else {
                 e->sc = NULL;
         }
@@ -5209,7 +5209,7 @@ UserOp:
                 return -3;
         }
         p = table_look(ty, &uops, tok()->operator);
-        return (p != NULL) ? llabs(p->z) : 8;
+        return (p != NULL) ? llabs(V_Z(*(p))) : 8;
 }
 
 static Expr *
@@ -5905,16 +5905,19 @@ parse_operator_directive(Ty *ty)
         next();
 
         if (strcmp(assoc, "left") == 0) {
-                table_put(ty, &uops, uop, &INTEGER(p));
+                Value precedence = INTEGER(p);
+                table_put(ty, &uops, uop, &precedence);
         } else if (strcmp(assoc, "right") == 0) {
-                table_put(ty, &uops, uop, &INTEGER(-p));
+                Value precedence = INTEGER(-p);
+                table_put(ty, &uops, uop, &precedence);
         } else {
                 die("expected 'left' or 'right' in operator directive");
         }
 
         if (T0 != TOKEN_NEWLINE) {
                 Expr *e = parse_expr(ty, 0);
-                table_put(ty, &uopcs, uop, &PTR(e));
+                Value expr = PTR(e);
+                table_put(ty, &uopcs, uop, &expr);
         }
 
         consume(TOKEN_NEWLINE);
@@ -7451,8 +7454,7 @@ parse_get_type(Ty *ty, int prec, bool resolve, bool want_raw)
                 } else {
                         compiler_symbolize_expression(ty, e, NULL);
                         v = PTR(e);
-                        v.type |= VALUE_TAGGED;
-                        v.tags = tags_push(ty, 0, TyExpr);
+                        v = value_with_tags(ty, v, tags_push(ty, 0, TyExpr));
                 }
                 TY_CATCH_END();
         }
@@ -7490,8 +7492,7 @@ parse_get_expr(Ty *ty, int prec, bool resolve, bool want_raw)
                 } else {
                         compiler_symbolize_expression(ty, e, NULL);
                         v = PTR(e);
-                        v.type |= VALUE_TAGGED;
-                        v.tags = tags_push(ty, 0, TyExpr);
+                        v = value_with_tags(ty, v, tags_push(ty, 0, TyExpr));
                 }
                 TY_CATCH_END();
         }
@@ -7525,8 +7526,8 @@ parse_get_stmt(Ty *ty, int prec, bool want_raw)
                 Stmt *s = parse_statement(ty, prec);
                 if (want_raw) {
                         v = vT(2);
-                        v.items[0] = PTR(s);
-                        v.items[1] = tyexpr(ty, (Expr *)s, 0);
+                        V_ITEMS(v)[0] = PTR(s);
+                        V_ITEMS(v)[1] = tyexpr(ty, (Expr *)s, 0);
                 } else {
                         v = tyexpr(ty, (Expr *)s, 0);
                 }

@@ -313,15 +313,15 @@ class_name(Ty *ty, int c);
 static inline char const *
 ValueTypeName(Ty *ty, Value const *v)
 {
-        if (v->type & VALUE_TAGGED) {
-                return tags_name(ty, tags_first(ty, v->tags));
+        if (V_TYPE(*(v)) & VALUE_TAGGED) {
+                return tags_name(ty, tags_first(ty, V_TAGS(*(v))));
         }
 
-        if (v->type == VALUE_OBJECT) {
-                return class_name(ty, v->class);
+        if (V_TYPE(*(v)) == VALUE_OBJECT) {
+                return class_name(ty, V_CLASS(*(v)));
         }
 
-        return TypeName(ty, v->type);
+        return TypeName(ty, V_TYPE(*(v)));
 }
 
 char *
@@ -401,8 +401,8 @@ value_vshow_color(Ty *ty, Value const *v, u32 flags);
         }
 
 #define ARG(i) (*vm_get(ty, argc - 1 - (i)))
-#define NAMED(s) ((kwargs != NULL && !IsNil(*kwargs)) ? dict_get_member(ty, kwargs->dict, (s)) : NULL)
-#define ARG_T(i) ((argc > i) ? (vm_get(ty, argc - 1 - (i))->type) : VALUE_NONE)
+#define NAMED(s) ((kwargs != NULL && !IsNil(*kwargs)) ? dict_get_member(ty, V_DICT(*kwargs), (s)) : NULL)
+#define ARG_T(i) ((argc > i) ? V_TYPE(*vm_get(ty, argc - 1 - (i))) : VALUE_NONE)
 #define HAVE_FLAG(s) (value_truthy_checked(ty, NAMED(s)))
 
 #define CHECK_ARGC_1(n0) do {                            \
@@ -486,19 +486,19 @@ noreturn void vm_panic(Ty *, char const *, ...);
 static inline bool
 IsZero(Value const v)
 {
-        return (v.type == VALUE_ZERO);
+        return (V_TYPE(v) == VALUE_ZERO);
 }
 
 static inline bool
 IsNone(Value const v)
 {
-        return (v.type == VALUE_NONE);
+        return (V_TYPE(v) == VALUE_NONE);
 }
 
 static inline bool
 IsNil(Value const v)
 {
-        return (v.type == VALUE_NIL);
+        return (V_TYPE(v) == VALUE_NIL);
 }
 
 static inline bool
@@ -520,7 +520,7 @@ checked_arg_1(
         Value arg = (named != NULL) ? *named
                   : (argp  != NULL) ? *argp
                   : NONE;
-        int const _t = arg.type;
+        int const _t = V_TYPE(arg);
 
         if (
                 (_t != t0)
@@ -552,7 +552,7 @@ checked_arg_2(
         Value arg = (named != NULL) ? *named
                   : (argp  != NULL) ? *argp
                   : NONE;
-        int const _t = arg.type;
+        int const _t = V_TYPE(arg);
 
         if (
                 (_t != t0)
@@ -587,7 +587,7 @@ checked_arg_3(
         Value arg = (named != NULL) ? *named
                   : (argp  != NULL) ? *argp
                   : NONE;
-        int const _t = arg.type;
+        int const _t = V_TYPE(arg);
 
         if (_t != t0 && _t != t1 && _t != t2) {
                 zP(
@@ -621,7 +621,7 @@ checked_arg_4(
                   : (argp  != NULL) ? *argp
                   : NONE;
 
-        int const _t = arg.type;
+        int const _t = V_TYPE(arg);
 
         if (_t != t0 && _t != t1 && _t != t2 && _t != t3) {
                 zP(
@@ -657,7 +657,7 @@ checked_arg_5(
                   : (argp  != NULL) ? *argp
                   : NONE;
 
-        int const _t = arg.type;
+        int const _t = V_TYPE(arg);
 
         if (_t != t0 && _t != t1 && _t != t2 && _t != t3 && _t != t4) {
                 zP(
@@ -695,7 +695,7 @@ checked_arg_6(
                   : (argp  != NULL) ? *argp
                   : NONE;
 
-        int const _t = arg.type;
+        int const _t = V_TYPE(arg);
 
         if (_t != t0 && _t != t1 && _t != t2 && _t != t3 && _t != t4 && _t != t5) {
                 zP(
@@ -760,12 +760,12 @@ checked_arg_6(
 
 #define TRY_ARG(...) ARGxD(__VA_ARGS__, _NIL, _NONE)
 
-#define    INT_ARG(i) ARGx(i, VALUE_INTEGER).z
-#define  FLOAT_ARG(i) ARGx(i, VALUE_REAL).real
-#define   BOOL_ARG(i) ARGx(i, VALUE_BOOLEAN).boolean
-#define  ARRAY_ARG(i) ARGx(i, VALUE_ARRAY).array
-#define   DICT_ARG(i) ARGx(i, VALUE_DICT).dict
-#define    PTR_ARG(i) ((ARG_T(i) == VALUE_NIL) ? NULL : ARGx(i, VALUE_PTR).ptr)
+#define    INT_ARG(i) V_Z(ARGx(i, VALUE_INTEGER))
+#define  FLOAT_ARG(i) V_REAL(ARGx(i, VALUE_REAL))
+#define   BOOL_ARG(i) V_BOOL(ARGx(i, VALUE_BOOLEAN))
+#define  ARRAY_ARG(i) V_ARRAY(ARGx(i, VALUE_ARRAY))
+#define   DICT_ARG(i) V_DICT(ARGx(i, VALUE_DICT))
+#define    PTR_ARG(i) ((ARG_T(i) == VALUE_NIL) ? NULL : V_PTR(ARGx(i, VALUE_PTR)))
 
 #define bP(fmt, ...) zP("%s: " fmt, _name__ __VA_OPT__(,) __VA_ARGS__)
 
@@ -856,20 +856,20 @@ tuple_get_i(Value const *tuple, int id);
 static inline Value *
 tget_or_null(Value const *tuple, uptr k)
 {
-        if ((tuple->type & ~VALUE_TAGGED) != VALUE_TUPLE) {
+        if ((V_TYPE(*(tuple)) & ~VALUE_TAGGED) != VALUE_TUPLE) {
                 return NULL;
         }
 
         if (k < 16) {
-                return (k >= tuple->count) ? NULL : &tuple->items[k];
+                return (k >= V_COUNT(*(tuple))) ? NULL : &V_ITEMS(*(tuple))[k];
         }
 
         char const *name = (char const *)k;
         int id = M_ID(name);
 
-        if (tuple->ids != NULL) for (int i = 0; i < tuple->count; ++i) {
-                if (tuple->ids[i] == id) {
-                        return &tuple->items[i];
+        if (V_IDS(*(tuple)) != NULL) for (int i = 0; i < V_COUNT(*(tuple)); ++i) {
+                if (V_IDS(*(tuple))[i] == id) {
+                        return &V_ITEMS(*(tuple))[i];
                 }
         }
 
@@ -887,14 +887,14 @@ static inline Value *
 tget_t(Value const *tuple, uptr k, u32 t)
 {
         Value *v = tget_or_null(tuple, k);
-        return (v == NULL || v->type != t) ? NULL : v;
+        return (v == NULL || V_TYPE(*(v)) != t) ? NULL : v;
 }
 
 static inline Value *
 tget_nn(Value const *tuple, uptr k)
 {
         Value *v = tget_or_null(tuple, k);
-        return (v == NULL || v->type == VALUE_NIL) ? NULL : v;
+        return (v == NULL || V_TYPE(*(v)) == VALUE_NIL) ? NULL : v;
 }
 
 static inline Value
@@ -959,8 +959,11 @@ static inline void
 value_array_push(Ty *ty, Array *a, Value v)
 {
         if (a->count == a->capacity) {
+                /* mRE may trigger GC before v is stored in the array. */
+                gP(&v);
                 a->capacity = a->capacity ? a->capacity * 2 : 4;
                 mRE(a->items, a->capacity * sizeof (Value));
+                gX();
         }
 
         a->items[a->count++] = v;
@@ -996,13 +999,13 @@ STRING_VFORMAT(Ty *ty, char const *fmt, va_list ap)
         memcpy(str, vv(buf), vN(buf) + 1);
         SCRATCH_RESTORE();
 
-        return (Value) {
+        return VALUE_BOX_(
                 .type = VALUE_STRING,
                 .tags = 0,
                 .str = str,
                 .bytes = vN(buf),
                 .str0 = str,
-        };
+        );
 }
 
 static inline Value
@@ -1023,13 +1026,13 @@ STRING_CLONE(Ty *ty, void const *s, u32 n)
 {
         u8 *clone = value_string_clone(ty, s, n);
 
-        return (Value) {
+        return VALUE_BOX_(
                 .type = VALUE_STRING,
                 .tags = 0,
                 .str = clone,
                 .bytes = n,
                 .str0 = clone,
-        };
+        );
 }
 
 static inline Value
@@ -1042,13 +1045,13 @@ STRING_CLONE_C(Ty *ty, void const *s)
         u32 n = strlen(s);
         u8 *clone = value_string_clone(ty, s, n);
 
-        return (Value) {
+        return VALUE_BOX_(
                 .type = VALUE_STRING,
                 .tags = 0,
                 .str = clone,
                 .bytes = n,
                 .str0 = clone,
-        };
+        );
 }
 
 static inline Value
@@ -1061,13 +1064,13 @@ STRING_C_CLONE_C(Ty *ty, void const *s)
         u32 n = strlen(s);
         u8 *clone = value_string_clone_nul(ty, s, n);
 
-        return (Value) {
+        return VALUE_BOX_(
                 .type = VALUE_STRING,
                 .tags = 0,
                 .str = clone,
                 .bytes = n,
                 .str0 = clone,
-        };
+        );
 }
 
 static inline Value
@@ -1075,82 +1078,82 @@ STRING_C_CLONE(Ty *ty, void const *s, u32 n)
 {
         u8 *clone = value_string_clone_nul(ty, s, n);
 
-        return (Value) {
+        return VALUE_BOX_(
                 .type = VALUE_STRING,
                 .tags = 0,
                 .str = clone,
                 .bytes = n,
                 .str0 = clone,
-        };
+        );
 }
 
 static inline Value
-STRING(void *s, u32 n)
+STRING(Ty *ty, void *s, u32 n)
 {
-        return (Value) {
+        return VALUE_BOX_(
                 .type = VALUE_STRING,
                 .tags = 0,
                 .str = s,
                 .bytes = n,
                 .str0 = s,
-        };
+        );
 }
 
 static inline Value
-STRING_VIEW(Value s, isize offset, u32 n)
+STRING_VIEW(Ty *ty, Value s, isize offset, u32 n)
 {
-        return (Value) {
+        return VALUE_BOX_(
                 .type = VALUE_STRING,
                 .tags = 0,
-                .str = s.str + offset,
+                .str = V_STR(s) + offset,
                 .bytes = n,
-                .str0 = s.str0,
-                .ro = s.ro
-        };
+                .str0 = V_STR0(s),
+                .ro = V_RO(s)
+        );
 }
 
 static inline Value
-STRING_NOGC(void const *s, u32 n)
+STRING_NOGC(Ty *ty, void const *s, u32 n)
 {
-        return (Value) {
+        return VALUE_BOX_(
                 .type = VALUE_STRING,
                 .tags = 0,
                 .str = s,
                 .bytes = n,
                 .str0 = (u8 *)s,
                 .ro = true
-        };
+        );
 }
 
 static inline Value
-STRING_NOGC_C(void const *s)
+STRING_NOGC_C(Ty *ty, void const *s)
 {
-        return (Value) {
+        return VALUE_BOX_(
                 .type = VALUE_STRING,
                 .tags = 0,
                 .str = s,
                 .bytes = strlen(s),
                 .str0 = (u8 *)s,
                 .ro = true
-        };
+        );
 }
 
-#define STRING_EMPTY (STRING_NOGC(NULL, 0))
+#define STRING_EMPTY (STRING_NOGC(ty, NULL, 0))
 
 static inline bool
 DecrementString(Value *v)
 {
         if (
-                (v->str0 == NULL)
-             || (v->str0 == v->str)
+                (V_STR0(*(v)) == NULL)
+             || (V_STR0(*(v)) == V_STR(*(v)))
         ) {
                 return false;
         }
 
-        while (v->str > v->str0) {
-                v->str -= 1;
-                v->bytes += 1;
-                if ((*v->str & 0x80) != 0x80) {
+        while (V_STR(*(v)) > V_STR0(*(v))) {
+                V_STR(*(v)) -= 1;
+                V_BYTES(*(v)) += 1;
+                if ((*V_STR(*(v)) & 0x80) != 0x80) {
                         break;
                 }
         }
@@ -1163,16 +1166,16 @@ OffsetString(Value const *v, i32 n)
 {
         Value str = *v;
 
-        while (n > 0 && str.bytes > 0) {
-                i32 sz = u8_rune_sz(str.str);
+        while (n > 0 && V_BYTES(str) > 0) {
+                i32 sz = u8_rune_sz(V_STR(str));
                 if (sz <= 0) {
                         sz = 1;
                 }
-                if (sz > str.bytes) {
-                        sz = str.bytes;
+                if (sz > V_BYTES(str)) {
+                        sz = V_BYTES(str);
                 }
-                str.str += sz;
-                str.bytes -= sz;
+                V_STR(str) += sz;
+                V_BYTES(str) -= sz;
                 n -= 1;
         }
 
@@ -1198,30 +1201,36 @@ Value
 static inline Value
 PAIR_(Ty *ty, Value a, Value b)
 {
+        gP(&a); gP(&b);
         Value v = vT(2);
-        v.items[0] = a;
-        v.items[1] = b;
+        gX(); gX();
+        V_ITEMS(v)[0] = a;
+        V_ITEMS(v)[1] = b;
         return v;
 }
 
 static inline Value
 TRIPLE_(Ty *ty, Value a, Value b, Value c)
 {
+        gP(&a); gP(&b); gP(&c);
         Value v = vT(3);
-        v.items[0] = a;
-        v.items[1] = b;
-        v.items[2] = c;
+        gX(); gX(); gX();
+        V_ITEMS(v)[0] = a;
+        V_ITEMS(v)[1] = b;
+        V_ITEMS(v)[2] = c;
         return v;
 }
 
 static inline Value
 QUADRUPLE_(Ty *ty, Value a, Value b, Value c, Value d)
 {
+        gP(&a); gP(&b); gP(&c); gP(&d);
         Value v = vT(4);
-        v.items[0] = a;
-        v.items[1] = b;
-        v.items[2] = c;
-        v.items[3] = d;
+        gX(); gX(); gX(); gX();
+        V_ITEMS(v)[0] = a;
+        V_ITEMS(v)[1] = b;
+        V_ITEMS(v)[2] = c;
+        V_ITEMS(v)[3] = d;
         return v;
 }
 
@@ -1233,25 +1242,32 @@ tags_push(Ty *ty, int, int);
 static inline Value
 Ok(Ty *ty, Value v)
 {
-        v.type |= VALUE_TAGGED;
-        v.tags = tags_push(ty, v.tags, TAG_OK);
-        return v;
+        return value_with_tags(ty, v, tags_push(ty, V_TAGS(v), TAG_OK));
 }
 
 static inline Value
 Err(Ty *ty, Value v)
 {
-        v.type |= VALUE_TAGGED;
-        v.tags = tags_push(ty, v.tags, TAG_ERR);
-        return v;
+        return value_with_tags(ty, v, tags_push(ty, V_TAGS(v), TAG_ERR));
+}
+
+static inline u16
+some_tag_chain(Ty *ty)
+{
+        if (UNLIKELY(ty->some_tag_chain == 0))
+                ty->some_tag_chain = tags_push(ty, 0, TAG_SOME);
+        return ty->some_tag_chain;
 }
 
 static inline Value
 Some(Ty *ty, Value v)
 {
-        v.type |= VALUE_TAGGED;
-        v.tags = tags_push(ty, v.tags, TAG_SOME);
-        return v;
+        if (LIKELY(nanbox_is_int(v.bits)))
+                return value_direct_tagged_int(nanbox_to_int(v.bits), some_tag_chain(ty));
+        int base = V_TAGS(v);
+        if (base == 0)
+                return value_with_tags(ty, v, some_tag_chain(ty));
+        return value_with_tags(ty, v, tags_push(ty, base, TAG_SOME));
 }
 
 #define Some(x) (Some)(ty, x)
@@ -1259,25 +1275,25 @@ Some(Ty *ty, Value v)
 static inline u32
 header_size_of(Value const *f)
 {
-        return f->info[FUN_INFO_HEADER_SIZE];
+        return V_INFO(*(f))[FUN_INFO_HEADER_SIZE];
 }
 
 static inline u32
 code_size_of(Value const *f)
 {
-        return f->info[FUN_INFO_CODE_SIZE];
+        return V_INFO(*(f))[FUN_INFO_CODE_SIZE];
 }
 
 static inline i32
 param_count_of(Value const *f)
 {
-        return f->info[FUN_INFO_PARAM_COUNT];
+        return V_INFO(*(f))[FUN_INFO_PARAM_COUNT];
 }
 
 static inline void *
 info_of(Value const *f, int i)
 {
-        return ((char *)f->info) + i;
+        return ((char *)V_INFO(*(f))) + i;
 }
 
 static inline i16 *
@@ -1307,22 +1323,22 @@ kwargs_idx_of(Value const *v)
 static inline char *
 code_of(Value const *v)
 {
-        return (char *)v->info + v->info[0];
+        return (char *)V_INFO(*(v)) + V_INFO(*(v))[0];
 }
 
 static inline i32
 class_of(Value const *v)
 {
-        return (v->xinfo != NULL && v->xinfo->class > 0)
-             ? v->xinfo->class
-             : v->info[FUN_INFO_CLASS];
+        return (V_XINFO(*(v)) != NULL && V_XINFO(*(v))->class > 0)
+             ? V_XINFO(*(v))->class
+             : V_INFO(*(v))[FUN_INFO_CLASS];
 }
 
 static inline Expr *
 expr_of(Value const *f)
 {
         uptr expr;
-        memcpy(&expr, (char *)f->info + FUN_EXPR, sizeof expr);
+        memcpy(&expr, (char *)V_INFO(*f) + FUN_EXPR, sizeof expr);
         return (Expr *)expr;
 }
 
@@ -1365,8 +1381,8 @@ type_of(Value const *f)
 static inline char const *
 proto_of(Value const *f)
 {
-        if (f->xinfo != NULL && f->xinfo->proto != NULL) {
-                return f->xinfo->proto;
+        if (V_XINFO(*(f)) != NULL && V_XINFO(*(f))->proto != NULL) {
+                return V_XINFO(*(f))->proto;
         } else {
                 return (char const *)*(uptr *)info_of(f, FUN_PROTO);
         }
@@ -1375,8 +1391,8 @@ proto_of(Value const *f)
 static inline char const *
 doc_of(Value const *f)
 {
-        if (f->xinfo != NULL && f->xinfo->doc != NULL) {
-                return f->xinfo->doc;
+        if (V_XINFO(*(f)) != NULL && V_XINFO(*(f))->doc != NULL) {
+                return V_XINFO(*(f))->doc;
         } else {
                 return (char const *)*(uptr *)info_of(f, FUN_DOC);
         }
@@ -1385,8 +1401,8 @@ doc_of(Value const *f)
 static inline char const *
 name_of(Value const *f)
 {
-        if (f->xinfo != NULL && f->xinfo->name != NULL) {
-                return f->xinfo->name;
+        if (V_XINFO(*(f)) != NULL && V_XINFO(*(f))->name != NULL) {
+                return V_XINFO(*(f))->name;
         } else {
                 return (char const *)*(uptr *)info_of(f, FUN_NAME);
         }
@@ -1410,7 +1426,7 @@ meta_of(Ty *ty, Value const *f)
         uptr p;
         Value *meta;
 
-        char *addr = (char *)f->info + FUN_META;
+        char *addr = (char *)V_INFO(*(f)) + FUN_META;
 
         memcpy(&p, addr, sizeof p);
         if (p == 0) {
@@ -1429,8 +1445,8 @@ meta_of(Ty *ty, Value const *f)
 static inline Value
 self_of(Value const *f)
 {
-        if (f->type == VALUE_BOUND_FUNCTION) {
-                return *f->env[f->info[FUN_INFO_CAPTURES]];
+        if (V_TYPE(*(f)) == VALUE_BOUND_FUNCTION) {
+                return *V_ENV(*(f))[V_INFO(*(f))[FUN_INFO_CAPTURES]];
         } else {
                 return NIL;
         }
@@ -1441,7 +1457,7 @@ jit_of(Value const *f)
 {
         uptr jit;
 #if !defined(TY_NO_JIT)
-        memcpy(&jit, (char *)f->info + FUN_JIT, sizeof jit);
+        memcpy(&jit, (char *)V_INFO(*f) + FUN_JIT, sizeof jit);
 #else
         jit = 0;
 #endif
@@ -1453,7 +1469,7 @@ set_jit_of(Value const *f, void *code)
 {
         uptr jit = (uptr)code;
 #if !defined(TY_NO_JIT)
-        memcpy((char *)f->info + FUN_JIT, &jit, sizeof jit);
+        memcpy((char *)V_INFO(*f) + FUN_JIT, &jit, sizeof jit);
 #endif
 }
 
@@ -1466,7 +1482,7 @@ from_eval(Value const *f)
 static inline Type *
 as_type(Value const *v)
 {
-        return v->ptr;
+        return V_PTR(*(v));
 }
 
 #define PACK_TYPES(t1, t2) ((((u64)t1) << 32) | ((u32)t2))
@@ -1475,8 +1491,8 @@ as_type(Value const *v)
 static inline int
 ClassOf(Value const *v)
 {
-        switch (v->type) {
-        case VALUE_OBJECT:            return v->class;
+        switch (V_TYPE(*(v))) {
+        case VALUE_OBJECT:            return V_CLASS(*(v));
         case VALUE_INTEGER:           return CLASS_INT;
         case VALUE_REAL:              return CLASS_FLOAT;
         case VALUE_STRING:            return CLASS_STRING;
@@ -1502,7 +1518,7 @@ ClassOf(Value const *v)
         case VALUE_PTR:               return CLASS_PTR;
 
         case VALUE_REGEX:
-                return v->regex->detailed ? CLASS_REGEXV
+                return V_REGEX(*(v))->detailed ? CLASS_REGEXV
                                           : CLASS_REGEX;
         }
 
@@ -1558,42 +1574,34 @@ DictFirst(Dict const *d)
 }
 
 static inline Value
-stripped(Value const *wrapped)
+stripped(Ty *ty, Value const *wrapped)
 {
-        Value inner = *wrapped;
-        inner.type &= ~VALUE_TAGGED;
-        inner.tags = 0;
-        return inner;
+        return value_with_tags(ty, *wrapped, 0);
 }
 
 static inline Value
 unwrap(Ty *ty, Value const *wrapped)
 {
-        Value v = *wrapped;
-
-        if (v.tags != 0) {
-                v.tags = tags_pop(ty, v.tags);
-        }
-
-        if (v.tags == 0) {
-                v.type &= ~VALUE_TAGGED;
-        }
-
-        return v;
+        u16 tags = V_TAGS(*wrapped);
+        if (tags != 0) tags = tags_pop(ty, tags);
+        return value_with_tags(ty, *wrapped, tags);
 }
 
 #define TryUnwrap(v, t) ((TryUnwrap)(ty, (v), (t)))
 static inline bool
 (TryUnwrap)(Ty *ty, Value *wrapped, int tag)
 {
-        if (!tags_try_pop(ty, &wrapped->tags, tag)) {
-                return false;
+        if (value_is_direct_tagged_int(*wrapped) && tag == TAG_SOME
+            && value_direct_tagged_int_tags(*wrapped) == some_tag_chain(ty)) {
+                *wrapped = value_integer(ty, value_direct_tagged_int_value(*wrapped));
+                return true;
         }
-
-        if (wrapped->tags == 0) {
-                wrapped->type &= ~VALUE_TAGGED;
-        }
-
+        u16 tags = V_TAGS(*wrapped);
+        if (!tags_try_pop(ty, &tags, tag)) return false;
+        if (tags == 0 && value_is_direct_tagged_int(*wrapped))
+                *wrapped = value_integer(ty, value_direct_tagged_int_value(*wrapped));
+        else
+                *wrapped = value_with_tags(ty, *wrapped, (u16)tags);
         return true;
 }
 
@@ -1601,42 +1609,26 @@ static inline bool
 inline static void
 (PopTag)(Ty *ty, Value *val)
 {
-        if ((val->tags = tags_pop(ty, val->tags)) == 0) {
-                val->type &= ~VALUE_TAGGED;
-        }
+        *val = value_with_tags(ty, *val, tags_pop(ty, V_TAGS(*val)));
 }
 
 static inline Value
 tagged(Ty *ty, int tag, Value v, ...)
 {
         va_list ap;
-
         va_start(ap, v);
-
         vec(Value) vs = {0};
-
         Value next = va_arg(ap, Value);
-
-        if (next.type == VALUE_NONE) {
-                goto TagAndReturn;
-        }
-
+        if (V_TYPE(next) == VALUE_NONE) goto TagAndReturn;
         svP(vs, v);
-
-        while (next.type != VALUE_NONE) {
+        while (V_TYPE(next) != VALUE_NONE) {
                 svP(vs, next);
                 next = va_arg(ap, Value);
         }
-
         v = vT(vs.count);
-        for (int i = 0; i < vs.count; ++i) {
-                v.items[i] = vs.items[i];
-        }
-
+        for (int i = 0; i < vs.count; ++i) V_ITEMS(v)[i] = vs.items[i];
 TagAndReturn:
-        v.type |= VALUE_TAGGED;
-        v.tags = tags_push(ty, v.tags, tag);
-        return v;
+        return value_with_tags(ty, v, tags_push(ty, V_TAGS(v), tag));
 }
 
 static inline Value
@@ -1649,7 +1641,7 @@ FunDef(Ty *ty, Value const *f)
 static inline Value
 ClassDef(Ty *ty, Value const *c)
 {
-        Value def = CToTyStmt(ty, class_get(ty, c->class)->def);
+        Value def = CToTyStmt(ty, class_get(ty, V_CLASS(*(c)))->def);
         return unwrap(ty, &def);
 }
 
@@ -1667,19 +1659,19 @@ NewZero(void)
 static inline void
 (PutMember)(Ty *ty, Value v, i32 m, Value x)
 {
-        Class *c = v.object->class;
+        Class *c = V_OBJECT(v)->class;
         u16 off;
 
         if (
                 (m < vN(c->offsets_r))
              && ((off = v__(c->offsets_r, m)) != OFF_NOT_FOUND)
         ) {
-                v.object->slots[off & OFF_MASK] = x;
+                V_OBJECT(v)->slots[off & OFF_MASK] = x;
         } else {
-                if (v.object->dynamic == NULL) {
-                        v.object->dynamic = mA0(sizeof (struct itable));
+                if (V_OBJECT(v)->dynamic == NULL) {
+                        V_OBJECT(v)->dynamic = mA0(sizeof (struct itable));
                 }
-                itable_add(ty, v.object->dynamic, m, x);
+                itable_add(ty, V_OBJECT(v)->dynamic, m, x);
         }
 }
 
@@ -1687,7 +1679,7 @@ static inline void
 static inline Value *
 (ObjectMember)(Ty *ty, Value v, i32 m)
 {
-        Class *c = v.object->class;
+        Class *c = V_OBJECT(v)->class;
         u16 off;
 
         if (
@@ -1695,9 +1687,9 @@ static inline Value *
              && ((off = v__(c->offsets_r, m)) != OFF_NOT_FOUND)
              && ((off >> OFF_SHIFT) == OFF_FIELD)
         ) {
-                return &v.object->slots[off & OFF_MASK];
-        } else if (v.object->dynamic != NULL) {
-                return itable_lookup(ty, v.object->dynamic, m);
+                return &V_OBJECT(v)->slots[off & OFF_MASK];
+        } else if (V_OBJECT(v)->dynamic != NULL) {
+                return itable_lookup(ty, V_OBJECT(v)->dynamic, m);
         } else {
                 return NULL;
         }
@@ -1708,12 +1700,12 @@ TryIntoTime(Ty *ty, char const *ctx, Value const *t, i64 factor)
 {
         struct timespec spec;
 
-        switch (t->type) {
+        switch (V_TYPE(*(t))) {
         case VALUE_REAL:
-                return (factor * t->real);
+                return (factor * V_REAL(*(t)));
 
         case VALUE_INTEGER:
-                return t->z;
+                return V_Z(*(t));
 
         case VALUE_TUPLE:
                 spec = tuple_timespec(ty, ctx, t);
@@ -1749,15 +1741,15 @@ ConstructPrimitive(Ty *ty, int class_id, int argc, Value *kwargs);
 inline static bool
 value_truthy(Ty *ty, Value const *v)
 {
-        switch (v->type) {
-        case VALUE_REAL:             return (v->real != 0.0);
-        case VALUE_BOOLEAN:          return v->boolean;
-        case VALUE_INTEGER:          return (v->z != 0);
+        switch (V_TYPE(*(v))) {
+        case VALUE_REAL:             return (V_REAL(*(v)) != 0.0);
+        case VALUE_BOOLEAN:          return V_BOOL(*(v));
+        case VALUE_INTEGER:          return (V_Z(*(v)) != 0);
         case VALUE_STRING:           return (sN(*v) != 0);
-        case VALUE_ARRAY:            return (vN(*v->array) != 0);
-        case VALUE_TUPLE:            return (v->count != 0);
-        case VALUE_BLOB:             return (vN(*v->blob) != 0);
-        case VALUE_QUEUE:            return (queue_count(v->queue) != 0);
+        case VALUE_ARRAY:            return (vN(*V_ARRAY(*v)) != 0);
+        case VALUE_TUPLE:            return (V_COUNT(*(v)) != 0);
+        case VALUE_BLOB:             return (vN(*V_BLOB(*v)) != 0);
+        case VALUE_QUEUE:            return (queue_count(V_QUEUE(*(v))) != 0);
         case VALUE_SHARED_QUEUE:     return true;
         case VALUE_REGEX:            return true;
         case VALUE_FUNCTION:         return true;
@@ -1773,7 +1765,7 @@ value_truthy(Ty *ty, Value const *v)
         case VALUE_TAG:              return true;
         case VALUE_GENERATOR:        return true;
         case VALUE_TRACE:            return true;
-        case VALUE_PTR:              return (v->ptr != NULL);
+        case VALUE_PTR:              return (V_PTR(*(v)) != NULL);
         default:                     return false;
         }
 }

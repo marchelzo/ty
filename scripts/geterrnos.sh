@@ -6,4 +6,4 @@ echo '#include <errno.h>' \
     | cut -d' ' -f2 \
     | sort \
     | uniq \
-	| awk '{printf("{ .module = \"errno\", .name = \"%s\", .value = INT(%s) },\n", $1, $1)}'
+	| awk '{printf("{ .module = \"errno\", .name = \"%s\", .init = INT(%s) },\n", $1, $1)}'

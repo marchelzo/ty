@@ -23,7 +23,7 @@
 //   x23 = operand base pointer (== &stack.items[fp + bound])
 //   x24 = fp byte offset into stack (stable across reallocs)
 //
-// Value slots live in the interpreter's stack at [x23 + i*32].
+// Value slots live in the interpreter's stack at [x23 + i*8].
 // ============================================================================
 
 
@@ -45,6 +45,25 @@ static void jit_emit_sub(dasm_State **Dst, int dst, int left, int right) {
 static void jit_emit_mul(dasm_State **Dst, int dst, int left, int right) {
         |  mul Rx(dst), Rx(left), Rx(right)
 }
+
+static void jit_emit_add32_overflow(dasm_State **Dst, int dst, int left, int right, int label) {
+        |  adds Rw(dst), Rw(left), Rw(right)
+        |  cset x17, vs
+        |  cbnz x17, =>label
+}
+static void jit_emit_sub32_overflow(dasm_State **Dst, int dst, int left, int right, int label) {
+        |  subs Rw(dst), Rw(left), Rw(right)
+        |  cset x17, vs
+        |  cbnz x17, =>label
+}
+static void jit_emit_mul32_overflow(dasm_State **Dst, int dst, int left, int right, int label) {
+        |  smull x16, Rw(left), Rw(right)
+        |  sxtw Rx(dst), w16
+        |  cmp Rx(dst), x16
+        |  cset x17, ne
+        |  cbnz x17, =>label
+}
+
 
 static void jit_emit_sdiv(dasm_State **Dst, int dst, int left, int right) {
         |  sdiv Rx(dst), Rx(left), Rx(right)
@@ -260,6 +279,38 @@ static void jit_emit_fdiv(dasm_State **Dst, int base, int a_off, int b_off) {
         |  str d0, [Rx(base), #a_off]
 }
 
+static void jit_emit_int_to_double_bits(dasm_State **Dst, int dst, int src) {
+        |  scvtf d0, Rx(src)
+        |  fmov Rx(dst), d0
+}
+
+static void jit_emit_fsqrt_bits(dasm_State **Dst, int dst, int src) {
+        |  fmov d0, Rx(src)
+        |  fsqrt d0, d0
+        |  fmov Rx(dst), d0
+}
+
+static void jit_emit_farith_bits(dasm_State **Dst, int dst, int left, int right, int op) {
+        |  fmov d0, Rx(left)
+        |  fmov d1, Rx(right)
+        switch (op) {
+        case 0:
+                |  fadd d0, d0, d1
+                break;
+        case 1:
+                |  fsub d0, d0, d1
+                break;
+        case 2:
+                |  fmul d0, d0, d1
+                break;
+        default:
+                |  fdiv d0, d0, d1
+                break;
+        }
+        |  fmov Rx(dst), d0
+}
+
+
 static void jit_emit_branch_bit_set(dasm_State **Dst, int reg, int bit, int label) {
         |  tbnz Rx(reg), #bit, =>label
 }
@@ -382,7 +433,7 @@ static void jit_emit_jump_epilogue_restore(dasm_State **Dst) {
 // After a yield helper returns, x0 contains the updated frame pointer (index).
 // Update x24 (fp byte offset) = x0 * VALUE_SIZE.
 static void jit_emit_update_fp(dasm_State **Dst) {
-        |  lsl x24, x0, #5  // VALUE_SIZE == 32 == 1 << 5
+        |  lsl x24, x0, #3  // VALUE_SIZE == 8 == 1 << 3
 }
 
 // --- Reload x21/x23 after calls that may realloc the stack ---
@@ -407,13 +458,13 @@ static void jit_emit_sync_stack_count(dasm_State **Dst, int bound, int sp) {
         // stack.count = fp + bound + sp
         // fp * VALUE_SIZE is in x24
         // We need the integer index, not byte offset.
-        // fp = x24 / VALUE_SIZE = x24 >> 5  (assuming VALUE_SIZE == 32)
-        |  lsr x16, x24, #5
+        // fp = x24 / VALUE_SIZE = x24 >> 3  (assuming VALUE_SIZE == 8)
+        |  lsr x17, x24, #3
         int total = bound + sp;
         if (total > 0) {
-                |  add x16, x16, #total
+                |  add x17, x17, #total
         }
-        |  str x16, [x19, #OFF_TY_STACK + OFF_VEC_LEN]
+        |  str x17, [x19, #OFF_TY_STACK + OFF_VEC_LEN]
 }
 
 // --- Memory operations ---
@@ -558,6 +609,11 @@ static void jit_emit_branch_ule(dasm_State **Dst, int label) {
         |  cbnz x16, =>label
 }
 
+static void jit_emit_branch_ult(dasm_State **Dst, int label) {
+        |  cset x16, lo
+        |  cbnz x16, =>label
+}
+
 static void jit_emit_branch_ge(dasm_State **Dst, int label) {
         |  cset x16, ge
         |  cbnz x16, =>label
@@ -586,3 +642,69 @@ static void jit_emit_ldr16(dasm_State **Dst, int dst, int base, int offset) {
 static void jit_emit_ldr16_index(dasm_State **Dst, int dst, int base, int index) {
         |  ldrh Rw(dst), [Rx(base), Rx(index)]
 }
+
+static void jit_emit_ldr64_index(dasm_State **Dst, int dst, int base, int index) {
+        |  ldr Rx(dst), [Rx(base), Rx(index)]
+}
+
+static void jit_emit_str64_index(dasm_State **Dst, int src, int base, int index) {
+        |  str Rx(src), [Rx(base), Rx(index)]
+}
+static void jit_emit_ldr64_index8(dasm_State **Dst, int dst, int base, int index) {
+        |  ldr Rx(dst), [Rx(base), Rx(index), lsl #3]
+}
+static void jit_emit_str64_index8(dasm_State **Dst, int src, int base, int index) {
+        |  str Rx(src), [Rx(base), Rx(index), lsl #3]
+}
+
+
+static void jit_emit_mov32(dasm_State **Dst, int dst, int src) {
+        |  mov Rw(dst), Rw(src)
+}
+
+static void jit_emit_signext32(dasm_State **Dst, int dst, int src) {
+        |  sxtw Rx(dst), Rw(src)
+}
+static void jit_emit_branch_not_int32(dasm_State **Dst, int word, int label) {
+        |  lsr x17, Rx(word), #48
+        |  cmp x17, #6
+        |  bne =>label
+}
+static void jit_emit_decode_direct_array(dasm_State **Dst, int dst, int word, int label) {
+        |  lsr x17, Rx(word), #48
+        |  cmp x17, #1
+        |  bne =>label
+        |  lsl Rx(dst), Rx(word), #16
+        |  lsr Rx(dst), Rx(dst), #16
+}
+static void jit_emit_decode_direct_tag(dasm_State **Dst, int dst, int word, int label) {
+        |  lsr x17, Rx(word), #48
+        |  cmp x17, #3
+        |  bne =>label
+        |  ubfx Rx(dst), Rx(word), #0, #32
+}
+static void jit_emit_decode_direct_object(dasm_State **Dst, int dst, int word, int label) {
+        |  lsr x17, Rx(word), #48
+        |  cmp x17, #4
+        |  bne =>label
+        |  lsl Rx(dst), Rx(word), #16
+        |  lsr Rx(dst), Rx(dst), #16
+}
+static void jit_emit_strip_direct_pointer(dasm_State **Dst, int dst, int word) {
+        |  lsl Rx(dst), Rx(word), #16
+        |  lsr Rx(dst), Rx(dst), #16
+}
+
+static void jit_emit_branch_not_pointer(dasm_State **Dst, int word, int label) {
+        |  lsr x17, Rx(word), #48
+        |  cbnz x17, =>label
+}
+static void jit_emit_branch_not_double(dasm_State **Dst, int word, int label) {
+        |  lsr x17, Rx(word), #48
+        |  cmp x17, #7
+        |  blo =>label
+}
+
+
+
+

@@ -20,8 +20,8 @@
         }                        \
 } while (0)
 
-#define V_IS_EMPTY(v) ((v)->type == 0)
-#define V_IS_TOMB(v)  ((v)->type == VALUE_TOMBSTONE)
+#define V_IS_EMPTY(v) (V_TYPE(*(v)) == VALUE_ZERO)
+#define V_IS_TOMB(v)  (V_TYPE(*(v)) == VALUE_TOMBSTONE)
 
 #define IS_EMPTY(d, i) V_IS_EMPTY(&(d)->items[i].k)
 #define IS_TOMB(d, i)  V_IS_TOMB(&(d)->items[i].k)
@@ -184,7 +184,7 @@ delete(Dict *d, usize i)
         }
 
         m0(d->items[i]);
-        d->items[i].k.type = VALUE_TOMBSTONE;
+        d->items[i].k = TOMBSTONE;
 
         d->count -= 1;
         d->tombs += 1;
@@ -233,7 +233,7 @@ dict_get_value(Ty *ty, Dict *d, Value *key)
                 return val(d, i);
         }
 
-        if (d->dflt.type != VALUE_ZERO) {
+        if (V_TYPE(d->dflt) != VALUE_ZERO) {
                 GC_STOP();
                 ENSURE_INIT(d);
                 Value dflt = vm_call1(ty, &d->dflt, key);
@@ -309,7 +309,7 @@ dict_put_key_if_not_exists(Ty *ty, Dict *d, Value key)
 
         Value v;
 
-        if (d->dflt.type != VALUE_ZERO) {
+        if (V_TYPE(d->dflt) != VALUE_ZERO) {
                 v = vm_call1(ty, &d->dflt, &key);
                 i = find_spot(ty, d->size, d->items, h, &key);
                 if (OCCUPIED(d, i)) {
@@ -325,20 +325,20 @@ dict_put_key_if_not_exists(Ty *ty, Dict *d, Value key)
 Value *
 dict_put_member_if_not_exists(Ty *ty, Dict *d, char const *member)
 {
-        return dict_put_key_if_not_exists(ty, d, STRING_NOGC(member, strlen(member)));
+        return dict_put_key_if_not_exists(ty, d, STRING_NOGC(ty, member, strlen(member)));
 }
 
 Value *
 dict_get_member(Ty *ty, Dict *d, char const *key)
 {
-        Value string = STRING_NOGC(key, strlen(key));
+        Value string = STRING_NOGC(ty, key, strlen(key));
         return dict_get_value(ty, d, &string);
 }
 
 void
 dict_put_member(Ty *ty, Dict *d, char const *key, Value value)
 {
-        Value string = STRING_NOGC(key, strlen(key));
+        Value string = STRING_NOGC(ty, key, strlen(key));
         dict_put_value(ty, d, string, value);
 }
 
@@ -349,7 +349,7 @@ dict_mark(Ty *ty, Dict *d)
 
         MARK(d);
 
-        if (d->dflt.type != VALUE_ZERO) {
+        if (V_TYPE(d->dflt) != VALUE_ZERO) {
                 xvP(ty->marking, &d->dflt);
         }
 
@@ -377,14 +377,14 @@ dict_default(Ty *ty, Value *d, int argc, Value *kwargs)
         ASSERT_ARGC("Dict.default()", 0, 1);
 
         if (argc == 0) {
-                if (d->dict->dflt.type == VALUE_ZERO) {
+                if (V_TYPE(V_DICT(*d)->dflt) == VALUE_ZERO) {
                         return NIL;
                 } else {
-                        return d->dict->dflt;
+                        return V_DICT(*(d))->dflt;
                 }
         }
 
-        d->dict->dflt = ARG(0);
+        V_DICT(*(d))->dflt = ARG(0);
 
         return *d;
 }
@@ -394,15 +394,15 @@ dict_contains(Ty *ty, Value *d, int argc, Value *kwargs)
 {
         ASSERT_ARGC("Dict.contains()", 1);
 
-        if (d->dict->size == 0) {
+        if (V_DICT(*(d))->size == 0) {
                 return BOOLEAN(false);
         }
 
         Value *key = &ARG(0);
         u64 h = value_hash(ty, key);
-        usize i = find_spot(ty, d->dict->size, d->dict->items, h, key);
+        usize i = find_spot(ty, V_DICT(*(d))->size, V_DICT(*(d))->items, h, key);
 
-        return BOOLEAN(OCCUPIED(d->dict, i));
+        return BOOLEAN(OCCUPIED(V_DICT(*d), i));
 }
 
 static Value
@@ -410,8 +410,8 @@ dict_keys(Ty *ty, Value *d, int argc, Value *kwargs)
 {
         ASSERT_ARGC("Dict.keys()", 0);
 
-        Array *keys = vAn(d->dict->count);
-        dfor(d->dict, vPx(*keys, *key));
+        Array *keys = vAn(V_DICT(*d)->count);
+        dfor(V_DICT(*d), vPx(*keys, *key));
 
         return ARRAY(keys);
 }
@@ -421,8 +421,8 @@ dict_values(Ty *ty, Value *d, int argc, Value *kwargs)
 {
         ASSERT_ARGC("Dict.values()", 0);
 
-        Array *values = vAn(d->dict->count);
-        dfor(d->dict, vPx(*values, *val));
+        Array *values = vAn(V_DICT(*d)->count);
+        dfor(V_DICT(*d), vPx(*values, *val));
 
         return ARRAY(values);
 }
@@ -432,10 +432,10 @@ dict_items(Ty *ty, Value *d, int argc, Value *kwargs)
 {
         ASSERT_ARGC("Dict.items()", 0);
 
-        Array *items = vAn(d->dict->count);
+        Array *items = vAn(V_DICT(*d)->count);
         Value result = ARRAY(items);
         gP(&result);
-        dfor(d->dict, vPx(*items, PAIR(*key, *val)));
+        dfor(V_DICT(*d), vPx(*items, PAIR(*key, *val)));
         gX();
 
         return result;
@@ -458,7 +458,7 @@ static Value
 dict_clone(Ty *ty, Value *d, int argc, Value *kwargs)
 {
         ASSERT_ARGC("Dict.clone()", 0);
-        return DICT(DictClone(ty, d->dict));
+        return DICT(DictClone(ty, V_DICT(*d)));
 }
 
 bool
@@ -526,14 +526,14 @@ dict_diff(Ty *ty, Value *d, int argc, Value *kwargs)
         }
 
         Value u = ARG(0);
-        if (u.type != VALUE_DICT) {
+        if (V_TYPE(u) != VALUE_DICT) {
                 zP("Dict.diff(): expected Dict but got %s", SHOW(&u));
         }
 
         Dict *diff = dict_new(ty);
         NOGC(diff);
-        copy_unique(ty, diff, d->dict, u.dict);
-        copy_unique(ty, diff, u.dict, d->dict);
+        copy_unique(ty, diff, V_DICT(*(d)), V_DICT(u));
+        copy_unique(ty, diff, V_DICT(u), V_DICT(*(d)));
         OKGC(diff);
 
         return DICT(diff);
@@ -547,8 +547,8 @@ dict_intersect(Ty *ty, Value *d, int argc, Value *kwargs)
         Dict *u = DICT_ARG(0);
 
         if (argc == 1) {
-                for (usize i = 0; i < d->dict->size;) {
-                        if (!OCCUPIED(d->dict, i)) {
+                for (usize i = 0; i < V_DICT(*(d))->size;) {
+                        if (!OCCUPIED(V_DICT(*d), i)) {
                                 i += 1;
                                 continue;
                         }
@@ -556,11 +556,11 @@ dict_intersect(Ty *ty, Value *d, int argc, Value *kwargs)
                                 ty,
                                 u->size,
                                 u->items,
-                                d->dict->items[i].h,
-                                &d->dict->items[i].k
+                                V_DICT(*(d))->items[i].h,
+                                &V_DICT(*(d))->items[i].k
                         );
                         if (!OCCUPIED(u, j)) {
-                                i = delete(d->dict, i);
+                                i = delete(V_DICT(*(d)), i);
                         } else {
                                 i += 1;
                         }
@@ -570,8 +570,8 @@ dict_intersect(Ty *ty, Value *d, int argc, Value *kwargs)
                 if (!CALLABLE(f)) {
                         zP("the second argument to dict.intersect() must be callable");
                 }
-                for (usize i = 0; i < d->dict->size;) {
-                        if (!OCCUPIED(d->dict, i)) {
+                for (usize i = 0; i < V_DICT(*(d))->size;) {
+                        if (!OCCUPIED(V_DICT(*d), i)) {
                                 i += 1;
                                 continue;
                         }
@@ -579,16 +579,16 @@ dict_intersect(Ty *ty, Value *d, int argc, Value *kwargs)
                                 ty,
                                 u->size,
                                 u->items,
-                                d->dict->items[i].h,
-                                &d->dict->items[i].k
+                                V_DICT(*(d))->items[i].h,
+                                &V_DICT(*(d))->items[i].k
                         );
                         if (!OCCUPIED(u, j)) {
-                                i = delete(d->dict, i);
+                                i = delete(V_DICT(*(d)), i);
                         } else {
-                                d->dict->items[i].v = vm_eval_function(
+                                V_DICT(*(d))->items[i].v = vm_eval_function(
                                         ty,
                                         &f,
-                                        &d->dict->items[i].v,
+                                        &V_DICT(*(d))->items[i].v,
                                         &u->items[j].v,
                                         NULL
                                 );
@@ -650,8 +650,8 @@ dict_update(Ty *ty, Value *d, int argc, Value *kwargs)
 
         return DICT(
                 (argc == 1)
-              ? DictUpdate(ty, d->dict, u)
-              : DictUpdateWith(ty, d->dict, u, &ARG(1))
+              ? DictUpdate(ty, V_DICT(*d), u)
+              : DictUpdateWith(ty, V_DICT(*d), u, &ARG(1))
         );
 }
 
@@ -667,13 +667,13 @@ dict_subtract(Ty *ty, Value *d, int argc, Value *kwargs)
                         if (OCCUPIED(u, i)) {
                                 usize j = find_spot(
                                         ty,
-                                        d->dict->size,
-                                        d->dict->items,
+                                        V_DICT(*(d))->size,
+                                        V_DICT(*(d))->items,
                                         u->items[i].h,
                                         &u->items[i].k
                                 );
-                                if (OCCUPIED(d->dict, j)) {
-                                        delete(d->dict, j);
+                                if (OCCUPIED(V_DICT(*d), j)) {
+                                        delete(V_DICT(*(d)), j);
                                 }
                         }
                 }
@@ -683,20 +683,20 @@ dict_subtract(Ty *ty, Value *d, int argc, Value *kwargs)
                         if (OCCUPIED(u, i)) {
                                 usize j = find_spot(
                                         ty,
-                                        d->dict->size,
-                                        d->dict->items,
+                                        V_DICT(*(d))->size,
+                                        V_DICT(*(d))->items,
                                         u->items[i].h,
                                         &u->items[i].k
                                 );
-                                if (OCCUPIED(d->dict, j)) {
+                                if (OCCUPIED(V_DICT(*d), j)) {
                                         vm_eval_function(
                                                 ty,
                                                 &f,
-                                                &d->dict->items[j].v,
+                                                &V_DICT(*(d))->items[j].v,
                                                 &u->items[i].v,
                                                 NULL
                                         );
-                                        delete(d->dict, j);
+                                        delete(V_DICT(*(d)), j);
                                 }
                         }
                 }
@@ -712,7 +712,7 @@ dict_put(Ty *ty, Value *d, int argc, Value *kwargs)
         ASSERT_ARGC_RANGE("Dict.put()", 1, INT_MAX);
 
         for (int i = 0; i < argc; ++i) {
-                dict_put_value(ty, d->dict, ARG(i), NIL);
+                dict_put_value(ty, V_DICT(*(d)), ARG(i), NIL);
         }
 
         return *d;
@@ -726,7 +726,7 @@ dict_get_or_put_with(Ty *ty, Value *d, int argc, Value *kwargs)
         Value key = ARG(0);
         Value fun = ARG(1);
 
-        Dict *dict = d->dict;
+        Dict *dict = V_DICT(*(d));
 
         ENSURE_INIT(dict);
 
@@ -766,10 +766,10 @@ dict_clear(Ty *ty, Value *d, int argc, Value *kwargs)
 {
         ASSERT_ARGC("Dict.clear()", 0);
 
-        memset(d->dict->items, 0, sizeof (DictItem) * d->dict->size);
-        d->dict->last = NULL;
-        d->dict->count = 0;
-        d->dict->tombs = 0;
+        memset(V_DICT(*d)->items, 0, sizeof (DictItem) * V_DICT(*d)->size);
+        V_DICT(*(d))->last = NULL;
+        V_DICT(*(d))->count = 0;
+        V_DICT(*(d))->tombs = 0;
 
         return *d;
 }
@@ -782,22 +782,22 @@ dict_pop(Ty *ty, Value *d, int argc, Value *kwargs)
         isize i = (argc == 1) ? INT_ARG(0) : -1;
 
         if (i < 0) {
-                i += d->dict->count;
+                i += V_DICT(*(d))->count;
         }
-        if (i < 0 || i >= d->dict->count) {
-                bP("index %jd out of range [0, %zu)", i, d->dict->count);
+        if (i < 0 || i >= V_DICT(*(d))->count) {
+                bP("index %jd out of range [0, %zu)", i, V_DICT(*d)->count);
         }
 
         DictItem *it;
 
-        if (i < d->dict->count / 2) {
-                it = DictFirst(d->dict);
+        if (i < V_DICT(*(d))->count / 2) {
+                it = DictFirst(V_DICT(*(d)));
                 while (i --> 0) {
                         it = it->next;
                 }
         } else {
-                it = d->dict->last;
-                i = d->dict->count - i - 1;
+                it = V_DICT(*(d))->last;
+                i = V_DICT(*(d))->count - i - 1;
                 while (i --> 0) {
                         it = it->prev;
                 }
@@ -805,7 +805,7 @@ dict_pop(Ty *ty, Value *d, int argc, Value *kwargs)
 
         Value popped = PAIR(it->k, it->v);
 
-        delete(d->dict, it - d->dict->items);
+        delete(V_DICT(*(d)), it - V_DICT(*(d))->items);
 
         return popped;
 }
@@ -820,17 +820,17 @@ dict_remove(Ty *ty, Value *d, int argc, Value *kwargs)
 
         usize i = find_spot(
                 ty,
-                d->dict->size,
-                d->dict->items,
+                V_DICT(*(d))->size,
+                V_DICT(*(d))->items,
                 h,
                 &k
         );
 
-        if (!OCCUPIED(d->dict, i)) {
+        if (!OCCUPIED(V_DICT(*d), i)) {
                 return NIL;
         } else {
-                Value v = d->dict->items[i].v;
-                delete(d->dict, i);
+                Value v = V_DICT(*(d))->items[i].v;
+                delete(V_DICT(*(d)), i);
                 return v;
         }
 }
@@ -841,7 +841,7 @@ dict_keep_mut(Ty *ty, Value *d, int argc, Value *kwargs)
         ASSERT_ARGC("Dict.keep!()", 1);
 
         Value f    = ARG(0);
-        Dict *dict = d->dict;
+        Dict *dict = V_DICT(*(d));
 
         for (usize i = 0; i < dict->size; ++i) {
                 if (!OCCUPIED(dict, i)) {
@@ -872,7 +872,7 @@ dict_keep(Ty *ty, Value *d, int argc, Value *kwargs)
 
         NOGC(new);
 
-        dfor(d->dict, {
+        dfor(V_DICT(*d), {
                 Value keep = vm_eval_function(ty, &f, key, val, NULL);
                 if (value_truthy(ty, &keep)) {
                         dict_put_value(ty, new, *key, *val);
@@ -888,14 +888,14 @@ static Value
 dict_len(Ty *ty, Value *d, int argc, Value *kwargs)
 {
         ASSERT_ARGC("Dict.len()", 0);
-        return INTEGER(d->dict->count);
+        return INTEGER(V_DICT(*d)->count);
 }
 
 static Value
 dict_ptr(Ty *ty, Value *d, int argc, Value *kwargs)
 {
         ASSERT_ARGC("Dict.ptr()", 0);
-        return PTR(d->dict);
+        return PTR(V_DICT(*d));
 }
 
 DEFINE_METHOD_TABLE(

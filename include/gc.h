@@ -59,6 +59,7 @@ enum {
         GC_QUEUE,
         GC_SHARED_QUEUE,
         GC_VALUE,
+        GC_VALUE_BOX,
         GC_ENV,
         GC_GENERATOR,
         GC_THREAD,

@@ -45,15 +45,15 @@ struct_offsets(ffi_type const *t)
 inline static double
 float_from(Value const *v)
 {
-        return (v->type == VALUE_INTEGER) ? v->z : v->real;
+        return (V_TYPE(*(v)) == VALUE_INTEGER) ? V_Z(*(v)) : V_REAL(*(v));
 }
 
 inline static imax
 int_from(Value const *v)
 {
-        return (v->type == VALUE_INTEGER) ? v->z
-             : (v->type == VALUE_PTR)     ? (iptr)v->ptr
-             : v->real;
+        return (V_TYPE(*(v)) == VALUE_INTEGER) ? V_Z(*(v))
+             : (V_TYPE(*(v)) == VALUE_PTR)     ? (iptr)V_PTR(*(v))
+             : V_REAL(*(v));
 }
 
 inline static void *
@@ -61,12 +61,12 @@ ptr_from(Ty *ty, Value const *v)
 {
         Value *f;
 
-        switch (v->type) {
+        switch (V_TYPE(*(v))) {
         case VALUE_PTR:
-                return v->ptr;
+                return V_PTR(*(v));
 
         case VALUE_INTEGER:
-                return (void *)v->z;
+                return (void *)V_Z(*(v));
 
         case VALUE_STRING:
                 return (void *)ss(*v);
@@ -75,15 +75,15 @@ ptr_from(Ty *ty, Value const *v)
                 return NULL;
 
         case VALUE_BLOB:
-                return (void *)v->blob->items;
+                return (void *)V_BLOB(*(v))->items;
 
         case VALUE_FOREIGN_FUNCTION:
-                return (void *)v->ff;
+                return (void *)V_FF(*(v));
 
         case VALUE_OBJECT:
-                f = class_lookup_method_i(ty, v->class, NAMES.ptr);
+                f = class_lookup_method_i(ty, V_CLASS(*(v)), NAMES.ptr);
                 if (f != NULL) {
-                        return vm_call_method(ty, v, f, 0).ptr;
+                        return V_PTR(vm_call_method(ty, v, f, 0));
                 }
                 // fallthrough
         }
@@ -196,25 +196,25 @@ store(Ty *ty, ffi_type *t, void *p, Value const *v)
                 break;
 
         case FFI_TYPE_STRUCT:
-                switch (v->type) {
+                switch (V_TYPE(*(v))) {
                 case VALUE_TUPLE:
-                        if ((usize)v->count > struct_count(t)) {
-                                zP("too many values for FFI struct: %d", v->count);
+                        if ((usize)V_COUNT(*(v)) > struct_count(t)) {
+                                zP("too many values for FFI struct: %d", V_COUNT(*v));
                         }
                         offsets = struct_offsets(t);
-                        for (int i = 0; i < v->count; ++i) {
-                                store(ty, t->elements[i], (char *)p + offsets[i], &v->items[i]);
+                        for (int i = 0; i < V_COUNT(*(v)); ++i) {
+                                store(ty, t->elements[i], (char *)p + offsets[i], &V_ITEMS(*(v))[i]);
                         }
                         break;
 
                 case VALUE_PTR:
-                        memcpy(p, v->ptr, t->size);
+                        memcpy(p, V_PTR(*v), t->size);
                         break;
 
                 case VALUE_OBJECT:
-                        f = class_lookup_method_i(ty, v->class, NAMES.ptr);
+                        f = class_lookup_method_i(ty, V_CLASS(*(v)), NAMES.ptr);
                         if (f != NULL) {
-                                memcpy(p, vm_call_method(ty, v, f, 0).ptr, t->size);
+                                memcpy(p, V_PTR(vm_call_method(ty, v, f, 0)), t->size);
                         } else {
                                 zP("attempt to dereference null-pointer: %s.__ptr__()", VSC(v));
                         }
@@ -286,7 +286,7 @@ load(Ty *ty, ffi_type *t, void const *p)
                 offsets = struct_offsets(t);
 
                 for (int i = 0; i < n; ++i) {
-                        v.items[i] = load(ty, t->elements[i], (char *)p + offsets[i]);
+                        V_ITEMS(v)[i] = load(ty, t->elements[i], (char *)p + offsets[i]);
                 }
 
                 gX();
@@ -305,7 +305,7 @@ closure_func(ffi_cif *cif, void *ret, void **args, void *data)
         Ty *ty = GetMyTy();
 
         Value *ctx = data;
-        Value *f = &ctx->items[0];
+        Value *f = &V_ITEMS(*(ctx))[0];
 
         depth += 1;
 
@@ -376,8 +376,8 @@ cffi_cif(Ty *ty, int argc, Value *kwargs)
 
         if (argc == 0) {
                 rt = &ffi_type_void;
-        } else if (ARG(0).type == VALUE_PTR) {
-                rt = ARG(0).ptr;
+        } else if (V_TYPE(ARG(0)) == VALUE_PTR) {
+                rt = V_PTR(ARG(0));
         } else {
 Bad:
                 xvF(ats);
@@ -385,23 +385,23 @@ Bad:
         }
 
         for (int i = 1; i < argc; ++i) {
-                if (ARG(i).type != VALUE_PTR) {
+                if (V_TYPE(ARG(i)) != VALUE_PTR) {
                         goto Bad;
                 }
-                xvP(ats, ARG(i).ptr);
+                xvP(ats, V_PTR(ARG(i)));
         }
 
         ffi_cif *cif = mA(sizeof *cif);
 
         Value *nFixed = NAMED("nFixed");
 
-        if (nFixed != NULL && nFixed->type != VALUE_NIL) {
-                if (nFixed->type != VALUE_INTEGER) {
+        if (nFixed != NULL && V_TYPE(*(nFixed)) != VALUE_NIL) {
+                if (V_TYPE(*(nFixed)) != VALUE_INTEGER) {
                         xvF(ats);
                         mF(cif);
                         zP("ffi.cif(): expected nFixed to be an integer but got: %s", VSC(nFixed));
                 }
-                if (ffi_prep_cif_var(cif, FFI_DEFAULT_ABI, nFixed->z, max(0, argc - 1), rt, ats.items) != FFI_OK) {
+                if (ffi_prep_cif_var(cif, FFI_DEFAULT_ABI, V_Z(*(nFixed)), max(0, argc - 1), rt, ats.items) != FFI_OK) {
                         xvF(ats);
                         mF(cif);
                         return NIL;
@@ -464,11 +464,11 @@ cffi_size(Ty *ty, int argc, Value *kwargs)
                 zP("ffi.size() expects 1 or 2 arguments but got %d", argc);
         }
 
-        if (ARG(0).type != VALUE_PTR) {
+        if (V_TYPE(ARG(0)) != VALUE_PTR) {
                 zP("the argument to ffi.size() must be a pointer");
         }
 
-        return INTEGER(((ffi_type *)ARG(0).ptr)->size);
+        return INTEGER(((ffi_type *)V_PTR(ARG(0)))->size);
 }
 
 Value
@@ -485,9 +485,9 @@ cffi_auto(Ty *ty, int argc, Value *kwargs)
                 dtor[0] = ARG(1);
         }
 
-        dtor[1] = PTR(ptr.ptr);
+        dtor[1] = PTR(V_PTR(ptr));
 
-        return TGCPTR(ptr.ptr, ptr.extra, dtor);
+        return TGCPTR(V_PTR(ptr), V_EXTRA(ptr), dtor);
 }
 
 Value
@@ -521,14 +521,14 @@ cffi_new(Ty *ty, int argc, Value *kwargs)
         Value p = TPTR(t, aligned_alloc(align, total));
 #endif
 
-        if (p.ptr == NULL) {
+        if (V_PTR(p) == NULL) {
                 return NIL;
         }
 
         if (init == NULL) {
-                memset(p.ptr, 0, total);
+                memset(V_PTR(p), 0, total);
         } else {
-                memcpy(p.ptr, init, count * t->size);
+                memcpy(V_PTR(p), init, count * t->size);
         }
 
         return p;
@@ -551,15 +551,15 @@ cffi_box(Ty *ty, int argc, Value *kwargs)
         Value p = TPTR(t, aligned_alloc(align, size));
 #endif
 
-        if (p.ptr == NULL) {
+        if (V_PTR(p) == NULL) {
                 return NIL;
         }
 
         if (argc == 2) {
                 Value v = ARG(1);
-                store(ty, t, p.ptr, &v);
+                store(ty, t, V_PTR(p), &v);
         } else {
-                memset(p.ptr, 0, t->size);
+                memset(V_PTR(p), 0, t->size);
         }
 
         return p;
@@ -614,11 +614,11 @@ cffi_pmember(Ty *ty, int argc, Value *kwargs)
         }
 
         Value t = ARG(0);
-        if (t.type != VALUE_PTR) {
+        if (V_TYPE(t) != VALUE_PTR) {
                 zP("the first argument to ffi.member() must be a pointer");
         }
 
-        ffi_type *type = t.ptr;
+        ffi_type *type = V_PTR(t);
 
         int n = 0;
         while (type->elements[n] != NULL) {
@@ -626,13 +626,13 @@ cffi_pmember(Ty *ty, int argc, Value *kwargs)
         }
 
         unsigned char *p;
-        switch (ARG(1).type) {
+        switch (V_TYPE(ARG(1))) {
         case VALUE_PTR:
-                p = ARG(1).ptr;
+                p = V_PTR(ARG(1));
                 break;
 
         case VALUE_BLOB:
-                p = ARG(1).blob->items;
+                p = V_BLOB(ARG(1))->items;
                 break;
 
         default:
@@ -641,16 +641,16 @@ cffi_pmember(Ty *ty, int argc, Value *kwargs)
 
         Value i = ARG(2);
         if (
-                (i.type != VALUE_INTEGER)
-             || (i.z < 0)
-             || (i.z >= n)
+                (V_TYPE(i) != VALUE_INTEGER)
+             || (V_Z(i) < 0)
+             || (V_Z(i) >= n)
         ) {
                 zP("invalid third argument to ffi.pmember(): %s", VSC(&i));
         }
 
         usize const *offsets = struct_offsets(type);
 
-        return PTR(p + offsets[i.z]);
+        return PTR(p + offsets[V_Z(i)]);
 }
 
 Value
@@ -661,11 +661,11 @@ cffi_member(Ty *ty, int argc, Value *kwargs)
         }
 
         Value t = ARG(0);
-        if (t.type != VALUE_PTR) {
+        if (V_TYPE(t) != VALUE_PTR) {
                 zP("the first argument to ffi.member() must be a pointer");
         }
 
-        ffi_type *type = t.ptr;
+        ffi_type *type = V_PTR(t);
 
         int n = 0;
         while (type->elements[n] != NULL) {
@@ -673,13 +673,13 @@ cffi_member(Ty *ty, int argc, Value *kwargs)
         }
 
         unsigned char *p;
-        switch (ARG(1).type) {
+        switch (V_TYPE(ARG(1))) {
         case VALUE_PTR:
-                p = ARG(1).ptr;
+                p = V_PTR(ARG(1));
                 break;
 
         case VALUE_BLOB:
-                p = ARG(1).blob->items;
+                p = V_BLOB(ARG(1))->items;
                 break;
 
         default:
@@ -688,9 +688,9 @@ cffi_member(Ty *ty, int argc, Value *kwargs)
 
         Value i = ARG(2);
         if (
-                (i.type != VALUE_INTEGER)
-             || (i.z < 0)
-             || (i.z >= n)
+                (V_TYPE(i) != VALUE_INTEGER)
+             || (V_Z(i) < 0)
+             || (V_Z(i) >= n)
         ) {
                 zP("invalid third argument to ffi.member(): %s", VSC(&i));
         }
@@ -698,10 +698,10 @@ cffi_member(Ty *ty, int argc, Value *kwargs)
         usize const *offsets = struct_offsets(type);
 
         if (argc == 3) {
-                return load(ty, type->elements[i.z], p + offsets[i.z]);
+                return load(ty, type->elements[V_Z(i)], p + offsets[V_Z(i)]);
         } else {
                 Value val = ARG(3);
-                store(ty, type->elements[i.z], p + offsets[i.z], &val);
+                store(ty, type->elements[V_Z(i)], p + offsets[V_Z(i)], &val);
                 return val;
         }
 }
@@ -751,15 +751,15 @@ cffi_load(Ty *ty, int argc, Value *kwargs)
         Value arg0 = ARGx(0, VALUE_PTR);
 
         if (argc == 1) {
-                ffi_type *t = (arg0.extra == NULL)
+                ffi_type *t = (V_EXTRA(arg0) == NULL)
                             ? &ffi_type_uint8
-                            : arg0.extra;
-                return load(ty, t, arg0.ptr);
+                            : V_EXTRA(arg0);
+                return load(ty, t, V_PTR(arg0));
         }
 
         Value addr = ARG(1);
 
-        return load(ty, arg0.ptr, ptr_from(ty, &addr));
+        return load(ty, V_PTR(arg0), ptr_from(ty, &addr));
 }
 
 Value
@@ -769,13 +769,13 @@ cffi_load_atomic(Ty *ty, int argc, Value *kwargs)
 
         switch (argc) {
         case 1:
-                t = (ARG(0).extra == NULL)
+                t = (V_EXTRA(ARG(0)) == NULL)
                   ? &ffi_type_uint8
-                  : ARG(0).extra;
-                return xload(ty, t, ARG(0).ptr);
+                  : V_EXTRA(ARG(0));
+                return xload(ty, t, V_PTR(ARG(0)));
 
         case 2:
-                return xload(ty, ARG(0).ptr, ARG(1).ptr);
+                return xload(ty, V_PTR(ARG(0)), V_PTR(ARG(1)));
 
         default:
                 zP("atomic.load(): expected 1 or 2 arguments but got %d", argc);
@@ -827,23 +827,23 @@ cffi_store(Ty *ty, int argc, Value *kwargs)
                 zP("ffi.store(): expected 2 or 3 arguments but got %d", argc);
         }
 
-        if (vPtr.type != VALUE_PTR) {
+        if (V_TYPE(vPtr) != VALUE_PTR) {
                 zP("ffi.store(): expected pointer but got: %s", VSC(&vPtr));
         }
 
-        if (vType.type == VALUE_NONE) {
+        if (V_TYPE(vType) == VALUE_NONE) {
                 vType = PTR(
-                        (vPtr.extra == NULL)
+                        (V_EXTRA(vPtr) == NULL)
                       ? &ffi_type_uint8
-                      : (ffi_type *)vPtr.extra
+                      : (ffi_type *)V_EXTRA(vPtr)
                 );
-        } else if (vType.type != VALUE_PTR) {
+        } else if (V_TYPE(vType) != VALUE_PTR) {
                 zP("ffi.store(): expected pointer but got: %s", VSC(&vType));
         }
 
-        store(ty, vType.ptr, vPtr.ptr, &vVal);
+        store(ty, V_PTR(vType), V_PTR(vPtr), &vVal);
 
-        return load(ty, vType.ptr, vPtr.ptr);
+        return load(ty, V_PTR(vType), V_PTR(vPtr));
 }
 
 Value
@@ -870,21 +870,21 @@ cffi_store_atomic(Ty *ty, int argc, Value *kwargs)
                 zP("atomic.store(): expected 2 or 3 arguments but got %d", argc);
         }
 
-        if (vPtr.type != VALUE_PTR) {
+        if (V_TYPE(vPtr) != VALUE_PTR) {
                 zP("atomic.store(): expected pointer but got: %s", VSC(&vPtr));
         }
 
-        if (vType.type == VALUE_NONE) {
+        if (V_TYPE(vType) == VALUE_NONE) {
                 vType = PTR(
-                        (vPtr.extra == NULL)
+                        (V_EXTRA(vPtr) == NULL)
                       ? &ffi_type_uint8
-                      : (ffi_type *)vPtr.extra
+                      : (ffi_type *)V_EXTRA(vPtr)
                 );
-        } else if (vType.type != VALUE_PTR) {
+        } else if (V_TYPE(vType) != VALUE_PTR) {
                 zP("atomic.store(): expected pointer but got: %s", VSC(&vType));
         }
 
-        xstore(ty, vType.ptr, vPtr.ptr, &vVal);
+        xstore(ty, V_PTR(vType), V_PTR(vPtr), &vVal);
 
         return NIL;
 }
@@ -950,8 +950,8 @@ cffi_fast_call(Ty *ty, Value const *fun, int argc, Value *kwargs)
 {
         ASSERT_ARGC_RANGE("ffi.call()", 0, INT_MAX);
 
-        ffi_cif *cif = fun->ffi;
-        void (*func)(void) = (void (*)(void))fun->ff;
+        ffi_cif *cif = V_FFI(*(fun));
+        void (*func)(void) = (void (*)(void))V_FF(*(fun));
 
         if (UNLIKELY(cif->nargs != argc)) {
                 bP("bad FFI call: %u arguments expected but got %d", cif->nargs, argc);
@@ -1003,7 +1003,7 @@ cffi_blob(Ty *ty, int argc, Value *kwargs)
 {
         ASSERT_ARGC("ffi.blob()", 2);
 
-        void *mem = ARGx(0, VALUE_PTR).ptr;
+        void *mem = V_PTR(ARGx(0, VALUE_PTR));
         usize n = INT_ARG(1);
 
         // TODO: should be a 'frozen' blob or something
@@ -1104,7 +1104,7 @@ cffi_dlsym(Ty *ty, int argc, Value *kwargs)
         Value symbol = ARGx(0, VALUE_STRING);
 
         void *handle;
-        if (argc == 2 && ARG(1).type != VALUE_NIL) {
+        if (argc == 2 && V_TYPE(ARG(1)) != VALUE_NIL) {
                 handle = PTR_ARG(1);
         } else {
 #ifdef _WIN32
@@ -1141,11 +1141,11 @@ cffi_struct(Ty *ty, int argc, Value *kwargs)
         for (int i = 0; i < argc; ++i) {
                 Value member = ARG(i);
 
-                if (member.type != VALUE_PTR) {
+                if (V_TYPE(member) != VALUE_PTR) {
                         zP("non-pointer passed to ffi.struct(): %s", VSC(&member));
                 }
 
-                t->elements[i] = member.ptr;
+                t->elements[i] = V_PTR(member);
         }
 
         t->elements[argc] = NULL;
@@ -1171,7 +1171,7 @@ cffi_closure(Ty *ty, int argc, Value *kwargs)
         }
 
         Value cif = cffi_cif(ty, argc - 1, NULL);
-        if (cif.type == VALUE_NIL) {
+        if (V_TYPE(cif) == VALUE_NIL) {
                 bP("failed to construct ffi_cif");
         }
 
@@ -1185,16 +1185,16 @@ cffi_closure(Ty *ty, int argc, Value *kwargs)
 
         Value *data = mAo(sizeof *data, GC_VALUE);
         *data = vT(2);
-        data->items[0] = f;
-        data->items[1] = PTR(ty);
+        V_ITEMS(*(data))[0] = f;
+        V_ITEMS(*(data))[1] = PTR(ty);
 
         void **pointers = mA(sizeof (void *[2]));
         pointers[0] = closure;
-        pointers[1] = cif.ptr;
+        pointers[1] = V_PTR(cif);
 
         GC_RESUME();
 
-        if (ffi_prep_closure_loc(closure, cif.ptr, closure_func, data, code) == FFI_OK) {
+        if (ffi_prep_closure_loc(closure, V_PTR(cif), closure_func, data, code) == FFI_OK) {
                 return EPTR(code, data, pointers);
         } else {
                 mF(data);
@@ -1209,7 +1209,7 @@ cffi_closure_free(Ty *ty, int argc, Value *kwargs)
         ASSERT_ARGC("ffi.freeClosure()", 1);
 
         Value p = ARGx(0, VALUE_PTR);
-        void **pointers = p.extra;
+        void **pointers = V_EXTRA(p);
 
         ffi_closure_free(pointers[0]);
 
@@ -1376,7 +1376,7 @@ cffi_pack(Ty *ty, int argc, Value *kwargs)
 
         int ai;
 
-        switch (arg0.type) {
+        switch (V_TYPE(arg0)) {
         case VALUE_STRING:
                 fmt  = ss(arg0);
                 nfmt = sN(arg0);
@@ -1390,7 +1390,7 @@ cffi_pack(Ty *ty, int argc, Value *kwargs)
                 fmt  = ss(arg1);
                 nfmt = sN(arg1);
                 b    = NULL;
-                buf  = arg0.ptr;
+                buf  = V_PTR(arg0);
                 ai   = 2;
                 break;
 
@@ -1398,7 +1398,7 @@ cffi_pack(Ty *ty, int argc, Value *kwargs)
                 arg1 = ARGx(1, VALUE_STRING);
                 fmt  = ss(arg1);
                 nfmt = sN(arg1);
-                b    = arg0.blob;
+                b    = V_BLOB(arg0);
                 buf  = NULL;
                 ai   = 2;
                 break;
@@ -1466,12 +1466,12 @@ cffi_pack(Ty *ty, int argc, Value *kwargs)
                         Value v = ARGx(ai++, VALUE_STRING, VALUE_BLOB);
                         u8 const *src;
                         isize srclen;
-                        if (v.type == VALUE_STRING) {
+                        if (V_TYPE(v) == VALUE_STRING) {
                                 src = ss(v);
                                 srclen = sN(v);
                         } else {
-                                src = vv(*v.blob);
-                                srclen = vN(*v.blob);
+                                src = vv(*V_BLOB(v));
+                                srclen = vN(*V_BLOB(v));
                         }
                         memcpy(buf + off, src, min(srclen, count));
                         off += count;
@@ -1554,9 +1554,9 @@ cffi_unpack(Ty *ty, int argc, Value *kwargs)
 
         Value vBuf = ARGx(1, VALUE_BLOB, VALUE_PTR);
 
-        unsigned char const *buf = (vBuf.type == VALUE_BLOB)
-                                 ? vv(*vBuf.blob)
-                                 : vBuf.ptr;
+        unsigned char const *buf = (V_TYPE(vBuf) == VALUE_BLOB)
+                                 ? vv(*V_BLOB(vBuf))
+                                 : V_PTR(vBuf);
 
         isize offset = (argc == 3) ? INT_ARG(2) : 0;
 
@@ -1598,7 +1598,7 @@ cffi_unpack(Ty *ty, int argc, Value *kwargs)
                         uvR(*sb, count);
                         vN(*sb) = count;
                         memcpy(vv(*sb), buf + off, count);
-                        t.items[ti++] = BLOB(sb);
+                        V_ITEMS(t)[ti++] = BLOB(sb);
                         off += count;
                         continue;
                 }
@@ -1667,7 +1667,7 @@ cffi_unpack(Ty *ty, int argc, Value *kwargs)
                                 return v;
                         }
 
-                        t.items[ti++] = v;
+                        V_ITEMS(t)[ti++] = v;
                         off += size;
                 }
         }

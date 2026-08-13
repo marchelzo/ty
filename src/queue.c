@@ -33,7 +33,7 @@ queue_push(Ty *ty, Value *self, int argc, Value *kwargs)
 {
         ASSERT_ARGC_RANGE("Queue.push()", 1, INT_MAX);
 
-        Queue *q = self->queue;
+        Queue *q = V_QUEUE(*(self));
 
         for (int i = 0; i < argc; ++i) {
                 _queue_push_back_one(ty, &q->items, &q->head, &q->tail, &q->cap, ARG(i));
@@ -49,7 +49,7 @@ queue_push_front(Ty *ty, Value *self, int argc, Value *kwargs)
 {
         ASSERT_ARGC_RANGE("Queue.push-front()", 1, INT_MAX);
 
-        Queue *q = self->queue;
+        Queue *q = V_QUEUE(*(self));
 
         for (int i = argc - 1; i >= 0; --i) {
                 _queue_push_front_one(ty, &q->items, &q->head, &q->tail, &q->cap, ARG(i));
@@ -65,7 +65,7 @@ queue_pop(Ty *ty, Value *self, int argc, Value *kwargs)
 {
         ASSERT_ARGC("Queue.pop()", 0);
 
-        Queue *q = self->queue;
+        Queue *q = V_QUEUE(*(self));
 
         if (_queue_count(q->head, q->tail, q->cap) == 0) {
                 bP("empty queue");
@@ -82,7 +82,7 @@ queue_pop_back(Ty *ty, Value *self, int argc, Value *kwargs)
 {
         ASSERT_ARGC("Queue.pop-back()", 0);
 
-        Queue *q = self->queue;
+        Queue *q = V_QUEUE(*(self));
 
         if (_queue_count(q->head, q->tail, q->cap) == 0) {
                 bP("empty queue");
@@ -98,7 +98,7 @@ queue_try_pop(Ty *ty, Value *self, int argc, Value *kwargs)
 {
         ASSERT_ARGC("Queue.try-pop()", 0);
 
-        Queue *q = self->queue;
+        Queue *q = V_QUEUE(*(self));
 
         if (_queue_count(q->head, q->tail, q->cap) == 0) {
                 return None;
@@ -115,7 +115,7 @@ queue_try_pop_back(Ty *ty, Value *self, int argc, Value *kwargs)
 {
         ASSERT_ARGC("Queue.try-pop-back()", 0);
 
-        Queue *q = self->queue;
+        Queue *q = V_QUEUE(*(self));
 
         if (_queue_count(q->head, q->tail, q->cap) == 0) {
                 return None;
@@ -131,7 +131,7 @@ queue_peek(Ty *ty, Value *self, int argc, Value *kwargs)
 {
         ASSERT_ARGC("Queue.peek()", 0);
 
-        Queue *q = self->queue;
+        Queue *q = V_QUEUE(*(self));
 
         if (_queue_count(q->head, q->tail, q->cap) == 0) {
                 bP("empty queue");
@@ -145,7 +145,7 @@ queue_peek_back(Ty *ty, Value *self, int argc, Value *kwargs)
 {
         ASSERT_ARGC("Queue.peek-back()", 0);
 
-        Queue *q = self->queue;
+        Queue *q = V_QUEUE(*(self));
 
         if (_queue_count(q->head, q->tail, q->cap) == 0) {
                 bP("empty queue");
@@ -159,7 +159,7 @@ queue_try_peek(Ty *ty, Value *self, int argc, Value *kwargs)
 {
         ASSERT_ARGC("Queue.try-peek()", 0);
 
-        Queue *q = self->queue;
+        Queue *q = V_QUEUE(*(self));
 
         if (_queue_count(q->head, q->tail, q->cap) == 0) {
                 return None;
@@ -173,7 +173,7 @@ queue_try_peek_back(Ty *ty, Value *self, int argc, Value *kwargs)
 {
         ASSERT_ARGC("Queue.try-peek-back()", 0);
 
-        Queue *q = self->queue;
+        Queue *q = V_QUEUE(*(self));
 
         if (_queue_count(q->head, q->tail, q->cap) == 0) {
                 return None;
@@ -186,14 +186,14 @@ static Value
 queue_len(Ty *ty, Value *self, int argc, Value *kwargs)
 {
         ASSERT_ARGC("Queue.len()", 0);
-        return INTEGER(_queue_count(self->queue->head, self->queue->tail, self->queue->cap));
+        return INTEGER(_queue_count(V_QUEUE(*self)->head, V_QUEUE(*self)->tail, V_QUEUE(*self)->cap));
 }
 
 static Value
 queue_empty(Ty *ty, Value *self, int argc, Value *kwargs)
 {
         ASSERT_ARGC("Queue.empty?()", 0);
-        return BOOLEAN(_queue_count(self->queue->head, self->queue->tail, self->queue->cap) == 0);
+        return BOOLEAN(_queue_count(V_QUEUE(*self)->head, V_QUEUE(*self)->tail, V_QUEUE(*self)->cap) == 0);
 }
 
 static Value
@@ -201,8 +201,8 @@ queue_clear(Ty *ty, Value *self, int argc, Value *kwargs)
 {
         ASSERT_ARGC("Queue.clear()", 0);
 
-        self->queue->head = 0;
-        self->queue->tail = 0;
+        V_QUEUE(*(self))->head = 0;
+        V_QUEUE(*(self))->tail = 0;
 
         return *self;
 }
@@ -212,7 +212,7 @@ queue_to_array(Ty *ty, Value *self, int argc, Value *kwargs)
 {
         ASSERT_ARGC("Queue.to-array()", 0);
 
-        Queue *q = self->queue;
+        Queue *q = V_QUEUE(*(self));
         usize n = _queue_count(q->head, q->tail, q->cap);
 
         Array *a = vAn(n);
@@ -279,7 +279,7 @@ shared_queue_put(Ty *ty, Value *self, int argc, Value *kwargs)
 {
         ASSERT_ARGC("SharedQueue.put()", 1);
 
-        SharedQueue *q = self->shared_queue;
+        SharedQueue *q = V_SHARED_QUEUE(*(self));
 
         TyMutexLock(&q->mutex);
         _queue_push_back_one(ty, &q->items, &q->head, &q->tail, &q->cap, ARG(0));
@@ -296,7 +296,7 @@ shared_queue_take(Ty *ty, Value *self, int argc, Value *kwargs)
 {
         ASSERT_ARGC("SharedQueue.take()", 0);
 
-        SharedQueue *q = self->shared_queue;
+        SharedQueue *q = V_SHARED_QUEUE(*(self));
 
         UnlockTy();
         TyMutexLock(&q->mutex);
@@ -325,7 +325,7 @@ shared_queue_try_take(Ty *ty, Value *self, int argc, Value *kwargs)
 {
         ASSERT_ARGC("SharedQueue.tryTake()", 0, 1);
 
-        SharedQueue *q = self->shared_queue;
+        SharedQueue *q = V_SHARED_QUEUE(*(self));
 
         if (argc == 1) {
                 u64 timeout = MSEC_TIMEOUT_ARG(0);
@@ -360,7 +360,7 @@ shared_queue_peek(Ty *ty, Value *self, int argc, Value *kwargs)
 {
         ASSERT_ARGC("SharedQueue.peek()", 0);
 
-        SharedQueue *q = self->shared_queue;
+        SharedQueue *q = V_SHARED_QUEUE(*(self));
 
         UnlockTy();
         TyMutexLock(&q->mutex);
@@ -388,7 +388,7 @@ shared_queue_try_peek(Ty *ty, Value *self, int argc, Value *kwargs)
 {
         ASSERT_ARGC("SharedQueue.try-peek()", 0);
 
-        SharedQueue *q = self->shared_queue;
+        SharedQueue *q = V_SHARED_QUEUE(*(self));
 
         TyMutexLock(&q->mutex);
 
@@ -409,7 +409,7 @@ shared_queue_len(Ty *ty, Value *self, int argc, Value *kwargs)
 {
         ASSERT_ARGC("SharedQueue.len()", 0);
 
-        SharedQueue *q = self->shared_queue;
+        SharedQueue *q = V_SHARED_QUEUE(*(self));
 
         TyMutexLock(&q->mutex);
         usize n = _queue_count(q->head, q->tail, q->cap);
@@ -423,7 +423,7 @@ shared_queue_empty(Ty *ty, Value *self, int argc, Value *kwargs)
 {
         ASSERT_ARGC("SharedQueue.empty?()", 0);
 
-        SharedQueue *q = self->shared_queue;
+        SharedQueue *q = V_SHARED_QUEUE(*(self));
 
         TyMutexLock(&q->mutex);
         bool empty = (_queue_count(q->head, q->tail, q->cap) == 0);
@@ -437,7 +437,7 @@ shared_queue_clear(Ty *ty, Value *self, int argc, Value *kwargs)
 {
         ASSERT_ARGC("SharedQueue.clear()", 0);
 
-        SharedQueue *q = self->shared_queue;
+        SharedQueue *q = V_SHARED_QUEUE(*(self));
 
         TyMutexLock(&q->mutex);
         q->head = 0;
@@ -452,7 +452,7 @@ shared_queue_close(Ty *ty, Value *self, int argc, Value *kwargs)
 {
         ASSERT_ARGC("SharedQueue.close()", 0);
 
-        SharedQueue *q = self->shared_queue;
+        SharedQueue *q = V_SHARED_QUEUE(*(self));
 
         TyMutexLock(&q->mutex);
         q->open = false;
@@ -468,7 +468,7 @@ shared_queue_open(Ty *ty, Value *self, int argc, Value *kwargs)
 {
         ASSERT_ARGC("SharedQueue.open?()", 0);
 
-        SharedQueue *q = self->shared_queue;
+        SharedQueue *q = V_SHARED_QUEUE(*(self));
 
         TyMutexLock(&q->mutex);
         bool open = q->open;
@@ -482,7 +482,7 @@ shared_queue_to_array(Ty *ty, Value *self, int argc, Value *kwargs)
 {
         ASSERT_ARGC("SharedQueue.to-array()", 0);
 
-        SharedQueue *q = self->shared_queue;
+        SharedQueue *q = V_SHARED_QUEUE(*(self));
         Array *a = mAo0(sizeof (Array), GC_ARRAY);
 
         TyMutexLock(&q->mutex);

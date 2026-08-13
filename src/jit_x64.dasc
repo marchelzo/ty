@@ -23,7 +23,7 @@
 //   rbx = operand base pointer (== &stack.items[fp + bound])
 //   rbp = fp byte offset into stack (stable across reallocs)
 //
-// Value slots live in the interpreter's stack at [rbx + i*32].
+// Value slots live in the interpreter's stack at [rbx + i*8].
 // ============================================================================
 
 
@@ -70,6 +70,23 @@ static void jit_emit_mul(dasm_State **Dst, int dst, int left, int right) {
                 |  imul Rq(dst), Rq(right)
         }
 }
+
+static void jit_emit_add32_overflow(dasm_State **Dst, int dst, int left, int right, int label) {
+        |  mov Rd(dst), Rd(left)
+        |  add Rd(dst), Rd(right)
+        |  jo =>label
+}
+static void jit_emit_sub32_overflow(dasm_State **Dst, int dst, int left, int right, int label) {
+        |  mov Rd(dst), Rd(left)
+        |  sub Rd(dst), Rd(right)
+        |  jo =>label
+}
+static void jit_emit_mul32_overflow(dasm_State **Dst, int dst, int left, int right, int label) {
+        |  mov Rd(dst), Rd(left)
+        |  imul Rd(dst), Rd(right)
+        |  jo =>label
+}
+
 
 static void jit_emit_sdiv(dasm_State **Dst, int dst, int left, int right) {
         |  mov rax, Rq(left)
@@ -334,6 +351,38 @@ static void jit_emit_fdiv(dasm_State **Dst, int base, int a_off, int b_off) {
         |  movsd qword [Rq(base)+a_off], xmm0
 }
 
+static void jit_emit_int_to_double_bits(dasm_State **Dst, int dst, int src) {
+        |  cvtsi2sd xmm0, Rq(src)
+        |  movd Rq(dst), xmm0
+}
+
+static void jit_emit_fsqrt_bits(dasm_State **Dst, int dst, int src) {
+        |  movd xmm0, Rq(src)
+        |  sqrtsd xmm0, xmm0
+        |  movd Rq(dst), xmm0
+}
+
+static void jit_emit_farith_bits(dasm_State **Dst, int dst, int left, int right, int op) {
+        |  movd xmm0, Rq(left)
+        |  movd xmm1, Rq(right)
+        switch (op) {
+        case 0:
+                |  addsd xmm0, xmm1
+                break;
+        case 1:
+                |  subsd xmm0, xmm1
+                break;
+        case 2:
+                |  mulsd xmm0, xmm1
+                break;
+        default:
+                |  divsd xmm0, xmm1
+                break;
+        }
+        |  movd Rq(dst), xmm0
+}
+
+
 static void jit_emit_branch_bit_set(dasm_State **Dst, int reg, int bit, int label) {
         |  bt Rq(reg), bit
         |  jc =>label
@@ -469,7 +518,7 @@ static void jit_emit_jump_epilogue_restore(dasm_State **Dst) {
 // After a yield helper returns, rax contains the updated frame pointer (index).
 // Update rbp (fp byte offset) = rax * VALUE_SIZE.
 static void jit_emit_update_fp(dasm_State **Dst, int bound) {
-        |  shl rax, 5       // VALUE_SIZE == 32 == 1 << 5
+        |  shl rax, 3       // VALUE_SIZE == 8 == 1 << 3
         |  mov rbp, rax
         |  mov rax, [r12+OFF_TY_STACK+OFF_VEC_DATA]
         |  lea r14, [rax+rbp]
@@ -496,10 +545,10 @@ static void jit_emit_reload_stack(dasm_State **Dst, int bound) {
 
 // Sync interpreter stack count to JIT's current sp.
 // Sets ty->stack.count = (fp + bound + sp)
-// rbp holds fp * VALUE_SIZE, so fp = rbp / VALUE_SIZE = rbp >> 5
+// rbp holds fp * VALUE_SIZE, so fp = rbp / VALUE_SIZE = rbp >> 3
 static void jit_emit_sync_stack_count(dasm_State **Dst, int bound, int sp) {
         |  mov rax, rbp
-        |  shr rax, 5
+        |  shr rax, 3
         int total = bound + sp;
         if (total > 0) {
                 |  add rax, total
@@ -551,6 +600,90 @@ static void jit_emit_ldr16(dasm_State **Dst, int dst, int base, int offset) {
 static void jit_emit_ldr16_index(dasm_State **Dst, int dst, int base, int index) {
         |  movzx Rd(dst), word [Rq(base)+Rq(index)]
 }
+
+static void jit_emit_ldr64_index(dasm_State **Dst, int dst, int base, int index) {
+        |  mov Rq(dst), qword [Rq(base)+Rq(index)]
+}
+
+static void jit_emit_str64_index(dasm_State **Dst, int src, int base, int index) {
+        |  mov qword [Rq(base)+Rq(index)], Rq(src)
+}
+static void jit_emit_ldr64_index8(dasm_State **Dst, int dst, int base, int index) {
+        |  mov Rq(dst), [Rq(base)+Rq(index)*8]
+}
+static void jit_emit_str64_index8(dasm_State **Dst, int src, int base, int index) {
+        |  mov [Rq(base)+Rq(index)*8], Rq(src)
+}
+
+
+static void jit_emit_mov32(dasm_State **Dst, int dst, int src) {
+        |  mov Rd(dst), Rd(src)
+}
+
+static void jit_emit_signext32(dasm_State **Dst, int dst, int src) {
+        |  movsxd Rq(dst), Rd(src)
+}
+static void jit_emit_branch_not_int32(dasm_State **Dst, int word, int label) {
+        |  mov rax, Rq(word)
+        |  shr rax, 48
+        |  cmp rax, 6
+        |  jne =>label
+}
+static void jit_emit_decode_direct_array(dasm_State **Dst, int dst, int word, int label) {
+        |  mov rax, Rq(word)
+        |  shr rax, 48
+        |  cmp rax, 1
+        |  jne =>label
+        |  shl Rq(word), 16
+        |  shr Rq(word), 16
+        if (dst != word) {
+                |  mov Rq(dst), Rq(word)
+        }
+}
+static void jit_emit_decode_direct_tag(dasm_State **Dst, int dst, int word, int label) {
+        |  mov rax, Rq(word)
+        |  shr rax, 48
+        |  cmp rax, 3
+        |  jne =>label
+        if (dst != word) {
+                |  mov Rq(dst), Rq(word)
+        }
+        |  mov Rd(dst), Rd(dst)
+}
+static void jit_emit_decode_direct_object(dasm_State **Dst, int dst, int word, int label) {
+        |  mov rax, Rq(word)
+        |  shr rax, 48
+        |  cmp rax, 4
+        |  jne =>label
+        |  shl Rq(word), 16
+        |  shr Rq(word), 16
+        if (dst != word) {
+                |  mov Rq(dst), Rq(word)
+        }
+}
+static void jit_emit_strip_direct_pointer(dasm_State **Dst, int dst, int word) {
+        if (dst != word) {
+                |  mov Rq(dst), Rq(word)
+        }
+        |  shl Rq(dst), 16
+        |  shr Rq(dst), 16
+}
+
+static void jit_emit_branch_not_pointer(dasm_State **Dst, int word, int label) {
+        |  mov rax, Rq(word)
+        |  shr rax, 48
+        |  jnz =>label
+}
+static void jit_emit_branch_not_double(dasm_State **Dst, int word, int label) {
+        |  mov rax, Rq(word)
+        |  shr rax, 48
+        |  cmp rax, 7
+        |  jb =>label
+}
+
+
+
+
 
 // Load/store pairs (two sequential loads/stores on x64)
 static void jit_emit_ldp64(dasm_State **Dst, int dst1, int dst2, int base, int offset) {
@@ -617,6 +750,10 @@ static void jit_emit_branch_le(dasm_State **Dst, int label) {
 
 static void jit_emit_branch_ule(dasm_State **Dst, int label) {
         |  jbe =>label
+}
+
+static void jit_emit_branch_ult(dasm_State **Dst, int label) {
+        |  jb =>label
 }
 
 static void jit_emit_branch_ge(dasm_State **Dst, int label) {

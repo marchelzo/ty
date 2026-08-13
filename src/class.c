@@ -125,6 +125,8 @@ class_new_empty(Ty *ty)
         Class *c = alloc0(sizeof *c);
 #endif
         c->i = vN(classes);
+        c->init = NONE;
+        c->finalizer = NONE;
 
         xvP(classes, c);
 
@@ -217,8 +219,10 @@ class_new_instance(Ty *ty, int class)
         usize const size = sizeof (TyObject)
                          + vN(c->fields.ids) * sizeof (Value);
 
-        TyObject *obj =  mAo0(size, GC_OBJECT);
+        TyObject *obj = mAo(size, GC_OBJECT);
+        obj->init = false;
         obj->class = c;
+        obj->dynamic = NULL;
         obj->nslot = vN(c->fields.ids);
 
         for (int i = 0; i < obj->nslot; ++i) {
@@ -249,11 +253,18 @@ void
 class_mark(Ty *ty, int c)
 {
         Class *class = C(c);
+        struct itable *tables[] = {
+                &class->methods, &class->getters, &class->setters, &class->fields,
+                &class->s_methods, &class->s_getters, &class->s_setters, &class->s_fields
+        };
 
-        for (usize i = 0; i < vN(class->s_fields.values); ++i) {
-                Value *v = v_(class->s_fields.values, i);
-                xvP(ty->marking, v);
+        for (usize t = 0; t < countof(tables); ++t) {
+                for (usize i = 0; i < vN(tables[t]->values); ++i) {
+                        xvP(ty->marking, v_(tables[t]->values, i));
+                }
         }
+        xvP(ty->marking, &class->finalizer);
+        xvP(ty->marking, &class->init);
 }
 
 char const *
@@ -332,11 +343,11 @@ class_lookup_field(Ty *ty, int class, int id)
                 return NULL;
         }
 
-        if  (v->type != VALUE_REF) {
+        if  (V_TYPE(*(v)) != VALUE_REF) {
                 return v;
         }
 
-        return (v->ref->type != VALUE_ZERO) ? v->ref : NULL;
+        return (V_TYPE(*V_REF(*v)) != VALUE_ZERO) ? V_REF(*(v)) : NULL;
 }
 
 Value *
@@ -889,8 +900,8 @@ eliminate_refs(struct itable *t)
 {
         for (u32 i = 0; i < vN(t->values); ++i) {
                 Value *v = v_(t->values, i);
-                if (v->type == VALUE_REF) {
-                        *v = *v->ref;
+                if (V_TYPE(*(v)) == VALUE_REF) {
+                        *v = *V_REF(*(v));
                 }
         }
 }
@@ -901,7 +912,7 @@ jit_methods(Ty *ty, struct itable *t)
 {
         for (u32 i = 0; i < vN(t->values); ++i) {
                 Value *v = v_(t->values, i);
-                if ((v->type == VALUE_FUNCTION) && expr_of(v)->must_jit) {
+                if ((V_TYPE(*(v)) == VALUE_FUNCTION) && expr_of(v)->must_jit) {
                         if (UNLIKELY(try_jit(ty, v) == NULL)) {
                                 zP("failed to JIT compile function %s", SHOW(v));
                         }
@@ -952,7 +963,7 @@ decorated_slot(Class *c, Expr const *meth)
 {
         for (int i = 0; i < vN(c->fields.values); ++i) {
                 Value const *v = v_(c->fields.values, i);
-                if ((v->type == VALUE_PTR) && (v->extra == meth)) {
+                if ((V_TYPE(*(v)) == VALUE_PTR) && (V_EXTRA(*(v)) == meth)) {
                         return i;
                 }
         }

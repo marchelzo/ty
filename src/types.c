@@ -148,7 +148,7 @@ static void *PARAMETER = (void *)&PARAMETER;
 
 static Type ERROR = { .type = TYPE_ERROR, .fixed = true };
 
-static Value STATIC_NIL = NIL;
+static Value STATIC_NIL = { .bits = { .as_int64 = NANBOX_VALUE_NULL } };
 
 enum { LOW_FUEL = 5, MAX_FUEL = 999999 };
 static int FUEL = MAX_FUEL;
@@ -397,7 +397,7 @@ FuelCheck(Ty *ty)
 inline static char *
 mkcstr(Ty *ty, Value const *v)
 {
-        if (v != NULL && v->type == VALUE_STRING) {
+        if (v != NULL && V_TYPE(*(v)) == VALUE_STRING) {
                 char *s = amA(sN(*v) + 1);
 
                 memcpy(s, ss(*v), sN(*v));
@@ -468,7 +468,7 @@ LookEnv(Ty *ty, TypeEnv *env, u32 id)
 
         Value const *v = itable_lookup(ty, &env->vars, id);
 
-        return (v != NULL) ? (IsNil(*v) ? NULL : v->ptr)
+        return (v != NULL) ? (IsNil(*v) ? NULL : V_PTR(*(v)))
                            : LookEnv(ty, env->parent, id);
 }
 
@@ -9632,7 +9632,7 @@ VarName(Ty *ty, u32 id)
 {
         Value *v = itable_get(ty, &VarNameTable, id);
 
-        if (v->type == VALUE_NIL) {
+        if (V_TYPE(*(v)) == VALUE_NIL) {
                 byte_vector name = {0};
                 dump(&name, "%c", VarLetter);
                 if (VarNumber > 0) {
@@ -9645,7 +9645,7 @@ VarName(Ty *ty, u32 id)
                 *v = PTR(name.items);
         }
 
-        return v->ptr;
+        return V_PTR(*(v));
 }
 
 char *
@@ -10114,8 +10114,8 @@ type_show(Ty *ty, Type const *t0)
                         dump(&buf, "%s", ShowType(t0->val));
                 } else {
                         char const *name;
-                        if (t0->func.type == VALUE_BUILTIN_FUNCTION) {
-                                name = M_NAME(t0->func.name);
+                        if (V_TYPE(t0->func) == VALUE_BUILTIN_FUNCTION) {
+                                name = M_NAME(V_NAME(t0->func));
                         } else {
                                 name = name_of(&t0->func);
                         }
@@ -11404,7 +11404,7 @@ TypeCheckXD(Ty *ty, TypeCheckStack *stack, Type *t0, Value const *v)
                 goto End;
         }
 
-        if (v->type == VALUE_NIL) {
+        if (V_TYPE(*(v)) == VALUE_NIL) {
                 ok = (TypeType(t0) == TYPE_VARIABLE)
                   || type_check_x(ty, t0, NIL_TYPE, false);
                 goto End;
@@ -11412,25 +11412,25 @@ TypeCheckXD(Ty *ty, TypeCheckStack *stack, Type *t0, Value const *v)
 
         switch (t0->type) {
         case TYPE_INT:
-                ok = (v->type == VALUE_INTEGER)
-                  && (v->z == t0->z);
+                ok = (V_TYPE(*(v)) == VALUE_INTEGER)
+                  && (V_Z(*(v)) == t0->z);
                 break;
 
         case TYPE_RANGE:
-                ok = (v->type == VALUE_INTEGER)
-                  && (v->z >= RangeLow(t0))
-                  && (v->z <= RangeHigh(t0));
+                ok = (V_TYPE(*(v)) == VALUE_INTEGER)
+                  && (V_Z(*(v)) >= RangeLow(t0))
+                  && (V_Z(*(v)) <= RangeHigh(t0));
                 break;
 
         case TYPE_STRING:
-                ok = (v->type == VALUE_STRING)
+                ok = (V_TYPE(*(v)) == VALUE_STRING)
                   && (strlen(t0->str) == sN(*v))
                   && (memcmp(t0->str, ss(*v), sN(*v)) == 0);
                 break;
 
         case TYPE_BOOL:
-                ok = (v->type == VALUE_BOOLEAN)
-                  && (v->boolean == (bool)t0->z);
+                ok = (V_TYPE(*(v)) == VALUE_BOOLEAN)
+                  && (V_BOOL(*(v)) == (bool)t0->z);
                 break;
 
         case TYPE_VARIABLE:
@@ -11467,11 +11467,11 @@ TypeCheckXD(Ty *ty, TypeCheckStack *stack, Type *t0, Value const *v)
                 break;
 
         case TYPE_TUPLE:
-                if (v->type == VALUE_TUPLE) {
+                if (V_TYPE(*(v)) == VALUE_TUPLE) {
                         for (int i = 0; i < vN(t0->types); ++i) {
                                 char const *name = v__(t0->names, i);
                                 Value const *item = (name != NULL) ? tuple_get(v, name)
-                                                  : (v->count > i) ? &v->items[i]
+                                                  : (V_COUNT(*(v)) > i) ? &V_ITEMS(*(v))[i]
                                                   : /*   else   */   NULL;
                                 if (item == NULL && !v__(t0->required, i)) {
                                         continue;
@@ -11511,18 +11511,18 @@ TypeCheckXD(Ty *ty, TypeCheckStack *stack, Type *t0, Value const *v)
                 break;
 
         case TYPE_TAG:
-                ok = (v->type == VALUE_TAG)
-                  && (v->tag == TagOf(t0));
+                ok = (V_TYPE(*(v)) == VALUE_TAG)
+                  && (V_TAG(*(v)) == TagOf(t0));
                 break;
 
         case TYPE_CLASS:
-                ok = (v->type == VALUE_CLASS)
-                  && class_is_subclass(ty, v->class, t0->class->i);
+                ok = (V_TYPE(*(v)) == VALUE_CLASS)
+                  && class_is_subclass(ty, V_CLASS(*(v)), t0->class->i);
                 break;
 
         default:
-                if (v->type & VALUE_TAGGED) {
-                        if (TagOf(t0) != tags_first(ty, v->tags)) {
+                if (V_TYPE(*(v)) & VALUE_TAGGED) {
+                        if (TagOf(t0) != tags_first(ty, V_TAGS(*(v)))) {
                                 goto End;
                         }
                         Value inner = unwrap(ty, v);
@@ -11533,13 +11533,13 @@ TypeCheckXD(Ty *ty, TypeCheckStack *stack, Type *t0, Value const *v)
                         }
                         switch (t0->class->i) {
                         case CLASS_ARRAY:
-                                for (int i = 0; i < vN(*v->array); ++i) {
+                                for (int i = 0; i < vN(*V_ARRAY(*v)); ++i) {
                                         if (
                                                 !TypeCheckXD(
                                                         ty,
                                                         stack,
                                                         TypeArg(t0, 0),
-                                                        v_(*v->array, i)
+                                                        v_(*V_ARRAY(*v), i)
                                                 )
                                         ) {
                                                 goto End;
@@ -11548,7 +11548,7 @@ TypeCheckXD(Ty *ty, TypeCheckStack *stack, Type *t0, Value const *v)
                                 break;
 
                         case CLASS_DICT:
-                                dfor(v->dict, ({
+                                dfor(V_DICT(*v), ({
                                         if (
                                                 !TypeCheckXD(
                                                         ty,
@@ -11762,16 +11762,16 @@ TyTypeVector(Ty *ty, Value const *v)
 {
         TypeVector types = {0};
 
-        switch (v->type) {
+        switch (V_TYPE(*(v))) {
         case VALUE_ARRAY:
-                for (int i = 0; i < vN(*v->array); ++i) {
-                        avP(types, type_from_ty(ty, v_(*v->array, i)));
+                for (int i = 0; i < vN(*V_ARRAY(*v)); ++i) {
+                        avP(types, type_from_ty(ty, v_(*V_ARRAY(*v), i)));
                 }
                 break;
 
         case VALUE_TUPLE:
-                for (int i = 0; i < v->count; ++i) {
-                        avP(types, type_from_ty(ty, &v->items[i]));
+                for (int i = 0; i < V_COUNT(*(v)); ++i) {
+                        avP(types, type_from_ty(ty, &V_ITEMS(*v)[i]));
                 }
                 break;
 
@@ -11789,14 +11789,14 @@ TyTypeVector(Ty *ty, Value const *v)
 static Class *
 TyTypeClass(Ty *ty, Value const *v)
 {
-        if (v->type == VALUE_CLASS) {
-                return class_get(ty, v->class);
+        if (V_TYPE(*(v)) == VALUE_CLASS) {
+                return class_get(ty, V_CLASS(*(v)));
         } else if (
-                (v->type == VALUE_TYPE)
-             && (v->ptr != NULL)
-             && (((Type *)v->ptr)->type == TYPE_CLASS)
+                (V_TYPE(*(v)) == VALUE_TYPE)
+             && (V_PTR(*(v)) != NULL)
+             && (((Type *)V_PTR(*(v)))->type == TYPE_CLASS)
         ) {
-                return ((Type *)v->ptr)->class;
+                return ((Type *)V_PTR(*(v)))->class;
         } else {
                 CompileError("expected class but got: %s", VSC(v));
                 UNREACHABLE();
@@ -11811,30 +11811,30 @@ type_from_ty(Ty *ty, Value const *v)
         Type *t0 = NULL;
         Type *t1;
 
-        switch (v->type) {
+        switch (V_TYPE(*(v))) {
         case VALUE_NIL:
                 return NIL_TYPE;
 
         case VALUE_TYPE:
-                return v->ptr;
+                return V_PTR(*(v));
 
         case VALUE_OPERATOR:
                 t0 = NewTVar(ty);
                 t1 = NewFunction(
                         PARAMETER, t0,
-                        NewRecord(M_NAME(v->uop), NewFunction(t0)),
+                        NewRecord(M_NAME(V_UOP(*v)), NewFunction(t0)),
                         t0
                 );
-                return type_both(ty, op_type(ty, v->bop), t1);
+                return type_both(ty, op_type(ty, V_BOP(*(v))), t1);
 
         case VALUE_FUNCTION:
                 return expr_of(v)->_type;
 
         case VALUE_CLASS:
-                return class_get(ty, v->class)->object_type;
+                return class_get(ty, V_CLASS(*(v)))->object_type;
         }
 
-        if (v->type == VALUE_TAG) switch (v->tag) {
+        if (V_TYPE(*(v)) == VALUE_TAG) switch (V_TAG(*(v))) {
         case TyNilT:
                 return NIL_TYPE;
 
@@ -11871,27 +11871,27 @@ type_from_ty(Ty *ty, Value const *v)
 
         Value inner = unwrap(ty, v);
 
-        if (v->type == VALUE_TUPLE) {
+        if (V_TYPE(*(v)) == VALUE_TUPLE) {
                 goto RecordType;
         }
 
-        int tag = tags_first(ty, v->tags);
+        int tag = tags_first(ty, V_TAGS(*(v)));
         if (tag == -1) {
                 return UNKNOWN;
         }
 
         switch (tag) {
         case TyIntT:
-                if (inner.type == VALUE_INTEGER) {
+                if (V_TYPE(inner) == VALUE_INTEGER) {
                         t0 = NewType(ty, TYPE_INT);
-                        t0->z = inner.z;
+                        t0->z = V_Z(inner);
                 } else {
                         goto Fail;
                 }
                 break;
 
         case TyStringT:
-                if (inner.type == VALUE_STRING) {
+                if (V_TYPE(inner) == VALUE_STRING) {
                         t0 = NewType(ty, TYPE_STRING);
                         t0->str = mkcstr(ty, &inner);
                 } else {
@@ -11900,9 +11900,9 @@ type_from_ty(Ty *ty, Value const *v)
                 break;
 
         case TyBoolT:
-                if (inner.type == VALUE_BOOLEAN) {
+                if (V_TYPE(inner) == VALUE_BOOLEAN) {
                         t0 = NewType(ty, TYPE_BOOL);
-                        t0->z = inner.boolean;
+                        t0->z = V_BOOL(inner);
                 } else {
                         goto Fail;
                 }
@@ -11924,7 +11924,7 @@ type_from_ty(Ty *ty, Value const *v)
                 t0->_type = type_from_ty(ty, tget_t(&inner, "type", VALUE_TYPE));
                 t0->asrc  = CompilerExprFor(
                         ty,
-                        TY_TMP_C_STR(tget_or(&inner, "mod", STRING_NOGC_C(""))),
+                        TY_TMP_C_STR(tget_or(&inner, "mod", STRING_NOGC_C(ty, ""))),
                         t0->name
                 );
                 break;
@@ -11932,18 +11932,19 @@ type_from_ty(Ty *ty, Value const *v)
         case TyObjectT:
                 t0 = NewType(ty, TYPE_OBJECT);
                 if (
-                        (inner.type == VALUE_TUPLE)
-                     && (inner.count == 2)
-                     && (inner.items[1].type == VALUE_ARRAY)
+                        (V_TYPE(inner) == VALUE_TUPLE)
+                     && (V_COUNT(inner) == 2)
+                     && (V_TYPE(V_ITEMS(inner)[1]) == VALUE_ARRAY)
                 ) {
-                        t0->class = TyTypeClass(ty, &inner.items[0]);
-                        t0->args = TyTypeVector(ty, &inner.items[1]);
+                        t0->class = TyTypeClass(ty, &V_ITEMS(inner)[0]);
+                        t0->args = TyTypeVector(ty, &V_ITEMS(inner)[1]);
                 } else if (
-                        (inner.type == VALUE_TUPLE)
-                     && (inner.count >= 2)
+                        (V_TYPE(inner) == VALUE_TUPLE)
+                     && (V_COUNT(inner) >= 2)
                 ) {
-                        t0->class = TyTypeClass(ty, &inner.items[0]);
-                        t0->args = TyTypeVector(ty, &TUPLE(&inner.items[1], NULL, inner.count - 1, false));
+                        t0->class = TyTypeClass(ty, &V_ITEMS(inner)[0]);
+                        Value tail = TUPLE(&V_ITEMS(inner)[1], NULL, V_COUNT(inner) - 1, false);
+                        t0->args = TyTypeVector(ty, &tail);
                 } else {
                         t0->class = TyTypeClass(ty, &inner);
                 }
@@ -11956,7 +11957,7 @@ type_from_ty(Ty *ty, Value const *v)
 
         case TyTagT:
                 t0 = NewType(ty, TYPE_TAG);
-                t0->tag = inner.tag;
+                t0->tag = V_TAG(inner);
                 t0->class = tags_get_class(ty, t0->tag);
                 break;
 
@@ -11966,19 +11967,19 @@ type_from_ty(Ty *ty, Value const *v)
                 break;
 
         case TyHoleT:
-                if (inner.type != VALUE_TYPE) {
+                if (V_TYPE(inner) != VALUE_TYPE) {
                         CompileError("expected type hole but got: %s", VSC(v));
                         UNREACHABLE();
                 }
-                t0 = inner.ptr;
+                t0 = V_PTR(inner);
                 break;
 
         case TyVarT:
-                if (inner.type != VALUE_INTEGER) {
+                if (V_TYPE(inner) != VALUE_INTEGER) {
                         CompileError("expected type variable ID but got: %s", VSC(&inner));
                 }
                 t0 = NewType(ty, TYPE_VARIABLE);
-                t0->id = inner.z;
+                t0->id = V_Z(inner);
                 t0->level = 0;
                 t0->val = TVAR;
                 break;
@@ -11986,48 +11987,48 @@ type_from_ty(Ty *ty, Value const *v)
         case TyRecordT:
 RecordType:
                 t0 = NewType(ty, TYPE_TUPLE);
-                for (int i = 0; i < inner.count; ++i) {
-                        Type *u0 = type_from_ty(ty, &inner.items[i]);
+                for (int i = 0; i < V_COUNT(inner); ++i) {
+                        Type *u0 = type_from_ty(ty, &V_ITEMS(inner)[i]);
                         if (
-                                (inner.ids == NULL)
-                             || (inner.ids[i] == -1)
+                                (V_IDS(inner) == NULL)
+                             || (V_IDS(inner)[i] == -1)
                         ) {
                                 AddEntry(t0, u0);
                         } else {
-                                AddEntry(t0, u0, M_NAME(inner.ids[i]));
+                                AddEntry(t0, u0, M_NAME(V_IDS(inner)[i]));
                         }
                 }
                 break;
 
         case TyFuncT:
                 t0 = NewType(ty, TYPE_FUNCTION);
-                if (inner.type != VALUE_TUPLE || inner.count != 3) {
+                if (V_TYPE(inner) != VALUE_TUPLE || V_COUNT(inner) != 3) {
                         CompileError("expected (TVars, Params, ReturnType) tuple but got: %s", VSC(&inner));
                         UNREACHABLE();
                 }
-                if (inner.items[0].type != VALUE_ARRAY) {
+                if (V_TYPE(V_ITEMS(inner)[0]) != VALUE_ARRAY) {
                         goto Fail;
                 }
-                for (int i = 0; i < vN(*inner.items[0].array); ++i) {
-                        Value const id = unwrap(ty, v_(*inner.items[0].array, i));
-                        if (id.type == VALUE_INTEGER) {
-                                avP(t0->bound, id.z);
-                        } else if (id.type == VALUE_TYPE && IsTVar(id.ptr)) {
-                                avP(t0->bound, ((Type *)id.ptr)->id);
+                for (int i = 0; i < vN(*V_ARRAY(V_ITEMS(inner)[0])); ++i) {
+                        Value const id = unwrap(ty, v_(*V_ARRAY(V_ITEMS(inner)[0]), i));
+                        if (V_TYPE(id) == VALUE_INTEGER) {
+                                avP(t0->bound, V_Z(id));
+                        } else if (V_TYPE(id) == VALUE_TYPE && IsTVar(V_PTR(id))) {
+                                avP(t0->bound, ((Type *)V_PTR(id))->id);
                         } else {
                                 goto Fail;
                         }
                 }
-                if (inner.items[1].type != VALUE_ARRAY) {
+                if (V_TYPE(V_ITEMS(inner)[1]) != VALUE_ARRAY) {
                         goto Fail;
                 }
-                for (int i = 0; i < vN(*inner.items[1].array); ++i) {
-                        Value const *name = tget_t(v_(*inner.items[1].array, i), "name", VALUE_STRING);
-                        Value const type = tget_or(v_(*inner.items[1].array, i), "type", TYPE(UNKNOWN));
-                        Value const req = tget_or(v_(*inner.items[1].array, i), "required", BOOLEAN(false));
+                for (int i = 0; i < vN(*V_ARRAY(V_ITEMS(inner)[1])); ++i) {
+                        Value const *name = tget_t(v_(*V_ARRAY(V_ITEMS(inner)[1]), i), "name", VALUE_STRING);
+                        Value const type = tget_or(v_(*V_ARRAY(V_ITEMS(inner)[1]), i), "type", TYPE(UNKNOWN));
+                        Value const req = tget_or(v_(*V_ARRAY(V_ITEMS(inner)[1]), i), "required", BOOLEAN(false));
                         avP(t0->params, PARAM(mkcstr(ty, name), type_from_ty(ty, &type), value_truthy(ty, &req)));
                 }
-                t0->rt = type_from_ty(ty, &inner.items[2]);
+                t0->rt = type_from_ty(ty, &V_ITEMS(inner)[2]);
                 break;
         }
 
@@ -12096,9 +12097,9 @@ type_to_ty(Ty *ty, Type *t0)
                 v = is_record(t0) ? value_record(ty, vN(t0->types)) : vT(vN(t0->types));
                 for (int i = 0; i < vN(t0->types); ++i) {
                         if (v__(t0->names, i) != NULL) {
-                                v.ids[i] = M_ID(v__(t0->names, i));
+                                V_IDS(v)[i] = M_ID(v__(t0->names, i));
                         }
-                        v.items[i] = type_to_ty(ty, v__(t0->types, i));
+                        V_ITEMS(v)[i] = type_to_ty(ty, v__(t0->types, i));
                 }
                 v = tagged(ty, TyRecordT, v, NONE);
                 break;

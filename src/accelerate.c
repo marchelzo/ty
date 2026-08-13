@@ -78,7 +78,7 @@ setd(void *p, i64 i, double v, int dt)
 static inline double
 valtod(Value v)
 {
-        return (v.type == VALUE_REAL) ? v.real : (double)v.z;
+        return (V_TYPE(v) == VALUE_REAL) ? V_REAL(v) : (double)V_Z(v);
 }
 
 #define DISPATCH(dt, ...) \
@@ -1326,16 +1326,16 @@ BUILTIN_FUNCTION(accel_from_list2d)
                 return INTEGER(0);
         }
 
-        if (UNLIKELY(arr->items[0].type != VALUE_ARRAY)) {
+        if (UNLIKELY(V_TYPE(arr->items[0]) != VALUE_ARRAY)) {
                 bP("expected array of arrays");
         }
 
-        i64 cols = arr->items[0].array->count;
+        i64 cols = V_ARRAY(arr->items[0])->count;
         for (i64 i = 0; i < rows; ++i) {
-                if (UNLIKELY(arr->items[i].type != VALUE_ARRAY)) {
+                if (UNLIKELY(V_TYPE(arr->items[i]) != VALUE_ARRAY)) {
                         bP("row %lld is not an array", (long long)i);
                 }
-                Array *row = arr->items[i].array;
+                Array *row = V_ARRAY(arr->items[i]);
                 if (UNLIKELY((i64)row->count != cols)) {
                         bP("jagged rows (row 0 has %lld cols, row %lld has %lld)",
                            (long long)cols, (long long)i, (long long)row->count);
@@ -1377,10 +1377,10 @@ BUILTIN_FUNCTION(accel_from_bytes)
 
         Value v = ARG(0);
         unsigned char *src;
-        if (v.type == VALUE_PTR) {
-                src = v.ptr;
-        } else if (v.type == VALUE_BLOB) {
-                src = v.blob->items;
+        if (V_TYPE(v) == VALUE_PTR) {
+                src = V_PTR(v);
+        } else if (V_TYPE(v) == VALUE_BLOB) {
+                src = V_BLOB(v)->items;
         } else {
                 bP("arg[0] must be Blob or Ptr");
         }
@@ -1723,14 +1723,14 @@ BUILTIN_FUNCTION(accel_hstack_2d)
         i64   rows       = INT_ARG(3);
         i64   dt         = INT_ARG(4);
 
-        Array *ptrs_arr   = ptrs_val.array;
-        Array *widths_arr = widths_val.array;
+        Array *ptrs_arr   = V_ARRAY(ptrs_val);
+        Array *widths_arr = V_ARRAY(widths_val);
 
         i64 sz = esz(dt);
 
         i64 total_cols = 0;
         for (i64 i = 0; i < n_arrays; ++i) {
-                total_cols += widths_arr->items[i].z;
+                total_cols += V_Z(widths_arr->items[i]);
         }
 
         void *out = mAo(rows * total_cols * sz, GC_ANY);
@@ -1740,9 +1740,9 @@ BUILTIN_FUNCTION(accel_hstack_2d)
         for (i64 r = 0; r < rows; ++r) {
                 i64 off = 0;
                 for (i64 a = 0; a < n_arrays; ++a) {
-                        i64 w = widths_arr->items[a].z;
+                        i64 w = V_Z(widths_arr->items[a]);
                         i64 w_bytes = w * sz;
-                        const char *sp = (const char *)ptrs_arr->items[a].ptr;
+                        const char *sp = (const char *)V_PTR(ptrs_arr->items[a]);
                         memcpy(dp + off, sp + r * w_bytes, w_bytes);
                         off += w_bytes;
                 }
@@ -1758,10 +1758,10 @@ BUILTIN_FUNCTION(accel_from_raw)
 
         Value v = ARG(0);
         const void *src;
-        if (v.type == VALUE_BLOB) {
-                src = v.blob->items;
-        } else if (v.type == VALUE_PTR) {
-                src = v.ptr;
+        if (V_TYPE(v) == VALUE_BLOB) {
+                src = V_BLOB(v)->items;
+        } else if (V_TYPE(v) == VALUE_PTR) {
+                src = V_PTR(v);
         } else {
                 bP("fromRaw(): arg[0] must be Blob or Ptr");
         }

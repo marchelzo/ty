@@ -21,6 +21,7 @@
 #include "log.h"
 #include "xd.h"
 #include "mod.h"
+#include "nanbox.h"
 
 #define TY_MAX_CALL_DEPTH (1UL << 10)
 #define TY_TMP_BUF_COUNT 3
@@ -314,6 +315,16 @@ enum {
 #define TY_STOP(x)  (ty->flags &= ~TY_F_ ## x)
 
 struct value {
+        nanbox_t bits;
+};
+
+/*
+ * GC-managed payload for values that do not fit in the immediate NaN-box
+ * representation.  This deliberately preserves the former Value layout: the
+ * first implementation is correctness-first and boxes every complex value.
+ * The nanbox aux tags remain available for a future direct-pointer fast path.
+ */
+typedef struct value_payload {
         u8 type;
         u16 tags;
         u32 src;
@@ -331,71 +342,37 @@ struct value {
                 Symbol *sym;
                 Module *mod;
                 struct {
-                        union {
-                                Value *ref;
-                                void *ptr;
-                        };
+                        union { Value *ref; void *ptr; };
                         void *gcptr;
                         void *extra;
                 };
-                struct {
-                        i32 class;
-                        TyObject *object;
-                };
-                struct {
-                        i32 uop;
-                        i32 bop;
-                };
+                struct { i32 class; TyObject *object; };
+                struct { i32 uop; i32 bop; };
                 struct {
                         union {
-                                struct {
-                                        Value *this;
-                                        union {
-                                                Value *method;
-                                                BuiltinMethod *builtin_method;
-                                        };
-                                };
-                                struct {
-                                        BuiltinFunction *builtin_function;
-                                        char const *module;
-                                };
+                                struct { Value *this; union { Value *method; BuiltinMethod *builtin_method; }; };
+                                struct { BuiltinFunction *builtin_function; char const *module; };
                         };
                         i32 name;
                 };
-                struct {
-                        u8 const *str;
-                        u32 bytes;
-                        bool ro;
-                        u8 *str0;
-                };
-                struct {
-                        imax i;
-                        ptrdiff_t off;
-                        int nt;
-                };
-                struct {
-                        i32 count;
-                        Value *items;
-                        i32 *ids;
-                };
+                struct { u8 const *str; u32 bytes; bool ro; u8 *str0; };
+                struct { imax i; ptrdiff_t off; int nt; };
+                struct { i32 count; Value *items; i32 *ids; };
                 Regex const *regex;
                 struct {
-                        union {
-                                struct {
-                                        void (*ff)();
-                                        ffi_cif *ffi;
-                                };
-                                struct {
-                                        i32 *info;
-                                        Value **env;
-                                };
-                        };
+                        union { struct { void (*ff)(); ffi_cif *ffi; }; struct { i32 *info; Value **env; }; };
                         FunUserInfo *xinfo;
                 };
                 Expr *namespace;
                 Generator *gen;
         };
-};
+} ValuePayload;
+
+typedef struct value_box {
+        ValuePayload payload;
+} ValueBox;
+
+_Static_assert(sizeof(Value) == 8, "Value must remain one 64-bit word");
 
 struct object {
         bool          init;
@@ -448,6 +425,7 @@ struct frame {
         usize fp;
         char const *ip;
         Value f;
+        i32 jit_resume;
 };
 
 typedef struct cothread_state {
@@ -516,6 +494,7 @@ struct thread {
         TyCondVar cond;
 
         Value v;
+        Value *ctx;
         u64 i;
         bool alive;
         bool joined;
@@ -740,6 +719,7 @@ typedef struct ty {
 
         i32 eval_depth;
         u32 flags;
+        u16 some_tag_chain;
         u64 id;
 
         u64 prng[4];
@@ -1264,47 +1244,238 @@ enum {
 };
 #undef X
 
-#define INTEGER(k)               ((Value){ .type = VALUE_INTEGER,          .z              = (k),                                  .tags = 0 })
-#define REAL(f)                  ((Value){ .type = VALUE_REAL,             .real           = (f),                                  .tags = 0 })
-#define BOOLEAN(b)               ((Value){ .type = VALUE_BOOLEAN,          .boolean        = (b),                                  .tags = 0 })
-#define ARRAY(a)                 ((Value){ .type = VALUE_ARRAY,            .array          = (a),                                  .tags = 0 })
-#define TUPLE(vs, ns, n, gc)     ((Value){ .type = VALUE_TUPLE,            .items          = (vs), .count = (n),  .ids = (ns),     .tags = 0 })
-#define BLOB(b)                  ((Value){ .type = VALUE_BLOB,             .blob           = (b),                                  .tags = 0 })
-#define QUEUE(q)                 ((Value){ .type = VALUE_QUEUE,            .queue          = (q),                                  .tags = 0 })
-#define SHARED_QUEUE(q)          ((Value){ .type = VALUE_SHARED_QUEUE,     .shared_queue   = (q),                                  .tags = 0 })
-#define DICT(d)                  ((Value){ .type = VALUE_DICT,             .dict           = (d),                                  .tags = 0 })
-#define REGEX(r)                 ((Value){ .type = VALUE_REGEX,            .regex          = (r),                                  .tags = 0 })
-#define FUNCTION()               ((Value){ .type = VALUE_FUNCTION,                                                                 .tags = 0 })
-#define PTR(p)                   ((Value){ .type = VALUE_PTR,              .ptr            = (p),  .gcptr = NULL,                  .tags = 0 })
-#define TPTR(t, p)               ((Value){ .type = VALUE_PTR,              .ptr            = (p),  .gcptr = NULL,  .extra = (t),   .tags = 0 })
-#define GCPTR(p, gcp)            ((Value){ .type = VALUE_PTR,              .ptr            = (p),  .gcptr = (gcp),                 .tags = 0 })
-#define TGCPTR(p, t, gcp)        ((Value){ .type = VALUE_PTR,              .ptr            = (p),  .gcptr = (gcp), .extra = (t),   .tags = 0 })
-#define EPTR(p, gcp, ep)         ((Value){ .type = VALUE_PTR,              .ptr            = (p),  .gcptr = (gcp), .extra = (ep),  .tags = 0 })
-#define TRACE(t)                 ((Value){ .type = VALUE_TRACE,            .ptr            = (t),                                  .tags = 0 })
-#define BLOB(b)                  ((Value){ .type = VALUE_BLOB,             .blob           = (b),                                  .tags = 0 })
-#define REF(p)                   ((Value){ .type = VALUE_REF,              .ptr            = (p),                                  .tags = 0 })
-#define UNINITIALIZED(p)         ((Value){ .type = VALUE_UNINITIALIZED,    .ptr            = (p),                                  .tags = 0 })
-#define TAG(t)                   ((Value){ .type = VALUE_TAG,              .tag            = (t),                                  .tags = 0 })
-#define CLASS(c)                 ((Value){ .type = VALUE_CLASS,            .class          = (c),  .object = NULL,                 .tags = 0 })
-#define TYPE(t)                  ((Value){ .type = VALUE_TYPE,             .ptr            = (t),                                  .tags = 0 })
-#define OBJECT(o, c)             ((Value){ .type = VALUE_OBJECT,           .object         = (o),  .class  = (c),                  .tags = 0 })
-#define OPERATOR(u, b)           ((Value){ .type = VALUE_OPERATOR,         .uop            = (u),  .bop    = (b),                  .tags = 0 })
-#define NAMESPACE(ns)            ((Value){ .type = VALUE_NAMESPACE,        .namespace      = (ns),                                 .tags = 0 })
-#define MODULE(m)                ((Value){ .type = VALUE_MODULE,           .mod            = (m),                                  .tags = 0 })
-#define METHOD(n, m, t)          ((Value){ .type = VALUE_METHOD,           .method         = (m),  .this   = (t),  .name = (n),    .tags = 0 })
-#define GENERATOR(g)             ((Value){ .type = VALUE_GENERATOR,        .gen            = (g),                                  .tags = 0 })
-#define THREAD(t)                ((Value){ .type = VALUE_THREAD,           .thread         = (t),                                  .tags = 0 })
-#define BUILTIN_METHOD(n, m, t)  ((Value){ .type = VALUE_BUILTIN_METHOD,   .builtin_method = (m),  .this   = (t),  .name = (n),    .tags = 0 })
-#define FOREIGN_FUN(p, i, x)     ((Value){ .type = VALUE_FOREIGN_FUNCTION, .ffi            = (i),  .ff     = (p),  .xinfo = (x),   .tags = 0 })
-#define NIL                      ((Value){ .type = VALUE_NIL,                                                                      .tags = 0 })
-#define INDEX(ix, o, n)          ((Value){ .type = VALUE_INDEX,            .i              = (ix), .off   = (o), .nt = (n),        .tags = 0 })
-#define SENTINEL                 ((Value){ .type = VALUE_SENTINEL,         .i              = 0,    .off   = 0,                     .tags = 0 })
-#define NONE                     ((Value){ .type = VALUE_NONE,             .i              = 0,    .off   = 0,                     .tags = 0 })
-#define BREAK                    ((Value){ .type = VALUE_BREAK,            .i              = 0,    .off   = 0,                     .tags = 0 })
-#define ZERO                     ((Value){ 0 })
+Value value_box(Ty *ty, ValuePayload payload);
+Value value_integer(Ty *ty, imax z);
+Value value_real(double real);
+Value value_boolean(bool boolean);
+Value value_with_src(Ty *ty, Value value, u32 src);
+Value value_with_tags(Ty *ty, Value value, u16 tags);
+Value value_with_type(Ty *ty, Value value, u8 type);
+ValuePayload value_payload(Value value);
 
-#define CALLABLE(v) ((v).type <= VALUE_REGEX)
-#define ARITY(f)    ((f).type == VALUE_FUNCTION ? (((i16 *)((f).info + 5))[0] == -1 ? (f).info[4] : 100) : 1)
+#define VALUE_DIRECT_ARRAY_TAG UINT64_C(0x0001000000000000)
+#define VALUE_DIRECT_CLASS_TAG UINT64_C(0x0002000000000000)
+#define VALUE_DIRECT_TAG_TAG   UINT64_C(0x0003000000000000)
+#define VALUE_DIRECT_OBJECT_TAG UINT64_C(0x0004000000000000)
+#define VALUE_DIRECT_TAGGED_INT_TAG UINT64_C(0x0005000000000000)
+#define VALUE_DIRECT_PTR_MASK  UINT64_C(0x0000ffffffffffff)
+
+inline static bool
+value_is_direct_array(Value value)
+{
+        return (value.bits.as_int64 & ~VALUE_DIRECT_PTR_MASK) == VALUE_DIRECT_ARRAY_TAG;
+}
+
+inline static Value
+value_direct_array(Array *array)
+{
+        uptr p = (uptr)array;
+        assert(p != 0 && (p & ~VALUE_DIRECT_PTR_MASK) == 0);
+        return (Value){ .bits.as_int64 = VALUE_DIRECT_ARRAY_TAG | p };
+}
+
+inline static Array *
+value_direct_array_ptr(Value value)
+{
+        assert(value_is_direct_array(value));
+        return (Array *)(uptr)(value.bits.as_int64 & VALUE_DIRECT_PTR_MASK);
+}
+
+inline static bool value_is_direct_class(Value v) {
+        return (v.bits.as_int64 & ~VALUE_DIRECT_PTR_MASK) == VALUE_DIRECT_CLASS_TAG;
+}
+inline static Value value_direct_class(i32 c) {
+        return (Value){ .bits.as_int64 = VALUE_DIRECT_CLASS_TAG | (u32)c };
+}
+inline static i32 value_direct_class_id(Value v) {
+        return (i32)(u32)(v.bits.as_int64 & VALUE_DIRECT_PTR_MASK);
+}
+inline static bool value_is_direct_tag(Value v) {
+        return (v.bits.as_int64 & ~VALUE_DIRECT_PTR_MASK) == VALUE_DIRECT_TAG_TAG;
+}
+inline static Value value_direct_tag(i32 t) {
+        return (Value){ .bits.as_int64 = VALUE_DIRECT_TAG_TAG | (u32)t };
+}
+inline static i32 value_direct_tag_id(Value v) {
+        return (i32)(u32)(v.bits.as_int64 & VALUE_DIRECT_PTR_MASK);
+}
+inline static bool value_is_direct_tagged_int(Value v) {
+        return (v.bits.as_int64 & ~VALUE_DIRECT_PTR_MASK) == VALUE_DIRECT_TAGGED_INT_TAG;
+}
+inline static Value value_direct_tagged_int(i32 z, u16 tags) {
+        assert(tags != 0);
+        return (Value){ .bits.as_int64 = VALUE_DIRECT_TAGGED_INT_TAG
+                                           | ((u64)tags << 32) | (u32)z };
+}
+inline static i32 value_direct_tagged_int_value(Value v) {
+        return (i32)(u32)v.bits.as_int64;
+}
+inline static u16 value_direct_tagged_int_tags(Value v) {
+        return (u16)(v.bits.as_int64 >> 32);
+}
+inline static bool value_is_direct_object(Value v) {
+        return (v.bits.as_int64 & ~VALUE_DIRECT_PTR_MASK) == VALUE_DIRECT_OBJECT_TAG;
+}
+inline static Value value_direct_object(TyObject *o) {
+        uptr p = (uptr)o;
+        assert(p != 0 && (p & ~VALUE_DIRECT_PTR_MASK) == 0);
+        return (Value){ .bits.as_int64 = VALUE_DIRECT_OBJECT_TAG | p };
+}
+inline static TyObject *value_direct_object_ptr(Value v) {
+        return (TyObject *)(uptr)(v.bits.as_int64 & VALUE_DIRECT_PTR_MASK);
+}
+inline static ValueBox *
+value_box_ptr(Value value)
+{
+        assert(nanbox_is_pointer(value.bits));
+        return (ValueBox *)nanbox_to_pointer(value.bits);
+}
+
+inline static u8
+value_type(Value value)
+{
+        if (nanbox_is_int(value.bits)) return VALUE_INTEGER;
+        if (nanbox_is_double(value.bits)) return VALUE_REAL;
+        if (nanbox_is_boolean(value.bits)) return VALUE_BOOLEAN;
+        if (nanbox_is_null(value.bits)) return VALUE_NIL;
+        if (nanbox_is_undefined(value.bits)) return VALUE_NONE;
+        if (nanbox_is_empty(value.bits)) return VALUE_ZERO;
+        if (nanbox_is_deleted(value.bits)) return VALUE_TOMBSTONE;
+        if (value_is_direct_array(value)) return VALUE_ARRAY;
+        if (value_is_direct_class(value)) return VALUE_CLASS;
+        if (value_is_direct_tag(value)) return VALUE_TAG;
+        if (value_is_direct_object(value)) return VALUE_OBJECT;
+        if (value_is_direct_tagged_int(value)) return VALUE_INTEGER | VALUE_TAGGED;
+        return value_box_ptr(value)->payload.type;
+}
+
+inline static u16
+value_tags(Value value)
+{
+        if (value_is_direct_tagged_int(value)) return value_direct_tagged_int_tags(value);
+        return nanbox_is_pointer(value.bits) ? value_box_ptr(value)->payload.tags : 0;
+}
+
+inline static u32
+value_src(Value value)
+{
+        return nanbox_is_pointer(value.bits) ? value_box_ptr(value)->payload.src : 0;
+}
+
+inline static imax
+value_z(Value value)
+{
+        if (nanbox_is_int(value.bits)) return (imax)nanbox_to_int(value.bits);
+        if (value_is_direct_tagged_int(value)) return value_direct_tagged_int_value(value);
+        return nanbox_is_pointer(value.bits) ? value_box_ptr(value)->payload.z : 0;
+}
+
+inline static double
+value_real_get(Value value)
+{
+        if (nanbox_is_double(value.bits)) return nanbox_to_double(value.bits);
+        return nanbox_is_pointer(value.bits) ? value_box_ptr(value)->payload.real : 0.0;
+}
+
+inline static bool
+value_bool(Value value)
+{
+        if (nanbox_is_boolean(value.bits)) return nanbox_to_boolean(value.bits);
+        return nanbox_is_pointer(value.bits) ? value_box_ptr(value)->payload.boolean : false;
+}
+
+#define V_TYPE(v)       value_type((v))
+#define V_TAGS(v)       value_tags((v))
+#define V_SRC(v)        value_src((v))
+#define V_Z(v)          value_z((v))
+#define V_REAL(v)       value_real_get((v))
+#define V_BOOL(v)       value_bool((v))
+#define V_TAG(v)        (value_is_direct_tag((v)) ? value_direct_tag_id((v)) : value_box_ptr((v))->payload.tag)
+#define V_ARRAY(v)      (value_is_direct_array((v)) ? value_direct_array_ptr((v)) : value_box_ptr((v))->payload.array)
+#define V_DICT(v)       value_box_ptr((v))->payload.dict
+#define V_BLOB(v)       value_box_ptr((v))->payload.blob
+#define V_QUEUE(v)      value_box_ptr((v))->payload.queue
+#define V_SHARED_QUEUE(v) value_box_ptr((v))->payload.shared_queue
+#define V_THREAD(v)     value_box_ptr((v))->payload.thread
+#define V_SYM(v)        value_box_ptr((v))->payload.sym
+#define V_MOD(v)        value_box_ptr((v))->payload.mod
+#define V_REF(v)        value_box_ptr((v))->payload.ref
+#define V_PTR(v)        value_box_ptr((v))->payload.ptr
+#define V_GCPTR(v)      value_box_ptr((v))->payload.gcptr
+#define V_EXTRA(v)      value_box_ptr((v))->payload.extra
+#define V_CLASS(v)      (value_is_direct_class((v)) ? value_direct_class_id((v)) : value_is_direct_object((v)) ? value_direct_object_ptr((v))->class->i : value_box_ptr((v))->payload.class)
+#define V_OBJECT(v)     (value_is_direct_object((v)) ? value_direct_object_ptr((v)) : value_box_ptr((v))->payload.object)
+#define V_UOP(v)        value_box_ptr((v))->payload.uop
+#define V_BOP(v)        value_box_ptr((v))->payload.bop
+#define V_THIS(v)       value_box_ptr((v))->payload.this
+#define V_METHOD(v)     value_box_ptr((v))->payload.method
+#define V_BUILTIN_METHOD(v) value_box_ptr((v))->payload.builtin_method
+#define V_BUILTIN_FUNCTION(v) value_box_ptr((v))->payload.builtin_function
+#define V_MODULE(v)     value_box_ptr((v))->payload.module
+#define V_NAME(v)       value_box_ptr((v))->payload.name
+#define V_STR(v)        value_box_ptr((v))->payload.str
+#define V_BYTES(v)      value_box_ptr((v))->payload.bytes
+#define V_RO(v)         value_box_ptr((v))->payload.ro
+#define V_STR0(v)       value_box_ptr((v))->payload.str0
+#define V_I(v)          value_box_ptr((v))->payload.i
+#define V_OFF(v)        value_box_ptr((v))->payload.off
+#define V_NT(v)         value_box_ptr((v))->payload.nt
+#define V_COUNT(v)      value_box_ptr((v))->payload.count
+#define V_ITEMS(v)      value_box_ptr((v))->payload.items
+#define V_IDS(v)        value_box_ptr((v))->payload.ids
+#define V_REGEX(v)      value_box_ptr((v))->payload.regex
+#define V_FF(v)         value_box_ptr((v))->payload.ff
+#define V_FFI(v)        value_box_ptr((v))->payload.ffi
+#define V_INFO(v)       value_box_ptr((v))->payload.info
+#define V_ENV(v)        value_box_ptr((v))->payload.env
+#define V_XINFO(v)      value_box_ptr((v))->payload.xinfo
+#define V_NAMESPACE(v)  value_box_ptr((v))->payload.namespace
+#define V_GEN(v)        value_box_ptr((v))->payload.gen
+
+#define VALUE_BOX_(...) value_box(ty, (ValuePayload){ __VA_ARGS__ })
+#define INTEGER(k)               value_integer(ty, (k))
+#define REAL(f)                  value_real((f))
+#define BOOLEAN(b)               value_boolean((b))
+#define ARRAY(a)                 value_direct_array((a))
+#define TUPLE(vs, ns, n, gc)     VALUE_BOX_(.type=VALUE_TUPLE, .items=(vs), .count=(n), .ids=(ns))
+#define BLOB(b)                  VALUE_BOX_(.type=VALUE_BLOB, .blob=(b))
+#define QUEUE(q)                 VALUE_BOX_(.type=VALUE_QUEUE, .queue=(q))
+#define SHARED_QUEUE(q)          VALUE_BOX_(.type=VALUE_SHARED_QUEUE, .shared_queue=(q))
+#define DICT(d)                  VALUE_BOX_(.type=VALUE_DICT, .dict=(d))
+#define REGEX(r)                 VALUE_BOX_(.type=VALUE_REGEX, .regex=(r))
+#define FUNCTION()               VALUE_BOX_(.type=VALUE_FUNCTION)
+#define PTR(p)                   VALUE_BOX_(.type=VALUE_PTR, .ptr=(p), .gcptr=NULL)
+#define TPTR(t, p)               VALUE_BOX_(.type=VALUE_PTR, .ptr=(p), .gcptr=NULL, .extra=(t))
+#define GCPTR(p, gcp)            VALUE_BOX_(.type=VALUE_PTR, .ptr=(p), .gcptr=(gcp))
+#define TGCPTR(p, t, gcp)        VALUE_BOX_(.type=VALUE_PTR, .ptr=(p), .gcptr=(gcp), .extra=(t))
+#define EPTR(p, gcp, ep)         VALUE_BOX_(.type=VALUE_PTR, .ptr=(p), .gcptr=(gcp), .extra=(ep))
+#define TRACE(t)                 VALUE_BOX_(.type=VALUE_TRACE, .ptr=(t))
+#define REF(p)                   VALUE_BOX_(.type=VALUE_REF, .ref=(p))
+#define UNINITIALIZED(p)         VALUE_BOX_(.type=VALUE_UNINITIALIZED, .ptr=(p))
+#define TAG(t)                   value_direct_tag((t))
+#define CLASS(c)                 value_direct_class((c))
+#define TYPE(t)                  VALUE_BOX_(.type=VALUE_TYPE, .ptr=(t))
+#define OBJECT(o, c)             value_direct_object((o))
+#define OPERATOR(u, b)           VALUE_BOX_(.type=VALUE_OPERATOR, .uop=(u), .bop=(b))
+#define NAMESPACE(ns)            VALUE_BOX_(.type=VALUE_NAMESPACE, .namespace=(ns))
+#define MODULE(m)                VALUE_BOX_(.type=VALUE_MODULE, .mod=(m))
+#define METHOD(n, m, t)          VALUE_BOX_(.type=VALUE_METHOD, .method=(m), .this=(t), .name=(n))
+#define GENERATOR(g)             VALUE_BOX_(.type=VALUE_GENERATOR, .gen=(g))
+#define THREAD(t)                VALUE_BOX_(.type=VALUE_THREAD, .thread=(t))
+#define BUILTIN_METHOD(n, m, t)  VALUE_BOX_(.type=VALUE_BUILTIN_METHOD, .builtin_method=(m), .this=(t), .name=(n))
+#define FOREIGN_FUN(p, i, x)     VALUE_BOX_(.type=VALUE_FOREIGN_FUNCTION, .ffi=(i), .ff=(p), .xinfo=(x))
+#define NIL                      ((Value){ .bits = nanbox_null() })
+#define INDEX(ix, o, n)          VALUE_BOX_(.type=VALUE_INDEX, .i=(ix), .off=(o), .nt=(n))
+#define SENTINEL                 VALUE_BOX_(.type=VALUE_SENTINEL)
+#define NONE                     ((Value){ .bits = nanbox_undefined() })
+#define BREAK                    VALUE_BOX_(.type=VALUE_BREAK)
+#define ZERO                     ((Value){ .bits = nanbox_empty() })
+#define TOMBSTONE                ((Value){ .bits = nanbox_deleted() })
+
+#define VADDR(v) (&(Value){ .bits = (v).bits })
+
+#define CALLABLE(v) (V_TYPE(v) <= VALUE_REGEX)
+#define ARITY(f)    (V_TYPE(f) == VALUE_FUNCTION ? (((i16 *)(V_INFO(f) + 5))[0] == -1 ? V_INFO(f)[4] : 100) : 1)
 
 #define PAIR(a, b)            PAIR_(ty, (a), (b))
 #define TRIPLE(a, b, c)       TRIPLE_(ty, (a), (b), (c))
@@ -1567,20 +1738,20 @@ TyTmpCString(Ty *ty, u32 i, Value val)
         usize n;
         void const *str;
 
-        switch (val.type) {
+        switch (V_TYPE(val)) {
         case VALUE_STRING:
                 n = sN(val);
                 str = ss(val);
                 break;
 
         case VALUE_BLOB:
-                n = vN(*val.blob);
-                str = vv(*val.blob);
+                n = vN(*V_BLOB(val));
+                str = vv(*V_BLOB(val));
                 break;
 
         case VALUE_PTR:
-                n = strlen((char const *)val.ptr);
-                str = val.ptr;
+                n = strlen((char const *)V_PTR(val));
+                str = V_PTR(val);
                 break;
 
         default:
@@ -1601,15 +1772,15 @@ TyNewCString(Ty *ty, Value val, bool nul_before)
         usize n;
         void const *str;
 
-        switch (val.type) {
+        switch (V_TYPE(val)) {
         case VALUE_STRING:
                 n = sN(val);
                 str = ss(val);
                 break;
 
         case VALUE_BLOB:
-                n = vN(*val.blob);
-                str = vv(*val.blob);
+                n = vN(*V_BLOB(val));
+                str = vv(*V_BLOB(val));
                 break;
 
         default:
@@ -1686,8 +1857,8 @@ vm_xerror(Ty *ty, int kind, char const *fmt, ...);
 #define TDB_TY         ((TDB == NULL) ? NULL : (Ty *)(TDB->ty))
 #define TDB_STATE      ((TDB == NULL) ? TDB_STATE_OFF : TDB->state)
 #define TDB_STATE_NAME (TDB_STATE_NAMES[TDB_STATE])
-#define TDB_MUTEX      (TDB->thread.thread->mutex)
-#define TDB_CONDVAR    (TDB->thread.thread->cond)
+#define TDB_MUTEX      (V_THREAD(TDB->thread)->mutex)
+#define TDB_CONDVAR    (V_THREAD(TDB->thread)->cond)
 #define DEBUGGING      (!TDB_IS(OFF))
 
 #if 0

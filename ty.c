@@ -254,7 +254,7 @@ execln(Ty *ty, char *line)
 
                 Value *v = vm_get(ty, -1);
 
-                if (v->type != VALUE_FUNCTION) {
+                if (V_TYPE(*v) != VALUE_FUNCTION) {
                         printf(
                                 "Can't break on %s!",
                                 VSC(v)
@@ -321,7 +321,7 @@ readln(Ty *ty)
 
                 TY_CATCH_END();
 
-                return (line.type != VALUE_NIL)
+                return (V_TYPE(line) != VALUE_NIL)
                      ? TyNewCString(ty, line, true)
                      : NULL;
         } else {

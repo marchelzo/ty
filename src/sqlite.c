@@ -142,24 +142,24 @@ fetch(Ty *ty, int argc, Value *kwargs)
         for (int i = 0; i < n; ++i) {
                 switch (sqlite3_column_type(stmt, i)) {
                 case SQLITE_NULL:
-                        vAp(a.array, NIL);
+                        vAp(V_ARRAY(a), NIL);
                         break;
                 case SQLITE_FLOAT:
-                        vAp(a.array, REAL(sqlite3_column_double(stmt, i)));
+                        vAp(V_ARRAY(a), REAL(sqlite3_column_double(stmt, i)));
                         break;
                 case SQLITE_INTEGER:
-                        vAp(a.array, INTEGER(sqlite3_column_int64(stmt, i)));
+                        vAp(V_ARRAY(a), INTEGER(sqlite3_column_int64(stmt, i)));
                         break;
                 case SQLITE_TEXT:;
                         s = (char *)sqlite3_column_text(stmt, i);
                         sz = sqlite3_column_bytes(stmt, i);
-                        vAp(a.array, vSs(s, sz));
+                        vAp(V_ARRAY(a), vSs(s, sz));
                         break;
                 case SQLITE_BLOB:;
                         b = value_blob_new(ty);
                         s = sqlite3_column_blob(stmt, i);
                         sz = sqlite3_column_bytes(stmt, i);
-                        vAp(a.array, BLOB(b));
+                        vAp(V_ARRAY(a), BLOB(b));
                         vvPn(*b, s, sz);
                         break;
                 }
@@ -188,29 +188,31 @@ fetch_dict(Ty *ty, int argc, Value *kwargs)
         for (int i = 0; i < n; ++i) {
                 char const *name = sqlite3_column_name(stmt, i);
                 Value key = vSsz(name);
+                gP(&key);
                 switch (sqlite3_column_type(stmt, i)) {
                 case SQLITE_NULL:
-                        dict_put_value(ty, d.dict, key, NIL);
+                        dict_put_value(ty, V_DICT(d), key, NIL);
                         break;
                 case SQLITE_FLOAT:
-                        dict_put_value(ty, d.dict, key, REAL(sqlite3_column_double(stmt, i)));
+                        dict_put_value(ty, V_DICT(d), key, REAL(sqlite3_column_double(stmt, i)));
                         break;
                 case SQLITE_INTEGER:
-                        dict_put_value(ty, d.dict, key, INTEGER(sqlite3_column_int64(stmt, i)));
+                        dict_put_value(ty, V_DICT(d), key, INTEGER(sqlite3_column_int64(stmt, i)));
                         break;
                 case SQLITE_TEXT:;
                         s = (char *)sqlite3_column_text(stmt, i);
                         sz = sqlite3_column_bytes(stmt, i);
-                        dict_put_value(ty, d.dict, key, vSs(s, sz));
+                        dict_put_value(ty, V_DICT(d), key, vSs(s, sz));
                         break;
                 case SQLITE_BLOB:;
                         b = value_blob_new(ty);
                         s = sqlite3_column_blob(stmt, i);
                         sz = sqlite3_column_bytes(stmt, i);
-                        dict_put_value(ty, d.dict, key, BLOB(b));
+                        dict_put_value(ty, V_DICT(d), key, BLOB(b));
                         uvPn(*b, s, sz);
                         break;
                 }
+                gX();
         }
 
         gX();
@@ -242,10 +244,10 @@ mbind(Ty *ty, int argc, Value *kwargs)
         Value index = ARGx(1, VALUE_STRING, VALUE_INTEGER);
         i32 i;
 
-        if (index.type == VALUE_STRING) {
+        if (V_TYPE(index) == VALUE_STRING) {
                 i = sqlite3_bind_parameter_index(stmt, TY_TMP_C_STR(index));
-        } else if (index.type == VALUE_INTEGER) {
-                i = index.z;
+        } else if (V_TYPE(index) == VALUE_INTEGER) {
+                i = V_Z(index);
         } else {
                 UNREACHABLE();
         }
@@ -253,12 +255,12 @@ mbind(Ty *ty, int argc, Value *kwargs)
         Value v = ARG(2);
         int err;
 
-        switch (v.type) {
+        switch (V_TYPE(v)) {
         case VALUE_INTEGER:
-                err = sqlite3_bind_int64(stmt, i, v.z);
+                err = sqlite3_bind_int64(stmt, i, V_Z(v));
                 break;
         case VALUE_REAL:
-                err = sqlite3_bind_double(stmt, i, v.real);
+                err = sqlite3_bind_double(stmt, i, V_REAL(v));
                 break;
         case VALUE_STRING:
                 err = sqlite3_bind_text(
@@ -273,8 +275,8 @@ mbind(Ty *ty, int argc, Value *kwargs)
                 err = sqlite3_bind_blob(
                         stmt,
                         i,
-                        vv(*v.blob),
-                        vN(*v.blob),
+                        vv(*V_BLOB(v)),
+                        vN(*V_BLOB(v)),
                         SQLITE_TRANSIENT
                 );
                 break;
@@ -319,10 +321,10 @@ error_msg(Ty *ty, int argc, Value *kwargs)
         Value v = ARGx(0, VALUE_PTR, VALUE_INTEGER);
         char const *msg;
 
-        if (v.type == VALUE_PTR) {
-                msg = sqlite3_errmsg(v.ptr);
-        } else if (v.type == VALUE_INTEGER) {
-                msg = sqlite3_errstr(v.z);
+        if (V_TYPE(v) == VALUE_PTR) {
+                msg = sqlite3_errmsg(V_PTR(v));
+        } else if (V_TYPE(v) == VALUE_INTEGER) {
+                msg = sqlite3_errstr(V_Z(v));
         } else {
                 UNREACHABLE();
         }
@@ -330,8 +332,8 @@ error_msg(Ty *ty, int argc, Value *kwargs)
         return (msg != NULL) ? vSsz(msg) : NIL;
 }
 
-#define BUILTIN(f)    { .type = VALUE_BUILTIN_FUNCTION, .builtin_function = (f), .tags = 0 }
-#define INT(k)        { .type = VALUE_INTEGER,          .z                = (k), .tags = 0 }
+#define BUILTIN(f)    { .bits = { .as_int64 = 0 } }
+#define INT(k)        { .bits = { .as_int64 = NANBOX_MIN_NUMBER | (u32)(k) } }
 
 static struct {
         char const *name;
@@ -474,6 +476,10 @@ static struct {
 void
 sqlite_load(Ty *ty)
 {
+        BuiltinFunction *functions[] = { dbopen, dbclose, fetch, fetch_dict, prepare, step, finalize, reset, mbind, get_column, column_count, column_name, error_code, error_msg, changes, total_changes, last_insert_rowid };
+        for (usize i = 0; i < countof(functions); ++i) {
+                builtins[i].value = VALUE_BOX_(.type=VALUE_BUILTIN_FUNCTION, .builtin_function=functions[i]);
+        }
         vm_load_c_module(ty, "sqlite3c", builtins);
 }
 

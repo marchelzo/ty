@@ -109,12 +109,12 @@ collect(Ty *ty, struct alloc *a)
 
         case GC_OBJECT:
                 o = OBJECT((TyObject *)p, ((TyObject *)p)->class->i);
-                finalizer = class_get_finalizer(ty, o.class);
-                if (finalizer.type != VALUE_NONE) {
+                finalizer = class_get_finalizer(ty, V_CLASS(o));
+                if (V_TYPE(finalizer) != VALUE_NONE) {
                         vm_call_method(ty, &o, &finalizer, 0);
                 }
-                if (o.object->dynamic != NULL) {
-                        itable_release(ty, o.object->dynamic);
+                if (V_OBJECT(o)->dynamic != NULL) {
+                        itable_release(ty, V_OBJECT(o)->dynamic);
                 }
                 break;
 
@@ -137,8 +137,8 @@ collect(Ty *ty, struct alloc *a)
         case GC_FFI_AUTO:
                 finalizer = ((Value *)p)[0];
                 o = ((Value *)p)[1];
-                if (finalizer.type == VALUE_PTR) {
-                        ((void (*)(void *))finalizer.ptr)(o.ptr);
+                if (V_TYPE(finalizer) == VALUE_PTR) {
+                        ((void (*)(void *))V_PTR(finalizer))(V_PTR(o));
                 } else {
                         vmP(&o);
                         vmC(&finalizer, 1);

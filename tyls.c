@@ -207,7 +207,7 @@ main(int argc, char *argv[])
 
                 Value req = builtin_read(ty, 0, NULL);
 
-                if (req.type == VALUE_NIL) {
+                if (V_TYPE(req) == VALUE_NIL) {
                         return 0;
                 }
 
@@ -217,7 +217,7 @@ main(int argc, char *argv[])
 
                 LOGX("%s", SHOW(&req, ABBREV));
 
-                i32 what = tget_nn(&req, "what")->z;
+                i32 what = V_Z(*tget_nn(&req, "what"));
 
                 i32 line;
                 i32 col;
@@ -246,9 +246,9 @@ main(int argc, char *argv[])
                 switch (what) {
                 case LS_COMPILE:
                         v = tget_or(&req, "source", NIL);
-                        AllowErrors = (tget_or(&req, "check", NIL).type == VALUE_NIL);
+                        AllowErrors = (V_TYPE(tget_or(&req, "check", NIL)) == VALUE_NIL);
 
-                        if (v.type == VALUE_NIL) {
+                        if (V_TYPE(v) == VALUE_NIL) {
                                 goto EndRequest;
                         }
 
@@ -344,8 +344,8 @@ main(int argc, char *argv[])
                         break;
 
                 case LS_DEFINITION:
-                        line = tget_nn(&req, "line")->z;
-                        col  = tget_nn(&req, "col")->z;
+                        line = V_Z(*tget_nn(&req, "line"));
+                        col  = V_Z(*tget_nn(&req, "col"));
 
                         if (mod == NULL) {
                                 goto EndRequest;
@@ -367,8 +367,8 @@ main(int argc, char *argv[])
                         break;
 
                 case LS_COMPLETION:
-                        line = tget_nn(&req, "line")->z;
-                        col  = tget_nn(&req, "col")->z;
+                        line = V_Z(*tget_nn(&req, "line"));
+                        col  = V_Z(*tget_nn(&req, "col"));
 
                         if (mod == NULL) {
                                 goto EndRequest;

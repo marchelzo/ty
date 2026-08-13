@@ -22,7 +22,7 @@ mod_root(Ty *ty, char const *path)
         Value const *_root = table_look(ty, &ty->ty->pkg, dir);
 
         if (_root != NULL) {
-                return _root->ptr;
+                return V_PTR(*(_root));
         }
 
         char pkg[PATH_MAX + 1];
@@ -48,7 +48,8 @@ mod_root(Ty *ty, char const *path)
         }
 
         for (int i = 0; i < vN(paths); ++i) {
-                table_put(ty, &ty->ty->pkg, v__(paths, i), &PTR((void *)root));
+                Value root_ptr = PTR((void *)root);
+                table_put(ty, &ty->ty->pkg, v__(paths, i), &root_ptr);
         }
 
         return root;
