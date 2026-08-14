@@ -188,6 +188,7 @@ fetch_dict(Ty *ty, int argc, Value *kwargs)
         for (int i = 0; i < n; ++i) {
                 char const *name = sqlite3_column_name(stmt, i);
                 Value key = vSsz(name);
+                gP(&key);
                 switch (sqlite3_column_type(stmt, i)) {
                 case SQLITE_NULL:
                         dict_put_value(ty, d.dict, key, NIL);
@@ -211,6 +212,7 @@ fetch_dict(Ty *ty, int argc, Value *kwargs)
                         uvPn(*b, s, sz);
                         break;
                 }
+                gX();
         }
 
         gX();
@@ -476,4 +478,3 @@ sqlite_load(Ty *ty)
 {
         vm_load_c_module(ty, "sqlite3c", builtins);
 }
-

@@ -640,6 +640,19 @@ NextGCPhase(Ty *ty, int phase, int n_running)
 }
 
 static void
+MarkPendingFFIAutoValues(Ty *marker, Ty *owner)
+{
+        for (usize i = 0; i < vN(owner->allocs); ++i) {
+                struct alloc *a = v__(owner->allocs, i);
+                if (a->type == GC_FFI_AUTO && !a->mark && a->hard == 0) {
+                        Value *values = (Value *)a->data;
+                        value_mark(marker, &values[0]);
+                        value_mark(marker, &values[1]);
+                }
+        }
+}
+
+static void
 WaitGC(Ty *ty)
 {
         GCLOG("Waiting for GC");
@@ -661,6 +674,7 @@ WaitGC(Ty *ty)
         }
 
         MarkStorage(ty);
+        MarkPendingFFIAutoValues(ty, ty);
         ty->group->GCReadyCount += 1;
 
         WaitForGCPhase(ty, GC_PHASE_SWEEP);
@@ -760,6 +774,11 @@ DoGC(Ty *ty)
 
         GCLOG("Marking own storage on thread %llu", TID);
         MarkStorage(ty);
+
+        for (int i = 0; i < nBlocked; ++i) {
+                MarkPendingFFIAutoValues(ty, v__(ty->group->TyList, blockedThreads[i]));
+        }
+        MarkPendingFFIAutoValues(ty, ty);
 
         if (ty->group == &MainGroup) {
                 GCLOG("Marking %zu global roots on thread %llu", vN(Globals), TID);
@@ -1621,24 +1640,24 @@ xjit(Ty *ty, isize depth, JitFn *func, i32 resume_idx, Value *args, Value **env)
         switch (reason) {
         case JIT_CALL:
                 CO_LOG("jit_trampoline_call", TERM(94;1), "suspend with resume_idx = %d", next_resume);
-                top->f.tags = next_resume;
+                top->jit_resume = next_resume;
                 break;
 
         case JIT_YIELD_SOME:
                 CO_LOG("jit_yield_some", TERM(91;1), "yielding: %s, resume=%d", VSC(vvL(STACK)), next_resume);
-                top->f.tags = next_resume;
+                top->jit_resume = next_resume;
                 v_L(STACK) = Some(v_L(STACK));
                 DoYield(ty);
                 break;
 
         case JIT_YIELD:
                 CO_LOG("jit_yield", TERM(91;1), "yielding: %s", VSC(vvL(STACK)));
-                top->f.tags = next_resume;
+                top->jit_resume = next_resume;
                 DoYield(ty);
                 break;
 
         case JIT_YIELD_NONE:
-                top->f.tags = next_resume;
+                top->jit_resume = next_resume;
                 push(None);
                 CO_LOG("jit_yield_none", TERM(91;1), "yielding: %s", VSC(vvL(STACK)));
                 DoYield(ty);
@@ -1660,7 +1679,7 @@ go_jit(Ty *ty)
                 usize cfp = top->fp;
                 Value *args = v_(STACK, cfp);
 
-                i32 resume_idx = top->f.tags;
+                i32 resume_idx = top->jit_resume;
 
                 CO_LOG("go()", TERM(34;1), "%s => resume%s: %d", TERM(92;1), TERM(0), resume_idx);
 
@@ -1685,9 +1704,7 @@ call_jit(Ty *ty, Value const *f)
         usize fp = vvL(FRAMES)->fp;
         usize f0 = vN(FRAMES) - 1;
 
-        Value *activation = &v_(FRAMES, f0)->f;
-        activation->type = VALUE_NATIVE_FUNCTION;
-        activation->tags = 0;
+        v_(FRAMES, f0)->jit_resume = 0;
 
         xjit(ty, f0, func, 0, v_(STACK, fp), f->env);
 
@@ -1703,7 +1720,7 @@ call_jit(Ty *ty, Value const *f)
                 usize cfp = top->fp;
                 Value *args = v_(STACK, cfp);
 
-                i32 resume_idx = top->f.tags;
+                i32 resume_idx = top->jit_resume;
 
                 CO_LOG("call_jit()", TERM(34;1), "%s => resume%s: %d", TERM(92;1), TERM(0), resume_idx);
 
@@ -1932,7 +1949,7 @@ vm_trampoline_linked(Ty *ty, JitFn *func, Value **env)
                         ty,
                         depth,
                         jit_of(&top->f),
-                        top->f.tags,
+                        top->jit_resume,
                         v_(STACK, top->fp),
                         top->f.env
                 );

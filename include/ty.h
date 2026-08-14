@@ -448,6 +448,7 @@ struct frame {
         usize fp;
         char const *ip;
         Value f;
+        i32 jit_resume;
 };
 
 typedef struct cothread_state {

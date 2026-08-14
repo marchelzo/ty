@@ -135,8 +135,8 @@ BUILD_SIG_FILE := obj/.build_sig
 PREV_SIG := $(shell cat $(BUILD_SIG_FILE) 2>/dev/null)
 
 ifneq ($(BUILD_SIG),$(PREV_SIG))
-$(shell rm -f obj/*.o obj/tyls/*.o $(PROG))
-$(shell mkdir -p obj obj/tyls)
+$(shell rm -f obj/*.o obj/tyls/*.o obj/typrof/*.o obj/*.d obj/tyls/*.d obj/typrof/*.d $(PROG) tyls typrof)
+$(shell mkdir -p obj obj/tyls obj/typrof)
 $(shell echo '$(BUILD_SIG)' > $(BUILD_SIG_FILE))
 endif
 
@@ -163,6 +163,11 @@ ifndef NO_NSYNC
 	EXTERNAL += nsync/out/libnsync.a
 endif
 ASSEMBLY := $(patsubst %.c,%.s,$(SOURCES))
+.DEFAULT_GOAL := all
+DEPFILES := $(OBJECTS:.o=.d) $(TYLS_OBJECTS:.o=.d) $(TYPROF_OBJECTS:.o=.d) \
+            obj/ty-main.d obj/tyls-main.d obj/typrof-main.d
+
+-include $(DEPFILES)
 
 all: $(PROG)
 
@@ -183,17 +188,29 @@ obj/jit.o: $(JIT_HDR)
 obj/tyls/jit.o: $(JIT_HDR)
 obj/typrof/jit.o: $(JIT_HDR)
 
-ty: ty.c $(OBJECTS) $(EXTERNAL)
-	@echo cc $<
+ty: obj/ty-main.o $(OBJECTS) $(EXTERNAL)
+	@echo cc $@
 	@$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
-tyls: tyls.c $(TYLS_OBJECTS) $(EXTERNAL)
-	@echo cc $<
+tyls: obj/tyls-main.o $(TYLS_OBJECTS) $(EXTERNAL)
+	@echo cc $@
 	@$(CC) $(CFLAGS) -DTY_LS -o $@ $^ $(LDFLAGS)
 
-typrof: ty.c $(TYPROF_OBJECTS) $(EXTERNAL)
-	@echo cc $<
+typrof: obj/typrof-main.o $(TYPROF_OBJECTS) $(EXTERNAL)
+	@echo cc $@
 	@$(CC) $(CFLAGS) -DTY_PROFILER -o $@ $^ $(LDFLAGS)
+
+obj/ty-main.o: ty.c
+	@echo cc $<
+	@$(CC) $(CFLAGS) -MMD -MP -MF obj/ty-main.d -c -o $@ $<
+
+obj/tyls-main.o: tyls.c
+	@echo cc $<
+	@$(CC) $(CFLAGS) -DTY_LS -MMD -MP -MF obj/tyls-main.d -c -o $@ $<
+
+obj/typrof-main.o: ty.c
+	@echo cc $<
+	@$(CC) $(CFLAGS) -DTY_PROFILER -MMD -MP -MF obj/typrof-main.d -c -o $@ $<
 
 asm: $(ASSEMBLY)
 
@@ -209,19 +226,19 @@ dtoa/dtoa.o: dtoa/SwiftDtoa.c
 
 obj/%.o: src/%.c
 	@echo cc $<
-	@$(CC) $(CFLAGS) -c -o $@ -DFILENAME=$(patsubst src/%.c,%,$<) $<
+	@$(CC) $(CFLAGS) -MMD -MP -MF $(@:.o=.d) -c -o $@ -DFILENAME=$(patsubst src/%.c,%,$<) $<
 
 obj/tyls/%.o: src/%.c
 	@echo cc $<
-	@$(CC) $(CFLAGS) -c -o $@ -DTY_LS -DFILENAME=$(patsubst src/%.c,%,$<) $<
+	@$(CC) $(CFLAGS) -MMD -MP -MF $(@:.o=.d) -c -o $@ -DTY_LS -DFILENAME=$(patsubst src/%.c,%,$<) $<
 
 obj/typrof/%.o: src/%.c
 	@echo cc $<
-	@$(CC) $(CFLAGS) -c -o $@ -DTY_PROFILER -DFILENAME=$(patsubst src/%.c,%,$<) $<
+	@$(CC) $(CFLAGS) -MMD -MP -MF $(@:.o=.d) -c -o $@ -DTY_PROFILER -DFILENAME=$(patsubst src/%.c,%,$<) $<
 
 
 clean:
-	rm -rf $(PROG) *.gcda $(OBJECTS) $(TYLS_OBJECTS) $(TYPROF_OBJECTS) libco/libco.o dtoa/dtoa.o include/keywords.h $(BUILD_SIG_FILE)
+	rm -rf $(PROG) *.gcda $(OBJECTS) $(TYLS_OBJECTS) $(TYPROF_OBJECTS) libco/libco.o dtoa/dtoa.o include/keywords.h $(BUILD_SIG_FILE) $(DEPFILES) obj/ty-main.o obj/tyls-main.o obj/typrof-main.o
 
 test:
 	./ty test.ty

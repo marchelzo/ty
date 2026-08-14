@@ -217,8 +217,10 @@ class_new_instance(Ty *ty, int class)
         usize const size = sizeof (TyObject)
                          + vN(c->fields.ids) * sizeof (Value);
 
-        TyObject *obj =  mAo0(size, GC_OBJECT);
+        TyObject *obj = mAo(size, GC_OBJECT);
+        obj->init = false;
         obj->class = c;
+        obj->dynamic = NULL;
         obj->nslot = vN(c->fields.ids);
 
         for (int i = 0; i < obj->nslot; ++i) {

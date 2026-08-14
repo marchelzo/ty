@@ -5148,7 +5148,8 @@ bc_resolve_inline_fields(JitCtx *ctx, TyInlinePlan const *plan, TyInlineKind kin
 {
         for (int i = 0; i < plan->count; ++i) {
                 TyInlineInsn const *insn = &plan->insns[i];
-                if (insn->op != TY_INLINE_FIELD) {
+                if (insn->op != TY_INLINE_FIELD
+                    && insn->op != TY_INLINE_STORE_FIELD) {
                         continue;
                 }
 
@@ -5189,6 +5190,7 @@ bc_inline_plan_types(JitCtx *ctx, Value const *callee, TyInlinePlan const *plan)
                 numeric |= op == TY_INLINE_ADD
                         || op == TY_INLINE_SUB
                         || op == TY_INLINE_MUL
+                        || op == TY_INLINE_DIV
                         || op == TY_INLINE_EQ
                         || op == TY_INLINE_NE
                         || op == TY_INLINE_LT
@@ -5198,7 +5200,8 @@ bc_inline_plan_types(JitCtx *ctx, Value const *callee, TyInlinePlan const *plan)
         }
         bool arithmetic = root == TY_INLINE_ADD
                        || root == TY_INLINE_SUB
-                       || root == TY_INLINE_MUL;
+                       || root == TY_INLINE_MUL
+                       || root == TY_INLINE_DIV;
         bool comparison = root == TY_INLINE_EQ
                        || root == TY_INLINE_NE
                        || root == TY_INLINE_LT
@@ -5454,7 +5457,8 @@ bc_emit_inline_plan(JitCtx *ctx, TyInlinePlan const *plan, TyInlineKind kind,
         dasm_State **asm = &ctx->asm;
         for (int i = 0; i < plan->count; ++i) {
                 TyInlineInsn const *insn = &plan->insns[i];
-                if (insn->op != TY_INLINE_FIELD) {
+                if (insn->op != TY_INLINE_FIELD
+                    && insn->op != TY_INLINE_STORE_FIELD) {
                         continue;
                 }
                 int source = bc_inline_local_pos(
@@ -5465,7 +5469,8 @@ bc_emit_inline_plan(JitCtx *ctx, TyInlinePlan const *plan, TyInlineKind kind,
                 bool layout_proven = false;
                 for (int j = 0; j < i; ++j) {
                         TyInlineInsn const *previous = &plan->insns[j];
-                        if (previous->op != TY_INLINE_FIELD) {
+                        if (previous->op != TY_INLINE_FIELD
+                            && previous->op != TY_INLINE_STORE_FIELD) {
                                 continue;
                         }
                         int previous_source = bc_inline_local_pos(
@@ -5537,6 +5542,47 @@ bc_emit_inline_plan(JitCtx *ctx, TyInlinePlan const *plan, TyInlineKind kind,
                         break;
                 }
 
+                case TY_INLINE_BOOLEAN:
+                {
+                        int off = OP_OFF(scratch + depth);
+                        jit_emit_load_imm(asm, BC_S0, 0);
+                        jit_emit_stp64(asm, BC_S0, BC_S0, BC_OPS, off);
+                        jit_emit_stp64(asm, BC_S0, BC_S0, BC_OPS, off + 16);
+                        jit_emit_load_imm(asm, BC_S0, VALUE_BOOLEAN);
+                        jit_emit_strb(asm, BC_S0, BC_OPS, off + VAL_OFF_TYPE);
+                        jit_emit_load_imm(asm, BC_S0, insn->integer != 0);
+                        jit_emit_strb(asm, BC_S0, BC_OPS, off + VAL_OFF_Z);
+                        depth++;
+                        break;
+                }
+
+                case TY_INLINE_STORE_FIELD:
+                {
+                        int source = bc_inline_local_pos(plan, kind, base, self_pos,
+                                                         insn->local);
+                        int off = OP_OFF(scratch + depth);
+                        jit_emit_load_imm(asm, BC_S0, 0);
+                        jit_emit_stp64(asm, BC_S0, BC_S0, BC_OPS, off);
+                        jit_emit_stp64(asm, BC_S0, BC_S0, BC_OPS, off + 16);
+                        jit_emit_load_imm(asm, BC_S0, VALUE_BOOLEAN);
+                        jit_emit_strb(asm, BC_S0, BC_OPS, off + VAL_OFF_TYPE);
+                        jit_emit_load_imm(asm, BC_S0, insn->integer != 0);
+                        jit_emit_strb(asm, BC_S0, BC_OPS, off + VAL_OFF_Z);
+                        jit_emit_ldr64(asm, BC_S2, BC_OPS,
+                                       OP_OFF(source) + VAL_OFF_OBJECT);
+                        int slot_off = OBJ_OFF_SLOTS
+                                     + (fields[i].offset & OFF_MASK) * VALUE_SIZE;
+                        jit_emit_load_imm(asm, BC_S1, slot_off);
+                        jit_emit_add(asm, BC_S2, BC_S2, BC_S1);
+                        bc_copy_value(ctx, BC_S2, 0, BC_OPS, off);
+                        depth++;
+                        break;
+                }
+
+                case TY_INLINE_POP:
+                        depth--;
+                        break;
+
                 case TY_INLINE_INTEGER:
                 {
                         int off = OP_OFF(scratch + depth);
@@ -5576,6 +5622,16 @@ bc_emit_inline_plan(JitCtx *ctx, TyInlinePlan const *plan, TyInlineKind kind,
                         bc_emit_inline_arithmetic(
                                 ctx, insn->op, left, right, lbl_slow
                         );
+                        depth--;
+                        break;
+                }
+
+                case TY_INLINE_DIV:
+                {
+                        int saved_sp = ctx->sp;
+                        ctx->sp = scratch + depth;
+                        bc_emit_arith(ctx, (void *)jit_rt_div);
+                        ctx->sp = saved_sp;
                         depth--;
                         break;
                 }
