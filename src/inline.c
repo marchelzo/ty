@@ -214,9 +214,38 @@ ty_inline_analyze(Value const *callee, TyInlineKind kind, int argc, TyInlinePlan
                         }
                         break;
 
+                case INSTR_TRUE:
+                case INSTR_FALSE:
+                        insn.op = TY_INLINE_BOOLEAN;
+                        insn.integer = op == INSTR_TRUE;
+                        if (!push_insn(plan, insn)) return false;
+                        break;
+
+                case INSTR_TARGET_SELF_MEMBER:
+                {
+                        i32 member;
+                        if (!read_bytes(&ip, end, &member, sizeof member)
+                            || kind != TY_INLINE_METHOD || plan->count == 0) return false;
+                        TyInlineInsn *value = &plan->insns[plan->count - 1];
+                        if (value->op != TY_INLINE_BOOLEAN) return false;
+                        value->op = TY_INLINE_STORE_FIELD;
+                        value->local = plan->self_local;
+                        value->member = member;
+                        break;
+                }
+
+                case INSTR_ASSIGN:
+                        break;
+
+                case INSTR_POP:
+                        insn.op = TY_INLINE_POP;
+                        if (!push_insn(plan, insn)) return false;
+                        break;
+
                 case INSTR_ADD:
                 case INSTR_SUB:
                 case INSTR_MUL:
+                case INSTR_DIV:
                 case INSTR_EQ:
                 case INSTR_NEQ:
                 case INSTR_LT:
@@ -226,6 +255,7 @@ ty_inline_analyze(Value const *callee, TyInlineKind kind, int argc, TyInlinePlan
                         insn.op = op == INSTR_ADD ? TY_INLINE_ADD
                                 : op == INSTR_SUB ? TY_INLINE_SUB
                                 : op == INSTR_MUL ? TY_INLINE_MUL
+                                : op == INSTR_DIV ? TY_INLINE_DIV
                                 : op == INSTR_EQ  ? TY_INLINE_EQ
                                 : op == INSTR_NEQ ? TY_INLINE_NE
                                 : op == INSTR_LT  ? TY_INLINE_LT
@@ -381,11 +411,18 @@ ty_inline_analyze(Value const *callee, TyInlineKind kind, int argc, TyInlinePlan
                 case TY_INLINE_FIELD:
                 case TY_INLINE_INTEGER:
                 case TY_INLINE_REAL:
+                case TY_INLINE_BOOLEAN:
+                case TY_INLINE_STORE_FIELD:
                         next_depth++;
+                        break;
+                case TY_INLINE_POP:
+                        if (depth < 1) return false;
+                        next_depth--;
                         break;
                 case TY_INLINE_ADD:
                 case TY_INLINE_SUB:
                 case TY_INLINE_MUL:
+                case TY_INLINE_DIV:
                 case TY_INLINE_EQ:
                 case TY_INLINE_NE:
                 case TY_INLINE_LT:

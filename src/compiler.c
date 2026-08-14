@@ -427,6 +427,9 @@ static bool
 emit_statement(Ty *ty, Stmt const *s, bool want_result);
 
 static bool
+emit_implicit_tail_body(Ty *ty, Stmt const *body);
+
+static bool
 emit_expression(Ty *ty, Expr const *e);
 
 static bool
@@ -7814,7 +7817,8 @@ emit_function(Ty *ty, Expr const *e)
                                 Ei32(i);
                         }
                 }
-                if (!emit_statement(ty, body, true)) {
+                if (!emit_implicit_tail_body(ty, body)
+                    && !emit_statement(ty, body, true)) {
                         if (RUNTIME_CONSTRAINTS && e->return_type != NULL) {
                                 emit_return_check(ty, e);
                         }
@@ -8151,6 +8155,31 @@ emit_return_check(Ty *ty, Expr const *f)
         }
 
         add_location(ty, f->return_type, start, vN(STATE.code));
+}
+
+static bool
+emit_implicit_tail_body(Ty *ty, Stmt const *body)
+{
+        if (body == NULL
+            || (body->type != STATEMENT_BLOCK && body->type != STATEMENT_MULTI)
+            || vN(body->statements) == 0
+            || (RUNTIME_CONSTRAINTS && STATE.func->return_type != NULL)
+            || STATE.function_resources != STATE.resources
+            || vN(STATE.tries) != 0) return false;
+        Stmt const *last = v__(body->statements, vN(body->statements) - 1);
+        if (last->type != STATEMENT_EXPRESSION) return false;
+        Expr const *call = last->expression;
+        if (!is_call(call) || is_variadic(call)
+            || call->function->type != EXPRESSION_IDENTIFIER
+            || call->function->symbol != STATE.func->fn_symbol
+            || vN(call->args) != vN(STATE.func->params)
+            || vN(call->kwargs) != 0) return false;
+        for (int i = 0; i + 1 < vN(body->statements); ++i) {
+                if (emit_statement(ty, v__(body->statements, i), false)) return true;
+        }
+        for (int i = 0; i < vN(call->args); ++i) EE(v__(call->args, i));
+        INSN(TAIL_CALL);
+        return true;
 }
 
 static bool
