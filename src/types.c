@@ -11520,6 +11520,15 @@ TypeCheckXD(Ty *ty, TypeCheckStack *stack, Type *t0, Value const *v)
                   && class_is_subclass(ty, v->class, t0->class->i);
                 break;
 
+        case TYPE_TYPE:
+                ok = (v->type == VALUE_TYPE)
+                  && (
+                          (t0->_type == NULL)
+                       || IsTVar(Resolve(ty, t0->_type))
+                       || type_check_x(ty, t0->_type, v->ptr, false)
+                     );
+                break;
+
         default:
                 if (v->type & VALUE_TAGGED) {
                         if (TagOf(t0) != tags_first(ty, v->tags)) {
