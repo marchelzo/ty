@@ -11943,7 +11943,7 @@ type_from_ty(Ty *ty, Value const *v)
                      && (V_COUNT(inner) >= 2)
                 ) {
                         t0->class = TyTypeClass(ty, &V_ITEMS(inner)[0]);
-                        Value tail = TUPLE(&V_ITEMS(inner)[1], NULL, V_COUNT(inner) - 1, false);
+                        Value tail = value_tuple_view(ty, inner, 1, V_COUNT(inner) - 1);
                         t0->args = TyTypeVector(ty, &tail);
                 } else {
                         t0->class = TyTypeClass(ty, &inner);

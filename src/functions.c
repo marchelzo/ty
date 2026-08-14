@@ -1478,13 +1478,7 @@ BUILTIN_FUNCTION(tuple)
                 named += d->count;
         }
 
-        Value tuple = vT(argc + named);
-
-        if (named > 0) {
-                NOGC(V_ITEMS(tuple));
-                V_IDS(tuple) = mAo((argc + named) * sizeof (int), GC_ANY);
-                OKGC(V_ITEMS(tuple));
-        }
+        Value tuple = value_tuple_alloc(ty, argc + named, named > 0);
 
         for (int i = 0; i < argc; ++i) {
                 V_ITEMS(tuple)[i] = ARG(i);
@@ -8299,9 +8293,9 @@ BUILTIN_FUNCTION(type)
                         return v;
                 }
 
-                Value *types = mAo(n * sizeof (Value), GC_TUPLE);
-
-                NOGC(types);
+                Value tuple = value_tuple_alloc(ty, n, false);
+                Value *types = V_ITEMS(tuple);
+                value_tuple_nogc(tuple);
 
                 for (int i = 0; i < n; ++i) {
                         vmP(&V_ITEMS(v)[i]);
@@ -8309,9 +8303,9 @@ BUILTIN_FUNCTION(type)
                         vmX();
                 }
 
-                OKGC(types);
+                value_tuple_okgc(tuple);
 
-                return TUPLE(types, NULL, n, false);
+                return tuple;
         }
 
         if (V_TAGS(v) != 0) {

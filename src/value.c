@@ -4,6 +4,9 @@
 #include <assert.h>
 #include <stdbool.h>
 #include <inttypes.h>
+#ifdef TY_BOX_STATS
+#include <stdatomic.h>
+#endif
 
 #include <pcre2.h>
 #include <xxhash.h>
@@ -30,6 +33,65 @@ static _Thread_local vec(Value *) show_tuples;
 static _Thread_local vec(Array *) show_arrays;
 static _Thread_local vec(Queue *) show_queues;
 
+#ifdef TY_BOX_STATS
+static _Atomic uint64_t box_counts[VALUE_ANY + 1];
+static atomic_flag box_stats_registered = ATOMIC_FLAG_INIT;
+static _Atomic uint64_t string_clone_count;
+static _Atomic uint64_t string_wrap_count;
+static _Atomic uint64_t string_view_count;
+
+static char const *
+box_type_name(int type)
+{
+        switch (type) {
+        case VALUE_FUNCTION:         return "Function";
+        case VALUE_BOUND_FUNCTION:   return "BoundFunction";
+        case VALUE_STAR_FUNCTION:    return "StarFunction";
+        case VALUE_METHOD:           return "Method";
+        case VALUE_BUILTIN_FUNCTION: return "BuiltinFunction";
+        case VALUE_BUILTIN_METHOD:   return "BuiltinMethod";
+        case VALUE_FOREIGN_FUNCTION: return "ForeignFunction";
+        case VALUE_NATIVE_FUNCTION:  return "NativeFunction";
+        case VALUE_GENERATOR_0:      return "Generator0";
+        case VALUE_TAG:              return "Tag";
+        case VALUE_OPERATOR:         return "Operator";
+        case VALUE_TYPE:             return "Type";
+        case VALUE_INTEGER:          return "LargeInteger";
+        case VALUE_STRING:           return "DecoratedString";
+        case VALUE_SENTINEL:         return "Sentinel";
+        case VALUE_INDEX:            return "Index";
+        case VALUE_NAMESPACE:        return "Namespace";
+        case VALUE_MODULE:           return "Module";
+        case VALUE_PTR:              return "Ptr";
+        case VALUE_REF:              return "Ref";
+        case VALUE_TUPLE:            return "Tuple";
+        case VALUE_TRACE:            return "Trace";
+        case VALUE_FUN_META:         return "FunMeta";
+        default:                     return "Other";
+        }
+}
+
+static void
+dump_box_stats(void)
+{
+        uint64_t total = 0;
+        for (int type = 0; type <= VALUE_ANY; ++type) {
+                uint64_t n = atomic_load_explicit(&box_counts[type], memory_order_relaxed);
+                if (n != 0) {
+                        fprintf(stderr, "VALUE_BOX %2d %-18s %" PRIu64 "\n", type, box_type_name(type), n);
+                        total += n;
+                }
+        }
+        fprintf(stderr, "VALUE_BOX -- %-18s %" PRIu64 "\n", "TOTAL", total);
+        fprintf(stderr, "VALUE_STRING clone              %" PRIu64 "\n",
+                atomic_load_explicit(&string_clone_count, memory_order_relaxed));
+        fprintf(stderr, "VALUE_STRING wrap               %" PRIu64 "\n",
+                atomic_load_explicit(&string_wrap_count, memory_order_relaxed));
+        fprintf(stderr, "VALUE_STRING view               %" PRIu64 "\n",
+                atomic_load_explicit(&string_view_count, memory_order_relaxed));
+}
+#endif
+
 void
 TyValueCleanup(void)
 {
@@ -42,13 +104,22 @@ TyValueCleanup(void)
 Value
 value_box(Ty *ty, ValuePayload payload)
 {
+#ifdef TY_BOX_STATS
+        if (!atomic_flag_test_and_set_explicit(&box_stats_registered, memory_order_relaxed)) {
+                atexit(dump_box_stats);
+        }
+        int type = payload.type & ~VALUE_TAGGED;
+        if (type >= 0 && type <= VALUE_ANY) {
+                atomic_fetch_add_explicit(&box_counts[type], 1, memory_order_relaxed);
+        }
+#endif
         /* Do not trigger a collection between evaluating the payload pointer(s) and
          * making the box visible as a Value/root.  Ordinary allocations still
          * perform the limit check; boxes use the registered unchecked path. */
-        /* Do not trigger a collection between evaluating the payload pointer(s) and
-         * making the box visible as a Value/root.  Ordinary allocations still
-         * perform the limit check; boxes use the registered unchecked path. */
-        ValueBox *box = gc_alloc_object0_unchecked(ty, sizeof *box, GC_VALUE_BOX);
+        /* ValuePayload arrives by value and compound literals zero-initialize
+         * every omitted member, so clearing the allocation a second time only
+         * adds bandwidth to this hot exceptional path. */
+        ValueBox *box = gc_alloc_object_unchecked(ty, sizeof *box, GC_VALUE_BOX);
         if (!TY_IS_READY) {
                 /* Loader/compiler structures retain Values outside traced GC
                  * containers for the process lifetime. */
@@ -79,6 +150,136 @@ value_boolean(bool boolean)
         return (Value){ .bits = nanbox_from_boolean(boolean) };
 }
 
+Value
+value_string_clone_value(Ty *ty, void const *src, u32 n)
+{
+#ifdef TY_BOX_STATS
+        atomic_fetch_add_explicit(&string_clone_count, 1, memory_order_relaxed);
+#endif
+        u8 *clone = src != NULL ? value_string_clone(ty, src, n) : NULL;
+        return value_box(ty, (ValuePayload){
+                .type=VALUE_STRING, .str=clone, .bytes=n, .str0=clone
+        });
+}
+
+Value
+value_string_clone_nul_value(Ty *ty, void const *src, u32 n)
+{
+#ifdef TY_BOX_STATS
+        atomic_fetch_add_explicit(&string_clone_count, 1, memory_order_relaxed);
+#endif
+        u8 *clone = src != NULL ? value_string_clone_nul(ty, src, n) : NULL;
+        return value_box(ty, (ValuePayload){
+                .type=VALUE_STRING, .str=clone, .bytes=n, .str0=clone
+        });
+}
+
+Value
+value_string_wrap(Ty *ty, void const *src, u32 n, bool ro)
+{
+#ifdef TY_BOX_STATS
+        atomic_fetch_add_explicit(&string_wrap_count, 1, memory_order_relaxed);
+#endif
+        return value_box(ty, (ValuePayload){
+                .type=VALUE_STRING, .str=src, .bytes=n, .str0=(u8 *)src, .ro=ro
+        });
+}
+
+Value
+value_string_view(Ty *ty, Value source, isize offset, u32 n)
+{
+#ifdef TY_BOX_STATS
+        atomic_fetch_add_explicit(&string_view_count, 1, memory_order_relaxed);
+#endif
+        return value_box(ty, (ValuePayload){
+                .type=V_TYPE(source), .tags=V_TAGS(source), .src=V_SRC(source),
+                .str=V_STR(source) + offset, .bytes=n, .str0=V_STR0(source), .ro=V_RO(source)
+        });
+}
+
+Value
+value_tuple_wrap(Ty *ty, Value *items, i32 *ids, i32 count)
+{
+        /* items/ids may have just been allocated and are not yet reachable
+         * from a Value, so publishing the descriptor must not trigger GC. */
+        TupleValue *tuple = gc_alloc_object_unchecked(ty, sizeof *tuple, GC_TUPLE_VALUE);
+        tuple->owner = NULL;
+        tuple->items = items;
+        tuple->ids = ids;
+        tuple->count = count;
+        tuple->src = 0;
+        tuple->tags = 0;
+        tuple->items_gc = items != NULL;
+        tuple->ids_gc = ids != NULL;
+        if (!TY_IS_READY) NOGC(tuple);
+        return value_direct_tuple(tuple);
+}
+
+Value
+value_tuple_alloc(Ty *ty, i32 count, bool with_ids)
+{
+        assert(count >= 0);
+        usize items_bytes = (usize)count * sizeof (Value);
+        usize ids_bytes = with_ids ? (usize)count * sizeof (i32) : 0;
+        TupleValue *tuple = gc_alloc_object(
+                ty, sizeof *tuple + items_bytes + ids_bytes, GC_TUPLE_VALUE);
+        tuple->owner = NULL;
+        tuple->items = (Value *)(tuple + 1);
+        tuple->ids = with_ids ? (i32 *)((u8 *)tuple->items + items_bytes) : NULL;
+        tuple->count = count;
+        tuple->src = 0;
+        tuple->tags = 0;
+        tuple->items_gc = false;
+        tuple->ids_gc = false;
+        return value_direct_tuple(tuple);
+}
+
+void
+value_tuple_nogc(Value value)
+{
+        NOGC(value_direct_tuple_ptr(value));
+}
+
+void
+value_tuple_okgc(Value value)
+{
+        OKGC(value_direct_tuple_ptr(value));
+}
+
+Value
+value_tuple_view(Ty *ty, Value source, i32 offset, i32 count)
+{
+        assert(value_is_direct_tuple(source));
+        TupleValue *parent = value_direct_tuple_ptr(source);
+        assert(offset >= 0 && count >= 0 && offset + count <= parent->count);
+        TupleValue *tuple = gc_alloc_object_unchecked(ty, sizeof *tuple, GC_TUPLE_VALUE);
+        tuple->owner = parent->owner != NULL ? parent->owner : parent;
+        tuple->items = parent->items + offset;
+        tuple->ids = parent->ids != NULL ? parent->ids + offset : NULL;
+        tuple->count = count;
+        tuple->src = parent->src;
+        tuple->tags = parent->tags;
+        tuple->items_gc = false;
+        tuple->ids_gc = false;
+        return value_direct_tuple(tuple);
+}
+
+Value
+value_tuple_metadata(Ty *ty, Value source, u16 tags, u32 src)
+{
+        TupleValue *tuple = gc_alloc_object_unchecked(ty, sizeof *tuple, GC_TUPLE_VALUE);
+        TupleValue *owner = value_direct_tuple_ptr(source);
+        tuple->owner = owner->owner != NULL ? owner->owner : owner;
+        tuple->items = owner->items;
+        tuple->ids = owner->ids;
+        tuple->count = owner->count;
+        tuple->src = src;
+        tuple->tags = tags;
+        tuple->items_gc = false;
+        tuple->ids_gc = false;
+        return value_direct_tuple(tuple);
+}
+
 ValuePayload
 value_payload(Value value)
 {
@@ -87,6 +288,7 @@ value_payload(Value value)
         if (value_is_direct_tag(value)) return (ValuePayload){ .type=VALUE_TAG, .tag=value_direct_tag_id(value) };
         if (value_is_direct_object(value)) return (ValuePayload){ .type=VALUE_OBJECT, .object=value_direct_object_ptr(value), .class=value_direct_object_ptr(value)->class->i };
         if (value_is_direct_tagged_int(value)) return (ValuePayload){ .type=VALUE_INTEGER | VALUE_TAGGED, .tags=value_direct_tagged_int_tags(value), .z=value_direct_tagged_int_value(value) };
+        if (value_is_direct_tuple(value)) return (ValuePayload){ .type=V_TYPE(value), .tags=V_TAGS(value), .src=V_SRC(value), .count=V_COUNT(value), .items=V_ITEMS(value), .ids=V_IDS(value) };
         if (nanbox_is_pointer(value.bits)) return value_box_ptr(value)->payload;
         if (nanbox_is_int(value.bits)) return (ValuePayload){ .type=VALUE_INTEGER, .z=nanbox_to_int(value.bits) };
         if (nanbox_is_double(value.bits)) return (ValuePayload){ .type=VALUE_REAL, .real=nanbox_to_double(value.bits) };
@@ -100,6 +302,8 @@ value_payload(Value value)
 Value
 value_with_src(Ty *ty, Value value, u32 src)
 {
+        if (value_is_direct_tuple(value))
+                return value_tuple_metadata(ty, value, V_TAGS(value), src);
         ValuePayload payload = value_payload(value);
         payload.src = src;
         return value_box(ty, payload);
@@ -114,6 +318,8 @@ value_with_tags(Ty *ty, Value value, u16 tags)
                 if (tags != 0) return value_direct_tagged_int(value_direct_tagged_int_value(value), tags);
                 return value_integer(ty, value_direct_tagged_int_value(value));
         }
+        if (value_is_direct_tuple(value))
+                return value_tuple_metadata(ty, value, tags, V_SRC(value));
         ValuePayload payload = value_payload(value);
         payload.tags = tags;
         payload.type = tags ? (payload.type | VALUE_TAGGED) : (payload.type & ~VALUE_TAGGED);
@@ -123,6 +329,8 @@ value_with_tags(Ty *ty, Value value, u16 tags)
 Value
 value_with_type(Ty *ty, Value value, u8 type)
 {
+        if (value_is_direct_tuple(value) && (type & ~VALUE_TAGGED) == VALUE_TUPLE)
+                return value_tuple_metadata(ty, value, V_TAGS(value), V_SRC(value));
         ValuePayload payload = value_payload(value);
         payload.type = type;
         return value_box(ty, payload);
@@ -1747,19 +1955,31 @@ value_array_mark(Ty *ty, struct array *a)
 }
 
 inline static void
+mark_tuple_descriptor(Ty *ty, TupleValue *tuple)
+{
+        if (MARKED(tuple)) return;
+        MARK(tuple);
+
+        if (tuple->owner != NULL) {
+                mark_tuple_descriptor(ty, tuple->owner);
+                return;
+        }
+
+        if (tuple->items == NULL) return;
+
+        if (tuple->items_gc) MARK(tuple->items);
+
+        for (int i = 0; i < tuple->count; ++i) {
+                MarkNext(ty, &tuple->items[i]);
+        }
+
+        if (tuple->ids != NULL && tuple->ids_gc) MARK(tuple->ids);
+}
+
+inline static void
 mark_tuple(Ty *ty, Value const *v)
 {
-        if (V_ITEMS(*(v)) == NULL || MARKED(V_ITEMS(*v))) return;
-
-        MARK(V_ITEMS(*v));
-
-        for (int i = 0; i < V_COUNT(*(v)); ++i) {
-                MarkNext(ty, &V_ITEMS(*(v))[i]);
-        }
-
-        if (V_IDS(*(v)) != NULL) {
-                MARK(V_IDS(*v));
-        }
+        mark_tuple_descriptor(ty, value_direct_tuple_ptr(*v));
 }
 
 inline static void
@@ -1778,9 +1998,7 @@ mark_thread(Ty *ty, Value const *v)
 inline static void
 mark_string(Ty *ty, Value const *v)
 {
-        if (!V_RO(*(v)) && V_STR0(*(v)) != NULL) {
-                MARK(V_STR0(*v));
-        }
+        if (!V_RO(*v) && V_STR0(*v) != NULL) MARK(V_STR0(*v));
 }
 
 inline static void
@@ -1979,30 +2197,26 @@ value_blob_new(Ty *ty)
 Value
 value_tuple(Ty *ty, int n)
 {
-        Value *items = mAo(n * sizeof (Value), GC_TUPLE);
+        Value tuple = value_tuple_alloc(ty, n, false);
 
         for (int i = 0; i < n; ++i) {
-                items[i] = NIL;
+                V_ITEMS(tuple)[i] = NIL;
         }
 
-        return TUPLE(items, NULL, n, false);
+        return tuple;
 }
 
 Value
 value_record(Ty *ty, int n)
 {
-        Value *items = mAo(n * sizeof (Value), GC_TUPLE);
-
-        NOGC(items);
-        int *ids = mAo(n * sizeof (int), GC_TUPLE);
-        OKGC(items);
+        Value tuple = value_tuple_alloc(ty, n, true);
 
         for (int i = 0; i < n; ++i) {
-                items[i] = NIL;
-                ids[i] = -1;
+                V_ITEMS(tuple)[i] = NIL;
+                V_IDS(tuple)[i] = -1;
         }
 
-        return TUPLE(items, ids, n, false);
+        return tuple;
 }
 
 Value
@@ -2020,11 +2234,9 @@ value_named_tuple(Ty *ty, char const *first, ...)
 
         va_end(ap);
 
-        Value *items = mAo(n * sizeof (Value), GC_TUPLE);
-
-        NOGC(items);
-        int *ids = mAo(n * sizeof (int), GC_TUPLE);
-        OKGC(items);
+        Value tuple = value_tuple_alloc(ty, n, true);
+        Value *items = V_ITEMS(tuple);
+        int *ids = V_IDS(tuple);
 
         va_start(ap, first);
 
@@ -2039,7 +2251,7 @@ value_named_tuple(Ty *ty, char const *first, ...)
 
         va_end(ap);
 
-        return TUPLE(items, ids, n, false);
+        return tuple;
 }
 
 Value *

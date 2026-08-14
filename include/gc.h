@@ -73,6 +73,9 @@ enum {
         GC_NOTE,
         GC_COUNTER,
         GC_CHANNEL,
+        /* Appended to preserve allocation-kind values embedded by older JIT
+         * or cached native artifacts. */
+        GC_TUPLE_VALUE,
         GC_ANY
 };
 

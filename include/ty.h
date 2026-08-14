@@ -318,6 +318,17 @@ struct value {
         nanbox_t bits;
 };
 
+typedef struct tuple_value {
+        struct tuple_value *owner;
+        Value *items;
+        i32 *ids;
+        i32 count;
+        u32 src;
+        u16 tags;
+        bool items_gc;
+        bool ids_gc;
+} TupleValue;
+
 /*
  * GC-managed payload for values that do not fit in the immediate NaN-box
  * representation.  This deliberately preserves the former Value layout: the
@@ -1248,6 +1259,16 @@ Value value_box(Ty *ty, ValuePayload payload);
 Value value_integer(Ty *ty, imax z);
 Value value_real(double real);
 Value value_boolean(bool boolean);
+Value value_string_clone_value(Ty *ty, void const *src, u32 n);
+Value value_string_clone_nul_value(Ty *ty, void const *src, u32 n);
+Value value_string_wrap(Ty *ty, void const *src, u32 n, bool ro);
+Value value_string_view(Ty *ty, Value string, isize offset, u32 n);
+Value value_tuple_wrap(Ty *ty, Value *items, i32 *ids, i32 count);
+Value value_tuple_alloc(Ty *ty, i32 count, bool with_ids);
+Value value_tuple_view(Ty *ty, Value tuple, i32 offset, i32 count);
+Value value_tuple_metadata(Ty *ty, Value tuple, u16 tags, u32 src);
+void value_tuple_nogc(Value tuple);
+void value_tuple_okgc(Value tuple);
 Value value_with_src(Ty *ty, Value value, u32 src);
 Value value_with_tags(Ty *ty, Value value, u16 tags);
 Value value_with_type(Ty *ty, Value value, u8 type);
@@ -1259,6 +1280,8 @@ ValuePayload value_payload(Value value);
 #define VALUE_DIRECT_OBJECT_TAG UINT64_C(0x0004000000000000)
 #define VALUE_DIRECT_TAGGED_INT_TAG UINT64_C(0x0005000000000000)
 #define VALUE_DIRECT_PTR_MASK  UINT64_C(0x0000ffffffffffff)
+#define VALUE_DIRECT_TUPLE_PTR_TAG UINT64_C(0x2)
+#define VALUE_DIRECT_TUPLE_PTR_MASK UINT64_C(0x3)
 
 inline static bool
 value_is_direct_array(Value value)
@@ -1324,6 +1347,20 @@ inline static Value value_direct_object(TyObject *o) {
 inline static TyObject *value_direct_object_ptr(Value v) {
         return (TyObject *)(uptr)(v.bits.as_int64 & VALUE_DIRECT_PTR_MASK);
 }
+inline static bool value_is_direct_tuple(Value v) {
+        return (v.bits.as_int64 & ~VALUE_DIRECT_PTR_MASK) == 0
+            && v.bits.as_int64 > NANBOX_VALUE_UNDEFINED
+            && (v.bits.as_int64 & VALUE_DIRECT_TUPLE_PTR_MASK) == VALUE_DIRECT_TUPLE_PTR_TAG;
+}
+inline static Value value_direct_tuple(TupleValue *tuple) {
+        uptr p = (uptr)tuple;
+        assert(p != 0 && (p & ~VALUE_DIRECT_PTR_MASK) == 0);
+        assert((p & VALUE_DIRECT_TUPLE_PTR_MASK) == 0);
+        return (Value){ .bits.as_int64 = p | VALUE_DIRECT_TUPLE_PTR_TAG };
+}
+inline static TupleValue *value_direct_tuple_ptr(Value v) {
+        return (TupleValue *)(uptr)(v.bits.as_int64 & ~VALUE_DIRECT_TUPLE_PTR_MASK);
+}
 inline static ValueBox *
 value_box_ptr(Value value)
 {
@@ -1346,6 +1383,8 @@ value_type(Value value)
         if (value_is_direct_tag(value)) return VALUE_TAG;
         if (value_is_direct_object(value)) return VALUE_OBJECT;
         if (value_is_direct_tagged_int(value)) return VALUE_INTEGER | VALUE_TAGGED;
+        if (value_is_direct_tuple(value))
+                return value_direct_tuple_ptr(value)->tags ? VALUE_TUPLE | VALUE_TAGGED : VALUE_TUPLE;
         return value_box_ptr(value)->payload.type;
 }
 
@@ -1353,12 +1392,14 @@ inline static u16
 value_tags(Value value)
 {
         if (value_is_direct_tagged_int(value)) return value_direct_tagged_int_tags(value);
+        if (value_is_direct_tuple(value)) return value_direct_tuple_ptr(value)->tags;
         return nanbox_is_pointer(value.bits) ? value_box_ptr(value)->payload.tags : 0;
 }
 
 inline static u32
 value_src(Value value)
 {
+        if (value_is_direct_tuple(value)) return value_direct_tuple_ptr(value)->src;
         return nanbox_is_pointer(value.bits) ? value_box_ptr(value)->payload.src : 0;
 }
 
@@ -1420,9 +1461,9 @@ value_bool(Value value)
 #define V_I(v)          value_box_ptr((v))->payload.i
 #define V_OFF(v)        value_box_ptr((v))->payload.off
 #define V_NT(v)         value_box_ptr((v))->payload.nt
-#define V_COUNT(v)      value_box_ptr((v))->payload.count
-#define V_ITEMS(v)      value_box_ptr((v))->payload.items
-#define V_IDS(v)        value_box_ptr((v))->payload.ids
+#define V_COUNT(v)      value_direct_tuple_ptr((v))->count
+#define V_ITEMS(v)      value_direct_tuple_ptr((v))->items
+#define V_IDS(v)        value_direct_tuple_ptr((v))->ids
 #define V_REGEX(v)      value_box_ptr((v))->payload.regex
 #define V_FF(v)         value_box_ptr((v))->payload.ff
 #define V_FFI(v)        value_box_ptr((v))->payload.ffi
@@ -1437,7 +1478,7 @@ value_bool(Value value)
 #define REAL(f)                  value_real((f))
 #define BOOLEAN(b)               value_boolean((b))
 #define ARRAY(a)                 value_direct_array((a))
-#define TUPLE(vs, ns, n, gc)     VALUE_BOX_(.type=VALUE_TUPLE, .items=(vs), .count=(n), .ids=(ns))
+#define TUPLE(vs, ns, n, gc)     value_tuple_wrap(ty, (vs), (ns), (n))
 #define BLOB(b)                  VALUE_BOX_(.type=VALUE_BLOB, .blob=(b))
 #define QUEUE(q)                 VALUE_BOX_(.type=VALUE_QUEUE, .queue=(q))
 #define SHARED_QUEUE(q)          VALUE_BOX_(.type=VALUE_SHARED_QUEUE, .shared_queue=(q))

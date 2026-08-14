@@ -266,14 +266,12 @@ reconstruct(Ty *ty, Value *msg, usize *cursor)
 
         case VALUE_TUPLE: {
                 i32 n = V_COUNT(e);
-                Value *items = mAo(n * sizeof (Value), GC_TUPLE);
-                i32 *ids = NULL;
+                Value r = value_tuple_alloc(ty, n, V_IDS(e) != NULL);
+                Value *items = V_ITEMS(r);
                 if (V_IDS(e) != NULL) {
-                        ids = mA(n * sizeof (i32));
-                        memcpy(ids, V_IDS(e), n * sizeof (i32));
+                        memcpy(V_IDS(r), V_IDS(e), n * sizeof (i32));
                         xmF(V_IDS(e));
                 }
-                Value r = TUPLE(items, ids, n, true);
                 r = value_with_tags(ty, r, V_TAGS(e));
                 msg[*cursor - 1] = r;
                 for (i32 i = 0; i < n; ++i) {

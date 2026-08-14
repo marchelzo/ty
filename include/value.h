@@ -988,24 +988,15 @@ static inline Value
 STRING_VFORMAT(Ty *ty, char const *fmt, va_list ap)
 {
         va_list _ap;
-        u8 *str;
         byte_vector buf = {0};
 
         SCRATCH_SAVE();
         va_copy(_ap, ap);
         scvdump(ty, &buf, fmt, _ap);
         va_end(_ap);
-        str = mAo(vN(buf) + 1, GC_STRING);
-        memcpy(str, vv(buf), vN(buf) + 1);
+        Value result = value_string_clone_nul_value(ty, vv(buf), vN(buf));
         SCRATCH_RESTORE();
-
-        return VALUE_BOX_(
-                .type = VALUE_STRING,
-                .tags = 0,
-                .str = str,
-                .bytes = vN(buf),
-                .str0 = str,
-        );
+        return result;
 }
 
 static inline Value
@@ -1024,15 +1015,7 @@ STRING_FORMAT(Ty *ty, char const *fmt, ...)
 static inline Value
 STRING_CLONE(Ty *ty, void const *s, u32 n)
 {
-        u8 *clone = value_string_clone(ty, s, n);
-
-        return VALUE_BOX_(
-                .type = VALUE_STRING,
-                .tags = 0,
-                .str = clone,
-                .bytes = n,
-                .str0 = clone,
-        );
+        return value_string_clone_value(ty, s, n);
 }
 
 static inline Value
@@ -1043,15 +1026,7 @@ STRING_CLONE_C(Ty *ty, void const *s)
         }
 
         u32 n = strlen(s);
-        u8 *clone = value_string_clone(ty, s, n);
-
-        return VALUE_BOX_(
-                .type = VALUE_STRING,
-                .tags = 0,
-                .str = clone,
-                .bytes = n,
-                .str0 = clone,
-        );
+        return value_string_clone_value(ty, s, n);
 }
 
 static inline Value
@@ -1062,86 +1037,43 @@ STRING_C_CLONE_C(Ty *ty, void const *s)
         }
 
         u32 n = strlen(s);
-        u8 *clone = value_string_clone_nul(ty, s, n);
-
-        return VALUE_BOX_(
-                .type = VALUE_STRING,
-                .tags = 0,
-                .str = clone,
-                .bytes = n,
-                .str0 = clone,
-        );
+        return value_string_clone_nul_value(ty, s, n);
 }
 
 static inline Value
 STRING_C_CLONE(Ty *ty, void const *s, u32 n)
 {
-        u8 *clone = value_string_clone_nul(ty, s, n);
-
-        return VALUE_BOX_(
-                .type = VALUE_STRING,
-                .tags = 0,
-                .str = clone,
-                .bytes = n,
-                .str0 = clone,
-        );
+        return value_string_clone_nul_value(ty, s, n);
 }
 
 static inline Value
 STRING(Ty *ty, void *s, u32 n)
 {
-        return VALUE_BOX_(
-                .type = VALUE_STRING,
-                .tags = 0,
-                .str = s,
-                .bytes = n,
-                .str0 = s,
-        );
+        return value_string_wrap(ty, s, n, false);
 }
 
 static inline Value
 STRING_VIEW(Ty *ty, Value s, isize offset, u32 n)
 {
-        return VALUE_BOX_(
-                .type = VALUE_STRING,
-                .tags = 0,
-                .str = V_STR(s) + offset,
-                .bytes = n,
-                .str0 = V_STR0(s),
-                .ro = V_RO(s)
-        );
+        return value_string_view(ty, s, offset, n);
 }
 
 static inline Value
 STRING_NOGC(Ty *ty, void const *s, u32 n)
 {
-        return VALUE_BOX_(
-                .type = VALUE_STRING,
-                .tags = 0,
-                .str = s,
-                .bytes = n,
-                .str0 = (u8 *)s,
-                .ro = true
-        );
+        return value_string_wrap(ty, s, n, true);
 }
 
 static inline Value
 STRING_NOGC_C(Ty *ty, void const *s)
 {
-        return VALUE_BOX_(
-                .type = VALUE_STRING,
-                .tags = 0,
-                .str = s,
-                .bytes = strlen(s),
-                .str0 = (u8 *)s,
-                .ro = true
-        );
+        return value_string_wrap(ty, s, strlen(s), true);
 }
 
 #define STRING_EMPTY (STRING_NOGC(ty, NULL, 0))
 
 static inline bool
-DecrementString(Value *v)
+DecrementString(Ty *ty, Value *v)
 {
         if (
                 (V_STR0(*(v)) == NULL)
@@ -1150,40 +1082,46 @@ DecrementString(Value *v)
                 return false;
         }
 
-        while (V_STR(*(v)) > V_STR0(*(v))) {
-                V_STR(*(v)) -= 1;
-                V_BYTES(*(v)) += 1;
-                if ((*V_STR(*(v)) & 0x80) != 0x80) {
+        u8 const *str = V_STR(*v);
+        u32 bytes = V_BYTES(*v);
+        while (str > V_STR0(*v)) {
+                str -= 1;
+                bytes += 1;
+                if ((*str & 0x80) != 0x80) {
                         break;
                 }
         }
+        Value view = value_string_view(ty, *v, str - V_STR(*v), bytes);
+        *v = view;
 
         return true;
 }
 
 static inline Value
-OffsetString(Value const *v, i32 n)
+OffsetString(Ty *ty, Value const *v, i32 n)
 {
-        Value str = *v;
+        u8 const *str = V_STR(*v);
+        u32 bytes = V_BYTES(*v);
 
-        while (n > 0 && V_BYTES(str) > 0) {
-                i32 sz = u8_rune_sz(V_STR(str));
+        while (n > 0 && bytes > 0) {
+                i32 sz = u8_rune_sz(str);
                 if (sz <= 0) {
                         sz = 1;
                 }
-                if (sz > V_BYTES(str)) {
-                        sz = V_BYTES(str);
+                if (sz > bytes) {
+                        sz = bytes;
                 }
-                V_STR(str) += sz;
-                V_BYTES(str) -= sz;
+                str += sz;
+                bytes -= sz;
                 n -= 1;
         }
 
-        while (n < 0 && DecrementString(&str)) {
-                n += 1;
+        while (n < 0 && str > V_STR0(*v)) {
+                do { str -= 1; bytes += 1; } while (str > V_STR0(*v) && (*str & 0x80) == 0x80);
+                ++n;
         }
-
-        return str;
+        Value view = value_string_view(ty, *v, str - V_STR(*v), bytes);
+        return view;
 }
 
 struct timespec

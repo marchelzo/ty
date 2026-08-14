@@ -5840,12 +5840,11 @@ DoTupleLiteral(Ty *ty)
         }
 
         u32   k = vN(values);
-        Value v = TUPLE(mAo(k * sizeof (Value), GC_TUPLE), NULL, k, false);
+        Value v = value_tuple_alloc(ty, k, have_names);
 
         if (k > 0) {
                 __builtin_memcpy(V_ITEMS(v), vv(values), k * sizeof (Value));
                 if (have_names) {
-                        V_IDS(v) = uAo(k * sizeof (i32), GC_TUPLE);
                         __builtin_memcpy(V_IDS(v), vv(ids), k * sizeof (i32));
                 }
         }
@@ -5920,7 +5919,7 @@ DecValue(Ty *ty, Value *v)
                 break;
 
         case VALUE_STRING:
-                DecrementString(v);
+                DecrementString(ty, v);
                 break;
 
         case VALUE_OBJECT:
@@ -7149,9 +7148,8 @@ TargetMember:
                                 DOJUMP(jump);
                         } else {
                                 i32 count = V_COUNT(*(top())) - i;
-                                Value *rest = mAo(count * sizeof (Value), GC_TUPLE);
-                                memcpy(rest, V_ITEMS(*top()) + i, count * sizeof (Value));
-                                *vp = TUPLE(rest, NULL, count, false);
+                                *vp = value_tuple_alloc(ty, count, false);
+                                memcpy(V_ITEMS(*vp), V_ITEMS(*top()) + i, count * sizeof (Value));
                         }
                         break;
 
@@ -7179,8 +7177,7 @@ TargetMember:
                                         }
                                 }
 
-                                value = vT(ids.count);
-                                V_IDS(value) = uAo(V_COUNT(value) * sizeof (i32), GC_TUPLE);
+                                value = value_tuple_alloc(ty, ids.count, true);
 
                                 memcpy(V_IDS(value), vv(ids), V_COUNT(value) * sizeof (i32));
 
@@ -7685,9 +7682,8 @@ TargetMember:
                 CASE(TUPLE)
                         READVALUE(n);
                         READVALUE(s);
-                        v = VALUE_BOX_(
-                                .type=VALUE_TUPLE, .count=n, .ids=(i32 *)s,
-                                .items=mAo(n * sizeof (Value), GC_TUPLE));
+                        v = value_tuple_alloc(ty, n, false);
+                        value_direct_tuple_ptr(v)->ids = (i32 *)s;
                         memcpy(V_ITEMS(v), topN(n), n * sizeof (Value));
                         STACK.count -= n;
                         push(v);
@@ -7699,8 +7695,8 @@ TargetMember:
 
                 CASE(GATHER_TUPLE)
                         n = vN(STACK) - vXx(SP_STACK);
-                        vp = mAo(n * sizeof (Value), GC_TUPLE);
-                        v = TUPLE(vp, NULL, n, false);
+                        v = value_tuple_alloc(ty, n, false);
+                        vp = V_ITEMS(v);
                         __builtin_memcpy(vp, topN(n), n * sizeof (Value));
                         STACK.count -= n;
                         push(v);
@@ -11791,9 +11787,8 @@ vm_jit_tuple_rest(Ty *ty, Value *tos, Value *target, i32 start)
         }
 
         i32 count = V_COUNT(*(tos)) - start;
-        Value *rest = mAo(count * sizeof (Value), GC_TUPLE);
-        memcpy(rest, V_ITEMS(*tos) + start, count * sizeof (Value));
-        *target = TUPLE(rest, NULL, count, false);
+        *target = value_tuple_alloc(ty, count, false);
+        memcpy(V_ITEMS(*target), V_ITEMS(*tos) + start, count * sizeof (Value));
 
         return true;
 }
@@ -11822,8 +11817,7 @@ vm_jit_record_rest(Ty *ty, Value *tos, Value *target, i32 const *excluded_ids)
                 }
         }
 
-        Value value = vT(ids.count);
-        V_IDS(value) = uAo(V_COUNT(value) * sizeof (i32), GC_TUPLE);
+        Value value = value_tuple_alloc(ty, ids.count, true);
 
         memcpy(V_IDS(value), vv(ids), V_COUNT(value) * sizeof (i32));
 

@@ -1864,7 +1864,8 @@ BUILTIN_FUNCTION(accel_mha_forward)
                     n, n_embd, n_embd, 1.0,
                     ctx_merged, n_embd, Wo, n_embd, 0.0, attn_out, n_embd);
 
-        Value *items = uAo(6 * sizeof (Value), GC_TUPLE);
+        Value tuple = value_tuple_alloc(ty, 6, false);
+        Value *items = V_ITEMS(tuple);
         items[0] = TGCPTR(attn_out,   &ffi_type_double, attn_out);
         items[1] = TGCPTR(Q,          &ffi_type_double, Q);
         items[2] = TGCPTR(K,          &ffi_type_double, K);
@@ -1872,7 +1873,7 @@ BUILTIN_FUNCTION(accel_mha_forward)
         items[4] = TGCPTR(all_probs,  &ffi_type_double, all_probs);
         items[5] = TGCPTR(ctx_merged, &ffi_type_double, ctx_merged);
 
-        return TUPLE(items, NULL, 6, false);
+        return tuple;
 }
 
 BUILTIN_FUNCTION(accel_mha_backward)
@@ -1995,14 +1996,15 @@ BUILTIN_FUNCTION(accel_mha_backward)
 
         SCRATCH_RESTORE();
 
-        Value *items = uAo(5 * sizeof (Value), GC_TUPLE);
+        Value tuple = value_tuple_alloc(ty, 5, false);
+        Value *items = V_ITEMS(tuple);
         items[0] = TGCPTR(d_xnorm, &ffi_type_double, d_xnorm);
         items[1] = TGCPTR(dWq,     &ffi_type_double, dWq);
         items[2] = TGCPTR(dWk,     &ffi_type_double, dWk);
         items[3] = TGCPTR(dWv,     &ffi_type_double, dWv);
         items[4] = TGCPTR(dWo,     &ffi_type_double, dWo);
 
-        return TUPLE(items, NULL, 5, false);
+        return tuple;
 }
 
 BUILTIN_FUNCTION(accel_kv_cache_alloc)
@@ -2020,11 +2022,12 @@ BUILTIN_FUNCTION(accel_kv_cache_alloc)
         double *k_buf = mAo0(bytes, GC_ANY);
         double *v_buf = mAo0(bytes, GC_ANY);
 
-        Value *items = mAo(2 * sizeof(Value), GC_TUPLE);
+        Value tuple = value_tuple_alloc(ty, 2, false);
+        Value *items = V_ITEMS(tuple);
         items[0] = TGCPTR(k_buf, &ffi_type_double, k_buf);
         items[1] = TGCPTR(v_buf, &ffi_type_double, v_buf);
 
-        return TUPLE(items, NULL, 2, false);
+        return tuple;
 }
 
 BUILTIN_FUNCTION(accel_mha_forward_one)

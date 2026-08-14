@@ -72,10 +72,10 @@ op_builtin_add(Ty *ty)
         }
 
         case PACK_TYPES(VALUE_STRING, VALUE_INTEGER):
-                COMPLETE(OffsetString(left, V_Z(*right)));
+                COMPLETE(OffsetString(ty, left, V_Z(*right)));
 
         case PACK_TYPES(VALUE_STRING, VALUE_BOOLEAN):
-                COMPLETE(OffsetString(left, V_BOOL(*right)));
+                COMPLETE(OffsetString(ty, left, V_BOOL(*right)));
 
         case PACK_TYPES(VALUE_INTEGER, VALUE_PTR):
                 SWAP(Value const *, left, right);
@@ -304,10 +304,10 @@ op_builtin_sub(Ty *ty)
                 COMPLETE(INTEGER(V_Z(*left) - V_BOOL(*right)));
 
         case PACK_TYPES(VALUE_STRING, VALUE_INTEGER):
-                COMPLETE(OffsetString(left, -V_Z(*right)));
+                COMPLETE(OffsetString(ty, left, -V_Z(*right)));
 
         case PACK_TYPES(VALUE_STRING, VALUE_BOOLEAN):
-                COMPLETE(OffsetString(left, -(int)V_BOOL(*right)));
+                COMPLETE(OffsetString(ty, left, -(int)V_BOOL(*right)));
 
         case PACK_TYPES(VALUE_PTR, VALUE_INTEGER):
                 t = (V_EXTRA(*(left)) == NULL) ? &ffi_type_uint8 : V_EXTRA(*(left));
