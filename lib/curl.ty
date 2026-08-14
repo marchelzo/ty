@@ -712,6 +712,7 @@ pub class Response {
     ok -> Bool { status in 200..300 }
 
     text() -> String { body.str()          }
+    json[T](schema: Type[T]) -> T { json::parse(schema, text()) }
     json() -> _      { json::parse(text()) }
 
     header(name: String) -> String | nil {
@@ -844,6 +845,7 @@ pub class SSEEvent {
     }
 
     json() -> _ { json::parse(data) }
+    json[T](schema: Type[T]) -> T { json::parse(schema, data) }
 
     __str__() -> String {
         let parts = []
