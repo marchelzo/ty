@@ -270,7 +270,7 @@ main(int argc, char *argv[])
 
                                 if (HaveDeps && same) {
                                         if (ty->arena.base != DepsArena.base) {
-                                                FreeArena(&ty->arena);
+                                                FreeArena(ty, &ty->arena);
                                         }
                                         ty->arena = InitArena;
                                         CompilerRestoreArena(&InitBaseline.arena_snaps);
@@ -280,7 +280,7 @@ main(int argc, char *argv[])
                                         vN(Globals) = DepsBaseline.global_count;
                                 } else {
                                         if (ty->arena.base != InitArena.base) {
-                                                FreeArena(&ty->arena);
+                                                FreeArena(ty, &ty->arena);
                                         }
                                         ty->arena = InitArena;
                                         CompilerRestoreArena(&InitBaseline.arena_snaps);

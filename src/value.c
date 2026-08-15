@@ -33,6 +33,25 @@ static _Thread_local vec(Value *) show_tuples;
 static _Thread_local vec(Array *) show_arrays;
 static _Thread_local vec(Queue *) show_queues;
 
+static void
+append_decimal_integer(Ty *ty, byte_vector *buf, imax value)
+{
+        char storage[sizeof(value) * 3 + 2];
+        char *p = storage + sizeof storage;
+        bool negative = value < 0;
+        umax magnitude = negative
+                       ? (umax)(-(value + 1)) + 1
+                       : (umax)value;
+
+        do {
+                *--p = '0' + magnitude % 10;
+                magnitude /= 10;
+        } while (magnitude != 0);
+
+        if (negative) *--p = '-';
+        svPn(*buf, p, storage + sizeof storage - p);
+}
+
 #ifdef TY_BOX_STATS
 static _Atomic uint64_t box_counts[VALUE_ANY + 1];
 static atomic_flag box_stats_registered = ATOMIC_FLAG_INIT;
@@ -156,10 +175,13 @@ value_string_clone_value(Ty *ty, void const *src, u32 n)
 #ifdef TY_BOX_STATS
         atomic_fetch_add_explicit(&string_clone_count, 1, memory_order_relaxed);
 #endif
-        u8 *clone = src != NULL ? value_string_clone(ty, src, n) : NULL;
-        return value_box(ty, (ValuePayload){
-                .type=VALUE_STRING, .str=clone, .bytes=n, .str0=clone
-        });
+        Value result = value_string_inline(ty, n);
+        if (src != NULL && n != 0) memcpy((u8 *)V_STR(result), src, n);
+        if (src == NULL) {
+                V_STR(result) = NULL;
+                V_STR0(result) = NULL;
+        }
+        return result;
 }
 
 Value
@@ -168,10 +190,39 @@ value_string_clone_nul_value(Ty *ty, void const *src, u32 n)
 #ifdef TY_BOX_STATS
         atomic_fetch_add_explicit(&string_clone_count, 1, memory_order_relaxed);
 #endif
-        u8 *clone = src != NULL ? value_string_clone_nul(ty, src, n) : NULL;
-        return value_box(ty, (ValuePayload){
-                .type=VALUE_STRING, .str=clone, .bytes=n, .str0=clone
-        });
+        ValueBox *box = gc_alloc_object_unchecked(
+                ty, sizeof *box + n + 1, GC_VALUE_BOX
+        );
+        u8 *bytes = (u8 *)(box + 1);
+        box->payload = (ValuePayload) {
+                .type=VALUE_STRING,
+                .str=src != NULL ? bytes : NULL,
+                .bytes=n,
+                .str0=src != NULL ? bytes : NULL,
+                .inline_bytes=true
+        };
+        if (src != NULL) {
+                if (n != 0) memcpy(bytes, src, n);
+                bytes[n] = '\0';
+        }
+        return (Value){ .bits = nanbox_from_pointer(box) };
+}
+
+Value
+value_string_inline(Ty *ty, u32 n)
+{
+        ValueBox *box = gc_alloc_object_unchecked(
+                ty, sizeof *box + n, GC_VALUE_BOX
+        );
+        u8 *bytes = (u8 *)(box + 1);
+        box->payload = (ValuePayload) {
+                .type=VALUE_STRING,
+                .str=bytes,
+                .bytes=n,
+                .str0=bytes,
+                .inline_bytes=true
+        };
+        return (Value){ .bits = nanbox_from_pointer(box) };
 }
 
 Value
@@ -191,9 +242,19 @@ value_string_view(Ty *ty, Value source, isize offset, u32 n)
 #ifdef TY_BOX_STATS
         atomic_fetch_add_explicit(&string_view_count, 1, memory_order_relaxed);
 #endif
+        u8 const *str = V_STR(source) + offset;
+        u8 *str0 = V_STR0(source);
+        bool ro = V_RO(source);
+
+        if (V_INLINE_BYTES(source)) {
+                str0 = value_string_clone(ty, V_STR(source), V_BYTES(source));
+                str = str0 + offset;
+                ro = false;
+        }
+
         return value_box(ty, (ValuePayload){
                 .type=V_TYPE(source), .tags=V_TAGS(source), .src=V_SRC(source),
-                .str=V_STR(source) + offset, .bytes=n, .str0=V_STR0(source), .ro=V_RO(source)
+                .str=str, .bytes=n, .str0=str0, .ro=ro
         });
 }
 
@@ -235,13 +296,13 @@ value_tuple_alloc(Ty *ty, i32 count, bool with_ids)
 }
 
 void
-value_tuple_nogc(Value value)
+value_tuple_nogc(Ty *ty, Value value)
 {
         NOGC(value_direct_tuple_ptr(value));
 }
 
 void
-value_tuple_okgc(Value value)
+value_tuple_okgc(Ty *ty, Value value)
 {
         OKGC(value_direct_tuple_ptr(value));
 }
@@ -828,7 +889,7 @@ show_impl(
                         if (color) {
                                 sxdf(&buf, "%s%"PRIiMAX"%s", TERM(93), V_Z(v), TERM(0));
                         } else {
-                                sxdf(&buf, "%"PRIiMAX, V_Z(v));
+                                append_decimal_integer(ty, &buf, V_Z(v));
                         }
                         break;
 
@@ -1998,7 +2059,9 @@ mark_thread(Ty *ty, Value const *v)
 inline static void
 mark_string(Ty *ty, Value const *v)
 {
-        if (!V_RO(*v) && V_STR0(*v) != NULL) MARK(V_STR0(*v));
+        if (!V_RO(*v) && !V_INLINE_BYTES(*v) && V_STR0(*v) != NULL) {
+                MARK(V_STR0(*v));
+        }
 }
 
 inline static void

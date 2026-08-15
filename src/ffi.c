@@ -478,6 +478,7 @@ cffi_auto(Ty *ty, int argc, Value *kwargs)
 
         Value ptr = ARGx(0, VALUE_PTR);
         Value *dtor = mAo(sizeof (Value [2]), GC_FFI_AUTO);
+        gc_track_finalizer_value(ty, dtor);
 
         if (argc == 1) {
                 dtor[0] = PTR(free);

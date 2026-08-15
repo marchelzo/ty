@@ -76,16 +76,16 @@ MarkArena(Arena *a)
 }
 
 void
-FreeArena(Arena *a)
+FreeArena(Ty *ty, Arena *a)
 {
         if (a == NULL) {
                 return;
         }
 
-        FreeArena(NextArena(a));
+        FreeArena(ty, NextArena(a));
 
         if (a->gc) {
-                OKGC(a->base);
+                gc_okgc(ty, a->base);
         } else {
                 xmF(a->base);
         }

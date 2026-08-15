@@ -62,6 +62,7 @@ typedef struct {
         usize length;
         u64 hash;
         void *data;
+        void *literal;
 } InternEntry;
 
 typedef vec(InternEntry) InternBucket;
@@ -366,7 +367,7 @@ typedef struct value_payload {
                         };
                         i32 name;
                 };
-                struct { u8 const *str; u32 bytes; bool ro; u8 *str0; };
+                struct { u8 const *str; u32 bytes; bool ro; bool inline_bytes; u8 *str0; };
                 struct { imax i; ptrdiff_t off; int nt; };
                 struct { i32 count; Value *items; i32 *ids; };
                 Regex const *regex;
@@ -718,6 +719,7 @@ typedef struct ty {
         isize memory_limit;
 
         AllocList allocs;
+        AllocList finalizer_values;
         ThreadGroup *group;
         TyThreadState *blocked;
         TySpinLock *lock;
@@ -934,8 +936,13 @@ extern usize TotalBytesAllocated;
 #define ALLOC_OF(p) ((struct alloc *)(((char *)(p)) - offsetof(struct alloc, data)))
 
 
-#define NOGC(v)   atomic_fetch_add_explicit(&(ALLOC_OF(v))->hard, 1, memory_order_relaxed)
-#define OKGC(v)   atomic_fetch_sub_explicit(&(ALLOC_OF(v))->hard, 1, memory_order_relaxed)
+void gc_nogc(Ty *ty, void *allocation);
+void gc_okgc(Ty *ty, void *allocation);
+void gc_track_finalizer_value(Ty *ty, void *allocation);
+void gc_untrack_finalizer_value(Ty *ty, void *allocation);
+
+#define NOGC(v)   gc_nogc(ty, (v))
+#define OKGC(v)   gc_okgc(ty, (v))
 
 #define POISON(v)   atomic_store_explicit(&(ALLOC_OF(v))->hard, 0xDEAD, memory_order_seq_cst)
 #define POISONED(v) (atomic_load_explicit(&(ALLOC_OF(v))->hard, memory_order_seq_cst) == 0xDEAD)
@@ -1261,14 +1268,15 @@ Value value_real(double real);
 Value value_boolean(bool boolean);
 Value value_string_clone_value(Ty *ty, void const *src, u32 n);
 Value value_string_clone_nul_value(Ty *ty, void const *src, u32 n);
+Value value_string_inline(Ty *ty, u32 n);
 Value value_string_wrap(Ty *ty, void const *src, u32 n, bool ro);
 Value value_string_view(Ty *ty, Value string, isize offset, u32 n);
 Value value_tuple_wrap(Ty *ty, Value *items, i32 *ids, i32 count);
 Value value_tuple_alloc(Ty *ty, i32 count, bool with_ids);
 Value value_tuple_view(Ty *ty, Value tuple, i32 offset, i32 count);
 Value value_tuple_metadata(Ty *ty, Value tuple, u16 tags, u32 src);
-void value_tuple_nogc(Value tuple);
-void value_tuple_okgc(Value tuple);
+void value_tuple_nogc(Ty *ty, Value tuple);
+void value_tuple_okgc(Ty *ty, Value tuple);
 Value value_with_src(Ty *ty, Value value, u32 src);
 Value value_with_tags(Ty *ty, Value value, u16 tags);
 Value value_with_type(Ty *ty, Value value, u8 type);
@@ -1457,6 +1465,7 @@ value_bool(Value value)
 #define V_STR(v)        value_box_ptr((v))->payload.str
 #define V_BYTES(v)      value_box_ptr((v))->payload.bytes
 #define V_RO(v)         value_box_ptr((v))->payload.ro
+#define V_INLINE_BYTES(v) value_box_ptr((v))->payload.inline_bytes
 #define V_STR0(v)       value_box_ptr((v))->payload.str0
 #define V_I(v)          value_box_ptr((v))->payload.i
 #define V_OFF(v)        value_box_ptr((v))->payload.off

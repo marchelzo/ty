@@ -19,7 +19,8 @@ const TY_OPTS = ['-q' if ty.q, '-j' if !ty.jit].unwords()
 const FILTER = match argv {
     [_,       filter] => regex(filter),
     [_, '-n', filter] => regex("^(?!.*(?:{filter})).*$"),
-    _                 => regex('.')
+    [_, '-a']         => /./,
+    _                 => /^tests\/[^\/.]+\.ty$/
 }
 
 fn log-scale(lo: Float, hi: Float) -> (Float -> Float) {

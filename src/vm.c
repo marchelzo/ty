@@ -258,6 +258,12 @@ typedef struct profile_entry {
         void *ctx;
 } ProfileEntry;
 
+typedef struct profile_group {
+        int64_t count;
+        char *name;
+        int instances;
+} ProfileGroup;
+
 char const *GC_ENTRY = "(Garbage Collection)";
 
 static int
@@ -273,6 +279,14 @@ CompareProfileEntriesByWeight(void const *a_, void const *b_)
                 return 1;
 
         return 0;
+}
+
+static int
+CompareProfileGroupsByWeight(void const *a_, void const *b_)
+{
+        ProfileGroup const *a = a_;
+        ProfileGroup const *b = b_;
+        return (a->count < b->count) - (a->count > b->count);
 }
 
 static int
@@ -307,8 +321,21 @@ static _Thread_local char *LastIP;
 static _Thread_local u64 LastThreadTime;
 static _Thread_local u64 LastThreadGCTime;
 static TySpinLock ProfileMutex;
-static Dict *Samples;
-static Dict *FuncSamples;
+
+typedef struct {
+        void const *key;
+        u64 count;
+        bool occupied;
+} ProfileCounter;
+
+typedef struct {
+        ProfileCounter *items;
+        usize capacity;
+        usize count;
+} ProfileCounterTable;
+
+static ProfileCounterTable Samples;
+static ProfileCounterTable FuncSamples;
 istat prof;
 
 static bool WantReport = false;
@@ -317,6 +344,58 @@ static int64_t LastReportRequest;
 u64 ProfileSampleInterval = 0;
 static _Thread_local i32 ProfileCountdown = 0;
 static _Thread_local i32 ProfileCalibrate = 100;
+
+static bool
+profile_table_grow(ProfileCounterTable *table)
+{
+        usize capacity = table->capacity ? table->capacity * 2 : 1024;
+        ProfileCounter *items = calloc(capacity, sizeof *items);
+        if (items == NULL) return false;
+
+        for (usize i = 0; i < table->capacity; ++i) {
+                ProfileCounter entry = table->items[i];
+                if (!entry.occupied) continue;
+
+                usize spot = ((uptr)entry.key >> 3) * 11400714819323198485ull;
+                spot &= capacity - 1;
+                while (items[spot].occupied) spot = (spot + 1) & (capacity - 1);
+                items[spot] = entry;
+        }
+
+        free(table->items);
+        table->items = items;
+        table->capacity = capacity;
+        return true;
+}
+
+static void
+profile_table_add(ProfileCounterTable *table, void const *key, u64 count)
+{
+        if (
+                table->capacity == 0
+             || (table->count + 1) * 4 >= table->capacity * 3
+        ) {
+                if (!profile_table_grow(table)) return;
+        }
+
+        usize spot = ((uptr)key >> 3) * 11400714819323198485ull;
+        spot &= table->capacity - 1;
+
+        while (table->items[spot].occupied) {
+                if (table->items[spot].key == key) {
+                        table->items[spot].count += count;
+                        return;
+                }
+                spot = (spot + 1) & (table->capacity - 1);
+        }
+
+        table->items[spot] = (ProfileCounter) {
+                .key = key,
+                .count = count,
+                .occupied = true
+        };
+        table->count += 1;
+}
 
 /*
  * Records a sample for `prev_ip` (the instruction whose time we're measuring),
@@ -330,7 +409,7 @@ static _Thread_local i32 ProfileCalibrate = 100;
 inline static bool
 profiler_tick(Ty *ty, char const *prev_ip, char const *next_ip)
 {
-        if (Samples == NULL) return false;
+        if (Samples.capacity == 0) return false;
 
         if (ProfileSampleInterval > 0 && --ProfileCountdown > 0) {
                 return false;
@@ -340,43 +419,22 @@ profiler_tick(Ty *ty, char const *prev_ip, char const *next_ip)
 
         u64 now = TyThreadTime();
 
-        if (LastThreadGCTime > 0) {
-                if (ProfileSampleInterval == 0) {
-                        Value *count = dict_put_key_if_not_exists(
-                                ty,
-                                FuncSamples,
-                                PTR((void *)GC_ENTRY)
-                        );
-                        if (V_TYPE(*(count)) == VALUE_NIL) {
-                                *count = INTEGER(LastThreadGCTime);
-                        } else {
-                                *(count) = INTEGER(V_Z(*(count)) + (LastThreadGCTime));
-                        }
-                }
-                LastThreadGCTime = 0;
-        }
-
         if (prev_ip != NULL && LastThreadTime != 0) {
                 u64 dt = now - LastThreadTime;
 
                 TySpinLockLock(&ProfileMutex);
 
+                if (LastThreadGCTime > 0 && ProfileSampleInterval == 0) {
+                        profile_table_add(&FuncSamples, GC_ENTRY, LastThreadGCTime);
+                }
+                LastThreadGCTime = 0;
+
                 istat_add(&prof, prev_ip, dt);
 
-                Value *count = dict_put_key_if_not_exists(ty, Samples, PTR(prev_ip));
-                if (V_TYPE(*(count)) == VALUE_NIL) {
-                        *count = INTEGER(dt);
-                } else {
-                        *(count) = INTEGER(V_Z(*(count)) + (dt));
-                }
+                profile_table_add(&Samples, prev_ip, dt);
 
                 int *func = (ty->st->frames.count > 0) ? V_INFO(*(ActiveFun(ty))) : NULL;
-                count = dict_put_key_if_not_exists(ty, FuncSamples, PTR(func));
-                if (V_TYPE(*(count)) == VALUE_NIL) {
-                        *count = INTEGER(dt);
-                } else {
-                        *(count) = INTEGER(V_Z(*(count)) + (dt));
-                }
+                profile_table_add(&FuncSamples, func, dt);
 
                 TySpinLockUnlock(&ProfileMutex);
 
@@ -685,8 +743,8 @@ WaitGC(Ty *ty)
 static void
 MarkFinalizerValues(Ty *marker, Ty *owner)
 {
-        for (usize i = 0; i < vN(owner->allocs); ++i) {
-                struct alloc *a = v__(owner->allocs, i);
+        for (usize i = 0; i < vN(owner->finalizer_values); ++i) {
+                struct alloc *a = v__(owner->finalizer_values, i);
                 if (a->type == GC_VALUE_BOX && a->hard != 0) {
                         ValueBox *box = (ValueBox *)a->data;
                         int type = box->payload.type & ~VALUE_TAGGED;
@@ -2302,12 +2360,13 @@ CleanupThread(void *ctx)
         xvF(CO_THREADS);
         xvF(ty->co_states);
         xvF(ty->allocs);
+        xvF(ty->finalizer_values);
         xvF(ty->_2op_cache);
         xvF(ty->err);
         xvF(ty->marking);
         xvF(ty->visiting);
         xvF(ty->scratch.arenas);
-        FreeArena(&ty->arena);
+        FreeArena(ty, &ty->arena);
         pcre2_match_data_free(ty->pcre2.match);
         pcre2_match_context_free(ty->pcre2.ctx);
         pcre2_jit_stack_free(ty->pcre2.stack);
@@ -5758,12 +5817,9 @@ static void
 DoStringLiteral(Ty *ty, i32 i)
 {
         InternEntry const *interned = intern_entry(&xD.strings, i);
-        push(
-                STRING_NOGC(ty,
-                        interned->name,
-                        (uptr)interned->data
-                )
-        );
+        (void)ty;
+        assert(interned->literal != NULL);
+        push((Value){ .bits = nanbox_from_pointer(interned->literal) });
 }
 
 void
@@ -9453,30 +9509,77 @@ ProfileReport(Ty *ty)
 {
         vec(ProfileEntry) profile = {0};
         vec(ProfileEntry) func_profile = {0};
+        vec(ProfileGroup) func_groups = {0};
 
         char color_buffer[64] = {0};
         double total_ticks = 0.0;
 
-        dfor(Samples, {
+        for (usize i = 0; i < Samples.capacity; ++i) {
+                ProfileCounter const *sample = &Samples.items[i];
+                if (!sample->occupied) continue;
                 ProfileEntry entry = ((ProfileEntry) {
-                        .ctx = V_PTR(*key),
-                        .count = V_Z(*val)
+                        .ctx = (void *)sample->key,
+                        .count = sample->count
                 });
                 xvP(profile, entry);
                 total_ticks += entry.count;
-        });
+        }
 
-        dfor(FuncSamples, {
+        for (usize i = 0; i < FuncSamples.capacity; ++i) {
+                ProfileCounter const *sample = &FuncSamples.items[i];
+                if (!sample->occupied) continue;
                 ProfileEntry entry = ((ProfileEntry) {
-                        .ctx = V_PTR(*key),
-                        .count = V_Z(*val)
+                        .ctx = (void *)sample->key,
+                        .count = sample->count
                 });
                 xvP(func_profile, entry);
-        });
+        }
 
         qsort(func_profile.items, func_profile.count, sizeof (ProfileEntry), CompareProfileEntriesByWeight);
 
         fprintf(ProfileOut, "%s======= profile by function =======%s\n\n", PTERM(95), PTERM(0));
+        for (int i = 0; i < func_profile.count; ++i) {
+                ProfileEntry *entry = &func_profile.items[i];
+                if (entry->ctx == NULL || entry->ctx == GC_ENTRY) continue;
+
+                Value f = FUNCTION();
+                V_INFO(f) = entry->ctx;
+                char *name = VSC(&f);
+                int group = -1;
+                for (int j = 0; j < func_groups.count; ++j) {
+                        if (strcmp(v__(func_groups, j).name, name) == 0) {
+                                group = j;
+                                break;
+                        }
+                }
+                if (group >= 0) {
+                        v__(func_groups, group).count += entry->count;
+                        v__(func_groups, group).instances += 1;
+                        xmF(name);
+                } else {
+                        xvP(func_groups, ((ProfileGroup) {
+                                .count=entry->count, .name=name, .instances=1
+                        }));
+                }
+        }
+        qsort(func_groups.items, func_groups.count, sizeof (ProfileGroup), CompareProfileGroupsByWeight);
+        for (int i = 0; i < func_groups.count; ++i) {
+                ProfileGroup *group = &func_groups.items[i];
+                if (group->count / total_ticks < 0.01) break;
+                fprintf(
+                        ProfileOut,
+                        "   %5.1f%%  %-14lld  %s",
+                        group->count / total_ticks * 100.0,
+                        (long long)group->count,
+                        group->name
+                );
+                if (group->instances > 1) {
+                        fprintf(ProfileOut, "  (%d instances)", group->instances);
+                }
+                fputc('\n', ProfileOut);
+        }
+
+        fprintf(ProfileOut, "\n%s======= profile by function instance =======%s\n\n", PTERM(95), PTERM(0));
         for (int i = 0; i < func_profile.count; ++i) {
                 ProfileEntry *entry = &func_profile.items[i];
 
@@ -9517,15 +9620,19 @@ ProfileReport(Ty *ty)
                         char *f_string = VSC(&f);
                         fprintf(
                                 ProfileOut,
-                                "   %s%5.1f%%  %-14lld  %s\n",
+                                "   %s%5.1f%%  %-14lld  %s  [info=%p]\n",
                                 color_buffer,
                                 entry->count / total_ticks * 100.0,
                                 (long long)entry->count,
-                                f_string
+                                f_string,
+                                entry->ctx
                         );
                         xmF(f_string);
                 }
         }
+
+        for (int i = 0; i < func_groups.count; ++i) xmF(v__(func_groups, i).name);
+        xvF(func_groups);
 
         byte_vector prog_text = {0};
 
@@ -9952,10 +10059,13 @@ vm_init(Ty *ty, int ac, char **av)
         TY_CATCH_END();
 
 #ifdef TY_PROFILER
-        Samples = dict_new(ty);
-        NOGC(Samples);
-        FuncSamples = dict_new(ty);
-        NOGC(FuncSamples);
+        if (!profile_table_grow(&Samples) || !profile_table_grow(&FuncSamples)) {
+                free(Samples.items);
+                free(FuncSamples.items);
+                Samples = (ProfileCounterTable) {0};
+                FuncSamples = (ProfileCounterTable) {0};
+                return false;
+        }
         TySpinLockInit(&ProfileMutex);
 #endif
 

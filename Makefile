@@ -186,6 +186,7 @@ include/keywords.h: src/keywords.gperf
 
 obj/token.o: include/keywords.h
 obj/tyls/token.o: include/keywords.h
+obj/typrof/token.o: include/keywords.h
 
 # jit.c depends on the generated DynASM header
 obj/jit.o: $(JIT_HDR)

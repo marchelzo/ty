@@ -8295,7 +8295,7 @@ BUILTIN_FUNCTION(type)
 
                 Value tuple = value_tuple_alloc(ty, n, false);
                 Value *types = V_ITEMS(tuple);
-                value_tuple_nogc(tuple);
+                value_tuple_nogc(ty, tuple);
 
                 for (int i = 0; i < n; ++i) {
                         vmP(&V_ITEMS(v)[i]);
@@ -8303,7 +8303,7 @@ BUILTIN_FUNCTION(type)
                         vmX();
                 }
 
-                value_tuple_okgc(tuple);
+                value_tuple_okgc(ty, tuple);
 
                 return tuple;
         }

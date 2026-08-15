@@ -6865,6 +6865,14 @@ emit_string_literal(Ty *ty, char const *s)
                 interned = intern_put(interned, (void *)(uptr)strlen(s));
         }
 
+        if (interned->literal == NULL) {
+                Value literal = STRING_NOGC(
+                        ty, interned->name, (u32)(uptr)interned->data
+                );
+                gc_immortalize(ty, &literal);
+                interned->literal = value_box_ptr(literal);
+        }
+
         Ei32(interned->id);
 }
 

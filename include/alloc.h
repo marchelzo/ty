@@ -30,12 +30,12 @@ void
 MarkArena(Arena *a);
 
 void
-FreeArena(Arena *a);
+FreeArena(Ty *ty, Arena *a);
 
 inline static void
 (ReleaseArena)(Ty *ty, Arena old)
 {
-        FreeArena(&ty->arena);
+        FreeArena(ty, &ty->arena);
         ty->arena = old;
 }
 

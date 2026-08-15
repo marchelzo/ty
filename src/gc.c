@@ -18,6 +18,50 @@ static GCRootSet ImmortalSet;
 #define A_LOAD(p)     atomic_load_explicit((p), memory_order_relaxed)
 #define A_STORE(p, x) atomic_store_explicit((p), (x), memory_order_relaxed)
 
+void
+gc_track_finalizer_value(Ty *ty, void *allocation)
+{
+        struct alloc *a = ALLOC_OF(allocation);
+        for (usize i = 0; i < vN(ty->finalizer_values); ++i) {
+                if (v__(ty->finalizer_values, i) == a) return;
+        }
+        xvP(ty->finalizer_values, a);
+}
+
+void
+gc_untrack_finalizer_value(Ty *ty, void *allocation)
+{
+        struct alloc *a = ALLOC_OF(allocation);
+        for (usize i = 0; i < vN(ty->finalizer_values); ++i) {
+                if (v__(ty->finalizer_values, i) == a) {
+                        v__(ty->finalizer_values, i) = v_L(ty->finalizer_values);
+                        vvX(ty->finalizer_values);
+                        return;
+                }
+        }
+}
+
+void
+gc_nogc(Ty *ty, void *allocation)
+{
+        struct alloc *a = ALLOC_OF(allocation);
+        u16 previous = atomic_fetch_add_explicit(&a->hard, 1, memory_order_relaxed);
+        if (previous == 0 && a->type == GC_VALUE_BOX) {
+                gc_track_finalizer_value(ty, allocation);
+        }
+}
+
+void
+gc_okgc(Ty *ty, void *allocation)
+{
+        struct alloc *a = ALLOC_OF(allocation);
+        u16 previous = atomic_fetch_sub_explicit(&a->hard, 1, memory_order_relaxed);
+        assert(previous != 0);
+        if (previous == 1 && a->type == GC_VALUE_BOX) {
+                gc_untrack_finalizer_value(ty, allocation);
+        }
+}
+
 inline static void
 collect(Ty *ty, struct alloc *a)
 {
@@ -135,6 +179,7 @@ collect(Ty *ty, struct alloc *a)
                 break;
 
         case GC_FFI_AUTO:
+                gc_untrack_finalizer_value(ty, p);
                 finalizer = ((Value *)p)[0];
                 o = ((Value *)p)[1];
                 if (V_TYPE(finalizer) == VALUE_PTR) {

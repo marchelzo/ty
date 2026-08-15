@@ -1661,7 +1661,9 @@ static void
 jit_rt_string(Ty *ty, Value *result, i32 i)
 {
         InternEntry const *interned = intern_entry(&xD.strings, i);
-        *result = STRING_NOGC(ty, interned->name, (uptr)interned->data);
+        (void)ty;
+        assert(interned->literal != NULL);
+        *result = (Value){ .bits = nanbox_from_pointer(interned->literal) };
 }
 
 
@@ -2580,6 +2582,7 @@ bc_prescan(JitCtx *ctx, char const *code, int code_size)
                 case INSTR_DUP2_SWAP:
                 case INSTR_INT8:
                 case INSTR_INTEGER:
+                case INSTR_STRING:
                 case INSTR_TRUE:
                 case INSTR_FALSE:
                 case INSTR_NIL:
@@ -2602,6 +2605,8 @@ bc_prescan(JitCtx *ctx, char const *code, int code_size)
                 case INSTR_BIT_XOR:
                 case INSTR_SHL:
                 case INSTR_SHR:
+                case INSTR_TO_STRING:
+                case INSTR_CONCAT_STRINGS:
                 case INSTR_JUMP:
                 case INSTR_JUMP_IF:
                 case INSTR_JUMP_IF_NOT:
@@ -3654,7 +3659,8 @@ jit_rt_concat_strings(Ty *ty, Value *result, Value *base, int n)
                 Value *v = (Value *)((char *)base + i * VALUE_SIZE);
                 total += sN(*v);
         }
-        char *str = uAo(total, GC_STRING);
+        Value string = value_string_inline(ty, total);
+        u8 *str = (u8 *)V_STR(string);
         usize k = 0;
         for (int i = 0; i < n; ++i) {
                 Value *v = (Value *)((char *)base + i * VALUE_SIZE);
@@ -3663,7 +3669,7 @@ jit_rt_concat_strings(Ty *ty, Value *result, Value *base, int n)
                         k += sN(*v);
                 }
         }
-        *result = STRING(ty, str, total);
+        *result = string;
 }
 
 // ============================================================================
@@ -7450,6 +7456,7 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                         bool ctor_nil_guard;
                         if (known_class > 0 && jit_simple_ctor_plan(ty, known_class, n,
                                                                   &ctor_map, &ctor_nil_guard)) {
+                                int lbl_ctor_miss = bc_next_label(ctx);
                                 jit_emit_mov(asm, BC_A0, BC_TY);
                                 jit_emit_add_imm(asm, BC_A1, BC_OPS, out_off);
                                 jit_emit_load_imm(asm, BC_A2, known_class);
@@ -7458,9 +7465,11 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                                 jit_emit_load_imm(asm, BC_A5, ctor_nil_guard);
                                 jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_simple_ctor);
                                 bc_emit_runtime_call(ctx, BC_CALL);
-                                jit_emit_reload_stack(asm, ctx->bound);
                                 jit_emit_cmp_ri(asm, BC_RET, 1);
-                                jit_emit_branch_eq(asm, lbl_done);
+                                jit_emit_branch_ne(asm, lbl_ctor_miss);
+                                jit_emit_reload_stack(asm, ctx->bound);
+                                jit_emit_jump(asm, lbl_done);
+                                jit_emit_label(asm, lbl_ctor_miss);
                         }
                         jit_emit_mov(asm, BC_A0, BC_TY);
                         jit_emit_add_imm(asm, BC_A1, BC_OPS, out_off);
@@ -7481,9 +7490,11 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                         jit_emit_load_imm(asm, BC_A3, n);
                         jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_call_trampoline);
                         bc_emit_runtime_call(ctx, BC_CALL);
-                        /* Calls may grow/reallocate the VM operand stack. */
+                        /* Test BC_RET before reloading the stack: on x86-64 the
+                         * reload uses rax, which is also the return register. */
+                        int lbl_call_returned = bc_next_label(ctx);
+                        jit_emit_cbz(asm, BC_RET, lbl_call_returned);
                         jit_emit_reload_stack(asm, ctx->bound);
-                        jit_emit_cbz(asm, BC_RET, lbl_done);
 
                         // JIT callee detected: save resume index, signal trampoline, return
                         int site_idx = ctx->call_site_count++;
@@ -7497,6 +7508,10 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                         // Registers will be reloaded at the next instruction's top-of-loop reload.
                         jit_emit_label(asm, resume_lbl);
                         bc_raw_reset(ctx);
+
+                        jit_emit_jump(asm, lbl_done);
+                        jit_emit_label(asm, lbl_call_returned);
+                        jit_emit_reload_stack(asm, ctx->bound);
 
                         // Join point for both paths
                         jit_emit_label(asm, lbl_done);
