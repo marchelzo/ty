@@ -1,0 +1,7 @@
+import ffi as c
+import os
+
+if c.open('lz4') == nil {
+    print('liblz4 is not installed')
+    os.exit(77)
+}

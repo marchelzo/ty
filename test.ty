@@ -1,4 +1,4 @@
-import chalk (chalk, hsl-gradient)
+import chalk (chalk, escape, hsl-gradient)
 import math (log)
 import os (..)
 import path (Path)
@@ -7,20 +7,26 @@ import time
 import tp (ThreadPool, Future)
 import ty
 
-let COLUMNS = min(terminal-size().?cols ?? 64, 64)
+const TEST_DIR = Path('tests')
+const REQUIREMENTS_FILE = '_require.ty'
+const COLUMNS = min(terminal-size().?cols ?? 64, 64)
 
 let pass  = Atomic(0)
 let fail  = Atomic(0)
 let slow  = Atomic(0)
+let skip  = Atomic(0)
+let user-cpu-us = Atomic(0)
+let system-cpu-us = Atomic(0)
 
 const TY_CMD  = getenv('TY_PATH') ?? ty.executable
 const TY_OPTS = ['-q' if ty.q, '-j' if !ty.jit].unwords()
 
+const ALL_TESTS = argv.pluck(\_ == '-a').some?()
+
 const FILTER = match argv {
     [_,       filter] => regex(filter),
     [_, '-n', filter] => regex("^(?!.*(?:{filter})).*$"),
-    [_, '-a']         => /./,
-    _                 => /^tests\/[^\/.]+\.ty$/
+    _                 => /./,
 }
 
 fn log-scale(lo: Float, hi: Float) -> (Float -> Float) {
@@ -49,8 +55,10 @@ fn run(p: Path) {
             ('', chalk"[b bright magenta]TIMEOUT[/]")
         },
 
-        {status: 0, signal: nil, *} => do {
+        {status: 0, signal: nil, user, system, *} => do {
             pass += 1
+            user-cpu-us += int(user * 1.0e6)
+            system-cpu-us += int(system * 1.0e6)
             ('#635d56', chalk"[bright green bold]PASS[/] {show-time(time.now() - t0)}")
         },
 
@@ -76,25 +84,140 @@ fn run(p: Path) {
     return "{name} {dots} {result}"
 }
 
-let pool = ThreadPool(ncpu(), run)
-let t0 = time.now()
+fn tests-in(dir: Path) {
+    dir.glob('*.ty')
+       .filter(\_.name != REQUIREMENTS_FILE)
+       .filter(\FILTER in "{_}")
+}
 
-for (dir, _, files) in Path('tests').walk() {
-    let group = chalk"[#bd892d]{dir}[/]"
-    let pad   = chalk"[#333]─[/]"
-    let tests = files.filter(/\.ty$/).filter(\FILTER in "{dir / _}")
-    print("{" {group} {pad}{pad}":{pad}>{COLUMNS}}")
-    for Future.iter(tests.map(pool.submit@(dir / _))) {
-        print(it)
+fn subdirs(dir: Path) {
+    dir.ls().filter(\_.dir?)
+}
+
+fn has-selected-tests(dir: Path) {
+    #tests-in(dir) > 0
+        || (ALL_TESTS && subdirs(dir).any?(has-selected-tests))
+}
+
+fn output-reason(stdout: String, stderr: String, fallback: String) {
+    let output = [stdout.trim(), stderr.trim()].filter(\#_ > 0).join('\n')
+    output || fallback
+}
+
+fn skip-reason(stdout: String, stderr: String) {
+    let reason = stdout.trim() || stderr.trim() || 'requirements not met'
+    reason.split('\n')[0].trim()
+}
+
+fn check-requirements(dir: Path) {
+    let conf = dir / REQUIREMENTS_FILE
+    if !conf.file? { return nil }
+
+    let _, details = sh("{TY_CMD} {TY_OPTS} {conf}", timeoutMs=5000)
+
+    match details {
+        nil => ({
+            kind: 'error',
+            reason: 'requirements check timed out'
+        }),
+
+        {status: 0, signal: nil, *} => nil,
+
+        {status: 77, signal: nil, stdout, stderr, *} => ({
+            kind: 'skip',
+            reason: skip-reason(stdout, stderr)
+        }),
+
+        {status, signal, stdout, stderr, *} => do {
+            let reason = output-reason(
+                stdout,
+                stderr,
+                'requirements check failed without output'
+            )
+            ({
+                kind: 'error',
+                reason: [
+                    "exit status: {status}" if status != 0,
+                    "SIG{signame(signal).upper()}" if signal != nil,
+                    reason
+                ].join('\n')
+            })
+        }
     }
 }
 
+fn show-group(dir: Path) {
+    let group = chalk"[#bd892d]{dir}[/]"
+    let pad   = chalk"[#333]─[/]"
+    print("{" {group} {pad}{pad}":{pad}>{COLUMNS}}")
+}
+
+fn show-skip(p: Path) {
+    skip += 1
+    chalk"[#635d56]{p.stem:24}[/] [#444]...[/] [bright yellow bold]SKIP[/]"
+}
+
+fn show-requirements-error(reason: String) {
+    fail += 1
+    print(
+        chalk"[bright red]{REQUIREMENTS_FILE:24}[/] "
+             "[#444]...[/] [bright red bold]FAIL[/]\n{reason}"
+    )
+}
+
+let pool = ThreadPool(ncpu(), run)
+let t0 = time.now()
+
+fn run-dir(dir: Path, inherited-requirement: _ = nil) {
+    if !has-selected-tests(dir) { return }
+
+    let requirement = inherited-requirement ?? check-requirements(dir)
+    let tests = tests-in(dir)
+
+    if tests || requirement.?kind == 'error' {
+        show-group(dir)
+    }
+
+    match requirement {
+        {kind: 'error', reason} => {
+            show-requirements-error(reason)
+            return
+        },
+
+        {kind: 'skip', reason} => {
+            for p in tests {
+                print(show-skip(p))
+            }
+            print(chalk"[#777]    └─ {escape(reason)}[/]")
+        },
+
+        _ => {
+            for Future.iter(tests.map(pool.submit)) {
+                print(it)
+            }
+        }
+    }
+
+    if ALL_TESTS {
+        for subdir in subdirs(dir) {
+            run-dir(subdir, requirement)
+        }
+    }
+}
+
+run-dir(TEST_DIR)
+
 let t1 = time.now()
+let user-cpu = user-cpu-us.load() / 1.0e6
+let system-cpu = system-cpu-us.load() / 1.0e6
 
 let summary = [
     chalk"[green b]{pass}[/] passed" if pass > 0,
     chalk"[red b]{fail}[/] failed" if fail > 0,
+    chalk"[yellow b]{skip}[/] skipped" if skip > 0,
     chalk"[magenta b]{slow}[/] timed out" if slow > 0,
+    chalk"[#ccc b]{user-cpu:.2}s[/] user",
+    chalk"[#ccc b]{system-cpu:.2}s[/] system",
     chalk"[#ccc b]{(t1 - t0):.2}s[/] elapsed"
 ]
 

@@ -22,9 +22,8 @@ void
 gc_track_finalizer_value(Ty *ty, void *allocation)
 {
         struct alloc *a = ALLOC_OF(allocation);
-        for (usize i = 0; i < vN(ty->finalizer_values); ++i) {
-                if (v__(ty->finalizer_values, i) == a) return;
-        }
+        /* GC_VALUE_BOX callers arrive only on the hard-count transition from
+         * zero, and each GC_FFI_AUTO allocation is registered exactly once. */
         xvP(ty->finalizer_values, a);
 }
 

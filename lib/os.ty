@@ -14,6 +14,7 @@ pub fn pread(fd: Int, n: Int, offset: Int) -> Blob;
 pub fn pwrite(fd: Int, data: _, offset: Int) -> Int;
 
 pub fn wait(pid: Int = -1, options: Int = 0) -> (Int, Int) | nil;
+pub fn wait4(pid: Int = -1, options: Int = 0) -> (Int, Int, Float, Float) | nil;
 
 pub fn socket(domain: Int, type: Int, protocol: Int) -> Int;
 pub fn bind(sock: Int, addr: _) -> Int;

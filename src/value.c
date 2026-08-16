@@ -2187,13 +2187,35 @@ mark_trace(Ty *ty, ThrowCtx *ctx)
 static inline void
 _value_mark_xd(Ty *ty, Value const *v)
 {
-        /* A complex Value owns its payload box; mark that allocation before
-         * following any pointers stored in the legacy payload. */
-        if (nanbox_is_pointer(v->bits)) {
-                MARK(value_box_ptr(*v));
+        /* Deal with direct values before the generic boxed path.  Besides
+         * avoiding repeated tag decoding for the common cases, this keeps a
+         * direct tuple's low-bit-tagged pointer away from value_box_ptr(). */
+        if (value_is_direct_array(*v)) {
+                value_array_mark(ty, value_direct_array_ptr(*v));
+                return;
         }
+        if (value_is_direct_class(*v)) {
+                class_mark(ty, value_direct_class_id(*v));
+                return;
+        }
+        if (value_is_direct_object(*v)) {
+                object_mark(ty, value_direct_object_ptr(*v));
+                return;
+        }
+        if (nanbox_is_aux(v->bits)) return;
+        if (value_is_direct_tuple(*v)) {
+                mark_tuple(ty, v);
+                return;
+        }
+        if (!nanbox_is_pointer(v->bits)) return;
 
-        void **src = source_lookup(ty, V_SRC(*(v)));
+        /* A marked box has already had its unique payload traced, so repeated
+         * references need no further work. */
+        ValueBox *box = value_box_ptr(*v);
+        if (MARKED(box)) return;
+        MARK(box);
+
+        void **src = source_lookup(ty, box->payload.src);
         if (src != NULL && *src != NULL) {
                 MARK(*src);
         }
@@ -2208,7 +2230,7 @@ _value_mark_xd(Ty *ty, Value const *v)
         ++d;
 #endif
 
-        switch (V_TYPE(*(v)) & ~VALUE_TAGGED) {
+        switch (box->payload.type & ~VALUE_TAGGED) {
         case VALUE_METHOD:           if (!MARKED(V_THIS(*v))) { mark_method(ty, v); }                     break;
         case VALUE_BUILTIN_METHOD:   if (!MARKED(V_THIS(*v))) { MARK(V_THIS(*v)); MarkNext(ty, V_THIS(*(v))); }   break;
         case VALUE_FOREIGN_FUNCTION: if (V_XINFO(*(v)) != NULL) { MARK(V_XINFO(*v)); }                         break;

@@ -699,6 +699,37 @@ NextGCPhase(Ty *ty, int phase, int n_running)
 
 static void MarkFinalizerValues(Ty *marker, Ty *owner);
 
+static bool
+FinalizerBoxNeedsMark(ValueBox const *box)
+{
+        if (box->payload.src != 0) return true;
+
+        switch (box->payload.type & ~VALUE_TAGGED) {
+        case VALUE_FOREIGN_FUNCTION: return box->payload.xinfo != NULL;
+        case VALUE_ARRAY:            return box->payload.array != NULL;
+        case VALUE_DICT:             return box->payload.dict != NULL;
+        case VALUE_NATIVE_FUNCTION:
+        case VALUE_BOUND_FUNCTION:
+        case VALUE_FUNCTION:         return true;
+        case VALUE_GENERATOR:        return box->payload.gen != NULL;
+        case VALUE_THREAD:           return box->payload.thread != NULL;
+        case VALUE_STRING:           return !box->payload.ro
+                                         && !box->payload.inline_bytes
+                                         && box->payload.str0 != NULL;
+        case VALUE_OBJECT:           return box->payload.object != NULL;
+        case VALUE_CLASS:            return true;
+        case VALUE_REF:              return box->payload.ref != NULL;
+        case VALUE_BLOB:             return box->payload.blob != NULL;
+        case VALUE_QUEUE:            return box->payload.queue != NULL;
+        case VALUE_SHARED_QUEUE:     return box->payload.shared_queue != NULL;
+        case VALUE_PTR:              return box->payload.gcptr != NULL;
+        case VALUE_TRACE:            return box->payload.ptr != NULL;
+        case VALUE_REGEX:            return box->payload.regex != NULL
+                                         && box->payload.regex->gc;
+        default:                     return false;
+        }
+}
+
 static void
 WaitGC(Ty *ty)
 {
@@ -751,6 +782,7 @@ MarkFinalizerValues(Ty *marker, Ty *owner)
                         if (type == VALUE_METHOD || type == VALUE_BUILTIN_METHOD) {
                                 continue; /* receiver can be temporary native stack storage */
                         }
+                        if (!FinalizerBoxNeedsMark(box)) continue;
                         Value v = { .bits = nanbox_from_pointer(a->data) };
                         value_mark(marker, &v);
                 } else if (a->type == GC_FFI_AUTO && !a->mark && a->hard == 0) {

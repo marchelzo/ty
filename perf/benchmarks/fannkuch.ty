@@ -29,7 +29,6 @@ fn fannkuch(n: Int) -> Int {
                     perm[j] = tmp
                     i += 1
                     j -= 1
-                    print({i, j})
                 }
                 flips += 1
             }
@@ -67,5 +66,5 @@ fn fannkuch-bench(n: Int) {
 }
 
 if __module__ == 'main' {
-    fannkuch(4)
+    fannkuch(9)
 }

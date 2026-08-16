@@ -78,6 +78,7 @@ typedef struct stat StatStruct;
 #include <sys/mman.h>
 #include <sys/mman.h>
 #include <sys/random.h>
+#include <sys/resource.h>
 #include <sys/socket.h>
 #include <sys/time.h>
 #include <sys/un.h>
@@ -5790,6 +5791,67 @@ BUILTIN_FUNCTION(os_wait)
         }
 
         return (ret > 0) ? PAIR(INTEGER(ret), INTEGER(status)) : NIL;
+#endif
+}
+
+BUILTIN_FUNCTION(os_wait4)
+{
+        ASSERT_ARGC("os.wait4()", 0, 1, 2);
+#ifdef _WIN32
+        NOT_ON_WINDOWS("os.wait4()");
+#else
+        imax pid;
+        imax flags;
+
+        switch (argc) {
+        case 0:
+                pid = -1;
+                flags = 0;
+                break;
+
+        case 1:
+                pid = INT_ARG(0);
+                flags = 0;
+                break;
+
+        case 2:
+                pid = INT_ARG(0);
+                flags = INT_ARG(1);
+                break;
+        }
+
+        int status;
+        int ret;
+        struct rusage usage;
+
+        UnlockTy();
+        for (;;) {
+                ret = wait4(pid, &status, flags, &usage);
+                if (ret == -1 && errno == EINTR) {
+                        continue;
+                }
+                break;
+        }
+        LockTy();
+        if (ret < 0 && errno != ECHILD) {
+                bP("%s", strerror(errno));
+        }
+        if (ret <= 0) {
+                return NIL;
+        }
+
+        Value result = vT(4);
+
+        V_ITEMS(result)[0] = INTEGER(ret);
+        V_ITEMS(result)[1] = INTEGER(status);
+        V_ITEMS(result)[2] = REAL(
+                usage.ru_utime.tv_sec + usage.ru_utime.tv_usec / 1.0e6
+        );
+        V_ITEMS(result)[3] = REAL(
+                usage.ru_stime.tv_sec + usage.ru_stime.tv_usec / 1.0e6
+        );
+
+        return result;
 #endif
 }
 

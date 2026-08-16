@@ -291,6 +291,7 @@ static struct {
   { .module = "os",         .name = "getsid",                   .init = BUILTIN(builtin_os_getsid)              },
   { .module = "os",         .name = "setsid",                   .init = BUILTIN(builtin_os_setsid)              },
   { .module = "os",         .name = "wait",                     .init = BUILTIN(builtin_os_wait)                },
+  { .module = "os",         .name = "wait4",                    .init = BUILTIN(builtin_os_wait4)               },
   { .module = "os",         .name = "WIFSTOPPED",               .init = BUILTIN(builtin_os_WIFSTOPPED)          },
   { .module = "os",         .name = "WIFEXITED",                .init = BUILTIN(builtin_os_WIFEXITED)           },
   { .module = "os",         .name = "WEXITSTATUS",              .init = BUILTIN(builtin_os_WEXITSTATUS)         },

@@ -1,5 +1,5 @@
 # anything beginning with underscore
-_*
+_*/
 # ides
 .vscode
 .vs

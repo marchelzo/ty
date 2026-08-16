@@ -3654,22 +3654,33 @@ jit_rt_compare(Ty *ty, Value *a, Value *b)
 static void
 jit_rt_concat_strings(Ty *ty, Value *result, Value *base, int n)
 {
+        ptrdiff_t result_idx = result - vv(STACK);
+        ptrdiff_t base_idx = base - vv(STACK);
+
+        /* value_string_inline() can collect.  The JIT keeps its operand-stack
+         * depth in generated code, so expose the input strings to the GC
+         * before allocating the result. */
+        vN(STACK) = base_idx + n;
+
         usize total = 0;
         for (int i = 0; i < n; ++i) {
-                Value *v = (Value *)((char *)base + i * VALUE_SIZE);
+                Value *v = v_(STACK, base_idx + i);
+                if (V_TYPE(*v) != VALUE_STRING) {
+                        *v = value_vshow(ty, v, 0);
+                }
                 total += sN(*v);
         }
         Value string = value_string_inline(ty, total);
         u8 *str = (u8 *)V_STR(string);
         usize k = 0;
         for (int i = 0; i < n; ++i) {
-                Value *v = (Value *)((char *)base + i * VALUE_SIZE);
+                Value *v = v_(STACK, base_idx + i);
                 if (sN(*v) > 0) {
                         memcpy(str + k, ss(*v), sN(*v));
                         k += sN(*v);
                 }
         }
-        *result = string;
+        *v_(STACK, result_idx) = string;
 }
 
 // ============================================================================
@@ -4003,8 +4014,10 @@ bc_try_local_array_swap(JitCtx *ctx, char const *code, char const *end,
         jit_emit_cmp_ri(asm,BC_S0,0); jit_emit_branch_lt(asm,lbl_slow); jit_emit_cmp_rr(asm,BC_S0,BC_S2); jit_emit_branch_ge(asm,lbl_slow);
         jit_emit_cmp_ri(asm,BC_S3,0); jit_emit_branch_lt(asm,lbl_slow); jit_emit_cmp_rr(asm,BC_S3,BC_S2); jit_emit_branch_ge(asm,lbl_slow);
         jit_emit_ldr64(asm,BC_S1,BC_S1,offsetof(Array,items));
-        jit_emit_ldr64_index8(asm,BC_S2,BC_S1,BC_S0); jit_emit_ldr64_index8(asm,BC_CALL,BC_S1,BC_S3);
-        jit_emit_str64_index8(asm,BC_CALL,BC_S1,BC_S0); jit_emit_str64_index8(asm,BC_S2,BC_S1,BC_S3);
+        /* BC_CALL aliases BC_S2 on x64, so keep the two array elements in
+         * genuinely distinct registers while exchanging them. */
+        jit_emit_ldr64_index8(asm,BC_RET,BC_S1,BC_S0); jit_emit_ldr64_index8(asm,BC_CALL,BC_S1,BC_S3);
+        jit_emit_str64_index8(asm,BC_CALL,BC_S1,BC_S0); jit_emit_str64_index8(asm,BC_RET,BC_S1,BC_S3);
         if (fold_cursors) {
                 jit_emit_add_imm(asm, BC_S0, BC_S0, 1);
                 jit_emit_add_imm(asm, BC_S3, BC_S3, -1);
@@ -7162,7 +7175,7 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                         int target = (int)(ip - code) + n;
                         int lbl_target = bc_find_label(ctx, target);
                         if (lbl_target < 0) BAIL("invalid equality jump target");
-                        bc_emit_binop_helper(ctx, op == INSTR_JEQ
+                        bc_emit_cmp(ctx, op == INSTR_JEQ
                                 ? (void *)jit_rt_eq : (void *)jit_rt_ne);
                         bc_emit_truthy(ctx);
                         ctx->sp--;

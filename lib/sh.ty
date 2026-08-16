@@ -12,7 +12,9 @@ pub use CmdResult = {
     status: Int,
     signal: Int | nil,
     stdout: String,
-    stderr: String
+    stderr: String,
+    user: Float,
+    system: Float
 }
 
 pub fn sh(
@@ -97,7 +99,7 @@ pub fn sh(
         os.close(p.stderr)
     }
 
-    let (_, status) = os.wait(p.pid)!
+    let (_, status, user, system) = os.wait4(p.pid)!
 
     if timedOut {
         return nil
@@ -109,7 +111,9 @@ pub fn sh(
         signal: os.WIFSIGNALED(status) ? os.WTERMSIG(status) : nil,
         stdout: out,
         status: os.WEXITSTATUS(status),
-        stderr: err.str!()
+        stderr: err.str!(),
+        user,
+        system
     }
 #|else
     let stdoutThread = Thread(-> do {
