@@ -1379,6 +1379,47 @@ value_box_ptr(Value value)
 inline static u8
 value_type(Value value)
 {
+#if defined(NANBOX_64)
+        u64 bits = value.bits.as_int64;
+
+        if ((bits >> 48) == 0) switch (bits) {
+        case NANBOX_VALUE_EMPTY:
+                return VALUE_ZERO;
+        case NANBOX_VALUE_DELETED:
+                return VALUE_TOMBSTONE;
+        case NANBOX_VALUE_FALSE:
+        case NANBOX_VALUE_TRUE:
+                return VALUE_BOOLEAN;
+        case NANBOX_VALUE_NULL:
+                return VALUE_NIL;
+        case NANBOX_VALUE_UNDEFINED:
+                return VALUE_NONE;
+        default:
+                if (value_is_direct_tuple(value)) {
+                        return value_direct_tuple_ptr(value)->tags
+                             ? VALUE_TUPLE | VALUE_TAGGED
+                             : VALUE_TUPLE;
+                }
+                return value_box_ptr(value)->payload.type;
+        }
+
+        switch (bits >> 48) {
+        case VALUE_DIRECT_ARRAY_TAG >> 48:
+                return VALUE_ARRAY;
+        case VALUE_DIRECT_CLASS_TAG >> 48:
+                return VALUE_CLASS;
+        case VALUE_DIRECT_TAG_TAG >> 48:
+                return VALUE_TAG;
+        case VALUE_DIRECT_OBJECT_TAG >> 48:
+                return VALUE_OBJECT;
+        case VALUE_DIRECT_TAGGED_INT_TAG >> 48:
+                return VALUE_INTEGER | VALUE_TAGGED;
+        case NANBOX_MIN_NUMBER >> 48:
+                return VALUE_INTEGER;
+        default:
+                return VALUE_REAL;
+        }
+#else
         if (nanbox_is_int(value.bits)) return VALUE_INTEGER;
         if (nanbox_is_double(value.bits)) return VALUE_REAL;
         if (nanbox_is_boolean(value.bits)) return VALUE_BOOLEAN;
@@ -1394,6 +1435,7 @@ value_type(Value value)
         if (value_is_direct_tuple(value))
                 return value_direct_tuple_ptr(value)->tags ? VALUE_TUPLE | VALUE_TAGGED : VALUE_TUPLE;
         return value_box_ptr(value)->payload.type;
+#endif
 }
 
 inline static u16

@@ -629,7 +629,7 @@ pub class FormPart {
     }
 }
 
-pub class FormData : Iter[FormPart] {
+pub class FormData : Iterable[FormPart] {
     __parts: Array[FormPart]
 
     init() { __parts = [] }
@@ -646,8 +646,8 @@ pub class FormData : Iter[FormPart] {
     }
 
     parts() -> Array[FormPart] { __parts }
-    __iter__() { __parts.__iter__() }
-    __len__() -> Int { #__parts }
+    __iter__() -> Iter[FormPart] { __parts.__iter__() }
+    #() -> Int { #__parts }
 }
 
 /* ============================================================================
@@ -1528,7 +1528,7 @@ pub class Session {
             t.setopt-long(CURLOPT_HTTPAUTH, CURLAUTH_BEARER, 'CURLOPT_HTTPAUTH')
         }
 
-        if let $cookies = opts.cookies {
+        if let $cookies = opts.cookies ?? defaults.cookies {
             let cookie-str = ["{k}={v}" for k, v in cookies].join('; ')
             t.setopt-str(CURLOPT_COOKIE, cookie-str, 'CURLOPT_COOKIE')
         }

@@ -14,7 +14,35 @@ pub fn pread(fd: Int, n: Int, offset: Int) -> Blob;
 pub fn pwrite(fd: Int, data: _, offset: Int) -> Int;
 
 pub fn wait(pid: Int = -1, options: Int = 0) -> (Int, Int) | nil;
-pub fn wait4(pid: Int = -1, options: Int = 0) -> (Int, Int, Float, Float) | nil;
+
+/** Complete resource-usage data returned by wait4(2). */
+pub use RUsage = {
+    utime: Float,
+    stime: Float,
+    maxrss: Int,
+    ixrss: Int,
+    idrss: Int,
+    isrss: Int,
+    minflt: Int,
+    majflt: Int,
+    nswap: Int,
+    inblock: Int,
+    oublock: Int,
+    msgsnd: Int,
+    msgrcv: Int,
+    nsignals: Int,
+    nvcsw: Int,
+    nivcsw: Int
+}
+
+/** Process status and resource usage returned by wait4(2). */
+pub use Wait4Result = {
+    pid: Int,
+    status: Int,
+    rusage: RUsage
+}
+
+//pub fn wait4(pid: Int = -1, options: Int = 0) -> Wait4Result | nil;
 
 pub fn socket(domain: Int, type: Int, protocol: Int) -> Int;
 pub fn bind(sock: Int, addr: _) -> Int;

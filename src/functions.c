@@ -5794,6 +5794,35 @@ BUILTIN_FUNCTION(os_wait)
 #endif
 }
 
+#ifndef _WIN32
+static Value
+os_rusage_value(Ty *ty, struct rusage const *usage)
+{
+        Value result = vTn(
+                "utime",    REAL(usage->ru_utime.tv_sec
+                                + usage->ru_utime.tv_usec / 1.0e6),
+                "stime",    REAL(usage->ru_stime.tv_sec
+                                + usage->ru_stime.tv_usec / 1.0e6),
+                "maxrss",   INTEGER(usage->ru_maxrss),
+                "ixrss",    INTEGER(usage->ru_ixrss),
+                "idrss",    INTEGER(usage->ru_idrss),
+                "isrss",    INTEGER(usage->ru_isrss),
+                "minflt",   INTEGER(usage->ru_minflt),
+                "majflt",   INTEGER(usage->ru_majflt),
+                "nswap",    INTEGER(usage->ru_nswap),
+                "inblock",  INTEGER(usage->ru_inblock),
+                "oublock",  INTEGER(usage->ru_oublock),
+                "msgsnd",   INTEGER(usage->ru_msgsnd),
+                "msgrcv",   INTEGER(usage->ru_msgrcv),
+                "nsignals", INTEGER(usage->ru_nsignals),
+                "nvcsw",    INTEGER(usage->ru_nvcsw),
+                "nivcsw",   INTEGER(usage->ru_nivcsw)
+        );
+
+        return result;
+}
+#endif
+
 BUILTIN_FUNCTION(os_wait4)
 {
         ASSERT_ARGC("os.wait4()", 0, 1, 2);
@@ -5840,16 +5869,16 @@ BUILTIN_FUNCTION(os_wait4)
                 return NIL;
         }
 
-        Value result = vT(4);
+        Value rusage = os_rusage_value(ty, &usage);
+        gP(&rusage);
 
-        V_ITEMS(result)[0] = INTEGER(ret);
-        V_ITEMS(result)[1] = INTEGER(status);
-        V_ITEMS(result)[2] = REAL(
-                usage.ru_utime.tv_sec + usage.ru_utime.tv_usec / 1.0e6
+        Value result = vTn(
+                "pid",     INTEGER(ret),
+                "status",  INTEGER(status),
+                "rusage",  rusage
         );
-        V_ITEMS(result)[3] = REAL(
-                usage.ru_stime.tv_sec + usage.ru_stime.tv_usec / 1.0e6
-        );
+
+        gX();
 
         return result;
 #endif
@@ -6174,7 +6203,7 @@ BUILTIN_FUNCTION(os_sigwaitinfo)
                 "fd",      INTEGER(info.si_fd),
 #endif
                 "value",   INTEGER(info.si_value.sival_int),
-                "addr",    INTEGER((imax)(uintptr_t)info.si_addr),
+                "addr",    INTEGER((imax)(uptr)info.si_addr),
                 "band",    INTEGER(info.si_band)
         );
 

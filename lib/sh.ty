@@ -13,8 +13,7 @@ pub use CmdResult = {
     signal: Int | nil,
     stdout: String,
     stderr: String,
-    user: Float,
-    system: Float
+    rusage: os.RUsage
 }
 
 pub fn sh(
@@ -99,7 +98,7 @@ pub fn sh(
         os.close(p.stderr)
     }
 
-    let (_, status, user, system) = os.wait4(p.pid)!
+    let {status, rusage, *} = os.wait4(p.pid)!
 
     if timedOut {
         return nil
@@ -112,8 +111,7 @@ pub fn sh(
         stdout: out,
         status: os.WEXITSTATUS(status),
         stderr: err.str!(),
-        user,
-        system
+        rusage
     }
 #|else
     let stdoutThread = Thread(-> do {

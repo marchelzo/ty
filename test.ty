@@ -55,10 +55,10 @@ fn run(p: Path) {
             ('', chalk"[b bright magenta]TIMEOUT[/]")
         },
 
-        {status: 0, signal: nil, user, system, *} => do {
+        {status: 0, signal: nil, rusage, *} => do {
             pass += 1
-            user-cpu-us += int(user * 1.0e6)
-            system-cpu-us += int(system * 1.0e6)
+            user-cpu-us += int(rusage.utime * 1.0e6)
+            system-cpu-us += int(rusage.stime * 1.0e6)
             ('#635d56', chalk"[bright green bold]PASS[/] {show-time(time.now() - t0)}")
         },
 

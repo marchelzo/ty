@@ -12,3 +12,35 @@ pub fn os-basics() {
     assert(getcwd().match?(/\/tests$/))
     chdir(cwd)
 }
+
+pub fn wait4-result() {
+    if not __windows__ {
+        let process = spawn(['/bin/sh', '-c', 'exit 7'])
+        let result = wait4(process.pid)!
+
+        assert(result.pid == process.pid)
+        assert(WIFEXITED(result.status))
+        assert(WEXITSTATUS(result.status) == 7)
+
+        let rusage = result.rusage
+        assert(#rusage == 16)
+        assert(rusage.utime >= 0.0)
+        assert(rusage.stime >= 0.0)
+        assert([
+            rusage.maxrss,
+            rusage.ixrss,
+            rusage.idrss,
+            rusage.isrss,
+            rusage.minflt,
+            rusage.majflt,
+            rusage.nswap,
+            rusage.inblock,
+            rusage.oublock,
+            rusage.msgsnd,
+            rusage.msgrcv,
+            rusage.nsignals,
+            rusage.nvcsw,
+            rusage.nivcsw
+        ].all?(\_ >= 0))
+    }
+}
