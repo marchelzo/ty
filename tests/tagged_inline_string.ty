@@ -1,0 +1,11 @@
+ns test
+
+pub fn tagged-inline-string-survives-gc() {
+    // chars() returns compact strings whose bytes live in the Value box.
+    // Adding/removing a tag must not leave the new box pointing into the old
+    // box, which can be collected while the string is still reachable.
+    let Some(ch) = Some('x'.chars()[0])
+    let garbage = ['z'.repeat(1024) for ..6000]
+    assert(#garbage == 6000)
+    assert(ch == 'x')
+}

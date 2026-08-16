@@ -360,11 +360,28 @@ value_payload(Value value)
         return (ValuePayload){ .type=VALUE_ZERO };
 }
 
+static Value
+value_inline_string_metadata(Ty *ty, Value value, u8 type, u16 tags, u32 src)
+{
+        /* Inline string bytes belong to their ValueBox.  A metadata-only box
+         * cannot safely point into the old box because the old Value may no
+         * longer be reachable. */
+        Value result = value_string_clone_value(ty, V_STR(value), V_BYTES(value));
+        ValuePayload *payload = &value_box_ptr(result)->payload;
+        payload->type = type;
+        payload->tags = tags;
+        payload->src = src;
+        return result;
+}
+
 Value
 value_with_src(Ty *ty, Value value, u32 src)
 {
         if (value_is_direct_tuple(value))
                 return value_tuple_metadata(ty, value, V_TAGS(value), src);
+        if ((V_TYPE(value) & ~VALUE_TAGGED) == VALUE_STRING && V_INLINE_BYTES(value))
+                return value_inline_string_metadata(
+                        ty, value, V_TYPE(value), V_TAGS(value), src);
         ValuePayload payload = value_payload(value);
         payload.src = src;
         return value_box(ty, payload);
@@ -381,6 +398,10 @@ value_with_tags(Ty *ty, Value value, u16 tags)
         }
         if (value_is_direct_tuple(value))
                 return value_tuple_metadata(ty, value, tags, V_SRC(value));
+        if ((V_TYPE(value) & ~VALUE_TAGGED) == VALUE_STRING && V_INLINE_BYTES(value)) {
+                u8 type = tags ? VALUE_STRING | VALUE_TAGGED : VALUE_STRING;
+                return value_inline_string_metadata(ty, value, type, tags, V_SRC(value));
+        }
         ValuePayload payload = value_payload(value);
         payload.tags = tags;
         payload.type = tags ? (payload.type | VALUE_TAGGED) : (payload.type & ~VALUE_TAGGED);
@@ -392,6 +413,11 @@ value_with_type(Ty *ty, Value value, u8 type)
 {
         if (value_is_direct_tuple(value) && (type & ~VALUE_TAGGED) == VALUE_TUPLE)
                 return value_tuple_metadata(ty, value, V_TAGS(value), V_SRC(value));
+        if ((V_TYPE(value) & ~VALUE_TAGGED) == VALUE_STRING
+        && (type & ~VALUE_TAGGED) == VALUE_STRING
+        && V_INLINE_BYTES(value))
+                return value_inline_string_metadata(
+                        ty, value, type, V_TAGS(value), V_SRC(value));
         ValuePayload payload = value_payload(value);
         payload.type = type;
         return value_box(ty, payload);
