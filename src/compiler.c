@@ -7638,6 +7638,7 @@ emit_function(Ty *ty, Expr const *e)
                 EP(NULL);
         }
 #endif
+        EP(NULL);
 
         LOG("COMPILING FUNCTION: %s", scope_name(ty, e->scope));
 
@@ -19877,13 +19878,17 @@ DumpProgram(
                 CASE(FUNCTION)
                 CASE(GENERATOR)
                 {
-                        Value v = FUNCTION();
-
                         READVALUE_(n);
 
                         c = ALIGNED_FOR(i64, c);
 
-                        V_INFO(v) = (int *) c;
+                        ValueBox box = {
+                                .payload = {
+                                        .type = VALUE_FUNCTION,
+                                        .info = (int *)c
+                                }
+                        };
+                        Value v = { .bits = nanbox_from_pointer(&box) };
 
                         int hs    = V_INFO(v)[FUN_INFO_HEADER_SIZE];
                         int size  = V_INFO(v)[FUN_INFO_CODE_SIZE];

@@ -85,7 +85,7 @@ FreeArena(Ty *ty, Arena *a)
         FreeArena(ty, NextArena(a));
 
         if (a->gc) {
-                gc_okgc(ty, a->base);
+                OKGC(a->base);
         } else {
                 xmF(a->base);
         }

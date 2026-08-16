@@ -697,38 +697,7 @@ NextGCPhase(Ty *ty, int phase, int n_running)
         TyCondVarBroadcast(&ty->group->GCPhaseCond);
 }
 
-static void MarkFinalizerValues(Ty *marker, Ty *owner);
-
-static bool
-FinalizerBoxNeedsMark(ValueBox const *box)
-{
-        if (box->payload.src != 0) return true;
-
-        switch (box->payload.type & ~VALUE_TAGGED) {
-        case VALUE_FOREIGN_FUNCTION: return box->payload.xinfo != NULL;
-        case VALUE_ARRAY:            return box->payload.array != NULL;
-        case VALUE_DICT:             return box->payload.dict != NULL;
-        case VALUE_NATIVE_FUNCTION:
-        case VALUE_BOUND_FUNCTION:
-        case VALUE_FUNCTION:         return true;
-        case VALUE_GENERATOR:        return box->payload.gen != NULL;
-        case VALUE_THREAD:           return box->payload.thread != NULL;
-        case VALUE_STRING:           return !box->payload.ro
-                                         && !box->payload.inline_bytes
-                                         && box->payload.str0 != NULL;
-        case VALUE_OBJECT:           return box->payload.object != NULL;
-        case VALUE_CLASS:            return true;
-        case VALUE_REF:              return box->payload.ref != NULL;
-        case VALUE_BLOB:             return box->payload.blob != NULL;
-        case VALUE_QUEUE:            return box->payload.queue != NULL;
-        case VALUE_SHARED_QUEUE:     return box->payload.shared_queue != NULL;
-        case VALUE_PTR:              return box->payload.gcptr != NULL;
-        case VALUE_TRACE:            return box->payload.ptr != NULL;
-        case VALUE_REGEX:            return box->payload.regex != NULL
-                                         && box->payload.regex->gc;
-        default:                     return false;
-        }
-}
+static void MarkPendingFFIAutoValues(Ty *marker, Ty *owner);
 
 static void
 WaitGC(Ty *ty)
@@ -751,11 +720,9 @@ WaitGC(Ty *ty)
                 return;
         }
 
+        class_prepare_mark(ty);
         MarkStorage(ty);
-        /* Hard/immortal Value boxes can own GC-managed payloads.  Running
-         * threads mark their own heaps here, so they must retain those payloads
-         * before signaling the coordinator that marking is complete. */
-        MarkFinalizerValues(ty, ty);
+        MarkPendingFFIAutoValues(ty, ty);
         ty->group->GCReadyCount += 1;
 
         WaitForGCPhase(ty, GC_PHASE_SWEEP);
@@ -772,25 +739,17 @@ WaitGC(Ty *ty)
 }
 
 static void
-MarkFinalizerValues(Ty *marker, Ty *owner)
+MarkPendingFFIAutoValues(Ty *marker, Ty *owner)
 {
         for (usize i = 0; i < vN(owner->finalizer_values); ++i) {
                 struct alloc *a = v__(owner->finalizer_values, i);
-                if (a->type == GC_VALUE_BOX && a->hard != 0) {
-                        ValueBox *box = (ValueBox *)a->data;
-                        int type = box->payload.type & ~VALUE_TAGGED;
-                        if (type == VALUE_METHOD || type == VALUE_BUILTIN_METHOD) {
-                                continue; /* receiver can be temporary native stack storage */
-                        }
-                        if (!FinalizerBoxNeedsMark(box)) continue;
-                        Value v = { .bits = nanbox_from_pointer(a->data) };
-                        value_mark(marker, &v);
-                } else if (a->type == GC_FFI_AUTO && !a->mark && a->hard == 0) {
+                if (a->type == GC_FFI_AUTO && !a->mark && a->hard == 0) {
                         Value *values = (Value *)a->data;
-                        value_mark(marker, &values[0]);
-                        value_mark(marker, &values[1]);
+                        value_mark_push(marker, &values[0]);
+                        value_mark_push(marker, &values[1]);
                 }
         }
+        value_mark_drain(marker);
 }
 
 void
@@ -863,6 +822,11 @@ DoGC(Ty *ty)
 
         StartGC(ty);
 
+        for (int i = 0; i < nBlocked; ++i) {
+                class_prepare_mark(v__(ty->group->TyList, blockedThreads[i]));
+        }
+        class_prepare_mark(ty);
+
 #if defined(TY_GC_STATS)
         if (heap > GCMaxHeap) {
                 GCMaxHeap = heap;
@@ -878,12 +842,12 @@ DoGC(Ty *ty)
         GCLOG("Marking own storage on thread %llu", TID);
         MarkStorage(ty);
 
-        /* An unreachable custom-auto allocation still needs its embedded
-         * destructor and owner Values alive while the sweep invokes it. */
         for (int i = 0; i < nBlocked; ++i) {
-                MarkFinalizerValues(ty, v__(ty->group->TyList, blockedThreads[i]));
+                MarkPendingFFIAutoValues(
+                        ty, v__(ty->group->TyList, blockedThreads[i])
+                );
         }
-        MarkFinalizerValues(ty, ty);
+        MarkPendingFFIAutoValues(ty, ty);
 
         if (ty->group == &MainGroup) {
                 /* The native class registry outlives ordinary Value roots. */
@@ -895,20 +859,23 @@ DoGC(Ty *ty)
                 GCLOG("Marking %zu global roots on thread %llu", vN(Globals), TID);
                 RESET_TOTAL_REACHED();
                 for (int i = 0; i < vN(Globals); ++i) {
-                        value_mark(ty, v_(Globals, i));
+                        value_mark_push(ty, v_(Globals, i));
                 }
+                value_mark_drain(ty);
                 LOG_REACHED(" => globals reached %llu", TotalReached);
 
                 RESET_TOTAL_REACHED();
                 GCRootSet *immortal = GCImmortalSet(ty);
                 for (int i = 0; i < vN(*immortal); ++i) {
-                        value_mark(ty, v_(*immortal, i));
+                        value_mark_push(ty, v_(*immortal, i));
                 }
+                value_mark_drain(ty);
                 LOG_REACHED(" => immortal reached %llu", TotalReached);
 
                 for (int i = 0; i < vN(SignalGCRoots); ++i) {
-                        value_mark(ty, v_(SignalGCRoots, i));
+                        value_mark_push(ty, v_(SignalGCRoots, i));
                 }
+                value_mark_drain(ty);
         }
 
         NextGCPhase(ty, GC_PHASE_SWEEP, nRunning);
@@ -2392,10 +2359,12 @@ CleanupThread(void *ctx)
         xvF(CO_THREADS);
         xvF(ty->co_states);
         xvF(ty->allocs);
+        gc_free_value_box_cache(ty);
         xvF(ty->finalizer_values);
         xvF(ty->_2op_cache);
         xvF(ty->err);
         xvF(ty->marking);
+        xvF(ty->class_marks);
         xvF(ty->visiting);
         xvF(ty->scratch.arenas);
         FreeArena(ty, &ty->arena);
@@ -6520,21 +6489,38 @@ BadContainer:
 char *
 DoFunction(Ty *ty, char const *ip)
 {
-        Value v = {0};
-
-        v = value_with_type(ty, v, VALUE_FUNCTION);
-        GC_STOP();
-
         int n = load_i32(ip);
         ip += sizeof (i32);
 
         ip = ALIGNED_FOR(i64, ip);
 
-        V_INFO(v) = (i32 *)ip;
+        i32 *info = (i32 *)ip;
 
-        int hs   = V_INFO(v)[FUN_INFO_HEADER_SIZE];
-        int size = V_INFO(v)[FUN_INFO_CODE_SIZE];
-        int nEnv = V_INFO(v)[FUN_INFO_CAPTURES];
+        int hs   = info[FUN_INFO_HEADER_SIZE];
+        int size = info[FUN_INFO_CODE_SIZE];
+        int nEnv = info[FUN_INFO_CAPTURES];
+
+        bool cacheable = ty->id == 0
+                      && nEnv == 0
+                      && !(*((i16 *)((char *)info + FUN_FLAGS)) & FF_FROM_EVAL);
+        ValueBox *cached = NULL;
+        if (cacheable) {
+                memcpy(&cached, (char *)info + FUN_CACHE, sizeof cached);
+        }
+
+        Value v;
+        if (cached != NULL) {
+                v = (Value){ .bits = nanbox_from_pointer(cached) };
+        } else {
+                v = FUNCTION();
+                V_INFO(v) = info;
+                if (cacheable) {
+                        gc_immortalize(ty, &v);
+                        cached = value_box_ptr(v);
+                        memcpy((char *)info + FUN_CACHE, &cached, sizeof cached);
+                }
+        }
+        GC_STOP();
 
         int ncaps = (n > 0) ? nEnv - n : nEnv;
 

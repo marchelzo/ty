@@ -648,10 +648,9 @@ string_words(Ty *ty, Value *string, int argc, Value *kwargs)
                 if (i >= len)
                         break;
 
-                Value str = STRING_VIEW(ty, *string, i, 0);
+                isize start = i;
 
                 do {
-                        sN(str) += n;
                         i += n;
                         n = max(utf8proc_iterate(s + i, len - i, &cp), 1);
                         c = utf8proc_category(cp);
@@ -664,7 +663,7 @@ string_words(Ty *ty, Value *string, int argc, Value *kwargs)
                      && (c != UTF8PROC_CATEGORY_ZP)
                 );
 
-                vAp(a, STRING_CLONE(ty, ss(str), sN(str)));
+                vAp(a, STRING_CLONE(ty, s + start, i - start));
         }
 End:
         OKGC(a);
@@ -755,10 +754,6 @@ string_split(Ty *ty, Value *string, int argc, Value *kwargs)
         gP(&result);
 
         if (V_TYPE(pattern) == VALUE_STRING) {
-                /* Reserve before creating STRING_VIEW temporaries: growing the
-                 * result array may run GC, and a not-yet-pushed view otherwise
-                 * exists only in an unscanned C local. */
-                vvR(*V_ARRAY(result), (usize)len + 1);
                 u8 const *p = ss(pattern);
                 isize n = sN(pattern);
 
@@ -767,19 +762,17 @@ string_split(Ty *ty, Value *string, int argc, Value *kwargs)
 
                 isize i = 0;
                 while (i < len) {
-                        Value str = STRING_VIEW(ty, *string, i, 0);
+                        isize start = i;
 
                         if (argc == 2 && V_ARRAY(result)->count == V_Z(ARG(1))) {
-                                sN(str) = len - i;
                                 i = len;
                         } else {
                                 while (i < len && !is_prefix(s + i, len - i, p, n)) {
-                                        sN(str) += 1;
                                         i += 1;
                                 }
                         }
 
-                        vAp(V_ARRAY(result), STRING_CLONE(ty, ss(str), sN(str)));
+                        vAp(V_ARRAY(result), STRING_CLONE(ty, s + start, i - start));
 
                         i += n;
                 }

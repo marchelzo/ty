@@ -139,11 +139,6 @@ value_box(Ty *ty, ValuePayload payload)
          * every omitted member, so clearing the allocation a second time only
          * adds bandwidth to this hot exceptional path. */
         ValueBox *box = gc_alloc_object_unchecked(ty, sizeof *box, GC_VALUE_BOX);
-        if (!TY_IS_READY) {
-                /* Loader/compiler structures retain Values outside traced GC
-                 * containers for the process lifetime. */
-                NOGC(box);
-        }
         box->payload = payload;
         return (Value){ .bits = nanbox_from_pointer(box) };
 }
@@ -350,6 +345,8 @@ value_payload(Value value)
         if (value_is_direct_object(value)) return (ValuePayload){ .type=VALUE_OBJECT, .object=value_direct_object_ptr(value), .class=value_direct_object_ptr(value)->class->i };
         if (value_is_direct_tagged_int(value)) return (ValuePayload){ .type=VALUE_INTEGER | VALUE_TAGGED, .tags=value_direct_tagged_int_tags(value), .z=value_direct_tagged_int_value(value) };
         if (value_is_direct_tuple(value)) return (ValuePayload){ .type=V_TYPE(value), .tags=V_TAGS(value), .src=V_SRC(value), .count=V_COUNT(value), .items=V_ITEMS(value), .ids=V_IDS(value) };
+        if (value_is_direct_regex(value)) return (ValuePayload){ .type=VALUE_REGEX, .regex=value_direct_regex_ptr(value) };
+        if (value_is_direct_sentinel(value)) return (ValuePayload){ .type=VALUE_SENTINEL };
         if (nanbox_is_pointer(value.bits)) return value_box_ptr(value)->payload;
         if (nanbox_is_int(value.bits)) return (ValuePayload){ .type=VALUE_INTEGER, .z=nanbox_to_int(value.bits) };
         if (nanbox_is_double(value.bits)) return (ValuePayload){ .type=VALUE_REAL, .real=nanbox_to_double(value.bits) };
@@ -377,6 +374,8 @@ value_inline_string_metadata(Ty *ty, Value value, u8 type, u16 tags, u32 src)
 Value
 value_with_src(Ty *ty, Value value, u32 src)
 {
+        if (V_SRC(value) == src) return value;
+
         if (value_is_direct_tuple(value))
                 return value_tuple_metadata(ty, value, V_TAGS(value), src);
         if ((V_TYPE(value) & ~VALUE_TAGGED) == VALUE_STRING && V_INLINE_BYTES(value))
@@ -390,6 +389,11 @@ value_with_src(Ty *ty, Value value, u32 src)
 Value
 value_with_tags(Ty *ty, Value value, u16 tags)
 {
+        u8 type = V_TYPE(value);
+        u8 tagged_type = tags ? (type | VALUE_TAGGED)
+                              : (type & ~VALUE_TAGGED);
+        if (V_TAGS(value) == tags && type == tagged_type) return value;
+
         if (tags != 0 && nanbox_is_int(value.bits))
                 return value_direct_tagged_int(nanbox_to_int(value.bits), tags);
         if (value_is_direct_tagged_int(value)) {
@@ -399,18 +403,21 @@ value_with_tags(Ty *ty, Value value, u16 tags)
         if (value_is_direct_tuple(value))
                 return value_tuple_metadata(ty, value, tags, V_SRC(value));
         if ((V_TYPE(value) & ~VALUE_TAGGED) == VALUE_STRING && V_INLINE_BYTES(value)) {
-                u8 type = tags ? VALUE_STRING | VALUE_TAGGED : VALUE_STRING;
-                return value_inline_string_metadata(ty, value, type, tags, V_SRC(value));
+                return value_inline_string_metadata(
+                        ty, value, tagged_type, tags, V_SRC(value)
+                );
         }
         ValuePayload payload = value_payload(value);
         payload.tags = tags;
-        payload.type = tags ? (payload.type | VALUE_TAGGED) : (payload.type & ~VALUE_TAGGED);
+        payload.type = tagged_type;
         return value_box(ty, payload);
 }
 
 Value
 value_with_type(Ty *ty, Value value, u8 type)
 {
+        if (V_TYPE(value) == type) return value;
+
         if (value_is_direct_tuple(value) && (type & ~VALUE_TAGGED) == VALUE_TUPLE)
                 return value_tuple_metadata(ty, value, V_TAGS(value), V_SRC(value));
         if ((V_TYPE(value) & ~VALUE_TAGGED) == VALUE_STRING
@@ -2228,6 +2235,12 @@ _value_mark_xd(Ty *ty, Value const *v)
                 object_mark(ty, value_direct_object_ptr(*v));
                 return;
         }
+        if (value_is_direct_regex(*v)) {
+                Regex const *regex = value_direct_regex_ptr(*v);
+                if (regex->gc) MARK(regex);
+                return;
+        }
+        if (value_is_direct_sentinel(*v)) return;
         if (nanbox_is_aux(v->bits)) return;
         if (value_is_direct_tuple(*v)) {
                 mark_tuple(ty, v);
@@ -2287,16 +2300,27 @@ _value_mark_xd(Ty *ty, Value const *v)
 }
 
 void
-_value_mark(Ty *ty, Value const *v)
+value_mark_push(Ty *ty, Value const *v)
 {
         RESET_REACHED();
 
         _value_mark_xd(ty, v);
+}
 
+void
+value_mark_drain(Ty *ty)
+{
         while (vN(ty->marking) > 0) {
-                v = vXx(ty->marking);
+                Value const *v = vXx(ty->marking);
                 _value_mark_xd(ty, v);
         }
+}
+
+void
+_value_mark(Ty *ty, Value const *v)
+{
+        value_mark_push(ty, v);
+        value_mark_drain(ty);
 }
 
 Blob *

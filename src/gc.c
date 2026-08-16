@@ -18,12 +18,39 @@ static GCRootSet ImmortalSet;
 #define A_LOAD(p)     atomic_load_explicit((p), memory_order_relaxed)
 #define A_STORE(p, x) atomic_store_explicit((p), (x), memory_order_relaxed)
 
+static inline bool
+CacheValueBox(Ty *ty, struct alloc *a)
+{
+        if (
+                a->type != GC_VALUE_BOX
+             || a->size != sizeof (ValueBox)
+             || ty->free_value_box_count >= GC_VALUE_BOX_CACHE_MAX
+        ) {
+                return false;
+        }
+
+        *(struct alloc **)a->data = ty->free_value_boxes;
+        ty->free_value_boxes = a;
+        ty->free_value_box_count += 1;
+        return true;
+}
+
+void
+gc_free_value_box_cache(Ty *ty)
+{
+        while (ty->free_value_boxes != NULL) {
+                struct alloc *a = ty->free_value_boxes;
+                ty->free_value_boxes = *(struct alloc **)a->data;
+                ty_free(a);
+        }
+        ty->free_value_box_count = 0;
+}
+
 void
 gc_track_finalizer_value(Ty *ty, void *allocation)
 {
         struct alloc *a = ALLOC_OF(allocation);
-        /* GC_VALUE_BOX callers arrive only on the hard-count transition from
-         * zero, and each GC_FFI_AUTO allocation is registered exactly once. */
+        /* Each GC_FFI_AUTO allocation is registered exactly once. */
         xvP(ty->finalizer_values, a);
 }
 
@@ -37,27 +64,6 @@ gc_untrack_finalizer_value(Ty *ty, void *allocation)
                         vvX(ty->finalizer_values);
                         return;
                 }
-        }
-}
-
-void
-gc_nogc(Ty *ty, void *allocation)
-{
-        struct alloc *a = ALLOC_OF(allocation);
-        u16 previous = atomic_fetch_add_explicit(&a->hard, 1, memory_order_relaxed);
-        if (previous == 0 && a->type == GC_VALUE_BOX) {
-                gc_track_finalizer_value(ty, allocation);
-        }
-}
-
-void
-gc_okgc(Ty *ty, void *allocation)
-{
-        struct alloc *a = ALLOC_OF(allocation);
-        u16 previous = atomic_fetch_sub_explicit(&a->hard, 1, memory_order_relaxed);
-        assert(previous != 0);
-        if (previous == 1 && a->type == GC_VALUE_BOX) {
-                gc_untrack_finalizer_value(ty, allocation);
         }
 }
 
@@ -237,7 +243,7 @@ GCSweepTy(Ty *ty)
                 ) {
                         ty->memory_used -= min(a->size, ty->memory_used);
                         collect(ty, a);
-                        ty_free(a);
+                        if (!CacheValueBox(ty, a)) ty_free(a);
                 } else {
                         A_STORE(&a->mark, false);
                         *v_(ty->allocs, n++) = a;

@@ -250,8 +250,25 @@ class_ctor(Ty *ty, int class)
 }
 
 void
+class_prepare_mark(Ty *ty)
+{
+        ty->class_mark_epoch += 1;
+        if (UNLIKELY(ty->class_mark_epoch == 0)) {
+                memset(vv(ty->class_marks), 0,
+                       vN(ty->class_marks) * sizeof *vv(ty->class_marks));
+                ty->class_mark_epoch = 1;
+        }
+}
+
+void
 class_mark(Ty *ty, int c)
 {
+        while (vN(ty->class_marks) <= c) {
+                xvP(ty->class_marks, 0);
+        }
+        if (v__(ty->class_marks, c) == ty->class_mark_epoch) return;
+        v__(ty->class_marks, c) = ty->class_mark_epoch;
+
         Class *class = C(c);
         struct itable *tables[] = {
                 &class->methods, &class->getters, &class->setters, &class->fields,

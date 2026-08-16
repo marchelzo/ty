@@ -913,6 +913,12 @@ tuple_get_completions(Ty *ty, Value const *v, char const *prefix, char **out, in
 void
 _value_mark(Ty *ty, Value const *v);
 
+void
+value_mark_push(Ty *ty, Value const *v);
+
+void
+value_mark_drain(Ty *ty);
+
 static inline Array *
 value_array_new(Ty *ty)
 {

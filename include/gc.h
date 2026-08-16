@@ -29,11 +29,9 @@ HoldingLock(Ty *ty);
         xvP(ty->allocs, (a)); \
 } while (0)
 
-#if !defined(TY_RELEASE)
- #define GC_INITIAL_LIMIT (4ULL << 20)
-#else
- #define GC_INITIAL_LIMIT (4ULL << 20)
-#endif
+#define GC_INITIAL_LIMIT (1ULL << 20)
+
+#define GC_VALUE_BOX_CACHE_MAX (1ULL << 16)
 
 
 #if defined(TY_GC_STATS)
@@ -237,9 +235,20 @@ gc_alloc_object_unchecked(Ty *ty, usize n, char type)
         MemoryUsed += n;
         AddToTotalBytes(n);
 
-        struct alloc *a = ty_malloc(sizeof *a + n);
-        if (UNLIKELY(a == NULL)) {
-                panic("Out of memory!");
+        struct alloc *a;
+        if (
+                type == GC_VALUE_BOX
+             && n == sizeof (ValueBox)
+             && ty->free_value_boxes != NULL
+        ) {
+                a = ty->free_value_boxes;
+                ty->free_value_boxes = *(struct alloc **)a->data;
+                ty->free_value_box_count -= 1;
+        } else {
+                a = ty_malloc(sizeof *a + n);
+                if (UNLIKELY(a == NULL)) {
+                        panic("Out of memory!");
+                }
         }
 
         atomic_init(&a->mark, false);
@@ -374,6 +383,9 @@ GCMark(Ty *ty);
 
 void
 GCSweepTy(Ty *ty);
+
+void
+gc_free_value_box_cache(Ty *ty);
 
 void
 GCSweep(Ty *ty, AllocList *allocs, isize *used);
