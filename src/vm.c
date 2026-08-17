@@ -5937,8 +5937,7 @@ IncValue(Ty *ty, Value *v)
                 if (sN(*v) > 0) {
                         n = utf8proc_iterate(ss(*v), sN(*v), &rune);
                         n = max(1, n);
-                        ss(*v) += n;
-                        sN(*v) -= n;
+                        *v = STRING_VIEW(ty, *v, n, sN(*v) - n);
                 }
                 break;
 

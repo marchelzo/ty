@@ -691,17 +691,17 @@ string_lines(Ty *ty, Value *string, int argc, Value *kwargs)
         }
 
         while (i < len) {
-                Value str = STRING_VIEW(ty, *string, i, 0);
+                isize start = i;
 
                 while (
                         (i < len)
                      && (s[i] != '\n')
                      && ((s[i] != '\r') || (s[i + 1] != '\n'))
                 ) {
-                        sN(str) += 1;
                         i += 1;
                 }
 
+                Value str = STRING_VIEW(ty, *string, start, i - start);
                 vAp(a, str);
 
                 if (i < len) {

@@ -3,8 +3,6 @@
 
 #include "defs.h"
 
-typedef struct table PackageCache;
-
 void
 mod_init(TY *ty);
 

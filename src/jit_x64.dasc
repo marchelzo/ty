@@ -673,6 +673,8 @@ static void jit_emit_branch_not_pointer(dasm_State **Dst, int word, int label) {
         |  mov rax, Rq(word)
         |  shr rax, 48
         |  jnz =>label
+        |  test Rb(word), 3
+        |  jnz =>label
 }
 static void jit_emit_branch_not_double(dasm_State **Dst, int word, int label) {
         |  mov rax, Rq(word)

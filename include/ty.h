@@ -635,7 +635,7 @@ typedef struct ty0 {
         IPVector tls0;
 
         CompileState *compiler;
-        PackageCache pkg;
+        InternSet pkg;
 
         vec(TyTest) tests;
 } TY;
@@ -1278,6 +1278,7 @@ Value value_string_clone_nul_value(Ty *ty, void const *src, u32 n);
 Value value_string_inline(Ty *ty, u32 n);
 Value value_string_wrap(Ty *ty, void const *src, u32 n, bool ro);
 Value value_string_view(Ty *ty, Value string, isize offset, u32 n);
+u32 value_direct_string_size(Value string);
 Value value_tuple_wrap(Ty *ty, Value *items, i32 *ids, i32 count);
 Value value_tuple_alloc(Ty *ty, i32 count, bool with_ids);
 Value value_tuple_view(Ty *ty, Value tuple, i32 offset, i32 count);
@@ -1296,6 +1297,7 @@ ValuePayload value_payload(Value value);
 #define VALUE_DIRECT_TAGGED_INT_TAG UINT64_C(0x0005000000000000)
 #define VALUE_DIRECT_PTR_MASK  UINT64_C(0x0000ffffffffffff)
 #define VALUE_DIRECT_PTR_MIN   UINT64_C(0x1000)
+#define VALUE_DIRECT_STRING_PTR_TAG UINT64_C(0x1)
 #define VALUE_DIRECT_TUPLE_PTR_TAG UINT64_C(0x2)
 #define VALUE_DIRECT_REGEX_PTR_TAG UINT64_C(0x3)
 #define VALUE_DIRECT_TUPLE_PTR_MASK UINT64_C(0x3)
@@ -1379,6 +1381,24 @@ inline static Value value_direct_tuple(TupleValue *tuple) {
 inline static TupleValue *value_direct_tuple_ptr(Value v) {
         return (TupleValue *)(uptr)(v.bits.as_int64 & ~VALUE_DIRECT_TUPLE_PTR_MASK);
 }
+inline static bool value_is_direct_string(Value v) {
+#if defined(NANBOX_64)
+        return (v.bits.as_int64 & ~VALUE_DIRECT_PTR_MASK) == 0
+            && v.bits.as_int64 >= VALUE_DIRECT_PTR_MIN
+            && (v.bits.as_int64 & VALUE_DIRECT_TUPLE_PTR_MASK) == VALUE_DIRECT_STRING_PTR_TAG;
+#else
+        return false;
+#endif
+}
+inline static Value value_direct_string(void const *string) {
+        uptr p = (uptr)string;
+        assert(p >= VALUE_DIRECT_PTR_MIN && (p & ~VALUE_DIRECT_PTR_MASK) == 0);
+        assert((p & VALUE_DIRECT_TUPLE_PTR_MASK) == 0);
+        return (Value){ .bits.as_int64 = p | VALUE_DIRECT_STRING_PTR_TAG };
+}
+inline static u8 *value_direct_string_ptr(Value v) {
+        return (u8 *)(uptr)(v.bits.as_int64 & ~VALUE_DIRECT_TUPLE_PTR_MASK);
+}
 inline static bool value_is_direct_regex(Value v) {
 #if defined(NANBOX_64)
         return (v.bits.as_int64 & ~VALUE_DIRECT_PTR_MASK) == 0
@@ -1444,6 +1464,8 @@ value_type(Value value)
                 switch (bits & VALUE_DIRECT_TUPLE_PTR_MASK) {
                 case 0:
                         return value_box_ptr(value)->payload.type;
+                case VALUE_DIRECT_STRING_PTR_TAG:
+                        return VALUE_STRING;
                 case VALUE_DIRECT_TUPLE_PTR_TAG:
                         return value_direct_tuple_ptr(value)->tags
                              ? VALUE_TUPLE | VALUE_TAGGED
@@ -1484,6 +1506,7 @@ value_type(Value value)
         if (value_is_direct_tag(value)) return VALUE_TAG;
         if (value_is_direct_object(value)) return VALUE_OBJECT;
         if (value_is_direct_tagged_int(value)) return VALUE_INTEGER | VALUE_TAGGED;
+        if (value_is_direct_string(value)) return VALUE_STRING;
         if (value_is_direct_tuple(value))
                 return value_direct_tuple_ptr(value)->tags ? VALUE_TUPLE | VALUE_TAGGED : VALUE_TUPLE;
         return value_box_ptr(value)->payload.type;
@@ -1495,7 +1518,7 @@ value_tags(Value value)
 {
         if (value_is_direct_tagged_int(value)) return value_direct_tagged_int_tags(value);
         if (value_is_direct_tuple(value)) return value_direct_tuple_ptr(value)->tags;
-        if (value_is_direct_regex(value) || value_is_direct_sentinel(value)) return 0;
+        if (value_is_direct_string(value) || value_is_direct_regex(value) || value_is_direct_sentinel(value)) return 0;
         return nanbox_is_pointer(value.bits) ? value_box_ptr(value)->payload.tags : 0;
 }
 
@@ -1503,7 +1526,7 @@ inline static u32
 value_src(Value value)
 {
         if (value_is_direct_tuple(value)) return value_direct_tuple_ptr(value)->src;
-        if (value_is_direct_regex(value) || value_is_direct_sentinel(value)) return 0;
+        if (value_is_direct_string(value) || value_is_direct_regex(value) || value_is_direct_sentinel(value)) return 0;
         return nanbox_is_pointer(value.bits) ? value_box_ptr(value)->payload.src : 0;
 }
 
@@ -1558,11 +1581,11 @@ value_bool(Value value)
 #define V_BUILTIN_FUNCTION(v) value_box_ptr((v))->payload.builtin_function
 #define V_MODULE(v)     value_box_ptr((v))->payload.module
 #define V_NAME(v)       value_box_ptr((v))->payload.name
-#define V_STR(v)        value_box_ptr((v))->payload.str
-#define V_BYTES(v)      value_box_ptr((v))->payload.bytes
-#define V_RO(v)         value_box_ptr((v))->payload.ro
-#define V_INLINE_BYTES(v) value_box_ptr((v))->payload.inline_bytes
-#define V_STR0(v)       value_box_ptr((v))->payload.str0
+#define V_STR(v)        (value_is_direct_string((v)) ? value_direct_string_ptr((v)) : value_box_ptr((v))->payload.str)
+#define V_BYTES(v)      (value_is_direct_string((v)) ? value_direct_string_size((v)) : value_box_ptr((v))->payload.bytes)
+#define V_RO(v)         (value_is_direct_string((v)) ? false : value_box_ptr((v))->payload.ro)
+#define V_INLINE_BYTES(v) (value_is_direct_string((v)) ? false : value_box_ptr((v))->payload.inline_bytes)
+#define V_STR0(v)       (value_is_direct_string((v)) ? value_direct_string_ptr((v)) : value_box_ptr((v))->payload.str0)
 #define V_I(v)          value_box_ptr((v))->payload.i
 #define V_OFF(v)        value_box_ptr((v))->payload.off
 #define V_NT(v)         value_box_ptr((v))->payload.nt

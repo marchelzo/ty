@@ -809,7 +809,7 @@ value_string_clone(Ty *ty, void const *src, u32 n)
                 return NULL;
         }
 
-        u8 *str = mAo(n + 1, GC_STRING);
+        u8 *str = mAo(n + 1, GC_STRING_NUL);
 
         memcpy(str, src, n);
         str[n] = '\0';
@@ -820,7 +820,7 @@ value_string_clone(Ty *ty, void const *src, u32 n)
 static inline void *
 value_string_clone_nul(Ty *ty, void const *src, u32 n)
 {
-        u8 *str = mAo(n + 1, GC_STRING);
+        u8 *str = mAo(n + 1, GC_STRING_NUL);
 
         memcpy(str, src, n);
         str[n] = '\0';

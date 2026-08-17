@@ -698,13 +698,14 @@ static void jit_emit_strip_direct_pointer(dasm_State **Dst, int dst, int word) {
 static void jit_emit_branch_not_pointer(dasm_State **Dst, int word, int label) {
         |  lsr x17, Rx(word), #48
         |  cbnz x17, =>label
+        |  tst Rx(word), #3
+        |  bne =>label
 }
 static void jit_emit_branch_not_double(dasm_State **Dst, int word, int label) {
         |  lsr x17, Rx(word), #48
         |  cmp x17, #7
         |  blo =>label
 }
-
 
 
 

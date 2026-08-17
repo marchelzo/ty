@@ -1,8 +1,6 @@
 #ifndef DEFS_H_INCLUDED
 #define DEFS_H_INCLUDED
 
-#define TY_GC_STATS
-
 #include <stddef.h>
 #include <stdint.h>
 #include <setjmp.h>

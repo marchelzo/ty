@@ -74,6 +74,7 @@ enum {
         /* Appended to preserve allocation-kind values embedded by older JIT
          * or cached native artifacts. */
         GC_TUPLE_VALUE,
+        GC_STRING_NUL,
         GC_ANY
 };
 

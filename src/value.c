@@ -170,44 +170,32 @@ value_string_clone_value(Ty *ty, void const *src, u32 n)
 #ifdef TY_BOX_STATS
         atomic_fetch_add_explicit(&string_clone_count, 1, memory_order_relaxed);
 #endif
-        Value result = value_string_inline(ty, n);
-        if (src != NULL && n != 0) memcpy((u8 *)V_STR(result), src, n);
         if (src == NULL) {
-                V_STR(result) = NULL;
-                V_STR0(result) = NULL;
+                return value_box(ty, (ValuePayload) {
+                        .type=VALUE_STRING, .bytes=n
+                });
         }
+        Value result = value_string_inline(ty, n);
+        if (n != 0) memcpy((u8 *)V_STR(result), src, n);
         return result;
 }
 
 Value
 value_string_clone_nul_value(Ty *ty, void const *src, u32 n)
 {
-#ifdef TY_BOX_STATS
-        atomic_fetch_add_explicit(&string_clone_count, 1, memory_order_relaxed);
-#endif
-        ValueBox *box = gc_alloc_object_unchecked(
-                ty, sizeof *box + n + 1, GC_VALUE_BOX
-        );
-        u8 *bytes = (u8 *)(box + 1);
-        box->payload = (ValuePayload) {
-                .type=VALUE_STRING,
-                .str=src != NULL ? bytes : NULL,
-                .bytes=n,
-                .str0=src != NULL ? bytes : NULL,
-                .inline_bytes=true
-        };
-        if (src != NULL) {
-                if (n != 0) memcpy(bytes, src, n);
-                bytes[n] = '\0';
-        }
-        return (Value){ .bits = nanbox_from_pointer(box) };
+        return value_string_clone_value(ty, src, n);
 }
 
 Value
 value_string_inline(Ty *ty, u32 n)
 {
+#if defined(NANBOX_64)
+        u8 *bytes = gc_alloc_object(ty, (usize)n + 1, GC_STRING_NUL);
+        bytes[n] = '\0';
+        return value_direct_string(bytes);
+#else
         ValueBox *box = gc_alloc_object_unchecked(
-                ty, sizeof *box + n, GC_VALUE_BOX
+                ty, sizeof *box + n + 1, GC_VALUE_BOX
         );
         u8 *bytes = (u8 *)(box + 1);
         box->payload = (ValuePayload) {
@@ -217,7 +205,19 @@ value_string_inline(Ty *ty, u32 n)
                 .str0=bytes,
                 .inline_bytes=true
         };
-        return (Value){ .bits = nanbox_from_pointer(box) };
+        bytes[n] = '\0';
+        return (Value){ .bits=nanbox_from_pointer(box) };
+#endif
+}
+
+u32
+value_direct_string_size(Value value)
+{
+        struct alloc const *a = ALLOC_OF(value_direct_string_ptr(value));
+        usize nul = a->type == GC_STRING_NUL;
+        assert((a->type == GC_STRING || a->type == GC_STRING_NUL)
+            && a->size >= nul && a->size - nul <= UINT32_MAX);
+        return (u32)(a->size - nul);
 }
 
 Value
@@ -225,6 +225,16 @@ value_string_wrap(Ty *ty, void const *src, u32 n, bool ro)
 {
 #ifdef TY_BOX_STATS
         atomic_fetch_add_explicit(&string_wrap_count, 1, memory_order_relaxed);
+#endif
+#if defined(NANBOX_64)
+        if (!ro && src != NULL && ((uptr)src & VALUE_DIRECT_TUPLE_PTR_MASK) == 0) {
+                struct alloc const *a = ALLOC_OF(src);
+                usize bytes = a->size - (a->type == GC_STRING_NUL);
+                if ((a->type == GC_STRING || a->type == GC_STRING_NUL)
+                && bytes == n) {
+                        return value_direct_string(src);
+                }
+        }
 #endif
         return value_box(ty, (ValuePayload){
                 .type=VALUE_STRING, .str=src, .bytes=n, .str0=(u8 *)src, .ro=ro
@@ -237,6 +247,8 @@ value_string_view(Ty *ty, Value source, isize offset, u32 n)
 #ifdef TY_BOX_STATS
         atomic_fetch_add_explicit(&string_view_count, 1, memory_order_relaxed);
 #endif
+        if (offset == 0 && n == V_BYTES(source)) return source;
+
         u8 const *str = V_STR(source) + offset;
         u8 *str0 = V_STR0(source);
         bool ro = V_RO(source);
@@ -267,7 +279,6 @@ value_tuple_wrap(Ty *ty, Value *items, i32 *ids, i32 count)
         tuple->tags = 0;
         tuple->items_gc = items != NULL;
         tuple->ids_gc = ids != NULL;
-        if (!TY_IS_READY) NOGC(tuple);
         return value_direct_tuple(tuple);
 }
 
@@ -344,6 +355,7 @@ value_payload(Value value)
         if (value_is_direct_tag(value)) return (ValuePayload){ .type=VALUE_TAG, .tag=value_direct_tag_id(value) };
         if (value_is_direct_object(value)) return (ValuePayload){ .type=VALUE_OBJECT, .object=value_direct_object_ptr(value), .class=value_direct_object_ptr(value)->class->i };
         if (value_is_direct_tagged_int(value)) return (ValuePayload){ .type=VALUE_INTEGER | VALUE_TAGGED, .tags=value_direct_tagged_int_tags(value), .z=value_direct_tagged_int_value(value) };
+        if (value_is_direct_string(value)) return (ValuePayload){ .type=VALUE_STRING, .str=V_STR(value), .bytes=V_BYTES(value), .str0=V_STR0(value) };
         if (value_is_direct_tuple(value)) return (ValuePayload){ .type=V_TYPE(value), .tags=V_TAGS(value), .src=V_SRC(value), .count=V_COUNT(value), .items=V_ITEMS(value), .ids=V_IDS(value) };
         if (value_is_direct_regex(value)) return (ValuePayload){ .type=VALUE_REGEX, .regex=value_direct_regex_ptr(value) };
         if (value_is_direct_sentinel(value)) return (ValuePayload){ .type=VALUE_SENTINEL };
@@ -2238,6 +2250,10 @@ _value_mark_xd(Ty *ty, Value const *v)
         if (value_is_direct_regex(*v)) {
                 Regex const *regex = value_direct_regex_ptr(*v);
                 if (regex->gc) MARK(regex);
+                return;
+        }
+        if (value_is_direct_string(*v)) {
+                MARK(value_direct_string_ptr(*v));
                 return;
         }
         if (value_is_direct_sentinel(*v)) return;
