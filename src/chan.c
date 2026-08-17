@@ -32,13 +32,7 @@ basic(Value const *v)
         case VALUE_REAL:
         case VALUE_NIL:
         case VALUE_TAG:
-                return true;
-
-        case VALUE_STRING:
-                return V_RO(*v);
-
-        case VALUE_FUNCTION:
-                return (V_ENV(*v) == NULL && V_XINFO(*v) == NULL);
+                return !value_is_boxed(*v);
 
         default:
                 return false;
@@ -78,6 +72,28 @@ emit(Ty *ty, ValueVector *out, Value v)
         svP(*out, v);
 }
 
+/*
+ * Serialized channel messages outlive the sender's heap, particularly when
+ * an isolated thread sends its last message and exits before the receiver
+ * runs.  Keep synthetic serialization headers outside the GC heaps and free
+ * them while reconstructing (or discarding) the message.
+ */
+static Value
+wire_value(ValuePayload payload)
+{
+        ValueBox *box = xmA(sizeof *box);
+        box->payload = payload;
+        return (Value){ .bits = nanbox_from_pointer(box) };
+}
+
+static void
+wire_value_free(Value value)
+{
+        xmF(value_box_ptr(value));
+}
+
+#define WIRE_VALUE(...) wire_value((ValuePayload){ __VA_ARGS__ })
+
 static void
 prepare(Ty *ty, ValueVector *out, SeenVec *sv, Value const *v)
 {
@@ -90,7 +106,10 @@ prepare(Ty *ty, ValueVector *out, SeenVec *sv, Value const *v)
         i64 ref = (id != -1) ? seen(sv, id) : -1;
 
         if (ref != -1) {
-                emit(ty, out, REF((void *)(iptr)ref));
+                emit(ty, out, WIRE_VALUE(
+                        .type = VALUE_REF,
+                        .ref = (Value *)(iptr)ref
+                ));
                 return;
         }
 
@@ -103,10 +122,24 @@ prepare(Ty *ty, ValueVector *out, SeenVec *sv, Value const *v)
         u8 type = V_TYPE(*v) & ~VALUE_TAGGED;
 
         switch (type) {
+        case VALUE_BOOLEAN:
+        case VALUE_INTEGER:
+        case VALUE_REAL:
+        case VALUE_NIL:
+        case VALUE_TAG:
+        case VALUE_FUNCTION:
+                if (type != VALUE_FUNCTION
+                || (V_ENV(*v) == NULL && V_XINFO(*v) == NULL)) {
+                        emit(ty, out, wire_value(value_payload(*v)));
+                } else {
+                        emit(ty, out, NIL);
+                }
+                break;
+
         case VALUE_STRING: {
                 u8 *copy = xmA(V_BYTES(*v));
                 memcpy(copy, V_STR(*v), V_BYTES(*v));
-                Value e = VALUE_BOX_(
+                Value e = WIRE_VALUE(
                         .type  = V_TYPE(*v),
                         .tags  = V_TAGS(*v),
                         .str   = copy,
@@ -122,7 +155,7 @@ prepare(Ty *ty, ValueVector *out, SeenVec *sv, Value const *v)
                 usize n = vN(*V_BLOB(*v));
                 u8 *copy = xmA(n);
                 memcpy(copy, vv(*V_BLOB(*v)), n);
-                Value e = VALUE_BOX_(
+                Value e = WIRE_VALUE(
                         .type  = V_TYPE(*v),
                         .tags  = V_TAGS(*v),
                         .str   = copy,
@@ -133,7 +166,11 @@ prepare(Ty *ty, ValueVector *out, SeenVec *sv, Value const *v)
         }
 
         case VALUE_ARRAY: {
-                Value header = VALUE_BOX_(.type=V_TYPE(*v), .tags=V_TAGS(*v), .src=V_ARRAY(*v)->count);
+                Value header = WIRE_VALUE(
+                        .type = V_TYPE(*v),
+                        .tags = V_TAGS(*v),
+                        .src = V_ARRAY(*v)->count
+                );
                 emit(ty, out, header);
                 for (usize i = 0; i < V_ARRAY(*v)->count; ++i) {
                         prepare(ty, out, sv, &V_ARRAY(*v)->items[i]);
@@ -147,7 +184,7 @@ prepare(Ty *ty, ValueVector *out, SeenVec *sv, Value const *v)
                         ids = xmA(V_COUNT(*v) * sizeof (i32));
                         memcpy(ids, V_IDS(*v), V_COUNT(*v) * sizeof (i32));
                 }
-                Value header = VALUE_BOX_(
+                Value header = WIRE_VALUE(
                         .type  = V_TYPE(*v),
                         .tags  = V_TAGS(*v),
                         .count = V_COUNT(*v),
@@ -161,7 +198,11 @@ prepare(Ty *ty, ValueVector *out, SeenVec *sv, Value const *v)
         }
 
         case VALUE_DICT: {
-                Value header = VALUE_BOX_(.type=V_TYPE(*v), .tags=V_TAGS(*v), .src=V_DICT(*v)->count);
+                Value header = WIRE_VALUE(
+                        .type = V_TYPE(*v),
+                        .tags = V_TAGS(*v),
+                        .src = V_DICT(*v)->count
+                );
                 emit(ty, out, header);
                 for (DictItem *it = DictFirst(V_DICT(*v)); it != NULL; it = it->next) {
                         prepare(ty, out, sv, &it->k);
@@ -172,7 +213,7 @@ prepare(Ty *ty, ValueVector *out, SeenVec *sv, Value const *v)
         }
 
         case VALUE_OBJECT: {
-                Value header = VALUE_BOX_(
+                Value header = WIRE_VALUE(
                         .type   = V_TYPE(*v),
                         .tags   = V_TAGS(*v),
                         .class  = V_CLASS(*v),
@@ -193,7 +234,11 @@ prepare(Ty *ty, ValueVector *out, SeenVec *sv, Value const *v)
                           ? (q->tail - q->head)
                           : (q->cap - q->head + q->tail);
                 }
-                Value header = VALUE_BOX_(.type=V_TYPE(*v), .tags=V_TAGS(*v), .src=n);
+                Value header = WIRE_VALUE(
+                        .type = V_TYPE(*v),
+                        .tags = V_TAGS(*v),
+                        .src = n
+                );
                 emit(ty, out, header);
                 for (usize i = 0; i < n; ++i) {
                         usize idx = (q->head + i) % q->cap;
@@ -215,7 +260,9 @@ reconstruct(Ty *ty, Value *msg, usize *cursor)
         u8 type = V_TYPE(e) & ~VALUE_TAGGED;
 
         if (type == VALUE_REF) {
-                return msg[(uptr)V_PTR(e)];
+                usize entry = (uptr)V_REF(e);
+                wire_value_free(e);
+                return msg[entry];
         }
 
         if (basic(&e)) {
@@ -223,14 +270,29 @@ reconstruct(Ty *ty, Value *msg, usize *cursor)
         }
 
         switch (type) {
+        case VALUE_BOOLEAN:
+        case VALUE_INTEGER:
+        case VALUE_REAL:
+        case VALUE_NIL:
+        case VALUE_TAG:
+        case VALUE_FUNCTION: {
+                ValuePayload header = value_payload(e);
+                wire_value_free(e);
+                Value r = value_box(ty, header);
+                msg[*cursor - 1] = r;
+                return r;
+        }
+
         case VALUE_STRING: {
-                u8 *s = value_string_clone(ty, V_STR(e), V_BYTES(e));
-                xmF((void *)V_STR(e));
+                ValuePayload header = value_payload(e);
+                wire_value_free(e);
+                u8 *s = value_string_clone(ty, header.str, header.bytes);
+                xmF((void *)header.str);
                 Value r = VALUE_BOX_(
-                        .type  = V_TYPE(e),
-                        .tags  = V_TAGS(e),
+                        .type  = header.type,
+                        .tags  = header.tags,
                         .str   = s,
-                        .bytes = V_BYTES(e),
+                        .bytes = header.bytes,
                         .str0  = s,
                         .ro    = false,
                 );
@@ -239,24 +301,28 @@ reconstruct(Ty *ty, Value *msg, usize *cursor)
         }
 
         case VALUE_BLOB: {
+                ValuePayload header = value_payload(e);
+                wire_value_free(e);
                 Blob *b = value_blob_new(ty);
-                if (V_BYTES(e) > 0) {
-                        uvR(*b, V_BYTES(e));
-                        memcpy(vv(*b), V_STR(e), V_BYTES(e));
-                        vN(*b) = V_BYTES(e);
+                if (header.bytes > 0) {
+                        uvR(*b, header.bytes);
+                        memcpy(vv(*b), header.str, header.bytes);
+                        vN(*b) = header.bytes;
                 }
-                xmF((void *)V_STR(e));
+                xmF((void *)header.str);
                 Value r = BLOB(b);
-                r = value_with_tags(ty, r, V_TAGS(e));
+                r = value_with_tags(ty, r, header.tags);
                 msg[*cursor - 1] = r;
                 return r;
         }
 
         case VALUE_ARRAY: {
-                usize n = V_SRC(e);
+                ValuePayload header = value_payload(e);
+                wire_value_free(e);
+                usize n = header.src;
                 Array *a = value_array_new_sized(ty, n);
                 Value r = ARRAY(a);
-                r = value_with_tags(ty, r, V_TAGS(e));
+                r = value_with_tags(ty, r, header.tags);
                 msg[*cursor - 1] = r;
                 for (usize i = 0; i < n; ++i) {
                         value_array_push(ty, a, reconstruct(ty, msg, cursor));
@@ -265,14 +331,16 @@ reconstruct(Ty *ty, Value *msg, usize *cursor)
         }
 
         case VALUE_TUPLE: {
-                i32 n = V_COUNT(e);
-                Value r = value_tuple_alloc(ty, n, V_IDS(e) != NULL);
+                ValuePayload header = value_payload(e);
+                wire_value_free(e);
+                i32 n = header.count;
+                Value r = value_tuple_alloc(ty, n, header.ids != NULL);
                 Value *items = V_ITEMS(r);
-                if (V_IDS(e) != NULL) {
-                        memcpy(V_IDS(r), V_IDS(e), n * sizeof (i32));
-                        xmF(V_IDS(e));
+                if (header.ids != NULL) {
+                        memcpy(V_IDS(r), header.ids, n * sizeof (i32));
+                        xmF(header.ids);
                 }
-                r = value_with_tags(ty, r, V_TAGS(e));
+                r = value_with_tags(ty, r, header.tags);
                 msg[*cursor - 1] = r;
                 for (i32 i = 0; i < n; ++i) {
                         items[i] = reconstruct(ty, msg, cursor);
@@ -281,10 +349,12 @@ reconstruct(Ty *ty, Value *msg, usize *cursor)
         }
 
         case VALUE_DICT: {
-                usize n = V_SRC(e);
+                ValuePayload header = value_payload(e);
+                wire_value_free(e);
+                usize n = header.src;
                 Dict *d = dict_new(ty);
                 Value r = DICT(d);
-                r = value_with_tags(ty, r, V_TAGS(e));
+                r = value_with_tags(ty, r, header.tags);
                 msg[*cursor - 1] = r;
                 for (usize i = 0; i < n; ++i) {
                         Value k = reconstruct(ty, msg, cursor);
@@ -296,13 +366,15 @@ reconstruct(Ty *ty, Value *msg, usize *cursor)
         }
 
         case VALUE_OBJECT: {
-                u32 nslot = (uptr)V_OBJECT(e);
+                ValuePayload header = value_payload(e);
+                wire_value_free(e);
+                u32 nslot = (uptr)header.object;
                 usize size = sizeof (TyObject) + nslot * sizeof (Value);
                 TyObject *obj = uAo0(size, GC_OBJECT);
-                obj->class = class_get(ty, V_CLASS(e));
+                obj->class = class_get(ty, header.class);
                 obj->nslot = nslot;
-                Value r = OBJECT(obj, V_CLASS(e));
-                r = value_with_tags(ty, r, V_TAGS(e));
+                Value r = OBJECT(obj, header.class);
+                r = value_with_tags(ty, r, header.tags);
                 msg[*cursor - 1] = r;
                 for (u32 i = 0; i < nslot; ++i) {
                         obj->slots[i] = reconstruct(ty, msg, cursor);
@@ -311,14 +383,16 @@ reconstruct(Ty *ty, Value *msg, usize *cursor)
         }
 
         case VALUE_QUEUE: {
-                usize n = V_SRC(e);
+                ValuePayload header = value_payload(e);
+                wire_value_free(e);
+                usize n = header.src;
                 Queue *q = mAo0(sizeof (Queue), GC_QUEUE);
                 if (n > 0) {
                         q->items = uA(n * sizeof (Value));
                         q->cap = n;
                 }
                 Value r = QUEUE(q);
-                r = value_with_tags(ty, r, V_TAGS(e));
+                r = value_with_tags(ty, r, header.tags);
                 msg[*cursor - 1] = r;
                 for (usize i = 0; i < n; ++i) {
                         q->items[i] = reconstruct(ty, msg, cursor);
@@ -445,38 +519,46 @@ discard(Value *msg, usize *cursor)
         Value e = msg[(*cursor)++];
         u8 type = V_TYPE(e) & ~VALUE_TAGGED;
 
-        if (type == VALUE_REF || basic(&e)) {
+        if (type == VALUE_REF) {
+                wire_value_free(e);
                 return;
         }
+
+        if (basic(&e)) {
+                return;
+        }
+
+        ValuePayload header = value_payload(e);
+        wire_value_free(e);
 
         switch (type) {
         case VALUE_STRING:
         case VALUE_BLOB:
-                xmF((void *)V_STR(e));
+                xmF((void *)header.str);
                 break;
 
         case VALUE_TUPLE:
-                xmF(V_IDS(e));
-                for (i32 i = 0; i < V_COUNT(e); ++i) {
+                xmF(header.ids);
+                for (i32 i = 0; i < header.count; ++i) {
                         discard(msg, cursor);
                 }
                 break;
 
         case VALUE_ARRAY:
         case VALUE_QUEUE:
-                for (usize i = 0; i < V_SRC(e); ++i) {
+                for (usize i = 0; i < header.src; ++i) {
                         discard(msg, cursor);
                 }
                 break;
 
         case VALUE_DICT:
-                for (usize i = 0; i < 2 * V_SRC(e) + 1; ++i) {
+                for (usize i = 0; i < 2 * header.src + 1; ++i) {
                         discard(msg, cursor);
                 }
                 break;
 
         case VALUE_OBJECT:
-                for (u32 i = 0; i < (uptr)V_OBJECT(e); ++i) {
+                for (u32 i = 0; i < (uptr)header.object; ++i) {
                         discard(msg, cursor);
                 }
                 break;
