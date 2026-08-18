@@ -1,0 +1,44 @@
+import ty
+import math (nan)
+import ffi as c
+
+ns test
+
+pub fn integerExtrema() {
+    let lo = -9223372036854775807 - 1
+    let hi = 9223372036854775807
+    assert(lo + 1 == -9223372036854775807)
+    assert(hi - 1 == 9223372036854775806)
+    ty.gc()
+    assert(lo == -9223372036854775808)
+    assert(hi == 9223372036854775807)
+}
+
+pub fn immediateAndBoxedKindsSurviveGc() {
+    let values = [nil, true, false, 0, 2147483647, 2147483648, -2147483649, 1.25, [1, 2]]
+    ty.gc()
+    assert(values[0] == nil)
+    assert(values[1] && !values[2])
+    assert(values[3] == 0)
+    assert(values[4] == 2147483647)
+    assert(values[5] == 2147483648)
+    assert(values[6] == -2147483649)
+    assert(values[7] == 1.25)
+    assert(values[8] == [1, 2])
+}
+
+pub fn nanAndMetadataPromotion() {
+    assert(nan.nan?)
+    let f = fn (x) { x }
+    f.doc = 'nanbox metadata'
+    ty.gc()
+    assert(f.doc == 'nanbox metadata')
+    assert(f(42) == 42)
+}
+
+pub fn pointerRoundTrip() {
+    let p = c.new(c.u8, 32)
+    c.store(c.u8, p, 91)
+    assert(c.load(c.u8, p) == 91)
+    c.free(p)
+}

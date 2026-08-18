@@ -267,6 +267,9 @@ dict_has_value(Ty *ty, Dict *d, Value *key)
 void
 dict_put_value(Ty *ty, Dict *d, Value key, Value value)
 {
+        gP(&key);
+        gP(&value);
+
         ENSURE_INIT(d);
 
         u64 h = value_hash(ty, &key);
@@ -277,34 +280,50 @@ dict_put_value(Ty *ty, Dict *d, Value key, Value value)
         } else {
                 put(ty, d, i, h, key, value);
         }
+
+        gX();
+        gX();
 }
 
 Value *
 dict_put_value_with(Ty *ty, Dict *d, Value key, Value v, Value const *f)
 {
+        gP(&key);
+        gP(&v);
+
         ENSURE_INIT(d);
 
         u64 h = value_hash(ty, &key);
         usize i = find_spot(ty, d->size, d->items, h, &key);
+        Value *result;
 
         if (OCCUPIED(d, i)) {
                 d->items[i].v = vm_eval_function(ty, f, &d->items[i].v, &v, NULL);
-                return val(d, i);
+                result = val(d, i);
         } else {
-                return put(ty, d, i, h, key, v);
+                result = put(ty, d, i, h, key, v);
         }
+
+        gX();
+        gX();
+
+        return result;
 }
 
 Value *
 dict_put_key_if_not_exists(Ty *ty, Dict *d, Value key)
 {
+        gP(&key);
+
         ENSURE_INIT(d);
 
         u64 h = value_hash(ty, &key);
         usize i = find_spot(ty, d->size, d->items, h, &key);
 
         if (OCCUPIED(d, i)) {
-                return val(d, i);
+                Value *result = val(d, i);
+                gX();
+                return result;
         }
 
         Value v;
@@ -313,13 +332,20 @@ dict_put_key_if_not_exists(Ty *ty, Dict *d, Value key)
                 v = vm_call1(ty, &d->dflt, &key);
                 i = find_spot(ty, d->size, d->items, h, &key);
                 if (OCCUPIED(d, i)) {
-                        return val(d, i);
+                        Value *result = val(d, i);
+                        gX();
+                        return result;
                 }
         } else {
                 v = NIL;
         }
 
-        return put(ty, d, i, h, key, v);
+        gP(&v);
+        Value *result = put(ty, d, i, h, key, v);
+        gX();
+        gX();
+
+        return result;
 }
 
 Value *
