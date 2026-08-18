@@ -712,7 +712,9 @@ pub class Response {
     ok -> Bool { status in 200..300 }
 
     text() -> String { body.str()          }
-    json() -> _      { json::parse(text()) }
+
+    json[T](schema: Type[T]) -> T { json::parse(schema, text()) }
+    json()                   -> _ { json::parse(text()) }
 
     header(name: String) -> String | nil {
         let key = name.lower()
