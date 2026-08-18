@@ -502,7 +502,6 @@ pub class TermIO {
         lock: Mutex,
         cond: CondVar,
         on: Bool,
-        waiting: Bool,
         open: Bool
     }
 
@@ -557,8 +556,7 @@ pub class TermIO {
             lock: Mutex(),
             cond: CondVar(),
             open: true,
-            on: false,
-            waiting: false
+            on: false
         }
 
         let enter = Blob()
@@ -602,9 +600,7 @@ pub class TermIO {
     stop() {
         write(__notif-w, 0)
         with __state.lock {
-            // Wait until the reader has both stopped the terminal and parked
-            // on the notification pipe for the next start request.
-            while __state.on || !__state.waiting {
+            while __state.on {
                 __state.cond.wait(__state.lock)
             }
         }
@@ -624,7 +620,6 @@ pub class TermIO {
         write(__fd, __enter)
         with __state.lock {
             __state.on = true
-            __state.waiting = false
         }
         __state.cond.broadcast()
     }
@@ -649,12 +644,6 @@ pub class TermIO {
         let i = 0
 
         fn wait-for-resume() {
-            // Acknowledge the stop only after reaching the resume-wait path.
-            with __state.lock {
-                __state.waiting = true
-            }
-            __state.cond.broadcast()
-
             for (;;) {
                 warn!("Reader: waiting for resume...")
                 match poll([__notif-r], -1) {

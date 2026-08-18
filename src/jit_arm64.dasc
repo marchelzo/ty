@@ -213,72 +213,6 @@ static void jit_emit_fcmp_ge(dasm_State **Dst, int dst, int scratch, int base, i
         |  cset Rx(dst), ge
 }
 
-static void jit_emit_fcmp_mixed(dasm_State **Dst, int dst, int scratch, int base,
-                                 int a_off, int b_off, bool a_is_int, int op) {
-        (void)scratch;
-        if (a_is_int) {
-                |  ldr x0, [Rx(base), #a_off]
-                |  scvtf d0, x0
-                |  ldr d1, [Rx(base), #b_off]
-        } else {
-                |  ldr d0, [Rx(base), #a_off]
-                |  ldr x0, [Rx(base), #b_off]
-                |  scvtf d1, x0
-        }
-        |  fcmp d0, d1
-        switch (op) {
-        case 0:
-                |  cset Rx(dst), eq
-                break;
-        case 1:
-                |  cset Rx(dst), ne
-                break;
-        case 2:
-                |  cset Rx(dst), mi
-                break;
-        case 3:
-                |  cset Rx(dst), gt
-                break;
-        case 4:
-                |  cset Rx(dst), ls
-                break;
-        case 5:
-                |  cset Rx(dst), ge
-                break;
-        }
-}
-
-// --- Float arithmetic ---
-// Load doubles from [base+a_off] and [base+b_off], compute, store result to [base+a_off].
-
-static void jit_emit_fadd(dasm_State **Dst, int base, int a_off, int b_off) {
-        |  ldr d0, [Rx(base), #a_off]
-        |  ldr d1, [Rx(base), #b_off]
-        |  fadd d0, d0, d1
-        |  str d0, [Rx(base), #a_off]
-}
-
-static void jit_emit_fsub(dasm_State **Dst, int base, int a_off, int b_off) {
-        |  ldr d0, [Rx(base), #a_off]
-        |  ldr d1, [Rx(base), #b_off]
-        |  fsub d0, d0, d1
-        |  str d0, [Rx(base), #a_off]
-}
-
-static void jit_emit_fmul(dasm_State **Dst, int base, int a_off, int b_off) {
-        |  ldr d0, [Rx(base), #a_off]
-        |  ldr d1, [Rx(base), #b_off]
-        |  fmul d0, d0, d1
-        |  str d0, [Rx(base), #a_off]
-}
-
-static void jit_emit_fdiv(dasm_State **Dst, int base, int a_off, int b_off) {
-        |  ldr d0, [Rx(base), #a_off]
-        |  ldr d1, [Rx(base), #b_off]
-        |  fdiv d0, d0, d1
-        |  str d0, [Rx(base), #a_off]
-}
-
 static void jit_emit_int_to_double_bits(dasm_State **Dst, int dst, int src) {
         |  scvtf d0, Rx(src)
         |  fmov Rx(dst), d0
@@ -310,63 +244,6 @@ static void jit_emit_farith_bits(dasm_State **Dst, int dst, int left, int right,
         |  fmov Rx(dst), d0
 }
 
-
-static void jit_emit_branch_bit_set(dasm_State **Dst, int reg, int bit, int label) {
-        |  tbnz Rx(reg), #bit, =>label
-}
-
-static void jit_emit_farith_to(dasm_State **Dst, int dst_base, int dst_off,
-                               int src_base, int src_off, int op) {
-        |  ldr d0, [Rx(dst_base), #dst_off]
-        |  ldr d1, [Rx(src_base), #src_off]
-        switch (op) {
-        case 0:
-                |  fadd d0, d0, d1
-                break;
-        case 1:
-                |  fsub d0, d0, d1
-                break;
-        default:
-                |  fmul d0, d0, d1
-                break;
-        }
-        |  str d0, [Rx(dst_base), #dst_off]
-}
-
-static void jit_emit_farith_mixed(dasm_State **Dst, int base, int a_off, int b_off,
-                                  bool a_is_int, int op) {
-        if (a_is_int) {
-                |  ldr x0, [Rx(base), #a_off]
-                |  scvtf d0, x0
-                |  ldr d1, [Rx(base), #b_off]
-        } else {
-                |  ldr d0, [Rx(base), #a_off]
-                |  ldr x0, [Rx(base), #b_off]
-                |  scvtf d1, x0
-        }
-        switch (op) {
-        case 0:
-                |  fadd d0, d0, d1
-                break;
-        case 1:
-                |  fsub d0, d0, d1
-                break;
-        case 2:
-                |  fmul d0, d0, d1
-                break;
-        case 3:
-                |  fdiv d0, d0, d1
-                break;
-        }
-        |  str d0, [Rx(base), #a_off]
-}
-
-// Load two doubles and compare: fcmp [base+off0], [base+off1]
-static void jit_emit_fload_cmp(dasm_State **Dst, int base, int off0, int off1) {
-        |  ldr d0, [Rx(base), #off0]
-        |  ldr d1, [Rx(base), #off1]
-        |  fcmp d0, d1
-}
 
 // --- Conditional branches ---
 
@@ -430,12 +307,6 @@ static void jit_emit_jump_epilogue_restore(dasm_State **Dst) {
         |  b ->epilogue_restore
 }
 
-// After a yield helper returns, x0 contains the updated frame pointer (index).
-// Update x24 (fp byte offset) = x0 * 8.
-static void jit_emit_update_fp(dasm_State **Dst) {
-        |  lsl x24, x0, #3
-}
-
 // --- Reload x21/x23 after calls that may realloc the stack ---
 // x24 holds the stable fp byte offset; bound is known at compile time.
 static void jit_emit_reload_stack(dasm_State **Dst, int bound) {
@@ -484,55 +355,9 @@ static void jit_emit_ldrb(dasm_State **Dst, int dst, int base, int offset) {
         |  ldrb Rw(dst), [Rx(base), #offset]
 }
 
-// Store byte to [base + offset]
-static void jit_emit_strb(dasm_State **Dst, int src, int base, int offset) {
-        |  strb Rw(src), [Rx(base), #offset]
-}
-
-// Store halfword (16-bit) to [base + offset]
-static void jit_emit_strh(dasm_State **Dst, int src, int base, int offset) {
-        |  strh Rw(src), [Rx(base), #offset]
-}
-
 // Store 32-bit word to [base + offset]
 static void jit_emit_str32(dasm_State **Dst, int src, int base, int offset) {
         |  str Rw(src), [Rx(base), #offset]
-}
-
-// Load pair of 64-bit values from [base + offset]
-static void jit_emit_ldp64(dasm_State **Dst, int r1, int r2, int base, int offset) {
-        if (offset >= -512 && offset <= 504 && (offset % 8) == 0) {
-                |  ldp Rx(r1), Rx(r2), [Rx(base), #offset]
-        } else if (offset > 0 && offset <= 4095) {
-                |  add x17, Rx(base), #offset
-                |  ldp Rx(r1), Rx(r2), [x17]
-        } else if (offset < 0 && offset >= -4095) {
-                int neg = -offset;
-                |  sub x17, Rx(base), #neg
-                |  ldp Rx(r1), Rx(r2), [x17]
-        } else {
-                jit_emit_load_imm(Dst, 17, (iptr)offset);
-                |  add x17, x17, Rx(base)
-                |  ldp Rx(r1), Rx(r2), [x17]
-        }
-}
-
-// Store pair of 64-bit values to [base + offset]
-static void jit_emit_stp64(dasm_State **Dst, int r1, int r2, int base, int offset) {
-        if (offset >= -512 && offset <= 504 && (offset % 8) == 0) {
-                |  stp Rx(r1), Rx(r2), [Rx(base), #offset]
-        } else if (offset > 0 && offset <= 4095) {
-                |  add x17, Rx(base), #offset
-                |  stp Rx(r1), Rx(r2), [x17]
-        } else if (offset < 0 && offset >= -4095) {
-                int neg = -offset;
-                |  sub x17, Rx(base), #neg
-                |  stp Rx(r1), Rx(r2), [x17]
-        } else {
-                jit_emit_load_imm(Dst, 17, (iptr)offset);
-                |  add x17, x17, Rx(base)
-                |  stp Rx(r1), Rx(r2), [x17]
-        }
 }
 
 // --- Add immediate ---
@@ -619,37 +444,15 @@ static void jit_emit_branch_ge(dasm_State **Dst, int label) {
         |  cbnz x16, =>label
 }
 
-// Float branches (use after fcmp)
-static void jit_emit_fbranch_gt(dasm_State **Dst, int label) {
-        |  cset x16, gt
-        |  cbnz x16, =>label
-}
-
-static void jit_emit_fbranch_ge(dasm_State **Dst, int label) {
-        |  cset x16, ge
-        |  cbnz x16, =>label
-}
-
 // Load 32-bit word from [base + offset]
 static void jit_emit_ldr32(dasm_State **Dst, int dst, int base, int offset) {
         |  ldr Rw(dst), [Rx(base), #offset]
-}
-
-static void jit_emit_ldr16(dasm_State **Dst, int dst, int base, int offset) {
-        |  ldrh Rw(dst), [Rx(base), #offset]
 }
 
 static void jit_emit_ldr16_index(dasm_State **Dst, int dst, int base, int index) {
         |  ldrh Rw(dst), [Rx(base), Rx(index)]
 }
 
-static void jit_emit_ldr64_index(dasm_State **Dst, int dst, int base, int index) {
-        |  ldr Rx(dst), [Rx(base), Rx(index)]
-}
-
-static void jit_emit_str64_index(dasm_State **Dst, int src, int base, int index) {
-        |  str Rx(src), [Rx(base), Rx(index)]
-}
 static void jit_emit_ldr64_index8(dasm_State **Dst, int dst, int base, int index) {
         |  ldr Rx(dst), [Rx(base), Rx(index), lsl #3]
 }

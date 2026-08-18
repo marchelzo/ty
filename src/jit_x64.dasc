@@ -275,82 +275,6 @@ static void jit_emit_fcmp_ge(dasm_State **Dst, int dst, int scratch, int base, i
         |  movzx Rq(dst), Rb(dst)
 }
 
-static void jit_emit_fcmp_mixed(dasm_State **Dst, int dst, int scratch, int base,
-                                 int a_off, int b_off, bool a_is_int, int op) {
-        if (a_is_int) {
-                |  mov rax, qword [Rq(base)+a_off]
-                |  cvtsi2sd xmm0, rax
-                |  movsd xmm1, qword [Rq(base)+b_off]
-        } else {
-                |  movsd xmm0, qword [Rq(base)+a_off]
-                |  mov rax, qword [Rq(base)+b_off]
-                |  cvtsi2sd xmm1, rax
-        }
-        switch (op) {
-        case 0:
-                |  ucomisd xmm0, xmm1
-                |  sete Rb(dst)
-                |  setnp Rb(scratch)
-                |  and Rb(dst), Rb(scratch)
-                |  movzx Rq(dst), Rb(dst)
-                break;
-        case 1:
-                |  ucomisd xmm0, xmm1
-                |  setne Rb(dst)
-                |  setp Rb(scratch)
-                |  or Rb(dst), Rb(scratch)
-                |  movzx Rq(dst), Rb(dst)
-                break;
-        case 2:
-                |  ucomisd xmm1, xmm0
-                |  seta Rb(dst)
-                |  movzx Rq(dst), Rb(dst)
-                break;
-        case 3:
-                |  ucomisd xmm0, xmm1
-                |  seta Rb(dst)
-                |  movzx Rq(dst), Rb(dst)
-                break;
-        case 4:
-                |  ucomisd xmm1, xmm0
-                |  setae Rb(dst)
-                |  movzx Rq(dst), Rb(dst)
-                break;
-        case 5:
-                |  ucomisd xmm0, xmm1
-                |  setae Rb(dst)
-                |  movzx Rq(dst), Rb(dst)
-                break;
-        }
-}
-
-// --- Float arithmetic ---
-// Load doubles from [base+a_off] and [base+b_off], compute, store result to [base+a_off].
-
-static void jit_emit_fadd(dasm_State **Dst, int base, int a_off, int b_off) {
-        |  movsd xmm0, qword [Rq(base)+a_off]
-        |  addsd xmm0, qword [Rq(base)+b_off]
-        |  movsd qword [Rq(base)+a_off], xmm0
-}
-
-static void jit_emit_fsub(dasm_State **Dst, int base, int a_off, int b_off) {
-        |  movsd xmm0, qword [Rq(base)+a_off]
-        |  subsd xmm0, qword [Rq(base)+b_off]
-        |  movsd qword [Rq(base)+a_off], xmm0
-}
-
-static void jit_emit_fmul(dasm_State **Dst, int base, int a_off, int b_off) {
-        |  movsd xmm0, qword [Rq(base)+a_off]
-        |  mulsd xmm0, qword [Rq(base)+b_off]
-        |  movsd qword [Rq(base)+a_off], xmm0
-}
-
-static void jit_emit_fdiv(dasm_State **Dst, int base, int a_off, int b_off) {
-        |  movsd xmm0, qword [Rq(base)+a_off]
-        |  divsd xmm0, qword [Rq(base)+b_off]
-        |  movsd qword [Rq(base)+a_off], xmm0
-}
-
 static void jit_emit_int_to_double_bits(dasm_State **Dst, int dst, int src) {
         |  cvtsi2sd xmm0, Rq(src)
         |  movd Rq(dst), xmm0
@@ -382,65 +306,6 @@ static void jit_emit_farith_bits(dasm_State **Dst, int dst, int left, int right,
         |  movd Rq(dst), xmm0
 }
 
-
-static void jit_emit_branch_bit_set(dasm_State **Dst, int reg, int bit, int label) {
-        |  bt Rq(reg), bit
-        |  jc =>label
-}
-
-static void jit_emit_farith_to(dasm_State **Dst, int dst_base, int dst_off,
-                               int src_base, int src_off, int op) {
-        |  movsd xmm0, qword [Rq(dst_base)+dst_off]
-        switch (op) {
-        case 0:
-                |  addsd xmm0, qword [Rq(src_base)+src_off]
-                break;
-        case 1:
-                |  subsd xmm0, qword [Rq(src_base)+src_off]
-                break;
-        default:
-                |  mulsd xmm0, qword [Rq(src_base)+src_off]
-                break;
-        }
-        |  movsd qword [Rq(dst_base)+dst_off], xmm0
-}
-
-static void jit_emit_farith_mixed(dasm_State **Dst, int base, int a_off, int b_off,
-                                  bool a_is_int, int op) {
-        if (a_is_int) {
-                |  mov rax, qword [Rq(base)+a_off]
-                |  cvtsi2sd xmm0, rax
-                |  movsd xmm1, qword [Rq(base)+b_off]
-        } else {
-                |  movsd xmm0, qword [Rq(base)+a_off]
-                |  mov rax, qword [Rq(base)+b_off]
-                |  cvtsi2sd xmm1, rax
-        }
-        switch (op) {
-        case 0:
-                |  addsd xmm0, xmm1
-                break;
-        case 1:
-                |  subsd xmm0, xmm1
-                break;
-        case 2:
-                |  mulsd xmm0, xmm1
-                break;
-        case 3:
-                |  divsd xmm0, xmm1
-                break;
-        }
-        |  movsd qword [Rq(base)+a_off], xmm0
-}
-
-// Load two doubles and compare: ucomisd [base+off0], [base+off1]
-// For gt/ge: off0=a, off1=b (natural order, then ja/jae)
-// For lt/le: off0=b, off1=a (swapped, then ja/jae)
-static void jit_emit_fload_cmp(dasm_State **Dst, int base, int off0, int off1) {
-        |  movsd xmm0, qword [Rq(base)+off0]
-        |  movsd xmm1, qword [Rq(base)+off1]
-        |  ucomisd xmm0, xmm1
-}
 
 // --- Conditional branches ---
 
@@ -515,21 +380,6 @@ static void jit_emit_jump_epilogue_restore(dasm_State **Dst) {
         |  jmp ->epilogue_restore
 }
 
-// After a yield helper returns, rax contains the updated frame pointer (index).
-// Update rbp (fp byte offset) = rax * 8.
-static void jit_emit_update_fp(dasm_State **Dst, int bound) {
-        |  shl rax, 3
-        |  mov rbp, rax
-        |  mov rax, [r12+OFF_TY_STACK+OFF_VEC_DATA]
-        |  lea r14, [rax+rbp]
-        int ops_off = bound * sizeof (Value);
-        if (ops_off > 0) {
-                |  lea rbx, [r14+ops_off]
-        } else {
-                |  mov rbx, r14
-        }
-}
-
 // --- Reload r14/rbx after calls that may realloc the stack ---
 // rbp holds the stable fp byte offset; bound is known at compile time.
 static void jit_emit_reload_stack(dasm_State **Dst, int bound) {
@@ -573,16 +423,6 @@ static void jit_emit_ldrb(dasm_State **Dst, int dst, int base, int offset) {
         |  movzx Rd(dst), byte [Rq(base)+offset]
 }
 
-// Store byte to [base + offset]
-static void jit_emit_strb(dasm_State **Dst, int src, int base, int offset) {
-        |  mov byte [Rq(base)+offset], Rb(src)
-}
-
-// Store halfword (16-bit) to [base + offset]
-static void jit_emit_strh(dasm_State **Dst, int src, int base, int offset) {
-        |  mov word [Rq(base)+offset], Rw(src)
-}
-
 // Store 32-bit word to [base + offset]
 static void jit_emit_str32(dasm_State **Dst, int src, int base, int offset) {
         |  mov dword [Rq(base)+offset], Rd(src)
@@ -593,21 +433,10 @@ static void jit_emit_ldr32(dasm_State **Dst, int dst, int base, int offset) {
         |  mov Rd(dst), dword [Rq(base)+offset]
 }
 
-static void jit_emit_ldr16(dasm_State **Dst, int dst, int base, int offset) {
-        |  movzx Rd(dst), word [Rq(base)+offset]
-}
-
 static void jit_emit_ldr16_index(dasm_State **Dst, int dst, int base, int index) {
         |  movzx Rd(dst), word [Rq(base)+Rq(index)]
 }
 
-static void jit_emit_ldr64_index(dasm_State **Dst, int dst, int base, int index) {
-        |  mov Rq(dst), qword [Rq(base)+Rq(index)]
-}
-
-static void jit_emit_str64_index(dasm_State **Dst, int src, int base, int index) {
-        |  mov qword [Rq(base)+Rq(index)], Rq(src)
-}
 static void jit_emit_ldr64_index8(dasm_State **Dst, int dst, int base, int index) {
         |  mov Rq(dst), [Rq(base)+Rq(index)*8]
 }
@@ -697,22 +526,6 @@ static void jit_emit_branch_not_double(dasm_State **Dst, int word, int label) {
         |  cmp rax, 7
         |  jb =>label
 }
-
-
-
-
-
-// Load/store pairs (two sequential loads/stores on x64)
-static void jit_emit_ldp64(dasm_State **Dst, int dst1, int dst2, int base, int offset) {
-        |  mov Rq(dst1), [Rq(base)+offset]
-        |  mov Rq(dst2), [Rq(base)+(offset+8)]
-}
-
-static void jit_emit_stp64(dasm_State **Dst, int src1, int src2, int base, int offset) {
-        |  mov [Rq(base)+offset], Rq(src1)
-        |  mov [Rq(base)+(offset+8)], Rq(src2)
-}
-
 // --- Add immediate ---
 static void jit_emit_add_imm(dasm_State **Dst, int dst, int src, int imm) {
         if (imm == 0) {
@@ -775,14 +588,4 @@ static void jit_emit_branch_ult(dasm_State **Dst, int label) {
 
 static void jit_emit_branch_ge(dasm_State **Dst, int label) {
         |  jge =>label
-}
-
-// Float branches (use after ucomisd)
-// For lt/le we swap operands at the load site, so ja/jae work for all cases.
-static void jit_emit_fbranch_gt(dasm_State **Dst, int label) {
-        |  ja =>label
-}
-
-static void jit_emit_fbranch_ge(dasm_State **Dst, int label) {
-        |  jae =>label
 }
