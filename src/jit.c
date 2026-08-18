@@ -3619,6 +3619,24 @@ jit_rt_check_match(Ty *ty, Value *result, Value *value, Value *pattern)
         DoCheckMatch(ty, true);
 }
 
+static void
+jit_rt_operator(Ty *ty, Value *out, int uop, int bop)
+{
+        *out = OPERATOR(uop, bop);
+}
+
+static void
+jit_rt_integer(Ty *ty, Value *out, imax value)
+{
+        *out = value_integer(ty, value);
+}
+
+static void
+jit_rt_type(Ty *ty, Value *out, Type *type)
+{
+        *out = TYPE(type);
+}
+
 static int
 jit_rt_compare(Ty *ty, Value *a, Value *b)
 {
@@ -3738,11 +3756,27 @@ bc_push_bits(JitCtx *ctx, u64 bits, Type *type)
 }
 
 static void
-bc_push_integer(JitCtx *ctx, intmax_t val)
+bc_store_integer(JitCtx *ctx, int offset, imax value)
 {
-        Value v = value_integer(ctx->ty, val);
-        if (nanbox_is_pointer(v.bits)) gc_immortalize(ctx->ty, &v);
-        bc_push_bits(ctx, v.bits.as_int64, INT_TYPE);
+        dasm_State **asm = &ctx->asm;
+        if (value >= INT32_MIN && value <= INT32_MAX) {
+                jit_emit_load_imm(asm, BC_S0, nanbox_from_int((i32)value).as_int64);
+                jit_emit_str64(asm, BC_S0, BC_OPS, offset);
+                return;
+        }
+        jit_emit_mov(asm, BC_A0, BC_TY);
+        jit_emit_add_imm(asm, BC_A1, BC_OPS, offset);
+        jit_emit_load_imm(asm, BC_A2, value);
+        jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_integer);
+        bc_emit_runtime_call(ctx, BC_CALL);
+}
+
+static void
+bc_push_integer(JitCtx *ctx, imax value)
+{
+        bc_store_integer(ctx, OP_OFF(ctx->sp), value);
+        ctx->op_types[ctx->sp++] = INT_TYPE;
+        if (ctx->sp > ctx->max_sp) ctx->max_sp = ctx->sp;
 }
 
 static void
@@ -3976,10 +4010,7 @@ bc_emit_int_local_jcmp(JitCtx *ctx, int left, int right, imax immediate,
                         ctx, BC_OPS, right_off, BC_LOC, right * sizeof (Value)
                 );
         } else {
-                Value iv = value_integer(ctx->ty, immediate);
-                if (nanbox_is_pointer(iv.bits)) gc_immortalize(ctx->ty, &iv);
-                jit_emit_load_imm(asm, BC_S0, iv.bits.as_int64);
-                jit_emit_str64(asm, BC_S0, BC_OPS, right_off);
+                bc_store_integer(ctx, right_off, immediate);
         }
         jit_emit_mov(asm, BC_A0, BC_TY);
         jit_emit_add_imm(asm, BC_A1, BC_OPS, left_off);
@@ -4254,10 +4285,7 @@ bc_try_local_array_get_assign(JitCtx *ctx, char const *code, char const *end,
         int idx_off = OP_OFF(ctx->sp + 1);
         if (index_local >= 0) bc_copy_value(ctx, BC_OPS, idx_off, BC_LOC, index_local * sizeof (Value));
         else {
-                Value iv = value_integer(ctx->ty, immediate);
-                if (nanbox_is_pointer(iv.bits)) gc_immortalize(ctx->ty, &iv);
-                jit_emit_load_imm(asm, BC_S0, iv.bits.as_int64);
-                jit_emit_str64(asm, BC_S0, BC_OPS, idx_off);
+                bc_store_integer(ctx, idx_off, immediate);
         }
         jit_emit_mov(asm, BC_A0, BC_TY); jit_emit_add_imm(asm, BC_A1, BC_OPS, result_off);
         jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_subscript); bc_emit_reentrant_call(ctx, BC_CALL);
@@ -4378,10 +4406,7 @@ bc_try_local_array_store_pop(JitCtx *ctx, char const *code, char const *end,
         int idx_off = OP_OFF(ctx->sp + 1);
         if (index_local >= 0) bc_copy_value(ctx, BC_OPS, idx_off, BC_LOC, index_local * sizeof (Value));
         else {
-                Value iv = value_integer(ctx->ty, immediate);
-                if (nanbox_is_pointer(iv.bits)) gc_immortalize(ctx->ty, &iv);
-                jit_emit_load_imm(asm, BC_S0, iv.bits.as_int64);
-                jit_emit_str64(asm, BC_S0, BC_OPS, idx_off);
+                bc_store_integer(ctx, idx_off, immediate);
         }
         jit_emit_mov(asm, BC_A0, BC_TY);
         jit_emit_add_imm(asm, BC_A1, BC_OPS, OP_OFF(ctx->sp + 2));
@@ -4466,10 +4491,7 @@ bc_try_local_array_get(JitCtx *ctx, char const *code, char const *end,
         int idx_off = OP_OFF(ctx->sp + 1);
         if (index_local >= 0) bc_copy_value(ctx, BC_OPS, idx_off, BC_LOC, index_local * sizeof (Value));
         else {
-                Value iv = value_integer(ctx->ty, immediate);
-                if (nanbox_is_pointer(iv.bits)) gc_immortalize(ctx->ty, &iv);
-                jit_emit_load_imm(asm, BC_S0, iv.bits.as_int64);
-                jit_emit_str64(asm, BC_S0, BC_OPS, idx_off);
+                bc_store_integer(ctx, idx_off, immediate);
         }
         jit_emit_mov(asm, BC_A0, BC_TY); jit_emit_add_imm(asm, BC_A1, BC_OPS, result_off);
         jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_subscript); bc_emit_reentrant_call(ctx, BC_CALL);
@@ -4904,9 +4926,7 @@ bc_emit_local_int_imm_mut_pop(JitCtx *ctx, int target, u8 op, imax value)
         bc_encode_int32(ctx, BC_S0, BC_S0); jit_emit_str64(asm, BC_S0, BC_LOC, target_off);
         jit_emit_jump(asm, lbl_done);
         jit_emit_label(asm, lbl_slow);
-        Value iv = value_integer(ctx->ty, value);
-        if (nanbox_is_pointer(iv.bits)) gc_immortalize(ctx->ty, &iv);
-        jit_emit_load_imm(asm, BC_S0, iv.bits.as_int64); jit_emit_str64(asm, BC_S0, BC_OPS, scratch_off);
+        bc_store_integer(ctx, scratch_off, value);
         jit_emit_mov(asm, BC_A0, BC_TY); jit_emit_add_imm(asm, BC_A1, BC_LOC, target_off);
         jit_emit_add_imm(asm, BC_A2, BC_OPS, scratch_off); jit_emit_mov(asm, BC_A3, BC_A2);
         jit_emit_load_imm(asm, BC_CALL, (iptr)bc_mut_runtime(op)); bc_emit_reentrant_call(ctx, BC_CALL);
@@ -6860,11 +6880,15 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                         int b_op;
                         BC_READ(u_op);
                         BC_READ(b_op);
-                        Value value = value_box(ctx->ty, (ValuePayload){
-                                .type=VALUE_OPERATOR, .uop=u_op, .bop=b_op
-                        });
-                        gc_immortalize(ctx->ty, &value);
-                        bc_push_bits(ctx, value.bits.as_int64, NULL);
+                        int dst = OP_OFF(ctx->sp);
+                        jit_emit_mov(asm, BC_A0, BC_TY);
+                        jit_emit_add_imm(asm, BC_A1, BC_OPS, dst);
+                        jit_emit_load_imm(asm, BC_A2, u_op);
+                        jit_emit_load_imm(asm, BC_A3, b_op);
+                        jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_operator);
+                        bc_emit_runtime_call(ctx, BC_CALL);
+                        ctx->sp++;
+                        if (ctx->sp > ctx->max_sp) ctx->max_sp = ctx->sp;
                         break;
                 }
 
@@ -7937,11 +7961,14 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                 CASE(TYPE) {
                         uptr p;
                         BC_READ(p);
-                        Value value = value_box(ctx->ty, (ValuePayload){
-                                .type=VALUE_TYPE, .ptr=(void *)p
-                        });
-                        gc_immortalize(ctx->ty, &value);
-                        bc_push_bits(ctx, value.bits.as_int64, NULL);
+                        int dst = OP_OFF(ctx->sp);
+                        jit_emit_mov(asm, BC_A0, BC_TY);
+                        jit_emit_add_imm(asm, BC_A1, BC_OPS, dst);
+                        jit_emit_load_imm(asm, BC_A2, p);
+                        jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_type);
+                        bc_emit_runtime_call(ctx, BC_CALL);
+                        ctx->sp++;
+                        if (ctx->sp > ctx->max_sp) ctx->max_sp = ctx->sp;
                         break;
                 }
 
