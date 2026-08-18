@@ -558,6 +558,11 @@ InitializeTy(Ty *ty, ThreadGroup *group)
 static void
 InitializeTY(TY *ty0, Ty *ty)
 {
+        intern_init(&ty0->u_ops);
+        intern_init(&ty0->b_ops);
+        intern_init(&ty0->members);
+        intern_init(&ty0->strings);
+
 #define X(op, id) intern(&ty0->b_ops, id)
         TY_BINARY_OPERATORS;
 #undef X

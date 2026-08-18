@@ -10,6 +10,7 @@ inline static void
 intern_init(InternSet *set)
 {
         memset(set, 0, sizeof *set);
+        TySpinLockInit(&set->lock);
 }
 
 InternEntry *
@@ -37,9 +38,10 @@ intern(InternSet *set, char const *s)
 inline static InternEntry *
 intern_entry(InternSet *set, i64 id)
 {
-        u32 key = set->index.items[id];
-        InternBucket *b = &set->set[key & 0xFF];
-        return &b->items[key >> 8u];
+        TySpinLockLock(&set->lock);
+        InternEntry *entry = set->index.items[id];
+        TySpinLockUnlock(&set->lock);
+        return entry;
 }
 
 #endif

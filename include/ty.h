@@ -65,11 +65,12 @@ typedef struct {
         void *literal;
 } InternEntry;
 
-typedef vec(InternEntry) InternBucket;
+typedef vec(InternEntry *) InternBucket;
 
 typedef struct {
         InternBucket set[INTERN_TABLE_SIZE];
-        vec(u32) index;
+        vec(InternEntry *) index;
+        TySpinLock lock;
 } InternSet;
 
 typedef struct location {

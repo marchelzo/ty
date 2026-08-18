@@ -5,13 +5,11 @@
 #include "vec.h"
 #include "xd.h"
 
-void const *InternSentinel = &InternSentinel;
-
 inline static InternEntry *
 find(InternBucket const *bucket, char const *name, usize length, u64 hash)
 {
         for (usize i = 0; i < vN(*bucket); ++i) {
-                InternEntry *entry = v_(*bucket, i);
+                InternEntry *entry = v__(*bucket, i);
                 if (entry->hash != hash || entry->length != length) {
                         continue;
                 }
@@ -29,24 +27,28 @@ intern_get_n(InternSet *set, char const *name, usize length)
         u64 hash = XXH3_64bits(name, length);
         InternBucket *bucket = &set->set[hash & (INTERN_TABLE_SIZE - 1)];
 
+        TySpinLockLock(&set->lock);
         InternEntry *entry = find(bucket, name, length, hash);
+        TySpinLockUnlock(&set->lock);
 
         if (entry != NULL) {
                 return entry;
         }
 
-        xvP(
-                *bucket,
-                ((InternEntry) {
-                        .name   = name,
-                        .length = length,
-                        .hash   = hash,
-                        .id     = -(bucket + 1 - set->set),
-                        .data   = set
-                })
-        );
-
-        return vvX(*bucket);
+        /*
+         * A miss is represented in thread-local storage until intern_put().
+         * The old implementation borrowed bucket->items[bucket->count], which
+         * let another thread overwrite or invalidate the returned pointer.
+         */
+        static _Thread_local InternEntry pending;
+        pending = (InternEntry) {
+                .name   = name,
+                .length = length,
+                .hash   = hash,
+                .id     = -1,
+                .data   = set,
+        };
+        return &pending;
 }
 
 InternEntry *
@@ -59,24 +61,41 @@ InternEntry *
 intern_put(InternEntry *e, void *data)
 {
         InternSet *set = e->data;
-        InternBucket *b = &set->set[-e->id - 1];
+        usize length = e->length;
+        u64 hash = e->hash;
+        InternBucket *bucket = &set->set[hash & (INTERN_TABLE_SIZE - 1)];
 
-        char *owned_name = ty_malloc(e->length + 1);
-        if (owned_name == NULL) {
+        InternEntry *candidate = ty_malloc(sizeof *candidate + length + 1);
+        if (candidate == NULL) {
                 panic("out of memory");
         }
-        memcpy(owned_name, e->name, e->length);
-        owned_name[e->length] = '\0';
+        char *owned_name = (char *)(candidate + 1);
+        memcpy(owned_name, e->name, length);
+        owned_name[length] = '\0';
 
-        e->name = owned_name;
-        e->data = data;
-        e->id   = vN(set->index);
+        *candidate = (InternEntry) {
+                .name   = owned_name,
+                .length = length,
+                .hash   = hash,
+                .data   = data,
+        };
 
-        xvP(set->index, (b->count << 8u) | (b - set->set));
+        TySpinLockLock(&set->lock);
 
-        b->count += 1;
+        /* Another thread may have committed the same miss in the meantime. */
+        InternEntry *entry = find(bucket, owned_name, length, hash);
+        if (entry != NULL) {
+                TySpinLockUnlock(&set->lock);
+                ty_free(candidate);
+                return entry;
+        }
 
-        return e;
+        candidate->id = vN(set->index);
+        xvP(*bucket, candidate);
+        xvP(set->index, candidate);
+
+        TySpinLockUnlock(&set->lock);
+        return candidate;
 }
 
 /* vim: set sts=8 sw=8 expandtab: */
