@@ -135,3 +135,16 @@ pub fn test-inline-small-conditionals() {
         assert(call-inline-choose(value, 2.0) == 2.0)
     }
 }
+
+pub fn test-jit-equality-fast-path-kinds() {
+    let same-left: String = 'same'
+    let same-right: String = 'same'
+    let different: String = 'different'
+    let empty = nil
+    for ..1000 {
+        assert(same-left == same-right)
+        assert(same-left != different)
+        assert(empty == nil)
+        assert(empty != 0)
+    }
+}
