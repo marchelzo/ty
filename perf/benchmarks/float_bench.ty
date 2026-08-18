@@ -46,5 +46,5 @@ fn float-ops(n: Int) {
 }
 
 if __module__ == 'main' {
-    float-ops(25)
+    float-ops(10)
 }

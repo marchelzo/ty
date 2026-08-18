@@ -11688,8 +11688,8 @@ emit_expr(Ty *ty, Expr const *e, bool need_loc)
                 break;
 
         case EXPRESSION_SHR_EQ:
-                emit_target(ty, e->target, false);
                 EE(e->value);
+                emit_target(ty, e->target, false);
                 INSN(MUT_SHR);
                 break;
 

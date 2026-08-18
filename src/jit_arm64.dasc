@@ -402,8 +402,8 @@ static void jit_emit_prologue(dasm_State **Dst, int bound) {
         // x24 = args - stack.items
         |  ldr x9, [x19, #OFF_TY_STACK + OFF_VEC_DATA]
         |  sub x24, x21, x9
-        // x23 = args + bound * VALUE_SIZE = &stack.items[fp + bound]
-        int ops_off = bound * VALUE_SIZE;
+        // x23 = args + bound * 8 = &stack.items[fp + bound]
+        int ops_off = bound * sizeof (Value);
         if (ops_off > 0) {
                 |  add x23, x21, #ops_off
         } else {
@@ -431,9 +431,9 @@ static void jit_emit_jump_epilogue_restore(dasm_State **Dst) {
 }
 
 // After a yield helper returns, x0 contains the updated frame pointer (index).
-// Update x24 (fp byte offset) = x0 * VALUE_SIZE.
+// Update x24 (fp byte offset) = x0 * 8.
 static void jit_emit_update_fp(dasm_State **Dst) {
-        |  lsl x24, x0, #3  // VALUE_SIZE == 8 == 1 << 3
+        |  lsl x24, x0, #3
 }
 
 // --- Reload x21/x23 after calls that may realloc the stack ---
@@ -441,7 +441,7 @@ static void jit_emit_update_fp(dasm_State **Dst) {
 static void jit_emit_reload_stack(dasm_State **Dst, int bound) {
         |  ldr x9, [x19, #OFF_TY_STACK + OFF_VEC_DATA]
         |  add x21, x9, x24
-        int ops_off = bound * VALUE_SIZE;
+        int ops_off = bound * sizeof (Value);
         if (ops_off > 0) {
                 |  add x23, x21, #ops_off
         } else {
@@ -451,14 +451,14 @@ static void jit_emit_reload_stack(dasm_State **Dst, int bound) {
 
 // Sync interpreter stack count to JIT's current sp.
 // Sets ty->stack.count = (fp + bound + sp)
-// x24 holds fp * VALUE_SIZE, so fp = x24 / VALUE_SIZE
+// x24 holds fp * 8, so fp = x24 >> 3.
 // But simpler: x23 points to &stack.items[fp + bound],
 // and sp slots past that is where we are.
 static void jit_emit_sync_stack_count(dasm_State **Dst, int bound, int sp) {
         // stack.count = fp + bound + sp
-        // fp * VALUE_SIZE is in x24
+        // fp * 8 is in x24
         // We need the integer index, not byte offset.
-        // fp = x24 / VALUE_SIZE = x24 >> 3  (assuming VALUE_SIZE == 8)
+        // fp = x24 >> 3
         |  lsr x17, x24, #3
         int total = bound + sp;
         if (total > 0) {
@@ -677,6 +677,16 @@ static void jit_emit_decode_direct_array(dasm_State **Dst, int dst, int word, in
         |  lsl Rx(dst), Rx(word), #16
         |  lsr Rx(dst), Rx(dst), #16
 }
+static void jit_emit_decode_direct_tuple(dasm_State **Dst, int dst, int word, int label) {
+        |  lsr x17, Rx(word), #48
+        |  cbnz x17, =>label
+        |  cmp Rx(word), #0x1000
+        |  blo =>label
+        |  and x17, Rx(word), #3
+        |  cmp x17, #2
+        |  bne =>label
+        |  and Rx(dst), Rx(word), #-4
+}
 static void jit_emit_decode_direct_tag(dasm_State **Dst, int dst, int word, int label) {
         |  lsr x17, Rx(word), #48
         |  cmp x17, #3
@@ -706,6 +716,3 @@ static void jit_emit_branch_not_double(dasm_State **Dst, int word, int label) {
         |  cmp x17, #7
         |  blo =>label
 }
-
-
-

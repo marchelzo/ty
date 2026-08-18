@@ -331,12 +331,7 @@ typedef struct tuple_value {
         bool ids_gc;
 } TupleValue;
 
-/*
- * GC-managed payload for values that do not fit in the immediate NaN-box
- * representation.  This deliberately preserves the former Value layout: the
- * first implementation is correctness-first and boxes every complex value.
- * The nanbox aux tags remain available for a future direct-pointer fast path.
- */
+/* GC-managed payload for values that do not have a direct 64-bit encoding. */
 typedef struct value_payload {
         u8 type;
         u16 tags;
@@ -1382,13 +1377,9 @@ inline static TupleValue *value_direct_tuple_ptr(Value v) {
         return (TupleValue *)(uptr)(v.bits.as_int64 & ~VALUE_DIRECT_TUPLE_PTR_MASK);
 }
 inline static bool value_is_direct_string(Value v) {
-#if defined(NANBOX_64)
         return (v.bits.as_int64 & ~VALUE_DIRECT_PTR_MASK) == 0
             && v.bits.as_int64 >= VALUE_DIRECT_PTR_MIN
             && (v.bits.as_int64 & VALUE_DIRECT_TUPLE_PTR_MASK) == VALUE_DIRECT_STRING_PTR_TAG;
-#else
-        return false;
-#endif
 }
 inline static Value value_direct_string(void const *string) {
         uptr p = (uptr)string;
@@ -1400,13 +1391,9 @@ inline static u8 *value_direct_string_ptr(Value v) {
         return (u8 *)(uptr)(v.bits.as_int64 & ~VALUE_DIRECT_TUPLE_PTR_MASK);
 }
 inline static bool value_is_direct_regex(Value v) {
-#if defined(NANBOX_64)
         return (v.bits.as_int64 & ~VALUE_DIRECT_PTR_MASK) == 0
             && v.bits.as_int64 >= VALUE_DIRECT_PTR_MIN
             && (v.bits.as_int64 & VALUE_DIRECT_TUPLE_PTR_MASK) == VALUE_DIRECT_REGEX_PTR_TAG;
-#else
-        return false;
-#endif
 }
 inline static Value value_direct_regex(Regex const *regex) {
         uptr p = (uptr)regex;
@@ -1418,20 +1405,12 @@ inline static Regex const *value_direct_regex_ptr(Value v) {
         return (Regex const *)(uptr)(v.bits.as_int64 & ~VALUE_DIRECT_TUPLE_PTR_MASK);
 }
 inline static bool value_is_direct_sentinel(Value v) {
-#if defined(NANBOX_64)
         return v.bits.as_int64 == VALUE_DIRECT_SENTINEL;
-#else
-        return false;
-#endif
 }
 inline static bool value_is_boxed(Value v) {
-#if defined(NANBOX_64)
         return nanbox_is_pointer(v.bits)
             && v.bits.as_int64 >= VALUE_DIRECT_PTR_MIN
             && (v.bits.as_int64 & VALUE_DIRECT_TUPLE_PTR_MASK) == 0;
-#else
-        return nanbox_is_pointer(v.bits);
-#endif
 }
 inline static ValueBox *
 value_box_ptr(Value value)
@@ -1443,7 +1422,6 @@ value_box_ptr(Value value)
 inline static u8
 value_type(Value value)
 {
-#if defined(NANBOX_64)
         u64 bits = value.bits.as_int64;
 
         if ((bits >> 48) == 0) switch (bits) {
@@ -1493,24 +1471,6 @@ value_type(Value value)
         default:
                 return VALUE_REAL;
         }
-#else
-        if (nanbox_is_int(value.bits)) return VALUE_INTEGER;
-        if (nanbox_is_double(value.bits)) return VALUE_REAL;
-        if (nanbox_is_boolean(value.bits)) return VALUE_BOOLEAN;
-        if (nanbox_is_null(value.bits)) return VALUE_NIL;
-        if (nanbox_is_undefined(value.bits)) return VALUE_NONE;
-        if (nanbox_is_empty(value.bits)) return VALUE_ZERO;
-        if (nanbox_is_deleted(value.bits)) return VALUE_TOMBSTONE;
-        if (value_is_direct_array(value)) return VALUE_ARRAY;
-        if (value_is_direct_class(value)) return VALUE_CLASS;
-        if (value_is_direct_tag(value)) return VALUE_TAG;
-        if (value_is_direct_object(value)) return VALUE_OBJECT;
-        if (value_is_direct_tagged_int(value)) return VALUE_INTEGER | VALUE_TAGGED;
-        if (value_is_direct_string(value)) return VALUE_STRING;
-        if (value_is_direct_tuple(value))
-                return value_direct_tuple_ptr(value)->tags ? VALUE_TUPLE | VALUE_TAGGED : VALUE_TUPLE;
-        return value_box_ptr(value)->payload.type;
-#endif
 }
 
 inline static u16
@@ -1613,11 +1573,7 @@ value_bool(Value value)
 #define QUEUE(q)                 VALUE_BOX_(.type=VALUE_QUEUE, .queue=(q))
 #define SHARED_QUEUE(q)          VALUE_BOX_(.type=VALUE_SHARED_QUEUE, .shared_queue=(q))
 #define DICT(d)                  VALUE_BOX_(.type=VALUE_DICT, .dict=(d))
-#if defined(NANBOX_64)
 #define REGEX(r)                 value_direct_regex((r))
-#else
-#define REGEX(r)                 VALUE_BOX_(.type=VALUE_REGEX, .regex=(r))
-#endif
 #define FUNCTION()               VALUE_BOX_(.type=VALUE_FUNCTION)
 #define PTR(p)                   VALUE_BOX_(.type=VALUE_PTR, .ptr=(p), .gcptr=NULL)
 #define TPTR(t, p)               VALUE_BOX_(.type=VALUE_PTR, .ptr=(p), .gcptr=NULL, .extra=(t))
@@ -1641,11 +1597,7 @@ value_bool(Value value)
 #define FOREIGN_FUN(p, i, x)     VALUE_BOX_(.type=VALUE_FOREIGN_FUNCTION, .ffi=(i), .ff=(p), .xinfo=(x))
 #define NIL                      ((Value){ .bits = nanbox_null() })
 #define INDEX(ix, o, n)          VALUE_BOX_(.type=VALUE_INDEX, .i=(ix), .off=(o), .nt=(n))
-#if defined(NANBOX_64)
 #define SENTINEL                 ((Value){ .bits.as_int64 = VALUE_DIRECT_SENTINEL })
-#else
-#define SENTINEL                 VALUE_BOX_(.type=VALUE_SENTINEL)
-#endif
 #define NONE                     ((Value){ .bits = nanbox_undefined() })
 #define BREAK                    VALUE_BOX_(.type=VALUE_BREAK)
 #define ZERO                     ((Value){ .bits = nanbox_empty() })

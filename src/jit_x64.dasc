@@ -484,8 +484,8 @@ static void jit_emit_prologue(dasm_State **Dst, int bound) {
         |  sub r14, rax
         |  mov rbp, r14
         |  add r14, rax
-        // rbx = args + bound * VALUE_SIZE = &stack.items[fp + bound]
-        int ops_off = bound * VALUE_SIZE;
+        // rbx = args + bound * 8 = &stack.items[fp + bound]
+        int ops_off = bound * sizeof (Value);
         if (ops_off > 0) {
                 |  lea rbx, [r14+ops_off]
         } else {
@@ -516,13 +516,13 @@ static void jit_emit_jump_epilogue_restore(dasm_State **Dst) {
 }
 
 // After a yield helper returns, rax contains the updated frame pointer (index).
-// Update rbp (fp byte offset) = rax * VALUE_SIZE.
+// Update rbp (fp byte offset) = rax * 8.
 static void jit_emit_update_fp(dasm_State **Dst, int bound) {
-        |  shl rax, 3       // VALUE_SIZE == 8 == 1 << 3
+        |  shl rax, 3
         |  mov rbp, rax
         |  mov rax, [r12+OFF_TY_STACK+OFF_VEC_DATA]
         |  lea r14, [rax+rbp]
-        int ops_off = bound * VALUE_SIZE;
+        int ops_off = bound * sizeof (Value);
         if (ops_off > 0) {
                 |  lea rbx, [r14+ops_off]
         } else {
@@ -535,7 +535,7 @@ static void jit_emit_update_fp(dasm_State **Dst, int bound) {
 static void jit_emit_reload_stack(dasm_State **Dst, int bound) {
         |  mov rax, [r12+OFF_TY_STACK+OFF_VEC_DATA]
         |  lea r14, [rax+rbp]
-        int ops_off = bound * VALUE_SIZE;
+        int ops_off = bound * sizeof (Value);
         if (ops_off > 0) {
                 |  lea rbx, [r14+ops_off]
         } else {
@@ -545,7 +545,7 @@ static void jit_emit_reload_stack(dasm_State **Dst, int bound) {
 
 // Sync interpreter stack count to JIT's current sp.
 // Sets ty->stack.count = (fp + bound + sp)
-// rbp holds fp * VALUE_SIZE, so fp = rbp / VALUE_SIZE = rbp >> 3
+// rbp holds fp * 8, so fp = rbp >> 3.
 static void jit_emit_sync_stack_count(dasm_State **Dst, int bound, int sp) {
         |  mov rax, rbp
         |  shr rax, 3
@@ -639,6 +639,21 @@ static void jit_emit_decode_direct_array(dasm_State **Dst, int dst, int word, in
         if (dst != word) {
                 |  mov Rq(dst), Rq(word)
         }
+}
+static void jit_emit_decode_direct_tuple(dasm_State **Dst, int dst, int word, int label) {
+        |  mov rax, Rq(word)
+        |  shr rax, 48
+        |  jnz =>label
+        |  cmp Rq(word), 0x1000
+        |  jb =>label
+        |  mov rax, Rq(word)
+        |  and rax, 3
+        |  cmp rax, 2
+        |  jne =>label
+        if (dst != word) {
+                |  mov Rq(dst), Rq(word)
+        }
+        |  and Rq(dst), -4
 }
 static void jit_emit_decode_direct_tag(dasm_State **Dst, int dst, int word, int label) {
         |  mov rax, Rq(word)

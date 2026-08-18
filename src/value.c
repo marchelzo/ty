@@ -189,25 +189,9 @@ value_string_clone_nul_value(Ty *ty, void const *src, u32 n)
 Value
 value_string_inline(Ty *ty, u32 n)
 {
-#if defined(NANBOX_64)
         u8 *bytes = gc_alloc_object(ty, (usize)n + 1, GC_STRING_NUL);
         bytes[n] = '\0';
         return value_direct_string(bytes);
-#else
-        ValueBox *box = gc_alloc_object_unchecked(
-                ty, sizeof *box + n + 1, GC_VALUE_BOX
-        );
-        u8 *bytes = (u8 *)(box + 1);
-        box->payload = (ValuePayload) {
-                .type=VALUE_STRING,
-                .str=bytes,
-                .bytes=n,
-                .str0=bytes,
-                .inline_bytes=true
-        };
-        bytes[n] = '\0';
-        return (Value){ .bits=nanbox_from_pointer(box) };
-#endif
 }
 
 u32
@@ -226,7 +210,6 @@ value_string_wrap(Ty *ty, void const *src, u32 n, bool ro)
 #ifdef TY_BOX_STATS
         atomic_fetch_add_explicit(&string_wrap_count, 1, memory_order_relaxed);
 #endif
-#if defined(NANBOX_64)
         if (!ro && src != NULL && ((uptr)src & VALUE_DIRECT_TUPLE_PTR_MASK) == 0) {
                 struct alloc const *a = ALLOC_OF(src);
                 usize bytes = a->size - (a->type == GC_STRING_NUL);
@@ -235,7 +218,6 @@ value_string_wrap(Ty *ty, void const *src, u32 n, bool ro)
                         return value_direct_string(src);
                 }
         }
-#endif
         return value_box(ty, (ValuePayload){
                 .type=VALUE_STRING, .str=src, .bytes=n, .str0=(u8 *)src, .ro=ro
         });
