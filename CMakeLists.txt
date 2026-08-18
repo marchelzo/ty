@@ -1,5 +1,11 @@
 cmake_minimum_required(VERSION 3.21)
 
+option(BUILD_PROFILER "Build the typrof executable for profiling" OFF)
+if(BUILD_PROFILER)
+  list(APPEND VCPKG_MANIFEST_FEATURES profiler)
+  list(REMOVE_DUPLICATES VCPKG_MANIFEST_FEATURES)
+endif()
+
 project(ty VERSION 0.1 LANGUAGES C)
 
 include(cmake/VersionInfoTarget.cmake)
@@ -8,7 +14,6 @@ include(cmake/VersionInfoTarget.cmake)
 #   user-defined options
 # ---
 
-option(BUILD_PROFILER "Build the typrof executable for profiling" OFF)
 option(USE_NSYNC "Use nsync synchronization primitives on supported platforms" ON)
 option(NO_JIT "Disable JIT code generation" OFF)
 option(USE_SYSTEM_DEPS "Use system-installed libraries instead of vcpkg (e.g. FreeBSD ports)" OFF)
@@ -441,11 +446,29 @@ target_compile_definitions(${_tgt_ty_ls} PRIVATE TY_LS)
 target_link_libraries(${_tgt_ty_ls} PRIVATE ${_tgt_ty_interface})
 
 if(BUILD_PROFILER)
+  if(USE_SYSTEM_DEPS)
+    pkg_check_modules(_capstone REQUIRED IMPORTED_TARGET capstone)
+    set(_tgt_capstone PkgConfig::_capstone)
+  else()
+    find_package(capstone CONFIG REQUIRED)
+    set(_tgt_capstone capstone::capstone)
+  endif()
+
   set(_tgt_ty_profiler "${PROJECT_NAME}prof")
   add_executable(${_tgt_ty_profiler})
   target_sources(${_tgt_ty_profiler} PRIVATE ty.c)
-  target_compile_definitions(${_tgt_ty_profiler} PRIVATE TY_PROFILER)
-  target_link_libraries(${_tgt_ty_profiler} PRIVATE ${_tgt_ty_interface})
+  target_compile_definitions(
+    ${_tgt_ty_profiler}
+    PRIVATE
+      TY_PROFILER
+      TY_HAVE_CAPSTONE
+  )
+  target_link_libraries(
+    ${_tgt_ty_profiler}
+    PRIVATE
+      ${_tgt_ty_interface}
+      ${_tgt_capstone}
+  )
 endif()
 
 # ---

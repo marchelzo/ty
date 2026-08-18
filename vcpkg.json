@@ -11,5 +11,19 @@
     },
     "xxhash",
     "mimalloc"
-  ]
+  ],
+  "features": {
+    "profiler": {
+      "description": "Dependencies used only by the typrof executable",
+      "dependencies": [
+        {
+          "name": "capstone",
+          "features": [
+            "arm64",
+            "x86"
+          ]
+        }
+      ]
+    }
+  }
 }

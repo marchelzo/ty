@@ -46,6 +46,11 @@ jit_free(Ty *ty);
 // Print JIT stats report (compilation info, fast/slow paths, top slow sites)
 void
 jit_stats_report(Ty *ty, FILE *out);
+
+// Enable annotated native-code output. A non-empty filter restricts output to
+// functions whose class/name/prototype contains the given substring.
+void
+jit_asm_enable(char const *filter);
 #endif
 
 inline static JitFn *

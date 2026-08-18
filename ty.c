@@ -129,6 +129,9 @@ usage(void)
                 "    -F FREQ       Set profiler sampling frequency in Hz (default: every instruction)     \0"
                 "    -o FILE       Write profile data to FILE instead of stdout                           \0"
                 "                    (- is interpreted as stdout, and @ is interpreted as stderr)         \0"
+                "    --jit-asm[=FILTER]                                                                  \0"
+                "                  Append annotated assembly for JIT-compiled functions; optionally      \0"
+                "                  restrict output to names containing FILTER                            \0"
                 "    --wall        Profile based on wall time instead of CPU time                         \0"
 #endif
                 "    --color=WHEN  Explicitly control when to use colored output. WHEN can be set         \0"
@@ -517,6 +520,11 @@ ProcessArgs(char *argv[], bool first)
                 extern bool UseWallTime;
                 if (strcmp(argv[argi], "--wall") == 0) {
                         UseWallTime = true;
+                } else if (strcmp(argv[argi], "--jit-asm") == 0) {
+                        jit_asm_enable(NULL);
+                } else if (strncmp(argv[argi], "--jit-asm=", 10) == 0
+                           && argv[argi][10] != '\0') {
+                        jit_asm_enable(argv[argi] + 10);
                 } else
 #endif
 

@@ -162,6 +162,8 @@ SOURCES := $(wildcard src/*.c)
 OBJECTS := $(patsubst src/%.c,obj/%.o,$(SOURCES))
 TYLS_OBJECTS := $(patsubst src/%.c,obj/tyls/%.o,$(SOURCES))
 TYPROF_OBJECTS := $(patsubst src/%.c,obj/typrof/%.o,$(SOURCES))
+TYPROF_CAPSTONE_CFLAGS = $(shell pkg-config --cflags capstone 2>/dev/null)
+TYPROF_CAPSTONE_LIBS = $(shell pkg-config --libs capstone 2>/dev/null)
 EXTERNAL := libco/libco.o dtoa/dtoa.o libmd/libmd.a
 ifndef NO_NSYNC
 	EXTERNAL += nsync/out/libnsync.a
@@ -203,7 +205,7 @@ tyls: obj/tyls-main.o $(TYLS_OBJECTS) $(EXTERNAL)
 
 typrof: obj/typrof-main.o $(TYPROF_OBJECTS) $(EXTERNAL)
 	@echo cc $@
-	@$(CC) $(CFLAGS) -DTY_PROFILER -o $@ $^ $(LDFLAGS)
+	@$(CC) $(CFLAGS) -DTY_PROFILER -DTY_HAVE_CAPSTONE -o $@ $^ $(LDFLAGS) $(TYPROF_CAPSTONE_LIBS)
 
 obj/ty-main.o: ty.c
 	@echo cc $<
@@ -239,7 +241,7 @@ obj/tyls/%.o: src/%.c
 
 obj/typrof/%.o: src/%.c
 	@echo cc $<
-	@$(CC) $(CFLAGS) -MMD -MP -MF $(@:.o=.d) -c -o $@ -DTY_PROFILER -DFILENAME=$(patsubst src/%.c,%,$<) $<
+	@$(CC) $(CFLAGS) $(TYPROF_CAPSTONE_CFLAGS) -MMD -MP -MF $(@:.o=.d) -c -o $@ -DTY_PROFILER -DTY_HAVE_CAPSTONE -DFILENAME=$(patsubst src/%.c,%,$<) $<
 
 
 clean:
