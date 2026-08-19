@@ -1,0 +1,83 @@
+import lib (bench)
+import json
+
+// Decode a batch resembling an analytics API response, aggregate it, and
+// encode a smaller response.  Keeping the serialized input outside the timed
+// function makes each iteration represent one complete request payload.
+
+fn make-events(count: Int) {
+    let kinds = ['view', 'click', 'purchase', 'refund']
+    let countries = ['CA', 'US', 'GB', 'DE', 'JP', 'BR']
+
+    [{
+        id: i,
+        account: "user-{i % 61}",
+        kind: kinds[i % #kinds],
+        country: countries[(i * 5) % #countries],
+        active: i % 4 != 0,
+        labels: ["campaign-{i % 9}", "device-{i % 3}"],
+        metrics: {
+            duration: (i * 37) % 1000,
+            value: ((i * 19) % 500).float / 10.0
+        },
+        note: i % 10 == 0 ? nil : "event {i}"
+    } for i in ..count]
+}
+
+let JSON_PAYLOAD = json.encode({
+    version: 3,
+    source: 'edge-gateway',
+    events: make-events(750)
+})
+
+fn transform-json(payload: String) {
+    let document: _ = json.parse(payload)
+    let counts = %{*: 0}
+    let totals = %{*: 0.0}
+    let accounts = %{}
+    let selected = []
+
+    for event in document['events'] if event['active'] {
+        let kind = event['kind']
+        counts[kind] += 1
+        totals[event['country']] += event['metrics']['value']
+        accounts[event['account']] = true
+
+        if kind == 'purchase' || event['metrics']['duration'] >= 900 {
+            selected.push({
+                id: event['id'],
+                kind: kind,
+                score: event['metrics']['value'],
+                label: event['labels'][0]
+            })
+        }
+    }
+
+    let response = json.encode({
+        accepted: counts.values().sum(),
+        uniqueAccounts: #accounts,
+        counts: counts,
+        totals: totals,
+        selected: selected
+    })
+
+    (response, #selected)
+}
+
+@bench('json record array dict string float bool nil alloc parse serialize')
+fn json-pipeline(n: Int) {
+    for ..n {
+        let (response, selected) = transform-json(JSON_PAYLOAD)
+        let summary: _ = json.parse(response)
+        assert(summary['accepted'] == 562)
+        assert(summary['uniqueAccounts'] == 61)
+        assert(#summary['counts'] == 3)
+        assert(#summary['totals'] == 6)
+        assert(summary['selected'].len() == selected)
+        assert(selected > 100)
+    }
+}
+
+if __module__ == 'main' {
+    json-pipeline(1)
+}

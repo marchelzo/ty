@@ -1,0 +1,44 @@
+import lib (bench)
+import io
+
+// Binary buffered I/O stresses Blob creation/indexing, bitwise integer work,
+// repeated reads and writes, and stream lifecycle costs.
+
+const BLOCK_SIZE = 256 * 1024
+const COPIES = 4
+
+let BINARY_BLOCK = Blob(*[((i * 31) ^ (i / 251)) & 0xff for i in ..BLOCK_SIZE])
+
+@bench('fs io binary blob integer bitwise alloc')
+fn blob-io(n: Int) {
+    for ..n {
+        with file = io.tmpfile() {
+            for ..COPIES {
+                assert(file.write(BINARY_BLOCK) == BLOCK_SIZE)
+            }
+            file.flush()
+            file.rewind()
+
+            let total = 0
+            let checksum = 0
+            while total < BLOCK_SIZE * COPIES {
+                let chunk = file.read(32 * 1024)
+                assert(#chunk > 0)
+
+                let j = 0
+                while j < #chunk {
+                    checksum = ((checksum * 33) ^ chunk[j]) & 0x7fffffff
+                    j += 257
+                }
+                total += #chunk
+            }
+
+            assert(total == BLOCK_SIZE * COPIES)
+            assert(checksum != 0)
+        }
+    }
+}
+
+if __module__ == 'main' {
+    blob-io(1)
+}

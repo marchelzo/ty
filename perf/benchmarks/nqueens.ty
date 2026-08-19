@@ -31,7 +31,7 @@ fn solve(n: Int) -> Int {
     count
 }
 
-@bench
+@bench('array integer recursion closure backtracking')
 fn nqueens(n: Int) {
     for ..n {
         let result = solve(10)

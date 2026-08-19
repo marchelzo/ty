@@ -16,11 +16,11 @@ pub use BenchRecord = {
 }
 
 pub use SuiteRecord = Array[BenchRecord]
-pub use BestRecord = Dict[String, BenchRecord]
 
 pub use Benchmark = {
     name: String,
-    run:  Int -> Any
+    run:  Int -> Any,
+    tags: Array[String]
 }
 
 // ---------------------------------------------------------------------------
@@ -98,9 +98,18 @@ pub class Result {
 
 let BENCHMARKS: Array[Benchmark] = []
 
-pub fn bench(f) {
-    BENCHMARKS.push({name: f.__name__, run: f})
+// Decorators insert the decorated function as the first argument, so both
+// @bench and @bench('space separated tags') arrive here.
+pub fn bench(f, categories: String = '') {
+    let tags = categories.words().uniq().sort()
+    BENCHMARKS.push({name: f.__name__, run: f, tags})
     f
+}
+
+pub fn matches-filter(entry: Benchmark, query: String) -> Bool {
+    query.words().all?(term -> (
+        entry.name.contains?(term) || entry.tags.contains?(term)
+    ))
 }
 
 pub fn registered() -> Array[Benchmark] {
@@ -200,42 +209,4 @@ pub fn save-results(path: String, results: [Result]) {
 
 pub fn load-results(path: String) -> Array[BenchRecord] | nil {
     try json.parse(SuiteRecord, Path(path).read-text()) else nil
-}
-
-// ---------------------------------------------------------------------------
-//  Best-results tracking
-// ---------------------------------------------------------------------------
-
-pub fn load-best(path: String) -> Dict[String, BenchRecord] {
-    try {
-        json.parse(BestRecord, Path(path).read-text())
-    } catch _ {
-        %{}
-    }
-}
-
-pub fn update-best(path: String, results: [Result]) {
-    let best = load-best(path)
-    let updated = false
-
-    for r in results {
-        if let $old = best[r.name] {
-            if r.med < old.median {
-                best[r.name] = r.to-dict()
-                updated = true
-            }
-        } else {
-            best[r.name] = r.to-dict()
-            updated = true
-        }
-    }
-
-    if updated {
-        let text = json.encode(best)
-        with f = io.open(path, 'w') {
-            f.write(text)
-        }
-    }
-
-    best
 }

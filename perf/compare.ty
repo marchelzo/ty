@@ -42,11 +42,6 @@ fn ty-results-file(jit: Bool) {
     "{PERF_DIR}/results{sfx}.json"
 }
 
-fn ty-best-file(jit: Bool) {
-    let sfx = if jit { '_jit' } else { '' }
-    "{PERF_DIR}/best{sfx}.json"
-}
-
 let PY_RESULTS = "{PERF_DIR}/results_py.json"
 
 let TY_TO_DISPLAY = %{
@@ -77,6 +72,7 @@ fn run-ty(filter, rounds: Int, warmup: Int, jit: Bool) {
     let cmd = [ty-bin]
     if !jit { cmd.push('-j') }
     cmd.push("{PERF_DIR}/run.ty")
+    cmd.push('run')
     cmd.push('-n')
     cmd.push("{rounds}")
     cmd.push("--warmup={warmup}")
@@ -240,8 +236,8 @@ fn print-table(
               "   Python [magenta]"
               "{fmt-time(py-total):>10}[/]")
     print("  {'Geometric mean:':24} {geo-str}")
-    print("  {'Best:':24} {describe(ratios.max())}")
-    print("  {'Worst:':24} {describe(ratios.min())}")
+    print("  {'Best:':24} {describe(ratios.max() ?? 1.0)}")
+    print("  {'Worst:':24} {describe(ratios.min() ?? 1.0)}")
     print("  {'Wins:':24}"
           " ty {ty-wins}  /  Python {py-wins}"
           "  /  tied {tied}")

@@ -1,0 +1,118 @@
+import lib (bench)
+
+// Dependency planning is representative of package managers, build systems,
+// and job schedulers.  Package and plan entries are records; dictionaries are
+// used both as maps and sets.
+
+use Package = {
+    name: String,
+    deps: Array[String],
+    cost: Int,
+    cached: Bool
+}
+
+fn make-packages(count: Int) -> Array[Package] {
+    let packages: Array[Package] = []
+
+    for i in ..count {
+        let deps: Array[String] = []
+        if i > 0 { deps.push("pkg-{(i - 1) / 2}") }
+        if i > 6 && i % 5 == 0 { deps.push("pkg-{i - 7}") }
+
+        packages.push({
+            name: "pkg-{i}",
+            deps,
+            cost: i % 19 + 1,
+            cached: i % 6 == 0
+        })
+    }
+
+    packages
+}
+
+let PACKAGES = make-packages(600)
+let TARGETS = PACKAGES.map(\_.name)
+
+fn make-plan(packages: Array[Package], targets: Array[String]) {
+    let by-name = %{}
+    for package in packages { by-name[package.name] = package }
+
+    // Find the transitive closure without recursion.
+    let required = %{}
+    let stack = targets.clone()
+    while #stack > 0 {
+        let name = stack.pop()
+        if name in required { continue }
+
+        required[name] = true
+        for dep in by-name[name].deps { stack.push(dep) }
+    }
+
+    let indegree = %{}
+    let dependents = %{}
+    for name, _ in required {
+        indegree[name] = 0
+        dependents[name] = []
+    }
+
+    for name, _ in required {
+        for dep in by-name[name].deps if dep in required {
+            indegree[name] += 1
+            dependents[dep].push(name)
+        }
+    }
+
+    let ready = []
+    for name, degree in indegree if degree == 0 { ready.push(name) }
+
+    let order = []
+    let finish = %{}
+    let work = 0
+    let cache-hits = 0
+
+    while #ready > 0 {
+        let name = ready.pop()
+        let package = by-name[name]
+        let start = 0
+        for dep in package.deps if dep in required {
+            start = max(start, finish[dep])
+        }
+
+        let cost = package.cached ? 0 : package.cost
+        let done = start + cost
+        finish[name] = done
+        work += cost
+        cache-hits += package.cached ? 1 : 0
+        order.push({name, start, finish: done, cached: package.cached})
+
+        for child in dependents[name] {
+            indegree[child] -= 1
+            if indegree[child] == 0 { ready.push(child) }
+        }
+    }
+
+    let critical = 0
+    for _, t in finish { critical = max(critical, t) }
+
+    return {
+        order: order,
+        work: work,
+        cache-hits: cache-hits,
+        critical: critical
+    }
+}
+
+@bench('record array dict set graph string integer alloc scheduler')
+fn dependency-graph(n: Int) {
+    for ..n {
+        let plan = make-plan(PACKAGES, TARGETS)
+        assert(#plan.order == 600)
+        assert(plan.order[0].name == 'pkg-0')
+        assert(plan.cache-hits == 100)
+        assert(plan.work > plan.critical)
+    }
+}
+
+if __module__ == 'main' {
+    dependency-graph(1)
+}
