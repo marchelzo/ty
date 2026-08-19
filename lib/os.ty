@@ -130,6 +130,62 @@ pub fn stat(path: String) -> Stat | nil;
 pub fn fstat(fd: Int) -> Stat | nil;
 pub fn lstat(path: String) -> Stat | nil;
 
+#|if __apple__
+pub use Statfs = {
+    bsize:       Int,
+    iosize:      Int,
+    blocks:      Int,
+    bfree:       Int,
+    bavail:      Int,
+    files:       Int,
+    ffree:       Int,
+    fsid:        (Int, Int),
+    owner:       Int,
+    type:        Int,
+    flags:       Int,
+    fssubtype:   Int,
+    fstypename:  String,
+    mntonname:   String,
+    mntfromname: String
+}
+#|else if __linux__
+pub use Statfs = {
+    type:    Int,
+    bsize:   Int,
+    blocks:  Int,
+    bfree:   Int,
+    bavail:  Int,
+    files:   Int,
+    ffree:   Int,
+    fsid:    (Int, Int),
+    namelen: Int,
+    frsize:  Int,
+    flags:   Int
+}
+#|]
+
+#|if !__windows__
+pub use Statvfs = {
+    bsize:   Int,
+    frsize:  Int,
+    blocks:  Int,
+    bfree:   Int,
+    bavail:  Int,
+    files:   Int,
+    ffree:   Int,
+    favail:  Int,
+    fsid:    Int,
+    flag:    Int,
+    namemax: Int
+}
+
+pub fn statvfs(file: Int | String) -> Statvfs;
+#|]
+
+#|if __apple__ || __linux__
+pub fn statfs(file: Int | String) -> Statfs;
+#|]
+
 pub fn opendir(path: String) -> Int | nil;
 pub fn readdir(dirp: Int) -> {ino: Int, off: Int, reclen: Int, type: Int, name: String} | nil;
 pub fn closedir(dirp: Int) -> Int;

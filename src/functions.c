@@ -20,6 +20,9 @@
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#ifndef _WIN32
+#include <sys/statvfs.h>
+#endif
 
 #include <utf8proc.h>
 #include <sha1.h>
@@ -37,6 +40,7 @@
 #ifdef __linux__
 #include <sys/epoll.h>
 #include <sys/sendfile.h>
+#include <sys/vfs.h>
 #include <sys/eventfd.h>
 #include <sys/inotify.h>
 #include <sys/signalfd.h>
@@ -45,6 +49,7 @@
 #endif
 
 #if defined(__APPLE__)
+#include <sys/mount.h>
 #include <sys/sysctl.h>
 #include <util.h>
 #endif
@@ -6754,6 +6759,128 @@ BUILTIN_FUNCTION(os_stat)
 #endif
 }
 
+#if defined(__linux__) || defined(__APPLE__)
+static Value
+statfsv(Ty *ty, struct statfs const *s)
+{
+        GC_STOP();
+
+        Value fsid = vT(2);
+#if defined(__APPLE__)
+        V_ITEMS(fsid)[0] = INTEGER(s->f_fsid.val[0]);
+        V_ITEMS(fsid)[1] = INTEGER(s->f_fsid.val[1]);
+
+        Value result = vTn(
+                "bsize", INTEGER(s->f_bsize),
+                "iosize", INTEGER(s->f_iosize),
+                "blocks", INTEGER(s->f_blocks),
+                "bfree", INTEGER(s->f_bfree),
+                "bavail", INTEGER(s->f_bavail),
+                "files", INTEGER(s->f_files),
+                "ffree", INTEGER(s->f_ffree),
+                "fsid", fsid,
+                "owner", INTEGER(s->f_owner),
+                "type", INTEGER(s->f_type),
+                "flags", INTEGER(s->f_flags),
+                "fssubtype", INTEGER(s->f_fssubtype),
+                "fstypename", vSs(s->f_fstypename, strnlen(s->f_fstypename, sizeof s->f_fstypename)),
+                "mntonname", vSs(s->f_mntonname, strnlen(s->f_mntonname, sizeof s->f_mntonname)),
+                "mntfromname", vSs(s->f_mntfromname, strnlen(s->f_mntfromname, sizeof s->f_mntfromname))
+        );
+#else
+        V_ITEMS(fsid)[0] = INTEGER(s->f_fsid.__val[0]);
+        V_ITEMS(fsid)[1] = INTEGER(s->f_fsid.__val[1]);
+
+        Value result = vTn(
+                "type", INTEGER(s->f_type),
+                "bsize", INTEGER(s->f_bsize),
+                "blocks", INTEGER(s->f_blocks),
+                "bfree", INTEGER(s->f_bfree),
+                "bavail", INTEGER(s->f_bavail),
+                "files", INTEGER(s->f_files),
+                "ffree", INTEGER(s->f_ffree),
+                "fsid", fsid,
+                "namelen", INTEGER(s->f_namelen),
+                "frsize", INTEGER(s->f_frsize),
+                "flags", INTEGER(s->f_flags)
+        );
+#endif
+
+        GC_RESUME();
+        return result;
+}
+
+BUILTIN_FUNCTION(os_statfs)
+{
+        ASSERT_ARGC("os.statfs()", 1);
+
+        Value file = ARGx(0, VALUE_INTEGER, VALUE_STRING);
+        struct statfs s;
+        char const *path = V_TYPE(file) == VALUE_STRING ? TY_TMP_C_STR(file) : NULL;
+        int ret;
+
+        UnlockTy();
+        if (V_TYPE(file) == VALUE_INTEGER) {
+                ret = fstatfs(V_Z(file), &s);
+        } else {
+                ret = statfs(path, &s);
+        }
+        int err = errno;
+        LockTy();
+
+        if (ret != 0) {
+                OSError(err, &"fstatfs()"[V_TYPE(file) != VALUE_INTEGER]);
+        }
+
+        return statfsv(ty, &s);
+}
+#endif
+
+#ifndef _WIN32
+static Value
+statvfsv(Ty *ty, struct statvfs const *s)
+{
+        return vTn(
+                "bsize", INTEGER(s->f_bsize),
+                "frsize", INTEGER(s->f_frsize),
+                "blocks", INTEGER(s->f_blocks),
+                "bfree", INTEGER(s->f_bfree),
+                "bavail", INTEGER(s->f_bavail),
+                "files", INTEGER(s->f_files),
+                "ffree", INTEGER(s->f_ffree),
+                "favail", INTEGER(s->f_favail),
+                "fsid", INTEGER(s->f_fsid),
+                "flag", INTEGER(s->f_flag),
+                "namemax", INTEGER(s->f_namemax)
+        );
+}
+
+BUILTIN_FUNCTION(os_statvfs)
+{
+        ASSERT_ARGC("os.statvfs()", 1);
+
+        Value file = ARGx(0, VALUE_INTEGER, VALUE_STRING);
+        struct statvfs s;
+        char const *path = V_TYPE(file) == VALUE_STRING ? TY_TMP_C_STR(file) : NULL;
+        int ret;
+
+        UnlockTy();
+        if (V_TYPE(file) == VALUE_INTEGER) {
+                ret = fstatvfs(V_Z(file), &s);
+        } else {
+                ret = statvfs(path, &s);
+        }
+        int err = errno;
+        LockTy();
+
+        if (ret != 0) {
+                OSError(err, &"fstatvfs()"[V_TYPE(file) != VALUE_INTEGER]);
+        }
+
+        return statvfsv(ty, &s);
+}
+#endif
+
 static int
 lock_file(int fd, int operation)
 {
@@ -7092,8 +7219,9 @@ BUILTIN_FUNCTION(time_gettime)
         clockid_t clk;
         if (argc == 1) {
                 Value v = ARG(0);
-                if (V_TYPE(v) != VALUE_INTEGER)
+                if (V_TYPE(v) != VALUE_INTEGER) {
                         zP("the argument to time.gettime() must be an integer");
+                }
                 clk = V_Z(v);
         } else {
                 clk = CLOCK_REALTIME;

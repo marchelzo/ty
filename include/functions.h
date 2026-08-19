@@ -139,6 +139,12 @@ BUILTIN_FUNCTION(os_spawn);
 BUILTIN_FUNCTION(os_stat);
 BUILTIN_FUNCTION(os_lstat);
 BUILTIN_FUNCTION(os_fstat);
+#if defined(__linux__) || defined(__APPLE__)
+BUILTIN_FUNCTION(os_statfs);
+#endif
+#ifndef _WIN32
+BUILTIN_FUNCTION(os_statvfs);
+#endif
 BUILTIN_FUNCTION(os_truncate);
 BUILTIN_FUNCTION(os_ftruncate);
 BUILTIN_FUNCTION(os_realpath);

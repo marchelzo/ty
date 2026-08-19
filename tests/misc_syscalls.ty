@@ -46,6 +46,65 @@ pub fn test_fchmod() {
     os.unlink(path)
 }
 
+#|if __apple__ || __linux__
+// ============================================================
+// Test: os.statfs with paths and file descriptors
+// ============================================================
+pub fn test_statfs() {
+    let (fd, path) = os.mktemp()
+    let pathfs = os.statfs(path)
+    let filefs = os.statfs(fd)
+    assert(pathfs.bsize > 0)
+    assert(pathfs.blocks > 0)
+    assert(pathfs.fsid == filefs.fsid)
+    os.close(fd)
+    os.unlink(path)
+}
+
+// ============================================================
+// Test: os.statfs raises OSError on syscall failure
+// ============================================================
+pub fn test_statfs_error() {
+    let raised = false
+    try {
+        os.statfs(-1)
+    } catch _: OSError {
+        raised = true
+    }
+    assert(raised)
+}
+#|]
+
+#|if !__windows__
+// ============================================================
+// Test: os.statvfs with paths and file descriptors
+// ============================================================
+pub fn test_statvfs() {
+    let (fd, path) = os.mktemp()
+    let pathvfs = os.statvfs(path)
+    let filevfs = os.statvfs(fd)
+    assert(pathvfs.bsize > 0)
+    assert(pathvfs.frsize > 0)
+    assert(pathvfs.bsize == filevfs.bsize)
+    assert(pathvfs.frsize == filevfs.frsize)
+    os.close(fd)
+    os.unlink(path)
+}
+
+// ============================================================
+// Test: os.statvfs raises OSError on syscall failure
+// ============================================================
+pub fn test_statvfs_error() {
+    let raised = false
+    try {
+        os.statvfs(-1)
+    } catch _: OSError {
+        raised = true
+    }
+    assert(raised)
+}
+#|]
+
 // ============================================================
 // Test: os.fchown (change to same uid/gid — no root needed)
 // ============================================================

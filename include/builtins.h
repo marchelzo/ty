@@ -166,6 +166,12 @@ static struct {
   { .module = "os",         .name = "stat",                     .init = BUILTIN(builtin_os_stat)                },
   { .module = "os",         .name = "lstat",                    .init = BUILTIN(builtin_os_lstat)               },
   { .module = "os",         .name = "fstat",                    .init = BUILTIN(builtin_os_fstat)               },
+#if defined(__linux__) || defined(__APPLE__)
+  { .module = "os",         .name = "statfs",                   .init = BUILTIN(builtin_os_statfs)              },
+#endif
+#ifndef _WIN32
+  { .module = "os",         .name = "statvfs",                  .init = BUILTIN(builtin_os_statvfs)             },
+#endif
   { .module = "os",         .name = "truncate",                 .init = BUILTIN(builtin_os_truncate)            },
   { .module = "os",         .name = "ftruncate",                .init = BUILTIN(builtin_os_ftruncate)           },
   { .module = "os",         .name = "access",                   .init = BUILTIN(builtin_os_access)              },
