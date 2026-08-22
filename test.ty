@@ -215,15 +215,21 @@ let summary = [
     chalk"[green b]{pass}[/] passed" if pass > 0,
     chalk"[red b]{fail}[/] failed" if fail > 0,
     chalk"[yellow b]{skip}[/] skipped" if skip > 0,
-    chalk"[magenta b]{slow}[/] timed out" if slow > 0,
-    chalk"[#ccc b]{user-cpu:.2}s[/] user",
-    chalk"[#ccc b]{system-cpu:.2}s[/] system",
-    chalk"[#ccc b]{(t1 - t0):.2}s[/] elapsed"
+    chalk"[magenta b]{slow}[/] timed out" if slow > 0
 ]
+
+let times = [
+    chalk"[#ccc]{user-cpu:.2}s[/] user",
+    chalk"[#ccc]{system-cpu:.2}s[/] system",
+    chalk"[#ccc]{(t1 - t0):.2}s[/] elapsed"
+]
+
+let put-list = print@(chalk"[#666]{_.join(', ')}[/]")
 
 print()
 print(chalk"[#333]{'─' * COLUMNS}[/]")
-print(chalk"[#666]{summary.join(', ')}[/]")
+put-list(summary)
+put-list(times)
 print(chalk"[#333]{'─' * COLUMNS}[/]")
 
 exit(int(fail > 0 || slow > 0))

@@ -340,8 +340,8 @@ pub class CURLError < RuntimeError {
     code -> Int { __code }
     context -> String | nil { __ctx }
 
-    what() -> String {
-        if __ctx { "{__ctx}: {strerror(__code)}" } else { strerror(__code) }
+    what -> String {
+        __ctx ? "{__ctx}: {strerror(__code)}" : strerror(__code)
     }
 
     static strerror(code: Int) -> String {
