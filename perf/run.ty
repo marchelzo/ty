@@ -237,9 +237,8 @@ fn run-suite(opts: RunOptions, database: String) {
 
     let mode = ty.jit ? 'jit' : 'interpreter'
     print(chalk"[bold bright cyan]Ty performance suite[/]  {mode-label(mode)}")
-    print(chalk"[count-{#running}?]{#running} benchmark(s)[/] [dim]·[/] "
-                "[rounds-{opts.rounds}?]{opts.rounds} rounds[/] [dim]·[/] "
-                "[warmup-{opts.warmup}?]{opts.warmup} warmup[/]")
+    print(chalk"[cyan]{#running} benchmark(s)[/] [dim]· {opts.rounds} rounds · "
+                "{opts.warmup} warmup[/]")
     print()
 
     let started = now()
@@ -248,13 +247,12 @@ fn run-suite(opts: RunOptions, database: String) {
     for entry in running {
         let label = benchmark-label(entry.name, name-width)
         print(chalk"{label} [dim]calibrating…[/]", end='', flush=true)
-        let r = run-one(entry.name, entry.run, warmup=opts.warmup, rounds=opts.rounds)
+        let r = run-one(entry, warmup=opts.warmup, rounds=opts.rounds)
         results.push(r)
         print("\r\x1b[K", end='')
         print(chalk"{label} {duration-label(r.med, width=10)}[dim]/iter[/] "
-                    "[dim]±[/] {duration-label(r.sd, role='spread')} "
-                    "[iterations-{r.iters}?]{r.iters} iters[/] [dim]×[/] "
-                    "[rounds-{opts.rounds}?]{opts.rounds} rounds[/]")
+                    "[dim]±[/] {duration-label(r.sd, role='spread', width=9)}  "
+                    "[dim]{r.iters:>7} iters × {opts.rounds:>3} rounds[/]")
     }
 
     if opts.compare {
@@ -272,13 +270,13 @@ fn run-suite(opts: RunOptions, database: String) {
     print(chalk"[bold]Total:[/] {duration-label(results.map(\_.med).sum())}")
     if opts.noSave { return }
 
-    save-results(RESULTS_FILE, results)
     let run-id = record-run(
         database, results, mode, opts.warmup, opts.rounds, opts.filter,
         #all, now() - started, opts.note,
         window=opts.historyWindow,
         threshold=opts.regressionThreshold / 100.0
     )
+    save-results(RESULTS_FILE, results)
     print()
     print-run(database, run-id)
 }
