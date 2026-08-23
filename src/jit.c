@@ -1541,6 +1541,13 @@ jit_rt_render_template(Ty *ty, Value *result, uptr expr_ptr)
 }
 
 static int
+jit_rt_ensure_len_array(Value const *tos, int expected)
+{
+        return V_TYPE(*(tos)) == VALUE_ARRAY
+            && V_ARRAY(*(tos))->count <= expected;
+}
+
+static int
 jit_rt_ensure_len_tuple(Value const *tos, int expected)
 {
         return V_TYPE(*(tos)) == VALUE_TUPLE && V_COUNT(*(tos)) <= expected;
@@ -10603,17 +10610,32 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                         BC_READ(expected_len);
 
                         int tos_off = OP_OFF(ctx->sp - 1);
+                        int slow_lbl = bc_next_label(ctx);
+                        int done_lbl = bc_next_label(ctx);
 
                         jit_emit_ldr64(asm, BC_S0, BC_OPS, tos_off);
                         bc_set_label_sp(ctx, target, ctx->sp);
                         jit_emit_decode_direct_array(
-                                asm, BC_S1, BC_S0, fail_lbl
+                                asm, BC_S1, BC_S0, slow_lbl
                         );
                         jit_emit_ldr64(
                                 asm, BC_S0, BC_S1, offsetof(Array, count)
                         );
                         jit_emit_cmp_ri(asm, BC_S0, expected_len);
                         jit_emit_branch_gt(asm, fail_lbl);
+                        jit_emit_jump(asm, done_lbl);
+
+                        jit_emit_label(asm, slow_lbl);
+                        jit_emit_add_imm(asm, BC_A0, BC_OPS, tos_off);
+                        jit_emit_load_imm(asm, BC_A1, expected_len);
+                        jit_emit_load_imm(
+                                asm, BC_CALL, (iptr)jit_rt_ensure_len_array
+                        );
+                        bc_emit_runtime_call(ctx, BC_CALL);
+                        jit_emit_cmp_ri(asm, BC_RET, 0);
+                        jit_emit_branch_eq(asm, fail_lbl);
+
+                        jit_emit_label(asm, done_lbl);
                         break;
                 }
 
