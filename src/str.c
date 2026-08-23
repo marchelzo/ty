@@ -53,6 +53,7 @@ mkmatch(Ty *ty, Value *s, usize *ovec, isize n, bool detailed)
 {
         if (detailed) {
                 Value groups = ARRAY(vAn(n));
+                gP(&groups);
 
                 for (isize i = 0; i < n; ++i) {
                         isize off = ovec[2*i];
@@ -66,18 +67,19 @@ mkmatch(Ty *ty, Value *s, usize *ovec, isize n, bool detailed)
                 PutMember(match, NAMES.groups, groups);
                 GC_RESUME();
 
+                gX();
                 return match;
         } else if (n == 1) {
                 return STRING_VIEW(ty, *s, ovec[0], ovec[1] - ovec[0]);
         } else {
                 Value match = ARRAY(vA());
-                NOGC(V_ARRAY(match));
+                gP(&match);
 
                 for (isize i = 0, j = 0; i < n; ++i, j += 2) {
-                        vvP(*V_ARRAY(match), STRING_VIEW(ty, *s, ovec[j], ovec[j + 1] - ovec[j]));
+                        vAp(V_ARRAY(match), STRING_VIEW(ty, *s, ovec[j], ovec[j + 1] - ovec[j]));
                 }
 
-                OKGC(V_ARRAY(match));
+                gX();
 
                 return match;
         }
@@ -611,8 +613,9 @@ string_words(Ty *ty, Value *string, int argc, Value *kwargs)
 {
         ASSERT_ARGC("String.words()", 0);
 
-        struct array *a = vA();
-        NOGC(a);
+        Value result = ARRAY(vA());
+        gP(&result);
+        struct array *a = V_ARRAY(result);
 
         isize i = 0;
         isize len = sN(*string);
@@ -666,9 +669,8 @@ string_words(Ty *ty, Value *string, int argc, Value *kwargs)
                 vAp(a, STRING_CLONE(ty, s + start, i - start));
         }
 End:
-        OKGC(a);
-
-        return ARRAY(a);
+        gX();
+        return result;
 }
 
 static Value
@@ -678,8 +680,9 @@ string_lines(Ty *ty, Value *string, int argc, Value *kwargs)
 
         gP(string);
 
-        struct array *a = vA();
-        NOGC(a);
+        Value result = ARRAY(vA());
+        gP(&result);
+        struct array *a = V_ARRAY(result);
 
         isize i = 0;
         isize len = sN(*string);
@@ -710,9 +713,8 @@ string_lines(Ty *ty, Value *string, int argc, Value *kwargs)
         }
 End:
         gX();
-        OKGC(a);
-
-        return ARRAY(a);
+        gX();
+        return result;
 }
 
 static Value
@@ -743,9 +745,12 @@ string_split(Ty *ty, Value *string, int argc, Value *kwargs)
                         off += max(bytes, 1);
                 }
                 Value left = STRING_VIEW(ty, *string, 0, off);
+                gP(&left);
                 Value right = STRING_VIEW(ty, *string, off, len - off);
+                Value result = PAIR(left, right);
+                gX();
 
-                return PAIR(left, right);
+                return result;
         }
 
         usize limit = (argc == 2) ? INT_ARG(1) : SIZE_MAX;

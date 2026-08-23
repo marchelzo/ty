@@ -231,6 +231,10 @@ value_string_view(Ty *ty, Value source, isize offset, u32 n)
 #endif
         if (offset == 0 && n == V_BYTES(source)) return source;
 
+        /* A view used to be allocation-free.  Preserve that safepoint contract
+         * until the new Value has been fully published. */
+        GC_STOP();
+
         u8 const *str = V_STR(source) + offset;
         u8 *str0 = V_STR0(source);
         bool ro = V_RO(source);
@@ -241,10 +245,13 @@ value_string_view(Ty *ty, Value source, isize offset, u32 n)
                 ro = false;
         }
 
-        return value_box(ty, (ValuePayload){
+        Value result = value_box(ty, (ValuePayload){
                 .type=V_TYPE(source), .tags=V_TAGS(source), .src=V_SRC(source),
                 .str=str, .bytes=n, .str0=str0, .ro=ro
         });
+
+        GC_RESUME();
+        return result;
 }
 
 Value
@@ -2367,6 +2374,17 @@ value_named_tuple(Ty *ty, char const *first, ...)
 
         va_end(ap);
 
+        /* The Value arguments have already been evaluated, but varargs are not
+         * visible to the collector.  Root them before allocating the tuple. */
+        usize roots = vN(RootSet);
+        va_start(ap, first);
+        for (int i = 0; i < n; ++i) {
+                Value item = va_arg(ap, Value);
+                gP(&item);
+                (void)va_arg(ap, char const *);
+        }
+        va_end(ap);
+
         Value tuple = value_tuple_alloc(ty, n, true);
         Value *items = V_ITEMS(tuple);
         int *ids = V_IDS(tuple);
@@ -2384,6 +2402,7 @@ value_named_tuple(Ty *ty, char const *first, ...)
 
         va_end(ap);
 
+        vN(RootSet) = roots;
         return tuple;
 }
 

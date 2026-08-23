@@ -5849,7 +5849,7 @@ DoDictLiteral(Ty *ty, i32 n, Value const *dflt)
         GC_RESUME();
 
         vN(STACK) -= n;
-        xpush(val);
+        push(val);
 }
 
 static void
@@ -9227,7 +9227,7 @@ CaptureContextEx(Ty *ty, ThrowCtx *ctx)
                 }
 
                 ValueVector locals = {0};
-                xvPn(locals, vv(STACK) + fp, nvar);
+                xvPn(locals, vv(st.stack) + fp, nvar);
 
                 for (int i = 0; i < vN(locals); ++i) {
                         Value *v = v_(locals, i);

@@ -10061,7 +10061,8 @@ BUILTIN_FUNCTION(lex_state)
 
         lex_save(ty, &st);
 
-        return vTn(
+        GC_STOP();
+        Value result = vTn(
                 "source",       xSs(st.start, st.end - st.start),
                 "position",     make_location(ty, &st.loc),
                 "context",      INTEGER(st.ctx),
@@ -10069,6 +10070,9 @@ BUILTIN_FUNCTION(lex_state)
                 "keepNewline",  BOOLEAN(st.need_nl),
                 "blankLine",    BOOLEAN(st.blank_line)
         );
+        GC_RESUME();
+
+        return result;
 }
 
 BUILTIN_FUNCTION(lex_peek_char)
@@ -10597,6 +10601,7 @@ BUILTIN_FUNCTION(tdb_context)
         char *ip = (argc == 0) ? TDB->host->ip : V_PTR(ARG(0));
         Expr *context = (Expr *)compiler_find_expr(ty, ip);
 
+        GC_STOP();
         Value expr = (context == NULL) ? NIL : PTR(context);
 
         Value prog = (context == NULL)          ? NIL
@@ -10607,11 +10612,14 @@ BUILTIN_FUNCTION(tdb_context)
                    : (context->mod == NULL)  ? NIL
                    : xSz(context->mod->path);
 
-        return (context == NULL) ? NIL : vTn(
+        Value result = (context == NULL) ? NIL : vTn(
                 "prog",  prog,
                 "file",  file,
                 "expr",  expr
         );
+        GC_RESUME();
+
+        return result;
 }
 
 BUILTIN_FUNCTION(tdb_insn)
@@ -10623,9 +10631,13 @@ BUILTIN_FUNCTION(tdb_insn)
         Value ip = ARGx(0, VALUE_PTR);
         u8 insn = *(u8 *)V_PTR(ip);
 
-        return vTn(
+        GC_STOP();
+        Value result = vTn(
                 "name", xSz(GetInstructionName(insn))
         );
+        GC_RESUME();
+
+        return result;
 }
 
 BUILTIN_FUNCTION(tdb_state)
@@ -10635,6 +10647,7 @@ BUILTIN_FUNCTION(tdb_state)
 
         Expr *context = (Expr *)compiler_find_expr(ty, TDB->host->ip);
 
+        GC_STOP();
         Value ip = PTR(TDB->host->ip);
 
         Value expr = (context == NULL) ? NIL : PTR(context);
@@ -10657,7 +10670,7 @@ BUILTIN_FUNCTION(tdb_state)
                  ? INTEGER(vvL(TDB->host->st->frames)->fp)
                  : NIL;
 
-        return vTn(
+        Value result = vTn(
                 "ip",    ip,
                 "insn",  xSz(GetInstructionName(*(u8 *)V_PTR(ip))),
                 "prog",  prog,
@@ -10669,6 +10682,9 @@ BUILTIN_FUNCTION(tdb_state)
                 "depth", INTEGER(vN(TDB->host->st->frames)),
                 "sp",    INTEGER(vN(TDB->host->st->stack))
         );
+        GC_RESUME();
+
+        return result;
 }
 
 /* vim: set sw=8 sts=8 expandtab: */
