@@ -1,4 +1,4 @@
-import sql (table, connect, disconnect, transaction, ValidationError, diff, migrate!, generate, up, down, redo, migration-status, pending)
+import sql (table, connect, disconnect, transaction, rows, ValidationError, diff, migrate!, generate, up, down, redo, migration-status, pending)
 import sqlite (SQLite)
 import path (Path)
 import date (PlainDate, PlainDateTime)
@@ -102,6 +102,33 @@ class Product {
     category: String | nil
 
     index = [name, (category, price)]
+}
+
+@table
+class Enrollment {
+    table-name = 'enrollments'
+    primary-key = [student_id, course_id]
+
+    student_id: Int
+    course_id:  Int
+    value:      String
+}
+
+@table
+class Person {
+    table-name = 'people'
+
+    id:   Int
+    name: String
+}
+
+@table
+class Pet {
+    table-name = 'pets'
+
+    id:    Int
+    name:  String
+    owner: ForeignKey[Person.id]
 }
 
 ns test
@@ -217,6 +244,86 @@ pub fn test-schema-metadata() {
     assert(s.table == 'user')
     assert(s.pk == 'id')
     assert(#s.cols == 4)
+}
+
+pub fn test-explicit-table-name() {
+    let person-schema: _ = Person.schema()
+    let pet-schema: _ = Pet.schema()
+    assert(person-schema.table == 'people')
+    assert(pet-schema.table == 'pets')
+    assert('REFERENCES people(id)' in pet-schema.sql)
+
+    fresh()
+    let person = Person(name='Alice').insert()
+    let pet = Pet(name='Miso', owner=person.id).insert()
+    assert(Person.get(person.id).name == 'Alice')
+    assert(Pet.get(pet.id).name == 'Miso')
+    assert(pet.person().name == 'Alice')
+}
+
+pub fn test-raw-rows() {
+    fresh()
+    User(name='Alice', age=30).insert()
+    let result = rows('SELECT name, age FROM user WHERE age = ?', 30)
+    assert(#result == 1)
+    assert(result[0]['name'] == 'Alice')
+    assert(result[0]['age'] == 30)
+}
+
+pub fn test-connect-loads-schema-before-sync() {
+    let db = connect(
+        ':memory:',
+        schema="""
+            PRAGMA user_version = 17;
+            CREATE TABLE user (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL
+            );
+            INSERT INTO user (name) VALUES ('from schema');
+        """
+    )
+    assert(User.get(1).name == 'from schema')
+    assert(db.fetch-one('PRAGMA user_version')['user_version'] == 17)
+}
+
+pub fn test-connect-can-skip-model-sync() {
+    let db = connect(
+        ':memory:',
+        schema='CREATE TABLE schema_only (value TEXT)',
+        sync=false
+    )
+    assert(db.table?('schema_only'))
+    assert(!db.table?('user'))
+    assert(!db.table?('enrollments'))
+}
+
+pub fn test-composite-primary-key() {
+    fresh()
+    let schema: _ = Enrollment.schema()
+    assert(schema.table == 'enrollments')
+    assert(schema.pks == ['student_id', 'course_id'])
+    assert('PRIMARY KEY (student_id, course_id)' in schema.sql)
+    assert('PRIMARY KEY (student_id, course_id)' in schema.pg-sql)
+    assert('AUTOINCREMENT' not in schema.sql)
+
+    let enrollment = Enrollment(
+        student_id=7, course_id=11, value='first'
+    ).insert()
+    assert(enrollment.student_id == 7)
+    assert(enrollment.course_id == 11)
+
+    let found = Enrollment.get([7, 11])
+    assert(found.value == 'first')
+    found.value = 'updated'
+    found.save()
+    assert(Enrollment.get([7, 11]).value == 'updated')
+
+    Enrollment(student_id=7, course_id=11, value='upserted').upsert()
+    assert(Enrollment.count() == 1)
+    assert(Enrollment.get([7, 11]).value == 'upserted')
+
+    found.delete!()
+    assert(Enrollment.get([7, 11]) == nil)
 }
 
 pub fn test-file-persistence() {
