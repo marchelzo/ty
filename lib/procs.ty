@@ -1,0 +1,1086 @@
+/** Process inspection and control for Linux and macOS. */
+
+import errno (EPERM)
+import ffi as c (C!)
+import os
+import path (Path)
+import ptr (typed)
+import time
+
+C! fn {
+    int getpagesize(void);
+    long sysconf(int name);
+}
+
+fn __must(x, what: String) {
+    x ?? throw os.OSError(what)
+}
+
+fn __int(s: String) -> Int {
+    int(s) ?? throw ValueError("invalid integer: {s}")
+}
+
+fn __env-dict(xs: Array[String]) -> Dict[String, String] {
+    let env = %{}
+    for s in xs {
+        match s.split('=', 1) {
+            [key, value] => env[key] = value,
+            _            => ()
+        }
+    }
+    env
+}
+
+fn __bytes(s: Blob) -> Array[String] {
+    let out = []
+    let word = Blob()
+    for byte in s {
+        if byte == 0 {
+            if word { out.push(word.str!()); word.clear() }
+        } else {
+            word.push(byte)
+        }
+    }
+    if word { out.push(word.str!()) }
+    out
+}
+
+/** Failure returned directly by a kernel process API. */
+pub class ProcessError < RuntimeError {
+    op:   String
+    pid:  Int
+    code: Int
+
+    init(op: String, pid: Int, code: Int) {
+        self.op = op
+        self.pid = pid
+        self.code = code
+        super("{op}({pid}): kernel error {code}")
+    }
+}
+
+/** Cumulative CPU time, in seconds. */
+pub class Cpu {
+    user:     Float
+    system:   Float
+    children: Float
+
+    init(user: Float, system: Float, children: Float = 0.0) {
+        self.user = user
+        self.system = system
+        self.children = children
+    }
+
+    total -> Float { user + system }
+    family -> Float { total + children }
+
+    __repr__() -> String {
+        "Cpu(user={user:.3}, system={system:.3}, children={children:.3})"
+    }
+    __str__() -> String { __repr__() }
+}
+
+/** Process memory sizes, in bytes. */
+pub class Memory {
+    virtual:  Int
+    resident: Int
+    shared:   Int
+    text:     Int
+    data:     Int
+
+    init(virtual: Int, resident: Int, shared: Int = 0, text: Int = 0, data: Int = 0) {
+        self.virtual = virtual
+        self.resident = resident
+        self.shared = shared
+        self.text = text
+        self.data = data
+    }
+
+    rss -> Int { resident }
+    vsize -> Int { virtual }
+
+    __repr__() -> String {
+        "Memory(virtual={virtual}, resident={resident}, shared={shared})"
+    }
+    __str__() -> String { __repr__() }
+}
+
+/** Cumulative process I/O counters. */
+pub class Io {
+    read:        Int
+    written:     Int
+    read-calls:  Int
+    write-calls: Int
+
+    init(read: Int = 0, written: Int = 0, read-calls: Int = 0, write-calls: Int = 0) {
+        self.read = read
+        self.written = written
+        self.read-calls = read-calls
+        self.write-calls = write-calls
+    }
+
+    __repr__() -> String { "Io(read={read}, written={written})" }
+    __str__() -> String { __repr__() }
+}
+
+pub use Faults = {minor: Int, major: Int}
+
+/** A live process handle. Properties are read afresh on every access. */
+pub class Process {
+    __pid: Int
+
+    init(pid: Int) {
+        if pid <= 0 { throw ValueError("invalid pid: {pid}") }
+        __pid = pid
+    }
+
+    static current -> Process { self(os.getpid()) }
+
+    pid -> Int { __pid }
+    id  -> Int { __pid }
+
+    alive? -> Bool { __proc-alive?(__pid) }
+    state  -> String { __proc-stat(__pid).state }
+    zombie? -> Bool { state == 'Z' }
+
+    name -> String { __proc-stat(__pid).name }
+    ppid -> Int { __proc-stat(__pid).ppid }
+    pgid -> Int { __proc-stat(__pid).pgid }
+    sid  -> Int { __proc-stat(__pid).sid }
+
+    parent -> Process | nil {
+        let id = ppid
+        id > 0 ? Process(id) : nil
+    }
+
+    uid  -> Int { __proc-cred(__pid).uid }
+    euid -> Int { __proc-cred(__pid).euid }
+    gid  -> Int { __proc-cred(__pid).gid }
+    egid -> Int { __proc-cred(__pid).egid }
+
+    exe  -> Path | nil { __proc-path(__pid, 'exe') }
+    cwd  -> Path | nil { __proc-path(__pid, 'cwd') }
+    root -> Path | nil { __proc-path(__pid, 'root') }
+
+    argv -> Array[String] { __proc-args(__pid) }
+    env  -> Dict[String, String] { __env-dict(__proc-env(__pid)) }
+
+    cmd -> String {
+        let args = argv
+        args ? args.join(' ') : name
+    }
+
+    started -> Float { __proc-started(__pid) }
+    age -> Float { time.now(time.CLOCK_REALTIME) - started }
+    cpu -> Cpu { __proc-cpu(__pid) }
+    memory -> Memory { __proc-memory(__pid) }
+    io -> Io { __proc-io(__pid) }
+    threads -> Int { __proc-stat(__pid).threads }
+    priority -> Int { __proc-stat(__pid).priority }
+    nice -> Int { __proc-stat(__pid).nice }
+    faults -> Faults {
+        let s = __proc-stat(__pid)
+        ({minor: s.minflt, major: s.majflt})
+    }
+
+    fds -> Array[Fd] { __proc-fds(self) }
+    maps -> Array[Map] { __proc-maps(self) }
+    mounts -> Array[Mount] { __proc-mounts(self) }
+    tasks -> Array[Task] { __proc-tasks(self) }
+
+    map(addr: Int) -> Map | nil {
+        maps.find(m -> addr in m)
+    }
+
+    children(recursive: Bool = false) {
+        ::children(self, recursive)
+    }
+
+    signal(sig: Int) {
+        if os.kill(__pid, sig) == -1 { throw os.OSError("kill({__pid})") }
+        self
+    }
+
+    hangup()    { signal(os.SIGHUP) }
+    interrupt() { signal(os.SIGINT) }
+    quit()      { signal(os.SIGQUIT) }
+    terminate() { signal(os.SIGTERM) }
+    kill()      { signal(os.SIGKILL) }
+    stop()      { signal(os.SIGSTOP) }
+    cont()      { signal(os.SIGCONT) }
+
+    read(addr: Int, size: Int) -> Blob {
+        if addr < 0 || size < 0 { throw ValueError('negative address or size') }
+        if size == 0 { return Blob() }
+        __proc-read(__pid, addr, size)
+    }
+
+    write(addr: Int, data: String | Blob) -> Int {
+        if addr < 0 { throw ValueError('negative address') }
+        if !data { return 0 }
+        __proc-write(__pid, addr, data)
+    }
+
+    wait(options: Int = 0) { os.wait(__pid, options) }
+
+    ==(other: Process) -> Bool { __pid == other.__pid }
+    __hash__() -> Int { __pid }
+    __repr__() -> String { "Process({__pid})" }
+    __str__() -> String { "{__pid}" }
+}
+
+/** One virtual-memory mapping, bound to its owning process. */
+pub class Map {
+    process: Process
+    lo:      Int
+    hi:      Int
+    offset:  Int
+    dev:     String
+    inode:   Int
+    path:    String | nil
+    perms:   String
+
+    init(process: Process, lo: Int, hi: Int, perms: String,
+         offset: Int = 0, dev: String = '', inode: Int = 0,
+         path: String | nil = nil) {
+        if lo < 0 || hi < lo || offset < 0 || inode < 0 {
+            throw ValueError('invalid map range or offset')
+        }
+        if #perms != 4 { throw ValueError("invalid map permissions: {perms}") }
+        self.process = process
+        self.lo = lo
+        self.hi = hi
+        self.perms = perms
+        self.offset = offset
+        self.dev = dev
+        self.inode = inode
+        self.path = path
+    }
+
+    size -> Int { hi - lo }
+    readable?   -> Bool { perms[0] == 'r' }
+    writable?   -> Bool { perms[1] == 'w' }
+    executable? -> Bool { perms[2] == 'x' }
+    private?    -> Bool { perms[3] == 'p' }
+    shared?     -> Bool { perms[3] == 's' }
+
+    contains?(addr: Int) -> Bool { lo <= addr && addr < hi }
+    `in`(addr: Int) -> Bool { contains?(addr) }
+
+    read(offset: Int = 0, size: Int | nil = nil) -> Blob {
+        size = size ?? (hi - lo - offset)
+        if offset < 0 || size < 0 || offset + size > hi - lo {
+            throw ValueError('read outside map')
+        }
+        process.read(lo + offset, size)
+    }
+
+    write(offset: Int, data: String | Blob) -> Int {
+        if offset < 0 || offset + #data > hi - lo { throw ValueError('write outside map') }
+        process.write(lo + offset, data)
+    }
+
+    ==(other: Map) -> Bool {
+        process == other.process && lo == other.lo && hi == other.hi
+    }
+
+    __hash__() -> Int { process.pid ^ lo ^ hi }
+
+    __repr__() -> String {
+        "Map({lo:#x}..{hi:#x}, '{perms}', '{path ?? ''}')"
+    }
+}
+
+/** One file descriptor, bound to its owning process. */
+pub class Fd {
+    process: Process
+    fd:      Int
+
+    init(process: Process, fd: Int) {
+        if fd < 0 { throw ValueError("invalid file descriptor: {fd}") }
+        self.process = process
+        self.fd = fd
+    }
+
+    target -> String | nil { __fd-target(process.pid, fd) }
+    info -> Dict[String, Int | String] { __fd-info(process.pid, fd) }
+    pos -> Int | nil { info['pos'] }
+    flags -> Int | nil { info['flags'] }
+    mount-id -> Int | nil { info['mnt_id'] }
+
+    ==(other: Fd) -> Bool { process == other.process && fd == other.fd }
+    __hash__() -> Int { process.pid ^ fd }
+
+    __repr__() -> String {
+        "Fd({process.pid}, {fd}, '{target ?? ''}')"
+    }
+}
+
+/** One OS task (a Linux task or a Darwin Mach thread). */
+pub class Task {
+    process: Process
+    tid:     Int
+
+    init(process: Process, tid: Int) {
+        if tid <= 0 { throw ValueError("invalid task id: {tid}") }
+        self.process = process
+        self.tid = tid
+    }
+
+    id -> Int { tid }
+    name -> String { __task-info(process.pid, tid).name }
+    state -> String { __task-info(process.pid, tid).state }
+    cpu -> Cpu { __task-info(process.pid, tid).cpu }
+
+    ==(other: Task) -> Bool { process == other.process && tid == other.tid }
+    __hash__() -> Int { process.pid ^ tid }
+
+    __repr__() -> String { "Task({process.pid}, {tid})" }
+}
+
+/** One entry in a process's mount namespace. */
+pub class Mount {
+    id:      Int | nil
+    parent:  Int | nil
+    dev:     String
+    root:    Path
+    point:   Path
+    fs:      String
+    source:  String
+    options: Array[String]
+
+    init(id: Int | nil, parent: Int | nil, dev: String, root: String,
+         point: String, fs: String, source: String, options: Array[String]) {
+        self.id = id
+        self.parent = parent
+        self.dev = dev
+        self.root = Path(root)
+        self.point = Path(point)
+        self.fs = fs
+        self.source = source
+        self.options = options
+    }
+
+    read-only? -> Bool { 'ro' in options }
+    __repr__() -> String { "Mount('{source}', '{point}', '{fs}')" }
+}
+
+pub fn pids() -> Array[Int] { __pids().sort!() }
+
+pub fn current() -> Process { Process.current }
+
+pub fn get(pid: Int) -> Process | nil {
+    let p = Process(pid)
+    p.alive? ? p : nil
+}
+
+/** Lazily enumerate the processes satisfying every supplied filter. */
+pub fn find*(
+    name: String | Regex | nil = nil,
+    uid: Int | nil = nil,
+    parent: Int | Process | nil = nil,
+    pgid: Int | nil = nil,
+    pred: _ = nil
+) {
+    let parent = (parent :: Process) ? parent.pid : parent
+
+    for pid in pids() {
+        let p = Process(pid)
+        try {
+            if name :: String {
+                continue if p.name != name
+            } else if name :: Regex {
+                continue if !p.name.match?(name)
+            }
+            continue if uid != nil && p.uid != uid
+            continue if parent != nil && p.ppid != parent
+            continue if pgid != nil && p.pgid != pgid
+            continue if pred != nil && !pred(p)
+            yield p
+        } catch _: OSError { }
+    }
+}
+
+pub fn first(name: String | Regex) -> Process | nil {
+    for p in find(name=name) { return p }
+}
+
+pub fn named(name: String | Regex) -> Array[Process] {
+    [*find(name=name)]
+}
+
+pub fn owned(uid: Int = os.getuid()) -> Array[Process] {
+    [*find(uid=uid)]
+}
+
+pub fn children(parent: Int | Process, recursive: Bool = false) -> Array[Process] {
+    let pid = (parent :: Process) ? parent.pid : parent
+    if !recursive { return [*find(parent=pid)] }
+
+    let by-parent = %{}
+    for p in find() {
+        try {
+            let ppid = p.ppid
+            (by-parent[ppid] ?? (by-parent[ppid] = [])).push(p)
+        } catch _: OSError { }
+    }
+
+    let out = []
+    let seen = %{pid: true}
+    fn collect(id: Int) {
+        for p in by-parent[id] ?? [] {
+            continue if p.pid in seen
+            seen[p.pid] = true
+            out.push(p)
+            collect(p.pid)
+        }
+    }
+    collect(pid)
+    out
+}
+
+#|if __linux__
+
+const __PROC = Path('/proc')
+
+fn __proc-file(pid: Int, name: String) -> Path { __PROC / "{pid}" / name }
+
+fn __proc-stat(pid: Int) {
+    let line = __proc-file(pid, 'stat').read-text()
+    let l = __must(line.search('('), 'stat')
+    let r = __must(line.searchr(')'), 'stat')
+    let name = line.slice(l + 1, r - l - 1)
+    let f = line.slice(r + 2).trim().split(/\s+/)
+
+    ({
+        name,
+        state: f[0],
+        ppid: __int(f[1]),
+        pgid: __int(f[2]),
+        sid: __int(f[3]),
+        minflt: __int(f[7]),
+        majflt: __int(f[9]),
+        utime: __int(f[11]),
+        stime: __int(f[12]),
+        cutime: __int(f[13]),
+        cstime: __int(f[14]),
+        priority: __int(f[15]),
+        nice: __int(f[16]),
+        threads: __int(f[17]),
+        start: __int(f[19]),
+        vsize: __int(f[20]),
+        rss: __int(f[21])
+    })
+}
+
+fn __proc-status(pid: Int) -> Dict[String, String] {
+    let fields = %{}
+    for line in __proc-file(pid, 'status').read-text().lines() {
+        match line.split(':', 1) {
+            [key, value] => fields[key] = value.trim(),
+            _            => ()
+        }
+    }
+    fields
+}
+
+fn __proc-cred(pid: Int) {
+    let s = __proc-status(pid)
+    let u = s['Uid'].split(/\s+/).map(__int)
+    let g = s['Gid'].split(/\s+/).map(__int)
+    ({uid: u[0], euid: u[1], gid: g[0], egid: g[1]})
+}
+
+fn __proc-alive?(pid: Int) -> Bool {
+    os.kill(pid, 0) == 0 || errno.get() == EPERM
+}
+
+fn __proc-path(pid: Int, name: String) -> Path | nil {
+    match os.readlink("{__proc-file(pid, name)}") {
+        $path => Path(path),
+        _     => nil
+    }
+}
+
+fn __proc-args(pid: Int) -> Array[String] {
+    __bytes(__proc-file(pid, 'cmdline').read-bytes())
+}
+
+fn __proc-env(pid: Int) -> Array[String] {
+    __bytes(__proc-file(pid, 'environ').read-bytes())
+}
+
+fn __ticks() -> Float {
+    float(sysconf(2))
+}
+
+fn __boot-time() -> Float {
+    for line in (__PROC / 'stat').read-text().lines() {
+        if let [_, seconds] = line.match(/^btime\s+(\d+)$/) {
+            return float(seconds)
+        }
+    }
+    throw RuntimeError('missing btime in /proc/stat')
+}
+
+fn __proc-started(pid: Int) -> Float {
+    __boot-time() + __proc-stat(pid).start / __ticks()
+}
+
+fn __proc-cpu(pid: Int) -> Cpu {
+    let s = __proc-stat(pid)
+    let hz = __ticks()
+    Cpu(s.utime / hz, s.stime / hz, (s.cutime + s.cstime) / hz)
+}
+
+fn __proc-memory(pid: Int) -> Memory {
+    let f = __proc-file(pid, 'statm').read-text().trim().split(/\s+/).map(__int)
+    let page = getpagesize()
+    Memory(f[0] * page, f[1] * page, f[2] * page, f[3] * page, f[5] * page)
+}
+
+fn __proc-io(pid: Int) -> Io {
+    let xs = %{}
+    for line in __proc-file(pid, 'io').read-text().lines() {
+        if let [key, value] = line.split(':', 1) {
+            xs[key] = __int(value.trim())
+        }
+    }
+    Io(xs['read_bytes'] ?? 0, xs['write_bytes'] ?? 0,
+       xs['syscr'] ?? 0, xs['syscw'] ?? 0)
+}
+
+fn __pids() -> Array[Int] {
+    os.listdir('/proc').map(int).remove(nil)
+}
+
+fn __fd-target(pid: Int, fd: Int) -> String | nil {
+    os.readlink("{__proc-file(pid, 'fd')}/{fd}")
+}
+
+fn __fd-info(pid: Int, fd: Int) -> Dict[String, Int | String] {
+    let info = %{}
+    for line in __proc-file(pid, "fdinfo/{fd}").read-text().lines() {
+        if let [key, value] = line.split(':', 1) {
+            let value = value.trim()
+            info[key] = (key == 'flags') ? (int(value, 8) ?? value) : (int(value) ?? value)
+        }
+    }
+    info
+}
+
+fn __proc-fds(p: Process) {
+    let dir = __proc-file(p.pid, 'fd')
+    os.listdir("{dir}").map(int).remove(nil).sort!().map(fd -> Fd(p, fd))
+}
+
+fn __proc-maps(p: Process) {
+    let maps = []
+    const line-re = /^([0-9a-f]+)-([0-9a-f]+)\s+([rwxps-]{4})\s+([0-9a-f]+)\s+([0-9a-f]+:[0-9a-f]+)\s+(\d+)\s*(.*)$/
+
+    for line in __proc-file(p.pid, 'maps').read-text().lines() {
+        if let [_, lo, hi, perms, offset, dev, inode, path] = line.match(line-re) {
+            let $lo = int(lo, 16) or continue
+            let $hi = int(hi, 16) or continue
+            let $offset = int(offset, 16) or continue
+            maps.push(Map(p, lo, hi, perms, offset, dev, __int(inode), path || nil))
+        }
+    }
+    maps
+}
+
+fn __unescape-mount(s: String) -> String {
+    s.sub(/\\([0-7]{3})/, [_, oct] -> chr(int(oct, 8)))
+}
+
+fn __proc-mounts(p: Process) {
+    let mounts = []
+    for line in __proc-file(p.pid, 'mountinfo').read-text().lines() {
+        if not let [left, right] = line.split(' - ', 1) { continue }
+        let a = left.split(/\s+/)
+        let b = right.split(/\s+/)
+        if #a < 6 || #b < 2 { continue }
+        mounts.push(Mount(
+            __int(a[0]), __int(a[1]), a[2], __unescape-mount(a[3]),
+            __unescape-mount(a[4]), b[0], __unescape-mount(b[1]),
+            [*a[5].split(','), *(#b > 2 ? b[2].split(',') : [])]
+        ))
+    }
+    mounts
+}
+
+fn __proc-tasks(p: Process) {
+    let dir = __proc-file(p.pid, 'task')
+    os.listdir("{dir}").map(int).remove(nil).sort!().map(tid -> Task(p, tid))
+}
+
+fn __task-info(pid: Int, tid: Int) {
+    let line = __proc-file(pid, "task/{tid}/stat").read-text()
+    let l = __must(line.search('('), 'task stat')
+    let r = __must(line.searchr(')'), 'task stat')
+    let name = line.slice(l + 1, r - l - 1)
+    let f = line.slice(r + 2).trim().split(/\s+/)
+    let hz = __ticks()
+    ({name, state: f[0], cpu: Cpu(__int(f[11]) / hz, __int(f[12]) / hz)})
+}
+
+fn __proc-read(pid: Int, addr: Int, size: Int) -> Blob {
+    let fd = os.open("{__proc-file(pid, 'mem')}", os.O_RDONLY)
+    if fd == -1 { throw os.OSError("open(/proc/{pid}/mem)") }
+    defer os.close(fd)
+    __must(os.pread(fd, size, addr), "pread(/proc/{pid}/mem)")
+}
+
+fn __proc-write(pid: Int, addr: Int, data: String | Blob) -> Int {
+    let fd = os.open("{__proc-file(pid, 'mem')}", os.O_WRONLY)
+    if fd == -1 { throw os.OSError("open(/proc/{pid}/mem)") }
+    defer os.close(fd)
+    let n = os.pwrite(fd, data, addr)
+    if n == -1 { throw os.OSError("pwrite(/proc/{pid}/mem)") }
+    n
+}
+
+#|else if __apple__
+
+const PROC_PIDLISTFDS        = 1
+const PROC_PIDTBSDINFO       = 3
+const PROC_PIDTASKINFO       = 4
+const PROC_PIDTHREADINFO     = 5
+const PROC_PIDLISTTHREADS    = 6
+const PROC_PIDREGIONPATHINFO = 8
+const PROC_PIDVNODEPATHINFO  = 9
+const PROC_PIDFDVNODEPATHINFO = 2
+const RUSAGE_INFO_V2 = 2
+
+C! fn {
+    int proc_listallpids(void *buffer, int buffersize);
+    int proc_pidinfo(int pid, int flavor, uint64_t arg, void *buffer, int buffersize);
+    int proc_pidfdinfo(int pid, int fd, int flavor, void *buffer, int buffersize);
+    int proc_pidpath(int pid, void *buffer, uint32_t buffersize);
+    int proc_pid_rusage(int pid, int flavor, void *buffer);
+    int sysctl(int *name, unsigned int namelen, void *oldp,
+               unsigned long *oldlenp, void *newp, unsigned long newlen);
+
+    int task_for_pid(unsigned int task, int pid, unsigned int *target);
+    int mach_port_deallocate(unsigned int task, unsigned int name);
+    int mach_vm_read_overwrite(unsigned int task, uint64_t address,
+                               uint64_t size, uint64_t data, uint64_t *outsize);
+    int mach_vm_write(unsigned int task, uint64_t address,
+                      uint64_t data, unsigned int size);
+
+    int getmntinfo(void *mounts, int flags);
+}
+
+C! struct ProcBsdInfo {
+    uint32_t flags;
+    uint32_t status;
+    uint32_t xstatus;
+    uint32_t pid;
+    uint32_t ppid;
+    uint32_t uid;
+    uint32_t gid;
+    uint32_t ruid;
+    uint32_t rgid;
+    uint32_t svuid;
+    uint32_t svgid;
+    uint32_t reserved;
+    char comm[16];
+    char name[32];
+    uint32_t nfiles;
+    uint32_t pgid;
+    uint32_t jobc;
+    uint32_t ttydev;
+    uint32_t tpgid;
+    int32_t nice;
+    uint64_t start_sec;
+    uint64_t start_usec;
+}
+
+C! struct ProcTaskInfo {
+    uint64_t virtual_size;
+    uint64_t resident_size;
+    uint64_t total_user;
+    uint64_t total_system;
+    uint64_t threads_user;
+    uint64_t threads_system;
+    int32_t policy;
+    int32_t faults;
+    int32_t pageins;
+    int32_t cow_faults;
+    int32_t messages_sent;
+    int32_t messages_received;
+    int32_t syscalls_mach;
+    int32_t syscalls_unix;
+    int32_t switches;
+    int32_t thread_count;
+    int32_t running_count;
+    int32_t priority;
+}
+
+C! struct ProcThreadInfo {
+    uint64_t user_time;
+    uint64_t system_time;
+    int32_t cpu_usage;
+    int32_t policy;
+    int32_t run_state;
+    int32_t flags;
+    int32_t sleep_time;
+    int32_t cur_priority;
+    int32_t priority;
+    int32_t max_priority;
+    char name[64];
+}
+
+C! struct ProcFdInfo {
+    int32_t fd;
+    uint32_t type;
+}
+
+C! struct ProcVnodePathInfo {
+    c.u8 cwd_info[152];
+    char cwd[1024];
+    c.u8 root_info[152];
+    char root[1024];
+}
+
+C! struct ProcFdPathInfo {
+    uint32_t open_flags;
+    uint32_t status;
+    int64_t offset;
+    int32_t type;
+    uint32_t guard_flags;
+    c.u8 vnode_info[152];
+    char path[1024];
+}
+
+C! struct ProcRegionInfo {
+    uint32_t protection;
+    uint32_t max_protection;
+    uint32_t inheritance;
+    uint32_t flags;
+    uint64_t offset;
+    uint32_t behavior;
+    uint32_t user_wired;
+    uint32_t user_tag;
+    uint32_t resident_pages;
+    uint32_t private_pages;
+    uint32_t swapped_pages;
+    uint32_t dirtied_pages;
+    uint32_t refs;
+    uint32_t shadow_depth;
+    uint32_t share_mode;
+    uint32_t private_resident_pages;
+    uint32_t shared_resident_pages;
+    uint32_t object_id;
+    uint32_t depth;
+    uint64_t address;
+    uint64_t size;
+    c.u8 vnode_info[152];
+    char path[1024];
+}
+
+C! struct ProcRusage {
+    c.u8 uuid[16];
+    uint64_t user_time;
+    uint64_t system_time;
+    uint64_t pkg_wakeups;
+    uint64_t interrupt_wakeups;
+    uint64_t pageins;
+    uint64_t wired_size;
+    uint64_t resident_size;
+    uint64_t footprint;
+    uint64_t start_time;
+    uint64_t exit_time;
+    uint64_t child_user_time;
+    uint64_t child_system_time;
+    uint64_t child_pkg_wakeups;
+    uint64_t child_interrupt_wakeups;
+    uint64_t child_pageins;
+    uint64_t child_elapsed_time;
+    uint64_t bytes_read;
+    uint64_t bytes_written;
+}
+
+C! struct DarwinStatfs {
+    uint32_t block_size;
+    int32_t io_size;
+    uint64_t blocks;
+    uint64_t blocks_free;
+    uint64_t blocks_avail;
+    uint64_t files;
+    uint64_t files_free;
+    int32_t fsid0;
+    int32_t fsid1;
+    uint32_t owner;
+    uint32_t type;
+    uint32_t flags;
+    uint32_t subtype;
+    char fs_name[16];
+    char point[1024];
+    char source[1024];
+    uint32_t reserved[8];
+}
+
+fn __pidinfo(pid: Int, flavor: Int, info, arg: Int = 0) {
+    let n = proc_pidinfo(pid, flavor, arg, info.get(), #info)
+    if n != #info { throw os.OSError("proc_pidinfo({pid})") }
+    info
+}
+
+fn __bsd(pid: Int) { __pidinfo(pid, PROC_PIDTBSDINFO, ProcBsdInfo()) }
+fn __task(pid: Int) { __pidinfo(pid, PROC_PIDTASKINFO, ProcTaskInfo()) }
+
+fn __proc-stat(pid: Int) {
+    let b = __bsd(pid)
+    let t = __task(pid)
+    let name = c.str(b.name()) || c.str(b.comm())
+    let state = %{
+        1: 'I', 2: 'R', 3: 'S', 4: 'T', 5: 'Z'
+    }[b.status] ?? '?'
+    ({
+        name, state,
+        ppid: b.ppid,
+        pgid: b.pgid,
+        sid: os.getsid(pid),
+        minflt: max(t.faults - t.pageins, 0),
+        majflt: t.pageins,
+        priority: t.priority,
+        nice: b.nice,
+        threads: t.thread_count
+    })
+}
+
+fn __proc-cred(pid: Int) {
+    let b = __bsd(pid)
+    ({uid: b.ruid, euid: b.uid, gid: b.rgid, egid: b.gid})
+}
+
+fn __proc-alive?(pid: Int) -> Bool {
+    os.kill(pid, 0) == 0 || errno.get() == EPERM
+}
+
+fn __proc-path(pid: Int, which: String) -> Path | nil {
+    if which == 'exe' {
+        let buf = c.alloc(4096)
+        defer c.free(buf)
+        let n = proc_pidpath(pid, buf, 4096)
+        return n > 0 ? Path(c.str(buf, n)) : nil
+    }
+
+    let info = ProcVnodePathInfo()
+    if proc_pidinfo(pid, PROC_PIDVNODEPATHINFO, 0, info.get(), #info) != #info {
+        return nil
+    }
+    let path = match which {
+        'cwd'  => c.str(info.cwd()),
+        'root' => c.str(info.root()),
+        _      => ''
+    }
+    path ? Path(path) : nil
+}
+
+fn __proc-strings(pid: Int) {
+    let mib = c.array(c.int, [1, 49, pid])
+    let size = c.box(c.ulong, 0)
+    defer c.free(mib)
+    defer c.free(size)
+
+    if sysctl(mib, 3, nil, size, nil, 0) == -1 {
+        throw os.OSError("sysctl(KERN_PROCARGS2, {pid})")
+    }
+
+    let n = size[0]
+    let buf = c.alloc(n)
+    defer c.free(buf)
+    if sysctl(mib, 3, buf, size, nil, 0) == -1 {
+        throw os.OSError("sysctl(KERN_PROCARGS2, {pid})")
+    }
+
+    let argc = c.load(c.int, buf)
+    let off = c.size(c.int)
+    while off < n && c.load(c.u8, buf + off) != 0 { off += 1 }
+    while off < n && c.load(c.u8, buf + off) == 0 { off += 1 }
+
+    fn take-string() {
+        let start = off
+        while off < n && c.load(c.u8, buf + off) != 0 { off += 1 }
+        let s = c.as_str(buf + start, off - start)
+        off += 1
+        s
+    }
+
+    let args = [take-string() for _ in ..argc if off < n]
+    while off < n && c.load(c.u8, buf + off) == 0 { off += 1 }
+    let env = []
+    while off < n && c.load(c.u8, buf + off) != 0 { env.push(take-string()) }
+    (args, env)
+}
+
+fn __proc-args(pid: Int) -> Array[String] { __proc-strings(pid).0 }
+fn __proc-env(pid: Int) -> Array[String] { __proc-strings(pid).1 }
+
+fn __proc-started(pid: Int) -> Float {
+    let b = __bsd(pid)
+    b.start_sec + b.start_usec / 1e6
+}
+
+fn __proc-cpu(pid: Int) -> Cpu {
+    let t = __task(pid)
+    Cpu(t.total_user / 1e9, t.total_system / 1e9)
+}
+
+fn __proc-memory(pid: Int) -> Memory {
+    let t = __task(pid)
+    Memory(t.virtual_size, t.resident_size)
+}
+
+fn __proc-io(pid: Int) -> Io {
+    let r = ProcRusage()
+    proc_pid_rusage(pid, RUSAGE_INFO_V2, r.get()) == 0
+        ? Io(r.bytes_read, r.bytes_written)
+        : Io()
+}
+
+fn __pids() -> Array[Int] {
+    let cap = max(proc_listallpids(nil, 0) + 32, 64)
+    let buf = c.alloc(cap * c.size(c.int))
+    defer c.free(buf)
+    let n = proc_listallpids(buf, cap * c.size(c.int))
+    [c.load(c.int, buf + i * c.size(c.int)) for i in ..n].remove!(0)
+}
+
+fn __proc-fds(p: Process) {
+    let cap = max(__bsd(p.pid).nfiles + 16, 32)
+    let stride = c.size(ProcFdInfo_C)
+    let buf = c.alloc(cap * stride)
+    defer c.free(buf)
+    let bytes = proc_pidinfo(p.pid, PROC_PIDLISTFDS, 0, buf, cap * stride)
+    if bytes < 0 { throw os.OSError("proc_pidinfo({p.pid}, LISTFDS)") }
+    [Fd(p, ProcFdInfo(typed(buf, c.u8) + i * stride).fd) for i in ..(bytes / stride)]
+}
+
+fn __fd-target(pid: Int, fd: Int) -> String | nil {
+    let info = ProcFdPathInfo()
+    let n = proc_pidfdinfo(pid, fd, PROC_PIDFDVNODEPATHINFO, info.get(), #info)
+    n == #info ? (c.str(info.path()) || nil) : nil
+}
+
+fn __fd-info(pid: Int, fd: Int) -> Dict[String, Int | String] {
+    let info = ProcFdPathInfo()
+    let n = proc_pidfdinfo(pid, fd, PROC_PIDFDVNODEPATHINFO, info.get(), #info)
+    n == #info
+        ? %{'pos': info.offset, 'flags': info.open_flags,
+            'status': info.status, 'type': info.type}
+        : %{}
+}
+
+fn __proc-maps(p: Process) {
+    let maps = []
+    let address = 0
+    for (;;) {
+        let r = ProcRegionInfo()
+        let n = proc_pidinfo(p.pid, PROC_PIDREGIONPATHINFO, address, r.get(), #r)
+        break if n != #r || r.size == 0
+
+        let perms = "{r.protection & 1 ? 'r' : '-'}"
+                  + "{r.protection & 2 ? 'w' : '-'}"
+                  + "{r.protection & 4 ? 'x' : '-'}"
+                  + (r.share_mode in [4, 5, 7] ? 's' : 'p')
+        let path = c.str(r.path()) || nil
+        maps.push(Map(p, r.address, r.address + r.size, perms,
+                      r.offset, '', 0, path))
+        address = r.address + r.size
+    }
+    maps
+}
+
+fn __mount-options(flags: Int) {
+    let options = [
+        option
+        for (bit, option) in [
+            (0x00000001, 'ro'),
+            (0x00000002, 'sync'),
+            (0x00000004, 'noexec'),
+            (0x00000008, 'nosuid'),
+            (0x00000010, 'nodev'),
+            (0x00001000, 'local'),
+            (0x00800000, 'journaled'),
+            (0x10000000, 'noatime')
+        ]
+        if flags & bit
+    ]
+    options.insert(0, flags & 1 ? 'ro' : 'rw')
+    options
+}
+
+fn __proc-mounts(p: Process) {
+    let pp = c.box(c.ptr)
+    defer c.free(pp)
+    let n = getmntinfo(pp, 2)
+    if n <= 0 { throw os.OSError('getmntinfo()') }
+    let base = c.load(c.ptr, pp)
+    let stride = c.size(DarwinStatfs_C)
+    let mounts = []
+    for i in ..n {
+        let s = DarwinStatfs(typed(base, c.u8) + i * stride)
+        mounts.push(Mount(
+            nil, nil, '', '/', c.str(s.point()), c.str(s.fs_name()),
+            c.str(s.source()), __mount-options(s.flags)
+        ))
+    }
+    mounts
+}
+
+fn __proc-tasks(p: Process) {
+    let cap = max(__task(p.pid).thread_count + 16, 32)
+    let stride = c.size(c.u64)
+    let buf = c.alloc(cap * stride)
+    defer c.free(buf)
+    let bytes = proc_pidinfo(p.pid, PROC_PIDLISTTHREADS, 0, buf, cap * stride)
+    if bytes < 0 { throw os.OSError("proc_pidinfo({p.pid}, LISTTHREADS)") }
+    [Task(p, c.load(c.u64, buf + i * stride)) for i in ..(bytes / stride)]
+}
+
+fn __task-info(pid: Int, tid: Int) {
+    let t = ProcThreadInfo()
+    __pidinfo(pid, PROC_PIDTHREADINFO, t, tid)
+    let name = c.str(t.name()) || c.str(__bsd(pid).name())
+    let state = %{1: 'R', 2: 'T', 3: 'S', 4: 'D', 5: 'H'}[t.run_state] ?? '?'
+    ({name, state, cpu: Cpu(t.user_time / 1e9, t.system_time / 1e9)})
+}
+
+fn __self-task() -> Int {
+    let symbol = c.dlsym('mach_task_self_', nil)
+              ?? throw RuntimeError('mach_task_self_: symbol not found')
+    c.load(c.u32, symbol)
+}
+
+fn __mach-task(pid: Int) -> Int {
+    let port = c.box(c.u32, 0)
+    defer c.free(port)
+    let kr = task_for_pid(__self-task(), pid, port)
+    if kr != 0 { throw ProcessError('task_for_pid', pid, kr) }
+    port[0]
+}
+
+fn __proc-read(pid: Int, addr: Int, size: Int) -> Blob {
+    let task = __mach-task(pid)
+    defer mach_port_deallocate(__self-task(), task)
+    let buf = c.alloc(size)
+    let got = c.box(c.u64, 0)
+    defer c.free(buf)
+    defer c.free(got)
+    let kr = mach_vm_read_overwrite(task, addr, size, int(buf), got)
+    if kr != 0 { throw ProcessError('mach_vm_read_overwrite', pid, kr) }
+    Blob(c.as_str(buf, got[0]))
+}
+
+fn __proc-write(pid: Int, addr: Int, data: String | Blob) -> Int {
+    let task = __mach-task(pid)
+    defer mach_port_deallocate(__self-task(), task)
+    let kr = mach_vm_write(task, addr, int(data.ptr()), #data)
+    if kr != 0 { throw ProcessError('mach_vm_write', pid, kr) }
+    #data
+}
+
+#|]

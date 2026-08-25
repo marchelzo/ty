@@ -1,0 +1,17 @@
+import ffi as c
+import os
+
+#|if __apple__
+let blas = c.dlopen('/System/Library/Frameworks/Accelerate.framework/Accelerate')
+        ?? c.open(['BLAS', 'blas', 'openblas'])
+let lapack = c.dlopen('/System/Library/Frameworks/Accelerate.framework/Accelerate')
+          ?? c.open(['LAPACK', 'lapack'])
+#|else
+let blas = c.open(['BLAS', 'blas', 'openblas'])
+let lapack = c.open(['LAPACK', 'lapack'])
+#|]
+
+if blas == nil || lapack == nil {
+    print('BLAS and LAPACK are required by the np tests')
+    os.exit(77)
+}

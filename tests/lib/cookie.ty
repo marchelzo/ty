@@ -15,7 +15,11 @@ pub fn test-chrome-v10-decryption() {
     /* AES-128-CBC fixture derived with Chrome's PBKDF2 parameters. This catches
      * regressions in both key derivation and removal of the v10 prefix. */
     let encrypted = Blob('v10')
+#|if __apple__
     encrypted.push('fe6e00445e4437eccc8fa4c165d329eb'.unhex()!)
+#|else
+    encrypted.push('3994698d937ebeda791bcdbffe7d43a3'.unhex()!)
+#|]
     let decryptor = get-cookie-decryptor(password='test', meta-version=23)
     assert(decryptor.key-available)
     assert(decryptor.decrypt(encrypted) == 'hello')

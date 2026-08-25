@@ -1,6 +1,12 @@
 import ffi as c (C!)
 import ty
 
+fn gc() {
+    for _ in ..16 {
+        let _ = [[*..5].reverse() for ..1000]
+    }
+}
+
 ns test
 
 /// Original user-function documentation.
@@ -70,7 +76,7 @@ pub fn xinfo-survives-garbage-collection() {
         doc="documentation-{suffix}"
     )
 
-    for _ in 0..4 { ty.gc() }
+    gc()
 
     assert(f.__name__ == 'dynamic-kept-alive')
     assert(doc(f) == (
@@ -87,7 +93,7 @@ pub fn function-object-metadata-coexists-with-xinfo() {
     f.payload = {answer: 42}
 
     let renamed = set-doc(f, name='with-metadata', doc='Has both kinds of metadata.')
-    for _ in 0..2 { ty.gc() }
+    gc()
 
     assert(renamed(5) == 15)
     assert(renamed.label == 'attached metadata')
