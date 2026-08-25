@@ -171,7 +171,20 @@ fn _diff-table(cls: _, db: SQLite) {
     ops
 }
 
-pub fn connect(dsn: String, full-mutex: Bool = true) {
+fn _load-schema(db: _, schema: String) {
+    if _dialect(db) == 'sqlite' {
+        db.run(schema)
+    } else {
+        db.exec(schema)
+    }
+}
+
+pub fn connect(
+    dsn: String,
+    full-mutex: Bool = true,
+    schema: String | nil = nil,
+    sync: Bool = true,
+) {
     fn pg(dsn) {
         let $mod = try { Module('psql') } catch _ {
             throw RuntimeError("PostgreSQL driver not found: install the 'psql' module")
@@ -183,8 +196,11 @@ pub fn connect(dsn: String, full-mutex: Bool = true) {
         /^psql:\/\//          => pg(dsn.sub(/^psql/, 'postgresql')),
         _                     => SQLite(dsn, full-mutex=full-mutex)
     }
-    let tbls = with _tables-mu { [*_tables] }
-    for tbls { _sync-table(it) }
+    if schema != nil { _load-schema(_db, schema) }
+    if sync {
+        let tbls = with _tables-mu { [*_tables] }
+        for tbls { _sync-table(it) }
+    }
     _db
 }
 
@@ -194,6 +210,10 @@ pub fn disconnect() {
 }
 
 pub fn db() { _db }
+
+pub fn rows(sql: String, *ps: _, db = nil) -> Array[Dict[String, _]] {
+    _resolve-db(db).fetch-all(sql, *ps)
+}
 
 pub fn diff(db: SQLite | nil = nil) {
     let db = _resolve-db(db)
@@ -451,6 +471,16 @@ let _known-sql-types = %{
     'Instant':       'TEXT'
 }
 
+let _model-tables = %{}
+
+fn _register-model-table(model: String, table: String) {
+    _model-tables[model] = table
+}
+
+fn _table-for-model(model: String) -> String {
+    _model-tables[model] ?? _snake(model)
+}
+
 fn _sql-type(name: String) -> String {
     match _known-sql-types[name] {
         $t => t,
@@ -479,7 +509,11 @@ fn _unwrap-type(node: AST) {
     }
 }
 
-fn _col-def(c: _, dialect: String = 'sqlite') -> String {
+fn _col-def(
+    c: _,
+    dialect: String = 'sqlite',
+    inline-pk: Bool = true,
+) -> String {
     let pk-clause = if c.pk && c.auto {
         match dialect {
             'postgres' => 'SERIAL PRIMARY KEY',
@@ -497,7 +531,8 @@ fn _col-def(c: _, dialect: String = 'sqlite') -> String {
     return [
         _quote(c.name),
         c.sql-type,
-        'NOT NULL' if !c.nullable && !c.pk,
+        'PRIMARY KEY' if c.pk && inline-pk,
+        'NOT NULL' if !c.nullable && (!c.pk || !inline-pk),
         'UNIQUE' if c.uniq,
         "DEFAULT {_sql-default(c.dflt)}" if c.dflt != nil,
         "REFERENCES {c.refs}" if c.refs != nil
@@ -509,7 +544,13 @@ fn _create-sql(
     cols: Array[_],
     dialect: String = 'sqlite'
 ) -> String {
-    let defs = cols.map(c -> _col-def(c, dialect)).join(', ')
+    let pks = cols.filter(\_.pk)
+    let inline-pk = #pks <= 1
+    let defs = cols.map(c -> _col-def(c, dialect, inline-pk=inline-pk))
+    if !inline-pk {
+        defs.push("PRIMARY KEY ({pks.map(c -> _quote(c.name)).join(', ')})")
+    }
+    defs = defs.join(', ')
     "CREATE TABLE IF NOT EXISTS {table} ({defs})"
 }
 
@@ -776,22 +817,23 @@ fn _build-assocs(specs: Array[Array[_]]) {
     d
 }
 
-fn _do-get(db: SQLite | nil, tbl: String, pkq: String, pk: Int | String | nil) {
+fn _do-get(db: SQLite | nil, tbl: String, pkqs: Array[String], pks: Array[_]) {
     let db = _resolve-db(db)
+    let cond = pkqs.map(q -> "{q} = ?").join(' AND ')
     db.fetch-one(
-        "SELECT * FROM {tbl} WHERE {pkq} = ?",
-        pk
+        "SELECT * FROM {tbl} WHERE {cond}",
+        *pks
     )
 }
 
-fn _do-reload(db: SQLite | nil, tbl: String, pkq: String, pk: Int | String | nil) {
-    _do-get(db, tbl, pkq, pk)
+fn _do-reload(db: SQLite | nil, tbl: String, pkqs: Array[String], pks: Array[_]) {
+    _do-get(db, tbl, pkqs, pks)
 }
 
 fn _do-belongs-to(
     db: SQLite | nil, tbl: String, pkq: String, fk-val: Int | String | nil
 ) {
-    _do-get(db, tbl, pkq, fk-val)
+    _do-get(db, tbl, [pkq], [fk-val])
 }
 
 fn _do-has-many[T](
@@ -916,6 +958,7 @@ pub macro table(def: _) {
     let ty.Class($cls) = def
     let fields = cls.fields
     let table  = _snake(cls.name)
+    let primary-keys = []
 
     if cls.`super` == nil {
         cls.`super` = $$[ $$::(Table) $$]
@@ -941,6 +984,22 @@ pub macro table(def: _) {
     let real-fields = []
     for field in fields {
         match field {
+            ty.Assign((
+                ty.Id({name: $option, *}),
+                ty.String($name)
+            )) and option in ['tableName', 'table_name'] => {
+                table = name
+            },
+            ty.Assign((
+                ty.Id({name: $option, *}),
+                ty.Array($items)
+            )) and option in ['primaryKey', 'primary_key'] => {
+                for item in items {
+                    let ty.ArrayItem($ai) = item
+                    let ty.Id({name: $name, *}) = ai.item
+                    primary-keys.push(name)
+                }
+            },
             ty.Assign((ty.Id({name: 'index', *}), ty.Array($items))) => {
                 for item in items {
                     let ty.ArrayItem($ai) = item
@@ -963,6 +1022,7 @@ pub macro table(def: _) {
         }
     }
     fields = real-fields
+    _register-model-table(cls.name, table)
 
     for field in fields {
         let (fld, dflt-node) = _parse-field(field)
@@ -983,12 +1043,14 @@ pub macro table(def: _) {
         let fk-ref   = nil
         let fk-table = nil
         let fk-col   = nil
+        let ref-table = nil
 
         match constraint {
             ForeignKey(tbl, col) => {
                 fk-table = tbl
                 fk-col   = col
-                fk-ref   = "{_snake(tbl)}({col})"
+                ref-table = _table-for-model(tbl)
+                fk-ref   = "{ref-table}({col})"
             },
             _ => {}
         }
@@ -1002,7 +1064,7 @@ pub macro table(def: _) {
         let date = _date?(tyname) ? tyname : nil
 
         cols.push({
-            name, sql-type, fk-table, fk-col, date,
+            name, sql-type, fk-table, fk-col, ref-table, date,
             pk:   false,
             auto: false,
             uniq: uniq?,
@@ -1010,6 +1072,22 @@ pub macro table(def: _) {
             refs: fk-ref,
             nullable: nullable? || (dflt-node != nil)
         })
+    }
+
+    if #primary-keys > 0 {
+        for name in primary-keys {
+            let found? = false
+            for c, i in cols {
+                if c.name == name {
+                    cols[i] = {*c, pk: true, auto: false}
+                    found? = true
+                }
+            }
+            if !found? {
+                throw ValueError("primary-key field '{name}' not found on {cls.name}")
+            }
+        }
+        has-pk? = true
     }
 
     for c, i in cols {
@@ -1025,12 +1103,14 @@ pub macro table(def: _) {
         }
     }
 
-    let pk-name = (cols.find(\_.pk) ?? cols[0]).name
-    let pk-q       = _quote(pk-name)
+    let pk-cols = cols.filter(\_.pk)
+    let pk-name = (pk-cols[0] ?? cols[0]).name
+    let pk-qs = pk-cols.map(c -> _quote(c.name))
 
     let schema = {
         table,
         pk: pk-name,
+        pks: pk-cols.map(\_.name),
         cols,
         indexes,
         pg-sql: _create-sql(table, cols, 'postgres'),
@@ -1059,6 +1139,13 @@ pub macro table(def: _) {
         }
     }
 
+    fn where-clause-for(cs: _, offset: Int = 0, dialect: String = 'sqlite') {
+        match dialect {
+            'postgres' => ["{_quote(c.name)} = ${i + offset + 1}" for c, i in cs].join(' AND '),
+            _          => ["{_quote(it.name)} = ?" for cs].join(' AND ')
+        }
+    }
+
     fn build-ins-sql(dialect: String) {
         "INSERT INTO {table}"
         " ({quoted-names(ins-cols)})"
@@ -1067,20 +1154,19 @@ pub macro table(def: _) {
 
     fn build-upd-sql(dialect: String) {
         let sc = set-clause-for(upd-cols, dialect=dialect)
-        let ph = (dialect == 'postgres') ? "${#upd-cols + 1}" : '?'
-        return "UPDATE {table} SET {sc} WHERE {pk-q} = {ph}"
+        let wc = where-clause-for(pk-cols, offset=#upd-cols, dialect=dialect)
+        return "UPDATE {table} SET {sc} WHERE {wc}"
     }
 
     fn build-del-sql(dialect: String) {
-        let ph = (dialect == 'postgres') ? '$1' : '?'
-        return "DELETE FROM {table} WHERE {pk-q} = {ph}"
+        let wc = where-clause-for(pk-cols, dialect=dialect)
+        return "DELETE FROM {table} WHERE {wc}"
     }
 
     let excluded-set = ["{_quote(it.name)} = excluded.{_quote(it.name)}" for upd-cols].join(', ')
     let unique-cols = cols.filter(\_.uniq)
-    let upsert-conflict = (#unique-cols > 0)
-        ? _quote(unique-cols[0].name)
-        : pk-q
+    let conflict-cols = (#unique-cols > 0) ? [unique-cols[0]] : pk-cols
+    let upsert-conflict = quoted-names(conflict-cols)
 
     fn build-upsert-sql(dialect: String) {
         "INSERT INTO {table}"
@@ -1108,7 +1194,7 @@ pub macro table(def: _) {
     fn flds(cs: _) { [fld-expr(it) for cs] }
 
     let tbl = ty.String(table)
-    let pkq = ty.String(pk-q)
+    let pkqs = ty.Value(pk-qs)
 
     let db-resolve = $$[
         let db = $$::(_resolve-db)(db)
@@ -1183,7 +1269,17 @@ pub macro table(def: _) {
             *flds(ins-cols).map(\ty.Arg(arg: _))
         ]
     )
-    ins-stmts.push($$[ $$pk-name = $$ins-exec $$])
+    if cols.any?(\_.auto) {
+        ins-stmts.push($$[ $$pk-name = $$ins-exec $$])
+    } else {
+        ins-stmts.push(ty.Call(
+            func: $$[ db.exec $$],
+            args: [
+                ty.Arg(arg: ins-sql-pick),
+                *flds(ins-cols).map(\ty.Arg(arg: _))
+            ]
+        ))
+    }
     if has-method['afterInsert'] {
         ins-stmts.push(cb('afterInsert'))
     }
@@ -1208,7 +1304,7 @@ pub macro table(def: _) {
         args: [
             ty.Arg(arg: upd-sql-pick),
             *flds(upd-cols).map(\ty.Arg(arg: _)),
-            ty.Arg(arg: ty.Id(name: pk-name))
+            *flds(pk-cols).map(\ty.Arg(arg: _))
         ]
     ))
     if has-method['afterSave'] {
@@ -1237,7 +1333,17 @@ pub macro table(def: _) {
     if has-validations || has-method['validate'] {
         upsert-stmts.push(validate-guard)
     }
-    upsert-stmts.push($$[ $$pk-name = $$upsert-exec $$])
+    if cols.any?(\_.auto) {
+        upsert-stmts.push($$[ $$pk-name = $$upsert-exec $$])
+    } else {
+        upsert-stmts.push(ty.Call(
+            func: $$[ db.exec $$],
+            args: [
+                ty.Arg(arg: upsert-sql-pick),
+                *flds(ins-cols).map(\ty.Arg(arg: _))
+            ]
+        ))
+    }
     upsert-stmts.push($$[ self $$])
     let upsert-body = ty.Block(upsert-stmts)
 
@@ -1252,7 +1358,7 @@ pub macro table(def: _) {
         func: $$[ db.exec $$],
         args: [
             ty.Arg(arg: del-sql-pick),
-            ty.Arg(arg: ty.Id(name: pk-name))
+            *flds(pk-cols).map(\ty.Arg(arg: _))
         ]
     ))
     if has-method['afterDelete'] { del-stmts.push(cb('afterDelete')) }
@@ -1275,12 +1381,16 @@ pub macro table(def: _) {
         $$[ d $$]
     ])
 
-    let pk-fld = ty.Id(name: pk-name)
+    let pk-values = flds(pk-cols).fold(
+        $$[ [] $$],
+        (acc, el) -> $$[ [*$$acc, $$el] $$]
+    )
+    let get-pk-values = (#pk-cols == 1) ? $$[ [pk] $$] : $$[ pk $$]
     let cls-id = ty.Id(name: cls.name)
     let reload-body = $$[
         let db = $$::(_resolve-db)(db)
         if let $r = $$::(_do-reload)(
-            db, $$tbl, $$pkq, $$pk-fld
+            db, $$tbl, $$pkqs, $$pk-values
         ) {
             let fresh = $$cls-id.fromRow(r)
             fresh.errors = errors
@@ -1331,7 +1441,7 @@ pub macro table(def: _) {
 
     let fk-cols = cols.filter(\_.fk-table != nil)
     for fk in fk-cols {
-        let ref-tbl = ty.String(_snake(fk.fk-table))
+        let ref-tbl = ty.String(fk.ref-table)
         let ref-pkq = ty.String(
             _quote(fk.fk-col)
         )
@@ -1388,7 +1498,7 @@ pub macro table(def: _) {
     let assoc-specs = fk-cols.map(fn (fk) {
         let $n  = ty.String(fk.fk-table.lower())
         let $fc = ty.String(fk.name)
-        let $rt = ty.String(_snake(fk.fk-table))
+        let $rt = ty.String(fk.ref-table)
         let $rp = ty.String(fk.fk-col)
         let rc  = ty.Id(name: fk.fk-table)
         $$[ [$$n, $$fc, $$rt, $$rp, $$rc.fromRow] $$]
@@ -1434,7 +1544,7 @@ pub macro table(def: _) {
             params: ['pk', db-p],
             body: $$[
                 if let $r = $$::(_do-get)(
-                    db, $$tbl, $$pkq, pk
+                    db, $$tbl, $$pkqs, $$get-pk-values
                 ) {
                     from-row(r)
                 }
