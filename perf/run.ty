@@ -1,190 +1,320 @@
 import os
 import time (now)
 import chalk (chalk)
-import json
 import path (Path)
 import clap (clap!)
 import ty
 
 import lib (
     run-one,
-    fmt-time,
-    fmt-delta,
     load-benchmarks,
     load-results,
-    load-best,
     save-results,
-    update-best,
+    matches-filter,
     Result,
     BenchRecord,
 )
+import history (
+    DEFAULT_DATABASE,
+    record-run,
+    print-run,
+    print-history,
+    latest-run-id,
+    compare-runs,
+    print-trend,
+    check-run,
+    set-status,
+    benchmark-label,
+    tag-label,
+    mode-label,
+    duration-label,
+    delta-label,
+)
 
-// ---------------------------------------------------------------------------
-//  CLI
-// ---------------------------------------------------------------------------
+let PERF_DIR = Path(__file__).parent
+let JIT_SFX = if ty.jit { '_jit' } else { '' }
+let RESULTS_FILE = "{PERF_DIR}/results{JIT_SFX}.json"
 
-/** ty performance suite — run and track benchmarks. */
-clap! PerfRunner {
-    /// Benchmark name filter
+/** Run benchmarks and append the result to history. */
+clap! RunOptions v1 {
+    /// Benchmark name or tag filter (space-separated terms are ANDed)
     filter: String, pos: true
 
-    /// Compare with previous and best results
+    /// Also compare with the disposable previous-run cache
     compare: Bool, short: 'c'
 
-    /// Don't save results
+    /// Don't save the result cache or historical record
     noSave: Bool, short: 'S'
 
+    /// Attach a note to this historical run
+    note: String, short: None
+
+    /// Number of recent eligible runs in a robust baseline
+    historyWindow: Int, short: None, default: 5, check: 1..100
+
+    /// Minimum percentage change reported as a regression
+    regressionThreshold: Float, short: None, default: 5.0, check: 0..100
+
     /// Number of warmup iterations
-    warmup: Int, default: 3, check: 0..100
+    warmup: Int, short: 'w', default: 3, check: 0..100
 
     /// Number of timed rounds
     rounds: Int, short: 'n', default: 5, check: 1..100
 }
 
-let JIT_SFX      = if ty.jit { '_jit' } else { '' }
-let RESULTS_FILE = "perf/results{JIT_SFX}.json"
-let BEST_FILE    = "perf/best{JIT_SFX}.json"
+/** Browse available benchmarks and their tags. */
+clap! ListOptions v1 {
+    /// Only show benchmarks matching this name/tag filter
+    filter: String, pos: true
+}
 
-fn main() {
-    let (opts, _) = PerfRunner.parse()
+/** View recent benchmark runs. */
+clap! HistoryOptions v1 {
+    /// Maximum number of runs to show
+    limit: Int, short: 'n', default: 20, check: 1..1000
 
-    let benchmarks = load-benchmarks(Path(__file__).parent / 'benchmarks')
+    /// Only show baseline-eligible runs
+    eligible: Bool, short: 'e'
 
+    /// Only show runs containing a matching benchmark
+    filter: String, short: 'f'
+}
+
+/** View one run and all of its benchmark results. */
+clap! ShowOptions v1 {
+    /// Run ID (default: latest)
+    runId: Int, pos: true
+}
+
+/** Compare one run with its baseline or another run. */
+clap! CompareOptions v1 {
+    /// Run ID (default: latest)
+    runId: Int, pos: true
+
+    /// Other run ID (default: the first run's robust baseline)
+    against: Int, pos: true
+}
+
+/** Visualize a benchmark over time. */
+clap! TrendOptions v1 {
+    /// Benchmark name filter
+    benchmark: String, pos: true, required: true
+
+    /// Maximum number of measurements
+    limit: Int, short: 'n', default: 20, check: 1..1000
+
+    /// Include dirty, partial, and anomalous measurements
+    all: Bool, short: 'a'
+}
+
+/** Exit nonzero when a run contains regressions or anomalies. */
+clap! CheckOptions v1 {
+    /// Run ID (default: latest)
+    runId: Int, pos: true
+
+    /// Regression threshold as a percentage
+    threshold: Float, short: 't', default: 5.0, check: 0..100
+}
+
+/** Include or exclude a run from future baselines. */
+clap! StatusOptions v1 {
+    /// Run ID
+    runId: Int, pos: true, required: true
+
+    /// auto, eligible, or excluded
+    status: String, pos: true, required: true
+
+    /// Explain the manual decision
+    reason: String, short: 'r'
+}
+
+/** Ty performance suite — benchmark, inspect history, and catch regressions. */
+clap! Perf v1 {
+    /// SQLite history database
+    database: String, short: None, default: DEFAULT_DATABASE
+
+    /// Run benchmarks
+    cmd run: RunOptions
+
+    /// List benchmarks
+    cmd list: ListOptions
+
+    /// View recent recorded runs
+    cmd history: HistoryOptions
+
+    /// View one recorded run
+    cmd show: ShowOptions
+
+    /// Compare runs or compare a run with its baseline
+    cmd compare: CompareOptions
+
+    /// Visualize a benchmark over time
+    cmd trend: TrendOptions
+
+    /// Check a run for regressions
+    cmd check: CheckOptions
+
+    /// Override a run's baseline eligibility
+    cmd status: StatusOptions
+}
+
+let COMMANDS = ['run', 'list', 'history', 'show', 'compare', 'trend', 'check', 'status']
+
+// Preserve the old `run.ty [options] [filter]` spelling while making the
+// documented interface properly command-oriented.
+fn normalized-argv() -> [String] {
+    let args = os.argv
+    if #args == 1 { return [args[0], 'run'] }
+    if args[1] == '--list' { return [args[0], 'list', *args.slice(2)] }
+    if args[1] in ['-h', '--help', '--version', '--completions'] { return args }
+    if args[1] == '--database' && #args >= 4 && args[3] in COMMANDS { return args }
+    if args[1].starts?('--database=') && #args >= 3 && args[2] in COMMANDS { return args }
+    if args[1] not in COMMANDS { return [args[0], 'run', *args.slice(1)] }
+    args
+}
+
+fn benchmarks() {
+    load-benchmarks(PERF_DIR / 'benchmarks').sort(by: \_.name)
+}
+
+fn print-catalog(opts: ListOptions) {
+    let entries = benchmarks()
+    if opts.filter {
+        entries = entries.filter(entry -> matches-filter(entry, opts.filter))
+    }
+    if #entries == 0 {
+        print(chalk"[yellow bold]No benchmarks matched[/] '{opts.filter}'.")
+        return
+    }
+
+    let width: Int = max(12, entries.map(\#_.name).max() ?? 12) + 2
+    print(chalk"[bold bright cyan]Ty benchmark catalog[/]  [dim]{#entries} benchmark(s)[/]")
+    print(chalk"[dim]Filter by name or combine tags: perf/run.ty run 'numeric float'[/]")
+    print()
+    print(chalk"[bold]  {'Benchmark':{width}} Tags[/]")
+    print(chalk"[dim]  {'─'.repeat(width + 62)}[/]")
+    for entry in entries {
+        let tags = entry.tags.map(tag-label).join(' · ')
+        print(chalk"  {benchmark-label(entry.name, width)} {tags}")
+    }
+}
+
+fn print-comparison(
+    title: String,
+    ref-map: Dict[String, BenchRecord],
+    results: [Result],
+    name-width: Int,
+) {
+    print()
+    print(chalk"[bold bright cyan]{title}[/]")
+    print()
+    for r in results {
+        let label = benchmark-label(r.name, name-width)
+        if let $old = ref-map[r.name] {
+            let ratio = r.med / old.median
+            let verdict = ratio < 0.95 ? 'improvement'
+                        : ratio > 1.05 ? 'regression'
+                        : 'stable'
+            print(chalk"  {label} {duration-label(old.median, role='baseline', width=10)} "
+                        "[dim]→[/] {duration-label(r.med, verdict=verdict, width=10)}  "
+                        "{delta-label(ratio)}")
+        } else {
+            print(chalk"  {label} [dim]no previous data[/]")
+        }
+    }
+}
+
+fn run-suite(opts: RunOptions, database: String) {
+    let all = benchmarks()
     let running = opts.filter
-        ? benchmarks.filter(\_.name.contains?(opts.filter))
-        : benchmarks
-
+        ? all.filter(entry -> matches-filter(entry, opts.filter))
+        : all
     if #running == 0 {
-        print(chalk"[red bold]No benchmarks matched"
-                    " filter:[/] '{opts.filter}'")
-        let names = benchmarks.map(\_.name).join(', ')
-        print("Available: {names}")
+        print(chalk"[red bold]No benchmarks matched[/] '{opts.filter}'.")
+        print(chalk"[dim]Use 'perf/run.ty list' to browse names and tags.[/]")
         os.exit(1)
     }
 
-    let jit-str = if ty.jit {
-        chalk" [bright green bold]JIT[/]"
-    } else {
-        chalk" [dim]no JIT[/]"
-    }
-    print(chalk"[bold bright cyan]ty performance suite[/]"
-              "{jit-str}")
-    print(chalk"[dim]{#running} benchmark(s)"
-              " · {opts.rounds} rounds"
-              " · {opts.warmup} warmup[/]")
+    let mode = ty.jit ? 'jit' : 'interpreter'
+    print(chalk"[bold bright cyan]Ty performance suite[/]  {mode-label(mode)}")
+    print(chalk"[cyan]{#running} benchmark(s)[/] [dim]· {opts.rounds} rounds · "
+                "{opts.warmup} warmup[/]")
     print()
 
-    // ---------------------------------------------------------------------------
-    //  Run
-    // ---------------------------------------------------------------------------
-
-    let results: Array[Result] = []
-    let best = load-best(BEST_FILE)
-
+    let started = now()
+    let results: [Result] = []
     let name-width: Int = (running.map(\#_.name).max() ?? 0) + 2
-
     for entry in running {
-        let label = chalk"[bold]{entry.name:{name-width}}[/]"
-        print(chalk"{label} [dim]calibrating...[/]", end='', flush=true)
-
-        let r = run-one(
-            entry.name,
-            entry.run,
-            warmup=opts.warmup,
-            rounds=opts.rounds
-        )
+        let label = benchmark-label(entry.name, name-width)
+        print(chalk"{label} [dim]calibrating…[/]", end='', flush=true)
+        let r = run-one(entry, warmup=opts.warmup, rounds=opts.rounds)
         results.push(r)
-
-        // Clear the line
         print("\r\x1b[K", end='')
-
-        let time-str  = fmt-time(r.med)
-        let sd-str    = fmt-time(r.sd)
-
-        // Color relative to all-time best (first run = everything green)
-        let color = if let $b = best[r.name] {
-            let ratio = r.med / b.median
-            if ratio <= 1.02 {
-                'bright green'
-            } else if ratio < 1.10 {
-                'green'
-            } else if ratio < 1.25 {
-                'yellow'
-            } else {
-                'red'
-            }
-        } else {
-            'bright green'
-        }
-
-        print(chalk"{label} [bold {color}]{time-str:>10}[/]/iter [dim]± {sd-str:<8} ({r.iters} iters × {opts.rounds} rounds)[/]")
-    }
-
-    // ---------------------------------------------------------------------------
-    //  Comparison with previous run
-    // ---------------------------------------------------------------------------
-
-    fn print-comparison(
-        title: String,
-        ref-map: Dict[String, BenchRecord],
-        results: Array[Result],
-        name-width: Int
-    ) {
-        print()
-        print(chalk"[bold bright cyan]{title}[/]")
-        print()
-
-        for r in results {
-            let label = chalk"[bold]{r.name:{name-width}}[/]"
-            if let $old = ref-map[r.name] {
-                let ratio = r.med / old.median
-                let delta = fmt-delta(ratio)
-                let color = if ratio < 0.95 {
-                    'bright green bold'
-                } else if ratio > 1.05 {
-                    'red bold'
-                } else {
-                    'dim'
-                }
-                print(chalk"  {label} {fmt-time(old.median):>10} → {fmt-time(r.med):>10}  [{color}]{delta}[/]")
-            } else {
-                print(chalk"  {label} [dim]no previous data[/]")
-            }
-        }
+        print(chalk"{label} {duration-label(r.med, width=10)}[dim]/iter[/] "
+                    "[dim]±[/] {duration-label(r.sd, role='spread', width=9)}  "
+                    "[dim]{r.iters:>7} iters × {opts.rounds:>3} rounds[/]")
     }
 
     if opts.compare {
-        let prev = load-results(RESULTS_FILE)
-        if prev != nil {
-            let prev-map = %{e.name: e for e in prev}
-            print-comparison('Comparison with previous run:', prev-map, results, name-width)
+        if let $previous = load-results(RESULTS_FILE) {
+            print-comparison(
+                'Previous-run cache', %{e.name: e for e in previous},
+                results, name-width
+            )
         } else {
-            print(chalk"\n[dim]No previous results to compare against.[/]")
+            print(chalk"\n[dim]No previous-run cache.[/]")
         }
     }
 
-    // ---------------------------------------------------------------------------
-    //  Summary
-    // ---------------------------------------------------------------------------
-
     print()
-    let total = results.map(\_.med).sum()
-    print(chalk"[bold]Total:[/] {fmt-time(total)}")
+    print(chalk"[bold]Total:[/] {duration-label(results.map(\_.med).sum())}")
+    if opts.noSave { return }
 
-    // ---------------------------------------------------------------------------
-    //  Save + update best
-    // ---------------------------------------------------------------------------
+    let run-id = record-run(
+        database, results, mode, opts.warmup, opts.rounds, opts.filter,
+        #all, now() - started, opts.note,
+        window=opts.historyWindow,
+        threshold=opts.regressionThreshold / 100.0
+    )
+    save-results(RESULTS_FILE, results)
+    print()
+    print-run(database, run-id)
+}
 
-    if !opts.noSave {
-        save-results(RESULTS_FILE, results)
-        print(chalk"[dim]Results saved to {RESULTS_FILE}[/]")
+fn required-run-id(database: String, requested: Int | nil) -> Int {
+    requested ?? latest-run-id(database)
+        ?? throw ValueError('no performance runs have been recorded')
+}
+
+fn main() {
+    let (opts, _) = Perf.parse(normalized-argv())
+    match opts.cmd {
+        run: RunOptions => run-suite(run, opts.database),
+        list: ListOptions => print-catalog(list),
+        history: HistoryOptions => print-history(
+            opts.database, history.limit, !history.eligible, history.filter
+        ),
+        show: ShowOptions => print-run(
+            opts.database, required-run-id(opts.database, show.runId)
+        ),
+        compare: CompareOptions => compare-runs(
+            opts.database, required-run-id(opts.database, compare.runId), compare.against
+        ),
+        trend: TrendOptions => print-trend(
+            opts.database, trend.benchmark, trend.limit, trend.all
+        ),
+        check: CheckOptions => {
+            let ok = check-run(
+                opts.database, required-run-id(opts.database, check.runId),
+                check.threshold / 100.0
+            )
+            if !ok { os.exit(1) }
+        },
+        status: StatusOptions => set-status(
+            opts.database, status.runId, status.status, status.reason
+        ),
+        _ => nil
     }
-
-    // Compare against all-time best, then update it
-    if #best > 0 {
-        print-comparison('Comparison with all-time best:', best, results, name-width)
-    }
-    update-best(BEST_FILE, results)
 }
 
 main()

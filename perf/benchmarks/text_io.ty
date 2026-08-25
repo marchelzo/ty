@@ -1,0 +1,58 @@
+import lib (bench)
+import io
+
+// Buffered text I/O followed by a typical CSV-like ingestion pass.  tmpfile()
+// keeps the benchmark self-cleaning while still exercising stdio and the
+// filesystem/page cache rather than an in-memory stream abstraction.
+
+fn make-reading(i: Int) -> String {
+    let value = ((i * 17) % 1000).float / 10.0
+    let quality = if i % 13 == 0 { 'bad' } else { 'ok' }
+    "2026-08-18T12:{i % 60:02}:{(i * 7) % 60:02}Z,sensor-{i % 32},{value},{quality}"
+}
+
+fn make-readings(count: Int) -> String {
+    let lines = [make-reading(i) for i in ..count]
+    "{lines.join('\n')}\n"
+}
+
+let READING_DATA = make-readings(2000)
+
+@bench('fs io text string float dict alloc parse')
+fn text-io(n: Int) {
+    for ..n {
+        with file = io.tmpfile() {
+            assert(file.write(READING_DATA) == #READING_DATA)
+            file.flush()
+            file.rewind()
+
+            let counts = %{*: 0}
+            let accepted = 0
+            let total = 0.0
+            let rows = 0
+
+            for line in file {
+                let fields = line.split(',')
+                let sensor = fields[1]
+                let value = float(fields[2])
+                let status = fields[3].strip()
+
+                counts[sensor] += 1
+                rows += 1
+                if status == 'ok' {
+                    accepted += 1
+                    total += value
+                }
+            }
+
+            assert(rows == 2000)
+            assert(accepted == 1846)
+            assert(#counts == 32)
+            assert(total > 80000.0)
+        }
+    }
+}
+
+if __module__ == 'main' {
+    text-io(1)
+}

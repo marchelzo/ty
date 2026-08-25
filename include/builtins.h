@@ -165,6 +165,12 @@ static struct {
   { .module = "os",         .name = "stat",                     .value = BUILTIN(builtin_os_stat)                },
   { .module = "os",         .name = "lstat",                    .value = BUILTIN(builtin_os_lstat)               },
   { .module = "os",         .name = "fstat",                    .value = BUILTIN(builtin_os_fstat)               },
+#if defined(__linux__) || defined(__APPLE__)
+  { .module = "os",         .name = "statfs",                   .value = BUILTIN(builtin_os_statfs)              },
+#endif
+#ifndef _WIN32
+  { .module = "os",         .name = "statvfs",                  .value = BUILTIN(builtin_os_statvfs)             },
+#endif
   { .module = "os",         .name = "truncate",                 .value = BUILTIN(builtin_os_truncate)            },
   { .module = "os",         .name = "ftruncate",                .value = BUILTIN(builtin_os_ftruncate)           },
   { .module = "os",         .name = "access",                   .value = BUILTIN(builtin_os_access)              },
@@ -290,6 +296,7 @@ static struct {
   { .module = "os",         .name = "getsid",                   .value = BUILTIN(builtin_os_getsid)              },
   { .module = "os",         .name = "setsid",                   .value = BUILTIN(builtin_os_setsid)              },
   { .module = "os",         .name = "wait",                     .value = BUILTIN(builtin_os_wait)                },
+  { .module = "os",         .name = "wait4",                    .value = BUILTIN(builtin_os_wait4)               },
   { .module = "os",         .name = "WIFSTOPPED",               .value = BUILTIN(builtin_os_WIFSTOPPED)          },
   { .module = "os",         .name = "WIFEXITED",                .value = BUILTIN(builtin_os_WIFEXITED)           },
   { .module = "os",         .name = "WEXITSTATUS",              .value = BUILTIN(builtin_os_WEXITSTATUS)         },

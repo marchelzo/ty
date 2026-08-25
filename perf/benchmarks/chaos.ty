@@ -210,7 +210,7 @@ fn make-splines() -> [Spline] {
     ]
 }
 
-@bench
+@bench('class array float numeric math alloc dispatch')
 fn chaos-game(n: Int) {
     for ..n {
         let game = ChaosGame(make-splines())

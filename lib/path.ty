@@ -286,7 +286,7 @@ pub class Path {
     }
 
     open(how: String = 'r') -> io.Stream {
-        io.open(str(self), how) ?? throw os.OSError('open()')
+        io.open("{self}", how)
     }
 
     read-text() -> String {

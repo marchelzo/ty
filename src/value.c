@@ -30,6 +30,27 @@ static _Thread_local vec(Value *) show_tuples;
 static _Thread_local vec(Array *) show_arrays;
 static _Thread_local vec(Queue *) show_queues;
 
+static void
+append_decimal_integer(Ty *ty, byte_vector *buf, imax value)
+{
+        char storage[sizeof value * 3 + 2];
+        char *p = storage + sizeof storage;
+        bool negative = value < 0;
+        umax magnitude = negative
+                       ? (umax)(-(value + 1)) + 1
+                       : (umax)value;
+
+        do {
+                *--p = '0' + magnitude % 10;
+                magnitude /= 10;
+        } while (magnitude != 0);
+
+        if (negative) {
+                *--p = '-';
+        }
+        svPn(*buf, p, storage + sizeof storage - p);
+}
+
 void
 TyValueCleanup(void)
 {
@@ -537,7 +558,7 @@ show_impl(
                         if (color) {
                                 sxdf(&buf, "%s%"PRIiMAX"%s", TERM(93), v.z, TERM(0));
                         } else {
-                                sxdf(&buf, "%"PRIiMAX, v.z);
+                                append_decimal_integer(ty, &buf, v.z);
                         }
                         break;
 
@@ -1685,6 +1706,11 @@ mark_thread(Ty *ty, Value const *v)
         if (MARKED(v->thread)) return;
         MARK(v->thread);
         MarkNext(ty, &v->thread->v);
+        if (v->thread->ctx != NULL) {
+                for (Value *p = v->thread->ctx; p->type != VALUE_NONE; ++p) {
+                        MarkNext(ty, p);
+                }
+        }
 }
 
 inline static void
@@ -1925,26 +1951,41 @@ value_named_tuple(Ty *ty, char const *first, ...)
 
         va_end(ap);
 
+        Value values[n];
+        char const *names[n];
+
+        names[0] = first;
+
+        va_start(ap, first);
+        values[0] = va_arg(ap, Value);
+
+        for (int i = 1; i < n; ++i) {
+                names[i] = va_arg(ap, char const *);
+                values[i] = va_arg(ap, Value);
+        }
+
+        va_end(ap);
+
+        usize roots = vN(RootSet);
+
+        for (int i = 0; i < n; ++i) {
+                gP(&values[i]);
+        }
+
         Value *items = mAo(n * sizeof (Value), GC_TUPLE);
 
         NOGC(items);
         int *ids = mAo(n * sizeof (int), GC_TUPLE);
         OKGC(items);
 
-        va_start(ap, first);
-
-        ids[0] = (first[0] == '\0') ? -1 : M_ID(first);
-        items[0] = va_arg(ap, Value);
-
-        for (int i = 1; i < n; ++i) {
-                char const *name = va_arg(ap, char *);
-                items[i] = va_arg(ap, Value);
-                ids[i] = (name[0] == '\0') ? -1 : M_ID(name);
+        for (int i = 0; i < n; ++i) {
+                ids[i] = (names[i][0] == '\0') ? -1 : M_ID(names[i]);
+                items[i] = values[i];
         }
 
-        va_end(ap);
-
-        return TUPLE(items, ids, n, false);
+        Value tuple = TUPLE(items, ids, n, false);
+        vN(RootSet) = roots;
+        return tuple;
 }
 
 Value *

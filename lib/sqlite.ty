@@ -31,19 +31,24 @@ class SQLiteRowIter[a] : Iter[a] {
 
 class SQLiteStatement[a] : Iterable[a] {
     __p: _
+    __db: _
+    __sql: String
     __status: Int
 
-    init(p: _) {
+    init(p: _, db, sql: String) {
         __p = p
+        __db = db
+        __sql = sql
     }
 
     exec() -> Int {
         if __p {
             __status = ::step(__p)
+            let detail = ::errorMessage(__db)
             ::finalize(__p)
             __p = nil
             if __status != SQLITE_DONE && __status != SQLITE_ROW {
-                throw SQLiteError(__status)
+                throw SQLiteError(__status, "{__sql}: {detail}")
             }
             return __status
         } else {
@@ -169,7 +174,7 @@ pub class SQLite {
             }
         }
 
-        return SQLiteStatement(s)
+        return SQLiteStatement(s, __db, sql)
     }
 
     exec(sql, *ps) -> Int {

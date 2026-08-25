@@ -2159,6 +2159,7 @@ NewThread(Ty *ty, Thread *t, Value *call, Value *name, bool isolated)
                 .isolated = isolated
         };
 
+        t->ctx = call;
         TyMutexInit(&t->mutex);
         TyCondVarInit(&t->cond);
         t->alive = true;
@@ -2437,6 +2438,7 @@ vm_run_thread(void *p)
 #endif
 
         xmF(ctx);
+        t->ctx = NULL;
         mF(call);
 
         TyMutexLock(&t->mutex);
@@ -6492,7 +6494,10 @@ IntoMethod(Ty *ty, Value const *fun, i32 c)
         u32 size = header_size_of(fun)
                  + code_size_of(fun);
 
-        method.info = memcpy(mrealloc(NULL, size), fun->info, size);
+        void *storage = from_eval(fun)
+                      ? uAo(size, GC_ANY)
+                      : mrealloc(NULL, size);
+        method.info = memcpy(storage, fun->info, size);
         method.info[FUN_INFO_CLASS] = c;
 
         if (c0 != -1) {
@@ -9092,7 +9097,7 @@ CaptureContextEx(Ty *ty, ThrowCtx *ctx)
                 }
 
                 ValueVector locals = {0};
-                xvPn(locals, vv(STACK) + fp, nvar);
+                xvPn(locals, vv(st.stack) + fp, nvar);
 
                 for (int i = 0; i < vN(locals); ++i) {
                         Value *v = v_(locals, i);
@@ -9851,6 +9856,10 @@ vm_init(Ty *ty, int ac, char **av)
         NAMES._static_methods_ = M_ID("__static_methods__");
         NAMES._static_getters_ = M_ID("__static_getters__");
         NAMES._super_          = M_ID("__super__");
+
+        /* Builtins may construct named values from worker threads, so intern
+         * their fixed field names before concurrent execution is possible. */
+        TyFunctionsInit(ty);
 
         GC_STOP();
 

@@ -28,7 +28,7 @@ class Point {
     }
 }
 
-@bench
+@bench('class array float numeric math alloc mutation')
 fn float-ops(n: Int) {
     for ..n {
         let count = 50000
@@ -43,4 +43,8 @@ fn float-ops(n: Int) {
             result.maximize!(points[i])
         }
     }
+}
+
+if __module__ == 'main' {
+    float-ops(10)
 }

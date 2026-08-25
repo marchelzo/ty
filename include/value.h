@@ -959,8 +959,10 @@ static inline void
 value_array_push(Ty *ty, Array *a, Value v)
 {
         if (a->count == a->capacity) {
+                gP(&v);
                 a->capacity = a->capacity ? a->capacity * 2 : 4;
                 mRE(a->items, a->capacity * sizeof (Value));
+                gX();
         }
 
         a->items[a->count++] = v;

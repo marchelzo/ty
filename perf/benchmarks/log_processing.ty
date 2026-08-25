@@ -1,0 +1,82 @@
+import lib (bench)
+
+// A regex-validated log-processing pass with token conversion, dictionary
+// aggregation, set membership, record allocation, and sorting.
+
+let LOG_PATTERN = /^\S+\s+\w+\s+service=[\w-]+\s+duration=\d+ms\s+path=\S+$/
+
+fn make-log-lines(count: Int) -> Array[String] {
+    let services = ['auth', 'billing', 'catalog', 'search', 'worker']
+
+    [do {
+        let level = if i % 17 == 0 { 'ERROR' } else if i % 7 == 0 { 'WARN' } else { 'INFO' }
+        let service = services[i % #services]
+        let duration = (i * 37) % 500
+        "2026-08-18T12:{i % 60:02}:{(i * 7) % 60:02}Z {level} service={service} duration={duration}ms path=/api/v{i % 3 + 1}/resource/{i % 23}"
+    } for i in ..count]
+}
+
+let LOG_LINES = make-log-lines(5000)
+
+fn analyze-logs(lines: Array[String]) {
+    let by-service = %{*: 0}
+    let by-level = %{*: 0}
+    let paths = %{}
+    let slow = []
+    let total-duration = 0
+
+    for line in lines {
+        if !line.match?(LOG_PATTERN) { continue }
+        let fields = line.split(' ')
+        let timestamp = fields[0]
+        let level = fields[1]
+        let service = fields[2].split('=')[1]
+        let duration-text = fields[3].split('=')[1].comb('ms')
+        let path = fields[4].split('=')[1]
+
+        let duration = int(duration-text)
+        by-service[service] += 1
+        by-level[level] += 1
+        paths[path] = true
+        total-duration += duration
+
+        if duration >= 400 {
+            slow.push({timestamp, service, path, duration, failed: level == 'ERROR'})
+        }
+    }
+
+    let service-report = []
+    for report-service, count in by-service {
+        service-report.push({service: report-service, count})
+    }
+    service-report.sort!(by=\_.service)
+    slow.sort!(by=\_.duration, desc=true)
+
+    return {
+        by-service: by-service,
+        by-level: by-level,
+        paths: paths,
+        slow: slow,
+        service-report: service-report,
+        total-duration: total-duration
+    }
+}
+
+@bench('regex string record array dict set integer alloc sort analytics')
+fn log-processing(n: Int) {
+    for ..n {
+        let result = analyze-logs(LOG_LINES)
+        assert(result.by-service.values().sum() == 5000)
+        assert(#result.by-service == 5)
+        assert(#result.by-level == 3)
+        assert(#result.paths == 69)
+        assert(#result.slow == 1000)
+        assert(#result.service-report == 5)
+        assert(result.slow[0].duration == 499)
+        assert(result.total-duration == 1247500)
+    }
+}
+
+if __module__ == 'main' {
+    log-processing(1)
+}

@@ -135,7 +135,7 @@ BUILD_SIG_FILE := obj/.build_sig
 PREV_SIG := $(shell cat $(BUILD_SIG_FILE) 2>/dev/null)
 
 ifneq ($(BUILD_SIG),$(PREV_SIG))
-$(shell rm -f obj/*.o obj/tyls/*.o obj/typrof/*.o obj/*.d obj/tyls/*.d obj/typrof/*.d $(PROG) tyls typrof)
+$(shell rm -f obj/*.o obj/tyls/*.o obj/typrof/*.o obj/ty-main.o obj/tyls-main.o obj/typrof-main.o obj/*.d obj/tyls/*.d obj/typrof/*.d $(PROG) tyls typrof)
 $(shell mkdir -p obj obj/tyls obj/typrof)
 $(shell echo '$(BUILD_SIG)' > $(BUILD_SIG_FILE))
 endif
@@ -182,6 +182,7 @@ include/keywords.h: src/keywords.gperf
 
 obj/token.o: include/keywords.h
 obj/tyls/token.o: include/keywords.h
+obj/typrof/token.o: include/keywords.h
 
 # jit.c depends on the generated DynASM header
 obj/jit.o: $(JIT_HDR)

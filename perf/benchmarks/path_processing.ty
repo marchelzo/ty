@@ -1,0 +1,66 @@
+import lib (bench)
+import path (Path)
+
+// Inspired by pyperformance's pathlib workload: create many short-lived Path
+// objects and perform the normalization and classification work common in a
+// build tool or static-site generator.  Result entries remain plain records.
+
+let SOURCE_ROOT = Path('/srv/application')
+
+fn make-path-names(count: Int) -> Array[String] {
+    let suffixes = ['.ty', '.json', '.md']
+    ["packages/pkg-{i % 120}/src/module-{i}{suffixes[i % #suffixes]}" for i in ..count]
+}
+
+let PATH_NAMES = make-path-names(3000)
+
+fn plan-paths(names: Array[String]) {
+    let suffix-counts = %{*: 0}
+    let directories = %{}
+    let outputs = []
+    let component-count = 0
+
+    for name in names {
+        let source = SOURCE_ROOT / name
+        let relative = source.relative-to(SOURCE_ROOT)
+        suffix-counts[source.suffix] += 1
+        directories[source.parent] = true
+        component-count += #relative.parts
+
+        if source.suffix == '.ty' {
+            let generated = relative.with-stem("{relative.stem}.generated")
+                                    .with-suffix('.o')
+            outputs.push({
+                source: str(relative),
+                target: str(Path('build') / generated),
+                package: relative.parts[1]
+            })
+        }
+    }
+
+    outputs.sort!(by=\_.target)
+    return {
+        suffix-counts: suffix-counts,
+        directories: directories,
+        outputs: outputs,
+        component-count: component-count
+    }
+}
+
+@bench('library path regex string record array dict set alloc sort')
+fn path-processing(n: Int) {
+    for ..n {
+        let plan = plan-paths(PATH_NAMES)
+        assert(plan.suffix-counts['.ty'] == 1000)
+        assert(plan.suffix-counts['.json'] == 1000)
+        assert(plan.suffix-counts['.md'] == 1000)
+        assert(#plan.directories == 120)
+        assert(#plan.outputs == 1000)
+        assert(plan.component-count == 12000)
+        assert(plan.outputs[0].target < plan.outputs[-1].target)
+    }
+}
+
+if __module__ == 'main' {
+    path-processing(1)
+}

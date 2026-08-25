@@ -105,7 +105,7 @@ fn next!(t) {
     next()
 }
 
-pub fn getCif(rt, *aTypes, nFixed: ?Int) {
+pub fn get-cif(rt, *aTypes, nFixed: ?Int) {
     let cifs = _cif_cache ?? (_cif_cache = %{})
     let signature = (rt, aTypes, nFixed)
     match cifs[signature] {
@@ -123,12 +123,12 @@ pub fn wrap(lib, name: String, rType: _ = nil, *aTypes: _, func-ptr?: Bool = fal
           .map!(t -> (t :: Ptr) ? t : t.ctype())
 
     if rType :: Ptr {
-        let interface = getCif(rType, *aTypes)
+        let interface = get-cif(rType, *aTypes)
         return func-ptr?
              ? fn func(*args) { c.call(interface, fp[0], *args) }
              : c.fun(fp, interface, name)
     } else {
-        let interface = getCif(rType.ctype(), *aTypes)
+        let interface = get-cif(rType.ctype(), *aTypes)
         return fn func(*args, out=rType()) {
             c.call(interface, func-ptr? ? fp[0] : fp, *args, out=out.get())
             out
@@ -184,7 +184,7 @@ pub fn ffi-type(expr: _, coerce: Bool = false) -> _ {
     }
 }
 
-pub fn wrapVar[a](lib, name, nFixed, rType, *aTypes) -> _ {
+pub fn wrap-var[a](lib, name, nFixed, rType, *aTypes) -> _ {
     if not let $fp = c.dlsym(name, lib) {
         throw RuntimeError("Failed to load symbol '{name}'")
     }
@@ -198,7 +198,7 @@ pub fn wrapVar[a](lib, name, nFixed, rType, *aTypes) -> _ {
             args[i] = x
         }
 
-        let interface = getCif(rType, *aTypes, nFixed=nFixed)
+        let interface = get-cif(rType, *aTypes, nFixed=nFixed)
 
         let y = c.call(interface, fp, *args)
 
@@ -221,7 +221,7 @@ pub memset = wrap(nil, 'memset', c.void, c.ptr, c.int, c.u64)
 pub strcpy = wrap(nil, 'strcpy', c.ptr, c.ptr, c.ptr)
 
 fn _syscall(nr: Int, *args: Any) -> Int { -1 }
-pub syscall: (typeof _syscall) = wrapVar(nil, 'syscall', 1, c.long, c.long)
+pub syscall: (typeof _syscall) = wrap-var(nil, 'syscall', 1, c.long, c.long)
 
 fn nexttype(array-to-ptr?: Bool = true, has-name?: ?Bool = nil) {
     const ignore = /^(?:const|union|struct|restrict|register|auto|volatile|atomic|_Atomic|noreturn|_Noreturn|\*)$/

@@ -739,6 +739,14 @@ class Array[T] : Iterable[T] {
         (#self > 0) ? Some(self.pop()) : None
     }
 
+    pluck(pred: T -> Any) -> Some[T] | None {
+        if let $i = search-by(pred) {
+            Some(pop(i))
+        } else {
+            None
+        }
+    }
+
     __iter__*() -> Generator[T] {
         for x in self {
             yield x

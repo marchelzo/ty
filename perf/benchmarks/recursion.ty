@@ -57,7 +57,7 @@ fn sieve(limit: Int) -> Int {
     count
 }
 
-@bench
+@bench('recursion call array integer numeric')
 fn recursion(nn: Int) {
     for ..nn {
         assert(ack(3, 4) == 125)

@@ -230,7 +230,7 @@ fn richards-once() {
     assert(work.qpkt-count == 23246)
 }
 
-@bench
+@bench('class dispatch scheduler array record alloc integer')
 fn richards-bench(n: Int) {
     for ..n {
         richards-once()

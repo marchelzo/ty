@@ -1,0 +1,578 @@
+import sqlite (SQLite)
+import path (Path)
+import date (utc-now)
+import hash (sha256)
+import json
+import os
+import chalk (chalk)
+import sh (sh)
+
+import lib (Result, fmt-time, fmt-delta)
+
+let PERF_DIR = Path(__file__).parent
+let ROOT_DIR = PERF_DIR.parent
+
+pub DEFAULT_DATABASE = "{PERF_DIR}/history.sqlite3"
+let BASELINE_WINDOW = 5
+let MIN_CHANGE = 0.05
+let MAX_CV = 0.25
+let MIN_PLAUSIBLE_RATIO = 0.20
+let MAX_PLAUSIBLE_RATIO = 5.0
+
+use Metadata = {
+    commit: String,
+    branch: String,
+    dirty: Bool,
+    dirtyFiles: [String],
+    machineJson: String,
+    machineId: String,
+    build: String,
+    suite: String,
+}
+
+fn command(cmd: String) -> String {
+    let out, info = sh(cmd, chdir="{ROOT_DIR}")
+
+    if out == nil || info.?status != 0 {
+        throw RuntimeError("command `{cmd}` failed: {info}")
+    }
+
+    out
+}
+
+fn median(xs: [Float]) -> Float {
+    let ys = xs.sort()
+    if #ys % 2 == 0 {
+        (ys[#ys / 2 - 1] + ys[#ys / 2]) / 2.0
+    } else {
+        ys[#ys / 2]
+    }
+}
+
+fn mad(xs: [Float], center: Float) -> Float {
+    median(xs.map(x -> (x - center).abs))
+}
+
+fn suite-hash() -> String {
+    let h = sha256()
+    let files = [PERF_DIR / 'lib.ty', *(PERF_DIR / 'benchmarks').glob('*.ty').sort(by: \_.name)]
+    for path in files {
+        h.update("{path.name}\0")
+        h.update(path)
+        h.update('\0')
+    }
+    h.hexdigest().slice(0, 20)
+}
+
+fn metadata() -> Metadata {
+    let dirty-text = command('git status --porcelain=v1 --untracked-files=no')
+    let dirty-files = dirty-text ? dirty-text.lines() : []
+    let machine = %{
+        'hostname': command('hostname'),
+        'system': command('uname -s'),
+        'release': command('uname -r'),
+        'architecture': command('uname -m'),
+        'cpu': command("sysctl -n machdep.cpu.brand_string 2>/dev/null || sed -n 's/^model name[^:]*: //p' /proc/cpuinfo 2>/dev/null | head -1"),
+    }
+    let machine-json = json.encode(machine)
+    let build-config = 'unknown-build'
+    try { build-config = (ROOT_DIR / 'obj/.build_sig').read-text().trim() } catch _ {}
+    return {
+        commit: command('git rev-parse HEAD'),
+        branch: command('git branch --show-current'),
+        dirty: #dirty-files > 0,
+        dirtyFiles: dirty-files,
+        machineJson: machine-json,
+        machineId: sha256(machine-json).hexdigest().slice(0, 16),
+        build: build-config,
+        suite: suite-hash(),
+    }
+}
+
+pub fn open-history(path: String = DEFAULT_DATABASE) -> SQLite {
+    let db = SQLite(path)
+    db.run((PERF_DIR / 'history.sql').read-text())
+    db
+}
+
+fn baseline(db: SQLite, meta, mode: String, benchmark: String, window: Int) {
+    let rows: [_] = db.fetchAll(
+        """
+        SELECT m.median_seconds
+          FROM measurements AS m
+          JOIN runs AS r ON r.id = m.run_id
+         WHERE r.runner = 'ty' AND r.mode = ? AND r.branch = ?
+           AND r.build_config = ? AND r.machine_id = ? AND r.suite_hash = ?
+           AND COALESCE(r.manual_eligible, r.auto_eligible) = 1
+           AND COALESCE(m.manual_valid, m.auto_valid) = 1
+           AND r.id >= COALESCE((
+                SELECT max(r2.id) FROM runs AS r2
+                 WHERE r2.runner = 'ty' AND r2.mode = ? AND r2.branch = ?
+                   AND r2.build_config = ? AND r2.machine_id = ?
+                   AND r2.suite_hash = ? AND r2.baseline_reset = 1
+                   AND COALESCE(r2.manual_eligible, r2.auto_eligible) = 1
+           ), 0)
+         ORDER BY r.id DESC LIMIT ?
+        """,
+        mode, meta.branch, meta.build, meta.machineId, meta.suite,
+        mode, meta.branch, meta.build, meta.machineId, meta.suite,
+        window
+    )
+    if #rows == 0 { return nil }
+    let values: [Float] = rows.map(r -> Float(r['median_seconds']))
+    let center = median(values)
+    return %{
+        'median': center,
+        'mad': mad(values, center),
+        'n': #values
+    }
+}
+
+fn classify(r: Result, base, threshold: Float) {
+    let cv = r.mean > 0 ? r.sd / r.mean : 1.0 / 0.0
+    let valid = r.med > 0 && cv <= MAX_CV
+    let reason: String | nil = nil
+    if r.med <= 0 {
+        reason = 'non-positive timing value'
+    } else if cv > MAX_CV {
+        reason = "within-run CV {cv * 100:.1}% exceeds {MAX_CV * 100:.0}%"
+    }
+
+    let ratio: Float | nil = base ? r.med / Float(base['median']) : nil
+    if valid && ratio != nil
+    && (ratio < MIN_PLAUSIBLE_RATIO || ratio > MAX_PLAUSIBLE_RATIO) {
+        valid = false
+        reason = "implausible {ratio:.3}x jump from robust baseline"
+    }
+
+    let significance = base
+        ? max(threshold, 3.0 * 1.4826 * Float(base['mad']) / Float(base['median']))
+        : threshold
+    let verdict = if !valid { 'anomaly' }
+        else if ratio == nil { 'no-baseline' }
+        else if ratio > 1.0 + significance { 'regression' }
+        else if ratio < 1.0 - significance { 'improvement' }
+        else { 'stable' }
+    return %{
+        'valid': valid, 'reason': reason, 'ratio': ratio,
+        'significance': significance, 'verdict': verdict, 'cv': cv
+    }
+}
+
+pub fn record-run(
+    path: String,
+    results: [Result],
+    mode: String,
+    warmup: Int,
+    rounds: Int,
+    filter: String | nil,
+    expected-count: Int,
+    duration: Float,
+    note: String | nil,
+    window: Int = BASELINE_WINDOW,
+    threshold: Float = MIN_CHANGE,
+) -> Int {
+    let db = open-history(path)
+    let meta = metadata()
+    let full-suite = filter == nil && #results == expected-count
+    let eligible = !meta.dirty && full-suite && rounds >= 3
+    let eligibility-reason = if meta.dirty { 'dirty working tree' }
+        else if !full-suite { 'partial/filtered suite' }
+        else if rounds < 3 { 'fewer than 3 timed rounds' }
+        else { 'clean, complete suite' }
+    let bases = %{r.name: baseline(db, meta, mode, r.name, window) for r in results}
+
+    let run-id = 0
+    let dirty-value = Int(meta.dirty)
+    let full-suite-value = Int(full-suite)
+    let eligible-value = Int(eligible)
+    let recorded-at = "{utc-now()}Z"
+    let benchmark-count = #results
+    let phase = "run metadata (dirty={dirty-value}, full_suite={full-suite-value}, "
+              "auto_eligible={eligible-value}, benchmarks={#results}/{expected-count})"
+    try {
+        db.transaction(fn () {
+            db.exec(
+                """
+                INSERT INTO runs (
+                    recorded_at, duration_seconds, runner, mode, build_config,
+                    commit_hash, branch, dirty, dirty_file_count, dirty_files_json,
+                    machine_id, machine_json, suite_hash, warmup, rounds,
+                    benchmark_filter, benchmark_count, expected_count, full_suite,
+                    auto_eligible, eligibility_reason, note
+                ) VALUES (?, ?, 'ty', ?, ?, ?, ?, ?, ?, '[]', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                recorded-at, duration, mode, meta.build, meta.commit, meta.branch,
+                dirty-value, #meta.dirtyFiles, meta.machineId, meta.machineJson,
+                meta.suite, warmup, rounds,
+                filter, benchmark-count, expected-count, full-suite-value,
+                eligible-value, eligibility-reason, note
+            )
+            run-id = db.last-insert-rowid()
+
+            for r in results {
+                phase = "measurement '{r.name}'"
+                let base = bases[r.name]
+                let c = classify(r, base, threshold)
+                let base-median = base ? base['median'] : nil
+                let base-mad = base ? base['mad'] : nil
+                let base-count = base ? base['n'] : 0
+                db.exec(
+                    """
+                    INSERT INTO measurements (
+                        run_id, benchmark, iterations, sample_count, mean_seconds,
+                        median_seconds, min_seconds, max_seconds, stddev_seconds, cv,
+                        auto_valid, validity_reason, baseline_seconds, baseline_mad,
+                        baseline_run_count, change_ratio, significance_ratio, verdict
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    run-id, r.name, r.iters, r.n, r.mean, r.med, r.best,
+                    r.worst, r.sd, c['cv'], Int(c['valid']), c['reason'],
+                    base-median, base-mad, base-count, c['ratio'],
+                    c['significance'], c['verdict']
+                )
+                let measurement-id = db.last-insert-rowid()
+                for seconds, i in r.per-iter-times {
+                    phase = "sample {i} for '{r.name}'"
+                    db.exec(
+                        'INSERT INTO samples (measurement_id, sample_index, seconds) VALUES (?, ?, ?)',
+                        measurement-id, i, seconds
+                    )
+                }
+            }
+            phase = 'dirty-file metadata'
+            db.exec(
+                "UPDATE runs SET dirty_files_json = COALESCE(?, '[]') WHERE id = ?",
+                json.encode(meta.dirtyFiles.slice(0, min(100, #meta.dirtyFiles))),
+                run-id
+            )
+            phase = 'transaction commit'
+        })
+    } catch e {
+        db.close()
+        throw RuntimeError("performance history failed at {phase}: {e}")
+    }
+    db.close()
+    run-id
+}
+
+fn status-label(row) {
+    if row['manual_eligible'] == 0 { chalk"[red]excluded[/]" }
+    else if row['manual_eligible'] == 1 { chalk"[bright green]accepted[/]" }
+    else if row['auto_eligible'] == 1 { chalk"[green]eligible[/]" }
+    else if row['dirty'] == 1 { chalk"[yellow]dirty[/]" }
+    else { chalk"[dim]partial[/]" }
+}
+
+fn display-time(value) -> String {
+    value == nil ? '—' : fmt-time(value)
+}
+
+fn identity-key(value: String) -> String {
+    sha256("{value}").hexdigest().slice(0, 10)
+}
+
+pub fn benchmark-label(name, width: Int = 0) {
+    let value = String(name)
+    let text = width > 0 ? "{value:{width}}" : value
+    chalk"[bold]{text}[/]"
+}
+
+pub fn tag-label(name) {
+    let value = String(name)
+    chalk"[tag-{identity-key(value)}?]{value}[/]"
+}
+
+pub fn run-label(id, width: Int = 0) {
+    let value = String(id)
+    let text = width > 0 ? "#{value:{width}}" : "#{value}"
+    chalk"[bright cyan bold]{text}[/]"
+}
+
+pub fn revision-label(revision, width: Int = 10) {
+    let full = String(revision ?? 'unknown')
+    let text = full.slice(0, width)
+    chalk"[rev-{full}?]{text:{width}}[/]"
+}
+
+pub fn branch-label(branch) {
+    let name = String(branch ?? 'detached')
+    chalk"[blue]{name}[/]"
+}
+
+pub fn machine-label(machine) {
+    let id = String(machine ?? 'unknown')
+    chalk"[machine-{id}?]{id}[/]"
+}
+
+pub fn timestamp-label(timestamp, date-only: Bool = false) {
+    let value = String(timestamp)
+    let day = value.slice(0, 10)
+    if date-only {
+        chalk"[blue]{day}[/]"
+    } else {
+        let rest = value.slice(10, min(9, #value - 10))
+        chalk"[blue]{day}[/][dim]{rest}[/]"
+    }
+}
+
+pub fn mode-label(mode, width: Int = 0) {
+    let name = String(mode)
+    let text = width > 0 ? "{name:{width}}" : name
+    if name == 'jit' { chalk"[bright green bold]{text}[/]" }
+    else { chalk"[yellow]{text}[/]" }
+}
+
+pub fn duration-label(value, role: String = 'current', verdict: String | nil = nil, width: Int = 0) {
+    let text = display-time(value)
+    let padded = width > 0 ? "{text:>{width}}" : text
+    let style = match verdict {
+        'regression' => 'red bold',
+        'improvement' => 'bright green bold',
+        'anomaly' => 'yellow bold',
+        _ => role == 'baseline' ? 'magenta' : role == 'spread' ? 'dim cyan' : 'bright cyan'
+    }
+    chalk"[{style}]{padded}[/]"
+}
+
+pub fn delta-label(ratio, width: Int = 0) {
+    let value: Float | nil = ratio == nil ? nil : Float(ratio)
+    let text = value == nil ? '—' : fmt-delta(value)
+    let padded = width > 0 ? "{text:>{width}}" : text
+    let style = value == nil ? 'dim'
+              : value > 1.05 ? 'red bold'
+              : value < 0.95 ? 'bright green bold'
+              :                'dim'
+    chalk"[{style}]{padded}[/]"
+}
+
+pub fn verdict-label(verdict) {
+    let value = String(verdict)
+    let style = match value {
+        'regression' => 'red bold',
+        'improvement' => 'bright green bold',
+        'anomaly' => 'yellow bold',
+        'stable' => 'green',
+        _ => 'dim'
+    }
+    chalk"[{style}]{value}[/]"
+}
+
+pub fn print-run(path: String, run-id: Int) {
+    let db = open-history(path)
+    let run: _ = db.fetchOne('SELECT * FROM runs WHERE id = ?', run-id)
+    if run == nil { throw ValueError("no performance run #{run-id}") }
+    let rows: [_] = db.fetchAll(
+        'SELECT * FROM measurements WHERE run_id = ? ORDER BY benchmark', run-id
+    )
+    print(chalk"[bold bright cyan]Run[/] {run-label(run-id)}  {timestamp-label(run['recorded_at'])}  "
+                "[dim]{run['runner']}[/]/[bold]{mode-label(run['mode'])}[/]  {status-label(run)}")
+    print(chalk"{revision-label(run['commit_hash'], 12)}  {branch-label(run['branch'])}  "
+                "[dim]machine=[/]{machine-label(run['machine_id'])}")
+    if run['note'] { print(chalk"[italic dim]Note:[/] [italic]{run['note']}[/]") }
+    print()
+    let width: Int = (rows.map(r -> #String(r['benchmark'])).max() ?? 7) + 2
+    print(chalk"[bold]  {'Benchmark':{width}} {'Current':>10}  {'Baseline':>10}  {'Change':>8}  Verdict[/]")
+    print(chalk"[dim]  {'─'.repeat(width + 45)}[/]")
+    for row in rows {
+        let verdict = String(row['verdict'])
+        print(chalk"  {benchmark-label(row['benchmark'], width)}"
+                    " {duration-label(row['median_seconds'], verdict=verdict, width=10)}  "
+                    "{duration-label(row['baseline_seconds'], role='baseline', width=10)}  "
+                    "{delta-label(row['change_ratio'], 8)}  {verdict-label(verdict)}")
+    }
+    db.close()
+}
+
+pub fn print-history(
+    path: String,
+    limit: Int = 20,
+    all: Bool = false,
+    filter: String | nil = nil,
+) {
+    let db = open-history(path)
+    let rows: [_] = if filter {
+        db.fetchAll(
+            """
+            SELECT DISTINCT r.* FROM runs AS r
+            JOIN measurements AS m ON m.run_id = r.id
+            WHERE m.benchmark LIKE ?
+              AND (? OR COALESCE(r.manual_eligible, r.auto_eligible) = 1)
+            ORDER BY r.id DESC LIMIT ?
+            """, "%{filter}%", Int(all), limit
+        )
+    } else {
+        db.fetchAll(
+            """
+            SELECT * FROM runs
+             WHERE ? OR COALESCE(manual_eligible, auto_eligible) = 1
+             ORDER BY id DESC LIMIT ?
+            """, Int(all), limit
+        )
+    }
+    print(chalk"[bold bright cyan]Performance history[/]  [dim]{#rows} run(s)[/]")
+    print()
+    print(chalk"[bold]  {'Run':>5}  {'Timestamp (UTC)':19}  {'Mode':11}  {'Commit':10}  {'State':10}  {'Benches':>7}  Note[/]")
+    print(chalk"[dim]  {'─'.repeat(88)}[/]")
+    for row in rows {
+        let note = row['note'] ?? ''
+        print(chalk"  {run-label(row['id'], 4)}  {timestamp-label(row['recorded_at'])}  "
+                    "{mode-label(row['mode'], 11)}  {revision-label(row['commit_hash'])}  "
+                    "{status-label(row):10}  [cyan]{row['benchmark_count']:>7}[/]  "
+                    "[italic dim]{note}[/]")
+    }
+    if #rows == 0 {
+        print(chalk"[dim]  No matching runs. Use --all to include dirty and partial runs.[/]")
+    }
+    db.close()
+}
+
+pub fn latest-run-id(path: String) -> Int | nil {
+    let db = open-history(path)
+    let row: _ = db.fetchOne('SELECT max(id) AS id FROM runs')
+    db.close()
+    if row == nil { nil } else { row['id'] }
+}
+
+pub fn compare-runs(path: String, run-id: Int, against: Int | nil = nil) {
+    let db = open-history(path)
+    let rows: [_] = if against != nil {
+        db.fetchAll(
+            """
+            SELECT n.benchmark, n.median_seconds AS current, o.median_seconds AS baseline
+              FROM measurements AS n LEFT JOIN measurements AS o
+                ON o.run_id = ? AND o.benchmark = n.benchmark
+             WHERE n.run_id = ? ORDER BY n.benchmark
+            """, against, run-id
+        )
+    } else {
+        db.fetchAll(
+            """
+            SELECT benchmark, median_seconds AS current, baseline_seconds AS baseline
+              FROM measurements WHERE run_id = ? ORDER BY benchmark
+            """, run-id
+        )
+    }
+    let reference-label = if against != nil {
+        run-label(against)
+    } else {
+        chalk"[magenta]robust baseline[/]"
+    }
+    print(chalk"[bold bright cyan]Compare[/]  {run-label(run-id)} "
+                "[dim]vs[/] {reference-label}")
+    print()
+    let width: Int = (rows.map(r -> #String(r['benchmark'])).max() ?? 7) + 2
+    for row in rows {
+        let ratio = row['baseline'] ? row['current'] / row['baseline'] : nil
+        let verdict = ratio == nil ? nil : ratio > 1.05 ? 'regression' : ratio < 0.95 ? 'improvement' : 'stable'
+        print(chalk"  {benchmark-label(row['benchmark'], width)} "
+                    "{duration-label(row['baseline'], role='baseline', width=10)} "
+                    "[dim]→[/] {duration-label(row['current'], verdict=verdict, width=10)}  "
+                    "{delta-label(ratio, 8)}")
+    }
+    db.close()
+}
+
+let SPARKS = '▁▂▃▄▅▆▇█'
+
+pub fn print-trend(path: String, benchmark: String, limit: Int = 20, all: Bool = false) {
+    let db = open-history(path)
+    let rows: [_] = db.fetchAll(
+        """
+        SELECT r.id, r.recorded_at, r.commit_hash, r.dirty, m.median_seconds
+          FROM measurements AS m JOIN runs AS r ON r.id = m.run_id
+         WHERE m.benchmark LIKE ?
+           AND (? OR (COALESCE(r.manual_eligible, r.auto_eligible) = 1
+                  AND COALESCE(m.manual_valid, m.auto_valid) = 1))
+         ORDER BY r.id DESC LIMIT ?
+        """, "%{benchmark}%", Int(all), limit
+    )
+    rows.reverse!()
+    if #rows == 0 {
+        print(chalk"[yellow]No history for benchmark matching '{benchmark}'.[/]")
+        db.close()
+        return
+    }
+    let values: [Float] = rows.map(r -> Float(r['median_seconds']))
+    let lo = values.min() ?? 0.0
+    let hi = values.max() ?? lo
+    let spark = values.map(v -> do {
+        let i = hi == lo ? 0 : int(((v - lo) / (hi - lo) * (#SPARKS - 1)).round)
+        SPARKS[i]
+    }).join('')
+    let overall-ratio = values[-1] / values[0]
+    print(chalk"{benchmark-label(benchmark)} [bold bright cyan]trend[/]  "
+                "[cyan]{spark}[/]")
+    let overall-verdict = overall-ratio > 1.05 ? 'regression'
+                        : overall-ratio < 0.95 ? 'improvement'
+                        : nil
+    print(chalk"{duration-label(values[0], role='baseline')} [dim]→[/] "
+                "{duration-label(values[-1], verdict=overall-verdict)}  "
+                "[cyan]{#values} runs[/] [dim]· lower is better[/]")
+    print()
+    for row in rows {
+        let dirty = row['dirty'] ? chalk" [yellow]dirty[/]" : ''
+        print(chalk"  {run-label(row['id'], 4)} {timestamp-label(row['recorded_at'], date-only=true)}  "
+                    "{duration-label(row['median_seconds'], width=10)}  "
+                    "{revision-label(row['commit_hash'])}{dirty}")
+    }
+    db.close()
+}
+
+pub fn check-run(path: String, run-id: Int, threshold: Float) -> Bool {
+    let db = open-history(path)
+    let rows: [_] = db.fetchAll(
+        'SELECT * FROM measurements WHERE run_id = ? ORDER BY benchmark', run-id
+    )
+    let failures = rows.filter(row -> (
+        row['verdict'] == 'anomaly'
+        || (row['change_ratio'] != nil
+            && row['change_ratio'] > 1.0 + max(threshold, row['significance_ratio']))
+    ))
+    if #failures == 0 {
+        print(chalk"[bright green bold]PASS[/] {run-label(run-id)}[dim]: no regressions above[/] "
+                    "[yellow]{threshold * 100:.1}%[/]")
+    } else {
+        print(chalk"[red bold]FAIL[/] {run-label(run-id)}[dim]:[/] "
+                    "[red bold]{#failures} performance problem(s)[/]")
+        for row in failures {
+            print(chalk"  {benchmark-label(row['benchmark'])}  {verdict-label(row['verdict'])}  "
+                        "{delta-label(row['change_ratio'])}")
+        }
+    }
+    db.close()
+    #failures == 0
+}
+
+pub fn set-status(path: String, run-id: Int, status: String, reason: String | nil) {
+    if status not in ['auto', 'eligible', 'excluded'] {
+        throw ValueError("status must be auto, eligible, or excluded")
+    }
+    let db = open-history(path)
+    let value = match status { 'auto' => nil, 'eligible' => 1, 'excluded' => 0 }
+    db.transaction(fn () {
+        db.exec(
+            'UPDATE runs SET manual_eligible = ?, manual_reason = ? WHERE id = ?',
+            value, reason, run-id
+        )
+        if status == 'eligible' {
+            db.exec('UPDATE runs SET baseline_reset = 1 WHERE id = ?', run-id)
+            db.exec(
+                "UPDATE measurements SET manual_valid = 1, manual_reason = ? "
+                "WHERE run_id = ? AND auto_valid = 0",
+                reason ?? 'manually validated', run-id
+            )
+        } else if status == 'auto' {
+            db.exec('UPDATE runs SET baseline_reset = 0 WHERE id = ?', run-id)
+            db.exec(
+                'UPDATE measurements SET manual_valid = NULL, manual_reason = NULL WHERE run_id = ?',
+                run-id
+            )
+        }
+    })
+    let label = status == 'eligible' ? chalk"[bright green bold]{status}[/]"
+              : status == 'excluded' ? chalk"[red bold]{status}[/]"
+              :                        chalk"[dim]{status}[/]"
+    print(chalk"{run-label(run-id)} [dim]baseline status →[/] {label}")
+    db.close()
+}

@@ -1,5 +1,26 @@
 ns test
 
+let global-target-value = 0
+
+pub fn global-target() {
+    global-target-value = 10
+    global-target-value += 5
+    global-target-value *= 2
+    global-target-value /= 3
+    global-target-value %= 7
+    global-target-value |= 0x10
+    global-target-value &= 0x1f
+    global-target-value ^= 0x03
+    global-target-value <<= 2
+    global-target-value >>= 1
+    assert(global-target-value == 32)
+
+    assert(global-target-value++ == 32)
+    assert(++global-target-value == 34)
+    assert(global-target-value-- == 34)
+    assert(--global-target-value == 32)
+}
+
 pub fn post-inc() {
     let x = 5
     assert(x++ == 5)
