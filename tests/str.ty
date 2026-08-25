@@ -564,6 +564,13 @@ pub fn interpolation() {
     assert("hello {x} world" == 'hello 42 world')
 }
 
+pub fn integer-conversion() {
+    assert(str(0) == '0')
+    assert(str(-1) == '-1')
+    assert(str(9223372036854775807) == '9223372036854775807')
+    assert(str(-9223372036854775808) == '-9223372036854775808')
+}
+
 pub fn unicode() {
     assert('HELLO'.lower() == 'hello')
     assert('hello'.upper() == 'HELLO')

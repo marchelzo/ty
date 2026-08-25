@@ -10849,10 +10849,12 @@ emit_assignment2(Ty *ty, Expr *target, bool maybe, bool def)
                         vfor(target->subscript->es, EE(*it));
                         INSN(ASSIGN_SUBSCRIPT);
                         Eu8(vN(target->subscript->es));
+                        STK(-(i32)vN(target->subscript->es) - 1);
                 } else {
                         EE(target->subscript);
                         INSN(ASSIGN_SUBSCRIPT);
                         Eu8(1);
+                        STK(-2);
                 }
                 break;
 
@@ -11679,8 +11681,8 @@ emit_expr(Ty *ty, Expr const *e, bool need_loc)
                 break;
 
         case EXPRESSION_SHR_EQ:
-                emit_target(ty, e->target, false);
                 EE(e->value);
+                emit_target(ty, e->target, false);
                 INSN(MUT_SHR);
                 break;
 

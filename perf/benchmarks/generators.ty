@@ -22,7 +22,7 @@ fn walk*(node: Tree[Int]) -> Generator[Int] {
 }
 
 
-@bench
+@bench('generator tuple tree recursion alloc')
 fn gen-tree(n: Int) {
     let tree = build-tree(0, N)
 

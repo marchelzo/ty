@@ -2,7 +2,8 @@ import time (now)
 import json
 import io
 import path (Path)
-import ty.mod
+import os
+import ty
 
 pub use BenchRecord = {
     name: String,
@@ -16,12 +17,25 @@ pub use BenchRecord = {
 }
 
 pub use SuiteRecord = Array[BenchRecord]
-pub use BestRecord = Dict[String, BenchRecord]
 
 pub use Benchmark = {
     name: String,
-    run:  Int -> Any
+    program: String,
+    tags: Array[String],
 }
+
+use BenchmarkInfo = {
+    name: String,
+    tags: Array[String],
+}
+
+use BenchmarkOutput = {
+    name: String,
+    iters: Int,
+    times: Array[Float],
+}
+
+use CalibrationOutput = Int
 
 // ---------------------------------------------------------------------------
 //  Statistics helpers
@@ -93,26 +107,111 @@ pub class Result {
 }
 
 // ---------------------------------------------------------------------------
-//  Benchmark registry
+//  Benchmark programs
 // ---------------------------------------------------------------------------
 
-let BENCHMARKS: Array[Benchmark] = []
+const INFO_MODE = '--ty-perf-info'
+const CALIBRATE_MODE = '--ty-perf-calibrate'
+const BENCH_MODE = '--ty-perf-bench'
 
-pub fn bench(f) {
-    BENCHMARKS.push({name: f.__name__, run: f})
-    f
+fn benchmark-program(name: String, categories: String, f) {
+    if #os.argv < 2 { return }
+
+    let tags = categories.words().uniq().sort()
+    match os.argv[1] {
+        INFO_MODE => {
+            print(json.encode(%{'name': name, 'tags': tags}))
+            os.exit(0)
+        },
+        CALIBRATE_MODE => {
+            if #os.argv != 3 {
+                throw ValueError("{CALIBRATE_MODE} requires TARGET-SECONDS")
+            }
+            print(json.encode(calibrate(f, Float(os.argv[2]))))
+            os.exit(0)
+        },
+        BENCH_MODE => {
+            if #os.argv != 5 {
+                throw ValueError("{BENCH_MODE} requires ITERATIONS WARMUP ROUNDS")
+            }
+            let iters = Int(os.argv[2])
+            let warmup = Int(os.argv[3])
+            let rounds = Int(os.argv[4])
+            for ..warmup { f(1) }
+            let times: [Float] = []
+            for ..rounds {
+                let t0 = now()
+                f(iters)
+                times.push(now() - t0)
+            }
+            print(json.encode(%{'name': name, 'iters': iters, 'times': times}))
+            os.exit(0)
+        },
+        _ => nil
+    }
 }
 
-pub fn registered() -> Array[Benchmark] {
-    BENCHMARKS
+// Expand the original definition followed by a tiny program entrypoint. The
+// entrypoint remains dormant during ordinary imports and only responds to the
+// private modes used by the suite runner.
+pub macro bench(def, categories = nil) {
+    let ty.FuncDef({name, *}) = def
+    let label = ty.String(name)
+    let categories = categories ?? ty.String('')
+    let callable = ty.Id({name})
+    ty.Multi([
+        def,
+        $$[ $$::(benchmark-program)($$label, $$categories, $$callable) $$]
+    ])
+}
+
+pub fn matches-filter(entry: Benchmark, query: String) -> Bool {
+    query.words().all?(term -> (
+        entry.name.contains?(term) || entry.tags.contains?(term)
+    ))
+}
+
+fn benchmark-command(program: String, *args: String) -> [String] {
+    let command = [ty.executable]
+    if !ty.jit { command.push('-j') }
+    command.push(program)
+    command += args
+    command
+}
+
+fn start-benchmark(program: String, *args: String) {
+    let command = benchmark-command(program, *args)
+    os.spawn(command, stdout=os.SPAWN_PIPE)
+}
+
+fn finish-benchmark(program: String, child) -> String {
+    let output = Blob()
+    while let $chunk = os.read(child.stdout, 4096) { output.push(chunk) }
+    os.close(child.stdout)
+    let (_, status) = os.wait(child.pid)!
+    if !os.WIFEXITED(status) || os.WEXITSTATUS(status) != 0 {
+        let outcome = os.WIFEXITED(status)
+            ? "exit status {os.WEXITSTATUS(status)}"
+            : "signal {os.WTERMSIG(status)}"
+        throw RuntimeError("benchmark program '{program}' failed with {outcome}")
+    }
+    output.str!().trim()
+}
+
+fn invoke-benchmark(program: String, *args: String) -> String {
+    finish-benchmark(program, start-benchmark(program, *args))
 }
 
 pub fn load-benchmarks(dir: String | Path) -> Array[Benchmark] {
-    for Path(dir).glob('*.ty') {
-        ty.mod.load("benchmarks/{it.stem}")
-    }
-
-    return BENCHMARKS
+    let pending = [do {
+        let program = "{path}"
+        (program, start-benchmark(program, INFO_MODE))
+    } for path in Path(dir).glob('*.ty').sort(by: \_.name)]
+    return [do {
+        let info = json.parse(BenchmarkInfo, finish-benchmark(program, child))
+        let entry: Benchmark = {name: info.name, program: program, tags: info.tags}
+        entry
+    } for (program, child) in pending]
 }
 
 // ---------------------------------------------------------------------------
@@ -138,27 +237,28 @@ pub fn calibrate(f, target: Float = 0.5) {
 }
 
 pub fn run-one(
-    name: String,
-    f,
+    benchmark: Benchmark,
     warmup:  Int = 3,
     rounds:  Int = 5,
     target:  Float = 0.5
 ) {
-    // Warmup
-    for ..warmup { f(1) }
-
-    // Calibrate
-    let iters = calibrate(f, target)
-
-    // Timed runs
-    let times: [Float] = []
-    for i in ..rounds {
-        let t0 = now()
-        f(iters)
-        times.push(now() - t0)
+    // Calibration and measurement deliberately happen in separate child
+    // processes. Measurement gets its own warmup, then all timed rounds run in
+    // that benchmark's otherwise-pristine process.
+    let iters = json.parse(
+        CalibrationOutput,
+        invoke-benchmark(benchmark.program, CALIBRATE_MODE, "{target}")
+    )
+    let output = json.parse(
+        BenchmarkOutput,
+        invoke-benchmark(
+            benchmark.program, BENCH_MODE, "{iters}", "{warmup}", "{rounds}"
+        )
+    )
+    if output.name != benchmark.name || output.iters != iters || #output.times != rounds {
+        throw RuntimeError("invalid result from benchmark program '{benchmark.program}'")
     }
-
-    Result(name, times, iters)
+    Result(benchmark.name, output.times, iters)
 }
 
 // ---------------------------------------------------------------------------
@@ -200,42 +300,4 @@ pub fn save-results(path: String, results: [Result]) {
 
 pub fn load-results(path: String) -> Array[BenchRecord] | nil {
     try json.parse(SuiteRecord, Path(path).read-text()) else nil
-}
-
-// ---------------------------------------------------------------------------
-//  Best-results tracking
-// ---------------------------------------------------------------------------
-
-pub fn load-best(path: String) -> Dict[String, BenchRecord] {
-    try {
-        json.parse(BestRecord, Path(path).read-text())
-    } catch _ {
-        %{}
-    }
-}
-
-pub fn update-best(path: String, results: [Result]) {
-    let best = load-best(path)
-    let updated = false
-
-    for r in results {
-        if let $old = best[r.name] {
-            if r.med < old.median {
-                best[r.name] = r.to-dict()
-                updated = true
-            }
-        } else {
-            best[r.name] = r.to-dict()
-            updated = true
-        }
-    }
-
-    if updated {
-        let text = json.encode(best)
-        with f = io.open(path, 'w') {
-            f.write(text)
-        }
-    }
-
-    best
 }

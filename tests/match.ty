@@ -1,5 +1,12 @@
 ns test
 
+fn tagged-array-match(x) -> Bool {
+    match x {
+        Ok([(fd, ev)]) => (fd, ev) == (6, 1),
+        _ => false
+    }
+}
+
 pub fn matchtest() {
     match [3, ('foo', 'bar'), {a: 1, b: 2, c: 3}, 9, 9, 9] {
         [a, b, {a: 2}, *_] => { assert(false) },
@@ -17,4 +24,5 @@ pub fn matchtest() {
             assert((x, y, z) == (10, nil, nil))
         }
     }
+    assert(tagged-array-match(Ok([(6, 1)])))
 }

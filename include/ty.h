@@ -517,6 +517,7 @@ struct thread {
         TyCondVar cond;
 
         Value v;
+        Value *ctx;
         u64 i;
         bool alive;
         bool joined;

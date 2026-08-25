@@ -136,7 +136,7 @@ pub fn advance(bodies, dt: Float, steps: Int) {
     }
 }
 
-@bench
+@bench('class array float numeric simulation mutation')
 fn nbody(nn: Int) {
     for ..nn {
         let bodies = make-bodies()

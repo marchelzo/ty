@@ -5,6 +5,9 @@
 
 #include "ty.h"
 #include "value.h"
+
+void TyFunctionsInit(Ty *ty);
+
 BUILTIN_FUNCTION(print);
 BUILTIN_FUNCTION(doc);
 BUILTIN_FUNCTION(set_doc);
@@ -139,6 +142,12 @@ BUILTIN_FUNCTION(os_spawn);
 BUILTIN_FUNCTION(os_stat);
 BUILTIN_FUNCTION(os_lstat);
 BUILTIN_FUNCTION(os_fstat);
+#if defined(__linux__) || defined(__APPLE__)
+BUILTIN_FUNCTION(os_statfs);
+#endif
+#ifndef _WIN32
+BUILTIN_FUNCTION(os_statvfs);
+#endif
 BUILTIN_FUNCTION(os_truncate);
 BUILTIN_FUNCTION(os_ftruncate);
 BUILTIN_FUNCTION(os_realpath);
@@ -247,6 +256,7 @@ BUILTIN_FUNCTION(os_recvfrom);
 BUILTIN_FUNCTION(os_sendto);
 BUILTIN_FUNCTION(os_shutdown);
 BUILTIN_FUNCTION(os_wait);
+BUILTIN_FUNCTION(os_wait4);
 BUILTIN_FUNCTION(os_WIFEXITED);
 BUILTIN_FUNCTION(os_WIFSIGNALED);
 #ifdef WIFCONTINUED

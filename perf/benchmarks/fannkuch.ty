@@ -57,10 +57,14 @@ fn fannkuch(n: Int) -> Int {
     max-flips
 }
 
-@bench
+@bench('array integer numeric permutation mutation')
 fn fannkuch-bench(n: Int) {
     for ..n {
         let result = fannkuch(9)
         assert(result == 30)
     }
+}
+
+if __module__ == 'main' {
+    fannkuch(9)
 }

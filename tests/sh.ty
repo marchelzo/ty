@@ -19,6 +19,18 @@ pub fn sh-combine-output() {
     }
 }
 
+pub fn sh-cpu-time() {
+    if not __windows__ {
+        let _, result = sh('printf based')
+        assert(#result.rusage == 16)
+        assert(result.rusage.utime >= 0.0)
+        assert(result.rusage.stime >= 0.0)
+        assert(result.rusage.maxrss >= 0)
+        assert(result.rusage.nvcsw >= 0)
+        assert(result.rusage.nivcsw >= 0)
+    }
+}
+
 pub fn sh-timeout() {
     if __windows__ {
         assert(sh('Sleep 1; echo Hello', shell: ['powershell', '-Command'], timeoutMs: 100) == nil)

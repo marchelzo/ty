@@ -248,7 +248,7 @@ fn make-scene() -> Scene {
     Scene(objects, lights, Vec(0.0, 1.8, 10.0))
 }
 
-@bench
+@bench('class record array float numeric render alloc dispatch')
 fn raytrace(n: Int) {
     let scene = make-scene()
     for ..n {

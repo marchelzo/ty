@@ -882,7 +882,9 @@ SeqToList(Type *t0)
                 break;
 
         case TYPE_VARIABLE:
-                SeqToList(t0->val);
+                if (IsBoundVar(t0)) {
+                        SeqToList(t0->val);
+                }
                 break;
         }
 

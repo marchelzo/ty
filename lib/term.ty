@@ -469,6 +469,12 @@ ns _size {
         ioctl(fd, TIOCGWINSZ, (c.ptr, size.get()))
         (size.xpix, size.ypix)
     }
+
+    fn get-winsz(fd: Int) -> (Int, Int, Int, Int) {
+        size = size ?? WinSize()
+        ioctl(fd, TIOCGWINSZ, (c.ptr, size.get()))
+        (size.lines, size.cols, size.xpix, size.ypix)
+    }
 }
 
 pub fn size(fd: Int) -> (Int, Int) {
@@ -476,8 +482,7 @@ pub fn size(fd: Int) -> (Int, Int) {
 }
 
 pub fn cell-size(fd: Int = 0) -> (Int, Int) {
-    let (rows, cols) = _size.get(fd)
-    let (xpix, ypix) = _size.get-px(fd)
+    let (rows, cols, xpix, ypix) = _size.get-winsz(fd)
     if xpix > 0 && ypix > 0 && cols > 0 && rows > 0 {
         (xpix / cols, ypix / rows)
     } else {
@@ -589,21 +594,25 @@ pub class TermIO {
     }
 
     start() {
+        warn!("Main: request start")
         write(__notif-w, 1)
         with __state.lock {
             while !__state.on {
                 __state.cond.wait(__state.lock)
             }
         }
+        warn!("Main: started")
     }
 
     stop() {
+        warn!("Main: request stop")
         write(__notif-w, 0)
         with __state.lock {
             while __state.on {
                 __state.cond.wait(__state.lock)
             }
         }
+        warn!("Main: stopped")
     }
 
     __start() {

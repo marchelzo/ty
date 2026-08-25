@@ -15,6 +15,35 @@ pub fn pwrite(fd: Int, data: _, offset: Int) -> Int;
 
 pub fn wait(pid: Int = -1, options: Int = 0) -> (Int, Int) | nil;
 
+/** Complete resource-usage data returned by wait4(2). */
+pub use RUsage = {
+    utime: Float,
+    stime: Float,
+    maxrss: Int,
+    ixrss: Int,
+    idrss: Int,
+    isrss: Int,
+    minflt: Int,
+    majflt: Int,
+    nswap: Int,
+    inblock: Int,
+    oublock: Int,
+    msgsnd: Int,
+    msgrcv: Int,
+    nsignals: Int,
+    nvcsw: Int,
+    nivcsw: Int
+}
+
+/** Process status and resource usage returned by wait4(2). */
+pub use Wait4Result = {
+    pid: Int,
+    status: Int,
+    rusage: RUsage
+}
+
+//pub fn wait4(pid: Int = -1, options: Int = 0) -> Wait4Result | nil;
+
 pub fn socket(domain: Int, type: Int, protocol: Int) -> Int;
 pub fn bind(sock: Int, addr: _) -> Int;
 pub fn connect(sock: Int, addr: _) -> Int;
@@ -100,6 +129,62 @@ pub use Stat = {
 pub fn stat(path: String) -> Stat | nil;
 pub fn fstat(fd: Int) -> Stat | nil;
 pub fn lstat(path: String) -> Stat | nil;
+
+#|if __apple__
+pub use Statfs = {
+    bsize:       Int,
+    iosize:      Int,
+    blocks:      Int,
+    bfree:       Int,
+    bavail:      Int,
+    files:       Int,
+    ffree:       Int,
+    fsid:        (Int, Int),
+    owner:       Int,
+    type:        Int,
+    flags:       Int,
+    fssubtype:   Int,
+    fstypename:  String,
+    mntonname:   String,
+    mntfromname: String
+}
+#|else if __linux__
+pub use Statfs = {
+    type:    Int,
+    bsize:   Int,
+    blocks:  Int,
+    bfree:   Int,
+    bavail:  Int,
+    files:   Int,
+    ffree:   Int,
+    fsid:    (Int, Int),
+    namelen: Int,
+    frsize:  Int,
+    flags:   Int
+}
+#|]
+
+#|if !__windows__
+pub use Statvfs = {
+    bsize:   Int,
+    frsize:  Int,
+    blocks:  Int,
+    bfree:   Int,
+    bavail:  Int,
+    files:   Int,
+    ffree:   Int,
+    favail:  Int,
+    fsid:    Int,
+    flag:    Int,
+    namemax: Int
+}
+
+pub fn statvfs(file: Int | String) -> Statvfs;
+#|]
+
+#|if __apple__ || __linux__
+pub fn statfs(file: Int | String) -> Statfs;
+#|]
 
 pub fn opendir(path: String) -> Int | nil;
 pub fn readdir(dirp: Int) -> {ino: Int, off: Int, reclen: Int, type: Int, name: String} | nil;

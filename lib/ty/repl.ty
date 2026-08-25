@@ -26,6 +26,10 @@ chalk.aqua   = '#89b482'
 chalk.grey   = '#847a6d'
 chalk.pink   = '#d677be'
 
+fn key(s: String) -> String {
+    s.sub(/^__/, 'zz').sub(/^_/, 'z')
+}
+
 let groups = %{
     'fg0': 'id',
     'fg1': '[ ] { } ( ) . .? , ] ->',
@@ -172,9 +176,9 @@ fn type-completions(type: _, prefix: String) -> Array[_] {
             let completions = members
                 .filter(\_.name.starts?(prefix.comb('`')))
                 .filter(\_.type !:: types::Intersect)
-                .sort(by=\_.name)
+                .sort(by=\key(_.name))
                 .map(${(label(it), fix-name(it.name))})
-                .sort(by=\"{_.0}")
+                .sort(by=\key("{_.0}"))
 
             for info.traits {
                 completions += type-completions(it, prefix)
@@ -191,7 +195,7 @@ fn type-completions(type: _, prefix: String) -> Array[_] {
             => fields.keys()
                 .filter(\_.starts?(prefix))
                 .map(\_[#prefix;])
-                .sort(),
+                .sort(by=key),
 
         _ => []
     }
@@ -212,7 +216,7 @@ fn mod-completions(mod: Dict[String, _], prefix: String) -> [([Text | String], S
         }
     }
 
-    return completions.sort!(by=\_.1)
+    return completions.sort!(by=\key(_.1))
 }
 
 fn get-import(name: String) -> Module | nil {

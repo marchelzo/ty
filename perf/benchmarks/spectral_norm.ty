@@ -47,7 +47,7 @@ fn spectral(nn: Int) -> Float {
     (vBv / vv).sqrt
 }
 
-@bench
+@bench('array float numeric matrix')
 fn spectral-norm(n: Int) {
     for ..n {
         let result = spectral(100)

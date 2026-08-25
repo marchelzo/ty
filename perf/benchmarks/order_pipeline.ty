@@ -1,0 +1,98 @@
+import lib (bench)
+
+// A small order-processing pipeline.  The application data is deliberately
+// represented by nested records rather than classes: this is the shape used
+// by decoded API payloads and database rows in many Ty programs.
+
+use LineItem = {
+    sku: String,
+    quantity: Int,
+    price: Float
+}
+
+use Order = {
+    id: Int,
+    account: String,
+    region: String,
+    status: String,
+    priority: Bool,
+    items: Array[LineItem]
+}
+
+fn make-orders(count: Int) -> Array[Order] {
+    let regions = ['na', 'eu', 'apac', 'latam']
+    let orders: Array[Order] = []
+
+    for i in ..count {
+        let status = if i % 11 == 0 {
+            'cancelled'
+        } else if i % 5 == 0 {
+            'pending'
+        } else {
+            'paid'
+        }
+
+        orders.push({
+            id: i,
+            account: "acct-{i % 97:02}",
+            region: regions[i % #regions],
+            status,
+            priority: i % 13 == 0,
+            items: [
+                {sku: "sku-{i % 7}", quantity: i % 4 + 1, price: 3.25 + (i % 9).float},
+                {sku: "sku-{(i + 3) % 7}", quantity: i % 3 + 1, price: 8.50 + (i % 5).float},
+                {sku: "sku-{(i + 5) % 7}", quantity: 1, price: 1.75 + (i % 11).float}
+            ]
+        })
+    }
+
+    orders
+}
+
+let ORDERS = make-orders(2000)
+
+fn process-orders(orders: Array[Order]) {
+    let revenue = %{*: 0.0}
+    let units = %{*: 0}
+    let accounts = %{}
+    let summaries = []
+
+    for order in orders if order.status != 'cancelled' {
+        let subtotal = 0.0
+        for item in order.items {
+            subtotal += item.price * item.quantity
+            units[item.sku] += item.quantity
+        }
+
+        let total = subtotal * (order.priority ? 0.92 : 1.0)
+        revenue[order.region] += total
+        accounts[order.account] = true
+        summaries.push({id: order.id, account: order.account, total})
+    }
+
+    let largest = summaries.sort(by=\_.total, desc=true).take(10)
+    return {
+        revenue: revenue,
+        units: units,
+        accounts: accounts,
+        largest: largest,
+        processed: #summaries
+    }
+}
+
+@bench('record array dict set float string alloc sort analytics')
+fn order-pipeline(n: Int) {
+    for ..n {
+        let result = process-orders(ORDERS)
+        assert(result.processed == 1818)
+        assert(#result.accounts == 97)
+        assert(#result.revenue == 4)
+        assert(#result.units == 7)
+        assert(#result.largest == 10)
+        assert(result.largest[0].total >= result.largest[-1].total)
+    }
+}
+
+if __module__ == 'main' {
+    order-pipeline(1)
+}

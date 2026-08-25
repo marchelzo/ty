@@ -20,6 +20,9 @@
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#ifndef _WIN32
+#include <sys/statvfs.h>
+#endif
 
 #include <utf8proc.h>
 #include <sha1.h>
@@ -37,6 +40,7 @@
 #ifdef __linux__
 #include <sys/epoll.h>
 #include <sys/sendfile.h>
+#include <sys/vfs.h>
 #include <sys/eventfd.h>
 #include <sys/inotify.h>
 #include <sys/signalfd.h>
@@ -45,6 +49,7 @@
 #endif
 
 #if defined(__APPLE__)
+#include <sys/mount.h>
 #include <sys/sysctl.h>
 #include <util.h>
 #endif
@@ -78,6 +83,7 @@ typedef struct stat StatStruct;
 #include <sys/mman.h>
 #include <sys/mman.h>
 #include <sys/random.h>
+#include <sys/resource.h>
 #include <sys/socket.h>
 #include <sys/time.h>
 #include <sys/un.h>
@@ -116,6 +122,23 @@ extern char **environ;
 
 static _Thread_local vec(char) B;
 static _Atomic(u64) tid = 0;
+
+void
+TyFunctionsInit(Ty *ty)
+{
+        (void)ty;
+#ifndef _WIN32
+        static char const *wait4_fields[] = {
+                "utime", "stime", "maxrss", "ixrss", "idrss", "isrss",
+                "minflt", "majflt", "nswap", "inblock", "oublock",
+                "msgsnd", "msgrcv", "nsignals", "nvcsw", "nivcsw",
+                "pid", "status", "rusage"
+        };
+        for (usize i = 0; i < countof(wait4_fields); ++i) {
+                (void)M_ID(wait4_fields[i]);
+        }
+#endif
+}
 
 u64 NextThreadId() { return ++tid; }
 
@@ -2624,19 +2647,29 @@ BUILTIN_FUNCTION(os_readdir)
 
         UnlockTy();
         struct dirent *entry = readdir(dir);
-        LockTy();
         if (entry == NULL) {
+                LockTy();
                 return NIL;
         }
 
-        Value name = vSsz(entry->d_name);
+        ino_t ino = entry->d_ino;
+        unsigned short reclen = entry->d_reclen;
+        unsigned char type = entry->d_type;
+        char *entry_name = strdup(entry->d_name);
+        LockTy();
+        if (entry_name == NULL) {
+                zP("os.readdir(): out of memory");
+        }
+
+        Value name = vSsz(entry_name);
+        free(entry_name);
 
         NOGC(ss(name));
 
         Value result = vTn(
-                "ino",    INTEGER(entry->d_ino),
-                "reclen", INTEGER(entry->d_reclen),
-                "type",   INTEGER(entry->d_type),
+                "ino",    INTEGER(ino),
+                "reclen", INTEGER(reclen),
+                "type",   INTEGER(type),
                 "name",   name
         );
 
@@ -5788,6 +5821,72 @@ BUILTIN_FUNCTION(os_wait)
 #endif
 }
 
+#ifndef _WIN32
+static Value
+os_rusage_value(Ty *ty, struct rusage const *usage)
+{
+        return vTn(
+                "utime",    REAL(usage->ru_utime.tv_sec
+                                  + usage->ru_utime.tv_usec / 1.0e6),
+                "stime",    REAL(usage->ru_stime.tv_sec
+                                  + usage->ru_stime.tv_usec / 1.0e6),
+                "maxrss",   INTEGER(usage->ru_maxrss),
+                "ixrss",    INTEGER(usage->ru_ixrss),
+                "idrss",    INTEGER(usage->ru_idrss),
+                "isrss",    INTEGER(usage->ru_isrss),
+                "minflt",   INTEGER(usage->ru_minflt),
+                "majflt",   INTEGER(usage->ru_majflt),
+                "nswap",    INTEGER(usage->ru_nswap),
+                "inblock",  INTEGER(usage->ru_inblock),
+                "oublock",  INTEGER(usage->ru_oublock),
+                "msgsnd",   INTEGER(usage->ru_msgsnd),
+                "msgrcv",   INTEGER(usage->ru_msgrcv),
+                "nsignals", INTEGER(usage->ru_nsignals),
+                "nvcsw",    INTEGER(usage->ru_nvcsw),
+                "nivcsw",   INTEGER(usage->ru_nivcsw)
+        );
+}
+#endif
+
+BUILTIN_FUNCTION(os_wait4)
+{
+        ASSERT_ARGC("os.wait4()", 0, 1, 2);
+#ifdef _WIN32
+        NOT_ON_WINDOWS("os.wait4()");
+#else
+        imax pid = argc > 0 ? INT_ARG(0) : -1;
+        imax flags = argc > 1 ? INT_ARG(1) : 0;
+        int status;
+        int ret;
+        int err;
+        struct rusage usage;
+
+        UnlockTy();
+        do {
+                ret = wait4(pid, &status, flags, &usage);
+        } while (ret == -1 && errno == EINTR);
+        err = errno;
+        LockTy();
+
+        if (ret < 0 && err != ECHILD) {
+                bP("%s", strerror(err));
+        }
+        if (ret <= 0) {
+                return NIL;
+        }
+
+        Value rusage = os_rusage_value(ty, &usage);
+        gP(&rusage);
+        Value result = vTn(
+                "pid",     INTEGER(ret),
+                "status",  INTEGER(status),
+                "rusage",  rusage
+        );
+        gX();
+        return result;
+#endif
+}
+
 #ifdef _WIN32
 #define WAITMACRO(name) \
         Value \
@@ -6657,6 +6756,132 @@ BUILTIN_FUNCTION(os_stat)
         return xstatv(ty, stat(path, &s), &s);
 #endif
 }
+
+#if defined(__linux__) || defined(__APPLE__)
+static Value
+statfsv(Ty *ty, struct statfs const *s)
+{
+        GC_STOP();
+
+        Value fsid = vT(2);
+#if defined(__APPLE__)
+        fsid.items[0] = INTEGER(s->f_fsid.val[0]);
+        fsid.items[1] = INTEGER(s->f_fsid.val[1]);
+
+        Value result = vTn(
+                "bsize",       INTEGER(s->f_bsize),
+                "iosize",      INTEGER(s->f_iosize),
+                "blocks",      INTEGER(s->f_blocks),
+                "bfree",       INTEGER(s->f_bfree),
+                "bavail",      INTEGER(s->f_bavail),
+                "files",       INTEGER(s->f_files),
+                "ffree",       INTEGER(s->f_ffree),
+                "fsid",        fsid,
+                "owner",       INTEGER(s->f_owner),
+                "type",        INTEGER(s->f_type),
+                "flags",       INTEGER(s->f_flags),
+                "fssubtype",   INTEGER(s->f_fssubtype),
+                "fstypename",  vSs(s->f_fstypename, strnlen(
+                        s->f_fstypename, sizeof s->f_fstypename
+                )),
+                "mntonname",   vSs(s->f_mntonname, strnlen(
+                        s->f_mntonname, sizeof s->f_mntonname
+                )),
+                "mntfromname", vSs(s->f_mntfromname, strnlen(
+                        s->f_mntfromname, sizeof s->f_mntfromname
+                ))
+        );
+#else
+        fsid.items[0] = INTEGER(s->f_fsid.__val[0]);
+        fsid.items[1] = INTEGER(s->f_fsid.__val[1]);
+
+        Value result = vTn(
+                "type",    INTEGER(s->f_type),
+                "bsize",   INTEGER(s->f_bsize),
+                "blocks",  INTEGER(s->f_blocks),
+                "bfree",   INTEGER(s->f_bfree),
+                "bavail",  INTEGER(s->f_bavail),
+                "files",   INTEGER(s->f_files),
+                "ffree",   INTEGER(s->f_ffree),
+                "fsid",    fsid,
+                "namelen", INTEGER(s->f_namelen),
+                "frsize",  INTEGER(s->f_frsize),
+                "flags",   INTEGER(s->f_flags)
+        );
+#endif
+
+        GC_RESUME();
+        return result;
+}
+
+BUILTIN_FUNCTION(os_statfs)
+{
+        ASSERT_ARGC("os.statfs()", 1);
+
+        Value file = ARGx(0, VALUE_INTEGER, VALUE_STRING);
+        struct statfs s;
+        char const *path = file.type == VALUE_STRING ? TY_TMP_C_STR(file) : NULL;
+        int ret;
+
+        UnlockTy();
+        if (file.type == VALUE_INTEGER) {
+                ret = fstatfs(file.z, &s);
+        } else {
+                ret = statfs(path, &s);
+        }
+        int err = errno;
+        LockTy();
+
+        if (ret != 0) {
+                OSError(err, &"fstatfs()"[file.type != VALUE_INTEGER]);
+        }
+        return statfsv(ty, &s);
+}
+#endif
+
+#ifndef _WIN32
+static Value
+statvfsv(Ty *ty, struct statvfs const *s)
+{
+        return vTn(
+                "bsize",   INTEGER(s->f_bsize),
+                "frsize",  INTEGER(s->f_frsize),
+                "blocks",  INTEGER(s->f_blocks),
+                "bfree",   INTEGER(s->f_bfree),
+                "bavail",  INTEGER(s->f_bavail),
+                "files",   INTEGER(s->f_files),
+                "ffree",   INTEGER(s->f_ffree),
+                "favail",  INTEGER(s->f_favail),
+                "fsid",    INTEGER(s->f_fsid),
+                "flag",    INTEGER(s->f_flag),
+                "namemax", INTEGER(s->f_namemax)
+        );
+}
+
+BUILTIN_FUNCTION(os_statvfs)
+{
+        ASSERT_ARGC("os.statvfs()", 1);
+
+        Value file = ARGx(0, VALUE_INTEGER, VALUE_STRING);
+        struct statvfs s;
+        char const *path = file.type == VALUE_STRING ? TY_TMP_C_STR(file) : NULL;
+        int ret;
+
+        UnlockTy();
+        if (file.type == VALUE_INTEGER) {
+                ret = fstatvfs(file.z, &s);
+        } else {
+                ret = statvfs(path, &s);
+        }
+        int err = errno;
+        LockTy();
+
+        if (ret != 0) {
+                OSError(err, &"fstatvfs()"[file.type != VALUE_INTEGER]);
+        }
+        return statvfsv(ty, &s);
+}
+#endif
 
 static int
 lock_file(int fd, int operation)

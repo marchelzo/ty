@@ -497,8 +497,9 @@ static void jit_emit_add_imm(dasm_State **Dst, int dst, int src, int imm) {
                 |  sub Rx(dst), Rx(src), #neg
         } else {
                 // Large immediate: load into scratch register, then add
-                jit_emit_load_imm(Dst, dst, (iptr)imm);
-                |  add Rx(dst), Rx(dst), Rx(src)
+                int scratch = dst == src ? 17 : dst;
+                jit_emit_load_imm(Dst, scratch, (iptr)imm);
+                |  add Rx(dst), Rx(scratch), Rx(src)
         }
 }
 
