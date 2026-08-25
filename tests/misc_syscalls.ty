@@ -47,6 +47,9 @@ pub fn test_fchmod() {
 }
 
 #|if __apple__ || __linux__
+// ============================================================
+// Test: os.statfs with paths and file descriptors
+// ============================================================
 pub fn test_statfs() {
     let (fd, path) = os.mktemp()
     let pathfs = os.statfs(path)
@@ -58,6 +61,9 @@ pub fn test_statfs() {
     os.unlink(path)
 }
 
+// ============================================================
+// Test: os.statfs raises OSError on syscall failure
+// ============================================================
 pub fn test_statfs_error() {
     let raised = false
     try {
@@ -70,6 +76,9 @@ pub fn test_statfs_error() {
 #|]
 
 #|if !__windows__
+// ============================================================
+// Test: os.statvfs with paths and file descriptors
+// ============================================================
 pub fn test_statvfs() {
     let (fd, path) = os.mktemp()
     let pathvfs = os.statvfs(path)
@@ -82,6 +91,9 @@ pub fn test_statvfs() {
     os.unlink(path)
 }
 
+// ============================================================
+// Test: os.statvfs raises OSError on syscall failure
+// ============================================================
 pub fn test_statvfs_error() {
     let raised = false
     try {

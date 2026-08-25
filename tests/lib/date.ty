@@ -453,9 +453,9 @@ pub fn test-zoned-date-time-normalizes-case-and-compares-aliases() {
     let instant = Instant.from-epoch-seconds(0)
     let lower = instant.to-zoned-date-time-iso('america/new_york')
     assert(lower.time-zone-id == 'America/New_York')
-    let kolkata = instant.to-zoned-date-time-iso('Asia/Kolkata')
-    let calcutta = instant.to-zoned-date-time-iso('Asia/Calcutta')
-    assert(kolkata.equals(calcutta))
+    let utc = instant.to-zoned-date-time-iso('UTC')
+    let etc-utc = instant.to-zoned-date-time-iso('Etc/UTC')
+    assert(utc.equals(etc-utc))
     assert(!instant.to-zoned-date-time-iso('UTC').equals(
         instant.to-zoned-date-time-iso('+00:00')
     ))

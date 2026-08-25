@@ -28,6 +28,19 @@ pub fn chan() {
     assert(ch.recv(0) == None)
     assert(ch.recv() == Some('hello'))
 
+    // Composite message headers must not point into the sender's GC heap.
+    // Join first so the isolated heap is gone before reconstruction begins.
+    let composite = Channel()
+    let sender = Thread(isolated=true, fn () {
+        composite.send((42, 'answer', 1 << 40))
+    })
+    sender.join()
+    let got = composite.recv()
+    for i in ..100000 {
+        let garbage = "composite-garbage-{i}-{'x' * 64}"
+    }
+    assert(got == Some((42, 'answer', 1 << 40)))
+
     // The launching group must not own the environment used by an isolated
     // thread. Force several collections after the launcher drops its closure.
     let gate = Channel()

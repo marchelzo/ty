@@ -1,0 +1,7 @@
+import ffi as c
+import os
+
+if c.open('zstd') == nil {
+    print('libzstd is not installed')
+    os.exit(77)
+}

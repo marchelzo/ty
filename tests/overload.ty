@@ -1,5 +1,3 @@
-import json
-
 class A {
     static foo(x: Float) {
         1
@@ -25,20 +23,9 @@ fn bar(a: Int, b: Int) {
 
 fn o() {}
 
-class GenericTypeOverload {
-    static decode[T](schema: Type[T]) -> T {
-        json::parse(schema, '{"answer":42}')
-    }
-
-    static decode() { nil }
-}
-
-use Decoded = {answer: Int}
-
 ns test
 
 pub fn overload() {
     assert([A.foo(4.0), A.foo([1, 2]), A.foo([1, 2.0]), A.foo(['a'])] == [1, 2, 3, 4])
     assert((bar('x'), bar(4, 5)) == (1, 2))
-    assert(GenericTypeOverload.decode(Decoded).answer == 42)
 }

@@ -1,0 +1,7 @@
+import ffi as c
+import os
+
+if c.open('uv') == nil {
+    print('libuv is not installed')
+    os.exit(77)
+}

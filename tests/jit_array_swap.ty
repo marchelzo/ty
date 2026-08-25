@@ -1,0 +1,23 @@
+ns test
+
+fn swap-array-cursors() {
+    let values = [0, 1, 2]
+    let i = 0
+    let j = 2
+
+    while i < j {
+        let tmp = values[i]
+        values[i] = values[j]
+        values[j] = tmp
+        i += 1
+        j -= 1
+    }
+
+    return {values, i, j}
+}
+
+pub fn jit-array-swap-uses-distinct-registers() {
+    for ..1000 {
+        assert(swap-array-cursors() == {values: [2, 1, 0], i: 1, j: 1})
+    }
+}

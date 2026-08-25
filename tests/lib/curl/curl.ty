@@ -1,0 +1,365 @@
+import curl (..)
+import ty
+import json
+import net
+import os
+
+ns test
+
+fn reply(fd: Int, body: String | Blob = '', status: Int = 200, headers = %{}) {
+    let reason = match status {
+        200 => 'OK',
+        400 => 'Bad Request',
+        401 => 'Unauthorized',
+        _   => 'Not Found'
+    }
+    let response = Blob([
+        "HTTP/1.1 {status} {reason}",
+        "Content-Length: {body.size()}",
+        'Connection: close',
+        *["{key}: {value}" for key, value in headers],
+        '',
+        ''
+    ].join('\r\n'))
+    response.push(body)
+    os.write(fd, response, all=true)
+}
+
+fn read-request(fd: Int) {
+    let data = Blob()
+    let chunk = Blob()
+    let header-end = -1
+
+    while header-end < 0 {
+        if os.read(fd, chunk, 16 * 1024) <= 0 { return nil }
+        data.push(chunk)
+        chunk.clear()
+        header-end = data.str!().search('\r\n\r\n')
+    }
+
+    let text = data.str!()
+    let lines = text.slice(0, header-end).split('\r\n')
+    let [method, url, *] = lines[0].split(' ')
+    let headers: Dict[String, String] = %{}
+    for line in lines[1;] {
+        if let [key, value] = line.split(':', 1) {
+            headers[key.lower()] = value.trim()
+        }
+    }
+
+    let payload-start = header-end + 4
+    let payload-size = int(headers['content-length'] ?? '0')
+    while #data < payload-start + payload-size {
+        if os.read(fd, chunk, 16 * 1024) <= 0 { return nil }
+        data.push(chunk)
+        chunk.clear()
+    }
+
+    let body = data.slice(payload-start, payload-size).str!()
+    return {method, url, headers, body}
+}
+
+fn handle-client(fd: Int) {
+    defer os.close(fd)
+    let request = read-request(fd) ?? return nil
+    let path = request.url.split('?', 1)[0]
+
+    if request.method == 'GET' && path == '/get' {
+        let ok = request.url.contains?('foo=bar')
+        reply(fd, json.encode(%{'ok': ok}), status=ok ? 200 : 400,
+              headers=%{'Content-Type': 'application/json'})
+    } else if request.method == 'POST' && path == '/json' {
+        let value = try { json.parse(request.body)! } ?? %{}
+        let ok = value['message'] == 'Hello, World!'
+              && request.headers['x-custom-header'] == 'test'
+        reply(fd, json.encode(%{'ok': ok}), status=ok ? 200 : 400,
+              headers=%{'Content-Type': 'application/json'})
+    } else if request.method == 'POST' && path == '/multipart' {
+        let ok = request.body.contains?('name="field1"')
+              && request.body.contains?('value1')
+              && request.body.contains?('name="field2"')
+              && request.body.contains?('value2')
+              && request.body.contains?('filename="test.txt"')
+              && request.body.contains?('Hello from file!')
+        reply(fd, json.encode(%{'ok': ok}), status=ok ? 200 : 400,
+              headers=%{'Content-Type': 'application/json'})
+    } else if request.method == 'GET' && path == '/basic-auth/user/passwd' {
+        let ok = request.headers['authorization'] == 'Basic dXNlcjpwYXNzd2Q='
+        reply(fd, '', status=ok ? 200 : 401,
+              headers=%{'WWW-Authenticate': 'Basic realm="curl-test"'})
+    } else if request.method == 'GET' && path == '/cookies' {
+        let ok = request.headers['cookie'] == 'session=abc123'
+        reply(fd, '', status=ok ? 200 : 400)
+    } else if request.method == 'GET' && path.starts?('/bytes/') {
+        let size = int(path.split('/')[2])
+        reply(fd, Blob(*[(i % 251) for i in ..size]))
+    } else if request.method == 'GET' && path == '/robots.txt' {
+        reply(fd, "User-agent: *\nDisallow: /private\n",
+              headers=%{'Content-Type': 'text/plain'})
+    } else if request.method == 'GET' && path == '/delay' {
+        os.sleep(2.0)
+        reply(fd)
+    } else if request.method == 'POST' && path == '/anything' {
+        let value = try { json.parse(request.body)! } ?? %{}
+        reply(fd, json.encode(%{'json': value}),
+              headers=%{'Content-Type': 'application/json'})
+    } else if request.method == 'GET' && path == '/gzip' {
+        let body = '1f8b0800000000000003ab564aafca2c28484d51b22a292a4dad05005392988b10000000'.unhex()!
+        reply(fd, body, headers=%{
+            'Content-Type': 'application/json',
+            'Content-Encoding': 'gzip'
+        })
+    } else if request.method == 'GET' && path == '/' {
+        reply(fd, 'ok')
+    } else {
+        reply(fd, status=404)
+    }
+}
+
+let server-socket = net.listen('tcp', '127.0.0.1:0')
+let (_, server-port) = os.getnameinfo(
+    os.getsockname(server-socket), os.NI_NUMERICHOST | os.NI_NUMERICSERV
+)
+let server-url = "http://127.0.0.1:{server-port}"
+let server-thread = Thread(fn () {
+    while let (fd, _) = os.accept(server-socket) {
+        Thread(handle-client, fd)
+    }
+})
+
+fn local-session() {
+    let session = Session()
+    /* An empty CURLOPT_PROXY disables proxy environment variables too. */
+    session.defaults.proxy = ''
+    session
+}
+
+pub fn test-simple-get() {
+    let resp = get("{server-url}/get", query=%{'foo': 'bar'}, proxy='')
+    assert(resp.ok)
+    assert(resp.status == 200)
+}
+
+pub fn test-post-json() {
+    let resp = post(
+        "{server-url}/json",
+        json=%{'message': 'Hello, World!'},
+        headers=%{'X-Custom-Header': 'test'},
+        proxy=''
+    )
+    assert(resp.ok)
+    assert(resp.json()['ok'] == true)
+}
+
+pub fn test-multipart-form() {
+    let form = FormData()
+    form.append('field1', 'value1')
+    form.append('field2', 'value2')
+    form.append-file-data('file', 'Hello from file!', 'test.txt', 'text/plain')
+
+    let resp = post("{server-url}/multipart", form=form, proxy='')
+    assert(resp.ok, resp.text())
+    assert(resp.json()['ok'] == true)
+}
+
+pub fn test-basic-auth() {
+    let resp = get("{server-url}/basic-auth/user/passwd",
+                   auth=('user', 'passwd'), proxy='')
+    assert(resp.ok)
+}
+
+pub fn test-cookies() {
+    let session = local-session()
+    session.defaults.cookies = %{'session': 'abc123'}
+    let resp = session.get("{server-url}/cookies")
+    assert(resp.ok)
+}
+
+pub fn test-progress() {
+    let called = false
+    let resp = get(
+        "{server-url}/bytes/1000",
+        proxy='',
+        on-progress=fn(p: Progress) -> Bool { called = true; true }
+    )
+    assert(resp.ok && called)
+}
+
+pub fn test-on-data-callback() {
+    let chunks = []
+    let resp = get(
+        "{server-url}/bytes/1000",
+        proxy='',
+        on-data=fn(chunk: Blob) -> Bool { chunks.push(chunk); true }
+    )
+    assert(resp.ok)
+    assert(#chunks > 0)
+}
+
+pub fn test-url-builder() {
+    let u = URL('https://example.com/path')
+    u.append-query('key1', 'value1')
+    u.append-query(%{'key2': 'value 2', 'key3': 123})
+    assert('key1=value1' in u.str())
+}
+
+pub fn test-timeout() {
+    try {
+        let resp = get("{server-url}/delay", timeout=1, proxy='')
+        assert(false, 'Should have timed out')
+    } catch e: CURLError {
+        assert(e.code == CURLE_OPERATION_TIMEDOUT)
+    }
+}
+
+pub fn test-version() {
+    assert(version() :: /curl\/\d+\.\d+\.\d+/)
+}
+
+pub fn test-sse-parser() {
+    let parser = SSEParser()
+
+    let events = [*parser.feed("event: message\ndata: hello\n\n")]
+    assert(#events == 1)
+    assert(events[0].event == 'message')
+    assert(events[0].data == 'hello')
+
+    events = [*parser.feed("data: line1\ndata: line2\n\n")]
+    assert(#events == 1)
+    assert(events[0].data == "line1\nline2")
+
+    events = [*parser.feed("id: 42\nretry: 5000\ndata: test\n\n")]
+    assert(#events == 1)
+    assert(events[0].id == '42')
+    assert(events[0].retry == 5000)
+    assert(parser.last-id == '42')
+
+    events = [*parser.feed(": this is a comment\ndata: after comment\n\n")]
+    assert(#events == 1)
+    assert(events[0].data == 'after comment')
+
+    events = [*parser.feed("data: par")]
+    assert(#events == 0)
+    events = [*parser.feed("tial\n\n")]
+    assert(#events == 1)
+    assert(events[0].data == 'partial')
+}
+
+pub fn test-streaming-chunks() {
+    let stream = get-stream("{server-url}/bytes/500", proxy='')
+    assert(stream.ok)
+
+    let total = 0
+    for chunk in stream.chunks() { total += #chunk }
+    assert(total == 500)
+}
+
+pub fn test-streaming-lines() {
+    let stream = get-stream("{server-url}/robots.txt", proxy='')
+    assert(stream.ok)
+
+    let lines = [*stream.lines()]
+    assert(#lines > 0)
+}
+
+pub fn test-stream-read-all() {
+    let stream = get-stream("{server-url}/bytes/100", proxy='')
+    assert(stream.ok)
+
+    let data = stream.read()
+    assert(#data == 100)
+}
+
+pub fn test-multi-replenishes-active-queue() {
+    let session = local-session()
+    let multi = session.multi(max-host-connections=1, max-concurrent-streams=4)
+
+    for i in ..2 {
+        let opts = RequestOptions()
+        opts.url = "{server-url}/"
+        multi.add(opts, context=i)
+    }
+
+    let completed = []
+    for transfer in multi.completed() {
+        let response = transfer.unwrap()
+        assert(response.ok)
+        assert(response.http-version == CURL_HTTP_VERSION_1_1)
+        completed.push(transfer.context)
+
+        /* A completion consumer may replenish the active queue. */
+        if #completed == 1 {
+            let opts = RequestOptions()
+            opts.url = "{server-url}/"
+            multi.add(opts, context=2)
+        }
+    }
+
+    assert(completed.sort!() == [0, 1, 2])
+    assert(multi.active == 0)
+}
+
+pub fn test-multi-isolates-transfer-errors() {
+    let session = local-session()
+    let multi = session.multi()
+
+    let bad = RequestOptions()
+    bad.url = '://not-a-url'
+    multi.add(bad, context='bad')
+
+    let good = RequestOptions()
+    good.url = "{server-url}/"
+    multi.add(good, context='good')
+
+    let successes = 0
+    let failures = 0
+    for transfer in multi.completed() {
+        if transfer.error {
+            failures += 1
+            assert(transfer.context == 'bad')
+        } else {
+            successes += 1
+            assert(transfer.context == 'good')
+            assert(transfer.unwrap().ok)
+        }
+    }
+    assert(successes == 1 && failures == 1)
+}
+
+pub fn test-multi-json-posts() {
+    let session = local-session()
+    let multi = session.multi(max-host-connections=1, max-concurrent-streams=4)
+    let payload = ['x' for _ in ..16000].join()
+
+    for i in ..4 {
+        let opts = RequestOptions()
+        opts.method = 'POST'
+        opts.url = "{server-url}/anything"
+        opts.json = %{'index': i, 'payload': payload}
+        multi.add(opts, context=i)
+    }
+
+    let transfers = [*multi.completed()]
+    ty.gc()
+    let completed = 0
+    for transfer in transfers {
+        let response = transfer.unwrap()
+        assert(response.ok)
+        assert(response.http-version == CURL_HTTP_VERSION_1_1)
+        let trace = json.encode(%{'url': response.url, 'body': response.text()})
+        assert("{server-url}/anything" in trace)
+        let echoed = response.json()['json']
+        assert(echoed['index'] == transfer.context)
+        assert(#echoed['payload'] == #payload)
+        completed += 1
+    }
+    assert(completed == 4)
+}
+
+pub fn test-response-compression() {
+    let session = local-session()
+    session.defaults.accept-encoding = ''
+    let response = session.get("{server-url}/gzip")
+    assert(response.ok)
+    assert(response.json()['gzipped'] == true)
+}

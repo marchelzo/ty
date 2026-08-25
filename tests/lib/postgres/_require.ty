@@ -1,0 +1,55 @@
+import ffi as c (C!)
+import os
+
+let libpq = c.open('pq')
+
+if libpq == nil {
+    print('libpq is not installed')
+    os.exit(77)
+}
+
+C! libpq fn {
+    void *PQconnectdb(const char *conninfo);
+    void PQfinish(void *conn);
+    int PQstatus(const void *conn);
+    void *PQexec(void *conn, const char *command);
+    int PQresultStatus(const void *result);
+    char *PQgetvalue(const void *result, int row, int column);
+    void PQclear(void *result);
+};
+
+let conn = PQconnectdb('dbname=postgres'.cstr())
+
+if PQstatus(conn) != 0 {
+    PQfinish(conn)
+    print('local PostgreSQL is unavailable for the current user')
+    os.exit(77)
+}
+
+let result = PQexec(
+    conn,
+    "SELECT EXISTS ("
+    "  SELECT 1 FROM pg_database WHERE datname = 'ty_psql_test'"
+    ") OR rolcreatedb OR rolsuper"
+    " FROM pg_roles WHERE rolname = current_user".cstr()
+)
+
+if result == nil {
+    PQfinish(conn)
+    print('failed to check the current PostgreSQL role')
+    os.exit(77)
+}
+
+let usable = PQresultStatus(result) == 2
+          && c.str(PQgetvalue(result, 0, 0)) == 't'
+
+PQclear(result)
+PQfinish(conn)
+
+if !usable {
+    print(
+        'the current PostgreSQL role cannot use an existing ty_psql_test '
+        'database or create it'
+    )
+    os.exit(77)
+}

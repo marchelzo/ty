@@ -1,0 +1,88 @@
+import procs (..)
+import os
+
+ns test
+
+fn current-process() {
+    let p = current()
+
+    assert(p.pid == os.getpid())
+    assert(p.alive?)
+    assert(get(p.pid) == p)
+    assert(p.name)
+    assert(p.ppid > 0)
+    assert(p.uid == os.getuid())
+    assert(p.gid == os.getgid())
+    assert(p.started > 0)
+    assert(p.age >= 0)
+    assert(p.threads > 0)
+    assert(p.cpu.total >= 0)
+    assert(p.memory.resident > 0)
+    assert(p.io.read >= 0)
+    assert(p.argv)
+    assert(p.env != nil)
+    assert(p.exe != nil)
+    assert(p.cwd != nil)
+}
+
+fn enumerate-and-filter() {
+    let p = current()
+
+    assert(p.pid in pids())
+    assert(p in [*find()])
+    assert(p in named(p.name))
+    assert(p in owned(p.uid))
+    assert(first(p.name) != nil)
+    assert(p in children(p.ppid))
+    assert(p in children(p.ppid, true))
+}
+
+fn process-objects() {
+    let p = current()
+    let maps = p.maps
+    let tasks = p.tasks
+
+    assert(maps)
+    assert(tasks)
+    assert(p.mounts)
+    assert(p.map(maps[0].lo) == maps[0])
+    assert(maps[0].size > 0)
+    assert(maps[0].lo in maps[0])
+    assert(tasks.all?(task -> task.process == p && task.tid > 0))
+    assert(p.fds.all?(fd -> fd.process == p))
+}
+
+fn access-own-memory() {
+    let p = current()
+    let data = Blob('Ty process memory')
+    let addr = int(data.ptr())
+
+    assert(p.read(addr, #data).str!() == data.str!())
+
+    let first = data[0]
+    defer p.write(addr, Blob(first))
+    assert(p.write(addr, Blob(ord('t'))) == 1)
+    assert(data[0] == ord('t'))
+}
+
+fn control-child() {
+    let desc = os.spawn(['/bin/sleep', '30'])
+    let p = Process(desc.pid)
+    defer {
+        if p.alive? { p.kill() }
+        p.wait()
+    }
+
+    assert(p.alive?)
+    assert(p.signal(0) == p)
+    p.terminate()
+    assert(p.wait() != nil)
+}
+
+pub fn process-api() {
+    current-process()
+    enumerate-and-filter()
+    process-objects()
+    //access-own-memory()
+    //control-child()
+}

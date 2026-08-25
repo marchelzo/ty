@@ -2066,7 +2066,7 @@ Value
                 vmP(&arg);
         }
 
-        if (!IsMissing(class->init)) {
+        if (!IsZero(class->init)) {
                 (void)vm_call_method(ty, &object, &class->init, argc);
         }
 

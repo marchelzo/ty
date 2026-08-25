@@ -1,4 +1,5 @@
 import ty
+import math (sin, cos)
 
 ns test
 
@@ -32,6 +33,19 @@ fn linked-recurse-outer(n: Int) -> Int {
 
 pub fn test-linked-recursion-and-stack-growth() {
     assert(linked-recurse-outer(400) == 807)
+}
+
+fn linked-tail-driver(n: Int) -> Int {
+    fn loop(n: Int, total: Int) -> Int {
+        if n == 0 { total } else { loop(n - 1, total + 1) }
+    }
+    loop(n, 0)
+}
+
+pub fn test-linked-nested-self-tail-loop() {
+    for ..1000 {
+        assert(linked-tail-driver(100) == 100)
+    }
 }
 
 class LinkedCounter {
@@ -107,4 +121,22 @@ pub fn test-linked-global-rebind-guard() {
     for ..1000 {
         assert(linked-rebind-call(4) == 7)
     }
+}
+
+fn direct-sin(value) { sin(value) }
+fn direct-cos(value) { cos(value) }
+fn direct-max(left, right) { max(left, right) }
+
+pub fn test-direct-numeric-builtins-and-fallbacks() {
+    for ..1000 {
+        assert(direct-sin(0.5) > 0.47)
+        assert(direct-cos(0.5) > 0.87)
+        assert(direct-max(3.5, 4.5) == 4.5)
+    }
+
+    // Integer arguments exercise the generic builtin fallback from the
+    // guarded double-only JIT paths.
+    assert(direct-sin(0) == 0.0)
+    assert(direct-cos(0) == 1.0)
+    assert(direct-max(3, 4) == 4)
 }

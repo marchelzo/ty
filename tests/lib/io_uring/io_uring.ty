@@ -1,0 +1,239 @@
+import io_uring (IoUring, CQE, IORING_OP_NOP)
+import ffi as c (C!)
+import os
+
+C! fn {
+    void *memset(void *s, int c, size_t n);
+    void *memcpy(void *dst, void *src, size_t n);
+    int memcmp(void *a, void *b, size_t n);
+};
+
+ns test
+
+#|if __linux__
+pub fn test-create() {
+    let ring = IoUring(entries: 4)
+    assert(ring.fd >= 0)
+    assert(ring.sq-entries >= 4)
+    assert(ring.cq-entries >= ring.sq-entries)
+    ring.close()
+}
+
+pub fn test-nop() {
+    let ring = IoUring(entries: 4)
+
+    ring.prep-nop(user: 42)
+    ring.submit-and-wait(1)
+
+    let cqes = ring.peek-cqes()
+    assert(#cqes == 1)
+    assert(cqes[0].res == 0)
+    assert(cqes[0].user == 42)
+    ring.advance-cq(1)
+
+    ring.close()
+}
+
+pub fn test-multiple-nops() {
+    let ring = IoUring(entries: 8)
+
+    for i in ..5 {
+        ring.prep-nop(user: i)
+    }
+
+    ring.submit-and-wait(5)
+    let cqes = ring.peek-cqes()
+    assert(#cqes == 5)
+
+    let users = %{cqe.user for cqe in cqes}
+    for i in ..5 {
+        assert(i in users)
+    }
+
+    ring.advance-cq(#cqes)
+    ring.close()
+}
+
+pub fn test-pipe-read-write() {
+    let (r, w) = os.pipe()
+    let ring = IoUring(entries: 4)
+
+    let msg = 'hello io_uring'
+    let wbuf = c.alloc(#msg)
+    memcpy(wbuf, msg, #msg)
+
+    ring.prep-write(w, wbuf, #msg, user: 1)
+    ring.submit-and-wait(1)
+
+    let cqes = ring.peek-cqes()
+    assert(#cqes == 1)
+    assert(cqes[0].res == #msg)
+    ring.advance-cq(1)
+
+    let rbuf = c.alloc(64)
+    memset(rbuf, 0, 64)
+    ring.prep-read(r, rbuf, 64, user: 2)
+    ring.submit-and-wait(1)
+
+    let cqes2 = ring.peek-cqes()
+    assert(#cqes2 == 1)
+    assert(cqes2[0].res == #msg)
+    assert(memcmp(rbuf, wbuf, #msg) == 0)
+    ring.advance-cq(1)
+
+    c.free(wbuf)
+    c.free(rbuf)
+    os.close(r)
+    os.close(w)
+    ring.close()
+}
+
+pub fn test-each-cqe() {
+    let ring = IoUring(entries: 8)
+
+    ring.prep-nop(user: 10)
+    ring.prep-nop(user: 20)
+    ring.prep-nop(user: 30)
+    ring.submit-and-wait(3)
+
+    let got = []
+    let n = ring.each-cqe(|user, res, flags| -> got.push(user))
+    assert(n == 3)
+    assert(#got == 3)
+
+    got.sort!()
+    assert(got == [10, 20, 30])
+
+    ring.close()
+}
+
+pub fn test-wait-cqe() {
+    let ring = IoUring(entries: 4)
+
+    ring.prep-nop(user: 77)
+    ring.submit()
+
+    let cqe = ring.wait-cqe()
+    assert(cqe.user == 77)
+    assert(cqe.res == 0)
+
+    ring.close()
+}
+
+pub fn test-cqes-generator() {
+    let ring = IoUring(entries: 8)
+
+    ring.prep-nop(user: 1)
+    ring.prep-nop(user: 2)
+    ring.prep-nop(user: 3)
+
+    let got = []
+    for cqe in ring.cqes(3) {
+        got.push(cqe.user)
+    }
+
+    got.sort!()
+    assert(got == [1, 2, 3])
+
+    ring.close()
+}
+
+pub fn test-close-fd() {
+    let (r, w) = os.pipe()
+    let ring = IoUring(entries: 4)
+
+    ring.prep-close(w, user: 99)
+    ring.submit-and-wait(1)
+
+    let cqes = ring.peek-cqes()
+    assert(#cqes == 1)
+    assert(cqes[0].res == 0)
+    assert(cqes[0].user == 99)
+    ring.advance-cq(1)
+
+    let rbuf = c.alloc(16)
+    ring.prep-read(r, rbuf, 16, user: 100)
+    ring.submit-and-wait(1)
+
+    let cqes2 = ring.peek-cqes()
+    assert(#cqes2 == 1)
+    assert(cqes2[0].res == 0)
+    ring.advance-cq(1)
+
+    c.free(rbuf)
+    os.close(r)
+    ring.close()
+}
+
+pub fn test-peek-empty() {
+    let ring = IoUring(entries: 4)
+    let cqes = ring.peek-cqes()
+    assert(#cqes == 0)
+    ring.close()
+}
+
+pub fn test-sq-full() {
+    let ring = IoUring(entries: 4)
+
+    for _ in ..ring.sq-entries {
+        ring.prep-nop()
+    }
+
+    let threw? = false
+    try {
+        ring.prep-nop()
+    } catch _ {
+        threw? = true
+    }
+    assert(threw?)
+
+    ring.submit-and-wait(ring.sq-entries)
+    ring.advance-cq(ring.sq-entries)
+    ring.close()
+}
+
+pub fn test-user-data-large() {
+    let ring = IoUring(entries: 4)
+    let big = 0x1F_CAFE_BABE
+
+    ring.prep-nop(user: big)
+    ring.submit-and-wait(1)
+
+    let cqe = ring.wait-cqe()
+    assert(cqe.user == big)
+
+    ring.close()
+}
+
+pub fn test-cqe-str() {
+    let cqe = CQE(user: 1, res: -5, flags: 0)
+    let s = "{cqe}"
+    assert('data=1' in s)
+    assert('res=-5' in s)
+}
+
+pub fn test-file-read-at-offset() {
+    let (fd, name) = os.mktemp('uring_test')
+    os.write(fd, 'abcdefghijklmnop')
+    os.close(fd)
+
+    let fd2 = os.open(name, os.O_RDONLY)
+    let ring = IoUring(entries: 4)
+    let buf = c.alloc(4)
+    memset(buf, 0, 4)
+
+    ring.prep-read(fd2, buf, 4, offset: 4, user: 55)
+    ring.submit-and-wait(1)
+
+    let cqe = ring.wait-cqe()
+    assert(cqe.res == 4)
+
+    let got = c.str(buf, 4)
+    assert(got == 'efgh')
+
+    c.free(buf)
+    os.close(fd2)
+    os.unlink(name)
+    ring.close()
+}
+#|]

@@ -1,0 +1,7 @@
+import ffi as c
+import os
+
+if c.open('yaml') == nil {
+    print('libyaml is not installed')
+    os.exit(77)
+}

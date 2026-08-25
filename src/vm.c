@@ -3739,7 +3739,7 @@ GetMember(Ty *ty, int member, bool try_missing, bool exec)
                         pop();
                         return PrettySource(ty, &v);
                 } else if (has_meta(&v)) {
-                        push(*meta_of(ty, v.method));
+                        push(*meta_of(ty, &v));
                         meta = GetMember(ty, member, false, exec);
                         if (!IsNone(meta)) {
                                 pop();

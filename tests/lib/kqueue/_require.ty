@@ -1,0 +1,6 @@
+import os
+
+if !(__bsd__ || __apple__) {
+    print('kqueue is only available on BSD and macOS')
+    os.exit(77)
+}
