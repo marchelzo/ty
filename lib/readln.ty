@@ -343,7 +343,7 @@ pub class InteractiveLineReader {
         __history-file = (history-file != nil) ?: Path(history-file)
 
         if history-file != nil and let $raw = slurp("{history-file}") {
-            __history = raw.lines().map(json::parse!)
+            __history = raw.lines().map(json::parse@(HistoryEntry, _))
         } else {
             __history = []
         }
