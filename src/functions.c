@@ -39,6 +39,7 @@
 
 #ifdef __linux__
 #include <sys/epoll.h>
+#include <sys/prctl.h>
 #include <sys/sendfile.h>
 #include <sys/vfs.h>
 #include <sys/eventfd.h>
@@ -3733,7 +3734,7 @@ BUILTIN_FUNCTION(os_mprotect)
 
 BUILTIN_FUNCTION(os_setproctitle)
 {
-        ASSERT_ARGC_RANGE("os", 1, INT_MAX);
+        ASSERT_ARGC_RANGE("os.setproctitle()", 1, INT_MAX);
 
         byte_vector title = {0};
 
@@ -3761,13 +3762,36 @@ BUILTIN_FUNCTION(os_setproctitle)
 
         SCRATCH_RESTORE();
 
-#ifndef __APPLE__
         for (int i = 1; i < TyArgc; ++i) {
-                TyArgv[i] = TyArgv[i - 1] + strlen(TyArgv[i - 1]) + 1;
+                if (i >= argc) {
+                        TyArgv[i] = NULL;
+                } else {
+                        TyArgv[i] = TyArgv[i - 1] + strlen(TyArgv[i - 1]) + 1;
+                }
         }
-#endif
 
         return NIL;
+}
+
+BUILTIN_FUNCTION(os_setprocname)
+{
+        ASSERT_ARGC("os.setprocname()", 1);
+
+        char *name = TY_TMP_C_STR(ARGx(0, VALUE_STRING));
+
+#if defined(__APPLE__)
+        setprogname(name);
+        return INTEGER(0);
+#elif defined(__FreeBSD__)
+        return INTEGER(setproctitle_fast("%s", name));
+#elif defined(__linux__)
+        return INTEGER(prctl(PR_SET_NAME, name, 0, 0, 0));
+#elif defined(_WIN32)
+        Value name = ARGx(0, VALUE_STRING);
+        return INTEGER(SetConsoleTitleA(name));
+#else
+        bP("unsupported platform");
+#endif
 }
 
 #ifdef _WIN32
