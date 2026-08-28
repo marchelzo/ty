@@ -134,7 +134,7 @@ pub class Process {
         __pid = pid
     }
 
-    static current -> Process { self(os.getpid()) }
+    static this -> Process { self(os.getpid()) }
 
     pid -> Int { __pid }
     id  -> Int { __pid }
@@ -367,7 +367,7 @@ pub class Mount {
 
 pub fn pids() -> Array[Int] { __pids().sort!() }
 
-pub fn current() -> Process { Process.current }
+pub fn this() -> Process { Process.this }
 
 pub fn get(pid: Int) -> Process | nil {
     let p = Process(pid)
@@ -904,7 +904,7 @@ fn __proc-strings(pid: Int) {
     fn take-string() {
         let start = off
         while off < n && c.load(c.u8, buf + off) != 0 { off += 1 }
-        let s = c.as_str(buf + start, off - start)
+        let s = c.str(buf + start, off - start)
         off += 1
         s
     }

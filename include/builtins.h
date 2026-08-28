@@ -528,6 +528,7 @@ static struct {
 #endif
 
   { .module = "os",         .name = "setproctitle",             .value = BUILTIN(builtin_os_setproctitle)         },
+  { .module = "os",         .name = "setprocname",              .value = BUILTIN(builtin_os_setprocname)          },
 
   { .module = "thread",     .name = "create",                   .value = BUILTIN(builtin_thread_create)           },
   { .module = "thread",     .name = "join",                     .value = BUILTIN(builtin_thread_join)             },

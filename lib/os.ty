@@ -42,7 +42,7 @@ pub use Wait4Result = {
     rusage: RUsage
 }
 
-//pub fn wait4(pid: Int = -1, options: Int = 0) -> Wait4Result | nil;
+pub fn wait4(pid: Int = -1, options: Int = 0) -> Wait4Result | nil;
 
 pub fn socket(domain: Int, type: Int, protocol: Int) -> Int;
 pub fn bind(sock: Int, addr: _) -> Int;
@@ -241,6 +241,9 @@ pub fn spawn(
 ) -> ProcessDescriptor;
 
 pub fn mprotect(addr: _, length: Int, prot: Int) -> Int;
+
+pub fn setproctitle(*parts: String) -> nil;
+pub fn setprocname(name: String) -> Int;
 
 #|if __linux__
 pub fn eventfd(initval: Int, flags: ?Int) -> Int;
