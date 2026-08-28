@@ -278,7 +278,7 @@ reconstruct(Ty *ty, Value *msg, usize *cursor)
                         memcpy(ids, e.ids, n * sizeof (i32));
                         xmF(e.ids);
                 }
-                Value r = TUPLE(items, ids, n, true);
+                Value r = TUPLE(items, ids, n);
                 r.type = e.type;
                 r.tags = e.tags;
                 msg[*cursor - 1] = r;

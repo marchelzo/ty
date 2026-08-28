@@ -1270,7 +1270,7 @@ enum {
 #define REAL(f)                  ((Value){ .type = VALUE_REAL,             .real           = (f),                                  .tags = 0 })
 #define BOOLEAN(b)               ((Value){ .type = VALUE_BOOLEAN,          .boolean        = (b),                                  .tags = 0 })
 #define ARRAY(a)                 ((Value){ .type = VALUE_ARRAY,            .array          = (a),                                  .tags = 0 })
-#define TUPLE(vs, ns, n, gc)     ((Value){ .type = VALUE_TUPLE,            .items          = (vs), .count = (n),  .ids = (ns),     .tags = 0 })
+#define TUPLE(vs, ns, n)         ((Value){ .type = VALUE_TUPLE,            .items          = (vs), .count = (n),  .ids = (ns),     .tags = 0 })
 #define BLOB(b)                  ((Value){ .type = VALUE_BLOB,             .blob           = (b),                                  .tags = 0 })
 #define QUEUE(q)                 ((Value){ .type = VALUE_QUEUE,            .queue          = (q),                                  .tags = 0 })
 #define SHARED_QUEUE(q)          ((Value){ .type = VALUE_SHARED_QUEUE,     .shared_queue   = (q),                                  .tags = 0 })

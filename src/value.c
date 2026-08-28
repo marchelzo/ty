@@ -1916,7 +1916,7 @@ value_tuple(Ty *ty, int n)
                 items[i] = NIL;
         }
 
-        return TUPLE(items, NULL, n, false);
+        return TUPLE(items, NULL, n);
 }
 
 Value
@@ -1933,7 +1933,7 @@ value_record(Ty *ty, int n)
                 ids[i] = -1;
         }
 
-        return TUPLE(items, ids, n, false);
+        return TUPLE(items, ids, n);
 }
 
 Value
@@ -1951,41 +1951,23 @@ value_named_tuple(Ty *ty, char const *first, ...)
 
         va_end(ap);
 
-        Value values[n];
-        char const *names[n];
-
-        names[0] = first;
+        Value *items = mAo(n * sizeof (Value), GC_TUPLE);
+        int   *ids   = uAo(n * sizeof (int),   GC_TUPLE);
 
         va_start(ap, first);
-        values[0] = va_arg(ap, Value);
+
+        ids[0] = (first[0] == '\0') ? -1 : M_ID(first);
+        items[0] = va_arg(ap, Value);
 
         for (int i = 1; i < n; ++i) {
-                names[i] = va_arg(ap, char const *);
-                values[i] = va_arg(ap, Value);
+                char const *name = va_arg(ap, char *);
+                items[i] = va_arg(ap, Value);
+                ids[i] = (name[0] == '\0') ? -1 : M_ID(name);
         }
 
         va_end(ap);
 
-        usize roots = vN(RootSet);
-
-        for (int i = 0; i < n; ++i) {
-                gP(&values[i]);
-        }
-
-        Value *items = mAo(n * sizeof (Value), GC_TUPLE);
-
-        NOGC(items);
-        int *ids = mAo(n * sizeof (int), GC_TUPLE);
-        OKGC(items);
-
-        for (int i = 0; i < n; ++i) {
-                ids[i] = (names[i][0] == '\0') ? -1 : M_ID(names[i]);
-                items[i] = values[i];
-        }
-
-        Value tuple = TUPLE(items, ids, n, false);
-        vN(RootSet) = roots;
-        return tuple;
+        return TUPLE(items, ids, n);
 }
 
 Value *
