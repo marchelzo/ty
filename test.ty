@@ -221,7 +221,7 @@ let summary = [
 let times = [
     chalk"[#ccc]{user-cpu:.2}s[/] user",
     chalk"[#ccc]{system-cpu:.2}s[/] system",
-    chalk"[#ccc]{(t1 - t0):.2}s[/] elapsed"
+    chalk"[#ccc]{(t1 - t0):.2}s[/] wall"
 ]
 
 let put-list = print@(chalk"[#666]{_.join(', ')}[/]")

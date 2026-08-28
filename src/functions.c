@@ -3761,9 +3761,11 @@ BUILTIN_FUNCTION(os_setproctitle)
 
         SCRATCH_RESTORE();
 
+#ifndef __APPLE__
         for (int i = 1; i < TyArgc; ++i) {
                 TyArgv[i] = TyArgv[i - 1] + strlen(TyArgv[i - 1]) + 1;
         }
+#endif
 
         return NIL;
 }

@@ -1872,7 +1872,7 @@ BUILTIN_FUNCTION(accel_mha_forward)
         items[4] = TGCPTR(all_probs,  &ffi_type_double, all_probs);
         items[5] = TGCPTR(ctx_merged, &ffi_type_double, ctx_merged);
 
-        return TUPLE(items, NULL, 6, false);
+        return TUPLE(items, NULL, 6);
 }
 
 BUILTIN_FUNCTION(accel_mha_backward)
@@ -2002,7 +2002,7 @@ BUILTIN_FUNCTION(accel_mha_backward)
         items[3] = TGCPTR(dWv,     &ffi_type_double, dWv);
         items[4] = TGCPTR(dWo,     &ffi_type_double, dWo);
 
-        return TUPLE(items, NULL, 5, false);
+        return TUPLE(items, NULL, 5);
 }
 
 BUILTIN_FUNCTION(accel_kv_cache_alloc)
@@ -2024,7 +2024,7 @@ BUILTIN_FUNCTION(accel_kv_cache_alloc)
         items[0] = TGCPTR(k_buf, &ffi_type_double, k_buf);
         items[1] = TGCPTR(v_buf, &ffi_type_double, v_buf);
 
-        return TUPLE(items, NULL, 2, false);
+        return TUPLE(items, NULL, 2);
 }
 
 BUILTIN_FUNCTION(accel_mha_forward_one)
