@@ -31,6 +31,7 @@
 #ifdef __linux__
 #include <sys/epoll.h>
 #include <sys/mount.h>
+#include <sys/prctl.h>
 #include <linux/mount.h>
 #include <linux/sched.h>
 #endif
@@ -409,6 +410,10 @@ volatile bool GC_EVERY_ALLOC = false;
 
 bool PrintResult = false;
 FILE *DisassemblyOut = NULL;
+
+char **TyArgv;
+int    TyArgc;
+usize  TyTitleSize;
 
 typedef struct {
         atomic_bool *created;
@@ -936,7 +941,7 @@ add_builtins(Ty *ty, int ac, char **av)
         Array *args = vA();
 
         for (int i = 0; i < ac; ++i) {
-                vAp(args, STRING_NOGC(av[i], strlen(av[i])));
+                vAp(args, vSsz(av[i]));
         }
 
         compiler_introduce_symbol(ty, NULL, "argv");
@@ -5780,7 +5785,7 @@ DoTupleLiteral(Ty *ty)
         }
 
         u32   k = vN(values);
-        Value v = TUPLE(mAo(k * sizeof (Value), GC_TUPLE), NULL, k, false);
+        Value v = TUPLE(mAo(k * sizeof (Value), GC_TUPLE), NULL, k);
 
         if (k > 0) {
                 __builtin_memcpy(v.items, vv(values), k * sizeof (Value));
@@ -7090,7 +7095,7 @@ TargetMember:
                                 i32 count = top()->count - i;
                                 Value *rest = mAo(count * sizeof (Value), GC_TUPLE);
                                 memcpy(rest, top()->items + i, count * sizeof (Value));
-                                *vp = TUPLE(rest, NULL, count, false);
+                                *vp = TUPLE(rest, NULL, count);
                         }
                         break;
 
@@ -7642,7 +7647,7 @@ TargetMember:
                 CASE(GATHER_TUPLE)
                         n = vN(STACK) - vXx(SP_STACK);
                         vp = mAo(n * sizeof (Value), GC_TUPLE);
-                        v = TUPLE(vp, NULL, n, false);
+                        v = TUPLE(vp, NULL, n);
                         __builtin_memcpy(vp, topN(n), n * sizeof (Value));
                         STACK.count -= n;
                         push(v);
@@ -9857,8 +9862,6 @@ vm_init(Ty *ty, int ac, char **av)
         NAMES._static_getters_ = M_ID("__static_getters__");
         NAMES._super_          = M_ID("__super__");
 
-        /* Builtins may construct named values from worker threads, so intern
-         * their fixed field names before concurrent execution is possible. */
         TyFunctionsInit(ty);
 
         GC_STOP();
@@ -11732,7 +11735,7 @@ vm_jit_tuple_rest(Ty *ty, Value *tos, Value *target, i32 start)
         i32 count = tos->count - start;
         Value *rest = mAo(count * sizeof (Value), GC_TUPLE);
         memcpy(rest, tos->items + start, count * sizeof (Value));
-        *target = TUPLE(rest, NULL, count, false);
+        *target = TUPLE(rest, NULL, count);
 
         return true;
 }

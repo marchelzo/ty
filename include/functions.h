@@ -142,6 +142,7 @@ BUILTIN_FUNCTION(os_spawn);
 BUILTIN_FUNCTION(os_stat);
 BUILTIN_FUNCTION(os_lstat);
 BUILTIN_FUNCTION(os_fstat);
+BUILTIN_FUNCTION(os_setproctitle);
 #if defined(__linux__) || defined(__APPLE__)
 BUILTIN_FUNCTION(os_statfs);
 #endif

@@ -11954,7 +11954,7 @@ type_from_ty(Ty *ty, Value const *v)
                      && (inner.count >= 2)
                 ) {
                         t0->class = TyTypeClass(ty, &inner.items[0]);
-                        t0->args = TyTypeVector(ty, &TUPLE(&inner.items[1], NULL, inner.count - 1, false));
+                        t0->args = TyTypeVector(ty, &TUPLE(&inner.items[1], NULL, inner.count - 1));
                 } else {
                         t0->class = TyTypeClass(ty, &inner);
                 }

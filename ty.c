@@ -692,6 +692,14 @@ main(int argc, char **argv)
 {
         ty = &vvv;
 
+        TyArgc = argc;
+        TyArgv = argv;
+        TyTitleSize = strlen(argv[0]) + 1;
+
+        for (int i = 1; argv[i] == argv[0] + TyTitleSize; ++i) {
+                TyTitleSize += strlen(argv[i]) + 1;
+        }
+
 #if defined(TY_PROFILE_TYPES) && 1
         atexit(xxx);
 #endif

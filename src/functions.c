@@ -127,17 +127,145 @@ void
 TyFunctionsInit(Ty *ty)
 {
         (void)ty;
-#ifndef _WIN32
-        static char const *wait4_fields[] = {
-                "utime", "stime", "maxrss", "ixrss", "idrss", "isrss",
-                "minflt", "majflt", "nswap", "inblock", "oublock",
-                "msgsnd", "msgrcv", "nsignals", "nvcsw", "nivcsw",
-                "pid", "status", "rusage"
-        };
-        for (usize i = 0; i < countof(wait4_fields); ++i) {
-                (void)M_ID(wait4_fields[i]);
-        }
-#endif
+        M_ID("addr");
+        M_ID("address");
+        M_ID("atime");
+        M_ID("band");
+        M_ID("bavail");
+        M_ID("bfree");
+        M_ID("blankLine");
+        M_ID("blksize");
+        M_ID("blocks");
+        M_ID("bsize");
+        M_ID("byte");
+        M_ID("canonname");
+        M_ID("cc");
+        M_ID("cflag");
+        M_ID("code");
+        M_ID("col");
+        M_ID("cols");
+        M_ID("comment");
+        M_ID("context");
+        M_ID("ctime");
+        M_ID("depth");
+        M_ID("dev");
+        M_ID("doc");
+        M_ID("end");
+        M_ID("errno");
+        M_ID("expr");
+        M_ID("family");
+        M_ID("favail");
+        M_ID("fd");
+        M_ID("ffree");
+        M_ID("fields");
+        M_ID("file");
+        M_ID("files");
+        M_ID("flag");
+        M_ID("flags");
+        M_ID("float");
+        M_ID("fp");
+        M_ID("frames");
+        M_ID("frsize");
+        M_ID("fsid");
+        M_ID("fssubtype");
+        M_ID("fstypename");
+        M_ID("func");
+        M_ID("getters");
+        M_ID("gid");
+        M_ID("gmtoff");
+        M_ID("handle");
+        M_ID("hour");
+        M_ID("id");
+        M_ID("idrss");
+        M_ID("iflag");
+        M_ID("inblock");
+        M_ID("ino");
+        M_ID("insn");
+        M_ID("int");
+        M_ID("iosize");
+        M_ID("ip");
+        M_ID("isdst");
+        M_ID("ispeed");
+        M_ID("isrss");
+        M_ID("ixrss");
+        M_ID("keepComments");
+        M_ID("keepNewline");
+        M_ID("kind");
+        M_ID("last");
+        M_ID("lflag");
+        M_ID("line");
+        M_ID("location");
+        M_ID("majflt");
+        M_ID("master");
+        M_ID("maxrss");
+        M_ID("mday");
+        M_ID("meta");
+        M_ID("methods");
+        M_ID("min");
+        M_ID("minflt");
+        M_ID("mntfromname");
+        M_ID("mntonname");
+        M_ID("mod");
+        M_ID("mode");
+        M_ID("module");
+        M_ID("mon");
+        M_ID("msg");
+        M_ID("msgrcv");
+        M_ID("msgsnd");
+        M_ID("mtime");
+        M_ID("name");
+        M_ID("namelen");
+        M_ID("namemax");
+        M_ID("nivcsw");
+        M_ID("nlink");
+        M_ID("nsec");
+        M_ID("nsignals");
+        M_ID("nswap");
+        M_ID("nvcsw");
+        M_ID("oflag");
+        M_ID("ospeed");
+        M_ID("oublock");
+        M_ID("owner");
+        M_ID("params");
+        M_ID("path");
+        M_ID("pid");
+        M_ID("position");
+        M_ID("prog");
+        M_ID("protocol");
+        M_ID("rdev");
+        M_ID("reclen");
+        M_ID("rows");
+        M_ID("rusage");
+        M_ID("scope");
+        M_ID("sec");
+        M_ID("setters");
+        M_ID("signo");
+        M_ID("size");
+        M_ID("slave");
+        M_ID("source");
+        M_ID("sp");
+        M_ID("src");
+        M_ID("stack");
+        M_ID("start");
+        M_ID("staticGetters");
+        M_ID("staticMethods");
+        M_ID("staticSetters");
+        M_ID("status");
+        M_ID("stderr");
+        M_ID("stdin");
+        M_ID("stdout");
+        M_ID("stime");
+        M_ID("str");
+        M_ID("super");
+        M_ID("traits");
+        M_ID("type");
+        M_ID("uid");
+        M_ID("utime");
+        M_ID("value");
+        M_ID("wday");
+        M_ID("yday");
+        M_ID("year");
+        M_ID("zone");
 }
 
 u64 NextThreadId() { return ++tid; }
@@ -3601,6 +3729,43 @@ BUILTIN_FUNCTION(os_mprotect)
         int prot = INT_ARG(2);
 
         return INTEGER(mprotect(addr, length, prot));
+}
+
+BUILTIN_FUNCTION(os_setproctitle)
+{
+        ASSERT_ARGC_RANGE("os", 1, INT_MAX);
+
+        byte_vector title = {0};
+
+        // Validate before entering scratch arena or we'll leak
+        for (int i = 0; i < argc; ++i) {
+                (void)ARGx(i, VALUE_STRING);
+        }
+
+        SCRATCH_SAVE();
+
+        for (int i = 0; i < argc && vN(title) < TyTitleSize; ++i) {
+                Value *arg = &ARG(i);
+                svPn(title, ss(*arg), sN(*arg));
+                svP(title, '\0');
+        }
+
+        while (vN(title) < TyTitleSize) {
+                svP(title, '\0');
+        }
+
+        vN(title) = TyTitleSize;
+        v_L(title) = '\0';
+
+        memcpy(TyArgv[0], vv(title), TyTitleSize);
+
+        SCRATCH_RESTORE();
+
+        for (int i = 1; i < TyArgc; ++i) {
+                TyArgv[i] = TyArgv[i - 1] + strlen(TyArgv[i - 1]) + 1;
+        }
+
+        return NIL;
 }
 
 #ifdef _WIN32
@@ -8348,7 +8513,12 @@ BUILTIN_FUNCTION(stdio_fflush)
 BUILTIN_FUNCTION(stdio_fclose)
 {
         ASSERT_ARGC("stdio.fclose()", 1);
-        return (fclose(PTR_ARG(0)) == EOF) ? NIL : INTEGER(0);
+
+        if (fclose(PTR_ARG(0)) == 0) {
+                return INTEGER(0);
+        } else {
+                return INTEGER(errno);
+        }
 }
 
 BUILTIN_FUNCTION(stdio_clearerr)
@@ -8525,7 +8695,7 @@ BUILTIN_FUNCTION(type)
 
                 OKGC(types);
 
-                return TUPLE(types, NULL, n, false);
+                return TUPLE(types, NULL, n);
         }
 
         if (v.tags != 0) {

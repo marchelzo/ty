@@ -17,6 +17,10 @@
 extern bool PrintResult;
 extern volatile sig_atomic_t JitInterruptFlag;
 
+extern char **TyArgv;
+extern int    TyArgc;
+extern usize  TyTitleSize;
+
 bool
 vm_init(Ty *ty, int ac, char **av);
 

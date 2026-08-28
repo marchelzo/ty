@@ -1461,7 +1461,7 @@ jit_rt_tuple(Ty *ty, Value *top, i32 n, i32 *ids)
         vN(STACK) = top - vv(STACK);
 
         Value *items = mAo(n * sizeof (Value), GC_TUPLE);
-        Value tuple = TUPLE(items, ids, n, false);
+        Value tuple = TUPLE(items, ids, n);
 
         memcpy(items, vZ(STACK) - n, n * sizeof (Value));
         vN(STACK) -= n;

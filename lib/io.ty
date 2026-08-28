@@ -38,13 +38,11 @@ pub class Stream : Iter[String] {
     fd -> Int { __fd }
 
     close() {
-        match __f ?: stdio.fclose(__f) {
-            0 => {
-                __f  = nil
-                __fd = -1
-            },
-
-            _ => throw os.OSError('close()', __f ? : errno.EBADF)
+        let err = __f ? stdio.fclose(__f) : errno.EBADF
+        __f = nil
+        __fd = -1
+        if err {
+            throw os.OSError('close()', err)
         }
     }
 
