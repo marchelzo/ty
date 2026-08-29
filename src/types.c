@@ -16,6 +16,8 @@
 #define TYPES_LOG      0
 #define FUN_TYPES_LOG  0
 
+#define TVAR_ID(id) ((id) & (TV_MIN_FLAG - 1))
+
 typedef struct {
         TypeVector id0;
         TypeVector id1;
@@ -154,6 +156,8 @@ enum { LOW_FUEL = 5, MAX_FUEL = 999999 };
 static int FUEL = MAX_FUEL;
 
 enum {
+        TV_MIN_FLAG = (1U << 27),
+
         TV_VARIADIC = (1U << 27),
         TV_PACK     = (1U << 28)
 };
@@ -172,6 +176,9 @@ IsSolved(Type const *t0);
 
 static bool
 IsFullyBound(Type *t0);
+
+static bool
+IsDisconnected(Type *t0, Type *u0);
 
 static bool
 IsPacked(Type *t0);
@@ -478,6 +485,32 @@ ContainsID(U32Vector const *vars, u32 id)
         for (int i = 0; i < vN(*vars); ++i) {
                 if (v__(*vars, i) == id) {
                         return true;
+                }
+        }
+
+        return false;
+}
+
+inline static bool
+IsFixedTVar(u32 id)
+{
+        isize lo = 0;
+        isize hi = vN(FixedTypeVars) - 1;
+
+        id = TVAR_ID(id);
+
+        while (lo <= hi) {
+                isize mid = (lo / 2) + (hi / 2) + (hi & lo & 1);
+                u32 mid_id = TVAR_ID(v__(FixedTypeVars, mid));
+
+                if (mid_id == id) {
+                        return true;
+                }
+
+                if (mid_id < id) {
+                        lo = mid + 1;
+                } else {
+                        hi = mid - 1;
                 }
         }
 
@@ -2257,6 +2290,14 @@ GetTVarBound(Ty *ty, Type const *t0)
         }
 
         return LookEnv(ty, GetEnv(), t0->id);
+}
+
+inline static Type *
+RigidTVarBound(Ty *ty, Type const *t0)
+{
+        return (IsTVar(t0) && IsFixedTVar(t0->id))
+             ? GetTVarBound(ty, t0)
+             : NULL;
 }
 
 inline static Type *
@@ -5212,6 +5253,10 @@ UnifyXD(Ty *ty, Type *t0, Type *t1, bool super, bool check, bool soft)
                 OK("check_shallow() successful");
         }
 
+        if (RigidTVarBound(ty, super ? t0 : t1) != NULL) {
+                goto Fail;
+        }
+
         if (IsBoundVar(t0)) {
                 if (UnifyXD(ty, t0->val, t1, super, false, soft)) {
                         OK("unified with t0->val");
@@ -5818,7 +5863,15 @@ CullConstraints(Ty *ty, Type *t0)
 
         for (int i = vN(t0->constraints) - 1; i >= 0; --i) {
                 Constraint c = v__(t0->constraints, i);
-                bool ok = BindConstraint(ty, &c);
+                /*
+                 * A connected `T <: Bound` must survive instantiation until
+                 * call arguments have had a chance to infer T.  Solving it
+                 * here would incorrectly turn subtyping into T = Bound.
+                 */
+                bool defer = (c.type == TC_SUB)
+                          && CanBind(Reduce(ty, c.t0))
+                          && !IsDisconnected(t0, c.t0);
+                bool ok = !defer && BindConstraint(ty, &c);
                 if (ok) {
                         if (!cloned) {
                                 t0 = CloneType(ty, t0);
@@ -7865,6 +7918,9 @@ type_slice_t(Ty *ty, Type *t0, Type *t1, Type *t2, Type *t3)
 Type *
 type_subscript_t(Ty *ty, Type *t0, Type *t1)
 {
+        /* Subscriptability is a capability supplied by an upper bound. */
+        t0 = Resolve(ty, t0);
+
         if (IsTuple(t0) && IsIntLit(t1)) {
                 return (vN(t0->types) > t1->z)
                      ? v__(t0->types, t1->z)
@@ -8057,6 +8113,14 @@ type_check_shallow(Ty *ty, Type *t0, Type *t1)
                 return true;
         }
 
+        Type *bound0 = RigidTVarBound(ty, t0);
+        Type *bound1 = RigidTVarBound(ty, t1);
+
+        if (bound0 != NULL || bound1 != NULL) {
+                return (bound0 == NULL)
+                    && type_check_x(ty, t0, bound1, false);
+        }
+
         Type *t0_ = Resolve(ty, t0);
         Type *t1_ = Resolve(ty, t1);
 
@@ -8142,6 +8206,14 @@ type_check_x_(Ty *ty, Type *t0, Type *t1, bool need)
              || IsBottom(t0)
         ) {
                 return true;
+        }
+
+        Type *bound0 = RigidTVarBound(ty, t0);
+        Type *bound1 = RigidTVarBound(ty, t1);
+
+        if (bound0 != NULL || bound1 != NULL) {
+                return (bound0 == NULL)
+                    && type_check_x(ty, t0, bound1, need);
         }
 
         Type *t0_ = Resolve(ty, t0);
@@ -10272,6 +10344,9 @@ MakeConcrete_(Ty *ty, Type *t0, TypeVector *refs, bool variance)
                         return (t1 != NULL) ? t1 : (variance ? TYPE_ANY : UNKNOWN);
                 }
         } else if (IsTVar(t0)) {
+                if (IsFixedTVar(t0->id)) {
+                        return type_fixed(ty, t0);
+                }
                 Type *t1 = LookEnv(ty, GetEnv(), t0->id);
                 return (t1 != NULL) ? t1 : t0;
         }
@@ -11095,7 +11170,7 @@ fixup(Ty *ty, Type *t0)
                 int refs    = CountRefs(g0, id);
                 int rt_refs = CountRefs(g0->rt, id);
 
-                if (ContainsID(&FixedTypeVars, id)) {
+                if (IsFixedTVar(id)) {
                         avP(g0->bound, id);
                 } else if (refs + rt_refs > 1) {
                         Type *var0 = NewTVar(ty);

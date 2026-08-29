@@ -275,6 +275,7 @@ set(_src_files
   src/str.c
   src/table.c
   src/tags.c
+  src/title.c
   src/token.c
   src/types.c
   src/util.c

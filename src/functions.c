@@ -111,6 +111,7 @@ extern char **environ;
 #include "class.h"
 #include "compiler.h"
 #include "types.h"
+#include "title.h"
 
 #ifdef __APPLE__
 #define fputc_unlocked putc_unlocked
@@ -3738,16 +3739,11 @@ BUILTIN_FUNCTION(os_setproctitle)
 
         byte_vector title = {0};
 
-        // Validate before entering scratch arena or we'll leak
-        for (int i = 0; i < argc; ++i) {
-                (void)ARGx(i, VALUE_STRING);
-        }
-
         SCRATCH_SAVE();
 
         for (int i = 0; i < argc && vN(title) < TyTitleSize; ++i) {
-                Value *arg = &ARG(i);
-                svPn(title, ss(*arg), sN(*arg));
+                Value arg = ARGx(i, VALUE_STRING);
+                svPn(title, ss(arg), sN(arg));
                 svP(title, '\0');
         }
 

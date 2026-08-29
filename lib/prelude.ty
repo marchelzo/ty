@@ -587,7 +587,7 @@ class Array[T] : Iterable[T] {
         splice(0, i)
     }
 
-    transpose[U]() -> Array[T] where T: Array[U] {
+    transpose[U]() -> Array[Array[U]] where T: Array[U] {
         [[self[j][i] for j in ..#self] for i in ..#self[0]]
     }
 
@@ -1639,7 +1639,7 @@ class Generator[T, S] : Iter[T] {
     }
 
     __next__() -> Some[T] | None where S: nil {
-        self()
+        self(nil as S)
     }
 
     __call__(arg: S) -> Some[T] | None {
