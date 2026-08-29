@@ -155,8 +155,9 @@ typedef vec(Module *)       ModuleVector;
 #define smA(n) AllocateScratch(ty, (n))
 #define smA0(n) AllocateScratch0(ty, (n))
 
-#define xmA(n) mrealloc(NULL, (n))
-#define xmF(p) ty_free((p))
+#define xmA(n)    mrealloc(NULL, (n))
+#define xtA(t, n) mrealloc(NULL, (n) * sizeof (t))
+#define xmF(p)    ty_free((p))
 
 #define mresize(ptr, n) ((ptr) = mrealloc((ptr), (n)))
 #define Resize(p, n, m) ((p) = __builtin_memcpy(amA(n), (p), (m)))

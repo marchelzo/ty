@@ -27,6 +27,7 @@
 #include "types.h"
 #include "highlight.h"
 #include "polyfill_time.h"
+#include "title.h"
 
 #ifdef TY_HAVE_VERSION_INFO
 #include "VersionInfo.h"
@@ -692,24 +693,8 @@ main(int argc, char **argv)
 {
         ty = &vvv;
 
-        TyArgc = argc;
-        TyArgv = argv;
-        TyTitleSize = strlen(argv[0]) + 1;
-
-#ifdef __APPLE__
-        char ***_NSGetArgv();
-
-        char **clone = xmA(sizeof (char *) * (argc + 1));
-        for (int i = 0; i < argc; ++i) {
-                clone[i] = S2(argv[i]);
-        }
-        clone[argc] = NULL;
-
-        *_NSGetArgv() = clone;
-#endif
-
-        for (int i = 1; argv[i] == argv[0] + TyTitleSize; ++i) {
-                TyTitleSize += strlen(argv[i]) + 1;
+        if (getenv("TY_MUTABLE_TITLE") != NULL) {
+                TyTitleInit(argc, argv);
         }
 
 #if defined(TY_PROFILE_TYPES) && 1

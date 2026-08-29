@@ -134,7 +134,7 @@ pub class Process {
         __pid = pid
     }
 
-    static self -> Process { self(os.getpid()) }
+    static this -> Process { self(os.getpid()) }
 
     pid -> Int { __pid }
     id  -> Int { __pid }
@@ -367,7 +367,7 @@ pub class Mount {
 
 pub fn pids() -> Array[Int] { __pids().sort!() }
 
-pub fn self() -> Process { Process.self }
+pub fn this() -> Process { Process.this }
 
 pub fn get(pid: Int) -> Process | nil {
     let p = Process(pid)
@@ -821,14 +821,26 @@ C! struct DarwinStatfs {
     uint32_t reserved[8];
 }
 
-fn __pidinfo(pid: Int, flavor: Int, info, arg: Int = 0) {
-    let n = proc_pidinfo(pid, flavor, arg, info.get(), #info)
+use ProcInfo = ProcBsdInfo
+             | ProcTaskInfo
+             | ProcThreadInfo
+             | ProcFdInfo
+             | ProcVnodePathInfo
+             | ProcFdPathInfo
+             | ProcRegionInfo
+             | ProcRusage
+
+fn __pidinfo[T](pid: Int, flavor: Int, info: T, arg: Int = 0) -> T where T: ProcInfo {
+    let n = proc_pidinfo(pid, flavor, arg, info, #info)
     if n != #info { throw os.OSError("proc_pidinfo({pid})") }
     info
 }
 
-fn __bsd(pid: Int) { __pidinfo(pid, PROC_PIDTBSDINFO, ProcBsdInfo()) }
-fn __task(pid: Int) { __pidinfo(pid, PROC_PIDTASKINFO, ProcTaskInfo()) }
+fn __bsd(pid: Int) {
+    __pidinfo(pid, PROC_PIDTBSDINFO, ProcBsdInfo())
+}
+
+fn __task(pid: Int) -> ProcTaskInfo { __pidinfo(pid, PROC_PIDTASKINFO, ProcTaskInfo()) }
 
 fn __proc-stat(pid: Int) {
     let b = __bsd(pid)

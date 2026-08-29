@@ -17,10 +17,6 @@
 extern bool PrintResult;
 extern volatile sig_atomic_t JitInterruptFlag;
 
-extern char **TyArgv;
-extern int    TyArgc;
-extern usize  TyTitleSize;
-
 bool
 vm_init(Ty *ty, int ac, char **av);
 
@@ -408,5 +404,4 @@ extern u64 ProfileSampleInterval;
 #endif
 
 #endif
-
 /* vim: set sts=8 sw=8 expandtab: */

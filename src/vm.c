@@ -410,10 +410,6 @@ volatile bool GC_EVERY_ALLOC = false;
 bool PrintResult = false;
 FILE *DisassemblyOut = NULL;
 
-char **TyArgv;
-int    TyArgc;
-usize  TyTitleSize;
-
 typedef struct {
         atomic_bool *created;
         Value *ctx;

@@ -4,7 +4,7 @@ import os
 ns test
 
 fn current-process() {
-    let p = current()
+    let p = this()
 
     assert(p.pid == os.getpid())
     assert(p.alive?)
@@ -26,7 +26,7 @@ fn current-process() {
 }
 
 fn enumerate-and-filter() {
-    let p = current()
+    let p = this()
 
     assert(p.pid in pids())
     assert(p in [*find()])
@@ -38,7 +38,7 @@ fn enumerate-and-filter() {
 }
 
 fn process-objects() {
-    let p = current()
+    let p = this()
     let maps = p.maps
     let tasks = p.tasks
 
@@ -53,7 +53,7 @@ fn process-objects() {
 }
 
 fn access-own-memory() {
-    let p = current()
+    let p = this()
     let data = Blob('Ty process memory')
     let addr = int(data.ptr())
 

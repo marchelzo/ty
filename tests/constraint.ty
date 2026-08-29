@@ -12,3 +12,37 @@ pub fn constraint() {
         ;
     }
 }
+
+pub fn bounded-type-parameters() {
+    use Scalar = Int | String
+    use Sized = String | Array
+
+    fn identity[T](x: T) -> T where T: Scalar { x }
+    fn singleton[T](x: T) -> Array[T] where T: Scalar { [x] }
+    fn first[T, U](xs: T) -> U where T: Array[U] { xs[0] }
+    fn size[T](x: T) -> Int where T: Sized { #x }
+
+    fn integer() -> Int { identity(42) }
+    fn strings() -> Array[String] { singleton('x') }
+    fn first-integer() -> Int { first([10, 20]) }
+
+    assert(integer() == 42)
+    assert(strings() == ['x'])
+    assert(first-integer() == 10)
+    assert(size('abc') == 3)
+    assert(size([1, 2]) == 2)
+
+    try {
+        __eval__('identity(1.5)')
+        assert(false, 'bounded call accepted an argument outside its upper bound')
+    } catch ex :: 'unsatisfied type constraint' in ex.what {
+        ;
+    }
+
+    try {
+        __eval__('fn invalid[T](x: T) -> T where T: Scalar { 1 }')
+        assert(false, 'bounded return type was widened to its upper bound')
+    } catch ex :: 'type mismatch' in ex.what {
+        ;
+    }
+}

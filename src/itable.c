@@ -74,7 +74,7 @@ bfind(struct itable const *t, i64 id, int * restrict i)
                 int m = (lo / 2) + (hi / 2) + (hi & lo & 1);
                 if      (id < ids[m]) { hi = m - 1; i_ = m;   }
                 else if (id > ids[m]) { lo = m + 1; i_ = lo;  }
-                else                  { *i = m; return true; }
+                else                  { *i = m; return true;  }
         }
 
         *i = i_;
