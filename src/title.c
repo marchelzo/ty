@@ -34,7 +34,7 @@ GetEnvironEnd(void)
         (void)fscanf(stat, "%*s");
         (void)fscanf(stat, "%*s");
         for (int i = 0; i < 51 - 3; ++i) {
-                if (fscanf(stat, "%ju", &addr) != 1) {
+                if (fscanf(stat, "%"SCNuPTR, &addr) != 1) {
                         fclose(stat);
                         return NULL;
                 }
@@ -66,7 +66,7 @@ static void
 TyTitleSetup(void)
 {
         ArgvEnd = TyArgv[0] + strlen(TyArgv[0]);
-        for (int i = 1; TyArgv[i] == TitleEnd + 1; ++i) {
+        for (int i = 1; TyArgv[i] == ArgvEnd + 1; ++i) {
                 ArgvEnd = TyArgv[i] + strlen(TyArgv[i]);
         }
 
@@ -117,14 +117,6 @@ TyTitleSet(char const *title, usize size)
                 TyTitleSetup();
         }
 
-        char const *argp = title;
-        int         argc = 0;
-
-        while (argp < title + size) {
-                argp += strlen(argp) + 1;
-                argc += 1;
-        }
-
         usize avail = TitleEnd - TitleBegin;
         usize keep  = zminu(size, avail);
 
@@ -145,17 +137,9 @@ TyTitleSet(char const *title, usize size)
          * that byte isn't NUL if we couldn't update the metadata.
          */
         uptr end = (uptr)TitleBegin + keep;
-        bool err = !prctl(PR_SET_MM, PR_SET_MM_ARG_END,   end, 0, 0)
-                || !prctl(PR_SET_MM, PR_SET_MM_ENV_START, end, 0, 0);
+        bool err = (prctl(PR_SET_MM, PR_SET_MM_ARG_END,   end, 0, 0) < 0)
+                || (prctl(PR_SET_MM, PR_SET_MM_ENV_START, end, 0, 0) < 0);
         *ArgvEnd += ('x' * err * !*ArgvEnd);
 #endif
-
-        for (int i = 1; i < TyArgc; ++i) {
-                if (i >= argc) {
-                        TyArgv[i] = NULL;
-                } else {
-                        TyArgv[i] = TyArgv[i - 1] + strlen(TyArgv[i - 1]) + 1;
-                }
-        }
 }
 /* vim: set sts=8 sw=8 expandtab: */
