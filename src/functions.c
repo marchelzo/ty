@@ -3740,31 +3740,13 @@ BUILTIN_FUNCTION(os_setproctitle)
         byte_vector title = {0};
 
         SCRATCH_SAVE();
-
-        for (int i = 0; i < argc && vN(title) < TyTitleSize; ++i) {
+        for (int i = 0; i < argc; ++i) {
                 Value arg = ARGx(i, VALUE_STRING);
                 svPn(title, ss(arg), sN(arg));
                 svP(title, '\0');
         }
-
-        while (vN(title) < TyTitleSize) {
-                svP(title, '\0');
-        }
-
-        vN(title) = TyTitleSize;
-        v_L(title) = '\0';
-
-        memcpy(TyArgv[0], vv(title), TyTitleSize);
-
+        TyTitleSet(vv(title), vN(title));
         SCRATCH_RESTORE();
-
-        for (int i = 1; i < TyArgc; ++i) {
-                if (i >= argc) {
-                        TyArgv[i] = NULL;
-                } else {
-                        TyArgv[i] = TyArgv[i - 1] + strlen(TyArgv[i - 1]) + 1;
-                }
-        }
 
         return NIL;
 }

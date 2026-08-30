@@ -1,5 +1,11 @@
 #include <stdio.h>
 
+#if defined(__linux__)
+#include <sys/prctl.h>
+#elif defined(__APPLE__)
+#include <crt_externs.h>
+#endif
+
 #include "title.h"
 #include "ty.h"
 
@@ -7,33 +13,92 @@ extern char **environ;
 
 char **TyArgv;
 int    TyArgc;
-usize  TyTitleSize;
 
-typedef struct {
-        char *data;
-        usize idx;
-} EnvironEntry;
+static char *ArgvEnd;
+static char *TitleBegin;
+static char *TitleEnd;
 
-static int
-entrycmp(const void *_a, const void *_b)
+static char *
+GetEnvironEnd(void)
 {
-        uptr a = (uptr)((EnvironEntry *)_a)->data;
-        uptr b = (uptr)((EnvironEntry *)_b)->data;
-        return (a < b) ? -1 : (a > b);
+#if defined(__linux__)
+        FILE *stat = fopen("/proc/self/stat", "r");
+        if (stat == NULL) {
+                return NULL;
+        }
+
+        uptr addr = 0;
+
+        /* proc_pid_stat(5): (51) env_end */
+        (void)fscanf(stat, "%*d");
+        (void)fscanf(stat, "%*s");
+        (void)fscanf(stat, "%*s");
+        for (int i = 0; i < 51 - 3; ++i) {
+                if (fscanf(stat, "%ju", &addr) != 1) {
+                        fclose(stat);
+                        return NULL;
+                }
+        }
+
+        fclose(stat);
+
+        return (char *)addr;
+#elif defined(__APPLE__)
+        char **argv = *_NSGetArgv();
+        int    argc = *_NSGetArgc();
+
+        char **envp = argv + argc + 1;
+
+        while (*envp != NULL) {
+                ++envp;
+        }
+
+        return envp[2];
+#endif
 }
 
-void
-TyTitleInit(
-        int argc
-      , char **argv
-#ifdef __APPLE__
-      , char const *env_end
-#endif
-)
+static void
+TyTitleMoveToSafety(void)
 {
-#ifdef __APPLE__
-        char ***_NSGetArgv();
+}
 
+static void
+TyTitleSetup(void)
+{
+        ArgvEnd = TyArgv[0] + strlen(TyArgv[0]);
+        for (int i = 1; TyArgv[i] == TitleEnd + 1; ++i) {
+                ArgvEnd = TyArgv[i] + strlen(TyArgv[i]);
+        }
+
+        TitleBegin = TyArgv[0];
+        TitleEnd   = GetEnvironEnd();
+
+        if (TitleEnd == NULL) {
+                TitleEnd = ArgvEnd + 1;
+        }
+
+        XXX("Title capacity: %jd", TitleEnd - TitleBegin);
+
+        /*
+         * Any `environ` entries that sill point into this region need to be
+         * moved into allocated storage so they aren't clobbered if we call
+         * setproctitle().
+         */
+        uptr beg = (uptr)TitleBegin;
+        uptr end = (uptr)TitleEnd;
+
+        for (usize i = 0; environ[i] != NULL; ++i) {
+                uptr env_addr = (uptr)environ[i];
+                if (env_addr >= beg && env_addr < end) {
+                        environ[i] = S2(environ[i]);
+                }
+        }
+
+        /*
+         * On Darwin we do something similar for `argv` as well since external
+         * modules may access it via `_NSGetArgv()`.
+         */
+#if defined(__APPLE__)
         char **clone = xtA(char *, argc + 1);
         for (int i = 0; i < argc; ++i) {
                 clone[i] = S2(argv[i]);
@@ -41,31 +106,61 @@ TyTitleInit(
         clone[argc] = NULL;
 
         *_NSGetArgv() = clone;
-#else
-        FILE *stat = fopen("/proc/self/stat", "r");
-        if (stat == NULL) {
-                return;
-        }
-
-        uptr addr = 0;
-        for (int i = 0; i < 51; ++i) {
-                fscanf(stat, "%ju", &addr);
-        }
-
-        char *env_end = (char *)addr;
 #endif
-        TyArgc = argc;
-        TyArgv = argv;
 
-        uptr beg = (uptr)argv[0];
-        uptr end = (uptr)env_end;
+}
 
-        TyTitleSize = (end - beg) + 1;
+inline static bool
+prctlmm(long what, uptr addr)
+{
+        return (prctl(PR_SET_MM, what, addr, 0, 0) == 0);
+}
 
-        for (usize i = 0; environ[i] != NULL; ++i) {
-                uptr env_addr = (uptr)environ[i];
-                if (env_addr >= beg && env_addr < end) {
-                        environ[i] = S2(environ[i]);
+void
+TyTitleSet(char const *title, usize size)
+{
+        if (TitleBegin == NULL) {
+                TyTitleSetup();
+        }
+
+        char const *argp = title;
+        int         argc = 0;
+
+        while (argp < title + size) {
+                argp += strlen(argp) + 1;
+                argc += 1;
+        }
+
+        usize avail = TitleEnd - TitleBegin;
+        usize keep  = zminu(size, avail);
+
+        memset(TitleBegin, 0, avail);
+        memcpy(TitleBegin, title, keep);
+
+#if defined(__linux__)
+        /*
+         * If we can, we should update the kernel's argv/env metadata. These values
+         * affect what readers of /proc/pid/{cmdline,environ} will see.
+         *
+         * If we don't have CAP_SYS_RESOURCE, this will fail, and writing title data
+         * over the original `arg_end` will cause the kernel to realize we're doing
+         * some kind of `setproctitle()` thing, and subsequent reads to /proc/pid/cmdline
+         * will only see title data up to the first NUL in the original `argv` region.
+         *
+         * The kernel uses `arg_end[-1] != '\0'` to detect this, so we should make sure
+         * that byte isn't NUL if we couldn't update the metadata.
+         */
+        uptr end = (uptr)TitleBegin + keep;
+        bool err = !prctlmm(PR_SET_MM_ARG_END,   end)
+                || !prctlmm(PR_SET_MM_ENV_START, end);
+        *ArgvEnd += ('x' * err * !*ArgvEnd);
+#endif
+
+        for (int i = 1; i < TyArgc; ++i) {
+                if (i >= argc) {
+                        TyArgv[i] = NULL;
+                } else {
+                        TyArgv[i] = TyArgv[i - 1] + strlen(TyArgv[i - 1]) + 1;
                 }
         }
 }
