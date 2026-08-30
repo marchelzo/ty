@@ -689,12 +689,24 @@ NextOption:
 }
 
 int
-main(int argc, char **argv)
+main(
+        int argc
+      , char **argv
+#if defined(__APPLE__)
+      , char **envp
+      , char **apple
+#endif
+)
 {
         ty = &vvv;
 
         if (getenv("TY_MUTABLE_TITLE") != NULL) {
+#if defined(__APPLE__)
+                TyTitleInit(argc, argv, apple[1]);
+#else
                 TyTitleInit(argc, argv);
+#endif
+
         }
 
 #if defined(TY_PROFILE_TYPES) && 1

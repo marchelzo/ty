@@ -1,12 +1,7 @@
-# anything beginning with underscore
 _*
-# ides
-.vscode
-.vs
-# vcpkg
 vcpkg_installed
 vcpkg
 *.log
 *.err
-.DS_Store
-.history
+.*
+!.gitignore

@@ -700,7 +700,7 @@ fn *(x: Float, d: Duration) -> Duration {
     }
     let nanos = Int(x * Float(d.total-nanoseconds))
     let neg = nanos < 0
-    let rem = if neg { -nanos } else { nanos }
+    let rem = neg ? -nanos : nanos
     let days = rem / 86400000000000;    rem = rem % 86400000000000
     let h = rem / 3600000000000;        rem = rem % 3600000000000
     let m = rem / 60000000000;          rem = rem % 60000000000
