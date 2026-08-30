@@ -99,21 +99,15 @@ TyTitleSetup(void)
          * modules may access it via `_NSGetArgv()`.
          */
 #if defined(__APPLE__)
-        char **clone = xtA(char *, argc + 1);
-        for (int i = 0; i < argc; ++i) {
-                clone[i] = S2(argv[i]);
+        char **clone = xtA(char *, TyArgc + 1);
+        for (int i = 0; i < TyArgc; ++i) {
+                clone[i] = S2(TyArgv[i]);
         }
-        clone[argc] = NULL;
+        clone[TyArgc] = NULL;
 
         *_NSGetArgv() = clone;
 #endif
 
-}
-
-inline static bool
-prctlmm(long what, uptr addr)
-{
-        return (prctl(PR_SET_MM, what, addr, 0, 0) == 0);
 }
 
 void
@@ -151,8 +145,8 @@ TyTitleSet(char const *title, usize size)
          * that byte isn't NUL if we couldn't update the metadata.
          */
         uptr end = (uptr)TitleBegin + keep;
-        bool err = !prctlmm(PR_SET_MM_ARG_END,   end)
-                || !prctlmm(PR_SET_MM_ENV_START, end);
+        bool err = !prctl(PR_SET_MM, PR_SET_MM_ARG_END,   end, 0, 0)
+                || !prctl(PR_SET_MM, PR_SET_MM_ENV_START, end, 0, 0);
         *ArgvEnd += ('x' * err * !*ArgvEnd);
 #endif
 
