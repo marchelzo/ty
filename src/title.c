@@ -1,4 +1,6 @@
 #include <stdio.h>
+#include <errno.h>
+#include <string.h>
 
 #if defined(__linux__)
 #include <sys/prctl.h>
@@ -46,22 +48,64 @@ GetEnvironEnd(void)
                 return NULL;
         }
 
-        uptr addr = 0;
+        char  *buf = NULL;
+        usize  cap = 0;
 
-        /* proc_pid_stat(5): (51) env_end */
-        (void)fscanf(stat, "%*d");
-        skipcomm(stat);
-        (void)fscanf(stat, "%*s");
-        for (int i = 0; i < 51 - 3; ++i) {
-                if (fscanf(stat, "%"SCNuPTR, &addr) != 1) {
-                        fclose(stat);
-                        return NULL;
-                }
+        /*
+         * See proc_pid_stat(5) for the cause of the brain cancer that follows.
+         */
+
+        if (getdelim(&buf, &cap, '\0', stat) < 0) {
+                fclose(stat);
+                free(buf);
+                return NULL;
         }
 
         fclose(stat);
 
-        return (char *)addr;
+        char *comm_end = strrchr(buf, ')');
+        if (comm_end == NULL) {
+                free(buf);
+                return NULL;
+        }
+
+        char *save;
+        char *tok = strtok_r(comm_end + 1, " \t\n", &save);
+
+        /* (3) state */
+        if (tok == NULL) {
+                free(buf);
+                return NULL;
+        }
+
+        /* Skip (4) ppid through (50) env_start. */
+        for (int field = 4; field < 51; ++field) {
+                if (strtok_r(NULL, " \t\n", &save) == NULL) {
+                        free(buf);
+                        return NULL;
+                }
+        }
+
+        /* (51) env_end */
+        tok = strtok_r(NULL, " \t\n", &save);
+        if (tok == NULL) {
+                free(buf);
+                return NULL;
+        }
+
+        errno = 0;
+
+        char *end;
+        umax addr = strtoumax(tok, &end, 10);
+
+        bool bad = (end == tok)
+                || (*end != '\0')
+                || (errno == ERANGE)
+                || (addr > UINTPTR_MAX);
+
+        free(buf);
+
+        return !bad ? (char *)(uptr)addr : NULL;
 #elif defined(__APPLE__)
         char **argv = *_NSGetArgv();
         int    argc = *_NSGetArgc();
