@@ -18,6 +18,25 @@ static char *ArgvEnd;
 static char *TitleBegin;
 static char *TitleEnd;
 
+static void
+skipcomm(FILE *stat)
+{
+        for (int ch; (ch = fgetc(stat)) != '(';) {
+                if (ch == EOF) {
+                        return;
+                }
+        }
+
+        for (int level = 1; level > 0;) {
+                switch (fgetc(stat)) {
+                default:              break;
+                case '(': level += 1; break;
+                case ')': level -= 1; break;
+                case EOF: return;
+                }
+        }
+}
+
 static char *
 GetEnvironEnd(void)
 {
@@ -31,7 +50,7 @@ GetEnvironEnd(void)
 
         /* proc_pid_stat(5): (51) env_end */
         (void)fscanf(stat, "%*d");
-        (void)fscanf(stat, "%*s");
+        skipcomm(stat);
         (void)fscanf(stat, "%*s");
         for (int i = 0; i < 51 - 3; ++i) {
                 if (fscanf(stat, "%"SCNuPTR, &addr) != 1) {
@@ -76,8 +95,6 @@ TyTitleSetup(void)
         if (TitleEnd == NULL) {
                 TitleEnd = ArgvEnd + 1;
         }
-
-        XXX("Title capacity: %jd", TitleEnd - TitleBegin);
 
         /*
          * Any `environ` entries that sill point into this region need to be
