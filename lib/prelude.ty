@@ -198,13 +198,16 @@ fn +[K, U, V](a: Dict[K, U], b: Dict[K, V]) -> Dict[K, U | V];
 fn -[K, V](a: Dict[K, V], b: Dict[K, Any]) -> Dict[K, V];
 fn &[K, V](a: Dict[K, V], b: Dict[K, Any]) -> Dict[K, V];
 
+fn %[A, B, R](tpl: (A, B), f: (A | B) -> R) -> (R, R);
+fn %[A, B, C, R](tpl: (A, B, C), f: (A | B | C) -> R) -> (R, R, R);
+fn %[A, B, C, D, R](tpl: (A, B, C, D), f: (A | B | C | D) -> R) -> (R, R, R, R);
+
 fn %.*[T, U, *Ts](tpl: (T, Ts), f: T -> U) -> (U, Ts);
+fn .%.*[T, U, V, *Ts](tpl: (T, U, Ts), f: U -> V) -> (T, V, Ts);
+fn ..%.*[T, U, V, W, *Ts](tpl: (T, U, V, Ts), f: V -> W) -> (T, U, W, Ts);
 
 fn doc(c:  Class)    -> (String, String, [(String, String, String)]);
 fn doc(f:  Function) -> (String, String, String);
-fn doc(id: Any)   -> (String, String, String)
-                  | (String, String [(String, String, String)])
-                  | nil;
 
 fn set-doc[T](x: T, name: ?String, proto: ?String, doc: ?String) -> T;
 
@@ -485,7 +488,9 @@ class Array[T] : Iterable[T] {
     drop(n: Int) -> Array[T];
     drop-while!(predicate: T -> Any) -> Array[T];
     drop-while(predicate: T -> Any) -> Array[T];
+    each(f: T -> Any) -> Array[T];
     each(f: (T, ?Int) -> Any) -> Array[T];
+    each[U](x: U, f: (U, T) -> Any) -> U;
     each[U](x: U, f: (U, ?T, ?Int) -> Any) -> U;
     enumerate() -> Array[(Int, T)];
     filter!(pred: T -> Any) -> Array[T];
@@ -1052,6 +1057,7 @@ class String : Iterable[String], IntoPtr[Int] {
     words() -> [String];
     lines() -> [String];
 
+    #() -> Int;
     len() -> Int;
     size() -> Int;
     width() -> Int;
@@ -2046,7 +2052,7 @@ trait Iterable[T] {
         __iter__().pad(n, x)
     }
 
-    zip(*its, longest=false) {
+    zip[...U](*its: ...Iterable[U], longest: Bool = false) -> Generator[(T, U)] {
         __iter__().zip(*its, longest=longest)
     }
 
@@ -2058,15 +2064,15 @@ trait Iterable[T] {
         __iter__().unzip(*args, **kwargs)
     }
 
-    unzip2(*args, %kwargs) {
+    unzip2[A, B](*args, %kwargs) -> (Array[A], Array[B]) where T: (A, B) {
         __iter__().unzip2(*args, **kwargs)
     }
 
-    unzip3(*args, %kwargs) {
+    unzip3[A, B, C](*args, %kwargs) -> (Array[A], Array[B], Array[C]) where T: (A, B, C) {
         __iter__().unzip3(*args, **kwargs)
     }
 
-    unzip4(*args, %kwargs) {
+    unzip4[A, B, C, D](*args, %kwargs) -> (Array[A], Array[B], Array[C], Array[D]) where T: (A, B, C, D) {
         __iter__().unzip4(*args, **kwargs)
     }
 
@@ -2293,15 +2299,15 @@ trait Iter[T] < Iterable[T] {
         unzipWith(*args, **kwargs, f=id)
     }
 
-    unzip2(*args, %kwargs) {
+    unzip2[A, B](*args, %kwargs) -> (Array[A], Array[B]) where T: (A, B) {
         unzipWith(*args, **kwargs, f=id, n=2)
     }
 
-    unzip3(*args, %kwargs) {
+    unzip3[A, B, C](*args, %kwargs) -> (Array[A], Array[B], Array[C]) where T: (A, B, C) {
         unzipWith(f=id, *args, **kwargs, f=id, n=3)
     }
 
-    unzip4(*args, %kwargs) {
+    unzip4[A, B, C, D](*args, %kwargs) -> (Array[A], Array[B], Array[C], Array[D]) where T: (A, B, C, D) {
         unzipWith(*args, **kwargs, f=id, n=4)
     }
 

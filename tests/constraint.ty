@@ -70,6 +70,12 @@ pub fn deferred-subscript-constraints() {
 
     assert(both((1, 'a')) == (1, 'a'))
 
+    fn reorder(exclude, include) {
+        [*exclude, *include].sort(by=&0).map(&1)
+    }
+
+    assert(reorder([(1, 'b')], [(0, 2)]) == [2, 'b'])
+
     try {
         __eval__("[(1, 'a'), true].map(&0)")
         assert(false, 'subscript constraint accepted a non-subscriptable union arm')
@@ -111,4 +117,34 @@ pub fn deferred-subscript-constraints() {
     }
     let nested: Array[Array[String | {type: Int | nil}]] = [[{type: 1}]]
     assert(first-type(nested) == 1)
+}
+
+pub fn variadic-tuples-and-sugared-composition() {
+    fn pack(xs: Array[String]) {
+        tuple(*xs)
+    }
+
+    let packed: (*String) = pack(['a', 'b'])
+    assert(packed == ('a', 'b'))
+
+    let pattern = /^(a)(b)(\s+)(d)$/
+    let parse: String -> (String, String, String, String) =
+        (\_ ..%.* &comb(/\s/)) . (\tuple(*_)) . &[1;] . pattern
+
+    let lines = [parse('ab  d')]
+    assert(lines == [('a', 'b', '', 'd')])
+    let lengths: Array[(Int, Int, Int, Int)] = lines.map(\_ % `#`)
+    assert(lengths == [(1, 1, 0, 1)])
+    assert(lengths.unzip4() % &max == (1, 1, 0, 1))
+
+    let seen = []
+    lines.each(seen.push@(_))
+    assert(seen == lines)
+
+    let ends = []
+    lines.each(match {
+        (a, _, _, d) => ends.push(a + d),
+        _ => ()
+    })
+    assert(ends == ['ad'])
 }
