@@ -33,7 +33,8 @@ extern u32 TYPES_OFF;
 struct constraint {
         enum {
                 TC_2OP,
-                TC_SUB
+                TC_SUB,
+                TC_SUBSCRIPT
         } type;
         union {
                 struct {

@@ -189,6 +189,9 @@ TypeOf2Op(Ty *ty, int op, Type *t0, Type *t1);
 static bool
 BindConstraint(Ty *ty, Constraint *c);
 
+static bool
+ForceBindConstraint(Ty *ty, Constraint *c);
+
 static Type *
 CullConstraints(Ty *ty, Type *t0);
 
@@ -5647,15 +5650,32 @@ UnifyXD(Ty *ty, Type *t0, Type *t1, bool super, bool check, bool soft)
                         }
 
                         if (!progress) {
-                                if (super) {
-                                        if (n1 != 0) {
-                                                goto Fail;
+                                ConstraintVector *required = super
+                                                           ? &t1->constraints
+                                                           : &t0->constraints;
+
+                                if (vN(*required) > 0) {
+                                        ConstraintVector *sink = TyCompilerState(ty)->constraint_sink;
+                                        if (sink != NULL) {
+                                                avPv(*sink, *required);
+                                                v0(*required);
+                                        } else {
+                                                u32 n = 0;
+                                                for (u32 i = 0; i < vN(*required); ++i) {
+                                                        Constraint *c = v_(*required, i);
+                                                        if (!ForceBindConstraint(ty, c)) {
+                                                                *v_(*required, n++) = *c;
+                                                        }
+                                                }
+                                                vN(*required) = n;
+                                                if (n != 0) {
+                                                        goto Fail;
+                                                }
                                         }
+                                }
+                                if (super) {
                                         avPv(t1->constraints, t0->constraints);
                                 } else {
-                                        if (n0 != 0) {
-                                                goto Fail;
-                                        }
                                         avPv(t0->constraints, t1->constraints);
                                 }
                                 break;
@@ -5813,6 +5833,18 @@ ShowConstraint(Ty *ty, Constraint *c)
                         ShowType(c->t1)
                 );
                 break;
+
+        case TC_SUBSCRIPT:
+                dump(
+                        &buf,
+                        "%s[%s] %s->%s %s",
+                        ShowType(c->t0),
+                        ShowType(c->t1),
+                        TERM(1;94),
+                        TERM(0),
+                        ShowType(c->t2)
+                );
+                break;
         }
 
         return vv(buf);
@@ -5832,8 +5864,35 @@ ShouldDefer2Op(Type *t0, Type *t1, Type *t2)
         return (n_unbound > 1);
 }
 
+inline static bool
+ShouldDeferSubscript(Ty *ty, Type *t0, Type *t1)
+{
+        return CanBind(Reduce(ty, t0))
+            || CanBind(Reduce(ty, t1));
+}
+
+inline static bool
+ShouldDeferConstraint(Ty *ty, Constraint *c)
+{
+        switch (c->type) {
+        case TC_2OP:
+                return ShouldDefer2Op(c->t0, c->t1, c->t2);
+
+        case TC_SUBSCRIPT:
+                return ShouldDeferSubscript(ty, c->t0, c->t1);
+
+        case TC_SUB:
+                return false;
+        }
+
+        return false;
+}
+
 static Type *
 TrySolve2Op(Ty *ty, int op, Type *op0, Type *t0, Type *t1, Type *t2, bool exhaustive);
+
+static Type *
+TrySolveSubscript(Ty *ty, Type *t0, Type *t1, Type *t2, bool force);
 
 static Type *
 CullConstraints(Ty *ty, Type *t0)
@@ -5868,9 +5927,14 @@ CullConstraints(Ty *ty, Type *t0)
                  * call arguments have had a chance to infer T.  Solving it
                  * here would incorrectly turn subtyping into T = Bound.
                  */
-                bool defer = (c.type == TC_SUB)
-                          && CanBind(Reduce(ty, c.t0))
-                          && !IsDisconnected(t0, c.t0);
+                bool defer = (
+                                (c.type == TC_SUB)
+                             && CanBind(Reduce(ty, c.t0))
+                             && !IsDisconnected(t0, c.t0)
+                             ) || (
+                                (c.type == TC_SUBSCRIPT)
+                             && ShouldDeferSubscript(ty, c.t0, c.t1)
+                             );
                 bool ok = !defer && BindConstraint(ty, &c);
                 if (ok) {
                         if (!cloned) {
@@ -6193,6 +6257,137 @@ TrySolve2Op(Ty *ty, int op, Type *op0, Type *t0, Type *t1, Type *t2, bool exhaus
         return r0;
 }
 
+static Type *
+SubscriptMethodResult(Ty *ty, Type *t0, Type *t1)
+{
+        Expr arg = {
+                .type  = EXPRESSION_NIL,
+                ._type = t1
+        };
+        Expr *argv[] = { &arg };
+
+        ExprVec args   = { .items = argv, .count = 1 };
+        ExprVec kwargs = {0};
+        StringVector kws = {0};
+
+        Type *method = type_member_access_t(ty, t0, "[]", false);
+
+        if (method == NULL) {
+                return NULL;
+        }
+
+        if (IsBottom(method)) {
+                return BOTTOM;
+        }
+
+        Type *result = InferCall0(
+                ty,
+                &args,
+                &kwargs,
+                &kws,
+                Inst1(ty, method),
+                false
+        );
+
+        if (result == NULL) {
+                return NULL;
+        }
+
+        return SolveMemberAccess(ty, t0, result);
+}
+
+static Type *
+SubscriptResult(Ty *ty, Type *t0, Type *t1, bool force)
+{
+        t0 = Resolve(ty, t0);
+        t1 = Resolve(ty, t1);
+
+        if (IsUnknown(t0) || IsUnknown(t1)) {
+                return UNKNOWN;
+        }
+
+        if (
+                (!force && (CanBind(t0) || CanBind(t1)))
+             || IsTVar(t0)
+        ) {
+                return NULL;
+        }
+
+        if (TypeType(t0) == TYPE_UNION) {
+                Type *result = NULL;
+
+                for (int i = 0; i < vN(t0->types); ++i) {
+                        Type *arm = SubscriptResult(
+                                ty,
+                                v__(t0->types, i),
+                                t1,
+                                true
+                        );
+
+                        if (arm == NULL) {
+                                return NULL;
+                        }
+
+                        result = (result == NULL)
+                               ? arm
+                               : Either(ty, result, arm);
+                }
+
+                return (result == NULL) ? BOTTOM : result;
+        }
+
+        if (IsTuple(t0) && IsIntLit(t1)) {
+                return (t1->z >= 0 && t1->z < vN(t0->types))
+                     ? v__(t0->types, t1->z)
+                     : NULL;
+        }
+
+        if (
+                force
+             && CanBind(t0)
+        ) {
+                Type *result = NewVar(ty);
+                Type *capability = NewRecord("[]", NewFunction(t1, result));
+
+                return UnifyX(ty, t0, capability, false, false)
+                     ? Resolve(ty, result)
+                     : NULL;
+        }
+
+        if (
+                IsRecord(t0)
+             && !t0->fixed
+             && !t0->closed
+             && (FindRecordEntry(t0, 0, "[]") == NULL)
+        ) {
+                Type *result = NewVar(ty);
+                AddEntry(t0, NewFunction(t1, result), "[]");
+                return result;
+        }
+
+        return SubscriptMethodResult(ty, t0, t1);
+}
+
+static Type *
+TrySolveSubscript(Ty *ty, Type *t0, Type *t1, Type *t2, bool force)
+{
+        if (!ENABLED) {
+                return UNKNOWN;
+        }
+
+        t0 = Reduce(ty, t0);
+        t1 = Reduce(ty, t1);
+        t2 = Reduce(ty, t2);
+
+        Type *result = SubscriptResult(ty, t0, t1, force);
+
+        if (result == NULL) {
+                return NULL;
+        }
+
+        return UnifyX(ty, t2, result, true, false) ? result : NULL;
+}
+
 static bool
 BindConstraint(Ty *ty, Constraint *c)
 {
@@ -6246,6 +6441,22 @@ BindConstraint(Ty *ty, Constraint *c)
                 XXTLOG("    %s", ShowType(c->t1));
                 break;
 
+        case TC_SUBSCRIPT:
+                XXTLOG("BindConstraint([]):");
+                XXTLOG("    %s", ShowType(c->t0));
+                XXTLOG("    %s", ShowType(c->t1));
+                XXTLOG("    %s", ShowType(c->t2));
+                c->t0 = Reduce(ty, c->t0);
+                c->t1 = Reduce(ty, c->t1);
+                c->t2 = Reduce(ty, c->t2);
+                t0 = TrySolveSubscript(ty, c->t0, c->t1, c->t2, false);
+                ok = (t0 != NULL);
+                XXTLOG("%sBindConstraint([])%s:", ok ? TERM(92) : TERM(91), TERM(0));
+                XXTLOG("    %s", ShowType(c->t0));
+                XXTLOG("    %s", ShowType(c->t1));
+                XXTLOG("    %s", ShowType(c->t2));
+                break;
+
         }
 
 #if defined(TY_PROFILE_TYPES)
@@ -6254,6 +6465,20 @@ BindConstraint(Ty *ty, Constraint *c)
 #endif
 
         return ok;
+}
+
+static bool
+ForceBindConstraint(Ty *ty, Constraint *c)
+{
+        if (c->type != TC_SUBSCRIPT) {
+                return false;
+        }
+
+        c->t0 = Reduce(ty, c->t0);
+        c->t1 = Reduce(ty, c->t1);
+        c->t2 = Reduce(ty, c->t2);
+
+        return TrySolveSubscript(ty, c->t0, c->t1, c->t2, true) != NULL;
 }
 
 static void
@@ -6306,6 +6531,25 @@ SolveDeferred(Ty *ty)
                 case TC_SUB:
                         Unify(ty, c.t0, c.t1, true);
                         break;
+
+                case TC_SUBSCRIPT:
+                        if (f0 != NULL) {
+                                avP(f0->constraints, c);
+                        } else if (TY_IS_INITIALIZED && ENFORCE) {
+                                if (c.src != NULL) {
+                                        CompilerPushContext(ty, c.src);
+                                }
+                                TypeError(
+                                        "no impl. of [] for:"
+                                        FMT_MORE "container: %s"
+                                        FMT_MORE "index:     %s"
+                                        FMT_MORE "result:    %s",
+                                        ShowType(c.t0),
+                                        ShowType(c.t1),
+                                        ShowType(c.t2)
+                                );
+                        }
+                        break;
                 }
         }
 
@@ -6316,10 +6560,23 @@ static bool
 TryProgress(Ty *ty)
 {
         usize n = (vN(WorkIndex) > 0) ? *vvL(WorkIndex) : 0;
+        usize count = vN(ToSolve) - n;
+
+        if (count == 0) {
+                return false;
+        }
+
+        ConstraintVector work = {0};
+        ConstraintVector keep = {0};
+
+        SCRATCH_SAVE();
+        svPn(work, v_(ToSolve, n), count);
+        vN(ToSolve) = n;
+
         bool any = false;
 
-        for (usize i = n; i < vN(ToSolve); ++i) {
-                Constraint *c = v_(ToSolve, i);
+        for (usize i = 0; i < vN(work); ++i) {
+                Constraint *c = v_(work, i);
                 if (BindConstraint(ty, c)) {
                         any = true;
 #if defined(TY_PROFILE_TYPES)
@@ -6336,12 +6593,12 @@ TryProgress(Ty *ty)
                         }
 #endif
                 } else {
-                        *v_(ToSolve, n) = *c;
-                        n += 1;
+                        svP(keep, *c);
                 }
         }
 
-        vN(ToSolve) = n;
+        SCRATCH_RESTORE();
+        xvPv(ToSolve, keep);
 
         return any;
 }
@@ -6553,7 +6810,14 @@ FindParam(
 }
 
 static bool
-CheckArg(Ty *ty, int i, Param const *p, Type *a0, bool strict)
+CheckArg(
+        Ty *ty,
+        int i,
+        Param const *p,
+        Type *a0,
+        bool strict,
+        ConstraintVector *deferred
+)
 {
         Type *p0 = p->type;
 
@@ -6583,11 +6847,16 @@ CheckArg(Ty *ty, int i, Param const *p, Type *a0, bool strict)
                 return false;
         }
 
-        if (UnifyX(ty, p0, a0, true, false)) {
-                return true;
-        }
+        CompileState *state = TyCompilerState(ty);
+        ConstraintVector *previous = state->constraint_sink;
+        state->constraint_sink = deferred;
 
-        if (UnifyX(ty, a0, p0, false, false)) {
+        bool ok = UnifyX(ty, p0, a0, true, false)
+               || UnifyX(ty, a0, p0, false, false);
+
+        state->constraint_sink = previous;
+
+        if (ok) {
                 return true;
         }
 
@@ -6794,18 +7063,18 @@ InferCall0(
                                         Type *d0 = ResolveVar(p->dflt);
                                         if (d0 != p->dflt) {
                                                 Type *d00 = Inst1(ty, d0);
-                                                if (!CheckArg(ty, i, p, d00, strict)) {
+                                                if (!CheckArg(ty, i, p, d00, strict, &t0->constraints)) {
                                                         return NULL;
                                                 }
                                         }
                                         continue;
                                 }
-                                if (!p->required || CheckArg(ty, i, p, NIL_TYPE, strict)) {
+                                if (!p->required || CheckArg(ty, i, p, NIL_TYPE, strict, &t0->constraints)) {
                                         continue;
                                 }
                                 return NULL;
                         }
-                        if (!CheckArg(ty, i, p, a0, strict)) {
+                        if (!CheckArg(ty, i, p, a0, strict, &t0->constraints)) {
                                 return NULL;
                         }
                 }
@@ -6814,7 +7083,7 @@ InferCall0(
                         Param const *p = FindParam(i, NULL, &t0->params);
                         Type *a0 = v__(*args, i)->_type;
                         if (p != NULL && p->type != NULL) {
-                                if (!CheckArg(ty, p - v_(t0->params, 0), p, a0, strict)) {
+                                if (!CheckArg(ty, p - v_(t0->params, 0), p, a0, strict, &t0->constraints)) {
                                         return NULL;
                                 }
                         } else if (ENFORCE && strict) {
@@ -6838,7 +7107,7 @@ InferCall0(
                         Param const *p = FindParam(i, v__(*kws, i), &t0->params);
                         Type *a0 = v__(*kwargs, i)->_type;
                         if (p != NULL && p->type != NULL) {
-                                if (!CheckArg(ty, p - v_(t0->params, 0), p, a0, strict)) {
+                                if (!CheckArg(ty, p - v_(t0->params, 0), p, a0, strict, &t0->constraints)) {
                                         return NULL;
                                 }
                         } else if (ENFORCE && strict) {
@@ -6878,6 +7147,10 @@ InferCall0(
                 for (int i = 0; i < vN(t0->constraints); ++i) {
                         Constraint *c = v_(t0->constraints, i);
                         if (!strict) {
+                                if (ShouldDeferConstraint(ty, c)) {
+                                        /* Conditionally viable; the strict retry will commit it. */
+                                        continue;
+                                }
                                 v0(t0->constraints);
                                 XXTLOG(
                                         "failing InferCall() due to unsatisfied type constraint: %s"
@@ -6888,10 +7161,7 @@ InferCall0(
                                 );
                                 return NULL;
                         }
-                        if (
-                                (c->type == TC_2OP)
-                             && ShouldDefer2Op(c->t0, c->t1, c->t2)
-                        ) {
+                        if (ShouldDeferConstraint(ty, c)) {
                                 if (vN(FunStack) > 0) {
                                         xvP(ToSolve, *c);
                                 }
@@ -7396,6 +7666,12 @@ Inst1(Ty *ty, Type *t0)
                         case TC_SUB:
                                 c->t0 = Inst1(ty, c->t0);
                                 c->t1 = Inst1(ty, c->t1);
+                                break;
+
+                        case TC_SUBSCRIPT:
+                                c->t0 = Inst1(ty, c->t0);
+                                c->t1 = Inst1(ty, c->t1);
+                                c->t2 = Inst1(ty, c->t2);
                                 break;
 
                         case TC_2OP:
@@ -7915,25 +8191,42 @@ type_slice_t(Ty *ty, Type *t0, Type *t1, Type *t2, Type *t3)
         return t4;
 }
 
+static Type *
+TypeSubscript(Ty *ty, Type *t0, Type *t1, Expr const *src)
+{
+        t0 = Resolve(ty, t0);
+        t1 = Resolve(ty, t1);
+
+        if (IsTuple(t0) && IsIntLit(t1)) {
+                return (t1->z >= 0 && t1->z < vN(t0->types))
+                     ? v__(t0->types, t1->z)
+                     : BOTTOM;
+        }
+
+        Type *t2 = NewVar(ty);
+
+        t2->level += 1;
+
+        if (TrySolveSubscript(ty, t0, t1, t2, false) == NULL) {
+                xvP(
+                        ToSolve,
+                        CONSTRAINT(
+                                .type = TC_SUBSCRIPT,
+                                .t0   = t0,
+                                .t1   = t1,
+                                .t2   = t2,
+                                .src  = src
+                        )
+                );
+        }
+
+        return t2;
+}
+
 Type *
 type_subscript_t(Ty *ty, Type *t0, Type *t1)
 {
-        /* Subscriptability is a capability supplied by an upper bound. */
-        t0 = Resolve(ty, t0);
-
-        if (IsTuple(t0) && IsIntLit(t1)) {
-                return (vN(t0->types) > t1->z)
-                     ? v__(t0->types, t1->z)
-                     : BOTTOM;
-        } else {
-                Type *t2 = NewVar(ty);
-                Type *t3 = NewRecord("[]", NewFunction(t1, t2));
-
-                UnifyX(ty, t0, t3, false, false)
-             || UnifyX(ty, t3, t0, true, true);
-
-                return t2;
-        }
+        return TypeSubscript(ty, t0, t1, NULL);
 }
 
 static Type *
@@ -7985,10 +8278,11 @@ type_subscript(Ty *ty, Expr const *e)
 {
         xDDD();
 
-        return type_subscript_t(
+        return TypeSubscript(
                 ty,
                 e->container->_type,
-                e->subscript->_type
+                e->subscript->_type,
+                e
         );
 }
 

@@ -574,17 +574,27 @@ pub class Query[T] : Iterable[T] {
     __assocs:   Dict[String, _]
     __incs:     Array[_]
 
-    _clone(%overrides) -> Query[T] {
+    _clone(
+        tbl:      String                 = __tbl,
+        from-row: (Dict[String, _] -> T) = __from-row,
+        cond:     String | nil           = __cond,
+        params:   Array[_]               = __params,
+        ord:      String | nil           = __ord,
+        lim:      Int | nil              = __lim,
+        off:      Int | nil              = __off,
+        assocs:   Dict[String, _]        = __assocs,
+        incs:     Array[String]          = __incs
+    ) -> Query[T] {
         Query(
-            tbl      = overrides['tbl']     ?? __tbl,
-            from-row = overrides['fromRow'] ?? __from-row,
-            cond     = overrides['cond']    ?? __cond,
-            params   = overrides['params']  ?? __params,
-            ord      = overrides['ord']     ?? __ord,
-            lim      = overrides['lim']     ?? __lim,
-            off      = overrides['off']     ?? __off,
-            assocs   = overrides['assocs']  ?? __assocs,
-            incs     = overrides['incs']    ?? __incs
+            tbl      = tbl,
+            from-row = from-row,
+            cond     = cond,
+            params   = params,
+            ord      = ord,
+            lim      = lim,
+            off      = off,
+            assocs   = assocs,
+            incs     = incs
         )
     }
 
@@ -638,12 +648,13 @@ pub class Query[T] : Iterable[T] {
     }
 
     _select-sql(cols: String = '*') -> String {
-        let sql = "SELECT {cols} FROM {__tbl}"
-        if __cond != nil { sql = "{sql} WHERE {__cond}" }
-        if __ord  != nil { sql = "{sql} ORDER BY {__ord}" }
-        if __lim  != nil { sql = "{sql} LIMIT {__lim}" }
-        if __off  != nil { sql = "{sql} OFFSET {__off}" }
-        sql
+        [
+            "SELECT {cols} FROM {__tbl}",
+            "WHERE {__cond}" if __cond,
+            "ORDER BY {__ord}" if __ord,
+            "LIMIT {__lim}" if __lim,
+            "OFFSET {__off}" if __off
+        ].join(' ')
     }
 
     _eager-load!(rows: Array[_], instances: Array[_], db: SQLite) {
