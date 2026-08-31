@@ -1127,14 +1127,23 @@ QualifiedName_(Expr const *e, byte_vector *b)
 
         case EXPRESSION_FUNCTION:
         case EXPRESSION_MULTI_FUNCTION:
-                xvPn(*b, e->mod->name, strlen(e->mod->name));
-                xvP(*b, '.');
-                if (e->class != NULL) {
-                        dump(b, "%s.", e->class->name);
-                }
-                xvPn(*b, e->name, strlen(e->name));
-                if (e->mtype & MT_SET) {
-                        xvP(*b, '=');
+                if (e->name == NULL) {
+                        dump(
+                                b,
+                                "(anon:%s:%d)",
+                                e->mod->name,
+                                e->start.line + 1
+                        );
+                } else {
+                        xvPn(*b, e->mod->name, strlen(e->mod->name));
+                        xvP(*b, '.');
+                        if (e->class != NULL) {
+                                dump(b, "%s.", e->class->name);
+                        }
+                        xvPn(*b, e->name, strlen(e->name));
+                        if (e->mtype & MT_SET) {
+                                xvP(*b, '=');
+                        }
                 }
                 break;
 

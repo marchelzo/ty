@@ -1444,6 +1444,7 @@ FlattenTypeSequence(
         TypeVector *types,
         ConstStringVector *names,
         BoolVector *required,
+        Type **repeat,
         bool packed_only
 )
 {
@@ -1469,6 +1470,9 @@ FlattenTypeSequence(
                 Type *t0 = ResolveVar(v__(*types, i));
                 if (TypeType(t0) == TYPE_SEQUENCE && (!packed_only || t0->packed)) {
                         avPv(flat, t0->types);
+                        if (repeat != NULL && t0->repeat != NULL) {
+                                unify2(ty, repeat, t0->repeat);
+                        }
                         if (names != NULL) {
                                 while (vN(flat_names) < vN(flat)) {
                                         avP(flat_names, NULL);
@@ -1495,6 +1499,7 @@ FlattenTypeSequence(
                 &flat,
                 (names != NULL) ? &flat_names : NULL,
                 (required != NULL) ? &flat_required : NULL,
+                repeat,
                 packed_only
         );
 
@@ -1518,19 +1523,33 @@ Flatten(Ty *ty, Type *t0)
 {
         switch (TypeType(t0)) {
         case TYPE_TUPLE:
-                return FlattenTypeSequence(ty, &t0->types, &t0->names, &t0->required, false);
+                return FlattenTypeSequence(
+                        ty,
+                        &t0->types,
+                        &t0->names,
+                        &t0->required,
+                        &t0->repeat,
+                        false
+                );
 
         case TYPE_SEQUENCE:
         case TYPE_LIST:
-                return FlattenTypeSequence(ty, &t0->types, NULL, NULL, false);
+                return FlattenTypeSequence(
+                        ty,
+                        &t0->types,
+                        NULL,
+                        NULL,
+                        &t0->repeat,
+                        false
+                );
 
         case TYPE_UNION:
         case TYPE_INTERSECT:
-                return FlattenTypeSequence(ty, &t0->types, NULL, NULL, true);
+                return FlattenTypeSequence(ty, &t0->types, NULL, NULL, NULL, true);
 
         case TYPE_ALIAS:
         case TYPE_OBJECT:
-                return FlattenTypeSequence(ty, &t0->args, NULL, NULL, false);
+                return FlattenTypeSequence(ty, &t0->args, NULL, NULL, NULL, false);
 
         case TYPE_FUNCTION:
                 return FlattenParameterList(ty, &t0->params);
@@ -5865,9 +5884,29 @@ ShouldDefer2Op(Type *t0, Type *t1, Type *t2)
 }
 
 inline static bool
+HasPendingSubscriptArm(Ty *ty, Type *t0)
+{
+        t0 = Reduce(ty, t0);
+
+        if (CanBind(t0)) {
+                return true;
+        }
+
+        if (TypeType(t0) == TYPE_UNION) {
+                for (int i = 0; i < vN(t0->types); ++i) {
+                        if (HasPendingSubscriptArm(ty, v__(t0->types, i))) {
+                                return true;
+                        }
+                }
+        }
+
+        return false;
+}
+
+inline static bool
 ShouldDeferSubscript(Ty *ty, Type *t0, Type *t1)
 {
-        return CanBind(Reduce(ty, t0))
+        return HasPendingSubscriptArm(ty, t0)
             || CanBind(Reduce(ty, t1));
 }
 
@@ -6321,7 +6360,7 @@ SubscriptResult(Ty *ty, Type *t0, Type *t1, bool force)
                                 ty,
                                 v__(t0->types, i),
                                 t1,
-                                true
+                                force
                         );
 
                         if (arm == NULL) {
@@ -6993,6 +7032,7 @@ InferCall0(
         Type *t3;
         Type *t4;
         bool gather = false;
+        bool dynamic_pack = false;
 
         vec(Expr) _argv = {0};
         ExprVec _args = {0};
@@ -7038,7 +7078,13 @@ InferCall0(
                                         if (!UnifyX(ty, p0, arg0, true, strict)) {
                                                 return NULL;
                                         }
-                                        avP(pack0->types, ResolveVar(packed));
+                                        Type *packed0 = ResolveVar(packed);
+                                        if (v__(*args, ai)->type == EXPRESSION_SPREAD) {
+                                                dynamic_pack = true;
+                                                unify2(ty, &pack0->repeat, packed0);
+                                        } else {
+                                                avP(pack0->types, packed0);
+                                        }
                                 }
                         }
 
@@ -7086,6 +7132,8 @@ InferCall0(
                                 if (!CheckArg(ty, p - v_(t0->params, 0), p, a0, strict, &t0->constraints)) {
                                         return NULL;
                                 }
+                        } else if (dynamic_pack && i >= pack_index) {
+                                continue;
                         } else if (ENFORCE && strict) {
                                 TypeError(
                                         "argument %s%d%s has no matching parameter"
@@ -7864,6 +7912,19 @@ type_member_access_t_(Ty *ty, Type const *t0, char const *name, bool strict, boo
                         goto TryUnify;
                 }
                 return t1;
+
+        case TYPE_FUNCTION:
+                t1 = type_member_access_t_(
+                        ty,
+                        ToRecordLikeType(ty, (Type *)t0),
+                        name,
+                        false,
+                        setter
+                );
+                if (t1 != NULL) {
+                        return t1;
+                }
+                return NULL;
 
         case TYPE_CLASS:
         case TYPE_TAG:
@@ -10956,9 +11017,9 @@ Type *
 type_op(Ty *ty, Expr const *e)
 {
         Type *t0 = op_type(ty, e->op.b);
-        Type *v0 = NewVar(ty);
+        Type *v0 = NewTVar(ty);
         Type *u0 = NewRecord(e->op.id, NewFunction(v0));
-        return type_both(ty, t0, NewFunction(u0, v0));
+        return type_both(ty, t0, NewFunction(PARAMETER, v0, u0, v0));
 }
 
 Type *
