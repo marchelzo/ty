@@ -43,6 +43,9 @@ static char *
 GetEnvironEnd(void)
 {
 #if defined(__linux__)
+        /*
+         * See proc_pid_stat(5) for the cause of the brain cancer that follows.
+         */
         FILE *stat = fopen("/proc/self/stat", "r");
         if (stat == NULL) {
                 return NULL;
@@ -50,10 +53,6 @@ GetEnvironEnd(void)
 
         char  *buf = NULL;
         usize  cap = 0;
-
-        /*
-         * See proc_pid_stat(5) for the cause of the brain cancer that follows.
-         */
 
         if (getdelim(&buf, &cap, '\0', stat) < 0) {
                 fclose(stat);

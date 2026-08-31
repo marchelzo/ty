@@ -46,3 +46,69 @@ pub fn bounded-type-parameters() {
         ;
     }
 }
+
+pub fn deferred-subscript-constraints() {
+    let pairs = [(1, 'a'), (0, 'b')]
+
+    assert(pairs.map(&0) == [1, 0])
+    assert(
+        str(typeof [(1, 'a'), ('x', 'b')].map(&0))
+            == "Array[1 | 'x']"
+    )
+    assert(pairs.sort(by=&0) == [(0, 'b'), (1, 'a')])
+    assert(
+        pairs.sort(by=x -> match x { (a, _) => a })
+            == [(0, 'b'), (1, 'a')]
+    )
+
+    fn first(x: (1, 'a') | (0, 'b')) { x[0] }
+
+    assert(first((1, 'a')) == 1)
+    assert(first((0, 'b')) == 0)
+
+    fn both(x) { (x[0], x[1]) }
+
+    assert(both((1, 'a')) == (1, 'a'))
+
+    try {
+        __eval__("[(1, 'a'), true].map(&0)")
+        assert(false, 'subscript constraint accepted a non-subscriptable union arm')
+    } catch ex :: 'type constraint' in ex.what {
+        ;
+    }
+
+    try {
+        __eval__("[(1,), (2, 3)].map(x -> x[1])")
+        assert(false, 'subscript constraint ignored an out-of-range union arm')
+    } catch ex :: 'type constraint' in ex.what {
+        ;
+    }
+
+    fn check-view(msg) {
+        match msg {
+            %{'trace': &0 ~> _} => true,
+            _ => false
+        }
+    }
+
+    assert(check-view(%{'trace': [1]}))
+
+    let by-parent = %{}
+    let ppid: Int = 2
+    (by-parent[ppid] ?? (by-parent[ppid] = [])).push({pid: 1})
+
+    fn collect(id: Int) {
+        for p in by-parent[id] ?? [] {
+            collect(p.pid)
+        }
+    }
+
+    collect(ppid)
+
+    let first-type = xss -> match xss[0][0] {
+        x: {type: Int | nil} => x.type,
+        _ => nil
+    }
+    let nested: Array[Array[String | {type: Int | nil}]] = [[{type: 1}]]
+    assert(first-type(nested) == 1)
+}

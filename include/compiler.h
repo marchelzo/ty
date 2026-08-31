@@ -217,6 +217,7 @@ typedef struct compiler_state {
         u32 flags;
 
         Type *expected_type;
+        ConstraintVector *constraint_sink;
 
         TypeVector return_types;
 
