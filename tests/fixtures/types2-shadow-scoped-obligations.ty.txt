@@ -1,0 +1,10 @@
+fn shadowScopedMin[...Ts](*xs: ...Ts) -> ...(Ts |)
+where (...(Ts |) <=> ...(Ts |)): Int {
+    return xs[0] as ...(Ts |)
+}
+
+class ShadowScopedObligations {
+    choose(lo, hi) {
+        shadowScopedMin(lo, hi)
+    }
+}

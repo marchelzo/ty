@@ -1,0 +1,14 @@
+let xs = [1, 2, 3]
+
+fn twice(x: Int) -> Int {
+    x + x
+}
+
+use Chain[T] = nil | {value: T, next: Chain[T]}
+
+fn decode[T](schema: Type[T], text: String) -> T;
+fn captureless(pattern: Regex[0]) -> Bool;
+
+let emptyChain: Chain[Int] = nil
+
+print(xs.map(twice))

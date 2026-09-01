@@ -1,0 +1,428 @@
+use UnaryInt = Int -> Int
+use RecoveryItem = { name: String }
+use RecoveryRecordAlias = { value: Int }
+
+fn invoke(f: UnaryInt, value: Int) -> Int {
+    f(value)
+}
+
+fn nullable(value: Int | nil) -> Int {
+    value ?? 0
+}
+
+fn dynamic-call(f: _, value) {
+    f(value)
+}
+
+fn dynamic-pair() -> _ {
+    (2, 'items')
+}
+
+fn dynamic-payload(value: _) {
+    match value {
+        Some(payload) => payload,
+        _ => nil
+    }
+}
+
+fn weak-write(flag: Bool) {
+    let current = nil
+    current = flag ? 'written' : nil
+    current
+}
+
+fn annotated-pattern(value: Int | String) -> Int {
+    match value {
+        text: String => #text,
+        number: Int => number
+    }
+}
+
+fn gradual-pack(value: _) {
+    max(1, value)
+}
+
+fn intersection-field(
+    value: {shared: Int} & ({left: String} | {right: Bool})
+) -> Int {
+    value.shared
+}
+
+class RecoveryBox {
+    value: Int = 40
+
+    current -> Int {
+        value
+    }
+}
+
+class RecoveryFactory {
+    value: Int = 0
+
+    init(value: Int = 51) {
+        self.value = value
+    }
+
+    static make -> RecoveryFactory {
+        self(51)
+    }
+}
+
+class RecoveryGeneratorBase {
+    values() -> Generator[Int] {
+        generator { yield 40 }
+    }
+}
+
+class RecoveryGeneratorChild < RecoveryGeneratorBase {
+    values*() -> Generator[Int] {
+        yield 41
+    }
+}
+
+class RecoveryConstructorBase {
+    value: Int
+
+    init(value: Int) {
+        self.value = value
+    }
+}
+
+class RecoveryConstructorChild < RecoveryConstructorBase {}
+
+class RecoveryConstructorOverrideBase {
+    init() {}
+}
+
+class RecoveryConstructorOverrideChild < RecoveryConstructorOverrideBase {
+    label: String
+
+    init(label: String) {
+        self.label = label
+    }
+}
+
+class RecoveryPrivateBase {
+    __state: Int = 1
+}
+
+class RecoveryPrivateChild < RecoveryPrivateBase {
+    __state: String = 'private'
+
+    privateValue -> String { __state }
+}
+
+class RecoveryPatternObject {
+    value: Int = 68
+}
+
+fn recovery-yield-helper(value: Int) -> Int {
+    yield value
+    value
+}
+
+fn recovery-deep-yield*() -> Generator[Int] {
+    recovery-yield-helper(42)
+}
+
+fn recovery-yield-from*(enabled: Bool) -> Generator[Int] {
+    if !enabled {
+        return
+    }
+    yield *[40, 41, 42]
+}
+
+fn recovery-array-index(xs: Array[Int], i: Int) -> Int {
+    xs[i]
+}
+
+fn recovery-tuple-index(xs: (Int, String), i: Int) -> Int | String {
+    xs[i]
+}
+
+fn recovery-splat-target(value: Int, label: String) -> String {
+    "{value}:{label}"
+}
+
+fn recovery-dynamic-record(source: _) -> Int {
+    let copy = {*source}
+    copy.value = 44
+    copy.value
+}
+
+fn recovery-record-copy(source) {
+    let copy = {*source}
+    copy
+}
+
+fn recovery-function-top(f: Function) {
+    f(46)
+}
+
+fn recovery-function-subclass(constructor: Tag) {
+    constructor(52)
+}
+
+fn recovery-fixed-options(f: _, n: _ = nil) {
+    n
+}
+
+fn recovery-gradual-forward(*args, %kwargs) {
+    recovery-fixed-options(*args, **kwargs, f=id, n=53)
+}
+
+fn recovery-omitted-dynamic(value: _) {
+    value ?? 54
+}
+
+fn recovery-integer-division(value: Int) -> Int {
+    value / 2
+}
+
+fn recovery-partial-forward(target: Int -> Int, *args, %kwargs) -> Int {
+    target(*args, **kwargs)
+}
+
+fn recovery-array-reassignment() -> (Int, Int) {
+    let left: Int = 0
+    let right: Int = 0
+    [left, right] = [57, 58]
+    (left, right)
+}
+
+fn recovery-language-string() -> Int {
+    let render = fn (parts: _) -> Int { #parts }
+    render"prefix{59}"
+}
+
+fn recovery-int-rest(*values: Int) -> Int {
+    let total = 0
+    for value in values {
+        total += value
+    }
+    total
+}
+
+fn recovery-array-result() -> Array[Int] {
+    [60, 61]
+}
+
+fn recovery-iterate-result() -> Int {
+    let total = 0
+    for value in recovery-array-result() {
+        total += value
+    }
+    total
+}
+
+fn recovery-contextual-pattern(
+    callback: (Array[String]) -> String
+) -> String {
+    callback(['first', 'second'])
+}
+
+fn recovery-native-mutation() -> Int {
+    let values = [62, 63]
+    values.swap(0, 1)
+    let mapping = %{'value': values[0]}
+    let removed = mapping.remove('value') ?? 0
+    mapping.clear()
+    removed
+}
+
+fn recovery-iterable-input(values: Iterable[Int]) -> Int {
+    let total = 0
+    for value in values {
+        total += value
+    }
+    total
+}
+
+fn recovery-pack-keyword[...Ts](
+    *values: ...Ts,
+    enabled: Bool = false
+) -> Bool {
+    enabled
+}
+
+fn recovery-bounded-iteration[T, U](values: T) -> Int where T: Iterable[U] {
+    let total = 0
+    for _ in values.__iter__() {
+        total += 1
+    }
+    total
+}
+
+fn recovery-aliased-pattern(value: RecoveryRecordAlias | Int) -> Int {
+    match value {
+        record: RecoveryRecordAlias => record.value,
+        number: Int => number
+    }
+}
+
+fn recovery-pack-tuple-pattern(
+    values: Array[Int],
+    labels: Array[String]
+) -> String {
+    for (_, label) in values.__iter__().zip(labels) {
+        return label
+    }
+    ''
+}
+
+fn recovery-dynamic-match-payload(parts: _) -> String {
+    parts.map(match {
+        value: String => value,
+        (value, _) => value.__str__()
+    }).join()
+}
+
+fn recovery-object-field-pattern(value: Object) -> Int {
+    match value {
+        Object({value: $matched}) => matched,
+        _ => 0
+    }
+}
+
+fn recovery-record-pattern(source: {value: Int, label: String}) -> String {
+    let {value, label, *} = source
+    label
+}
+
+fn recovery-union-array-pattern(source: Array[Int] | nil) -> Int {
+    match source {
+        [first, *rest] => first,
+        _ => 0
+    }
+}
+
+use match RecoveryLength {
+    text: String => #text,
+    number: Int => number
+}
+
+fn recovery-custom-pattern(source: Int | String) -> Int {
+    match source {
+        RecoveryLength(length) => length,
+        _ => 0
+    }
+}
+
+fn recovery-record-dictionary(
+    source: {value: Int, label: String}
+) -> Dict[String, Int | String] {
+    %{**source}
+}
+
+let (count, label) = dynamic-pair()
+let incremented = invoke(fn (value: Int) -> Int { value + 1 }, nullable())
+let called = dynamic-call(fn (value: Int) -> Int { value + 2 }, 40)
+let payload = dynamic-payload(Some(42))
+let box = RecoveryBox()
+let factoryValue = RecoveryFactory.make.value
+let inheritedConstructorValue = RecoveryConstructorChild(67).value
+let constructorOverrideValue = RecoveryConstructorOverrideChild('constructor').label
+let privateMemberValue = RecoveryPrivateChild().privateValue
+let gradualArray: Array[_] = [1, 2]
+let gradualCallback: () -> _ = fn () -> Int { 42 }
+let weakValue = weak-write(true)
+let narrowedValue = annotated-pattern('abcd')
+let gradualMaximum = gradual-pack(3)
+let baseItems: Dict[String, RecoveryItem] = %{
+    'base': {name: 'base'}
+}
+let mergedItems: Dict[String, RecoveryItem] = %{
+    **baseItems,
+    'next': {name: 'next'}
+}
+let defaultItems: Dict[String, RecoveryItem] = %{
+    **mergedItems,
+    *: {name: 'missing'}
+}
+let indexedArray = recovery-array-index([40, 41], 0)
+let indexedTuple = recovery-tuple-index((42, 'items'), 1)
+let splattedTuple = recovery-splat-target(*(43, 'items'))
+let copiedRecord = {*{value: 40, label: 'items'}, value: 44}
+let copiedValue: Int = copiedRecord.value
+let dynamicRecordValue = recovery-dynamic-record({value: 40})
+let preservedRecord = recovery-record-copy({value: 45, label: 'preserved'})
+let preservedLabel: String = preservedRecord.label
+let functionTopValue = recovery-function-top(fn (value: Int) { value })
+let functionSubclassValue = recovery-function-subclass(Some)
+let gradualForwardValue = recovery-gradual-forward()
+let omittedDynamicValue = recovery-omitted-dynamic()
+let integerDivisionValue = recovery-integer-division(110)
+let partialForwardValue = recovery-partial-forward(fn (value: Int) { value }, 56)
+let arrayReassignmentValue = recovery-array-reassignment()
+let languageStringValue = recovery-language-string()
+let inferredTypeValue = typeof languageStringValue
+let functionClassValue: Object | nil = recovery-array-result.__class__
+let restValue = recovery-int-rest(*[20, 27])
+let iteratedResultValue = recovery-iterate-result()
+let stringBuiltinValue: Int = 'abc'.charCount()
+let stringOffsetValue: String = 'abc' + 1
+let contextualPatternValue = recovery-contextual-pattern(
+    |[_, second]| -> second.upper()
+)
+let nativeMutationValue = recovery-native-mutation()
+let iterableInputValue = recovery-iterable-input([64, 65])
+let packKeywordValue = recovery-pack-keyword(66, 'pack', enabled: true)
+let boundedIterationValue = recovery-bounded-iteration([69, 70])
+let aliasedPatternValue = recovery-aliased-pattern({value: 71})
+let packTuplePatternValue = recovery-pack-tuple-pattern([72], ['tuple-pack'])
+let objectFieldPatternValue = recovery-object-field-pattern(RecoveryPatternObject())
+let recordPatternValue = recovery-record-pattern({value: 48, label: 'pattern'})
+let arrayPatternValue = recovery-union-array-pattern([49])
+let customPatternValue = recovery-custom-pattern('patterns')
+let recordDictionary = recovery-record-dictionary({value: 50, label: 'row-dict'})
+let recordDictionaryLabel = recordDictionary['label'] ?? 'missing'
+
+print(
+    count,
+    label,
+    incremented,
+    called,
+    payload,
+    box.current,
+    factoryValue,
+    inheritedConstructorValue,
+    constructorOverrideValue,
+    privateMemberValue,
+    gradualArray,
+    gradualCallback(),
+    weakValue,
+    narrowedValue,
+    gradualMaximum,
+    indexedArray,
+    indexedTuple,
+    splattedTuple,
+    copiedValue,
+    dynamicRecordValue,
+    preservedLabel,
+    functionTopValue,
+    functionSubclassValue,
+    gradualForwardValue,
+    omittedDynamicValue,
+    integerDivisionValue,
+    partialForwardValue,
+    arrayReassignmentValue,
+    languageStringValue,
+    functionClassValue,
+    restValue,
+    iteratedResultValue,
+    stringBuiltinValue,
+    stringOffsetValue,
+    contextualPatternValue,
+    nativeMutationValue,
+    iterableInputValue,
+    packKeywordValue,
+    boundedIterationValue,
+    aliasedPatternValue,
+    packTuplePatternValue,
+    objectFieldPatternValue,
+    recordPatternValue,
+    arrayPatternValue,
+    customPatternValue,
+    recordDictionaryLabel,
+    defaultItems['missing'].?name ?? 'none'
+)

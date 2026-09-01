@@ -1,0 +1,12 @@
+fn captured-mutation() {
+    let value: String | nil = 'present'
+
+    fn clear() {
+        value = nil
+    }
+
+    if value != nil {
+        clear()
+        value.len()
+    }
+}

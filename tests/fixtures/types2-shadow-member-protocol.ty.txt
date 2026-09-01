@@ -1,0 +1,12 @@
+fn keys-of(container) {
+    container.keys()
+}
+
+fn rename(item, name) {
+    item.name = name
+}
+
+let entries: Dict[String, Int] = %{'answer': 42}
+let labeled = {name: 'before'}
+rename(labeled, 'after')
+print(keys-of(entries))

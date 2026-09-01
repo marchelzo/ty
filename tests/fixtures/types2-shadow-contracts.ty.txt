@@ -1,0 +1,22 @@
+trait RequiredMember[T] {
+    required(x: T) -> T;
+}
+
+class MissingMember : RequiredMember[Int] {
+}
+
+class WrongMember : RequiredMember[Int] {
+    required(x: String) -> String { x }
+}
+
+class GoodMember : RequiredMember[Int] {
+    required(x: Int) -> Int { x }
+}
+
+class BaseMember {
+    convert(x: Int) -> Object { x }
+}
+
+class BadOverride < BaseMember {
+    convert(x: String) -> Int { 1 }
+}

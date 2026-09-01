@@ -278,6 +278,8 @@ set(_src_files
   src/title.c
   src/token.c
   src/types.c
+  src/types2.c
+  src/types2_core.c
   src/util.c
   src/value.c
   src/vm.c

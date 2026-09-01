@@ -27,6 +27,7 @@
 #include "value.h"
 #include "vm.h"
 #include "types.h"
+#include "types2.h"
 #include "highlight.h"
 #include "jit.h"
 
@@ -13392,16 +13393,51 @@ expand_prog(Ty *ty, Stmt **p)
 static Stmt **
 resolve_prog(Ty *ty, Stmt **p)
 {
+        Types2Shadow *shadow = types2_shadow_begin(
+                STATE.module->name,
+                STATE.module->path
+        );
+
+        if (TY_CATCH_ERROR()) {
+                types2_shadow_abort(shadow);
+                TY_RETHROW();
+        }
+
         types_begin(ty);
 
+        int types2_class_ops = 0;
         for (usize i = 0; p[i] != NULL; ++i) {
                 InjectRedpill(ty, p[i]);
+                while (types2_class_ops < vN(STATE.class_ops)) {
+                        types2_shadow_observe_statement(
+                                ty,
+                                shadow,
+                                v__(STATE.class_ops, types2_class_ops),
+                                TYPES2_SHADOW_CLASS_OPERATOR_DECLARATION,
+                                types2_class_ops
+                        );
+                        types2_class_ops += 1;
+                }
+                types2_shadow_observe_statement(
+                        ty,
+                        shadow,
+                        p[i],
+                        TYPES2_SHADOW_DECLARATION,
+                        i
+                );
                 types_iter(ty);
         }
 
         for (usize i = 0; p[i] != NULL; ++i) {
                 symbolize_statement(ty, STATE.global, p[i]);
                 types_iter(ty);
+                types2_shadow_observe_statement(
+                        ty,
+                        shadow,
+                        p[i],
+                        TYPES2_SHADOW_STATEMENT,
+                        i
+                );
         }
 
         for (int i = 0; i < vN(STATE.class_ops); ++i) {
@@ -13413,9 +13449,19 @@ resolve_prog(Ty *ty, Stmt **p)
                         symbolize_statement(ty, STATE.global, def);
                 }
                 types_iter(ty);
+                types2_shadow_observe_statement(
+                        ty,
+                        shadow,
+                        def,
+                        TYPES2_SHADOW_CLASS_OPERATOR,
+                        i
+                );
         }
 
         types_finish(ty);
+        types2_shadow_finish(shadow);
+        TY_CATCH_END();
+
         ScopeFinalize(ty, STATE.global);
 
         return p;
@@ -14415,6 +14461,38 @@ Symbol *
 compiler_global_sym(Ty *ty, usize i)
 {
         return v__(GlobalScope->owned, i);
+}
+
+bool
+compiler_symbol_literal(Symbol const *symbol, CompilerLiteral *literal)
+{
+        if (literal != NULL) *literal = (CompilerLiteral) { 0 };
+        if (
+                symbol == NULL
+             || literal == NULL
+             || !SymbolIsConst(symbol)
+             || symbol->i < 0
+             || symbol->i >= vN(Globals)
+        ) return false;
+
+        Value const *value = v_(Globals, symbol->i);
+        switch (value->type & ~VALUE_TAGGED) {
+        case VALUE_INTEGER:
+                literal->kind = COMPILER_LITERAL_INTEGER;
+                literal->integer = value->z;
+                return true;
+        case VALUE_BOOLEAN:
+                literal->kind = COMPILER_LITERAL_BOOLEAN;
+                literal->boolean = value->boolean;
+                return true;
+        case VALUE_STRING:
+                literal->kind = COMPILER_LITERAL_STRING;
+                literal->string = ss(*value);
+                literal->string_length = sN(*value);
+                return true;
+        default:
+                return false;
+        }
 }
 
 symbol_vector *

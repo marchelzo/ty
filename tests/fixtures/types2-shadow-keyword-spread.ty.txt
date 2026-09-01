@@ -1,0 +1,15 @@
+class Config {
+    init(width: Int = 80, color: Bool = true) {}
+
+    width() -> Int { 80 }
+}
+
+fn config-from(options) {
+    Config(**options)
+}
+
+fn apply-options(%options) {
+    config-from(options).width()
+}
+
+print(apply-options(width: 100))
