@@ -18,6 +18,21 @@ typedef struct location Location;
 typedef struct expression Expr;
 typedef struct symbol Symbol;
 
+typedef enum compiler_literal_kind {
+        COMPILER_LITERAL_NONE,
+        COMPILER_LITERAL_INTEGER,
+        COMPILER_LITERAL_BOOLEAN,
+        COMPILER_LITERAL_STRING
+} CompilerLiteralKind;
+
+typedef struct compiler_literal {
+        CompilerLiteralKind kind;
+        imax integer;
+        bool boolean;
+        u8 const *string;
+        usize string_length;
+} CompilerLiteral;
+
 enum {
         TY_NAME_NONE,
         TY_NAME_VARIABLE,
@@ -342,6 +357,12 @@ compiler_global_count(Ty *ty);
 
 Symbol *
 compiler_global_sym(Ty *ty, usize i);
+
+/* Read-only bridge for constants whose runtime value has already been
+ * materialized.  In particular, a shadow typechecker can consume literal
+ * identities without consulting the legacy Type graph. */
+bool
+compiler_symbol_literal(Symbol const *symbol, CompilerLiteral *literal);
 
 symbol_vector *
 compiler_globals(Ty *ty);

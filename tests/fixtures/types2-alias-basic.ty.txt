@@ -1,0 +1,14 @@
+use TokenLocation = {
+    line: Int,
+    col: Int,
+    byte: Int
+}
+
+use Token = {
+    type: String,
+    start: TokenLocation,
+    end: TokenLocation,
+    ?meta: String | nil
+}
+
+let location: TokenLocation = {line: 1, col: 2, byte: 3}

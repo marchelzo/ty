@@ -1,0 +1,13 @@
+fn string-length(value: String | nil) -> Int {
+    if value == nil {
+        return 0
+    }
+
+    value.len()
+}
+
+fn choose(flag: Bool, value: String | nil) -> Int {
+    flag ? (value != nil ? value.len() : 0) : 0
+}
+
+string-length('shadow') + choose(true, 'flow')

@@ -1,0 +1,41 @@
+fn complete-domain(value: Int | String) -> Int {
+    match value {
+        text: String => #text,
+        number: Int => number
+    }
+}
+
+fn duplicate-boolean(value: Bool) -> Int {
+    match value {
+        true => 1,
+        true => 2,
+        false => 3
+    }
+}
+
+fn incomplete-boolean(value: Bool) -> Int {
+    match value {
+        true => 1
+    }
+}
+
+fn open-domain(value: _) -> Int {
+    match value {
+        number: Int => number,
+        _ => 0
+    }
+}
+
+fn tuple-domain(value: Float | (Float, Float)) -> Float {
+    match value {
+        (left, right) => left + right,
+        scalar => scalar
+    }
+}
+
+print(
+    complete-domain('covered'),
+    duplicate-boolean(false),
+    open-domain('open'),
+    tuple-domain(1.5)
+)
