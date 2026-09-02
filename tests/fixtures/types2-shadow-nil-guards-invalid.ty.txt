@@ -1,0 +1,21 @@
+class Slot {
+    __value: String | nil
+
+    init() {
+        __value = nil
+    }
+
+    clear() {
+        __value = nil
+    }
+
+    length() -> Int {
+        if __value != nil {
+            clear()
+            return __value.len()
+        }
+        0
+    }
+}
+
+print(Slot().length())

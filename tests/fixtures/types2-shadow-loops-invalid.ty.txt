@@ -1,0 +1,11 @@
+fn optional-element(xs: [?Int]) -> Int {
+    xs[0]
+}
+
+fn only-none(value: Some[Int] | None) -> Int {
+    match value {
+        None => 0
+    }
+}
+
+print(optional-element([1]), only-none(None))

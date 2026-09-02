@@ -1,0 +1,114 @@
+tag Plain;
+tag Boxed[T] {
+    label() -> String where T: {name: String} { describe(self) }
+}
+
+use Shape = Plain | Boxed[{name: String}]
+
+fn describe(item: {name: String}) -> String { "boxed {item.name}" }
+
+fn first-pair(xs: [Int]) -> (Int, Int) {
+    for (;;) {
+        if let [$a, $b] = xs {
+            return (a, b)
+        }
+    }
+}
+
+fn first-positive(xs: [Int]) -> Int {
+    for (;;) {
+        for x in xs {
+            if x > 0 {
+                return x
+            }
+        }
+        break
+    }
+    0
+}
+
+fn label(shape: Shape) -> String {
+    match shape {
+        Boxed(_) as boxed => boxed.label(),
+        Plain => 'plain'
+    }
+}
+
+fn head(queue: SharedQueue[Int]) -> ?Int {
+    match queue.try-take(0) {
+        Some(value) => value,
+        None => nil
+    }
+}
+
+fn pair-sum(a: String, b: String) -> Int { #a + #b }
+fn quad-sum(a: String, b: String, c: String, d: String) -> Int { #a + #b + #c + #d }
+
+fn spread-sum(text: String) -> Int {
+    let handlers = [(/(a)(b)/, pair-sum), (/(a)(b)(c)(d)/, quad-sum)]
+    for (pattern, handler) in handlers {
+        if let [matched, *captures] = text.match(pattern) {
+            return handler(*captures)
+        }
+    }
+    0
+}
+
+fn optional-head(xs: [?Int]) -> Int {
+    xs[0] ?? 0
+}
+
+class Cursor {
+    __state: {t: Int, y: ?Int, x: ?Int}
+
+    init() {
+        __state = {t: 0, y: nil, x: nil}
+    }
+
+    reset() {
+        self.__state = {t: 0, y: nil, x: nil}
+    }
+
+    t() -> Int { __state.t }
+}
+
+fn lookup(table: Dict[String, Int], key: String) -> Int {
+    match table(key) {
+        Some(value) => value,
+        None => -1
+    }
+}
+
+fn drain*(count: Int) -> Generator[Int] {
+    for i in 0..count {
+        yield i
+    }
+}
+
+fn first-yield() -> ?Int {
+    let stream = drain(3)
+    match stream() {
+        Some(value) => value,
+        None => nil
+    }
+}
+
+let queue = SharedQueue()
+queue.put(5)
+let cursor = Cursor()
+cursor.reset()
+
+print(
+    first-pair([1, 2]),
+    first-positive([-1, 3]),
+    label(Boxed({name: 'x'})),
+    label(Plain),
+    head(queue),
+    spread-sum('ab'),
+    spread-sum('abcd'),
+    optional-head([nil, 2]),
+    cursor.t(),
+    lookup(%{'a': 1}, 'a'),
+    lookup(%{'a': 1}, 'b'),
+    first-yield()
+)

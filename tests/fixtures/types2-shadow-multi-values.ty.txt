@@ -1,0 +1,54 @@
+fn square-and-negate(x: Int) -> |Int, Int| {
+    return x * x, -x
+}
+
+fn labelled(x: Int) {
+    return x, "n{x}"
+}
+
+fn maybe-pair(x: Int) -> nil | |String, Int| {
+    if x < 0 {
+        return nil
+    }
+    return "ok", x
+}
+
+fn forward() { labelled(3) }
+
+fn passthrough() { return square-and-negate(2) }
+
+fn total(items: Dict[String, Int]) -> Int {
+    let sum = 0
+    for key, value in items {
+        sum += #key + value
+    }
+    for key in items {
+        sum += #key
+    }
+    sum
+}
+
+fn indexed(names: Array[String]) -> Array[(String, Int)] {
+    let pairs: Array[(String, Int)] = []
+    for name, i in names {
+        pairs.push((name, i))
+    }
+    pairs
+}
+
+let a, b = square-and-negate(4)
+let c = square-and-negate(4)
+let d, e = labelled(4)
+let f, g = 1, 2
+let h, i = c
+let j, k = (1, 2)
+let l, m, n = 0, labelled(2)
+let o, p = forward()
+let q, r = passthrough()
+let s, t = maybe-pair(4)
+let u = maybe-pair(-1)
+let v, w = maybe-pair(-1)
+f = 7
+
+print(a, b, c, d, e, f, g, h, i, j, k, l, m, n, o, p, q, r, s, t, u, v, w)
+print(total(%{'ab': 1}), indexed(['x', 'y']))
