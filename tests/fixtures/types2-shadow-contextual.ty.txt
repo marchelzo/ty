@@ -1,0 +1,98 @@
+use Style = {?fg: ?Array[Int], ?bold: ?Bool}
+
+fn style-for(name: String) -> Style | nil {
+    match name {
+        'red'  => ({fg: [31]}),
+        'bold' => ({bold: true}),
+        _      => nil
+    }
+}
+
+fn style-or-plain(name: String) -> Style {
+    if name == 'bold' {
+        ({bold: true})
+    } else {
+        ({fg: [0]})
+    }
+}
+
+fn iround(x: Float) -> Int { int(x) }
+
+fn make-gradient(grad: (Float) -> (Int, Int, Int)) -> (Float) -> String {
+    t -> "{grad(t)}"
+}
+
+fn rgb-gradient(c1: (Int, Int, Int), c2: (Int, Int, Int)) -> (Float) -> String {
+    let (r1, g1, b1) = c1
+    let (r2, g2, b2) = c2
+    make-gradient(
+        t -> (
+            iround(r1 + (r2 - r1) * t),
+            iround(g1 + (g2 - g1) * t),
+            iround(b1 + (b2 - b1) * t)
+        )
+    )
+}
+
+class Longer {
+    __n: Int
+    init(n: Int) { __n = n }
+    __call__(s: String) -> Bool { #s > __n }
+}
+
+fn keep-long(words: Array[String]) -> Array[String] {
+    words.filter(Longer(1))
+}
+
+fn drop-blank(lines: Array[String]) -> Array[String] {
+    lines.dropWhile!(/^\s*$/)
+}
+
+fn tails(words: Array[String]) -> Array[String] {
+    words.map(&[1;])
+}
+
+fn unescape(part: String) -> String {
+    part.sub(/\\./, &[1;])
+}
+
+fn count-kinds(parts: Array[String | RegexMatch]) -> Int {
+    let n = 0
+    for match parts {
+        part: String => { n += 1 },
+        RegexMatch({captures}) => { n += #captures }
+    }
+    n
+}
+
+fn tally(words: Array[String]) -> Dict[String, Int] {
+    let counts = %{*: 0}
+    for w in words {
+        counts[w] += 1
+    }
+    counts
+}
+
+fn describe(c) -> String {
+    let (name, _, members) = doc(c)
+    "{name} with {#members} members"
+}
+
+let fds = %{nil: 2, *: #it}
+let key: String | nil = 'abc'
+let fd: Int = fds[key]
+
+print(
+    style-for('red'),
+    style-or-plain('bold'),
+    rgb-gradient((0, 0, 0), (255, 255, 255))(0.5),
+    keep-long(['a', 'bb']),
+    drop-blank(['', 'x']),
+    tails(['ab', 'c']),
+    unescape('a\\.b'),
+    count-kinds(['x', 'y']),
+    tally(['a', 'b', 'a']),
+    describe(Int),
+    fd,
+    fds[nil]
+)

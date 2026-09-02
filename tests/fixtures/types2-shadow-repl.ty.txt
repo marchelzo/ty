@@ -1,0 +1,65 @@
+import ty
+import path (Path)
+import readln (CompletionItem, CompletionLabel)
+
+fn token-end(t: Token) -> Int {
+    match t {
+        {end, *} => end.byte,
+        _        => 0
+    }
+}
+
+fn token-ends(ts: Array[Token]) -> Array[Int] {
+    ts.map!(t -> match t {
+        {id, end, *} and end.byte > 0 => end.byte,
+        _                             => 0
+    })
+}
+
+fn parsed-tokens(source: String) -> Array[Token] {
+    match ty.parse(source, tokens=true, deep=false, resolve=false) {
+        (Ok((_, {tokens, *})) or Err({tokens, *}))
+            => tokens.remove!(nil),
+        err
+            => []
+    }
+}
+
+fn colored(source: String) -> Array[(String, String)] {
+    let parts = [(it, '') for source]
+    for i in ..#parts {
+        parts[i] = (parts[i][0], 'plain')
+    }
+    parts
+}
+
+fn numbered(lines: Array[String]) -> Array[(Int, String)] {
+    lines.enumerate!()
+}
+
+fn labelled(names: Array[String], prefix: String) -> Array[CompletionItem] {
+    let completions: Array[(CompletionLabel, String)] = []
+    for name in names if name.starts?(prefix) {
+        let label: CompletionLabel | nil = match name {
+            /^_/ => nil,
+            _    => [name, ':']
+        }
+        if label {
+            completions.push((label, name[#prefix;]))
+        }
+    }
+    [*completions.sort!(by=\_.1)]
+}
+
+fn history-path() -> Path {
+    Path.home() / '.ty' / '.history'
+}
+
+print(
+    token-end(parsed-tokens('let x = 1')[0]),
+    token-ends(parsed-tokens('f(1)')),
+    colored('ab'),
+    numbered(['a', 'b']),
+    labelled(['abc', '_x', 'ab'], 'a'),
+    "{history-path()}".ends?('.history')
+)

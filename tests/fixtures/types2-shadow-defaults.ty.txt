@@ -1,0 +1,38 @@
+fn pad(x: Int, width: Int = 4) -> String { "{x:{width}}" }
+
+fn tail(s: String) -> String { s[1;] }
+
+fn tails(words: Array[String]) -> Array[String] { words.map(&[1;]) }
+
+fn tally(words: Array[String]) -> Dict[String, Int] {
+    let counts = %{*: 0}
+    for w in words {
+        counts[w] += 1
+    }
+    counts
+}
+
+fn merged(base: Dict[String, Int]) -> Int {
+    let d = %{**base, *: #it}
+    let total = 0
+    for key, value in d {
+        total += value + #key
+    }
+    total + d['xyz'] + #d
+}
+
+let fds = %{nil: 2, *: #it}
+let key: String | nil = 'abc'
+let fd: Int = fds[key]
+let none: Int = fds[nil]
+
+print(
+    pad(7),
+    pad(7, 2),
+    tail('abc'),
+    tails(['ab', 'c']),
+    tally(['a', 'b', 'a']),
+    merged(%{'q': 1}),
+    fd,
+    none
+)
