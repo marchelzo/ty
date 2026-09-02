@@ -105,6 +105,20 @@ fn next!(t) {
     next()
 }
 
+fn next-str() -> String {
+    match next() {
+        {str, *} => str,
+        token    => fail("expected a string but found: {token}")
+    }
+}
+
+fn next-comment() -> String {
+    match next() {
+        {comment, *} => comment,
+        token        => fail("expected a comment but found: {token}")
+    }
+}
+
 fn try-id() -> String | nil {
     if let {$id, *} = peek() {
         next()
@@ -402,7 +416,7 @@ fn cfun() {
     let (lib, prefix) = match (peek().type, peek(1)) {
         ('fn', _)               => (ty.Nil, ''),
         ('id', {type: 'fn', *}) => (expr(99), ''),
-        ('id', {str, *})        => (expr(99), next().str),
+        ('id', {str, *})        => (expr(99), next-str()),
         _                       => (expr(99), '')
     }
 
@@ -474,7 +488,7 @@ fn cfun() {
             let doc = nil
 
             while peek().type == 'comment' {
-                doc = "{doc ?? ''}{next().comment}"
+                doc = "{doc ?? ''}{next-comment()}"
             }
 
             let source = lex.state().source

@@ -227,10 +227,11 @@ pub class SQLite {
     }
 
     tables() -> Array[String] {
-        fetchAll(
+        let rows: Array[Array[String]] = fetchAll(
             "SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name",
             assoc=false
-        ).map(&0)
+        )
+        rows.map(&0)
     }
 
     dialect -> String { 'sqlite' }

@@ -96,7 +96,7 @@ pub fn compile(source) -> _ {
     }
 
     let prog = ty.Func(
-         params: [ty.Param({name: it, constraint: ty.Any}) for free if it != '_ety_push'],
+         params: [ty.Param({name: it, constraint: ty.Any}) for free ?? [] if it != '_ety_push'],
          body: $$[
             let _ety_blob = ::blob();
             let _ety_push = _ety_blob.push;

@@ -6292,6 +6292,11 @@ DoSubscript(Ty *ty, bool exec)
 
         case VALUE_STRING:
                 v = string_char(ty, &container, 1, NULL);
+                if (UNLIKELY(IsNil(v))) {
+                        put(TAGGED(TAG_INDEX_ERR, container, pop()));
+                        RaiseException(ty);
+
+                }
                 pop();
                 put(v);
                 break;

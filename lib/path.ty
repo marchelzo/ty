@@ -73,7 +73,7 @@ pub class Path {
         }
     }
 
-    ==(other: Path | String) -> Bool {
+    ==(other: Any) -> Bool {
         match other {
             p: Path => (__drv == p.__drv)
                     && (__root == p.__root)

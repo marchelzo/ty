@@ -299,7 +299,7 @@ fn _printer(kwargs) {
     Printer(**kwargs)
 }
 
-pretty = fn pretty(x, %kwargs) {
+pretty = fn pretty(x, %kwargs: Any) {
     if 'width' not in kwargs {
         kwargs['width'] = min(term-cols(), 60)
     }

@@ -480,11 +480,13 @@ doprint(Ty *ty, int argc, Value *kwargs, FILE *f)
                         break;
 
                 case VALUE_PTR:
+                        if (v->ptr == NULL) goto Show;
                         s = v->ptr;
                         n = strlen(v->ptr);
                         break;
 
                 default:
+                Show:
                         LockTy();
                         s = VSC(&ARG(i), show_flags);
                         UnlockTy();
