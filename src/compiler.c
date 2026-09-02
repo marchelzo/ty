@@ -5415,6 +5415,13 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
         case EXPRESSION_ARRAY:
                 if (IS_CTX(TYPE) && vN(e->elements) == 1) {
                         Expr *elem0 = v__(e->elements, 0);
+                        if (vN(e->optional) > 0 && v__(e->optional, 0)) {
+                                Expr *optional = NewExpr(ty, EXPRESSION_PREFIX_QUESTION);
+                                optional->operand = elem0;
+                                optional->start = elem0->start;
+                                optional->end = elem0->end;
+                                elem0 = optional;
+                        }
                         e->type = EXPRESSION_SUBSCRIPT;
                         e->container = NewExpr(ty, EXPRESSION_IDENTIFIER);
                         e->container->identifier = "Array";

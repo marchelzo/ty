@@ -51,7 +51,7 @@ run_case()
         printf '%s\n' "$result" >"$status"
 }
 
-for fixture in valid invalid overload-union flow flow-invalidation contracts class-operator operator-constraints pack-constraints scoped-obligations subscript-protocol member-protocol keyword-spread match-coverage recovery deferred nil-guards nil-guards-invalid; do
+for fixture in valid invalid overload-union flow flow-invalidation contracts class-operator operator-constraints pack-constraints scoped-obligations subscript-protocol member-protocol keyword-spread match-coverage recovery deferred nil-guards nil-guards-invalid loops loops-invalid; do
         source=$test_dir/fixtures/types2-shadow-$fixture.ty.txt
 
         run_case \
@@ -175,6 +175,22 @@ grep -Eq '"path":"[^"]*types2-shadow-nil-guards.ty.txt".*"types2_errors":0' \
 grep -Eq '"path":"[^"]*types2-shadow-nil-guards-invalid.ty.txt".*"code":"union-method-coverage"' \
         "$scratch/shadow.jsonl"
 grep -Eq '"path":"[^"]*types2-shadow-nil-guards-invalid.ty.txt".*"types2_errors":1,' \
+        "$scratch/shadow.jsonl"
+grep -Eq '"path":"[^"]*types2-shadow-loops.ty.txt".*"types2_errors":0,' \
+        "$scratch/shadow.jsonl"
+grep -Eq '"path":"[^"]*types2-shadow-loops.ty.txt".*"types2_warnings":0,' \
+        "$scratch/shadow.jsonl"
+grep -Eq '"path":"[^"]*types2-shadow-loops.ty.txt".*"pending_obligations":0' \
+        "$scratch/shadow.jsonl"
+grep -Eq '"path":"[^"]*types2-shadow-loops.ty.txt".*"deferred_reasons":\{[^}]*"spread-length":[1-9]' \
+        "$scratch/shadow.jsonl"
+grep -Eq '"path":"[^"]*types2-shadow-loops-invalid.ty.txt".*"code":"function-fallthrough"' \
+        "$scratch/shadow.jsonl"
+grep -Eq '"path":"[^"]*types2-shadow-loops-invalid.ty.txt".*"code":"non-exhaustive-match"' \
+        "$scratch/shadow.jsonl"
+grep -Eq '"path":"[^"]*types2-shadow-loops-invalid.ty.txt".*"types2_errors":1,' \
+        "$scratch/shadow.jsonl"
+grep -Eq '"path":"[^"]*types2-shadow-loops-invalid.ty.txt".*"types2_warnings":1,' \
         "$scratch/shadow.jsonl"
 grep -Eq '"path":"[^"]*types2-shadow-deferred.ty.txt".*"deferred_nodes":6,' \
         "$scratch/shadow.jsonl"

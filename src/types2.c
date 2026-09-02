@@ -145,6 +145,7 @@ typedef enum types2_flow_bit {
 
 typedef struct types2_flow {
         unsigned outcomes;
+        unsigned break_depths;
         T2Type value;
         T2Type returns;
 } Types2Flow;
@@ -171,6 +172,7 @@ typedef struct types2_call_effect {
         X(CALLABLE_TOP,           "callable-top",           RUNTIME)           \
         X(DYNAMIC_OPERAND,        "dynamic-operand",        RUNTIME)           \
         X(DYNAMIC_SPREAD,         "dynamic-spread",         RUNTIME)           \
+        X(SPREAD_LENGTH,          "spread-length",          RUNTIME)           \
         X(DYNAMIC_KEYWORD_SPREAD, "dynamic-keyword-spread", RUNTIME)           \
         X(DYNAMIC_MEMBER_NAME,    "dynamic-member-name",    RUNTIME)           \
         X(DYNAMIC_METHOD_NAME,    "dynamic-method-name",    RUNTIME)           \
@@ -1127,12 +1129,12 @@ instantiate_binding(
              && t2_type_variable_kind(shadow->universe, binding->type)
                 == T2_VARIABLE_WEAK
         ) {
-                T2Type zonked = t2_solver_zonk(
+                T2Type stored = t2_solver_solution(
                         shadow->solver,
                         binding->type,
                         T2_PREFER_LOWER_BOUND
                 );
-                if (zonked != T2_TYPE_INVALID) return zonked;
+                if (stored != T2_TYPE_INVALID) return stored;
         }
         return binding->type;
 }
@@ -2402,6 +2404,16 @@ lower_named_type(
 }
 
 static T2Type
+lower_array_element_type(Types2Shadow *shadow, Expr const *array, int index)
+{
+        T2Type element = lower_type(shadow, v__(array->elements, index));
+        bool optional = index < vN(array->optional) && v__(array->optional, index);
+        if (!optional) return element;
+        T2Type nil = t2_primitive(shadow->universe, T2_TYPE_NIL);
+        return t2_union(shadow->universe, (T2Type[]) { element, nil }, 2);
+}
+
+static T2Type
 lower_function_type(Types2Shadow *shadow, Expr const *expression)
 {
         Expr const *input = expression->left;
@@ -3561,7 +3573,7 @@ lower_type(Types2Shadow *shadow, Expr const *source)
         {
                 T2Type argument = vN(expression->elements) == 0
                                 ? t2_primitive(shadow->universe, T2_TYPE_DYNAMIC)
-                                : lower_type(shadow, v__(expression->elements, 0));
+                                : lower_array_element_type(shadow, expression, 0);
                 result = nominal_application(
                         shadow,
                         CLASS_ARRAY,
@@ -3718,6 +3730,22 @@ resolved_operation_type(
         if (t2_type_kind(shadow->universe, type) != T2_TYPE_RECORD) return type;
         T2Type zonked = t2_solver_zonk(shadow->solver, type, preference);
         return zonked == T2_TYPE_INVALID ? type : zonked;
+}
+
+static T2Type
+assumed_supertype(Types2Shadow *shadow, T2Type type)
+{
+        T2Type head = resolved_type_head(shadow, type, T2_PREFER_LOWER_BOUND);
+        if (t2_type_kind(shadow->universe, head) != T2_TYPE_VARIABLE) return type;
+        T2Type assumed = T2_TYPE_INVALID;
+        for (size_t i = 0; i < shadow->upper_assumption_count; ++i) {
+                Types2UpperAssumption const *entry = &shadow->upper_assumptions[i];
+                if (entry->subtype != head) continue;
+                assumed = assumed == T2_TYPE_INVALID
+                        ? entry->supertype
+                        : t2_meet(shadow->universe, assumed, entry->supertype);
+        }
+        return assumed == T2_TYPE_INVALID ? type : assumed;
 }
 
 static bool
@@ -5711,6 +5739,45 @@ record_call_effect(Types2Shadow *shadow, T2Type callable)
         ) shadow->failed = true;
 }
 
+static bool
+spread_fills_positional_suffix(
+        Types2Shadow *shadow,
+        T2Type callable,
+        size_t first,
+        T2Type element,
+        char const *const *keywords,
+        size_t keyword_count,
+        Expr const *site
+)
+{
+        size_t count = t2_callable_parameter_count(shadow->universe, callable);
+        for (size_t i = first; i < count; ++i) {
+                T2ParameterSpec parameter;
+                if (!t2_callable_parameter(
+                        shadow->universe,
+                        callable,
+                        i,
+                        &parameter
+                )) continue;
+                if (
+                        parameter.kind != T2_PARAMETER_POSITIONAL_ONLY
+                     && parameter.kind != T2_PARAMETER_POSITIONAL_OR_KEYWORD
+                     && parameter.kind != T2_PARAMETER_POSITIONAL_REST
+                ) continue;
+                bool named = false;
+                for (size_t k = 0; k < keyword_count && !named; ++k) {
+                        named = parameter.name != NULL
+                             && keywords[k] != NULL
+                             && strcmp(parameter.name, keywords[k]) == 0;
+                }
+                if (named) continue;
+                if (!candidate_argument(shadow, element, parameter.type, site)) {
+                        return false;
+                }
+        }
+        return true;
+}
+
 static T2Type
 apply_callable_candidate(
         Types2Shadow *shadow,
@@ -5831,6 +5898,32 @@ apply_callable_candidate(
                                         site,
                                         NULL
                                 );
+                                continue;
+                        }
+                        if (
+                                i + 1 == argument_count
+                             && (
+                                        !found
+                                     || parameter.kind == T2_PARAMETER_POSITIONAL_ONLY
+                                     || parameter.kind
+                                        == T2_PARAMETER_POSITIONAL_OR_KEYWORD
+                                )
+                        ) {
+                                if (selected != SIZE_MAX) assigned[selected] = false;
+                                if (!spread_fills_positional_suffix(
+                                        shadow,
+                                        callable,
+                                        selected == SIZE_MAX ? parameter_count : selected,
+                                        element,
+                                        keywords,
+                                        keyword_count,
+                                        site
+                                )) {
+                                        free(assigned);
+                                        return T2_TYPE_INVALID;
+                                }
+                                gradual_positional_spread = true;
+                                defer_node(shadow, TYPES2_DEFER_SPREAD_LENGTH, site, NULL);
                                 continue;
                         }
                         if (!found) {
@@ -6156,7 +6249,7 @@ infer_call_types(
                                                  shadow->level,
                                                  "dynamic call argument"
                                            )
-                                         : arguments[i];
+                                         : assumed_supertype(shadow, arguments[i]);
                         parameters[i] = (T2ParameterSpec) {
                                 .type = parameter,
                                 .kind = T2_PARAMETER_POSITIONAL_ONLY,
@@ -6174,7 +6267,7 @@ infer_call_types(
                                                  shadow->level,
                                                  "dynamic keyword argument"
                                            )
-                                         : keyword_arguments[i];
+                                         : assumed_supertype(shadow, keyword_arguments[i]);
                         parameters[argument_count + i] = (T2ParameterSpec) {
                                 .name = keywords[i],
                                 .type = parameter,
@@ -8339,6 +8432,49 @@ check_subscript_write(
         return false;
 }
 
+static T2Type
+member_write_expected_type(
+        Types2Shadow *shadow,
+        T2Type object,
+        char const *name,
+        Expr const *site
+)
+{
+        object = resolved_operation_type(
+                shadow,
+                object,
+                T2_PREFER_LOWER_BOUND
+        );
+        T2TypeKind kind = t2_type_kind(shadow->universe, object);
+        if (kind == T2_TYPE_RECORD) {
+                T2FieldCapability capability;
+                T2Type field = t2_record_field_type(
+                        shadow->universe,
+                        object,
+                        name,
+                        NULL,
+                        &capability
+                );
+                return field != T2_TYPE_INVALID && capability == T2_FIELD_WRITABLE
+                     ? field
+                     : T2_TYPE_INVALID;
+        }
+        if (kind != T2_TYPE_NOMINAL) return T2_TYPE_INVALID;
+        Types2Nominal *nominal = nominal_from_type(shadow, object);
+        if (nominal == NULL) return T2_TYPE_INVALID;
+        int class_id = nominal->class_id;
+        (void)ensure_class_interface(shadow, class_id);
+        Types2Member *field = find_member(
+                shadow,
+                class_id,
+                name,
+                TYPES2_MEMBER_FIELD,
+                false
+        );
+        if (field == NULL || !field->writable) return T2_TYPE_INVALID;
+        return instantiate_member(shadow, field, object, site);
+}
+
 static bool
 check_member_write(
         Types2Shadow *shadow,
@@ -9173,6 +9309,54 @@ implicit_member_receiver(Types2Shadow *shadow, Symbol const *member)
                 );
         }
         return receiver;
+}
+
+static T2Type
+assignment_expected_type(Types2Shadow *shadow, Expr const *source)
+{
+        Expr const *target = source == NULL ? NULL : unfurl(source);
+        if (target == NULL) return T2_TYPE_INVALID;
+        if (target->type == EXPRESSION_IDENTIFIER) {
+                T2Type receiver = implicit_member_receiver(shadow, target->symbol);
+                if (receiver != T2_TYPE_INVALID) {
+                        return member_write_expected_type(
+                                shadow,
+                                receiver,
+                                target->identifier,
+                                target
+                        );
+                }
+                Types2Binding *binding = find_binding(shadow, target->symbol);
+                if (
+                        binding == NULL
+                     || !binding->initialized
+                     || binding->scheme != NULL
+                     || binding->type == T2_TYPE_INVALID
+                ) return T2_TYPE_INVALID;
+                T2TypeKind kind = t2_type_kind(shadow->universe, binding->type);
+                return kind == T2_TYPE_META || kind == T2_TYPE_VARIABLE
+                     ? T2_TYPE_INVALID
+                     : binding->type;
+        }
+        if (
+                target->type != EXPRESSION_MEMBER_ACCESS
+             && target->type != EXPRESSION_SELF_ACCESS
+        ) return T2_TYPE_INVALID;
+        Expr const *object = target->object == NULL ? NULL : unfurl(target->object);
+        if (
+                object == NULL
+             || target->member == NULL
+             || (
+                        object->type != EXPRESSION_SELF
+                     && object->type != EXPRESSION_IDENTIFIER
+                )
+        ) return T2_TYPE_INVALID;
+        return member_write_expected_type(
+                shadow,
+                infer_expression(shadow, target->object),
+                target->member->identifier,
+                target
+        );
 }
 
 static bool
@@ -12757,7 +12941,26 @@ infer_expression(Types2Shadow *shadow, Expr const *source)
         case EXPRESSION_MAYBE_EQ:
         {
                 T2SolverMark assignment = t2_solver_mark(shadow->solver);
-                T2Type value = infer_expression(shadow, expression->value);
+                T2Type expected = fresh_literal_expression(expression->value)
+                                ? assignment_expected_type(shadow, expression->target)
+                                : T2_TYPE_INVALID;
+                T2Type value = T2_TYPE_INVALID;
+                if (expected != T2_TYPE_INVALID) {
+                        T2SolverMark contextual = t2_solver_mark(shadow->solver);
+                        if (contextual_fresh_literal(
+                                shadow,
+                                expression->value,
+                                expected
+                        )) {
+                                t2_solver_commit(shadow->solver, contextual);
+                                value = expected;
+                        } else {
+                                t2_solver_rollback(shadow->solver, contextual);
+                        }
+                }
+                if (value == T2_TYPE_INVALID) {
+                        value = infer_expression(shadow, expression->value);
+                }
                 bool valid = assign_lvalue(shadow, expression->target, value, false);
                 if (
                         !valid
@@ -13260,6 +13463,7 @@ flow_join(Types2Shadow *shadow, Types2Flow left, Types2Flow right)
         T2Type never = t2_primitive(shadow->universe, T2_TYPE_NEVER);
         return (Types2Flow) {
                 .outcomes = left.outcomes | right.outcomes,
+                .break_depths = left.break_depths | right.break_depths,
                 .value = t2_join(
                         shadow->universe,
                         left.value == T2_TYPE_INVALID ? never : left.value,
@@ -13271,6 +13475,33 @@ flow_join(Types2Shadow *shadow, Types2Flow left, Types2Flow right)
                         right.returns == T2_TYPE_INVALID ? never : right.returns
                 )
         };
+}
+
+static Types2Flow
+loop_flow(Types2Shadow *shadow, Types2Flow body, bool infinite)
+{
+        bool exits = !infinite || (body.break_depths & 1u) != 0;
+        unsigned outer = body.break_depths >> 1;
+        return (Types2Flow) {
+                .outcomes = (exits ? TYPES2_FLOW_FALLS_THROUGH : 0)
+                          | (body.outcomes & (TYPES2_FLOW_RETURNS | TYPES2_FLOW_THROWS))
+                          | (outer != 0 ? TYPES2_FLOW_BREAKS : 0),
+                .break_depths = outer,
+                .value = t2_primitive(
+                        shadow->universe,
+                        exits ? T2_TYPE_NIL : T2_TYPE_NEVER
+                ),
+                .returns = body.returns
+        };
+}
+
+static bool
+loop_condition_is_true(Expr const *condition)
+{
+        Expr const *expression = condition == NULL ? NULL : unfurl(condition);
+        return expression != NULL
+            && expression->type == EXPRESSION_BOOLEAN
+            && expression->boolean;
 }
 
 static bool
@@ -14339,8 +14570,21 @@ infer_pattern(Types2Shadow *shadow, Expr const *pattern, T2Type subject)
         }
         case EXPRESSION_ALIAS_PATTERN:
         {
-                bool valid = assign_lvalue(shadow, pattern, subject, true);
-                return infer_pattern(shadow, pattern->aliased, subject) && valid;
+                bool reachable = infer_pattern(shadow, pattern->aliased, subject);
+                bool certain = false;
+                T2Type narrowed = reachable
+                                ? pattern_coverage(
+                                          shadow,
+                                          pattern->aliased,
+                                          subject,
+                                          &certain
+                                  )
+                                : subject;
+                if (
+                        !certain
+                     || t2_type_kind(shadow->universe, narrowed) == T2_TYPE_NEVER
+                ) narrowed = subject;
+                return assign_lvalue(shadow, pattern, narrowed, true) && reachable;
         }
         case EXPRESSION_INTEGER:
         case EXPRESSION_STRING:
@@ -15053,6 +15297,52 @@ nominal_pattern_coverage_x(
 }
 
 static T2Type
+bare_tag_pattern_coverage_x(
+        Types2Shadow *shadow,
+        T2Type subject,
+        int tag_id,
+        unsigned depth
+)
+{
+        T2Type never = t2_primitive(shadow->universe, T2_TYPE_NEVER);
+        if (depth >= 64) return never;
+        subject = resolved_type_head(
+                shadow,
+                subject,
+                T2_PREFER_LOWER_BOUND
+        );
+        T2TypeKind kind = t2_type_kind(shadow->universe, subject);
+        if (kind == T2_TYPE_UNION) {
+                T2Type result = never;
+                for (size_t i = 0; i < t2_type_arity(shadow->universe, subject); ++i) {
+                        result = t2_join(
+                                shadow->universe,
+                                result,
+                                bare_tag_pattern_coverage_x(
+                                        shadow,
+                                        t2_type_child(shadow->universe, subject, i),
+                                        tag_id,
+                                        depth + 1
+                                )
+                        );
+                }
+                return result;
+        }
+        if (kind != T2_TYPE_NOMINAL) return never;
+        Types2Nominal *nominal = nominal_from_type(shadow, subject);
+        if (nominal == NULL || nominal->tag_id != tag_id) return never;
+        if (t2_type_arity(shadow->universe, subject) == 0) return subject;
+        T2Type payload = resolved_type_head(
+                shadow,
+                t2_type_child(shadow->universe, subject, 0),
+                T2_PREFER_LOWER_BOUND
+        );
+        return t2_type_kind(shadow->universe, payload) == T2_TYPE_NEVER
+             ? subject
+             : never;
+}
+
+static T2Type
 pattern_coverage(
         Types2Shadow *shadow,
         Expr const *pattern,
@@ -15102,6 +15392,15 @@ pattern_coverage(
         }
         case EXPRESSION_MUST_EQUAL:
         {
+                if (pattern->symbol != NULL && SymbolIsTag(pattern->symbol)) {
+                        if (certain != NULL) *certain = true;
+                        return bare_tag_pattern_coverage_x(
+                                shadow,
+                                subject,
+                                pattern->symbol->tag,
+                                0
+                        );
+                }
                 T2Type literal = literal_symbol_type(shadow, pattern->symbol);
                 if (literal == T2_TYPE_INVALID) return never;
                 if (certain != NULL) *certain = true;
@@ -15461,6 +15760,20 @@ replace_callable_channels(
         );
         free(parameters);
         return replacement;
+}
+
+static T2Type
+tag_method_self_type(Types2Shadow *shadow, Expr const *function, T2Type receiver)
+{
+        if (
+                function->class == NULL
+             || function->class->def == NULL
+             || function->class->def->type != STATEMENT_TAG_DEFINITION
+             || receiver == T2_TYPE_INVALID
+             || t2_type_kind(shadow->universe, receiver) != T2_TYPE_NOMINAL
+             || t2_type_arity(shadow->universe, receiver) != 1
+        ) return receiver;
+        return t2_type_child(shadow->universe, receiver, 0);
 }
 
 static T2Type
@@ -15836,6 +16149,8 @@ infer_single_function(Types2Shadow *shadow, Expr const *function)
                                 receiver,
                                 constructor
                         );
+                } else {
+                        self_type = tag_method_self_type(shadow, function, receiver);
                 }
                 self_binding->type = self_type;
                 self_binding->initialized = true;
@@ -17118,9 +17433,11 @@ infer_statement(Types2Shadow *shadow, Stmt const *statement)
                         );
                         unsigned prior_terminal = result.outcomes
                                                 & ~TYPES2_FLOW_FALLS_THROUGH;
+                        unsigned prior_break_depths = result.break_depths;
                         T2Type prior_returns = result.returns;
                         result = next;
                         result.outcomes |= prior_terminal;
+                        result.break_depths |= prior_break_depths;
                         result.returns = t2_join(
                                 shadow->universe,
                                 prior_returns,
@@ -17525,12 +17842,12 @@ infer_statement(Types2Shadow *shadow, Stmt const *statement)
                 if (statement->for_loop.next != NULL) {
                         (void)infer_expression(shadow, statement->for_loop.next);
                 }
-                result = (Types2Flow) {
-                        .outcomes = TYPES2_FLOW_FALLS_THROUGH
-                                  | (body.outcomes & (TYPES2_FLOW_RETURNS | TYPES2_FLOW_THROWS)),
-                        .value = nil,
-                        .returns = body.returns
-                };
+                result = loop_flow(
+                        shadow,
+                        body,
+                        statement->for_loop.cond == NULL
+                     || loop_condition_is_true(statement->for_loop.cond)
+                );
                 break;
         }
 
@@ -17577,20 +17894,18 @@ infer_statement(Types2Shadow *shadow, Stmt const *statement)
                         (void)infer_expression(shadow, statement->each._while);
                 }
                 Types2Flow body = infer_statement(shadow, statement->each.body);
-                result = (Types2Flow) {
-                        .outcomes = TYPES2_FLOW_FALLS_THROUGH
-                                  | (body.outcomes & (TYPES2_FLOW_RETURNS | TYPES2_FLOW_THROWS)),
-                        .value = nil,
-                        .returns = body.returns
-                };
+                result = loop_flow(shadow, body, false);
                 break;
         }
 
         case STATEMENT_WHILE:
         {
+                bool infinite = vN(statement->_while.parts) == 1;
                 for (int i = 0; i < vN(statement->_while.parts); ++i) {
                         struct condpart const *part = v__(statement->_while.parts, i);
                         T2Type condition = infer_expression(shadow, part->e);
+                        infinite &= part->target == NULL
+                                 && loop_condition_is_true(part->e);
                         if (part->target != NULL) {
                                 (void)infer_refutable_pattern(
                                         shadow,
@@ -17600,12 +17915,7 @@ infer_statement(Types2Shadow *shadow, Stmt const *statement)
                         }
                 }
                 Types2Flow body = infer_statement(shadow, statement->_while.block);
-                result = (Types2Flow) {
-                        .outcomes = TYPES2_FLOW_FALLS_THROUGH
-                                  | (body.outcomes & (TYPES2_FLOW_RETURNS | TYPES2_FLOW_THROWS)),
-                        .value = nil,
-                        .returns = body.returns
-                };
+                result = loop_flow(shadow, body, infinite);
                 break;
         }
 
@@ -17702,8 +18012,7 @@ infer_statement(Types2Shadow *shadow, Stmt const *statement)
                         });
                 }
                 if (statement->type == STATEMENT_WHILE_MATCH) {
-                        result.outcomes |= TYPES2_FLOW_FALLS_THROUGH;
-                        result.value = nil;
+                        result = loop_flow(shadow, result, false);
                 }
                 break;
         }
@@ -17735,6 +18044,7 @@ infer_statement(Types2Shadow *shadow, Stmt const *statement)
                                 final.returns
                         );
                         result.outcomes |= final.outcomes & ~TYPES2_FLOW_FALLS_THROUGH;
+                        result.break_depths |= final.break_depths;
                         if ((final.outcomes & TYPES2_FLOW_FALLS_THROUGH) == 0) {
                                 result.outcomes = final.outcomes;
                                 result.value = final.value;
@@ -17748,6 +18058,11 @@ infer_statement(Types2Shadow *shadow, Stmt const *statement)
                         result.value = infer_expression(shadow, statement->expression);
                 } else result.value = nil;
                 result.outcomes = TYPES2_FLOW_BREAKS;
+                result.break_depths = 1u << (
+                        statement->depth > 32 ? 31
+                      : statement->depth > 1  ? statement->depth - 1
+                      :                         0
+                );
                 result.returns = never;
                 break;
         case STATEMENT_CONTINUE:
@@ -18884,7 +19199,10 @@ paint_type(FILE *out, char const *text)
                         paint(out, "0");
                 } else if (isalpha(c) || c == '_') {
                         size_t start = i;
-                        while (type_word_char((unsigned char)text[i], (unsigned char)text[i + 1])) ++i;
+                        while (
+                                text[i] != '\0'
+                             && type_word_char((unsigned char)text[i], (unsigned char)text[i + 1])
+                        ) ++i;
                         size_t length = i - start;
                         if (primitive_type_word(text + start, length)) paint(out, "36");
                         else if (structural_type_word(text + start, length)) paint(out, "2");

@@ -970,6 +970,8 @@ class Dict[K, V] : Iterable[K, V] {
 
     pop(i: ?Int) -> (K, V);
 
+    __call__(k: K) -> Some[V] | None;
+
     keep(f: (K, V) -> Any) -> Dict[K, V];
     keep!(f: (K, V) -> Any) -> Dict[K, V];
 
@@ -1648,7 +1650,7 @@ class Generator[T, S] : Iter[T] {
         self(nil as S)
     }
 
-    __call__(arg: S) -> Some[T] | None {
+    __call__(arg: ?S) -> Some[T] | None {
         self(arg if arg != nil)
     }
 

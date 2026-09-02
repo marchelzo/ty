@@ -204,7 +204,7 @@ from the audit. None of that changes the authority boundary described above.
 Steps 1 through 4 of the previous handoff are complete, and Step 5 has begun.
 Since the audited revision `a5746a3` the shadow gained:
 
-- reasoned deferral telemetry (34 reasons in four classes) with per-site trace
+- reasoned deferral telemetry (35 reasons in four classes) with per-site trace
   events, and structural hashes on diagnostic events;
 - `tools/types2-corpus-summary.ty`, the checked-in classification file, and
   the strict corpus gate `tests/types2-corpus.sh`;
@@ -267,21 +267,83 @@ Three runtime defects were found and repaired along the way:
   called `rmtree` on a `Path | nil` field without a guard; it now checks
   `__path != nil` first, as `TempFile.__drop__` already did.
 
+Since revision `c8a148c` the session that worked through `ty -ct lib/term.ty`
+(16 errors and 7 warnings at the start, none at the end) added:
+
+- loop divergence: `for (;;)` and `while true` only fall through when the
+  body breaks out of that loop; `Types2Flow` carries a `break_depths` bitmask
+  so `break break` is attributed to the enclosing loop and `while match`
+  consumes its arms' breaks (`types2-shadow-loops` fixtures);
+- `self` inside a tag method is the payload type `T`, as the runtime unwraps
+  it (`K(1).f()` sees `1`; implicit sibling calls do not exist in tag methods);
+- a call through a still-forward binding (a later top-level function used
+  from an earlier class or tag body) widens rigid argument variables through
+  the scoped `where` assumptions before recording the callee's upper bound, so
+  the obligation checked at the definition no longer mentions a bound that has
+  left scope (`assumed_supertype`);
+- `pattern as name` binds the pattern's narrowed type, not the whole subject;
+- a bare tag pattern (`None`, `Plain`) is `EXPRESSION_MUST_EQUAL` on a tag
+  symbol and now covers exactly the payload-less arm `Tag[Never]`, matching the
+  runtime, which does not let `None` match `None(3)`;
+- a typed iterable spread (`handler(*captures)` with `captures: [String]`) fills
+  zero or more remaining positional slots when every reachable slot accepts the
+  element type; the arity stays a runtime check recorded as the new
+  `spread-length` runtime deferral;
+- contextual typing for assignments: a fresh record or array literal written
+  to a declared field (`__cursor = {...}`, `self.x = [...]`) or to a binding
+  with a non-meta type is typed against the declared type inside its own
+  solver transaction, so writable-field invariance no longer rejects
+  `{y: nil}` against `{y: ?Int}`;
+- reading a mutable binding resolves its weak meta one level (the stored
+  lower bound) instead of deep-zonking, so `let q = SharedQueue(); q.put(5)`
+  keeps the element meta open and `f(q)` with `SharedQueue[Int]` still unifies
+  it instead of freezing the literal `5`; the same change resolved the
+  `help.ty:166` literal-default call;
+- `[?T]` annotations: `symbolize_expression` rewrites `[T]` to `Array[T]` in
+  type context and silently dropped the optional marker for both checkers;
+  the rewrite now wraps the element in `?` so `[?Int]` is `Array[Int | nil]`
+  (`src/compiler.c`, not `src/types.c`);
+- the `-t` diagnostic printer read one byte past a type string while colouring
+  identifiers (`paint_type`), caught by ASan on the first `term` run.
+
+Library contracts corrected in the same pass, each checked against the
+runtime first:
+
+- `lib/prelude.ty`: `Dict` gained the `__call__(k: K) -> Some[V] | None`
+  prototype that the VM implements natively (`%{'a': 1}('a')` is `Some(1)`),
+  and `Generator.__call__` takes `arg: ?S` because a generator may be called
+  with no argument;
+- `lib/os.ty`: `poll` returned pairs for plain descriptors and triples only
+  when user data was attached, but was declared as `(Int, Int, ?T)` triples;
+  it is now two overloads, `[Int | (Int, Int)] -> Ok[[(Int, Int)]]` and the
+  user-data form, both with `timeout` defaulting to nil as the builtin does;
+- `lib/term.ty`: `title` sliced `s[0]` (nil on an empty string) and now uses
+  `s[;1]`; the `_size` helpers wrote the thread-local `size` and then read it
+  after `ioctl`, which the conservative call invalidation cannot see through,
+  so they share a `query(fd) -> WinSize` helper that works on a local;
+- `test.ty:24` called `some?()` after the prelude made it a getter, and the
+  legacy checker rejects `.some?` on `Some[T] | None` because `None` only has a
+  static getter, so the harness now tests `:: Some`.
+
 The last clean validation run used the clang ASan build and produced:
 
-- all 78 files under `tests/` pass when run as `ty --test FILE`; the
-  `test.ty` harness itself did not compile at handoff because an uncommitted
-  prelude edit turned `Some.some?()` into a getter while `test.ty:24` still
-  calls it, which is unrelated to types2;
+- `./ty test.ty`: 78 passed;
 - the types2 core unit suite: passed;
-- shadow-on/shadow-off equivalence: passed, including the `deferred` fixture;
+- shadow-on/shadow-off equivalence: passed, including the new `loops` and
+  `loops-invalid` fixtures;
 - the strict corpus gate: passed;
-- the startup corpus: 16 units, 0 unsupported nodes, 1,626 deferred nodes
-  (1,137 runtime, 164 incomplete, 325 external, 0 recovery), and 1 pending
+- the startup corpus: 16 units, 0 unsupported nodes, 1,624 deferred nodes
+  (1,137 runtime, 165 incomplete, 322 external, 0 recovery), and 1 pending
   terminal obligation;
-- 157 raw types2 diagnostic events (144 errors, 13 warnings) reducing to 156
-  unique `(unit, line, column, code)` diagnostics, all classified;
-- `ty -tc lib/path.ty` reports only the intended unreachable-pattern warning.
+- 127 raw types2 diagnostic events (121 errors, 6 warnings) reducing to 126
+  unique `(unit, line, column, code)` diagnostics, all classified; `term`
+  contributes none;
+- `ty -tc lib/path.ty` reports only the intended unreachable-pattern warning
+  and `ty -tc lib/term.ty` reports nothing.
+
+`tests/types2-corpus-classification.json`, `tests/types2-corpus.sh`,
+`tools/types2-corpus-summary.ty`, and `tests/dict_type_predicate.ty` are still
+untracked in the working tree; commit them with the next milestone.
 
 The deferral totals fell from 3,106 to about 1,700 because imported bindings
 replaced Dynamic at 700 call sites, and the diagnostic count first rose from
@@ -295,27 +357,30 @@ The most common deferral reasons in that snapshot were:
 | Reason | Class | Count | Notes |
 |---|---|---:|---|
 | `dynamic-callee` | runtime | 706 | mostly downstream of the `external` gaps below; Dynamic provenance is not tracked yet |
-| `unresolved-binding` | external | 325 | AST constructors from `ty` referenced by `prelude` before that module is compiled; macro builtins `peek`/`next`/`expr`; builtins without prototypes such as `type` and `show`; nested mutually recursive functions |
+| `unresolved-binding` | external | 322 | AST constructors from `ty` referenced by `prelude` before that module is compiled; builtins without prototypes such as `show`, `ptr`, `int`, and `members`; nested mutually recursive functions |
 | `runtime-value` | runtime | 278 | raw VM values spliced by macros |
-| `dynamic-operand` | runtime | 127 | |
+| `dynamic-operand` | runtime | 115 | |
 | `template` | incomplete | 72 | |
-| `operator-open-operand` | incomplete | 31 | |
 | `set-type` | incomplete | 22 | all in `ffi` |
-| `operator-protocol` | incomplete | 21 | |
 | `keyword-row` | incomplete | 18 | |
+| `callable-top` | runtime | 17 | |
+| `computed-type` | incomplete | 12 | |
+| `spread-arity` | incomplete | 9 | spreads whose element is still an open meta |
+| `spread-length` | runtime | 3 | typed spreads whose length is a runtime check |
 
 The remaining pending obligation is the `<=>` pack obligation from
 `min`/`max` at `lib/chalk.ty:609`; it is classified as an incomplete pack
 feature, not a library error.
 
 The classification file records 2 expected corrections, 20 library defects,
-10 incomplete features, and 124 unexplained diagnostics.  Keys carry line
+9 incomplete features, and 95 unexplained diagnostics.  Keys carry line
 numbers, so an edit that inserts lines in a library file moves every later
 key; reseed with `--seed --classification` and restore the moved entries'
 classes before treating them as new.  The unexplained
-group is the triage queue.  Its largest codes are `missing-field` (26),
-`bad-call` (23), `union-member-coverage` (16), `union-method-coverage` (14),
-and `unreachable-pattern` (10).  Most `missing-field` entries read `.id`/`.str`
+group is the triage queue.  Its largest codes are `missing-field` (23),
+`bad-call` (21), `union-method-coverage` (9), `invalid-trait-member` (7), and
+`invalid-override`, `not-callable`, `union-operator-coverage`, and
+`unsupported-operator` (6 each).  Most `missing-field` entries read `.id`/`.str`
 on tokens produced by the `ty/token` lexer builtins, whose interface is
 unavailable until that module is compiled.  Three `bad-call` entries appeared
 when operator ties started resolving by declaration order; a union operand
@@ -837,6 +902,19 @@ problems this work is intended to eliminate.
   being an explicit, isolated side effect.
 - Preserve unrelated user changes in the working tree and inspect the diff by
   path before formatting or bulk rewrites.
+- A class or tag method body is inferred at the class statement's checkpoint,
+  before later top-level functions are symbolized, so a forward call sees only
+  the callee's flexible meta.  Keep call-site bounds free of scoped `where`
+  assumptions (widen through `assumed_supertype`) rather than trying to lower
+  the later signature early; its annotations have no symbols yet.
+- Read a mutable binding through `t2_solver_solution`, never a deep zonk: a
+  zonk freezes every nested open meta at its current lower bound, which turns
+  `SharedQueue[$e]` with one `put(5)` into `SharedQueue[5]`.
+- `??=` is not an operator in the language or the prelude; `x ??= y` lexes as
+  a user operator and throws at runtime.  Write `x = x ?? y`.
+- `symbolize_expression` rewrites `[T]` to `Array[T]` in type context; any
+  new array-type surface syntax must survive that rewrite, as the optional
+  element marker now does.
 - Update this document after each milestone with the new clean baseline, newly
   classified gaps, and the exact next command. That is what makes a later
   continuation reliable rather than archaeological.

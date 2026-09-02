@@ -321,7 +321,7 @@ let function-keys = %{
     "57454u": keys.ISO_LEVEL5_SHIFT
 }
 
-fn title(s: String) { s[0].upper() + s[1;].lower() }
+fn title(s: String) { s[;1].upper() + s[1;].lower() }
 
 fn nice-key-name(ev: event.KeyDetails) -> String {
     let mods = ev.mods
@@ -458,22 +458,26 @@ ns _size {
 
     let __tls::size = nil
 
+    fn query(fd: Int) -> WinSize {
+        let ws = size ?? WinSize()
+        size = ws
+        ioctl(fd, TIOCGWINSZ, (c.ptr, ws.get()))
+        ws
+    }
+
     fn get(fd: Int) -> (Int, Int) {
-        size = size ?? WinSize()
-        ioctl(fd, TIOCGWINSZ, (c.ptr, size.get()))
-        (size.lines, size.cols)
+        let ws = query(fd)
+        (ws.lines, ws.cols)
     }
 
     fn get-px(fd: Int) -> (Int, Int) {
-        size = size ?? WinSize()
-        ioctl(fd, TIOCGWINSZ, (c.ptr, size.get()))
-        (size.xpix, size.ypix)
+        let ws = query(fd)
+        (ws.xpix, ws.ypix)
     }
 
     fn get-winsz(fd: Int) -> (Int, Int, Int, Int) {
-        size = size ?? WinSize()
-        ioctl(fd, TIOCGWINSZ, (c.ptr, size.get()))
-        (size.lines, size.cols, size.xpix, size.ypix)
+        let ws = query(fd)
+        (ws.lines, ws.cols, ws.xpix, ws.ypix)
     }
 }
 

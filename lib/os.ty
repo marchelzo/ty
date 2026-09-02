@@ -199,10 +199,15 @@ pub fn mkfifo(path: String, mode: ?Int) -> Int;
 pub fn accept(sock: Int) -> (Int, Blob);
 pub fn listen(sock: Int, n: Int) -> Int;
 
+pub fn poll(
+    pollfds: [Int | (Int, Int)],
+    timeout: Float | Int | nil = nil
+) -> Ok[[(Int, Int)]] | Err[Int];
+
 pub fn poll[T](
-    pollfds: [Int | (Int, Int, ?T)],
-    timeout: Float | Int | nil
-) -> Ok[[(Int, Int, ?T)]] | Err[Int];
+    pollfds: [Int | (Int, Int) | (Int, Int, T)],
+    timeout: Float | Int | nil = nil
+) -> Ok[[(Int, Int) | (Int, Int, T)]] | Err[Int];
 
 pub fn poll[T](
     pollfds-in: [Int | (Int, Int, T)],
