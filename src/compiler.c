@@ -6645,6 +6645,7 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
                  */
                 for (int i = 0; i < vN(s->value->constraints); ++i) {
                         Expr **constraint = v_(s->value->constraints, i);
+                        avP(s->value->retained_constraints, *constraint);
                         if (*constraint == NULL) {
                                 continue;
                         }
@@ -13395,7 +13396,8 @@ resolve_prog(Ty *ty, Stmt **p)
 {
         Types2Shadow *shadow = types2_shadow_begin(
                 STATE.module->name,
-                STATE.module->path
+                STATE.module->path,
+                STATE.module->source
         );
 
         if (TY_CATCH_ERROR()) {
@@ -13459,8 +13461,16 @@ resolve_prog(Ty *ty, Stmt **p)
         }
 
         types_finish(ty);
-        types2_shadow_finish(shadow);
+        size_t types2_errors = types2_shadow_finish(shadow);
         TY_CATCH_END();
+
+        if (types2_errors != 0) {
+                fail(
+                        "%zu type error%s reported by types2",
+                        types2_errors,
+                        types2_errors == 1 ? "" : "s"
+                );
+        }
 
         ScopeFinalize(ty, STATE.global);
 
@@ -14470,7 +14480,7 @@ compiler_symbol_literal(Symbol const *symbol, CompilerLiteral *literal)
         if (
                 symbol == NULL
              || literal == NULL
-             || !SymbolIsConst(symbol)
+             || (!SymbolIsConst(symbol) && !SymbolIsBuiltin(symbol))
              || symbol->i < 0
              || symbol->i >= vN(Globals)
         ) return false;

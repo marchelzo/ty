@@ -400,7 +400,10 @@ pub class Path {
     }
 
     ls() -> Array[Path] {
-        os.listdir("{self}").map(\self / _)
+        match os.listdir("{self}") {
+            $files => files.map(\self / _),
+            _      => throw os.OSError('getdents()')
+        }
     }
 
     copy(target: String | Path, follow-symlinks: Bool = true) -> Path {
@@ -633,7 +636,9 @@ class TempDir {
     }
 
     __drop__() {
-        __path.rmtree(quiet=true)
+        if __path != nil {
+            __path.rmtree(quiet=true)
+        }
     }
 }
 

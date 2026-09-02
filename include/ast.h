@@ -432,6 +432,7 @@ struct expression {
                         StringVector params;
                         ExprVec dflts;
                         ExprVec constraints;
+                        ExprVec retained_constraints;
                         ExprVec decorators;
                         ExprVec functions;
                         union {

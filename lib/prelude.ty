@@ -296,8 +296,6 @@ fn errno::get() -> Int;
 fn errno::str(err: Int) -> String;
 fn errno::str() -> String;
 
-fn os::listdir(path: String) -> [String];
-
 __set_type__ ty::executable String
 
 const `,` = tuple
@@ -1027,7 +1025,7 @@ class Dict[K, V] : Iterable[K, V] {
     }
 
     static [](K, V) {
-        x -> (x :: Dict) && x.keys().all?(p -> (p.0 :: K) && (p.1 :: V))
+        x -> (x :: Dict) && x.items().all?(|(k, v)| -> (k :: K) && (v :: V))
     }
 }
 
@@ -1573,6 +1571,8 @@ class Blob : Iterable[Int], IntoPtr[Int] {
     splice(i: ?Int = 0, n: Int = #self) -> Blob;
 
     set(i: Int, byte: Int) -> nil;
+
+    clear() -> nil;
 }
 
 class Bool {
@@ -1860,7 +1860,7 @@ tag None {
     static map(f)     { None  }
     static flat-map() { None  }
     static or-else(x) { x     }
-    static some?()    { false }
+    static some?      { false }
 }
 
 tag Some {
@@ -1868,7 +1868,7 @@ tag Some {
     flat-map(f) {      f(self)  }
      or-else(x) {        self   }
 
-    some?() { true }
+    some? { true }
 
     static from[T](x: T | nil) {
         match x {
