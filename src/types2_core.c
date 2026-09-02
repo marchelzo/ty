@@ -25,6 +25,7 @@ typedef struct t2_nominal_info {
         size_t supertype_count;
         size_t supertype_capacity;
         bool instantiated;
+        bool interface;
 } T2NominalInfo;
 
 typedef struct t2_applied_nominal {
@@ -960,6 +961,7 @@ t2_nominal_type_parameter(T2Universe *universe, uint32_t index)
 }
 
 static T2Type primitive_nominal(T2Universe const *universe, T2Node const *node);
+static T2Type nominal_project_x(T2Universe const *universe, T2Type subtype, uint64_t target_symbol, unsigned depth);
 
 static bool
 nominal_reaches(
@@ -1030,6 +1032,29 @@ t2_nominal_add_super(
         }
         info->supertypes[info->supertype_count++] = supertype_template;
         return backfill_nominal_super(universe, symbol, supertype_template);
+}
+
+bool
+t2_nominal_mark_interface(T2Universe *universe, uint64_t symbol)
+{
+        T2NominalInfo *info = universe == NULL
+                            ? NULL
+                            : find_nominal_mutable(universe, symbol);
+        if (info == NULL) return false;
+        info->interface = true;
+        return true;
+}
+
+static bool
+disjoint_nominals(T2Universe const *universe, T2Type left, T2Type right)
+{
+        T2Node const *a = get_node(universe, left);
+        T2Node const *b = get_node(universe, right);
+        T2NominalInfo const *ai = find_nominal(universe, a->payload);
+        T2NominalInfo const *bi = find_nominal(universe, b->payload);
+        if (ai == NULL || bi == NULL || ai->interface || bi->interface) return false;
+        return nominal_project_x(universe, left, b->payload, 0) == T2_TYPE_INVALID
+            && nominal_project_x(universe, right, a->payload, 0) == T2_TYPE_INVALID;
 }
 
 bool
@@ -2962,6 +2987,16 @@ unfold_recursive_head(T2Universe const *universe, T2Type type, bool *changed)
         return type;
 }
 
+T2Type
+t2_recursive_unfold(T2Universe const *universe, T2Type type)
+{
+        bool changed = false;
+        T2Type unfolded = universe == NULL
+                        ? T2_TYPE_INVALID
+                        : unfold_recursive_head(universe, type, &changed);
+        return unfolded == T2_TYPE_INVALID ? type : unfolded;
+}
+
 static T2Relation
 compare_field_types(
         T2RelationContext *context,
@@ -4460,6 +4495,9 @@ definitely_disjoint(T2Universe const *universe, T2Type left, T2Type right)
                      || bk == T2_TYPE_FUNCTION
                      || bk == T2_TYPE_TUPLE;
 
+        if (ak == T2_TYPE_NOMINAL && bk == T2_TYPE_NOMINAL && a->payload != b->payload) {
+                return disjoint_nominals(universe, left, right);
+        }
         if (ak == T2_TYPE_NOMINAL && b_atomic) return !primitive_conforms(universe, b, a);
         if (bk == T2_TYPE_NOMINAL && a_atomic) return !primitive_conforms(universe, a, b);
         return a_atomic && b_atomic && ak != bk;
@@ -8349,6 +8387,9 @@ t2_solver_solution(
         T2Type never = t2_primitive(solver->universe, T2_TYPE_NEVER);
         T2Type any = t2_primitive(solver->universe, T2_TYPE_ANY);
 
+        if (preference == T2_PREFER_KNOWN_VALUE) {
+                return lower != never ? lower : meta;
+        }
         if (preference == T2_PREFER_UPPER_BOUND) {
                 if (upper != any) return upper;
                 if (lower != never) return lower;

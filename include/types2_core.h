@@ -143,7 +143,8 @@ typedef enum t2_relation {
 
 typedef enum t2_solution_preference {
         T2_PREFER_LOWER_BOUND,
-        T2_PREFER_UPPER_BOUND
+        T2_PREFER_UPPER_BOUND,
+        T2_PREFER_KNOWN_VALUE
 } T2SolutionPreference;
 
 typedef enum t2_runtime_kind {
@@ -280,6 +281,9 @@ t2_nominal_add_super(
 
 bool
 t2_primitive_bind_nominal(T2Universe *universe, T2TypeKind kind, T2Type nominal);
+
+bool
+t2_nominal_mark_interface(T2Universe *universe, uint64_t symbol);
 
 T2Type
 t2_nominal_project(
@@ -456,6 +460,9 @@ t2_recursive(T2Universe *universe, uint32_t binder, T2Type body);
 
 bool
 t2_recursive_is_guarded(T2Universe const *universe, T2Type type);
+
+T2Type
+t2_recursive_unfold(T2Universe const *universe, T2Type type);
 
 T2Type
 t2_union(T2Universe *universe, T2Type const *arms, size_t count);

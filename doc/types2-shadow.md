@@ -526,41 +526,138 @@ runtime first:
   `(CompletionLabel, String)` pairs and widens to `Array[CompletionItem]`
   with a fresh `[*...]` literal at the boundary, because arrays are invariant.
 
+The session that worked through `ty -tc lib/curl.ty` (24 errors at the
+start, none at the end) and then the whole startup corpus with
+`TY_TYPES2_REPORT=all ./ty -t -ce0` (58 prelude errors, 8 in `ffi`, 3 in
+`pretty`, 1 each in `ety` and `sqlite`; only the four classified library
+defects below remain) added:
+
+- class hierarchies for imported and primitive classes: `ensure_nominal`
+  installs a class's superclass and trait templates from its definition in
+  every unit (previously only `ensure_class_interface` did, so an annotation
+  such as `Generator[Int, nil]` never learned `Iter[Int]`); the primitive
+  kinds `nil`, `Bool`, `Int`, `Float`, `String`, and `Object` are bound to
+  their prelude class nominals (`t2_primitive_bind_nominal`), and the core's
+  subtype, constraint, projection, and disjointness rules consult that
+  binding, so `'abc'` and `3` satisfy `IntoPtr[_]`; the primitive classes are
+  bound once per unit at the first checkpoint (`bind_primitive_classes`);
+  hierarchy registration runs under `building_interface` so a defining unit's
+  diagnostics (`Dict : Iterable[K, V]`) do not leak into importers;
+- `Iterable[K, V]` and `Iter[K, V]` with two arguments lower to
+  `Iterable[(K, V)]`, the convention the legacy checker and the runtime's
+  dictionary iteration share (`%{1: 2}.list()` is `[(1, 2)]`); a dictionary
+  `for` yields `|K, V, Int|` because a third target receives the index;
+- traits are marked as interfaces in the core, and two distinct non-interface
+  classes with no subclass relation are disjoint (`disjoint_nominals`), so a
+  `Sync[Dynamic]` operator no longer applies to a `Ptr[Int]` receiver and
+  narrowing drops unrelated class arms;
+- flow snapshots and assignment refinements read a binding's known value
+  (`T2_PREFER_KNOWN_VALUE`: an explicit solution or accumulated lower bounds)
+  and never an upper bound, and a branch that left a binding at its storage
+  type contributes no narrowing; previously a branch merge froze a parameter
+  or forward function at its current upper bound (`sql: nil | String` after a
+  guarded `throw`, `id: (T) -> Any` after another method's default), which
+  made every later, tighter use fail;
+- operator calls whose operands are all still open with more than one
+  applicable candidate defer as `operator-open-operand` instead of committing
+  to the first candidate (`j - i` picked `String.-`); bodiless but fully
+  annotated class operators (`Ptr.-`) are importable from the dispatch table;
+- narrowing a type variable to a class yields the class (`x :: Array` on
+  `x: T`), `:: Function` keeps callable arms (the library's gradual callable
+  top), operations unfold recursive aliases one level
+  (`t2_recursive_unfold`, so `#xs` on `mu. Array[@] | Array[T]` checks), a
+  value of the `Tuple` class iterates as Dynamic elements, a payload-less tag
+  value (`None`) dispatches to the tag's static methods (`or-else`), static
+  fields resolve on primitive classes (`Int.MAX`), and `o.{name} = v` is a
+  runtime-checked dynamic member write;
+- trait and override contracts compare whole overload sets: the compiler
+  stores each arm as `name#N` beside the combined member, and the per-arm
+  entries are skipped so Array's `group()`/`group(f)` are checked against the
+  trait's two arms by shape instead of by position;
+- a builtin symbol of another builtin module (`ty.Class`, `types.Object`)
+  reports the prelude as its home module; the by-name import now also
+  requires the same scope, so those stay `unresolved-binding` instead of
+  resolving to the prelude classes of the same name;
+- `print` of a `Ptr` whose address is NULL read the C string at NULL and
+  crashed; it now falls back to the ordinary `<ptr:0x0>` rendering.
+
+Library contracts corrected in the same pass, each checked against the
+runtime first:
+
+- `lib/ffi.ty`: `C!` pointer parameters are `?IntoPtr[_]` because `ptr_from`
+  maps `nil` to NULL (`curl_slist_append(nil, ...)`); `next-str()` and
+  `next-comment()` helpers replace `.str`/`.comment` reads on the token
+  union;
+- `lib/curl.ty`: `CookieJar.__iter__` returns `__cookies.values().__iter__()`
+  as the `Iter[Cookie]` contract requires (the runtime accepts either);
+- `lib/prelude.ty`: `Iterable`'s default methods now state the contract every
+  implementer satisfies (`map`, `group`, `groupsOf`, `intersperse`, and
+  `interleave` return `Iterable[...]`, `join(sep: String = '')`,
+  `find(pred) -> T | nil`, `classify[U](key)`, `[](i: Int) -> T | nil`,
+  `static chain*(*its)`), Array and Iter use the trait's parameter names
+  (`f`, `pred`, `ys`), Iter's mis-indented `window(n, f)` overload is
+  restored, `interleave` defaults to `long = true` on both paths, `min`,
+  `max`, and `argmax` are overload pairs with `where (U < U): Bool` /
+  `(U > U): Bool` bounds instead of comparing `Any` keys, `Array.group(f)`
+  gained its prototype (the builtin accepts a key), `Queue` implements
+  `__iter__` (its trait methods returned nil), `Blob` declares `ptr()` and
+  `__ptr__()`, `RegexMatch` reads the whole match through `self[0]`,
+  `Array.mean` sums with `0.0`, `unzip3` lost a duplicated keyword,
+  `String.splice` takes `Int`s, `String.[]` asserts the native optional read,
+  `Object.:>`/`<.>` call `self as Function` and `<.>` uses a real rest
+  lambda (`(*xs) -> ...` binds one argument), `?>`'s implementation is
+  unannotated, `memoized(max: ?Int = nil)`, `Sync` declares `Countable`,
+  `SubscriptWrite`, and `Formattable` bounds, and the macro helpers
+  `lex-id()`/`lex-id-token()` replace `lex.next().id`;
+- `lib/pretty.ty`: `pretty(x, %kwargs: Any)`; `lib/ety.ty`: the parser's
+  optional `free` list is guarded with `?? []`; `lib/sqlite.ty`: `tables()`
+  pins the result-only generic of `fetchAll` with a visible annotation.
+
+Known gaps recorded while reading these modules: a nominal argument does not
+yet satisfy a structural `where` bound at instantiation (`W([1, 2])[0] = 5`
+with `where T: SubscriptWrite[I, U]` fails outside the body); forwarding a
+mapped pack (`__iter__().zip(*its)`) is unsolved; `Array.zip` is array-only
+and keyword-`f` at runtime, `Dict.map` maps values, and `Dict.[]` is keyed,
+all diverging from `Iterable`; the runtime returns `nil` for an out-of-range
+`String` index while the prelude declares `String` (the legacy checker cannot
+take `String | nil` there, see `tests/str.ty`); a single-letter generator
+method name such as `h*` lexes as one identifier and is not a generator;
+`./ty -c lib/prelude.ty` and `./ty -c lib/os.ty` fail in the legacy checker
+independently of types2 (a builtin module compiled as a main file).
+
 The last clean validation run used the clang ASan build and produced:
 
 - `./ty test.ty`: 78 passed;
-- the types2 core unit suite: passed, including the multi-value checks;
-- shadow-on/shadow-off equivalence: passed, including the `multi-values`,
-  `multi-values-invalid`, `evolving`, `contextual`, `defaults`, and `repl`
-  fixtures;
+- the types2 core unit suite: passed;
+- shadow-on/shadow-off equivalence: passed, including the new `hierarchy`
+  fixture (primitive traits, cross-unit `Iter`, overload conformance,
+  upper-bound reads after a guarded throw, `:: Function`, tag statics,
+  dictionary index targets, recursive alias counts, dynamic member writes);
 - the strict corpus gate: passed;
-- the startup corpus: 16 units, 0 unsupported nodes, 1,619 deferred nodes
-  (1,141 runtime, 161 incomplete, 317 external, 0 recovery), and no pending
-  terminal obligation (the `chalk.ty:609` pack obligation resolved once its
-  view pattern narrowed to `Int`);
-- 79 raw types2 diagnostic events (77 errors, 2 warnings) reducing to 78
-  unique `(unit, line, column, code)` diagnostics, all classified (54
-  unexplained, 18 library defects, 4 incomplete features, 2 expected
-  corrections); `chalk`, `help`, `term`, `sh`, `readln`, `ty/repl`, `io`, and
-  `os` contribute none, and the remaining units are `prelude` (54), `ffi`
-  (19), `pretty` (3), and `os` (1);
-- `ty -tc lib/path.ty` reports only the intended unreachable-pattern warning;
-  `lib/term.ty`, `lib/sh.ty`, `lib/readln.ty`, `lib/log.ty`, `lib/chalk.ty`,
-  `lib/help.ty`, and `lib/ty/repl.ty` report nothing; outside the startup
-  corpus `lib/curl.ty` (24), `lib/ffi.ty` (19), `lib/pretty.ty` (3),
-  `lib/ety.ty` (1), and `lib/sqlite.ty` (1) are the next modules with errors;
-- the clang ASan build compiles the startup corpus in 1.10 s with 268 MiB
-  peak RSS with shadowing enabled and 0.48 s with 146 MiB with it disabled
-  (three warm runs each).
+- the startup corpus: 16 units, 0 unsupported nodes, 1,844 deferred nodes
+  (1,329 runtime, 171 incomplete, 344 external, 0 recovery), and no pending
+  obligation;
+- 5 raw types2 diagnostic events reducing to 5 unique diagnostics, all
+  classified (3 library defects: `Array.zip`, `Dict.map`, `Dict.[]`; 1
+  incomplete feature: mapped-pack forwarding; 1 expected correction: the
+  `path.ty` warning); `ffi`, `pretty`, and every other startup unit
+  contribute none;
+- every module under `lib/` compiled this session reports nothing under
+  `ty -tc` (`term`, `sh`, `readln`, `log`, `chalk`, `help`, `ty/repl`, `io`,
+  `os`, `curl`, `ffi`, `pretty`, `ety`, `sqlite`); `lib/path.ty` keeps its
+  intended warning.  The `-t` report can undercount the prelude relative to
+  the strict-gate log (three `Any > Any` operator errors appeared only with
+  the legacy checker on), so the log summary is the reference.
 
 `tests/types2-corpus-classification.json`, `tests/types2-corpus.sh`,
 `tools/types2-corpus-summary.ty`, `tests/dict_type_predicate.ty`, and the
 `deferred`, `nil-guards`, `loops`, `multi-values`, `evolving`, `contextual`,
-`defaults`, and `repl` fixtures are still untracked in the working tree;
-commit them with the next milestone.
-The classification file was reseeded on 2026-09-02; entries whose line moved
-after the prelude gained two operator prototypes were remapped by unit,
-column, code, and message with meta names and locations normalized.
+`defaults`, `repl`, and `hierarchy` fixtures are still untracked in the
+working tree; commit them with the next milestone.
+The classification file was reseeded on 2026-09-02 from a five-entry log;
+every earlier entry vanished because its site now checks, so the triage
+queue is empty and the next work is the full library matrix beyond the
+modules listed above plus the known gaps recorded with each milestone.
 
 The deferral totals fell from 3,106 to about 1,700 because imported bindings
 replaced Dynamic at 700 call sites, and the diagnostic count first rose from
@@ -589,19 +686,11 @@ The remaining pending obligation is the `<=>` pack obligation from
 `min`/`max` at `lib/chalk.ty:609`; it is classified as an incomplete pack
 feature, not a library error.
 
-The classification file records 2 expected corrections, 20 library defects,
-9 incomplete features, and 95 unexplained diagnostics.  Keys carry line
-numbers, so an edit that inserts lines in a library file moves every later
-key; reseed with `--seed --classification` and restore the moved entries'
-classes before treating them as new.  The unexplained
-group is the triage queue.  Its largest codes are `missing-field` (23),
-`bad-call` (21), `union-method-coverage` (9), `invalid-trait-member` (7), and
-`invalid-override`, `not-callable`, `union-operator-coverage`, and
-`unsupported-operator` (6 each).  Most `missing-field` entries read `.id`/`.str`
-on tokens produced by the `ty/token` lexer builtins, whose interface is
-unavailable until that module is compiled.  Three `bad-call` entries appeared
-when operator ties started resolving by declaration order; a union operand
-such as `Int | Float` should be split per arm before candidate selection.
+The classification file records 1 expected correction, 3 library defects, 1
+incomplete feature, and no unexplained diagnostics.  Keys carry line numbers,
+so an edit that inserts lines in a library file moves every later key; reseed
+with `--seed --classification` and restore the moved entries' classes before
+treating them as new.
 
 Do not optimize for reducing these numbers mechanically. In particular, do not
 replace an unexplained result with `Dynamic` merely to remove a diagnostic.
@@ -1165,6 +1254,18 @@ problems this work is intended to eliminate.
   `import_operator_definitions` cannot see them.  Import them from the
   dispatch table, and only when their signature is fully annotated.
 - `Path` has no `str` method; render a path with `"{path}"`.
+- A branch merge must never install a binding's upper bound as a refinement;
+  flow snapshots and assignment refinements use `T2_PREFER_KNOWN_VALUE`, and
+  a branch that left a binding at its storage type contributes nothing.
+- Overload arms are stored as `name#N` members beside the combined member;
+  contract checks skip the per-arm entries.
+- Builtin symbols of the `ty.*` modules report `mod = prelude` and carry a
+  non-tag value in `tag`; match imported definitions by scope as well as name.
+- `(*xs) -> ...` is not a rest lambda (it binds one argument); use
+  `fn (*xs) { ... }`.  A single-letter method name followed by `*` lexes as
+  one identifier.  `import ty` inside `ty -e` clashes with the pre-import.
+- `-t` output and the strict-gate log can differ for the prelude; always
+  finish with `tests/types2-corpus.sh`.
 - Update this document after each milestone with the new clean baseline, newly
   classified gaps, and the exact next command. That is what makes a later
   continuation reliable rather than archaeological.

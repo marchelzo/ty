@@ -33,6 +33,9 @@ use Token = TokenData & {
 }
 
 use Subscript[T, U] = { `[]`: T -> U };
+use SubscriptWrite[T, U] = { `[]=`: (T, U) -> U };
+use Countable = { `#`: () -> Int };
+use Formattable = { __fmt__: (*_) -> String };
 
 macro __flat-array! $$[
     $${
@@ -339,11 +342,11 @@ class Object {
     }
 
     :>(other) {
-        x -> (self(x) :: other)
+        x -> ((self as Function)(x) :: other)
     }
 
     <.>(other) {
-        (*xs) -> self(other(*xs))
+        return fn (*xs) { (self as Function)(other(*xs)) }
     }
 
     *>(f) {
@@ -498,12 +501,13 @@ class Array[T] : Iterable[T] {
     filter!(pred: T -> Any) -> Array[T];
     filter(pred: T -> Any) -> Array[T];
     group() -> Array[Array[T]];
+    group[U](f: T -> U) -> Array[Array[T]];
     groups-of(n: Int, keepShort: Bool = true) -> Array[Array[T]];
     insert(i: Int, *xs: T) -> nil;
     join(sep: String = '') -> String;
     len() -> Int;
-    map![U](fun: T -> U) -> Array[U];
-    map[U](fun: T -> U) -> Array[U];
+    map![U](f: T -> U) -> Array[U];
+    map[U](f: T -> U) -> Array[U];
     push(x: T) -> nil;
     pop(i: ?Int) -> T;
     remove!(x: Any) -> Array[T];
@@ -515,7 +519,7 @@ class Array[T] : Iterable[T] {
     rotate!(n: Int = 1) -> Array[T];
     search(x: T) -> Int | nil;
     search-by(predicate: T -> Any) -> Int | nil;
-    find(predicate: T -> Any) -> T | nil;
+    find(pred: T -> Any) -> T | nil;
     shuffle!() -> Array[T];
     shuffle() -> Array[T];
     sort!(by: T -> Any, desc: Bool = false) -> Array[T];
@@ -699,7 +703,7 @@ class Array[T] : Iterable[T] {
     mean(f: T -> Int | Float = id) -> Float | nil {
         match self {
             [] => nil,
-            _  => map(\float(f(_))).sum() / #self
+            _  => map(\float(f(_))).sum(0.0) / #self
         }
     }
 
@@ -715,7 +719,11 @@ class Array[T] : Iterable[T] {
         }
     }
 
-    argmax(f: T -> Any = id) -> ?Int {
+    argmax() -> ?Int where (T > T): Bool {
+        argmax(id)
+    }
+
+    argmax[U](f: T -> U) -> ?Int where (U > U): Bool {
         if #self == 0 { return nil }
 
         let i, max = 0, f(self[0])
@@ -1140,7 +1148,7 @@ class String : Iterable[String], IntoPtr[Int] {
         (bslice(0, start.size()) == start)
     }
 
-    splice(i, j) {
+    splice(i: Int, j: Int) {
         slice(i, j - i)
     }
 
@@ -1241,7 +1249,7 @@ class String : Iterable[String], IntoPtr[Int] {
     }
 
     [](i: Int) -> String {
-        self[i]
+        self[i]!
     }
 
     -(end: String) -> String {
@@ -1331,7 +1339,7 @@ class Int : IntoPtr[_] {
                 let k = abs
 
                 while k != 0 || #s == 0 {
-                    s = digits[k % base] + s
+                    s = digits[k % base]! + s
                     k /= base
                 }
 
@@ -1545,6 +1553,12 @@ class Float {
 
 class Blob : Iterable[Int], IntoPtr[Int] {
     init(*args: Any);
+
+    __ptr__() -> Ptr[Int] {
+        self.ptr()
+    }
+
+    ptr() -> Ptr[Int];
 
     searchr(s: String) -> Int | nil {
         for let off = size() - 1; off >= 0; --off {
@@ -1918,15 +1932,15 @@ class RegexMatch {
     }
 
     end -> Int {
-        start + #groups[0]
+        start + #self[0]
     }
 
     pre -> String {
-        str.bslice(0, groups[0].ptr() - str.ptr())
+        str.bslice(0, self[0].ptr() - str.ptr())
     }
 
     post -> String {
-        str.bslice(groups[0].ptr() - str.ptr() + groups[0].size())
+        str.bslice(self[0].ptr() - str.ptr() + self[0].size())
     }
 
     captures -> Array[String | nil] {
@@ -1942,12 +1956,12 @@ class RegexMatch {
     }
 
     #() -> Int {
-        #groups[0]
+        #self[0]
     }
 }
 
 trait Iterable[T] {
-    map[U](f: T -> U) -> Generator[U] {
+    map[U](f: T -> U) -> Iterable[U] {
         __iter__().map(f)
     }
 
@@ -1999,8 +2013,8 @@ trait Iterable[T] {
         __iter__().str()
     }
 
-    join(s) {
-        __iter__().join(s)
+    join(sep: String = '') -> String {
+        __iter__().join(sep)
     }
 
     unlines() {
@@ -2019,11 +2033,19 @@ trait Iterable[T] {
         __iter__().each(f)
     }
 
-    min(k: T -> Any = id) -> T | nil {
+    min() -> T | nil where (T < T): Bool {
+        __iter__().min()
+    }
+
+    min[U](k: T -> U) -> T | nil where (U < U): Bool {
         __iter__().min(k)
     }
 
-    max(k: T -> Any = id) -> T | nil {
+    max() -> T | nil where (T > T): Bool {
+        __iter__().max()
+    }
+
+    max[U](k: T -> U) -> T | nil where (U > U): Bool {
         __iter__().max(k)
     }
 
@@ -2039,11 +2061,11 @@ trait Iterable[T] {
         __iter__().count-by(pred)
     }
 
-    intersperse(x) {
-        __iter__().intersperse(x)
+    intersperse[U](sep: U) -> Iterable[T | U] {
+        __iter__().intersperse(sep)
     }
 
-    groupsOf(n: Int, keepShort: Bool = true) -> Generator[Array[T]] {
+    groupsOf(n: Int, keepShort: Bool = true) -> Iterable[Array[T]] {
         __iter__().groupsOf(n, keepShort=keepShort)
     }
 
@@ -2055,8 +2077,8 @@ trait Iterable[T] {
         __iter__().window(n)
     }
 
-    classify(f = id) {
-        __iter__().classify(f)
+    classify[U](key: T -> U = id) -> Dict[U, Array[T]] {
+        __iter__().classify(key)
     }
 
     pad(n, x) {
@@ -2127,16 +2149,20 @@ trait Iterable[T] {
         __iter__().fold(x, f)
     }
 
-    group[U](f: T -> U) -> Generator[Array[T]] {
+    group[U](f: T -> U) -> Iterable[Array[T]] {
         __iter__().group(f)
     }
 
-    group() -> Generator[Array[T]] {
+    group() -> Iterable[Array[T]] {
         __iter__().group()
     }
 
-    static chain(A, B) {
-        A.__iter__().chain(B)
+    static chain*(*its) {
+        for it in its {
+            for x in it.__iter__() {
+                yield x
+            }
+        }
     }
 
     chainAll[U]() -> Generator[U] where T: Iterable[U] {
@@ -2155,15 +2181,15 @@ trait Iterable[T] {
         __iter__().all?(pred)
     }
 
-    interleave[U](xs: Iterable[U], long: Bool = false) -> Iterable[T | U] {
-        __iter__().interleave(xs, long)
+    interleave[U](ys: Iterable[U], long: Bool = true) -> Iterable[T | U] {
+        __iter__().interleave(ys, long)
     }
 
     enumerate() {
         __iter__().enumerate()
     }
 
-    find(pred: T -> Any) {
+    find(pred: T -> Any) -> T | nil {
         __iter__().find(pred)
     }
 
@@ -2179,7 +2205,7 @@ trait Iterable[T] {
         #__iter__()
     }
 
-    [](i: Int) -> T {
+    [](i: Int) -> T | nil {
         __iter__()[i]
     }
 
@@ -2315,7 +2341,7 @@ trait Iter[T] < Iterable[T] {
     }
 
     unzip3[A, B, C](*args, %kwargs) -> (Array[A], Array[B], Array[C]) where T: (A, B, C) {
-        unzipWith(f=id, *args, **kwargs, f=id, n=3)
+        unzipWith(*args, **kwargs, f=id, n=3)
     }
 
     unzip4[A, B, C, D](*args, %kwargs) -> (Array[A], Array[B], Array[C], Array[D]) where T: (A, B, C, D) {
@@ -2366,8 +2392,8 @@ trait Iter[T] < Iterable[T] {
         }
     }
 
-    find[U](p: T -> U) -> T | nil {
-        for self if p(it) {
+    find[U](pred: T -> U) -> T | nil {
+        for self if pred(it) {
             return it
         }
     }
@@ -2419,7 +2445,7 @@ trait Iter[T] < Iterable[T] {
         }
     }
 
-   window*[U](n: Int, f: (*T) -> U) -> Generator[U] {
+    window*[U](n: Int, f: (*T) -> U) -> Generator[U] {
         let win = [*take(n)]
         while #win == n {
             yield f(*win)
@@ -2583,7 +2609,11 @@ trait Iter[T] < Iterable[T] {
         }
     }
 
-    max(k: T -> Any = id) -> T | nil {
+    max() -> T | nil where (T > T): Bool {
+        max(id)
+    }
+
+    max[U](k: T -> U) -> T | nil where (U > U): Bool {
         if not let Some(x) = __next__() {
             return nil
         }
@@ -2601,7 +2631,11 @@ trait Iter[T] < Iterable[T] {
         return m
     }
 
-    min(k: T -> Any = id) -> T | nil {
+    min() -> T | nil where (T < T): Bool {
+        min(id)
+    }
+
+    min[U](k: T -> U) -> T | nil where (U < U): Bool {
         if not let Some(x) = __next__() {
             return nil
         }
@@ -2777,6 +2811,11 @@ trait Iter[T] < Iterable[T] {
 
 class Queue[T] : Iterable[T] {
     init();
+    __iter__*() -> Generator[T] {
+        for x in self {
+            yield x
+        }
+    }
     push(*xs: T) -> Queue[T];
     push-front(*xs: T) -> Queue[T];
     pop() -> T;
@@ -3225,7 +3264,7 @@ class Sync[T] {
         }
     }
 
-    #() {
+    #() -> Int where T: Countable {
         with __mtx {
             #__x
         }
@@ -3241,7 +3280,7 @@ class Sync[T] {
         }
     }
 
-    []=[I, U](i: I, u: U) -> U where T: Subscript[I, U] {
+    []=[I, U](i: I, u: U) -> U where T: SubscriptWrite[I, U] {
         with __mtx {
             __x[i] = u
         }
@@ -3326,7 +3365,7 @@ class Sync[T] {
         }
     }
 
-    __fmt__(*args) {
+    __fmt__(*args) -> String where T: Formattable {
         with __mtx {
             __x.__fmt__(*args)
         }
@@ -3572,13 +3611,24 @@ macro timed(expr) {
     $$]
 }
 
+fn lex-id-token() -> {id: String, module: String} {
+    match lex.next() {
+        {id, module, *} => ({id, module}),
+        token           => throw RuntimeError("expected an identifier but found `{token.type}`")
+    }
+}
+
+fn lex-id() -> String {
+    lex-id-token().id
+}
+
 macro modify! {
     fn path() {
-        let p = [lex.next().id]
+        let p = [lex-id()]
 
         while lex.peek().type == '.' {
             lex.next()
-            p.push(lex.next().id)
+            p.push(lex-id())
         }
 
         p
@@ -3671,7 +3721,7 @@ macro enum! {
 
         ty.Multi(vars)
     } else {
-        let name = lex.next().id
+        let name = lex-id()
 
         lex.next()
 
@@ -3709,7 +3759,7 @@ macro sync! {
     let names = []
 
     while lex.peek().type != ')' {
-        names.push(lex.next().id)
+        names.push(lex-id())
         if lex.peek().type == ',' {
             lex.next()
         }
@@ -3767,7 +3817,7 @@ macro static_if {
 }
 
 macro ifdef {
-    let v = lex.next()
+    let v = lex-id-token()
 
     let then = parse.stmt(0)
 
@@ -4247,7 +4297,7 @@ fn <<[a, b](f: a -> b, x: a) -> b { f(x) }
 fn ?>[a, b](x: a, f: a -> b) -> b;
 fn ?>[a, b](x: nil | a, f: a -> b) -> nil | b;
 
-fn ?>(x: Any, f: Any) { (x == nil) ? nil : f(x) }
+fn ?>(x, f) { (x == nil) ? nil : f(x) }
 
 macro =~(a, b) = do let [$0, ?$1, ?$2, ?$3, ?$4, ?$5, ?$6, ?$7, ?$8, ?$9] or ($0: String) = $$a.match($$b)
 
@@ -4318,7 +4368,7 @@ macro __debug!(n) {
     ty.CompileTime($$[ ty.Value(__debug($$n)) $$])
 }
 
-fn memoized[F](fun: F, max: Int = nil) -> F {
+fn memoized[F](fun: F, max: ?Int = nil) -> F {
     let def = fun.__def__
 
     let gather = nil

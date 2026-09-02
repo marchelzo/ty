@@ -1278,8 +1278,9 @@ string_char(Ty *ty, Value *string, int argc, Value *kwargs)
                 n = utf8proc_iterate(ss(*string) + offset, sN(*string), &cp);
         }
 
-        if (offset == sN(*string))
+        if (offset == sN(*string)) {
                 return NIL;
+        }
 
         return STRING_VIEW(*string, offset, n);
 }
