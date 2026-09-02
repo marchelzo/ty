@@ -149,7 +149,8 @@ pub fn sh(
 }
 
 pub function ls(d, flags) {
-    return sh("ls '{d}' {flags || ''}").split("\n")
+    let $out = sh("ls '{d}' {flags || ''}") or return nil
+    out.split("\n")
 }
 
 pub function expand(s) {

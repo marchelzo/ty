@@ -591,7 +591,7 @@ pub class Chalk {
             part: String
                 => spans.push((style, part.sub(/\\./, &[1;]))),
 
-            RegexMatch({groups: [escaped]})
+            RegexMatch({groups: [$escaped]})
                 => spans.push((style, escaped[1;])),
 
             RegexMatch({captures}) => {
@@ -605,7 +605,7 @@ pub class Chalk {
                         throw 'TODO'
                     },
 
-                    [&len ~> n, &words $~> []] => {
+                    [&len $~> n, &words $~> []] => {
                         for ..min(n, #stack) {
                             match stack.pop() {
                                 {fmt} => {},
@@ -640,7 +640,7 @@ pub class Chalk {
     }
 
     __missing__=(name, style: String) {
-        __styles[name] = style.words().map(__styles[]).fold(\{*_, *_})
+        __styles[name] = style.words().map(w -> __styles[w]!).fold(\{*_, *_})
     }
 
     __missing__(name) {

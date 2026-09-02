@@ -149,6 +149,28 @@ find_op_fun(DispatchList const *list, i32 t1, i32 t2)
         return (match == NULL) ? NULL : match->expr;
 }
 
+usize
+op_definition_count(int op)
+{
+        if (op < 0 || op >= vN(_2.ops)) return 0;
+        DispatchGroup *group = v__(_2.ops, op);
+        TyRwLockRdLock(&group->lock);
+        usize count = vN(group->defs);
+        TyRwLockRdUnlock(&group->lock);
+        return count;
+}
+
+Expr *
+op_definition(int op, usize i)
+{
+        if (op < 0 || op >= vN(_2.ops)) return NULL;
+        DispatchGroup *group = v__(_2.ops, op);
+        TyRwLockRdLock(&group->lock);
+        Expr *expr = i < vN(group->defs) ? v__(group->defs, i).expr : NULL;
+        TyRwLockRdUnlock(&group->lock);
+        return expr;
+}
+
 void
 op_add(i32 op, i32 t1, i32 t2, i32 ref, Expr *expr)
 {

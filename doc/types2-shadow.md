@@ -325,25 +325,242 @@ runtime first:
   legacy checker rejects `.some?` on `Some[T] | None` because `None` only has a
   static getter, so the harness now tests `:: Some`.
 
+Since revision `f3675af` the session that worked through `ty -tc lib/readln.ty`
+(21 errors at the start, none at the end; `lib/sh.ty` went from 3 to none)
+added:
+
+- multiple return values: `return a, b` has the core type `|A, B|`
+  (`T2_TYPE_MULTI`, printed with the surface syntax).  Subtyping and solver
+  constraints compare it item by item as an infinitely nil-padded sequence:
+  `|Int, String| <: |Int, ?String|`, a single value `T` is `|T|`, and a
+  multi-value result is not a subtype of a single-valued declared result (the
+  legacy checker rules the same way).  `t2_multi` trims trailing `nil` items
+  and collapses one item to the item itself.  A call result collapses to its
+  first item everywhere except in `let a, b = ...`, `a, b = ...`, `return`,
+  and the tail expression of a function body, the only sites through which
+  the runtime propagates the extra values (`shadow->multi_value_site`); the
+  value list `0, f(), 3` splices a call's values in place as the VM's
+  `GET_EXTRA` does.  `let a, b = (1, 2)` binds the tuple and `nil`, and
+  `let a, b = x` binds `x` and `nil`, matching the runtime
+  (`types2-shadow-multi-values` fixtures);
+- `for` targets receive a value list: dictionaries yield `|K, V|`; arrays,
+  strings, and generators yield `|T, Int|` (element and index); a single
+  target takes the first value, so `for x in dict` is the key and
+  `for pair, i in pairs` is not a destructuring;
+- the postfix `!` assertion strips `nil` from the operand's type; the runtime
+  does not check it, and the legacy checker made the expression `Unknown`;
+- annotation patterns accept any type expression (`parts: Array[Text | nil]`,
+  `x: A | B`, `?T`) and narrow the subject through `narrow_type_to`, so match
+  arms and match lambdas see the narrowed binding and the remaining subject;
+- `pattern as name` binds the pattern's possible subject
+  (`pattern_narrowed_subject`), an over-approximation that selects the tag or
+  class arms even when the payload pattern is refutable, instead of the exact
+  coverage that previously fell back to the whole union;
+- `-1` in a pattern is a literal (`literal_pattern_type`), so `-1 or nil`
+  covers the `nil` arm;
+- `if` condition parts are inferred in order with each part's refinements and
+  bindings applied to the next, so `(key :: String) and let $f = table[key]`
+  sees `key: String`; `while` conditions refine the loop body; private-member
+  bindings mentioned by a condition are seeded before the refinement snapshot
+  (`touch_condition_bindings`) so the continuation after an early `return`
+  keeps its narrowing;
+- loops: before a loop body is inferred, the compiler's AST visitor (with
+  identity transforms and no scope, which makes it read-only) scans the loop
+  for assignments (`=`, compound assignments, `++`/`--`) to bindings declared
+  outside it and clears their flow refinements, because the first iteration's
+  view of a binding the body reassigns is unsound.  If such a binding is an
+  unannotated optional (`let x = nil`: a weak meta whose current solution
+  admits `nil`), the loop is inferred twice.  The muted first pass (no
+  diagnostics, deferrals, or unsupported-node counts) collects the assigned
+  value types as lower bounds; its obligations are cancelled, the side-table
+  entries it touched are forgotten, its bindings are deactivated, and the
+  second pass reports normally.  Refinements are restored after every loop.
+  Refinements resolve a weak binding's current solution before narrowing,
+  and branch merges snapshot resolved effective types, so a refinement never
+  captures the storage meta itself (`types2-shadow-evolving` fixture);
+- `a += b` on arrays is the in-place append the VM performs: the appended
+  element type must fit the receiver's element type and the receiver's type
+  is unchanged, so an accumulator `let xs = []; xs += ys` keeps one array
+  type instead of a growing union of concatenation results;
+- fresh array and record literals passed to a union-typed parameter are typed
+  against the first union arm that accepts them;
+- `pack-placement` now also rejects a pack inside `|...|`.
+
+Library contracts corrected in the same pass, each checked against the
+runtime first:
+
+- `lib/prelude.ty`: `+[T, U](Array[T], Array[U]) -> Array[T | U]` and
+  `*[T](Array[T], Int) -> Array[T]`, which the VM implements natively
+  (`[1] + ['a']`, `[1] * 3`); `-` on arrays is not implemented and stays
+  undeclared;
+- `lib/os.ty`: the three-argument `poll` takes `pollfds-in: Iterable[...]`
+  because it only reads that argument, while `pollfds-out` stays an invariant
+  array because the builtin fills it; a variable of type
+  `Array[(Int, Int, Blob)]` is not `Array[Int | (Int, Int, T)]` under
+  invariance;
+- `lib/sh.ty`: `ls` returns nil when the shell could not be spawned instead of
+  calling `split` on nil;
+- `lib/readln.ty`: `sum()` and `max()` on possibly empty arrays get explicit
+  defaults, `print-items` takes `select: ?Int`, the highlighted completion row
+  stores a `String` (`str(chalk"...")`) as its siblings do, the history file
+  is rebound with `if let $file = __history-file` before two calls, the
+  `label and (j == 0)` arm is `(label: Text)` because an empty array label
+  reached `width`, and the history matcher used `entry.0.str()` on a record
+  entry (stale tuple-era code) and compared `(line, i)` with a record; both
+  now use a `text-of(lines)` helper.
+
+Known gaps noted while reading these modules: records support positional
+access at runtime (`{a: 1}.0` is `1`) and types2 does not model it; the
+backtick operator value `` `#` `` reaches types2 as a computed-type deferral
+(`Dynamic`); `[].sum()` and `[].max()` are `nil` at runtime, so callers must
+supply a default.
+
+The session that followed worked through `ty -tc lib/log.ty`, `lib/chalk.ty`
+(8 errors and 1 warning), and `lib/help.ty` (3 errors and 2 warnings), all of
+which now report nothing, and added:
+
+- dictionaries with a default entry: `%{nil: 2, *: log-open(it)}` lowers the
+  `*: expr` callback (the parser's `it -> expr` lambda) so that the key type is
+  the union of the literal keys and the callback's parameter meta, and the value
+  type joins the literal values with the callback's result.  Reads with a wider
+  key widen the parameter (`nil | String <: nil | $it` sends `String` to `$it`),
+  which is how `global-log-fds` becomes `DefaultDict[nil | String, Int]` while
+  `it` is `String` inside `log-open(it)`.  A callback parameter the body leaves
+  unconstrained (`%{*: 0}`, `%{*: #it}`) defaults to Dynamic like any other
+  callback meta, so a literal nobody reads does not leave a pending predicate.
+  The literal's type is the prelude class `DefaultDict[K, V] < Dict[K, V]`,
+  whose `[](key: K) -> V` says that a read never yields `nil` because the
+  runtime computes the value on a miss; `counts[k] += 1` on `%{*: 0}` therefore
+  checks, and every `Dict` special case (subscripts, membership, `#`,
+  iteration, spreads) accepts either class.  Plain dictionary literals keep
+  exact key and value types and optional reads;
+- a parameter with a default accepts `nil` at every call shape, because the VM
+  substitutes the default when `nil` is passed (`f(1, nil)` is `f(1)`), while
+  the body still sees the declared type and the default expression must still
+  satisfy it (`select: Int = nil` remains an error).  `apply_callable_candidate`
+  widens such parameters to `T | nil`, and the core's `contravariant_parameter`
+  and `constrain_parameter_types` ignore `nil` arms of the expected type when
+  the actual parameter has a default, so the `&[i;]` section's
+  `[;;](1, nil, nil)` call matches `k: Int = 1` without changing the prototype.
+  The legacy checker rejects an explicit `nil` argument, so this is an expected
+  correction that fixtures cannot execute directly;
+- tail hints: a fresh record, array, or dictionary literal in tail position
+  (the value of `return`, the last expression of a body with a declared result,
+  and recursively the arms of `match`, both branches of `if` and `?:`, and the
+  last statement of a block) is typed against the declared result through
+  `contextual_fresh_literal`, keyed by the exact node (`shadow->hint_site`) so
+  the hint never reaches operands or arguments.  This is what lets
+  `parse-style` return `({fg: [...]})` against `TermStyle | nil`;
+- lambda hints: a lambda literal passed positionally to a method whose
+  parameter is a closed callable, or to a function named by a binding with such
+  a parameter, has its unannotated parameters seeded with the expected types
+  before its body is inferred (`shadow->lambda_hint_site`), so
+  `make-gradient(t -> iround(r1 + (r2 - r1) * t))` sees `t: Float`;
+- callable objects: an argument whose nominal (or refinement of a nominal,
+  such as `Regex[0]`) declares `__call__` is checked through that method's
+  instantiated type when the parameter is a callable, and calling such a value
+  resolves `__call__` through the refinement too; `class Regex` gained the
+  `__call__(s: String) -> String | Array[String | nil] | nil` prototype the VM
+  implements, so `lines.dropWhile!(/^\s*$/)` and `words.filter(Longer(1))`
+  check;
+- overload calls with a Dynamic argument join the results of every applicable
+  candidate instead of committing to the first, so a `nil` arm after
+  `match doc(x)` stays reachable;
+- `match` and `for match` resolve the subject's head before coverage; the
+  desugared `for match` reuses the loop target's node, whose cached type was
+  the storage meta, so class-pattern arms never subtracted;
+- a class value exposes instance methods as members (`Array.sort` inside the
+  `doc!` template), typed as the method itself rather than an unbound function.
+
+Library contracts corrected in the same pass, each checked against the
+runtime first:
+
+- `lib/prelude.ty`: `class DefaultDict[K, V] < Dict[K, V]` with
+  `[](key: K) -> V` names the type of a dictionary literal with a default entry
+  (its parameter name must match `Dict.[]` because overrides are checked by
+  call shape); `doc` returns `String | nil` documentation strings and `nil` for
+  an undocumented function (`doc(print)`), while a class result is never `nil`,
+  which `tests/xinfo.ty` relies on; a `?T` inside a tuple type is an optional
+  element marker, not `T | nil`, so the prototypes spell the union out;
+- `lib/chalk.ty`: `{groups: [$escaped]}` rejects a nil capture before slicing,
+  the capture count view uses the not-nil `$~>` form, and a compound style
+  asserts `__styles[w]!` because `{*nil}` throws at runtime;
+- `lib/help.ty`: the `doc!` template matches `{str, *}` on the token union
+  (the legacy checker rejects an irrefutable destructuring of the intersection),
+  and the common-indent scan defaults a non-matching line to `''`.
+
+The session that worked through `ty -tc lib/ty/repl.ty` (6 errors and 1
+warning at the start, none at the end) added:
+
+- record patterns on an intersection subject (`Token` is `TokenData & {...}`
+  where `TokenData` is a union of open records) take the field from the arms
+  that define it (`record_field_definition`), so `{end, *}` binds `end` to
+  `TokenLocation` instead of joining in a disconnected unknown from the open
+  rows; a refutable record pattern on an open row binds `Dynamic` rather than a
+  fresh meta, as the runtime domain is open;
+- a tag pattern's coverage checks its payload pattern against the payload type
+  (`tag_payload_covered`) instead of trusting syntactic irrefutability, so
+  `Ok((_, {tokens, *}))` on an optional `tokens?` field no longer claims the
+  whole arm and the following `err =>` arm stays reachable;
+- literal relaxation recurses into tuples, so `[(it, '') for source]` is
+  `Array[(String, String)]` and a later `(s, color)` write checks;
+- an annotated `let` forwards its declared type as a tail hint, so
+  `let label: CompletionLabel | nil = match item { ... => [chalk"..."] }` types
+  each arm's literal contextually;
+- keyword arguments receive callback hints too, and a hint can come from any
+  candidate of an overload set (`sort!(by=\key(_.1))`);
+- class operator methods of an imported class are found through the compiler's
+  operator dispatch table (`op_definition_count`/`op_definition`, a read-only
+  bridge added to `src/operators.c`), restricted to fully annotated operators
+  whose class matches an operand, so `Path.home() / '.ty'` resolves outside
+  `lib/path.ty`; unannotated class operators such as `Sync.<` stay out because
+  their signature-only schemes would poison unrelated comparisons.
+
+Library contracts corrected in the same pass, each checked against the
+runtime first:
+
+- `lib/prelude.ty`: `Array.enumerate!` is a VM builtin that lacked a
+  prototype;
+- `lib/ty/repl.ty`: `chr(source.byte(end.byte))` can receive `nil` past the
+  end of the source and now defaults to `0`; `mod-completions` builds
+  `(CompletionLabel, String)` pairs and widens to `Array[CompletionItem]`
+  with a fresh `[*...]` literal at the boundary, because arrays are invariant.
+
 The last clean validation run used the clang ASan build and produced:
 
 - `./ty test.ty`: 78 passed;
-- the types2 core unit suite: passed;
-- shadow-on/shadow-off equivalence: passed, including the new `loops` and
-  `loops-invalid` fixtures;
+- the types2 core unit suite: passed, including the multi-value checks;
+- shadow-on/shadow-off equivalence: passed, including the `multi-values`,
+  `multi-values-invalid`, `evolving`, `contextual`, `defaults`, and `repl`
+  fixtures;
 - the strict corpus gate: passed;
-- the startup corpus: 16 units, 0 unsupported nodes, 1,624 deferred nodes
-  (1,137 runtime, 165 incomplete, 322 external, 0 recovery), and 1 pending
-  terminal obligation;
-- 127 raw types2 diagnostic events (121 errors, 6 warnings) reducing to 126
-  unique `(unit, line, column, code)` diagnostics, all classified; `term`
-  contributes none;
-- `ty -tc lib/path.ty` reports only the intended unreachable-pattern warning
-  and `ty -tc lib/term.ty` reports nothing.
+- the startup corpus: 16 units, 0 unsupported nodes, 1,619 deferred nodes
+  (1,141 runtime, 161 incomplete, 317 external, 0 recovery), and no pending
+  terminal obligation (the `chalk.ty:609` pack obligation resolved once its
+  view pattern narrowed to `Int`);
+- 79 raw types2 diagnostic events (77 errors, 2 warnings) reducing to 78
+  unique `(unit, line, column, code)` diagnostics, all classified (54
+  unexplained, 18 library defects, 4 incomplete features, 2 expected
+  corrections); `chalk`, `help`, `term`, `sh`, `readln`, `ty/repl`, `io`, and
+  `os` contribute none, and the remaining units are `prelude` (54), `ffi`
+  (19), `pretty` (3), and `os` (1);
+- `ty -tc lib/path.ty` reports only the intended unreachable-pattern warning;
+  `lib/term.ty`, `lib/sh.ty`, `lib/readln.ty`, `lib/log.ty`, `lib/chalk.ty`,
+  `lib/help.ty`, and `lib/ty/repl.ty` report nothing; outside the startup
+  corpus `lib/curl.ty` (24), `lib/ffi.ty` (19), `lib/pretty.ty` (3),
+  `lib/ety.ty` (1), and `lib/sqlite.ty` (1) are the next modules with errors;
+- the clang ASan build compiles the startup corpus in 1.10 s with 268 MiB
+  peak RSS with shadowing enabled and 0.48 s with 146 MiB with it disabled
+  (three warm runs each).
 
 `tests/types2-corpus-classification.json`, `tests/types2-corpus.sh`,
-`tools/types2-corpus-summary.ty`, and `tests/dict_type_predicate.ty` are still
-untracked in the working tree; commit them with the next milestone.
+`tools/types2-corpus-summary.ty`, `tests/dict_type_predicate.ty`, and the
+`deferred`, `nil-guards`, `loops`, `multi-values`, `evolving`, `contextual`,
+`defaults`, and `repl` fixtures are still untracked in the working tree;
+commit them with the next milestone.
+The classification file was reseeded on 2026-09-02; entries whose line moved
+after the prelude gained two operator prototypes were remapped by unit,
+column, code, and message with meta names and locations normalized.
 
 The deferral totals fell from 3,106 to about 1,700 because imported bindings
 replaced Dynamic at 700 call sites, and the diagnostic count first rose from
@@ -915,6 +1132,39 @@ problems this work is intended to eliminate.
 - `symbolize_expression` rewrites `[T]` to `Array[T]` in type context; any
   new array-type surface syntax must survive that rewrite, as the optional
   element marker now does.
+- `shadow->multi_value_site` names the one call or value-list node whose raw
+  `|...|` result is wanted; every other call collapses to its first value at
+  the end of `infer_expression`.  Set it only around the exact node.
+- A loop's muted first pass relies on `shadow->muted`; any new diagnostic,
+  deferral, counter, or log line emitted during inference must honour it, and
+  anything cached per node must go through `set_node_type` so the touched
+  list can forget it before the second pass.
+- The compiler's `visit_statement` is read-only only with `visit_identity`
+  callbacks and a NULL scope; never hand it a scope from the shadow.
+- At runtime `for a, b in pairs` binds the pair and the index; destructure
+  with `for (a, b), i in pairs`.  `let a, b = (1, 2)` binds the tuple and
+  nil.  A multi-value result collapses to its first value in every other
+  position, including as a call argument.
+- `shadow->hint_site` and `shadow->lambda_hint_site` are consumed by node
+  identity; forward a hint only to a tail child right before inferring it.
+- A bare `Class` parameter is `Class[Dynamic]`, which a `Function` argument
+  satisfies gradually; `doc(f: Function)` therefore still selects the class
+  overload for a `Function`-typed argument (a Dynamic argument joins both).
+  Two unrelated nominal classes are not yet treated as disjoint.
+- An unannotated parameter is a flexible meta, not Dynamic: a call through
+  it commits to the first applicable overload and constrains the parameter.
+- `{captures, *}` inside a class pattern is not yet counted as covering the
+  class arm; `RegexMatch({captures})` is.
+- Passing `nil` for a defaulted parameter is accepted by types2 and rejected
+  by the legacy checker, so a fixture that both checkers run cannot contain
+  it directly; the `&[i;]` section exercises the rule at the type level.
+- A prelude class that overrides a method must reuse the inherited parameter
+  names (`[](key: K)`), or the override is reported as a call-shape mismatch.
+- Class operator methods are hoisted by the compiler into `STATE.class_ops`
+  and registered with `op_add`; they are not in `module->prog`, so
+  `import_operator_definitions` cannot see them.  Import them from the
+  dispatch table, and only when their signature is fully annotated.
+- `Path` has no `str` method; render a path with `"{path}"`.
 - Update this document after each milestone with the new clean baseline, newly
   classified gaps, and the exact next command. That is what makes a later
   continuation reliable rather than archaeological.

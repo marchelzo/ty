@@ -7,7 +7,7 @@ import ty.types as types
 import os
 import chalk (chalk, Text)
 import json
-import readln (readln, InteractiveLineReader, ListCompletions, CycleCompletions)
+import readln (readln, InteractiveLineReader, ListCompletions, CycleCompletions, CompletionItem, CompletionLabel)
 import path (Path)
 import time
 
@@ -80,7 +80,7 @@ fn color-and-break(source: String) -> Array[(Int, String)] {
         {meta: 'operator', *}
             => ({*t, type: 'op', meta: nil}),
 
-        {id, end, *} and chr(source.byte(end.byte)) == '('
+        {id, end, *} and chr(source.byte(end.byte) ?? 0) == '('
             => ({*t, type: 'fun'})
 
         _
@@ -201,11 +201,11 @@ fn type-completions(type: _, prefix: String) -> Array[_] {
     }
 }
 
-fn mod-completions(mod: Dict[String, _], prefix: String) -> [([Text | String], String)] {
-    let completions = []
+fn mod-completions(mod: Dict[String, _], prefix: String) -> Array[CompletionItem] {
+    let completions: Array[(CompletionLabel, String)] = []
 
     for name, item in mod if name.starts?(prefix) {
-        let label = match item {
+        let label: CompletionLabel | nil = match item {
             _ns: Dict => [chalk"[bright blue]{name}[/][grey]:[/] ", chalk"[b yellow]namespace[/]"],
             {type, *} => [chalk"[bright blue]{name}[/][grey]:[/] ", types::show(type)],
             _         => nil
@@ -216,7 +216,7 @@ fn mod-completions(mod: Dict[String, _], prefix: String) -> [([Text | String], S
         }
     }
 
-    return completions.sort!(by=\key(_.1))
+    return [*completions.sort!(by=\key(_.1))]
 }
 
 fn get-import(name: String) -> Module | nil {

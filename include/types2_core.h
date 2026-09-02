@@ -44,6 +44,7 @@ typedef enum t2_type_kind {
         T2_TYPE_PACK_FOLD_UNION,
         T2_TYPE_PACK_FOLD_INTERSECTION,
         T2_TYPE_VARIADIC_TUPLE,
+        T2_TYPE_MULTI,
         T2_TYPE_RECURSIVE,
         T2_TYPE_RECURSIVE_VARIABLE,
         T2_TYPE_OVERLOAD,
@@ -277,6 +278,9 @@ t2_nominal_add_super(
         T2Type supertype_template
 );
 
+bool
+t2_primitive_bind_nominal(T2Universe *universe, T2TypeKind kind, T2Type nominal);
+
 T2Type
 t2_nominal_project(
         T2Universe const *universe,
@@ -365,6 +369,12 @@ t2_effectful_callable(
 
 T2Type
 t2_tuple(T2Universe *universe, T2Type const *items, size_t count);
+
+T2Type
+t2_multi(T2Universe *universe, T2Type const *items, size_t count);
+
+T2Type
+t2_multi_item(T2Universe const *universe, T2Type type, size_t index);
 
 T2Type
 t2_record(

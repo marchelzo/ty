@@ -223,6 +223,48 @@ main(void)
         CHECK(t2_subtype(universe, matching_tuple, variadic_tuple) == T2_RELATION_YES);
         CHECK(t2_subtype(universe, mismatching_tuple, variadic_tuple) == T2_RELATION_NO);
 
+        T2Type int_string_values = t2_multi(
+                universe,
+                (T2Type[]) { integer, string },
+                2
+        );
+        T2Type optional_string = t2_union(universe, (T2Type[]) { string, nil }, 2);
+        T2Type int_optional_string_values = t2_multi(
+                universe,
+                (T2Type[]) { integer, optional_string },
+                2
+        );
+        check_string(universe, int_string_values, "|Int, String|");
+        check_snapshot(universe, int_string_values);
+        CHECK(t2_multi(universe, (T2Type[]) { integer, nil }, 2) == integer);
+        CHECK(t2_multi(universe, &integer, 1) == integer);
+        CHECK(t2_multi(universe, NULL, 0) == nil);
+        CHECK(t2_multi_item(universe, int_string_values, 0) == integer);
+        CHECK(t2_multi_item(universe, int_string_values, 1) == string);
+        CHECK(t2_multi_item(universe, int_string_values, 2) == nil);
+        CHECK(t2_multi_item(universe, integer, 0) == integer);
+        CHECK(t2_multi_item(universe, integer, 1) == nil);
+        CHECK(t2_subtype(
+                universe,
+                int_string_values,
+                int_optional_string_values
+        ) == T2_RELATION_YES);
+        CHECK(t2_subtype(
+                universe,
+                int_optional_string_values,
+                int_string_values
+        ) == T2_RELATION_NO);
+        CHECK(t2_subtype(universe, int_string_values, integer) == T2_RELATION_NO);
+        CHECK(t2_subtype(universe, integer, int_optional_string_values) == T2_RELATION_YES);
+        CHECK(t2_subtype(universe, integer, int_string_values) == T2_RELATION_NO);
+        CHECK(t2_subtype(universe, int_string_values, int_string_values) == T2_RELATION_YES);
+        CHECK(t2_join(universe, int_string_values, integer) == t2_union(
+                universe,
+                (T2Type[]) { int_string_values, integer },
+                2
+        ));
+        CHECK(t2_meet(universe, int_string_values, int_optional_string_values) == int_string_values);
+
         T2Type string_or_bool = t2_union(
                 universe,
                 (T2Type[]){ string, boolean },

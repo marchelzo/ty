@@ -584,7 +584,7 @@ pub class CookieJar : Iter[Cookie] {
         [cookie for _, cookie in __cookies if cookie.matches(host, path, secure)]
     }
 
-    __iter__() { __cookies.values() }
+    __iter__() { __cookies.values().__iter__() }
     __len__() -> Int { #__cookies }
 }
 
