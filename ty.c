@@ -17,6 +17,7 @@
 #include "xd.h"
 #include "itable.h"
 #include "compiler.h"
+#include "types2.h"
 #include "class.h"
 #include "blob.h"
 #include "str.h"
@@ -121,6 +122,7 @@ usage(void)
                 "    -M MODULE     Like -m, but uses an unqualified import: import MODULE (..)            \0"
                 "    -p            Print the value of the last-evaluated expression before exiting        \0"
                 "    -q            Ignore constraints on function parameters and return values            \0"
+                "    -t            Check with the experimental types2 checker instead of the legacy one    \0"
                 "    -S FILE       Write the program's annotated disassembly to FILE                      \0"
                 "                    (- is interpreted as stdout, and @ is interpreted as stderr)         \0"
                 "    --test        Any top-level functions decorated with @test will be executed after    \0"
@@ -533,6 +535,12 @@ ProcessArgs(char *argv[], bool first)
                                         DetailedExceptions = false;
                                         break;
 
+                                case 't':
+                                        Types2Authoritative = true;
+                                        CheckTypes = false;
+                                        CheckConstraints = false;
+                                        break;
+
                                 case 'b':
                                         basic = true;
                                         break;
@@ -728,6 +736,8 @@ main(int argc, char **argv)
                 fprintf(stderr, "%s\n", TyError(ty));
                 return -1;
         }
+
+        types2_startup_finished();
 
         argv += ProcessArgs(argv, false);
 

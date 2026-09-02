@@ -114,18 +114,69 @@ event for every inferred side-table entry.  This is intended for focused
 debugging and can make logs much larger.  These events also include the dormant
 runtime-shape fact when one can be computed.
 
-Run the permanent smoke/equivalence check after building with:
+Every deferral has a named reason.  The `finish` event carries
+`deferred_reasons` (nonzero counts by reason) and `deferred_classes`, which
+totals the reasons into four classes: `runtime` for intentional gradual or
+runtime-only boundaries (`dynamic-callee`, `dynamic-operand`, `unsafe-eval`,
+`runtime-value`, dynamic member names, ...), `incomplete` for unfinished types2
+features (`template`, `keyword-row`, `tuple-spread`, `set-type`,
+`operator-protocol`, ...), `external` for facts the shadow could not obtain
+(`unresolved-binding`, `unresolved-nominal`, `unresolved-tag`,
+`unresolved-matcher`), and `recovery` (`hierarchy-rejected`).  The reason
+table lives at the top of `src/types2.c`; `tools/types2-corpus-summary.ty`
+mirrors it and fails when the two disagree.  Set `TY_TYPES2_TRACE_DEFERRED=1`
+to add one `deferred` event per deferral with its reason, class, location,
+construct, and, for bindings, the symbol name and module, plus one `import`
+event per cross-unit binding import attempt.  Deferrals and diagnostics that
+occur while an imported definition is being re-lowered are attributed to the
+defining unit and are not counted in the importing unit.
+
+Diagnostic events also carry `actual_hash` and `expected_hash`, the canonical
+structural hashes of the two types when they exist, so tooling can dedupe
+without relying on rendered text alone.
+
+Run the permanent gates after building with:
 
 ```sh
 tests/types2-shadow-equivalence.sh ./ty
+tests/types2-corpus.sh ./ty
 make test-types2-core
 ```
+
+`tests/types2-corpus.sh` compiles the startup corpus with deferral tracing and
+runs `tools/types2-corpus-summary.ty --strict` against
+`tests/types2-corpus-classification.json`.  It fails on malformed events,
+unknown reasons or classifications, unclassified or stale diagnostics,
+internal errors, and aborts.  `make test-types2-corpus` runs the same gate.
+Regenerate the classification skeleton with `--seed` (merging an existing
+`--classification` file) after inference changes move diagnostics.
 
 This interface must remain one-way.  Code in `types2` may observe resolved
 syntax and read-only compiler facts.  The only legacy-type translation is the
 explicit materialized-computed-result boundary described above.  Legacy typing
 and code generation must never inspect a shadow result before the atomic
 cutover.
+
+## Experimental authoritative mode (`-t`)
+
+`ty -t FILE` runs the interpreter with the legacy typechecker's diagnostics
+disabled (as `-q` does) and types2 reporting instead.  Every unit compiled
+after startup prints its types2 diagnostics to standard error, sorted by
+location, with a source excerpt, the actual and expected types, and colour
+when standard error is a terminal (or `--color=always`).  Only errors in the
+entry unit (`main`, or `(repl)` for `-e`) abort compilation, so a script can
+import library modules that still carry classified diagnostics; those are
+printed but not fatal.  Set `TY_TYPES2_REPORT=all` to also print the startup
+units (prelude and friends), and `TY_TYPES2_DEBUG_OPERATORS=1` to trace
+operator candidate selection.  Multi-line solver explanations are folded into
+dimmed `note:` lines under the headline.
+
+This flag changes acceptance and diagnostics only.  Inferred types, emitted
+code, runtime constraints, reflection, and the JIT still come from the legacy
+path (with `CheckTypes` off), so it is a playground for reading types2's
+verdicts against real code, not the cutover described below.  The
+architectural invariants in this document still hold with `-t` off, which is
+the default and the mode the equivalence gate covers.
 
 ## Initial overhead baseline
 
@@ -134,6 +185,12 @@ fixture measured 53.5 ms with shadowing disabled and 56.7 ms with it enabled
 (10 warm runs each, roughly 6% overhead).  Peak RSS was indistinguishable at
 about 74 MiB in three runs.  These numbers are an early smoke baseline, not a
 budget for later inference milestones.
+
+On 2026-09-01, with cross-unit binding import in place, the clang ASan build
+compiled the startup corpus (`./ty -c -e nil`) in 0.95 s with 267 MiB peak RSS
+with shadowing enabled and 0.47 s with 144 MiB with `TY_TYPES2_SHADOW=0`
+(three warm runs each).  ASan inflates both numbers; the release preset has
+not been remeasured since imports landed.
 
 ## Project status at this handoff
 
@@ -144,62 +201,130 @@ can traverse the current startup corpus without reporting an unsupported AST
 node, and the core unit suite exercises the principal representation choices
 from the audit. None of that changes the authority boundary described above.
 
-The last known clean validation run used an ASan build and produced:
+Steps 1 through 4 of the previous handoff are complete, and Step 5 has begun.
+Since the audited revision `a5746a3` the shadow gained:
 
-- `test.ty`: 77/77 tests passed;
+- reasoned deferral telemetry (34 reasons in four classes) with per-site trace
+  events, and structural hashes on diagnostic events;
+- `tools/types2-corpus-summary.ty`, the checked-in classification file, and
+  the strict corpus gate `tests/types2-corpus.sh`;
+- cross-unit binding import: an identifier whose symbol has no binding in the
+  current unit is resolved by re-lowering the defining top-level statement
+  (function, prototype, definition, class, or tag) from the defining module's
+  syntax, with diagnostics and deferral accounting suppressed during the
+  re-lowering; prototypes for module builtins are matched by name inside the
+  symbol's home module, and the referencing symbol aliases the definition's
+  binding;
+- builtin module constants (for example `os.O_CREAT`) typed through the
+  compiler's literal fact bridge, which now also accepts builtin symbols;
+- regex patterns (captures `$0..$n` and named groups are bound to `String` in
+  the arm scope), `pattern and cond, let-part, ...` patterns, and negated
+  `if not let` bindings for the continuation;
+- unreachable tag patterns still bind their sub-patterns as Dynamic;
+- tag values and calls: a bare tag is `Tag[Never]`, `Tag(a)` is `Tag[A]`,
+  `Tag(a, b)` wraps a tuple, and every tag nominal has `Tag` as a supertype;
+  the `None` type is the tag, not `nil`, because the runtime distinguishes them;
+- `__missing__` protocols: a read of an absent member calls the class's
+  `__missing__(name)` method and a write of an absent member calls its
+  `__missing__=(name, value)` setter, which is how `chalk.red = '#f00'` is
+  typed (`chalk` is a `Chalk` object, not the module);
+- member access on a bare tag (`Some.from(x)`) resolves the tag's static
+  members, as the runtime's tag dispatch does;
+- cross-unit operator import: the legacy compiler nulls operator parameter
+  constraints after symbolizing them, so `symbolize_statement` now keeps a copy
+  in `retained_constraints` on the function node and types2 reads that copy;
+  candidates whose every parameter is still Dynamic are skipped, and ties
+  between equally specific candidates go to the first declared one, as the
+  legacy prototype order does;
+- bare generic application (`Array`, `Class`, `Iter`) lowers with Dynamic
+  arguments, and annotation patterns narrow gradually instead of forming an
+  intersection with the subject;
+- fresh record and array literals passed as call arguments are typed against
+  the parameter (contextual typing), so writable-field invariance no longer
+  rejects `f({count: nil})` against `{count: nil | Int}`;
+- comparisons and arithmetic on still-open operands (metas, pack folds) defer
+  as `operator-open-operand` instead of failing;
+- flow typing for implicit member fields: `__path != nil && __path.exists?`,
+  `if __path == nil { return }`, and `if x != nil { ... }` narrow a private
+  field read (`__path`) the way they narrow a local, through a transient
+  member binding seeded at the first read, invalidated by any call or write,
+  and scoped to the enclosing method (`types2-shadow-nil-guards` fixtures).
+
+Three runtime defects were found and repaired along the way:
+
+- `lib/prelude.ty` `Dict.[](K, V)` iterated `keys()` and indexed each key as a
+  pair, so `%{1: 2} :: Dict[Int, Int]` threw at runtime; it now iterates
+  `items()` (`tests/dict_type_predicate.ty`). This also removed the two
+  pending obligations the previous handoff documented.
+- `src/jit.c` baked the metaclass's `[](_) { self }` fallback for method calls
+  on class-valued receivers, so `Dict[Int, Int]` inside JIT-compiled code
+  evaluated to the bare class and matched every dictionary. `bc_emit_call_method`
+  now declines static-type method resolution for class and tag receivers, which
+  dispatch through their static tables first at runtime.
+- `lib/os.ty` declared `listdir` as `-> [Float] | nil` (the audit's conflicting
+  declaration); the runtime returns strings or nil, so it is now
+  `[String] | nil`, which made `Path.ls()` type correctly.  `TempDir.__drop__`
+  called `rmtree` on a `Path | nil` field without a guard; it now checks
+  `__path != nil` first, as `TempFile.__drop__` already did.
+
+The last clean validation run used the clang ASan build and produced:
+
+- all 78 files under `tests/` pass when run as `ty --test FILE`; the
+  `test.ty` harness itself did not compile at handoff because an uncommitted
+  prelude edit turned `Some.some?()` into a getter while `test.ty:24` still
+  calls it, which is unrelated to types2;
 - the types2 core unit suite: passed;
-- shadow-on/shadow-off equivalence: passed;
-- the startup/prelude corpus: 16 observed units, 0 unsupported nodes, 3,106
-  deferred nodes, and 2 pending terminal obligations;
-- 126 raw types2 diagnostic events: 119 errors and 7 warnings, reducing to 122
-  unique `(file, line, column, code)` diagnostics.
+- shadow-on/shadow-off equivalence: passed, including the `deferred` fixture;
+- the strict corpus gate: passed;
+- the startup corpus: 16 units, 0 unsupported nodes, 1,626 deferred nodes
+  (1,137 runtime, 164 incomplete, 325 external, 0 recovery), and 1 pending
+  terminal obligation;
+- 157 raw types2 diagnostic events (144 errors, 13 warnings) reducing to 156
+  unique `(unit, line, column, code)` diagnostics, all classified;
+- `ty -tc lib/path.ty` reports only the intended unreachable-pattern warning.
 
-This snapshot was taken on 2026-09-01 from the working tree descended from the
-audited revision `a5746a3`. It is a navigation aid, not an acceptance baseline:
-the corpus command only loads the normal startup modules, not every module under
-`lib/`, and many reported differences are not yet classified.
+The deferral totals fell from 3,106 to about 1,700 because imported bindings
+replaced Dynamic at 700 call sites, and the diagnostic count first rose from
+122 to 209 for the same reason (precise imported types reach call, member, and
+field-write checks that previously saw Dynamic) and then fell to 156 as the
+tag, operator, `__missing__`, contextual-argument, narrowing, and member
+nil-guard fixes above landed.  Do not treat either number as a score.
 
-The most common diagnostic codes in that snapshot were:
+The most common deferral reasons in that snapshot were:
 
-| Code | Count | First question to answer |
-|---|---:|---|
-| `generic-arity` | 17 | Is the declaration genuinely malformed, or has native generic metadata not been imported completely? |
-| `bad-call` | 13 | Is the call invalid under the intended complete call-shape rules, or is the callee interface incomplete? |
-| `union-method-coverage` | 12 | Does every reachable union arm really need the method, or is prior narrowing missing? |
-| `union-member-coverage` | 10 | Is this a real unsafe field access, an optional access, or a lost row/refinement fact? |
-| `missing-field` | 9 | Is the field absent, or missing from the types2 native/class interface? |
-| `not-callable` | 7 | Is this a real dynamic boundary, an overload-set issue, or an incomplete imported declaration? |
-| `invalid-trait-member` | 7 | Does the implementation violate the trait, or is trait member lowering incomplete? |
-| `invalid-override` | 6 | Is the complete call protocol incompatible, or is inherited metadata incomplete? |
-| `union-operator-coverage` | 6 | Is a reachable operand pair unsupported, or should control flow have removed it? |
+| Reason | Class | Count | Notes |
+|---|---|---:|---|
+| `dynamic-callee` | runtime | 706 | mostly downstream of the `external` gaps below; Dynamic provenance is not tracked yet |
+| `unresolved-binding` | external | 325 | AST constructors from `ty` referenced by `prelude` before that module is compiled; macro builtins `peek`/`next`/`expr`; builtins without prototypes such as `type` and `show`; nested mutually recursive functions |
+| `runtime-value` | runtime | 278 | raw VM values spliced by macros |
+| `dynamic-operand` | runtime | 127 | |
+| `template` | incomplete | 72 | |
+| `operator-open-operand` | incomplete | 31 | |
+| `set-type` | incomplete | 22 | all in `ffi` |
+| `operator-protocol` | incomplete | 21 | |
+| `keyword-row` | incomplete | 18 | |
 
-The largest unit-level hot spots were:
+The remaining pending obligation is the `<=>` pack obligation from
+`min`/`max` at `lib/chalk.ty:609`; it is classified as an incomplete pack
+feature, not a library error.
 
-| Unit | Errors | Warnings | Deferred | Pending obligations |
-|---|---:|---:|---:|---:|
-| `prelude` | 63 | 1 | 793 | 2 |
-| `ffi` | 2 | 0 | 502 | 0 |
-| `unibilium` | 5 | 0 | 389 | 0 |
-| `term` | 15 | 4 | 306 | 0 |
-| `path` | 3 | 1 | 265 | 0 |
-| `readln` | 18 | 0 | 202 | 0 |
-| `chalk` | 4 | 1 | 171 | 0 |
-
-These numbers help locate clusters, but they have the same caveat as the global
-totals: one incomplete shared interface can create many downstream events.
+The classification file records 2 expected corrections, 20 library defects,
+10 incomplete features, and 124 unexplained diagnostics.  Keys carry line
+numbers, so an edit that inserts lines in a library file moves every later
+key; reseed with `--seed --classification` and restore the moved entries'
+classes before treating them as new.  The unexplained
+group is the triage queue.  Its largest codes are `missing-field` (26),
+`bad-call` (23), `union-member-coverage` (16), `union-method-coverage` (14),
+and `unreachable-pattern` (10).  Most `missing-field` entries read `.id`/`.str`
+on tokens produced by the `ty/token` lexer builtins, whose interface is
+unavailable until that module is compiled.  Three `bad-call` entries appeared
+when operator ties started resolving by declaration order; a union operand
+such as `Int | Float` should be split per arm before candidate selection.
 
 Do not optimize for reducing these numbers mechanically. In particular, do not
 replace an unexplained result with `Dynamic` merely to remove a diagnostic.
 Each difference must be classified against the intended semantics in
 `type_system.md` and, where relevant, runtime behavior.
-
-The two retained terminal obligations currently come from the known `Dict`
-runtime-type predicate around `lib/prelude.ty:1030`. It iterates `x.keys()` and
-then reads `p.0` and `p.1` as though each value were a key/value pair. Types2 now
-keeps and reports those failed subscript obligations instead of erasing them.
-The likely library repair is to iterate items, but that change needs its own
-runtime and static regression test because it changes library behavior rather
-than shadow infrastructure.
 
 ## What is implemented, and what still needs proof
 
@@ -253,37 +378,30 @@ types2 result, not legacy behavior for known defects, is the oracle.
 
 ### 2. Split “deferred” into actionable reasons
 
-`deferred_nodes` is presently too broad to use as a readiness metric. It mixes
-valid runtime escape hatches with missing checker coverage. Introduce a stable
-reason enum and emit per-reason counts, with an optional event at the affected
-source location. At minimum distinguish:
+Done.  `defer_node`/`defer_symbol` in `src/types2.c` are the only accounting
+entry points; `retract_deferral` handles the materialized computed-type case.
+Every reason belongs to exactly one class, and the finish event reports both
+per-reason and per-class totals.  Keep the invariants when adding a reason:
 
-- deliberate `Dynamic` elimination or runtime-only constructs;
-- incomplete native/class interface information;
-- unresolved import, nominal, tag, or custom pattern information;
-- unknown-arity positional spread;
-- keyword dictionary spread awaiting keyword-row inference;
-- tuple-expression spread;
-- computed/compile-time work awaiting the single-evaluation broker;
-- type-level `typeof` whose operand has no types2 result;
-- dynamic member or method names;
-- unsupported operator protocol or operator value construction;
-- template, hole, and pack-fold expression variants;
-- macros and type-setting statements;
-- hierarchy or bound syntax that could not be lowered;
-- internal recovery after an earlier types2 failure.
+- add it to `TYPES2_DEFER_REASONS` and to `REASON_CLASSES` in
+  `tools/types2-corpus-summary.ty`, or the corpus gate fails;
+- never pick a reason merely to suppress a diagnostic;
+- `runtime` is for constructs that are intentionally dynamic; an incomplete
+  interface, spread, or keyword row must stay `incomplete`;
+- `external` is for facts the compiler has not made available to the shadow
+  (a module compiled later, a builtin without a prototype, a macro-provided
+  name); it is the next category to drive down.
 
-Some constructs such as `unsafe`, `eval`, trace/context values, and genuinely
-dynamic calls may remain intentionally dynamic forever. Give them an explicit
-reason such as `runtime-dynamic`; do not count them as unfinished. Conversely,
-an incomplete interface or tuple spread must not disappear into that category.
-The cutover gate is zero unclassified/incomplete deferrals on the supported
-corpus, not necessarily zero total deferrals.
+Two known imprecisions remain.  `dynamic-callee` and `dynamic-operand` count
+every elimination of a Dynamic value, whether the Dynamic came from an
+annotation or from an earlier `external` gap; tracking Dynamic provenance
+would let the runtime class exclude the latter.  Deferrals inside imported
+definitions are not counted by the importing unit at all.
 
 ### 3. Build a reproducible differential-validation corpus
 
-The current startup run is useful but insufficient. Add a checked-in driver
-that runs:
+The startup corpus, summary tool, classification file, and strict gate exist
+(`tests/types2-corpus.sh`).  The remaining driver work is to add:
 
 - the repository test suite;
 - every supported module under `lib/`, with an explicit list of platform-only
@@ -449,7 +567,7 @@ should not be used as the target.
 
 The next work session should proceed in this order.
 
-### Step 1: reproduce and archive the current baseline
+### Step 1: reproduce the current baseline
 
 Start from a fresh ASan build and run the permanent gates:
 
@@ -459,64 +577,67 @@ ASAN_OPTIONS=intercept_strndup=0:detect_leaks=0 \
     CC=clang make test-types2-core DEBUG=1
 ASAN_OPTIONS=intercept_strndup=0:detect_leaks=0 \
     ./tests/types2-shadow-equivalence.sh ./ty
+ASAN_OPTIONS=intercept_strndup=0:detect_leaks=0 \
+    ./tests/types2-corpus.sh ./ty
 ASAN_OPTIONS=intercept_strndup=0:detect_leaks=0 ./ty test.ty
 ```
 
-Then create a fresh log. `TY_TYPES2_LOG` appends, so never reuse an old path:
+For a readable summary of the corpus without the strict gate:
 
 ```sh
 types2_log=$(mktemp /tmp/types2-shadow.XXXXXX.jsonl)
 ASAN_OPTIONS=intercept_strndup=0:detect_leaks=0 \
-    TY_TYPES2_LOG="$types2_log" ./ty -c -e nil
-echo "$types2_log"
+    TY_TYPES2_LOG="$types2_log" TY_TYPES2_TRACE_DEFERRED=1 ./ty -c -e nil
+./ty tools/types2-corpus-summary.ty \
+    --classification tests/types2-corpus-classification.json "$types2_log"
 ```
 
-Record the revision, compiler, build flags, command, exit status, finish-event
-totals, and unique diagnostic keys. Do not commit a host-specific `/tmp` path.
+`TY_TYPES2_LOG` appends, so never reuse an old path.
 
-### Step 2: replace the scalar deferred counter with reasoned telemetry
+### Step 2: triage the unexplained diagnostics
 
-Add one enum and one accounting function rather than incrementing
-`shadow->deferred_nodes` directly throughout `src/types2.c`. Keep a total for
-compatibility, add per-reason totals to the finish event, and optionally emit
-location-bearing detail events under a verbose logging switch. Update the
-equivalence fixture to assert that logging remains the only observable change.
+`ty -t -c lib/<module>.ty` prints a module's own diagnostics in source order
+and is the fastest way to read one group at a time.
 
-Acceptance for this step:
+Work through `tests/types2-corpus-classification.json` by code, largest group
+first, and replace `unexplained` with the correct class and a note.  Read the
+source line and, where behavior is in question, run the construct.  Group
+notes are cheaper than per-site notes when a code has one cause.  Decisions
+that turn out to be language contract questions (implicit fields assigned in
+`init`, bare generic application, optional indexing, parameter names in
+overrides) belong in Workstream 1 fixtures rather than in the classification
+file alone.
 
-- every deferral site has a named reason;
-- reasons are divided into intentional runtime boundaries, incomplete features,
-  missing external facts, and recovery;
-- the startup corpus has zero unclassified deferrals;
-- no reason is selected solely to suppress a diagnostic;
-- shadow-on/off stdout, stderr, status, and runtime behavior remain identical.
+### Step 3: drive down the `external` deferrals
 
-### Step 3: add a checked-in corpus summary and classifier
+Use `TY_TYPES2_TRACE_DEFERRED=1` and the `deferred`/`import` events grouped by
+`name` and `module`.  The known groups are:
 
-Create a small test/tooling script that consumes JSON lines, deduplicates stable
-diagnostic identities, totals deferred reasons and solver counters, and compares
-the result with a checked-in classification file. It should reject malformed
-events and unknown classifications. Avoid using textual rendered types as the
-only identity; include canonical structural hashes where available.
+- symbols of modules compiled after the referencing unit (the `ty` AST
+  constructors used by `prelude` and `ffi`): decide whether the shadow may
+  re-lower a parsed but not yet compiled module, or whether those references
+  stay external until compile order changes;
+- macro-provided builtins (`peek`, `next`, `expr`, `stmt`) and builtins without
+  prelude prototypes (`type`, `show`, `unlock`, `sigmask`, `fdopen`): add native
+  contracts or prototypes as library changes with their own tests;
+- nested mutually recursive functions inside a block: pre-register forward
+  bindings for nested function definitions the way top-level declarations are;
+- `if not let` inside `break if`/`continue if` and other condition positions.
 
-Seed the classifier with the current high-volume groups, then examine each one
-against source and runtime behavior. The 122 unique diagnostics are the initial
-triage queue, not expected permanent failures.
+### Step 4: implement the largest incomplete categories
 
-### Step 4: resolve the known terminal obligation
+Use the reasoned counts: templates and holes, open-operand operator
+obligations, `__set_type__`, operator protocol fallbacks, keyword rows, then
+hierarchy syntax, computed types, spread arity, and tuple spreads.  For each,
+add a positive fixture, a negative fixture, a canonical inferred type
+assertion, and, where speculation is involved, a rollback assertion.
 
-Write a focused test for the `Dict` runtime-type predicate, verify the actual
-shape produced by `keys()` and `items()`, and repair `lib/prelude.ty:1030` if the
-audit diagnosis is confirmed. Assert both runtime matching and the types2
-obligation log. After the repair, the startup corpus should finish with no
-pending terminal obligation unless a newly discovered real error is documented.
+### Step 5: track Dynamic provenance
 
-### Step 5: implement the largest incomplete deferred categories
-
-Use the reasoned counts rather than guesswork. Start with incomplete native
-interfaces, tuple spreads, and keyword rows because they affect many downstream
-call/member errors. For each category, add fixtures before changing inference,
-and confirm transactional rollback and canonical inferred types afterward.
+Give the `runtime` class an honest meaning by distinguishing a Dynamic that
+came from an annotation, `unsafe`, or `eval` from one that came from an
+`external` or `incomplete` gap, so that `dynamic-callee` and
+`dynamic-operand` no longer hide unfinished work.
 
 ### Step 6: add the full library matrix and types2-only driver
 
@@ -535,9 +656,9 @@ the cutover gate is satisfied.
 ### Step 8: stabilize diagnostics and run performance gates
 
 Snapshot user-facing diagnostics, add complexity errors and peak counters, then
-measure the release build on the audit stress corpus. Performance work before
-deferred classification risks optimizing fallback paths that should instead be
-deleted.
+measure the release build on the audit stress corpus.  Cross-unit import
+re-lowers each imported definition once per importing unit; measure that cost
+on the release preset before adding a cross-unit scheme cache.
 
 ## Routine validation while developing
 
@@ -552,6 +673,10 @@ ASAN_OPTIONS=intercept_strndup=0:detect_leaks=0 \
 # Prove the shadow checker cannot alter ordinary behavior.
 ASAN_OPTIONS=intercept_strndup=0:detect_leaks=0 \
     ./tests/types2-shadow-equivalence.sh ./ty
+
+# Check the startup corpus against the classification file.
+ASAN_OPTIONS=intercept_strndup=0:detect_leaks=0 \
+    ./tests/types2-corpus.sh ./ty
 
 # Inspect a single fixture's events without contaminating stderr.
 types2_log=$(mktemp /tmp/types2-fixture.XXXXXX.jsonl)
@@ -625,6 +750,13 @@ one of them undermines the replacement strategy even if its local test passes.
   `tests/fixtures/types2-alias-basic.ty.txt` cover focused integration behavior.
   Add a small fixture instead of expanding one file into an opaque omnibus
   test.
+- `tools/types2-corpus-summary.ty` summarizes JSON Lines logs, validates
+  events and classifications, and seeds the classification file.
+- `tests/types2-corpus.sh` is the strict corpus gate;
+  `tests/types2-corpus-classification.json` is its expected-classification
+  file.
+- `tests/dict_type_predicate.ty` is the runtime regression for the `Dict`
+  type predicate and the JIT class-receiver dispatch repair.
 - `doc/types2-shadow.md` is this operational handoff. Update its baseline,
   remaining-work list, and commands whenever a milestone materially changes
   them.

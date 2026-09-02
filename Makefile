@@ -164,7 +164,7 @@ ifndef NO_NSYNC
 endif
 ASSEMBLY := $(patsubst %.c,%.s,$(SOURCES))
 .DEFAULT_GOAL := all
-.PHONY: all clean test test-types2-core test-types2-shadow
+.PHONY: all clean test test-types2-core test-types2-shadow test-types2-corpus
 DEPFILES := $(OBJECTS:.o=.d) $(TYLS_OBJECTS:.o=.d) $(TYPROF_OBJECTS:.o=.d) \
             obj/ty-main.d obj/tyls-main.d obj/typrof-main.d
 
@@ -254,6 +254,9 @@ obj/types2-core-test: tests/types2_core.c src/types2_core.c include/types2_core.
 
 test-types2-shadow: ty
 	./tests/types2-shadow-equivalence.sh ./ty
+
+test-types2-corpus: ty
+	./tests/types2-corpus.sh ./ty
 
 install: $(PROG)
 	sudo install -m755 -s $(PROG) $(DESTDIR)$(PREFIX)$(bindir)

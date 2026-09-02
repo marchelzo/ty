@@ -6723,6 +6723,18 @@ bc_emit_inline_operator(JitCtx *ctx, int op, void *fallback)
         }                                      \
 } while (0)
 
+static Class *
+dispatch_class_of(Ty *ty, Type const *t)
+{
+        Class *c = expected_class_of(ty, t);
+
+        if (c != NULL && (c->i == CLASS_CLASS || c->i == CLASS_TAG)) {
+                return NULL;
+        }
+
+        return c;
+}
+
 static void
 bc_emit_call_method(JitCtx *ctx, char const *op_ip, int z, int n, int nkw)
 {
@@ -6736,7 +6748,7 @@ bc_emit_call_method(JitCtx *ctx, char const *op_ip, int z, int n, int nkw)
         // self is at ops[sp-1] (top), args at ops[sp-1-n..sp-2]
 
         // Try to resolve method at compile time using receiver type info
-        Class *recv_cls = expected_class_of(ctx->ty, ctx->op_types[ctx->sp - 1]);
+        Class *recv_cls = dispatch_class_of(ctx->ty, ctx->op_types[ctx->sp - 1]);
 
         // Try builtin type fast path (String, Array, Dict, Blob)
         int builtin_vtype = -1;
