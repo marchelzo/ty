@@ -51,7 +51,7 @@ run_case()
         printf '%s\n' "$result" >"$status"
 }
 
-for fixture in valid invalid overload-union flow flow-invalidation contracts class-operator operator-constraints pack-constraints scoped-obligations subscript-protocol member-protocol keyword-spread match-coverage recovery deferred nil-guards nil-guards-invalid loops loops-invalid; do
+for fixture in valid invalid overload-union flow flow-invalidation contracts class-operator operator-constraints pack-constraints scoped-obligations subscript-protocol member-protocol keyword-spread match-coverage recovery deferred nil-guards nil-guards-invalid loops loops-invalid multi-values multi-values-invalid evolving contextual defaults repl; do
         source=$test_dir/fixtures/types2-shadow-$fixture.ty.txt
 
         run_case \
@@ -197,6 +197,40 @@ grep -Eq '"path":"[^"]*types2-shadow-deferred.ty.txt".*"deferred_nodes":6,' \
 grep -Eq '"path":"[^"]*types2-shadow-deferred.ty.txt".*"deferred_reasons":\{"dynamic-callee":1,"dynamic-operand":1,"dynamic-member-name":1,"unsafe-eval":2,"tuple-spread":1\}' \
         "$scratch/shadow.jsonl"
 grep -Eq '"path":"[^"]*types2-shadow-deferred.ty.txt".*"deferred_classes":\{"runtime":5,"incomplete":1,"external":0,"recovery":0\}' \
+        "$scratch/shadow.jsonl"
+grep -Eq '"path":"[^"]*types2-shadow-multi-values.ty.txt".*"types2_errors":0,' \
+        "$scratch/shadow.jsonl"
+grep -Eq '"path":"[^"]*types2-shadow-multi-values.ty.txt".*"types2_warnings":0,' \
+        "$scratch/shadow.jsonl"
+grep -Eq '"path":"[^"]*types2-shadow-multi-values.ty.txt".*"pending_obligations":0' \
+        "$scratch/shadow.jsonl"
+grep -Eq '"path":"[^"]*types2-shadow-multi-values-invalid.ty.txt".*"code":"return-type"' \
+        "$scratch/shadow.jsonl"
+grep -Eq '"path":"[^"]*types2-shadow-multi-values-invalid.ty.txt".*"types2_errors":2,' \
+        "$scratch/shadow.jsonl"
+grep -Eq '"path":"[^"]*types2-shadow-evolving.ty.txt".*"types2_errors":0,' \
+        "$scratch/shadow.jsonl"
+grep -Eq '"path":"[^"]*types2-shadow-evolving.ty.txt".*"types2_warnings":0,' \
+        "$scratch/shadow.jsonl"
+grep -Eq '"path":"[^"]*types2-shadow-evolving.ty.txt".*"pending_obligations":0' \
+        "$scratch/shadow.jsonl"
+grep -Eq '"path":"[^"]*types2-shadow-contextual.ty.txt".*"types2_errors":0,' \
+        "$scratch/shadow.jsonl"
+grep -Eq '"path":"[^"]*types2-shadow-contextual.ty.txt".*"types2_warnings":0,' \
+        "$scratch/shadow.jsonl"
+grep -Eq '"path":"[^"]*types2-shadow-contextual.ty.txt".*"pending_obligations":0' \
+        "$scratch/shadow.jsonl"
+grep -Eq '"path":"[^"]*types2-shadow-defaults.ty.txt".*"types2_errors":0,' \
+        "$scratch/shadow.jsonl"
+grep -Eq '"path":"[^"]*types2-shadow-defaults.ty.txt".*"types2_warnings":0,' \
+        "$scratch/shadow.jsonl"
+grep -Eq '"path":"[^"]*types2-shadow-defaults.ty.txt".*"pending_obligations":0' \
+        "$scratch/shadow.jsonl"
+grep -Eq '"path":"[^"]*types2-shadow-repl.ty.txt".*"types2_errors":0,' \
+        "$scratch/shadow.jsonl"
+grep -Eq '"path":"[^"]*types2-shadow-repl.ty.txt".*"types2_warnings":0,' \
+        "$scratch/shadow.jsonl"
+grep -Eq '"path":"[^"]*types2-shadow-repl.ty.txt".*"pending_obligations":0' \
         "$scratch/shadow.jsonl"
 
 printf 'types2 shadow equivalence: ok\n'

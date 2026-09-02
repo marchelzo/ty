@@ -63,6 +63,10 @@ fn completion-label-plain(item: CompletionItem) -> String {
     (chalk"{label}").plain
 }
 
+fn text-of(lines: Array[Array[String]]) -> String {
+    lines.map(\_.str() ?? '').unlines()
+}
+
 fn completion-text(item: CompletionItem) -> String {
     match item {
         (_, s) => s,
@@ -114,7 +118,7 @@ class CompletionCycler {
         let n = 0
 
         for page, i in __pages {
-            let count = page.map(`#`).sum()
+            let count = page.map(`#`).sum(0)
             if ci < n + count {
                 return (i, n)
             }
@@ -229,7 +233,7 @@ fn fit-items(items: Array[CompletionLabel], W: Int) -> Array[Array[String]] {
 
             let nparts = cols[i]
                 .map(label -> (label :: Array) ? #label : 1)
-                .max()
+                .max() ?? 0
 
             let parts: Array[Int] = []
 
@@ -244,7 +248,7 @@ fn fit-items(items: Array[CompletionLabel], W: Int) -> Array[Array[String]] {
                     (label: Array[Text | nil]) and (#label > j)
                         => min(limit(), width(label[j])),
 
-                    label and (j == 0) => do {
+                    (label: Text) and (j == 0) => do {
                         max-singleton = max(
                             max-singleton,
                             min(limit(), width(label))
@@ -363,9 +367,9 @@ pub class InteractiveLineReader {
     __add-history(lines: Array[Array[String]], i: Int, j: Int) {
         let entry = {lines, i, j, t: time.utc()}
 
-        if __history-file != nil {
-            __history-file.parent.mkdir(parents=true, exist-ok=true)
-            __history-file.append("{json::encode(entry)}\n")
+        if let $file = __history-file {
+            file.parent.mkdir(parents=true, exist-ok=true)
+            file.append("{json::encode(entry)}\n")
         }
 
         __history.push(entry)
@@ -404,18 +408,18 @@ pub class InteractiveLineReader {
         }
 
         fn get-text() {
-            lines.map(\_.str() ?? '').unlines()
+            text-of(lines)
         }
 
-        fn print-items(cs, select: Int = nil) {
+        fn print-items(cs, select: ?Int = nil) {
             write(__tio.fd, "{ERASE_LINE}\rAvailable completions:\n")
 
             let (h, w) = __tio.size()
 
             let n = 0
             for row in fit-items(cs, w) {
-                if select in n.range(0, #row - 1) {
-                    row[select - n] = chalk"[reverse]{row[select - n]}[/]"
+                if let $s = select and s in n.range(0, #row - 1) {
+                    row[s - n] = str(chalk"[reverse]{row[s - n]}[/]")
                 }
                 print(row.join('    '))
                 n += #row
@@ -476,7 +480,7 @@ pub class InteractiveLineReader {
 
         fn h-match?(i) {
             if #__history < i { return false }
-            let text = __history[-i].0.str() ?? ''
+            let text = text-of(__history[-i].lines)
             return (
                 (h-prefix == nil || text.starts?(h-prefix))
              && (h-suffix == nil || text.ends?(h-suffix))
@@ -550,7 +554,7 @@ pub class InteractiveLineReader {
                 '<Enter>', '\n' => {
                     let text = get-text()
 
-                    if text != '' && (__history == [] || (line, i) != __history[-1]) {
+                    if text != '' && (__history == [] || text-of(__history[-1].lines) != text) {
                         __add-history(lines, nr, i)
                     }
 

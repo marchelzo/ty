@@ -194,6 +194,9 @@ fn +(a: String, b: Int | Bool) -> String;
 fn *(a: String, b: Int | Bool) -> String;
 fn -(a: String, b: Int | Bool) -> String;
 
+fn +[T, U](a: Array[T], b: Array[U]) -> Array[T | U];
+fn *[T](a: Array[T], b: Int) -> Array[T];
+
 fn +[K, U, V](a: Dict[K, U], b: Dict[K, V]) -> Dict[K, U | V];
 fn -[K, V](a: Dict[K, V], b: Dict[K, Any]) -> Dict[K, V];
 fn &[K, V](a: Dict[K, V], b: Dict[K, Any]) -> Dict[K, V];
@@ -206,8 +209,8 @@ fn %.*[T, U, *Ts](tpl: (T, Ts), f: T -> U) -> (U, Ts);
 fn .%.*[T, U, V, *Ts](tpl: (T, U, Ts), f: U -> V) -> (T, V, Ts);
 fn ..%.*[T, U, V, W, *Ts](tpl: (T, U, V, Ts), f: V -> W) -> (T, U, W, Ts);
 
-fn doc(c:  Class)    -> (String, String, [(String, String, String)]);
-fn doc(f:  Function) -> (String, String, String);
+fn doc(c:  Class)    -> (String, String | nil, [(String, String | nil, String | nil)]);
+fn doc(f:  Function) -> (String, String | nil, String | nil) | nil;
 
 fn set-doc[T](x: T, name: ?String, proto: ?String, doc: ?String) -> T;
 
@@ -491,6 +494,7 @@ class Array[T] : Iterable[T] {
     each[U](x: U, f: (U, T) -> Any) -> U;
     each[U](x: U, f: (U, ?T, ?Int) -> Any) -> U;
     enumerate() -> Array[(Int, T)];
+    enumerate!() -> Array[(Int, T)];
     filter!(pred: T -> Any) -> Array[T];
     filter(pred: T -> Any) -> Array[T];
     group() -> Array[Array[T]];
@@ -1029,6 +1033,10 @@ class Dict[K, V] : Iterable[K, V] {
     static [](K, V) {
         x -> (x :: Dict) && x.items().all?(|(k, v)| -> (k :: K) && (v :: V))
     }
+}
+
+class DefaultDict[K, V] < Dict[K, V] {
+    [](key: K) -> V;
 }
 
 class String : Iterable[String], IntoPtr[Int] {
@@ -1588,6 +1596,7 @@ class Bool {
 class Regex < Function {
     source -> String;
     init(x) { regex(x) }
+    __call__(s: String) -> String | Array[String | nil] | nil;
     ~=(s) { s.match(self) }
     test(s) { s.match?(self) }
     exec(s) { s.match(self) }
@@ -3096,7 +3105,7 @@ class Channel {
     }
 }
 
-class Atomic : IntoPtr[Int] {
+class Atomic {
     __x: Ptr
 
     init(x: Int = 0) {

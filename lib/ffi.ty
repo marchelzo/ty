@@ -105,6 +105,20 @@ fn next!(t) {
     next()
 }
 
+fn try-id() -> String | nil {
+    if let {$id, *} = peek() {
+        next()
+        id
+    }
+}
+
+fn take-id() -> String {
+    match try-id() {
+        $ident => ident,
+        _      => throw RuntimeError("expected identifier but found: {peek()}")
+    }
+}
+
 pub fn get-cif(rt, *aTypes, nFixed: ?Int) {
     let cifs = _cif_cache ?? (_cif_cache = %{})
     let signature = (rt, aTypes, nFixed)
@@ -178,7 +192,7 @@ pub fn ffi-type(expr: _, coerce: Bool = false) -> _ {
                    : $$[ $$::(Float) $$]
         ),
 
-        c::ptr => coerce ? $$[ $$::(IntoPtr)[_] $$] : $$[ $$::(Ptr)[_] $$],
+        c::ptr => coerce ? $$[ ?$$::(IntoPtr)[_] $$] : $$[ $$::(Ptr)[_] $$],
 
         c::void => ty.Nil
     }
@@ -305,12 +319,12 @@ fn nexttype(array-to-ptr?: Bool = true, has-name?: ?Bool = nil) {
             let e = expr(1)
 
             // Allow stuff like f(c.int error_code) by just ignoring the identifier
-            return e, (allow-name? && peek().type == 'id') ?: next().id
+            return e, allow-name? ?: try-id()
         },
 
         ('const', _)   => { next()                  },
         ('comment', _) => { next()                  },
-        ('id',  _)     => { parts.push(next().id)   },
+        ('id',  _)     => { parts.push(take-id())   },
         ('*',   _),
         ('**',  _),
         ('***', _)     => { next(); parts.push('*') }
@@ -440,7 +454,7 @@ fn cfun() {
     }
 
     if peek().type == 'id' {
-        let name = next().id
+        let name = take-id()
 
         let (ps, var?) = nextproto()
 
@@ -470,7 +484,7 @@ fn cfun() {
             let j = peek(-1).end.byte
             let rt-string = source.bsplice(i, j)
 
-            let name = next().id
+            let name = take-id()
 
             let i = peek().start.byte
             let (ps, var?) = nextproto()
@@ -537,7 +551,7 @@ fn strct() {
     // struct
     next!('id')
 
-    let structName = next().id
+    let structName = take-id()
 
     next!('{')
 
@@ -562,7 +576,7 @@ fn strct() {
 
         while peek().type == ',' {
             next()
-            names.push((next().id, get-count()))
+            names.push((take-id(), get-count()))
         }
 
         next!(';')
@@ -621,7 +635,7 @@ fn strct() {
                 next!('}')
 
                 if (peek().?type, peek(1).?type) == ('id', ';') {
-                    let pre = next().id
+                    let pre = take-id()
                     prefix-decl-names(inner, pre)
                 }
 
@@ -906,16 +920,14 @@ fn clos() {
     // closure
     next()
 
-    let name = if peek().type == 'id' {
-        next().id
-    }
+    let name = try-id()
 
     next!('(')
 
     let params = []
 
     while peek().type != ')' {
-        let name = next().id
+        let name = take-id()
         // :
         next()
         let t = expr(0)

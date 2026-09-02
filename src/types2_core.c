@@ -69,6 +69,7 @@ struct t2_universe {
         size_t table_capacity;
 
         T2Type primitives[T2_TYPE_KIND_COUNT];
+        T2Type primitive_nominals[T2_TYPE_KIND_COUNT];
 
         T2NominalInfo *nominals;
         size_t nominal_count;
@@ -958,6 +959,8 @@ t2_nominal_type_parameter(T2Universe *universe, uint32_t index)
         return t2_variable(universe, T2_VARIABLE_QUANTIFIED, index + 1);
 }
 
+static T2Type primitive_nominal(T2Universe const *universe, T2Node const *node);
+
 static bool
 nominal_reaches(
         T2Universe const *universe,
@@ -1029,6 +1032,22 @@ t2_nominal_add_super(
         return backfill_nominal_super(universe, symbol, supertype_template);
 }
 
+bool
+t2_primitive_bind_nominal(T2Universe *universe, T2TypeKind kind, T2Type nominal)
+{
+        T2Node const *node = universe == NULL ? NULL : get_node(universe, nominal);
+        if (
+                node == NULL
+             || node->kind != T2_TYPE_NOMINAL
+             || node->arity != 0
+             || kind < T2_TYPE_OBJECT
+             || kind > T2_TYPE_STRING
+             || kind == T2_TYPE_ERROR
+        ) return false;
+        universe->primitive_nominals[kind] = nominal;
+        return true;
+}
+
 static T2Type
 nominal_project_x(
         T2Universe const *universe,
@@ -1039,6 +1058,10 @@ nominal_project_x(
 {
         if (depth > T2_RELATION_DEPTH_LIMIT) return T2_TYPE_INVALID;
         T2Node const *node = get_node(universe, subtype);
+        if (node != NULL && node->kind != T2_TYPE_NOMINAL) {
+                subtype = primitive_nominal(universe, node);
+                node = get_node(universe, subtype);
+        }
         if (node == NULL || node->kind != T2_TYPE_NOMINAL) return T2_TYPE_INVALID;
         if (node->payload == target_symbol) return subtype;
         T2AppliedNominal const *applied = find_applied_nominal(universe, subtype);
@@ -1790,6 +1813,57 @@ t2_tuple(T2Universe *universe, T2Type const *items, size_t count)
         );
 }
 
+T2Type
+t2_multi(T2Universe *universe, T2Type const *items, size_t count)
+{
+        T2Type nil = t2_primitive(universe, T2_TYPE_NIL);
+        if (nil == T2_TYPE_INVALID) return T2_TYPE_INVALID;
+        for (size_t i = 0; i < count; ++i) {
+                if (get_node(universe, items[i]) == NULL) return T2_TYPE_INVALID;
+        }
+        while (count != 0 && items[count - 1] == nil) count -= 1;
+        if (count == 0) return nil;
+        if (count == 1) return items[0];
+        return intern_type(
+                universe,
+                T2_TYPE_MULTI,
+                T2_VARIABLE_FLEXIBLE,
+                0,
+                NULL,
+                items,
+                count
+        );
+}
+
+T2Type
+t2_multi_item(T2Universe const *universe, T2Type type, size_t index)
+{
+        T2Node const *node = get_node(universe, type);
+        if (node == NULL) return T2_TYPE_INVALID;
+        if (node->kind != T2_TYPE_MULTI) {
+                return index == 0 ? type : universe->primitives[T2_TYPE_NIL];
+        }
+        return index < node->arity
+             ? node->children[index]
+             : universe->primitives[T2_TYPE_NIL];
+}
+
+static size_t
+multi_arity(T2Node const *node)
+{
+        return node->kind == T2_TYPE_MULTI ? node->arity : 1;
+}
+
+static bool
+sentinel_kind(T2TypeKind kind)
+{
+        return kind == T2_TYPE_NEVER
+            || kind == T2_TYPE_UNKNOWN
+            || kind == T2_TYPE_DYNAMIC
+            || kind == T2_TYPE_ANY
+            || kind == T2_TYPE_ERROR;
+}
+
 static bool
 row_tail_valid(T2Universe const *universe, T2Type tail)
 {
@@ -2389,6 +2463,8 @@ rebuild_type(
                         (node->payload & T2_RANGE_UPPER_INCLUSIVE) != 0
                 );
         }
+        case T2_TYPE_MULTI:
+                return t2_multi(universe, children, node->arity);
         case T2_TYPE_PACK:
                 return t2_pack(
                         universe,
@@ -2458,6 +2534,7 @@ guarded_occurrences(
                         || node->kind == T2_TYPE_FUNCTION
                         || node->kind == T2_TYPE_TUPLE
                         || node->kind == T2_TYPE_VARIADIC_TUPLE
+                        || node->kind == T2_TYPE_MULTI
                         || node->kind == T2_TYPE_RECORD
                         || node->kind == T2_TYPE_PACK
                         || node->kind == T2_TYPE_PACK_EXPANSION;
@@ -2703,6 +2780,28 @@ literal_base(T2TypeKind kind)
         default:
                 return kind;
         }
+}
+
+static T2Type
+primitive_nominal(T2Universe const *universe, T2Node const *node)
+{
+        if (node == NULL) return T2_TYPE_INVALID;
+        T2TypeKind kind = literal_base(node->kind);
+        return kind < T2_TYPE_KIND_COUNT
+             ? universe->primitive_nominals[kind]
+             : T2_TYPE_INVALID;
+}
+
+static bool
+primitive_conforms(
+        T2Universe const *universe,
+        T2Node const *primitive,
+        T2Node const *nominal
+)
+{
+        T2Type bound = primitive_nominal(universe, primitive);
+        return bound != T2_TYPE_INVALID
+            && nominal_project_x(universe, bound, nominal->payload, 0) != T2_TYPE_INVALID;
 }
 
 static T2Node const *
@@ -3158,6 +3257,52 @@ function_keyword_parameter(
         return NULL;
 }
 
+static bool
+parameter_has_default(T2Node const *parameter)
+{
+        T2ParameterKind kind = (T2ParameterKind)(
+                parameter->payload & T2_PARAMETER_KIND_MASK
+        );
+        return (parameter->payload & T2_PARAMETER_REQUIRED) == 0
+            && (
+                        kind == T2_PARAMETER_POSITIONAL_ONLY
+                     || kind == T2_PARAMETER_POSITIONAL_OR_KEYWORD
+                     || kind == T2_PARAMETER_KEYWORD_ONLY
+               );
+}
+
+static T2Relation
+subtype_relation_ignoring_nil(
+        T2RelationContext *context,
+        T2Type subtype,
+        T2Type supertype,
+        unsigned progress
+)
+{
+        T2Node const *node = get_node(context->universe, subtype);
+        if (node == NULL) return T2_RELATION_NO;
+        if (node->kind == T2_TYPE_NIL) return T2_RELATION_YES;
+        if (node->kind != T2_TYPE_UNION) {
+                return subtype_relation(context, subtype, supertype, progress);
+        }
+        T2Relation relation = T2_RELATION_YES;
+        for (size_t i = 0; i < node->arity; ++i) {
+                T2Node const *arm = get_node(context->universe, node->children[i]);
+                if (arm != NULL && arm->kind == T2_TYPE_NIL) continue;
+                relation = combine_all(
+                        relation,
+                        subtype_relation(
+                                context,
+                                node->children[i],
+                                supertype,
+                                progress
+                        )
+                );
+                if (relation == T2_RELATION_NO) break;
+        }
+        return relation;
+}
+
 static T2Relation
 contravariant_parameter(
         T2RelationContext *context,
@@ -3167,6 +3312,14 @@ contravariant_parameter(
 )
 {
         if (actual == NULL || expected == NULL) return T2_RELATION_NO;
+        if (parameter_has_default(actual)) {
+                return subtype_relation_ignoring_nil(
+                        context,
+                        expected->children[0],
+                        actual->children[0],
+                        progress + 1
+                );
+        }
         return subtype_relation(
                 context,
                 expected->children[0],
@@ -3707,6 +3860,13 @@ subtype_compute(
                 progress + 1
         );
 
+        if (b->kind == T2_TYPE_NOMINAL && a->kind != T2_TYPE_NOMINAL) {
+                T2Type bound = primitive_nominal(universe, a);
+                if (bound != T2_TYPE_INVALID) {
+                        return subtype_relation(context, bound, supertype, progress + 1);
+                }
+        }
+
         if (a->kind == T2_TYPE_NOMINAL && b->kind == T2_TYPE_NOMINAL) {
                 if (a->payload != b->payload || a->arity != b->arity) {
                         T2AppliedNominal const *applied = find_applied_nominal(
@@ -3786,6 +3946,26 @@ subtype_compute(
                                 progress + 1
                         )
                 );
+        }
+
+        if (a->kind == T2_TYPE_MULTI || b->kind == T2_TYPE_MULTI) {
+                size_t count = multi_arity(a) > multi_arity(b)
+                             ? multi_arity(a)
+                             : multi_arity(b);
+                T2Relation relation = T2_RELATION_YES;
+                for (size_t i = 0; i < count; ++i) {
+                        relation = combine_all(
+                                relation,
+                                subtype_relation(
+                                        context,
+                                        t2_multi_item(universe, subtype, i),
+                                        t2_multi_item(universe, supertype, i),
+                                        progress + 1
+                                )
+                        );
+                        if (relation == T2_RELATION_NO) break;
+                }
+                return relation;
         }
 
         if (a->kind == T2_TYPE_TUPLE && b->kind == T2_TYPE_TUPLE) {
@@ -4280,8 +4460,8 @@ definitely_disjoint(T2Universe const *universe, T2Type left, T2Type right)
                      || bk == T2_TYPE_FUNCTION
                      || bk == T2_TYPE_TUPLE;
 
-        if (ak == T2_TYPE_NOMINAL && b_atomic) return true;
-        if (bk == T2_TYPE_NOMINAL && a_atomic) return true;
+        if (ak == T2_TYPE_NOMINAL && b_atomic) return !primitive_conforms(universe, b, a);
+        if (bk == T2_TYPE_NOMINAL && a_atomic) return !primitive_conforms(universe, a, b);
         return a_atomic && b_atomic && ak != bk;
 }
 
@@ -5081,6 +5261,14 @@ show_type(T2Universe const *universe, T2Type type, T2StringBuffer *buffer)
                 if (node->arity == 1) buffer_text(buffer, ",");
                 buffer_text(buffer, ")");
                 break;
+        case T2_TYPE_MULTI:
+                buffer_text(buffer, "|");
+                for (size_t i = 0; i < node->arity; ++i) {
+                        if (i != 0) buffer_text(buffer, ", ");
+                        show_type(universe, node->children[i], buffer);
+                }
+                buffer_text(buffer, "|");
+                break;
         case T2_TYPE_VARIADIC_TUPLE:
         {
                 size_t prefix = (size_t)node->payload;
@@ -5600,6 +5788,8 @@ runtime_facts_x(T2Universe const *universe, T2Type type, unsigned depth)
         case T2_TYPE_VARIADIC_TUPLE:
                 exact.kind = T2_RUNTIME_TUPLE;
                 return exact;
+        case T2_TYPE_MULTI:
+                return runtime_facts_x(universe, node->children[0], depth + 1);
         case T2_TYPE_RECORD:
                 exact.kind = T2_RUNTIME_RECORD;
                 return exact;
@@ -6512,6 +6702,28 @@ constrain_children(
         return result;
 }
 
+static T2Type
+without_nil_arms(T2Universe *universe, T2Type type)
+{
+        T2Node const *node = get_node(universe, type);
+        if (node == NULL) return T2_TYPE_INVALID;
+        if (node->kind == T2_TYPE_NIL) return t2_primitive(universe, T2_TYPE_NEVER);
+        if (node->kind != T2_TYPE_UNION) return type;
+        T2TypeVector arms = {0};
+        for (size_t i = 0; i < node->arity; ++i) {
+                T2Node const *arm = get_node(universe, node->children[i]);
+                if (arm != NULL && arm->kind == T2_TYPE_NIL) continue;
+                if (!push_type(&arms, node->children[i])) {
+                        free(arms.items);
+                        universe->failed = true;
+                        return T2_TYPE_INVALID;
+                }
+        }
+        T2Type result = t2_union(universe, arms.items, arms.count);
+        free(arms.items);
+        return result;
+}
+
 static T2Relation
 constrain_parameter_types(
         T2Solver *solver,
@@ -6522,9 +6734,14 @@ constrain_parameter_types(
 )
 {
         if (actual == NULL || expected == NULL) return T2_RELATION_NO;
+        T2Type wanted = expected->children[0];
+        if (parameter_has_default(actual)) {
+                wanted = without_nil_arms(solver->universe, wanted);
+                if (wanted == T2_TYPE_INVALID) return T2_RELATION_COMPLEXITY;
+        }
         return constrain_internal(
                 solver,
-                expected->children[0],
+                wanted,
                 actual->children[0],
                 provenance,
                 retain_deferred
@@ -7546,6 +7763,33 @@ constrain_internal(
                 return result;
         }
 
+        if (
+                (a->kind == T2_TYPE_MULTI || b->kind == T2_TYPE_MULTI)
+             && !sentinel_kind(a->kind)
+             && !sentinel_kind(b->kind)
+        ) {
+                size_t count = multi_arity(a) > multi_arity(b)
+                             ? multi_arity(a)
+                             : multi_arity(b);
+                T2Relation result = T2_RELATION_YES;
+                for (size_t i = 0; i < count; ++i) {
+                        result = combine_all(
+                                result,
+                                constrain_internal(
+                                        solver,
+                                        t2_multi_item(solver->universe, subtype, i),
+                                        t2_multi_item(solver->universe, supertype, i),
+                                        provenance,
+                                        retain_deferred
+                                )
+                        );
+                        if (solver->failed || result == T2_RELATION_NO) {
+                                return T2_RELATION_NO;
+                        }
+                }
+                return result;
+        }
+
         if (a->kind == T2_TYPE_TUPLE && b->kind == T2_TYPE_TUPLE && a->arity == b->arity) {
                 return constrain_children(solver, a, b, provenance, retain_deferred);
         }
@@ -7632,6 +7876,19 @@ constrain_internal(
                         if (solver->failed) return T2_RELATION_NO;
                 }
                 return result;
+        }
+
+        if (b->kind == T2_TYPE_NOMINAL && a->kind != T2_TYPE_NOMINAL) {
+                T2Type bound = primitive_nominal(solver->universe, a);
+                if (bound != T2_TYPE_INVALID) {
+                        return constrain_internal(
+                                solver,
+                                bound,
+                                supertype,
+                                provenance,
+                                retain_deferred
+                        );
+                }
         }
 
         if (a->kind == T2_TYPE_NOMINAL && b->kind == T2_TYPE_NOMINAL) {

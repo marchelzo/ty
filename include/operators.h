@@ -503,6 +503,12 @@ op_builtin_shr(Ty *ty)
 void
 op_add(int op, int t1, int t2, int ref, Expr *fun);
 
+usize
+op_definition_count(int op);
+
+Expr *
+op_definition(int op, usize i);
+
 int
 op_dispatch(Ty *ty, int op, int t1, int t2);
 
