@@ -51,7 +51,7 @@ run_case()
         printf '%s\n' "$result" >"$status"
 }
 
-for fixture in valid invalid overload-union flow flow-invalidation contracts class-operator operator-constraints pack-constraints scoped-obligations subscript-protocol member-protocol keyword-spread match-coverage recovery deferred nil-guards nil-guards-invalid loops loops-invalid multi-values multi-values-invalid evolving contextual defaults repl hierarchy http clap open-operands forward-calls relations; do
+for fixture in valid invalid overload-union flow flow-invalidation contracts class-operator operator-constraints pack-constraints scoped-obligations subscript-protocol member-protocol keyword-spread match-coverage recovery deferred nil-guards nil-guards-invalid loops loops-invalid multi-values multi-values-invalid evolving contextual defaults repl hierarchy http clap open-operands forward-calls relations gradual; do
         source=$test_dir/fixtures/types2-shadow-$fixture.ty.txt
 
         run_case \
@@ -151,6 +151,10 @@ grep -Eq '"path":"[^"]*types2-shadow-forward-calls.ty.txt".*"pending_obligations
 grep -Eq '"path":"[^"]*types2-shadow-relations.ty.txt".*"types2_errors":0' \
         "$scratch/shadow.jsonl"
 grep -Eq '"path":"[^"]*types2-shadow-relations.ty.txt".*"pending_obligations":0' \
+        "$scratch/shadow.jsonl"
+grep -Eq '"path":"[^"]*types2-shadow-gradual.ty.txt".*"types2_errors":0' \
+        "$scratch/shadow.jsonl"
+grep -Eq '"path":"[^"]*types2-shadow-gradual.ty.txt".*"pending_obligations":0' \
         "$scratch/shadow.jsonl"
 grep -Eq '"path":"[^"]*types2-shadow-scoped-obligations.ty.txt".*"pending_obligations":0' \
         "$scratch/shadow.jsonl"

@@ -1066,9 +1066,12 @@ t2_primitive_bind_nominal(T2Universe *universe, T2TypeKind kind, T2Type nominal)
                 node == NULL
              || node->kind != T2_TYPE_NOMINAL
              || node->arity != 0
-             || kind < T2_TYPE_OBJECT
-             || kind > T2_TYPE_STRING
              || kind == T2_TYPE_ERROR
+             || (
+                        (kind < T2_TYPE_OBJECT || kind > T2_TYPE_STRING)
+                     && kind != T2_TYPE_FUNCTION
+                     && kind != T2_TYPE_OVERLOAD
+                )
         ) return false;
         universe->primitive_nominals[kind] = nominal;
         return true;
@@ -7795,6 +7798,24 @@ arm_lower_bound_admits(T2Solver *solver, T2Type arm, T2Type subtype)
             && t2_subtype(solver->universe, subtype, lower) == T2_RELATION_YES;
 }
 
+static T2Type
+resolve_meta_solution(T2Solver *solver, T2Type type)
+{
+        for (unsigned depth = 0; depth < 64; ++depth) {
+                type = resolve_sort_solution(solver, type);
+                uint32_t meta = meta_from_type(solver, type);
+                if (meta == 0) return type;
+                T2Meta const *node = &solver->metas[find_root(solver, meta) - 1];
+                T2Type solution = node->solution;
+                if (solution == T2_TYPE_INVALID && node->lower == node->upper) {
+                        solution = node->lower;
+                }
+                if (solution == T2_TYPE_INVALID) return type;
+                type = solution;
+        }
+        return type;
+}
+
 static T2Relation
 constrain_either_way(
         T2Solver *solver,
@@ -7804,10 +7825,11 @@ constrain_either_way(
         bool retain_deferred
 )
 {
-        if (
-                meta_from_type(solver, resolve_sort_solution(solver, left)) != 0
-             || meta_from_type(solver, resolve_sort_solution(solver, right)) != 0
-        ) return t2_solver_unify(solver, left, right, provenance);
+        left = resolve_meta_solution(solver, left);
+        right = resolve_meta_solution(solver, right);
+        if (meta_from_type(solver, left) != 0 || meta_from_type(solver, right) != 0) {
+                return t2_solver_unify(solver, left, right, provenance);
+        }
         T2SolverMark mark = t2_solver_mark(solver);
         T2Relation forward = constrain_internal(
                 solver,
@@ -7931,6 +7953,7 @@ constrain_internal(
         if (a->kind == T2_TYPE_DYNAMIC || b->kind == T2_TYPE_DYNAMIC) {
                 return T2_RELATION_YES;
         }
+        if (a->kind == T2_TYPE_ANY) return T2_RELATION_YES;
 
         if (a->kind == T2_TYPE_UNION) {
                 T2Relation result = T2_RELATION_YES;
@@ -10642,6 +10665,15 @@ zonk_type(T2ZonkContext *context, T2Type source)
                 .result = result
         };
         return result;
+}
+
+T2Type
+t2_solver_resolve_packs(T2Solver *solver, T2Type type)
+{
+        if (solver == NULL || type == T2_TYPE_INVALID) return type;
+        return type_contains_solved_pack_meta(solver, type, 0)
+             ? resolve_pack_solutions(solver, type, 0)
+             : type;
 }
 
 T2Type

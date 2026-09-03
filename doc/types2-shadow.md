@@ -1028,6 +1028,105 @@ runtime first:
   is `Int` under both checkers (first applicable arm wins in both) and
   `Future.any`'s `fs.swap(i, -1)` checks.
 
+The session that worked through `ty -tc lib/ink.ty` (106 errors and 9
+warnings at the start, none at the end; `-t` no longer implies `-q`) made
+the checker markedly more gradual, on the instruction that pragmatism
+outranks soundness:
+
+- `Any` is gradual: eliminating it (member read or write, call, subscript,
+  slice, iteration, count, prefix minus, operators, membership) yields
+  `Dynamic` with the usual `dynamic-operand` accounting, `is_dynamic_type`
+  treats it as Dynamic, and the solver accepts `Any` on the subtype side of
+  any constraint, so a `let x: Any` or an `Array[Any]` element flows into a
+  `Component` parameter.  This is slightly wider than the legacy checker,
+  which accepts an `Array[Any]` element and a member read on `Any` but
+  rejects a bare `Any` value as the argument of a nominal parameter; the
+  wider reading is deliberate (`Any` is the escape hatch `lib/ink.ty` uses),
+  and fixtures use the element form so both checkers accept them;
+- function and overload kinds are bound to the prelude's `Function` class
+  (`bind_primitive_nominal`, `t2_primitive_bind_nominal` accepts them), so
+  the solver proves `(ev) -> R <: Function` inside unions such as
+  `Function | nil`;
+- a callable argument passed to a callable-top parameter (`Dynamic`, `Any`,
+  `Function`, or a union of those with `nil`) has its open metavariables
+  defaulted to `Dynamic` whether it is a literal or a variable
+  (`callable_top_parameter`, `callable_headed`), because nothing on that side
+  can ever constrain them;
+- `resolved_type_head` unfolds a solved pack fold (`t2_solver_resolve_packs`),
+  so `min(a, b).clamp(0, h)` finds `Int.clamp`;
+- field narrowing survives calls: `invalidate_unstable_refinements` no longer
+  touches member bindings, and a captured or global variable loses its
+  narrowing at a call only when some function frame on the stack assigns it
+  (`scan_function_assignments` records every symbol a function body or its
+  closures write; `symbol_assigned_in_frames` consults the stack).  A nested
+  function starts with the refinements of globals and of captured bindings
+  that are assigned somewhere cleared, and never inherits the top-level flow
+  state of a global;
+- a match guard (`pattern and cond`, or the statement form's guard) applies
+  its condition refinements to the arm body, and each arm snapshots and
+  restores refinements so a guard cannot leak into later arms;
+- a conditional array element (`[x if x != nil]`) is typed with its
+  condition applied (the comprehension gap noted earlier is closed for array
+  literals);
+- `Dict` is bivariant like `Array`, and the bivariant helper reads a
+  metavariable through its solution or equal bounds before deciding whether
+  to unify, so `props + %{k: v}` with `k: 'width' | 'height'` merges into
+  `Dict[String, _]`;
+- a safe access to a member the static class does not declare is
+  `nil | Dynamic` (a subclass may declare it) instead of `nil`;
+- a value-constraint pattern whose constraint is a pattern-and node
+  (`label: Styled and (j == 0)`, which the parser reads as
+  `label: (Styled and (j == 0))`) is inferred as a pattern instead of an
+  expression, which crashed on the node's unused `right` field;
+- a top-level `let` used before its declaration: the forward binding's
+  metavariable is now constrained by the declared type when the declaration
+  is inferred, so obligations retained on the forward use resolve;
+- the `gradual` fixture covers all of the above under both harness modes,
+  and `nil-guards-invalid` now shows that a write of a `Dynamic` value resets
+  a field's narrowing (the old fixture relied on call invalidation).
+
+Library contracts corrected in the same pass, each checked against the
+runtime first:
+
+- `lib/prelude.ty`: `Blob.reserve(n: Int) -> nil` and `Blob.fill() -> Blob |
+  nil` (the builtins exist and were undeclared);
+- `lib/ink.ty`: `complete(before, after)` is called the way `readln`
+  calls completion functions (the record-form alias means named
+  parameters, as the legacy checker also reads it); `_tio` is
+  `term.TermIO | nil`; the two kitty registries are declared with the other
+  globals instead of after their first use; `Component` declares the layout
+  props `width`, `height`, and `scroll-total` as `_`; `TreeView.children`
+  is `Any` (it is a callback, not the inherited array); `resolve(val: _,
+  default: _ = nil)`; `Timer.reschedule` reads `__repeat` into a local;
+  `(label: StyledText) and (j == 0)` narrows the completion label arm; the
+  empty-column `max()` defaults to 0.
+
+A follow-up in the same session absorbed the change that `-t` no longer
+implies `-q`: the legacy checker now runs in full under `-tc`, so a library
+edit must satisfy both checkers, and a probe that prints a `CompileError`
+never reached types2 at all.  Consequences:
+
+- `lib/http.ty`'s `header(k: String, v)` names its key parameter.  The
+  `Dict.[](key: K) -> nil | V` declaration made the legacy checker reject the
+  untyped method (a deferred subscript constraint `Dict[String, String][k]
+  -> String` that a `nil | String` read cannot satisfy), which `-t` used to
+  hide; `lib/log.ty` had been refitted the same way.  `import http` compiles
+  again under the legacy checker;
+- `lib/os.ty` cannot be compiled standalone at all: its native prototypes
+  (`pub fn open(...) -> Int;`) resolve only inside the `os` module, so the
+  sweep checks it through a scratch file that imports it (the shadow log
+  shows 174 checkpoints for `lib/os.ty` with no error or pending
+  obligation).  A `reference to undefined variable: open` from
+  `ty -tc lib/os.ty` is that, not a types2 result;
+- `Dict.len() -> Int` is declared (the builtin exists), which moved the
+  line-keyed prelude entries in the corpus classification by two;
+- a callable assigned into a callable-top slot (`w.on-change = v -> v * 2`
+  on a `Function | nil` field, a `let` with such an annotation, an array or
+  dictionary element write) has its open metas defaulted like a callable
+  argument (`write_slot` / `settle_callable_slot`, shared with
+  `candidate_argument`), so the `*` predicate on the lambda's parameter no
+  longer survives to the end of the unit.
+
 The last clean validation run used the clang ASan build and produced:
 
 - `./ty test.ty`: 78 passed, 1 failed (`xinfo`, rejected by the legacy
@@ -1036,29 +1135,33 @@ The last clean validation run used the clang ASan build and produced:
   legacy-checker rejections that quiet mode suppresses by design);
 - the types2 core unit suite: passed;
 - shadow-on/shadow-off equivalence: passed, including the `clap`,
-  `open-operands`, `forward-calls`, and `relations` fixtures;
+  `open-operands`, `forward-calls`, `relations`, and `gradual` fixtures;
 - the strict corpus gate: passed;
-- the startup corpus: 16 units, 0 unsupported nodes, 1,836 deferred nodes
-  (1,343 runtime, 160 incomplete, 333 external, 0 recovery), and no pending
+- the startup corpus: 16 units, 0 unsupported nodes, 1,841 deferred nodes
+  (1,348 runtime, 160 incomplete, 333 external, 0 recovery), and no pending
   obligation;
 - 4 raw types2 diagnostic events reducing to 4 unique diagnostics, all
   classified (3 library defects: `Array.zip`, `Dict.map`, `Dict.[]`; 1
   incomplete feature: mapped-pack forwarding);
 - every module under `lib/` compiled so far reports nothing under `ty -tc`
-  (`term`, `sh`, `readln`, `log`, `chalk`, `help`, `ty/repl`, `io`, `os`,
-  `path`, `curl`, `ffi`, `pretty`, `ety`, `sqlite`, `http`, `llhttp`, `yaml`,
-  `clap`, `date`, `dotenv`, `procs`, `tp`), and so does `test.ty`; the legacy
-  checker rejects `lib/log.ty` and `lib/http.ty`
-  (`Dict.[]` reads) and `lib/os.ty` (pre-existing), which is accepted.  The
-  `-t` report can undercount the prelude relative to the strict-gate log, so
-  the log summary is the reference.
+  (`term`, `sh`, `readln`, `log`, `chalk`, `help`, `ty/repl`, `io`, `path`,
+  `curl`, `ffi`, `pretty`, `ety`, `sqlite`, `http`, `llhttp`, `yaml`, `clap`,
+  `date`, `dotenv`, `procs`, `tp`, `ink` standalone, `os` through an importing
+  scratch file), and so does `test.ty`; with `-t` no longer implying `-q`
+  the legacy checker runs too and accepts every one of them (`lib/log.ty`
+  and `lib/http.ty` were refitted; `tests/xinfo.ty` is still rejected by the
+  legacy checker, which is accepted).  The `-t` report can undercount the
+  prelude relative to the strict-gate log, so the log summary is the
+  reference.
 
-The `forward-calls` and `relations` fixtures
+The `forward-calls`, `relations`, and `gradual` fixtures
 (`tests/fixtures/types2-shadow-forward-calls.ty.txt`,
-`tests/fixtures/types2-shadow-relations.ty.txt`) are still untracked in the
+`tests/fixtures/types2-shadow-relations.ty.txt`,
+`tests/fixtures/types2-shadow-gradual.ty.txt`) are still untracked in the
 working tree; commit them with the next milestone.  Run each
-`tests/lib/*.ty` suite with `ty --test -t FILE` after a module is clean under
-`-tc`: it executes the library through the quieted legacy code generator,
+`tests/lib/*.ty` suite (and `tests/tp.ty`, `tests/nsync.ty`) with
+`ty --test -t FILE` after a module is clean under `-tc`: it executes the
+library through the legacy code generator with runtime constraints enforced,
 which is how the union-pattern bug above surfaced.
 The classification file was reseeded on 2026-09-02 from a four-entry log
 (the `path.ty` warning left when that match was rewritten), so the triage
@@ -1753,3 +1856,15 @@ problems this work is intended to eliminate.
   of a multi-function in the same vector, or the last plain-named arm wins
   over the overload.  Check `member_scheme` events (one per registration,
   in order) before trusting an overload's arm order.
+- `ty -tc` runs the legacy checker first and a file it rejects prints no
+  types2 diagnostics at all, so a scratch probe that "passes" may simply have
+  been rejected by the legacy checker: always look for `CompileError` in the
+  output before trusting an empty result.
+- The checker is deliberately gradual where the user's code is: `Any` is a
+  gradual escape hatch, narrowing persists across calls, and `Array`/`Dict`
+  are bivariant.  Do not tighten those without asking; pragmatism outranks
+  soundness here.
+- Since 2026-09-03 `-t` no longer disables the legacy checker.  A library
+  edit made for types2 must also pass `ty -c` on a scratch file that imports
+  the module; `lib/os.ty` can only be checked that way, because its native
+  prototypes do not resolve outside the `os` module.

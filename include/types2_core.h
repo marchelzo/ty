@@ -683,6 +683,9 @@ t2_solver_solution(
 );
 
 T2Type
+t2_solver_resolve_packs(T2Solver *solver, T2Type type);
+
+T2Type
 t2_solver_zonk(
         T2Solver *solver,
         T2Type type,

@@ -984,6 +984,8 @@ class Dict[K, V] : Iterable[K, V] {
 
     __call__(k: K) -> Some[V] | None;
 
+    len() -> Int;
+
     keep(f: (K, V) -> Any) -> Dict[K, V];
     keep!(f: (K, V) -> Any) -> Dict[K, V];
 
@@ -1552,6 +1554,8 @@ class Float {
 }
 
 class Blob : Iterable[Int], IntoPtr[Int] {
+    reserve(n: Int) -> nil;
+    fill() -> Blob | nil;
     init(*args: Any);
 
     __ptr__() -> Ptr[Int] {

@@ -812,8 +812,8 @@ pub class InteractiveLineReader {
                             ?? __complete
                             ?? complete-file
                         )(
-                            before.str() ?? '',
-                            after.str() ?? ''
+                            before.join(),
+                            after.join()
                         )
                         match result {
                             Insert(s) => {

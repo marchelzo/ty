@@ -26,7 +26,7 @@ pub class HttpResponse {
         headers = %{'Content-Type': 'text/html'}
     }
 
-    header(k, v) {
+    header(k: String, v) {
         if v == nil {
             headers[k]
         } else {

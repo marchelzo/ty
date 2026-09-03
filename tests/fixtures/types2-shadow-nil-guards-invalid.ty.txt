@@ -9,9 +9,11 @@ class Slot {
         __value = nil
     }
 
+    other() -> _ { nil }
+
     length() -> Int {
         if __value != nil {
-            clear()
+            __value = other()
             return __value.len()
         }
         0
