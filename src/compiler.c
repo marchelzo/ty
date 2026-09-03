@@ -7328,37 +7328,40 @@ fail_match_if_not(Ty *ty, Expr const *e)
 }
 
 static void
-_xemit_constraint(Ty *ty, Expr const *c, JumpSet *jumps)
+_xemit_constraint(Ty *ty, Expr const *c)
 {
-        if (c->type == EXPRESSION_TYPE_UNION) {
-                for (int i = 0; i < vN(c->es); ++i) {
-                        if (i + 1 == vN(c->es)) {
-                                _xemit_constraint(ty, v__(c->es, i), jumps);
-                        } else {
-                                INSN(DUP);
-                                _xemit_constraint(ty, v__(c->es, i), jumps);
-                                INSN(DUP);
-                                svP(*jumps, (PLACEHOLDER_JUMP)(ty, INSTR_JUMP_IF));
-                                INSN(POP);
-                        }
-                }
-        } else {
+        if (c->type != EXPRESSION_TYPE_UNION) {
                 EE(c);
                 INSN(CHECK_MATCH);
+                return;
         }
+
+        JumpSet matched = {0};
+
+        for (int i = 0; i + 1 < vN(c->es); ++i) {
+                INSN(DUP);
+                _xemit_constraint(ty, v__(c->es, i));
+                svP(matched, (PLACEHOLDER_JUMP)(ty, INSTR_JUMP_IF));
+        }
+
+        _xemit_constraint(ty, *vvL(c->es));
+        PLACEHOLDER_JUMP(JUMP, done);
+
+        for (int i = 0; i < vN(matched); ++i) {
+                PATCH_JUMP(v__(matched, i));
+        }
+        INSN(POP);
+        INSN(TRUE);
+
+        PATCH_JUMP(done);
 }
 
 static void
 emit_constraint(Ty *ty, Expr const *c)
 {
-        JumpSet jumps = {0};
-
         SCRATCH_SAVE();
         WITH_STACK() {
-                _xemit_constraint(ty, c, &jumps);
-        }
-        for (int i = 0; i < vN(jumps); ++i) {
-                PATCH_JUMP(v__(jumps, i));
+                _xemit_constraint(ty, c);
         }
         SCRATCH_RESTORE();
 }

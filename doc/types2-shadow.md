@@ -894,10 +894,48 @@ No library contract needed correcting: `__duration-nanoseconds-relative`
 returns `Int` on every path, and the second `date.ty` diagnostic was the
 forward-call pinning above, not a defect in that function.
 
+The session that worked through `ty -tc lib/dotenv.ty` (2 errors at the start,
+none at the end) found no checker defect: `unescape` and `escape` passed
+`g: true` to `String.sub`, a keyword that neither the prelude prototypes nor
+the runtime know (`string_replace` in `src/str.c` ignores its keyword
+arguments and always replaces every match).  The keyword is gone, and both
+helpers are now single-pass `sub` calls with a `match` lambda, because the
+sequential form decoded `a\\nb` as a backslash followed by a newline.  The
+legacy checker accepted the module only because `s` was unannotated.
+
+Running `tests/lib/dotenv.ty` under `-t` then exposed a code-generation bug
+in `_xemit_constraint`'s per-arm union path.  With the checker on,
+`ResolveConstraint` folds every pattern and parameter constraint such as
+`p: String | Path` into one resolved `TYPE` value checked by a single
+`CHECK_MATCH`; an instrumented build emitted the per-arm path zero times
+across the startup corpus, every `lib/` module, and every test.  With the
+checker quieted (`-q`, and therefore `-t`) nothing is folded, and the per-arm
+path is emitted at dozens of sites (`prelude:1504`, `prelude:3459`,
+`io:93`, `path:26`, ...).  That path left an extra copy of the value on the
+stack when an early arm matched, so its merge label had two stack depths.
+The interpreter tolerated it, but the JIT records one stack depth per label
+and adopts it when emission reaches the label, so on the no-match path
+`JUMP_IF_NOT` tested a stale slot holding the original value and every union
+annotation pattern matched anything truthy.  The emitter now jumps every
+matched arm to one shared `POP; TRUE` trampoline, which leaves exactly one
+boolean on every path and executes fewer instructions than the old sequence
+on every path except a first-arm match (one more); nothing changes for the
+checker-on build.  `tests/match.ty`'s `union-annotation-pattern` covers a
+top-level and an array-element annotation under both harness modes.  The JIT
+still silently trusts the first depth recorded for a label; a general
+conflict check is not possible without distinguishing `Fail` labels that
+`POP_STACK_POS` resets.  Two notes for the next reader: `CheckConstraints` in
+`include/ty.h` is declared but never defined or read, so `CheckTypes` is the
+only switch; and `Some(p: T)` is a named tuple-member pattern
+(`TRY_TUPLE_MEMBER 'p'` against the value of `T`), not an annotated payload,
+so it never reaches this emitter.
+
 The last clean validation run used the clang ASan build and produced:
 
 - `./ty test.ty`: 78 passed, 1 failed (`xinfo`, rejected by the legacy
   checker after `Dict.[]` became honest; ignored per instruction);
+  `./ty -q test.ty`: 77 passed, 2 failed (`constraint` and `refine` assert
+  legacy-checker rejections that quiet mode suppresses by design);
 - the types2 core unit suite: passed;
 - shadow-on/shadow-off equivalence: passed, including the `clap` and
   `open-operands` fixtures;
@@ -911,14 +949,18 @@ The last clean validation run used the clang ASan build and produced:
 - every module under `lib/` compiled so far reports nothing under `ty -tc`
   (`term`, `sh`, `readln`, `log`, `chalk`, `help`, `ty/repl`, `io`, `os`,
   `path`, `curl`, `ffi`, `pretty`, `ety`, `sqlite`, `http`, `llhttp`, `yaml`,
-  `clap`, `date`); the legacy checker rejects `lib/log.ty` and `lib/http.ty`
+  `clap`, `date`, `dotenv`); the legacy checker rejects `lib/log.ty` and
+  `lib/http.ty`
   (`Dict.[]` reads) and `lib/os.ty` (pre-existing), which is accepted.  The
   `-t` report can undercount the prelude relative to the strict-gate log, so
   the log summary is the reference.
 
 The `open-operands` fixture
 (`tests/fixtures/types2-shadow-open-operands.ty.txt`) is still untracked in
-the working tree; commit it with the next milestone.
+the working tree; commit it with the next milestone.  Run each
+`tests/lib/*.ty` suite with `ty --test -t FILE` after a module is clean under
+`-tc`: it executes the library through the quieted legacy code generator,
+which is how the union-pattern bug above surfaced.
 The classification file was reseeded on 2026-09-02 from a four-entry log
 (the `path.ty` warning left when that match was rewritten), so the triage
 queue is empty and the next work is the full library matrix beyond the
@@ -1423,6 +1465,10 @@ tests, logs, and agreed performance data.
 - [ ] Computed types and compile-time callbacks execute exactly once.
 - [ ] Dormant `typeof`, reflection, type-value, runtime metadata, bytecode, and
       JIT adapters round-trip all public types.
+- [ ] Runtime constraint checking (`ResolveConstraint`'s fold of pattern and
+      parameter constraints into `TYPE` values) and JIT type hints are driven
+      by types2 with the same coverage the legacy checker provides; these
+      consumers are kept, not removed with `src/types.c`.
 - [ ] Shadow-on/off equivalence passes with logging disabled.
 - [ ] Diagnostics are stable and actionable enough to replace the legacy user
       experience.
@@ -1587,3 +1633,14 @@ problems this work is intended to eliminate.
   watches every metavariable visible through the current solutions and
   bounds, and only get captured into a scheme if generalization can read the
   local weak metavariables they mention.
+- `-q` and `-t` compile through code paths the default build rarely
+  exercises (`ResolveConstraint` and every `CheckTypes` guard return early),
+  and the JIT assumes one stack depth per label.  A runtime difference between
+  `ty FILE` and `ty -t FILE` is a code-generation bug to fix in
+  `src/compiler.c`, not a types2 diagnostic; compare `-q -j` (interpreter)
+  against `-q` (JIT) and read `ty.disassemble(f)` to find it.  Fix such a path
+  for every mode rather than gating a slower sequence behind `!CheckTypes`:
+  the quieted mode is not the post-cutover shape of the compiler.  After the
+  cutover, types2 must feed the same consumers the legacy checker feeds
+  today: the `ResolveConstraint` fold behind runtime constraint checks, the
+  JIT's type hints, `typeof`, and `ty.types`.  Those mechanisms stay.

@@ -45,12 +45,14 @@ fn parse-value(raw) {
     }
 }
 
-fn unescape(s) {
-    s.sub(/\\n/,  '\n',  g: true)
-     .sub(/\\r/,  '\r',  g: true)
-     .sub(/\\t/,  '\t',  g: true)
-     .sub(/\\\\/,  '\\', g: true)
-     .sub(/\\"/,  '"',   g: true)
+fn unescape(s: String) -> String {
+    s.sub(/\\[nrt"\\]/, match {
+        '\\n'  => '\n',
+        '\\r'  => '\r',
+        '\\t'  => '\t',
+        '\\"'  => '"',
+        '\\\\' => '\\'
+    })
 }
 
 pub fn read(path: Path = Path('.env')) -> Dict[String, String] {
@@ -94,12 +96,14 @@ pub fn string(vars: Dict[String, String]) -> String {
     b.str!()
 }
 
-fn escape(s) {
-    s.sub(/\\/,  '\\\\', g: true)
-     .sub(/"/,   '\\"',  g: true)
-     .sub(/\n/,  '\\n',  g: true)
-     .sub(/\r/,  '\\r',  g: true)
-     .sub(/\t/,  '\\t',  g: true)
+fn escape(s: String) -> String {
+    s.sub(/[\n\r\t"\\]/, match {
+        '\n' => '\\n',
+        '\r' => '\\r',
+        '\t' => '\\t',
+        '"'  => '\\"',
+        '\\' => '\\\\'
+    })
 }
 
 pub fn write(vars: Dict[String, String], path: String | Path = '.env') {

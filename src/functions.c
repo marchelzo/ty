@@ -6726,7 +6726,7 @@ BUILTIN_FUNCTION(os_listdir)
         DIR *d = opendir(TY_TMP_C_STR(dir));
         LockTy();
         if (d == NULL) {
-                return NIL;
+                OSError(errno, "opendir()");
         }
 
         Array *files = vA();

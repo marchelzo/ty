@@ -215,7 +215,7 @@ pub fn poll[T](
     timeout: Float | Int | nil
 ) -> Int;
 
-pub fn listdir(path: String) -> [String] | nil;
+pub fn listdir(path: String) -> Array[String];
 pub fn ncpu() -> Int;
 pub fn terminal-size(fd: ?Int) -> {rows: Int, cols: Int} | nil;
 

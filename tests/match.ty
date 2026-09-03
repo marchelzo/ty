@@ -26,3 +26,30 @@ pub fn matchtest() {
     }
     assert(tagged-array-match(Ok([(6, 1)])))
 }
+
+fn kind(x) {
+    match x {
+        p: String | Int => 'scalar',
+        _               => 'other'
+    }
+}
+
+fn head-kind(xs) {
+    match xs {
+        [p: String | Int, *_] => 'scalar',
+        _                     => 'other'
+    }
+}
+
+pub fn union-annotation-pattern() {
+    assert(kind('a') == 'scalar')
+    assert(kind(1) == 'scalar')
+    assert(kind(2.5) == 'other')
+    assert(kind([1]) == 'other')
+    assert(kind(nil) == 'other')
+    assert(head-kind(['a', 2.5]) == 'scalar')
+    assert(head-kind([1]) == 'scalar')
+    assert(head-kind([2.5, 'a']) == 'other')
+    assert(head-kind([[1]]) == 'other')
+    assert(head-kind([]) == 'other')
+}

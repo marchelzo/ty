@@ -400,10 +400,7 @@ pub class Path {
     }
 
     ls() -> Array[Path] {
-        match os.listdir("{self}") {
-            $files => files.map(\self / _),
-            _      => throw os.OSError('getdents()')
-        }
+        os.listdir("{self}").map(\self / _)
     }
 
     copy(target: String | Path, follow-symlinks: Bool = true) -> Path {
