@@ -10,7 +10,6 @@
 #include "vec.h"
 #include "itable.h"
 #include "class.h"
-#include "types.h"
 #include "ty.h"
 #include "jit.h"
 
@@ -80,8 +79,6 @@ init(Ty *ty, Class *c, Stmt *def)
         c->def         = def;
         c->finalizer   = NONE;
         c->super       = (c->i != CLASS_OBJECT) ? C(CLASS_OBJECT) : NULL;
-        c->type        = type_class(ty, c);
-        c->object_type = type_object(ty, c);
 }
 
 inline static void
@@ -138,8 +135,6 @@ class_new_empty(Ty *ty)
                 }
         }
 
-        c->type        = type_class(ty, c);
-        c->object_type = type_object(ty, c);
 
         return c;
 }

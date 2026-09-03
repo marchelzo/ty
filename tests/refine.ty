@@ -244,9 +244,9 @@ fn bad(box: Box) {
     take-string(box.value)
 }
 ''')
-        let output, result = sh("{ty.executable} {source}", combineOutput=true)
-        assert(result != nil && result.status != 0)
-        assert(output.contains?('given:    Int | String'))
-        assert(output.contains?('expected: String'))
+        let $output, $result = sh("{ty.executable} {source}", combineOutput=true)
+        assert(result.status != 0)
+        assert(output.contains?('[bad-call]'))
+        assert(output.contains?('Int | String <: String'))
     }
 }

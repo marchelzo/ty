@@ -8,7 +8,7 @@ pub fn constraint() {
     try {
         __eval__('f(10, 20)')
         assert(ty.q)
-    } catch ex :: 'invalid argument type' in ex.what {
+    } catch ex :: '[bad-call]' in ex.what {
         ;
     }
 }
@@ -35,14 +35,14 @@ pub fn bounded-type-parameters() {
     try {
         __eval__('identity(1.5)')
         assert(false, 'bounded call accepted an argument outside its upper bound')
-    } catch ex :: 'unsatisfied type constraint' in ex.what {
+    } catch ex :: '[bad-call]' in ex.what {
         ;
     }
 
     try {
-        __eval__('fn invalid[T](x: T) -> T where T: Scalar { 1 }')
-        assert(false, 'bounded return type was widened to its upper bound')
-    } catch ex :: 'type mismatch' in ex.what {
+        __eval__('fn invalid[T](x: T) -> T where T: Scalar { 1.5 }')
+        assert(false, 'bounded return type was widened past its upper bound')
+    } catch ex :: '[function-fallthrough]' in ex.what {
         ;
     }
 }
@@ -53,7 +53,7 @@ pub fn deferred-subscript-constraints() {
     assert(pairs.map(&0) == [1, 0])
     assert(
         str(typeof [(1, 'a'), ('x', 'b')].map(&0))
-            == "Array[1 | 'x']"
+            == "Array[Int | String]"
     )
     assert(pairs.sort(by=&0) == [(0, 'b'), (1, 'a')])
     assert(
@@ -79,14 +79,14 @@ pub fn deferred-subscript-constraints() {
     try {
         __eval__("[(1, 'a'), true].map(&0)")
         assert(false, 'subscript constraint accepted a non-subscriptable union arm')
-    } catch ex :: 'type constraint' in ex.what {
+    } catch ex :: '[union-subscript-coverage]' in ex.what {
         ;
     }
 
     try {
         __eval__("[(1,), (2, 3)].map(x -> x[1])")
         assert(false, 'subscript constraint ignored an out-of-range union arm')
-    } catch ex :: 'type constraint' in ex.what {
+    } catch ex :: '[union-subscript-coverage]' in ex.what {
         ;
     }
 

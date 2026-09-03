@@ -690,6 +690,27 @@ t2_integer_range(
         );
 }
 
+bool
+t2_integer_range_bounds(
+        T2Universe const *universe,
+        T2Type range,
+        T2Type *lower,
+        T2Type *upper,
+        bool *upper_inclusive
+)
+{
+        T2Node const *node = get_node(universe, range);
+        if (node == NULL || node->kind != T2_TYPE_INT_RANGE) return false;
+        bool has_lower = (node->payload & T2_RANGE_HAS_LOWER) != 0;
+        bool has_upper = (node->payload & T2_RANGE_HAS_UPPER) != 0;
+        if (lower != NULL) *lower = has_lower ? node->children[0] : T2_TYPE_INVALID;
+        if (upper != NULL) *upper = has_upper ? node->children[has_lower] : T2_TYPE_INVALID;
+        if (upper_inclusive != NULL) {
+                *upper_inclusive = (node->payload & T2_RANGE_UPPER_INCLUSIVE) != 0;
+        }
+        return true;
+}
+
 T2Type
 t2_refinement(T2Universe *universe, T2Type base, T2Type argument)
 {
@@ -904,16 +925,13 @@ t2_declare_nominal(
                 return false;
         }
 
-        T2NominalInfo const *existing = find_nominal(universe, symbol);
+        T2NominalInfo *existing = find_nominal_mutable(universe, symbol);
         if (existing != NULL) {
                 if (existing->arity != arity || strcmp(existing->name, name) != 0) {
                         return false;
                 }
                 for (size_t i = 0; i < arity; ++i) {
-                        T2Variance wanted = variance == NULL ? T2_INVARIANT : variance[i];
-                        if (existing->variance[i] != wanted) {
-                                return false;
-                        }
+                        existing->variance[i] = variance == NULL ? T2_INVARIANT : variance[i];
                 }
                 return true;
         }
@@ -951,6 +969,15 @@ t2_declare_nominal(
                 .arity = arity,
                 .variance = owned_variance
         };
+        return true;
+}
+
+bool
+t2_nominal_declared(T2Universe const *universe, uint64_t symbol, size_t *arity)
+{
+        T2NominalInfo const *info = find_nominal(universe, symbol);
+        if (info == NULL) return false;
+        if (arity != NULL) *arity = info->arity;
         return true;
 }
 
@@ -3038,21 +3065,11 @@ compare_field_types(
         bool actual_writable = (actual->payload & T2_FIELD_WRITABLE_BIT) != 0;
         if (expected_writable && !actual_writable) return T2_RELATION_NO;
 
-        T2Relation read = subtype_relation(
+        return subtype_relation(
                 context,
                 actual->children[0],
                 expected->children[0],
                 progress + 1
-        );
-        if (!expected_writable) return read;
-        return combine_all(
-                read,
-                subtype_relation(
-                        context,
-                        expected->children[0],
-                        actual->children[0],
-                        progress + 1
-                )
         );
 }
 
@@ -3530,6 +3547,18 @@ function_subtype(
                         progress + 1
                 )
         );
+        T2Node const *expected_yield = get_node(
+                context->universe,
+                expected->children[expected_count + 1]
+        );
+        T2Node const *expected_send = get_node(
+                context->universe,
+                expected->children[expected_count + 2]
+        );
+        if (
+                expected_yield->kind == T2_TYPE_NEVER
+             && expected_send->kind == T2_TYPE_NIL
+        ) return relation;
         relation = combine_all(
                 relation,
                 subtype_relation(
@@ -5546,6 +5575,66 @@ t2_type_string(T2Universe const *universe, T2Type type)
         return buffer.items;
 }
 
+typedef struct t2_substitution {
+        T2Universe *universe;
+        uint32_t const *ids;
+        T2Type const *replacements;
+        size_t count;
+} T2Substitution;
+
+static T2Type
+substitute_type(T2Substitution const *substitution, T2Type source, unsigned depth)
+{
+        T2Node const *node = get_node(substitution->universe, source);
+        if (node == NULL || depth > T2_RELATION_DEPTH_LIMIT) return source;
+        if (node->kind == T2_TYPE_VARIABLE) {
+                for (size_t i = 0; i < substitution->count; ++i) {
+                        if (node->payload == substitution->ids[i]) {
+                                return substitution->replacements[i];
+                        }
+                }
+                return source;
+        }
+        if (node->arity == 0 || node->kind == T2_TYPE_RECURSIVE) return source;
+        T2Type *children = malloc(node->arity * sizeof *children);
+        if (children == NULL) return T2_TYPE_INVALID;
+        bool changed = false;
+        for (size_t i = 0; i < node->arity; ++i) {
+                children[i] = substitute_type(substitution, node->children[i], depth + 1);
+                if (children[i] == T2_TYPE_INVALID) {
+                        free(children);
+                        return T2_TYPE_INVALID;
+                }
+                changed |= children[i] != node->children[i];
+        }
+        T2Type result = changed
+                      ? rebuild_type(substitution->universe, node, children)
+                      : source;
+        free(children);
+        return result;
+}
+
+T2Type
+t2_type_substitute(
+        T2Universe *universe,
+        T2Type type,
+        uint32_t const *ids,
+        T2Type const *replacements,
+        size_t count
+)
+{
+        if (universe == NULL || (count != 0 && (ids == NULL || replacements == NULL))) {
+                return T2_TYPE_INVALID;
+        }
+        T2Substitution substitution = {
+                .universe = universe,
+                .ids = ids,
+                .replacements = replacements,
+                .count = count
+        };
+        return substitute_type(&substitution, type, 0);
+}
+
 typedef struct t2_snapshot_build {
         T2Universe const *universe;
         T2TypeSnapshot *snapshot;
@@ -7082,6 +7171,18 @@ constrain_function_types(
                         retain_deferred
                 )
         );
+        T2Node const *expected_yield = get_node(
+                solver->universe,
+                expected->children[expected_count + 1]
+        );
+        T2Node const *expected_send = get_node(
+                solver->universe,
+                expected->children[expected_count + 2]
+        );
+        if (
+                expected_yield->kind == T2_TYPE_NEVER
+             && expected_send->kind == T2_TYPE_NIL
+        ) return result;
         result = combine_all(
                 result,
                 constrain_internal(

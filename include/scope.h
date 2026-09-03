@@ -70,8 +70,6 @@ enum { TY_SYM_FLAGS };
 #undef X
 
 
-typedef struct type Type;
-
 typedef struct symbol {
         char const *identifier;
         char const *doc;
@@ -89,7 +87,8 @@ typedef struct symbol {
         Location loc;
         Module *mod;
 
-        Type *type;
+        T2Type type;
+        T2Scheme *scheme;
         Expr *expr;
         Scope *scope;
 
@@ -104,8 +103,6 @@ typedef struct scope {
         symbol_vector owned;
         symbol_vector captured;
         int_vector cap_indices;
-
-        RefinementVector refinements;
 
         Scope *function;
 
@@ -261,52 +258,6 @@ TY_SYM_FLAGS
         }
 TY_SCOPE_FLAGS
 #undef X
-
-inline static Refinement *
-ScopeFindRefinement(Scope *scope, Symbol *var)
-{
-        if (scope == NULL) {
-                return NULL;
-        }
-
-        for (int i = 0; i < vN(scope->refinements); ++i) {
-                Refinement *ref = v_(scope->refinements, i);
-                if (ref->var == var) {
-                        return ref;
-                }
-        }
-
-        return NULL;
-}
-
-inline static Refinement *
-ScopeRefineVar(Ty *ty, Scope *scope, Symbol *var, Type *t0)
-{
-        Refinement *ref = ScopeFindRefinement(scope, var);
-
-        char *type_show(Ty *ty, Type const *t0);
-
-        if (ref != NULL) {
-                Type *type_both(Ty *, Type *, Type *);
-                if (ref->mut) {
-                        ref->t0 = t0;
-                } else {
-                        ref->t0 = type_both(ty, ref->t0, t0);
-                }
-        } else {
-                avP(
-                        scope->refinements,
-                        ((Refinement) {
-                                .var = var,
-                                .t0 = t0,
-                                .active = false
-                        })
-                );
-                ref = vvL(scope->refinements);
-        }
-
-        return ref;
-}
 
 inline static bool
 ScopeIsTop(Scope const *scope)

@@ -11,7 +11,7 @@
 #include "functions.h"
 #include "json.h"
 #include "itable.h"
-#include "types.h"
+#include "types2.h"
 #include "vm.h"
 
 //#define LSLOG(fmt, ...) fprintf(stderr, fmt __VA_OPT__(,) __VA_ARGS__)
@@ -39,9 +39,6 @@ Ty *ty;
 Ty vvv;
 
 int EnableLogging = 0;
-u64 TypeCheckCounter = 0;
-u64 TypeAllocCounter = 0;
-u64 TypeCheckTime = 0;
 
 usize TotalBytesAllocated = 0;
 
@@ -360,7 +357,7 @@ main(int argc, char *argv[])
                                 "line",  INTEGER(sym->loc.line),
                                 "col",   INTEGER(sym->loc.col),
                                 "file",  xSz(sym->mod ? sym->mod->path : "<unknown>"),
-                                "type",  xSz(type_show(ty, sym->type)),
+                                "type",  xSz(types2_show(ty, sym->type)),
                                 "doc",   (sym->doc == NULL) ? NIL : xSz(sym->doc)
                         );
                         break;
@@ -381,7 +378,7 @@ main(int argc, char *argv[])
 
                         result = vTn(
                                 "source",      xSs(QueryExpr->start.s, QueryExpr->end.s - QueryExpr->start.s),
-                                "type",        xSz(type_show(ty, QueryExpr->_type)),
+                                "type",        xSz(types2_show(ty, QueryExpr->_type)),
                                 "completions", ARRAY((Array *)&items)
                         );
                         break;

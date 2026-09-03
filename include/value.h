@@ -1358,7 +1358,7 @@ is_starred(Value const *f)
         return (*flags_of(f) & FF_STAR);
 }
 
-static inline Type *
+static inline T2Type
 type_of(Value const *f)
 {
         return expr_of(f)->_type;
@@ -1465,10 +1465,10 @@ from_eval(Value const *f)
         return (*flags_of(f) & FF_FROM_EVAL);
 }
 
-static inline Type *
+static inline T2Type
 as_type(Value const *v)
 {
-        return v->ptr;
+        return (T2Type)v->z;
 }
 
 #define PACK_TYPES(t1, t2) ((((u64)t1) << 32) | ((u32)t2))

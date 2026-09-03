@@ -88,7 +88,7 @@
 #include "str.h"
 #include "tags.h"
 #include "test.h"
-#include "types.h"
+#include "types2.h"
 #include "utf8.h"
 #include "xd.h"
 #include "value.h"
@@ -911,23 +911,23 @@ add_builtins(Ty *ty, int ac, char **av)
                 xvP(Globals, builtins[i].value);
                 switch (ClassOf(v)) {
                 case CLASS_INT:
-                        sym->type = type_integer(ty, v->z);
+                        sym->type = types2_literal_int(v->z);
                         sym->flags |= SYM_CONST;
                         break;
 
                 case CLASS_STRING:
-                        sym->type = type_string(ty, TY_C_STR(*v));
+                        sym->type = types2_literal_string(TY_C_STR(*v));
                         sym->flags |= SYM_CONST;
                         break;
 
                 case CLASS_BOOL:
-                        sym->type = type_bool(ty, v->boolean);
+                        sym->type = types2_literal_bool(v->boolean);
                         sym->flags |= SYM_CONST;
                         break;
 
                 case CLASS_FLOAT:
                 case CLASS_PTR:
-                        sym->type = class_get(ty, ClassOf(v))->object_type;
+                        sym->type = types2_object_type(ty, class_get(ty, ClassOf(v)));
                         sym->flags |= SYM_CONST;
                         break;
                 }
@@ -6232,7 +6232,7 @@ DoCheckMatch(Ty *ty, bool exec)
         case VALUE_TYPE:
                 v = pop();
                 value = pop();
-                xpush(BOOLEAN(TypeCheck(ty, v.ptr, &value)));
+                xpush(BOOLEAN(types2_check(ty, as_type(&v), &value)));
                 break;
 
         case VALUE_NIL:
@@ -7716,7 +7716,7 @@ TargetMember:
 
                 CASE(TYPE)
                         READVALUE(s);
-                        push(TYPE((Type *)s));
+                        push(TYPE((T2Type)s));
                         break;
 
                 CASE(VALUE)

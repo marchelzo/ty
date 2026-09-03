@@ -3834,6 +3834,7 @@ macro ifdef {
 
 class SharedQueue[T] {
     init();
+    #() -> Int;
     put(x: T) -> SharedQueue[T];
     try-take(timeout: Int | Float = 0) -> Some[T] | None;
     take() -> T;

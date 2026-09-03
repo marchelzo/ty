@@ -25,7 +25,6 @@
 #include "dict.h"
 #include "array.h"
 #include "ty.h"
-#include "types.h"
 #include "highlight.h"
 #include "polyfill_time.h"
 #include "title.h"
@@ -52,9 +51,6 @@ static char SourceFilePath[PATH_MAX];
 
 static bool KindOfEnableLogging = false;
 int EnableLogging = 0;
-u64 TypeCheckCounter = 0;
-u64 TypeAllocCounter = 0;
-u64 TypeCheckTime = 0;
 
 #if 1
 _Atomic u64 LogCounter;
@@ -209,7 +205,9 @@ execln(Ty *ty, char *line)
                 }
                 Expr expr = { .type = EXPRESSION_STATEMENT, .statement = prog[0] };
                 if (compiler_symbolize_expression(ty, &expr, NULL)) {
-                        printf("%s\n", type_show(ty, prog[0]->_type));
+                        char *shown = types2_show(ty, types2_infer(ty, &expr));
+                        printf("%s\n", shown);
+                        free(shown);
                         goto End;
                 } else {
                         goto Bad;
@@ -232,18 +230,10 @@ execln(Ty *ty, char *line)
 
                 Expr *pair = TyToCExpr(ty, vm_get(ty, -1));
 
-                Type *t0 = type_resolve(ty, v__(pair->es, 0));
-                Type *t1 = type_resolve(ty, v__(pair->es, 1));
+                T2Type t0 = types2_resolve(ty, v__(pair->es, 0));
+                T2Type t1 = types2_resolve(ty, v__(pair->es, 1));
 
-                EnableLogging += 1;
-                if (TY_CATCH_ERROR()) {
-                        (void)TY_CATCH();
-                        fprintf(stderr, "%s\n", TyError(ty));
-                } else {
-                        unify(ty, &t0, t1);
-                        TY_CATCH_END();
-                }
-                EnableLogging -= 1;
+                puts(types2_subtype(t0, t1) ? "true" : "false");
 
                 goto End;
 #endif
@@ -376,19 +366,6 @@ sigint(int signal)
         longjmp(InterruptJB, 1);
 }
 
-#if defined(TY_PROFILE_TYPES)
-static void
-xxx(void)
-{
-        void
-        DumpTypeTimingInfo(Ty *ty);
-
-        DumpTypeTimingInfo(ty);
-
-        printf("Allocated %"PRIu64" type objects.\n", TypeAllocCounter);
-        printf("Total type checking time: %.4fs\n", TypeCheckTime / 1.0e9);
-}
-#endif
 
 noreturn static void
 repl(Ty *ty)
@@ -409,7 +386,6 @@ repl(Ty *ty)
                                 exit(EXIT_SUCCESS);
                         }
                         execln(ty, line);
-                        types_reset_names(ty);
                 }
         }
 }
@@ -533,8 +509,6 @@ ProcessArgs(char *argv[], bool first)
                                         break;
 
                                 case 't':
-                                        Types2Authoritative = true;
-                                        //CheckTypes = false;
                                         break;
 
                                 case 'b':

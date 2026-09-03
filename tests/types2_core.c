@@ -672,7 +672,7 @@ main(void)
                 universe,
                 record_writable_int,
                 record_writable_wide
-        ) == T2_RELATION_NO);
+        ) == T2_RELATION_YES);
 
         T2ParameterSpec named_required = {
                 .name = "x",

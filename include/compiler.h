@@ -231,11 +231,6 @@ typedef struct compiler_state {
 
         u32 flags;
 
-        Type *expected_type;
-        ConstraintVector *constraint_sink;
-
-        TypeVector return_types;
-
         StmtVec loop_stmts;
 
         Expr *func;
@@ -538,9 +533,6 @@ CompilerResolveExpr(Ty *ty, Expr *e);
 
 void
 UnresolveExpr(Ty *ty, Expr *expr);
-
-Type *
-OriginalType(Ty *ty, Symbol const *var);
 
 void *
 CompilerPushContext(Ty *ty, void const *ctx);

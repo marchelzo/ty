@@ -7,7 +7,6 @@
 #include "log.h"
 #include "ty.h"
 #include "xd.h"
-#include "types.h"
 
 static i64 SYMBOL;
 
@@ -363,7 +362,7 @@ xadd(Ty *ty, Scope *scope, char const *id)
                 Symbol *old = ScopeFindRecycled(scope, id);
                 if (old != NULL) {
                         old->flags = SYM_GLOBAL;
-                        old->type  = NULL;
+                        old->type  = T2_TYPE_INVALID;
                         old->expr  = NULL;
                         old->class = -1;
                         old->tag   = -1;
@@ -392,7 +391,6 @@ NewTypeVar(Ty *ty, char const *name)
         Symbol *sym = xnew(ty, name);
 
         sym->flags |= SYM_TYPE_VAR;
-        sym->type = type_variable(ty, sym);
 
         return sym;
 }
@@ -403,7 +401,6 @@ NewScopedTypeVar(Ty *ty, Scope *s, char const *name)
         Symbol *sym = xadd(ty, s, name);
 
         sym->flags |= SYM_TYPE_VAR;
-        sym->type = type_variable(ty, sym);
 
         return sym;
 }
@@ -438,7 +435,6 @@ scope_add_type_var(Ty *ty, Scope *s, char const *id, u32 flags)
         sym->scope = s;
         sym->flags |= SYM_TYPE_VAR;
         sym->flags |= flags;
-        sym->type = type_variable(ty, sym);
 
         return sym;
 }
@@ -450,7 +446,6 @@ scope_add_type_alias(Ty *ty, Scope *s, char const *id, Expr const *src)
 
         sym->scope = s;
         sym->flags |= SYM_TYPE_ALIAS;
-        sym->type = type_alias_tmp(ty, id, src);
 
         return sym;
 }
@@ -892,7 +887,6 @@ void
 ScopeReset(Scope *scope)
 {
         scope->flags &= ~SCOPE_ACTIVE;
-        v0(scope->refinements);
 
         for (i32 i = 0; i < scope->size; ++i) {
                 Symbol *last = NULL;
@@ -920,15 +914,8 @@ scope_reset(void)
 void
 ScopeFinalize(Ty *ty, Scope *scope)
 {
-        if (!CheckTypes) {
-                return;
-        }
-
-        for (i32 i = 0; i < scope->size; ++i) {
-                for (Symbol *sym = scope->table[i]; sym != NULL; sym = sym->next) {
-                        sym->type = type_reduce(ty, sym->type);
-                }
-        }
+        (void)ty;
+        (void)scope;
 }
 
 /* vim: set sw=8 sts=8 expandtab: */

@@ -6,12 +6,11 @@ fn gen*(fun) {
 }
 
 pub fn yield-from-c() {
-    let g = nil
     let s = ''
 
     fn add(c) { s += (yield c)(c) }
 
-    g = gen(add) 
+    let g = gen(add)
 
     fn f() {
         g(&upper)

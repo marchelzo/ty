@@ -26,7 +26,6 @@
 #include "xd.h"
 #include "value.h"
 #include "vm.h"
-#include "types.h"
 #include "types2.h"
 #include "highlight.h"
 #include "jit.h"
@@ -214,7 +213,6 @@ enum {
         Ei32(0);                                    \
 } while (0)
 
-#define SET_TYPE_SRC(e) ((e) != NULL && (e)->_type != NULL && ((e)->_type->src = (Expr *)(e)))
 
 #define NO_TYPES (!CheckTypes || TY_IS_READY)
 
@@ -282,7 +280,6 @@ enum {
 #define WITH_PERMISSIVE_SCOPE WITH_STATE(_based, 1)
 #define WITH_MATCH_FAILS()    WITH_STATE(match_fails, NewJumpGroup())
 #define WITH_SELF(x)          WITH_STATE(self, ((x) != NULL) ? (x) : STATE.self)
-#define WITH_EXPECTED_TYPE(x) WITH_STATE(expected_type, (x))
 #define WITH_CTX(c)           WITH_STATE(ctx, CTX_##c)
 
 #define IS_CTX(c) (STATE.ctx == (CTX_##c))
@@ -417,12 +414,6 @@ symbolize_pattern(Ty *ty, Scope *scope, Expr *e, Scope *reuse, bool def);
 static void
 symbolize_expression(Ty *ty, Scope *scope, Expr *e);
 
-static void
-UpdateRefinemenets(Ty *ty, Scope *scope);
-
-static void
-AddRefinements(Ty *ty, Expr const *e, Scope *_then, Scope *_else);
-
 static bool
 emit_statement(Ty *ty, Stmt const *s, bool want_result);
 
@@ -504,7 +495,7 @@ static bool
 TryResolveExpr(Ty *ty, Scope *scope, Expr *e);
 
 static void
-RedpillFun(Ty *ty, Scope *scope, Expr *f, Type *self0);
+RedpillFun(Ty *ty, Scope *scope, Expr *f, bool method);
 
 static void
 InjectRedpill(Ty *ty, Stmt *s);
@@ -1589,11 +1580,11 @@ ProposeMemberDefinition(Ty *ty, Location start, Location end, Expr const *o, cha
                         .loc  = Nowhere,
                         .mod  = STATE.module,
                         .doc  = "",
-                        .type = NULL
+                        .type = T2_TYPE_INVALID
                 };
 
-                Type *t0 = type_member_access_t(ty, o->_type, m, false);
-                Expr const *member = type_find_member(ty, o->_type, m);
+                Expr const *member = types2_find_member(ty, o->_type, m);
+                T2Type t0 = (member != NULL) ? member->_type : T2_TYPE_INVALID;
                 char const *name = NULL;
                 char const *doc = NULL;
 
@@ -1634,7 +1625,7 @@ ProposeMemberDefinition(Ty *ty, Location start, Location end, Expr const *o, cha
                                 .type = t0
                         };
                         QueryResult = &sym;
-                } else if (t0 != NULL) {
+                } else if (t0 != T2_TYPE_INVALID) {
                         sym.type = t0;
                         QueryResult = &sym;
                 }
@@ -1723,7 +1714,9 @@ Restart:
                 goto Restart;
 
         default:
-                c = type_approx_class(type_resolve(ty, spec));
+                c = (spec->type == EXPRESSION_TYPE && types2_class_of(ty, spec->_type) != NULL)
+                  ? types2_class_of(ty, spec->_type)->i
+                  : -1;
                 if (c < 0) {
 Sorry:
                         PushContext(ty, spec);
@@ -1732,31 +1725,6 @@ Sorry:
         }
 
         return c;
-}
-
-static Type *
-ResolveConstraint(Ty *ty, Expr *constraint)
-{
-        if (constraint == NULL || !CheckTypes) {
-                return NULL;
-        }
-
-        if (constraint->type == EXPRESSION_TYPE) {
-                return constraint->_type;
-        }
-
-        Type *t0 = type_fixed(ty, type_resolve(ty, constraint));
-
-        // XXX
-        if (1 && (t0 != NULL)) {
-                Expr *tmp = aclone(constraint);
-                tmp->arena = GetArenaAlloc(ty);
-                constraint->type = EXPRESSION_TYPE;
-                constraint->_type = t0;
-                constraint->constraint = tmp;
-        }
-
-        return t0;
 }
 
 static void
@@ -2460,7 +2428,7 @@ addsymbol(Ty *ty, Scope *scope, char const *name)
                         sym->flags = SYM_GLOBAL;
                         sym->class = -1;
                         sym->tag   = -1;
-                        sym->type  = NULL;
+                        sym->type  = T2_TYPE_INVALID;
                         sym->expr  = NULL;
                         sym->mod   = STATE.module;
                         return sym;
@@ -2590,10 +2558,6 @@ freshstate(Ty *ty, Module *mod)
                 .mend   = Nowhere
         };
 
-        // == Typechecking ==========
-        types_init(ty);
-        // ==========================
-
         avP(st.imports, ((struct import) {
                 .mod  = GlobalModule,
                 .name = "prelude",
@@ -2665,36 +2629,57 @@ Expr2Op(Expr const *e)
 }
 
 static void
-resolve_type_choices(Ty *ty, Type *t0, int_vector *cs)
+resolve_type_choices(Ty *ty, T2Type t0, int_vector *cs)
 {
-        switch (t0->type) {
-        case TYPE_CLASS:
-        case TYPE_OBJECT:
-                avP(*cs, t0->class->i);
-                break;
+        T2Universe *universe = types2_universe();
 
-        case TYPE_TUPLE:
+        switch (t2_type_kind(universe, t0)) {
+        case T2_TYPE_NOMINAL:
+        {
+                uint64_t symbol = t2_type_payload(universe, t0);
+                int tag = types2_symbol_tag(symbol);
+                avP(*cs, tag > 0 ? tags_get_class(ty, tag)->i : types2_symbol_class(symbol));
+                break;
+        }
+
+        case T2_TYPE_TUPLE:
+        case T2_TYPE_VARIADIC_TUPLE:
+        case T2_TYPE_RECORD:
                 avP(*cs, CLASS_TUPLE);
                 break;
 
-        case TYPE_UNION:
-                for (int i = 0; i < vN(t0->types); ++i) {
-                        resolve_type_choices(ty, v__(t0->types, i), cs);
+        case T2_TYPE_UNION:
+                for (size_t i = 0; i < t2_type_arity(universe, t0); ++i) {
+                        resolve_type_choices(ty, t2_type_child(universe, t0, i), cs);
                 }
                 break;
 
-        case TYPE_VARIABLE:
-        case TYPE_FUNCTION:
-        case TYPE_BOTTOM:
+        case T2_TYPE_VARIABLE:
+        case T2_TYPE_META:
+        case T2_TYPE_FUNCTION:
+        case T2_TYPE_OVERLOAD:
+        case T2_TYPE_NEVER:
+        case T2_TYPE_UNKNOWN:
+        case T2_TYPE_DYNAMIC:
+        case T2_TYPE_ANY:
+        case T2_TYPE_OBJECT:
                 avP(*cs, CLASS_TOP);
                 break;
 
-        case TYPE_NIL:
+        case T2_TYPE_NIL:
                 avP(*cs, CLASS_NIL);
                 break;
 
         default:
-                fail("bad operator signature: %s", type_show(ty, t0));
+        {
+                Class *class = types2_class_of(ty, t0);
+                if (class == NULL) {
+                        char *shown = types2_show(ty, t0);
+                        fail("bad operator signature: %s", shown);
+                }
+                avP(*cs, class->i);
+                break;
+        }
         }
 }
 
@@ -2977,7 +2962,6 @@ resolve_access(Ty *ty, Scope const *scope, char **parts, int n, Expr *e, bool st
                 f->namespace = left;
                 f->module = NULL;
                 f->symbol = sym;
-                f->_type = sym->type;
                 fc.function = f;
 
                 *e = fc;
@@ -2988,7 +2972,6 @@ resolve_access(Ty *ty, Scope const *scope, char **parts, int n, Expr *e, bool st
                 e->namespace = left;
                 e->module = "";
                 e->symbol = sym;
-                e->_type = sym->type;
         }
 
         return e;
@@ -3227,8 +3210,6 @@ symbolize_fields(Ty *ty, Scope *subscope, ExprVec const *fields)
                 case EXPRESSION_IDENTIFIER:
                         if (field->constraint != NULL) {
                                 symbolize_expression(ty, subscope, field->constraint);
-                                field->_type = type_fixed(ty, type_resolve(ty, field->constraint));
-                                SET_TYPE_SRC(field);
                         }
                         break;
 
@@ -3240,10 +3221,7 @@ symbolize_fields(Ty *ty, Scope *subscope, ExprVec const *fields)
                         symbolize_expression(ty, subscope, field->value);
                         if (field->target->constraint != NULL) {
                                 symbolize_expression(ty, subscope, field->target->constraint);
-                                field->_type = type_fixed(ty, type_resolve(ty, field->target->constraint));
-                                SET_TYPE_SRC(field);
                         }
-                        type_assign(ty, field->target, field->value->_type, T_FLAG_STRICT);
                         break;
 
                 default:
@@ -3337,7 +3315,7 @@ RegexCapture(Ty *ty, Scope *scope, int i)
         ty_snprintf(id, sizeof id, "$%d", i);
 
         Symbol *var = addsymbol(ty, scope, sclonea(ty, id));
-        var->type = STRING_TYPE;
+        var->type = types2_primitive(T2_TYPE_STRING);
 
         return var;
 }
@@ -3369,7 +3347,7 @@ add_captures(Ty *ty, Expr *pattern, Scope *scope)
                                 /*
                                  * Don't think clone is necessary here...
                                  */
-                                addsymbol(ty, scope, nt)->type = STRING_TYPE;
+                                addsymbol(ty, scope, nt)->type = types2_primitive(T2_TYPE_STRING);
                                 goto NextCapture;
                         }
                 }
@@ -3793,13 +3771,6 @@ symbolize_lvalue_(Ty *ty, Scope *scope, Expr *target, u32 flags)
                                 WITH_CTX(TYPE) {
                                         symbolize_expression(ty, scope, target->constraint);
                                 }
-                                Type *c0 = ResolveConstraint(ty, target->constraint);
-                                if (c0 != NULL) {
-                                        c0->src = target;
-                                        target->_type = c0;
-                                        target->symbol->type = c0;
-                                        target->symbol->flags |= SYM_FIXED;
-                                }
                         }
                 } else {
                         if (target->constraint != NULL) {
@@ -4011,32 +3982,6 @@ symbolize_pattern_(Ty *ty, Scope *scope, Expr *e, Scope *reuse, bool def)
                         symbolize_pattern_(ty, scope, e->aliased, reuse, def);
                 }
 
-                Type *c0 = ResolveConstraint(ty, e->constraint);
-                if (c0 != NULL) {
-                        e->symbol->type = c0;
-                        e->symbol->flags |= SYM_FIXED;
-                        unify2(ty, &e->_type, c0);
-                } else if (e->symbol->type == NULL) {
-                        Type *t0 = type_var(ty);
-
-                        switch  (e->type) {
-                        case EXPRESSION_MATCH_NOT_NIL:
-                                e->_type = t0;
-                                e->symbol->type = t0;
-                                break;
-
-                        case EXPRESSION_ALIAS_PATTERN:
-                                e->_type = e->aliased->_type;
-                                e->symbol->type = e->aliased->_type;
-                                break;
-
-                        default:
-                                e->_type = t0;
-                                e->symbol->type = t0;
-                                break;
-                        }
-                }
-
                 //===================={ <LSP> }=========================================
                 if (
                         FindDefinition && 0
@@ -4062,13 +4007,11 @@ symbolize_pattern_(Ty *ty, Scope *scope, Expr *e, Scope *reuse, bool def)
                         symbolize_pattern_(ty, scope, p->target, reuse, p->def);
                         symbolize_expression(ty, scope, p->e);
                 }
-                e->_type = e->left->_type;
                 break;
         case EXPRESSION_ARRAY:
                 for (int i = 0; i < vN(e->elements); ++i) {
                         symbolize_pattern_(ty, scope, v__(e->elements, i), reuse, def);
                 }
-                e->_type = type_array(ty, e);
                 break;
         case EXPRESSION_DICT:
                 for (int i = 0; i < vN(e->keys); ++i) {
@@ -4105,7 +4048,6 @@ symbolize_pattern_(Ty *ty, Scope *scope, Expr *e, Scope *reuse, bool def)
                 for (int i = 0; i < vN(e->es); ++i) {
                         symbolize_pattern_(ty, scope, v__(e->es, i), reuse, def);
                 }
-                e->_type = type_tuple(ty, e);
                 break;
         case EXPRESSION_VIEW_PATTERN:
         case EXPRESSION_NOT_NIL_VIEW_PATTERN:
@@ -4124,13 +4066,10 @@ symbolize_pattern_(Ty *ty, Scope *scope, Expr *e, Scope *reuse, bool def)
                 /* fallthrough */
         case EXPRESSION_MATCH_REST:
                 e->symbol = addsymbol(ty, scope, e->identifier);
-                e->symbol->type = type_var(ty);
-                e->_type = e->symbol->type;
                 break;
         case EXPRESSION_OBJECT_PATTERN:
         case EXPRESSION_TAG_APPLICATION:
                 symbolize_pattern_(ty, scope, e->tagged, reuse, def);
-                e->_type = type_call(ty, e);
                 break;
         Tag:
                 symbolize_expression(ty, scope, e);
@@ -4139,14 +4078,6 @@ symbolize_pattern_(Ty *ty, Scope *scope, Expr *e, Scope *reuse, bool def)
         case EXPRESSION_CHECK_MATCH:
                 symbolize_pattern_(ty, scope, e->left, reuse, def);
                 symbolize_expression(ty, scope, e->right);
-                if (
-                        IsRangeExpr(e->right)
-                     && (e->right->left != NULL)
-                     && (e->right->left->_type != NULL)
-                ) {
-                        unify2(ty, &e->left->_type, e->right->left->_type);
-                }
-                e->_type = e->left->_type;
                 break;
         case EXPRESSION_REGEX:
                 add_captures(ty, e, scope);
@@ -4602,7 +4533,7 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
         STATE.start = e->start;
         STATE.end = e->end;
 
-        UpdateRefinemenets(ty, scope);
+        STATE.active = scope;
 
         Symbol *var;
         Scope *subscope;
@@ -4627,10 +4558,6 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                 printf(" %4d | %s\n", e->start.line + 1, show_expr(e));
         }
 #endif
-
-        Type *t0 = NULL;
-        bool subject_open;
-        SWAP(Type *, t0, STATE.expected_type);
 
         bool debug = e->dbg;
 
@@ -4732,24 +4659,11 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                         );
                 }
 
-                if (e->symbol->type == NULL) {
-                        e->symbol->type = type_var(ty);
-                        LOG("ID: %s  ::  %s\n", e->identifier, type_show(ty, e->symbol->type));
-                }
-
-                if (SymbolIsProperty(e->symbol) && IsFuncT(e->symbol->type)) {
-                        e->_type = e->symbol->type->rt;
-                } else if (SymbolIsTypeAlias(e->symbol)) {
-                        e->_type = type_type(ty, e->symbol->type);
-                } else {
-                        e->_type = e->symbol->type;
-                }
                 break;
 
         case EXPRESSION_OPERATOR:
                 e->op.u = intern(&xD.members, e->op.id)->id;
                 e->op.b = intern(&xD.b_ops, e->op.id)->id;
-                e->_type = type_op(ty, e);
                 break;
 
         case EXPRESSION_COMPILE_TIME:
@@ -4763,7 +4677,6 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                 WITH_TYPES_OFF {
                         symbolize_expression(ty, scope, e->left);
                 }
-                e->_type = type_fixed(ty, type_resolve(ty, e->right));
                 break;
 
         case EXPRESSION_SPECIAL_STRING:
@@ -4773,19 +4686,16 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                         symbolize_expression(ty, scope, *v_(e->fmts, i));
                         symbolize_expression(ty, scope, *v_(e->fmtfs, i));
                 }
-                e->_type = type_special_str(ty, e);
                 break;
 
         case EXPRESSION_DYNAMIC_REGEX:
                 for (int i = 0; i < vN(e->expressions); ++i) {
                         symbolize_expression(ty, scope, v__(e->expressions, i));
                 }
-                e->_type = type_dyn_regex(ty, e);
                 break;
 
         case EXPRESSION_TAG:
                 e->symbol = ResolveIdentifier(ty, e);
-                e->_type = e->symbol->type;
                 break;
 
         case EXPRESSION_TAG_APPLICATION:
@@ -4793,39 +4703,16 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                         e->symbol = ResolveIdentifier(ty, e);
                 }
                 symbolize_expression(ty, scope, e->tagged);
-                e->_type = type_call(ty, e);
-                SET_TYPE_SRC(e);
                 break;
 
         case EXPRESSION_MATCH:
                 symbolize_expression(ty, scope, e->subject);
-                subject_open = !type_is_concrete(ty, e->subject->_type);
-                t0 = type_new_inst(ty, e->subject->_type);
                 for (int i = 0; i < vN(e->patterns); ++i) {
                         Expr *pat = v__(e->patterns, i);
                         subscope = scope_new(ty, "(match-branch)", scope, false);
                         symbolize_pattern(ty, subscope, pat, NULL, true);
-                        ctx = PushContext(ty, pat);
-                        /* An open subject can gain constraints after this arm is
-                         * analyzed, so its irrefutable binding must stay tied to it. */
-                        type_try_assign(
-                                ty,
-                                pat,
-                                (
-                                        subject_open
-                                     && (pat->type == EXPRESSION_IDENTIFIER)
-                                     && (pat->constraint == NULL)
-                                )
-                                        ? e->subject->_type
-                                        : t0,
-                                0
-                        );
-                        ctx = RestoreContext(ty, ctx);
                         symbolize_expression(ty, subscope, v__(e->thens, i));
-                        t0 = type_without(ty, t0, pat->_type);
                 }
-                e->_type = type_match(ty, e);
-                SET_TYPE_SRC(e);
                 break;
 
         case EXPRESSION_UNARY_OP:
@@ -4834,7 +4721,6 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                 } else {
                         symbolize_expression(ty, scope, e->operand);
                 }
-                e->_type = type_unary_op(ty, e);
                 break;
 
         case EXPRESSION_USER_OP:
@@ -4861,9 +4747,6 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
         case EXPRESSION_CMP:
                 symbolize_expression(ty, scope, e->left);
                 symbolize_expression(ty, scope, e->right);
-                if (IS_CTX(EXPR)) {
-                        e->_type = type_binary_op(ty, e);
-                }
                 break;
 
         case EXPRESSION_IN:
@@ -4873,41 +4756,25 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
         case EXPRESSION_CHECK_MATCH:
                 symbolize_expression(ty, scope, e->left);
                 symbolize_expression(ty, scope, e->right);
-                e->_type = BOOL_TYPE;
                 break;
 
         case EXPRESSION_AND:
                 subscope = scope_new(ty, "(&&then)", scope, false);
                 symbolize_expression(ty, scope, e->left);
-                AddRefinements(ty, e->left, subscope, NULL);
                 symbolize_expression(ty, subscope, e->right);
-                e->_type = type_either(ty, e->left->_type, e->right->_type);
                 break;
 
         case EXPRESSION_OR:
                 subscope = scope_new(ty, "(||else)", scope, false);
                 symbolize_expression(ty, scope, e->left);
-                AddRefinements(ty, e->left, NULL, subscope);
                 symbolize_expression(ty, subscope, e->right);
-                e->_type = type_either(ty, e->left->_type, e->right->_type);
                 break;
 
         case EXPRESSION_WTF:
-                symbolize_expression(ty, scope, e->left);
-                symbolize_expression(ty, scope, e->right);
-                e->_type = type_wtf(ty, e);
-                break;
-
         case EXPRESSION_DOT_DOT:
-                symbolize_expression(ty, scope, e->left);
-                symbolize_expression(ty, scope, e->right);
-                e->_type = class_get(ty, CLASS_RANGE)->object_type;
-                break;
-
         case EXPRESSION_DOT_DOT_DOT:
                 symbolize_expression(ty, scope, e->left);
                 symbolize_expression(ty, scope, e->right);
-                e->_type = class_get(ty, CLASS_INC_RANGE)->object_type;
                 break;
 
         case EXPRESSION_UNSAFE:
@@ -4925,29 +4792,20 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                 } else {
                         e->boolean = (scope_lookup(ty, scope, e->identifier) != NULL);
                 }
-                e->_type = BOOL_TYPE;
                 break;
 
         case EXPRESSION_IFDEF:
                 if (e->module != NULL) {
                         Module *mod = GetModule(ty, e->module);
                         if (
-                                (mod != NULL)
-                             && (mod->scope != NULL)
-                             && ((e->symbol = scope_lookup(ty, mod->scope, e->identifier)) != NULL)
+                                (mod == NULL)
+                             || (mod->scope == NULL)
+                             || ((e->symbol = scope_lookup(ty, mod->scope, e->identifier)) == NULL)
                         ) {
-                                e->_type = type_tagged(ty, TAG_SOME, e->symbol->type);
-                        } else {
                                 e->type = EXPRESSION_NONE;
-                                e->_type = tags_get_class(ty, TAG_NONE)->type;
                         }
-                } else {
-                        if ((e->symbol = scope_lookup(ty, scope, e->identifier)) != NULL) {
-                                e->_type = type_tagged(ty, TAG_SOME, e->symbol->type);
-                        } else {
-                                e->type = EXPRESSION_NONE;
-                                e->_type = tags_get_class(ty, TAG_NONE)->type;
-                        }
+                } else if ((e->symbol = scope_lookup(ty, scope, e->identifier)) == NULL) {
+                        e->type = EXPRESSION_NONE;
                 }
                 break;
 
@@ -4955,11 +4813,9 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                 e->escope = scope;
                 scope_capture_all(ty, scope, GlobalScope);
                 symbolize_expression(ty, scope, e->operand);
-                e->_type = type_var(ty);
                 break;
 
         case EXPRESSION_VALUE:
-                e->_type = UNKNOWN_TYPE;
                 break;
 
         case EXPRESSION_PREFIX_MINUS:
@@ -4969,48 +4825,25 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
         case EXPRESSION_PREFIX_DEC:
         case EXPRESSION_POSTFIX_INC:
         case EXPRESSION_POSTFIX_DEC:
-                symbolize_expression(ty, scope, e->operand);
-                e->_type = e->operand->_type;
-                break;
-
         case EXPRESSION_PREFIX_HASH:
-                symbolize_expression(ty, scope, e->operand);
-                e->_type = type_unary_hash_t(ty, e->operand->_type);
-                break;
-
         case EXPRESSION_PREFIX_BANG:
-                symbolize_expression(ty, scope, e->operand);
-                e->_type = BOOL_TYPE;
-                break;
-
         case EXPRESSION_TYPE_OF:
-                symbolize_expression(ty, scope, e->operand);
-                e->_type = type_type(ty, e->operand->_type);
-                break;
-
         case EXPRESSION_PACK_UNION:
         case EXPRESSION_PACK_INTERSECT:
-                symbolize_expression(ty, scope, e->operand);
-                break;
-
         case EXPRESSION_ENTER:
                 symbolize_expression(ty, scope, e->operand);
-                e->_type = type_enter(ty, e->operand->_type);
                 break;
 
         case EXPRESSION_CONDITIONAL:
                 subscope = scope_new(ty, "(?:then)", scope, false);
                 scope = scope_new(ty, "(?:else)", scope, false);
                 symbolize_expression(ty, scope, e->cond);
-                AddRefinements(ty, e->cond, subscope, scope);
                 symbolize_expression(ty, subscope, e->then);
                 symbolize_expression(ty, scope, e->_else);
-                e->_type = type_conditional(ty, e);
                 break;
 
         case EXPRESSION_STATEMENT:
                 symbolize_statement(ty, scope, e->statement);
-                e->_type = e->statement->_type;
                 break;
 
         case EXPRESSION_TEMPLATE:
@@ -5020,16 +4853,9 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                         WITH_STATE(ctx, hole_ctx) {
                                 symbolize_expression(ty, scope, hole);
                         }
-                        if (hole_ctx == CTX_TYPE) {
-                                ResolveConstraint(ty, hole);
-                        }
                 }
                 for (usize i = 0; i < vN(e->template.exprs); ++i) {
                         symbolize_expression(ty, scope, v__(e->template.exprs, i));
-                }
-                var = scope_lookup(ty, GlobalScope, "AST");
-                if (var != NULL) {
-                        e->_type = var->type;
                 }
                 break;
 
@@ -5047,9 +4873,7 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                      && SymbolIsFunMacro(e->function->symbol)
                 ) {
                         invoke_fun_macro(ty, scope, e);
-                        WITH_EXPECTED_TYPE(t0) {
-                                symbolize_expression(ty, scope, e);
-                        }
+                        symbolize_expression(ty, scope, e);
                         break;
                 }
 
@@ -5068,19 +4892,8 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                         break;
                 }
 
-                t0 = e->function->_type;
-
                 for (usize i = 0;  i < vN(e->args); ++i) {
-                        Type *arg0 = NULL;
-                        if (IsFuncT(e->function->_type) && vN(t0->params) > i) {
-                                if (vN(t0->bound) > 0) {
-                                        t0 = type_inst(ty, t0);
-                                }
-                                arg0 = v_(t0->params, i)->type;
-                        }
-                        WITH_EXPECTED_TYPE(arg0) {
-                                symbolize_expression(ty, scope, v__(e->args, i));
-                        }
+                        symbolize_expression(ty, scope, v__(e->args, i));
                 }
 
                 for (usize i = 0;  i < vN(e->args); ++i) {
@@ -5095,18 +4908,11 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                         symbolize_expression(ty, scope, v__(e->fkwconds, i));
                 }
 
-                e->_type = type_call(ty, e);
-                SET_TYPE_SRC(e);
-
                 break;
 
         case EXPRESSION_SUBSCRIPT:
                 symbolize_expression(ty, scope, e->container);
                 symbolize_expression(ty, scope, e->subscript);
-                if (IS_CTX(EXPR)) {
-                        e->_type = type_subscript(ty, e);
-                        SET_TYPE_SRC(e);
-                }
                 break;
 
         case EXPRESSION_SLICE:
@@ -5114,8 +4920,6 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                 symbolize_expression(ty, scope, e->slice.i);
                 symbolize_expression(ty, scope, e->slice.j);
                 symbolize_expression(ty, scope, e->slice.k);
-                e->_type = type_slice(ty, e);
-                SET_TYPE_SRC(e);
                 break;
 
         case EXPRESSION_DYN_MEMBER_ACCESS:
@@ -5123,8 +4927,6 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
         case EXPRESSION_MEMBER_ACCESS:
         case EXPRESSION_SELF_ACCESS:
                 symbolize_expression(ty, scope, e->object);
-                e->_type = type_member_access(ty, e);
-                SET_TYPE_SRC(e);
                 //===================={ <LSP> }=========================================
                 if (FindDefinition && 0 && e->type == EXPRESSION_METHOD_CALL) {
                         ProposeMemberDefinition(ty, e->start, e->end, e->object, e->member->identifier);
@@ -5136,26 +4938,6 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                 symbolize_expression(ty, scope, e->method);
         case EXPRESSION_METHOD_CALL:
                 symbolize_expression(ty, scope, e->object);
-                t0 = type_member_access_t(
-                        ty,
-                        e->object->_type,
-                        e->method->identifier,
-                        false
-                );
-                for (usize i = 0;  i < vN(e->method_args); ++i) {
-                        Type *arg0 = NULL;
-
-                        if (IsFuncT(t0) && vN(t0->params) > i) {
-                                if (vN(t0->bound) > 0) {
-                                        t0 = type_inst(ty, t0);
-                                }
-                                arg0 = v_(t0->params, i)->type;
-                        }
-
-                        WITH_EXPECTED_TYPE(arg0) {
-                                symbolize_expression(ty, scope, v__(e->method_args, i));
-                        }
-                }
                 for (usize i = 0;  i < vN(e->method_args); ++i) {
                         symbolize_expression(ty, scope, v__(e->method_args, i));
                 }
@@ -5165,8 +4947,6 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                 for (usize i = 0; i < vN(e->method_kwargs); ++i) {
                         symbolize_expression(ty, scope, v__(e->method_kwargs, i));
                 }
-                e->_type = type_method_call(ty, e);
-                SET_TYPE_SRC(e);
                 //===================={ <LSP> }=========================================
                 if (FindDefinition && 0 && e->type == EXPRESSION_METHOD_CALL) {
                         ProposeMemberDefinition(ty, e->method->start, e->method->end, e->object, e->method->identifier);
@@ -5184,23 +4964,10 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
         case EXPRESSION_XOR_EQ:
         case EXPRESSION_SHL_EQ:
         case EXPRESSION_SHR_EQ:
-                symbolize_expression(ty, scope, e->value);
-                symbolize_lvalue(ty, scope, e->target, 0);
-                e->_type = e->target->_type;
-                break;
-
         case EXPRESSION_MAYBE_EQ:
         case EXPRESSION_EQ:
                 symbolize_expression(ty, scope, e->value);
                 symbolize_lvalue(ty, scope, e->target, 0);
-                UpdateRefinemenets(ty, scope);
-                type_assign(
-                        ty,
-                        e->target,
-                        e->value->_type,
-                        T_FLAG_STRICT | T_FLAG_UPDATE | (e->value->bang * T_FLAG_BANG)
-                );
-                e->_type = e->value->_type;
                 break;
 
         case EXPRESSION_FUNCTION_TYPE:
@@ -5220,54 +4987,14 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                 TryStates tries = STATE.tries;
                 v00(STATE.tries);
 
-                TypeVector return_types = STATE.return_types;
-                v00(STATE.return_types);
-
                 STATE.func = e;
 
-                bool typecheck = !e->clone;
-
-#if defined(TY_PROFILE_TYPES)
-                u64 time_start = TyThreadCPUTime();
-                u64 allocs_start = TypeAllocCounter;
-#endif
-
                 if (e->scope == NULL) {
-                        RedpillFun(ty, scope, e, NULL);
-                }
-
-                if (typecheck) {
-                        type_fn_begin(ty, e);
+                        RedpillFun(ty, scope, e, false);
                 }
 
                 if (e->fn_symbol != NULL) {
-                        e->fn_symbol->type = e->_type;
                         e->fn_symbol->expr = e;
-                }
-
-                if (e->class == NULL) {
-                        DBG(
-                                "================================================== %s[%s:%d]() === %s",
-                                (e->name != NULL) ? e->name : "(anon)",
-                                CurrentModuleName(ty),
-                                e->start.line + 1,
-                                type_show(ty, e->_type)
-                        );
-                } else {
-                        DBG(
-                                "================================================ %s.%s() === %s",
-                                e->class->name,
-                                e->name,
-                                type_show(ty, e->_type)
-                        );
-                }
-
-                if (
-                        typecheck
-                     && (e->type == EXPRESSION_FUNCTION)
-                     && (IsFuncT(t0) || TypeType(t0) == TYPE_ALIAS)
-                ) {
-                        unify(ty, &e->_type, t0);
                 }
 
                 if (e->type == EXPRESSION_IMPLICIT_FUNCTION) {
@@ -5282,33 +5009,10 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
 
                         STATE.implicit_fscope = implicit_fscope;
                         STATE.implicit_func = implicit_func;
-
-                        e->_type = type_fn_tmp(ty, e);
-                        SET_TYPE_SRC(e);
-
                 } else {
                         WITH_SELF(e->self) {
                                 symbolize_statement(ty, e->scope, e->body);
                         }
-                }
-
-                if (
-                        typecheck
-                    && (e->_type != NULL)
-                    && (e->body != NULL)
-                    && !e->body->will_return
-                    && !e->star
-                ) {
-                        if (e->return_type != NULL) {
-                                unify2(ty, &e->_type->rt, e->body->_type);
-                        } else {
-                                avP(STATE.return_types, type_inst(ty, e->body->_type));
-                        }
-                }
-
-                if (typecheck && (e->return_type == NULL) && (e->body != NULL)) {
-                        Type *r0 = type_any_of(ty, &STATE.return_types);
-                        unify2(ty, &e->_type->rt, r0);
                 }
 
                 e->bound_symbols.items = e->scope->owned.items;
@@ -5316,79 +5020,10 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
 
                 STATE.func = func;
                 STATE.tries = tries;
-                STATE.return_types = return_types;
-
-                if (typecheck && (e->type == EXPRESSION_MULTI_FUNCTION)) {
-                        e->_type = NULL;
-                        for (int i = 0; i < vN(e->functions); ++i) {
-                                Expr const *fun = v__(e->functions, i);
-                                Type *f0 = (fun->type == STATEMENT_FUNCTION_DEFINITION)
-                                         ? ((Stmt *)fun)->value->_type
-                                         : fun->_type;
-                                e->_type = type_both(ty, e->_type, f0);
-                        }
-                }
-
-                if (CurrentClassID == -1) {
-                        DBG("=== %s() === %s", e->name, type_show(ty, e->_type));
-                } else {
-                        DBG("=== %s.%s() === %s", STATE.class->name, e->name, type_show(ty, e->_type));
-                }
-
-                if (typecheck) {
-                        type_fn_end(ty, e);
-                }
 
                 for (int i = 0; i < vN(e->decorators); ++i) {
-                        Expr *dec = v__(e->decorators, i);
-                        switch (dec->type) {
-                        case EXPRESSION_FUNCTION_CALL:
-                                v__(dec->args, 0)->_type = e->_type;
-                                break;
-
-                        case EXPRESSION_METHOD_CALL:
-                                v__(dec->method_args, 0)->_type = e->_type;
-                                break;
-
-                        default:
-                                UNREACHABLE();
-                        }
-                        symbolize_expression(ty, scope, dec);
-                        e->_type = dec->_type;
+                        symbolize_expression(ty, scope, v__(e->decorators, i));
                 }
-
-                if (e->fn_symbol != NULL) {
-                        e->fn_symbol->type = e->_type;
-                }
-
-#if defined(TY_PROFILE_TYPES)
-                if (STATE.func == NULL) {
-                        u64 time_end = TyThreadCPUTime();
-                        u64 allocs_end = TypeAllocCounter;
-
-                        u64 elapsed = time_end - time_start;
-                        u64 allocated = allocs_end - allocs_start;
-
-                        if (e->class != NULL) {
-                                printf(
-                                        "%"PRIu64" %"PRIu64" %s::%s.%s\n",
-                                        elapsed,
-                                        allocated,
-                                        CurrentModuleName(ty),
-                                        e->class->name,
-                                        e->name
-                                );
-                        } else {
-                                printf(
-                                        "%"PRIu64" %"PRIu64" %s::%s\n",
-                                        elapsed,
-                                        allocated,
-                                        CurrentModuleName(ty),
-                                        e->name
-                                );
-                        }
-                }
-#endif
 
                 break;
         }
@@ -5396,19 +5031,16 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
         case EXPRESSION_WITH:
                 subscope = scope_new(ty, "(with)", scope, false);
                 symbolize_statement(ty, subscope, e->with.block);
-                e->_type = e->with.block->_type;
                 break;
 
         case EXPRESSION_THROW:
                 symbolize_expression(ty, scope, e->throw);
-                e->_type = BOTTOM_TYPE;
                 break;
 
         case EXPRESSION_YIELD:
                 for (int i = 0; i < vN(e->es); ++i) {
                         symbolize_expression(ty, scope, v__(e->es, i));
                 }
-                e->_type = type_yield(ty, e);
                 break;
 
         case EXPRESSION_ARRAY:
@@ -5433,14 +5065,11 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                         if (v__(e->aconds, i) != NULL) {
                                 subscope = scope_new(ty, "(array-cond)", scope, false);
                                 symbolize_expression(ty, subscope, v__(e->aconds, i));
-                                AddRefinements(ty, v__(e->aconds, i), subscope, NULL);
                                 symbolize_expression(ty, subscope, v__(e->elements, i));
                         } else {
                                 symbolize_expression(ty, scope, v__(e->elements, i));
                         }
                 }
-                e->_type = type_array(ty, e);
-                SET_TYPE_SRC(e);
                 break;
 
         case EXPRESSION_ARRAY_COMPR:
@@ -5452,21 +5081,15 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                         symbolize_expression(ty, subscope, part->iter);
                         subscope = scope_new(ty, "(array compr)", subscope, false);
                         symbolize_lvalue(ty, subscope, part->pattern, LV_DECL);
-                        type_assign_iterable(ty, part->pattern, part->iter->_type, 0);
                         symbolize_statement(ty, subscope, part->where);
                         symbolize_expression(ty, subscope, part->_while);
-                        AddRefinements(ty, part->_while, subscope, NULL);
                         symbolize_expression(ty, subscope, part->_if);
-                        AddRefinements(ty, part->_if, subscope, NULL);
                 }
 
                 for (usize i = 0; i < vN(e->elements); ++i) {
                         symbolize_expression(ty, subscope, v__(e->elements, i));
                         symbolize_expression(ty, subscope, v__(e->aconds, i));
                 }
-
-                e->_type = type_array(ty, e);
-                SET_TYPE_SRC(e);
 
                 break;
         }
@@ -5477,8 +5100,6 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                         symbolize_expression(ty, scope, v__(e->keys, i));
                         symbolize_expression(ty, scope, v__(e->values, i));
                 }
-                e->_type = type_dict(ty, e);
-                SET_TYPE_SRC(e);
                 break;
 
         case EXPRESSION_DICT_COMPR:
@@ -5490,7 +5111,6 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                         symbolize_expression(ty, subscope, part->iter);
                         subscope = scope_new(ty, "(dict compr)", subscope, false);
                         symbolize_lvalue(ty, subscope, part->pattern, LV_DECL);
-                        type_assign_iterable(ty, part->pattern, part->iter->_type, 0);
                         symbolize_statement(ty, subscope, part->where);
                         symbolize_expression(ty, subscope, part->_while);
                         symbolize_expression(ty, subscope, part->_if);
@@ -5501,9 +5121,6 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                         symbolize_expression(ty, subscope, v__(e->values, i));
                 }
 
-                e->_type = type_dict(ty, e);
-                SET_TYPE_SRC(e);
-
                 break;
         }
 
@@ -5511,15 +5128,12 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                 for (int i = 0; i < vN(e->es); ++i) {
                         symbolize_expression(ty, scope, v__(e->es, i));
                 }
-                SET_TYPE_SRC(e);
                 break;
 
         case EXPRESSION_LIST:
                 for (int i = 0; i < vN(e->es); ++i) {
                         symbolize_expression(ty, scope, v__(e->es, i));
                 }
-                e->_type = type_list(ty, e);
-                SET_TYPE_SRC(e);
                 break;
 
         case EXPRESSION_TUPLE:
@@ -5527,21 +5141,14 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                         symbolize_expression(ty, scope, v__(e->es, i));
                         symbolize_expression(ty, scope, v__(e->tconds, i));
                 }
-                e->_type = type_tuple(ty, e);
-                SET_TYPE_SRC(e);
                 if (IS_CTX(TYPE) && has_any_names(e)) {
                         e->type = EXPRESSION_TUPLE_SPEC;
                 }
                 break;
 
         case EXPRESSION_SPREAD:
-                symbolize_expression(ty, scope, e->value);
-                e->_type = e->value->_type;
-                break;
-
         case EXPRESSION_SPLAT:
                 symbolize_expression(ty, scope, e->value);
-                e->_type = e->value->_type;
                 break;
 
         case EXPRESSION_SUPER:
@@ -5554,27 +5161,11 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                 break;
 
         case EXPRESSION_INTEGER:
-                e->_type = type_integer(ty, e->integer);
-                break;
-
         case EXPRESSION_REAL:
-                e->_type = TYPE_FLOAT;
-                break;
-
         case EXPRESSION_BOOLEAN:
-                e->_type = type_bool(ty, e->boolean);
-                break;
-
         case EXPRESSION_STRING:
-                e->_type = type_string(ty, e->string);
-                break;
-
         case EXPRESSION_REGEX:
-                e->_type = type_regex(ty, e->regex);
-                break;
-
         case EXPRESSION_NIL:
-                e->_type = NIL_TYPE;
                 break;
 
         case EXPRESSION_MATCH_REST:
@@ -5582,15 +5173,6 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
 
         case EXPRESSION_ERROR:
                 fail("%s", e->string);
-        }
-
-        if (e->bang) {
-                e->_type = UNKNOWN_TYPE;
-        }
-
-        if (e->_type == NULL) {
-                e->_type = type_var(ty);
-                SET_TYPE_SRC(e);
         }
 
         if (debug) {
@@ -5603,8 +5185,6 @@ End:
         RestoreContext(ty, ctx);
         PopScope();
 
-        dont_printf(">>> %s\n", ExpressionTypeName(e));
-        dont_printf("::) %s\n", type_show(ty, e->_type));
 }
 
 static char *
@@ -5726,420 +5306,6 @@ CompilerDoUse(Ty *ty, Stmt *s, Scope *scope)
         RestoreContext(ty, ctx);
 }
 
-static Scope *
-DisableRefinements(Ty *ty, Scope *scope)
-{
-        if (NO_TYPES) {
-                return scope;
-        }
-
-        bool logged = false;
-
-        while (scope != NULL && !ScopeIsActive(scope)) {
-                for (int i = 0; i < vN(scope->refinements); ++i) {
-                        Refinement *ref = v_(scope->refinements, i);
-                        if (ref->active) {
-                                if (!logged) {
-                                        LogRefine("DisableRefinements(): %s", scope_name(ty, scope));
-                                        logged = true;
-                                }
-                                LogRefine("Disable(%s):", ref->var->identifier);
-                                LogRefine("    %s", type_show(ty, ref->var->type));
-                                LogRefine("--> %s", type_show(ty, ref->t0));
-                                SWAP(Type *, ref->t0, ref->var->type);
-                                ref->active = false;
-                                if (ref->mut) {
-                                        unify2(ty, &ref->var->type, ref->t0);
-                                }
-                        }
-                }
-                scope = scope->parent;
-        }
-
-        return scope;
-}
-
-static void
-EnableRefinements(Ty *ty, Scope *scope, Scope *stop)
-{
-        if (NO_TYPES) {
-                return;
-        }
-
-        bool logged = false;
-
-        while (scope != stop) {
-                for (int i = 0; i < vN(scope->refinements); ++i) {
-                        Refinement *ref = v_(scope->refinements, i);
-                        if (!ref->active) {
-                                if (!logged) {
-                                        LogRefine("EnableRefinements(): %s", scope_name(ty, scope));
-                                        logged = true;
-                                }
-                                LogRefine("  Enable(%s):", ref->var->identifier);
-                                LogRefine("      %s", type_show(ty, ref->var->type));
-                                LogRefine("  --> %s", type_show(ty, ref->t0));
-                                SWAP(Type *, ref->t0, ref->var->type);
-                                ref->active = true;
-                        }
-                }
-                scope = scope->parent;
-        }
-}
-
-inline static void
-SetActive(Scope *scope)
-{
-        if (NO_TYPES) {
-                return;
-        }
-
-        while (scope != NULL) {
-                scope->flags |= SCOPE_ACTIVE;
-                scope = scope->parent;
-        }
-}
-
-inline static void
-ClearActive(Scope *scope)
-{
-        if (NO_TYPES) {
-                return;
-        }
-
-        while (scope != NULL) {
-                scope->flags &= ~SCOPE_ACTIVE;
-                scope = scope->parent;
-        }
-}
-
-inline static void
-EnableRefinement(Refinement *ref)
-{
-        if (ref != NULL && !ref->active) {
-                SWAP(Type *, ref->t0, ref->var->type);
-                ref->active = true;
-        }
-}
-
-inline static void
-DisableRefinement(Refinement *ref)
-{
-        if (ref != NULL && ref->active) {
-                LogRefine("Disable(%s):", ref->var->identifier);
-                SWAP(Type *, ref->t0, ref->var->type);
-                ref->active = false;
-        }
-}
-
-inline static Type *
-RefinedType(Refinement *ref)
-{
-        if (ref->active) {
-                return ref->var->type;
-        } else {
-                return ref->t0;
-        }
-}
-
-inline static Type *
-UnrefinedType(Refinement *ref)
-{
-        if (!ref->active) {
-                return ref->var->type;
-        } else {
-                return ref->t0;
-        }
-}
-
-static void
-RefineMemberType(Ty *ty, Expr const *expr, Type *t0, Scope *_then, Scope *_else)
-{
-        Symbol *sym = expr->object->symbol;
-        char const *name = expr->member->identifier;
-
-        Type *u0 = type_member_access_t(ty, sym->type, name, false);
-
-        if (t0 != NULL) {
-                if (_then != NULL) {
-                        Type *r0 = type_both(ty, type_unfixed(ty, sym->type), NewRecord(name, t0));
-                        ScopeRefineVar(ty, _then, sym, r0);
-                }
-
-                if (_else != NULL) {
-                        Type *t00 = type_without(ty, u0, t0);
-                        Type *r0 = type_both(ty, type_unfixed(ty, sym->type), NewRecord(name, t00));
-                        ScopeRefineVar(ty, _else, sym, r0);
-                }
-        } else {
-                if (_then != NULL) {
-                        Type *t00 = type_without(ty, u0, NIL_TYPE);
-                        Type *r0 = type_both(ty, type_unfixed(ty, sym->type), NewRecord(name, t00));
-                        ScopeRefineVar(ty, _then, sym, r0);
-                }
-        }
-}
-
-static void
-AddRefinements(Ty *ty, Expr const *e, Scope *_then, Scope *_else)
-{
-        if (NO_TYPES || e == NULL) {
-                return;
-        }
-
-        switch (e->type) {
-        case EXPRESSION_AND:
-                AddRefinements(ty, e->left, _then, _else);
-                AddRefinements(ty, e->right, _then, _else);
-                break;
-
-        case EXPRESSION_OR:
-                AddRefinements(ty, e->left, NULL, _else);
-                AddRefinements(ty, e->right, NULL, _else);
-                break;
-
-        case EXPRESSION_PREFIX_BANG:
-                AddRefinements(ty, e->operand, _else, _then);
-                break;
-
-        case EXPRESSION_DBL_EQ:
-                if (e->right->type != EXPRESSION_NIL) {
-                        break;
-                }
-                if (e->left->type == EXPRESSION_IDENTIFIER) {
-                        if (_then != NULL) {
-                                ScopeRefineVar(
-                                        ty,
-                                        _then,
-                                        e->left->symbol,
-                                        NIL_TYPE
-                                );
-                        }
-                        if (_else != NULL) {
-                                ScopeRefineVar(
-                                        ty,
-                                        _else,
-                                        e->left->symbol,
-                                        type_not_nil(ty, e->left->symbol->type)
-                                );
-                        }
-                } else if (
-                        (e->left->type == EXPRESSION_MEMBER_ACCESS)
-                     && (e->left->object->type == EXPRESSION_IDENTIFIER)
-                ) {
-                        RefineMemberType(ty, e->left, NULL, _else, _then);
-                }
-                break;
-
-        case EXPRESSION_NOT_EQ:
-                if (e->right->type != EXPRESSION_NIL) {
-                        break;
-                }
-                if (e->left->type == EXPRESSION_IDENTIFIER) {
-                        if (_then != NULL) {
-                                ScopeRefineVar(
-                                        ty,
-                                        _then,
-                                        e->left->symbol,
-                                        type_not_nil(ty, e->left->symbol->type)
-                                );
-                        }
-                        if (_else != NULL) {
-                                ScopeRefineVar(
-                                        ty,
-                                        _else,
-                                        e->left->symbol,
-                                        NIL_TYPE
-                                );
-                        }
-                } else if (
-                        (e->left->type == EXPRESSION_MEMBER_ACCESS)
-                     && (e->left->object->type == EXPRESSION_IDENTIFIER)
-                ) {
-                        RefineMemberType(ty, e->left, NULL, _then, _else);
-                }
-                break;
-
-        case EXPRESSION_IDENTIFIER:
-                if (_then != NULL) {
-                        ScopeRefineVar(
-                                ty,
-                                _then,
-                                e->symbol,
-                                type_not_nil(ty, e->symbol->type)
-                        );
-                        Refinement *ref = vvL(_then->refinements);
-                        LogRefine("AddRefinement(%s): %s", ref->var->identifier, scope_name(ty, _then));
-                        LogRefine("    %s", type_show(ty, ref->var->type));
-                        LogRefine("--> %s", type_show(ty, ref->t0));
-                }
-                break;
-
-        case EXPRESSION_MEMBER_ACCESS:
-                if (e->object->type == EXPRESSION_IDENTIFIER) {
-                        RefineMemberType(ty, e, NULL, _then, _else);
-                }
-                break;
-
-        case EXPRESSION_CHECK_MATCH:
-                if (
-                        (e->left->type == EXPRESSION_IDENTIFIER)
-                     && IsClassName(e->right)
-                ) {
-                        LogRefine("=== NewRefinement(%s): %s", e->left->identifier, type_show(ty, e->left->symbol->type));
-                        if (_then != NULL) {
-                                ScopeRefineVar(
-                                        ty,
-                                        _then,
-                                        e->left->symbol,
-                                        type_instance_of(
-                                                ty,
-                                                e->left->symbol->type,
-                                                e->right->symbol->class
-                                        )
-                                );
-                                Refinement *ref = vvL(_then->refinements);
-                                LogRefine("AddRefinement(%s):", ref->var->identifier);
-                                LogRefine("    %s", type_show(ty, ref->var->type));
-                                LogRefine("--> %s", type_show(ty, ref->t0));
-                        }
-                        if (_else != NULL) {
-                                ScopeRefineVar(
-                                        ty,
-                                        _else,
-                                        e->left->symbol,
-                                        type_without(
-                                                ty,
-                                                e->left->symbol->type,
-                                                class_get(ty, e->right->symbol->class)->object_type
-                                        )
-                                );
-                                Refinement *ref = vvL(_else->refinements);
-                                LogRefine("AddRefinement(%s):", ref->var->identifier);
-                                LogRefine("    %s", type_show(ty, ref->var->type));
-                                LogRefine("--> %s", type_show(ty, ref->t0));
-                        }
-                } else if (
-                        (e->left->type == EXPRESSION_MEMBER_ACCESS)
-                     && (e->left->object->type == EXPRESSION_IDENTIFIER)
-                     && IsClassName(e->right)
-                ) {
-                        RefineMemberType(
-                                ty,
-                                e->left,
-                                class_get(ty, e->right->symbol->class)->object_type,
-                                _then,
-                                _else
-                        );
-                }
-                break;
-        }
-}
-
-Type *
-OriginalType(Ty *ty, Symbol const *var)
-{
-        Type *t0 = var->type;
-        Scope *scope = STATE.active;
-
-        while (scope != NULL) {
-                for (int i = 0; i < vN(scope->refinements); ++i) {
-                        Refinement *ref = v_(scope->refinements, i);
-                        if (ref->active && ref->var == var) {
-                                t0 = ref->t0;
-                        }
-                }
-                scope = scope->parent;
-        }
-
-        return t0;
-}
-
-static void
-MergeRefinements(Ty *ty, Scope *scope, Scope *then, Scope *_else)
-{
-        if (NO_TYPES) {
-                return;
-        }
-
-        for (int i = 0; i < vN(then->refinements); ++i) {
-                Refinement *ref0 = v_(then->refinements, i);
-                Refinement *ref1 = ScopeFindRefinement(_else, ref0->var);
-
-                if (ref1 != NULL) {
-                        LogRefine(
-                                "CheckRefinement[%d/%zu](%s): %s",
-                                i + 1,
-                                vN(then->refinements),
-                                ref0->var->identifier,
-                                type_show(ty, ref0->var->type)
-                        );
-                        LogRefine("    %s", type_show(ty, ref0->t0));
-                        LogRefine("    %s", type_show(ty, ref1->t0));
-                } else {
-                        LogRefine(
-                                "CheckRefinement[%d/%zu](%s): %s",
-                                i + 1,
-                                vN(then->refinements),
-                                ref0->var->identifier,
-                                type_show(ty, ref0->var->type)
-                        );
-                        LogRefine("    %s", type_show(ty, ref0->t0));
-                        LogRefine("    <none>");
-                }
-
-                DisableRefinement(ref0);
-                DisableRefinement(ref1);
-
-                Type *t0 = OriginalType(ty, ref0->var);
-                Type *u0 = UnrefinedType(ref0);
-                Type *m0 = type_either(
-                        ty,
-                        RefinedType(ref0),
-                        (ref1 != NULL) ? RefinedType(ref1) : u0
-                );
-
-                if (type_check(ty, m0, t0) && SymbolIsFixedType(ref0->var)) {
-                        m0 = t0;
-                }
-
-                Refinement *existing = ScopeFindRefinement(scope, ref0->var);
-
-                if (existing != NULL) {
-                        existing->t0 = UnrefinedType(existing);
-                        existing->active = true;
-                } else {
-                        avP(scope->refinements, ((Refinement) {
-                                .var    = ref0->var,
-                                .t0     = u0,
-                                .mut    = ref0->mut,
-                                .active = true
-                        }));
-                }
-
-                ref0->var->type = m0;
-        }
-
-        v0(then->refinements);
-        if (_else != NULL) {
-                v0(_else->refinements);
-        }
-}
-
-static void
-UpdateRefinemenets(Ty *ty, Scope *scope)
-{
-        if (scope != STATE.active) {
-                ClearActive(STATE.active);
-                SetActive(scope);
-                Scope *stop = DisableRefinements(ty, STATE.active);
-                EnableRefinements(ty, scope, stop);
-                STATE.active = scope;
-        } else {
-                EnableRefinements(ty, scope, scope->parent);
-        }
-}
-
 static void
 symbolize_fun_decl(Ty *ty, Scope *scope, Stmt *s, u32 flag)
 {
@@ -6166,14 +5332,7 @@ symbolize_fun_def(Ty *ty, Scope *scope, Stmt *s, u32 flag)
 
         Symbol *var = s->target->symbol;
 
-        dont_printf("%s(0) :: %s\n", s->target->identifier, type_show(ty, var->type));
-
         if (s->value->overload == NULL) {
-                if (HasBody(s->value)) {
-                        var->type = s->value->fn_symbol->type;
-                }
-                dont_printf("%s(1) :: %s\n", s->target->identifier, type_show(ty, var->type));
-                s->target->_type = s->value->_type;
                 var->expr = s->value;
         }
 }
@@ -6183,23 +5342,17 @@ symbolize_match_stmt(Ty *ty, Scope *scope, Stmt *s)
 {
         symbolize_expression(ty, scope, s->match.e);
 
-        Type *t0 = type_new_inst(ty, s->match.e->_type);
-
         bool will_return = (vN(s->match.statements) > 0);
 
         for (int i = 0; i < vN(s->match.patterns); ++i) {
                 Expr *pat = v__(s->match.patterns, i);
                 Scope *subscope = scope_new(ty, "(match-branch)", scope, false);
                 symbolize_pattern(ty, subscope, pat, NULL, true);
-                type_try_assign(ty, pat, t0, 0);
                 symbolize_statement(ty, subscope, v__(s->match.statements, i));
-                t0 = type_without(ty, t0, pat->_type);
                 will_return &= v__(s->match.statements, i)->will_return;
         }
 
         s->will_return = will_return;
-        s->_type = type_match_stmt(ty, s);
-        SET_TYPE_SRC(s);
 }
 
 static void
@@ -6234,7 +5387,7 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
                 scope = GetNamespace(ty, s->ns);
         }
 
-        UpdateRefinemenets(ty, scope);
+        STATE.active = scope;
 
         void *ctx = PushContext(ty, s);
 
@@ -6273,7 +5426,6 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
 
         case STATEMENT_EXPRESSION:
                 symbolize_expression(ty, scope, s->expression);
-                s->_type = s->expression->_type;
                 s->will_return = WillReturn(s->expression);
                 break;
 
@@ -6282,13 +5434,7 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
                 if (vN(STATE.loop_stmts) < s->depth) {
                         fail("break statement has no corresponding loop");
                 }
-                Stmt *loop = vZ(STATE.loop_stmts)[-s->depth];
-                if (s->expression != NULL) {
-                        symbolize_expression(ty, scope, s->expression);
-                        unify2(ty, &loop->_type, s->expression->_type);
-                } else {
-                        unify2(ty, &loop->_type, NIL_TYPE);
-                }
+                symbolize_expression(ty, scope, s->expression);
                 break;
         }
 
@@ -6399,11 +5545,6 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
                 if (vN(s->statements) > 0) {
                         Stmt const *last = v_L(s->statements);
                         s->will_return = last->will_return;
-                        s->_type = last->_type;
-                }
-                if (!WillReturn(s) && (s->type == STATEMENT_BLOCK)) {
-                        avPv(scope->parent->refinements, scope->refinements);
-                        v0(scope->refinements);
                 }
                 break;
 
@@ -6423,15 +5564,11 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
                 symbolize_statement(ty, scope, s->try.finally);
 
                 s->try.need_trace = end_try(ty)->need_trace;
-                s->_type = s->try.s->_type;
                 break;
         }
 
         case STATEMENT_WHILE_MATCH:
                 WITH_LOOP(symbolize_match_stmt(ty, scope, s));
-                if (s->_type == NULL) {
-                        s->_type = NIL_TYPE;
-                }
                 s->will_return = false;
                 break;
 
@@ -6446,20 +5583,11 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
                         fix_part(ty, p, scope);
                         symbolize_expression(ty, subscope, p->e);
                         symbolize_pattern(ty, subscope, p->target, NULL, p->def);
-                        if (p->target != NULL) {
-                                type_try_assign(ty, p->target, p->e->_type, 0);
-                        } else {
-                                AddRefinements(ty, p->e, subscope, NULL);
-                        }
                 }
                 WITH_LOOP(symbolize_statement(ty, subscope, s->_while.block));
-                if (s->_type == NULL) {
-                        s->_type = NIL_TYPE;
-                }
                 break;
 
         case STATEMENT_IF:
-                // if not let Ok(x) = f() or not [y] = bar() { ... }
                 subscope = scope_new(ty, "(if)", scope, false);
                 subscope2 = scope_new(ty, "(else)", scope, false);
                 if (s->_if.neg) {
@@ -6469,9 +5597,6 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
                                 fix_part(ty, p, scope);
                                 symbolize_expression(ty, subscope, p->e);
                                 symbolize_pattern(ty, scope, p->target, NULL, p->def);
-                                if (p->target != NULL) {
-                                        type_try_assign(ty, p->target, p->e->_type, 0);
-                                }
                         }
                         symbolize_statement(ty, subscope, s->_if._else);
                 } else {
@@ -6479,54 +5604,10 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
                                 struct condpart *p = v__(s->_if.parts, i);
                                 fix_part(ty, p, scope);
                                 symbolize_expression(ty, subscope, p->e);
-                                UpdateRefinemenets(ty, scope);
                                 symbolize_pattern(ty, subscope, p->target, NULL, p->def);
-                                if (p->target != NULL) {
-                                        type_try_assign(ty, p->target, p->e->_type, 0);
-                                } else {
-                                        AddRefinements(
-                                                ty,
-                                                p->e,
-                                                subscope,
-                                                subscope2
-                                        );
-                                }
                         }
                         symbolize_statement(ty, subscope2, s->_if._else);
                         symbolize_statement(ty, subscope, s->_if.then);
-                        UpdateRefinemenets(ty, scope);
-                        if (WillReturn(s->_if.then) && !WillReturn(s->_if._else)) {
-                                int old = vN(scope->refinements);
-                                avPv(scope->refinements, subscope2->refinements);
-                                v0(subscope2->refinements);
-                                for (int i = old; i < vN(scope->refinements); ++i) {
-                                        Refinement *ref = v_(scope->refinements, i);
-                                        SWAP(Type *, ref->t0, ref->var->type);
-                                        ref->active = true;
-                                }
-                        } else if (WillReturn(s->_if._else) && !WillReturn(s->_if.then)) {
-                                int old = vN(scope->refinements);
-                                avPv(scope->refinements, subscope->refinements);
-                                v0(subscope->refinements);
-                                for (int i = old; i < vN(scope->refinements); ++i) {
-                                        Refinement *ref = v_(scope->refinements, i);
-                                        SWAP(Type *, ref->t0, ref->var->type);
-                                        ref->active = true;
-                                }
-                        } else {
-                                MergeRefinements(ty, scope, subscope, subscope2);
-                        }
-                }
-                if (s->_if.then != NULL) {
-                        unify2(ty, &s->_type, s->_if.then->_type);
-                        s->will_return = s->_if.then->will_return;
-                } else {
-                        unify2(ty, &s->_type, NIL_TYPE);
-                }
-                if (s->_if._else != NULL) {
-                        unify2(ty, &s->_type, s->_if._else->_type);
-                } else {
-                        unify2(ty, &s->_type, NIL_TYPE);
                 }
                 s->will_return = (s->_if.then != NULL && s->_if.then->will_return)
                               && (s->_if._else != NULL && s->_if._else->will_return);
@@ -6537,32 +5618,19 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
                 subscope = scope_new(ty, "(for-body)", scope, false);
                 symbolize_statement(ty, scope, s->for_loop.init);
                 symbolize_expression(ty, scope, s->for_loop.cond);
-                AddRefinements(ty, s->for_loop.cond, subscope, NULL);
                 WITH_LOOP(symbolize_statement(ty, subscope, s->for_loop.body));
                 symbolize_expression(ty, scope, s->for_loop.next);
                 s->will_return = WillReturn(s->for_loop.body);
-                if (s->_type == NULL && s->for_loop.cond != NULL) {
-                        s->_type = NIL_TYPE;
-                }
                 break;
 
         case STATEMENT_EACH_LOOP:
                 symbolize_expression(ty, scope, s->each.array);
                 subscope = scope_new(ty, "(for-each)", scope, false);
                 symbolize_lvalue(ty, subscope, s->each.target, LV_DECL);
-                type_assign_iterable(ty, s->each.target, s->each.array->_type, T_FLAG_STRICT);
                 symbolize_expression(ty, subscope, s->each._if);
                 symbolize_expression(ty, subscope, s->each._while);
-                AddRefinements(ty, s->each._if, subscope, NULL);
-                AddRefinements(ty, s->each._while, subscope, NULL);
                 WITH_LOOP(symbolize_statement(ty, subscope, s->each.body));
                 s->will_return = WillReturn(s->each.body);
-                if (s->will_return) {
-                        MergeRefinements(ty, scope, subscope, NULL);
-                }
-                if (s->_type == NULL) {
-                        s->_type = NIL_TYPE;
-                }
                 break;
 
         case STATEMENT_RETURN:
@@ -6572,25 +5640,10 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
 
                 for (int i = 0; i < vN(s->returns); ++i) {
                         symbolize_expression(ty, scope, v__(s->returns, i));
-                        dont_printf("  return: %s\n", type_show(ty, v__(s->returns, i)->_type));
                 }
 
                 if (STATE.func->star || STATE.func->type == EXPRESSION_GENERATOR) {
                         s->type = STATEMENT_GENERATOR_RETURN;
-                } else if (CheckTypes && STATE.func->_type != NULL) {
-                        Type *t0 = (vN(s->returns) == 0) ? NIL_TYPE
-                                 : (vN(s->returns) == 1) ? (*vvL(s->returns))->_type
-                                 : type_list_from(ty, &s->returns);
-
-                        dont_printf("  before unify: %s\n", type_show(ty, STATE.func->_type->rt));
-
-                        if (STATE.func->return_type != NULL) {
-                                unify2(ty, &STATE.func->_type->rt, t0);
-                        } else {
-                                avP(STATE.return_types, type_inst(ty, t0));
-                        }
-
-                        dont_printf("  after unify: %s\n", type_show(ty, STATE.func->_type->rt));
                 }
 
                 s->will_return = true;
@@ -6601,7 +5654,6 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
                         for (int i = 0; i < vN(s->value->es); ++i) {
                                 symbolize_expression(ty, scope, v__(s->value->es, i));
                         }
-                        s->value->_type = type_list_from(ty, &s->value->es);
                 } else {
                         symbolize_expression(ty, scope, s->value);
                 }
@@ -6610,12 +5662,6 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
                         scope,
                         s->target,
                         LV_DECL | (LV_CONST * s->cnst) | (s->pub * LV_PUB)
-                );
-                type_assign(
-                        ty,
-                        s->target,
-                        s->value->_type,
-                        T_FLAG_STRICT | T_FLAG_AVOID_NIL | (s->value->bang * T_FLAG_BANG)
                 );
                 if (
                         (s->target->type == EXPRESSION_IDENTIFIER)
@@ -6633,13 +5679,6 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
                                 xvP(Globals, UNINITIALIZED(sym));
                         }
                         *v_(Globals, i) = v__(Globals, j);
-                }
-                if (s->target->type == EXPRESSION_IDENTIFIER) {
-                       dont_printf(
-                                "%s ::= %s\n",
-                                s->target->identifier,
-                                type_show(ty, s->target->symbol->type)
-                        );
                 }
                 break;
 
@@ -6932,7 +5971,7 @@ emit_load(Ty *ty, Symbol const *s, Scope const *scope)
 
         if (SymbolIsTypeAlias(s)) {
                 INSN(TYPE);
-                EP(s->type->_type);
+                EP((uptr)s->type);
                 return;
         }
 
@@ -7329,6 +6368,13 @@ fail_match_if_not(Ty *ty, Expr const *e)
 static void
 _xemit_constraint(Ty *ty, Expr const *c)
 {
+        if (c->annotated && c->_type != T2_TYPE_INVALID) {
+                INSN(TYPE);
+                EP((uptr)c->_type);
+                INSN(CHECK_MATCH);
+                return;
+        }
+
         if (c->type != EXPRESSION_TYPE_UNION) {
                 EE(c);
                 INSN(CHECK_MATCH);
@@ -7697,6 +6743,15 @@ emit_function(Ty *ty, Expr const *e)
                                 array_of->container->symbol = class_get(ty, CLASS_ARRAY)->def->class.var;
                                 array_of->container->identifier = array_of->container->symbol->identifier;
                                 array_of->subscript = constraint;
+                                if (constraint->annotated && constraint->_type != T2_TYPE_INVALID) {
+                                        array_of->annotated = true;
+                                        array_of->_type = types2_class_instance(
+                                                ty,
+                                                CLASS_ARRAY,
+                                                &constraint->_type,
+                                                1
+                                        );
+                                }
                                 constraint = array_of;
                         }
                         WITH_STACK() {
@@ -10519,8 +9574,8 @@ BeginRangeLoop(
         Expr *start = !reverse ? range->left  : range->right;
         Expr *stop  = !reverse ? range->right : range->left;
 
-        Expr zero = { .type = EXPRESSION_INTEGER, .integer = 0,          ._type = INT_TYPE };
-        Expr inf  = { .type = EXPRESSION_INTEGER, .integer = INTMAX_MAX, ._type = INT_TYPE };
+        Expr zero = { .type = EXPRESSION_INTEGER, .integer = 0,          ._type = types2_primitive(T2_TYPE_INT) };
+        Expr inf  = { .type = EXPRESSION_INTEGER, .integer = INTMAX_MAX, ._type = types2_primitive(T2_TYPE_INT) };
 
         if (start == NULL) start = &zero;
         if (stop  == NULL) stop  = (reverse ? &zero : &inf);
@@ -12334,7 +11389,7 @@ get_module_scope(char const *name)
 }
 
 static void
-RedpillFun(Ty *ty, Scope *scope, Expr *f, Type *self0)
+RedpillFun(Ty *ty, Scope *scope, Expr *f, bool method)
 {
         if (f->scope != NULL) {
                 return;
@@ -12346,7 +11401,7 @@ RedpillFun(Ty *ty, Scope *scope, Expr *f, Type *self0)
                 for (int i = 0; i < vN(f->functions); ++i) {
                         Expr *sub = v__(f->functions, i);
                         if (sub->type == EXPRESSION_FUNCTION) {
-                                RedpillFun(ty, scope, v__(f->functions, i), self0);
+                                RedpillFun(ty, scope, v__(f->functions, i), method);
                         } else {
                                 InjectRedpill(ty, (Stmt *)sub);
                         }
@@ -12367,23 +11422,16 @@ RedpillFun(Ty *ty, Scope *scope, Expr *f, Type *self0)
 
         SymbolizeTypeParams(ty, f->scope, &f->type_params);
 
-        if (self0 != NULL) {
-                if (
+        if (
+                method
+             && (
                         !contains(OperatorCharset, *f->name)
                      || (vN(f->params) == 0)
-                ) {
-                        f->self = scope_add_i(ty, f->scope, "self", vN(f->params));
-                        f->self->mod = STATE.module;
-                        f->self->loc = STATE.start;
-                        if (
-                                (TypeType(self0) == TYPE_OBJECT)
-                             && (TypeType(self0->class->type) == TYPE_TAG)
-                        ) {
-                                f->self->type = v__(self0->args, 0);
-                        } else {
-                                f->self->type = self0;
-                        }
-                }
+                )
+        ) {
+                f->self = scope_add_i(ty, f->scope, "self", vN(f->params));
+                f->self->mod = STATE.module;
+                f->self->loc = STATE.start;
         }
 
         WITH_SELF(f->self) {
@@ -12399,30 +11447,7 @@ RedpillFun(Ty *ty, Scope *scope, Expr *f, Type *self0)
                 }
         }
 
-        for (usize i = 0; i < vN(f->params); ++i) {
-                Symbol *sym = v__(f->param_symbols, i);
-                Expr *constraint = v__(f->constraints, i);
-                sym->type = ResolveConstraint(ty, constraint);
-                if (
-                        (constraint != NULL)
-                     && (constraint->type == EXPRESSION_TYPE)
-                ) {
-                        sym->flags |= SYM_FIXED;
-                }
-        }
-
-        if (f->type == EXPRESSION_MULTI_FUNCTION) {
-                f->_type = NULL;
-                for (int i = 0; i < vN(f->functions); ++i) {
-                        Expr *sub = v__(f->functions, i);
-                        if (sub->type == EXPRESSION_FUNCTION) {
-                                f->_type = type_both(ty, f->_type, sub->_type);
-                        }
-                }
-                if (f->fn_symbol != NULL) {
-                        f->fn_symbol->type = f->_type;
-                }
-        } else {
+        if (f->type != EXPRESSION_MULTI_FUNCTION) {
                 WITH_CTX(TYPE) WITH_SELF(f->self) {
                         symbolize_expression(ty, f->scope, f->return_type);
                         for (int i = 0; i < vN(f->type_bounds); ++i) {
@@ -12488,18 +11513,9 @@ RedpillFun(Ty *ty, Scope *scope, Expr *f, Type *self0)
                                 }
                         }
                 }
-                ResolveConstraint(ty, f->return_type);
-                f->_type = type_fn_tmp(ty, f);
                 if (f->fn_symbol != NULL) {
                         f->fn_symbol->expr = f;
-                        f->fn_symbol->type = f->_type;
                 }
-        }
-
-        if (f->class == NULL) {
-                LOG("REDPILL: === %s() === %s", f->name, type_show(ty, f->_type));
-        } else {
-                LOG("REDPILL: === %s.%s() === %s", f->class->name, f->name, type_show(ty, f->_type));
         }
 
         RestoreContext(ty, ctx);
@@ -12508,11 +11524,11 @@ RedpillFun(Ty *ty, Scope *scope, Expr *f, Type *self0)
 }
 
 static void
-RedpillMethods(Ty *ty, Scope *scope, Type *t0, ExprVec const *ms)
+RedpillMethods(Ty *ty, Scope *scope, ExprVec const *ms)
 {
         for (int i = 0; i < vN(*ms); ++i) {
                 Expr *meth = v__(*ms, i);
-                RedpillFun(ty, scope, meth, t0);
+                RedpillFun(ty, scope, meth, true);
         }
 }
 
@@ -12563,13 +11579,7 @@ InjectRedpill(Ty *ty, Stmt *s)
                 } else {
                         def->redpilled = true;
                 }
-                class = def->var->type->class;
-                RedpillMethods(
-                        ty,
-                        def->scope,
-                        class->object_type,
-                        &def->methods
-                );
+                RedpillMethods(ty, def->scope, &def->methods);
                 break;
 
         case STATEMENT_TYPE_DEFINITION:
@@ -12608,13 +11618,6 @@ InjectRedpill(Ty *ty, Stmt *s)
                                         Expr const *m0 = FindMethod(class, m->name);
                                         if (m0 != NULL) {
                                                 m->return_type = m0->return_type;
-                                                dont_printf(
-                                                        "%s: inherited return type: %s.%s() -> %s\n",
-                                                        class->name,
-                                                        super->name,
-                                                        m->name,
-                                                        type_show(ty, type_resolve(ty, m->return_type))
-                                                );
                                         }
                                 }
                         }
@@ -12647,14 +11650,12 @@ InjectRedpill(Ty *ty, Stmt *s)
                 AddClassTraits(ty, def);
                 ResolveFieldTypes(ty, def->scope, &def->fields);
                 ResolveFieldTypes(ty, def->s_scope, &def->s_fields);
-                Type *self0 = type_fixed(ty, class->object_type);
-                RedpillMethods(ty, def->scope, self0, &def->methods);
-                RedpillMethods(ty, def->scope, self0, &def->getters);
-                RedpillMethods(ty, def->scope, self0, &def->setters);
-                Type *s_self0 = type_fixed(ty, class->type);
-                RedpillMethods(ty, def->s_scope, s_self0, &def->s_methods);
-                RedpillMethods(ty, def->s_scope, s_self0, &def->s_getters);
-                RedpillMethods(ty, def->s_scope, s_self0, &def->s_setters);
+                RedpillMethods(ty, def->scope, &def->methods);
+                RedpillMethods(ty, def->scope, &def->getters);
+                RedpillMethods(ty, def->scope, &def->setters);
+                RedpillMethods(ty, def->s_scope, &def->s_methods);
+                RedpillMethods(ty, def->s_scope, &def->s_getters);
+                RedpillMethods(ty, def->s_scope, &def->s_setters);
                 break;
 
         //case STATEMENT_IF:
@@ -12677,42 +11678,7 @@ InjectRedpill(Ty *ty, Stmt *s)
                 if (s->target->symbol == NULL) {
                         DeclareSymbols(ty, s);
                 }
-                DT(s->value->_type, "name=%s\n", s->target->identifier);
-                if (s->value->_type == NULL) {
-                        RedpillFun(ty, scope, s->value, NULL);
-                }
-                if (s->value->type != EXPRESSION_MULTI_FUNCTION) {
-                        DT(
-                                s->target->symbol->type,
-                                "PRE  %s::%s  (%p)\n",
-                                s->target->symbol->mod->name,
-                                s->target->identifier,
-                                (void *)s->target->symbol
-                        );
-                        type_bind(ty, s->target->symbol->type, s->value->_type);
-                        s->target->symbol->type = type_both(
-                                ty,
-                                HasBody(s->value) ? NULL : s->target->symbol->type,
-                                s->value->_type
-                        );
-                        DT(
-                                s->target->symbol->type,
-                                "POST %s::%s  (%p)\n",
-                                s->target->symbol->mod->name,
-                                s->target->identifier,
-                                (void *)s->target->symbol
-                        );
-                } else {
-                        for (int i = 0; i < vN(s->value->functions); ++i) {
-                                Stmt *sub = (Stmt *)v__(s->value->functions, i);
-                                s->target->symbol->type = type_both(
-                                        ty,
-                                        s->target->symbol->type,
-                                        sub->value->_type
-                                );
-                                DT(s->target->symbol->type, "sub=%s\n", type_show(ty, sub->value->_type));
-                        }
-                }
+                RedpillFun(ty, scope, s->value, false);
                 break;
 
         case STATEMENT_USE:
@@ -12858,7 +11824,7 @@ clone_expr(Expr *e, Scope *scope, void *ctx)
         e = aclone(e);
         e->arena = GetArenaAlloc(ty);
         e->xscope = NULL;
-        e->_type = NULL;
+        e->_type = T2_TYPE_INVALID;
 
         switch (e->type) {
         case EXPRESSION_ARRAY:
@@ -12918,7 +11884,7 @@ clone_lvalue(Expr *e, bool _, Scope *scope, void *ctx)
         Ty *ty = (Ty *)ctx;
         e = aclone(e);
         e->arena = GetArenaAlloc(ty);
-        e->_type = NULL;
+        e->_type = T2_TYPE_INVALID;
         return e;
 }
 
@@ -12929,7 +11895,7 @@ clone_stmt(Stmt *s, Scope *scope, void *ctx)
 
         s = aclone(s);
         s->arena = GetArenaAlloc(ty);
-        s->_type = NULL;
+        s->_type = T2_TYPE_INVALID;
 
         switch (s->type) {
         case STATEMENT_BLOCK:
@@ -13223,7 +12189,7 @@ lowkey(Expr *e, Scope *scope, void *ctx)
 
                 case EXPRESSION_FUNCTION:
                         if (e->class != NULL) {
-                                Expr o = { ._type = e->class->object_type };
+                                Expr o = { ._type = types2_object_type(ty, e->class) };
                                 ProposeMemberDefinition(ty, e->start, e->end, &o, e->name);
                         }
                         break;
@@ -13414,8 +12380,6 @@ resolve_prog(Ty *ty, Stmt **p)
                 TY_RETHROW();
         }
 
-        types_begin(ty);
-
         int types2_class_ops = 0;
         for (usize i = 0; p[i] != NULL; ++i) {
                 InjectRedpill(ty, p[i]);
@@ -13436,12 +12400,10 @@ resolve_prog(Ty *ty, Stmt **p)
                         TYPES2_SHADOW_DECLARATION,
                         i
                 );
-                types_iter(ty);
         }
 
         for (usize i = 0; p[i] != NULL; ++i) {
                 symbolize_statement(ty, STATE.global, p[i]);
-                types_iter(ty);
                 types2_shadow_observe_statement(
                         ty,
                         shadow,
@@ -13459,7 +12421,6 @@ resolve_prog(Ty *ty, Stmt **p)
                 ) {
                         symbolize_statement(ty, STATE.global, def);
                 }
-                types_iter(ty);
                 types2_shadow_observe_statement(
                         ty,
                         shadow,
@@ -13469,17 +12430,9 @@ resolve_prog(Ty *ty, Stmt **p)
                 );
         }
 
-        types_finish(ty);
-        size_t types2_errors = types2_shadow_finish(shadow);
         TY_CATCH_END();
 
-        if (types2_errors != 0) {
-                fail(
-                        "%zu type error%s reported by types2",
-                        types2_errors,
-                        types2_errors == 1 ? "" : "s"
-                );
-        }
+        types2_shadow_finish(ty, shadow);
 
         ScopeFinalize(ty, STATE.global);
 
@@ -13619,7 +12572,6 @@ compile(Ty *ty, char const *source)
 NoEmit:
         add_location_info(ty);
 
-        DisableRefinements(ty, STATE.active);
         STATE.active = NULL;
 
         v0(STATE.class_ops);
@@ -13900,16 +12852,6 @@ compiler_init(Ty *ty)
         STATE = freshstate(ty, GlobalModule);
         ThreadLocals = scope_new(ty, "(thread)", NULL, false);
 
-        static Type  NIL_TYPE_     = { .type = TYPE_NIL,    .fixed = false };
-        static Type  NONE_TYPE_    = { .type = TYPE_NONE,   .fixed = false };
-        static Type  BOTTOM_TYPE_  = { .type = TYPE_BOTTOM, .fixed = false };
-        static Type  UNKNOWN_TYPE_ = { .type = TYPE_BOTTOM, .fixed = true  };
-
-        NIL_TYPE     = &NIL_TYPE_;
-        NONE_TYPE    = &NONE_TYPE_;
-        BOTTOM_TYPE  = &BOTTOM_TYPE_;
-        UNKNOWN_TYPE = &UNKNOWN_TYPE_;
-
         for (int i = CLASS_OBJECT; i < CLASS_BUILTIN_END; ++i) {
                 Class *c = class_new_empty(ty);
                 Symbol *sym = addsymbol(ty, GlobalScope, c->name);
@@ -13938,28 +12880,8 @@ compiler_init(Ty *ty)
         class_implement_trait(ty, CLASS_BLOB,         CLASS_ITERABLE);
         class_implement_trait(ty, CLASS_BLOB,         CLASS_INTO_PTR);
 
-        static Class ANY_CLASS = { .i = CLASS_TOP, .name = "Any" };
-        static Type  ANY_TYPE  = { .type = TYPE_OBJECT, .class = &ANY_CLASS, .concrete = true };
-
-        INT_TYPE    = class_get(ty, CLASS_INT   )->object_type;
-        STRING_TYPE = class_get(ty, CLASS_STRING)->object_type;
-        TYPE_REGEX  = class_get(ty, CLASS_REGEX )->object_type;
-        TYPE_REGEXV = class_get(ty, CLASS_REGEXV)->object_type;
-        TYPE_FLOAT  = class_get(ty, CLASS_FLOAT )->object_type;
-        BOOL_TYPE   = class_get(ty, CLASS_BOOL  )->object_type;
-        TYPE_BLOB   = class_get(ty, CLASS_BLOB  )->object_type;
-        TYPE_ARRAY  = class_get(ty, CLASS_ARRAY )->object_type;
-        TYPE_DICT   = class_get(ty, CLASS_DICT  )->object_type;
-        TYPE_CLASS_ = class_get(ty, CLASS_CLASS )->object_type;
-        TYPE_ANY    = &ANY_TYPE;
-
-        if (CheckTypes) {
-                scope_add_type(ty, GlobalScope, "Any")->type = TYPE_ANY;
-                scope_add_type(ty, GlobalScope, "Type")->type = type_type(ty, NULL);
-        } else {
-                AnyTypeSymbol = scope_add_type_var(ty, GlobalScope, "Any", 0);
-                (void)scope_add_type_var(ty, GlobalScope, "Type", 0);
-        }
+        AnyTypeSymbol = scope_add_type_var(ty, GlobalScope, "Any", 0);
+        (void)scope_add_type_var(ty, GlobalScope, "Type", 0);
 }
 
 void
@@ -14075,7 +12997,6 @@ compiler_introduce_symbol(Ty *ty, char const *module, char const *name)
         }
 
         Symbol *sym = addsymbol(ty, mod->scope, name);
-        sym->type   = BOTTOM_TYPE;
         sym->mod    = mod;
         sym->flags |= (SYM_PUBLIC | SYM_BUILTIN);
 
@@ -14108,7 +13029,6 @@ compiler_introduce_tag(Ty *ty, char const *module, char const *name, int super)
         if (super == -1) {
                 class = class_new_empty(ty);
                 class->name = name;
-                class->type = type_tag(ty, class, sym->tag);
         } else {
                 class = tags_get_class(ty, super);
         }
@@ -16288,7 +15208,7 @@ cexpr(Ty *ty, Value *v)
 
                 case VALUE_TYPE:
                         e->type = EXPRESSION_TYPE;
-                        e->_type = v->ptr;
+                        e->_type = as_type(v);
                         break;
 
                 case VALUE_STRING:
@@ -16312,7 +15232,7 @@ cexpr(Ty *ty, Value *v)
         case TyType:
         {
                 e->type = EXPRESSION_TYPE;
-                e->_type = type_from_ty(ty, &_v);
+                e->_type = types2_from_ty(ty, &_v);
                 break;
         }
 
@@ -17430,7 +16350,6 @@ tyeval(Ty *ty, Expr *e, Value *ret, Scope *scope)
         }
 
         CompileState state = STATE;
-        TypeCheckState types = types_save(ty);
 
         Module *mod = amA0(sizeof (Module));
         mod->name = "(tmp)";
@@ -17447,13 +16366,12 @@ tyeval(Ty *ty, Expr *e, Value *ret, Scope *scope)
                 *ret = TY_CATCH();
                 EVAL_DEPTH -= 1;
                 STATE = state;
-                types_restore(ty, &types);
                 return false;
         }
 
         if (e->xscope == NULL) {
                 symbolize_expression(ty, scope, e);
-                types_iter(ty);
+                types2_check_expression(ty, e);
         }
 
         EE(e);
@@ -17467,7 +16385,6 @@ tyeval(Ty *ty, Expr *e, Value *ret, Scope *scope)
         EVAL_DEPTH -= 1;
 
         STATE = state;
-        types_restore(ty, &types);
 
         return ok;
 }
@@ -17662,10 +16579,6 @@ ResolveFieldTypes(Ty *ty, Scope *scope, ExprVec const *fields)
                 if (f->constraint != NULL && f->symbol != NULL) {
                         WITH_CTX(TYPE) {
                                 symbolize_expression(ty, scope, f->constraint);
-                                f->_type = type_fixed(ty, type_resolve(ty, f->constraint));
-                                f->symbol->type = f->_type;
-                                f->symbol->flags |= SYM_FIXED;
-                                SET_TYPE_SRC(f);
                         }
                 }
         }
@@ -17733,8 +16646,6 @@ define_tag(Ty *ty, Stmt *s)
         } else {
                 Class *class = class_get(ty, class_new(ty, s));
                 tags_set_class(ty, sym->tag, class);
-                sym->type = type_tag(ty, class, sym->tag);
-
         }
 
         for (int i = 0; i < vN(s->tag.methods); ++i) {
@@ -17751,14 +16662,6 @@ define_tag(Ty *ty, Stmt *s)
 void
 define_type(Ty *ty, Stmt *s, Scope *scope)
 {
-        if (
-                (s->class.var != NULL)
-             && IsAliasT(s->class.var->type)
-             && (s->class.var->type->_type != NULL)
-        ) {
-                return;
-        }
-
         DefinePending(ty);
 
         if (scope == NULL) {
@@ -17802,8 +16705,6 @@ define_type(Ty *ty, Stmt *s, Scope *scope)
         WITH_CTX(TYPE) {
                 symbolize_expression(ty, s->class.scope, s->class.type);
         }
-
-        type_alias(ty, s->class.var, s);
 
         RestoreContext(ty, ctx);
 }
@@ -17943,15 +16844,6 @@ define_class(Ty *ty, Stmt *s)
         cd->symbol = sym->class;
         cd->var = sym;
 
-        LOG(
-                "%s================%s DEFINE CLASS: %s :: %s %s==========================%s",
-                TERM(91),
-                TERM(0),
-                cd->name,
-                type_show(ty, class->object_type),
-                TERM(91),
-                TERM(0)
-        );
 
         aggregate_overloads(ty, class, &cd->methods, false);
         aggregate_overloads(ty, class, &cd->setters, true);
@@ -17969,7 +16861,7 @@ define_class(Ty *ty, Stmt *s)
                         Expr *this;
                         if (CheckTypes) {
                                 this = NewExpr(ty, EXPRESSION_TYPE);
-                                this->_type = class->object_type;
+                                this->_type = types2_object_type(ty, class);
                         } else {
                                 this = NewExpr(ty, EXPRESSION_IDENTIFIER);
                                 this->identifier = cd->name;
@@ -18008,7 +16900,6 @@ define_class(Ty *ty, Stmt *s)
                         }
                 } else {
                         m->class = class;
-                        m->_type = UNKNOWN_TYPE;
                         AddToClass(ty, m, class_add_method, 0);
                         if (vN(m->decorators) > 0) {
                                 i32 id = ScratchMethodId(ty, m->name, class->i);
@@ -18023,28 +16914,24 @@ define_class(Ty *ty, Stmt *s)
 
         for (int i = 0; i < vN(cd->s_methods); ++i) {
                 Expr *m = v__(cd->s_methods, i);
-                m->_type = UNKNOWN_TYPE;
                 m->class = class;
                 AddToClass(ty, m, class_add_static, SYM_STATIC | SYM_FUNCTION);
         }
 
         for (int i = 0; i < vN(cd->s_getters); ++i) {
                 Expr *m = v__(cd->s_getters, i);
-                m->_type = UNKNOWN_TYPE;
                 m->class = class;
                 AddToClass(ty, m, class_add_s_getter, SYM_STATIC | SYM_PROPERTY);
         }
 
         for (int i = 0; i < vN(cd->s_setters); ++i) {
                 Expr *m = v__(cd->s_setters, i);
-                m->_type = UNKNOWN_TYPE;
                 m->class = class;
                 AddToClass(ty, m, class_add_s_setter, SYM_STATIC);
         }
 
         for (int i = 0; i < vN(cd->getters); ++i) {
                 Expr *m = v__(cd->getters, i);
-                m->_type = UNKNOWN_TYPE;
                 m->class = class;
                 AddToClass(ty, m, class_add_getter, SYM_PROPERTY);
                 if (vN(m->decorators) > 0) {
@@ -18055,7 +16942,6 @@ define_class(Ty *ty, Stmt *s)
 
         for (int i = 0; i < vN(cd->setters); ++i) {
                 Expr *m = v__(cd->setters, i);
-                m->_type = UNKNOWN_TYPE;
                 m->class = class;
                 AddToClass(ty, m, class_add_setter, 0);
                 if (vN(m->decorators) > 0) {
@@ -18321,7 +17207,6 @@ compiler_symbolize_expression(Ty *ty, Expr *e, Scope *scope)
         }
 
         CompileState state = STATE;
-        TypeCheckState types = types_save(ty);
 
         Module *mod = amA0(sizeof (Module));
         mod->name = "(tmp)";
@@ -18338,17 +17223,14 @@ compiler_symbolize_expression(Ty *ty, Expr *e, Scope *scope)
                 TY_CATCH();
                 EVAL_DEPTH -= 1;
                 STATE = state;
-                types_restore(ty, &types);
                 return false;
         }
 
         symbolize_expression(ty, scope, e);
-        types_iter(ty);
         TY_CATCH_END();
 
         EVAL_DEPTH -= 1;
         STATE = state;
-        types_restore(ty, &types);
 
         return true;
 }
@@ -18358,8 +17240,7 @@ compiler_set_type_of(Ty *ty, Stmt *stmt)
 {
         symbolize_lvalue(ty, GetNamespace(ty, stmt->ns), stmt->target, 0);
         symbolize_expression(ty, GetNamespace(ty, stmt->ns), stmt->value);
-        stmt->target->symbol->type = type_concrete(ty, type_resolve(ty, stmt->value));
-        stmt->target->symbol->flags |= SYM_FIXED;
+        stmt->target->symbol->type = types2_resolve(ty, stmt->value);
 }
 
 void
@@ -19771,9 +18652,10 @@ DumpProgram(
                 CASE(TYPE)
                         READVALUE_(s);
                         if (!DebugScan) {
-                                dump(out, " %s", type_show(ty, (Type *)s));
+                                char *shown = types2_show(ty, (T2Type)s);
+                                dump(out, " %s", shown);
+                                free(shown);
                         }
-                        dont_printf(" %s", type_show(ty, (Type *)s));
                         break;
                 CASE(EVAL)
                         READVALUE(s);
@@ -20544,7 +19426,6 @@ CompilerRestoreBaseline(Ty *ty, CompilerBaseline const *b)
         scope_set_symbol(ty, b->symbol_count);
         vN(GlobalScope->owned) = b->owned_count;
 
-        types_init(ty);
         op_reset(&b->_2op_baseline);
 
         for (int i = 0; i < vN(ty->_2op_cache); ++i) {
@@ -20610,7 +19491,7 @@ SymbolToCompletionItem(Ty *ty, Symbol const *sym, i32 depth)
         return vTn(
                 "name",  xSz(sym->identifier),
                 "doc",   (sym->doc == NULL) ? NIL : xSz(sym->doc),
-                "type",  xSz(type_show(ty, sym->type)),
+                "type",  xSz(types2_show(ty, sym->type)),
                 "kind",  INTEGER(6),
                 "depth", INTEGER(depth)
         );
@@ -20726,7 +19607,7 @@ CompilerSuggestCompletions(
                         );
                 } else {
                         LOG("OBJECT IS NOT A MODULE: %s", QueryExpr->object->name);
-                        type_completions(
+                        types2_completions(
                                 ty,
                                 QueryExpr->object->_type,
                                 QueryExpr->member->identifier,

@@ -14,7 +14,7 @@
 #include "vec.h"
 #include "vm.h"
 #include "ty.h"
-#include "types.h"
+#include "types2.h"
 
 #define KW_DELIM(c) (strchr(" \n}],", c) != NULL)
 #define FAIL longjmp(jb, 1)
@@ -696,252 +696,290 @@ json_parse_xD(Ty *ty, char const *s, usize n)
 }
 
 static Value
-typed_value(Ty *ty, Type *t0)
+typed_value(Ty *ty, T2Type t0);
+
+static Value
+checked_value(Ty *ty, T2Type t0)
 {
-        t0 = type_resolve_var(t0);
+        Value v = value(ty);
+        if (!types2_check(ty, t0, &v)) {
+                FAIL;
+        }
+        return v;
+}
+
+static Value
+typed_array(Ty *ty, T2Type element)
+{
+        if (next() != '[') FAIL;
+
+        Array *a = vA();
+
+        while (peek() != '\0' && peek() != ']') {
+                vvP(*a, element == T2_TYPE_INVALID ? value(ty) : typed_value(ty, element));
+                space();
+                if (peek() != ']' && next() != ',') FAIL;
+        }
+
+        if (next() != ']') FAIL;
+
+        return ARRAY(a);
+}
+
+static Value
+typed_dict(Ty *ty, T2Type val_type)
+{
+        if (next() != '{') FAIL;
+
+        Dict *obj = dict_new(ty);
+
+        while (peek() != '\0' && peek() != '}') {
+                space();
+                Value key = string(ty);
+                space();
+                if (next() != ':') FAIL;
+                Value val = val_type == T2_TYPE_INVALID ? value(ty) : typed_value(ty, val_type);
+                dict_put_value(ty, obj, key, val);
+                space();
+                if (peek() != '}' && next() != ',') FAIL;
+        }
+
+        if (next() != '}') FAIL;
+
+        return DICT(obj);
+}
+
+static Value
+typed_tuple(Ty *ty, T2Type t0, size_t typed_count)
+{
+        T2Universe *universe = types2_universe();
+
+        if (next() != '[') FAIL;
+
+        SCRATCH_SAVE();
+        ValueVector items = {0};
+
+        while (peek() != '\0' && peek() != ']') {
+                size_t i = vN(items);
+                svP(items, i < typed_count ? typed_value(ty, t2_type_child(universe, t0, i)) : value(ty));
+                space();
+                if (peek() != ']' && next() != ',') {
+                        SCRATCH_RESTORE();
+                        FAIL;
+                }
+        }
+
+        if (next() != ']' || vN(items) < typed_count) {
+                SCRATCH_RESTORE();
+                FAIL;
+        }
+
+        Value tuple = vT(vN(items));
+        for (u32 i = 0; i < vN(items); ++i) {
+                tuple.items[i] = v__(items, i);
+        }
+
+        SCRATCH_RESTORE();
+
+        return tuple;
+}
+
+static Value
+typed_record(Ty *ty, T2Type t0)
+{
+        T2Universe *universe = types2_universe();
+
+        if (next() != '{') FAIL;
+
+        SCRATCH_SAVE();
+
+        size_t nfields = t2_record_field_count(universe, t0);
+
+        ValueVector keys   = {0};
+        ValueVector values = {0};
+
+        while (peek() != '\0' && peek() != '}') {
+                space();
+                Value key = string(ty);
+                space();
+                if (next() != ':') {
+                        SCRATCH_RESTORE();
+                        FAIL;
+                }
+
+                char const *kstr = TY_TMP_C_STR(key);
+                T2Type field_type = t2_record_field_type(universe, t0, kstr, NULL, NULL);
+                Value val = field_type == T2_TYPE_INVALID ? value(ty) : typed_value(ty, field_type);
+
+                space();
+                if (peek() != '}' && next() != ',') {
+                        SCRATCH_RESTORE();
+                        FAIL;
+                }
+
+                svP(keys, key);
+                svP(values, val);
+        }
+
+        if (next() != '}') {
+                SCRATCH_RESTORE();
+                FAIL;
+        }
+
+        Value object = value_record(ty, vN(keys));
+
+        for (u32 i = 0; i < vN(keys); ++i) {
+                char const *key = TY_TMP_C_STR(v__(keys, i));
+                object.ids[i]   = M_ID(key);
+                object.items[i] = v__(values, i);
+        }
+
+        for (size_t i = 0; i < nfields; ++i) {
+                T2FieldSpec field;
+                if (!t2_record_field(universe, t0, i, &field) || field.presence != T2_PRESENCE_REQUIRED) {
+                        continue;
+                }
+                int fid = M_ID(field.name);
+                bool found = false;
+                for (u32 j = 0; j < vN(keys); ++j) {
+                        if (object.ids[j] == fid) {
+                                found = true;
+                                break;
+                        }
+                }
+                if (!found) {
+                        SCRATCH_RESTORE();
+                        FAIL;
+                }
+        }
+
+        SCRATCH_RESTORE();
+
+        return object;
+}
+
+static Value
+typed_union(Ty *ty, T2Type t0)
+{
+        T2Universe *universe = types2_universe();
+        char const *saved_json = json;
+        usize saved_len = len;
+        size_t arity = t2_type_arity(universe, t0);
+
+        for (size_t i = 0; i < arity; ++i) {
+                json = saved_json;
+                len = saved_len;
+
+                jmp_buf saved_jb;
+                memcpy(saved_jb, jb, sizeof jb);
+
+                if (setjmp(jb) == 0) {
+                        Value v = typed_value(ty, t2_type_child(universe, t0, i));
+                        memcpy(jb, saved_jb, sizeof jb);
+                        return v;
+                }
+
+                memcpy(jb, saved_jb, sizeof jb);
+        }
+
+        FAIL;
+}
+
+static Value
+typed_nominal(Ty *ty, T2Type t0)
+{
+        T2Universe *universe = types2_universe();
+        uint64_t symbol = t2_type_payload(universe, t0);
+        int class = types2_symbol_class(symbol);
+
+        switch (class) {
+        case CLASS_INT:    return typed_value(ty, t2_primitive(universe, T2_TYPE_INT));
+        case CLASS_FLOAT:  return typed_value(ty, t2_primitive(universe, T2_TYPE_FLOAT));
+        case CLASS_STRING: return typed_value(ty, t2_primitive(universe, T2_TYPE_STRING));
+        case CLASS_BOOL:   return typed_value(ty, t2_primitive(universe, T2_TYPE_BOOL));
+        case CLASS_ARRAY:  return typed_array(ty, t2_type_child(universe, t0, 0));
+        case CLASS_DICT:   return typed_dict(ty, t2_type_child(universe, t0, 1));
+        default:           return value(ty);
+        }
+}
+
+static Value
+typed_value(Ty *ty, T2Type t0)
+{
+        T2Universe *universe = types2_universe();
 
         space();
 
         Value v;
 
-        switch (t0->type) {
-        case TYPE_ALIAS:
-                if (t0->_type != NULL) {
-                        return typed_value(ty, t0->_type);
-                }
-                return value(ty);
-
-        case TYPE_VARIABLE:
-        case TYPE_NONE:
-        case TYPE_BOTTOM:
-                return value(ty);
-
-        case TYPE_NIL:
+        switch (t2_type_kind(universe, t0)) {
+        case T2_TYPE_NIL:
                 return null();
 
-        case TYPE_INT:
+        case T2_TYPE_INT:
                 v = number();
-                if (v.type != VALUE_INTEGER || v.z != t0->z) {
+                if (v.type != VALUE_INTEGER) {
                         FAIL;
                 }
                 return v;
 
-        case TYPE_STRING:
-                v = string(ty);
-                if (
-                        (v.type != VALUE_STRING)
-                     || (sN(v) != strlen(t0->str))
-                     || (memcmp(ss(v), t0->str, sN(v)) != 0)
-                ) {
+        case T2_TYPE_FLOAT:
+                v = number();
+                if (v.type == VALUE_INTEGER) {
+                        return REAL((double)v.z);
+                }
+                if (v.type != VALUE_REAL) {
                         FAIL;
                 }
                 return v;
 
-        case TYPE_OBJECT:
-                switch (t0->class->i) {
-                case CLASS_INT:
-                        v = number();
-                        if (v.type != VALUE_INTEGER) {
-                                FAIL;
-                        }
-                        return v;
+        case T2_TYPE_STRING:
+                return string(ty);
 
-                case CLASS_FLOAT:
-                        v = number();
-                        if (v.type == VALUE_INTEGER) {
-                                return REAL((double)v.z);
-                        }
-                        if (v.type != VALUE_REAL) {
-                                FAIL;
-                        }
-                        return v;
-
-                case CLASS_STRING:
-                        return string(ty);
-
-                case CLASS_BOOL:
-                        if (peek() == 't') return jtrue();
-                        if (peek() == 'f') return jfalse();
-                        FAIL;
-
-                case CLASS_ARRAY:
-                {
-                        Type *elem_type = (vN(t0->args) > 0) ? v__(t0->args, 0) : NULL;
-
-                        if (next() != '[') FAIL;
-
-                        Array *a = vA();
-
-                        while (peek() != '\0' && peek() != ']') {
-                                if (elem_type != NULL) {
-                                        vvP(*a, typed_value(ty, elem_type));
-                                } else {
-                                        vvP(*a, value(ty));
-                                }
-                                space();
-                                if (peek() != ']' && next() != ',')
-                                        FAIL;
-                        }
-
-                        if (next() != ']') FAIL;
-
-                        return ARRAY(a);
-                }
-
-                case CLASS_DICT:
-                {
-                        Type *val_type = (vN(t0->args) > 1) ? v__(t0->args, 1) : NULL;
-
-                        if (next() != '{') {
-                                FAIL;
-                        }
-
-                        Dict *obj = dict_new(ty);
-
-                        while (peek() != '\0' && peek() != '}') {
-                                space();
-                                Value key = string(ty);
-                                space();
-                                if (next() != ':') {
-                                        FAIL;
-                                }
-                                Value val;
-                                if (val_type != NULL) {
-                                        val = typed_value(ty, val_type);
-                                } else {
-                                        val = value(ty);
-                                }
-                                dict_put_value(ty, obj, key, val);
-                                space();
-                                if (peek() != '}' && next() != ',') {
-                                        FAIL;
-                                }
-                        }
-
-                        if (next() != '}') {
-                                FAIL;
-                        }
-
-                        return DICT(obj);
-                }
-
-                default:
-                        return value(ty);
-                }
-
-        case TYPE_TUPLE:
-        {
-                if (next() != '{') {
-                        FAIL;
-                }
-
-                SCRATCH_SAVE();
-
-                int nfields = vN(t0->types);
-
-                ValueVector keys   = {0};
-                ValueVector values = {0};
-
-                while (peek() != '\0' && peek() != '}') {
-                        space();
-                        Value key = string(ty);
-                        space();
-                        if (next() != ':') {
-                                SCRATCH_RESTORE();
-                                FAIL;
-                        }
-
-                        char const *kstr = TY_TMP_C_STR(key);
-                        Type *field_type = NULL;
-
-                        for (int i = 0; i < nfields; ++i) {
-                                char const *fname = v__(t0->names, i);
-                                if (fname != NULL && strcmp(fname, kstr) == 0) {
-                                        field_type = v__(t0->types, i);
-                                        break;
-                                }
-                        }
-
-                        Value val;
-                        if (field_type != NULL) {
-                                val = typed_value(ty, field_type);
-                        } else {
-                                val = value(ty);
-                        }
-
-                        space();
-                        if (peek() != '}' && next() != ',') {
-                                SCRATCH_RESTORE();
-                                FAIL;
-                        }
-
-                        svP(keys, key);
-                        svP(values, val);
-                }
-
-                if (next() != '}') {
-                        SCRATCH_RESTORE();
-                        FAIL;
-                }
-
-                Value object = value_record(ty, vN(keys));
-
-                for (u32 i = 0; i < vN(keys); ++i) {
-                        char const *key = TY_TMP_C_STR(v__(keys, i));
-                        object.ids[i]   = M_ID(key);
-                        object.items[i] = v__(values, i);
-                }
-
-                for (int i = 0; i < nfields; ++i) {
-                        if (!v__(t0->required, i)) {
-                                continue;
-                        }
-                        char const *fname = v__(t0->names, i);
-                        if (fname == NULL) {
-                                continue;
-                        }
-                        int fid = M_ID(fname);
-                        bool found = false;
-                        for (u32 j = 0; j < vN(keys); ++j) {
-                                if (object.ids[j] == fid) {
-                                        found = true;
-                                        break;
-                                }
-                        }
-                        if (!found) {
-                                SCRATCH_RESTORE();
-                                FAIL;
-                        }
-                }
-
-                SCRATCH_RESTORE();
-
-                return object;
-        }
-
-        case TYPE_UNION:
-        {
-                char const *saved_json = json;
-                usize saved_len = len;
-
-                for (int i = 0; i < vN(t0->types); ++i) {
-                        json = saved_json;
-                        len = saved_len;
-
-                        jmp_buf saved_jb;
-                        memcpy(saved_jb, jb, sizeof jb);
-
-                        if (setjmp(jb) == 0) {
-                                Value v = typed_value(ty, v__(t0->types, i));
-                                memcpy(jb, saved_jb, sizeof jb);
-                                return v;
-                        }
-
-                        memcpy(jb, saved_jb, sizeof jb);
-                }
-
+        case T2_TYPE_BOOL:
+                if (peek() == 't') return jtrue();
+                if (peek() == 'f') return jfalse();
                 FAIL;
+
+        case T2_TYPE_LITERAL_BOOL:
+        case T2_TYPE_LITERAL_INT:
+        case T2_TYPE_LITERAL_STRING:
+        case T2_TYPE_INT_RANGE:
+                return checked_value(ty, t0);
+
+        case T2_TYPE_REFINEMENT:
+                return typed_value(ty, t2_type_child(universe, t0, 0));
+
+        case T2_TYPE_COMPUTED:
+        {
+                T2Type resolved = t2_type_resolve_computed(universe, t0);
+                return resolved == T2_TYPE_INVALID || resolved == t0
+                     ? value(ty)
+                     : typed_value(ty, resolved);
         }
+
+        case T2_TYPE_RECURSIVE:
+        {
+                T2Type unfolded = t2_recursive_unfold(universe, t0);
+                return unfolded == T2_TYPE_INVALID || unfolded == t0
+                     ? value(ty)
+                     : typed_value(ty, unfolded);
+        }
+
+        case T2_TYPE_NOMINAL:
+                return typed_nominal(ty, t0);
+
+        case T2_TYPE_RECORD:
+                return typed_record(ty, t0);
+
+        case T2_TYPE_TUPLE:
+                return typed_tuple(ty, t0, t2_type_arity(universe, t0));
+
+        case T2_TYPE_VARIADIC_TUPLE:
+                return typed_tuple(ty, t0, (size_t)t2_type_payload(universe, t0));
+
+        case T2_TYPE_UNION:
+                return typed_union(ty, t0);
 
         default:
                 return value(ty);
@@ -949,7 +987,7 @@ typed_value(Ty *ty, Type *t0)
 }
 
 Value
-json_parse_typed(Ty *ty, Type *t0, char const *s, usize n)
+json_parse_typed(Ty *ty, T2Type t0, char const *s, usize n)
 {
         json = s;
         len  = n;
@@ -962,7 +1000,7 @@ json_parse_typed(Ty *ty, Type *t0, char const *s, usize n)
                 GC_RESUME();
                 zP(
                         "json.parse(): failed to parse JSON as %s",
-                        type_show(ty, t0)
+                        types2_show(ty, t0)
                 );
         }
 
@@ -973,7 +1011,7 @@ json_parse_typed(Ty *ty, Type *t0, char const *s, usize n)
                 GC_RESUME();
                 zP(
                         "json.parse(): unexpected trailing data after parsing %s",
-                        type_show(ty, t0)
+                        types2_show(ty, t0)
                 );
         }
 

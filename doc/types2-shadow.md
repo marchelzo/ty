@@ -1,16 +1,129 @@
 # types2 shadow mode
 
-`src/types2.c` is the independent replacement typechecker's integration
-boundary.  It is intentionally non-authoritative: the compiler continues to
-use only `src/types.c` for diagnostics, inferred types, emitted code, JIT
-guidance, reflection, exit status, and runtime behavior.
+## Cutover status (2026-09-03): types2 is the only checker
 
-The shadow pass is enabled by default and runs native declaration and
-expression inference at the same declaration, statement, and class-operator
-checkpoints as the legacy checker.  Results live in an AST-keyed side table;
-they are never written to `Expr._type`, symbols, classes, bytecode, or JIT
-state.  The shadow owns its allocations and is abandoned if legacy checking
-exits early.
+`src/types.c` and `include/types.h` are gone.  types2 (`src/types2.c`,
+`src/types2_core.c`) now drives every observable type-system behavior:
+diagnostics, `Expr._type`/`Symbol.type`/`Class.type` handles, `typeof`,
+emitted constraint checks (`CHECK_MATCH` on a `VALUE_TYPE`), `TypeCheck`
+(now `types2_check`), `json.parse(T, s)` (`typed_value` over T2 kinds), the
+`ty.types` builtins, the JIT type hints, the REPL `:t`, and the language
+server's symbol/member types.  The "shadow" naming below is historical; the
+sections after this one describe the checker as it was built and remain
+accurate about inference, gates, and traps except where this section says
+otherwise.
+
+Architecture:
+
+- One process-wide `T2Universe` (`types2_universe()`) is shared by every
+  shadow and by the runtime, so a `T2Type` (a `uint32_t` handle) outlives the
+  compilation that produced it.  Nominal symbols are deterministic:
+  `types2_class_symbol(class_id) = class_id + 1`,
+  `types2_tag_symbol(tag_id) = (1 << 32) + tag_id` (see `include/types2.h`),
+  so every unit and the runtime agree.  `t2_declare_nominal` accepts a
+  re-declaration with the same name/arity and updates the variance;
+  `ensure_nominal` adopts an arity already declared in the universe.
+  Solver metas are keyed by solver id, so metas never alias across units.
+- At `types2_shadow_finish` the unit publishes zonked types
+  (`T2_PREFER_LOWER_BOUND`) onto the AST and symbol table
+  (`publish_types`): every observed node's `_type`, with `Expr.annotated`
+  set when the type came from annotation lowering (`note_annotation` in
+  `lower_type`); every binding's `Symbol.type` (scheme bodies for
+  generalized bindings) plus `Symbol.scheme` (ownership transferred, the
+  binding is marked `borrowed`); every resolved alias's `Symbol.type`.
+  `EXPRESSION_TYPE` nodes keep the handle the compiler stored in them.
+  `Class.type`/`Class.object_type` are filled lazily by
+  `types2_class_type`/`types2_object_type` through a scratch shadow.
+- The runtime API lives at the bottom of `src/types2.c` and is declared in
+  `include/types2.h`: `types2_check`, `types2_show`, `types2_to_ty`/
+  `types2_from_ty` (the `Ty*T` reflection tags), `types2_class_of`
+  (JIT `expected_class_of`), `types2_is_nil`, `types2_is_callable`,
+  `types2_callable_result`, `types2_subtype`, `types2_substitute`
+  (`ty.types.inst`), `types2_member_type` (receiver argument substitution
+  for `ty.types.info`), `types2_resolve`/`types2_infer` (scratch shadows
+  for `ty.types.resolve`/`ty.types.infer` and the REPL), `types2_find_member`
+  and `types2_completions` (language server), `types2_class_instance`,
+  `types2_tag_instance`, and `types2_check_expression` (runtime `__eval__`
+  goes through `tyeval`, not `resolve_prog`, so it runs its own shadow).
+- A `VALUE_TYPE` stores the handle in `.z` (`TYPE(t)`, `as_type(v)`); the
+  emitter writes it as a pointer-sized immediate after `INSTR_TYPE`.
+- `_xemit_constraint` uses the typed path (`TYPE` + `CHECK_MATCH`) only for
+  nodes with `annotated` set; an expression on the right of `::` (for
+  example `catch ex :: 'text' in ex.what`) keeps the dynamic path.  Pattern
+  constraints whose syntax is a type (`type_expression_syntax`) are lowered
+  as annotations in `infer_pattern`.  Runtime constraints that still exist:
+  pattern constraints, `::` in patterns, and overload parameter checks
+  (`RUNTIME_CONSTRAINTS` is still 0).
+- Legacy-only compiler machinery was deleted: scope refinements
+  (`Refinement`, `ScopeRefineVar`, `AddRefinements`, ...),
+  `ResolveConstraint` (annotations stay raw syntax; `RedpillFun` takes a
+  `method` flag), `expected_type`/`return_types`, `TypeCheckState`,
+  `op_type`/`op_member_type`, `Param`/`ParamVector`, `TypeVector`, and the
+  `TypeCheckCounter` family.  `TYPES_OFF`/`WITH_TYPES_OFF` moved to
+  `include/types2.h` and now gate `types2_shadow_begin` (macro execution,
+  `ty.parse`, and `TYC_NO_TYPES` compiles skip types2).
+
+Semantics:
+
+- `-q` (or `CheckTypes == false`) disables types2 entirely: no diagnostics,
+  no published types, no JIT hints, and constraints fall back to the
+  dynamic per-arm path.  `-t` is accepted and ignored (`Types2Authoritative`
+  is gone).  `TY_TYPES2_SHADOW=0` also disables the checker.
+- Diagnostics are fatal for the entry unit (`main`), `(repl)`, and `(eval)`
+  units compiled after startup; the CompileError text is the rendered
+  error list (warnings omitted), so `ex.what` from `__eval__` contains the
+  message and the `[code]`.  Imported library modules publish their types
+  but their diagnostics are neither fatal nor printed unless
+  `TY_TYPES2_REPORT=all` is set (the pre-cutover `-t` contract, kept so
+  the modules that are not yet clean stay importable).  Startup units
+  (prelude and friends) are never fatal.
+- Warnings are never printed on a successful compile.
+- `(eval)` and `(repl)` shadows resolve symbols the importer cannot find
+  (nested functions, `__tls::` bindings, local aliases) from the published
+  `Symbol.scheme`/`Symbol.type` (`ensure_resolved_binding`,
+  `published_bindings`), rejecting types that still contain foreign metas.
+  Other units keep the importing walk only.
+- Pending obligations whose subject is an unconstrained or foreign meta are
+  dropped at unit end instead of reported (`obligation_on_unknown`).
+- Gradual additions made during the cutover: member access on a bare
+  `tag` (declared without a body, e.g. `tag CType;`) defers to Dynamic;
+  `let ty.Id(...) = e`, `let _ = e`, and object patterns are valid
+  declaration targets; `$x` let-patterns strip nil; `super(args)` inside a
+  method resolves the superclass method of the same name; `invalid-override`
+  is a warning; dictionary patterns bind the value type without `nil`;
+  member assignment refines the path (`box.value = 'x'` then
+  `box.value: 'x'`); user operators fall back to the class method protocol
+  when the registry is ambiguous; operands whose head is a primitive kind
+  now match class-operator definitions (`primitive_class_id`); writable
+  record fields are covariant and a plain callable parameter (no
+  yield/send) ignores the actual callable's channels (both in the strict
+  relation and the solver); `nominal_from_type` materializes a nominal it
+  has not seen (types published by other units).
+- Declared type parameters remain flexible metas inside bodies (so
+  `fn f[T](x: T) -> T { 1 }` is accepted with `T := 1`); `Int` is not a
+  subtype of `Float`.  `tests/constraint.ty` was adjusted accordingly and its
+  `__eval__` expectations now match types2 codes (`[bad-call]`,
+  `[function-fallthrough]`, `[union-subscript-coverage]`); `tests/refine.ty`,
+  `tests/sh.ty`, `tests/yield_from_c.ty`, and `tests/matrix.ty` were
+  tightened against `nil` unions the runtime may really produce.
+- Computed types (`__flat-array!(T)` in `Array.flat`) are no longer
+  materialized from the legacy checker; they stay deferred and resolve to
+  Dynamic.
+
+Validation after the cutover (release and clang ASan builds): `./ty test.ty`
+78 passed with only `xinfo` failing (same as before), `./ty -q test.ty` 77
+passed with the expected `constraint`/`refine` failures, both gates, the
+core suite, `make tyls`, the five library suites, and every module of the
+earlier sweep clean under `./ty -c`.  Library modules that still report
+types2 diagnostics when compiled as an entry unit (non-fatal on import):
+apple, cookie, dbg, dbus, fcgi, hash, html, ical, ini, inotify, np, repl,
+sql, tui, uv (`tickit` fails to import for an unrelated `ffi` export).  The
+equivalence gate now has an explicit invalid set (`invalid`, `contracts`,
+`flow-invalidation`, `loops-invalid`, `multi-values-invalid`,
+`nil-guards-invalid`) that must be rejected with a CompileError; every other
+fixture must be accepted with output identical to `TY_TYPES2_SHADOW=0`.
+
+## Historical overview
 
 The compiler-independent core in `src/types2_core.c` provides the first native
 types2 representation and solver layer.  It currently includes hash-consed
@@ -157,7 +270,7 @@ explicit materialized-computed-result boundary described above.  Legacy typing
 and code generation must never inspect a shadow result before the atomic
 cutover.
 
-## Experimental authoritative mode (`-t`)
+## Experimental authoritative mode (`-t`) (historical; `-t` is now a no-op)
 
 `ty -t FILE` runs the interpreter with the legacy typechecker's diagnostics
 disabled (as `-q` does) and types2 reporting instead.  Every unit compiled
@@ -1641,7 +1754,7 @@ one of them undermines the replacement strategy even if its local test passes.
   remaining-work list, and commands whenever a milestone materially changes
   them.
 
-## Cutover readiness checklist
+## Cutover readiness checklist (historical; completed 2026-09-03)
 
 Do not switch authority until all boxes below can be supported by checked-in
 tests, logs, and agreed performance data.
@@ -1679,7 +1792,7 @@ tests, logs, and agreed performance data.
 - [ ] The post-cutover deletion plan has been rehearsed on a branch and the full
       correctness, runtime, JIT, ASan, and performance suites pass there.
 
-## Atomic cutover procedure
+## Atomic cutover procedure (historical; completed 2026-09-03)
 
 The eventual semantic switch and legacy removal should be one integration
 change, easy to revert as a whole:

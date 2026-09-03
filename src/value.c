@@ -22,7 +22,7 @@
 #include "ast.h"
 #include "compiler.h"
 #include "functions.h"
-#include "types.h"
+#include "types2.h"
 #include "highlight.h"
 
 static _Thread_local vec(Dict *) show_dicts;
@@ -603,8 +603,9 @@ show_impl(
 
                 case VALUE_TYPE:
                 {
-                        char *s = type_show(ty, v.ptr);
+                        char *s = types2_show(ty, as_type(&v));
                         svPn(buf, s, strlen(s));
+                        free(s);
                         break;
                 }
 

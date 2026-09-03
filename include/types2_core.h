@@ -229,6 +229,15 @@ t2_integer_range(
         bool upper_inclusive
 );
 
+bool
+t2_integer_range_bounds(
+        T2Universe const *universe,
+        T2Type range,
+        T2Type *lower,
+        T2Type *upper,
+        bool *upper_inclusive
+);
+
 T2Type
 t2_refinement(T2Universe *universe, T2Type base, T2Type argument);
 
@@ -273,6 +282,9 @@ t2_declare_nominal(
 
 T2Type
 t2_nominal_type_parameter(T2Universe *universe, uint32_t index);
+
+bool
+t2_nominal_declared(T2Universe const *universe, uint64_t symbol, size_t *arity);
 
 bool
 t2_nominal_add_super(
@@ -596,6 +608,15 @@ t2_type_same(T2Universe const *universe, T2Type left, T2Type right);
 
 char *
 t2_type_string(T2Universe const *universe, T2Type type);
+
+T2Type
+t2_type_substitute(
+        T2Universe *universe,
+        T2Type type,
+        uint32_t const *ids,
+        T2Type const *replacements,
+        size_t count
+);
 
 /*
  * A snapshot is an owned, solver-free representation of one immutable term

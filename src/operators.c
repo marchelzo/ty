@@ -13,7 +13,6 @@
 #include "tthread.h"
 #include "value.h"
 #include "vec.h"
-#include "types.h"
 #include "vm.h"
 
 enum {
@@ -34,7 +33,6 @@ typedef struct {
         TyRwLock      lock;
         DispatchCache cache;
         DispatchList  defs;
-        Type *op0;
 } DispatchGroup;
 
 static struct {
@@ -209,7 +207,6 @@ op_add(i32 op, i32 t1, i32 t2, i32 ref, Expr *expr)
         );
 
         v0(group->cache);
-        group->op0 = NULL;
 
         TyRwLockWrUnlock(&group->lock);
 }
@@ -295,152 +292,6 @@ op_fun_info(i32 op, i32 t1, i32 t2)
         return expr;
 }
 
-i32
-op_defs_for(i32 op, i32 c, bool left, ExprVec *defs)
-{
-        Ty *ty = &vvv;
-
-        TyRwLockRdLock(&_2.lock);
-
-        if (_2.ops.count <= op) {
-                TyRwLockRdUnlock(&_2.lock);
-                puts("none");
-                return 0;
-        }
-
-        i32 n = 0;
-
-        DispatchGroup *group = _2.ops.items[op];
-        TyRwLockRdUnlock(&_2.lock);
-
-        TyRwLockWrLock(&group->lock);
-        for (i32 i = 0; i < vN(group->defs); ++i) {
-                Expr *fun = v_(group->defs, i)->expr;
-                i32 t1 = v_(group->defs, i)->t1;
-                i32 t2 = v_(group->defs, i)->t2;
-                if (
-                        fun->_type != NULL
-                     && class_is_subclass(&vvv, c, (left ? t1 : t2))
-                ) {
-                        avP(*defs, fun);
-                        n += 1;
-                }
-        }
-        TyRwLockWrUnlock(&group->lock);
-
-        return n;
-}
-
-i32
-op_defs_for_l(i32 op, i32 c, ExprVec *defs)
-{
-        return op_defs_for(op, c, true, defs);
-}
-
-i32
-op_defs_for_r(i32 op, i32 c, ExprVec *defs)
-{
-        return op_defs_for(op, c, false, defs);
-}
-
-Type *
-op_member_type(i32 op, i32 c, bool left)
-{
-        TyRwLockRdLock(&_2.lock);
-
-        if (_2.ops.count <= op) {
-                TyRwLockRdUnlock(&_2.lock);
-                return NULL;
-        }
-
-        Type *t0 = NULL;
-
-        DispatchGroup *group = _2.ops.items[op];
-        TyRwLockRdUnlock(&_2.lock);
-
-        TyRwLockWrLock(&group->lock);
-        for (i32 i = 0; i < vN(group->defs); ++i) {
-                Expr const *fun = v_(group->defs, i)->expr;
-                i32 t1 = v_(group->defs, i)->t1;
-                i32 t2 = v_(group->defs, i)->t2;
-                if (
-                        (fun->_type != NULL)
-                     && ((left ? t1 : t2) == c)
-                ) {
-                        t0 = type_both(&vvv, t0, fun->_type);
-                }
-        }
-        TyRwLockWrUnlock(&group->lock);
-
-        return t0;
-}
-
-Type *
-op_member_type_l(i32 op, i32 c)
-{
-        return op_member_type(op, c, true);
-}
-
-Type *
-op_member_type_r(i32 op, i32 c)
-{
-        return op_member_type(op, c, false);
-}
-
-Type *
-op_type(Ty *ty, i32 op)
-{
-        Type *t0 = NULL;
-        TypeVector types = {0};
-        DispatchGroup *group;
-
-        TyRwLockRdLock(&_2.lock);
-        if (_2.ops.count <= op) {
-                TyRwLockRdUnlock(&_2.lock);
-                return NULL;
-        }
-        group = _2.ops.items[op];
-        TyRwLockRdUnlock(&_2.lock);
-
-        SCRATCH_SAVE();
-
-        TyRwLockRdLock(&group->lock);
-        dont_printf("op_type(%s)  (%u defs):\n", intern_entry(&xD.b_ops, op)->name, (int)vN(group->defs));
-        if (group->op0 == NULL) {
-                /*
-                 * Snapshot the type pointers while holding the lock.
-                 */
-                for (i32 i = 0; i < vN(group->defs); ++i) {
-                        Expr const *fun = v_(group->defs, i)->expr;
-                        if (fun->_type != NULL && fun->return_type != NULL) {
-                                svP(types, fun->_type);
-                        }
-                }
-                TyRwLockRdUnlock(&group->lock);
-
-                /*
-                 * Build the intersection incrementally outside the lock.
-                 * Update group->op0 after each step so that recursive
-                 * op_type calls (via type_both -> Reduce -> BindConstraint)
-                 * see the progressively-built result and terminate.
-                 */
-                for (i32 i = 0; i < vN(types); ++i) {
-                        t0 = type_both(ty, t0, v__(types, i));
-                        TyRwLockWrLock(&group->lock);
-                        group->op0 = t0;
-                        TyRwLockWrUnlock(&group->lock);
-                }
-        } else {
-                t0 = group->op0;
-                TyRwLockRdUnlock(&group->lock);
-        }
-
-        SCRATCH_RESTORE();
-
-        dont_printf("op_type(%s): %s\n", intern_entry(&xD.b_ops, op)->name, type_show(ty, t0));
-
-        return t0;
-}
 
 U32Vector
 op_baseline(Ty *ty)
@@ -469,7 +320,6 @@ op_reset(U32Vector const *base)
                 xvF(group->cache);
                 v00(group->cache);
                 vN(group->defs) = v__(*base, i);
-                group->op0 = NULL;
         }
 
         for (i32 i = vN(*base); i < vN(_2.ops); ++i) {

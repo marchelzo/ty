@@ -21,6 +21,7 @@
 #include "log.h"
 #include "xd.h"
 #include "mod.h"
+#include "types2_core.h"
 
 #define TY_MAX_CALL_DEPTH (1UL << 10)
 #define TY_TMP_BUF_COUNT 3
@@ -35,18 +36,15 @@ typedef vec(struct alloc *) AllocList;
 typedef vec(char *)         IPVector;
 typedef vec(void *)         ContextVector;
 typedef vec(cothread_t)     CoThreadVector;
-typedef vec(Constraint)     ConstraintVector;
 typedef vec(Frame)          FrameStack;
 typedef vec(Value)          GCRootSet;
 typedef vec(Value *)        GCWorkStack;
-typedef vec(Refinement)     RefinementVector;
 typedef vec(Scope *)        ScopeVector;
 typedef vec(usize)          SPStack;
 typedef vec(struct sigfn)   SigfnStack;
 typedef vec(Target)         TargetStack;
 typedef vec(struct token)   TokenVector;
 typedef vec(struct try *)   TryStack;
-typedef vec(Type *)         TypeVector;
 typedef vec(Value)          ValueVector;
 typedef ValueVector         ValueStack;
 typedef vec(Class *)        ClassVector;
@@ -148,13 +146,6 @@ typedef struct {
         char *doc;
         i32 class;
 } FunUserInfo;
-
-struct refinement {
-        Symbol *var;
-        Type *t0;
-        bool active;
-        bool mut;
-};
 
 typedef struct object TyObject;
 
@@ -440,8 +431,8 @@ struct class {
 
         Stmt *def;
 
-        Type *type;
-        Type *object_type;
+        T2Type type;
+        T2Type object_type;
 };
 
 struct frame {
@@ -658,21 +649,6 @@ typedef struct {
         Expr *cond;
 } DebugBreakpoint;
 
-typedef struct param Param;
-typedef struct type Type;
-
-struct param {
-        char const *name;
-        Type *type;
-        Type *dflt;
-        bool required;
-        bool rest;
-        bool kws;
-        bool pack;
-};
-
-typedef vec(Param) ParamVector;
-
 #define TY_TDB_STATES   \
         X(OFF)          \
         X(STARTING)     \
@@ -878,9 +854,6 @@ extern bool CompileOnly;
 extern bool AllowErrors;
 extern bool InteractiveSession;
 
-extern u64 TypeCheckCounter;
-extern u64 TypeAllocCounter;
-extern u64 TypeCheckTime;
 
 #if !defined(TY_RELEASE)
 extern volatile bool GC_EVERY_ALLOC;
@@ -1287,7 +1260,7 @@ enum {
 #define UNINITIALIZED(p)         ((Value){ .type = VALUE_UNINITIALIZED,    .ptr            = (p),                                  .tags = 0 })
 #define TAG(t)                   ((Value){ .type = VALUE_TAG,              .tag            = (t),                                  .tags = 0 })
 #define CLASS(c)                 ((Value){ .type = VALUE_CLASS,            .class          = (c),  .object = NULL,                 .tags = 0 })
-#define TYPE(t)                  ((Value){ .type = VALUE_TYPE,             .ptr            = (t),                                  .tags = 0 })
+#define TYPE(t)                  ((Value){ .type = VALUE_TYPE,             .z              = (t),                                  .tags = 0 })
 #define OBJECT(o, c)             ((Value){ .type = VALUE_OBJECT,           .object         = (o),  .class  = (c),                  .tags = 0 })
 #define OPERATOR(u, b)           ((Value){ .type = VALUE_OPERATOR,         .uop            = (u),  .bop    = (b),                  .tags = 0 })
 #define NAMESPACE(ns)            ((Value){ .type = VALUE_NAMESPACE,        .namespace      = (ns),                                 .tags = 0 })

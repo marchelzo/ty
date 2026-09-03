@@ -19,6 +19,8 @@ else
         asan_options=intercept_strndup=0
 fi
 
+invalid_fixtures=" invalid contracts flow-invalidation loops-invalid multi-values-invalid nil-guards-invalid "
+
 run_case()
 {
         mode=$1
@@ -51,6 +53,29 @@ run_case()
         printf '%s\n' "$result" >"$status"
 }
 
+expect_rejected()
+{
+        fixture=$1
+        if [ "$(cat "$scratch/$fixture.enabled.status")" = 0 ]; then
+                echo "types2 accepted invalid fixture $fixture" >&2
+                exit 1
+        fi
+        grep -q 'CompileError' "$scratch/$fixture.enabled.err"
+}
+
+expect_accepted()
+{
+        fixture=$1
+        if [ "$(cat "$scratch/$fixture.enabled.status")" != 0 ]; then
+                echo "types2 rejected valid fixture $fixture:" >&2
+                cat "$scratch/$fixture.enabled.err" >&2
+                exit 1
+        fi
+        cmp "$scratch/$fixture.disabled.out" "$scratch/$fixture.enabled.out"
+        cmp "$scratch/$fixture.disabled.err" "$scratch/$fixture.enabled.err"
+        cmp "$scratch/$fixture.disabled.status" "$scratch/$fixture.enabled.status"
+}
+
 for fixture in valid invalid overload-union flow flow-invalidation contracts class-operator operator-constraints pack-constraints scoped-obligations subscript-protocol member-protocol keyword-spread match-coverage recovery deferred nil-guards nil-guards-invalid loops loops-invalid multi-values multi-values-invalid evolving contextual defaults repl hierarchy http clap open-operands forward-calls relations gradual; do
         source=$test_dir/fixtures/types2-shadow-$fixture.ty.txt
 
@@ -68,9 +93,10 @@ for fixture in valid invalid overload-union flow flow-invalidation contracts cla
                 "$scratch/$fixture.enabled.err" \
                 "$scratch/$fixture.enabled.status"
 
-        cmp "$scratch/$fixture.disabled.out" "$scratch/$fixture.enabled.out"
-        cmp "$scratch/$fixture.disabled.err" "$scratch/$fixture.enabled.err"
-        cmp "$scratch/$fixture.disabled.status" "$scratch/$fixture.enabled.status"
+        case "$invalid_fixtures" in
+        *" $fixture "*) expect_rejected "$fixture" ;;
+        *) expect_accepted "$fixture" ;;
+        esac
 done
 
 run_case \
@@ -108,13 +134,11 @@ grep -Eq '"event":"deferred".*"reason":"dynamic-callee".*"line":14,' \
 grep -Eq '"event":"deferred".*"reason":"dynamic-operand".*"line":15,' \
         "$scratch/deferred.jsonl"
 ! grep -q '"event":"deferred"' "$scratch/shadow.jsonl"
-
 grep -q '"event":"begin"' "$scratch/shadow.jsonl"
 grep -Eq '"event":"finish","unit":"prelude",.*"pending_obligations":0,' "$scratch/shadow.jsonl"
 ! grep -q '"event":"pending_obligation","unit":"prelude"' "$scratch/shadow.jsonl"
 grep -q '"event":"checkpoint"' "$scratch/shadow.jsonl"
 grep -q '"event":"finish"' "$scratch/shadow.jsonl"
-grep -q '"event":"abort"' "$scratch/shadow.jsonl"
 grep -Eq '"union_call_splits":[1-9][0-9]*' "$scratch/shadow.jsonl"
 grep -Eq '"path":"[^"]*types2-shadow-flow.ty.txt".*"types2_errors":0' \
         "$scratch/shadow.jsonl"

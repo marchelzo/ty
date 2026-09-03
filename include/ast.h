@@ -294,7 +294,7 @@ typedef struct type_bound {
 } TypeBound;
 
 typedef struct type_hint {
-        Type *type;
+        T2Type type;
         iptr pc;
 } TypeHint;
 
@@ -310,8 +310,9 @@ struct expression {
         Module *mod;
         Expr *xfunc;
         Scope *xscope;
-        Type *_type;
+        T2Type _type;
 
+        bool annotated;
         bool has_resources;
         bool bang;
 
@@ -514,7 +515,7 @@ struct statement {
         Module *mod;
         Expr *xfunc;
         Scope *xscope;
-        Type *_type;
+        T2Type _type;
 
         i32 when;
         bool will_return;

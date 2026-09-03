@@ -14,7 +14,7 @@
 #include "ty.h"
 #include "value.h"
 #include "ast.h"
-#include "types.h"
+#include "types2.h"
 #include "scope.h"
 #include "class.h"
 #include "jit.h"
@@ -2304,7 +2304,7 @@ typedef struct {
         char const *name;
 
         // Type information (from expr_of(func)->_type)
-        Type *func_type;    // TYPE_FUNCTION with param types and return type
+        T2Type func_type;
         Class *self_class;  // Non-NULL if this is a method (class of self)
         int self_class_id;  // Class ID for guard checks (-1 if unknown)
 
@@ -2315,7 +2315,7 @@ typedef struct {
 
         // Track which local each operand stack slot came from (-1 = unknown)
         // Used to look up types for CALL_METHOD/MEMBER_ACCESS fast paths
-        Type *op_types[MAX_BC_OPS];
+        T2Type op_types[MAX_BC_OPS];
         i32 op_known_class[MAX_BC_OPS];
 
         // Label map: bytecode offset => DynASM label + expected sp + save_sp state
@@ -3713,7 +3713,7 @@ jit_rt_concat_strings(Ty *ty, Value *result, Value *base, int n)
 // Bytecode emission
 // ============================================================================
 
-static Class *expected_class_of(Ty *ty, Type const *t);
+static Class *expected_class_of(Ty *ty, T2Type t);
 
 static void
 bc_copy_value(JitCtx *ctx, int dst_reg, int dst_off, int src_reg, int src_off)
@@ -3841,7 +3841,7 @@ bc_push_integer(JitCtx *ctx, intmax_t val)
         ctx->sp++;
         if (ctx->sp > ctx->max_sp) ctx->max_sp = ctx->sp;
 
-        ctx->op_types[ctx->sp - 1] = INT_TYPE;
+        ctx->op_types[ctx->sp - 1] = types2_primitive(T2_TYPE_INT);
 }
 
 static void
@@ -3863,7 +3863,7 @@ bc_push_bool(JitCtx *ctx, bool val)
         ctx->sp++;
         if (ctx->sp > ctx->max_sp) ctx->max_sp = ctx->sp;
 
-        ctx->op_types[ctx->sp - 1] = BOOL_TYPE;
+        ctx->op_types[ctx->sp - 1] = types2_primitive(T2_TYPE_BOOL);
 }
 
 static void
@@ -3882,7 +3882,7 @@ bc_push_nil(JitCtx *ctx)
         ctx->sp++;
         if (ctx->sp > ctx->max_sp) ctx->max_sp = ctx->sp;
 
-        ctx->op_types[ctx->sp - 1] = NIL_TYPE;
+        ctx->op_types[ctx->sp - 1] = types2_primitive(T2_TYPE_NIL);
 }
 
 // a = ops[sp-2], b = ops[sp-1], result = ops[sp-2], sp--
@@ -4662,7 +4662,7 @@ bc_try_local_array_get(JitCtx *ctx, char const *code, char const *end,
         jit_emit_load_imm(asm, BC_CALL, (iptr)jit_rt_subscript);
         bc_emit_runtime_call(ctx, BC_CALL);
         jit_emit_label(asm, lbl_done);
-        ctx->op_types[ctx->sp] = NULL;
+        ctx->op_types[ctx->sp] = T2_TYPE_INVALID;
         ++ctx->sp;
         if (ctx->sp > ctx->max_sp) {
                 ctx->max_sp = ctx->sp;
@@ -5281,8 +5281,8 @@ bc_emit_arith(JitCtx *ctx, void *helper)
         int a_off = OP_OFF(ctx->sp - 2);
         int b_off = OP_OFF(ctx->sp - 1);
 
-        Type *a0 = ctx->op_types[ctx->sp - 2];
-        Type *b0 = ctx->op_types[ctx->sp - 1];
+        T2Type a0 = ctx->op_types[ctx->sp - 2];
+        T2Type b0 = ctx->op_types[ctx->sp - 1];
 
         Class *a_cls = expected_class_of(ctx->ty, a0);
         Class *b_cls = expected_class_of(ctx->ty, b0);
@@ -5453,8 +5453,8 @@ bc_emit_cmp(JitCtx *ctx, void *helper)
         bool is_eq_or_ne = (helper == (void *)jit_rt_eq || helper == (void *)jit_rt_ne);
         Class *cls = expected_class_of(ctx->ty, ctx->op_types[ctx->sp - 1]);
 
-        bool inline_nil = IsNilT(ctx->op_types[ctx->sp - 1])
-                       || IsNilT(ctx->op_types[ctx->sp - 2]);
+        bool inline_nil = types2_is_nil(ctx->op_types[ctx->sp - 1])
+                       || types2_is_nil(ctx->op_types[ctx->sp - 2]);
 
         // For non-equality ops with no int/float fast path, just call the helper
         if (!is_eq_or_ne && (cls == NULL || (cls->i != CLASS_INT && cls->i != CLASS_FLOAT))) {
@@ -5785,18 +5785,12 @@ bc_emit_trampoline_signal(JitCtx *ctx, int status, int idx)
 }
 
 static Class *
-expected_class_of(Ty *ty, Type const *t)
+expected_class_of(Ty *ty, T2Type t)
 {
-        Class *c = type_guess_class_of(ty, t);
-
-        if (c != NULL && c->is_trait) {
-                c = NULL;
-        }
-
-        return c;
+        return types2_class_of(ty, t);
 }
 
-static Type *
+static T2Type
 find_type_hint(TypeHintVector const *hints, iptr off)
 {
         isize lo = 0;
@@ -5814,7 +5808,7 @@ find_type_hint(TypeHintVector const *hints, iptr off)
                 }
         }
 
-        return NULL;
+        return T2_TYPE_INVALID;
 }
 
 static Value *
@@ -6002,11 +5996,11 @@ bc_inline_plan_types(JitCtx *ctx, Value const *callee, TyInlinePlan const *plan)
                 return true;
         }
 
-        Type *function = type_resolve_var(type_of(callee));
-        if (!IsFuncT(function)) {
+        T2Type function = type_of(callee);
+        if (!types2_is_callable(function)) {
                 return false;
         }
-        Class *result = expected_class_of(ctx->ty, function->rt);
+        Class *result = expected_class_of(ctx->ty, types2_callable_result(function));
         if (result == NULL) {
                 return false;
         }
@@ -6724,7 +6718,7 @@ bc_emit_inline_operator(JitCtx *ctx, int op, void *fallback)
 } while (0)
 
 static Class *
-dispatch_class_of(Ty *ty, Type const *t)
+dispatch_class_of(Ty *ty, T2Type t)
 {
         Class *c = expected_class_of(ty, t);
 
@@ -6996,7 +6990,7 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
 
         TypeHintVector const *hints = &expr_of(ctx->func)->type_hints;
 
-        Type *ARRAY_TYPE = class_get(ty, CLASS_ARRAY)->object_type;
+        T2Type ARRAY_TYPE = types2_object_type(ty, class_get(ty, CLASS_ARRAY));
 
 #define BC_READ(var)  do { __builtin_memcpy(&var, ip, sizeof var); ip += sizeof var; } while (0)
 #define BC_SKIP(type) (ip += sizeof(type))
@@ -7015,8 +7009,8 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                         ctx->raw_dirty = ctx->cfg_dirty[off];
                 }
 
-                Type *hint0 = find_type_hint(hints, off);
-                if (hint0 != NULL) {
+                T2Type hint0 = find_type_hint(hints, off);
+                if (hint0 != T2_TYPE_INVALID) {
                         ctx->op_types[ctx->sp - 1] = hint0;
 #if JIT_SCAN_LOG
                         Expr const *e = compiler_find_expr(ty, code + off);
@@ -7026,7 +7020,7 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                                 e ? e->start.line + 1 : 0,
                                 name_of(ctx->func),
                                 off,
-                                type_show(ty, hint0));
+                                types2_show(ty, hint0));
 #endif
                 }
 
@@ -7422,7 +7416,7 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                              && ((u8)*ip == INSTR_SUBSCRIPT)
                              && (bc_find_label(ctx, off + 2) == -1)
                         ) {
-                                Type *t_con = type_resolve_var(ctx->op_types[ctx->sp - 1]);
+                                T2Type t_con = (ctx->op_types[ctx->sp - 1]);
                                 Class *c = expected_class_of(ctx->ty, t_con);
 
                                 if (c != NULL && c->i == CLASS_TUPLE) {
@@ -7639,7 +7633,7 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                         // Store original a (in regs) to b
                         jit_emit_stp64(asm, BC_S0, BC_S1, BC_OPS, b);
                         jit_emit_stp64(asm, BC_S2, BC_S3, BC_OPS, b + 16);
-                        SWAP(Type *, ctx->op_types[ctx->sp - 1], ctx->op_types[ctx->sp - 2]);
+                        SWAP(T2Type, ctx->op_types[ctx->sp - 1], ctx->op_types[ctx->sp - 2]);
                         break;
                 }
 
@@ -7897,8 +7891,8 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                         int b_off = OP_OFF(ctx->sp - 1);
                         bool is_eq = (op == INSTR_JEQ);
 
-                        Type *a0 = ctx->op_types[ctx->sp - 2];
-                        Type *b0 = ctx->op_types[ctx->sp - 1];
+                        T2Type a0 = ctx->op_types[ctx->sp - 2];
+                        T2Type b0 = ctx->op_types[ctx->sp - 1];
 
                         Class *a_cls = expected_class_of(ctx->ty, a0);
                         Class *b_cls = expected_class_of(ctx->ty, b0);
@@ -7912,7 +7906,7 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                         bool try_str = (a_cls != NULL && a_cls->i == CLASS_STRING)
                                     || (b_cls != NULL && b_cls->i == CLASS_STRING);
 
-                        bool try_nil = IsNilT(a0) || IsNilT(b0) || (a_cls == NULL) || (b_cls == NULL);
+                        bool try_nil = types2_is_nil(a0) || types2_is_nil(b0) || (a_cls == NULL) || (b_cls == NULL);
 
                         int lbl_nil_check = bc_next_label(ctx);
                         int lbl_slow = bc_next_label(ctx);
@@ -8034,8 +8028,8 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                         int lbl_slow = bc_next_label(ctx);
                         int lbl_done = bc_next_label(ctx);
 
-                        Type *a0 = ctx->op_types[ctx->sp - 2];
-                        Type *b0 = ctx->op_types[ctx->sp - 1];
+                        T2Type a0 = ctx->op_types[ctx->sp - 2];
+                        T2Type b0 = ctx->op_types[ctx->sp - 1];
 
                         Class *a_cls = expected_class_of(ctx->ty, a0);
                         Class *b_cls = expected_class_of(ctx->ty, b0);
@@ -8141,7 +8135,7 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                         BC_READ(z);
 
                         // Try type-guided fast path using local type info
-                        Type *t0 = ctx->op_types[ctx->sp - 1];
+                        T2Type t0 = ctx->op_types[ctx->sp - 1];
                         Class *obj_class = expected_class_of(ctx->ty, t0);
 
                         bool emitted_fast = false;
@@ -8293,9 +8287,9 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                                 break;
                         }
 
-                        Type *t0 = (ctx->self_class != NULL)
-                                 ? ctx->self_class->object_type
-                                 : NULL;
+                        T2Type t0 = (ctx->self_class != NULL)
+                                  ? types2_object_type(ctx->ty, ctx->self_class)
+                                  : T2_TYPE_INVALID;
 
                         ctx->sp++; // make room for result (helper will write to sp-1)
 
@@ -8475,7 +8469,7 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                                 break;
                         }
 
-                        Type *f0 = ctx->op_types[ctx->sp - 1];
+                        T2Type f0 = ctx->op_types[ctx->sp - 1];
 
                         DBG("CALL(argc=%d)", n);
 
@@ -9408,7 +9402,7 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                         u8 n;
                         BC_READ(n);
 
-                        Type *t0 = type_resolve_var(ctx->op_types[ctx->sp - (n + 1)]);
+                        T2Type t0 = (ctx->op_types[ctx->sp - (n + 1)]);
                         Class *c = expected_class_of(ctx->ty, t0);
 
                         bool try_array = (c != NULL && c->i == CLASS_ARRAY);
@@ -9538,7 +9532,7 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                         int lbl_slow = bc_next_label(ctx);
                         int lbl_done = bc_next_label(ctx);
 
-                        Type *t0 = type_resolve_var(ctx->op_types[ctx->sp - 2]);
+                        T2Type t0 = (ctx->op_types[ctx->sp - 2]);
                         Class *c = expected_class_of(ctx->ty, t0);
 
                         bool try_array = (c != NULL && c->i == CLASS_ARRAY);
@@ -9907,7 +9901,7 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                         int lbl_slow = bc_next_label(ctx);
                         int lbl_done = bc_next_label(ctx);
 
-                        Type *t0 = ctx->op_types[ctx->sp - 1];
+                        T2Type t0 = ctx->op_types[ctx->sp - 1];
                         Class *obj_class = expected_class_of(ctx->ty, t0);
 
                         // Fast path: if int, add 1 to z
@@ -9938,7 +9932,7 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                         int lbl_slow = bc_next_label(ctx);
                         int lbl_done = bc_next_label(ctx);
 
-                        Type *t0 = ctx->op_types[ctx->sp - 1];
+                        T2Type t0 = ctx->op_types[ctx->sp - 1];
                         Class *obj_class = expected_class_of(ctx->ty, t0);
 
                         if (obj_class != NULL && obj_class->i == CLASS_INT) {
@@ -9975,7 +9969,7 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                         bc_emit_runtime_call(ctx, BC_CALL);
                         ctx->sp++;
                         if (ctx->sp > ctx->max_sp) ctx->max_sp = ctx->sp;
-                        ctx->op_types[ctx->sp - 1] = STRING_TYPE;
+                        ctx->op_types[ctx->sp - 1] = types2_primitive(T2_TYPE_STRING);
                         break;
                 }
 
@@ -10003,7 +9997,7 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
 
                         ctx->sp++;
                         if (ctx->sp > ctx->max_sp) ctx->max_sp = ctx->sp;
-                        ctx->op_types[ctx->sp - 1] = TYPE_FLOAT;
+                        ctx->op_types[ctx->sp - 1] = types2_primitive(T2_TYPE_FLOAT);
                         break;
                 }
 
@@ -10019,7 +10013,7 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                         if (!bc_emit_builtin_count(ctx)) {
                                 bc_emit_unop_helper(ctx, (void *)jit_rt_count);
                         }
-                        ctx->op_types[ctx->sp - 1] = INT_TYPE;
+                        ctx->op_types[ctx->sp - 1] = types2_primitive(T2_TYPE_INT);
                         break;
 
                 CASE(GET_TAG) {
@@ -10215,7 +10209,7 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                                 bc_emit_reentrant_call(ctx, BC_CALL);
                         }
                         ctx->sp--;
-                        ctx->op_types[ctx->sp - 1] = NULL;
+                        ctx->op_types[ctx->sp - 1] = T2_TYPE_INVALID;
                         break;
                 }
 
@@ -11049,10 +11043,10 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                                 int lbl_slow = bc_next_label(ctx);
                                 int lbl_done = bc_next_label(ctx);
 
-                                Type *t0 = ctx->op_types[ctx->sp - 1];
+                                T2Type t0 = ctx->op_types[ctx->sp - 1];
                                 Class *class0 = expected_class_of(ctx->ty, t0);
 
-                                Type *t1 = locals[ctx->tgt_index]->type;
+                                T2Type t1 = locals[ctx->tgt_index]->type;
                                 Class *class1 = expected_class_of(ctx->ty, t1);
 
                                 if (
@@ -11560,7 +11554,7 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                                 int lbl_slow = bc_next_label(ctx);
                                 int lbl_done = bc_next_label(ctx);
 
-                                Type *t0 = locals[ctx->tgt_index]->type;
+                                T2Type t0 = locals[ctx->tgt_index]->type;
                                 Class *class0 = expected_class_of(ctx->ty, t0);
 
                                 if (class0 != NULL && class0->i == CLASS_INT) {
@@ -11594,7 +11588,7 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                                 int lbl_slow = bc_next_label(ctx);
                                 int lbl_done = bc_next_label(ctx);
 
-                                Type *t0 = locals[ctx->tgt_index]->type;
+                                T2Type t0 = locals[ctx->tgt_index]->type;
                                 Class *class0 = expected_class_of(ctx->ty, t0);
 
                                 jit_emit_ldr64(asm, BC_S2, BC_ENV, ctx->tgt_index * 8);
@@ -11669,7 +11663,7 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                                 int lbl_slow = bc_next_label(ctx);
                                 int lbl_done = bc_next_label(ctx);
 
-                                Type *t0 = locals[ctx->tgt_index]->type;
+                                T2Type t0 = locals[ctx->tgt_index]->type;
                                 Class *class0 = expected_class_of(ctx->ty, t0);
 
                                 if (class0 != NULL && class0->i == CLASS_INT) {
@@ -11700,7 +11694,7 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                                 int lbl_slow = bc_next_label(ctx);
                                 int lbl_done = bc_next_label(ctx);
 
-                                Type *t0 = locals[ctx->tgt_index]->type;
+                                T2Type t0 = locals[ctx->tgt_index]->type;
                                 Class *class0 = expected_class_of(ctx->ty, t0);
 
                                 jit_emit_ldr64(asm, BC_S2, BC_ENV, ctx->tgt_index * 8);
@@ -11772,7 +11766,7 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                                 int lbl_slow = bc_next_label(ctx);
                                 int lbl_done = bc_next_label(ctx);
 
-                                Type *t0 = locals[ctx->tgt_index]->type;
+                                T2Type t0 = locals[ctx->tgt_index]->type;
                                 Class *class0 = expected_class_of(ctx->ty, t0);
 
                                 if (class0 != NULL && class0->i == CLASS_INT) {
@@ -11802,7 +11796,7 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                                 int lbl_slow = bc_next_label(ctx);
                                 int lbl_done = bc_next_label(ctx);
 
-                                Type *t0 = locals[ctx->tgt_index]->type;
+                                T2Type t0 = locals[ctx->tgt_index]->type;
                                 Class *class0 = expected_class_of(ctx->ty, t0);
 
                                 jit_emit_ldr64(asm, BC_S2, BC_ENV, ctx->tgt_index * 8);
@@ -11873,7 +11867,7 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                                 int lbl_slow = bc_next_label(ctx);
                                 int lbl_done = bc_next_label(ctx);
 
-                                Type *t0 = locals[ctx->tgt_index]->type;
+                                T2Type t0 = locals[ctx->tgt_index]->type;
                                 Class *class0 = expected_class_of(ctx->ty, t0);
 
                                 if (class0 != NULL && class0->i == CLASS_INT) {
@@ -11904,7 +11898,7 @@ bc_emit(JitCtx *ctx, char const *code, int code_size)
                                 int lbl_slow = bc_next_label(ctx);
                                 int lbl_done = bc_next_label(ctx);
 
-                                Type *t0 = locals[ctx->tgt_index]->type;
+                                T2Type t0 = locals[ctx->tgt_index]->type;
                                 Class *class0 = expected_class_of(ctx->ty, t0);
 
                                 jit_emit_ldr64(asm, BC_S2, BC_ENV, ctx->tgt_index * 8);
