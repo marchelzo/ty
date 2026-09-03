@@ -67,7 +67,8 @@ typedef enum t2_variable_kind {
 typedef enum t2_variance {
         T2_INVARIANT,
         T2_COVARIANT,
-        T2_CONTRAVARIANT
+        T2_CONTRAVARIANT,
+        T2_BIVARIANT
 } T2Variance;
 
 typedef enum t2_presence {

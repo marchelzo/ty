@@ -924,11 +924,109 @@ checker-on build.  `tests/match.ty`'s `union-annotation-pattern` covers a
 top-level and an array-element annotation under both harness modes.  The JIT
 still silently trusts the first depth recorded for a label; a general
 conflict check is not possible without distinguishing `Fail` labels that
-`POP_STACK_POS` resets.  Two notes for the next reader: `CheckConstraints` in
-`include/ty.h` is declared but never defined or read, so `CheckTypes` is the
-only switch; and `Some(p: T)` is a named tuple-member pattern
-(`TRY_TUPLE_MEMBER 'p'` against the value of `T`), not an annotated payload,
-so it never reaches this emitter.
+`POP_STACK_POS` resets.  Note for the next reader: `Some(p: T)` is a named
+tuple-member pattern (`TRY_TUPLE_MEMBER 'p'` against the value of `T`), not
+an annotated payload, so it never reaches this emitter.
+
+The session that worked through `ty -tc lib/procs.ty` (13 errors at the
+start, none at the end) added:
+
+- a call on a still-open callee resolves the callee by its known value only
+  (`T2_PREFER_KNOWN_VALUE` in `infer_call_types`): the lower-bound preference
+  fell back to the callee's upper bound, so the second forward call to a
+  helper defined later was checked against the first call's argument types
+  (`__proc-path(__pid, 'cwd')` against `(Int, 'exe') -> $r`), and both calls
+  shared one result metavariable; every call on an open callee now records
+  its own call-site bound, and the definition satisfies all of them;
+- a template splice `$$::(f)` is a runtime-value boundary: the spliced
+  expression's unconstrained metavariables default to `Dynamic`
+  (`default_dynamic_callable_metas`), because the generated call is typed
+  when the macro expands, not at the template.  The precise scheme of
+  `_completions` (member predicates on its unannotated `cls`) had left its
+  instantiated obligations pending at `clap.ty`'s `completionsFn` template;
+- a failed contextual literal attempt forgets the node types it recorded
+  (`contextual_fresh_literal` records touched nodes and calls
+  `forget_touched_nodes` on rollback, as the muted pre-pass does): rollback
+  reclaims metavariable ids, so the cached type of a spread's call was
+  pointing at ids later reused for unrelated metavariables, which is how
+  `[*find(name=name)]` against `Array[Process]` ended with the contradictory
+  pair `Int <: Process` and `Process <: Int` pending;
+- the contextual array path accepts any iterable spread through its first
+  iteration value (`collapse_multi_values` of `iterated_type_x`), not only
+  `Array` spreads, so a generator or range spread in a tail position is
+  typed against the declared element instead of falling to the failure
+  path above;
+- `binding_scheme` and `member_scheme` log events carry `predicate_list`,
+  the rendered scheme predicates, which is what distinguished a precise
+  scheme from a `Dynamic`-bounded one and a quantified yield channel from a
+  leaked weak metavariable;
+- a lambda literal passed to a `Dynamic`-typed parameter of a known callee
+  is a dynamic callback context: `candidate_argument` now receives the
+  argument expression and defaults a callable literal's unconstrained
+  metavariables to `Dynamic`, as the Dynamic-callee path already did, so
+  `find(pred=\_.rank > 2)` against `pred: _ = nil` no longer leaves a member
+  and an operator predicate pending.  A variable argument is still left
+  alone, because Dynamic on the parameter side is an elimination permission,
+  not a bound on the value;
+- a type value stands for its constructor against a callable in both the
+  strict relation and the solver (`type[Item] <: (Int) -> Item` compares the
+  class's constructor), so `xs.map(Item)` and `.map(Path)` check;
+- the `forward-calls` fixture covers forward calls with literal arguments
+  from a class body, generator spreads against declared array results, a
+  lambda against a `Dynamic` parameter, and a class value as a mapper.
+
+Library contracts corrected in the same pass, each checked against the
+runtime first:
+
+- `lib/procs.ty`: `Fd.pos`, `flags`, and `mount-id` read a
+  `Dict[String, Int | String]` and are declared `Int | nil`, so they go
+  through `__int-field`, which keeps the integer and drops a string;
+  `__proc-cred` guards its `status` reads with `__must` because a
+  dictionary read is `nil | String`.
+
+The session that worked through `ty -tc test.ty` (14 errors at the start,
+none at the end, and `lib/tp.ty` clean along the way) added:
+
+- ordering operators derive from `<=>`: when no registered `<`, `<=`, `>`,
+  or `>=` candidate applies, `infer_binary_pair` tries the left operand's
+  `<=>` (`ordered_through_cmp`) and yields `Bool`, which is what the VM's
+  `value_compare` fallback does; the operands are not swapped, because
+  `3 < atomic` throws at runtime;
+- compound assignment dispatches to a class's mutating operator first
+  (`mutating_operator_result`): `tally += 1` on an object with `+=` calls
+  that method, leaves the target's type alone, and takes the method's
+  result as the expression value, as `DoMutAdd` does through
+  `vm_try_2op(OP_MUT_ADD)`; the dispatch-table import no longer requires a
+  declared return type, only annotated parameters, so `Atomic.+=` is a
+  candidate with a `Dynamic` result;
+- string membership accepts `String | Regex | RegexV` (`string_needle_type`),
+  the contract of `String.search`, which throws for anything else;
+- `Array`'s parameter is bivariant (`T2_BIVARIANT` in the core): the strict
+  relation and the coinductive relation accept either direction, the
+  solver tries the covariant direction and falls back to the contravariant
+  one (`constrain_either_way`), and an open metavariable on either side is
+  still unified, because inference relies on that to solve element types
+  (`Array[Array[$V]]` against `Array[Array[String]]` in `sqlite.tables`).
+  This is deliberately unsound so that `Future.any` can pass
+  `Array[Note]` to `Thread.wait-any(objects: Array[Note | CondVar])`;
+  pragmatism over soundness is the stated priority;
+- a class function entry that is also an arm of a multi-function in the same
+  class is skipped by both member builders (`overload_arm_elsewhere`): the
+  compiler renames arms `name#N` but keeps the definition's own entry under
+  its plain name, and `add_member` replaced the combined overload with that
+  single arm, so every overloaded static method resolved to its definition
+  arm only;
+- the `relations` fixture covers `<=>`-derived comparisons, `+=` on an
+  object, a regex needle, `Array` bivariance, and a static overload whose
+  prototype arm must win.
+
+Library contracts corrected in the same pass, each checked against the
+runtime first:
+
+- `lib/prelude.ty`: `Thread.wait-any`'s `timeout: nil -> Int` prototype now
+  precedes the `?Float -> Int | nil` definition, so a call without a timeout
+  is `Int` under both checkers (first applicable arm wins in both) and
+  `Future.any`'s `fs.swap(i, -1)` checks.
 
 The last clean validation run used the clang ASan build and produced:
 
@@ -937,8 +1035,8 @@ The last clean validation run used the clang ASan build and produced:
   `./ty -q test.ty`: 77 passed, 2 failed (`constraint` and `refine` assert
   legacy-checker rejections that quiet mode suppresses by design);
 - the types2 core unit suite: passed;
-- shadow-on/shadow-off equivalence: passed, including the `clap` and
-  `open-operands` fixtures;
+- shadow-on/shadow-off equivalence: passed, including the `clap`,
+  `open-operands`, `forward-calls`, and `relations` fixtures;
 - the strict corpus gate: passed;
 - the startup corpus: 16 units, 0 unsupported nodes, 1,836 deferred nodes
   (1,343 runtime, 160 incomplete, 333 external, 0 recovery), and no pending
@@ -949,15 +1047,16 @@ The last clean validation run used the clang ASan build and produced:
 - every module under `lib/` compiled so far reports nothing under `ty -tc`
   (`term`, `sh`, `readln`, `log`, `chalk`, `help`, `ty/repl`, `io`, `os`,
   `path`, `curl`, `ffi`, `pretty`, `ety`, `sqlite`, `http`, `llhttp`, `yaml`,
-  `clap`, `date`, `dotenv`); the legacy checker rejects `lib/log.ty` and
-  `lib/http.ty`
+  `clap`, `date`, `dotenv`, `procs`, `tp`), and so does `test.ty`; the legacy
+  checker rejects `lib/log.ty` and `lib/http.ty`
   (`Dict.[]` reads) and `lib/os.ty` (pre-existing), which is accepted.  The
   `-t` report can undercount the prelude relative to the strict-gate log, so
   the log summary is the reference.
 
-The `open-operands` fixture
-(`tests/fixtures/types2-shadow-open-operands.ty.txt`) is still untracked in
-the working tree; commit it with the next milestone.  Run each
+The `forward-calls` and `relations` fixtures
+(`tests/fixtures/types2-shadow-forward-calls.ty.txt`,
+`tests/fixtures/types2-shadow-relations.ty.txt`) are still untracked in the
+working tree; commit them with the next milestone.  Run each
 `tests/lib/*.ty` suite with `ty --test -t FILE` after a module is clean under
 `-tc`: it executes the library through the quieted legacy code generator,
 which is how the union-pattern bug above surfaced.
@@ -1644,3 +1743,13 @@ problems this work is intended to eliminate.
   cutover, types2 must feed the same consumers the legacy checker feeds
   today: the `ResolveConstraint` fold behind runtime constraint checks, the
   JIT's type hints, `typeof`, and `ty.types`.  Those mechanisms stay.
+- Never resolve an open callee through its upper bound: a call-site bound
+  says what the callee must accept, not what it is.  And whenever a
+  speculative attempt is rolled back, forget the node types it cached:
+  rollback reclaims metavariable ids, so a cached term can silently start
+  naming an unrelated metavariable.
+- `add_member` replaces a member of the same name, kind, and staticness.
+  Any loop over a class's function vector must skip entries that are arms
+  of a multi-function in the same vector, or the last plain-named arm wins
+  over the overload.  Check `member_scheme` events (one per registration,
+  in order) before trusting an overload's arm order.

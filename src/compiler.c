@@ -370,7 +370,6 @@ static int builtin_modules;
 static int BuiltinCount;
 
 static CompileState STATE;
-#define STATE STATE
 
 static ModuleVector modules;
 static vec(ProgramAnnotation) annotations;

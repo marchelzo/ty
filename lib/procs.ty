@@ -20,6 +20,13 @@ fn __int(s: String) -> Int {
     int(s) ?? throw ValueError("invalid integer: {s}")
 }
 
+fn __int-field(info: Dict[String, Int | String], key: String) -> Int | nil {
+    match info[key] {
+        n: Int => n,
+        _      => nil
+    }
+}
+
 fn __env-dict(xs: Array[String]) -> Dict[String, String] {
     let env = %{}
     for s in xs {
@@ -304,9 +311,9 @@ pub class Fd {
 
     target -> String | nil { __fd-target(process.pid, fd) }
     info -> Dict[String, Int | String] { __fd-info(process.pid, fd) }
-    pos -> Int | nil { info['pos'] }
-    flags -> Int | nil { info['flags'] }
-    mount-id -> Int | nil { info['mnt_id'] }
+    pos -> Int | nil { __int-field(info, 'pos') }
+    flags -> Int | nil { __int-field(info, 'flags') }
+    mount-id -> Int | nil { __int-field(info, 'mnt_id') }
 
     ==(other: Fd) -> Bool { process == other.process && fd == other.fd }
     __hash__() -> Int { process.pid ^ fd }
@@ -486,8 +493,8 @@ fn __proc-status(pid: Int) -> Dict[String, String] {
 
 fn __proc-cred(pid: Int) {
     let s = __proc-status(pid)
-    let u = s['Uid'].split(/\s+/).map(__int)
-    let g = s['Gid'].split(/\s+/).map(__int)
+    let u = __must(s['Uid'], 'Uid').split(/\s+/).map(__int)
+    let g = __must(s['Gid'], 'Gid').split(/\s+/).map(__int)
     ({uid: u[0], euid: u[1], gid: g[0], egid: g[1]})
 }
 

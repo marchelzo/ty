@@ -872,7 +872,6 @@ extern char const *COLOR_MODE_NAMES[TY_COLOR_MODE_COUNT];
 
 extern bool RunningTests;
 extern bool CheckTypes;
-extern bool CheckConstraints;
 extern bool DetailedExceptions;
 extern bool NoJIT;
 extern bool CompileOnly;

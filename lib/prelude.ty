@@ -3455,6 +3455,12 @@ class Thread[T] {
 
     static wait-any(
         objects: Array[Note | CondVar],
+        timeout: nil = nil,
+        lock: Mutex | Array[Mutex] | nil = nil
+    ) -> Int;
+
+    static wait-any(
+        objects: Array[Note | CondVar],
         timeout: ?Float = nil,
         lock: Mutex | Array[Mutex] | nil = nil
     ) -> Int | nil {
@@ -3464,12 +3470,6 @@ class Thread[T] {
             lock if lock != nil
         )
     }
-
-    static wait-any(
-        objects: Array[Note | CondVar],
-        timeout: nil = nil,
-        lock: Mutex | Array[Mutex] | nil = nil
-    ) -> Int;
 
     getName() -> String | nil {
         thread.getName(__handle)

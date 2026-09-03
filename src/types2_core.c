@@ -3818,6 +3818,13 @@ subtype_compute(
                 }
                 return relation;
         }
+        if (
+                a->kind == T2_TYPE_TYPE_VALUE
+             && a->arity == 2
+             && b->kind == T2_TYPE_FUNCTION
+        ) {
+                return subtype_relation(context, a->children[1], supertype, progress);
+        }
 
         /* Set structure must be considered before treating variables as
          * opaque.  This proves tautologies such as T <: T | nil while still
@@ -3947,6 +3954,21 @@ subtype_compute(
                                         b->children[i],
                                         a->children[i],
                                         progress + 1
+                                );
+                        } else if (variance == T2_BIVARIANT) {
+                                item = combine_any(
+                                        subtype_relation(
+                                                context,
+                                                a->children[i],
+                                                b->children[i],
+                                                progress + 1
+                                        ),
+                                        subtype_relation(
+                                                context,
+                                                b->children[i],
+                                                a->children[i],
+                                                progress + 1
+                                        )
                                 );
                         } else {
                                 item = combine_all(
@@ -4325,6 +4347,21 @@ subtype_x(
                                         b->children[i],
                                         a->children[i],
                                         depth + 1
+                                );
+                        } else if (variance == T2_BIVARIANT) {
+                                item = combine_any(
+                                        subtype_x(
+                                                universe,
+                                                a->children[i],
+                                                b->children[i],
+                                                depth + 1
+                                        ),
+                                        subtype_x(
+                                                universe,
+                                                b->children[i],
+                                                a->children[i],
+                                                depth + 1
+                                        )
                                 );
                         } else {
                                 item = a->children[i] == b->children[i]
@@ -7397,7 +7434,7 @@ constrain_mapped_pack_expansion(
                                             ? T2_INVARIANT
                                             : info->variance[j];
                         T2Relation item_relation;
-                        if (variance == T2_COVARIANT) {
+                        if (variance == T2_COVARIANT || variance == T2_BIVARIANT) {
                                 item_relation = constrain_internal(
                                         solver,
                                         projection->children[j],
@@ -7443,7 +7480,7 @@ constrain_mapped_pack_expansion(
                             : info->variance[pack_index];
         T2Type variable = meta_type(solver, pack_root);
         T2Relation sequence_relation;
-        if (variance == T2_COVARIANT) {
+        if (variance == T2_COVARIANT || variance == T2_BIVARIANT) {
                 sequence_relation = constrain_internal(
                         solver,
                         sequence,
@@ -7759,6 +7796,41 @@ arm_lower_bound_admits(T2Solver *solver, T2Type arm, T2Type subtype)
 }
 
 static T2Relation
+constrain_either_way(
+        T2Solver *solver,
+        T2Type left,
+        T2Type right,
+        char const *provenance,
+        bool retain_deferred
+)
+{
+        if (
+                meta_from_type(solver, resolve_sort_solution(solver, left)) != 0
+             || meta_from_type(solver, resolve_sort_solution(solver, right)) != 0
+        ) return t2_solver_unify(solver, left, right, provenance);
+        T2SolverMark mark = t2_solver_mark(solver);
+        T2Relation forward = constrain_internal(
+                solver,
+                left,
+                right,
+                provenance,
+                retain_deferred
+        );
+        if (forward != T2_RELATION_NO && !solver->failed) {
+                t2_solver_commit(solver, mark);
+                return forward;
+        }
+        t2_solver_rollback(solver, mark);
+        return constrain_internal(
+                solver,
+                right,
+                left,
+                provenance,
+                retain_deferred
+        );
+}
+
+static T2Relation
 constrain_internal(
         T2Solver *solver,
         T2Type subtype,
@@ -8007,6 +8079,19 @@ constrain_internal(
                 }
                 return result;
         }
+        if (
+                a->kind == T2_TYPE_TYPE_VALUE
+             && a->arity == 2
+             && b->kind == T2_TYPE_FUNCTION
+        ) {
+                return constrain_internal(
+                        solver,
+                        a->children[1],
+                        supertype,
+                        provenance,
+                        retain_deferred
+                );
+        }
         if (a->kind == T2_TYPE_OVERLOAD && b->kind == T2_TYPE_FUNCTION) {
                 size_t applicable = 0;
                 size_t selected = 0;
@@ -8116,6 +8201,14 @@ constrain_internal(
                                         solver,
                                         b->children[i],
                                         a->children[i],
+                                        provenance,
+                                        retain_deferred
+                                );
+                        } else if (variance == T2_BIVARIANT) {
+                                item = constrain_either_way(
+                                        solver,
+                                        a->children[i],
+                                        b->children[i],
                                         provenance,
                                         retain_deferred
                                 );

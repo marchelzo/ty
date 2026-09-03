@@ -1426,6 +1426,8 @@ ensure_nominal(
               && class->def->type == STATEMENT_TAG_DEFINITION)
         ) {
                 for (size_t i = 0; i < arity; ++i) variance[i] = T2_COVARIANT;
+        } else if (class_id == CLASS_ARRAY) {
+                for (size_t i = 0; i < arity; ++i) variance[i] = T2_BIVARIANT;
         }
         bool declared = t2_declare_nominal(
                 shadow->universe,
@@ -4350,6 +4352,7 @@ constrain_predicate_maybe_diagnose(
         return valid;
 }
 
+static bool overload_arm_elsewhere(ExprVec const *functions, Expr const *function);
 static bool function_has_body(Expr const *function);
 static T2Type class_receiver_type(
         Types2Shadow *shadow,
@@ -4725,6 +4728,7 @@ interface_function_members(
 {
         for (int i = 0; i < vN(*functions); ++i) {
                 Expr const *function = v__(*functions, i);
+                if (overload_arm_elsewhere(functions, function)) continue;
                 T2Scheme *scheme = interface_callable_scheme(
                         shadow,
                         function,
@@ -6225,6 +6229,13 @@ static T2Type binding_effective_type(Types2Binding const *binding);
 static void deactivate_path_bindings(Types2Shadow *shadow, Symbol const *base, char const *member);
 static Types2Binding *ensure_resolved_binding(Types2Shadow *shadow, Symbol const *symbol);
 static T2Type iterated_type(Types2Shadow *shadow, T2Type source, Expr const *site);
+static T2Type iterated_type_x(
+        Types2Shadow *shadow,
+        T2Type source,
+        Expr const *site,
+        bool diagnose,
+        unsigned depth
+);
 static T2Type assign_iteration_target(
         Types2Shadow *shadow,
         Expr const *target,
@@ -6399,11 +6410,25 @@ positional_argument_expression(Expr const *site, size_t index)
         return v__(*arguments, (int)index);
 }
 
+static Expr const *
+keyword_argument_expression(Expr const *site, size_t index)
+{
+        if (site == NULL) return NULL;
+        ExprVec const *arguments = site->type == EXPRESSION_FUNCTION_CALL
+                                 ? &site->kwargs
+                                 : site->type == EXPRESSION_METHOD_CALL
+                                   ? &site->method_kwargs
+                                   : NULL;
+        if (arguments == NULL || index >= (size_t)vN(*arguments)) return NULL;
+        return v__(*arguments, (int)index);
+}
+
 static bool
 candidate_argument(
         Types2Shadow *shadow,
         T2Type argument,
         T2Type parameter,
+        Expr const *source,
         Expr const *site
 )
 {
@@ -6420,8 +6445,13 @@ candidate_argument(
                  * not an equality constraint on the value flowing into it.
                  * Binding an otherwise principal argument meta to Dynamic
                  * here makes a later precise use fail (and made call results
-                 * depend on which Dynamic consumer ran first). */
-                return true;
+                 * depend on which Dynamic consumer ran first).  A callable
+                 * literal is different: nothing else can ever constrain its
+                 * parameters, so it is a dynamic callback context. */
+                if (is_callable_literal(source)) {
+                        default_dynamic_callable_metas(shadow, argument, 0);
+                }
+                return !shadow->failed && !t2_solver_failed(shadow->solver);
         }
         T2Type resolved_argument = resolved_type_head(
                 shadow,
@@ -6554,7 +6584,7 @@ spread_fills_positional_suffix(
                              && strcmp(parameter.name, keywords[k]) == 0;
                 }
                 if (named) continue;
-                if (!candidate_argument(shadow, element, parameter.type, site)) {
+                if (!candidate_argument(shadow, element, parameter.type, NULL, site)) {
                         return false;
                 }
         }
@@ -6738,6 +6768,7 @@ apply_callable_candidate(
                                         shadow,
                                         element,
                                         parameter.type,
+                                        NULL,
                                         site
                                 )) {
                                         free(assigned);
@@ -6752,6 +6783,7 @@ apply_callable_candidate(
                                         shadow,
                                         arguments[i],
                                         parameter.type,
+                                        NULL,
                                         site
                                 )
                         ) break;
@@ -6765,7 +6797,7 @@ apply_callable_candidate(
                                 argument_count - i,
                                 T2_TYPE_INVALID
                         );
-                        if (!candidate_argument(shadow, pack, parameter.type, site)) {
+                        if (!candidate_argument(shadow, pack, parameter.type, NULL, site)) {
                                 free(assigned);
                                 return T2_TYPE_INVALID;
                         }
@@ -6785,6 +6817,7 @@ apply_callable_candidate(
                         shadow,
                         arguments[i],
                         accepted_parameter_type(shadow, &parameter),
+                        literal,
                         site
                 )) {
                         free(assigned);
@@ -6810,7 +6843,7 @@ apply_callable_candidate(
                         0,
                         T2_TYPE_INVALID
                 );
-                if (!candidate_argument(shadow, empty, parameter.type, site)) {
+                if (!candidate_argument(shadow, empty, parameter.type, NULL, site)) {
                         free(assigned);
                         return T2_TYPE_INVALID;
                 }
@@ -6885,6 +6918,7 @@ apply_callable_candidate(
                             shadow,
                             keyword_arguments[i],
                             accepted_parameter_type(shadow, &parameter),
+                            keyword_argument_expression(site, i),
                             site
                         )
                 ) {
@@ -6937,7 +6971,7 @@ infer_call_types(
         callee = resolved_type_head(
                 shadow,
                 callee,
-                T2_PREFER_LOWER_BOUND
+                T2_PREFER_KNOWN_VALUE
         );
         T2TypeKind kind = t2_type_kind(shadow->universe, callee);
         if (kind == T2_TYPE_ERROR) return callee;
@@ -7667,7 +7701,6 @@ import_operator_table(
                         function == NULL
                      || function->mtype != MT_2OP
                      || function->class == NULL
-                     || function->return_type == NULL
                      || find_operator_declaration(shadow, function) != NULL
                 ) continue;
                 bool annotated = true;
@@ -7909,6 +7942,101 @@ infer_registered_operator(
                 site,
                 diagnose
         );
+}
+
+static bool
+usable_type(Types2Shadow *shadow, T2Type type)
+{
+        return type != T2_TYPE_INVALID
+            && t2_type_kind(shadow->universe, type) != T2_TYPE_ERROR;
+}
+
+static bool
+ordering_operation(uint8_t operation)
+{
+        switch (operation) {
+        case EXPRESSION_LT:
+        case EXPRESSION_LEQ:
+        case EXPRESSION_GT:
+        case EXPRESSION_GEQ:
+                return true;
+        default:
+                return false;
+        }
+}
+
+static T2Type
+ordered_through_cmp(
+        Types2Shadow *shadow,
+        T2Type left,
+        T2Type right,
+        Expr const *site
+)
+{
+        T2SolverMark mark = t2_solver_mark(shadow->solver);
+        T2Type compared = infer_registered_operator(
+                shadow,
+                "<=>",
+                left,
+                right,
+                site,
+                false
+        );
+        if (usable_type(shadow, compared) && !t2_solver_failed(shadow->solver)) {
+                t2_solver_commit(shadow->solver, mark);
+                return t2_primitive(shadow->universe, T2_TYPE_BOOL);
+        }
+        t2_solver_rollback(shadow->solver, mark);
+        return T2_TYPE_INVALID;
+}
+
+static char const *
+compound_operator_name(uint8_t type)
+{
+        switch (type) {
+        case EXPRESSION_PLUS_EQ:  return "+=";
+        case EXPRESSION_MINUS_EQ: return "-=";
+        case EXPRESSION_STAR_EQ:  return "*=";
+        case EXPRESSION_DIV_EQ:   return "/=";
+        case EXPRESSION_MOD_EQ:   return "%=";
+        case EXPRESSION_AND_EQ:   return "&=";
+        case EXPRESSION_OR_EQ:    return "|=";
+        case EXPRESSION_XOR_EQ:   return "^=";
+        case EXPRESSION_SHL_EQ:   return "<<=";
+        case EXPRESSION_SHR_EQ:   return ">>=";
+        default:                  return NULL;
+        }
+}
+
+static T2Type
+mutating_operator_result(
+        Types2Shadow *shadow,
+        char const *name,
+        T2Type target,
+        T2Type value,
+        Expr const *site
+)
+{
+        if (name == NULL) return T2_TYPE_INVALID;
+        T2Type head = resolved_type_head(shadow, target, T2_PREFER_LOWER_BOUND);
+        if (t2_type_kind(shadow->universe, head) != T2_TYPE_NOMINAL) {
+                return T2_TYPE_INVALID;
+        }
+        T2SolverMark mark = t2_solver_mark(shadow->solver);
+        T2Type mutated = infer_registered_operator(
+                shadow,
+                name,
+                target,
+                value,
+                site,
+                false
+        );
+        if (usable_type(shadow, mutated) && !t2_solver_failed(shadow->solver)) {
+                t2_solver_commit(shadow->solver, mark);
+                return mutated;
+        }
+        t2_solver_rollback(shadow->solver, mark);
+        return T2_TYPE_INVALID;
 }
 
 static char const *
@@ -8200,9 +8328,24 @@ infer_binary_pair(
                         left,
                         right,
                         site,
-                        diagnose
+                        false
                 );
-                if (registered != T2_TYPE_INVALID) return registered;
+                if (usable_type(shadow, registered)) return registered;
+                if (ordering_operation(operation)) {
+                        T2Type ordered = ordered_through_cmp(shadow, left, right, site);
+                        if (ordered != T2_TYPE_INVALID) return ordered;
+                }
+                if (registered != T2_TYPE_INVALID) {
+                        if (diagnose) (void)infer_registered_operator(
+                                shadow,
+                                name,
+                                left,
+                                right,
+                                site,
+                                true
+                        );
+                        return t2_primitive(shadow->universe, T2_TYPE_ERROR);
+                }
         }
 
         if (open_operand_kind(left_kind) || open_operand_kind(right_kind)) {
@@ -9245,6 +9388,24 @@ resolved_match_subject(Types2Shadow *shadow, T2Type type)
         return result;
 }
 
+static T2Type
+string_needle_type(Types2Shadow *shadow)
+{
+        T2Type needle = t2_primitive(shadow->universe, T2_TYPE_STRING);
+        int const classes[] = { CLASS_REGEX, CLASS_REGEXV };
+        char const *const names[] = { "Regex", "RegexV" };
+        for (size_t i = 0; i < 2; ++i) {
+                Types2Nominal *nominal = ensure_nominal(shadow, classes[i], names[i], 0);
+                if (nominal == NULL) continue;
+                needle = t2_join(
+                        shadow->universe,
+                        needle,
+                        t2_nominal(shadow->universe, nominal->symbol, NULL, 0)
+                );
+        }
+        return needle;
+}
+
 static bool
 membership_compatible(
         Types2Shadow *shadow,
@@ -9376,10 +9537,10 @@ check_membership(
                         shadow,
                         site,
                         item,
-                        t2_primitive(shadow->universe, T2_TYPE_STRING),
+                        string_needle_type(shadow),
                         diagnose,
                         "membership-type",
-                        "string membership requires a String"
+                        "string membership requires a String, Regex, or RegexV"
                 );
         }
 
@@ -10231,22 +10392,24 @@ contextual_fresh_literal_x(
                 for (int i = 0; i < vN(expression->elements); ++i) {
                         Expr const *item = v__(expression->elements, i);
                         if (item != NULL && item->type == EXPRESSION_SPREAD) {
-                                T2Type spread = infer_expression(shadow, item);
-                                Types2Nominal *spread_nominal = nominal_from_type(
+                                T2Type element = collapse_multi_values(
                                         shadow,
-                                        spread
+                                        iterated_type_x(
+                                                shadow,
+                                                infer_expression(shadow, item),
+                                                item,
+                                                false,
+                                                0
+                                        )
                                 );
                                 if (
-                                        spread_nominal == NULL
-                                     || spread_nominal->class_id != CLASS_ARRAY
+                                        element == T2_TYPE_INVALID
+                                     || t2_type_kind(shadow->universe, element)
+                                        == T2_TYPE_ERROR
                                      || !constrain_type_maybe_diagnose(
                                                 shadow,
                                                 item,
-                                                t2_type_child(
-                                                        shadow->universe,
-                                                        spread,
-                                                        0
-                                                ),
+                                                element,
                                                 wanted,
                                                 false,
                                                 "contextual-array-spread",
@@ -10418,10 +10581,17 @@ contextual_fresh_literal(
                 return false;
         }
         T2SolverMark mark = t2_solver_mark(shadow->solver);
+        size_t touched_mark = shadow->touched_count;
+        shadow->recording += 1;
         bool valid = contextual_fresh_literal_x(shadow, source, expected)
                   && !t2_solver_failed(shadow->solver);
-        if (valid) t2_solver_commit(shadow->solver, mark);
-        else t2_solver_rollback(shadow->solver, mark);
+        shadow->recording -= 1;
+        if (valid) {
+                t2_solver_commit(shadow->solver, mark);
+        } else {
+                t2_solver_rollback(shadow->solver, mark);
+                forget_touched_nodes(shadow, touched_mark);
+        }
         return valid;
 }
 
@@ -14685,6 +14855,18 @@ infer_expression(Types2Shadow *shadow, Expr const *source)
                 }
                 T2Type target_type = infer_expression(shadow, expression->target);
                 T2Type value_type = infer_expression(shadow, expression->value);
+                T2Type mutated = mutating_operator_result(
+                        shadow,
+                        compound_operator_name(expression->type),
+                        target_type,
+                        value_type,
+                        expression
+                );
+                if (mutated != T2_TYPE_INVALID) {
+                        t2_solver_commit(shadow->solver, assignment);
+                        result = mutated;
+                        break;
+                }
                 T2Type combined = in_place_array_append(
                         shadow,
                         operation,
@@ -14978,6 +15160,7 @@ infer_expression(Types2Shadow *shadow, Expr const *source)
                 break;
         case EXPRESSION_TEMPLATE_XHOLE:
                 result = infer_expression(shadow, expression->hole.expr);
+                default_dynamic_callable_metas(shadow, result, 0);
                 break;
         case EXPRESSION_TEMPLATE_HOLE:
         case EXPRESSION_TEMPLATE_VHOLE:
@@ -18476,6 +18659,41 @@ function_has_body(Expr const *function)
         return false;
 }
 
+static void
+log_scheme_predicates(Types2Shadow *shadow, T2Scheme const *scheme)
+{
+        fputs(",\"predicate_list\":[", shadow->log);
+        size_t count = scheme == NULL ? 0 : t2_scheme_predicate_count(scheme);
+        for (size_t i = 0; i < count; ++i) {
+                T2Predicate predicate;
+                if (!t2_scheme_predicate(scheme, i, &predicate)) continue;
+                char *subtype = t2_type_string(shadow->universe, predicate.subtype);
+                char *supertype = t2_type_string(shadow->universe, predicate.supertype);
+                char *operand = predicate.operand == T2_TYPE_INVALID
+                              ? NULL
+                              : t2_type_string(shadow->universe, predicate.operand);
+                char text[1024];
+                snprintf(
+                        text,
+                        sizeof text,
+                        "%s%s%s: %s%s%s <: %s",
+                        predicate_kind_name(predicate.kind),
+                        predicate.name == NULL ? "" : ":",
+                        predicate.name == NULL ? "" : predicate.name,
+                        subtype == NULL ? "?" : subtype,
+                        operand == NULL ? "" : " ~ ",
+                        operand == NULL ? "" : operand,
+                        supertype == NULL ? "?" : supertype
+                );
+                if (i != 0) fputc(',', shadow->log);
+                json_string(shadow->log, text);
+                free(subtype);
+                free(supertype);
+                free(operand);
+        }
+        fputc(']', shadow->log);
+}
+
 static T2Scheme *
 generalize_member_scheme(
         Types2Shadow *shadow,
@@ -18557,6 +18775,21 @@ generalize_member_scheme(
         return result;
 }
 
+static bool
+overload_arm_elsewhere(ExprVec const *functions, Expr const *function)
+{
+        if (function == NULL || function->type == EXPRESSION_MULTI_FUNCTION) {
+                return false;
+        }
+        for (int i = 0; i < vN(*functions); ++i) {
+                Expr const *other = v__(*functions, i);
+                if (other != function && operator_expression_contains(other, function)) {
+                        return true;
+                }
+        }
+        return false;
+}
+
 static void
 infer_member_functions(
         Types2Shadow *shadow,
@@ -18571,6 +18804,7 @@ infer_member_functions(
 {
         for (int i = 0; i < vN(*functions); ++i) {
                 Expr const *function = v__(*functions, i);
+                if (overload_arm_elsewhere(functions, function)) continue;
                 size_t binding_mark = shadow->binding_count;
                 size_t environment_count = 0;
                 T2Type *environment = environment_types(
@@ -18636,6 +18870,7 @@ infer_member_functions(
                                         free(scheme_type);
                                 }
                         }
+                        log_scheme_predicates(shadow, scheme);
                         log_end(shadow);
                 }
                 if (scheme == NULL) {
@@ -20124,6 +20359,10 @@ infer_statement_once(Types2Shadow *shadow, Stmt const *statement)
                                         else log_native_type(
                                                 shadow,
                                                 t2_scheme_body(binding->scheme)
+                                        );
+                                        log_scheme_predicates(
+                                                shadow,
+                                                generalized ? binding->scheme : NULL
                                         );
                                         log_end(shadow);
                                 }

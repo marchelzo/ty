@@ -58,7 +58,6 @@ char const *COLOR_MODE_NAMES[] = {
 
 bool RunningTests = false;
 bool CheckTypes = true;
-bool CheckConstraints = true;
 bool DetailedExceptions = true;
 bool CompileOnly = true;
 bool AllowErrors = false;

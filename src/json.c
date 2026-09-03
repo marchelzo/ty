@@ -952,7 +952,7 @@ Value
 json_parse_typed(Ty *ty, Type *t0, char const *s, usize n)
 {
         json = s;
-        len = n;
+        len  = n;
 
         xd = true;
 

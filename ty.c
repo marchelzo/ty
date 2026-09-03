@@ -85,7 +85,6 @@ bool CompileOnly        = false;
 bool HighlightOnly      = false;
 bool AllowErrors        = false;
 bool CheckTypes         = true;
-bool CheckConstraints   = true;
 bool DetailedExceptions = false;
 bool NoJIT              = false;
 bool InteractiveSession = false;
@@ -498,7 +497,6 @@ ProcessArgs(char *argv[], bool first)
                 if (s_eq(argv[argi], "--highlight") || strncmp(argv[argi], "--highlight=", 12) == 0) {
                         HighlightOnly = true;
                         CheckTypes = false;
-                        CheckConstraints = false;
                         char const *eq = strchr(argv[argi], '=');
                         if (eq != NULL && eq[1] != '\0') {
                                 HighlightTheme = eq + 1;
@@ -531,14 +529,12 @@ ProcessArgs(char *argv[], bool first)
                                 switch (*opt) {
                                 case 'q':
                                         CheckTypes = false;
-                                        CheckConstraints = false;
                                         DetailedExceptions = false;
                                         break;
 
                                 case 't':
                                         Types2Authoritative = true;
-                                        CheckTypes = false;
-                                        CheckConstraints = false;
+                                        //CheckTypes = false;
                                         break;
 
                                 case 'b':
