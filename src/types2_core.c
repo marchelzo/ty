@@ -110,6 +110,7 @@ typedef struct t2_meta {
         char *provenance;
         T2WatchVector watchers;
         bool checking_bounds;
+        bool retired;
 } T2Meta;
 
 typedef struct t2_edge {
@@ -2510,6 +2511,10 @@ rebuild_type(
                         (size_t)node->payload,
                         children[node->payload]
                 );
+        case T2_TYPE_UNION:
+                return t2_union(universe, children, node->arity);
+        case T2_TYPE_INTERSECTION:
+                return t2_intersection(universe, children, node->arity);
         default:
                 return intern_type(
                         universe,
@@ -6762,6 +6767,46 @@ without_nil_arms(T2Universe *universe, T2Type type)
         return result;
 }
 
+static T2Type
+erase_callable_types(T2Universe *universe, T2Type callable)
+{
+        size_t count = t2_callable_parameter_count(universe, callable);
+        T2ParameterSpec *parameters = count == 0
+                                    ? NULL
+                                    : malloc(count * sizeof *parameters);
+        if (count != 0 && parameters == NULL) return T2_TYPE_INVALID;
+        T2Type dynamic = t2_primitive(universe, T2_TYPE_DYNAMIC);
+        for (size_t i = 0; i < count; ++i) {
+                if (!t2_callable_parameter(universe, callable, i, &parameters[i])) {
+                        free(parameters);
+                        return T2_TYPE_INVALID;
+                }
+                parameters[i].type = dynamic;
+        }
+        T2Type erased = t2_callable(
+                universe,
+                parameters,
+                count,
+                dynamic,
+                dynamic,
+                dynamic
+        );
+        free(parameters);
+        return erased;
+}
+
+static T2Relation
+callable_shape_relation(T2Universe *universe, T2Type actual, T2Type expected)
+{
+        T2Type erased_actual = erase_callable_types(universe, actual);
+        T2Type erased_expected = erase_callable_types(universe, expected);
+        if (
+                erased_actual == T2_TYPE_INVALID
+             || erased_expected == T2_TYPE_INVALID
+        ) return T2_RELATION_COMPLEXITY;
+        return t2_subtype(universe, erased_actual, erased_expected);
+}
+
 static T2Relation
 constrain_parameter_types(
         T2Solver *solver,
@@ -6797,7 +6842,11 @@ constrain_function_types(
         bool retain_deferred
 )
 {
-        T2Relation shape = t2_subtype(solver->universe, actual_type, expected_type);
+        T2Relation shape = callable_shape_relation(
+                solver->universe,
+                actual_type,
+                expected_type
+        );
         if (shape == T2_RELATION_NO || shape == T2_RELATION_COMPLEXITY) {
                 set_solver_error(
                         solver,
@@ -7608,6 +7657,46 @@ solver_types_identical(
         return true;
 }
 
+static bool
+type_has_open_meta(T2Solver *solver, T2Type type, unsigned depth)
+{
+        if (depth > T2_RELATION_DEPTH_LIMIT || type == T2_TYPE_INVALID) return false;
+        uint32_t meta = meta_from_type(solver, type);
+        if (meta != 0) {
+                meta = find_root(solver, meta);
+                T2Type solution = solver->metas[meta - 1].solution;
+                if (solution == T2_TYPE_INVALID) return true;
+                return type_has_open_meta(solver, solution, depth + 1);
+        }
+        T2Node const *node = get_node(solver->universe, type);
+        if (node == NULL) return false;
+        for (size_t i = 0; i < node->arity; ++i) {
+                if (type_has_open_meta(solver, node->children[i], depth + 1)) {
+                        return true;
+                }
+        }
+        return false;
+}
+
+static bool
+callable_parameters_open(T2Solver *solver, T2Node const *callable)
+{
+        size_t count = (size_t)callable->payload;
+        for (size_t i = 0; i < count && i < callable->arity; ++i) {
+                if (type_has_open_meta(solver, callable->children[i], 0)) return true;
+        }
+        return false;
+}
+
+static bool
+arm_lower_bound_admits(T2Solver *solver, T2Type arm, T2Type subtype)
+{
+        if (meta_from_type(solver, arm) == 0) return false;
+        T2Type lower = t2_solver_lower_bound(solver, arm);
+        return lower != T2_TYPE_INVALID
+            && t2_subtype(solver->universe, subtype, lower) == T2_RELATION_YES;
+}
+
 static T2Relation
 constrain_internal(
         T2Solver *solver,
@@ -7706,6 +7795,9 @@ constrain_internal(
                 set_solver_error(solver, "invalid type constraint", subtype, supertype, provenance);
                 return T2_RELATION_NO;
         }
+        if (a->kind == T2_TYPE_DYNAMIC || b->kind == T2_TYPE_DYNAMIC) {
+                return T2_RELATION_YES;
+        }
 
         if (a->kind == T2_TYPE_UNION) {
                 T2Relation result = T2_RELATION_YES;
@@ -7741,6 +7833,11 @@ constrain_internal(
                                 subtype,
                                 b->children[i]
                                 ) == T2_RELATION_YES
+                             || arm_lower_bound_admits(
+                                solver,
+                                b->children[i],
+                                subtype
+                                )
                         ) return T2_RELATION_YES;
                 }
                 size_t applicable = 0;
@@ -7832,6 +7929,65 @@ constrain_internal(
                 return constrain_children(solver, a, b, provenance, retain_deferred);
         }
 
+        if (b->kind == T2_TYPE_OVERLOAD) {
+                T2Relation result = T2_RELATION_YES;
+                for (size_t i = 0; i < b->arity; ++i) {
+                        result = combine_all(
+                                result,
+                                constrain_internal(
+                                        solver,
+                                        subtype,
+                                        b->children[i],
+                                        provenance,
+                                        retain_deferred
+                                )
+                        );
+                        if (solver->failed) return T2_RELATION_NO;
+                }
+                return result;
+        }
+        if (a->kind == T2_TYPE_OVERLOAD && b->kind == T2_TYPE_FUNCTION) {
+                size_t applicable = 0;
+                size_t selected = 0;
+                for (size_t i = 0; i < a->arity; ++i) {
+                        T2SolverMark mark = t2_solver_mark(solver);
+                        T2Relation trial = constrain_internal(
+                                solver,
+                                a->children[i],
+                                supertype,
+                                provenance,
+                                false
+                        );
+                        bool success = !solver->failed && trial != T2_RELATION_NO;
+                        t2_solver_rollback(solver, mark);
+                        if (!success) continue;
+                        if (applicable == 0) selected = i;
+                        applicable += 1;
+                }
+                if (applicable == 0) {
+                        set_solver_error(
+                                solver,
+                                "no overload arm satisfies the expected callable",
+                                subtype,
+                                supertype,
+                                provenance
+                        );
+                        return T2_RELATION_NO;
+                }
+                if (applicable == 1 || !callable_parameters_open(solver, b)) {
+                        return constrain_internal(
+                                solver,
+                                a->children[selected],
+                                supertype,
+                                provenance,
+                                retain_deferred
+                        );
+                }
+                if (retain_deferred) {
+                        return retain_obligation(solver, subtype, supertype, provenance);
+                }
+                return T2_RELATION_DEFERRED;
+        }
         if (a->kind == T2_TYPE_FUNCTION && b->kind == T2_TYPE_FUNCTION) {
                 return constrain_function_types(
                         solver,
@@ -8387,6 +8543,12 @@ t2_solver_solution(
         T2Type never = t2_primitive(solver->universe, T2_TYPE_NEVER);
         T2Type any = t2_primitive(solver->universe, T2_TYPE_ANY);
 
+        if (solver->metas[id - 1].retired) {
+                if (lower != never) return lower;
+                if (upper != any) return upper;
+                return meta;
+        }
+        if (preference == T2_PREFER_SOLUTION_ONLY) return meta;
         if (preference == T2_PREFER_KNOWN_VALUE) {
                 return lower != never ? lower : meta;
         }
@@ -9001,6 +9163,14 @@ type_contains_variable(
         return false;
 }
 
+static bool type_reaches_variable(
+        T2Solver *solver,
+        T2Type type,
+        T2VariableKind variable_kind,
+        uint32_t variable_id,
+        unsigned depth
+);
+
 static bool
 types_share_variable(
         T2Solver *solver,
@@ -9026,7 +9196,7 @@ types_share_variable(
         T2Node const *node = get_node(solver->universe, exported);
         if (node == NULL) return false;
         if (node->kind == T2_TYPE_VARIABLE) {
-                return type_contains_variable(
+                return type_reaches_variable(
                         solver,
                         candidate,
                         node->variable_kind,
@@ -9039,6 +9209,68 @@ types_share_variable(
                         solver,
                         node->children[i],
                         candidate,
+                        depth + 1
+                )) return true;
+        }
+        return false;
+}
+
+static bool
+type_reaches_variable(
+        T2Solver *solver,
+        T2Type type,
+        T2VariableKind variable_kind,
+        uint32_t variable_id,
+        unsigned depth
+)
+{
+        if (depth > T2_RELATION_DEPTH_LIMIT) return false;
+        uint32_t meta = meta_from_type(solver, type);
+        if (meta != 0) {
+                meta = find_root(solver, meta);
+                T2Meta const *node = &solver->metas[meta - 1];
+                if (node->solution != T2_TYPE_INVALID) {
+                        return type_reaches_variable(
+                                solver,
+                                node->solution,
+                                variable_kind,
+                                variable_id,
+                                depth + 1
+                        );
+                }
+                return (
+                                node->lower != T2_TYPE_INVALID
+                             && type_reaches_variable(
+                                        solver,
+                                        node->lower,
+                                        variable_kind,
+                                        variable_id,
+                                        depth + 1
+                                )
+                        ) || (
+                                node->upper != T2_TYPE_INVALID
+                             && type_reaches_variable(
+                                        solver,
+                                        node->upper,
+                                        variable_kind,
+                                        variable_id,
+                                        depth + 1
+                                )
+                        );
+        }
+        T2Node const *node = get_node(solver->universe, type);
+        if (node == NULL) return false;
+        if (
+                node->kind == T2_TYPE_VARIABLE
+             && node->variable_kind == variable_kind
+             && node->payload == variable_id
+        ) return true;
+        for (size_t i = 0; i < node->arity; ++i) {
+                if (type_reaches_variable(
+                        solver,
+                        node->children[i],
+                        variable_kind,
+                        variable_id,
                         depth + 1
                 )) return true;
         }
@@ -9588,17 +9820,13 @@ solver_generalize(
                                 0
                            )
                 );
-                if (
-                        !touches_replacement
-                     && !(
-                                scoped
-                             && predicate_shares_exported_variable(
-                                    solver,
-                                    type,
-                                    predicate
-                                )
-                        )
-                ) continue;
+                bool shares = scoped
+                           && predicate_shares_exported_variable(
+                                      solver,
+                                      type,
+                                      predicate
+                              );
+                if (!touches_replacement && !shares) continue;
                 T2Type subtype = generalize_type(
                         &generalization,
                         predicate->subtype
@@ -10169,6 +10397,31 @@ t2_solver_zonk(
         free(context.active_metas);
         free(context.binders);
         return result;
+}
+
+
+bool
+t2_definitely_disjoint(T2Universe const *universe, T2Type left, T2Type right)
+{
+        return definitely_disjoint(universe, left, right);
+}
+
+bool
+t2_solver_meta_solved(T2Solver *solver, T2Type meta)
+{
+        if (solver == NULL) return false;
+        uint32_t id = meta_from_type(solver, meta);
+        if (id == 0) return false;
+        id = find_root(solver, id);
+        return solver->metas[id - 1].solution != T2_TYPE_INVALID;
+}
+void
+t2_solver_retire_metas_since(T2Solver *solver, T2SolverMark mark)
+{
+        if (solver == NULL) return;
+        for (size_t id = mark.meta_count + 1; id <= solver->meta_count; ++id) {
+                solver->metas[id - 1].retired = true;
+        }
 }
 
 /* vim: set sts=8 sw=8 expandtab: */

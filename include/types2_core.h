@@ -144,7 +144,8 @@ typedef enum t2_relation {
 typedef enum t2_solution_preference {
         T2_PREFER_LOWER_BOUND,
         T2_PREFER_UPPER_BOUND,
-        T2_PREFER_KNOWN_VALUE
+        T2_PREFER_KNOWN_VALUE,
+        T2_PREFER_SOLUTION_ONLY
 } T2SolutionPreference;
 
 typedef enum t2_runtime_kind {
@@ -484,6 +485,15 @@ t2_subtype(T2Universe const *universe, T2Type subtype, T2Type supertype);
 
 T2Relation
 t2_consistent(T2Universe const *universe, T2Type left, T2Type right);
+
+bool
+t2_definitely_disjoint(T2Universe const *universe, T2Type left, T2Type right);
+
+bool
+t2_solver_meta_solved(T2Solver *solver, T2Type meta);
+
+void
+t2_solver_retire_metas_since(T2Solver *solver, T2SolverMark mark);
 
 T2Scheme *
 t2_scheme_new(

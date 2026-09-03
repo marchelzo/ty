@@ -23,8 +23,8 @@ fn merged(base: Dict[String, Int]) -> Int {
 
 let fds = %{nil: 2, *: #it}
 let key: String | nil = 'abc'
-let fd: Int = fds[key]
-let none: Int = fds[nil]
+let fd: Int = fds[key] ?? 0
+let none: Int = fds[nil] ?? 0
 
 print(
     pad(7),

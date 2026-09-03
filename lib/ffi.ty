@@ -27,12 +27,12 @@ __set_type__ c::double  CType[Float];
 __set_type__ c::ptr     CType[Ptr[Any]];
 __set_type__ c::void    CType[nil];
 
-fn c::str(ptr: IntoPtr[Any], len: ?Int) -> String;
-fn c::as_str(ptr: IntoPtr[Any], len: ?Int) -> String;
+fn c::str(ptr: IntoPtr[_], len: ?Int) -> String;
+fn c::as_str(ptr: IntoPtr[_], len: ?Int) -> String;
 fn c::load[T](type: CType[T], address: IntoPtr[T]) -> T;
 fn c::size[T](type: CType[T]) -> Int;
-fn c::free(ptr: IntoPtr[Any]) -> nil;
-fn c::new[T](type: CType[T], count: ?Int, init: ?IntoPtr[Any]) -> Ptr[T];
+fn c::free(ptr: IntoPtr[_]) -> nil;
+fn c::new[T](type: CType[T], count: ?Int, init: ?IntoPtr[_]) -> Ptr[T];
 fn c::box[T](type: CType[T], val: ?T) -> Ptr[T];
 fn c::alloc[T](size: Int) -> Ptr[T];
 fn ptr::typed[T](ptr: Ptr[Any], type: CType[T]) -> Ptr[T];
@@ -84,7 +84,7 @@ $$]
 
 fn c::pack(fmt: String, *args: Any) -> Ptr[Any];
 fn c::pack[T](buf: T, fmt: String, *args: Any) -> T;
-fn c::unpack[T](fmt: T, buf: IntoPtr[Any], off: Int = 0) -> __unpack-types!(T);
+fn c::unpack[T](fmt: T, buf: IntoPtr[_], off: Int = 0) -> __unpack-types!(T);
 
 pub __tls::_cif_cache: _ = nil
 
@@ -374,6 +374,10 @@ fn nextproto() -> (Array[AST], Bool) {
         let variadic = false
 
         next!('(')
+
+        if peek().?id == 'void' && peek(1).type == ')' {
+            next()
+        }
 
         while match peek().type {
             ')' => { break },
@@ -677,9 +681,29 @@ fn strct() {
         }).flat()
     }
 
+    fn collect-array-names(decls: _) -> _ {
+        decls.map(fn (d: _) -> _ match d {
+            Union(_, (inner: _)) => collect-array-names(inner),
+            Struct((inner: _))   => collect-array-names(inner),
+            {count: nil, *}      => [],
+            _                    => [d.name]
+        }).flat()
+    }
+
     let member-names = collect-names(members)
+    let array-names = collect-array-names(members)
+    let scalar-names = member-names.filter(n -> n not in array-names)
 
     let init-params = [ty.Param({name: it, constraint: ty.Any}) for member-names]
+
+    fn store-array(name) {
+        let value = ty.Id({name})
+        let copy = ty.Call(
+            func: ty.MemberAccess($$[ self $$], name),
+            args: [ty.Arg(arg: value)]
+        )
+        $$[ if $$value != nil { $$copy } $$]
+    }
 
     let init = ty.Func(
         name: 'init',
@@ -691,8 +715,9 @@ fn strct() {
                 $$[ self.`<p>` = c.new($$ctype) $$],
                 *[
                     $$[ $$(ty.MemberAccess($$[ self $$], name)) = $$(ty.Id({name})) $$]
-                    for name in member-names
-                ]
+                    for name in scalar-names
+                ],
+                *[store-array(name) for name in array-names]
             ])
         )
     )

@@ -618,44 +618,265 @@ yet satisfy a structural `where` bound at instantiation (`W([1, 2])[0] = 5`
 with `where T: SubscriptWrite[I, U]` fails outside the body); forwarding a
 mapped pack (`__iter__().zip(*its)`) is unsolved; `Array.zip` is array-only
 and keyword-`f` at runtime, `Dict.map` maps values, and `Dict.[]` is keyed,
-all diverging from `Iterable`; the runtime returns `nil` for an out-of-range
-`String` index while the prelude declares `String` (the legacy checker cannot
-take `String | nil` there, see `tests/str.ty`); a single-letter generator
+all diverging from `Iterable`; a single-letter generator
 method name such as `h*` lexes as one identifier and is not a generator;
 `./ty -c lib/prelude.ty` and `./ty -c lib/os.ty` fail in the legacy checker
 independently of types2 (a builtin module compiled as a main file).
 
+The session that worked through `ty -tc lib/http.ty` (13 errors in `llhttp`
+and 4 in `http` at the start, none at the end; the legacy checker rejected
+`lib/llhttp.ty` at the start and accepts it now) added:
+
+- member, subscript, and operator predicates on a metavariable that has only
+  an upper bound: the resolver checked the predicate against the whole upper
+  bound, so `token.size()` followed by `buf.search(token)` (needle
+  `Int | String | Blob`) failed because `Int` has no `size`; the upper bound
+  is now filtered to the arms that provide the member or operator
+  (`arms_providing_member`, `arms_supporting_operator`), the metavariable is
+  tightened to that union inside the same transaction, and the predicate is
+  resolved against it;
+- a muted pre-pass now also runs over the rest of a block after an unannotated
+  optional binding (`let data = nil`) that a nested function mentions and a
+  later statement assigns (`closure_repass_needed`), so a closure such as
+  `commit` sees the binding's final lower bounds instead of narrowing `nil` to
+  `Never`; the loop pre-pass also triggers for subscript writes and method
+  calls on bindings whose nominal arguments are still open metavariables
+  (`params[k] = v`, `xs.push(x)`); both share `muted_prepass`, which
+  snapshots and restores the whole binding table (a nested `fn` inferred twice
+  was otherwise appended to itself as an overload), retires the metavariables
+  the pass created (`t2_solver_retire_metas_since`), and never nests.  A
+  retired metavariable reads as its lower bound, because nothing will
+  constrain it again, but it is never pinned: pinning one that sits above a
+  live parameter metavariable through an edge tightened the live one and broke
+  `sqlite.fetchAll(assoc=false)`;
+- match subjects substitute solved and retired metavariables inside union arms
+  (`resolved_match_subject`, `T2_PREFER_SOLUTION_ONLY`), which is what lets
+  `one: String` subtract from `nil | String | Array[..]` when the dictionary's
+  value bound was accumulated by the pre-pass;
+- `Dynamic` is accepted on either side of a solver constraint
+  (`constrain_internal`), so a class declaring `IntoPtr[_]` satisfies
+  `IntoPtr[Int]` through the inherited-supertype path the way an `Array[_]`
+  argument already satisfied `Array[Int]` through unification; the strict
+  `t2_subtype` relation is unchanged;
+- `rebuild_type` canonicalises unions and intersections, so zonking `U | V`
+  after both resolve to the same type no longer yields duplicate arms
+  (`Dict.+` returns `Dict[K, U | V]`), and `T <: $a | $b` is proven without
+  solver mutation when `T` already sits below one arm's lower bound
+  (`arm_lower_bound_admits`), which resolved the pending field write behind
+  `(url, params) = match ...`;
+- membership (`x in dict`, `x in array`) requires the tested type to overlap
+  the key or element type (`t2_definitely_disjoint`) instead of being a
+  subtype of it: the runtime answers `false` for a mismatched key, and a
+  `nil | String` header value is a legitimate question.  An open tested type
+  or container type still constrains as before;
+- `?v` in an array pattern binds `T | nil`, because the runtime binds `nil`
+  for an absent element (the `optional` vector already typed array literals);
+- `kw: **T` in a record-form function type is a keyword-rest parameter (the
+  parser produces a nested spread, not a splat), which is how
+  `RequestHandler` declares that route parameters arrive as keywords;
+- the right operand of `??` receives the left operand's non-nil type as a
+  literal hint, so `__handlers[method] ?? []` is one array type instead of a
+  union of two, and a fresh dictionary literal argument is typed contextually
+  like arrays and records (`fresh_literal_expression`);
+- a `let x: _ = ...` binding keeps `Dynamic`: the assignment no longer records
+  the initializer's precise type as a flow refinement when the declared
+  storage type is Dynamic, so an explicit opt-out such as `modify!`'s
+  `let record: _ = %{}` is honoured.
+
+Library contracts corrected in the same pass, each checked against the
+runtime first:
+
+- `lib/prelude.ty`: `Blob.clear(i: Int = 0, n: ?Int = nil) -> Blob` (the
+  builtin removes a byte range and returns the blob; the legacy checker
+  rejected `buf.clear(0, n)` as well), and `modify!` builds its nested record
+  with `d = d[part] ?? (d[part] = %{})`;
+- `lib/os.ty`: the three-argument `poll` fills `pollfds-out` with
+  `(Int, Int) | (Int, Int, T)`, because plain descriptors report pairs;
+- `lib/ffi.ty`: `c::str`, `as_str`, `free`, `new`, and `unpack` take
+  `IntoPtr[_]` instead of `IntoPtr[Any]`, which under invariance rejected even
+  a `String`;
+- `lib/llhttp.ty`: `decode-query` returns
+  `Dict[String, String | Array[String | nil] | nil]` and `HttpRequest.params`
+  matches, because a bare key repeated after a valued one produces
+  `['1', nil]` at runtime; a multipart part without a Content-Disposition
+  header yields `MultipartError` instead of calling `str!` on `nil`; the
+  `disposition` map carries a `Dict[String, String]` annotation, which is what
+  the legacy checker needed to accept the module at all;
+- `lib/http.ty`: `RequestHandler` declares `kwargs: **_`, `__install` reads
+  the route list with `?? []` and writes it back (the legacy checker rejects a
+  `DefaultDict`-typed field initialised with `%{*: []}`), and the poll list is
+  `[Int | (Int, Int, HttpConnection)]`.
+
+Known gaps recorded while reading these modules: `_` lowers to `Dynamic`
+everywhere, so `Dict[String, Dynamic]` cannot be written without making the
+dictionary itself dynamic (the `modify!` trie is Dynamic); a membership guard
+(`if part not in d { d[part] = ... }`) does not narrow the following subscript
+read; a pre-pass-local metavariable that received no bound at all remains a
+bare arm in the accumulated bound; the record-form function type has no
+surface syntax for keyword-only parameters beyond the `**` rest.
+
+The session that worked through `ty -tc lib/clap.ty` (20 errors and 3
+warnings in `clap` plus 3 errors in `yaml` at the start, none at the end; the
+legacy checker rejected `lib/clap.ty` at the start and accepts it now) added:
+
+- callable shape checks compare erased callables: `constrain_function_types`
+  used the strict relation on the full types as a shape pre-check, which
+  rejected any callable with `Dynamic` parameters against a callable with
+  metavariables (`edit-distance(other) -> Dynamic` against
+  `($m) -> $r`); the pre-check now erases every parameter and result to
+  `Dynamic` (`erase_callable_types`) so only kinds, names, arity, and
+  required-ness are compared before the gradual constraints run;
+- an overload set on the subtype side of a solver constraint is resolved like a
+  call: each arm is tried in a transaction, a single applicable arm (or the
+  first one once the expected parameters are closed) is committed so the
+  expected result metavariable is bound, and an ambiguous set with still-open
+  parameters is retained (`constrain_internal`); previously
+  `overload{...} <: (Regex[0]) -> $r` fell to the strict relation and left
+  `$r` unbound, which is why `lisp(s)`'s `scan(...).join('-').lower()` chain
+  never resolved at call sites;
+- match subjects and refutable annotation patterns use a metavariable's known
+  value (`T2_PREFER_KNOWN_VALUE`) and an identifier subject bound to an open
+  metavariable is matched as that metavariable (`known_subject_meta`), so a
+  requirement collected in one arm (`_ => pred(result)` puts a callable upper
+  bound on `pred`) no longer makes `rng: Range` in a later match "unreachable";
+  the subject identifier is also refined to each arm's narrowed type for the
+  arm's body (`refine_arm_subject`), so `_ => pred(1)` on a
+  `Array | Range | Regex | (Int -> Bool)` parameter sees the callable arm;
+- a predicate whose subject is concrete but whose result is `Dynamic` (a tuple
+  element typed `_`, a builtin returning `_`) is discharged as `Dynamic`
+  instead of deferred forever (`entries.map(\#_[0])`);
+- a lambda passed to a `Dynamic`-typed parameter is a dynamic callback
+  context: its unconstrained parameter and result metavariables default to
+  `Dynamic` after inference instead of leaving member predicates pending;
+- member paths: `x.f != nil`, `x.f :: T`, and a truthiness test on `x.f`
+  where `x` is a local binding with a record or class type seed a path
+  binding (`path_refinement_binding`, keyed by the base symbol and member
+  name, stored in the binding table with `symbol == NULL`) whose refinement is
+  consulted by every later read of `x.f`, merged and restored by the same
+  branch machinery as ordinary bindings, cleared by any call (they are
+  `member` bindings), and deactivated by a write to `x` or `x.f`.  Because
+  `::` binds looser than `&&`, `if a.f != nil && a.f.g :: T` parses as
+  `(a.f != nil && a.f.g) :: T`, and `&&` yields its right operand, so a `::`
+  test whose left side is a conjunction refines the left conjunct and applies
+  the test to the right conjunct (`apply_match_test`); `and`/`or` keyword
+  forms are handled like `&&`/`||` in condition refinements;
+- comparisons against literal `nil` and `::` tests against a type value run no
+  user code and no longer invalidate member refinements
+  (`pure_comparison`); in exchange, a nested function body starts with the
+  stale refinements of captured evolving bindings (`let ^file = nil` leaves
+  `nil`) cleared (`forget_captured_evolving_refinements`) and restored for the
+  outer flow afterwards, which is what the old operator invalidation used to do
+  by accident;
+- generalization follows a metavariable's bounds when deciding whether a
+  scoped obligation shares an exported variable (`type_reaches_variable`);
+- narrowing to a union annotation (`set: Array | Range`) narrows to each arm
+  and joins the results, so an unrelated arm (`Regex`) is no longer kept by
+  the Dynamic-argument rule;
+- a tag value passed where a callable is expected (`group.all?(Some)`) is
+  checked through `Tag.__call__`, found through a new `Tag`-instance fallback
+  for tag receivers whose own class has no such member
+  (`tag_instance_member`);
+- `condition_test_type` rejects a non-identifier leaf instead of reading a
+  garbage symbol (a crash that only appeared with the legacy checker on).
+
+Library contracts corrected in the same pass, each checked against the
+runtime first:
+
+- `lib/prelude.ty`: `Array.any?`/`all?` and the `Iterable` defaults take
+  `pred: T -> _` (the builtins call the predicate on every element; a tag or
+  class value is a matcher and `Tag` now declares `__call__(x: _) -> _`),
+  `popWhile(pred: T -> _) -> Array[T]` (it returns `self`), which is also what
+  the legacy checker needed to type `lines.filter(\_).all?(...)`;
+- `lib/ffi.ty`: a `(void)` C prototype no longer produces a `nil` parameter,
+  and a struct `init` stores array members through their accessor method
+  instead of assigning a field that clobbered the method (`c.u8 _rest[392]`);
+- `lib/clap.ty`: `camel` slices `s[;1]` (the split piece can be empty, so
+  `s[0]` is `nil`), the leading-whitespace count is
+  `l.search(/\S/) ?? #l` (the composed `` `#` . /^\s*/ `` form was rejected
+  by the legacy checker), the flag map read is asserted (`flagMap[name]!`),
+  and `setValue(spec: OptionSpec, val: String)` names its contract (without
+  it `val.split(...)` was an unknown iterable and `vals[-1]` optional).
+
+Known gaps recorded while reading these modules: a member predicate that is
+discharged inside a function body breaks the chain from the parameter to the
+result metavariables it produced, so a later obligation on such a result
+(`takes(vals[-1])` with `vals = d != nil ? val.split(d) : [val]`) is neither
+captured by the scheme nor resolvable and is reported at the definition; a
+comprehension's `if` condition does not narrow the element expression
+(`[o for xs if o != nil where o = it]` is `Array[String | nil]`); `Some[Int]`
+in expression position (the `Tag.[]` matcher) is not subscriptable; a
+function that calls its parameter only in a fallback arm still carries that
+call as an unconditional scheme requirement, so annotate such parameters
+with the full union.
+
+The follow-up that asked where `s[0] :: nil | String` came from found that
+`infer_subscript_type` carried hard-coded subscript rules (`String` read as
+`String | nil`, `Array` as `T`, `Dict` as `V | nil`) that ran before any
+member lookup, so the prelude's `[]` declarations were never consulted for
+those receivers and a contradiction between the two was silent.  The runtime
+now throws `IndexError` for an out-of-range string index, which made the
+stale native rule wrong.  Changes:
+
+- the three rules are gone; a subscript resolves through the receiver's
+  declared `[]` member like any operator, and `infer_subscript_protocol` maps
+  a primitive receiver to its bound prelude class (`receiver_class_id`), so
+  `String.[](i: Int) -> String`, `Array.[]`'s two arms, `Dict.[]`, and
+  `DefaultDict.[](key: K) -> V` are the only sources of truth;
+- the native builtin table still carries `[]` contracts for `String` and
+  `Dict` as runtime knowledge, and `add_builtin_method` now reconciles a
+  native contract with an existing declaration
+  (`reconcile_native_contract`): a declaration may be weaker than the
+  runtime contract, but one that claims more (declared strictly below native)
+  is reported at the class as `native-contract-mismatch` and the sound
+  contract is installed; an unrelated pair is reported and the declaration
+  kept.  `tests/subscript_contracts.ty` pins the runtime facts the table
+  encodes;
+- `Dict.[](key: K) -> nil | V` in the prelude, as instructed, because a
+  missing key reads as `nil`; the legacy checker now rejects `lib/log.ty`
+  (and therefore `lib/http.ty`) and the `tests/xinfo.ty` test, which is
+  accepted per the instruction to ignore legacy-checker errors;
+  `tools/types2-corpus-summary.ty` and the `contextual`/`defaults` fixtures
+  had genuine unguarded reads and were corrected so the gates still run;
+- `??` on a still-open left operand is a retained `??` operator predicate
+  resolved once the subject is known (`counts[key] ?? 0` on an unannotated
+  `counts` no longer keeps a `nil` arm that arrives later);
+- an assignment of a `Dynamic` value no longer refines the binding away from
+  its declared type (`nr: Int` stays `Int`);
+- gradual consistency of a union actual is checked per arm, so
+  `Function | Class` is not accepted for a `Class` parameter merely because
+  `Class[Dynamic]` is one of its arms; the existing union-argument split
+  across overloads then applies (`doc(x)` with `x: Class | Function` joins
+  both results, including the Function arm's `nil`), and `help.ty`'s local
+  `doc` lambda declares that union.
+
 The last clean validation run used the clang ASan build and produced:
 
-- `./ty test.ty`: 78 passed;
+- `./ty test.ty`: 78 passed, 1 failed (`xinfo`, rejected by the legacy
+  checker after `Dict.[]` became honest; ignored per instruction);
 - the types2 core unit suite: passed;
-- shadow-on/shadow-off equivalence: passed, including the new `hierarchy`
-  fixture (primitive traits, cross-unit `Iter`, overload conformance,
-  upper-bound reads after a guarded throw, `:: Function`, tag statics,
-  dictionary index targets, recursive alias counts, dynamic member writes);
+- shadow-on/shadow-off equivalence: passed, including the `clap` fixture;
 - the strict corpus gate: passed;
-- the startup corpus: 16 units, 0 unsupported nodes, 1,844 deferred nodes
-  (1,329 runtime, 171 incomplete, 344 external, 0 recovery), and no pending
+- the startup corpus: 16 units, 0 unsupported nodes, 1,849 deferred nodes
+  (1,343 runtime, 173 incomplete, 333 external, 0 recovery), and no pending
   obligation;
-- 5 raw types2 diagnostic events reducing to 5 unique diagnostics, all
+- 4 raw types2 diagnostic events reducing to 4 unique diagnostics, all
   classified (3 library defects: `Array.zip`, `Dict.map`, `Dict.[]`; 1
-  incomplete feature: mapped-pack forwarding; 1 expected correction: the
-  `path.ty` warning); `ffi`, `pretty`, and every other startup unit
-  contribute none;
-- every module under `lib/` compiled this session reports nothing under
-  `ty -tc` (`term`, `sh`, `readln`, `log`, `chalk`, `help`, `ty/repl`, `io`,
-  `os`, `curl`, `ffi`, `pretty`, `ety`, `sqlite`); `lib/path.ty` keeps its
-  intended warning.  The `-t` report can undercount the prelude relative to
-  the strict-gate log (three `Any > Any` operator errors appeared only with
-  the legacy checker on), so the log summary is the reference.
+  incomplete feature: mapped-pack forwarding);
+- every module under `lib/` compiled so far reports nothing under `ty -tc`
+  (`term`, `sh`, `readln`, `log`, `chalk`, `help`, `ty/repl`, `io`, `os`,
+  `path`, `curl`, `ffi`, `pretty`, `ety`, `sqlite`, `http`, `llhttp`, `yaml`,
+  `clap`); the legacy checker rejects `lib/log.ty` and `lib/http.ty`
+  (`Dict.[]` reads) and `lib/os.ty` (pre-existing), which is accepted.  The
+  `-t` report can undercount the prelude relative to the strict-gate log, so
+  the log summary is the reference.
 
 `tests/types2-corpus-classification.json`, `tests/types2-corpus.sh`,
 `tools/types2-corpus-summary.ty`, `tests/dict_type_predicate.ty`, and the
 `deferred`, `nil-guards`, `loops`, `multi-values`, `evolving`, `contextual`,
-`defaults`, `repl`, and `hierarchy` fixtures are still untracked in the
-working tree; commit them with the next milestone.
-The classification file was reseeded on 2026-09-02 from a five-entry log;
-every earlier entry vanished because its site now checks, so the triage
+`defaults`, `repl`, `hierarchy`, `http`, and `clap` fixtures are still
+untracked in the working tree; commit them with the next milestone.
+The classification file was reseeded on 2026-09-02 from a four-entry log
+(the `path.ty` warning left when that match was rewritten), so the triage
 queue is empty and the next work is the full library matrix beyond the
 modules listed above plus the known gaps recorded with each milestone.
 
@@ -686,8 +907,8 @@ The remaining pending obligation is the `<=>` pack obligation from
 `min`/`max` at `lib/chalk.ty:609`; it is classified as an incomplete pack
 feature, not a library error.
 
-The classification file records 1 expected correction, 3 library defects, 1
-incomplete feature, and no unexplained diagnostics.  Keys carry line numbers,
+The classification file records 3 library defects, 1 incomplete feature,
+and no unexplained diagnostics.  Keys carry line numbers,
 so an edit that inserts lines in a library file moves every later key; reseed
 with `--seed --classification` and restore the moved entries' classes before
 treating them as new.
@@ -1266,6 +1487,51 @@ problems this work is intended to eliminate.
   one identifier.  `import ty` inside `ty -e` clashes with the pre-import.
 - `-t` output and the strict-gate log can differ for the prelude; always
   finish with `tests/types2-corpus.sh`.
+- A muted pre-pass (`muted_prepass`) must snapshot and restore the whole
+  binding table, retire the metavariables it created rather than pin them,
+  and never run inside another pre-pass; a predicate resolver that sees a
+  metavariable with only an upper bound must filter that bound, not fail on
+  it.
+- `let x: _` is a Dynamic binding; do not refine it from its initializer.
+  `_` in a parameter annotation is also Dynamic, and `Dynamic` is accepted on
+  both sides of a solver constraint but never by the strict relation.
+- The record-form function type spells a keyword rest as `kw: **T`; the
+  parser gives a nested spread.  At runtime `f(**d)` binds matching named
+  parameters and drops the rest, so a keyword spread against a callable type
+  without `**` is an error.
+- Membership is an overlap test, not a subtype test; `x in dict` with a
+  mismatched key is `false` at runtime.
+- `?v` in an array pattern is `nil` when the element is absent;
+  `'abcd' + 2` slices to `'cd'`; `Blob.clear(i, n)` removes a range and
+  returns the blob; the three-argument `poll` reports pairs for plain
+  descriptors and triples for tagged ones.
+- The legacy checker needs `let disposition: Dict[String, String] = %{...}`
+  in `llhttp.ty` and rejects a `DefaultDict`-typed field initialised with a
+  default-dictionary literal; keep both when editing those modules.
+- `::` binds looser than `&&`: `a.f != nil && a.f.g :: T` is
+  `(a.f != nil && a.f.g) :: T`, and `&&` yields its right operand.  Path
+  refinements live in the binding table with `symbol == NULL`; any code that
+  dereferences `binding->symbol` must guard it.
+- A metavariable's upper bound is a requirement, never its value: match
+  subjects, refutable patterns, and identifier subjects read known values
+  only.  The strict callable shape check must erase types first.
+- A comparison against literal `nil` or a `::` type test does not invalidate
+  member refinements; a nested function body instead starts without the stale
+  refinements of captured evolving bindings.
+- Tags are matcher predicates at runtime (`[Some(1), None].all?(Some)` is
+  `false`) and `_`-prefixed members are private, so a struct's `_rest` array
+  accessor is only reachable from inside the class.
+- A struct constructor's first positional parameter is the pointer slot;
+  pass members by keyword (`S(a: 7, data: blob)`).
+- Subscripts resolve through the declared `[]` member; there are no native
+  subscript rules left.  A native builtin contract must never be stronger
+  than the runtime; when the prelude claims more than the native table, the
+  class reports `native-contract-mismatch`.  `tests/subscript_contracts.ty`
+  pins the runtime facts (string and array reads throw, dictionary reads are
+  `nil` when missing).
+- Legacy-checker errors are ignored by instruction, but code that must
+  execute (tools, tests, fixtures) still has to compile under it; guard a
+  dictionary read with `??` or `!` there rather than weakening a declaration.
 - Update this document after each milestone with the new clean baseline, newly
   classified gaps, and the exact next command. That is what makes a later
   continuation reliable rather than archaeological.

@@ -27,7 +27,7 @@ fn _cleanDoc(doc: String | nil) {
 
     let lines = doc.lines().drop-while!(`!`).pop-while(`!`)
 
-    let leading = lines.filter(\_).map(`#` . /^\s*/).min() ?? 0
+    let leading = lines.filter(\_).map(l -> l.search(/\S/) ?? #l).min() ?? 0
     lines = lines.map(&[leading;])
 
     if lines.filter(\_).all?(\_.match?(/^\*/)) {
@@ -232,7 +232,7 @@ fn _doParse(cls: _, argv, config) -> _ {
         return result
     }
 
-    fn setValue(spec, val) {
+    fn setValue(spec: OptionSpec, val: String) {
         let vals = spec.delim != nil ? val.split(spec.delim) : [val]
         if spec.repeat || (spec.constraint :: Array) {
             result[spec.name] = result[spec.name] ?? []
@@ -321,7 +321,7 @@ fn _doParse(cls: _, argv, config) -> _ {
                 allLefts.push('    --version')
             }
             for spec in visibleOpts {
-                let s = flagMap[spec.name]
+                let s = flagMap[spec.name]!
                 if typeMap[spec.name] != nil { s += " <{typeMap[spec.name]}>" }
                 allLefts.push(s)
             }

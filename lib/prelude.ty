@@ -742,8 +742,8 @@ class Array[T] : Iterable[T] {
         join()
     }
 
-    popWhile(p) {
-        while #self > 0 && p(self[-1]) {
+    popWhile(pred: T -> _) -> Array[T] {
+        while #self > 0 && pred(self[-1]) {
             self.pop()
         }
 
@@ -1034,7 +1034,7 @@ class Dict[K, V] : Iterable[K, V] {
         keep!((k, v) -> !f(k, v))
     }
 
-    [](key: K) -> V {
+    [](key: K) -> nil | V {
         self[key]
     }
 
@@ -1249,7 +1249,7 @@ class String : Iterable[String], IntoPtr[Int] {
     }
 
     [](i: Int) -> String {
-        self[i]!
+        self[i]
     }
 
     -(end: String) -> String {
@@ -1596,7 +1596,7 @@ class Blob : Iterable[Int], IntoPtr[Int] {
 
     set(i: Int, byte: Int) -> nil;
 
-    clear() -> nil;
+    clear(i: Int = 0, n: ?Int = nil) -> Blob;
 }
 
 class Bool {
@@ -1713,6 +1713,8 @@ class Module {
 }
 
 class Tag < Function {
+    __call__(x: _) -> _;
+
     [](T) {
         x -> do {
             match x {
@@ -1973,12 +1975,12 @@ trait Iterable[T] {
         __iter__().reverse()
     }
 
-    any?(p) -> Bool {
-        __iter__().any?(p)
+    any?(pred: T -> _) -> Bool {
+        __iter__().any?(pred)
     }
 
-    all?(p) -> Bool {
-        __iter__().all?(p)
+    all?(pred: T -> _) -> Bool {
+        __iter__().all?(pred)
     }
 
     list() {
@@ -2261,18 +2263,18 @@ trait Iter[T] < Iterable[T] {
         return x
     }
 
-    any?(p: _) -> Bool {
+    any?(pred: T -> _) -> Bool {
         for x in self {
-            if p(x) {
+            if pred(x) {
                 return true
             }
         }
         return false
     }
 
-    all?(p: _) -> Bool {
+    all?(pred: T -> _) -> Bool {
         for x in self {
-            if !p(x) {
+            if !pred(x) {
                 return false
             }
         }
@@ -3666,10 +3668,7 @@ macro modify! {
         let d = record
 
         for part in ps {
-            if part not in d {
-                d[part] = %{}
-            }
-            d = d[part]
+            d = d[part] ?? (d[part] = %{})
         }
 
         d[field] = e

@@ -80,7 +80,7 @@ fn describe(c) -> String {
 
 let fds = %{nil: 2, *: #it}
 let key: String | nil = 'abc'
-let fd: Int = fds[key]
+let fd: Int = fds[key] ?? 0
 
 print(
     style-for('red'),

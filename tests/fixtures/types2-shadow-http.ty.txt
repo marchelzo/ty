@@ -1,0 +1,94 @@
+import ffi as c (C!)
+import os (..)
+
+C! struct Pair {
+    c.int a;
+    c.int b;
+}
+
+fn free-pair(p: Pair) { c.free(p) }
+
+class Box : IntoPtr[_] { __ptr__() -> Ptr[_] { Ptr[Int](0) } }
+fn wants-int(x: IntoPtr[Int]) -> Int { 0 }
+
+fn seek(token) -> Int | nil {
+    let size = token.size()
+    let buf = Blob()
+    buf.push('abc')
+    buf.clear(0, 1)
+    buf.search(token) ?? size
+}
+
+fn count(token) -> Int {
+    let n = #token
+    Blob().search(token) ?? n
+}
+
+fn decode(query: String) -> Dict[String, String | Array[String | nil] | nil] {
+    let params = %{}
+    for [k, ?v] in query.split('&').map(p -> p.split('=', 1)) {
+        match params[k] {
+            nil         => { params[k] = v        },
+            one: String => { params[k] = [one, v] },
+            many        => { many.push(v)         }
+        }
+    }
+    params
+}
+
+fn commit-later() -> Int {
+    let data = nil
+    fn commit(x: Int) {
+        if data != nil {
+            data.push(x)
+        }
+    }
+    fn part() { data = [] }
+    part()
+    commit(1)
+    #(data ?? [])
+}
+
+use Handler = {req: Int, rsp: String, params: *_, kwargs: **_} -> Int;
+fn dispatch(f: Handler, ps: Dict[String, String]) -> Int { f(1, 'a', **ps) }
+fn handler(req: Int, rsp: String, id: String = '') -> Int { #id }
+
+fn route-map() -> Int {
+    let routes: Dict[String, Array[String]] = %{*: []}
+    let handlers = routes['GET'] ?? []
+    handlers.push('/x')
+    handlers.sort!(by=\-(#_))
+    routes['GET'] = handlers
+    #handlers
+}
+
+fn member(headers: Dict[String, String | Array[String]], keys: Dict[String, Bool]) -> Bool {
+    headers['Content-Type'] in keys
+}
+
+fn opt-elements(xs: Array[String]) -> String | nil {
+    let [first, ?second] = xs
+    second
+}
+
+fn record-trie() -> Int {
+    let record: _ = %{}
+    let d = record
+    for part in ['a', 'b'] {
+        d = d[part] ?? (d[part] = %{})
+    }
+    d['leaf'] = 1
+    #record
+}
+
+fn merge(a: Dict[String, Int | nil], b: Dict[String, Int | nil]) -> Dict[String, Int | nil] { a + b }
+
+fn polling(sock: Int) -> Int {
+    let fds: [Int | (Int, Int, String)] = [sock]
+    fds.push((sock, POLLIN, 'tag'))
+    #fds
+}
+
+print(seek('b'), count('c'), decode('a=1&a&b'), commit-later())
+print(dispatch(handler, %{'id': 'xy'}), route-map(), member(%{'Content-Type': 'x'}, %{'x': true}))
+print(opt-elements(['p']), record-trie(), merge(%{'k': 1}, %{'j': nil}), polling(0), wants-int(Box()))

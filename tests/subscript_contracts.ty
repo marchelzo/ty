@@ -1,0 +1,29 @@
+ns test
+
+fn throws-index-error(f: () -> _) -> Bool {
+    try {
+        f()
+    } catch IndexError(_) {
+        return true
+    }
+    false
+}
+
+pub fn test-string-index-throws-out-of-range() {
+    assert('abc'[1] == 'b')
+    assert(throws-index-error(() -> ''[0]))
+    assert(throws-index-error(() -> 'abc'[5]))
+}
+
+pub fn test-array-index-throws-out-of-range() {
+    assert([1, 2][1] == 2)
+    assert(throws-index-error(() -> [1][5]))
+}
+
+pub fn test-dictionary-index-is-nil-when-missing() {
+    let d = %{'a': 1}
+    assert(d['a'] == 1)
+    assert(d['b'] == nil)
+    let dd = %{*: 0}
+    assert(dd['x'] == 0)
+}
