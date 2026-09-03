@@ -1,0 +1,108 @@
+import ptr
+import ty
+
+fn takes-into(p: IntoPtr[_]) -> Int { 0 }
+fn takes-iter(it: Iter[Int]) -> Int { it.list().sum(0) }
+fn gen*() -> Generator[Int, nil] { yield 1; yield 2 }
+
+class Bag : Iterable[Int] {
+    __xs: Array[Int]
+    init(xs: Array[Int]) { __xs = xs }
+    __iter__() -> Iter[Int] { __xs.__iter__() }
+}
+
+trait Grouped[T] {
+    groups[U](f: T -> U) -> Iterable[Array[T]] { [] }
+    groups() -> Iterable[Array[T]] { [] }
+}
+
+class Runs[T] : Grouped[T] {
+    groups() -> Array[Array[T]] { [] }
+    groups[U](f: T -> U) -> Array[Array[T]] { [] }
+}
+
+class Ctx < RuntimeError {
+    init(code: Int, ctx: String = '') { super(ctx) }
+}
+
+class Stmt {
+    init(p, db, sql: String) {}
+}
+
+class Db {
+    __db: _
+    init() { __db = %{'prepare': (db, sql) -> 1} }
+    query(sql) -> Stmt {
+        if not let $s = __db['prepare'](__db, sql) {
+            throw Ctx(1, sql)
+        }
+        Stmt(s, __db, sql)
+    }
+}
+
+trait Keyed[T] {
+    lo(k: T -> Any = later) -> T | nil { nil }
+}
+
+class Keys[T] : Keyed[T] {
+    mean(f: T -> Int | Float = later) -> Int { 0 }
+}
+
+fn later[T](x: T) -> T { x }
+
+fn render(p: String | (() -> String)) -> String {
+    if p :: Function { p() } else { p }
+}
+
+fn or-zero(x: Some[Int] | None) -> Int {
+    match x {
+        Some(v) => v,
+        None    => 0
+    }
+}
+
+class Opts {
+    width: Int
+    init() { width = 0 }
+}
+
+fn apply-opts(o: Opts, kwargs: Dict[String, Int]) {
+    for key, val in kwargs { o.{key} = val }
+}
+
+fn positions(d: Dict[String, Int]) -> Int {
+    let total = 0
+    for _, _, i in d { total += i }
+    total
+}
+
+use Nested[U] = Array[U] | Array[Nested[U]]
+
+fn outer-count(xs: Nested[Int]) -> Int { #xs }
+
+fn sp(i, j) { 'abcdef'.slice(i, j - i) }
+
+let big: Int = Int.MAX
+let make-class = ty.Class
+
+print(
+    takes-into('abc'),
+    takes-into(3),
+    takes-into('abc'.cstr()),
+    takes-into(ptr.null),
+    takes-iter(gen()),
+    [x for x in Bag([4, 5])],
+    render('a'),
+    render(-> 'b'),
+    or-zero(Some(3)),
+    or-zero(None),
+    positions(%{'x': 1, 'y': 2}),
+    outer-count([1, 2]),
+    sp(1, 3),
+    big > 0,
+    make-class != nil,
+    Db().query('select 1') != nil
+)
+let opts = Opts()
+apply-opts(opts, %{'width': 7})
+print(opts.width)

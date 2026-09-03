@@ -211,7 +211,7 @@ pub fn poll[T](
 
 pub fn poll[T](
     pollfds-in: Iterable[Int | (Int, Int, T)],
-    pollfds-out: [(Int, Int, T)],
+    pollfds-out: [(Int, Int) | (Int, Int, T)],
     timeout: Float | Int | nil
 ) -> Int;
 

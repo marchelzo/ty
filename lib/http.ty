@@ -67,7 +67,7 @@ pub class HttpResponse {
     }
 }
 
-use RequestHandler = {req: HttpRequest, rsp: HttpResponse, params: *_} -> Int;
+use RequestHandler = {req: HttpRequest, rsp: HttpResponse, params: *_, kwargs: **_} -> Int;
 
 use RouteMap = Dict[
     String,
@@ -137,9 +137,10 @@ pub class HttpServer {
 
     __install(method: String, route: String, fun: RequestHandler) {
         let (params, pattern) = make-pattern(route)
-        let handlers = __handlers[method]
+        let handlers = __handlers[method] ?? []
         handlers.push({route, params, pattern, fun})
         handlers.sort!(by=\-(_.route.search('<') ?? 99999))
+        __handlers[method] = handlers
     }
 
     get(f, route) {
@@ -202,7 +203,7 @@ pub class HttpServer {
     }
 
     run() {
-        let polling = [__sock, __ev-r]
+        let polling: [Int | (Int, Int, HttpConnection)] = [__sock, __ev-r]
         let events  = []
         let buf     = Blob()
 

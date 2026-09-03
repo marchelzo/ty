@@ -144,7 +144,7 @@ doc! os::exec
 pub fn help(x: Any) {
     let x = docRef(x)
 
-    let doc = fn (x) {
+    let doc = fn (x: Class | Function) {
         return table[x] ?? doc(x)
     }
 

@@ -5,31 +5,25 @@
       "classification": "library-defect",
       "note": "Array.zip is a native builtin that rejects non-Array iterables and takes f as a keyword, so it cannot satisfy Iterable.zip(*its: ...Iterable[U], longest)",
       "severity": "error",
-      "message": "member does not satisfy the declared trait contract: constraint failed: overload{(...ys: ...Array[$pack2090] = ?, f: Error = ?) -> Array[$m2091]; (...ys: ...Array[$pack2092] = ?) -> Array[($q1073742050, $pack2092)]} is not a subtype of (...its: ...Iterable[$pack2093] = ?, longest: Bool = ?) -> Generator[($q1073742050, $pack2093), nil] yields ($q1073742050, $pack2093) sends nil at member does not satisfy the declared trait contract at /home/brad/ty/lib/prelude.ty:549:5\npredicate: overload{(...ys: ...Array[$pack2090] = ?, f: Error = ?) -> Array[$m2091]; (...ys: ...Array[$pack2092] = ?) -> Array[($q1073742050, $pack2092)]} <: (...its: ...Iterable[$pack2093] = ?, longest: Bool = ?) -> Generator[($q1073742050, $pack2093), nil] yields ($q1073742050, $pack2093) sends nil from member does not satisfy the declared trait contract at /home/brad/ty/lib/prelude.ty:549:5\n"
+      "message": "member does not satisfy the declared trait contract: no overload arm satisfies the expected callable: overload{(...ys: ...Array[$pack2205] = ?, f: Error = ?) -> Array[$m2206]; (...ys: ...Array[$pack2207] = ?) -> Array[($q1073742050, $pack2207)]} is not a subtype of (...its: ...Iterable[$pack2208] = ?, longest: Bool = ?) -> Generator[($q1073742050, $pack2208), nil] yields ($q1073742050, $pack2208) sends nil at member does not satisfy the declared trait contract at /home/brad/ty/lib/prelude.ty:549:5\npredicate: overload{(...ys: ...Array[$pack2205] = ?, f: Error = ?) -> Array[$m2206]; (...ys: ...Array[$pack2207] = ?) -> Array[($q1073742050, $pack2207)]} <: (...its: ...Iterable[$pack2208] = ?, longest: Bool = ?) -> Generator[($q1073742050, $pack2208), nil] yields ($q1073742050, $pack2208) sends nil from member does not satisfy the declared trait contract at /home/brad/ty/lib/prelude.ty:549:5\n"
     },
     "prelude:990:5:invalid-trait-member": {
       "classification": "library-defect",
       "note": "Dict.map maps values and returns a Dict, an API that diverges from Iterable.map over (K, V) pairs",
       "severity": "error",
-      "message": "member does not satisfy the declared trait contract: occurs check failed: ($q1073742051, $m2092) is not a subtype of $m2092 at member does not satisfy the declared trait contract at /home/brad/ty/lib/prelude.ty:990:5\nupper bound: $m2090 <: ($q1073742052) -> $m2092 from map\nlower bound: Dict[$q1073742051, $m2092] <: $m2091 from map\nsubtype edge: $m2093 <: $m2094 from map\nsubtype edge: $m2094 <: $m2093 from map\npredicate: (f: $m2090) -> $m2091 <: (f: (($q1073742051, $q1073742052)) -> $m2093) -> Iterable[$m2093] yields $m2093 sends nil from member does not satisfy the declared trait contract at /home/brad/ty/lib/prelude.ty:990:5\n"
+      "message": "member does not satisfy the declared trait contract: occurs check failed: ($q1073742051, $m2207) is not a subtype of $m2207 at member does not satisfy the declared trait contract at /home/brad/ty/lib/prelude.ty:990:5\nupper bound: $m2205 <: ($q1073742052) -> $m2207 from map\nlower bound: Dict[$q1073742051, $m2207] <: $m2206 from map\nsubtype edge: $m2208 <: $m2209 from map\nsubtype edge: $m2209 <: $m2208 from map\npredicate: (f: $m2205) -> $m2206 <: (f: (($q1073742051, $q1073742052)) -> $m2208) -> Iterable[$m2208] yields $m2208 sends nil from member does not satisfy the declared trait contract at /home/brad/ty/lib/prelude.ty:990:5\n"
     },
     "prelude:1037:5:invalid-trait-member": {
       "classification": "library-defect",
       "note": "Dict.[] is keyed lookup while the Iterable default [](i: Int) is positional; the two contracts conflict",
       "severity": "error",
-      "message": "member does not satisfy the declared trait contract: incompatible callable protocol: (key: $q1073742051) -> $q1073742052 is not a subtype of (i: Int) -> nil | ($q1073742051, $q1073742052) at member does not satisfy the declared trait contract at /home/brad/ty/lib/prelude.ty:1037:5\npredicate: nil <: $q1073742052 from []\npredicate: (key: $q1073742051) -> $q1073742052 <: (i: Int) -> nil | ($q1073742051, $q1073742052) from member does not satisfy the declared trait contract at /home/brad/ty/lib/prelude.ty:1037:5\n"
+      "message": "member does not satisfy the declared trait contract: incompatible callable protocol: (key: $q1073742051) -> nil | $q1073742052 is not a subtype of (i: Int) -> nil | ($q1073742051, $q1073742052) at member does not satisfy the declared trait contract at /home/brad/ty/lib/prelude.ty:1037:5\npredicate: (key: $q1073742051) -> nil | $q1073742052 <: (i: Int) -> nil | ($q1073742051, $q1073742052) from member does not satisfy the declared trait contract at /home/brad/ty/lib/prelude.ty:1037:5\n"
     },
-    "prelude:2089:9:bad-call": {
+    "prelude:2091:9:bad-call": {
       "classification": "incomplete-feature",
-      "note": "forwarding a mapped pack parameter (*its: ...Iterable[U]) into another mapped-pack parameter is not solved yet",
+      "note": "forwarding a mapped pack parameter (*its: ...Iterable[U]) into another mapped-pack parameter (__iter__().zip(*its)) is unsolved: the pack expansion of a pack is not related to the callee's mapped pack",
       "severity": "error",
-      "message": "arguments do not satisfy the callable's names, defaults, rests, and types: constraint failed: ...(...Iterable[$pack900] |) is not a subtype of Iterable[$pack901] at call argument at /home/brad/ty/lib/prelude.ty:2089:9\npredicate: ......(...Iterable[$pack900] |) <: ...Iterable[$pack901] from call argument at /home/brad/ty/lib/prelude.ty:2089:9\n"
-    },
-    "path:84:13:unreachable-pattern": {
-      "classification": "expected-correction",
-      "note": "catch-all arm after exhaustive arms; benign warning the legacy checker never reported",
-      "severity": "warning",
-      "message": "previous match arms already cover the subject type"
+      "message": "arguments do not satisfy the callable's names, defaults, rests, and types: constraint failed: ...(...Iterable[$pack904] |) is not a subtype of Iterable[$pack905] at call argument at /home/brad/ty/lib/prelude.ty:2091:9\npredicate: ......(...Iterable[$pack904] |) <: ...Iterable[$pack905] from call argument at /home/brad/ty/lib/prelude.ty:2091:9\n"
     }
   }
 }

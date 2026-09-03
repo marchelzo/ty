@@ -379,7 +379,7 @@ fn multipart*(boundary: String) {
             }
             match k.lower() {
                 'content-disposition' => {
-                    let disposition = %{k: v for [_, k, v] in v.scan(/(\w+)="([^"]+)"/)}
+                    let disposition: Dict[String, String] = %{k: v for [_, k, v] in v.scan(/(\w+)="([^"]+)"/)}
 
                     name     = disposition['name']
                     filename = disposition['filename']
@@ -420,10 +420,12 @@ fn multipart*(boundary: String) {
             path     = nil
             mime     = nil
             name     = nil
-        } else {
+        } else if data != nil {
             form[name] = data.str!()
             data       = nil
             name       = nil
+        } else {
+            yield MultipartError
         }
 
         end != '--'
@@ -445,7 +447,7 @@ pub fn urldecode(s: String) -> String {
      .sub("\r", "\n")
 }
 
-pub fn decode-query(query: String) -> Dict[String, String | Array[String] | nil] {
+pub fn decode-query(query: String) -> Dict[String, String | Array[String | nil] | nil] {
     let params = %{}
 
     for [k, ?v] in query.split('&').map(p -> p.split('=', 1).map!(urldecode)) {
@@ -466,7 +468,7 @@ pub class HttpRequest {
     url:       String
     version:   HttpVersion
     headers:   HttpHeaders
-    params:    Dict[String, String | [String] | nil]
+    params:    Dict[String, String | [String | nil] | nil]
     files:     Dict[String, _]
     body:      String | nil
     finished:  Bool

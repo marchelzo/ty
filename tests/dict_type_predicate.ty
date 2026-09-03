@@ -1,0 +1,37 @@
+ns test
+
+pub fn test-dict-type-predicate-accepts-matching-entries() {
+    assert(%{1: 'a', 2: 'b'} :: Dict[Int, String])
+    assert(%{'x': 1.5} :: Dict[String, Float])
+    assert(%{} :: Dict[Int, String])
+}
+
+pub fn test-dict-type-predicate-rejects-wrong-keys() {
+    assert(!(%{'a': 1} :: Dict[Int, Int]))
+    assert(!(%{1: 1, 'b': 2} :: Dict[Int, Int]))
+}
+
+pub fn test-dict-type-predicate-rejects-wrong-values() {
+    assert(!(%{1: 'a'} :: Dict[Int, Int]))
+    assert(!(%{1: 1, 2: 'b'} :: Dict[Int, Int]))
+}
+
+pub fn test-dict-type-predicate-rejects-non-dicts() {
+    assert(!([(1, 2)] :: Dict[Int, Int]))
+    assert(!(nil :: Dict[Int, Int]))
+    assert(!('dict' :: Dict[String, String]))
+}
+
+pub fn test-dict-type-predicate-in-match() {
+    let describe = match {
+        d :: Dict[String, Int] => 'counts',
+        d :: Dict[Int, String] => 'names',
+        d :: Dict              => 'dict',
+        _                      => 'other',
+    }
+
+    assert(describe(%{'a': 1}) == 'counts')
+    assert(describe(%{1: 'a'}) == 'names')
+    assert(describe(%{1.5: 'a'}) == 'dict')
+    assert(describe([1]) == 'other')
+}

@@ -1,0 +1,506 @@
+import ffi as c (C!)
+import os (mmap, munmap)
+import errno
+
+C! fn {
+    void *memset(void *s, int c, size_t n);
+    void *memcpy(void *dst, void *src, size_t n);
+    long syscall(long number, ...);
+};
+
+const __NR_io_uring_setup    = 425
+const __NR_io_uring_enter    = 426
+const __NR_io_uring_register = 427
+
+pub const IORING_SETUP_IOPOLL    = 1 << 0
+pub const IORING_SETUP_SQPOLL    = 1 << 1
+pub const IORING_SETUP_SQ_AFF    = 1 << 2
+pub const IORING_SETUP_CQSIZE    = 1 << 3
+pub const IORING_SETUP_CLAMP     = 1 << 4
+pub const IORING_SETUP_ATTACH_WQ = 1 << 5
+
+pub const IORING_ENTER_GETEVENTS = 1
+pub const IORING_ENTER_SQ_WAKEUP = 2
+pub const IORING_ENTER_SQ_WAIT   = 4
+pub const IORING_ENTER_EXT_ARG   = 8
+
+pub const IORING_SQ_NEED_WAKEUP = 1 << 0
+pub const IORING_SQ_CQ_OVERFLOW = 1 << 1
+
+pub const IOSQE_FIXED_FILE    = 1 << 0
+pub const IOSQE_IO_DRAIN      = 1 << 1
+pub const IOSQE_IO_LINK       = 1 << 2
+pub const IOSQE_IO_HARDLINK   = 1 << 3
+pub const IOSQE_ASYNC         = 1 << 4
+pub const IOSQE_BUFFER_SELECT = 1 << 5
+
+pub const IORING_OP_NOP             = 0
+pub const IORING_OP_READV           = 1
+pub const IORING_OP_WRITEV          = 2
+pub const IORING_OP_FSYNC           = 3
+pub const IORING_OP_READ_FIXED      = 4
+pub const IORING_OP_WRITE_FIXED     = 5
+pub const IORING_OP_POLL_ADD        = 6
+pub const IORING_OP_POLL_REMOVE     = 7
+pub const IORING_OP_SENDMSG         = 9
+pub const IORING_OP_RECVMSG         = 10
+pub const IORING_OP_TIMEOUT         = 11
+pub const IORING_OP_TIMEOUT_REMOVE  = 12
+pub const IORING_OP_ACCEPT          = 13
+pub const IORING_OP_ASYNC_CANCEL    = 14
+pub const IORING_OP_LINK_TIMEOUT    = 15
+pub const IORING_OP_CONNECT         = 16
+pub const IORING_OP_CLOSE           = 19
+pub const IORING_OP_READ            = 22
+pub const IORING_OP_WRITE           = 23
+pub const IORING_OP_SEND            = 26
+pub const IORING_OP_RECV            = 27
+pub const IORING_OP_SHUTDOWN        = 34
+pub const IORING_OP_SOCKET          = 45
+
+const IORING_OFF_SQ_RING = 0
+const IORING_OFF_CQ_RING = 0x8000000
+const IORING_OFF_SQES    = 0x10000000
+const MAP_POPULATE       = 0x008000
+
+C! struct io_uring_sqe {
+    uint8_t  opcode;
+    uint8_t  flags;
+    uint16_t ioprio;
+    int32_t  fd;
+    uint64_t off;
+    uint64_t addr;
+    uint32_t len;
+    uint32_t rw_flags;
+    uint64_t user_data;
+    uint16_t buf_index;
+    uint16_t personality;
+    int32_t  splice_fd_in;
+    uint64_t addr3;
+    uint64_t __pad2;
+};
+
+C! struct io_uring_cqe {
+    uint64_t user_data;
+    int32_t  res;
+    uint32_t flags;
+};
+
+C! struct io_uring_params {
+    uint32_t sq_entries;
+    uint32_t cq_entries;
+    uint32_t flags;
+    uint32_t sq_thread_cpu;
+    uint32_t sq_thread-idle;
+    uint32_t features;
+    uint32_t wq_fd;
+    uint32_t resv0;
+    uint32_t resv1;
+    uint32_t resv2;
+
+    uint32_t sq_off_head;
+    uint32_t sq_off_tail;
+    uint32_t sq_off_ring_mask;
+    uint32_t sq_off_ring_entries;
+    uint32_t sq_off_flags;
+    uint32_t sq_off_dropped;
+    uint32_t sq_off_array;
+    uint32_t sq_off_resv1;
+    uint64_t sq_off_user_addr;
+
+    uint32_t cq_off_head;
+    uint32_t cq_off_tail;
+    uint32_t cq_off_ring_mask;
+    uint32_t cq_off_ring_entries;
+    uint32_t cq_off_overflow;
+    uint32_t cq_off_cqes;
+    uint32_t cq_off_flags;
+    uint32_t cq_off_resv1;
+    uint64_t cq_off_user_addr;
+};
+
+fn sys_io_uring_setup(entries, params) {
+    syscall(__NR_io_uring_setup, (c.u32, entries), (c.ptr, params))
+}
+
+fn sys_io_uring_enter(fd, to_submit, min_complete, flags) {
+    syscall(
+        __NR_io_uring_enter,
+        (c.u32, fd),
+        (c.u32, to_submit),
+        (c.u32, min_complete),
+        (c.u32, flags),
+        (c.ptr, nil),
+        (c.u64, 0)
+    )
+}
+
+fn read-u32(base, off) { c.load(c.u32, base + off) }
+fn read-i32(base, off) { c.load(c.i32, base + off) }
+fn read-u64(base, off) { c.load(c.u64, base + off) }
+
+fn write-u32(base, off, val) { c.store(c.u32, base + off, val) }
+
+const CQE_USER_DATA = 0
+const CQE_RES       = 8
+const CQE_FLAGS     = 12
+const CQE_SIZE      = 16
+
+pub class CQE {
+    user:  Int
+    res:   Int
+    flags: Int
+
+    init(user, res, flags) {
+        self.user  = user
+        self.res   = res
+        self.flags = flags
+    }
+
+    __str__() {
+        "CQE(data={self.user}, res={self.res}, flags={self.flags})"
+    }
+}
+
+pub class IoUring {
+    fd: Int
+
+    sq-entries: Int
+    cq-entries: Int
+
+    sq-ring: Ptr
+    cq-ring: Ptr
+    sqes: Ptr
+
+    sq-ring-sz: Int
+    cq-ring-sz: Int
+
+    sq-head-off: Int
+    sq-tail-off: Int
+    sq-mask-off: Int
+    sq-flags-off: Int
+    sq-array-off: Int
+
+    cq-head-off: Int
+    cq-tail-off: Int
+    cq-mask-off: Int
+    cq-cqes-off: Int
+
+    // Cached
+    sq-mask: Int
+    cq-mask: Int
+
+    // Reusable SQE staging area
+    __sqe: io_uring_sqe
+
+    init(entries: Int = 64, flags: Int = 0) {
+        __sqe = io_uring_sqe()
+
+        let params = io_uring_params()
+        if flags != 0 {
+            params.flags = flags
+        }
+
+        fd = sys_io_uring_setup(entries, params)
+        if fd < 0 {
+            throw "io_uring_setup failed: {errno.str()}"
+        }
+
+        sq-entries = params.sq_entries
+        cq-entries = params.cq_entries
+
+        sq-head-off  = params.sq_off_head
+        sq-tail-off  = params.sq_off_tail
+        sq-mask-off  = params.sq_off_ring_mask
+        sq-flags-off = params.sq_off_flags
+        sq-array-off = params.sq_off_array
+
+        cq-head-off = params.cq_off_head
+        cq-tail-off = params.cq_off_tail
+        cq-mask-off = params.cq_off_ring_mask
+        cq-cqes-off = params.cq_off_cqes
+
+        // mmap the SQ ring
+        sq-ring-sz = params.sq_off_array + sq-entries * 4
+        sq-ring = mmap(
+            nil, sq-ring-sz,
+            os.PROT_READ | os.PROT_WRITE,
+            os.MAP_SHARED | MAP_POPULATE,
+            fd, IORING_OFF_SQ_RING
+        )
+
+        // mmap the CQ ring
+        cq-ring-sz = params.cq_off_cqes + cq-entries * CQE_SIZE
+        cq-ring = mmap(
+            nil, cq-ring-sz,
+            os.PROT_READ | os.PROT_WRITE,
+            os.MAP_SHARED | MAP_POPULATE,
+            fd, IORING_OFF_CQ_RING
+        )
+
+        // mmap the SQEs array
+        sqes = mmap(
+            nil, sq-entries * #__sqe,
+            os.PROT_READ | os.PROT_WRITE,
+            os.MAP_SHARED | MAP_POPULATE,
+            fd, IORING_OFF_SQES
+        )
+
+        // Cache the ring masks
+        sq-mask = read-u32(sq-ring, sq-mask-off)
+        cq-mask = read-u32(cq-ring, cq-mask-off)
+    }
+
+    // ----------------------------------------------------------
+    // Prepare an SQE and copy it into the ring. Returns the SQE
+    // object for further modification before submit if needed.
+    // ----------------------------------------------------------
+    push-sqe(sqe: io_uring_sqe) {
+        let tail = read-u32(sq-ring, sq-tail-off)
+        let head = read-u32(sq-ring, sq-head-off)
+
+        if tail - head >= sq-entries {
+            throw "SQ ring full"
+        }
+
+        let idx = tail & sq-mask
+        let dst = sqes + idx * #sqe
+
+        // Copy the SQE into the ring
+        memcpy(dst, sqe, #sqe)
+
+        // Write the index into the SQ array
+        write-u32(sq-ring, sq-array-off + idx * 4, idx)
+
+        // Advance tail
+        write-u32(sq-ring, sq-tail-off, tail + 1)
+    }
+
+    // ----------------------------------------------------------
+    // Submit queued SQEs to the kernel
+    // ----------------------------------------------------------
+    submit() {
+        let tail = read-u32(sq-ring, sq-tail-off)
+        let head = read-u32(sq-ring, sq-head-off)
+        let n = tail - head
+        if n == 0 { return 0 }
+
+        let ret = sys_io_uring_enter(fd, n, 0, 0)
+        if ret < 0 {
+            throw "io_uring_enter(submit) failed: {errno.str()}"
+        }
+        return ret
+    }
+
+    // ----------------------------------------------------------
+    // Submit and wait for at least `n` completions
+    // ----------------------------------------------------------
+    submit-and-wait(n: Int = 1) {
+        let tail = read-u32(sq-ring, sq-tail-off)
+        let head = read-u32(sq-ring, sq-head-off)
+        let to-submit = tail - head
+
+        let ret = sys_io_uring_enter(fd, to-submit, n, IORING_ENTER_GETEVENTS)
+        if ret < 0 {
+            throw "io_uring_enter(submit_and_wait) failed: {errno.str()}"
+        }
+        return ret
+    }
+
+    // ----------------------------------------------------------
+    // Wait for at least `n` completions (without submitting)
+    // ----------------------------------------------------------
+    wait(n: Int = 1) {
+        let ret = sys_io_uring_enter(fd, 0, n, IORING_ENTER_GETEVENTS)
+        if ret < 0 {
+            throw "io_uring_enter(wait) failed: {errno.str()}"
+        }
+        return ret
+    }
+
+    peek-cqes() {
+        let head = read-u32(cq-ring, cq-head-off)
+        let tail = read-u32(cq-ring, cq-tail-off)
+        let results = []
+
+        while head != tail {
+            let idx = head & cq-mask
+            let p = cq-ring + cq-cqes-off + idx * CQE_SIZE
+
+            results.push(CQE(
+                user:  read-u64(p, CQE_USER_DATA),
+                res:   read-i32(p, CQE_RES),
+                flags: read-u32(p, CQE_FLAGS)
+            ))
+
+            head += 1
+        }
+
+        return results
+    }
+
+    // ----------------------------------------------------------
+    // Consume `n` CQEs
+    // ----------------------------------------------------------
+    advance-cq(n: Int) {
+        let head = read-u32(cq-ring, cq-head-off)
+        write-u32(cq-ring, cq-head-off, head + n)
+    }
+
+    // ----------------------------------------------------------
+    // Process completed CQEs and advance the CQ head.
+    // Returns the number of CQEs processed.
+    // ----------------------------------------------------------
+    each-cqe(f) {
+        let head = read-u32(cq-ring, cq-head-off)
+        let tail = read-u32(cq-ring, cq-tail-off)
+        let n = 0
+
+        while head != tail {
+            let idx = head & cq-mask
+            let p = cq-ring + cq-cqes-off + idx * CQE_SIZE
+            f(read-u64(p, CQE_USER_DATA), read-i32(p, CQE_RES), read-u32(p, CQE_FLAGS))
+            head += 1
+            n += 1
+        }
+
+        write-u32(cq-ring, cq-head-off, head)
+        return n
+    }
+
+    // ----------------------------------------------------------
+    // Wait for and return the next completed CQE
+    // ----------------------------------------------------------
+    wait-cqe() {
+        for (;;) {
+            let cqes = peek-cqes()
+            if #cqes > 0 {
+                advance-cq(1)
+                return cqes[0]
+            }
+            wait(1)
+        }
+    }
+
+    // ----------------------------------------------------------
+    // Submit, wait, and yield each CQE
+    // ----------------------------------------------------------
+    cqes*(n: Int = 1) {
+        submit-and-wait(n)
+        let completed = peek-cqes()
+        advance-cq(#completed)
+        for cqe in completed {
+            yield cqe
+        }
+    }
+
+    // ----------------------------------------------------------
+    // SQE preparation helpers
+    // Reuse __sqe (memset to zero, fill fields, memcpy
+    // into ring) to avoid allocating a C! struct per operation.
+    // ----------------------------------------------------------
+
+    __fresh-sqe() {
+        memset(__sqe, 0, #__sqe)
+        __sqe
+    }
+
+    prep-nop(user: Int = 0) {
+        let sqe = __fresh-sqe()
+        sqe.opcode = IORING_OP_NOP
+        sqe.user_data = user
+        push-sqe(sqe)
+    }
+
+    prep-read(fd: Int, buf, len: Int, offset: Int = 0, user: Int = 0) {
+        let sqe = __fresh-sqe()
+        sqe.opcode = IORING_OP_READ
+        sqe.fd = fd
+        sqe.off = offset
+        sqe.addr = int(buf)
+        sqe.len = len
+        sqe.user_data = user
+        push-sqe(sqe)
+    }
+
+    prep-write(fd: Int, buf, len: Int, offset: Int = 0, user: Int = 0) {
+        let sqe = __fresh-sqe()
+        sqe.opcode = IORING_OP_WRITE
+        sqe.fd = fd
+        sqe.off = offset
+        sqe.addr = int(buf)
+        sqe.len = len
+        sqe.user_data = user
+        push-sqe(sqe)
+    }
+
+    prep-accept(fd: Int, addr = nil, addrlen = nil, flags: Int = 0, user: Int = 0) {
+        let sqe = __fresh-sqe()
+        sqe.opcode = IORING_OP_ACCEPT
+        sqe.fd = fd
+        if addr    { sqe.addr = int(addr) }
+        if addrlen { sqe.off  = int(addrlen) }
+        sqe.rw_flags = flags
+        sqe.user_data = user
+        push-sqe(sqe)
+    }
+
+    prep-recv(fd: Int, buf, len: Int, flags: Int = 0, user: Int = 0) {
+        let sqe = __fresh-sqe()
+        sqe.opcode = IORING_OP_RECV
+        sqe.fd = fd
+        sqe.addr = int(buf)
+        sqe.len = len
+        sqe.rw_flags = flags
+        sqe.user_data = user
+        push-sqe(sqe)
+    }
+
+    prep-send(fd: Int, buf, len: Int, flags: Int = 0, user: Int = 0) {
+        let sqe = __fresh-sqe()
+        sqe.opcode = IORING_OP_SEND
+        sqe.fd = fd
+        sqe.addr = int(buf)
+        sqe.len = len
+        sqe.rw_flags = flags
+        sqe.user_data = user
+        push-sqe(sqe)
+    }
+
+    prep-close(fd: Int, user: Int = 0) {
+        let sqe = __fresh-sqe()
+        sqe.opcode = IORING_OP_CLOSE
+        sqe.fd = fd
+        sqe.user_data = user
+        push-sqe(sqe)
+    }
+
+    prep-connect(fd: Int, addr, addrlen: Int, user: Int = 0) {
+        let sqe = __fresh-sqe()
+        sqe.opcode = IORING_OP_CONNECT
+        sqe.fd = fd
+        sqe.addr = int(addr)
+        sqe.off = addrlen
+        sqe.user_data = user
+        push-sqe(sqe)
+    }
+
+    prep-shutdown(fd: Int, how: Int, user: Int = 0) {
+        let sqe = __fresh-sqe()
+        sqe.opcode = IORING_OP_SHUTDOWN
+        sqe.fd = fd
+        sqe.len = how
+        sqe.user_data = user
+        push-sqe(sqe)
+    }
+
+    // ----------------------------------------------------------
+    // Clean up
+    // ----------------------------------------------------------
+    close() {
+        munmap(sqes, sq-entries * #__sqe)
+        munmap(cq-ring, cq-ring-sz)
+        munmap(sq-ring, sq-ring-sz)
+        os.close(fd)
+    }
+}

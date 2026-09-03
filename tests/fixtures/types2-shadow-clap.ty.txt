@@ -1,0 +1,78 @@
+import ffi as c (C!)
+
+C! fn {
+    int getpid(void);
+}
+
+C! struct Pair {
+    c.int a;
+    c.u8 data[4];
+}
+
+use Spec = {name: String, check: {pred: _, src: String} | nil, pos: Bool}
+
+fn lisp(s) {
+    s.scan(/(?:^[[:lower:]]+)|(?:[[:upper:]][[:lower:]]*)/)
+     .join('-')
+     .lower()
+}
+
+fn similar(name, longs: Array[String | nil]) {
+    let close? = o -> o.edit-distance(name) <= 1 + max(1, #o / 4)
+    [o for longs if (o != nil) && close?(o) where o = it]
+}
+
+fn describe(pred: Array[Int] | Range | Regex | (Int -> Bool)) -> String {
+    let ok = match pred {
+        set: Array | Range => 1 in set,
+        pat: Regex         => 'x'.match?(pat),
+        _                  => !!pred(1)
+    }
+    if !ok {
+        return match pred {
+            rng: Range => "range {rng}",
+            pat: Regex => "regex {pat}",
+            set: Array => "one of {set.join(', ')}",
+            _          => 'check'
+        }
+    }
+    'ok'
+}
+
+fn meta(spec: Spec) -> String | nil {
+    if spec.check != nil && spec.check.pred :: Array {
+        return spec.check.src.upper()
+    }
+    if spec.check != nil {
+        return "{spec.check.src}!"
+    }
+    ''
+}
+
+fn widths(specs: Array[Spec]) -> Int {
+    let entries = []
+    for spec in specs {
+        let label: _ = spec.name
+        entries.push((label, spec.name ?? '', 'x'))
+    }
+    entries.map(\#_[0]).max() ?? 0
+}
+
+fn any-pos(specs: Array[Spec]) -> Bool {
+    specs.any?(\!_.pos) || specs.all?(s -> s.pos)
+}
+
+fn camel(name: String) -> String {
+    let [first, *rest] = name.split('-')
+    rest.map!(s -> s[0].upper() + s[1;].lower())
+    [first, *rest].join()
+}
+
+fn leading(lines: Array[String]) -> Int {
+    lines.filter(\_).pop-while(\_ == '').map(l -> l.search(/\S/) ?? #l).min() ?? 0
+}
+
+let specs = [{name: 'alpha', check: {pred: [1, 2], src: '[1, 2]'}, pos: true}, {name: 'beta', check: nil, pos: false}]
+print(lisp('HelloWorld'), similar('alpha', ['alpah', 'zzz', nil]), describe([2]), describe(1..3), describe(x -> x > 0))
+print(meta(specs[0]), meta(specs[1]), widths(specs), any-pos(specs), camel('foo-bar-baz'), leading(['  a', '   b', '']))
+print(getpid() > 0, Pair(a: 3).a)

@@ -1,0 +1,426 @@
+import json
+import os (exit)
+
+const USAGE = 'usage: ty tools/types2-corpus-summary.ty [--classification FILE] [--seed] [--strict] LOG...'
+const EVENT_SCHEMA = 'ty.types2.shadow.v1'
+const CLASSIFICATION_SCHEMA = 'ty.types2.classification.v1'
+
+const CLASSIFICATIONS = [
+    'agreement',
+    'expected-correction',
+    'library-defect',
+    'runtime-boundary',
+    'incomplete-feature',
+    'unexplained',
+]
+
+const DEFERRED_CLASSES = ['runtime', 'incomplete', 'external', 'recovery']
+
+const REASON_CLASSES = %{
+    'dynamic-callee':         'runtime',
+    'callable-top':           'runtime',
+    'dynamic-operand':        'runtime',
+    'dynamic-spread':         'runtime',
+    'spread-length':          'runtime',
+    'dynamic-keyword-spread': 'runtime',
+    'dynamic-member-name':    'runtime',
+    'dynamic-method-name':    'runtime',
+    'runtime-context':        'runtime',
+    'runtime-value':          'runtime',
+    'unsafe-eval':            'runtime',
+    'spread-arity':           'incomplete',
+    'keyword-row':            'incomplete',
+    'tuple-spread':           'incomplete',
+    'template':               'incomplete',
+    'template-hole':          'incomplete',
+    'pack-fold':              'incomplete',
+    'operator-value':         'incomplete',
+    'operator-protocol':      'incomplete',
+    'operator-open-operand':  'incomplete',
+    'incomplete-interface':   'incomplete',
+    'computed-type':          'incomplete',
+    'compile-time':           'incomplete',
+    'typeof-unresolved':      'incomplete',
+    'ifdef':                  'incomplete',
+    'macro-definition':       'incomplete',
+    'set-type':               'incomplete',
+    'unsupported-bound':      'incomplete',
+    'unsupported-hierarchy':  'incomplete',
+    'unsupported-pattern':    'incomplete',
+    'unresolved-binding':     'external',
+    'unresolved-nominal':     'external',
+    'unresolved-tag':         'external',
+    'unresolved-matcher':     'external',
+    'hierarchy-rejected':     'recovery',
+}
+
+const COUNTERS = [
+    'nodes',
+    'inferred_nodes',
+    'unsupported_nodes',
+    'candidate_trials',
+    'union_call_splits',
+    'union_call_arms',
+    'computed_type_terms',
+    'materialized_computed_types',
+    'runtime_fact_nodes',
+    'core_types',
+    'solver_metas',
+    'solver_edges',
+    'solver_work_steps',
+]
+
+fn fail(message) {
+    eprint("types2-corpus-summary: {message}")
+    exit(2)
+}
+
+fn tally(counts, key, n = 1) {
+    counts[key] = (counts[key] ?? 0) + n
+}
+
+fn lexicographic(*pairs: _) -> Int {
+    for (x, y) in pairs {
+        match x <=> y {
+            0 => continue,
+            c => return c,
+        }
+    }
+    0
+}
+
+fn by-count-then-name(a: (String, Int), b: (String, Int)) -> Int {
+    lexicographic((b[1], a[1]), (a[0], b[0]))
+}
+
+class Options {
+    files: [String]
+    classification: ?String
+    seed: Bool
+    strict: Bool
+
+    init(args) {
+        files = []
+        classification = nil
+        seed = false
+        strict = false
+
+        let rest = args
+        while let [$arg, *more] = rest {
+            rest = consume(arg, more)
+        }
+
+        if #files == 0 {
+            fail(USAGE)
+        }
+    }
+
+    consume(arg, more) {
+        match arg {
+            '--strict'         => strict = true,
+            '--seed'           => seed = true,
+            '--classification' => classification = more[0] ?? fail(USAGE),
+            _                  => files.push(arg),
+        }
+        arg == '--classification' ? more[1;] : more
+    }
+}
+
+fn events*(path) {
+    let n = 0
+    for line in slurp(path).lines() {
+        n += 1
+        if #line == 0 {
+            continue
+        }
+        let event: _ = json.parse(line) ?? fail("{path}:{n}: malformed JSON event")
+        let well-formed = (event :: Dict)
+                       && event['schema'] == EVENT_SCHEMA
+                       && (event['event'] :: String)
+                       && (event['unit'] :: String)
+        if !well-formed {
+            fail("{path}:{n}: malformed types2 event")
+        }
+        yield event
+    }
+}
+
+class Diagnostic {
+    key: String
+    unit: String
+    line: Int
+    column: Int
+    code: String
+    severity: String
+    message: String
+    count: Int
+    order: Int
+
+    init(event: _, order) {
+        unit = event['unit']
+        line = event['line']
+        column = event['column']
+        code = event['code']
+        severity = event['severity']
+        message = event['message']
+        key = "{unit}:{line}:{column}:{code}"
+        count = 0
+        self.order = order
+    }
+
+    compare(other: Diagnostic) -> Int {
+        lexicographic(
+            (order, other.order),
+            (line, other.line),
+            (column, other.column),
+            (code, other.code)
+        )
+    }
+}
+
+class Summary {
+    events: Int
+    units: [_]
+    unit-order: Dict[String, Int]
+    diagnostics: Dict[String, Diagnostic]
+    reasons: Dict[String, Int]
+    classes: Dict[String, Int]
+    counters: Dict[String, Int]
+    names: Dict[String, Dict[String, Int]]
+    pending: Int
+    internal-errors: Int
+    aborts: Int
+
+    init() {
+        events = 0
+        units = []
+        unit-order = %{}
+        diagnostics = %{}
+        reasons = %{}
+        classes = %{}
+        counters = %{}
+        names = %{}
+        pending = 0
+        internal-errors = 0
+        aborts = 0
+    }
+
+    add(event: _) {
+        events += 1
+        if !unit-order.has?(event['unit']) {
+            unit-order[event['unit']] = #unit-order
+        }
+        match event['event'] {
+            'finish'             => add-finish(event),
+            'diagnostic'         => add-diagnostic(event),
+            'deferred'           => add-deferred(event),
+            'pending_obligation' => pending += 1,
+            'internal_error'     => internal-errors += 1,
+            'abort'              => aborts += 1,
+            _                    => nil,
+        }
+    }
+
+    add-finish(event: _) {
+        units.push(event)
+        for reason, n in event['deferred_reasons'] ?? %{} {
+            check-reason(reason)
+            tally(reasons, reason, n)
+        }
+        for kind, n in event['deferred_classes'] ?? %{} {
+            tally(classes, kind, n)
+        }
+        for counter in COUNTERS {
+            tally(counters, counter, event[counter] ?? 0)
+        }
+    }
+
+    add-diagnostic(event: _) {
+        let order = unit-order[event['unit']] ?? fail("diagnostic for unknown unit {event['unit']}")
+        let entry = Diagnostic(event, order)
+        let known = diagnostics[entry.key] ?? entry
+        known.count += 1
+        diagnostics[entry.key] = known
+    }
+
+    add-deferred(event: _) {
+        check-reason(event['reason'])
+        let by-name: Dict[String, Int] = names[event['reason']] ?? %{}
+        tally(by-name, event['name'] ?? '<anonymous>')
+        names[event['reason']] = by-name
+    }
+
+    check-reason(reason) {
+        if !REASON_CLASSES.has?(reason) {
+            fail("unknown deferred reason `{reason}`; update REASON_CLASSES")
+        }
+    }
+
+    class-totals-consistent?() {
+        let expected = %{}
+        for reason, n in reasons {
+            tally(expected, REASON_CLASSES[reason], n)
+        }
+        DEFERRED_CLASSES.all?(kind -> (expected[kind] ?? 0) == (classes[kind] ?? 0))
+    }
+
+    sorted-diagnostics() {
+        diagnostics.values().sort(cmp=(a, b) -> a.compare(b))
+    }
+}
+
+fn load-classification(path: String) -> Dict[String, _] {
+    let document: _ = json.parse(slurp(path)) ?? fail("{path}: malformed classification JSON")
+    if !(document :: Dict) || document['schema'] != CLASSIFICATION_SCHEMA {
+        fail("{path}: expected schema {CLASSIFICATION_SCHEMA}")
+    }
+    let entries: Dict[String, _] = document['diagnostics'] ?? %{}
+    for key, entry in entries {
+        let classification: _ = (entry :: Dict) ? entry['classification'] : nil
+        if !(classification in CLASSIFICATIONS) {
+            fail("{path}: unknown classification `{classification}` for {key}")
+        }
+    }
+    entries
+}
+
+fn print-units(summary: Summary) {
+    print("{'unit':<14}{'errors':>8}{'warnings':>10}{'deferred':>10}{'pending':>9}{'runtime':>9}{'incomplete':>12}{'external':>10}{'recovery':>10}")
+    let totals = %{}
+    for unit in summary.units {
+        let classes: _ = unit['deferred_classes'] ?? %{}
+        let row = [
+            unit['types2_errors'],
+            unit['types2_warnings'],
+            unit['deferred_nodes'],
+            unit['pending_obligations'],
+            *DEFERRED_CLASSES.map(kind -> classes[kind] ?? 0),
+        ]
+        for value, i in row {
+            tally(totals, i, value)
+        }
+        print("{unit['unit']:<14}{row[0]:>8}{row[1]:>10}{row[2]:>10}{row[3]:>9}{row[4]:>9}{row[5]:>12}{row[6]:>10}{row[7]:>10}")
+    }
+    let t = [totals[i] ?? 0 for i in 0..8]
+    print("{'total':<14}{t[0]:>8}{t[1]:>10}{t[2]:>10}{t[3]:>9}{t[4]:>9}{t[5]:>12}{t[6]:>10}{t[7]:>10}")
+}
+
+fn print-reasons(summary: Summary) {
+    print()
+    print('deferred reasons')
+    let ordered = summary.reasons.items().sort(cmp=by-count-then-name)
+    for (reason, n) in ordered {
+        let names = summary.names[reason] ?? %{}
+        let top = names.items().sort(cmp=by-count-then-name)[;5]
+        let detail = #top == 0 ? '' : '  ' + top.map(|(name, k)| -> "{name[;32]}×{k}").join(', ')
+        print("{n:>6}  {reason:<24}{REASON_CLASSES[reason]:<12}{detail}")
+    }
+    if !summary.class-totals-consistent?() {
+        print('  warning: finish-event class totals disagree with the reason table')
+    }
+}
+
+fn print-counters(summary: Summary) {
+    print()
+    print('solver counters')
+    for counter in COUNTERS {
+        print("{summary.counters[counter] ?? 0:>10}  {counter}")
+    }
+}
+
+fn print-diagnostics(summary: Summary, classification: ?Dict[String, _]) {
+    let unique = summary.sorted-diagnostics()
+    let events = unique.map(&.count).sum() ?? 0
+    print()
+    print("diagnostics: {events} events, {#unique} unique")
+    let codes = %{}
+    for entry in unique {
+        tally(codes, entry.code)
+    }
+    for (code, n) in codes.items().sort(cmp=by-count-then-name) {
+        print("{n:>6}  {code}")
+    }
+
+    let $entries = classification or return {unclassified: 0, stale: 0}
+
+    print()
+    print('classification')
+    let totals = %{}
+    let unclassified = []
+    for entry in unique {
+        match entries[entry.key] {
+            nil    => unclassified.push(entry),
+            $known => tally(totals, known['classification']),
+        }
+    }
+    for kind in CLASSIFICATIONS {
+        print("{totals[kind] ?? 0:>6}  {kind}")
+    }
+    let stale = entries.keys().sort().filter(key -> !summary.diagnostics.has?(key))
+    print("{#unclassified:>6}  unclassified")
+    print("{#stale:>6}  stale")
+    for entry in unclassified {
+        print("  unclassified {entry.key}: {entry.message}")
+    }
+    for key in stale {
+        print("  stale {key}")
+    }
+
+    return {unclassified: #unclassified, stale: #stale}
+}
+
+fn print-seed(summary: Summary, classification: ?Dict[String, _]) {
+    let existing: Dict[String, _] = classification ?? %{}
+    let lines = summary.sorted-diagnostics().map(fn (entry: Diagnostic) -> String {
+        let previous: _ = existing[entry.key] ?? %{}
+        let fields = %{
+            'classification': previous['classification'] ?? 'unexplained',
+            'note': previous['note'] ?? '',
+            'severity': entry.severity,
+            'message': entry.message,
+        }
+        "    {json.encode(entry.key)}: {json.encode(fields)}"
+    })
+    print('{')
+    print("  \"schema\": {json.encode(CLASSIFICATION_SCHEMA)},")
+    print('  "diagnostics": {')
+    print(lines.join(",\n"))
+    print('  }')
+    print('}')
+}
+
+let options = Options(argv[1;])
+let classification = if let $path = options.classification {
+    load-classification(path)
+}
+let summary = Summary()
+
+for path in options.files {
+    for event in events(path) {
+        summary.add(event)
+    }
+}
+
+if options.seed {
+    print-seed(summary, classification)
+    exit(0)
+}
+
+print("types2 corpus summary: {summary.events} events, {#summary.units} units, {summary.internal-errors} internal errors, {summary.aborts} aborts, {summary.pending} pending obligations")
+print-units(summary)
+print-reasons(summary)
+print-counters(summary)
+let {unclassified, stale} = print-diagnostics(summary, classification)
+
+let violations = [
+    'internal errors' if summary.internal-errors > 0,
+    'aborts' if summary.aborts > 0,
+    'unclassified diagnostics' if unclassified > 0,
+    'stale classifications' if stale > 0,
+    'inconsistent deferred class totals' if !summary.class-totals-consistent?(),
+]
+
+if options.strict and #violations > 0 {
+    eprint("types2-corpus-summary: strict failure: {violations.join(', ')}")
+    exit(1)
+}
