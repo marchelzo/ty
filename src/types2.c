@@ -4892,8 +4892,8 @@ class_declaration_site(Types2Shadow *shadow, int class_id)
              || class_id >= class_count(shadow->ty)
         ) return NULL;
         Class const *class = class_get(shadow->ty, class_id);
-        if (class == NULL || class->def == NULL) return NULL;
-        return class->def->class.var;
+        if (class == NULL) return NULL;
+        return (Expr *)class->def;
 }
 
 static void
@@ -7701,6 +7701,67 @@ every_operand_open(Types2Shadow *shadow, T2Type const *arguments, size_t count)
         return true;
 }
 
+static bool
+meta_headed(Types2Shadow *shadow, T2Type type)
+{
+        T2Type head = resolved_type_head(shadow, type, T2_PREFER_LOWER_BOUND);
+        return t2_type_kind(shadow->universe, head) == T2_TYPE_META;
+}
+
+static T2Type
+retain_operator_predicate(
+        Types2Shadow *shadow,
+        char const *name,
+        T2Type const *arguments,
+        size_t argument_count,
+        Expr const *site,
+        bool diagnose
+)
+{
+        if (
+                argument_count != 2
+             || (
+                        !meta_headed(shadow, arguments[0])
+                     && !meta_headed(shadow, arguments[1])
+                )
+        ) return T2_TYPE_INVALID;
+        T2Type result = t2_solver_new_meta(
+                shadow->solver,
+                T2_VARIABLE_FLEXIBLE,
+                shadow->level,
+                "operator result"
+        );
+        if (result == T2_TYPE_INVALID) return T2_TYPE_INVALID;
+        if (shadow_option_enabled("TY_TYPES2_DEBUG_OPERATORS")) {
+                char *left = t2_type_string(shadow->universe, arguments[0]);
+                char *right = t2_type_string(shadow->universe, arguments[1]);
+                fprintf(
+                        stderr,
+                        "operator %s retained (%s, %s)\n",
+                        name,
+                        left == NULL ? "?" : left,
+                        right == NULL ? "?" : right
+                );
+                free(left);
+                free(right);
+        }
+        bool valid = constrain_predicate_maybe_diagnose(
+                shadow,
+                site,
+                (T2Predicate) {
+                        .kind = T2_PREDICATE_OPERATOR,
+                        .subtype = arguments[0],
+                        .supertype = result,
+                        .operand = arguments[1],
+                        .name = name
+                },
+                diagnose,
+                "operator-contract",
+                "operands must support the operator once their types are known"
+        );
+        return valid ? result : t2_primitive(shadow->universe, T2_TYPE_ERROR);
+}
+
 static T2Type
 infer_registered_operator_call(
         Types2Shadow *shadow,
@@ -7711,11 +7772,11 @@ infer_registered_operator_call(
         bool diagnose
 )
 {
+        (void)import_operator_definitions(shadow, name);
         bool found = false;
         size_t best = SIZE_MAX;
         size_t applicable_count = 0;
         unsigned best_score = 0;
-        bool ambiguous = false;
         for (size_t i = 0; i < shadow->operator_count; ++i) {
                 Types2Operator const *candidate = &shadow->operators[i];
                 if (strcmp(candidate->name, name) != 0) continue;
@@ -7759,17 +7820,23 @@ infer_registered_operator_call(
                         best_score = score;
                 }
         }
-        if (
-                best != SIZE_MAX
-             && applicable_count > 1
-             && every_operand_open(shadow, arguments, argument_count)
-        ) {
-                defer_node(shadow, TYPES2_DEFER_OPERATOR_OPEN_OPERAND, site, name);
-                return t2_primitive(shadow->universe, T2_TYPE_DYNAMIC);
+        if (applicable_count > 1) {
+                T2Type retained = retain_operator_predicate(
+                        shadow,
+                        name,
+                        arguments,
+                        argument_count,
+                        site,
+                        diagnose
+                );
+                if (retained != T2_TYPE_INVALID) return retained;
+                if (every_operand_open(shadow, arguments, argument_count)) {
+                        defer_node(shadow, TYPES2_DEFER_OPERATOR_OPEN_OPERAND, site, name);
+                        return t2_primitive(shadow->universe, T2_TYPE_DYNAMIC);
+                }
         }
         if (
-                (best == SIZE_MAX || !found)
-             && !ambiguous
+                best == SIZE_MAX
              && import_operator_table(shadow, name, arguments, argument_count)
         ) {
                 return infer_registered_operator_call(
@@ -7781,18 +7848,8 @@ infer_registered_operator_call(
                         diagnose
                 );
         }
-        if (!found) {
-                if (!import_operator_definitions(shadow, name)) return T2_TYPE_INVALID;
-                return infer_registered_operator_call(
-                        shadow,
-                        name,
-                        arguments,
-                        argument_count,
-                        site,
-                        diagnose
-                );
-        }
-        if (best == SIZE_MAX || ambiguous) {
+        if (!found) return T2_TYPE_INVALID;
+        if (best == SIZE_MAX) {
                 for (size_t i = 0; i < argument_count; ++i) {
                         if (operator_type_is_open(shadow, arguments[i], 0)) {
                                 defer_node(shadow, TYPES2_DEFER_OPERATOR_OPEN_OPERAND, site, name);
@@ -7802,18 +7859,14 @@ infer_registered_operator_call(
                                 );
                         }
                 }
-        }
-        if (best == SIZE_MAX || ambiguous) {
                 if (diagnose) add_diagnostic(
                         shadow,
                         site,
                         TYPES2_DIAGNOSTIC_ERROR,
-                        best == SIZE_MAX ? "unsupported-operator" : "ambiguous-operator",
+                        "unsupported-operator",
                         argument_count == 0 ? T2_TYPE_INVALID : arguments[0],
                         argument_count < 2 ? T2_TYPE_INVALID : arguments[1],
-                        best == SIZE_MAX
-                            ? "no registered operator accepts these operand types"
-                            : "more than one equally specific operator accepts these operand types"
+                        "no registered operator accepts these operand types"
                 );
                 return t2_primitive(shadow->universe, T2_TYPE_ERROR);
         }
@@ -12036,6 +12089,34 @@ infer_prefix_minus_type(
         }
         if (relaxed == T2_TYPE_FLOAT) {
                 return t2_primitive(shadow->universe, T2_TYPE_FLOAT);
+        }
+        if (kind == T2_TYPE_META) {
+                T2Type result = t2_solver_new_meta(
+                        shadow->solver,
+                        T2_VARIABLE_FLEXIBLE,
+                        shadow->level,
+                        "negation result"
+                );
+                bool valid = constrain_predicate_maybe_diagnose(
+                        shadow,
+                        site,
+                        (T2Predicate) {
+                                .kind = T2_PREDICATE_OPERATOR,
+                                .subtype = operand,
+                                .supertype = result,
+                                .operand = t2_primitive(
+                                        shadow->universe,
+                                        T2_TYPE_NEVER
+                                ),
+                                .name = "-"
+                        },
+                        diagnose,
+                        "negation-requirement",
+                        "value must expose a compatible prefix - contract"
+                );
+                return valid
+                     ? result
+                     : t2_primitive(shadow->universe, T2_TYPE_ERROR);
         }
 
         T2SolverMark member_mark = t2_solver_mark(shadow->solver);
@@ -21280,11 +21361,14 @@ operator_predicate_result(
         T2Type operand
 )
 {
-        if (
-                name != NULL
-             && strcmp(name, "#") == 0
-             && t2_type_kind(shadow->universe, operand) == T2_TYPE_NEVER
-        ) return infer_count_type(shadow, subject, NULL, false);
+        bool unary = name != NULL
+                  && t2_type_kind(shadow->universe, operand) == T2_TYPE_NEVER;
+        if (unary && strcmp(name, "#") == 0) {
+                return infer_count_type(shadow, subject, NULL, false);
+        }
+        if (unary && strcmp(name, "-") == 0) {
+                return infer_prefix_minus_type(shadow, subject, NULL, false);
+        }
         if (name != NULL && strcmp(name, "??") == 0) {
                 return t2_join(
                         shadow->universe,

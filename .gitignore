@@ -1,16 +1,21 @@
 _*
+
 vcpkg_installed/
 vcpkg/
-obj/
+
 src/jit_*.h
 include/ioctl_constants.h
 include/errno_constants.h
 include/keywords.h
+
+obj/
 dtoa/*.o
 libco/*.o
 libmd/*.a
 libmd/build/
 nsync/out/
+
+compile_commands.json
 
 ty
 tyls
@@ -18,5 +23,6 @@ typrof
 
 *.log
 *.err
+
 .*
 !.gitignore

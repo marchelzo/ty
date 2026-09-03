@@ -6536,8 +6536,16 @@ bind_sort_meta(
 }
 
 static bool
-collect_meta_roots(T2Solver *solver, T2Type type, uint32_t **roots, size_t *count, size_t *capacity)
+collect_live_meta_roots(
+        T2Solver *solver,
+        T2Type type,
+        uint32_t **roots,
+        size_t *count,
+        size_t *capacity,
+        unsigned depth
+)
 {
+        if (depth > T2_RELATION_DEPTH_LIMIT) return true;
         uint32_t meta = meta_from_type(solver, type);
         if (meta != 0) {
                 meta = find_root(solver, meta);
@@ -6552,17 +6560,98 @@ collect_meta_roots(T2Solver *solver, T2Type type, uint32_t **roots, size_t *coun
                         sizeof **roots
                 )) return false;
                 (*roots)[(*count)++] = meta;
-                return true;
+                T2Meta const *node = &solver->metas[meta - 1];
+                if (node->solution != T2_TYPE_INVALID) {
+                        return collect_live_meta_roots(
+                                solver,
+                                node->solution,
+                                roots,
+                                count,
+                                capacity,
+                                depth + 1
+                        );
+                }
+                return collect_live_meta_roots(
+                        solver,
+                        node->lower,
+                        roots,
+                        count,
+                        capacity,
+                        depth + 1
+                ) && collect_live_meta_roots(
+                        solver,
+                        node->upper,
+                        roots,
+                        count,
+                        capacity,
+                        depth + 1
+                );
         }
 
         T2Node const *node = get_node(solver->universe, type);
         if (node == NULL) return false;
         for (size_t i = 0; i < node->arity; ++i) {
-                if (!collect_meta_roots(solver, node->children[i], roots, count, capacity)) {
-                        return false;
-                }
+                if (!collect_live_meta_roots(
+                        solver,
+                        node->children[i],
+                        roots,
+                        count,
+                        capacity,
+                        depth + 1
+                )) return false;
         }
         return true;
+}
+
+static bool
+meta_watches(T2Solver const *solver, uint32_t meta, uint64_t watch)
+{
+        T2WatchVector const *watchers = &solver->metas[meta - 1].watchers;
+        for (size_t i = 0; i < watchers->count; ++i) {
+                if (watchers->items[i] == watch) return true;
+        }
+        return false;
+}
+
+static bool
+watch_obligation(T2Solver *solver, size_t index)
+{
+        T2Predicate const *predicate = &solver->obligations[index].predicate;
+        uint64_t watch = T2_WATCH_OBLIGATION | index;
+        uint32_t *roots = NULL;
+        size_t count = 0;
+        size_t capacity = 0;
+        bool ok = collect_live_meta_roots(
+                solver,
+                predicate->subtype,
+                &roots,
+                &count,
+                &capacity,
+                0
+        ) && collect_live_meta_roots(
+                solver,
+                predicate->supertype,
+                &roots,
+                &count,
+                &capacity,
+                0
+        );
+        if (ok && predicate->operand != T2_TYPE_INVALID) {
+                ok = collect_live_meta_roots(
+                        solver,
+                        predicate->operand,
+                        &roots,
+                        &count,
+                        &capacity,
+                        0
+                );
+        }
+        for (size_t i = 0; ok && i < count; ++i) {
+                if (meta_watches(solver, roots[i], watch)) continue;
+                ok = push_watch(solver, roots[i], watch);
+        }
+        free(roots);
+        return ok;
 }
 
 static T2Relation
@@ -6606,37 +6695,9 @@ retain_predicate(
         solver->obligations[index].predicate.name = name;
         solver->obligations[index].predicate.provenance = provenance;
 
-        uint32_t *roots = NULL;
-        size_t count = 0;
-        size_t capacity = 0;
-        bool ok = collect_meta_roots(
-                solver,
-                predicate->subtype,
-                &roots,
-                &count,
-                &capacity
-        ) && collect_meta_roots(
-                solver,
-                predicate->supertype,
-                &roots,
-                &count,
-                &capacity
-        );
-        if (ok && predicate->operand != T2_TYPE_INVALID) {
-                ok = collect_meta_roots(
-                        solver,
-                        predicate->operand,
-                        &roots,
-                        &count,
-                        &capacity
-                );
-        }
-        for (size_t i = 0; ok && i < count; ++i) {
-                ok = push_watch(solver, roots[i], T2_WATCH_OBLIGATION | index);
-        }
-        free(roots);
-
-        return ok ? T2_RELATION_DEFERRED : T2_RELATION_COMPLEXITY;
+        return watch_obligation(solver, index)
+             ? T2_RELATION_DEFERRED
+             : T2_RELATION_COMPLEXITY;
 }
 
 static T2Relation
@@ -8183,6 +8244,11 @@ drain_work(T2Solver *solver)
                                 })) break;
                                 obligation->active = false;
                         } else if (
+                                relation == T2_RELATION_DEFERRED
+                             && !solver->failed
+                        ) {
+                                if (!watch_obligation(solver, index)) break;
+                        } else if (
                                 relation == T2_RELATION_NO
                              && !solver->failed
                         ) {
@@ -9569,6 +9635,103 @@ generalize_type(T2Generalization *generalization, T2Type source)
         return result;
 }
 
+static T2Type
+weak_lower_view(
+        T2Solver *solver,
+        T2Type type,
+        uint32_t const *active,
+        size_t active_count
+)
+{
+        if (active_count > T2_RELATION_DEPTH_LIMIT) return type;
+        uint32_t meta = meta_from_type(solver, type);
+        if (meta != 0) {
+                meta = find_root(solver, meta);
+                T2Meta const *node = &solver->metas[meta - 1];
+                if (node->solution != T2_TYPE_INVALID) {
+                        return weak_lower_view(
+                                solver,
+                                node->solution,
+                                active,
+                                active_count
+                        );
+                }
+                if (node->variable_kind != T2_VARIABLE_WEAK) {
+                        return meta_type(solver, meta);
+                }
+                for (size_t i = 0; i < active_count; ++i) {
+                        if (active[i] == meta) return meta_type(solver, meta);
+                }
+                uint32_t stack[T2_RELATION_DEPTH_LIMIT + 2];
+                if (active_count != 0) {
+                        memcpy(stack, active, active_count * sizeof *stack);
+                }
+                stack[active_count] = meta;
+                T2Type never = t2_primitive(solver->universe, T2_TYPE_NEVER);
+                T2Type view = node->lower;
+                for (size_t i = 0; i < solver->edge_count; ++i) {
+                        uint32_t sub = find_root(solver, solver->edges[i].subtype);
+                        uint32_t sup = find_root(solver, solver->edges[i].supertype);
+                        if (sub == meta || sup != meta) continue;
+                        T2Type below = weak_lower_view(
+                                solver,
+                                meta_type(solver, sub),
+                                stack,
+                                active_count + 1
+                        );
+                        if (below == T2_TYPE_INVALID) return below;
+                        view = t2_join(solver->universe, view, below);
+                        if (view == T2_TYPE_INVALID) return view;
+                }
+                return view == never ? meta_type(solver, meta) : view;
+        }
+
+        T2Node const *node = get_node(solver->universe, type);
+        if (
+                node == NULL
+             || node->arity == 0
+             || node->kind == T2_TYPE_RECURSIVE
+        ) return type;
+        T2Type *children = malloc(node->arity * sizeof *children);
+        if (children == NULL) return T2_TYPE_INVALID;
+        bool changed = false;
+        for (size_t i = 0; i < node->arity; ++i) {
+                children[i] = weak_lower_view(
+                        solver,
+                        node->children[i],
+                        active,
+                        active_count
+                );
+                if (children[i] == T2_TYPE_INVALID) {
+                        free(children);
+                        return T2_TYPE_INVALID;
+                }
+                changed |= children[i] != node->children[i];
+        }
+        T2Type result = changed
+                      ? rebuild_type(solver->universe, node, children)
+                      : type;
+        free(children);
+        return result;
+}
+
+static T2Predicate
+obligation_view(T2Solver *solver, T2Predicate const *predicate)
+{
+        T2Predicate view = *predicate;
+        view.subtype = weak_lower_view(solver, predicate->subtype, NULL, 0);
+        view.supertype = weak_lower_view(solver, predicate->supertype, NULL, 0);
+        if (predicate->operand != T2_TYPE_INVALID) {
+                view.operand = weak_lower_view(
+                        solver,
+                        predicate->operand,
+                        NULL,
+                        0
+                );
+        }
+        return view;
+}
+
 static T2Scheme *
 solver_generalize(
         T2Solver *solver,
@@ -9610,7 +9773,11 @@ solver_generalize(
                 ) {
                         T2Obligation const *obligation = &solver->obligations[i];
                         if (!obligation->active) continue;
-                        T2Predicate const *predicate = &obligation->predicate;
+                        T2Predicate viewed = obligation_view(
+                                solver,
+                                &obligation->predicate
+                        );
+                        T2Predicate const *predicate = &viewed;
                         if (!predicate_shares_exported_variable(
                                 solver,
                                 type,
@@ -9799,7 +9966,11 @@ solver_generalize(
         for (size_t i = 0; i < solver->obligation_count; ++i) {
                 T2Obligation const *obligation = &solver->obligations[i];
                 if (!obligation->active) continue;
-                T2Predicate const *predicate = &obligation->predicate;
+                T2Predicate viewed = obligation_view(
+                        solver,
+                        &obligation->predicate
+                );
+                T2Predicate const *predicate = &viewed;
                 bool scoped = i >= scoped_obligation_start;
                 bool touches_replacement = type_touches_replacement(
                         solver,

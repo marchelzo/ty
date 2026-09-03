@@ -849,15 +849,61 @@ stale native rule wrong.  Changes:
   both results, including the Function arm's `nil`), and `help.ty`'s local
   `doc` lambda declares that union.
 
+The session that worked through `ty -tc lib/date.ty` (2 errors at the start,
+none at the end) added:
+
+- operator definitions from other modules are imported before a unit's own
+  candidates are tried: `infer_registered_operator_call` only imported them
+  when the unit had no candidate of that name, so a module declaring its own
+  `-` overloads (`fn -(a: PlainDate, b: Duration)`) never saw the prelude's
+  `-(Int, Bool)` and rejected `y -= (m <= 2)`;
+- an operator whose operand head is a still-open metavariable, and for which
+  more than one candidate applies, retains an operator predicate
+  (`retain_operator_predicate`, result metavariable `operator result`)
+  instead of committing to the best-scoring candidate, which used to pin the
+  operand: a forward call's result used in `nanos / 86400000000000.0` forced
+  the later definition to return `Float`, and an unannotated parameter used
+  in `x / 2.0` or `x < 5` was frozen at `Float` or `Int`, so a later call
+  with the other numeric type failed.  The predicate resolves through the
+  existing resolver once the operands are known, and a generalized function
+  carries it as a scheme predicate, so `fn f(x) { x / 2.0 }` accepts both
+  `f(3)` and `f(2.5)`.  Calls whose operands are all open but not
+  metavariable-headed still defer as `operator-open-operand` (4 sites remain
+  in the prelude);
+- prefix minus on an open operand retains a unary `-` operator predicate (a
+  `Never` operand marks a unary predicate, as `#` already did) instead of a
+  member lookup that `Int` cannot satisfy, which `xs[-i]` on an unannotated
+  `i` needed once `#xs < i` no longer pinned `i`;
+- the core re-registers a deferred obligation's watches through current
+  solutions and bounds (`collect_live_meta_roots`, `watch_obligation`): the
+  `<=>` pack obligation from `max(1, #o / 4)` watched only the pack
+  metavariable, so once the pack was solved to `(1, $r)` nothing woke it when
+  `$r` became `Int`;
+- generalization reads a weak (mutable local) metavariable through its
+  incoming edges before deciding whether an obligation can be captured into a
+  scheme (`weak_lower_view`, `obligation_view`): a class method's own type
+  parameter is a flexible metavariable while its body is inferred, so
+  `y > best` in `argmax[U]` after `let i, best = 0, f(items[0])` mentioned
+  the local's weak metavariable and was left behind as an unresolvable unit
+  obligation; it is now captured as `U > U` beside the declared bound;
+- `TY_TYPES2_DEBUG_OPERATORS=1` also prints `operator OP retained (a, b)`
+  when a predicate is retained, and the `open-operands` fixture pins these
+  behaviours under both checkers.
+
+No library contract needed correcting: `__duration-nanoseconds-relative`
+returns `Int` on every path, and the second `date.ty` diagnostic was the
+forward-call pinning above, not a defect in that function.
+
 The last clean validation run used the clang ASan build and produced:
 
 - `./ty test.ty`: 78 passed, 1 failed (`xinfo`, rejected by the legacy
   checker after `Dict.[]` became honest; ignored per instruction);
 - the types2 core unit suite: passed;
-- shadow-on/shadow-off equivalence: passed, including the `clap` fixture;
+- shadow-on/shadow-off equivalence: passed, including the `clap` and
+  `open-operands` fixtures;
 - the strict corpus gate: passed;
-- the startup corpus: 16 units, 0 unsupported nodes, 1,849 deferred nodes
-  (1,343 runtime, 173 incomplete, 333 external, 0 recovery), and no pending
+- the startup corpus: 16 units, 0 unsupported nodes, 1,836 deferred nodes
+  (1,343 runtime, 160 incomplete, 333 external, 0 recovery), and no pending
   obligation;
 - 4 raw types2 diagnostic events reducing to 4 unique diagnostics, all
   classified (3 library defects: `Array.zip`, `Dict.map`, `Dict.[]`; 1
@@ -865,16 +911,14 @@ The last clean validation run used the clang ASan build and produced:
 - every module under `lib/` compiled so far reports nothing under `ty -tc`
   (`term`, `sh`, `readln`, `log`, `chalk`, `help`, `ty/repl`, `io`, `os`,
   `path`, `curl`, `ffi`, `pretty`, `ety`, `sqlite`, `http`, `llhttp`, `yaml`,
-  `clap`); the legacy checker rejects `lib/log.ty` and `lib/http.ty`
+  `clap`, `date`); the legacy checker rejects `lib/log.ty` and `lib/http.ty`
   (`Dict.[]` reads) and `lib/os.ty` (pre-existing), which is accepted.  The
   `-t` report can undercount the prelude relative to the strict-gate log, so
   the log summary is the reference.
 
-`tests/types2-corpus-classification.json`, `tests/types2-corpus.sh`,
-`tools/types2-corpus-summary.ty`, `tests/dict_type_predicate.ty`, and the
-`deferred`, `nil-guards`, `loops`, `multi-values`, `evolving`, `contextual`,
-`defaults`, `repl`, `hierarchy`, `http`, and `clap` fixtures are still
-untracked in the working tree; commit them with the next milestone.
+The `open-operands` fixture
+(`tests/fixtures/types2-shadow-open-operands.ty.txt`) is still untracked in
+the working tree; commit it with the next milestone.
 The classification file was reseeded on 2026-09-02 from a four-entry log
 (the `path.ty` warning left when that match was rewritten), so the triage
 queue is empty and the next work is the full library matrix beyond the
@@ -1535,3 +1579,11 @@ problems this work is intended to eliminate.
 - Update this document after each milestone with the new clean baseline, newly
   classified gaps, and the exact next command. That is what makes a later
   continuation reliable rather than archaeological.
+- An operator applied to a metavariable-headed operand with more than one
+  applicable candidate must retain a predicate, never commit to the
+  best-scoring candidate: the commit is a hidden bound on the operand
+  (`x / 2.0` froze `x` at `Float`, and a forward call's result at the first
+  candidate's parameter type).  Retained predicates only resolve if the core
+  watches every metavariable visible through the current solutions and
+  bounds, and only get captured into a scheme if generalization can read the
+  local weak metavariables they mention.
