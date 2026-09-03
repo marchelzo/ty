@@ -9405,18 +9405,16 @@ type_assign(Ty *ty, Expr *e, Type *t0, int flags)
                 } else {
                         t2 = OriginalType(ty, e->symbol);
                         bool ok = UnifyX(ty, t0, t2, false, false);
-                        if (
-                                !ok
-                             && check
-                             && ENFORCE
-                             && !HAVE_COMPILER_FLAG(NO_TYPES)
-                        ) {
-                                TypeError(
-                                        "can't assign %s to %s%s%s which has type %s",
-                                        ShowType(t0),
-                                        TERM(93), e->identifier, TERM(0),
-                                        ShowType(e->symbol->type)
-                                );
+                        if (!ok) {
+                                if (check && ENFORCE && !HAVE_COMPILER_FLAG(NO_TYPES)) {
+                                        TypeError(
+                                                "can't assign %s to %s%s%s which has type %s",
+                                                ShowType(t0),
+                                                TERM(93), e->identifier, TERM(0),
+                                                ShowType(e->symbol->type)
+                                        );
+                                }
+                                return;
                         }
                         if (flags & T_FLAG_UPDATE) {
                                 Refinement *ref = ScopeFindRefinement(

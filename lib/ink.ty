@@ -205,9 +205,10 @@ pub fn set-theme(overrides: Dict[String, String] = %{}) {
     for name, val in theme if #val > 0 {
         chalk.{name} = val
     }
-    _bg-global-sgr = (theme['bg-global'] ?? '') != ''
-        ? resolve-bg-sgr(theme['bg-global'])
-        : ''
+    _bg-global-sgr = match theme['bg-global'] {
+        $style and style => resolve-bg-sgr(style),
+        _                => ''
+    }
 }
 
 set-theme()
@@ -388,7 +389,7 @@ fn strip-ws-children(xs: Array[Any]) -> Array[Any] {
 
 pub class Node {
     `tag`:    NodeBox | NodeText | NodeOverlay | NodeRaw
-    props:    Dict[String, Any]
+    props:    Dict[String, _]
     children: Array[Any]
 
     direction: String
@@ -3294,14 +3295,14 @@ pub class Element {
     y: Int
     w: Int
     h: Int
-    props: Dict[String, Any]
+    props: Dict[String, _]
     children: Array[Element]
     focusable?: Bool
     component: Component | nil
 
     init(
         x: Int, y: Int, w: Int, h: Int,
-        props: Dict[String, Any],
+        props: Dict[String, _],
         children: Array[Element] = [],
         component: Component | nil = nil
     ) {
